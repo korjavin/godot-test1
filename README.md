@@ -263,21 +263,34 @@ First, download export templates:
 
 ## 🔄 CI/CD
 
-This project includes GitHub Actions for automated builds.
+This project includes GitHub Actions for automated web builds and deployment.
 
 ### What Gets Built Automatically
 
 When you push code to GitHub:
-- ✅ Windows executable (`.exe`)
-- ✅ Linux executable (`.x86_64`)
-- ✅ Web build (`index.html`)
+- ✅ Web build (`index.html`) - Automatically deployed to GitHub Pages!
 
-### Accessing Builds
+### Play Online
 
+After the first deployment, your game will be available at:
+```
+https://<your-username>.github.io/godot-test1/
+```
+
+**First-time setup**: You may need to enable GitHub Pages:
+1. Go to your repository on GitHub
+2. Click **Settings** tab
+3. Scroll to **Pages** section (left sidebar)
+4. Under "Source", it should show `gh-pages` branch (auto-configured)
+5. Your site will be live in a few minutes!
+
+### Accessing Build Artifacts
+
+You can also download the web build as a ZIP:
 1. Go to your GitHub repository
 2. Click **Actions** tab
 3. Click on the latest workflow run
-4. Download artifacts from the bottom of the page
+4. Download the `web-build` artifact from the bottom
 
 ### Manual Build Trigger
 
@@ -287,6 +300,8 @@ git add .
 git commit -m "Update game"
 git push origin main
 ```
+
+The workflow will automatically build and deploy to GitHub Pages!
 
 See `.github/workflows/build.yml` for configuration details.
 
