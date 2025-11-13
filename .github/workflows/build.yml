@@ -3,10 +3,10 @@ name: 🎮 Build and Deploy Web Game
 # When to run this workflow
 on:
   push:
-    branches: [ main, claude/* ]  # Run on push to main or Claude branches
+    branches: [ main, claude/* ]
   pull_request:
     branches: [ main ]
-  workflow_dispatch:  # Allow manual trigger
+  workflow_dispatch:
 
 # Required for GitHub Pages deployment
 permissions:
@@ -14,17 +14,21 @@ permissions:
   pages: write
   id-token: write
 
-# Environment variables
+# Allow only one concurrent deployment
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
 env:
   GODOT_VERSION: 4.3
   EXPORT_NAME: zelda-like-game
 
 jobs:
   # ============================================================================
-  # Export for Web (HTML5) and Deploy to GitHub Pages
+  # Build Web Export
   # ============================================================================
-  export-web:
-    name: 🌐 Build & Deploy Web
+  build:
+    name: 🔨 Build Web Export
     runs-on: ubuntu-latest
     container:
       image: barichello/godot-ci:4.3
@@ -33,6 +37,16 @@ jobs:
         uses: actions/checkout@v4
         with:
           lfs: true
+
+      - name: 📦 Cache Godot imports
+        uses: actions/cache@v3
+        with:
+          path: |
+            .godot/imported
+            .godot/shader_cache
+          key: godot-imports-${{ hashFiles('**/*.tscn', '**/*.tres', '**/*.gd', 'project.godot') }}
+          restore-keys: |
+            godot-imports-
 
       - name: 🔧 Setup export templates
         run: |
@@ -44,18 +58,31 @@ jobs:
           mkdir -v -p build/web
           godot --headless --verbose --export-release "Web" build/web/index.html
 
-      - name: 📤 Upload Web build as artifact
+      - name: 📤 Upload artifact for GitHub Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/web
+
+      - name: 📦 Upload web build as artifact (for download)
         uses: actions/upload-artifact@v4
         with:
           name: web-build
           path: build/web
-          retention-days: 14
+          retention-days: 7
 
-      - name: 🚀 Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v3
-        # Only deploy on push to main or claude/* branches (not on PRs)
-        if: github.event_name == 'push'
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./build/web
-          force_orphan: true
+  # ============================================================================
+  # Deploy to GitHub Pages
+  # ============================================================================
+  deploy:
+    name: 🚀 Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    # Only deploy on push to main or claude/* branches (not on PRs)
+    if: github.event_name == 'push'
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: 🌐 Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
