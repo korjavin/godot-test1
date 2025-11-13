@@ -3,9 +3,9 @@ name: 🎮 Build and Deploy Web Game
 # When to run this workflow
 on:
   push:
-    branches: [ main, claude/* ]
+    branches: [ master, claude/* ]
   pull_request:
-    branches: [ main ]
+    branches: [ master ]
   workflow_dispatch:
 
 # Required for GitHub Pages deployment
@@ -60,6 +60,7 @@ jobs:
 
       - name: 📤 Upload artifact for GitHub Pages
         uses: actions/upload-pages-artifact@v3
+        if: github.ref == 'refs/heads/master' && github.event_name == 'push'
         with:
           path: build/web
 
@@ -71,14 +72,14 @@ jobs:
           retention-days: 7
 
   # ============================================================================
-  # Deploy to GitHub Pages
+  # Deploy to GitHub Pages (only from master branch)
   # ============================================================================
   deploy:
     name: 🚀 Deploy to GitHub Pages
     needs: build
     runs-on: ubuntu-latest
-    # Only deploy on push to main or claude/* branches (not on PRs)
-    if: github.event_name == 'push'
+    # Only deploy on push to master branch
+    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

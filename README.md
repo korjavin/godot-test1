@@ -120,12 +120,43 @@ godot --path . scenes/main.tscn
 
 See [Building for Distribution](#building-for-distribution) section.
 
+### Method 4: Run Web Build Locally (Testing Web Export)
+
+If you have a web build (from CI/CD artifact or local export), you can test it locally:
+
+**Linux/macOS:**
+```bash
+./serve.sh
+```
+
+**Windows:**
+```cmd
+serve.bat
+```
+
+**Manual (any OS with Python):**
+```bash
+cd build/web  # or web-build if from artifact
+python3 -m http.server 8000
+# Then open: http://localhost:8000
+```
+
+**What the script does:**
+- Finds your web build automatically
+- Starts a local HTTP server
+- Opens your browser automatically
+- Shows network URL for testing on other devices
+
+**Note:** Web builds require an HTTP server (can't use `file://`) due to browser security restrictions for WebAssembly.
+
 ## 📁 Project Structure
 
 ```
 godot-test1/
 ├── project.godot           # Main project configuration
 ├── icon.svg                # Project icon
+├── serve.sh                # Local web server script (Linux/macOS)
+├── serve.bat               # Local web server script (Windows)
 │
 ├── scenes/                 # Scene files (.tscn)
 │   ├── main.tscn          # Main game scene (world + player)
@@ -149,6 +180,7 @@ godot-test1/
 │       └── build.yml     # Automated build pipeline
 │
 ├── README.md             # This file!
+├── QUICKSTART.md         # Quick start guide
 └── LICENSE               # MIT License
 ```
 
@@ -294,14 +326,23 @@ You can also download the web build as a ZIP:
 
 ### Manual Build Trigger
 
+**From feature branches (like claude/*):**
 ```bash
-# Commit and push your changes
+# This will build but NOT deploy (for testing)
 git add .
 git commit -m "Update game"
-git push origin main
+git push origin <your-branch-name>
 ```
 
-The workflow will automatically build and deploy to GitHub Pages!
+**Deploy to GitHub Pages (from master branch):**
+```bash
+# Merge your changes to master to deploy
+git checkout master
+git merge <your-branch-name>
+git push origin master
+```
+
+The workflow will automatically build and deploy to GitHub Pages when you push to `master`!
 
 See `.github/workflows/build.yml` for configuration details.
 
