@@ -294,14 +294,23 @@ You can also download the web build as a ZIP:
 
 ### Manual Build Trigger
 
+**From feature branches (like claude/*):**
 ```bash
-# Commit and push your changes
+# This will build but NOT deploy (for testing)
 git add .
 git commit -m "Update game"
-git push origin main
+git push origin <your-branch-name>
 ```
 
-The workflow will automatically build and deploy to GitHub Pages!
+**Deploy to GitHub Pages (from master branch):**
+```bash
+# Merge your changes to master to deploy
+git checkout master
+git merge <your-branch-name>
+git push origin master
+```
+
+The workflow will automatically build and deploy to GitHub Pages when you push to `master`!
 
 See `.github/workflows/build.yml` for configuration details.
 
