@@ -1,0 +1,69 @@
+# Godot 4+ specific ignores
+.godot/
+.import/
+
+# Godot-specific files
+*.translation
+*.import
+
+# Build outputs
+build/
+builds/
+dist/
+exports/
+
+# Mono/C# (if using C# in future)
+.mono/
+data_*/
+mono_crash.*.json
+
+# System/tool-specific
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+[Dd]esktop.ini
+
+# IDE specific files
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
+
+# Logs and temporary files
+*.log
+logs/
+*.tmp
+
+# Android build files (if exporting to Android)
+.gradle/
+local.properties
+*.apk
+*.aab
+
+# iOS build files (if exporting to iOS)
+*.dSYM.zip
+*.ipa
+ios/
+
+# Web export (generated files)
+.web/
+*.wasm.map
+
+# Backup files
+*.backup
+*.bak
+*~
+
+# OS generated files
+.directory
+
+# Don't ignore export_presets.cfg - we want this in version control
+# so CI/CD can use it
+!export_presets.cfg
