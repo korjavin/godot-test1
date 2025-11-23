@@ -1,25 +1,74 @@
-[gd_scene load_steps=3 format=3 uid="uid://windman_3d_updated_001"]
+[gd_scene load_steps=13 format=3 uid="uid://windman_3d_updated_001"]
 
-[ext_resource type="PackedScene" uid="uid://windman_model_001" path="res://assets/models/characters/windman.glb" id="1_windman_model"]
-[ext_resource type="Script" path="res://scripts/windman_whole_body_animator.gd" id="2_animator"]
+[ext_resource type="PackedScene" path="res://assets/models/characters/windman_parts/windman_head.glb" id="1_head"]
+[ext_resource type="PackedScene" path="res://assets/models/characters/windman_parts/windman_torso.glb" id="2_torso"]
+[ext_resource type="PackedScene" path="res://assets/models/characters/windman_parts/windman_left_upper_arm.glb" id="3_left_upper_arm"]
+[ext_resource type="PackedScene" path="res://assets/models/characters/windman_parts/windman_left_lower_arm.glb" id="4_left_lower_arm"]
+[ext_resource type="PackedScene" path="res://assets/models/characters/windman_parts/windman_right_upper_arm.glb" id="5_right_upper_arm"]
+[ext_resource type="PackedScene" path="res://assets/models/characters/windman_parts/windman_right_lower_arm.glb" id="6_right_lower_arm"]
+[ext_resource type="PackedScene" path="res://assets/models/characters/windman_parts/windman_left_upper_leg.glb" id="7_left_upper_leg"]
+[ext_resource type="PackedScene" path="res://assets/models/characters/windman_parts/windman_left_lower_leg.glb" id="8_left_lower_leg"]
+[ext_resource type="PackedScene" path="res://assets/models/characters/windman_parts/windman_right_upper_leg.glb" id="9_right_upper_leg"]
+[ext_resource type="PackedScene" path="res://assets/models/characters/windman_parts/windman_right_lower_leg.glb" id="10_right_lower_leg"]
+[ext_resource type="PackedScene" path="res://assets/models/characters/windman_parts/windman_fan.glb" id="11_fan"]
 
 [node name="Windman" type="Node3D"]
-script = ExtResource("2_animator")
 
 [node name="Body" type="Node3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
 
-[node name="WindmanModel" parent="Body" instance=ExtResource("1_windman_model")]
-transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0)
+[node name="Head" parent="Body" instance=ExtResource("1_head")]
+transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 1.62)
+
+[node name="Torso" parent="Body" instance=ExtResource("2_torso")]
+transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 1.17)
 
 [node name="LeftArm" type="Node3D" parent="Body"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.18, 1.28, 0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.18, 0, 1.28)
+
+[node name="UpperArm" parent="Body/LeftArm" instance=ExtResource("3_left_upper_arm")]
+transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0)
+
+[node name="LowerArm" type="Node3D" parent="Body/LeftArm"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.27)
+
+[node name="Mesh" parent="Body/LeftArm/LowerArm" instance=ExtResource("4_left_lower_arm")]
+transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0)
 
 [node name="RightArm" type="Node3D" parent="Body"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.18, 1.28, 0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.18, 0, 1.28)
+
+[node name="UpperArm" parent="Body/RightArm" instance=ExtResource("5_right_upper_arm")]
+transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0)
+
+[node name="LowerArm" type="Node3D" parent="Body/RightArm"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.27)
+
+[node name="Mesh" parent="Body/RightArm/LowerArm" instance=ExtResource("6_right_lower_arm")]
+transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0)
+
+[node name="Fan" parent="Body/RightArm/LowerArm/Mesh" instance=ExtResource("11_fan")]
+transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0.04, -0.10)
 
 [node name="LeftLeg" type="Node3D" parent="Body"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.09, 0.77, 0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.09, 0, 0.77)
+
+[node name="UpperLeg" parent="Body/LeftLeg" instance=ExtResource("7_left_upper_leg")]
+transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0)
+
+[node name="LowerLeg" type="Node3D" parent="Body/LeftLeg"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.37)
+
+[node name="Mesh" parent="Body/LeftLeg/LowerLeg" instance=ExtResource("8_left_lower_leg")]
+transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0)
 
 [node name="RightLeg" type="Node3D" parent="Body"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.09, 0.77, 0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.09, 0, 0.77)
+
+[node name="UpperLeg" parent="Body/RightLeg" instance=ExtResource("9_right_upper_leg")]
+transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0)
+
+[node name="LowerLeg" type="Node3D" parent="Body/RightLeg"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.37)
+
+[node name="Mesh" parent="Body/RightLeg/LowerLeg" instance=ExtResource("10_right_lower_leg")]
+transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0)
