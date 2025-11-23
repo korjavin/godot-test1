@@ -578,12 +578,11 @@ func reset_position() -> void:
 	# Reset velocity to prevent carrying momentum
 	velocity = Vector3.ZERO
 
-	# Reset camera rotation to default
-	yaw = 0.0
-	pitch = 0.0
+	# Reset camera and character rotation to default
+	rotation.y = 0.0  # Reset character horizontal rotation
 	if camera_pivot:
-		camera_pivot.rotation.y = 0.0
-		camera_pivot.rotation.x = 0.0
+		camera_pivot.rotation.x = 0.0  # Reset camera vertical rotation
+		camera_pivot.rotation.y = 0.0  # Reset camera horizontal rotation
 
 	# Reset character state
 	is_ducking = false
