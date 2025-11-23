@@ -562,3 +562,31 @@ func animate_idle(delta: float) -> void:
 		var breathe_amount = 0.01
 		var breathe = sin(animation_time * breathe_speed) * breathe_amount
 		character_body.position.y = lerp(character_body.position.y, breathe, 0.1)
+
+# ============================================================================
+# SECTION 7: GAME STATE METHODS
+# ============================================================================
+
+func reset_position() -> void:
+	"""
+	Reset the player to the spawn position.
+	Called when the player dies (e.g., hit by a crocodile).
+	"""
+	# Reset position to spawn point
+	global_position = Vector3(0, 2, 0)
+
+	# Reset velocity to prevent carrying momentum
+	velocity = Vector3.ZERO
+
+	# Reset camera rotation to default
+	yaw = 0.0
+	pitch = 0.0
+	if camera_pivot:
+		camera_pivot.rotation.y = 0.0
+		camera_pivot.rotation.x = 0.0
+
+	# Reset character state
+	is_ducking = false
+	is_running = false
+
+	print("Player position reset - respawned at spawn point")
