@@ -91,7 +91,7 @@ var original_scale_y: float = 1.0
 const CHARACTERS: Array[Dictionary] = [
 	{
 		"name": "windman",
-		"scene_path": "res://scenes/characters/windman.tscn"
+		"scene_path": "res://scenes/characters/windman_updated.tscn"
 	},
 	{
 		"name": "primm",
