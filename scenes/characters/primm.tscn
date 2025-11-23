@@ -1,4 +1,4 @@
-[gd_scene load_steps=9 format=3 uid="uid://c8primm001"]
+[gd_scene load_steps=19 format=3 uid="uid://c8primm001"]
 
 [sub_resource type="StandardMaterial3D" id="mat_skin"]
 albedo_color = Color(0.9, 0.75, 0.6, 1)
@@ -29,126 +29,148 @@ albedo_color = Color(0.1, 0.1, 0.1, 1)
 albedo_color = Color(0.7, 0.7, 0.75, 1)
 metallic = 0.8
 
+[sub_resource type="StandardMaterial3D" id="mat_hair"]
+albedo_color = Color(0.2, 0.15, 0.1, 1)
+
+[sub_resource type="StandardMaterial3D" id="mat_glove"]
+albedo_color = Color(0.05, 0.05, 0.05, 1)
+
+[sub_resource type="SphereMesh" id="mesh_sphere"]
+
+[sub_resource type="BoxMesh" id="mesh_box"]
+
+[sub_resource type="CapsuleMesh" id="mesh_capsule"]
+
+[sub_resource type="SphereMesh" id="mesh_sphere2"]
+
+[sub_resource type="SphereMesh" id="mesh_sphere3"]
+
+[sub_resource type="SphereMesh" id="mesh_sphere4"]
+
+[sub_resource type="SphereMesh" id="mesh_sphere5"]
+
+[sub_resource type="SphereMesh" id="mesh_sphere6"]
+
 [node name="Primm" type="Node3D"]
 
 [node name="Body" type="Node3D" parent="."]
 
 [node name="Head" type="MeshInstance3D" parent="Body"]
 transform = Transform3D(0.95, 0, 0, 0, 1.05, 0, 0, 0, 0.95, 0, 1.6, 0)
-mesh = SphereMesh.new()
+mesh = SubResource("mesh_sphere")
 surface_material_override/0 = SubResource("mat_skin")
 
 [node name="Hair" type="MeshInstance3D" parent="Body/Head"]
 transform = Transform3D(1.0, 0, 0, 0, 0.5, 0, 0, 0, 1.0, 0, 0.15, 0)
-mesh = SphereMesh.new()
-surface_material_override/0 = StandardMaterial3D.new()
+mesh = SubResource("mesh_sphere2")
+surface_material_override/0 = SubResource("mat_hair")
 
 [node name="Goggles" type="MeshInstance3D" parent="Body/Head"]
 transform = Transform3D(1.05, 0, 0, 0, 0.15, 0, 0, 0, 0.3, 0, 0.05, 0.45)
-mesh = BoxMesh.new()
+mesh = SubResource("mesh_box")
 surface_material_override/0 = SubResource("mat_goggles")
 
 [node name="Torso" type="MeshInstance3D" parent="Body"]
 transform = Transform3D(0.35, 0, 0, 0, 0.6, 0, 0, 0, 0.25, 0, 1.0, 0)
-mesh = BoxMesh.new()
+mesh = SubResource("mesh_box")
 surface_material_override/0 = SubResource("mat_black_shirt")
 
 [node name="GlowLine1" type="MeshInstance3D" parent="Body/Torso"]
 transform = Transform3D(0.9, 0, 0, 0, 0.05, 0, 0, 0, 1.2, 0, 0.2, 1.1)
-mesh = BoxMesh.new()
+mesh = SubResource("mesh_box")
 surface_material_override/0 = SubResource("mat_blue_glow")
 
 [node name="GlowLine2" type="MeshInstance3D" parent="Body/Torso"]
 transform = Transform3D(0.9, 0, 0, 0, 0.05, 0, 0, 0, 1.2, 0, -0.2, 1.1)
-mesh = BoxMesh.new()
+mesh = SubResource("mesh_box")
 surface_material_override/0 = SubResource("mat_blue_glow")
 
 [node name="Coat" type="MeshInstance3D" parent="Body"]
 transform = Transform3D(0.45, 0, 0, 0, 0.65, 0, 0, 0, 0.28, 0, 0.95, 0)
-mesh = BoxMesh.new()
+mesh = SubResource("mesh_box")
 surface_material_override/0 = SubResource("mat_purple_coat")
 
 [node name="CoatTrim1" type="MeshInstance3D" parent="Body/Coat"]
 transform = Transform3D(0.05, 0, 0, 0, 1.0, 0, 0, 0, 1.05, 1.1, 0, 0)
-mesh = BoxMesh.new()
+mesh = SubResource("mesh_box")
 surface_material_override/0 = SubResource("mat_silver")
 
 [node name="CoatTrim2" type="MeshInstance3D" parent="Body/Coat"]
 transform = Transform3D(0.05, 0, 0, 0, 1.0, 0, 0, 0, 1.05, -1.1, 0, 0)
-mesh = BoxMesh.new()
+mesh = SubResource("mesh_box")
 surface_material_override/0 = SubResource("mat_silver")
 
 [node name="LeftArm" type="MeshInstance3D" parent="Body"]
 transform = Transform3D(0.11, 0, 0, 0, 0.45, 0, 0, 0, 0.11, -0.5, 1.0, 0)
-mesh = CapsuleMesh.new()
+mesh = SubResource("mesh_capsule")
 surface_material_override/0 = SubResource("mat_purple_coat")
 
 [node name="LeftHand" type="MeshInstance3D" parent="Body/LeftArm"]
 transform = Transform3D(0.9, 0, 0, 0, 0.4, 0, 0, 0, 0.9, 0, -0.7, 0)
-mesh = SphereMesh.new()
+mesh = SubResource("mesh_sphere3")
 surface_material_override/0 = SubResource("mat_skin")
 
 [node name="LeftGlove" type="MeshInstance3D" parent="Body/LeftArm/LeftHand"]
 transform = Transform3D(1.05, 0, 0, 0, 1.05, 0, 0, 0, 1.05, 0, 0, 0)
-mesh = SphereMesh.new()
-surface_material_override/0 = StandardMaterial3D.new()
+mesh = SubResource("mesh_sphere4")
+surface_material_override/0 = SubResource("mat_glove")
 
 [node name="RightArm" type="MeshInstance3D" parent="Body"]
 transform = Transform3D(0.11, 0, 0, 0, 0.45, 0, 0, 0, 0.11, 0.5, 1.0, 0)
-mesh = CapsuleMesh.new()
+mesh = SubResource("mesh_capsule")
 surface_material_override/0 = SubResource("mat_purple_coat")
 
 [node name="RightHand" type="MeshInstance3D" parent="Body/RightArm"]
 transform = Transform3D(0.9, 0, 0, 0, 0.4, 0, 0, 0, 0.9, 0, -0.7, 0)
-mesh = SphereMesh.new()
+mesh = SubResource("mesh_sphere5")
 surface_material_override/0 = SubResource("mat_skin")
 
 [node name="RightGlove" type="MeshInstance3D" parent="Body/RightArm/RightHand"]
 transform = Transform3D(1.05, 0, 0, 0, 1.05, 0, 0, 0, 1.05, 0, 0, 0)
-mesh = SphereMesh.new()
-surface_material_override/0 = StandardMaterial3D.new()
+mesh = SubResource("mesh_sphere6")
+surface_material_override/0 = SubResource("mat_glove")
 
 [node name="LeftLeg" type="MeshInstance3D" parent="Body"]
 transform = Transform3D(0.14, 0, 0, 0, 0.5, 0, 0, 0, 0.14, -0.15, 0.3, 0)
-mesh = CapsuleMesh.new()
+mesh = SubResource("mesh_capsule")
 surface_material_override/0 = SubResource("mat_blue_pants")
 
 [node name="LeftBoot" type="MeshInstance3D" parent="Body/LeftLeg"]
 transform = Transform3D(1.2, 0, 0, 0, 0.3, 0, 0, 0, 1.5, 0, -0.7, 0.1)
-mesh = BoxMesh.new()
+mesh = SubResource("mesh_box")
 surface_material_override/0 = SubResource("mat_black_boots")
 
 [node name="BootAccent1" type="MeshInstance3D" parent="Body/LeftLeg/LeftBoot"]
 transform = Transform3D(0.1, 0, 0, 0, 1.1, 0, 0, 0, 1.0, 1.1, 0, 0)
-mesh = BoxMesh.new()
+mesh = SubResource("mesh_box")
 surface_material_override/0 = SubResource("mat_silver")
 
 [node name="RightLeg" type="MeshInstance3D" parent="Body"]
 transform = Transform3D(0.14, 0, 0, 0, 0.5, 0, 0, 0, 0.14, 0.15, 0.3, 0)
-mesh = CapsuleMesh.new()
+mesh = SubResource("mesh_capsule")
 surface_material_override/0 = SubResource("mat_blue_pants")
 
 [node name="RightBoot" type="MeshInstance3D" parent="Body/RightLeg"]
 transform = Transform3D(1.2, 0, 0, 0, 0.3, 0, 0, 0, 1.5, 0, -0.7, 0.1)
-mesh = BoxMesh.new()
+mesh = SubResource("mesh_box")
 surface_material_override/0 = SubResource("mat_black_boots")
 
 [node name="BootAccent2" type="MeshInstance3D" parent="Body/RightLeg/RightBoot"]
 transform = Transform3D(0.1, 0, 0, 0, 1.1, 0, 0, 0, 1.0, 1.1, 0, 0)
-mesh = BoxMesh.new()
+mesh = SubResource("mesh_box")
 surface_material_override/0 = SubResource("mat_silver")
 
 [node name="FloatingOrb1" type="MeshInstance3D" parent="Body"]
 transform = Transform3D(0.1, 0, 0, 0, 0.1, 0, 0, 0, 0.1, 0.3, 1.2, 0.3)
-mesh = SphereMesh.new()
+mesh = SubResource("mesh_sphere")
 surface_material_override/0 = SubResource("mat_blue_glow")
 
 [node name="FloatingOrb2" type="MeshInstance3D" parent="Body"]
 transform = Transform3D(0.1, 0, 0, 0, 0.1, 0, 0, 0, 0.1, -0.3, 1.2, 0.3)
-mesh = SphereMesh.new()
+mesh = SubResource("mesh_sphere")
 surface_material_override/0 = SubResource("mat_blue_glow")
 
 [node name="FloatingOrb3" type="MeshInstance3D" parent="Body"]
 transform = Transform3D(0.08, 0, 0, 0, 0.08, 0, 0, 0, 0.08, 0, 0.9, 0.4)
-mesh = SphereMesh.new()
+mesh = SubResource("mesh_sphere")
 surface_material_override/0 = SubResource("mat_blue_glow")
