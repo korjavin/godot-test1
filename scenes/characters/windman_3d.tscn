@@ -1,0 +1,180 @@
+[gd_scene load_steps=3 format=3 uid="uid://windman_3d_scene_001"]
+
+[ext_resource type="PackedScene" uid="uid://windman_model_001" path="res://assets/models/characters/windman.glb" id="1"]
+
+[sub_resource type="AnimationLibrary" id="AnimationLibrary_windman"]
+
+[node name="Windman3D" type="Node3D"]
+
+[node name="CharacterBody3D" type="CharacterBody3D" parent="."]
+
+[node name="Skeleton3D" type="Skeleton3D" parent="CharacterBody3D"]
+bones/0/name = "Root"
+bones/0/parent = -1
+bones/0/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
+bones/0/enabled = true
+bones/0/position = Vector3(0, 0, 0)
+bones/0/rotation = Quaternion(0, 0, 0, 1)
+bones/0/scale = Vector3(1, 1, 1)
+
+bones/1/name = "Hips"
+bones/1/parent = 0
+bones/1/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0.88)
+bones/1/enabled = true
+bones/1/position = Vector3(0, 0, 0.88)
+bones/1/rotation = Quaternion(0, 0, 0, 1)
+bones/1/scale = Vector3(1, 1, 1)
+
+bones/2/name = "Spine"
+bones/2/parent = 1
+bones/2/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0.29)
+bones/2/enabled = true
+bones/2/position = Vector3(0, 0, 0.29)
+bones/2/rotation = Quaternion(0, 0, 0, 1)
+bones/2/scale = Vector3(1, 1, 1)
+
+bones/3/name = "Chest"
+bones/3/parent = 2
+bones/3/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0.18)
+bones/3/enabled = true
+bones/3/position = Vector3(0, 0, 0.18)
+bones/3/rotation = Quaternion(0, 0, 0, 1)
+bones/3/scale = Vector3(1, 1, 1)
+
+bones/4/name = "Neck"
+bones/4/parent = 3
+bones/4/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0.11)
+bones/4/enabled = true
+bones/4/position = Vector3(0, 0, 0.11)
+bones/4/rotation = Quaternion(0, 0, 0, 1)
+bones/4/scale = Vector3(1, 1, 1)
+
+bones/5/name = "Head"
+bones/5/parent = 4
+bones/5/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0.16)
+bones/5/enabled = true
+bones/5/position = Vector3(0, 0, 0.16)
+bones/5/rotation = Quaternion(0, 0, 0, 1)
+bones/5/scale = Vector3(1, 1, 1)
+
+bones/6/name = "LeftShoulder"
+bones/6/parent = 3
+bones/6/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.14, 0, 0.05)
+bones/6/enabled = true
+bones/6/position = Vector3(-0.14, 0, 0.05)
+bones/6/rotation = Quaternion(0, 0, 0, 1)
+bones/6/scale = Vector3(1, 1, 1)
+
+bones/7/name = "LeftUpperArm"
+bones/7/parent = 6
+bones/7/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.04, 0, -0.12)
+bones/7/enabled = true
+bones/7/position = Vector3(-0.04, 0, -0.12)
+bones/7/rotation = Quaternion(0, 0, 0, 1)
+bones/7/scale = Vector3(1, 1, 1)
+
+bones/8/name = "LeftLowerArm"
+bones/8/parent = 7
+bones/8/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.27)
+bones/8/enabled = true
+bones/8/position = Vector3(0, 0, -0.27)
+bones/8/rotation = Quaternion(0, 0, 0, 1)
+bones/8/scale = Vector3(1, 1, 1)
+
+bones/9/name = "LeftHand"
+bones/9/parent = 8
+bones/9/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.15)
+bones/9/enabled = true
+bones/9/position = Vector3(0, 0, -0.15)
+bones/9/rotation = Quaternion(0, 0, 0, 1)
+bones/9/scale = Vector3(1, 1, 1)
+
+bones/10/name = "RightShoulder"
+bones/10/parent = 3
+bones/10/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.14, 0, 0.05)
+bones/10/enabled = true
+bones/10/position = Vector3(0.14, 0, 0.05)
+bones/10/rotation = Quaternion(0, 0, 0, 1)
+bones/10/scale = Vector3(1, 1, 1)
+
+bones/11/name = "RightUpperArm"
+bones/11/parent = 10
+bones/11/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.04, 0, -0.12)
+bones/11/enabled = true
+bones/11/position = Vector3(0.04, 0, -0.12)
+bones/11/rotation = Quaternion(0, 0, 0, 1)
+bones/11/scale = Vector3(1, 1, 1)
+
+bones/12/name = "RightLowerArm"
+bones/12/parent = 11
+bones/12/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.27)
+bones/12/enabled = true
+bones/12/position = Vector3(0, 0, -0.27)
+bones/12/rotation = Quaternion(0, 0, 0, 1)
+bones/12/scale = Vector3(1, 1, 1)
+
+bones/13/name = "RightHand"
+bones/13/parent = 12
+bones/13/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.15)
+bones/13/enabled = true
+bones/13/position = Vector3(0, 0, -0.15)
+bones/13/rotation = Quaternion(0, 0, 0, 1)
+bones/13/scale = Vector3(1, 1, 1)
+
+bones/14/name = "LeftUpperLeg"
+bones/14/parent = 1
+bones/14/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.09, 0, -0.11)
+bones/14/enabled = true
+bones/14/position = Vector3(-0.09, 0, -0.11)
+bones/14/rotation = Quaternion(0, 0, 0, 1)
+bones/14/scale = Vector3(1, 1, 1)
+
+bones/15/name = "LeftLowerLeg"
+bones/15/parent = 14
+bones/15/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.37)
+bones/15/enabled = true
+bones/15/position = Vector3(0, 0, -0.37)
+bones/15/rotation = Quaternion(0, 0, 0, 1)
+bones/15/scale = Vector3(1, 1, 1)
+
+bones/16/name = "LeftFoot"
+bones/16/parent = 15
+bones/16/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.3)
+bones/16/enabled = true
+bones/16/position = Vector3(0, 0, -0.3)
+bones/16/rotation = Quaternion(0, 0, 0, 1)
+bones/16/scale = Vector3(1, 1, 1)
+
+bones/17/name = "RightUpperLeg"
+bones/17/parent = 1
+bones/17/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.09, 0, -0.11)
+bones/17/enabled = true
+bones/17/position = Vector3(0.09, 0, -0.11)
+bones/17/rotation = Quaternion(0, 0, 0, 1)
+bones/17/scale = Vector3(1, 1, 1)
+
+bones/18/name = "RightLowerLeg"
+bones/18/parent = 17
+bones/18/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.37)
+bones/18/enabled = true
+bones/18/position = Vector3(0, 0, -0.37)
+bones/18/rotation = Quaternion(0, 0, 0, 1)
+bones/18/scale = Vector3(1, 1, 1)
+
+bones/19/name = "RightFoot"
+bones/19/parent = 18
+bones/19/rest = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.3)
+bones/19/enabled = true
+bones/19/position = Vector3(0, 0, -0.3)
+bones/19/rotation = Quaternion(0, 0, 0, 1)
+bones/19/scale = Vector3(1, 1, 1)
+
+[node name="WindmanModel" parent="CharacterBody3D/Skeleton3D" instance=ExtResource("1")]
+
+[node name="AnimationPlayer" type="AnimationPlayer" parent="CharacterBody3D"]
+libraries = {
+"": SubResource("AnimationLibrary_windman")
+}
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="CharacterBody3D"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0.85)
