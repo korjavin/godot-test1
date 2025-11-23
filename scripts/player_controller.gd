@@ -404,11 +404,20 @@ func setup_animation_references() -> void:
 		print("Warning: Character doesn't have a 'Body' node")
 		return
 
+	print("Body node found!")
+
 	# Find limb nodes
 	left_arm = character_body.get_node_or_null("LeftArm")
 	right_arm = character_body.get_node_or_null("RightArm")
 	left_leg = character_body.get_node_or_null("LeftLeg")
 	right_leg = character_body.get_node_or_null("RightLeg")
+
+	# Debug output
+	print("  Limb nodes found:")
+	print("    LeftArm: ", left_arm != null)
+	print("    RightArm: ", right_arm != null)
+	print("    LeftLeg: ", left_leg != null)
+	print("    RightLeg: ", right_leg != null)
 
 	# Store original rotations
 	original_rotations.clear()

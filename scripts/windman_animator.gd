@@ -10,15 +10,24 @@ var skeleton: Skeleton3D = null
 var bone_indices: Dictionary = {}
 
 ## Limb proxy nodes (these are animated by the player controller)
-@onready var left_arm_proxy: Node3D = $LeftArm if has_node("LeftArm") else null
-@onready var right_arm_proxy: Node3D = $RightArm if has_node("RightArm") else null
-@onready var left_leg_proxy: Node3D = $LeftLeg if has_node("LeftLeg") else null
-@onready var right_leg_proxy: Node3D = $RightLeg if has_node("RightLeg") else null
+@onready var left_arm_proxy: Node3D = $Body/LeftArm if has_node("Body/LeftArm") else null
+@onready var right_arm_proxy: Node3D = $Body/RightArm if has_node("Body/RightArm") else null
+@onready var left_leg_proxy: Node3D = $Body/LeftLeg if has_node("Body/LeftLeg") else null
+@onready var right_leg_proxy: Node3D = $Body/RightLeg if has_node("Body/RightLeg") else null
 
 func _ready() -> void:
 	"""
 	Initialize the animator by finding the skeleton and bone indices.
 	"""
+	print("Windman animator: Initializing...")
+
+	# Debug: Check proxy nodes
+	print("  Proxy nodes found:")
+	print("    LeftArm: ", left_arm_proxy != null)
+	print("    RightArm: ", right_arm_proxy != null)
+	print("    LeftLeg: ", left_leg_proxy != null)
+	print("    RightLeg: ", right_leg_proxy != null)
+
 	# Try to find the skeleton in the model
 	var model = get_node_or_null("Body/WindmanModel")
 	if model:
@@ -31,7 +40,9 @@ func _ready() -> void:
 		bone_indices["LeftUpperLeg"] = skeleton.find_bone("LeftUpperLeg")
 		bone_indices["RightUpperLeg"] = skeleton.find_bone("RightUpperLeg")
 
-		print("Windman animator initialized with skeleton")
+		print("Windman animator: Skeleton found with bone indices:")
+		for bone_name in bone_indices:
+			print("    ", bone_name, ": ", bone_indices[bone_name])
 	else:
 		print("Windman animator: No skeleton found, animations will be limited")
 

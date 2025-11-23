@@ -14,16 +14,16 @@ script = ExtResource("2_animator")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
 
 [node name="WindmanModel" parent="Body" instance=ExtResource("1_windman_model")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
+transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0)
 
-[node name="LeftArm" type="Node3D" parent="."]
+[node name="LeftArm" type="Node3D" parent="Body"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.18, 1.28, 0)
 
-[node name="RightArm" type="Node3D" parent="."]
+[node name="RightArm" type="Node3D" parent="Body"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.18, 1.28, 0)
 
-[node name="LeftLeg" type="Node3D" parent="."]
+[node name="LeftLeg" type="Node3D" parent="Body"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.09, 0.77, 0)
 
-[node name="RightLeg" type="Node3D" parent="."]
+[node name="RightLeg" type="Node3D" parent="Body"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.09, 0.77, 0)
