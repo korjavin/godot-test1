@@ -20,7 +20,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  GODOT_VERSION: 4.3
+  GODOT_VERSION: 4.5
   EXPORT_NAME: zelda-like-game
 
 jobs:
@@ -31,7 +31,7 @@ jobs:
     name: 🔨 Build Web Export
     runs-on: ubuntu-latest
     container:
-      image: barichello/godot-ci:4.3
+      image: barichello/godot-ci:4.5
     steps:
       - name: 📥 Checkout code
         uses: actions/checkout@v4
