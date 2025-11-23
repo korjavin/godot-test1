@@ -84,6 +84,36 @@ var is_running: bool = false
 var original_scale_y: float = 1.0
 
 # ============================================================================
+# SECTION 5: CHARACTER SYSTEM
+# ============================================================================
+
+## Available characters in the game
+const CHARACTERS: Array[Dictionary] = [
+	{
+		"name": "windman",
+		"texture_path": "res://assets/characters/windman.png"
+	},
+	{
+		"name": "primm",
+		"texture_path": "res://assets/characters/primm.png"
+	},
+	{
+		"name": "teibi",
+		"texture_path": "res://assets/characters/teibi.png"
+	},
+	{
+		"name": "phoboman",
+		"texture_path": "res://assets/characters/phoboman.png"
+	}
+]
+
+## Current character index (starts with windman at index 0)
+var current_character_index: int = 0
+
+## Reference to the character sprite
+@onready var character_sprite: Sprite3D = $CharacterSprite
+
+# ============================================================================
 # INITIALIZATION
 # ============================================================================
 
@@ -99,12 +129,16 @@ func _ready() -> void:
 	if mesh_instance:
 		original_scale_y = mesh_instance.scale.y
 
+	# Initialize the starting character (windman)
+	load_character(current_character_index)
+
 	print("Player Controller initialized!")
 	print("Controls:")
 	print("  WASD - Move")
 	print("  Space - Jump")
 	print("  Shift - Run")
 	print("  Ctrl - Duck")
+	print("  E - Switch Character")
 	print("  Mouse - Look around")
 	print("  ESC - Release mouse")
 
@@ -138,6 +172,10 @@ func _input(event: InputEvent) -> void:
 			Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 		else:
 			Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+
+	# Handle character switching with E key
+	if event.is_action_pressed("switch_character"):
+		switch_to_next_character()
 
 # ============================================================================
 # PHYSICS PROCESSING (CALLED EVERY FRAME)
@@ -265,3 +303,44 @@ func _to_string() -> String:
 		is_on_floor(),
 		velocity
 	]
+
+# ============================================================================
+# CHARACTER SWITCHING FUNCTIONS
+# ============================================================================
+
+func switch_to_next_character() -> void:
+	"""
+	Switches to the next character in the cycle:
+	windman -> primm -> teibi -> phoboman -> windman (loops)
+	"""
+	# Increment the character index
+	current_character_index = (current_character_index + 1) % CHARACTERS.size()
+
+	# Load the new character
+	load_character(current_character_index)
+
+	# Print confirmation
+	var character_name = CHARACTERS[current_character_index]["name"]
+	print("Switched to character: %s" % character_name)
+
+func load_character(index: int) -> void:
+	"""
+	Loads a character's sprite based on the index.
+
+	@param index: Index in the CHARACTERS array
+	"""
+	if index < 0 or index >= CHARACTERS.size():
+		push_error("Invalid character index: %d" % index)
+		return
+
+	var character_data = CHARACTERS[index]
+	var texture_path = character_data["texture_path"]
+
+	# Load the texture
+	var texture = load(texture_path) as Texture2D
+
+	if texture and character_sprite:
+		character_sprite.texture = texture
+		print("Loaded character: %s" % character_data["name"])
+	else:
+		push_error("Failed to load character sprite or sprite node not found")
