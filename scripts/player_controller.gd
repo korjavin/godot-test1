@@ -91,27 +91,30 @@ var original_scale_y: float = 1.0
 const CHARACTERS: Array[Dictionary] = [
 	{
 		"name": "windman",
-		"texture_path": "res://assets/characters/windman.png"
+		"scene_path": "res://scenes/characters/windman.tscn"
 	},
 	{
 		"name": "primm",
-		"texture_path": "res://assets/characters/primm.png"
+		"scene_path": "res://scenes/characters/primm.tscn"
 	},
 	{
 		"name": "teibi",
-		"texture_path": "res://assets/characters/teibi.png"
+		"scene_path": "res://scenes/characters/teibi.tscn"
 	},
 	{
 		"name": "phoboman",
-		"texture_path": "res://assets/characters/phoboman.png"
+		"scene_path": "res://scenes/characters/phoboman.tscn"
 	}
 ]
 
 ## Current character index (starts with windman at index 0)
 var current_character_index: int = 0
 
-## Reference to the character sprite
-@onready var character_sprite: Sprite3D = $CharacterSprite
+## Reference to the character model container
+@onready var character_container: Node3D = $CharacterModel
+
+## Currently loaded character instance
+var current_character_node: Node3D = null
 
 # ============================================================================
 # INITIALIZATION
@@ -325,7 +328,7 @@ func switch_to_next_character() -> void:
 
 func load_character(index: int) -> void:
 	"""
-	Loads a character's sprite based on the index.
+	Loads a character's 3D model based on the index.
 
 	@param index: Index in the CHARACTERS array
 	"""
@@ -334,13 +337,20 @@ func load_character(index: int) -> void:
 		return
 
 	var character_data = CHARACTERS[index]
-	var texture_path = character_data["texture_path"]
+	var scene_path = character_data["scene_path"]
 
-	# Load the texture
-	var texture = load(texture_path) as Texture2D
+	# Remove the old character if it exists
+	if current_character_node != null:
+		current_character_node.queue_free()
+		current_character_node = null
 
-	if texture and character_sprite:
-		character_sprite.texture = texture
+	# Load the character scene
+	var character_scene = load(scene_path) as PackedScene
+
+	if character_scene and character_container:
+		# Instance the new character
+		current_character_node = character_scene.instantiate()
+		character_container.add_child(current_character_node)
 		print("Loaded character: %s" % character_data["name"])
 	else:
-		push_error("Failed to load character sprite or sprite node not found")
+		push_error("Failed to load character scene or container node not found")

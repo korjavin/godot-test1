@@ -15,11 +15,7 @@ mesh = SubResource("CapsuleMesh_1")
 skeleton = NodePath("../..")
 visible = false
 
-[node name="CharacterSprite" type="Sprite3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0)
-billboard = 1
-texture_filter = 0
-pixel_size = 0.01
+[node name="CharacterModel" type="Node3D" parent="."]
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0)
