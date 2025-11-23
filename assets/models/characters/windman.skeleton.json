@@ -1,0 +1,165 @@
+{
+  "bones": {
+    "Root": {
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "parent": null
+    },
+    "Hips": {
+      "position": [
+        0,
+        0,
+        0.88
+      ],
+      "parent": "Root"
+    },
+    "Spine": {
+      "position": [
+        0,
+        0,
+        1.17
+      ],
+      "parent": "Hips"
+    },
+    "Chest": {
+      "position": [
+        0,
+        0,
+        1.35
+      ],
+      "parent": "Spine"
+    },
+    "Neck": {
+      "position": [
+        0,
+        0,
+        1.46
+      ],
+      "parent": "Chest"
+    },
+    "Head": {
+      "position": [
+        0,
+        0,
+        1.62
+      ],
+      "parent": "Neck"
+    },
+    "LeftShoulder": {
+      "position": [
+        -0.14,
+        0,
+        1.4
+      ],
+      "parent": "Chest"
+    },
+    "LeftUpperArm": {
+      "position": [
+        -0.18,
+        0,
+        1.28
+      ],
+      "parent": "LeftShoulder"
+    },
+    "LeftLowerArm": {
+      "position": [
+        -0.18,
+        0,
+        1.01
+      ],
+      "parent": "LeftUpperArm"
+    },
+    "LeftHand": {
+      "position": [
+        -0.18,
+        0,
+        0.86
+      ],
+      "parent": "LeftLowerArm"
+    },
+    "RightShoulder": {
+      "position": [
+        0.14,
+        0,
+        1.4
+      ],
+      "parent": "Chest"
+    },
+    "RightUpperArm": {
+      "position": [
+        0.18,
+        0,
+        1.28
+      ],
+      "parent": "RightShoulder"
+    },
+    "RightLowerArm": {
+      "position": [
+        0.18,
+        0,
+        1.01
+      ],
+      "parent": "RightUpperArm"
+    },
+    "RightHand": {
+      "position": [
+        0.18,
+        0,
+        0.86
+      ],
+      "parent": "RightLowerArm"
+    },
+    "LeftUpperLeg": {
+      "position": [
+        -0.09,
+        0,
+        0.77
+      ],
+      "parent": "Hips"
+    },
+    "LeftLowerLeg": {
+      "position": [
+        -0.09,
+        0,
+        0.4
+      ],
+      "parent": "LeftUpperLeg"
+    },
+    "LeftFoot": {
+      "position": [
+        -0.09,
+        0,
+        0.1
+      ],
+      "parent": "LeftLowerLeg"
+    },
+    "RightUpperLeg": {
+      "position": [
+        0.09,
+        0,
+        0.77
+      ],
+      "parent": "Hips"
+    },
+    "RightLowerLeg": {
+      "position": [
+        0.09,
+        0,
+        0.4
+      ],
+      "parent": "RightUpperLeg"
+    },
+    "RightFoot": {
+      "position": [
+        0.09,
+        0,
+        0.1
+      ],
+      "parent": "RightLowerLeg"
+    }
+  },
+  "note": "This skeleton structure should be recreated in Godot for animation"
+}
