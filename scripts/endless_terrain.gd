@@ -29,6 +29,21 @@ extends Node3D
 ## You can customize this in the Godot editor!
 @export var terrain_material: StandardMaterial3D
 
+## Enable/disable object spawning on terrain
+@export var spawn_objects: bool = true
+
+## Number of objects to spawn per chunk (approximately)
+## Higher values = more cluttered terrain
+@export var objects_per_chunk: int = 12
+
+## Minimum distance between objects (in meters)
+## Higher values = more space for player movement
+@export var min_object_spacing: float = 5.0
+
+## Object size range (random between min and max)
+@export var object_size_min: float = 1.0
+@export var object_size_max: float = 2.5
+
 # ============================================================================
 # SECTION 2: INTERNAL STATE
 # ============================================================================
@@ -201,6 +216,117 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 	# Add to scene and register in our dictionary
 	add_child(mesh_instance)
 	active_chunks[chunk_pos] = mesh_instance
+
+	# Spawn objects in this chunk if enabled
+	if spawn_objects:
+		spawn_objects_in_chunk(chunk_pos, mesh_instance)
+
+func spawn_objects_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D) -> void:
+	"""
+	Spawns random objects (cubes) within a terrain chunk.
+
+	@param chunk_pos: Chunk coordinates for seeded random generation
+	@param parent_chunk: The chunk mesh to attach objects to
+
+	EDUCATIONAL NOTE:
+	- We use chunk coordinates as a seed for deterministic randomness
+	- This means the same chunk always generates the same objects
+	- Objects are parented to the chunk so they're removed when chunk is removed
+	"""
+
+	# Use chunk coordinates to create a unique but consistent seed
+	# This ensures the same chunk always generates the same objects
+	var seed_value := hash(Vector2i(chunk_pos.x * 73856093, chunk_pos.y * 19349663))
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_value
+
+	# Calculate the world position of this chunk's corner
+	var chunk_world_pos := chunk_to_world(chunk_pos)
+	var half_chunk := chunk_size / 2.0
+
+	# Store positions of spawned objects to check spacing
+	var spawned_positions: Array[Vector3] = []
+
+	# Try to spawn objects with proper spacing
+	var attempts := 0
+	var max_attempts := objects_per_chunk * 3  # Allow multiple attempts per object
+
+	while spawned_positions.size() < objects_per_chunk and attempts < max_attempts:
+		attempts += 1
+
+		# Generate random position within chunk bounds
+		# Leave some margin from edges for better appearance
+		var margin := 2.0
+		var random_x := rng.randf_range(-half_chunk + margin, half_chunk - margin)
+		var random_z := rng.randf_range(-half_chunk + margin, half_chunk - margin)
+		var object_pos := Vector3(random_x, 0, random_z)
+
+		# Check if this position is far enough from existing objects
+		var valid_position := true
+		for existing_pos in spawned_positions:
+			if object_pos.distance_to(existing_pos) < min_object_spacing:
+				valid_position = false
+				break
+
+		if not valid_position:
+			continue
+
+		# Create the object
+		var object_instance := MeshInstance3D.new()
+		object_instance.name = "Object_%d" % spawned_positions.size()
+
+		# Create a cube mesh with random size
+		var cube_mesh := BoxMesh.new()
+		var size := rng.randf_range(object_size_min, object_size_max)
+		cube_mesh.size = Vector3(size, size, size)
+
+		# Create a material with random color variations
+		var object_material := StandardMaterial3D.new()
+		# Generate earthy/natural colors (browns, grays, dark greens)
+		var color_choice := rng.randi_range(0, 2)
+		match color_choice:
+			0:  # Brown rocks
+				object_material.albedo_color = Color(
+					rng.randf_range(0.3, 0.5),
+					rng.randf_range(0.2, 0.4),
+					rng.randf_range(0.1, 0.3)
+				)
+			1:  # Gray stones
+				var gray := rng.randf_range(0.3, 0.6)
+				object_material.albedo_color = Color(gray, gray, gray)
+			2:  # Dark green (mossy)
+				object_material.albedo_color = Color(
+					rng.randf_range(0.1, 0.3),
+					rng.randf_range(0.3, 0.5),
+					rng.randf_range(0.1, 0.3)
+				)
+
+		object_material.roughness = rng.randf_range(0.7, 1.0)
+		cube_mesh.material = object_material
+
+		object_instance.mesh = cube_mesh
+
+		# Position relative to chunk (parent will handle world positioning)
+		# Add half the size to Y so cube sits on ground instead of halfway through
+		object_pos.y = size / 2.0
+		object_instance.position = object_pos
+
+		# Add slight random rotation for variety
+		object_instance.rotation.y = rng.randf_range(0, TAU)
+
+		# Add collision so player can't walk through objects
+		var static_body := StaticBody3D.new()
+		var collision_shape := CollisionShape3D.new()
+		var box_shape := BoxShape3D.new()
+		box_shape.size = Vector3(size, size, size)
+		collision_shape.shape = box_shape
+
+		static_body.add_child(collision_shape)
+		object_instance.add_child(static_body)
+
+		# Add to chunk (so it gets removed when chunk is removed)
+		parent_chunk.add_child(object_instance)
+		spawned_positions.append(object_pos)
 
 func remove_chunk(chunk_pos: Vector2i) -> void:
 	"""
