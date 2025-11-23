@@ -19,7 +19,7 @@ extends Node3D
 
 ## How many chunks to render around the player in each direction
 ## Higher values = you can see further, but more GPU/CPU usage
-@export var render_distance: int = 3
+@export var render_distance: int = 5
 
 ## Terrain height variation (for future procedural generation)
 ## Currently we use a flat plane, but this allows for hills/valleys

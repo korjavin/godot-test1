@@ -43,7 +43,9 @@ const JUMP_VELOCITY: float = 8.0
 ## - Mars: 3.7
 ## - Earth: 9.8
 ## - Jupiter: 24.8
-var gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity")
+var gravity: float = 3.6
+
+##  ProjectSettings.get_setting("physics/3d/default_gravity")
 
 # ============================================================================
 # SECTION 3: CAMERA AND ROTATION SETTINGS
