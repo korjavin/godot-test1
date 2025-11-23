@@ -1,0 +1,108 @@
+[gd_scene load_steps=15 format=3 uid="uid://c8windman001"]
+
+[sub_resource type="StandardMaterial3D" id="mat_skin"]
+albedo_color = Color(0.9, 0.75, 0.6, 1)
+
+[sub_resource type="StandardMaterial3D" id="mat_blue_shirt"]
+albedo_color = Color(0.2, 0.4, 0.8, 1)
+
+[sub_resource type="StandardMaterial3D" id="mat_bandage_blue"]
+albedo_color = Color(0.3, 0.5, 0.9, 1)
+
+[sub_resource type="StandardMaterial3D" id="mat_bandage_red"]
+albedo_color = Color(0.8, 0.2, 0.2, 1)
+
+[sub_resource type="StandardMaterial3D" id="mat_brown_shorts"]
+albedo_color = Color(0.4, 0.3, 0.2, 1)
+
+[sub_resource type="StandardMaterial3D" id="mat_black_boots"]
+albedo_color = Color(0.1, 0.1, 0.1, 1)
+
+[sub_resource type="StandardMaterial3D" id="mat_brown_handle"]
+albedo_color = Color(0.3, 0.2, 0.1, 1)
+
+[sub_resource type="SphereMesh" id="mesh_sphere"]
+
+[sub_resource type="BoxMesh" id="mesh_box"]
+
+[sub_resource type="CapsuleMesh" id="mesh_capsule"]
+
+[sub_resource type="CylinderMesh" id="mesh_cylinder"]
+
+[sub_resource type="SphereMesh" id="mesh_sphere2"]
+
+[sub_resource type="SphereMesh" id="mesh_sphere3"]
+
+[sub_resource type="CapsuleMesh" id="mesh_capsule2"]
+
+[node name="Windman" type="Node3D"]
+
+[node name="Body" type="Node3D" parent="."]
+
+[node name="Head" type="MeshInstance3D" parent="Body"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.6, 0)
+mesh = SubResource("mesh_sphere")
+surface_material_override/0 = SubResource("mat_skin")
+
+[node name="Bandage_Upper" type="MeshInstance3D" parent="Body/Head"]
+transform = Transform3D(1.1, 0, 0, 0, 0.15, 0, 0, 0, 1.1, 0, 0, 0)
+mesh = SubResource("mesh_box")
+surface_material_override/0 = SubResource("mat_bandage_blue")
+
+[node name="Bandage_Lower" type="MeshInstance3D" parent="Body/Head"]
+transform = Transform3D(1.1, 0, 0, 0, 0.1, 0, 0, 0, 1.1, 0, -0.1, 0)
+mesh = SubResource("mesh_box")
+surface_material_override/0 = SubResource("mat_bandage_red")
+
+[node name="Torso" type="MeshInstance3D" parent="Body"]
+transform = Transform3D(0.4, 0, 0, 0, 0.6, 0, 0, 0, 0.3, 0, 1.0, 0)
+mesh = SubResource("mesh_box")
+surface_material_override/0 = SubResource("mat_blue_shirt")
+
+[node name="LeftArm" type="MeshInstance3D" parent="Body"]
+transform = Transform3D(0.12, 0, 0, 0, 0.45, 0, 0, 0, 0.12, -0.5, 1.0, 0)
+mesh = SubResource("mesh_capsule")
+surface_material_override/0 = SubResource("mat_blue_shirt")
+
+[node name="LeftHand" type="MeshInstance3D" parent="Body/LeftArm"]
+transform = Transform3D(0.9, 0, 0, 0, 0.4, 0, 0, 0, 0.9, 0, -0.7, 0)
+mesh = SubResource("mesh_sphere2")
+surface_material_override/0 = SubResource("mat_skin")
+
+[node name="RightArm" type="MeshInstance3D" parent="Body"]
+transform = Transform3D(0.12, 0, 0, 0, 0.45, 0, 0, 0, 0.12, 0.5, 1.0, 0)
+mesh = SubResource("mesh_capsule2")
+surface_material_override/0 = SubResource("mat_blue_shirt")
+
+[node name="RightHand" type="MeshInstance3D" parent="Body/RightArm"]
+transform = Transform3D(0.9, 0, 0, 0, 0.4, 0, 0, 0, 0.9, 0, -0.7, 0)
+mesh = SubResource("mesh_sphere3")
+surface_material_override/0 = SubResource("mat_skin")
+
+[node name="Fan" type="Node3D" parent="Body/RightArm/RightHand"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.3, -0.3, 0)
+
+[node name="FanHandle" type="MeshInstance3D" parent="Body/RightArm/RightHand/Fan"]
+transform = Transform3D(0.05, 0, 0, 0, 0.25, 0, 0, 0, 0.05, 0, 0, 0)
+mesh = SubResource("mesh_cylinder")
+surface_material_override/0 = SubResource("mat_brown_handle")
+
+[node name="LeftLeg" type="MeshInstance3D" parent="Body"]
+transform = Transform3D(0.15, 0, 0, 0, 0.5, 0, 0, 0, 0.15, -0.15, 0.3, 0)
+mesh = SubResource("mesh_capsule")
+surface_material_override/0 = SubResource("mat_brown_shorts")
+
+[node name="LeftBoot" type="MeshInstance3D" parent="Body/LeftLeg"]
+transform = Transform3D(1.2, 0, 0, 0, 0.3, 0, 0, 0, 1.5, 0, -0.7, 0.1)
+mesh = SubResource("mesh_box")
+surface_material_override/0 = SubResource("mat_black_boots")
+
+[node name="RightLeg" type="MeshInstance3D" parent="Body"]
+transform = Transform3D(0.15, 0, 0, 0, 0.5, 0, 0, 0, 0.15, 0.15, 0.3, 0)
+mesh = SubResource("mesh_capsule")
+surface_material_override/0 = SubResource("mat_brown_shorts")
+
+[node name="RightBoot" type="MeshInstance3D" parent="Body/RightLeg"]
+transform = Transform3D(1.2, 0, 0, 0, 0.3, 0, 0, 0, 1.5, 0, -0.7, 0.1)
+mesh = SubResource("mesh_box")
+surface_material_override/0 = SubResource("mat_black_boots")

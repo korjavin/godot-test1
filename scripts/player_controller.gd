@@ -84,6 +84,62 @@ var is_running: bool = false
 var original_scale_y: float = 1.0
 
 # ============================================================================
+# SECTION 5: CHARACTER SYSTEM
+# ============================================================================
+
+## Available characters in the game
+const CHARACTERS: Array[Dictionary] = [
+	{
+		"name": "windman",
+		"scene_path": "res://scenes/characters/windman.tscn"
+	},
+	{
+		"name": "primm",
+		"scene_path": "res://scenes/characters/primm.tscn"
+	},
+	{
+		"name": "teibi",
+		"scene_path": "res://scenes/characters/teibi.tscn"
+	},
+	{
+		"name": "phoboman",
+		"scene_path": "res://scenes/characters/phoboman.tscn"
+	}
+]
+
+## Current character index (starts with windman at index 0)
+var current_character_index: int = 0
+
+## Reference to the character model container
+@onready var character_container: Node3D = $CharacterModel
+
+## Currently loaded character instance
+var current_character_node: Node3D = null
+
+# ============================================================================
+# SECTION 6: ANIMATION SYSTEM
+# ============================================================================
+
+## Animation timing variable (tracks time for procedural animations)
+var animation_time: float = 0.0
+
+## Animation speed multiplier for walking/running
+var animation_speed: float = 1.0
+
+## References to character limbs for animation
+var left_arm: Node3D = null
+var right_arm: Node3D = null
+var left_leg: Node3D = null
+var right_leg: Node3D = null
+var character_body: Node3D = null
+
+## Original rotations for resetting animations
+var original_rotations: Dictionary = {}
+
+## Track if character was on floor last frame (for landing detection)
+var was_on_floor: bool = true
+
+# ============================================================================
 # INITIALIZATION
 # ============================================================================
 
@@ -99,12 +155,16 @@ func _ready() -> void:
 	if mesh_instance:
 		original_scale_y = mesh_instance.scale.y
 
+	# Initialize the starting character (windman)
+	load_character(current_character_index)
+
 	print("Player Controller initialized!")
 	print("Controls:")
 	print("  WASD - Move")
 	print("  Space - Jump")
 	print("  Shift - Run")
 	print("  Ctrl - Duck")
+	print("  E - Switch Character")
 	print("  Mouse - Look around")
 	print("  ESC - Release mouse")
 
@@ -138,6 +198,10 @@ func _input(event: InputEvent) -> void:
 			Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 		else:
 			Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+
+	# Handle character switching with E key
+	if event.is_action_pressed("switch_character"):
+		switch_to_next_character()
 
 # ============================================================================
 # PHYSICS PROCESSING (CALLED EVERY FRAME)
@@ -192,6 +256,9 @@ func _physics_process(delta: float) -> void:
 	# STEP 8: Move the character using Godot's built-in physics
 	# This handles collisions automatically
 	move_and_slide()
+
+	# STEP 9: Update character animations
+	update_character_animation(delta, input_dir)
 
 # ============================================================================
 # HELPER FUNCTIONS
@@ -265,3 +332,224 @@ func _to_string() -> String:
 		is_on_floor(),
 		velocity
 	]
+
+# ============================================================================
+# CHARACTER SWITCHING FUNCTIONS
+# ============================================================================
+
+func switch_to_next_character() -> void:
+	"""
+	Switches to the next character in the cycle:
+	windman -> primm -> teibi -> phoboman -> windman (loops)
+	"""
+	# Increment the character index
+	current_character_index = (current_character_index + 1) % CHARACTERS.size()
+
+	# Load the new character
+	load_character(current_character_index)
+
+	# Print confirmation
+	var character_name = CHARACTERS[current_character_index]["name"]
+	print("Switched to character: %s" % character_name)
+
+func load_character(index: int) -> void:
+	"""
+	Loads a character's 3D model based on the index.
+
+	@param index: Index in the CHARACTERS array
+	"""
+	if index < 0 or index >= CHARACTERS.size():
+		push_error("Invalid character index: %d" % index)
+		return
+
+	var character_data = CHARACTERS[index]
+	var scene_path = character_data["scene_path"]
+
+	# Remove the old character if it exists
+	if current_character_node != null:
+		current_character_node.queue_free()
+		current_character_node = null
+
+	# Load the character scene
+	var character_scene = load(scene_path) as PackedScene
+
+	if character_scene and character_container:
+		# Instance the new character
+		current_character_node = character_scene.instantiate()
+		character_container.add_child(current_character_node)
+
+		# Setup animation references
+		setup_animation_references()
+
+		print("Loaded character: %s" % character_data["name"])
+	else:
+		push_error("Failed to load character scene or container node not found")
+
+# ============================================================================
+# ANIMATION FUNCTIONS
+# ============================================================================
+
+func setup_animation_references() -> void:
+	"""
+	Finds and stores references to character limbs for animation.
+	Called when a new character is loaded.
+	"""
+	if not current_character_node:
+		return
+
+	# Find the Body node that contains all limbs
+	character_body = current_character_node.get_node_or_null("Body")
+
+	if not character_body:
+		print("Warning: Character doesn't have a 'Body' node")
+		return
+
+	# Find limb nodes
+	left_arm = character_body.get_node_or_null("LeftArm")
+	right_arm = character_body.get_node_or_null("RightArm")
+	left_leg = character_body.get_node_or_null("LeftLeg")
+	right_leg = character_body.get_node_or_null("RightLeg")
+
+	# Store original rotations
+	original_rotations.clear()
+	if left_arm:
+		original_rotations["left_arm"] = left_arm.rotation
+	if right_arm:
+		original_rotations["right_arm"] = right_arm.rotation
+	if left_leg:
+		original_rotations["left_leg"] = left_leg.rotation
+	if right_leg:
+		original_rotations["right_leg"] = right_leg.rotation
+	if character_body:
+		original_rotations["body"] = character_body.rotation
+
+	print("Animation system initialized for character")
+
+func update_character_animation(delta: float, input_dir: Vector2) -> void:
+	"""
+	Main animation update function. Determines which animation to play
+	based on character state.
+
+	@param delta: Time since last frame
+	@param input_dir: Current input direction
+	"""
+	if not current_character_node or not character_body:
+		return
+
+	# Update animation time
+	animation_time += delta
+
+	# Determine animation state and animate accordingly
+	var is_moving = input_dir.length() > 0.1
+	var current_on_floor = is_on_floor()
+
+	# Jump/Fall animation
+	if not current_on_floor:
+		animate_jumping()
+	# Landing detected
+	elif not was_on_floor and current_on_floor:
+		animate_landing()
+	# Walking/Running animation
+	elif is_moving and current_on_floor:
+		var speed_multiplier = 1.5 if is_running else 1.0
+		animate_walking(delta, speed_multiplier)
+	# Idle animation
+	else:
+		animate_idle(delta)
+
+	# Update floor tracking
+	was_on_floor = current_on_floor
+
+func animate_walking(delta: float, speed_multiplier: float) -> void:
+	"""
+	Animates the character's limbs for walking/running.
+	Arms and legs swing back and forth.
+
+	@param delta: Time since last frame
+	@param speed_multiplier: How fast to play the animation (1.0 = normal, 1.5 = running)
+	"""
+	if not left_arm or not right_arm or not left_leg or not right_leg:
+		return
+
+	# Walking animation uses sine waves for smooth swinging motion
+	var walk_speed = 8.0 * speed_multiplier
+	var arm_swing_amount = deg_to_rad(30)  # 30 degrees swing
+	var leg_swing_amount = deg_to_rad(40)  # 40 degrees swing
+
+	# Calculate swing values using sine wave
+	var time_factor = animation_time * walk_speed
+	var arm_swing = sin(time_factor) * arm_swing_amount
+	var leg_swing = sin(time_factor) * leg_swing_amount
+
+	# Apply rotations (arms and legs swing opposite to each other)
+	left_arm.rotation.x = original_rotations["left_arm"].x + arm_swing
+	right_arm.rotation.x = original_rotations["right_arm"].x - arm_swing
+
+	left_leg.rotation.x = original_rotations["left_leg"].x - leg_swing
+	right_leg.rotation.x = original_rotations["right_leg"].x + leg_swing
+
+	# Add slight body bob for realism
+	if character_body:
+		var bob_amount = 0.03
+		var bob = sin(time_factor * 2.0) * bob_amount
+		character_body.position.y = bob
+
+func animate_jumping() -> void:
+	"""
+	Animates the character in mid-air (jumping or falling).
+	Arms go up, legs come together.
+	"""
+	if not left_arm or not right_arm or not left_leg or not right_leg:
+		return
+
+	# Target pose for jumping
+	var arm_up_angle = deg_to_rad(-45)  # Arms raised
+	var leg_together_angle = deg_to_rad(10)  # Legs slightly bent
+
+	# Smoothly interpolate to jump pose
+	var lerp_speed = 0.15
+
+	left_arm.rotation.x = lerp(left_arm.rotation.x, original_rotations["left_arm"].x + arm_up_angle, lerp_speed)
+	right_arm.rotation.x = lerp(right_arm.rotation.x, original_rotations["right_arm"].x + arm_up_angle, lerp_speed)
+
+	left_leg.rotation.x = lerp(left_leg.rotation.x, original_rotations["left_leg"].x + leg_together_angle, lerp_speed)
+	right_leg.rotation.x = lerp(right_leg.rotation.x, original_rotations["right_leg"].x + leg_together_angle, lerp_speed)
+
+	# Reset body position
+	if character_body:
+		character_body.position.y = lerp(character_body.position.y, 0.0, lerp_speed)
+
+func animate_landing() -> void:
+	"""
+	Brief animation when the character lands on the ground.
+	Creates a small impact pose.
+	"""
+	if not character_body:
+		return
+
+	# Small crouch on landing
+	character_body.position.y = -0.1
+
+func animate_idle(delta: float) -> void:
+	"""
+	Animates the character when standing still.
+	Creates a subtle breathing/idle motion.
+	"""
+	if not left_arm or not right_arm or not left_leg or not right_leg:
+		return
+
+	# Smoothly return limbs to original positions
+	var lerp_speed = 0.1
+
+	left_arm.rotation.x = lerp(left_arm.rotation.x, original_rotations["left_arm"].x, lerp_speed)
+	right_arm.rotation.x = lerp(right_arm.rotation.x, original_rotations["right_arm"].x, lerp_speed)
+
+	left_leg.rotation.x = lerp(left_leg.rotation.x, original_rotations["left_leg"].x, lerp_speed)
+	right_leg.rotation.x = lerp(right_leg.rotation.x, original_rotations["right_leg"].x, lerp_speed)
+
+	# Subtle breathing animation
+	if character_body:
+		var breathe_speed = 2.0
+		var breathe_amount = 0.01
+		var breathe = sin(animation_time * breathe_speed) * breathe_amount
+		character_body.position.y = lerp(character_body.position.y, breathe, 0.1)
