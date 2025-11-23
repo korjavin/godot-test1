@@ -1,8 +1,7 @@
-[gd_scene load_steps=7 format=3 uid="uid://clqb4rcmjrpgs"]
+[gd_scene load_steps=6 format=3 uid="uid://clqb4rcmjrpgs"]
 
 [ext_resource type="PackedScene" uid="uid://bqtq2xtxqnvvr" path="res://scenes/player.tscn" id="1_main"]
 [ext_resource type="Script" uid="uid://b07rwceo0eo4o" path="res://scripts/endless_terrain.gd" id="2_terrain"]
-[ext_resource type="PackedScene" uid="uid://crocodile01" path="res://scenes/characters/piglet_crocodile.tscn" id="3_crocodile"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_1"]
 sky_horizon_color = Color(0.64625, 0.65575, 0.67075, 1)
@@ -31,18 +30,3 @@ shadow_enabled = true
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="."]
 environment = SubResource("Environment_1")
-
-[node name="Crocodile1" parent="." instance=ExtResource("3_crocodile")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 8, 0.5, 5)
-
-[node name="Crocodile2" parent="." instance=ExtResource("3_crocodile")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -12, 0.5, 8)
-
-[node name="Crocodile3" parent="." instance=ExtResource("3_crocodile")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 15, 0.5, -10)
-
-[node name="Crocodile4" parent="." instance=ExtResource("3_crocodile")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -8, 0.5, -15)
-
-[node name="Crocodile5" parent="." instance=ExtResource("3_crocodile")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 20, 0.5, 12)

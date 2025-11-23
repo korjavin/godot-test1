@@ -44,9 +44,22 @@ extends Node3D
 @export var object_size_min: float = 1.0
 @export var object_size_max: float = 2.5
 
+## Enable/disable crocodile spawning on terrain
+@export var spawn_crocodiles: bool = true
+
+## Number of crocodiles to spawn per chunk
+## Higher values = more dangerous terrain!
+@export var crocodiles_per_chunk: int = 5
+
+## Minimum distance between crocodiles (in meters)
+@export var min_crocodile_spacing: float = 8.0
+
 # ============================================================================
 # SECTION 2: INTERNAL STATE
 # ============================================================================
+
+## Preloaded crocodile scene for spawning
+var crocodile_scene: PackedScene
 
 ## Reference to the player node to track their position
 var player: Node3D
@@ -66,6 +79,12 @@ func _ready() -> void:
 	"""
 	Initialize the terrain system.
 	"""
+	# Load the crocodile scene for spawning
+	crocodile_scene = load("res://scenes/characters/piglet_crocodile.tscn")
+	if not crocodile_scene:
+		push_warning("Failed to load crocodile scene!")
+		spawn_crocodiles = false
+
 	# Find the player in the scene tree
 	# We'll use this to track where to generate terrain
 	await get_tree().process_frame  # Wait for scene to be fully ready
@@ -84,6 +103,7 @@ func _ready() -> void:
 	print("Endless Terrain System initialized!")
 	print("Chunk size: ", chunk_size, "m")
 	print("Render distance: ", render_distance, " chunks")
+	print("Crocodiles per chunk: ", crocodiles_per_chunk if spawn_crocodiles else 0)
 
 func _process(_delta: float) -> void:
 	"""
@@ -221,6 +241,10 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 	if spawn_objects:
 		spawn_objects_in_chunk(chunk_pos, mesh_instance)
 
+	# Spawn crocodiles in this chunk if enabled
+	if spawn_crocodiles:
+		spawn_crocodiles_in_chunk(chunk_pos, mesh_instance)
+
 func spawn_objects_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D) -> void:
 	"""
 	Spawns random objects (cubes) within a terrain chunk.
@@ -327,6 +351,75 @@ func spawn_objects_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D) -
 		# Add to chunk (so it gets removed when chunk is removed)
 		parent_chunk.add_child(object_instance)
 		spawned_positions.append(object_pos)
+
+func spawn_crocodiles_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D) -> void:
+	"""
+	Spawns crocodile NPCs within a terrain chunk.
+
+	@param chunk_pos: Chunk coordinates for seeded random generation
+	@param parent_chunk: The chunk mesh to attach crocodiles to
+
+	EDUCATIONAL NOTE:
+	- Crocodiles are spawned dynamically with the terrain
+	- They are parented to the chunk so they're removed when chunk is removed
+	- This creates an endless stream of enemies as you explore
+	"""
+
+	if not crocodile_scene:
+		return
+
+	# Use chunk coordinates to create a unique but consistent seed
+	# Offset the hash value to get different positions than objects
+	var seed_value := hash(Vector2i(chunk_pos.x * 83492791, chunk_pos.y * 28411639))
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_value
+
+	# Calculate the world position of this chunk's corner
+	var chunk_world_pos := chunk_to_world(chunk_pos)
+	var half_chunk := chunk_size / 2.0
+
+	# Store positions of spawned crocodiles to check spacing
+	var spawned_positions: Array[Vector3] = []
+
+	# Try to spawn crocodiles with proper spacing
+	var attempts := 0
+	var max_attempts := crocodiles_per_chunk * 5  # Allow multiple attempts per crocodile
+
+	while spawned_positions.size() < crocodiles_per_chunk and attempts < max_attempts:
+		attempts += 1
+
+		# Generate random position within chunk bounds
+		var margin := 3.0  # Keep away from edges
+		var random_x := rng.randf_range(-half_chunk + margin, half_chunk - margin)
+		var random_z := rng.randf_range(-half_chunk + margin, half_chunk - margin)
+		var crocodile_pos := Vector3(random_x, 0.5, random_z)  # Y=0.5 to spawn above ground
+
+		# Check if this position is far enough from existing crocodiles
+		var valid_position := true
+		for existing_pos in spawned_positions:
+			if crocodile_pos.distance_to(existing_pos) < min_crocodile_spacing:
+				valid_position = false
+				break
+
+		if not valid_position:
+			continue
+
+		# Instantiate the crocodile
+		var crocodile_instance = crocodile_scene.instantiate()
+		crocodile_instance.name = "Crocodile_%d_%d_%d" % [chunk_pos.x, chunk_pos.y, spawned_positions.size()]
+
+		# Position relative to chunk
+		crocodile_instance.position = crocodile_pos
+
+		# Random initial rotation for variety
+		crocodile_instance.rotation.y = rng.randf_range(0, TAU)
+
+		# Add to chunk (so it gets removed when chunk is removed)
+		parent_chunk.add_child(crocodile_instance)
+		spawned_positions.append(crocodile_pos)
+
+	if spawned_positions.size() > 0:
+		print("Spawned %d crocodiles in chunk (%d, %d)" % [spawned_positions.size(), chunk_pos.x, chunk_pos.y])
 
 func remove_chunk(chunk_pos: Vector2i) -> void:
 	"""
