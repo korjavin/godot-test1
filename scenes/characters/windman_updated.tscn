@@ -17,58 +17,58 @@
 [node name="Body" type="Node3D" parent="."]
 
 [node name="Head" parent="Body" instance=ExtResource("1_head")]
-transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 1.62)
+transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 1.62, 0)
 
 [node name="Torso" parent="Body" instance=ExtResource("2_torso")]
-transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 1.17)
+transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 1.17, 0)
 
 [node name="LeftArm" type="Node3D" parent="Body"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.18, 0, 1.28)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.18, 1.28, 0)
 
 [node name="UpperArm" parent="Body/LeftArm" instance=ExtResource("3_left_upper_arm")]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0)
 
 [node name="LowerArm" type="Node3D" parent="Body/LeftArm"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.27)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.27, 0)
 
 [node name="Mesh" parent="Body/LeftArm/LowerArm" instance=ExtResource("4_left_lower_arm")]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0)
 
 [node name="RightArm" type="Node3D" parent="Body"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.18, 0, 1.28)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.18, 1.28, 0)
 
 [node name="UpperArm" parent="Body/RightArm" instance=ExtResource("5_right_upper_arm")]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0)
 
 [node name="LowerArm" type="Node3D" parent="Body/RightArm"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.27)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.27, 0)
 
 [node name="Mesh" parent="Body/RightArm/LowerArm" instance=ExtResource("6_right_lower_arm")]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0)
 
 [node name="Fan" parent="Body/RightArm/LowerArm/Mesh" instance=ExtResource("11_fan")]
-transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0.04, -0.10)
+transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, -0.10, 0)
 
 [node name="LeftLeg" type="Node3D" parent="Body"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.09, 0, 0.77)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.09, 0.77, 0)
 
 [node name="UpperLeg" parent="Body/LeftLeg" instance=ExtResource("7_left_upper_leg")]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0)
 
 [node name="LowerLeg" type="Node3D" parent="Body/LeftLeg"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.37)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.37, 0)
 
 [node name="Mesh" parent="Body/LeftLeg/LowerLeg" instance=ExtResource("8_left_lower_leg")]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0)
 
 [node name="RightLeg" type="Node3D" parent="Body"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.09, 0, 0.77)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.09, 0.77, 0)
 
 [node name="UpperLeg" parent="Body/RightLeg" instance=ExtResource("9_right_upper_leg")]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0)
 
 [node name="LowerLeg" type="Node3D" parent="Body/RightLeg"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.37)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.37, 0)
 
 [node name="Mesh" parent="Body/RightLeg/LowerLeg" instance=ExtResource("10_right_lower_leg")]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0)
