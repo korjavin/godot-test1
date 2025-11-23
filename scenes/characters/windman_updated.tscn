@@ -1,4 +1,4 @@
-[gd_scene load_steps=4 format=3 uid="uid://c8windman001"]
+[gd_scene load_steps=4 format=3 uid="uid://windman_3d_updated_001"]
 
 [ext_resource type="PackedScene" uid="uid://windman_model_001" path="res://assets/models/characters/windman.glb" id="1_windman_model"]
 [ext_resource type="Script" path="res://scripts/windman_animator.gd" id="2_animator"]

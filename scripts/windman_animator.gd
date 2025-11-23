@@ -63,26 +63,26 @@ func _process(_delta: float) -> void:
 		if bone_idx >= 0:
 			var pose = skeleton.get_bone_pose_rotation(bone_idx)
 			# Apply rotation from proxy to bone
-			var target_rotation = Quaternion(Vector3(left_arm_proxy.rotation.x, 0, 0))
+			var target_rotation = Quaternion.from_euler(Vector3(left_arm_proxy.rotation.x, 0, 0))
 			skeleton.set_bone_pose_rotation(bone_idx, pose.slerp(target_rotation, 0.3))
 
 	if right_arm_proxy and bone_indices.has("RightUpperArm"):
 		var bone_idx = bone_indices["RightUpperArm"]
 		if bone_idx >= 0:
 			var pose = skeleton.get_bone_pose_rotation(bone_idx)
-			var target_rotation = Quaternion(Vector3(right_arm_proxy.rotation.x, 0, 0))
+			var target_rotation = Quaternion.from_euler(Vector3(right_arm_proxy.rotation.x, 0, 0))
 			skeleton.set_bone_pose_rotation(bone_idx, pose.slerp(target_rotation, 0.3))
 
 	if left_leg_proxy and bone_indices.has("LeftUpperLeg"):
 		var bone_idx = bone_indices["LeftUpperLeg"]
 		if bone_idx >= 0:
 			var pose = skeleton.get_bone_pose_rotation(bone_idx)
-			var target_rotation = Quaternion(Vector3(left_leg_proxy.rotation.x, 0, 0))
+			var target_rotation = Quaternion.from_euler(Vector3(left_leg_proxy.rotation.x, 0, 0))
 			skeleton.set_bone_pose_rotation(bone_idx, pose.slerp(target_rotation, 0.3))
 
 	if right_leg_proxy and bone_indices.has("RightUpperLeg"):
 		var bone_idx = bone_indices["RightUpperLeg"]
 		if bone_idx >= 0:
 			var pose = skeleton.get_bone_pose_rotation(bone_idx)
-			var target_rotation = Quaternion(Vector3(right_leg_proxy.rotation.x, 0, 0))
+			var target_rotation = Quaternion.from_euler(Vector3(right_leg_proxy.rotation.x, 0, 0))
 			skeleton.set_bone_pose_rotation(bone_idx, pose.slerp(target_rotation, 0.3))
