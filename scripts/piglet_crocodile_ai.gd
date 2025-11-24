@@ -127,8 +127,8 @@ func _physics_process(delta: float) -> void:
 	# Move and handle collisions
 	move_and_slide()
 
-	# Check for player collision
-	_check_player_collision()
+	# Handle collisions with player and other crocodiles
+	_handle_collisions()
 
 
 # ============================================================================
@@ -214,17 +214,58 @@ func _pause_and_change_direction() -> void:
 # COLLISION DETECTION
 # ============================================================================
 
-func _check_player_collision() -> void:
-	"""Check if we've collided with the player and handle it."""
+func _handle_collisions() -> void:
+	"""Check collisions with player and other crocodiles."""
 	# Check all collisions from move_and_slide()
 	for i in range(get_slide_collision_count()):
 		var collision := get_slide_collision(i)
 		var collider := collision.get_collider()
 
+		if not collider:
+			continue
+
 		# Check if we hit the player
-		if collider and collider.is_in_group("player"):
+		if collider.is_in_group("player"):
 			_on_player_collision(collider)
-			return
+			return # Prioritize player collision
+			
+		# Check if we hit another crocodile
+		if collider.is_in_group("crocodile") and collider != self:
+			_resolve_crocodile_conflict(collider)
+			if is_queued_for_deletion():
+				return
+
+
+func _resolve_crocodile_conflict(other_crocodile: Node) -> void:
+	"""
+	Handle collision with another crocodile.
+	Randomly (but deterministically) decide which one survives.
+	"""
+	if is_queued_for_deletion() or other_crocodile.is_queued_for_deletion():
+		return
+
+	# Use instance IDs to deterministically decide a winner
+	# This ensures consistency even if only one detects the collision
+	var my_id = get_instance_id()
+	var other_id = other_crocodile.get_instance_id()
+	
+	# Simple hash to pick a winner "randomly" but consistently for this pair
+	var combined_hash = (my_id + other_id) * 12345
+	var i_win = false
+	
+	if combined_hash % 2 == 0:
+		# Even hash: Larger ID wins
+		i_win = my_id > other_id
+	else:
+		# Odd hash: Smaller ID wins
+		i_win = my_id < other_id
+	
+	if i_win:
+		print("🐊 Crocodile %s ate %s!" % [name, other_crocodile.name])
+		other_crocodile.queue_free()
+	else:
+		print("🐊 Crocodile %s was eaten by %s!" % [name, other_crocodile.name])
+		queue_free()
 
 
 func _on_player_collision(player: Node) -> void:
