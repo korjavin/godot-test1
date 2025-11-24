@@ -160,14 +160,20 @@ func _update_chase_state() -> void:
 	# Calculate distance to player
 	var distance_to_player = global_position.distance_to(player_node.global_position)
 
-	# Update chase state based on detection radius
-	if distance_to_player <= DETECTION_RADIUS:
+	# Check if player is grounded (can be smelled)
+	# If player jumps (is not on floor), crocodiles lose the scent
+	var player_is_grounded = true
+	if player_node.has_method("is_on_floor"):
+		player_is_grounded = player_node.is_on_floor()
+
+	# Update chase state based on detection radius AND player grounded state
+	if distance_to_player <= DETECTION_RADIUS and player_is_grounded:
 		if not is_chasing:
 			# Just started chasing
 			is_chasing = true
 	else:
 		if is_chasing:
-			# Lost the player
+			# Lost the player (too far OR player jumped)
 			is_chasing = false
 			# Choose new random direction
 			_choose_new_direction()
