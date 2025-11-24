@@ -2,19 +2,27 @@ extends CharacterBody3D
 ## Piglet Crocodile NPC AI
 ##
 ## This script controls the behavior of hostile piglet crocodiles.
-## They wander randomly and are fatal to the player on collision.
+## They wander randomly but will chase the player when detected.
 ##
 ## Behavior:
 ## - Random wandering with periodic direction changes
-## - Slow to medium movement speed
+## - Detection radius: can "smell" the player within range
+## - Chase mode: pursues player at increased speed when detected
+## - Returns to wandering when player escapes detection range
 ## - Fatal collision with player (resets player position)
 
 # ============================================================================
 # CONSTANTS
 # ============================================================================
 
-## Movement speed in meters per second
+## Movement speed in meters per second (wandering)
 const MOVE_SPEED: float = 2.5
+
+## Chase speed when pursuing player (faster)
+const CHASE_SPEED: float = 3.5
+
+## Detection radius - distance at which crocodile can "smell" the player
+const DETECTION_RADIUS: float = 15.0
 
 ## Time between direction changes (in seconds)
 const DIRECTION_CHANGE_INTERVAL: float = 4.0
@@ -41,6 +49,12 @@ var is_paused: bool = false
 ## Pause time remaining
 var pause_time_remaining: float = 0.0
 
+## Is the crocodile currently chasing the player?
+var is_chasing: bool = false
+
+## Reference to the player node
+var player_node: Node3D = null
+
 ## Random number generator for movement
 var rng: RandomNumberGenerator = RandomNumberGenerator.new()
 
@@ -63,6 +77,9 @@ func _ready() -> void:
 	# Start with a random offset to avoid all crocodiles changing direction at once
 	time_since_direction_change = randf() * DIRECTION_CHANGE_INTERVAL
 
+	# Find the player node (defer to allow scene to fully load)
+	call_deferred("_find_player")
+
 
 func _physics_process(delta: float) -> void:
 	"""Update movement and handle collision every physics frame."""
@@ -83,25 +100,87 @@ func _physics_process(delta: float) -> void:
 		move_and_slide()
 		return
 
-	# Update direction change timer
-	time_since_direction_change += delta
-	if time_since_direction_change >= DIRECTION_CHANGE_INTERVAL:
-		_pause_and_change_direction()
+	# Check if player is in detection range
+	_update_chase_state()
 
-	# Apply movement
-	velocity.x = movement_direction.x * MOVE_SPEED
-	velocity.z = movement_direction.z * MOVE_SPEED
+	# Choose movement behavior based on state
+	if is_chasing and player_node:
+		# Chase the player
+		_chase_player()
+	else:
+		# Wander randomly
+		_wander(delta)
 
 	# Rotate to face movement direction
 	if movement_direction.length() > 0.1:
 		var target_rotation = atan2(movement_direction.x, movement_direction.z)
 		rotation.y = lerp_angle(rotation.y, target_rotation, delta * 5.0)
 
+		# Apply movement based on facing direction (prevents sliding sideways)
+		var current_speed = CHASE_SPEED if is_chasing else MOVE_SPEED
+		velocity.x = sin(rotation.y) * current_speed
+		velocity.z = cos(rotation.y) * current_speed
+	else:
+		velocity.x = 0.0
+		velocity.z = 0.0
+
 	# Move and handle collisions
 	move_and_slide()
 
 	# Check for player collision
 	_check_player_collision()
+
+
+# ============================================================================
+# DETECTION AND CHASE METHODS
+# ============================================================================
+
+func _find_player() -> void:
+	"""Find and store reference to the player node."""
+	var players = get_tree().get_nodes_in_group("player")
+	if players.size() > 0:
+		player_node = players[0]
+
+
+func _update_chase_state() -> void:
+	"""Check distance to player and update chase state."""
+	if not player_node:
+		is_chasing = false
+		return
+
+	# Calculate distance to player
+	var distance_to_player = global_position.distance_to(player_node.global_position)
+
+	# Update chase state based on detection radius
+	if distance_to_player <= DETECTION_RADIUS:
+		if not is_chasing:
+			# Just started chasing
+			is_chasing = true
+	else:
+		if is_chasing:
+			# Lost the player
+			is_chasing = false
+			# Choose new random direction
+			_choose_new_direction()
+
+
+func _chase_player() -> void:
+	"""Set movement direction toward the player."""
+	if not player_node:
+		return
+
+	# Calculate direction to player (on XZ plane)
+	var direction_to_player = player_node.global_position - global_position
+	direction_to_player.y = 0  # Keep movement on horizontal plane
+	movement_direction = direction_to_player.normalized()
+
+
+func _wander(delta: float) -> void:
+	"""Handle random wandering behavior."""
+	# Update direction change timer
+	time_since_direction_change += delta
+	if time_since_direction_change >= DIRECTION_CHANGE_INTERVAL:
+		_pause_and_change_direction()
 
 
 # ============================================================================
