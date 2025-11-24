@@ -16,10 +16,15 @@ extends CharacterBody3D
 # ============================================================================
 
 ## Movement speed in meters per second (wandering)
-const MOVE_SPEED: float = 2.5
+var move_speed_instance: float = 0.0
 
 ## Chase speed when pursuing player (faster)
-const CHASE_SPEED: float = 3.5
+var chase_speed_instance: float = 0.0
+
+## Base speeds for randomization
+const BASE_MOVE_SPEED: float = 2.5
+const BASE_CHASE_SPEED: float = 3.5
+const SPEED_RANDOM_FACTOR: float = 0.2 # +/- 20%
 
 ## Detection radius - distance at which crocodile can "smell" the player
 const DETECTION_RADIUS: float = 15.0
@@ -66,6 +71,10 @@ func _ready() -> void:
 	"""Initialize the crocodile NPC."""
 	# Randomize the RNG
 	rng.randomize()
+
+	# Set instance-specific speeds
+	move_speed_instance = BASE_MOVE_SPEED * rng.randf_range(1.0 - SPEED_RANDOM_FACTOR, 1.0 + SPEED_RANDOM_FACTOR)
+	chase_speed_instance = BASE_CHASE_SPEED * rng.randf_range(1.0 - SPEED_RANDOM_FACTOR, 1.0 + SPEED_RANDOM_FACTOR)
 
 	# Set initial random direction
 	_choose_new_direction()
@@ -117,7 +126,7 @@ func _physics_process(delta: float) -> void:
 		rotation.y = lerp_angle(rotation.y, target_rotation, delta * 5.0)
 
 		# Apply movement based on facing direction (prevents sliding sideways)
-		var current_speed = CHASE_SPEED if is_chasing else MOVE_SPEED
+		var current_speed = chase_speed_instance if is_chasing else move_speed_instance
 		velocity.x = sin(rotation.y) * current_speed
 		velocity.z = cos(rotation.y) * current_speed
 	else:
