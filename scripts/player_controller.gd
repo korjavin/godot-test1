@@ -119,6 +119,16 @@ var current_character_index: int = 0
 ## Currently loaded character instance
 var current_character_node: Node3D = null
 
+## All character models, instanced once up front and reused. Switching characters
+## just toggles which one is visible, so there is no per-press load/instance cost
+## (which is what used to cause the hitch when pressing E).
+var character_instances: Array[Node3D] = []
+
+## Cached neutral limb rotations for each character, captured at startup while the
+## model is in its untouched rest pose. Restoring from this on activation means a
+## character never resumes from a frozen mid-animation pose after being hidden.
+var character_rest_poses: Array[Dictionary] = []
+
 # ============================================================================
 # SECTION 6: ANIMATION SYSTEM
 # ============================================================================
@@ -135,6 +145,12 @@ var right_arm: Node3D = null
 var left_leg: Node3D = null
 var right_leg: Node3D = null
 var character_body: Node3D = null
+
+## Shared cel-shading outline, created once and reused for every character.
+## Applied as a material overlay so it works on any mesh — both the primitive
+## characters and the GLB-based windman — without touching their own materials.
+const OUTLINE_SHADER: Shader = preload("res://assets/shaders/outline.gdshader")
+var outline_material: ShaderMaterial = null
 
 ## Original rotations for resetting animations
 var original_rotations: Dictionary = {}
@@ -158,8 +174,10 @@ func _ready() -> void:
 	if mesh_instance:
 		original_scale_y = mesh_instance.scale.y
 
-	# Initialize the starting character (windman)
-	load_character(current_character_index)
+	# Instance every character once up front, then show the starting one (windman).
+	# Pre-instancing here keeps later character switches instant.
+	preload_all_characters()
+	set_active_character(current_character_index)
 
 	print("Player Controller initialized!")
 	print("Controls:")
@@ -344,49 +362,125 @@ func switch_to_next_character() -> void:
 	"""
 	Switches to the next character in the cycle:
 	windman -> primm -> teibi -> phoboman -> windman (loops)
+
+	This is now just a visibility swap between already-instanced models, so it
+	happens instantly with no loading hitch.
 	"""
 	# Increment the character index
 	current_character_index = (current_character_index + 1) % CHARACTERS.size()
 
-	# Load the new character
-	load_character(current_character_index)
+	# Show the newly selected character
+	set_active_character(current_character_index)
 
 	# Print confirmation
-	var character_name = CHARACTERS[current_character_index]["name"]
-	print("Switched to character: %s" % character_name)
+	print("Switched to character: %s" % CHARACTERS[current_character_index]["name"])
 
-func load_character(index: int) -> void:
+func preload_all_characters() -> void:
 	"""
-	Loads a character's 3D model based on the index.
+	Instance all characters a single time and park them (hidden) under the
+	character container.
+
+	Doing the expensive load + instance + outline work here, once at startup,
+	means switching characters later (set_active_character) is just a visibility
+	toggle. That removes the per-press hitch that used to come from re-loading
+	and re-instancing a model — especially windman, which is 11 separate meshes.
+	"""
+	if not character_container:
+		push_error("Character container node not found")
+		return
+
+	for index in CHARACTERS.size():
+		var scene_path: String = CHARACTERS[index]["scene_path"]
+		var character_scene := load(scene_path) as PackedScene
+		if not character_scene:
+			push_error("Failed to load character scene: %s" % scene_path)
+			character_instances.append(null)
+			character_rest_poses.append({})
+			continue
+
+		# Instance it, hide it, and add it to the container.
+		var instance := character_scene.instantiate()
+		character_container.add_child(instance)
+		instance.visible = false
+
+		# Give it the cel outline and remember its rest pose while limbs are
+		# still untouched (so re-activation never drifts the rest pose).
+		apply_character_outline(instance)
+		character_instances.append(instance)
+		character_rest_poses.append(capture_rest_pose(instance))
+
+		print("Preloaded character: %s" % CHARACTERS[index]["name"])
+
+func set_active_character(index: int) -> void:
+	"""
+	Make one preloaded character visible and route the animation system to it.
+	Switching is instant because every character already exists in the tree.
 
 	@param index: Index in the CHARACTERS array
 	"""
-	if index < 0 or index >= CHARACTERS.size():
+	if index < 0 or index >= character_instances.size():
 		push_error("Invalid character index: %d" % index)
 		return
 
-	var character_data = CHARACTERS[index]
-	var scene_path = character_data["scene_path"]
+	current_character_index = index
 
-	# Remove the old character if it exists
-	if current_character_node != null:
-		current_character_node.queue_free()
-		current_character_node = null
+	# Show only the chosen character; hide the rest.
+	for i in character_instances.size():
+		if character_instances[i]:
+			character_instances[i].visible = (i == index)
 
-	# Load the character scene
-	var character_scene = load(scene_path) as PackedScene
+	current_character_node = character_instances[index]
+	if not current_character_node:
+		return
 
-	if character_scene and character_container:
-		# Instance the new character
-		current_character_node = character_scene.instantiate()
-		character_container.add_child(current_character_node)
+	# Point the animation system at this character, then snap it back to its
+	# cached rest pose so it never resumes from a frozen mid-animation pose.
+	setup_animation_references()
+	original_rotations = character_rest_poses[index].duplicate()
+	restore_rest_pose(index)
 
-		# Setup animation references
-		setup_animation_references()
+func capture_rest_pose(instance: Node3D) -> Dictionary:
+	"""
+	Record a character's limb rotations while it sits in its untouched rest pose.
+	Keys match those used by the animation functions (left_arm, right_leg, ...).
 
-		print("Loaded character: %s" % character_data["name"])
-	else:
-		push_error("Failed to load character scene or container node not found")
+	@param instance: A freshly-instanced character model
+	@return Dictionary of limb name -> rest rotation
+	"""
+	var pose: Dictionary = {}
+	var body := instance.get_node_or_null("Body")
+	if not body:
+		return pose
+
+	pose["body"] = body.rotation
+	var limb_keys := {
+		"left_arm": "LeftArm", "right_arm": "RightArm",
+		"left_leg": "LeftLeg", "right_leg": "RightLeg",
+	}
+	for key in limb_keys:
+		var limb := body.get_node_or_null(limb_keys[key])
+		if limb:
+			pose[key] = limb.rotation
+	return pose
+
+func restore_rest_pose(index: int) -> void:
+	"""
+	Snap the active character's limbs (and body) back to their cached rest pose.
+
+	@param index: Index in the CHARACTERS array
+	"""
+	var pose: Dictionary = character_rest_poses[index]
+	if left_arm and pose.has("left_arm"):
+		left_arm.rotation = pose["left_arm"]
+	if right_arm and pose.has("right_arm"):
+		right_arm.rotation = pose["right_arm"]
+	if left_leg and pose.has("left_leg"):
+		left_leg.rotation = pose["left_leg"]
+	if right_leg and pose.has("right_leg"):
+		right_leg.rotation = pose["right_leg"]
+	if character_body and pose.has("body"):
+		character_body.rotation = pose["body"]
+		character_body.position.y = 0.0
 
 # ============================================================================
 # ANIMATION FUNCTIONS
@@ -436,6 +530,29 @@ func setup_animation_references() -> void:
 		original_rotations["body"] = character_body.rotation
 
 	print("Animation system initialized for character")
+
+func apply_character_outline(node: Node) -> void:
+	"""
+	Recursively give every mesh in the loaded character a black cel outline.
+
+	We assign a shared inverted-hull ShaderMaterial as each MeshInstance3D's
+	`material_overlay`, which renders as an extra silhouette pass on top of the
+	mesh's existing (toon) material. Walking the tree recursively means this
+	covers both the primitive-built characters AND the nested meshes inside the
+	GLB-based windman, in one place.
+
+	@param node: Root of the character subtree to outline
+	"""
+	# Build the outline material the first time we need it.
+	if outline_material == null:
+		outline_material = ShaderMaterial.new()
+		outline_material.shader = OUTLINE_SHADER
+
+	if node is MeshInstance3D:
+		(node as MeshInstance3D).material_overlay = outline_material
+
+	for child in node.get_children():
+		apply_character_outline(child)
 
 func update_character_animation(delta: float, input_dir: Vector2) -> void:
 	"""

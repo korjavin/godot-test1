@@ -1,19 +1,43 @@
-[gd_scene load_steps=19 format=3 uid="uid://c8primm001"]
+[gd_scene load_steps=20 format=3 uid="uid://c8primm001"]
 
 [sub_resource type="StandardMaterial3D" id="mat_skin"]
 albedo_color = Color(0.9, 0.75, 0.6, 1)
+roughness = 0.95
+diffuse_mode = 3
+specular_mode = 2
+rim_enabled = true
+rim = 0.45
+rim_tint = 0.25
+subsurf_scatter_enabled = true
+subsurf_scatter_strength = 0.25
 
 [sub_resource type="StandardMaterial3D" id="mat_purple_coat"]
 albedo_color = Color(0.4, 0.2, 0.6, 1)
+roughness = 0.95
+diffuse_mode = 3
+specular_mode = 2
+rim_enabled = true
+rim = 0.45
+rim_tint = 0.25
 
 [sub_resource type="StandardMaterial3D" id="mat_black_shirt"]
 albedo_color = Color(0.1, 0.1, 0.15, 1)
+roughness = 0.95
+diffuse_mode = 3
+specular_mode = 2
+rim_enabled = true
+rim = 0.45
+rim_tint = 0.25
 
 [sub_resource type="StandardMaterial3D" id="mat_blue_glow"]
 albedo_color = Color(0.2, 0.5, 1.0, 1)
 emission_enabled = true
 emission = Color(0.2, 0.5, 1.0, 1)
 emission_energy_multiplier = 2.0
+diffuse_mode = 3
+rim_enabled = true
+rim = 0.3
+rim_tint = 0.3
 
 [sub_resource type="StandardMaterial3D" id="mat_goggles"]
 albedo_color = Color(0.3, 0.6, 0.9, 0.3)
@@ -21,23 +45,54 @@ transparency = 1
 
 [sub_resource type="StandardMaterial3D" id="mat_blue_pants"]
 albedo_color = Color(0.15, 0.2, 0.4, 1)
+roughness = 0.95
+diffuse_mode = 3
+specular_mode = 2
+rim_enabled = true
+rim = 0.45
+rim_tint = 0.25
 
 [sub_resource type="StandardMaterial3D" id="mat_black_boots"]
 albedo_color = Color(0.1, 0.1, 0.1, 1)
+roughness = 0.95
+diffuse_mode = 3
+specular_mode = 2
+rim_enabled = true
+rim = 0.45
+rim_tint = 0.25
 
 [sub_resource type="StandardMaterial3D" id="mat_silver"]
 albedo_color = Color(0.7, 0.7, 0.75, 1)
 metallic = 0.8
+diffuse_mode = 3
+specular_mode = 1
+rim_enabled = true
+rim = 0.4
+rim_tint = 0.25
 
 [sub_resource type="StandardMaterial3D" id="mat_hair"]
 albedo_color = Color(0.2, 0.15, 0.1, 1)
+roughness = 0.95
+diffuse_mode = 3
+specular_mode = 2
+rim_enabled = true
+rim = 0.45
+rim_tint = 0.25
 
 [sub_resource type="StandardMaterial3D" id="mat_glove"]
 albedo_color = Color(0.05, 0.05, 0.05, 1)
+roughness = 0.95
+diffuse_mode = 3
+specular_mode = 2
+rim_enabled = true
+rim = 0.45
+rim_tint = 0.25
 
 [sub_resource type="SphereMesh" id="mesh_sphere"]
 
 [sub_resource type="BoxMesh" id="mesh_box"]
+
+[sub_resource type="SphereMesh" id="mesh_round"]
 
 [sub_resource type="CapsuleMesh" id="mesh_capsule"]
 
@@ -72,7 +127,7 @@ surface_material_override/0 = SubResource("mat_goggles")
 
 [node name="Torso" type="MeshInstance3D" parent="Body"]
 transform = Transform3D(0.35, 0, 0, 0, 0.6, 0, 0, 0, 0.25, 0, 1.0, 0)
-mesh = SubResource("mesh_box")
+mesh = SubResource("mesh_round")
 surface_material_override/0 = SubResource("mat_black_shirt")
 
 [node name="GlowLine1" type="MeshInstance3D" parent="Body/Torso"]
@@ -87,7 +142,7 @@ surface_material_override/0 = SubResource("mat_blue_glow")
 
 [node name="Coat" type="MeshInstance3D" parent="Body"]
 transform = Transform3D(0.45, 0, 0, 0, 0.65, 0, 0, 0, 0.28, 0, 0.95, 0)
-mesh = SubResource("mesh_box")
+mesh = SubResource("mesh_round")
 surface_material_override/0 = SubResource("mat_purple_coat")
 
 [node name="CoatTrim1" type="MeshInstance3D" parent="Body/Coat"]
@@ -137,7 +192,7 @@ surface_material_override/0 = SubResource("mat_blue_pants")
 
 [node name="LeftBoot" type="MeshInstance3D" parent="Body/LeftLeg"]
 transform = Transform3D(1.2, 0, 0, 0, 0.3, 0, 0, 0, 1.5, 0, -0.7, 0.1)
-mesh = SubResource("mesh_box")
+mesh = SubResource("mesh_round")
 surface_material_override/0 = SubResource("mat_black_boots")
 
 [node name="BootAccent1" type="MeshInstance3D" parent="Body/LeftLeg/LeftBoot"]
@@ -152,7 +207,7 @@ surface_material_override/0 = SubResource("mat_blue_pants")
 
 [node name="RightBoot" type="MeshInstance3D" parent="Body/RightLeg"]
 transform = Transform3D(1.2, 0, 0, 0, 0.3, 0, 0, 0, 1.5, 0, -0.7, 0.1)
-mesh = SubResource("mesh_box")
+mesh = SubResource("mesh_round")
 surface_material_override/0 = SubResource("mat_black_boots")
 
 [node name="BootAccent2" type="MeshInstance3D" parent="Body/RightLeg/RightBoot"]
