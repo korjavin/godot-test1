@@ -101,6 +101,16 @@ const CHASE_PITCH: float = 10.0 * PI / 180.0
 const BREATHE_SPEED: float = 2.0
 const BREATHE_AMOUNT: float = 0.012
 
+# ----- Bite -----
+## How long the chomp animation plays when the crocodile catches the player (s).
+const BITE_DURATION: float = 0.5
+
+## How far the head snaps down/up during the chomp (radians).
+const BITE_PITCH: float = 26.0 * PI / 180.0
+
+## How far the body lunges forward during the bite (metres).
+const BITE_LUNGE: float = 0.35
+
 # ============================================================================
 # STATE VARIABLES
 # ============================================================================
@@ -150,6 +160,10 @@ var animation_time: float = 0.0
 
 ## Current (eased) forward lean
 var current_pitch: float = 0.0
+
+## Bite/chomp animation state, played when the crocodile catches the player.
+var is_biting: bool = false
+var bite_timer: float = 0.0
 
 # ============================================================================
 # LIFECYCLE METHODS
@@ -449,6 +463,11 @@ func _animate_body(delta: float) -> void:
 
 	animation_time += delta
 
+	# A bite overrides the normal locomotion animation while it plays.
+	if is_biting:
+		_animate_bite(delta)
+		return
+
 	# How fast are we actually moving along the ground? (0 = standing still)
 	var horizontal_speed := Vector2(velocity.x, velocity.z).length()
 	var move_factor := clampf(horizontal_speed / BASE_MOVE_SPEED, 0.0, 1.6)
@@ -477,6 +496,32 @@ func _animate_body(delta: float) -> void:
 	var oscillation := Basis.from_euler(Vector3(current_pitch, yaw_sway, roll))
 	model.transform.basis = (oscillation * facing).scaled(model_base_scale)
 	model.position.y = model_base_y + bob
+
+
+func _animate_bite(delta: float) -> void:
+	"""
+	Play the chomp: the head snaps down/up a couple of times while the body lunges
+	forward (toward the player it just caught, since the crocodile keeps facing
+	them while paused). The lunge eases in and back out, so the model returns
+	cleanly to its rest pose as the bite ends.
+	"""
+	bite_timer -= delta
+	if bite_timer <= 0.0:
+		is_biting = false
+		return
+
+	# Progress through the bite: 0 at the start, 1 at the end.
+	var p := 1.0 - clampf(bite_timer / BITE_DURATION, 0.0, 1.0)
+	# Two fast chomps (sin over two cycles) and a single forward lunge (sin over
+	# half a cycle, so it pushes out then pulls back to zero).
+	var chomp := sin(p * TAU * 2.0)
+	var lunge := sin(p * PI) * BITE_LUNGE
+
+	var facing := Basis(Vector3.UP, MODEL_FACING_OFFSET)
+	var snap := Basis.from_euler(Vector3(chomp * BITE_PITCH, 0.0, 0.0))
+	model.transform.basis = (snap * facing).scaled(model_base_scale)
+	# Lunge along the body's forward axis (+Z) and lift a touch on each snap.
+	model.position = Vector3(0.0, model_base_y + absf(chomp) * 0.04, lunge)
 
 
 # ============================================================================
@@ -537,24 +582,34 @@ func _resolve_crocodile_conflict(other_crocodile: Node) -> void:
 		queue_free()
 
 
-func _on_player_collision(player: Node) -> void:
-	"""Handle collision with the player (FATAL)."""
-	print("💀 Piglet Crocodile collision! Player defeated!")
+func _start_bite() -> void:
+	"""Begin the chomp animation (ignored if one is already playing)."""
+	if is_biting:
+		return
+	is_biting = true
+	bite_timer = BITE_DURATION
 
-	# Reset player to spawn position
-	if player.has_method("reset_position"):
+
+func _on_player_collision(player: Node) -> void:
+	"""Handle collision with the player (FATAL): chomp, then send them back."""
+	print("💀 Piglet Crocodile bites the player!")
+
+	# Snap at the player so the hit reads clearly.
+	_start_bite()
+
+	# Tell the player it was bitten. hit_by_crocodile() plays the red flash /
+	# camera shake / brief freeze and then respawns; older saves without it fall
+	# back to a plain reset.
+	if player.has_method("hit_by_crocodile"):
+		player.hit_by_crocodile()
+	elif player.has_method("reset_position"):
 		player.reset_position()
 	else:
 		# Fallback: move player up and away
 		if player is Node3D:
 			player.global_position = Vector3(0, 2, 0)
 
-	# Optional: Add visual/audio feedback here
-	# - Play death sound
-	# - Show game over UI
-	# - Spawn particle effect
-
-	# Optional: Make the crocodile react (pause, animation, etc.)
+	# Pause/turn away so we don't immediately re-trigger on the same overlap.
 	_pause_and_change_direction()
 
 

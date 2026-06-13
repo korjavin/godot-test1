@@ -105,6 +105,20 @@ var step_direction: float = 0.0
 ## reset to 0 whenever the player is caught by a crocodile (see reset_position).
 var coins_collected: int = 0
 
+## "Caught" sequence: when a crocodile bites the player we freeze briefly (so the
+## bite is actually visible), flash the screen red and shake the camera, then
+## respawn. These track that short window.
+var is_caught: bool = false
+var caught_timer: float = 0.0
+const CAUGHT_DURATION: float = 0.55
+
+## Camera shake, used by the crocodile-bite hit effect. Decays back to 0.
+var shake_amount: float = 0.0
+const SHAKE_MAX: float = 0.25
+const SHAKE_DECAY: float = 1.0
+## Resting local position of the camera, so shake can offset from it and restore.
+var camera_rest_position: Vector3 = Vector3.ZERO
+
 ## Character's visual mesh (for ducking animation)
 @onready var mesh_instance: Node3D = $MeshInstance3D
 
@@ -204,6 +218,10 @@ func _ready() -> void:
 	preload_all_characters()
 	set_active_character(current_character_index)
 
+	# Remember the camera's resting spot so the hit-shake can offset from it.
+	if camera:
+		camera_rest_position = camera.position
+
 	print("Player Controller initialized!")
 	print("Controls:")
 	print("  W / S - Walk forward / back")
@@ -262,6 +280,19 @@ func _physics_process(delta: float) -> void:
 
 	@param delta: Time elapsed since last frame (in seconds)
 	"""
+
+	# STEP 0: If a crocodile just caught us, freeze in place and let the bite +
+	# red flash play out for a moment, then respawn. We skip all normal input and
+	# movement while this short "caught" window runs.
+	if is_caught:
+		velocity = Vector3.ZERO
+		move_and_slide()
+		update_character_animation(delta, Vector2.ZERO)
+		caught_timer -= delta
+		if caught_timer <= 0.0:
+			is_caught = false
+			reset_position()
+		return
 
 	# STEP 1: Handle Gravity
 	# If the character is not on the ground, apply gravity
@@ -322,6 +353,26 @@ func _physics_process(delta: float) -> void:
 
 	# STEP 10: Update character animations
 	update_character_animation(delta, input_dir)
+
+func _process(delta: float) -> void:
+	"""
+	Per-frame visual updates that don't belong in the physics step. Right now this
+	is just the camera shake from being bitten — it offsets the camera by a small
+	random amount that decays back to zero.
+	"""
+	if not camera:
+		return
+
+	if shake_amount > 0.0:
+		shake_amount = maxf(0.0, shake_amount - SHAKE_DECAY * delta)
+		camera.position = camera_rest_position + Vector3(
+			randf_range(-1.0, 1.0),
+			randf_range(-1.0, 1.0),
+			0.0
+		) * shake_amount
+	elif camera.position != camera_rest_position:
+		# Settle exactly back to rest once the shake is done.
+		camera.position = camera_rest_position
 
 # ============================================================================
 # HELPER FUNCTIONS
@@ -911,6 +962,29 @@ func collect_coin() -> void:
 	"""
 	coins_collected += 1
 	print("Collected a coin! Total: %d" % coins_collected)
+
+
+func hit_by_crocodile() -> void:
+	"""
+	Called by a crocodile when it bites the player (see piglet_crocodile_ai.gd).
+
+	Rather than teleporting away instantly, we play a clear "caught" signal: a red
+	screen flash, a camera shake, and a brief freeze (handled in _physics_process)
+	so the bite is actually visible. reset_position() — which also clears the coin
+	count — runs at the end of that short window.
+	"""
+	if is_caught:
+		return
+	is_caught = true
+	caught_timer = CAUGHT_DURATION
+
+	# Pop the red full-screen flash (found via group, so the HUD isn't hard-wired).
+	var flash := get_tree().get_first_node_in_group("hit_flash")
+	if flash and flash.has_method("flash"):
+		flash.flash()
+
+	# Kick off the camera shake.
+	shake_amount = SHAKE_MAX
 
 
 func reset_position() -> void:
