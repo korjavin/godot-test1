@@ -73,12 +73,33 @@ extends Node3D
 ## block. This stops crocodiles from spawning partially buried inside blocks.
 @export var min_object_clearance: float = 1.5
 
+## Enable/disable collectible coin spawning on terrain
+@export var spawn_coins: bool = true
+
+## Number of coins to spawn per chunk. Kept modest so they stay motivating
+## rather than carpeting the ground.
+@export var coins_per_chunk: int = 6
+
+## Minimum distance between coins (in meters)
+@export var min_coin_spacing: float = 4.0
+
+## Coin placement heights (metres):
+## - ground coins float just above the grass, grabbed by walking over them
+## - air coins sit above standing reach, so you have to jump for them
+## - block coins sit this far above a block's top surface
+const COIN_GROUND_HEIGHT: float = 0.9
+const COIN_AIR_HEIGHT: float = 3.0
+const COIN_BLOCK_OFFSET: float = 0.6
+
 # ============================================================================
 # SECTION 2: INTERNAL STATE
 # ============================================================================
 
 ## Preloaded crocodile scene for spawning
 var crocodile_scene: PackedScene
+
+## Preloaded coin scene for spawning
+var coin_scene: PackedScene
 
 ## Reference to the player node to track their position
 var player: Node3D
@@ -103,6 +124,12 @@ func _ready() -> void:
 	if not crocodile_scene:
 		push_warning("Failed to load crocodile scene!")
 		spawn_crocodiles = false
+
+	# Load the coin scene for spawning
+	coin_scene = load("res://scenes/collectibles/coin.tscn")
+	if not coin_scene:
+		push_warning("Failed to load coin scene!")
+		spawn_coins = false
 
 	# Find the player in the scene tree
 	# We'll use this to track where to generate terrain
@@ -266,6 +293,10 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 	if spawn_crocodiles:
 		spawn_crocodiles_in_chunk(chunk_pos, mesh_instance, obstacles)
 
+	# Spawn collectible coins (on the ground, on blocks, and some up in the air)
+	if spawn_coins:
+		spawn_coins_in_chunk(chunk_pos, mesh_instance, obstacles)
+
 func spawn_objects_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D) -> Array:
 	"""
 	Spawns blocks within a terrain chunk: scattered cubes, the occasional little
@@ -337,18 +368,23 @@ func spawn_objects_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D) -
 		var size := rng.randf_range(object_size_min, object_size_max)
 		create_block(parent_chunk, Vector3(random_x, size / 2.0, random_z), size, rng.randf_range(0, TAU), rng)
 		spawned_positions.append(object_pos)
-		obstacles.append({ "pos": Vector3(random_x, 0, random_z), "radius": size * 0.71 })
+
+		# Track the height of the top surface (grows if we stack a tower on top).
+		var top_y := size
 
 		# Sometimes stack a few smaller blocks on top to make a little tower.
 		if rng.randf() < stack_chance:
 			var stack_count := rng.randi_range(1, stack_max_extra)
-			var top_y := size  # current height of the top surface of the stack
 			for i in stack_count:
 				# Each block up the stack is a bit smaller, so towers taper and
 				# the random yaw doesn't make them overhang awkwardly.
 				var stack_size := size * rng.randf_range(0.6, 0.85)
 				create_block(parent_chunk, Vector3(random_x, top_y + stack_size / 2.0, random_z), stack_size, rng.randf_range(0, TAU), rng)
 				top_y += stack_size
+
+		# Record the footprint and final top height — used to keep crocodiles out
+		# of the block and to perch coins on top of it.
+		obstacles.append({ "pos": Vector3(random_x, 0, random_z), "radius": size * 0.71, "top": top_y })
 
 	return obstacles
 
@@ -391,11 +427,14 @@ func spawn_wall(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, half_c
 
 		# Wall blocks are axis-aligned (yaw 0) so they sit flush against each other.
 		create_block(parent_chunk, Vector3(x, block_size / 2.0, z), block_size, 0.0, rng)
-		obstacles.append({ "pos": Vector3(x, 0, z), "radius": block_size * 0.71 })
+		var top := block_size
 
 		# Now and then double a section up so the wall isn't a uniform single row.
 		if rng.randf() < 0.3:
 			create_block(parent_chunk, Vector3(x, block_size + block_size / 2.0, z), block_size, 0.0, rng)
+			top = 2.0 * block_size
+
+		obstacles.append({ "pos": Vector3(x, 0, z), "radius": block_size * 0.71, "top": top })
 
 func create_block(parent_chunk: MeshInstance3D, center_pos: Vector3, size: float, yaw: float, rng: RandomNumberGenerator) -> void:
 	"""
@@ -536,6 +575,85 @@ func spawn_crocodiles_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D
 
 	if spawned_positions.size() > 0:
 		print("Spawned %d crocodiles in chunk (%d, %d)" % [spawned_positions.size(), chunk_pos.x, chunk_pos.y])
+
+func spawn_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array) -> void:
+	"""
+	Scatter collectible coins through a chunk. A coin is one of three kinds:
+	  - a ground coin floating just above the grass (walk over it),
+	  - an air coin up at jump height (you have to jump for it), or
+	  - a block coin perched on top of a block / tower.
+
+	@param chunk_pos: Chunk coordinates for seeded random generation
+	@param parent_chunk: The chunk mesh to attach coins to
+	@param obstacles: Block footprints (with their top heights) from
+	                  spawn_objects_in_chunk, used to place block coins and to keep
+	                  low coins from spawning inside a block.
+
+	EDUCATIONAL NOTE:
+	- Seeded like everything else, so a chunk's coins are always the same.
+	- Coins are parented to the chunk, so they unload when the chunk does.
+	"""
+	if not coin_scene:
+		return
+
+	# Seed offset so coins land in different spots than objects/crocodiles.
+	var seed_value := hash(Vector2i(chunk_pos.x * 19783, chunk_pos.y * 51307))
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_value
+
+	var half_chunk := chunk_size / 2.0
+	var margin := 3.0
+
+	# Positions placed so far, to keep coins spaced out.
+	var placed: Array[Vector3] = []
+
+	var attempts := 0
+	var max_attempts := coins_per_chunk * 6
+
+	while placed.size() < coins_per_chunk and attempts < max_attempts:
+		attempts += 1
+
+		var coin_pos: Vector3
+		var roll := rng.randf()
+
+		if roll < 0.3 and obstacles.size() > 0:
+			# Perch a coin on top of a random block / tower.
+			var ob = obstacles[rng.randi_range(0, obstacles.size() - 1)]
+			coin_pos = Vector3(ob.pos.x, ob.top + COIN_BLOCK_OFFSET, ob.pos.z)
+		else:
+			# Out in the open: a ground-level coin, or a higher "jump for it" one.
+			var x := rng.randf_range(-half_chunk + margin, half_chunk - margin)
+			var z := rng.randf_range(-half_chunk + margin, half_chunk - margin)
+			# Don't bury a low coin inside a block.
+			if _point_over_block(x, z, obstacles):
+				continue
+			var y := COIN_GROUND_HEIGHT if roll < 0.7 else COIN_AIR_HEIGHT
+			coin_pos = Vector3(x, y, z)
+
+		# Keep coins spaced apart from each other.
+		var valid := true
+		for existing in placed:
+			if coin_pos.distance_to(existing) < min_coin_spacing:
+				valid = false
+				break
+		if not valid:
+			continue
+
+		# Spawn the coin (position is local to the chunk, like blocks/crocodiles).
+		var coin := coin_scene.instantiate()
+		coin.position = coin_pos
+		parent_chunk.add_child(coin)
+		placed.append(coin_pos)
+
+func _point_over_block(x: float, z: float, obstacles: Array) -> bool:
+	"""
+	True if the (x, z) column is over (or hugging) a block footprint, so we don't
+	drop a ground/air coin inside a block.
+	"""
+	for ob in obstacles:
+		if Vector2(x - ob.pos.x, z - ob.pos.z).length() < ob.radius + 1.0:
+			return true
+	return false
 
 func remove_chunk(chunk_pos: Vector2i) -> void:
 	"""

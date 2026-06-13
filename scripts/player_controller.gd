@@ -101,6 +101,10 @@ var step_timer: float = 0.0
 ## -1 = stepping left (Q), +1 = stepping right (E).
 var step_direction: float = 0.0
 
+## How many golden coins the player has collected. The HUD reads this, and it is
+## reset to 0 whenever the player is caught by a crocodile (see reset_position).
+var coins_collected: int = 0
+
 ## Character's visual mesh (for ducking animation)
 @onready var mesh_instance: Node3D = $MeshInstance3D
 
@@ -900,6 +904,15 @@ func animate_idle(delta: float) -> void:
 # SECTION 7: GAME STATE METHODS
 # ============================================================================
 
+func collect_coin() -> void:
+	"""
+	Add one to the coin count. Called by a coin's Area3D when the player touches
+	it (see coin.gd). The HUD picks up the new value on its next frame.
+	"""
+	coins_collected += 1
+	print("Collected a coin! Total: %d" % coins_collected)
+
+
 func reset_position() -> void:
 	"""
 	Reset the player to the spawn position.
@@ -907,6 +920,9 @@ func reset_position() -> void:
 	"""
 	# Define spawn point
 	var spawn_point = Vector3(0, 2, 0)
+
+	# Getting caught by a crocodile costs you all your coins.
+	coins_collected = 0
 
 	# Clear any crocodiles near the spawn point
 	clear_nearby_crocodiles(spawn_point)
