@@ -38,6 +38,50 @@ const PAUSE_DURATION: float = 0.5
 ## Gravity acceleration (matches project default)
 const GRAVITY: float = 9.8
 
+# ----- Organic wandering -----
+## How sharply the heading drifts while wandering (radians/sec of random steer).
+## Small continuous nudges produce smooth, curved meandering instead of
+## straight lines with hard turns.
+const WANDER_TURN_RATE: float = 1.2
+
+## How smoothly the body turns to face its heading (higher = snappier)
+const TURN_SMOOTHNESS: float = 5.0
+
+## Slowest wander speed as a fraction of the instance's base speed
+const MIN_WANDER_SPEED_FACTOR: float = 0.45
+
+## How quickly wander speed ebbs and flows (radians/sec)
+const SPEED_VARIATION_FREQ: float = 0.8
+
+## Chance (per direction-change interval) of pausing to "sniff" around
+const SNIFF_PAUSE_CHANCE: float = 0.3
+
+# ----- Procedural body animation -----
+## Yaw applied to the model so its snout points along the travel direction.
+## The mesh is authored facing +X but the body travels +Z, so we rotate -90°.
+## If the snout ends up pointing the wrong way in-editor, flip this sign.
+const MODEL_FACING_OFFSET: float = -PI / 2.0
+
+## Stride frequency at full speed (radians/sec) — drives the waddle/bob
+const STRIDE_FREQUENCY: float = 9.0
+
+## Side-to-side waddle roll amplitude (radians) — uses PI math so it stays a
+## constant expression (deg_to_rad() can't be used in a const)
+const WADDLE_ROLL: float = 9.0 * PI / 180.0
+
+## Vertical bob amplitude (metres)
+const BOB_AMOUNT: float = 0.025
+
+## Slow body "snaking" yaw amplitude (radians)
+const SWAY_YAW: float = 5.0 * PI / 180.0
+
+## Forward lean while hunting the player (radians)
+const CHASE_PITCH: float = 10.0 * PI / 180.0
+
+## Idle breathing speed/amount when standing still
+const BREATHE_SPEED: float = 2.0
+const BREATHE_AMOUNT: float = 0.012
+
 # ============================================================================
 # STATE VARIABLES
 # ============================================================================
@@ -63,6 +107,31 @@ var player_node: Node3D = null
 ## Random number generator for movement
 var rng: RandomNumberGenerator = RandomNumberGenerator.new()
 
+## Smoothly-drifting heading used while wandering (radians)
+var wander_heading: float = 0.0
+
+## Phase accumulator for wander-speed variation
+var speed_phase: float = 0.0
+
+## Per-instance phase offset so the whole pack doesn't move in lockstep
+var instance_phase: float = 0.0
+
+# --- Body animation state ---
+
+## The model node we animate (single static mesh, no rigged limbs)
+var model: Node3D = null
+
+## Cached rest scale / height of the model so animation composes on top
+var model_base_scale: Vector3 = Vector3.ONE
+var model_base_y: float = 0.0
+
+## Stride / idle phase accumulators
+var stride_phase: float = 0.0
+var animation_time: float = 0.0
+
+## Current (eased) forward lean
+var current_pitch: float = 0.0
+
 # ============================================================================
 # LIFECYCLE METHODS
 # ============================================================================
@@ -86,58 +155,69 @@ func _ready() -> void:
 	# Start with a random offset to avoid all crocodiles changing direction at once
 	time_since_direction_change = randf() * DIRECTION_CHANGE_INTERVAL
 
+	# Per-instance phase offsets so a pack of crocodiles doesn't move in lockstep
+	instance_phase = rng.randf_range(0.0, TAU)
+	speed_phase = rng.randf_range(0.0, TAU)
+	stride_phase = rng.randf_range(0.0, TAU)
+
+	# Cache the visual model so we can animate its body procedurally
+	model = get_node_or_null("Model")
+	if model:
+		model_base_scale = model.scale
+		model_base_y = model.position.y
+
 	# Find the player node (defer to allow scene to fully load)
 	call_deferred("_find_player")
 
 
 func _physics_process(delta: float) -> void:
-	"""Update movement and handle collision every physics frame."""
+	"""Update movement, body animation and collisions every physics frame."""
 	# Apply gravity
 	if not is_on_floor():
 		velocity.y -= GRAVITY * delta
 	else:
 		velocity.y = 0.0
 
-	# Handle pause state
 	if is_paused:
+		# Stand still while paused (still breathes via _animate_body below).
 		pause_time_remaining -= delta
 		if pause_time_remaining <= 0:
 			is_paused = false
-		# Don't move while paused
-		velocity.x = 0
-		velocity.z = 0
-		move_and_slide()
-		return
-
-	# Check if player is in detection range
-	_update_chase_state()
-
-	# Choose movement behavior based on state
-	if is_chasing and player_node:
-		# Chase the player
-		_chase_player()
-	else:
-		# Wander randomly
-		_wander(delta)
-
-	# Rotate to face movement direction
-	if movement_direction.length() > 0.1:
-		var target_rotation = atan2(movement_direction.x, movement_direction.z)
-		rotation.y = lerp_angle(rotation.y, target_rotation, delta * 5.0)
-
-		# Apply movement based on facing direction (prevents sliding sideways)
-		var current_speed = chase_speed_instance if is_chasing else move_speed_instance
-		velocity.x = sin(rotation.y) * current_speed
-		velocity.z = cos(rotation.y) * current_speed
-	else:
 		velocity.x = 0.0
 		velocity.z = 0.0
+	else:
+		# Decide what we want to do this frame.
+		_update_chase_state()
 
-	# Move and handle collisions
+		if is_chasing and player_node:
+			# Chase the player
+			_chase_player()
+		else:
+			# Wander with smooth, organic steering
+			_wander(delta)
+
+		# Rotate smoothly toward the desired heading and move that way.
+		# Driving velocity from facing (not the raw direction) prevents sliding
+		# sideways and makes turns curve naturally.
+		if movement_direction.length() > 0.1:
+			var target_rotation := atan2(movement_direction.x, movement_direction.z)
+			rotation.y = lerp_angle(rotation.y, target_rotation, delta * TURN_SMOOTHNESS)
+
+			var current_speed := chase_speed_instance if is_chasing else _wander_speed(delta)
+			velocity.x = sin(rotation.y) * current_speed
+			velocity.z = cos(rotation.y) * current_speed
+		else:
+			velocity.x = 0.0
+			velocity.z = 0.0
+
+	# Move and resolve collisions (collisions are ignored while paused, matching
+	# the original "harmless while recovering" behaviour).
 	move_and_slide()
+	if not is_paused:
+		_handle_collisions()
 
-	# Handle collisions with player and other crocodiles
-	_handle_collisions()
+	# Animate the body to match how fast we're actually moving.
+	_animate_body(delta)
 
 
 # ============================================================================
@@ -191,11 +271,36 @@ func _chase_player() -> void:
 
 
 func _wander(delta: float) -> void:
-	"""Handle random wandering behavior."""
-	# Update direction change timer
+	"""
+	Organic wandering: instead of snapping to a brand-new random direction and
+	walking dead-straight, the heading drifts continuously by small random
+	amounts (a bounded random walk), producing smooth, curved meandering. Every
+	so often we apply a bigger course correction and occasionally pause to sniff.
+	"""
+	# Continuous gentle steering — this is what curves the path.
+	wander_heading += rng.randf_range(-1.0, 1.0) * WANDER_TURN_RATE * delta
+
+	# Periodic bigger nudges / occasional pauses to look around.
 	time_since_direction_change += delta
 	if time_since_direction_change >= DIRECTION_CHANGE_INTERVAL:
-		_pause_and_change_direction()
+		time_since_direction_change = 0.0
+		wander_heading += rng.randf_range(-PI / 2.0, PI / 2.0)
+		if rng.randf() < SNIFF_PAUSE_CHANCE:
+			is_paused = true
+			pause_time_remaining = PAUSE_DURATION
+
+	# Convert heading to a direction vector on the XZ plane.
+	movement_direction = Vector3(sin(wander_heading), 0.0, cos(wander_heading))
+
+
+func _wander_speed(delta: float) -> float:
+	"""
+	A gently varying wander speed so crocodiles ease between strolling and a
+	brisker walk instead of gliding at one constant velocity.
+	"""
+	speed_phase += delta * SPEED_VARIATION_FREQ
+	var t := 0.5 * (sin(speed_phase + instance_phase) + 1.0)  # 0..1
+	return move_speed_instance * lerp(MIN_WANDER_SPEED_FACTOR, 1.0, t)
 
 
 # ============================================================================
@@ -203,16 +308,12 @@ func _wander(delta: float) -> void:
 # ============================================================================
 
 func _choose_new_direction() -> void:
-	"""Choose a new random movement direction."""
-	# Random angle in radians
-	var angle: float = rng.randf_range(0, TAU)  # TAU = 2*PI = full circle
+	"""Pick a fresh random heading to wander toward."""
+	# Random angle in radians (TAU = 2*PI = full circle)
+	wander_heading = rng.randf_range(0.0, TAU)
 
-	# Convert to direction vector (on XZ plane, Y=0 for ground movement)
-	movement_direction = Vector3(
-		sin(angle),
-		0,
-		cos(angle)
-	).normalized()
+	# Convert to a direction vector on the XZ plane (Y=0 for ground movement)
+	movement_direction = Vector3(sin(wander_heading), 0.0, cos(wander_heading))
 
 	# Reset timer
 	time_since_direction_change = 0.0
@@ -223,6 +324,53 @@ func _pause_and_change_direction() -> void:
 	is_paused = true
 	pause_time_remaining = PAUSE_DURATION
 	_choose_new_direction()
+
+
+# ============================================================================
+# BODY ANIMATION
+# ============================================================================
+
+func _animate_body(delta: float) -> void:
+	"""
+	Procedural body animation. The crocodile model is a single static mesh with
+	no rigged limbs, so — like the player animates its limbs with sine waves — we
+	animate the whole `Model` node: a side-to-side waddle, a vertical bob, a slow
+	body "snake", and a forward lean while hunting. The stride speeds up the
+	faster the crocodile moves and freezes (to a gentle breath) when it stops.
+	"""
+	if not model:
+		return
+
+	animation_time += delta
+
+	# How fast are we actually moving along the ground? (0 = standing still)
+	var horizontal_speed := Vector2(velocity.x, velocity.z).length()
+	var move_factor := clampf(horizontal_speed / BASE_MOVE_SPEED, 0.0, 1.6)
+
+	# Advance the stride phase faster the quicker we move.
+	stride_phase += delta * STRIDE_FREQUENCY * move_factor
+
+	# Waddle (roll about the forward axis) + vertical bob (twice the stride rate).
+	var roll := sin(stride_phase) * WADDLE_ROLL * move_factor
+	var bob := sin(stride_phase * 2.0) * BOB_AMOUNT * move_factor
+
+	# Slow body "snaking" — a lazy yaw sway, offset per-instance.
+	var yaw_sway := sin(stride_phase * 0.5 + instance_phase) * SWAY_YAW * move_factor
+
+	# Lean forward while hunting; ease back to level otherwise.
+	var target_pitch := CHASE_PITCH if is_chasing else 0.0
+	current_pitch = lerp(current_pitch, target_pitch, delta * 6.0)
+
+	# When basically still, replace the bob with a subtle breathing motion.
+	if move_factor < 0.05:
+		bob = sin(animation_time * BREATHE_SPEED) * BREATHE_AMOUNT
+
+	# Compose the transform: first align the snout to the travel direction, then
+	# layer the oscillations on top (re-applying the model's rest scale).
+	var facing := Basis(Vector3.UP, MODEL_FACING_OFFSET)
+	var oscillation := Basis.from_euler(Vector3(current_pitch, yaw_sway, roll))
+	model.transform.basis = (oscillation * facing).scaled(model_base_scale)
+	model.position.y = model_base_y + bob
 
 
 # ============================================================================
