@@ -44,6 +44,21 @@ extends Node3D
 @export var object_size_min: float = 1.0
 @export var object_size_max: float = 2.5
 
+## Chance (0..1) that a chunk contains a wall — a line of blocks the player has
+## to run around. Kept low so walls show up only "sometimes", not every chunk.
+@export var wall_chance: float = 0.35
+
+## How many blocks long a wall is (random between min and max).
+@export var wall_min_length: int = 4
+@export var wall_max_length: int = 7
+
+## Chance (0..1) that a scattered block gets extra blocks stacked on top of it,
+## so the terrain occasionally has little towers instead of only single cubes.
+@export var stack_chance: float = 0.25
+
+## Maximum number of extra blocks stacked on top of a stacked block.
+@export var stack_max_extra: int = 2
+
 ## Enable/disable crocodile spawning on terrain
 @export var spawn_crocodiles: bool = true
 
@@ -53,6 +68,10 @@ extends Node3D
 
 ## Minimum distance between crocodiles (in meters)
 @export var min_crocodile_spacing: float = 3.0
+
+## How much clear space (in meters) to keep between a crocodile and the nearest
+## block. This stops crocodiles from spawning partially buried inside blocks.
+@export var min_object_clearance: float = 1.5
 
 # ============================================================================
 # SECTION 2: INTERNAL STATE
@@ -237,20 +256,25 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 	add_child(mesh_instance)
 	active_chunks[chunk_pos] = mesh_instance
 
-	# Spawn objects in this chunk if enabled
+	# Spawn objects in this chunk if enabled. This returns the footprint of every
+	# block placed (walls included) so crocodiles can avoid spawning inside them.
+	var obstacles: Array = []
 	if spawn_objects:
-		spawn_objects_in_chunk(chunk_pos, mesh_instance)
+		obstacles = spawn_objects_in_chunk(chunk_pos, mesh_instance)
 
 	# Spawn crocodiles in this chunk if enabled
 	if spawn_crocodiles:
-		spawn_crocodiles_in_chunk(chunk_pos, mesh_instance)
+		spawn_crocodiles_in_chunk(chunk_pos, mesh_instance, obstacles)
 
-func spawn_objects_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D) -> void:
+func spawn_objects_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D) -> Array:
 	"""
-	Spawns random objects (cubes) within a terrain chunk.
+	Spawns blocks within a terrain chunk: scattered cubes, the occasional little
+	stack/tower, and — sometimes — a wall the player has to run around.
 
 	@param chunk_pos: Chunk coordinates for seeded random generation
 	@param parent_chunk: The chunk mesh to attach objects to
+	@return Array of obstacle footprints ({ "pos": Vector3, "radius": float }) so
+	        the crocodile spawner can keep its NPCs out of the blocks.
 
 	EDUCATIONAL NOTE:
 	- We use chunk coordinates as a seed for deterministic randomness
@@ -264,11 +288,18 @@ func spawn_objects_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D) -
 	var rng := RandomNumberGenerator.new()
 	rng.seed = seed_value
 
-	# Calculate the world position of this chunk's corner
-	var chunk_world_pos := chunk_to_world(chunk_pos)
+	# Half the chunk width — handy for keeping things inside the chunk bounds.
 	var half_chunk := chunk_size / 2.0
 
-	# Store positions of spawned objects to check spacing
+	# Footprints of every block we place, returned so crocodiles can avoid them.
+	var obstacles: Array = []
+
+	# Occasionally lay down a wall first, so scattered blocks can be placed around
+	# it (the scatter loop below checks against these footprints).
+	if rng.randf() < wall_chance:
+		spawn_wall(rng, parent_chunk, half_chunk, obstacles)
+
+	# Store positions of scattered objects to check spacing between them
 	var spawned_positions: Array[Vector3] = []
 
 	# Try to spawn objects with proper spacing
@@ -285,79 +316,154 @@ func spawn_objects_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D) -
 		var random_z := rng.randf_range(-half_chunk + margin, half_chunk - margin)
 		var object_pos := Vector3(random_x, 0, random_z)
 
-		# Check if this position is far enough from existing objects
+		# Check if this position is far enough from other scattered objects...
 		var valid_position := true
 		for existing_pos in spawned_positions:
 			if object_pos.distance_to(existing_pos) < min_object_spacing:
 				valid_position = false
 				break
 
+		# ...and not sitting on top of a wall block we placed above.
+		if valid_position:
+			for ob in obstacles:
+				if Vector2(random_x - ob.pos.x, random_z - ob.pos.z).length() < min_object_spacing:
+					valid_position = false
+					break
+
 		if not valid_position:
 			continue
 
-		# Create the object
-		var object_instance := MeshInstance3D.new()
-		object_instance.name = "Object_%d" % spawned_positions.size()
-
-		# Create a cube mesh with random size
-		var cube_mesh := BoxMesh.new()
+		# Base block sits on the ground.
 		var size := rng.randf_range(object_size_min, object_size_max)
-		cube_mesh.size = Vector3(size, size, size)
-
-		# Create a material with random color variations
-		var object_material := StandardMaterial3D.new()
-		# Generate earthy/natural colors (browns, grays, dark greens)
-		var color_choice := rng.randi_range(0, 2)
-		match color_choice:
-			0:  # Brown rocks
-				object_material.albedo_color = Color(
-					rng.randf_range(0.3, 0.5),
-					rng.randf_range(0.2, 0.4),
-					rng.randf_range(0.1, 0.3)
-				)
-			1:  # Gray stones
-				var gray := rng.randf_range(0.3, 0.6)
-				object_material.albedo_color = Color(gray, gray, gray)
-			2:  # Dark green (mossy)
-				object_material.albedo_color = Color(
-					rng.randf_range(0.1, 0.3),
-					rng.randf_range(0.3, 0.5),
-					rng.randf_range(0.1, 0.3)
-				)
-
-		object_material.roughness = rng.randf_range(0.7, 1.0)
-		cube_mesh.material = object_material
-
-		object_instance.mesh = cube_mesh
-
-		# Position relative to chunk (parent will handle world positioning)
-		# Add half the size to Y so cube sits on ground instead of halfway through
-		object_pos.y = size / 2.0
-		object_instance.position = object_pos
-
-		# Add slight random rotation for variety
-		object_instance.rotation.y = rng.randf_range(0, TAU)
-
-		# Add collision so player can't walk through objects
-		var static_body := StaticBody3D.new()
-		var collision_shape := CollisionShape3D.new()
-		var box_shape := BoxShape3D.new()
-		box_shape.size = Vector3(size, size, size)
-		collision_shape.shape = box_shape
-
-		static_body.add_child(collision_shape)
-		object_instance.add_child(static_body)
-
-		# Add to chunk (so it gets removed when chunk is removed)
-		parent_chunk.add_child(object_instance)
+		create_block(parent_chunk, Vector3(random_x, size / 2.0, random_z), size, rng.randf_range(0, TAU), rng)
 		spawned_positions.append(object_pos)
+		obstacles.append({ "pos": Vector3(random_x, 0, random_z), "radius": size * 0.71 })
 
-func spawn_crocodiles_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D) -> void:
+		# Sometimes stack a few smaller blocks on top to make a little tower.
+		if rng.randf() < stack_chance:
+			var stack_count := rng.randi_range(1, stack_max_extra)
+			var top_y := size  # current height of the top surface of the stack
+			for i in stack_count:
+				# Each block up the stack is a bit smaller, so towers taper and
+				# the random yaw doesn't make them overhang awkwardly.
+				var stack_size := size * rng.randf_range(0.6, 0.85)
+				create_block(parent_chunk, Vector3(random_x, top_y + stack_size / 2.0, random_z), stack_size, rng.randf_range(0, TAU), rng)
+				top_y += stack_size
+
+	return obstacles
+
+func spawn_wall(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, half_chunk: float, obstacles: Array) -> void:
+	"""
+	Build a single wall — a straight line of touching blocks the player must run
+	around — somewhere inside the chunk.
+
+	@param rng: The chunk's seeded RNG (so the wall is deterministic)
+	@param parent_chunk: The chunk mesh to attach the wall blocks to
+	@param half_chunk: Half the chunk width, for bounds
+	@param obstacles: Footprint list to append each wall block to (for crocodiles)
+	"""
+	# Uniform block size so the wall reads as one solid line.
+	var block_size := rng.randf_range(1.6, 2.4)
+	# Step slightly less than the block size so neighbours overlap — no gaps.
+	var step := block_size * 0.98
+	var length := rng.randi_range(wall_min_length, wall_max_length)
+
+	# Run the wall along X or along Z.
+	var along_x := rng.randf() < 0.5
+	var margin := 2.0
+	var limit := half_chunk - margin
+
+	# Distance from the first block centre to the last. Trim the wall if it would
+	# be longer than the chunk can hold.
+	var span := (length - 1) * step
+	if span > 2.0 * limit:
+		length = int(floor((2.0 * limit) / step)) + 1
+		span = (length - 1) * step
+
+	# Pick where the wall starts along its axis, and its fixed perpendicular coord.
+	var start := rng.randf_range(-limit, limit - span)
+	var fixed := rng.randf_range(-limit, limit)
+
+	for i in length:
+		var along := start + i * step
+		var x := along if along_x else fixed
+		var z := fixed if along_x else along
+
+		# Wall blocks are axis-aligned (yaw 0) so they sit flush against each other.
+		create_block(parent_chunk, Vector3(x, block_size / 2.0, z), block_size, 0.0, rng)
+		obstacles.append({ "pos": Vector3(x, 0, z), "radius": block_size * 0.71 })
+
+		# Now and then double a section up so the wall isn't a uniform single row.
+		if rng.randf() < 0.3:
+			create_block(parent_chunk, Vector3(x, block_size + block_size / 2.0, z), block_size, 0.0, rng)
+
+func create_block(parent_chunk: MeshInstance3D, center_pos: Vector3, size: float, yaw: float, rng: RandomNumberGenerator) -> void:
+	"""
+	Create one cube block (mesh + earthy material + box collision) and parent it
+	to the chunk. Shared by the scattered blocks, the stacked towers and the walls.
+
+	@param parent_chunk: The chunk mesh to attach the block to
+	@param center_pos: Block centre position, local to the chunk (Y is the centre,
+	                    so pass size/2 to sit a block on the ground)
+	@param size: Cube edge length
+	@param yaw: Y rotation in radians (0 for walls so they line up; random for scatter)
+	@param rng: The chunk's seeded RNG, used for the random material colour
+	"""
+	var object_instance := MeshInstance3D.new()
+
+	# Create a cube mesh at the requested size
+	var cube_mesh := BoxMesh.new()
+	cube_mesh.size = Vector3(size, size, size)
+
+	# Create a material with random earthy/natural colours (browns, grays, mossy)
+	var object_material := StandardMaterial3D.new()
+	var color_choice := rng.randi_range(0, 2)
+	match color_choice:
+		0:  # Brown rocks
+			object_material.albedo_color = Color(
+				rng.randf_range(0.3, 0.5),
+				rng.randf_range(0.2, 0.4),
+				rng.randf_range(0.1, 0.3)
+			)
+		1:  # Gray stones
+			var gray := rng.randf_range(0.3, 0.6)
+			object_material.albedo_color = Color(gray, gray, gray)
+		2:  # Dark green (mossy)
+			object_material.albedo_color = Color(
+				rng.randf_range(0.1, 0.3),
+				rng.randf_range(0.3, 0.5),
+				rng.randf_range(0.1, 0.3)
+			)
+
+	object_material.roughness = rng.randf_range(0.7, 1.0)
+	cube_mesh.material = object_material
+	object_instance.mesh = cube_mesh
+
+	# Position (local to the chunk) and orient the block.
+	object_instance.position = center_pos
+	object_instance.rotation.y = yaw
+
+	# Add collision so the player (and crocodiles) can't walk through the block.
+	var static_body := StaticBody3D.new()
+	var collision_shape := CollisionShape3D.new()
+	var box_shape := BoxShape3D.new()
+	box_shape.size = Vector3(size, size, size)
+	collision_shape.shape = box_shape
+
+	static_body.add_child(collision_shape)
+	object_instance.add_child(static_body)
+
+	# Add to chunk (so it gets removed when chunk is removed)
+	parent_chunk.add_child(object_instance)
+
+func spawn_crocodiles_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array = []) -> void:
 	"""
 	Spawns crocodile NPCs within a terrain chunk.
 
 	@param chunk_pos: Chunk coordinates for seeded random generation
 	@param parent_chunk: The chunk mesh to attach crocodiles to
+	@param obstacles: Block footprints to keep crocodiles out of, so they don't
+	                  spawn partially buried inside a block (see spawn_objects_in_chunk)
 
 	EDUCATIONAL NOTE:
 	- Crocodiles are spawned dynamically with the terrain
@@ -400,6 +506,16 @@ func spawn_crocodiles_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D
 			if crocodile_pos.distance_to(existing_pos) < min_crocodile_spacing:
 				valid_position = false
 				break
+
+		# Also reject positions that overlap a block, so crocodiles never spawn
+		# partially inside one. We compare horizontal distance against the block's
+		# footprint radius plus a clearance margin.
+		if valid_position:
+			for ob in obstacles:
+				var horizontal := Vector2(crocodile_pos.x - ob.pos.x, crocodile_pos.z - ob.pos.z).length()
+				if horizontal < ob.radius + min_object_clearance:
+					valid_position = false
+					break
 
 		if not valid_position:
 			continue
