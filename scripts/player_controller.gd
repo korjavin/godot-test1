@@ -403,9 +403,9 @@ func preload_all_characters() -> void:
 		character_container.add_child(instance)
 		instance.visible = false
 
-		# Give it the cel outline and remember its rest pose while limbs are
-		# still untouched (so re-activation never drifts the rest pose).
-		apply_character_outline(instance)
+		# Give it the cel-shaded style (outline + toon/rim) and remember its rest
+		# pose while limbs are still untouched (so re-activation never drifts it).
+		apply_character_style(instance)
 		character_instances.append(instance)
 		character_rest_poses.append(capture_rest_pose(instance))
 
@@ -531,28 +531,53 @@ func setup_animation_references() -> void:
 
 	print("Animation system initialized for character")
 
-func apply_character_outline(node: Node) -> void:
+func apply_character_style(node: Node) -> void:
 	"""
-	Recursively give every mesh in the loaded character a black cel outline.
+	Recursively give every mesh in the character its cel-shaded look:
+	  - a shared inverted-hull outline as a material overlay, and
+	  - soft toon diffuse + rim light on each surface material.
 
-	We assign a shared inverted-hull ShaderMaterial as each MeshInstance3D's
-	`material_overlay`, which renders as an extra silhouette pass on top of the
-	mesh's existing (toon) material. Walking the tree recursively means this
-	covers both the primitive-built characters AND the nested meshes inside the
-	GLB-based windman, in one place.
+	Walking the tree covers both the primitive-built characters AND the nested
+	meshes inside the GLB-based windman, in one place. The primitive characters
+	already declare toon shading in their scene files, so apply_toon_shading only
+	upgrades materials that aren't toon yet (windman's baked GLB materials) and
+	leaves the others exactly as authored.
 
-	@param node: Root of the character subtree to outline
+	@param node: Root of the character subtree to style
 	"""
-	# Build the outline material the first time we need it.
+	# Build the shared outline material the first time we need it.
 	if outline_material == null:
 		outline_material = ShaderMaterial.new()
 		outline_material.shader = OUTLINE_SHADER
 
 	if node is MeshInstance3D:
-		(node as MeshInstance3D).material_overlay = outline_material
+		var mesh := node as MeshInstance3D
+		mesh.material_overlay = outline_material
+		apply_toon_shading(mesh)
 
 	for child in node.get_children():
-		apply_character_outline(child)
+		apply_character_style(child)
+
+func apply_toon_shading(mesh: MeshInstance3D) -> void:
+	"""
+	Add soft toon diffuse + rim light to a mesh's materials, matching the look
+	the primitive characters get from their scene files. We duplicate each
+	material first so we only ADD shading and never lose the baked albedo or
+	textures — important for windman, whose colours live in its GLB materials.
+
+	Materials that are already toon (the primitive characters) are skipped.
+
+	@param mesh: The mesh whose surface materials should be cel-shaded
+	"""
+	for surface in mesh.get_surface_override_material_count():
+		var mat := mesh.get_active_material(surface)
+		if mat is BaseMaterial3D and mat.diffuse_mode != BaseMaterial3D.DIFFUSE_TOON:
+			var styled := mat.duplicate() as BaseMaterial3D
+			styled.diffuse_mode = BaseMaterial3D.DIFFUSE_TOON
+			styled.rim_enabled = true
+			styled.rim = 0.4
+			styled.rim_tint = 0.25
+			mesh.set_surface_override_material(surface, styled)
 
 func update_character_animation(delta: float, input_dir: Vector2) -> void:
 	"""
