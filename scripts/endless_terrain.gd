@@ -49,10 +49,10 @@ extends Node3D
 
 ## Number of crocodiles to spawn per chunk
 ## Higher values = more dangerous terrain!
-@export var crocodiles_per_chunk: int = 5
+@export var crocodiles_per_chunk: int = 10
 
 ## Minimum distance between crocodiles (in meters)
-@export var min_crocodile_spacing: float = 8.0
+@export var min_crocodile_spacing: float = 3.0
 
 # ============================================================================
 # SECTION 2: INTERNAL STATE

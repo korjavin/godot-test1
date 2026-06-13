@@ -67,6 +67,9 @@ const MOUSE_SENSITIVITY: float = 0.003
 const CAMERA_PITCH_MIN: float = -60.0  # Looking down limit (degrees)
 const CAMERA_PITCH_MAX: float = 60.0   # Looking up limit (degrees)
 
+## Safe spawn radius - crocodiles within this distance will be removed on respawn
+const SPAWN_SAFE_RADIUS: float = 25.0
+
 # ============================================================================
 # SECTION 4: STATE VARIABLES
 # ============================================================================
@@ -572,8 +575,14 @@ func reset_position() -> void:
 	Reset the player to the spawn position.
 	Called when the player dies (e.g., hit by a crocodile).
 	"""
+	# Define spawn point
+	var spawn_point = Vector3(0, 2, 0)
+
+	# Clear any crocodiles near the spawn point
+	clear_nearby_crocodiles(spawn_point)
+
 	# Reset position to spawn point
-	global_position = Vector3(0, 2, 0)
+	global_position = spawn_point
 
 	# Reset velocity to prevent carrying momentum
 	velocity = Vector3.ZERO
@@ -589,3 +598,24 @@ func reset_position() -> void:
 	is_running = false
 
 	print("Player position reset - respawned at spawn point")
+
+
+func clear_nearby_crocodiles(spawn_point: Vector3) -> void:
+	"""
+	Remove all crocodiles within SPAWN_SAFE_RADIUS of the spawn point.
+	Prevents instant death after respawning.
+
+	@param spawn_point: The position to check distance from
+	"""
+	var crocodiles = get_tree().get_nodes_in_group("crocodile")
+	var removed_count = 0
+
+	for crocodile in crocodiles:
+		if crocodile is Node3D:
+			var distance = spawn_point.distance_to(crocodile.global_position)
+			if distance <= SPAWN_SAFE_RADIUS:
+				crocodile.queue_free()
+				removed_count += 1
+
+	if removed_count > 0:
+		print("Cleared %d crocodile(s) near spawn point" % removed_count)
