@@ -44,11 +44,12 @@ extends Node3D
 @export var object_size_min: float = 1.0
 @export var object_size_max: float = 2.5
 
-## Chance (0..1) that a chunk contains a wall — a line of blocks the player has
-## to run around. Kept low so walls show up only "sometimes", not every chunk.
-@export var wall_chance: float = 0.35
+## Chance (0..1) that a chunk gets one "feature" structure — a wall, a corridor,
+## or a Mayan step-pyramid — for variety. Kept moderate so structures show up
+## often enough to be interesting but the field doesn't feel crowded.
+@export var structure_chance: float = 0.5
 
-## How many blocks long a wall is (random between min and max).
+## How many blocks long a wall / corridor is (random between min and max).
 @export var wall_min_length: int = 4
 @export var wall_max_length: int = 7
 
@@ -325,10 +326,11 @@ func spawn_objects_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D) -
 	# Footprints of every block we place, returned so crocodiles can avoid them.
 	var obstacles: Array = []
 
-	# Occasionally lay down a wall first, so scattered blocks can be placed around
-	# it (the scatter loop below checks against these footprints).
-	if rng.randf() < wall_chance:
-		spawn_wall(rng, parent_chunk, half_chunk, obstacles)
+	# Occasionally build one feature structure first (wall / corridor / pyramid),
+	# so scattered blocks can be placed around it (the scatter loop below checks
+	# against these footprints).
+	if rng.randf() < structure_chance:
+		spawn_feature_structure(rng, parent_chunk, half_chunk, obstacles)
 
 	# Store positions of scattered objects to check spacing between them
 	var spawned_positions: Array[Vector3] = []
@@ -383,10 +385,174 @@ func spawn_objects_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D) -
 				top_y += stack_size
 
 		# Record the footprint and final top height — used to keep crocodiles out
-		# of the block and to perch coins on top of it.
-		obstacles.append({ "pos": Vector3(random_x, 0, random_z), "radius": size * 0.71, "top": top_y })
+		# of the block and to perch coins on top of it. Single blocks/towers are
+		# climbable (their steps are <= one jump), so coins may sit on top.
+		obstacles.append({ "pos": Vector3(random_x, 0, random_z), "radius": size * 0.71, "top": top_y, "climbable": true })
 
 	return obstacles
+
+func spawn_feature_structure(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, half_chunk: float, obstacles: Array) -> void:
+	"""
+	Pick and build one "feature" structure for variety: a wall, a corridor to run
+	through, or a Mayan step-pyramid. Pyramids are the biggest/rarest landmark.
+
+	@param rng: The chunk's seeded RNG (so the choice is deterministic)
+	@param parent_chunk: The chunk mesh to attach the structure to
+	@param half_chunk: Half the chunk width, for bounds
+	@param obstacles: Footprint list each piece is appended to (crocodiles + coins)
+	"""
+	var pick := rng.randf()
+	if pick < 0.3:
+		spawn_wall(rng, parent_chunk, half_chunk, obstacles)
+	elif pick < 0.55:
+		spawn_corridor(rng, parent_chunk, half_chunk, obstacles)
+	elif pick < 0.75:
+		spawn_gate(rng, parent_chunk, half_chunk, obstacles)
+	else:
+		spawn_pyramid(rng, parent_chunk, half_chunk, obstacles)
+
+func spawn_pyramid(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, half_chunk: float, obstacles: Array) -> void:
+	"""
+	Build a Mayan step-pyramid: a few square slabs stacked smallest-on-top, like a
+	ziggurat. Each layer is a single flat box (cheap), not a grid of cubes.
+
+	@param rng: The chunk's seeded RNG
+	@param parent_chunk: The chunk mesh to attach the slabs to
+	@param half_chunk: Half the chunk width, for bounds
+	@param obstacles: Footprint list (one entry for the whole base, with the apex
+	                  height as its top so a coin can perch on top)
+	"""
+	# Pyramids vary a lot in size. Most are modest; now and then a giant one with
+	# 10-15 levels towers over the field as a landmark you can climb.
+	var layers: int
+	var base_size: float
+	if rng.randf() < 0.25:
+		layers = rng.randi_range(10, 15)
+		base_size = rng.randf_range(16.0, 24.0)
+	else:
+		layers = rng.randi_range(3, 6)
+		base_size = rng.randf_range(6.0, 11.0)
+
+	var layer_height := rng.randf_range(1.0, 1.5)
+	# How much narrower each layer is than the one below it.
+	var shrink := base_size / float(layers + 1)
+
+	# Keep the whole base inside the chunk.
+	var limit := half_chunk - (base_size * 0.5 + 1.0)
+	if limit <= 0.0:
+		return  # chunk too small for this pyramid; skip it
+	var cx := rng.randf_range(-limit, limit)
+	var cz := rng.randf_range(-limit, limit)
+
+	var y := 0.0
+	for i in layers:
+		var w := base_size - i * shrink
+		create_box(parent_chunk, Vector3(cx, y + layer_height / 2.0, cz), Vector3(w, layer_height, w), 0.0, rng)
+		y += layer_height
+
+	# One footprint for the whole base; top = apex height. Pyramids are climbable
+	# via their steps, so a coin on the apex is reachable (just a long climb).
+	obstacles.append({ "pos": Vector3(cx, 0, cz), "radius": base_size * 0.71, "top": y, "climbable": true })
+
+func spawn_gate(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, half_chunk: float, obstacles: Array) -> void:
+	"""
+	Build a monumental gate (Brandenburg-Tor style): two tall pillars with a thick
+	lintel beam across the top, leaving an opening to walk through.
+
+	The pillars are about as tall as a full jump, so reaching the coin that perches
+	on the lintel is genuinely hard — you have to hop up onto a pillar and then up
+	onto the lintel. That's intentional "hard to reach" gameplay.
+
+	@param rng: The chunk's seeded RNG
+	@param parent_chunk: The chunk mesh to attach the gate to
+	@param half_chunk: Half the chunk width, for bounds
+	@param obstacles: Footprint list (pillars, plus a coin-perch on the lintel)
+	"""
+	var pillar_w := rng.randf_range(1.3, 1.8)
+	# Pillars stay just under jump height (~3.6 m) so you can still hop onto one to
+	# reach the lintel coin — hard, but possible.
+	var pillar_h := rng.randf_range(2.7, 3.1)
+	var depth := rng.randf_range(1.3, 2.0)
+	var opening := rng.randf_range(3.0, 4.5)
+	var lintel_h := rng.randf_range(0.9, 1.3)
+	var total_w := opening + 2.0 * pillar_w  # full span across both pillars
+
+	# Pillars are separated along X (and you walk through along Z) or vice-versa.
+	var along_x := rng.randf() < 0.5
+
+	# Conservative bound that fits the gate whichever way it's turned.
+	var limit := half_chunk - (total_w * 0.5 + 1.0)
+	if limit <= 0.0:
+		return
+	var cx := rng.randf_range(-limit, limit)
+	var cz := rng.randf_range(-limit, limit)
+
+	# Distance from the gate centre to each pillar's centre.
+	var half_span := opening * 0.5 + pillar_w * 0.5
+
+	for pillar_sign in 2:
+		var s := -1.0 if pillar_sign == 0 else 1.0
+		var px: float = cx + (s * half_span if along_x else 0.0)
+		var pz: float = cz + (0.0 if along_x else s * half_span)
+		# Pillar is pillar_w across the span axis and `depth` across the other.
+		var pillar_dims: Vector3 = Vector3(pillar_w, pillar_h, depth) if along_x else Vector3(depth, pillar_h, pillar_w)
+		create_box(parent_chunk, Vector3(px, pillar_h * 0.5, pz), pillar_dims, 0.0, rng)
+		# Each pillar is its own footprint, so crocodiles can still pass through
+		# the opening between them.
+		obstacles.append({ "pos": Vector3(px, 0, pz), "radius": maxf(pillar_w, depth) * 0.71, "top": pillar_h, "climbable": true })
+
+	# Lintel beam spanning the full width, resting on top of both pillars.
+	var lintel_dims: Vector3 = Vector3(total_w, lintel_h, depth) if along_x else Vector3(depth, lintel_h, total_w)
+	create_box(parent_chunk, Vector3(cx, pillar_h + lintel_h * 0.5, cz), lintel_dims, 0.0, rng)
+
+	# Register the lintel centre as a (hard-to-reach but climbable) coin perch.
+	obstacles.append({ "pos": Vector3(cx, 0, cz), "radius": 1.0, "top": pillar_h + lintel_h, "climbable": true })
+
+func spawn_corridor(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, half_chunk: float, obstacles: Array) -> void:
+	"""
+	Build a corridor: two parallel two-block-high walls with a gap between them
+	that the player can run down.
+
+	@param rng: The chunk's seeded RNG
+	@param parent_chunk: The chunk mesh to attach the walls to
+	@param half_chunk: Half the chunk width, for bounds
+	@param obstacles: Footprint list each block is appended to
+	"""
+	var block_size := rng.randf_range(1.8, 2.4)
+	var step := block_size * 0.98
+	var length := rng.randi_range(wall_min_length + 1, wall_max_length + 1)
+	# Width of the walkable gap between the two walls.
+	var gap := rng.randf_range(2.5, 4.0)
+
+	var along_x := rng.randf() < 0.5
+	var limit := half_chunk - 2.0
+
+	# Trim the corridor if it's longer than the chunk can hold.
+	var span := (length - 1) * step
+	if span > 2.0 * limit:
+		length = int(floor((2.0 * limit) / step)) + 1
+		span = (length - 1) * step
+
+	# Bail if the chunk can't fit the corridor's width.
+	if limit - gap * 0.5 <= -limit + gap * 0.5:
+		return
+	var start := rng.randf_range(-limit, limit - span)
+	# Centreline of the corridor on the perpendicular axis.
+	var center_perp := rng.randf_range(-limit + gap * 0.5, limit - gap * 0.5)
+
+	# Two parallel walls, offset to either side of the centreline.
+	for side_sign in 2:
+		var side := -1.0 if side_sign == 0 else 1.0
+		var perp := center_perp + side * gap * 0.5
+		for i in length:
+			var along := start + i * step
+			var x := along if along_x else perp
+			var z := perp if along_x else along
+			# Two blocks tall so it reads as an enclosed passage. Sheer and taller
+			# than a jump, so it's not climbable (no coins perch on the roof).
+			create_block(parent_chunk, Vector3(x, block_size / 2.0, z), block_size, 0.0, rng)
+			create_block(parent_chunk, Vector3(x, block_size + block_size / 2.0, z), block_size, 0.0, rng)
+			obstacles.append({ "pos": Vector3(x, 0, z), "radius": block_size * 0.71, "top": 2.0 * block_size, "climbable": false })
 
 func spawn_wall(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, half_chunk: float, obstacles: Array) -> void:
 	"""
@@ -428,31 +594,41 @@ func spawn_wall(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, half_c
 		# Wall blocks are axis-aligned (yaw 0) so they sit flush against each other.
 		create_block(parent_chunk, Vector3(x, block_size / 2.0, z), block_size, 0.0, rng)
 		var top := block_size
+		# A single-block section is low enough to hop onto; a doubled one is not.
+		var climbable := true
 
 		# Now and then double a section up so the wall isn't a uniform single row.
 		if rng.randf() < 0.3:
 			create_block(parent_chunk, Vector3(x, block_size + block_size / 2.0, z), block_size, 0.0, rng)
 			top = 2.0 * block_size
+			climbable = false
 
-		obstacles.append({ "pos": Vector3(x, 0, z), "radius": block_size * 0.71, "top": top })
+		obstacles.append({ "pos": Vector3(x, 0, z), "radius": block_size * 0.71, "top": top, "climbable": climbable })
 
 func create_block(parent_chunk: MeshInstance3D, center_pos: Vector3, size: float, yaw: float, rng: RandomNumberGenerator) -> void:
 	"""
-	Create one cube block (mesh + earthy material + box collision) and parent it
-	to the chunk. Shared by the scattered blocks, the stacked towers and the walls.
+	Create one cube block. Thin wrapper over create_box for the common case where
+	all three dimensions are equal (scattered blocks, towers, walls, corridors).
+	"""
+	create_box(parent_chunk, center_pos, Vector3(size, size, size), yaw, rng)
 
-	@param parent_chunk: The chunk mesh to attach the block to
-	@param center_pos: Block centre position, local to the chunk (Y is the centre,
-	                    so pass size/2 to sit a block on the ground)
-	@param size: Cube edge length
-	@param yaw: Y rotation in radians (0 for walls so they line up; random for scatter)
+func create_box(parent_chunk: MeshInstance3D, center_pos: Vector3, dimensions: Vector3, yaw: float, rng: RandomNumberGenerator) -> void:
+	"""
+	Create one box (mesh + earthy material + matching box collision) and parent it
+	to the chunk. Used for cube blocks and for the flat slabs that make up pyramids.
+
+	@param parent_chunk: The chunk mesh to attach the box to
+	@param center_pos: Box centre position, local to the chunk (Y is the centre,
+	                   so pass height/2 to sit a box on the ground)
+	@param dimensions: Full box size on each axis (width, height, depth)
+	@param yaw: Y rotation in radians (0 to keep faces axis-aligned)
 	@param rng: The chunk's seeded RNG, used for the random material colour
 	"""
 	var object_instance := MeshInstance3D.new()
 
-	# Create a cube mesh at the requested size
-	var cube_mesh := BoxMesh.new()
-	cube_mesh.size = Vector3(size, size, size)
+	# Create a box mesh at the requested dimensions
+	var box_mesh := BoxMesh.new()
+	box_mesh.size = dimensions
 
 	# Create a material with random earthy/natural colours (browns, grays, mossy)
 	var object_material := StandardMaterial3D.new()
@@ -475,18 +651,18 @@ func create_block(parent_chunk: MeshInstance3D, center_pos: Vector3, size: float
 			)
 
 	object_material.roughness = rng.randf_range(0.7, 1.0)
-	cube_mesh.material = object_material
-	object_instance.mesh = cube_mesh
+	box_mesh.material = object_material
+	object_instance.mesh = box_mesh
 
-	# Position (local to the chunk) and orient the block.
+	# Position (local to the chunk) and orient the box.
 	object_instance.position = center_pos
 	object_instance.rotation.y = yaw
 
-	# Add collision so the player (and crocodiles) can't walk through the block.
+	# Add collision so the player (and crocodiles) can't walk through the box.
 	var static_body := StaticBody3D.new()
 	var collision_shape := CollisionShape3D.new()
 	var box_shape := BoxShape3D.new()
-	box_shape.size = Vector3(size, size, size)
+	box_shape.size = dimensions
 	collision_shape.shape = box_shape
 
 	static_body.add_child(collision_shape)
@@ -616,9 +792,17 @@ func spawn_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obs
 		var coin_pos: Vector3
 		var roll := rng.randf()
 
-		if roll < 0.3 and obstacles.size() > 0:
-			# Perch a coin on top of a random block / tower.
-			var ob = obstacles[rng.randi_range(0, obstacles.size() - 1)]
+		if roll < 0.3:
+			# Perch a coin on top of a *climbable* structure, so it can actually be
+			# reached. Sheer tops taller than a jump (doubled walls, corridor roofs)
+			# are skipped; pyramids/gates/blocks are fair game.
+			var perches: Array = []
+			for o in obstacles:
+				if o.get("climbable", false):
+					perches.append(o)
+			if perches.is_empty():
+				continue
+			var ob = perches[rng.randi_range(0, perches.size() - 1)]
 			coin_pos = Vector3(ob.pos.x, ob.top + COIN_BLOCK_OFFSET, ob.pos.z)
 		else:
 			# Out in the open: a ground-level coin, or a higher "jump for it" one.

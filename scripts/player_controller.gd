@@ -43,8 +43,11 @@ const STEP_DURATION: float = 0.28
 
 ## Jump velocity determines how high the character can jump
 ## Higher values = higher jumps
-## Physics Note: This is the initial upward velocity when jumping
-const JUMP_VELOCITY: float = 8.0
+## Physics Note: This is the initial upward velocity when jumping.
+## Apex height scales with the SQUARE of this. With gravity = 3.6 the apex is
+## about JUMP_VELOCITY^2 / (2 * gravity): 5.1 -> ~3.6 m. Single blocks top out at
+## 2.5 m and structures are climbed in <=3 m steps, so everything stays jumpable.
+const JUMP_VELOCITY: float = 5.1
 
 ## Gravity value (meters per second squared)
 ## This matches Earth's gravity. The physics engine uses this to pull
