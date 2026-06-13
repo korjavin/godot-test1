@@ -56,6 +56,25 @@ const SPEED_VARIATION_FREQ: float = 0.8
 ## Chance (per direction-change interval) of pausing to "sniff" around
 const SNIFF_PAUSE_CHANCE: float = 0.3
 
+# ----- Obstacle avoidance -----
+## How far ahead (metres) the crocodile senses blocks. This is deliberately
+## longer than the visual model so the crocodile turns away *before* its snout
+## can reach a block — the snout poking into blocks is exactly what this fixes
+## (the physics capsule is much shorter than the model, so move_and_slide alone
+## stops the body but lets the longer nose overlap the block).
+const AVOID_LOOK_AHEAD: float = 3.0
+
+## Angle of the left/right "feeler" probes used to find a clear way around (rad).
+const AVOID_FEELER_ANGLE: float = PI / 5.0  # 36°
+
+## Height above the body origin to cast the feelers from, so they sample the
+## block's side walls rather than the flat ground.
+const AVOID_FEELER_HEIGHT: float = 0.3
+
+## Speed multiplier while steering around a block, so the crocodile eases off and
+## curves around instead of ramming the block nose-first.
+const AVOID_SPEED_FACTOR: float = 0.5
+
 # ----- Procedural body animation -----
 ## Yaw applied to the model so its snout points along the travel direction.
 ## The mesh is authored facing +X but the body travels +Z, so we rotate -90°.
@@ -196,14 +215,22 @@ func _physics_process(delta: float) -> void:
 			# Wander with smooth, organic steering
 			_wander(delta)
 
+		# Steer around any block ahead so we don't drive our snout into it. This
+		# may override the chase/wander heading for this frame.
+		var avoiding := _avoid_obstacles()
+
 		# Rotate smoothly toward the desired heading and move that way.
 		# Driving velocity from facing (not the raw direction) prevents sliding
 		# sideways and makes turns curve naturally.
 		if movement_direction.length() > 0.1:
 			var target_rotation := atan2(movement_direction.x, movement_direction.z)
-			rotation.y = lerp_angle(rotation.y, target_rotation, delta * TURN_SMOOTHNESS)
+			# Turn harder while avoiding so we actually clear the block in time.
+			var turn_rate := TURN_SMOOTHNESS * (2.0 if avoiding else 1.0)
+			rotation.y = lerp_angle(rotation.y, target_rotation, delta * turn_rate)
 
 			var current_speed := chase_speed_instance if is_chasing else _wander_speed(delta)
+			if avoiding:
+				current_speed *= AVOID_SPEED_FACTOR
 			velocity.x = sin(rotation.y) * current_speed
 			velocity.z = cos(rotation.y) * current_speed
 		else:
@@ -301,6 +328,85 @@ func _wander_speed(delta: float) -> float:
 	speed_phase += delta * SPEED_VARIATION_FREQ
 	var t := 0.5 * (sin(speed_phase + instance_phase) + 1.0)  # 0..1
 	return move_speed_instance * lerp(MIN_WANDER_SPEED_FACTOR, 1.0, t)
+
+
+func _avoid_obstacles() -> bool:
+	"""
+	Steer around blocks so the crocodile never drives its snout into one.
+
+	We cast a short feeler ray straight ahead; if it hits a block, we probe to the
+	left and right and turn toward whichever side is open (or turn hard if both are
+	blocked, e.g. facing into a wall). Because the look-ahead is longer than the
+	model, the crocodile starts turning before its nose can reach the block.
+
+	The player, other crocodiles and the flat ground are NOT treated as obstacles,
+	so this never stops a crocodile from reaching the player.
+
+	@return true if a block was sensed and we steered around it this frame.
+	"""
+	if movement_direction.length() < 0.1:
+		return false
+
+	var space := get_world_3d().direct_space_state
+	if not space:
+		return false
+
+	var origin := global_position + Vector3(0.0, AVOID_FEELER_HEIGHT, 0.0)
+	var forward := movement_direction.normalized()
+
+	# Nothing straight ahead? Then there's nothing to steer around.
+	if not _feeler_blocked(space, origin, forward):
+		return false
+
+	# Probe both sides and pick a clear way around.
+	var left_dir := forward.rotated(Vector3.UP, AVOID_FEELER_ANGLE)
+	var right_dir := forward.rotated(Vector3.UP, -AVOID_FEELER_ANGLE)
+	var left_blocked := _feeler_blocked(space, origin, left_dir)
+	var right_blocked := _feeler_blocked(space, origin, right_dir)
+
+	var steer_dir: Vector3
+	if left_blocked and right_blocked:
+		# Boxed in (running into a wall) — turn hard to one side to escape.
+		steer_dir = forward.rotated(Vector3.UP, PI / 2.0)
+	elif right_blocked:
+		steer_dir = left_dir
+	elif left_blocked:
+		steer_dir = right_dir
+	else:
+		# A single block dead ahead with both sides open — ease around it.
+		steer_dir = left_dir
+
+	movement_direction = steer_dir.normalized()
+	# Keep the wander heading in sync so a wandering crocodile holds the new
+	# course after it clears the block instead of curving straight back into it.
+	wander_heading = atan2(movement_direction.x, movement_direction.z)
+	return true
+
+
+func _feeler_blocked(space: PhysicsDirectSpaceState3D, origin: Vector3, dir: Vector3) -> bool:
+	"""
+	Cast one feeler ray and report whether a *block* sits within AVOID_LOOK_AHEAD.
+	The player, other crocodiles and the (horizontal) ground are not blocks.
+
+	@param space: The physics space to query
+	@param origin: Ray start, already lifted to feeler height
+	@param dir: Direction to probe (need not be normalized)
+	@return true if the ray hits something we should steer around
+	"""
+	var query := PhysicsRayQueryParameters3D.create(origin, origin + dir.normalized() * AVOID_LOOK_AHEAD)
+	query.exclude = [get_rid()]  # never sense our own collider
+	query.collide_with_areas = false
+	var hit := space.intersect_ray(query)
+	if hit.is_empty():
+		return false
+
+	var collider = hit.get("collider")
+	if collider == null:
+		return false
+	# Ignore the things we don't want to swerve around.
+	if collider.is_in_group("player") or collider.is_in_group("crocodile"):
+		return false
+	return true
 
 
 # ============================================================================
