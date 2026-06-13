@@ -74,6 +74,11 @@ extends Node3D
 ## block. This stops crocodiles from spawning partially buried inside blocks.
 @export var min_object_clearance: float = 1.5
 
+## Chance (0..1) that a given walkable structure top (pyramid apex / wall ridge)
+## gets a rare crocodile patrolling it. Kept moderate so they're an occasional
+## surprise, not on every structure.
+@export var platform_crocodile_chance: float = 0.4
+
 ## Enable/disable collectible coin spawning on terrain
 @export var spawn_coins: bool = true
 
@@ -285,26 +290,33 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 	active_chunks[chunk_pos] = mesh_instance
 
 	# Spawn objects in this chunk if enabled. This returns the footprint of every
-	# block placed (walls included) so crocodiles can avoid spawning inside them.
+	# block placed (walls included) so crocodiles can avoid spawning inside them,
+	# and fills `platforms` with walkable structure tops for patrolling crocodiles.
 	var obstacles: Array = []
+	var platforms: Array = []
 	if spawn_objects:
-		obstacles = spawn_objects_in_chunk(chunk_pos, mesh_instance)
+		obstacles = spawn_objects_in_chunk(chunk_pos, mesh_instance, platforms)
 
 	# Spawn crocodiles in this chunk if enabled
 	if spawn_crocodiles:
 		spawn_crocodiles_in_chunk(chunk_pos, mesh_instance, obstacles)
+		# Rare crocodiles that patrol an elevated platform (pyramid top / wall ridge)
+		spawn_platform_crocodiles(chunk_pos, mesh_instance, platforms)
 
 	# Spawn collectible coins (on the ground, on blocks, and some up in the air)
 	if spawn_coins:
 		spawn_coins_in_chunk(chunk_pos, mesh_instance, obstacles)
 
-func spawn_objects_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D) -> Array:
+func spawn_objects_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, platforms: Array) -> Array:
 	"""
 	Spawns blocks within a terrain chunk: scattered cubes, the occasional little
-	stack/tower, and — sometimes — a wall the player has to run around.
+	stack/tower, and — sometimes — a feature structure (wall / corridor / gate /
+	pyramid).
 
 	@param chunk_pos: Chunk coordinates for seeded random generation
 	@param parent_chunk: The chunk mesh to attach objects to
+	@param platforms: Out-param; feature structures append walkable-top descriptors
+	                  here for patrolling crocodiles.
 	@return Array of obstacle footprints ({ "pos": Vector3, "radius": float }) so
 	        the crocodile spawner can keep its NPCs out of the blocks.
 
@@ -330,7 +342,7 @@ func spawn_objects_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D) -
 	# so scattered blocks can be placed around it (the scatter loop below checks
 	# against these footprints).
 	if rng.randf() < structure_chance:
-		spawn_feature_structure(rng, parent_chunk, half_chunk, obstacles)
+		spawn_feature_structure(rng, parent_chunk, half_chunk, obstacles, platforms)
 
 	# Store positions of scattered objects to check spacing between them
 	var spawned_positions: Array[Vector3] = []
@@ -391,27 +403,30 @@ func spawn_objects_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D) -
 
 	return obstacles
 
-func spawn_feature_structure(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, half_chunk: float, obstacles: Array) -> void:
+func spawn_feature_structure(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, half_chunk: float, obstacles: Array, platforms: Array) -> void:
 	"""
 	Pick and build one "feature" structure for variety: a wall, a corridor to run
-	through, or a Mayan step-pyramid. Pyramids are the biggest/rarest landmark.
+	through, a gate, or a Mayan step-pyramid. Pyramids are the biggest/rarest
+	landmark. Walls and pyramids also register a walkable top (platforms) that a
+	patrolling crocodile can be placed on.
 
 	@param rng: The chunk's seeded RNG (so the choice is deterministic)
 	@param parent_chunk: The chunk mesh to attach the structure to
 	@param half_chunk: Half the chunk width, for bounds
 	@param obstacles: Footprint list each piece is appended to (crocodiles + coins)
+	@param platforms: Walkable-top descriptors for patrolling crocodiles
 	"""
 	var pick := rng.randf()
 	if pick < 0.3:
-		spawn_wall(rng, parent_chunk, half_chunk, obstacles)
+		spawn_wall(rng, parent_chunk, half_chunk, obstacles, platforms)
 	elif pick < 0.55:
 		spawn_corridor(rng, parent_chunk, half_chunk, obstacles)
 	elif pick < 0.75:
 		spawn_gate(rng, parent_chunk, half_chunk, obstacles)
 	else:
-		spawn_pyramid(rng, parent_chunk, half_chunk, obstacles)
+		spawn_pyramid(rng, parent_chunk, half_chunk, obstacles, platforms)
 
-func spawn_pyramid(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, half_chunk: float, obstacles: Array) -> void:
+func spawn_pyramid(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, half_chunk: float, obstacles: Array, platforms: Array) -> void:
 	"""
 	Build a Mayan step-pyramid: a few square slabs stacked smallest-on-top, like a
 	ziggurat. Each layer is a single flat box (cheap), not a grid of cubes.
@@ -421,6 +436,7 @@ func spawn_pyramid(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, hal
 	@param half_chunk: Half the chunk width, for bounds
 	@param obstacles: Footprint list (one entry for the whole base, with the apex
 	                  height as its top so a coin can perch on top)
+	@param platforms: Gets the flat apex registered as a patrol platform
 	"""
 	# Pyramids vary a lot in size. Most are modest; now and then a giant one with
 	# 10-15 levels towers over the field as a landmark you can climb.
@@ -453,6 +469,12 @@ func spawn_pyramid(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, hal
 	# One footprint for the whole base; top = apex height. Pyramids are climbable
 	# via their steps, so a coin on the apex is reachable (just a long climb).
 	obstacles.append({ "pos": Vector3(cx, 0, cz), "radius": base_size * 0.71, "top": y, "climbable": true })
+
+	# Register the flat apex as a patrol platform (if it's big enough to stand on).
+	var apex_w := base_size - (layers - 1) * shrink
+	var apex_half := apex_w * 0.5 - 0.3
+	if apex_half > 0.4:
+		platforms.append({ "center": Vector3(cx, y, cz), "half": Vector2(apex_half, apex_half) })
 
 func spawn_gate(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, half_chunk: float, obstacles: Array) -> void:
 	"""
@@ -554,7 +576,7 @@ func spawn_corridor(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, ha
 			create_block(parent_chunk, Vector3(x, block_size + block_size / 2.0, z), block_size, 0.0, rng)
 			obstacles.append({ "pos": Vector3(x, 0, z), "radius": block_size * 0.71, "top": 2.0 * block_size, "climbable": false })
 
-func spawn_wall(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, half_chunk: float, obstacles: Array) -> void:
+func spawn_wall(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, half_chunk: float, obstacles: Array, platforms: Array) -> void:
 	"""
 	Build a single wall — a straight line of touching blocks the player must run
 	around — somewhere inside the chunk.
@@ -563,6 +585,7 @@ func spawn_wall(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, half_c
 	@param parent_chunk: The chunk mesh to attach the wall blocks to
 	@param half_chunk: Half the chunk width, for bounds
 	@param obstacles: Footprint list to append each wall block to (for crocodiles)
+	@param platforms: Gets the wall ridge registered as a patrol platform
 	"""
 	# Uniform block size so the wall reads as one solid line.
 	var block_size := rng.randf_range(1.6, 2.4)
@@ -604,6 +627,17 @@ func spawn_wall(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, half_c
 			climbable = false
 
 		obstacles.append({ "pos": Vector3(x, 0, z), "radius": block_size * 0.71, "top": top, "climbable": climbable })
+
+	# Register the wall ridge as a thin patrol platform (a crocodile can pace it
+	# end to end). Surface is the single-block height; doubled humps just become
+	# obstacles its feelers turn it back at.
+	var mid_along := start + (length - 1) * step * 0.5
+	var ridge_center: Vector3 = Vector3(mid_along, block_size, fixed) if along_x else Vector3(fixed, block_size, mid_along)
+	var half_along := (length - 1) * step * 0.5 + block_size * 0.5 - 0.4
+	var half_across := block_size * 0.5 - 0.3
+	var ridge_half: Vector2 = Vector2(half_along, half_across) if along_x else Vector2(half_across, half_along)
+	if half_along > 1.0 and half_across > 0.2:
+		platforms.append({ "center": ridge_center, "half": ridge_half })
 
 func create_block(parent_chunk: MeshInstance3D, center_pos: Vector3, size: float, yaw: float, rng: RandomNumberGenerator) -> void:
 	"""
@@ -751,6 +785,54 @@ func spawn_crocodiles_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D
 
 	if spawned_positions.size() > 0:
 		print("Spawned %d crocodiles in chunk (%d, %d)" % [spawned_positions.size(), chunk_pos.x, chunk_pos.y])
+
+func spawn_platform_crocodiles(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, platforms: Array) -> void:
+	"""
+	Place rare crocodiles that patrol an elevated structure top (a pyramid apex or
+	a wall ridge). They can't jump or climb, so each is confined to its platform —
+	it paces around but never walks off the edge (see set_confinement in the AI).
+
+	@param chunk_pos: Chunk coordinates for seeded random generation
+	@param parent_chunk: The chunk mesh to attach the crocodiles to
+	@param platforms: Walkable-top descriptors ({ "center": Vector3, "half": Vector2 })
+	"""
+	if not crocodile_scene or platforms.is_empty():
+		return
+
+	var seed_value := hash(Vector2i(chunk_pos.x * 40499, chunk_pos.y * 86969))
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_value
+
+	var count := 0
+	for platform in platforms:
+		# Only some platforms get a guard, so they stay a rare surprise.
+		if rng.randf() > platform_crocodile_chance:
+			continue
+
+		var center: Vector3 = platform.center
+		var half: Vector2 = platform.half
+
+		# Start a little in from the edges so it lands cleanly on the surface.
+		var ang := rng.randf_range(0.0, TAU)
+		var sx := maxf(0.0, half.x - 1.0) * cos(ang)
+		var sz := maxf(0.0, half.y - 1.0) * sin(ang)
+
+		var crocodile := crocodile_scene.instantiate()
+		crocodile.name = "PatrolCrocodile_%d_%d_%d" % [chunk_pos.x, chunk_pos.y, count]
+		# Spawn just above the surface so gravity settles it onto the platform.
+		crocodile.position = Vector3(center.x + sx, center.y + 0.6, center.z + sz)
+		crocodile.rotation.y = rng.randf_range(0.0, TAU)
+		parent_chunk.add_child(crocodile)
+
+		# Confine it to this platform (in world space) so it can never wander off.
+		if crocodile.has_method("set_confinement"):
+			var center_global: Vector3 = parent_chunk.global_position + center
+			crocodile.set_confinement(center_global, half)
+
+		count += 1
+
+	if count > 0:
+		print("Spawned %d patrolling crocodile(s) in chunk (%d, %d)" % [count, chunk_pos.x, chunk_pos.y])
 
 func spawn_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array) -> void:
 	"""

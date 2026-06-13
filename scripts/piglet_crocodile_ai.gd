@@ -165,6 +165,16 @@ var current_pitch: float = 0.0
 var is_biting: bool = false
 var bite_timer: float = 0.0
 
+## Confinement: elevated "patrol" crocodiles are pinned to a structure top (a
+## pyramid apex or wall ridge) and can never wander off it, since they can't jump
+## or climb back up. Set up by the terrain via set_confinement().
+var is_confined: bool = false
+var confine_center: Vector3 = Vector3.ZERO
+## Half-extents of the platform box on world X (.x) and world Z (.y).
+var confine_half: Vector2 = Vector2.ZERO
+## Start steering back toward the centre once this close to the platform edge.
+const CONFINE_MARGIN: float = 0.9
+
 # ============================================================================
 # LIFECYCLE METHODS
 # ============================================================================
@@ -233,6 +243,11 @@ func _physics_process(delta: float) -> void:
 		# may override the chase/wander heading for this frame.
 		var avoiding := _avoid_obstacles()
 
+		# If this is a patrol crocodile, turn it back toward the platform centre
+		# when it gets near an edge (overrides the heading above).
+		if is_confined:
+			_steer_within_platform()
+
 		# Rotate smoothly toward the desired heading and move that way.
 		# Driving velocity from facing (not the raw direction) prevents sliding
 		# sideways and makes turns curve naturally.
@@ -256,6 +271,11 @@ func _physics_process(delta: float) -> void:
 	move_and_slide()
 	if not is_paused:
 		_handle_collisions()
+
+	# Hard backstop: pin a patrol crocodile inside its platform so it can never
+	# slip off the edge, even if a collision or the bite-lunge nudged it.
+	if is_confined:
+		_clamp_to_platform()
 
 	# Animate the body to match how fast we're actually moving.
 	_animate_body(delta)
@@ -421,6 +441,62 @@ func _feeler_blocked(space: PhysicsDirectSpaceState3D, origin: Vector3, dir: Vec
 	if collider.is_in_group("player") or collider.is_in_group("crocodile"):
 		return false
 	return true
+
+
+# ============================================================================
+# PLATFORM CONFINEMENT (patrolling crocodiles)
+# ============================================================================
+
+func set_confinement(center: Vector3, half: Vector2) -> void:
+	"""
+	Pin this crocodile to a platform so it patrols but never walks off. Called by
+	the terrain right after spawning an elevated "patrol" crocodile.
+
+	@param center: World-space centre of the platform (its surface height in .y)
+	@param half: Half-extents of the platform on world X (.x) and world Z (.y)
+	"""
+	is_confined = true
+	confine_center = center
+	confine_half = half
+
+
+func _steer_within_platform() -> void:
+	"""
+	Turn a patrol crocodile back toward the platform centre as it nears an edge,
+	so it paces the surface instead of strolling off it.
+	"""
+	var off := global_position - confine_center
+	var steer := Vector3.ZERO
+
+	if off.x > confine_half.x - CONFINE_MARGIN:
+		steer.x = -1.0
+	elif off.x < -confine_half.x + CONFINE_MARGIN:
+		steer.x = 1.0
+
+	if off.z > confine_half.y - CONFINE_MARGIN:
+		steer.z = -1.0
+	elif off.z < -confine_half.y + CONFINE_MARGIN:
+		steer.z = 1.0
+
+	if steer != Vector3.ZERO:
+		movement_direction = steer.normalized()
+		wander_heading = atan2(movement_direction.x, movement_direction.z)
+
+
+func _clamp_to_platform() -> void:
+	"""
+	Hard backstop: keep the crocodile's position inside the platform box. If it
+	somehow reached the edge, pull it back and kill the outward velocity.
+	"""
+	var off := global_position - confine_center
+	var clamped_x := clampf(off.x, -confine_half.x, confine_half.x)
+	var clamped_z := clampf(off.z, -confine_half.y, confine_half.y)
+
+	if clamped_x != off.x or clamped_z != off.z:
+		global_position.x = confine_center.x + clamped_x
+		global_position.z = confine_center.z + clamped_z
+		velocity.x = 0.0
+		velocity.z = 0.0
 
 
 # ============================================================================
