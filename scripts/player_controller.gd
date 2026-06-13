@@ -815,22 +815,37 @@ func animate_sidestep() -> void:
 
 func animate_jumping() -> void:
 	"""
-	Animates the character in mid-air (jumping or falling).
-	Arms go up, legs come together.
+	Animate the character in mid-air: they throw their arms out to the sides and
+	FLAP them like wings, as if trying to take off, while the legs tuck together.
+
+	Walking swings the limbs forward/back on the X axis; the wing flap rolls the
+	arms on the Z axis instead, so it never fights the walk pose. We set the arm
+	roll directly (rather than easing toward it) so the flap stays crisp, and
+	mirror the two arms with opposite signs so they spread and beat together.
+	animate_landing() drops the wings back down on touchdown.
 	"""
 	if not left_arm or not right_arm or not left_leg or not right_leg:
 		return
 
-	# Target pose for jumping
-	var arm_up_angle = deg_to_rad(-45)  # Arms raised
-	var leg_together_angle = deg_to_rad(10)  # Legs slightly bent
+	# Continuous wing beat while airborne.
+	var flap_speed = 14.0
+	var flap = sin(animation_time * flap_speed)
 
-	# Smoothly interpolate to jump pose
-	var lerp_speed = 0.15
+	# Base spread (arms out toward horizontal) with the flap added on top. The
+	# right arm rolls toward +X and the left toward -X, so they mirror each other.
+	var wing_spread = deg_to_rad(72)
+	var flap_range = deg_to_rad(22)
+	var wing_angle = wing_spread + flap * flap_range
 
-	left_arm.rotation.x = lerp(left_arm.rotation.x, original_rotations["left_arm"].x + arm_up_angle, lerp_speed)
-	right_arm.rotation.x = lerp(right_arm.rotation.x, original_rotations["right_arm"].x + arm_up_angle, lerp_speed)
+	right_arm.rotation.z = original_rotations["right_arm"].z + wing_angle
+	left_arm.rotation.z = original_rotations["left_arm"].z - wing_angle
+	# Clear any leftover forward/back swing from walking so the wings sit level.
+	right_arm.rotation.x = original_rotations["right_arm"].x
+	left_arm.rotation.x = original_rotations["left_arm"].x
 
+	# Tuck the legs slightly together underneath.
+	var leg_together_angle = deg_to_rad(10)
+	var lerp_speed = 0.2
 	left_leg.rotation.x = lerp(left_leg.rotation.x, original_rotations["left_leg"].x + leg_together_angle, lerp_speed)
 	right_leg.rotation.x = lerp(right_leg.rotation.x, original_rotations["right_leg"].x + leg_together_angle, lerp_speed)
 
@@ -841,13 +856,21 @@ func animate_jumping() -> void:
 func animate_landing() -> void:
 	"""
 	Brief animation when the character lands on the ground.
-	Creates a small impact pose.
+	Creates a small impact pose and lowers the wings back to rest.
 	"""
 	if not character_body:
 		return
 
 	# Small crouch on landing
 	character_body.position.y = -0.1
+
+	# Drop the wings (arm roll) back to the sides now that we're grounded. The
+	# walk/idle animations only drive the X axis, so without this the arms would
+	# stay spread out after touchdown.
+	if left_arm and original_rotations.has("left_arm"):
+		left_arm.rotation.z = original_rotations["left_arm"].z
+	if right_arm and original_rotations.has("right_arm"):
+		right_arm.rotation.z = original_rotations["right_arm"].z
 
 func animate_idle(delta: float) -> void:
 	"""
