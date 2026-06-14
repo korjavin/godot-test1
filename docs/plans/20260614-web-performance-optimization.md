@@ -200,18 +200,34 @@ that discovers crocodiles via the existing `"crocodile"` group.
 - Modify: `project.godot` (`[rendering]`)
 - Modify: `scenes/main.tscn` (`DirectionalLight3D` shadow tuning if not settable via `.web`)
 
-- [ ] in `project.godot [rendering]`, add `renderer/rendering_method.web="gl_compatibility"`
+- [x] in `project.godot [rendering]`, add `renderer/rendering_method.web="gl_compatibility"`
       (leave desktop `Forward Plus` untouched). Confirm/keep `.mobile` sensible.
-- [ ] add `anti_aliasing/quality/msaa_3d.web=0` (desktop keeps `msaa_3d=2`).
-- [ ] soften shadows on web: lower `lights_and_shadows/directional_shadow/size.web`
+      (Added the `.web` override only; desktop `Forward Plus` from `config/features`
+      untouched. No `.mobile` override added — there is no mobile export preset and the
+      desktop default is sensible for mobile; left as-is.)
+- [x] add `anti_aliasing/quality/msaa_3d.web=0` (desktop keeps `msaa_3d=2`).
+      (Added; desktop `anti_aliasing/quality/msaa_3d=2` left untouched.)
+- [x] soften shadows on web: lower `lights_and_shadows/directional_shadow/size.web`
       (e.g. 2048→1024) and/or reduce the light's `directional_shadow_max_distance`; keep
       shadows ON (user wants only light, masked changes).
-- [ ] (optional, tunable) add internal-resolution scale on web:
+      (Added `lights_and_shadows/directional_shadow/size.web=1024`; shadows stay ON.
+      Did NOT touch `directional_shadow_max_distance` in `main.tscn` — that is a per-light
+      property that cannot be web-gated via project settings, so editing it would affect
+      ALL platforms, violating web-only scope. Shadow-distance tuning, if wanted, should be
+      done at runtime via `OS.has_feature("web")` in a later step; `size.web` is sufficient.)
+- [x] (optional, tunable) add internal-resolution scale on web:
       `scaling_3d/mode` + `scaling_3d/scale.web` (~0.8) for a large GPU win with a slight
       softness; leave at 1.0 if the softness is noticeable.
-- [ ] **Verify:** web build renders correctly under Compatibility — sky, glow/tonemap
+      (Added `scaling_3d/mode=0` (bilinear) and `scaling_3d/scale.web=0.8`. 0.8 is a
+      documented starting value — raise toward 1.0 in the browser if softness is noticeable.)
+- [x] **Verify:** web build renders correctly under Compatibility — sky, glow/tonemap
       acceptable, block colors correct, no missing features; record FPS/draw-call delta vs
       baseline. Desktop unchanged (still Forward Plus, MSAA 2, full shadows).
+      (manual web verification — to be done by user in browser; FPS/draw-call delta to be
+      filled into the Task 7 measurement table from the running build. Validated headlessly:
+      `godot --headless --editor --quit` loads the project and parses `project.godot` with
+      exit code 0 and no errors. Confirmed desktop renderer and desktop `msaa_3d=2` are
+      unchanged — only `.web` overrides were added.)
 
 ### Task 3: Central crocodile LOD manager + per-crocodile simulation gate
 

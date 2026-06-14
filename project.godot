@@ -80,4 +80,40 @@ switch_character={
 
 textures/canvas_textures/default_texture_filter=2
 textures/vram_compression/import_etc2_astc=true
+
+; --- Renderer selection ---------------------------------------------------
+; Desktop/editor keep the high-quality "Forward Plus" renderer (declared in
+; config/features above). The ".web" suffix is a Godot 4 *per-platform
+; override*: when the project runs on the web (HTML5/WebGL2) export, Godot uses
+; this value instead. "gl_compatibility" is the lightweight WebGL2 path, which
+; is far cheaper in a browser than Forward+ — so the web build runs smoothly
+; while desktop stays full quality. We only ADD the override; we never touch
+; the desktop default.
+renderer/rendering_method.web="gl_compatibility"
+
+; --- Anti-aliasing --------------------------------------------------------
+; Desktop keeps MSAA 3D at level 2 (4x) for crisp edges. On the web, MSAA is
+; expensive on the GPU, so the ".web" override disables it (0 = off). Again,
+; web-only: the desktop value above is untouched.
 anti_aliasing/quality/msaa_3d=2
+anti_aliasing/quality/msaa_3d.web=0
+
+; --- Shadows --------------------------------------------------------------
+; Soften the directional (sun) shadow on the web only. The desktop default
+; directional shadow map is 2048px; the ".web" override halves it to 1024px,
+; which lightens GPU/memory cost in the browser. Shadows stay ON — this is a
+; light, masked quality tweak, not a removal. (Shadow *max distance* is a
+; per-light property in the scene and cannot be web-gated from project
+; settings, so we tune it at runtime later if needed, not here.)
+lights_and_shadows/directional_shadow/size.web=1024
+
+; --- Internal resolution scale (web-only, tunable) ------------------------
+; "scaling_3d" renders the 3D scene at a fraction of the window resolution and
+; then upscales to fill the screen — a big GPU win for a small softness cost.
+; mode=0 is bilinear upscaling. We keep desktop at the default full scale (1.0)
+; and only downscale on the web to 0.8 (renders 3D at 80% resolution, then
+; upscales). 0.8 is a STARTING value: if the softness is noticeable in the
+; browser, raise scale.web toward 1.0 to trade some performance back for
+; sharpness.
+scaling_3d/mode=0
+scaling_3d/scale.web=0.8
