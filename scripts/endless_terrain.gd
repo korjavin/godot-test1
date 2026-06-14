@@ -130,6 +130,13 @@ const WEB_FOG_DENSITY: float = 0.005
 const COIN_GROUND_HEIGHT: float = 0.9
 const COIN_BLOCK_OFFSET: float = 0.6
 
+## Extra clearance (metres) added to a block's footprint radius when deciding whether
+## a road coin sits "over" that block. The ~1 m margin makes the test hug slightly
+## WIDER than the block itself, so a coin grazing a block's edge perches on top rather
+## than clipping into the side. Shared by _point_over_block and the perch loop so the
+## overlap rule has exactly one definition (see _block_overlaps).
+const COIN_BLOCK_OVERLAP_MARGIN: float = 1.0
+
 # ----------------------------------------------------------------------------
 # COIN ROAD CONFIGURATION (the meandering parametric trail that carries coins)
 # ----------------------------------------------------------------------------
@@ -184,6 +191,24 @@ const ROAD_RESTORE: float = 0.06
 ## distinct from the per-chunk object/crocodile seeds (it is its OWN world). Pick
 ## any constant; changing it reshapes the entire road.
 const ROAD_WORLD_SEED: int = 0x5_0AD  # "ROAD"-ish; arbitrary fixed constant
+
+## How fast the corridor width breathes (radians of cos() per station). Lower = the
+## road swells wide and narrows over MORE stations. At 0.08 the cosine's period is
+## ~2π/0.08 ≈ 78 stations, so the width cycles slowly enough to feel smooth, not pulsey.
+const ROAD_WIDTH_FREQ: float = 0.08
+
+## Lateral weave frequencies (radians of sin() per station). The coin line snakes
+## across the corridor as the SUM of two sines: a primary slow sweep plus a second,
+## even slower sine that breaks the metronome regularity. Both are low so consecutive
+## coins barely shift sideways (each stays in sight of the previous one).
+const ROAD_WEAVE_FREQ_PRIMARY: float = 0.12
+const ROAD_WEAVE_FREQ_SECONDARY: float = 0.037
+
+## Amplitude of the secondary weave sine relative to the primary (which is 1.0). The
+## raw weave therefore spans ±(1.0 + ROAD_WEAVE_SECONDARY_AMP); we normalise by that
+## max so _road_lateral_unit stays in [-1, 1] — keep the divisor in sync with this.
+const ROAD_WEAVE_SECONDARY_AMP: float = 0.5
+const ROAD_WEAVE_MAX_AMP: float = 1.0 + ROAD_WEAVE_SECONDARY_AMP  # weave normaliser (= 1.5)
 
 # ============================================================================
 # SECTION 2: INTERNAL STATE
@@ -1524,7 +1549,7 @@ func _road_width(k: int) -> float:
 	  (no per-station jumps), so the corridor visibly breathes wide and narrow as you
 	  travel. We remap cos()'s [-1,1] to [0,1] then lerp between the bounds.
 	"""
-	var t := (cos(float(k) * 0.08) + 1.0) * 0.5  # smooth [0,1], period ~78 stations
+	var t := (cos(float(k) * ROAD_WIDTH_FREQ) + 1.0) * 0.5  # smooth [0,1], period ~78 stations
 	return lerpf(road_width_min, road_width_max, t)
 
 func _road_lateral_unit(k: int) -> float:
@@ -1540,10 +1565,12 @@ func _road_lateral_unit(k: int) -> float:
 	  coins barely shift sideways — the coin line snakes smoothly across the corridor
 	  instead of hopping edge to edge, keeping each coin in sight of the previous one.
 	  A second, slower sine adds a touch of variation so it doesn't look like a pure
-	  metronome. The sum is divided by its max amplitude (1.5) to stay within [-1, 1].
+	  metronome. The sum is divided by its max amplitude (ROAD_WEAVE_MAX_AMP = 1.5) to
+	  stay within [-1, 1].
 	"""
-	var weave := sin(float(k) * 0.12) + 0.5 * sin(float(k) * 0.037)
-	return clampf(weave / 1.5, -1.0, 1.0)
+	var weave := sin(float(k) * ROAD_WEAVE_FREQ_PRIMARY) \
+		+ ROAD_WEAVE_SECONDARY_AMP * sin(float(k) * ROAD_WEAVE_FREQ_SECONDARY)
+	return clampf(weave / ROAD_WEAVE_MAX_AMP, -1.0, 1.0)
 
 func _road_coin_world(k: int) -> Vector3:
 	"""
@@ -1667,7 +1694,7 @@ func spawn_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obs
 			var perched := false
 			var perch_top := 0.0
 			for ob in obstacles:
-				if Vector2(local.x - ob.pos.x, local.z - ob.pos.z).length() < ob.radius + 1.0:
+				if _block_overlaps(local.x, local.z, ob):
 					if ob.get("climbable", false) and (not perched or ob.top > perch_top):
 						perch_top = ob.top
 						perched = true
@@ -1680,13 +1707,28 @@ func spawn_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obs
 		coin.position = local
 		parent_chunk.add_child(coin)
 
+func _block_overlaps(x: float, z: float, ob: Dictionary) -> bool:
+	"""
+	True if the (x, z) column falls within block `ob`'s footprint, padded outward by
+	COIN_BLOCK_OVERLAP_MARGIN so coins grazing the edge count as "over" the block.
+
+	@param x, z: Column to test (chunk-LOCAL XZ, same frame as ob.pos).
+	@param ob: One block obstacle entry with `pos` (Vector2) and `radius` (float).
+	@return: Whether the column hugs the block's (padded) footprint.
+
+	This is the single home of the coin-vs-block overlap rule: both _point_over_block
+	(does ANY block cover this coin?) and the perch loop (WHICH covered block is the
+	highest climbable one?) call it, so the test and its margin can't drift apart.
+	"""
+	return Vector2(x - ob.pos.x, z - ob.pos.z).length() < ob.radius + COIN_BLOCK_OVERLAP_MARGIN
+
 func _point_over_block(x: float, z: float, obstacles: Array) -> bool:
 	"""
 	True if the (x, z) column is over (or hugging) a block footprint, so we don't
 	drop a road coin inside a block (it perches on the block's top instead).
 	"""
 	for ob in obstacles:
-		if Vector2(x - ob.pos.x, z - ob.pos.z).length() < ob.radius + 1.0:
+		if _block_overlaps(x, z, ob):
 			return true
 	return false
 
