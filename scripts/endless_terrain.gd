@@ -1515,80 +1515,95 @@ func _road_coin_world(k: int) -> Vector3:
 
 func spawn_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array) -> void:
 	"""
-	Scatter collectible coins through a chunk. A coin is one of three kinds:
-	  - a ground coin floating just above the grass (walk over it),
-	  - an air coin up at jump height (you have to jump for it), or
-	  - a block coin perched on top of a block / tower.
+	Lay this chunk's slice of the COIN ROAD — the single continuous, deterministic
+	trail that carries every coin in the world (see the COIN ROAD math section above
+	and the COIN ROAD CONFIGURATION section near the top).
 
-	@param chunk_pos: Chunk coordinates for seeded random generation
-	@param parent_chunk: The chunk mesh to attach coins to
+	Coins are NOT scattered randomly any more. The road centerline is a pure function
+	of the integer station index `k` (one coin candidate per station, seeded only from
+	`k` + ROAD_WORLD_SEED). Off-road areas get NO coins, so the trail reads as a clear
+	"go this way" route the player wants to follow.
+
+	@param chunk_pos: Chunk coordinates this body is generating coins for.
+	@param parent_chunk: The chunk mesh the coins attach to (it sits at the chunk
+	                     center, so we store coin positions chunk-LOCAL — relative to
+	                     that center — exactly like blocks/crocodiles).
 	@param obstacles: Block footprints (with their top heights) from
-	                  spawn_objects_in_chunk, used to place block coins and to keep
-	                  low coins from spawning inside a block.
+	                  spawn_objects_in_chunk, used to perch a road coin on a climbable
+	                  block (or skip it) when the road runs through a block footprint.
 
-	EDUCATIONAL NOTE:
-	- Seeded like everything else, so a chunk's coins are always the same.
-	- Coins are parented to the chunk, so they unload when the chunk does.
+	EDUCATIONAL NOTE — why this is seam-correct (no gaps, no duplicates):
+	- The road is global and station-indexed, but each chunk generates independently.
+	  A station whose coin lands exactly on a chunk seam must be spawned by EXACTLY
+	  one chunk. We guarantee that by bucketing each coin to the chunk its FINAL world
+	  position falls in: `world_to_chunk(coin_world) == chunk_pos`. Every other chunk
+	  that scans the same station skips it, so it is spawned once and only once.
+	- Because |heading| < 90° keeps the centerline's world X strictly increasing in
+	  `k`, a chunk's X-range maps to a CONTIGUOUS range of stations. We extend the
+	  shared station cache to span this chunk's (widened) X-range, then scan it.
+	- Off-road is empty: only stations whose coin actually lands inside this chunk
+	  spawn anything, so far-from-road chunks spawn zero coins.
 	"""
-	if not coin_scene:
+	if not spawn_coins or coin_scene == null:
 		return
 
-	# Seed offset so coins land in different spots than objects/crocodiles.
-	var seed_value := hash(Vector2i(chunk_pos.x * 19783, chunk_pos.y * 51307))
-	var rng := RandomNumberGenerator.new()
-	rng.seed = seed_value
-
+	# This chunk's world center and its world X-range. We pad the range by half the
+	# widest the road can ever be (plus a small margin) because a station's CENTERLINE
+	# can sit just outside the chunk while its laterally-offset coin swings back inside
+	# it — widening the scanned X-range makes sure we never miss such a coin.
+	var center := chunk_to_world(chunk_pos)
 	var half_chunk := chunk_size / 2.0
-	var margin := 3.0
+	var x0 := center.x - half_chunk
+	var x1 := center.x + half_chunk
+	var pad := road_width_max / 2.0 + 2.0
 
-	# Positions placed so far, to keep coins spaced out.
-	var placed: Array[Vector3] = []
+	# Grow the shared station cache so it covers this chunk's widened X-range. The
+	# cache is a pure function of `k`, so this is idempotent across chunks and load
+	# order doesn't matter — it just grows contiguously and is reused.
+	_road_extend_to_x(x0 - pad, x1 + pad)
 
-	var attempts := 0
-	var max_attempts := coins_per_chunk * 6
+	# Narrow the scan to the contiguous sub-range of stations whose centerline X falls
+	# within the widened X-range. (X is strictly increasing in `k`, so this is a clean
+	# window; the world_to_chunk bucket test below is the real correctness guarantee.)
+	for k in range(road_k_min, road_k_max + 1):
+		var st: Dictionary = _road_station(k)
+		var cx: float = st.center.x
+		if cx < x0 - pad:
+			continue  # not yet into this chunk's window
+		if cx > x1 + pad:
+			break  # past this chunk's window — and X only grows from here, so stop
 
-	while placed.size() < coins_per_chunk and attempts < max_attempts:
-		attempts += 1
+		# Final world-space coin position for this station (centerline + lateral weave).
+		var cw := _road_coin_world(k)
 
-		var coin_pos: Vector3
-		var roll := rng.randf()
-
-		if roll < 0.3:
-			# Perch a coin on top of a *climbable* structure, so it can actually be
-			# reached. Sheer tops taller than a jump (doubled walls, corridor roofs)
-			# are skipped; pyramids/gates/blocks are fair game.
-			var perches: Array = []
-			for o in obstacles:
-				if o.get("climbable", false):
-					perches.append(o)
-			if perches.is_empty():
-				continue
-			var ob = perches[rng.randi_range(0, perches.size() - 1)]
-			coin_pos = Vector3(ob.pos.x, ob.top + COIN_BLOCK_OFFSET, ob.pos.z)
-		else:
-			# Out in the open: a ground-level coin, or a higher "jump for it" one.
-			var x := rng.randf_range(-half_chunk + margin, half_chunk - margin)
-			var z := rng.randf_range(-half_chunk + margin, half_chunk - margin)
-			# Don't bury a low coin inside a block.
-			if _point_over_block(x, z, obstacles):
-				continue
-			var y := COIN_GROUND_HEIGHT if roll < 0.7 else COIN_AIR_HEIGHT
-			coin_pos = Vector3(x, y, z)
-
-		# Keep coins spaced apart from each other.
-		var valid := true
-		for existing in placed:
-			if coin_pos.distance_to(existing) < min_coin_spacing:
-				valid = false
-				break
-		if not valid:
+		# Bucket by final chunk: spawn this coin only from the chunk it actually lands
+		# in. This is what makes seams gap-free and duplicate-free.
+		if world_to_chunk(cw) != chunk_pos:
 			continue
+
+		# Convert to chunk-LOCAL (relative to the chunk center, like every other
+		# chunk-parented node), so the coin sits at the right world spot.
+		var local := Vector3(cw.x - center.x, cw.y, cw.z - center.z)
+
+		# If the road runs over a block footprint, the ground-height coin would be
+		# buried. Perch it on the block's top if that block is climbable; otherwise
+		# (sheer tops taller than a jump) skip this one coin — structures are sparse
+		# so the visible chain stays intact.
+		if _point_over_block(local.x, local.z, obstacles):
+			var perched := false
+			for ob in obstacles:
+				if Vector2(local.x - ob.pos.x, local.z - ob.pos.z).length() < ob.radius + 1.0:
+					if ob.get("climbable", false):
+						local.y = ob.top + COIN_BLOCK_OFFSET
+						perched = true
+					break
+			if not perched:
+				continue
 
 		# Spawn the coin (position is local to the chunk, like blocks/crocodiles).
 		var coin := coin_scene.instantiate()
-		coin.position = coin_pos
+		coin.position = local
 		parent_chunk.add_child(coin)
-		placed.append(coin_pos)
 
 func _point_over_block(x: float, z: float, obstacles: Array) -> bool:
 	"""

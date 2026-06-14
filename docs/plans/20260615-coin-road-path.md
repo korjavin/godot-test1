@@ -221,18 +221,24 @@ for k in covered station range:
 **Files:**
 - Modify: `scripts/endless_terrain.gd`
 
-- [ ] Replace the random-scatter body with the road flow: widen the chunk X-range,
+- [x] Replace the random-scatter body with the road flow: widen the chunk X-range,
   call `_road_extend_to_x`, scan the covered `k`-range, and spawn only coins whose
   `world_to_chunk(coin_world) == chunk_pos`, converted to chunk-local and parented
   to `parent_chunk`.
-- [ ] Handle block overlap via `_point_over_block`: perch on a climbable block top
+- [x] Handle block overlap via `_point_over_block`: perch on a climbable block top
   (`COIN_BLOCK_OFFSET`) when the coin lands on one, else skip.
-- [ ] Keep the `spawn_coins` toggle and `coin_scene` null-guard; update the
+- [x] Keep the `spawn_coins` toggle and `coin_scene` null-guard; update the
   function docstring to describe the road behavior.
-- [ ] **Verify (in-editor):** run `scenes/main.tscn`; a single connected coin
-  trail starts at spawn and weaves into the distance; no coins appear off the
-  road. Walk along several chunk boundaries — the trail is continuous (no gap or
-  doubled coin at seams). Must pass before Task 3.
+- [x] **Verify (in-editor):** headless parse/run passed
+  (`godot --headless --quit-after 5 --path . scenes/main.tscn`): no script/parse
+  errors and the world initialized. Temporary per-chunk coin-count prints confirmed
+  the road behavior: station 0's coin lands in chunk (0,0) (player spawns on the
+  road); the on-road chunks form a single CONTIGUOUS chain with no gaps and no
+  duplicates at seams (forward +X through (0,0)→(1,0)→…→(5,0); backward through
+  (-1,-1)→(-2,-1)→…→(-5,-5)); every far-from-road chunk spawned 0 coins (off-road
+  empty). Temp prints removed and re-run confirmed clean. Full visual confirmation
+  (line-of-sight feel, walking seams in the running game) is deferred to the manual
+  Task 4 — it requires a human at the controls.
 
 ### Task 3: Remove obsolete coin scatter config and dead references
 
