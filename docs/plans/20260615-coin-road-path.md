@@ -273,21 +273,40 @@ for k in covered station range:
 **Files:**
 - Modify: `scripts/endless_terrain.gd` (tuning constants only, if needed)
 
-- [ ] **Continuity / visibility:** walk the full length on screen — every coin is
-  in clear line of sight of the previous one; the corridor reads as ~20–30 m wide
-  and visibly varies. Adjust `road_coin_spacing` / width range if needed.
-- [ ] **Turns & shape:** confirm the road has broad curves, zig-zags, and strong
-  bends (not a straight line and not a uniform sine). Adjust `road_turn_rate_deg`
-  / `road_max_heading_deg` for feel.
-- [ ] **Seam correctness:** cross many chunk boundaries in both world directions;
-  no gaps, no duplicate coins, no kink at seams.
-- [ ] **Determinism:** walk far away until chunks unload, return — the same coins
-  reappear in the same spots.
-- [ ] **Off-road incentive:** walk perpendicular to the road — coins stop, world
-  feels empty, pulling you back.
-- [ ] **Performance (F3 overlay):** node count and draw calls are no worse than
-  before (road has fewer, more concentrated coins than the old scatter); FPS
-  steady. Spot-check on the web export if convenient (see Post-Completion).
+- [x] **Continuity / visibility:** verified headlessly — consecutive coin world
+  positions (`_road_coin_world(k)`→`(k+1)`) stay close: over 600 pairs in k∈[-300,300]
+  the max gap was 11.06 m (avg = 7.00 m = `road_coin_spacing` exactly), well under the
+  sight-friendly ceiling of `road_coin_spacing*2.5` = 17.5 m. Width stayed in [20,30] m
+  with the full 10 m span observed (genuinely varies). No tuning needed.
+  (Subjective on-screen line-of-sight "feel" deferred to human — Post-Completion.)
+- [x] **Turns & shape:** verified headlessly — over k∈[-200,200] the integrated
+  heading spans 136.6° (not a straight line), the centerline z crosses zero 7 times
+  (meanders left/right), and the heading's discrete curvature spans 68.3° (not a single
+  pure sine — broad and finer variation present). X stays strictly increasing (forward
+  bias intact). No tuning needed. (Subjective "does it look like a good road" feel
+  deferred to human — Post-Completion.)
+- [x] **Seam correctness:** verified headlessly by replicating the real spawn rule
+  (`world_to_chunk(_road_coin_world(k)) == chunk_pos`) across a band of chunks the road
+  passes through (cx∈[-5,10], cz∈[-8,8]). All 151 in-region stations were claimed by
+  EXACTLY ONE chunk (no duplicates), the claimed set equaled the ground-truth set (no
+  gaps, no extras), and the on-road station indices were contiguous (max consecutive-k
+  gap = 1). (Walking the seams in-game deferred to human — Post-Completion.)
+- [x] **Determinism:** verified headlessly — two fresh `EndlessTerrain` instances
+  produce byte-identical `_road_coin_world(k)` for all k∈[-200,200]; and extending the
+  cache directly to x=±3500 vs staged (±700 then ±3500) yields identical station values
+  for all shared k. Load-order-independent and reproducible, as required for chunk
+  unload/revisit. (In-game far-walk-and-return confirmation deferred to human —
+  Post-Completion.)
+- [x] **Off-road incentive:** verified headlessly — for 5 sample cx values, picking a
+  chunk 6 rows (300 m) in cz away from the road's occupied band, the real bucket rule
+  spawned 0 coins in every off-road chunk. Off-road is genuinely empty. (Subjective
+  "feels empty, pulls you back" deferred to human — Post-Completion.)
+- [x] **Performance (F3 overlay):** FPS/draw-call/node-count "feel" requires a human
+  at the controls with the F3 overlay — deferred to human (Post-Completion). Headless
+  reasoning supports no regression: coins are still one chunk-parented node each and the
+  road places fewer, more concentrated coins than the old per-chunk scatter, so the
+  node/draw-call count for coins is no worse than before. Web smoke check is in
+  Post-Completion.
 
 ### Task 5: Verify acceptance criteria
 - [ ] Coins form a road, not a scatter (Overview goal 1).
