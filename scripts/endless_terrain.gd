@@ -193,6 +193,12 @@ var _shared_unit_box_mesh: BoxMesh
 ## is NOT supported by MultiMesh (only transform + color are per-instance), so we
 ## bake a single representative roughness here (0.85, mid-range of the old
 ## 0.7–1.0 spread). The visual difference is negligible.
+##
+## COLOUR SPACE: we leave `vertex_color_is_srgb` at its default (false) on purpose —
+## the Compatibility (web) renderer IGNORES that flag, so we can't rely on it. Instead
+## create_box pre-converts each instance colour with `srgb_to_linear()` before storing
+## it, so the per-instance colour is already linear and matches what the OLD
+## `albedo_color` (sRGB→linear) path produced. See the COLOUR SPACE note in create_box.
 var _shared_block_material: StandardMaterial3D
 
 ## A representative roughness for the shared block material. The old per-block code
@@ -950,8 +956,12 @@ func create_box(parent_chunk: MeshInstance3D, center_pos: Vector3, dimensions: V
 	  The MultiMesh (block_batch → MultiMeshInstance3D) and this collision body are the
 	  TWO HALVES of each chunk's blocks: one renders them, one collides with them.
 
-	@param parent_chunk: The chunk mesh (kept for symmetry / future use; the shape now
-	                   attaches to block_body, which is itself parented to the chunk)
+	@param parent_chunk: The chunk mesh. NOTE: create_box itself no longer uses this — the
+	                   visual goes to block_batch and the collision shape attaches to
+	                   block_body (which create_chunk parents to the chunk). It's kept only
+	                   to match the uniform (parent_chunk, ..., block_batch, block_body)
+	                   signature shared by every spawn_*/create_* helper, so all the call
+	                   sites pass the same argument list. (Not used for "future" plans.)
 	@param center_pos: Box centre position, local to the chunk (Y is the centre,
 	                   so pass height/2 to sit a box on the ground)
 	@param dimensions: Full box size on each axis (width, height, depth)
@@ -992,8 +1002,10 @@ func create_box(parent_chunk: MeshInstance3D, center_pos: Vector3, dimensions: V
 	# old code (so the procedural world is unchanged). The value itself is discarded:
 	# MultiMesh can't vary roughness per instance, so the shared material uses one
 	# representative roughness (SHARED_BLOCK_ROUGHNESS). The visual difference between
-	# a fixed 0.85 and the old 0.7–1.0 spread is negligible.
-	var _discarded_roughness := rng.randf_range(0.7, 1.0)
+	# a fixed 0.85 and the old 0.7–1.0 spread is negligible. We DON'T store the result —
+	# the CALL must stay (it advances the RNG), but the value is unused, so calling
+	# randf_range purely for its determinism side effect is enough.
+	rng.randf_range(0.7, 1.0)
 
 	# ----- Append this block to the chunk's MultiMesh batch (VISUALS) ------------
 	# A MultiMesh instance is just a Transform3D applied to the shared UNIT cube.
@@ -1003,10 +1015,23 @@ func create_box(parent_chunk: MeshInstance3D, center_pos: Vector3, dimensions: V
 	# the old per-block MeshInstance3D.position used). Because the MultiMeshInstance3D
 	# is parented to the chunk at local origin, these local transforms land the blocks
 	# in exactly the same spots as before.
+	#
+	# COLOUR SPACE (must match the old look exactly): the OLD per-block code set
+	# `StandardMaterial3D.albedo_color = chosen_color`, and Godot treats albedo_color as
+	# sRGB — it converts sRGB→linear before lighting, which slightly DARKENS the value.
+	# A MultiMesh per-instance colour, however, is fed straight into the shader as the
+	# vertex colour: with `vertex_color_is_srgb = false` (the default, and the ONLY
+	# value the web/Compatibility renderer honours) that sRGB→linear step is skipped, so
+	# the raw colour would render brighter/washed-out — a visible regression on desktop
+	# AND web. To reproduce the old albedo output renderer-agnostically, we convert the
+	# colour to linear OURSELVES here (`srgb_to_linear()`) so the final linear albedo
+	# equals srgb_to_linear(chosen_color), exactly as the old material produced. This is
+	# a pure value transform on an already-computed Color — it consumes NO RNG, so the
+	# deterministic world layout is unchanged.
 	var basis := Basis(Vector3.UP, yaw).scaled(dimensions)
 	block_batch.append({
 		"transform": Transform3D(basis, center_pos),
-		"color": chosen_color,
+		"color": chosen_color.srgb_to_linear(),
 	})
 
 	# ----- Register the collision shape on the CHUNK'S shared body (COLLISION) ----

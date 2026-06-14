@@ -566,6 +566,45 @@ that discovers crocodiles via the existing `"crocodile"` group.
 | + Consolidated collision (Task 5) | (manual) | (manual) | (manual) | (manual) | (manual) | (manual) |
 | + Render dist + fog (Task 6) | (manual) | (manual) | (manual) | (manual) | (manual) | (manual) |
 
+#### Numeric acceptance gate (PASS/FAIL — read the final `+ Render dist + fog` row vs the `Baseline` row)
+
+Fill the table above first, then this is PASS only if ALL hold on the test machine:
+- **FPS (web):** final row is **smooth and ≥ the target FPS** for the test machine
+  (target: **≥ 50 FPS** on the dev machine; **≥ 30 FPS** on a mid/low-end machine) AND
+  is **≥ the baseline** FPS — never a regression.
+- **Draw calls:** final row is **≤ 1/5 of the Baseline** draw calls (i.e. ≥ 5× lower) —
+  this is the MultiMesh batching payoff.
+- **Physics ms:** final row is **strictly lower than the Baseline** physics ms (the LOD
+  manager sleeping the distant pack should produce a clear drop, not a wash).
+- **Nodes:** final row is **lower than the Baseline** node count (consolidated per-chunk
+  collision + reduced web chunk count).
+- **Active/total crocs:** in the final row, with the player stationary in an open area,
+  **active ≪ total** (only the handful within `SIM_RADIUS=45 m` are awake) — proves the
+  LOD is actually sleeping crocodiles, not just present.
+
+If any row FAILS, do not merge to `master`; tune (`SIM_RADIUS`, web `render_distance`,
+`scaling_3d/scale.web`, shadow size, fog density) and re-measure.
+
+#### Concrete manual visual/gameplay checks (do these in the running build — they catch the failure modes the table can't)
+
+- [ ] **(a) MultiMesh block colour parity, WEB renderer.** Take a screenshot of one
+  recognisable chunk on **desktop** (Forward+) and the **same chunk** on the **web build**
+  (gl_compatibility). The block browns/grays/mossy greens must read the **same brightness**
+  — NOT lighter/washed-out. (This is the visual confirmation of the `srgb_to_linear()` fix:
+  the per-instance colour is pre-converted to linear so the Compatibility renderer — which
+  ignores `vertex_color_is_srgb` — still matches the old `albedo_color` output. **Final
+  colour match needs the user's in-browser visual confirmation.**)
+- [ ] **(b) LOD sleep grounding.** Walk away from a crocodile until the F3 overlay shows
+  `active < total` (it has slept). Confirm the slept crocodile is **standing on the ground,
+  not floating**, and that on re-approach it **wakes and resumes from the ground**, not from
+  mid-air. (Airborne-sleep freeze is a known cosmetic edge case only for crocs 45 m+ away;
+  this check confirms the common on-ground case is clean.)
+- [ ] **(c) Coin placement parity.** Confirm a coin sits **flush on a pyramid apex** and on a
+  **gate lintel** — the MultiMesh/collision refactor must not have shifted block tops, so
+  `obstacles[].top` perching is unchanged.
+- [ ] **(d) Desktop render scale = 1.0.** On desktop, confirm rendering is **full resolution
+  (no upscaling blur)** — only `scaling_3d/scale.web=0.8` should apply; desktop must stay 1.0.
+
 ### Task 8: [Final] Update documentation
 - [x] update `CLAUDE.md`: document the new `crocodile_lod_manager.gd` (LOD/sleep contract,
       `SIM_RADIUS` vs `DETECTION_RADIUS`), MultiMesh block rendering + consolidated
@@ -611,6 +650,13 @@ that discovers crocodiles via the existing `"crocodile"` group.
 **Manual verification:**
 - In-browser playtest across browsers (Chrome, Firefox, Safari) and a mid/low-end machine —
   confirm smooth FPS and that fog/Compatibility rendering looks good everywhere.
+- **MultiMesh block colour parity (sRGB fix):** create_box now stores each block's colour
+  pre-converted via `srgb_to_linear()` so the MultiMesh path matches the old `albedo_color`
+  output even under the web Compatibility renderer (which ignores `vertex_color_is_srgb`).
+  The code makes the final linear albedo equal `srgb_to_linear(C)` as before, but the
+  **final colour match still needs the user's in-browser visual confirmation** — compare a
+  web screenshot of a chunk against the same chunk on desktop (manual check (a) above);
+  blocks must not look brighter/washed-out on web.
 - Decide final tuning values from the measurement table: `SIM_RADIUS`, web
   `render_distance` (3 vs 4), fog distances, optional `scaling_3d/scale.web`, shadow size.
 - Confirm Compatibility-renderer glow/tonemap on web is acceptable; if glow looks wrong,

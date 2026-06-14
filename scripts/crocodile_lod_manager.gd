@@ -168,11 +168,12 @@ func _scan_crocodiles() -> void:
 		var dist_sq: float = croc.global_position.distance_squared_to(player_pos)
 
 		# Read the crocodile's current LOD state so we can apply hysteresis and
-		# only call the setter on a real transition. `lod_active` defaults to true
-		# on the crocodile, so a just-spawned one reads as awake here.
-		var currently_active: bool = true
-		if "lod_active" in croc:
-			currently_active = croc.lod_active
+		# only call the setter on a real transition. We already filtered to crocs
+		# that declare `set_lod_active` (above), and every such croc is a real
+		# PigletCrocodile that ALSO declares `lod_active`, so we can read it directly
+		# without a membership guard. `lod_active` defaults to true, so a just-spawned
+		# one reads as awake here.
+		var currently_active: bool = croc.lod_active
 
 		var should_be_active: bool = currently_active
 		if currently_active:

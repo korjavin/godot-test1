@@ -168,8 +168,9 @@ var bite_timer: float = 0.0
 ## LOD (simulation level-of-detail) gate. When true, this crocodile runs its full
 ## per-frame AI/physics step exactly as before. When false, it is "asleep": the
 ## central CrocodileLODManager has decided it is too far from the player to
-## possibly matter this frame, so _physics_process cheap-returns and the HitBox
-## stops monitoring. Defaults to TRUE so a crocodile spawned before the manager's
+## possibly matter this frame, so _physics_process cheap-returns (which is also
+## what makes a slept croc harmless — see set_lod_active) and the HitBox stops
+## monitoring as a cheap cleanup. Defaults to TRUE so a crocodile spawned before the manager's
 ## first scan behaves normally for that brief window (the manager will sleep it on
 ## its next tick if it's far away). See crocodile_lod_manager.gd for the contract.
 var lod_active: bool = true
@@ -483,11 +484,19 @@ func set_lod_active(active: bool) -> void:
 	Called by the central CrocodileLODManager only when the awake/asleep decision
 	actually changes, so the transition work below runs at most once per change.
 
-	Beyond storing the flag (which _physics_process reads to cheap-return while
-	asleep), the only side effect is toggling the HitBox Area3D's monitoring: a
-	sleeping crocodile far from the player should not waste physics time keeping a
-	hostile trigger live, and — critically — must not be able to harm the player.
-	An awake crocodile restores monitoring so its bite works exactly as before.
+	What actually keeps a sleeping crocodile from harming the player is storing the
+	flag: _physics_process reads `lod_active` at the very top and cheap-returns while
+	asleep, which means the crocodile never runs move_and_slide nor _handle_collisions
+	— and _handle_collisions (reading get_slide_collision()) is the ONLY code path that
+	calls player.reset_position(). So the early-return alone makes a slept crocodile
+	harmless; no contact damage can occur.
+
+	The HitBox Area3D's monitoring is toggled here too, but purely as a cheap cleanup:
+	nothing connects to the HitBox's body_entered/area_entered signals (grep confirms
+	no such connection in this script or piglet_crocodile.tscn), so the HitBox does not
+	itself drive any damage. Turning monitoring off on a sleeping crocodile just saves
+	the physics server from tracking ~1,200 idle Area3Ds; turning it back on when awake
+	costs nothing. It's harmless to keep, but it is NOT the safety mechanism.
 
 	We touch the HitBox with set_deferred() because monitoring can't be flipped
 	mid-physics-step safely; deferring applies it at a safe point. We also only do
@@ -504,7 +513,10 @@ func set_lod_active(active: bool) -> void:
 	var hitbox := get_node_or_null("HitBox")
 	if hitbox:
 		# Deferred so we never change monitoring in the middle of physics resolution.
-		# Asleep → stop monitoring (no cost, can't catch the player). Awake → resume.
+		# Asleep → stop monitoring (frees the physics server from tracking an idle
+		# Area3D). Awake → resume. This is a cheap cleanup, NOT the harm-prevention
+		# safety: the _physics_process early-return is what stops a slept croc from
+		# ever running the collision code that damages the player (see set_lod_active).
 		hitbox.set_deferred("monitoring", active)
 
 
