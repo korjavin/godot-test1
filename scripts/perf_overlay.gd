@@ -39,10 +39,6 @@ const REFRESH_INTERVAL: float = 0.25
 ## Seconds left until the next text refresh (counts down each frame).
 var _time_until_refresh: float = 0.0
 
-## Cached player reference, re-fetched via the "player" group if it goes away
-## (e.g. after a respawn). Matches the rest of the project's group-based lookup.
-var _player: Node = null
-
 
 func _ready() -> void:
 	# Add to a group so other systems could find/toggle us later if needed.
@@ -75,8 +71,8 @@ func _input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
 		if event.keycode == TOGGLE_KEYCODE:
 			visible = not visible
-			# Re-fetching the player and forcing an immediate refresh makes the
-			# overlay feel instant the moment it is shown.
+			# Forcing an immediate refresh makes the overlay feel instant the
+			# moment it is shown.
 			if visible:
 				_time_until_refresh = 0.0
 
