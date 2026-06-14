@@ -245,15 +245,28 @@ for k in covered station range:
 **Files:**
 - Modify: `scripts/endless_terrain.gd`
 
-- [ ] Remove `coins_per_chunk`, `min_coin_spacing`, and `COIN_AIR_HEIGHT` and any
+- [x] Remove `coins_per_chunk`, `min_coin_spacing`, and `COIN_AIR_HEIGHT` and any
   now-dead local logic (random kind roll, air-coin branch, per-chunk `placed`
   spacing list) left over from the old scatter.
-- [ ] Grep the file (and project) for the removed identifiers to confirm no
+  Removed the three declarations; the Task 2 rewrite had already removed all the
+  dead local scatter logic (no `placed` list, no random kind roll, no air-coin
+  branch remained), so nothing further to strip.
+- [x] Grep the file (and project) for the removed identifiers to confirm no
   remaining references; update neighboring comments/the file header note about
   coins so they describe the road.
-- [ ] **Verify (in-editor):** project loads with no parser errors/warnings about
+  Project-wide grep of `scripts/ scenes/ project.godot` returned ZERO matches for
+  all three identifiers. Updated comments: the coin-height block, the
+  spawn_coins call-site comment, the `_point_over_block` docstring, and the
+  `ROAD_WORLD_SEED` comment (dropped its stale "coin-scatter seeds" mention) — all
+  now describe the deterministic station-indexed parametric road.
+- [x] **Verify (in-editor):** project loads with no parser errors/warnings about
   missing identifiers; game still runs and the road still spawns. Must pass before
   Task 4.
+  Headless parse/run clean: `godot --headless --quit-after 5 --path . scenes/main.tscn`
+  showed no script/parse/missing-identifier errors and the world fully initialized
+  (chunks + crocodiles spawned). Only the pre-existing "material is null"
+  dummy-renderer noise appeared (unrelated/expected in headless). Full visual
+  confirmation that the road still spawns in the running game is in Task 4.
 
 ### Task 4: Manual verification & tuning pass
 

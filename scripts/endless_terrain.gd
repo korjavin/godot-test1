@@ -122,19 +122,12 @@ const WEB_FOG_DENSITY: float = 0.005
 ## Enable/disable collectible coin spawning on terrain
 @export var spawn_coins: bool = true
 
-## Number of coins to spawn per chunk. Kept modest so they stay motivating
-## rather than carpeting the ground.
-@export var coins_per_chunk: int = 6
-
-## Minimum distance between coins (in meters)
-@export var min_coin_spacing: float = 4.0
-
-## Coin placement heights (metres):
-## - ground coins float just above the grass, grabbed by walking over them
-## - air coins sit above standing reach, so you have to jump for them
-## - block coins sit this far above a block's top surface
+## Coin placement heights (metres). Coins live on the COIN ROAD (see the section
+## below), not scattered per chunk, so there are only two cases now:
+## - road coins float just above the grass, grabbed by walking over them
+## - when the road runs over a climbable block, the coin perches this far above
+##   that block's top surface instead of being buried (see spawn_coins_in_chunk)
 const COIN_GROUND_HEIGHT: float = 0.9
-const COIN_AIR_HEIGHT: float = 3.0
 const COIN_BLOCK_OFFSET: float = 0.6
 
 # ----------------------------------------------------------------------------
@@ -188,7 +181,7 @@ const COIN_BLOCK_OFFSET: float = 0.6
 const ROAD_RESTORE: float = 0.06
 
 ## Fixed seed mixed into the per-station hash so the road is stable run-to-run yet
-## distinct from the object/crocodile/coin-scatter seeds (it is its OWN world). Pick
+## distinct from the per-chunk object/crocodile seeds (it is its OWN world). Pick
 ## any constant; changing it reshapes the entire road.
 const ROAD_WORLD_SEED: int = 0x5_0AD  # "ROAD"-ish; arbitrary fixed constant
 
@@ -633,7 +626,9 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 		# Rare crocodiles that patrol an elevated platform (pyramid top / wall ridge)
 		spawn_platform_crocodiles(chunk_pos, mesh_instance, platforms)
 
-	# Spawn collectible coins (on the ground, on blocks, and some up in the air)
+	# Lay this chunk's slice of the coin road (deterministic station-indexed trail;
+	# coins sit at ground height, perching on a climbable block where the road
+	# crosses one — see spawn_coins_in_chunk).
 	if spawn_coins:
 		spawn_coins_in_chunk(chunk_pos, mesh_instance, obstacles)
 
@@ -1608,7 +1603,7 @@ func spawn_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obs
 func _point_over_block(x: float, z: float, obstacles: Array) -> bool:
 	"""
 	True if the (x, z) column is over (or hugging) a block footprint, so we don't
-	drop a ground/air coin inside a block.
+	drop a road coin inside a block (it perches on the block's top instead).
 	"""
 	for ob in obstacles:
 		if Vector2(x - ob.pos.x, z - ob.pos.z).length() < ob.radius + 1.0:
