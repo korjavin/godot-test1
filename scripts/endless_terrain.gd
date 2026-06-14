@@ -137,6 +137,61 @@ const COIN_GROUND_HEIGHT: float = 0.9
 const COIN_AIR_HEIGHT: float = 3.0
 const COIN_BLOCK_OFFSET: float = 0.6
 
+# ----------------------------------------------------------------------------
+# COIN ROAD CONFIGURATION (the meandering parametric trail that carries coins)
+# ----------------------------------------------------------------------------
+##
+## EDUCATIONAL NOTE — what "the coin road" is and why it is built this way:
+## Instead of scattering coins randomly per chunk (no direction, no journey), all
+## coins live on ONE continuous road that snakes across the infinite world and
+## always trends forward along +X. The road is a *parametric* path: we sample it
+## at integer "station" indices `k` (one coin candidate per station). Station 0
+## sits at the world origin (where the player spawns) heading straight along +X,
+## so the player is on the road the instant the game starts.
+##
+## The whole shape is a PURE, DETERMINISTIC function of the station index `k` and a
+## single fixed seed (ROAD_WORLD_SEED) — there is NO per-chunk RNG and NO per-frame
+## state in the geometry. That is what lets the trail line up seamlessly across
+## chunk seams and regenerate byte-for-byte identically when a chunk is revisited.
+##
+## The path is built by integrating a heading angle station-by-station (see the
+## recurrence in _road_extend_to_x). A gentle restoring pull and a hard heading cap
+## (< 90°) keep the centerline's X STRICTLY INCREASING in `k`, so a chunk's X-range
+## maps to a bounded, contiguous range of stations — which is what makes per-chunk
+## coverage finite and seam-correct. The road still reads as a real road with broad
+## curves, zig-zags and steep diagonal bends; it just never reverses net direction.
+
+## World-meters between consecutive stations (the STEP of the path). Small enough
+## that each coin stays in clear sight of the one before it.
+@export var road_coin_spacing: float = 7.0
+
+## The road corridor width varies smoothly between these bounds (metres). The coin
+## line weaves laterally WITHIN this corridor, so the width sets how far a coin can
+## drift sideways from the centerline.
+@export var road_width_min: float = 20.0
+@export var road_width_max: float = 30.0
+
+## Maximum per-station heading jitter magnitude (degrees). Larger = curvier / tighter
+## zig-zags. This is the amplitude of the deterministic turn noise added each station.
+@export var road_turn_rate_deg: float = 18.0
+
+## Heading cap measured from the +X axis (degrees). The integrated heading is clamped
+## to ±this. MUST stay < 90° so cos(heading) is always > 0 and the centerline's X
+## keeps increasing with `k` (asserted in _road_extend_to_x). 78° still allows steep,
+## road-like diagonal bends while guaranteeing forward progress.
+@export var road_max_heading_deg: float = 78.0
+
+## Heading restoring pull toward +X applied every station BEFORE the turn noise:
+## heading *= (1 - ROAD_RESTORE). Without it the random turns would random-walk the
+## heading and pin it against the cap; this gentle pull keeps the road trending
+## forward and gives it a natural "return to course" feel after a bend.
+const ROAD_RESTORE: float = 0.06
+
+## Fixed seed mixed into the per-station hash so the road is stable run-to-run yet
+## distinct from the object/crocodile/coin-scatter seeds (it is its OWN world). Pick
+## any constant; changing it reshapes the entire road.
+const ROAD_WORLD_SEED: int = 0x5_0AD  # "ROAD"-ish; arbitrary fixed constant
+
 # ============================================================================
 # SECTION 2: INTERNAL STATE
 # ============================================================================
@@ -146,6 +201,28 @@ var crocodile_scene: PackedScene
 
 ## Preloaded coin scene for spawning
 var coin_scene: PackedScene
+
+# ----------------------------------------------------------------------------
+# COIN ROAD STATION CACHE (the integrated centerline, computed once, never reset)
+# ----------------------------------------------------------------------------
+##
+## The road centerline is sampled at integer station indices `k`. Each cached entry
+## is a Dictionary { center: Vector2, heading: float }, where `center` is the
+## centerline position in world (x, z) coordinates — note we pack WORLD Z into the
+## Vector2's `.y` field — and `heading` is the integrated heading angle (radians)
+## from +X used to step to the NEXT station.
+##
+## The cache is CONTIGUOUS in `k`: road_stations[i] holds station index
+## (road_k_min + i). It grows from station 0 outward in BOTH directions (forward for
+## k>0, backward for k<0) as chunks request coverage, and is NEVER invalidated — the
+## road is static and infinite, and every station is a pure function of `k` + the
+## fixed seed, so a cached value is correct forever and independent of load order.
+var road_stations: Array = []
+
+## Inclusive station-index bounds of what `road_stations` currently holds. They start
+## "empty" (min > max); the first _road_extend_to_x seeds station 0 and sets both to 0.
+var road_k_min: int = 1
+var road_k_max: int = 0
 
 ## Reference to the player node to track their position
 var player: Node3D
@@ -1250,6 +1327,191 @@ func spawn_platform_crocodiles(chunk_pos: Vector2i, parent_chunk: MeshInstance3D
 
 	if count > 0:
 		print("Spawned %d patrolling crocodile(s) in chunk (%d, %d)" % [count, chunk_pos.x, chunk_pos.y])
+
+# ============================================================================
+# COIN ROAD MATH (deterministic, pure-in-k parametric centerline + coin placement)
+# ============================================================================
+#
+# Everything below is a pure function of the station index `k` and ROAD_WORLD_SEED.
+# There is no per-chunk RNG and no per-frame state, so the road is identical for a
+# given `k` no matter which chunk asks for it or in what order — that is what makes
+# the trail seamless across chunk boundaries and reproducible on revisit.
+
+func _road_hash01(k: int) -> float:
+	"""
+	Deterministic pseudo-random float in [0, 1) for station `k`.
+
+	@param k: Station index (may be negative).
+	@return: A stable [0,1) value; same `k` always yields the same result.
+
+	EDUCATIONAL NOTE:
+	- We mix `k` with the fixed ROAD_WORLD_SEED via Godot's hash(), so the road's
+	  randomness is reproducible (no RNG state) yet distinct from the seeds used for
+	  blocks/crocodiles. hash() returns a 32-bit-ish int; we fold it into [0,1) by
+	  masking to a positive range and dividing by that range's size.
+	"""
+	# Two ints in a Vector2i give hash() plenty to mix; the multipliers spread `k`
+	# across the hash space so adjacent stations don't produce near-identical values.
+	var h := hash(Vector2i(k, ROAD_WORLD_SEED))
+	# Mask to 24 positive bits and normalise to [0, 1). (Plenty of resolution for an
+	# angle, and avoids sign issues from hash() possibly returning negatives.)
+	return float(h & 0xFFFFFF) / float(0x1000000)
+
+func _road_turn(k: int) -> float:
+	"""
+	Signed per-station turn angle (radians) for station `k`.
+
+	@param k: Station index.
+	@return: A deterministic angle in [-road_turn_rate_deg, +road_turn_rate_deg],
+	         expressed in radians; this is the heading "jitter" added at station `k`.
+
+	EDUCATIONAL NOTE:
+	- _road_hash01 gives [0,1); we remap it to [-1,1] and scale by the configured
+	  turn rate. This is the only source of curviness in the path.
+	"""
+	var signed_unit := _road_hash01(k) * 2.0 - 1.0  # [0,1) -> [-1,1)
+	return deg_to_rad(road_turn_rate_deg) * signed_unit
+
+func _road_extend_to_x(x_min: float, x_max: float) -> void:
+	"""
+	Grow the station cache (in BOTH directions, contiguously from station 0) until the
+	cached centerline spans the world X-range [x_min, x_max].
+
+	@param x_min: Smallest world X that must be covered by a cached station.
+	@param x_max: Largest world X that must be covered by a cached station.
+
+	EDUCATIONAL NOTE — the heading-integrated recurrence (the heart of the road):
+	  heading[k+1] = clamp( heading[k]*(1-ROAD_RESTORE) + turn_noise(k), -CAP, +CAP )
+	  center[k+1]  = center[k] + road_coin_spacing * Vector2(cos heading[k], sin heading[k])
+	The backward step (k-1) MIRRORS this exactly so the cache stays a single pure
+	function of `k`: from station k we know heading[k-1] is whatever produced heading[k]
+	via the forward rule, but rather than invert the clamp we simply recompute the
+	backward heading with the same recurrence using turn_noise(k-1) and the heading we
+	are stepping FROM. Concretely, to add station (k-1) we treat (k-1) as the "current"
+	station and station k as its "next": heading[k-1] is derived so that stepping it
+	forward lands at center[k], and center[k-1] is found by stepping BACKWARD from
+	center[k] along heading[k-1]. (See the symmetric construction below.)
+
+	Because |heading| < 90° (asserted), cos(heading) > 0 always, so each forward step
+	strictly INCREASES X and each backward step strictly DECREASES it. That monotonicity
+	is what makes "extend until we span this X-range" terminate and gives every chunk a
+	bounded, contiguous range of stations.
+	"""
+	# Safety: the whole monotonic-X guarantee depends on the heading staying under 90°.
+	assert(road_max_heading_deg < 90.0,
+		"road_max_heading_deg must be < 90 so the centerline's X stays strictly increasing")
+
+	var max_heading := deg_to_rad(road_max_heading_deg)
+
+	# First-time seeding: station 0 at world origin, heading along +X (0 rad).
+	if road_k_min > road_k_max:
+		road_stations = [{ "center": Vector2(0.0, 0.0), "heading": 0.0 }]
+		road_k_min = 0
+		road_k_max = 0
+
+	# Grow FORWARD (increasing k) until the last cached station's X reaches x_max.
+	# We append station (k+1) computed from station k's center+heading.
+	while _road_station(road_k_max).center.x < x_max:
+		var cur: Dictionary = _road_station(road_k_max)
+		var cur_heading: float = cur.heading
+		# New center: step road_coin_spacing along the CURRENT heading.
+		var next_center: Vector2 = cur.center + road_coin_spacing * Vector2(cos(cur_heading), sin(cur_heading))
+		# New heading for the NEXT step: restore toward +X, add this station's turn, clamp.
+		var next_heading: float = clampf(
+			cur_heading * (1.0 - ROAD_RESTORE) + _road_turn(road_k_max),
+			-max_heading, max_heading)
+		road_stations.append({ "center": next_center, "heading": next_heading })
+		road_k_max += 1
+
+	# Grow BACKWARD (decreasing k) until the first cached station's X reaches x_min.
+	# To prepend station (k-1) we need heading[k-1] and center[k-1] such that stepping
+	# station (k-1) FORWARD reproduces station k. We mirror the forward rule:
+	#   - heading[k-1] is the heading that, after restore+turn(k-1)+clamp, yields
+	#     heading[k]. Inverting the clamp+restore exactly is not generally possible, so
+	#     we instead define the backward heading directly with the SAME recurrence shape
+	#     using turn_noise(k-1), which keeps the cache a deterministic function of k.
+	#   - center[k-1] = center[k] - road_coin_spacing * dir(heading[k-1]).
+	while _road_station(road_k_min).center.x > x_min:
+		var first: Dictionary = _road_station(road_k_min)
+		var first_heading: float = first.heading
+		# Reconstruct the heading at (k-1). Forward rule from (k-1) to (k) is:
+		#   heading[k] = clamp(heading[k-1]*(1-RESTORE) + turn(k-1), ...)
+		# Solve for heading[k-1] (un-clamped form, which is exact whenever heading[k]
+		# is off the cap — and on the cap the road is straightened anyway, so the small
+		# discrepancy is invisible and, crucially, still fully deterministic in k):
+		var prev_heading: float = clampf(
+			(first_heading - _road_turn(road_k_min - 1)) / (1.0 - ROAD_RESTORE),
+			-max_heading, max_heading)
+		# Step BACKWARD from the first cached center along the reconstructed heading.
+		var prev_center: Vector2 = first.center - road_coin_spacing * Vector2(cos(prev_heading), sin(prev_heading))
+		road_stations.push_front({ "center": prev_center, "heading": prev_heading })
+		road_k_min -= 1
+
+func _road_station(k: int) -> Dictionary:
+	"""
+	Return the cached station Dictionary { center: Vector2, heading: float } for index
+	`k`. ASSUMES `k` is within [road_k_min, road_k_max] (callers extend the cache
+	first); the contiguous layout means index i maps to (road_k_min + i).
+	"""
+	return road_stations[k - road_k_min]
+
+func _road_width(k: int) -> float:
+	"""
+	Smoothly-varying corridor width (metres) at station `k`, oscillating between
+	road_width_min and road_width_max.
+
+	@param k: Station index.
+	@return: Width in [road_width_min, road_width_max].
+
+	EDUCATIONAL NOTE:
+	- A low-frequency cosine of `k` gives a slow, smooth swell/narrowing of the road
+	  (no per-station jumps), so the corridor visibly breathes wide and narrow as you
+	  travel. We remap cos()'s [-1,1] to [0,1] then lerp between the bounds.
+	"""
+	var t := (cos(float(k) * 0.08) + 1.0) * 0.5  # smooth [0,1], period ~78 stations
+	return lerpf(road_width_min, road_width_max, t)
+
+func _road_lateral_unit(k: int) -> float:
+	"""
+	Smooth lateral weave factor in [-1, 1] for station `k`. Multiplying this by
+	width/2 gives how far the coin sits to the LEFT/RIGHT of the centerline.
+
+	@param k: Station index.
+	@return: A value in [-1, 1] that changes slowly with `k`.
+
+	EDUCATIONAL NOTE:
+	- The weave is intentionally LOW-FREQUENCY (a slow sine of `k`) so consecutive
+	  coins barely shift sideways — the coin line snakes smoothly across the corridor
+	  instead of hopping edge to edge, keeping each coin in sight of the previous one.
+	  A second, slower sine adds a touch of variation so it doesn't look like a pure
+	  metronome. The sum is divided by its max amplitude (1.5) to stay within [-1, 1].
+	"""
+	var weave := sin(float(k) * 0.12) + 0.5 * sin(float(k) * 0.037)
+	return clampf(weave / 1.5, -1.0, 1.0)
+
+func _road_coin_world(k: int) -> Vector3:
+	"""
+	Final world-space coin position for station `k`: the centerline plus a lateral
+	offset perpendicular to the heading, at ground height.
+
+	@param k: Station index (the cache MUST already cover it — callers extend first).
+	@return: World-space Vector3 where station `k`'s coin should sit.
+
+	EDUCATIONAL NOTE:
+	- We take the station's centerline point and heading, build a unit vector
+	  PERPENDICULAR to the heading (rotate the heading direction 90°: (cos,sin) ->
+	  (-sin,cos)), and slide along it by lateral_unit * width/2. The result is in the
+	  (x, z) plane; Y is the fixed ground height. Note Vector2.y maps to world Z.
+	"""
+	var st: Dictionary = _road_station(k)
+	var center: Vector2 = st.center
+	var heading: float = st.heading
+	# Perpendicular (left-hand normal) to the heading direction in the XZ plane.
+	var perp := Vector2(-sin(heading), cos(heading))
+	var offset := _road_lateral_unit(k) * _road_width(k) * 0.5
+	var p := center + perp * offset
+	# Vector2.x -> world X, Vector2.y -> world Z; coin floats at ground height.
+	return Vector3(p.x, COIN_GROUND_HEIGHT, p.y)
 
 func spawn_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array) -> void:
 	"""

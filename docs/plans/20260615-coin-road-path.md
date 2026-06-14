@@ -194,23 +194,27 @@ for k in covered station range:
 **Files:**
 - Modify: `scripts/endless_terrain.gd`
 
-- [ ] Add the new road tunables (`road_coin_spacing`, `road_width_min/max`,
+- [x] Add the new road tunables (`road_coin_spacing`, `road_width_min/max`,
   `road_turn_rate_deg`, `road_max_heading_deg`) and consts (`ROAD_RESTORE`,
   `ROAD_WORLD_SEED`) in the coin config section, with teaching-style comments
   matching the file's density.
-- [ ] Add the station cache state (`road_stations` + index bounds) in the
+- [x] Add the station cache state (`road_stations` + index bounds) in the
   internal-state section.
-- [ ] Implement `_road_hash01(k)` and `_road_turn(k)` (deterministic, seed-mixed).
-- [ ] Implement the forward+backward station recurrence and
+- [x] Implement `_road_hash01(k)` and `_road_turn(k)` (deterministic, seed-mixed).
+- [x] Implement the forward+backward station recurrence and
   `_road_extend_to_x(x_min, x_max)` that grows the cache contiguously from
   station 0 until it spans the requested X-range (assert `road_max_heading_deg <
   90` so X stays monotonic).
-- [ ] Implement `_road_width(k)`, `_road_lateral_unit(k)`, and
+- [x] Implement `_road_width(k)`, `_road_lateral_unit(k)`, and
   `_road_coin_world(k)` (center + perpendicular weave at `COIN_GROUND_HEIGHT`).
-- [ ] **Verify (in-editor):** temporarily call the helpers in `_ready()` to
+- [x] **Verify (in-editor):** temporarily call the helpers in `_ready()` to
   print station 0..40 world positions; confirm X is strictly increasing, the path
   visibly meanders (z changes sign), and width stays in [20,30]. Remove the temp
   prints before finishing the task. Must pass before Task 2.
+  Verified via `godot --headless --quit-after 5 --path . scenes/main.tscn`:
+  stations -10..40 dumped; X strictly increasing in both directions
+  (-71.46 → 268.71), centerline z changed sign 5 times (meanders), width stayed
+  in [20.00, 30.00]; temp prints removed and re-run confirmed clean (no errors).
 
 ### Task 2: Rewrite `spawn_coins_in_chunk` to lay coins along the road
 
