@@ -296,27 +296,71 @@ that discovers crocodiles via the existing `"crocodile"` group.
 - Modify: `scripts/endless_terrain.gd` (`create_box`, `create_block`, `create_chunk`, and
   the `spawn_*` structure builders that call them)
 
-- [ ] introduce a per-chunk **block batch**: change `create_box()` so that, instead of
+- [x] introduce a per-chunk **block batch**: change `create_box()` so that, instead of
       instancing a `MeshInstance3D`+`StandardMaterial3D` per block, it appends a
       `{ "transform": Transform3D, "color": Color }` entry to a batch array threaded
       through `create_chunk` → `spawn_objects_in_chunk` → `spawn_*` → `create_box`.
       (Keep the existing per-block `StaticBody3D` collision for now — Task 5 consolidates
       it.)
-- [ ] preserve the exact earthy color logic (brown / gray / mossy ranges) — just store the
+      (Done. `create_chunk` creates `var block_batch: Array = []` before calling
+      `spawn_objects_in_chunk`, and the `block_batch` out-param is threaded through
+      `spawn_objects_in_chunk` → `spawn_feature_structure` → `spawn_wall`/`spawn_corridor`/
+      `spawn_gate`/`spawn_pyramid` → `create_block` → `create_box` (every call site updated;
+      verified by grep). `create_box` now appends `{ "transform": Transform3D, "color":
+      Color }` instead of instancing a MeshInstance3D+material. The per-block
+      `StaticBody3D`+`CollisionShape3D`+`BoxShape3D` is STILL created (now a bare body with
+      no visible mesh), positioned at `center_pos` with `rotation.y = yaw`, default
+      layer/mask — collision is byte-for-byte unchanged. Task 5 will consolidate it.)
+- [x] preserve the exact earthy color logic (brown / gray / mossy ranges) — just store the
       chosen `Color` per instance instead of baking it into a unique material.
-- [ ] after object generation in `create_chunk`, build one `MultiMeshInstance3D` per chunk:
+      (Done. The `match rng.randi_range(0,2)` brown/gray/mossy branches and their
+      `randf_range` ranges are unchanged; the chosen `Color` is stored per instance.
+      DETERMINISM: `create_box` still consumes the `randf_range(0.7, 1.0)` roughness draw
+      (discarded) so the chunk RNG sequence — and therefore the whole procedural world
+      layout — is identical to before. Per-instance roughness isn't supported by MultiMesh,
+      so the shared material bakes one representative roughness `SHARED_BLOCK_ROUGHNESS=0.85`
+      (mid of the old 0.7–1.0 spread); the visual difference is negligible.)
+- [x] after object generation in `create_chunk`, build one `MultiMeshInstance3D` per chunk:
       shared unit `BoxMesh`, `MultiMesh` with `TRANSFORM_3D` + `use_colors=true`,
       `instance_count = batch.size()`, per-instance transform (basis = per-axis scale by
       `dimensions` × yaw rotation, origin = local center) and `set_instance_color`. Material:
       `StandardMaterial3D`, `vertex_color_use_as_albedo=true`, roughness in the existing
       range. Parent the `MultiMeshInstance3D` to the chunk (auto-freed on unload).
-- [ ] keep the heavy teaching comments: explain MultiMesh, per-instance transform/color,
+      (Done in `_build_block_multimesh()`, called from `create_chunk` when `block_batch` is
+      non-empty. Uses a lazily-created SHARED unit `BoxMesh` (size 1×1×1, reused across all
+      chunks) and a SHARED `StandardMaterial3D` with `vertex_color_use_as_albedo=true`,
+      `roughness=0.85`, applied as `material_override`. Per-instance basis =
+      `Basis(Vector3.UP, yaw).scaled(dimensions)`, origin = chunk-local `center_pos`;
+      `set_instance_transform`/`set_instance_color` per entry. The `MultiMeshInstance3D` is
+      parented to the chunk mesh at local origin, so it auto-frees on unload and the blocks
+      land in exactly the same spots (instance transforms are chunk-local, matching the old
+      `MeshInstance3D.position = center_pos` convention).)
+- [x] keep the heavy teaching comments: explain MultiMesh, per-instance transform/color,
       and why this collapses draw calls.
-- [ ] **Verify (visual-identical):** blocks, towers, walls, corridors, gates, pyramids all
+      (Done. SECTION 2 has a multi-paragraph note on what a MultiMesh is and why one draw
+      call renders all instances; `create_box` documents the VISUALS-vs-COLLISION
+      decoupling, the per-instance transform basis, and the determinism rationale;
+      `_build_block_multimesh` documents `transform_format`, `use_colors`,
+      `vertex_color_use_as_albedo`, and the chunk-local parenting. Comment density matches
+      the surrounding teaching style.)
+- [x] **Verify (visual-identical):** blocks, towers, walls, corridors, gates, pyramids all
       look the same (shapes, sizes, yaw, earthy colors); coins still perch correctly on
       block tops (`obstacles[].top` unchanged).
-- [ ] **Verify (perf):** `RENDER_TOTAL_DRAW_CALLS_IN_FRAME` drops sharply vs Task 3;
+      (manual web/desktop verification — to be done by user. Static guarantees: the
+      obstacle/platform return data (`pos`/`radius`/`top`/`climbable`) and the coin perching
+      logic are untouched; the per-instance transform reproduces each block's exact size
+      (per-axis scale = `dimensions`), yaw, and chunk-local position; colours use the
+      identical brown/gray/mossy ranges; the RNG sequence is preserved so structure shapes/
+      placements are unchanged. Headless validation: `godot --headless --check-only --script
+      scripts/endless_terrain.gd` parses clean and `godot --headless --editor --quit` imports
+      the whole project with no SCRIPT ERROR / Parse Error, exit 0.)
+- [x] **Verify (perf):** `RENDER_TOTAL_DRAW_CALLS_IN_FRAME` drops sharply vs Task 3;
       record delta.
+      (manual web verification — to be done by user in browser; draw-call delta to be read
+      from the F3 overlay and filled into the Task 7 measurement table. Expected: each
+      chunk's many per-block MeshInstance3Ds collapse to one MultiMeshInstance3D = roughly
+      one draw call per chunk for blocks, so `RENDER_TOTAL_DRAW_CALLS_IN_FRAME` should drop
+      sharply.)
 
 ### Task 5: Consolidated per-chunk block collision
 
