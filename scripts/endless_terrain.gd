@@ -21,6 +21,46 @@ extends Node3D
 ## Higher values = you can see further, but more GPU/CPU usage
 @export var render_distance: int = 5
 
+## Reduced render distance used ONLY on the web (WebGL) build (see _ready()).
+##
+## WHY WEB GETS A SMALLER VIEW:
+## render_distance is squared into the number of active chunks — desktop's 5 means
+## (2*5+1)² = 121 chunks live at once, each carrying a ground mesh, a block MultiMesh,
+## a block-collision body, ~10 crocodiles and some coins. In a browser that is a LOT
+## of draw calls, physics bodies and AI to keep alive, and it's the single biggest CPU/
+## GPU cost. Dropping to 3 means only (2*3+1)² = 49 chunks — roughly 2.5× fewer chunks,
+## i.e. ~2.5× fewer crocodiles/bodies/draw calls to simulate and render every frame.
+## That's the largest single web performance win in this plan.
+##
+## The catch is that a smaller view normally reveals the "edge of the world" — the last
+## ring of chunks just stops, with sky beyond it. We hide that edge with depth fog (set
+## up below in _ready, web only) coloured like the sky horizon, so the nearer world edge
+## dissolves into the sky and the field still FEELS endless. Desktop keeps the full 5
+## and never gets fog, so it is visually unchanged.
+##
+## TUNABLE: 3 is a good default. If the visible world feels too tight in the browser,
+## bump this to 4 (and, if you do, you may want to lower the fog density a touch so the
+## fog still sits just inside the new, larger view).
+const WEB_RENDER_DISTANCE: int = 3
+
+# ----------------------------------------------------------------------------
+# WEB-ONLY DEPTH FOG (masks the reduced view distance — see _setup_web_fog)
+# ----------------------------------------------------------------------------
+##
+## Fog colour: the sky horizon grey from main.tscn's ProceduralSkyMaterial
+## (sky_horizon_color ≈ 0.646, 0.656, 0.671). Matching the horizon makes the fogged-out
+## world edge blend seamlessly into the sky instead of reading as a coloured haze.
+const WEB_FOG_COLOR: Color = Color(0.646, 0.656, 0.671)
+
+## Exponential fog density. The reduced web view reaches render_distance(3) ×
+## chunk_size(50) = ~150 m to the nearest chunk edge and ~175 m to the far corner, so we
+## want visibility to fade out around there. 0.005 gives roughly ~150–250 m of visibility
+## (exponential fog has no hard cutoff — it thickens with distance), which tucks the chunk
+## boundary into the haze without fogging the playable area near the player.
+## TUNABLE: raise toward 0.006 for a closer/denser edge, lower toward 0.004 for a more
+## open feel (or if you bump WEB_RENDER_DISTANCE to 4).
+const WEB_FOG_DENSITY: float = 0.005
+
 ## Terrain height variation (for future procedural generation)
 ## Currently we use a flat plane, but this allows for hills/valleys
 @export var terrain_height: float = 0.0
@@ -195,6 +235,20 @@ func _ready() -> void:
 	"""
 	Initialize the terrain system.
 	"""
+	# WEB-ONLY: shrink the view distance BEFORE any chunks are generated.
+	#
+	# We set this here at the very top of _ready (and chunk generation is driven later
+	# from _process via update_chunks, which reads render_distance fresh each time), so
+	# simply lowering render_distance now is enough — the FIRST chunk update will already
+	# use the reduced value, and no full-size ring of chunks is ever built on web.
+	#
+	# `OS.has_feature("web")` is true only in the exported HTML5/WebGL build, so desktop
+	# and the editor keep the exported render_distance (5) and are completely unaffected.
+	# See the WEB_RENDER_DISTANCE comment above for why the web build wants fewer chunks
+	# and how the fog (set up below) hides the resulting nearer world edge.
+	if OS.has_feature("web"):
+		render_distance = WEB_RENDER_DISTANCE
+
 	# Load the crocodile scene for spawning
 	crocodile_scene = load("res://scenes/characters/piglet_crocodile.tscn")
 	if not crocodile_scene:
@@ -222,10 +276,78 @@ func _ready() -> void:
 		terrain_material.albedo_color = Color(0.2, 0.6, 0.2)  # Green grass color
 		terrain_material.roughness = 0.8
 
+	# WEB-ONLY: enable the depth fog that masks the reduced view distance. Done after the
+	# player is found (so we know the scene tree is ready) but it only touches the
+	# WorldEnvironment, not the player. Gated strictly behind OS.has_feature("web") inside
+	# the helper, so desktop/editor get NO fog.
+	_setup_web_fog()
+
 	print("Endless Terrain System initialized!")
+	# Log the platform and the EFFECTIVE render distance so it's obvious in the web
+	# console which value the build is actually running with (3 on web, 5 on desktop).
+	print("Platform: ", "WEB" if OS.has_feature("web") else "DESKTOP/EDITOR")
 	print("Chunk size: ", chunk_size, "m")
 	print("Render distance: ", render_distance, " chunks")
 	print("Crocodiles per chunk: ", crocodiles_per_chunk if spawn_crocodiles else 0)
+
+func _setup_web_fog() -> void:
+	"""
+	Enable depth fog on the scene's WorldEnvironment — WEB ONLY — so the reduced view
+	distance's nearer world edge dissolves into the sky and the field still feels endless.
+
+	Desktop and the editor never enter the web branch, so they get NO fog and stay
+	visually identical to before this change.
+
+	WHY FOG (and why web-only): on web we shrink render_distance (see WEB_RENDER_DISTANCE),
+	which would otherwise expose the hard "edge of the world" where the last ring of chunks
+	stops. Fog coloured like the sky horizon hides that boundary in haze, so the smaller
+	world looks like it just fades into the distance. Desktop keeps the full view and needs
+	no such mask.
+	"""
+	# Strict web gate: do nothing at all on desktop/editor.
+	if not OS.has_feature("web"):
+		return
+
+	# Find the WorldEnvironment. EndlessTerrain doesn't hold a hard reference to it, but in
+	# main.tscn the two are SIBLINGS under the root "Main" node, so a sibling lookup via our
+	# parent is the simplest robust way to reach it. Guard every step with null checks so a
+	# differently-structured scene degrades gracefully (no fog) instead of crashing.
+	var parent_node := get_parent()
+	if parent_node == null:
+		return
+	var world_env := parent_node.get_node_or_null("WorldEnvironment") as WorldEnvironment
+	if world_env == null:
+		push_warning("Web fog: no sibling WorldEnvironment found; skipping fog setup.")
+		return
+
+	var env: Environment = world_env.environment
+	if env == null:
+		push_warning("Web fog: WorldEnvironment has no Environment resource; skipping fog.")
+		return
+
+	# DEFENSIVE COPY: the Environment is an inline SubResource shared with the editor scene.
+	# We duplicate it and assign the copy back BEFORE enabling fog, so we mutate a
+	# per-instance copy at runtime rather than the shared resource. This only ever runs on
+	# the web build, but duplicating keeps it clean and avoids any chance of dirtying the
+	# shared sub-resource. (We pass false so it copies the resource itself, not its deep
+	# sub-resources like the Sky, which we want to keep sharing.)
+	env = env.duplicate(false)
+	world_env.environment = env
+
+	# Enable exponential depth fog tinted like the sky horizon. Property names below are the
+	# Godot 4.5 Environment fog API:
+	#   - fog_enabled            : turn fog on
+	#   - fog_light_color        : the fog's colour (matches the sky horizon → seamless edge)
+	#   - fog_density            : exponential density (controls how quickly distance fades)
+	#   - fog_sun_scatter        : 0 = no bright streak toward the sun, keeping the haze flat
+	#   - fog_aerial_perspective : 0 = don't blend the sky into fog for distant geometry
+	env.fog_enabled = true
+	env.fog_light_color = WEB_FOG_COLOR
+	env.fog_density = WEB_FOG_DENSITY
+	env.fog_sun_scatter = 0.0
+	env.fog_aerial_perspective = 0.0
+
+	print("Web fog enabled (density ", WEB_FOG_DENSITY, ", colour ", WEB_FOG_COLOR, ")")
 
 func _process(_delta: float) -> void:
 	"""

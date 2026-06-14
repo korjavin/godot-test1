@@ -135,6 +135,13 @@ that discovers crocodiles via the existing `"crocodile"` group.
    lower (start at 3; tune by feel), and depth fog (color = sky horizon) added to the
    `WorldEnvironment` so the nearer world edge dissolves into the sky — the world still
    feels endless. Desktop keeps `render_distance=5` and no fog.
+   (IMPLEMENTED Task 6 — chosen values: `WEB_RENDER_DISTANCE = 3` (121→49 active chunks on
+   web; tunable to 4), exponential depth fog enabled at runtime ONLY when
+   `OS.has_feature("web")`: `fog_light_color = Color(0.646, 0.656, 0.671)` (= sky horizon),
+   `WEB_FOG_DENSITY = 0.005`, `fog_sun_scatter = 0.0`, `fog_aerial_perspective = 0.0`. Fog
+   is applied to a runtime `duplicate()` of the Environment so the shared inline
+   SubResource is never mutated. `scenes/main.tscn` was NOT modified — desktop stays
+   pristine: render_distance 5, no fog.)
 
 **Key design decisions & rationale:**
 - *Visual vs collision decoupling* (MultiMesh for looks, separate static bodies for
@@ -429,17 +436,53 @@ that discovers crocodiles via the existing `"crocodile"` group.
 - Modify: `scripts/endless_terrain.gd` (`_ready`: web-gated `render_distance`)
 - Modify: `scenes/main.tscn` or runtime in code (`WorldEnvironment` fog, web-gated)
 
-- [ ] in `endless_terrain._ready()`, if `OS.has_feature("web")`, set a lower
+- [x] in `endless_terrain._ready()`, if `OS.has_feature("web")`, set a lower
       `render_distance` (start at **3**; tunable — bump to 4 if 3 feels tight). Desktop
       keeps 5. Log the chosen value.
-- [ ] enable depth fog on the `WorldEnvironment` **on web only** (runtime when
+      (Done. Added `const WEB_RENDER_DISTANCE: int = 3` (heavily documented as tunable —
+      bump to 4 if the browser view feels tight). At the very TOP of `_ready()`, BEFORE any
+      scene loads / player find / chunk generation, `if OS.has_feature("web"):
+      render_distance = WEB_RENDER_DISTANCE`. Since chunk generation is driven later from
+      `_process` → `update_chunks` (which reads `render_distance` fresh), setting it early
+      means the FIRST chunk update already uses 3 — no full-size 121-chunk ring is ever
+      built on web. Desktop/editor never enter the branch, so they keep the exported 5.
+      The existing print block now also logs `Platform: WEB|DESKTOP/EDITOR` next to the
+      effective `Render distance:` line, matching the existing print() style.)
+- [x] enable depth fog on the `WorldEnvironment` **on web only** (runtime when
       `OS.has_feature("web")`, or a `.web`-gated setup): fog color = sky horizon
       `Color(0.646, 0.656, 0.671)`; tune `fog_depth`/`density` so the world edge fades into
       the sky just inside the (reduced) view distance. Desktop: no fog.
-- [ ] **Verify (look):** on web the world still feels endless — the chunk boundary is
+      (Done in code only — `scenes/main.tscn` was NOT modified, keeping desktop pristine.
+      New `_setup_web_fog()` helper, called from `_ready()` after the player is found,
+      gated strictly behind `OS.has_feature("web")` (returns immediately on desktop/editor →
+      NO fog). It locates the `WorldEnvironment` as a SIBLING via
+      `get_parent().get_node_or_null("WorldEnvironment")` (they share root `Main` in
+      main.tscn), null-guards every step, then `env = env.duplicate(false)` and assigns the
+      copy back BEFORE enabling fog — so we mutate a per-instance runtime copy, never the
+      shared inline SubResource. Godot 4.5 fog API set: `fog_enabled = true`,
+      `fog_light_color = Color(0.646, 0.656, 0.671)` (= sky horizon → edge blends into sky),
+      `fog_density = 0.005` (const `WEB_FOG_DENSITY`, exp. fog ≈ 150–250 m visibility, tucks
+      the ~150–175 m chunk edge into haze), `fog_sun_scatter = 0.0` (flat/neutral, no sun
+      streak), `fog_aerial_perspective = 0.0`. All five property names verified to compile
+      under Godot 4.5.)
+- [x] **Verify (look):** on web the world still feels endless — the chunk boundary is
       hidden by fog, the horizon reads as sky, not a hard edge. Desktop unchanged.
-- [ ] **Verify (perf):** chunk count, draw calls, node count, and physics time all drop
+      (manual web/desktop verification — to be done by user. Static guarantees: fog colour
+      exactly matches the main.tscn sky horizon (`Color(0.646, 0.656, 0.671)` ≈
+      ProceduralSkyMaterial `sky_horizon_color`), so the fogged edge reads as sky; fog and
+      the reduced render distance are BOTH strictly behind `OS.has_feature("web")`, so the
+      desktop build is byte-for-byte unchanged — no fog, render_distance 5. Headless
+      validation: `godot --headless --check-only --script scripts/endless_terrain.gd` parses
+      clean (exit 0) and `godot --headless --editor --quit --path .` imports the whole
+      project with no SCRIPT ERROR / Parse Error (exit 0).)
+- [x] **Verify (perf):** chunk count, draw calls, node count, and physics time all drop
       again vs Task 5; this should be the largest single CPU/physics win; record delta.
+      (manual web verification — to be done by user in browser; chunk-count / draw-call /
+      node-count / physics-ms delta to be read from the F3 overlay and filled into the Task 7
+      measurement table. Expected: render_distance 5→3 cuts active chunks from
+      (2·5+1)²=121 to (2·3+1)²=49 — ~2.5× fewer chunks, hence ~2.5× fewer crocodiles,
+      bodies, MultiMeshes and coins simulated/rendered. This is the largest single web CPU/
+      physics win in the plan.)
 
 ### Task 7: Verify acceptance criteria
 - [ ] verify every Overview benefit holds: smooth in-browser FPS; counts unchanged;
