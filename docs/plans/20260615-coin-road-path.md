@@ -353,14 +353,29 @@ for k in covered station range:
   expected/ignored "material is null" dummy-renderer noise, no script/parse errors.
 
 ### Task 6: [Final] Update documentation
-- [ ] Update `CLAUDE.md` — replace the coin description (under "Everything in the
+- [x] Update `CLAUDE.md` — replace the coin description (under "Everything in the
   world is spawned procedurally" / performance conventions) with the road model:
   deterministic station-indexed parametric path, forward-biased, chunk coverage by
   X-range, off-road empty. Note the no-loops design decision and the spatial-bucket
   alternative.
-- [ ] Update `README.md` / `QUICKSTART.md` only if they describe coin behavior
+  Done. Added a "coin road" paragraph in the "Everything in the world is spawned
+  procedurally" section (after the block-collision paragraph) covering: pure-in-`k`
+  parametric path seeded from ROAD_WORLD_SEED (not per-chunk RNG), station 0 at
+  origin, heading-integration recurrence with restoring +X bias + `<90°` cap →
+  strictly-increasing X (forward trend, no loops/U-turns), corridor width 20–30 m,
+  7 m spacing, per-chunk station-cache extension + `world_to_chunk` final-chunk
+  bucket (no gaps/dupes), off-road = zero coins, block-perch fallback, and the
+  no-loops design note + spatial-bucket alternative. Also fixed the "Entity counts
+  are never reduced" bullet to carve out coins (placement changed by design, not
+  perf) while keeping crocodiles/blocks per chunk unchanged.
+- [x] Update `README.md` / `QUICKSTART.md` only if they describe coin behavior
   (skip if they don't).
-- [ ] Move this plan to `docs/plans/completed/`.
+  Skipped — `grep -in "coin" README.md QUICKSTART.md` returned ZERO matches in
+  both files; neither describes coin placement/behavior, so they were left
+  unchanged.
+- [x] Move this plan to `docs/plans/completed/`. (deferred to harness - plan moved
+  after finalize; NOT moved here to avoid breaking later review/finalize/stats
+  phases that read this file.)
 
 ## Post-Completion
 *Items requiring a human at the controls — no checkboxes, informational only.*
