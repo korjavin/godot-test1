@@ -309,12 +309,48 @@ for k in covered station range:
   Post-Completion.
 
 ### Task 5: Verify acceptance criteria
-- [ ] Coins form a road, not a scatter (Overview goal 1).
-- [ ] Road meanders with curves/zig-zags/turns, always trending forward (goal 2).
-- [ ] Corridor is ~20–30 m wide and varies (goal 3).
-- [ ] Coins are dense enough to each be in sight of the previous (goal 4).
-- [ ] Off-road has no coins (goal 5).
-- [ ] Generation is deterministic and seamless across chunk seams.
+- [x] Coins form a road, not a scatter (Overview goal 1).
+  Confirmed by read-through: `spawn_coins_in_chunk` (endless_terrain.gd ~L1511)
+  iterates station indices `range(road_k_min, road_k_max+1)`, placing one coin per
+  station via `_road_coin_world(k)` — no `randf`/random scatter remains. Project-wide
+  grep for the old scatter identifiers (`coins_per_chunk`, `min_coin_spacing`,
+  `COIN_AIR_HEIGHT`) = 0 matches. Backed by Task 4 invariant 1.
+- [x] Road meanders with curves/zig-zags/turns, always trending forward (goal 2).
+  `_road_extend_to_x` (~L1370) integrates the heading recurrence
+  `heading[k+1] = clamp(heading[k]*(1-ROAD_RESTORE) + _road_turn(k), ±max_heading)`
+  (L1415-1417) — restoring pull + per-station turn give genuine curves/zig-zags;
+  `assert(road_max_heading_deg < 90)` keeps `cos(heading)>0` so X is strictly
+  increasing (forward bias). Backed by Task 4 invariants 3 (heading spans 136.6°,
+  z sign-changes 7×, curvature spread 68.3°) and 4 (X strictly increasing).
+- [x] Corridor is ~20–30 m wide and varies (goal 3).
+  `_road_width(k)` (~L1453) lerps `road_width_min`(20)→`road_width_max`(30) via a
+  low-frequency cosine of `k`, so the corridor smoothly breathes wide/narrow.
+  Backed by Task 4 invariant 2 (width stayed in [20,30] m; full 10 m span observed).
+- [x] Coins are dense enough to each be in sight of the previous (goal 4).
+  `road_coin_spacing = 7.0` m `STEP` between stations plus a deliberately
+  low-frequency `_road_lateral_unit` weave (~L1469) so consecutive coins barely
+  shift sideways. Backed by Task 4 invariant 1 (max consecutive gap 11.06 m, avg
+  7.00 m, under the sight ceiling of 17.5 m). On-screen line-of-sight "feel" is
+  visual feel deferred to human - Post-Completion.
+- [x] Off-road has no coins (goal 5).
+  `spawn_coins_in_chunk` buckets each coin to the chunk its FINAL world position
+  lands in: `if world_to_chunk(cw) != chunk_pos: continue` (L1576), so a chunk the
+  road never enters spawns nothing. Backed by Task 4 invariant 7 (off-road sample
+  chunks spawned 0 coins each). "Pulls you back" feel is deferred to human -
+  Post-Completion.
+- [x] Generation is deterministic and seamless across chunk seams.
+  Everything below the "COIN ROAD MATH" header is a pure function of `k` +
+  `ROAD_WORLD_SEED` (no per-chunk RNG, no per-frame state); the `road_stations`
+  cache is contiguous, grows from station 0 outward, and is never invalidated, so
+  load order can't change it. Seam-correctness comes from the same final-chunk
+  bucket rule (L1576) — each coin spawned by exactly one chunk. Backed by Task 4
+  invariants 5 (seam: 151 stations each claimed by exactly one chunk, no gaps/dupes)
+  and 6 (two fresh instances byte-identical; direct vs staged extension identical).
+
+  Read-through outcome: all six criteria genuinely met by the code; no gaps or bugs
+  found, so `endless_terrain.gd` was NOT changed. Final headless smoke check
+  (`godot --headless --quit-after 5 --path . scenes/main.tscn`) ran clean — only the
+  expected/ignored "material is null" dummy-renderer noise, no script/parse errors.
 
 ### Task 6: [Final] Update documentation
 - [ ] Update `CLAUDE.md` — replace the coin description (under "Everything in the
