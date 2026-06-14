@@ -1009,12 +1009,26 @@ func create_box(parent_chunk: MeshInstance3D, center_pos: Vector3, dimensions: V
 
 	# ----- Append this block to the chunk's MultiMesh batch (VISUALS) ------------
 	# A MultiMesh instance is just a Transform3D applied to the shared UNIT cube.
-	# We build the basis as: rotate around UP by `yaw`, THEN scale each local axis by
+	# We build the basis as: rotate around UP by `yaw`, THEN scale each LOCAL axis by
 	# `dimensions` — so the 1×1×1 cube becomes a (w, h, d) box turned by yaw. The
 	# transform origin is `center_pos`, which is LOCAL to the chunk (same convention
 	# the old per-block MeshInstance3D.position used). Because the MultiMeshInstance3D
 	# is parented to the chunk at local origin, these local transforms land the blocks
 	# in exactly the same spots as before.
+	#
+	# WHY `scaled_local` (NOT `scaled`): the order of scale vs rotation matters.
+	#   * `Basis.scaled(dimensions)` post-multiplies each ROW → it scales in the
+	#     PARENT/global frame, composing as `S * R`.
+	#   * `Basis.scaled_local(dimensions)` scales in the basis's OWN/local frame
+	#     (after the rotation), composing as `R * S`.
+	# The collision path below builds a BoxShape3D sized to `dimensions` on a
+	# CollisionShape3D that is THEN rotated by `yaw` — i.e. local-space scale, `R * S`.
+	# We match that here with `scaled_local` so the rendered box and its collision
+	# shape share the EXACT same transform. For an axis-aligned cube or a yaw of 0 the
+	# two orders are identical, so every block in the game today looks the same either
+	# way; but for a FUTURE non-uniform block at a non-zero yaw, `S * R` would shear /
+	# mis-scale the visual relative to the (unchanged) collision shape — a latent
+	# desync. Using `scaled_local` keeps visual and collision in lockstep for all cases.
 	#
 	# COLOUR SPACE (must match the old look exactly): the OLD per-block code set
 	# `StandardMaterial3D.albedo_color = chosen_color`, and Godot treats albedo_color as
@@ -1028,7 +1042,7 @@ func create_box(parent_chunk: MeshInstance3D, center_pos: Vector3, dimensions: V
 	# equals srgb_to_linear(chosen_color), exactly as the old material produced. This is
 	# a pure value transform on an already-computed Color — it consumes NO RNG, so the
 	# deterministic world layout is unchanged.
-	var basis := Basis(Vector3.UP, yaw).scaled(dimensions)
+	var basis := Basis(Vector3.UP, yaw).scaled_local(dimensions)
 	block_batch.append({
 		"transform": Transform3D(basis, center_pos),
 		"color": chosen_color.srgb_to_linear(),
