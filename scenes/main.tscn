@@ -1,9 +1,10 @@
-[gd_scene load_steps=8 format=3 uid="uid://clqb4rcmjrpgs"]
+[gd_scene load_steps=9 format=3 uid="uid://clqb4rcmjrpgs"]
 
 [ext_resource type="PackedScene" uid="uid://bqtq2xtxqnvvr" path="res://scenes/player.tscn" id="1_main"]
 [ext_resource type="Script" uid="uid://b07rwceo0eo4o" path="res://scripts/endless_terrain.gd" id="2_terrain"]
 [ext_resource type="Script" path="res://scripts/coin_hud.gd" id="3_hud"]
 [ext_resource type="Script" path="res://scripts/hit_flash.gd" id="4_flash"]
+[ext_resource type="Script" path="res://scripts/perf_overlay.gd" id="5_perf"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_1"]
 sky_horizon_color = Color(0.64625, 0.65575, 0.67075, 1)
@@ -61,3 +62,17 @@ theme_override_font_sizes/font_size = 40
 text = "Coins: 0"
 horizontal_alignment = 2
 script = ExtResource("3_hud")
+
+[node name="PerfOverlay" type="Label" parent="HUD"]
+anchors_preset = 0
+offset_left = 16.0
+offset_top = 16.0
+offset_right = 320.0
+offset_bottom = 240.0
+mouse_filter = 2
+theme_override_colors/font_color = Color(0.9, 1, 0.9, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 6
+theme_override_font_sizes/font_size = 18
+text = "PERF (F3)"
+script = ExtResource("5_perf")

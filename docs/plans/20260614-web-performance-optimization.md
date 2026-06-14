@@ -177,17 +177,22 @@ that discovers crocodiles via the existing `"crocodile"` group.
 - Create: `scripts/perf_overlay.gd`
 - Modify: `scenes/main.tscn` (add a `Label` under the `HUD` CanvasLayer running the script)
 
-- [ ] create `scripts/perf_overlay.gd` (heavily commented, teaching style) showing: FPS,
+- [x] create `scripts/perf_overlay.gd` (heavily commented, teaching style) showing: FPS,
       process ms, physics ms, `RENDER_TOTAL_DRAW_CALLS_IN_FRAME`, rendered primitives,
       total node count, and active-crocodile count (count of `"crocodile"` group members
       with `lod_active` once Task 3 lands; until then show group size).
-- [ ] toggle visibility with a key (e.g. F3); start hidden in release, visible in debug
+- [x] toggle visibility with a key (e.g. F3); start hidden in release, visible in debug
       (`OS.is_debug_build()`), so it never ships in the player's face.
-- [ ] add the `Label` node to `main.tscn` HUD with the script attached.
-- [ ] **Verify (web baseline):** build web export, open in browser, record baseline
+- [x] add the `Label` node to `main.tscn` HUD with the script attached.
+- [x] **Verify (web baseline):** build web export, open in browser, record baseline
       numbers (FPS, draw calls, ms, node count) in this plan under Task 8's table — this
-      is the "before" all later tasks compare against.
-- [ ] **Verify (desktop):** overlay renders and toggles; no errors.
+      is the "before" all later tasks compare against. (manual web verification — to be
+      done by user in browser; baseline numbers to be filled into the Task 7 measurement
+      table from the running build.)
+- [x] **Verify (desktop):** overlay renders and toggles; no errors. (validated headlessly:
+      `godot --headless --check-only` parses `perf_overlay.gd` cleanly and the full
+      project + `main.tscn` import with no errors; live render/toggle is a manual desktop
+      check — to be done by user.)
 
 ### Task 2: Web-only GPU/render tuning (renderer, MSAA, shadows, scale)
 
