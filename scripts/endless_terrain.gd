@@ -205,12 +205,18 @@ var coin_scene: PackedScene
 ## Vector2's `.y` field — and `heading` is the integrated heading angle (radians)
 ## from +X used to step to the NEXT station.
 ##
-## The cache is CONTIGUOUS in `k`: road_stations[i] holds station index
-## (road_k_min + i). It grows from station 0 outward in BOTH directions (forward for
-## k>0, backward for k<0) as chunks request coverage, and is NEVER invalidated — the
-## road is static and infinite, and every station is a pure function of `k` + the
-## fixed seed, so a cached value is correct forever and independent of load order.
-var road_stations: Array = []
+## We key the cache by `k` in a Dictionary (NOT a contiguous Array) so that extending
+## the road in the -X direction is O(1) per station: an Array would force `push_front`,
+## which shifts every existing element (O(n) per insert → O(n²) over a long backward
+## walk). A Dictionary insert is O(1) and an index lookup `road_stations[k]` is O(1),
+## regardless of how far the road has grown either way. The cache still holds a
+## CONTIGUOUS range [road_k_min, road_k_max]; it just doesn't pay the array-shift cost.
+##
+## The cache grows from station 0 outward in BOTH directions (forward for k>0, backward
+## for k<0) as chunks request coverage, and is NEVER invalidated — the road is static
+## and infinite, and every station is a pure function of `k` + the fixed seed, so a
+## cached value is correct forever and independent of load order.
+var road_stations: Dictionary = {}
 
 ## Inclusive station-index bounds of what `road_stations` currently holds. They start
 ## "empty" (min > max); the first _road_extend_to_x seeds station 0 and sets both to 0.
@@ -1393,14 +1399,22 @@ func _road_extend_to_x(x_min: float, x_max: float) -> void:
 	bounded, contiguous range of stations.
 	"""
 	# Safety: the whole monotonic-X guarantee depends on the heading staying under 90°.
+	# road_max_heading_deg is an @export, so a designer could set it >= 90 — and an
+	# assert is STRIPPED in release builds, so it can't be our only guard. If the cap
+	# were >= 90, cos(heading) could reach 0 or go negative and the "extend until X
+	# reaches the target" while-loops below would stop advancing in X and HANG (or run
+	# the road backward). We therefore use a CLAMPED effective cap everywhere in here;
+	# the assert stays as a loud editor-time warning, but the clamp is what actually
+	# keeps release builds safe. _road_max_heading() returns the same clamped value so
+	# every road helper agrees on the cap.
 	assert(road_max_heading_deg < 90.0,
 		"road_max_heading_deg must be < 90 so the centerline's X stays strictly increasing")
 
-	var max_heading := deg_to_rad(road_max_heading_deg)
+	var max_heading := _road_max_heading()
 
 	# First-time seeding: station 0 at world origin, heading along +X (0 rad).
 	if road_k_min > road_k_max:
-		road_stations = [{ "center": Vector2(0.0, 0.0), "heading": 0.0 }]
+		road_stations = { 0: { "center": Vector2(0.0, 0.0), "heading": 0.0 } }
 		road_k_min = 0
 		road_k_max = 0
 
@@ -1415,7 +1429,8 @@ func _road_extend_to_x(x_min: float, x_max: float) -> void:
 		var next_heading: float = clampf(
 			cur_heading * (1.0 - ROAD_RESTORE) + _road_turn(road_k_max),
 			-max_heading, max_heading)
-		road_stations.append({ "center": next_center, "heading": next_heading })
+		# O(1) Dictionary insert keyed by the new station index (no array-shift).
+		road_stations[road_k_max + 1] = { "center": next_center, "heading": next_heading }
 		road_k_max += 1
 
 	# Grow BACKWARD (decreasing k) until the first cached station's X reaches x_min.
@@ -1439,16 +1454,62 @@ func _road_extend_to_x(x_min: float, x_max: float) -> void:
 			-max_heading, max_heading)
 		# Step BACKWARD from the first cached center along the reconstructed heading.
 		var prev_center: Vector2 = first.center - road_coin_spacing * Vector2(cos(prev_heading), sin(prev_heading))
-		road_stations.push_front({ "center": prev_center, "heading": prev_heading })
+		# O(1) Dictionary insert keyed by (k-1) — this is the whole reason the cache is a
+		# Dictionary and not an Array: an Array would need push_front here (O(n) shift).
+		road_stations[road_k_min - 1] = { "center": prev_center, "heading": prev_heading }
 		road_k_min -= 1
+
+func _road_max_heading() -> float:
+	"""
+	The EFFECTIVE heading cap in radians: road_max_heading_deg clamped to [0, 89°].
+
+	@return: deg_to_rad(clamp(road_max_heading_deg, 0, 89)).
+
+	EDUCATIONAL NOTE:
+	- road_max_heading_deg is an @export a designer can set to anything. The road's
+	  monotonic-X guarantee (and thus loop termination in _road_extend_to_x) requires
+	  the cap to stay strictly under 90°. Asserts are stripped from release builds, so
+	  we ALSO clamp at read time here — every road helper routes its cap through this so
+	  a misconfigured export can never make the centerline stall or run backward.
+	"""
+	return deg_to_rad(clampf(road_max_heading_deg, 0.0, 89.0))
 
 func _road_station(k: int) -> Dictionary:
 	"""
 	Return the cached station Dictionary { center: Vector2, heading: float } for index
 	`k`. ASSUMES `k` is within [road_k_min, road_k_max] (callers extend the cache
-	first); the contiguous layout means index i maps to (road_k_min + i).
+	first). The cache is a Dictionary keyed directly by `k`, so this is an O(1) lookup.
 	"""
-	return road_stations[k - road_k_min]
+	return road_stations[k]
+
+func _road_first_k_at_or_after_x(x: float) -> int:
+	"""
+	Return the smallest cached station index `k` whose centerline X is >= `x`, by binary
+	search over [road_k_min, road_k_max]. If every cached station is left of `x`, returns
+	road_k_max + 1 (an empty window).
+
+	@param x: World X to search for.
+	@return: First station index with center.x >= x (clamped to the cached range).
+
+	EDUCATIONAL NOTE:
+	- ASSUMES the cache already spans `x` (callers _road_extend_to_x first) and relies on
+	  the road's centerline X being STRICTLY INCREASING in `k` (guaranteed by the < 90°
+	  heading cap) — that monotonicity is exactly what makes a binary search valid. This
+	  lets a chunk jump straight to its station window in O(log cache) instead of scanning
+	  every cached station from road_k_min (which would be O(cache size) = O(distance from
+	  origin) on every chunk load).
+	"""
+	var lo := road_k_min
+	var hi := road_k_max
+	# Standard lower-bound binary search: narrow toward the first index satisfying
+	# center.x >= x. `lo` ends one past the last station strictly left of x.
+	while lo <= hi:
+		var mid := lo + (hi - lo) / 2  # integer division → floor of the midpoint
+		if _road_station(mid).center.x < x:
+			lo = mid + 1
+		else:
+			hi = mid - 1
+	return lo
 
 func _road_width(k: int) -> float:
 	"""
@@ -1542,29 +1603,40 @@ func spawn_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obs
 	if not spawn_coins or coin_scene == null:
 		return
 
-	# This chunk's world center and its world X-range. We pad the range by half the
-	# widest the road can ever be (plus a small margin) because a station's CENTERLINE
-	# can sit just outside the chunk while its laterally-offset coin swings back inside
-	# it — widening the scanned X-range makes sure we never miss such a coin.
+	# This chunk's world center and its world X-range. We pad the range because a
+	# station's CENTERLINE can sit just outside the chunk while its laterally-offset
+	# coin swings back inside it — widening the scanned X-range makes sure we never miss
+	# such a coin (a missed coin = a permanent gap in the road, since no other chunk
+	# would scan that station).
+	#
+	# SEAM-CORRECTNESS INVARIANT: pad MUST be >= the largest amount a coin's WORLD X can
+	# differ from its station's centerline X. A coin is offset perpendicular to the
+	# heading by up to width/2 (max width = road_width_max/2). Projected onto X, that
+	# perpendicular offset is `sin(heading) * width/2`, maximised at |heading| = the cap.
+	# So the worst-case X excursion is sin(cap) * road_width_max/2. We DERIVE pad from
+	# that geometry (plus a small safety margin) instead of hand-tuning a magic number,
+	# so the invariant survives future retuning of road_width_max / road_max_heading_deg.
 	var center := chunk_to_world(chunk_pos)
 	var half_chunk := chunk_size / 2.0
 	var x0 := center.x - half_chunk
 	var x1 := center.x + half_chunk
-	var pad := road_width_max / 2.0 + 2.0
+	var pad := sin(_road_max_heading()) * road_width_max * 0.5 + 2.0
 
 	# Grow the shared station cache so it covers this chunk's widened X-range. The
 	# cache is a pure function of `k`, so this is idempotent across chunks and load
 	# order doesn't matter — it just grows contiguously and is reused.
 	_road_extend_to_x(x0 - pad, x1 + pad)
 
-	# Narrow the scan to the contiguous sub-range of stations whose centerline X falls
-	# within the widened X-range. (X is strictly increasing in `k`, so this is a clean
-	# window; the world_to_chunk bucket test below is the real correctness guarantee.)
-	for k in range(road_k_min, road_k_max + 1):
+	# Find the FIRST station whose centerline X is >= the window start by binary search.
+	# Because X is strictly increasing in `k`, the window of stations covering this chunk
+	# is a contiguous range, and we can jump straight to its start instead of scanning
+	# the whole cache from road_k_min (which would be O(total cache) = O(distance from
+	# origin) every chunk load — a latent web-perf regression). The `for` over the window
+	# then touches only O(window) stations, independent of how far the road has grown.
+	var k_start := _road_first_k_at_or_after_x(x0 - pad)
+	for k in range(k_start, road_k_max + 1):
 		var st: Dictionary = _road_station(k)
 		var cx: float = st.center.x
-		if cx < x0 - pad:
-			continue  # not yet into this chunk's window
 		if cx > x1 + pad:
 			break  # past this chunk's window — and X only grows from here, so stop
 
@@ -1581,19 +1653,27 @@ func spawn_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obs
 		var local := Vector3(cw.x - center.x, cw.y, cw.z - center.z)
 
 		# If the road runs over a block footprint, the ground-height coin would be
-		# buried. Perch it on the block's top if that block is climbable; otherwise
-		# (sheer tops taller than a jump) skip this one coin — structures are sparse
-		# so the visible chain stays intact.
+		# buried. Perch it on a climbable block's top; only if NONE of the overlapping
+		# blocks is climbable (sheer tops taller than a jump) do we skip this one coin —
+		# structures are sparse so the visible chain stays intact.
+		#
+		# We must scan ALL overlapping blocks, not break on the first: a coin can sit
+		# over several blocks at once, and if the first one we hit is non-climbable while
+		# a later one IS climbable, the coin can still perch — breaking early would skip
+		# it needlessly. Among climbable overlaps we perch on the HIGHEST top so the coin
+		# rests above every block it covers (and obstacles is in a fixed order, so this
+		# stays deterministic).
 		if _point_over_block(local.x, local.z, obstacles):
 			var perched := false
+			var perch_top := 0.0
 			for ob in obstacles:
 				if Vector2(local.x - ob.pos.x, local.z - ob.pos.z).length() < ob.radius + 1.0:
-					if ob.get("climbable", false):
-						local.y = ob.top + COIN_BLOCK_OFFSET
+					if ob.get("climbable", false) and (not perched or ob.top > perch_top):
+						perch_top = ob.top
 						perched = true
-					break
 			if not perched:
 				continue
+			local.y = perch_top + COIN_BLOCK_OFFSET
 
 		# Spawn the coin (position is local to the chunk, like blocks/crocodiles).
 		var coin := coin_scene.instantiate()
