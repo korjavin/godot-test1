@@ -344,7 +344,16 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 	# Position the chunk in the world
 	mesh_instance.position = chunk_to_world(chunk_pos)
 
-	# Add collision so the player doesn't fall through
+	# Add the GROUND collision so the player doesn't fall through the plane.
+	#
+	# DESIGN CHOICE (Task 5 — consolidated collision): we keep the GROUND collision
+	# in its OWN StaticBody3D, SEPARATE from the per-chunk *block* body created below.
+	# The ground is a single shape created once per chunk, so folding it into the
+	# block body would save exactly one node and only muddle the code — there is no
+	# meaningful win. The real win is collapsing the MANY per-block bodies (one per
+	# decorative cube/slab — dozens per chunk) into a single body; that's what the
+	# block_body below does. Ground and blocks share the same default collision
+	# layer/mask, so keeping them in two bodies is purely cosmetic, not behavioural.
 	var static_body := StaticBody3D.new()
 	var collision_shape := CollisionShape3D.new()
 	var box_shape := BoxShape3D.new()
@@ -365,21 +374,53 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 	var obstacles: Array = []
 	var platforms: Array = []
 
-	# Per-chunk "block batch": as blocks are created they no longer instance their
-	# own MeshInstance3D. Instead each block appends a { "transform": Transform3D,
-	# "color": Color } entry here, and AFTER generation we build ONE
-	# MultiMeshInstance3D that renders all of them in a single draw call.
-	# (Their collision bodies are still created per block — see create_box.)
+	# ------------------------------------------------------------------------
+	# The two halves of every chunk's decorative blocks (created together,
+	# consumed separately):
+	#
+	#   1. block_batch — the VISUAL half (Task 4). As blocks are created they no
+	#      longer instance their own MeshInstance3D; each appends a
+	#      { "transform": Transform3D, "color": Color } entry here, and AFTER
+	#      generation we build ONE MultiMeshInstance3D rendering all of them in a
+	#      single draw call.
+	#
+	#   2. block_body — the COLLISION half (Task 5). ONE StaticBody3D for the WHOLE
+	#      chunk's blocks; each block adds its own CollisionShape3D child to it
+	#      (instead of every block getting its own StaticBody3D). For STATIC
+	#      geometry a single body with many shape children is physically IDENTICAL
+	#      to many one-shape bodies — Godot collides against each shape the same
+	#      way regardless of how the shapes are grouped under bodies — but it cuts
+	#      the node count for blocks by ~25× (one body instead of one-per-block),
+	#      which is a big web/CPU win with zero collision change.
+	#
+	# We create block_body up front and thread it (alongside block_batch) down the
+	# whole spawn call chain so create_box can hang each block's shape on it.
 	var block_batch: Array = []
+	var block_body := StaticBody3D.new()
+	block_body.name = "BlockCollision"
+	# Default collision layer/mask (1/1) — IDENTICAL to the old per-block bodies,
+	# which never set them. Leaving the defaults keeps player collision and
+	# crocodile avoidance raycasts hitting blocks exactly as before.
 
 	if spawn_objects:
-		obstacles = spawn_objects_in_chunk(chunk_pos, mesh_instance, platforms, block_batch)
+		obstacles = spawn_objects_in_chunk(chunk_pos, mesh_instance, platforms, block_batch, block_body)
 
 	# Build the chunk's batched block visuals. If any blocks were placed, collapse
 	# them all into one MultiMeshInstance3D parented to this chunk (so it is freed
 	# automatically when the chunk unloads, like every other per-chunk node).
 	if not block_batch.is_empty():
 		_build_block_multimesh(mesh_instance, block_batch)
+
+	# Attach the chunk's single block-collision body — but only if it actually
+	# collected shapes. A chunk with no blocks (rare) would otherwise leave an empty
+	# StaticBody3D in the tree; an empty body is harmless (it never collides), but we
+	# free it to keep the node count honest. If it has shapes, parent it to the chunk
+	# so it unloads automatically when the chunk does (same per-chunk parenting rule
+	# as the MultiMesh visuals and everything else).
+	if block_body.get_child_count() > 0:
+		mesh_instance.add_child(block_body)
+	else:
+		block_body.queue_free()
 
 	# Spawn crocodiles in this chunk if enabled
 	if spawn_crocodiles:
@@ -391,7 +432,7 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 	if spawn_coins:
 		spawn_coins_in_chunk(chunk_pos, mesh_instance, obstacles)
 
-func spawn_objects_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, platforms: Array, block_batch: Array) -> Array:
+func spawn_objects_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, platforms: Array, block_batch: Array, block_body: StaticBody3D) -> Array:
 	"""
 	Spawns blocks within a terrain chunk: scattered cubes, the occasional little
 	stack/tower, and — sometimes — a feature structure (wall / corridor / gate /
@@ -404,6 +445,8 @@ func spawn_objects_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, p
 	@param block_batch: Out-param; each block created appends its
 	                  { "transform": Transform3D, "color": Color } here so the
 	                  caller can render them all as one MultiMesh (visual batching).
+	@param block_body: The chunk's single shared block-collision StaticBody3D; each
+	                  block adds its CollisionShape3D child to this body (Task 5).
 	@return Array of obstacle footprints ({ "pos": Vector3, "radius": float }) so
 	        the crocodile spawner can keep its NPCs out of the blocks.
 
@@ -429,7 +472,7 @@ func spawn_objects_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, p
 	# so scattered blocks can be placed around it (the scatter loop below checks
 	# against these footprints).
 	if rng.randf() < structure_chance:
-		spawn_feature_structure(rng, parent_chunk, half_chunk, obstacles, platforms, block_batch)
+		spawn_feature_structure(rng, parent_chunk, half_chunk, obstacles, platforms, block_batch, block_body)
 
 	# Store positions of scattered objects to check spacing between them
 	var spawned_positions: Array[Vector3] = []
@@ -467,7 +510,7 @@ func spawn_objects_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, p
 
 		# Base block sits on the ground.
 		var size := rng.randf_range(object_size_min, object_size_max)
-		create_block(parent_chunk, Vector3(random_x, size / 2.0, random_z), size, rng.randf_range(0, TAU), rng, block_batch)
+		create_block(parent_chunk, Vector3(random_x, size / 2.0, random_z), size, rng.randf_range(0, TAU), rng, block_batch, block_body)
 		spawned_positions.append(object_pos)
 
 		# Track the height of the top surface (grows if we stack a tower on top).
@@ -480,7 +523,7 @@ func spawn_objects_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, p
 				# Each block up the stack is a bit smaller, so towers taper and
 				# the random yaw doesn't make them overhang awkwardly.
 				var stack_size := size * rng.randf_range(0.6, 0.85)
-				create_block(parent_chunk, Vector3(random_x, top_y + stack_size / 2.0, random_z), stack_size, rng.randf_range(0, TAU), rng, block_batch)
+				create_block(parent_chunk, Vector3(random_x, top_y + stack_size / 2.0, random_z), stack_size, rng.randf_range(0, TAU), rng, block_batch, block_body)
 				top_y += stack_size
 
 		# Record the footprint and final top height — used to keep crocodiles out
@@ -490,7 +533,7 @@ func spawn_objects_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, p
 
 	return obstacles
 
-func spawn_feature_structure(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, half_chunk: float, obstacles: Array, platforms: Array, block_batch: Array) -> void:
+func spawn_feature_structure(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, half_chunk: float, obstacles: Array, platforms: Array, block_batch: Array, block_body: StaticBody3D) -> void:
 	"""
 	Pick and build one "feature" structure for variety: a wall, a corridor to run
 	through, a gate, or a Mayan step-pyramid. Pyramids are the biggest/rarest
@@ -503,18 +546,20 @@ func spawn_feature_structure(rng: RandomNumberGenerator, parent_chunk: MeshInsta
 	@param obstacles: Footprint list each piece is appended to (crocodiles + coins)
 	@param platforms: Walkable-top descriptors for patrolling crocodiles
 	@param block_batch: Out-param threaded down to create_box for MultiMesh batching
+	@param block_body: The chunk's shared block-collision body, threaded down to
+	                  create_box so each block's shape hangs on it (Task 5)
 	"""
 	var pick := rng.randf()
 	if pick < 0.3:
-		spawn_wall(rng, parent_chunk, half_chunk, obstacles, platforms, block_batch)
+		spawn_wall(rng, parent_chunk, half_chunk, obstacles, platforms, block_batch, block_body)
 	elif pick < 0.55:
-		spawn_corridor(rng, parent_chunk, half_chunk, obstacles, block_batch)
+		spawn_corridor(rng, parent_chunk, half_chunk, obstacles, block_batch, block_body)
 	elif pick < 0.75:
-		spawn_gate(rng, parent_chunk, half_chunk, obstacles, block_batch)
+		spawn_gate(rng, parent_chunk, half_chunk, obstacles, block_batch, block_body)
 	else:
-		spawn_pyramid(rng, parent_chunk, half_chunk, obstacles, platforms, block_batch)
+		spawn_pyramid(rng, parent_chunk, half_chunk, obstacles, platforms, block_batch, block_body)
 
-func spawn_pyramid(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, half_chunk: float, obstacles: Array, platforms: Array, block_batch: Array) -> void:
+func spawn_pyramid(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, half_chunk: float, obstacles: Array, platforms: Array, block_batch: Array, block_body: StaticBody3D) -> void:
 	"""
 	Build a Mayan step-pyramid: a few square slabs stacked smallest-on-top, like a
 	ziggurat. Each layer is a single flat box (cheap), not a grid of cubes.
@@ -526,6 +571,7 @@ func spawn_pyramid(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, hal
 	                  height as its top so a coin can perch on top)
 	@param platforms: Gets the flat apex registered as a patrol platform
 	@param block_batch: Out-param threaded down to create_box for MultiMesh batching
+	@param block_body: The chunk's shared block-collision body (Task 5)
 	"""
 	# Pyramids vary a lot in size. Most are modest; now and then a giant one with
 	# 10-15 levels towers over the field as a landmark you can climb.
@@ -552,7 +598,7 @@ func spawn_pyramid(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, hal
 	var y := 0.0
 	for i in layers:
 		var w := base_size - i * shrink
-		create_box(parent_chunk, Vector3(cx, y + layer_height / 2.0, cz), Vector3(w, layer_height, w), 0.0, rng, block_batch)
+		create_box(parent_chunk, Vector3(cx, y + layer_height / 2.0, cz), Vector3(w, layer_height, w), 0.0, rng, block_batch, block_body)
 		y += layer_height
 
 	# One footprint for the whole base; top = apex height. Pyramids are climbable
@@ -565,7 +611,7 @@ func spawn_pyramid(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, hal
 	if apex_half > 0.4:
 		platforms.append({ "center": Vector3(cx, y, cz), "half": Vector2(apex_half, apex_half) })
 
-func spawn_gate(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, half_chunk: float, obstacles: Array, block_batch: Array) -> void:
+func spawn_gate(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, half_chunk: float, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
 	"""
 	Build a monumental gate (Brandenburg-Tor style): two tall pillars with a thick
 	lintel beam across the top, leaving an opening to walk through.
@@ -579,6 +625,7 @@ func spawn_gate(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, half_c
 	@param half_chunk: Half the chunk width, for bounds
 	@param obstacles: Footprint list (pillars, plus a coin-perch on the lintel)
 	@param block_batch: Out-param threaded down to create_box for MultiMesh batching
+	@param block_body: The chunk's shared block-collision body (Task 5)
 	"""
 	var pillar_w := rng.randf_range(1.3, 1.8)
 	# Pillars stay just under jump height (~3.6 m) so you can still hop onto one to
@@ -608,19 +655,19 @@ func spawn_gate(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, half_c
 		var pz: float = cz + (0.0 if along_x else s * half_span)
 		# Pillar is pillar_w across the span axis and `depth` across the other.
 		var pillar_dims: Vector3 = Vector3(pillar_w, pillar_h, depth) if along_x else Vector3(depth, pillar_h, pillar_w)
-		create_box(parent_chunk, Vector3(px, pillar_h * 0.5, pz), pillar_dims, 0.0, rng, block_batch)
+		create_box(parent_chunk, Vector3(px, pillar_h * 0.5, pz), pillar_dims, 0.0, rng, block_batch, block_body)
 		# Each pillar is its own footprint, so crocodiles can still pass through
 		# the opening between them.
 		obstacles.append({ "pos": Vector3(px, 0, pz), "radius": maxf(pillar_w, depth) * 0.71, "top": pillar_h, "climbable": true })
 
 	# Lintel beam spanning the full width, resting on top of both pillars.
 	var lintel_dims: Vector3 = Vector3(total_w, lintel_h, depth) if along_x else Vector3(depth, lintel_h, total_w)
-	create_box(parent_chunk, Vector3(cx, pillar_h + lintel_h * 0.5, cz), lintel_dims, 0.0, rng, block_batch)
+	create_box(parent_chunk, Vector3(cx, pillar_h + lintel_h * 0.5, cz), lintel_dims, 0.0, rng, block_batch, block_body)
 
 	# Register the lintel centre as a (hard-to-reach but climbable) coin perch.
 	obstacles.append({ "pos": Vector3(cx, 0, cz), "radius": 1.0, "top": pillar_h + lintel_h, "climbable": true })
 
-func spawn_corridor(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, half_chunk: float, obstacles: Array, block_batch: Array) -> void:
+func spawn_corridor(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, half_chunk: float, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
 	"""
 	Build a corridor: two parallel two-block-high walls with a gap between them
 	that the player can run down.
@@ -630,6 +677,7 @@ func spawn_corridor(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, ha
 	@param half_chunk: Half the chunk width, for bounds
 	@param obstacles: Footprint list each block is appended to
 	@param block_batch: Out-param threaded down to create_box for MultiMesh batching
+	@param block_body: The chunk's shared block-collision body (Task 5)
 	"""
 	var block_size := rng.randf_range(1.8, 2.4)
 	var step := block_size * 0.98
@@ -663,11 +711,11 @@ func spawn_corridor(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, ha
 			var z := perp if along_x else along
 			# Two blocks tall so it reads as an enclosed passage. Sheer and taller
 			# than a jump, so it's not climbable (no coins perch on the roof).
-			create_block(parent_chunk, Vector3(x, block_size / 2.0, z), block_size, 0.0, rng, block_batch)
-			create_block(parent_chunk, Vector3(x, block_size + block_size / 2.0, z), block_size, 0.0, rng, block_batch)
+			create_block(parent_chunk, Vector3(x, block_size / 2.0, z), block_size, 0.0, rng, block_batch, block_body)
+			create_block(parent_chunk, Vector3(x, block_size + block_size / 2.0, z), block_size, 0.0, rng, block_batch, block_body)
 			obstacles.append({ "pos": Vector3(x, 0, z), "radius": block_size * 0.71, "top": 2.0 * block_size, "climbable": false })
 
-func spawn_wall(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, half_chunk: float, obstacles: Array, platforms: Array, block_batch: Array) -> void:
+func spawn_wall(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, half_chunk: float, obstacles: Array, platforms: Array, block_batch: Array, block_body: StaticBody3D) -> void:
 	"""
 	Build a single wall — a straight line of touching blocks the player must run
 	around — somewhere inside the chunk.
@@ -678,6 +726,7 @@ func spawn_wall(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, half_c
 	@param obstacles: Footprint list to append each wall block to (for crocodiles)
 	@param platforms: Gets the wall ridge registered as a patrol platform
 	@param block_batch: Out-param threaded down to create_box for MultiMesh batching
+	@param block_body: The chunk's shared block-collision body (Task 5)
 	"""
 	# Uniform block size so the wall reads as one solid line.
 	var block_size := rng.randf_range(1.6, 2.4)
@@ -707,14 +756,14 @@ func spawn_wall(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, half_c
 		var z := fixed if along_x else along
 
 		# Wall blocks are axis-aligned (yaw 0) so they sit flush against each other.
-		create_block(parent_chunk, Vector3(x, block_size / 2.0, z), block_size, 0.0, rng, block_batch)
+		create_block(parent_chunk, Vector3(x, block_size / 2.0, z), block_size, 0.0, rng, block_batch, block_body)
 		var top := block_size
 		# A single-block section is low enough to hop onto; a doubled one is not.
 		var climbable := true
 
 		# Now and then double a section up so the wall isn't a uniform single row.
 		if rng.randf() < 0.3:
-			create_block(parent_chunk, Vector3(x, block_size + block_size / 2.0, z), block_size, 0.0, rng, block_batch)
+			create_block(parent_chunk, Vector3(x, block_size + block_size / 2.0, z), block_size, 0.0, rng, block_batch, block_body)
 			top = 2.0 * block_size
 			climbable = false
 
@@ -731,36 +780,56 @@ func spawn_wall(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, half_c
 	if half_along > 1.0 and half_across > 0.2:
 		platforms.append({ "center": ridge_center, "half": ridge_half })
 
-func create_block(parent_chunk: MeshInstance3D, center_pos: Vector3, size: float, yaw: float, rng: RandomNumberGenerator, block_batch: Array) -> void:
+func create_block(parent_chunk: MeshInstance3D, center_pos: Vector3, size: float, yaw: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> void:
 	"""
 	Create one cube block. Thin wrapper over create_box for the common case where
 	all three dimensions are equal (scattered blocks, towers, walls, corridors).
 
 	@param block_batch: Out-param forwarded to create_box for MultiMesh batching.
+	@param block_body: The chunk's shared block-collision body, forwarded to
+	                  create_box so this block's shape hangs on it (Task 5).
 	"""
-	create_box(parent_chunk, center_pos, Vector3(size, size, size), yaw, rng, block_batch)
+	create_box(parent_chunk, center_pos, Vector3(size, size, size), yaw, rng, block_batch, block_body)
 
-func create_box(parent_chunk: MeshInstance3D, center_pos: Vector3, dimensions: Vector3, yaw: float, rng: RandomNumberGenerator, block_batch: Array) -> void:
+func create_box(parent_chunk: MeshInstance3D, center_pos: Vector3, dimensions: Vector3, yaw: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> void:
 	"""
-	Register one box for rendering AND build its physics collision body. Used for
+	Register one box for rendering AND register its physics collision shape. Used for
 	cube blocks and for the flat slabs that make up pyramids.
 
-	VISUALS vs COLLISION are now DECOUPLED (Task 4 of the perf plan):
-	- VISUALS: this function no longer instances a MeshInstance3D + StandardMaterial3D
-	  per block. Instead it appends one { "transform": Transform3D, "color": Color }
-	  entry to `block_batch`. The caller (create_chunk) later turns the whole batch
-	  into ONE MultiMeshInstance3D, so all of a chunk's blocks draw in a single draw
-	  call instead of dozens (see SECTION 2's MultiMesh notes and
-	  _build_block_multimesh below). The blocks look EXACTLY the same — same shapes,
-	  sizes, yaw and earthy-colour ranges — only how they're SUBMITTED to the GPU
-	  changed.
-	- COLLISION: we STILL create a per-block StaticBody3D + CollisionShape3D exactly
-	  as before, so physics (player walls, crocodile avoidance) is byte-for-byte
-	  unchanged. (Consolidating these into one body per chunk is Task 5 — deliberately
-	  left for later so this change is purely visual.) That collision node now has NO
-	  visible mesh; it's a bare StaticBody3D positioned/rotated where the block is.
+	VISUALS vs COLLISION are DECOUPLED (Tasks 4 + 5 of the perf plan):
+	- VISUALS (Task 4): this function no longer instances a MeshInstance3D +
+	  StandardMaterial3D per block. Instead it appends one
+	  { "transform": Transform3D, "color": Color } entry to `block_batch`. The caller
+	  (create_chunk) later turns the whole batch into ONE MultiMeshInstance3D, so all
+	  of a chunk's blocks draw in a single draw call instead of dozens (see SECTION
+	  2's MultiMesh notes and _build_block_multimesh below). The blocks look EXACTLY
+	  the same — same shapes, sizes, yaw and earthy-colour ranges — only how they're
+	  SUBMITTED to the GPU changed.
+	- COLLISION (Task 5): this function no longer creates a per-block StaticBody3D.
+	  Instead it adds just a CollisionShape3D (with a BoxShape3D) as a child of the
+	  CHUNK'S SINGLE shared `block_body`, positioning/rotating that shape node where
+	  the block is.
 
-	@param parent_chunk: The chunk mesh to attach the collision body to
+	  WHY ONE BODY WITH MANY SHAPES == MANY ONE-SHAPE BODIES (for static geometry):
+	  a StaticBody3D's job is to give its CollisionShape3D children a physics presence
+	  in the world; the body itself doesn't move (static). Godot's physics engine
+	  collides against each individual SHAPE — at that shape's own world transform —
+	  regardless of whether the shapes are spread across many bodies or grouped under
+	  one. The OLD code put each block's shape at the block's transform via the BODY's
+	  position/rotation (shape sat at the body's local origin). The NEW code puts that
+	  same transform directly on the CollisionShape3D node instead (it's a Node3D, so
+	  it has its own position/rotation), giving the shape the IDENTICAL world placement.
+	  So the player still can't walk through a block, and a crocodile's avoidance
+	  raycast still hits it, byte-for-byte as before — we've only changed how the
+	  collision nodes are GROUPED, not where any collision surface is. The payoff is
+	  ~25× fewer nodes for blocks (one body per chunk instead of one per block), a real
+	  CPU/web win with zero behavioural change.
+
+	  The MultiMesh (block_batch → MultiMeshInstance3D) and this collision body are the
+	  TWO HALVES of each chunk's blocks: one renders them, one collides with them.
+
+	@param parent_chunk: The chunk mesh (kept for symmetry / future use; the shape now
+	                   attaches to block_body, which is itself parented to the chunk)
 	@param center_pos: Box centre position, local to the chunk (Y is the centre,
 	                   so pass height/2 to sit a box on the ground)
 	@param dimensions: Full box size on each axis (width, height, depth)
@@ -768,6 +837,8 @@ func create_box(parent_chunk: MeshInstance3D, center_pos: Vector3, dimensions: V
 	@param rng: The chunk's seeded RNG, used for the random earthy colour
 	@param block_batch: Out-param; we append this block's per-instance transform +
 	                   colour here for the chunk's MultiMesh.
+	@param block_body: The chunk's single shared StaticBody3D; we add this block's
+	                   CollisionShape3D child to it (see WHY note above).
 	"""
 	# ----- Pick the earthy colour (UNCHANGED logic) ------------------------------
 	# IMPORTANT (determinism): the chunk's world layout is seeded from this same RNG.
@@ -816,23 +887,30 @@ func create_box(parent_chunk: MeshInstance3D, center_pos: Vector3, dimensions: V
 		"color": chosen_color,
 	})
 
-	# ----- Build the collision body (COLLISION — kept per block for now) ---------
-	# A bare StaticBody3D (no visible mesh) sized/placed exactly like the old block,
-	# so the player and crocodiles collide with it identically. Default collision
-	# layer/mask (unchanged from before, when the StaticBody hung under the visible
-	# MeshInstance3D).
-	var collision_body := StaticBody3D.new()
-	collision_body.position = center_pos
-	collision_body.rotation.y = yaw
-
+	# ----- Register the collision shape on the CHUNK'S shared body (COLLISION) ----
+	# Instead of giving this block its OWN StaticBody3D (the old, node-heavy way), we
+	# create just a CollisionShape3D and hang it on the chunk's single `block_body`.
+	# The shape node carries the block's transform itself: we set its local
+	# position = center_pos and rotation.y = yaw — the SAME chunk-local convention the
+	# visual MultiMesh instance uses, and the same transform the old per-block body
+	# applied. Because block_body is parented to the chunk (and the chunk is placed in
+	# the world), this shape lands at the IDENTICAL world position/orientation the old
+	# per-block body produced, so collision is byte-for-byte unchanged.
+	#
+	# Default collision layer/mask (1/1) — block_body never sets them, exactly like the
+	# old per-block bodies, so the player's collision and crocodile avoidance raycasts
+	# keep hitting blocks the same way.
 	var collision_shape := CollisionShape3D.new()
+	collision_shape.position = center_pos
+	collision_shape.rotation.y = yaw
+
 	var box_shape := BoxShape3D.new()
 	box_shape.size = dimensions
 	collision_shape.shape = box_shape
-	collision_body.add_child(collision_shape)
 
-	# Parent to the chunk (so it gets removed when the chunk is removed).
-	parent_chunk.add_child(collision_body)
+	# Add to the shared per-chunk body. (block_body is parented to the chunk by
+	# create_chunk once generation finishes, so all these shapes unload with the chunk.)
+	block_body.add_child(collision_shape)
 
 func _build_block_multimesh(parent_chunk: MeshInstance3D, block_batch: Array) -> void:
 	"""

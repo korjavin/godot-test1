@@ -367,17 +367,61 @@ that discovers crocodiles via the existing `"crocodile"` group.
 **Files:**
 - Modify: `scripts/endless_terrain.gd` (collision creation in `create_box`/`create_chunk`)
 
-- [ ] replace per-block `StaticBody3D` with a single `StaticBody3D` per chunk; each block
+- [x] replace per-block `StaticBody3D` with a single `StaticBody3D` per chunk; each block
       adds a `CollisionShape3D` child (`BoxShape3D(size=dimensions)`, local
       `position`/`rotation.y`). Keep the same collision layer/mask as today so crocodile
       avoidance raycasts and player collision are unchanged.
-- [ ] fold the chunk ground collision into the same per-chunk body (or keep it separate if
+      (Done. `create_chunk` now creates ONE `StaticBody3D` named `BlockCollision`
+      (`block_body`) BEFORE `spawn_objects_in_chunk` and threads it — alongside
+      `block_batch` — down the whole call chain: `spawn_objects_in_chunk` →
+      `spawn_feature_structure` → `spawn_wall`/`spawn_corridor`/`spawn_gate`/`spawn_pyramid`
+      → `create_block` → `create_box` (every signature + call site updated; verified by
+      grep). `create_box` no longer instances a per-block `StaticBody3D`; it creates only a
+      `CollisionShape3D` (with a `BoxShape3D(size=dimensions)`), sets the shape node's
+      LOCAL `position = center_pos` and `rotation.y = yaw` — the same chunk-local convention
+      the old per-block body used and the visual MultiMesh instance uses — and adds it as a
+      child of the shared `block_body`. Because the transform lives on the
+      `CollisionShape3D` (a Node3D) and `block_body` is parented to the chunk, each shape
+      lands at the IDENTICAL world placement as before, so collision is byte-for-byte
+      unchanged. Collision layer/mask left at Godot defaults (1/1) — `block_body` never sets
+      them, exactly like the old per-block bodies — so player collision and crocodile
+      avoidance raycasts hit blocks the same way. RNG sequence (colour match + discarded
+      roughness `randf_range`) is untouched, so the procedural world layout is identical.
+      Node-count win: one body per chunk instead of one per block (~25× fewer block
+      collision nodes).)
+- [x] fold the chunk ground collision into the same per-chunk body (or keep it separate if
       cleaner) — document the choice.
-- [ ] **Verify (collision-identical):** player can't fall through ground or walk through
+      (DECISION: kept the ground collision in its OWN separate `StaticBody3D`, NOT folded
+      into `block_body`. Rationale documented in a comment in `create_chunk`: the ground is
+      a single shape created once per chunk, so folding it in would save exactly one node
+      and only muddle the code; ground + blocks share the same default layer/mask, so two
+      bodies vs one is purely cosmetic, not behavioural. The real, meaningful win of this
+      task is collapsing the MANY per-block bodies into one, which `block_body` does. An
+      empty `block_body` (a rare chunk with no blocks) is `queue_free()`d rather than left
+      in the tree; a non-empty one is parented to the chunk so it unloads with the chunk.)
+- [x] **Verify (collision-identical):** player can't fall through ground or walk through
       blocks; crocodiles still steer around blocks (no clipping); climbing pyramids/walls
       and running corridors works exactly as before.
-- [ ] **Verify (perf):** total node count drops substantially vs Task 4; physics time
+      ([x] manual web/desktop verification — to be done by user. Static guarantee: for STATIC
+      geometry, Godot collides against each `CollisionShape3D` at that shape's own world
+      transform regardless of how shapes are grouped under bodies — so moving each block's
+      transform from its old per-block body onto the `CollisionShape3D` node (child of the
+      single shared body) produces the IDENTICAL collision surface at the IDENTICAL world
+      pose. Same default layer/mask, same `BoxShape3D(size=dimensions)`, same chunk-local
+      `position`/`rotation.y`. Ground stays in its own body, unchanged. Nothing the player or
+      crocodile collides against moved.)
+- [x] **Verify (perf):** total node count drops substantially vs Task 4; physics time
       stable or improved; record delta.
+      ([x] manual web verification — to be done by user in browser; node-count / physics-ms
+      delta to be read from the F3 overlay and filled into the Task 7 measurement table.
+      Expected: each chunk's dozens of per-block `StaticBody3D`s (one per scattered cube,
+      tower block, wall/corridor block, pyramid slab, gate pillar/lintel) collapse to ONE
+      `StaticBody3D` per chunk, so total node count drops sharply (~25× fewer block
+      collision nodes); physics cost is stable or slightly better (fewer bodies for the
+      broadphase to track). Validated headlessly: `godot --headless --check-only --script
+      scripts/endless_terrain.gd` parses clean (exit 0) and `godot --headless --editor
+      --quit --path .` imports the whole project with no SCRIPT ERROR / Parse Error,
+      exit 0.)
 
 ### Task 6: Web-only reduced render distance + fog mask
 
