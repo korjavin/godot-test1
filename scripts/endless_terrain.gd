@@ -1408,7 +1408,7 @@ func _road_extend_to_x(x_min: float, x_max: float) -> void:
 
 	EDUCATIONAL NOTE — the heading-integrated recurrence (the heart of the road):
 	  heading[k+1] = clamp( heading[k]*(1-ROAD_RESTORE) + turn_noise(k), -CAP, +CAP )
-	  center[k+1]  = center[k] + road_coin_spacing * Vector2(cos heading[k], sin heading[k])
+	  center[k+1]  = center[k] + _road_spacing() * Vector2(cos heading[k], sin heading[k])
 	The backward step (k-1) MIRRORS this exactly so the cache stays a single pure
 	function of `k`: from station k we know heading[k-1] is whatever produced heading[k]
 	via the forward rule, but rather than invert the clamp we simply recompute the
@@ -1434,8 +1434,16 @@ func _road_extend_to_x(x_min: float, x_max: float) -> void:
 	# every road helper agrees on the cap.
 	assert(road_max_heading_deg < 90.0,
 		"road_max_heading_deg must be < 90 so the centerline's X stays strictly increasing")
+	# The same termination depends on the STEP distance being strictly positive: a zero or
+	# negative road_coin_spacing freezes/reverses X so the while-loops below never reach
+	# their target and HANG. Loud editor-time hint; _road_spacing() is the release-safe guard.
+	assert(road_coin_spacing > 0.0,
+		"road_coin_spacing must be > 0 so each station strictly advances the centerline's X")
 
 	var max_heading := _road_max_heading()
+	# Clamped effective step distance — strictly positive, so X always advances and the
+	# extend loops below terminate. At the default 7.0 this is inert (returns 7.0).
+	var spacing := _road_spacing()
 
 	# First-time seeding: station 0 at world origin, heading along +X (0 rad).
 	if road_k_min > road_k_max:
@@ -1448,8 +1456,8 @@ func _road_extend_to_x(x_min: float, x_max: float) -> void:
 	while _road_station(road_k_max).center.x < x_max:
 		var cur: Dictionary = _road_station(road_k_max)
 		var cur_heading: float = cur.heading
-		# New center: step road_coin_spacing along the CURRENT heading.
-		var next_center: Vector2 = cur.center + road_coin_spacing * Vector2(cos(cur_heading), sin(cur_heading))
+		# New center: step the (clamped) spacing along the CURRENT heading.
+		var next_center: Vector2 = cur.center + spacing * Vector2(cos(cur_heading), sin(cur_heading))
 		# New heading for the NEXT step: restore toward +X, add this station's turn, clamp.
 		var next_heading: float = clampf(
 			cur_heading * (1.0 - ROAD_RESTORE) + _road_turn(road_k_max),
@@ -1465,7 +1473,7 @@ func _road_extend_to_x(x_min: float, x_max: float) -> void:
 	#     heading[k]. Inverting the clamp+restore exactly is not generally possible, so
 	#     we instead define the backward heading directly with the SAME recurrence shape
 	#     using turn_noise(k-1), which keeps the cache a deterministic function of k.
-	#   - center[k-1] = center[k] - road_coin_spacing * dir(heading[k-1]).
+	#   - center[k-1] = center[k] - _road_spacing() * dir(heading[k-1]).
 	while _road_station(road_k_min).center.x > x_min:
 		var first: Dictionary = _road_station(road_k_min)
 		var first_heading: float = first.heading
@@ -1477,8 +1485,9 @@ func _road_extend_to_x(x_min: float, x_max: float) -> void:
 		var prev_heading: float = clampf(
 			(first_heading - _road_turn(road_k_min - 1)) / (1.0 - ROAD_RESTORE),
 			-max_heading, max_heading)
-		# Step BACKWARD from the first cached center along the reconstructed heading.
-		var prev_center: Vector2 = first.center - road_coin_spacing * Vector2(cos(prev_heading), sin(prev_heading))
+		# Step BACKWARD from the first cached center along the reconstructed heading
+		# (same clamped, strictly-positive spacing as the forward step).
+		var prev_center: Vector2 = first.center - spacing * Vector2(cos(prev_heading), sin(prev_heading))
 		# O(1) Dictionary insert keyed by (k-1) — this is the whole reason the cache is a
 		# Dictionary and not an Array: an Array would need push_front here (O(n) shift).
 		road_stations[road_k_min - 1] = { "center": prev_center, "heading": prev_heading }
@@ -1498,6 +1507,26 @@ func _road_max_heading() -> float:
 	  a misconfigured export can never make the centerline stall or run backward.
 	"""
 	return deg_to_rad(clampf(road_max_heading_deg, 0.0, 89.0))
+
+func _road_spacing() -> float:
+	"""
+	The EFFECTIVE per-station step distance (world metres): road_coin_spacing clamped
+	to a small positive minimum.
+
+	@return: maxf(road_coin_spacing, 0.1).
+
+	EDUCATIONAL NOTE:
+	- road_coin_spacing is an @export a designer can set to anything, but it is the STEP
+	  magnitude in the recurrence (center advances by spacing * (cos heading, sin heading)
+	  each station). The "extend until the centerline spans this X-range" while-loops in
+	  _road_extend_to_x only terminate while X keeps strictly advancing — which requires
+	  the step to be strictly POSITIVE. A spacing of 0 freezes X (loop never reaches its
+	  target → editor/game HANG); a negative spacing runs X backward (same hang). Asserts
+	  are stripped from release builds, so — exactly like _road_max_heading() — we ALSO
+	  clamp at read time here and route EVERY road step through this. At the default 7.0
+	  the clamp is inert (returns 7.0), so coin positions are unchanged.
+	"""
+	return maxf(road_coin_spacing, 0.1)
 
 func _road_station(k: int) -> Dictionary:
 	"""
@@ -1638,16 +1667,20 @@ func spawn_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obs
 	#
 	# SEAM-CORRECTNESS INVARIANT: pad MUST be >= the largest amount a coin's WORLD X can
 	# differ from its station's centerline X. A coin is offset perpendicular to the
-	# heading by up to width/2 (max width = road_width_max/2). Projected onto X, that
-	# perpendicular offset is `sin(heading) * width/2`, maximised at |heading| = the cap.
-	# So the worst-case X excursion is sin(cap) * road_width_max/2. We DERIVE pad from
-	# that geometry (plus a small safety margin) instead of hand-tuning a magic number,
-	# so the invariant survives future retuning of road_width_max / road_max_heading_deg.
+	# heading by up to width/2. Projected onto X, that perpendicular offset is
+	# `sin(heading) * width/2`, maximised at |heading| = the cap and at the LARGEST width.
+	# _road_width() lerps between road_width_min and road_width_max, so the largest width
+	# it can return is maxf(road_width_min, road_width_max) — NOT bare road_width_max. If a
+	# designer swaps the bounds (min > max), the lerp can return up to road_width_min, whose
+	# lateral excursion would exceed a road_width_max-only pad → stations missed at the
+	# binary-search window edge → coins dropped at seams. So the worst-case X excursion is
+	# sin(cap) * maxf(min,max)/2; we DERIVE pad from that geometry (plus a small safety
+	# margin) so the invariant survives future retuning OR swapping of the width bounds.
 	var center := chunk_to_world(chunk_pos)
 	var half_chunk := chunk_size / 2.0
 	var x0 := center.x - half_chunk
 	var x1 := center.x + half_chunk
-	var pad := sin(_road_max_heading()) * road_width_max * 0.5 + 2.0
+	var pad := sin(_road_max_heading()) * maxf(road_width_min, road_width_max) * 0.5 + 2.0
 
 	# Grow the shared station cache so it covers this chunk's widened X-range. The
 	# cache is a pure function of `k`, so this is idempotent across chunks and load
