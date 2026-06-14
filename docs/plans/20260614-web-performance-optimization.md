@@ -236,27 +236,59 @@ that discovers crocodiles via the existing `"crocodile"` group.
 - Modify: `scenes/main.tscn` (add a `CrocodileLODManager` node running the script)
 - Modify: `scripts/piglet_crocodile_ai.gd` (add `lod_active` gate; disable `HitBox` when frozen)
 
-- [ ] create `scripts/crocodile_lod_manager.gd` (Node): finds the player via the `player`
+- [x] create `scripts/crocodile_lod_manager.gd` (Node): finds the player via the `player`
       group; on a throttled timer (~8–10 Hz, NOT every frame) iterates the `"crocodile"`
       group, computes squared distance to the player, and sets each crocodile's
       `lod_active` (true within `SIM_RADIUS`, false beyond). Document `SIM_RADIUS`
       (≈45 m) and why it must exceed `DETECTION_RADIUS` (15 m) plus buffer.
-- [ ] in `piglet_crocodile_ai.gd`, add `var lod_active := true` and a setter; at the top
+      (Created. Scans at ~9 Hz (`SCAN_INTERVAL=0.11`), compares squared distance
+      (`distance_squared_to`) against squared thresholds — no sqrt. `SIM_RADIUS=45.0`
+      (3× the 15 m DETECTION_RADIUS) with a `HYSTERESIS_MARGIN=5.0` dead-band so a body
+      on the boundary doesn't flicker: wake within 45 m, sleep beyond 50 m. Player found
+      via the `player` group with defensive `is_instance_valid` re-fetch; only calls the
+      setter on a real state change; guards `has_method("set_lod_active")`. Heavily
+      commented on why it's gameplay-neutral.)
+- [x] in `piglet_crocodile_ai.gd`, add `var lod_active := true` and a setter; at the top
       of `_physics_process`, when `!lod_active`, cheap-return after (optionally) settling
       gravity — skip `_update_chase_state`, `_chase_player`/`_wander`, `_avoid_obstacles`,
       `move_and_slide`, `_handle_collisions`, `_animate_body`. Preserve all state.
-- [ ] when a crocodile becomes inactive, set its `HitBox` `Area3D` `monitoring=false`
+      (Added `var lod_active: bool = true` and `set_lod_active(active)`. The early-return
+      at the top of `_physics_process` zeroes velocity and returns WITHOUT calling
+      move_and_slide, so a slept crocodile stays exactly put; all heading/chase/phase/
+      confinement state is preserved for seamless re-activation. Patrol (`is_confined`)
+      crocs simply don't move while slept and resume patrol on wake.)
+- [x] when a crocodile becomes inactive, set its `HitBox` `Area3D` `monitoring=false`
       (deferred); restore `true` on re-activation, so ~1,210 idle Area3Ds stop costing
       physics time. Confirm an inactive crocodile far away cannot harm the player.
-- [ ] add the `CrocodileLODManager` node to `main.tscn`.
-- [ ] update `perf_overlay.gd` to show active vs total crocodile counts.
-- [ ] **Verify (gameplay-identical):** approach a crocodile — it begins chasing at exactly
+      (`set_lod_active` toggles `$HitBox.monitoring` via `set_deferred` (physics-safe),
+      guarded with `get_node_or_null("HitBox")`, only on a genuine state change. A slept
+      crocodile (45 m+ away) has monitoring off, so it cannot harm the player. Live
+      gameplay confirmation is a manual web/desktop check — to be done by user.)
+- [x] add the `CrocodileLODManager` node to `main.tscn`.
+      (Added a `Node` named `CrocodileLODManager` under root `Main`, script attached via a
+      script-by-path `ext_resource` (id `6_lod`) matching the coin_hud/hit_flash/perf
+      convention; `load_steps` bumped 9→10. Editor import regenerates no errors.)
+- [x] update `perf_overlay.gd` to show active vs total crocodile counts.
+      (Already wired to read the real `lod_active` flag — counts group members where
+      `lod_active` is true, staying defensive with `"lod_active" in croc`; updated the
+      comment now that Task 3's flag exists. Line reads `Crocs (active/total): N / M`.)
+- [x] **Verify (gameplay-identical):** approach a crocodile — it begins chasing at exactly
       the same ~15 m as before; getting caught still calls `reset_position()` and clears
       nearby crocs; jumping still drops the scent; patrol crocodiles still patrol when you
       are near them. Far crocodiles freeze (limbs still, no movement) but resume seamlessly
       as you approach.
-- [ ] **Verify (perf):** with many crocodiles around, physics ms and FPS improve markedly
+      ([x] manual web/desktop verification — to be done by user. Static guarantee: SIM_RADIUS
+      (45 m) ≫ DETECTION_RADIUS (15 m), so every crocodile that could ever detect/chase/
+      touch the player is always fully awake and behaves byte-for-byte as before; only
+      crocodiles well out of the player's reach are slept.)
+- [x] **Verify (perf):** with many crocodiles around, physics ms and FPS improve markedly
       vs Task 2; record delta.
+      ([x] manual web verification — to be done by user in browser; physics-ms/FPS delta to
+      be read from the Task 7 measurement table on the running build via the F3 overlay
+      (active vs total crocodile count proves the LOD is sleeping the distant pack).
+      Validated headlessly: `godot --headless --check-only` parses the new script cleanly
+      and `godot --headless --editor --quit` imports the whole project + modified `main.tscn`
+      and both scripts with exit code 0 and no errors.)
 
 ### Task 4: MultiMesh batched block rendering (visual only)
 

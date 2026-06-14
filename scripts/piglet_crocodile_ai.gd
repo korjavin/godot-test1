@@ -165,6 +165,15 @@ var current_pitch: float = 0.0
 var is_biting: bool = false
 var bite_timer: float = 0.0
 
+## LOD (simulation level-of-detail) gate. When true, this crocodile runs its full
+## per-frame AI/physics step exactly as before. When false, it is "asleep": the
+## central CrocodileLODManager has decided it is too far from the player to
+## possibly matter this frame, so _physics_process cheap-returns and the HitBox
+## stops monitoring. Defaults to TRUE so a crocodile spawned before the manager's
+## first scan behaves normally for that brief window (the manager will sleep it on
+## its next tick if it's far away). See crocodile_lod_manager.gd for the contract.
+var lod_active: bool = true
+
 ## Confinement: elevated "patrol" crocodiles are pinned to a structure top (a
 ## pyramid apex or wall ridge) and can never wander off it, since they can't jump
 ## or climb back up. Set up by the terrain via set_confinement().
@@ -215,6 +224,27 @@ func _ready() -> void:
 
 func _physics_process(delta: float) -> void:
 	"""Update movement, body animation and collisions every physics frame."""
+	# ------------------------------------------------------------------------
+	# LOD SLEEP GATE (simulation level-of-detail)
+	# ------------------------------------------------------------------------
+	# If the CrocodileLODManager has slept this crocodile (it is far from the
+	# player and can't matter this frame), do the absolute minimum and bail out
+	# BEFORE any of the expensive work: chase scanning, wander steering, obstacle
+	# raycasts, confinement steering, move_and_slide, collision handling, platform
+	# clamping and body animation are ALL skipped while asleep.
+	#
+	# We freeze the body completely by zeroing velocity and NOT calling
+	# move_and_slide — a slept crocodile simply stays exactly where it was. We do
+	# not even apply gravity here: distant crocodiles were already standing on the
+	# terrain when they fell asleep, and skipping gravity (rather than letting them
+	# drift down without collision resolution) is what keeps them perfectly put.
+	# Every other piece of state (heading, chase flags, phases, confinement) is
+	# preserved untouched, so when the manager wakes this crocodile again it
+	# resumes seamlessly — whether it's a wanderer or a confined patrol crocodile.
+	if not lod_active:
+		velocity = Vector3.ZERO
+		return
+
 	# Apply gravity
 	if not is_on_floor():
 		velocity.y -= GRAVITY * delta
@@ -441,6 +471,41 @@ func _feeler_blocked(space: PhysicsDirectSpaceState3D, origin: Vector3, dir: Vec
 	if collider.is_in_group("player") or collider.is_in_group("crocodile"):
 		return false
 	return true
+
+
+# ============================================================================
+# LOD (SIMULATION LEVEL-OF-DETAIL)
+# ============================================================================
+
+func set_lod_active(active: bool) -> void:
+	"""
+	Wake (active = true) or sleep (active = false) this crocodile's simulation.
+	Called by the central CrocodileLODManager only when the awake/asleep decision
+	actually changes, so the transition work below runs at most once per change.
+
+	Beyond storing the flag (which _physics_process reads to cheap-return while
+	asleep), the only side effect is toggling the HitBox Area3D's monitoring: a
+	sleeping crocodile far from the player should not waste physics time keeping a
+	hostile trigger live, and — critically — must not be able to harm the player.
+	An awake crocodile restores monitoring so its bite works exactly as before.
+
+	We touch the HitBox with set_deferred() because monitoring can't be flipped
+	mid-physics-step safely; deferring applies it at a safe point. We also only do
+	the HitBox work on a genuine state change to avoid redundant deferred calls.
+	"""
+	# No-op if nothing actually changed (defensive; the manager already guards this).
+	if active == lod_active:
+		return
+
+	lod_active = active
+
+	# Toggle the hostile trigger to match the new state. Guard that the node exists
+	# (every PigletCrocodile scene has $HitBox, but stay robust if a variant doesn't).
+	var hitbox := get_node_or_null("HitBox")
+	if hitbox:
+		# Deferred so we never change monitoring in the middle of physics resolution.
+		# Asleep → stop monitoring (no cost, can't catch the player). Awake → resume.
+		hitbox.set_deferred("monitoring", active)
 
 
 # ============================================================================

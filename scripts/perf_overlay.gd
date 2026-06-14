@@ -118,16 +118,18 @@ func _update_text() -> void:
 	var node_count: int = int(Performance.get_monitor(Performance.OBJECT_NODE_COUNT))
 
 	# --- Crocodile simulation count ---------------------------------------
-	# Count crocodiles via the "crocodile" group (the same group the future LOD
-	# manager will use). We also count how many are "active" (simulating). Until
-	# Task 3 adds the `lod_active` flag, every crocodile is treated as active, so
-	# active == total and the line still reads sensibly.
+	# Count crocodiles via the "crocodile" group (the same group the LOD manager
+	# uses). We also count how many are "active" (fully simulating) vs frozen by
+	# LOD. Task 3 added the real `lod_active` flag on each crocodile, so this line
+	# now proves the LOD manager is working: when you stand in an open field the
+	# active count should be a small handful while the total stays large.
 	var crocodiles: Array = get_tree().get_nodes_in_group("crocodile")
 	var croc_total: int = crocodiles.size()
 	var croc_active: int = 0
 	for croc in crocodiles:
-		# `"lod_active" in croc` is true once the property exists (Task 3); before
-		# that, or if the flag is true, the crocodile counts as actively simulating.
+		# Stay defensive: `"lod_active" in croc` is true once the property exists
+		# (Task 3 onward). If for some reason a crocodile lacks the flag, or its
+		# flag is true, it counts as actively simulating.
 		if not ("lod_active" in croc) or croc.lod_active:
 			croc_active += 1
 
