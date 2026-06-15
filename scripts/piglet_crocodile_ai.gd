@@ -24,7 +24,17 @@ var chase_speed_instance: float = 0.0
 ## Base speeds for randomization
 const BASE_MOVE_SPEED: float = 2.5
 const BASE_CHASE_SPEED: float = 3.5
-const SPEED_RANDOM_FACTOR: float = 0.2 # +/- 20%
+
+## Per-crocodile speed spread: each crocodile rolls ONE multiplier in
+## [1-FACTOR, 1+FACTOR] and applies it to BOTH its wander and chase speed, so some
+## crocodiles are clearly faster and some slower — yet a given crocodile's chase
+## always still outpaces its own stroll (the two speeds never drift apart). ±50%.
+const SPEED_RANDOM_FACTOR: float = 0.5
+
+## Per-crocodile size spread: each crocodile rolls a uniform scale in
+## [1-FACTOR, 1+FACTOR] applied to the whole body (visual model + physics capsule
+## together), so the pack is a mix of smaller and larger crocodiles. ±25%.
+const SIZE_RANDOM_FACTOR: float = 0.25
 
 ## Detection radius - distance at which crocodile can "smell" the player
 const DETECTION_RADIUS: float = 15.0
@@ -204,9 +214,20 @@ func _ready() -> void:
 	# Randomize the RNG
 	rng.randomize()
 
-	# Set instance-specific speeds
-	move_speed_instance = BASE_MOVE_SPEED * rng.randf_range(1.0 - SPEED_RANDOM_FACTOR, 1.0 + SPEED_RANDOM_FACTOR)
-	chase_speed_instance = BASE_CHASE_SPEED * rng.randf_range(1.0 - SPEED_RANDOM_FACTOR, 1.0 + SPEED_RANDOM_FACTOR)
+	# Set instance-specific speeds. One shared multiplier drives both speeds, so a
+	# "fast" crocodile is fast at everything (and its chase always still outpaces its
+	# own wander) instead of the two speeds drifting apart independently.
+	var speed_factor := rng.randf_range(1.0 - SPEED_RANDOM_FACTOR, 1.0 + SPEED_RANDOM_FACTOR)
+	move_speed_instance = BASE_MOVE_SPEED * speed_factor
+	chase_speed_instance = BASE_CHASE_SPEED * speed_factor
+
+	# Give this crocodile a randomized overall size. We scale the whole body
+	# uniformly so the visual model and the physics capsule grow/shrink together;
+	# gravity then settles it onto the ground regardless of size. The model's OWN
+	# local scale stays 1, so model_base_scale cached below is unaffected and the
+	# procedural body animation composes correctly on top of this body scale.
+	var size_scale := rng.randf_range(1.0 - SIZE_RANDOM_FACTOR, 1.0 + SIZE_RANDOM_FACTOR)
+	scale = Vector3.ONE * size_scale
 
 	# Set initial random direction
 	_choose_new_direction()
@@ -739,7 +760,15 @@ func _animate_bite(delta: float) -> void:
 # ============================================================================
 
 func _handle_collisions() -> void:
-	"""Check collisions with player and other crocodiles."""
+	"""
+	Check collisions with the player.
+
+	Crocodiles are now SOLID to one another (their collision_mask includes their own
+	layer), so move_and_slide already shoves two bumping crocodiles apart on its own
+	— they push past each other instead of overlapping. We therefore do NOTHING on a
+	crocodile-vs-crocodile contact (the earlier eat-on-touch "cannibalism" is gone);
+	the physical push is the entire behaviour, and only the player still matters here.
+	"""
 	# Check all collisions from move_and_slide()
 	for i in range(get_slide_collision_count()):
 		var collision := get_slide_collision(i)
@@ -752,44 +781,6 @@ func _handle_collisions() -> void:
 		if collider.is_in_group("player"):
 			_on_player_collision(collider)
 			return # Prioritize player collision
-			
-		# Check if we hit another crocodile
-		if collider.is_in_group("crocodile") and collider != self:
-			_resolve_crocodile_conflict(collider)
-			if is_queued_for_deletion():
-				return
-
-
-func _resolve_crocodile_conflict(other_crocodile: Node) -> void:
-	"""
-	Handle collision with another crocodile.
-	Randomly (but deterministically) decide which one survives.
-	"""
-	if is_queued_for_deletion() or other_crocodile.is_queued_for_deletion():
-		return
-
-	# Use instance IDs to deterministically decide a winner
-	# This ensures consistency even if only one detects the collision
-	var my_id = get_instance_id()
-	var other_id = other_crocodile.get_instance_id()
-	
-	# Simple hash to pick a winner "randomly" but consistently for this pair
-	var combined_hash = (my_id + other_id) * 12345
-	var i_win = false
-	
-	if combined_hash % 2 == 0:
-		# Even hash: Larger ID wins
-		i_win = my_id > other_id
-	else:
-		# Odd hash: Smaller ID wins
-		i_win = my_id < other_id
-	
-	if i_win:
-		print("🐊 Crocodile %s ate %s!" % [name, other_crocodile.name])
-		other_crocodile.queue_free()
-	else:
-		print("🐊 Crocodile %s was eaten by %s!" % [name, other_crocodile.name])
-		queue_free()
 
 
 func _start_bite() -> void:
