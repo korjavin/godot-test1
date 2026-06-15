@@ -1691,17 +1691,36 @@ func spawn_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obs
 	# Because X is strictly increasing in `k`, the window of stations covering this chunk
 	# is a contiguous range, and we can jump straight to its start instead of scanning
 	# the whole cache from road_k_min (which would be O(total cache) = O(distance from
-	# origin) every chunk load — a latent web-perf regression). The `for` over the window
+	# origin) every chunk load — a latent web-perf regression). The loop over the window
 	# then touches only O(window) stations, independent of how far the road has grown.
+	#
+	# WHY a `while` (NOT `for k in range(k_start, road_k_max + 1)`): in GDScript `range(a, b)`
+	# eagerly MATERIALISES a full Array of every int in [a, b) before the loop body runs.
+	# Even though we `break` the instant a station's X passes the window, that array is
+	# already allocated at size O(road_k_max - k_start) = O(total cached suffix). After the
+	# player runs far in +X (road_k_max large) then backtracks/respawns to an early chunk
+	# (small k_start), every one of up to ~121 chunk loads per boundary crossing would alloc
+	# a huge int array just to visit a handful of stations — defeating the O(window) intent
+	# and churning memory. A manual counter allocates nothing, so the early break makes the
+	# scan truly O(window) in BOTH iteration AND allocation. Same stations, same order →
+	# byte-identical coins.
 	var k_start := _road_first_k_at_or_after_x(x0 - pad)
-	for k in range(k_start, road_k_max + 1):
-		var st: Dictionary = _road_station(k)
+	# We index stations with the captured `cur_k` and advance the cursor `k` once at the
+	# TOP of every iteration (before any `continue`), so both early-skip paths below still
+	# move forward — a `while` has no implicit step, so a `continue` past an unincremented
+	# counter would spin forever. The `break` (window exhausted) exits outright, no step
+	# needed. Iteration order over k is identical to the old `for k in range(...)`.
+	var k := k_start
+	while k <= road_k_max:
+		var cur_k := k
+		k += 1
+		var st: Dictionary = _road_station(cur_k)
 		var cx: float = st.center.x
 		if cx > x1 + pad:
 			break  # past this chunk's window — and X only grows from here, so stop
 
 		# Final world-space coin position for this station (centerline + lateral weave).
-		var cw := _road_coin_world(k)
+		var cw := _road_coin_world(cur_k)
 
 		# Bucket by final chunk: spawn this coin only from the chunk it actually lands
 		# in. This is what makes seams gap-free and duplicate-free.
