@@ -1,197 +1,70 @@
-[gd_scene load_steps=18 format=3 uid="uid://c8phoboman001"]
+[gd_scene load_steps=12 format=3 uid="uid://c8phoboman001"]
 
-[sub_resource type="StandardMaterial3D" id="mat_helmet"]
-albedo_color = Color(0.3, 0.3, 0.35, 1)
-metallic = 0.6
-diffuse_mode = 3
-specular_mode = 1
-rim_enabled = true
-rim = 0.4
-rim_tint = 0.25
-
-[sub_resource type="StandardMaterial3D" id="mat_visor"]
-albedo_color = Color(0.4, 0.6, 0.7, 0.4)
-transparency = 1
-
-[sub_resource type="StandardMaterial3D" id="mat_soup"]
-albedo_color = Color(0.9, 0.5, 0.3, 1)
-emission_enabled = true
-emission = Color(0.8, 0.4, 0.2, 1)
-emission_energy_multiplier = 1.5
-diffuse_mode = 3
-rim_enabled = true
-rim = 0.3
-rim_tint = 0.3
-
-[sub_resource type="StandardMaterial3D" id="mat_belly_blue"]
-albedo_color = Color(0.2, 0.4, 0.8, 1)
-roughness = 0.95
-diffuse_mode = 3
-specular_mode = 2
-rim_enabled = true
-rim = 0.45
-rim_tint = 0.25
-
-[sub_resource type="StandardMaterial3D" id="mat_dragon"]
-albedo_color = Color(0.8, 0.2, 0.2, 1)
-roughness = 0.95
-diffuse_mode = 3
-specular_mode = 2
-rim_enabled = true
-rim = 0.45
-rim_tint = 0.25
-
-[sub_resource type="StandardMaterial3D" id="mat_arm"]
-albedo_color = Color(0.85, 0.7, 0.6, 1)
-roughness = 0.95
-diffuse_mode = 3
-specular_mode = 2
-rim_enabled = true
-rim = 0.45
-rim_tint = 0.25
-subsurf_scatter_enabled = true
-subsurf_scatter_strength = 0.25
-
-[sub_resource type="StandardMaterial3D" id="mat_pants"]
-albedo_color = Color(0.1, 0.1, 0.1, 1)
-roughness = 0.95
-diffuse_mode = 3
-specular_mode = 2
-rim_enabled = true
-rim = 0.45
-rim_tint = 0.25
-
-[sub_resource type="StandardMaterial3D" id="mat_boots"]
-albedo_color = Color(0.05, 0.05, 0.05, 1)
-roughness = 0.95
-diffuse_mode = 3
-specular_mode = 2
-rim_enabled = true
-rim = 0.45
-rim_tint = 0.25
-
-[sub_resource type="StandardMaterial3D" id="mat_noodle"]
-albedo_color = Color(0.95, 0.9, 0.7, 1)
-roughness = 0.95
-diffuse_mode = 3
-specular_mode = 2
-rim_enabled = true
-rim = 0.45
-rim_tint = 0.25
-
-[sub_resource type="StandardMaterial3D" id="mat_green"]
-albedo_color = Color(0.2, 0.8, 0.3, 1)
-roughness = 0.95
-diffuse_mode = 3
-specular_mode = 2
-rim_enabled = true
-rim = 0.45
-rim_tint = 0.25
-
-[sub_resource type="SphereMesh" id="mesh_sphere"]
-
-[sub_resource type="TorusMesh" id="mesh_torus"]
-
-[sub_resource type="CapsuleMesh" id="mesh_capsule"]
-
-[sub_resource type="BoxMesh" id="mesh_box"]
-
-[sub_resource type="SphereMesh" id="mesh_sphere2"]
-
-[sub_resource type="CapsuleMesh" id="mesh_capsule2"]
-
-[sub_resource type="SphereMesh" id="mesh_round"]
+[ext_resource type="PackedScene" path="res://assets/models/characters/phoboman_parts/phoboman_head.glb" id="1_head"]
+[ext_resource type="PackedScene" path="res://assets/models/characters/phoboman_parts/phoboman_torso.glb" id="2_torso"]
+[ext_resource type="PackedScene" path="res://assets/models/characters/phoboman_parts/phoboman_left_upper_arm.glb" id="3_left_upper_arm"]
+[ext_resource type="PackedScene" path="res://assets/models/characters/phoboman_parts/phoboman_left_lower_arm.glb" id="4_left_lower_arm"]
+[ext_resource type="PackedScene" path="res://assets/models/characters/phoboman_parts/phoboman_right_upper_arm.glb" id="5_right_upper_arm"]
+[ext_resource type="PackedScene" path="res://assets/models/characters/phoboman_parts/phoboman_right_lower_arm.glb" id="6_right_lower_arm"]
+[ext_resource type="PackedScene" path="res://assets/models/characters/phoboman_parts/phoboman_left_upper_leg.glb" id="7_left_upper_leg"]
+[ext_resource type="PackedScene" path="res://assets/models/characters/phoboman_parts/phoboman_left_lower_leg.glb" id="8_left_lower_leg"]
+[ext_resource type="PackedScene" path="res://assets/models/characters/phoboman_parts/phoboman_right_upper_leg.glb" id="9_right_upper_leg"]
+[ext_resource type="PackedScene" path="res://assets/models/characters/phoboman_parts/phoboman_right_lower_leg.glb" id="10_right_lower_leg"]
 
 [node name="Phoboman" type="Node3D"]
 
 [node name="Body" type="Node3D" parent="."]
 
-[node name="HelmetBack" type="MeshInstance3D" parent="Body"]
-transform = Transform3D(0.5, 0, 0, 0, 0.5, 0, 0, 0, 0.5, 0, 1.3, -0.05)
-mesh = SubResource("mesh_sphere")
-surface_material_override/0 = SubResource("mat_helmet")
+[node name="Head" parent="Body" instance=ExtResource("1_head")]
+transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 1.04, 0)
 
-[node name="Visor" type="MeshInstance3D" parent="Body"]
-transform = Transform3D(0.45, 0, 0, 0, 0.45, 0, 0, 0, 0.15, 0, 1.3, 0.35)
-mesh = SubResource("mesh_sphere")
-surface_material_override/0 = SubResource("mat_visor")
+[node name="Torso" parent="Body" instance=ExtResource("2_torso")]
+transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0.62, 0)
 
-[node name="SoupInside" type="MeshInstance3D" parent="Body/Visor"]
-transform = Transform3D(0.9, 0, 0, 0, 0.9, 0, 0, 0, 0.8, 0, 0, 0.3)
-mesh = SubResource("mesh_sphere")
-surface_material_override/0 = SubResource("mat_soup")
+[node name="LeftArm" type="Node3D" parent="Body"]
+transform = Transform3D(-0.390731, 0.920505, 0, -0.920505, -0.390731, 0, 0, 0, 1, -0.46, 0.7, 0)
 
-[node name="NoodleEye1" type="MeshInstance3D" parent="Body/Visor/SoupInside"]
-transform = Transform3D(0.15, 0, 0, 0, 0.02, 0, 0, 0, 0.15, -0.3, 0.2, 0.8)
-mesh = SubResource("mesh_torus")
-surface_material_override/0 = SubResource("mat_noodle")
+[node name="UpperArm" parent="Body/LeftArm" instance=ExtResource("3_left_upper_arm")]
+transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0)
 
-[node name="NoodleEye2" type="MeshInstance3D" parent="Body/Visor/SoupInside"]
-transform = Transform3D(0.15, 0, 0, 0, 0.02, 0, 0, 0, 0.15, 0.3, 0.2, 0.8)
-mesh = SubResource("mesh_torus")
-surface_material_override/0 = SubResource("mat_noodle")
+[node name="LowerArm" type="Node3D" parent="Body/LeftArm"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.15, 0)
 
-[node name="GreenNose" type="MeshInstance3D" parent="Body/Visor/SoupInside"]
-transform = Transform3D(0.08, 0, 0, 0, 0.15, 0, 0, 0, 0.08, 0, 0, 1)
-mesh = SubResource("mesh_capsule")
-surface_material_override/0 = SubResource("mat_green")
+[node name="Mesh" parent="Body/LeftArm/LowerArm" instance=ExtResource("4_left_lower_arm")]
+transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0)
 
-[node name="Belly" type="MeshInstance3D" parent="Body"]
-transform = Transform3D(0.6, 0, 0, 0, 0.65, 0, 0, 0, 0.55, 0, 0.7, 0)
-mesh = SubResource("mesh_sphere")
-surface_material_override/0 = SubResource("mat_belly_blue")
+[node name="RightArm" type="Node3D" parent="Body"]
+transform = Transform3D(-0.390731, -0.920505, 0, 0.920505, -0.390731, 0, 0, 0, 1, 0.46, 0.7, 0)
 
-[node name="DragonBody" type="MeshInstance3D" parent="Body/Belly"]
-transform = Transform3D(0.15, 0, 0, 0, 0.3, 0, 0, 0, 0.08, -0.6, 0, 1.1)
-mesh = SubResource("mesh_capsule")
-surface_material_override/0 = SubResource("mat_dragon")
+[node name="UpperArm" parent="Body/RightArm" instance=ExtResource("5_right_upper_arm")]
+transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0)
 
-[node name="DragonTail" type="MeshInstance3D" parent="Body/Belly/DragonBody"]
-transform = Transform3D(0.7, 0, 0, 0, 1.2, 0, 0, 0, 0.7, -1.5, 0, 0)
-mesh = SubResource("mesh_capsule2")
-surface_material_override/0 = SubResource("mat_dragon")
+[node name="LowerArm" type="Node3D" parent="Body/RightArm"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.15, 0)
 
-[node name="DragonHead" type="MeshInstance3D" parent="Body/Belly/DragonBody"]
-transform = Transform3D(1.2, 0, 0, 0, 1.0, 0, 0, 0, 1.2, 1.3, 0.2, 0)
-mesh = SubResource("mesh_box")
-surface_material_override/0 = SubResource("mat_dragon")
+[node name="Mesh" parent="Body/RightArm/LowerArm" instance=ExtResource("6_right_lower_arm")]
+transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0)
 
-[node name="LeftArm" type="MeshInstance3D" parent="Body"]
-transform = Transform3D(0.15, 0, 0, 0, 0.25, 0, 0, 0, 0.15, -0.6, 0.9, 0)
-mesh = SubResource("mesh_capsule")
-surface_material_override/0 = SubResource("mat_arm")
+[node name="LeftLeg" type="Node3D" parent="Body"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.13, 0.2, 0)
 
-[node name="LeftHand" type="MeshInstance3D" parent="Body/LeftArm"]
-transform = Transform3D(1.1, 0, 0, 0, 0.6, 0, 0, 0, 1.1, 0, -0.45, 0)
-mesh = SubResource("mesh_sphere2")
-surface_material_override/0 = SubResource("mat_arm")
+[node name="UpperLeg" parent="Body/LeftLeg" instance=ExtResource("7_left_upper_leg")]
+transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0)
 
-[node name="RightArm" type="MeshInstance3D" parent="Body"]
-transform = Transform3D(0.15, 0, 0, 0, 0.25, 0, 0, 0, 0.15, 0.6, 0.9, 0)
-mesh = SubResource("mesh_capsule")
-surface_material_override/0 = SubResource("mat_arm")
+[node name="LowerLeg" type="Node3D" parent="Body/LeftLeg"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.09, 0)
 
-[node name="RightHand" type="MeshInstance3D" parent="Body/RightArm"]
-transform = Transform3D(1.1, 0, 0, 0, 0.6, 0, 0, 0, 1.1, 0, -0.45, 0)
-mesh = SubResource("mesh_sphere2")
-surface_material_override/0 = SubResource("mat_arm")
+[node name="Mesh" parent="Body/LeftLeg/LowerLeg" instance=ExtResource("8_left_lower_leg")]
+transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0)
 
-[node name="LeftLeg" type="MeshInstance3D" parent="Body"]
-transform = Transform3D(0.12, 0, 0, 0, 0.22, 0, 0, 0, 0.12, -0.2, 0.15, 0)
-mesh = SubResource("mesh_capsule")
-surface_material_override/0 = SubResource("mat_pants")
+[node name="RightLeg" type="Node3D" parent="Body"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.13, 0.2, 0)
 
-[node name="LeftBoot" type="MeshInstance3D" parent="Body/LeftLeg"]
-transform = Transform3D(1.3, 0, 0, 0, 0.4, 0, 0, 0, 1.5, 0, -0.5, 0.1)
-mesh = SubResource("mesh_round")
-surface_material_override/0 = SubResource("mat_boots")
+[node name="UpperLeg" parent="Body/RightLeg" instance=ExtResource("9_right_upper_leg")]
+transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0)
 
-[node name="RightLeg" type="MeshInstance3D" parent="Body"]
-transform = Transform3D(0.12, 0, 0, 0, 0.22, 0, 0, 0, 0.12, 0.2, 0.15, 0)
-mesh = SubResource("mesh_capsule")
-surface_material_override/0 = SubResource("mat_pants")
+[node name="LowerLeg" type="Node3D" parent="Body/RightLeg"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.09, 0)
 
-[node name="RightBoot" type="MeshInstance3D" parent="Body/RightLeg"]
-transform = Transform3D(1.3, 0, 0, 0, 0.4, 0, 0, 0, 1.5, 0, -0.5, 0.1)
-mesh = SubResource("mesh_round")
-surface_material_override/0 = SubResource("mat_boots")
+[node name="Mesh" parent="Body/RightLeg/LowerLeg" instance=ExtResource("10_right_lower_leg")]
+transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0)
