@@ -1732,27 +1732,33 @@ func spawn_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obs
 		var local := Vector3(cw.x - center.x, cw.y, cw.z - center.z)
 
 		# If the road runs over a block footprint, the ground-height coin would be
-		# buried. Perch it on a climbable block's top; only if NONE of the overlapping
-		# blocks is climbable (sheer tops taller than a jump) do we skip this one coin —
-		# structures are sparse so the visible chain stays intact.
+		# buried. A coin must clear EVERYTHING it overlaps, not just whatever block we'd
+		# like to perch it on — so the TALLEST overlapping block governs:
+		#   - if the tallest overlap is climbable, perch on it (its top is above every
+		#     other block the coin covers, so nothing buries it);
+		#   - if the tallest overlap is NON-climbable (a sheer wall/roof higher than a
+		#     jump), SKIP the coin entirely. Perching on a SHORTER climbable block here
+		#     would leave the coin embedded inside that taller wall — visually buried and
+		#     effectively unreachable, which is worse than dropping one coin (structures
+		#     are sparse, so the visible chain stays intact).
 		#
-		# We must scan ALL overlapping blocks, not break on the first: a coin can sit
-		# over several blocks at once, and if the first one we hit is non-climbable while
-		# a later one IS climbable, the coin can still perch — breaking early would skip
-		# it needlessly. Among climbable overlaps we perch on the HIGHEST top so the coin
-		# rests above every block it covers (and obstacles is in a fixed order, so this
-		# stays deterministic).
+		# We scan ALL overlapping blocks (never break on the first) to find that tallest
+		# top. obstacles is in a fixed order and ties keep the first-encountered block, so
+		# this stays a pure deterministic function of the obstacles list.
 		if _point_over_block(local.x, local.z, obstacles):
-			var perched := false
-			var perch_top := 0.0
+			var found := false
+			var tallest_top := 0.0
+			var tallest_climbable := false
 			for ob in obstacles:
 				if _block_overlaps(local.x, local.z, ob):
-					if ob.get("climbable", false) and (not perched or ob.top > perch_top):
-						perch_top = ob.top
-						perched = true
-			if not perched:
+					# Strict `>` keeps the FIRST block on a tie (deterministic).
+					if not found or ob.top > tallest_top:
+						tallest_top = ob.top
+						tallest_climbable = ob.get("climbable", false)
+						found = true
+			if not tallest_climbable:
 				continue
-			local.y = perch_top + COIN_BLOCK_OFFSET
+			local.y = tallest_top + COIN_BLOCK_OFFSET
 
 		# Spawn the coin (position is local to the chunk, like blocks/crocodiles).
 		var coin := coin_scene.instantiate()
