@@ -161,15 +161,27 @@ const COIN_BLOCK_OVERLAP_MARGIN: float = 1.0
 ## coverage finite and seam-correct. The road still reads as a real road with broad
 ## curves, zig-zags and steep diagonal bends; it just never reverses net direction.
 
-## World-meters between consecutive stations (the STEP of the path). Small enough
-## that each coin stays in clear sight of the one before it.
-@export var road_coin_spacing: float = 7.0
+## World-metres between consecutive coin "slices" along the road centerline (the STEP
+## of the path). Each slice scatters a few coins across the band, so this sets how often
+## a new clump of coins appears as you travel — NOT the gap between individual coins.
+## Larger = sparser road.
+@export var road_coin_spacing: float = 6.0
 
-## The road corridor width varies smoothly between these bounds (metres). The coin
-## line weaves laterally WITHIN this corridor, so the width sets how far a coin can
-## drift sideways from the centerline.
-@export var road_width_min: float = 20.0
-@export var road_width_max: float = 30.0
+## The coin BAND width (metres) varies smoothly between these bounds. Coins are scattered
+## at RANDOM lateral offsets within ±band/2 of the centerline (NOT on a single line), so
+## the road reads as a swath of territory a few coins wide rather than a conga-line. Bump
+## these up for a wider, more spread-out trail; down for a tighter path. (~10–20 m shows
+## roughly 3–4 coins across at the default density.)
+@export var road_width_min: float = 10.0
+@export var road_width_max: float = 20.0
+
+## Coins CONSIDERED per slice, and the chance each one actually spawns. Average coins per
+## slice = road_coin_slots * road_coin_chance. Lower the chance for a sparser, less obvious
+## trail; raise it (or the slots) for a denser swath. Keeping the average near ~1 makes the
+## band feel like scattered territory, not a carpet. Skipped slots are what give the road
+## its irregular, "not so obvious" look.
+@export var road_coin_slots: int = 3
+@export var road_coin_chance: float = 0.4
 
 ## Maximum per-station heading jitter magnitude (degrees). Larger = curvier / tighter
 ## zig-zags. This is the amplitude of the deterministic turn noise added each station.
@@ -187,28 +199,25 @@ const COIN_BLOCK_OVERLAP_MARGIN: float = 1.0
 ## forward and gives it a natural "return to course" feel after a bend.
 const ROAD_RESTORE: float = 0.06
 
-## Fixed seed mixed into the per-station hash so the road is stable run-to-run yet
-## distinct from the per-chunk object/crocodile seeds (it is its OWN world). Pick
-## any constant; changing it reshapes the entire road.
+## Fixed seed mixed into the per-station hash for the CENTERLINE so the road is stable
+## run-to-run yet distinct from the per-chunk object/crocodile seeds (it is its OWN
+## world). Pick any constant; changing it reshapes the entire road's path.
 const ROAD_WORLD_SEED: int = 0x5_0AD  # "ROAD"-ish; arbitrary fixed constant
 
-## How fast the corridor width breathes (radians of cos() per station). Lower = the
-## road swells wide and narrows over MORE stations. At 0.08 the cosine's period is
+## Separate fixed seed for the per-slice COIN SCATTER RNG (the lateral/along-road jitter
+## and the per-coin spawn chance). Kept distinct from ROAD_WORLD_SEED so reshaping the
+## scatter doesn't move the centerline, and vice-versa.
+const ROAD_COIN_SEED: int = 0xC0_1A  # "coin"-ish; arbitrary fixed constant
+
+## How fast the band width breathes (radians of cos() per station). Lower = the band
+## swells wide and narrows over MORE stations. At 0.08 the cosine's period is
 ## ~2π/0.08 ≈ 78 stations, so the width cycles slowly enough to feel smooth, not pulsey.
 const ROAD_WIDTH_FREQ: float = 0.08
 
-## Lateral weave frequencies (radians of sin() per station). The coin line snakes
-## across the corridor as the SUM of two sines: a primary slow sweep plus a second,
-## even slower sine that breaks the metronome regularity. Both are low so consecutive
-## coins barely shift sideways (each stays in sight of the previous one).
-const ROAD_WEAVE_FREQ_PRIMARY: float = 0.12
-const ROAD_WEAVE_FREQ_SECONDARY: float = 0.037
-
-## Amplitude of the secondary weave sine relative to the primary (which is 1.0). The
-## raw weave therefore spans ±(1.0 + ROAD_WEAVE_SECONDARY_AMP); we normalise by that
-## max so _road_lateral_unit stays in [-1, 1] — keep the divisor in sync with this.
-const ROAD_WEAVE_SECONDARY_AMP: float = 0.5
-const ROAD_WEAVE_MAX_AMP: float = 1.0 + ROAD_WEAVE_SECONDARY_AMP  # weave normaliser (= 1.5)
+## Fraction of road_coin_spacing a coin may jitter ALONG the road from its slice center
+## (±this × spacing). Without it, every slice's coins would sit on the same cross-line
+## and the eye would read regular rows; this staggers them so the swath looks organic.
+const ROAD_COIN_LONG_JITTER: float = 0.5
 
 # ============================================================================
 # SECTION 2: INTERNAL STATE
@@ -1567,63 +1576,68 @@ func _road_first_k_at_or_after_x(x: float) -> int:
 
 func _road_width(k: int) -> float:
 	"""
-	Smoothly-varying corridor width (metres) at station `k`, oscillating between
+	Smoothly-varying coin BAND width (metres) at station `k`, oscillating between
 	road_width_min and road_width_max.
 
 	@param k: Station index.
 	@return: Width in [road_width_min, road_width_max].
 
 	EDUCATIONAL NOTE:
-	- A low-frequency cosine of `k` gives a slow, smooth swell/narrowing of the road
-	  (no per-station jumps), so the corridor visibly breathes wide and narrow as you
+	- A low-frequency cosine of `k` gives a slow, smooth swell/narrowing of the band
+	  (no per-station jumps), so the coin swath visibly breathes wide and narrow as you
 	  travel. We remap cos()'s [-1,1] to [0,1] then lerp between the bounds.
 	"""
 	var t := (cos(float(k) * ROAD_WIDTH_FREQ) + 1.0) * 0.5  # smooth [0,1], period ~78 stations
 	return lerpf(road_width_min, road_width_max, t)
 
-func _road_lateral_unit(k: int) -> float:
+func _road_coins_at(k: int) -> Array:
 	"""
-	Smooth lateral weave factor in [-1, 1] for station `k`. Multiplying this by
-	width/2 gives how far the coin sits to the LEFT/RIGHT of the centerline.
-
-	@param k: Station index.
-	@return: A value in [-1, 1] that changes slowly with `k`.
-
-	EDUCATIONAL NOTE:
-	- The weave is intentionally LOW-FREQUENCY (a slow sine of `k`) so consecutive
-	  coins barely shift sideways — the coin line snakes smoothly across the corridor
-	  instead of hopping edge to edge, keeping each coin in sight of the previous one.
-	  A second, slower sine adds a touch of variation so it doesn't look like a pure
-	  metronome. The sum is divided by its max amplitude (ROAD_WEAVE_MAX_AMP = 1.5) to
-	  stay within [-1, 1].
-	"""
-	var weave := sin(float(k) * ROAD_WEAVE_FREQ_PRIMARY) \
-		+ ROAD_WEAVE_SECONDARY_AMP * sin(float(k) * ROAD_WEAVE_FREQ_SECONDARY)
-	return clampf(weave / ROAD_WEAVE_MAX_AMP, -1.0, 1.0)
-
-func _road_coin_world(k: int) -> Vector3:
-	"""
-	Final world-space coin position for station `k`: the centerline plus a lateral
-	offset perpendicular to the heading, at ground height.
+	Deterministic list of world-space coin positions SCATTERED across the road band at
+	station `k`. Replaces the old one-coin-on-a-smooth-weave model: instead of a single
+	coin on a tidy line, each station drops a few coins at RANDOM lateral offsets within
+	±band/2 of the centerline (plus a little along-road jitter), so the road reads as a
+	loose swath of territory a few coins wide rather than an obvious conga-line.
 
 	@param k: Station index (the cache MUST already cover it — callers extend first).
-	@return: World-space Vector3 where station `k`'s coin should sit.
+	@return: Array of world-space Vector3 coin positions "owned" by station `k`. May be
+	         EMPTY when the per-coin spawn rolls come up short — that is exactly what keeps
+	         the trail sparse and irregular.
 
-	EDUCATIONAL NOTE:
-	- We take the station's centerline point and heading, build a unit vector
-	  PERPENDICULAR to the heading (rotate the heading direction 90°: (cos,sin) ->
-	  (-sin,cos)), and slide along it by lateral_unit * width/2. The result is in the
-	  (x, z) plane; Y is the fixed ground height. Note Vector2.y maps to world Z.
+	EDUCATIONAL NOTE — why this stays deterministic & seam-correct:
+	- The scatter RNG is seeded ONLY from `k` (+ ROAD_COIN_SEED), so a station's coins are
+	  identical no matter which chunk computes them or in what order — the property the
+	  seam bucketing in spawn_coins_in_chunk relies on. Each coin is still assigned to
+	  whichever chunk its FINAL position lands in, so there are no gaps or duplicates.
+	- A coin's offset from the centerline is bounded by band/2 (lateral) plus
+	  ROAD_COIN_LONG_JITTER*spacing (along-road); spawn_coins_in_chunk's `pad` is derived
+	  from exactly that bound so the scan window can never miss a scattered coin at a seam.
 	"""
 	var st: Dictionary = _road_station(k)
 	var center: Vector2 = st.center
 	var heading: float = st.heading
-	# Perpendicular (left-hand normal) to the heading direction in the XZ plane.
+	# Unit vectors ALONG (tangent) and PERPENDICULAR (left-hand normal) to the heading,
+	# in the XZ plane. Vector2.x -> world X, Vector2.y -> world Z.
+	var tangent := Vector2(cos(heading), sin(heading))
 	var perp := Vector2(-sin(heading), cos(heading))
-	var offset := _road_lateral_unit(k) * _road_width(k) * 0.5
-	var p := center + perp * offset
-	# Vector2.x -> world X, Vector2.y -> world Z; coin floats at ground height.
-	return Vector3(p.x, COIN_GROUND_HEIGHT, p.y)
+	var half_band := _road_width(k) * 0.5
+
+	# Per-station RNG seeded purely from `k` (+ a coin-specific seed): deterministic and
+	# load-order independent. The draw order below is fixed, so the coin set is stable.
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(Vector2i(k, ROAD_COIN_SEED))
+
+	var coins: Array = []
+	for _slot in road_coin_slots:
+		# Rolling each slot (rather than always placing a coin) is what makes the swath
+		# sparse and irregular instead of a regular grid. A skipped slot still consumes
+		# one draw, so the RNG sequence — and thus every later coin — stays deterministic.
+		if rng.randf() >= road_coin_chance:
+			continue
+		var lat := rng.randf_range(-1.0, 1.0) * half_band                               # across the band
+		var lon := rng.randf_range(-1.0, 1.0) * ROAD_COIN_LONG_JITTER * _road_spacing()  # along the road
+		var p := center + perp * lat + tangent * lon
+		coins.append(Vector3(p.x, COIN_GROUND_HEIGHT, p.y))
+	return coins
 
 func spawn_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array) -> void:
 	"""
@@ -1631,10 +1645,12 @@ func spawn_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obs
 	trail that carries every coin in the world (see the COIN ROAD math section above
 	and the COIN ROAD CONFIGURATION section near the top).
 
-	Coins are NOT scattered randomly any more. The road centerline is a pure function
-	of the integer station index `k` (one coin candidate per station, seeded only from
-	`k` + ROAD_WORLD_SEED). Off-road areas get NO coins, so the trail reads as a clear
-	"go this way" route the player wants to follow.
+	The road centerline is a pure, deterministic function of the integer station index
+	`k`. Each station then SCATTERS a few coins at random offsets within a band around
+	the centerline (see _road_coins_at), so the trail reads as a loose swath of territory
+	a few coins wide — not a single line — while still being a clear "go this way" route.
+	Off-road areas get NO coins. Everything is seeded only from `k` (+ the road seeds), so
+	it regenerates byte-identically and is seam-correct.
 
 	@param chunk_pos: Chunk coordinates this body is generating coins for.
 	@param parent_chunk: The chunk mesh the coins attach to (it sits at the chunk
@@ -1660,27 +1676,23 @@ func spawn_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obs
 		return
 
 	# This chunk's world center and its world X-range. We pad the range because a
-	# station's CENTERLINE can sit just outside the chunk while its laterally-offset
-	# coin swings back inside it — widening the scanned X-range makes sure we never miss
-	# such a coin (a missed coin = a permanent gap in the road, since no other chunk
-	# would scan that station).
+	# station's CENTERLINE can sit just outside the chunk while one of its scattered coins
+	# falls back inside it — widening the scanned X-range makes sure we never miss such a
+	# coin (a missed coin = a permanent gap, since no other chunk would scan that station).
 	#
-	# SEAM-CORRECTNESS INVARIANT: pad MUST be >= the largest amount a coin's WORLD X can
-	# differ from its station's centerline X. A coin is offset perpendicular to the
-	# heading by up to width/2. Projected onto X, that perpendicular offset is
-	# `sin(heading) * width/2`, maximised at |heading| = the cap and at the LARGEST width.
-	# _road_width() lerps between road_width_min and road_width_max, so the largest width
-	# it can return is maxf(road_width_min, road_width_max) — NOT bare road_width_max. If a
-	# designer swaps the bounds (min > max), the lerp can return up to road_width_min, whose
-	# lateral excursion would exceed a road_width_max-only pad → stations missed at the
-	# binary-search window edge → coins dropped at seams. So the worst-case X excursion is
-	# sin(cap) * maxf(min,max)/2; we DERIVE pad from that geometry (plus a small safety
-	# margin) so the invariant survives future retuning OR swapping of the width bounds.
+	# SEAM-CORRECTNESS INVARIANT: pad MUST be >= the largest amount a scattered coin's WORLD
+	# X can differ from its station's centerline X. A coin is offset up to band/2
+	# PERPENDICULAR to the heading and up to ROAD_COIN_LONG_JITTER*spacing ALONG it. The X
+	# projections of those (sin·lat and cos·lon) are each bounded by their magnitude, so the
+	# worst-case X excursion is band/2 + ROAD_COIN_LONG_JITTER*spacing. The band's largest
+	# value is maxf(road_width_min, road_width_max) — NOT bare road_width_max — so a designer
+	# swapping the bounds (min > max) still can't under-pad. We DERIVE pad from exactly that
+	# geometry (plus a small margin) so the invariant survives retuning of width OR spacing.
 	var center := chunk_to_world(chunk_pos)
 	var half_chunk := chunk_size / 2.0
 	var x0 := center.x - half_chunk
 	var x1 := center.x + half_chunk
-	var pad := sin(_road_max_heading()) * maxf(road_width_min, road_width_max) * 0.5 + 2.0
+	var pad := maxf(road_width_min, road_width_max) * 0.5 + ROAD_COIN_LONG_JITTER * _road_spacing() + 2.0
 
 	# Grow the shared station cache so it covers this chunk's widened X-range. The
 	# cache is a pure function of `k`, so this is idempotent across chunks and load
@@ -1719,51 +1731,51 @@ func spawn_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obs
 		if cx > x1 + pad:
 			break  # past this chunk's window — and X only grows from here, so stop
 
-		# Final world-space coin position for this station (centerline + lateral weave).
-		var cw := _road_coin_world(cur_k)
-
-		# Bucket by final chunk: spawn this coin only from the chunk it actually lands
-		# in. This is what makes seams gap-free and duplicate-free.
-		if world_to_chunk(cw) != chunk_pos:
-			continue
-
-		# Convert to chunk-LOCAL (relative to the chunk center, like every other
-		# chunk-parented node), so the coin sits at the right world spot.
-		var local := Vector3(cw.x - center.x, cw.y, cw.z - center.z)
-
-		# If the road runs over a block footprint, the ground-height coin would be
-		# buried. A coin must clear EVERYTHING it overlaps, not just whatever block we'd
-		# like to perch it on — so the TALLEST overlapping block governs:
-		#   - if the tallest overlap is climbable, perch on it (its top is above every
-		#     other block the coin covers, so nothing buries it);
-		#   - if the tallest overlap is NON-climbable (a sheer wall/roof higher than a
-		#     jump), SKIP the coin entirely. Perching on a SHORTER climbable block here
-		#     would leave the coin embedded inside that taller wall — visually buried and
-		#     effectively unreachable, which is worse than dropping one coin (structures
-		#     are sparse, so the visible chain stays intact).
-		#
-		# We scan ALL overlapping blocks (never break on the first) to find that tallest
-		# top. obstacles is in a fixed order and ties keep the first-encountered block, so
-		# this stays a pure deterministic function of the obstacles list.
-		if _point_over_block(local.x, local.z, obstacles):
-			var found := false
-			var tallest_top := 0.0
-			var tallest_climbable := false
-			for ob in obstacles:
-				if _block_overlaps(local.x, local.z, ob):
-					# Strict `>` keeps the FIRST block on a tie (deterministic).
-					if not found or ob.top > tallest_top:
-						tallest_top = ob.top
-						tallest_climbable = ob.get("climbable", false)
-						found = true
-			if not tallest_climbable:
+		# This station scatters a handful of coins across the band; place each one that
+		# actually lands inside THIS chunk.
+		for cw in _road_coins_at(cur_k):
+			# Bucket by final chunk: spawn this coin only from the chunk it actually lands
+			# in. This is what makes seams gap-free and duplicate-free.
+			if world_to_chunk(cw) != chunk_pos:
 				continue
-			local.y = tallest_top + COIN_BLOCK_OFFSET
 
-		# Spawn the coin (position is local to the chunk, like blocks/crocodiles).
-		var coin := coin_scene.instantiate()
-		coin.position = local
-		parent_chunk.add_child(coin)
+			# Convert to chunk-LOCAL (relative to the chunk center, like every other
+			# chunk-parented node), so the coin sits at the right world spot.
+			var local := Vector3(cw.x - center.x, cw.y, cw.z - center.z)
+
+			# If the road runs over a block footprint, the ground-height coin would be
+			# buried. A coin must clear EVERYTHING it overlaps, not just whatever block we'd
+			# like to perch it on — so the TALLEST overlapping block governs:
+			#   - if the tallest overlap is climbable, perch on it (its top is above every
+			#     other block the coin covers, so nothing buries it);
+			#   - if the tallest overlap is NON-climbable (a sheer wall/roof higher than a
+			#     jump), SKIP the coin entirely. Perching on a SHORTER climbable block here
+			#     would leave the coin embedded inside that taller wall — visually buried and
+			#     effectively unreachable, which is worse than dropping one coin (structures
+			#     are sparse, so the visible swath stays intact).
+			#
+			# We scan ALL overlapping blocks (never break on the first) to find that tallest
+			# top. obstacles is in a fixed order and ties keep the first-encountered block, so
+			# this stays a pure deterministic function of the obstacles list.
+			if _point_over_block(local.x, local.z, obstacles):
+				var found := false
+				var tallest_top := 0.0
+				var tallest_climbable := false
+				for ob in obstacles:
+					if _block_overlaps(local.x, local.z, ob):
+						# Strict `>` keeps the FIRST block on a tie (deterministic).
+						if not found or ob.top > tallest_top:
+							tallest_top = ob.top
+							tallest_climbable = ob.get("climbable", false)
+							found = true
+				if not tallest_climbable:
+					continue
+				local.y = tallest_top + COIN_BLOCK_OFFSET
+
+			# Spawn the coin (position is local to the chunk, like blocks/crocodiles).
+			var coin := coin_scene.instantiate()
+			coin.position = local
+			parent_chunk.add_child(coin)
 
 func _block_overlaps(x: float, z: float, ob: Dictionary) -> bool:
 	"""
