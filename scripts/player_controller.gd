@@ -104,8 +104,9 @@ var step_timer: float = 0.0
 ## -1 = stepping left (Q), +1 = stepping right (E).
 var step_direction: float = 0.0
 
-## How many golden coins the player has collected. The HUD reads this, and it is
-## reset to 0 whenever the player is caught by a crocodile (see reset_position).
+## How many golden coins the player has collected. The HUD reads this. Coins now
+## survive a crocodile bite (we only lose a life); they are reset to 0 only on a
+## full restart from the Game Over screen (see restart_game / reset_position).
 var coins_collected: int = 0
 
 ## "Caught" sequence: when a crocodile bites the player we freeze briefly (so the
@@ -114,6 +115,21 @@ var coins_collected: int = 0
 var is_caught: bool = false
 var caught_timer: float = 0.0
 const CAUGHT_DURATION: float = 0.55
+
+## Lives / game-over state. The player starts each run with MAX_LIVES; every
+## crocodile bite costs one. While lives remain we respawn *in place* (keeping all
+## coins) after a short grace window; when they run out we show the Game Over
+## screen and freeze until the player restarts. The hearts HUD reads `lives`.
+const MAX_LIVES: int = 3
+var lives: int = MAX_LIVES
+var is_game_over: bool = false
+
+## Post-respawn grace: after losing a life we stand frozen and invulnerable for
+## RESPAWN_GRACE_DURATION seconds (with crocodiles swept out of the area) before
+## control returns, so a wandering crocodile can't bite us the instant we recover.
+var is_respawning: bool = false
+var respawn_timer: float = 0.0
+const RESPAWN_GRACE_DURATION: float = 5.0
 
 ## Camera shake, used by the crocodile-bite hit effect. Decays back to 0.
 var shake_amount: float = 0.0
@@ -302,9 +318,17 @@ func _physics_process(delta: float) -> void:
 	@param delta: Time elapsed since last frame (in seconds)
 	"""
 
-	# STEP 0: If a crocodile just caught us, freeze in place and let the bite +
-	# red flash play out for a moment, then respawn. We skip all normal input and
-	# movement while this short "caught" window runs.
+	# STEP 0a: Game over — out of lives. Stand frozen (the Game Over screen is up
+	# and the cursor is free) until the player hits "Play Again", which calls
+	# restart_game(). We still settle under gravity so we don't hang in the air.
+	if is_game_over:
+		_freeze_with_gravity(delta)
+		update_character_animation(delta, Vector2.ZERO)
+		return
+
+	# STEP 0b: If a crocodile just caught us, freeze in place and let the bite +
+	# red flash play out for a moment. When the window ends we lose a life and
+	# either respawn in place or, if that was our last life, trigger game over.
 	if is_caught:
 		velocity = Vector3.ZERO
 		move_and_slide()
@@ -312,7 +336,21 @@ func _physics_process(delta: float) -> void:
 		caught_timer -= delta
 		if caught_timer <= 0.0:
 			is_caught = false
-			reset_position()
+			_on_caught_finished()
+		return
+
+	# STEP 0c: Post-respawn grace. We keep standing still and invulnerable (see
+	# hit_by_crocodile) while a short countdown runs, then hand control back. A
+	# final crocodile sweep on the last frame keeps the resume spot clear.
+	if is_respawning:
+		_freeze_with_gravity(delta)
+		update_character_animation(delta, Vector2.ZERO)
+		respawn_timer -= delta
+		_show_respawn_countdown()
+		if respawn_timer <= 0.0:
+			is_respawning = false
+			_hide_respawn_message()
+			clear_nearby_crocodiles(global_position)
 		return
 
 	# STEP 0.5: Tick ability cooldowns / the Windman air boost, then read the F key.
@@ -1011,11 +1049,14 @@ func hit_by_crocodile() -> void:
 	Called by a crocodile when it bites the player (see piglet_crocodile_ai.gd).
 
 	Rather than teleporting away instantly, we play a clear "caught" signal: a red
-	screen flash, a camera shake, and a brief freeze (handled in _physics_process)
-	so the bite is actually visible. reset_position() — which also clears the coin
-	count — runs at the end of that short window.
+	screen flash, a camera shake, and a brief freeze (handled in _physics_process).
+	When that window ends _on_caught_finished() spends a life and either respawns
+	us in place or ends the run.
+
+	Bites are ignored while we are already caught, inside the post-respawn grace
+	window, or on the game-over screen — those three states make us invulnerable.
 	"""
-	if is_caught:
+	if is_caught or is_respawning or is_game_over:
 		return
 	is_caught = true
 	caught_timer = CAUGHT_DURATION
@@ -1029,15 +1070,112 @@ func hit_by_crocodile() -> void:
 	shake_amount = SHAKE_MAX
 
 
+func _on_caught_finished() -> void:
+	"""
+	Called once the "caught" freeze ends. One bite costs one life; from there we
+	either respawn in place (lives left) or end the run (no lives left).
+	"""
+	lives -= 1
+	print("Caught! Lives remaining: %d" % lives)
+	if lives <= 0:
+		lives = 0
+		_trigger_game_over()
+	else:
+		_respawn_in_place()
+
+
+func _respawn_in_place() -> void:
+	"""
+	Soft respawn after a bite: stay exactly where we fell and keep every coin —
+	the only penalty is the lost life. We sweep crocodiles out of the immediate
+	area and start a short, frozen grace window (see the is_respawning branch in
+	_physics_process) so we can't be re-bitten the moment we recover. Any active
+	ability state (air boost, giant/small form) is also cleared.
+	"""
+	_reset_ability_states()
+	clear_nearby_crocodiles(global_position)
+	velocity = Vector3.ZERO
+	is_ducking = false
+	is_running = false
+	is_respawning = true
+	respawn_timer = RESPAWN_GRACE_DURATION
+
+
+func _trigger_game_over() -> void:
+	"""
+	Out of lives: freeze the player, free the mouse cursor so the player can click
+	the button, and raise the Game Over screen (found via group) with the final
+	coin tally.
+	"""
+	is_game_over = true
+	velocity = Vector3.ZERO
+	_reset_ability_states()
+	_hide_respawn_message()
+	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+
+	var panel := get_tree().get_first_node_in_group("game_over_ui")
+	if panel and panel.has_method("show_game_over"):
+		panel.show_game_over(coins_collected)
+	print("Game over! Final coins: %d" % coins_collected)
+
+
+func restart_game() -> void:
+	"""
+	Start a brand-new run. Called by the Game Over screen's "Play Again" button.
+	Everything resets: coins to 0, lives back to full, and the player is sent to
+	the origin spawn with the mouse recaptured.
+	"""
+	coins_collected = 0
+	lives = MAX_LIVES
+	is_game_over = false
+	is_caught = false
+	is_respawning = false
+	_hide_respawn_message()
+	reset_position()
+	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+
+
+func _freeze_with_gravity(delta: float) -> void:
+	"""
+	Hold the player still (no horizontal movement) while still settling under
+	gravity, so a frozen state never leaves the character hovering. Used by the
+	game-over and post-respawn-grace branches of _physics_process.
+	"""
+	velocity.x = 0.0
+	velocity.z = 0.0
+	if not is_on_floor():
+		velocity.y -= gravity * delta
+	else:
+		velocity.y = 0.0
+	move_and_slide()
+
+
+func _show_respawn_countdown() -> void:
+	"""Show the centred respawn countdown (a plain Label found via group)."""
+	var label := get_tree().get_first_node_in_group("respawn_label")
+	if label:
+		label.visible = true
+		label.text = "Caught! Back in %d..." % int(ceil(respawn_timer))
+
+
+func _hide_respawn_message() -> void:
+	"""Hide the respawn countdown label."""
+	var label := get_tree().get_first_node_in_group("respawn_label")
+	if label:
+		label.visible = false
+
+
 func reset_position() -> void:
 	"""
-	Reset the player to the spawn position.
-	Called when the player dies (e.g., hit by a crocodile).
+	Hard reset to the origin spawn point. This is the "start over" teleport used by
+	restart_game() (and kept as the crocodile's legacy fallback). It wipes the coin
+	count — a normal bite no longer does this; it only costs a life and respawns in
+	place (see _respawn_in_place).
 	"""
 	# Define spawn point
 	var spawn_point = Vector3(0, 2, 0)
 
-	# Getting caught by a crocodile costs you all your coins.
+	# A full restart wipes the coin count.
 	coins_collected = 0
 
 	# Clear any crocodiles near the spawn point
