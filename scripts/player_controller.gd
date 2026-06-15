@@ -128,6 +128,14 @@ var camera_rest_position: Vector3 = Vector3.ZERO
 ## Original height of the character (for ducking)
 var original_scale_y: float = 1.0
 
+## Player collision capsule. Teibi's resize ability scales this (and the visible
+## model) up and down; we cache its rest position and half-height so the capsule's
+## BOTTOM can be pinned to the ground at any size — the player never sinks into the
+## floor or gets launched when growing or shrinking.
+@onready var collision_shape: CollisionShape3D = $CollisionShape3D
+var collision_base_y: float = 1.0
+var collision_half_height: float = 1.0
+
 # ============================================================================
 # SECTION 5: CHARACTER SYSTEM
 # ============================================================================
@@ -216,6 +224,15 @@ func _ready() -> void:
 	if mesh_instance:
 		original_scale_y = mesh_instance.scale.y
 
+	# Cache the collision capsule's rest pose so Teibi's resize ability can keep the
+	# capsule grounded at any scale, and give every character its own cooldown slot.
+	if collision_shape:
+		collision_base_y = collision_shape.position.y
+		if collision_shape.shape is CapsuleShape3D:
+			collision_half_height = (collision_shape.shape as CapsuleShape3D).height * 0.5
+	ability_cooldowns.resize(CHARACTERS.size())
+	ability_cooldowns.fill(0.0)
+
 	# Instance every character once up front, then show the starting one (windman).
 	# Pre-instancing here keeps later character switches instant.
 	preload_all_characters()
@@ -234,6 +251,7 @@ func _ready() -> void:
 	print("  Shift - Run")
 	print("  Ctrl - Duck")
 	print("  R - Switch Character")
+	print("  F - Special ability (unique per character)")
 	print("  Mouse - Look around")
 	print("  ESC - Release mouse")
 
@@ -297,16 +315,27 @@ func _physics_process(delta: float) -> void:
 			reset_position()
 		return
 
+	# STEP 0.5: Tick ability cooldowns / the Windman air boost, then read the F key.
+	# Done before gravity so an active boost can soften this frame's fall.
+	_update_ability_timers(delta)
+	if Input.is_action_just_pressed("special_ability"):
+		try_activate_ability()
+
 	# STEP 1: Handle Gravity
-	# If the character is not on the ground, apply gravity
+	# If the character is not on the ground, apply gravity. While Windman's Air Rush
+	# is active we soften gravity so he glides and soars on the wind instead of
+	# dropping like a stone.
 	if not is_on_floor():
-		# Add gravity to the vertical velocity
+		var frame_gravity := gravity
+		if windman_boost_timer > 0.0:
+			frame_gravity *= WINDMAN_GRAVITY_FACTOR
 		# Note: We multiply by delta to make it frame-rate independent
-		velocity.y -= gravity * delta
+		velocity.y -= frame_gravity * delta
 
 	# STEP 2: Handle Jumping
-	# Check if jump button is pressed AND character is on the ground
-	if Input.is_action_just_pressed("jump") and is_on_floor():
+	# Check if jump button is pressed AND character is on the ground. Giant Teibi
+	# is too heavy to leave the ground, so he can't jump while transformed.
+	if Input.is_action_just_pressed("jump") and is_on_floor() and not is_giant:
 		# Set upward velocity for jump
 		velocity.y = JUMP_VELOCITY
 
@@ -404,9 +433,14 @@ func calculate_current_speed() -> float:
 	@return float: Current speed in meters per second
 
 	EDUCATIONAL NOTE:
-	- We check states in priority order: duck > run > walk
+	- We check states in priority order: air-rush > duck > run > walk
 	- Only one state can be active at a time
 	"""
+	# Windman's Air Rush overrides everything while he is airborne — a wind-fast
+	# flight through the sky (~5× walk speed, "Shift pressed five times over").
+	if windman_boost_timer > 0.0 and not is_on_floor():
+		return WINDMAN_AIR_SPEED
+
 	if is_ducking:
 		return DUCK_SPEED
 	elif is_running:
@@ -613,6 +647,11 @@ func set_active_character(index: int) -> void:
 	setup_animation_references()
 	original_rotations = character_rest_poses[index].duplicate()
 	restore_rest_pose(index)
+
+	# A freshly selected character always starts at normal size with no giant
+	# crush — Teibi's resize state must not carry across a switch (otherwise a
+	# different character could inherit Teibi's giant body or shrunken capsule).
+	_revert_teibi_to_normal()
 
 func capture_rest_pose(instance: Node3D) -> Dictionary:
 	"""
@@ -1020,6 +1059,9 @@ func reset_position() -> void:
 	is_ducking = false
 	is_running = false
 
+	# Drop any active ability state (air boost, giant form, odd size) on respawn.
+	_reset_ability_states()
+
 	print("Player position reset - respawned at spawn point")
 
 
@@ -1042,3 +1084,343 @@ func clear_nearby_crocodiles(spawn_point: Vector3) -> void:
 
 	if removed_count > 0:
 		print("Cleared %d crocodile(s) near spawn point" % removed_count)
+
+
+# ============================================================================
+# SECTION 8: SPECIAL ABILITIES (F KEY)
+# ============================================================================
+## Every character has ONE signature power, fired with F (the "special_ability"
+## input action). They all share a per-character cooldown and a HUD dial:
+##
+##   * windman  — Air Rush:   launches into the sky and flies at ~5× walk speed
+##                            with softened gravity for a few seconds.
+##   * primm    — Phase Step: blinks straight forward THROUGH a block, never
+##                            stopping inside it (an instant short teleport).
+##   * teibi    — Resize:     cycles normal → small → giant → normal. Giant Teibi
+##                            is fearless and CRUSHES any crocodile it touches.
+##   * phoboman — Stink Wave: belches expanding waves of stench; every crocodile
+##                            turns tail and flees for several seconds.
+##
+## Cooldowns are tracked PER CHARACTER (one timer each), so switching characters
+## shows that character's own readiness on the HUD. Discovery stays group-based
+## (crocodiles via the "crocodile" group), matching the rest of the project.
+
+## One-shot expanding "wave" visual, reused by several abilities. We spawn it into
+## the world (parented to our parent) so it lives on its own and frees itself.
+const ABILITY_EFFECT := preload("res://scripts/ability_effect.gd")
+
+## Per-character cooldown length, in seconds. Tunable — longer for stronger powers.
+const ABILITY_COOLDOWN := {
+	"windman": 8.0,
+	"primm": 6.0,
+	"teibi": 4.0,
+	"phoboman": 12.0,
+}
+
+## Friendly ability names shown on the cooldown HUD.
+const ABILITY_NAME := {
+	"windman": "Air Rush",
+	"primm": "Phase Step",
+	"teibi": "Resize",
+	"phoboman": "Stink Wave",
+}
+
+# --- Windman: Air Rush ---
+## Top air speed during the boost (5× walk speed — "like Shift pressed five times").
+const WINDMAN_AIR_SPEED: float = WALK_SPEED * 5.0
+## How long the boost lasts, in seconds.
+const WINDMAN_BOOST_DURATION: float = 4.0
+## Gravity multiplier while boosting, so Windman glides instead of dropping.
+const WINDMAN_GRAVITY_FACTOR: float = 0.45
+## Upward launch applied on activation so he gets airborne to use the speed.
+const WINDMAN_LIFT: float = 6.0
+
+# --- Primm: Phase Step ---
+## Desired blink distance — far enough to clear a single block in open ground.
+const PRIMM_BLINK_DISTANCE: float = 6.0
+## If the desired landing spot is inside a block, keep scanning outward in steps
+## of this size until a clear spot is found (so Primm always exits the far side).
+const PRIMM_BLINK_STEP: float = 0.5
+## How far out the scan looks before giving up (covers any structure in-game).
+const PRIMM_BLINK_MAX_DISTANCE: float = 40.0
+
+# --- Teibi: Resize ---
+## Scale factors for the small and giant forms (1.0 is the normal size).
+const TEIBI_SCALE_SMALL: float = 0.45
+const TEIBI_SCALE_BIG: float = 2.2
+## How long Teibi may stay in an altered form (small OR giant) before he snaps
+## back to normal on his own — no extra press needed. This is a TOTAL budget for
+## the whole small/giant excursion: switching small↔giant does not refill it.
+const TEIBI_FORM_DURATION: float = 10.0
+
+# --- Phoboman: Stink Wave ---
+## How long crocodiles flee after one whiff, in seconds.
+const PHOBOMAN_FLEE_DURATION: float = 10.0
+## Visual reach of the stink waves, in metres.
+const PHOBOMAN_STINK_RADIUS: float = 9.0
+
+## Per-character cooldown timers (seconds remaining; 0 = ready). Sized in _ready().
+var ability_cooldowns: Array[float] = []
+
+## Windman boost time remaining (seconds; > 0 means the Air Rush is active).
+var windman_boost_timer: float = 0.0
+
+## Teibi's size cycle: 0 = normal, 1 = small, 2 = giant.
+var teibi_size_state: int = 0
+
+## Seconds left in Teibi's current altered form before it auto-reverts to normal
+## (0 while he is normal). See TEIBI_FORM_DURATION.
+var teibi_form_timer: float = 0.0
+
+## True only while Teibi is giant — makes him crush crocodiles on contact.
+var is_giant: bool = false
+
+
+func _update_ability_timers(delta: float) -> void:
+	"""Count down cooldowns, the Windman air boost, and Teibi's form timer."""
+	for i in ability_cooldowns.size():
+		if ability_cooldowns[i] > 0.0:
+			ability_cooldowns[i] = maxf(0.0, ability_cooldowns[i] - delta)
+	if windman_boost_timer > 0.0:
+		windman_boost_timer = maxf(0.0, windman_boost_timer - delta)
+	# Teibi's small/giant form expires on its own after a while, snapping him back
+	# to normal size with no extra press — so he can never get stuck transformed.
+	if teibi_size_state != 0 and teibi_form_timer > 0.0:
+		teibi_form_timer = maxf(0.0, teibi_form_timer - delta)
+		if teibi_form_timer <= 0.0:
+			_revert_teibi_to_normal()
+
+
+func try_activate_ability() -> void:
+	"""
+	Fire the current character's special ability if it isn't on cooldown. Each
+	ability function returns true when it actually triggered, which is what starts
+	the cooldown — so a no-op never locks the power.
+	"""
+	var char_name: String = CHARACTERS[current_character_index]["name"]
+
+	# Still cooling down? Ignore the press.
+	if ability_cooldowns[current_character_index] > 0.0:
+		return
+
+	var used := false
+	match char_name:
+		"windman":
+			used = _ability_windman()
+		"primm":
+			used = _ability_primm()
+		"teibi":
+			used = _ability_teibi()
+		"phoboman":
+			used = _ability_phoboman()
+
+	if used:
+		ability_cooldowns[current_character_index] = float(ABILITY_COOLDOWN.get(char_name, 10.0))
+
+
+func _ability_windman() -> bool:
+	"""Air Rush: launch up and forward, then soar fast with softened gravity."""
+	var forward := -transform.basis.z
+	forward.y = 0.0
+	forward = forward.normalized()
+
+	windman_boost_timer = WINDMAN_BOOST_DURATION
+	# Launch: up so he is airborne, plus an immediate forward shove so even a
+	# standing press blasts off into the wind right away.
+	velocity.y = WINDMAN_LIFT
+	velocity.x = forward.x * WINDMAN_AIR_SPEED
+	velocity.z = forward.z * WINDMAN_AIR_SPEED
+
+	# An airy cyan swirl around him to sell the gust.
+	_spawn_ability_effect(global_position, Color(0.7, 0.92, 1.0, 0.4), 5.0, 0.6)
+	return true
+
+
+func _ability_primm() -> bool:
+	"""
+	Phase Step: instantly blink straight forward, passing THROUGH any block. Primm
+	must never end up stuck inside geometry, so instead of a blind fixed hop we
+	scan forward from the desired distance and land at the first spot where his
+	body actually fits — which is always on the far side of whatever he phased
+	through (a single block, a wall, or a whole pyramid). If there's no clear spot
+	within reach (facing into an enormous solid), the blink simply doesn't fire and
+	costs no cooldown.
+	"""
+	var forward := -transform.basis.z
+	forward.y = 0.0
+	if forward.length() < 0.01:
+		return false
+	forward = forward.normalized()
+
+	# March outward for the first position where Primm's body is NOT inside a block.
+	var target := global_position
+	var found := false
+	var d := PRIMM_BLINK_DISTANCE
+	while d <= PRIMM_BLINK_MAX_DISTANCE:
+		var candidate := global_position + forward * d
+		if not _is_body_blocked_at(candidate):
+			target = candidate
+			found = true
+			break
+		d += PRIMM_BLINK_STEP
+
+	if not found:
+		return false
+
+	# A quick flash where he leaves and where he arrives, to sell the teleport.
+	_spawn_ability_effect(global_position, Color(0.45, 0.5, 1.0, 0.5), 2.0, 0.35)
+	global_position = target
+	velocity = Vector3.ZERO  # land cleanly on the far side, no carried momentum
+	_spawn_ability_effect(global_position, Color(0.45, 0.5, 1.0, 0.5), 2.0, 0.35)
+	return true
+
+
+func _is_body_blocked_at(pos: Vector3) -> bool:
+	"""
+	True if solid geometry occupies Primm's body space at world position `pos`.
+	We probe with a small sphere at capsule-CENTRE height (not at the feet) so the
+	flat ground — which the capsule always rests on — never counts as "blocked";
+	only blocks and structures that rise above the ground do.
+	"""
+	var space := get_world_3d().direct_space_state
+	if not space:
+		return false
+	var query := PhysicsShapeQueryParameters3D.new()
+	var probe := SphereShape3D.new()
+	probe.radius = 0.5
+	query.shape = probe
+	# Lift the probe to the capsule's centre height so it clears the ground plane.
+	query.transform = Transform3D(Basis(), pos + Vector3(0.0, collision_base_y, 0.0))
+	query.exclude = [get_rid()]  # never sense our own collider
+	query.collision_mask = collision_mask
+	return not space.intersect_shape(query, 1).is_empty()
+
+
+func _ability_teibi() -> bool:
+	"""
+	Resize: cycle normal → small → giant → normal. Giant form crushes crocodiles
+	(see crushes_crocodiles) but is too heavy to jump (see the jump step). Any
+	altered form auto-reverts to normal after TEIBI_FORM_DURATION, so Teibi can
+	never get stuck giant or tiny.
+	"""
+	var prev_state := teibi_size_state
+	teibi_size_state = (teibi_size_state + 1) % 3
+	var s := 1.0
+	match teibi_size_state:
+		1:
+			s = TEIBI_SCALE_SMALL
+		2:
+			s = TEIBI_SCALE_BIG
+		_:
+			s = 1.0
+	_apply_teibi_scale(s)
+	is_giant = (teibi_size_state == 2)
+
+	# Manage the auto-revert budget: start it the moment he first leaves normal,
+	# clear it when he's back to normal, and KEEP it running across a small↔giant
+	# switch (it's a total time-in-altered-form budget, not per-form).
+	if teibi_size_state == 0:
+		teibi_form_timer = 0.0
+	elif prev_state == 0:
+		teibi_form_timer = TEIBI_FORM_DURATION
+	return true
+
+
+func _ability_phoboman() -> bool:
+	"""Stink Wave: send out smelly waves; every crocodile flees for a while."""
+	# A few staggered green waves so it reads as rolling stench, not one pop.
+	_spawn_ability_effect(global_position, Color(0.55, 0.85, 0.2, 0.55), PHOBOMAN_STINK_RADIUS, 0.9, 0.0)
+	_spawn_ability_effect(global_position, Color(0.5, 0.8, 0.25, 0.45), PHOBOMAN_STINK_RADIUS, 0.9, 0.18)
+	_spawn_ability_effect(global_position, Color(0.45, 0.75, 0.3, 0.4), PHOBOMAN_STINK_RADIUS, 0.9, 0.36)
+
+	# Repel every crocodile via the group (no hard references), matching the
+	# project's group-based discovery convention.
+	for croc in get_tree().get_nodes_in_group("crocodile"):
+		if croc.has_method("flee_from"):
+			croc.flee_from(global_position, PHOBOMAN_FLEE_DURATION)
+	return true
+
+
+func _apply_teibi_scale(s: float) -> void:
+	"""
+	Resize the visible model AND the collision capsule to scale `s`, keeping the
+	capsule's bottom pinned to the ground so the player never sinks into the floor
+	or gets launched when growing or shrinking.
+
+	Why the position tweak: scaling the CollisionShape3D node scales the capsule
+	about the node's origin, which would move the capsule's bottom up/down. We move
+	the node so the bottom stays exactly where it was at normal size.
+	"""
+	if character_container:
+		character_container.scale = Vector3(s, s, s)
+	if collision_shape:
+		collision_shape.scale = Vector3(s, s, s)
+		var bottom := collision_base_y - collision_half_height
+		collision_shape.position.y = bottom + s * collision_half_height
+
+
+func _spawn_ability_effect(pos: Vector3, color: Color, max_radius: float, lifetime: float, delay: float = 0.0) -> void:
+	"""
+	Spawn a one-shot expanding/fading wave at a world position. Parented to our
+	parent (the main scene) so it lives independently of the player and frees
+	itself when finished — no manual cleanup, no leak.
+	"""
+	var parent := get_parent()
+	if not parent:
+		return
+	var fx := MeshInstance3D.new()
+	fx.set_script(ABILITY_EFFECT)
+	parent.add_child(fx)
+	fx.global_position = pos
+	fx.setup(color, max_radius, lifetime, delay)
+
+
+func _reset_ability_states() -> void:
+	"""Clear transient ability state on respawn (air boost, giant/small form)."""
+	windman_boost_timer = 0.0
+	_revert_teibi_to_normal()
+
+
+func _revert_teibi_to_normal() -> void:
+	"""Snap Teibi back to normal size — used by the form timeout, character switch,
+	and respawn. Safe to call for any character (a normal-size body is the default)."""
+	teibi_size_state = 0
+	is_giant = false
+	teibi_form_timer = 0.0
+	_apply_teibi_scale(1.0)
+
+
+# --- Ability HUD contract (read by ability_hud.gd) ---------------------------
+
+func get_ability_name() -> String:
+	"""Friendly name of the current character's ability (for the HUD)."""
+	var char_name: String = CHARACTERS[current_character_index]["name"]
+	return ABILITY_NAME.get(char_name, "Ability")
+
+
+func get_ability_cooldown_ratio() -> float:
+	"""Cooldown progress for the HUD dial: 1.0 just-used → 0.0 fully ready."""
+	var char_name: String = CHARACTERS[current_character_index]["name"]
+	var duration: float = float(ABILITY_COOLDOWN.get(char_name, 10.0))
+	if duration <= 0.0:
+		return 0.0
+	return clampf(ability_cooldowns[current_character_index] / duration, 0.0, 1.0)
+
+
+func get_ability_remaining() -> float:
+	"""Seconds of cooldown left on the current character's ability."""
+	return maxf(0.0, ability_cooldowns[current_character_index])
+
+
+func is_ability_ready() -> bool:
+	"""True when the current character can fire its ability right now."""
+	return ability_cooldowns[current_character_index] <= 0.0
+
+
+func crushes_crocodiles() -> bool:
+	"""
+	Crocodile contract: when true, a crocodile that touches the player is crushed
+	instead of biting. Only giant-form Teibi qualifies. (See piglet_crocodile_ai
+	._on_player_collision.)
+	"""
+	return is_giant

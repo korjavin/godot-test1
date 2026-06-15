@@ -130,6 +130,16 @@ var pause_time_remaining: float = 0.0
 ## Is the crocodile currently chasing the player?
 var is_chasing: bool = false
 
+## Flee state. When Phoboman unleashes his Stink Wave, every crocodile turns tail
+## and runs from the player for a while. Fleeing OVERRIDES both chase and wander,
+## and a fleeing crocodile is harmless — it won't bite (see _on_player_collision).
+var is_fleeing: bool = false
+## Seconds of fleeing left (counts down to 0).
+var flee_time_remaining: float = 0.0
+## The smell's origin, used only as a fallback "run from here" point if the player
+## reference is momentarily missing while fleeing.
+var flee_source: Vector3 = Vector3.ZERO
+
 ## Reference to the player node
 var player_node: Node3D = null
 
@@ -260,15 +270,26 @@ func _physics_process(delta: float) -> void:
 		velocity.x = 0.0
 		velocity.z = 0.0
 	else:
-		# Decide what we want to do this frame.
-		_update_chase_state()
+		# Decide what we want to do this frame. Fleeing (Phoboman's Stink Wave)
+		# overrides everything; otherwise chase the player if in range, else wander.
+		if is_fleeing:
+			flee_time_remaining -= delta
+			if flee_time_remaining <= 0.0:
+				# The whiff wore off — go back to normal wandering.
+				is_fleeing = false
+				_choose_new_direction()
 
-		if is_chasing and player_node:
-			# Chase the player
-			_chase_player()
+		if is_fleeing:
+			# Run directly away from the player.
+			_flee()
 		else:
-			# Wander with smooth, organic steering
-			_wander(delta)
+			_update_chase_state()
+			if is_chasing and player_node:
+				# Chase the player
+				_chase_player()
+			else:
+				# Wander with smooth, organic steering
+				_wander(delta)
 
 		# Steer around any block ahead so we don't drive our snout into it. This
 		# may override the chase/wander heading for this frame.
@@ -288,7 +309,8 @@ func _physics_process(delta: float) -> void:
 			var turn_rate := TURN_SMOOTHNESS * (2.0 if avoiding else 1.0)
 			rotation.y = lerp_angle(rotation.y, target_rotation, delta * turn_rate)
 
-			var current_speed := chase_speed_instance if is_chasing else _wander_speed(delta)
+			# Flee and chase both move at the faster "chase" speed.
+			var current_speed := chase_speed_instance if (is_chasing or is_fleeing) else _wander_speed(delta)
 			if avoiding:
 				current_speed *= AVOID_SPEED_FACTOR
 			velocity.x = sin(rotation.y) * current_speed
@@ -360,6 +382,41 @@ func _chase_player() -> void:
 	var direction_to_player = player_node.global_position - global_position
 	direction_to_player.y = 0  # Keep movement on horizontal plane
 	movement_direction = direction_to_player.normalized()
+
+
+func _flee() -> void:
+	"""
+	Run directly AWAY from the player (Phoboman's stink). Falls back to the
+	remembered smell origin if the player reference is momentarily missing, and to
+	the current heading if we somehow sit right on top of the source.
+	"""
+	var away := Vector3.ZERO
+	if player_node:
+		away = global_position - player_node.global_position
+	else:
+		away = global_position - flee_source
+	away.y = 0.0
+
+	if away.length() < 0.01:
+		away = Vector3(sin(wander_heading), 0.0, cos(wander_heading))
+
+	movement_direction = away.normalized()
+	# Keep the wander heading in sync so obstacle-avoidance steering composes
+	# cleanly and the croc holds its escape course instead of curving back.
+	wander_heading = atan2(movement_direction.x, movement_direction.z)
+
+
+func flee_from(source: Vector3, duration: float) -> void:
+	"""
+	Public hook called by Phoboman's Stink Wave (via the "crocodile" group): make
+	this crocodile turn tail and run from the player for `duration` seconds. Drops
+	any current chase. `source` is the smell's origin, used only as a fallback
+	direction if the player can't be located on a given frame.
+	"""
+	is_fleeing = true
+	flee_time_remaining = duration
+	flee_source = source
+	is_chasing = false
 
 
 func _wander(delta: float) -> void:
@@ -744,7 +801,22 @@ func _start_bite() -> void:
 
 
 func _on_player_collision(player: Node) -> void:
-	"""Handle collision with the player (FATAL): chomp, then send them back."""
+	"""
+	Handle collision with the player. Normally FATAL (chomp, then send them back),
+	with two exceptions tied to special abilities:
+	  * Giant-form Teibi CRUSHES the crocodile on contact instead of being bitten.
+	  * A crocodile fleeing Phoboman's stink is harmless and just brushes past.
+	"""
+	# Giant Teibi squashes crocodiles on contact instead of being bitten.
+	if player.has_method("crushes_crocodiles") and player.crushes_crocodiles():
+		print("🐊 Squashed by a giant!")
+		queue_free()
+		return
+
+	# While fleeing Phoboman's stink, crocodiles can't bring themselves to bite.
+	if is_fleeing:
+		return
+
 	print("💀 Piglet Crocodile bites the player!")
 
 	# Snap at the player so the hit reads clearly.
