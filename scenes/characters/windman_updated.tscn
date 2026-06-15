@@ -47,7 +47,7 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.27, 0)
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0)
 
 [node name="Fan" parent="Body/RightArm/LowerArm/Mesh" instance=ExtResource("11_fan")]
-transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, -0.10, 0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.04, -0.16)
 
 [node name="LeftLeg" type="Node3D" parent="Body"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.09, 0.77, 0)
