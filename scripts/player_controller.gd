@@ -310,11 +310,19 @@ func _input(event: InputEvent) -> void:
 			pitch = clamp(pitch, CAMERA_PITCH_MIN, CAMERA_PITCH_MAX)
 			camera_pivot.rotation.x = deg_to_rad(pitch)
 
-	# Allow player to release mouse with ESC
+	# Allow player to release mouse with ESC.
+	# TOUCH-SESSION GUARD: on a phone/tablet we deliberately keep the mouse VISIBLE so
+	# the on-screen touch buttons are usable and no pointer-lock prompt appears (matching
+	# the same `MobileSensors.is_touch_session()` gate used by the mouse-capture sites in
+	# `_ready()`/`restart_game()`). Without this guard, ESC's unconditional toggle could
+	# re-capture the mouse in a touch session, bypassing that single source of truth. So
+	# on a touch session ESC only ever moves TOWARD visible (never into captured); on
+	# desktop (non-touch) the original capture<->visible toggle is byte-for-byte unchanged.
 	if event.is_action_pressed("ui_cancel"):
 		if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 			Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
-		else:
+		elif not MobileSensors.is_touch_session():
+			# Desktop only: re-capture on a second ESC. A touch session never re-captures.
 			Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 
 	# Handle character switching with E key

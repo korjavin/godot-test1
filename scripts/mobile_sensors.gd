@@ -125,6 +125,20 @@ var _js_age: float = 0.0
 ## first orientation event arrives.
 var _ori_age: float = JS_SAMPLE_TIMEOUT + 1.0
 
+## Seconds since the last *motion* sample specifically (a real `devicemotion`
+## accel/gravity reading) — a THIRD timer, separate from both `_js_age` and `_ori_age`.
+## WHY it must exist: `_js_age` is reset by ANY JS event, including a `deviceorientation`
+## event that carries a compass heading but NO acceleration/gravity (and even by the
+## bare listener-attach in `_attach_js_listeners`/`_install_ios_permission_flow`). So
+## `_js_age <= JS_SAMPLE_TIMEOUT` can read "live" while `_gravity`/`_linear` are still
+## zero (no `devicemotion` has ever fired). With zero gravity, `tilt()` would compute a
+## bogus ~180° angle against the default DOWN neutral and the TILT steer mode would
+## command a phantom near-full turn. `_motion_age` is reset to 0 ONLY when a genuine
+## `devicemotion` accel/gravity field arrives (see `_on_js_devicemotion`), so the TILT
+## (tilt) and STEP (linear_accel) signals can require a fresh MOTION sample, NOT merely
+## any JS event. Initialised stale so motion is NOT trusted before the first real sample.
+var _motion_age: float = JS_SAMPLE_TIMEOUT + 1.0
+
 # --- Internal: JavaScriptBridge handles ------------------------------------
 # CRITICAL: GDScript's JavaScriptBridge callbacks are garbage-collected the moment
 # nothing references them — which would silently detach our listeners. We therefore
@@ -264,9 +278,36 @@ func has_data() -> bool:
 	return enabled and _has_live
 
 
+## True only when a genuine, fresh MOTION sample (real accel/gravity) is currently
+## flowing — the precise signal the touch UI's enable-overlay retry watches. This is
+## STRICTER than `has_data()`: `has_data()` can briefly be true on a compass-only
+## (orientation) reading, but the enable overlay must confirm the *step/tilt* signal
+## actually started before it hides itself and latches "motion on". Mirrors the
+## `_motion_age` gate used for source selection. On desktop (no sensors) and a denied
+## / never-permissioned web stream this stays false, so the overlay can offer a retry.
+func is_receiving_motion() -> bool:
+	if not enabled:
+		return false
+	# Native path: real accelerometer + gravity both reading (the same "native usable"
+	# criterion the source selector uses), so a native device counts as receiving motion.
+	if (Input.get_accelerometer().length() > LIVE_DATA_EPSILON
+			and Input.get_gravity().length() > LIVE_DATA_EPSILON):
+		return true
+	# JS path: a real `devicemotion` accel/gravity sample arrived within the timeout
+	# (`_motion_age` is reset ONLY by such a sample), so the gravity-derived signals are live.
+	return _is_web and _js_active and _motion_age <= JS_SAMPLE_TIMEOUT
+
+
 ## Player-motion acceleration (m/s²) with gravity already removed — the signal the
 ## step-detector thresholds. Zero vector when there is no live data.
 func linear_accel() -> Vector3:
+	# DEFENSIVE ZERO-GRAVITY GUARD (same rationale as `tilt()`'s second layer).
+	# `_linear` is `accel - gravity`; if no real gravity sample has been captured yet
+	# (the source went live on an orientation-only / freshly-attached JS stream) the
+	# whole reading is meaningless, so report no motion rather than feed the step
+	# detector a bogus transient. Neutral until a genuine `devicemotion` sample exists.
+	if _gravity.length() <= LIVE_DATA_EPSILON:
+		return Vector3.ZERO
 	return _linear
 
 
@@ -278,6 +319,18 @@ func linear_accel() -> Vector3:
 ## angle and calibrating makes that pose read (0, 0). Returns (0,0) with no data.
 func tilt() -> Vector2:
 	if not _has_live:
+		return Vector2.ZERO
+
+	# DEFENSIVE ZERO-GRAVITY GUARD (layer 2 of the phantom-turn fix).
+	# Even with `_has_live` true, the gravity vector can still be (near-)zero — e.g. a
+	# JS source that went live on an orientation-only event before any `devicemotion`
+	# accel/gravity sample arrived. Computing tilt from a zero `_gravity` against the
+	# default DOWN neutral yields a bogus ~180° angle, which the TILT steer mode would
+	# fire as a phantom near-full turn. So if there is no real gravity sample yet, report
+	# *centred* (no tilt) and let steering stay neutral until genuine gravity exists. The
+	# source-selection gate (`_motion_age`) already prevents most of this; this is the
+	# belt-and-braces second layer that holds even if a source slips through live with no gravity.
+	if _gravity.length() <= LIVE_DATA_EPSILON:
 		return Vector2.ZERO
 
 	# Roll/pitch from the gravity vector via `_gravity_angles()`. With the phone's
@@ -378,9 +431,14 @@ func _poll_sources(delta: float) -> void:
 	# Age the orientation-specific timer alongside it: because `_ori_age` is reset
 	# only by the orientation callback (never by motion), this is what lets us notice
 	# a *compass* stall even while `devicemotion` keeps `_js_age` pinned at ~0.
+	# Age the motion-specific timer the same way: `_motion_age` is reset only by a real
+	# `devicemotion` accel/gravity sample, so it climbs while ONLY orientation events
+	# (or a bare listener attach) arrive — which is exactly when we must NOT trust the
+	# (still-zero) gravity for tilt/step. See `_motion_age` declaration.
 	if _js_active:
 		_js_age += delta
 		_ori_age += delta
+		_motion_age += delta
 
 	# Choose a source and fill the current sample (sets `_has_live`).
 	_select_and_read_source(delta)
@@ -419,8 +477,17 @@ func _select_and_read_source(delta: float) -> void:
 	var native_gravity_live: bool = native_gravity.length() > LIVE_DATA_EPSILON
 	var native_usable: bool = native_accel_live and native_gravity_live
 
-	# Is the JS shim a usable alternative right now (web only, attached, fresh)?
-	var js_usable: bool = _is_web and _js_active and _js_age <= JS_SAMPLE_TIMEOUT
+	# Is the JS shim a usable alternative right now (web only, attached, AND carrying a
+	# fresh MOTION sample)? Critically we gate on `_motion_age`, NOT `_js_age`: `_js_age`
+	# is reset by ANY JS event — including a `deviceorientation`-only event (compass, no
+	# accel/gravity) and the bare listener attach — so it can read "fresh" while
+	# `_gravity`/`_linear` are still zero. Reading a zero-gravity sample as live would make
+	# `tilt()` compute a bogus ~180° angle vs the default DOWN neutral and the TILT steer
+	# mode command a phantom full turn. Requiring a fresh `_motion_age` means the tilt/step
+	# (gravity-derived) signals only go live once a genuine `devicemotion` sample exists.
+	# (Orientation-only freshness still gates the compass-yaw/TWIST path via `_ori_age` in
+	# `_read_js`/`_read_native`, so the TWIST mode can use the compass before motion warms up.)
+	var js_usable: bool = _is_web and _js_active and _motion_age <= JS_SAMPLE_TIMEOUT
 
 	# Prefer native when it has the full signal we need. But if native is DEGENERATE
 	# (e.g. accel without gravity → would zero out `_linear`) and a fresh JS source is
@@ -723,6 +790,12 @@ func _on_js_devicemotion(args: Array) -> void:
 	# times the (empty) stream out instead of steering on a frozen reading.
 	if got_data:
 		_js_age = 0.0
+		# Reset the motion-specific timer too — and ONLY here, on a genuine accel/gravity
+		# sample, NEVER in `_on_js_deviceorientation` or on listener attach. This is what
+		# lets the tilt/step source-selection gate (`_motion_age <= JS_SAMPLE_TIMEOUT`)
+		# prove a REAL gravity reading exists before tilt() steers — an orientation-only
+		# stream leaves `_motion_age` climbing past the timeout and never goes live for tilt.
+		_motion_age = 0.0
 		_js_active = true
 
 

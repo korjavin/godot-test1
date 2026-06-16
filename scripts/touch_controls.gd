@@ -77,6 +77,15 @@ const TOGGLE_HEIGHT: float = 64.0
 ## never affects a released desktop build because real play has no touchscreen.
 const FORCE_SHOW_KEYCODE: Key = KEY_F6
 
+## Grace period (seconds) after the enable tap during which we WATCH for motion data
+## to actually start flowing before committing. iOS resolves `requestPermission()`
+## asynchronously and a denial / non-secure-context / sensorless device produces NO
+## `devicemotion` samples at all. If none arrive within this window we re-show the
+## overlay ("tap to retry") instead of latching enabled — so a keyboardless phone is
+## never stranded with the controls hidden and no way back. ~3.5 s comfortably covers
+## the permission dialog round-trip plus a few sensor frames without feeling sticky.
+const MOTION_ENABLE_TIMEOUT: float = 3.5
+
 # ============================================================================
 # STATE
 # ============================================================================
@@ -86,9 +95,22 @@ const FORCE_SHOW_KEYCODE: Key = KEY_F6
 ## MobileInput node (then the buttons safely no-op).
 var _driver: Node = null
 
-## True once the enable overlay has been tapped, so we don't keep re-requesting
-## permission / re-enabling on every later interaction.
+## True once the enable overlay has been tapped AND motion data actually started
+## flowing, so we don't keep re-requesting permission / re-enabling on every later
+## interaction. It is NOT set merely by tapping — see `_motion_watching` for the
+## "tapped but waiting to confirm data" interim state.
 var _motion_enabled: bool = false
+
+## True while we are WATCHING for motion to start after an enable tap, but before it
+## has actually been confirmed (or timed out). During this window the overlay is
+## hidden (so play can begin immediately if data flows) but NOT latched, so if the
+## grace period expires with no data we can re-show it for a retry. See `_process`.
+var _motion_watching: bool = false
+
+## Seconds elapsed in the current `_motion_watching` window, accumulated in `_process`
+## (which already runs for the action-release queue). Compared against
+## `MOTION_ENABLE_TIMEOUT` to decide "data started" vs "re-show the retry overlay".
+var _motion_watch_elapsed: float = 0.0
 
 ## True while the UI is force-shown by the F6 debug key on a non-touch device, so a
 ## second F6 press toggles it back off. Independent of the auto (touch) visibility.
@@ -340,15 +362,58 @@ func _release_action(action_name: String) -> void:
 	Input.parse_input_event(release)
 
 
-## Flush any presses queued last frame by `_fire_action`, on this (guaranteed-later)
-## frame. Runs every frame; cheap no-op when the queue is empty. This is what makes the
-## press last a full frame so `is_action_just_pressed`/`_input()` see exactly one press.
-func _process(_delta: float) -> void:
-	if _actions_to_release.is_empty():
+## Per-frame housekeeping: (1) flush any synthetic-action releases queued last frame by
+## `_fire_action` (the guaranteed-later-frame release that makes the press last exactly
+## one frame), and (2) drive the enable-overlay motion WATCH so a denied/dataless enable
+## re-shows the retry overlay instead of stranding the player. Both are cheap no-ops when
+## idle, and the whole function is inert on desktop (the UI is hidden and never enabled).
+func _process(delta: float) -> void:
+	# --- 1. Flush queued action releases ----------------------------------
+	if not _actions_to_release.is_empty():
+		for action_name in _actions_to_release:
+			_release_action(action_name)
+		_actions_to_release.clear()
+
+	# --- 2. Enable-overlay motion watch -----------------------------------
+	_update_motion_watch(delta)
+
+
+## Watch for motion to actually start after an enable tap. While `_motion_watching`:
+## if a fresh real motion sample is flowing, CONFIRM — latch `_motion_enabled` and stop
+## watching (the overlay is already hidden). Otherwise count down `MOTION_ENABLE_TIMEOUT`;
+## on expiry with still no data, RE-SHOW the overlay with a retry prompt so the player can
+## try again (re-grant permission, or it was a non-secure context). No-op when not watching.
+func _update_motion_watch(delta: float) -> void:
+	if not _motion_watching:
 		return
-	for action_name in _actions_to_release:
-		_release_action(action_name)
-	_actions_to_release.clear()
+
+	# Read the driver's owned sensor (shared instance, found via the group) and ask
+	# whether a genuine motion sample is flowing. Null-safe at every hop: a missing
+	# driver/sensor simply means "no data yet", which lets the timeout re-show the overlay.
+	var receiving: bool = false
+	var driver: Node = _ensure_driver()
+	if driver != null:
+		var sensors: MobileSensors = driver.get_sensors()
+		if sensors != null:
+			receiving = sensors.is_receiving_motion()
+
+	if receiving:
+		# Data confirmed: latch the feature on and stop watching. The overlay is already
+		# hidden from the tap, so there's nothing more to do here.
+		_motion_enabled = true
+		_motion_watching = false
+		return
+
+	# Still no data — count down the grace window.
+	_motion_watch_elapsed += delta
+	if _motion_watch_elapsed >= MOTION_ENABLE_TIMEOUT:
+		# Gave it a fair chance and nothing arrived (permission denied, non-secure
+		# context, or no sensor). Stop watching and re-show the overlay so the player can
+		# retry — never leave a keyboardless phone with the controls hidden and no way back.
+		_motion_watching = false
+		if _enable_overlay != null:
+			_enable_overlay.text = "Motion unavailable — tap to retry"
+			_enable_overlay.visible = true
 
 
 ## Jump button → the polled `jump` action (controller reads is_action_just_pressed).
@@ -401,32 +466,40 @@ func _update_steer_toggle_label() -> void:
 ## First tap of the enable overlay: satisfy the iOS motion-permission gesture and
 ## start the driver. This handler runs inside the tap's user-gesture call stack,
 ## which is exactly what iOS Safari requires for DeviceMotionEvent.requestPermission().
-## We then hide the overlay so the game (and the action buttons beneath) is usable.
 ##
-## RETRY PATH (the fix): we only latch `_motion_enabled` and drop the overlay when a
-## driver was ACTUALLY found and `enable()` invoked. If `_ensure_driver()` returns null
-## (a build with no MobileInput node), we leave the overlay up and tappable so the
-## player isn't stranded with no controls and no way to retry — a keyboardless phone
-## must always have a path back to enabling motion. (We can't synchronously detect an
-## iOS permission *denial* — that resolves async — so driver-presence is the practical
-## guard; a denied grant simply leaves the sensor stream empty, which the driver's
-## staleness handling already tolerates.)
+## RETRY PATH (the fix): tapping does NOT permanently latch the feature. There are two
+## ways an enable can silently fail and strand a keyboardless phone:
+##   * no MobileInput node (a stripped build), handled here by leaving the overlay up;
+##   * permission DENIED / non-secure-context / sensorless device → `requestPermission()`
+##     resolves (async) without ever delivering a `devicemotion` sample.
+## So instead of hiding+latching outright, we kick off the driver and enter a short
+## WATCH window (`_motion_watching`): the overlay is hidden so play can begin the moment
+## data flows, but it is re-shown ("tap to retry") if no motion arrives within
+## `MOTION_ENABLE_TIMEOUT` (driven in `_process`). Only when real motion is confirmed do
+## we latch `_motion_enabled`. (With calibrate-on-first-data in MobileSensors, neutral is
+## captured from the first REAL sample, not the stale pre-permission default, so iOS's
+## async grant no longer biases steering.)
 func _on_enable_overlay_pressed() -> void:
 	if _ensure_driver() == null:
 		# No driver to talk to: do NOT latch enabled or hide the overlay. The overlay
 		# stays visible and tappable so the player can retry (e.g. if the node appears
 		# later), instead of being left with a hidden overlay and no controls at all.
+		# Re-label so the player understands a retry is possible.
+		if _enable_overlay != null:
+			_enable_overlay.text = "Motion unavailable — tap to retry"
 		return
 
 	# Order matters: request permission first (still inside the user gesture), then
 	# enable the driver. `enable()` already calibrates neutral from the current pose
 	# (see mobile_input.enable()), so we deliberately do NOT call calibrate() again
-	# here — that would double-calibrate redundantly. (And with calibrate-on-first-data
-	# in MobileSensors, the neutral is captured from the first REAL sample, not the
-	# stale pre-permission default, so iOS's async grant no longer biases steering.)
+	# here — that would double-calibrate redundantly.
 	_driver.request_permission()
 	_driver.enable()
-	_motion_enabled = true
-	# Drop the overlay so play can begin; the action buttons underneath become usable.
+
+	# Begin the watch rather than latching: hide the overlay so play can start, but keep
+	# the door open to re-show it if motion never materialises. `_process` accumulates
+	# `_motion_watch_elapsed` and either confirms (data arrived) or re-shows the overlay.
+	_motion_watching = true
+	_motion_watch_elapsed = 0.0
 	if _enable_overlay != null:
 		_enable_overlay.visible = false
