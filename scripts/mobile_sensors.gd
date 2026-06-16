@@ -98,6 +98,13 @@ var _has_orientation: bool = false
 ## True once *some* source produced a live reading this frame.
 var _has_live: bool = false
 
+## Which source last filled the "current sample": "native", "js", or "none". Updated
+## by `_read_native`/`_read_js` (and the no-data branch of `_select_and_read_source`)
+## purely so the on-device tuning panel can show the player WHERE motion is coming
+## from (e.g. "Sensor: LIVE (js)") — a key diagnostic when controls feel dead, since
+## "none" immediately explains an unresponsive build. Read via `current_source()`.
+var _current_source: String = "none"
+
 # --- Internal: which source is active --------------------------------------
 
 ## True only on the HTML5 export — gates every `JavaScriptBridge` touch so this
@@ -276,6 +283,16 @@ func _process(delta: float) -> void:
 ## return false, so callers can cleanly fall back to keyboard with no special-casing.
 func has_data() -> bool:
 	return enabled and _has_live
+
+
+## Which source last fed the current sample: "native", "js", or "none". Reported to
+## the on-device tuning panel so a player can see WHERE motion data is coming from (a
+## key diagnostic — "none" explains an unresponsive build at a glance). When we are
+## disabled or no source is live this is "none", matching `has_data()` being false.
+func current_source() -> String:
+	if not enabled or not _has_live:
+		return "none"
+	return _current_source
 
 
 ## True only when a genuine, fresh MOTION sample (real accel/gravity) is currently
@@ -517,6 +534,7 @@ func _select_and_read_source(delta: float) -> void:
 	_has_live = false
 	_has_orientation = false
 	_linear = Vector3.ZERO
+	_current_source = "none"  # diagnostics: panel shows "Sensor: NO DATA".
 
 
 ## Fill the current sample from the already-read native `Input` sensor values and
@@ -568,6 +586,7 @@ func _read_native(delta: float, accel: Vector3, gravity: Vector3) -> void:
 		_integrated_yaw += _gyro.z * delta
 
 	_has_live = true
+	_current_source = "native"  # diagnostics: panel shows "Sensor: LIVE (native)".
 
 
 ## Fill the current sample from the JS-shim values stashed on `window` by the DOM
@@ -619,6 +638,7 @@ func _read_js(delta: float) -> void:
 		_integrated_yaw += _gyro.z * delta
 
 	_has_live = true
+	_current_source = "js"  # diagnostics: panel shows "Sensor: LIVE (js)".
 
 
 # ===========================================================================

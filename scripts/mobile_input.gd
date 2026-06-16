@@ -90,72 +90,109 @@ extends Node
 ## releases both turn actions so nothing is left stuck pressed.
 
 # ============================================================================
-# CONSTANTS — step-to-walk tuning (final values set on-device in Task 6)
+# DEFAULT TUNING VALUES (live-adjustable — see the `var`s just below)
 # ============================================================================
-# These are sensible *starting* values picked from the physics of a footstep on a
-# hand-held phone. They will be tuned against the real `MobileSensors.linear_accel()`
-# magnitudes once a device is available (the Task 1 `motion_debug.gd` F4 readout is
-# the instrument for reading a real step's peak height). Until then they are
-# conservative enough to walk without false-triggering on hand jitter.
+# These `const DEFAULT_*` values are the *starting points* picked from the physics
+# of a footstep on a hand-held phone. They are now ONLY the defaults: the live values
+# the driver actually reads each frame are the plain `var`s further down, which the
+# on-device **tuning panel** (`mobile_settings_panel.gd`) edits at runtime via
+# `set_tuning()` and persists to `user://mobile_tuning.cfg`. Keeping the defaults as
+# named consts lets "Reset to defaults" (and a missing config file) fall back to the
+# exact values that used to be hard-coded — so behaviour is byte-for-byte identical
+# until the player deliberately changes a slider.
 
-## Linear-acceleration magnitude (m/s²) a footstep must exceed to count as a step.
-## At rest the gravity-removed signal sits near 0; a deliberate step on a held
+## Default linear-acceleration magnitude (m/s²) a footstep must exceed to count as a
+## step. At rest the gravity-removed signal sits near 0; a deliberate step on a held
 ## phone typically peaks well above ~2–3 m/s². Set above resting jitter but below a
 ## real step's peak so ordinary hand-shake doesn't register as walking.
-const STEP_ACCEL_THRESHOLD: float = 2.5
+const DEFAULT_STEP_ACCEL_THRESHOLD: float = 2.5
 
-## Refractory period (seconds) — the minimum time between two accepted steps. Human
-## walking cadence tops out around ~2.5 steps/second, so ~0.28 s comfortably admits
-## a brisk pace while rejecting the multiple frames a single foot-strike spike spans
-## (which would otherwise be double/triple-counted).
-const STEP_MIN_INTERVAL: float = 0.28
+## Default refractory period (seconds) — the minimum time between two accepted steps.
+## Human walking cadence tops out around ~2.5 steps/second, so ~0.28 s comfortably
+## admits a brisk pace while rejecting the multiple frames a single foot-strike spike
+## spans (which would otherwise be double/triple-counted).
+const DEFAULT_STEP_MIN_INTERVAL: float = 0.28
 
-## How fast `walk_energy` bleeds away per second when no new steps arrive (units of
+## Default `walk_energy` bleed per second when no new steps arrive (units of
 ## energy/second). Higher = the hero stops sooner after the player stops stepping;
-## lower = more "coasting". Tuned so a couple of missed steps still keeps the hero
-## moving smoothly but a real stop halts within a beat.
-const STEP_WALK_DECAY: float = 1.6
+## lower = more "coasting".
+const DEFAULT_STEP_WALK_DECAY: float = 1.6
 
-## How much `walk_energy` each accepted step injects. With energy clamped to [0,1]
-## for the final strength, a value near 0.6 means a single step gives a strong-but-
-## not-instant-full push and a second step within the decay window saturates to full
-## walk — so a steady cadence reads as a confident, sustained walk.
-const STEP_WALK_PER_STEP: float = 0.6
+## Default `walk_energy` each accepted step injects. With energy clamped to [0,1] for
+## the final strength, ~0.6 means a single step gives a strong-but-not-instant-full
+## push and a second step within the decay window saturates to full walk.
+const DEFAULT_STEP_WALK_PER_STEP: float = 0.6
+
+## Default steering deadzone, in **degrees** of tilt/twist from neutral. Below this
+## the phone is "centred" and no turn is applied, so resting wobble doesn't drift.
+const DEFAULT_STEER_DEADZONE_DEG: float = 6.0
+
+## Default degrees of tilt/twist (measured *past* the deadzone) that map to full turn
+## strength. Smaller = twitchier/more sensitive steering, larger = lean further.
+const DEFAULT_STEER_FULL_DEG: float = 25.0
+
+# ============================================================================
+# LIVE TUNING VARS — what the driver actually reads each frame
+# ============================================================================
+# These are the runtime-adjustable knobs. They START at the `DEFAULT_*` consts above
+# (so a fresh install / missing config behaves exactly like the old hard-coded code),
+# are OVERWRITTEN from `user://mobile_tuning.cfg` in `_ready()` if a saved file exists,
+# and are edited live by the on-device tuning panel through `set_tuning()` (which also
+# re-saves). The on-device tuner is how the final feel gets dialled in — see the plan's
+# Task 6 note that no hardware was available in the build env, so these can now be tuned
+# by the player on a real phone instead of guessed in code.
+
+## Live step threshold — see `DEFAULT_STEP_ACCEL_THRESHOLD`.
+var STEP_ACCEL_THRESHOLD: float = DEFAULT_STEP_ACCEL_THRESHOLD
+
+## Live step refractory period — see `DEFAULT_STEP_MIN_INTERVAL`.
+var STEP_MIN_INTERVAL: float = DEFAULT_STEP_MIN_INTERVAL
+
+## Live walk-energy decay — see `DEFAULT_STEP_WALK_DECAY`.
+var STEP_WALK_DECAY: float = DEFAULT_STEP_WALK_DECAY
+
+## Live walk-energy per step — see `DEFAULT_STEP_WALK_PER_STEP`.
+var STEP_WALK_PER_STEP: float = DEFAULT_STEP_WALK_PER_STEP
+
+## Live steering deadzone (degrees) — see `DEFAULT_STEER_DEADZONE_DEG`.
+var STEER_DEADZONE_DEG: float = DEFAULT_STEER_DEADZONE_DEG
+
+## Live full-turn angle (degrees) — see `DEFAULT_STEER_FULL_DEG`.
+var STEER_FULL_DEG: float = DEFAULT_STEER_FULL_DEG
+
+## Flip which way tilt/twist turns the hero. Some devices/browsers report roll/yaw
+## with the opposite sign than this code assumes, so a player whose steering feels
+## *reversed* can tick this from the tuning panel to fix it — it simply negates the
+## signed steer strength in `_update_steering`. Persisted like the numeric knobs.
+var invert_steering: bool = false
+
+# ============================================================================
+# CONSTANTS — steering tuning that stays fixed (not exposed in the panel)
+# ============================================================================
 
 ## Forward-strength deadzone. Below this clamped `walk_energy` we release
 ## `move_forward` entirely rather than feed a tiny analog value, so the hero comes
 ## to a clean stop (and the controller's idle animation can take over) instead of
-## creeping on decay remnants.
+## creeping on decay remnants. Not panel-exposed: it's an internal floor, not a feel knob.
 const WALK_DEADZONE: float = 0.08
-
-# ============================================================================
-# CONSTANTS — steering tuning (final values set on-device in Task 6)
-# ============================================================================
-# These map a *degree* of tilt or twist (away from the calibrated neutral) onto a
-# turn strength fed to `turn_left`/`turn_right`. Like the step constants they are
-# sensible starting points chosen from comfortable hand-held phone angles; the
-# real feel is dialled in against a device in Task 6.
-
-## Steering deadzone, in **degrees** of tilt/twist from neutral. Below this the
-## phone is treated as "centred" and no turn is applied — so small, unavoidable
-## wobble while holding the phone (or stepping) doesn't make the hero drift. Set
-## small enough that a deliberate lean is still responsive but large enough to
-## swallow resting jitter.
-const STEER_DEADZONE_DEG: float = 6.0
-
-## Degrees of tilt/twist (measured *past* the deadzone) that map to full turn
-## strength. A ~25° lean past the 6° deadzone (≈31° total) gives a full-rate turn;
-## anything beyond just saturates. Smaller = twitchier/more sensitive steering,
-## larger = you must lean further for the same turn. Tuned for a comfortable wrist
-## tilt on-device in Task 6.
-const STEER_FULL_DEG: float = 25.0
 
 ## Ceiling for the synthesized turn strength, in [0,1]. The controller multiplies
 ## the polled axis by its own `TURN_SPEED`, so 1.0 here means "tilt can command the
-## same top turn rate the A/D keys do". Capped at 1.0 (a full key press); kept as a
-## constant so the on-device pass can soften peak turn speed without touching the
-## scaling math.
+## same top turn rate the A/D keys do". Capped at 1.0 (a full key press); kept a
+## constant — the panel tunes sensitivity via the deadzone/full-angle, not this cap.
 const STEER_MAX_STRENGTH: float = 1.0
+
+# ============================================================================
+# PERSISTENCE
+# ============================================================================
+
+## Where the live tuning is saved. `user://` maps to IndexedDB on the web export, so
+## the values **persist across page reloads** — which is exactly what lets a player
+## experiment with the sliders, reload, and keep their tuning. A missing file is fine:
+## `_load_tuning()` just keeps the defaults. The single `[tuning]` section holds one
+## key per adjustable var (matching the keys `get_tuning()`/`set_tuning()` use).
+const TUNING_CONFIG_PATH: String = "user://mobile_tuning.cfg"
+const TUNING_SECTION: String = "tuning"
 
 ## Debug force-enable key. F3 (perf overlay) and F4 (motion readout) are taken, so
 ## F5 is the next free function key — pressing it toggles this driver on/off in the
@@ -203,6 +240,31 @@ var _time_since_step: float = 999.0
 ## Previous frame's linear-accel magnitude, so we can detect an *upward* crossing of
 ## the threshold (a rising edge) rather than firing every frame the signal is high.
 var _prev_accel_mag: float = 0.0
+
+## DIAGNOSTICS (read by the on-device tuning panel via `get_diagnostics()`).
+## These mirror the live signals so a player can SEE the controls working: whether
+## data flows, how big their step spikes are (the key number for setting the
+## threshold), and how many steps have registered. None of them affect behaviour —
+## they are pure read-outs computed alongside the existing step/steer math.
+
+## Current frame's linear-accel magnitude (m/s²). Cached so the panel and the step
+## detector read the same value. This is "accel now" in the readout.
+var _diag_accel_mag: float = 0.0
+
+## Rolling, decaying maximum of `_diag_accel_mag` over roughly the last
+## `ACCEL_PEAK_HALFLIFE` seconds. THE number to set the step threshold by: glance at
+## the peak while walking and set `STEP_ACCEL_THRESHOLD` a touch below it. It rises
+## instantly to a new high and bleeds back down so an old spike doesn't stick forever.
+var _diag_accel_peak: float = 0.0
+
+## Total accepted steps since the last `enable()` / state reset. Shown as "steps:" in
+## the panel so the player can confirm each physical step is being detected one-for-one.
+var _diag_step_count: int = 0
+
+## How fast the rolling accel peak decays. Expressed as a half-life: the peak loses
+## half its excess over the current magnitude every `ACCEL_PEAK_HALFLIFE` seconds, so
+## a spike from a step stays visible for ~1.5 s (a couple of steps) before fading.
+const ACCEL_PEAK_HALFLIFE: float = 0.5
 
 ## True only while we are actively holding `move_forward` pressed, so we release it
 ## exactly once when energy drops back under the deadzone (and never spam releases).
@@ -267,6 +329,11 @@ func _ready() -> void:
 	add_child(_sensors)
 	_sensors.enabled = true
 	_sensors.calibrate()
+
+	# Load any previously-saved live tuning. On web this comes back from IndexedDB, so a
+	# player's dialled-in feel survives a page reload. A missing/old file is harmless —
+	# `_load_tuning()` only overwrites the keys it finds and leaves the rest at defaults.
+	_load_tuning()
 
 
 func _input(event: InputEvent) -> void:
@@ -371,9 +438,156 @@ func request_permission() -> void:
 		_sensors.request_permission()
 
 
-# (No standalone `calibrate()` passthrough: `enable()` and `set_steer_mode()` already
-# recalibrate at the moments the UI needs, and nothing called a bare calibrate(), so it
-# was dead. A re-zero is reachable via the steer toggle, which recalibrates by design.)
+## Re-zero the neutral pose on demand. This is a thin passthrough to the owned
+## sensor's `calibrate()`, re-added because the on-device tuning panel now exposes a
+## "Recalibrate (re-zero)" button: a player diagnosing unresponsive steering wants to
+## re-centre from however they're CURRENTLY holding the phone without toggling steer
+## mode. (A prior cleanup removed this as dead code; it is now a live UI affordance.)
+## Safe no-op before the sensor exists.
+func recalibrate() -> void:
+	if _sensors != null:
+		_sensors.calibrate()
+
+
+# ============================================================================
+# PUBLIC API — live tuning (called by the on-device tuning panel)
+# ============================================================================
+
+## Return the current value of every adjustable parameter, keyed by the SAME strings
+## `set_tuning()` accepts and `_load_tuning()`/`_save_tuning()` persist. The tuning
+## panel reads this once to seed its sliders/toggle; it is the single authoritative
+## list of what is tunable, so the panel never hard-codes the parameter set.
+func get_tuning() -> Dictionary:
+	return {
+		"step_accel_threshold": STEP_ACCEL_THRESHOLD,
+		"step_walk_per_step": STEP_WALK_PER_STEP,
+		"step_walk_decay": STEP_WALK_DECAY,
+		"step_min_interval": STEP_MIN_INTERVAL,
+		"steer_deadzone_deg": STEER_DEADZONE_DEG,
+		"steer_full_deg": STEER_FULL_DEG,
+		"invert_steering": invert_steering,
+	}
+
+
+## Update ONE tuning parameter live and immediately persist the whole set. The panel
+## calls this from each slider's `value_changed` / the checkbox's `toggled`. Unknown
+## keys are ignored (defensive), and each numeric key is clamped to the same range the
+## panel offers so a bad value can never wedge the feel. Saving on every change is what
+## makes the tuning survive a page reload (see `_save_tuning`).
+func set_tuning(key: String, value) -> void:
+	match key:
+		"step_accel_threshold":
+			STEP_ACCEL_THRESHOLD = clampf(float(value), 0.2, 6.0)
+		"step_walk_per_step":
+			STEP_WALK_PER_STEP = clampf(float(value), 0.1, 2.0)
+		"step_walk_decay":
+			STEP_WALK_DECAY = clampf(float(value), 0.3, 4.0)
+		"step_min_interval":
+			STEP_MIN_INTERVAL = clampf(float(value), 0.10, 0.60)
+		"steer_deadzone_deg":
+			STEER_DEADZONE_DEG = clampf(float(value), 0.0, 20.0)
+		"steer_full_deg":
+			STEER_FULL_DEG = clampf(float(value), 8.0, 45.0)
+		"invert_steering":
+			invert_steering = bool(value)
+		_:
+			# Unknown key: ignore rather than crash, so a future panel field can't break here.
+			return
+	_save_tuning()
+
+
+## Restore every adjustable parameter to its `DEFAULT_*` value and persist. Backs the
+## panel's "Reset to defaults" button — a one-tap escape hatch if a player tunes
+## themselves into an unusable corner.
+func reset_tuning_to_defaults() -> void:
+	STEP_ACCEL_THRESHOLD = DEFAULT_STEP_ACCEL_THRESHOLD
+	STEP_WALK_PER_STEP = DEFAULT_STEP_WALK_PER_STEP
+	STEP_WALK_DECAY = DEFAULT_STEP_WALK_DECAY
+	STEP_MIN_INTERVAL = DEFAULT_STEP_MIN_INTERVAL
+	STEER_DEADZONE_DEG = DEFAULT_STEER_DEADZONE_DEG
+	STEER_FULL_DEG = DEFAULT_STEER_FULL_DEG
+	invert_steering = false
+	_save_tuning()
+
+
+## Return a snapshot of the LIVE signals for the panel's diagnostics readout. This is
+## the centrepiece for diagnosing "controls feel unresponsive": the player can SEE
+## whether data is flowing, how big their step spikes are (`accel_peak` — set the
+## threshold just under it), the resulting walk energy, the running step count, and the
+## current tilt/yaw in degrees. All values are plain reads of state the driver already
+## maintains, so calling this every frame is cheap and side-effect-free.
+func get_diagnostics() -> Dictionary:
+	var has_data: bool = false
+	var source: String = "none"
+	var tilt_deg: float = 0.0
+	var yaw_deg: float = 0.0
+	if _sensors != null:
+		has_data = _sensors.has_data()
+		source = _sensors.current_source()
+		# tilt().x is the roll (left/right lean) used by TILT steering; show it in degrees.
+		tilt_deg = rad_to_deg(_sensors.tilt().x)
+		yaw_deg = rad_to_deg(_sensors.yaw())
+	return {
+		"has_data": has_data,
+		"source": source,
+		"accel_mag": _diag_accel_mag,
+		"accel_peak": _diag_accel_peak,
+		"walk_energy": walk_energy,
+		"step_count": _diag_step_count,
+		"tilt_deg": tilt_deg,
+		"yaw_deg": yaw_deg,
+	}
+
+
+# ============================================================================
+# INTERNAL: persistence (ConfigFile at user://mobile_tuning.cfg)
+# ============================================================================
+
+## Load the saved tuning over the defaults. A missing file (first run) is NOT an error:
+## `ConfigFile.load` returns a non-OK code and we simply keep the defaults. Each value
+## is read with the current live value as the fallback, so a partially-written or
+## older file only overrides the keys it actually contains. We funnel every loaded
+## value back through `set_tuning`'s clamping by assigning then re-clamping via the
+## same ranges, guarding against a hand-edited out-of-range file.
+func _load_tuning() -> void:
+	var cfg := ConfigFile.new()
+	var err: int = cfg.load(TUNING_CONFIG_PATH)
+	if err != OK:
+		# No saved file yet (or unreadable) — keep the DEFAULT_* values. This is the
+		# expected first-run path and must NOT be treated as a failure.
+		return
+	# Read each key with the current value as the default, then clamp through the same
+	# ranges set_tuning() enforces so a tampered file can't push the feel out of bounds.
+	STEP_ACCEL_THRESHOLD = clampf(
+		float(cfg.get_value(TUNING_SECTION, "step_accel_threshold", STEP_ACCEL_THRESHOLD)), 0.2, 6.0)
+	STEP_WALK_PER_STEP = clampf(
+		float(cfg.get_value(TUNING_SECTION, "step_walk_per_step", STEP_WALK_PER_STEP)), 0.1, 2.0)
+	STEP_WALK_DECAY = clampf(
+		float(cfg.get_value(TUNING_SECTION, "step_walk_decay", STEP_WALK_DECAY)), 0.3, 4.0)
+	STEP_MIN_INTERVAL = clampf(
+		float(cfg.get_value(TUNING_SECTION, "step_min_interval", STEP_MIN_INTERVAL)), 0.10, 0.60)
+	STEER_DEADZONE_DEG = clampf(
+		float(cfg.get_value(TUNING_SECTION, "steer_deadzone_deg", STEER_DEADZONE_DEG)), 0.0, 20.0)
+	STEER_FULL_DEG = clampf(
+		float(cfg.get_value(TUNING_SECTION, "steer_full_deg", STEER_FULL_DEG)), 8.0, 45.0)
+	invert_steering = bool(cfg.get_value(TUNING_SECTION, "invert_steering", invert_steering))
+
+
+## Write the current live tuning to disk. On web `user://` is IndexedDB-backed, so this
+## is what makes a player's tuning survive a reload. `ConfigFile.save` creates the file
+## if it doesn't exist (no error on first save) and overwrites it otherwise; we ignore
+## the return code because a failed save just means the tuning isn't persisted this run,
+## which is non-fatal and must never interrupt play.
+func _save_tuning() -> void:
+	var cfg := ConfigFile.new()
+	cfg.set_value(TUNING_SECTION, "step_accel_threshold", STEP_ACCEL_THRESHOLD)
+	cfg.set_value(TUNING_SECTION, "step_walk_per_step", STEP_WALK_PER_STEP)
+	cfg.set_value(TUNING_SECTION, "step_walk_decay", STEP_WALK_DECAY)
+	cfg.set_value(TUNING_SECTION, "step_min_interval", STEP_MIN_INTERVAL)
+	cfg.set_value(TUNING_SECTION, "steer_deadzone_deg", STEER_DEADZONE_DEG)
+	cfg.set_value(TUNING_SECTION, "steer_full_deg", STEER_FULL_DEG)
+	cfg.set_value(TUNING_SECTION, "invert_steering", invert_steering)
+	cfg.save(TUNING_CONFIG_PATH)
 
 
 # ============================================================================
@@ -395,6 +609,18 @@ func _update_step_to_walk(delta: float) -> void:
 	if _sensors != null:
 		accel_mag = _sensors.linear_accel().length()
 
+	# DIAGNOSTICS: cache the current magnitude and track a decaying rolling peak so the
+	# tuning panel can show "accel now" and "peak". The peak rises instantly to any new
+	# high and otherwise bleeds toward the current magnitude at the half-life rate, so a
+	# step's spike stays readable for ~a second instead of vanishing in one frame.
+	_diag_accel_mag = accel_mag
+	if accel_mag > _diag_accel_peak:
+		_diag_accel_peak = accel_mag
+	else:
+		# Exponential decay of the *excess* over the current magnitude toward 0.
+		var decay: float = pow(0.5, delta / ACCEL_PEAK_HALFLIFE)
+		_diag_accel_peak = accel_mag + (_diag_accel_peak - accel_mag) * decay
+
 	# --- 2. Peak detector: rising-edge crossing + refractory --------------
 	# A step is the moment the magnitude rises *through* the threshold (it was below
 	# last frame, it's at/above now). Requiring the rising edge means one sustained
@@ -404,6 +630,7 @@ func _update_step_to_walk(delta: float) -> void:
 	if crossed_up and _time_since_step >= STEP_MIN_INTERVAL:
 		walk_energy += STEP_WALK_PER_STEP
 		_time_since_step = 0.0
+		_diag_step_count += 1  # diagnostics: count this accepted step for the panel readout.
 	_prev_accel_mag = accel_mag
 
 	# --- 3. Decay the energy ----------------------------------------------
@@ -434,10 +661,16 @@ func _release_forward() -> void:
 
 ## Clear all step/walk state so enabling or disabling starts from a clean slate
 ## (no leftover energy, refractory clock seeded to accept the first step at once).
+## Also zeroes the diagnostics that are meaningful per-session: the step counter
+## restarts at 0 on each `enable()` so the panel's "steps:" reflects this session, and
+## the rolling accel peak resets so a stale spike from a previous session doesn't show.
 func _reset_step_state() -> void:
 	walk_energy = 0.0
 	_time_since_step = 999.0
 	_prev_accel_mag = 0.0
+	_diag_step_count = 0
+	_diag_accel_peak = 0.0
+	_diag_accel_mag = 0.0
 
 
 # ============================================================================
@@ -468,6 +701,14 @@ func _update_steering(_delta: float) -> void:
 	# +STEER_MAX_STRENGTH]: 0 inside the deadzone, ramping to the cap over
 	# STEER_FULL_DEG of lean past the deadzone. The sign carries the direction.
 	var signed_strength: float = _steer_strength(angle_deg)
+
+	# INVERT STEERING (panel toggle): some devices/browsers report roll/yaw with the
+	# opposite sign than the SIGN MAPPING below assumes, which makes steering feel
+	# reversed. Negating the signed strength here cleanly swaps left<->right without
+	# touching the press logic, so a player can fix a backwards-steering phone from the
+	# tuning panel instead of needing a code change.
+	if invert_steering:
+		signed_strength = -signed_strength
 
 	# --- 3. Drive the turn actions ----------------------------------------
 	# SIGN MAPPING (see the class header): we want a *left* lean/twist of the phone
