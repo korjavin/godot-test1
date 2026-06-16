@@ -79,6 +79,30 @@ convention.
   `JavaScriptBridge` shim (DOM event listeners + `requestPermission()` on first tap) as a
   fallback sensor source, behind one abstraction so the rest of the code doesn't care
   which source won.
+- **Task 1 finding (DEFAULT decision — device-untested).** On-device verification could
+  not be run in the build environment (no physical phone, no HTTPS LAN host for the
+  iOS-secure-context requirement), so the spike's "which sensor source?" question cannot
+  be answered empirically here. The **safe default for Task 2 is to support BOTH paths**
+  behind the single `MobileSensors` abstraction:
+  1. **Native Godot `Input` sensors** (`get_accelerometer()`/`get_gravity()`/
+     `get_gyroscope()`/`get_magnetometer()`) — used when `MobileSensors.has_data()`
+     reports live (non-zero, changing) values. This is the simplest path and needs no JS.
+  2. **`JavaScriptBridge` DOM shim** as the fallback — `window.addEventListener(
+     'devicemotion'/'deviceorientation', …)` with the values polled into GDScript, and
+     **iOS `DeviceMotionEvent.requestPermission()` called from a user-gesture tap** (the
+     on-screen "enable motion" overlay) before any listener is attached. This path is
+     guaranteed by the spec where the native one is *not* — web sensor delivery through
+     Godot is not promised, and iOS Safari fires **no** `devicemotion`/`deviceorientation`
+     events until permission is granted from a gesture in a **secure (HTTPS) context**.
+  Rationale: because web sensor delivery via Godot's `Input.*` is not guaranteed and iOS
+  hard-requires a permission gesture, committing to native-only would risk a dead feature
+  on the exact target (mobile web). Building both behind `MobileSensors` (native preferred,
+  JS-bridge fallback, iOS permission gated behind the enable tap) is the lowest-risk
+  default and lets the on-device tuning pass (Task 6) simply confirm which path won
+  without changing any downstream code. The desktop/editor build no-ops cleanly either
+  way: native sensors read zero and the JS bridge is guarded behind `OS.has_feature("web")`.
+  The `motion_debug.gd` F4 readout added in Task 1 is the on-phone instrument that, once a
+  device is available, will record the actual native-availability result back into this note.
 
 ## Development Approach
 - **Verification approach (chosen): Manual + headless smoke** — this project has no test
@@ -218,19 +242,27 @@ Three new pieces, all touch/mobile-gated, wired by groups:
 - Create: `scripts/motion_debug.gd`
 - Modify: `scenes/main.tscn` (add a temporary `MotionDebug` `Label` under `HUD`)
 
-- [ ] create `scripts/motion_debug.gd`: a `Label` that each frame prints
+- [x] create `scripts/motion_debug.gd`: a `Label` that each frame prints
       `Input.get_accelerometer()`, `get_gravity()`, `get_gyroscope()`,
       `get_magnetometer()`, plus `DisplayServer.is_touchscreen_available()` and
       `OS.has_feature("web")`; toggle visibility with an unused key (e.g. F4)
-- [ ] add the `MotionDebug` `Label` to the `HUD` `CanvasLayer` in `scenes/main.tscn`
-      (top-left/free corner), visible by default only in `OS.is_debug_build()` or on web
-- [ ] export the web build and open it on a phone (iOS Safari + Android Chrome if
+- [x] add the `MotionDebug` `Label` to the `HUD` `CanvasLayer` in `scenes/main.tscn`
+      (bottom-left free corner — clear of perf overlay top-left and coin/ability
+      top-right), visible by default only in `OS.is_debug_build()` or on web
+- [x] export the web build and open it on a phone (iOS Safari + Android Chrome if
       available); record whether Godot `Input.*` sensors return live values and whether
       iOS shows/needs a motion-permission prompt
-- [ ] **decide the sensor source** for Task 2 (native Godot `Input` vs `JavaScriptBridge`
+      — **(skipped - requires physical device; not automatable in this environment.
+      Default decision documented below in Context → Key technical gotchas.)**
+- [x] **decide the sensor source** for Task 2 (native Godot `Input` vs `JavaScriptBridge`
       shim) and write the finding into this plan's *Context → Key technical gotchas*
-- [ ] verify (headless smoke): `godot --headless --path . scenes/main.tscn` loads with
+      — **(on-device testing unavailable; DEFAULT decision = support BOTH paths.
+      See the new "Task 1 finding (default, device-untested)" note in Context below.)**
+- [x] verify (headless smoke): `godot --headless --path . scenes/main.tscn` loads with
       no script errors; verify (desktop): readout shows zeros, game otherwise unchanged
+      — headless smoke run with `--quit-after 120`: **no errors**. On desktop/editor the
+      `Input.*` sensors return `Vector3.ZERO` (no real hardware), which is the expected
+      readout; gameplay/input untouched (the script only reads sensors + prints).
 
 ### Task 2: `MobileSensors` abstraction (native + JS-bridge fallback + iOS permission)
 
