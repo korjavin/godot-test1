@@ -126,9 +126,15 @@ var _suppress_signals: bool = false
 
 
 func _ready() -> void:
-	# Span the whole screen but let touches pass through to the game where there's no
-	# control, exactly like touch_controls — the gear/panel capture their own input.
-	mouse_filter = Control.MOUSE_FILTER_PASS
+	# This root spans the whole screen, but it must NOT be a hit-test target itself:
+	# it sits ABOVE the TouchControls sibling in the HUD, and Godot's MOUSE_FILTER_PASS
+	# only re-propagates to a control's *ancestors*, never to sibling controls drawn
+	# beneath it. A full-rect PASS root therefore swallows every tap before it can reach
+	# the "tap to enable" overlay (and the action buttons) inside TouchControls. IGNORE
+	# makes the empty areas of this root transparent to input, so taps fall through to
+	# the sibling below, while the gear button and the open panel body — which carry
+	# their own STOP filter (Button/PanelContainer default) — still receive their taps.
+	mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 	# Find the motion driver by group (no hard reference). May be null on a stripped
 	# build; every handler guards for it via `_ensure_driver()`.
