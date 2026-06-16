@@ -233,14 +233,22 @@ func _ready() -> void:
 	Called when the node enters the scene tree.
 	This is where we do initial setup.
 	"""
-	# Capture the mouse so it doesn't leave the game window — but ONLY on desktop.
-	# On a touch device (phone/tablet) the mobile controls are active and there is no
+	# Capture the mouse so it doesn't leave the game window — but ONLY when this is NOT
+	# a touch session. On a phone/tablet the mobile controls are active and there is no
 	# mouse to capture; requesting pointer-lock there would pop a useless permission
 	# prompt and can leave the page in a weird captured state. So we skip the capture
-	# when a touchscreen is present, leaving the cursor visible for the on-screen
-	# touch buttons. Desktop (no touchscreen) keeps the original capture behaviour, so
-	# keyboard+mouse play is byte-for-byte unchanged. (See the mobile-motion plan, Task 5.)
-	if not DisplayServer.is_touchscreen_available():
+	# on a touch session, leaving the cursor visible for the on-screen touch buttons.
+	#
+	# CANONICAL DETECTION (the fix): we ask `MobileSensors.is_touch_session()` — the
+	# SAME static rule the touch UI (`touch_controls._is_touch_device()`) uses — instead
+	# of the narrower `DisplayServer.is_touchscreen_available()`. Previously the UI could
+	# decide "mobile" (via the web coarse-pointer check) while this guard still captured
+	# the mouse, an inconsistency on web phones that report no Godot touchscreen.
+	#
+	# DESKTOP SAFETY: on a native desktop build (no touchscreen, not web) the static func
+	# returns false WITHOUT touching JavaScriptBridge, so mouse capture happens exactly as
+	# before — desktop keyboard+mouse play is byte-for-byte unchanged. (Mobile-motion plan.)
+	if not MobileSensors.is_touch_session():
 		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 
 	# Store the original character height for ducking calculations
@@ -1139,7 +1147,13 @@ func restart_game() -> void:
 	is_respawning = false
 	_hide_respawn_message()
 	reset_position()
-	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+	# Recapture the mouse — but ONLY when this is NOT a touch session, mirroring the
+	# `_ready()` guard via the SAME canonical `MobileSensors.is_touch_session()` rule.
+	# "Play Again" on a phone must not re-grab the mouse (pointer-lock), which would
+	# undo the touch mouse-capture guard. On native desktop the static func returns
+	# false (no JavaScriptBridge touched), so the mouse is recaptured exactly as before.
+	if not MobileSensors.is_touch_session():
+		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 
 
 func _freeze_with_gravity(delta: float) -> void:

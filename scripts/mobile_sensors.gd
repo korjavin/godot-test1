@@ -153,6 +153,67 @@ var _neutral_yaw_deg: float = 0.0
 ## absolute compass alpha is available. Reset to zero on `calibrate()`.
 var _integrated_yaw: float = 0.0
 
+## CALIBRATE-ON-FIRST-DATA (the fix for the iOS async-permission bias).
+## On iOS, `DeviceMotionEvent.requestPermission()` resolves *asynchronously* (a
+## Promise), so when the UI calls `calibrate()` right after `enable()`/permission,
+## NO real sensor sample has arrived yet — `_gravity` is still the default neutral,
+## and capturing it as "neutral" would bias steering until the next recalibrate.
+## Instead, `calibrate()` ARMS this flag; the per-frame poll then captures neutral
+## from the FIRST genuinely-live sample (see `_poll_sources`). If data is already
+## live when `calibrate()` is called (desktop never; web after the stream warms up),
+## it calibrates immediately AND clears the flag, so an explicit re-zero still works.
+var _calibrate_pending: bool = false
+
+
+# ===========================================================================
+# STATIC: canonical "is this a touch/mobile session?" detection
+# ===========================================================================
+
+## THE single source of truth for "are we on a touch/mobile device?" — used by
+## BOTH the on-screen touch UI (`touch_controls.gd._is_touch_device()`) AND the
+## player's mouse-capture guard (`player_controller.gd`). Keeping the rule in one
+## `static func` is what prevents the two from drifting apart: if the UI decides
+## "mobile" but the mouse guard uses a *narrower* rule, a phone can both show the
+## touch UI *and* grab the mouse (pointer-lock) — the inconsistency this fixes.
+##
+## The rule (must match what `touch_controls` historically used):
+##   * `DisplayServer.is_touchscreen_available()` — Godot's own touchscreen probe;
+##     the only signal consulted on **desktop/native** (and the editor).
+##   * On **web only**, ALSO accept a *coarse* pointer (a finger) OR the *absence*
+##     of a *fine* pointer (no mouse/trackpad) via `matchMedia`. The web build is
+##     the mobile target, so we bias toward "mobile" there: a false negative would
+##     strand a keyboardless phone, while a false positive only shows an ignorable
+##     overlay on desktop-web.
+##
+## DESKTOP SAFETY: this is `static`, so it needs no instance and is callable as
+## `MobileSensors.is_touch_session()` from anywhere (it's a global `class_name`).
+## On a native desktop build (no touchscreen, `OS.has_feature("web")` false) it
+## returns **false without ever touching JavaScriptBridge**, so desktop mouse
+## capture happens exactly as before — byte-for-byte unchanged.
+static func is_touch_session() -> bool:
+	# Primary signal, consulted on every platform. On desktop this is the ONLY
+	# branch reached, and it is false, so we return false immediately below.
+	if DisplayServer.is_touchscreen_available():
+		return true
+	# Web-only fallback. Guard every `JavaScriptBridge` touch behind the web
+	# feature so a native desktop build NEVER evaluates JS (and never errors).
+	if OS.has_feature("web"):
+		# A coarse pointer (finger) strongly implies a touch device.
+		# `JavaScriptBridge.eval` returns a `Variant` (the JS value, or null when
+		# the expression can't be evaluated), so the hint is `: Variant`.
+		var coarse: Variant = JavaScriptBridge.eval(
+			"matchMedia('(pointer: coarse)').matches", true)
+		if coarse != null and bool(coarse):
+			return true
+		# Belt-and-braces: a browser reporting NO fine pointer (no mouse/trackpad)
+		# is almost certainly a phone — show the (ignorable) overlay rather than
+		# strand a phone player who'd otherwise have neither touch UI nor keyboard.
+		var fine: Variant = JavaScriptBridge.eval(
+			"matchMedia('(pointer: fine)').matches", true)
+		if fine != null and not bool(fine):
+			return true
+	return false
+
 
 func _ready() -> void:
 	# Detect the web export once. Everything JS-related is gated on this flag so
@@ -273,11 +334,30 @@ func request_permission() -> void:
 ## Capture the current pose as the new "neutral". Tilt and yaw are reported as
 ## offsets from this, so calling calibrate() while the player holds the phone in a
 ## comfortable resting pose re-centres steering. Also re-zeroes the gyro-integrated
-## yaw so twist starts fresh. Safe to call any time (uses the last sample, or the
-## default neutral if no data has arrived yet).
+## yaw so twist starts fresh.
+##
+## CALIBRATE-ON-FIRST-DATA: because iOS grants motion permission asynchronously, the
+## UI typically calls this *before* the first real sample arrives. Rather than
+## capturing the stale default neutral, we ARM a pending calibration that the poll
+## fulfils from the first live sample. If a live sample is ALREADY available (the
+## stream has warmed up), we capture neutral immediately so an explicit re-zero — e.g.
+## the steer-mode toggle — still takes effect right away. Safe to call any time.
 func calibrate() -> void:
-	# Use the freshest gravity reading as the new "down"; if we have no live data
-	# yet, keep the default downward neutral rather than a zero vector.
+	if _has_live and _gravity.length() > LIVE_DATA_EPSILON:
+		# Data is live now: capture neutral immediately and clear any pending arm.
+		_apply_calibration()
+		_calibrate_pending = false
+	else:
+		# No live sample yet (desktop always; web pre-permission / pre-first-event):
+		# arm the poll to capture neutral from the first genuinely-live reading.
+		_calibrate_pending = true
+
+
+## Snapshot the current live sample as the neutral pose. Internal — `calibrate()`
+## either calls this now (data live) or defers it to the poll (calibrate-on-first-
+## data). Assumes a live `_gravity`/orientation; callers gate on `_has_live`.
+func _apply_calibration() -> void:
+	# Use the freshest gravity reading as the new "down".
 	if _gravity.length() > LIVE_DATA_EPSILON:
 		_neutral_gravity = _gravity
 	# Capture the current absolute heading (if any) as the zero for twist-yaw.
@@ -302,6 +382,23 @@ func _poll_sources(delta: float) -> void:
 		_js_age += delta
 		_ori_age += delta
 
+	# Choose a source and fill the current sample (sets `_has_live`).
+	_select_and_read_source(delta)
+
+	# CALIBRATE-ON-FIRST-DATA: if a calibration was armed (e.g. by `enable()`/the UI
+	# before any sample arrived — the iOS async-permission case), fulfil it the moment
+	# a genuinely-live sample exists. This captures neutral from a REAL pose instead of
+	# the stale default, so steering isn't biased. Fires at most once per arm. On
+	# desktop `_has_live` never becomes true, so this simply never fires (no spin).
+	if _calibrate_pending and _has_live and _gravity.length() > LIVE_DATA_EPSILON:
+		_apply_calibration()
+		_calibrate_pending = false
+
+
+## Pick the live source and fill the source-agnostic "current sample" from it. Split
+## out of `_poll_sources` so the calibrate-on-first-data fulfilment can run uniformly
+## after WHICHEVER source (or none) was read this frame.
+func _select_and_read_source(delta: float) -> void:
 	# Read the native sensors ONCE up front and reuse the values for both the
 	# "is native alive?" test and the actual fill — avoids the previous double-read
 	# (it used to call get_accelerometer()/get_gravity() in the liveness check and then
@@ -310,14 +407,42 @@ func _poll_sources(delta: float) -> void:
 	# desktop reads exact zero and we fall through.
 	var native_accel := Input.get_accelerometer()
 	var native_gravity := Input.get_gravity()
-	if native_accel.length() > LIVE_DATA_EPSILON or native_gravity.length() > LIVE_DATA_EPSILON:
+
+	# Is native delivering data we can actually USE for the step signal? The step
+	# detector thresholds `linear_accel()` = `accel - gravity`. If the platform reports
+	# a non-trivial accelerometer BUT a zero/degenerate gravity vector, `_read_native`
+	# falls back to using `accel` itself as the gravity proxy, which makes
+	# `_linear = accel - accel = 0` — silently dead step-to-walk. So "native is usable"
+	# requires BOTH a live accelerometer AND a live gravity vector; otherwise we don't
+	# let native win just because *one* of them is non-zero.
+	var native_accel_live: bool = native_accel.length() > LIVE_DATA_EPSILON
+	var native_gravity_live: bool = native_gravity.length() > LIVE_DATA_EPSILON
+	var native_usable: bool = native_accel_live and native_gravity_live
+
+	# Is the JS shim a usable alternative right now (web only, attached, fresh)?
+	var js_usable: bool = _is_web and _js_active and _js_age <= JS_SAMPLE_TIMEOUT
+
+	# Prefer native when it has the full signal we need. But if native is DEGENERATE
+	# (e.g. accel without gravity → would zero out `_linear`) and a fresh JS source is
+	# available, fall through to JS rather than reading a broken native sample.
+	if native_usable:
 		_read_native(delta, native_accel, native_gravity)
 		return
 
-	# Native isn't delivering. On web, fall back to the JS-bridge shim if it has a
-	# fresh sample. (Off-web there is no shim, so we simply report no data.)
-	if _is_web and _js_active and _js_age <= JS_SAMPLE_TIMEOUT:
+	# Native isn't fully usable. On web, fall back to the JS-bridge shim if it has a
+	# fresh sample — this rescues the "native accel-only / gravity-zero" case above by
+	# using the browser's own gravity-excluded `acceleration` field. (Off-web there is
+	# no shim, so we simply report no data.)
+	if js_usable:
 		_read_js(delta)
+		return
+
+	# JS isn't available either. As a LAST resort, if native at least reports a live
+	# accelerometer (even with degenerate gravity), read it anyway — a degraded tilt is
+	# still better than nothing on a platform that only exposes the accelerometer, and
+	# desktop (exact-zero accel) still falls through to "no data" below.
+	if native_accel_live:
+		_read_native(delta, native_accel, native_gravity)
 		return
 
 	# Neither source produced data this frame: report nothing live and zero the
@@ -537,18 +662,46 @@ func _on_js_devicemotion(args: Array) -> void:
 
 	# accelerationIncludingGravity and acceleration are sub-objects with x/y/z;
 	# either can be null on some browsers, so guard each access.
+	#
+	# HONEST FRESHNESS (the fix): a `devicemotion` event can fire with ALL of its
+	# sub-objects null (some browsers/sensor states do exactly this). If we blindly
+	# reset `_js_age = 0` at the end regardless, the poll would treat the PREVIOUS,
+	# now-stale stashed accel/gyro values as "fresh" — steering/walking on a frozen
+	# reading. So we (a) CLEAR the stashed values for any sub-object that is null
+	# (rather than retaining the old ones), and (b) only mark the stream fresh when
+	# at least one real numeric field actually arrived this event.
+	var got_data: bool = false
+
+	# `accelerationIncludingGravity` — present on most devices even when `acceleration`
+	# is null. Used (minus `acceleration`) to recover the gravity vector.
 	var acc_g: JavaScriptObject = ev.accelerationIncludingGravity
-	if acc_g != null:
-		_js_window.__gd_acc_g_x = acc_g.x if acc_g.x != null else 0.0
+	if acc_g != null and acc_g.x != null:
+		_js_window.__gd_acc_g_x = acc_g.x
 		_js_window.__gd_acc_g_y = acc_g.y if acc_g.y != null else 0.0
 		_js_window.__gd_acc_g_z = acc_g.z if acc_g.z != null else 0.0
+		got_data = true
+	else:
+		# Null/absent: clear so a later read can't mistake stale values for current.
+		_js_window.__gd_acc_g_x = 0.0
+		_js_window.__gd_acc_g_y = 0.0
+		_js_window.__gd_acc_g_z = 0.0
+
+	# `acceleration` — gravity already excluded; this IS our `_linear` step signal.
+	# Many devices send this null but a valid `accelerationIncludingGravity` (handled
+	# above), so its absence alone is NOT "no data".
 	var acc: JavaScriptObject = ev.acceleration
-	if acc != null:
-		_js_window.__gd_acc_x = acc.x if acc.x != null else 0.0
+	if acc != null and acc.x != null:
+		_js_window.__gd_acc_x = acc.x
 		_js_window.__gd_acc_y = acc.y if acc.y != null else 0.0
 		_js_window.__gd_acc_z = acc.z if acc.z != null else 0.0
+		got_data = true
+	else:
+		_js_window.__gd_acc_x = 0.0
+		_js_window.__gd_acc_y = 0.0
+		_js_window.__gd_acc_z = 0.0
+
 	var rot: JavaScriptObject = ev.rotationRate
-	if rot != null:
+	if rot != null and rot.alpha != null:
 		# TWIST-AXIS MAPPING (critical — must agree with yaw()).
 		# yaw() integrates _gyro.**z** as the twist-around-vertical signal, and the
 		# native path feeds that from `Input.get_gyroscope().z`. For a phone held in
@@ -556,13 +709,21 @@ func _on_js_devicemotion(args: Array) -> void:
 		# **alpha** (NOT gamma). So alpha → _gyro.z to keep the JS and native sources on
 		# one convention (twist always lands in .z, whichever source is live). beta and
 		# gamma fill the other two components for completeness (unused by yaw()).
-		_js_window.__gd_rot_z = rot.alpha if rot.alpha != null else 0.0
+		_js_window.__gd_rot_z = rot.alpha
 		_js_window.__gd_rot_x = rot.beta if rot.beta != null else 0.0
 		_js_window.__gd_rot_y = rot.gamma if rot.gamma != null else 0.0
+		got_data = true
+	else:
+		_js_window.__gd_rot_z = 0.0
+		_js_window.__gd_rot_x = 0.0
+		_js_window.__gd_rot_y = 0.0
 
-	# Mark the stream fresh so the poll's staleness timer resets.
-	_js_age = 0.0
-	_js_active = true
+	# Only mark the stream fresh/live when this event actually carried a real field.
+	# An all-null event no longer resets the staleness clock, so the poll correctly
+	# times the (empty) stream out instead of steering on a frozen reading.
+	if got_data:
+		_js_age = 0.0
+		_js_active = true
 
 
 ## `deviceorientation` handler. Stash alpha (compass heading), beta, gamma so the

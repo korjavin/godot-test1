@@ -267,39 +267,18 @@ func _apply_platform_visibility() -> void:
 		_enable_overlay.visible = visible and not _motion_enabled
 
 
-## True on a phone/tablet. Primary signal is Godot's own touchscreen probe; on web
-## we also accept a CSS coarse-pointer media query, because some mobile browsers do
-## not report a touchscreen through `DisplayServer` but DO match `pointer: coarse`.
-## Everything JS is guarded behind `OS.has_feature("web")` so desktop never evals JS.
+## True on a phone/tablet. Delegates to `MobileSensors.is_touch_session()` — the ONE
+## canonical detection rule (touchscreen probe, plus a web coarse-/not-fine-pointer
+## fallback), shared with the player's mouse-capture guard so the two can never
+## disagree. (Previously this rule lived here AND a *narrower* rule lived in
+## `player_controller`, so a web phone could show this UI yet still capture the mouse.)
 ##
-## WEB BIAS (deliberate — see the plan): the web build is the *mobile target*, and a
-## false negative here is catastrophic (the whole control scheme hides and a
-## keyboardless phone becomes unplayable with no on-screen hint), whereas a false
-## positive is harmless (a desktop-web user just sees an unobtrusive enable overlay
-## they can ignore). So on web we bias toward SHOWING: we accept the coarse-pointer
-## match OR the *absence* of a fine pointer (a phone with no mouse). Desktop NON-web
-## (editor/native) stays strictly gated on the real touchscreen probe, so the desktop
-## regression is preserved exactly.
+## We keep the F6 debug-force-show as a SEPARATE OR in `_apply_platform_visibility()`,
+## not here, so this function stays a pure "is this really a touch device?" predicate.
+## Everything JS in the canonical func is guarded behind `OS.has_feature("web")`, so
+## desktop never evaluates JS and the desktop regression is preserved exactly.
 func _is_touch_device() -> bool:
-	if DisplayServer.is_touchscreen_available():
-		return true
-	# Web fallback (biased toward showing — see the doc comment above). Guard every
-	# JavaScriptBridge call behind the web feature so desktop/editor never touch JS.
-	if OS.has_feature("web"):
-		# A coarse pointer (finger) strongly implies a touch device.
-		# `JavaScriptBridge.eval` returns a `Variant` (the JS value, or null if the
-		# expression couldn't be evaluated), so the hint is `: Variant`.
-		var coarse: Variant = JavaScriptBridge.eval("matchMedia('(pointer: coarse)').matches", true)
-		if coarse != null and bool(coarse):
-			return true
-		# Belt-and-braces: if the browser reports NO fine pointer (no mouse/trackpad),
-		# treat it as a touch device too. This catches mobile browsers that report
-		# neither a Godot touchscreen nor `pointer: coarse` — better to show the
-		# (ignorable) overlay than hide everything and strand a phone player.
-		var fine: Variant = JavaScriptBridge.eval("matchMedia('(pointer: fine)').matches", true)
-		if fine != null and not bool(fine):
-			return true
-	return false
+	return MobileSensors.is_touch_session()
 
 
 # ============================================================================
@@ -423,14 +402,30 @@ func _update_steer_toggle_label() -> void:
 ## start the driver. This handler runs inside the tap's user-gesture call stack,
 ## which is exactly what iOS Safari requires for DeviceMotionEvent.requestPermission().
 ## We then hide the overlay so the game (and the action buttons beneath) is usable.
+##
+## RETRY PATH (the fix): we only latch `_motion_enabled` and drop the overlay when a
+## driver was ACTUALLY found and `enable()` invoked. If `_ensure_driver()` returns null
+## (a build with no MobileInput node), we leave the overlay up and tappable so the
+## player isn't stranded with no controls and no way to retry — a keyboardless phone
+## must always have a path back to enabling motion. (We can't synchronously detect an
+## iOS permission *denial* — that resolves async — so driver-presence is the practical
+## guard; a denied grant simply leaves the sensor stream empty, which the driver's
+## staleness handling already tolerates.)
 func _on_enable_overlay_pressed() -> void:
-	if _ensure_driver() != null:
-		# Order matters: request permission first (still inside the user gesture), then
-		# enable the driver. `enable()` already calibrates neutral from the current pose
-		# (see mobile_input.enable()), so we deliberately do NOT call calibrate() again
-		# here — that would double-calibrate redundantly.
-		_driver.request_permission()
-		_driver.enable()
+	if _ensure_driver() == null:
+		# No driver to talk to: do NOT latch enabled or hide the overlay. The overlay
+		# stays visible and tappable so the player can retry (e.g. if the node appears
+		# later), instead of being left with a hidden overlay and no controls at all.
+		return
+
+	# Order matters: request permission first (still inside the user gesture), then
+	# enable the driver. `enable()` already calibrates neutral from the current pose
+	# (see mobile_input.enable()), so we deliberately do NOT call calibrate() again
+	# here — that would double-calibrate redundantly. (And with calibrate-on-first-data
+	# in MobileSensors, the neutral is captured from the first REAL sample, not the
+	# stale pre-permission default, so iOS's async grant no longer biases steering.)
+	_driver.request_permission()
+	_driver.enable()
 	_motion_enabled = true
 	# Drop the overlay so play can begin; the action buttons underneath become usable.
 	if _enable_overlay != null:
