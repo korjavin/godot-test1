@@ -318,6 +318,28 @@ func set_steer_mode(mode: SteerMode) -> void:
 	_reset_steer_state()
 
 
+## Thin passthrough to the owned sensor's iOS-permission entry point. The Task 5
+## touch-controls UI talks **only** to this driver (via the "mobile_input" group),
+## never to the `MobileSensors` child directly, so it can't reach the sensor's
+## `request_permission()` itself. This forwards the call so the "Tap to enable
+## motion controls" overlay can satisfy iOS Safari's user-gesture requirement
+## without coupling the UI to the sensor object. Safe no-op off-web / when the
+## sensor isn't present yet.
+func request_permission() -> void:
+	if _sensors != null:
+		_sensors.request_permission()
+
+
+## Thin passthrough to the owned sensor's `calibrate()` (capture the current pose
+## as the new neutral). Exposed for the same reason as `request_permission()`: the
+## UI only knows about this driver, so it routes a manual recalibrate through here.
+## Note `enable()` already calibrates, so the overlay does **not** need to call this
+## separately on first enable — it exists for any UI that wants an explicit re-zero.
+func calibrate() -> void:
+	if _sensors != null:
+		_sensors.calibrate()
+
+
 # ============================================================================
 # INTERNAL: the step-to-walk loop
 # ============================================================================

@@ -1,4 +1,4 @@
-[gd_scene load_steps=15 format=3 uid="uid://clqb4rcmjrpgs"]
+[gd_scene load_steps=16 format=3 uid="uid://clqb4rcmjrpgs"]
 
 [ext_resource type="PackedScene" uid="uid://bqtq2xtxqnvvr" path="res://scenes/player.tscn" id="1_main"]
 [ext_resource type="Script" uid="uid://b07rwceo0eo4o" path="res://scripts/endless_terrain.gd" id="2_terrain"]
@@ -11,6 +11,7 @@
 [ext_resource type="Script" path="res://scripts/game_over_ui.gd" id="9_gameover"]
 [ext_resource type="Script" path="res://scripts/motion_debug.gd" id="10_motion"]
 [ext_resource type="Script" path="res://scripts/mobile_input.gd" id="11_mobileinput"]
+[ext_resource type="PackedScene" uid="uid://b8touchctrls01" path="res://scenes/ui/touch_controls.tscn" id="12_touch"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_1"]
 sky_horizon_color = Color(0.64625, 0.65575, 0.67075, 1)
@@ -143,6 +144,8 @@ theme_override_font_sizes/font_size = 16
 text = "MOTION (F4)"
 vertical_alignment = 2
 script = ExtResource("10_motion")
+
+[node name="TouchControls" parent="HUD" instance=ExtResource("12_touch")]
 
 [node name="GameOver" type="Control" parent="HUD"]
 anchors_preset = 15

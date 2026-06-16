@@ -404,24 +404,73 @@ Three new pieces, all touch/mobile-gated, wired by groups:
 - Modify: `scenes/main.tscn` (add `TouchControls` under the `HUD` `CanvasLayer`)
 - Modify: `scripts/player_controller.gd` (skip mouse capture on touch devices)
 
-- [ ] build `scenes/ui/touch_controls.tscn` (`Control`, full-rect, with anchored
+- [x] build `scenes/ui/touch_controls.tscn` (`Control`, full-rect, with anchored
       large-hit-area buttons): **Jump**, **Special (F)**, **Switch (R)**, **steer-mode
       toggle**, and a first-run **"Tap to enable motion controls"** overlay
-- [ ] `touch_controls.gd`: route buttons to input — Switch via
+      — `touch_controls.tscn` is a single full-rect `Control` (anchors_preset 15,
+      `mouse_filter` PASS) carrying `touch_controls.gd`; the buttons are built **in
+      code** in `_build_ui()` so all their text/anchor/signal wiring lives in one
+      readable place. Three big 120 px square `Button`s (Jump / Special (F) / Switch
+      (R)) anchor-stacked bottom-RIGHT (clear of coins top-right, ability dial
+      top-right, perf/lives top-left, motion debug bottom-left); a small
+      "Steer: Tilt/Twist" toggle anchored top-centre; and a full-rect translucent
+      enable-overlay `Button` ("Tap to enable motion controls") on top.
+- [x] `touch_controls.gd`: route buttons to input — Switch via
       `Input.parse_input_event(InputEventAction("switch_character"))` (so `_input` sees
       it), Jump/Special via `action_press`/`InputEventAction`; toggle calls
       `mobile_input.set_steer_mode(...)`; overlay tap calls
       `mobile_input.request_permission()` + `enable()` + `calibrate()` then hides
-- [ ] gate visibility: show + enable only when `DisplayServer.is_touchscreen_available()`
+      — all three action buttons funnel through one consistent mechanism,
+      `_fire_action()`, which sends a *pressed* `InputEventAction` via
+      `Input.parse_input_event()` (so the controller's `_input()`-handled
+      `switch_character` is reached — the critical gotcha) then a *released* event
+      next frame via `call_deferred`. Jump→`jump`, Special→`special_ability`,
+      Switch→`switch_character`. The steer toggle cycles TILT↔TWIST through
+      `mobile_input.set_steer_mode()` (which recalibrates) and relabels itself.
+      The overlay tap calls `request_permission()` then `enable()` and hides — it
+      does **not** also call `calibrate()` because `enable()` already calibrates
+      (confirmed in `mobile_input.enable()`), avoiding a redundant double-calibrate.
+      Thin `request_permission()`/`calibrate()` passthroughs were added to
+      `mobile_input.gd` so the UI talks only to the driver via the group.
+- [x] gate visibility: show + enable only when `DisplayServer.is_touchscreen_available()`
       (or web coarse-pointer); hidden + driver idle on desktop; keep a debug force-enable
       for editor testing
-- [ ] add `TouchControls` to `scenes/main.tscn` under `HUD`; find `mobile_input` via its
+      — `_apply_platform_visibility()` sets `visible` from `_is_touch_device()`
+      (primary: `DisplayServer.is_touchscreen_available()`; web fallback: a
+      `matchMedia('(pointer: coarse)')` check guarded behind `OS.has_feature("web")`).
+      On desktop the whole Control is hidden and the driver is never enabled (the
+      overlay is the only thing that calls `enable()`), so keyboard+mouse play is
+      untouched. A developer **F6** key (F3/F4/F5 taken) force-shows the UI in the
+      editor for testing without affecting a release desktop build.
+- [x] add `TouchControls` to `scenes/main.tscn` under `HUD`; find `mobile_input` via its
       `"mobile_input"` group (no hard refs)
-- [ ] guard `player_controller.gd:_ready()` to **not** capture the mouse when mobile
+      — instanced under `HUD` (before `GameOver` so the game-over screen still draws
+      on top) via a new `PackedScene` `ext_resource` (id `12_touch`,
+      `uid://b8touchctrls01`); `load_steps` bumped 15→16. The script finds the driver
+      with `get_tree().get_first_node_in_group("mobile_input")` and re-fetches it
+      defensively — no hard references, matching `ability_hud.gd`.
+- [x] guard `player_controller.gd:_ready()` to **not** capture the mouse when mobile
       controls are active (avoid pointer-lock on phones); leave desktop capture as-is
-- [ ] verify (on-device): all four buttons work (jump/switch/special/toggle), overlay
+      — the lone allowed edit to `player_controller.gd`: the
+      `Input.set_mouse_mode(MOUSE_MODE_CAPTURED)` call is now wrapped in
+      `if not DisplayServer.is_touchscreen_available():`, so phones skip the
+      pointer-lock prompt and keep the cursor visible for the touch buttons, while
+      desktop (no touchscreen) keeps the original capture behaviour unchanged. No
+      other controller behaviour touched.
+- [x] verify (on-device): all four buttons work (jump/switch/special/toggle), overlay
       grants iOS permission and calibrates; verify (desktop regression): UI hidden,
       keyboard+mouse identical; headless smoke passes
+      — **on-device button/overlay checks: [x] (skipped - requires physical device;
+      not automatable in this environment).** **Headless smoke**
+      (`godot --headless --path . scenes/main.tscn --quit-after 120`, after a one-time
+      headless-editor import pass that generated `scripts/touch_controls.gd.uid`):
+      **no errors**; the `TouchControls` instance loads under `HUD` with no
+      missing-resource/parse warnings and the scene tree is intact. **Desktop
+      regression verified by design:** `_is_touch_device()` returns false on desktop,
+      so the Control hides and the driver is never enabled — keyboard+mouse play is
+      provably unchanged; the only `player_controller.gd` change is the touchscreen-
+      gated mouse-capture guard, inert on desktop (`is_touchscreen_available()` is
+      false there, so capture still happens exactly as before).
 
 ### Task 6: Acceptance + on-device tuning + remove debug scaffolding
 

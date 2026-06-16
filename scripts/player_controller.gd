@@ -233,8 +233,15 @@ func _ready() -> void:
 	Called when the node enters the scene tree.
 	This is where we do initial setup.
 	"""
-	# Capture the mouse so it doesn't leave the game window
-	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+	# Capture the mouse so it doesn't leave the game window — but ONLY on desktop.
+	# On a touch device (phone/tablet) the mobile controls are active and there is no
+	# mouse to capture; requesting pointer-lock there would pop a useless permission
+	# prompt and can leave the page in a weird captured state. So we skip the capture
+	# when a touchscreen is present, leaving the cursor visible for the on-screen
+	# touch buttons. Desktop (no touchscreen) keeps the original capture behaviour, so
+	# keyboard+mouse play is byte-for-byte unchanged. (See the mobile-motion plan, Task 5.)
+	if not DisplayServer.is_touchscreen_available():
+		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 
 	# Store the original character height for ducking calculations
 	if mesh_instance:
