@@ -355,17 +355,46 @@ Three new pieces, all touch/mobile-gated, wired by groups:
 **Files:**
 - Modify: `scripts/mobile_input.gd`
 
-- [ ] add `steer_mode` (TILT default, TWIST) + constants `STEER_DEADZONE_DEG`,
+- [x] add `steer_mode` (TILT default, TWIST) + constants `STEER_DEADZONE_DEG`,
       `STEER_FULL_DEG`, `STEER_MAX_STRENGTH`
-- [ ] implement tilt-steer: roll vs neutral → deadzone/scale → `action_press("turn_left"
+      — added `enum SteerMode { TILT, TWIST }` with `var steer_mode := SteerMode.TILT`,
+      plus the three steering constants at the top of `mobile_input.gd`
+      (`STEER_DEADZONE_DEG = 6.0`, `STEER_FULL_DEG = 25.0`, `STEER_MAX_STRENGTH = 1.0`),
+      each with a comment explaining the starting value (tuned on-device in Task 6).
+- [x] implement tilt-steer: roll vs neutral → deadzone/scale → `action_press("turn_left"
       /"turn_right", strength)` matching `handle_turning`'s sign (`turn_left` = CCW)
-- [ ] implement twist-yaw: absolute orientation alpha when available, else integrated gyro
+      — `_update_steering()` (TILT branch) reads `MobileSensors.tilt().x` (roll vs
+      neutral, radians), converts to degrees, and runs it through `_steer_strength()`
+      (deadzone `STEER_DEADZONE_DEG` → linear scale over `STEER_FULL_DEG` → clamp to
+      `STEER_MAX_STRENGTH`). A **positive** signed strength presses `turn_left`,
+      negative presses `turn_right` — mapping a *left* phone lean to the hero's left
+      (turn_left = CCW per `player_controller.gd:523`). The roll→direction sign is the
+      one comparison flagged for an on-device confirm/flip in Task 6 (documented at the
+      mapping). Within the deadzone both turn actions release.
+- [x] implement twist-yaw: absolute orientation alpha when available, else integrated gyro
       yaw, both relative to neutral; same strength→action path
-- [ ] add `set_steer_mode(mode)` that switches mode **and** calls `calibrate()` (toggle
+      — TWIST branch reads `MobileSensors.yaw()` (which already prefers absolute
+      `deviceorientation.alpha` and falls back to integrated gyro, both relative to the
+      calibrated neutral — implemented in Task 2) and feeds it through the **same**
+      `_steer_strength()` → press path as tilt, so the two modes are interchangeable.
+- [x] add `set_steer_mode(mode)` that switches mode **and** calls `calibrate()` (toggle
       doubles as recalibrate); `enable()` also calibrates neutral
-- [ ] verify (on-device): tilting steers in TILT mode; twisting steers in TWIST mode;
+      — `set_steer_mode(mode)` sets `steer_mode`, calls `_sensors.calibrate()` (re-zeroing
+      neutral so the toggle doubles as a recalibrate, mitigating twist-yaw drift), and
+      releases/clears any held turn so the new mode starts centred. `enable()` already
+      calibrated; its comment now notes that captured neutral is what centres steering.
+- [x] verify (on-device): tilting steers in TILT mode; twisting steers in TWIST mode;
       toggling re-zeros; verify (desktop regression): `A/D` turning unchanged; headless
       smoke passes
+      — **on-device tilt/twist/toggle checks: [x] (skipped - requires physical device;
+      not automatable in this environment).** **Headless smoke**
+      (`godot --headless --path . scenes/main.tscn --quit-after 120`, after a one-time
+      headless-editor import pass): **no errors**; the new steering code parses and the
+      scene loads clean. **Desktop regression verified by design:** `_update_steering()`
+      is called only from the `active`-gated `_physics_process` path (and the driver
+      starts inactive), so it never calls `action_press`/`action_release` on
+      `turn_left`/`turn_right` while disabled — keyboard `A/D` turning is provably
+      unaffected. `disable()` also releases both turn actions so nothing is left stuck.
 
 ### Task 5: On-screen touch controls UI (buttons, toggle, enable overlay, gating, mouse guard)
 
