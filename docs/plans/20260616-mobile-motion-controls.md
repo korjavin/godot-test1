@@ -270,18 +270,38 @@ Three new pieces, all touch/mobile-gated, wired by groups:
 - Create: `scripts/mobile_sensors.gd`
 - Modify: `scripts/motion_debug.gd` (read through `MobileSensors` to prove the API)
 
-- [ ] create `scripts/mobile_sensors.gd` exposing: `enabled`, `has_data()`,
+- [x] create `scripts/mobile_sensors.gd` exposing: `enabled`, `has_data()`,
       `linear_accel()`, `tilt()` (roll/pitch vs neutral), `yaw()` (twist vs neutral),
       `request_permission()`, `calibrate()` — sourced per the Task 1 decision
-- [ ] implement the web `JavaScriptBridge` path: `DeviceMotionEvent.requestPermission()`
+      — implemented as a bare `Node` with `class_name MobileSensors` supporting **both**
+      sensor paths (native `Input.*` preferred, JS-bridge fallback) per the Task 1
+      DEFAULT decision; native is read in `_read_native()`, web in `_read_js()`, and the
+      public getters are source-agnostic.
+- [x] implement the web `JavaScriptBridge` path: `DeviceMotionEvent.requestPermission()`
       on a user gesture, `devicemotion`/`deviceorientation` listeners, values polled into
       GDScript; all guarded by `OS.has_feature("web")` so desktop/editor no-op cleanly
-- [ ] implement `calibrate()` (store neutral gravity/orientation) and graceful
+      — `request_permission()` → `_request_web_permission()` feature-detects iOS's
+      `DeviceMotionEvent.requestPermission` and only attaches listeners on `'granted'`;
+      callbacks are created via `JavaScriptBridge.create_callback` and **stored in member
+      vars** (`_js_motion_cb`/`_js_orientation_cb`) so they survive GC; every JS touch is
+      behind `_is_web` (= `OS.has_feature("web")`).
+- [x] implement `calibrate()` (store neutral gravity/orientation) and graceful
       `has_data() == false` when no sensors are present
-- [ ] point `motion_debug.gd` at `MobileSensors` so the readout exercises the real API
-- [ ] verify (headless smoke): scene loads, no errors; on desktop `has_data()` is false
+      — `calibrate()` stashes `_neutral_gravity`/`_neutral_yaw_deg` and zeroes the gyro
+      integrator; `has_data()` is true only when a source delivers values above
+      `LIVE_DATA_EPSILON`, so desktop (all-zero sensors) reports false and nothing throws.
+- [x] point `motion_debug.gd` at `MobileSensors` so the readout exercises the real API
+      — `motion_debug.gd` now owns a `MobileSensors` child (enabled + calibrated in
+      `_ready()`) and prints `has_data()`, `linear_accel()`, `tilt()` (deg), `yaw()` (deg)
+      under the raw `Input.*` values.
+- [x] verify (headless smoke): scene loads, no errors; on desktop `has_data()` is false
       and nothing throws. verify (web): after the permission tap, the readout shows live
       values changing as the phone moves
+      — headless smoke (`--quit-after 120`): **no errors** after registering the new
+      global class via a headless editor import pass; on desktop the readout shows
+      `has_data: no` and zeroed abstraction values (expected, no real sensors).
+      The **web "values change as the phone moves"** check is **[x] (skipped - requires
+      physical device / HTTPS secure context; not automatable in this environment)**.
 
 ### Task 3: Step-to-walk — peak detection drives `move_forward`
 

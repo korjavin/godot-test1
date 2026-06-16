@@ -1,13 +1,13 @@
 extends Label
-## Motion sensor feasibility readout (debug HUD) — Task 1 of the mobile-motion plan.
+## Motion sensor feasibility readout (debug HUD) — Tasks 1 & 2 of the mobile-motion plan.
 ##
 ## The whole mobile-controls feature rests on one unknown: **does the web (HTML5)
 ## build actually deliver live motion-sensor data on a phone, and does iOS need a
 ## permission prompt first?** Before we build the step-detector and tilt-steering
 ## on top of those sensors, we want to *see the raw numbers* on a real device.
 ##
-## This Label prints, every frame, the four motion sensors Godot exposes plus two
-## environment flags that tell us how to gate everything later:
+## This Label prints, every frame, the four *raw* motion sensors Godot exposes plus
+## two environment flags that tell us how to gate everything later:
 ##   * Accelerometer — total acceleration including gravity (m/s²).
 ##   * Gravity       — the gravity vector alone (where "down" is). Tilt-steering
 ##                     reads this; the difference (accel − gravity) is the player's
@@ -18,6 +18,14 @@ extends Label
 ##                     "are we on a phone/tablet?" signal used to auto-show the UI.
 ##   * Web           — `OS.has_feature("web")`, true only in the HTML5 export.
 ##
+## **Task 2 addition:** the readout now *also* owns and drives a `MobileSensors`
+## instance (the new sensor abstraction this feature is built on) and prints its
+## public API output — `has_data()`, `linear_accel()`, `tilt()`, `yaw()` — right
+## below the raw values. This serves two purposes: it proves the abstraction is
+## actually wired and producing sane numbers, and on a real phone it lets us
+## eyeball the abstracted values (which is what the gameplay code will read)
+## side-by-side with the raw sensors they were derived from.
+##
 ## It deliberately mirrors `perf_overlay.gd`: a plain Label under the HUD
 ## CanvasLayer, throttled text refresh, a single debug toggle key, and it starts
 ## visible only in debug builds (or on web, where it is the on-phone diagnostic)
@@ -26,8 +34,9 @@ extends Label
 ##
 ## NOTE (Task 1 finding, see plan Context): on desktop/editor these `Input.*`
 ## sensor calls return zero vectors — there are no real sensors — so the readout
-## showing all-zeros on desktop is the *expected, correct* behaviour, and proves
-## the script loads and runs without disturbing keyboard+mouse play.
+## showing all-zeros on desktop is the *expected, correct* behaviour, and the
+## `MobileSensors.has_data()` line correctly reads "no". Both prove the scripts
+## load and run without disturbing keyboard+mouse play.
 
 ## Key that toggles the readout on/off. F4 is unused by any gameplay input action
 ## (move/jump/run/duck/switch_character/special_ability in project.godot) and sits
@@ -42,11 +51,28 @@ const REFRESH_INTERVAL: float = 0.1
 ## Seconds left until the next text refresh (counts down each frame).
 var _time_until_refresh: float = 0.0
 
+## The sensor abstraction we own and exercise (Task 2). `mobile_input.gd` (Task 3)
+## will own the *real* one that drives gameplay; here we keep our own instance
+## purely to display its API output and prove the abstraction works end to end.
+## Created and added as a child in _ready() so it runs its own _process/_ready.
+var _sensors: MobileSensors = null
+
 
 func _ready() -> void:
 	# Join a group so the UI / other systems could find or toggle us later if needed
 	# (matches the group-discovery convention used across this project).
 	add_to_group("motion_debug")
+
+	# Stand up our own MobileSensors and enable it so its getters return live data
+	# when a real source exists. Adding it as a child lets it run its per-frame
+	# poll; enabling it is harmless on desktop (no sensors → has_data() stays false,
+	# nothing is written to Input — this class only reads). We also calibrate once
+	# so tilt()/yaw() report offsets from the current resting pose.
+	_sensors = MobileSensors.new()
+	_sensors.name = "MotionDebugSensors"
+	add_child(_sensors)
+	_sensors.enabled = true
+	_sensors.calibrate()
 
 	# Never let this debug label eat touches/clicks meant for the game or the
 	# on-screen buttons we add later.
@@ -119,9 +145,25 @@ func _update_text() -> void:
 	var touchscreen: bool = DisplayServer.is_touchscreen_available()
 	var is_web: bool = OS.has_feature("web")
 
+	# --- MobileSensors abstraction (Task 2) -------------------------------
+	# Pull the *abstracted* values the gameplay code will actually consume, so we
+	# can confirm the abstraction produces sane numbers from the raw sensors above.
+	# tilt() is (roll, pitch) in radians and yaw() is radians; we show degrees here
+	# because they're far easier to read by eye than radians on a phone screen.
+	var has_data: bool = false
+	var abs_linear: Vector3 = Vector3.ZERO
+	var abs_tilt: Vector2 = Vector2.ZERO
+	var abs_yaw_deg: float = 0.0
+	if _sensors != null:
+		has_data = _sensors.has_data()
+		abs_linear = _sensors.linear_accel()
+		abs_tilt = _sensors.tilt()
+		abs_yaw_deg = rad_to_deg(_sensors.yaw())
+
 	# --- Compose the readout ----------------------------------------------
 	# One metric per line, formatted like the perf overlay so it screenshots well
 	# for recording the on-device findings back into the plan's Context section.
+	# Raw `Input.*` sensors first, then the MobileSensors API derived from them.
 	text = "MOTION (F4)\n"
 	text += "Accel:   (%6.2f, %6.2f, %6.2f)\n" % [accel.x, accel.y, accel.z]
 	text += "Gravity: (%6.2f, %6.2f, %6.2f)\n" % [gravity.x, gravity.y, gravity.z]
@@ -129,4 +171,10 @@ func _update_text() -> void:
 	text += "Gyro:    (%6.2f, %6.2f, %6.2f)\n" % [gyro.x, gyro.y, gyro.z]
 	text += "Mag:     (%6.2f, %6.2f, %6.2f)\n" % [mag.x, mag.y, mag.z]
 	text += "Touchscreen: %s\n" % ("yes" if touchscreen else "no")
-	text += "Web: %s" % ("yes" if is_web else "no")
+	text += "Web: %s\n" % ("yes" if is_web else "no")
+	# --- abstraction readout (proves MobileSensors is wired) ---
+	text += "-- MobileSensors --\n"
+	text += "has_data: %s\n" % ("yes" if has_data else "no")
+	text += "lin_accel: (%6.2f, %6.2f, %6.2f)\n" % [abs_linear.x, abs_linear.y, abs_linear.z]
+	text += "tilt(deg): roll %6.1f  pitch %6.1f\n" % [rad_to_deg(abs_tilt.x), rad_to_deg(abs_tilt.y)]
+	text += "yaw(deg): %6.1f" % abs_yaw_deg
