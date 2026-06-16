@@ -190,8 +190,8 @@ godot-test1/
 |--------|-----|-------------|
 | **Move Forward** | W | Walk forward |
 | **Move Backward** | S | Walk backward |
-| **Move Left** | A | Strafe left |
-| **Move Right** | D | Strafe right |
+| **Turn Left** | A | Turn left (tank-style body rotation) |
+| **Turn Right** | D | Turn right (tank-style body rotation) |
 | **Jump** | Space | Jump (only on ground) |
 | **Run** | Left Shift | Run (2x speed) |
 | **Duck** | Left Ctrl | Crouch (0.5x speed, 0.5x height) |

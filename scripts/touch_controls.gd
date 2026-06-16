@@ -22,8 +22,8 @@ extends Control
 ## this UI holds **no** hard reference to the motion driver. It locates it through
 ## the `"mobile_input"` group with `get_tree().get_first_node_in_group(...)`, so it
 ## keeps working regardless of scene wiring order. It talks *only* to that driver's
-## public API (`enable()`, `disable()`, `set_steer_mode()`, `request_permission()`,
-## `calibrate()`), never to the sensor object underneath.
+## public API (`enable()`, `disable()`, `set_steer_mode()`, `request_permission()`),
+## never to the sensor object underneath.
 ##
 ## ----------------------------------------------------------------------------
 ## The discrete-button → action gotcha (critical — see the plan)
@@ -93,6 +93,11 @@ var _motion_enabled: bool = false
 ## True while the UI is force-shown by the F6 debug key on a non-touch device, so a
 ## second F6 press toggles it back off. Independent of the auto (touch) visibility.
 var _force_shown: bool = false
+
+## Names of actions whose synthetic *press* was dispatched this frame and whose
+## matching *release* must be dispatched on a GUARANTEED-LATER frame. See `_fire_action`
+## / `_process` for why a same-frame `call_deferred` release is avoided.
+var _actions_to_release: PackedStringArray = []
 
 # --- Child node references (built in _ready, not from the .tscn) ------------
 # The buttons are created in code rather than declared in the scene so all their
@@ -261,14 +266,31 @@ func _apply_platform_visibility() -> void:
 ## we also accept a CSS coarse-pointer media query, because some mobile browsers do
 ## not report a touchscreen through `DisplayServer` but DO match `pointer: coarse`.
 ## Everything JS is guarded behind `OS.has_feature("web")` so desktop never evals JS.
+##
+## WEB BIAS (deliberate — see the plan): the web build is the *mobile target*, and a
+## false negative here is catastrophic (the whole control scheme hides and a
+## keyboardless phone becomes unplayable with no on-screen hint), whereas a false
+## positive is harmless (a desktop-web user just sees an unobtrusive enable overlay
+## they can ignore). So on web we bias toward SHOWING: we accept the coarse-pointer
+## match OR the *absence* of a fine pointer (a phone with no mouse). Desktop NON-web
+## (editor/native) stays strictly gated on the real touchscreen probe, so the desktop
+## regression is preserved exactly.
 func _is_touch_device() -> bool:
 	if DisplayServer.is_touchscreen_available():
 		return true
-	# Web fallback: a coarse pointer (finger) strongly implies a touch device. Guard
-	# the JavaScriptBridge call behind the web feature so desktop/editor never touch JS.
+	# Web fallback (biased toward showing — see the doc comment above). Guard every
+	# JavaScriptBridge call behind the web feature so desktop/editor never touch JS.
 	if OS.has_feature("web"):
+		# A coarse pointer (finger) strongly implies a touch device.
 		var coarse = JavaScriptBridge.eval("matchMedia('(pointer: coarse)').matches", true)
 		if coarse != null and bool(coarse):
+			return true
+		# Belt-and-braces: if the browser reports NO fine pointer (no mouse/trackpad),
+		# treat it as a touch device too. This catches mobile browsers that report
+		# neither a Godot touchscreen nor `pointer: coarse` — better to show the
+		# (ignorable) overlay than hide everything and strand a phone player.
+		var fine = JavaScriptBridge.eval("matchMedia('(pointer: fine)').matches", true)
+		if fine != null and not bool(fine):
 			return true
 	return false
 
@@ -286,7 +308,16 @@ func _is_touch_device() -> bool:
 ## send a *pressed* InputEventAction now (which makes both the polled-state readers
 ## like `is_action_just_pressed("jump")` AND the event readers like the controller's
 ## `event.is_action_pressed("switch_character")` in `_input()` see it), then queue a
-## matching *released* event for the next frame so the action doesn't latch on.
+## matching *released* event for a GUARANTEED-LATER frame so the action doesn't latch.
+##
+## RELEASE-NEXT-FRAME (not same-frame call_deferred):
+## A `call_deferred` release fires later in the *same* idle frame, before the next
+## physics/process tick polls input. In practice `is_action_just_pressed` still latches
+## for one frame even then, but to remove all doubt we instead queue the release and
+## flush it at the *top of the next `_process` frame* (see `_process`). That guarantees
+## a full frame elapses with the action pressed, so every consumer — the polled
+## `jump`/`special_ability` (read in the controller's `_physics_process`) and the
+## `_input()`-handled `switch_character` — reliably sees exactly one press.
 func _fire_action(action_name: String) -> void:
 	var press := InputEventAction.new()
 	press.action = action_name
@@ -295,9 +326,8 @@ func _fire_action(action_name: String) -> void:
 	# reaches both polling and `_input()` consumers — the only way switch_character
 	# (an `_input()`-handled action) can be triggered from code.
 	Input.parse_input_event(press)
-	# Release on the next frame so just-pressed fires exactly once and the action
-	# isn't left stuck "held". call_deferred runs after the current frame's input.
-	call_deferred("_release_action", action_name)
+	# Queue the matching release for the next frame rather than this one.
+	_actions_to_release.append(action_name)
 
 
 ## Send the matching released InputEventAction, ending the one-shot press above.
@@ -306,6 +336,17 @@ func _release_action(action_name: String) -> void:
 	release.action = action_name
 	release.pressed = false
 	Input.parse_input_event(release)
+
+
+## Flush any presses queued last frame by `_fire_action`, on this (guaranteed-later)
+## frame. Runs every frame; cheap no-op when the queue is empty. This is what makes the
+## press last a full frame so `is_action_just_pressed`/`_input()` see exactly one press.
+func _process(_delta: float) -> void:
+	if _actions_to_release.is_empty():
+		return
+	for action_name in _actions_to_release:
+		_release_action(action_name)
+	_actions_to_release.clear()
 
 
 ## Jump button → the polled `jump` action (controller reads is_action_just_pressed).

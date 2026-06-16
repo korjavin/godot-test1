@@ -51,10 +51,13 @@ const REFRESH_INTERVAL: float = 0.1
 ## Seconds left until the next text refresh (counts down each frame).
 var _time_until_refresh: float = 0.0
 
-## The sensor abstraction we own and exercise (Task 2). `mobile_input.gd` (Task 3)
-## will own the *real* one that drives gameplay; here we keep our own instance
-## purely to display its API output and prove the abstraction works end to end.
-## Created and added as a child in _ready() so it runs its own _process/_ready.
+## The sensor abstraction whose API output we display. We do NOT own one: the
+## `mobile_input.gd` driver already owns the live `MobileSensors` that drives gameplay,
+## so we READ that same instance through the `"mobile_input"` group (see `_get_sensors`).
+## Two independent MobileSensors would each attach their own JS `devicemotion`/
+## `deviceorientation` listeners and clash over the shared `window.__gd_*` scratchpad;
+## reusing the driver's avoids that duplicate-listener problem entirely. Re-fetched
+## lazily because the driver may not exist yet when this Label readies.
 var _sensors: MobileSensors = null
 
 
@@ -63,16 +66,10 @@ func _ready() -> void:
 	# (matches the group-discovery convention used across this project).
 	add_to_group("motion_debug")
 
-	# Stand up our own MobileSensors and enable it so its getters return live data
-	# when a real source exists. Adding it as a child lets it run its per-frame
-	# poll; enabling it is harmless on desktop (no sensors → has_data() stays false,
-	# nothing is written to Input — this class only reads). We also calibrate once
-	# so tilt()/yaw() report offsets from the current resting pose.
-	_sensors = MobileSensors.new()
-	_sensors.name = "MotionDebugSensors"
-	add_child(_sensors)
-	_sensors.enabled = true
-	_sensors.calibrate()
+	# Grab the driver's live sensor (if the driver is up yet). We do NOT create our own
+	# — see the `_sensors` doc comment for why a second instance would clash on JS
+	# listeners. If the driver isn't ready, `_get_sensors()` retries each refresh.
+	_sensors = _get_sensors()
 
 	# Never let this debug label eat touches/clicks meant for the game or the
 	# on-screen buttons we add later.
@@ -159,6 +156,10 @@ func _update_text() -> void:
 	var abs_linear: Vector3 = Vector3.ZERO
 	var abs_tilt: Vector2 = Vector2.ZERO
 	var abs_yaw_deg: float = 0.0
+	# Lazily (re)fetch the driver's shared sensor — it may not have existed when we
+	# readied. Once found it's cached; if the driver vanished we re-look-up next frame.
+	if _sensors == null or not is_instance_valid(_sensors):
+		_sensors = _get_sensors()
 	if _sensors != null:
 		has_data = _sensors.has_data()
 		abs_linear = _sensors.linear_accel()
@@ -183,3 +184,13 @@ func _update_text() -> void:
 	text += "lin_accel: (%6.2f, %6.2f, %6.2f)\n" % [abs_linear.x, abs_linear.y, abs_linear.z]
 	text += "tilt(deg): roll %6.1f  pitch %6.1f\n" % [rad_to_deg(abs_tilt.x), rad_to_deg(abs_tilt.y)]
 	text += "yaw(deg): %6.1f" % abs_yaw_deg
+
+
+## Find the live `MobileSensors` owned by the `mobile_input` driver via its group, so
+## the readout reflects the SAME sensor gameplay uses (and we never spin up a second
+## instance with its own JS listeners). Returns null if the driver isn't present yet.
+func _get_sensors() -> MobileSensors:
+	var driver := get_tree().get_first_node_in_group("mobile_input")
+	if driver != null and driver.has_method("get_sensors"):
+		return driver.get_sensors()
+	return null

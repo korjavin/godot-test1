@@ -21,7 +21,7 @@ class_name MobileSensors
 ## Per the Task 1 "DEFAULT decision" (no physical device was available, see the
 ## plan's Context → Key technical gotchas), this class **supports BOTH paths
 ## behind one clean API** and prefers whichever is actually delivering data:
-##   * native first (cheapest, no JS) when `_native_has_live_data()` is true,
+##   * native first (cheapest, no JS) when its accel/gravity read non-zero,
 ##   * else the JS-bridge shim (once permission is granted and events arrive).
 ##
 ## Everything downstream (`mobile_input.gd` in Task 3+, and the `motion_debug.gd`
@@ -76,10 +76,9 @@ var enabled: bool = false
 # the JS path both write here; the public getters read only from here, so they
 # never branch on the source.
 
-## Total acceleration including gravity (m/s²), device axes.
-var _accel: Vector3 = Vector3.ZERO
-
-## Gravity-only vector (m/s²) — where "down" points in device axes.
+## Gravity-only vector (m/s²) — where "down" points in device axes. Total acceleration
+## (incl. gravity) is read as a *local* in the readers, not stored, since only gravity
+## and the gravity-removed `_linear` are needed past the read.
 var _gravity: Vector3 = Vector3.ZERO
 
 ## Player-motion acceleration (gravity already removed). On native we compute it
@@ -136,10 +135,6 @@ var _neutral_gravity: Vector3 = Vector3.DOWN * GRAVITY_MAGNITUDE
 ## Absolute yaw (degrees) captured at calibrate, when a compass heading exists.
 var _neutral_yaw_deg: float = 0.0
 
-## True once `calibrate()` has run at least once (before that, neutral is the
-## sensible default of "down" and zero yaw).
-var _calibrated: bool = false
-
 ## Gyro-integrated yaw accumulator (radians), used as the twist source when no
 ## absolute compass alpha is available. Reset to zero on `calibrate()`.
 var _integrated_yaw: float = 0.0
@@ -154,6 +149,23 @@ func _ready() -> void:
 	# Start from a sane neutral so the getters never divide by a zero vector even
 	# before the first calibrate(): "down" is the obvious resting gravity.
 	_neutral_gravity = Vector3.DOWN * GRAVITY_MAGNITUDE
+
+
+func _exit_tree() -> void:
+	# Detach our DOM listeners when the node leaves the tree. The game RELOADS on
+	# restart / game-over, and without this each reload would stack another pair of
+	# `devicemotion`/`deviceorientation` listeners on the persistent `window`, leaking
+	# handlers (and double-counting events) across sessions. removeEventListener needs
+	# the *same* function reference we added, which is exactly why we retained the
+	# callbacks in member vars — we pass those very objects back here. Web-only; inert
+	# (and never errors) on desktop because `_js_window`/callbacks stay null off-web.
+	if not _is_web or _js_window == null:
+		return
+	if _js_motion_cb != null:
+		_js_window.removeEventListener("devicemotion", _js_motion_cb)
+	if _js_orientation_cb != null:
+		_js_window.removeEventListener("deviceorientation", _js_orientation_cb)
+	_js_active = false
 
 
 func _process(delta: float) -> void:
@@ -243,6 +255,19 @@ func request_permission() -> void:
 	_request_web_permission()
 
 
+## Whether iOS Safari's motion-permission request has been *granted*. Reads back the
+## `window.__gd_perm_granted` flag the permission Promise sets on 'granted' (see
+## `_install_ios_permission_flow`). Lets a caller distinguish "permission denied" (this
+## returns false but the gesture happened) from "no sensors on this device" — useful if
+## the UI ever wants to surface that difference. On non-iOS browsers permission isn't
+## gated, so the flag stays 0 and this returns false even though sensors work; treat it
+## as "iOS-grant confirmed", not a general has-sensors signal (use `has_data()` for that).
+func permission_granted() -> bool:
+	if not _is_web or _js_window == null:
+		return false
+	return _js_num("__gd_perm_granted") > 0.5
+
+
 ## Capture the current pose as the new "neutral". Tilt and yaw are reported as
 ## offsets from this, so calling calibrate() while the player holds the phone in a
 ## comfortable resting pose re-centres steering. Also re-zeroes the gyro-integrated
@@ -258,7 +283,6 @@ func calibrate() -> void:
 		_neutral_yaw_deg = _orientation.x
 	# Reset the drift-prone integrated yaw so the new neutral really is zero twist.
 	_integrated_yaw = 0.0
-	_calibrated = true
 
 
 # ===========================================================================
@@ -272,9 +296,16 @@ func _poll_sources(delta: float) -> void:
 	if _js_active:
 		_js_age += delta
 
-	# Try native first — it's the cheapest path and needs no JS at all.
-	if _native_has_live_data():
-		_read_native(delta)
+	# Read the native sensors ONCE up front and reuse the values for both the
+	# "is native alive?" test and the actual fill — avoids the previous double-read
+	# (it used to call get_accelerometer()/get_gravity() in the liveness check and then
+	# AGAIN inside the reader). A real device reads ~1g of gravity at rest, so a
+	# non-trivial accel/gravity magnitude is the reliable "native is live" signal;
+	# desktop reads exact zero and we fall through.
+	var native_accel := Input.get_accelerometer()
+	var native_gravity := Input.get_gravity()
+	if native_accel.length() > LIVE_DATA_EPSILON or native_gravity.length() > LIVE_DATA_EPSILON:
+		_read_native(delta, native_accel, native_gravity)
 		return
 
 	# Native isn't delivering. On web, fall back to the JS-bridge shim if it has a
@@ -290,33 +321,35 @@ func _poll_sources(delta: float) -> void:
 	_linear = Vector3.ZERO
 
 
-## True when Godot's native `Input` sensors are returning live values. A real
-## device always reads ~1g of gravity at rest, so a non-trivial accel/gravity
-## magnitude is a reliable "native is alive" signal; desktop reads exact zero.
-func _native_has_live_data() -> bool:
-	var a := Input.get_accelerometer()
-	var g := Input.get_gravity()
-	return a.length() > LIVE_DATA_EPSILON or g.length() > LIVE_DATA_EPSILON
-
-
-## Fill the current sample from Godot's native `Input` sensors and advance the
-## gyro-integrated yaw. Gravity comes straight from the sensor; linear accel is
-## the classic `accel - gravity`.
-func _read_native(delta: float) -> void:
-	_accel = Input.get_accelerometer()
-	_gravity = Input.get_gravity()
+## Fill the current sample from the already-read native `Input` sensor values and
+## advance the gyro-integrated yaw. Gravity comes straight from the sensor; linear
+## accel is the classic `accel - gravity`. (accel/gravity are passed in by the caller
+## so we never re-read them — see `_poll_sources`.)
+func _read_native(delta: float, accel: Vector3, gravity: Vector3) -> void:
+	_gravity = gravity
 	# If the platform reports total accel but no separate gravity vector, treat the
 	# accelerometer itself as the gravity proxy at rest so tilt still works.
 	if _gravity.length() <= LIVE_DATA_EPSILON:
-		_gravity = _accel
-	_linear = _accel - _gravity
+		_gravity = accel
+	_linear = accel - _gravity
 	_gyro = Input.get_gyroscope()
 
-	# Native sensors don't give us an absolute compass heading we can trust here,
-	# so twist-yaw uses the integrated gyro (z = rotation about the device's
-	# vertical axis). deviceorientation (web) is the only absolute-heading source.
-	_has_orientation = false
-	_integrated_yaw += _gyro.z * delta
+	# Twist-yaw source preference (even when native wins for tilt):
+	# Godot's native `Input` exposes no trustworthy absolute compass heading, so the
+	# native path would normally fall back to the drift-prone integrated gyro. BUT on
+	# web the JS `deviceorientation` shim may still be delivering a fresh absolute
+	# `alpha` (compass) heading even while native sensors drive tilt. That absolute
+	# heading is drift-free, so prefer it for yaw() when it's fresh — only integrate the
+	# gyro when no live compass sample is available.
+	if _is_web and _js_window != null and _js_num("__gd_has_orient") > 0.5:
+		_has_orientation = true
+		_orientation = Vector3(
+			_js_num("__gd_ori_alpha"),
+			_js_num("__gd_ori_beta"),
+			_js_num("__gd_ori_gamma"))
+	else:
+		_has_orientation = false
+		_integrated_yaw += _gyro.z * delta
 
 	_has_live = true
 
@@ -328,12 +361,12 @@ func _read_js(delta: float) -> void:
 	if _js_window == null:
 		return
 
-	# devicemotion.accelerationIncludingGravity → our _accel.
+	# devicemotion.accelerationIncludingGravity → accel (local; only used transiently here).
 	# devicemotion.acceleration (gravity already excluded) → our _linear.
 	# devicemotion.rotationRate (deg/s) → our _gyro (converted to rad/s).
 	# We stash each as a flat numeric field on window in the JS callback, so here
 	# we just read primitives (robust across browsers that null out sub-objects).
-	_accel = Vector3(
+	var accel := Vector3(
 		_js_num("__gd_acc_g_x"), _js_num("__gd_acc_g_y"), _js_num("__gd_acc_g_z"))
 	_linear = Vector3(
 		_js_num("__gd_acc_x"), _js_num("__gd_acc_y"), _js_num("__gd_acc_z"))
@@ -347,9 +380,9 @@ func _read_js(delta: float) -> void:
 
 	# Gravity isn't delivered directly by devicemotion; recover it as
 	# (accelIncludingGravity − acceleration), which is exactly the gravity vector.
-	_gravity = _accel - _linear
+	_gravity = accel - _linear
 	if _gravity.length() <= LIVE_DATA_EPSILON:
-		_gravity = _accel
+		_gravity = accel
 
 	# Absolute orientation (deviceorientation): alpha/beta/gamma in degrees.
 	# `__gd_has_orient` is set to 1 by the orientation listener once it fires.
@@ -487,9 +520,16 @@ func _on_js_devicemotion(args: Array) -> void:
 		_js_window.__gd_acc_z = acc.z if acc.z != null else 0.0
 	var rot: JavaScriptObject = ev.rotationRate
 	if rot != null:
-		_js_window.__gd_rot_x = rot.alpha if rot.alpha != null else 0.0
-		_js_window.__gd_rot_y = rot.beta if rot.beta != null else 0.0
-		_js_window.__gd_rot_z = rot.gamma if rot.gamma != null else 0.0
+		# TWIST-AXIS MAPPING (critical — must agree with yaw()).
+		# yaw() integrates _gyro.**z** as the twist-around-vertical signal, and the
+		# native path feeds that from `Input.get_gyroscope().z`. For a phone held in
+		# portrait, the DOM `rotationRate` axis that measures twist-around-vertical is
+		# **alpha** (NOT gamma). So alpha → _gyro.z to keep the JS and native sources on
+		# one convention (twist always lands in .z, whichever source is live). beta and
+		# gamma fill the other two components for completeness (unused by yaw()).
+		_js_window.__gd_rot_z = rot.alpha if rot.alpha != null else 0.0
+		_js_window.__gd_rot_x = rot.beta if rot.beta != null else 0.0
+		_js_window.__gd_rot_y = rot.gamma if rot.gamma != null else 0.0
 
 	# Mark the stream fresh so the poll's staleness timer resets.
 	_js_age = 0.0
@@ -504,14 +544,18 @@ func _on_js_deviceorientation(args: Array) -> void:
 	var ev: JavaScriptObject = args[0]
 	if ev == null:
 		return
-	# alpha is the compass-like heading [0,360); it can be null if the device lacks
-	# a magnetometer, in which case we leave __gd_has_orient at 0 and the poll falls
-	# back to integrated gyro.
+	# alpha is the compass-like heading [0,360); it can be null if the device lacks a
+	# magnetometer. We must CLEAR __gd_has_orient when alpha goes absent, not just set
+	# it when present — otherwise the flag latches to 1 forever and the poll keeps
+	# trusting a stale heading after the compass drops out. So: set on a valid alpha,
+	# reset on a null/absent one (the poll then falls back to integrated gyro).
 	if ev.alpha != null:
 		_js_window.__gd_ori_alpha = ev.alpha
 		_js_window.__gd_ori_beta = ev.beta if ev.beta != null else 0.0
 		_js_window.__gd_ori_gamma = ev.gamma if ev.gamma != null else 0.0
 		_js_window.__gd_has_orient = 1
+	else:
+		_js_window.__gd_has_orient = 0
 	# Touching orientation also counts as a live sample for staleness purposes.
 	_js_age = 0.0
 	_js_active = true

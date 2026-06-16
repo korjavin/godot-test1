@@ -221,11 +221,37 @@ var _pressing_turn_left: bool = false
 var _pressing_turn_right: bool = false
 
 
+## The four analog actions this driver synthesizes with `Input.action_press(action,
+## strength)`. We clear their per-action deadzone in `_ready()` (see there for why).
+const SYNTHESIZED_ANALOG_ACTIONS: PackedStringArray = [
+	"move_forward", "move_backward", "turn_left", "turn_right",
+]
+
+
 func _ready() -> void:
 	# Join the discovery group so the touch-controls UI (Task 5) can find this driver
 	# via `get_tree().get_first_node_in_group("mobile_input")` — the same no-hard-
 	# references pattern the rest of the project uses.
 	add_to_group("mobile_input")
+
+	# DEADZONE GUARD (defensive — see the empirical note below).
+	# The four actions we drive analog-style declare `"deadzone": 0.5` in project.godot
+	# (a sensible default for *keyboard/joypad* axes). The synthesized walk/steer ramps
+	# can legitimately sit *below* 0.5 (e.g. STEP_WALK_PER_STEP=0.6 decaying away, or the
+	# lower half of the tilt ramp). If the controller's `Input.get_axis(...)` →
+	# `get_action_strength()` read applied that 0.5 deadzone, the entire lower half of our
+	# analog range would be silently swallowed and steering/walk would feel dead.
+	#
+	# EMPIRICALLY (Godot 4.5): `Input.action_press(action, strength)` actually BYPASSES
+	# the per-action deadzone — a 0.1/0.3/0.6 press reads back unchanged via both
+	# `get_action_strength()` and `get_axis()`. So the swallow does NOT happen today.
+	# We still zero the deadzone here as a cheap, harmless belt-and-braces guarantee: it
+	# makes the analog ramp correct regardless of any future engine change, and it does
+	# NOT affect desktop keyboard input (a key press is strength 1.0, well above any
+	# deadzone). Done once at startup; the project.godot values are otherwise untouched.
+	for action in SYNTHESIZED_ANALOG_ACTIONS:
+		if InputMap.has_action(action):
+			InputMap.action_set_deadzone(action, 0.0)
 
 	# Stand up the sensor abstraction and add it as a child so it runs its own
 	# _process poll. We enable it (harmless on desktop: no real sensors → it reports
@@ -318,6 +344,16 @@ func set_steer_mode(mode: SteerMode) -> void:
 	_reset_steer_state()
 
 
+## Expose the owned `MobileSensors` so other systems (e.g. the `motion_debug.gd`
+## readout) can READ the *same* live sensor instead of standing up a second one. Two
+## independent MobileSensors would each attach their own JS `devicemotion`/
+## `deviceorientation` listeners and fight over the shared `window.__gd_*` scratchpad;
+## sharing this one avoids duplicate listeners entirely. May be null very early (before
+## `_ready()`), so callers should null-check.
+func get_sensors() -> MobileSensors:
+	return _sensors
+
+
 ## Thin passthrough to the owned sensor's iOS-permission entry point. The Task 5
 ## touch-controls UI talks **only** to this driver (via the "mobile_input" group),
 ## never to the `MobileSensors` child directly, so it can't reach the sensor's
@@ -330,14 +366,9 @@ func request_permission() -> void:
 		_sensors.request_permission()
 
 
-## Thin passthrough to the owned sensor's `calibrate()` (capture the current pose
-## as the new neutral). Exposed for the same reason as `request_permission()`: the
-## UI only knows about this driver, so it routes a manual recalibrate through here.
-## Note `enable()` already calibrates, so the overlay does **not** need to call this
-## separately on first enable — it exists for any UI that wants an explicit re-zero.
-func calibrate() -> void:
-	if _sensors != null:
-		_sensors.calibrate()
+# (No standalone `calibrate()` passthrough: `enable()` and `set_steer_mode()` already
+# recalibrate at the moments the UI needs, and nothing called a bare calibrate(), so it
+# was dead. A re-zero is reachable via the steer toggle, which recalibrates by design.)
 
 
 # ============================================================================
