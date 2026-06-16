@@ -22,6 +22,13 @@ window/size/viewport_width=1920
 window/size/viewport_height=1080
 window/size/mode=2
 window/stretch/mode="canvas_items"
+; Aspect handling. Desktop keeps "keep" (the engine default — preserves the 1920x1080
+; 16:9 framing, letterboxing only if the window isn't 16:9). The web build (phones)
+; overrides to "expand" via Godot's `.web` per-feature suffix, so the view fills any
+; screen shape with square pixels (no black bars, no distortion — it just reveals a
+; little more/less of the scene). Anchored HUD/touch controls reflow to the new edges.
+window/stretch/aspect="keep"
+window/stretch/aspect.web="expand"
 
 [input]
 
