@@ -108,8 +108,22 @@ var _is_web: bool = false
 var _js_active: bool = false
 
 ## Seconds since the last JS sample; compared against JS_SAMPLE_TIMEOUT so a
-## stalled stream (backgrounded tab) stops counting as "live".
+## stalled stream (backgrounded tab) stops counting as "live". Reset by BOTH the
+## `devicemotion` AND the `deviceorientation` callback, so it tracks "is *any* JS
+## event still arriving?" — NOT "is the compass heading still fresh?".
 var _js_age: float = 0.0
+
+## Seconds since the last *orientation* sample specifically — a SEPARATE timer from
+## `_js_age` for one critical reason: `_js_age` is kept alive by `devicemotion`
+## events, which on the native-tilt + JS-compass path keep firing at ~60 Hz even
+## when the `deviceorientation` stream has gone silent (sensor throttle / backgrounded
+## tab). In that case `_js_age` stays ~0 forever and can NEVER detect a compass stall.
+## `_ori_age` is reset ONLY in `_on_js_deviceorientation`, so it ages unbounded while
+## the orientation stream is stalled even though motion events keep coming — which is
+## exactly the signal needed to stop trusting a frozen `_orientation`. Initialised
+## stale (> JS_SAMPLE_TIMEOUT) so the compass path is NOT trusted before the very
+## first orientation event arrives.
+var _ori_age: float = JS_SAMPLE_TIMEOUT + 1.0
 
 # --- Internal: JavaScriptBridge handles ------------------------------------
 # CRITICAL: GDScript's JavaScriptBridge callbacks are garbage-collected the moment
@@ -293,8 +307,12 @@ func calibrate() -> void:
 ## preferring whichever is actually live. Called once per frame while enabled.
 func _poll_sources(delta: float) -> void:
 	# Age the JS stream so a stalled feed eventually stops counting as live.
+	# Age the orientation-specific timer alongside it: because `_ori_age` is reset
+	# only by the orientation callback (never by motion), this is what lets us notice
+	# a *compass* stall even while `devicemotion` keeps `_js_age` pinned at ~0.
 	if _js_active:
 		_js_age += delta
+		_ori_age += delta
 
 	# Read the native sensors ONCE up front and reuse the values for both the
 	# "is native alive?" test and the actual fill — avoids the previous double-read
@@ -342,19 +360,24 @@ func _read_native(delta: float, accel: Vector3, gravity: Vector3) -> void:
 	# heading is drift-free, so prefer it for yaw() when it's fresh — only integrate the
 	# gyro when no live compass sample is available.
 	#
-	# STALENESS GATE: we must also require the JS sample to be fresh
-	# (`_js_age <= JS_SAMPLE_TIMEOUT`), exactly as `_read_js` is gated by the caller.
-	# `__gd_has_orient` only flips back to 0 when the orientation listener actually
-	# fires a null-alpha event; if the `deviceorientation` stream goes *silent*
-	# (sensor throttle, backgrounded tab) it never fires that reset, so the flag
-	# stays latched at 1 and `_orientation` freezes. Unlike `_read_js` (which is only
-	# reached on a fresh stream), `_read_native` runs whenever native sensors are
-	# live, so without this age check it would keep reading the frozen heading
-	# indefinitely. When the orientation sample is stale we drop the compass and fall
-	# back to integrated gyro yaw below, matching how `_read_js` judges freshness.
+	# STALENESS GATE: trusting the latched `__gd_has_orient` flag alone is NOT enough.
+	# That flag only flips back to 0 when the orientation listener actually fires a
+	# null-alpha event; if the `deviceorientation` stream goes *silent* (sensor
+	# throttle, backgrounded tab) it never fires that reset, so the flag stays latched
+	# at 1 and `_orientation` freezes.
+	#
+	# We CANNOT gate on the shared `_js_age` here: this `_read_native` path runs while
+	# `devicemotion` is still feeding tilt, and that same `devicemotion` callback resets
+	# `_js_age` to 0 every frame — so `_js_age` would stay fresh forever and never catch
+	# an orientation-only stall. We gate on the orientation-specific `_ori_age` instead,
+	# which is reset ONLY by `_on_js_deviceorientation`, so it climbs past the timeout
+	# precisely when the compass stream has gone quiet (even while motion keeps coming).
+	# When the orientation sample is stale we drop the compass and fall back to
+	# integrated gyro yaw below. `_read_js` uses this identical `_ori_age` gate, so both
+	# readers judge orientation freshness by the same criterion.
 	if (_is_web and _js_window != null
 			and _js_num("__gd_has_orient") > 0.5
-			and _js_age <= JS_SAMPLE_TIMEOUT):
+			and _ori_age <= JS_SAMPLE_TIMEOUT):
 		_has_orientation = true
 		_orientation = Vector3(
 			_js_num("__gd_ori_alpha"),
@@ -398,15 +421,21 @@ func _read_js(delta: float) -> void:
 		_gravity = accel
 
 	# Absolute orientation (deviceorientation): alpha/beta/gamma in degrees.
-	# `__gd_has_orient` is set to 1 by the orientation listener once it fires.
-	_has_orientation = _js_num("__gd_has_orient") > 0.5
+	# `__gd_has_orient` is set to 1 by the orientation listener once it fires — but the
+	# same latch problem applies here as in `_read_native`: a silently-stalled
+	# orientation stream leaves the flag pinned at 1 while `_orientation` freezes. So we
+	# gate on the orientation-specific `_ori_age` as well, using the IDENTICAL criterion
+	# as `_read_native` so both paths agree on when the compass is fresh. When stale we
+	# fall back to integrating the gyro.
+	_has_orientation = (_js_num("__gd_has_orient") > 0.5
+			and _ori_age <= JS_SAMPLE_TIMEOUT)
 	if _has_orientation:
 		_orientation = Vector3(
 			_js_num("__gd_ori_alpha"),
 			_js_num("__gd_ori_beta"),
 			_js_num("__gd_ori_gamma"))
 	else:
-		# No compass alpha → fall back to integrating the gyro like the native path.
+		# No fresh compass alpha → fall back to integrating the gyro like the native path.
 		_integrated_yaw += _gyro.z * delta
 
 	_has_live = true
@@ -571,6 +600,12 @@ func _on_js_deviceorientation(args: Array) -> void:
 		_js_window.__gd_has_orient = 0
 	# Touching orientation also counts as a live sample for staleness purposes.
 	_js_age = 0.0
+	# Reset the orientation-specific freshness timer too — and ONLY here, never in
+	# `_on_js_devicemotion`. This is the whole point of the separate timer: it proves
+	# the `deviceorientation` stream itself is still firing, independent of whether
+	# `devicemotion` is. If this stream stalls, `_ori_age` climbs past JS_SAMPLE_TIMEOUT
+	# and both readers drop the (now frozen) compass heading.
+	_ori_age = 0.0
 	_js_active = true
 
 
