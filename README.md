@@ -204,6 +204,18 @@ godot-test1/
 - Ducking makes you shorter (useful for... future obstacles!)
 - Mouse controls the camera - character rotates with mouse left/right
 
+### 📱 Playing on mobile
+
+The web build is playable on a phone with **no keyboard** — it drives the game with the phone's motion sensors:
+
+1. Open the GitHub Pages URL on your phone (HTTPS is required for iOS motion access — the GitHub Pages link provides it).
+2. Tap **"enable motion controls"** on the first-run overlay. On iOS this also grants the motion-sensor permission (it must be triggered by your tap).
+3. **Step** in place (or walk) to move forward — each footstep the accelerometer detects pushes the hero ahead.
+4. **Tilt** the phone left/right to steer. Tap the **Steer: Tilt/Twist** toggle (top-centre) to switch to **twist** steering (rotating the phone flat); the toggle also re-centres steering.
+5. Use the on-screen buttons (bottom-right) for the keyboard-only actions: **JUMP**, **R** (switch character), and **F** (special ability).
+
+The touch controls appear **only on touch devices** (auto-detected); on a desktop browser, keyboard + mouse play is exactly as above and the touch UI stays hidden.
+
 ## 📚 Learning Resources
 
 ### Godot Official Resources

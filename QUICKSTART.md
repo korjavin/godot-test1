@@ -27,6 +27,10 @@ Press **F5** or click the Play button (▶️)
 - **Mouse** - Look around
 - **ESC** - Release/capture mouse
 
+### 📱 On mobile (web build)
+
+Open the GitHub Pages URL on your phone and tap **"enable motion controls"** (this also grants iOS motion permission). Then **step** to walk, **tilt** to steer (tap the on-screen toggle for **twist** steering), and use the on-screen **JUMP / R (switch) / F (special)** buttons. The touch controls appear automatically on touch devices only — desktop keyboard + mouse is unchanged.
+
 ## What's Next?
 
 1. **Explore the code**: Open `scripts/player_controller.gd` - it's heavily commented!

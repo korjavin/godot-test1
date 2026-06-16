@@ -542,11 +542,28 @@ Three new pieces, all touch/mobile-gated, wired by groups:
       scripts load and run clean.
 
 ### Task 7: [Final] Documentation
-- [ ] update `CLAUDE.md` with a "Mobile / touch controls" architecture section
+- [x] update `CLAUDE.md` with a "Mobile / touch controls" architecture section
       (the three new components, the synthesize-existing-actions approach, the
       touch-only gating convention, the sensor-abstraction + iOS-permission gotcha)
-- [ ] add a short "Playing on mobile" note to `README.md` / `QUICKSTART.md`
-- [ ] move this plan to `docs/plans/completed/`
+      — added a new **"Mobile / touch controls"** subsection under Architecture
+      (after "Player: character switching + procedural animation"). It documents the
+      goal (phone-playable web build), the three components (`mobile_sensors.gd`
+      abstraction with native + JS-bridge fallback + iOS `requestPermission()`,
+      `mobile_input.gd` driver in group `"mobile_input"`, `touch_controls.tscn/.gd`
+      UI), the KEY rule (synthesize existing actions via `action_press`/
+      `parse_input_event`), the CRITICAL `switch_character`-is-`_input()`-not-polled
+      gotcha, the touch-only gating convention (visibility + idle driver + mouse-capture
+      guard), the F4/F5/F6 debug keys, the STEP_*/STEER_* tuning note, and the
+      iOS/HTTPS-secure-context caveat — matching CLAUDE.md's dense, gotcha-first style.
+- [x] add a short "Playing on mobile" note to `README.md` / `QUICKSTART.md`
+      — added a brief, user-facing **"📱 Playing on mobile"** subsection to **both**:
+      under README.md's Controls section (open the Pages URL, tap "enable motion
+      controls" / grant iOS motion, step to walk, tilt to steer + twist toggle, on-screen
+      JUMP / R / F buttons, touch-only auto-detect) and a condensed one-paragraph version
+      in QUICKSTART.md's Controls.
+- [x] move this plan to `docs/plans/completed/` — **(move handled by harness after all
+      phases)**; the plan file is intentionally left in place per the execution harness's
+      contract (it relocates the plan once every phase has finished).
 
 ## Post-Completion
 *Items requiring manual intervention or external systems — informational only*
