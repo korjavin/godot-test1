@@ -341,7 +341,20 @@ func _read_native(delta: float, accel: Vector3, gravity: Vector3) -> void:
 	# `alpha` (compass) heading even while native sensors drive tilt. That absolute
 	# heading is drift-free, so prefer it for yaw() when it's fresh — only integrate the
 	# gyro when no live compass sample is available.
-	if _is_web and _js_window != null and _js_num("__gd_has_orient") > 0.5:
+	#
+	# STALENESS GATE: we must also require the JS sample to be fresh
+	# (`_js_age <= JS_SAMPLE_TIMEOUT`), exactly as `_read_js` is gated by the caller.
+	# `__gd_has_orient` only flips back to 0 when the orientation listener actually
+	# fires a null-alpha event; if the `deviceorientation` stream goes *silent*
+	# (sensor throttle, backgrounded tab) it never fires that reset, so the flag
+	# stays latched at 1 and `_orientation` freezes. Unlike `_read_js` (which is only
+	# reached on a fresh stream), `_read_native` runs whenever native sensors are
+	# live, so without this age check it would keep reading the frozen heading
+	# indefinitely. When the orientation sample is stale we drop the compass and fall
+	# back to integrated gyro yaw below, matching how `_read_js` judges freshness.
+	if (_is_web and _js_window != null
+			and _js_num("__gd_has_orient") > 0.5
+			and _js_age <= JS_SAMPLE_TIMEOUT):
 		_has_orientation = true
 		_orientation = Vector3(
 			_js_num("__gd_ori_alpha"),
