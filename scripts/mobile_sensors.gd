@@ -739,6 +739,19 @@ func _on_js_devicemotion(args: Array) -> void:
 	# at least one real numeric field actually arrived this event.
 	var got_data: bool = false
 
+	# TWO SEPARATE LIVENESS CONDITIONS (the refinement): `got_data` is true for ANY
+	# real field — including a gyro-only `rotationRate` sample — and it gates the
+	# GENERAL `_js_age`/`_js_active` clock (the stream is genuinely producing events).
+	# But `_motion_age` (the tilt/step gate) must prove a REAL accel/gravity reading,
+	# NOT gyro. WHY: tilt() (steering) and the step detector both derive from the
+	# gravity vector / linear accel; gyro (`rotationRate`) only feeds the TWIST yaw
+	# path and carries no gravity. A gyro-only `devicemotion` stream therefore must
+	# NOT mark the tilt/step source live — otherwise `tilt()` would steer off a still
+	# (near-zero) gravity vector and the enable-overlay watch (`is_receiving_motion()`,
+	# which keys on `_motion_age`) would latch "receiving motion" before any usable
+	# accel/gravity ever flowed. So accel/gravity sets `got_motion`; gyro does not.
+	var got_motion: bool = false
+
 	# `accelerationIncludingGravity` — present on most devices even when `acceleration`
 	# is null. Used (minus `acceleration`) to recover the gravity vector.
 	var acc_g: JavaScriptObject = ev.accelerationIncludingGravity
@@ -747,6 +760,7 @@ func _on_js_devicemotion(args: Array) -> void:
 		_js_window.__gd_acc_g_y = acc_g.y if acc_g.y != null else 0.0
 		_js_window.__gd_acc_g_z = acc_g.z if acc_g.z != null else 0.0
 		got_data = true
+		got_motion = true  # real gravity-bearing accel — tilt/step can go live
 	else:
 		# Null/absent: clear so a later read can't mistake stale values for current.
 		_js_window.__gd_acc_g_x = 0.0
@@ -762,6 +776,7 @@ func _on_js_devicemotion(args: Array) -> void:
 		_js_window.__gd_acc_y = acc.y if acc.y != null else 0.0
 		_js_window.__gd_acc_z = acc.z if acc.z != null else 0.0
 		got_data = true
+		got_motion = true  # real linear-accel sample — tilt/step can go live
 	else:
 		_js_window.__gd_acc_x = 0.0
 		_js_window.__gd_acc_y = 0.0
@@ -785,18 +800,27 @@ func _on_js_devicemotion(args: Array) -> void:
 		_js_window.__gd_rot_x = 0.0
 		_js_window.__gd_rot_y = 0.0
 
-	# Only mark the stream fresh/live when this event actually carried a real field.
-	# An all-null event no longer resets the staleness clock, so the poll correctly
-	# times the (empty) stream out instead of steering on a frozen reading.
+	# GENERAL stream liveness: mark the stream fresh/live when this event carried ANY
+	# real field (accel, gravity, OR gyro). An all-null event no longer resets the
+	# staleness clock, so the poll correctly times the (empty) stream out instead of
+	# steering on a frozen reading. Gyro counts here because the TWIST yaw path is a
+	# legitimate consumer of a gyro-only stream.
 	if got_data:
 		_js_age = 0.0
-		# Reset the motion-specific timer too — and ONLY here, on a genuine accel/gravity
-		# sample, NEVER in `_on_js_deviceorientation` or on listener attach. This is what
-		# lets the tilt/step source-selection gate (`_motion_age <= JS_SAMPLE_TIMEOUT`)
-		# prove a REAL gravity reading exists before tilt() steers — an orientation-only
-		# stream leaves `_motion_age` climbing past the timeout and never goes live for tilt.
-		_motion_age = 0.0
 		_js_active = true
+
+	# MOTION-specific liveness: reset `_motion_age` ONLY on a genuine accel/gravity
+	# sample (`got_motion`) — NEVER on a gyro-only event, in `_on_js_deviceorientation`,
+	# or on listener attach. WHY gyro must NOT count: `rotationRate` carries no gravity,
+	# yet tilt() (steering) and the step detector both derive from the gravity vector.
+	# If gyro reset `_motion_age`, the tilt/step source-selection gate
+	# (`_motion_age <= JS_SAMPLE_TIMEOUT`) — and `is_receiving_motion()`, which keys on
+	# the same timer — would read "live" off a still (near-zero) gravity vector,
+	# steering on garbage and latching the enable-overlay "receiving motion" prematurely.
+	# A gyro-only stream now leaves `_motion_age` climbing past the timeout, so tilt/step
+	# correctly stay neutral until a real accel/gravity sample arrives.
+	if got_motion:
+		_motion_age = 0.0
 
 
 ## `deviceorientation` handler. Stash alpha (compass heading), beta, gamma so the
