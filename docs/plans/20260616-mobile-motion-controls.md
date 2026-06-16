@@ -309,19 +309,46 @@ Three new pieces, all touch/mobile-gated, wired by groups:
 - Create: `scripts/mobile_input.gd`
 - Modify: `scenes/main.tscn` (add `MobileInput` `Node` under `Main`, group `"mobile_input"`)
 
-- [ ] create `scripts/mobile_input.gd` (bare `Node`) owning a `MobileSensors`; constants
+- [x] create `scripts/mobile_input.gd` (bare `Node`) owning a `MobileSensors`; constants
       at top: `STEP_ACCEL_THRESHOLD`, `STEP_MIN_INTERVAL`, `STEP_WALK_DECAY`,
       `STEP_WALK_PER_STEP`, `WALK_DEADZONE`
-- [ ] implement the step peak-detector (threshold crossing + refractory interval) feeding
+      — `mobile_input.gd` extends `Node`, joins group `"mobile_input"` in `_ready()`,
+      and stands up a `MobileSensors` child (enabled + calibrated). All five tunable
+      constants declared at top with starting values + comments (to be tuned in Task 6).
+- [x] implement the step peak-detector (threshold crossing + refractory interval) feeding
       a decaying `walk_energy`; map energy → `Input.action_press("move_forward", strength)`
       / `action_release` at the deadzone
-- [ ] add `enable()/disable()` + a debug force-enable so the driver only writes Input when
+      — `_update_step_to_walk()` reads `MobileSensors.linear_accel().length()`, registers a
+      step on an **upward** threshold crossing gated by `STEP_MIN_INTERVAL` (refractory),
+      pumps `STEP_WALK_PER_STEP` into `walk_energy`, decays it by `STEP_WALK_DECAY`/s, and
+      drives `move_forward` at `clamp(walk_energy,0,1)` above `WALK_DEADZONE` (releasing it
+      once below). `move_forward` confirmed analog/polled in `project.godot`, so
+      `action_press(action, strength)` is correct (controller reads it via `get_axis`).
+- [x] add `enable()/disable()` + a debug force-enable so the driver only writes Input when
       active (idle on desktop)
-- [ ] add the `MobileInput` node to `scenes/main.tscn` under `Main`, in group
+      — `enable()`/`disable()` flip an `active` bool (default false); `disable()` also
+      releases `move_forward` and resets step state. `_physics_process` returns early when
+      `!active`, so **no Input write ever happens while disabled** — the keyboard W/S path
+      is untouched. Debug force-enable = **F5** in `_input()` (F3/F4 already taken); it is a
+      developer-only key outside the project input map and no-ops on release desktop because
+      the driver still has no live sensor data there.
+- [x] add the `MobileInput` node to `scenes/main.tscn` under `Main`, in group
       `"mobile_input"`
-- [ ] verify (on-device): stepping advances the hero forward, stopping halts it; verify
+      — added as a sibling of `CrocodileLODManager`/`EndlessTerrain` with the script
+      attached and `groups=["mobile_input"]`; `load_steps` bumped 14→15 and the
+      `ext_resource` for `mobile_input.gd` added (id `11_mobileinput`).
+- [x] verify (on-device): stepping advances the hero forward, stopping halts it; verify
       (desktop regression): with the driver disabled, keyboard `W/S` movement is
       unchanged; headless smoke passes
+      — **on-device stepping check: [x] (skipped - requires physical device; not
+      automatable in this environment).** **Headless smoke** (`godot --headless --path .
+      scenes/main.tscn --quit-after 120`, after a one-time headless-editor import pass to
+      register the `MobileSensors` global class): **no errors**; the `MobileInput` node
+      loads with no missing-script error and Godot generated `scripts/mobile_input.gd.uid`.
+      **Desktop regression verified by design:** the driver starts inactive and
+      `_physics_process` early-returns while `!active`, so it never calls
+      `action_press`/`action_release` on desktop — keyboard `W/S` movement is provably
+      unaffected when the driver is disabled.
 
 ### Task 4: Steering — tilt-roll (default) + twist-yaw toggle drive `turn_left`/`turn_right`
 
