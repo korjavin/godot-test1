@@ -221,8 +221,13 @@ var _pressing_turn_left: bool = false
 var _pressing_turn_right: bool = false
 
 
-## The four analog actions this driver synthesizes with `Input.action_press(action,
-## strength)`. We clear their per-action deadzone in `_ready()` (see there for why).
+## The analog actions whose per-action deadzone we zero in `_ready()` (see there for
+## why). The driver actively *drives* `move_forward` (from stepping) and
+## `turn_left`/`turn_right` (from tilt/twist) via `Input.action_press(action,
+## strength)`; `move_backward` is **never** synthesized (the design is forward-only —
+## you turn around to go back), but it is the negative half of the controller's
+## `get_axis("move_forward", "move_backward")` read, so we clear its deadzone too for
+## consistency. Clearing a deadzone we never press is harmless.
 const SYNTHESIZED_ANALOG_ACTIONS: PackedStringArray = [
 	"move_forward", "move_backward", "turn_left", "turn_right",
 ]

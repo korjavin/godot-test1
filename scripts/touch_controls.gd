@@ -158,9 +158,12 @@ func _build_ui() -> void:
 	#
 	# Anchoring: each button anchors to the bottom-right corner (anchor 1,1) and is
 	# pushed in/up by negative offsets, so it stays glued to that corner on resize.
-	_jump_button = _make_action_button("JUMP", 1)
-	_special_button = _make_action_button("SPECIAL\n(F)", 2)
-	_switch_button = _make_action_button("SWITCH\n(R)", 3)
+	# Pass an explicit PascalCase node name separate from the visible label, so the
+	# node tree reads as `JumpButton`/`SpecialButton`/`SwitchButton` (clean, debuggable)
+	# while the on-screen TEXT keeps its newline + "(F)"/"(R)" hint.
+	_jump_button = _make_action_button("JUMP", "JumpButton", 1)
+	_special_button = _make_action_button("SPECIAL\n(F)", "SpecialButton", 2)
+	_switch_button = _make_action_button("SWITCH\n(R)", "SwitchButton", 3)
 
 	# Connect each to its routing handler. Jump/Special use the "fire once" pulse;
 	# Switch uses the same event path (its handler is identical but named for clarity).
@@ -217,12 +220,14 @@ func _build_ui() -> void:
 	add_child(_enable_overlay)
 
 
-## Create one big square action button with the given label and stack slot. Slot 1
-## is the lowest (bottom-most) button; higher slots stack upward. Anchored to the
+## Create one big square action button with the given visible `label`, an explicit
+## PascalCase `node_name` (so the scene tree reads cleanly instead of deriving a
+## messy name like "SPECIAL_(F)" from the label), and a stack `slot`. Slot 1 is the
+## lowest (bottom-most) button; higher slots stack upward. Anchored to the
 ## bottom-right corner so the cluster stays put on any screen size.
-func _make_action_button(label: String, slot: int) -> Button:
+func _make_action_button(label: String, node_name: String, slot: int) -> Button:
 	var button := Button.new()
-	button.name = label.replace("\n", "_")
+	button.name = node_name
 	button.text = label
 	button.add_theme_font_size_override("font_size", 26)
 	button.custom_minimum_size = Vector2(ACTION_BUTTON_SIZE, ACTION_BUTTON_SIZE)
@@ -282,17 +287,35 @@ func _is_touch_device() -> bool:
 	# JavaScriptBridge call behind the web feature so desktop/editor never touch JS.
 	if OS.has_feature("web"):
 		# A coarse pointer (finger) strongly implies a touch device.
-		var coarse = JavaScriptBridge.eval("matchMedia('(pointer: coarse)').matches", true)
+		# `JavaScriptBridge.eval` returns a `Variant` (the JS value, or null if the
+		# expression couldn't be evaluated), so the hint is `: Variant`.
+		var coarse: Variant = JavaScriptBridge.eval("matchMedia('(pointer: coarse)').matches", true)
 		if coarse != null and bool(coarse):
 			return true
 		# Belt-and-braces: if the browser reports NO fine pointer (no mouse/trackpad),
 		# treat it as a touch device too. This catches mobile browsers that report
 		# neither a Godot touchscreen nor `pointer: coarse` — better to show the
 		# (ignorable) overlay than hide everything and strand a phone player.
-		var fine = JavaScriptBridge.eval("matchMedia('(pointer: fine)').matches", true)
+		var fine: Variant = JavaScriptBridge.eval("matchMedia('(pointer: fine)').matches", true)
 		if fine != null and not bool(fine):
 			return true
 	return false
+
+
+# ============================================================================
+# DRIVER LOOKUP (single mechanism — like _fire_action for input)
+# ============================================================================
+
+## Refresh and return the cached motion driver, re-resolving it via the
+## `"mobile_input"` group if it was never found or has since been freed. Every
+## handler that talks to the driver routes through this ONE helper (instead of
+## repeating the null/`is_instance_valid` re-fetch inline), matching the project's
+## single-mechanism-helper style (cf. `_fire_action` for input). Returns null on a
+## build with no MobileInput node, so callers must still null-check the result.
+func _ensure_driver() -> Node:
+	if _driver == null or not is_instance_valid(_driver):
+		_driver = get_tree().get_first_node_in_group("mobile_input")
+	return _driver
 
 
 # ============================================================================
@@ -370,13 +393,12 @@ func _on_switch_pressed() -> void:
 ## `set_steer_mode()` also recalibrates (re-zeros neutral), so the toggle doubles as
 ## the player's manual "re-centre steering" gesture, per the plan.
 func _on_steer_toggle_pressed() -> void:
-	if _driver == null or not is_instance_valid(_driver):
-		_driver = get_tree().get_first_node_in_group("mobile_input")
-	if _driver == null:
+	if _ensure_driver() == null:
 		return
-	# Cycle to the other mode. The driver's enum is SteerMode { TILT = 0, TWIST = 1 }.
-	var current = _driver.steer_mode
-	var next = _driver.SteerMode.TWIST if current == _driver.SteerMode.TILT else _driver.SteerMode.TILT
+	# Cycle to the other mode. The driver's enum is SteerMode { TILT = 0, TWIST = 1 },
+	# so the values are plain ints — hence the `: int` hints.
+	var current: int = _driver.steer_mode
+	var next: int = _driver.SteerMode.TWIST if current == _driver.SteerMode.TILT else _driver.SteerMode.TILT
 	_driver.set_steer_mode(next)
 	_update_steer_toggle_label()
 
@@ -387,9 +409,7 @@ func _on_steer_toggle_pressed() -> void:
 func _update_steer_toggle_label() -> void:
 	if _steer_toggle == null:
 		return
-	if _driver == null or not is_instance_valid(_driver):
-		_driver = get_tree().get_first_node_in_group("mobile_input")
-	if _driver == null:
+	if _ensure_driver() == null:
 		_steer_toggle.text = "Tilt/Twist"
 		return
 	# Show the active mode in the label, e.g. "Steer: Tilt".
@@ -404,9 +424,7 @@ func _update_steer_toggle_label() -> void:
 ## which is exactly what iOS Safari requires for DeviceMotionEvent.requestPermission().
 ## We then hide the overlay so the game (and the action buttons beneath) is usable.
 func _on_enable_overlay_pressed() -> void:
-	if _driver == null or not is_instance_valid(_driver):
-		_driver = get_tree().get_first_node_in_group("mobile_input")
-	if _driver != null:
+	if _ensure_driver() != null:
 		# Order matters: request permission first (still inside the user gesture), then
 		# enable the driver. `enable()` already calibrates neutral from the current pose
 		# (see mobile_input.enable()), so we deliberately do NOT call calibrate() again

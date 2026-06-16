@@ -219,11 +219,12 @@ func tilt() -> Vector2:
 	if not _has_live:
 		return Vector2.ZERO
 
-	# Roll/pitch from the gravity vector. With the phone's standard device frame
-	# (x = right edge, y = top edge, z = out of screen) gravity's components tell
-	# us how the screen is oriented relative to "down":
-	#   roll  = atan2(gravity.x, gravity.z-ish)  → left/right lean
-	#   pitch = atan2(gravity.y, ...)            → fore/aft tip
+	# Roll/pitch from the gravity vector via `_gravity_angles()`. With the phone's
+	# standard device frame (x = right edge, y = top edge, z = out of screen) gravity's
+	# components tell us how the screen is oriented relative to "down". The exact axes
+	# used are defined in `_gravity_angles()` and must match this description:
+	#   roll  = atan2(gravity.x, gravity.y)  → left/right lean around the long axis
+	#   pitch = atan2(gravity.z, gravity.y)  → fore/aft tip of the screen
 	# We compute the *current* angles and the *neutral* angles the same way, then
 	# return the difference, so the result is relative to calibration.
 	var cur := _gravity_angles(_gravity)
@@ -267,19 +268,6 @@ func request_permission() -> void:
 		return
 
 	_request_web_permission()
-
-
-## Whether iOS Safari's motion-permission request has been *granted*. Reads back the
-## `window.__gd_perm_granted` flag the permission Promise sets on 'granted' (see
-## `_install_ios_permission_flow`). Lets a caller distinguish "permission denied" (this
-## returns false but the gesture happened) from "no sensors on this device" — useful if
-## the UI ever wants to surface that difference. On non-iOS browsers permission isn't
-## gated, so the flag stays 0 and this returns false even though sensors work; treat it
-## as "iOS-grant confirmed", not a general has-sensors signal (use `has_data()` for that).
-func permission_granted() -> bool:
-	if not _is_web or _js_window == null:
-		return false
-	return _js_num("__gd_perm_granted") > 0.5
 
 
 ## Capture the current pose as the new "neutral". Tilt and yaw are reported as
@@ -523,7 +511,6 @@ func _install_ios_permission_flow() -> void:
 				if (state === 'granted') {
 					window.addEventListener('devicemotion', window.__gd_motion_cb);
 					window.addEventListener('deviceorientation', window.__gd_orientation_cb);
-					window.__gd_perm_granted = 1;
 				}
 			}).catch(function(_e) { /* denied or error: stay on keyboard */ });
 		})();
@@ -618,7 +605,9 @@ func _on_js_deviceorientation(args: Array) -> void:
 func _js_num(field: String) -> float:
 	if _js_window == null:
 		return 0.0
-	var v = _js_window[field]
+	# Indexing a `JavaScriptObject` yields a `Variant` (the JS value, or null when the
+	# field is missing/undefined), so the hint is `: Variant`.
+	var v: Variant = _js_window[field]
 	if v == null:
 		return 0.0
 	return float(v)
