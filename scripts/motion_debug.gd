@@ -28,9 +28,9 @@ extends Label
 ##
 ## It deliberately mirrors `perf_overlay.gd`: a plain Label under the HUD
 ## CanvasLayer, throttled text refresh, a single debug toggle key, and it starts
-## visible only in debug builds (or on web, where it is the on-phone diagnostic)
-## so it never ends up in a release-desktop player's face. It touches no gameplay
-## — it only reads sensor values and prints them.
+## visible only in debug builds — in the release/web build (the shipping target)
+## it stays hidden until F4 is pressed, so it never ends up in a player's face. It
+## touches no gameplay — it only reads sensor values and prints them.
 ##
 ## NOTE (Task 1 finding, see plan Context): on desktop/editor these `Input.*`
 ## sensor calls return zero vectors — there are no real sensors — so the readout
@@ -86,11 +86,16 @@ func _ready() -> void:
 	add_theme_constant_override("outline_size", 6)
 	add_theme_font_size_override("font_size", 16)
 
-	# Start visible in a debug build (so we always have numbers while developing)
-	# and on the web export (this readout *is* the on-phone Task 1 diagnostic).
-	# In a release desktop build it stays hidden until F4 is pressed, so it never
-	# ships in a player's face. Task 6 will tighten/remove this scaffolding.
-	visible = OS.is_debug_build() or OS.has_feature("web")
+	# Start hidden by default, shown immediately only in a debug build (running from
+	# the editor or a debug export) so we always have numbers while developing. In the
+	# release/web build — the actual shipping target — it stays HIDDEN until the player
+	# presses F4, so the diagnostic never ends up in a player's face. This matches the
+	# perf overlay's convention (`visible = OS.is_debug_build()`, toggled by key
+	# otherwise). The F4 toggle below still works, so the readout can be summoned
+	# on-device for debugging when needed. (Task 6: dropped the old
+	# `or OS.has_feature("web")` auto-show, which wrongly made it visible by default on
+	# the shipping web build.)
+	visible = OS.is_debug_build()
 
 	# Seed the first refresh so text appears right away rather than after a delay.
 	_time_until_refresh = 0.0
