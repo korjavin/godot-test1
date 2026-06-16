@@ -14,9 +14,12 @@ extends Control
 ##     set the step threshold by), the resulting walk energy + step count, and the
 ##     current tilt/yaw. If it reads "NO DATA" the player instantly knows the problem
 ##     is permission/sensors, not tuning.
-##   * One **slider per adjustable parameter** writes straight back to the driver via
-##     `set_tuning(key, value)`, which also persists to `user://mobile_tuning.cfg` so
-##     the tuning survives a page reload (IndexedDB on web).
+##   * Each adjustable parameter gets a big **−  value  +  stepper row** (a "spinner"),
+##     not a slider: tiny slider grabs are unusable on a small phone, while large +/−
+##     buttons with the exact number between them are easy to thumb and read. Every step
+##     writes straight back to the driver via `set_tuning(key, value)`, which also
+##     persists to `user://mobile_tuning.cfg` so the tuning survives a page reload
+##     (IndexedDB on web).
 ##   * An **Invert steering** toggle fixes a phone whose roll/yaw sign is reversed.
 ##   * **Recalibrate** re-zeros the neutral pose from the current hold; **Reset to
 ##     defaults** restores the shipped values.
@@ -47,20 +50,25 @@ extends Control
 ## Size of the always-visible gear/"Tune" button. Parked top-LEFT, clear of the steer
 ## toggle (top-centre), the action cluster (bottom-right) and the coin/lives HUD
 ## corners — a comfortably large touch target on a phone.
-const GEAR_WIDTH: float = 92.0
-const GEAR_HEIGHT: float = 56.0
+const GEAR_WIDTH: float = 110.0
+const GEAR_HEIGHT: float = 60.0
 
 ## Margin (px) from the screen edge for the gear button and the panel.
 const EDGE_MARGIN: float = 16.0
 
-## The open panel's size. Tall and fairly wide so the sliders are easy to grab; it is
-## scrollable (a ScrollContainer) in case a short phone in landscape can't show it all.
-const PANEL_WIDTH: float = 360.0
-const PANEL_HEIGHT: float = 560.0
+## The open panel's size. Wide enough for the −/value/+ steppers and the diagnostics
+## text to read large; it is scrollable (a ScrollContainer) so a short phone screen can
+## still reach every row.
+const PANEL_WIDTH: float = 380.0
+const PANEL_HEIGHT: float = 580.0
 
-## Minimum height of each slider row, so the slider grab area is finger-friendly. Phone
-## touch targets want ~44-48 pt minimum; 56 px clears that comfortably.
-const ROW_HEIGHT: float = 56.0
+## Side length (px) of the big −/+ stepper buttons. Generous so they are easy to thumb
+## on a small screen (well past the ~44-48 pt minimum touch target).
+const STEP_BUTTON_SIZE: float = 60.0
+
+## Minimum height of the secondary action buttons (Invert/Recalibrate/Reset/Close), so
+## they stay finger-friendly.
+const ACTION_ROW_HEIGHT: float = 60.0
 
 ## Developer force-show key. F3 = perf overlay, F4 = motion readout, F5 = mobile_input
 ## force-enable, F6 = touch UI force-show; F7 is the next free function key and toggles
@@ -71,9 +79,9 @@ const FORCE_SHOW_KEYCODE: Key = KEY_F7
 
 ## The adjustable parameters, in display order. Each entry is
 ## [key, label, min, max, step] — the key MUST match what `mobile_input.get_tuning()`
-## returns and `set_tuning()` accepts, the rest drive the slider. Keeping the spec in
+## returns and `set_tuning()` accepts, the rest drive the stepper. Keeping the spec in
 ## one array means adding a knob later is a one-line change here.
-const SLIDER_SPECS: Array = [
+const TUNING_SPECS: Array = [
 	["step_accel_threshold", "Step threshold", 0.2, 6.0, 0.1],
 	["step_walk_per_step", "Step power", 0.1, 2.0, 0.05],
 	["step_walk_decay", "Walk decay", 0.3, 4.0, 0.1],
@@ -102,26 +110,29 @@ var _force_shown: bool = false
 ## The always-visible gear/"Tune" toggle button.
 var _gear_button: Button = null
 
-## The collapsible panel body (a PanelContainer) holding diagnostics + sliders.
+## The collapsible panel body (a PanelContainer) holding diagnostics + steppers.
 var _panel_body: PanelContainer = null
 
 ## The multi-line diagnostics label, refreshed every `_process` frame while open.
 var _diag_label: Label = null
 
-## Per-slider value labels, keyed by the param key, so each slider can show its current
-## numeric value next to its name without re-walking the tree.
-var _value_labels: Dictionary = {}
+## Current value of each tunable param, keyed by param key. The steppers mutate this and
+## push it to the driver; the displays render it. Seeded from `get_tuning()`.
+var _step_values: Dictionary = {}
 
-## The HSliders, keyed by param key, so "Reset to defaults" can push refreshed values
-## back into them without firing their `value_changed` recursively (we guard that).
-var _sliders: Dictionary = {}
+## The big numeric value labels shown between the − and + buttons, keyed by param key,
+## so a step (or a reset) can refresh just that row's number.
+var _value_displays: Dictionary = {}
+
+## Per-key [min, max, step] pulled from TUNING_SPECS, so the stepper handler can clamp
+## and snap without re-walking the spec array.
+var _spec_by_key: Dictionary = {}
 
 ## The invert-steering checkbox, refreshed by "Reset to defaults".
 var _invert_check: CheckButton = null
 
-## Guard flag: true while we are programmatically setting slider/checkbox values (seed
-## or reset), so the `value_changed`/`toggled` handlers don't echo straight back into
-## the driver. Without this, seeding the UI from `get_tuning()` would re-save every key.
+## Guard flag: true while we programmatically set the checkbox value (seed or reset), so
+## its `toggled` handler doesn't echo straight back into the driver and re-save.
 var _suppress_signals: bool = false
 
 
@@ -143,7 +154,7 @@ func _ready() -> void:
 	# Build the gear + collapsible panel in code so all the wiring lives here.
 	_build_ui()
 
-	# Seed the sliders/checkbox from the driver's current (possibly persisted) tuning.
+	# Seed the steppers/checkbox from the driver's current (possibly persisted) tuning.
 	_seed_controls_from_driver()
 
 	# Decide initial visibility from the platform: shown on touch / when force-shown,
@@ -185,7 +196,7 @@ func _build_ui() -> void:
 	_gear_button = Button.new()
 	_gear_button.name = "TuneButton"
 	_gear_button.text = "⚙ Tune"  # ⚙ gear glyph + label
-	_gear_button.add_theme_font_size_override("font_size", 22)
+	_gear_button.add_theme_font_size_override("font_size", 26)
 	_gear_button.custom_minimum_size = Vector2(GEAR_WIDTH, GEAR_HEIGHT)
 	_gear_button.anchor_left = 0.0
 	_gear_button.anchor_right = 0.0
@@ -216,7 +227,7 @@ func _build_ui() -> void:
 	_panel_body.offset_bottom = _panel_body.offset_top + PANEL_HEIGHT
 	# Translucent dark background so the world stays faintly visible behind the panel.
 	var panel_style := StyleBoxFlat.new()
-	panel_style.bg_color = Color(0.05, 0.06, 0.09, 0.88)
+	panel_style.bg_color = Color(0.05, 0.06, 0.09, 0.9)
 	panel_style.set_corner_radius_all(10)
 	panel_style.set_content_margin_all(10)
 	_panel_body.add_theme_stylebox_override("panel", panel_style)
@@ -231,8 +242,8 @@ func _build_ui() -> void:
 
 	var vbox := VBoxContainer.new()
 	vbox.name = "Body"
-	vbox.add_theme_constant_override("separation", 8)
-	# Make the VBox fill the scroll width so sliders stretch the full panel width.
+	vbox.add_theme_constant_override("separation", 10)
+	# Make the VBox fill the scroll width so rows stretch the full panel width.
 	vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	vbox.custom_minimum_size = Vector2(PANEL_WIDTH - 24.0, 0.0)
 	scroll.add_child(vbox)
@@ -240,105 +251,111 @@ func _build_ui() -> void:
 	# --- Diagnostics read-out (top of the panel) -------------------------
 	var diag_title := Label.new()
 	diag_title.text = "DIAGNOSTICS"
-	diag_title.add_theme_font_size_override("font_size", 16)
+	diag_title.add_theme_font_size_override("font_size", 18)
 	diag_title.add_theme_color_override("font_color", Color(0.7, 0.85, 1.0))
 	vbox.add_child(diag_title)
 
 	_diag_label = Label.new()
 	_diag_label.name = "Diagnostics"
-	_diag_label.add_theme_font_size_override("font_size", 17)
-	# A fixed-ish multi-line block; autowrap off so columns line up.
+	# Big, because reading the live sensor numbers (especially "peak") on a small phone
+	# is the whole point of this block.
+	_diag_label.add_theme_font_size_override("font_size", 24)
 	_diag_label.text = "Sensor: ..."
 	vbox.add_child(_diag_label)
 
-	# A thin separator before the sliders.
+	# A thin separator before the steppers.
 	vbox.add_child(HSeparator.new())
 
 	var tune_title := Label.new()
-	tune_title.text = "TUNING"
-	tune_title.add_theme_font_size_override("font_size", 16)
+	tune_title.text = "TUNING  (tap −/+)"
+	tune_title.add_theme_font_size_override("font_size", 18)
 	tune_title.add_theme_color_override("font_color", Color(0.7, 0.85, 1.0))
 	vbox.add_child(tune_title)
 
-	# --- One labeled slider per adjustable param -------------------------
-	for spec in SLIDER_SPECS:
-		_build_slider_row(vbox, spec)
+	# --- One −/value/+ stepper row per adjustable param ------------------
+	for spec in TUNING_SPECS:
+		_build_stepper_row(vbox, spec)
 
 	# --- Invert steering checkbox ----------------------------------------
 	_invert_check = CheckButton.new()
 	_invert_check.name = "InvertSteering"
 	_invert_check.text = "Invert steering"
-	_invert_check.add_theme_font_size_override("font_size", 18)
-	_invert_check.custom_minimum_size = Vector2(0.0, ROW_HEIGHT)
+	_invert_check.add_theme_font_size_override("font_size", 22)
+	_invert_check.custom_minimum_size = Vector2(0.0, ACTION_ROW_HEIGHT)
 	_invert_check.toggled.connect(_on_invert_toggled)
 	vbox.add_child(_invert_check)
 
 	vbox.add_child(HSeparator.new())
 
 	# --- Action buttons: Recalibrate / Reset / Close ---------------------
-	var recal_button := Button.new()
-	recal_button.name = "Recalibrate"
-	recal_button.text = "Recalibrate (re-zero)"
-	recal_button.add_theme_font_size_override("font_size", 18)
-	recal_button.custom_minimum_size = Vector2(0.0, ROW_HEIGHT)
-	recal_button.pressed.connect(_on_recalibrate_pressed)
-	vbox.add_child(recal_button)
-
-	var reset_button := Button.new()
-	reset_button.name = "ResetDefaults"
-	reset_button.text = "Reset to defaults"
-	reset_button.add_theme_font_size_override("font_size", 18)
-	reset_button.custom_minimum_size = Vector2(0.0, ROW_HEIGHT)
-	reset_button.pressed.connect(_on_reset_pressed)
-	vbox.add_child(reset_button)
-
-	var close_button := Button.new()
-	close_button.name = "Close"
-	close_button.text = "Close"
-	close_button.add_theme_font_size_override("font_size", 18)
-	close_button.custom_minimum_size = Vector2(0.0, ROW_HEIGHT)
-	close_button.pressed.connect(_on_close_pressed)
-	vbox.add_child(close_button)
+	vbox.add_child(_make_action_button("Recalibrate (re-zero)", _on_recalibrate_pressed))
+	vbox.add_child(_make_action_button("Reset to defaults", _on_reset_pressed))
+	vbox.add_child(_make_action_button("Close", _on_close_pressed))
 
 
-## Build one labeled slider row [key, label, min, max, step] and append it to `parent`.
-## The row is a VBox: a header label ("Name: value") above an HSlider sized for a thumb.
-func _build_slider_row(parent: VBoxContainer, spec: Array) -> void:
+## Build one full-width secondary action button (Recalibrate/Reset/Close) with a big
+## font and finger-friendly height, wired to `handler`.
+func _make_action_button(text: String, handler: Callable) -> Button:
+	var button := Button.new()
+	button.text = text
+	button.add_theme_font_size_override("font_size", 22)
+	button.custom_minimum_size = Vector2(0.0, ACTION_ROW_HEIGHT)
+	button.pressed.connect(handler)
+	return button
+
+
+## Build one "spinner" row [key, label, min, max, step] and append it to `parent`.
+## Layout: a name label on its own line, then a [ − ] [ big value ] [ + ] horizontal
+## stepper. The big buttons + large centred number replace the old hard-to-grab slider.
+func _build_stepper_row(parent: VBoxContainer, spec: Array) -> void:
 	var key: String = spec[0]
 	var label_text: String = spec[1]
 	var min_val: float = spec[2]
 	var max_val: float = spec[3]
 	var step_val: float = spec[4]
+	_spec_by_key[key] = [min_val, max_val, step_val]
 
 	var row := VBoxContainer.new()
 	row.name = key
 	row.add_theme_constant_override("separation", 2)
-	row.custom_minimum_size = Vector2(0.0, ROW_HEIGHT)
 
-	# Header label shows the parameter name and its current numeric value.
-	var header := Label.new()
-	header.add_theme_font_size_override("font_size", 16)
-	header.text = label_text + ": ..."
-	row.add_child(header)
-	_value_labels[key] = header
-	# Stash the display name on the label via meta so the value updater can rebuild text.
-	header.set_meta("label_text", label_text)
+	# Name label (its own line so a long name never squeezes the stepper).
+	var name_label := Label.new()
+	name_label.add_theme_font_size_override("font_size", 20)
+	name_label.text = label_text
+	row.add_child(name_label)
 
-	# The slider itself. We make it tall (custom_minimum_size height) so the grab area
-	# is finger-friendly on a phone.
-	var slider := HSlider.new()
-	slider.name = "Slider"
-	slider.min_value = min_val
-	slider.max_value = max_val
-	slider.step = step_val
-	slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	slider.custom_minimum_size = Vector2(0.0, 32.0)
-	# Bind the key so one handler serves every slider.
-	slider.value_changed.connect(_on_slider_changed.bind(key))
-	row.add_child(slider)
-	_sliders[key] = slider
+	# The −  value  +  stepper line.
+	var stepper := HBoxContainer.new()
+	stepper.add_theme_constant_override("separation", 10)
 
+	var minus := _make_step_button("−", key, -1.0)
+	stepper.add_child(minus)
+
+	var value_label := Label.new()
+	value_label.add_theme_font_size_override("font_size", 26)
+	value_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	value_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	value_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	value_label.text = "..."
+	stepper.add_child(value_label)
+	_value_displays[key] = value_label
+
+	var plus := _make_step_button("+", key, 1.0)
+	stepper.add_child(plus)
+
+	row.add_child(stepper)
 	parent.add_child(row)
+
+
+## Build one big square −/+ button bound to a param key and a direction (-1 or +1).
+func _make_step_button(text: String, key: String, direction: float) -> Button:
+	var button := Button.new()
+	button.text = text
+	button.add_theme_font_size_override("font_size", 34)
+	button.custom_minimum_size = Vector2(STEP_BUTTON_SIZE, STEP_BUTTON_SIZE)
+	button.pressed.connect(_on_step_pressed.bind(key, direction))
+	return button
 
 
 # ============================================================================
@@ -385,7 +402,7 @@ func _on_close_pressed() -> void:
 	_set_panel_open(false)
 
 
-## Open or collapse the panel body and refresh its contents on open so the sliders and
+## Open or collapse the panel body and refresh its contents on open so the steppers and
 ## diagnostics reflect the latest driver state the moment it appears.
 func _set_panel_open(open: bool) -> void:
 	_panel_open = open
@@ -401,33 +418,38 @@ func _set_panel_open(open: bool) -> void:
 # SEEDING / REFRESH
 # ============================================================================
 
-## Push the driver's current tuning into the sliders + checkbox WITHOUT echoing each
-## change back to the driver (the `_suppress_signals` guard). Used on `_ready()`, on
-## open, and after a reset. Safe when the driver is missing (controls just keep defaults).
+## Pull the driver's current tuning into `_step_values` + the displays and the invert
+## checkbox. Used on `_ready()`, on open, and after a reset. The checkbox set is wrapped
+## in `_suppress_signals` so seeding it doesn't echo back into the driver. Safe when the
+## driver is missing (controls just keep defaults).
 func _seed_controls_from_driver() -> void:
 	var driver: Node = _ensure_driver()
 	if driver == null:
 		return
 	var tuning: Dictionary = driver.get_tuning()
-	_suppress_signals = true
-	for key in _sliders:
+	for spec in TUNING_SPECS:
+		var key: String = spec[0]
 		if tuning.has(key):
-			var slider: HSlider = _sliders[key]
-			slider.value = float(tuning[key])
-			_refresh_value_label(key, float(tuning[key]))
+			_step_values[key] = float(tuning[key])
+			_refresh_value_display(key)
 	if _invert_check != null and tuning.has("invert_steering"):
+		_suppress_signals = true
 		_invert_check.button_pressed = bool(tuning["invert_steering"])
-	_suppress_signals = false
+		_suppress_signals = false
 
 
-## Rebuild a slider row's header text to "Name: value" with a tidy number of decimals.
-func _refresh_value_label(key: String, value: float) -> void:
-	if not _value_labels.has(key):
+## Rebuild a stepper row's value label from `_step_values`, formatted with a sensible
+## number of decimals: integer for whole-number steps (degrees), two decimals otherwise.
+func _refresh_value_display(key: String) -> void:
+	if not _value_displays.has(key) or not _step_values.has(key):
 		return
-	var header: Label = _value_labels[key]
-	var label_text: String = String(header.get_meta("label_text", key))
-	# Two decimals reads cleanly for both the small (0.10..0.60) and large (8..45) ranges.
-	header.text = "%s: %.2f" % [label_text, value]
+	var value: float = _step_values[key]
+	var step_val: float = _spec_by_key[key][2]
+	var label: Label = _value_displays[key]
+	if step_val >= 1.0:
+		label.text = "%d" % int(round(value))
+	else:
+		label.text = "%.2f" % value
 
 
 ## Refresh the live diagnostics block from the driver. Called every `_process` frame
@@ -462,15 +484,23 @@ func _update_diagnostics() -> void:
 # CONTROL HANDLERS → driver.set_tuning / recalibrate / reset
 # ============================================================================
 
-## A slider moved: push the new value into the driver (which clamps + persists) and
-## refresh the row's numeric label. Ignored while we're programmatically seeding/resetting.
-func _on_slider_changed(value: float, key: String) -> void:
-	if _suppress_signals:
+## A − or + stepper was tapped: nudge the value by one step (clamped + snapped to the
+## step grid), refresh the display, and push it to the driver (which clamps + persists).
+func _on_step_pressed(key: String, direction: float) -> void:
+	if not _spec_by_key.has(key):
 		return
-	_refresh_value_label(key, value)
+	var spec: Array = _spec_by_key[key]
+	var min_val: float = spec[0]
+	var max_val: float = spec[1]
+	var step_val: float = spec[2]
+	var current: float = float(_step_values.get(key, min_val))
+	# Snap to the step grid so repeated taps don't accumulate float drift.
+	var next_val: float = clampf(snappedf(current + direction * step_val, step_val), min_val, max_val)
+	_step_values[key] = next_val
+	_refresh_value_display(key)
 	var driver: Node = _ensure_driver()
 	if driver != null:
-		driver.set_tuning(key, value)
+		driver.set_tuning(key, next_val)
 
 
 ## The invert-steering checkbox toggled: push it to the driver (persisted). Ignored
@@ -492,7 +522,7 @@ func _on_recalibrate_pressed() -> void:
 
 
 ## Reset-to-defaults button: tell the driver to restore + persist the shipped values,
-## then re-seed the controls so the sliders/checkbox snap to the new (default) state.
+## then re-seed the controls so the steppers/checkbox snap to the new (default) state.
 func _on_reset_pressed() -> void:
 	var driver: Node = _ensure_driver()
 	if driver != null:

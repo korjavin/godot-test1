@@ -67,8 +67,8 @@ const BUTTON_MARGIN: float = 24.0
 
 ## Size of the small steer-mode toggle, parked top-centre away from the action
 ## cluster and clear of the existing HUD (coins top-right, perf/lives top-left).
-const TOGGLE_WIDTH: float = 150.0
-const TOGGLE_HEIGHT: float = 64.0
+const TOGGLE_WIDTH: float = 200.0
+const TOGGLE_HEIGHT: float = 72.0
 
 ## Developer force-show key. F3 = perf overlay, F4 = motion readout, F5 = mobile_input
 ## force-enable; F6 is the next free function key. Pressing it toggles this UI on so a
@@ -200,7 +200,7 @@ func _build_ui() -> void:
 	_steer_toggle = Button.new()
 	_steer_toggle.name = "SteerToggle"
 	_steer_toggle.custom_minimum_size = Vector2(TOGGLE_WIDTH, TOGGLE_HEIGHT)
-	_steer_toggle.add_theme_font_size_override("font_size", 22)
+	_steer_toggle.add_theme_font_size_override("font_size", 30)
 	# Anchor to the top-centre: both horizontal anchors at 0.5 centres it, then we
 	# pull it left by half its width and down a margin from the top.
 	_steer_toggle.anchor_left = 0.5
