@@ -636,6 +636,10 @@ func switch_to_next_character() -> void:
 	This is now just a visibility swap between already-instanced models, so it
 	happens instantly with no loading hitch.
 	"""
+	# Block switching while a prolonged ability (flying/resize) is active
+	if windman_boost_timer > 0.0 or teibi_size_state != 0:
+		return
+
 	# Increment the character index
 	current_character_index = (current_character_index + 1) % CHARACTERS.size()
 
