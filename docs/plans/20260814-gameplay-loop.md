@@ -87,12 +87,12 @@ Related patterns: group-based discovery only (no hard refs) — `player`, `game_
 The goal: two consecutive runs generate different worlds; within one run every chunk
 regenerates byte-identically on revisit and coin seam-claiming still holds.
 
-- [ ] Add `var run_seed: int = 0` state to `scripts/endless_terrain.gd` (documented in the
+- [x] Add `var run_seed: int = 0` state to `scripts/endless_terrain.gd` (documented in the
       teaching style: why it exists, why it's mixed into every hash, why it must stay
       constant for a whole run). Roll it in `_ready()` before any chunk generates:
       use a `RandomNumberGenerator` with `randomize()` and take `rng.randi()` (do not
       disturb global RNG state used elsewhere).
-- [ ] Mix `run_seed` into ALL five deterministic hash sites, using `Vector3i` so the mix
+- [x] Mix `run_seed` into ALL five deterministic hash sites, using `Vector3i` so the mix
       is a real third hash input (not arithmetic that could alias):
       - `spawn_objects_in_chunk`: `hash(Vector3i(chunk_pos.x * 73856093, chunk_pos.y * 19349663, run_seed))`
       - `spawn_crocodiles_in_chunk`: `hash(Vector3i(chunk_pos.x * 83492791, chunk_pos.y * 28411639, run_seed))`
@@ -101,18 +101,18 @@ regenerates byte-identically on revisit and coin seam-claiming still holds.
       - `_road_coins_at`: `rng.seed = hash(Vector3i(k, ROAD_COIN_SEED, run_seed))`
       Update the surrounding educational comments (they currently say "fixed seed /
       identical run-to-run" — now it's "fixed for the duration of a run").
-- [ ] Add `func new_run() -> void` to `endless_terrain.gd`: re-roll `run_seed`, clear the
+- [x] Add `func new_run() -> void` to `endless_terrain.gd`: re-roll `run_seed`, clear the
       road station cache (`road_stations = {}`, reset `road_k_min`/`road_k_max` to the
       empty sentinel exactly as declared at the top of the file), `queue_free()` every
       chunk in `active_chunks` and clear the dictionary, then force an immediate rebuild
       around the spawn chunk (call `update_chunks(Vector2i(0, 0))` and set
       `last_player_chunk = Vector2i(0, 0)`) so the player teleported to (0,2,0) by
       `reset_position()` lands on solid ground the same frame.
-- [ ] Add the terrain to a group in `_ready()` (`add_to_group("terrain")`) and call
+- [x] Add the terrain to a group in `_ready()` (`add_to_group("terrain")`) and call
       `new_run()` from `player_controller.restart_game()` via
       `get_tree().get_first_node_in_group("terrain")` with a `has_method` guard —
       matching the project's group-based wiring convention.
-- [ ] Verify determinism by reasoning AND a headless check if the CLI allows: within a
+- [x] Verify determinism by reasoning AND a headless check if the CLI allows: within a
       run `run_seed` never changes, so every seed site is still a pure function of
       (chunk coords | k) — revisited chunks regenerate identically and the coin
       seam-claiming (`world_to_chunk(cw) == chunk_pos`) is untouched. Across

@@ -1158,6 +1158,13 @@ func restart_game() -> void:
 	is_caught = false
 	is_respawning = false
 	_hide_respawn_message()
+	# Re-roll the world BEFORE teleporting back to spawn: new_run() re-seeds the
+	# terrain and synchronously rebuilds the chunks around (0,0), so reset_position()
+	# lands us on freshly generated solid ground in the same frame. Group-based
+	# lookup with a has_method guard — the project's no-hard-references convention.
+	var terrain := get_tree().get_first_node_in_group("terrain")
+	if terrain and terrain.has_method("new_run"):
+		terrain.new_run()
 	reset_position()
 	# Recapture the mouse — but ONLY when this is NOT a touch session, mirroring the
 	# `_ready()` guard via the SAME canonical `MobileSensors.is_touch_session()` rule.
