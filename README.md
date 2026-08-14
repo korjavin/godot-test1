@@ -1,457 +1,128 @@
-# Zelda-like Educational Game 🎮
+# Crimekickers: The Endless Road 🐊
 
-A 3rd person adventure game built with Godot 4.3 for learning game development concepts.
+An endless-runner adventure in the **Crimekickers universe**, built with **Godot 4.5**.
 
-## 🎯 Project Overview
+You are a Crimekicker dropped into an infinite, procedurally generated world. A
+trail of coins — the **coin road** — winds off toward the horizon. Follow it as
+far as you can: the further you get, the meaner and denser the crocodile piglets
+chasing you become. Switch between four heroes on the fly, each with their own
+signature power, rack up distance and coins, and try to beat your own best run.
+Every run generates a brand-new world.
 
-This is an educational project designed to teach Godot game development through a Zelda-like adventure game. The project features:
+**▶ Play it in your browser: https://korjavin.github.io/godot-test1/**
 
-- **3rd Person Character Controller** - Walk, run, duck, and jump
-- **Endless Terrain System** - Procedurally generated infinite field
-- **Physics-Based Movement** - Realistic gravity and movement mechanics
-- **Extensively Commented Code** - Learn as you read
-- **Clean Architecture** - Well-organized project structure
+Works on desktop and on phones — on mobile you literally **step in place to
+walk** and **tilt your phone to steer** (device motion sensors), with on-screen
+buttons for everything else.
 
-## 📋 Table of Contents
+## The Crimekickers
 
-- [Prerequisites](#prerequisites)
-- [Installation](#installation)
-- [Running the Game](#running-the-game)
-- [Project Structure](#project-structure)
-- [Controls](#controls)
-- [Learning Resources](#learning-resources)
-- [Customization Guide](#customization-guide)
-- [Building for Distribution](#building-for-distribution)
-- [CI/CD](#cicd)
-- [Troubleshooting](#troubleshooting)
+| Hero | Special (F) | What it does |
+|---|---|---|
+| **Windman** | Air Rush | Launches into fast gliding flight — ~5× walking speed while airborne |
+| **Primm** | Phase Step | Blinks straight through a wall or block, always landing safely on the far side |
+| **Teibi** | Resize | Cycles small → giant → normal; giant Teibi **crushes** crocodiles on contact (but can't jump) |
+| **Phoboman** | Stink Wave | Expanding stench waves send every crocodile nearby fleeing in terror |
 
-## 🔧 Prerequisites
+Press **R** to switch heroes mid-run. Abilities run on per-hero cooldowns —
+watch the radial dial in the top-right.
 
-### Required Software
+## How a run works
 
-1. **Godot Engine 4.3 or later**
-   - Download from: https://godotengine.org/download
-   - Choose the "Standard" version (not .NET unless you want C# support)
-   - Supports Windows, macOS, and Linux
+- **Distance is your score** — how far from the spawn you've pushed. Your best
+  distance and coin haul are saved (they survive page reloads) and a **NEW
+  BEST** flash greets a record run.
+- **Coins pay off**: follow the coin road for a steady trickle, watch for rare
+  **purple gems worth 10**, and keep a pickup streak alive for a score
+  multiplier of up to ×5. Every 75 coins banks an **extra life** (up to 5).
+- **The crocodile piglets mean it**: they outpace a walking player, and get
+  faster and more numerous the further you go, while the coin road narrows.
+  Running, jumping, and your hero powers are how you stay ahead.
+- **3 lives**: a bite costs one (you keep your coins and your spot). Lose them
+  all and it's game over — Enter, Space, or a tap starts the next run in a
+  freshly generated world.
 
-2. **Git** (optional, for version control)
-   - Download from: https://git-scm.com/
+## Controls
 
-### System Requirements
+### Desktop
+| Key | Action |
+|---|---|
+| **W / S** | Walk forward / back |
+| **A / D** | Turn |
+| **Q / E** | Sidestep |
+| **Mouse** | Look around |
+| **Space** | Jump |
+| **Shift** | Run |
+| **Ctrl** | Duck |
+| **R** | Switch hero |
+| **F** | Special ability |
+| **P** | Pause |
+| **Esc** | Release / recapture the mouse |
+| **F3** | Performance overlay |
 
-- **OS**: Windows 7+, macOS 10.13+, or Linux
-- **RAM**: 4 GB minimum, 8 GB recommended
-- **GPU**: Any GPU with OpenGL 3.3 / Vulkan support
-- **Storage**: 200 MB for Godot + 50 MB for project
+### Mobile (web build)
+Open the game on your phone and tap the start overlay (this also grants iOS
+motion permission). Then:
+- **Step in place** to walk — your phone's motion sensors detect your steps
+- **Tilt** the phone to steer (or toggle to **twist** steering on screen)
+- On-screen buttons: **Jump**, **Special**, **Switch hero**
+- The **⚙ Tune** panel lets you calibrate step detection and steering live;
+  your settings persist between visits
 
-## 📥 Installation
+## Running from source
 
-### Step 1: Install Godot
-
-#### Windows
-1. Download Godot from https://godotengine.org/download
-2. Extract the ZIP file to a folder (e.g., `C:\Godot`)
-3. Run `Godot_v4.3-stable_win64.exe`
-4. (Optional) Create a desktop shortcut
-
-#### macOS
-1. Download the macOS version
-2. Open the DMG file
-3. Drag Godot to Applications folder
-4. Right-click and select "Open" (first time only, due to security)
-
-#### Linux
-```bash
-# Download and extract
-wget https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_linux.x86_64.zip
-unzip Godot_v4.3-stable_linux.x86_64.zip
-
-# Make executable
-chmod +x Godot_v4.3-stable_linux.x86_64
-
-# Run
-./Godot_v4.3-stable_linux.x86_64
-```
-
-### Step 2: Get the Project
-
-#### Option A: Clone with Git
-```bash
-git clone <your-repository-url>
-cd godot-test1
-```
-
-#### Option B: Download ZIP
-1. Download the project ZIP from GitHub
-2. Extract to your desired location
-3. Navigate to the extracted folder
-
-## 🚀 Running the Game
-
-### Method 1: Using Godot Editor (Recommended for Learning)
-
-1. **Open Godot Engine**
-2. **Import the Project**:
-   - Click "Import" on the project manager
-   - Navigate to the project folder
-   - Select `project.godot`
-   - Click "Import & Edit"
-
-3. **Run the Game**:
-   - Press `F5` or click the "Play" button (▶️) in the top-right
-   - First time: You may need to wait for shaders to compile
-
-4. **Edit the Game**:
-   - Explore the Scene tab to see the game structure
-   - Double-click scripts to edit them
-   - Press `F6` to run the current scene
-
-### Method 2: Command Line (Quick Testing)
+Requires **Godot 4.5** (standard build): https://godotengine.org/download
 
 ```bash
-# Navigate to project directory
-cd /path/to/godot-test1
+# Open in the editor
+godot project.godot
 
-# Run with Godot (replace path with your Godot executable)
+# Run the game from the CLI
 godot --path . scenes/main.tscn
+
+# Headless web export (needs the "Web" export preset + templates)
+mkdir -p build/web && godot --headless --export-release "Web" build/web/index.html
+
+# Serve a local web build (WebAssembly needs HTTP, not file://)
+./serve.sh        # macOS/Linux    serve.bat on Windows
 ```
 
-### Method 3: Export and Run (For Distribution)
+See [QUICKSTART.md](QUICKSTART.md) for the 5-minute version.
 
-See [Building for Distribution](#building-for-distribution) section.
+## How it's built
 
-### Method 4: Run Web Build Locally (Testing Web Export)
+The codebase is written to be read — scripts are heavily commented, explaining
+*why* along with *what*. Highlights:
 
-If you have a web build (from CI/CD artifact or local export), you can test it locally:
+- **Everything is procedural.** The infinite terrain, the decorative blocks,
+  the crocodiles, and the coin road are all generated in code, deterministically
+  per run — revisit a spot and it's exactly as you left it; restart and the
+  world is new. There is no hand-placed scenery.
+- **The characters are code too**: their 3D models are generated by Python
+  scripts (`scripts/generate_*.py`), and all animation is procedural — sine
+  waves on limbs, no keyframes.
+- **The audio is synthesized at startup** — every blip, whoosh, and sting is an
+  `AudioStreamWAV` baked in code. There are zero audio asset files.
+- **Tuned hard for the browser**: MultiMesh batching, per-chunk consolidated
+  collision, simulation LOD that sleeps far-away crocodiles, and web-specific
+  render settings keep it smooth on a phone.
 
-**Linux/macOS:**
-```bash
-./serve.sh
-```
+Architecture notes for contributors (and AI assistants) live in
+[CLAUDE.md](CLAUDE.md).
 
-**Windows:**
-```cmd
-serve.bat
-```
+## CI/CD
 
-**Manual (any OS with Python):**
-```bash
-cd build/web  # or web-build if from artifact
-python3 -m http.server 8000
-# Then open: http://localhost:8000
-```
+Every push builds the web export via GitHub Actions
+(`.github/workflows/build.yml`). Pushes to `master` deploy straight to GitHub
+Pages — merging is releasing.
 
-**What the script does:**
-- Finds your web build automatically
-- Starts a local HTTP server
-- Opens your browser automatically
-- Shows network URL for testing on other devices
+## In the works
 
-**Note:** Web builds require an HTTP server (can't use `file://`) due to browser security restrictions for WebAssembly.
+Visual overhaul (art-directed lighting, sky, fog, bloom), first-person view
+toggle, giant road bosses, lost-civilization artifacts, biomes (deserts,
+forests, rivers, mountains), weather with rain that grounds Windman, and
+migrating elephants and giraffes.
 
-## 📁 Project Structure
+## License
 
-```
-godot-test1/
-├── project.godot           # Main project configuration
-├── icon.svg                # Project icon
-├── serve.sh                # Local web server script (Linux/macOS)
-├── serve.bat               # Local web server script (Windows)
-│
-├── scenes/                 # Scene files (.tscn)
-│   ├── main.tscn          # Main game scene (world + player)
-│   └── player.tscn        # Player character scene
-│
-├── scripts/               # GDScript files
-│   ├── player_controller.gd    # Character movement logic
-│   └── endless_terrain.gd      # Terrain generation system
-│
-├── assets/                # Game assets
-│   ├── models/           # 3D models (.glb, .obj)
-│   ├── textures/         # Textures and images
-│   └── materials/        # Material files (.tres)
-│
-├── docs/                  # Documentation
-│   ├── TUTORIAL.md       # Customization tutorials
-│   └── CODE_STRUCTURE.md # Code architecture guide
-│
-├── .github/              # CI/CD configuration
-│   └── workflows/
-│       └── build.yml     # Automated build pipeline
-│
-├── README.md             # This file!
-├── QUICKSTART.md         # Quick start guide
-└── LICENSE               # MIT License
-```
-
-## 🎮 Controls
-
-| Action | Key | Description |
-|--------|-----|-------------|
-| **Move Forward** | W | Walk forward |
-| **Move Backward** | S | Walk backward |
-| **Turn Left** | A | Turn left (tank-style body rotation) |
-| **Turn Right** | D | Turn right (tank-style body rotation) |
-| **Jump** | Space | Jump (only on ground) |
-| **Run** | Left Shift | Run (2x speed) |
-| **Duck** | Left Ctrl | Crouch (0.5x speed, 0.5x height) |
-| **Look Around** | Mouse | Rotate camera |
-| **Release Mouse** | ESC | Show/hide cursor |
-
-### Tips
-- Hold **Shift** while moving to run faster
-- You can only jump when on the ground
-- Ducking makes you shorter (useful for... future obstacles!)
-- Mouse controls the camera - character rotates with mouse left/right
-
-### 📱 Playing on mobile
-
-The web build is playable on a phone with **no keyboard** — it drives the game with the phone's motion sensors:
-
-1. Open the GitHub Pages URL on your phone (HTTPS is required for iOS motion access — the GitHub Pages link provides it).
-2. Tap **"enable motion controls"** on the first-run overlay. On iOS this also grants the motion-sensor permission (it must be triggered by your tap).
-3. **Step** in place (or walk) to move forward — each footstep the accelerometer detects pushes the hero ahead.
-4. **Tilt** the phone left/right to steer. Tap the **Steer: Tilt/Twist** toggle (top-centre) to switch to **twist** steering (rotating the phone flat); the toggle also re-centres steering.
-5. Use the on-screen buttons (bottom-right) for the keyboard-only actions: **JUMP**, **R** (switch character), and **F** (special ability).
-
-The touch controls appear **only on touch devices** (auto-detected); on a desktop browser, keyboard + mouse play is exactly as above and the touch UI stays hidden.
-
-## 📚 Learning Resources
-
-### Godot Official Resources
-- [Godot Documentation](https://docs.godotengine.org/en/stable/)
-- [GDScript Basics](https://docs.godotengine.org/en/stable/tutorials/scripting/gdscript/gdscript_basics.html)
-- [3D Tutorial](https://docs.godotengine.org/en/stable/tutorials/3d/introduction_to_3d.html)
-
-### Project-Specific Guides
-- **[TUTORIAL.md](docs/TUTORIAL.md)** - How to customize your hero
-- **[CODE_STRUCTURE.md](docs/CODE_STRUCTURE.md)** - Understanding the architecture
-
-### Recommended Learning Path
-1. Read through `scripts/player_controller.gd` - It's heavily commented
-2. Experiment with the constants (WALK_SPEED, JUMP_VELOCITY, etc.)
-3. Follow the TUTORIAL.md to customize your character
-4. Try modifying the terrain system in `scripts/endless_terrain.gd`
-
-## 🎨 Customization Guide
-
-### Quick Customization Examples
-
-#### Change Movement Speed
-Edit `scripts/player_controller.gd`:
-```gdscript
-const WALK_SPEED: float = 5.0   # Try 10.0 for faster movement!
-const RUN_SPEED: float = 10.0   # Try 20.0 for super speed!
-```
-
-#### Change Jump Height
-```gdscript
-const JUMP_VELOCITY: float = 8.0  # Try 15.0 for higher jumps!
-```
-
-#### Change Gravity (Simulate Different Planets!)
-```gdscript
-# Moon gravity (weak)
-var gravity: float = 1.6
-
-# Jupiter gravity (strong)
-var gravity: float = 24.8
-```
-
-#### Change Terrain Appearance
-Edit `scripts/endless_terrain.gd`:
-```gdscript
-# In _ready() function, change the color:
-terrain_material.albedo_color = Color(0.8, 0.6, 0.4)  # Sandy color!
-```
-
-For detailed customization, see **[TUTORIAL.md](docs/TUTORIAL.md)**.
-
-## 📦 Building for Distribution
-
-### Export Templates
-
-First, download export templates:
-1. Open Godot
-2. Go to **Editor → Manage Export Templates**
-3. Click **Download and Install**
-
-### Windows Build
-
-1. In Godot: **Project → Export**
-2. Click **Add...** → **Windows Desktop**
-3. Configure:
-   - **Export Path**: `builds/windows/game.exe`
-   - **Runnable**: ✅ Checked
-4. Click **Export Project**
-
-### Linux Build
-
-1. **Project → Export** → **Add...** → **Linux/X11**
-2. **Export Path**: `builds/linux/game.x86_64`
-3. **Export Project**
-
-### macOS Build
-
-1. **Project → Export** → **Add...** → **macOS**
-2. **Export Path**: `builds/macos/game.zip`
-3. **Export Project**
-4. Note: May require code signing for distribution
-
-### Web Build (HTML5)
-
-1. **Project → Export** → **Add...** → **Web**
-2. **Export Path**: `builds/web/index.html`
-3. **Export Project**
-4. Host on GitHub Pages, itch.io, or your own server
-
-## 🔄 CI/CD
-
-This project includes GitHub Actions for automated web builds and deployment.
-
-### What Gets Built Automatically
-
-When you push code to GitHub:
-- ✅ Web build (`index.html`) - Automatically deployed to GitHub Pages!
-
-### Play Online
-
-After the first deployment, your game will be available at:
-```
-https://<your-username>.github.io/godot-test1/
-```
-
-**First-time setup**: You may need to enable GitHub Pages:
-1. Go to your repository on GitHub
-2. Click **Settings** tab
-3. Scroll to **Pages** section (left sidebar)
-4. Under "Source", it should show `gh-pages` branch (auto-configured)
-5. Your site will be live in a few minutes!
-
-### Accessing Build Artifacts
-
-You can also download the web build as a ZIP:
-1. Go to your GitHub repository
-2. Click **Actions** tab
-3. Click on the latest workflow run
-4. Download the `web-build` artifact from the bottom
-
-### Manual Build Trigger
-
-**From feature branches (like claude/*):**
-```bash
-# This will build but NOT deploy (for testing)
-git add .
-git commit -m "Update game"
-git push origin <your-branch-name>
-```
-
-**Deploy to GitHub Pages (from master branch):**
-```bash
-# Merge your changes to master to deploy
-git checkout master
-git merge <your-branch-name>
-git push origin master
-```
-
-The workflow will automatically build and deploy to GitHub Pages when you push to `master`!
-
-See `.github/workflows/build.yml` for configuration details.
-
-## 🐛 Troubleshooting
-
-### Issue: "Failed to load scene"
-**Solution**: Ensure you opened `project.godot`, not individual files.
-
-### Issue: Mouse not captured
-**Solution**: Click inside the game window, or press ESC to toggle mouse mode.
-
-### Issue: Character falls through ground
-**Solution**:
-1. Check that terrain chunks have StaticBody3D nodes
-2. Verify collision layers in Project Settings
-
-### Issue: Low FPS / Performance issues
-**Solution**:
-- Reduce `render_distance` in `scripts/endless_terrain.gd`
-- Lower graphics settings in Project Settings → Rendering
-- Disable shadows on DirectionalLight3D
-
-### Issue: Export templates not found
-**Solution**:
-1. Editor → Manage Export Templates
-2. Download and Install
-3. Restart Godot
-
-### Issue: Code changes not taking effect
-**Solution**:
-1. Save the script (Ctrl+S)
-2. Reload the scene (Ctrl+R)
-3. If still not working, close and reopen the project
-
-## 🤝 Contributing
-
-This is an educational project! Feel free to:
-- Experiment with the code
-- Add new features
-- Improve documentation
-- Share your modifications
-
-## 📄 License
-
-MIT License - See [LICENSE](LICENSE) file for details.
-
-## 🎓 Educational Goals
-
-By working with this project, you'll learn:
-
-1. **Godot Fundamentals**
-   - Scene tree structure
-   - Node types and inheritance
-   - GDScript syntax and patterns
-
-2. **Game Development Concepts**
-   - Character controllers
-   - Camera systems
-   - Physics and collision
-   - Input handling
-
-3. **Software Engineering**
-   - Code organization
-   - Documentation practices
-   - Version control with Git
-   - CI/CD pipelines
-
-4. **3D Game Mechanics**
-   - 3D transformations
-   - Vector math
-   - Procedural generation
-   - Optimization techniques
-
-## 🚀 Next Steps
-
-Once you're comfortable with the basics, try:
-
-1. **Add Enemies** - Create wandering NPCs
-2. **Implement Combat** - Add a sword attack
-3. **Create Collectibles** - Add items to pick up
-4. **Add Sound Effects** - Make the game come alive
-5. **Build a HUD** - Display health and stamina bars
-6. **Create Multiple Levels** - Design different areas
-
-## 📞 Support
-
-- **Godot Community**: https://godotengine.org/community
-- **Godot Discord**: https://discord.gg/godotengine
-- **Godot Forums**: https://forum.godotengine.org/
-
-## 🌟 Acknowledgments
-
-- **Godot Engine** - For the amazing open-source game engine
-- **Godot Community** - For excellent documentation and tutorials
-
----
-
-**Happy Game Development! 🎮✨**
-
-Remember: Every great game developer started as a beginner. Take your time, experiment, and most importantly - have fun!
+See [LICENSE](LICENSE).
