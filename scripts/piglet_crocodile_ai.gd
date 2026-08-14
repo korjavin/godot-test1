@@ -288,8 +288,8 @@ func _ready() -> void:
 	if model:
 		model_base_scale = model.scale
 		model_base_y = model.position.y
-		# One walk over the model subtree applies all per-mesh styling (draw cull
-		# today; shared toon materials later reuse this same walk).
+		# One walk over the model subtree applies all per-mesh styling (draw
+		# cull + shared toon materials).
 		_style_model_meshes(model)
 
 	# Find the player node (defer to allow scene to fully load)
@@ -300,15 +300,23 @@ func _style_model_meshes(node: Node) -> void:
 	"""
 	Recursively apply per-mesh styling to every GeometryInstance3D under the model.
 
-	Currently that is the visual draw-range cull: beyond VISUAL_CULL_DISTANCE the
-	renderer simply skips drawing these meshes (works in gl_compatibility too).
-	This changes RENDERING only — the crocodile body, its AI, and its collision
-	all stay exactly as they were; the LOD manager's sleep radius handles the
-	simulation side independently. Entity counts are never reduced by this.
+	Two treatments per mesh, one walk:
+	- Visual draw-range cull: beyond VISUAL_CULL_DISTANCE the renderer simply
+	  skips drawing these meshes (works in gl_compatibility too). This changes
+	  RENDERING only — the crocodile body, its AI, and its collision all stay
+	  exactly as they were; the LOD manager's sleep radius handles the
+	  simulation side independently. Entity counts are never reduced by this.
+	- Shared toon+rim styling via ToonShading.apply_to_mesh, so crocs match the
+	  hero's cel-shaded look. Its static cache hands every croc the SAME styled
+	  material per source, so ~490 bodies add only a handful of materials.
+	  Deliberately NO inverted-hull outline overlay here (the player has one):
+	  that is a second draw call per mesh × ~490 crocs — unaffordable.
 	"""
 	if node is GeometryInstance3D:
 		node.visibility_range_end = VISUAL_CULL_DISTANCE
 		node.visibility_range_end_margin = VISUAL_CULL_MARGIN
+	if node is MeshInstance3D:
+		ToonShading.apply_to_mesh(node)
 	for child in node.get_children():
 		_style_model_meshes(child)
 

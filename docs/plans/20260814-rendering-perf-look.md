@@ -356,7 +356,7 @@ Hard invariants (repo law — violating any is a blocker):
 
 ### Task 9: Croc toon+rim via shared helper (ONE static cached material set)
 
-- [ ] Create `scripts/toon_shading.gd` (`class_name ToonShading extends RefCounted`) with
+- [x] Create `scripts/toon_shading.gd` (`class_name ToonShading extends RefCounted`) with
       one static method `apply_to_mesh(mesh: MeshInstance3D) -> void` containing the
       EXACT logic of `player_controller.apply_toon_shading` (:903–922: per-surface, skip
       already-toon, duplicate → `diffuse_mode = DIFFUSE_TOON`, `rim_enabled`, `rim 0.4`,
@@ -365,16 +365,23 @@ Hard invariants (repo law — violating any is a blocker):
       crocodiles sharing the same GLB materials get ONE styled duplicate per source
       material, never per-croc duplicates. Teaching comment: the cache is the whole
       point — per-croc duplicates would be ~490 extra materials AND break batching.
-- [ ] `scripts/player_controller.gd`: SURGICAL edit only — replace the BODY of
+- [x] `scripts/player_controller.gd`: SURGICAL edit only — replace the BODY of
       `apply_toon_shading` with a delegation to `ToonShading.apply_to_mesh(mesh)` (keep
       the method + docstring so call sites and teaching flow are untouched). The shared
       cache is correct for the player too (same source material → same styled result).
       Touch NOTHING else in this file.
-- [ ] `scripts/piglet_crocodile_ai.gd` `_ready`: in the Task 2 model-subtree walk, call
+- [x] `scripts/piglet_crocodile_ai.gd` `_ready`: in the Task 2 model-subtree walk, call
       `ToonShading.apply_to_mesh(mesh)` on each MeshInstance3D — crocs get the same
       toon+rim cohesion as the hero. Do NOT add the inverted-hull outline overlay to
       crocs (a second draw call × 490 — unaffordable; comment says so).
-- [ ] Run `godot --headless --path . --quit-after 2` — must be clean.
+- [x] Run `godot --headless --path . --quit-after 2` — must be clean.
+      ➕ Env upgrade: ran `godot --headless --import` once to build the missing
+      `.godot` class-name cache (ToonShading is a `class_name` and needs it).
+      Result: the run is now FULLY clean — zero errors — and the pre-existing
+      unimported-glb/MobileSensors baseline errors from Tasks 1–8 are gone too.
+      Error diff vs stashed baseline: empty both ways. The import also
+      generated `toon_shading.gd.uid` and the previously-missing
+      `ground.gdshader.uid` (committed — Godot manages these).
 
 ### Task 10: Ability HUD redraw gating
 

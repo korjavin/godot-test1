@@ -909,17 +909,14 @@ func apply_toon_shading(mesh: MeshInstance3D) -> void:
 
 	Materials that are already toon (the primitive characters) are skipped.
 
+	The actual styling now lives in the shared ToonShading helper
+	(scripts/toon_shading.gd) so crocodiles get the identical treatment; its
+	static material cache is correct for the player too — the same source
+	material always maps to the same styled duplicate.
+
 	@param mesh: The mesh whose surface materials should be cel-shaded
 	"""
-	for surface in mesh.get_surface_override_material_count():
-		var mat := mesh.get_active_material(surface)
-		if mat is BaseMaterial3D and mat.diffuse_mode != BaseMaterial3D.DIFFUSE_TOON:
-			var styled := mat.duplicate() as BaseMaterial3D
-			styled.diffuse_mode = BaseMaterial3D.DIFFUSE_TOON
-			styled.rim_enabled = true
-			styled.rim = 0.4
-			styled.rim_tint = 0.25
-			mesh.set_surface_override_material(surface, styled)
+	ToonShading.apply_to_mesh(mesh)
 
 func _sfx(method: String, arg: Variant = null) -> void:
 	"""
