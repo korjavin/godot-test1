@@ -399,10 +399,7 @@ func _physics_process(delta: float) -> void:
 	if Input.is_action_just_pressed("jump") and is_on_floor() and not is_giant:
 		# Set upward velocity for jump
 		velocity.y = JUMP_VELOCITY
-		# Jump sound (null-safe group lookup, like the hit_flash pattern).
-		var sm := get_tree().get_first_node_in_group("sound_manager")
-		if sm and sm.has_method("play_jump"):
-			sm.play_jump()
+		_sfx("play_jump")
 
 	# STEP 3: Handle Ducking
 	handle_ducking()
@@ -862,6 +859,19 @@ func apply_toon_shading(mesh: MeshInstance3D) -> void:
 			styled.rim_tint = 0.25
 			mesh.set_surface_override_material(surface, styled)
 
+func _sfx(method: String, arg: Variant = null) -> void:
+	"""
+	Fire one SoundManager one-shot (e.g. "play_jump") via the "sound_manager"
+	group — null-safe like the hit_flash pattern, so a scene run without Main
+	just stays silent instead of erroring.
+	"""
+	var sm := get_tree().get_first_node_in_group("sound_manager")
+	if sm and sm.has_method(method):
+		if arg == null:
+			sm.call(method)
+		else:
+			sm.call(method, arg)
+
 func update_character_animation(delta: float, input_dir: Vector2) -> void:
 	"""
 	Main animation update function. Determines which animation to play
@@ -880,6 +890,14 @@ func update_character_animation(delta: float, input_dir: Vector2) -> void:
 	var is_moving = input_dir.length() > 0.1
 	var current_on_floor = is_on_floor()
 
+	# Landing thud, keyed to the raw floor transition rather than the animation
+	# branch below — an active sidestep would otherwise swallow it — and muted
+	# during the frozen caught/respawn/game-over windows (this function still
+	# runs there, and settling under gravity mid-freeze shouldn't thud).
+	if current_on_floor and not was_on_floor \
+			and not (is_caught or is_respawning or is_game_over):
+		_sfx("play_land")
+
 	# Jump/Fall animation
 	if not current_on_floor:
 		animate_jumping()
@@ -889,10 +907,6 @@ func update_character_animation(delta: float, input_dir: Vector2) -> void:
 	# Landing detected
 	elif not was_on_floor and current_on_floor:
 		animate_landing()
-		# Landing thud (null-safe group lookup).
-		var sm := get_tree().get_first_node_in_group("sound_manager")
-		if sm and sm.has_method("play_land"):
-			sm.play_land()
 	# Walking/Running animation
 	elif is_moving and current_on_floor:
 		var speed_multiplier = 1.5 if is_running else 1.0
@@ -1096,10 +1110,8 @@ func hit_by_crocodile() -> void:
 	is_caught = true
 	caught_timer = CAUGHT_DURATION
 
-	# Bite sting (null-safe group lookup, like the hit_flash below).
-	var sm := get_tree().get_first_node_in_group("sound_manager")
-	if sm and sm.has_method("play_bite"):
-		sm.play_bite()
+	# Bite sting.
+	_sfx("play_bite")
 
 	# Pop the red full-screen flash (found via group, so the HUD isn't hard-wired).
 	var flash := get_tree().get_first_node_in_group("hit_flash")
@@ -1153,10 +1165,8 @@ func _trigger_game_over() -> void:
 	_hide_respawn_message()
 	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 
-	# Game-over sting (null-safe group lookup).
-	var sm := get_tree().get_first_node_in_group("sound_manager")
-	if sm and sm.has_method("play_game_over"):
-		sm.play_game_over()
+	# Game-over sting.
+	_sfx("play_game_over")
 
 	var panel := get_tree().get_first_node_in_group("game_over_ui")
 	if panel and panel.has_method("show_game_over"):
@@ -1406,10 +1416,8 @@ func try_activate_ability() -> void:
 	if used:
 		ability_cooldowns[current_character_index] = float(ABILITY_COOLDOWN.get(char_name, 10.0))
 		# Whoosh only when the ability actually fired — a failed Primm blink that
-		# costs no cooldown stays silent too (null-safe group lookup).
-		var sm := get_tree().get_first_node_in_group("sound_manager")
-		if sm and sm.has_method("play_ability"):
-			sm.play_ability(char_name)
+		# costs no cooldown stays silent too.
+		_sfx("play_ability", char_name)
 
 
 func _ability_windman() -> bool:

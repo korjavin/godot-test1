@@ -42,7 +42,7 @@ script = ExtResource("6_lod")
 [node name="MobileInput" type="Node" parent="." groups=["mobile_input"]]
 script = ExtResource("11_mobileinput")
 
-[node name="SoundManager" type="Node" parent="." groups=["sound_manager"]]
+[node name="SoundManager" type="Node" parent="."]
 script = ExtResource("14_sound")
 
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]

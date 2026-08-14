@@ -159,7 +159,6 @@ func _ready() -> void:
 	wind.loop_mode = AudioStreamWAV.LOOP_FORWARD
 	wind.loop_begin = 0
 	wind.loop_end = wind.data.size() / 2  # frames, not bytes (2 bytes/frame)
-	_streams["wind"] = wind
 
 	# Build the one-shot player pool.
 	for i in range(ONESHOT_PLAYER_COUNT):
