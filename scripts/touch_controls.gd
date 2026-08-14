@@ -480,6 +480,13 @@ func _update_steer_toggle_label() -> void:
 ## captured from the first REAL sample, not the stale pre-permission default, so iOS's
 ## async grant no longer biases steering.)
 func _on_enable_overlay_pressed() -> void:
+	# This tap is the guaranteed user gesture on mobile web — unlock audio here
+	# (before any early return: no driver must not mean no sound). Null-safe, so
+	# a scene without a SoundManager never errors.
+	var sm := get_tree().get_first_node_in_group("sound_manager")
+	if sm and sm.has_method("unlock_audio"):
+		sm.unlock_audio()
+
 	if _ensure_driver() == null:
 		# No driver to talk to: do NOT latch enabled or hide the overlay. The overlay
 		# stays visible and tappable so the player can retry (e.g. if the node appears
