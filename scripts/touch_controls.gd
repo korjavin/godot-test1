@@ -153,6 +153,7 @@ var _jump_button: Button = null
 var _special_button: Button = null
 var _switch_button: Button = null
 var _steer_toggle: Button = null
+var _fullscreen_button: Button = null
 var _enable_overlay: Button = null
 
 ## Text children of the enable overlay. A Button cannot autowrap its own text, so
@@ -264,6 +265,35 @@ func _build_ui() -> void:
 	add_child(_steer_toggle)
 	# Seed its label from the driver's current mode (TILT by default).
 	_update_steer_toggle_label()
+
+	# --- Fullscreen toggle, right of the steer toggle (Android web only) ---
+	# iOS Safari doesn't support requestFullscreen (the probe reports false there),
+	# so this button only ever appears where it can actually work: Android/desktop
+	# browsers with `document.fullscreenEnabled`. Same top strip, same translucent
+	# family style, a square the height of the steer toggle. A Button.pressed
+	# handler runs inside a user-gesture call stack — which is exactly what the
+	# browser requires before it will grant an enter-fullscreen request.
+	_fullscreen_button = Button.new()
+	_fullscreen_button.name = "FullscreenButton"
+	_fullscreen_button.text = "⛶"
+	_fullscreen_button.custom_minimum_size = Vector2(TOGGLE_HEIGHT, TOGGLE_HEIGHT)
+	_fullscreen_button.add_theme_font_size_override("font_size", 30)
+	_apply_translucent_style(_fullscreen_button, TOGGLE_HEIGHT / 2.0)
+	# Park it immediately to the right of the centred steer toggle: same top-centre
+	# anchoring, offsets pushed right past the toggle's half-width plus a margin.
+	_fullscreen_button.anchor_left = 0.5
+	_fullscreen_button.anchor_right = 0.5
+	_fullscreen_button.anchor_top = 0.0
+	_fullscreen_button.anchor_bottom = 0.0
+	_fullscreen_button.offset_left = TOGGLE_WIDTH * 0.5 + BUTTON_MARGIN * 0.25
+	_fullscreen_button.offset_right = TOGGLE_WIDTH * 0.5 + BUTTON_MARGIN * 0.25 + TOGGLE_HEIGHT
+	_fullscreen_button.offset_top = BUTTON_MARGIN
+	_fullscreen_button.offset_bottom = BUTTON_MARGIN + TOGGLE_HEIGHT
+	# Visible only where fullscreen can actually be entered (Android web; false on
+	# iOS Safari and on all native/desktop builds — see the probe's doc comment).
+	_fullscreen_button.visible = MobileSensors.is_fullscreen_available()
+	_fullscreen_button.pressed.connect(_on_fullscreen_pressed)
+	add_child(_fullscreen_button)
 
 	# --- First-run enable overlay (full-rect) -----------------------------
 	# A big, semi-transparent Button covering the whole screen. We use a Button (not
@@ -598,6 +628,17 @@ func _on_steer_toggle_pressed() -> void:
 	var next: int = _driver.SteerMode.TWIST if current == _driver.SteerMode.TILT else _driver.SteerMode.TILT
 	_driver.set_steer_mode(next)
 	_update_steer_toggle_label()
+
+
+## Fullscreen button → toggle the browser between fullscreen and windowed via
+## DisplayServer (Godot's web port routes this to requestFullscreen/exitFullscreen).
+## Running inside the Button's pressed signal keeps us in the user-gesture call
+## stack the browser demands for ENTERING fullscreen; leaving needs no gesture.
+func _on_fullscreen_pressed() -> void:
+	if DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN:
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
+	else:
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
 
 
 ## Refresh the steer toggle's caption to show the *current* mode, so the player can

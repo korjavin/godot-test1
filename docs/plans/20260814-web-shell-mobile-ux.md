@@ -89,8 +89,8 @@ All edits go in `[preset.3.options]` (the Web preset) of `export_presets.cfg`. K
 
 ### Task 5: Fullscreen toggle button, Android web only (touch_controls.gd + mobile_sensors.gd)
 
-- [ ] add a static helper to `mobile_sensors.gd`: `static func is_fullscreen_available() -> bool` — returns false unless `OS.has_feature("web")`; on web, feature-detect via `JavaScriptBridge.eval("document.fullscreenEnabled === true", true)` (iOS Safari reports false — `requestFullscreen` is unsupported there; Android Chrome reports true). Follows the file's existing pattern of web-gated static JS probes (`is_touch_session()`).
-- [ ] in `touch_controls.gd` `_build_ui()`, add a small `"⛶"` fullscreen `Button` right of the steer toggle (same top strip, same translucent style, roughly `TOGGLE_HEIGHT` square). Visible only when `MobileSensors.is_fullscreen_available()`. Its `pressed` handler toggles via `DisplayServer.window_set_mode(...)`: if current mode is `WINDOW_MODE_FULLSCREEN` → `WINDOW_MODE_WINDOWED`, else `WINDOW_MODE_FULLSCREEN`. A `Button.pressed` handler IS a user gesture, which the browser requires for entering fullscreen.
+- [x] add a static helper to `mobile_sensors.gd`: `static func is_fullscreen_available() -> bool` — returns false unless `OS.has_feature("web")`; on web, feature-detect via `JavaScriptBridge.eval("document.fullscreenEnabled === true", true)` (iOS Safari reports false — `requestFullscreen` is unsupported there; Android Chrome reports true). Follows the file's existing pattern of web-gated static JS probes (`is_touch_session()`).
+- [x] in `touch_controls.gd` `_build_ui()`, add a small `"⛶"` fullscreen `Button` right of the steer toggle (same top strip, same translucent style, roughly `TOGGLE_HEIGHT` square). Visible only when `MobileSensors.is_fullscreen_available()`. Its `pressed` handler toggles via `DisplayServer.window_set_mode(...)`: if current mode is `WINDOW_MODE_FULLSCREEN` → `WINDOW_MODE_WINDOWED`, else `WINDOW_MODE_FULLSCREEN`. A `Button.pressed` handler IS a user gesture, which the browser requires for entering fullscreen.
 
 ### Task 6: Pause on focus loss + tap-to-resume (mobile_input.gd + touch_controls.gd)
 
