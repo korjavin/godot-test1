@@ -11,9 +11,11 @@ extends Control
 ##   * **Switch (R)** → fires the *event-driven* `switch_character` action.
 ##   * **steer toggle**→ flips the driver between TILT and TWIST steering.
 ##
-## plus a first-run **"Tap to enable motion controls"** overlay that satisfies
-## iOS Safari's user-gesture requirement for motion permission and calibrates the
-## neutral pose, then gets out of the way.
+## plus a first-run **"TAP TO START"** onboarding overlay (a mini how-to that also
+## satisfies iOS Safari's user-gesture requirement for motion permission and
+## calibrates the neutral pose, then gets out of the way — re-showable later as a
+## help screen via `show_onboarding()`), and a full-screen **portrait guard** that
+## asks the player to rotate to landscape.
 ##
 ## ----------------------------------------------------------------------------
 ## No hard references — found by group, like the rest of the HUD
@@ -98,6 +100,15 @@ const FORCE_SHOW_KEYCODE: Key = KEY_F6
 ## the permission dialog round-trip plus a few sensor frames without feeling sticky.
 const MOTION_ENABLE_TIMEOUT: float = 3.5
 
+## Onboarding overlay copy. The overlay doubles as a mini how-to: a big headline
+## plus the three things a first-time phone player must know. The headline swaps
+## to RETRY_HEADLINE when an enable attempt times out with no motion data (see
+## `_update_motion_watch`) and back to ONBOARD_HEADLINE whenever the overlay is
+## re-shown via `show_onboarding()` — the how-to body always stays underneath.
+const ONBOARD_HEADLINE: String = "TAP TO START"
+const RETRY_HEADLINE: String = "Motion unavailable — tap to retry"
+const ONBOARD_BODY: String = "Step in place to walk\nTilt your phone to steer\nButtons bottom-right: Jump / Special / Switch"
+
 # ============================================================================
 # STATE
 # ============================================================================
@@ -144,6 +155,18 @@ var _switch_button: Button = null
 var _steer_toggle: Button = null
 var _enable_overlay: Button = null
 
+## Text children of the enable overlay. A Button cannot autowrap its own text, so
+## the words live in Labels layered on top of it (mouse_filter IGNORE keeps them
+## tap-transparent): `_enable_headline` carries the big "TAP TO START" (or the
+## retry message), `_enable_body` the wrapping how-to lines beneath it.
+var _enable_headline: Label = null
+var _enable_body: Label = null
+
+## Full-screen "Rotate your device" ColorRect, shown whenever a REAL touch session
+## is held in portrait (viewport taller than wide). Drawn on top of everything and
+## swallowing taps, because the 1920x1080 landscape layout is hopeless in portrait.
+var _portrait_guard: ColorRect = null
+
 
 func _ready() -> void:
 	# The root Control spans the whole screen (full-rect anchors set in the .tscn).
@@ -151,6 +174,11 @@ func _ready() -> void:
 	# the game world (the buttons below capture their own input via STOP), matching
 	# the plan's "PASS on the root, buttons capture their own input" note.
 	mouse_filter = Control.MOUSE_FILTER_PASS
+
+	# Join the "touch_controls" group so other UI (the settings panel's "How to
+	# play" button) can find us and call `show_onboarding()` — the same no-hard-refs
+	# group-discovery convention as everything else in this project.
+	add_to_group("touch_controls")
 
 	# Find the motion driver by group — no hard reference, exactly like ability_hud
 	# finds the player. May be null on a stripped build; every handler guards for it.
@@ -244,8 +272,10 @@ func _build_ui() -> void:
 	# the child order so it draws on top of the action buttons until dismissed.
 	_enable_overlay = Button.new()
 	_enable_overlay.name = "EnableOverlay"
-	_enable_overlay.text = "Tap to enable motion controls"
-	_enable_overlay.add_theme_font_size_override("font_size", 32)
+	# The Button itself carries NO text — a Button cannot autowrap, so the words
+	# live in the Label children built just below, where the how-to lines can wrap
+	# on a narrow phone screen. The Button is purely the tap surface + dark fill.
+	_enable_overlay.text = ""
 	# A translucent dark fill so the world is still faintly visible behind the prompt.
 	var overlay_style := StyleBoxFlat.new()
 	overlay_style.bg_color = Color(0.0, 0.0, 0.0, 0.72)
@@ -261,6 +291,66 @@ func _build_ui() -> void:
 	_enable_overlay.offset_bottom = 0.0
 	_enable_overlay.pressed.connect(_on_enable_overlay_pressed)
 	add_child(_enable_overlay)
+
+	# The overlay's words: headline + how-to body, stacked in a full-rect VBox
+	# centered vertically. Every node here is MOUSE_FILTER_IGNORE so taps fall
+	# straight through to the Button underneath (the whole screen stays tappable).
+	var overlay_text := VBoxContainer.new()
+	overlay_text.name = "OnboardingText"
+	overlay_text.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	overlay_text.anchor_right = 1.0
+	overlay_text.anchor_bottom = 1.0
+	overlay_text.alignment = BoxContainer.ALIGNMENT_CENTER
+	overlay_text.add_theme_constant_override("separation", 28)
+	_enable_overlay.add_child(overlay_text)
+
+	# Headline — big and unmissable. Doubles as the error line on a retry (see
+	# `_update_motion_watch`); the how-to body below never changes.
+	_enable_headline = Label.new()
+	_enable_headline.name = "OnboardHeadline"
+	_enable_headline.text = ONBOARD_HEADLINE
+	_enable_headline.add_theme_font_size_override("font_size", 40)
+	_enable_headline.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_enable_headline.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_enable_headline.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	overlay_text.add_child(_enable_headline)
+
+	# How-to body — the three things a first-time phone player needs to know.
+	_enable_body = Label.new()
+	_enable_body.name = "OnboardBody"
+	_enable_body.text = ONBOARD_BODY
+	_enable_body.add_theme_font_size_override("font_size", 28)
+	_enable_body.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_enable_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_enable_body.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	overlay_text.add_child(_enable_body)
+
+	# --- Portrait "rotate your device" guard ------------------------------
+	# Added LAST so it draws on top of everything (including the enable overlay):
+	# the 1920x1080 landscape layout is unusable in portrait, so we black it out and
+	# swallow all taps until the phone is rotated. Visibility is driven per-frame in
+	# `_process` from the viewport aspect — `screen.orientation.lock` is deliberately
+	# NOT used because in-browser iOS ignores it. Starts hidden; only ever shown on a
+	# real touch session (never by the F6 desktop force-show).
+	_portrait_guard = ColorRect.new()
+	_portrait_guard.name = "PortraitGuard"
+	_portrait_guard.color = Color(0.0, 0.0, 0.0, 0.85)
+	_portrait_guard.mouse_filter = Control.MOUSE_FILTER_STOP
+	_portrait_guard.anchor_right = 1.0
+	_portrait_guard.anchor_bottom = 1.0
+	_portrait_guard.visible = false
+	var rotate_label := Label.new()
+	rotate_label.name = "RotateLabel"
+	rotate_label.text = "Rotate your device\n(landscape only)"
+	rotate_label.add_theme_font_size_override("font_size", 40)
+	rotate_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	rotate_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	rotate_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	rotate_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	rotate_label.anchor_right = 1.0
+	rotate_label.anchor_bottom = 1.0
+	_portrait_guard.add_child(rotate_label)
+	add_child(_portrait_guard)
 
 
 ## Create one big square action button with the given visible `label`, an explicit
@@ -425,6 +515,18 @@ func _process(delta: float) -> void:
 	# --- 2. Enable-overlay motion watch -----------------------------------
 	_update_motion_watch(delta)
 
+	# --- 3. Portrait guard -------------------------------------------------
+	# Drive the "rotate your device" screen straight off the viewport aspect each
+	# frame (cheap — one Vector2 compare). Gated on the REAL touch predicate, not
+	# on `visible`, so the F6 desktop force-show can never trigger it; a shrunk
+	# desktop/editor window is not a phone held wrong.
+	if _portrait_guard != null:
+		if _is_touch_device():
+			var view_size: Vector2 = get_viewport().get_visible_rect().size
+			_portrait_guard.visible = view_size.y > view_size.x
+		else:
+			_portrait_guard.visible = false
+
 
 ## Watch for motion to actually start after an enable tap. While `_motion_watching`:
 ## if a fresh real motion sample is flowing, CONFIRM — latch `_motion_enabled` and stop
@@ -460,7 +562,10 @@ func _update_motion_watch(delta: float) -> void:
 		# retry — never leave a keyboardless phone with the controls hidden and no way back.
 		_motion_watching = false
 		if _enable_overlay != null:
-			_enable_overlay.text = "Motion unavailable — tap to retry"
+			# Swap only the HEADLINE to the retry message — the how-to body stays
+			# visible underneath, so a retrying player keeps the instructions.
+			if _enable_headline != null:
+				_enable_headline.text = RETRY_HEADLINE
 			_enable_overlay.visible = true
 
 
@@ -528,13 +633,21 @@ func _update_steer_toggle_label() -> void:
 ## captured from the first REAL sample, not the stale pre-permission default, so iOS's
 ## async grant no longer biases steering.)
 func _on_enable_overlay_pressed() -> void:
+	if _motion_enabled:
+		# Motion is already up and running — the overlay was re-shown as a help
+		# screen via `show_onboarding()`. A tap just dismisses it; do NOT re-request
+		# permission, re-enable the driver, or restart the motion watch.
+		_enable_overlay.visible = false
+		return
+
 	if _ensure_driver() == null:
 		# No driver to talk to: do NOT latch enabled or hide the overlay. The overlay
 		# stays visible and tappable so the player can retry (e.g. if the node appears
 		# later), instead of being left with a hidden overlay and no controls at all.
-		# Re-label so the player understands a retry is possible.
-		if _enable_overlay != null:
-			_enable_overlay.text = "Motion unavailable — tap to retry"
+		# Re-label the headline so the player understands a retry is possible (the
+		# how-to body stays put beneath it).
+		if _enable_headline != null:
+			_enable_headline.text = RETRY_HEADLINE
 		return
 
 	# Order matters: request permission first (still inside the user gesture), then
@@ -551,3 +664,21 @@ func _on_enable_overlay_pressed() -> void:
 	_motion_watch_elapsed = 0.0
 	if _enable_overlay != null:
 		_enable_overlay.visible = false
+
+
+# ============================================================================
+# PUBLIC API (called by other UI via the "touch_controls" group)
+# ============================================================================
+
+## Re-show the onboarding overlay as a HELP SCREEN, with the default how-to text.
+## Called by the settings panel's "How to play" button (found via the group). This
+## deliberately does NOT reset `_motion_enabled` or touch the driver: if motion is
+## already running, the tap handler sees `_motion_enabled` and simply hides the
+## overlay again; if motion was never enabled, the overlay behaves exactly like the
+## first run (tap = permission gesture + enable + watch).
+func show_onboarding() -> void:
+	if _enable_overlay == null:
+		return
+	if _enable_headline != null:
+		_enable_headline.text = ONBOARD_HEADLINE
+	_enable_overlay.visible = true
