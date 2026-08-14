@@ -109,6 +109,27 @@ var step_direction: float = 0.0
 ## full restart from the Game Over screen (see restart_game / reset_position).
 var coins_collected: int = 0
 
+## Coin streak multiplier: picking up coins in quick succession (each pickup
+## within STREAK_WINDOW seconds of the last) builds a streak. Every
+## STREAK_COINS_PER_STEP consecutive coins raise the score multiplier by +1, up
+## to 1 + STREAK_MAX_BONUS (x5). Letting the window lapse — or getting bitten
+## (see hit_by_crocodile) — resets the streak to zero. This rewards staying ON
+## the coin road and moving fast, which is exactly the risk the difficulty
+## gradient punishes.
+const STREAK_WINDOW: float = 2.5
+const STREAK_MAX_BONUS: int = 4
+const STREAK_COINS_PER_STEP: int = 10
+var coin_streak: int = 0
+var streak_timer: float = 0.0
+
+## Extra lives from coins: every EXTRA_LIFE_COINS coins banked grants +1 life,
+## capped at LIVES_CAP hearts. next_extra_life_at is the next threshold to cross
+## (collect_coin advances it in a while-loop, because one gem at a high streak
+## multiplier can jump across a whole threshold — or even two).
+const EXTRA_LIFE_COINS: int = 75
+const LIVES_CAP: int = 5
+var next_extra_life_at: int = EXTRA_LIFE_COINS
+
 ## Headline score: how far this run has travelled, in metres. The coin road's
 ## centerline X is strictly increasing by construction (see endless_terrain.gd —
 ## `road_max_heading_deg < 90` so cos(heading) > 0), which means the farthest X
@@ -404,6 +425,13 @@ func _physics_process(delta: float) -> void:
 	# this run (see run_distance above for why farthest-X == distance travelled).
 	run_distance = maxi(run_distance, int(global_position.x))
 
+	# STEP 0.45: Tick the coin-streak window down; when it lapses the streak is
+	# over and the score multiplier drops back to x1 (see collect_coin).
+	if streak_timer > 0.0:
+		streak_timer = maxf(0.0, streak_timer - delta)
+		if streak_timer <= 0.0:
+			coin_streak = 0
+
 	# STEP 0.5: Tick ability cooldowns / the Windman air boost, then read the F key.
 	# Done before gravity so an active boost can soften this frame's fall.
 	_update_ability_timers(delta)
@@ -530,12 +558,18 @@ func calculate_current_speed() -> float:
 	if windman_boost_timer > 0.0 and not is_on_floor():
 		return WINDMAN_AIR_SPEED
 
+	# Each character has a modest speed stat (see CHARACTER_SPEED) that scales
+	# every grounded gait. Unknown names fall back to 1.0 — a new character
+	# without an entry just moves at baseline speed.
+	var char_name: String = CHARACTERS[current_character_index]["name"]
+	var speed_scale: float = float(CHARACTER_SPEED.get(char_name, 1.0))
+
 	if is_ducking:
-		return DUCK_SPEED
+		return DUCK_SPEED * speed_scale
 	elif is_running:
-		return RUN_SPEED
+		return RUN_SPEED * speed_scale
 	else:
-		return WALK_SPEED
+		return WALK_SPEED * speed_scale
 
 func handle_ducking() -> void:
 	"""
@@ -1095,9 +1129,33 @@ func collect_coin(value: int = 1) -> void:
 	Add a pickup's worth to the coin count. Called by a coin's Area3D when the
 	player touches it (see coin.gd) — a plain coin passes 1, a purple gem passes
 	its GEM_VALUE (10). The HUD picks up the new value on its next frame.
+
+	Two layered bonuses happen here:
+	- STREAK: each pickup refreshes the streak window; the pickup's value is
+	  multiplied by the current streak multiplier (see get_streak_multiplier).
+	  The streak counts *pickups*, not value — a gem is one link in the chain.
+	- EXTRA LIVES: every EXTRA_LIFE_COINS banked grants +1 life up to LIVES_CAP.
+	  A while-loop, not an if: one gem at x5 is worth 50 and can jump across a
+	  whole threshold (or two), and each crossed threshold must still pay out.
 	"""
-	coins_collected += value
-	print("Collected a coin worth %d! Total: %d" % [value, coins_collected])
+	streak_timer = STREAK_WINDOW
+	coin_streak += 1
+	coins_collected += value * get_streak_multiplier()
+	while coins_collected >= next_extra_life_at:
+		next_extra_life_at += EXTRA_LIFE_COINS
+		if lives < LIVES_CAP:
+			lives += 1
+			print("Extra life! Lives: %d" % lives)
+	print("Collected a coin worth %d (x%d streak)! Total: %d" % [value, get_streak_multiplier(), coins_collected])
+
+
+func get_streak_multiplier() -> int:
+	"""
+	Current score multiplier from the coin streak: x1 with no streak, +1 per
+	STREAK_COINS_PER_STEP consecutive coins, capped at 1 + STREAK_MAX_BONUS.
+	Read by the coin HUD to show the "(xN)" suffix.
+	"""
+	return 1 + mini(STREAK_MAX_BONUS, coin_streak / STREAK_COINS_PER_STEP)
 
 
 func hit_by_crocodile() -> void:
@@ -1114,6 +1172,10 @@ func hit_by_crocodile() -> void:
 	"""
 	if is_caught or is_respawning or is_game_over:
 		return
+	# A real bite breaks the coin streak. Deliberately AFTER the invulnerability
+	# early-return above, so an ignored bite (grace window etc.) costs nothing.
+	coin_streak = 0
+	streak_timer = 0.0
 	is_caught = true
 	caught_timer = CAUGHT_DURATION
 
@@ -1221,6 +1283,9 @@ func restart_game() -> void:
 	"""
 	coins_collected = 0
 	run_distance = 0
+	coin_streak = 0
+	streak_timer = 0.0
+	next_extra_life_at = EXTRA_LIFE_COINS
 	lives = MAX_LIVES
 	is_game_over = false
 	is_caught = false
@@ -1283,9 +1348,13 @@ func reset_position() -> void:
 	# Define spawn point
 	var spawn_point = Vector3(0, 2, 0)
 
-	# A full restart wipes the coin count and the distance score.
+	# A full restart wipes the coin count, the distance score, and the streak /
+	# extra-life progress that hangs off the coin count.
 	coins_collected = 0
 	run_distance = 0
+	coin_streak = 0
+	streak_timer = 0.0
+	next_extra_life_at = EXTRA_LIFE_COINS
 
 	# Clear any crocodiles near the spawn point
 	clear_nearby_crocodiles(spawn_point)
@@ -1362,6 +1431,18 @@ const ABILITY_COOLDOWN := {
 	"primm": 6.0,
 	"teibi": 4.0,
 	"phoboman": 12.0,
+}
+
+## Per-character movement speed multiplier, applied to duck/run/walk in
+## calculate_current_speed() (NOT to Windman's Air Rush — that ability defines
+## its own absolute speed). The spread is deliberately modest (0.9–1.15) so
+## every character stays playable: Primm is the sprinter, Teibi the tank whose
+## power compensates, and the others sit near baseline.
+const CHARACTER_SPEED := {
+	"windman": 1.0,
+	"primm": 1.15,
+	"teibi": 0.9,
+	"phoboman": 1.05,
 }
 
 ## Friendly ability names shown on the cooldown HUD.

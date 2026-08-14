@@ -193,7 +193,7 @@ regenerates byte-identically on revisit and coin seam-claiming still holds.
 
 ### Task 6: Coin streak multiplier + per-character speeds + extra lives
 
-- [ ] `scripts/player_controller.gd`: streak state (`coin_streak: int`,
+- [x] `scripts/player_controller.gd`: streak state (`coin_streak: int`,
       `streak_timer: float`, `const STREAK_WINDOW: float = 2.5`,
       `const STREAK_MAX_BONUS: int = 4`, `const STREAK_COINS_PER_STEP: int = 10`).
       `collect_coin(value: int = 1)`: refresh `streak_timer`, increment `coin_streak`,
@@ -202,20 +202,20 @@ regenerates byte-identically on revisit and coin seam-claiming still holds.
       reset `coin_streak`. Break the streak in `hit_by_crocodile()` (before the
       invulnerability early-return? NO — after it, so ignored bites don't break streaks).
       Expose `func get_streak_multiplier() -> int` for the HUD.
-- [ ] `scripts/coin_hud.gd`: append ` (x%d)` when the multiplier is > 1, e.g.
+- [x] `scripts/coin_hud.gd`: append ` (x%d)` when the multiplier is > 1, e.g.
       `Distance: 240m   Coins: 87 (x3)`.
-- [ ] `scripts/player_controller.gd`: `const CHARACTER_SPEED := { "windman": 1.0,
+- [x] `scripts/player_controller.gd`: `const CHARACTER_SPEED := { "windman": 1.0,
       "primm": 1.15, "teibi": 0.9, "phoboman": 1.05 }` next to `ABILITY_COOLDOWN`;
       multiply into `calculate_current_speed()`'s duck/run/walk returns (NOT the
       windman air-rush return — the ability already defines its own speed). Keep the
       spread modest (0.9–1.15) so no character is unplayable.
-- [ ] Extra life every 75 coins: `const EXTRA_LIFE_COINS: int = 75`,
+- [x] Extra life every 75 coins: `const EXTRA_LIFE_COINS: int = 75`,
       `const LIVES_CAP: int = 5`, `var next_extra_life_at: int = EXTRA_LIFE_COINS`.
       In `collect_coin()`, while `coins_collected >= next_extra_life_at`: advance the
       threshold and `lives = mini(lives + 1, LIVES_CAP)`. Reset `next_extra_life_at`
       in `restart_game()`/`reset_position()`. (While-loop, not if: a single gem+streak
       pickup can jump across a threshold — or even two.)
-- [ ] Fix `scripts/lives_hud.gd`: DELETE its own `const MAX_LIVES` and read the pip
+- [x] Fix `scripts/lives_hud.gd`: DELETE its own `const MAX_LIVES` and read the pip
       count from the player via the existing group lookup —
       `maxi(player.MAX_LIVES, player.lives)` pips total, `lives` of them filled — so a
       4th/5th heart renders correctly and the duplication bug is gone. Track the drawn

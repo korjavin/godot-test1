@@ -17,3 +17,9 @@ func _process(_delta: float) -> void:
 	if player and "coins_collected" in player:
 		var distance: int = player.run_distance if "run_distance" in player else 0
 		text = "Distance: %dm   Coins: %d" % [distance, player.coins_collected]
+		# Show the coin-streak multiplier only while it's actually boosting (>1),
+		# e.g. "Distance: 240m   Coins: 87 (x3)" — see get_streak_multiplier().
+		if player.has_method("get_streak_multiplier"):
+			var mult: int = player.get_streak_multiplier()
+			if mult > 1:
+				text += " (x%d)" % mult
