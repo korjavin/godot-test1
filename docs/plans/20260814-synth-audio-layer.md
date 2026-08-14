@@ -56,9 +56,9 @@
 - [x] **web unlock**: `var _unlocked: bool = false`; every `play_*` early-returns while `!_unlocked`; `unlock_audio()` sets the flag and starts the wind loop; `_input(event)` in the manager itself calls `unlock_audio()` on the first key/mouse-button/screen-touch pressed event then `set_process_input(false)` — this covers desktop-web first keypress/click AND is harmless on native desktop (sounds simply start with the first input, which is when gameplay starts anyway). Comment the mobile-browser-gesture WHY prominently. No JavaScriptBridge needed — Godot 4.5 web resumes the AudioContext on a user gesture automatically; gating our own playback until a gesture guarantees no "AudioContext was not allowed to start" console errors
 
 ### Task 2: Add SoundManager node to scenes/main.tscn (surgical diff)
-- [ ] add one `ext_resource` line for `scripts/sound_manager.gd` (type="Script", new unique id), bump `load_steps` by 1 in the header
-- [ ] add `[node name="SoundManager" type="Node" parent="." groups=["sound_manager"]]` with the script, placed right after the `MobileInput` node block (mirrors `CrocodileLODManager`/`MobileInput` placement); touch nothing else in the file
-- [ ] do NOT hand-edit any `.gd.uid` files (Godot generates the new one; if the editor is unavailable, omitting the .uid is fine — Godot creates it on next import)
+- [x] add one `ext_resource` line for `scripts/sound_manager.gd` (type="Script", new unique id), bump `load_steps` by 1 in the header
+- [x] add `[node name="SoundManager" type="Node" parent="." groups=["sound_manager"]]` with the script, placed right after the `MobileInput` node block (mirrors `CrocodileLODManager`/`MobileInput` placement); touch nothing else in the file
+- [x] do NOT hand-edit any `.gd.uid` files (Godot generates the new one; if the editor is unavailable, omitting the .uid is fine — Godot creates it on next import)
 
 ### Task 3: One-liner hooks in existing scripts
 - [ ] `scripts/coin.gd` `_on_body_entered()`: after `collected = true`, null-safe group lookup + `sm.play_coin()` (two lines, matching the `hit_flash` lookup pattern; brief comment: the coin frees itself, so the MANAGER owns the player — a sound attached to this dying node would be cut off)
