@@ -116,6 +116,13 @@ The player has a **lives system** (`MAX_LIVES = 3`, drawn as red hearts top-left
 
 Invulnerability is enforced in one place: `hit_by_crocodile()` early-returns while `is_caught`, `is_respawning`, or `is_game_over`. `reset_position()` is now only the **hard reset to spawn** `(0,2,0)` (teleport + zero velocity/rotation + `clear_nearby_crocodiles()` + wipe coins + `_reset_ability_states()`) used by `restart_game()` and kept as the crocodile's legacy fallback — a normal bite no longer teleports to origin or clears coins. (Giant-form Teibi still **crushes** crocodiles on contact via `crushes_crocodiles()`, so those never reach the bite path at all.)
 
+### Synthesized audio (no asset files)
+`scripts/sound_manager.gd` (a `Node` named `SoundManager` under `Main` in `main.tscn`, in group `"sound_manager"`) is the entire audio layer. **Invariant: there are no audio asset files** — every sound is generated in code at `_ready()` as an `AudioStreamWAV` (mono 16-bit PCM at `MIX_RATE = 22050`), so the web build size is unchanged. One-shots play through a round-robin pool of `ONESHOT_PLAYER_COUNT` `AudioStreamPlayer` children (overlapping sounds don't cut each other off); the quiet ambient wind bed (`WIND_VOLUME_DB = -26`, far below the −6..−10 dB one-shots) has its own dedicated looping player.
+
+Public API (all void, all safe to call anytime): `play_coin()` (random `pitch_scale` jitter per pickup), `play_jump()`, `play_land()`, `play_ability(character_name)` (per-character pitch via the `ABILITY_PITCH` dict), `play_bite()`, `play_game_over()`, and `unlock_audio()`. Callers never hold a reference — hooks in `coin.gd`, `player_controller.gd`, and `touch_controls.gd` are null-safe one-liners via the group: `var sm := get_tree().get_first_node_in_group("sound_manager")` / `if sm and sm.has_method("play_coin"): sm.play_coin()` — so any scene run without `Main` stays silent instead of erroring. (The coin's pickup sound plays through the manager's players, not the coin, because the coin `queue_free()`s itself on pickup.)
+
+**Web unlock gesture rule:** browsers block audio until a user gesture, so every `play_*` early-returns until `unlock_audio()` flips `_unlocked` (which also starts the wind loop). The manager's own `_input()` calls it on the first key/click/touch (then disables input processing), and `touch_controls.gd`'s "enable motion controls" overlay tap calls it explicitly — the guaranteed gesture on mobile web. Don't add a `play_*` path that bypasses this gate.
+
 ## Performance & web build
 The game ships primarily as a **web (WebGL) build**, which is the performance-sensitive target. Several systems exist purely to keep it smooth in a browser without changing how it looks or plays on desktop:
 

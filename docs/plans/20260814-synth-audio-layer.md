@@ -78,7 +78,7 @@
 - [x] if a `godot` binary is on PATH: run `godot --headless --path . --quit-after 2` and confirm no script parse errors; otherwise do a careful self-review of every edited file for syntax (balanced indents, typed signatures) — ran on Godot 4.5.stable, exit 0, no parse errors
 
 ### Task 5: [Final] Update documentation
-- [ ] add a short "Synthesized audio" subsection to CLAUDE.md's Architecture section: the `sound_manager` group contract, the play_* API, the web unlock gesture rule, and the "no audio assets — everything is generated at _ready()" invariant
+- [x] add a short "Synthesized audio" subsection to CLAUDE.md's Architecture section: the `sound_manager` group contract, the play_* API, the web unlock gesture rule, and the "no audio assets — everything is generated at _ready()" invariant
 
 ## Technical Details
 - `AudioStreamWAV` fields: `format = AudioStreamWAV.FORMAT_16_BITS`, `mix_rate = MIX_RATE`, `stereo = false`, `data` = `PackedByteArray` (2 bytes/frame, little-endian signed 16-bit); float→s16: `clampi(int(sample * 32767.0), -32768, 32767)`.
