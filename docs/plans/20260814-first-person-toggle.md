@@ -131,11 +131,13 @@
       desktop is untouched.
 
 ### Task 5: Verify acceptance criteria
-- [ ] `godot --headless --path . --import` completes without errors
-- [ ] `godot --headless --path . --quit-after 3` runs clean (no script errors)
-- [ ] grep-verify: no diffs in `scripts/endless_terrain.gd`, crocodile scripts, or
-      `scenes/main.tscn` (hard boundary)
-- [ ] re-read the diff for style: teaching comments present, explicit type hints,
+- [x] `godot --headless --path . --import` completes without errors
+- [x] `godot --headless --path . --quit-after 3` runs clean (no script errors)
+- [x] grep-verify: no diffs in `scripts/endless_terrain.gd`, crocodile scripts, or
+      `scenes/main.tscn` (hard boundary) — checked against this plan's commit range
+      (9cd2f9d..HEAD): only CLAUDE.md, project.godot, player_controller.gd,
+      touch_controls.gd, and this plan file changed
+- [x] re-read the diff for style: teaching comments present, explicit type hints,
       constants at top, no `.gd.uid` files hand-edited
 
 ### Task 6: [Final] Update documentation
