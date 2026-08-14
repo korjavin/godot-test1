@@ -141,13 +141,14 @@
       constants at top, no `.gd.uid` files hand-edited
 
 ### Task 6: [Final] Update documentation
-- [ ] Add a short subsection to CLAUDE.md under the player section describing the
+- [x] Add a short subsection to CLAUDE.md under the player section describing the
       first-person toggle (C / `toggle_camera`), the reused-rig design (no second
       camera), the hidden-model rule, the eye-height-tracks-Teibi rule, and the
       `camera_rest_position` shake gotcha — matching the file's existing density.
-- [ ] Note for the PR body (do not code it): the queued game-feel bead
+- [x] Note for the PR body (do not code it): the queued game-feel bead
       godot-test1-afc.2 will later add a SpringArm3D + FOV kick to this same rig and
-      must respect `first_person` mode.
+      must respect `first_person` mode. (Also recorded as the closing bullet of the
+      new CLAUDE.md subsection so it isn't lost if the PR body is rewritten.)
 
 ## Technical Details
 - FP camera local transform under the pivot: identity basis (pivot pitch = look pitch;
