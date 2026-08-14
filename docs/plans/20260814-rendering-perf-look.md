@@ -228,7 +228,7 @@ Hard invariants (repo law — violating any is a blocker):
 
 ### Task 5: Coin cost + presentation — process gating, no shadow, brighter emission, rest tilt
 
-- [ ] `scripts/crocodile_lod_manager.gd`: extend the existing ~9 Hz throttled scan to
+- [x] `scripts/crocodile_lod_manager.gd`: extend the existing ~9 Hz throttled scan to
       ALSO gate coins: for every node in the `"coin"` group, `set_process(false)` when
       beyond `COIN_ANIM_RADIUS = 30.0` from the player and `set_process(true)` within,
       with the same hysteresis-margin pattern (`COIN_HYSTERESIS = 5.0`) and
@@ -239,11 +239,11 @@ Hard invariants (repo law — violating any is a blocker):
       frozen coin still collects normally. Do NOT touch collision layers/masks. Update
       the script's header comment: it is now the small "animation/simulation LOD"
       manager for crocs + coins (name kept for history).
-- [ ] `scenes/collectibles/coin.tscn`: on the `Mesh` MeshInstance3D set `cast_shadow = 0`
+- [x] `scenes/collectibles/coin.tscn`: on the `Mesh` MeshInstance3D set `cast_shadow = 0`
       (a 0.35 m coin's shadow is invisible noise; ~250 casters removed from the shadow
       pass) and raise the gold material's `emission_energy_multiplier` from 0.6 to 1.6
       so coins genuinely exceed the Task 6 glow threshold and bloom.
-- [ ] Coin rest tilt (~15° off vertical so the spin shows face AND edge):
+- [x] Coin rest tilt (~15° off vertical so the spin shows face AND edge):
       in `scripts/coin.gd`, keep the spin in `_process` but compose the mesh basis as
       `Basis(Vector3.UP, spin_angle) * TILT_BASIS * mesh_base_basis` where
       `TILT_BASIS = Basis(Vector3.RIGHT, deg_to_rad(15.0))` and `mesh_base_basis` is the
@@ -252,7 +252,10 @@ Hard invariants (repo law — violating any is a blocker):
       mesh is tilted; the explicit compose is the simple correct form.) `make_gem()`
       needs no change (it scales the whole Area3D). NO pickup tween/pop — the game-feel
       bead owns that.
-- [ ] Run `godot --headless --path . --quit-after 2` — must be clean.
+- [x] Run `godot --headless --path . --quit-after 2` — must be clean.
+      ⚠️ Same env note as Tasks 1–4: pre-existing unimported-glb + MobileSensors
+      class-cache errors only; unique-error set verified byte-identical to the
+      stashed baseline (coin.gd / crocodile_lod_manager.gd load with zero errors).
 
 ### Task 6: Finished sky, UNIVERSAL fog, glow that earns its pass, BCS grade
 

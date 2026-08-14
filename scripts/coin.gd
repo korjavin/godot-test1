@@ -18,6 +18,11 @@ extends Area3D
 ## How fast the coin spins around the vertical axis (radians/sec)
 const SPIN_SPEED: float = 3.0
 
+## Permanent rest lean off vertical (~15°) so the spin alternately shows the
+## coin's face AND its edge instead of a dead-upright disc. Applied as a fixed
+## basis composed with the spin each frame (see _process).
+const TILT_BASIS: Basis = Basis(Vector3.RIGHT, deg_to_rad(15.0))
+
 ## Gem variant: worth this many coins, drawn this much bigger, and tinted purple.
 ## Gems are rolled by the terrain's road scatter (see _road_coins_at) — a coin
 ## becomes a gem only when the spawner calls make_gem() right after instantiate.
@@ -46,6 +51,14 @@ var value: int = 1
 var bob_phase: float = 0.0
 var base_y: float = 0.0
 
+## Accumulated spin angle (radians) and the mesh's scene-authored rest basis.
+## We rebuild the mesh basis from scratch each frame — spin-around-world-up
+## composed with the fixed tilt on top of the authored pose — because a plain
+## `rotate_y` cannot express "spin upright while permanently leaning 15°" once
+## the mesh is tilted (it would spin around the *tilted* local axis instead).
+var spin_angle: float = 0.0
+var mesh_base_basis: Basis
+
 # ============================================================================
 # LIFECYCLE
 # ============================================================================
@@ -56,6 +69,9 @@ func _ready() -> void:
 	# Remember where we were placed so the bob oscillates around it.
 	base_y = position.y
 
+	# Cache the scene-authored mesh pose; the spin/tilt compose on top of it.
+	mesh_base_basis = mesh.basis
+
 	# Offset the bob per-coin so a field of coins doesn't pulse in lockstep.
 	bob_phase = randf() * TAU
 
@@ -64,9 +80,11 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
-	# Spin the coin face.
+	# Spin the coin face: rotate around WORLD up, with the permanent 15° lean
+	# and the authored pose composed in (leftmost transform applies last).
+	spin_angle += SPIN_SPEED * delta
 	if mesh:
-		mesh.rotate_y(SPIN_SPEED * delta)
+		mesh.basis = Basis(Vector3.UP, spin_angle) * TILT_BASIS * mesh_base_basis
 
 	# Bob up and down a little around the spawn height.
 	bob_phase += delta * BOB_SPEED
