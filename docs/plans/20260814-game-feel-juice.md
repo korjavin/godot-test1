@@ -73,11 +73,11 @@ Apex invariant: `v²/2g` stays exactly 3.6125 m (10.2²/28.8), so the 2.5 m bloc
 design and ≤3 m climb steps at player_controller.gd:47-49 are untouched; airtime halves
 (2.83 s → 1.42 s). Crocs drop chase when the player is airborne, so shorter airtime means
 crocs hold aggro more — intended difficulty change per the bead.
-- [ ] `scripts/player_controller.gd`: `JUMP_VELOCITY` 5.1 → 10.2; `gravity` 3.6 → 14.4; update BOTH teaching comment blocks (SECTION 2) to explain the new arcade-snappy arc and the preserved apex math
-- [ ] `WINDMAN_GRAVITY_FACTOR` 0.45 → 0.1125 (14.4 × 0.1125 = 1.62 — byte-identical glide gravity to the old 3.6 × 0.45, so Windman's Air Rush feel is preserved exactly; say so in the comment)
-- [ ] add `const COYOTE_TIME: float = 0.12` and `const JUMP_BUFFER_TIME: float = 0.12` (SECTION 2) with vars `coyote_timer` / `jump_buffer_timer`; each physics frame: `coyote_timer = COYOTE_TIME` while `is_on_floor()`, else tick down; on `Input.is_action_just_pressed("jump")` set `jump_buffer_timer = JUMP_BUFFER_TIME`, else tick down
-- [ ] replace the jump check at STEP 2 (~:546): fire when `jump_buffer_timer > 0.0 and (is_on_floor() or coyote_timer > 0.0) and not is_giant`; on firing zero BOTH timers (prevents a coyote double-jump) and keep the existing `_sfx("play_jump")`
-- [ ] headless smoke clean
+- [x] `scripts/player_controller.gd`: `JUMP_VELOCITY` 5.1 → 10.2; `gravity` 3.6 → 14.4; update BOTH teaching comment blocks (SECTION 2) to explain the new arcade-snappy arc and the preserved apex math
+- [x] `WINDMAN_GRAVITY_FACTOR` 0.45 → 0.1125 (14.4 × 0.1125 = 1.62 — byte-identical glide gravity to the old 3.6 × 0.45, so Windman's Air Rush feel is preserved exactly; say so in the comment)
+- [x] add `const COYOTE_TIME: float = 0.12` and `const JUMP_BUFFER_TIME: float = 0.12` (SECTION 2) with vars `coyote_timer` / `jump_buffer_timer`; each physics frame: `coyote_timer = COYOTE_TIME` while `is_on_floor()`, else tick down; on `Input.is_action_just_pressed("jump")` set `jump_buffer_timer = JUMP_BUFFER_TIME`, else tick down
+- [x] replace the jump check at STEP 2 (~:546): fire when `jump_buffer_timer > 0.0 and (is_on_floor() or coyote_timer > 0.0) and not is_giant`; on firing zero BOTH timers (prevents a coyote double-jump) and keep the existing `_sfx("play_jump")`
+- [x] headless smoke clean
 
 ### Task 4: Horizontal acceleration + footstep events
 - [ ] `scripts/player_controller.gd` STEP 8 (~:582-585): replace the direct `velocity.x/z = planar_velocity.x/z` assignment with `move_toward` toward the target at `const MOVE_ACCELERATION: float = 40.0` m/s² (`velocity.x = move_toward(velocity.x, planar_velocity.x, MOVE_ACCELERATION * delta)`, same for z); the no-input friction branch stays as-is

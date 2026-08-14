@@ -44,22 +44,34 @@ const STEP_DURATION: float = 0.28
 ## Jump velocity determines how high the character can jump
 ## Higher values = higher jumps
 ## Physics Note: This is the initial upward velocity when jumping.
-## Apex height scales with the SQUARE of this. With gravity = 3.6 the apex is
-## about JUMP_VELOCITY^2 / (2 * gravity): 5.1 -> ~3.6 m. Single blocks top out at
-## 2.5 m and structures are climbed in <=3 m steps, so everything stays jumpable.
-const JUMP_VELOCITY: float = 5.1
+## Apex height scales with the SQUARE of this: JUMP_VELOCITY^2 / (2 * gravity).
+## We doubled velocity (5.1 -> 10.2) AND quadrupled gravity (3.6 -> 14.4), so the
+## apex is EXACTLY unchanged: 10.2^2 / (2 * 14.4) = 3.6125 m — same as the old
+## 5.1^2 / (2 * 3.6). Single blocks top out at 2.5 m and structures are climbed
+## in <=3 m steps, so everything stays jumpable. What DID change is airtime
+## (2v/g): 2.83 s -> 1.42 s — the jump reads arcade-snappy instead of floaty.
+const JUMP_VELOCITY: float = 10.2
 
 ## Gravity value (meters per second squared)
-## This matches Earth's gravity. The physics engine uses this to pull
-## the character down when they're in the air.
-## Try changing this to simulate different planets!
-## - Moon: 1.6
-## - Mars: 3.7
-## - Earth: 9.8
-## - Jupiter: 24.8
-var gravity: float = 3.6
+## Deliberately unphysical: 14.4 (about 1.5× Earth) makes the jump arc snappy —
+## the character pops up and comes right back down instead of floating. Paired
+## with JUMP_VELOCITY above so the apex height is preserved (see the math there).
+## For reference, real planets: Moon 1.6, Mars 3.7, Earth 9.8, Jupiter 24.8.
+var gravity: float = 14.4
 
 ##  ProjectSettings.get_setting("physics/3d/default_gravity")
+
+## Coyote time: for this many seconds AFTER walking off a ledge the jump still
+## fires, as if the ground were still underfoot. Players expect it — without it
+## a jump pressed one frame late at a block edge silently eats the input.
+const COYOTE_TIME: float = 0.12
+## Jump buffer: a jump pressed this many seconds BEFORE landing is remembered
+## and fires on the first grounded frame, so button-mashing near the ground
+## never drops a jump.
+const JUMP_BUFFER_TIME: float = 0.12
+## Countdown timers for the two grace windows above (ticked in _physics_process).
+var coyote_timer: float = 0.0
+var jump_buffer_timer: float = 0.0
 
 # ============================================================================
 # SECTION 3: CAMERA AND ROTATION SETTINGS
@@ -540,12 +552,25 @@ func _physics_process(delta: float) -> void:
 		# Note: We multiply by delta to make it frame-rate independent
 		velocity.y -= frame_gravity * delta
 
-	# STEP 2: Handle Jumping
-	# Check if jump button is pressed AND character is on the ground. Giant Teibi
+	# STEP 2: Handle Jumping (with coyote time + jump buffer — see SECTION 2)
+	# Refresh the coyote window while grounded; tick it down while airborne.
+	if is_on_floor():
+		coyote_timer = COYOTE_TIME
+	else:
+		coyote_timer = maxf(0.0, coyote_timer - delta)
+	# A fresh press arms the buffer; otherwise the buffer ticks down.
+	if Input.is_action_just_pressed("jump"):
+		jump_buffer_timer = JUMP_BUFFER_TIME
+	else:
+		jump_buffer_timer = maxf(0.0, jump_buffer_timer - delta)
+	# Fire when a buffered press meets ground OR the coyote window. Giant Teibi
 	# is too heavy to leave the ground, so he can't jump while transformed.
-	if Input.is_action_just_pressed("jump") and is_on_floor() and not is_giant:
-		# Set upward velocity for jump
+	if jump_buffer_timer > 0.0 and (is_on_floor() or coyote_timer > 0.0) and not is_giant:
+		# Set upward velocity for jump. Zero BOTH timers so the same press can't
+		# fire twice (e.g. a coyote jump immediately re-triggering off the buffer).
 		velocity.y = JUMP_VELOCITY
+		coyote_timer = 0.0
+		jump_buffer_timer = 0.0
 		_sfx("play_jump")
 
 	# STEP 3: Handle Ducking
@@ -1575,7 +1600,10 @@ const WINDMAN_AIR_SPEED: float = WALK_SPEED * 5.0
 ## How long the boost lasts, in seconds.
 const WINDMAN_BOOST_DURATION: float = 4.0
 ## Gravity multiplier while boosting, so Windman glides instead of dropping.
-const WINDMAN_GRAVITY_FACTOR: float = 0.45
+## Retuned with the snappy-jump gravity change: 14.4 × 0.1125 = 1.62 m/s² —
+## byte-identical to the old 3.6 × 0.45, so the Air Rush glide feel is
+## preserved exactly even though base gravity quadrupled.
+const WINDMAN_GRAVITY_FACTOR: float = 0.1125
 ## Upward launch applied on activation so he gets airborne to use the speed.
 const WINDMAN_LIFT: float = 6.0
 
