@@ -214,17 +214,18 @@
       the whole task and note it in the plan with ⚠️.
 
 ### Task 5: Verify acceptance criteria
-- [ ] Re-read the diff against the determinism rules: boss stream independent
+- [x] Re-read the diff against the determinism rules: boss stream independent
       (only `hash(Vector3i(i, BOSS_SEED, run_seed))`), no changes to any existing
       RNG draw sequence, `SIM_RADIUS`/`crocodile_lod_manager.gd`/
       `player_controller.gd`/HUD scripts untouched, bosses keep group
       `"crocodile"` (LOD sleep + stink-wave targeting + danger telegraph all
       keep working; a slept boss is fine — sleep-never-remove holds).
-- [ ] `godot --headless --path . --import` exits clean (no script errors).
-- [ ] `godot --headless --path . --quit-after 3` (main scene) exits clean —
+- [x] `godot --headless --path . --import` exits clean (no script errors).
+- [x] `godot --headless --path . --quit-after 3` (main scene) exits clean —
       terrain generates, bosses spawn without runtime errors.
-- [ ] Sanity-check the size schedule numerically (a quick throwaway calc is fine):
-      boss 1 = 2.5x, monotonically growing, capped at 6.0x.
+- [x] Sanity-check the size schedule numerically (a quick throwaway calc is fine):
+      boss 1 = 2.5x, monotonically growing, capped at 6.0x —
+      [2.5, 3.375, 4.25, 5.125, 6.0, 6.0, ...] confirmed.
 
 ### Task 6: [Final] Update documentation
 - [ ] Add a short "Boss crocodiles" subsection to `CLAUDE.md` under the enemy/AI
