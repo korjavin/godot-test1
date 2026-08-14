@@ -168,8 +168,20 @@ var _enable_body: Label = null
 ## swallowing taps, because the 1920x1080 landscape layout is hopeless in portrait.
 var _portrait_guard: ColorRect = null
 
+## Full-screen "Paused — tap to resume" Button, shown while `get_tree().paused` on a
+## real touch session (the focus-loss pause set by mobile_input.gd). Same tap-surface
+## pattern as the enable overlay; its tap calls the driver's `resume_from_pause()`.
+var _resume_overlay: Button = null
+
 
 func _ready() -> void:
+	# The resume overlay must stay tappable — and `_process` must keep running (it
+	# flushes the synthetic-action release queue and drives this overlay's visibility)
+	# — while `get_tree().paused` freezes everything else. SAFE while paused: all this
+	# UI's outputs are one-shot synthetic InputEventActions the paused controller
+	# simply won't consume until unpause, so nothing leaks into the frozen world.
+	process_mode = Node.PROCESS_MODE_ALWAYS
+
 	# The root Control spans the whole screen (full-rect anchors set in the .tscn).
 	# We keep its mouse_filter at PASS so it doesn't itself swallow touches meant for
 	# the game world (the buttons below capture their own input via STOP), matching
@@ -354,6 +366,38 @@ func _build_ui() -> void:
 	_enable_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_enable_body.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	overlay_text.add_child(_enable_body)
+
+	# --- "Paused — tap to resume" overlay ----------------------------------
+	# Shown while the tree is paused by the focus-loss handler in mobile_input.gd.
+	# Same full-rect Button + centered Label pattern as the enable overlay (a Button
+	# is the tap surface; its tap is also the WebAudio unlock gesture the browser
+	# wants after a backgrounded tab returns). Child order matters: AFTER the enable
+	# overlay (so it could draw over it, though `_process` never shows both at once)
+	# but BEFORE the portrait guard, which must stay on top of everything.
+	_resume_overlay = Button.new()
+	_resume_overlay.name = "ResumeOverlay"
+	_resume_overlay.text = ""
+	var resume_style := StyleBoxFlat.new()
+	resume_style.bg_color = Color(0.0, 0.0, 0.0, 0.72)
+	_resume_overlay.add_theme_stylebox_override("normal", resume_style)
+	_resume_overlay.add_theme_stylebox_override("hover", resume_style)
+	_resume_overlay.add_theme_stylebox_override("pressed", resume_style)
+	_resume_overlay.anchor_right = 1.0
+	_resume_overlay.anchor_bottom = 1.0
+	_resume_overlay.visible = false
+	_resume_overlay.pressed.connect(_on_resume_overlay_pressed)
+	var resume_label := Label.new()
+	resume_label.name = "ResumeLabel"
+	resume_label.text = "Paused — tap to resume"
+	resume_label.add_theme_font_size_override("font_size", 40)
+	resume_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	resume_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	resume_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	resume_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	resume_label.anchor_right = 1.0
+	resume_label.anchor_bottom = 1.0
+	_resume_overlay.add_child(resume_label)
+	add_child(_resume_overlay)
 
 	# --- Portrait "rotate your device" guard ------------------------------
 	# Added LAST so it draws on top of everything (including the enable overlay):
@@ -557,6 +601,19 @@ func _process(delta: float) -> void:
 		else:
 			_portrait_guard.visible = false
 
+	# --- 4. Pause / resume overlay -----------------------------------------
+	# Mirror the tree's paused state (set by mobile_input.gd on focus loss) into the
+	# resume overlay — but never over the initial enable overlay: if the tab was
+	# backgrounded before first enable, the enable overlay stays the one prompt (its
+	# tap enables motion, then THIS overlay appears for the unpause tap). Gated on
+	# the real touch predicate so a desktop pause (from any future source) never
+	# shows a phone overlay — desktop stays byte-for-byte unchanged.
+	if _resume_overlay != null:
+		if _is_touch_device():
+			_resume_overlay.visible = get_tree().paused and not _enable_overlay.visible
+		else:
+			_resume_overlay.visible = false
+
 
 ## Watch for motion to actually start after an enable tap. While `_motion_watching`:
 ## if a fresh real motion sample is flowing, CONFIRM — latch `_motion_enabled` and stop
@@ -705,6 +762,19 @@ func _on_enable_overlay_pressed() -> void:
 	_motion_watch_elapsed = 0.0
 	if _enable_overlay != null:
 		_enable_overlay.visible = false
+
+
+## Resume overlay tap → unfreeze the game. Routed through the driver's
+## `resume_from_pause()` so the driver can also restore its pre-pause active state
+## (it remembers whether motion was running when focus was lost). Null-safe: on a
+## build with no MobileInput node, just unpause the tree directly so the player is
+## never stuck on a frozen screen.
+func _on_resume_overlay_pressed() -> void:
+	var driver: Node = _ensure_driver()
+	if driver != null:
+		driver.resume_from_pause()
+	else:
+		get_tree().paused = false
 
 
 # ============================================================================
