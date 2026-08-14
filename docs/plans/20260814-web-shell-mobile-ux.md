@@ -115,11 +115,11 @@ All edits go in `[preset.3.options]` (the Web preset) of `export_presets.cfg`. K
 
 ### Task 9: Verify acceptance criteria (the hard gate)
 
-- [ ] run the headless web export from the repo root: `mkdir -p build/web && godot --headless --export-release "Web" build/web/index.html` — it MUST exit 0. This validates every `export_presets.cfg` and `project.godot` edit AND compiles all GDScript. If it fails on a missing-export-template error (env gap, templates may still be downloading), fall back to `godot --headless --import` (script/scene validation) and mark this item with ⚠️ so the PR flags that CI is the real gate.
-- [ ] if the export succeeded, inspect the output: `build/web/index.html` must contain the theme-color meta + the background style; `build/web/index.manifest.json` must have `"display": "fullscreen"`, `"orientation": "landscape"`, three icon entries; the `index.144x144.png`/`index.180x180.png`/`index.512x512.png` files must exist. `grep` is sufficient.
-- [ ] verify desktop neutrality by reading (not editing) the gates: every new behavior in the diff must be behind `MobileSensors.is_touch_session()` or `OS.has_feature("web")`; `content_scale_factor` is never touched on desktop; the F6/F7 debug force-shows must not trigger the scale, the portrait guard, or the pause path.
-- [ ] confirm no file outside the ownership boundary is in the diff (`git diff --name-only` against the base) — especially `player_controller.gd`, `main.tscn`, HUD scripts, `CLAUDE.md`.
-- [ ] confirm `scenes/ui/touch_controls.tscn` needed no change (all UI is code-built; if a change WAS needed, it is within the boundary — just verify it parses via the export/import run).
+- [x] run the headless web export from the repo root: `mkdir -p build/web && godot --headless --export-release "Web" build/web/index.html` — exited 0 (templates installed; no fallback needed).
+- [x] if the export succeeded, inspect the output: `build/web/index.html` contains the theme-color meta + the `#5a6570` background style + both apple-mobile-web-app metas; `build/web/index.manifest.json` has `"display":"fullscreen"`, `"orientation":"landscape"`, three icon entries; all three `index.*.png` icons exist.
+- [x] verify desktop neutrality by reading (not editing) the gates: `content_scale_factor` is set only under `MobileSensors.is_touch_session()` (not `_force_shown`); portrait guard and resume overlay are driven off `_is_touch_device()` each frame (force-show can't trigger them); `NOTIFICATION_APPLICATION_FOCUS_OUT` early-returns unless `is_touch_session()` (desktop alt-tab never pauses).
+- [x] confirm no file outside the ownership boundary is in the diff (`git diff --name-only` vs merge-base with master: only the plan file, `export_presets.cfg`, `project.godot`, `serve.sh`, and the four mobile scripts).
+- [x] confirm `scenes/ui/touch_controls.tscn` needed no change (not in the diff — all UI is code-built).
 
 ## Technical Details
 
