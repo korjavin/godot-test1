@@ -121,14 +121,14 @@ regenerates byte-identically on revisit and coin seam-claiming still holds.
 
 ### Task 2: Distance as headline score (player + HUD)
 
-- [ ] Add `var run_distance: int = 0` to `scripts/player_controller.gd` (documented:
+- [x] Add `var run_distance: int = 0` to `scripts/player_controller.gd` (documented:
       the coin road's X is strictly increasing by construction, so farthest-X *is*
       the distance travelled along the run — no path integration needed). Update it in
       `_physics_process`: `run_distance = maxi(run_distance, int(global_position.x))`.
       Reset to 0 in `restart_game()` (and in `reset_position()` alongside the coin wipe).
-- [ ] Show it live in `scripts/coin_hud.gd`: label becomes e.g.
+- [x] Show it live in `scripts/coin_hud.gd`: label becomes e.g.
       `"Distance: %dm   Coins: %d"` (streak multiplier suffix comes in Task 6).
-- [ ] Pass it to the game-over screen: `_trigger_game_over()` calls
+- [x] Pass it to the game-over screen: `_trigger_game_over()` calls
       `panel.show_game_over(coins_collected, run_distance)`; update
       `game_over_ui.show_game_over` signature and add a distance label
       (distance is the HEADLINE — larger/above the coin tally).

@@ -11,7 +11,9 @@ extends Control
 ## restart_game(); it never holds a hard reference, matching the rest of the
 ## project's group-based wiring.
 
-## The label we rewrite each time the screen appears, to show the coin count.
+## The labels we rewrite each time the screen appears. Distance is the HEADLINE
+## score (bigger, above the coin tally) — see run_distance in player_controller.gd.
+var distance_label: Label = null
 var coins_label: Label = null
 
 
@@ -60,6 +62,17 @@ func _build_ui() -> void:
 	title.add_theme_constant_override("outline_size", 10)
 	vbox.add_child(title)
 
+	# Headline distance score (rewritten by show_game_over) — larger than the coin
+	# tally because distance is the run's primary score.
+	distance_label = Label.new()
+	distance_label.text = "Distance: 0m"
+	distance_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	distance_label.add_theme_font_size_override("font_size", 48)
+	distance_label.add_theme_color_override("font_color", Color(1, 1, 1))
+	distance_label.add_theme_color_override("font_outline_color", Color(0, 0, 0))
+	distance_label.add_theme_constant_override("outline_size", 8)
+	vbox.add_child(distance_label)
+
 	# Final coin tally (rewritten by show_game_over).
 	coins_label = Label.new()
 	coins_label.text = "Coins collected: 0"
@@ -82,8 +95,10 @@ func _build_ui() -> void:
 	vbox.add_child(button_wrap)
 
 
-func show_game_over(coins: int) -> void:
-	"""Reveal the screen and report the final coin count."""
+func show_game_over(coins: int, distance: int = 0) -> void:
+	"""Reveal the screen and report the run's distance (headline) and coin count."""
+	if distance_label:
+		distance_label.text = "Distance: %dm" % distance
 	if coins_label:
 		coins_label.text = "Coins collected: %d" % coins
 	visible = true

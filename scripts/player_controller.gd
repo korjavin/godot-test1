@@ -109,6 +109,14 @@ var step_direction: float = 0.0
 ## full restart from the Game Over screen (see restart_game / reset_position).
 var coins_collected: int = 0
 
+## Headline score: how far this run has travelled, in metres. The coin road's
+## centerline X is strictly increasing by construction (see endless_terrain.gd —
+## `road_max_heading_deg < 90` so cos(heading) > 0), which means the farthest X
+## the player has ever reached IS the distance along the run — no path
+## integration needed. We track a running max so backtracking never lowers it.
+## Reset to 0 only on a full restart (restart_game / reset_position).
+var run_distance: int = 0
+
 ## "Caught" sequence: when a crocodile bites the player we freeze briefly (so the
 ## bite is actually visible), flash the screen red and shake the camera, then
 ## respawn. These track that short window.
@@ -375,6 +383,10 @@ func _physics_process(delta: float) -> void:
 			_hide_respawn_message()
 			clear_nearby_crocodiles(global_position)
 		return
+
+	# STEP 0.4: Record the headline distance score — the farthest world X reached
+	# this run (see run_distance above for why farthest-X == distance travelled).
+	run_distance = maxi(run_distance, int(global_position.x))
 
 	# STEP 0.5: Tick ability cooldowns / the Windman air boost, then read the F key.
 	# Done before gravity so an active boost can soften this frame's fall.
@@ -1142,8 +1154,8 @@ func _trigger_game_over() -> void:
 
 	var panel := get_tree().get_first_node_in_group("game_over_ui")
 	if panel and panel.has_method("show_game_over"):
-		panel.show_game_over(coins_collected)
-	print("Game over! Final coins: %d" % coins_collected)
+		panel.show_game_over(coins_collected, run_distance)
+	print("Game over! Distance: %dm, final coins: %d" % [run_distance, coins_collected])
 
 
 func restart_game() -> void:
@@ -1153,6 +1165,7 @@ func restart_game() -> void:
 	the origin spawn with the mouse recaptured.
 	"""
 	coins_collected = 0
+	run_distance = 0
 	lives = MAX_LIVES
 	is_game_over = false
 	is_caught = false
@@ -1215,8 +1228,9 @@ func reset_position() -> void:
 	# Define spawn point
 	var spawn_point = Vector3(0, 2, 0)
 
-	# A full restart wipes the coin count.
+	# A full restart wipes the coin count and the distance score.
 	coins_collected = 0
+	run_distance = 0
 
 	# Clear any crocodiles near the spawn point
 	clear_nearby_crocodiles(spawn_point)
