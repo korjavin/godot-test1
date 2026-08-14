@@ -139,6 +139,16 @@ var _motion_watch_elapsed: float = 0.0
 ## second F6 press toggles it back off. Independent of the auto (touch) visibility.
 var _force_shown: bool = false
 
+## Cached result of `MobileSensors.is_touch_session()` — the ONE canonical touch
+## predicate (touchscreen probe, plus a web coarse-/not-fine-pointer fallback),
+## shared with the player's mouse-capture guard so the two can never disagree.
+## Whether a session is touch cannot change mid-run, and on a web desktop the
+## fallback evaluates JS `matchMedia` probes — far too expensive to re-run every
+## `_process` frame — so it is read ONCE in `_ready()` and every per-frame check
+## consults this bool. (F6 debug-force-show is a SEPARATE OR in
+## `_apply_platform_visibility()`, keeping this a pure "really a touch device?" flag.)
+var _is_touch: bool = false
+
 ## Names of actions whose synthetic *press* was dispatched this frame and whose
 ## matching *release* must be dispatched on a GUARANTEED-LATER frame. See `_fire_action`
 ## / `_process` for why a same-frame `call_deferred` release is avoided.
@@ -182,6 +192,11 @@ func _ready() -> void:
 	# simply won't consume until unpause, so nothing leaks into the frozen world.
 	process_mode = Node.PROCESS_MODE_ALWAYS
 
+	# Resolve the canonical touch predicate ONCE (see `_is_touch`); everything below
+	# — initial visibility, content scale, and the per-frame overlay gates — reads
+	# this cached bool instead of re-probing.
+	_is_touch = MobileSensors.is_touch_session()
+
 	# The root Control spans the whole screen (full-rect anchors set in the .tscn).
 	# We keep its mouse_filter at PASS so it doesn't itself swallow touches meant for
 	# the game world (the buttons below capture their own input via STOP), matching
@@ -209,7 +224,7 @@ func _ready() -> void:
 	# for the CSS-px math). Gate strictly on the canonical touch predicate — NOT on
 	# `_force_shown` — so F6 debug on a desktop shows the buttons without rescaling
 	# the desktop HUD, keeping desktop rendering byte-for-byte unchanged.
-	if MobileSensors.is_touch_session():
+	if _is_touch:
 		get_window().content_scale_factor = TOUCH_CONTENT_SCALE
 
 
@@ -308,35 +323,17 @@ func _build_ui() -> void:
 	add_child(_fullscreen_button)
 
 	# --- First-run enable overlay (full-rect) -----------------------------
-	# A big, semi-transparent Button covering the whole screen. We use a Button (not
-	# a Panel) because it natively handles the tap and gives us the user-gesture call
-	# stack iOS requires for DeviceMotionEvent.requestPermission(). It sits LAST in
-	# the child order so it draws on top of the action buttons until dismissed.
-	_enable_overlay = Button.new()
-	_enable_overlay.name = "EnableOverlay"
-	# The Button itself carries NO text — a Button cannot autowrap, so the words
-	# live in the Label children built just below, where the how-to lines can wrap
-	# on a narrow phone screen. The Button is purely the tap surface + dark fill.
-	_enable_overlay.text = ""
-	# A translucent dark fill so the world is still faintly visible behind the prompt.
-	var overlay_style := StyleBoxFlat.new()
-	overlay_style.bg_color = Color(0.0, 0.0, 0.0, 0.72)
-	_enable_overlay.add_theme_stylebox_override("normal", overlay_style)
-	_enable_overlay.add_theme_stylebox_override("hover", overlay_style)
-	_enable_overlay.add_theme_stylebox_override("pressed", overlay_style)
-	# Full-rect: cover the whole Control (anchors_preset 15 equivalent).
-	_enable_overlay.anchor_right = 1.0
-	_enable_overlay.anchor_bottom = 1.0
-	_enable_overlay.offset_left = 0.0
-	_enable_overlay.offset_top = 0.0
-	_enable_overlay.offset_right = 0.0
-	_enable_overlay.offset_bottom = 0.0
+	# A big, semi-transparent Button covering the whole screen (see
+	# `_make_overlay_button` for the shared tap-surface pattern). We use a Button
+	# (not a Panel) because it natively handles the tap and gives us the user-gesture
+	# call stack iOS requires for DeviceMotionEvent.requestPermission(). It sits LAST
+	# in the child order so it draws on top of the action buttons until dismissed.
+	_enable_overlay = _make_overlay_button("EnableOverlay")
 	_enable_overlay.pressed.connect(_on_enable_overlay_pressed)
 	add_child(_enable_overlay)
 
 	# The overlay's words: headline + how-to body, stacked in a full-rect VBox
-	# centered vertically. Every node here is MOUSE_FILTER_IGNORE so taps fall
-	# straight through to the Button underneath (the whole screen stays tappable).
+	# centered vertically (the VBox lays the Labels out, hence fullrect = false).
 	var overlay_text := VBoxContainer.new()
 	overlay_text.name = "OnboardingText"
 	overlay_text.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -348,55 +345,24 @@ func _build_ui() -> void:
 
 	# Headline — big and unmissable. Doubles as the error line on a retry (see
 	# `_update_motion_watch`); the how-to body below never changes.
-	_enable_headline = Label.new()
-	_enable_headline.name = "OnboardHeadline"
-	_enable_headline.text = ONBOARD_HEADLINE
-	_enable_headline.add_theme_font_size_override("font_size", 40)
-	_enable_headline.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_enable_headline.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_enable_headline.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_enable_headline = _make_overlay_label("OnboardHeadline", ONBOARD_HEADLINE, 40, false)
 	overlay_text.add_child(_enable_headline)
 
 	# How-to body — the three things a first-time phone player needs to know.
-	_enable_body = Label.new()
-	_enable_body.name = "OnboardBody"
-	_enable_body.text = ONBOARD_BODY
-	_enable_body.add_theme_font_size_override("font_size", 28)
-	_enable_body.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_enable_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_enable_body.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_enable_body = _make_overlay_label("OnboardBody", ONBOARD_BODY, 28, false)
 	overlay_text.add_child(_enable_body)
 
 	# --- "Paused — tap to resume" overlay ----------------------------------
 	# Shown while the tree is paused by the focus-loss handler in mobile_input.gd.
-	# Same full-rect Button + centered Label pattern as the enable overlay (a Button
-	# is the tap surface; its tap is also the WebAudio unlock gesture the browser
-	# wants after a backgrounded tab returns). Child order matters: AFTER the enable
-	# overlay (so it could draw over it, though `_process` never shows both at once)
-	# but BEFORE the portrait guard, which must stay on top of everything.
-	_resume_overlay = Button.new()
-	_resume_overlay.name = "ResumeOverlay"
-	_resume_overlay.text = ""
-	var resume_style := StyleBoxFlat.new()
-	resume_style.bg_color = Color(0.0, 0.0, 0.0, 0.72)
-	_resume_overlay.add_theme_stylebox_override("normal", resume_style)
-	_resume_overlay.add_theme_stylebox_override("hover", resume_style)
-	_resume_overlay.add_theme_stylebox_override("pressed", resume_style)
-	_resume_overlay.anchor_right = 1.0
-	_resume_overlay.anchor_bottom = 1.0
+	# Same full-rect Button + centered Label pattern as the enable overlay (its tap
+	# is also the WebAudio unlock gesture the browser wants after a backgrounded tab
+	# returns). Child order matters: AFTER the enable overlay (so it could draw over
+	# it, though `_process` never shows both at once) but BEFORE the portrait guard,
+	# which must stay on top of everything.
+	_resume_overlay = _make_overlay_button("ResumeOverlay")
 	_resume_overlay.visible = false
 	_resume_overlay.pressed.connect(_on_resume_overlay_pressed)
-	var resume_label := Label.new()
-	resume_label.name = "ResumeLabel"
-	resume_label.text = "Paused — tap to resume"
-	resume_label.add_theme_font_size_override("font_size", 40)
-	resume_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	resume_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	resume_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	resume_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	resume_label.anchor_right = 1.0
-	resume_label.anchor_bottom = 1.0
-	_resume_overlay.add_child(resume_label)
+	_resume_overlay.add_child(_make_overlay_label("ResumeLabel", "Paused — tap to resume", 40, true))
 	add_child(_resume_overlay)
 
 	# --- Portrait "rotate your device" guard ------------------------------
@@ -405,7 +371,8 @@ func _build_ui() -> void:
 	# swallow all taps until the phone is rotated. Visibility is driven per-frame in
 	# `_process` from the viewport aspect — `screen.orientation.lock` is deliberately
 	# NOT used because in-browser iOS ignores it. Starts hidden; only ever shown on a
-	# real touch session (never by the F6 desktop force-show).
+	# real touch session (never by the F6 desktop force-show). A ColorRect (not a
+	# Button): it swallows taps via MOUSE_FILTER_STOP but nothing should fire on tap.
 	_portrait_guard = ColorRect.new()
 	_portrait_guard.name = "PortraitGuard"
 	_portrait_guard.color = Color(0.0, 0.0, 0.0, 0.85)
@@ -413,17 +380,7 @@ func _build_ui() -> void:
 	_portrait_guard.anchor_right = 1.0
 	_portrait_guard.anchor_bottom = 1.0
 	_portrait_guard.visible = false
-	var rotate_label := Label.new()
-	rotate_label.name = "RotateLabel"
-	rotate_label.text = "Rotate your device\n(landscape only)"
-	rotate_label.add_theme_font_size_override("font_size", 40)
-	rotate_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	rotate_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	rotate_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	rotate_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	rotate_label.anchor_right = 1.0
-	rotate_label.anchor_bottom = 1.0
-	_portrait_guard.add_child(rotate_label)
+	_portrait_guard.add_child(_make_overlay_label("RotateLabel", "Rotate your device\n(landscape only)", 40, true))
 	add_child(_portrait_guard)
 
 
@@ -482,6 +439,45 @@ func _apply_translucent_style(button: Button, corner_radius: float) -> void:
 	button.add_theme_color_override("font_pressed_color", Color.WHITE)
 
 
+## Build one full-screen tap-surface Button — the shared overlay pattern (enable
+## overlay, resume overlay). The Button is purely the whole-screen tap target plus
+## a translucent dark fill (so the world stays faintly visible behind the prompt);
+## it carries NO text of its own because a Button cannot autowrap — the words live
+## in `_make_overlay_label` children layered on top.
+func _make_overlay_button(node_name: String) -> Button:
+	var button := Button.new()
+	button.name = node_name
+	button.text = ""
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.0, 0.0, 0.0, 0.72)
+	button.add_theme_stylebox_override("normal", style)
+	button.add_theme_stylebox_override("hover", style)
+	button.add_theme_stylebox_override("pressed", style)
+	# Full-rect: cover the whole Control (anchors_preset 15 equivalent).
+	button.anchor_right = 1.0
+	button.anchor_bottom = 1.0
+	return button
+
+
+## Build one overlay text Label: centred, autowrapping (so it survives a narrow
+## phone screen), MOUSE_FILTER_IGNORE so taps fall straight through to the surface
+## underneath. `fullrect = true` centres it over the whole overlay; `false` leaves
+## layout to a container parent (the enable overlay's VBox stacks its two Labels).
+func _make_overlay_label(node_name: String, text: String, font_size: int, fullrect: bool) -> Label:
+	var label := Label.new()
+	label.name = node_name
+	label.text = text
+	label.add_theme_font_size_override("font_size", font_size)
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	if fullrect:
+		label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		label.anchor_right = 1.0
+		label.anchor_bottom = 1.0
+	return label
+
+
 # ============================================================================
 # PLATFORM GATING / VISIBILITY
 # ============================================================================
@@ -491,28 +487,12 @@ func _apply_translucent_style(button: Button, corner_radius: float) -> void:
 ## drives whether the enable overlay is presented (only when actually shown and not
 ## yet enabled).
 func _apply_platform_visibility() -> void:
-	var on_touch: bool = _is_touch_device()
 	# Visible if the platform is touch OR a developer force-showed it for testing.
-	visible = on_touch or _force_shown
+	visible = _is_touch or _force_shown
 
 	# The enable overlay only makes sense while the UI is up and motion hasn't been
 	# enabled yet. If we're hidden, or already enabled, keep it down.
-	if _enable_overlay != null:
-		_enable_overlay.visible = visible and not _motion_enabled
-
-
-## True on a phone/tablet. Delegates to `MobileSensors.is_touch_session()` — the ONE
-## canonical detection rule (touchscreen probe, plus a web coarse-/not-fine-pointer
-## fallback), shared with the player's mouse-capture guard so the two can never
-## disagree. (Previously this rule lived here AND a *narrower* rule lived in
-## `player_controller`, so a web phone could show this UI yet still capture the mouse.)
-##
-## We keep the F6 debug-force-show as a SEPARATE OR in `_apply_platform_visibility()`,
-## not here, so this function stays a pure "is this really a touch device?" predicate.
-## Everything JS in the canonical func is guarded behind `OS.has_feature("web")`, so
-## desktop never evaluates JS and the desktop regression is preserved exactly.
-func _is_touch_device() -> bool:
-	return MobileSensors.is_touch_session()
+	_enable_overlay.visible = visible and not _motion_enabled
 
 
 # ============================================================================
@@ -587,19 +567,24 @@ func _process(delta: float) -> void:
 		_actions_to_release.clear()
 
 	# --- 2. Enable-overlay motion watch -----------------------------------
-	_update_motion_watch(delta)
+	# FROZEN while the tree is paused: a backgrounded/blurred tab delivers no sensor
+	# events, so counting the grace window through a focus-loss pause would always
+	# time out and spuriously flip the overlay to "Motion unavailable — tap to retry"
+	# (and thereby suppress the resume overlay). Only foreground, unpaused time
+	# counts toward the timeout; the watch resumes where it left off after the tap.
+	if not get_tree().paused:
+		_update_motion_watch(delta)
 
 	# --- 3. Portrait guard -------------------------------------------------
 	# Drive the "rotate your device" screen straight off the viewport aspect each
-	# frame (cheap — one Vector2 compare). Gated on the REAL touch predicate, not
-	# on `visible`, so the F6 desktop force-show can never trigger it; a shrunk
-	# desktop/editor window is not a phone held wrong.
-	if _portrait_guard != null:
-		if _is_touch_device():
-			var view_size: Vector2 = get_viewport().get_visible_rect().size
-			_portrait_guard.visible = view_size.y > view_size.x
-		else:
-			_portrait_guard.visible = false
+	# frame (cheap — one Vector2 compare on the cached touch bool). Gated on the REAL
+	# touch predicate, not on `visible`, so the F6 desktop force-show can never
+	# trigger it; a shrunk desktop/editor window is not a phone held wrong.
+	if _is_touch:
+		var view_size: Vector2 = get_viewport().get_visible_rect().size
+		_portrait_guard.visible = view_size.y > view_size.x
+	else:
+		_portrait_guard.visible = false
 
 	# --- 4. Pause / resume overlay -----------------------------------------
 	# Mirror the tree's paused state (set by mobile_input.gd on focus loss) into the
@@ -608,11 +593,7 @@ func _process(delta: float) -> void:
 	# tap enables motion, then THIS overlay appears for the unpause tap). Gated on
 	# the real touch predicate so a desktop pause (from any future source) never
 	# shows a phone overlay — desktop stays byte-for-byte unchanged.
-	if _resume_overlay != null:
-		if _is_touch_device():
-			_resume_overlay.visible = get_tree().paused and not _enable_overlay.visible
-		else:
-			_resume_overlay.visible = false
+	_resume_overlay.visible = _is_touch and get_tree().paused and not _enable_overlay.visible
 
 
 ## Watch for motion to actually start after an enable tap. While `_motion_watching`:
@@ -648,12 +629,10 @@ func _update_motion_watch(delta: float) -> void:
 		# context, or no sensor). Stop watching and re-show the overlay so the player can
 		# retry — never leave a keyboardless phone with the controls hidden and no way back.
 		_motion_watching = false
-		if _enable_overlay != null:
-			# Swap only the HEADLINE to the retry message — the how-to body stays
-			# visible underneath, so a retrying player keeps the instructions.
-			if _enable_headline != null:
-				_enable_headline.text = RETRY_HEADLINE
-			_enable_overlay.visible = true
+		# Swap only the HEADLINE to the retry message — the how-to body stays
+		# visible underneath, so a retrying player keeps the instructions.
+		_enable_headline.text = RETRY_HEADLINE
+		_enable_overlay.visible = true
 
 
 ## Jump button → the polled `jump` action (controller reads is_action_just_pressed).
@@ -744,8 +723,7 @@ func _on_enable_overlay_pressed() -> void:
 		# later), instead of being left with a hidden overlay and no controls at all.
 		# Re-label the headline so the player understands a retry is possible (the
 		# how-to body stays put beneath it).
-		if _enable_headline != null:
-			_enable_headline.text = RETRY_HEADLINE
+		_enable_headline.text = RETRY_HEADLINE
 		return
 
 	# Order matters: request permission first (still inside the user gesture), then
@@ -760,15 +738,15 @@ func _on_enable_overlay_pressed() -> void:
 	# `_motion_watch_elapsed` and either confirms (data arrived) or re-shows the overlay.
 	_motion_watching = true
 	_motion_watch_elapsed = 0.0
-	if _enable_overlay != null:
-		_enable_overlay.visible = false
+	_enable_overlay.visible = false
 
 
 ## Resume overlay tap → unfreeze the game. Routed through the driver's
 ## `resume_from_pause()` so the driver can also restore its pre-pause active state
-## (it remembers whether motion was running when focus was lost). Null-safe: on a
-## build with no MobileInput node, just unpause the tree directly so the player is
-## never stuck on a frozen screen.
+## (it remembers whether motion was running when focus was lost). The no-driver
+## `else` is unreachable today (only mobile_input.gd ever pauses the tree, so a
+## paused tree implies the driver exists) — kept as a two-line anti-softlock belt
+## so the player is never stuck on a frozen screen if a future pause source appears.
 func _on_resume_overlay_pressed() -> void:
 	var driver: Node = _ensure_driver()
 	if driver != null:
@@ -788,8 +766,5 @@ func _on_resume_overlay_pressed() -> void:
 ## overlay again; if motion was never enabled, the overlay behaves exactly like the
 ## first run (tap = permission gesture + enable + watch).
 func show_onboarding() -> void:
-	if _enable_overlay == null:
-		return
-	if _enable_headline != null:
-		_enable_headline.text = ONBOARD_HEADLINE
+	_enable_headline.text = ONBOARD_HEADLINE
 	_enable_overlay.visible = true

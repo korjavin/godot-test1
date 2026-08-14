@@ -47,9 +47,12 @@ extends Control
 # CONSTANTS — layout / tuning
 # ============================================================================
 
-## Size of the always-visible gear/"Tune" button. Parked BOTTOM-LEFT, the one free
-## corner: the steer toggle owns top-centre, the action cluster bottom-right, the
-## lives hearts + perf overlay top-left and the coin/ability HUD top-right. A
+## Size of the always-visible gear/"Tune" button. Parked BOTTOM-LEFT, the free
+## corner of the release HUD: the steer toggle owns top-centre, the action cluster
+## bottom-right, the lives hearts + perf overlay top-left and the coin/ability HUD
+## top-right. (The debug-only MotionDebug readout also sits bottom-left, so the
+## gear overlaps it in debug builds — acceptable: the label ignores mouse input so
+## the gear stays tappable, and release/web builds start with it hidden.) A
 ## comfortably large touch target on a phone.
 const GEAR_WIDTH: float = 110.0
 const GEAR_HEIGHT: float = 60.0
@@ -191,10 +194,12 @@ func _process(_delta: float) -> void:
 ## once from `_ready()`. Anchored so it repositions correctly on any screen size.
 func _build_ui() -> void:
 	# --- Gear / "Tune" toggle, BOTTOM-LEFT --------------------------------
-	# Bottom-left is the one free corner of the HUD: lives hearts + perf overlay own
-	# the top-left column, the coin counter / ability dial the top-right, the steer
-	# toggle the top-centre, and the Jump/Special/Switch cluster the bottom-right.
-	# Anchored to the bottom edge (anchor y = 1) so it hugs the corner on any screen.
+	# Bottom-left is the free corner of the release HUD: lives hearts + perf overlay
+	# own the top-left column, the coin counter / ability dial the top-right, the
+	# steer toggle the top-centre, and the Jump/Special/Switch cluster the bottom-
+	# right. (Debug builds also draw the MotionDebug readout here — a debug-only
+	# overlap; see the GEAR_WIDTH doc comment.) Anchored to the bottom edge
+	# (anchor y = 1) so it hugs the corner on any screen.
 	_gear_button = Button.new()
 	_gear_button.name = "TuneButton"
 	_gear_button.text = "⚙ Tune"  # ⚙ gear glyph + label
@@ -216,8 +221,9 @@ func _build_ui() -> void:
 	# A PanelContainer gives a translucent rounded background; inside it a
 	# ScrollContainer + VBox holds the diagnostics label and all the rows, so a short
 	# screen can scroll. It starts hidden (collapsed) — the gear opens it. It opens
-	# UPWARD from just above the gear so the whole body stays on-screen; on a screen
-	# shorter than PANEL_HEIGHT the inner ScrollContainer still reaches every row.
+	# UPWARD from just above the gear; `_set_panel_open` clamps its height to the
+	# visible viewport on open (a phone's scaled viewport is shorter than the full
+	# PANEL_HEIGHT stack), and the inner ScrollContainer then reaches every row.
 	_panel_body = PanelContainer.new()
 	_panel_body.name = "TunePanel"
 	_panel_body.anchor_left = 0.0
@@ -414,6 +420,17 @@ func _set_panel_open(open: bool) -> void:
 	if _panel_body != null:
 		_panel_body.visible = open
 	if open:
+		# Clamp the panel to the space actually above the gear. With the touch UI's
+		# content_scale_factor (1.8) magnifying the whole 2D layer, the visible
+		# design viewport on a phone is only ~600 px tall — shorter than the full
+		# gear + gap + PANEL_HEIGHT stack (~664 px) — and a PanelContainer poking
+		# past the screen top is unreachable even through its inner ScrollContainer
+		# (a ScrollContainer scrolls its CONTENT, not its own off-screen frame).
+		# Shrinking the panel keeps its whole frame on-screen and lets the
+		# ScrollContainer genuinely reach every row. Recomputed on every open so it
+		# tracks the current viewport (e.g. after an orientation change).
+		var view_height: float = get_viewport().get_visible_rect().size.y
+		_panel_body.offset_top = maxf(_panel_body.offset_bottom - PANEL_HEIGHT, -view_height + EDGE_MARGIN)
 		# Re-seed in case the driver was found late or tuning changed elsewhere.
 		_seed_controls_from_driver()
 		_update_diagnostics()

@@ -303,14 +303,13 @@ const SYNTHESIZED_ANALOG_ACTIONS: PackedStringArray = [
 
 
 func _ready() -> void:
-	# PAUSE COORDINATOR: this node must keep processing while `get_tree().paused`
-	# (which freezes every default-process_mode node) so it can coordinate the resume
-	# handshake with the touch UI — `resume_from_pause()` is only useful if the node
-	# that owns it isn't itself frozen. This is SAFE with respect to the pause: the
-	# focus-out path below sets `active = false` (via `disable()`) before pausing, and
-	# `_physics_process` early-returns while `!active`, so the driver never writes
-	# Input during the pause even though it keeps ticking.
-	process_mode = Node.PROCESS_MODE_ALWAYS
+	# PAUSING: this node deliberately keeps the DEFAULT process mode, so the
+	# focus-loss pause below freezes its `_physics_process` (and the sensors child's
+	# polling) along with the rest of the world — structurally guaranteeing the
+	# driver never writes `Input` while paused. Nothing here needs to tick during
+	# the pause: `_notification()` is delivered regardless of pause mode, and
+	# `resume_from_pause()` is a direct method call from the touch UI (whose own
+	# node IS `PROCESS_MODE_ALWAYS` so its resume overlay stays tappable).
 
 	# Join the discovery group so the touch-controls UI (Task 5) can find this driver
 	# via `get_tree().get_first_node_in_group("mobile_input")` — the same no-hard-

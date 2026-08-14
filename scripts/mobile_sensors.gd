@@ -191,7 +191,7 @@ var _calibrate_pending: bool = false
 # ===========================================================================
 
 ## THE single source of truth for "are we on a touch/mobile device?" — used by
-## BOTH the on-screen touch UI (`touch_controls.gd._is_touch_device()`) AND the
+## BOTH the on-screen touch UI (`touch_controls.gd`, cached in its `_is_touch`) AND the
 ## player's mouse-capture guard (`player_controller.gd`). Keeping the rule in one
 ## `static func` is what prevents the two from drifting apart: if the UI decides
 ## "mobile" but the mouse guard uses a *narrower* rule, a phone can both show the
