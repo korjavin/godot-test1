@@ -283,6 +283,44 @@ var active_chunks: Dictionary = {}
 ## Last player chunk position (to detect when to update chunks)
 var last_player_chunk: Vector2i = Vector2i(999999, 999999)
 
+# ----------------------------------------------------------------------------
+# TIME-SLICED CHUNK GENERATION (one chunk per frame, nearest-first)
+# ----------------------------------------------------------------------------
+##
+## Building EVERY missing chunk in a single frame is what caused the startup
+## freeze: 49 chunks on web (121 on desktop) of mesh + collision + crocodile +
+## coin generation in one go is a multi-second hitch on a phone. Instead,
+## update_chunks() now builds only a small SAFETY RING synchronously and queues
+## the rest here; _process() then drains the queue at exactly ONE chunk per
+## frame — ~40 pending chunks become ~0.7 s of progressive fill hidden behind
+## the fog, instead of one frozen frame.
+##
+## DETERMINISM NOTE — generation ORDER cannot change the world. Every chunk's
+## content is seeded purely from its own coords + run_seed (hash(Vector3i(...))),
+## and the road station cache grows contiguously outward from station 0 via a
+## recurrence that is pure in the station index `k` (see _road_extend_to_x) —
+## whichever chunk happens to request coverage first, station k always comes out
+## identical. So building chunks over 40 frames instead of 1 produces a
+## byte-identical world.
+
+## Chunks within Chebyshev distance <= SYNC_RING of the player's chunk are built
+## SYNCHRONOUSLY in update_chunks. This is the load-bearing safety guarantee:
+## the player (walking, or teleported to spawn by new_run/restart) can only ever
+## reach an adjacent chunk this frame, so ring 1 being solid means they can
+## never stand over — or fall through — an unbuilt chunk while the rest of the
+## world fills in progressively. 9 chunks at startup/new_run, at most 3 new
+## ring chunks on a normal boundary crossing.
+const SYNC_RING: int = 1
+
+## Missing chunks awaiting progressive creation, sorted nearest-first (squared
+## distance to the player's chunk), plus a companion Dictionary mirror so
+## membership checks/removals stay O(1). Both are rebuilt from scratch on every
+## update_chunks call — it only runs on boundary crossings, so a full rebuild
+## is cheap and simpler than incremental surgery (and naturally drops queued
+## chunks that fell back out of range).
+var pending_chunks: Array[Vector2i] = []
+var pending_lookup: Dictionary = {}
+
 ## PER-RUN WORLD SEED — makes run 2 a different world from run 1.
 ##
 ## EDUCATIONAL NOTE — the determinism contract:
@@ -561,6 +599,20 @@ func _process(_delta: float) -> void:
 		update_chunks(player_chunk)
 		last_player_chunk = player_chunk
 
+	# TIME-SLICED FILL: build exactly ONE queued chunk per frame (see the
+	# pending_chunks comment in SECTION 2). The queue is sorted nearest-first,
+	# so the chunks the player is most likely to see next appear first, and the
+	# per-frame cost is bounded by one chunk's generation instead of dozens.
+	while not pending_chunks.is_empty():
+		var next_pos: Vector2i = pending_chunks.pop_front()
+		pending_lookup.erase(next_pos)
+		# Skip anything already created since it was queued (defensive — the
+		# queue is rebuilt on every boundary crossing, but cheap to guard).
+		if next_pos in active_chunks:
+			continue
+		create_chunk(next_pos)
+		break
+
 # ============================================================================
 # CHUNK MANAGEMENT FUNCTIONS
 # ============================================================================
@@ -631,10 +683,33 @@ func update_chunks(player_chunk: Vector2i) -> void:
 	for chunk_pos in chunks_to_remove:
 		remove_chunk(chunk_pos)
 
-	# STEP 3: Create new chunks that don't exist yet
+	# STEP 3: Create new chunks that don't exist yet — TIME-SLICED.
+	#
+	# Only the SAFETY RING (Chebyshev distance <= SYNC_RING around the player —
+	# the chunks the player could physically reach this frame) is built right
+	# now. Everything further out goes into pending_chunks, which _process
+	# drains at one chunk per frame. Rebuilding the queue from scratch here is
+	# deliberate: this only runs on boundary crossings, and a fresh build both
+	# dedupes for free and drops any previously-queued chunk that fell out of
+	# range. Generation ORDER doesn't matter for content — see the determinism
+	# note above pending_chunks in SECTION 2.
+	pending_chunks.clear()
+	pending_lookup.clear()
+
 	for chunk_pos in chunks_to_load:
-		if chunk_pos not in active_chunks:
+		if chunk_pos in active_chunks:
+			continue
+		var cheb := maxi(absi(chunk_pos.x - player_chunk.x), absi(chunk_pos.y - player_chunk.y))
+		if cheb <= SYNC_RING:
 			create_chunk(chunk_pos)
+		else:
+			pending_chunks.append(chunk_pos)
+			pending_lookup[chunk_pos] = true
+
+	# Nearest-first: sort by squared distance to the player's chunk so the fill
+	# grows outward from the player (the far edge, hidden by fog, comes last).
+	pending_chunks.sort_custom(func(a: Vector2i, b: Vector2i) -> bool:
+		return (a - player_chunk).length_squared() < (b - player_chunk).length_squared())
 
 func create_chunk(chunk_pos: Vector2i) -> void:
 	"""
@@ -1935,27 +2010,35 @@ func new_run() -> void:
 	2. Clear the road station cache — its entries were computed with the OLD seed
 	   and would poison the new road (the cache is "correct forever" only while the
 	   seed is constant). Reset the bounds to the empty sentinel (min > max) exactly
-	   as declared, so the next _road_extend_to_x re-seeds station 0.
+	   as declared, so the next _road_extend_to_x re-seeds station 0. Also clear the
+	   pending-chunk queue — anything queued was computed for the old world.
 	3. Free every active chunk and clear the dictionary — old-world geometry.
-	4. Rebuild the ring around the spawn chunk (0,0) IMMEDIATELY (update_chunks is
-	   synchronous), so the player being teleported to (0,2,0) this same frame lands
-	   on solid new-world ground instead of falling through a hole. Setting
+	4. Rebuild around the spawn chunk (0,0) via update_chunks — which builds the
+	   spawn chunk + SYNC_RING ring 1 SYNCHRONOUSLY and queues the rest for
+	   progressive fill. The respawned player is teleported to (0,2,0) this SAME
+	   frame, so that ring-1-sync build is the load-bearing guarantee that they
+	   land on solid new-world ground instead of falling through a hole. Setting
 	   last_player_chunk to (0,0) keeps _process from redundantly rebuilding.
 	"""
 	# 1. New seed (same roll as _ready()).
 	_roll_run_seed()
 
-	# 2. Road cache back to its declared empty state.
+	# 2. Road cache back to its declared empty state, and the old-world pending
+	# queue emptied (update_chunks below rebuilds it for the new world anyway;
+	# clearing here just makes the invariant explicit).
 	road_stations = {}
 	road_k_min = 1
 	road_k_max = 0
+	pending_chunks.clear()
+	pending_lookup.clear()
 
 	# 3. Drop every old-world chunk (queue_free is the safe removal, as in remove_chunk).
 	for chunk_pos in active_chunks.keys():
 		active_chunks[chunk_pos].queue_free()
 	active_chunks.clear()
 
-	# 4. Rebuild around the spawn synchronously so the respawning player has ground.
+	# 4. Rebuild the spawn ring synchronously (+ queue the rest) so the
+	# respawning player has ground under (0,2,0) this frame.
 	update_chunks(Vector2i(0, 0))
 	last_player_chunk = Vector2i(0, 0)
 

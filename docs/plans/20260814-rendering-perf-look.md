@@ -185,12 +185,12 @@ Hard invariants (repo law — violating any is a blocker):
 
 ### Task 4: Time-sliced chunk generation (one chunk per frame, nearest-first)
 
-- [ ] `scripts/endless_terrain.gd`: add state at the top of SECTION 2 (with teaching
+- [x] `scripts/endless_terrain.gd`: add state at the top of SECTION 2 (with teaching
       comments): `var pending_chunks: Array[Vector2i] = []` plus a companion
       `var pending_lookup: Dictionary = {}` for O(1) dedupe, and a constant
       `const SYNC_RING: int = 1` (chunks within Chebyshev distance ≤ 1 of the player's
       chunk are built synchronously — the safety ring the player can reach this frame).
-- [ ] Rework `update_chunks(player_chunk)`: still computes needed set + removes far
+- [x] Rework `update_chunks(player_chunk)`: still computes needed set + removes far
       chunks immediately (unchanged), but instead of creating ALL missing chunks in one
       frame it (a) creates missing chunks with `max(|dx|,|dz|) <= SYNC_RING`
       IMMEDIATELY (player + ring 1 — at startup and after `new_run()` that is 9 chunks,
@@ -200,23 +200,31 @@ Hard invariants (repo law — violating any is a blocker):
       fell out of range (rebuild the queue from scratch each call — it only runs on
       boundary crossings, so a full rebuild is cheap and simpler than incremental
       surgery).
-- [ ] `_process`: after the existing boundary-crossing check, dequeue and `create_chunk`
+- [x] `_process`: after the existing boundary-crossing check, dequeue and `create_chunk`
       exactly ONE pending chunk per frame (skip entries already created). 40 pending
       chunks = 40 frames (~0.7 s) of progressive fill hidden behind the fog, instead of
       one multi-second freeze.
-- [ ] `new_run()`: clear `pending_chunks`/`pending_lookup` in step 2–3 (they were
+- [x] `new_run()`: clear `pending_chunks`/`pending_lookup` in step 2–3 (they were
       computed for the old world), then keep calling `update_chunks(Vector2i(0,0))` —
       with the rework that synchronously builds the spawn chunk + ring 1 (the landing
       safety the current synchronous rebuild provides — comment MUST say the respawned
       player teleports to (0,2,0) the same frame, so ring-1-sync is the load-bearing
       guarantee), queueing the remaining ~40 for progressive fill.
-- [ ] Determinism note in comments: generation ORDER does not affect content — every
+- [x] Determinism note in comments: generation ORDER does not affect content — every
       chunk's RNG is seeded purely from its own coords + `run_seed`, and the road
       station cache is pure in `k` — so time-slicing cannot change the world. Verify the
       claim holds by reading `spawn_coins_in_chunk`'s station-cache extension (it is
       monotonic and order-independent) before writing the comment.
-- [ ] Run `godot --headless --path . --quit-after 2` — must be clean (the player must
+- [x] Run `godot --headless --path . --quit-after 2` — must be clean (the player must
       not fall through: watch for "fell off" resets in output).
+      ⚠️ Same env note as Tasks 1–3: ran with --quit-after 300 for a longer soak;
+      error set verified byte-identical to the stashed baseline (pre-existing
+      unimported-glb + MobileSensors class-cache errors only). Zero "fell off"
+      resets — the SYNC_RING landing safety holds. Backtraces confirm both paths
+      exercise: sync ring via update_chunks, progressive fill via _process.
+      Verified before writing the determinism comment: _road_extend_to_x grows the
+      station cache contiguously from station 0 via a recurrence pure in k, so
+      chunk generation order cannot change road/coin content.
 
 ### Task 5: Coin cost + presentation — process gating, no shadow, brighter emission, rest tilt
 
