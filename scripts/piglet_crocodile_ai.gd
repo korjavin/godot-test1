@@ -492,6 +492,13 @@ func _update_chase_state() -> void:
 		if not is_chasing:
 			# Just started chasing
 			is_chasing = true
+			# Bosses announce themselves with a growl on the not-chasing →
+			# chasing transition (null-safe group lookup, like every SFX hook —
+			# a scene run without Main just stays silent).
+			if is_boss:
+				var sm := get_tree().get_first_node_in_group("sound_manager")
+				if sm and sm.has_method("play_boss_growl"):
+					sm.play_boss_growl()
 	else:
 		if is_chasing:
 			# Lost the player (too far OR player jumped)

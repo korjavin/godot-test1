@@ -202,11 +202,11 @@
       croc rng, platform rng, road coin rng) gained/lost/reordered a single draw.
 
 ### Task 4: Optional boss growl one-shot (skip honestly if fiddly)
-- [ ] Add to `scripts/sound_manager.gd` following the existing recipe: `GROWL_*`
+- [x] Add to `scripts/sound_manager.gd` following the existing recipe: `GROWL_*`
       consts (low fundamental ~70 Hz, ~0.5 s, saw/noise blend, −8 dB),
       `_synth_growl()` builder, bake in `_ready()`, public `play_boss_growl()`
       behind the same unlock gate.
-- [ ] In `piglet_crocodile_ai.gd` `_update_chase_state()`, on the
+- [x] In `piglet_crocodile_ai.gd` `_update_chase_state()`, on the
       not-chasing → chasing transition, when `is_boss`, fire the growl via the
       null-safe group lookup pattern
       (`get_tree().get_first_node_in_group("sound_manager")` + `has_method`
