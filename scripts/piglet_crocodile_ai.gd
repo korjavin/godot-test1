@@ -34,6 +34,13 @@ const BASE_CHASE_SPEED: float = 5.5
 const DISTANCE_SPEED_SCALE_DENOM: float = 3000.0
 const DISTANCE_SPEED_SCALE_MAX: float = 0.6
 
+## Hard ceiling on the final chase speed. The per-croc ±50% roll and the distance
+## factor MULTIPLY (worst case 5.5 × 1.5 × 1.6 = 13.2), which would outrun even a
+## RUNNING player (RUN_SPEED 10.0 — 9.0 for the slowest character) and silently
+## break the "running still escapes" promise above. Capping just under the slowest
+## run speed keeps that escape hatch true; the gradient still bites walkers hard.
+const MAX_CHASE_SPEED: float = 8.5
+
 ## Per-crocodile speed spread: each crocodile rolls ONE multiplier in
 ## [1-FACTOR, 1+FACTOR] and applies it to BOTH its wander and chase speed, so some
 ## crocodiles are clearly faster and some slower — yet a given crocodile's chase
@@ -238,7 +245,9 @@ func _ready() -> void:
 	var distance_factor := 1.0 + clampf(
 		absf(global_position.x) / DISTANCE_SPEED_SCALE_DENOM, 0.0, DISTANCE_SPEED_SCALE_MAX
 	)
-	chase_speed_instance *= distance_factor
+	# The min() keeps a top-rolled far croc from outrunning a RUNNING player — see
+	# MAX_CHASE_SPEED above.
+	chase_speed_instance = minf(chase_speed_instance * distance_factor, MAX_CHASE_SPEED)
 
 	# Give this crocodile a randomized overall size. We scale the whole body
 	# uniformly so the visual model and the physics capsule grow/shrink together;
