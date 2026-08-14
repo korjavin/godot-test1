@@ -217,6 +217,13 @@ const ROAD_COIN_SEED: int = 0xC0_1A  # "coin"-ish; arbitrary fixed constant
 ## ~2π/0.08 ≈ 78 stations, so the width cycles slowly enough to feel smooth, not pulsey.
 const ROAD_WIDTH_FREQ: float = 0.08
 
+## Difficulty gradient: the coin band NARROWS with distance. Over the first
+## ROAD_NARROW_STATIONS stations the oscillating width is lerped toward a floor of
+## road_width_min * ROAD_NARROW_FLOOR_FACTOR, so far into a run the coin swath is a
+## tight ribbon that demands precise steering to keep the streak alive.
+const ROAD_NARROW_STATIONS: int = 2000
+const ROAD_NARROW_FLOOR_FACTOR: float = 0.4
+
 ## Fraction of road_coin_spacing a coin may jitter ALONG the road from its slice center
 ## (±this × spacing). Without it, every slice's coins would sit on the same cross-line
 ## and the eye would read regular rows; this staggers them so the swath looks organic.
@@ -1303,11 +1310,18 @@ func spawn_crocodiles_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D
 	# Store positions of spawned crocodiles to check spacing
 	var spawned_positions: Array[Vector3] = []
 
+	# Difficulty gradient: chunks farther from origin (along the road's +X axis) hold
+	# MORE crocodiles — +1 per 6 chunks of |x| distance, capped at +8 over the base.
+	# A pure function of chunk coords, so within-run determinism is untouched (the
+	# same chunk always regenerates the same count). The LOD manager keeps the extra
+	# distant crocodiles cheap: they are slept (frozen, monitoring off), never removed.
+	var chunk_croc_target := crocodiles_per_chunk + mini(8, absi(chunk_pos.x) / 6)
+
 	# Try to spawn crocodiles with proper spacing
 	var attempts := 0
-	var max_attempts := crocodiles_per_chunk * 5  # Allow multiple attempts per crocodile
+	var max_attempts := chunk_croc_target * 5  # Allow multiple attempts per crocodile
 
-	while spawned_positions.size() < crocodiles_per_chunk and attempts < max_attempts:
+	while spawned_positions.size() < chunk_croc_target and attempts < max_attempts:
 		attempts += 1
 
 		# Generate random position within chunk bounds
@@ -1620,15 +1634,23 @@ func _road_width(k: int) -> float:
 	road_width_min and road_width_max.
 
 	@param k: Station index.
-	@return: Width in [road_width_min, road_width_max].
+	@return: Width in [road_width_min * ROAD_NARROW_FLOOR_FACTOR, road_width_max]
+	         (the upper reaches only near the origin; distance narrows the range).
 
 	EDUCATIONAL NOTE:
 	- A low-frequency cosine of `k` gives a slow, smooth swell/narrowing of the band
 	  (no per-station jumps), so the coin swath visibly breathes wide and narrow as you
 	  travel. We remap cos()'s [-1,1] to [0,1] then lerp between the bounds.
+	- Difficulty gradient: the whole band then narrows with distance, lerping toward
+	  road_width_min * ROAD_NARROW_FLOOR_FACTOR over the first ROAD_NARROW_STATIONS
+	  stations. Still a pure function of `k`, so determinism within a run holds. The
+	  seam-scan `pad` in spawn_coins_in_chunk stays a safe upper bound: narrowing only
+	  ever SHRINKS the band below maxf(road_width_min, road_width_max).
 	"""
 	var t := (cos(float(k) * ROAD_WIDTH_FREQ) + 1.0) * 0.5  # smooth [0,1], period ~78 stations
-	return lerpf(road_width_min, road_width_max, t)
+	var width := lerpf(road_width_min, road_width_max, t)
+	var narrow_t := clampf(float(absi(k)) / float(ROAD_NARROW_STATIONS), 0.0, 1.0)
+	return lerpf(width, road_width_min * ROAD_NARROW_FLOOR_FACTOR, narrow_t)
 
 func _road_coins_at(k: int) -> Array:
 	"""

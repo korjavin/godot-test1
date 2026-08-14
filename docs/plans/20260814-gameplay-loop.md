@@ -151,7 +151,7 @@ regenerates byte-identically on revisit and coin seam-claiming still holds.
 
 ### Task 4: Difficulty gradient (crocs faster + denser, road narrower with distance)
 
-- [ ] `scripts/piglet_crocodile_ai.gd`: raise `BASE_CHASE_SPEED` from 3.5 to 5.5
+- [x] `scripts/piglet_crocodile_ai.gd`: raise `BASE_CHASE_SPEED` from 3.5 to 5.5
       (now above WALK_SPEED 5.0 — a walking player gets caught; running/abilities escape).
       In `_ready()`, after the existing per-instance speed roll, multiply
       `chase_speed_instance` by a distance factor
@@ -159,12 +159,12 @@ regenerates byte-identically on revisit and coin seam-claiming still holds.
       (`DISTANCE_SPEED_SCALE_DENOM: float = 3000.0`, `DISTANCE_SPEED_SCALE_MAX: float = 0.6`)
       with a teaching comment (global_position is valid in _ready because the terrain
       parents the croc before _ready runs).
-- [ ] `scripts/endless_terrain.gd` `spawn_crocodiles_in_chunk`: density scales with
+- [x] `scripts/endless_terrain.gd` `spawn_crocodiles_in_chunk`: density scales with
       distance — compute `var chunk_croc_target := crocodiles_per_chunk + mini(8, absi(chunk_pos.x) / 6)`
       and use it in BOTH the while condition and `max_attempts` (`chunk_croc_target * 5`).
       Pure function of chunk coords → determinism within a run is preserved. Note in the
       comment that the LOD manager keeps the extra distant crocs cheap (slept, never removed).
-- [ ] `scripts/endless_terrain.gd` `_road_width(k)`: narrow the band with distance —
+- [x] `scripts/endless_terrain.gd` `_road_width(k)`: narrow the band with distance —
       after computing the oscillating width, scale it toward a floor:
       `var narrow_t := clampf(float(absi(k)) / 2000.0, 0.0, 1.0)` and
       `return lerpf(width, road_width_min * 0.4, narrow_t)` (new constants at top:

@@ -21,9 +21,18 @@ var move_speed_instance: float = 0.0
 ## Chase speed when pursuing player (faster)
 var chase_speed_instance: float = 0.0
 
-## Base speeds for randomization
+## Base speeds for randomization. Chase speed is deliberately ABOVE the player's
+## WALK_SPEED (5.0), so a merely-walking player WILL get caught — escaping a chase
+## takes running, jumping (crocodiles lose the scent when you leave the ground), or
+## a special ability. This is the game's core fail pressure.
 const BASE_MOVE_SPEED: float = 2.5
-const BASE_CHASE_SPEED: float = 3.5
+const BASE_CHASE_SPEED: float = 5.5
+
+## Difficulty gradient: crocodiles chase faster the farther from origin they spawn.
+## The multiplier is 1.0 + clamp(|x| / DENOM, 0, MAX) — +60% at 3 km and capped there,
+## so late-run walking is lethal but running/abilities still escape.
+const DISTANCE_SPEED_SCALE_DENOM: float = 3000.0
+const DISTANCE_SPEED_SCALE_MAX: float = 0.6
 
 ## Per-crocodile speed spread: each crocodile rolls ONE multiplier in
 ## [1-FACTOR, 1+FACTOR] and applies it to BOTH its wander and chase speed, so some
@@ -220,6 +229,16 @@ func _ready() -> void:
 	var speed_factor := rng.randf_range(1.0 - SPEED_RANDOM_FACTOR, 1.0 + SPEED_RANDOM_FACTOR)
 	move_speed_instance = BASE_MOVE_SPEED * speed_factor
 	chase_speed_instance = BASE_CHASE_SPEED * speed_factor
+
+	# Difficulty gradient: scale CHASE speed up with distance from the world origin.
+	# global_position is already valid here because the terrain parents the crocodile
+	# into the chunk BEFORE _ready runs, so |x| is the true spawn distance. Only the
+	# chase speed scales — wandering stays lazy everywhere; it's being HUNTED that
+	# gets scarier the farther you push.
+	var distance_factor := 1.0 + clampf(
+		absf(global_position.x) / DISTANCE_SPEED_SCALE_DENOM, 0.0, DISTANCE_SPEED_SCALE_MAX
+	)
+	chase_speed_instance *= distance_factor
 
 	# Give this crocodile a randomized overall size. We scale the whole body
 	# uniformly so the visual model and the physics capsule grow/shrink together;
