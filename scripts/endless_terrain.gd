@@ -331,13 +331,12 @@ var last_player_chunk: Vector2i = Vector2i(999999, 999999)
 const SYNC_RING: int = 1
 
 ## Missing chunks awaiting progressive creation, sorted nearest-first (squared
-## distance to the player's chunk), plus a companion Dictionary mirror so
-## membership checks/removals stay O(1). Both are rebuilt from scratch on every
-## update_chunks call — it only runs on boundary crossings, so a full rebuild
-## is cheap and simpler than incremental surgery (and naturally drops queued
-## chunks that fell back out of range).
+## distance to the player's chunk). Rebuilt from scratch on every update_chunks
+## call — it only runs on boundary crossings, so a full rebuild is cheap and
+## simpler than incremental surgery: it dedupes for free (each position comes
+## from iterating the unique-keyed chunks_to_load Dictionary once) and
+## naturally drops queued chunks that fell back out of range.
 var pending_chunks: Array[Vector2i] = []
-var pending_lookup: Dictionary = {}
 
 ## PER-RUN WORLD SEED — makes run 2 a different world from run 1.
 ##
@@ -444,15 +443,15 @@ func _get_shared_ground_mesh() -> PlaneMesh:
 	use. All chunks are the same size, so a single mesh serves them all — the old
 	code allocated a fresh subdivided PlaneMesh per chunk for no benefit. 16×16
 	subdivisions give the vertex density the vertex-noise ground shader needs.
-	The material is (re)assigned from the CURRENT terrain_material on every call,
-	so the getter can never capture a stale value regardless of call order.
+	The material comes from terrain_material, which _ready() finalizes before
+	any chunk can be created, so assigning it once here is safe.
 	"""
 	if _shared_ground_mesh == null:
 		_shared_ground_mesh = PlaneMesh.new()
 		_shared_ground_mesh.size = Vector2(chunk_size, chunk_size)
 		_shared_ground_mesh.subdivide_width = 16
 		_shared_ground_mesh.subdivide_depth = 16
-	_shared_ground_mesh.material = terrain_material
+		_shared_ground_mesh.material = terrain_material
 	return _shared_ground_mesh
 
 func _get_shared_block_material() -> StandardMaterial3D:
@@ -634,15 +633,11 @@ func _process(_delta: float) -> void:
 	# pending_chunks comment in SECTION 2). The queue is sorted nearest-first,
 	# so the chunks the player is most likely to see next appear first, and the
 	# per-frame cost is bounded by one chunk's generation instead of dozens.
-	while not pending_chunks.is_empty():
-		var next_pos: Vector2i = pending_chunks.pop_front()
-		pending_lookup.erase(next_pos)
-		# Skip anything already created since it was queued (defensive — the
-		# queue is rebuilt on every boundary crossing, but cheap to guard).
-		if next_pos in active_chunks:
-			continue
-		create_chunk(next_pos)
-		break
+	# (No already-created check needed: the queue is rebuilt from scratch on
+	# every boundary crossing, and between crossings only this line creates
+	# chunks, so a queued position can never already be active.)
+	if not pending_chunks.is_empty():
+		create_chunk(pending_chunks.pop_front())
 
 # ============================================================================
 # CHUNK MANAGEMENT FUNCTIONS
@@ -725,7 +720,6 @@ func update_chunks(player_chunk: Vector2i) -> void:
 	# range. Generation ORDER doesn't matter for content — see the determinism
 	# note above pending_chunks in SECTION 2.
 	pending_chunks.clear()
-	pending_lookup.clear()
 
 	for chunk_pos in chunks_to_load:
 		if chunk_pos in active_chunks:
@@ -735,7 +729,6 @@ func update_chunks(player_chunk: Vector2i) -> void:
 			create_chunk(chunk_pos)
 		else:
 			pending_chunks.append(chunk_pos)
-			pending_lookup[chunk_pos] = true
 
 	# Nearest-first: sort by squared distance to the player's chunk so the fill
 	# grows outward from the player (the far edge, hidden by fog, comes last).
@@ -828,7 +821,7 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 	# crocodile avoidance raycasts hitting blocks exactly as before.
 
 	if spawn_objects:
-		obstacles = spawn_objects_in_chunk(chunk_pos, mesh_instance, platforms, block_batch, block_body)
+		obstacles = spawn_objects_in_chunk(chunk_pos, platforms, block_batch, block_body)
 
 	# Build the chunk's batched block visuals. If any blocks were placed, collapse
 	# them all into one MultiMeshInstance3D parented to this chunk (so it is freed
@@ -859,14 +852,13 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 	if spawn_coins:
 		spawn_coins_in_chunk(chunk_pos, mesh_instance, obstacles)
 
-func spawn_objects_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, platforms: Array, block_batch: Array, block_body: StaticBody3D) -> Array:
+func spawn_objects_in_chunk(chunk_pos: Vector2i, platforms: Array, block_batch: Array, block_body: StaticBody3D) -> Array:
 	"""
 	Spawns blocks within a terrain chunk: scattered cubes, the occasional little
 	stack/tower, and — sometimes — a feature structure (wall / corridor / gate /
 	pyramid).
 
 	@param chunk_pos: Chunk coordinates for seeded random generation
-	@param parent_chunk: The chunk mesh to attach objects to
 	@param platforms: Out-param; feature structures append walkable-top descriptors
 	                  here for patrolling crocodiles.
 	@param block_batch: Out-param; each block created appends its
@@ -900,7 +892,7 @@ func spawn_objects_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, p
 	# so scattered blocks can be placed around it (the scatter loop below checks
 	# against these footprints).
 	if rng.randf() < structure_chance:
-		spawn_feature_structure(rng, parent_chunk, half_chunk, obstacles, platforms, block_batch, block_body)
+		spawn_feature_structure(rng, half_chunk, obstacles, platforms, block_batch, block_body)
 
 	# Store positions of scattered objects to check spacing between them
 	var spawned_positions: Array[Vector3] = []
@@ -938,7 +930,7 @@ func spawn_objects_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, p
 
 		# Base block sits on the ground.
 		var size := rng.randf_range(object_size_min, object_size_max)
-		create_block(parent_chunk, Vector3(random_x, size / 2.0, random_z), size, rng.randf_range(0, TAU), rng, block_batch, block_body)
+		create_block(Vector3(random_x, size / 2.0, random_z), size, rng.randf_range(0, TAU), rng, block_batch, block_body)
 		spawned_positions.append(object_pos)
 
 		# Track the height of the top surface (grows if we stack a tower on top).
@@ -951,7 +943,7 @@ func spawn_objects_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, p
 				# Each block up the stack is a bit smaller, so towers taper and
 				# the random yaw doesn't make them overhang awkwardly.
 				var stack_size := size * rng.randf_range(0.6, 0.85)
-				create_block(parent_chunk, Vector3(random_x, top_y + stack_size / 2.0, random_z), stack_size, rng.randf_range(0, TAU), rng, block_batch, block_body)
+				create_block(Vector3(random_x, top_y + stack_size / 2.0, random_z), stack_size, rng.randf_range(0, TAU), rng, block_batch, block_body)
 				top_y += stack_size
 
 		# Record the footprint and final top height — used to keep crocodiles out
@@ -961,7 +953,7 @@ func spawn_objects_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, p
 
 	return obstacles
 
-func spawn_feature_structure(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, half_chunk: float, obstacles: Array, platforms: Array, block_batch: Array, block_body: StaticBody3D) -> void:
+func spawn_feature_structure(rng: RandomNumberGenerator, half_chunk: float, obstacles: Array, platforms: Array, block_batch: Array, block_body: StaticBody3D) -> void:
 	"""
 	Pick and build one "feature" structure for variety: a wall, a corridor to run
 	through, a gate, or a Mayan step-pyramid. Pyramids are the biggest/rarest
@@ -969,7 +961,6 @@ func spawn_feature_structure(rng: RandomNumberGenerator, parent_chunk: MeshInsta
 	patrolling crocodile can be placed on.
 
 	@param rng: The chunk's seeded RNG (so the choice is deterministic)
-	@param parent_chunk: The chunk mesh to attach the structure to
 	@param half_chunk: Half the chunk width, for bounds
 	@param obstacles: Footprint list each piece is appended to (crocodiles + coins)
 	@param platforms: Walkable-top descriptors for patrolling crocodiles
@@ -979,21 +970,20 @@ func spawn_feature_structure(rng: RandomNumberGenerator, parent_chunk: MeshInsta
 	"""
 	var pick := rng.randf()
 	if pick < 0.3:
-		spawn_wall(rng, parent_chunk, half_chunk, obstacles, platforms, block_batch, block_body)
+		spawn_wall(rng, half_chunk, obstacles, platforms, block_batch, block_body)
 	elif pick < 0.55:
-		spawn_corridor(rng, parent_chunk, half_chunk, obstacles, block_batch, block_body)
+		spawn_corridor(rng, half_chunk, obstacles, block_batch, block_body)
 	elif pick < 0.75:
-		spawn_gate(rng, parent_chunk, half_chunk, obstacles, block_batch, block_body)
+		spawn_gate(rng, half_chunk, obstacles, block_batch, block_body)
 	else:
-		spawn_pyramid(rng, parent_chunk, half_chunk, obstacles, platforms, block_batch, block_body)
+		spawn_pyramid(rng, half_chunk, obstacles, platforms, block_batch, block_body)
 
-func spawn_pyramid(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, half_chunk: float, obstacles: Array, platforms: Array, block_batch: Array, block_body: StaticBody3D) -> void:
+func spawn_pyramid(rng: RandomNumberGenerator, half_chunk: float, obstacles: Array, platforms: Array, block_batch: Array, block_body: StaticBody3D) -> void:
 	"""
 	Build a Mayan step-pyramid: a few square slabs stacked smallest-on-top, like a
 	ziggurat. Each layer is a single flat box (cheap), not a grid of cubes.
 
 	@param rng: The chunk's seeded RNG
-	@param parent_chunk: The chunk mesh to attach the slabs to
 	@param half_chunk: Half the chunk width, for bounds
 	@param obstacles: Footprint list (one entry for the whole base, with the apex
 	                  height as its top so a coin can perch on top)
@@ -1026,7 +1016,7 @@ func spawn_pyramid(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, hal
 	var y := 0.0
 	for i in layers:
 		var w := base_size - i * shrink
-		create_box(parent_chunk, Vector3(cx, y + layer_height / 2.0, cz), Vector3(w, layer_height, w), 0.0, rng, block_batch, block_body)
+		create_box(Vector3(cx, y + layer_height / 2.0, cz), Vector3(w, layer_height, w), 0.0, rng, block_batch, block_body)
 		y += layer_height
 
 	# One footprint for the whole base; top = apex height. Pyramids are climbable
@@ -1039,7 +1029,7 @@ func spawn_pyramid(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, hal
 	if apex_half > 0.4:
 		platforms.append({ "center": Vector3(cx, y, cz), "half": Vector2(apex_half, apex_half) })
 
-func spawn_gate(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, half_chunk: float, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
+func spawn_gate(rng: RandomNumberGenerator, half_chunk: float, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
 	"""
 	Build a monumental gate (Brandenburg-Tor style): two tall pillars with a thick
 	lintel beam across the top, leaving an opening to walk through.
@@ -1049,7 +1039,6 @@ func spawn_gate(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, half_c
 	onto the lintel. That's intentional "hard to reach" gameplay.
 
 	@param rng: The chunk's seeded RNG
-	@param parent_chunk: The chunk mesh to attach the gate to
 	@param half_chunk: Half the chunk width, for bounds
 	@param obstacles: Footprint list (pillars, plus a coin-perch on the lintel)
 	@param block_batch: Out-param threaded down to create_box for MultiMesh batching
@@ -1083,25 +1072,24 @@ func spawn_gate(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, half_c
 		var pz: float = cz + (0.0 if along_x else s * half_span)
 		# Pillar is pillar_w across the span axis and `depth` across the other.
 		var pillar_dims: Vector3 = Vector3(pillar_w, pillar_h, depth) if along_x else Vector3(depth, pillar_h, pillar_w)
-		create_box(parent_chunk, Vector3(px, pillar_h * 0.5, pz), pillar_dims, 0.0, rng, block_batch, block_body)
+		create_box(Vector3(px, pillar_h * 0.5, pz), pillar_dims, 0.0, rng, block_batch, block_body)
 		# Each pillar is its own footprint, so crocodiles can still pass through
 		# the opening between them.
 		obstacles.append({ "pos": Vector3(px, 0, pz), "radius": maxf(pillar_w, depth) * 0.71, "top": pillar_h, "climbable": true })
 
 	# Lintel beam spanning the full width, resting on top of both pillars.
 	var lintel_dims: Vector3 = Vector3(total_w, lintel_h, depth) if along_x else Vector3(depth, lintel_h, total_w)
-	create_box(parent_chunk, Vector3(cx, pillar_h + lintel_h * 0.5, cz), lintel_dims, 0.0, rng, block_batch, block_body)
+	create_box(Vector3(cx, pillar_h + lintel_h * 0.5, cz), lintel_dims, 0.0, rng, block_batch, block_body)
 
 	# Register the lintel centre as a (hard-to-reach but climbable) coin perch.
 	obstacles.append({ "pos": Vector3(cx, 0, cz), "radius": 1.0, "top": pillar_h + lintel_h, "climbable": true })
 
-func spawn_corridor(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, half_chunk: float, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
+func spawn_corridor(rng: RandomNumberGenerator, half_chunk: float, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
 	"""
 	Build a corridor: two parallel two-block-high walls with a gap between them
 	that the player can run down.
 
 	@param rng: The chunk's seeded RNG
-	@param parent_chunk: The chunk mesh to attach the walls to
 	@param half_chunk: Half the chunk width, for bounds
 	@param obstacles: Footprint list each block is appended to
 	@param block_batch: Out-param threaded down to create_box for MultiMesh batching
@@ -1139,17 +1127,16 @@ func spawn_corridor(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, ha
 			var z := perp if along_x else along
 			# Two blocks tall so it reads as an enclosed passage. Sheer and taller
 			# than a jump, so it's not climbable (no coins perch on the roof).
-			create_block(parent_chunk, Vector3(x, block_size / 2.0, z), block_size, 0.0, rng, block_batch, block_body)
-			create_block(parent_chunk, Vector3(x, block_size + block_size / 2.0, z), block_size, 0.0, rng, block_batch, block_body)
+			create_block(Vector3(x, block_size / 2.0, z), block_size, 0.0, rng, block_batch, block_body)
+			create_block(Vector3(x, block_size + block_size / 2.0, z), block_size, 0.0, rng, block_batch, block_body)
 			obstacles.append({ "pos": Vector3(x, 0, z), "radius": block_size * 0.71, "top": 2.0 * block_size, "climbable": false })
 
-func spawn_wall(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, half_chunk: float, obstacles: Array, platforms: Array, block_batch: Array, block_body: StaticBody3D) -> void:
+func spawn_wall(rng: RandomNumberGenerator, half_chunk: float, obstacles: Array, platforms: Array, block_batch: Array, block_body: StaticBody3D) -> void:
 	"""
 	Build a single wall — a straight line of touching blocks the player must run
 	around — somewhere inside the chunk.
 
 	@param rng: The chunk's seeded RNG (so the wall is deterministic)
-	@param parent_chunk: The chunk mesh to attach the wall blocks to
 	@param half_chunk: Half the chunk width, for bounds
 	@param obstacles: Footprint list to append each wall block to (for crocodiles)
 	@param platforms: Gets the wall ridge registered as a patrol platform
@@ -1184,14 +1171,14 @@ func spawn_wall(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, half_c
 		var z := fixed if along_x else along
 
 		# Wall blocks are axis-aligned (yaw 0) so they sit flush against each other.
-		create_block(parent_chunk, Vector3(x, block_size / 2.0, z), block_size, 0.0, rng, block_batch, block_body)
+		create_block(Vector3(x, block_size / 2.0, z), block_size, 0.0, rng, block_batch, block_body)
 		var top := block_size
 		# A single-block section is low enough to hop onto; a doubled one is not.
 		var climbable := true
 
 		# Now and then double a section up so the wall isn't a uniform single row.
 		if rng.randf() < 0.3:
-			create_block(parent_chunk, Vector3(x, block_size + block_size / 2.0, z), block_size, 0.0, rng, block_batch, block_body)
+			create_block(Vector3(x, block_size + block_size / 2.0, z), block_size, 0.0, rng, block_batch, block_body)
 			top = 2.0 * block_size
 			climbable = false
 
@@ -1208,7 +1195,7 @@ func spawn_wall(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, half_c
 	if half_along > 1.0 and half_across > 0.2:
 		platforms.append({ "center": ridge_center, "half": ridge_half })
 
-func create_block(parent_chunk: MeshInstance3D, center_pos: Vector3, size: float, yaw: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> void:
+func create_block(center_pos: Vector3, size: float, yaw: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> void:
 	"""
 	Create one cube block. Thin wrapper over create_box for the common case where
 	all three dimensions are equal (scattered blocks, towers, walls, corridors).
@@ -1217,9 +1204,9 @@ func create_block(parent_chunk: MeshInstance3D, center_pos: Vector3, size: float
 	@param block_body: The chunk's shared block-collision body, forwarded to
 	                  create_box so this block's shape hangs on it (Task 5).
 	"""
-	create_box(parent_chunk, center_pos, Vector3(size, size, size), yaw, rng, block_batch, block_body)
+	create_box(center_pos, Vector3(size, size, size), yaw, rng, block_batch, block_body)
 
-func create_box(parent_chunk: MeshInstance3D, center_pos: Vector3, dimensions: Vector3, yaw: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> void:
+func create_box(center_pos: Vector3, dimensions: Vector3, yaw: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> void:
 	"""
 	Register one box for rendering AND register its physics collision shape. Used for
 	cube blocks and for the flat slabs that make up pyramids.
@@ -1256,12 +1243,6 @@ func create_box(parent_chunk: MeshInstance3D, center_pos: Vector3, dimensions: V
 	  The MultiMesh (block_batch → MultiMeshInstance3D) and this collision body are the
 	  TWO HALVES of each chunk's blocks: one renders them, one collides with them.
 
-	@param parent_chunk: The chunk mesh. NOTE: create_box itself no longer uses this — the
-	                   visual goes to block_batch and the collision shape attaches to
-	                   block_body (which create_chunk parents to the chunk). It's kept only
-	                   to match the uniform (parent_chunk, ..., block_batch, block_body)
-	                   signature shared by every spawn_*/create_* helper, so all the call
-	                   sites pass the same argument list. (Not used for "future" plans.)
 	@param center_pos: Box centre position, local to the chunk (Y is the centre,
 	                   so pass height/2 to sit a box on the ground)
 	@param dimensions: Full box size on each axis (width, height, depth)
@@ -2063,7 +2044,6 @@ func new_run() -> void:
 	road_k_min = 1
 	road_k_max = 0
 	pending_chunks.clear()
-	pending_lookup.clear()
 
 	# 3. Drop every old-world chunk (queue_free is the safe removal, as in remove_chunk).
 	for chunk_pos in active_chunks.keys():

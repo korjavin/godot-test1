@@ -19,8 +19,18 @@ extends Control
 ## Cached player reference (re-fetched if it ever goes away).
 var player: Node = null
 
-## Last-drawn display state (see _process). "" means "never drawn / force redraw".
-var _last_drawn_key: String = ""
+## Snapshot of what the dial currently shows — written by _process, read by
+## _draw, so the change-check and the drawing always agree. _have_data is false
+## until the first successful read (and when the player goes away, so _draw
+## clears the control instead of leaving a stale arc painted).
+var _have_data: bool = false
+var _ratio: float = 0.0
+var _ability_ready: bool = false
+var _ability_name: String = ""
+var _secs: float = 0.0
+## Quantized copies of ratio/secs used for the redraw change-check (see _process).
+var _last_arc: int = -1
+var _last_tenths: int = -1
 
 # --- Layout / colours (tweak here) ------------------------------------------
 const DIAL_RADIUS: float = 40.0
@@ -41,35 +51,46 @@ func _ready() -> void:
 func _process(_delta: float) -> void:
 	if player == null or not is_instance_valid(player):
 		player = get_tree().get_first_node_in_group("player")
-		_last_drawn_key = ""  # player just [re]acquired — force one redraw
-	# Redraw ONLY when what we would draw actually changed. We fold everything the
-	# dial shows into one comparable key: ready flag, ability name, the cooldown
-	# ratio quantized to arc-visible steps (1/128th of the ring — finer changes
-	# don't move a pixel), and the remaining-seconds text at its displayed "%.1f"
-	# precision. While the ability is READY and idle (the common case) the key is
-	# constant, so the HUD costs zero redraws instead of one per frame.
 	if player == null or not is_instance_valid(player) \
 			or not player.has_method("get_ability_cooldown_ratio"):
+		# No player to read — clear the dial once rather than leaving the
+		# last-drawn arc frozen on screen.
+		if _have_data:
+			_have_data = false
+			queue_redraw()
 		return
 	var ratio: float = player.get_ability_cooldown_ratio()
-	var ready: bool = player.is_ability_ready() if player.has_method("is_ability_ready") else ratio <= 0.0
-	var ability_name: String = player.get_ability_name() if player.has_method("get_ability_name") else "Ability"
-	var secs: float = player.get_ability_remaining() if player.has_method("get_ability_remaining") else 0.0
-	var key := "%s|%s|%d|%.1f" % [ready, ability_name, roundi(ratio * 128.0), secs]
-	if key != _last_drawn_key:
-		_last_drawn_key = key
-		queue_redraw()
+	var ready: bool = player.is_ability_ready()
+	var ability_name: String = player.get_ability_name()
+	var secs: float = player.get_ability_remaining()
+	# Redraw ONLY when what we would draw actually changed: ready flag, name,
+	# the ratio quantized to arc-visible steps (1/128th of the ring — finer
+	# changes don't move a pixel), and the seconds text at its displayed 0.1 s
+	# precision. While the ability is READY and idle (the common case) nothing
+	# changes, so the HUD costs zero redraws instead of one per frame.
+	var arc := roundi(ratio * 128.0)
+	var tenths := roundi(secs * 10.0)
+	if _have_data and ready == _ability_ready and ability_name == _ability_name \
+			and arc == _last_arc and tenths == _last_tenths:
+		return
+	_have_data = true
+	_ratio = ratio
+	_ability_ready = ready
+	_ability_name = ability_name
+	_secs = secs
+	_last_arc = arc
+	_last_tenths = tenths
+	queue_redraw()
 
 
 func _draw() -> void:
-	if player == null or not is_instance_valid(player):
+	# Draw from the _process snapshot (no player fetches here). _have_data false
+	# means "nothing to show" — drawing nothing clears the control.
+	if not _have_data:
 		return
-	if not player.has_method("get_ability_cooldown_ratio"):
-		return
-
-	var ratio: float = player.get_ability_cooldown_ratio()  # 1 = just used, 0 = ready
-	var ready: bool = player.is_ability_ready() if player.has_method("is_ability_ready") else ratio <= 0.0
-	var ability_name: String = player.get_ability_name() if player.has_method("get_ability_name") else "Ability"
+	var ratio := _ratio  # 1 = just used, 0 = ready
+	var ready := _ability_ready
+	var ability_name := _ability_name
 
 	var font := get_theme_default_font()
 	var center := Vector2(size.x * 0.5, DIAL_CENTER_Y)
@@ -99,9 +120,8 @@ func _draw() -> void:
 		name_size, Color(1, 1, 1, 0.97))
 
 	# Seconds remaining inside the dial while cooling down.
-	if not ready and player.has_method("get_ability_remaining"):
-		var secs: float = player.get_ability_remaining()
-		_draw_centered(font, "%.1f" % secs, Vector2(center.x, center.y + 22.0),
+	if not ready:
+		_draw_centered(font, "%.1f" % _secs, Vector2(center.x, center.y + 22.0),
 			14, Color(1, 0.85, 0.6, 0.95))
 
 

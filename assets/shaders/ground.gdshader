@@ -24,11 +24,24 @@ uniform vec3 green_b: source_color = vec3(0.20, 0.44, 0.26); // shaded moss
 // Noise value computed per-vertex, interpolated for free across the triangle.
 varying float v_noise;
 
-// Classic sin/dot hash: turns a 2D lattice point into a pseudo-random 0..1
+// Sine-free 2D lattice hash: turns a lattice point into a pseudo-random 0..1
 // value. Deterministic (pure function of position), so the pattern never
 // swims between frames or differs between chunks.
+//
+// PRECISION: distance is this game's headline score, so world X reaches many
+// kilometres — the classic fract(sin(dot(p, big)) * 43758.5453) hash feeds
+// sin() inputs of 1e4+ out there, where fp32 sin loses its low bits and the
+// noise collapses into visible banding (worst on mobile GPUs, the web
+// target). So we wrap the lattice point with mod() first — hash inputs stay
+// small everywhere, at the cost of the noise tiling every 289 lattice cells
+// (~11.5 km for the broad octave; far beyond anything the fog lets you see).
+// The wrap is seamless: lattice point 289 hashes identically to 0, so the
+// cells on either side of the wrap boundary share their corner values.
 float hash2(vec2 p) {
-	return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+	p = mod(p, 289.0);
+	p = fract(p * vec2(0.1031, 0.1030));
+	p += dot(p, p.yx + 33.33);
+	return fract((p.x + p.y) * p.x);
 }
 
 // One octave of value noise: hash the four corners of the lattice cell the
