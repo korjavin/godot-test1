@@ -63,10 +63,10 @@ constants at top, `_synth_*()` returning `PackedFloat32Array`, `_build_wav()` in
 - [x] headless smoke: import + `--quit-after 3` clean
 
 ### Task 2: hit_flash color parameter + coin pickup juice
-- [ ] `scripts/hit_flash.gd`: give `flash()` a color argument with the current red as default — `func flash(flash_color: Color = Color(0.7, 0.0, 0.0)) -> void:` — that sets `color = Color(flash_color.r, flash_color.g, flash_color.b, 0.0)` before popping `current_alpha` (existing `player_controller.hit_by_crocodile` caller keeps working unchanged)
-- [ ] `scripts/coin.gd` `_on_body_entered`: before `queue_free()`, spawn a gold `ability_effect.gd` wave at the coin's `global_position` — bare `MeshInstance3D` + `set_script(preload(...))`, parented to the COIN'S PARENT (the chunk — same self-freeing pattern as `player_controller._spawn_ability_effect`), `setup(Color(1.0, 0.85, 0.2, 0.5), 1.2, 0.25)`
-- [ ] `scripts/coin_hud.gd`: scale-pop on pickup — track last-seen `coins_collected`; when it increases set `scale = Vector2.ONE * 1.25` (with `pivot_offset = size * 0.5` so it pops around its centre), and every `_process` frame lerp `scale` back toward `Vector2.ONE` (~10/s); keep the existing text logic untouched
-- [ ] headless smoke clean
+- [x] `scripts/hit_flash.gd`: give `flash()` a color argument with the current red as default — `func flash(flash_color: Color = Color(0.7, 0.0, 0.0)) -> void:` — that sets `color = Color(flash_color.r, flash_color.g, flash_color.b, 0.0)` before popping `current_alpha` (existing `player_controller.hit_by_crocodile` caller keeps working unchanged)
+- [x] `scripts/coin.gd` `_on_body_entered`: before `queue_free()`, spawn a gold `ability_effect.gd` wave at the coin's `global_position` — bare `MeshInstance3D` + `set_script(preload(...))`, parented to the COIN'S PARENT (the chunk — same self-freeing pattern as `player_controller._spawn_ability_effect`), `setup(Color(1.0, 0.85, 0.2, 0.5), 1.2, 0.25)`
+- [x] `scripts/coin_hud.gd`: scale-pop on pickup — track last-seen `coins_collected`; when it increases set `scale = Vector2.ONE * 1.25` (with `pivot_offset = size * 0.5` so it pops around its centre), and every `_process` frame lerp `scale` back toward `Vector2.ONE` (~10/s); keep the existing text logic untouched
+- [x] headless smoke clean
 
 ### Task 3: Jump arc retune + coyote time + jump buffer
 Apex invariant: `v²/2g` stays exactly 3.6125 m (10.2²/28.8), so the 2.5 m block level

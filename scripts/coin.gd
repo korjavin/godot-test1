@@ -30,6 +30,10 @@ const GEM_VALUE: int = 10
 const GEM_SCALE: float = 1.6
 const GEM_COLOR: Color = Color(0.65, 0.25, 0.95)
 
+## The self-freeing expanding wave used for the pickup pop (same script the
+## player's abilities use — see _spawn_ability_effect in player_controller.gd).
+const ABILITY_EFFECT := preload("res://scripts/ability_effect.gd")
+
 ## Gentle up/down bob so coins feel lively and mid-air ones are easy to spot
 const BOB_SPEED: float = 2.0
 const BOB_AMOUNT: float = 0.12
@@ -143,6 +147,18 @@ func _on_body_entered(body: Node) -> void:
 	var sm := get_tree().get_first_node_in_group("sound_manager")
 	if sm and sm.has_method("play_coin"):
 		sm.play_coin()
+
+	# Pickup pop: a quick gold wave at the coin's spot. Parented to the COIN'S
+	# PARENT (the chunk), not the coin — we queue_free() ourselves right below,
+	# and a child effect would die with us. The wave frees itself when done and
+	# unloads with the chunk, so nothing leaks (same pattern as the abilities).
+	var fx_parent := get_parent()
+	if fx_parent:
+		var fx := MeshInstance3D.new()
+		fx.set_script(ABILITY_EFFECT)
+		fx_parent.add_child(fx)
+		fx.global_position = global_position
+		fx.setup(Color(1.0, 0.85, 0.2, 0.5), 1.2, 0.25)
 
 	# Remove the coin now that it's been picked up.
 	queue_free()
