@@ -81,6 +81,20 @@ const JUMP_BUFFER_TIME: float = 0.12
 var coyote_timer: float = 0.0
 var jump_buffer_timer: float = 0.0
 
+## Landing impact ("squash"): touching down compresses the character for a brief
+## moment, scaled by how fast we were falling — a soft hop barely dips, a long
+## drop visibly squashes. Purely visual; the collision capsule never changes.
+const LAND_SQUASH_DURATION: float = 0.18
+## Impacts faster than this (m/s downward) also get a small camera shake and a
+## flat dust ring at the feet — the "heavy landing" tier.
+const LAND_HARD_SPEED: float = 4.0
+## Seconds left in the current squash (0 = none) and its 0.2–1.0 strength.
+var land_squash_timer: float = 0.0
+var land_squash_strength: float = 0.0
+## Downward speed recorded every airborne falling frame — move_and_slide zeroes
+## velocity.y on touchdown, so the landing code reads this instead.
+var _fall_speed: float = 0.0
+
 # ============================================================================
 # SECTION 3: CAMERA AND ROTATION SETTINGS
 # ============================================================================
@@ -620,6 +634,10 @@ func _physics_process(delta: float) -> void:
 			frame_gravity *= WINDMAN_GRAVITY_FACTOR
 		# Note: We multiply by delta to make it frame-rate independent
 		velocity.y -= frame_gravity * delta
+		# Record the fall speed while dropping — move_and_slide zeroes velocity.y
+		# the frame we touch down, so the landing squash reads this snapshot.
+		if velocity.y < 0.0:
+			_fall_speed = -velocity.y
 
 	# STEP 2: Handle Jumping (with coyote time + jump buffer — see SECTION 2)
 	# Refresh the coyote window while grounded; tick it down while airborne.
@@ -1168,6 +1186,17 @@ func update_character_animation(delta: float, input_dir: Vector2) -> void:
 	if current_on_floor and not was_on_floor \
 			and not (is_caught or is_respawning or is_game_over):
 		_sfx("play_land")
+		# Start the landing squash, scaled by impact speed (see SECTION 2). The
+		# eased dip itself is applied AFTER the branch chain below, so the walk
+		# bob / idle breathe can't overwrite it on the same frame.
+		land_squash_timer = LAND_SQUASH_DURATION
+		land_squash_strength = clampf(_fall_speed / 10.0, 0.2, 1.0)
+		# Heavy landings additionally kick the camera and puff a flat dust ring
+		# at the feet (the thud above already covers audio on every landing).
+		if _fall_speed > LAND_HARD_SPEED:
+			shake_amount = maxf(shake_amount, 0.12)
+			_spawn_ability_effect(global_position, Color(0.75, 0.7, 0.6, 0.45), 1.6, 0.3)
+		_fall_speed = 0.0
 
 	# Jump/Fall animation
 	if not current_on_floor:
@@ -1185,6 +1214,24 @@ func update_character_animation(delta: float, input_dir: Vector2) -> void:
 	# Idle animation
 	else:
 		animate_idle(delta)
+
+	# Landing squash — applied AFTER the branch chain so whatever body position
+	# the active animation just wrote gets the dip added on top (instead of the
+	# walk bob / idle breathe overwriting it). A sin(progress * PI) arc eases the
+	# compression in and back out, ending at exactly zero so the pose hands back
+	# to the animations with no snap. The scale squash stretches the container
+	# wide and short (volume-preserving cartoon squash) around the current Teibi
+	# base scale; it is skipped while a Teibi resize tween is animating that same
+	# property, so the two never fight.
+	if land_squash_timer > 0.0:
+		land_squash_timer = maxf(0.0, land_squash_timer - delta)
+		var squash_progress := 1.0 - land_squash_timer / LAND_SQUASH_DURATION
+		var k := sin(squash_progress * PI) * land_squash_strength
+		if character_body:
+			character_body.position.y -= 0.14 * k
+		if character_container and (_teibi_tween == null or not _teibi_tween.is_running()):
+			var base := _current_teibi_scale()
+			character_container.scale = base * Vector3(1.0 + 0.2 * k, 1.0 - 0.3 * k, 1.0 + 0.2 * k)
 
 	# Not in the walking state (idle, airborne)? Reset the footstep tracker to
 	# its "no history" sentinel so the first frame of the next walk records the
@@ -1328,14 +1375,13 @@ func animate_jumping() -> void:
 
 func animate_landing() -> void:
 	"""
-	Brief animation when the character lands on the ground.
-	Creates a small impact pose and lowers the wings back to rest.
+	Brief animation when the character lands on the ground. The impact crouch
+	itself is no longer set here — the eased landing squash at the end of
+	update_character_animation drives it over LAND_SQUASH_DURATION instead of
+	the old single -0.1 frame — so this only lowers the wings back to rest.
 	"""
 	if not character_body:
 		return
-
-	# Small crouch on landing
-	character_body.position.y = -0.1
 
 	# Drop the wings (arm roll) back to the sides now that we're grounded. The
 	# walk/idle animations only drive the X axis, so without this the arms would
@@ -1759,6 +1805,11 @@ var teibi_form_timer: float = 0.0
 ## True only while Teibi is giant — makes him crush crocodiles on contact.
 var is_giant: bool = false
 
+## The Teibi resize scale tween, when one is animating character_container.scale
+## (null/finished otherwise). The landing squash checks it so the two writers of
+## that property never fight.
+var _teibi_tween: Tween = null
+
 
 func _update_ability_timers(delta: float) -> void:
 	"""Count down cooldowns, the Windman air boost, and Teibi's form timer."""
@@ -1926,6 +1977,19 @@ func _ability_phoboman() -> bool:
 		if croc.has_method("flee_from"):
 			croc.flee_from(global_position, PHOBOMAN_FLEE_DURATION)
 	return true
+
+
+func _current_teibi_scale() -> float:
+	"""The character's current base scale from Teibi's size cycle (1.0 for every
+	other character — their state is always 0). The landing squash multiplies
+	around this so a squashed small/giant Teibi stays small/giant."""
+	match teibi_size_state:
+		1:
+			return TEIBI_SCALE_SMALL
+		2:
+			return TEIBI_SCALE_BIG
+		_:
+			return 1.0
 
 
 func _apply_teibi_scale(s: float) -> void:
