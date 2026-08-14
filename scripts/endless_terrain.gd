@@ -81,8 +81,11 @@ const FOG_DENSITY_DESKTOP: float = 0.0022
 @export var terrain_height: float = 0.0
 
 ## The material to apply to terrain chunks
-## You can customize this in the Godot editor!
-@export var terrain_material: StandardMaterial3D
+## You can customize this in the Godot editor! Typed as the base Material so
+## it accepts EITHER a StandardMaterial3D or a ShaderMaterial — when left
+## empty, _ready() builds the default ShaderMaterial running
+## assets/shaders/ground.gdshader (a vertex-noise two-green blend).
+@export var terrain_material: Material
 
 ## Enable/disable object spawning on terrain
 @export var spawn_objects: bool = true
@@ -516,11 +519,15 @@ func _ready() -> void:
 		push_warning("No player found! Add the player to the 'player' group.")
 		return
 
-	# Create default material if none provided
+	# Create default material if none provided.
+	# The built-in default is the ground vertex-noise shader (two greens blended
+	# by a per-VERTEX world-space noise — see assets/shaders/ground.gdshader for
+	# why it's nearly free and seamless across chunks). The @export escape hatch
+	# still wins: assign ANY Material in the editor and this block is skipped.
 	if not terrain_material:
-		terrain_material = StandardMaterial3D.new()
-		terrain_material.albedo_color = Color(0.2, 0.6, 0.2)  # Green grass color
-		terrain_material.roughness = 0.8
+		var ground_material := ShaderMaterial.new()
+		ground_material.shader = load("res://assets/shaders/ground.gdshader")
+		terrain_material = ground_material
 
 	# Enable the depth fog on ALL platforms (thick on web to mask the reduced view
 	# distance, thin on desktop as a horizon haze — see _setup_fog). Done after the

@@ -301,7 +301,7 @@ Hard invariants (repo law — violating any is a blocker):
 
 ### Task 7: Ground vertex-noise shader
 
-- [ ] Create `assets/shaders/ground.gdshader` (`shader_type spatial`): in `vertex()`,
+- [x] Create `assets/shaders/ground.gdshader` (`shader_type spatial`): in `vertex()`,
       compute a large-scale 2-octave value-noise float from the WORLD-space XZ of the
       vertex (`(MODEL_MATRIX * vec4(VERTEX, 1.0)).xz`; sin/hash-based, e.g.
       `fract(sin(dot(p, vec2(...))) * ...)` smoothed with a `sin`-blend octave at ~1/40 m
@@ -312,14 +312,20 @@ Hard invariants (repo law — violating any is a blocker):
       is per-VERTEX (the 16×16 subdivided plane from Task 1 provides the vertices).
       World-space input means the pattern is continuous across chunk seams with zero
       per-chunk work. Teaching comments in the shader.
-- [ ] `scripts/endless_terrain.gd` `_ready`: build the ground material as a
+- [x] `scripts/endless_terrain.gd` `_ready`: build the ground material as a
       `ShaderMaterial` loading `ground.gdshader` instead of the default green
       `StandardMaterial3D` (keep the `@export var terrain_material` escape hatch: if a
       material IS provided in the editor, honor it; only the built-in default switches
       to the shader). Type of `terrain_material` export must widen from
       `StandardMaterial3D` to `Material` for this — update the export and its comment.
-- [ ] Run `godot --headless --path . --quit-after 2` — must be clean (shader compile
+- [x] Run `godot --headless --path . --quit-after 2` — must be clean (shader compile
       errors surface here).
+      ⚠️ Same env note as Tasks 1–6: pre-existing unimported-glb + MobileSensors
+      class-cache errors only; unique-line diff vs the stashed baseline shows ONLY
+      backtrace line numbers shifting (endless_terrain.gd grew ~7 comment lines)
+      plus the usual seed-dependent './Model' warning backtrace variance. Zero
+      shader compile errors; main.tscn assigns no terrain_material override, so
+      the ShaderMaterial default is live.
 
 ### Task 8: Curated block color ramps (RNG-sequence-preserving)
 
