@@ -414,6 +414,19 @@ var _shared_block_material: StandardMaterial3D
 ## same RNG call in create_box so the deterministic world layout is unchanged.)
 const SHARED_BLOCK_ROUGHNESS: float = 0.85
 
+## Curated block colour ramps (Task 8 of the rendering pass). The old code rolled
+## each colour channel independently, which gave muddy, uncoordinated blocks. Now
+## each of the three block "families" is a hand-picked two-colour RAMP sharing a
+## warm undertone, and a block samples its ramp with ONE lerp — so every block
+## still varies, but along an art-directed line instead of a random RGB cube.
+## (The RNG draw count in create_box is unchanged — see the determinism note there.)
+const RAMP_SANDSTONE_A := Color(0.72, 0.58, 0.42)  # warm sandstone …
+const RAMP_SANDSTONE_B := Color(0.65, 0.38, 0.28)  # … to terracotta
+const RAMP_SLATE_A := Color(0.38, 0.40, 0.45)      # slate …
+const RAMP_SLATE_B := Color(0.55, 0.58, 0.63)      # … to blue-grey
+const RAMP_MOSS_A := Color(0.42, 0.45, 0.26)       # olive …
+const RAMP_MOSS_B := Color(0.30, 0.42, 0.28)       # … to moss
+
 func _get_shared_unit_box_mesh() -> BoxMesh:
 	"""
 	Returns the shared unit (1×1×1) BoxMesh used by every block MultiMesh,
@@ -1259,31 +1272,33 @@ func create_box(parent_chunk: MeshInstance3D, center_pos: Vector3, dimensions: V
 	@param block_body: The chunk's single shared StaticBody3D; we add this block's
 	                   CollisionShape3D child to it (see WHY note above).
 	"""
-	# ----- Pick the earthy colour (UNCHANGED logic) ------------------------------
+	# ----- Pick the block colour from a curated ramp -----------------------------
 	# IMPORTANT (determinism): the chunk's world layout is seeded from this same RNG.
 	# If we changed how many random numbers we draw here, every later block/crocodile/
-	# coin in the chunk would shift. So we keep the colour draws EXACTLY as before
-	# (same randi_range(0,2) branch, same randf_range ranges), and we still consume
-	# the roughness randf_range below even though the MultiMesh uses one shared
-	# roughness — preserving the RNG sequence keeps the world identical.
+	# coin in the chunk would shift. The COLOURS changed (per-channel randoms → curated
+	# ramps, see the RAMP_* consts up top), but the DRAWS did not: same randi_range(0,2)
+	# selector, then per branch the SAME number of randf_range calls with the SAME
+	# argument ranges as the old code. The FIRST draw in each branch becomes the ramp
+	# position `t` (normalised to 0..1 via inverse_lerp of its own range); the extra
+	# draws that used to feed the other channels are consumed and DISCARDED purely to
+	# advance the RNG — exactly like the roughness discard below. Keeping the calls
+	# textually parallel to the old ones makes the sequence preservation auditable.
 	var chosen_color: Color
 	var color_choice := rng.randi_range(0, 2)
 	match color_choice:
-		0:  # Brown rocks
-			chosen_color = Color(
-				rng.randf_range(0.3, 0.5),
-				rng.randf_range(0.2, 0.4),
-				rng.randf_range(0.1, 0.3)
-			)
-		1:  # Gray stones
-			var gray := rng.randf_range(0.3, 0.6)
-			chosen_color = Color(gray, gray, gray)
-		2:  # Dark green (mossy)
-			chosen_color = Color(
-				rng.randf_range(0.1, 0.3),
-				rng.randf_range(0.3, 0.5),
-				rng.randf_range(0.1, 0.3)
-			)
+		0:  # Warm sandstone → terracotta (was: brown rocks, 3 draws — still 3)
+			var t := inverse_lerp(0.3, 0.5, rng.randf_range(0.3, 0.5))
+			rng.randf_range(0.2, 0.4)  # discarded — RNG-sequence padding (see note above)
+			rng.randf_range(0.1, 0.3)  # discarded — RNG-sequence padding
+			chosen_color = RAMP_SANDSTONE_A.lerp(RAMP_SANDSTONE_B, t)
+		1:  # Slate → blue-grey (was: gray stones, 1 draw — still 1)
+			var t := inverse_lerp(0.3, 0.6, rng.randf_range(0.3, 0.6))
+			chosen_color = RAMP_SLATE_A.lerp(RAMP_SLATE_B, t)
+		2:  # Olive → moss (was: dark green, 3 draws — still 3)
+			var t := inverse_lerp(0.1, 0.3, rng.randf_range(0.1, 0.3))
+			rng.randf_range(0.3, 0.5)  # discarded — RNG-sequence padding
+			rng.randf_range(0.1, 0.3)  # discarded — RNG-sequence padding
+			chosen_color = RAMP_MOSS_A.lerp(RAMP_MOSS_B, t)
 
 	# Still DRAW the roughness random value to keep the RNG sequence identical to the
 	# old code (so the procedural world is unchanged). The value itself is discarded:

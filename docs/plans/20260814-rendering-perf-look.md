@@ -329,14 +329,14 @@ Hard invariants (repo law — violating any is a blocker):
 
 ### Task 8: Curated block color ramps (RNG-sequence-preserving)
 
-- [ ] `scripts/endless_terrain.gd` `create_box` (:1152–1178): replace the three
+- [x] `scripts/endless_terrain.gd` `create_box` (:1152–1178): replace the three
       per-channel-random color branches with three hand-picked RAMPS sharing a warm
       undertone, each sampled by ONE lerp: 0 = warm sandstone→terracotta
       (`Color(0.72, 0.58, 0.42)` → `Color(0.65, 0.38, 0.28)`), 1 = slate→blue-grey
       (`Color(0.38, 0.40, 0.45)` → `Color(0.55, 0.58, 0.63)`), 2 = olive→moss
       (`Color(0.42, 0.45, 0.26)` → `Color(0.30, 0.42, 0.28)`). Declare the six Color
       endpoints as consts at the top of the file near `SHARED_BLOCK_ROUGHNESS`.
-- [ ] **HARD CONSTRAINT — consume EXACTLY the same RNG draws in the same order** (the
+- [x] **HARD CONSTRAINT — consume EXACTLY the same RNG draws in the same order** (the
       existing :1146–1151 comment documents why; extend it): keep `rng.randi_range(0, 2)`
       as the ramp selector, then per branch consume the SAME number of `randf_range`
       calls as today — branch 0 (was 3 draws): first draw is the ramp `t`, the next two
@@ -346,9 +346,13 @@ Hard invariants (repo law — violating any is a blocker):
       draws (the values are remapped/discarded, but keeping the calls textually parallel
       makes the preservation auditable) — then normalize the used draw to 0..1 for the
       lerp `t`. Comment each discard exactly like the existing roughness-discard note.
-- [ ] Keep the `.srgb_to_linear()` conversion on the final color (the :1203–1214 comment
-      explains why; ramps don't change that logic).
-- [ ] Run `godot --headless --path . --quit-after 2` — must be clean.
+- [x] Keep the `.srgb_to_linear()` conversion on the final color (the :1203–1214 comment
+      explains why; ramps don't change that logic). (Untouched — sits after the match.)
+- [x] Run `godot --headless --path . --quit-after 2` — must be clean.
+      ⚠️ Same env note as Tasks 1–7: pre-existing unimported-glb + MobileSensors
+      class-cache errors only; unique-error set verified byte-identical to the
+      stashed baseline. Draw audit: branch 0 = 3 randf_range, branch 1 = 1,
+      branch 2 = 3, plus the roughness discard — 5/3/5 total, unchanged.
 
 ### Task 9: Croc toon+rim via shared helper (ONE static cached material set)
 
