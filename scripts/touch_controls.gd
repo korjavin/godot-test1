@@ -62,8 +62,20 @@ extends Control
 const ACTION_BUTTON_SIZE: float = 120.0
 
 ## Gap (px) between stacked action buttons and from the screen edge, so the cluster
-## reads as a tidy group in the bottom-right thumb zone without crowding the edge.
-const BUTTON_MARGIN: float = 24.0
+## reads as a tidy group in the bottom-right thumb zone. 64 (raised from 24) keeps
+## the bottom-most button clear of the iOS home-indicator swipe strip, which grew
+## in on-screen size once TOUCH_CONTENT_SCALE started magnifying the whole UI.
+const BUTTON_MARGIN: float = 64.0
+
+## UI magnification applied on REAL touch sessions only (never desktop, never the
+## F6 debug force-show). The math that motivates 1.8: the project renders a
+## 1920x1080 design viewport with `canvas_items` stretch, so on an iPhone 14
+## landscape (~844 CSS px wide) every design px is scaled by ~844/1920 ≈ 0.44 —
+## and with `aspect=expand` fitting the shorter axis it lands nearer 0.364. That
+## turns the 120 px JUMP button into ~44 CSS px, the bare Apple minimum (and ~25 px
+## in portrait — hopeless). `content_scale_factor` multiplies the whole 2D/UI layer
+## (3D render cost untouched): 120 × 1.8 × 0.364 ≈ 79 CSS px — comfortably tappable.
+const TOUCH_CONTENT_SCALE: float = 1.8
 
 ## Size of the small steer-mode toggle, parked top-centre away from the action
 ## cluster and clear of the existing HUD (coins top-right, perf/lives top-left).
@@ -152,6 +164,13 @@ func _ready() -> void:
 	# so keyboard+mouse play is untouched (the F6 key can still force-show for testing).
 	_apply_platform_visibility()
 
+	# Magnify the whole 2D/UI layer on real touch sessions (see TOUCH_CONTENT_SCALE
+	# for the CSS-px math). Gate strictly on the canonical touch predicate — NOT on
+	# `_force_shown` — so F6 debug on a desktop shows the buttons without rescaling
+	# the desktop HUD, keeping desktop rendering byte-for-byte unchanged.
+	if MobileSensors.is_touch_session():
+		get_window().content_scale_factor = TOUCH_CONTENT_SCALE
+
 
 func _input(event: InputEvent) -> void:
 	# Developer force-show toggle (F6). Raw key, not a named action: this is a debug
@@ -201,6 +220,8 @@ func _build_ui() -> void:
 	_steer_toggle.name = "SteerToggle"
 	_steer_toggle.custom_minimum_size = Vector2(TOGGLE_WIDTH, TOGGLE_HEIGHT)
 	_steer_toggle.add_theme_font_size_override("font_size", 30)
+	# Same translucent family look as the action circles; half-height radius = pill.
+	_apply_translucent_style(_steer_toggle, TOGGLE_HEIGHT / 2.0)
 	# Anchor to the top-centre: both horizontal anchors at 0.5 centres it, then we
 	# pull it left by half its width and down a margin from the top.
 	_steer_toggle.anchor_left = 0.5
@@ -253,6 +274,11 @@ func _make_action_button(label: String, node_name: String, slot: int) -> Button:
 	button.text = label
 	button.add_theme_font_size_override("font_size", 26)
 	button.custom_minimum_size = Vector2(ACTION_BUTTON_SIZE, ACTION_BUTTON_SIZE)
+	# Translucent dark circle instead of the opaque default theme panel, so the
+	# buttons occlude far less of the 3D world behind them. A corner radius of half
+	# the side length turns the square into a circle; the pressed variant is a bit
+	# brighter so a registered tap reads visually.
+	_apply_translucent_style(button, ACTION_BUTTON_SIZE / 2.0)
 	# Anchor to the bottom-right corner (1,1).
 	button.anchor_left = 1.0
 	button.anchor_right = 1.0
@@ -268,6 +294,28 @@ func _make_action_button(label: String, node_name: String, slot: int) -> Button:
 	button.offset_top = bottom_offset - ACTION_BUTTON_SIZE
 	add_child(button)
 	return button
+
+
+## Give a button the shared translucent rounded look (dark glassy fill, white text)
+## used by the whole touch UI, so the action circles and the top-strip toggle read
+## as one family. `corner_radius` = half the button's height makes a pill/circle.
+## The "pressed" variant is the same shape with a brighter fill (alpha 0.55 → 0.75)
+## so a registered tap is visible even under a thumb.
+func _apply_translucent_style(button: Button, corner_radius: float) -> void:
+	var normal_style := StyleBoxFlat.new()
+	normal_style.bg_color = Color(0.10, 0.12, 0.16, 0.55)
+	normal_style.corner_radius_top_left = int(corner_radius)
+	normal_style.corner_radius_top_right = int(corner_radius)
+	normal_style.corner_radius_bottom_left = int(corner_radius)
+	normal_style.corner_radius_bottom_right = int(corner_radius)
+	var pressed_style: StyleBoxFlat = normal_style.duplicate()
+	pressed_style.bg_color = Color(0.10, 0.12, 0.16, 0.75)
+	button.add_theme_stylebox_override("normal", normal_style)
+	button.add_theme_stylebox_override("hover", normal_style)
+	button.add_theme_stylebox_override("pressed", pressed_style)
+	button.add_theme_color_override("font_color", Color.WHITE)
+	button.add_theme_color_override("font_hover_color", Color.WHITE)
+	button.add_theme_color_override("font_pressed_color", Color.WHITE)
 
 
 # ============================================================================
