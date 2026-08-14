@@ -90,12 +90,35 @@ var jump_buffer_timer: float = 0.0
 ## Lower values = slower rotation (smoother but less responsive)
 const ROTATION_SPEED: float = 10.0
 
-## Camera reference - we'll set this up in the scene
+## Camera rig references. The chain is CameraPivot → CameraArm → Camera3D:
+## the pivot carries the mouse-look pitch, and the SpringArm3D between pivot
+## and camera pulls the camera in whenever a wall/block sits in the way, so the
+## view never clips through geometry. NOTE: a SpringArm3D OVERRIDES its
+## children's local position every physics frame (it slides them along its
+## local Z by the collision-clamped length) — so nothing may ever write
+## camera.position. The bite shake uses Camera3D.h_offset/v_offset (view-space
+## offsets the arm doesn't touch) and first-person moves the ARM itself
+## (see _apply_view_mode).
 @onready var camera_pivot: Node3D = $CameraPivot
-@onready var camera: Camera3D = $CameraPivot/Camera3D
+@onready var camera_arm: SpringArm3D = $CameraPivot/CameraArm
+@onready var camera: Camera3D = $CameraPivot/CameraArm/Camera3D
 
 ## Mouse sensitivity for camera rotation
 const MOUSE_SENSITIVITY: float = 0.003
+
+## Keyboard-turn camera easing: when A/D spin the body, the camera pivot lags
+## the turn and eases back in at this rate (higher = catches up faster), so a
+## keyboard turn sweeps smoothly instead of snapping with the body. MOUSE turns
+## deliberately bypass this (they never touch camera_yaw_lag) and stay 1:1.
+const CAMERA_TURN_EASE: float = 10.0
+
+## Speed-scaled field of view: the camera widens from FOV_BASE (the Camera3D
+## default) toward FOV_MAX as horizontal speed climbs from WALK_SPEED up to
+## Windman's air-rush speed — fast movement literally looks fast. Eased at
+## FOV_EASE per second so the lens never snaps.
+const FOV_BASE: float = 75.0
+const FOV_MAX: float = 97.0
+const FOV_EASE: float = 5.0
 
 ## Camera pitch limits (prevents camera from flipping over)
 const CAMERA_PITCH_MIN: float = -60.0  # Looking down limit (degrees)
@@ -207,20 +230,38 @@ var respawn_timer: float = 0.0
 const RESPAWN_GRACE_DURATION: float = 5.0
 
 ## Camera shake, used by the crocodile-bite hit effect. Decays back to 0.
+## The shake drives Camera3D.h_offset/v_offset (view-space slide of the lens),
+## NOT camera.position — the SpringArm3D owns the camera's local position and
+## would stomp any write there every physics frame. Offsets also work
+## identically in first-person, so the shake needs no per-view rest caching.
 var shake_amount: float = 0.0
 const SHAKE_MAX: float = 0.25
 const SHAKE_DECAY: float = 1.0
-## Resting local position of the camera, so shake can offset from it and restore.
-var camera_rest_position: Vector3 = Vector3.ZERO
+
+## Keyboard-turn camera lag (radians). handle_turning subtracts each frame's
+## body turn into this; _process applies it to the pivot's yaw and decays it to
+## zero, so the camera trails an A/D turn and eases in behind the body. Mouse
+## turns never touch it, keeping mouse look 1:1. Zeroed in reset_position().
+var camera_yaw_lag: float = 0.0
+
+## Transient FOV kick (degrees) added on top of the speed-scaled target — set
+## by Windman's Air Rush launch and decayed by the ability code (Task 7 wiring;
+## harmlessly 0 until then).
+var fov_punch: float = 0.0
 
 ## First-person view mode. This is a player PREFERENCE, not transient state: it
 ## deliberately survives respawn, restart, and character switches (nothing in
 ## those paths resets it). Toggled with C in _physics_process (STEP 0.55).
 var first_person: bool = false
-## The camera's original scene-file transform (position (0,2,8), baked −15°
-## pitch), cached in _ready() so leaving first-person restores the shipped
-## third-person view byte-for-byte instead of rebuilding an approximation.
-var third_person_camera_transform: Transform3D = Transform3D.IDENTITY
+## The spring arm's original scene-file transform (−14° pitch at the pivot) and
+## length (8.25 — the old camera's (0,2,8) offset expressed as an arm), plus the
+## camera's residual −1° pitch, cached in _ready() so leaving first-person
+## restores the shipped third-person framing byte-for-byte. First-person
+## commandeers the ARM (identity basis at the eyes, zero length ⇒ no collision
+## cast ⇒ the arm is bypassed in FP for free) — see _apply_view_mode().
+var third_person_arm_transform: Transform3D = Transform3D.IDENTITY
+var third_person_arm_length: float = 0.0
+var third_person_camera_rotation: Vector3 = Vector3.ZERO
 
 ## Character's visual mesh (for ducking animation)
 @onready var mesh_instance: Node3D = $MeshInstance3D
@@ -374,12 +415,17 @@ func _ready() -> void:
 	preload_all_characters()
 	set_active_character(current_character_index)
 
-	# Remember the camera's resting spot so the hit-shake can offset from it,
-	# and cache the full scene transform so the first-person toggle (C) can
-	# restore the exact shipped third-person view when switching back.
+	# Cache the spring arm's scene pose (transform + length) and the camera's
+	# residual pitch so the first-person toggle (C) can restore the exact
+	# shipped third-person view when switching back. Also exclude our own
+	# capsule from the arm's collision cast — otherwise the arm would "hit"
+	# the player and yank the camera into the back of our head.
+	if camera_arm:
+		camera_arm.add_excluded_object(get_rid())
+		third_person_arm_transform = camera_arm.transform
+		third_person_arm_length = camera_arm.spring_length
 	if camera:
-		camera_rest_position = camera.position
-		third_person_camera_transform = camera.transform
+		third_person_camera_rotation = camera.rotation
 
 	print("Player Controller initialized!")
 	print("Controls:")
@@ -447,31 +493,39 @@ func _apply_view_mode() -> void:
 	mode. Deliberately idempotent — safe to re-run any time (e.g. after a Teibi
 	resize or a character switch) without tracking what the previous state was.
 	"""
-	if not camera:
+	if not camera or not camera_arm:
 		return
 	if first_person:
-		# Identity basis zeroes the camera's baked −15° third-person pitch, so
-		# the pivot's pitch alone (mouse-look) is the look pitch. Position puts
-		# the camera at the character's eyes. Hide the model so we don't see
-		# our own head from the inside.
-		camera.transform = Transform3D(Basis.IDENTITY, _first_person_eye_position())
+		# First-person commandeers the ARM, not the camera (the arm owns the
+		# camera's local position — see the rig note in SECTION 3). Identity
+		# basis zeroes the arm's −14° scene pitch so the pivot's pitch alone
+		# (mouse-look) is the look pitch; the arm origin moves to the eyes; and
+		# zero spring length means the camera slides to the arm origin AND no
+		# collision ray is cast — the arm is bypassed in FP for free. The
+		# camera's residual −1° pitch is zeroed too. Hide the model so we
+		# don't see our own head from the inside.
+		camera_arm.spring_length = 0.0
+		camera_arm.transform = Transform3D(Basis.IDENTITY, _first_person_eye_position())
+		camera.rotation = Vector3.ZERO
 		if character_container:
 			character_container.visible = false
 	else:
-		# Restore the CACHED scene transform — byte-identical to the shipped
-		# third-person view — and show the model again.
-		camera.transform = third_person_camera_transform
+		# Restore the CACHED scene arm pose + camera pitch — byte-identical to
+		# the shipped third-person view — and show the model again.
+		camera_arm.transform = third_person_arm_transform
+		camera_arm.spring_length = third_person_arm_length
+		camera.rotation = third_person_camera_rotation
 		if character_container:
 			character_container.visible = true
-	# The bite-shake offsets the camera from camera_rest_position and snaps
-	# back to it, so it MUST track the current view's rest spot — otherwise a
-	# shake would teleport the camera into the other view.
-	camera_rest_position = camera.position
+	# No shake bookkeeping needed here: the bite shake lives on the camera's
+	# h_offset/v_offset, which are view-space and identical in both views.
 
 
 func _first_person_eye_position() -> Vector3:
 	"""
-	The first-person camera's local position UNDER THE PIVOT. The pivot sits at
+	The first-person eye point as a local position UNDER THE PIVOT (in FP the
+	spring arm gets an identity basis, so arm-local == pivot-local and this
+	value seats the ARM — the camera rides at its origin). The pivot sits at
 	a fixed local height (1.5), so we subtract it from the desired eye height.
 	Deriving the scale from the collision capsule means Teibi's small/giant
 	forms move the eyes down/up automatically.
@@ -497,7 +551,7 @@ func _physics_process(delta: float) -> void:
 	# switch_character gotcha in CLAUDE.md. Polled BEFORE the frozen-state early
 	# returns below so a press during the caught/respawn/game-over windows isn't
 	# silently dropped — the view is a pure camera preference and safe to flip
-	# while frozen (_apply_view_mode() only touches the camera and model).
+	# while frozen (_apply_view_mode() only touches the camera rig and model).
 	if Input.is_action_just_pressed("toggle_camera"):
 		first_person = not first_person
 		_apply_view_mode()
@@ -638,23 +692,40 @@ func _physics_process(delta: float) -> void:
 
 func _process(delta: float) -> void:
 	"""
-	Per-frame visual updates that don't belong in the physics step. Right now this
-	is just the camera shake from being bitten — it offsets the camera by a small
-	random amount that decays back to zero.
+	Per-frame visual camera work that doesn't belong in the physics step:
+	the bite shake (random view-space offsets that decay to zero), the eased
+	keyboard-turn lag, and the speed-scaled FOV.
 	"""
 	if not camera:
 		return
 
+	# Bite shake — driven through h_offset/v_offset (a view-space slide of the
+	# lens), because the SpringArm3D overwrites camera.position every physics
+	# frame. Offsets ride on top of whatever the arm decides, in both views.
 	if shake_amount > 0.0:
 		shake_amount = maxf(0.0, shake_amount - SHAKE_DECAY * delta)
-		camera.position = camera_rest_position + Vector3(
-			randf_range(-1.0, 1.0),
-			randf_range(-1.0, 1.0),
-			0.0
-		) * shake_amount
-	elif camera.position != camera_rest_position:
+		camera.h_offset = randf_range(-1.0, 1.0) * shake_amount
+		camera.v_offset = randf_range(-1.0, 1.0) * shake_amount
+	elif camera.h_offset != 0.0 or camera.v_offset != 0.0:
 		# Settle exactly back to rest once the shake is done.
-		camera.position = camera_rest_position
+		camera.h_offset = 0.0
+		camera.v_offset = 0.0
+
+	# Eased keyboard turn: the pivot's yaw holds the lag handle_turning banked,
+	# then the lag decays toward zero — so the camera starts behind an A/D turn
+	# and smoothly catches up. Mouse turns never bank lag, so they stay 1:1.
+	camera_pivot.rotation.y = camera_yaw_lag
+	camera_yaw_lag = lerpf(camera_yaw_lag, 0.0, minf(1.0, CAMERA_TURN_EASE * delta))
+
+	# Speed-scaled FOV: map horizontal speed from WALK_SPEED → Windman's
+	# air-rush speed onto FOV_BASE → FOV_MAX, add any transient ability punch,
+	# and ease the lens toward it. A Camera3D property, so it applies
+	# identically in first- and third-person.
+	var horizontal_speed := Vector2(velocity.x, velocity.z).length()
+	var speed_blend := clampf(
+		(horizontal_speed - WALK_SPEED) / (WINDMAN_AIR_SPEED - WALK_SPEED), 0.0, 1.0)
+	var target_fov := lerpf(FOV_BASE, FOV_MAX, speed_blend) + fov_punch
+	camera.fov = lerpf(camera.fov, target_fov, minf(1.0, FOV_EASE * delta))
 
 # ============================================================================
 # HELPER FUNCTIONS
@@ -742,7 +813,13 @@ func handle_turning(delta: float) -> void:
 	if absf(turn_input) > 0.01:
 		# A positive angle spins counter-clockwise around +Y, i.e. to the
 		# character's left — which matches A producing a positive turn_input.
-		rotate_y(turn_input * TURN_SPEED * delta)
+		var turn_delta := turn_input * TURN_SPEED * delta
+		rotate_y(turn_delta)
+		# Bank the same turn as camera lag: the pivot counter-rotates by it and
+		# eases back to zero in _process, so the camera trails the keyboard
+		# turn instead of snapping with the body. (Mouse turns happen in
+		# _input and never touch this, keeping mouse look 1:1.)
+		camera_yaw_lag -= turn_delta
 
 func update_sidestep(delta: float) -> void:
 	"""
@@ -1545,6 +1622,7 @@ func reset_position() -> void:
 	if camera_pivot:
 		camera_pivot.rotation.x = 0.0  # Reset camera vertical rotation
 		camera_pivot.rotation.y = 0.0  # Reset camera horizontal rotation
+	camera_yaw_lag = 0.0  # Drop any keyboard-turn lag along with the pivot yaw
 
 	# Reset character state
 	is_ducking = false
@@ -1867,7 +1945,7 @@ func _apply_teibi_scale(s: float) -> void:
 		var bottom := collision_base_y - collision_half_height
 		collision_shape.position.y = bottom + s * collision_half_height
 	# First-person eyes are derived from this capsule scale, so a resize must
-	# immediately re-seat the camera (and the shake rest position) at the new
+	# immediately re-seat the spring arm (which carries the camera) at the new
 	# height — small Teibi looks from down low, giant Teibi from up high.
 	# _apply_view_mode() is idempotent, so this is safe from every caller
 	# (F-cycle, form timeout, character switch, respawn).
