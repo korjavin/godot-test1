@@ -103,9 +103,9 @@ All edits go in `[preset.3.options]` (the Web preset) of `export_presets.cfg`. K
 
 ### Task 7: Relocate the settings gear out of the top-left HUD column (mobile_settings_panel.gd)
 
-- [ ] move the gear button (currently top-left, ~lines 200-209) to the BOTTOM-LEFT corner: anchor (0,1), `offset_left = EDGE_MARGIN`, `offset_bottom = -EDGE_MARGIN`, `offset_top = -EDGE_MARGIN - GEAR_HEIGHT`. Bottom-left is free (action cluster is bottom-right, lives/perf top-left, coins/ability top-right). Update the const-doc comments that say "top-LEFT".
-- [ ] re-anchor the open panel body so it remains fully on-screen from its new corner: anchor bottom-left, opening UPWARD from just above the gear (`offset_bottom = -EDGE_MARGIN - GEAR_HEIGHT - 8`, `offset_top = offset_bottom - PANEL_HEIGHT`), clamped by the existing ScrollContainer if the screen is short.
-- [ ] add a "How to play" button to the panel's action-button rows (same `ACTION_ROW_HEIGHT` style as Recalibrate/Reset/Close): finds the touch UI via the new `"touch_controls"` group and calls `show_onboarding()`, then closes the panel. Null-safe if the group is empty.
+- [x] move the gear button (currently top-left, ~lines 200-209) to the BOTTOM-LEFT corner: anchor (0,1), `offset_left = EDGE_MARGIN`, `offset_bottom = -EDGE_MARGIN`, `offset_top = -EDGE_MARGIN - GEAR_HEIGHT`. Bottom-left is free (action cluster is bottom-right, lives/perf top-left, coins/ability top-right). Update the const-doc comments that say "top-LEFT".
+- [x] re-anchor the open panel body so it remains fully on-screen from its new corner: anchor bottom-left, opening UPWARD from just above the gear (`offset_bottom = -EDGE_MARGIN - GEAR_HEIGHT - 8`, `offset_top = offset_bottom - PANEL_HEIGHT`), clamped by the existing ScrollContainer if the screen is short.
+- [x] add a "How to play" button to the panel's action-button rows (same `ACTION_ROW_HEIGHT` style as Recalibrate/Reset/Close): finds the touch UI via the new `"touch_controls"` group and calls `show_onboarding()`, then closes the panel. Null-safe if the group is empty.
 
 ### Task 8: serve.sh cleanups
 
