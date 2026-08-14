@@ -1090,13 +1090,14 @@ func animate_idle(delta: float) -> void:
 # SECTION 7: GAME STATE METHODS
 # ============================================================================
 
-func collect_coin() -> void:
+func collect_coin(value: int = 1) -> void:
 	"""
-	Add one to the coin count. Called by a coin's Area3D when the player touches
-	it (see coin.gd). The HUD picks up the new value on its next frame.
+	Add a pickup's worth to the coin count. Called by a coin's Area3D when the
+	player touches it (see coin.gd) — a plain coin passes 1, a purple gem passes
+	its GEM_VALUE (10). The HUD picks up the new value on its next frame.
 	"""
-	coins_collected += 1
-	print("Collected a coin! Total: %d" % coins_collected)
+	coins_collected += value
+	print("Collected a coin worth %d! Total: %d" % [value, coins_collected])
 
 
 func hit_by_crocodile() -> void:

@@ -175,19 +175,19 @@ regenerates byte-identically on revisit and coin seam-claiming still holds.
 
 ### Task 5: Gem coins worth 10
 
-- [ ] `scripts/coin.gd`: add `var value: int = 1` and `var is_gem: bool = false`, plus a
+- [x] `scripts/coin.gd`: add `var value: int = 1` and `var is_gem: bool = false`, plus a
       `func make_gem() -> void` that sets value 10, scales the coin up (~1.6x), and
       recolours the mesh purple with emission (duplicate the mesh material at runtime —
       never mutate the shared resource; follow the same defensive-duplicate pattern as
       `_setup_web_fog`). Collection passes the value: `body.collect_coin(value)`.
       Keep the diff surgical (a parallel audio PR touches this file).
-- [ ] `scripts/endless_terrain.gd` `_road_coins_at(k)`: after a slot's position draws,
+- [x] `scripts/endless_terrain.gd` `_road_coins_at(k)`: after a slot's position draws,
       roll one extra `rng.randf()` for the gem chance (`ROAD_GEM_CHANCE: float = 0.04`,
       constant at top). Return entries as `{ "pos": Vector3, "gem": bool }` dictionaries
       instead of bare Vector3s. The extra draw changes the per-station RNG sequence —
       that is deliberate and fine because the run_seed scheme (Task 1) already regenerated
       the world; determinism within a run holds because the draw ORDER is fixed.
-- [ ] `spawn_coins_in_chunk`: consume the new entry shape (`cw.pos` for bucketing/height
+- [x] `spawn_coins_in_chunk`: consume the new entry shape (`cw.pos` for bucketing/height
       logic, call `coin.make_gem()` after instantiate when `cw.gem`). Every use of the
       old bare-Vector3 value must be updated — grep for `_road_coins_at` callers.
 

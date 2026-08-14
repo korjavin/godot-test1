@@ -212,6 +212,12 @@ const ROAD_WORLD_SEED: int = 0x5_0AD  # "ROAD"-ish; arbitrary fixed constant
 ## scatter doesn't move the centerline, and vice-versa.
 const ROAD_COIN_SEED: int = 0xC0_1A  # "coin"-ish; arbitrary fixed constant
 
+## Chance that a scattered road coin spawns as a rare purple GEM worth 10 (see
+## coin.gd make_gem). Rolled as one extra draw from the same per-station scatter
+## RNG right after a coin's position draws, so gem placement is exactly as
+## deterministic and seam-correct as the coins themselves.
+const ROAD_GEM_CHANCE: float = 0.04
+
 ## How fast the band width breathes (radians of cos() per station). Lower = the band
 ## swells wide and narrows over MORE stations. At 0.08 the cosine's period is
 ## ~2π/0.08 ≈ 78 stations, so the width cycles slowly enough to feel smooth, not pulsey.
@@ -1661,9 +1667,10 @@ func _road_coins_at(k: int) -> Array:
 	loose swath of territory a few coins wide rather than an obvious conga-line.
 
 	@param k: Station index (the cache MUST already cover it — callers extend first).
-	@return: Array of world-space Vector3 coin positions "owned" by station `k`. May be
-	         EMPTY when the per-coin spawn rolls come up short — that is exactly what keeps
-	         the trail sparse and irregular.
+	@return: Array of { "pos": Vector3, "gem": bool } dictionaries "owned" by station
+	         `k` — `pos` is the world-space coin position, `gem` marks the rare purple
+	         gem variant (ROAD_GEM_CHANCE). May be EMPTY when the per-coin spawn rolls
+	         come up short — that is exactly what keeps the trail sparse and irregular.
 
 	EDUCATIONAL NOTE — why this stays deterministic & seam-correct:
 	- The scatter RNG is seeded ONLY from `k` (+ ROAD_COIN_SEED + the run-constant
@@ -1700,7 +1707,10 @@ func _road_coins_at(k: int) -> Array:
 		var lat := rng.randf_range(-1.0, 1.0) * half_band                               # across the band
 		var lon := rng.randf_range(-1.0, 1.0) * ROAD_COIN_LONG_JITTER * _road_spacing()  # along the road
 		var p := center + perp * lat + tangent * lon
-		coins.append(Vector3(p.x, COIN_GROUND_HEIGHT, p.y))
+		# One extra draw AFTER the position: is this coin a rare gem? The draw order
+		# (chance, lat, lon, gem) is fixed, so the whole station stays deterministic.
+		var gem := rng.randf() < ROAD_GEM_CHANCE
+		coins.append({ "pos": Vector3(p.x, COIN_GROUND_HEIGHT, p.y), "gem": gem })
 	return coins
 
 func spawn_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array) -> void:
@@ -1796,16 +1806,17 @@ func spawn_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obs
 			break  # past this chunk's window — and X only grows from here, so stop
 
 		# This station scatters a handful of coins across the band; place each one that
-		# actually lands inside THIS chunk.
+		# actually lands inside THIS chunk. Each entry is { "pos": Vector3, "gem": bool }.
 		for cw in _road_coins_at(cur_k):
+			var cw_pos: Vector3 = cw.pos
 			# Bucket by final chunk: spawn this coin only from the chunk it actually lands
 			# in. This is what makes seams gap-free and duplicate-free.
-			if world_to_chunk(cw) != chunk_pos:
+			if world_to_chunk(cw_pos) != chunk_pos:
 				continue
 
 			# Convert to chunk-LOCAL (relative to the chunk center, like every other
 			# chunk-parented node), so the coin sits at the right world spot.
-			var local := Vector3(cw.x - center.x, cw.y, cw.z - center.z)
+			var local := Vector3(cw_pos.x - center.x, cw_pos.y, cw_pos.z - center.z)
 
 			# If the road runs over a block footprint, the ground-height coin would be
 			# buried. A coin must clear EVERYTHING it overlaps, not just whatever block we'd
@@ -1837,8 +1848,12 @@ func spawn_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obs
 				local.y = tallest_top + COIN_BLOCK_OFFSET
 
 			# Spawn the coin (position is local to the chunk, like blocks/crocodiles).
+			# A gem entry is upgraded BEFORE entering the tree (make_gem recolours a
+			# duplicated material and scales the whole pickup — see coin.gd).
 			var coin := coin_scene.instantiate()
 			coin.position = local
+			if cw.gem:
+				coin.make_gem()
 			parent_chunk.add_child(coin)
 
 func _block_overlaps(x: float, z: float, ob: Dictionary) -> bool:
