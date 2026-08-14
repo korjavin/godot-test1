@@ -240,7 +240,7 @@ regenerates byte-identically on revisit and coin seam-claiming still holds.
 
 ### Task 8: [Final] Update documentation
 
-- [ ] Update CLAUDE.md: new "Gameplay loop" notes — run_seed mixing (and the
+- [x] Update CLAUDE.md: new "Gameplay loop" notes — run_seed mixing (and the
       new_run()/restart contract), distance score, best-run ConfigFile, difficulty
       gradient knobs, gem/streak/extra-life mechanics, lives_hud now reads the player.
       Amend the now-stale claims ("identical run-to-run", "coins... reset to 0 only on
