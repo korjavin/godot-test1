@@ -56,11 +56,11 @@ Hard constraints from the bead:
 Later tasks call these, so they land first. All follow the existing baker pattern:
 constants at top, `_synth_*()` returning `PackedFloat32Array`, `_build_wav()` in `_ready()`,
 `play_*()` through `_play_oneshot()` (which already enforces the web-unlock gate).
-- [ ] `scripts/sound_manager.gd`: add `_synth_footstep()` — a very short (~0.06 s) low-passed noise tap (soft "pat"), volume ~−14 dB; `play_footstep()` with a per-call `pitch_scale` jitter parameter-free random (like `play_coin`)
-- [ ] add `_synth_buzz()` — a short (~0.15 s) low square-wave buzz (~90 Hz, fast decay), volume ~−10 dB; `play_buzz()` (used by the blocked-ability press)
-- [ ] add `_synth_crunch()` — a short (~0.2 s) harsh noise burst with fast decay (croc crush), volume ~−8 dB; `play_crunch()`
-- [ ] add `_synth_heartbeat()` — ONE "lub-dub" cycle (~0.8 s: two low sine thumps ~55 Hz with fast decay, the second slightly quieter, then silence to pad the loop) built as a LOOP_FORWARD `AudioStreamWAV` exactly like the wind loop recipe (loop_begin 0, loop_end = data.size()/2); in `_ready()` create the dedicated loop player, assign the stream, store it as `_loop_players["heartbeat"]` (do NOT play it — the danger vignette drives play/stop/pitch/volume via `get_loop_player("heartbeat")` + `is_unlocked()`)
-- [ ] headless smoke: import + `--quit-after 3` clean
+- [x] `scripts/sound_manager.gd`: add `_synth_footstep()` — a very short (~0.06 s) low-passed noise tap (soft "pat"), volume ~−14 dB; `play_footstep()` with a per-call `pitch_scale` jitter parameter-free random (like `play_coin`)
+- [x] add `_synth_buzz()` — a short (~0.15 s) low square-wave buzz (~90 Hz, fast decay), volume ~−10 dB; `play_buzz()` (used by the blocked-ability press)
+- [x] add `_synth_crunch()` — a short (~0.2 s) harsh noise burst with fast decay (croc crush), volume ~−8 dB; `play_crunch()`
+- [x] add `_synth_heartbeat()` — ONE "lub-dub" cycle (~0.8 s: two low sine thumps ~55 Hz with fast decay, the second slightly quieter, then silence to pad the loop) built as a LOOP_FORWARD `AudioStreamWAV` exactly like the wind loop recipe (loop_begin 0, loop_end = data.size()/2); in `_ready()` create the dedicated loop player, assign the stream, store it as `_loop_players["heartbeat"]` (do NOT play it — the danger vignette drives play/stop/pitch/volume via `get_loop_player("heartbeat")` + `is_unlocked()`)
+- [x] headless smoke: import + `--quit-after 3` clean
 
 ### Task 2: hit_flash color parameter + coin pickup juice
 - [ ] `scripts/hit_flash.gd`: give `flash()` a color argument with the current red as default — `func flash(flash_color: Color = Color(0.7, 0.0, 0.0)) -> void:` — that sets `color = Color(flash_color.r, flash_color.g, flash_color.b, 0.0)` before popping `current_alpha` (existing `player_controller.hit_by_crocodile` caller keeps working unchanged)

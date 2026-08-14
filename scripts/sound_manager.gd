@@ -105,6 +105,30 @@ const GAME_OVER_FREQS: Array[float] = [392.0, 311.1, 261.6]  # G4, Eb4, C4
 const GAME_OVER_NOTE_DURATION: float = 0.35
 const GAME_OVER_VOLUME_DB: float = -6.0
 
+# --- Footstep: a tiny low-passed noise tap (a soft "pat" on dirt). ---
+const FOOTSTEP_DURATION: float = 0.06
+const FOOTSTEP_LOWPASS: float = 0.18    # one-pole factor — duller than the whoosh
+const FOOTSTEP_PITCH_JITTER: float = 0.15  # ±15% per step so a walk cycle
+										# doesn't sound like a metronome
+const FOOTSTEP_VOLUME_DB: float = -14.0  # quiet — fires twice per stride, forever
+
+# --- Blocked-ability buzz: a curt low square "nope" (F pressed on cooldown). ---
+const BUZZ_FREQ: float = 90.0
+const BUZZ_DURATION: float = 0.15
+const BUZZ_VOLUME_DB: float = -10.0
+
+# --- Croc crush: a harsh noise burst with a fast decay (giant Teibi stomp). ---
+const CRUNCH_DURATION: float = 0.2
+const CRUNCH_VOLUME_DB: float = -8.0
+
+# --- Danger heartbeat: ONE looping "lub-dub" cycle, driven externally. ---
+## The danger vignette fetches this via get_loop_player("heartbeat") and owns
+## play/stop/pitch/volume itself — we only bake the stream and park the player.
+const HEARTBEAT_FREQ: float = 55.0        # low chest-thump fundamental
+const HEARTBEAT_CYCLE: float = 0.8        # full lub-dub + silence = one loop
+const HEARTBEAT_DUB_DELAY: float = 0.22   # seconds from "lub" to the "dub"
+const HEARTBEAT_DUB_LEVEL: float = 0.7    # the second thump is slightly softer
+
 # --- Ambient wind: a long smoothed-noise loop, DELIBERATELY very quiet. ---
 ## It should register subconsciously ("the world is alive"), never as a sound
 ## the player notices — hence far below every one-shot above.
@@ -158,6 +182,9 @@ func _ready() -> void:
 	_streams["whoosh"] = _build_wav(_synth_whoosh())
 	_streams["bite"] = _build_wav(_synth_bite())
 	_streams["game_over"] = _build_wav(_synth_game_over())
+	_streams["footstep"] = _build_wav(_synth_footstep())
+	_streams["buzz"] = _build_wav(_synth_buzz())
+	_streams["crunch"] = _build_wav(_synth_crunch())
 
 	# The wind is the one LOOPING stream: mark the whole buffer as the loop
 	# region so it plays forever once started.
@@ -178,6 +205,19 @@ func _ready() -> void:
 	_wind_player.volume_db = WIND_VOLUME_DB
 	add_child(_wind_player)
 	_loop_players["wind"] = _wind_player
+
+	# The danger heartbeat is the second looping stream — same recipe as the
+	# wind (LOOP_FORWARD over the whole buffer), but we deliberately do NOT
+	# play it here: the danger vignette drives play/stop/pitch/volume live via
+	# get_loop_player("heartbeat"), gated on is_unlocked().
+	var heartbeat: AudioStreamWAV = _build_wav(_synth_heartbeat())
+	heartbeat.loop_mode = AudioStreamWAV.LOOP_FORWARD
+	heartbeat.loop_begin = 0
+	heartbeat.loop_end = heartbeat.data.size() / 2  # frames, not bytes (2 bytes/frame)
+	var heartbeat_player := AudioStreamPlayer.new()
+	heartbeat_player.stream = heartbeat
+	add_child(heartbeat_player)
+	_loop_players["heartbeat"] = heartbeat_player
 
 
 func _input(event: InputEvent) -> void:
@@ -252,6 +292,24 @@ func play_bite() -> void:
 
 func play_game_over() -> void:
 	_play_oneshot("game_over", GAME_OVER_VOLUME_DB)
+
+
+func play_footstep() -> void:
+	## Footstep tap, fired on each walk-sine foot plant. Same cosmetic pitch
+	## jitter idea as play_coin — identical taps twice a second read as a
+	## machine, so each step lands at a slightly different pitch.
+	_play_oneshot("footstep", FOOTSTEP_VOLUME_DB,
+			1.0 + randf_range(-FOOTSTEP_PITCH_JITTER, FOOTSTEP_PITCH_JITTER))
+
+
+func play_buzz() -> void:
+	## The blocked-ability "nope" — F pressed while the cooldown is running.
+	_play_oneshot("buzz", BUZZ_VOLUME_DB)
+
+
+func play_crunch() -> void:
+	## Giant Teibi flattening a crocodile.
+	_play_oneshot("crunch", CRUNCH_VOLUME_DB)
 
 
 # ============================================================================
@@ -387,6 +445,70 @@ func _synth_game_over() -> PackedFloat32Array:
 			var t: float = float(i) / MIX_RATE
 			var envelope: float = exp(-t * 6.0)  # slow-ish decay, notes ring a little
 			samples.append(sin(TAU * freq * t) * envelope)
+	return samples
+
+
+func _synth_footstep() -> PackedFloat32Array:
+	## A very short low-passed noise burst with a fast decay — the soft "pat"
+	## of a foot on dirt. Same one-pole trick as the whoosh, but a heavier
+	## filter and a tiny duration turn the hiss into a dull tap.
+	var samples := PackedFloat32Array()
+	var frames: int = int(FOOTSTEP_DURATION * MIX_RATE)
+	var filtered: float = 0.0
+	for i in range(frames):
+		filtered += FOOTSTEP_LOWPASS * (randf_range(-1.0, 1.0) - filtered)
+		var t: float = float(i) / MIX_RATE
+		var envelope: float = exp(-t * 80.0)  # gone in a few hundredths of a second
+		samples.append(filtered * envelope * 3.0)  # filtering eats amplitude; compensate
+	return samples
+
+
+func _synth_buzz() -> PackedFloat32Array:
+	## A short LOW square wave with a fast decay — the classic "denied" buzzer.
+	## Square for the same reason as the bite (harsh, all odd harmonics), but
+	## at a constant low pitch: no sweep, no drama, just a curt "nope".
+	var samples := PackedFloat32Array()
+	var frames: int = int(BUZZ_DURATION * MIX_RATE)
+	for i in range(frames):
+		var t: float = float(i) / MIX_RATE
+		var square: float = 1.0 if sin(TAU * BUZZ_FREQ * t) >= 0.0 else -1.0
+		var envelope: float = exp(-t * 20.0)
+		samples.append(square * envelope * 0.6)  # 0.6: squares are LOUD at equal amplitude
+	return samples
+
+
+func _synth_crunch() -> PackedFloat32Array:
+	## A harsh RAW noise burst dying fast — bone and cartilage giving way under
+	## a giant foot. Unlike the whoosh/footstep this noise is deliberately NOT
+	## low-passed: the full-spectrum hiss edge is what makes it read as violent.
+	var samples := PackedFloat32Array()
+	var frames: int = int(CRUNCH_DURATION * MIX_RATE)
+	for i in range(frames):
+		var t: float = float(i) / MIX_RATE
+		var envelope: float = exp(-t * 22.0)
+		samples.append(randf_range(-1.0, 1.0) * envelope)
+	return samples
+
+
+func _synth_heartbeat() -> PackedFloat32Array:
+	## ONE full "lub-dub" cycle, meant to loop forever (LOOP_FORWARD is set on
+	## the stream in _ready). Two low sine thumps — the "dub" delayed a fraction
+	## of a second and slightly quieter, just like a real heart — followed by
+	## silence padding out the cycle, so the looped result is a slow resting
+	## pulse. The danger vignette speeds it up by raising pitch_scale, which
+	## shortens BOTH the thumps and the silent gap: exactly how panic sounds.
+	var samples := PackedFloat32Array()
+	var frames: int = int(HEARTBEAT_CYCLE * MIX_RATE)
+	var dub_start: int = int(HEARTBEAT_DUB_DELAY * MIX_RATE)
+	for i in range(frames):
+		var t: float = float(i) / MIX_RATE
+		# The "lub": a low sine thump decaying fast from the cycle start.
+		var value: float = sin(TAU * HEARTBEAT_FREQ * t) * exp(-t * 18.0)
+		# The "dub": the same thump re-struck at the delay, slightly softer.
+		if i >= dub_start:
+			var t2: float = float(i - dub_start) / MIX_RATE
+			value += sin(TAU * HEARTBEAT_FREQ * t2) * exp(-t2 * 18.0) * HEARTBEAT_DUB_LEVEL
+		samples.append(value)
 	return samples
 
 
