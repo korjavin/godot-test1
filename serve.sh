@@ -2,8 +2,9 @@
 ##
 ## Local Web Server for Godot Game
 ##
-## This script starts a local HTTP server to test the web build.
-## Godot web exports require proper HTTP headers for SharedArrayBuffer support.
+## This script starts a plain static HTTP server to test the web build.
+## It sets NO special headers (no COOP/COEP/SharedArrayBuffer support) —
+## this project's Web export has thread_support=false, so none are needed.
 ##
 
 set -e  # Exit on error
@@ -105,12 +106,25 @@ echo -e "${GREEN}🎮 Server is running!${NC}"
 echo -e "${BLUE}========================================${NC}"
 echo ""
 echo -e "  ${GREEN}Local:${NC}    http://localhost:$PORT"
-echo -e "  ${GREEN}Network:${NC}  http://$(hostname -I | awk '{print $1}'):$PORT"
+
+# LAN IP: `hostname -I` is Linux-only; macOS uses ipconfig getifaddr
+if [ "$(uname -s)" = "Darwin" ]; then
+    LAN_IP=$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || true)
+else
+    LAN_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+fi
+if [ -n "$LAN_IP" ]; then
+    echo -e "  ${GREEN}Network:${NC}  http://$LAN_IP:$PORT"
+fi
 echo ""
 echo -e "${YELLOW}📝 Instructions:${NC}"
 echo "  1. Open your browser"
 echo "  2. Navigate to: ${BLUE}http://localhost:$PORT${NC}"
 echo "  3. Wait for the game to load"
+echo ""
+echo -e "${YELLOW}⚠️  iOS motion sensors need a SECURE (HTTPS) context:${NC}"
+echo "  http://<lan-ip> will NOT grant DeviceMotionEvent permission on iOS."
+echo "  Test motion controls on the GitHub Pages (HTTPS) build or an HTTPS tunnel."
 echo ""
 echo -e "${YELLOW}🛑 To stop the server:${NC} Press Ctrl+C"
 echo ""

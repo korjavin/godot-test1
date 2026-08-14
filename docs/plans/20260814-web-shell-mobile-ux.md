@@ -109,9 +109,9 @@ All edits go in `[preset.3.options]` (the Web preset) of `export_presets.cfg`. K
 
 ### Task 8: serve.sh cleanups
 
-- [ ] fix the header comment (lines 4-5): the script sets NO SharedArrayBuffer/COOP/COEP headers — say plainly that it's a plain static server and that this project's export has `thread_support=false` so no such headers are needed.
-- [ ] fix the Linux-only `hostname -I` (line 108): detect macOS (`uname -s` = Darwin) and use `ipconfig getifaddr en0` (fall back to `en1`, then omit the Network line if empty); keep `hostname -I` for Linux.
-- [ ] print a note near the instructions: iOS motion sensors require a SECURE context — `http://<lan-ip>` will NOT grant `DeviceMotionEvent` permission on iOS; test motion on the GitHub Pages (HTTPS) build or an HTTPS tunnel.
+- [x] fix the header comment (lines 4-5): the script sets NO SharedArrayBuffer/COOP/COEP headers — say plainly that it's a plain static server and that this project's export has `thread_support=false` so no such headers are needed.
+- [x] fix the Linux-only `hostname -I` (line 108): detect macOS (`uname -s` = Darwin) and use `ipconfig getifaddr en0` (fall back to `en1`, then omit the Network line if empty); keep `hostname -I` for Linux.
+- [x] print a note near the instructions: iOS motion sensors require a SECURE context — `http://<lan-ip>` will NOT grant `DeviceMotionEvent` permission on iOS; test motion on the GitHub Pages (HTTPS) build or an HTTPS tunnel.
 
 ### Task 9: Verify acceptance criteria (the hard gate)
 
