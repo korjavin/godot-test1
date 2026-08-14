@@ -100,19 +100,19 @@
 ## Implementation Steps
 
 ### Task 1: Boss flags and behavior in piglet_crocodile_ai.gd
-- [ ] Add boss constants at the top of `scripts/piglet_crocodile_ai.gd` (with the
+- [x] Add boss constants at the top of `scripts/piglet_crocodile_ai.gd` (with the
       existing teaching-comment style): `BOSS_CHASE_SPEED: float = 7.0` (above
       WALK 5.0, below the slowest RUN 9.0 — walking loses, running escapes),
       `BOSS_DETECTION_RADIUS: float = 25.0` (with a comment citing the invariant:
       must stay well below the LOD manager's `SIM_RADIUS` 45 so any boss that can
       detect the player is always awake).
-- [ ] Add state vars near the other flags: `var is_boss: bool = false` and
+- [x] Add state vars near the other flags: `var is_boss: bool = false` and
       `var boss_scale: float = 1.0`.
-- [ ] Add `func setup_as_boss(body_scale: float) -> void` — a public hook the
+- [x] Add `func setup_as_boss(body_scale: float) -> void` — a public hook the
       terrain calls on the instance BEFORE `add_child` (so `_ready` sees the flags):
       sets `is_boss = true` and `boss_scale = body_scale`. Document the call-order
       contract in its docstring.
-- [ ] Branch `_ready()`: when `is_boss`, SKIP the random speed roll and the random
+- [x] Branch `_ready()`: when `is_boss`, SKIP the random speed roll and the random
       size roll entirely (no per-instance randomization for bosses — size comes from
       the deterministic schedule) — instead set
       `move_speed_instance = BASE_MOVE_SPEED`,
@@ -122,12 +122,12 @@
       the running-escape hatch survives at any distance), and
       `scale = Vector3.ONE * boss_scale`. The cosmetic animation-phase rolls
       (`instance_phase` etc.) stay for both (they only desync animations).
-- [ ] Stink-wave immunity: `flee_from()` early-returns when `is_boss` (with a
+- [x] Stink-wave immunity: `flee_from()` early-returns when `is_boss` (with a
       comment: the group `"crocodile"` membership is KEPT — the wave finds bosses,
       they just shrug it off; immunity lives here, not in group tricks).
-- [ ] Detection radius: in `_update_chase_state()`, compare against a local
+- [x] Detection radius: in `_update_chase_state()`, compare against a local
       `var radius: float = BOSS_DETECTION_RADIUS if is_boss else DETECTION_RADIUS`.
-- [ ] Not crushable: in `_on_player_collision()`, add the boss branch as an EARLY
+- [x] Not crushable: in `_on_player_collision()`, add the boss branch as an EARLY
       check ABOVE the existing giant-Teibi crush block (leave that block textually
       untouched — a parallel executor edits inside it): when `is_boss`, go straight
       to the bite path (print, `_start_bite()`, `hit_by_crocodile()` /

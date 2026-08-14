@@ -55,6 +55,23 @@ const SIZE_RANDOM_FACTOR: float = 0.25
 ## Detection radius - distance at which crocodile can "smell" the player
 const DETECTION_RADIUS: float = 15.0
 
+# ----- Boss crocodiles -----
+## Bosses are the rare, huge road-guardian crocodiles the terrain places
+## deterministically along the coin road (see endless_terrain.gd). They reuse
+## this exact AI wholesale — a boss differs only in a handful of flags set via
+## setup_as_boss() below, never in behaviour code.
+##
+## Boss chase speed: above WALK_SPEED (5.0) so a walking player is run down,
+## but the MAX_CHASE_SPEED cap (8.5) keeps it under the slowest RUN (9.0), so
+## RUNNING always escapes — the core escape hatch survives.
+const BOSS_CHASE_SPEED: float = 7.0
+
+## Boss detection radius: wider "smell" than a regular crocodile so the boss
+## reads as a real threat guarding the road. INVARIANT: must stay well below
+## the LOD manager's SIM_RADIUS (45.0) — any crocodile that can detect the
+## player must always be awake, so near-player behaviour never changes.
+const BOSS_DETECTION_RADIUS: float = 25.0
+
 ## Visual draw cull: past this distance the crocodile's MESHES stop being drawn
 ## (visibility_range_end on every GeometryInstance3D in the model subtree). This
 ## is a pure RENDERING cull — the crocodile entity itself stays alive and counted;
@@ -177,6 +194,13 @@ var flee_time_remaining: float = 0.0
 ## reference is momentarily missing while fleeing.
 var flee_source: Vector3 = Vector3.ZERO
 
+## Boss flags, set by the terrain via setup_as_boss() BEFORE this node enters
+## the tree (so _ready sees them). A boss skips the per-instance random
+## speed/size rolls — its size comes from the deterministic schedule instead.
+var is_boss: bool = false
+## Uniform body scale for a boss (from the terrain's size schedule; 1.0 = unused).
+var boss_scale: float = 1.0
+
 ## Reference to the player node
 var player_node: Node3D = null
 
@@ -241,32 +265,41 @@ func _ready() -> void:
 	# Randomize the RNG
 	rng.randomize()
 
-	# Set instance-specific speeds. One shared multiplier drives both speeds, so a
-	# "fast" crocodile is fast at everything (and its chase always still outpaces its
-	# own wander) instead of the two speeds drifting apart independently.
-	var speed_factor := rng.randf_range(1.0 - SPEED_RANDOM_FACTOR, 1.0 + SPEED_RANDOM_FACTOR)
-	move_speed_instance = BASE_MOVE_SPEED * speed_factor
-	chase_speed_instance = BASE_CHASE_SPEED * speed_factor
-
 	# Difficulty gradient: scale CHASE speed up with distance from the world origin.
 	# global_position is already valid here because the terrain parents the crocodile
 	# into the chunk BEFORE _ready runs, so |x| is the true spawn distance. Only the
 	# chase speed scales — wandering stays lazy everywhere; it's being HUNTED that
-	# gets scarier the farther you push.
+	# gets scarier the farther you push. Shared by both branches below so the
+	# gradient applies to bosses too.
 	var distance_factor := 1.0 + clampf(
 		absf(global_position.x) / DISTANCE_SPEED_SCALE_DENOM, 0.0, DISTANCE_SPEED_SCALE_MAX
 	)
-	# The min() keeps a top-rolled far croc from outrunning a RUNNING player — see
-	# MAX_CHASE_SPEED above.
-	chase_speed_instance = minf(chase_speed_instance * distance_factor, MAX_CHASE_SPEED)
 
-	# Give this crocodile a randomized overall size. We scale the whole body
-	# uniformly so the visual model and the physics capsule grow/shrink together;
-	# gravity then settles it onto the ground regardless of size. The model's OWN
-	# local scale stays 1, so model_base_scale cached below is unaffected and the
-	# procedural body animation composes correctly on top of this body scale.
-	var size_scale := rng.randf_range(1.0 - SIZE_RANDOM_FACTOR, 1.0 + SIZE_RANDOM_FACTOR)
-	scale = Vector3.ONE * size_scale
+	if is_boss:
+		# Bosses take NO per-instance random rolls: their size comes from the
+		# terrain's deterministic schedule (boss_scale) and their speeds are fixed,
+		# so a boss regenerates byte-identically when its chunk is revisited.
+		move_speed_instance = BASE_MOVE_SPEED
+		# The MAX_CHASE_SPEED cap keeps the running-escape hatch true at any distance.
+		chase_speed_instance = minf(BOSS_CHASE_SPEED * distance_factor, MAX_CHASE_SPEED)
+		scale = Vector3.ONE * boss_scale
+	else:
+		# Set instance-specific speeds. One shared multiplier drives both speeds, so a
+		# "fast" crocodile is fast at everything (and its chase always still outpaces its
+		# own wander) instead of the two speeds drifting apart independently.
+		var speed_factor := rng.randf_range(1.0 - SPEED_RANDOM_FACTOR, 1.0 + SPEED_RANDOM_FACTOR)
+		move_speed_instance = BASE_MOVE_SPEED * speed_factor
+		# The min() keeps a top-rolled far croc from outrunning a RUNNING player — see
+		# MAX_CHASE_SPEED above.
+		chase_speed_instance = minf(BASE_CHASE_SPEED * speed_factor * distance_factor, MAX_CHASE_SPEED)
+
+		# Give this crocodile a randomized overall size. We scale the whole body
+		# uniformly so the visual model and the physics capsule grow/shrink together;
+		# gravity then settles it onto the ground regardless of size. The model's OWN
+		# local scale stays 1, so model_base_scale cached below is unaffected and the
+		# procedural body animation composes correctly on top of this body scale.
+		var size_scale := rng.randf_range(1.0 - SIZE_RANDOM_FACTOR, 1.0 + SIZE_RANDOM_FACTOR)
+		scale = Vector3.ONE * size_scale
 
 	# Set initial random direction
 	_choose_new_direction()
@@ -443,8 +476,10 @@ func _update_chase_state() -> void:
 	if player_node.has_method("is_on_floor"):
 		player_is_grounded = player_node.is_on_floor()
 
-	# Update chase state based on detection radius AND player grounded state
-	if distance_to_player <= DETECTION_RADIUS and player_is_grounded:
+	# Update chase state based on detection radius AND player grounded state.
+	# Bosses smell farther (still well under the LOD SIM_RADIUS — see the const).
+	var radius: float = BOSS_DETECTION_RADIUS if is_boss else DETECTION_RADIUS
+	if distance_to_player <= radius and player_is_grounded:
 		if not is_chasing:
 			# Just started chasing
 			is_chasing = true
@@ -496,6 +531,11 @@ func flee_from(source: Vector3, duration: float) -> void:
 	any current chase. `source` is the smell's origin, used only as a fallback
 	direction if the player can't be located on a given frame.
 	"""
+	# Bosses shrug the stink off. They KEEP group "crocodile" membership — the
+	# wave still finds them, they just don't care; immunity lives here, not in
+	# group tricks (so LOD sleep and every other group consumer stays intact).
+	if is_boss:
+		return
 	is_fleeing = true
 	flee_time_remaining = duration
 	flee_source = source
@@ -652,6 +692,24 @@ func set_lod_active(active: bool) -> void:
 	set_physics_process(active)
 	if not active:
 		velocity = Vector3.ZERO
+
+
+# ============================================================================
+# BOSS SETUP
+# ============================================================================
+
+func setup_as_boss(body_scale: float) -> void:
+	"""
+	Mark this crocodile as a road-guardian BOSS. CALL-ORDER CONTRACT: the terrain
+	must call this on the fresh instance BEFORE add_child() — _ready() branches on
+	these flags (skipping the random speed/size rolls and applying the scale), so
+	setting them after the node enters the tree would be too late.
+
+	@param body_scale: Uniform body scale from the terrain's deterministic
+	    size schedule (2.5x and up — always bigger than any regular croc's roll)
+	"""
+	is_boss = true
+	boss_scale = body_scale
 
 
 # ============================================================================
@@ -854,6 +912,22 @@ func _on_player_collision(player: Node) -> void:
 	  * Giant-form Teibi CRUSHES the crocodile on contact instead of being bitten.
 	  * A crocodile fleeing Phoboman's stink is harmless and just brushes past.
 	"""
+	# A BOSS is bigger than even giant-form Teibi (2.5x+ vs the giant scale), so
+	# giant form gets bitten like anyone else — bosses are never crushable. This
+	# early check sits ABOVE the crush block so that block stays untouched.
+	# ponytail: the few bite lines below are duplicated from the normal path on
+	# purpose — a shared helper would tangle this with the crush block another
+	# change owns; fold them together once that settles.
+	if is_boss:
+		print("💀 BOSS crocodile bites the player!")
+		_start_bite()
+		if player.has_method("hit_by_crocodile"):
+			player.hit_by_crocodile()
+		elif player.has_method("reset_position"):
+			player.reset_position()
+		_pause_and_change_direction()
+		return
+
 	# Giant Teibi squashes crocodiles on contact instead of being bitten.
 	if player.has_method("crushes_crocodiles") and player.crushes_crocodiles():
 		print("🐊 Squashed by a giant!")
