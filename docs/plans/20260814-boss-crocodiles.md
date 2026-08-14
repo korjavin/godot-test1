@@ -137,7 +137,7 @@
       deliberate minimal-merge-conflict choice — mark with a `ponytail:` comment.
 
 ### Task 2: Boss visual styling (toon variant + scaled cull range)
-- [ ] Add a boss material variant to `scripts/toon_shading.gd`: a second static
+- [x] Add a boss material variant to `scripts/toon_shading.gd`: a second static
       cache (`_boss_styled_cache: Dictionary`) and
       `static func apply_boss_to_mesh(mesh: MeshInstance3D) -> void` that mirrors
       `apply_to_mesh` but additionally darkens/red-shifts the duplicate's
@@ -147,7 +147,7 @@
       Note: unlike `apply_to_mesh`, do NOT skip materials that are already
       `DIFFUSE_TOON` from the regular cache — key the boss cache off the SOURCE
       material seen on the mesh and always install the boss duplicate.
-- [ ] In `piglet_crocodile_ai.gd` `_style_model_meshes()`, branch on `is_boss`:
+- [x] In `piglet_crocodile_ai.gd` `_style_model_meshes()`, branch on `is_boss`:
       bosses call `ToonShading.apply_boss_to_mesh(node)` instead of
       `apply_to_mesh(node)`, and set
       `visibility_range_end = VISUAL_CULL_DISTANCE * boss_scale` (margin scaled

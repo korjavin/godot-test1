@@ -346,10 +346,19 @@ func _style_model_meshes(node: Node) -> void:
 	  that is a second draw call per mesh × ~490 crocs — unaffordable.
 	"""
 	if node is GeometryInstance3D:
-		node.visibility_range_end = VISUAL_CULL_DISTANCE
-		node.visibility_range_end_margin = VISUAL_CULL_MARGIN
+		# Bosses scale the cull range by their body scale: a 6x boss is visible
+		# from ~6x further, so culling it at the regular 60 m would make a
+		# mountain of crocodile pop into view. Regular crocs (boss_scale = 1.0)
+		# get byte-identical values to before.
+		node.visibility_range_end = VISUAL_CULL_DISTANCE * boss_scale
+		node.visibility_range_end_margin = VISUAL_CULL_MARGIN * boss_scale
 	if node is MeshInstance3D:
-		ToonShading.apply_to_mesh(node)
+		# Bosses get the darker/red-shifted shared variant so they read
+		# menacing; both paths cache per SOURCE material, never per body.
+		if is_boss:
+			ToonShading.apply_boss_to_mesh(node)
+		else:
+			ToonShading.apply_to_mesh(node)
 	for child in node.get_children():
 		_style_model_meshes(child)
 
