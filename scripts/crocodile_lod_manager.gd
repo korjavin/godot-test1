@@ -1,11 +1,18 @@
 extends Node
-## Central Crocodile LOD (Level-of-Detail) Manager.
+## Central simulation/animation LOD (Level-of-Detail) Manager.
+##
+## Historically this managed only crocodiles (the node keeps its
+## CrocodileLODManager name for history), but it is now the small central home
+## for BOTH cheap distance-based LOD gates: crocodile *simulation* sleep (below)
+## and coin *animation* freezing (`_scan_coins` — distant coins stop paying for
+## their per-frame spin/bob `_process`; collection is Area3D-signal driven, so a
+## frozen coin still collects normally).
 ##
 ## This is Task 3 of the web-performance-optimization plan. The world spawns a
 ## LOT of crocodiles (roughly one thousand active across the loaded chunks), and
 ## every one of them runs a full physics+AI step every frame — gravity, chase
-## scanning, obstacle-avoidance raycasts, move_and_slide, body animation, plus a
-## monitoring HitBox Area3D. The overwhelming majority of those crocodiles are
+## scanning, obstacle-avoidance raycasts, move_and_slide and body animation.
+## The overwhelming majority of those crocodiles are
 ## nowhere near the player and could never affect the game this frame, yet they
 ## cost the same as the few that matter. That wasted CPU/physics work is the main
 ## cause of the in-browser stutter.
@@ -85,6 +92,29 @@ const WAKE_DISTANCE_SQ: float = SIM_RADIUS * SIM_RADIUS
 const SLEEP_DISTANCE_SQ: float = (SIM_RADIUS + HYSTERESIS_MARGIN) * (SIM_RADIUS + HYSTERESIS_MARGIN)
 
 # ============================================================================
+# COIN ANIMATION GATING
+# ============================================================================
+# Coins run a per-frame `_process` (spin + bob) purely for looks. At 30 m+ that
+# motion is invisible, so we `set_process(false)` on far coins and re-enable it
+# as the player approaches — the same throttled-scan + hysteresis + only-on-
+# state-change discipline as the crocodile pass above. Nothing about collection
+# changes: pickup is driven by the Area3D `body_entered` signal, which fires
+# regardless of `_process`, and collision layers/masks are untouched.
+
+## Radius (metres) within which a coin animates. Far smaller than SIM_RADIUS —
+## a coin has no behaviour to preserve, only a visual flourish nobody can see
+## from 30 m away.
+const COIN_ANIM_RADIUS: float = 30.0
+
+## Same anti-flicker dead-band idea as HYSTERESIS_MARGIN: animate within 30 m,
+## freeze only beyond 35 m.
+const COIN_HYSTERESIS: float = 5.0
+
+## Squared thresholds (avoid sqrt per coin per scan, as with the croc pass).
+const COIN_WAKE_DISTANCE_SQ: float = COIN_ANIM_RADIUS * COIN_ANIM_RADIUS
+const COIN_FREEZE_DISTANCE_SQ: float = (COIN_ANIM_RADIUS + COIN_HYSTERESIS) * (COIN_ANIM_RADIUS + COIN_HYSTERESIS)
+
+# ============================================================================
 # STATE
 # ============================================================================
 
@@ -120,6 +150,7 @@ func _process(delta: float) -> void:
 	_time_until_scan = SCAN_INTERVAL
 
 	_scan_crocodiles()
+	_scan_coins()
 
 
 # ============================================================================
@@ -189,3 +220,33 @@ func _scan_crocodiles() -> void:
 		# also idempotent, but skipping the call entirely keeps this loop cheap.
 		if should_be_active != currently_active:
 			croc.set_lod_active(should_be_active)
+
+
+func _scan_coins() -> void:
+	## One coin-animation pass: freeze the spin/bob `_process` of coins the
+	## player can't see moving, thaw the ones nearby. We read each coin's
+	## current state straight off `is_processing()` — the engine already tracks
+	## it, so no bookkeeping Dictionary is needed — and call `set_process` only
+	## on a real transition, mirroring the crocodile pass.
+	if not is_instance_valid(_player):
+		# _scan_crocodiles() already tried to (re)acquire the player this tick;
+		# if it's still missing we simply skip coins too.
+		return
+
+	var player_pos: Vector3 = _player.global_position
+
+	for coin in get_tree().get_nodes_in_group("coin"):
+		if not is_instance_valid(coin) or not (coin is Node3D):
+			continue
+
+		var dist_sq: float = coin.global_position.distance_squared_to(player_pos)
+		var animating: bool = coin.is_processing()
+
+		if animating:
+			# Animating → freeze only once clearly outside the buffer (hysteresis).
+			if dist_sq > COIN_FREEZE_DISTANCE_SQ:
+				coin.set_process(false)
+		else:
+			# Frozen → resume as soon as we're back inside COIN_ANIM_RADIUS.
+			if dist_sq <= COIN_WAKE_DISTANCE_SQ:
+				coin.set_process(true)

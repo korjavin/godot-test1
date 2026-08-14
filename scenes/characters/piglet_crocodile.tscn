@@ -1,4 +1,4 @@
-[gd_scene load_steps=5 format=3 uid="uid://crocodile01"]
+[gd_scene load_steps=4 format=3 uid="uid://crocodile01"]
 
 [ext_resource type="Script" path="res://scripts/piglet_crocodile_ai.gd" id="1_crocodile"]
 [ext_resource type="PackedScene" path="res://assets/models/characters/piglet_crocodile.glb" id="2_model"]
@@ -6,9 +6,6 @@
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_1"]
 radius = 0.16
 height = 1.4
-
-[sub_resource type="SphereShape3D" id="SphereShape3D_1"]
-radius = 0.25
 
 [node name="PigletCrocodile" type="CharacterBody3D" groups=["crocodile", "enemy"]]
 collision_layer = 2
@@ -21,11 +18,3 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
 [node name="CollisionShape3D" type="CollisionShape3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 0, -1, 0, 1, 0, 0, 0.16, 0)
 shape = SubResource("CapsuleShape3D_1")
-
-[node name="HitBox" type="Area3D" parent="."]
-collision_layer = 2
-collision_mask = 1
-
-[node name="HitBoxShape" type="CollisionShape3D" parent="HitBox"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.15, 0)
-shape = SubResource("SphereShape3D_1")

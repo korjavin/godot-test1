@@ -34,9 +34,9 @@ extends Node3D
 ##
 ## The catch is that a smaller view normally reveals the "edge of the world" — the last
 ## ring of chunks just stops, with sky beyond it. We hide that edge with depth fog (set
-## up below in _ready, web only) coloured like the sky horizon, so the nearer world edge
+## up below in _ready) coloured like the sky horizon, so the nearer world edge
 ## dissolves into the sky and the field still FEELS endless. Desktop keeps the full 5
-## and never gets fog, so it is visually unchanged.
+## chunks of view and gets a much thinner fog (see FOG_DENSITY_DESKTOP below).
 ##
 ## TUNABLE: 3 is a good default. If the visible world feels too tight in the browser,
 ## bump this to 4 (and, if you do, you may want to lower the fog density a touch so the
@@ -44,30 +44,48 @@ extends Node3D
 const WEB_RENDER_DISTANCE: int = 3
 
 # ----------------------------------------------------------------------------
-# WEB-ONLY DEPTH FOG (masks the reduced view distance — see _setup_web_fog)
+# UNIVERSAL DEPTH FOG (see _setup_fog)
 # ----------------------------------------------------------------------------
 ##
-## Fog colour: the sky horizon grey from main.tscn's ProceduralSkyMaterial
-## (sky_horizon_color ≈ 0.646, 0.656, 0.671). Matching the horizon makes the fogged-out
-## world edge blend seamlessly into the sky instead of reading as a coloured haze.
-const WEB_FOG_COLOR: Color = Color(0.646, 0.656, 0.671)
+## Fog runs on EVERY platform now — desktop and editor included. This is an intentional,
+## owner-sanctioned desktop visual change: the ONE deliberate exception to this repo's
+## "visual changes are web-gated" rule. On web the fog is thick and masks the reduced
+## view distance (its original job); on desktop it is a thin depth haze that dissolves
+## the far horizon instead of showing a hard world edge. Only the DENSITY stays
+## platform-gated, because density is a view-distance/perf concern, not a look concern.
+##
+## Fog colour: the sky horizon colour from main.tscn's ProceduralSkyMaterial
+## (sky_horizon_color = ground_horizon_color = 0.85, 0.86, 0.80). Matching the horizon
+## makes the fogged-out world edge blend seamlessly into the sky instead of reading as a
+## coloured haze. CONTRACT: if the sky horizon colour ever changes, this constant moves
+## with it — all three values are one colour.
+const FOG_COLOR: Color = Color(0.85, 0.86, 0.80)
 
-## Exponential fog density. The reduced web view reaches render_distance(3) ×
+## Exponential fog density, WEB value. The reduced web view reaches render_distance(3) ×
 ## chunk_size(50) = ~150 m to the nearest chunk edge and ~175 m to the far corner, so we
 ## want visibility to fade out around there. 0.005 gives roughly ~150–250 m of visibility
 ## (exponential fog has no hard cutoff — it thickens with distance), which tucks the chunk
 ## boundary into the haze without fogging the playable area near the player.
 ## TUNABLE: raise toward 0.006 for a closer/denser edge, lower toward 0.004 for a more
 ## open feel (or if you bump WEB_RENDER_DISTANCE to 4).
-const WEB_FOG_DENSITY: float = 0.005
+const FOG_DENSITY_WEB: float = 0.005
+
+## Exponential fog density, DESKTOP/EDITOR value. Desktop sees ~250–275 m of chunks
+## (render_distance 5), so the fog must sit much further out: 0.0022 is a soft depth
+## haze that only reads near the far edge of the view, giving aerial perspective
+## without eating the playable area.
+const FOG_DENSITY_DESKTOP: float = 0.0022
 
 ## Terrain height variation (for future procedural generation)
 ## Currently we use a flat plane, but this allows for hills/valleys
 @export var terrain_height: float = 0.0
 
 ## The material to apply to terrain chunks
-## You can customize this in the Godot editor!
-@export var terrain_material: StandardMaterial3D
+## You can customize this in the Godot editor! Typed as the base Material so
+## it accepts EITHER a StandardMaterial3D or a ShaderMaterial — when left
+## empty, _ready() builds the default ShaderMaterial running
+## assets/shaders/ground.gdshader (a vertex-noise two-green blend).
+@export var terrain_material: Material
 
 ## Enable/disable object spawning on terrain
 @export var spawn_objects: bool = true
@@ -283,6 +301,43 @@ var active_chunks: Dictionary = {}
 ## Last player chunk position (to detect when to update chunks)
 var last_player_chunk: Vector2i = Vector2i(999999, 999999)
 
+# ----------------------------------------------------------------------------
+# TIME-SLICED CHUNK GENERATION (one chunk per frame, nearest-first)
+# ----------------------------------------------------------------------------
+##
+## Building EVERY missing chunk in a single frame is what caused the startup
+## freeze: 49 chunks on web (121 on desktop) of mesh + collision + crocodile +
+## coin generation in one go is a multi-second hitch on a phone. Instead,
+## update_chunks() now builds only a small SAFETY RING synchronously and queues
+## the rest here; _process() then drains the queue at exactly ONE chunk per
+## frame — ~40 pending chunks become ~0.7 s of progressive fill hidden behind
+## the fog, instead of one frozen frame.
+##
+## DETERMINISM NOTE — generation ORDER cannot change the world. Every chunk's
+## content is seeded purely from its own coords + run_seed (hash(Vector3i(...))),
+## and the road station cache grows contiguously outward from station 0 via a
+## recurrence that is pure in the station index `k` (see _road_extend_to_x) —
+## whichever chunk happens to request coverage first, station k always comes out
+## identical. So building chunks over 40 frames instead of 1 produces a
+## byte-identical world.
+
+## Chunks within Chebyshev distance <= SYNC_RING of the player's chunk are built
+## SYNCHRONOUSLY in update_chunks. This is the load-bearing safety guarantee:
+## the player (walking, or teleported to spawn by new_run/restart) can only ever
+## reach an adjacent chunk this frame, so ring 1 being solid means they can
+## never stand over — or fall through — an unbuilt chunk while the rest of the
+## world fills in progressively. 9 chunks at startup/new_run, at most 3 new
+## ring chunks on a normal boundary crossing.
+const SYNC_RING: int = 1
+
+## Missing chunks awaiting progressive creation, sorted nearest-first (squared
+## distance to the player's chunk). Rebuilt from scratch on every update_chunks
+## call — it only runs on boundary crossings, so a full rebuild is cheap and
+## simpler than incremental surgery: it dedupes for free (each position comes
+## from iterating the unique-keyed chunks_to_load Dictionary once) and
+## naturally drops queued chunks that fell back out of range.
+var pending_chunks: Array[Vector2i] = []
+
 ## PER-RUN WORLD SEED — makes run 2 a different world from run 1.
 ##
 ## EDUCATIONAL NOTE — the determinism contract:
@@ -336,6 +391,9 @@ var run_seed: int = 0
 ## transforms carry the per-axis scale, so this single cube becomes every block.
 var _shared_unit_box_mesh: BoxMesh
 
+## The single ground PlaneMesh shared by every chunk (see _get_shared_ground_mesh).
+var _shared_ground_mesh: PlaneMesh
+
 ## Lazily-created shared material for the block MultiMesh. `vertex_color_use_as_albedo`
 ## lets one material show each instance's individual colour. Per-instance roughness
 ## is NOT supported by MultiMesh (only transform + color are per-instance), so we
@@ -355,6 +413,19 @@ var _shared_block_material: StandardMaterial3D
 ## same RNG call in create_box so the deterministic world layout is unchanged.)
 const SHARED_BLOCK_ROUGHNESS: float = 0.85
 
+## Curated block colour ramps (Task 8 of the rendering pass). The old code rolled
+## each colour channel independently, which gave muddy, uncoordinated blocks. Now
+## each of the three block "families" is a hand-picked two-colour RAMP sharing a
+## warm undertone, and a block samples its ramp with ONE lerp — so every block
+## still varies, but along an art-directed line instead of a random RGB cube.
+## (The RNG draw count in create_box is unchanged — see the determinism note there.)
+const RAMP_SANDSTONE_A := Color(0.72, 0.58, 0.42)  # warm sandstone …
+const RAMP_SANDSTONE_B := Color(0.65, 0.38, 0.28)  # … to terracotta
+const RAMP_SLATE_A := Color(0.38, 0.40, 0.45)      # slate …
+const RAMP_SLATE_B := Color(0.55, 0.58, 0.63)      # … to blue-grey
+const RAMP_MOSS_A := Color(0.42, 0.45, 0.26)       # olive …
+const RAMP_MOSS_B := Color(0.30, 0.42, 0.28)       # … to moss
+
 func _get_shared_unit_box_mesh() -> BoxMesh:
 	"""
 	Returns the shared unit (1×1×1) BoxMesh used by every block MultiMesh,
@@ -365,6 +436,23 @@ func _get_shared_unit_box_mesh() -> BoxMesh:
 		_shared_unit_box_mesh = BoxMesh.new()
 		_shared_unit_box_mesh.size = Vector3.ONE  # unit cube; scaled per-instance
 	return _shared_unit_box_mesh
+
+func _get_shared_ground_mesh() -> PlaneMesh:
+	"""
+	Returns the ONE PlaneMesh shared by every chunk's ground, creating it on first
+	use. All chunks are the same size, so a single mesh serves them all — the old
+	code allocated a fresh subdivided PlaneMesh per chunk for no benefit. 16×16
+	subdivisions give the vertex density the vertex-noise ground shader needs.
+	The material comes from terrain_material, which _ready() finalizes before
+	any chunk can be created, so assigning it once here is safe.
+	"""
+	if _shared_ground_mesh == null:
+		_shared_ground_mesh = PlaneMesh.new()
+		_shared_ground_mesh.size = Vector2(chunk_size, chunk_size)
+		_shared_ground_mesh.subdivide_width = 16
+		_shared_ground_mesh.subdivide_depth = 16
+		_shared_ground_mesh.material = terrain_material
+	return _shared_ground_mesh
 
 func _get_shared_block_material() -> StandardMaterial3D:
 	"""
@@ -443,17 +531,21 @@ func _ready() -> void:
 		push_warning("No player found! Add the player to the 'player' group.")
 		return
 
-	# Create default material if none provided
+	# Create default material if none provided.
+	# The built-in default is the ground vertex-noise shader (two greens blended
+	# by a per-VERTEX world-space noise — see assets/shaders/ground.gdshader for
+	# why it's nearly free and seamless across chunks). The @export escape hatch
+	# still wins: assign ANY Material in the editor and this block is skipped.
 	if not terrain_material:
-		terrain_material = StandardMaterial3D.new()
-		terrain_material.albedo_color = Color(0.2, 0.6, 0.2)  # Green grass color
-		terrain_material.roughness = 0.8
+		var ground_material := ShaderMaterial.new()
+		ground_material.shader = load("res://assets/shaders/ground.gdshader")
+		terrain_material = ground_material
 
-	# WEB-ONLY: enable the depth fog that masks the reduced view distance. Done after the
+	# Enable the depth fog on ALL platforms (thick on web to mask the reduced view
+	# distance, thin on desktop as a horizon haze — see _setup_fog). Done after the
 	# player is found (so we know the scene tree is ready) but it only touches the
-	# WorldEnvironment, not the player. Gated strictly behind OS.has_feature("web") inside
-	# the helper, so desktop/editor get NO fog.
-	_setup_web_fog()
+	# WorldEnvironment, not the player.
+	_setup_fog()
 
 	print("Endless Terrain System initialized!")
 	# Log the platform and the EFFECTIVE render distance so it's obvious in the web
@@ -463,24 +555,18 @@ func _ready() -> void:
 	print("Render distance: ", render_distance, " chunks")
 	print("Crocodiles per chunk: ", crocodiles_per_chunk if spawn_crocodiles else 0)
 
-func _setup_web_fog() -> void:
+func _setup_fog() -> void:
 	"""
-	Enable depth fog on the scene's WorldEnvironment — WEB ONLY — so the reduced view
-	distance's nearer world edge dissolves into the sky and the field still feels endless.
+	Enable depth fog on the scene's WorldEnvironment — on EVERY platform.
 
-	Desktop and the editor never enter the web branch, so they get NO fog and stay
-	visually identical to before this change.
-
-	WHY FOG (and why web-only): on web we shrink render_distance (see WEB_RENDER_DISTANCE),
-	which would otherwise expose the hard "edge of the world" where the last ring of chunks
-	stops. Fog coloured like the sky horizon hides that boundary in haze, so the smaller
-	world looks like it just fades into the distance. Desktop keeps the full view and needs
-	no such mask.
+	This is an intentional, owner-sanctioned desktop visual change: the one deliberate
+	exception to this repo's "visual changes are web-gated" rule (see the FOG_COLOR
+	comment block up top). Only the DENSITY differs per platform — that's a
+	view-distance/perf concern, so it stays gated:
+	  - web:     FOG_DENSITY_WEB (0.005)      — thick, masks the reduced render distance
+	  - desktop: FOG_DENSITY_DESKTOP (0.0022) — thin depth haze; the long view's horizon
+	                                            dissolves instead of ending at a hard edge
 	"""
-	# Strict web gate: do nothing at all on desktop/editor.
-	if not OS.has_feature("web"):
-		return
-
 	# Find the WorldEnvironment. EndlessTerrain doesn't hold a hard reference to it, but in
 	# main.tscn the two are SIBLINGS under the root "Main" node, so a sibling lookup via our
 	# parent is the simplest robust way to reach it. Guard every step with null checks so a
@@ -490,20 +576,19 @@ func _setup_web_fog() -> void:
 		return
 	var world_env := parent_node.get_node_or_null("WorldEnvironment") as WorldEnvironment
 	if world_env == null:
-		push_warning("Web fog: no sibling WorldEnvironment found; skipping fog setup.")
+		push_warning("Fog: no sibling WorldEnvironment found; skipping fog setup.")
 		return
 
 	var env: Environment = world_env.environment
 	if env == null:
-		push_warning("Web fog: WorldEnvironment has no Environment resource; skipping fog.")
+		push_warning("Fog: WorldEnvironment has no Environment resource; skipping fog.")
 		return
 
 	# DEFENSIVE COPY: the Environment is an inline SubResource shared with the editor scene.
 	# We duplicate it and assign the copy back BEFORE enabling fog, so we mutate a
-	# per-instance copy at runtime rather than the shared resource. This only ever runs on
-	# the web build, but duplicating keeps it clean and avoids any chance of dirtying the
-	# shared sub-resource. (We pass false so it copies the resource itself, not its deep
-	# sub-resources like the Sky, which we want to keep sharing.)
+	# per-instance copy at runtime rather than the shared resource — the editor's saved
+	# scene never sees the fog values. (We pass false so it copies the resource itself,
+	# not its deep sub-resources like the Sky, which we want to keep sharing.)
 	env = env.duplicate(false)
 	world_env.environment = env
 
@@ -511,16 +596,19 @@ func _setup_web_fog() -> void:
 	# Godot 4.5 Environment fog API:
 	#   - fog_enabled            : turn fog on
 	#   - fog_light_color        : the fog's colour (matches the sky horizon → seamless edge)
-	#   - fog_density            : exponential density (controls how quickly distance fades)
-	#   - fog_sun_scatter        : 0 = no bright streak toward the sun, keeping the haze flat
+	#   - fog_density            : exponential density (controls how quickly distance fades);
+	#                              the one platform-gated value — see _setup_fog's docstring
+	#   - fog_sun_scatter        : 0.15 = a gentle bright streak toward the warm key light,
+	#                              so the haze reads sunlit instead of flat grey
 	#   - fog_aerial_perspective : 0 = don't blend the sky into fog for distant geometry
+	var density: float = FOG_DENSITY_WEB if OS.has_feature("web") else FOG_DENSITY_DESKTOP
 	env.fog_enabled = true
-	env.fog_light_color = WEB_FOG_COLOR
-	env.fog_density = WEB_FOG_DENSITY
-	env.fog_sun_scatter = 0.0
+	env.fog_light_color = FOG_COLOR
+	env.fog_density = density
+	env.fog_sun_scatter = 0.15
 	env.fog_aerial_perspective = 0.0
 
-	print("Web fog enabled (density ", WEB_FOG_DENSITY, ", colour ", WEB_FOG_COLOR, ")")
+	print("Fog enabled (density ", density, ", colour ", FOG_COLOR, ")")
 
 func _process(_delta: float) -> void:
 	"""
@@ -540,6 +628,16 @@ func _process(_delta: float) -> void:
 	if player_chunk != last_player_chunk:
 		update_chunks(player_chunk)
 		last_player_chunk = player_chunk
+
+	# TIME-SLICED FILL: build exactly ONE queued chunk per frame (see the
+	# pending_chunks comment in SECTION 2). The queue is sorted nearest-first,
+	# so the chunks the player is most likely to see next appear first, and the
+	# per-frame cost is bounded by one chunk's generation instead of dozens.
+	# (No already-created check needed: the queue is rebuilt from scratch on
+	# every boundary crossing, and between crossings only this line creates
+	# chunks, so a queued position can never already be active.)
+	if not pending_chunks.is_empty():
+		create_chunk(pending_chunks.pop_front())
 
 # ============================================================================
 # CHUNK MANAGEMENT FUNCTIONS
@@ -588,13 +686,18 @@ func update_chunks(player_chunk: Vector2i) -> void:
 	- As the player moves, we add/remove chunks at the edges
 	"""
 
-	# STEP 1: Find all chunks that SHOULD be loaded
-	var chunks_to_load: Array[Vector2i] = []
+	# STEP 1: Find all chunks that SHOULD be loaded.
+	#
+	# We store them as Dictionary KEYS (value `true`), not an Array, because the
+	# membership test in STEP 2 (`in`) is an O(1) hash lookup on a Dictionary but a
+	# LINEAR scan on an Array — with 121 desktop chunks that Array version was
+	# 121×121 comparisons per boundary crossing. Same semantics, hash-speed lookup.
+	var chunks_to_load: Dictionary = {}
 
 	for x in range(-render_distance, render_distance + 1):
 		for z in range(-render_distance, render_distance + 1):
 			var chunk_pos := Vector2i(player_chunk.x + x, player_chunk.y + z)
-			chunks_to_load.append(chunk_pos)
+			chunks_to_load[chunk_pos] = true
 
 	# STEP 2: Remove chunks that are too far away
 	var chunks_to_remove: Array[Vector2i] = []
@@ -606,10 +709,31 @@ func update_chunks(player_chunk: Vector2i) -> void:
 	for chunk_pos in chunks_to_remove:
 		remove_chunk(chunk_pos)
 
-	# STEP 3: Create new chunks that don't exist yet
+	# STEP 3: Create new chunks that don't exist yet — TIME-SLICED.
+	#
+	# Only the SAFETY RING (Chebyshev distance <= SYNC_RING around the player —
+	# the chunks the player could physically reach this frame) is built right
+	# now. Everything further out goes into pending_chunks, which _process
+	# drains at one chunk per frame. Rebuilding the queue from scratch here is
+	# deliberate: this only runs on boundary crossings, and a fresh build both
+	# dedupes for free and drops any previously-queued chunk that fell out of
+	# range. Generation ORDER doesn't matter for content — see the determinism
+	# note above pending_chunks in SECTION 2.
+	pending_chunks.clear()
+
 	for chunk_pos in chunks_to_load:
-		if chunk_pos not in active_chunks:
+		if chunk_pos in active_chunks:
+			continue
+		var cheb := maxi(absi(chunk_pos.x - player_chunk.x), absi(chunk_pos.y - player_chunk.y))
+		if cheb <= SYNC_RING:
 			create_chunk(chunk_pos)
+		else:
+			pending_chunks.append(chunk_pos)
+
+	# Nearest-first: sort by squared distance to the player's chunk so the fill
+	# grows outward from the player (the far edge, hidden by fog, comes last).
+	pending_chunks.sort_custom(func(a: Vector2i, b: Vector2i) -> bool:
+		return (a - player_chunk).length_squared() < (b - player_chunk).length_squared())
 
 func create_chunk(chunk_pos: Vector2i) -> void:
 	"""
@@ -627,14 +751,13 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 	var mesh_instance := MeshInstance3D.new()
 	mesh_instance.name = "Chunk_%d_%d" % [chunk_pos.x, chunk_pos.y]
 
-	# Create the plane mesh
-	var plane_mesh := PlaneMesh.new()
-	plane_mesh.size = Vector2(chunk_size, chunk_size)
-	plane_mesh.subdivide_width = 10  # More subdivisions = smoother mesh
-	plane_mesh.subdivide_depth = 10
-	plane_mesh.material = terrain_material
+	# All chunks share ONE PlaneMesh resource (see _get_shared_ground_mesh) —
+	# allocating a fresh subdivided mesh per chunk was pure waste.
+	mesh_instance.mesh = _get_shared_ground_mesh()
 
-	mesh_instance.mesh = plane_mesh
+	# A flat ground plane can only ever shadow itself — skip it in the shadow
+	# passes entirely. Blocks/crocs still cast onto it; it just casts nothing.
+	mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 
 	# Position the chunk in the world
 	mesh_instance.position = chunk_to_world(chunk_pos)
@@ -698,7 +821,7 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 	# crocodile avoidance raycasts hitting blocks exactly as before.
 
 	if spawn_objects:
-		obstacles = spawn_objects_in_chunk(chunk_pos, mesh_instance, platforms, block_batch, block_body)
+		obstacles = spawn_objects_in_chunk(chunk_pos, platforms, block_batch, block_body)
 
 	# Build the chunk's batched block visuals. If any blocks were placed, collapse
 	# them all into one MultiMeshInstance3D parented to this chunk (so it is freed
@@ -729,14 +852,13 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 	if spawn_coins:
 		spawn_coins_in_chunk(chunk_pos, mesh_instance, obstacles)
 
-func spawn_objects_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, platforms: Array, block_batch: Array, block_body: StaticBody3D) -> Array:
+func spawn_objects_in_chunk(chunk_pos: Vector2i, platforms: Array, block_batch: Array, block_body: StaticBody3D) -> Array:
 	"""
 	Spawns blocks within a terrain chunk: scattered cubes, the occasional little
 	stack/tower, and — sometimes — a feature structure (wall / corridor / gate /
 	pyramid).
 
 	@param chunk_pos: Chunk coordinates for seeded random generation
-	@param parent_chunk: The chunk mesh to attach objects to
 	@param platforms: Out-param; feature structures append walkable-top descriptors
 	                  here for patrolling crocodiles.
 	@param block_batch: Out-param; each block created appends its
@@ -770,7 +892,7 @@ func spawn_objects_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, p
 	# so scattered blocks can be placed around it (the scatter loop below checks
 	# against these footprints).
 	if rng.randf() < structure_chance:
-		spawn_feature_structure(rng, parent_chunk, half_chunk, obstacles, platforms, block_batch, block_body)
+		spawn_feature_structure(rng, half_chunk, obstacles, platforms, block_batch, block_body)
 
 	# Store positions of scattered objects to check spacing between them
 	var spawned_positions: Array[Vector3] = []
@@ -808,7 +930,7 @@ func spawn_objects_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, p
 
 		# Base block sits on the ground.
 		var size := rng.randf_range(object_size_min, object_size_max)
-		create_block(parent_chunk, Vector3(random_x, size / 2.0, random_z), size, rng.randf_range(0, TAU), rng, block_batch, block_body)
+		create_block(Vector3(random_x, size / 2.0, random_z), size, rng.randf_range(0, TAU), rng, block_batch, block_body)
 		spawned_positions.append(object_pos)
 
 		# Track the height of the top surface (grows if we stack a tower on top).
@@ -821,7 +943,7 @@ func spawn_objects_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, p
 				# Each block up the stack is a bit smaller, so towers taper and
 				# the random yaw doesn't make them overhang awkwardly.
 				var stack_size := size * rng.randf_range(0.6, 0.85)
-				create_block(parent_chunk, Vector3(random_x, top_y + stack_size / 2.0, random_z), stack_size, rng.randf_range(0, TAU), rng, block_batch, block_body)
+				create_block(Vector3(random_x, top_y + stack_size / 2.0, random_z), stack_size, rng.randf_range(0, TAU), rng, block_batch, block_body)
 				top_y += stack_size
 
 		# Record the footprint and final top height — used to keep crocodiles out
@@ -831,7 +953,7 @@ func spawn_objects_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, p
 
 	return obstacles
 
-func spawn_feature_structure(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, half_chunk: float, obstacles: Array, platforms: Array, block_batch: Array, block_body: StaticBody3D) -> void:
+func spawn_feature_structure(rng: RandomNumberGenerator, half_chunk: float, obstacles: Array, platforms: Array, block_batch: Array, block_body: StaticBody3D) -> void:
 	"""
 	Pick and build one "feature" structure for variety: a wall, a corridor to run
 	through, a gate, or a Mayan step-pyramid. Pyramids are the biggest/rarest
@@ -839,7 +961,6 @@ func spawn_feature_structure(rng: RandomNumberGenerator, parent_chunk: MeshInsta
 	patrolling crocodile can be placed on.
 
 	@param rng: The chunk's seeded RNG (so the choice is deterministic)
-	@param parent_chunk: The chunk mesh to attach the structure to
 	@param half_chunk: Half the chunk width, for bounds
 	@param obstacles: Footprint list each piece is appended to (crocodiles + coins)
 	@param platforms: Walkable-top descriptors for patrolling crocodiles
@@ -849,21 +970,20 @@ func spawn_feature_structure(rng: RandomNumberGenerator, parent_chunk: MeshInsta
 	"""
 	var pick := rng.randf()
 	if pick < 0.3:
-		spawn_wall(rng, parent_chunk, half_chunk, obstacles, platforms, block_batch, block_body)
+		spawn_wall(rng, half_chunk, obstacles, platforms, block_batch, block_body)
 	elif pick < 0.55:
-		spawn_corridor(rng, parent_chunk, half_chunk, obstacles, block_batch, block_body)
+		spawn_corridor(rng, half_chunk, obstacles, block_batch, block_body)
 	elif pick < 0.75:
-		spawn_gate(rng, parent_chunk, half_chunk, obstacles, block_batch, block_body)
+		spawn_gate(rng, half_chunk, obstacles, block_batch, block_body)
 	else:
-		spawn_pyramid(rng, parent_chunk, half_chunk, obstacles, platforms, block_batch, block_body)
+		spawn_pyramid(rng, half_chunk, obstacles, platforms, block_batch, block_body)
 
-func spawn_pyramid(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, half_chunk: float, obstacles: Array, platforms: Array, block_batch: Array, block_body: StaticBody3D) -> void:
+func spawn_pyramid(rng: RandomNumberGenerator, half_chunk: float, obstacles: Array, platforms: Array, block_batch: Array, block_body: StaticBody3D) -> void:
 	"""
 	Build a Mayan step-pyramid: a few square slabs stacked smallest-on-top, like a
 	ziggurat. Each layer is a single flat box (cheap), not a grid of cubes.
 
 	@param rng: The chunk's seeded RNG
-	@param parent_chunk: The chunk mesh to attach the slabs to
 	@param half_chunk: Half the chunk width, for bounds
 	@param obstacles: Footprint list (one entry for the whole base, with the apex
 	                  height as its top so a coin can perch on top)
@@ -896,7 +1016,7 @@ func spawn_pyramid(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, hal
 	var y := 0.0
 	for i in layers:
 		var w := base_size - i * shrink
-		create_box(parent_chunk, Vector3(cx, y + layer_height / 2.0, cz), Vector3(w, layer_height, w), 0.0, rng, block_batch, block_body)
+		create_box(Vector3(cx, y + layer_height / 2.0, cz), Vector3(w, layer_height, w), 0.0, rng, block_batch, block_body)
 		y += layer_height
 
 	# One footprint for the whole base; top = apex height. Pyramids are climbable
@@ -909,7 +1029,7 @@ func spawn_pyramid(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, hal
 	if apex_half > 0.4:
 		platforms.append({ "center": Vector3(cx, y, cz), "half": Vector2(apex_half, apex_half) })
 
-func spawn_gate(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, half_chunk: float, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
+func spawn_gate(rng: RandomNumberGenerator, half_chunk: float, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
 	"""
 	Build a monumental gate (Brandenburg-Tor style): two tall pillars with a thick
 	lintel beam across the top, leaving an opening to walk through.
@@ -919,7 +1039,6 @@ func spawn_gate(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, half_c
 	onto the lintel. That's intentional "hard to reach" gameplay.
 
 	@param rng: The chunk's seeded RNG
-	@param parent_chunk: The chunk mesh to attach the gate to
 	@param half_chunk: Half the chunk width, for bounds
 	@param obstacles: Footprint list (pillars, plus a coin-perch on the lintel)
 	@param block_batch: Out-param threaded down to create_box for MultiMesh batching
@@ -953,25 +1072,24 @@ func spawn_gate(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, half_c
 		var pz: float = cz + (0.0 if along_x else s * half_span)
 		# Pillar is pillar_w across the span axis and `depth` across the other.
 		var pillar_dims: Vector3 = Vector3(pillar_w, pillar_h, depth) if along_x else Vector3(depth, pillar_h, pillar_w)
-		create_box(parent_chunk, Vector3(px, pillar_h * 0.5, pz), pillar_dims, 0.0, rng, block_batch, block_body)
+		create_box(Vector3(px, pillar_h * 0.5, pz), pillar_dims, 0.0, rng, block_batch, block_body)
 		# Each pillar is its own footprint, so crocodiles can still pass through
 		# the opening between them.
 		obstacles.append({ "pos": Vector3(px, 0, pz), "radius": maxf(pillar_w, depth) * 0.71, "top": pillar_h, "climbable": true })
 
 	# Lintel beam spanning the full width, resting on top of both pillars.
 	var lintel_dims: Vector3 = Vector3(total_w, lintel_h, depth) if along_x else Vector3(depth, lintel_h, total_w)
-	create_box(parent_chunk, Vector3(cx, pillar_h + lintel_h * 0.5, cz), lintel_dims, 0.0, rng, block_batch, block_body)
+	create_box(Vector3(cx, pillar_h + lintel_h * 0.5, cz), lintel_dims, 0.0, rng, block_batch, block_body)
 
 	# Register the lintel centre as a (hard-to-reach but climbable) coin perch.
 	obstacles.append({ "pos": Vector3(cx, 0, cz), "radius": 1.0, "top": pillar_h + lintel_h, "climbable": true })
 
-func spawn_corridor(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, half_chunk: float, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
+func spawn_corridor(rng: RandomNumberGenerator, half_chunk: float, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
 	"""
 	Build a corridor: two parallel two-block-high walls with a gap between them
 	that the player can run down.
 
 	@param rng: The chunk's seeded RNG
-	@param parent_chunk: The chunk mesh to attach the walls to
 	@param half_chunk: Half the chunk width, for bounds
 	@param obstacles: Footprint list each block is appended to
 	@param block_batch: Out-param threaded down to create_box for MultiMesh batching
@@ -1009,17 +1127,16 @@ func spawn_corridor(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, ha
 			var z := perp if along_x else along
 			# Two blocks tall so it reads as an enclosed passage. Sheer and taller
 			# than a jump, so it's not climbable (no coins perch on the roof).
-			create_block(parent_chunk, Vector3(x, block_size / 2.0, z), block_size, 0.0, rng, block_batch, block_body)
-			create_block(parent_chunk, Vector3(x, block_size + block_size / 2.0, z), block_size, 0.0, rng, block_batch, block_body)
+			create_block(Vector3(x, block_size / 2.0, z), block_size, 0.0, rng, block_batch, block_body)
+			create_block(Vector3(x, block_size + block_size / 2.0, z), block_size, 0.0, rng, block_batch, block_body)
 			obstacles.append({ "pos": Vector3(x, 0, z), "radius": block_size * 0.71, "top": 2.0 * block_size, "climbable": false })
 
-func spawn_wall(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, half_chunk: float, obstacles: Array, platforms: Array, block_batch: Array, block_body: StaticBody3D) -> void:
+func spawn_wall(rng: RandomNumberGenerator, half_chunk: float, obstacles: Array, platforms: Array, block_batch: Array, block_body: StaticBody3D) -> void:
 	"""
 	Build a single wall — a straight line of touching blocks the player must run
 	around — somewhere inside the chunk.
 
 	@param rng: The chunk's seeded RNG (so the wall is deterministic)
-	@param parent_chunk: The chunk mesh to attach the wall blocks to
 	@param half_chunk: Half the chunk width, for bounds
 	@param obstacles: Footprint list to append each wall block to (for crocodiles)
 	@param platforms: Gets the wall ridge registered as a patrol platform
@@ -1054,14 +1171,14 @@ func spawn_wall(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, half_c
 		var z := fixed if along_x else along
 
 		# Wall blocks are axis-aligned (yaw 0) so they sit flush against each other.
-		create_block(parent_chunk, Vector3(x, block_size / 2.0, z), block_size, 0.0, rng, block_batch, block_body)
+		create_block(Vector3(x, block_size / 2.0, z), block_size, 0.0, rng, block_batch, block_body)
 		var top := block_size
 		# A single-block section is low enough to hop onto; a doubled one is not.
 		var climbable := true
 
 		# Now and then double a section up so the wall isn't a uniform single row.
 		if rng.randf() < 0.3:
-			create_block(parent_chunk, Vector3(x, block_size + block_size / 2.0, z), block_size, 0.0, rng, block_batch, block_body)
+			create_block(Vector3(x, block_size + block_size / 2.0, z), block_size, 0.0, rng, block_batch, block_body)
 			top = 2.0 * block_size
 			climbable = false
 
@@ -1078,7 +1195,7 @@ func spawn_wall(rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, half_c
 	if half_along > 1.0 and half_across > 0.2:
 		platforms.append({ "center": ridge_center, "half": ridge_half })
 
-func create_block(parent_chunk: MeshInstance3D, center_pos: Vector3, size: float, yaw: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> void:
+func create_block(center_pos: Vector3, size: float, yaw: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> void:
 	"""
 	Create one cube block. Thin wrapper over create_box for the common case where
 	all three dimensions are equal (scattered blocks, towers, walls, corridors).
@@ -1087,9 +1204,9 @@ func create_block(parent_chunk: MeshInstance3D, center_pos: Vector3, size: float
 	@param block_body: The chunk's shared block-collision body, forwarded to
 	                  create_box so this block's shape hangs on it (Task 5).
 	"""
-	create_box(parent_chunk, center_pos, Vector3(size, size, size), yaw, rng, block_batch, block_body)
+	create_box(center_pos, Vector3(size, size, size), yaw, rng, block_batch, block_body)
 
-func create_box(parent_chunk: MeshInstance3D, center_pos: Vector3, dimensions: Vector3, yaw: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> void:
+func create_box(center_pos: Vector3, dimensions: Vector3, yaw: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> void:
 	"""
 	Register one box for rendering AND register its physics collision shape. Used for
 	cube blocks and for the flat slabs that make up pyramids.
@@ -1126,12 +1243,6 @@ func create_box(parent_chunk: MeshInstance3D, center_pos: Vector3, dimensions: V
 	  The MultiMesh (block_batch → MultiMeshInstance3D) and this collision body are the
 	  TWO HALVES of each chunk's blocks: one renders them, one collides with them.
 
-	@param parent_chunk: The chunk mesh. NOTE: create_box itself no longer uses this — the
-	                   visual goes to block_batch and the collision shape attaches to
-	                   block_body (which create_chunk parents to the chunk). It's kept only
-	                   to match the uniform (parent_chunk, ..., block_batch, block_body)
-	                   signature shared by every spawn_*/create_* helper, so all the call
-	                   sites pass the same argument list. (Not used for "future" plans.)
 	@param center_pos: Box centre position, local to the chunk (Y is the centre,
 	                   so pass height/2 to sit a box on the ground)
 	@param dimensions: Full box size on each axis (width, height, depth)
@@ -1142,31 +1253,33 @@ func create_box(parent_chunk: MeshInstance3D, center_pos: Vector3, dimensions: V
 	@param block_body: The chunk's single shared StaticBody3D; we add this block's
 	                   CollisionShape3D child to it (see WHY note above).
 	"""
-	# ----- Pick the earthy colour (UNCHANGED logic) ------------------------------
+	# ----- Pick the block colour from a curated ramp -----------------------------
 	# IMPORTANT (determinism): the chunk's world layout is seeded from this same RNG.
 	# If we changed how many random numbers we draw here, every later block/crocodile/
-	# coin in the chunk would shift. So we keep the colour draws EXACTLY as before
-	# (same randi_range(0,2) branch, same randf_range ranges), and we still consume
-	# the roughness randf_range below even though the MultiMesh uses one shared
-	# roughness — preserving the RNG sequence keeps the world identical.
+	# coin in the chunk would shift. The COLOURS changed (per-channel randoms → curated
+	# ramps, see the RAMP_* consts up top), but the DRAWS did not: same randi_range(0,2)
+	# selector, then per branch the SAME number of randf_range calls with the SAME
+	# argument ranges as the old code. The FIRST draw in each branch becomes the ramp
+	# position `t` (normalised to 0..1 via inverse_lerp of its own range); the extra
+	# draws that used to feed the other channels are consumed and DISCARDED purely to
+	# advance the RNG — exactly like the roughness discard below. Keeping the calls
+	# textually parallel to the old ones makes the sequence preservation auditable.
 	var chosen_color: Color
 	var color_choice := rng.randi_range(0, 2)
 	match color_choice:
-		0:  # Brown rocks
-			chosen_color = Color(
-				rng.randf_range(0.3, 0.5),
-				rng.randf_range(0.2, 0.4),
-				rng.randf_range(0.1, 0.3)
-			)
-		1:  # Gray stones
-			var gray := rng.randf_range(0.3, 0.6)
-			chosen_color = Color(gray, gray, gray)
-		2:  # Dark green (mossy)
-			chosen_color = Color(
-				rng.randf_range(0.1, 0.3),
-				rng.randf_range(0.3, 0.5),
-				rng.randf_range(0.1, 0.3)
-			)
+		0:  # Warm sandstone → terracotta (was: brown rocks, 3 draws — still 3)
+			var t := inverse_lerp(0.3, 0.5, rng.randf_range(0.3, 0.5))
+			rng.randf_range(0.2, 0.4)  # discarded — RNG-sequence padding (see note above)
+			rng.randf_range(0.1, 0.3)  # discarded — RNG-sequence padding
+			chosen_color = RAMP_SANDSTONE_A.lerp(RAMP_SANDSTONE_B, t)
+		1:  # Slate → blue-grey (was: gray stones, 1 draw — still 1)
+			var t := inverse_lerp(0.3, 0.6, rng.randf_range(0.3, 0.6))
+			chosen_color = RAMP_SLATE_A.lerp(RAMP_SLATE_B, t)
+		2:  # Olive → moss (was: dark green, 3 draws — still 3)
+			var t := inverse_lerp(0.1, 0.3, rng.randf_range(0.1, 0.3))
+			rng.randf_range(0.3, 0.5)  # discarded — RNG-sequence padding
+			rng.randf_range(0.1, 0.3)  # discarded — RNG-sequence padding
+			chosen_color = RAMP_MOSS_A.lerp(RAMP_MOSS_B, t)
 
 	# Still DRAW the roughness random value to keep the RNG sequence identical to the
 	# old code (so the procedural world is unchanged). The value itself is discarded:
@@ -1378,9 +1491,6 @@ func spawn_crocodiles_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D
 		parent_chunk.add_child(crocodile_instance)
 		spawned_positions.append(crocodile_pos)
 
-	if spawned_positions.size() > 0:
-		print("Spawned %d crocodiles in chunk (%d, %d)" % [spawned_positions.size(), chunk_pos.x, chunk_pos.y])
-
 func spawn_platform_crocodiles(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, platforms: Array) -> void:
 	"""
 	Place rare crocodiles that patrol an elevated structure top (a pyramid apex or
@@ -1426,9 +1536,6 @@ func spawn_platform_crocodiles(chunk_pos: Vector2i, parent_chunk: MeshInstance3D
 			crocodile.set_confinement(center_global, half)
 
 		count += 1
-
-	if count > 0:
-		print("Spawned %d patrolling crocodile(s) in chunk (%d, %d)" % [count, chunk_pos.x, chunk_pos.y])
 
 # ============================================================================
 # COIN ROAD MATH (deterministic, pure-in-k parametric centerline + coin placement)
@@ -1519,7 +1626,7 @@ func _road_extend_to_x(x_min: float, x_max: float) -> void:
 
 	var max_heading := _road_max_heading()
 	# Clamped effective step distance — strictly positive, so X always advances and the
-	# extend loops below terminate. At the default 7.0 this is inert (returns 7.0).
+	# extend loops below terminate. At the default 6.0 this is inert (returns 6.0).
 	var spacing := _road_spacing()
 
 	# First-time seeding: station 0 at world origin, heading along +X (0 rad).
@@ -1600,8 +1707,8 @@ func _road_spacing() -> float:
 	  the step to be strictly POSITIVE. A spacing of 0 freezes X (loop never reaches its
 	  target → editor/game HANG); a negative spacing runs X backward (same hang). Asserts
 	  are stripped from release builds, so — exactly like _road_max_heading() — we ALSO
-	  clamp at read time here and route EVERY road step through this. At the default 7.0
-	  the clamp is inert (returns 7.0), so coin positions are unchanged.
+	  clamp at read time here and route EVERY road step through this. At the default 6.0
+	  the clamp is inert (returns 6.0), so coin positions are unchanged.
 	"""
 	return maxf(road_coin_spacing, 0.1)
 
@@ -1917,27 +2024,34 @@ func new_run() -> void:
 	2. Clear the road station cache — its entries were computed with the OLD seed
 	   and would poison the new road (the cache is "correct forever" only while the
 	   seed is constant). Reset the bounds to the empty sentinel (min > max) exactly
-	   as declared, so the next _road_extend_to_x re-seeds station 0.
+	   as declared, so the next _road_extend_to_x re-seeds station 0. Also clear the
+	   pending-chunk queue — anything queued was computed for the old world.
 	3. Free every active chunk and clear the dictionary — old-world geometry.
-	4. Rebuild the ring around the spawn chunk (0,0) IMMEDIATELY (update_chunks is
-	   synchronous), so the player being teleported to (0,2,0) this same frame lands
-	   on solid new-world ground instead of falling through a hole. Setting
+	4. Rebuild around the spawn chunk (0,0) via update_chunks — which builds the
+	   spawn chunk + SYNC_RING ring 1 SYNCHRONOUSLY and queues the rest for
+	   progressive fill. The respawned player is teleported to (0,2,0) this SAME
+	   frame, so that ring-1-sync build is the load-bearing guarantee that they
+	   land on solid new-world ground instead of falling through a hole. Setting
 	   last_player_chunk to (0,0) keeps _process from redundantly rebuilding.
 	"""
 	# 1. New seed (same roll as _ready()).
 	_roll_run_seed()
 
-	# 2. Road cache back to its declared empty state.
+	# 2. Road cache back to its declared empty state, and the old-world pending
+	# queue emptied (update_chunks below rebuilds it for the new world anyway;
+	# clearing here just makes the invariant explicit).
 	road_stations = {}
 	road_k_min = 1
 	road_k_max = 0
+	pending_chunks.clear()
 
 	# 3. Drop every old-world chunk (queue_free is the safe removal, as in remove_chunk).
 	for chunk_pos in active_chunks.keys():
 		active_chunks[chunk_pos].queue_free()
 	active_chunks.clear()
 
-	# 4. Rebuild around the spawn synchronously so the respawning player has ground.
+	# 4. Rebuild the spawn ring synchronously (+ queue the rest) so the
+	# respawning player has ground under (0,2,0) this frame.
 	update_chunks(Vector2i(0, 0))
 	last_player_chunk = Vector2i(0, 0)
 

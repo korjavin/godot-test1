@@ -55,6 +55,17 @@ const SIZE_RANDOM_FACTOR: float = 0.25
 ## Detection radius - distance at which crocodile can "smell" the player
 const DETECTION_RADIUS: float = 15.0
 
+## Visual draw cull: past this distance the crocodile's MESHES stop being drawn
+## (visibility_range_end on every GeometryInstance3D in the model subtree). This
+## is a pure RENDERING cull — the crocodile entity itself stays alive and counted;
+## the LOD manager sleeps its SIMULATION separately at 45/50 m. Entity counts are
+## unchanged: nothing is removed, meshes just skip the draw when far away. 60 m is
+## deliberately wider than the 50 m sleep radius so a visible crocodile is never a
+## frozen-mid-stride sleeper close up, and the universal depth fog hides the pop.
+const VISUAL_CULL_DISTANCE: float = 60.0
+## Fade margin for the cull boundary (Godot hysteresis band, avoids flicker).
+const VISUAL_CULL_MARGIN: float = 8.0
+
 ## Time between direction changes (in seconds)
 const DIRECTION_CHANGE_INTERVAL: float = 4.0
 
@@ -204,9 +215,9 @@ var bite_timer: float = 0.0
 ## LOD (simulation level-of-detail) gate. When true, this crocodile runs its full
 ## per-frame AI/physics step exactly as before. When false, it is "asleep": the
 ## central CrocodileLODManager has decided it is too far from the player to
-## possibly matter this frame, so _physics_process cheap-returns (which is also
-## what makes a slept croc harmless — see set_lod_active) and the HitBox stops
-## monitoring as a cheap cleanup. Defaults to TRUE so a crocodile spawned before the manager's
+## possibly matter this frame, so _physics_process is disabled entirely (with a
+## cheap-return backstop at its top — see set_lod_active, which is also what makes
+## a slept croc harmless). Defaults to TRUE so a crocodile spawned before the manager's
 ## first scan behaves normally for that brief window (the manager will sleep it on
 ## its next tick if it's far away). See crocodile_lod_manager.gd for the contract.
 var lod_active: bool = true
@@ -277,30 +288,53 @@ func _ready() -> void:
 	if model:
 		model_base_scale = model.scale
 		model_base_y = model.position.y
+		# One walk over the model subtree applies all per-mesh styling (draw
+		# cull + shared toon materials).
+		_style_model_meshes(model)
 
 	# Find the player node (defer to allow scene to fully load)
 	call_deferred("_find_player")
 
 
+func _style_model_meshes(node: Node) -> void:
+	"""
+	Recursively apply per-mesh styling to every GeometryInstance3D under the model.
+
+	Two treatments per mesh, one walk:
+	- Visual draw-range cull: beyond VISUAL_CULL_DISTANCE the renderer simply
+	  skips drawing these meshes (works in gl_compatibility too). This changes
+	  RENDERING only — the crocodile body, its AI, and its collision all stay
+	  exactly as they were; the LOD manager's sleep radius handles the
+	  simulation side independently. Entity counts are never reduced by this.
+	- Shared toon+rim styling via ToonShading.apply_to_mesh, so crocs match the
+	  hero's cel-shaded look. Its static cache hands every croc the SAME styled
+	  material per source, so ~490 bodies add only a handful of materials.
+	  Deliberately NO inverted-hull outline overlay here (the player has one):
+	  that is a second draw call per mesh × ~490 crocs — unaffordable.
+	"""
+	if node is GeometryInstance3D:
+		node.visibility_range_end = VISUAL_CULL_DISTANCE
+		node.visibility_range_end_margin = VISUAL_CULL_MARGIN
+	if node is MeshInstance3D:
+		ToonShading.apply_to_mesh(node)
+	for child in node.get_children():
+		_style_model_meshes(child)
+
+
 func _physics_process(delta: float) -> void:
 	"""Update movement, body animation and collisions every physics frame."""
 	# ------------------------------------------------------------------------
-	# LOD SLEEP GATE (simulation level-of-detail)
+	# LOD SLEEP GATE (simulation level-of-detail) — BACKSTOP ONLY
 	# ------------------------------------------------------------------------
-	# If the CrocodileLODManager has slept this crocodile (it is far from the
-	# player and can't matter this frame), do the absolute minimum and bail out
-	# BEFORE any of the expensive work: chase scanning, wander steering, obstacle
-	# raycasts, confinement steering, move_and_slide, collision handling, platform
-	# clamping and body animation are ALL skipped while asleep.
-	#
-	# We freeze the body completely by zeroing velocity and NOT calling
-	# move_and_slide — a slept crocodile simply stays exactly where it was. We do
-	# not even apply gravity here: distant crocodiles were already standing on the
-	# terrain when they fell asleep, and skipping gravity (rather than letting them
-	# drift down without collision resolution) is what keeps them perfectly put.
-	# Every other piece of state (heading, chase flags, phases, confinement) is
-	# preserved untouched, so when the manager wakes this crocodile again it
-	# resumes seamlessly — whether it's a wanderer or a confined patrol crocodile.
+	# Normally this never runs while asleep: set_lod_active(false) disables the
+	# _physics_process callback entirely via set_physics_process(false), so a
+	# slept crocodile costs zero script dispatches per tick. This early-return is
+	# kept purely as a defensive backstop — if anything ever re-enables physics
+	# processing on a slept crocodile, we still freeze in place (zero velocity,
+	# no move_and_slide, no gravity — a distant croc was already standing on the
+	# terrain, and skipping gravity is what keeps it perfectly put) instead of
+	# half-simulating. Every other piece of state (heading, chase flags, phases,
+	# confinement) is preserved untouched, so waking resumes seamlessly.
 	if not lod_active:
 		velocity = Vector3.ZERO
 		return
@@ -590,23 +624,22 @@ func set_lod_active(active: bool) -> void:
 	Called by the central CrocodileLODManager only when the awake/asleep decision
 	actually changes, so the transition work below runs at most once per change.
 
-	What actually keeps a sleeping crocodile from harming the player is storing the
-	flag: _physics_process reads `lod_active` at the very top and cheap-returns while
-	asleep, which means the crocodile never runs move_and_slide nor _handle_collisions
-	— and _handle_collisions (reading get_slide_collision()) is the ONLY code path that
-	calls player.reset_position(). So the early-return alone makes a slept crocodile
-	harmless; no contact damage can occur.
+	What actually keeps a sleeping crocodile from harming the player is that its
+	physics step never runs: set_physics_process(false) below stops the engine from
+	dispatching _physics_process at all, which means the crocodile never runs
+	move_and_slide nor _handle_collisions — and _handle_collisions (reading
+	get_slide_collision()) is the ONLY code path that calls player.reset_position().
+	So a slept crocodile is harmless; no contact damage can occur.
 
-	The HitBox Area3D's monitoring is toggled here too, but purely as a cheap cleanup:
-	nothing connects to the HitBox's body_entered/area_entered signals (grep confirms
-	no such connection in this script or piglet_crocodile.tscn), so the HitBox does not
-	itself drive any damage. Turning monitoring off on a sleeping crocodile just saves
-	the physics server from tracking ~1,200 idle Area3Ds; turning it back on when awake
-	costs nothing. It's harmless to keep, but it is NOT the safety mechanism.
+	Why set_physics_process instead of relying only on the early-return inside
+	_physics_process? With ~460 slept crocodiles, even a cheap-return still costs
+	~460 script dispatches (engine→GDScript call overhead) every physics tick.
+	Disabling the callback removes those dispatches entirely; the early-return
+	stays in _physics_process purely as a backstop in case something else ever
+	re-enables processing on a slept crocodile.
 
-	We touch the HitBox with set_deferred() because monitoring can't be flipped
-	mid-physics-step safely; deferring applies it at a safe point. We also only do
-	the HitBox work on a genuine state change to avoid redundant deferred calls.
+	We still zero velocity here (not just in the backstop) so the freeze is
+	immediate — the body holds exactly its current spot from this frame on.
 	"""
 	# No-op if nothing actually changed (defensive; the manager already guards this).
 	if active == lod_active:
@@ -614,16 +647,11 @@ func set_lod_active(active: bool) -> void:
 
 	lod_active = active
 
-	# Toggle the hostile trigger to match the new state. Guard that the node exists
-	# (every PigletCrocodile scene has $HitBox, but stay robust if a variant doesn't).
-	var hitbox := get_node_or_null("HitBox")
-	if hitbox:
-		# Deferred so we never change monitoring in the middle of physics resolution.
-		# Asleep → stop monitoring (frees the physics server from tracking an idle
-		# Area3D). Awake → resume. This is a cheap cleanup, NOT the harm-prevention
-		# safety: the _physics_process early-return is what stops a slept croc from
-		# ever running the collision code that damages the player (see set_lod_active).
-		hitbox.set_deferred("monitoring", active)
+	# Stop (or resume) the per-tick physics callback itself. Asleep → the engine
+	# never calls _physics_process on this crocodile, saving the script dispatch.
+	set_physics_process(active)
+	if not active:
+		velocity = Vector3.ZERO
 
 
 # ============================================================================
