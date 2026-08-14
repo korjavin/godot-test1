@@ -11,9 +11,11 @@ extends Control
 ##   * **Switch (R)** → fires the *event-driven* `switch_character` action.
 ##   * **steer toggle**→ flips the driver between TILT and TWIST steering.
 ##
-## plus a first-run **"Tap to enable motion controls"** overlay that satisfies
-## iOS Safari's user-gesture requirement for motion permission and calibrates the
-## neutral pose, then gets out of the way.
+## plus a first-run **"TAP TO START"** onboarding overlay (a mini how-to that also
+## satisfies iOS Safari's user-gesture requirement for motion permission and
+## calibrates the neutral pose, then gets out of the way — re-showable later as a
+## help screen via `show_onboarding()`), and a full-screen **portrait guard** that
+## asks the player to rotate to landscape.
 ##
 ## ----------------------------------------------------------------------------
 ## No hard references — found by group, like the rest of the HUD
@@ -62,8 +64,20 @@ extends Control
 const ACTION_BUTTON_SIZE: float = 120.0
 
 ## Gap (px) between stacked action buttons and from the screen edge, so the cluster
-## reads as a tidy group in the bottom-right thumb zone without crowding the edge.
-const BUTTON_MARGIN: float = 24.0
+## reads as a tidy group in the bottom-right thumb zone. 64 (raised from 24) keeps
+## the bottom-most button clear of the iOS home-indicator swipe strip, which grew
+## in on-screen size once TOUCH_CONTENT_SCALE started magnifying the whole UI.
+const BUTTON_MARGIN: float = 64.0
+
+## UI magnification applied on REAL touch sessions only (never desktop, never the
+## F6 debug force-show). The math that motivates 1.8: the project renders a
+## 1920x1080 design viewport with `canvas_items` stretch, so on an iPhone 14
+## landscape (~844 CSS px wide) every design px is scaled by ~844/1920 ≈ 0.44 —
+## and with `aspect=expand` fitting the shorter axis it lands nearer 0.364. That
+## turns the 120 px JUMP button into ~44 CSS px, the bare Apple minimum (and ~25 px
+## in portrait — hopeless). `content_scale_factor` multiplies the whole 2D/UI layer
+## (3D render cost untouched): 120 × 1.8 × 0.364 ≈ 79 CSS px — comfortably tappable.
+const TOUCH_CONTENT_SCALE: float = 1.8
 
 ## Size of the small steer-mode toggle, parked top-centre away from the action
 ## cluster and clear of the existing HUD (coins top-right, perf/lives top-left).
@@ -85,6 +99,15 @@ const FORCE_SHOW_KEYCODE: Key = KEY_F6
 ## never stranded with the controls hidden and no way back. ~3.5 s comfortably covers
 ## the permission dialog round-trip plus a few sensor frames without feeling sticky.
 const MOTION_ENABLE_TIMEOUT: float = 3.5
+
+## Onboarding overlay copy. The overlay doubles as a mini how-to: a big headline
+## plus the three things a first-time phone player must know. The headline swaps
+## to RETRY_HEADLINE when an enable attempt times out with no motion data (see
+## `_update_motion_watch`) and back to ONBOARD_HEADLINE whenever the overlay is
+## re-shown via `show_onboarding()` — the how-to body always stays underneath.
+const ONBOARD_HEADLINE: String = "TAP TO START"
+const RETRY_HEADLINE: String = "Motion unavailable — tap to retry"
+const ONBOARD_BODY: String = "Step in place to walk\nTilt your phone to steer\nButtons bottom-right: Jump / Special / Switch"
 
 # ============================================================================
 # STATE
@@ -116,6 +139,16 @@ var _motion_watch_elapsed: float = 0.0
 ## second F6 press toggles it back off. Independent of the auto (touch) visibility.
 var _force_shown: bool = false
 
+## Cached result of `MobileSensors.is_touch_session()` — the ONE canonical touch
+## predicate (touchscreen probe, plus a web coarse-/not-fine-pointer fallback),
+## shared with the player's mouse-capture guard so the two can never disagree.
+## Whether a session is touch cannot change mid-run, and on a web desktop the
+## fallback evaluates JS `matchMedia` probes — far too expensive to re-run every
+## `_process` frame — so it is read ONCE in `_ready()` and every per-frame check
+## consults this bool. (F6 debug-force-show is a SEPARATE OR in
+## `_apply_platform_visibility()`, keeping this a pure "really a touch device?" flag.)
+var _is_touch: bool = false
+
 ## Names of actions whose synthetic *press* was dispatched this frame and whose
 ## matching *release* must be dispatched on a GUARANTEED-LATER frame. See `_fire_action`
 ## / `_process` for why a same-frame `call_deferred` release is avoided.
@@ -130,15 +163,50 @@ var _jump_button: Button = null
 var _special_button: Button = null
 var _switch_button: Button = null
 var _steer_toggle: Button = null
+var _fullscreen_button: Button = null
 var _enable_overlay: Button = null
+
+## Text children of the enable overlay. A Button cannot autowrap its own text, so
+## the words live in Labels layered on top of it (mouse_filter IGNORE keeps them
+## tap-transparent): `_enable_headline` carries the big "TAP TO START" (or the
+## retry message), `_enable_body` the wrapping how-to lines beneath it.
+var _enable_headline: Label = null
+var _enable_body: Label = null
+
+## Full-screen "Rotate your device" ColorRect, shown whenever a REAL touch session
+## is held in portrait (viewport taller than wide). Drawn on top of everything and
+## swallowing taps, because the 1920x1080 landscape layout is hopeless in portrait.
+var _portrait_guard: ColorRect = null
+
+## Full-screen "Paused — tap to resume" Button, shown while `get_tree().paused` on a
+## real touch session (the focus-loss pause set by mobile_input.gd). Same tap-surface
+## pattern as the enable overlay; its tap calls the driver's `resume_from_pause()`.
+var _resume_overlay: Button = null
 
 
 func _ready() -> void:
+	# The resume overlay must stay tappable — and `_process` must keep running (it
+	# flushes the synthetic-action release queue and drives this overlay's visibility)
+	# — while `get_tree().paused` freezes everything else. SAFE while paused: all this
+	# UI's outputs are one-shot synthetic InputEventActions the paused controller
+	# simply won't consume until unpause, so nothing leaks into the frozen world.
+	process_mode = Node.PROCESS_MODE_ALWAYS
+
+	# Resolve the canonical touch predicate ONCE (see `_is_touch`); everything below
+	# — initial visibility, content scale, and the per-frame overlay gates — reads
+	# this cached bool instead of re-probing.
+	_is_touch = MobileSensors.is_touch_session()
+
 	# The root Control spans the whole screen (full-rect anchors set in the .tscn).
 	# We keep its mouse_filter at PASS so it doesn't itself swallow touches meant for
 	# the game world (the buttons below capture their own input via STOP), matching
 	# the plan's "PASS on the root, buttons capture their own input" note.
 	mouse_filter = Control.MOUSE_FILTER_PASS
+
+	# Join the "touch_controls" group so other UI (the settings panel's "How to
+	# play" button) can find us and call `show_onboarding()` — the same no-hard-refs
+	# group-discovery convention as everything else in this project.
+	add_to_group("touch_controls")
 
 	# Find the motion driver by group — no hard reference, exactly like ability_hud
 	# finds the player. May be null on a stripped build; every handler guards for it.
@@ -151,6 +219,13 @@ func _ready() -> void:
 	# and the enable overlay; on desktop we hide everything and leave the driver idle
 	# so keyboard+mouse play is untouched (the F6 key can still force-show for testing).
 	_apply_platform_visibility()
+
+	# Magnify the whole 2D/UI layer on real touch sessions (see TOUCH_CONTENT_SCALE
+	# for the CSS-px math). Gate strictly on the canonical touch predicate — NOT on
+	# `_force_shown` — so F6 debug on a desktop shows the buttons without rescaling
+	# the desktop HUD, keeping desktop rendering byte-for-byte unchanged.
+	if _is_touch:
+		get_window().content_scale_factor = TOUCH_CONTENT_SCALE
 
 
 func _input(event: InputEvent) -> void:
@@ -201,6 +276,8 @@ func _build_ui() -> void:
 	_steer_toggle.name = "SteerToggle"
 	_steer_toggle.custom_minimum_size = Vector2(TOGGLE_WIDTH, TOGGLE_HEIGHT)
 	_steer_toggle.add_theme_font_size_override("font_size", 30)
+	# Same translucent family look as the action circles; half-height radius = pill.
+	_apply_translucent_style(_steer_toggle, TOGGLE_HEIGHT / 2.0)
 	# Anchor to the top-centre: both horizontal anchors at 0.5 centres it, then we
 	# pull it left by half its width and down a margin from the top.
 	_steer_toggle.anchor_left = 0.5
@@ -216,30 +293,95 @@ func _build_ui() -> void:
 	# Seed its label from the driver's current mode (TILT by default).
 	_update_steer_toggle_label()
 
+	# --- Fullscreen toggle, right of the steer toggle (Android web only) ---
+	# iOS Safari doesn't support requestFullscreen (the probe reports false there),
+	# so this button only ever appears where it can actually work: Android/desktop
+	# browsers with `document.fullscreenEnabled`. Same top strip, same translucent
+	# family style, a square the height of the steer toggle. A Button.pressed
+	# handler runs inside a user-gesture call stack — which is exactly what the
+	# browser requires before it will grant an enter-fullscreen request.
+	_fullscreen_button = Button.new()
+	_fullscreen_button.name = "FullscreenButton"
+	_fullscreen_button.text = "⛶"
+	_fullscreen_button.custom_minimum_size = Vector2(TOGGLE_HEIGHT, TOGGLE_HEIGHT)
+	_fullscreen_button.add_theme_font_size_override("font_size", 30)
+	_apply_translucent_style(_fullscreen_button, TOGGLE_HEIGHT / 2.0)
+	# Park it immediately to the right of the centred steer toggle: same top-centre
+	# anchoring, offsets pushed right past the toggle's half-width plus a margin.
+	_fullscreen_button.anchor_left = 0.5
+	_fullscreen_button.anchor_right = 0.5
+	_fullscreen_button.anchor_top = 0.0
+	_fullscreen_button.anchor_bottom = 0.0
+	_fullscreen_button.offset_left = TOGGLE_WIDTH * 0.5 + BUTTON_MARGIN * 0.25
+	_fullscreen_button.offset_right = TOGGLE_WIDTH * 0.5 + BUTTON_MARGIN * 0.25 + TOGGLE_HEIGHT
+	_fullscreen_button.offset_top = BUTTON_MARGIN
+	_fullscreen_button.offset_bottom = BUTTON_MARGIN + TOGGLE_HEIGHT
+	# Visible only where fullscreen can actually be entered (Android web; false on
+	# iOS Safari and on all native/desktop builds — see the probe's doc comment).
+	_fullscreen_button.visible = MobileSensors.is_fullscreen_available()
+	_fullscreen_button.pressed.connect(_on_fullscreen_pressed)
+	add_child(_fullscreen_button)
+
 	# --- First-run enable overlay (full-rect) -----------------------------
-	# A big, semi-transparent Button covering the whole screen. We use a Button (not
-	# a Panel) because it natively handles the tap and gives us the user-gesture call
-	# stack iOS requires for DeviceMotionEvent.requestPermission(). It sits LAST in
-	# the child order so it draws on top of the action buttons until dismissed.
-	_enable_overlay = Button.new()
-	_enable_overlay.name = "EnableOverlay"
-	_enable_overlay.text = "Tap to enable motion controls"
-	_enable_overlay.add_theme_font_size_override("font_size", 32)
-	# A translucent dark fill so the world is still faintly visible behind the prompt.
-	var overlay_style := StyleBoxFlat.new()
-	overlay_style.bg_color = Color(0.0, 0.0, 0.0, 0.72)
-	_enable_overlay.add_theme_stylebox_override("normal", overlay_style)
-	_enable_overlay.add_theme_stylebox_override("hover", overlay_style)
-	_enable_overlay.add_theme_stylebox_override("pressed", overlay_style)
-	# Full-rect: cover the whole Control (anchors_preset 15 equivalent).
-	_enable_overlay.anchor_right = 1.0
-	_enable_overlay.anchor_bottom = 1.0
-	_enable_overlay.offset_left = 0.0
-	_enable_overlay.offset_top = 0.0
-	_enable_overlay.offset_right = 0.0
-	_enable_overlay.offset_bottom = 0.0
+	# A big, semi-transparent Button covering the whole screen (see
+	# `_make_overlay_button` for the shared tap-surface pattern). We use a Button
+	# (not a Panel) because it natively handles the tap and gives us the user-gesture
+	# call stack iOS requires for DeviceMotionEvent.requestPermission(). It sits LAST
+	# in the child order so it draws on top of the action buttons until dismissed.
+	_enable_overlay = _make_overlay_button("EnableOverlay")
 	_enable_overlay.pressed.connect(_on_enable_overlay_pressed)
 	add_child(_enable_overlay)
+
+	# The overlay's words: headline + how-to body, stacked in a full-rect VBox
+	# centered vertically (the VBox lays the Labels out, hence fullrect = false).
+	var overlay_text := VBoxContainer.new()
+	overlay_text.name = "OnboardingText"
+	overlay_text.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	overlay_text.anchor_right = 1.0
+	overlay_text.anchor_bottom = 1.0
+	overlay_text.alignment = BoxContainer.ALIGNMENT_CENTER
+	overlay_text.add_theme_constant_override("separation", 28)
+	_enable_overlay.add_child(overlay_text)
+
+	# Headline — big and unmissable. Doubles as the error line on a retry (see
+	# `_update_motion_watch`); the how-to body below never changes.
+	_enable_headline = _make_overlay_label("OnboardHeadline", ONBOARD_HEADLINE, 40, false)
+	overlay_text.add_child(_enable_headline)
+
+	# How-to body — the three things a first-time phone player needs to know.
+	_enable_body = _make_overlay_label("OnboardBody", ONBOARD_BODY, 28, false)
+	overlay_text.add_child(_enable_body)
+
+	# --- "Paused — tap to resume" overlay ----------------------------------
+	# Shown while the tree is paused by the focus-loss handler in mobile_input.gd.
+	# Same full-rect Button + centered Label pattern as the enable overlay (its tap
+	# is also the WebAudio unlock gesture the browser wants after a backgrounded tab
+	# returns). Child order matters: AFTER the enable overlay (so it could draw over
+	# it, though `_process` never shows both at once) but BEFORE the portrait guard,
+	# which must stay on top of everything.
+	_resume_overlay = _make_overlay_button("ResumeOverlay")
+	_resume_overlay.visible = false
+	_resume_overlay.pressed.connect(_on_resume_overlay_pressed)
+	_resume_overlay.add_child(_make_overlay_label("ResumeLabel", "Paused — tap to resume", 40, true))
+	add_child(_resume_overlay)
+
+	# --- Portrait "rotate your device" guard ------------------------------
+	# Added LAST so it draws on top of everything (including the enable overlay):
+	# the 1920x1080 landscape layout is unusable in portrait, so we black it out and
+	# swallow all taps until the phone is rotated. Visibility is driven per-frame in
+	# `_process` from the viewport aspect — `screen.orientation.lock` is deliberately
+	# NOT used because in-browser iOS ignores it. Starts hidden; only ever shown on a
+	# real touch session (never by the F6 desktop force-show). A ColorRect (not a
+	# Button): it swallows taps via MOUSE_FILTER_STOP but nothing should fire on tap.
+	_portrait_guard = ColorRect.new()
+	_portrait_guard.name = "PortraitGuard"
+	_portrait_guard.color = Color(0.0, 0.0, 0.0, 0.85)
+	_portrait_guard.mouse_filter = Control.MOUSE_FILTER_STOP
+	_portrait_guard.anchor_right = 1.0
+	_portrait_guard.anchor_bottom = 1.0
+	_portrait_guard.visible = false
+	_portrait_guard.add_child(_make_overlay_label("RotateLabel", "Rotate your device\n(landscape only)", 40, true))
+	add_child(_portrait_guard)
 
 
 ## Create one big square action button with the given visible `label`, an explicit
@@ -253,6 +395,11 @@ func _make_action_button(label: String, node_name: String, slot: int) -> Button:
 	button.text = label
 	button.add_theme_font_size_override("font_size", 26)
 	button.custom_minimum_size = Vector2(ACTION_BUTTON_SIZE, ACTION_BUTTON_SIZE)
+	# Translucent dark circle instead of the opaque default theme panel, so the
+	# buttons occlude far less of the 3D world behind them. A corner radius of half
+	# the side length turns the square into a circle; the pressed variant is a bit
+	# brighter so a registered tap reads visually.
+	_apply_translucent_style(button, ACTION_BUTTON_SIZE / 2.0)
 	# Anchor to the bottom-right corner (1,1).
 	button.anchor_left = 1.0
 	button.anchor_right = 1.0
@@ -270,6 +417,67 @@ func _make_action_button(label: String, node_name: String, slot: int) -> Button:
 	return button
 
 
+## Give a button the shared translucent rounded look (dark glassy fill, white text)
+## used by the whole touch UI, so the action circles and the top-strip toggle read
+## as one family. `corner_radius` = half the button's height makes a pill/circle.
+## The "pressed" variant is the same shape with a brighter fill (alpha 0.55 → 0.75)
+## so a registered tap is visible even under a thumb.
+func _apply_translucent_style(button: Button, corner_radius: float) -> void:
+	var normal_style := StyleBoxFlat.new()
+	normal_style.bg_color = Color(0.10, 0.12, 0.16, 0.55)
+	normal_style.corner_radius_top_left = int(corner_radius)
+	normal_style.corner_radius_top_right = int(corner_radius)
+	normal_style.corner_radius_bottom_left = int(corner_radius)
+	normal_style.corner_radius_bottom_right = int(corner_radius)
+	var pressed_style: StyleBoxFlat = normal_style.duplicate()
+	pressed_style.bg_color = Color(0.10, 0.12, 0.16, 0.75)
+	button.add_theme_stylebox_override("normal", normal_style)
+	button.add_theme_stylebox_override("hover", normal_style)
+	button.add_theme_stylebox_override("pressed", pressed_style)
+	button.add_theme_color_override("font_color", Color.WHITE)
+	button.add_theme_color_override("font_hover_color", Color.WHITE)
+	button.add_theme_color_override("font_pressed_color", Color.WHITE)
+
+
+## Build one full-screen tap-surface Button — the shared overlay pattern (enable
+## overlay, resume overlay). The Button is purely the whole-screen tap target plus
+## a translucent dark fill (so the world stays faintly visible behind the prompt);
+## it carries NO text of its own because a Button cannot autowrap — the words live
+## in `_make_overlay_label` children layered on top.
+func _make_overlay_button(node_name: String) -> Button:
+	var button := Button.new()
+	button.name = node_name
+	button.text = ""
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.0, 0.0, 0.0, 0.72)
+	button.add_theme_stylebox_override("normal", style)
+	button.add_theme_stylebox_override("hover", style)
+	button.add_theme_stylebox_override("pressed", style)
+	# Full-rect: cover the whole Control (anchors_preset 15 equivalent).
+	button.anchor_right = 1.0
+	button.anchor_bottom = 1.0
+	return button
+
+
+## Build one overlay text Label: centred, autowrapping (so it survives a narrow
+## phone screen), MOUSE_FILTER_IGNORE so taps fall straight through to the surface
+## underneath. `fullrect = true` centres it over the whole overlay; `false` leaves
+## layout to a container parent (the enable overlay's VBox stacks its two Labels).
+func _make_overlay_label(node_name: String, text: String, font_size: int, fullrect: bool) -> Label:
+	var label := Label.new()
+	label.name = node_name
+	label.text = text
+	label.add_theme_font_size_override("font_size", font_size)
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	if fullrect:
+		label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		label.anchor_right = 1.0
+		label.anchor_bottom = 1.0
+	return label
+
+
 # ============================================================================
 # PLATFORM GATING / VISIBILITY
 # ============================================================================
@@ -279,28 +487,12 @@ func _make_action_button(label: String, node_name: String, slot: int) -> Button:
 ## drives whether the enable overlay is presented (only when actually shown and not
 ## yet enabled).
 func _apply_platform_visibility() -> void:
-	var on_touch: bool = _is_touch_device()
 	# Visible if the platform is touch OR a developer force-showed it for testing.
-	visible = on_touch or _force_shown
+	visible = _is_touch or _force_shown
 
 	# The enable overlay only makes sense while the UI is up and motion hasn't been
 	# enabled yet. If we're hidden, or already enabled, keep it down.
-	if _enable_overlay != null:
-		_enable_overlay.visible = visible and not _motion_enabled
-
-
-## True on a phone/tablet. Delegates to `MobileSensors.is_touch_session()` — the ONE
-## canonical detection rule (touchscreen probe, plus a web coarse-/not-fine-pointer
-## fallback), shared with the player's mouse-capture guard so the two can never
-## disagree. (Previously this rule lived here AND a *narrower* rule lived in
-## `player_controller`, so a web phone could show this UI yet still capture the mouse.)
-##
-## We keep the F6 debug-force-show as a SEPARATE OR in `_apply_platform_visibility()`,
-## not here, so this function stays a pure "is this really a touch device?" predicate.
-## Everything JS in the canonical func is guarded behind `OS.has_feature("web")`, so
-## desktop never evaluates JS and the desktop regression is preserved exactly.
-func _is_touch_device() -> bool:
-	return MobileSensors.is_touch_session()
+	_enable_overlay.visible = visible and not _motion_enabled
 
 
 # ============================================================================
@@ -375,7 +567,44 @@ func _process(delta: float) -> void:
 		_actions_to_release.clear()
 
 	# --- 2. Enable-overlay motion watch -----------------------------------
-	_update_motion_watch(delta)
+	# FROZEN while the tree is paused: a backgrounded/blurred tab delivers no sensor
+	# events, so counting the grace window through a focus-loss pause would always
+	# time out and spuriously flip the overlay to "Motion unavailable — tap to retry"
+	# (and thereby suppress the resume overlay). Only foreground, unpaused time
+	# counts toward the timeout; the watch resumes where it left off after the tap.
+	if not get_tree().paused:
+		_update_motion_watch(delta)
+
+	# --- 3. Portrait guard -------------------------------------------------
+	# Drive the "rotate your device" screen straight off the viewport aspect each
+	# frame (cheap — one Vector2 compare on the cached touch bool). Gated on the REAL
+	# touch predicate, not on `visible`, so the F6 desktop force-show can never
+	# trigger it; a shrunk desktop/editor window is not a phone held wrong.
+	if _is_touch:
+		var view_size: Vector2 = get_viewport().get_visible_rect().size
+		var portrait: bool = view_size.y > view_size.x
+		# Entering portrait also PAUSES, via the same driver path as focus loss.
+		# Without this the guard only blacks out the screen while the world keeps
+		# running — and a portrait-held phone sits ~90° of roll from the landscape
+		# neutral, so tilt steering saturates and the hero spins/walks blind.
+		# After rotating back the guard hides and the standard "tap to resume"
+		# overlay (which re-enables + recalibrates motion) takes over.
+		if portrait and not _portrait_guard.visible:
+			var driver: Node = _ensure_driver()
+			if driver != null:
+				driver.pause_game()
+		_portrait_guard.visible = portrait
+	else:
+		_portrait_guard.visible = false
+
+	# --- 4. Pause / resume overlay -----------------------------------------
+	# Mirror the tree's paused state (set by mobile_input.gd on focus loss) into the
+	# resume overlay — but never over the initial enable overlay: if the tab was
+	# backgrounded before first enable, the enable overlay stays the one prompt (its
+	# tap enables motion, then THIS overlay appears for the unpause tap). Gated on
+	# the real touch predicate so a desktop pause (from any future source) never
+	# shows a phone overlay — desktop stays byte-for-byte unchanged.
+	_resume_overlay.visible = _is_touch and get_tree().paused and not _enable_overlay.visible
 
 
 ## Watch for motion to actually start after an enable tap. While `_motion_watching`:
@@ -411,9 +640,10 @@ func _update_motion_watch(delta: float) -> void:
 		# context, or no sensor). Stop watching and re-show the overlay so the player can
 		# retry — never leave a keyboardless phone with the controls hidden and no way back.
 		_motion_watching = false
-		if _enable_overlay != null:
-			_enable_overlay.text = "Motion unavailable — tap to retry"
-			_enable_overlay.visible = true
+		# Swap only the HEADLINE to the retry message — the how-to body stays
+		# visible underneath, so a retrying player keeps the instructions.
+		_enable_headline.text = RETRY_HEADLINE
+		_enable_overlay.visible = true
 
 
 ## Jump button → the polled `jump` action (controller reads is_action_just_pressed).
@@ -445,6 +675,17 @@ func _on_steer_toggle_pressed() -> void:
 	var next: int = _driver.SteerMode.TWIST if current == _driver.SteerMode.TILT else _driver.SteerMode.TILT
 	_driver.set_steer_mode(next)
 	_update_steer_toggle_label()
+
+
+## Fullscreen button → toggle the browser between fullscreen and windowed via
+## DisplayServer (Godot's web port routes this to requestFullscreen/exitFullscreen).
+## Running inside the Button's pressed signal keeps us in the user-gesture call
+## stack the browser demands for ENTERING fullscreen; leaving needs no gesture.
+func _on_fullscreen_pressed() -> void:
+	if DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN:
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
+	else:
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
 
 
 ## Refresh the steer toggle's caption to show the *current* mode, so the player can
@@ -487,13 +728,20 @@ func _on_enable_overlay_pressed() -> void:
 	if sm and sm.has_method("unlock_audio"):
 		sm.unlock_audio()
 
+	if _motion_enabled:
+		# Motion is already up and running — the overlay was re-shown as a help
+		# screen via `show_onboarding()`. A tap just dismisses it; do NOT re-request
+		# permission, re-enable the driver, or restart the motion watch.
+		_enable_overlay.visible = false
+		return
+
 	if _ensure_driver() == null:
 		# No driver to talk to: do NOT latch enabled or hide the overlay. The overlay
 		# stays visible and tappable so the player can retry (e.g. if the node appears
 		# later), instead of being left with a hidden overlay and no controls at all.
-		# Re-label so the player understands a retry is possible.
-		if _enable_overlay != null:
-			_enable_overlay.text = "Motion unavailable — tap to retry"
+		# Re-label the headline so the player understands a retry is possible (the
+		# how-to body stays put beneath it).
+		_enable_headline.text = RETRY_HEADLINE
 		return
 
 	# Order matters: request permission first (still inside the user gesture), then
@@ -508,5 +756,33 @@ func _on_enable_overlay_pressed() -> void:
 	# `_motion_watch_elapsed` and either confirms (data arrived) or re-shows the overlay.
 	_motion_watching = true
 	_motion_watch_elapsed = 0.0
-	if _enable_overlay != null:
-		_enable_overlay.visible = false
+	_enable_overlay.visible = false
+
+
+## Resume overlay tap → unfreeze the game. Routed through the driver's
+## `resume_from_pause()` so the driver can also restore its pre-pause active state
+## (it remembers whether motion was running when focus was lost). The no-driver
+## `else` is unreachable today (only mobile_input.gd ever pauses the tree, so a
+## paused tree implies the driver exists) — kept as a two-line anti-softlock belt
+## so the player is never stuck on a frozen screen if a future pause source appears.
+func _on_resume_overlay_pressed() -> void:
+	var driver: Node = _ensure_driver()
+	if driver != null:
+		driver.resume_from_pause()
+	else:
+		get_tree().paused = false
+
+
+# ============================================================================
+# PUBLIC API (called by other UI via the "touch_controls" group)
+# ============================================================================
+
+## Re-show the onboarding overlay as a HELP SCREEN, with the default how-to text.
+## Called by the settings panel's "How to play" button (found via the group). This
+## deliberately does NOT reset `_motion_enabled` or touch the driver: if motion is
+## already running, the tap handler sees `_motion_enabled` and simply hides the
+## overlay again; if motion was never enabled, the overlay behaves exactly like the
+## first run (tap = permission gesture + enable + watch).
+func show_onboarding() -> void:
+	_enable_headline.text = ONBOARD_HEADLINE
+	_enable_overlay.visible = true

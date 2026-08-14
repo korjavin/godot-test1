@@ -282,6 +282,13 @@ var _pressing_turn_left: bool = false
 ## release discipline as `_pressing_turn_left`.
 var _pressing_turn_right: bool = false
 
+## Whether the driver was `active` at the moment the app lost focus (browser tab
+## backgrounded / app switched). Remembered across the pause so `resume_from_pause()`
+## can restore exactly the pre-pause state: a player who had motion running gets it
+## back automatically on the resume tap, while one who never enabled it isn't
+## surprise-enabled by merely switching tabs.
+var _was_active_before_pause: bool = false
+
 
 ## The analog actions whose per-action deadzone we zero in `_ready()` (see there for
 ## why). The driver actively *drives* `move_forward` (from stepping) and
@@ -296,6 +303,14 @@ const SYNTHESIZED_ANALOG_ACTIONS: PackedStringArray = [
 
 
 func _ready() -> void:
+	# PAUSING: this node deliberately keeps the DEFAULT process mode, so the
+	# focus-loss pause below freezes its `_physics_process` (and the sensors child's
+	# polling) along with the rest of the world — structurally guaranteeing the
+	# driver never writes `Input` while paused. Nothing here needs to tick during
+	# the pause: `_notification()` is delivered regardless of pause mode, and
+	# `resume_from_pause()` is a direct method call from the touch UI (whose own
+	# node IS `PROCESS_MODE_ALWAYS` so its resume overlay stays tappable).
+
 	# Join the discovery group so the touch-controls UI (Task 5) can find this driver
 	# via `get_tree().get_first_node_in_group("mobile_input")` — the same no-hard-
 	# references pattern the rest of the project uses.
@@ -347,6 +362,30 @@ func _input(event: InputEvent) -> void:
 				disable()
 			else:
 				enable()
+
+
+func _notification(what: int) -> void:
+	# PAUSE ON FOCUS LOSS (touch sessions only). The browser fires this when the tab
+	# is backgrounded or the phone app-switches — the player is gone, so freeze the
+	# world rather than let crocodiles keep hunting a hero nobody is steering.
+	#
+	# Gated on the canonical touch predicate: desktop alt-tab must NOT pause (the
+	# acceptance bar is desktop byte-for-byte unchanged), and `is_touch_session()` is
+	# false everywhere a keyboard player could alt-tab.
+	#
+	# We deliberately do NOT auto-resume on NOTIFICATION_APPLICATION_FOCUS_IN: resume
+	# is the explicit "tap to resume" in the touch UI, which doubles as the WebAudio
+	# unlock gesture browsers require after a tab returns from the background.
+	#
+	# PAUSE INTERACTIONS (sanity-checked, nothing else to do here): the respawn
+	# countdown and the game-over UI live under default-process_mode nodes, so while
+	# the tab is hidden they freeze WITH the tree and resume cleanly on the tap — a
+	# frozen countdown is the *correct* behavior (no losing lives while backgrounded).
+	# Neither script is touched by this feature.
+	if what == NOTIFICATION_APPLICATION_FOCUS_OUT:
+		if not MobileSensors.is_touch_session():
+			return
+		pause_game()
 
 
 func _physics_process(delta: float) -> void:
@@ -401,6 +440,36 @@ func disable() -> void:
 	_release_turns()
 	_reset_step_state()
 	_reset_steer_state()
+
+
+## Freeze the tree, remembering whether motion was running so `resume_from_pause()`
+## can restore it. Called on focus loss (above) and by the touch UI when the phone
+## rotates to portrait. IDEMPOTENT — the early return when already paused matters:
+## a second focus loss while paused (double app-switch without a resume tap) would
+## otherwise overwrite `_was_active_before_pause` with the now-false `active`,
+## leaving motion permanently dead after the resume tap (the UI has no other
+## re-enable path).
+func pause_game() -> void:
+	if get_tree().paused:
+		return
+	# Remember whether motion was running so the resume tap can restore it, then
+	# disable FIRST (releases every held action so nothing stays latched pressed
+	# through the pause) and freeze the whole tree.
+	_was_active_before_pause = active
+	disable()
+	get_tree().paused = true
+
+
+## Unfreeze the tree after a focus-loss pause. Called by the touch UI's full-screen
+## "Paused — tap to resume" overlay (via the "mobile_input" group). Re-enables the
+## driver only if it was active when focus was lost — `enable()` also recalibrates
+## neutral, which is exactly right after a pause: the player is re-settling into
+## however they're NOW holding the phone.
+func resume_from_pause() -> void:
+	get_tree().paused = false
+	if _was_active_before_pause:
+		enable()
+	_was_active_before_pause = false
 
 
 ## Switch the steering scheme AND recalibrate. The UI toggle (Task 5) calls this;

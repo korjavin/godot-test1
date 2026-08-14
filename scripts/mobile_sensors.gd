@@ -191,7 +191,7 @@ var _calibrate_pending: bool = false
 # ===========================================================================
 
 ## THE single source of truth for "are we on a touch/mobile device?" — used by
-## BOTH the on-screen touch UI (`touch_controls.gd._is_touch_device()`) AND the
+## BOTH the on-screen touch UI (`touch_controls.gd`, cached in its `_is_touch`) AND the
 ## player's mouse-capture guard (`player_controller.gd`). Keeping the rule in one
 ## `static func` is what prevents the two from drifting apart: if the UI decides
 ## "mobile" but the mouse guard uses a *narrower* rule, a phone can both show the
@@ -234,6 +234,27 @@ static func is_touch_session() -> bool:
 		if fine != null and not bool(fine):
 			return true
 	return false
+
+
+## Can this session enter browser fullscreen at all? Web-only feature-detect, in
+## the same web-gated static-JS-probe style as `is_touch_session()` above.
+##
+## WHY a probe instead of just showing a button everywhere: iOS Safari does NOT
+## support `Element.requestFullscreen()` on arbitrary elements, and it reports
+## `document.fullscreenEnabled === false` — so on an iPhone the fullscreen button
+## would be a dead control. Android Chrome (the platform that actually benefits,
+## since its browser chrome eats screen height) reports true. Gating the button's
+## visibility on this probe means it appears exactly where it can work.
+##
+## DESKTOP SAFETY: off-web this returns false without touching JavaScriptBridge,
+## so native desktop/editor builds never evaluate JS and never show the button.
+static func is_fullscreen_available() -> bool:
+	if not OS.has_feature("web"):
+		return false
+	# Strict `=== true` so a missing/undefined property reads as unavailable.
+	var enabled_probe: Variant = JavaScriptBridge.eval(
+		"document.fullscreenEnabled === true", true)
+	return enabled_probe != null and bool(enabled_probe)
 
 
 func _ready() -> void:

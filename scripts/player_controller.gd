@@ -281,7 +281,7 @@ func _ready() -> void:
 	# on a touch session, leaving the cursor visible for the on-screen touch buttons.
 	#
 	# CANONICAL DETECTION (the fix): we ask `MobileSensors.is_touch_session()` — the
-	# SAME static rule the touch UI (`touch_controls._is_touch_device()`) uses — instead
+	# SAME static rule the touch UI uses (cached there as `_is_touch`) — instead
 	# of the narrower `DisplayServer.is_touchscreen_available()`. Previously the UI could
 	# decide "mobile" (via the web coarse-pointer check) while this guard still captured
 	# the mouse, an inconsistency on web phones that report no Godot touchscreen.

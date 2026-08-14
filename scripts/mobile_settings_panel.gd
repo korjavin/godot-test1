@@ -47,9 +47,13 @@ extends Control
 # CONSTANTS — layout / tuning
 # ============================================================================
 
-## Size of the always-visible gear/"Tune" button. Parked top-LEFT, clear of the steer
-## toggle (top-centre), the action cluster (bottom-right) and the coin/lives HUD
-## corners — a comfortably large touch target on a phone.
+## Size of the always-visible gear/"Tune" button. Parked BOTTOM-LEFT, the free
+## corner of the release HUD: the steer toggle owns top-centre, the action cluster
+## bottom-right, the lives hearts + perf overlay top-left and the coin/ability HUD
+## top-right. (The debug-only MotionDebug readout also sits bottom-left, so the
+## gear overlaps it in debug builds — acceptable: the label ignores mouse input so
+## the gear stays tappable, and release/web builds start with it hidden.) A
+## comfortably large touch target on a phone.
 const GEAR_WIDTH: float = 110.0
 const GEAR_HEIGHT: float = 60.0
 
@@ -189,10 +193,13 @@ func _process(_delta: float) -> void:
 ## Build the gear button and the collapsible panel body and wire every signal. Called
 ## once from `_ready()`. Anchored so it repositions correctly on any screen size.
 func _build_ui() -> void:
-	# --- Gear / "Tune" toggle, top-LEFT ----------------------------------
-	# Top-left is clear of the steer toggle (top-centre), the action cluster
-	# (bottom-right) and the coin counter / lives hearts in the very corners — we nudge
-	# it down a bit from the top-left so it doesn't collide with the lives HUD.
+	# --- Gear / "Tune" toggle, BOTTOM-LEFT --------------------------------
+	# Bottom-left is the free corner of the release HUD: lives hearts + perf overlay
+	# own the top-left column, the coin counter / ability dial the top-right, the
+	# steer toggle the top-centre, and the Jump/Special/Switch cluster the bottom-
+	# right. (Debug builds also draw the MotionDebug readout here — a debug-only
+	# overlap; see the GEAR_WIDTH doc comment.) Anchored to the bottom edge
+	# (anchor y = 1) so it hugs the corner on any screen.
 	_gear_button = Button.new()
 	_gear_button.name = "TuneButton"
 	_gear_button.text = "⚙ Tune"  # ⚙ gear glyph + label
@@ -200,31 +207,34 @@ func _build_ui() -> void:
 	_gear_button.custom_minimum_size = Vector2(GEAR_WIDTH, GEAR_HEIGHT)
 	_gear_button.anchor_left = 0.0
 	_gear_button.anchor_right = 0.0
-	_gear_button.anchor_top = 0.0
-	_gear_button.anchor_bottom = 0.0
+	_gear_button.anchor_top = 1.0
+	_gear_button.anchor_bottom = 1.0
 	_gear_button.offset_left = EDGE_MARGIN
 	_gear_button.offset_right = EDGE_MARGIN + GEAR_WIDTH
-	# Pushed down below the lives HUD (hearts top-left) so the two don't overlap.
-	_gear_button.offset_top = EDGE_MARGIN + 48.0
-	_gear_button.offset_bottom = EDGE_MARGIN + 48.0 + GEAR_HEIGHT
+	# Offsets are measured from the BOTTOM edge (anchor 1), so they are negative.
+	_gear_button.offset_top = -EDGE_MARGIN - GEAR_HEIGHT
+	_gear_button.offset_bottom = -EDGE_MARGIN
 	_gear_button.pressed.connect(_on_gear_pressed)
 	add_child(_gear_button)
 
-	# --- Panel body (collapsible), anchored top-LEFT under the gear -------
+	# --- Panel body (collapsible), anchored bottom-left ABOVE the gear ----
 	# A PanelContainer gives a translucent rounded background; inside it a
 	# ScrollContainer + VBox holds the diagnostics label and all the rows, so a short
-	# screen can scroll. It starts hidden (collapsed) — the gear opens it.
+	# screen can scroll. It starts hidden (collapsed) — the gear opens it. It opens
+	# UPWARD from just above the gear; `_set_panel_open` clamps its height to the
+	# visible viewport on open (a phone's scaled viewport is shorter than the full
+	# PANEL_HEIGHT stack), and the inner ScrollContainer then reaches every row.
 	_panel_body = PanelContainer.new()
 	_panel_body.name = "TunePanel"
 	_panel_body.anchor_left = 0.0
 	_panel_body.anchor_right = 0.0
-	_panel_body.anchor_top = 0.0
-	_panel_body.anchor_bottom = 0.0
+	_panel_body.anchor_top = 1.0
+	_panel_body.anchor_bottom = 1.0
 	_panel_body.offset_left = EDGE_MARGIN
 	_panel_body.offset_right = EDGE_MARGIN + PANEL_WIDTH
-	# Sit the panel just under the gear button.
-	_panel_body.offset_top = EDGE_MARGIN + 48.0 + GEAR_HEIGHT + 8.0
-	_panel_body.offset_bottom = _panel_body.offset_top + PANEL_HEIGHT
+	# Sit the panel just above the gear button (offsets from the bottom edge).
+	_panel_body.offset_bottom = -EDGE_MARGIN - GEAR_HEIGHT - 8.0
+	_panel_body.offset_top = _panel_body.offset_bottom - PANEL_HEIGHT
 	# Translucent dark background so the world stays faintly visible behind the panel.
 	var panel_style := StyleBoxFlat.new()
 	panel_style.bg_color = Color(0.05, 0.06, 0.09, 0.9)
@@ -287,7 +297,8 @@ func _build_ui() -> void:
 
 	vbox.add_child(HSeparator.new())
 
-	# --- Action buttons: Recalibrate / Reset / Close ---------------------
+	# --- Action buttons: How to play / Recalibrate / Reset / Close -------
+	vbox.add_child(_make_action_button("How to play", _on_how_to_play_pressed))
 	vbox.add_child(_make_action_button("Recalibrate (re-zero)", _on_recalibrate_pressed))
 	vbox.add_child(_make_action_button("Reset to defaults", _on_reset_pressed))
 	vbox.add_child(_make_action_button("Close", _on_close_pressed))
@@ -409,6 +420,17 @@ func _set_panel_open(open: bool) -> void:
 	if _panel_body != null:
 		_panel_body.visible = open
 	if open:
+		# Clamp the panel to the space actually above the gear. With the touch UI's
+		# content_scale_factor (1.8) magnifying the whole 2D layer, the visible
+		# design viewport on a phone is only ~600 px tall — shorter than the full
+		# gear + gap + PANEL_HEIGHT stack (~664 px) — and a PanelContainer poking
+		# past the screen top is unreachable even through its inner ScrollContainer
+		# (a ScrollContainer scrolls its CONTENT, not its own off-screen frame).
+		# Shrinking the panel keeps its whole frame on-screen and lets the
+		# ScrollContainer genuinely reach every row. Recomputed on every open so it
+		# tracks the current viewport (e.g. after an orientation change).
+		var view_height: float = get_viewport().get_visible_rect().size.y
+		_panel_body.offset_top = maxf(_panel_body.offset_bottom - PANEL_HEIGHT, -view_height + EDGE_MARGIN)
 		# Re-seed in case the driver was found late or tuning changed elsewhere.
 		_seed_controls_from_driver()
 		_update_diagnostics()
@@ -511,6 +533,17 @@ func _on_invert_toggled(pressed: bool) -> void:
 	var driver: Node = _ensure_driver()
 	if driver != null:
 		driver.set_tuning("invert_steering", pressed)
+
+
+## "How to play" button: re-show the touch UI's onboarding how-to overlay, then close
+## this panel so the help screen isn't buried under it. The touch UI is found through
+## the "touch_controls" group (the same no-hard-refs convention as the driver lookup);
+## null-safe so a build without TouchControls just closes the panel.
+func _on_how_to_play_pressed() -> void:
+	var touch_ui: Node = get_tree().get_first_node_in_group("touch_controls")
+	if touch_ui != null:
+		touch_ui.show_onboarding()
+	_set_panel_open(false)
 
 
 ## Recalibrate button: re-zero the neutral pose from however the player is holding the
