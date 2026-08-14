@@ -155,4 +155,4 @@ When optimizing, follow the split this work established:
 ## Conventions
 - GDScript with explicit type hints throughout; constants for tunable values (`WALK_SPEED`, `DETECTION_RADIUS`, etc.) declared at the top of each script.
 - Gravity is per-script and intentionally non-physical: the player uses `gravity = 3.6` (floaty, despite the "Earth = 9.8" comment), while crocodiles use `GRAVITY = 9.8`.
-- Input actions are defined in `project.godot` (`move_forward`/`move_backward`, `turn_left`/`turn_right`, `step_left`/`step_right`, `jump`, `run`, `duck`, `switch_character`, `special_ability`) — reference these action names, don't hardcode keycodes.
+- Input actions are defined in `project.godot` (`move_forward`/`move_backward`, `turn_left`/`turn_right`, `step_left`/`step_right`, `jump`, `run`, `duck`, `switch_character`, `special_ability`, `toggle_camera`) — reference these action names, don't hardcode keycodes.
