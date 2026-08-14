@@ -107,18 +107,18 @@
       leave the clamp constants alone).
 
 ### Task 3: Interactions — Teibi scale, character switch, respawn persistence
-- [ ] At the end of `_apply_teibi_scale()`, if `first_person`, re-run `_apply_view_mode()`
+- [x] At the end of `_apply_teibi_scale()`, if `first_person`, re-run `_apply_view_mode()`
       so eye height (and shake rest position) track the new capsule scale immediately.
-- [ ] At the end of `set_active_character()`, if `first_person`, re-run `_apply_view_mode()`
+- [x] At the end of `set_active_character()`, if `first_person`, re-run `_apply_view_mode()`
       — per-instance visibility toggling makes the container-hide survive switches
       already, but this is the cheap defensive re-apply the bead asks for (and the
       `_revert_teibi_to_normal()` inside the switch already funnels through the
       Teibi hook above; idempotent, so double-apply is harmless).
-- [ ] Confirm `reset_position()` / `restart_game()` / `_respawn_in_place()` do NOT touch
+- [x] Confirm `reset_position()` / `restart_game()` / `_respawn_in_place()` do NOT touch
       `first_person` or `camera.transform` — the view mode is a preference and must
       survive both. (If any of them mutate `camera` beyond the pivot rotation reset,
       route them through `_apply_view_mode()` instead of resetting.)
-- [ ] The caught freeze/flash/shake path needs no change: the red flash + HUD are
+- [x] The caught freeze/flash/shake path needs no change: the red flash + HUD are
       CanvasLayer (unaffected), and the shake now offsets from the refreshed
       `camera_rest_position` in either mode. Leave it as is.
 

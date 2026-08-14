@@ -884,6 +884,13 @@ func set_active_character(index: int) -> void:
 	# different character could inherit Teibi's giant body or shrunken capsule).
 	_revert_teibi_to_normal()
 
+	# Defensive first-person re-apply: switching only flips per-instance
+	# visibility (the hidden container survives on its own), but re-running the
+	# idempotent _apply_view_mode() guarantees the model stays hidden and the
+	# camera stays at the eyes even if the switching mechanism changes later.
+	if first_person:
+		_apply_view_mode()
+
 func capture_rest_pose(instance: Node3D) -> Dictionary:
 	"""
 	Record a character's limb rotations while it sits in its untouched rest pose.
@@ -1816,6 +1823,13 @@ func _apply_teibi_scale(s: float) -> void:
 		collision_shape.scale = Vector3(s, s, s)
 		var bottom := collision_base_y - collision_half_height
 		collision_shape.position.y = bottom + s * collision_half_height
+	# First-person eyes are derived from this capsule scale, so a resize must
+	# immediately re-seat the camera (and the shake rest position) at the new
+	# height — small Teibi looks from down low, giant Teibi from up high.
+	# _apply_view_mode() is idempotent, so this is safe from every caller
+	# (F-cycle, form timeout, character switch, respawn).
+	if first_person:
+		_apply_view_mode()
 
 
 func _spawn_ability_effect(pos: Vector3, color: Color, max_radius: float, lifetime: float, delay: float = 0.0) -> void:
