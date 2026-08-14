@@ -70,8 +70,8 @@ All edits go in `[preset.3.options]` (the Web preset) of `export_presets.cfg`. K
 
 ### Task 2: Boot splash background color in project.godot
 
-- [ ] in `[application]` of `project.godot`, add `boot_splash/bg_color=Color(0.353, 0.396, 0.439, 1)` (the sky-horizon tone; also feeds `$GODOT_SPLASH_COLOR` in the web shell's loading overlay — Context #3). Keep the existing `;`-comment style of the file if adding an explanatory comment (project.godot DOES support `;` comments — see the `[display]` section).
-- [ ] skip `boot_splash/image`: leaving it unset shows the plain bg color (no black flash, no stock Godot logo file needed in-repo). This is the honest minimal fix; note the deferral in the PR.
+- [x] in `[application]` of `project.godot`, add `boot_splash/bg_color=Color(0.353, 0.396, 0.439, 1)` (the sky-horizon tone; also feeds `$GODOT_SPLASH_COLOR` in the web shell's loading overlay — Context #3). Keep the existing `;`-comment style of the file if adding an explanatory comment (project.godot DOES support `;` comments — see the `[display]` section).
+- [x] skip `boot_splash/image`: leaving it unset shows the plain bg color (no black flash, no stock Godot logo file needed in-repo). This is the honest minimal fix; note the deferral in the PR.
 
 ### Task 3: Touch UI scale, safe-area margins, translucent circular buttons (touch_controls.gd)
 
