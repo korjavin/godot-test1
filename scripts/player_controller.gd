@@ -130,13 +130,22 @@ const EXTRA_LIFE_COINS: int = 75
 const LIVES_CAP: int = 5
 var next_extra_life_at: int = EXTRA_LIFE_COINS
 
-## Headline score: how far this run has travelled, in metres. The coin road's
-## centerline X is strictly increasing by construction (see endless_terrain.gd —
-## `road_max_heading_deg < 90` so cos(heading) > 0), which means the farthest X
-## the player has ever reached IS the distance along the run — no path
-## integration needed. We track a running max so backtracking never lowers it.
-## Reset to 0 only on a full restart (restart_game / reset_position).
+## Headline score: how far this run has travelled, in metres — the farthest
+## HORIZONTAL DISPLACEMENT from the (0,0) spawn point ever reached this run.
+## (Originally this tracked farthest world X — the coin road's forward axis —
+## but playtesting showed that reads as a broken counter the moment the player
+## wanders any other direction: the number just sits at 0. Displacement is
+## direction-agnostic, and for a player following the road it is almost exactly
+## the same number, since the road's X is strictly increasing by construction.)
+## We track a running max so backtracking never lowers it. Reset to 0 only on a
+## full restart (restart_game / reset_position).
 var run_distance: int = 0
+
+## Spawn facing: -PI/2 turns the body's -Z forward onto +X — straight down the
+## coin road — so "just walk forward" from spawn follows the coin trail and the
+## distance counter climbs immediately. (With the default 0.0 facing, a new
+## player walks off along Z, sees Distance stuck at 0, and reads it as a bug.)
+const SPAWN_FACING_Y: float = -PI / 2
 
 ## Best-run records, persisted across sessions in a ConfigFile at
 ## BEST_RUN_CONFIG_PATH (same pattern as mobile_input.gd's tuning file: on web
@@ -274,6 +283,16 @@ func _ready() -> void:
 	Called when the node enters the scene tree.
 	This is where we do initial setup.
 	"""
+	# Face straight down the coin road (+X) from the very first frame, so "just
+	# walk forward" follows the coin trail and the distance counter climbs
+	# immediately (see SPAWN_FACING_Y for why this beats the default facing).
+	rotation.y = SPAWN_FACING_Y
+
+	# Desktop pause handler (P key). Instanced in code — not a main.tscn node —
+	# so any scene that runs the player standalone gets pausing for free; see
+	# pause_controller.gd for why it must be a separate PROCESS_MODE_ALWAYS node.
+	add_child(preload("res://scripts/pause_controller.gd").new())
+
 	# Capture the mouse so it doesn't leave the game window — but ONLY when this is NOT
 	# a touch session. On a phone/tablet the mobile controls are active and there is no
 	# mouse to capture; requesting pointer-lock there would pop a useless permission
@@ -421,9 +440,11 @@ func _physics_process(delta: float) -> void:
 			clear_nearby_crocodiles(global_position)
 		return
 
-	# STEP 0.4: Record the headline distance score — the farthest world X reached
-	# this run (see run_distance above for why farthest-X == distance travelled).
-	run_distance = maxi(run_distance, int(global_position.x))
+	# STEP 0.4: Record the headline distance score — the farthest horizontal
+	# displacement from the spawn point reached this run (see run_distance above
+	# for why displacement, not raw X). Spawn is world (0,0) on the XZ plane, so
+	# the displacement is just the length of the horizontal position.
+	run_distance = maxi(run_distance, int(Vector2(global_position.x, global_position.z).length()))
 
 	# STEP 0.45: Tick the coin-streak window down; when it lapses the streak is
 	# over and the score multiplier drops back to x1 (see collect_coin).
@@ -1391,7 +1412,7 @@ func reset_position() -> void:
 	velocity = Vector3.ZERO
 
 	# Reset camera and character rotation to default
-	rotation.y = 0.0  # Reset character horizontal rotation
+	rotation.y = SPAWN_FACING_Y  # Face straight down the coin road (+X)
 	if camera_pivot:
 		camera_pivot.rotation.x = 0.0  # Reset camera vertical rotation
 		camera_pivot.rotation.y = 0.0  # Reset camera horizontal rotation
