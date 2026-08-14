@@ -109,6 +109,47 @@ var step_direction: float = 0.0
 ## full restart from the Game Over screen (see restart_game / reset_position).
 var coins_collected: int = 0
 
+## Coin streak multiplier: picking up coins in quick succession (each pickup
+## within STREAK_WINDOW seconds of the last) builds a streak. Every
+## STREAK_COINS_PER_STEP consecutive coins raise the score multiplier by +1, up
+## to 1 + STREAK_MAX_BONUS (x5). Letting the window lapse — or getting bitten
+## (see hit_by_crocodile) — resets the streak to zero. This rewards staying ON
+## the coin road and moving fast, which is exactly the risk the difficulty
+## gradient punishes.
+const STREAK_WINDOW: float = 2.5
+const STREAK_MAX_BONUS: int = 4
+const STREAK_COINS_PER_STEP: int = 10
+var coin_streak: int = 0
+var streak_timer: float = 0.0
+
+## Extra lives from coins: every EXTRA_LIFE_COINS coins banked grants +1 life,
+## capped at LIVES_CAP hearts. next_extra_life_at is the next threshold to cross
+## (collect_coin advances it in a while-loop, because one gem at a high streak
+## multiplier can jump across a whole threshold — or even two).
+const EXTRA_LIFE_COINS: int = 75
+const LIVES_CAP: int = 5
+var next_extra_life_at: int = EXTRA_LIFE_COINS
+
+## Headline score: how far this run has travelled, in metres. The coin road's
+## centerline X is strictly increasing by construction (see endless_terrain.gd —
+## `road_max_heading_deg < 90` so cos(heading) > 0), which means the farthest X
+## the player has ever reached IS the distance along the run — no path
+## integration needed. We track a running max so backtracking never lowers it.
+## Reset to 0 only on a full restart (restart_game / reset_position).
+var run_distance: int = 0
+
+## Best-run records, persisted across sessions in a ConfigFile at
+## BEST_RUN_CONFIG_PATH (same pattern as mobile_input.gd's tuning file: on web
+## `user://` is IndexedDB-backed, so the records survive a page reload; a missing
+## file on first run is NOT an error — we just keep the zero defaults). The two
+## records are tracked INDEPENDENTLY: best_distance is the farthest any run got,
+## best_coins the richest any run got — a long-but-poor run can set one without
+## the other. Updated + saved in _trigger_game_over(), loaded once in _ready().
+const BEST_RUN_CONFIG_PATH: String = "user://best_run.cfg"
+const BEST_RUN_SECTION: String = "best"
+var best_distance: int = 0
+var best_coins: int = 0
+
 ## "Caught" sequence: when a crocodile bites the player we freeze briefly (so the
 ## bite is actually visible), flash the screen red and shake the camera, then
 ## respawn. These track that short window.
@@ -251,6 +292,10 @@ func _ready() -> void:
 	if not MobileSensors.is_touch_session():
 		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 
+	# Load the persisted best-run records (a missing file on first run is fine —
+	# the zero defaults stand). See the comment block above BEST_RUN_CONFIG_PATH.
+	_load_best_run()
+
 	# Store the original character height for ducking calculations
 	if mesh_instance:
 		original_scale_y = mesh_instance.scale.y
@@ -375,6 +420,17 @@ func _physics_process(delta: float) -> void:
 			_hide_respawn_message()
 			clear_nearby_crocodiles(global_position)
 		return
+
+	# STEP 0.4: Record the headline distance score — the farthest world X reached
+	# this run (see run_distance above for why farthest-X == distance travelled).
+	run_distance = maxi(run_distance, int(global_position.x))
+
+	# STEP 0.45: Tick the coin-streak window down; when it lapses the streak is
+	# over and the score multiplier drops back to x1 (see collect_coin).
+	if streak_timer > 0.0:
+		streak_timer = maxf(0.0, streak_timer - delta)
+		if streak_timer <= 0.0:
+			coin_streak = 0
 
 	# STEP 0.5: Tick ability cooldowns / the Windman air boost, then read the F key.
 	# Done before gravity so an active boost can soften this frame's fall.
@@ -503,12 +559,18 @@ func calculate_current_speed() -> float:
 	if windman_boost_timer > 0.0 and not is_on_floor():
 		return WINDMAN_AIR_SPEED
 
+	# Each character has a modest speed stat (see CHARACTER_SPEED) that scales
+	# every grounded gait. Unknown names fall back to 1.0 — a new character
+	# without an entry just moves at baseline speed.
+	var char_name: String = CHARACTERS[current_character_index]["name"]
+	var speed_scale: float = float(CHARACTER_SPEED.get(char_name, 1.0))
+
 	if is_ducking:
-		return DUCK_SPEED
+		return DUCK_SPEED * speed_scale
 	elif is_running:
-		return RUN_SPEED
+		return RUN_SPEED * speed_scale
 	else:
-		return WALK_SPEED
+		return WALK_SPEED * speed_scale
 
 func handle_ducking() -> void:
 	"""
@@ -1084,13 +1146,38 @@ func animate_idle(delta: float) -> void:
 # SECTION 7: GAME STATE METHODS
 # ============================================================================
 
-func collect_coin() -> void:
+func collect_coin(value: int = 1) -> void:
 	"""
-	Add one to the coin count. Called by a coin's Area3D when the player touches
-	it (see coin.gd). The HUD picks up the new value on its next frame.
+	Add a pickup's worth to the coin count. Called by a coin's Area3D when the
+	player touches it (see coin.gd) — a plain coin passes 1, a purple gem passes
+	its GEM_VALUE (10). The HUD picks up the new value on its next frame.
+
+	Two layered bonuses happen here:
+	- STREAK: each pickup refreshes the streak window; the pickup's value is
+	  multiplied by the current streak multiplier (see get_streak_multiplier).
+	  The streak counts *pickups*, not value — a gem is one link in the chain.
+	- EXTRA LIVES: every EXTRA_LIFE_COINS banked grants +1 life up to LIVES_CAP.
+	  A while-loop, not an if: one gem at x5 is worth 50 and can jump across a
+	  whole threshold (or two), and each crossed threshold must still pay out.
 	"""
-	coins_collected += 1
-	print("Collected a coin! Total: %d" % coins_collected)
+	streak_timer = STREAK_WINDOW
+	coin_streak += 1
+	coins_collected += value * get_streak_multiplier()
+	while coins_collected >= next_extra_life_at:
+		next_extra_life_at += EXTRA_LIFE_COINS
+		if lives < LIVES_CAP:
+			lives += 1
+			print("Extra life! Lives: %d" % lives)
+	print("Collected a coin worth %d (x%d streak)! Total: %d" % [value, get_streak_multiplier(), coins_collected])
+
+
+func get_streak_multiplier() -> int:
+	"""
+	Current score multiplier from the coin streak: x1 with no streak, +1 per
+	STREAK_COINS_PER_STEP consecutive coins, capped at 1 + STREAK_MAX_BONUS.
+	Read by the coin HUD to show the "(xN)" suffix.
+	"""
+	return 1 + mini(STREAK_MAX_BONUS, coin_streak / STREAK_COINS_PER_STEP)
 
 
 func hit_by_crocodile() -> void:
@@ -1107,6 +1194,10 @@ func hit_by_crocodile() -> void:
 	"""
 	if is_caught or is_respawning or is_game_over:
 		return
+	# A real bite breaks the coin streak. Deliberately AFTER the invulnerability
+	# early-return above, so an ignored bite (grace window etc.) costs nothing.
+	coin_streak = 0
+	streak_timer = 0.0
 	is_caught = true
 	caught_timer = CAUGHT_DURATION
 
@@ -1168,10 +1259,48 @@ func _trigger_game_over() -> void:
 	# Game-over sting.
 	_sfx("play_game_over")
 
+	# Best-run bookkeeping: distance is the headline record, so IT decides the
+	# "NEW BEST!" flash; the coin record updates on its own max independently
+	# (see the comment block above BEST_RUN_CONFIG_PATH). Only write the file
+	# when a record actually moved — no pointless disk/IndexedDB churn.
+	var is_new_best := run_distance > best_distance
+	if is_new_best or coins_collected > best_coins:
+		best_distance = maxi(best_distance, run_distance)
+		best_coins = maxi(best_coins, coins_collected)
+		_save_best_run()
+
 	var panel := get_tree().get_first_node_in_group("game_over_ui")
 	if panel and panel.has_method("show_game_over"):
-		panel.show_game_over(coins_collected)
-	print("Game over! Final coins: %d" % coins_collected)
+		panel.show_game_over(coins_collected, run_distance, best_distance, best_coins, is_new_best)
+	print("Game over! Distance: %dm, final coins: %d" % [run_distance, coins_collected])
+
+
+func _load_best_run() -> void:
+	"""
+	Load the persisted best-run records over the zero defaults. A missing file
+	(first ever run) is NOT an error: ConfigFile.load returns a non-OK code and
+	we simply keep 0/0 — the expected first-run path, same as mobile_input.gd's
+	tuning load. Values are clamped non-negative so a hand-edited file can't
+	show a nonsense negative record.
+	"""
+	var cfg := ConfigFile.new()
+	if cfg.load(BEST_RUN_CONFIG_PATH) != OK:
+		return
+	best_distance = maxi(0, int(cfg.get_value(BEST_RUN_SECTION, "distance", best_distance)))
+	best_coins = maxi(0, int(cfg.get_value(BEST_RUN_SECTION, "coins", best_coins)))
+
+
+func _save_best_run() -> void:
+	"""
+	Write the current records to disk. On web `user://` is IndexedDB-backed, so
+	this is what makes a best score survive a page reload. The return code is
+	ignored: a failed save just means the record isn't persisted this session,
+	which is non-fatal and must never interrupt the game-over flow.
+	"""
+	var cfg := ConfigFile.new()
+	cfg.set_value(BEST_RUN_SECTION, "distance", best_distance)
+	cfg.set_value(BEST_RUN_SECTION, "coins", best_coins)
+	cfg.save(BEST_RUN_CONFIG_PATH)
 
 
 func restart_game() -> void:
@@ -1180,12 +1309,20 @@ func restart_game() -> void:
 	Everything resets: coins to 0, lives back to full, and the player is sent to
 	the origin spawn with the mouse recaptured.
 	"""
-	coins_collected = 0
+	# Coins/distance/streak are wiped by reset_position() below — the one owner of
+	# the "hard reset" wipe list, so the two can never drift out of sync.
 	lives = MAX_LIVES
 	is_game_over = false
 	is_caught = false
 	is_respawning = false
 	_hide_respawn_message()
+	# Re-roll the world BEFORE teleporting back to spawn: new_run() re-seeds the
+	# terrain and synchronously rebuilds the chunks around (0,0), so reset_position()
+	# lands us on freshly generated solid ground in the same frame. Group-based
+	# lookup with a has_method guard — the project's no-hard-references convention.
+	var terrain := get_tree().get_first_node_in_group("terrain")
+	if terrain and terrain.has_method("new_run"):
+		terrain.new_run()
 	reset_position()
 	# Recapture the mouse — but ONLY when this is NOT a touch session, mirroring the
 	# `_ready()` guard via the SAME canonical `MobileSensors.is_touch_session()` rule.
@@ -1236,8 +1373,13 @@ func reset_position() -> void:
 	# Define spawn point
 	var spawn_point = Vector3(0, 2, 0)
 
-	# A full restart wipes the coin count.
+	# A full restart wipes the coin count, the distance score, and the streak /
+	# extra-life progress that hangs off the coin count.
 	coins_collected = 0
+	run_distance = 0
+	coin_streak = 0
+	streak_timer = 0.0
+	next_extra_life_at = EXTRA_LIFE_COINS
 
 	# Clear any crocodiles near the spawn point
 	clear_nearby_crocodiles(spawn_point)
@@ -1314,6 +1456,18 @@ const ABILITY_COOLDOWN := {
 	"primm": 6.0,
 	"teibi": 4.0,
 	"phoboman": 12.0,
+}
+
+## Per-character movement speed multiplier, applied to duck/run/walk in
+## calculate_current_speed() (NOT to Windman's Air Rush — that ability defines
+## its own absolute speed). The spread is deliberately modest (0.9–1.15) so
+## every character stays playable: Primm is the sprinter, Teibi the tank whose
+## power compensates, and the others sit near baseline.
+const CHARACTER_SPEED := {
+	"windman": 1.0,
+	"primm": 1.15,
+	"teibi": 0.9,
+	"phoboman": 1.05,
 }
 
 ## Friendly ability names shown on the cooldown HUD.

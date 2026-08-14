@@ -149,10 +149,12 @@ const COIN_BLOCK_OVERLAP_MARGIN: float = 1.0
 ## sits at the world origin (where the player spawns) heading straight along +X,
 ## so the player is on the road the instant the game starts.
 ##
-## The whole shape is a PURE, DETERMINISTIC function of the station index `k` and a
-## single fixed seed (ROAD_WORLD_SEED) — there is NO per-chunk RNG and NO per-frame
-## state in the geometry. That is what lets the trail line up seamlessly across
-## chunk seams and regenerate byte-for-byte identically when a chunk is revisited.
+## The whole shape is a PURE, DETERMINISTIC function of the station index `k` and the
+## seeds (ROAD_WORLD_SEED + this run's run_seed, fixed for the duration of a run) —
+## there is NO per-chunk RNG and NO per-frame state in the geometry. That is what lets
+## the trail line up seamlessly across chunk seams and regenerate byte-for-byte
+## identically when a chunk is revisited. A new run re-rolls run_seed, so the NEXT
+## road takes a different path (see the run_seed doc block below).
 ##
 ## The path is built by integrating a heading angle station-by-station (see the
 ## recurrence in _road_extend_to_x). A gentle restoring pull and a hard heading cap
@@ -199,9 +201,10 @@ const COIN_BLOCK_OVERLAP_MARGIN: float = 1.0
 ## forward and gives it a natural "return to course" feel after a bend.
 const ROAD_RESTORE: float = 0.06
 
-## Fixed seed mixed into the per-station hash for the CENTERLINE so the road is stable
-## run-to-run yet distinct from the per-chunk object/crocodile seeds (it is its OWN
-## world). Pick any constant; changing it reshapes the entire road's path.
+## Fixed seed mixed into the per-station hash for the CENTERLINE, distinct from the
+## per-chunk object/crocodile seeds (it is its OWN world). The per-run run_seed is
+## mixed in alongside it, so the road is stable for the duration of a run but takes
+## a different path each run. Changing this constant reshapes every road ever rolled.
 const ROAD_WORLD_SEED: int = 0x5_0AD  # "ROAD"-ish; arbitrary fixed constant
 
 ## Separate fixed seed for the per-slice COIN SCATTER RNG (the lateral/along-road jitter
@@ -209,10 +212,23 @@ const ROAD_WORLD_SEED: int = 0x5_0AD  # "ROAD"-ish; arbitrary fixed constant
 ## scatter doesn't move the centerline, and vice-versa.
 const ROAD_COIN_SEED: int = 0xC0_1A  # "coin"-ish; arbitrary fixed constant
 
+## Chance that a scattered road coin spawns as a rare purple GEM worth 10 (see
+## coin.gd make_gem). Rolled as one extra draw from the same per-station scatter
+## RNG right after a coin's position draws, so gem placement is exactly as
+## deterministic and seam-correct as the coins themselves.
+const ROAD_GEM_CHANCE: float = 0.04
+
 ## How fast the band width breathes (radians of cos() per station). Lower = the band
 ## swells wide and narrows over MORE stations. At 0.08 the cosine's period is
 ## ~2π/0.08 ≈ 78 stations, so the width cycles slowly enough to feel smooth, not pulsey.
 const ROAD_WIDTH_FREQ: float = 0.08
+
+## Difficulty gradient: the coin band NARROWS with distance. Over the first
+## ROAD_NARROW_STATIONS stations the oscillating width is lerped toward a floor of
+## road_width_min * ROAD_NARROW_FLOOR_FACTOR, so far into a run the coin swath is a
+## tight ribbon that demands precise steering to keep the streak alive.
+const ROAD_NARROW_STATIONS: int = 2000
+const ROAD_NARROW_FLOOR_FACTOR: float = 0.4
 
 ## Fraction of road_coin_spacing a coin may jitter ALONG the road from its slice center
 ## (±this × spacing). Without it, every slice's coins would sit on the same cross-line
@@ -266,6 +282,28 @@ var active_chunks: Dictionary = {}
 
 ## Last player chunk position (to detect when to update chunks)
 var last_player_chunk: Vector2i = Vector2i(999999, 999999)
+
+## PER-RUN WORLD SEED — makes run 2 a different world from run 1.
+##
+## EDUCATIONAL NOTE — the determinism contract:
+## Every "random" thing in the world (block layout, crocodile positions, the road's
+## shape, the coin scatter) is derived from a pure hash of its coordinates — chunk
+## coords for chunk content, station index `k` for the road. That purity is what
+## lets a chunk regenerate byte-identically when you walk away and come back, and
+## what lets the coin road line up seamlessly across chunk seams.
+##
+## `run_seed` is mixed into EVERY one of those hash sites as a third hash input
+## (via Vector3i — a real extra input, not arithmetic that could alias two seeds
+## onto the same value). It is rolled ONCE per run and never changes mid-run, so:
+##   - WITHIN a run: every seed site is still a pure function of (coords | k),
+##     because run_seed is a constant — revisited chunks regenerate identically
+##     and the coin seam-claiming (world_to_chunk(coin) == chunk_pos) still holds.
+##   - ACROSS runs: new_run() re-rolls it, so every hash changes and the next run
+##     gets a genuinely different world layout.
+##
+## We roll it with a local RandomNumberGenerator (randomize() + randi()) instead of
+## the global randi() so we don't disturb the global RNG state other scripts use.
+var run_seed: int = 0
 
 # ----------------------------------------------------------------------------
 # SHARED RESOURCES FOR MULTIMESH BLOCK RENDERING (created once, reused forever)
@@ -347,10 +385,29 @@ func _get_shared_block_material() -> StandardMaterial3D:
 # INITIALIZATION
 # ============================================================================
 
+func _roll_run_seed() -> void:
+	"""
+	Roll a fresh per-run world seed. A throwaway local RNG (randomize() seeds it
+	from entropy) keeps the global RNG state untouched. Shared by _ready() and
+	new_run() so the two sites can't drift apart.
+	"""
+	var seed_rng := RandomNumberGenerator.new()
+	seed_rng.randomize()
+	run_seed = seed_rng.randi()
+
+
 func _ready() -> void:
 	"""
 	Initialize the terrain system.
 	"""
+	# Roll this run's world seed FIRST, before any chunk can possibly generate — every
+	# seed site mixes it in, so it must exist before the first hash.
+	_roll_run_seed()
+
+	# Join the "terrain" group so other systems (player restart) can find us without
+	# hard references — the same group-based wiring used for "player"/"crocodile".
+	add_to_group("terrain")
+
 	# WEB-ONLY: shrink the view distance BEFORE any chunks are generated.
 	#
 	# We set this here at the very top of _ready (and chunk generation is driven later
@@ -696,9 +753,10 @@ func spawn_objects_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, p
 	- Objects are parented to the chunk so they're removed when chunk is removed
 	"""
 
-	# Use chunk coordinates to create a unique but consistent seed
-	# This ensures the same chunk always generates the same objects
-	var seed_value := hash(Vector2i(chunk_pos.x * 73856093, chunk_pos.y * 19349663))
+	# Use chunk coordinates (+ this run's seed) to create a unique but consistent seed.
+	# Within a run the same chunk always regenerates the same objects; across runs the
+	# mixed-in run_seed makes the layout fresh (see the run_seed doc block up top).
+	var seed_value := hash(Vector3i(chunk_pos.x * 73856093, chunk_pos.y * 19349663, run_seed))
 	var rng := RandomNumberGenerator.new()
 	rng.seed = seed_value
 
@@ -1252,9 +1310,10 @@ func spawn_crocodiles_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D
 	if not crocodile_scene:
 		return
 
-	# Use chunk coordinates to create a unique but consistent seed
-	# Offset the hash value to get different positions than objects
-	var seed_value := hash(Vector2i(chunk_pos.x * 83492791, chunk_pos.y * 28411639))
+	# Use chunk coordinates (+ this run's seed) to create a unique but consistent seed.
+	# Different multipliers than the object seed give different positions than objects;
+	# run_seed makes crocodile placement differ run-to-run (constant within a run).
+	var seed_value := hash(Vector3i(chunk_pos.x * 83492791, chunk_pos.y * 28411639, run_seed))
 	var rng := RandomNumberGenerator.new()
 	rng.seed = seed_value
 
@@ -1265,11 +1324,18 @@ func spawn_crocodiles_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D
 	# Store positions of spawned crocodiles to check spacing
 	var spawned_positions: Array[Vector3] = []
 
+	# Difficulty gradient: chunks farther from origin (along the road's +X axis) hold
+	# MORE crocodiles — +1 per 6 chunks of |x| distance, capped at +8 over the base.
+	# A pure function of chunk coords, so within-run determinism is untouched (the
+	# same chunk always regenerates the same count). The LOD manager keeps the extra
+	# distant crocodiles cheap: they are slept (frozen, monitoring off), never removed.
+	var chunk_croc_target := crocodiles_per_chunk + mini(8, absi(chunk_pos.x) / 6)
+
 	# Try to spawn crocodiles with proper spacing
 	var attempts := 0
-	var max_attempts := crocodiles_per_chunk * 5  # Allow multiple attempts per crocodile
+	var max_attempts := chunk_croc_target * 5  # Allow multiple attempts per crocodile
 
-	while spawned_positions.size() < crocodiles_per_chunk and attempts < max_attempts:
+	while spawned_positions.size() < chunk_croc_target and attempts < max_attempts:
 		attempts += 1
 
 		# Generate random position within chunk bounds
@@ -1328,7 +1394,8 @@ func spawn_platform_crocodiles(chunk_pos: Vector2i, parent_chunk: MeshInstance3D
 	if not crocodile_scene or platforms.is_empty():
 		return
 
-	var seed_value := hash(Vector2i(chunk_pos.x * 40499, chunk_pos.y * 86969))
+	# Chunk coords + run_seed, like every other seed site (see the run_seed doc block).
+	var seed_value := hash(Vector3i(chunk_pos.x * 40499, chunk_pos.y * 86969, run_seed))
 	var rng := RandomNumberGenerator.new()
 	rng.seed = seed_value
 
@@ -1367,10 +1434,11 @@ func spawn_platform_crocodiles(chunk_pos: Vector2i, parent_chunk: MeshInstance3D
 # COIN ROAD MATH (deterministic, pure-in-k parametric centerline + coin placement)
 # ============================================================================
 #
-# Everything below is a pure function of the station index `k` and ROAD_WORLD_SEED.
-# There is no per-chunk RNG and no per-frame state, so the road is identical for a
-# given `k` no matter which chunk asks for it or in what order — that is what makes
-# the trail seamless across chunk boundaries and reproducible on revisit.
+# Everything below is a pure function of the station index `k`, ROAD_WORLD_SEED, and
+# the per-run run_seed (constant for the whole run). There is no per-chunk RNG and no
+# per-frame state, so the road is identical for a given `k` no matter which chunk asks
+# for it or in what order — that is what makes the trail seamless across chunk
+# boundaries and reproducible on revisit. Only new_run() (a fresh run) changes it.
 
 func _road_hash01(k: int) -> float:
 	"""
@@ -1385,9 +1453,9 @@ func _road_hash01(k: int) -> float:
 	  blocks/crocodiles. hash() returns a 32-bit-ish int; we fold it into [0,1) by
 	  masking to a positive range and dividing by that range's size.
 	"""
-	# Two ints in a Vector2i give hash() plenty to mix; the multipliers spread `k`
-	# across the hash space so adjacent stations don't produce near-identical values.
-	var h := hash(Vector2i(k, ROAD_WORLD_SEED))
+	# Three ints in a Vector3i give hash() plenty to mix; run_seed rides along as a
+	# real third input so each run gets its own road shape (constant within a run).
+	var h := hash(Vector3i(k, ROAD_WORLD_SEED, run_seed))
 	# Mask to 24 positive bits and normalise to [0, 1). (Plenty of resolution for an
 	# angle, and avoids sign issues from hash() possibly returning negatives.)
 	return float(h & 0xFFFFFF) / float(0x1000000)
@@ -1580,15 +1648,23 @@ func _road_width(k: int) -> float:
 	road_width_min and road_width_max.
 
 	@param k: Station index.
-	@return: Width in [road_width_min, road_width_max].
+	@return: Width in [road_width_min * ROAD_NARROW_FLOOR_FACTOR, road_width_max]
+	         (the upper reaches only near the origin; distance narrows the range).
 
 	EDUCATIONAL NOTE:
 	- A low-frequency cosine of `k` gives a slow, smooth swell/narrowing of the band
 	  (no per-station jumps), so the coin swath visibly breathes wide and narrow as you
 	  travel. We remap cos()'s [-1,1] to [0,1] then lerp between the bounds.
+	- Difficulty gradient: the whole band then narrows with distance, lerping toward
+	  road_width_min * ROAD_NARROW_FLOOR_FACTOR over the first ROAD_NARROW_STATIONS
+	  stations. Still a pure function of `k`, so determinism within a run holds. The
+	  seam-scan `pad` in spawn_coins_in_chunk stays a safe upper bound: narrowing only
+	  ever SHRINKS the band below maxf(road_width_min, road_width_max).
 	"""
 	var t := (cos(float(k) * ROAD_WIDTH_FREQ) + 1.0) * 0.5  # smooth [0,1], period ~78 stations
-	return lerpf(road_width_min, road_width_max, t)
+	var width := lerpf(road_width_min, road_width_max, t)
+	var narrow_t := clampf(float(absi(k)) / float(ROAD_NARROW_STATIONS), 0.0, 1.0)
+	return lerpf(width, road_width_min * ROAD_NARROW_FLOOR_FACTOR, narrow_t)
 
 func _road_coins_at(k: int) -> Array:
 	"""
@@ -1599,12 +1675,14 @@ func _road_coins_at(k: int) -> Array:
 	loose swath of territory a few coins wide rather than an obvious conga-line.
 
 	@param k: Station index (the cache MUST already cover it — callers extend first).
-	@return: Array of world-space Vector3 coin positions "owned" by station `k`. May be
-	         EMPTY when the per-coin spawn rolls come up short — that is exactly what keeps
-	         the trail sparse and irregular.
+	@return: Array of { "pos": Vector3, "gem": bool } dictionaries "owned" by station
+	         `k` — `pos` is the world-space coin position, `gem` marks the rare purple
+	         gem variant (ROAD_GEM_CHANCE). May be EMPTY when the per-coin spawn rolls
+	         come up short — that is exactly what keeps the trail sparse and irregular.
 
 	EDUCATIONAL NOTE — why this stays deterministic & seam-correct:
-	- The scatter RNG is seeded ONLY from `k` (+ ROAD_COIN_SEED), so a station's coins are
+	- The scatter RNG is seeded ONLY from `k` (+ ROAD_COIN_SEED + the run-constant
+	  run_seed), so a station's coins are
 	  identical no matter which chunk computes them or in what order — the property the
 	  seam bucketing in spawn_coins_in_chunk relies on. Each coin is still assigned to
 	  whichever chunk its FINAL position lands in, so there are no gaps or duplicates.
@@ -1621,10 +1699,11 @@ func _road_coins_at(k: int) -> Array:
 	var perp := Vector2(-sin(heading), cos(heading))
 	var half_band := _road_width(k) * 0.5
 
-	# Per-station RNG seeded purely from `k` (+ a coin-specific seed): deterministic and
-	# load-order independent. The draw order below is fixed, so the coin set is stable.
+	# Per-station RNG seeded purely from `k` (+ a coin-specific seed + this run's seed):
+	# deterministic and load-order independent within a run. The draw order below is
+	# fixed, so the coin set is stable; new_run() re-rolls run_seed for a fresh scatter.
 	var rng := RandomNumberGenerator.new()
-	rng.seed = hash(Vector2i(k, ROAD_COIN_SEED))
+	rng.seed = hash(Vector3i(k, ROAD_COIN_SEED, run_seed))
 
 	var coins: Array = []
 	for _slot in road_coin_slots:
@@ -1636,7 +1715,10 @@ func _road_coins_at(k: int) -> Array:
 		var lat := rng.randf_range(-1.0, 1.0) * half_band                               # across the band
 		var lon := rng.randf_range(-1.0, 1.0) * ROAD_COIN_LONG_JITTER * _road_spacing()  # along the road
 		var p := center + perp * lat + tangent * lon
-		coins.append(Vector3(p.x, COIN_GROUND_HEIGHT, p.y))
+		# One extra draw AFTER the position: is this coin a rare gem? The draw order
+		# (chance, lat, lon, gem) is fixed, so the whole station stays deterministic.
+		var gem := rng.randf() < ROAD_GEM_CHANCE
+		coins.append({ "pos": Vector3(p.x, COIN_GROUND_HEIGHT, p.y), "gem": gem })
 	return coins
 
 func spawn_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array) -> void:
@@ -1732,16 +1814,17 @@ func spawn_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obs
 			break  # past this chunk's window — and X only grows from here, so stop
 
 		# This station scatters a handful of coins across the band; place each one that
-		# actually lands inside THIS chunk.
+		# actually lands inside THIS chunk. Each entry is { "pos": Vector3, "gem": bool }.
 		for cw in _road_coins_at(cur_k):
+			var cw_pos: Vector3 = cw.pos
 			# Bucket by final chunk: spawn this coin only from the chunk it actually lands
 			# in. This is what makes seams gap-free and duplicate-free.
-			if world_to_chunk(cw) != chunk_pos:
+			if world_to_chunk(cw_pos) != chunk_pos:
 				continue
 
 			# Convert to chunk-LOCAL (relative to the chunk center, like every other
 			# chunk-parented node), so the coin sits at the right world spot.
-			var local := Vector3(cw.x - center.x, cw.y, cw.z - center.z)
+			var local := Vector3(cw_pos.x - center.x, cw_pos.y, cw_pos.z - center.z)
 
 			# If the road runs over a block footprint, the ground-height coin would be
 			# buried. A coin must clear EVERYTHING it overlaps, not just whatever block we'd
@@ -1773,8 +1856,12 @@ func spawn_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obs
 				local.y = tallest_top + COIN_BLOCK_OFFSET
 
 			# Spawn the coin (position is local to the chunk, like blocks/crocodiles).
+			# A gem entry is upgraded BEFORE entering the tree (make_gem recolours a
+			# duplicated material and scales the whole pickup — see coin.gd).
 			var coin := coin_scene.instantiate()
 			coin.position = local
+			if cw.gem:
+				coin.make_gem()
 			parent_chunk.add_child(coin)
 
 func _block_overlaps(x: float, z: float, ob: Dictionary) -> bool:
@@ -1817,6 +1904,44 @@ func remove_chunk(chunk_pos: Vector2i) -> void:
 		var chunk = active_chunks[chunk_pos]
 		chunk.queue_free()
 		active_chunks.erase(chunk_pos)
+
+func new_run() -> void:
+	"""
+	Reset the world for a brand-new run: re-roll the per-run seed and rebuild
+	everything derived from it. Called by player_controller.restart_game() (via the
+	"terrain" group) BEFORE the player is teleported back to the (0,2,0) spawn.
+
+	EDUCATIONAL NOTE — the order matters:
+	1. Re-roll run_seed — every hash site mixes it in, so all downstream content
+	   (blocks, crocodiles, road, coins) will come out different.
+	2. Clear the road station cache — its entries were computed with the OLD seed
+	   and would poison the new road (the cache is "correct forever" only while the
+	   seed is constant). Reset the bounds to the empty sentinel (min > max) exactly
+	   as declared, so the next _road_extend_to_x re-seeds station 0.
+	3. Free every active chunk and clear the dictionary — old-world geometry.
+	4. Rebuild the ring around the spawn chunk (0,0) IMMEDIATELY (update_chunks is
+	   synchronous), so the player being teleported to (0,2,0) this same frame lands
+	   on solid new-world ground instead of falling through a hole. Setting
+	   last_player_chunk to (0,0) keeps _process from redundantly rebuilding.
+	"""
+	# 1. New seed (same roll as _ready()).
+	_roll_run_seed()
+
+	# 2. Road cache back to its declared empty state.
+	road_stations = {}
+	road_k_min = 1
+	road_k_max = 0
+
+	# 3. Drop every old-world chunk (queue_free is the safe removal, as in remove_chunk).
+	for chunk_pos in active_chunks.keys():
+		active_chunks[chunk_pos].queue_free()
+	active_chunks.clear()
+
+	# 4. Rebuild around the spawn synchronously so the respawning player has ground.
+	update_chunks(Vector2i(0, 0))
+	last_player_chunk = Vector2i(0, 0)
+
+	print("New run started (run_seed = %d)" % run_seed)
 
 # ============================================================================
 # DEBUG FUNCTIONS

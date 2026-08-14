@@ -11,9 +11,11 @@ extends Control
 ## platform with no asset dependency — matching this project's "draw it in code"
 ## style (see the crocodile/player procedural animation).
 
-## How many hearts to draw. Keep this in sync with player_controller.gd's
-## MAX_LIVES — it is the total number of pips shown, full + empty.
-const MAX_LIVES: int = 3
+## The pip total is read from the PLAYER each frame (max(MAX_LIVES, lives)),
+## not duplicated here as a constant — extra lives earned from coins can push
+## `lives` above MAX_LIVES (up to the player's LIVES_CAP), and a 4th/5th heart
+## must render. Reading the single source of truth also kills the old
+## keep-in-sync bug this file used to have.
 
 ## Size (roughly the height in pixels) of one heart, and the gap between hearts.
 const HEART_SIZE: float = 32.0
@@ -26,8 +28,9 @@ const EMPTY_COLOR: Color = Color(0.35, 0.14, 0.16, 0.55)
 ## Cached player reference (re-fetched if it ever goes away).
 var player: Node = null
 
-## Last values we drew, so we only repaint when the count actually changes.
+## Last values we drew, so we only repaint when either count actually changes.
 var _drawn_lives: int = -1
+var _drawn_total: int = -1
 
 
 func _ready() -> void:
@@ -41,17 +44,22 @@ func _process(_delta: float) -> void:
 		player = get_tree().get_first_node_in_group("player")
 
 	var lives: int = 0
+	var total: int = 0
 	if player and "lives" in player:
 		lives = player.lives
+		# Total pips = the run's starting hearts, plus any extra lives that
+		# pushed `lives` above that (see EXTRA_LIFE_COINS in player_controller).
+		total = maxi(player.MAX_LIVES, lives)
 
 	# Repaint only on change — _draw is comparatively expensive to run every frame.
-	if lives != _drawn_lives:
+	if lives != _drawn_lives or total != _drawn_total:
 		_drawn_lives = lives
+		_drawn_total = total
 		queue_redraw()
 
 
 func _draw() -> void:
-	for i in MAX_LIVES:
+	for i in _drawn_total:
 		var center := Vector2(
 			HEART_SIZE * 0.5 + i * (HEART_SIZE + HEART_SPACING),
 			HEART_SIZE * 0.5

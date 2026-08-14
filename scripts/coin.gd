@@ -18,6 +18,13 @@ extends Area3D
 ## How fast the coin spins around the vertical axis (radians/sec)
 const SPIN_SPEED: float = 3.0
 
+## Gem variant: worth this many coins, drawn this much bigger, and tinted purple.
+## Gems are rolled by the terrain's road scatter (see _road_coins_at) — a coin
+## becomes a gem only when the spawner calls make_gem() right after instantiate.
+const GEM_VALUE: int = 10
+const GEM_SCALE: float = 1.6
+const GEM_COLOR: Color = Color(0.65, 0.25, 0.95)
+
 ## Gentle up/down bob so coins feel lively and mid-air ones are easy to spot
 const BOB_SPEED: float = 2.0
 const BOB_AMOUNT: float = 0.12
@@ -31,6 +38,9 @@ const BOB_AMOUNT: float = 0.12
 
 ## Guard so a coin can only ever be collected once.
 var collected: bool = false
+
+## How many coins this pickup is worth (1 for a plain coin, GEM_VALUE for a gem).
+var value: int = 1
 
 ## Bob animation phase and the rest height we bob around.
 var bob_phase: float = 0.0
@@ -64,6 +74,38 @@ func _process(delta: float) -> void:
 
 
 # ============================================================================
+# GEM UPGRADE
+# ============================================================================
+
+func make_gem() -> void:
+	"""
+	Upgrade this coin into a rare purple GEM worth GEM_VALUE coins.
+
+	Called by the terrain right after instantiate (BEFORE this node enters the
+	tree), so we fetch $Mesh with get_node here rather than relying on the
+	@onready `mesh` var, which is only assigned at _ready.
+
+	EDUCATIONAL NOTE — duplicate, never mutate, the shared material: every coin
+	instance shares the material resource baked into coin.tscn. Recolouring it
+	in place would turn EVERY coin in the world purple (same defensive-duplicate
+	pattern as _setup_web_fog in endless_terrain.gd).
+	"""
+	value = GEM_VALUE
+
+	# Bigger all over — scaling the Area3D grows the visual AND the pickup
+	# sphere together, so the rarer, juicier pickup is also a little easier to grab.
+	scale = Vector3.ONE * GEM_SCALE
+
+	var gem_mesh: MeshInstance3D = get_node("Mesh")
+	var mat := gem_mesh.get_surface_override_material(0)
+	if mat is StandardMaterial3D:
+		var gem_mat: StandardMaterial3D = mat.duplicate()
+		gem_mat.albedo_color = GEM_COLOR
+		gem_mat.emission = GEM_COLOR
+		gem_mesh.set_surface_override_material(0, gem_mat)
+
+
+# ============================================================================
 # COLLECTION
 # ============================================================================
 
@@ -76,7 +118,7 @@ func _on_body_entered(body: Node) -> void:
 
 	collected = true
 	if body.has_method("collect_coin"):
-		body.collect_coin()
+		body.collect_coin(value)
 
 	# Pickup blip. The MANAGER owns the audio players — this coin queue_free()s
 	# itself right below, so a sound attached to this dying node would be cut off.
