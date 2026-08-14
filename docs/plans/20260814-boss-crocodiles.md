@@ -228,7 +228,7 @@
       [2.5, 3.375, 4.25, 5.125, 6.0, 6.0, ...] confirmed.
 
 ### Task 6: [Final] Update documentation
-- [ ] Add a short "Boss crocodiles" subsection to `CLAUDE.md` under the enemy/AI
+- [x] Add a short "Boss crocodiles" subsection to `CLAUDE.md` under the enemy/AI
       architecture notes: deterministic station-indexed placement (own
       `BOSS_SEED` stream), size schedule, `setup_as_boss` call-order contract
       (before `add_child`), flee immunity keeps group membership, boss detection
