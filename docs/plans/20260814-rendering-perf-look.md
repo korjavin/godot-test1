@@ -399,13 +399,21 @@ Hard invariants (repo law — violating any is a blocker):
 
 ### Task 11: Verify acceptance criteria + docs
 
-- [ ] Re-read the plan Overview + all hard invariants; verify each is honored (grep for
+- [x] Re-read the plan Overview + all hard invariants; verify each is honored (grep for
       leftover `WEB_FOG`, dead HitBox references, per-chunk prints; re-check the RNG
       draw count in `create_box` by counting calls per branch old vs new).
-- [ ] `godot --headless --path . --quit-after 2` runs clean.
-- [ ] Headless web export builds: `mkdir -p build/web && godot --headless
+      Audit results: zero `WEB_FOG` hits, zero HitBox hits (scripts/ + scenes/);
+      only one-time prints remain in endless_terrain.gd (_ready ×5, fog ×1,
+      new_run ×1); create_box draws = selector + 3/1/3 per branch + roughness
+      discard = 5/3/5, matching the audit table. Collision layers untouched,
+      SIM_RADIUS/DETECTION_RADIUS untouched, no GPUParticles3D anywhere.
+- [x] `godot --headless --path . --quit-after 2` runs clean.
+      Fully clean (post-Task-9 import cache), exit 0, zero errors; desktop fog
+      line prints (density 0.0022).
+- [x] Headless web export builds: `mkdir -p build/web && godot --headless
       --export-release "Web" build/web/index.html` (exit 0, index.html + wasm produced).
-- [ ] Update `CLAUDE.md`: (a) fog is now UNIVERSAL (desktop too) — document it as the
+      Exit 0; index.html, index.wasm, index.js, index.pck all produced.
+- [x] Update `CLAUDE.md`: (a) fog is now UNIVERSAL (desktop too) — document it as the
       sanctioned exception to the web-gate rule, with density still platform-gated;
       (b) time-sliced chunk generation (one/frame nearest-first, SYNC_RING safety for
       spawn/new_run); (c) HitBox is gone from the croc scene (update the LOD-contract
@@ -413,8 +421,13 @@ Hard invariants (repo law — violating any is a blocker):
       croc styling + visual cull range; (e) LOD manager now also gates coin `_process`;
       (f) shared ground mesh + ground shader + curated block ramps (with the RNG-
       preservation note); (g) main.tscn light/sky/glow/grade values.
-- [ ] ➕ NOTE (honest deferral, decided at planning time): **B10 near-ring grass is
-      SKIPPED.** Its own acceptance gate — "only if A-phase wins are verified via the F3
+      All seven items landed: new time-slicing + shared-ground paragraphs in the
+      terrain section, LOD section rewritten (HitBox gone, set_physics_process,
+      draw cull, coin gating), new "Art-directed look" section for (d)+(g), fog
+      bullet + conventions exception rewritten for (a), block-MultiMesh paragraph
+      updated for the ramps, new_run description updated for the sliced rebuild.
+- [x] ➕ NOTE (honest deferral, decided at planning time): **B10 near-ring grass is
+      SKIPPED.** (Acknowledged — not implemented, per its own verify-first gate.) Its own acceptance gate — "only if A-phase wins are verified via the F3
       overlay" — cannot be met in this environment (headless, no display, no real web
       device to read F3 on). Shipping unverifiable extra geometry against an explicit
       verify-first gate would be dishonest; it remains a clean follow-up once someone
