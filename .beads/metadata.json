@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "godot_test1",
+  "project_id": "b42d7bd6-1459-4d08-b172-2c17654dc747"
+}

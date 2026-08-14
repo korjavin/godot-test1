@@ -73,3 +73,9 @@ ios/
 # binaries, MPL-2.0 bundled libs). The web build needs no addon at all, and the
 # Web export preset excludes addons/* so an installed one cannot reach it.
 addons/
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
+.beads/proxieddb/
+*.gate.lock*
