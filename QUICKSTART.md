@@ -1,100 +1,60 @@
 # Quick Start Guide 🚀
 
-Get up and running in 5 minutes!
+Get running in 5 minutes.
 
-## Step 1: Install Godot
+## Just play it
 
-Download Godot 4.3 or later from: https://godotengine.org/download
+**https://korjavin.github.io/godot-test1/** — desktop or phone browser, nothing
+to install.
 
-## Step 2: Open the Project
+## Run from source
 
-1. Launch Godot
-2. Click **Import**
-3. Navigate to this folder
-4. Select `project.godot`
-5. Click **Import & Edit**
-
-## Step 3: Run the Game
-
-Press **F5** or click the Play button (▶️)
+1. Download **Godot 4.5** (standard build): https://godotengine.org/download
+2. Launch Godot → **Import** → select this folder's `project.godot` → **Import & Edit**
+3. Press **F5** (or the ▶ Play button)
 
 ## Controls
 
-- **WASD** - Move
-- **Space** - Jump
-- **Shift** - Run
-- **Ctrl** - Duck
-- **Mouse** - Look around
-- **ESC** - Release/capture mouse
+- **W/S** move · **A/D** turn · **Q/E** sidestep · **Mouse** look
+- **Space** jump · **Shift** run · **Ctrl** duck
+- **R** switch hero · **F** special ability
+- **P** pause · **Esc** release/recapture mouse · **F3** perf overlay
 
 ### 📱 On mobile (web build)
 
-Open the GitHub Pages URL on your phone and tap **"enable motion controls"** (this also grants iOS motion permission). Then **step** to walk, **tilt** to steer (tap the on-screen toggle for **twist** steering), and use the on-screen **JUMP / R (switch) / F (special)** buttons. The touch controls appear automatically on touch devices only — desktop keyboard + mouse is unchanged.
+Open the GitHub Pages URL on your phone and tap the start overlay (this also
+grants iOS motion permission). Then **step in place** to walk, **tilt** to steer
+(tap the on-screen toggle for **twist** steering), and use the on-screen
+**JUMP / SPECIAL / SWITCH** buttons. The **⚙ Tune** panel calibrates step
+detection and steering live, and your settings persist between visits. The touch
+controls appear automatically on touch devices only — desktop keyboard + mouse
+is unchanged.
 
-## What's Next?
+## Poke at the code
 
-1. **Explore the code**: Open `scripts/player_controller.gd` - it's heavily commented!
-2. **Read the tutorial**: See `docs/TUTORIAL.md` for customization guides
-3. **Understand the architecture**: Check `docs/CODE_STRUCTURE.md`
-4. **Experiment**: Try changing values like WALK_SPEED or JUMP_VELOCITY
+Everything is heavily commented — start with `scripts/player_controller.gd`
+(movement, heroes, abilities) and `scripts/endless_terrain.gd` (the procedural
+world and the coin road). Architecture notes live in [CLAUDE.md](CLAUDE.md).
 
-## Quick Tweaks to Try
+Fun quick tweaks (constants at the top of each script):
 
-### Make the character faster:
-Edit `scripts/player_controller.gd`:
 ```gdscript
-const WALK_SPEED: float = 10.0  # Was 5.0
-const RUN_SPEED: float = 20.0   # Was 10.0
+# scripts/player_controller.gd
+const WALK_SPEED: float = 5.0     # crank it
+const RUN_SPEED: float = 10.0
+
+# scripts/piglet_crocodile_ai.gd
+const BASE_CHASE_SPEED: float = 5.5   # how scary are the crocs?
 ```
 
-### Jump higher:
-```gdscript
-const JUMP_VELOCITY: float = 15.0  # Was 8.0
-```
+## Common issues
 
-### Change gravity (simulate moon!):
-```gdscript
-var gravity: float = 1.6  # Moon gravity!
-```
-
-### Change terrain color:
-Edit `scripts/endless_terrain.gd` in the `_ready()` function:
-```gdscript
-terrain_material.albedo_color = Color(0.8, 0.6, 0.4)  # Sandy!
-```
-
-## Project Structure
-
-```
-godot-test1/
-├── scenes/          # Game scenes
-├── scripts/         # GDScript code
-├── assets/          # 3D models, textures
-├── docs/            # Documentation
-└── README.md        # Full documentation
-```
-
-## Need Help?
-
-- **Full Documentation**: See [README.md](README.md)
-- **Tutorials**: See [docs/TUTORIAL.md](docs/TUTORIAL.md)
-- **Code Explanation**: See [docs/CODE_STRUCTURE.md](docs/CODE_STRUCTURE.md)
-- **Godot Docs**: https://docs.godotengine.org
-
-## Common Issues
-
-**Mouse not working?**
-- Click in the game window
-- Press ESC to toggle mouse capture
-
-**Character falls through ground?**
-- Wait a moment for terrain to generate
-- Check that you're starting above Y=0
-
-**Changes not taking effect?**
-- Save the script (Ctrl+S)
-- Restart the scene (F6)
+- **Mouse not working?** Click the game window; Esc toggles capture.
+- **No motion controls on iPhone over LAN?** iOS only delivers motion sensor
+  data on HTTPS — test motion on the GitHub Pages build (or a tunnel), not
+  `http://<lan-ip>`.
+- **Changes not taking effect?** Save the script and restart the scene.
 
 ---
 
-**Happy Game Development! 🎮**
+**Welcome to the Crimekickers universe! 🐊**
