@@ -85,9 +85,6 @@ const CAMERA_PITCH_MAX: float = 60.0   # Looking up limit (degrees)
 ## Eye height above the FEET at normal scale — just under the ~1.8 m head top,
 ## so the camera sits where the character's eyes would be.
 const FIRST_PERSON_EYE_HEIGHT: float = 1.65
-## Small forward (−Z) nudge for the first-person camera so face/nose geometry
-## can never clip into view even if a model is ever left visible by mistake.
-const FIRST_PERSON_FORWARD_OFFSET: float = 0.2
 
 ## Safe spawn radius - crocodiles within this distance will be removed on respawn
 const SPAWN_SAFE_RADIUS: float = 25.0
@@ -198,7 +195,7 @@ var camera_rest_position: Vector3 = Vector3.ZERO
 
 ## First-person view mode. This is a player PREFERENCE, not transient state: it
 ## deliberately survives respawn, restart, and character switches (nothing in
-## those paths resets it). Toggled with C via _set_first_person().
+## those paths resets it). Toggled with C in _physics_process (STEP 0.55).
 var first_person: bool = false
 ## The camera's original scene-file transform (position (0,2,8), baked −15°
 ## pitch), cached in _ready() so leaving first-person restores the shipped
@@ -417,15 +414,6 @@ func _input(event: InputEvent) -> void:
 # FIRST-PERSON VIEW TOGGLE
 # ============================================================================
 
-func _set_first_person(enabled: bool) -> void:
-	"""
-	Switches between third-person and first-person view (the C key).
-	The flag is just a preference; _apply_view_mode() does all the real work.
-	"""
-	first_person = enabled
-	_apply_view_mode()
-
-
 func _apply_view_mode() -> void:
 	"""
 	Moves the EXISTING camera (no second Camera3D!) to match the current view
@@ -462,11 +450,7 @@ func _first_person_eye_position() -> Vector3:
 	forms move the eyes down/up automatically.
 	"""
 	var scale_y: float = collision_shape.scale.y if collision_shape else 1.0
-	return Vector3(
-		0.0,
-		scale_y * FIRST_PERSON_EYE_HEIGHT - camera_pivot.position.y,
-		-FIRST_PERSON_FORWARD_OFFSET * scale_y
-	)
+	return Vector3(0.0, scale_y * FIRST_PERSON_EYE_HEIGHT - camera_pivot.position.y, 0.0)
 
 # ============================================================================
 # PHYSICS PROCESSING (CALLED EVERY FRAME)
@@ -479,6 +463,17 @@ func _physics_process(delta: float) -> void:
 
 	@param delta: Time elapsed since last frame (in seconds)
 	"""
+
+	# STEP 0: First-person toggle (C). POLLED rather than handled in _input() on
+	# purpose: the touch UI synthesizes actions via Input.parse_input_event,
+	# which polled is_action_just_pressed() sees reliably — same reasoning as the
+	# switch_character gotcha in CLAUDE.md. Polled BEFORE the frozen-state early
+	# returns below so a press during the caught/respawn/game-over windows isn't
+	# silently dropped — the view is a pure camera preference and safe to flip
+	# while frozen (_apply_view_mode() only touches the camera and model).
+	if Input.is_action_just_pressed("toggle_camera"):
+		first_person = not first_person
+		_apply_view_mode()
 
 	# STEP 0a: Game over — out of lives. Stand frozen (the Game Over screen is up
 	# and the cursor is free) until the player hits "Play Again", which calls
@@ -533,13 +528,6 @@ func _physics_process(delta: float) -> void:
 	_update_ability_timers(delta)
 	if Input.is_action_just_pressed("special_ability"):
 		try_activate_ability()
-
-	# STEP 0.55: First-person toggle (C). POLLED here rather than handled in
-	# _input() on purpose: the touch UI synthesizes actions via
-	# Input.parse_input_event, which polled is_action_just_pressed() sees
-	# reliably — same reasoning as the switch_character gotcha in CLAUDE.md.
-	if Input.is_action_just_pressed("toggle_camera"):
-		_set_first_person(not first_person)
 
 	# STEP 1: Handle Gravity
 	# If the character is not on the ground, apply gravity. While Windman's Air Rush
@@ -882,14 +870,10 @@ func set_active_character(index: int) -> void:
 	# A freshly selected character always starts at normal size with no giant
 	# crush — Teibi's resize state must not carry across a switch (otherwise a
 	# different character could inherit Teibi's giant body or shrunken capsule).
+	# This also re-applies the first-person view when active: _apply_teibi_scale
+	# ends with `if first_person: _apply_view_mode()`, keeping the model hidden
+	# and the camera at the eyes across the switch.
 	_revert_teibi_to_normal()
-
-	# Defensive first-person re-apply: switching only flips per-instance
-	# visibility (the hidden container survives on its own), but re-running the
-	# idempotent _apply_view_mode() guarantees the model stays hidden and the
-	# camera stays at the eyes even if the switching mechanism changes later.
-	if first_person:
-		_apply_view_mode()
 
 func capture_rest_pose(instance: Node3D) -> Dictionary:
 	"""
