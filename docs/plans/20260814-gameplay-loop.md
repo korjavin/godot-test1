@@ -224,17 +224,17 @@ regenerates byte-identically on revisit and coin seam-claiming still holds.
 
 ### Task 7: Enter/Space restart + verify acceptance criteria
 
-- [ ] `scripts/game_over_ui.gd`: restart on `ui_accept` — in `_unhandled_input` (or
+- [x] `scripts/game_over_ui.gd`: restart on `ui_accept` — in `_unhandled_input` (or
       `_input`), when `visible` and `event.is_action_pressed("ui_accept")`, call the
       same `_on_restart_pressed()` path and mark the event handled. `ui_accept` covers
       Enter AND Space out of the box; no project.godot change needed.
-- [ ] Re-read the bead's acceptance criteria and verify each is implemented:
+- [x] Re-read the bead's acceptance criteria and verify each is implemented:
       live+game-over distance; best persists (ConfigFile written); two runs differ
       (run_seed mixed into all 5 hash sites); within-run chunk regen identical (no
       seed site depends on anything but coords/k + run_seed); crocs catch a walking
       player (5.5 > 5.0); density/speed/narrowing scale with distance; gems + streak
       in HUD; 4th heart renders; Enter/Space restarts.
-- [ ] Run the headless web export if the godot CLI + templates are available:
+- [x] Run the headless web export if the godot CLI + templates are available:
       `mkdir -p build/web && godot --headless --export-release "Web" build/web/index.html`.
       If unavailable, add a ⚠️ note that build verification is deferred to CI.
 

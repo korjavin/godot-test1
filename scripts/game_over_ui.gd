@@ -128,6 +128,15 @@ func _build_ui() -> void:
 	vbox.add_child(button_wrap)
 
 
+func _unhandled_input(event: InputEvent) -> void:
+	# Keyboard shortcut for "Play Again": Enter or Space (both are bound to the
+	# built-in ui_accept action out of the box, so no project.godot change).
+	# Only while the screen is actually up — otherwise this node must stay inert.
+	if visible and event.is_action_pressed("ui_accept"):
+		get_viewport().set_input_as_handled()
+		_on_restart_pressed()
+
+
 func show_game_over(coins: int, distance: int = 0, best_distance: int = 0,
 		best_coins: int = 0, is_new_best: bool = false) -> void:
 	"""
