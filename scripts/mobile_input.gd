@@ -385,12 +385,7 @@ func _notification(what: int) -> void:
 	if what == NOTIFICATION_APPLICATION_FOCUS_OUT:
 		if not MobileSensors.is_touch_session():
 			return
-		# Remember whether motion was running so the resume tap can restore it, then
-		# disable FIRST (releases every held action so nothing stays latched pressed
-		# through the pause) and freeze the whole tree.
-		_was_active_before_pause = active
-		disable()
-		get_tree().paused = true
+		pause_game()
 
 
 func _physics_process(delta: float) -> void:
@@ -445,6 +440,24 @@ func disable() -> void:
 	_release_turns()
 	_reset_step_state()
 	_reset_steer_state()
+
+
+## Freeze the tree, remembering whether motion was running so `resume_from_pause()`
+## can restore it. Called on focus loss (above) and by the touch UI when the phone
+## rotates to portrait. IDEMPOTENT — the early return when already paused matters:
+## a second focus loss while paused (double app-switch without a resume tap) would
+## otherwise overwrite `_was_active_before_pause` with the now-false `active`,
+## leaving motion permanently dead after the resume tap (the UI has no other
+## re-enable path).
+func pause_game() -> void:
+	if get_tree().paused:
+		return
+	# Remember whether motion was running so the resume tap can restore it, then
+	# disable FIRST (releases every held action so nothing stays latched pressed
+	# through the pause) and freeze the whole tree.
+	_was_active_before_pause = active
+	disable()
+	get_tree().paused = true
 
 
 ## Unfreeze the tree after a focus-loss pause. Called by the touch UI's full-screen

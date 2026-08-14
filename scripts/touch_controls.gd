@@ -582,7 +582,18 @@ func _process(delta: float) -> void:
 	# trigger it; a shrunk desktop/editor window is not a phone held wrong.
 	if _is_touch:
 		var view_size: Vector2 = get_viewport().get_visible_rect().size
-		_portrait_guard.visible = view_size.y > view_size.x
+		var portrait: bool = view_size.y > view_size.x
+		# Entering portrait also PAUSES, via the same driver path as focus loss.
+		# Without this the guard only blacks out the screen while the world keeps
+		# running — and a portrait-held phone sits ~90° of roll from the landscape
+		# neutral, so tilt steering saturates and the hero spins/walks blind.
+		# After rotating back the guard hides and the standard "tap to resume"
+		# overlay (which re-enables + recalibrates motion) takes over.
+		if portrait and not _portrait_guard.visible:
+			var driver: Node = _ensure_driver()
+			if driver != null:
+				driver.pause_game()
+		_portrait_guard.visible = portrait
 	else:
 		_portrait_guard.visible = false
 
