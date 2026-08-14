@@ -128,21 +128,22 @@ Hard invariants (repo law — violating any is a blocker):
 
 ### Task 2: Crocodile perf — dead HitBox removal, physics-process sleep, draw-range cull
 
-- [ ] `scenes/characters/piglet_crocodile.tscn`: delete the `HitBox` Area3D node and its
+- [x] `scenes/characters/piglet_crocodile.tscn`: delete the `HitBox` Area3D node and its
       `HitBoxShape` child (:25–31) and the now-unused `SphereShape3D_1` sub-resource
       (and drop `load_steps` accordingly). The AI script itself documents nothing connects
       to it — it is ~2 dead nodes + 1 physics area × ~490 crocs.
-- [ ] `scripts/piglet_crocodile_ai.gd` `set_lod_active`: remove the HitBox
+- [x] `scripts/piglet_crocodile_ai.gd` `set_lod_active`: remove the HitBox
       `set_deferred("monitoring", …)` block (:617–622-ish) and rewrite the surrounding
       doc/comments (:600–609 reference the HitBox cleanup — they must go too, including
       the stale mention at :207–210 near the `lod_active` var).
-- [ ] `scripts/piglet_crocodile_ai.gd` `set_lod_active`: add
+      ➕ Also scrubbed the HitBox mention from crocodile_lod_manager.gd's header.
+- [x] `scripts/piglet_crocodile_ai.gd` `set_lod_active`: add
       `set_physics_process(active)` on the state change — a slept croc's script is no
       longer dispatched at all (~460 saved dispatches per physics tick). KEEP the
       `if not lod_active: velocity = Vector3.ZERO; return` early-return at the top of
       `_physics_process` as a backstop (comment it as such), and keep zeroing `velocity`
       inside `set_lod_active(false)` so the freeze stays immediate.
-- [ ] `scripts/piglet_crocodile_ai.gd` `_ready`: after caching `model`, walk the model
+- [x] `scripts/piglet_crocodile_ai.gd` `_ready`: after caching `model`, walk the model
       subtree and on every `GeometryInstance3D` (equivalently `MeshInstance3D`) found set
       `visibility_range_end = 60.0` and `visibility_range_end_margin = 8.0` (both as new
       named constants at the top, e.g. `VISUAL_CULL_DISTANCE` / `VISUAL_CULL_MARGIN`).
@@ -151,7 +152,10 @@ Hard invariants (repo law — violating any is a blocker):
       before. Counts unchanged: comment must say so explicitly. This same walk is reused
       in Task 9 for toon shading — structure it as one helper method
       (`_style_model_meshes()` or similar) so the subtree is walked once.
-- [ ] Run `godot --headless --path . --quit-after 2` — must be clean.
+- [x] Run `godot --headless --path . --quit-after 2` — must be clean.
+      ⚠️ Same env note as Task 1: pre-existing unimported-glb errors only; verified
+      the error set is IDENTICAL to the stashed baseline (sole diff: the .tscn parse
+      error's line number shifted 18→15 because the scene file got shorter).
 
 ### Task 3: Shadow tuning + art-directed key light (main.tscn)
 

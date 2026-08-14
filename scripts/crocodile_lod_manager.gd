@@ -4,8 +4,8 @@ extends Node
 ## This is Task 3 of the web-performance-optimization plan. The world spawns a
 ## LOT of crocodiles (roughly one thousand active across the loaded chunks), and
 ## every one of them runs a full physics+AI step every frame — gravity, chase
-## scanning, obstacle-avoidance raycasts, move_and_slide, body animation, plus a
-## monitoring HitBox Area3D. The overwhelming majority of those crocodiles are
+## scanning, obstacle-avoidance raycasts, move_and_slide and body animation.
+## The overwhelming majority of those crocodiles are
 ## nowhere near the player and could never affect the game this frame, yet they
 ## cost the same as the few that matter. That wasted CPU/physics work is the main
 ## cause of the in-browser stutter.
