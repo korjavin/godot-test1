@@ -123,7 +123,7 @@
       `camera_rest_position` in either mode. Leave it as is.
 
 ### Task 4: Touch view-toggle button (small, optional but trivial here)
-- [ ] In `scripts/touch_controls.gd` `_build_ui()`, add a small "View" toggle button
+- [x] In `scripts/touch_controls.gd` `_build_ui()`, add a small "View" toggle button
       next to the existing steer-mode toggle (top-centre), wired through the existing
       `_fire_action("toggle_camera")` path — `parse_input_event` sets the polled action
       state, which the player's `is_action_just_pressed` poll sees exactly once.

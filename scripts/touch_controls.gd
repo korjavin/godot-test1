@@ -10,6 +10,7 @@ extends Control
 ##   * **Special (F)**→ fires the polled `special_ability` action.
 ##   * **Switch (R)** → fires the *event-driven* `switch_character` action.
 ##   * **steer toggle**→ flips the driver between TILT and TWIST steering.
+##   * **View**       → fires the polled `toggle_camera` action (C key: 1st/3rd person).
 ##
 ## plus a first-run **"TAP TO START"** onboarding overlay (a mini how-to that also
 ## satisfies iOS Safari's user-gesture requirement for motion permission and
@@ -163,6 +164,7 @@ var _jump_button: Button = null
 var _special_button: Button = null
 var _switch_button: Button = null
 var _steer_toggle: Button = null
+var _view_button: Button = null
 var _fullscreen_button: Button = null
 var _enable_overlay: Button = null
 
@@ -292,6 +294,33 @@ func _build_ui() -> void:
 	add_child(_steer_toggle)
 	# Seed its label from the driver's current mode (TILT by default).
 	_update_steer_toggle_label()
+
+	# --- View toggle, LEFT of the steer toggle -----------------------------
+	# Fires the `toggle_camera` action (the C key) through the same one-shot
+	# `_fire_action` pipeline as the action cluster. The player controller POLLS
+	# this action with `is_action_just_pressed`, which the parse_input_event press
+	# satisfies for exactly one frame — no special casing needed. Same top strip,
+	# same translucent family style, a square the height of the steer toggle,
+	# mirrored on the toggle's left where the fullscreen button sits on its right.
+	_view_button = Button.new()
+	_view_button.name = "ViewButton"
+	_view_button.text = "View"
+	_view_button.custom_minimum_size = Vector2(TOGGLE_HEIGHT, TOGGLE_HEIGHT)
+	_view_button.add_theme_font_size_override("font_size", 24)
+	_apply_translucent_style(_view_button, TOGGLE_HEIGHT / 2.0)
+	# Park it immediately to the LEFT of the centred steer toggle: same top-centre
+	# anchoring, offsets pushed left past the toggle's half-width plus a margin
+	# (the mirror image of the fullscreen button's placement below).
+	_view_button.anchor_left = 0.5
+	_view_button.anchor_right = 0.5
+	_view_button.anchor_top = 0.0
+	_view_button.anchor_bottom = 0.0
+	_view_button.offset_right = -TOGGLE_WIDTH * 0.5 - BUTTON_MARGIN * 0.25
+	_view_button.offset_left = -TOGGLE_WIDTH * 0.5 - BUTTON_MARGIN * 0.25 - TOGGLE_HEIGHT
+	_view_button.offset_top = BUTTON_MARGIN
+	_view_button.offset_bottom = BUTTON_MARGIN + TOGGLE_HEIGHT
+	_view_button.pressed.connect(_on_view_pressed)
+	add_child(_view_button)
 
 	# --- Fullscreen toggle, right of the steer toggle (Android web only) ---
 	# iOS Safari doesn't support requestFullscreen (the probe reports false there),
@@ -661,6 +690,12 @@ func _on_special_pressed() -> void:
 ## the controller handles it in `_input()`, not by polling.
 func _on_switch_pressed() -> void:
 	_fire_action("switch_character")
+
+
+## View button → the polled `toggle_camera` action (C key equivalent): flips the
+## player between 3rd-person and first-person view.
+func _on_view_pressed() -> void:
+	_fire_action("toggle_camera")
 
 
 ## Steer toggle → flip the driver's steer mode TILT <-> TWIST and update the label.
