@@ -385,16 +385,24 @@ func _get_shared_block_material() -> StandardMaterial3D:
 # INITIALIZATION
 # ============================================================================
 
+func _roll_run_seed() -> void:
+	"""
+	Roll a fresh per-run world seed. A throwaway local RNG (randomize() seeds it
+	from entropy) keeps the global RNG state untouched. Shared by _ready() and
+	new_run() so the two sites can't drift apart.
+	"""
+	var seed_rng := RandomNumberGenerator.new()
+	seed_rng.randomize()
+	run_seed = seed_rng.randi()
+
+
 func _ready() -> void:
 	"""
 	Initialize the terrain system.
 	"""
 	# Roll this run's world seed FIRST, before any chunk can possibly generate — every
-	# seed site mixes it in, so it must exist before the first hash. A throwaway local
-	# RNG (randomize() seeds it from entropy) keeps the global RNG state untouched.
-	var seed_rng := RandomNumberGenerator.new()
-	seed_rng.randomize()
-	run_seed = seed_rng.randi()
+	# seed site mixes it in, so it must exist before the first hash.
+	_roll_run_seed()
 
 	# Join the "terrain" group so other systems (player restart) can find us without
 	# hard references — the same group-based wiring used for "player"/"crocodile".
@@ -1916,10 +1924,8 @@ func new_run() -> void:
 	   on solid new-world ground instead of falling through a hole. Setting
 	   last_player_chunk to (0,0) keeps _process from redundantly rebuilding.
 	"""
-	# 1. New seed, same no-global-RNG-disturbance rule as _ready().
-	var seed_rng := RandomNumberGenerator.new()
-	seed_rng.randomize()
-	run_seed = seed_rng.randi()
+	# 1. New seed (same roll as _ready()).
+	_roll_run_seed()
 
 	# 2. Road cache back to its declared empty state.
 	road_stations = {}

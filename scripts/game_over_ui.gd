@@ -79,8 +79,6 @@ func _build_ui() -> void:
 	new_best_label.add_theme_color_override("font_color", Color(0.3, 1.0, 0.35))
 	new_best_label.add_theme_color_override("font_outline_color", Color(0, 0, 0))
 	new_best_label.add_theme_constant_override("outline_size", 8)
-	# Scale the pulse around the label's centre, not its top-left corner.
-	new_best_label.pivot_offset = new_best_label.get_minimum_size() * 0.5
 	new_best_label.visible = false
 	vbox.add_child(new_best_label)
 
@@ -137,8 +135,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		_on_restart_pressed()
 
 
-func show_game_over(coins: int, distance: int = 0, best_distance: int = 0,
-		best_coins: int = 0, is_new_best: bool = false) -> void:
+func show_game_over(coins: int, distance: int, best_distance: int,
+		best_coins: int, is_new_best: bool) -> void:
 	"""
 	Reveal the screen: the run's distance (headline) and coin count, the all-time
 	records line, and — when this run set a new distance record — a pulsing
@@ -152,11 +150,8 @@ func show_game_over(coins: int, distance: int = 0, best_distance: int = 0,
 		best_label.text = "Best: %dm / %d coins" % [best_distance, best_coins]
 	if new_best_label:
 		new_best_label.visible = is_new_best
-		# Kill any pulse left over from a previous game over before starting a
-		# fresh one, so tweens never stack across repeated screens.
-		if new_best_tween:
-			new_best_tween.kill()
-			new_best_tween = null
+		# Any previous pulse was already killed by _on_restart_pressed — the only
+		# route between two game overs — so we can start fresh here.
 		if is_new_best:
 			new_best_label.pivot_offset = new_best_label.get_minimum_size() * 0.5
 			new_best_tween = create_tween().set_loops()

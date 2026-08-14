@@ -42,9 +42,6 @@ var collected: bool = false
 ## How many coins this pickup is worth (1 for a plain coin, GEM_VALUE for a gem).
 var value: int = 1
 
-## True once make_gem() has upgraded this coin to the rare purple gem variant.
-var is_gem: bool = false
-
 ## Bob animation phase and the rest height we bob around.
 var bob_phase: float = 0.0
 var base_y: float = 0.0
@@ -94,7 +91,6 @@ func make_gem() -> void:
 	pattern as _setup_web_fog in endless_terrain.gd).
 	"""
 	value = GEM_VALUE
-	is_gem = true
 
 	# Bigger all over — scaling the Area3D grows the visual AND the pickup
 	# sphere together, so the rarer, juicier pickup is also a little easier to grab.

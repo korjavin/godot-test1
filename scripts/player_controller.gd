@@ -1281,11 +1281,8 @@ func restart_game() -> void:
 	Everything resets: coins to 0, lives back to full, and the player is sent to
 	the origin spawn with the mouse recaptured.
 	"""
-	coins_collected = 0
-	run_distance = 0
-	coin_streak = 0
-	streak_timer = 0.0
-	next_extra_life_at = EXTRA_LIFE_COINS
+	# Coins/distance/streak are wiped by reset_position() below — the one owner of
+	# the "hard reset" wipe list, so the two can never drift out of sync.
 	lives = MAX_LIVES
 	is_game_over = false
 	is_caught = false
