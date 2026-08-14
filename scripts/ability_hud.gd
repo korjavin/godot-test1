@@ -19,6 +19,9 @@ extends Control
 ## Cached player reference (re-fetched if it ever goes away).
 var player: Node = null
 
+## Last-drawn display state (see _process). "" means "never drawn / force redraw".
+var _last_drawn_key: String = ""
+
 # --- Layout / colours (tweak here) ------------------------------------------
 const DIAL_RADIUS: float = 40.0
 const RING_WIDTH: float = 6.0
@@ -38,8 +41,24 @@ func _ready() -> void:
 func _process(_delta: float) -> void:
 	if player == null or not is_instance_valid(player):
 		player = get_tree().get_first_node_in_group("player")
-	# One small control; redrawing each frame keeps the timer smooth and is cheap.
-	queue_redraw()
+		_last_drawn_key = ""  # player just [re]acquired — force one redraw
+	# Redraw ONLY when what we would draw actually changed. We fold everything the
+	# dial shows into one comparable key: ready flag, ability name, the cooldown
+	# ratio quantized to arc-visible steps (1/128th of the ring — finer changes
+	# don't move a pixel), and the remaining-seconds text at its displayed "%.1f"
+	# precision. While the ability is READY and idle (the common case) the key is
+	# constant, so the HUD costs zero redraws instead of one per frame.
+	if player == null or not is_instance_valid(player) \
+			or not player.has_method("get_ability_cooldown_ratio"):
+		return
+	var ratio: float = player.get_ability_cooldown_ratio()
+	var ready: bool = player.is_ability_ready() if player.has_method("is_ability_ready") else ratio <= 0.0
+	var ability_name: String = player.get_ability_name() if player.has_method("get_ability_name") else "Ability"
+	var secs: float = player.get_ability_remaining() if player.has_method("get_ability_remaining") else 0.0
+	var key := "%s|%s|%d|%.1f" % [ready, ability_name, roundi(ratio * 128.0), secs]
+	if key != _last_drawn_key:
+		_last_drawn_key = key
+		queue_redraw()
 
 
 func _draw() -> void:

@@ -385,14 +385,17 @@ Hard invariants (repo law — violating any is a blocker):
 
 ### Task 10: Ability HUD redraw gating
 
-- [ ] `scripts/ability_hud.gd` `_process`: gate `queue_redraw()` on the DISPLAYED state
+- [x] `scripts/ability_hud.gd` `_process`: gate `queue_redraw()` on the DISPLAYED state
       actually changing. Cache the last-drawn tuple — ready flag, ability name, the
       cooldown ratio quantized to arc-visible steps (e.g. `roundi(ratio * 128.0)`), and
       the remaining-seconds string (`"%.1f"`) — and redraw only when any differ (or when
       the player reference was just [re]acquired). While the ability is READY and
       nothing changes (the common case), the HUD costs zero redraws. Update the
       "redrawing each frame … is cheap" comment (:41) to explain the new gate.
-- [ ] Run `godot --headless --path . --quit-after 2` — must be clean.
+      (Implemented as one composed string key `ready|name|quantized|secs` — a single
+      compare, no tuple plumbing; empty string = force-redraw sentinel on [re]acquire.)
+- [x] Run `godot --headless --path . --quit-after 2` — must be clean.
+      Fully clean run (post-Task-9 import cache), exit 0, zero errors.
 
 ### Task 11: Verify acceptance criteria + docs
 
