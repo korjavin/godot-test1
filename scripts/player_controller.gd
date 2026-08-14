@@ -37,6 +37,14 @@ const TURN_SPEED: float = 2.6
 const STEP_SPEED: float = 5.5
 const STEP_DURATION: float = 0.28
 
+## How quickly horizontal velocity approaches the input's target speed, in m/s².
+## Instead of snapping instantly to full speed the moment W is pressed, velocity
+## ramps toward it — at 40 m/s² a standing start reaches walk speed (5 m/s) in
+## ~0.125 s. Barely perceptible as "sluggishness", but it gives starts and
+## direction changes a sense of weight. Stopping keeps the separate friction
+## branch below, which was already gradual.
+const MOVE_ACCELERATION: float = 40.0
+
 # ============================================================================
 # SECTION 2: JUMP AND PHYSICS CONSTANTS
 # ============================================================================
@@ -299,6 +307,13 @@ var original_rotations: Dictionary = {}
 
 ## Track if character was on floor last frame (for landing detection)
 var was_on_floor: bool = true
+
+## Footstep tracking: the sign of the walk-cycle sine last frame. Each sign flip
+## of sin(time_factor) is one leg passing through centre — i.e. one foot
+## planting — so flips are exactly the footstep moments, at any walk/run speed.
+## 0 means "not walking" (the reset state), so the first frame of a new walk
+## just records the sign instead of mis-firing a step.
+var _last_walk_sine_sign: int = 0
 
 # ============================================================================
 # INITIALIZATION
@@ -605,9 +620,10 @@ func _physics_process(delta: float) -> void:
 		planar_velocity += step_dir * STEP_SPEED
 
 	if planar_velocity != Vector3.ZERO:
-		# Set horizontal velocity (X and Z)
-		velocity.x = planar_velocity.x
-		velocity.z = planar_velocity.z
+		# Accelerate toward the target velocity instead of snapping to it —
+		# see MOVE_ACCELERATION in SECTION 1 for the feel rationale.
+		velocity.x = move_toward(velocity.x, planar_velocity.x, MOVE_ACCELERATION * delta)
+		velocity.z = move_toward(velocity.z, planar_velocity.z, MOVE_ACCELERATION * delta)
 	else:
 		# No input: gradually slow down (friction)
 		velocity.x = move_toward(velocity.x, 0, current_speed * delta * 10.0)
@@ -1093,6 +1109,14 @@ func update_character_animation(delta: float, input_dir: Vector2) -> void:
 	else:
 		animate_idle(delta)
 
+	# Not in the walking state (idle, airborne)? Reset the footstep tracker to
+	# its "no history" sentinel so the first frame of the next walk records the
+	# sine sign instead of mis-firing a phantom step. (A sidestep deliberately
+	# does NOT reset it — the walk cycle resumes where it left off, and a step
+	# sound on the post-sidestep foot plant is a real plant anyway.)
+	if not (is_moving and current_on_floor):
+		_last_walk_sine_sign = 0
+
 	# Update floor tracking
 	was_on_floor = current_on_floor
 
@@ -1116,6 +1140,16 @@ func animate_walking(delta: float, speed_multiplier: float) -> void:
 	var time_factor = animation_time * walk_speed
 	var arm_swing = sin(time_factor) * arm_swing_amount
 	var leg_swing = sin(time_factor) * leg_swing_amount
+
+	# Footstep sounds, keyed to the walk cycle itself: each sign flip of the
+	# swing sine is a leg passing through centre — a foot planting. Because
+	# time_factor already advances 1.5× when running, the step rate speeds up
+	# automatically. Sign 0 is the "just started walking" reset state: record
+	# the current sign silently so the first frame never mis-fires a step.
+	var sine_sign: int = 1 if sin(time_factor) >= 0.0 else -1
+	if _last_walk_sine_sign != 0 and sine_sign != _last_walk_sine_sign and is_on_floor():
+		_sfx("play_footstep")
+	_last_walk_sine_sign = sine_sign
 
 	# Apply rotations (arms and legs swing opposite to each other)
 	left_arm.rotation.x = original_rotations["left_arm"].x + arm_swing

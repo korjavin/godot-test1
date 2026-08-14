@@ -80,10 +80,10 @@ crocs hold aggro more — intended difficulty change per the bead.
 - [x] headless smoke clean
 
 ### Task 4: Horizontal acceleration + footstep events
-- [ ] `scripts/player_controller.gd` STEP 8 (~:582-585): replace the direct `velocity.x/z = planar_velocity.x/z` assignment with `move_toward` toward the target at `const MOVE_ACCELERATION: float = 40.0` m/s² (`velocity.x = move_toward(velocity.x, planar_velocity.x, MOVE_ACCELERATION * delta)`, same for z); the no-input friction branch stays as-is
-- [ ] `animate_walking` (~:1074): footstep events from the walk-sine zero crossings — track the sign of `sin(time_factor)` in a member var (`_last_walk_sine_sign`); on a sign flip (each flip = one foot planting) call `_sfx("play_footstep")` — but only while `is_on_floor()`; rate scales with `is_running` automatically because `time_factor` already advances 1.5× when running
-- [ ] reset `_last_walk_sine_sign` state cleanly when not walking so a first step after idle doesn't mis-fire
-- [ ] headless smoke clean
+- [x] `scripts/player_controller.gd` STEP 8 (~:582-585): replace the direct `velocity.x/z = planar_velocity.x/z` assignment with `move_toward` toward the target at `const MOVE_ACCELERATION: float = 40.0` m/s² (`velocity.x = move_toward(velocity.x, planar_velocity.x, MOVE_ACCELERATION * delta)`, same for z); the no-input friction branch stays as-is
+- [x] `animate_walking` (~:1074): footstep events from the walk-sine zero crossings — track the sign of `sin(time_factor)` in a member var (`_last_walk_sine_sign`); on a sign flip (each flip = one foot planting) call `_sfx("play_footstep")` — but only while `is_on_floor()`; rate scales with `is_running` automatically because `time_factor` already advances 1.5× when running
+- [x] reset `_last_walk_sine_sign` state cleanly when not walking so a first step after idle doesn't mis-fire (reset to a 0 sentinel in `update_character_animation` whenever the walking state isn't active; sidestep deliberately keeps the cycle history)
+- [x] headless smoke clean
 
 ### Task 5: Camera rig — SpringArm3D, shake via offsets, FP bypass, eased keyboard turn, speed FOV
 The trickiest task. **SpringArm3D gotcha: it OVERRIDES its Node3D children's local position
