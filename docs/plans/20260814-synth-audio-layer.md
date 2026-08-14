@@ -71,11 +71,11 @@
 - [x] every hook is null-safe (`if sm and sm.has_method(...)`) so any scene running without Main (e.g. a character scene in isolation) never errors
 
 ### Task 4: Verify acceptance criteria
-- [ ] verify all sounds exist and are distinct in code (different waveform/envelope/pitch per sound); wind volume constant is clearly far below the one-shots
-- [ ] verify NO audio asset files were added (`git status` — only .gd/.tscn/plan changes)
-- [ ] verify `main.tscn` diff is minimal: one ext_resource line, load_steps bump, one node block
-- [ ] verify no `play_*` call can run before `unlock_audio()` (grep the early-return guard)
-- [ ] if a `godot` binary is on PATH: run `godot --headless --path . --quit-after 2` and confirm no script parse errors; otherwise do a careful self-review of every edited file for syntax (balanced indents, typed signatures)
+- [x] verify all sounds exist and are distinct in code (different waveform/envelope/pitch per sound); wind volume constant is clearly far below the one-shots (wind −26 dB vs one-shots −6..−10 dB; sine chirp / rising sweep / low thud / noise swell / square sweep / minor phrase / looped low-passed noise)
+- [x] verify NO audio asset files were added (`git status` — only .gd/.tscn/.uid/plan changes)
+- [x] verify `main.tscn` diff is minimal: one ext_resource line, load_steps 17→18, one node block
+- [x] verify no `play_*` call can run before `unlock_audio()` (all play_* funnel through `_play_oneshot`, which early-returns on `!_unlocked`; the only other `.play()` is the wind loop inside `unlock_audio()` itself)
+- [x] if a `godot` binary is on PATH: run `godot --headless --path . --quit-after 2` and confirm no script parse errors; otherwise do a careful self-review of every edited file for syntax (balanced indents, typed signatures) — ran on Godot 4.5.stable, exit 0, no parse errors
 
 ### Task 5: [Final] Update documentation
 - [ ] add a short "Synthesized audio" subsection to CLAUDE.md's Architecture section: the `sound_manager` group contract, the play_* API, the web unlock gesture rule, and the "no audio assets — everything is generated at _ready()" invariant
