@@ -120,5 +120,11 @@ func _on_body_entered(body: Node) -> void:
 	if body.has_method("collect_coin"):
 		body.collect_coin(value)
 
+	# Pickup blip. The MANAGER owns the audio players — this coin queue_free()s
+	# itself right below, so a sound attached to this dying node would be cut off.
+	var sm := get_tree().get_first_node_in_group("sound_manager")
+	if sm and sm.has_method("play_coin"):
+		sm.play_coin()
+
 	# Remove the coin now that it's been picked up.
 	queue_free()
