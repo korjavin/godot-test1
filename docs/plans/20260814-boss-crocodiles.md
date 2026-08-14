@@ -155,7 +155,7 @@
       to before.
 
 ### Task 3: Deterministic boss spawner in endless_terrain.gd
-- [ ] Add boss constants near the road config section of
+- [x] Add boss constants near the road config section of
       `scripts/endless_terrain.gd`, teaching-style comments included:
       `BOSS_INTERVAL_STATIONS: int = 50` (at 6 m/station ≈ every 300 m of road,
       inside the requested 250–400 m), `BOSS_BASE_SCALE: float = 2.5` (clearly
@@ -166,7 +166,7 @@
       station along the road so the player sees it looming ahead), and
       `BOSS_SEED: int = 0xB0_55` (its OWN independent hash stream, like
       `ROAD_COIN_SEED` — never consumes existing RNG draws).
-- [ ] Add `func _boss_at(i: int) -> Dictionary` returning
+- [x] Add `func _boss_at(i: int) -> Dictionary` returning
       `{ "pos": Vector3, "scale": float }` for boss index `i >= 1` (station
       `k = i * BOSS_INTERVAL_STATIONS`; only forward stations get bosses — the
       player spawns at station 0 and the road trends +X; no boss at spawn).
@@ -180,7 +180,7 @@
       so boss 1 is exactly `BOSS_BASE_SCALE` and each successive boss is visibly
       bigger until the cap. Requires the station cache to already cover `k`
       (documented; the caller extends first, like `_road_coins_at`).
-- [ ] Add `func spawn_bosses_in_chunk(chunk_pos: Vector2i, parent_chunk:
+- [x] Add `func spawn_bosses_in_chunk(chunk_pos: Vector2i, parent_chunk:
       MeshInstance3D) -> void` following `spawn_coins_in_chunk`'s claim pattern:
       pad = `BOSS_LATERAL_MAX + BOSS_FORWARD_OFFSET + 2.0`; `_road_extend_to_x`
       over the padded chunk X-window; find the smallest boss index `i` whose
@@ -196,7 +196,7 @@
       No rotation draw needed — face along the road heading
       (`rotation.y = atan2(...)` from the station heading) or leave default;
       whatever is chosen must not consume any shared RNG.
-- [ ] Call `spawn_bosses_in_chunk(chunk_pos, mesh_instance)` from `create_chunk`,
+- [x] Call `spawn_bosses_in_chunk(chunk_pos, mesh_instance)` from `create_chunk`,
       gated on `spawn_crocodiles`, right after the existing crocodile spawns.
       Confirm by reading the diff that NO existing RNG stream (chunk object rng,
       croc rng, platform rng, road coin rng) gained/lost/reordered a single draw.

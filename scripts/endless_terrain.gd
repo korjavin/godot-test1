@@ -253,6 +253,39 @@ const ROAD_NARROW_FLOOR_FACTOR: float = 0.4
 ## and the eye would read regular rows; this staggers them so the swath looks organic.
 const ROAD_COIN_LONG_JITTER: float = 0.5
 
+# ----------------------------------------------------------------------------
+# BOSS CROCODILES (deterministic, station-indexed placement along the coin road)
+# ----------------------------------------------------------------------------
+## A boss crocodile stands on the road every BOSS_INTERVAL_STATIONS stations —
+## at 6 m/station that's one boss roughly every 300 m of road. Boss index `i`
+## (1, 2, 3, ...) owns station k = i * BOSS_INTERVAL_STATIONS; station 0 is the
+## player spawn and the road trends +X, so only forward stations get bosses.
+const BOSS_INTERVAL_STATIONS: int = 50
+
+## Size schedule: boss `i` scales the whole croc body by
+## min(BOSS_BASE_SCALE * (1 + (i-1) * BOSS_GROWTH), BOSS_MAX_SCALE)
+## → 2.5, 3.375, 4.25, 5.125, 6.0, 6.0, ... Each boss is visibly bigger than the
+## last until the cap. BOSS_BASE_SCALE (2.5x) is clearly bigger than the biggest
+## regular croc's random +25% size roll, so a boss always reads as "not a normal one".
+const BOSS_BASE_SCALE: float = 2.5
+const BOSS_GROWTH: float = 0.35
+const BOSS_MAX_SCALE: float = 6.0
+
+## A small deterministic lateral offset off the centerline (±this, in meters), so
+## bosses don't all stand dead-center on the road like a row of toll booths.
+const BOSS_LATERAL_MAX: float = 4.0
+
+## Spawn a bit AHEAD of the owning station along the road tangent, so the player
+## sees the boss looming up the road rather than materializing beside them.
+const BOSS_FORWARD_OFFSET: float = 8.0
+
+## Fixed seed for the boss placement RNG — its OWN independent hash stream (like
+## ROAD_COIN_SEED), mixed with the boss index and run_seed as
+## hash(Vector3i(i, BOSS_SEED, run_seed)). It never consumes a draw from any
+## existing chunk/coin/croc RNG sequence, so adding bosses regenerates the rest
+## of the procedural world byte-for-byte identically.
+const BOSS_SEED: int = 0xB0_55  # "BOSS"-ish; arbitrary fixed constant
+
 # ============================================================================
 # SECTION 2: INTERNAL STATE
 # ============================================================================
@@ -845,6 +878,9 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 		spawn_crocodiles_in_chunk(chunk_pos, mesh_instance, obstacles)
 		# Rare crocodiles that patrol an elevated platform (pyramid top / wall ridge)
 		spawn_platform_crocodiles(chunk_pos, mesh_instance, platforms)
+		# Rare BOSS crocodiles guarding the coin road (deterministic, station-
+		# indexed — its own BOSS_SEED hash stream, no shared RNG draws consumed)
+		spawn_bosses_in_chunk(chunk_pos, mesh_instance)
 
 	# Lay this chunk's slice of the coin road (deterministic station-indexed trail;
 	# coins sit at ground height, perching on a climbable block where the road
@@ -1536,6 +1572,111 @@ func spawn_platform_crocodiles(chunk_pos: Vector2i, parent_chunk: MeshInstance3D
 			crocodile.set_confinement(center_global, half)
 
 		count += 1
+
+func _boss_at(i: int) -> Dictionary:
+	"""
+	Deterministic placement + size for boss index `i` (>= 1). Pure function of
+	`i` + run_seed via the independent BOSS_SEED hash stream — no shared RNG is
+	touched, so the rest of the world regenerates byte-identically.
+
+	@param i: Boss index (1-based). Owns station k = i * BOSS_INTERVAL_STATIONS.
+	          ASSUMES the station cache already covers `k` (callers
+	          _road_extend_to_x first, like _road_coins_at).
+	@return: { "pos": Vector3 (world-space), "scale": float (body scale) }.
+
+	EDUCATIONAL NOTE:
+	- The RNG draws ONLY the lateral offset (one draw, fixed order), so boss
+	  placement is stable within a run: revisiting a chunk regenerates the
+	  identical boss. Across runs, run_seed changes BOTH the road and this
+	  stream, so bosses land elsewhere.
+	- Y sits a little above ground; gravity settles the body (the croc's capsule
+	  bottom is at its origin, so this works at any scale).
+	"""
+	var k := i * BOSS_INTERVAL_STATIONS
+	var st: Dictionary = _road_station(k)
+	var heading: float = st.heading
+	# Same tangent/perp construction as _road_coins_at (XZ plane; Vector2.x ->
+	# world X, Vector2.y -> world Z).
+	var tangent := Vector2(cos(heading), sin(heading))
+	var perp := Vector2(-sin(heading), cos(heading))
+
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(Vector3i(i, BOSS_SEED, run_seed))
+	var lateral := rng.randf_range(-1.0, 1.0) * BOSS_LATERAL_MAX
+
+	var p: Vector2 = st.center + tangent * BOSS_FORWARD_OFFSET + perp * lateral
+	# Size schedule: boss 1 is exactly BOSS_BASE_SCALE, each successive boss is
+	# BOSS_GROWTH of base bigger, capped at BOSS_MAX_SCALE (see the consts above).
+	var body_scale := minf(BOSS_BASE_SCALE * (1.0 + float(i - 1) * BOSS_GROWTH), BOSS_MAX_SCALE)
+	return { "pos": Vector3(p.x, 0.6, p.y), "scale": body_scale }
+
+func spawn_bosses_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D) -> void:
+	"""
+	Spawn this chunk's boss crocodiles — the rare road-guarding giants placed every
+	BOSS_INTERVAL_STATIONS stations along the coin road (see the BOSS CROCODILES
+	config section near the top).
+
+	Follows spawn_coins_in_chunk's seam-claim pattern exactly: extend the shared
+	station cache over this chunk's padded X-window, walk the boss indices whose
+	stations fall inside it, and spawn ONLY the bosses whose FINAL world position
+	lands in THIS chunk (world_to_chunk(pos) == chunk_pos) — each boss is claimed
+	by exactly one chunk, so there are no seam gaps or duplicates.
+
+	@param chunk_pos: Chunk coordinates this call is generating bosses for.
+	@param parent_chunk: The chunk mesh to attach bosses to. Chunk parenting is a
+	                     FEATURE here: outrunning a boss far enough unloads its
+	                     chunk and frees the boss with it — which reads to the
+	                     player as "you escaped it".
+	"""
+	if not crocodile_scene:
+		return
+
+	# Padded chunk X-window, same shape as the coin scan: a boss's world X can
+	# differ from its station's centerline X by at most the forward offset plus
+	# the lateral offset (each projection is bounded by its magnitude), so this
+	# pad guarantees no boss near a seam is ever missed by the chunk that owns it.
+	var center := chunk_to_world(chunk_pos)
+	var half_chunk := chunk_size / 2.0
+	var x0 := center.x - half_chunk
+	var x1 := center.x + half_chunk
+	var pad := BOSS_LATERAL_MAX + BOSS_FORWARD_OFFSET + 2.0
+
+	_road_extend_to_x(x0 - pad, x1 + pad)
+
+	# Smallest boss index whose station could fall at/after the window start:
+	# round the first in-window station up to the next interval multiple. Bosses
+	# start at index 1 — station 0 is the player spawn, no boss there.
+	var k_start := _road_first_k_at_or_after_x(x0 - pad)
+	var i := maxi(1, ceili(float(k_start) / float(BOSS_INTERVAL_STATIONS)))
+	while true:
+		var cur_i := i
+		i += 1
+		var k := cur_i * BOSS_INTERVAL_STATIONS
+		# Past the cache = past this chunk's padded window (the cache spans it and
+		# centerline X is strictly increasing in k), so we're done either way.
+		if k > road_k_max:
+			break
+		if _road_station(k).center.x > x1 + pad:
+			break
+
+		var boss: Dictionary = _boss_at(cur_i)
+		var boss_pos: Vector3 = boss.pos
+		# Exactly-one-chunk claim (see the docstring): only the chunk the boss
+		# actually lands in spawns it.
+		if world_to_chunk(boss_pos) != chunk_pos:
+			continue
+
+		var croc = crocodile_scene.instantiate()
+		croc.name = "BossCrocodile_%d" % cur_i
+		# Chunk-LOCAL position (relative to the chunk center), like every other
+		# chunk-parented node. Default rotation — the wander AI turns it within a
+		# second anyway, and drawing a rotation would add an RNG draw for nothing.
+		croc.position = Vector3(boss_pos.x - center.x, boss_pos.y, boss_pos.z - center.z)
+		# CALL-ORDER CONTRACT: setup_as_boss BEFORE add_child, so the croc's
+		# _ready (which runs on add_child, terrain-parented) sees the boss flags
+		# and skips its random speed/size rolls in favor of the schedule.
+		croc.setup_as_boss(boss.scale)
+		parent_chunk.add_child(croc)
 
 # ============================================================================
 # COIN ROAD MATH (deterministic, pure-in-k parametric centerline + coin placement)
