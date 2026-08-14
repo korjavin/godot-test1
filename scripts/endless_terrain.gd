@@ -1626,7 +1626,7 @@ func _road_extend_to_x(x_min: float, x_max: float) -> void:
 
 	var max_heading := _road_max_heading()
 	# Clamped effective step distance — strictly positive, so X always advances and the
-	# extend loops below terminate. At the default 7.0 this is inert (returns 7.0).
+	# extend loops below terminate. At the default 6.0 this is inert (returns 6.0).
 	var spacing := _road_spacing()
 
 	# First-time seeding: station 0 at world origin, heading along +X (0 rad).
@@ -1707,8 +1707,8 @@ func _road_spacing() -> float:
 	  the step to be strictly POSITIVE. A spacing of 0 freezes X (loop never reaches its
 	  target → editor/game HANG); a negative spacing runs X backward (same hang). Asserts
 	  are stripped from release builds, so — exactly like _road_max_heading() — we ALSO
-	  clamp at read time here and route EVERY road step through this. At the default 7.0
-	  the clamp is inert (returns 7.0), so coin positions are unchanged.
+	  clamp at read time here and route EVERY road step through this. At the default 6.0
+	  the clamp is inert (returns 6.0), so coin positions are unchanged.
 	"""
 	return maxf(road_coin_spacing, 0.1)
 

@@ -14,11 +14,12 @@ config/name="Zelda-like Educational Game"
 config/description="A 3rd person adventure game for learning Godot"
 run/main_scene="res://scenes/main.tscn"
 config/features=PackedStringArray("4.5", "Forward Plus")
-; Boot splash background: the sky-horizon tone (#5a6570). Shown instead of the
+; Boot splash background: the sky-horizon tone (#d9dbcc — must track
+; sky_horizon_color/FOG_COLOR (0.85, 0.86, 0.80)). Shown instead of the
 ; default black while the engine starts, and the web export substitutes it into
 ; the page's loading overlay ($GODOT_SPLASH_COLOR), so there is no black flash
 ; at any load stage. No boot_splash/image on purpose — plain color only.
-boot_splash/bg_color=Color(0.353, 0.396, 0.439, 1)
+boot_splash/bg_color=Color(0.85, 0.86, 0.8, 1)
 config/icon="res://icon.svg"
 
 [display]
