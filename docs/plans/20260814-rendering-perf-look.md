@@ -96,16 +96,16 @@ Hard invariants (repo law — violating any is a blocker):
 
 ### Task 1: Terrain quick wins — prints, Dictionary membership, shared ground mesh
 
-- [ ] `scripts/endless_terrain.gd`: delete the two PER-CHUNK `print()` calls — the
+- [x] `scripts/endless_terrain.gd`: delete the two PER-CHUNK `print()` calls — the
       "Spawned %d crocodiles…" (:1382, with its `if spawned_positions.size() > 0` guard)
       and "Spawned %d patrolling crocodile(s)…" (:1431, with its `if count > 0` guard).
       Keep the one-time `_ready()` and `new_run()` prints — they fire once, not per chunk.
-- [ ] `scripts/endless_terrain.gd` `update_chunks`: replace the O(n²) Array membership
+- [x] `scripts/endless_terrain.gd` `update_chunks`: replace the O(n²) Array membership
       (`chunk_pos not in chunks_to_load` — a linear scan per active chunk, and again per
       candidate) with a Dictionary keyed by `Vector2i` (value `true`); membership becomes
       O(1) hash lookups. Keep the same load/remove/create semantics. Add a short teaching
       comment about why Dictionary membership beats Array `in` here.
-- [ ] `scripts/endless_terrain.gd`: add a `_get_shared_ground_mesh()` lazy getter (same
+- [x] `scripts/endless_terrain.gd`: add a `_get_shared_ground_mesh()` lazy getter (same
       pattern and placement as `_get_shared_unit_box_mesh`, :358) returning ONE
       `PlaneMesh` shared by all chunks: `size = Vector2(chunk_size, chunk_size)`,
       `subdivide_width = 16`, `subdivide_depth = 16` (16×16 — enough vertices for the
@@ -115,11 +115,16 @@ Hard invariants (repo law — violating any is a blocker):
       hookup must happen AFTER `terrain_material` exists (getter runs post-`_ready`, so
       reading `terrain_material` inside the getter is safe — but guard the order anyway
       by assigning the material inside the getter from the current `terrain_material`).
-- [ ] `scripts/endless_terrain.gd` `create_chunk`: set
+- [x] `scripts/endless_terrain.gd` `create_chunk`: set
       `mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF` on the
       ground plane — a flat ground plane can only ever shadow itself; skipping it cuts
       every chunk out of the shadow passes for free.
-- [ ] Run `godot --headless --path . --quit-after 2` — must be clean.
+- [x] Run `godot --headless --path . --quit-after 2` — must be clean.
+      ⚠️ Env note: this worktree has no `.godot` import cache, so the headless run
+      shows 20 PRE-EXISTING errors (unimported piglet_crocodile.glb, MobileSensors
+      class-cache misses) — verified identical on the unmodified baseline via
+      `git stash`. Zero errors originate from the edited endless_terrain.gd.
+      "Clean" here = no NEW errors vs baseline.
 
 ### Task 2: Crocodile perf — dead HitBox removal, physics-process sleep, draw-range cull
 

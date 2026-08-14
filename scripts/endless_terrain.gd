@@ -336,6 +336,9 @@ var run_seed: int = 0
 ## transforms carry the per-axis scale, so this single cube becomes every block.
 var _shared_unit_box_mesh: BoxMesh
 
+## The single ground PlaneMesh shared by every chunk (see _get_shared_ground_mesh).
+var _shared_ground_mesh: PlaneMesh
+
 ## Lazily-created shared material for the block MultiMesh. `vertex_color_use_as_albedo`
 ## lets one material show each instance's individual colour. Per-instance roughness
 ## is NOT supported by MultiMesh (only transform + color are per-instance), so we
@@ -365,6 +368,23 @@ func _get_shared_unit_box_mesh() -> BoxMesh:
 		_shared_unit_box_mesh = BoxMesh.new()
 		_shared_unit_box_mesh.size = Vector3.ONE  # unit cube; scaled per-instance
 	return _shared_unit_box_mesh
+
+func _get_shared_ground_mesh() -> PlaneMesh:
+	"""
+	Returns the ONE PlaneMesh shared by every chunk's ground, creating it on first
+	use. All chunks are the same size, so a single mesh serves them all — the old
+	code allocated a fresh subdivided PlaneMesh per chunk for no benefit. 16×16
+	subdivisions give the vertex density the vertex-noise ground shader needs.
+	The material is (re)assigned from the CURRENT terrain_material on every call,
+	so the getter can never capture a stale value regardless of call order.
+	"""
+	if _shared_ground_mesh == null:
+		_shared_ground_mesh = PlaneMesh.new()
+		_shared_ground_mesh.size = Vector2(chunk_size, chunk_size)
+		_shared_ground_mesh.subdivide_width = 16
+		_shared_ground_mesh.subdivide_depth = 16
+	_shared_ground_mesh.material = terrain_material
+	return _shared_ground_mesh
 
 func _get_shared_block_material() -> StandardMaterial3D:
 	"""
@@ -588,13 +608,18 @@ func update_chunks(player_chunk: Vector2i) -> void:
 	- As the player moves, we add/remove chunks at the edges
 	"""
 
-	# STEP 1: Find all chunks that SHOULD be loaded
-	var chunks_to_load: Array[Vector2i] = []
+	# STEP 1: Find all chunks that SHOULD be loaded.
+	#
+	# We store them as Dictionary KEYS (value `true`), not an Array, because the
+	# membership test in STEP 2 (`in`) is an O(1) hash lookup on a Dictionary but a
+	# LINEAR scan on an Array — with 121 desktop chunks that Array version was
+	# 121×121 comparisons per boundary crossing. Same semantics, hash-speed lookup.
+	var chunks_to_load: Dictionary = {}
 
 	for x in range(-render_distance, render_distance + 1):
 		for z in range(-render_distance, render_distance + 1):
 			var chunk_pos := Vector2i(player_chunk.x + x, player_chunk.y + z)
-			chunks_to_load.append(chunk_pos)
+			chunks_to_load[chunk_pos] = true
 
 	# STEP 2: Remove chunks that are too far away
 	var chunks_to_remove: Array[Vector2i] = []
@@ -627,14 +652,13 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 	var mesh_instance := MeshInstance3D.new()
 	mesh_instance.name = "Chunk_%d_%d" % [chunk_pos.x, chunk_pos.y]
 
-	# Create the plane mesh
-	var plane_mesh := PlaneMesh.new()
-	plane_mesh.size = Vector2(chunk_size, chunk_size)
-	plane_mesh.subdivide_width = 10  # More subdivisions = smoother mesh
-	plane_mesh.subdivide_depth = 10
-	plane_mesh.material = terrain_material
+	# All chunks share ONE PlaneMesh resource (see _get_shared_ground_mesh) —
+	# allocating a fresh subdivided mesh per chunk was pure waste.
+	mesh_instance.mesh = _get_shared_ground_mesh()
 
-	mesh_instance.mesh = plane_mesh
+	# A flat ground plane can only ever shadow itself — skip it in the shadow
+	# passes entirely. Blocks/crocs still cast onto it; it just casts nothing.
+	mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 
 	# Position the chunk in the world
 	mesh_instance.position = chunk_to_world(chunk_pos)
@@ -1378,9 +1402,6 @@ func spawn_crocodiles_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D
 		parent_chunk.add_child(crocodile_instance)
 		spawned_positions.append(crocodile_pos)
 
-	if spawned_positions.size() > 0:
-		print("Spawned %d crocodiles in chunk (%d, %d)" % [spawned_positions.size(), chunk_pos.x, chunk_pos.y])
-
 func spawn_platform_crocodiles(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, platforms: Array) -> void:
 	"""
 	Place rare crocodiles that patrol an elevated structure top (a pyramid apex or
@@ -1426,9 +1447,6 @@ func spawn_platform_crocodiles(chunk_pos: Vector2i, parent_chunk: MeshInstance3D
 			crocodile.set_confinement(center_global, half)
 
 		count += 1
-
-	if count > 0:
-		print("Spawned %d patrolling crocodile(s) in chunk (%d, %d)" % [count, chunk_pos.x, chunk_pos.y])
 
 # ============================================================================
 # COIN ROAD MATH (deterministic, pure-in-k parametric centerline + coin placement)
