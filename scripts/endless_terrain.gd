@@ -34,9 +34,9 @@ extends Node3D
 ##
 ## The catch is that a smaller view normally reveals the "edge of the world" — the last
 ## ring of chunks just stops, with sky beyond it. We hide that edge with depth fog (set
-## up below in _ready, web only) coloured like the sky horizon, so the nearer world edge
+## up below in _ready) coloured like the sky horizon, so the nearer world edge
 ## dissolves into the sky and the field still FEELS endless. Desktop keeps the full 5
-## and never gets fog, so it is visually unchanged.
+## chunks of view and gets a much thinner fog (see FOG_DENSITY_DESKTOP below).
 ##
 ## TUNABLE: 3 is a good default. If the visible world feels too tight in the browser,
 ## bump this to 4 (and, if you do, you may want to lower the fog density a touch so the
@@ -44,22 +44,37 @@ extends Node3D
 const WEB_RENDER_DISTANCE: int = 3
 
 # ----------------------------------------------------------------------------
-# WEB-ONLY DEPTH FOG (masks the reduced view distance — see _setup_web_fog)
+# UNIVERSAL DEPTH FOG (see _setup_fog)
 # ----------------------------------------------------------------------------
 ##
-## Fog colour: the sky horizon grey from main.tscn's ProceduralSkyMaterial
-## (sky_horizon_color ≈ 0.646, 0.656, 0.671). Matching the horizon makes the fogged-out
-## world edge blend seamlessly into the sky instead of reading as a coloured haze.
-const WEB_FOG_COLOR: Color = Color(0.646, 0.656, 0.671)
+## Fog runs on EVERY platform now — desktop and editor included. This is an intentional,
+## owner-sanctioned desktop visual change: the ONE deliberate exception to this repo's
+## "visual changes are web-gated" rule. On web the fog is thick and masks the reduced
+## view distance (its original job); on desktop it is a thin depth haze that dissolves
+## the far horizon instead of showing a hard world edge. Only the DENSITY stays
+## platform-gated, because density is a view-distance/perf concern, not a look concern.
+##
+## Fog colour: the sky horizon colour from main.tscn's ProceduralSkyMaterial
+## (sky_horizon_color = ground_horizon_color = 0.85, 0.86, 0.80). Matching the horizon
+## makes the fogged-out world edge blend seamlessly into the sky instead of reading as a
+## coloured haze. CONTRACT: if the sky horizon colour ever changes, this constant moves
+## with it — all three values are one colour.
+const FOG_COLOR: Color = Color(0.85, 0.86, 0.80)
 
-## Exponential fog density. The reduced web view reaches render_distance(3) ×
+## Exponential fog density, WEB value. The reduced web view reaches render_distance(3) ×
 ## chunk_size(50) = ~150 m to the nearest chunk edge and ~175 m to the far corner, so we
 ## want visibility to fade out around there. 0.005 gives roughly ~150–250 m of visibility
 ## (exponential fog has no hard cutoff — it thickens with distance), which tucks the chunk
 ## boundary into the haze without fogging the playable area near the player.
 ## TUNABLE: raise toward 0.006 for a closer/denser edge, lower toward 0.004 for a more
 ## open feel (or if you bump WEB_RENDER_DISTANCE to 4).
-const WEB_FOG_DENSITY: float = 0.005
+const FOG_DENSITY_WEB: float = 0.005
+
+## Exponential fog density, DESKTOP/EDITOR value. Desktop sees ~250–275 m of chunks
+## (render_distance 5), so the fog must sit much further out: 0.0022 is a soft depth
+## haze that only reads near the far edge of the view, giving aerial perspective
+## without eating the playable area.
+const FOG_DENSITY_DESKTOP: float = 0.0022
 
 ## Terrain height variation (for future procedural generation)
 ## Currently we use a flat plane, but this allows for hills/valleys
@@ -507,11 +522,11 @@ func _ready() -> void:
 		terrain_material.albedo_color = Color(0.2, 0.6, 0.2)  # Green grass color
 		terrain_material.roughness = 0.8
 
-	# WEB-ONLY: enable the depth fog that masks the reduced view distance. Done after the
+	# Enable the depth fog on ALL platforms (thick on web to mask the reduced view
+	# distance, thin on desktop as a horizon haze — see _setup_fog). Done after the
 	# player is found (so we know the scene tree is ready) but it only touches the
-	# WorldEnvironment, not the player. Gated strictly behind OS.has_feature("web") inside
-	# the helper, so desktop/editor get NO fog.
-	_setup_web_fog()
+	# WorldEnvironment, not the player.
+	_setup_fog()
 
 	print("Endless Terrain System initialized!")
 	# Log the platform and the EFFECTIVE render distance so it's obvious in the web
@@ -521,24 +536,18 @@ func _ready() -> void:
 	print("Render distance: ", render_distance, " chunks")
 	print("Crocodiles per chunk: ", crocodiles_per_chunk if spawn_crocodiles else 0)
 
-func _setup_web_fog() -> void:
+func _setup_fog() -> void:
 	"""
-	Enable depth fog on the scene's WorldEnvironment — WEB ONLY — so the reduced view
-	distance's nearer world edge dissolves into the sky and the field still feels endless.
+	Enable depth fog on the scene's WorldEnvironment — on EVERY platform.
 
-	Desktop and the editor never enter the web branch, so they get NO fog and stay
-	visually identical to before this change.
-
-	WHY FOG (and why web-only): on web we shrink render_distance (see WEB_RENDER_DISTANCE),
-	which would otherwise expose the hard "edge of the world" where the last ring of chunks
-	stops. Fog coloured like the sky horizon hides that boundary in haze, so the smaller
-	world looks like it just fades into the distance. Desktop keeps the full view and needs
-	no such mask.
+	This is an intentional, owner-sanctioned desktop visual change: the one deliberate
+	exception to this repo's "visual changes are web-gated" rule (see the FOG_COLOR
+	comment block up top). Only the DENSITY differs per platform — that's a
+	view-distance/perf concern, so it stays gated:
+	  - web:     FOG_DENSITY_WEB (0.005)      — thick, masks the reduced render distance
+	  - desktop: FOG_DENSITY_DESKTOP (0.0022) — thin depth haze; the long view's horizon
+	                                            dissolves instead of ending at a hard edge
 	"""
-	# Strict web gate: do nothing at all on desktop/editor.
-	if not OS.has_feature("web"):
-		return
-
 	# Find the WorldEnvironment. EndlessTerrain doesn't hold a hard reference to it, but in
 	# main.tscn the two are SIBLINGS under the root "Main" node, so a sibling lookup via our
 	# parent is the simplest robust way to reach it. Guard every step with null checks so a
@@ -548,20 +557,19 @@ func _setup_web_fog() -> void:
 		return
 	var world_env := parent_node.get_node_or_null("WorldEnvironment") as WorldEnvironment
 	if world_env == null:
-		push_warning("Web fog: no sibling WorldEnvironment found; skipping fog setup.")
+		push_warning("Fog: no sibling WorldEnvironment found; skipping fog setup.")
 		return
 
 	var env: Environment = world_env.environment
 	if env == null:
-		push_warning("Web fog: WorldEnvironment has no Environment resource; skipping fog.")
+		push_warning("Fog: WorldEnvironment has no Environment resource; skipping fog.")
 		return
 
 	# DEFENSIVE COPY: the Environment is an inline SubResource shared with the editor scene.
 	# We duplicate it and assign the copy back BEFORE enabling fog, so we mutate a
-	# per-instance copy at runtime rather than the shared resource. This only ever runs on
-	# the web build, but duplicating keeps it clean and avoids any chance of dirtying the
-	# shared sub-resource. (We pass false so it copies the resource itself, not its deep
-	# sub-resources like the Sky, which we want to keep sharing.)
+	# per-instance copy at runtime rather than the shared resource — the editor's saved
+	# scene never sees the fog values. (We pass false so it copies the resource itself,
+	# not its deep sub-resources like the Sky, which we want to keep sharing.)
 	env = env.duplicate(false)
 	world_env.environment = env
 
@@ -569,16 +577,19 @@ func _setup_web_fog() -> void:
 	# Godot 4.5 Environment fog API:
 	#   - fog_enabled            : turn fog on
 	#   - fog_light_color        : the fog's colour (matches the sky horizon → seamless edge)
-	#   - fog_density            : exponential density (controls how quickly distance fades)
-	#   - fog_sun_scatter        : 0 = no bright streak toward the sun, keeping the haze flat
+	#   - fog_density            : exponential density (controls how quickly distance fades);
+	#                              the one platform-gated value — see _setup_fog's docstring
+	#   - fog_sun_scatter        : 0.15 = a gentle bright streak toward the warm key light,
+	#                              so the haze reads sunlit instead of flat grey
 	#   - fog_aerial_perspective : 0 = don't blend the sky into fog for distant geometry
+	var density: float = FOG_DENSITY_WEB if OS.has_feature("web") else FOG_DENSITY_DESKTOP
 	env.fog_enabled = true
-	env.fog_light_color = WEB_FOG_COLOR
-	env.fog_density = WEB_FOG_DENSITY
-	env.fog_sun_scatter = 0.0
+	env.fog_light_color = FOG_COLOR
+	env.fog_density = density
+	env.fog_sun_scatter = 0.15
 	env.fog_aerial_perspective = 0.0
 
-	print("Web fog enabled (density ", WEB_FOG_DENSITY, ", colour ", WEB_FOG_COLOR, ")")
+	print("Fog enabled (density ", density, ", colour ", FOG_COLOR, ")")
 
 func _process(_delta: float) -> void:
 	"""

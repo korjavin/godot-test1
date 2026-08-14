@@ -259,13 +259,13 @@ Hard invariants (repo law — violating any is a blocker):
 
 ### Task 6: Finished sky, UNIVERSAL fog, glow that earns its pass, BCS grade
 
-- [ ] `scenes/main.tscn` `ProceduralSkyMaterial_1`: finish the sky —
+- [x] `scenes/main.tscn` `ProceduralSkyMaterial_1`: finish the sky —
       `sky_top_color = Color(0.25, 0.45, 0.75)`,
       `sky_horizon_color = Color(0.85, 0.86, 0.80)` (warm pale),
       `ground_horizon_color = Color(0.85, 0.86, 0.80)` (match, seamless horizon band),
       `ground_bottom_color` = a desaturated terrain green (e.g. `Color(0.28, 0.33, 0.25)`),
       `sun_curve = 0.08` (visible sun halo; pairs with Task 3's angular_distance disc).
-- [ ] `scenes/main.tscn` `Environment_1`: make glow earn its already-paid pass —
+- [x] `scenes/main.tscn` `Environment_1`: make glow earn its already-paid pass —
       `glow_hdr_threshold = 0.85`, `glow_intensity = 0.6`, `glow_bloom = 0.05`. The
       compatibility renderer hardcodes screen-blend for glow — if it blooms hot, tune
       `glow_intensity` DOWN rather than the threshold up (leave a comment in the plan /
@@ -273,7 +273,10 @@ Hard invariants (repo law — violating any is a blocker):
       `adjustment_enabled = true`, `adjustment_contrast = 1.08`,
       `adjustment_saturation = 1.18`, and `tonemap_white = 1.2`,
       `tonemap_exposure = 1.05` (tonemap_mode stays 2/Filmic).
-- [ ] `scripts/endless_terrain.gd`: make fog UNIVERSAL — this is an intentional,
+      NOTE for future tuners (the .tscn can't carry comments): if glow blooms hot in
+      the compatibility renderer's hardcoded screen-blend, tune `glow_intensity`
+      DOWN — do not raise the threshold.
+- [x] `scripts/endless_terrain.gd`: make fog UNIVERSAL — this is an intentional,
       owner-sanctioned desktop visual change (the one deliberate exception to the
       "visual changes are web-gated" rule; say exactly that in the comments and update
       the stale web-only rationale at :24–62). Concretely: rename `_setup_web_fog` →
@@ -287,7 +290,14 @@ Hard invariants (repo law — violating any is a blocker):
       stays platform-gated even though the fog itself is universal; set
       `fog_sun_scatter = 0.15` (was 0.0 — a gentle bright streak toward the new warm
       sun). Keep the defensive `duplicate()` and the one-time print (update its text).
-- [ ] Run `godot --headless --path . --quit-after 2` — must be clean.
+      ➕ Also updated the stale `_setup_web_fog` cross-reference in coin.gd's
+      make_gem() docstring to the new `_setup_fog` name.
+- [x] Run `godot --headless --path . --quit-after 2` — must be clean.
+      ⚠️ Same env note as Tasks 1–5: pre-existing unimported-glb + MobileSensors
+      class-cache errors only; unique-error set diffed against the stashed baseline —
+      sole difference is backtrace line numbers shifting (endless_terrain.gd grew by
+      ~15 comment lines). Headless run confirms the desktop fog path fires:
+      "Fog enabled (density 0.0022, colour (0.85, 0.86, 0.8, 1.0))".
 
 ### Task 7: Ground vertex-noise shader
 

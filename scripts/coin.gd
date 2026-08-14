@@ -106,7 +106,7 @@ func make_gem() -> void:
 	EDUCATIONAL NOTE — duplicate, never mutate, the shared material: every coin
 	instance shares the material resource baked into coin.tscn. Recolouring it
 	in place would turn EVERY coin in the world purple (same defensive-duplicate
-	pattern as _setup_web_fog in endless_terrain.gd).
+	pattern as _setup_fog in endless_terrain.gd).
 	"""
 	value = GEM_VALUE
 
