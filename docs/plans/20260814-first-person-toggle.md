@@ -75,15 +75,15 @@
       (it enumerates the actions; keep it accurate).
 
 ### Task 2: First-person state + toggle in player_controller.gd
-- [ ] Add constants near the other camera constants (SECTION 3, with teaching comments):
+- [x] Add constants near the other camera constants (SECTION 3, with teaching comments):
       `FIRST_PERSON_EYE_HEIGHT: float = 1.65` (eye Y above the feet at normal scale —
       just under the ~1.8 m character head top) and
       `FIRST_PERSON_FORWARD_OFFSET: float = 0.2` (small −Z nudge so face/nose geometry
       never clips even if a model is ever left visible).
-- [ ] Add state near the other camera vars: `var first_person: bool = false` and
+- [x] Add state near the other camera vars: `var first_person: bool = false` and
       `var third_person_camera_transform: Transform3D` cached from `camera.transform`
       in `_ready()` (right where `camera_rest_position` is captured today).
-- [ ] Add `_set_first_person(enabled: bool) -> void` that sets the flag and calls a new
+- [x] Add `_set_first_person(enabled: bool) -> void` that sets the flag and calls a new
       `_apply_view_mode() -> void` which does ALL the work idempotently:
       - **FP**: `camera.transform = Transform3D(Basis.IDENTITY, _first_person_eye_position())`
         — identity basis zeroes the baked −15° pitch so the pivot's pitch alone is the
@@ -92,17 +92,17 @@
         show the model (`character_container.visible = true`).
       - **Both**: refresh `camera_rest_position = camera.position` so the bite-shake
         snap-back targets the current view's rest spot (see Context — this is the trap).
-- [ ] Add `_first_person_eye_position() -> Vector3` helper: local position under the
+- [x] Add `_first_person_eye_position() -> Vector3` helper: local position under the
       pivot = `Vector3(0.0, scale_y * FIRST_PERSON_EYE_HEIGHT - camera_pivot.position.y,
       -FIRST_PERSON_FORWARD_OFFSET * scale_y)` where
       `scale_y := collision_shape.scale.y if collision_shape else 1.0` — deriving from
       the collision shape means Teibi's small/giant forms move the eyes automatically.
-- [ ] Poll the toggle in `_physics_process` alongside the other
+- [x] Poll the toggle in `_physics_process` alongside the other
       `Input.is_action_just_pressed` polls (jump/special):
       `if Input.is_action_just_pressed("toggle_camera"): _set_first_person(not first_person)`.
       Polling (not `_input`) keeps it friendly to synthesized touch input per the
       CLAUDE.md gotcha. Teaching comment explaining the choice.
-- [ ] Mouse-look needs NO change: it only touches body yaw + pivot pitch, which drive
+- [x] Mouse-look needs NO change: it only touches body yaw + pivot pitch, which drive
       both views identically. Verify the ±60° pitch clamp reads fine in FP (it does —
       leave the clamp constants alone).
 
