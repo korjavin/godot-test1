@@ -159,21 +159,29 @@ Hard invariants (repo law — violating any is a blocker):
 
 ### Task 3: Shadow tuning + art-directed key light (main.tscn)
 
-- [ ] `scenes/main.tscn` `DirectionalLight3D`: add shadow tuning —
+- [x] `scenes/main.tscn` `DirectionalLight3D`: add shadow tuning —
       `directional_shadow_mode = 1` (2 splits instead of 4),
       `directional_shadow_max_distance = 55.0`,
       `directional_shadow_blur = 1.2`,
-      `directional_shadow_normal_bias = 0.8`.
+      `shadow_normal_bias = 0.8`.
+      ➕ Property-name fix: the plan said `directional_shadow_normal_bias`, but the
+      real Godot 4 Light3D property is `shadow_normal_bias` — used the real name so
+      the value actually applies.
       1024 px (web) spread over 55 m / 2 splits ≈ crisper contact shadows AND a 2–4×
       cheaper shadow pass than 100 m / 4 splits.
-- [ ] `scenes/main.tscn` `DirectionalLight3D`: art-direct the key —
+- [x] `scenes/main.tscn` `DirectionalLight3D`: art-direct the key —
       `light_color = Color(1, 0.94, 0.82)` (warm), `light_energy = 1.15`,
       `light_angular_distance = 1.5` (also makes the ProceduralSky draw a real sun disc).
       Rotate the sun to ~35° elevation raking SIDEWAYS across the +X run direction
       (e.g. rotation ≈ (-35°, -125°, 0°) so light comes from high-left of the run axis);
       compute the `transform` basis for the .tscn from those Euler angles. Drop the
       irrelevant translation-Y=10 origin or keep it (directional lights ignore position).
-- [ ] Run `godot --headless --path . --quit-after 2` — must be clean.
+      Basis computed from YXZ Euler (-35°, -125°, 0°), verified 35.0° elevation;
+      origin kept (harmless).
+- [x] Run `godot --headless --path . --quit-after 2` — must be clean.
+      ⚠️ Same env note as Tasks 1–2: pre-existing unimported-glb warnings only;
+      warning/error line set identical to the stashed baseline (only the occurrence
+      count of the per-croc './Model' warning varies run-to-run with the run seed).
 
 ### Task 4: Time-sliced chunk generation (one chunk per frame, nearest-first)
 
