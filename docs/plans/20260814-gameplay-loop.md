@@ -135,17 +135,17 @@ regenerates byte-identically on revisit and coin seam-claiming still holds.
 
 ### Task 3: Best-run persistence (ConfigFile at user://best_run.cfg)
 
-- [ ] In `scripts/player_controller.gd`, add best-run state (`best_distance: int`,
+- [x] In `scripts/player_controller.gd`, add best-run state (`best_distance: int`,
       `best_coins: int`) loaded in `_ready()` from `user://best_run.cfg` via ConfigFile —
       copy the load/save pattern (and its comments about first-run missing file being
       fine and web IndexedDB persistence) from `scripts/mobile_input.gd`
       `_load_tuning`/`_save_tuning`. Constants at top: `BEST_RUN_CONFIG_PATH`, section name.
-- [ ] In `_trigger_game_over()`: compute `is_new_best := run_distance > best_distance`;
+- [x] In `_trigger_game_over()`: compute `is_new_best := run_distance > best_distance`;
       if the run beat either record, update `best_distance`/`best_coins`
       (track them independently: best_distance is the record distance, best_coins the
       record coin count — each updates on its own max) and save the ConfigFile.
       Pass everything to the UI: `show_game_over(coins, distance, best_distance, best_coins, is_new_best)`.
-- [ ] In `scripts/game_over_ui.gd`: add a "Best: NNNm / NN coins" line, and a
+- [x] In `scripts/game_over_ui.gd`: add a "Best: NNNm / NN coins" line, and a
       "NEW BEST!" flash label shown only when `is_new_best` (bright colour; a simple
       Tween scale/blink pulse built in code is enough — no assets).
 

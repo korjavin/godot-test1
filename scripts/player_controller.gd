@@ -117,6 +117,18 @@ var coins_collected: int = 0
 ## Reset to 0 only on a full restart (restart_game / reset_position).
 var run_distance: int = 0
 
+## Best-run records, persisted across sessions in a ConfigFile at
+## BEST_RUN_CONFIG_PATH (same pattern as mobile_input.gd's tuning file: on web
+## `user://` is IndexedDB-backed, so the records survive a page reload; a missing
+## file on first run is NOT an error — we just keep the zero defaults). The two
+## records are tracked INDEPENDENTLY: best_distance is the farthest any run got,
+## best_coins the richest any run got — a long-but-poor run can set one without
+## the other. Updated + saved in _trigger_game_over(), loaded once in _ready().
+const BEST_RUN_CONFIG_PATH: String = "user://best_run.cfg"
+const BEST_RUN_SECTION: String = "best"
+var best_distance: int = 0
+var best_coins: int = 0
+
 ## "Caught" sequence: when a crocodile bites the player we freeze briefly (so the
 ## bite is actually visible), flash the screen red and shake the camera, then
 ## respawn. These track that short window.
@@ -258,6 +270,10 @@ func _ready() -> void:
 	# before — desktop keyboard+mouse play is byte-for-byte unchanged. (Mobile-motion plan.)
 	if not MobileSensors.is_touch_session():
 		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+
+	# Load the persisted best-run records (a missing file on first run is fine —
+	# the zero defaults stand). See the comment block above BEST_RUN_CONFIG_PATH.
+	_load_best_run()
 
 	# Store the original character height for ducking calculations
 	if mesh_instance:
@@ -1152,10 +1168,48 @@ func _trigger_game_over() -> void:
 	_hide_respawn_message()
 	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 
+	# Best-run bookkeeping: distance is the headline record, so IT decides the
+	# "NEW BEST!" flash; the coin record updates on its own max independently
+	# (see the comment block above BEST_RUN_CONFIG_PATH). Only write the file
+	# when a record actually moved — no pointless disk/IndexedDB churn.
+	var is_new_best := run_distance > best_distance
+	if is_new_best or coins_collected > best_coins:
+		best_distance = maxi(best_distance, run_distance)
+		best_coins = maxi(best_coins, coins_collected)
+		_save_best_run()
+
 	var panel := get_tree().get_first_node_in_group("game_over_ui")
 	if panel and panel.has_method("show_game_over"):
-		panel.show_game_over(coins_collected, run_distance)
+		panel.show_game_over(coins_collected, run_distance, best_distance, best_coins, is_new_best)
 	print("Game over! Distance: %dm, final coins: %d" % [run_distance, coins_collected])
+
+
+func _load_best_run() -> void:
+	"""
+	Load the persisted best-run records over the zero defaults. A missing file
+	(first ever run) is NOT an error: ConfigFile.load returns a non-OK code and
+	we simply keep 0/0 — the expected first-run path, same as mobile_input.gd's
+	tuning load. Values are clamped non-negative so a hand-edited file can't
+	show a nonsense negative record.
+	"""
+	var cfg := ConfigFile.new()
+	if cfg.load(BEST_RUN_CONFIG_PATH) != OK:
+		return
+	best_distance = maxi(0, int(cfg.get_value(BEST_RUN_SECTION, "distance", best_distance)))
+	best_coins = maxi(0, int(cfg.get_value(BEST_RUN_SECTION, "coins", best_coins)))
+
+
+func _save_best_run() -> void:
+	"""
+	Write the current records to disk. On web `user://` is IndexedDB-backed, so
+	this is what makes a best score survive a page reload. The return code is
+	ignored: a failed save just means the record isn't persisted this session,
+	which is non-fatal and must never interrupt the game-over flow.
+	"""
+	var cfg := ConfigFile.new()
+	cfg.set_value(BEST_RUN_SECTION, "distance", best_distance)
+	cfg.set_value(BEST_RUN_SECTION, "coins", best_coins)
+	cfg.save(BEST_RUN_CONFIG_PATH)
 
 
 func restart_game() -> void:
