@@ -56,6 +56,14 @@ Systems never hold hard references to each other. The player adds itself to the 
 - **Character switching** (E key): cycles the `CHARACTERS` array, freeing the old model and instancing the new `.tscn` under the `$CharacterModel` node.
 - **Procedural limb animation**: there is no `AnimationPlayer`. After loading a character, `setup_animation_references()` looks up child nodes **by exact name** — `Body`, and under it `LeftArm`/`RightArm`/`LeftLeg`/`RightLeg`. Walk/jump/idle poses are driven by sine waves on those nodes' rotations. **Any new playable character scene must use this exact node naming** or it will load but stay frozen.
 
+### First-person view toggle (C key)
+Pressing **C** (the `toggle_camera` action, polled with `is_action_just_pressed` in `_physics_process` so synthesized touch input works) toggles between the shipped 3rd-person view and a first-person view from the active character's eyes. Design rules, all in `player_controller.gd`:
+- **One camera, no second rig.** FP reuses the existing `$CameraPivot/Camera3D`. `_apply_view_mode()` is idempotent and does all the work: FP sets `camera.transform = Transform3D(Basis.IDENTITY, _first_person_eye_position())` (identity basis deliberately zeroes the camera's baked −15° scene pitch so the pivot's mouse-look pitch alone is the look pitch) and hides `$CharacterModel`; 3rd person restores the *cached* scene transform (`third_person_camera_transform`, captured in `_ready()`) — byte-identical to the shipped view — and re-shows the model. Mouse-look needs no changes: it only drives body yaw + pivot pitch, which serve both views.
+- **Eye height tracks Teibi's scale.** `_first_person_eye_position()` derives eye Y from `collision_shape.scale.y` × `FIRST_PERSON_EYE_HEIGHT` (1.65), so small/giant Teibi looks from the right height; `_apply_teibi_scale()` and `set_active_character()` both re-run `_apply_view_mode()` when `first_person` (cheap, idempotent, defensive).
+- **Shake gotcha:** the bite shake offsets `camera.position` from `camera_rest_position` and snaps back to it, so `_apply_view_mode()` **must** refresh `camera_rest_position` in both branches — otherwise a bite in FP would teleport the camera back to the 3rd-person spot. Any future code that moves the camera's own transform must do the same.
+- **View mode is a preference:** nothing in `reset_position()` / `restart_game()` / `_respawn_in_place()` touches `first_person` or `camera.transform`, so FP survives respawn, restart, and character switches. The touch UI has a small "View" button (top-centre, next to the steer toggle in `touch_controls.gd`) firing the same action through `_fire_action()`.
+- Queued game-feel work (bead godot-test1-afc.2: SpringArm3D + FOV kick) will touch this same rig and must respect `first_person`.
+
 ### Mobile / touch controls (web build, phone with no keyboard)
 The goal is a **web build playable on a phone with no keyboard**: the player physically *steps* to walk, *tilts/twists* the phone to steer, and taps on-screen buttons for the keyboard-only actions. Three new pieces, all **touch-only** and wired by groups — `player_controller.gd` is essentially untouched.
 
@@ -170,4 +178,4 @@ When optimizing, follow the split this work established:
 ## Conventions
 - GDScript with explicit type hints throughout; constants for tunable values (`WALK_SPEED`, `DETECTION_RADIUS`, etc.) declared at the top of each script.
 - Gravity is per-script and intentionally non-physical: the player uses `gravity = 3.6` (floaty, despite the "Earth = 9.8" comment), while crocodiles use `GRAVITY = 9.8`.
-- Input actions are defined in `project.godot` (`move_forward`/`move_backward`, `turn_left`/`turn_right`, `step_left`/`step_right`, `jump`, `run`, `duck`, `switch_character`, `special_ability`) — reference these action names, don't hardcode keycodes.
+- Input actions are defined in `project.godot` (`move_forward`/`move_backward`, `turn_left`/`turn_right`, `step_left`/`step_right`, `jump`, `run`, `duck`, `switch_character`, `special_ability`, `toggle_camera`) — reference these action names, don't hardcode keycodes.
