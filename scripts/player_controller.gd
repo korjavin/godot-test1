@@ -81,6 +81,11 @@ const MOUSE_SENSITIVITY: float = 0.003
 const CAMERA_PITCH_MIN: float = -60.0  # Looking down limit (degrees)
 const CAMERA_PITCH_MAX: float = 60.0   # Looking up limit (degrees)
 
+## First-person view (toggled with C / the "toggle_camera" action).
+## Eye height above the FEET at normal scale — just under the ~1.8 m head top,
+## so the camera sits where the character's eyes would be.
+const FIRST_PERSON_EYE_HEIGHT: float = 1.65
+
 ## Safe spawn radius - crocodiles within this distance will be removed on respawn
 const SPAWN_SAFE_RADIUS: float = 25.0
 
@@ -187,6 +192,15 @@ const SHAKE_MAX: float = 0.25
 const SHAKE_DECAY: float = 1.0
 ## Resting local position of the camera, so shake can offset from it and restore.
 var camera_rest_position: Vector3 = Vector3.ZERO
+
+## First-person view mode. This is a player PREFERENCE, not transient state: it
+## deliberately survives respawn, restart, and character switches (nothing in
+## those paths resets it). Toggled with C in _physics_process (STEP 0.55).
+var first_person: bool = false
+## The camera's original scene-file transform (position (0,2,8), baked −15°
+## pitch), cached in _ready() so leaving first-person restores the shipped
+## third-person view byte-for-byte instead of rebuilding an approximation.
+var third_person_camera_transform: Transform3D = Transform3D.IDENTITY
 
 ## Character's visual mesh (for ducking animation)
 @onready var mesh_instance: Node3D = $MeshInstance3D
@@ -333,9 +347,12 @@ func _ready() -> void:
 	preload_all_characters()
 	set_active_character(current_character_index)
 
-	# Remember the camera's resting spot so the hit-shake can offset from it.
+	# Remember the camera's resting spot so the hit-shake can offset from it,
+	# and cache the full scene transform so the first-person toggle (C) can
+	# restore the exact shipped third-person view when switching back.
 	if camera:
 		camera_rest_position = camera.position
+		third_person_camera_transform = camera.transform
 
 	print("Player Controller initialized!")
 	print("Controls:")
@@ -394,6 +411,48 @@ func _input(event: InputEvent) -> void:
 		switch_to_next_character()
 
 # ============================================================================
+# FIRST-PERSON VIEW TOGGLE
+# ============================================================================
+
+func _apply_view_mode() -> void:
+	"""
+	Moves the EXISTING camera (no second Camera3D!) to match the current view
+	mode. Deliberately idempotent — safe to re-run any time (e.g. after a Teibi
+	resize or a character switch) without tracking what the previous state was.
+	"""
+	if not camera:
+		return
+	if first_person:
+		# Identity basis zeroes the camera's baked −15° third-person pitch, so
+		# the pivot's pitch alone (mouse-look) is the look pitch. Position puts
+		# the camera at the character's eyes. Hide the model so we don't see
+		# our own head from the inside.
+		camera.transform = Transform3D(Basis.IDENTITY, _first_person_eye_position())
+		if character_container:
+			character_container.visible = false
+	else:
+		# Restore the CACHED scene transform — byte-identical to the shipped
+		# third-person view — and show the model again.
+		camera.transform = third_person_camera_transform
+		if character_container:
+			character_container.visible = true
+	# The bite-shake offsets the camera from camera_rest_position and snaps
+	# back to it, so it MUST track the current view's rest spot — otherwise a
+	# shake would teleport the camera into the other view.
+	camera_rest_position = camera.position
+
+
+func _first_person_eye_position() -> Vector3:
+	"""
+	The first-person camera's local position UNDER THE PIVOT. The pivot sits at
+	a fixed local height (1.5), so we subtract it from the desired eye height.
+	Deriving the scale from the collision capsule means Teibi's small/giant
+	forms move the eyes down/up automatically.
+	"""
+	var scale_y: float = collision_shape.scale.y if collision_shape else 1.0
+	return Vector3(0.0, scale_y * FIRST_PERSON_EYE_HEIGHT - camera_pivot.position.y, 0.0)
+
+# ============================================================================
 # PHYSICS PROCESSING (CALLED EVERY FRAME)
 # ============================================================================
 
@@ -404,6 +463,17 @@ func _physics_process(delta: float) -> void:
 
 	@param delta: Time elapsed since last frame (in seconds)
 	"""
+
+	# STEP 0: First-person toggle (C). POLLED rather than handled in _input() on
+	# purpose: the touch UI synthesizes actions via Input.parse_input_event,
+	# which polled is_action_just_pressed() sees reliably — same reasoning as the
+	# switch_character gotcha in CLAUDE.md. Polled BEFORE the frozen-state early
+	# returns below so a press during the caught/respawn/game-over windows isn't
+	# silently dropped — the view is a pure camera preference and safe to flip
+	# while frozen (_apply_view_mode() only touches the camera and model).
+	if Input.is_action_just_pressed("toggle_camera"):
+		first_person = not first_person
+		_apply_view_mode()
 
 	# STEP 0a: Game over — out of lives. Stand frozen (the Game Over screen is up
 	# and the cursor is free) until the player hits "Play Again", which calls
@@ -800,6 +870,9 @@ func set_active_character(index: int) -> void:
 	# A freshly selected character always starts at normal size with no giant
 	# crush — Teibi's resize state must not carry across a switch (otherwise a
 	# different character could inherit Teibi's giant body or shrunken capsule).
+	# This also re-applies the first-person view when active: _apply_teibi_scale
+	# ends with `if first_person: _apply_view_mode()`, keeping the model hidden
+	# and the camera at the eyes across the switch.
 	_revert_teibi_to_normal()
 
 func capture_rest_pose(instance: Node3D) -> Dictionary:
@@ -1734,6 +1807,13 @@ func _apply_teibi_scale(s: float) -> void:
 		collision_shape.scale = Vector3(s, s, s)
 		var bottom := collision_base_y - collision_half_height
 		collision_shape.position.y = bottom + s * collision_half_height
+	# First-person eyes are derived from this capsule scale, so a resize must
+	# immediately re-seat the camera (and the shake rest position) at the new
+	# height — small Teibi looks from down low, giant Teibi from up high.
+	# _apply_view_mode() is idempotent, so this is safe from every caller
+	# (F-cycle, form timeout, character switch, respawn).
+	if first_person:
+		_apply_view_mode()
 
 
 func _spawn_ability_effect(pos: Vector3, color: Color, max_radius: float, lifetime: float, delay: float = 0.0) -> void:
