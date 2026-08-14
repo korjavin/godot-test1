@@ -123,6 +123,8 @@ Public API (all void, all safe to call anytime): `play_coin()` (random `pitch_sc
 
 **Web unlock gesture rule:** browsers block audio until a user gesture, so every `play_*` early-returns until `unlock_audio()` flips `_unlocked` (which also starts the wind loop). The manager's own `_input()` calls it on the first key/click/touch (then disables input processing), and `touch_controls.gd`'s "enable motion controls" overlay tap calls it explicitly — the guaranteed gesture on mobile web. Don't add a `play_*` path that bypasses this gate.
 
+**Runtime-varied loops:** `get_loop_player(name)` fetches (or lazily creates) a dedicated looping `AudioStreamPlayer` per named ambient bed — `"wind"` is the only built-in. A future system needing a live-modulated loop (e.g. a proximity heartbeat) requests its own name, assigns a looping stream, and varies `pitch_scale`/`volume_db` per frame; it must check `is_unlocked()` before calling `play()`, because the gesture gate only guards the manager's own `play_*` methods.
+
 ## Performance & web build
 The game ships primarily as a **web (WebGL) build**, which is the performance-sensitive target. Several systems exist purely to keep it smooth in a browser without changing how it looks or plays on desktop:
 

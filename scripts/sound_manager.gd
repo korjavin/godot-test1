@@ -134,6 +134,12 @@ var _next_player: int = 0
 ## pool — a one-shot must not steal the loop's voice).
 var _wind_player: AudioStreamPlayer = null
 
+## Every dedicated looping player, keyed by name ("wind" today). Future
+## systems that need a runtime-varied loop (e.g. a proximity heartbeat) grab
+## a named player via get_loop_player() instead of adding their own audio
+## nodes, so all voices stay owned by this one manager.
+var _loop_players: Dictionary = {}
+
 
 # ============================================================================
 # LIFECYCLE
@@ -171,6 +177,7 @@ func _ready() -> void:
 	_wind_player.stream = wind
 	_wind_player.volume_db = WIND_VOLUME_DB
 	add_child(_wind_player)
+	_loop_players["wind"] = _wind_player
 
 
 func _input(event: InputEvent) -> void:
@@ -195,6 +202,26 @@ func unlock_audio() -> void:
 		return
 	_unlocked = true
 	_wind_player.play()
+
+
+func is_unlocked() -> bool:
+	## Whether the browser-gesture gate has opened. Code driving a loop player
+	## directly (via get_loop_player) must check this before calling play() —
+	## the gate only guards our own play_* methods.
+	return _unlocked
+
+
+func get_loop_player(loop_name: String) -> AudioStreamPlayer:
+	## Fetch (or lazily create) the dedicated looping AudioStreamPlayer for a
+	## named ambient bed. "wind" is the only built-in; a future system (e.g. a
+	## danger heartbeat) can request its own name, assign a looping stream, and
+	## vary pitch_scale / volume_db live every frame. The player is a child of
+	## this node, so it respects the same lifetime as everything else here.
+	if not _loop_players.has(loop_name):
+		var p := AudioStreamPlayer.new()
+		add_child(p)
+		_loop_players[loop_name] = p
+	return _loop_players[loop_name]
 
 
 func play_coin() -> void:
