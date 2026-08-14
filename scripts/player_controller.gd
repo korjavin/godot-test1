@@ -399,6 +399,10 @@ func _physics_process(delta: float) -> void:
 	if Input.is_action_just_pressed("jump") and is_on_floor() and not is_giant:
 		# Set upward velocity for jump
 		velocity.y = JUMP_VELOCITY
+		# Jump sound (null-safe group lookup, like the hit_flash pattern).
+		var sm := get_tree().get_first_node_in_group("sound_manager")
+		if sm and sm.has_method("play_jump"):
+			sm.play_jump()
 
 	# STEP 3: Handle Ducking
 	handle_ducking()
@@ -885,6 +889,10 @@ func update_character_animation(delta: float, input_dir: Vector2) -> void:
 	# Landing detected
 	elif not was_on_floor and current_on_floor:
 		animate_landing()
+		# Landing thud (null-safe group lookup).
+		var sm := get_tree().get_first_node_in_group("sound_manager")
+		if sm and sm.has_method("play_land"):
+			sm.play_land()
 	# Walking/Running animation
 	elif is_moving and current_on_floor:
 		var speed_multiplier = 1.5 if is_running else 1.0
@@ -1088,6 +1096,11 @@ func hit_by_crocodile() -> void:
 	is_caught = true
 	caught_timer = CAUGHT_DURATION
 
+	# Bite sting (null-safe group lookup, like the hit_flash below).
+	var sm := get_tree().get_first_node_in_group("sound_manager")
+	if sm and sm.has_method("play_bite"):
+		sm.play_bite()
+
 	# Pop the red full-screen flash (found via group, so the HUD isn't hard-wired).
 	var flash := get_tree().get_first_node_in_group("hit_flash")
 	if flash and flash.has_method("flash"):
@@ -1139,6 +1152,11 @@ func _trigger_game_over() -> void:
 	_reset_ability_states()
 	_hide_respawn_message()
 	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+
+	# Game-over sting (null-safe group lookup).
+	var sm := get_tree().get_first_node_in_group("sound_manager")
+	if sm and sm.has_method("play_game_over"):
+		sm.play_game_over()
 
 	var panel := get_tree().get_first_node_in_group("game_over_ui")
 	if panel and panel.has_method("show_game_over"):
@@ -1387,6 +1405,11 @@ func try_activate_ability() -> void:
 
 	if used:
 		ability_cooldowns[current_character_index] = float(ABILITY_COOLDOWN.get(char_name, 10.0))
+		# Whoosh only when the ability actually fired — a failed Primm blink that
+		# costs no cooldown stays silent too (null-safe group lookup).
+		var sm := get_tree().get_first_node_in_group("sound_manager")
+		if sm and sm.has_method("play_ability"):
+			sm.play_ability(char_name)
 
 
 func _ability_windman() -> bool:

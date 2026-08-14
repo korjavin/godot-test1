@@ -61,14 +61,14 @@
 - [x] do NOT hand-edit any `.gd.uid` files (Godot generates the new one; if the editor is unavailable, omitting the .uid is fine — Godot creates it on next import)
 
 ### Task 3: One-liner hooks in existing scripts
-- [ ] `scripts/coin.gd` `_on_body_entered()`: after `collected = true`, null-safe group lookup + `sm.play_coin()` (two lines, matching the `hit_flash` lookup pattern; brief comment: the coin frees itself, so the MANAGER owns the player — a sound attached to this dying node would be cut off)
-- [ ] `scripts/player_controller.gd` jump (STEP 2, inside the `is_action_just_pressed("jump")` branch): null-safe `play_jump()`
-- [ ] `scripts/player_controller.gd` landing (the `elif not was_on_floor and current_on_floor:` branch in `update_character_animation()`): null-safe `play_land()`
-- [ ] `scripts/player_controller.gd` `try_activate_ability()`: null-safe `play_ability(<current character name>)` at the single point where the ability actually fires / cooldown is committed (a Primm blink that finds no landing spot and costs no cooldown must stay silent); if abilities commit cooldown in per-ability branches, prefer one shared post-dispatch point if one exists, else one line per branch
-- [ ] `scripts/player_controller.gd` `hit_by_crocodile()`: after the invulnerability guard, null-safe `play_bite()`
-- [ ] `scripts/player_controller.gd` `_trigger_game_over()`: null-safe `play_game_over()`
-- [ ] `scripts/touch_controls.gd` `_on_enable_overlay_pressed()`: null-safe lookup via `"sound_manager"` group + `unlock_audio()` (the explicit mobile-web user gesture; comment why)
-- [ ] every hook is null-safe (`if sm and sm.has_method(...)`) so any scene running without Main (e.g. a character scene in isolation) never errors
+- [x] `scripts/coin.gd` `_on_body_entered()`: after `collected = true`, null-safe group lookup + `sm.play_coin()` (two lines, matching the `hit_flash` lookup pattern; brief comment: the coin frees itself, so the MANAGER owns the player — a sound attached to this dying node would be cut off)
+- [x] `scripts/player_controller.gd` jump (STEP 2, inside the `is_action_just_pressed("jump")` branch): null-safe `play_jump()`
+- [x] `scripts/player_controller.gd` landing (the `elif not was_on_floor and current_on_floor:` branch in `update_character_animation()`): null-safe `play_land()`
+- [x] `scripts/player_controller.gd` `try_activate_ability()`: null-safe `play_ability(<current character name>)` at the single point where the ability actually fires / cooldown is committed (the shared `if used:` block that commits the cooldown — a Primm blink that finds no landing spot stays silent)
+- [x] `scripts/player_controller.gd` `hit_by_crocodile()`: after the invulnerability guard, null-safe `play_bite()`
+- [x] `scripts/player_controller.gd` `_trigger_game_over()`: null-safe `play_game_over()`
+- [x] `scripts/touch_controls.gd` `_on_enable_overlay_pressed()`: null-safe lookup via `"sound_manager"` group + `unlock_audio()` (placed at the very top of the handler, BEFORE the no-driver early return — a missing motion driver must not mean no sound; comment explains the mobile-web gesture rule)
+- [x] every hook is null-safe (`if sm and sm.has_method(...)`) so any scene running without Main (e.g. a character scene in isolation) never errors
 
 ### Task 4: Verify acceptance criteria
 - [ ] verify all sounds exist and are distinct in code (different waveform/envelope/pitch per sound); wind volume constant is clearly far below the one-shots
