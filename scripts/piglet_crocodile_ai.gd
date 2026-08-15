@@ -201,6 +201,15 @@ var is_boss: bool = false
 ## Uniform body scale for a boss (from the terrain's size schedule; 1.0 = unused).
 var boss_scale: float = 1.0
 
+## This crocodile's effective "smell" range — the ONE place that resolves the
+## regular-vs-boss detection radius. `_update_chase_state` reads it, and so does
+## the danger telegraph in `crocodile_lod_manager` (which must normalise each
+## chaser's distance by ITS OWN radius: a boss acquires the player at 25 m, so a
+## telegraph hardcoded to the regular 15 m would stay dark and silent for the
+## first 10 m of the game's biggest threat closing on you). Resolved in _ready()
+## because `setup_as_boss()` is contracted to run before the node enters the tree.
+var detection_radius: float = DETECTION_RADIUS
+
 ## Reference to the player node
 var player_node: Node3D = null
 
@@ -279,6 +288,7 @@ func _ready() -> void:
 		# Bosses take NO per-instance random rolls: their size comes from the
 		# terrain's deterministic schedule (boss_scale) and their speeds are fixed,
 		# so a boss regenerates byte-identically when its chunk is revisited.
+		detection_radius = BOSS_DETECTION_RADIUS
 		move_speed_instance = BASE_MOVE_SPEED
 		# The MAX_CHASE_SPEED cap keeps the running-escape hatch true at any distance.
 		chase_speed_instance = minf(BOSS_CHASE_SPEED * distance_factor, MAX_CHASE_SPEED)
@@ -387,6 +397,13 @@ func _physics_process(delta: float) -> void:
 	else:
 		velocity.y = 0.0
 
+	# Snapshot BEFORE the branch below, which can clear is_paused mid-frame. The
+	# collision check after move_and_slide must judge the frame we actually just
+	# simulated: on the frame a pause expires the crocodile still stood perfectly
+	# still, so handling collisions there would re-arm the bite a frame early and
+	# defeat the point of _pause_and_change_direction's recovery window.
+	var was_paused: bool = is_paused
+
 	if is_paused:
 		# Stand still while paused (still breathes via _animate_body below).
 		pause_time_remaining -= delta
@@ -447,7 +464,7 @@ func _physics_process(delta: float) -> void:
 	# Move and resolve collisions (collisions are ignored while paused, matching
 	# the original "harmless while recovering" behaviour).
 	move_and_slide()
-	if not is_paused:
+	if not was_paused:
 		_handle_collisions()
 
 	# Hard backstop: pin a patrol crocodile inside its platform so it can never
@@ -486,9 +503,9 @@ func _update_chase_state() -> void:
 		player_is_grounded = player_node.is_on_floor()
 
 	# Update chase state based on detection radius AND player grounded state.
-	# Bosses smell farther (still well under the LOD SIM_RADIUS — see the const).
-	var radius: float = BOSS_DETECTION_RADIUS if is_boss else DETECTION_RADIUS
-	if distance_to_player <= radius and player_is_grounded:
+	# Bosses smell farther (still well under the LOD SIM_RADIUS — see the const);
+	# `detection_radius` is resolved once in _ready(), see the var.
+	if distance_to_player <= detection_radius and player_is_grounded:
 		if not is_chasing:
 			# Just started chasing
 			is_chasing = true
@@ -552,6 +569,15 @@ func flee_from(source: Vector3, duration: float) -> void:
 	# group tricks (so LOD sleep and every other group consumer stays intact).
 	if is_boss:
 		return
+	# A SLEPT croc ignores the stink too, and that is a correctness rule, not a
+	# nicety: set_lod_active(false) turns physics dispatch off, so its
+	# flee_time_remaining can never tick down. It would hold is_fleeing until it
+	# woke and then flee for the FULL duration — one press would leave every
+	# crocodile in every loaded chunk (~1000 of them) harmless-on-wake for as
+	# long as the player keeps advancing. A slept croc is > 50 m away (see
+	# SIM_RADIUS in crocodile_lod_manager); no smell reaches that far anyway.
+	if not lod_active:
+		return
 	is_fleeing = true
 	flee_time_remaining = duration
 	flee_source = source
@@ -612,18 +638,27 @@ func _avoid_obstacles() -> bool:
 	if not space:
 		return false
 
-	var origin := global_position + Vector3(0.0, AVOID_FEELER_HEIGHT, 0.0)
+	# Both probe dimensions SCALE WITH THE BODY (inert at scale 1, i.e. for every
+	# regular crocodile). _ready() sets `scale = ONE * boss_scale` for a boss, so a
+	# 6x boss's capsule alone reaches 0.7 * 6 = 4.2 m ahead of its origin — past the
+	# fixed 3 m world-space feeler, leaving avoidance completely dead from boss 4 on
+	# (useful reach 1.25 m, 0.64 m, 0.03 m, 0, 0 …) against a body that is also 6x
+	# wider and needs MORE clearance. The height likewise has to rise, or a big boss
+	# samples the ground at its own feet instead of a block's side wall.
+	var probe_scale := maxf(scale.x, scale.z)
+	var origin := global_position + Vector3(0.0, AVOID_FEELER_HEIGHT * scale.y, 0.0)
+	var reach := AVOID_LOOK_AHEAD * probe_scale
 	var forward := movement_direction.normalized()
 
 	# Nothing straight ahead? Then there's nothing to steer around.
-	if not _feeler_blocked(space, origin, forward):
+	if not _feeler_blocked(space, origin, forward, reach):
 		return false
 
 	# Probe both sides and pick a clear way around.
 	var left_dir := forward.rotated(Vector3.UP, AVOID_FEELER_ANGLE)
 	var right_dir := forward.rotated(Vector3.UP, -AVOID_FEELER_ANGLE)
-	var left_blocked := _feeler_blocked(space, origin, left_dir)
-	var right_blocked := _feeler_blocked(space, origin, right_dir)
+	var left_blocked := _feeler_blocked(space, origin, left_dir, reach)
+	var right_blocked := _feeler_blocked(space, origin, right_dir, reach)
 
 	var steer_dir: Vector3
 	if left_blocked and right_blocked:
@@ -644,17 +679,18 @@ func _avoid_obstacles() -> bool:
 	return true
 
 
-func _feeler_blocked(space: PhysicsDirectSpaceState3D, origin: Vector3, dir: Vector3) -> bool:
+func _feeler_blocked(space: PhysicsDirectSpaceState3D, origin: Vector3, dir: Vector3, reach: float) -> bool:
 	"""
-	Cast one feeler ray and report whether a *block* sits within AVOID_LOOK_AHEAD.
+	Cast one feeler ray and report whether a *block* sits within `reach`.
 	The player, other crocodiles and the (horizontal) ground are not blocks.
 
 	@param space: The physics space to query
 	@param origin: Ray start, already lifted to feeler height
 	@param dir: Direction to probe (need not be normalized)
+	@param reach: Ray length — AVOID_LOOK_AHEAD scaled by the body (see _avoid_obstacles)
 	@return true if the ray hits something we should steer around
 	"""
-	var query := PhysicsRayQueryParameters3D.create(origin, origin + dir.normalized() * AVOID_LOOK_AHEAD)
+	var query := PhysicsRayQueryParameters3D.create(origin, origin + dir.normalized() * reach)
 	query.exclude = [get_rid()]  # never sense our own collider
 	query.collide_with_areas = false
 	var hit := space.intersect_ray(query)
@@ -701,6 +737,19 @@ func set_lod_active(active: bool) -> void:
 	if active == lod_active:
 		return
 
+	# REFUSE to sleep a crocodile that has not landed yet. The terrain spawns crocs
+	# ABOVE the ground (local y 0.5 on the ground, +0.6 over a platform) and lets
+	# gravity settle them, but every chunk outside the synchronous ring is built
+	# ≥100 m away — so the manager's next scan (≤ SCAN_INTERVAL 0.11 s later, ~0.06 m
+	# of fall) would sleep them mid-air, and sleeping stops gravity FOREVER. The
+	# whole pack would hang ~0.44 m up until the player closed to SIM_RADIUS, and
+	# the draw cull (60 m) is deliberately WIDER than the sleep radius (45/50 m), so
+	# the floaters would be visibly drawn. The manager re-reads `lod_active` every
+	# scan and re-issues the call while the states disagree, so refusing here just
+	# costs a few extra calls until the body is on the floor.
+	if not active and not is_on_floor():
+		return
+
 	lod_active = active
 
 	# Stop (or resume) the per-tick physics callback itself. Asleep → the engine
@@ -708,6 +757,14 @@ func set_lod_active(active: bool) -> void:
 	set_physics_process(active)
 	if not active:
 		velocity = Vector3.ZERO
+		# Drop any flee state on the way down. flee_time_remaining is decremented
+		# ONLY in _physics_process, which we just switched off — so a croc slept
+		# mid-flee would hold is_fleeing (and stay harmless on contact) for its
+		# whole sleep, which is the exact failure flee_from's own slept-croc guard
+		# exists to prevent, reached from the other direction: Stink Wave, then Air
+		# Rush across the 50 m sleep boundary.
+		is_fleeing = false
+		flee_time_remaining = 0.0
 
 
 # ============================================================================
@@ -869,6 +926,11 @@ func _animate_bite(delta: float) -> void:
 	bite_timer -= delta
 	if bite_timer <= 0.0:
 		is_biting = false
+		# Put the model back on the capsule's centreline. _animate_body only ever
+		# writes position.y, so without this the last drawn lunge frame (~3.6 cm
+		# of forward +Z) would stay baked into the model FOREVER — every crocodile
+		# that has ever bitten drifts permanently ahead of its own collider.
+		model.position = Vector3(0.0, model_base_y, 0.0)
 		return
 
 	# Progress through the bite: 0 at the start, 1 at the end.

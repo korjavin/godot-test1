@@ -172,12 +172,13 @@ func _scan_crocodiles() -> void:
 	## (fully simulating) or asleep (frozen), and tell it only when that decision
 	## actually changes — so we never spam the setter every tick.
 	##
-	## The same loop ALSO feeds the danger telegraph for free: we track the
-	## nearest croc that is actively chasing (`is_chasing`) and publish that
-	## distance to the DangerVignette after the loop — zero extra passes. This
-	## is guaranteed complete because any croc that could be chasing is inside
-	## DETECTION_RADIUS (15 m), far inside SIM_RADIUS (45 m), so it is always
-	## awake and always seen by this scan.
+	## The same loop ALSO feeds the danger telegraph for free: for every croc that
+	## is actively chasing (`is_chasing`) we compute how far it has closed its OWN
+	## detection radius and publish the worst of them to the DangerVignette after
+	## the loop — zero extra passes. This is guaranteed complete because any croc
+	## that could be chasing is inside its detection radius (15 m regular, 25 m
+	## boss), far inside SIM_RADIUS (45 m), so it is always awake and always seen
+	## by this scan.
 
 	# Be defensive about the player ref: it can go stale if the player node is
 	# ever freed/replaced. If we don't have a valid one, try to (re)acquire it.
@@ -191,9 +192,13 @@ func _scan_crocodiles() -> void:
 
 	var player_pos: Vector3 = _player.global_position
 
-	# Squared distance to the nearest croc currently chasing the player; INF
-	# when nobody is hunting. Published to the danger vignette after the loop.
-	var nearest_chasing_dist_sq: float = INF
+	# Danger telegraph level: 0 = nobody hunting, 1 = a chaser at point blank.
+	# NORMALISED per chaser (distance ÷ that croc's own detection radius) rather
+	# than published as raw metres, because a boss acquires the player at 25 m
+	# while a regular croc only smells at 15 m — a single hardcoded range on the
+	# vignette side would leave the game's biggest threat un-telegraphed for the
+	# first 10 m of its approach. Published to the vignette after the loop.
+	var danger_level: float = 0.0
 
 	for croc in get_tree().get_nodes_in_group("crocodile"):
 		# Skip anything that isn't a live Node3D (e.g. queued for deletion).
@@ -213,8 +218,12 @@ func _scan_crocodiles() -> void:
 		# keeps us safe against a group member that doesn't expose the flag
 		# (same defensive style as the has_method filter above). Bosses live in
 		# the same group and expose the same flag, so they telegraph too.
-		if "is_chasing" in croc and croc.is_chasing:
-			nearest_chasing_dist_sq = minf(nearest_chasing_dist_sq, dist_sq)
+		if "is_chasing" in croc and croc.is_chasing and "detection_radius" in croc:
+			# `detection_radius` is the croc's OWN resolved smell range (15 regular,
+			# 25 boss) — never a constant duplicated here, so retuning either radius
+			# moves the telegraph with it. maxf guards a hand-zeroed radius.
+			var radius: float = maxf(croc.detection_radius, 0.001)
+			danger_level = maxf(danger_level, 1.0 - sqrt(dist_sq) / radius)
 
 		# Read the crocodile's current LOD state so we can apply hysteresis and
 		# only call the setter on a real transition. We already filtered to crocs
@@ -225,7 +234,19 @@ func _scan_crocodiles() -> void:
 		var currently_active: bool = croc.lod_active
 
 		var should_be_active: bool = currently_active
-		if currently_active:
+		# BOSSES NEVER SLEEP. Every croc's draw cull is deliberately WIDER than the
+		# sleep radius so a visible crocodile is never a frozen-mid-stride sleeper —
+		# but `piglet_crocodile_ai` scales a boss's `visibility_range_end` by its
+		# `boss_scale` (60 m × 2.5…6.0 = 150…360 m) so a mountain of crocodile doesn't
+		# pop into view, which inverts that invariant for exactly the entity the
+		# player looks at most: a boss standing on the road ahead would be drawn as a
+		# motionless statue for the first 100–310 m of its approach. Keeping them
+		# awake restores the invariant and costs nothing — bosses sit one per 300 m of
+		# road, so at most a couple are ever loaded. Same defensive `in` guard as the
+		# `is_chasing` read above.
+		if "is_boss" in croc and croc.is_boss:
+			should_be_active = true
+		elif currently_active:
 			# Awake → only sleep once we're clearly OUTSIDE the buffer (hysteresis).
 			if dist_sq > SLEEP_DISTANCE_SQ:
 				should_be_active = false
@@ -239,13 +260,21 @@ func _scan_crocodiles() -> void:
 		if should_be_active != currently_active:
 			croc.set_lod_active(should_be_active)
 
-	# Publish the danger distance (metres; INF = nobody chasing — sqrt(INF) is
-	# still INF, so one unconditional sqrt covers both cases). Group-based and
+	# A game-over player is out of play, so the telegraph must go quiet. Nothing
+	# else would ever clear it: the body stays frozen inside DETECTION_RADIUS, so
+	# its chasers keep `is_chasing` true and we would keep republishing ~1 m at
+	# 9 Hz — the heartbeat pounding at full pitch and the red vignette lit behind
+	# the Game Over screen until Play Again wipes the chunks. Same defensive `in`
+	# guard as the is_chasing read above.
+	if "is_game_over" in _player and _player.is_game_over:
+		danger_level = 0.0
+
+	# Publish the danger level (0..1; 0 = nobody chasing). Group-based and
 	# null-safe like every other cross-system hook: no vignette in the scene
 	# (e.g. a character scene run in isolation) means we simply skip it.
 	var vignette := get_tree().get_first_node_in_group("danger_vignette")
-	if vignette != null and vignette.has_method("set_danger_distance"):
-		vignette.set_danger_distance(sqrt(nearest_chasing_dist_sq))
+	if vignette != null and vignette.has_method("set_danger_level"):
+		vignette.set_danger_level(clampf(danger_level, 0.0, 1.0))
 
 
 func _scan_coins() -> void:
