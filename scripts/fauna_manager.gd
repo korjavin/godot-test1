@@ -18,7 +18,8 @@ extends Node
 ## found through the "player" group like everything else in this codebase.
 ##
 ## The perf story is deliberately boring:
-## - At most ONE herd (≤ 8 animals) is alive at a time.
+## - At most ONE migration event is alive at a time: ≤ 8 animals for the two
+##   herds, ≤ 10 members for a herder caravan (see CARAVAN_HERDERS_MAX).
 ## - Every animal is plain Node3D + MeshInstance3D boxes sharing ONE BoxMesh
 ##   and one material per species (see the static lazy getters below).
 ## - Between events the entire per-frame cost is a single float subtraction.
@@ -48,6 +49,18 @@ extends Node
 ## on solid ground on both platforms.
 const FIELD_RADIUS: float = 140.0
 
+## Longest formation offset (metres) any member can sit from its herd centre.
+## _spawn_herd places the CENTRE and _add_animal then adds each member's offset on
+## top, so the spawn circle has to be FIELD_RADIUS pulled in by this, or the
+## outermost member lands past the terrain FIELD_RADIUS was sized for. Bounded by
+## the giraffe echelon, the widest of the three formations:
+##     lat = 3.5 * HERD_SPREAD_LATERAL * 0.6 + 1.5 = 14.1
+##     lon = 3.5 * HERD_SPREAD_LONG    * 0.5 + 1.5 = 10.25   (step = (8-1)/2)
+##     |offset| = 17.43   <= 17.5   ✓
+## The caravan line is second at sqrt(9.9² + 1.6²) = 10.03. Retune GIRAFFE_FLOCK_MAX,
+## HERD_SPREAD_*, or the caravan line and this moves with them.
+const FORMATION_MAX_EXTENT: float = 17.5
+
 ## Distance (metres) from the live player position beyond which a herd is
 ## freed. Past FIELD_RADIUS so a herd is never culled mid-view — it always
 ## walks fully out of the visible field before despawning — but bounded by the
@@ -56,6 +69,18 @@ const FIELD_RADIUS: float = 140.0
 ## walking over open sky. 150 m is the largest value that keeps every LIVE
 ## animal (not just every spawn) on solid ground.
 const DESPAWN_RADIUS: float = 150.0
+
+## Hard lifetime cap (seconds) for one herd, checked alongside DESPAWN_RADIUS.
+## The distance test is RELATIVE to the live player, so a player travelling on
+## the herd's heading at the herd's speed (2–3 m/s — squarely inside the duck
+## gait's 2.25–2.875) pins the distance forever: the herd never despawns, the
+## event timer never re-arms, and because _spawn_herd early-returns while
+## _animals is non-empty NO fauna event ever happens again for the rest of the
+## run, while _update_herd keeps writing ~90 node properties every frame. The
+## cap is the escape hatch. A normal crossing with a STATIONARY player is the
+## longest legitimate one — FIELD_RADIUS + DESPAWN_RADIUS = 290 m at the slowest
+## 2 m/s ≈ 145 s — so 240 s never truncates a real crossing.
+const MAX_HERD_LIFETIME: float = 240.0
 
 ## Lateral offset (metres) of the migration line from the player, so a herd
 ## walks PAST them rather than THROUGH them. Without it the line is aimed
@@ -87,8 +112,22 @@ const FAUNA_INTERVAL_MAX: float = 240.0
 const WALK_SPEED_MIN: float = 2.0
 const WALK_SPEED_MAX: float = 3.0
 
-## Probability that a given event is an elephant family; otherwise a giraffe
-## flock. 50/50 — both species should feel equally common.
+## Probability that a given event is a herder caravan. Rolled FIRST, so it
+## takes its share off the top and ELEPHANT_CHANCE below stays the plain
+## elephant/giraffe split of whatever is left (0.15 caravan → 0.425 each herd).
+## Clearly rarer than either species on purpose: a caravan is the nomad camps'
+## people out on the move, and "rare" is the whole read — a wandering village
+## that shows up every other event stops being a sighting.
+##
+## It shares the ONE fauna event timer rather than owning a second one, and
+## that is the perf decision, not a stylistic one: a private timer would break
+## the one-herd invariant in _spawn_herd (the early-return that caps this whole
+## feature at a single live group), and two concurrent groups would double the
+## worst case for a feature whose entire idle cost is one float subtraction.
+const CARAVAN_CHANCE: float = 0.15
+
+## Probability that a NON-caravan event is an elephant family; otherwise a
+## giraffe flock. 50/50 — both species should feel equally common.
 const ELEPHANT_CHANCE: float = 0.5
 
 ## Half-angle (radians) of the cone the migration heading is drawn from, taken
@@ -212,6 +251,82 @@ const GIRAFFE_PATCH_COUNT: int = 3
 const GIRAFFE_PATCH_SIZE: Vector3 = Vector3(0.06, 0.45, 0.55)
 
 # ============================================================================
+# CONSTANTS — caravan geometry (herders + pack beasts)
+# ============================================================================
+# Same conventions as the two herd blocks: metres, Vector3(width, height,
+# length), local forward -Z, feet at local y = 0. A caravan is the nomad
+# camps' people out on the move — a couple of upright herders leading a short
+# file of woolly, laden pack beasts.
+
+## Caravan party size. Small on purpose: the read is "a few people walking
+## their animals somewhere", not a second herd. Worst case 4 + 6 = 10 members,
+## which is the largest event this manager can produce (the herds cap at 8) and
+## still one event at a time, so the one-herd perf invariant is unchanged.
+const CARAVAN_HERDERS_MIN: int = 2
+const CARAVAN_HERDERS_MAX: int = 4
+const CARAVAN_BEASTS_MIN: int = 3
+const CARAVAN_BEASTS_MAX: int = 6
+
+## Line formation: gap (metres) between consecutive members along the heading,
+## and the lateral wobble each member gets so the file reads as a loose trail
+## rather than a marching column.
+##
+## The spacing is BOUNDED by the field, not chosen by eye. The line is centred on
+## the herd position, so the rear member sits half a line-length further out and
+## must still land inside the ~150 m the web terrain actually reaches. That bound
+## is now enforced structurally by FORMATION_MAX_EXTENT (the spawn circle is pulled
+## in by it, and the despawn test subtracts the herd's real widest offset), so what
+## this has to satisfy is the caravan's own contribution to that extent:
+##     hypot((HERDERS_MAX + BEASTS_MAX - 1) / 2 * SPACING, JITTER)
+##      <= FORMATION_MAX_EXTENT
+##     hypot(4.5 * 2.2, 1.6) = hypot(9.9, 1.6) = 10.03 <= 17.5   ✓
+## Note the JITTER leg: the rear member is offset laterally as well as back, so the
+## plain 9.9 understates it.
+## At 3.0 a full ten-member caravan reached 13.5 m, putting its tail 153.5 m out —
+## standing over open sky on the web build. Retune the party size and this
+## together.
+const CARAVAN_LINE_SPACING: float = 2.2
+const CARAVAN_LINE_JITTER: float = 1.6
+
+## The herder: an upright blocky figure, deliberately human-scaled (~1.9 m to
+## the crown) so a pack beast beside them reads as a big animal.
+const HERDER_TORSO_SIZE: Vector3 = Vector3(0.52, 0.80, 0.34)
+const HERDER_HEAD_SIZE: Vector3 = Vector3(0.32, 0.32, 0.32)
+
+## One herder leg column; its y doubles as hip height, same trick as every
+## other fauna limb (see _make_leg).
+const HERDER_LEG_SIZE: Vector3 = Vector3(0.17, 0.80, 0.17)
+
+## The walking staff, carried at one side and leaned forward a few degrees —
+## the single silhouette cue that says "herder" rather than "person".
+const HERDER_STAFF_SIZE: Vector3 = Vector3(0.07, 1.85, 0.07)
+const HERDER_STAFF_LEAN_DEG: float = -8.0
+
+## The pack beast: a heavy woolly barrel on short legs (a llama/yak read), so
+## it never gets mistaken for the taller, leggier giraffe at FIELD_RADIUS.
+const BEAST_BODY_SIZE: Vector3 = Vector3(0.85, 0.90, 1.70)
+const BEAST_LEG_SIZE: Vector3 = Vector3(0.20, 0.80, 0.20)
+
+## The neck is built as TWO segments so it curves: a lower segment leaning
+## forward off the shoulders and an upper one bending back toward vertical,
+## with the head on top. One pivot drives the whole chain (see _build_pack_beast).
+const BEAST_NECK_SIZE: Vector3 = Vector3(0.28, 0.70, 0.28)
+const BEAST_NECK_ANGLE_DEG: float = -34.0
+const BEAST_NECK_UPPER_SIZE: Vector3 = Vector3(0.24, 0.55, 0.24)
+const BEAST_NECK_UPPER_ANGLE_DEG: float = 30.0
+const BEAST_HEAD_SIZE: Vector3 = Vector3(0.26, 0.28, 0.44)
+
+## Shag fringe: thin slabs hung along the lower flanks, in the SAME spirit as
+## the giraffe's coat patches — a handful of boxes standing in for fur this
+## feature has no texture (and no asset files) to draw.
+const BEAST_SHAG_PER_SIDE: int = 3
+const BEAST_SHAG_SIZE: Vector3 = Vector3(0.07, 0.42, 0.42)
+
+## The cargo: one or two strapped bundles riding the beast's back — the whole
+## point of a pack animal, and what separates a caravan from a wild herd.
+const BEAST_BUNDLE_SIZE: Vector3 = Vector3(0.72, 0.42, 0.52)
+
+# ============================================================================
 # CONSTANTS — procedural walk animation
 # ============================================================================
 # Same idiom as piglet_crocodile_ai._animate_body: no AnimationPlayer anywhere,
@@ -288,6 +403,18 @@ var _herd_position: Vector3 = Vector3.ZERO
 var _herd_speed: float = 0.0
 var _herd_travelled: float = 0.0
 
+## Seconds this herd has been alive, against MAX_HERD_LIFETIME (see there for
+## why a purely relative despawn test can stall forever).
+var _herd_age: float = 0.0
+
+## Longest formation offset this herd actually built, filled in by _add_animal.
+## The despawn test measures the herd CENTRE, so without subtracting this the
+## members on the far side of the formation walk that much further than
+## DESPAWN_RADIUS — over open sky on the web build. Bounded by
+## FORMATION_MAX_EXTENT; using the herd's real value keeps a small elephant
+## family on screen as long as it always was.
+var _herd_offset_max: float = 0.0
+
 # ============================================================================
 # SHARED RESOURCES (static — one per PROCESS, not one per manager/animal)
 # ============================================================================
@@ -303,6 +430,8 @@ static var _elephant_material: StandardMaterial3D = null
 static var _giraffe_material: StandardMaterial3D = null
 static var _accent_material: StandardMaterial3D = null
 static var _patch_material: StandardMaterial3D = null
+static var _cloak_material: StandardMaterial3D = null
+static var _wool_material: StandardMaterial3D = null
 
 
 static func _get_shared_box_mesh() -> BoxMesh:
@@ -348,14 +477,37 @@ static func _get_accent_material() -> StandardMaterial3D:
 
 static func _get_patch_material() -> StandardMaterial3D:
 	## The ONE dark accent material (darker-brown giraffe coat patches and
-	## horn nubs — both need a darker-than-coat read, so they share it). With
-	## this the feature's total material count is capped at a constant 4,
+	## horn nubs — both need a darker-than-coat read, so they share it). The
+	## caravan reuses it as-is for staffs, straps and bundles rather than adding
+	## a third brown, so the feature's total material count is a constant 6,
 	## independent of how many animals ever spawn.
 	if _patch_material == null:
 		_patch_material = StandardMaterial3D.new()
 		_patch_material.albedo_color = Color(0.48, 0.32, 0.16)
 		_patch_material.roughness = 0.9
 	return _patch_material
+
+
+static func _get_cloak_material() -> StandardMaterial3D:
+	## The ONE herder material (muted dusty mauve cloak). Picked to sit apart
+	## from BOTH herd hides (elephant grey, giraffe tan) and from the nomad
+	## camps' bone-white huts, so a caravan reads as "people" at a glance.
+	## Same sharing rule as every material above — never duplicate() per herder.
+	if _cloak_material == null:
+		_cloak_material = StandardMaterial3D.new()
+		_cloak_material.albedo_color = Color(0.43, 0.34, 0.40)
+		_cloak_material.roughness = 0.95
+	return _cloak_material
+
+
+static func _get_wool_material() -> StandardMaterial3D:
+	## The ONE pack-beast material (cream wool). Shared by every body, leg,
+	## neck and shag slab of every beast ever spawned.
+	if _wool_material == null:
+		_wool_material = StandardMaterial3D.new()
+		_wool_material.albedo_color = Color(0.86, 0.79, 0.63)
+		_wool_material.roughness = 0.95
+	return _wool_material
 
 
 # ============================================================================
@@ -597,6 +749,164 @@ func _build_giraffe() -> Dictionary:
 	}
 
 
+func _build_herder() -> Dictionary:
+	## Assemble one caravan herder — a two-legged blocky figure with a staff —
+	## and return the SAME species-agnostic record shape as the two herd
+	## builders, so nothing downstream learns a new case.
+	##
+	## The legs slot carries TWO pivots instead of four, and that costs no code
+	## at all: _animate_animals indexes LEG_PHASE_OFFSETS by leg index, and its
+	## first two entries are 0 and PI — exactly the alternating left/right
+	## stride a biped wants. (The quadruped order is FL/FR/RL/RR, so index 0/1
+	## being the left/right pair is not a coincidence to preserve here, it is
+	## the same convention: even index = left, odd = right.)
+	var mat := _get_cloak_material()
+
+	var root := Node3D.new()
+	root.name = "Herder"
+	var body := Node3D.new()
+	body.name = "Body"
+	root.add_child(body)
+
+	# Torso: rests on the leg tops, so its centre is hip + half height.
+	var torso_center_y := HERDER_LEG_SIZE.y + HERDER_TORSO_SIZE.y * 0.5
+	body.add_child(_make_box_part("TorsoBox", HERDER_TORSO_SIZE,
+			Vector3(0.0, torso_center_y, 0.0), mat, true))
+
+	# Head, sitting straight on the shoulders. Small, but it is the part that
+	# makes the silhouette read as a person, so it keeps its shadow.
+	body.add_child(_make_box_part("Head", HERDER_HEAD_SIZE,
+			Vector3(0.0, torso_center_y + HERDER_TORSO_SIZE.y * 0.5 + HERDER_HEAD_SIZE.y * 0.5,
+					0.0), mat, true))
+
+	# Staff: a thin pole carried at the right side, leaned forward a few
+	# degrees. Shadow OFF — a 7 cm pole is a pure accent (same rule as tusks).
+	var staff := _make_box_part("Staff", HERDER_STAFF_SIZE,
+			Vector3(HERDER_TORSO_SIZE.x * 0.5 + 0.10, HERDER_STAFF_SIZE.y * 0.5, -0.05),
+			_get_patch_material(), false)
+	staff.rotation_degrees.x = HERDER_STAFF_LEAN_DEG
+	body.add_child(staff)
+
+	# Two hip pivots, left then right (see the leg-order note above).
+	var hip_x := HERDER_TORSO_SIZE.x * 0.5 - HERDER_LEG_SIZE.x * 0.5
+	var legs: Array[Node3D] = [
+		_make_leg("LegL", Vector3(-hip_x, HERDER_LEG_SIZE.y, 0.0), HERDER_LEG_SIZE, mat, true),
+		_make_leg("LegR", Vector3(hip_x, HERDER_LEG_SIZE.y, 0.0), HERDER_LEG_SIZE, mat, true),
+	]
+	for leg: Node3D in legs:
+		body.add_child(leg)
+
+	return {
+		"root": root,
+		"body": body,
+		"legs": legs,
+		"neck": null,                   # a herder's head rides the torso directly
+		"neck_rest": 0.0,               # unused while neck is null
+		"trunk": [] as Array[Node3D],   # no trunk chain
+	}
+
+
+func _build_pack_beast() -> Dictionary:
+	## Assemble one laden pack beast: a woolly barrel on four short legs with a
+	## curved neck, a small head and one or two bundles strapped to its back.
+	## Same record shape as every other builder — the neck slot is filled, so
+	## the existing neck-bob animation drives it with no new code.
+	##
+	## The neck CURVES using one pivot, not two animated ones: the lower
+	## segment leans forward off the shoulders and carries a nested upper
+	## segment bent back toward vertical, with the head on top of that. Only
+	## the outer pivot is ever animated, and everything downstream rides it —
+	## the same parent-swings-the-chain structure as the elephant's trunk.
+	var mat := _get_wool_material()
+
+	var root := Node3D.new()
+	root.name = "PackBeast"
+	var body := Node3D.new()
+	body.name = "Body"
+	root.add_child(body)
+
+	# Barrel: bottom rests on the leg tops, so its centre is hip + half height.
+	var body_center_y := BEAST_LEG_SIZE.y + BEAST_BODY_SIZE.y * 0.5
+	body.add_child(_make_box_part("BodyBox", BEAST_BODY_SIZE,
+			Vector3(0.0, body_center_y, 0.0), mat, true))
+
+	# Shag fringe: slabs hung along the lower flanks, spaced down the length.
+	# Shadow OFF (accents), like the giraffe's coat patches.
+	var shag_x := BEAST_BODY_SIZE.x * 0.5 + BEAST_SHAG_SIZE.x * 0.5 - 0.02
+	var shag_y := body_center_y - BEAST_BODY_SIZE.y * 0.5 + BEAST_SHAG_SIZE.y * 0.35
+	for i: int in BEAST_SHAG_PER_SIDE:
+		# Evenly spaced along the barrel: i / (n-1) mapped onto -0.35..0.35 of
+		# the body length.
+		var t := float(i) / float(BEAST_SHAG_PER_SIDE - 1) - 0.5
+		var shag_z := t * BEAST_BODY_SIZE.z * 0.7
+		for side: float in [-1.0, 1.0]:
+			body.add_child(_make_box_part("Shag%d%s" % [i, "L" if side < 0.0 else "R"],
+					BEAST_SHAG_SIZE, Vector3(side * shag_x, shag_y, shag_z), mat, false))
+
+	# Bundles: the cargo, sitting on top of the barrel in dark strap-brown.
+	# Shadow OFF — they are small and already inside the body's own shadow.
+	var bundle_count := _rng.randi_range(1, 2)
+	var bundle_y := body_center_y + BEAST_BODY_SIZE.y * 0.5 + BEAST_BUNDLE_SIZE.y * 0.5 - 0.05
+	for i: int in bundle_count:
+		var bundle_z := (float(i) - float(bundle_count - 1) * 0.5) * (BEAST_BUNDLE_SIZE.z + 0.08)
+		body.add_child(_make_box_part("Bundle%d" % i, BEAST_BUNDLE_SIZE,
+				Vector3(0.0, bundle_y, bundle_z), _get_patch_material(), false))
+
+	# Neck: pivot at the shoulders, leaning forward; box hung half a length
+	# ABOVE it along the pivot's local up (the same offset trick as the legs
+	# and the giraffe neck), so the bob swings neck, head and all.
+	var neck := Node3D.new()
+	neck.name = "Neck"
+	neck.position = Vector3(0.0, body_center_y + BEAST_BODY_SIZE.y * 0.35,
+			-(BEAST_BODY_SIZE.z * 0.5 - BEAST_NECK_SIZE.z * 0.5))
+	neck.rotation_degrees.x = BEAST_NECK_ANGLE_DEG
+	body.add_child(neck)
+	neck.add_child(_make_box_part("NeckBox", BEAST_NECK_SIZE,
+			Vector3(0.0, BEAST_NECK_SIZE.y * 0.5, 0.0), mat, true))
+
+	# Upper neck: a child pivot at the lower segment's top, bent BACK so the
+	# pair reads as a curve rather than one straight bar. Not animated — it is
+	# rest geometry that rides the parent pivot.
+	var neck_upper := Node3D.new()
+	neck_upper.name = "NeckUpper"
+	neck_upper.position = Vector3(0.0, BEAST_NECK_SIZE.y, 0.0)
+	neck_upper.rotation_degrees.x = BEAST_NECK_UPPER_ANGLE_DEG
+	neck.add_child(neck_upper)
+	neck_upper.add_child(_make_box_part("NeckUpperBox", BEAST_NECK_UPPER_SIZE,
+			Vector3(0.0, BEAST_NECK_UPPER_SIZE.y * 0.5, 0.0), mat, true))
+
+	# Head, in UPPER-NECK-local space at the far end, so it rides the whole
+	# chain for free. Shadow OFF — a 26 cm nub adds nothing to the silhouette.
+	neck_upper.add_child(_make_box_part("Head", BEAST_HEAD_SIZE,
+			Vector3(0.0, BEAST_NECK_UPPER_SIZE.y + BEAST_HEAD_SIZE.y * 0.5 - 0.05,
+					-(BEAST_HEAD_SIZE.z * 0.5 - BEAST_NECK_UPPER_SIZE.z * 0.5)), mat, false))
+
+	# Legs, always in FL/FR/RL/RR order — the species-agnostic contract the
+	# animation loop relies on (diagonal trot pairs are picked by index).
+	var hip_x := BEAST_BODY_SIZE.x * 0.5 - BEAST_LEG_SIZE.x * 0.5
+	var hip_z := BEAST_BODY_SIZE.z * 0.5 - BEAST_LEG_SIZE.z * 0.5
+	var hip_y := BEAST_LEG_SIZE.y
+	var legs: Array[Node3D] = [
+		_make_leg("LegFL", Vector3(-hip_x, hip_y, -hip_z), BEAST_LEG_SIZE, mat, true),
+		_make_leg("LegFR", Vector3(hip_x, hip_y, -hip_z), BEAST_LEG_SIZE, mat, true),
+		_make_leg("LegRL", Vector3(-hip_x, hip_y, hip_z), BEAST_LEG_SIZE, mat, true),
+		_make_leg("LegRR", Vector3(hip_x, hip_y, hip_z), BEAST_LEG_SIZE, mat, true),
+	]
+	for leg: Node3D in legs:
+		body.add_child(leg)
+
+	return {
+		"root": root,
+		"body": body,
+		"legs": legs,
+		"neck": neck,
+		# The forward lean is the neck's REST pose: the bob is layered on top of
+		# it, never overwriting it (same discipline as the giraffe's neck).
+		"neck_rest": neck.rotation.x,
+		"trunk": [] as Array[Node3D],   # no trunk chain
+	}
+
+
 # ============================================================================
 # LIFECYCLE
 # ============================================================================
@@ -663,7 +973,8 @@ func _spawn_herd() -> void:
 	## lookup right here at spawn time.
 	if not _animals.is_empty():
 		# The ONE-HERD INVARIANT — this early-return IS the perf story: the
-		# feature's worst case is a single ≤ 8-animal herd, ever.
+		# feature's worst case is a single event, ever — ≤ 8 animals for a herd,
+		# ≤ 10 members for a caravan (CARAVAN_HERDERS_MAX + CARAVAN_BEASTS_MAX).
 		return
 	var player := _find_player()
 	if player == null:
@@ -683,19 +994,30 @@ func _spawn_herd() -> void:
 	var miss := _rng.randf_range(MIGRATION_MISS_MIN, MIGRATION_MISS_MAX)
 	if _rng.randf() < 0.5:
 		miss = -miss
-	# The along-heading setback shrinks to keep the origin ON the FIELD_RADIUS
-	# circle (Pythagoras), not past it — otherwise the lateral offset would push
-	# the spawn beyond DESPAWN_RADIUS and the herd would be freed on its first
-	# update frame. |miss| < FIELD_RADIUS always, so the root is real.
-	var setback := sqrt(FIELD_RADIUS * FIELD_RADIUS - miss * miss)
+	# The along-heading setback shrinks to keep the origin ON the spawn circle
+	# (Pythagoras), not past it — otherwise the lateral offset would push the spawn
+	# beyond DESPAWN_RADIUS and the herd would be freed on its first update frame.
+	# The circle is FIELD_RADIUS pulled in by FORMATION_MAX_EXTENT, because
+	# _add_animal places each member at `centre + offset` and never subtracts: with
+	# the centre ON the 140 m circle the outermost giraffe stood at ~157 m, over the
+	# open sky past the web build's ~150 m of terrain — the exact failure
+	# FIELD_RADIUS exists to prevent. |miss| < spawn_radius always, so the root is real.
+	var spawn_radius := FIELD_RADIUS - FORMATION_MAX_EXTENT
+	var setback := sqrt(spawn_radius * spawn_radius - miss * miss)
 	_herd_position = player_ground - _herd_heading * setback + _herd_lateral * miss
 	_herd_speed = _rng.randf_range(WALK_SPEED_MIN, WALK_SPEED_MAX)
 	_herd_travelled = 0.0
+	_herd_age = 0.0
+	_herd_offset_max = 0.0
 
 	# Build the members with their formation offsets (herd-local lateral/long
 	# pairs turned into world-space vectors — heading never changes, so the
 	# world-space offset is valid for the herd's whole life).
-	if _rng.randf() < ELEPHANT_CHANCE:
+	# The caravan is rolled FIRST and takes its slice off the top, so the
+	# elephant/giraffe split below is untouched (see CARAVAN_CHANCE).
+	if _rng.randf() < CARAVAN_CHANCE:
+		_spawn_caravan()
+	elif _rng.randf() < ELEPHANT_CHANCE:
 		_spawn_elephant_family()
 	else:
 		_spawn_giraffe_flock()
@@ -734,6 +1056,55 @@ func _spawn_giraffe_flock() -> void:
 		_add_animal(_build_giraffe(), _herd_lateral * lat + _herd_heading * lon)
 
 
+func _spawn_caravan() -> void:
+	## A herder caravan: the herders walk at the FRONT of the line and the laden
+	## pack beasts trail behind them in a loose, jittered single file — the
+	## "people leading their animals somewhere" read the owner asked for.
+	##
+	## Formation is one slot per member stepping CARAVAN_LINE_SPACING backwards
+	## along the heading, with a lateral wobble so the file bends like a trail
+	## rather than a marching column. Everything else — easing into the slot,
+	## facing along the heading, per-animal stride phase, movement, animation and
+	## despawn — comes free from _add_animal / _update_herd / _animate_animals:
+	## a caravan is just N records of the same species-agnostic shape.
+	##
+	## ISOLATION CONTRACT (identical to the two herds, and non-negotiable):
+	## caravan members join NO group and carry NO collision. Phoboman's Stink
+	## Wave iterates "crocodile" and crocodile_lod_manager.gd iterates it too, so
+	## a fauna node in any enemy group would be grabbed by both. They ignore the
+	## player, crocodiles, abilities and rain completely, and nothing can touch
+	## them back — they are scenery that happens to walk.
+	##
+	## ponytail: a caravan does NOT path to or from a nomad camp — the two
+	## halves of the feature are thematically linked and mechanically
+	## independent. Wiring them up needs a nearest-camp query on the terrain
+	## (camps are chunk-local and unload with their chunk, so it would also need
+	## to survive the camp despawning mid-walk); the upgrade path is a
+	## `get_camp_near(pos)` on endless_terrain.gd plus a heading override here.
+	##
+	## ponytail: the optional caravan bell one-shot is skipped, same shape as
+	## the elephant trumpet noted in _spawn_herd — sound_manager.gd's players are
+	## non-positional, and a caravan spawns ~FIELD_RADIUS (140 m) away, so a bell
+	## at full volume in both ears would read as "inside the player's head"
+	## rather than "in the distance". The upgrade path is a positional audio path
+	## (an AudioStreamPlayer3D on the lead herder) plus a play_* in the manager's
+	## synth style.
+	var herder_count := _rng.randi_range(CARAVAN_HERDERS_MIN, CARAVAN_HERDERS_MAX)
+	var beast_count := _rng.randi_range(CARAVAN_BEASTS_MIN, CARAVAN_BEASTS_MAX)
+
+	# Slot 0 is the front of the line; each later slot steps one spacing back
+	# along the heading. Centred on the herd position so the line straddles the
+	# migration centre instead of trailing entirely behind it.
+	var total := herder_count + beast_count
+	for i: int in total:
+		var step := float(i) - float(total - 1) * 0.5
+		var lon := -step * CARAVAN_LINE_SPACING
+		var lat := _rng.randf_range(-CARAVAN_LINE_JITTER, CARAVAN_LINE_JITTER)
+		var offset := _herd_heading * lon + _herd_lateral * lat
+		var record := _build_herder() if i < herder_count else _build_pack_beast()
+		_add_animal(record, offset)
+
+
 func _add_animal(record: Dictionary, offset: Vector3) -> void:
 	## Parent one built animal, place it at its formation slot, face it along
 	## the herd heading, and finish its record. The builder already cached every
@@ -751,6 +1122,8 @@ func _add_animal(record: Dictionary, offset: Vector3) -> void:
 	record["offset"] = offset                       # formation slot, world-space
 	record["phase"] = _rng.randf_range(0.0, TAU)    # stride offset — no lockstep
 	_animals.append(record)
+	# Widest slot in this formation — the despawn test subtracts it (see the var).
+	_herd_offset_max = maxf(_herd_offset_max, offset.length())
 
 
 func _update_herd(delta: float) -> void:
@@ -769,16 +1142,32 @@ func _update_herd(delta: float) -> void:
 	# the LIVE player position each tick, so "the herd walked past" and "the
 	# player ran away from the herd" are the same check. No player at all
 	# (scene torn down mid-walk) also ends the event.
-	if player == null or _herd_position.distance_to(player.global_position) > DESPAWN_RADIUS:
+	# The lifetime cap is the second half of that test: the distance is measured
+	# against a MOVING player, so a player travelling with the herd at the herd's
+	# own speed keeps it in range forever and the feature stalls for good (see
+	# MAX_HERD_LIFETIME).
+	if player == null or _herd_age + delta > MAX_HERD_LIFETIME:
 		_despawn_herd()
 		return
 
+	_herd_age += delta
 	_herd_travelled += _herd_speed * delta
 	# Centre = straight line along the heading + the gentle shared meander on
 	# the lateral axis, phased by distance walked (see MEANDER_FREQUENCY).
 	_herd_position += _herd_heading * (_herd_speed * delta)
 	var centre := _herd_position \
 			+ _herd_lateral * (sin(_herd_travelled * MEANDER_FREQUENCY) * MEANDER_AMPLITUDE)
+
+	# The distance test measures `centre` — the point every member is actually
+	# placed relative to, meander included — reduced by this herd's widest
+	# formation offset. Measuring _herd_position instead (no meander) and not
+	# subtracting the offset let the far side of the line walk ~14 m past the
+	# radius, which is exactly the terrain extent DESPAWN_RADIUS is bounded by
+	# (see _herd_offset_max). It runs AFTER the advance so the point tested is the
+	# one the members are about to be eased toward, not last tick's.
+	if centre.distance_to(player.global_position) > DESPAWN_RADIUS - _herd_offset_max:
+		_despawn_herd()
+		return
 
 	# Facing: the centre's own velocity — the heading plus the meander's
 	# derivative, which is exact and needs no previous-frame state. Computed

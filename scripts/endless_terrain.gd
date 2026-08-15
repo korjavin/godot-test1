@@ -132,6 +132,21 @@ const FOG_DENSITY_DESKTOP: float = 0.0022
 ## block. This stops crocodiles from spawning partially buried inside blocks.
 @export var min_object_clearance: float = 1.5
 
+## Radius (in metres) of the crocodile-free bubble around the world origin — the
+## spawn point every run and every restart begins on.
+##
+## Without it the FIRST run of a session gets no spawn protection at all: the
+## player's own clear_nearby_crocodiles() sweep only runs on respawn/restart, so a
+## fresh boot drops the player into a chunk holding ~10 crocodiles with nothing
+## keeping them off (0,0) — several sit inside DETECTION_RADIUS (15) and start
+## chasing on frame one, and BASE_CHASE_SPEED (5.5) beats WALK_SPEED (5.0).
+## Enforced here, in world generation, rather than as another sweep: it is a pure
+## function of position, so it holds identically for new_run() and needs no
+## ordering dance with the player's _ready(), which runs before any chunk exists.
+## Matches the player's SPAWN_SAFE_RADIUS (the post-respawn sweep radius) — the two
+## are the same rule enforced from the two ends; keep them in step if either moves.
+const SPAWN_SAFE_RADIUS: float = 25.0
+
 ## Chance (0..1) that a given walkable structure top (pyramid apex / wall ridge)
 ## gets a rare crocodile patrolling it. Kept moderate so they're an occasional
 ## surprise, not on every structure.
@@ -341,10 +356,14 @@ const BOSS_SEED: int = 0xB0_55  # "BOSS"-ish; arbitrary fixed constant
 ## Kill switch, mirrors spawn_coins / spawn_crocodiles.
 @export var spawn_artifacts: bool = true
 
-## Per-chunk chance of hosting an artifact: 0.05 ≈ one per 20 chunks, inside the
-## one-per-15-to-25 target band. Rarity is also the draw-call budget (see
-## ARTIFACT_MAX_ACCENTS below).
-const ARTIFACT_CHANCE: float = 0.05
+## Per-chunk chance of ROLLING an artifact, before the candidate loop rejects
+## spots on the road, in a river, or on stone already in the chunk. Measured
+## survival across a 61x61 field is 59.5%, so 0.08 lands ~1 built artifact per 24
+## chunks — the same rarity the 0.05 roll produced when placement was unchecked
+## and the one-per-15-to-25 target band. Retuned alongside the overlap test: with
+## rejections added and the chance left at 0.05 the rate fell to 1 per 38.
+## Rarity is also the draw-call budget (see ARTIFACT_MAX_ACCENTS below).
+const ARTIFACT_CHANCE: float = 0.08
 
 ## Fixed salt XORed into run_seed for the artifact hash stream — same spirit as
 ## BOSS_SEED / ROAD_COIN_SEED: an arbitrary constant that keeps this stream
@@ -352,8 +371,20 @@ const ARTIFACT_CHANCE: float = 0.05
 const ARTIFACT_SALT: int = 0xA27_1FA
 
 ## Candidate spots tried inside a chunk before giving up (a try is rejected when
-## it lands too close to the coin road — see ARTIFACT_ROAD_CLEARANCE).
+## it lands too close to the coin road, in a river, or on stone that is already
+## there — see spawn_artifact_in_chunk, which owns the loop).
 const ARTIFACT_PLACE_TRIES: int = 4
+
+## Placement radius (metres) — the WIDEST footprint any of the five shapes can
+## return, used by the candidate test because the real radius is only known once
+## the builder has run. Bounded by the stone circle, the widest of the five:
+##     stone circle: ring_r (4..6) + 1.0        -> 7.0   <- the max
+##     arch:         radius (fixed 5.0) + 1.0   -> 6.0
+##     spiral:       spiral_r (3..4) + 1.2      -> 5.2
+##     colossus head: 3.2      monolith: 2.5
+## Must stay under ARTIFACT_EDGE_MARGIN (12) or an artifact could straddle a chunk
+## seam. Retune any builder's radius and this moves with it.
+const ARTIFACT_RADIUS: float = 7.0
 
 ## Minimum lateral distance from the road centerline. The widest coin band
 ## half-width is road_width_max * 0.5 = 10, so 14 keeps artifacts clear of the
@@ -393,6 +424,154 @@ const ARTIFACT_COIN_MIN: int = 3
 const ARTIFACT_COIN_MAX: int = 5
 const ARTIFACT_COIN_RING_PAD_MIN: float = 1.5
 const ARTIFACT_COIN_RING_PAD_MAX: float = 4.0
+
+# ----------------------------------------------------------------------------
+# NOMAD CAMPS (rare dome-hut villages of caravan herders, off the road)
+# ----------------------------------------------------------------------------
+##
+## A camp is a loose circle of 3-6 white/bone DOME huts (an igloo read, built from
+## stacked shrinking box tiers) around a dark stone fire pit with one glowing
+## ember, plus crates/bundles and tether posts. It is the ARTIFACTS section's twin
+## in every structural way — its own independent hash stream, all solid geometry
+## through create_box into the chunk's ONE MultiMesh + ONE BlockCollision body,
+## one emissive MeshInstance3D for the ember — and differs only in flavour:
+##
+## - PALETTE: bone white huts + dark stone + weathered wood. Deliberately distinct
+##   from BOTH the warm RAMP_* block ramps (sandstone/slate/olive) AND the
+##   artifacts' desaturated grey-green: a camp should read as "someone LIVES here",
+##   not "ruins".
+## - EMBER: warm ORANGE, where the artifacts' accents are cold cyan. Two glows,
+##   two meanings, no ambiguity at a distance.
+## - NO GEM: a camp pays a couple of ordinary scattered coins. The guaranteed gem
+##   stays the artifacts' distinction, so the two landmark types keep separate
+##   reward identities.
+## - CALM POCKET: the camp's single round footprint is what keeps crocodiles out
+##   (see spawn_camp_in_chunk) — the herders' home is a place to breathe.
+##
+## Determinism contract: identical to the artifact one — pure function of chunk
+## coords + run_seed, ZERO draws from the shared chunk RNG, so the ~30 of 31 chunks
+## without a camp regenerate byte-for-byte as they did before camps existed.
+
+## Kill switch, mirrors spawn_artifacts / spawn_biome_content / spawn_coins.
+@export var spawn_camps: bool = true
+
+## Per-chunk chance of hosting a camp, BEFORE the placement rejections in
+## spawn_camp_in_chunk. Those rejections are severe and that is why this number
+## looks large: a camp needs a CAMP_RADIUS (9.4 m) circle clear of the ~12
+## scattered blocks a chunk already holds, and 12 exclusion discs of radius
+## (9 + block radius) cover more than a chunk's area, so most tries lose. Measured
+## over 5 x 121 startup chunks with the roll forced to 1.0: 14% of rolled camps
+## survive all four tries (overlap rejects ~86% of failures, road and river the
+## rest). 0.18 x 14% ≈ ONE CAMP PER 31 CHUNKS as actually built — measured over
+## 8 x 121 chunks at this value, 31 camps — against the artifacts' ~1 per 24, so
+## a village still reads as the rarer find. Retune by MEASURING, not by algebra:
+## the survival rate depends on the block density the biome mix produces.
+## (Those runs were measured at CAMP_RADIUS 9.0; the 9.4 it takes to bound the
+## huts is marginally stricter, so the built rate is a shade under 1 in 31.)
+const CAMP_CHANCE: float = 0.18
+
+## Fixed salt XORed into run_seed for the camp hash stream — same spirit as
+## ARTIFACT_SALT / BIOME_SALT / BOSS_SEED / ROAD_COIN_SEED: an arbitrary constant
+## that keeps this stream independent of every other deterministic spawn site.
+const CAMP_SALT: int = 0xCA_1117  # "CAMP"-ish; arbitrary fixed constant
+
+## Candidate spots tried inside a chunk before giving up. The tries live in
+## spawn_camp_in_chunk, not in _camp_at, so each one is judged by _biome_spot_ok
+## against the finished obstacle list — the test that actually rejects. Kept at 4:
+## raising it to 16 was measured at 36% survival vs 14%, but four cheap tries plus
+## a higher CAMP_CHANCE reaches the same built rate, and letting crowded chunks
+## lose is what puts camps in open ground where a village belongs.
+const CAMP_PLACE_TRIES: int = 4
+
+## Radius of the camp circle: the fire pit sits at the centre and the huts ring
+## it, so this covers the whole village plus a walking margin. It MUST cover the
+## widest hut on the outermost ring, because the same number is both the
+## placement test (_biome_spot_ok) and the footprint appended afterwards:
+##     CAMP_HUT_RING_MAX + (CAMP_HUT_WIDTH_MAX * 0.71 + 0.3)
+##     6.5              + (3.6 * 0.71 + 0.3) = 9.36    <= 9.4  ✓
+## At 9.0 the outer third of a metre of hut stone stood in ground the placement
+## test never checked; 9.4 makes the circle a true bound, which is also why no
+## per-hut footprint is appended (spawn_camp_in_chunk, step 5).
+const CAMP_RADIUS: float = 9.4
+
+## Minimum lateral distance from the coin-road centerline.
+##
+## INVARIANT — "no boss ever stands inside a camp". The camp test measures the
+## distance to STATION CENTRES (that is all _road_lateral_distance computes), and
+## a boss does NOT stand on its station centre: _boss_at offsets it
+## BOSS_FORWARD_OFFSET (8.0 m) along the tangent AND up to BOSS_LATERAL_MAX
+## (4.0 m) across it. Both legs must appear in the bound, or the invariant is
+## checked against a number 8 m smaller than the real one:
+##     CAMP_ROAD_CLEARANCE > CAMP_RADIUS + sqrt(BOSS_FORWARD_OFFSET^2 + BOSS_LATERAL_MAX^2)
+##     22.0                > 9.4         + sqrt(8.0^2 + 4.0^2) = 9.4 + 8.94 = 18.34  ✓
+## i.e. 3.66 m of slack, not the 8.6 the lateral leg alone suggests. (The real
+## clearance is larger still — stations are only _road_spacing() 6 m apart, so
+## the boss is in practice ~4.5 m from its NEAREST station centre rather than
+## 8.94 — but the hypotenuse is the bound that holds without assuming anything
+## about station spacing.) That inequality is the WHOLE boss exclusion —
+## spawn_bosses_in_chunk needs no edit and no extra test. Re-check this line if
+## ANY of the four constants named in it is retuned, BOSS_FORWARD_OFFSET included.
+##
+## 22 also clears the widest coin swath (road_width_max * 0.5 = 10 m) by a wide
+## margin, so camp coins can never be confused with road coins.
+const CAMP_ROAD_CLEARANCE: float = 22.0
+
+## Keeps the whole camp inside its own chunk so no hut straddles a seam (same rule
+## as ARTIFACT_EDGE_MARGIN). MUST exceed CAMP_RADIUS: 12.0 > 9.4 ✓.
+## With chunk_size 50 that still leaves a 26x26 m placement box.
+const CAMP_EDGE_MARGIN: float = 12.0
+
+## --- Hut geometry: an igloo read from 2-3 stacked, shrinking box tiers.
+const CAMP_HUT_MIN: int = 3
+const CAMP_HUT_MAX: int = 6
+const CAMP_HUT_RING_MIN: float = 4.0   # hut distance from the fire pit
+const CAMP_HUT_RING_MAX: float = 6.5
+const CAMP_HUT_WIDTH_MIN: float = 2.6  # widest (ground) tier
+const CAMP_HUT_WIDTH_MAX: float = 3.6
+const CAMP_HUT_TIER_MIN: int = 2
+const CAMP_HUT_TIER_MAX: int = 3
+const CAMP_HUT_TIER_HEIGHT: float = 0.9   # each tier's height
+const CAMP_HUT_TIER_SHRINK: float = 0.62  # each tier's width vs the one below
+const CAMP_HUT_YAW_JITTER: float = 0.25   # per-tier yaw wobble (radians)
+## Door height MUST stay under CAMP_HUT_TIER_HEIGHT (0.9): the doorway sits on
+## the ground tier's outer face, and the tier above is narrower (TIER_SHRINK), so
+## anything taller than one tier pokes out over the roofline as a dark nub.
+const CAMP_HUT_DOOR_SIZE := Vector3(0.7, 0.8, 0.5)
+
+## --- Fire pit: a ring of small dark stones + one emissive ember at the centre.
+const CAMP_FIRE_STONES: int = 7
+const CAMP_FIRE_RING_RADIUS: float = 1.1
+const CAMP_FIRE_STONE_SIZE := Vector3(0.45, 0.35, 0.45)
+const CAMP_EMBER_SIZE := Vector3(0.6, 0.35, 0.6)
+
+## --- Props: crates/bundles and tall thin tether posts on a ring between the
+## fire and the huts.
+const CAMP_CRATE_MIN: int = 3
+const CAMP_CRATE_MAX: int = 6
+const CAMP_CRATE_SIZE_MIN: float = 0.5
+const CAMP_CRATE_SIZE_MAX: float = 0.9
+const CAMP_POST_MIN: int = 2
+const CAMP_POST_MAX: int = 3
+const CAMP_POST_SIZE := Vector3(0.22, 1.8, 0.22)
+const CAMP_PROP_RING_MIN: float = 2.0
+const CAMP_PROP_RING_MAX: float = 4.0
+
+## --- Palette. Bone white for the hut shells (a spot on A→B per tier), near-black
+## stone for the fire ring, weathered brown for wood. See the banner above: this
+## is deliberately neither the warm RAMP_* ramps nor the artifacts' grey-green.
+const CAMP_HUT_A := Color(0.88, 0.87, 0.82)
+const CAMP_HUT_B := Color(0.74, 0.73, 0.69)
+const CAMP_STONE := Color(0.22, 0.21, 0.20)
+const CAMP_WOOD := Color(0.42, 0.31, 0.20)
+
+## Ember glow: WARM ORANGE (the artifacts' accents are cold cyan). main.tscn's
+## glow_hdr_threshold is 0.85, so an energy of 2.5 blooms for free.
+const CAMP_EMBER_COLOR := Color(1.0, 0.55, 0.18)
+const CAMP_EMBER_ENERGY: float = 2.5
+
+## Coin reward: a couple of scattered coins near the fire. NO gem — see the banner.
+const CAMP_COIN_MIN: int = 2
+const CAMP_COIN_MAX: int = 4
 
 # ----------------------------------------------------------------------------
 # BIOME FIELD CONFIGURATION (desert / plains / forest / mountain + rivers)
@@ -764,6 +943,11 @@ var _shared_block_material: StandardMaterial3D
 ## accent in the world, same lazy-singleton discipline as _shared_block_material.
 var _shared_artifact_glow_material: StandardMaterial3D
 
+## Lazily-created shared material for the nomad camps' fire-pit embers (see the
+## NOMAD CAMPS banner). Same lazy-singleton discipline as the artifact glow above:
+## ONE material for every ember that will ever be spawned, never one per camp.
+var _shared_camp_ember_material: StandardMaterial3D
+
 ## A representative roughness for the shared block material. The old per-block code
 ## picked a random roughness in [0.7, 1.0]; since MultiMesh can't vary roughness
 ## per instance, we use one mid-range value for all blocks. (We still CONSUME the
@@ -844,21 +1028,46 @@ func _get_artifact_glow_material() -> StandardMaterial3D:
 		_shared_artifact_glow_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	return _shared_artifact_glow_material
 
-func _spawn_artifact_accent(parent_chunk: MeshInstance3D, local_pos: Vector3, dimensions: Vector3, yaw: float, tilt: float) -> void:
+func _get_camp_ember_material() -> StandardMaterial3D:
 	"""
-	Spawns one emissive accent box (a rune strip, an eye, a missing keystone) as a
-	REAL MeshInstance3D parented to the chunk (per-chunk parenting rule: it unloads
-	with the chunk). Accents cannot join the block MultiMesh — that batch has one
-	shared NON-emissive material — so each accent is a genuine extra draw call.
-	That is exactly why artifacts are rare and capped at ARTIFACT_MAX_ACCENTS
-	accents each: worst case on screen is a handful of extra unshadowed draws.
+	Returns the shared emissive material for nomad-camp fire-pit embers, creating it
+	on first use — the artifact glow material's twin in every way except colour.
+	WARM ORANGE where the artifacts are cold cyan, so a glow at a distance always
+	says which landmark it belongs to. CAMP_EMBER_ENERGY (2.5) sits above main.tscn's
+	glow_hdr_threshold (0.85), so the already-paid glow post-process blooms it for
+	free, and UNSHADED keeps an ember lit when the camp falls into shadow.
+	"""
+	if _shared_camp_ember_material == null:
+		_shared_camp_ember_material = StandardMaterial3D.new()
+		_shared_camp_ember_material.albedo_color = CAMP_EMBER_COLOR
+		_shared_camp_ember_material.emission_enabled = true
+		_shared_camp_ember_material.emission = CAMP_EMBER_COLOR
+		_shared_camp_ember_material.emission_energy_multiplier = CAMP_EMBER_ENERGY
+		_shared_camp_ember_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	return _shared_camp_ember_material
+
+func _spawn_artifact_accent(parent_chunk: MeshInstance3D, local_pos: Vector3, dimensions: Vector3, yaw: float, tilt: float, material: StandardMaterial3D = null) -> void:
+	"""
+	Spawns one emissive accent box (a rune strip, an eye, a missing keystone, a camp
+	ember) as a REAL MeshInstance3D parented to the chunk (per-chunk parenting rule:
+	it unloads with the chunk). Accents cannot join the block MultiMesh — that batch
+	has one shared NON-emissive material — so each accent is a genuine extra draw
+	call. That is exactly why artifacts are rare and capped at ARTIFACT_MAX_ACCENTS
+	accents each (and why a camp spawns exactly ONE ember): worst case on screen is a
+	handful of extra unshadowed draws.
 	Same Basis(UP, yaw) * Basis(RIGHT, tilt) rotation order as create_box, so an
 	accent can sit flush on a tilted stone.
+
+	@param material: OPTIONAL emissive material. Null (the default) keeps the
+	                 artifacts' cyan glow, so every pre-existing call site is
+	                 unchanged; nomad camps pass _get_camp_ember_material() to reuse
+	                 this whole spawn path for their warm-orange ember. Both are
+	                 shared singletons — never pass a per-instance material here.
 	"""
 	var accent := MeshInstance3D.new()
 	accent.mesh = _get_shared_unit_box_mesh()  # shared cube; transform carries the size
 	accent.transform = Transform3D((Basis(Vector3.UP, yaw) * Basis(Vector3.RIGHT, tilt)).scaled_local(dimensions), local_pos)
-	accent.material_override = _get_artifact_glow_material()
+	accent.material_override = _get_artifact_glow_material() if material == null else material
 	# A fist-sized glowing strip casting a shadow would cost a shadow-pass draw
 	# for no visible payoff — accents glow, they don't shade.
 	accent.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
@@ -1302,6 +1511,16 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 	# attach so all its stone and wood joins the chunk's ONE MultiMesh draw call
 	# and ONE collision body.
 	spawn_biome_content_in_chunk(chunk_pos, obstacles, block_batch, block_body)
+
+	# Rare nomad camp — a dome-hut village round a fire pit (independent CAMP_SALT
+	# hash stream, no shared RNG draws consumed). SAME ORDERING REQUIREMENT as the
+	# artifact and the biome content above, for the same reasons: after them so it
+	# can re-check its spot against the finished obstacles list (and append its own
+	# footprint to it), and before _build_block_multimesh / the block_body attach so
+	# all its hut shell, stone and wood joins the chunk's ONE MultiMesh draw call
+	# and ONE collision body. Note it runs BEFORE spawn_crocodiles_in_chunk below —
+	# that is what lets its single footprint keep crocodiles out of the camp.
+	spawn_camp_in_chunk(chunk_pos, mesh_instance, obstacles, block_batch, block_body)
 
 	# Build the chunk's batched block visuals. If any blocks were placed, collapse
 	# them all into one MultiMeshInstance3D parented to this chunk (so it is freed
@@ -2082,7 +2301,10 @@ func spawn_crocodiles_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D
 
 		# Crocodiles don't stand in rivers — the water is the player's, and a river
 		# reads as a small safe(r) crossing. Rejected AFTER the position draws, so
-		# the stream is untouched (see the same note in spawn_objects_in_chunk).
+		# the candidate itself costs the stream nothing extra — but a rejection
+		# still skips the successful spawn's `rotation.y` draw below, so the rest
+		# of this chunk's crocodile positions shift. Deterministic within a run
+		# (is_river_at is pure), just not identical to a river-free chunk.
 		#
 		# chunk_croc_target is deliberately NOT reduced: density is a DESIGN number
 		# (the difficulty gradient), never trimmed for a biome. The while loop's
@@ -2090,6 +2312,14 @@ func spawn_crocodiles_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D
 		# instead, so a chunk merely grazed by a river keeps its full count; only a
 		# chunk almost entirely under water ends up with fewer.
 		if valid_position and is_river_at(chunk_world_pos + crocodile_pos):
+			valid_position = false
+
+		# Keep the spawn point clear (see SPAWN_SAFE_RADIUS). Same post-draw `continue`
+		# discipline as the river skip directly above — the candidate's own draws are
+		# already spent, so nothing upstream shifts; only the handful of chunks touching
+		# the origin bubble are affected, and identically on every run.
+		var croc_world := chunk_world_pos + crocodile_pos
+		if valid_position and Vector2(croc_world.x, croc_world.z).length() < SPAWN_SAFE_RADIUS:
 			valid_position = false
 
 		if not valid_position:
@@ -2325,67 +2555,46 @@ func _artifact_at(chunk_pos: Vector2i) -> Dictionary:
 	block/crocodile/coin is exactly where it was before artifacts existed.
 
 	@param chunk_pos: Chunk coordinates to decide for.
-	@return: {} when this chunk has no artifact (the ~19-in-20 case, or when every
-	         candidate spot fell too close to the coin road or into a river);
-	         otherwise
-	         { "local": Vector3 (chunk-LOCAL position, y = 0),
-	           "kind": int (0..4, which of the five shapes),
-	           "seed": int (seeds the shape builder's own private RNG) }.
+	@return: {} when this chunk has no artifact (the ~19-in-20 case); otherwise
+	         { "seed": int } — the seed for the artifact's private RNG, which
+	         spawn_artifact_in_chunk uses for placement, shape and geometry.
+
+	WHY THE CANDIDATE LOOP IS NOT HERE — same split, for the same reason, as
+	_camp_at / spawn_camp_in_chunk: when this runs the chunk has no geometry yet,
+	so the only tests available are road + river, and neither rejects the thing
+	that actually matters. Judging candidates here left artifacts placed with NO
+	obstacle test at all: measured over a 61x61 chunk field, 51.5% of artifacts
+	interpenetrated a scattered block or a feature structure, one of them buried
+	16.5 m deep inside a pyramid — taking its coin ring and its ONE guaranteed gem,
+	the whole reason to detour off the road, into the stone with it. That is
+	exactly the fused-solids bug _camp_spot_clear exists to prevent, one landmark
+	over. The loop therefore lives in spawn_artifact_in_chunk, where `obstacles`
+	exists.
 
 	EDUCATIONAL NOTE — the determinism contract:
 	- Within a run the same chunk yields the IDENTICAL artifact (same spot, same
-	  shape, same builder seed) no matter how often it unloads and regenerates —
-	  the RNG is seeded purely from chunk coords + run_seed, and its draw order
-	  below is fixed (chance roll, then 2 draws per placement try, then kind,
-	  then builder seed).
+	  shape, same stones) no matter how often it unloads and regenerates: the RNG
+	  is seeded purely from chunk coords + run_seed, and every draw downstream
+	  comes off that one seeded stream in a fixed order.
 	- Across runs, new_run() re-rolls run_seed, so artifacts land elsewhere.
-	- The road-clearance test reads the station cache (pure in `k`) and the river
-	  test reads the biome field (pure in world position + run_seed), so both are
-	  load-order independent: rejection is a property of the POSITION, not of
-	  when the chunk happened to generate.
+	- The road-clearance test reads the station cache (pure in `k`), the river test
+	  reads the biome field (pure in world position + run_seed), and the overlap
+	  test reads the chunk's own obstacle list (pure in chunk coords + run_seed) —
+	  so all three are load-order independent: rejection is a property of the
+	  POSITION, not of when the chunk happened to generate.
 	"""
 	var rng := RandomNumberGenerator.new()
 	# Same coordinate mixing as the chunk object seed, but salted so this stream
 	# never collides with (or perturbs) any other deterministic spawn site.
 	rng.seed = hash(Vector3i(chunk_pos.x * 73856093, chunk_pos.y * 19349663, run_seed ^ ARTIFACT_SALT))
 
-	# 1. Rarity roll — most chunks bail here.
+	# Rarity roll — most chunks bail here. This is the ONLY draw taken from the
+	# stream at this point; the rest happen in spawn_artifact_in_chunk off an RNG
+	# re-seeded from `seed`, so the two stay a single fixed sequence per chunk.
 	if rng.randf() >= ARTIFACT_CHANCE:
 		return {}
 
-	var center := chunk_to_world(chunk_pos)
-	# Candidates stay ARTIFACT_EDGE_MARGIN inside the chunk so the whole artifact
-	# (widest footprint < the margin) never straddles a seam.
-	var half := chunk_size / 2.0 - ARTIFACT_EDGE_MARGIN
-
-	# 2. Try a few candidate spots; accept the FIRST one far enough from the road
-	# centerline AND out of the water. This is what produces the off-road bias AND
-	# the hard "never on the centerline" rule. Acceptance stops the loop, so the
-	# draw sequence is still fixed for a given outcome (2 draws per try until the
-	# accepted try), and the kind/seed draws always follow in the same order.
-	# Adding the river test to the SAME acceptance condition keeps that shape: an
-	# artifact whose first candidate lands in a river just tries the next spot, or
-	# is skipped entirely — no draw is inserted or removed.
-	var local_x := 0.0
-	var local_z := 0.0
-	var placed := false
-	var tries := 0
-	while tries < ARTIFACT_PLACE_TRIES and not placed:
-		tries += 1
-		local_x = rng.randf_range(-half, half)
-		local_z = rng.randf_range(-half, half)
-		if _road_lateral_distance(center.x + local_x, center.z + local_z, ARTIFACT_ROAD_CLEARANCE) >= ARTIFACT_ROAD_CLEARANCE \
-				and not is_river_at(Vector3(center.x + local_x, 0.0, center.z + local_z)):
-			placed = true
-	if not placed:
-		return {}
-
-	# 3. Which of the five shapes, and 4. a further seed for the shape builder's
-	# own RNG (so builders can draw freely without this function caring how many
-	# draws each shape needs).
-	var kind := rng.randi_range(0, 4)
-	var builder_seed := rng.randi()
-	return { "local": Vector3(local_x, 0.0, local_z), "kind": kind, "seed": builder_seed }
+	return { "seed": rng.randi() }
 
 # ============================================================================
 # ARTIFACT SHAPE BUILDERS (the five code-built "lost civilization" landmarks)
@@ -2586,8 +2795,9 @@ func spawn_artifact_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, 
 	@param chunk_pos: Chunk coordinates being generated.
 	@param parent_chunk: The chunk mesh — accents and reward coins parent here
 	                     (per-chunk parenting rule: they unload with the chunk).
-	@param obstacles: The chunk's block-footprint list; the artifact appends its
-	                  own footprint so later spawners react to it (see below).
+	@param obstacles: The chunk's block-footprint list — READ to reject candidate
+	                  spots that would bury the artifact in existing stone, then
+	                  appended to with the artifact's own footprint (see below).
 	@param block_batch / block_body: The chunk's visual batch + collision body,
 	                                 threaded through to create_box.
 	"""
@@ -2597,15 +2807,47 @@ func spawn_artifact_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, 
 	if art.is_empty():
 		return
 
-	# The shape builder draws from its OWN RNG, seeded by _artifact_at's "seed"
-	# draw — so each builder can consume as many draws as its shape needs without
-	# the placement function (or anything else) caring.
+	# Everything below draws from ONE private RNG seeded by _artifact_at's roll, so
+	# each builder can consume as many draws as its shape needs without any other
+	# stream caring.
 	var rng := RandomNumberGenerator.new()
 	rng.seed = art.seed
-	var center: Vector3 = art.local
+
+	var chunk_center := chunk_to_world(chunk_pos)
+	# Candidates stay ARTIFACT_EDGE_MARGIN (12) inside the chunk so the whole
+	# artifact (widest footprint ARTIFACT_RADIUS 7.0 < the margin) never straddles
+	# a seam.
+	var half := chunk_size / 2.0 - ARTIFACT_EDGE_MARGIN
+
+	# Try a few candidate spots; accept the FIRST one that clears the road, the
+	# water AND the stone already in this chunk. The road rejection is what
+	# produces the off-road bias and the hard "never on the centerline" rule;
+	# the overlap rejection is what keeps the landmark readable (see _artifact_at
+	# for the 51.5%-interpenetration measurement that put it here). Every try
+	# failing means NO artifact — a monolith fused into a mountain massif reads
+	# worse than a chunk without one, which is the same call camps make.
+	# _biome_spot_ok is the single home of that whole rule; ARTIFACT_RADIUS is the
+	# widest any of the five shapes can be, since the real one is only known after
+	# its builder runs.
+	var local_x := 0.0
+	var local_z := 0.0
+	var placed := false
+	var tries := 0
+	while tries < ARTIFACT_PLACE_TRIES and not placed:
+		tries += 1
+		local_x = rng.randf_range(-half, half)
+		local_z = rng.randf_range(-half, half)
+		if _biome_spot_ok(chunk_center, local_x, local_z, ARTIFACT_RADIUS, ARTIFACT_ROAD_CLEARANCE, obstacles):
+			placed = true
+	if not placed:
+		return
+
+	# Which of the five shapes.
+	var kind := rng.randi_range(0, 4)
+	var center := Vector3(local_x, 0.0, local_z)
 
 	var footprint: Dictionary
-	match int(art.kind):
+	match kind:
 		0: footprint = _artifact_monolith(center, rng, parent_chunk, block_batch, block_body)
 		1: footprint = _artifact_arch(center, rng, parent_chunk, block_batch, block_body)
 		2: footprint = _artifact_stone_circle(center, rng, parent_chunk, block_batch, block_body)
@@ -2668,6 +2910,408 @@ func spawn_artifact_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, 
 	# the failure the rule exists to prevent; if it ever looks wrong, give the
 	# footprint a per-shape "solid centre height" rather than a taller vocabulary.
 	obstacles.append({ "pos": center, "radius": footprint.radius, "top": footprint.top, "climbable": true })
+
+# ============================================================================
+# NOMAD CAMPS (rare dome-hut villages — see the NOMAD CAMPS constant banner)
+# ============================================================================
+
+func _camp_at(chunk_pos: Vector2i) -> Dictionary:
+	"""
+	Deterministic nomad-camp placement for one chunk — _artifact_at for camps,
+	line for line. Pure function of chunk coords + run_seed via the independent
+	CAMP_SALT hash stream: it consumes NO draw from the shared chunk RNG, so every
+	existing block/crocodile/coin/artifact is exactly where it was before camps
+	existed.
+
+	@param chunk_pos: Chunk coordinates to decide for.
+	@return: {} when this chunk has no camp (the overwhelming majority); otherwise
+	         { "seed": int (seeds the camp builders' AND the candidate loop's own
+	           private RNG) }.
+	         There is no "kind": a camp is ONE layout whose variety comes from the
+	         builder RNG (hut count, ring radii, yaws), not from a shape enum.
+	         There is no "local" either — WHERE the camp goes is decided in
+	         spawn_camp_in_chunk, see below.
+
+	WHY THE CANDIDATE LOOP IS NOT HERE (it used to be, measured and moved):
+	this function runs before the chunk has any geometry, so the only tests it can
+	make are the road and the river — and those reject almost nothing (measured:
+	11 of 121 chunks). The test that actually rejects is the obstacle overlap
+	against the chunk's ~12 scattered blocks plus its biome geometry, which needs
+	the finished `obstacles` list and therefore lives in spawn_camp_in_chunk. With
+	the loop here, all four tries varied a test that always passed and the single
+	surviving spot then met the real test once: ~9% of rolled camps were built, so
+	camps landed ~10x rarer than intended. The loop now sits where `obstacles`
+	exists, so all CAMP_PLACE_TRIES tries vary the test that does the rejecting.
+
+	EDUCATIONAL NOTE — the determinism contract (identical to _artifact_at's):
+	- WITHIN A RUN the same chunk yields the IDENTICAL camp (same builder seed, and
+	  hence the same candidate sequence downstream) no matter how often it unloads
+	  and regenerates — the RNG is seeded purely from chunk coords + run_seed, and
+	  its draw order is fixed (chance roll, then the builder seed).
+	- ACROSS RUNS new_run() re-rolls run_seed, so camps land elsewhere.
+	- The placement tests downstream read the station cache (pure in `k`), the
+	  biome field (pure in world position + run_seed) and the chunk's own
+	  obstacles (rebuilt identically from the chunk RNG), so all three are
+	  load-order independent: a rejection is a property of the POSITION and the
+	  CHUNK, not of when the chunk happened to generate.
+	"""
+	var rng := RandomNumberGenerator.new()
+	# DIFFERENT coordinate primes from the artifact stream (73856093 / 19349663)
+	# and the biome stream (83492791 / 15485863), so camp placement can never
+	# correlate with either — a chunk that hosts an artifact is not thereby more
+	# (or less) likely to host a camp.
+	rng.seed = hash(Vector3i(chunk_pos.x * 40960001, chunk_pos.y * 26463089, run_seed ^ CAMP_SALT))
+
+	# 1. Rarity roll — the overwhelming majority of chunks bail here.
+	if rng.randf() >= CAMP_CHANCE:
+		return {}
+
+	# 2. A further seed for the camp's own RNG, which both picks the spot and
+	# builds the geometry, so neither cares how many draws the other needs.
+	return { "seed": rng.randi() }
+
+# ----------------------------------------------------------------------------
+# CAMP GEOMETRY BUILDERS (dome huts, fire pit, crates + tether posts)
+# ----------------------------------------------------------------------------
+#
+# The ARTIFACT SHAPE BUILDERS' contract, reused wholesale:
+# - ALL solid geometry goes through create_box(..., color_override), so a whole
+#   village joins the chunk's single block MultiMesh and single BlockCollision
+#   body: a camp costs ZERO extra draw calls and ZERO extra physics bodies.
+# - The ONE exception is the ember, a real MeshInstance3D through
+#   _spawn_artifact_accent — one extra unshadowed draw per camp, that's the lot.
+# - `rng` is always the camp's PRIVATE RNG (seeded from _camp_at's "seed"), so
+#   these builders draw as freely as their geometry needs without ever touching
+#   the shared chunk stream.
+# - Small decoration (doorways, fire stones) is spawned with collide = false, the
+#   same call create_box already grew for forest canopies: ankle-high scenery you
+#   should be able to walk over is not worth a CollisionShape3D each.
+
+func _camp_hut(center: Vector3, yaw: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	Build ONE dome hut: 2-3 stacked box tiers, widest on the ground and each one
+	narrower than the tier below, which is what turns a stack of cubes into an
+	igloo read at a glance. The top tier is also SHORTER (its height takes the same
+	CAMP_HUT_TIER_SHRINK factor), so the silhouette caps off as a dome rather than
+	ending in a flat chimney. Each tier gets its own small yaw wobble, so no two
+	huts look stamped from the same mould.
+
+	@param center: Hut centre on the ground (chunk-local, y = 0).
+	@param yaw: Facing. The doorway goes on the hut's local +Z face, so the caller
+	            points +Z at the fire pit and every door faces the flames.
+	@param rng: The camp's private RNG (see the section note above).
+	@param block_batch / block_body: The chunk's visual batch + collision body.
+	@return: { "radius": float, "top": float } — a conservative footprint for the
+	         chunk's `obstacles` list, same shape the artifact builders return.
+	"""
+	var base_width := rng.randf_range(CAMP_HUT_WIDTH_MIN, CAMP_HUT_WIDTH_MAX)
+	var tiers := rng.randi_range(CAMP_HUT_TIER_MIN, CAMP_HUT_TIER_MAX)
+	var width := base_width
+	var y := 0.0  # running height of the stack: the top of the tier placed so far
+	var i := 0
+	while i < tiers:
+		# The last tier is squashed as well as narrowed — that is the dome cap.
+		var tier_height: float = CAMP_HUT_TIER_HEIGHT * (CAMP_HUT_TIER_SHRINK if i == tiers - 1 else 1.0)
+		var tier_yaw := yaw + rng.randf_range(-CAMP_HUT_YAW_JITTER, CAMP_HUT_YAW_JITTER)
+		# Bone white, a fresh spot on the A→B ramp per tier so the shell is not one
+		# flat colour (the artifacts' _artifact_stone_color trick, one lerp).
+		var shell := CAMP_HUT_A.lerp(CAMP_HUT_B, rng.randf())
+		create_box(center + Vector3(0.0, y + tier_height / 2.0, 0.0), Vector3(width, tier_height, width), tier_yaw, rng, block_batch, block_body, 0.0, shell)
+		y += tier_height
+		width *= CAMP_HUT_TIER_SHRINK
+		i += 1
+
+	# The doorway: one small dark box set into the fire-facing (+Z) wall. Half of it
+	# sits inside the shell, so it reads as an opening rather than a porch.
+	# collide = false — it is a 0.5 m thick decoration flush with a wall that
+	# already collides, so a shape here would only add cost.
+	var door_offset := Basis(Vector3.UP, yaw) * Vector3(0.0, CAMP_HUT_DOOR_SIZE.y / 2.0, base_width / 2.0)
+	create_box(center + door_offset, CAMP_HUT_DOOR_SIZE, yaw, rng, block_batch, block_body, 0.0, CAMP_STONE, false)
+
+	# Radius is the half-DIAGONAL of the widest tier (tiers are yawed, so the
+	# half-width would under-cover a corner), plus a little for the doorway.
+	return { "radius": base_width * 0.71 + 0.3, "top": y }
+
+func _camp_fire_pit(center: Vector3, rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> void:
+	"""
+	Build the camp's heart: a ring of CAMP_FIRE_STONES small dark stones around the
+	centre plus ONE emissive ember sitting in the middle of them.
+
+	The ember is the camp's ENTIRE extra draw budget — one unshadowed MeshInstance3D
+	through the shared _spawn_artifact_accent path, carrying the shared warm-orange
+	material. The stones are ordinary batched boxes with collide = false: they are
+	ankle-high scenery you should be able to step over, and skipping them saves
+	CAMP_FIRE_STONES collision shapes per camp for no visible difference.
+
+	@param center: Fire-pit centre on the ground (chunk-local, y = 0).
+	@param rng: The camp's private RNG.
+	@param parent_chunk: The chunk mesh — the ember parents here so it unloads with
+	                     the chunk (per-chunk parenting rule).
+	@param block_batch / block_body: The chunk's visual batch + collision body.
+	"""
+	var base_angle := rng.randf_range(0.0, TAU)
+	var i := 0
+	while i < CAMP_FIRE_STONES:
+		# Even spacing round the ring plus a nudge, so it looks laid by hand.
+		var a := base_angle + TAU * float(i) / float(CAMP_FIRE_STONES) + rng.randf_range(-0.15, 0.15)
+		var r := CAMP_FIRE_RING_RADIUS + rng.randf_range(-0.12, 0.12)
+		var pos := center + Vector3(cos(a) * r, CAMP_FIRE_STONE_SIZE.y / 2.0, sin(a) * r)
+		create_box(pos, CAMP_FIRE_STONE_SIZE, rng.randf_range(0.0, TAU), rng, block_batch, block_body, 0.0, CAMP_STONE, false)
+		i += 1
+
+	# The one ember. Sits just clear of the ground so it never z-fights the plane.
+	_spawn_artifact_accent(parent_chunk, center + Vector3(0.0, CAMP_EMBER_SIZE.y / 2.0 + 0.05, 0.0), CAMP_EMBER_SIZE, rng.randf_range(0.0, TAU), 0.0, _get_camp_ember_material())
+
+func _camp_props(center: Vector3, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D, huts: Array) -> void:
+	"""
+	Scatter the lived-in clutter on a jittered ring between the fire and the huts:
+	a few weathered crates/bundles and 2-3 tall thin tether posts (where the pack
+	beasts would be tied). Both are solid — they are knee-to-chest height, so they
+	keep their collision and you walk around them like any block.
+
+	@param center: Camp centre (chunk-local, y = 0); the ring is measured from here.
+	@param rng: The camp's private RNG.
+	@param block_batch / block_body: The chunk's visual batch + collision body.
+	@param huts: The huts already built ({ "pos", "radius" }), so a prop never ends
+	             up buried in a wall — see _camp_spot_clear.
+
+	A candidate that lands in a hut is DROPPED, not retried: the counts are pure
+	ambience, and one crate fewer reads better than a loop that can still fail.
+
+	EACH ACCEPTED PROP JOINS THE TEST LIST. Testing only against the huts was the
+	same bug one scale down: 3-6 crates and 2-3 posts share ONE 2.0-4.0 m ring, so
+	two crates land within a crate's width of each other often — measured a third of
+	camps had an interpenetrating solid pair, and both crates and posts collide, so
+	it was a merged blob the player walked into.
+
+	DETERMINISM, HONESTLY: a drop does NOT consume the same draws as a placement —
+	it skips create_box's yaw argument plus its colour selector, ramp and discarded
+	roughness draws (and a dropped hut skips the whole of _camp_hut). That is
+	harmless ONLY because this rng is private to the camp and the placement/rarity
+	streams are decided before any geometry is drawn. Never lift this drop-mid-build
+	pattern onto a shared chunk stream.
+	"""
+	# huts is the caller's list — copy it, so growing it here can never leak a prop
+	# into the hut footprints the caller still holds.
+	var solids: Array = huts.duplicate()
+
+	var crates := rng.randi_range(CAMP_CRATE_MIN, CAMP_CRATE_MAX)
+	var i := 0
+	while i < crates:
+		i += 1
+		var a := rng.randf_range(0.0, TAU)
+		var r := rng.randf_range(CAMP_PROP_RING_MIN, CAMP_PROP_RING_MAX)
+		# Cubes, not slabs: one size draw keeps a crate reading as a crate.
+		var s := rng.randf_range(CAMP_CRATE_SIZE_MIN, CAMP_CRATE_SIZE_MAX)
+		var pos := center + Vector3(cos(a) * r, s / 2.0, sin(a) * r)
+		var crate_radius := s * 0.71
+		if not _camp_spot_clear(pos, crate_radius, solids):
+			continue
+		create_box(pos, Vector3(s, s, s), rng.randf_range(0.0, TAU), rng, block_batch, block_body, 0.0, CAMP_WOOD)
+		solids.append({ "pos": pos, "radius": crate_radius })
+
+	var posts := rng.randi_range(CAMP_POST_MIN, CAMP_POST_MAX)
+	i = 0
+	while i < posts:
+		i += 1
+		var a := rng.randf_range(0.0, TAU)
+		var r := rng.randf_range(CAMP_PROP_RING_MIN, CAMP_PROP_RING_MAX)
+		var pos := center + Vector3(cos(a) * r, CAMP_POST_SIZE.y / 2.0, sin(a) * r)
+		var post_radius := CAMP_POST_SIZE.x * 0.71
+		if not _camp_spot_clear(pos, post_radius, solids):
+			continue
+		create_box(pos, CAMP_POST_SIZE, rng.randf_range(0.0, TAU), rng, block_batch, block_body, 0.0, CAMP_WOOD)
+		solids.append({ "pos": pos, "radius": post_radius })
+
+func _camp_spot_clear(pos: Vector3, radius: float, solids: Array) -> bool:
+	"""
+	True when a `radius` circle at `pos` clears every solid thing built so far
+	({ "pos", "radius" } records). It is the camp's ONE overlap rule, and every
+	solid the camp builds is judged by it against everything solid before it:
+
+	- PROPS vs PROPS: 3-6 crates and 2-3 posts all sit on the same 2.0-4.0 m ring,
+	  so without this a third of camps had at least one interpenetrating pair.
+	- PROPS vs huts: the prop ring (CAMP_PROP_RING_*) and the hut ring
+	  (CAMP_HUT_RING_*) touch at 4 m, but a hut is up to 2.9 m of radius around ITS
+	  ring position, so its stone reaches inward to ~1.1 m — well into the prop
+	  band. Without this test roughly a fifth of all props spawned inside a hut
+	  wall, and props collide, so the player bumped geometry they could not see.
+	- HUTS vs each other: the ring radius is drawn PER HUT over a 2.5 m range and
+	  the angle is jittered, so evenly-spaced slots are no guarantee. At
+	  CAMP_HUT_MAX (6) the nominal step is TAU/6 = 1.047 rad and the ±0.25 jitter
+	  can shrink an adjacent gap to 0.547 rad; two huts both at CAMP_HUT_RING_MIN
+	  are then 2 * 4.0 * sin(0.547/2) = 2.16 m apart while their radii sum to at
+	  least 4.29 m. Measured over 163 camps with the roll forced to 1.0 BEFORE this
+	  test existed: 38% of camps had a pair of fused, interpenetrating domes — 35 of
+	  36 six-hut camps and half of the five-hut ones. Both huts collide, so that was
+	  a merged, unreadable blob the player walked into. After: 0 of 175.
+	"""
+	for other in solids:
+		if Vector2(pos.x - other.pos.x, pos.z - other.pos.z).length() < other.radius + radius:
+			return false
+	return true
+
+func spawn_camp_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
+	"""
+	Spawn this chunk's nomad camp, if _camp_at says it has one. Called from
+	create_chunk AFTER spawn_biome_content_in_chunk and BEFORE
+	_build_block_multimesh / the block_body attach, so every hut, stone, crate and
+	post joins the chunk's SINGLE MultiMesh draw call and its SINGLE
+	BlockCollision body — a whole village costs one extra draw call (the ember)
+	and zero extra physics bodies.
+
+	That ordering is also WHY the camp's candidate-spot loop lives here rather
+	than in _camp_at: by this point the chunk's scattered blocks, feature
+	structure, artifact and biome geometry are all in `obstacles`, so every try
+	can be judged against the test that actually rejects (see _camp_at's docstring
+	for the measurement that moved it).
+
+	@param chunk_pos: Chunk coordinates being generated.
+	@param parent_chunk: The chunk mesh — the ember and the camp's coins parent
+	                     here (per-chunk parenting rule: they unload with it).
+	@param obstacles: The chunk's block-footprint list. Read to place the camp,
+	                  then extended with ONE round footprint over the whole
+	                  village, which is what keeps crocodiles out — see the bottom.
+	@param block_batch / block_body: The chunk's visual batch + collision body.
+	"""
+	if not spawn_camps:
+		return
+	var camp := _camp_at(chunk_pos)
+	if camp.is_empty():
+		return
+
+	# The camp's OWN RNG, seeded by _camp_at's "seed" draw: it picks the spot AND
+	# feeds every builder, so each consumes as many draws as it needs without the
+	# placement roll (or any other stream) caring.
+	var rng := RandomNumberGenerator.new()
+	rng.seed = camp.seed
+
+	var chunk_center := chunk_to_world(chunk_pos)
+	# Candidates stay CAMP_EDGE_MARGIN (> CAMP_RADIUS) inside the chunk so the
+	# whole village fits in one chunk and never straddles a seam.
+	var half := chunk_size / 2.0 - CAMP_EDGE_MARGIN
+
+	# Try a few spots; accept the FIRST that clears _biome_spot_ok — the single
+	# home of the "would something solid here spoil what is already there?" rule,
+	# covering river + road clearance + overlap with everything already placed in
+	# one call. The road half of it is also the BOSS exclusion, see
+	# CAMP_ROAD_CLEARANCE. Bailing after every try is deliberate: a camp shoved
+	# through a mountain massif reads far worse than a chunk with no camp, and
+	# camps are ambience — nothing downstream expects one to exist.
+	var center := Vector3.ZERO
+	var placed := false
+	var tries := 0
+	while tries < CAMP_PLACE_TRIES and not placed:
+		tries += 1
+		center = Vector3(rng.randf_range(-half, half), 0.0, rng.randf_range(-half, half))
+		placed = _biome_spot_ok(chunk_center, center.x, center.z, CAMP_RADIUS, CAMP_ROAD_CLEARANCE, obstacles)
+	if not placed:
+		return
+
+	# 1. The fire pit at the camp's heart — built first because everything else is
+	# arranged around it (the huts face it, the props ring it).
+	_camp_fire_pit(center, rng, parent_chunk, block_batch, block_body)
+
+	# 2. The huts, on a jittered ring around the fire. Angles are evenly spread and
+	# then nudged, so the circle reads as pitched by people rather than stamped by
+	# a compass, and each hut is yawed so its doorway (+Z, see _camp_hut) points at
+	# the flames.
+	var hut_count := rng.randi_range(CAMP_HUT_MIN, CAMP_HUT_MAX)
+	var base_angle := rng.randf_range(0.0, TAU)
+	var hut_footprints: Array = []
+	var camp_top := 0.0
+	var h := 0
+	while h < hut_count:
+		var a := base_angle + TAU * float(h) / float(hut_count) + rng.randf_range(-0.25, 0.25)
+		var r := rng.randf_range(CAMP_HUT_RING_MIN, CAMP_HUT_RING_MAX)
+		var hut_center := center + Vector3(cos(a) * r, 0.0, sin(a) * r)
+		h += 1
+		# A hut that would grow through a neighbour is DROPPED, same rule as the
+		# props below: an evenly-spaced slot is no guarantee once the ring radius is
+		# drawn per hut and the angle is jittered (see _camp_spot_clear for the
+		# arithmetic). The test uses CAMP_HUT_WIDTH_MAX because _camp_hut draws the
+		# real width itself — testing conservatively costs a hut now and then, which
+		# is cheaper than a rebuilt one and reads as a village pitched around what
+		# fits. A camp is 3-6 huts MINUS these drops — measured 3.7 built on
+		# average, and 6-hut camps now land as 4s and 5s.
+		if not _camp_spot_clear(hut_center, CAMP_HUT_WIDTH_MAX * 0.71 + 0.3, hut_footprints):
+			continue
+		# Point the hut's local +Z back at the fire: Basis(UP, yaw) * (0,0,1) is
+		# (sin yaw, 0, cos yaw), and we want that to equal -(cos a, sin a).
+		var yaw := atan2(-cos(a), -sin(a))
+		var footprint := _camp_hut(hut_center, yaw, rng, block_batch, block_body)
+		# Only "pos"/"radius" — this list never reaches `obstacles` (see step 5), so
+		# the "top"/"climbable" an obstacle record carries would be read by nothing.
+		hut_footprints.append({ "pos": hut_center, "radius": footprint.radius })
+		camp_top = maxf(camp_top, footprint.top)
+
+	# 3. The lived-in clutter, on its own tighter ring between fire and huts. The
+	# huts go in FIRST so the props can be tested against them: the two rings
+	# touch, and a hut is nearly 3 m of radius around its ring position.
+	_camp_props(center, rng, block_batch, block_body, hut_footprints)
+
+	# 4. A couple of scattered coins by the fire — a small "someone lives here"
+	# reward, NOT a treasure haul. There is deliberately NO GEM: the guaranteed gem
+	# is the ARTIFACTS' distinction (see spawn_artifact_in_chunk), and giving camps
+	# one too would flatten the difference between "an ancient prize worth a detour"
+	# and "a village you happened to walk through".
+	#
+	# These are ordinary chunk-local coins parented to the chunk. They CANNOT
+	# collide with the road's station-claim logic: a camp centre is at least
+	# CAMP_ROAD_CLEARANCE (22 m) from the road centerline while the widest scatter
+	# band reaches road_width_max / 2 (10 m) plus ROAD_COIN_LONG_JITTER, so the two
+	# coin populations never share ground — no double-claim, no gap.
+	#
+	# ORDER MATTERS, exactly as for the artifact reward: these settle through
+	# _settle_coin_y BEFORE the camp's own footprint is appended below. Settling
+	# after would meet a non-climbable CAMP_RADIUS circle covering the whole
+	# village and skip every single coin.
+	if spawn_coins and coin_scene != null:
+		var coin_count := rng.randi_range(CAMP_COIN_MIN, CAMP_COIN_MAX)
+		var c := 0
+		while c < coin_count:
+			c += 1
+			var a := rng.randf_range(0.0, TAU)
+			# Just outside the fire stones (CAMP_FIRE_RING_RADIUS) and inside the
+			# prop RING (CAMP_PROP_RING_MIN). That compares ring centres, so it is
+			# not a guarantee: a crate's own half-diagonal reaches inward to
+			# 2.0 - 0.9 * 0.71 = 1.36 m, under the coin band's 1.9 m outer edge, and
+			# ~2% of camp coins do land on a crate. Harmless, so deliberately not
+			# tested: a crate is at most CAMP_CRATE_SIZE_MAX (0.9) tall, which is
+			# exactly COIN_GROUND_HEIGHT, so the coin rests on the lid, and the
+			# pickup sphere (0.6 m) far exceeds the crate's 0.45 m half-width, so it
+			# stays collectible from any side.
+			var r := CAMP_FIRE_RING_RADIUS + rng.randf_range(0.4, 0.8)
+			var cx := center.x + cos(a) * r
+			var cz := center.z + sin(a) * r
+			# Same perch-or-skip rule as every other coin (one home).
+			var cy := _settle_coin_y(cx, cz, COIN_GROUND_HEIGHT, obstacles)
+			if is_inf(cy):
+				continue
+			var coin := coin_scene.instantiate()
+			coin.position = Vector3(cx, cy, cz)
+			parent_chunk.add_child(coin)
+
+	# 5. ONE round footprint over the whole camp circle. THIS IS THE CROCODILE
+	# EXCLUSION, and it needs no edit anywhere else: spawn_crocodiles_in_chunk
+	# already rejects any spawn candidate within ob.radius + min_object_clearance of
+	# a footprint, so a CAMP_RADIUS circle simply reads as "occupied" and the camp
+	# stays the calm pocket it is meant to be — with NO EDIT to the crocodile
+	# spawner. Its retry budget absorbs the rejections, so the croc COUNT is
+	# unchanged; the positions are not. A rejected candidate skips the successful
+	# spawn's `rotation.y` draw, so the rest of that chunk's crocodile stream
+	# shifts — same as the river skip just above it. Harmless (within-run
+	# determinism holds: the camp is a pure function of chunk coords + run_seed),
+	# but do not read this as "camp chunks generate crocodiles byte-identically".
+	# climbable = false: a road coin over a camp would be skipped rather than
+	# perched on thin air. That cannot happen given CAMP_ROAD_CLEARANCE, but the
+	# rule stays honest either way.
+	# ONE circle is enough: CAMP_RADIUS is chosen to bound the widest hut on the
+	# outermost ring (9.36 <= 9.4, see the constant), so per-hut footprints would
+	# add 3-6 entries to a list every _settle_coin_y / _point_over_block call scans
+	# and reject nothing the circle does not already reject. `hut_footprints` stays
+	# a local, read by _camp_props above.
+	obstacles.append({ "pos": center, "radius": CAMP_RADIUS, "top": camp_top, "climbable": false })
 
 # ============================================================================
 # BIOME CONTENT (the geometry each biome adds on top of the ordinary blocks)
@@ -2763,13 +3407,21 @@ func _biome_spot_ok(chunk_center: Vector3, local_x: float, local_z: float, radiu
 	the clearance is a parameter rather than a constant read in here; it is handed
 	straight to _road_lateral_distance, which sizes its scan window from it.
 
-	ponytail: the river test is INERT as the constants stand — RIVER_LEVEL (0.5)
-	sits inside the PLAINS band, and all three callers only ever place geometry in
-	desert/forest/mountain, so no candidate here has ever been in the water. It is
-	kept because it costs one noise eval at generation time and is the thing that
-	stays correct if RIVER_LEVEL or the band thresholds are ever retuned. The river
-	exclusions that DO fire live in the plains-capable spawners: the scattered-block
-	scatter, the four feature-structure builders, the crocodiles and _artifact_at.
+	THE RIVER TEST IS LIVE — do not delete it as dead code. It is inert for the
+	three BIOME callers (cactus/forest/mountain), because RIVER_LEVEL (0.5) sits
+	inside the PLAINS band and those three only ever place geometry in
+	desert/forest/mountain. But spawn_camp_in_chunk is a fourth caller and camps are
+	PLAINS-CAPABLE, so for camps this branch actually rejects — it is the whole of
+	the "no village pitched mid-river" rule. The other river exclusions live in the
+	plains-capable spawners: the scattered-block scatter, the four feature-structure
+	builders, the crocodiles and _artifact_at.
+
+	ponytail: like every other caller, the test is asked at the spot's CENTRE only,
+	not over its `radius`. For a 1-2 m cactus that is exact; for a 9.4 m camp it
+	means a village centred near a bank can still put a hut in the band (~5% of
+	camps, by the measured ~8 m band width). Cosmetic — a river is a flat tint with
+	no mesh — so it is left alone; the upgrade is four extra is_river_at evals at
+	`radius` on the cardinals.
 	"""
 	var world_x := chunk_center.x + local_x
 	var world_z := chunk_center.z + local_z
