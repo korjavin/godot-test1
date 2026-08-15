@@ -100,6 +100,12 @@ const BITE_FREQ_END: float = 120.0
 const BITE_DURATION: float = 0.25
 const BITE_VOLUME_DB: float = -6.0
 
+# --- Boss growl: a low saw/noise rumble when a boss first smells the player. ---
+const GROWL_FREQ: float = 70.0          # low fundamental = "something BIG"
+const GROWL_DURATION: float = 0.5
+const GROWL_NOISE_MIX: float = 0.35     # how much breathy noise rides on the saw
+const GROWL_VOLUME_DB: float = -8.0
+
 # --- Game over: a slow three-note descending minor phrase. ---
 const GAME_OVER_FREQS: Array[float] = [392.0, 311.1, 261.6]  # G4, Eb4, C4
 const GAME_OVER_NOTE_DURATION: float = 0.35
@@ -157,6 +163,7 @@ func _ready() -> void:
 	_streams["land"] = _build_wav(_synth_land())
 	_streams["whoosh"] = _build_wav(_synth_whoosh())
 	_streams["bite"] = _build_wav(_synth_bite())
+	_streams["growl"] = _build_wav(_synth_growl())
 	_streams["game_over"] = _build_wav(_synth_game_over())
 
 	# The wind is the one LOOPING stream: mark the whole buffer as the loop
@@ -248,6 +255,12 @@ func play_ability(character_name: String) -> void:
 
 func play_bite() -> void:
 	_play_oneshot("bite", BITE_VOLUME_DB)
+
+
+func play_boss_growl() -> void:
+	## Boss crocodile acquiring the player — fired by piglet_crocodile_ai.gd on
+	## the not-chasing → chasing transition (bosses only).
+	_play_oneshot("growl", GROWL_VOLUME_DB)
 
 
 func play_game_over() -> void:
@@ -373,6 +386,29 @@ func _synth_bite() -> PackedFloat32Array:
 		var square: float = 1.0 if sin(TAU * phase) >= 0.0 else -1.0
 		var envelope: float = 1.0 - progress
 		samples.append(square * envelope * 0.6)  # 0.6: squares are LOUD at equal amplitude
+	return samples
+
+
+func _synth_growl() -> PackedFloat32Array:
+	## A LOW sawtooth (buzzy, all harmonics — an animal throat) blended with a
+	## little low-passed noise (breath), swelling in then dying away. The 70 Hz
+	## fundamental is what sells "very large animal": compare the 90 Hz landing
+	## thud, which is a clean sine and reads as impact, not menace.
+	var samples := PackedFloat32Array()
+	var frames: int = int(GROWL_DURATION * MIX_RATE)
+	var phase: float = 0.0
+	var filtered: float = 0.0
+	for i in range(frames):
+		var progress: float = float(i) / frames
+		phase += GROWL_FREQ / MIX_RATE
+		# Sawtooth: phase ramps 0→1 each cycle; remap to -1..1 with a hard drop.
+		var saw: float = 2.0 * fmod(phase, 1.0) - 1.0
+		# Breathy noise layer, low-passed so it rumbles instead of hissing.
+		filtered += 0.15 * (randf_range(-1.0, 1.0) - filtered)
+		var voice: float = saw * (1.0 - GROWL_NOISE_MIX) + filtered * 2.0 * GROWL_NOISE_MIX
+		# Swell in over the first quarter, fade out over the rest.
+		var envelope: float = minf(progress * 4.0, 1.0) * (1.0 - progress)
+		samples.append(voice * envelope * 0.7)  # saws are loud at equal amplitude
 	return samples
 
 
