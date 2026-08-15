@@ -1,4 +1,4 @@
-[gd_scene load_steps=21 format=3 uid="uid://clqb4rcmjrpgs"]
+[gd_scene load_steps=22 format=3 uid="uid://clqb4rcmjrpgs"]
 
 [ext_resource type="PackedScene" uid="uid://bqtq2xtxqnvvr" path="res://scenes/player.tscn" id="1_main"]
 [ext_resource type="Script" uid="uid://b07rwceo0eo4o" path="res://scripts/endless_terrain.gd" id="2_terrain"]
@@ -17,6 +17,7 @@
 [ext_resource type="Script" path="res://scripts/danger_vignette.gd" id="15_danger"]
 [ext_resource type="Script" path="res://scripts/capture_hint.gd" id="16_capture"]
 [ext_resource type="Script" path="res://scripts/weather_manager.gd" id="17_weather"]
+[ext_resource type="Script" path="res://scripts/fauna_manager.gd" id="18_fauna"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_1"]
 sky_top_color = Color(0.25, 0.45, 0.75, 1)
@@ -61,6 +62,9 @@ script = ExtResource("14_sound")
 
 [node name="Weather" type="Node" parent="." groups=["weather"]]
 script = ExtResource("17_weather")
+
+[node name="FaunaManager" type="Node" parent="."]
+script = ExtResource("18_fauna")
 
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
 transform = Transform3D(-0.573576, 0.469846, -0.67101, 0, 0.819152, 0.573576, 0.819152, 0.32899, -0.469846, 0, 10, 0)
