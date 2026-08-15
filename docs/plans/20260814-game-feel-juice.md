@@ -157,11 +157,11 @@ This is a state split, not new logic; the invulnerability guard must stay airtig
 - [x] headless smoke clean
 
 ### Task 11: Verify acceptance criteria
-- [ ] re-read the bead's acceptance list and confirm every item is implemented: coin pop (visual+HUD+audio), camera no longer clips (SpringArm), keyboard turn eased, mouse 1:1, FOV kicks when fast, jump airtime ~1.42 s with apex 3.61 m (2.5 m blocks jumpable — verify the math in SECTION 2 comments), vignette+heartbeat before a bite lands, respawn control back in 1.5 s + 2.5 s blink invulnerability, blocked F press flashes+buzzes, croc crush feedback, footsteps, heart pulse, click-to-capture + hint
-- [ ] confirm `piglet_crocodile_ai.gd` diff touches ONLY the crush branch; confirm `endless_terrain.gd` is untouched
-- [ ] confirm no `GPUParticles3D`, no `AudioStreamGenerator`, no new asset files anywhere in the diff
-- [ ] `godot --headless --path . --import` then `godot --headless --path . --quit-after 3` — both exit clean with no script errors
-- [ ] headless web export builds: `mkdir -p build/web && godot --headless --export-release "Web" build/web/index.html` (skip gracefully if export templates are missing in this environment — note it as a deferral)
+- [x] re-read the bead's acceptance list and confirm every item is implemented: coin pop (visual+HUD+audio), camera no longer clips (SpringArm), keyboard turn eased, mouse 1:1, FOV kicks when fast, jump airtime ~1.42 s with apex 3.61 m (2.5 m blocks jumpable — verify the math in SECTION 2 comments), vignette+heartbeat before a bite lands, respawn control back in 1.5 s + 2.5 s blink invulnerability, blocked F press flashes+buzzes, croc crush feedback, footsteps, heart pulse, click-to-capture + hint — all confirmed by grep against the code (constants, functions, and scene nodes present; apex comment at player_controller.gd:57)
+- [x] confirm `piglet_crocodile_ai.gd` diff touches ONLY the crush branch; confirm `endless_terrain.gd` is untouched — verified via `git diff origin/master...HEAD` (boss guard byte-for-byte intact; endless_terrain.gd absent from diff stat)
+- [x] confirm no `GPUParticles3D`, no `AudioStreamGenerator`, no new asset files anywhere in the diff — grep clean; only new files are `.gd` scripts + their Godot-managed `.uid` siblings
+- [x] `godot --headless --path . --import` then `godot --headless --path . --quit-after 3` — both exit clean with no script errors
+- [x] headless web export builds: `mkdir -p build/web && godot --headless --export-release "Web" build/web/index.html` — exit 0, full build output (index.wasm/pck/html) produced
 
 ### Task 12: Update documentation
 - [ ] `CLAUDE.md`: update the affected sections — jump/gravity convention note (gravity is now 14.4 with the preserved 3.61 m apex), the camera rig (SpringArm3D + h/v_offset shake + FOV, and how FP bypasses the arm), the respawn contract (1.5 s frozen + 2.5 s blink phases, the extended invulnerability guard), the danger telegraph (LOD manager publish + vignette/heartbeat), the new sound manager bakers, and the hit_flash color arg
