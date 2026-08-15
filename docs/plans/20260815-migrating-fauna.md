@@ -262,24 +262,38 @@ Dependencies identified: none new. No asset files, no Python pipeline, no autolo
 
 ### Task 6: Verify acceptance criteria
 
-- [ ] verify every requirement in the Overview and Hard constraints is implemented, in
+- [x] verify every requirement in the Overview and Hard constraints is implemented, in
       particular: no collision node of any kind exists in the animal trees, the animals join
       **no** group, no per-animal script is attached, and exactly one material per species is
       ever created (grep the script for `duplicate()` and for `.new()` on material types —
       the material `.new()`s must be inside the `static var` lazy getters only)
-- [ ] verify `git diff scenes/main.tscn` is **only** the `load_steps` bump, the one
-      `[ext_resource]` line, and the one 2-line node block
-- [ ] verify `git status` shows **no** modification to `endless_terrain.gd`,
+      — grep confirms: zero `CollisionShape`/`Area3D`/`StaticBody`/`CharacterBody`/`RigidBody`
+      hits, one `add_to_group` (the manager's own `"fauna"`), no `set_script`, no `duplicate()`,
+      and the five `*.new()` resource constructions all sit inside the `static` lazy getters
+      (lines 276/285/295/306/318) — 1 mesh + 4 materials, constant forever
+- [x] verify `git diff scenes/main.tscn` is **only** the `load_steps` bump, the one
+      `[ext_resource]` line, and the one 2-line node block — confirmed on commit `c5537cd`
+      (`18 → 19`, the `15_fauna` ext_resource line, the `FaunaManager` node block; 6 lines total)
+- [x] verify `git status` shows **no** modification to `endless_terrain.gd`,
       `player_controller.gd`, `piglet_crocodile_ai.gd`, `sound_manager.gd`, or any HUD script
-- [ ] run `godot --headless --path . --import` — must complete with no errors
-- [ ] run `godot --headless --path . scenes/main.tscn --quit-after 3` — must run clean with
+      — the fauna commits touch exactly 4 paths: the plan, `main.tscn`, `fauna_manager.gd`,
+      `fauna_manager.gd.uid`; the forbidden-file grep returns nothing
+- [x] run `godot --headless --path . --import` — must complete with no errors (Godot 4.5.stable,
+      exit 0, no errors)
+- [x] run `godot --headless --path . scenes/main.tscn --quit-after 3` — must run clean with
       **no** script errors, no "Invalid access", and no missing-node warnings from the new
       script (the fauna timer will not fire in 3 s; that is expected — the check is that the
-      manager loads and idles cleanly)
-- [ ] ➕ to actually exercise the spawn path in a headless run, temporarily set the first-event
+      manager loads and idles cleanly) — clean, only the usual init prints
+- [x] ➕ to actually exercise the spawn path in a headless run, temporarily set the first-event
       delay to ~1 s (or add a short-lived debug call), confirm a herd spawns and animates
       without errors, then **restore the real constants** and re-run the clean check
-- [ ] the project has no test suite and no linter (see CLAUDE.md) — the headless runs above
+      — temporarily set `FIELD_RADIUS 6` / `DESPAWN_RADIUS 8` / first-event ~0 s / interval
+      0.1–0.2 s plus debug prints, and ran 3000–4000 frames **forcing each species**
+      (`ELEPHANT_CHANCE` 1.0 then 0.0): repeated spawn → walk/animate → despawn → re-arm cycles,
+      herd sizes in range (elephants 3–5, giraffes 4–8), every animal freed, the one-herd
+      invariant never tripped, and **zero** errors/warnings. Constants restored from a
+      byte-identical backup (`git status` clean) and the 3-frame clean check re-run green
+- [x] the project has no test suite and no linter (see CLAUDE.md) — the headless runs above
       are the complete automatable check
 
 ### Task 7: [Final] Update documentation
