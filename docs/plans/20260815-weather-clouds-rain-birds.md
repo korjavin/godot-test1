@@ -135,16 +135,16 @@ Dependencies identified: none new. No assets, no GPUParticles3D (web runs
       the manager off the per-frame budget
 
 ### Task 3: Storm clouds and the `is_raining_at()` API
-- [ ] `STORM_CHANCE: float = 1.0 / 7.0` — on `_make_cloud()`, roll storm; storm clouds get
+- [x] `STORM_CHANCE: float = 1.0 / 7.0` — on `_make_cloud()`, roll storm; storm clouds get
       a bigger box count/size multiplier (`STORM_SIZE_FACTOR`) and the dark colour
-- [ ] compute and store each cloud's ground-zone `radius` from its actual box spread
+- [x] compute and store each cloud's ground-zone `radius` from its actual box spread
       (`RAIN_ZONE_FACTOR` × cluster radius) so the rain zone matches what the player sees
       overhead
-- [ ] implement `func is_raining_at(world_pos: Vector3) -> bool` — a flat XZ distance test
+- [x] implement `func is_raining_at(world_pos: Vector3) -> bool` — a flat XZ distance test
       against every storm cloud's moving centre. Only a handful of storm clouds exist, so
       this is a few `distance_squared_to` calls; document that it is cheap enough to call
       per-frame from the player
-- [ ] maintain `_player_in_rain: bool`, recomputed on the throttled tick from
+- [x] maintain `_player_in_rain: bool`, recomputed on the throttled tick from
       `is_raining_at(player.global_position)`, so enter/exit transitions are detected once
       per tick rather than per frame
 

@@ -83,9 +83,23 @@ const TICK_INTERVAL: float = 0.1
 const CLOUD_COLOR: Color = Color(0.93, 0.94, 0.96)
 const CLOUD_BRIGHTNESS_JITTER: float = 0.07
 
-## Storm clouds render this dark blue-grey (the storm *roll* arrives in the
-## storm task; the colour lives here with its sibling).
+## Storm clouds render this dark blue-grey.
 const STORM_COLOR: Color = Color(0.32, 0.34, 0.42)
+
+## Chance a freshly rolled cloud is a storm cloud (~1 in 7 → with 26 clouds,
+## roughly 3–4 storms in the sky at any moment).
+const STORM_CHANCE: float = 1.0 / 7.0
+
+## Storm clouds are beefier than fair-weather ones: box count and box size are
+## both multiplied by this, so a storm visibly looms rather than being a white
+## cloud recoloured dark.
+const STORM_SIZE_FACTOR: float = 1.5
+
+## Ground rain-zone radius = this × the cloud's actual visual cluster radius
+## (measured from its rolled boxes, not a constant), so the wet footprint on
+## the ground matches what the player sees overhead. Slightly over 1 so the
+## zone edge isn't pixel-tight to the silhouette.
+const RAIN_ZONE_FACTOR: float = 1.2
 
 # ============================================================================
 # STATE
@@ -100,8 +114,8 @@ var _rng: RandomNumberGenerator = RandomNumberGenerator.new()
 ## The cloud field: one Dictionary per cloud —
 ##   { "center": Vector3,   # world-space cluster centre (drifts with the wind)
 ##     "boxes": Array,      # per-box { "offset": Vector3, "size": Vector3, "yaw": float }
-##     "is_storm": bool,    # dark rain-carrying cloud (rolled in a later task)
-##     "radius": float,     # ground rain-zone radius (storm clouds only)
+##     "is_storm": bool,    # dark rain-carrying cloud
+##     "radius": float,     # ground rain-zone radius (storm clouds only, else 0)
 ##     "speed": float,      # this cloud's wind speed (WIND_SPEED ± variation)
 ##     "bob_phase": float } # phase offset so the field doesn't bob in unison
 var _clouds: Array = []
@@ -110,6 +124,11 @@ var _clouds: Array = []
 ## invalid, never a hard reference (project convention). While there is no
 ## player (scene mid-load, or a scene without one), the manager does nothing.
 var _player: Node3D = null
+
+## Whether the player currently stands inside any storm cloud's rain zone.
+## Recomputed once per throttled tick (not per frame) so later systems (rain
+## particles, audio fades) see clean enter/exit transitions at ~10 Hz.
+var _player_in_rain: bool = false
 
 ## Accumulator for the throttled tick.
 var _tick_accum: float = 0.0
@@ -160,6 +179,10 @@ func _process(delta: float) -> void:
 			_clouds.append(cloud)
 
 	_update_clouds(player_pos, elapsed)
+
+	# Rain state: recomputed once per tick (not per frame) so downstream
+	# systems (particles, audio fades) get clean ~10 Hz enter/exit transitions.
+	_player_in_rain = is_raining_at(player_pos)
 
 
 # ============================================================================
@@ -243,26 +266,41 @@ func _find_player() -> void:
 func _make_cloud() -> Dictionary:
 	## Roll one cloud cluster: a handful of flat-ish boxes scattered around a
 	## shared centre. Position is left at ZERO — _place_cloud_around() sets it.
+	var is_storm: bool = _rng.randf() < STORM_CHANCE
+	# Storms loom: more boxes AND bigger boxes than a fair-weather cloud.
+	# BOXES_PER_CLOUD_MAX already accounts for the storm count ceiling, so the
+	# fixed MultiMesh allocation never overflows.
+	var size_factor: float = STORM_SIZE_FACTOR if is_storm else 1.0
 	var boxes: Array = []
-	var box_count: int = _rng.randi_range(BOXES_PER_CLOUD_MIN, BOXES_PER_CLOUD_MAX)
+	var box_count: int = mini(
+			int(_rng.randi_range(BOXES_PER_CLOUD_MIN, BOXES_PER_CLOUD_MAX) * size_factor),
+			BOXES_PER_CLOUD_MAX)
+	# Visual cluster radius (XZ, from centre to a box's far edge) — measured
+	# from the ACTUAL rolled boxes so the storm's ground rain zone matches the
+	# silhouette the player sees overhead, not a one-size constant.
+	var cluster_radius: float = 0.0
 	for i in box_count:
-		boxes.append({
-			"offset": Vector3(
+		var offset := Vector3(
 				_rng.randf_range(-CLOUD_SPREAD, CLOUD_SPREAD),
 				_rng.randf_range(-CLOUD_SPREAD, CLOUD_SPREAD) * 0.3,
-				_rng.randf_range(-CLOUD_SPREAD, CLOUD_SPREAD)),
-			# Wide and flat: full-range X/Z, half-height Y reads as a cloud slab.
-			"size": Vector3(
+				_rng.randf_range(-CLOUD_SPREAD, CLOUD_SPREAD))
+		# Wide and flat: full-range X/Z, half-height Y reads as a cloud slab.
+		var size := Vector3(
 				_rng.randf_range(CLOUD_BOX_SIZE_MIN, CLOUD_BOX_SIZE_MAX),
 				_rng.randf_range(CLOUD_BOX_SIZE_MIN, CLOUD_BOX_SIZE_MAX) * 0.5,
-				_rng.randf_range(CLOUD_BOX_SIZE_MIN, CLOUD_BOX_SIZE_MAX)),
+				_rng.randf_range(CLOUD_BOX_SIZE_MIN, CLOUD_BOX_SIZE_MAX)) * size_factor
+		boxes.append({
+			"offset": offset,
+			"size": size,
 			"yaw": _rng.randf_range(0.0, TAU),
 		})
+		cluster_radius = maxf(cluster_radius,
+				Vector2(offset.x, offset.z).length() + maxf(size.x, size.z) * 0.5)
 	return {
 		"center": Vector3.ZERO,
 		"boxes": boxes,
-		"is_storm": false,  # storm roll + zone radius arrive in the storm task
-		"radius": 0.0,
+		"is_storm": is_storm,
+		"radius": cluster_radius * RAIN_ZONE_FACTOR if is_storm else 0.0,
 		"speed": WIND_SPEED * (1.0 + _rng.randf_range(-CLOUD_SPEED_VARIATION, CLOUD_SPEED_VARIATION)),
 		"bob_phase": _rng.randf_range(0.0, TAU),
 		# Per-cloud brightness multiplier on CLOUD_COLOR (storms ignore it).
@@ -308,5 +346,28 @@ func _update_clouds(player_pos: Vector3, elapsed: float) -> void:
 			cloud["speed"] = fresh["speed"]
 			cloud["bob_phase"] = fresh["bob_phase"]
 			cloud["brightness"] = fresh["brightness"]
+			cloud["is_storm"] = fresh["is_storm"]
+			cloud["radius"] = fresh["radius"]
 			_place_cloud_around(cloud, player_pos, true)
 	_write_cloud_instances()
+
+
+# ============================================================================
+# RAIN ZONES — the gameplay-facing weather API
+# ============================================================================
+
+func is_raining_at(world_pos: Vector3) -> bool:
+	## True if `world_pos` stands inside any storm cloud's ground rain zone —
+	## a flat XZ circle test against each storm cloud's moving centre. Only
+	## ~1 in 7 of the 26 clouds is a storm, so this is a few
+	## distance_squared_to calls: cheap enough to call per-frame from the
+	## player (the Windman hooks do exactly that).
+	for cloud in _clouds:
+		if not cloud["is_storm"]:
+			continue
+		var center: Vector3 = cloud["center"]
+		var radius: float = cloud["radius"]
+		if Vector2(world_pos.x - center.x, world_pos.z - center.z).length_squared() \
+				<= radius * radius:
+			return true
+	return false
