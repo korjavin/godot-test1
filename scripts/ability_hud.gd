@@ -32,6 +32,12 @@ var _secs: float = 0.0
 var _last_arc: int = -1
 var _last_tenths: int = -1
 
+## Seconds left of the "blocked press" red flash (0 = not flashing). Set by
+## flash_blocked() when the player hits F while the ability is still cooling;
+## while it runs the arc and the F hint render in COLOR_BLOCKED so the press
+## visibly registers instead of feeling dead.
+var _blocked_timer: float = 0.0
+
 # --- Layout / colours (tweak here) ------------------------------------------
 const DIAL_RADIUS: float = 40.0
 const RING_WIDTH: float = 6.0
@@ -41,14 +47,31 @@ const COLOR_TRACK := Color(1, 1, 1, 0.16)         # faint full ring behind the a
 const COLOR_COOLING := Color(1.0, 0.62, 0.12, 0.95)  # amber arc while on cooldown
 const COLOR_READY := Color(0.35, 1.0, 0.45, 0.95)    # bright green when ready
 const COLOR_BACKDROP := Color(0.0, 0.0, 0.0, 0.45)   # dark disc for contrast
+const COLOR_BLOCKED := Color(1.0, 0.25, 0.2)          # red flash on a blocked press
+const BLOCKED_FLASH_DURATION: float = 0.15
 
 
 func _ready() -> void:
 	# Never let this readout eat mouse clicks meant for the game.
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# Group registration so the player can flash us on a blocked press without
+	# holding a hard reference (same discovery convention as the rest of the HUD).
+	add_to_group("ability_hud")
+
+
+func flash_blocked() -> void:
+	"""Called (via the "ability_hud" group) when F is pressed while the ability
+	is still on cooldown — briefly renders the dial in red as a clear 'not yet'."""
+	_blocked_timer = BLOCKED_FLASH_DURATION
+	queue_redraw()
 
 
 func _process(_delta: float) -> void:
+	# Tick the blocked flash and force a redraw while it runs — including the
+	# frame it expires, so the red reliably clears back to the normal colours.
+	if _blocked_timer > 0.0:
+		_blocked_timer = maxf(0.0, _blocked_timer - _delta)
+		queue_redraw()
 	if player == null or not is_instance_valid(player):
 		player = get_tree().get_first_node_in_group("player")
 	if player == null or not is_instance_valid(player) \
@@ -91,6 +114,8 @@ func _draw() -> void:
 	var ratio := _ratio  # 1 = just used, 0 = ready
 	var ready := _ability_ready
 	var ability_name := _ability_name
+	# Blocked-press flash: while it runs, the arc and the F hint go red.
+	var blocked := _blocked_timer > 0.0
 
 	var font := get_theme_default_font()
 	var center := Vector2(size.x * 0.5, DIAL_CENTER_Y)
@@ -104,14 +129,18 @@ func _draw() -> void:
 		# Ready: a full, bright green ring.
 		draw_arc(center, DIAL_RADIUS, 0.0, TAU, 48, COLOR_READY, RING_WIDTH, true)
 	else:
-		# Cooling: an amber arc that empties clockwise from the top as time passes.
+		# Cooling: an amber arc that empties clockwise from the top as time passes
+		# (red for a beat when the player pressed F too early).
 		var start := -PI / 2.0
 		var end := start + TAU * ratio
-		draw_arc(center, DIAL_RADIUS, start, end, 48, COLOR_COOLING, RING_WIDTH, true)
+		var arc_col := COLOR_BLOCKED if blocked else COLOR_COOLING
+		draw_arc(center, DIAL_RADIUS, start, end, 48, arc_col, RING_WIDTH, true)
 
 	# Big "F" key hint in the centre of the dial.
 	var key_size := 30
 	var key_col := COLOR_READY if ready else Color(1, 1, 1, 0.95)
+	if blocked:
+		key_col = COLOR_BLOCKED
 	_draw_centered(font, "F", center + Vector2(0.0, key_size * 0.36), key_size, key_col)
 
 	# Ability name below the dial.
