@@ -49,9 +49,27 @@ extends Node
 const FIELD_RADIUS: float = 140.0
 
 ## Distance (metres) from the live player position beyond which a herd is
-## freed. Comfortably past FIELD_RADIUS so a herd is never culled mid-view —
-## it always walks fully out of the visible field before despawning.
-const DESPAWN_RADIUS: float = 230.0
+## freed. Past FIELD_RADIUS so a herd is never culled mid-view — it always
+## walks fully out of the visible field before despawning — but bounded by the
+## SAME terrain-extent argument as FIELD_RADIUS: the web ground only reaches
+## ~150 m, so a herd kept alive further than that would spend its last stretch
+## walking over open sky. 150 m is the largest value that keeps every LIVE
+## animal (not just every spawn) on solid ground.
+const DESPAWN_RADIUS: float = 150.0
+
+## Lateral offset (metres) of the migration line from the player, so a herd
+## walks PAST them rather than THROUGH them. Without it the line is aimed
+## exactly at the player's position at spawn time (the origin is placed on the
+## ray from the player), and the miss distance comes only from the player
+## having moved since — which is zero whenever they can't move: the 5 s
+## respawn grace freeze, a pause, or the game-over screen. The floor covers
+## MEANDER_AMPLITUDE (6) plus the widest formation spread, so a player standing
+## still watches the herd pass several metres clear (measured: ~9 m at the
+## closest draw). It does NOT make a crossing impossible — a player who runs
+## across the migration line can still meet it, which is the accepted
+## walk-through ceiling below, not a bug.
+const MIGRATION_MISS_MIN: float = 25.0
+const MIGRATION_MISS_MAX: float = 60.0
 
 ## The very first herd of a session comes sooner than the steady-state gap so
 ## a short play session still sees one (the acceptance criterion is "within a
@@ -629,10 +647,11 @@ func _spawn_herd() -> void:
 	## through the player's general area and out the far side.
 	##
 	## Placement: pick a heading from the rearward cone (see
-	## MIGRATION_HEADING_SPREAD), put the herd origin on the field circle at
-	## player_pos - heading * FIELD_RADIUS — i.e. ahead of the player down the
-	## road — and walk along +heading, so the migration line crosses TOWARD and
-	## PAST the player even while they run.
+	## MIGRATION_HEADING_SPREAD), put the herd origin on the field circle
+	## FIELD_RADIUS away — ahead of the player down the road, offset sideways by
+	## MIGRATION_MISS so the line passes BESIDE them, not through them — and walk
+	## along +heading, so the migration line crosses TOWARD and PAST the player
+	## even while they run.
 	##
 	## The animals are parented to THIS manager, never to a terrain chunk:
 	## chunk unloading frees everything under a chunk mesh, and a herd must
@@ -659,7 +678,17 @@ func _spawn_herd() -> void:
 	# the herd-local frame every formation offset is expressed in.
 	_herd_lateral = Vector3(-_herd_heading.z, 0.0, _herd_heading.x)
 	var player_ground := Vector3(player.global_position.x, 0.0, player.global_position.z)
-	_herd_position = player_ground - _herd_heading * FIELD_RADIUS
+	# Offset the whole migration line sideways so the herd passes BESIDE the
+	# player instead of straight through them (see MIGRATION_MISS_MIN).
+	var miss := _rng.randf_range(MIGRATION_MISS_MIN, MIGRATION_MISS_MAX)
+	if _rng.randf() < 0.5:
+		miss = -miss
+	# The along-heading setback shrinks to keep the origin ON the FIELD_RADIUS
+	# circle (Pythagoras), not past it — otherwise the lateral offset would push
+	# the spawn beyond DESPAWN_RADIUS and the herd would be freed on its first
+	# update frame. |miss| < FIELD_RADIUS always, so the root is real.
+	var setback := sqrt(FIELD_RADIUS * FIELD_RADIUS - miss * miss)
+	_herd_position = player_ground - _herd_heading * setback + _herd_lateral * miss
 	_herd_speed = _rng.randf_range(WALK_SPEED_MIN, WALK_SPEED_MAX)
 	_herd_travelled = 0.0
 

@@ -289,6 +289,12 @@ var _pressing_turn_right: bool = false
 ## surprise-enabled by merely switching tabs.
 var _was_active_before_pause: bool = false
 
+## Whether the tree pause currently in effect is OURS (see `is_paused_by_driver()`).
+## `get_tree().paused` alone can't answer that — `pause_controller.gd` sets the same
+## flag for the desktop P key — and the touch UI must not offer a "tap to resume"
+## for a pause it doesn't own.
+var _paused_by_driver: bool = false
+
 
 ## The analog actions whose per-action deadzone we zero in `_ready()` (see there for
 ## why). The driver actively *drives* `move_forward` (from stepping) and
@@ -457,6 +463,7 @@ func pause_game() -> void:
 	# through the pause) and freeze the whole tree.
 	_was_active_before_pause = active
 	disable()
+	_paused_by_driver = true
 	get_tree().paused = true
 
 
@@ -466,10 +473,22 @@ func pause_game() -> void:
 ## neutral, which is exactly right after a pause: the player is re-settling into
 ## however they're NOW holding the phone.
 func resume_from_pause() -> void:
+	_paused_by_driver = false
 	get_tree().paused = false
 	if _was_active_before_pause:
 		enable()
 	_was_active_before_pause = false
+
+
+## Whether the CURRENT tree pause is one WE started (focus loss / portrait guard),
+## as opposed to the desktop P-key pause owned by `pause_controller.gd`. The touch
+## UI gates its "tap to resume" overlay on this: a device that is BOTH a touch
+## session and has a keyboard (a touchscreen laptop, an Android tablet with a
+## keyboard) has two pause owners, and without this test the resume tap would
+## clear a P-key pause while `pause_controller`'s own click-swallowing overlay
+## stayed up over a running game.
+func is_paused_by_driver() -> bool:
+	return _paused_by_driver
 
 
 ## Switch the steering scheme AND recalibrate. The UI toggle (Task 5) calls this;

@@ -880,7 +880,7 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 		spawn_platform_crocodiles(chunk_pos, mesh_instance, platforms)
 		# Rare BOSS crocodiles guarding the coin road (deterministic, station-
 		# indexed — its own BOSS_SEED hash stream, no shared RNG draws consumed)
-		spawn_bosses_in_chunk(chunk_pos, mesh_instance)
+		spawn_bosses_in_chunk(chunk_pos, mesh_instance, obstacles)
 
 	# Lay this chunk's slice of the coin road (deterministic station-indexed trail;
 	# coins sit at ground height, perching on a climbable block where the road
@@ -1610,7 +1610,7 @@ func _boss_at(i: int) -> Dictionary:
 	var body_scale := minf(BOSS_BASE_SCALE * (1.0 + float(i - 1) * BOSS_GROWTH), BOSS_MAX_SCALE)
 	return { "pos": Vector3(p.x, 0.6, p.y), "scale": body_scale }
 
-func spawn_bosses_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D) -> void:
+func spawn_bosses_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array = []) -> void:
 	"""
 	Spawn this chunk's boss crocodiles — the rare road-guarding giants placed every
 	BOSS_INTERVAL_STATIONS stations along the coin road (see the BOSS CROCODILES
@@ -1627,6 +1627,14 @@ func spawn_bosses_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D) ->
 	                     FEATURE here: outrunning a boss far enough unloads its
 	                     chunk and frees the boss with it — which reads to the
 	                     player as "you escaped it".
+	@param obstacles: Block footprints to keep bosses out of, exactly like the
+	                  regular crocodile spawner. A boss is 2.5–6x scale, so one
+	                  placed on a wall or pyramid layer spawns INSIDE a
+	                  BoxShape3D and either gets ejected or wedges there,
+	                  blocking the road. Skipping is safe for the seam-claim
+	                  contract (the boss is simply absent, never duplicated) and
+	                  consumes no RNG draw, so the world stays byte-identical
+	                  everywhere else.
 	"""
 	if not crocodile_scene:
 		return
@@ -1666,12 +1674,30 @@ func spawn_bosses_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D) ->
 		if world_to_chunk(boss_pos) != chunk_pos:
 			continue
 
+		# Chunk-LOCAL position (relative to the chunk center), like every other
+		# chunk-parented node. `obstacles` is in these same local coords, so the
+		# footprint test below is the identical expression spawn_crocodiles_in_chunk
+		# uses — deliberately, so the two can't drift apart.
+		var local_pos := Vector3(boss_pos.x - center.x, boss_pos.y, boss_pos.z - center.z)
+
+		# Reject a boss standing on a block footprint (see the @param note). The
+		# clearance scales with the boss so a 6x giant needs 6x the room. The
+		# obstacle list is the chunk's own, in a fixed order, so this stays a pure
+		# deterministic function of the already-deterministic boss position.
+		var blocked := false
+		for ob in obstacles:
+			var horizontal := Vector2(local_pos.x - ob.pos.x, local_pos.z - ob.pos.z).length()
+			if horizontal < ob.radius + min_object_clearance * boss.scale:
+				blocked = true
+				break
+		if blocked:
+			continue
+
 		var croc = crocodile_scene.instantiate()
 		croc.name = "BossCrocodile_%d" % cur_i
-		# Chunk-LOCAL position (relative to the chunk center), like every other
-		# chunk-parented node. Default rotation — the wander AI turns it within a
-		# second anyway, and drawing a rotation would add an RNG draw for nothing.
-		croc.position = Vector3(boss_pos.x - center.x, boss_pos.y, boss_pos.z - center.z)
+		# Default rotation — the wander AI turns it within a second anyway, and
+		# drawing a rotation would add an RNG draw for nothing.
+		croc.position = local_pos
 		# CALL-ORDER CONTRACT: setup_as_boss BEFORE add_child, so the croc's
 		# _ready (which runs on add_child, terrain-parented) sees the boss flags
 		# and skips its random speed/size rolls in favor of the schedule.

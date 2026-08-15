@@ -5,9 +5,10 @@
 From time to time a family of migrating elephants or a flock of giraffes walks across the
 landscape in the distance. They are **pure scenery**: they never react to the player, the
 crocodiles, or any special ability, they have no collision bodies, and they belong to no
-gameplay group. They enter at the edge of a ~180 m field around the player, walk a
-straight-ish migration line with a gentle meander at a calm 2–3 m/s, and despawn once past
-the far edge.
+gameplay group. They enter at the edge of a ~140 m field around the player (the shipped
+`FIELD_RADIUS` — see Task 1 for why the original 180 didn't survive contact with the web
+build's terrain extent), walk a straight-ish migration line with a gentle meander at a calm
+2–3 m/s, and despawn once past the far edge.
 
 Everything lives in ONE new self-contained script, `scripts/fauna_manager.gd` (a `Node`
 named `FaunaManager` under `Main` in `main.tscn`, in group `"fauna"`), sibling in spirit to
@@ -125,9 +126,13 @@ Dependencies identified: none new. No asset files, no Python pipeline, no autolo
       explaining the whole system (pure ambience, no gameplay coupling, one herd at a time)
       in the teaching style used by `crocodile_lod_manager.gd`
 - [x] declare the full **constants block at the top**, grouped with `# ----- ... -----`
-      section comments and each documented: `FIELD_RADIUS := 180.0`,
-      `DESPAWN_RADIUS := 230.0` (comfortably past the field edge so a herd is never culled
-      mid-view), `FIRST_EVENT_DELAY_MIN := 40.0` / `FIRST_EVENT_DELAY_MAX := 80.0` (the very
+      section comments and each documented: `FIELD_RADIUS := 140.0`
+      (**shipped value — plan said 180**; the web build's ground only reaches ~150 m at
+      `WEB_RENDER_DISTANCE` 3 × 50 m chunks, so a herd spawned past that stands over open
+      sky), `DESPAWN_RADIUS := 150.0` (**shipped value — plan said 230**; past the field
+      edge so a herd is never culled mid-view, but held to the same terrain-extent bound,
+      which applies to the herd's whole lifetime and not just its spawn frame),
+      `FIRST_EVENT_DELAY_MIN := 40.0` / `FIRST_EVENT_DELAY_MAX := 80.0` (the very
       first herd comes sooner than the steady-state gap so a short play session still sees
       one — the acceptance criterion is "within a few minutes"),
       `FAUNA_INTERVAL_MIN := 120.0` / `FAUNA_INTERVAL_MAX := 240.0`,
@@ -163,7 +168,7 @@ Dependencies identified: none new. No asset files, no Python pipeline, no autolo
 
 - [x] add elephant geometry constants at the top: body size, leg size, head size, ear size,
       trunk segment size/count (2–3), tusk size, and `CALF_SCALE := 0.55`
-- [x] add `_build_elephant(is_adult: bool) -> Node3D` that assembles the animal entirely from
+- [x] add `_build_elephant(is_adult: bool)` that assembles the animal entirely from
       the shared unit `BoxMesh` + the shared elephant material, with a docstring explaining
       the blocky-by-design aesthetic (matches the game's decorative blocks and low-poly cast)
 - [x] structure the node tree so the animation in Task 5 has clean pivots:
@@ -186,7 +191,7 @@ Dependencies identified: none new. No asset files, no Python pipeline, no autolo
       nubs, and the count of darker-brown accent patch boxes (a **few** — 2–3 — explicitly
       NOT a checker pattern; comment that a real pattern would need a texture and is not
       worth an asset file)
-- [x] add `_build_giraffe() -> Node3D` with the same node structure contract as the
+- [x] add `_build_giraffe()` with the same node structure contract as the
       elephant: root → `Body` → four hip-pivoted leg `Node3D`s → a **`Neck` pivot** at the
       shoulders holding the angled neck box, with the small head + horn nubs parented to the
       neck's far end so they swing with it
@@ -207,9 +212,18 @@ Dependencies identified: none new. No asset files, no Python pipeline, no autolo
       `GIRAFFE_FLOCK_MIN := 4` / `GIRAFFE_FLOCK_MAX := 8`, `HERD_SPREAD_LATERAL`,
       `HERD_SPREAD_LONG`, `CALF_TRAIL_DISTANCE`, `MEANDER_AMPLITUDE`, `MEANDER_FREQUENCY`,
       `FORMATION_LERP_SPEED`
-- [x] `_spawn_herd()`: pick the species by `ELEPHANT_CHANCE`, pick a random compass heading,
-      place the **herd origin** on the field circle at `player_pos - heading * FIELD_RADIUS`
-      (so it walks *toward and past* the player's area), roll one shared
+- [x] `_spawn_herd()`: pick the species by `ELEPHANT_CHANCE`, pick a heading, place the
+      **herd origin** on the field circle so it walks *toward and past* the player's area,
+      roll one shared
+      <br>**Shipped deviations from this line:** the heading is NOT a random compass bearing
+      — it is drawn from a rearward cone, `PI ± MIGRATION_HEADING_SPREAD` (0.6 rad), against
+      the player's +X run direction. A uniform bearing wasted about half of all events: the
+      player runs 5–11 m/s and a herd ambles 2–3, so any herd heading roughly *with* them is
+      outrun and despawns behind the camera unseen. The origin is also offset sideways by
+      `MIGRATION_MISS_MIN..MAX` (25–60 m, either side) with the along-heading setback reduced
+      by Pythagoras to keep it on the `FIELD_RADIUS` circle — without the offset the line is
+      aimed exactly at the player and the herd walks *through* them whenever they can't step
+      aside (respawn grace freeze, pause, game-over screen).
       `_herd_speed` in `[WALK_SPEED_MIN, WALK_SPEED_MAX]`, build the members, and parent them
       to the manager's own parent (or to the manager) — **not** to a terrain chunk, since
       chunk unloading must never free a herd mid-walk
@@ -240,11 +254,15 @@ Dependencies identified: none new. No asset files, no Python pipeline, no autolo
 ### Task 5: Procedural walk animation (single loop over all animals)
 
 - [x] add animation constants: `STRIDE_FREQUENCY`, `LEG_SWING_DEG`, `BODY_BOB_AMOUNT`,
-      `NECK_BOB_DEG`, `NECK_BOB_FREQUENCY`, `TRUNK_SWAY_DEG`, `TRUNK_SWAY_FREQUENCY`
-- [x] in `_process`, after the herd movement, run ONE loop over `_animals` that advances a
-      shared `_animation_time` and per-animal `stride_phase += delta * STRIDE_FREQUENCY`
-      (scaled by the herd walk speed so faster herds step faster — same `move_factor` idea as
-      `_animate_body`)
+      `NECK_BOB_DEG`, `TRUNK_SWAY_DEG` — plus `NECK_BOB_RATE` / `TRUNK_SWAY_RATE`
+      (**shipped names — plan said `NECK_BOB_FREQUENCY` / `TRUNK_SWAY_FREQUENCY`**; "rate"
+      keeps them distinct from the per-metre `MEANDER_FREQUENCY`)
+- [x] in `_process`, after the herd movement, run ONE loop over `_animals` computing the
+      stride phase as a pure function of **metres walked** —
+      `_herd_travelled * STRIDE_FREQUENCY + animal_phase_offset` — rather than the
+      `stride_phase += delta * ...` accumulator this line specified. Distance-based means
+      feet keep pace with the ground at any walk speed for free (no `move_factor` scaling)
+      and the phase can never drift.
 - [x] legs: `pivot.rotation.x = sin(stride_phase + leg_phase_offset) * LEG_SWING_DEG` in
       radians, with the diagonal pairs a half-cycle apart (front-left/rear-right in phase,
       the other diagonal offset by `PI`) — a real quadruped trot, and comment it as such
