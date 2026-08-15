@@ -288,12 +288,12 @@ Dependencies identified: none new. No new files, no new assets, no scene edits.
       the ordering requirement
 
 ### Task 7: Documentation comments in-file
-- [ ] extend the ARTIFACTS section comment with the determinism contract in the
+- [x] extend the ARTIFACTS section comment with the determinism contract in the
       house teaching style: independent hash stream (no shared draws consumed),
       within-run revisits identical, cross-run different via `run_seed`, per-chunk
       parenting, and the "solid geometry → MultiMesh + BlockCollision, glow → at
       most 4 unshadowed MeshInstance3Ds" split
-- [ ] note honestly in a comment that the optional proximity shimmer loop was
+- [x] note honestly in a comment that the optional proximity shimmer loop was
       **skipped**: `sound_manager.get_loop_player()` returns a non-positional
       `AudioStreamPlayer`, so a per-artifact 3D hum would need a new positional
       audio path plus a per-frame proximity scan — out of proportion to "quiet

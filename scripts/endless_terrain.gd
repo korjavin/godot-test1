@@ -298,6 +298,28 @@ const BOSS_SEED: int = 0xB0_55  # "BOSS"-ish; arbitrary fixed constant
 ## pattern): a private RNG seeded from chunk coords + run_seed ^ ARTIFACT_SALT.
 ## It consumes NO draw from the shared chunk RNG, so on the ~19 of 20 chunks
 ## without an artifact the generated world is byte-for-byte identical to before.
+##
+## The determinism contract, spelled out:
+## - INDEPENDENT STREAM: _artifact_at() is a pure function of chunk coords +
+##   run_seed. No draw from the shared chunk RNG is consumed, inserted, or
+##   moved — every existing block/crocodile/coin stays exactly where it was.
+## - WITHIN A RUN: a revisited chunk regenerates the identical artifact (same
+##   shape, same spot, same stones), just like blocks and crocodile positions.
+## - ACROSS RUNS: new_run() re-rolls run_seed, so artifacts land elsewhere —
+##   run 2 is a fresh world, artifacts included.
+## - PER-CHUNK PARENTING: everything an artifact spawns (accents, coins, gem)
+##   is a child of the chunk MeshInstance3D, so it unloads with the chunk and
+##   nothing leaks.
+## - RENDER SPLIT: all SOLID geometry routes through create_box into the
+##   chunk's single MultiMesh + single BlockCollision body (zero extra draws,
+##   zero extra bodies); only the GLOW accents are real MeshInstance3Ds — at
+##   most ARTIFACT_MAX_ACCENTS of them, cast_shadow OFF.
+##
+## Honest deferral: an optional proximity "shimmer" hum per artifact was
+## SKIPPED. sound_manager.get_loop_player() returns a non-positional
+## AudioStreamPlayer, so a per-artifact 3D hum would need a new positional
+## audio path plus a per-frame proximity scan against artifact centres —
+## out of proportion to the quiet polish it buys.
 
 ## Kill switch, mirrors spawn_coins / spawn_crocodiles.
 @export var spawn_artifacts: bool = true
@@ -1896,7 +1918,7 @@ func _artifact_at(chunk_pos: Vector2i) -> Dictionary:
 #
 # Every builder shares ONE signature and ONE contract:
 #   _artifact_<shape>(center, rng, parent_chunk, block_batch, block_body)
-#     -> { "radius": float, "top": float }
+#     -> { "radius": float, "top": float, "gem_offset": Vector3 }
 # - ALL solid stone goes through create_box(..., tilt, _artifact_stone_color(rng)),
 #   so it joins the chunk's single block MultiMesh and single BlockCollision body:
 #   an artifact's stone costs ZERO extra draw calls and ZERO extra physics bodies.
@@ -1907,6 +1929,10 @@ func _artifact_at(chunk_pos: Vector2i) -> Dictionary:
 # - The returned radius/top approximate the footprint for the chunk's `obstacles`
 #   list (crocodile spawn rejection + the coin perch rule). Conservative (a touch
 #   generous) is fine; exact is not required.
+# - gem_offset is where the single reward gem goes, as an offset from `center` on
+#   the ground plane: Vector3.ZERO for the shapes with an open middle, and a step
+#   clear of the stone for the two whose centre is solid (monolith, colossus
+#   head) so the prize is never spawned inside a block.
 
 func _artifact_stone_color(rng: RandomNumberGenerator) -> Color:
 	"""
@@ -1942,7 +1968,13 @@ func _artifact_monolith(center: Vector3, rng: RandomNumberGenerator, parent_chun
 		var local_offset := Vector3(0.0, 0.6 + 1.5 * float(i), dims.z / 2.0 + 0.06)
 		_spawn_artifact_accent(parent_chunk, slab_center + rot * local_offset, Vector3(1.1, 0.35, 0.08), yaw, tilt)
 	# Horizontal reach ≈ half width + the lean's horizontal throw; 2.5 covers it.
-	return { "radius": 2.5, "top": slab_center.y + (dims.y / 2.0) * cos(tilt) }
+	# gem_offset: the centre column is solid slab, so the prize sits just off the
+	# runed face where the player can actually reach it (rotated by the slab yaw).
+	return {
+		"radius": 2.5,
+		"top": slab_center.y + (dims.y / 2.0) * cos(tilt),
+		"gem_offset": Basis(Vector3.UP, yaw) * Vector3(0.0, 0.0, dims.z / 2.0 + 1.2),
+	}
 
 func _artifact_arch(center: Vector3, rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
 	"""
@@ -1972,7 +2004,8 @@ func _artifact_arch(center: Vector3, rng: RandomNumberGenerator, parent_chunk: M
 	# The missing keystone: one accent floating at the gap's mid-angle.
 	var a_mid := PI * (float(gap_start) + float(gap_len - 1) / 2.0) / float(count - 1)
 	_spawn_artifact_accent(parent_chunk, center + rot_arch * Vector3(cos(a_mid) * radius, sin(a_mid) * radius, 0.0), Vector3(0.7, 0.7, 0.7), yaw, 0.0)
-	return { "radius": radius + 1.0, "top": radius + 1.0 }
+	# Hollow centre — the gem sits on the ground under the arch (offset ZERO).
+	return { "radius": radius + 1.0, "top": radius + 1.0, "gem_offset": Vector3.ZERO }
 
 func _artifact_stone_circle(center: Vector3, rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
 	"""
@@ -2003,7 +2036,9 @@ func _artifact_stone_circle(center: Vector3, rng: RandomNumberGenerator, parent_
 		i += 1
 	# One wide, nearly-flat glow panel on the centre slab's top face.
 	_spawn_artifact_accent(parent_chunk, center + Vector3(0.0, slab_dims.y + 0.05, 0.0), Vector3(2.0, 0.08, 2.0), base_yaw, 0.0)
-	return { "radius": ring_r + 1.0, "top": tallest_top }
+	# Offset ZERO: the gem sits dead centre, hovering just over the glowing altar
+	# slab (COIN_GROUND_HEIGHT 0.9 clears its 0.6 top) — the obvious prize spot.
+	return { "radius": ring_r + 1.0, "top": tallest_top, "gem_offset": Vector3.ZERO }
 
 func _artifact_colossus_head(center: Vector3, rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
 	"""
@@ -2029,7 +2064,13 @@ func _artifact_colossus_head(center: Vector3, rng: RandomNumberGenerator, parent
 	for side in [-1.0, 1.0]:
 		var eye_pos := brow_center + rot * Vector3(side * 0.9, -brow.y / 2.0 - 0.15, brow.z / 2.0 + 0.05)
 		_spawn_artifact_accent(parent_chunk, eye_pos, Vector3(0.5, 0.3, 0.12), yaw, 0.0)
-	return { "radius": 3.2, "top": brow_center.y + brow.y / 2.0 }
+	# gem_offset: the centre column is solid head, so the prize lies on the ground
+	# in front of the face — under its gaze, and reachable.
+	return {
+		"radius": 3.2,
+		"top": brow_center.y + brow.y / 2.0,
+		"gem_offset": rot * Vector3(0.0, 0.0, jaw.z / 2.0 + 1.2),
+	}
 
 func _artifact_spiral_steps(center: Vector3, rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
 	"""
@@ -2056,7 +2097,9 @@ func _artifact_spiral_steps(center: Vector3, rng: RandomNumberGenerator, parent_
 		i += 1
 	# The non-destination: one small glow hovering above the top step.
 	_spawn_artifact_accent(parent_chunk, last_pos + Vector3(0.0, 0.6, 0.0), Vector3(0.5, 0.5, 0.5), last_yaw, 0.0)
-	return { "radius": spiral_r + 1.2, "top": rise * float(count - 1) + step_dims.y }
+	# The helix winds AROUND an empty core, so the gem sits on the ground at the
+	# centre of the spiral (offset ZERO) — you walk into the eye of the staircase.
+	return { "radius": spiral_r + 1.2, "top": rise * float(count - 1) + step_dims.y, "gem_offset": Vector3.ZERO }
 
 func spawn_artifact_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
 	"""
@@ -2094,47 +2137,62 @@ func spawn_artifact_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, 
 		3: footprint = _artifact_colossus_head(center, rng, parent_chunk, block_batch, block_body)
 		_: footprint = _artifact_spiral_steps(center, rng, parent_chunk, block_batch, block_body)
 
+	# --- The reward: a ring of ordinary coins around the base + ONE gem at the
+	# artifact's centre (the incentive to detour off the coin road). Guarded like
+	# every other coin spawn; these are ordinary chunk-local coins parented to the
+	# chunk — the road's station-claim logic is not involved in any way.
+	#
+	# ORDER MATTERS: the artifact's own footprint is appended to `obstacles` only
+	# AFTER these coins are placed. Its footprint is a CIRCLE, but three of the
+	# five shapes (arch, stone circle, spiral) are mostly HOLLOW — settling their
+	# reward coins against that circle would perch them on the silhouette top,
+	# i.e. floating several metres up in open air. Placing the reward first means
+	# it settles only against real block stone, so it lies on the ground where the
+	# player can actually pick it up.
+	if spawn_coins and coin_scene != null:
+		var coin_count := rng.randi_range(ARTIFACT_COIN_MIN, ARTIFACT_COIN_MAX)
+		var ring_radius: float = footprint.radius + rng.randf_range(ARTIFACT_COIN_RING_PAD_MIN, ARTIFACT_COIN_RING_PAD_MAX)
+		var i := 0
+		while i < coin_count:
+			i += 1
+			var a := rng.randf_range(0.0, TAU)
+			var cx := center.x + cos(a) * ring_radius
+			var cz := center.z + sin(a) * ring_radius
+			# Same perch-or-skip rule as road coins (one home: _settle_coin_y):
+			# the ring can graze a neighbouring block, so a coin perches on a
+			# climbable top or is dropped under a sheer wall.
+			var cy := _settle_coin_y(cx, cz, COIN_GROUND_HEIGHT, obstacles)
+			if is_inf(cy):
+				continue
+			var coin := coin_scene.instantiate()
+			coin.position = Vector3(cx, cy, cz)
+			parent_chunk.add_child(coin)
+
+		# Exactly ONE gem, at the artifact's centre — offset by the shape's own
+		# `gem_offset` for the two shapes whose centre is solid stone (monolith,
+		# colossus head), so the prize sits at the foot of the landmark instead of
+		# inside it. Hollow shapes return ZERO and keep the gem dead centre.
+		# make_gem() BEFORE add_child, per coin.gd's contract (it fetches nodes
+		# with get_node, not @onready).
+		var gem_pos: Vector3 = center + footprint.gem_offset
+		var gem_y := _settle_coin_y(gem_pos.x, gem_pos.z, COIN_GROUND_HEIGHT, obstacles)
+		if not is_inf(gem_y):
+			var gem := coin_scene.instantiate()
+			gem.position = Vector3(gem_pos.x, gem_y, gem_pos.z)
+			gem.make_gem()
+			parent_chunk.add_child(gem)
+
 	# Register the artifact as one round obstacle footprint, exactly like a normal
 	# block. CONSEQUENCE (deliberate): crocodiles reject spawn points inside it,
-	# and any road coin whose column crosses it PERCHES on its top (climbable =
+	# and any ROAD coin whose column crosses it PERCHES on its top (climbable =
 	# true) instead of being buried in the stone — artifact stone behaves like
 	# ordinary block stone everywhere downstream.
+	# ponytail: a hollow artifact (arch/circle/spiral) can float a road coin over
+	# its empty middle, because one circle+top is the whole footprint vocabulary
+	# the coin rule speaks. Erring this way never BURIES a coin in stone, which is
+	# the failure the rule exists to prevent; if it ever looks wrong, give the
+	# footprint a per-shape "solid centre height" rather than a taller vocabulary.
 	obstacles.append({ "pos": center, "radius": footprint.radius, "top": footprint.top, "climbable": true })
-
-	# --- The reward: a ring of ordinary coins around the base + ONE gem at the
-	# centre (the incentive to detour off the coin road). Guarded like every other
-	# coin spawn; these are ordinary chunk-local coins parented to the chunk — the
-	# road's station-claim logic is not involved in any way.
-	if not spawn_coins or coin_scene == null:
-		return
-	var coin_count := rng.randi_range(ARTIFACT_COIN_MIN, ARTIFACT_COIN_MAX)
-	var ring_radius: float = footprint.radius + rng.randf_range(ARTIFACT_COIN_RING_PAD_MIN, ARTIFACT_COIN_RING_PAD_MAX)
-	var i := 0
-	while i < coin_count:
-		i += 1
-		var a := rng.randf_range(0.0, TAU)
-		var cx := center.x + cos(a) * ring_radius
-		var cz := center.z + sin(a) * ring_radius
-		# Same perch-or-skip rule as road coins (one home: _settle_coin_y). The
-		# ring can graze the artifact's own footprint or a neighbouring block —
-		# the coin perches on a climbable top, or is dropped under a sheer wall.
-		var cy := _settle_coin_y(cx, cz, COIN_GROUND_HEIGHT, obstacles)
-		if is_inf(cy):
-			continue
-		var coin := coin_scene.instantiate()
-		coin.position = Vector3(cx, cy, cz)
-		parent_chunk.add_child(coin)
-
-	# Exactly one gem at the artifact centre. The artifact's own footprint is in
-	# `obstacles` (climbable), so _settle_coin_y perches the gem ON TOP of the
-	# shape — intended: the prize rewards a climb. make_gem() BEFORE add_child,
-	# per coin.gd's contract (it fetches nodes with get_node, not @onready).
-	var gem_y := _settle_coin_y(center.x, center.z, COIN_GROUND_HEIGHT, obstacles)
-	if not is_inf(gem_y):
-		var gem := coin_scene.instantiate()
-		gem.position = Vector3(center.x, gem_y, center.z)
-		gem.make_gem()
-		parent_chunk.add_child(gem)
 
 # ============================================================================
 # COIN ROAD MATH (deterministic, pure-in-k parametric centerline + coin placement)
