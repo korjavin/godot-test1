@@ -1883,6 +1883,174 @@ func _artifact_at(chunk_pos: Vector2i) -> Dictionary:
 	return { "local": Vector3(local_x, 0.0, local_z), "kind": kind, "seed": builder_seed }
 
 # ============================================================================
+# ARTIFACT SHAPE BUILDERS (the five code-built "lost civilization" landmarks)
+# ============================================================================
+#
+# Every builder shares ONE signature and ONE contract:
+#   _artifact_<shape>(center, rng, parent_chunk, block_batch, block_body)
+#     -> { "radius": float, "top": float }
+# - ALL solid stone goes through create_box(..., tilt, _artifact_stone_color(rng)),
+#   so it joins the chunk's single block MultiMesh and single BlockCollision body:
+#   an artifact's stone costs ZERO extra draw calls and ZERO extra physics bodies.
+# - ALL glow goes through _spawn_artifact_accent — real MeshInstance3Ds, at most
+#   ARTIFACT_MAX_ACCENTS per artifact. That is the entire per-artifact draw budget.
+# - `rng` is the artifact's PRIVATE RNG (seeded from _artifact_at's "seed"), so
+#   builders draw as freely as they like without touching any shared stream.
+# - The returned radius/top approximate the footprint for the chunk's `obstacles`
+#   list (crocodile spawn rejection + the coin perch rule). Conservative (a touch
+#   generous) is fine; exact is not required.
+
+func _artifact_stone_color(rng: RandomNumberGenerator) -> Color:
+	"""
+	One weathered stone colour: a random spot on the ARTIFACT_STONE_A → B grey
+	ramp, then pushed a random amount (up to ARTIFACT_MOSS_MAX) toward dead-moss
+	green. Every stone comes out a slightly different grey-green — deliberately
+	DISTINCT from the warm/blue curated RAMP_* block colours, so an artifact reads
+	as "from another age" at a glance.
+	"""
+	var grey := ARTIFACT_STONE_A.lerp(ARTIFACT_STONE_B, rng.randf())
+	return grey.lerp(ARTIFACT_MOSS, rng.randf() * ARTIFACT_MOSS_MAX)
+
+func _artifact_monolith(center: Vector3, rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	Shape 0 — LEANING HALF-BURIED MONOLITH: one tall slab sunk into the ground at
+	a drunken angle, with three glowing rune strips stacked up its exposed face.
+	The tilt is the whole point (it is why create_box grew the tilt parameter).
+	"""
+	var yaw := rng.randf_range(0.0, TAU)
+	# Lean 0.12..0.25 rad to a random side — enough to read as "toppling for a
+	# thousand years", not enough to look knocked over.
+	var tilt := rng.randf_range(0.12, 0.25) * (1.0 if rng.randf() < 0.5 else -1.0)
+	var dims := Vector3(1.8, 8.0, 1.1)
+	var buried := rng.randf_range(1.2, 2.2)
+	# Centre BELOW y=0 by `buried`, so the base is swallowed by the ground.
+	var slab_center := center + Vector3(0.0, dims.y / 2.0 - buried, 0.0)
+	create_box(slab_center, dims, yaw, rng, block_batch, block_body, tilt, _artifact_stone_color(rng))
+	# Three rune strips up the slab's front (+Z) face. Positions are rotated by
+	# the SAME yaw*tilt basis as the slab, then pushed just past the face along
+	# its normal so each strip sits proud of the stone instead of z-fighting it.
+	var rot := Basis(Vector3.UP, yaw) * Basis(Vector3.RIGHT, tilt)
+	for i in 3:
+		var local_offset := Vector3(0.0, 0.6 + 1.5 * float(i), dims.z / 2.0 + 0.06)
+		_spawn_artifact_accent(parent_chunk, slab_center + rot * local_offset, Vector3(1.1, 0.35, 0.08), yaw, tilt)
+	# Horizontal reach ≈ half width + the lean's horizontal throw; 2.5 covers it.
+	return { "radius": 2.5, "top": slab_center.y + (dims.y / 2.0) * cos(tilt) }
+
+func _artifact_arch(center: Vector3, rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	Shape 1 — BROKEN ARCH OF FLOATING STONES: 7-9 rough blocks along a vertical
+	half-circle, with 1-2 consecutive stones MISSING so the arc reads as broken;
+	a single glowing accent hangs in the gap — the keystone that is not there.
+	(Static geometry needs no support, so the remaining stones simply float.)
+	"""
+	var yaw := rng.randf_range(0.0, TAU)
+	var radius := 5.0
+	var count := rng.randi_range(7, 9)
+	var gap_len := rng.randi_range(1, 2)
+	# Gap somewhere in the upper body of the arc — never the feet, so both ends
+	# still stand on the ground and the silhouette stays readable as an arch.
+	var gap_start := rng.randi_range(2, count - 2 - gap_len)
+	var rot_arch := Basis(Vector3.UP, yaw)
+	var i := 0
+	while i < count:
+		var a := PI * float(i) / float(count - 1)  # 0..PI sweeps foot → top → foot
+		if i >= gap_start and i < gap_start + gap_len:
+			i += 1
+			continue  # the broken part — no stone, no RNG draws (sequence still fixed: gap indices were drawn above)
+		var pos := center + rot_arch * Vector3(cos(a) * radius, sin(a) * radius, 0.0)
+		var dims := Vector3(rng.randf_range(1.1, 1.5), rng.randf_range(0.9, 1.3), 1.0)
+		create_box(pos, dims, yaw + rng.randf_range(-0.15, 0.15), rng, block_batch, block_body, rng.randf_range(-0.2, 0.2), _artifact_stone_color(rng))
+		i += 1
+	# The missing keystone: one accent floating at the gap's mid-angle.
+	var a_mid := PI * (float(gap_start) + float(gap_len - 1) / 2.0) / float(count - 1)
+	_spawn_artifact_accent(parent_chunk, center + rot_arch * Vector3(cos(a_mid) * radius, sin(a_mid) * radius, 0.0), Vector3(0.7, 0.7, 0.7), yaw, 0.0)
+	return { "radius": radius + 1.0, "top": radius + 1.0 }
+
+func _artifact_stone_circle(center: Vector3, rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	Shape 2 — CIRCLE OF TILTED STANDING STONES: 6-9 slabs on a ring, each facing
+	the centre and leaning drunkenly inward or outward, around a low central slab
+	with one wide flat glowing panel lying on its top face.
+	"""
+	var base_yaw := rng.randf_range(0.0, TAU)
+	var ring_r := rng.randf_range(4.0, 6.0)
+	var count := rng.randi_range(6, 9)
+	# Low central slab — the "altar" the glow panel lies on.
+	var slab_dims := Vector3(3.0, 0.6, 3.0)
+	create_box(center + Vector3(0.0, slab_dims.y / 2.0, 0.0), slab_dims, base_yaw, rng, block_batch, block_body, 0.0, _artifact_stone_color(rng))
+	var tallest_top := slab_dims.y
+	var i := 0
+	while i < count:
+		var a := base_yaw + TAU * float(i) / float(count)
+		# yaw = PI/2 - a points the slab's local Z (its thin depth axis) along the
+		# radial direction — i.e. the slab FACES the centre — which makes tilt
+		# (about local X, the tangent) lean it radially inward/outward.
+		var stone_yaw := PI / 2.0 - a
+		var lean := rng.randf_range(-0.3, 0.3)
+		var stone_dims := Vector3(1.3, rng.randf_range(2.8, 4.0), 0.7)
+		var sink := rng.randf_range(0.3, 0.7)  # half-buried, like the monolith
+		var pos := center + Vector3(cos(a) * ring_r, stone_dims.y / 2.0 - sink, sin(a) * ring_r)
+		create_box(pos, stone_dims, stone_yaw, rng, block_batch, block_body, lean, _artifact_stone_color(rng))
+		tallest_top = maxf(tallest_top, pos.y + (stone_dims.y / 2.0) * cos(lean))
+		i += 1
+	# One wide, nearly-flat glow panel on the centre slab's top face.
+	_spawn_artifact_accent(parent_chunk, center + Vector3(0.0, slab_dims.y + 0.05, 0.0), Vector3(2.0, 0.08, 2.0), base_yaw, 0.0)
+	return { "radius": ring_r + 1.0, "top": tallest_top }
+
+func _artifact_colossus_head(center: Vector3, rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	Shape 3 — HALF-BURIED COLOSSUS HEAD: a huge jaw box sunk into the ground, a
+	narrower brow box stacked on top, a slab nose on the front face, all sharing
+	one yaw so they read as a single fallen statue; two glowing eyes inset under
+	the brow. Ozymandias, in cubes.
+	"""
+	var yaw := rng.randf_range(0.0, TAU)
+	var rot := Basis(Vector3.UP, yaw)
+	var stone := _artifact_stone_color(rng)  # ONE colour for the whole head — it is one statue, not a pile
+	var jaw := Vector3(3.6, 2.4, 3.0)
+	var jaw_center := center + Vector3(0.0, jaw.y / 2.0 - rng.randf_range(0.8, 1.4), 0.0)
+	create_box(jaw_center, jaw, yaw, rng, block_batch, block_body, 0.0, stone)
+	# Brow: narrower, pushed slightly back so the face has a step.
+	var brow := Vector3(3.2, 1.4, 2.4)
+	var brow_center := jaw_center + rot * Vector3(0.0, jaw.y / 2.0 + brow.y / 2.0, -0.3)
+	create_box(brow_center, brow, yaw, rng, block_batch, block_body, 0.0, stone)
+	# Nose: a thin slab proud of the jaw's front (+Z) face, reaching up to the brow.
+	var nose := Vector3(0.8, 1.7, 0.6)
+	create_box(jaw_center + rot * Vector3(0.0, jaw.y / 2.0 + 0.2, jaw.z / 2.0 - 0.1), nose, yaw, rng, block_batch, block_body, 0.0, stone)
+	# Two eyes, inset just under the brow's front face, either side of the nose.
+	for side in [-1.0, 1.0]:
+		var eye_pos := brow_center + rot * Vector3(side * 0.9, -brow.y / 2.0 - 0.15, brow.z / 2.0 + 0.05)
+		_spawn_artifact_accent(parent_chunk, eye_pos, Vector3(0.5, 0.3, 0.12), yaw, 0.0)
+	return { "radius": 3.2, "top": brow_center.y + brow.y / 2.0 }
+
+func _artifact_spiral_steps(center: Vector3, rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	Shape 4 — SPIRAL OF STEPS TO NOWHERE: 10-16 floating step slabs winding up a
+	helix, each facing the centre so its long edge follows the curve (a climbable
+	staircase); one glowing accent hovers over the final, highest step — the
+	destination that is not there.
+	"""
+	var base_a := rng.randf_range(0.0, TAU)
+	var spiral_r := rng.randf_range(3.0, 4.0)
+	var count := rng.randi_range(10, 16)
+	var rise := 0.55  # per-step climb — jumpable by every character
+	var step_dims := Vector3(1.6, 0.4, 0.9)
+	var last_pos := center
+	var last_yaw := 0.0
+	var i := 0
+	while i < count:
+		var a := base_a + 0.6 * float(i)
+		var pos := center + Vector3(cos(a) * spiral_r, step_dims.y / 2.0 + rise * float(i), sin(a) * spiral_r)
+		# Same face-the-centre yaw as the stone circle: local Z radial, long X tangent.
+		last_yaw = PI / 2.0 - a
+		create_box(pos, step_dims, last_yaw, rng, block_batch, block_body, 0.0, _artifact_stone_color(rng))
+		last_pos = pos
+		i += 1
+	# The non-destination: one small glow hovering above the top step.
+	_spawn_artifact_accent(parent_chunk, last_pos + Vector3(0.0, 0.6, 0.0), Vector3(0.5, 0.5, 0.5), last_yaw, 0.0)
+	return { "radius": spiral_r + 1.2, "top": rise * float(count - 1) + step_dims.y }
+
+# ============================================================================
 # COIN ROAD MATH (deterministic, pure-in-k parametric centerline + coin placement)
 # ============================================================================
 #

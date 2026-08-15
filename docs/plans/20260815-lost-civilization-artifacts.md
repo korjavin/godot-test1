@@ -224,37 +224,38 @@ Dependencies identified: none new. No new files, no new assets, no scene edits.
       changes so artifacts land elsewhere; the chunk RNG stream is never touched
 
 ### Task 5: Build the five artifact shapes
-- [ ] add `_artifact_stone_color(rng: RandomNumberGenerator) -> Color`: lerp
+- [x] add `_artifact_stone_color(rng: RandomNumberGenerator) -> Color`: lerp
       `ARTIFACT_STONE_A → ARTIFACT_STONE_B` by a random `t`, then lerp toward
       `ARTIFACT_MOSS` by `rng.randf() * ARTIFACT_MOSS_MAX`, so every stone is a
       slightly different weathered grey-green
-- [ ] add `_artifact_monolith(...)` — **leaning half-buried monolith**: one tall
+- [x] add `_artifact_monolith(...)` — **leaning half-buried monolith**: one tall
       slab (≈`Vector3(1.8, 8.0, 1.1)`) with a random yaw and a `tilt` of
       ±(0.12..0.25) rad, its centre pushed BELOW y = 0 so the base is buried;
       3 thin emissive **rune strips** stacked up one face (accents, offset along
       the face normal so they sit proud of the stone)
-- [ ] add `_artifact_arch(...)` — **broken arch of floating stones**: 7-9 boxes
+- [x] add `_artifact_arch(...)` — **broken arch of floating stones**: 7-9 boxes
       placed along a half-circle arc (radius ≈ 5), each with a small random tilt
       and yaw, with 1-2 consecutive stones OMITTED so the arch reads as broken;
       one emissive accent floating in the gap (the "keystone that is missing")
-- [ ] add `_artifact_stone_circle(...)` — **circle of tilted standing stones**:
+- [x] add `_artifact_stone_circle(...)` — **circle of tilted standing stones**:
       6-9 slabs on a ring (radius 4-6), each leaning outward/inward by a random
       tilt, around a low central slab; one wide flat emissive accent lying on the
       centre slab's top face
-- [ ] add `_artifact_colossus_head(...)` — **half-buried colossus head**: a big
+- [x] add `_artifact_colossus_head(...)` — **half-buried colossus head**: a big
       half-buried jaw box, a narrower brow box on top, a slab nose, all sharing
       one yaw; two small emissive **eye** accents inset under the brow
-- [ ] add `_artifact_spiral_steps(...)` — **spiral of steps to nowhere**: 10-16
+- [x] add `_artifact_spiral_steps(...)` — **spiral of steps to nowhere**: 10-16
       step boxes on a spiral (angle increment ≈ 0.6 rad, rising ≈ 0.55 per step,
       radius 3-4), each yawed to face the centre; one emissive accent on the
       final, highest step (the destination that is not there)
-- [ ] give every builder the SAME signature —
+- [x] give every builder the SAME signature —
       `(center: Vector3, rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary` —
       returning `{ "radius": float, "top": float }` (footprint radius and top
       height for the obstacle entry). All solid geometry goes through
       `create_box(..., tilt, _artifact_stone_color(rng))`; all glow goes through
       `_spawn_artifact_accent`; nothing else is instanced
-- [ ] keep total accents per artifact `<= ARTIFACT_MAX_ACCENTS`
+- [x] keep total accents per artifact `<= ARTIFACT_MAX_ACCENTS` (monolith 3,
+      arch 1, circle 1, head 2, spiral 1)
 
 ### Task 6: Wire the artifact spawner into create_chunk (with coins + gem)
 - [ ] extract the coin perch/skip rule out of `spawn_coins_in_chunk` into
