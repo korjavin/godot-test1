@@ -3,10 +3,13 @@ extends Control
 ## the player a crocodile is actively hunting them BEFORE the bite lands.
 ##
 ## The CrocodileLODManager already iterates every crocodile ~9 Hz with the
-## player position in hand; it publishes the distance to the nearest CHASING
-## croc here via `set_danger_distance()` (group "danger_vignette", null-safe —
-## the project's standard no-hard-refs convention). This node turns that one
-## number into two feedback channels:
+## player position in hand; it publishes a 0..1 danger LEVEL here via
+## `set_danger_level()` (group "danger_vignette", null-safe — the project's
+## standard no-hard-refs convention). A level rather than raw metres because
+## each chaser has its OWN smell range (15 m regular, 25 m boss), so the manager
+## normalises by the radius of the croc that is actually hunting; a single range
+## on this side would leave a boss un-telegraphed over its extra 10 m. This node
+## turns that one number into two feedback channels:
 ##   - VISUAL: a fullscreen ColorRect running a tiny canvas_item shader (built
 ##     in code — no asset files) that tints only the screen edges red, fading
 ##     in as the croc closes. Deliberately cheap: one 2D quad, and even that
@@ -14,22 +17,17 @@ extends Control
 ##   - AUDIO: the sound manager's pre-baked "heartbeat" loop (see
 ##     sound_manager.gd), fetched via get_loop_player("heartbeat"). We own
 ##     play/stop and drive pitch_scale + volume_db live, so the heart beats
-##     faster and louder as the croc closes 15 m → 0. play() is gated on
-##     is_unlocked() — the browser-gesture gate only guards the manager's own
-##     play_* methods, not loop players driven directly (its documented rule).
+##     faster and louder as the croc closes its detection range → 0. play() is
+##     gated on is_unlocked() — the browser-gesture gate only guards the
+##     manager's own play_* methods, not loop players driven directly.
 ##
-## The published distance only arrives ~9 Hz (the LOD scan cadence), so the
+## The published level only arrives ~9 Hz (the LOD scan cadence), so the
 ## displayed alpha is EASED toward its target every frame — the vignette
 ## breathes smoothly instead of stepping visibly at scan rate.
 
 # ============================================================================
 # CONSTANTS
 # ============================================================================
-
-## Distance (metres) at which danger starts registering. This mirrors the
-## crocodile's DETECTION_RADIUS (15 m) — a croc can only be chasing inside it,
-## so the telegraph ramps over exactly the range where a hunt can exist.
-const DANGER_RANGE: float = 15.0
 
 ## Vignette opacity at point-blank range (danger level 1.0). Kept well under
 ## fully opaque so the world stays readable while the player flees.
@@ -68,9 +66,9 @@ void fragment() {
 # STATE
 # ============================================================================
 
-## Latest published distance to the nearest chasing croc (metres). INF means
-## nobody is hunting. Written by the LOD manager ~9 Hz via set_danger_distance.
-var _danger_distance: float = INF
+## Latest published danger level: 0 = nobody hunting, 1 = a chaser at point
+## blank. Written by the LOD manager ~9 Hz via set_danger_level.
+var _danger_level: float = 0.0
 
 ## The alpha actually on screen this frame, eased toward the target.
 var _display_alpha: float = 0.0
@@ -110,15 +108,16 @@ func _ready() -> void:
 	visible = false
 
 
-func set_danger_distance(distance: float) -> void:
-	## Called by CrocodileLODManager after each ~9 Hz scan: distance in metres
-	## to the nearest croc whose is_chasing is true, or INF when none.
-	_danger_distance = distance
+func set_danger_level(level: float) -> void:
+	## Called by CrocodileLODManager after each ~9 Hz scan: 0..1, where 1 is a
+	## chasing croc at point blank and 0 is "nobody is hunting". Already
+	## normalised by each chaser's own detection radius (see the header).
+	_danger_level = level
 
 
 func _process(delta: float) -> void:
-	# Danger level t: 0 at DANGER_RANGE (or beyond / INF), 1 at point blank.
-	var t: float = clampf(1.0 - _danger_distance / DANGER_RANGE, 0.0, 1.0)
+	# Danger level t: 0 when nothing hunts, 1 at point blank.
+	var t: float = clampf(_danger_level, 0.0, 1.0)
 
 	# Ease the on-screen alpha toward the target so the 9 Hz publish cadence
 	# never shows as visible steps.

@@ -211,7 +211,32 @@ var _calibrate_pending: bool = false
 ## On a native desktop build (no touchscreen, `OS.has_feature("web")` false) it
 ## returns **false without ever touching JavaScriptBridge**, so desktop mouse
 ## capture happens exactly as before — byte-for-byte unchanged.
+##
+## MEMOISED FOR THE WHOLE SESSION, and that is load-bearing, not a micro-opt. On
+## web the `matchMedia` probes are NOT constant — they flip when a pointing device
+## is attached or detached mid-session. Callers split into two camps: some cache
+## the answer once (`touch_controls._is_touch`, `capture_hint`), others re-ask live
+## (`mobile_input._notification`, the mouse-capture guards). If those two camps ever
+## see different answers the game HARD-FREEZES: the focus-loss handler pauses the
+## tree because it reads "touch", while the touch UI — which caches "not touch" —
+## keeps its "tap to resume" overlay hidden, and `pause_controller` refuses to
+## unpause a pause it did not create. One evaluation per session makes the split
+## impossible by construction (and stops re-running JS on every click).
 static func is_touch_session() -> bool:
+	if _touch_session_cache != CACHE_UNSET:
+		return _touch_session_cache == 1
+	_touch_session_cache = 1 if _probe_touch_session() else 0
+	return _touch_session_cache == 1
+
+
+## Sentinel for "the touch-session probe has not run yet" (see the cache above).
+const CACHE_UNSET: int = -1
+
+## Memoised `is_touch_session()` result: CACHE_UNSET, 0 (no) or 1 (yes).
+static var _touch_session_cache: int = CACHE_UNSET
+
+
+static func _probe_touch_session() -> bool:
 	# Primary signal, consulted on every platform. On desktop this is the ONLY
 	# branch reached, and it is false, so we return false immediately below.
 	if DisplayServer.is_touchscreen_available():

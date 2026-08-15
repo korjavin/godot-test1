@@ -201,6 +201,15 @@ var is_boss: bool = false
 ## Uniform body scale for a boss (from the terrain's size schedule; 1.0 = unused).
 var boss_scale: float = 1.0
 
+## This crocodile's effective "smell" range — the ONE place that resolves the
+## regular-vs-boss detection radius. `_update_chase_state` reads it, and so does
+## the danger telegraph in `crocodile_lod_manager` (which must normalise each
+## chaser's distance by ITS OWN radius: a boss acquires the player at 25 m, so a
+## telegraph hardcoded to the regular 15 m would stay dark and silent for the
+## first 10 m of the game's biggest threat closing on you). Resolved in _ready()
+## because `setup_as_boss()` is contracted to run before the node enters the tree.
+var detection_radius: float = DETECTION_RADIUS
+
 ## Reference to the player node
 var player_node: Node3D = null
 
@@ -279,6 +288,7 @@ func _ready() -> void:
 		# Bosses take NO per-instance random rolls: their size comes from the
 		# terrain's deterministic schedule (boss_scale) and their speeds are fixed,
 		# so a boss regenerates byte-identically when its chunk is revisited.
+		detection_radius = BOSS_DETECTION_RADIUS
 		move_speed_instance = BASE_MOVE_SPEED
 		# The MAX_CHASE_SPEED cap keeps the running-escape hatch true at any distance.
 		chase_speed_instance = minf(BOSS_CHASE_SPEED * distance_factor, MAX_CHASE_SPEED)
@@ -486,9 +496,9 @@ func _update_chase_state() -> void:
 		player_is_grounded = player_node.is_on_floor()
 
 	# Update chase state based on detection radius AND player grounded state.
-	# Bosses smell farther (still well under the LOD SIM_RADIUS — see the const).
-	var radius: float = BOSS_DETECTION_RADIUS if is_boss else DETECTION_RADIUS
-	if distance_to_player <= radius and player_is_grounded:
+	# Bosses smell farther (still well under the LOD SIM_RADIUS — see the const);
+	# `detection_radius` is resolved once in _ready(), see the var.
+	if distance_to_player <= detection_radius and player_is_grounded:
 		if not is_chasing:
 			# Just started chasing
 			is_chasing = true

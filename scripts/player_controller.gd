@@ -105,7 +105,20 @@ var jump_buffer_timer: float = 0.0
 const LAND_SQUASH_DURATION: float = 0.18
 ## Impacts faster than this (m/s downward) also get a small camera shake and a
 ## flat dust ring at the feet — the "heavy landing" tier.
-const LAND_HARD_SPEED: float = 4.0
+##
+## MUST STAY ABOVE A PLAIN JUMP'S TOUCHDOWN SPEED, which is exactly JUMP_VELOCITY
+## (10.2 m/s — a symmetric arc lands as fast as it left). At the old 4.0 the tier
+## fired on EVERY jump, and even on a 0.56 m step down: constant camera shake and
+## a fresh dust-ring mesh allocated per landing, with the "heavy" reading gone
+## because nothing was ever light. 12.0 means a real drop from above the jump
+## apex — i.e. off a stacked block or a mountain ledge.
+const LAND_HARD_SPEED: float = 12.0
+## Divisor mapping fall speed → squash strength. Also keyed to the jump arc: at
+## the old 10.0 a plain jump saturated the clamp at 1.0, so the documented "a
+## soft hop barely dips, a long drop visibly squashes" scaling never happened —
+## every landing squashed maximally. 16.0 puts a plain jump at ~0.64 and leaves
+## headroom above it for genuine drops.
+const LAND_SQUASH_SPEED_DIVISOR: float = 16.0
 ## Seconds left in the current squash (0 = none) and its 0.2–1.0 strength.
 var land_squash_timer: float = 0.0
 var land_squash_strength: float = 0.0
@@ -1291,7 +1304,7 @@ func update_character_animation(delta: float, input_dir: Vector2) -> void:
 		# eased dip itself is applied AFTER the branch chain below, so the walk
 		# bob / idle breathe can't overwrite it on the same frame.
 		land_squash_timer = LAND_SQUASH_DURATION
-		land_squash_strength = clampf(_fall_speed / 10.0, 0.2, 1.0)
+		land_squash_strength = clampf(_fall_speed / LAND_SQUASH_SPEED_DIVISOR, 0.2, 1.0)
 		# Heavy landings additionally kick the camera and puff a flat dust ring
 		# at the feet (the thud above already covers audio on every landing).
 		if _fall_speed > LAND_HARD_SPEED:
