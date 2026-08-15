@@ -69,6 +69,44 @@ const WALK_SPEED_MAX: float = 3.0
 const ELEPHANT_CHANCE: float = 0.5
 
 # ============================================================================
+# CONSTANTS — elephant geometry
+# ============================================================================
+# All sizes in metres as Vector3(width, height, length). The animal's local
+# forward is -Z (Godot's look-at convention, so the herd code can yaw it along
+# its travel direction), and feet rest at local y = 0 by construction — the
+# ground is a flat plane at world y = 0, so placing the root on the ground
+# needs no raycast (see endless_terrain.gd).
+
+## The barrel of the body. Sized so an adult reads clearly at FIELD_RADIUS
+## through the fog: bigger than any crocodile, unmistakably "large animal".
+const ELEPHANT_BODY_SIZE: Vector3 = Vector3(1.6, 1.5, 2.6)
+
+## One leg column. Its y is the leg LENGTH and doubles as the hip height —
+## the hip pivots sit at exactly this y so the foot bottoms out at y = 0.
+const ELEPHANT_LEG_SIZE: Vector3 = Vector3(0.4, 1.1, 0.4)
+
+## The head block, hung on the front of the body slightly above centre.
+const ELEPHANT_HEAD_SIZE: Vector3 = Vector3(1.0, 1.0, 0.9)
+
+## One big flat ear slab (thin on x so it reads as a flap, not a block).
+const ELEPHANT_EAR_SIZE: Vector3 = Vector3(0.12, 0.8, 0.65)
+
+## One trunk segment box; the trunk is ELEPHANT_TRUNK_SEGMENTS of these in a
+## nested pivot chain so it can sway like a floppy chain, not a rigid bar.
+const ELEPHANT_TRUNK_SEGMENT_SIZE: Vector3 = Vector3(0.28, 0.55, 0.28)
+
+## How many chained trunk segments (2–3 reads fine; 3 sways best).
+const ELEPHANT_TRUNK_SEGMENTS: int = 3
+
+## One tusk box (adults only), tilted forward off the head's lower corners.
+const ELEPHANT_TUSK_SIZE: Vector3 = Vector3(0.12, 0.55, 0.12)
+
+## Whole-calf scale relative to an adult: applied as ONE scale write on the
+## calf's root, never by rebuilding smaller boxes — same geometry, same code
+## path, half-ish size.
+const CALF_SCALE: float = 0.55
+
+# ============================================================================
 # STATE
 # ============================================================================
 
@@ -142,6 +180,139 @@ static func _get_accent_material() -> StandardMaterial3D:
 		_accent_material.albedo_color = Color(0.92, 0.90, 0.82)
 		_accent_material.roughness = 0.7
 	return _accent_material
+
+
+# ============================================================================
+# MODEL BUILDERS (pure code, no scene files, no assets — ability_effect.gd
+# precedent: build the visual tree in script, free it when done)
+# ============================================================================
+
+static func _make_box_part(part_name: String, size: Vector3, local_pos: Vector3,
+		material: StandardMaterial3D, casts_shadow: bool) -> MeshInstance3D:
+	## One box-shaped body part: the ONE shared unit BoxMesh scaled to `size`
+	## via the node's own scale (never a new mesh resource), painted with a
+	## shared species material. `casts_shadow` is a per-part choice: the big
+	## silhouette parts keep the default ON (near-ground shadows sell an
+	## animal's size), while small accents turn it OFF because they add
+	## shadow-pass draws without contributing anything visible to the shadow.
+	var part := MeshInstance3D.new()
+	part.name = part_name
+	part.mesh = _get_shared_box_mesh()
+	part.material_override = material
+	part.scale = size
+	part.position = local_pos
+	if not casts_shadow:
+		part.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	return part
+
+
+static func _make_leg(leg_name: String, hip_pos: Vector3, leg_size: Vector3,
+		material: StandardMaterial3D, casts_shadow: bool) -> Node3D:
+	## One leg = a bare pivot Node3D AT HIP HEIGHT with the visible box hung
+	## half a leg-length BELOW it. That offset is the whole trick: rotating
+	## the pivot about X swings the leg from the hip like a real limb, instead
+	## of spinning the box around its own centre. The walk animation only ever
+	## touches the pivot; the box never moves in its own frame.
+	var pivot := Node3D.new()
+	pivot.name = leg_name
+	pivot.position = hip_pos
+	pivot.add_child(_make_box_part("LegBox", leg_size,
+			Vector3(0.0, -leg_size.y * 0.5, 0.0), material, casts_shadow))
+	return pivot
+
+
+func _build_elephant(is_adult: bool) -> Node3D:
+	## Assemble one elephant entirely from the shared unit BoxMesh + shared
+	## materials. Blocky BY DESIGN: the whole world (decorative blocks, the
+	## low-poly character cast) is boxes and flat colours, so a box elephant
+	## matches the art direction — a smooth model would look pasted in, and a
+	## real mesh would mean an asset file this feature deliberately avoids.
+	##
+	## Tree contract (Task 5's animation depends on these exact shapes):
+	## root Node3D (feet at y = 0, faces -Z) -> "Body" Node3D (bobs
+	## vertically, carries the static boxes) -> four hip-pivot Node3Ds
+	## (FL/FR/RL/RR) and a nested "Trunk0..N" pivot chain off the head.
+	var mat := _get_elephant_material()
+	# Calves cast no shadows AT ALL: at CALF_SCALE they are small accents in
+	# the herd picture, and dropping them from the shadow passes is free
+	# fidelity headroom for the adults (whose shadows sell the size contrast).
+	var body_shadows := is_adult
+
+	var root := Node3D.new()
+	root.name = "Elephant"
+	var body := Node3D.new()
+	body.name = "Body"
+	root.add_child(body)
+
+	# Barrel: bottom rests on the leg tops, so its centre is hip + half height.
+	var body_center_y := ELEPHANT_LEG_SIZE.y + ELEPHANT_BODY_SIZE.y * 0.5
+	body.add_child(_make_box_part("BodyBox", ELEPHANT_BODY_SIZE,
+			Vector3(0.0, body_center_y, 0.0), mat, body_shadows))
+
+	# Head: hung on the front (-Z) face, slightly above body centre, tucked
+	# 0.15 m back into the barrel so the joint never shows a gap.
+	var head_pos := Vector3(0.0, body_center_y + 0.35,
+			-(ELEPHANT_BODY_SIZE.z * 0.5 + ELEPHANT_HEAD_SIZE.z * 0.5 - 0.15))
+	body.add_child(_make_box_part("Head", ELEPHANT_HEAD_SIZE, head_pos, mat, body_shadows))
+
+	# Ears: thin slabs on the head's sides. Shadow OFF — a 12 cm slab adds a
+	# shadow-pass draw and zero silhouette.
+	var ear_x := ELEPHANT_HEAD_SIZE.x * 0.5 + ELEPHANT_EAR_SIZE.x * 0.5
+	body.add_child(_make_box_part("EarL", ELEPHANT_EAR_SIZE,
+			head_pos + Vector3(-ear_x, 0.05, 0.15), mat, false))
+	body.add_child(_make_box_part("EarR", ELEPHANT_EAR_SIZE,
+			head_pos + Vector3(ear_x, 0.05, 0.15), mat, false))
+
+	# Tusks: adults only — the visual cue that separates parents from calves.
+	# Accent material (off-white), tilted so the tops lean forward, shadow OFF.
+	if is_adult:
+		var tusk_y := head_pos.y - ELEPHANT_HEAD_SIZE.y * 0.5
+		var tusk_z := head_pos.z - ELEPHANT_HEAD_SIZE.z * 0.5 + 0.1
+		for side: float in [-1.0, 1.0]:
+			var tusk := _make_box_part("TuskL" if side < 0.0 else "TuskR",
+					ELEPHANT_TUSK_SIZE, Vector3(side * 0.25, tusk_y, tusk_z),
+					_get_accent_material(), false)
+			tusk.rotation_degrees.x = -35.0
+			body.add_child(tusk)
+
+	# Trunk: a chain of nested pivots hanging from the head's front-bottom
+	# edge. Each pivot sits at the BOTTOM of its parent segment and its box
+	# hangs half a segment below it, so rotating any pivot swings everything
+	# downstream — the chain structure Task 5's per-segment sway lag needs.
+	var seg_len := ELEPHANT_TRUNK_SEGMENT_SIZE.y
+	var trunk_parent: Node3D = body
+	for i: int in ELEPHANT_TRUNK_SEGMENTS:
+		var pivot := Node3D.new()
+		pivot.name = "Trunk%d" % i
+		if i == 0:
+			pivot.position = Vector3(0.0, head_pos.y - ELEPHANT_HEAD_SIZE.y * 0.5,
+					head_pos.z - ELEPHANT_HEAD_SIZE.z * 0.5)
+		else:
+			pivot.position = Vector3(0.0, -seg_len, 0.0)
+		pivot.add_child(_make_box_part("TrunkBox", ELEPHANT_TRUNK_SEGMENT_SIZE,
+				Vector3(0.0, -seg_len * 0.5, 0.0), mat, false))
+		trunk_parent.add_child(pivot)
+		trunk_parent = pivot
+
+	# Legs, always in FL/FR/RL/RR order — the species-agnostic contract the
+	# animation loop relies on (diagonal trot pairs are picked by index).
+	var hip_x := ELEPHANT_BODY_SIZE.x * 0.5 - ELEPHANT_LEG_SIZE.x * 0.5
+	var hip_z := ELEPHANT_BODY_SIZE.z * 0.5 - ELEPHANT_LEG_SIZE.z * 0.5
+	var hip_y := ELEPHANT_LEG_SIZE.y
+	body.add_child(_make_leg("LegFL", Vector3(-hip_x, hip_y, -hip_z),
+			ELEPHANT_LEG_SIZE, mat, body_shadows))
+	body.add_child(_make_leg("LegFR", Vector3(hip_x, hip_y, -hip_z),
+			ELEPHANT_LEG_SIZE, mat, body_shadows))
+	body.add_child(_make_leg("LegRL", Vector3(-hip_x, hip_y, hip_z),
+			ELEPHANT_LEG_SIZE, mat, body_shadows))
+	body.add_child(_make_leg("LegRR", Vector3(hip_x, hip_y, hip_z),
+			ELEPHANT_LEG_SIZE, mat, body_shadows))
+
+	# A calf is the SAME build scaled once at the root — one scale write, no
+	# smaller boxes, no second code path to keep in sync.
+	if not is_adult:
+		root.scale = Vector3.ONE * CALF_SCALE
+	return root
 
 
 # ============================================================================

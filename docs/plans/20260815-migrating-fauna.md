@@ -161,21 +161,21 @@ Dependencies identified: none new. No asset files, no Python pipeline, no autolo
 
 ### Task 2: Elephant model builder (code-built boxes, no assets)
 
-- [ ] add elephant geometry constants at the top: body size, leg size, head size, ear size,
+- [x] add elephant geometry constants at the top: body size, leg size, head size, ear size,
       trunk segment size/count (2–3), tusk size, and `CALF_SCALE := 0.55`
-- [ ] add `_build_elephant(is_adult: bool) -> Node3D` that assembles the animal entirely from
+- [x] add `_build_elephant(is_adult: bool) -> Node3D` that assembles the animal entirely from
       the shared unit `BoxMesh` + the shared elephant material, with a docstring explaining
       the blocky-by-design aesthetic (matches the game's decorative blocks and low-poly cast)
-- [ ] structure the node tree so the animation in Task 5 has clean pivots:
+- [x] structure the node tree so the animation in Task 5 has clean pivots:
       root `Node3D` (the animal, positioned at ground level) → a `Body` `Node3D` carrying the
       body/head/ear boxes → **four leg pivot `Node3D`s at hip height**, each with a
       `MeshInstance3D` child offset **down by half the leg length** so rotating the pivot
       about X swings the leg from the hip, not around its own centre → a **trunk chain** of
       2–3 nested pivot `Node3D`s hanging off the head, each with its box child offset down
       by half a segment so the chain sways from its root
-- [ ] give adults the two white tusk boxes; calves get none, and the whole calf root is
+- [x] give adults the two white tusk boxes; calves get none, and the whole calf root is
       scaled by `CALF_SCALE` (one `scale` write on the root — do not rebuild smaller boxes)
-- [ ] set `cast_shadow`: **ON** (default) for the adult body/legs/head — near-ground shadows
+- [x] set `cast_shadow`: **ON** (default) for the adult body/legs/head — near-ground shadows
       sell their size; **`SHADOW_CASTING_SETTING_OFF`** for ears, trunk segments, tusks and
       every part of a calf, with a comment naming the reason (small accents contribute
       nothing to the silhouette but cost shadow-pass draws)
