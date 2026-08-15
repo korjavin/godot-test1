@@ -552,6 +552,15 @@ func flee_from(source: Vector3, duration: float) -> void:
 	# group tricks (so LOD sleep and every other group consumer stays intact).
 	if is_boss:
 		return
+	# A SLEPT croc ignores the stink too, and that is a correctness rule, not a
+	# nicety: set_lod_active(false) turns physics dispatch off, so its
+	# flee_time_remaining can never tick down. It would hold is_fleeing until it
+	# woke and then flee for the FULL duration — one press would leave every
+	# crocodile in every loaded chunk (~1000 of them) harmless-on-wake for as
+	# long as the player keeps advancing. A slept croc is > 50 m away (see
+	# SIM_RADIUS in crocodile_lod_manager); no smell reaches that far anyway.
+	if not lod_active:
+		return
 	is_fleeing = true
 	flee_time_remaining = duration
 	flee_source = source

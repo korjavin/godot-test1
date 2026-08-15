@@ -1808,6 +1808,14 @@ func clear_nearby_crocodiles(spawn_point: Vector3) -> void:
 	Remove all crocodiles within SPAWN_SAFE_RADIUS of the spawn point.
 	Prevents instant death after respawning.
 
+	BOSSES ARE EXEMPT — same rule as flee_from() in piglet_crocodile_ai.gd, for
+	the same reason: a boss is a deterministic road landmark, not spawn clutter.
+	Freeing one here would make dying the CHEAPEST way past every boss on the
+	road (a soft respawn keeps all coins, so the whole cost would be one life).
+	Leaving it standing is safe: the respawn grace freeze plus the blink
+	invulnerability that follows are long enough to run, and running (>= 9.0)
+	beats MAX_CHASE_SPEED (8.5) by design.
+
 	@param spawn_point: The position to check distance from
 	"""
 	var crocodiles = get_tree().get_nodes_in_group("crocodile")
@@ -1815,6 +1823,8 @@ func clear_nearby_crocodiles(spawn_point: Vector3) -> void:
 
 	for crocodile in crocodiles:
 		if crocodile is Node3D:
+			if "is_boss" in crocodile and crocodile.is_boss:
+				continue
 			var distance = spawn_point.distance_to(crocodile.global_position)
 			if distance <= SPAWN_SAFE_RADIUS:
 				crocodile.queue_free()

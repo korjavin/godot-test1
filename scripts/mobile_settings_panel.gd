@@ -141,6 +141,15 @@ var _suppress_signals: bool = false
 
 
 func _ready() -> void:
+	# Keep running while the tree is paused, for the same reason TouchControls does
+	# (see its _ready): this panel sits ABOVE TouchControls in the HUD, and its gear
+	# Button / open PanelContainer carry the default MOUSE_FILTER_STOP. A PAUSABLE
+	# Control gets no GUI input but still blocks the PROCESS_MODE_ALWAYS one beneath
+	# it, so during the focus-loss pause every tap landing on the gear — or anywhere
+	# on the open panel — would be swallowed and the "tap to resume" overlay under it
+	# would be dead. ALWAYS makes those taps work (Close then resumes normally).
+	process_mode = Node.PROCESS_MODE_ALWAYS
+
 	# This root spans the whole screen, but it must NOT be a hit-test target itself:
 	# it sits ABOVE the TouchControls sibling in the HUD, and Godot's MOUSE_FILTER_PASS
 	# only re-propagates to a control's *ancestors*, never to sibling controls drawn

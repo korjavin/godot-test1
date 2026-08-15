@@ -239,6 +239,15 @@ func _scan_crocodiles() -> void:
 		if should_be_active != currently_active:
 			croc.set_lod_active(should_be_active)
 
+	# A game-over player is out of play, so the telegraph must go quiet. Nothing
+	# else would ever clear it: the body stays frozen inside DETECTION_RADIUS, so
+	# its chasers keep `is_chasing` true and we would keep republishing ~1 m at
+	# 9 Hz — the heartbeat pounding at full pitch and the red vignette lit behind
+	# the Game Over screen until Play Again wipes the chunks. Same defensive `in`
+	# guard as the is_chasing read above.
+	if "is_game_over" in _player and _player.is_game_over:
+		nearest_chasing_dist_sq = INF
+
 	# Publish the danger distance (metres; INF = nobody chasing — sqrt(INF) is
 	# still INF, so one unconditional sqrt covers both cases). Group-based and
 	# null-safe like every other cross-system hook: no vignette in the scene
