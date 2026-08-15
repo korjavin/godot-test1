@@ -29,10 +29,20 @@ const DUCK_SPEED: float = 2.5
 ## Speed multiplier applied to the GROUNDED gaits (duck/run/walk) while the
 ## player is standing in a river — see is_wading and calculate_current_speed().
 ## 0.6 is a ~40% slowdown: enough to feel like wading and to make crossing a
-## river a real decision, not so much that a chasing crocodile is a death
-## sentence. Deliberately NOT applied to Windman's Air Rush — flying over a
-## river is not wading.
+## river a real decision. Deliberately NOT applied to Windman's Air Rush —
+## flying over a river is not wading.
 const WADE_SPEED_FACTOR: float = 0.6
+
+## Floor under the RUN gait while wading. The project's difficulty contract is
+## "running always escapes": crocodile chase speed is capped at MAX_CHASE_SPEED
+## (8.5 in piglet_crocodile_ai.gd) precisely so it stays under the slowest
+## character's run (RUN_SPEED 10.0 × CHARACTER_SPEED 0.9 = 9.0). Applying the
+## full wade factor to the run gait drops that to 5.4 — below even the BASE
+## chase speed of 5.5 — which would make a river band an unescapable death
+## trap rather than a decision, and river crossings are not length-bounded (see
+## the RIVER_HALF_WIDTH note in endless_terrain.gd). So walk and duck take the
+## full drag and the run is floored here instead.
+const WADE_RUN_MIN_SPEED: float = 9.0
 
 ## How fast A / D rotate the character, in radians per second.
 ## A and D no longer strafe — they turn the body (tank-style steering), so
@@ -860,6 +870,10 @@ func calculate_current_speed() -> float:
 	if is_ducking:
 		return DUCK_SPEED * speed_scale
 	elif is_running:
+		# The wading drag applies here too, but never below WADE_RUN_MIN_SPEED:
+		# running has to keep outpacing a chasing crocodile even in the water.
+		if is_wading:
+			return maxf(RUN_SPEED * speed_scale, WADE_RUN_MIN_SPEED)
 		return RUN_SPEED * speed_scale
 	else:
 		return WALK_SPEED * speed_scale

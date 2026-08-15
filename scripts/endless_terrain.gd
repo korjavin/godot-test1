@@ -516,25 +516,36 @@ const MOUNTAIN_HEIGHT_MIN: float = 8.0
 const MOUNTAIN_HEIGHT_MAX: float = 20.0
 const MOUNTAIN_BASE_WIDTH_MIN: float = 7.0
 const MOUNTAIN_BASE_WIDTH_MAX: float = 13.0
-const MOUNTAIN_LAYERS_MIN: int = 4
-const MOUNTAIN_LAYERS_MAX: int = 7
 const MOUNTAIN_LAYER_TAPER: float = 0.74  # each layer up is this fraction as wide
 const MOUNTAIN_LAYER_JITTER: float = 0.5  # metres of lateral wobble per layer
 
 ## MOUNTAIN — minimum height of one layer, in metres. A massif is only "walk
 ## around it" if you cannot simply hop up its steps: the player's jump apex is
 ## 3.61 m (see the gravity note in CLAUDE.md), so every step has to clear that.
-## The drawn layer count is capped by height / this, which is what stops a short
-## wide many-layered roll from generating a climbable ziggurat.
+## This is what SETS the layer count (height / this, floored at 2), which is why
+## there is no layer-count roll: with heights of 8-20 m a massif is 2-5 layers,
+## and a wide short one is a couple of sheer slabs rather than a climbable
+## ziggurat. (An earlier version drew a 4-7 layer count and clamped it with this;
+## the clamp always won, so the draw was dead and the "4-7 layers" it implied
+## never happened.)
 const MOUNTAIN_MIN_LAYER_HEIGHT: float = 4.0
 
 ## MOUNTAIN — keeps the base well inside the chunk so a massif never straddles a
-## seam and gets half-unloaded (same idea as ARTIFACT_EDGE_MARGIN, bigger because
-## a massif is bigger). The widest possible base half-width plus its layer jitter
-## is 7.0 m, so 8.0 clears a seam with room to spare while still leaving a 34 x 34
-## m placement box — wide enough that 2-4 massifs spread across the chunk instead
-## of piling into the middle of every one and reading as a per-chunk grid.
-const MOUNTAIN_EDGE_MARGIN: float = 8.0
+## seam (same idea as ARTIFACT_EDGE_MARGIN, bigger because a massif is bigger).
+## Layers are YAWED, so the reach from the centre is the rotated half-diagonal,
+## not the half-width: MOUNTAIN_BASE_WIDTH_MAX * 0.71 + MOUNTAIN_LAYER_JITTER =
+## 9.73 m — the same expression the footprint radius uses below. 10.0 covers it
+## and still leaves a 30 x 30 m placement box, wide enough that 2-4 massifs
+## spread across the chunk instead of piling into the middle of every one and
+## reading as a per-chunk grid.
+const MOUNTAIN_EDGE_MARGIN: float = 10.0
+
+## MOUNTAIN — footprint radius above which an already-placed obstacle is treated
+## as "do not bury this" when siting a massif. Scattered blocks top out at
+## object_size_max * 0.71 = 1.78 m and are deliberately fair game (see
+## _spawn_mountain_content); artifacts start at 2.5 m, and an artifact sealed
+## inside 20 m of rock takes its coin ring and its guaranteed gem with it.
+const MOUNTAIN_AVOID_RADIUS: float = 2.0
 
 ## MOUNTAIN — the road clearance is what cuts a CANYON through a range: the
 ## massifs simply refuse to stand near the centerline, so the coin road threads
@@ -2277,7 +2288,7 @@ func _artifact_at(chunk_pos: Vector2i) -> Dictionary:
 		tries += 1
 		local_x = rng.randf_range(-half, half)
 		local_z = rng.randf_range(-half, half)
-		if _road_lateral_distance(center.x + local_x, center.z + local_z) >= ARTIFACT_ROAD_CLEARANCE \
+		if _road_lateral_distance(center.x + local_x, center.z + local_z, ARTIFACT_ROAD_CLEARANCE) >= ARTIFACT_ROAD_CLEARANCE \
 				and not is_river_at(Vector3(center.x + local_x, 0.0, center.z + local_z)):
 			placed = true
 	if not placed:
@@ -2665,6 +2676,14 @@ func _biome_spot_ok(chunk_center: Vector3, local_x: float, local_z: float, radiu
 	Callers pass DIFFERENT clearances (trees a little, massifs a lot), which is why
 	the clearance is a parameter rather than a constant read in here; it is handed
 	straight to _road_lateral_distance, which sizes its scan window from it.
+
+	ponytail: the river test is INERT as the constants stand — RIVER_LEVEL (0.5)
+	sits inside the PLAINS band, and all three callers only ever place geometry in
+	desert/forest/mountain, so no candidate here has ever been in the water. It is
+	kept because it costs one noise eval at generation time and is the thing that
+	stays correct if RIVER_LEVEL or the band thresholds are ever retuned. The river
+	exclusions that DO fire live in the plains-capable spawners: the scattered-block
+	scatter, the four feature-structure builders, the crocodiles and _artifact_at.
 	"""
 	var world_x := chunk_center.x + local_x
 	var world_z := chunk_center.z + local_z
@@ -2704,9 +2723,15 @@ func _spawn_desert_content(chunk_center: Vector3, rng: RandomNumberGenerator, ob
 	for _i in count:
 		var local_x := rng.randf_range(-half, half)
 		var local_z := rng.randf_range(-half, half)
-		# Rejection is a `continue` AFTER the position draws, so a rejected cactus
+		# Rejections are `continue`s AFTER the position draws, so a rejected cactus
 		# costs a spot and not a shift in this (or any) RNG sequence.
 		if not _biome_spot_ok(chunk_center, local_x, local_z, CACTUS_WIDTH_MAX * 1.2, CACTUS_ROAD_CLEARANCE, obstacles):
+			continue
+		# Edge feathering, same rule as the forest and the mountains: the chunk
+		# CENTRE chose this builder, but each cactus re-tests the biome at its OWN
+		# position, so the sand dissolves into the plain along the noise contour
+		# instead of stopping dead on a straight chunk seam.
+		if biome_at(chunk_center.x + local_x, chunk_center.z + local_z) != Biome.DESERT:
 			continue
 
 		var width := rng.randf_range(CACTUS_WIDTH_MIN, CACTUS_WIDTH_MAX)
@@ -2836,14 +2861,23 @@ func _spawn_mountain_content(chunk_center: Vector3, rng: RandomNumberGenerator, 
 	var half := chunk_size / 2.0 - MOUNTAIN_EDGE_MARGIN
 	var count := rng.randi_range(MOUNTAIN_MASSIF_MIN, MOUNTAIN_MASSIF_MAX)
 
-	# Massifs are checked for overlap against EACH OTHER ONLY, not against the whole
-	# `obstacles` list. A massif's footprint radius is ~9.7 m, so demanding clearance
-	# from all dozen scattered blocks would cover the entire chunk and mountains
-	# would essentially stop generating. Overlapping a scattered block is also
-	# harmless — the block ends up INSIDE the rock, invisible, at worst reading as a
-	# boulder at the foot of the flank. Massif-on-massif is the overlap that matters:
-	# without this list, 2-4 peaks drawn from the same box merge into one lumpy blob.
-	var placed_massifs: Array = []
+	# Massifs are NOT checked against the whole `obstacles` list. A massif's
+	# footprint radius is ~9.7 m, so demanding clearance from all dozen scattered
+	# blocks would cover the entire chunk and mountains would essentially stop
+	# generating. Overlapping a scattered block is also harmless — the block ends up
+	# INSIDE the rock, invisible, at worst reading as a boulder at the foot of the
+	# flank.
+	#
+	# What DOES matter goes in this list: every massif placed so far (without it,
+	# 2-4 peaks drawn from the same box merge into one lumpy blob), plus anything
+	# already in the chunk too big to be a scattered block — in practice an artifact
+	# or a feature structure. Burying an artifact hides its emissive accents, its
+	# coin ring and the one guaranteed gem that is its whole reward, and that is
+	# cheap to avoid: see MOUNTAIN_AVOID_RADIUS.
+	var avoid: Array = []
+	for ob in obstacles:
+		if ob.radius >= MOUNTAIN_AVOID_RADIUS:
+			avoid.append(ob)
 
 	for _i in count:
 		# Try a few spots; take the first that clears the road, the river and is
@@ -2862,7 +2896,7 @@ func _spawn_mountain_content(chunk_center: Vector3, rng: RandomNumberGenerator, 
 			# MOUNTAIN_BASE_WIDTH_MAX is the widest base that could be drawn below —
 			# the real width is drawn after this test, and reordering the draws to
 			# know it exactly would shift the biome stream for nothing.
-			if _biome_spot_ok(chunk_center, local_x, local_z, MOUNTAIN_BASE_WIDTH_MAX * 0.71 + MOUNTAIN_LAYER_JITTER, MOUNTAIN_ROAD_CLEARANCE, placed_massifs) \
+			if _biome_spot_ok(chunk_center, local_x, local_z, MOUNTAIN_BASE_WIDTH_MAX * 0.71 + MOUNTAIN_LAYER_JITTER, MOUNTAIN_ROAD_CLEARANCE, avoid) \
 					and biome_at(wx, wz) == Biome.MOUNTAIN:
 				placed = true
 		if not placed:
@@ -2870,14 +2904,13 @@ func _spawn_mountain_content(chunk_center: Vector3, rng: RandomNumberGenerator, 
 
 		var height := rng.randf_range(MOUNTAIN_HEIGHT_MIN, MOUNTAIN_HEIGHT_MAX)
 		var base_w := rng.randf_range(MOUNTAIN_BASE_WIDTH_MIN, MOUNTAIN_BASE_WIDTH_MAX)
-		var layers := rng.randi_range(MOUNTAIN_LAYERS_MIN, MOUNTAIN_LAYERS_MAX)
-		# Cap the drawn count so no single step is short enough to jump onto. The
-		# draw itself still happens (the stream keeps its shape); we only clamp the
-		# result. Without this an 8 m massif split into 7 layers is a 1.14 m
-		# staircase with a 1.7 m ledge at each level — a walkable ziggurat, which
-		# would break the "impassable, you go around" contract that the whole
-		# mountains-as-blocks design rests on under the flat-world invariant.
-		layers = clampi(int(height / MOUNTAIN_MIN_LAYER_HEIGHT), 2, layers)
+		# The layer count falls straight out of the height: every step must be too
+		# tall to jump onto. Without that rule an 8 m massif split into 7 layers is
+		# a 1.14 m staircase with a 1.7 m ledge at each level — a walkable ziggurat,
+		# which would break the "impassable, you go around" contract that the whole
+		# mountains-as-blocks design rests on under the flat-world invariant. With
+		# heights of 8-20 m this gives 2-5 layers.
+		var layers := maxi(2, int(height / MOUNTAIN_MIN_LAYER_HEIGHT))
 		var snowy := height >= MOUNTAIN_SNOW_HEIGHT
 		var layer_h := height / float(layers)
 
@@ -2901,10 +2934,10 @@ func _spawn_mountain_content(chunk_center: Vector3, rng: RandomNumberGenerator, 
 		# One footprint for the whole massif, NOT climbable and carrying the real
 		# top height: crocodiles avoid it, and a road coin that would otherwise be
 		# perched 15 m up a peak is skipped instead (see _settle_coin_y). It goes
-		# into placed_massifs too, so the next massif keeps its distance from it.
+		# into `avoid` too, so the next massif keeps its distance from it.
 		var footprint := { "pos": Vector3(local_x, 0, local_z), "radius": base_w * 0.71 + MOUNTAIN_LAYER_JITTER, "top": height, "climbable": false }
 		obstacles.append(footprint)
-		placed_massifs.append(footprint)
+		avoid.append(footprint)
 
 # ============================================================================
 # BIOME FIELD (one noise field; four biomes + rivers read out of it)
@@ -3322,7 +3355,7 @@ func _road_coins_at(k: int) -> Array:
 		coins.append({ "pos": Vector3(p.x, COIN_GROUND_HEIGHT, p.y), "gem": gem })
 	return coins
 
-func _road_lateral_distance(world_x: float, world_z: float, clearance: float = ARTIFACT_ROAD_CLEARANCE) -> float:
+func _road_lateral_distance(world_x: float, world_z: float, clearance: float) -> float:
 	"""
 	Minimum distance (world metres, XZ plane) from the point (world_x, world_z)
 	to any road centerline station near it. Used by artifact placement to keep
@@ -3332,7 +3365,9 @@ func _road_lateral_distance(world_x: float, world_z: float, clearance: float = A
 	@param world_x, world_z: World-space point to test.
 	@param clearance: The distance the caller is about to compare against. Only
 	                  used to size the scan window — pass the SAME value you test
-	                  with, or the answer may be capped short of it.
+	                  with, or the answer may be capped short of it. Deliberately
+	                  has NO default: a default is exactly the footgun this
+	                  parameter exists to close.
 	@return: Distance to the nearest scanned station centre, or INF when no
 	         station falls in the scan window (the point is far off-road in X —
 	         "very far from the road" and "no road here" both mean "clear").

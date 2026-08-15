@@ -24,8 +24,11 @@
 // - fragment() does a handful of mix()/smoothstep() ops on interpolated
 //   varyings: no noise, no texture fetch, no branching for the 95% of the world
 //   that is dry land.
-// - The ONE per-pixel extra is the river shimmer, and it lives inside
-//   `if (v_river > 0.0)` so only pixels actually inside a river band pay for it.
+// - The river band factor is the ONE thing derived per-pixel (a subtract, an
+//   abs and a smoothstep off the interpolated field value — still no noise), and
+//   it has to be: see the note at its computation in fragment(). The shimmer on
+//   top of it lives inside `if (v_river > 0.0)`, so only pixels actually inside
+//   a river band pay for that.
 //   WebGL2 fill rate is the tightest budget in the project — keep it that way.
 //
 // SEAMLESSNESS CONTRACT: every noise here is sampled at the WORLD-space XZ of
@@ -62,17 +65,15 @@ uniform vec3 mountain_color: source_color = vec3(0.45, 0.43, 0.40); // grey-brow
 uniform vec3 river_color: source_color = vec3(0.10, 0.28, 0.34);    // dark blue-teal
 
 // How much of the band's half-width is full-strength river before the tint
-// starts fading out. A hard edge would alias badly at 16x16 vertex density
-// (the band is only ~8 m wide, a chunk vertex spacing is ~3 m), so the edge is
-// softened over the outer 45% of the band.
+// starts fading out. A hard edge would shimmer along the waterline, so the tint
+// eases off over the outer 45% of the band.
 const float RIVER_EDGE_SOFT = 0.55;
 
 // Ground mottling computed per-vertex, interpolated for free across the triangle.
 varying float v_noise;
-// The raw biome field value at this vertex — thresholded in fragment().
+// The raw biome field value at this vertex — thresholded in fragment(), and the
+// river band is derived from it there too (see the note in fragment()).
 varying float v_biome;
-// River strength: 1 in the band centre, falling to 0 at the band edge.
-varying float v_river;
 // World XZ, carried through only so the river shimmer can animate in world
 // space (so it doesn't swim when the chunk it belongs to is elsewhere).
 varying vec2 v_world_xz;
@@ -133,10 +134,6 @@ void vertex() {
 
 	// The biome field, sampled once per vertex like everything else here.
 	v_biome = biome_noise(world_xz);
-	// River = a thin CONTOUR of that same field. Distance from the contour,
-	// remapped so the centre of the band is 1 and the edge fades to 0.
-	float from_contour = abs(v_biome - river_level);
-	v_river = 1.0 - smoothstep(river_half_width * RIVER_EDGE_SOFT, river_half_width, from_contour);
 }
 
 void fragment() {
@@ -156,6 +153,21 @@ void fragment() {
 			smoothstep(biome_forest_max - biome_blend, biome_forest_max + biome_blend, v_biome));
 
 	float roughness = 0.8; // matches the old StandardMaterial3D ground roughness
+
+	// River = a thin CONTOUR of the same field: distance from the contour,
+	// remapped so the band centre is 1 and the edge fades to 0.
+	//
+	// WHY THIS IS PER-FRAGMENT WHILE EVERY OTHER NOISE READ IS PER-VERTEX: the
+	// band is only ~8 m wide and its soft edge spans under 2 m, while the chunk
+	// plane's vertex spacing is ~3 m (16x16 over 50 m). Interpolating the band
+	// factor itself would therefore undersample it by more than a vertex, and
+	// the blue you SEE would part company with the wading zone you FEEL by a
+	// metre or two — exactly the mismatch the CPU/GPU parity contract exists to
+	// prevent. v_biome is safe to interpolate (a 400 m wavelength is near-linear
+	// over 3 m); the cheap NONLINEAR part is what has to be evaluated here. Cost
+	// is a subtract, an abs and a smoothstep — no noise, no texture fetch.
+	float v_river = 1.0 - smoothstep(river_half_width * RIVER_EDGE_SOFT, river_half_width,
+			abs(v_biome - river_level));
 
 	// River last, on top of whatever biome it cuts through — rivers are an
 	// overlay, not a biome (same rule as is_river_at() on the CPU side).
