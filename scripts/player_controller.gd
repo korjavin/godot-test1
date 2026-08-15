@@ -872,6 +872,12 @@ func calculate_current_speed() -> float:
 	elif is_running:
 		# The wading drag applies here too, but never below WADE_RUN_MIN_SPEED:
 		# running has to keep outpacing a chasing crocodile even in the water.
+		#
+		# AS THE CONSTANTS STAND THE FLOOR ALWAYS WINS: the fastest character is
+		# 10.0 * 1.15 * 0.6 = 6.9, under the 9.0 floor, so EVERY character runs at
+		# exactly 9.0 while wading and the drag is fully absorbed. The maxf stays
+		# as the general expression — retune CHARACTER_SPEED or WADE_SPEED_FACTOR
+		# and the drag starts biting again without this line needing a thought.
 		if is_wading:
 			return maxf(RUN_SPEED * speed_scale, WADE_RUN_MIN_SPEED)
 		return RUN_SPEED * speed_scale

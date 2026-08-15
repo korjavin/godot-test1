@@ -547,6 +547,16 @@ const MOUNTAIN_EDGE_MARGIN: float = 10.0
 ## inside 20 m of rock takes its coin ring and its guaranteed gem with it.
 const MOUNTAIN_AVOID_RADIUS: float = 2.0
 
+## MOUNTAIN — ...but a WIDE thing is not the only thing worth avoiding: a TALL
+## one is a ladder. A stacked block tower reaches ~6.4 m with a radius of only
+## 1.78 m, so the radius rule alone lets one stand right against a massif whose
+## first ledge is MOUNTAIN_MIN_LAYER_HEIGHT (4 m) up — a 1.6 m hop onto the
+## summit, well inside the player's 3.61 m jump apex, which quietly breaks the
+## "impassable, you walk around it" contract the whole mountains-as-blocks design
+## rests on. So anything taller than one jump is avoided too, whatever its width.
+## Only a minority of towers clear this, so massifs still find room to generate.
+const MOUNTAIN_AVOID_TOP: float = 3.61
+
 ## MOUNTAIN — the road clearance is what cuts a CANYON through a range: the
 ## massifs simply refuse to stand near the centerline, so the coin road threads
 ## between them. Comfortably larger than FOREST_ROAD_CLEARANCE (a tree you can
@@ -2790,7 +2800,11 @@ func _spawn_forest_content(chunk_center: Vector3, rng: RandomNumberGenerator, ob
 	seam; with it, the tree line follows the noise contour and the wood dissolves
 	into the plain the way a real one does. One extra noise eval per candidate.
 	"""
-	var half := chunk_size / 2.0 - 2.0
+	# Canopy slabs are yawed, so the half-DIAGONAL is what has to stay inside the
+	# chunk (same reasoning as MOUNTAIN_EDGE_MARGIN). A flat 2.0 m margin left the
+	# widest canopy poking 0.4 m past the seam, where it would vanish with its own
+	# chunk while the neighbour still renders.
+	var half := chunk_size / 2.0 - TREE_CANOPY_WIDTH_MAX * 0.71
 	var count := rng.randi_range(FOREST_TREES_MIN, FOREST_TREES_MAX)
 
 	for _i in count:
@@ -2879,9 +2893,11 @@ func _spawn_mountain_content(chunk_center: Vector3, rng: RandomNumberGenerator, 
 	# or a feature structure. Burying an artifact hides its emissive accents, its
 	# coin ring and the one guaranteed gem that is its whole reward, and that is
 	# cheap to avoid: see MOUNTAIN_AVOID_RADIUS.
+	# ...and so does anything TALL enough to be climbed onto the massif from (see
+	# MOUNTAIN_AVOID_TOP) — a block tower is narrow but it is still a staircase.
 	var avoid: Array = []
 	for ob in obstacles:
-		if ob.radius >= MOUNTAIN_AVOID_RADIUS:
+		if ob.radius >= MOUNTAIN_AVOID_RADIUS or ob.top >= MOUNTAIN_AVOID_TOP:
 			avoid.append(ob)
 
 	for _i in count:
@@ -2917,14 +2933,19 @@ func _spawn_mountain_content(chunk_center: Vector3, rng: RandomNumberGenerator, 
 		# heights of 8-20 m this gives 2-5 layers.
 		var layers := maxi(2, int(height / MOUNTAIN_MIN_LAYER_HEIGHT))
 		var snowy := height >= MOUNTAIN_SNOW_HEIGHT
+		# Index of the first snow layer. Always leaves at least one rock layer
+		# showing: a 14-15.9 m massif gets exactly 3 layers, and a flat
+		# "top MOUNTAIN_SNOW_LAYERS" rule would paint 2 of those 3 white, so the
+		# peak read as a snow pillar rather than rock wearing a cap.
+		var snow_from := maxi(1, layers - MOUNTAIN_SNOW_LAYERS)
 		var layer_h := height / float(layers)
 
 		var width := base_w
 		var y := 0.0
 		for layer_index in layers:
-			# The top MOUNTAIN_SNOW_LAYERS boxes of a tall massif are forced white:
-			# a snow cap is the cheapest possible "this one is high" signal.
-			var is_snow := snowy and layer_index >= layers - MOUNTAIN_SNOW_LAYERS
+			# The top boxes of a tall massif are forced white: a snow cap is the
+			# cheapest possible "this one is high" signal.
+			var is_snow := snowy and layer_index >= snow_from
 			var color: Color = MOUNTAIN_SNOW_COLOR if is_snow else MOUNTAIN_ROCK_A.lerp(MOUNTAIN_ROCK_B, rng.randf())
 			var jitter_x := rng.randf_range(-MOUNTAIN_LAYER_JITTER, MOUNTAIN_LAYER_JITTER)
 			var jitter_z := rng.randf_range(-MOUNTAIN_LAYER_JITTER, MOUNTAIN_LAYER_JITTER)

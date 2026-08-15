@@ -64,10 +64,19 @@ uniform vec3 forest_color: source_color = vec3(0.13, 0.30, 0.17);   // deep cool
 uniform vec3 mountain_color: source_color = vec3(0.45, 0.43, 0.40); // grey-brown scree
 uniform vec3 river_color: source_color = vec3(0.10, 0.28, 0.34);    // dark blue-teal
 
-// How much of the band's half-width is full-strength river before the tint
-// starts fading out. A hard edge would shimmer along the waterline, so the tint
-// eases off over the outer 45% of the band.
-const float RIVER_EDGE_SOFT = 0.55;
+// Width of the soft waterline, as a fraction of the band half-width, CENTRED on
+// the gameplay edge: the tint is full strength up to (1 - soft) * half_width,
+// half strength exactly AT half_width, and gone by (1 + soft) * half_width.
+//
+// The centring is the point. A hard edge would shimmer along the waterline, so
+// the tint has to fade over some distance — but fading it INWARD (full strength
+// at 0.55, zero at 1.0, as this first did) makes the outer ~15% of the wading
+// band look like dry land: the player slows to 0.6x and starts splashing about
+// half a metre before any blue shows, on each bank. That is exactly the
+// "the blue you SEE is the water you FEEL" contract the whole two-language noise
+// arrangement exists to enforce. Straddling the edge splits the unavoidable
+// error evenly instead of putting all of it on one side.
+const float RIVER_EDGE_SOFT = 0.2;
 
 // Ground mottling computed per-vertex, interpolated for free across the triangle.
 varying float v_noise;
@@ -166,8 +175,8 @@ void fragment() {
 	// prevent. v_biome is safe to interpolate (a 400 m wavelength is near-linear
 	// over 3 m); the cheap NONLINEAR part is what has to be evaluated here. Cost
 	// is a subtract, an abs and a smoothstep — no noise, no texture fetch.
-	float v_river = 1.0 - smoothstep(river_half_width * RIVER_EDGE_SOFT, river_half_width,
-			abs(v_biome - river_level));
+	float v_river = 1.0 - smoothstep(river_half_width * (1.0 - RIVER_EDGE_SOFT),
+			river_half_width * (1.0 + RIVER_EDGE_SOFT), abs(v_biome - river_level));
 
 	// River last, on top of whatever biome it cuts through — rivers are an
 	// overlay, not a biome (same rule as is_river_at() on the CPU side).
