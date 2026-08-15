@@ -118,6 +118,18 @@ const FOOTSTEP_PITCH_JITTER: float = 0.15  # ±15% per step so a walk cycle
 										# doesn't sound like a metronome
 const FOOTSTEP_VOLUME_DB: float = -14.0  # quiet — fires twice per stride, forever
 
+# --- Splash: the SAME footstep sample, played brighter and louder (wading). ---
+## EDUCATIONAL NOTE: a wet slap and a dry pat are the same event — a foot hitting
+## a surface — differing mostly in brightness and loudness. Raising the pitch of
+## the noise tap shifts its spectrum up (that IS the "wetness"), so a splash costs
+## two constants instead of a whole extra synth function and buffer.
+## ponytail: reused sample, add a dedicated _synth_splash() only if it reads wrong.
+const SPLASH_PITCH: float = 1.9         # well above the footstep's ±15% jitter, so
+										# a splash never sounds like a normal step
+const SPLASH_PITCH_JITTER: float = 0.18  # slightly wider jitter than dry steps —
+										# water is messier than dirt
+const SPLASH_VOLUME_DB: float = -9.0    # ~5 dB above a footstep: wading is loud
+
 # --- Blocked-ability buzz: a curt low square "nope" (F pressed on cooldown). ---
 const BUZZ_FREQ: float = 90.0
 const BUZZ_DURATION: float = 0.15
@@ -313,6 +325,20 @@ func play_footstep() -> void:
 	## machine, so each step lands at a slightly different pitch.
 	_play_oneshot("footstep", FOOTSTEP_VOLUME_DB,
 			1.0 + randf_range(-FOOTSTEP_PITCH_JITTER, FOOTSTEP_PITCH_JITTER))
+
+
+func play_splash() -> void:
+	## Wading splash — fired from the SAME walk-cycle foot plant as play_footstep,
+	## whenever the player is standing in a river band (see is_river_at in
+	## endless_terrain.gd). The cadence therefore comes free from the walk sine:
+	## no timer, no extra state, just the other branch of a ternary in the player.
+	##
+	## It replays the "footstep" buffer well above its normal pitch, which brightens
+	## the noise tap into a wet slap — no new stream is baked, so the "no audio asset
+	## files" invariant and the web build size are both untouched. Routing through
+	## _play_oneshot also means it inherits the _unlocked gesture gate for free.
+	_play_oneshot("footstep", SPLASH_VOLUME_DB,
+			SPLASH_PITCH + randf_range(-SPLASH_PITCH_JITTER, SPLASH_PITCH_JITTER))
 
 
 func play_buzz() -> void:
