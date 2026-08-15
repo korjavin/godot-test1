@@ -121,10 +121,10 @@ Dependencies identified: none new. No asset files, no Python pipeline, no autolo
 
 ### Task 1: Manager skeleton — scheduling, shared resources, main.tscn wiring
 
-- [ ] create `scripts/fauna_manager.gd`: `extends Node`, with a file-level `##` doc comment
+- [x] create `scripts/fauna_manager.gd`: `extends Node`, with a file-level `##` doc comment
       explaining the whole system (pure ambience, no gameplay coupling, one herd at a time)
       in the teaching style used by `crocodile_lod_manager.gd`
-- [ ] declare the full **constants block at the top**, grouped with `# ----- ... -----`
+- [x] declare the full **constants block at the top**, grouped with `# ----- ... -----`
       section comments and each documented: `FIELD_RADIUS := 180.0`,
       `DESPAWN_RADIUS := 230.0` (comfortably past the field edge so a herd is never culled
       mid-view), `FIRST_EVENT_DELAY_MIN := 40.0` / `FIRST_EVENT_DELAY_MAX := 80.0` (the very
@@ -132,28 +132,28 @@ Dependencies identified: none new. No asset files, no Python pipeline, no autolo
       one — the acceptance criterion is "within a few minutes"),
       `FAUNA_INTERVAL_MIN := 120.0` / `FAUNA_INTERVAL_MAX := 240.0`,
       `WALK_SPEED_MIN := 2.0` / `WALK_SPEED_MAX := 3.0`, `ELEPHANT_CHANCE := 0.5`
-- [ ] add manager state: `var _event_timer: float`, `var _animals: Array[Node3D]` (or an
-      `Array[Dictionary]` of animal records — see Task 5, pick one and keep it consistent),
+- [x] add manager state: `var _event_timer: float`, `var _animals: Array[Dictionary]`
+      (animal records — chosen over `Array[Node3D]`, matches Task 5's record shape),
       `var _rng := RandomNumberGenerator.new()` (`randomize()`d in `_ready`, like the
       crocodile's per-instance rng — fauna is deliberately **non-deterministic ambience**,
       it must NOT touch the terrain's `run_seed` determinism contract)
-- [ ] `_ready()`: `add_to_group("fauna")`, seed the rng, set `_event_timer` to a random
+- [x] `_ready()`: `add_to_group("fauna")`, seed the rng, set `_event_timer` to a random
       first-event delay
-- [ ] add the lazy shared-resource getters as `static var` + getter functions, mirroring
+- [x] add the lazy shared-resource getters as `static var` + getter functions, mirroring
       `endless_terrain._get_shared_unit_box_mesh()`: `_get_shared_box_mesh() -> BoxMesh`
       (one 1×1×1 cube, scaled per part), `_get_elephant_material() -> StandardMaterial3D`
       (grey), `_get_giraffe_material() -> StandardMaterial3D` (tan-orange), and one shared
       accent material (off-white tusks / darker-brown giraffe patches). Each documents *why*
       it is shared (batching + memory: N animals must never add N materials)
-- [ ] `_process(delta)`: if a herd is alive, drive it (stub for now — filled in Tasks 4/5);
+- [x] `_process(delta)`: if a herd is alive, drive it (stub for now — filled in Tasks 4/5);
       otherwise decrement `_event_timer` and call `_spawn_herd()` when it reaches 0, then
       re-arm it with `_rng.randf_range(FAUNA_INTERVAL_MIN, FAUNA_INTERVAL_MAX)`. Comment
       that between events the entire per-frame cost is this one subtraction
-- [ ] add a `_find_player() -> Node3D` helper using
+- [x] add a `_find_player() -> Node3D` helper using
       `get_tree().get_first_node_in_group("player")`, **null-safe** — if there is no player
       (a scene run standalone) the manager simply does nothing, same defensive style as the
       sound-manager group lookups
-- [ ] edit `scenes/main.tscn`: add exactly one
+- [x] edit `scenes/main.tscn`: add exactly one
       `[ext_resource type="Script" path="res://scripts/fauna_manager.gd" id="15_fauna"]`
       line after the `14_sound` line, bump `load_steps`, and add the 2-line node block
       `[node name="FaunaManager" type="Node" parent="."]` / `script = ExtResource("15_fauna")`
