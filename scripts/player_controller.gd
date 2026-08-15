@@ -240,12 +240,21 @@ const MAX_LIVES: int = 3
 var lives: int = MAX_LIVES
 var is_game_over: bool = false
 
-## Post-respawn grace: after losing a life we stand frozen and invulnerable for
-## RESPAWN_GRACE_DURATION seconds (with crocodiles swept out of the area) before
-## control returns, so a wandering crocodile can't bite us the instant we recover.
+## Post-respawn grace, in TWO phases. Phase 1: after losing a life we stand
+## frozen and invulnerable for RESPAWN_GRACE_DURATION seconds (with crocodiles
+## swept out of the area). Phase 2: control returns immediately after, but we
+## stay invulnerable for RESPAWN_BLINK_DURATION more seconds while the model
+## blinks (classic arcade i-frames) — so we get moving again fast without a
+## wandering crocodile biting us the instant we recover. The blink toggles
+## visibility every RESPAWN_BLINK_CADENCE seconds (skipped in first-person,
+## where the model is already hidden). hit_by_crocodile treats a running
+## respawn_blink_timer exactly like the frozen window: bites are ignored.
 var is_respawning: bool = false
 var respawn_timer: float = 0.0
-const RESPAWN_GRACE_DURATION: float = 5.0
+var respawn_blink_timer: float = 0.0
+const RESPAWN_GRACE_DURATION: float = 1.5
+const RESPAWN_BLINK_DURATION: float = 2.5
+const RESPAWN_BLINK_CADENCE: float = 0.1
 
 ## Camera shake, used by the crocodile-bite hit effect. Decays back to 0.
 ## The shake drives Camera3D.h_offset/v_offset (view-space slide of the lens),
@@ -595,9 +604,10 @@ func _physics_process(delta: float) -> void:
 			_on_caught_finished()
 		return
 
-	# STEP 0c: Post-respawn grace. We keep standing still and invulnerable (see
-	# hit_by_crocodile) while a short countdown runs, then hand control back. A
-	# final crocodile sweep on the last frame keeps the resume spot clear.
+	# STEP 0c: Post-respawn grace, phase 1 (frozen). We keep standing still and
+	# invulnerable (see hit_by_crocodile) while a short countdown runs, then hand
+	# control back and start the phase-2 blink i-frames. A final crocodile sweep
+	# on the last frame keeps the resume spot clear.
 	if is_respawning:
 		_freeze_with_gravity(delta)
 		update_character_animation(delta, Vector2.ZERO)
@@ -607,7 +617,23 @@ func _physics_process(delta: float) -> void:
 			is_respawning = false
 			_hide_respawn_message()
 			clear_nearby_crocodiles(global_position)
+			respawn_blink_timer = RESPAWN_BLINK_DURATION
 		return
+
+	# STEP 0.35: Post-respawn grace, phase 2 (blinking i-frames). We move
+	# NORMALLY — no freeze branch — but stay invulnerable while the timer runs,
+	# with the model blinking on a fixed cadence so the protection is readable.
+	# First-person skips the toggle (the model is already hidden there); when
+	# the timer expires, _apply_view_mode() restores visibility idempotently,
+	# respecting whichever view we're in.
+	if respawn_blink_timer > 0.0:
+		respawn_blink_timer = maxf(0.0, respawn_blink_timer - delta)
+		if respawn_blink_timer <= 0.0:
+			_apply_view_mode()
+		elif not first_person and character_container:
+			# One on/off blink per two cadence intervals: visible for the first
+			# half of each 2×cadence window, hidden for the second.
+			character_container.visible = fmod(respawn_blink_timer, RESPAWN_BLINK_CADENCE * 2.0) < RESPAWN_BLINK_CADENCE
 
 	# STEP 0.4: Record the headline distance score — the farthest horizontal
 	# displacement from the spawn point reached this run (see run_distance above
@@ -1468,10 +1494,11 @@ func hit_by_crocodile() -> void:
 	When that window ends _on_caught_finished() spends a life and either respawns
 	us in place or ends the run.
 
-	Bites are ignored while we are already caught, inside the post-respawn grace
-	window, or on the game-over screen — those three states make us invulnerable.
+	Bites are ignored while we are already caught, inside either post-respawn
+	grace phase (frozen OR blinking), or on the game-over screen — those states
+	make us invulnerable.
 	"""
-	if is_caught or is_respawning or is_game_over:
+	if is_caught or is_respawning or is_game_over or respawn_blink_timer > 0.0:
 		return
 	# A real bite breaks the coin streak. Deliberately AFTER the invulnerability
 	# early-return above, so an ignored bite (grace window etc.) costs nothing.
@@ -1594,6 +1621,10 @@ func restart_game() -> void:
 	is_game_over = false
 	is_caught = false
 	is_respawning = false
+	# Drop any mid-blink i-frames and restore model visibility for the current
+	# view — blink state must never leak into a fresh run.
+	respawn_blink_timer = 0.0
+	_apply_view_mode()
 	_hide_respawn_message()
 	# Re-roll the world BEFORE teleporting back to spawn: new_run() re-seeds the
 	# terrain and synchronously rebuilds the chunks around (0,0), so reset_position()
@@ -1628,11 +1659,15 @@ func _freeze_with_gravity(delta: float) -> void:
 
 
 func _show_respawn_countdown() -> void:
-	"""Show the centred respawn countdown (a plain Label found via group)."""
+	"""
+	Show the centred respawn countdown (a plain Label found via group). The
+	frozen window is only 1.5 s now, so a one-decimal readout keeps the short
+	countdown visibly moving (a whole-seconds "2... 1..." would barely change).
+	"""
 	var label := get_tree().get_first_node_in_group("respawn_label")
 	if label:
 		label.visible = true
-		label.text = "Caught! Back in %d..." % int(ceil(respawn_timer))
+		label.text = "Caught! Back in %.1f..." % maxf(respawn_timer, 0.0)
 
 
 func _hide_respawn_message() -> void:
@@ -1679,6 +1714,11 @@ func reset_position() -> void:
 	# Reset character state
 	is_ducking = false
 	is_running = false
+
+	# Drop any mid-blink i-frames and restore model visibility for the current
+	# view (idempotent — see _apply_view_mode).
+	respawn_blink_timer = 0.0
+	_apply_view_mode()
 
 	# Drop any active ability state (air boost, giant form, odd size) on respawn.
 	_reset_ability_states()

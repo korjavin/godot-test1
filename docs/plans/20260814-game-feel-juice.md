@@ -142,12 +142,12 @@ Task-7 items actually landed: blocked-press flash + buzz, Teibi TRANS_BACK tween
 
 ### Task 9: Respawn split — 1.5 s frozen + 2.5 s mobile blinking invulnerability
 This is a state split, not new logic; the invulnerability guard must stay airtight.
-- [ ] `scripts/player_controller.gd`: `RESPAWN_GRACE_DURATION` 5.0 → 1.5; add `const RESPAWN_BLINK_DURATION: float = 2.5`, `const RESPAWN_BLINK_CADENCE: float = 0.1`, and `var respawn_blink_timer: float = 0.0`
-- [ ] when the frozen `is_respawning` window ends (~:507): set `respawn_blink_timer = RESPAWN_BLINK_DURATION` (keep the final `clear_nearby_crocodiles` sweep); the player then moves NORMALLY — the blink phase adds no freeze branch
-- [ ] tick `respawn_blink_timer` down each physics frame (e.g. alongside `_update_ability_timers`); while it runs, toggle `character_container.visible` on the 0.1 s cadence (`fmod(respawn_blink_timer, 0.2) < 0.1`) — but ONLY when `not first_person` (FP already hides the model); when it hits 0, restore visibility through `_apply_view_mode()` (idempotent, respects the current view)
-- [ ] extend the invulnerability guard in `hit_by_crocodile` (~:1286) to `if is_caught or is_respawning or is_game_over or respawn_blink_timer > 0.0: return` — and zero `respawn_blink_timer` (+ restore visibility via `_apply_view_mode()`) in `restart_game()` and `reset_position()` so state never leaks across a restart
-- [ ] update the respawn countdown label text/comments for the shorter window
-- [ ] headless smoke clean
+- [x] `scripts/player_controller.gd`: `RESPAWN_GRACE_DURATION` 5.0 → 1.5; add `const RESPAWN_BLINK_DURATION: float = 2.5`, `const RESPAWN_BLINK_CADENCE: float = 0.1`, and `var respawn_blink_timer: float = 0.0`
+- [x] when the frozen `is_respawning` window ends (~:507): set `respawn_blink_timer = RESPAWN_BLINK_DURATION` (keep the final `clear_nearby_crocodiles` sweep); the player then moves NORMALLY — the blink phase adds no freeze branch
+- [x] tick `respawn_blink_timer` down each physics frame (e.g. alongside `_update_ability_timers`); while it runs, toggle `character_container.visible` on the 0.1 s cadence (`fmod(respawn_blink_timer, 0.2) < 0.1`) — but ONLY when `not first_person` (FP already hides the model); when it hits 0, restore visibility through `_apply_view_mode()` (idempotent, respects the current view)
+- [x] extend the invulnerability guard in `hit_by_crocodile` (~:1286) to `if is_caught or is_respawning or is_game_over or respawn_blink_timer > 0.0: return` — and zero `respawn_blink_timer` (+ restore visibility via `_apply_view_mode()`) in `restart_game()` and `reset_position()` so state never leaks across a restart
+- [x] update the respawn countdown label text/comments for the shorter window (one-decimal countdown readout so the 1.5 s window visibly ticks)
+- [x] headless smoke clean
 
 ### Task 10: Croc crush feedback + life-lost heart pulse + click-to-capture
 - [ ] `scripts/piglet_crocodile_ai.gd` `_on_player_collision` crush branch ONLY (~:857-861): before freeing — squash (tween `scale.y` to ~15% over 0.12 s, `tween_callback(queue_free)` so the tween owns the free; a tween dies with its node, so chunk unload stays safe), spawn a small dust puff `ability_effect` wave at the croc's position parented to the croc's PARENT (the chunk — outlives the croc), fire `play_crunch()` via the `"sound_manager"` group (null-safe), nudge the player's shake (null-safe: `if "shake_amount" in player: player.shake_amount = maxf(player.shake_amount, 0.15)`), and guard re-entry (`set_physics_process(false)` + remove from `"crocodile"` group) so the dying croc can't crush-trigger twice
