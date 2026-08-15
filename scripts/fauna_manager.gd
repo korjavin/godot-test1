@@ -18,7 +18,8 @@ extends Node
 ## found through the "player" group like everything else in this codebase.
 ##
 ## The perf story is deliberately boring:
-## - At most ONE herd (≤ 8 animals) is alive at a time.
+## - At most ONE migration event is alive at a time: ≤ 8 animals for the two
+##   herds, ≤ 10 members for a herder caravan (see CARAVAN_HERDERS_MAX).
 ## - Every animal is plain Node3D + MeshInstance3D boxes sharing ONE BoxMesh
 ##   and one material per species (see the static lazy getters below).
 ## - Between events the entire per-frame cost is a single float subtraction.
@@ -933,7 +934,8 @@ func _spawn_herd() -> void:
 	## lookup right here at spawn time.
 	if not _animals.is_empty():
 		# The ONE-HERD INVARIANT — this early-return IS the perf story: the
-		# feature's worst case is a single ≤ 8-animal herd, ever.
+		# feature's worst case is a single event, ever — ≤ 8 animals for a herd,
+		# ≤ 10 members for a caravan (CARAVAN_HERDERS_MAX + CARAVAN_BEASTS_MAX).
 		return
 	var player := _find_player()
 	if player == null:
