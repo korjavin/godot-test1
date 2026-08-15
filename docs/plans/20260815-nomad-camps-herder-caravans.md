@@ -98,25 +98,28 @@ any existing RNG stream.
       the shared chunk RNG, identical within a run, different across runs
 
 ### Task 2: Camp geometry builders (dome huts, fire pit, crates, tether posts)
-- [ ] add `_camp_hut(center, yaw, rng, block_batch, block_body)`: an igloo read from
+- [x] add `_camp_hut(center, yaw, rng, block_batch, block_body)`: an igloo read from
       2–3 stacked shrinking box tiers (widest at the ground, each tier narrower and
       shorter, slight per-tier yaw jitter) + a small dark doorway box on one side,
       all through `create_box(..., color_override = <bone white from CAMP_HUT_A→B>)` so it
       joins the chunk's ONE MultiMesh and ONE `BlockCollision` body
-- [ ] add `_camp_fire_pit(center, rng, parent_chunk, block_batch, block_body)`: a ring of
+      (returns `{ "radius", "top" }` like the artifact builders, so Task 3 gets the hut
+      footprint for free; only the TOP tier is shortened — the dome cap — so a 3-tier hut
+      stays 2.36 m and the doorway still reads)
+- [x] add `_camp_fire_pit(center, rng, parent_chunk, block_batch, block_body)`: a ring of
       small dark stone boxes (`CAMP_STONE`) around the centre, plus **one** small emissive
       ember mesh
-- [ ] extend `_spawn_artifact_accent` with an OPTIONAL trailing
+- [x] extend `_spawn_artifact_accent` with an OPTIONAL trailing
       `material: StandardMaterial3D = null` parameter (null keeps the artifact glow
       material — every existing call site is unchanged), and add
       `_get_camp_ember_material()` as a second lazily-created shared unshaded emissive
       material (warm orange, energy above `main.tscn`'s `glow_hdr_threshold` 0.85,
       `cast_shadow` OFF via the existing accent path). ONE material for every ember ever
       spawned — never per camp
-- [ ] add `_camp_props(center, rng, block_batch, block_body)`: a few crates/bundles (small
+- [x] add `_camp_props(center, rng, block_batch, block_body)`: a few crates/bundles (small
       `CAMP_WOOD` boxes at random yaw) and 2–3 tall thin tether posts, placed on a jittered
       ring between the fire and the huts
-- [ ] every builder takes the camp's PRIVATE rng (seeded from `_camp_at`'s `"seed"`), like
+- [x] every builder takes the camp's PRIVATE rng (seeded from `_camp_at`'s `"seed"`), like
       the artifact shape builders, so they may draw freely
 
 ### Task 3: spawn_camp_in_chunk + wiring into create_chunk

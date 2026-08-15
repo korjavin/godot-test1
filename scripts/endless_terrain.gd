@@ -864,6 +864,11 @@ var _shared_block_material: StandardMaterial3D
 ## accent in the world, same lazy-singleton discipline as _shared_block_material.
 var _shared_artifact_glow_material: StandardMaterial3D
 
+## Lazily-created shared material for the nomad camps' fire-pit embers (see the
+## NOMAD CAMPS banner). Same lazy-singleton discipline as the artifact glow above:
+## ONE material for every ember that will ever be spawned, never one per camp.
+var _shared_camp_ember_material: StandardMaterial3D
+
 ## A representative roughness for the shared block material. The old per-block code
 ## picked a random roughness in [0.7, 1.0]; since MultiMesh can't vary roughness
 ## per instance, we use one mid-range value for all blocks. (We still CONSUME the
@@ -944,21 +949,46 @@ func _get_artifact_glow_material() -> StandardMaterial3D:
 		_shared_artifact_glow_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	return _shared_artifact_glow_material
 
-func _spawn_artifact_accent(parent_chunk: MeshInstance3D, local_pos: Vector3, dimensions: Vector3, yaw: float, tilt: float) -> void:
+func _get_camp_ember_material() -> StandardMaterial3D:
 	"""
-	Spawns one emissive accent box (a rune strip, an eye, a missing keystone) as a
-	REAL MeshInstance3D parented to the chunk (per-chunk parenting rule: it unloads
-	with the chunk). Accents cannot join the block MultiMesh — that batch has one
-	shared NON-emissive material — so each accent is a genuine extra draw call.
-	That is exactly why artifacts are rare and capped at ARTIFACT_MAX_ACCENTS
-	accents each: worst case on screen is a handful of extra unshadowed draws.
+	Returns the shared emissive material for nomad-camp fire-pit embers, creating it
+	on first use — the artifact glow material's twin in every way except colour.
+	WARM ORANGE where the artifacts are cold cyan, so a glow at a distance always
+	says which landmark it belongs to. CAMP_EMBER_ENERGY (2.5) sits above main.tscn's
+	glow_hdr_threshold (0.85), so the already-paid glow post-process blooms it for
+	free, and UNSHADED keeps an ember lit when the camp falls into shadow.
+	"""
+	if _shared_camp_ember_material == null:
+		_shared_camp_ember_material = StandardMaterial3D.new()
+		_shared_camp_ember_material.albedo_color = CAMP_EMBER_COLOR
+		_shared_camp_ember_material.emission_enabled = true
+		_shared_camp_ember_material.emission = CAMP_EMBER_COLOR
+		_shared_camp_ember_material.emission_energy_multiplier = CAMP_EMBER_ENERGY
+		_shared_camp_ember_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	return _shared_camp_ember_material
+
+func _spawn_artifact_accent(parent_chunk: MeshInstance3D, local_pos: Vector3, dimensions: Vector3, yaw: float, tilt: float, material: StandardMaterial3D = null) -> void:
+	"""
+	Spawns one emissive accent box (a rune strip, an eye, a missing keystone, a camp
+	ember) as a REAL MeshInstance3D parented to the chunk (per-chunk parenting rule:
+	it unloads with the chunk). Accents cannot join the block MultiMesh — that batch
+	has one shared NON-emissive material — so each accent is a genuine extra draw
+	call. That is exactly why artifacts are rare and capped at ARTIFACT_MAX_ACCENTS
+	accents each (and why a camp spawns exactly ONE ember): worst case on screen is a
+	handful of extra unshadowed draws.
 	Same Basis(UP, yaw) * Basis(RIGHT, tilt) rotation order as create_box, so an
 	accent can sit flush on a tilted stone.
+
+	@param material: OPTIONAL emissive material. Null (the default) keeps the
+	                 artifacts' cyan glow, so every pre-existing call site is
+	                 unchanged; nomad camps pass _get_camp_ember_material() to reuse
+	                 this whole spawn path for their warm-orange ember. Both are
+	                 shared singletons — never pass a per-instance material here.
 	"""
 	var accent := MeshInstance3D.new()
 	accent.mesh = _get_shared_unit_box_mesh()  # shared cube; transform carries the size
 	accent.transform = Transform3D((Basis(Vector3.UP, yaw) * Basis(Vector3.RIGHT, tilt)).scaled_local(dimensions), local_pos)
-	accent.material_override = _get_artifact_glow_material()
+	accent.material_override = _get_artifact_glow_material() if material == null else material
 	# A fist-sized glowing strip casting a shadow would cost a shadow-pass draw
 	# for no visible payoff — accents glow, they don't shade.
 	accent.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
@@ -2781,6 +2811,127 @@ func _camp_at(chunk_pos: Vector2i) -> Dictionary:
 	# as their geometry needs without this function caring how many draws that is.
 	var builder_seed := rng.randi()
 	return { "local": Vector3(local_x, 0.0, local_z), "seed": builder_seed }
+
+# ----------------------------------------------------------------------------
+# CAMP GEOMETRY BUILDERS (dome huts, fire pit, crates + tether posts)
+# ----------------------------------------------------------------------------
+#
+# The ARTIFACT SHAPE BUILDERS' contract, reused wholesale:
+# - ALL solid geometry goes through create_box(..., color_override), so a whole
+#   village joins the chunk's single block MultiMesh and single BlockCollision
+#   body: a camp costs ZERO extra draw calls and ZERO extra physics bodies.
+# - The ONE exception is the ember, a real MeshInstance3D through
+#   _spawn_artifact_accent — one extra unshadowed draw per camp, that's the lot.
+# - `rng` is always the camp's PRIVATE RNG (seeded from _camp_at's "seed"), so
+#   these builders draw as freely as their geometry needs without ever touching
+#   the shared chunk stream.
+# - Small decoration (doorways, fire stones) is spawned with collide = false, the
+#   same call create_box already grew for forest canopies: ankle-high scenery you
+#   should be able to walk over is not worth a CollisionShape3D each.
+
+func _camp_hut(center: Vector3, yaw: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	Build ONE dome hut: 2-3 stacked box tiers, widest on the ground and each one
+	narrower than the tier below, which is what turns a stack of cubes into an
+	igloo read at a glance. The top tier is also SHORTER (its height takes the same
+	CAMP_HUT_TIER_SHRINK factor), so the silhouette caps off as a dome rather than
+	ending in a flat chimney. Each tier gets its own small yaw wobble, so no two
+	huts look stamped from the same mould.
+
+	@param center: Hut centre on the ground (chunk-local, y = 0).
+	@param yaw: Facing. The doorway goes on the hut's local +Z face, so the caller
+	            points +Z at the fire pit and every door faces the flames.
+	@param rng: The camp's private RNG (see the section note above).
+	@param block_batch / block_body: The chunk's visual batch + collision body.
+	@return: { "radius": float, "top": float } — a conservative footprint for the
+	         chunk's `obstacles` list, same shape the artifact builders return.
+	"""
+	var base_width := rng.randf_range(CAMP_HUT_WIDTH_MIN, CAMP_HUT_WIDTH_MAX)
+	var tiers := rng.randi_range(CAMP_HUT_TIER_MIN, CAMP_HUT_TIER_MAX)
+	var width := base_width
+	var y := 0.0  # running height of the stack: the top of the tier placed so far
+	var i := 0
+	while i < tiers:
+		# The last tier is squashed as well as narrowed — that is the dome cap.
+		var tier_height: float = CAMP_HUT_TIER_HEIGHT * (CAMP_HUT_TIER_SHRINK if i == tiers - 1 else 1.0)
+		var tier_yaw := yaw + rng.randf_range(-CAMP_HUT_YAW_JITTER, CAMP_HUT_YAW_JITTER)
+		# Bone white, a fresh spot on the A→B ramp per tier so the shell is not one
+		# flat colour (the artifacts' _artifact_stone_color trick, one lerp).
+		var shell := CAMP_HUT_A.lerp(CAMP_HUT_B, rng.randf())
+		create_box(center + Vector3(0.0, y + tier_height / 2.0, 0.0), Vector3(width, tier_height, width), tier_yaw, rng, block_batch, block_body, 0.0, shell)
+		y += tier_height
+		width *= CAMP_HUT_TIER_SHRINK
+		i += 1
+
+	# The doorway: one small dark box set into the fire-facing (+Z) wall. Half of it
+	# sits inside the shell, so it reads as an opening rather than a porch.
+	# collide = false — it is a 0.5 m thick decoration flush with a wall that
+	# already collides, so a shape here would only add cost.
+	var door_offset := Basis(Vector3.UP, yaw) * Vector3(0.0, CAMP_HUT_DOOR_SIZE.y / 2.0, base_width / 2.0)
+	create_box(center + door_offset, CAMP_HUT_DOOR_SIZE, yaw, rng, block_batch, block_body, 0.0, CAMP_STONE, false)
+
+	# Radius is the half-DIAGONAL of the widest tier (tiers are yawed, so the
+	# half-width would under-cover a corner), plus a little for the doorway.
+	return { "radius": base_width * 0.71 + 0.3, "top": y }
+
+func _camp_fire_pit(center: Vector3, rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> void:
+	"""
+	Build the camp's heart: a ring of CAMP_FIRE_STONES small dark stones around the
+	centre plus ONE emissive ember sitting in the middle of them.
+
+	The ember is the camp's ENTIRE extra draw budget — one unshadowed MeshInstance3D
+	through the shared _spawn_artifact_accent path, carrying the shared warm-orange
+	material. The stones are ordinary batched boxes with collide = false: they are
+	ankle-high scenery you should be able to step over, and skipping them saves
+	CAMP_FIRE_STONES collision shapes per camp for no visible difference.
+
+	@param center: Fire-pit centre on the ground (chunk-local, y = 0).
+	@param rng: The camp's private RNG.
+	@param parent_chunk: The chunk mesh — the ember parents here so it unloads with
+	                     the chunk (per-chunk parenting rule).
+	@param block_batch / block_body: The chunk's visual batch + collision body.
+	"""
+	var base_angle := rng.randf_range(0.0, TAU)
+	var i := 0
+	while i < CAMP_FIRE_STONES:
+		# Even spacing round the ring plus a nudge, so it looks laid by hand.
+		var a := base_angle + TAU * float(i) / float(CAMP_FIRE_STONES) + rng.randf_range(-0.15, 0.15)
+		var r := CAMP_FIRE_RING_RADIUS + rng.randf_range(-0.12, 0.12)
+		var pos := center + Vector3(cos(a) * r, CAMP_FIRE_STONE_SIZE.y / 2.0, sin(a) * r)
+		create_box(pos, CAMP_FIRE_STONE_SIZE, rng.randf_range(0.0, TAU), rng, block_batch, block_body, 0.0, CAMP_STONE, false)
+		i += 1
+
+	# The one ember. Sits just clear of the ground so it never z-fights the plane.
+	_spawn_artifact_accent(parent_chunk, center + Vector3(0.0, CAMP_EMBER_SIZE.y / 2.0 + 0.05, 0.0), CAMP_EMBER_SIZE, rng.randf_range(0.0, TAU), 0.0, _get_camp_ember_material())
+
+func _camp_props(center: Vector3, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> void:
+	"""
+	Scatter the lived-in clutter on a jittered ring between the fire and the huts:
+	a few weathered crates/bundles and 2-3 tall thin tether posts (where the pack
+	beasts would be tied). Both are solid — they are knee-to-chest height, so they
+	keep their collision and you walk around them like any block.
+
+	@param center: Camp centre (chunk-local, y = 0); the ring is measured from here.
+	@param rng: The camp's private RNG.
+	@param block_batch / block_body: The chunk's visual batch + collision body.
+	"""
+	var crates := rng.randi_range(CAMP_CRATE_MIN, CAMP_CRATE_MAX)
+	var i := 0
+	while i < crates:
+		var a := rng.randf_range(0.0, TAU)
+		var r := rng.randf_range(CAMP_PROP_RING_MIN, CAMP_PROP_RING_MAX)
+		# Cubes, not slabs: one size draw keeps a crate reading as a crate.
+		var s := rng.randf_range(CAMP_CRATE_SIZE_MIN, CAMP_CRATE_SIZE_MAX)
+		create_box(center + Vector3(cos(a) * r, s / 2.0, sin(a) * r), Vector3(s, s, s), rng.randf_range(0.0, TAU), rng, block_batch, block_body, 0.0, CAMP_WOOD)
+		i += 1
+
+	var posts := rng.randi_range(CAMP_POST_MIN, CAMP_POST_MAX)
+	i = 0
+	while i < posts:
+		var a := rng.randf_range(0.0, TAU)
+		var r := rng.randf_range(CAMP_PROP_RING_MIN, CAMP_PROP_RING_MAX)
+		create_box(center + Vector3(cos(a) * r, CAMP_POST_SIZE.y / 2.0, sin(a) * r), CAMP_POST_SIZE, rng.randf_range(0.0, TAU), rng, block_batch, block_body, 0.0, CAMP_WOOD)
+		i += 1
 
 # ============================================================================
 # BIOME CONTENT (the geometry each biome adds on top of the ordinary blocks)
