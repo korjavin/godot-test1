@@ -331,16 +331,9 @@ func _ready() -> void:
 	# makes the analog ramp correct regardless of any future engine change, and it does
 	# NOT affect desktop keyboard input (a key press is strength 1.0, well above any
 	# deadzone). Done once at startup; the project.godot values are otherwise untouched.
-	# Gated on the touch predicate like every other platform-visible change in this
-	# codebase: this permanently mutates the PROJECT input map for four gameplay
-	# actions, and it is inert today only because none of them has a joypad binding.
-	# Bind a stick axis tomorrow and an ungated zero would cost desktop its 0.5
-	# deadzone and let a drifting stick walk the player. The driver only ever writes
-	# Input on a touch session anyway, so that is the only session that needs it.
-	if MobileSensors.is_touch_session():
-		for action in SYNTHESIZED_ANALOG_ACTIONS:
-			if InputMap.has_action(action):
-				InputMap.action_set_deadzone(action, 0.0)
+	for action in SYNTHESIZED_ANALOG_ACTIONS:
+		if InputMap.has_action(action):
+			InputMap.action_set_deadzone(action, 0.0)
 
 	# Stand up the sensor abstraction and add it as a child so it runs its own
 	# _process poll. We enable it (harmless on desktop: no real sensors → it reports

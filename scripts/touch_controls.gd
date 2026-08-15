@@ -136,16 +136,6 @@ var _motion_watching: bool = false
 ## `MOTION_ENABLE_TIMEOUT` to decide "data started" vs "re-show the retry overlay".
 var _motion_watch_elapsed: float = 0.0
 
-## True once an enable attempt has already timed out with no data and the player has
-## been offered one retry. It is what STOPS the retry cycle: the enable overlay is a
-## full-rect MOUSE_FILTER_STOP button covering the whole control cluster, so on a
-## device that will never deliver motion (iOS "Deny", the plain-http LAN host that
-## ./serve.sh serves, or a touchscreen with no accelerometer) re-showing it after
-## every timeout leaves the game permanently unplayable — the buttons underneath can
-## never be reached. After the second failure we give up silently: buttons alone are
-## a complete control scheme, and `show_onboarding()` is still the way back in.
-var _motion_retry_offered: bool = false
-
 ## True while the UI is force-shown by the F6 debug key on a non-touch device, so a
 ## second F6 press toggles it back off. Independent of the auto (touch) visibility.
 var _force_shown: bool = false
@@ -317,8 +307,6 @@ func _build_ui() -> void:
 	_view_button.text = "View"
 	_view_button.custom_minimum_size = Vector2(TOGGLE_HEIGHT, TOGGLE_HEIGHT)
 	_view_button.add_theme_font_size_override("font_size", 24)
-	# Touch-down like the action cluster — it fires the same kind of one-shot action.
-	_view_button.action_mode = BaseButton.ACTION_MODE_BUTTON_PRESS
 	_apply_translucent_style(_view_button, TOGGLE_HEIGHT / 2.0)
 	# Park it immediately to the LEFT of the centred steer toggle: same top-centre
 	# anchoring, offsets pushed left past the toggle's half-width plus a margin
@@ -436,11 +424,6 @@ func _make_action_button(label: String, node_name: String, slot: int) -> Button:
 	button.text = label
 	button.add_theme_font_size_override("font_size", 26)
 	button.custom_minimum_size = Vector2(ACTION_BUTTON_SIZE, ACTION_BUTTON_SIZE)
-	# Fire on touch-DOWN, not on release (Godot's default for a Button). These are
-	# gameplay actions against a 5.5 m/s chaser: release mode costs the whole tap
-	# duration in latency, and a thumb that slides off the circle mid-tap — routine
-	# while the player is physically stepping in place — cancels the press entirely.
-	button.action_mode = BaseButton.ACTION_MODE_BUTTON_PRESS
 	# Translucent dark circle instead of the opaque default theme panel, so the
 	# buttons occlude far less of the 3D world behind them. A corner radius of half
 	# the side length turns the square into a circle; the pressed variant is a bit
@@ -653,18 +636,6 @@ func _process(delta: float) -> void:
 	_resume_overlay.visible = _is_touch and get_tree().paused and not _enable_overlay.visible
 
 
-## True while one of the three full-rect overlays owns the screen (first-run enable,
-## focus-loss resume, portrait guard). All three are meant to be EXCLUSIVE — they
-## swallow every tap — but they can only swallow taps that reach them, and any HUD
-## sibling declared after TouchControls draws on top and wins hit-testing. So a
-## sibling with its own always-on button (the tuning gear) asks this and hides while
-## it is true. Getting it wrong is not cosmetic: a tap stolen from the enable overlay
-## is the ONE user gesture iOS grants DeviceMotionEvent.requestPermission() and the
-## browser grants WebAudio, so motion AND all audio stay dead for the session.
-func has_modal() -> bool:
-	return _enable_overlay.visible or _resume_overlay.visible or _portrait_guard.visible
-
-
 ## Watch for motion to actually start after an enable tap. While `_motion_watching`:
 ## if a fresh real motion sample is flowing, CONFIRM — latch `_motion_enabled` and stop
 ## watching (the overlay is already hidden). Otherwise count down `MOTION_ENABLE_TIMEOUT`;
@@ -698,22 +669,6 @@ func _update_motion_watch(delta: float) -> void:
 		# context, or no sensor). Stop watching and re-show the overlay so the player can
 		# retry — never leave a keyboardless phone with the controls hidden and no way back.
 		_motion_watching = false
-		if _motion_retry_offered:
-			# Second failure: this device is not going to deliver motion. Stand down
-			# for good rather than parking a full-rect overlay over the buttons every
-			# 3.5 s forever (see _motion_retry_offered) — the buttons are playable on
-			# their own, and show_onboarding() can still bring the overlay back.
-			_enable_overlay.visible = false
-			return
-		_motion_retry_offered = true
-		# PAUSE alongside raising it, exactly like the portrait guard above. This
-		# overlay is a full-rect Button, so it swallows every tap — Jump, Special,
-		# Switch and View all go dead while it is up. Over a LIVE world that means the
-		# player stands there being chased with no controls until they tap. The tap
-		# itself unpauses (see _on_enable_overlay_pressed). `driver` is the same handle
-		# the receiving-check above already resolved.
-		if driver != null:
-			driver.pause_game()
 		# Swap only the HEADLINE to the retry message — the how-to body stays
 		# visible underneath, so a retrying player keeps the instructions.
 		_enable_headline.text = RETRY_HEADLINE
@@ -838,13 +793,6 @@ func _on_enable_overlay_pressed() -> void:
 	_motion_watch_elapsed = 0.0
 	_enable_overlay.visible = false
 
-	# This tap is also the unpause. Two ways the tree can be paused under a visible
-	# enable overlay: the retry prompt pauses when it raises itself (a tap-swallowing
-	# overlay must not sit over live play), and a focus-loss pause before the first
-	# enable is suppressed from showing the resume overlay while we are visible. Both
-	# are cleared here, so a single tap always returns the player to a running game.
-	if get_tree().paused:
-		_driver.resume_from_pause()
 
 ## Resume overlay tap → unfreeze the game. Routed through the driver's
 ## `resume_from_pause()` so the driver can also restore its pre-pause active state

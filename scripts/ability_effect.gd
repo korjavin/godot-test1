@@ -30,19 +30,6 @@ var _base_alpha: float = 0.5
 ## Our own material, so we can fade albedo + emission each frame.
 var _material: StandardMaterial3D = null
 
-## The one unit sphere every wave ever drawn shares (see setup()).
-static var _shared_sphere_mesh: SphereMesh = null
-
-
-static func _get_shared_sphere_mesh() -> SphereMesh:
-	if _shared_sphere_mesh == null:
-		_shared_sphere_mesh = SphereMesh.new()
-		_shared_sphere_mesh.radius = 1.0
-		_shared_sphere_mesh.height = 2.0
-		_shared_sphere_mesh.radial_segments = 16
-		_shared_sphere_mesh.rings = 8
-	return _shared_sphere_mesh
-
 
 func setup(color: Color, max_radius: float, lifetime: float, delay: float = 0.0) -> void:
 	"""
@@ -60,13 +47,12 @@ func setup(color: Color, max_radius: float, lifetime: float, delay: float = 0.0)
 	_base_alpha = color.a
 
 	# A unit-radius sphere, so scaling by r gives a wave of radius r directly.
-	# SHARED, not per-wave: only `scale` ever animates the geometry, and the coin
-	# pickup sparkle spawns one of these on every collected coin (~2/s along the
-	# road) — a fresh SphereMesh each time is a fresh GPU buffer each time, which
-	# is exactly the churn the web build can least afford. Same shared lazy-getter
-	# pattern as endless_terrain._get_shared_unit_box_mesh() and ToonShading's
-	# cache. The MATERIAL still has to be per-instance, since alpha fades per wave.
-	mesh = _get_shared_sphere_mesh()
+	var sphere := SphereMesh.new()
+	sphere.radius = 1.0
+	sphere.height = 2.0
+	sphere.radial_segments = 16
+	sphere.rings = 8
+	mesh = sphere
 
 	# Unshaded + additive-ish translucent + double-sided, so the shell glows and is
 	# visible from inside as it sweeps out past the player.

@@ -69,15 +69,6 @@ func _process(delta: float) -> void:
 		_pulse_index = lives  # hearts are 0-based, so index `lives` just emptied
 		_pulse_timer = PULSE_DURATION
 
-	# Keep the dying heart's pip in the row for as long as it pulses. Losing a
-	# 4th/5th heart shrinks `total` in the SAME frame (it is derived from live
-	# `lives`), which would drop the pulsing index out of the _draw range — that
-	# heart would blink out with no death pulse at all, unlike hearts 1-3, which
-	# MAX_LIVES keeps in the row. Self-clearing: once the timer expires the row
-	# shrinks on its own.
-	if _pulse_timer > 0.0:
-		total = maxi(total, _pulse_index + 1)
-
 	# Repaint only on change — _draw is comparatively expensive to run every
 	# frame — EXCEPT while a death pulse animates, which needs every frame.
 	if _pulse_timer > 0.0:
