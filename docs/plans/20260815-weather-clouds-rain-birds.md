@@ -89,27 +89,27 @@ Dependencies identified: none new. No assets, no GPUParticles3D (web runs
 ## Implementation Steps
 
 ### Task 1: Cloud field skeleton — `scripts/weather_manager.gd`
-- [ ] create `scripts/weather_manager.gd` (`extends Node`) with the project's
+- [x] create `scripts/weather_manager.gd` (`extends Node`) with the project's
       teaching-density header comment: what it owns, why it is NOT in `endless_terrain.gd`
       (ambience, no per-chunk determinism), and how other scripts reach it (group
       `"weather"` + `has_method` guard)
-- [ ] declare ALL tunables as `const`s at the top with explicit type hints and a comment
+- [x] declare ALL tunables as `const`s at the top with explicit type hints and a comment
       each: `FIELD_RADIUS: float = 250.0`, `CLOUD_COUNT: int = 26`,
       `CLOUD_ALTITUDE_MIN/MAX: float = 45.0/70.0`, `BOXES_PER_CLOUD_MIN/MAX: int = 4/9`,
       `CLOUD_BOX_SIZE_MIN/MAX`, `CLOUD_SPREAD` (how far boxes scatter from the cluster
       centre), `WIND_DIR: Vector3` (normalized, XZ only), `WIND_SPEED: float = 1.6`,
       `CLOUD_SPEED_VARIATION: float = 0.25`, `BOB_AMPLITUDE`, `BOB_SPEED`,
       `TICK_INTERVAL: float = 0.1`
-- [ ] `_ready()`: `add_to_group("weather")`, `randomize()`-style RNG init (a
+- [x] `_ready()`: `add_to_group("weather")`, `randomize()`-style RNG init (a
       `RandomNumberGenerator` member, `randomize()`d — cosmetic randomness only, nowhere
       near the terrain's deterministic chunk RNG; say so in a comment)
-- [ ] build the cloud data model: an `Array` of per-cloud `Dictionary`s
+- [x] build the cloud data model: an `Array` of per-cloud `Dictionary`s
       `{ "center": Vector3, "boxes": Array, "is_storm": bool, "radius": float,
       "speed": float, "bob_phase": float }`, where each box entry is
       `{ "offset": Vector3, "size": Vector3, "yaw": float }`. A `_make_cloud()` helper
       rolls one cloud; a `_place_cloud_around(cloud, player_pos, ahead_only)` helper
       positions it (initial fill = anywhere in the disc; recycling = upwind edge only)
-- [ ] find the player by group each tick (`_player` cached, re-fetched when invalid) —
+- [x] find the player by group each tick (`_player` cached, re-fetched when invalid) —
       no hard references, and do nothing at all while no player exists
 
 ### Task 2: Cloud rendering — one MultiMesh, one draw call
