@@ -40,8 +40,13 @@ extends Node
 
 ## Radius (metres) of the field around the player where herds live: a herd
 ## spawns ON this circle and walks a line through the player's general area.
-## Chosen to be past the desktop fog's heavy haze but near enough to read.
-const FIELD_RADIUS: float = 180.0
+## Capped by the WEB build's terrain extent, not by taste: web drops
+## render_distance to 3 chunks × 50 m, so the ground reaches only ~150 m from
+## the player at worst (see endless_terrain.gd's fog comment). A herd spawned
+## past that would stand over open sky with no ground plane under it, which
+## the fog only partly hides for a 4 m-tall giraffe. 140 m keeps every spawn
+## on solid ground on both platforms.
+const FIELD_RADIUS: float = 140.0
 
 ## Distance (metres) from the live player position beyond which a herd is
 ## freed. Comfortably past FIELD_RADIUS so a herd is never culled mid-view —
@@ -67,6 +72,18 @@ const WALK_SPEED_MAX: float = 3.0
 ## Probability that a given event is an elephant family; otherwise a giraffe
 ## flock. 50/50 — both species should feel equally common.
 const ELEPHANT_CHANCE: float = 0.5
+
+## Half-angle (radians) of the cone the migration heading is drawn from, taken
+## AGAINST the player's run direction (+X). This is not decoration — it is what
+## makes the event visible at all. The player runs down +X for the whole game
+## (the coin road's X strictly increases) at 5–11 m/s, several times a herd's
+## 2–3 m/s amble, so a uniformly random compass heading would waste most
+## events: any herd walking roughly WITH the player is simply outrun and
+## despawns far behind the camera, never seen. Spawning ahead down the road and
+## walking back through the player's area is the only geometry that reliably
+## produces a crossing. ~35° is wide enough that no two migrations arrive on
+## the same line, narrow enough that the closing speed stays high.
+const MIGRATION_HEADING_SPREAD: float = 0.6
 
 # ============================================================================
 # CONSTANTS — herd composition and formation
@@ -209,8 +226,10 @@ const BODY_BOB_AMOUNT: float = 0.06
 ## Giraffe neck bob: a couple of degrees at HALF the stride rate (a long neck
 ## swings slowly), layered on top of the neck's rest lean — never overwriting
 ## it, the same compose-on-rest-pose discipline as the crocodile's
-## model_base_scale / model_base_y.
+## model_base_scale / model_base_y. NECK_BOB_RATE is that "half" as a fraction
+## of the stride rate, the neck's counterpart to TRUNK_SWAY_RATE below.
 const NECK_BOB_DEG: float = 3.5
+const NECK_BOB_RATE: float = 0.5
 
 ## Elephant trunk sway (degrees per segment, side to side about Z) and the
 ## phase LAG between consecutive segments. The lag is what makes the chain read
@@ -360,17 +379,19 @@ static func _make_leg(leg_name: String, hip_pos: Vector3, leg_size: Vector3,
 	return pivot
 
 
-func _build_elephant(is_adult: bool) -> Node3D:
+func _build_elephant(is_adult: bool) -> Dictionary:
 	## Assemble one elephant entirely from the shared unit BoxMesh + shared
 	## materials. Blocky BY DESIGN: the whole world (decorative blocks, the
 	## low-poly character cast) is boxes and flat colours, so a box elephant
 	## matches the art direction — a smooth model would look pasted in, and a
 	## real mesh would mean an asset file this feature deliberately avoids.
 	##
-	## Tree contract (Task 5's animation depends on these exact shapes):
-	## root Node3D (feet at y = 0, faces -Z) -> "Body" Node3D (bobs
-	## vertically, carries the static boxes) -> four hip-pivot Node3Ds
-	## (FL/FR/RL/RR) and a nested "Trunk0..N" pivot chain off the head.
+	## Returns the animal RECORD, not just the root: the builder already holds
+	## every pivot the animation loop will ever touch, so it hands them over
+	## directly rather than making _add_animal rediscover them by node name.
+	## The record shape is species-agnostic — root/body/legs (always four, in
+	## FL/FR/RL/RR order) plus the extras slot, which for an elephant is the
+	## trunk chain and a null neck.
 	var mat := _get_elephant_material()
 	# Calves cast no shadows AT ALL: at CALF_SCALE they are small accents in
 	# the herd picture, and dropping them from the shadow passes is free
@@ -419,6 +440,7 @@ func _build_elephant(is_adult: bool) -> Node3D:
 	# hangs half a segment below it, so rotating any pivot swings everything
 	# downstream — the chain structure Task 5's per-segment sway lag needs.
 	var seg_len := ELEPHANT_TRUNK_SEGMENT_SIZE.y
+	var trunk: Array[Node3D] = []
 	var trunk_parent: Node3D = body
 	for i: int in ELEPHANT_TRUNK_SEGMENTS:
 		var pivot := Node3D.new()
@@ -432,37 +454,45 @@ func _build_elephant(is_adult: bool) -> Node3D:
 				Vector3(0.0, -seg_len * 0.5, 0.0), mat, false))
 		trunk_parent.add_child(pivot)
 		trunk_parent = pivot
+		trunk.append(pivot)
 
 	# Legs, always in FL/FR/RL/RR order — the species-agnostic contract the
 	# animation loop relies on (diagonal trot pairs are picked by index).
 	var hip_x := ELEPHANT_BODY_SIZE.x * 0.5 - ELEPHANT_LEG_SIZE.x * 0.5
 	var hip_z := ELEPHANT_BODY_SIZE.z * 0.5 - ELEPHANT_LEG_SIZE.z * 0.5
 	var hip_y := ELEPHANT_LEG_SIZE.y
-	body.add_child(_make_leg("LegFL", Vector3(-hip_x, hip_y, -hip_z),
-			ELEPHANT_LEG_SIZE, mat, body_shadows))
-	body.add_child(_make_leg("LegFR", Vector3(hip_x, hip_y, -hip_z),
-			ELEPHANT_LEG_SIZE, mat, body_shadows))
-	body.add_child(_make_leg("LegRL", Vector3(-hip_x, hip_y, hip_z),
-			ELEPHANT_LEG_SIZE, mat, body_shadows))
-	body.add_child(_make_leg("LegRR", Vector3(hip_x, hip_y, hip_z),
-			ELEPHANT_LEG_SIZE, mat, body_shadows))
+	var legs: Array[Node3D] = [
+		_make_leg("LegFL", Vector3(-hip_x, hip_y, -hip_z), ELEPHANT_LEG_SIZE, mat, body_shadows),
+		_make_leg("LegFR", Vector3(hip_x, hip_y, -hip_z), ELEPHANT_LEG_SIZE, mat, body_shadows),
+		_make_leg("LegRL", Vector3(-hip_x, hip_y, hip_z), ELEPHANT_LEG_SIZE, mat, body_shadows),
+		_make_leg("LegRR", Vector3(hip_x, hip_y, hip_z), ELEPHANT_LEG_SIZE, mat, body_shadows),
+	]
+	for leg: Node3D in legs:
+		body.add_child(leg)
 
 	# A calf is the SAME build scaled once at the root — one scale write, no
 	# smaller boxes, no second code path to keep in sync.
 	if not is_adult:
 		root.scale = Vector3.ONE * CALF_SCALE
-	return root
+
+	return {
+		"root": root,
+		"body": body,
+		"legs": legs,
+		"neck": null,        # elephants have no neck pivot — the trunk is their extra
+		"neck_rest": 0.0,    # unused while neck is null; keeps the record one shape
+		"trunk": trunk,
+	}
 
 
-func _build_giraffe() -> Node3D:
+func _build_giraffe() -> Dictionary:
 	## Assemble one giraffe from the same shared unit BoxMesh + shared
-	## materials, under the SAME node-structure contract as _build_elephant so
-	## the animal record (and the animation loop reading it) stays
-	## species-agnostic: root Node3D (feet at y = 0, faces -Z) -> "Body"
-	## Node3D -> four hip-pivot legs added in FL/FR/RL/RR order. The only
-	## species difference is the extras slot: a giraffe has a "Neck" pivot
-	## (elephants: null) and no trunk chain (elephants: "Trunk0..N") — the
-	## record simply carries null/empty for the other species' extra.
+	## materials, and return the SAME record shape as _build_elephant so the
+	## animation loop reading it stays species-agnostic: root Node3D (feet at
+	## y = 0, faces -Z) -> "Body" Node3D -> four hip-pivot legs in FL/FR/RL/RR
+	## order. The only species difference is the extras slot: a giraffe has a
+	## neck pivot (elephants: null) and no trunk chain (elephants: 3 segments)
+	## — the record simply carries null/empty for the other species' extra.
 	var mat := _get_giraffe_material()
 
 	var root := Node3D.new()
@@ -486,7 +516,10 @@ func _build_giraffe() -> Node3D:
 	var patch_offsets: Array[Vector3] = [
 		Vector3(0.0, 0.12, -0.55), Vector3(0.0, -0.10, 0.10), Vector3(0.0, 0.18, 0.60),
 	]
-	for i: int in GIRAFFE_PATCH_COUNT:
+	# Clamped to the hand-picked spot list: the placements are authored, not
+	# generated, so raising GIRAFFE_PATCH_COUNT past them must cap out rather
+	# than run off the end of the arrays.
+	for i: int in mini(GIRAFFE_PATCH_COUNT, patch_offsets.size()):
 		body.add_child(_make_box_part("Patch%d" % i, GIRAFFE_PATCH_SIZE,
 				Vector3(patch_sides[i] * patch_x, body_center_y, 0.0) + patch_offsets[i],
 				_get_patch_material(), false))
@@ -524,15 +557,26 @@ func _build_giraffe() -> Node3D:
 	var hip_x := GIRAFFE_BODY_SIZE.x * 0.5 - GIRAFFE_LEG_SIZE.x * 0.5
 	var hip_z := GIRAFFE_BODY_SIZE.z * 0.5 - GIRAFFE_LEG_SIZE.z * 0.5
 	var hip_y := GIRAFFE_LEG_SIZE.y
-	body.add_child(_make_leg("LegFL", Vector3(-hip_x, hip_y, -hip_z),
-			GIRAFFE_LEG_SIZE, mat, true))
-	body.add_child(_make_leg("LegFR", Vector3(hip_x, hip_y, -hip_z),
-			GIRAFFE_LEG_SIZE, mat, true))
-	body.add_child(_make_leg("LegRL", Vector3(-hip_x, hip_y, hip_z),
-			GIRAFFE_LEG_SIZE, mat, true))
-	body.add_child(_make_leg("LegRR", Vector3(hip_x, hip_y, hip_z),
-			GIRAFFE_LEG_SIZE, mat, true))
-	return root
+	var legs: Array[Node3D] = [
+		_make_leg("LegFL", Vector3(-hip_x, hip_y, -hip_z), GIRAFFE_LEG_SIZE, mat, true),
+		_make_leg("LegFR", Vector3(hip_x, hip_y, -hip_z), GIRAFFE_LEG_SIZE, mat, true),
+		_make_leg("LegRL", Vector3(-hip_x, hip_y, hip_z), GIRAFFE_LEG_SIZE, mat, true),
+		_make_leg("LegRR", Vector3(hip_x, hip_y, hip_z), GIRAFFE_LEG_SIZE, mat, true),
+	]
+	for leg: Node3D in legs:
+		body.add_child(leg)
+
+	return {
+		"root": root,
+		"body": body,
+		"legs": legs,
+		"neck": neck,
+		# The neck's forward lean is its REST pose: the bob is layered on top of
+		# this value, never overwriting it (same discipline as the crocodile's
+		# cached model_base_scale / model_base_y).
+		"neck_rest": neck.rotation.x,
+		"trunk": [] as Array[Node3D],   # giraffes have no trunk chain
+	}
 
 
 # ============================================================================
@@ -584,10 +628,11 @@ func _spawn_herd() -> void:
 	## Build and place one herd on the edge of the field, aimed to walk
 	## through the player's general area and out the far side.
 	##
-	## Placement: pick a random compass heading, put the herd origin on the
-	## field circle at player_pos - heading * FIELD_RADIUS, and walk along
-	## +heading — so the migration line always crosses TOWARD and PAST the
-	## player's area rather than skimming the horizon.
+	## Placement: pick a heading from the rearward cone (see
+	## MIGRATION_HEADING_SPREAD), put the herd origin on the field circle at
+	## player_pos - heading * FIELD_RADIUS — i.e. ahead of the player down the
+	## road — and walk along +heading, so the migration line crosses TOWARD and
+	## PAST the player even while they run.
 	##
 	## The animals are parented to THIS manager, never to a terrain chunk:
 	## chunk unloading frees everything under a chunk mesh, and a herd must
@@ -605,7 +650,10 @@ func _spawn_herd() -> void:
 	if player == null:
 		return
 
-	var angle := _rng.randf_range(0.0, TAU)
+	# Heading is drawn from a cone facing back down the road (PI = straight
+	# against the player's +X run direction) — see MIGRATION_HEADING_SPREAD for
+	# why a uniform compass heading would leave most migrations unseen.
+	var angle := PI + _rng.randf_range(-MIGRATION_HEADING_SPREAD, MIGRATION_HEADING_SPREAD)
 	_herd_heading = Vector3(cos(angle), 0.0, sin(angle))
 	# Lateral = heading rotated 90° in the ground plane; with heading, it is
 	# the herd-local frame every formation offset is expressed in.
@@ -657,38 +705,23 @@ func _spawn_giraffe_flock() -> void:
 		_add_animal(_build_giraffe(), _herd_lateral * lat + _herd_heading * lon)
 
 
-func _add_animal(root: Node3D, offset: Vector3) -> void:
+func _add_animal(record: Dictionary, offset: Vector3) -> void:
 	## Parent one built animal, place it at its formation slot, face it along
-	## the herd heading, and store its record. The record caches EVERY node
-	## reference the movement/animation code will ever touch (limb pivots,
-	## neck, trunk chain, rest poses) so the per-frame loops never call
-	## get_node — lookups happen exactly once, here at spawn.
+	## the herd heading, and finish its record. The builder already cached every
+	## node reference the movement/animation code will ever touch (limb pivots,
+	## neck, trunk chain, rest pose), so the per-frame loops never call get_node
+	## — and neither does this, there is no lookup anywhere at spawn either.
+	##
+	## `position`, not `global_position`: the animals hang off this manager, a
+	## plain Node with no transform of its own, under Main at identity.
+	var root: Node3D = record["root"]
 	add_child(root)
-	root.global_position = _herd_position + offset
+	root.position = _herd_position + offset
 	root.rotation.y = atan2(-_herd_heading.x, -_herd_heading.z)
 
-	var body := root.get_node("Body") as Node3D
-	var legs: Array[Node3D] = []
-	for leg_name: String in ["LegFL", "LegFR", "LegRL", "LegRR"]:
-		legs.append(body.get_node(leg_name) as Node3D)
-	var neck := body.get_node_or_null("Neck") as Node3D
-	var trunk: Array[Node3D] = []
-	var seg: Node3D = body.get_node_or_null("Trunk0") as Node3D
-	while seg != null:
-		trunk.append(seg)
-		seg = seg.get_node_or_null("Trunk%d" % trunk.size()) as Node3D
-
-	_animals.append({
-		"root": root,
-		"body": body,
-		"legs": legs,
-		"neck": neck,                    # null for elephants
-		"trunk": trunk,                  # empty for giraffes
-		"offset": offset,                # formation slot, world-space
-		"phase": _rng.randf_range(0.0, TAU),  # stride offset — no lockstep
-		"neck_rest": neck.rotation.x if neck != null else 0.0,
-		"body_rest_y": body.position.y,
-	})
+	record["offset"] = offset                       # formation slot, world-space
+	record["phase"] = _rng.randf_range(0.0, TAU)    # stride offset — no lockstep
+	_animals.append(record)
 
 
 func _update_herd(delta: float) -> void:
@@ -718,19 +751,27 @@ func _update_herd(delta: float) -> void:
 	var centre := _herd_position \
 			+ _herd_lateral * (sin(_herd_travelled * MEANDER_FREQUENCY) * MEANDER_AMPLITUDE)
 
+	# Facing: the centre's own velocity — the heading plus the meander's
+	# derivative, which is exact and needs no previous-frame state. Computed
+	# ONCE per frame, not once per animal: every member shares the same centre
+	# path, the same formation offset arithmetic and the same ease weight, so
+	# every member's motion vector is provably identical and N atan2 calls
+	# would all return the same number. Local forward is -Z, hence the negated
+	# atan2 arguments.
+	var centre_velocity := _herd_heading + _herd_lateral \
+			* (cos(_herd_travelled * MEANDER_FREQUENCY) * MEANDER_AMPLITUDE * MEANDER_FREQUENCY)
+	var yaw := atan2(-centre_velocity.x, -centre_velocity.z)
+
+	# The ease is a soft, uniform lag on the whole formation (members start
+	# exactly on their slots, so nothing here spreads them apart): it takes the
+	# edge off the meander's direction changes so the herd swings into a turn
+	# instead of snapping onto the new line.
 	var ease_weight := minf(1.0, FORMATION_LERP_SPEED * delta)
 	for animal: Dictionary in _animals:
 		var root: Node3D = animal["root"]
 		var target: Vector3 = centre + animal["offset"]
-		var old_pos := root.position
-		root.position = old_pos.lerp(target, ease_weight)
-		# Face along the animal's OWN travel direction (not the herd heading):
-		# the formation ease + meander give each member its own curved path,
-		# and yawing along it is what makes the drift look deliberate. Local
-		# forward is -Z, hence the negated atan2 arguments.
-		var motion := root.position - old_pos
-		if motion.length_squared() > 0.000001:
-			root.rotation.y = atan2(-motion.x, -motion.z)
+		root.position = root.position.lerp(target, ease_weight)
+		root.rotation.y = yaw
 
 	_animate_animals()
 
@@ -743,8 +784,8 @@ func _animate_animals() -> void:
 	## Everything here is a pure function of _herd_travelled (metres walked) plus
 	## the animal's own random phase offset, so nothing accumulates and nothing
 	## drifts: the herd's stride is literally "where its feet are on the ground".
-	## The loop allocates nothing per frame — every node reference was cached at
-	## spawn in _add_animal, so there is not one get_node() call in here.
+	## The loop allocates nothing per frame — every node reference was cached by
+	## the builder that created it, so there is not one get_node() call in here.
 	var leg_swing := deg_to_rad(LEG_SWING_DEG)
 	var neck_bob := deg_to_rad(NECK_BOB_DEG)
 	var trunk_sway := deg_to_rad(TRUNK_SWAY_DEG)
@@ -761,16 +802,19 @@ func _animate_animals() -> void:
 		for i: int in legs.size():
 			legs[i].rotation.x = sin(stride + LEG_PHASE_OFFSETS[i]) * leg_swing
 
-		# Body: one shallow dip per footfall, i.e. twice the stride rate,
-		# composed on the body's cached rest height.
+		# Body: one shallow dip per footfall, i.e. twice the stride rate. The
+		# curve is offset to sit entirely at or ABOVE the Body node's rest
+		# height (0 by construction — neither builder moves it), because the
+		# legs hang off Body: a bob that dipped below rest would push every
+		# foot through the flat ground plane at y = 0.
 		var body: Node3D = animal["body"]
-		body.position.y = float(animal["body_rest_y"]) + sin(stride * 2.0) * BODY_BOB_AMOUNT
+		body.position.y = (sin(stride * 2.0) * 0.5 + 0.5) * BODY_BOB_AMOUNT
 
 		# Giraffe neck: a slow bob layered ON TOP of the rest lean (null for
 		# elephants — the record simply carries no neck for that species).
 		var neck: Node3D = animal["neck"]
 		if neck != null:
-			neck.rotation.x = float(animal["neck_rest"]) + sin(stride * 0.5) * neck_bob
+			neck.rotation.x = float(animal["neck_rest"]) + sin(stride * NECK_BOB_RATE) * neck_bob
 
 		# Elephant trunk: each chained segment sways side to side one
 		# TRUNK_SEGMENT_LAG behind its parent, so the chain trails in a soft S.
