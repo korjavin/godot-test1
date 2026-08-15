@@ -115,6 +115,24 @@ must move OFF `camera.position`:
 - [x] Windman FOV punch: add `fov_punch: float` member; `_ability_windman` sets `fov_punch = 12.0`; the Task-5 FOV code adds it to the target and decays it (~`fov_punch = maxf(0.0, fov_punch - 30.0 * delta)`)
 - [x] headless smoke clean
 
+### ⚠️ Resumption note (session limit interrupted; master merged in)
+Tasks 1–7 are DONE and verified in code (commit bf3785c was mislabelled "wip" — all four
+Task-7 items actually landed: blocked-press flash + buzz, Teibi TRANS_BACK tween, Primm
+3-flash trail, Windman `fov_punch`). Resume at Task 8. Since the plan was written,
+`origin/master` merged in **boss crocodiles (PR #15)** and the rendering PR (#14), so:
+- **All line numbers below are stale — grep for the code, don't trust the `~:NNN`.**
+- `piglet_crocodile_ai.gd` `_on_player_collision` now has a **boss early-return block ABOVE
+  the giant-Teibi crush block** (`if is_boss: … return`, ~:937). Task 10 must edit ONLY the
+  crush block *below* it and leave the boss guard byte-for-byte intact.
+- Bosses are in the same `"crocodile"` group and expose `is_chasing`, so Task 8's danger
+  telegraph picks them up automatically — no boss-specific code needed.
+- `lives_hud.gd` no longer has its own `MAX_LIVES`; it reads the pip total from the player
+  (`maxi(player.MAX_LIVES, player.lives)`) because coins can grant up to `LIVES_CAP` (5)
+  hearts. Task 10's heart pulse must keep using that player-derived total.
+- Task 12 must update the CLAUDE.md text as it stands AFTER the merge (it now documents
+  `RESPAWN_GRACE_DURATION = 5.0`, the old camera shake gotcha, and gravity 3.6 — all three
+  are now wrong and are exactly what Task 12 fixes).
+
 ### Task 8: Danger telegraph — LOD manager publishes nearest chasing croc, vignette + heartbeat
 - [ ] `scripts/crocodile_lod_manager.gd`: inside the existing `_scan_crocodiles()` loop (zero extra passes), track the minimum `dist_sq` among crocs whose `is_chasing` is true (guard with `"is_chasing" in croc`); after the loop publish `sqrt` of it (or `INF` when none) to the `"danger_vignette"` group node via a null-safe `set_danger_distance(d)` call — group-based, no hard refs, matching the manager's conventions. Chasing crocs are always awake (SIM_RADIUS 45 ≫ DETECTION_RADIUS 15), so the scan sees every chaser
 - [ ] new `scripts/danger_vignette.gd` (a `Control` in group `"danger_vignette"`, `MOUSE_FILTER_IGNORE`): a full-rect red screen-EDGE vignette — one `ColorRect` child with a tiny `canvas_item` shader built in code (`Shader.new()` + `code` string: radial distance from centre → alpha ramp toward the edges, tinted `vec3(0.8, 0.05, 0.05)`) — kept deliberately cheap (one fullscreen 2D quad). Danger level `t = clampf(1.0 - distance / 15.0, 0.0, 1.0)` (15 = croc DETECTION_RADIUS); ease the displayed alpha toward `t * MAX_ALPHA` (~0.45) each frame so scans at 9 Hz don't step visibly; fully transparent (and shader cost skipped via `visible = false`) when no chaser
