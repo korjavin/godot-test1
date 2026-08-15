@@ -298,13 +298,13 @@ Dependencies identified: none new. No asset files, no Python pipeline, no autolo
 
 ### Task 7: [Final] Update documentation
 
-- [ ] add a short **"Ambient fauna (migrating herds)"** subsection to `CLAUDE.md` under
+- [x] add a short **"Ambient fauna (migrating herds)"** subsection to `CLAUDE.md` under
       Architecture, in the established voice: what the manager is, the one-herd-at-a-time
       invariant, the shared-mesh/one-material-per-species rule, the "**no groups, no
       collision, no reaction to anything**" contract and *why* (stink wave + LOD manager
       iterate `"crocodile"`), the flat-ground y = 0 assumption, and the fact that fauna is
       deliberately non-deterministic ambience outside the terrain `run_seed` contract
-- [ ] do **not** touch README.md / QUICKSTART.md (they are already stale on engine version;
+- [x] do **not** touch README.md / QUICKSTART.md (they are already stale on engine version;
       out of scope)
 
 ## Technical Details
