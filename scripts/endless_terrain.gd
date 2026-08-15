@@ -396,6 +396,11 @@ const ARTIFACT_COIN_RING_PAD_MAX: float = 4.0
 ## free — a river is wherever the field crosses one particular level, which is
 ## exactly the shape of a contour line on a map: long, winding, and never a blob.
 
+## Kill switch for all biome GEOMETRY (cacti, trees, mountain massifs), mirroring
+## spawn_artifacts / spawn_coins. The biome FIELD itself (ground tint, rivers,
+## wading) is not affected — this only silences the content spawner.
+@export var spawn_biome_content: bool = true
+
 ## Enum for readability at every call site (biome_at returns one of these).
 ## NOTE: there is deliberately no Biome.RIVER — a river is an OVERLAY on whatever
 ## biome the ground under it is, tested separately with is_river_at().
@@ -1129,6 +1134,15 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 	# single consolidated collision body.
 	spawn_artifact_in_chunk(chunk_pos, mesh_instance, obstacles, block_batch, block_body)
 
+	# Biome geometry — cacti / trees / massifs, depending on the biome under this
+	# chunk's centre (independent BIOME_SALT hash stream, no shared RNG draws
+	# consumed). SAME ORDERING REQUIREMENT as the artifact above, for the same
+	# reasons: after spawn_objects_in_chunk so its footprints append to the
+	# finished obstacles list, and before _build_block_multimesh / the block_body
+	# attach so all its stone and wood joins the chunk's ONE MultiMesh draw call
+	# and ONE collision body.
+	spawn_biome_content_in_chunk(chunk_pos, obstacles, block_batch, block_body)
+
 	# Build the chunk's batched block visuals. If any blocks were placed, collapse
 	# them all into one MultiMeshInstance3D parented to this chunk (so it is freed
 	# automatically when the chunk unloads, like every other per-chunk node).
@@ -1574,7 +1588,7 @@ func create_block(center_pos: Vector3, size: float, yaw: float, rng: RandomNumbe
 	"""
 	create_box(center_pos, Vector3(size, size, size), yaw, rng, block_batch, block_body)
 
-func create_box(center_pos: Vector3, dimensions: Vector3, yaw: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D, tilt: float = 0.0, color_override: Color = Color(0.0, 0.0, 0.0, 0.0)) -> void:
+func create_box(center_pos: Vector3, dimensions: Vector3, yaw: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D, tilt: float = 0.0, color_override: Color = Color(0.0, 0.0, 0.0, 0.0), collide: bool = true) -> void:
 	"""
 	Register one box for rendering AND register its physics collision shape. Used for
 	cube blocks and for the flat slabs that make up pyramids.
@@ -1627,6 +1641,16 @@ func create_box(center_pos: Vector3, dimensions: Vector3, yaw: float, rng: Rando
 	@param color_override: OPTIONAL colour that replaces the curated-ramp pick when
 	                       its alpha > 0 (the default is fully transparent = inert).
 	                       Used by artifacts for their weathered palette.
+	@param collide: OPTIONAL — when false the box is VISUAL ONLY: it still joins the
+	                chunk's MultiMesh batch, but no CollisionShape3D is created for
+	                it. Defaults to true, so every pre-existing call site behaves
+	                exactly as before. WHY IT EXISTS: forest tree CANOPIES are pure
+	                decoration — you walk under leaves, and they sit above head
+	                height anyway — so a forest chunk pays collision shapes for its
+	                TRUNKS only instead of 3-4x that for trunk + canopy layers. Like
+	                `tilt` and `color_override` this changes NO RNG behaviour: the
+	                colour and roughness draws above happen identically whatever
+	                `collide` is, so the deterministic world layout is untouched.
 	"""
 	# ----- Pick the block colour from a curated ramp -----------------------------
 	# IMPORTANT (determinism): the chunk's world layout is seeded from this same RNG.
@@ -1741,6 +1765,13 @@ func create_box(center_pos: Vector3, dimensions: Vector3, yaw: float, rng: Rando
 	# above) via a whole-transform assignment — for the default tilt of 0 this is
 	# exactly the old `position = center_pos; rotation.y = yaw` pair, and for a
 	# tilted artifact stone it keeps collision matched to the leaning visual.
+	#
+	# VISUAL-ONLY BOXES: `collide == false` returns here, having already appended
+	# the visual instance and consumed the exact same RNG draws. Only the physics
+	# node is skipped — see the @param note above for why canopies want this.
+	if not collide:
+		return
+
 	var collision_shape := CollisionShape3D.new()
 	collision_shape.transform = Transform3D(rot, center_pos)
 
@@ -2401,6 +2432,109 @@ func spawn_artifact_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, 
 	# the failure the rule exists to prevent; if it ever looks wrong, give the
 	# footprint a per-shape "solid centre height" rather than a taller vocabulary.
 	obstacles.append({ "pos": center, "radius": footprint.radius, "top": footprint.top, "climbable": true })
+
+# ============================================================================
+# BIOME CONTENT (the geometry each biome adds on top of the ordinary blocks)
+# ============================================================================
+#
+# One entry point, one independent RNG stream, three builders. Structured
+# exactly like the artifact spawner above and for the same reasons:
+#   - INDEPENDENT STREAM: seeded from chunk coords + run_seed ^ BIOME_SALT, so it
+#     consumes ZERO draws from the shared chunk RNG — every block, crocodile and
+#     coin the old generator produced is still exactly where it was.
+#   - BATCHED: every solid thing built here goes through create_box into the
+#     chunk's single MultiMesh (block_batch) and single BlockCollision body
+#     (block_body), so a forest chunk is still ONE block draw call.
+#   - FOOTPRINTS: each thing built appends a round obstacle to `obstacles`, which
+#     later spawners (crocodiles, coins) already know how to read.
+
+func spawn_biome_content_in_chunk(chunk_pos: Vector2i, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
+	"""
+	Build this chunk's biome-specific geometry (cacti / trees / massifs). Called
+	from create_chunk AFTER spawn_artifact_in_chunk and BEFORE
+	_build_block_multimesh / the block_body attach, so the geometry joins the
+	chunk's single MultiMesh and single collision body and its footprints are in
+	`obstacles` before crocodiles and coins are placed.
+
+	@param chunk_pos: Chunk coordinates being generated.
+	@param obstacles: The chunk's block-footprint list; builders append theirs.
+	@param block_batch / block_body: The chunk's visual batch + collision body,
+	                                 threaded through to create_box.
+
+	The CHUNK CENTRE decides the biome for the whole chunk's content budget (how
+	many trees, how many massifs); individual builders re-test biome_at at each
+	object's OWN position, which is what feathers a forest edge across a chunk
+	seam instead of stopping dead at it.
+
+	NOTE (deviation from the plan's stated signature): there is no parent_chunk
+	param. Everything a biome builds is a create_box entry — no builder has a node
+	to parent — so the argument would be dead weight at every call site.
+	"""
+	if not spawn_biome_content:
+		return
+
+	# Own stream. Different coordinate multipliers than the chunk-object /
+	# artifact streams (which both use 73856093 / 19349663) so the two hash
+	# sequences never correlate — biome content and artifacts must not agree
+	# about where "interesting" spots are.
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(Vector3i(chunk_pos.x * 83492791, chunk_pos.y * 15485863, run_seed ^ BIOME_SALT))
+
+	var center := chunk_to_world(chunk_pos)
+	match biome_at(center.x, center.z):
+		Biome.DESERT:
+			_spawn_desert_content(center, rng, obstacles, block_batch, block_body)
+		Biome.FOREST:
+			_spawn_forest_content(center, rng, obstacles, block_batch, block_body)
+		Biome.MOUNTAIN:
+			_spawn_mountain_content(center, rng, obstacles, block_batch, block_body)
+		_:
+			# PLAINS is the baseline look — the ordinary scattered blocks ARE its
+			# content, so it deliberately builds nothing extra here.
+			pass
+
+
+func _biome_spot_ok(world_x: float, world_z: float, road_clearance: float) -> bool:
+	"""
+	The single home of the "is this a legal spot for biome geometry" rule.
+
+	@param world_x, world_z: Candidate world position.
+	@param road_clearance: Minimum distance to the coin-road centerline (metres).
+	@return: true when the spot is NOT in a river AND at least `road_clearance`
+	         from the road centerline.
+
+	WHY BOTH TESTS LIVE TOGETHER: they answer the same question — "would putting
+	something solid here spoil a route the player needs?". Rivers must stay wadeable
+	(a tree in the water is nonsense and a massif would dam it), and the coin road
+	must stay followable — a forest leaves the coin swath clear, and a mountain
+	range leaves a canyon through itself, purely by asking for a bigger clearance.
+
+	Callers pass DIFFERENT clearances (trees a little, massifs a lot), which is why
+	the clearance is a parameter rather than a constant read in here.
+
+	Keep every clearance at or below ~26 m: _road_lateral_distance scans a station
+	window padded by ARTIFACT_ROAD_CLEARANCE (14) + two station spacings, which
+	bounds honest answers to about that distance. Anything further away in X is
+	already further than 26 m in a straight line, so the answer stays correct.
+	"""
+	if is_river_at(Vector3(world_x, 0.0, world_z)):
+		return false
+	return _road_lateral_distance(world_x, world_z) >= road_clearance
+
+
+func _spawn_desert_content(chunk_center: Vector3, rng: RandomNumberGenerator, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
+	"""Cactus stacks. Built in the next task — see the plan's Task 6 (DESERT)."""
+	pass
+
+
+func _spawn_forest_content(chunk_center: Vector3, rng: RandomNumberGenerator, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
+	"""Trunk + canopy trees. Built in the next task — see the plan's Task 6 (FOREST)."""
+	pass
+
+
+func _spawn_mountain_content(chunk_center: Vector3, rng: RandomNumberGenerator, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
+	"""Impassable block massifs. Built in the next task — see the plan's Task 6 (MOUNTAIN)."""
+	pass
 
 # ============================================================================
 # BIOME FIELD (one noise field; four biomes + rivers read out of it)
