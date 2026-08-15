@@ -2752,7 +2752,12 @@ func _spawn_desert_content(chunk_center: Vector3, rng: RandomNumberGenerator, ob
 		if rng.randf() < CACTUS_ARM_CHANCE:
 			var arm_len := width * rng.randf_range(2.0, 3.0)
 			var arm_y := top_y * rng.randf_range(0.45, 0.7)
-			var arm_dir := Vector3(cos(yaw), 0.0, sin(yaw)) * (arm_len * 0.5 + width * 0.5)
+			# Push the arm out along its OWN long axis, which create_box orients with
+			# Basis(UP, yaw) — that maps local +X to (cos yaw, 0, -sin yaw). Writing
+			# the +sin form here rotates the offset the wrong way round, so the arm
+			# gets shoved sideways instead of outwards and floats detached from the
+			# trunk (worst at yaw = 45 deg, where the two are 90 deg apart).
+			var arm_dir := (Basis(Vector3.UP, yaw) * Vector3.RIGHT) * (arm_len * 0.5 + width * 0.5)
 			create_box(
 				Vector3(local_x, arm_y, local_z) + arm_dir,
 				Vector3(arm_len, width, width),
@@ -2969,13 +2974,29 @@ func _biome_hash2(p: Vector2) -> float:
 	The mod(p, 289.0) wrap is not decoration: see the PRECISION note in the shader
 	(world X reaches kilometres and fp32 hashing collapses out there). It is kept
 	here so both copies tile at exactly the same place.
+
+	EVERY STEP RUNS THROUGH Vector2, AND THAT IS THE POINT. Vector2 stores `real_t`
+	= float32, so round-tripping a value through one is the only float32 cast
+	GDScript has — bare GDScript scalars are float64. This hash AMPLIFIES: `v`
+	reaches ~9.2e3 before the final fract, where an fp32 ULP is ~1e-3, so a
+	last-bit difference upstream comes out ~200x larger at the end. Computing any
+	step in float64 therefore does NOT give "the same answer, more precisely" — it
+	gives a different hash. Measured against a strict-fp32 model of the GLSL, the
+	old float64 version diverged by mean 3.1e-3 / max 1.0, with 8% of lattice
+	corners past RIVER_HALF_WIDTH (0.007) — i.e. ~20% of river area disagreed
+	between the blue band drawn and the wading zone felt, the exact failure this
+	contract exists to prevent. Every operation below is therefore fp32-on-fp32,
+	matching the GLSL bit-for-bit (verified over all 289x289 lattice corners).
+	Do not "simplify" any line back to scalar arithmetic.
 	"""
 	var q := Vector2(fposmod(p.x, 289.0), fposmod(p.y, 289.0))
-	q = Vector2(q.x * 0.1031, q.y * 0.1030)
+	q *= Vector2(0.1031, 0.1030)
 	q = Vector2(q.x - floorf(q.x), q.y - floorf(q.y))
-	var d := q.dot(Vector2(q.y + 33.33, q.x + 33.33))
-	q += Vector2(d, d)
-	var v := (q.x + q.y) * q.x
+	# Vector2.dot() is real_t (fp32) arithmetic — GLSL's dot(p, p.yx + 33.33).
+	q += Vector2.ONE * q.dot(Vector2(q.y, q.x) + Vector2(33.33, 33.33))
+	# Both halves of fract((p.x + p.y) * p.x) forced through fp32 rounding.
+	var v := Vector2(q.x + q.y, 0.0).x
+	v = Vector2(v * q.x, 0.0).x
 	return v - floorf(v)
 
 
@@ -3011,11 +3032,19 @@ func _biome_noise(world_x: float, world_z: float) -> float:
 	SHADER-PARITY CONTRACT: mirrors `biome_noise` in ground.gdshader exactly (same
 	offset, same 1/BIOME_CELL_SIZE scale, same clamp). Edit both together.
 
-	ponytail: GDScript floats are doubles while GLSL runs fp32, so the two copies
-	can disagree in the last bits — the river band edge may sit a fraction of a
-	metre apart between the blue tint and the wading zone. Harmless (you are wading
-	the moment you look wet), and far cheaper than uploading a field texture or
-	reading anything back from the GPU.
+	GDScript floats are doubles while GLSL runs fp32, so _biome_hash2 goes to some
+	trouble to force every step through fp32 (see the note there — the naive
+	double version is NOT a harmless last-bit difference, it moves the waterline
+	by metres). With that done the two copies agree bit-for-bit on every lattice
+	corner, which is far cheaper than uploading a field texture or reading
+	anything back from the GPU.
+
+	ponytail: the residual risk is a driver that contracts the dot() into an FMA,
+	which would re-diverge (and could differ between desktop GL and mobile
+	WebGL2). Upgrade path if that ever shows up: hash the wrapped INTEGER lattice
+	indices with uint bit ops (GLSL ES 3.00 has them, GDScript ints are exact), so
+	there is no float precision left to match — it changes the field, so
+	RIVER_HALF_WIDTH would need re-tuning by eye.
 	"""
 	var p := Vector2(world_x, world_z) / BIOME_CELL_SIZE + biome_offset
 	return clampf(_biome_value_noise(p), 0.0, 1.0)

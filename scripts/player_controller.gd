@@ -1676,6 +1676,12 @@ func restart_game() -> void:
 	is_game_over = false
 	is_caught = false
 	is_respawning = false
+	# Ability cooldowns are NOT part of reset_position()'s wipe list, and
+	# _update_ability_timers() sits below the is_game_over early return in
+	# _physics_process — so they freeze the moment the run ends and would carry
+	# into the new one at full value (die right after a Stink Wave, hit Play
+	# Again, and F is refused for ~12 s with the HUD dial nearly full).
+	ability_cooldowns.fill(0.0)
 	# Drop any mid-blink i-frames and restore model visibility for the current
 	# view — blink state must never leak into a fresh run.
 	respawn_blink_timer = 0.0
@@ -2212,6 +2218,14 @@ func _reset_ability_states() -> void:
 	"""Clear transient ability state on respawn (air boost, giant/small form)."""
 	windman_boost_timer = 0.0
 	_revert_teibi_to_normal()
+	# Sidestep is transient too: the caught/respawn/game-over branches all return
+	# BEFORE update_sidestep(), so a player caught mid-step would otherwise come
+	# back with is_stepping still true and slide sideways out of the spawn.
+	if is_stepping:
+		is_stepping = false
+		step_timer = 0.0
+		step_direction = 0.0
+		reset_sidestep_pose()
 
 
 func _revert_teibi_to_normal() -> void:
