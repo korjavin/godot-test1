@@ -77,6 +77,16 @@ const BOB_SPEED: float = 0.3
 ## 1.6 m/s a 0.1 s step moves a cloud ~16 cm — invisible on an object 50 m up.
 const TICK_INTERVAL: float = 0.1
 
+## Base colour of a normal cloud: near-white, faintly warm. Each cloud jitters
+## its brightness a little (± CLOUD_BRIGHTNESS_JITTER, rolled once per cloud)
+## so the field doesn't read as one flat white stamp.
+const CLOUD_COLOR: Color = Color(0.93, 0.94, 0.96)
+const CLOUD_BRIGHTNESS_JITTER: float = 0.07
+
+## Storm clouds render this dark blue-grey (the storm *roll* arrives in the
+## storm task; the colour lives here with its sibling).
+const STORM_COLOR: Color = Color(0.32, 0.34, 0.42)
+
 # ============================================================================
 # STATE
 # ============================================================================
@@ -104,6 +114,14 @@ var _player: Node3D = null
 ## Accumulator for the throttled tick.
 var _tick_accum: float = 0.0
 
+## Running clock for the sine bob (advanced on the tick — the bob is only ever
+## rendered on the tick, so a finer clock would be wasted precision).
+var _time: float = 0.0
+
+## The one draw call for the whole cloud field: a single MultiMeshInstance3D
+## holding every box of every cloud (see _build_cloud_multimesh()).
+var _cloud_mmi: MultiMeshInstance3D = null
+
 
 # ============================================================================
 # LIFECYCLE
@@ -112,6 +130,7 @@ var _tick_accum: float = 0.0
 func _ready() -> void:
 	add_to_group("weather")
 	_rng.randomize()
+	_build_cloud_multimesh()
 
 
 func _process(delta: float) -> void:
@@ -122,6 +141,7 @@ func _process(delta: float) -> void:
 		return
 	var elapsed: float = _tick_accum
 	_tick_accum = 0.0
+	_time += elapsed
 
 	# Re-acquire the player if needed; with no player in the tree the whole
 	# manager idles (nothing to centre the field on).
@@ -140,6 +160,71 @@ func _process(delta: float) -> void:
 			_clouds.append(cloud)
 
 	_update_clouds(player_pos, elapsed)
+
+
+# ============================================================================
+# CLOUD RENDERING — one MultiMesh, one draw call
+# ============================================================================
+
+func _build_cloud_multimesh() -> void:
+	## Same batching pattern as endless_terrain's per-chunk block MultiMesh:
+	## one shared unit BoxMesh, per-instance transform carries the box size,
+	## per-instance colour carries the cloud tint — the entire sky costs ONE
+	## draw call regardless of cloud count.
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.use_colors = true
+	mm.mesh = BoxMesh.new()  # unit box; per-instance basis scales it
+	# ponytail: fixed allocation at the worst case (every cloud rolls max boxes);
+	# unused slots are parked with a zero-scale basis instead of repacking the
+	# buffer each tick — cheaper and simpler, the GPU skips degenerate boxes.
+	mm.instance_count = CLOUD_COUNT * BOXES_PER_CLOUD_MAX
+	var parked := Transform3D(Basis().scaled(Vector3.ZERO), Vector3.ZERO)
+	for i in mm.instance_count:
+		mm.set_instance_transform(i, parked)
+
+	# ONE shared material for every box. Soft matte white: full roughness, no
+	# specular glint (a sun highlight on a "cloud" reads as plastic). NO
+	# transparency — alpha-blended sky quads this big are mobile fill-rate
+	# poison (every covered pixel pays blend cost); opaque blocky clouds match
+	# the world's look and cost nothing extra.
+	var mat := StandardMaterial3D.new()
+	mat.vertex_color_use_as_albedo = true
+	mat.roughness = 1.0
+	mat.metallic_specular = 0.0
+
+	_cloud_mmi = MultiMeshInstance3D.new()
+	_cloud_mmi.multimesh = mm
+	_cloud_mmi.material_override = mat
+	# Shadows off: directional_shadow_max_distance is tuned to ~55 m, so clouds
+	# at 45–70 m altitude are outside the shadow range anyway — casting would
+	# add them to the shadow passes for nothing. Don't fight the tuning.
+	_cloud_mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(_cloud_mmi)
+
+
+func _write_cloud_instances() -> void:
+	## Write every instance transform + colour for the whole field. Runs on the
+	## ~10 Hz tick only; ~234 transform writes at 10 Hz is negligible.
+	var mm: MultiMesh = _cloud_mmi.multimesh
+	var parked := Transform3D(Basis().scaled(Vector3.ZERO), Vector3.ZERO)
+	for ci in _clouds.size():
+		var cloud: Dictionary = _clouds[ci]
+		var bob: float = sin(_time * BOB_SPEED * TAU + cloud["bob_phase"]) * BOB_AMPLITUDE
+		var center: Vector3 = cloud["center"] + Vector3(0.0, bob, 0.0)
+		var boxes: Array = cloud["boxes"]
+		var color: Color = STORM_COLOR if cloud["is_storm"] \
+				else CLOUD_COLOR * cloud["brightness"]
+		for bi in BOXES_PER_CLOUD_MAX:
+			var idx: int = ci * BOXES_PER_CLOUD_MAX + bi
+			if bi < boxes.size():
+				var box: Dictionary = boxes[bi]
+				var basis := Basis(Vector3.UP, box["yaw"]).scaled(box["size"])
+				mm.set_instance_transform(idx, Transform3D(basis, center + box["offset"]))
+				mm.set_instance_color(idx, color)
+			else:
+				# Unused slot for this cloud (it rolled fewer than max boxes).
+				mm.set_instance_transform(idx, parked)
 
 
 # ============================================================================
@@ -180,6 +265,8 @@ func _make_cloud() -> Dictionary:
 		"radius": 0.0,
 		"speed": WIND_SPEED * (1.0 + _rng.randf_range(-CLOUD_SPEED_VARIATION, CLOUD_SPEED_VARIATION)),
 		"bob_phase": _rng.randf_range(0.0, TAU),
+		# Per-cloud brightness multiplier on CLOUD_COLOR (storms ignore it).
+		"brightness": 1.0 + _rng.randf_range(-CLOUD_BRIGHTNESS_JITTER, CLOUD_BRIGHTNESS_JITTER),
 	}
 
 
@@ -206,9 +293,9 @@ func _place_cloud_around(cloud: Dictionary, player_pos: Vector3, ahead_only: boo
 
 
 func _update_clouds(player_pos: Vector3, elapsed: float) -> void:
-	## One throttled tick of cloud simulation: drift each cluster with the wind
-	## and recycle any that fell too far behind. (Rendering — writing the
-	## MultiMesh instance transforms — is added by the rendering task.)
+	## One throttled tick of cloud simulation: drift each cluster with the wind,
+	## recycle any that fell too far behind, then push the whole field into the
+	## MultiMesh.
 	for cloud in _clouds:
 		cloud["center"] += WIND_DIR * cloud["speed"] * elapsed
 		# "Behind" = along-wind offset from the player, projected onto WIND_DIR.
@@ -220,4 +307,6 @@ func _update_clouds(player_pos: Vector3, elapsed: float) -> void:
 			cloud["boxes"] = fresh["boxes"]
 			cloud["speed"] = fresh["speed"]
 			cloud["bob_phase"] = fresh["bob_phase"]
+			cloud["brightness"] = fresh["brightness"]
 			_place_cloud_around(cloud, player_pos, true)
+	_write_cloud_instances()

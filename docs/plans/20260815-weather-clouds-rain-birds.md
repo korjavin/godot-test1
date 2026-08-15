@@ -113,20 +113,20 @@ Dependencies identified: none new. No assets, no GPUParticles3D (web runs
       no hard references, and do nothing at all while no player exists
 
 ### Task 2: Cloud rendering — one MultiMesh, one draw call
-- [ ] in `_ready()`, build a single `MultiMeshInstance3D` child (`_cloud_mmi`) with a
+- [x] in `_ready()`, build a single `MultiMeshInstance3D` child (`_cloud_mmi`) with a
       shared unit `BoxMesh`, `transform_format = TRANSFORM_3D`, `use_colors = true`, and
       `instance_count = CLOUD_COUNT * BOXES_PER_CLOUD_MAX` (fixed allocation; unused slots
       are parked with a zero-scale basis — cheaper and simpler than repacking, note it
       with a `ponytail:` comment)
-- [ ] give it ONE shared `StandardMaterial3D`: `vertex_color_use_as_albedo = true`,
+- [x] give it ONE shared `StandardMaterial3D`: `vertex_color_use_as_albedo = true`,
       `roughness = 1.0`, `specular = 0.0` (soft matte white, NO transparency — alpha on
       big sky quads is mobile fill-rate poison, say so in the comment)
-- [ ] `cast_shadow = SHADOW_CASTING_SETTING_OFF` on the MultiMesh instance, with the
+- [x] `cast_shadow = SHADOW_CASTING_SETTING_OFF` on the MultiMesh instance, with the
       comment explaining why: the tuned `directional_shadow_max_distance` is ~55 m, so
       clouds at 45–70 m are outside the shadow range anyway — do not fight it
-- [ ] per-instance colour: near-white for normal clouds (slight per-cloud brightness
+- [x] per-instance colour: near-white for normal clouds (slight per-cloud brightness
       jitter), dark blue-grey for storm clouds (`STORM_COLOR`), both as `const`s
-- [ ] `_process(delta)`: accumulate into `_tick_accum` and only do cloud work every
+- [x] `_process(delta)`: accumulate into `_tick_accum` and only do cloud work every
       `TICK_INTERVAL` — drift each cloud centre by `WIND_DIR * cloud.speed * elapsed`, add
       the sine bob, recycle any cloud whose along-wind distance behind the player exceeds
       `FIELD_RADIUS`, then write every instance transform
