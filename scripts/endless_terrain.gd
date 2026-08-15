@@ -279,6 +279,23 @@ const BOSS_LATERAL_MAX: float = 4.0
 ## sees the boss looming up the road rather than materializing beside them.
 const BOSS_FORWARD_OFFSET: float = 8.0
 
+## How much ground a boss actually occupies, per unit of body scale. The
+## crocodile's collision capsule LIES DOWN (piglet_crocodile.tscn rotates the
+## 1.4 m capsule onto its side), so its widest horizontal reach is half that
+## length — 0.7 m at body scale 1. Multiplying by the boss's scale is the whole
+## point: a 6x boss needs ~4.2 m of clearance from a block where a normal
+## crocodile needs ~0.7, so the fixed min_object_clearance that the ordinary
+## crocodile spawner uses would be far too small here.
+const BOSS_FOOTPRINT_RADIUS_PER_SCALE: float = 0.7
+
+## How many deterministic lateral candidates a boss tries before it is skipped
+## entirely (the same "try a few spots, else give up" shape as artifacts). Every
+## candidate comes from the SAME BOSS_SEED stream and the FIRST one is exactly
+## the draw that existed before this list did, so the boss schedule (which
+## station, what size) and the placement of every unobstructed boss are
+## byte-for-byte what they were.
+const BOSS_PLACE_TRIES: int = 4
+
 ## Fixed seed for the boss placement RNG — its OWN independent hash stream (like
 ## ROAD_COIN_SEED), mixed with the boss index and run_seed as
 ## hash(Vector3i(i, BOSS_SEED, run_seed)). It never consumes a draw from any
@@ -1309,8 +1326,10 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 		# Rare crocodiles that patrol an elevated platform (pyramid top / wall ridge)
 		spawn_platform_crocodiles(chunk_pos, mesh_instance, platforms)
 		# Rare BOSS crocodiles guarding the coin road (deterministic, station-
-		# indexed — its own BOSS_SEED hash stream, no shared RNG draws consumed)
-		spawn_bosses_in_chunk(chunk_pos, mesh_instance)
+		# indexed — its own BOSS_SEED hash stream, no shared RNG draws consumed).
+		# Gets `obstacles` like its siblings so a 2.5x-6x boss is never wedged
+		# inside a wall/pyramid/tree/mountain right on the player's path.
+		spawn_bosses_in_chunk(chunk_pos, mesh_instance, obstacles)
 
 	# Lay this chunk's slice of the coin road (deterministic station-indexed trail;
 	# coins sit at ground height, perching on a climbable block where the road
@@ -2145,13 +2164,19 @@ func _boss_at(i: int) -> Dictionary:
 	@param i: Boss index (1-based). Owns station k = i * BOSS_INTERVAL_STATIONS.
 	          ASSUMES the station cache already covers `k` (callers
 	          _road_extend_to_x first, like _road_coins_at).
-	@return: { "pos": Vector3 (world-space), "scale": float (body scale) }.
+	@return: { "positions": Array[Vector3] (world-space candidates, best first),
+	           "scale": float (body scale) }.
 
 	EDUCATIONAL NOTE:
-	- The RNG draws ONLY the lateral offset (one draw, fixed order), so boss
-	  placement is stable within a run: revisiting a chunk regenerates the
-	  identical boss. Across runs, run_seed changes BOTH the road and this
+	- The RNG draws ONLY lateral offsets (BOSS_PLACE_TRIES draws, fixed order),
+	  so boss placement is stable within a run: revisiting a chunk regenerates
+	  the identical boss. Across runs, run_seed changes BOTH the road and this
 	  stream, so bosses land elsewhere.
+	- positions[0] is the ONE draw this function used to make, and it is drawn
+	  FIRST, so it is bit-identical to the pre-obstacle-check behaviour. The
+	  extra candidates are appended AFTER it and only ever consulted when the
+	  spawner rejects an earlier one for standing in a block footprint — nothing
+	  in the schedule (station, size, rarity) moves.
 	- Y sits a little above ground; gravity settles the body (the croc's capsule
 	  bottom is at its origin, so this works at any scale).
 	"""
@@ -2165,15 +2190,22 @@ func _boss_at(i: int) -> Dictionary:
 
 	var rng := RandomNumberGenerator.new()
 	rng.seed = hash(Vector3i(i, BOSS_SEED, run_seed))
-	var lateral := rng.randf_range(-1.0, 1.0) * BOSS_LATERAL_MAX
+	# Candidate lateral offsets, drawn in one fixed order. The first draw is the
+	# original (and overwhelmingly the used) one; the rest are fallbacks for a
+	# boss whose primary spot happens to sit inside a block/tree/mountain
+	# footprint — see spawn_bosses_in_chunk.
+	var positions: Array[Vector3] = []
+	for _try in BOSS_PLACE_TRIES:
+		var lateral := rng.randf_range(-1.0, 1.0) * BOSS_LATERAL_MAX
+		var p: Vector2 = st.center + tangent * BOSS_FORWARD_OFFSET + perp * lateral
+		positions.append(Vector3(p.x, 0.6, p.y))
 
-	var p: Vector2 = st.center + tangent * BOSS_FORWARD_OFFSET + perp * lateral
 	# Size schedule: boss 1 is exactly BOSS_BASE_SCALE, each successive boss is
 	# BOSS_GROWTH of base bigger, capped at BOSS_MAX_SCALE (see the consts above).
 	var body_scale := minf(BOSS_BASE_SCALE * (1.0 + float(i - 1) * BOSS_GROWTH), BOSS_MAX_SCALE)
-	return { "pos": Vector3(p.x, 0.6, p.y), "scale": body_scale }
+	return { "positions": positions, "scale": body_scale }
 
-func spawn_bosses_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D) -> void:
+func spawn_bosses_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array = []) -> void:
 	"""
 	Spawn this chunk's boss crocodiles — the rare road-guarding giants placed every
 	BOSS_INTERVAL_STATIONS stations along the coin road (see the BOSS CROCODILES
@@ -2185,11 +2217,30 @@ func spawn_bosses_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D) ->
 	lands in THIS chunk (world_to_chunk(pos) == chunk_pos) — each boss is claimed
 	by exactly one chunk, so there are no seam gaps or duplicates.
 
+	A boss is 2.5x–6x the size of a normal crocodile and stands ON the road, so a
+	boss wedged into a wall/pyramid/tree/mountain sits right on the player's path.
+	Each boss therefore walks its deterministic candidate list (see _boss_at) and
+	takes the first spot clear of every footprint in `obstacles`, exactly like the
+	sibling spawners — and is skipped entirely if none is clear.
+
+	THE CLAIM RULE (why the candidate walk stops early): `obstacles` only
+	describes THIS chunk, so a chunk can only judge candidates that land inside
+	itself. The loop therefore stops at the first candidate outside this chunk —
+	from there on, another chunk owns the decision. That makes duplicates
+	impossible: a chunk can only spawn a boss whose FIRST candidate already lies
+	inside it, and only one chunk can contain that first candidate. The price is
+	that a boss whose first candidate is blocked and whose next clear candidate
+	falls in a NEIGHBOURING chunk is skipped rather than moved — a rare
+	no-boss-here, which is an outcome the design already allows.
+
 	@param chunk_pos: Chunk coordinates this call is generating bosses for.
 	@param parent_chunk: The chunk mesh to attach bosses to. Chunk parenting is a
 	                     FEATURE here: outrunning a boss far enough unloads its
 	                     chunk and frees the boss with it — which reads to the
 	                     player as "you escaped it".
+	@param obstacles: This chunk's block footprints ({ pos (chunk-LOCAL), radius,
+	                  top, climbable }), as built by spawn_objects_in_chunk and
+	                  extended by the artifact/biome builders.
 	"""
 	if not crocodile_scene:
 		return
@@ -2223,10 +2274,35 @@ func spawn_bosses_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D) ->
 			break
 
 		var boss: Dictionary = _boss_at(cur_i)
-		var boss_pos: Vector3 = boss.pos
-		# Exactly-one-chunk claim (see the docstring): only the chunk the boss
-		# actually lands in spawns it.
-		if world_to_chunk(boss_pos) != chunk_pos:
+		var boss_scale: float = boss.scale
+		# Clearance this boss needs, SCALED BY ITS SIZE — a 6x boss reaches ~4.2 m
+		# where a normal crocodile reaches ~0.7, so the crocodile spawner's fixed
+		# min_object_clearance would be nowhere near enough (see the constant).
+		var footprint: float = BOSS_FOOTPRINT_RADIUS_PER_SCALE * boss_scale
+
+		# Walk the deterministic candidates: take the first one that is both ours
+		# (the claim rule in the docstring) and clear of every footprint.
+		var local_pos := Vector3.ZERO
+		var placed := false
+		for candidate in boss.positions:
+			# Exactly-one-chunk claim: the moment a candidate lands elsewhere, that
+			# chunk owns the rest of this boss's decision — stop, don't skip ahead.
+			if world_to_chunk(candidate) != chunk_pos:
+				break
+			# Obstacle footprints are stored chunk-LOCAL, so compare in that space.
+			var local := Vector3(candidate.x - center.x, candidate.y, candidate.z - center.z)
+			var clear := true
+			for ob in obstacles:
+				var horizontal := Vector2(local.x - ob.pos.x, local.z - ob.pos.z).length()
+				if horizontal < ob.radius + footprint:
+					clear = false
+					break
+			if clear:
+				local_pos = local
+				placed = true
+				break
+		# Not ours, or every candidate of ours was buried in geometry: no boss here.
+		if not placed:
 			continue
 
 		var croc = crocodile_scene.instantiate()
@@ -2234,7 +2310,7 @@ func spawn_bosses_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D) ->
 		# Chunk-LOCAL position (relative to the chunk center), like every other
 		# chunk-parented node. Default rotation — the wander AI turns it within a
 		# second anyway, and drawing a rotation would add an RNG draw for nothing.
-		croc.position = Vector3(boss_pos.x - center.x, boss_pos.y, boss_pos.z - center.z)
+		croc.position = local_pos
 		# CALL-ORDER CONTRACT: setup_as_boss BEFORE add_child, so the croc's
 		# _ready (which runs on add_child, terrain-parented) sees the boss flags
 		# and skips its random speed/size rolls in favor of the schedule.
