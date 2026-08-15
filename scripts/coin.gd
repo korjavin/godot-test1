@@ -45,6 +45,11 @@ const BOB_AMOUNT: float = 0.12
 ## The spinning visual. We rotate this child, leaving the collision shape steady.
 @onready var mesh: Node3D = $Mesh
 
+## The ONE purple gem material, shared by every gem that will ever spawn. Built
+## lazily in make_gem() from the coin scene's own material so an art change in
+## coin.tscn still carries through. Static — one per process, never per gem.
+static var _gem_material: StandardMaterial3D = null
+
 ## Guard so a coin can only ever be collected once.
 var collected: bool = false
 
@@ -119,12 +124,19 @@ func make_gem() -> void:
 	scale = Vector3.ONE * GEM_SCALE
 
 	var gem_mesh: MeshInstance3D = get_node("Mesh")
-	var mat := gem_mesh.get_surface_override_material(0)
-	if mat is StandardMaterial3D:
-		var gem_mat: StandardMaterial3D = mat.duplicate()
-		gem_mat.albedo_color = GEM_COLOR
-		gem_mat.emission = GEM_COLOR
-		gem_mesh.set_surface_override_material(0, gem_mat)
+	if _gem_material == null:
+		var mat := gem_mesh.get_surface_override_material(0)
+		if not (mat is StandardMaterial3D):
+			return
+		# Build the purple variant ONCE for the whole process and share it. Every
+		# gem wants the identical material (GEM_COLOR is a const), and gems are
+		# rebuilt on every chunk reload all along the road, so duplicating per gem
+		# was pure churn — same static-cache discipline as ToonShading's styled
+		# materials and fauna's "never duplicate a material per animal" rule.
+		_gem_material = (mat as StandardMaterial3D).duplicate()
+		_gem_material.albedo_color = GEM_COLOR
+		_gem_material.emission = GEM_COLOR
+	gem_mesh.set_surface_override_material(0, _gem_material)
 
 
 # ============================================================================

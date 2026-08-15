@@ -60,6 +60,12 @@ const LIVE_DATA_EPSILON: float = 0.05
 ## `has_data()` should report false rather than steer on a frozen reading.
 const JS_SAMPLE_TIMEOUT: float = 1.0
 
+## Smoothing weight for the low-pass gravity estimate used ONLY on browsers that
+## deliver `accelerationIncludingGravity` but no `acceleration` (see _read_js).
+## Small = slow tracking = gravity only, leaving footstep peaks in the residual;
+## at ~60 Hz events this settles a reorientation in roughly a second.
+const JS_GRAVITY_LP_ALPHA: float = 0.05
+
 ## Standard gravity magnitude. Used to normalise the gravity vector into a clean
 ## "down" direction for the tilt math, independent of the device's exact reading.
 const GRAVITY_MAGNITUDE: float = 9.80665
@@ -85,6 +91,11 @@ var _gravity: Vector3 = Vector3.ZERO
 ## as `accel - gravity`; the JS `devicemotion.acceleration` field already excludes
 ## gravity, so we copy it straight in.
 var _linear: Vector3 = Vector3.ZERO
+
+## Low-pass gravity estimate for the gravity-only JS path (see JS_GRAVITY_LP_ALPHA
+## and _read_js). Zero means "not seeded yet"; unused on the native path and on
+## browsers that deliver a real `acceleration`.
+var _gravity_lp: Vector3 = Vector3.ZERO
 
 ## Angular velocity (rad/s) — gyro. Twist-yaw integrates `z` from this when no
 ## absolute compass heading is available.
@@ -185,6 +196,18 @@ var _integrated_yaw: float = 0.0
 ## it calibrates immediately AND clears the flag, so an explicit re-zero still works.
 var _calibrate_pending: bool = false
 
+## The SAME deferral, one source down: the compass (`deviceorientation`) can lag
+## `devicemotion` by seconds — iOS grants them together but Safari fires motion
+## first, and the JS shim's `_ori_age` gate treats a not-yet-fired compass as
+## absent. So a calibration can complete on live GRAVITY while `_has_orientation`
+## is still false, leaving `_neutral_yaw_deg` at its 0.0 default. When the compass
+## then comes up, `yaw()` reports the raw absolute heading — up to ±180° — which
+## saturates `mobile_input`'s steer strength and holds `turn_left`/`turn_right`
+## pressed every physics frame (the hero spins in place until a recalibrate).
+## Arming this instead lets the poll capture the yaw neutral from the first real
+## compass sample, exactly like `_calibrate_pending` does for gravity.
+var _yaw_neutral_pending: bool = false
+
 
 # ===========================================================================
 # STATIC: canonical "is this a touch/mobile session?" detection
@@ -211,7 +234,32 @@ var _calibrate_pending: bool = false
 ## On a native desktop build (no touchscreen, `OS.has_feature("web")` false) it
 ## returns **false without ever touching JavaScriptBridge**, so desktop mouse
 ## capture happens exactly as before — byte-for-byte unchanged.
+##
+## MEMOISED FOR THE WHOLE SESSION, and that is load-bearing, not a micro-opt. On
+## web the `matchMedia` probes are NOT constant — they flip when a pointing device
+## is attached or detached mid-session. Callers split into two camps: some cache
+## the answer once (`touch_controls._is_touch`, `capture_hint`), others re-ask live
+## (`mobile_input._notification`, the mouse-capture guards). If those two camps ever
+## see different answers the game HARD-FREEZES: the focus-loss handler pauses the
+## tree because it reads "touch", while the touch UI — which caches "not touch" —
+## keeps its "tap to resume" overlay hidden, and `pause_controller` refuses to
+## unpause a pause it did not create. One evaluation per session makes the split
+## impossible by construction (and stops re-running JS on every click).
 static func is_touch_session() -> bool:
+	if _touch_session_cache != CACHE_UNSET:
+		return _touch_session_cache == 1
+	_touch_session_cache = 1 if _probe_touch_session() else 0
+	return _touch_session_cache == 1
+
+
+## Sentinel for "the touch-session probe has not run yet" (see the cache above).
+const CACHE_UNSET: int = -1
+
+## Memoised `is_touch_session()` result: CACHE_UNSET, 0 (no) or 1 (yes).
+static var _touch_session_cache: int = CACHE_UNSET
+
+
+static func _probe_touch_session() -> bool:
 	# Primary signal, consulted on every platform. On desktop this is the ONLY
 	# branch reached, and it is false, so we return false immediately below.
 	if DisplayServer.is_touchscreen_available():
@@ -451,9 +499,14 @@ func _apply_calibration() -> void:
 	# Use the freshest gravity reading as the new "down".
 	if _gravity.length() > LIVE_DATA_EPSILON:
 		_neutral_gravity = _gravity
-	# Capture the current absolute heading (if any) as the zero for twist-yaw.
+	# Capture the current absolute heading (if any) as the zero for twist-yaw. With
+	# no compass sample yet, ARM the capture instead of leaving the stale 0.0 default
+	# in place — see `_yaw_neutral_pending` for what a missed capture does to steering.
 	if _has_orientation:
 		_neutral_yaw_deg = _orientation.x
+		_yaw_neutral_pending = false
+	else:
+		_yaw_neutral_pending = true
 	# Reset the drift-prone integrated yaw so the new neutral really is zero twist.
 	_integrated_yaw = 0.0
 
@@ -489,6 +542,13 @@ func _poll_sources(delta: float) -> void:
 	if _calibrate_pending and _has_live and _gravity.length() > LIVE_DATA_EPSILON:
 		_apply_calibration()
 		_calibrate_pending = false
+
+	# Same deferral for the compass leg, which can come up long after gravity (see
+	# `_yaw_neutral_pending`): capture the yaw neutral from the first real heading so
+	# twist steering starts centred instead of saturated at the raw absolute heading.
+	if _yaw_neutral_pending and _has_orientation:
+		_neutral_yaw_deg = _orientation.x
+		_yaw_neutral_pending = false
 
 
 ## Pick the live source and fill the source-agnostic "current sample" from it. Split
@@ -555,6 +615,10 @@ func _select_and_read_source(delta: float) -> void:
 	_has_live = false
 	_has_orientation = false
 	_linear = Vector3.ZERO
+	# Drop the low-pass gravity estimate too: when the stream resumes the phone may
+	# be held quite differently, and a stale estimate would read as one long phantom
+	# step burst until it converged. Zero means "re-seed from the first sample".
+	_gravity_lp = Vector3.ZERO
 	_current_source = "none"  # diagnostics: panel shows "Sensor: NO DATA".
 
 
@@ -602,6 +666,10 @@ func _read_native(delta: float, accel: Vector3, gravity: Vector3) -> void:
 			_js_num("__gd_ori_alpha"),
 			_js_num("__gd_ori_beta"),
 			_js_num("__gd_ori_gamma"))
+		# Hold the gyro accumulator at zero while the compass drives yaw, so if the
+		# compass later stalls, `yaw()` falls back to "no twist" instead of snapping to
+		# whatever the accumulator held before the compass took over.
+		_integrated_yaw = 0.0
 	else:
 		_has_orientation = false
 		_integrated_yaw += _gyro.z * delta
@@ -636,9 +704,27 @@ func _read_js(delta: float) -> void:
 
 	# Gravity isn't delivered directly by devicemotion; recover it as
 	# (accelIncludingGravity − acceleration), which is exactly the gravity vector.
-	_gravity = accel - _linear
-	if _gravity.length() <= LIVE_DATA_EPSILON:
-		_gravity = accel
+	if _linear.length() <= LIVE_DATA_EPSILON and accel.length() > LIVE_DATA_EPSILON:
+		# GRAVITY-ONLY DEVICE. Plenty of browsers send `acceleration` null but a
+		# perfectly good `accelerationIncludingGravity` (the listener zeroes the
+		# former, see _on_js_devicemotion). Subtracting straight through would
+		# leave `_linear` permanently ZERO — tilt steering would still work, so
+		# nothing looks broken, but step-to-walk (the headline mobile feature)
+		# would never register a single step. Recover the linear component with a
+		# low-pass gravity estimate instead: gravity is the slow part of the
+		# signal, footsteps are the fast part, so accel − low-passed accel IS the
+		# step signal. Seeded from the first sample so it doesn't have to converge
+		# from zero (which would read as one huge phantom step).
+		if _gravity_lp.length() <= LIVE_DATA_EPSILON:
+			_gravity_lp = accel
+		else:
+			_gravity_lp = _gravity_lp.lerp(accel, JS_GRAVITY_LP_ALPHA)
+		_gravity = _gravity_lp
+		_linear = accel - _gravity_lp
+	else:
+		_gravity = accel - _linear
+		if _gravity.length() <= LIVE_DATA_EPSILON:
+			_gravity = accel
 
 	# Absolute orientation (deviceorientation): alpha/beta/gamma in degrees.
 	# `__gd_has_orient` is set to 1 by the orientation listener once it fires — but the
@@ -654,6 +740,9 @@ func _read_js(delta: float) -> void:
 			_js_num("__gd_ori_alpha"),
 			_js_num("__gd_ori_beta"),
 			_js_num("__gd_ori_gamma"))
+		# Same reason as `_read_native`: keep the fallback accumulator at zero while the
+		# compass is the yaw source, so a later compass stall reads as "no twist".
+		_integrated_yaw = 0.0
 	else:
 		# No fresh compass alpha → fall back to integrating the gyro like the native path.
 		_integrated_yaw += _gyro.z * delta

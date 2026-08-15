@@ -3,10 +3,13 @@ extends Control
 ## the player a crocodile is actively hunting them BEFORE the bite lands.
 ##
 ## The CrocodileLODManager already iterates every crocodile ~9 Hz with the
-## player position in hand; it publishes the distance to the nearest CHASING
-## croc here via `set_danger_distance()` (group "danger_vignette", null-safe —
-## the project's standard no-hard-refs convention). This node turns that one
-## number into two feedback channels:
+## player position in hand; it publishes a 0..1 danger LEVEL here via
+## `set_danger_level()` (group "danger_vignette", null-safe — the project's
+## standard no-hard-refs convention). A level rather than raw metres because
+## each chaser has its OWN smell range (15 m regular, 25 m boss), so the manager
+## normalises by the radius of the croc that is actually hunting; a single range
+## on this side would leave a boss un-telegraphed over its extra 10 m. This node
+## turns that one number into two feedback channels:
 ##   - VISUAL: a fullscreen ColorRect running a tiny canvas_item shader (built
 ##     in code — no asset files) that tints only the screen edges red, fading
 ##     in as the croc closes. Deliberately cheap: one 2D quad, and even that
@@ -14,22 +17,17 @@ extends Control
 ##   - AUDIO: the sound manager's pre-baked "heartbeat" loop (see
 ##     sound_manager.gd), fetched via get_loop_player("heartbeat"). We own
 ##     play/stop and drive pitch_scale + volume_db live, so the heart beats
-##     faster and louder as the croc closes 15 m → 0. play() is gated on
-##     is_unlocked() — the browser-gesture gate only guards the manager's own
-##     play_* methods, not loop players driven directly (its documented rule).
+##     faster and louder as the croc closes its detection range → 0. play() is
+##     gated on is_unlocked() — the browser-gesture gate only guards the
+##     manager's own play_* methods, not loop players driven directly.
 ##
-## The published distance only arrives ~9 Hz (the LOD scan cadence), so the
+## The published level only arrives ~9 Hz (the LOD scan cadence), so the
 ## displayed alpha is EASED toward its target every frame — the vignette
 ## breathes smoothly instead of stepping visibly at scan rate.
 
 # ============================================================================
 # CONSTANTS
 # ============================================================================
-
-## Distance (metres) at which danger starts registering. This mirrors the
-## crocodile's DETECTION_RADIUS (15 m) — a croc can only be chasing inside it,
-## so the telegraph ramps over exactly the range where a hunt can exist.
-const DANGER_RANGE: float = 15.0
 
 ## Vignette opacity at point-blank range (danger level 1.0). Kept well under
 ## fully opaque so the world stays readable while the player flees.
@@ -44,6 +42,16 @@ const HEARTBEAT_PITCH_FAR: float = 1.0
 const HEARTBEAT_PITCH_NEAR: float = 1.8
 const HEARTBEAT_VOLUME_FAR_DB: float = -18.0
 const HEARTBEAT_VOLUME_NEAR_DB: float = -6.0
+
+## How long (seconds) the danger level must stay at zero before the heartbeat
+## loop is actually stopped. Jumping is the documented way to break a
+## crocodile's scent (piglet_crocodile_ai clears is_chasing the moment the
+## player leaves the ground), so a normal run-and-jump chase drops the level to
+## 0 for roughly a second at a time. Without this hold the loop would stop and
+## restart FROM SAMPLE 0 on every jump — the "lub" is the loudest sample in the
+## cycle, so each restart clicks. Holding through the gap keeps one continuous
+## heartbeat for one continuous chase; a real escape still silences it.
+const HEARTBEAT_HOLD: float = 1.5
 
 ## The edge-vignette shader. Radial distance from screen centre, remapped so
 ## the middle of the screen stays untouched and only the border band tints
@@ -68,15 +76,18 @@ void fragment() {
 # STATE
 # ============================================================================
 
-## Latest published distance to the nearest chasing croc (metres). INF means
-## nobody is hunting. Written by the LOD manager ~9 Hz via set_danger_distance.
-var _danger_distance: float = INF
+## Latest published danger level: 0 = nobody hunting, 1 = a chaser at point
+## blank. Written by the LOD manager ~9 Hz via set_danger_level.
+var _danger_level: float = 0.0
 
 ## The alpha actually on screen this frame, eased toward the target.
 var _display_alpha: float = 0.0
 
 ## Whether WE started the heartbeat loop (so we know to stop it when safe).
 var _heartbeat_playing: bool = false
+
+## Seconds of continuous "no danger" so far, against HEARTBEAT_HOLD (see there).
+var _heartbeat_quiet: float = 0.0
 
 ## The fullscreen quad running the vignette shader.
 var _rect: ColorRect
@@ -110,15 +121,16 @@ func _ready() -> void:
 	visible = false
 
 
-func set_danger_distance(distance: float) -> void:
-	## Called by CrocodileLODManager after each ~9 Hz scan: distance in metres
-	## to the nearest croc whose is_chasing is true, or INF when none.
-	_danger_distance = distance
+func set_danger_level(level: float) -> void:
+	## Called by CrocodileLODManager after each ~9 Hz scan: 0..1, where 1 is a
+	## chasing croc at point blank and 0 is "nobody is hunting". Already
+	## normalised by each chaser's own detection radius (see the header).
+	_danger_level = level
 
 
 func _process(delta: float) -> void:
-	# Danger level t: 0 at DANGER_RANGE (or beyond / INF), 1 at point blank.
-	var t: float = clampf(1.0 - _danger_distance / DANGER_RANGE, 0.0, 1.0)
+	# Danger level t: 0 when nothing hunts, 1 at point blank.
+	var t: float = clampf(_danger_level, 0.0, 1.0)
 
 	# Ease the on-screen alpha toward the target so the 9 Hz publish cadence
 	# never shows as visible steps.
@@ -132,14 +144,14 @@ func _process(delta: float) -> void:
 	if visible:
 		(_rect.material as ShaderMaterial).set_shader_parameter("vignette_alpha", _display_alpha)
 
-	_update_heartbeat(t)
+	_update_heartbeat(t, delta)
 
 
 # ============================================================================
 # HEARTBEAT
 # ============================================================================
 
-func _update_heartbeat(t: float) -> void:
+func _update_heartbeat(t: float, delta: float) -> void:
 	## Drive the sound manager's looping heartbeat from the raw danger level
 	## (not the eased alpha — audio should track the actual threat instantly).
 	var sm := get_tree().get_first_node_in_group("sound_manager")
@@ -148,6 +160,7 @@ func _update_heartbeat(t: float) -> void:
 		return
 
 	var in_danger: bool = t > 0.0
+	_heartbeat_quiet = 0.0 if in_danger else _heartbeat_quiet + delta
 
 	if in_danger and not _heartbeat_playing:
 		# The gesture gate only guards the manager's own play_* methods; loop
@@ -155,14 +168,25 @@ func _update_heartbeat(t: float) -> void:
 		# gate is still closed we simply retry next frame (no state latched).
 		if not (sm.has_method("is_unlocked") and sm.is_unlocked()):
 			return
+		# Set the ramp BEFORE play(): the loop player is built with the engine
+		# default 0 dB (unlike the wind bed, which gets WIND_VOLUME_DB), and the
+		# "lub" is the loudest sample in the cycle, so starting it before the
+		# first volume write pops at full scale instead of the intended -18 dB.
+		_apply_heartbeat_ramp(sm, t)
 		sm.get_loop_player("heartbeat").play()
 		_heartbeat_playing = true
-	elif not in_danger and _heartbeat_playing:
+	elif _heartbeat_playing and _heartbeat_quiet >= HEARTBEAT_HOLD:
+		# Genuinely clear — not just a jump-length gap (see HEARTBEAT_HOLD).
 		sm.get_loop_player("heartbeat").stop()
 		_heartbeat_playing = false
 
 	if _heartbeat_playing:
-		# Faster and louder as the croc closes 15 m → 0.
-		var p: AudioStreamPlayer = sm.get_loop_player("heartbeat")
-		p.pitch_scale = lerpf(HEARTBEAT_PITCH_FAR, HEARTBEAT_PITCH_NEAR, t)
-		p.volume_db = lerpf(HEARTBEAT_VOLUME_FAR_DB, HEARTBEAT_VOLUME_NEAR_DB, t)
+		_apply_heartbeat_ramp(sm, t)
+
+
+func _apply_heartbeat_ramp(sm: Node, t: float) -> void:
+	## Faster and louder as the chaser closes detection_radius → 0. Split out so
+	## the pre-play() write and the per-frame write can never drift apart.
+	var p: AudioStreamPlayer = sm.get_loop_player("heartbeat")
+	p.pitch_scale = lerpf(HEARTBEAT_PITCH_FAR, HEARTBEAT_PITCH_NEAR, t)
+	p.volume_db = lerpf(HEARTBEAT_VOLUME_FAR_DB, HEARTBEAT_VOLUME_NEAR_DB, t)

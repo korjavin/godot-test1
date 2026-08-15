@@ -105,7 +105,20 @@ var jump_buffer_timer: float = 0.0
 const LAND_SQUASH_DURATION: float = 0.18
 ## Impacts faster than this (m/s downward) also get a small camera shake and a
 ## flat dust ring at the feet — the "heavy landing" tier.
-const LAND_HARD_SPEED: float = 4.0
+##
+## MUST STAY ABOVE A PLAIN JUMP'S TOUCHDOWN SPEED, which is exactly JUMP_VELOCITY
+## (10.2 m/s — a symmetric arc lands as fast as it left). At the old 4.0 the tier
+## fired on EVERY jump, and even on a 0.56 m step down: constant camera shake and
+## a fresh dust-ring mesh allocated per landing, with the "heavy" reading gone
+## because nothing was ever light. 12.0 means a real drop from above the jump
+## apex — i.e. off a stacked block or a mountain ledge.
+const LAND_HARD_SPEED: float = 12.0
+## Divisor mapping fall speed → squash strength. Also keyed to the jump arc: at
+## the old 10.0 a plain jump saturated the clamp at 1.0, so the documented "a
+## soft hop barely dips, a long drop visibly squashes" scaling never happened —
+## every landing squashed maximally. 16.0 puts a plain jump at ~0.64 and leaves
+## headroom above it for genuine drops.
+const LAND_SQUASH_SPEED_DIVISOR: float = 16.0
 ## Seconds left in the current squash (0 = none) and its 0.2–1.0 strength.
 var land_squash_timer: float = 0.0
 var land_squash_strength: float = 0.0
@@ -295,6 +308,17 @@ const SHAKE_DECAY: float = 1.0
 ## zero, so the camera trails an A/D turn and eases in behind the body. Mouse
 ## turns never touch it, keeping mouse look 1:1. Zeroed in reset_position().
 var camera_yaw_lag: float = 0.0
+
+## Mouse-look pitch (radians), tracked HERE rather than read back off the pivot.
+## THIS IS LOAD-BEARING, not bookkeeping: the pivot now carries yaw (the lag
+## above), and Node3D.rotate_x PRE-multiplies (basis = Rx(d) * Ry(yaw) * Rx(p)),
+## which has no zero-roll YXZ decomposition — so reading `rotation.x` back and
+## writing only it BAKES a parasitic `rotation.z` that nothing ever clears
+## (measured: -76 deg of permanent horizon cant while holding A and dragging the
+## mouse down; it survives respawn and restart). Every write to the pivot's
+## rotation therefore goes through the full Vector3 below, with an explicit 0
+## roll term. Never reintroduce rotate_x() here.
+var camera_pitch: float = 0.0
 
 ## Transient FOV kick (degrees) added on top of the speed-scaled target — set
 ## to FOV_PUNCH_WINDMAN by Windman's Air Rush launch, decayed back to zero at
@@ -508,13 +532,12 @@ func _input(event: InputEvent) -> void:
 			# Rotate the entire character body left/right (yaw)
 			rotate_y(-event.relative.x * MOUSE_SENSITIVITY)
 
-			# Rotate the camera pivot up/down (pitch)
-			camera_pivot.rotate_x(-event.relative.y * MOUSE_SENSITIVITY)
-
-			# Clamp the camera pitch to prevent over-rotation
-			var pitch = rad_to_deg(camera_pivot.rotation.x)
-			pitch = clamp(pitch, CAMERA_PITCH_MIN, CAMERA_PITCH_MAX)
-			camera_pivot.rotation.x = deg_to_rad(pitch)
+			# Pitch the camera pivot up/down. Accumulated and clamped in our own
+			# float, then written as a WHOLE rotation with a zero roll term —
+			# see camera_pitch for why rotate_x() must not come back here.
+			camera_pitch = clampf(camera_pitch - event.relative.y * MOUSE_SENSITIVITY,
+					deg_to_rad(CAMERA_PITCH_MIN), deg_to_rad(CAMERA_PITCH_MAX))
+			camera_pivot.rotation = Vector3(camera_pitch, camera_yaw_lag, 0.0)
 
 	# Allow player to release mouse with ESC.
 	# TOUCH-SESSION GUARD: on a phone/tablet we deliberately keep the mouse VISIBLE so
@@ -631,8 +654,10 @@ func _physics_process(delta: float) -> void:
 	# red flash play out for a moment. When the window ends we lose a life and
 	# either respawn in place or, if that was our last life, trigger game over.
 	if is_caught:
-		velocity = Vector3.ZERO
-		move_and_slide()
+		# Same freeze the game-over and respawn-grace branches use: horizontal motion
+		# stopped, gravity still applied. Zeroing velocity outright would pin a player
+		# bitten at jump apex motionless in mid-air for the whole CAUGHT_DURATION.
+		_freeze_with_gravity(delta)
 		update_character_animation(delta, Vector2.ZERO)
 		caught_timer -= delta
 		if caught_timer <= 0.0:
@@ -805,7 +830,7 @@ func _process(delta: float) -> void:
 	# Eased keyboard turn: the pivot's yaw holds the lag handle_turning banked,
 	# then the lag decays toward zero — so the camera starts behind an A/D turn
 	# and smoothly catches up. Mouse turns never bank lag, so they stay 1:1.
-	camera_pivot.rotation.y = camera_yaw_lag
+	camera_pivot.rotation = Vector3(camera_pitch, camera_yaw_lag, 0.0)
 	camera_yaw_lag = lerpf(camera_yaw_lag, 0.0, minf(1.0, CAMERA_TURN_EASE * delta))
 
 	# Speed-scaled FOV: map horizontal speed from WALK_SPEED → Windman's
@@ -1281,7 +1306,7 @@ func update_character_animation(delta: float, input_dir: Vector2) -> void:
 		# eased dip itself is applied AFTER the branch chain below, so the walk
 		# bob / idle breathe can't overwrite it on the same frame.
 		land_squash_timer = LAND_SQUASH_DURATION
-		land_squash_strength = clampf(_fall_speed / 10.0, 0.2, 1.0)
+		land_squash_strength = clampf(_fall_speed / LAND_SQUASH_SPEED_DIVISOR, 0.2, 1.0)
 		# Heavy landings additionally kick the camera and puff a flat dust ring
 		# at the feet (the thud above already covers audio on every landing).
 		if _fall_speed > LAND_HARD_SPEED:
@@ -1567,6 +1592,13 @@ func hit_by_crocodile() -> void:
 	streak_timer = 0.0
 	is_caught = true
 	caught_timer = CAUGHT_DURATION
+	# Drop the jump-forgiveness timers as we enter the freeze. Every frozen branch of
+	# _physics_process returns ABOVE the step that ticks them, so they would otherwise
+	# hold their pre-bite values for the whole caught/respawn/game-over window — and a
+	# restart from the game-over screen (Enter/Space, and Space is also `jump`) would
+	# then find a still-armed coyote_timer and launch the fresh run off the spawn point.
+	coyote_timer = 0.0
+	jump_buffer_timer = 0.0
 
 	# Bite sting.
 	_sfx("play_bite")
@@ -1773,10 +1805,10 @@ func reset_position() -> void:
 
 	# Reset camera and character rotation to default
 	rotation.y = SPAWN_FACING_Y  # Face straight down the coin road (+X)
-	if camera_pivot:
-		camera_pivot.rotation.x = 0.0  # Reset camera vertical rotation
-		camera_pivot.rotation.y = 0.0  # Reset camera horizontal rotation
+	camera_pitch = 0.0  # Reset camera vertical rotation
 	camera_yaw_lag = 0.0  # Drop any keyboard-turn lag along with the pivot yaw
+	if camera_pivot:
+		camera_pivot.rotation = Vector3.ZERO  # Whole rotation, so roll can't survive
 
 	# Reset character state
 	is_ducking = false
@@ -1798,6 +1830,14 @@ func clear_nearby_crocodiles(spawn_point: Vector3) -> void:
 	Remove all crocodiles within SPAWN_SAFE_RADIUS of the spawn point.
 	Prevents instant death after respawning.
 
+	BOSSES ARE EXEMPT — same rule as flee_from() in piglet_crocodile_ai.gd, for
+	the same reason: a boss is a deterministic road landmark, not spawn clutter.
+	Freeing one here would make dying the CHEAPEST way past every boss on the
+	road (a soft respawn keeps all coins, so the whole cost would be one life).
+	Leaving it standing is safe: the respawn grace freeze plus the blink
+	invulnerability that follows are long enough to run, and running (>= 9.0)
+	beats MAX_CHASE_SPEED (8.5) by design.
+
 	@param spawn_point: The position to check distance from
 	"""
 	var crocodiles = get_tree().get_nodes_in_group("crocodile")
@@ -1805,6 +1845,8 @@ func clear_nearby_crocodiles(spawn_point: Vector3) -> void:
 
 	for crocodile in crocodiles:
 		if crocodile is Node3D:
+			if "is_boss" in crocodile and crocodile.is_boss:
+				continue
 			var distance = spawn_point.distance_to(crocodile.global_position)
 			if distance <= SPAWN_SAFE_RADIUS:
 				crocodile.queue_free()
