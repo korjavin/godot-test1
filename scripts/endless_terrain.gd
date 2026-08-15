@@ -1194,6 +1194,11 @@ func spawn_objects_in_chunk(chunk_pos: Vector2i, platforms: Array, block_batch: 
 	# Half the chunk width — handy for keeping things inside the chunk bounds.
 	var half_chunk := chunk_size / 2.0
 
+	# World-space centre of this chunk. Block positions below are chunk-LOCAL, so
+	# every biome/river question (which is asked in WORLD space, because the biome
+	# field is one continuous world-space field) adds this first.
+	var chunk_center := chunk_to_world(chunk_pos)
+
 	# Footprints of every block we place, returned so crocodiles can avoid them.
 	var obstacles: Array = []
 
@@ -1201,7 +1206,7 @@ func spawn_objects_in_chunk(chunk_pos: Vector2i, platforms: Array, block_batch: 
 	# so scattered blocks can be placed around it (the scatter loop below checks
 	# against these footprints).
 	if rng.randf() < structure_chance:
-		spawn_feature_structure(rng, half_chunk, obstacles, platforms, block_batch, block_body)
+		spawn_feature_structure(rng, half_chunk, chunk_center, obstacles, platforms, block_batch, block_body)
 
 	# Store positions of scattered objects to check spacing between them
 	var spawned_positions: Array[Vector3] = []
@@ -1234,6 +1239,20 @@ func spawn_objects_in_chunk(chunk_pos: Vector2i, platforms: Array, block_batch: 
 					valid_position = false
 					break
 
+		# ...and not standing in a river. Blocks in the water would break the
+		# "wade across, don't climb" read of a river band.
+		#
+		# EDUCATIONAL NOTE — WHY THIS TEST SITS HERE, after the draws:
+		# random_x/random_z have already been drawn, so the RNG has already
+		# advanced. Rejecting here is a `continue` exactly like the spacing test
+		# above — it removes a placement without inserting or removing a draw, so
+		# every chunk that does NOT touch a river regenerates byte-identically to
+		# before biomes existed. Testing BEFORE the draws (or drawing a fresh
+		# position on rejection) would shift the whole stream and reshuffle the
+		# world. Same discipline in every biome exclusion below.
+		if valid_position and is_river_at(chunk_center + object_pos):
+			valid_position = false
+
 		if not valid_position:
 			continue
 
@@ -1262,7 +1281,7 @@ func spawn_objects_in_chunk(chunk_pos: Vector2i, platforms: Array, block_batch: 
 
 	return obstacles
 
-func spawn_feature_structure(rng: RandomNumberGenerator, half_chunk: float, obstacles: Array, platforms: Array, block_batch: Array, block_body: StaticBody3D) -> void:
+func spawn_feature_structure(rng: RandomNumberGenerator, half_chunk: float, chunk_center: Vector3, obstacles: Array, platforms: Array, block_batch: Array, block_body: StaticBody3D) -> void:
 	"""
 	Pick and build one "feature" structure for variety: a wall, a corridor to run
 	through, a gate, or a Mayan step-pyramid. Pyramids are the biggest/rarest
@@ -1271,29 +1290,39 @@ func spawn_feature_structure(rng: RandomNumberGenerator, half_chunk: float, obst
 
 	@param rng: The chunk's seeded RNG (so the choice is deterministic)
 	@param half_chunk: Half the chunk width, for bounds
+	@param chunk_center: World-space centre of the chunk, so each builder can turn
+	                  its chunk-LOCAL centre into a world position for the river
+	                  test (structures never stand in the water).
 	@param obstacles: Footprint list each piece is appended to (crocodiles + coins)
 	@param platforms: Walkable-top descriptors for patrolling crocodiles
 	@param block_batch: Out-param threaded down to create_box for MultiMesh batching
 	@param block_body: The chunk's shared block-collision body, threaded down to
 	                  create_box so each block's shape hangs on it (Task 5)
+
+	EDUCATIONAL NOTE — the river rule for structures: a structure is placed as ONE
+	object, so it gets ONE test, on its chosen centre, taken right after the draws
+	that produced that centre. A footprint-vs-band intersection test would be more
+	precise and much fiddlier for a band that winds; a centre test is enough to keep
+	walls and pyramids out of the water, which is all the rule is for.
 	"""
 	var pick := rng.randf()
 	if pick < 0.3:
-		spawn_wall(rng, half_chunk, obstacles, platforms, block_batch, block_body)
+		spawn_wall(rng, half_chunk, chunk_center, obstacles, platforms, block_batch, block_body)
 	elif pick < 0.55:
-		spawn_corridor(rng, half_chunk, obstacles, block_batch, block_body)
+		spawn_corridor(rng, half_chunk, chunk_center, obstacles, block_batch, block_body)
 	elif pick < 0.75:
-		spawn_gate(rng, half_chunk, obstacles, block_batch, block_body)
+		spawn_gate(rng, half_chunk, chunk_center, obstacles, block_batch, block_body)
 	else:
-		spawn_pyramid(rng, half_chunk, obstacles, platforms, block_batch, block_body)
+		spawn_pyramid(rng, half_chunk, chunk_center, obstacles, platforms, block_batch, block_body)
 
-func spawn_pyramid(rng: RandomNumberGenerator, half_chunk: float, obstacles: Array, platforms: Array, block_batch: Array, block_body: StaticBody3D) -> void:
+func spawn_pyramid(rng: RandomNumberGenerator, half_chunk: float, chunk_center: Vector3, obstacles: Array, platforms: Array, block_batch: Array, block_body: StaticBody3D) -> void:
 	"""
 	Build a Mayan step-pyramid: a few square slabs stacked smallest-on-top, like a
 	ziggurat. Each layer is a single flat box (cheap), not a grid of cubes.
 
 	@param rng: The chunk's seeded RNG
 	@param half_chunk: Half the chunk width, for bounds
+	@param chunk_center: World centre of the chunk, for the river test on the apex
 	@param obstacles: Footprint list (one entry for the whole base, with the apex
 	                  height as its top so a coin can perch on top)
 	@param platforms: Gets the flat apex registered as a patrol platform
@@ -1322,6 +1351,10 @@ func spawn_pyramid(rng: RandomNumberGenerator, half_chunk: float, obstacles: Arr
 	var cx := rng.randf_range(-limit, limit)
 	var cz := rng.randf_range(-limit, limit)
 
+	# No pyramids in the water (centre test, taken right after the centre draws).
+	if is_river_at(chunk_center + Vector3(cx, 0.0, cz)):
+		return
+
 	var y := 0.0
 	for i in layers:
 		var w := base_size - i * shrink
@@ -1338,7 +1371,7 @@ func spawn_pyramid(rng: RandomNumberGenerator, half_chunk: float, obstacles: Arr
 	if apex_half > 0.4:
 		platforms.append({ "center": Vector3(cx, y, cz), "half": Vector2(apex_half, apex_half) })
 
-func spawn_gate(rng: RandomNumberGenerator, half_chunk: float, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
+func spawn_gate(rng: RandomNumberGenerator, half_chunk: float, chunk_center: Vector3, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
 	"""
 	Build a monumental gate (Brandenburg-Tor style): two tall pillars with a thick
 	lintel beam across the top, leaving an opening to walk through.
@@ -1349,6 +1382,7 @@ func spawn_gate(rng: RandomNumberGenerator, half_chunk: float, obstacles: Array,
 
 	@param rng: The chunk's seeded RNG
 	@param half_chunk: Half the chunk width, for bounds
+	@param chunk_center: World centre of the chunk, for the river test on the gate
 	@param obstacles: Footprint list (pillars, plus a coin-perch on the lintel)
 	@param block_batch: Out-param threaded down to create_box for MultiMesh batching
 	@param block_body: The chunk's shared block-collision body (Task 5)
@@ -1372,6 +1406,10 @@ func spawn_gate(rng: RandomNumberGenerator, half_chunk: float, obstacles: Array,
 	var cx := rng.randf_range(-limit, limit)
 	var cz := rng.randf_range(-limit, limit)
 
+	# No gates in the water (centre test, taken right after the centre draws).
+	if is_river_at(chunk_center + Vector3(cx, 0.0, cz)):
+		return
+
 	# Distance from the gate centre to each pillar's centre.
 	var half_span := opening * 0.5 + pillar_w * 0.5
 
@@ -1393,13 +1431,15 @@ func spawn_gate(rng: RandomNumberGenerator, half_chunk: float, obstacles: Array,
 	# Register the lintel centre as a (hard-to-reach but climbable) coin perch.
 	obstacles.append({ "pos": Vector3(cx, 0, cz), "radius": 1.0, "top": pillar_h + lintel_h, "climbable": true })
 
-func spawn_corridor(rng: RandomNumberGenerator, half_chunk: float, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
+func spawn_corridor(rng: RandomNumberGenerator, half_chunk: float, chunk_center: Vector3, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
 	"""
 	Build a corridor: two parallel two-block-high walls with a gap between them
 	that the player can run down.
 
 	@param rng: The chunk's seeded RNG
 	@param half_chunk: Half the chunk width, for bounds
+	@param chunk_center: World centre of the chunk, for the river test on the
+	                  corridor's midpoint
 	@param obstacles: Footprint list each block is appended to
 	@param block_batch: Out-param threaded down to create_box for MultiMesh batching
 	@param block_body: The chunk's shared block-collision body (Task 5)
@@ -1426,6 +1466,14 @@ func spawn_corridor(rng: RandomNumberGenerator, half_chunk: float, obstacles: Ar
 	# Centreline of the corridor on the perpendicular axis.
 	var center_perp := rng.randf_range(-limit + gap * 0.5, limit - gap * 0.5)
 
+	# No corridors in the water. The corridor's centre is the midpoint of its run
+	# along one axis and the centreline on the other (centre test, taken right
+	# after the draws that fixed both).
+	var mid_along := start + span * 0.5
+	var corridor_center: Vector3 = Vector3(mid_along, 0.0, center_perp) if along_x else Vector3(center_perp, 0.0, mid_along)
+	if is_river_at(chunk_center + corridor_center):
+		return
+
 	# Two parallel walls, offset to either side of the centreline.
 	for side_sign in 2:
 		var side := -1.0 if side_sign == 0 else 1.0
@@ -1440,13 +1488,15 @@ func spawn_corridor(rng: RandomNumberGenerator, half_chunk: float, obstacles: Ar
 			create_block(Vector3(x, block_size + block_size / 2.0, z), block_size, 0.0, rng, block_batch, block_body)
 			obstacles.append({ "pos": Vector3(x, 0, z), "radius": block_size * 0.71, "top": 2.0 * block_size, "climbable": false })
 
-func spawn_wall(rng: RandomNumberGenerator, half_chunk: float, obstacles: Array, platforms: Array, block_batch: Array, block_body: StaticBody3D) -> void:
+func spawn_wall(rng: RandomNumberGenerator, half_chunk: float, chunk_center: Vector3, obstacles: Array, platforms: Array, block_batch: Array, block_body: StaticBody3D) -> void:
 	"""
 	Build a single wall — a straight line of touching blocks the player must run
 	around — somewhere inside the chunk.
 
 	@param rng: The chunk's seeded RNG (so the wall is deterministic)
 	@param half_chunk: Half the chunk width, for bounds
+	@param chunk_center: World centre of the chunk, for the river test on the
+	                  wall's midpoint
 	@param obstacles: Footprint list to append each wall block to (for crocodiles)
 	@param platforms: Gets the wall ridge registered as a patrol platform
 	@param block_batch: Out-param threaded down to create_box for MultiMesh batching
@@ -1474,6 +1524,16 @@ func spawn_wall(rng: RandomNumberGenerator, half_chunk: float, obstacles: Array,
 	var start := rng.randf_range(-limit, limit - span)
 	var fixed := rng.randf_range(-limit, limit)
 
+	# Midpoint of the wall's run — used both for the river test here and for the
+	# patrol-platform ridge at the bottom of this function.
+	var mid_along := start + (length - 1) * step * 0.5
+
+	# No walls in the water (centre test, taken right after the draws that placed
+	# the wall).
+	var wall_center: Vector3 = Vector3(mid_along, 0.0, fixed) if along_x else Vector3(fixed, 0.0, mid_along)
+	if is_river_at(chunk_center + wall_center):
+		return
+
 	for i in length:
 		var along := start + i * step
 		var x := along if along_x else fixed
@@ -1496,7 +1556,6 @@ func spawn_wall(rng: RandomNumberGenerator, half_chunk: float, obstacles: Array,
 	# Register the wall ridge as a thin patrol platform (a crocodile can pace it
 	# end to end). Surface is the single-block height; doubled humps just become
 	# obstacles its feelers turn it back at.
-	var mid_along := start + (length - 1) * step * 0.5
 	var ridge_center: Vector3 = Vector3(mid_along, block_size, fixed) if along_x else Vector3(fixed, block_size, mid_along)
 	var half_along := (length - 1) * step * 0.5 + block_size * 0.5 - 0.4
 	var half_across := block_size * 0.5 - 0.3
@@ -1811,6 +1870,18 @@ func spawn_crocodiles_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D
 					valid_position = false
 					break
 
+		# Crocodiles don't stand in rivers — the water is the player's, and a river
+		# reads as a small safe(r) crossing. Rejected AFTER the position draws, so
+		# the stream is untouched (see the same note in spawn_objects_in_chunk).
+		#
+		# chunk_croc_target is deliberately NOT reduced: density is a DESIGN number
+		# (the difficulty gradient), never trimmed for a biome. The while loop's
+		# generous retry budget (5 tries per crocodile) simply finds dry spots
+		# instead, so a chunk merely grazed by a river keeps its full count; only a
+		# chunk almost entirely under water ends up with fewer.
+		if valid_position and is_river_at(chunk_world_pos + crocodile_pos):
+			valid_position = false
+
 		if not valid_position:
 			continue
 
@@ -1988,7 +2059,8 @@ func _artifact_at(chunk_pos: Vector2i) -> Dictionary:
 
 	@param chunk_pos: Chunk coordinates to decide for.
 	@return: {} when this chunk has no artifact (the ~19-in-20 case, or when every
-	         candidate spot fell too close to the coin road); otherwise
+	         candidate spot fell too close to the coin road or into a river);
+	         otherwise
 	         { "local": Vector3 (chunk-LOCAL position, y = 0),
 	           "kind": int (0..4, which of the five shapes),
 	           "seed": int (seeds the shape builder's own private RNG) }.
@@ -2000,7 +2072,8 @@ func _artifact_at(chunk_pos: Vector2i) -> Dictionary:
 	  below is fixed (chance roll, then 2 draws per placement try, then kind,
 	  then builder seed).
 	- Across runs, new_run() re-rolls run_seed, so artifacts land elsewhere.
-	- The road-clearance test reads the station cache (pure in `k`), so it too is
+	- The road-clearance test reads the station cache (pure in `k`) and the river
+	  test reads the biome field (pure in world position + run_seed), so both are
 	  load-order independent: rejection is a property of the POSITION, not of
 	  when the chunk happened to generate.
 	"""
@@ -2019,10 +2092,13 @@ func _artifact_at(chunk_pos: Vector2i) -> Dictionary:
 	var half := chunk_size / 2.0 - ARTIFACT_EDGE_MARGIN
 
 	# 2. Try a few candidate spots; accept the FIRST one far enough from the road
-	# centerline. This is what produces the off-road bias AND the hard "never on
-	# the centerline" rule. Acceptance stops the loop, so the draw sequence is
-	# still fixed for a given outcome (2 draws per try until the accepted try),
-	# and the kind/seed draws always follow in the same order.
+	# centerline AND out of the water. This is what produces the off-road bias AND
+	# the hard "never on the centerline" rule. Acceptance stops the loop, so the
+	# draw sequence is still fixed for a given outcome (2 draws per try until the
+	# accepted try), and the kind/seed draws always follow in the same order.
+	# Adding the river test to the SAME acceptance condition keeps that shape: an
+	# artifact whose first candidate lands in a river just tries the next spot, or
+	# is skipped entirely — no draw is inserted or removed.
 	var local_x := 0.0
 	var local_z := 0.0
 	var placed := false
@@ -2031,7 +2107,8 @@ func _artifact_at(chunk_pos: Vector2i) -> Dictionary:
 		tries += 1
 		local_x = rng.randf_range(-half, half)
 		local_z = rng.randf_range(-half, half)
-		if _road_lateral_distance(center.x + local_x, center.z + local_z) >= ARTIFACT_ROAD_CLEARANCE:
+		if _road_lateral_distance(center.x + local_x, center.z + local_z) >= ARTIFACT_ROAD_CLEARANCE \
+				and not is_river_at(Vector3(center.x + local_x, 0.0, center.z + local_z)):
 			placed = true
 	if not placed:
 		return {}
