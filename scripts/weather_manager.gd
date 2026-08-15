@@ -22,6 +22,15 @@ extends Node
 ## falls too far behind (downwind of) the player is not freed — it is RECYCLED:
 ## re-rolled and re-placed at the upwind edge, so the field never depletes and
 ## nothing ever pops into existence in view (the fog + distance hide the seam).
+##
+## ponytail: two optional extras from the design were deliberately NOT built.
+## (1) A full-screen darkening ColorRect while inside a rain zone — a screen-
+## sized alpha blend is exactly the mobile fill-rate cost this project's perf
+## conventions warn about, for mood the particles + audio already carry; add it
+## if playtesting says the rain reads too cheerful. (2) A distant bird caw
+## one-shot — it would mean growing sound_manager.gd (a file parallel work
+## keeps touching) for one rare noise; add it there beside the other _synth_*
+## helpers if the flocks ever feel too silent.
 
 # ============================================================================
 # CLOUD TUNABLES

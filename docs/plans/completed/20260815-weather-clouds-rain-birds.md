@@ -239,11 +239,11 @@ Dependencies identified: none new. No assets, no GPUParticles3D (web runs
       (the F3 perf overlay is the measure)
 
 ### Task 10: [Final] Update documentation
-- [ ] add a short "Weather (clouds, rain zones, birds)" section to `CLAUDE.md` in the
+- [x] add a short "Weather (clouds, rain zones, birds)" section to `CLAUDE.md` in the
       existing style: what the manager owns, why it is NOT in `endless_terrain.gd`,
       the `is_raining_at()` contract, the two Windman hooks, and the perf shape
       (2 MultiMeshes + 1 conditional CPUParticles3D, throttled 10 Hz tick)
-- [ ] leave README/QUICKSTART alone (they are already stale about the engine version)
+- [x] leave README/QUICKSTART alone (they are already stale about the engine version)
 
 ## Technical Details
 
