@@ -163,19 +163,19 @@ Dependencies identified: none new. No assets, no GPUParticles3D (web runs
       costs literally nothing when it is not raining (beyond the manager's own tick)
 
 ### Task 5: Rain sound loop + wind ducking
-- [ ] synthesize the rain loop inside `weather_manager.gd` itself (`_synth_rain_stream()`,
+- [x] synthesize the rain loop inside `weather_manager.gd` itself (`_synth_rain_stream()`,
       mirroring `sound_manager._synth_wind()`: one-pole low-passed noise, but brighter/
       hissier for rain, with the same crossfaded loop seam, converted to a 16-bit mono
       `AudioStreamWAV` and marked `LOOP_FORWARD`). Keeping the synthesis local keeps
       `sound_manager.gd` untouched — zero merge conflict with the parallel executors
-- [ ] fetch the dedicated player via the `"sound_manager"` group's `get_loop_player("rain")`
+- [x] fetch the dedicated player via the `"sound_manager"` group's `get_loop_player("rain")`
       (null-safe + `has_method` guard, same as `player_controller._sfx()`), assign the
       stream once, and only `play()` once `is_unlocked()` reports the browser gesture has
       landed
-- [ ] fade `volume_db` between `RAIN_SILENT_DB` (-60) and `RAIN_VOLUME_DB` over
+- [x] fade `volume_db` between `RAIN_SILENT_DB` (-60) and `RAIN_VOLUME_DB` over
       `RAIN_FADE_TIME` on zone enter/exit; stop the player once it has faded fully out so
       a silent voice is not left mixing
-- [ ] duck the existing ambient wind bed by `WIND_DUCK_DB` while rain is audible, using
+- [x] duck the existing ambient wind bed by `WIND_DUCK_DB` while rain is audible, using
       the same fade progress, and restore it exactly when the rain fades out (capture the
       wind player's original `volume_db` once rather than assuming a constant)
 

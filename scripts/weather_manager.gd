@@ -129,6 +129,35 @@ const RAIN_STREAK_SIZE: Vector3 = Vector3(0.03, 0.7, 0.03)
 const RAIN_COLOR: Color = Color(0.65, 0.70, 0.78)
 
 # ============================================================================
+# RAIN AUDIO TUNABLES
+# ============================================================================
+
+## Rain loop level when fully faded in. Louder than the -26 dB ambient wind
+## bed (rain should be *noticed*), still below the -6..-10 dB one-shots.
+const RAIN_VOLUME_DB: float = -14.0
+
+## "Fully faded out" floor. -60 dB is inaudible; once the fade reaches it the
+## player is stop()ped entirely so no silent voice is left mixing.
+const RAIN_SILENT_DB: float = -60.0
+
+## Seconds for the full silent↔audible fade on rain-zone enter/exit.
+const RAIN_FADE_TIME: float = 1.5
+
+## How much the ambient wind bed ducks (dB, negative) while rain is audible,
+## scaled by the same fade progress so the two beds trade places smoothly.
+const WIND_DUCK_DB: float = -6.0
+
+## Rain loop synthesis (mirrors sound_manager._synth_wind(), kept LOCAL so
+## sound_manager.gd stays untouched): ~2 s of one-pole low-passed noise with a
+## crossfaded loop seam. The filter factor is much larger than the wind's 0.02
+## — less filtering keeps the noise bright and hissy, which is what reads as
+## "rain" instead of "distant rumble".
+const RAIN_LOOP_DURATION: float = 2.0
+const RAIN_LOWPASS: float = 0.25
+const RAIN_CROSSFADE: float = 0.05      # seconds blended across the loop seam
+const RAIN_MIX_RATE: int = 22050        # matches sound_manager.MIX_RATE
+
+# ============================================================================
 # STATE
 # ============================================================================
 
@@ -173,6 +202,25 @@ var _cloud_mmi: MultiMeshInstance3D = null
 ## the entire rain path costs nothing beyond the manager's own tick.
 var _rain: CPUParticles3D = null
 
+## The rain loop stream, synthesized once in _ready() (see _synth_rain_stream()).
+var _rain_stream: AudioStreamWAV = null
+
+## The sound manager's dedicated "rain" loop voice (from get_loop_player()) and
+## its "wind" bed, both fetched lazily via the "sound_manager" group behind
+## has_method guards — with no sound manager in the scene the rain is simply
+## silent, no errors (same degradation rule as player_controller._sfx()).
+var _rain_player: AudioStreamPlayer = null
+var _wind_bed: AudioStreamPlayer = null
+
+## The wind bed's own volume, captured ONCE the first time we duck it (never
+## assumed to be a constant — the sound manager owns that number). Ducking is
+## always expressed relative to this, so the bed restores exactly.
+var _wind_base_db: float = 0.0
+
+## Rain audio fade progress, 0 (silent) .. 1 (full), moved toward the
+## _player_in_rain target at 1/RAIN_FADE_TIME per second on the throttled tick.
+var _rain_mix: float = 0.0
+
 
 # ============================================================================
 # LIFECYCLE
@@ -183,6 +231,7 @@ func _ready() -> void:
 	_rng.randomize()
 	_build_cloud_multimesh()
 	_build_rain_particles()
+	_rain_stream = _synth_rain_stream()
 
 
 func _process(delta: float) -> void:
@@ -225,6 +274,8 @@ func _process(delta: float) -> void:
 		# Follow the player through the zone (throttled tick only — streaks are
 		# world-space, so the box lagging a step behind is invisible).
 		_rain.global_position = player_pos + Vector3(0.0, RAIN_SPAWN_HEIGHT, 0.0)
+
+	_update_rain_audio(elapsed)
 
 
 # ============================================================================
@@ -331,6 +382,91 @@ func _build_rain_particles() -> void:
 	_rain.mesh = streak
 	_rain.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(_rain)
+
+
+# ============================================================================
+# RAIN AUDIO — fade the rain loop in/out, duck the wind bed under it
+# ============================================================================
+
+func _update_rain_audio(elapsed: float) -> void:
+	## One throttled tick of the rain audio state machine (see the plan's
+	## Technical Details): _rain_mix chases the in-rain target at
+	## 1/RAIN_FADE_TIME per second, and both beds' volumes are pure functions
+	## of it. 10 Hz volume steps on a noise bed are inaudible.
+	var target: float = 1.0 if _player_in_rain else 0.0
+	if _rain_mix == 0.0 and target == 0.0:
+		return  # dry and fully faded out — the whole audio path costs nothing
+	_rain_mix = move_toward(_rain_mix, target, elapsed / RAIN_FADE_TIME)
+
+	# Null-safe group lookup, same shape as player_controller._sfx(): no sound
+	# manager (or a freed one) → silently do nothing, never error.
+	var sm := get_tree().get_first_node_in_group("sound_manager")
+	if sm == null or not sm.has_method("get_loop_player"):
+		return
+	if not is_instance_valid(_rain_player):
+		_rain_player = sm.get_loop_player("rain")
+		_rain_player.stream = _rain_stream  # assigned once; the voice keeps it
+	if not is_instance_valid(_wind_bed):
+		_wind_bed = sm.get_loop_player("wind")
+		_wind_base_db = _wind_bed.volume_db  # capture, don't assume a constant
+
+	_rain_player.volume_db = lerpf(RAIN_SILENT_DB, RAIN_VOLUME_DB, _rain_mix)
+	_wind_bed.volume_db = _wind_base_db + WIND_DUCK_DB * _rain_mix
+
+	if _rain_mix > 0.0:
+		# Start the loop on the way up — but only once the browser-gesture gate
+		# is open (get_loop_player voices are NOT guarded by the manager's own
+		# play_* gate, so we must check is_unlocked() ourselves). If the unlock
+		# lands mid-rain, a later tick starts the loop then.
+		if not _rain_player.playing and sm.has_method("is_unlocked") and sm.is_unlocked():
+			_rain_player.play()
+	elif _rain_player.playing:
+		# Faded fully back to 0: stop the voice so it doesn't sit in the mix
+		# silently forever. The wind duck is exactly 0 here, so the bed is
+		# restored to its captured base on this same tick.
+		_rain_player.stop()
+
+
+func _synth_rain_stream() -> AudioStreamWAV:
+	## The rain bed: ~2 s of LIGHTLY low-passed noise, looped forever — the
+	## same recipe as sound_manager._synth_wind() but with a much brighter
+	## filter (RAIN_LOWPASS 0.25 vs the wind's 0.02), because retained hiss is
+	## what makes noise read as rain. Synthesis lives HERE, not in
+	## sound_manager.gd, purely to keep that file untouched (zero merge
+	## surface with the parallel executors editing it).
+	##
+	## Loop-seam trick (same as the wind): synthesize a surplus tail, then
+	## crossfade it into the head so sample[frames] (which playback wraps to
+	## sample[0]) transitions smoothly instead of clicking.
+	var fade_frames: int = int(RAIN_CROSSFADE * RAIN_MIX_RATE)
+	var frames: int = int(RAIN_LOOP_DURATION * RAIN_MIX_RATE)
+	var raw := PackedFloat32Array()
+	var filtered: float = 0.0
+	for i in range(frames + fade_frames):  # surplus tail for the crossfade
+		filtered += RAIN_LOWPASS * (_rng.randf_range(-1.0, 1.0) - filtered)
+		raw.append(filtered * 1.4)  # mild filtering eats little amplitude
+	var samples := raw.slice(0, frames)
+	for i in range(fade_frames):
+		var blend: float = float(i) / fade_frames  # 0 at seam → 1 into the head
+		samples[i] = raw[frames + i] * (1.0 - blend) + samples[i] * blend
+
+	# float → 16-bit mono PCM, a local copy of sound_manager._build_wav() (kept
+	# here for the same untouched-file reason as the synthesis above).
+	var bytes := PackedByteArray()
+	bytes.resize(samples.size() * 2)  # 2 bytes per 16-bit frame
+	for i in range(samples.size()):
+		var s: int = clampi(int(samples[i] * 32767.0), -32768, 32767)
+		bytes[i * 2] = s & 0xFF
+		bytes[i * 2 + 1] = (s >> 8) & 0xFF
+	var wav := AudioStreamWAV.new()
+	wav.format = AudioStreamWAV.FORMAT_16_BITS
+	wav.mix_rate = RAIN_MIX_RATE
+	wav.stereo = false
+	wav.data = bytes
+	wav.loop_mode = AudioStreamWAV.LOOP_FORWARD
+	wav.loop_begin = 0
+	wav.loop_end = frames
+	return wav
 
 
 # ============================================================================
