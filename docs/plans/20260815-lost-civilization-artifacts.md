@@ -300,10 +300,10 @@ Dependencies identified: none new. No new files, no new assets, no scene edits.
       polish"
 
 ### Task 8: Verify acceptance criteria
-- [ ] `godot --headless --path . --import` — must complete without script errors
-- [ ] `godot --headless --path . --quit-after 3` — must run and quit with no
+- [x] `godot --headless --path . --import` — must complete without script errors
+- [x] `godot --headless --path . --quit-after 3` — must run and quit with no
       errors or warnings in stdout/stderr
-- [ ] write a TEMPORARY headless GDScript check (e.g. `scripts/tmp_artifact_check.gd`
+- [x] (done, script run + deleted) write a TEMPORARY headless GDScript check (e.g. `scripts/tmp_artifact_check.gd`
       run via `godot --headless --path . --script`) asserting: (a) `_artifact_at`
       returns the identical Dictionary for the same chunk called twice within a
       run; (b) over ~400 chunk coords the artifact hit-rate lands in the 1-per-15
@@ -311,19 +311,19 @@ Dependencies identified: none new. No new files, no new assets, no scene edits.
       returned artifact sits within `ARTIFACT_ROAD_CLEARANCE` of the road
       centerline. Run it, confirm it passes, then **delete the file** (no test
       infrastructure is left behind)
-- [ ] grep the diff to confirm ONLY `scripts/endless_terrain.gd` (plus this plan)
+- [x] grep the diff to confirm ONLY `scripts/endless_terrain.gd` (plus this plan)
       changed — `player_controller.gd`, the crocodile AI, HUD scripts and the
       boss spawner must be untouched
-- [ ] confirm by inspection that every existing `create_box`/`create_block` call
+- [x] confirm by inspection that every existing `create_box`/`create_block` call
       site is unchanged and that no draw was inserted into the chunk RNG stream
 
 ### Task 9: [Final] Update documentation
-- [ ] add a short subsection to `CLAUDE.md` under "Everything in the world is
+- [x] add a short subsection to `CLAUDE.md` under "Everything in the world is
       spawned procedurally from the terrain" describing artifacts: rarity, the
       independent `ARTIFACT_SALT` hash stream, the road-clearance rule, the
       MultiMesh/BlockCollision requirement, the ≤4 emissive accents, and the
       coin+gem reward — matching the density of the surrounding docs
-- [ ] do NOT touch README.md / QUICKSTART.md (stale by project convention)
+- [x] do NOT touch README.md / QUICKSTART.md (stale by project convention)
 
 ## Technical Details
 
