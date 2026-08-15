@@ -180,23 +180,23 @@ Dependencies identified: none new. No assets, no GPUParticles3D (web runs
       wind player's original `volume_db` once rather than assuming a constant)
 
 ### Task 6: Rare bird flocks
-- [ ] constants: `BIRD_INTERVAL_MIN/MAX: float = 60.0/120.0`, `BIRD_FLOCK_MIN/MAX: int = 3/7`,
+- [x] constants: `BIRD_INTERVAL_MIN/MAX: float = 60.0/120.0`, `BIRD_FLOCK_MIN/MAX: int = 3/7`,
       `BIRD_ALTITUDE_MIN/MAX: float = 30.0/40.0`, `BIRD_SPEED`, `BIRD_FLAP_HZ`,
       `BIRD_WING_LENGTH`, `BIRD_BOB_*`, `BIRD_COLOR` (dark)
-- [ ] a second `MultiMeshInstance3D` (`_bird_mmi`) sized `BIRD_FLOCK_MAX * 3` instances
+- [x] a second `MultiMeshInstance3D` (`_bird_mmi`) sized `BIRD_FLOCK_MAX * 3` instances
       (body + two wings per bird), sharing the same unit `BoxMesh` with its own dark
       material, `cast_shadow` OFF; instance count parked at zero scale while no flock is
       alive so it draws nothing
-- [ ] a countdown timer spawns a flock: pick a random crossing line through the player's
+- [x] a countdown timer spawns a flock: pick a random crossing line through the player's
       neighbourhood, give each bird a small lateral/vertical offset from the flock leader
       and its own flap phase
-- [ ] update birds EVERY frame (not on the 10 Hz tick) while a flock is alive — a wing
+- [x] update birds EVERY frame (not on the 10 Hz tick) while a flock is alive — a wing
       flap at a few Hz aliases badly at 10 Hz, and ≤21 instances updated only during the
       rare seconds a flock exists is free; wings rotate about their local forward axis by
       `sin(TAU * BIRD_FLAP_HZ * t + phase)` and the body bobs gently
-- [ ] despawn the flock (park instances, restart the countdown) once the leader is past
+- [x] despawn the flock (park instances, restart the countdown) once the leader is past
       `FIELD_RADIUS` from the player
-- [ ] no collision, no AI, no interaction, no caw sound — the bead marks the caw optional;
+- [x] no collision, no AI, no interaction, no caw sound — the bead marks the caw optional;
       skip it rather than growing `sound_manager.gd`, and note the skip in the comment
 
 ### Task 7: Wire the manager into `scenes/main.tscn` (minimal diff)

@@ -158,6 +158,62 @@ const RAIN_CROSSFADE: float = 0.05      # seconds blended across the loop seam
 const RAIN_MIX_RATE: int = 22050        # matches sound_manager.MIX_RATE
 
 # ============================================================================
+# BIRD TUNABLES
+# ============================================================================
+# Birds are pure ambience: no collision, no AI, no interaction, nothing to
+# collect. A flock crosses the sky now and then purely so the world feels
+# inhabited, then despawns. They are RARE by design — seen too often they stop
+# being a moment and become wallpaper.
+
+## Seconds between flocks (rolled fresh after each flock leaves).
+const BIRD_INTERVAL_MIN: float = 60.0
+const BIRD_INTERVAL_MAX: float = 120.0
+
+## How many birds in one flock. BIRD_FLOCK_MAX sizes the MultiMesh allocation.
+const BIRD_FLOCK_MIN: int = 3
+const BIRD_FLOCK_MAX: int = 7
+
+## Cruising altitude band (metres). Below the clouds (45–70 m) so they read as
+## clearly nearer, well above anything the player can reach.
+const BIRD_ALTITUDE_MIN: float = 30.0
+const BIRD_ALTITUDE_MAX: float = 40.0
+
+## Flight speed (m/s) — much faster than the clouds, which is what makes a
+## flock read as a living thing rather than more weather.
+const BIRD_SPEED: float = 9.0
+
+## Distance (metres) from the player the flock spawns at / despawns past. It
+## enters and leaves well outside the fogged view distance, so no popping.
+const BIRD_SPAWN_DISTANCE: float = 160.0
+const BIRD_DESPAWN_DISTANCE: float = 200.0
+
+## Wing beats per second, and how far (radians) a wing swings up/down from
+## level at the extremes of the beat.
+const BIRD_FLAP_HZ: float = 3.0
+const BIRD_FLAP_ANGLE: float = 0.6
+
+## Gentle vertical bob along the flight path (metres / cycles per second), so
+## the flock undulates instead of sliding along a ruler.
+const BIRD_BOB_AMPLITUDE: float = 0.5
+const BIRD_BOB_SPEED: float = 0.8
+
+## Body box (local axes: X = across, Y = up, Z = along the flight direction) and
+## one wing's box. Small — at 30–40 m these are specks with moving wings, which
+## is exactly the silhouette that reads as "bird".
+const BIRD_BODY_SIZE: Vector3 = Vector3(0.25, 0.25, 0.9)
+const BIRD_WING_SIZE: Vector3 = Vector3(1.1, 0.05, 0.35)
+
+## How far flock-mates scatter from the leader (metres, per axis).
+const BIRD_FLOCK_SPREAD: float = 6.0
+
+## Dark silhouette colour — a bird against a bright sky is a shadow, not a
+## lit object, so the material is unshaded and simply dark.
+const BIRD_COLOR: Color = Color(0.12, 0.13, 0.16)
+
+## Instances per bird in the MultiMesh: body + left wing + right wing.
+const BIRD_PARTS: int = 3
+
+# ============================================================================
 # STATE
 # ============================================================================
 
@@ -221,6 +277,26 @@ var _wind_base_db: float = 0.0
 ## _player_in_rain target at 1/RAIN_FADE_TIME per second on the throttled tick.
 var _rain_mix: float = 0.0
 
+## The one draw call for a bird flock (body + 2 wings per bird). Empty of
+## visible geometry — every instance parked at zero scale — while no flock is
+## in the air, which is nearly all the time.
+var _bird_mmi: MultiMeshInstance3D = null
+
+## The live flock: one Dictionary per bird —
+##   { "pos": Vector3,      # world position (advanced every frame)
+##     "phase": float }     # per-bird wing-beat + bob phase offset
+## Empty between flocks.
+var _birds: Array = []
+
+## Flight direction of the current flock (unit, XZ) and seconds until the next
+## flock spawns (rolled from BIRD_INTERVAL_MIN/MAX after each one leaves).
+var _bird_dir: Vector3 = Vector3.FORWARD
+var _bird_timer: float = 0.0
+
+## Running clock for the wing beat. Separate from _time because birds are
+## updated EVERY frame while _time only advances on the 10 Hz tick.
+var _bird_time: float = 0.0
+
 
 # ============================================================================
 # LIFECYCLE
@@ -231,12 +307,20 @@ func _ready() -> void:
 	_rng.randomize()
 	_build_cloud_multimesh()
 	_build_rain_particles()
+	_build_bird_multimesh()
 	_rain_stream = _synth_rain_stream()
+	_bird_timer = _rng.randf_range(BIRD_INTERVAL_MIN, BIRD_INTERVAL_MAX)
 
 
 func _process(delta: float) -> void:
+	# Birds are the ONE thing updated every frame — a 3 Hz wing beat sampled at
+	# the 10 Hz cloud tick would alias into a stutter. It is affordable because
+	# a flock is at most BIRD_FLOCK_MAX birds and exists only for the few
+	# seconds of a crossing; between flocks this call is a timer decrement.
+	_update_birds(delta)
+
 	# Throttle: all cloud work happens on the ~10 Hz tick, so on most frames
-	# this function is a single accumulate-and-return.
+	# the rest of this function is a single accumulate-and-return.
 	_tick_accum += delta
 	if _tick_accum < TICK_INTERVAL:
 		return
@@ -335,7 +419,10 @@ func _write_cloud_instances() -> void:
 			var idx: int = ci * BOXES_PER_CLOUD_MAX + bi
 			if bi < boxes.size():
 				var box: Dictionary = boxes[bi]
-				var basis := Basis(Vector3.UP, box["yaw"]).scaled(box["size"])
+				# scaled_local (not scaled): the size applies along the box's OWN
+				# axes after the yaw, exactly like the terrain's block MultiMesh —
+				# scaling world axes after a rotation shears a non-cubic box.
+				var basis := Basis(Vector3.UP, box["yaw"]).scaled_local(box["size"])
 				mm.set_instance_transform(idx, Transform3D(basis, center + box["offset"]))
 				mm.set_instance_color(idx, color)
 			else:
@@ -590,3 +677,143 @@ func is_raining_at(world_pos: Vector3) -> bool:
 				<= radius * radius:
 			return true
 	return false
+
+
+# ============================================================================
+# BIRDS — rare flocks crossing the sky (ambience only)
+# ============================================================================
+
+func _build_bird_multimesh() -> void:
+	## Second (and last) MultiMesh of this manager: every part of every bird in
+	## one draw call, same batching pattern as the clouds. Sized for the biggest
+	## possible flock and parked at zero scale, so while no flock is in the air
+	## it draws nothing at all — a MultiMesh whose instances are all degenerate
+	## costs one skipped draw, not one per bird.
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.mesh = BoxMesh.new()  # the same unit box the clouds use, per-instance scaled
+	mm.instance_count = BIRD_FLOCK_MAX * BIRD_PARTS
+
+	# Flat dark silhouette: a bird seen against a bright sky is a shadow, so
+	# unshaded is both cheaper AND more correct than lighting it.
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.albedo_color = BIRD_COLOR
+
+	_bird_mmi = MultiMeshInstance3D.new()
+	_bird_mmi.multimesh = mm
+	_bird_mmi.material_override = mat
+	_bird_mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(_bird_mmi)
+	_park_bird_instances()
+
+
+func _park_bird_instances() -> void:
+	## Collapse every bird instance to zero scale — the "no flock" state.
+	var mm: MultiMesh = _bird_mmi.multimesh
+	var parked := Transform3D(Basis().scaled(Vector3.ZERO), Vector3.ZERO)
+	for i in mm.instance_count:
+		mm.set_instance_transform(i, parked)
+
+
+func _update_birds(delta: float) -> void:
+	## Per-frame bird step. Between flocks (the common case) this is a timer
+	## decrement and an early return.
+	if _birds.is_empty():
+		_bird_timer -= delta
+		if _bird_timer <= 0.0 and is_instance_valid(_player):
+			_spawn_flock(_player.global_position)
+		return
+
+	_bird_time += delta
+	for bird in _birds:
+		bird["pos"] += _bird_dir * BIRD_SPEED * delta
+	_write_bird_instances()
+
+	# The flock leads with _birds[0]; once IT is far past the player the whole
+	# flock has crossed, so retire them and roll the next wait.
+	if is_instance_valid(_player):
+		var lead: Vector3 = _birds[0]["pos"] - _player.global_position
+		if Vector2(lead.x, lead.z).length() > BIRD_DESPAWN_DISTANCE:
+			_birds.clear()
+			_park_bird_instances()
+			_bird_timer = _rng.randf_range(BIRD_INTERVAL_MIN, BIRD_INTERVAL_MAX)
+	else:
+		# Player vanished mid-crossing (scene change) — drop the flock rather
+		# than leaving it flying forever with nothing to measure against.
+		_birds.clear()
+		_park_bird_instances()
+		_bird_timer = _rng.randf_range(BIRD_INTERVAL_MIN, BIRD_INTERVAL_MAX)
+
+
+func _spawn_flock(player_pos: Vector3) -> void:
+	## Launch one flock on a straight crossing near the player: pick a random
+	## heading, start BIRD_SPAWN_DISTANCE upstream of a point beside the player,
+	## and scatter the flock-mates around the leader.
+	var heading: float = _rng.randf_range(0.0, TAU)
+	_bird_dir = Vector3(cos(heading), 0.0, sin(heading))
+	# Offset the crossing line sideways so flocks don't always fly right at the
+	# player's head.
+	var side: Vector3 = _bird_dir.cross(Vector3.UP) * _rng.randf_range(-60.0, 60.0)
+	var altitude: float = _rng.randf_range(BIRD_ALTITUDE_MIN, BIRD_ALTITUDE_MAX)
+	var lead_pos: Vector3 = player_pos - _bird_dir * BIRD_SPAWN_DISTANCE + side
+	lead_pos.y = altitude
+
+	var count: int = _rng.randi_range(BIRD_FLOCK_MIN, BIRD_FLOCK_MAX)
+	_birds.clear()
+	for i in count:
+		# Bird 0 is the leader (exact lead_pos); the rest trail and spread out
+		# around it, each with its own wing-beat phase so the flock doesn't flap
+		# in lockstep like a single animated sprite.
+		var offset := Vector3.ZERO
+		if i > 0:
+			offset = Vector3(
+					_rng.randf_range(-BIRD_FLOCK_SPREAD, BIRD_FLOCK_SPREAD),
+					_rng.randf_range(-BIRD_FLOCK_SPREAD, BIRD_FLOCK_SPREAD) * 0.3,
+					_rng.randf_range(-BIRD_FLOCK_SPREAD, BIRD_FLOCK_SPREAD))
+		_birds.append({
+			"pos": lead_pos + offset,
+			"phase": _rng.randf_range(0.0, TAU),
+		})
+
+
+func _write_bird_instances() -> void:
+	## Write the whole flock into the MultiMesh: per bird a body box plus two
+	## wing boxes rotated by the shared sine flap.
+	##
+	## Each bird gets a local frame built from the flight direction —
+	## X = right (wing span), Y = up, Z = backwards (so the body's long Z axis
+	## lies along the flight path). A wing is that frame rotated about its local
+	## Z (the travel axis) by ±flap, which swings it up and down exactly like a
+	## real wing hinge.
+	var mm: MultiMesh = _bird_mmi.multimesh
+	var right: Vector3 = _bird_dir.cross(Vector3.UP).normalized()
+	var frame := Basis(right, Vector3.UP, -_bird_dir)
+	var parked := Transform3D(Basis().scaled(Vector3.ZERO), Vector3.ZERO)
+
+	for bi in BIRD_FLOCK_MAX:
+		var base_idx: int = bi * BIRD_PARTS
+		if bi >= _birds.size():
+			# Slot unused by this (smaller) flock.
+			for part in BIRD_PARTS:
+				mm.set_instance_transform(base_idx + part, parked)
+			continue
+
+		var bird: Dictionary = _birds[bi]
+		var phase: float = bird["phase"]
+		var pos: Vector3 = bird["pos"]
+		# Gentle undulation along the path, on top of the flap.
+		pos.y += sin(_bird_time * BIRD_BOB_SPEED * TAU + phase) * BIRD_BOB_AMPLITUDE
+		var flap: float = sin(_bird_time * BIRD_FLAP_HZ * TAU + phase) * BIRD_FLAP_ANGLE
+
+		mm.set_instance_transform(base_idx,
+				Transform3D(frame.scaled_local(BIRD_BODY_SIZE), pos))
+		# Wings mirror each other: left hinges +flap, right hinges -flap, and
+		# each sits half a wingspan out along its own rotated span axis.
+		for w in 2:
+			var sign_w: float = 1.0 if w == 0 else -1.0
+			var wing_basis: Basis = frame * Basis(Vector3.BACK, flap * sign_w)
+			var wing_pos: Vector3 = pos \
+					+ wing_basis * Vector3(BIRD_WING_SIZE.x * 0.5 * sign_w, 0.0, 0.0)
+			mm.set_instance_transform(base_idx + 1 + w,
+					Transform3D(wing_basis.scaled_local(BIRD_WING_SIZE), wing_pos))
