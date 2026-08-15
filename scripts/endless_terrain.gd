@@ -1311,7 +1311,7 @@ func create_block(center_pos: Vector3, size: float, yaw: float, rng: RandomNumbe
 	"""
 	create_box(center_pos, Vector3(size, size, size), yaw, rng, block_batch, block_body)
 
-func create_box(center_pos: Vector3, dimensions: Vector3, yaw: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> void:
+func create_box(center_pos: Vector3, dimensions: Vector3, yaw: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D, tilt: float = 0.0, color_override: Color = Color(0.0, 0.0, 0.0, 0.0)) -> void:
 	"""
 	Register one box for rendering AND register its physics collision shape. Used for
 	cube blocks and for the flat slabs that make up pyramids.
@@ -1357,6 +1357,13 @@ func create_box(center_pos: Vector3, dimensions: Vector3, yaw: float, rng: Rando
 	                   colour here for the chunk's MultiMesh.
 	@param block_body: The chunk's single shared StaticBody3D; we add this block's
 	                   CollisionShape3D child to it (see WHY note above).
+	@param tilt: OPTIONAL rotation about the local X axis (radians), applied AFTER
+	             yaw. Used by the lost-civilization artifacts for leaning stones.
+	             Defaults to 0.0 — the extra Basis is then the identity, so every
+	             existing call site produces a bit-for-bit identical transform.
+	@param color_override: OPTIONAL colour that replaces the curated-ramp pick when
+	                       its alpha > 0 (the default is fully transparent = inert).
+	                       Used by artifacts for their weathered palette.
 	"""
 	# ----- Pick the block colour from a curated ramp -----------------------------
 	# IMPORTANT (determinism): the chunk's world layout is seeded from this same RNG.
@@ -1395,6 +1402,16 @@ func create_box(center_pos: Vector3, dimensions: Vector3, yaw: float, rng: Rando
 	# randf_range purely for its determinism side effect is enough.
 	rng.randf_range(0.7, 1.0)
 
+	# ----- Optional colour override (artifacts) ----------------------------------
+	# Applied AFTER the ramp match on purpose: the ramp draws above belong to the
+	# CALLER'S RNG stream and must always happen to keep that stream's sequence
+	# intact. Ordinary chunk blocks pass the shared chunk RNG (where skipping draws
+	# would shift the whole world); artifacts pass their own private RNG, so the
+	# discarded draws cost nothing. Either way the shared-stream discipline of this
+	# function stays untouched — we only swap which colour VALUE gets used.
+	if color_override.a > 0.0:
+		chosen_color = color_override
+
 	# ----- Append this block to the chunk's MultiMesh batch (VISUALS) ------------
 	# A MultiMesh instance is just a Transform3D applied to the shared UNIT cube.
 	# We build the basis as: rotate around UP by `yaw`, THEN scale each LOCAL axis by
@@ -1430,9 +1447,17 @@ func create_box(center_pos: Vector3, dimensions: Vector3, yaw: float, rng: Rando
 	# equals srgb_to_linear(chosen_color), exactly as the old material produced. This is
 	# a pure value transform on an already-computed Color — it consumes NO RNG, so the
 	# deterministic world layout is unchanged.
-	var basis := Basis(Vector3.UP, yaw).scaled_local(dimensions)
+	#
+	# TILT (artifacts): the rotation is built ONCE as `Basis(UP, yaw) * Basis(RIGHT,
+	# tilt)` — yaw first, then a lean about the local X axis — and that SAME `rot` is
+	# used for both halves: the visual gets `rot.scaled_local(dimensions)` (still the
+	# `R * S` order documented above) and the collision shape below gets plain `rot`
+	# on its own transform. Sharing one basis is what keeps a TILTED box's visual and
+	# collision in lockstep. With the default `tilt == 0.0` the extra Basis is the
+	# identity, so this transform is bit-for-bit what the yaw-only code produced.
+	var rot := Basis(Vector3.UP, yaw) * Basis(Vector3.RIGHT, tilt)
 	block_batch.append({
-		"transform": Transform3D(basis, center_pos),
+		"transform": Transform3D(rot.scaled_local(dimensions), center_pos),
 		"color": chosen_color.srgb_to_linear(),
 	})
 
@@ -1449,9 +1474,12 @@ func create_box(center_pos: Vector3, dimensions: Vector3, yaw: float, rng: Rando
 	# Default collision layer/mask (1/1) — block_body never sets them, exactly like the
 	# old per-block bodies, so the player's collision and crocodile avoidance raycasts
 	# keep hitting blocks the same way.
+	# The shape reuses the SAME `rot` basis the visual used (see the TILT note
+	# above) via a whole-transform assignment — for the default tilt of 0 this is
+	# exactly the old `position = center_pos; rotation.y = yaw` pair, and for a
+	# tilted artifact stone it keeps collision matched to the leaning visual.
 	var collision_shape := CollisionShape3D.new()
-	collision_shape.position = center_pos
-	collision_shape.rotation.y = yaw
+	collision_shape.transform = Transform3D(rot, center_pos)
 
 	var box_shape := BoxShape3D.new()
 	box_shape.size = dimensions

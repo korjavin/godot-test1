@@ -153,11 +153,11 @@ Dependencies identified: none new. No new files, no new assets, no scene edits.
       footprint radius + a pad in this range)
 
 ### Task 2: Extend create_box with optional tilt + colour override (backward compatible)
-- [ ] change `create_box()`'s signature to
+- [x] change `create_box()`'s signature to
       `create_box(center_pos: Vector3, dimensions: Vector3, yaw: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D, tilt: float = 0.0, color_override: Color = Color(0.0, 0.0, 0.0, 0.0)) -> void`
       — both new params are **optional with inert defaults**, so all 20-odd
       existing call sites are untouched and behave byte-identically
-- [ ] build the rotation once as
+- [x] build the rotation once as
       `var rot := Basis(Vector3.UP, yaw) * Basis(Vector3.RIGHT, tilt)` and use it
       for BOTH halves: visual `Transform3D(rot.scaled_local(dimensions), center_pos)`
       and collision `collision_shape.transform = Transform3D(rot, center_pos)`
@@ -166,12 +166,12 @@ Dependencies identified: none new. No new files, no new assets, no scene edits.
       note documents, so visual and collision stay in lockstep for a tilted box —
       and that with `tilt == 0.0` the extra `Basis` is the identity, so the
       transform is bit-for-bit what it was
-- [ ] apply the colour override AFTER the existing ramp `match`: if
+- [x] apply the colour override AFTER the existing ramp `match`: if
       `color_override.a > 0.0`, use it instead of `chosen_color`. Comment WHY the
       ramp draws still happen (they belong to the caller's RNG stream; artifacts
       pass their own private RNG, so the discarded draws cost nothing and the
       shared-stream discipline in this function stays untouched)
-- [ ] verify by inspection that `create_block()` needs no change (it forwards
+- [x] verify by inspection that `create_block()` needs no change (it forwards
       positionally and the new params default)
 
 ### Task 3: Add the shared emissive accent material + accent spawner
