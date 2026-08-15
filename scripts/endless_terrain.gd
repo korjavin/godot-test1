@@ -742,6 +742,41 @@ func _roll_biome_offset() -> void:
 	)
 
 
+func _apply_biome_shader_params() -> void:
+	"""
+	Push the biome field's parameters onto the shared ground material, so the tint
+	the player SEES agrees with the biome/river the CPU DECIDES (biome_at /
+	is_river_at). This is the other half of the shader-parity contract documented on
+	_biome_noise: the two noise implementations are identical only if they are fed
+	identical constants.
+
+	Called from _ready() (right after the default ShaderMaterial is built) and from
+	new_run() (right after _roll_run_seed, which re-rolls biome_offset — the visible
+	biome layout has to move with the new run's world).
+
+	EDUCATIONAL NOTE — only the PARITY-CRITICAL parameters are pushed. The four biome
+	colours are left to the shader's own uniform defaults, exactly like green_a /
+	green_b: they are pure art with no GDScript counterpart, so an art pass can retint
+	the material in the editor without anyone touching this script.
+
+	The `is ShaderMaterial` guard keeps the @export escape hatch intact: assign any
+	StandardMaterial3D as terrain_material in the editor and this silently does
+	nothing instead of erroring on set_shader_parameter.
+	"""
+	if not (terrain_material is ShaderMaterial):
+		return
+
+	var mat := terrain_material as ShaderMaterial
+	mat.set_shader_parameter("biome_offset", biome_offset)
+	mat.set_shader_parameter("biome_cell_size", BIOME_CELL_SIZE)
+	mat.set_shader_parameter("biome_desert_max", BIOME_DESERT_MAX)
+	mat.set_shader_parameter("biome_plains_max", BIOME_PLAINS_MAX)
+	mat.set_shader_parameter("biome_forest_max", BIOME_FOREST_MAX)
+	mat.set_shader_parameter("river_level", RIVER_LEVEL)
+	mat.set_shader_parameter("river_half_width", RIVER_HALF_WIDTH)
+	mat.set_shader_parameter("biome_blend", BIOME_BLEND)
+
+
 func _ready() -> void:
 	"""
 	Initialize the terrain system.
@@ -798,6 +833,11 @@ func _ready() -> void:
 		var ground_material := ShaderMaterial.new()
 		ground_material.shader = load("res://assets/shaders/ground.gdshader")
 		terrain_material = ground_material
+
+	# Feed the biome field to the shader. Safe to call unconditionally — it no-ops on a
+	# non-ShaderMaterial. run_seed (and with it biome_offset) was rolled at the top of
+	# _ready(), so the uniforms match the field every other system reads.
+	_apply_biome_shader_params()
 
 	# Enable the depth fog on ALL platforms (thick on web to mask the reduced view
 	# distance, thin on desktop as a horizon haze — see _setup_fog). Done after the
@@ -2965,8 +3005,11 @@ func new_run() -> void:
 	   land on solid new-world ground instead of falling through a hole. Setting
 	   last_player_chunk to (0,0) keeps _process from redundantly rebuilding.
 	"""
-	# 1. New seed (same roll as _ready()).
+	# 1. New seed (same roll as _ready()). _roll_run_seed also re-rolls biome_offset,
+	# so the ground shader has to be re-fed immediately after it — otherwise the new
+	# run's rivers would be walked through while the OLD run's blue bands are drawn.
 	_roll_run_seed()
+	_apply_biome_shader_params()
 
 	# 2. Road cache back to its declared empty state, and the old-world pending
 	# queue emptied (update_chunks below rebuilds it for the new world anyway;
