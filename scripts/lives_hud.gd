@@ -25,12 +25,24 @@ const HEART_SPACING: float = 10.0
 const FILLED_COLOR: Color = Color(0.9, 0.15, 0.2)
 const EMPTY_COLOR: Color = Color(0.35, 0.14, 0.16, 0.55)
 
+## Losing a life pulses the dying heart: for PULSE_DURATION seconds it renders
+## oversized (up to PULSE_SCALE) in a bright flash colour, easing back down to
+## normal size while fading to EMPTY_COLOR — the heart visibly *dies* instead
+## of just not being drawn on the next repaint.
+const PULSE_DURATION: float = 0.6
+const PULSE_SCALE: float = 1.4
+const PULSE_COLOR: Color = Color(1.0, 0.55, 0.5)
+
 ## Cached player reference (re-fetched if it ever goes away).
 var player: Node = null
 
 ## Last values we drew, so we only repaint when either count actually changes.
 var _drawn_lives: int = -1
 var _drawn_total: int = -1
+
+## Which heart is mid-death-pulse (-1 = none) and how long the pulse has left.
+var _pulse_index: int = -1
+var _pulse_timer: float = 0.0
 
 
 func _ready() -> void:
@@ -39,7 +51,7 @@ func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	if player == null or not is_instance_valid(player):
 		player = get_tree().get_first_node_in_group("player")
 
@@ -51,8 +63,20 @@ func _process(_delta: float) -> void:
 		# pushed `lives` above that (see EXTRA_LIFE_COINS in player_controller).
 		total = maxi(player.MAX_LIVES, lives)
 
-	# Repaint only on change — _draw is comparatively expensive to run every frame.
-	if lives != _drawn_lives or total != _drawn_total:
+	# A DECREASE means a heart just died — start its death pulse. (The -1 guard
+	# skips the very first frame; a restart's refill is an increase, no pulse.)
+	if _drawn_lives >= 0 and lives < _drawn_lives:
+		_pulse_index = lives  # hearts are 0-based, so index `lives` just emptied
+		_pulse_timer = PULSE_DURATION
+
+	# Repaint only on change — _draw is comparatively expensive to run every
+	# frame — EXCEPT while a death pulse animates, which needs every frame.
+	if _pulse_timer > 0.0:
+		_pulse_timer = maxf(0.0, _pulse_timer - delta)
+		_drawn_lives = lives
+		_drawn_total = total
+		queue_redraw()
+	elif lives != _drawn_lives or total != _drawn_total:
 		_drawn_lives = lives
 		_drawn_total = total
 		queue_redraw()
@@ -65,7 +89,15 @@ func _draw() -> void:
 			HEART_SIZE * 0.5
 		)
 		var filled := i < _drawn_lives
-		_draw_heart(center, HEART_SIZE, FILLED_COLOR if filled else EMPTY_COLOR)
+		var size := HEART_SIZE
+		var color := FILLED_COLOR if filled else EMPTY_COLOR
+		# The dying heart: oversized and flash-bright at the start of the pulse,
+		# easing back to normal size and the dim empty colour as the timer runs out.
+		if i == _pulse_index and _pulse_timer > 0.0:
+			var k := _pulse_timer / PULSE_DURATION  # 1 → 0 over the pulse
+			size *= 1.0 + (PULSE_SCALE - 1.0) * k
+			color = PULSE_COLOR.lerp(EMPTY_COLOR, 1.0 - k)
+		_draw_heart(center, size, color)
 
 
 func _draw_heart(center: Vector2, size: float, fill: Color) -> void:

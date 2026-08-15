@@ -22,8 +22,13 @@ func _ready() -> void:
 	color = Color(0.7, 0.0, 0.0, 0.0)
 
 
-func flash() -> void:
-	"""Trigger the flash (called when the player is caught)."""
+func flash(flash_color: Color = Color(0.7, 0.0, 0.0)) -> void:
+	"""
+	Trigger the flash. Defaults to the classic "you got hit" red, so the existing
+	bite caller keeps working unchanged; other systems can pass their own tint
+	(the alpha component is ignored — opacity is driven by current_alpha).
+	"""
+	color = Color(flash_color.r, flash_color.g, flash_color.b, 0.0)
 	current_alpha = PEAK_ALPHA
 
 
