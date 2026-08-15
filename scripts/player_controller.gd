@@ -133,6 +133,10 @@ const CAMERA_TURN_EASE: float = 10.0
 const FOV_BASE: float = 75.0
 const FOV_MAX: float = 97.0
 const FOV_EASE: float = 5.0
+## Transient FOV kick on Windman's Air Rush launch (degrees) and how fast the
+## kick bleeds off (degrees per second) — a punch, not a sustained zoom.
+const FOV_PUNCH_WINDMAN: float = 12.0
+const FOV_PUNCH_DECAY: float = 30.0
 
 ## Camera pitch limits (prevents camera from flipping over)
 const CAMERA_PITCH_MIN: float = -60.0  # Looking down limit (degrees)
@@ -259,8 +263,8 @@ const SHAKE_DECAY: float = 1.0
 var camera_yaw_lag: float = 0.0
 
 ## Transient FOV kick (degrees) added on top of the speed-scaled target — set
-## by Windman's Air Rush launch and decayed by the ability code (Task 7 wiring;
-## harmlessly 0 until then).
+## to FOV_PUNCH_WINDMAN by Windman's Air Rush launch, decayed back to zero at
+## FOV_PUNCH_DECAY per second by the FOV code in _process.
 var fov_punch: float = 0.0
 
 ## First-person view mode. This is a player PREFERENCE, not transient state: it
@@ -744,6 +748,8 @@ func _process(delta: float) -> void:
 		(horizontal_speed - WALK_SPEED) / (WINDMAN_AIR_SPEED - WALK_SPEED), 0.0, 1.0)
 	var target_fov := lerpf(FOV_BASE, FOV_MAX, speed_blend) + fov_punch
 	camera.fov = lerpf(camera.fov, target_fov, minf(1.0, FOV_EASE * delta))
+	# The launch punch bleeds off on its own, so the kick reads then settles.
+	fov_punch = maxf(0.0, fov_punch - FOV_PUNCH_DECAY * delta)
 
 # ============================================================================
 # HELPER FUNCTIONS
@@ -1834,8 +1840,14 @@ func try_activate_ability() -> void:
 	"""
 	var char_name: String = CHARACTERS[current_character_index]["name"]
 
-	# Still cooling down? Ignore the press.
+	# Still cooling down? The press doesn't fire, but it must not feel dead:
+	# flash the cooldown dial red (via the "ability_hud" group — null-safe, no
+	# hard reference, like every other HUD hookup) and play a low denial buzz.
 	if ability_cooldowns[current_character_index] > 0.0:
+		var hud := get_tree().get_first_node_in_group("ability_hud")
+		if hud and hud.has_method("flash_blocked"):
+			hud.flash_blocked()
+		_sfx("play_buzz")
 		return
 
 	var used := false
@@ -1863,6 +1875,9 @@ func _ability_windman() -> bool:
 	forward = forward.normalized()
 
 	windman_boost_timer = WINDMAN_BOOST_DURATION
+	# Kick the lens wide for the launch moment — the FOV code in _process adds
+	# this on top of the speed-scaled target and decays it back to zero.
+	fov_punch = FOV_PUNCH_WINDMAN
 	# Launch: up so he is airborne, plus an immediate forward shove so even a
 	# standing press blasts off into the wind right away.
 	velocity.y = WINDMAN_LIFT
@@ -1905,8 +1920,13 @@ func _ability_primm() -> bool:
 	if not found:
 		return false
 
-	# A quick flash where he leaves and where he arrives, to sell the teleport.
+	# A quick flash where he leaves and where he arrives, to sell the teleport —
+	# plus three small staggered flashes along the path between them, so the eye
+	# can track WHERE the blink went instead of seeing two disconnected pops.
 	_spawn_ability_effect(global_position, Color(0.45, 0.5, 1.0, 0.5), 2.0, 0.35)
+	for i in range(3):
+		_spawn_ability_effect(global_position.lerp(target, (i + 1) / 4.0),
+			Color(0.45, 0.5, 1.0, 0.4), 1.0, 0.25, i * 0.05)
 	global_position = target
 	velocity = Vector3.ZERO  # land cleanly on the far side, no carried momentum
 	_spawn_ability_effect(global_position, Color(0.45, 0.5, 1.0, 0.5), 2.0, 0.35)
@@ -2003,8 +2023,17 @@ func _apply_teibi_scale(s: float) -> void:
 	the node so the bottom stays exactly where it was at normal size.
 	"""
 	if character_container:
-		character_container.scale = Vector3(s, s, s)
+		# The VISUAL scale tweens with a springy overshoot so the resize pops
+		# instead of snapping. Kill any in-flight resize tween first so rapid
+		# F-presses don't leave two tweens fighting over the same property.
+		if _teibi_tween:
+			_teibi_tween.kill()
+		_teibi_tween = create_tween().set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		_teibi_tween.tween_property(character_container, "scale", Vector3(s, s, s), 0.25)
 	if collision_shape:
+		# The COLLISION capsule snaps to the new size instantly — physics must
+		# never lag the visual, or a "still shrinking" giant could clip blocks
+		# and the first-person eye height would be mid-tween wrong.
 		collision_shape.scale = Vector3(s, s, s)
 		var bottom := collision_base_y - collision_half_height
 		collision_shape.position.y = bottom + s * collision_half_height
