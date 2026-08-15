@@ -87,8 +87,22 @@ const FAUNA_INTERVAL_MAX: float = 240.0
 const WALK_SPEED_MIN: float = 2.0
 const WALK_SPEED_MAX: float = 3.0
 
-## Probability that a given event is an elephant family; otherwise a giraffe
-## flock. 50/50 — both species should feel equally common.
+## Probability that a given event is a herder caravan. Rolled FIRST, so it
+## takes its share off the top and ELEPHANT_CHANCE below stays the plain
+## elephant/giraffe split of whatever is left (0.15 caravan → 0.425 each herd).
+## Clearly rarer than either species on purpose: a caravan is the nomad camps'
+## people out on the move, and "rare" is the whole read — a wandering village
+## that shows up every other event stops being a sighting.
+##
+## It shares the ONE fauna event timer rather than owning a second one, and
+## that is the perf decision, not a stylistic one: a private timer would break
+## the one-herd invariant in _spawn_herd (the early-return that caps this whole
+## feature at a single live group), and two concurrent groups would double the
+## worst case for a feature whose entire idle cost is one float subtraction.
+const CARAVAN_CHANCE: float = 0.15
+
+## Probability that a NON-caravan event is an elephant family; otherwise a
+## giraffe flock. 50/50 — both species should feel equally common.
 const ELEPHANT_CHANCE: float = 0.5
 
 ## Half-angle (radians) of the cone the migration heading is drawn from, taken
@@ -939,7 +953,11 @@ func _spawn_herd() -> void:
 	# Build the members with their formation offsets (herd-local lateral/long
 	# pairs turned into world-space vectors — heading never changes, so the
 	# world-space offset is valid for the herd's whole life).
-	if _rng.randf() < ELEPHANT_CHANCE:
+	# The caravan is rolled FIRST and takes its slice off the top, so the
+	# elephant/giraffe split below is untouched (see CARAVAN_CHANCE).
+	if _rng.randf() < CARAVAN_CHANCE:
+		_spawn_caravan()
+	elif _rng.randf() < ELEPHANT_CHANCE:
 		_spawn_elephant_family()
 	else:
 		_spawn_giraffe_flock()
@@ -976,6 +994,55 @@ func _spawn_giraffe_flock() -> void:
 		var lat := step * HERD_SPREAD_LATERAL * 0.6 + _rng.randf_range(-1.5, 1.5)
 		var lon := step * HERD_SPREAD_LONG * 0.5 + _rng.randf_range(-1.5, 1.5)
 		_add_animal(_build_giraffe(), _herd_lateral * lat + _herd_heading * lon)
+
+
+func _spawn_caravan() -> void:
+	## A herder caravan: the herders walk at the FRONT of the line and the laden
+	## pack beasts trail behind them in a loose, jittered single file — the
+	## "people leading their animals somewhere" read the owner asked for.
+	##
+	## Formation is one slot per member stepping CARAVAN_LINE_SPACING backwards
+	## along the heading, with a lateral wobble so the file bends like a trail
+	## rather than a marching column. Everything else — easing into the slot,
+	## facing along the heading, per-animal stride phase, movement, animation and
+	## despawn — comes free from _add_animal / _update_herd / _animate_animals:
+	## a caravan is just N records of the same species-agnostic shape.
+	##
+	## ISOLATION CONTRACT (identical to the two herds, and non-negotiable):
+	## caravan members join NO group and carry NO collision. Phoboman's Stink
+	## Wave iterates "crocodile" and crocodile_lod_manager.gd iterates it too, so
+	## a fauna node in any enemy group would be grabbed by both. They ignore the
+	## player, crocodiles, abilities and rain completely, and nothing can touch
+	## them back — they are scenery that happens to walk.
+	##
+	## ponytail: a caravan does NOT path to or from a nomad camp — the two
+	## halves of the feature are thematically linked and mechanically
+	## independent. Wiring them up needs a nearest-camp query on the terrain
+	## (camps are chunk-local and unload with their chunk, so it would also need
+	## to survive the camp despawning mid-walk); the upgrade path is a
+	## `get_camp_near(pos)` on endless_terrain.gd plus a heading override here.
+	##
+	## ponytail: the optional caravan bell one-shot is skipped, same shape as
+	## the elephant trumpet noted in _spawn_herd — sound_manager.gd's players are
+	## non-positional, and a caravan spawns ~FIELD_RADIUS (140 m) away, so a bell
+	## at full volume in both ears would read as "inside the player's head"
+	## rather than "in the distance". The upgrade path is a positional audio path
+	## (an AudioStreamPlayer3D on the lead herder) plus a play_* in the manager's
+	## synth style.
+	var herder_count := _rng.randi_range(CARAVAN_HERDERS_MIN, CARAVAN_HERDERS_MAX)
+	var beast_count := _rng.randi_range(CARAVAN_BEASTS_MIN, CARAVAN_BEASTS_MAX)
+
+	# Slot 0 is the front of the line; each later slot steps one spacing back
+	# along the heading. Centred on the herd position so the line straddles the
+	# migration centre instead of trailing entirely behind it.
+	var total := herder_count + beast_count
+	for i: int in total:
+		var step := float(i) - float(total - 1) * 0.5
+		var lon := -step * CARAVAN_LINE_SPACING
+		var lat := _rng.randf_range(-CARAVAN_LINE_JITTER, CARAVAN_LINE_JITTER)
+		var offset := _herd_heading * lon + _herd_lateral * lat
+		var record := _build_herder() if i < herder_count else _build_pack_beast()
+		_add_animal(record, offset)
 
 
 func _add_animal(record: Dictionary, offset: Vector3) -> void:

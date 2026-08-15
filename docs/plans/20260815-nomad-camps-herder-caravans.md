@@ -172,22 +172,25 @@ any existing RNG stream.
 - [x] feet rest at local y = 0 and local forward is -Z, like every other fauna builder
 
 ### Task 5: Caravan as the third migration type
-- [ ] add `CARAVAN_CHANCE` (weighted clearly rarer than the two herds — e.g. 0.15) with a
+- [x] add `CARAVAN_CHANCE` (weighted clearly rarer than the two herds — e.g. 0.15) with a
       comment on why it shares the fauna event timer rather than owning one
-- [ ] extend the species pick in `_spawn_herd()` so a caravan is rolled first and the
+- [x] extend the species pick in `_spawn_herd()` so a caravan is rolled first and the
       existing `ELEPHANT_CHANCE` split stays the elephant/giraffe branch — one extra
       branch, not a restructure
-- [ ] add `_spawn_caravan()`: herders at the FRONT of the line (small lateral jitter),
+- [x] add `_spawn_caravan()`: herders at the FRONT of the line (small lateral jitter),
       pack beasts trailing behind them along the heading in a loose, jittered single file
       — reuse `_add_animal(record, offset)` so formation easing, facing, phase offsets and
       despawn all come for free
-- [ ] verify no new state is needed in `_update_herd` / `_animate_animals`: a caravan is
-      just N records, so movement/animation/despawn are untouched
-- [ ] document the hard isolation contract in the caravan comments (no groups, no
+- [x] verify no new state is needed in `_update_herd` / `_animate_animals`: a caravan is
+      just N records, so movement/animation/despawn are untouched (verified by reading both
+      loops — they read only `legs`/`body`/`neck`/`trunk`, and a herder's null `neck` +
+      empty `trunk` are already the elephant/giraffe cases; confirmed at runtime by a
+      temporary forced-caravan headless run, clean)
+- [x] document the hard isolation contract in the caravan comments (no groups, no
       collision, ignores player/crocs/abilities/rain — same as the herds), and add a
       `ponytail:` note that a caravan does NOT path to nomad camps (out of scope; the
       upgrade path is a nearest-camp query from the terrain)
-- [ ] the optional caravan bell one-shot is **skipped honestly** — record it as a
+- [x] the optional caravan bell one-shot is **skipped honestly** — record it as a
       `ponytail:` deferral in the same shape as the existing elephant-trumpet note
       (`sound_manager.gd` is shared and the spawn is ~140 m away, so a non-positional bell
       would misread)
