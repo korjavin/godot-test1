@@ -401,25 +401,36 @@ const ARTIFACT_COIN_RING_PAD_MAX: float = 4.0
 ##   (see spawn_camp_in_chunk) — the herders' home is a place to breathe.
 ##
 ## Determinism contract: identical to the artifact one — pure function of chunk
-## coords + run_seed, ZERO draws from the shared chunk RNG, so the ~39 of 40 chunks
+## coords + run_seed, ZERO draws from the shared chunk RNG, so the ~30 of 31 chunks
 ## without a camp regenerate byte-for-byte as they did before camps existed.
 
 ## Kill switch, mirrors spawn_artifacts / spawn_biome_content / spawn_coins.
 @export var spawn_camps: bool = true
 
-## Per-chunk chance of hosting a camp: 0.025 ≈ one per 40 chunks BEFORE the
-## road/river rejections below — deliberately half as common as an artifact
-## (ARTIFACT_CHANCE 0.05), because a village should feel like a rarer find than
-## a ruin.
-const CAMP_CHANCE: float = 0.025
+## Per-chunk chance of hosting a camp, BEFORE the placement rejections in
+## spawn_camp_in_chunk. Those rejections are severe and that is why this number
+## looks large: a camp needs a CAMP_RADIUS (9 m) circle clear of the ~12
+## scattered blocks a chunk already holds, and 12 exclusion discs of radius
+## (9 + block radius) cover more than a chunk's area, so most tries lose. Measured
+## over 5 x 121 startup chunks with the roll forced to 1.0: 14% of rolled camps
+## survive all four tries (overlap rejects ~86% of failures, road and river the
+## rest). 0.18 x 14% ≈ ONE CAMP PER 31 CHUNKS as actually built — measured over
+## 8 x 121 chunks at this value, 31 camps — against the artifacts' ~1 per 24, so
+## a village still reads as the rarer find. Retune by MEASURING, not by algebra:
+## the survival rate depends on the block density the biome mix produces.
+const CAMP_CHANCE: float = 0.18
 
 ## Fixed salt XORed into run_seed for the camp hash stream — same spirit as
 ## ARTIFACT_SALT / BIOME_SALT / BOSS_SEED / ROAD_COIN_SEED: an arbitrary constant
 ## that keeps this stream independent of every other deterministic spawn site.
 const CAMP_SALT: int = 0xCA_1117  # "CAMP"-ish; arbitrary fixed constant
 
-## Candidate spots tried inside a chunk before giving up (a try is rejected when
-## it is too near the road or lands in a river).
+## Candidate spots tried inside a chunk before giving up. The tries live in
+## spawn_camp_in_chunk, not in _camp_at, so each one is judged by _biome_spot_ok
+## against the finished obstacle list — the test that actually rejects. Kept at 4:
+## raising it to 16 was measured at 36% survival vs 14%, but four cheap tries plus
+## a higher CAMP_CHANCE reaches the same built rate, and letting crowded chunks
+## lose is what puts camps in open ground where a village belongs.
 const CAMP_PLACE_TRIES: int = 4
 
 ## Radius of the camp circle: the fire pit sits at the centre, huts ring it at
@@ -2763,24 +2774,36 @@ func _camp_at(chunk_pos: Vector2i) -> Dictionary:
 	existed.
 
 	@param chunk_pos: Chunk coordinates to decide for.
-	@return: {} when this chunk has no camp (the ~39-in-40 case, or when every
-	         candidate spot fell too close to the coin road or into a river);
-	         otherwise
-	         { "local": Vector3 (chunk-LOCAL position, y = 0),
-	           "seed": int (seeds the camp builders' own private RNG) }.
+	@return: {} when this chunk has no camp (the overwhelming majority); otherwise
+	         { "seed": int (seeds the camp builders' AND the candidate loop's own
+	           private RNG) }.
 	         There is no "kind": a camp is ONE layout whose variety comes from the
 	         builder RNG (hut count, ring radii, yaws), not from a shape enum.
+	         There is no "local" either — WHERE the camp goes is decided in
+	         spawn_camp_in_chunk, see below.
+
+	WHY THE CANDIDATE LOOP IS NOT HERE (it used to be, measured and moved):
+	this function runs before the chunk has any geometry, so the only tests it can
+	make are the road and the river — and those reject almost nothing (measured:
+	11 of 121 chunks). The test that actually rejects is the obstacle overlap
+	against the chunk's ~12 scattered blocks plus its biome geometry, which needs
+	the finished `obstacles` list and therefore lives in spawn_camp_in_chunk. With
+	the loop here, all four tries varied a test that always passed and the single
+	surviving spot then met the real test once: ~9% of rolled camps were built, so
+	camps landed ~10x rarer than intended. The loop now sits where `obstacles`
+	exists, so all CAMP_PLACE_TRIES tries vary the test that does the rejecting.
 
 	EDUCATIONAL NOTE — the determinism contract (identical to _artifact_at's):
-	- WITHIN A RUN the same chunk yields the IDENTICAL camp (same spot, same
-	  builder seed) no matter how often it unloads and regenerates — the RNG is
-	  seeded purely from chunk coords + run_seed, and its draw order below is
-	  fixed (chance roll, then 2 draws per placement try, then the builder seed).
+	- WITHIN A RUN the same chunk yields the IDENTICAL camp (same builder seed, and
+	  hence the same candidate sequence downstream) no matter how often it unloads
+	  and regenerates — the RNG is seeded purely from chunk coords + run_seed, and
+	  its draw order is fixed (chance roll, then the builder seed).
 	- ACROSS RUNS new_run() re-rolls run_seed, so camps land elsewhere.
-	- The road-clearance test reads the station cache (pure in `k`) and the river
-	  test reads the biome field (pure in world position + run_seed), so both are
-	  load-order independent: a rejection is a property of the POSITION, not of
-	  when the chunk happened to generate.
+	- The placement tests downstream read the station cache (pure in `k`), the
+	  biome field (pure in world position + run_seed) and the chunk's own
+	  obstacles (rebuilt identically from the chunk RNG), so all three are
+	  load-order independent: a rejection is a property of the POSITION and the
+	  CHUNK, not of when the chunk happened to generate.
 	"""
 	var rng := RandomNumberGenerator.new()
 	# DIFFERENT coordinate primes from the artifact stream (73856093 / 19349663)
@@ -2793,34 +2816,9 @@ func _camp_at(chunk_pos: Vector2i) -> Dictionary:
 	if rng.randf() >= CAMP_CHANCE:
 		return {}
 
-	var center := chunk_to_world(chunk_pos)
-	# Candidates stay CAMP_EDGE_MARGIN (> CAMP_RADIUS) inside the chunk so the
-	# whole village fits in one chunk and never straddles a seam.
-	var half := chunk_size / 2.0 - CAMP_EDGE_MARGIN
-
-	# 2. Try a few candidate spots; accept the FIRST that is far enough from the
-	# road centerline AND out of the water. Same shape as _artifact_at: acceptance
-	# stops the loop, so the draw sequence stays fixed for a given outcome (2 draws
-	# per try until the accepted one), and the builder seed always follows.
-	# The road test is also the BOSS exclusion — see CAMP_ROAD_CLEARANCE.
-	var local_x := 0.0
-	var local_z := 0.0
-	var placed := false
-	var tries := 0
-	while tries < CAMP_PLACE_TRIES and not placed:
-		tries += 1
-		local_x = rng.randf_range(-half, half)
-		local_z = rng.randf_range(-half, half)
-		if _road_lateral_distance(center.x + local_x, center.z + local_z, CAMP_ROAD_CLEARANCE) >= CAMP_ROAD_CLEARANCE \
-				and not is_river_at(Vector3(center.x + local_x, 0.0, center.z + local_z)):
-			placed = true
-	if not placed:
-		return {}
-
-	# 3. A further seed for the camp builders' own RNG, so they can draw as freely
-	# as their geometry needs without this function caring how many draws that is.
-	var builder_seed := rng.randi()
-	return { "local": Vector3(local_x, 0.0, local_z), "seed": builder_seed }
+	# 2. A further seed for the camp's own RNG, which both picks the spot and
+	# builds the geometry, so neither cares how many draws the other needs.
+	return { "seed": rng.randi() }
 
 # ----------------------------------------------------------------------------
 # CAMP GEOMETRY BUILDERS (dome huts, fire pit, crates + tether posts)
@@ -2945,19 +2943,25 @@ func _camp_props(center: Vector3, rng: RandomNumberGenerator, block_batch: Array
 
 func spawn_camp_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
 	"""
-	Spawn this chunk's nomad camp, if _camp_at says it has one (~1 in 40 before
-	rejections). Called from create_chunk AFTER spawn_biome_content_in_chunk and
-	BEFORE _build_block_multimesh / the block_body attach, so every hut, stone,
-	crate and post joins the chunk's SINGLE MultiMesh draw call and its SINGLE
+	Spawn this chunk's nomad camp, if _camp_at says it has one. Called from
+	create_chunk AFTER spawn_biome_content_in_chunk and BEFORE
+	_build_block_multimesh / the block_body attach, so every hut, stone, crate and
+	post joins the chunk's SINGLE MultiMesh draw call and its SINGLE
 	BlockCollision body — a whole village costs one extra draw call (the ember)
 	and zero extra physics bodies.
+
+	That ordering is also WHY the camp's candidate-spot loop lives here rather
+	than in _camp_at: by this point the chunk's scattered blocks, feature
+	structure, artifact and biome geometry are all in `obstacles`, so every try
+	can be judged against the test that actually rejects (see _camp_at's docstring
+	for the measurement that moved it).
 
 	@param chunk_pos: Chunk coordinates being generated.
 	@param parent_chunk: The chunk mesh — the ember and the camp's coins parent
 	                     here (per-chunk parenting rule: they unload with it).
-	@param obstacles: The chunk's block-footprint list. The camp appends ONE round
-	                  footprint (plus its huts'), which is what keeps crocodiles
-	                  out — see the append at the bottom.
+	@param obstacles: The chunk's block-footprint list. Read to place the camp,
+	                  then extended with ONE round footprint (plus its huts'),
+	                  which is what keeps crocodiles out — see the bottom.
 	@param block_batch / block_body: The chunk's visual batch + collision body.
 	"""
 	if not spawn_camps:
@@ -2966,24 +2970,33 @@ func spawn_camp_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obst
 	if camp.is_empty():
 		return
 
-	var center: Vector3 = camp.local
-	var chunk_center := chunk_to_world(chunk_pos)
-
-	# _camp_at only knew about the road and the river — it runs off its own hash
-	# stream and never sees the chunk's geometry. Now that the chunk's blocks,
-	# artifact and biome content are all placed, re-ask the SINGLE home of the
-	# "is this spot legal?" rule (river + road clearance + overlap) with the
-	# finished obstacles list. Bailing here is deliberate: a camp shoved through a
-	# mountain massif or a feature structure reads far worse than a chunk with no
-	# camp, and camps are ambience — nothing downstream expects one to exist.
-	if not _biome_spot_ok(chunk_center, center.x, center.z, CAMP_RADIUS, CAMP_ROAD_CLEARANCE, obstacles):
-		return
-
-	# The builders draw from the camp's OWN RNG, seeded by _camp_at's "seed" draw,
-	# so each one consumes as many draws as its geometry needs without the
-	# placement function (or any other stream) caring.
+	# The camp's OWN RNG, seeded by _camp_at's "seed" draw: it picks the spot AND
+	# feeds every builder, so each consumes as many draws as it needs without the
+	# placement roll (or any other stream) caring.
 	var rng := RandomNumberGenerator.new()
 	rng.seed = camp.seed
+
+	var chunk_center := chunk_to_world(chunk_pos)
+	# Candidates stay CAMP_EDGE_MARGIN (> CAMP_RADIUS) inside the chunk so the
+	# whole village fits in one chunk and never straddles a seam.
+	var half := chunk_size / 2.0 - CAMP_EDGE_MARGIN
+
+	# Try a few spots; accept the FIRST that clears _biome_spot_ok — the single
+	# home of the "would something solid here spoil what is already there?" rule,
+	# covering river + road clearance + overlap with everything already placed in
+	# one call. The road half of it is also the BOSS exclusion, see
+	# CAMP_ROAD_CLEARANCE. Bailing after every try is deliberate: a camp shoved
+	# through a mountain massif reads far worse than a chunk with no camp, and
+	# camps are ambience — nothing downstream expects one to exist.
+	var center := Vector3.ZERO
+	var placed := false
+	var tries := 0
+	while tries < CAMP_PLACE_TRIES and not placed:
+		tries += 1
+		center = Vector3(rng.randf_range(-half, half), 0.0, rng.randf_range(-half, half))
+		placed = _biome_spot_ok(chunk_center, center.x, center.z, CAMP_RADIUS, CAMP_ROAD_CLEARANCE, obstacles)
+	if not placed:
+		return
 
 	# 1. The fire pit at the camp's heart — built first because everything else is
 	# arranged around it (the huts face it, the props ring it).

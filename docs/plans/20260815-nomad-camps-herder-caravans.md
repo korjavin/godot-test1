@@ -238,22 +238,32 @@ chunk's ~12 scattered blocks because `obstacles` does not exist yet at that poin
 `spawn_camp_in_chunk`. The retry loop is simply in the wrong function.
 
 ### ➕ Task 6a: Move the camp candidate loop to where `obstacles` exists
-- [ ] reduce `_camp_at` to the rarity roll + seed (keep its own salted stream and its
+- [x] reduce `_camp_at` to the rarity roll + seed (keep its own salted stream and its
       docstring determinism contract verbatim); delete its duplicated road/river test and
       its candidate loop, since `_biome_spot_ok` already covers river + road clearance +
-      obstacle overlap in one call
-- [ ] move the `CAMP_PLACE_TRIES` candidate loop into `spawn_camp_in_chunk`, drawing each
+      obstacle overlap in one call — it now returns `{}` or `{ "seed": int }` (no `"local"`),
+      and its docstring records the measurement that moved the loop
+- [x] move the `CAMP_PLACE_TRIES` candidate loop into `spawn_camp_in_chunk`, drawing each
       candidate from the camp's private RNG and accepting the first that clears
       `_biome_spot_ok(chunk_center, local_x, local_z, CAMP_RADIUS, CAMP_ROAD_CLEARANCE, obstacles)`
       — so all four tries vary the test that actually rejects
-- [ ] keep the existing bail-out behaviour when every try fails (no camp beats a camp
+- [x] keep the existing bail-out behaviour when every try fails (no camp beats a camp
       shoved through a mountain massif), and keep the `CAMP_EDGE_MARGIN` candidate box
-- [ ] re-measure the acceptance rate the same way (force `CAMP_CHANCE = 1.0`, count built
+- [x] re-measure the acceptance rate the same way (force `CAMP_CHANCE = 1.0`, count built
       camps over the startup ring) and retune `CAMP_CHANCE` so the post-rejection rate
       lands in the Overview's ~1 per 30–50 chunks; update the constant's comment with the
       measured number, in the style of the artifacts' "~1 per 24 chunks after rejections"
-- [ ] determinism unchanged: the camp stream stays independent and no shared-RNG draw is
-      inserted, removed or reordered; re-run the headless import + run to confirm clean
+      — **measured**: 5 × 121 forced chunks → 14% of rolled camps survive all four tries
+      (rejection breakdown 368 overlap / 33 road / 26 river, so overlap is ~86% of it);
+      `CAMP_CHANCE` 0.025 → **0.18**, verified over 8 × 121 chunks = 31 camps built =
+      **1 per 31 chunks**, inside the Overview's ~1 per 30–50. `CAMP_PLACE_TRIES` stays 4
+      (16 tries measured 36% survival, but four cheap tries plus the higher chance reach the
+      same built rate, and letting crowded chunks lose puts camps in open ground). All
+      instrumentation removed; `git diff` confirms one file touched.
+- [x] determinism unchanged: the camp stream stays independent and no shared-RNG draw is
+      inserted, removed or reordered (the moved loop draws from the camp's OWN private RNG,
+      seeded from `_camp_at`'s `"seed"`; `_biome_spot_ok` is a pure test); headless
+      `--import` and `--quit-after 400` both re-run clean
 
 ### Task 7: [Final] Update documentation
 - [ ] add a "Nomad camps" paragraph to the terrain section of `CLAUDE.md` (rarity, salt
