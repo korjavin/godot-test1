@@ -706,6 +706,14 @@ func _update_motion_watch(delta: float) -> void:
 			_enable_overlay.visible = false
 			return
 		_motion_retry_offered = true
+		# PAUSE alongside raising it, exactly like the portrait guard above. This
+		# overlay is a full-rect Button, so it swallows every tap — Jump, Special,
+		# Switch and View all go dead while it is up. Over a LIVE world that means the
+		# player stands there being chased with no controls until they tap. The tap
+		# itself unpauses (see _on_enable_overlay_pressed). `driver` is the same handle
+		# the receiving-check above already resolved.
+		if driver != null:
+			driver.pause_game()
 		# Swap only the HEADLINE to the retry message — the how-to body stays
 		# visible underneath, so a retrying player keeps the instructions.
 		_enable_headline.text = RETRY_HEADLINE
@@ -830,6 +838,13 @@ func _on_enable_overlay_pressed() -> void:
 	_motion_watch_elapsed = 0.0
 	_enable_overlay.visible = false
 
+	# This tap is also the unpause. Two ways the tree can be paused under a visible
+	# enable overlay: the retry prompt pauses when it raises itself (a tap-swallowing
+	# overlay must not sit over live play), and a focus-loss pause before the first
+	# enable is suppressed from showing the resume overlay while we are visible. Both
+	# are cleared here, so a single tap always returns the player to a running game.
+	if get_tree().paused:
+		_driver.resume_from_pause()
 
 ## Resume overlay tap → unfreeze the game. Routed through the driver's
 ## `resume_from_pause()` so the driver can also restore its pre-pause active state

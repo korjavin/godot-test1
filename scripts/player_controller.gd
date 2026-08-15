@@ -654,8 +654,10 @@ func _physics_process(delta: float) -> void:
 	# red flash play out for a moment. When the window ends we lose a life and
 	# either respawn in place or, if that was our last life, trigger game over.
 	if is_caught:
-		velocity = Vector3.ZERO
-		move_and_slide()
+		# Same freeze the game-over and respawn-grace branches use: horizontal motion
+		# stopped, gravity still applied. Zeroing velocity outright would pin a player
+		# bitten at jump apex motionless in mid-air for the whole CAUGHT_DURATION.
+		_freeze_with_gravity(delta)
 		update_character_animation(delta, Vector2.ZERO)
 		caught_timer -= delta
 		if caught_timer <= 0.0:
@@ -1590,6 +1592,13 @@ func hit_by_crocodile() -> void:
 	streak_timer = 0.0
 	is_caught = true
 	caught_timer = CAUGHT_DURATION
+	# Drop the jump-forgiveness timers as we enter the freeze. Every frozen branch of
+	# _physics_process returns ABOVE the step that ticks them, so they would otherwise
+	# hold their pre-bite values for the whole caught/respawn/game-over window — and a
+	# restart from the game-over screen (Enter/Space, and Space is also `jump`) would
+	# then find a still-armed coyote_timer and launch the fresh run off the spawn point.
+	coyote_timer = 0.0
+	jump_buffer_timer = 0.0
 
 	# Bite sting.
 	_sfx("play_bite")

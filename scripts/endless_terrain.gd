@@ -132,6 +132,21 @@ const FOG_DENSITY_DESKTOP: float = 0.0022
 ## block. This stops crocodiles from spawning partially buried inside blocks.
 @export var min_object_clearance: float = 1.5
 
+## Radius (in metres) of the crocodile-free bubble around the world origin — the
+## spawn point every run and every restart begins on.
+##
+## Without it the FIRST run of a session gets no spawn protection at all: the
+## player's own clear_nearby_crocodiles() sweep only runs on respawn/restart, so a
+## fresh boot drops the player into a chunk holding ~10 crocodiles with nothing
+## keeping them off (0,0) — several sit inside DETECTION_RADIUS (15) and start
+## chasing on frame one, and BASE_CHASE_SPEED (5.5) beats WALK_SPEED (5.0).
+## Enforced here, in world generation, rather than as another sweep: it is a pure
+## function of position, so it holds identically for new_run() and needs no
+## ordering dance with the player's _ready(), which runs before any chunk exists.
+## Matches the player's SPAWN_SAFE_RADIUS (the post-respawn sweep radius) — the two
+## are the same rule enforced from the two ends; keep them in step if either moves.
+const SPAWN_SAFE_RADIUS: float = 25.0
+
 ## Chance (0..1) that a given walkable structure top (pyramid apex / wall ridge)
 ## gets a rare crocodile patrolling it. Kept moderate so they're an occasional
 ## surprise, not on every structure.
@@ -2278,6 +2293,14 @@ func spawn_crocodiles_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D
 		# instead, so a chunk merely grazed by a river keeps its full count; only a
 		# chunk almost entirely under water ends up with fewer.
 		if valid_position and is_river_at(chunk_world_pos + crocodile_pos):
+			valid_position = false
+
+		# Keep the spawn point clear (see SPAWN_SAFE_RADIUS). Same post-draw `continue`
+		# discipline as the river skip directly above — the candidate's own draws are
+		# already spent, so nothing upstream shifts; only the handful of chunks touching
+		# the origin bubble are affected, and identically on every run.
+		var croc_world := chunk_world_pos + crocodile_pos
+		if valid_position and Vector2(croc_world.x, croc_world.z).length() < SPAWN_SAFE_RADIUS:
 			valid_position = false
 
 		if not valid_position:
