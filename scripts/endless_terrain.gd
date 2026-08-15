@@ -1433,6 +1433,16 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 	# and ONE collision body.
 	spawn_biome_content_in_chunk(chunk_pos, obstacles, block_batch, block_body)
 
+	# Rare nomad camp — a dome-hut village round a fire pit (independent CAMP_SALT
+	# hash stream, no shared RNG draws consumed). SAME ORDERING REQUIREMENT as the
+	# artifact and the biome content above, for the same reasons: after them so it
+	# can re-check its spot against the finished obstacles list (and append its own
+	# footprint to it), and before _build_block_multimesh / the block_body attach so
+	# all its hut shell, stone and wood joins the chunk's ONE MultiMesh draw call
+	# and ONE collision body. Note it runs BEFORE spawn_crocodiles_in_chunk below —
+	# that is what lets its single footprint keep crocodiles out of the camp.
+	spawn_camp_in_chunk(chunk_pos, mesh_instance, obstacles, block_batch, block_body)
+
 	# Build the chunk's batched block visuals. If any blocks were placed, collapse
 	# them all into one MultiMeshInstance3D parented to this chunk (so it is freed
 	# automatically when the chunk unloads, like every other per-chunk node).
@@ -2932,6 +2942,129 @@ func _camp_props(center: Vector3, rng: RandomNumberGenerator, block_batch: Array
 		var r := rng.randf_range(CAMP_PROP_RING_MIN, CAMP_PROP_RING_MAX)
 		create_box(center + Vector3(cos(a) * r, CAMP_POST_SIZE.y / 2.0, sin(a) * r), CAMP_POST_SIZE, rng.randf_range(0.0, TAU), rng, block_batch, block_body, 0.0, CAMP_WOOD)
 		i += 1
+
+func spawn_camp_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
+	"""
+	Spawn this chunk's nomad camp, if _camp_at says it has one (~1 in 40 before
+	rejections). Called from create_chunk AFTER spawn_biome_content_in_chunk and
+	BEFORE _build_block_multimesh / the block_body attach, so every hut, stone,
+	crate and post joins the chunk's SINGLE MultiMesh draw call and its SINGLE
+	BlockCollision body — a whole village costs one extra draw call (the ember)
+	and zero extra physics bodies.
+
+	@param chunk_pos: Chunk coordinates being generated.
+	@param parent_chunk: The chunk mesh — the ember and the camp's coins parent
+	                     here (per-chunk parenting rule: they unload with it).
+	@param obstacles: The chunk's block-footprint list. The camp appends ONE round
+	                  footprint (plus its huts'), which is what keeps crocodiles
+	                  out — see the append at the bottom.
+	@param block_batch / block_body: The chunk's visual batch + collision body.
+	"""
+	if not spawn_camps:
+		return
+	var camp := _camp_at(chunk_pos)
+	if camp.is_empty():
+		return
+
+	var center: Vector3 = camp.local
+	var chunk_center := chunk_to_world(chunk_pos)
+
+	# _camp_at only knew about the road and the river — it runs off its own hash
+	# stream and never sees the chunk's geometry. Now that the chunk's blocks,
+	# artifact and biome content are all placed, re-ask the SINGLE home of the
+	# "is this spot legal?" rule (river + road clearance + overlap) with the
+	# finished obstacles list. Bailing here is deliberate: a camp shoved through a
+	# mountain massif or a feature structure reads far worse than a chunk with no
+	# camp, and camps are ambience — nothing downstream expects one to exist.
+	if not _biome_spot_ok(chunk_center, center.x, center.z, CAMP_RADIUS, CAMP_ROAD_CLEARANCE, obstacles):
+		return
+
+	# The builders draw from the camp's OWN RNG, seeded by _camp_at's "seed" draw,
+	# so each one consumes as many draws as its geometry needs without the
+	# placement function (or any other stream) caring.
+	var rng := RandomNumberGenerator.new()
+	rng.seed = camp.seed
+
+	# 1. The fire pit at the camp's heart — built first because everything else is
+	# arranged around it (the huts face it, the props ring it).
+	_camp_fire_pit(center, rng, parent_chunk, block_batch, block_body)
+
+	# 2. The huts, on a jittered ring around the fire. Angles are evenly spread and
+	# then nudged, so the circle reads as pitched by people rather than stamped by
+	# a compass, and each hut is yawed so its doorway (+Z, see _camp_hut) points at
+	# the flames.
+	var hut_count := rng.randi_range(CAMP_HUT_MIN, CAMP_HUT_MAX)
+	var base_angle := rng.randf_range(0.0, TAU)
+	var hut_footprints: Array = []
+	var camp_top := 0.0
+	var h := 0
+	while h < hut_count:
+		var a := base_angle + TAU * float(h) / float(hut_count) + rng.randf_range(-0.25, 0.25)
+		var r := rng.randf_range(CAMP_HUT_RING_MIN, CAMP_HUT_RING_MAX)
+		var hut_center := center + Vector3(cos(a) * r, 0.0, sin(a) * r)
+		# Point the hut's local +Z back at the fire: Basis(UP, yaw) * (0,0,1) is
+		# (sin yaw, 0, cos yaw), and we want that to equal -(cos a, sin a).
+		var yaw := atan2(-cos(a), -sin(a))
+		var footprint := _camp_hut(hut_center, yaw, rng, block_batch, block_body)
+		hut_footprints.append({ "pos": hut_center, "radius": footprint.radius, "top": footprint.top, "climbable": false })
+		camp_top = maxf(camp_top, footprint.top)
+		h += 1
+
+	# 3. The lived-in clutter, on its own tighter ring between fire and huts.
+	_camp_props(center, rng, block_batch, block_body)
+
+	# 4. A couple of scattered coins by the fire — a small "someone lives here"
+	# reward, NOT a treasure haul. There is deliberately NO GEM: the guaranteed gem
+	# is the ARTIFACTS' distinction (see spawn_artifact_in_chunk), and giving camps
+	# one too would flatten the difference between "an ancient prize worth a detour"
+	# and "a village you happened to walk through".
+	#
+	# These are ordinary chunk-local coins parented to the chunk. They CANNOT
+	# collide with the road's station-claim logic: a camp centre is at least
+	# CAMP_ROAD_CLEARANCE (22 m) from the road centerline while the widest scatter
+	# band reaches road_width_max / 2 (10 m) plus ROAD_COIN_LONG_JITTER, so the two
+	# coin populations never share ground — no double-claim, no gap.
+	#
+	# ORDER MATTERS, exactly as for the artifact reward: these settle through
+	# _settle_coin_y BEFORE the camp's own footprint is appended below. Settling
+	# after would meet a non-climbable CAMP_RADIUS circle covering the whole
+	# village and skip every single coin.
+	if spawn_coins and coin_scene != null:
+		var coin_count := rng.randi_range(CAMP_COIN_MIN, CAMP_COIN_MAX)
+		var c := 0
+		while c < coin_count:
+			c += 1
+			var a := rng.randf_range(0.0, TAU)
+			# Just outside the fire stones (CAMP_FIRE_RING_RADIUS) and inside the
+			# prop ring (CAMP_PROP_RING_MIN), so a coin never lands in a crate.
+			var r := CAMP_FIRE_RING_RADIUS + rng.randf_range(0.4, 0.8)
+			var cx := center.x + cos(a) * r
+			var cz := center.z + sin(a) * r
+			# Same perch-or-skip rule as every other coin (one home).
+			var cy := _settle_coin_y(cx, cz, COIN_GROUND_HEIGHT, obstacles)
+			if is_inf(cy):
+				continue
+			var coin := coin_scene.instantiate()
+			coin.position = Vector3(cx, cy, cz)
+			parent_chunk.add_child(coin)
+
+	# 5. ONE round footprint over the whole camp circle. THIS IS THE CROCODILE
+	# EXCLUSION, and it needs no edit anywhere else: spawn_crocodiles_in_chunk
+	# already rejects any spawn candidate within ob.radius + min_object_clearance of
+	# a footprint, so a CAMP_RADIUS circle simply reads as "occupied" and the camp
+	# stays the calm pocket it is meant to be — with ZERO shifted RNG draws (the
+	# crocodile loop's rejections are absorbed by its existing retry budget).
+	# climbable = false: a road coin over a camp would be skipped rather than
+	# perched on thin air. That cannot happen given CAMP_ROAD_CLEARANCE, but the
+	# rule stays honest either way.
+	obstacles.append({ "pos": center, "radius": CAMP_RADIUS, "top": camp_top, "climbable": false })
+	# The huts' own footprints, so anything reading `obstacles` sees real hut stone
+	# rather than only the village-sized abstraction. The camp circle very nearly
+	# covers them already — a widest hut on the outermost ring reaches
+	# 6.5 + (3.6 * 0.71 + 0.3) = 9.36 m vs CAMP_RADIUS 9.0 — so this mostly matters
+	# for that last third of a metre today, and matters entirely if CAMP_RADIUS or
+	# the hut ring is ever retuned.
+	obstacles.append_array(hut_footprints)
 
 # ============================================================================
 # BIOME CONTENT (the geometry each biome adds on top of the ordinary blocks)

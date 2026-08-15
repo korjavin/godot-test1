@@ -123,27 +123,27 @@ any existing RNG stream.
       the artifact shape builders, so they may draw freely
 
 ### Task 3: spawn_camp_in_chunk + wiring into create_chunk
-- [ ] add `spawn_camp_in_chunk(chunk_pos, parent_chunk, obstacles, block_batch, block_body)`:
+- [x] add `spawn_camp_in_chunk(chunk_pos, parent_chunk, obstacles, block_batch, block_body)`:
       early-return on `not spawn_camps` / empty `_camp_at`; seed the private builder RNG;
       re-check the accepted spot against the chunk's finished `obstacles` (reuse
       `_biome_spot_ok(chunk_center, local_x, local_z, CAMP_RADIUS, CAMP_ROAD_CLEARANCE, obstacles)`
       — the existing single home of that rule; bail if it fails rather than shoving a camp
       through a mountain massif)
-- [ ] build the fire pit at the camp centre, then 3–6 huts on a jittered ring around it
+- [x] build the fire pit at the camp centre, then 3–6 huts on a jittered ring around it
       (`CAMP_HUT_RING_*`), each yawed to face the fire, then the props
-- [ ] spawn `CAMP_COIN_MIN..MAX` scattered coins around the fire through `_settle_coin_y`
+- [x] spawn `CAMP_COIN_MIN..MAX` scattered coins around the fire through `_settle_coin_y`
       (the perch-or-skip rule) **before** the footprint append, exactly like the artifact
       reward ordering — and **no gem**; comment why (artifacts keep that distinction)
-- [ ] append ONE round obstacle footprint at the camp centre with `radius = CAMP_RADIUS`,
+- [x] append ONE round obstacle footprint at the camp centre with `radius = CAMP_RADIUS`,
       `climbable = false`. **This single footprint IS the crocodile exclusion**: the existing
       `spawn_crocodiles_in_chunk` already rejects any candidate within
       `ob.radius + min_object_clearance` of a footprint, so no croc spawns inside the circle
       and `spawn_crocodiles_in_chunk` needs NO edit and NO shifted RNG draw. Also append the
       individual huts' own footprints so the crocodile/coin rules see real hut stone
-- [ ] call `spawn_camp_in_chunk` from `create_chunk` AFTER `spawn_biome_content_in_chunk`
+- [x] call `spawn_camp_in_chunk` from `create_chunk` AFTER `spawn_biome_content_in_chunk`
       and BEFORE `_build_block_multimesh` / the `block_body` attach, with the same ordering
       comment the artifact and biome calls carry; **do not touch `spawn_bosses_in_chunk`**
-- [ ] confirm in comments that camp coins can't collide with the road-coin claim logic
+- [x] confirm in comments that camp coins can't collide with the road-coin claim logic
       (a camp is ≥ `CAMP_ROAD_CLEARANCE` off the centerline, well outside the widest
       `road_width_max / 2` scatter band)
 
