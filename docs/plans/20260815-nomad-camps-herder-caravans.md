@@ -71,7 +71,7 @@ any existing RNG stream.
 ## Implementation Steps
 
 ### Task 1: Nomad camp constants + placement stream in endless_terrain.gd
-- [ ] add a `NOMAD CAMPS` constant banner near the ARTIFACTS section of
+- [x] add a `NOMAD CAMPS` constant banner near the ARTIFACTS section of
       `scripts/endless_terrain.gd`, in the same commented style: `@export var spawn_camps: bool = true`,
       `CAMP_CHANCE` (~0.025 → ~1 per 40 chunks before rejections, rarer than
       `ARTIFACT_CHANCE` 0.05), `CAMP_SALT` (a fresh arbitrary constant, distinct from
@@ -80,21 +80,21 @@ any existing RNG stream.
       hut/fire-pit/crate/post geometry constants, the weathered palette
       (`CAMP_HUT_A`/`CAMP_HUT_B` bone-white, `CAMP_STONE`, `CAMP_WOOD`,
       `CAMP_EMBER_COLOR`, `CAMP_EMBER_ENERGY`) and `CAMP_COIN_MIN`/`CAMP_COIN_MAX`
-- [ ] document in the banner: palette deliberately distinct from both the warm `RAMP_*`
+- [x] document in the banner: palette deliberately distinct from both the warm `RAMP_*`
       block ramps and the artifacts' grey-green; ember is warm orange vs the artifacts' cold cyan
-- [ ] `CAMP_ROAD_CLEARANCE` **must** exceed `CAMP_RADIUS + BOSS_LATERAL_MAX` — write the
+- [x] `CAMP_ROAD_CLEARANCE` **must** exceed `CAMP_RADIUS + BOSS_LATERAL_MAX` — write the
       arithmetic into the comment. This is what makes "no boss inside a camp circle" true
       **by construction**, with zero edits to `spawn_bosses_in_chunk` (owned by a parallel
       executor this cycle)
-- [ ] `CAMP_EDGE_MARGIN` must exceed `CAMP_RADIUS` so a whole camp fits inside its own
+- [x] `CAMP_EDGE_MARGIN` must exceed `CAMP_RADIUS` so a whole camp fits inside its own
       chunk and never straddles a seam (same rule as `ARTIFACT_EDGE_MARGIN`)
-- [ ] add `_camp_at(chunk_pos: Vector2i) -> Dictionary` modelled line-for-line on
+- [x] add `_camp_at(chunk_pos: Vector2i) -> Dictionary` modelled line-for-line on
       `_artifact_at`: its own RNG seeded `hash(Vector3i(chunk_pos.x * P1, chunk_pos.y * P2,
       run_seed ^ CAMP_SALT))` with **different coordinate primes** from the artifact and
       biome streams; rarity roll, then up to `CAMP_PLACE_TRIES` candidate spots accepted on
       the FIRST that clears the road (`_road_lateral_distance`) and is not
       `is_river_at()`; returns `{}` or `{ "local": Vector3, "seed": int }`
-- [ ] docstring the determinism contract exactly as `_artifact_at` does: zero draws from
+- [x] docstring the determinism contract exactly as `_artifact_at` does: zero draws from
       the shared chunk RNG, identical within a run, different across runs
 
 ### Task 2: Camp geometry builders (dome huts, fire pit, crates, tether posts)
