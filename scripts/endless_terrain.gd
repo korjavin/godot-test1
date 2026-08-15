@@ -286,6 +286,75 @@ const BOSS_FORWARD_OFFSET: float = 8.0
 ## of the procedural world byte-for-byte identically.
 const BOSS_SEED: int = 0xB0_55  # "BOSS"-ish; arbitrary fixed constant
 
+# ----------------------------------------------------------------------------
+# ARTIFACTS (rare deterministic "lost civilization" landmarks, off the road)
+# ----------------------------------------------------------------------------
+##
+## An artifact is a rare, weathered landmark (a leaning monolith, a broken arch,
+## a stone circle, a half-buried colossus head, a spiral of steps) built entirely
+## from the same block primitives as ordinary chunk scenery — its stone rides the
+## chunk's MultiMesh + BlockCollision body, so it costs zero extra draw calls.
+## Placement uses its OWN independent hash stream (the BOSS_SEED / ROAD_COIN_SEED
+## pattern): a private RNG seeded from chunk coords + run_seed ^ ARTIFACT_SALT.
+## It consumes NO draw from the shared chunk RNG, so on the ~19 of 20 chunks
+## without an artifact the generated world is byte-for-byte identical to before.
+
+## Kill switch, mirrors spawn_coins / spawn_crocodiles.
+@export var spawn_artifacts: bool = true
+
+## Per-chunk chance of hosting an artifact: 0.05 ≈ one per 20 chunks, inside the
+## one-per-15-to-25 target band. Rarity is also the draw-call budget (see
+## ARTIFACT_MAX_ACCENTS below).
+const ARTIFACT_CHANCE: float = 0.05
+
+## Fixed salt XORed into run_seed for the artifact hash stream — same spirit as
+## BOSS_SEED / ROAD_COIN_SEED: an arbitrary constant that keeps this stream
+## independent of every other deterministic spawn site.
+const ARTIFACT_SALT: int = 0xA27_1FA
+
+## Candidate spots tried inside a chunk before giving up (a try is rejected when
+## it lands too close to the coin road — see ARTIFACT_ROAD_CLEARANCE).
+const ARTIFACT_PLACE_TRIES: int = 4
+
+## Minimum lateral distance from the road centerline. The widest coin band
+## half-width is road_width_max * 0.5 = 10, so 14 keeps artifacts clear of the
+## coin swath (never on the road, always a deliberate detour) while still
+## leaving them visible from it.
+const ARTIFACT_ROAD_CLEARANCE: float = 14.0
+
+## Keeps the whole artifact inside its chunk so nothing straddles a seam
+## (an artifact is spawned and parented by exactly one chunk).
+const ARTIFACT_EDGE_MARGIN: float = 12.0
+
+## Weathered stone palette — deliberately DISTINCT from the curated block ramps
+## (RAMP_SANDSTONE_* / RAMP_SLATE_* / RAMP_MOSS_*): neutral desaturated greys
+## plus a dead-moss green, no warm sandstone undertone, no blue slate. The point
+## is that an artifact reads as "from another age" next to ordinary blocks.
+const ARTIFACT_STONE_A := Color(0.40, 0.41, 0.39)
+const ARTIFACT_STONE_B := Color(0.60, 0.61, 0.58)
+const ARTIFACT_MOSS := Color(0.33, 0.40, 0.30)
+const ARTIFACT_MOSS_MAX: float = 0.35  # max lerp toward moss per stone
+
+## Emissive accent glow: cold cyan — nothing else in the world is this colour.
+## main.tscn has glow_enabled with glow_hdr_threshold = 0.85, so an emission
+## energy of 3.0 pushes the accents over the threshold and they bloom for free.
+const ARTIFACT_GLOW_COLOR := Color(0.45, 0.95, 1.0)
+const ARTIFACT_GLOW_ENERGY: float = 3.0
+
+## Hard cap on real emissive MeshInstance3Ds per artifact — the draw-call
+## budget. Accents can't join the block MultiMesh (one shared non-emissive
+## material), so each is a real instance; rarity × this cap keeps the worst
+## case on screen to a handful of extra unshadowed draws.
+const ARTIFACT_MAX_ACCENTS: int = 4
+
+## Coin reward: 3-5 ordinary coins ring the artifact's base (ring radius =
+## footprint radius + a pad in [PAD_MIN, PAD_MAX]) plus exactly one gem at the
+## centre — the incentive to detour off the coin road.
+const ARTIFACT_COIN_MIN: int = 3
+const ARTIFACT_COIN_MAX: int = 5
+const ARTIFACT_COIN_RING_PAD_MIN: float = 1.5
+const ARTIFACT_COIN_RING_PAD_MAX: float = 4.0
+
 # ============================================================================
 # SECTION 2: INTERNAL STATE
 # ============================================================================

@@ -116,14 +116,14 @@ Dependencies identified: none new. No new files, no new assets, no scene edits.
 ## Implementation Steps
 
 ### Task 1: Add the ARTIFACTS configuration block (constants + palette + export)
-- [ ] in `scripts/endless_terrain.gd`, add a new **`# ARTIFACTS`** configuration
+- [x] in `scripts/endless_terrain.gd`, add a new **`# ARTIFACTS`** configuration
       section immediately AFTER the existing BOSS CROCODILES const block (keep
       the file's "constants at the top" convention), with a teaching-style
       section comment explaining what an artifact is and why it uses its own hash
       stream
-- [ ] add `@export var spawn_artifacts: bool = true` (kill switch, mirrors
+- [x] add `@export var spawn_artifacts: bool = true` (kill switch, mirrors
       `spawn_coins` / `spawn_crocodiles`)
-- [ ] add rarity + placement consts:
+- [x] add rarity + placement consts:
       `ARTIFACT_CHANCE: float = 0.05` (≈1 per 20 chunks, inside the 15-25 target),
       `ARTIFACT_SALT: int = 0xA27_1FA` (arbitrary fixed salt, same spirit as
       `BOSS_SEED` / `ROAD_COIN_SEED`),
@@ -134,7 +134,7 @@ Dependencies identified: none new. No new files, no new assets, no scene edits.
       while still leaving them visible from the road),
       `ARTIFACT_EDGE_MARGIN: float = 12.0` (keeps the whole artifact inside its
       chunk so nothing straddles a seam)
-- [ ] add the **weathered palette** consts with a comment stating explicitly that
+- [x] add the **weathered palette** consts with a comment stating explicitly that
       these are deliberately DISTINCT from `RAMP_SANDSTONE_*` / `RAMP_SLATE_*` /
       `RAMP_MOSS_*` (neutral desaturated greys + a dead-moss green, no warm
       sandstone, no blue slate):
@@ -142,12 +142,12 @@ Dependencies identified: none new. No new files, no new assets, no scene edits.
       `ARTIFACT_STONE_B := Color(0.60, 0.61, 0.58)`,
       `ARTIFACT_MOSS := Color(0.33, 0.40, 0.30)`,
       `ARTIFACT_MOSS_MAX: float = 0.35` (max lerp toward moss)
-- [ ] add the glow consts: `ARTIFACT_GLOW_COLOR := Color(0.45, 0.95, 1.0)`
+- [x] add the glow consts: `ARTIFACT_GLOW_COLOR := Color(0.45, 0.95, 1.0)`
       (cold cyan — nothing else in the world is this colour),
       `ARTIFACT_GLOW_ENERGY: float = 3.0` (comment: `main.tscn` glow threshold is
       0.85, so this blooms), `ARTIFACT_MAX_ACCENTS: int = 4` (hard cap on real
       `MeshInstance3D`s per artifact — the draw-call budget)
-- [ ] add the coin-reward consts: `ARTIFACT_COIN_MIN: int = 3`,
+- [x] add the coin-reward consts: `ARTIFACT_COIN_MIN: int = 3`,
       `ARTIFACT_COIN_MAX: int = 5`, `ARTIFACT_COIN_RING_PAD_MIN: float = 1.5`,
       `ARTIFACT_COIN_RING_PAD_MAX: float = 4.0` (coin ring radius = artifact
       footprint radius + a pad in this range)
