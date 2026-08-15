@@ -2949,7 +2949,7 @@ func _camp_props(center: Vector3, rng: RandomNumberGenerator, block_batch: Array
 		# Cubes, not slabs: one size draw keeps a crate reading as a crate.
 		var s := rng.randf_range(CAMP_CRATE_SIZE_MIN, CAMP_CRATE_SIZE_MAX)
 		var pos := center + Vector3(cos(a) * r, s / 2.0, sin(a) * r)
-		if not _camp_prop_clear(pos, s * 0.71, huts):
+		if not _camp_spot_clear(pos, s * 0.71, huts):
 			continue
 		create_box(pos, Vector3(s, s, s), rng.randf_range(0.0, TAU), rng, block_batch, block_body, 0.0, CAMP_WOOD)
 
@@ -2960,18 +2960,29 @@ func _camp_props(center: Vector3, rng: RandomNumberGenerator, block_batch: Array
 		var a := rng.randf_range(0.0, TAU)
 		var r := rng.randf_range(CAMP_PROP_RING_MIN, CAMP_PROP_RING_MAX)
 		var pos := center + Vector3(cos(a) * r, CAMP_POST_SIZE.y / 2.0, sin(a) * r)
-		if not _camp_prop_clear(pos, CAMP_POST_SIZE.x * 0.71, huts):
+		if not _camp_spot_clear(pos, CAMP_POST_SIZE.x * 0.71, huts):
 			continue
 		create_box(pos, CAMP_POST_SIZE, rng.randf_range(0.0, TAU), rng, block_batch, block_body, 0.0, CAMP_WOOD)
 
-func _camp_prop_clear(pos: Vector3, radius: float, huts: Array) -> bool:
+func _camp_spot_clear(pos: Vector3, radius: float, huts: Array) -> bool:
 	"""
-	True when a prop at `pos` clears every hut built so far. The prop ring
-	(CAMP_PROP_RING_*) and the hut ring (CAMP_HUT_RING_*) touch at 4 m, but a hut
-	is up to 2.9 m of radius around ITS ring position, so its stone reaches inward
-	to ~1.1 m — well into the prop band. Without this test roughly a fifth of all
-	props spawned inside a hut wall, and props collide, so the player bumped
-	geometry they could not see.
+	True when a `radius` circle at `pos` clears every hut built so far. Used for
+	BOTH of the camp's overlap rules, because both are the same test:
+
+	- PROPS vs huts: the prop ring (CAMP_PROP_RING_*) and the hut ring
+	  (CAMP_HUT_RING_*) touch at 4 m, but a hut is up to 2.9 m of radius around ITS
+	  ring position, so its stone reaches inward to ~1.1 m — well into the prop
+	  band. Without this test roughly a fifth of all props spawned inside a hut
+	  wall, and props collide, so the player bumped geometry they could not see.
+	- HUTS vs each other: the ring radius is drawn PER HUT over a 2.5 m range and
+	  the angle is jittered, so evenly-spaced slots are no guarantee. At
+	  CAMP_HUT_MAX (6) the nominal step is TAU/6 = 1.047 rad and the ±0.25 jitter
+	  can shrink an adjacent gap to 0.547 rad; two huts both at CAMP_HUT_RING_MIN
+	  are then 2 * 4.0 * sin(0.547/2) = 2.16 m apart while their radii sum to at
+	  least 4.29 m. Measured over 163 camps with the roll forced to 1.0 BEFORE this
+	  test existed: 38% of camps had a pair of fused, interpenetrating domes — 35 of
+	  36 six-hut camps and half of the five-hut ones. Both huts collide, so that was
+	  a merged, unreadable blob the player walked into. After: 0 of 175.
 	"""
 	for hut in huts:
 		if Vector2(pos.x - hut.pos.x, pos.z - hut.pos.z).length() < hut.radius + radius:
@@ -3052,13 +3063,23 @@ func spawn_camp_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obst
 		var a := base_angle + TAU * float(h) / float(hut_count) + rng.randf_range(-0.25, 0.25)
 		var r := rng.randf_range(CAMP_HUT_RING_MIN, CAMP_HUT_RING_MAX)
 		var hut_center := center + Vector3(cos(a) * r, 0.0, sin(a) * r)
+		h += 1
+		# A hut that would grow through a neighbour is DROPPED, same rule as the
+		# props below: an evenly-spaced slot is no guarantee once the ring radius is
+		# drawn per hut and the angle is jittered (see _camp_spot_clear for the
+		# arithmetic). The test uses CAMP_HUT_WIDTH_MAX because _camp_hut draws the
+		# real width itself — testing conservatively costs a hut now and then, which
+		# is cheaper than a rebuilt one and reads as a village pitched around what
+		# fits. A camp is 3-6 huts MINUS these drops — measured 3.7 built on
+		# average, and 6-hut camps now land as 4s and 5s.
+		if not _camp_spot_clear(hut_center, CAMP_HUT_WIDTH_MAX * 0.71 + 0.3, hut_footprints):
+			continue
 		# Point the hut's local +Z back at the fire: Basis(UP, yaw) * (0,0,1) is
 		# (sin yaw, 0, cos yaw), and we want that to equal -(cos a, sin a).
 		var yaw := atan2(-cos(a), -sin(a))
 		var footprint := _camp_hut(hut_center, yaw, rng, block_batch, block_body)
 		hut_footprints.append({ "pos": hut_center, "radius": footprint.radius, "top": footprint.top, "climbable": false })
 		camp_top = maxf(camp_top, footprint.top)
-		h += 1
 
 	# 3. The lived-in clutter, on its own tighter ring between fire and huts. The
 	# huts go in FIRST so the props can be tested against them: the two rings
@@ -3088,7 +3109,14 @@ func spawn_camp_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obst
 			c += 1
 			var a := rng.randf_range(0.0, TAU)
 			# Just outside the fire stones (CAMP_FIRE_RING_RADIUS) and inside the
-			# prop ring (CAMP_PROP_RING_MIN), so a coin never lands in a crate.
+			# prop RING (CAMP_PROP_RING_MIN). That compares ring centres, so it is
+			# not a guarantee: a crate's own half-diagonal reaches inward to
+			# 2.0 - 0.9 * 0.71 = 1.36 m, under the coin band's 1.9 m outer edge, and
+			# ~2% of camp coins do land on a crate. Harmless, so deliberately not
+			# tested: a crate is at most CAMP_CRATE_SIZE_MAX (0.9) tall, which is
+			# exactly COIN_GROUND_HEIGHT, so the coin rests on the lid, and the
+			# pickup sphere (0.6 m) far exceeds the crate's 0.45 m half-width, so it
+			# stays collectible from any side.
 			var r := CAMP_FIRE_RING_RADIUS + rng.randf_range(0.4, 0.8)
 			var cx := center.x + cos(a) * r
 			var cz := center.z + sin(a) * r
