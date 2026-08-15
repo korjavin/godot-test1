@@ -437,6 +437,99 @@ const RIVER_HALF_WIDTH: float = 0.02
 ## hard thresholds above, the eye reads this blend.
 const BIOME_BLEND: float = 0.05
 
+# ----------------------------------------------------------------------------
+# BIOME CONTENT TUNING (what each biome actually BUILDS)
+# ----------------------------------------------------------------------------
+##
+## Every value below feeds the three builders in the BIOME CONTENT section. They
+## all spend the same currency — create_box entries in the chunk's single
+## MultiMesh — so "more content" costs instances, not draw calls.
+
+## DESERT — sparsity is achieved by KEEPING ONLY ONE IN N of the ordinary
+## scattered blocks (see spawn_objects_in_chunk). Deliberately a counter rule and
+## NOT an RNG roll: an extra draw there would shift the shared chunk stream and
+## reshuffle every block, crocodile and coin in the chunk.
+const DESERT_BLOCK_KEEP_EVERY: int = 3
+
+## DESERT — cactus stacks: how many candidates, how big, how far from the road.
+## They are the only thing a desert ADDS; the emptiness comes from the skip above.
+## NOTE: crocodile density is completely UNCHANGED in a desert (see
+## spawn_crocodiles_in_chunk) — a desert reads empty through DECORATION only,
+## per the project's "entity counts are never reduced" rule.
+const CACTUS_MIN: int = 4
+const CACTUS_MAX: int = 9
+const CACTUS_ROAD_CLEARANCE: float = 10.0
+const CACTUS_WIDTH_MIN: float = 0.45
+const CACTUS_WIDTH_MAX: float = 0.75
+const CACTUS_SEGMENT_MIN: float = 0.9   # height of one stacked segment
+const CACTUS_SEGMENT_MAX: float = 1.6
+const CACTUS_ARM_CHANCE: float = 0.45   # chance of one short side "arm" box
+const CACTUS_COLOR := Color(0.24, 0.42, 0.24)
+
+## FOREST — tree budget per forest chunk. 25-40 trees × ~4 boxes each still ride
+## the chunk's ONE MultiMesh, so a forest chunk is the same single block draw
+## call as a plains chunk; only the trunks add collision shapes.
+const FOREST_TREES_MIN: int = 25
+const FOREST_TREES_MAX: int = 40
+
+## FOREST — minimum distance from the coin-road centerline. The widest coin band
+## half-width is road_width_max * 0.5 = 10, so 14 keeps the whole scattered coin
+## swath tree-free and the road followable through a wood.
+const FOREST_ROAD_CLEARANCE: float = 14.0
+
+## FOREST — trunk and canopy proportions. The canopy is 2-3 boxes of decreasing
+## size stacked on the trunk top, each built with collide = false (visual only).
+const TREE_TRUNK_WIDTH_MIN: float = 0.45
+const TREE_TRUNK_WIDTH_MAX: float = 0.75
+const TREE_TRUNK_HEIGHT_MIN: float = 2.2
+const TREE_TRUNK_HEIGHT_MAX: float = 3.8
+const TREE_CANOPY_LAYERS_MIN: int = 2
+const TREE_CANOPY_LAYERS_MAX: int = 3
+const TREE_CANOPY_WIDTH_MIN: float = 2.2  # widest (bottom) canopy layer
+const TREE_CANOPY_WIDTH_MAX: float = 3.4
+const TREE_CANOPY_LAYER_HEIGHT: float = 1.0
+const TREE_CANOPY_TAPER: float = 0.68     # each layer up is this fraction as wide
+const TREE_TRUNK_COLOR := Color(0.34, 0.24, 0.16)
+const TREE_LEAF_COLOR := Color(0.16, 0.36, 0.19)
+
+## MOUNTAIN — massifs per mountain chunk. Each is a stack of shrinking boxes, so
+## a "range" is 2-4 crude peaks per chunk and the biome band is several chunks
+## across.
+const MOUNTAIN_MASSIF_MIN: int = 2
+const MOUNTAIN_MASSIF_MAX: int = 4
+const MOUNTAIN_PLACE_TRIES: int = 5      # candidate spots tried per massif
+const MOUNTAIN_HEIGHT_MIN: float = 8.0
+const MOUNTAIN_HEIGHT_MAX: float = 20.0
+const MOUNTAIN_BASE_WIDTH_MIN: float = 7.0
+const MOUNTAIN_BASE_WIDTH_MAX: float = 13.0
+const MOUNTAIN_LAYERS_MIN: int = 4
+const MOUNTAIN_LAYERS_MAX: int = 7
+const MOUNTAIN_LAYER_TAPER: float = 0.74  # each layer up is this fraction as wide
+const MOUNTAIN_LAYER_JITTER: float = 0.5  # metres of lateral wobble per layer
+
+## MOUNTAIN — keeps the base well inside the chunk so a massif never straddles a
+## seam and gets half-unloaded (same idea as ARTIFACT_EDGE_MARGIN, bigger because
+## a massif is bigger).
+const MOUNTAIN_EDGE_MARGIN: float = 14.0
+
+## MOUNTAIN — the road clearance is what cuts a CANYON through a range: the
+## massifs simply refuse to stand near the centerline, so the coin road threads
+## between them. Comfortably larger than FOREST_ROAD_CLEARANCE (a tree you can
+## sidestep; a massif you would have to walk minutes around). Kept under the ~26 m
+## honest-answer bound documented on _biome_spot_ok.
+const MOUNTAIN_ROAD_CLEARANCE: float = 24.0
+
+## MOUNTAIN — a massif at least this tall gets its top layers forced snow-white.
+const MOUNTAIN_SNOW_HEIGHT: float = 14.0
+const MOUNTAIN_SNOW_LAYERS: int = 2      # how many top layers turn to snow
+const MOUNTAIN_SNOW_COLOR := Color(0.92, 0.94, 0.96)
+
+## MOUNTAIN — grey scree ramp for the rock itself. Cooler and flatter than both
+## the warm RAMP_* block colours and the artifacts' grey-green, so a massif reads
+## as bare rock rather than as a very large block or a ruin.
+const MOUNTAIN_ROCK_A := Color(0.42, 0.42, 0.44)
+const MOUNTAIN_ROCK_B := Color(0.58, 0.57, 0.55)
+
 # ============================================================================
 # SECTION 2: INTERNAL STATE
 # ============================================================================
@@ -1222,6 +1315,11 @@ func spawn_objects_in_chunk(chunk_pos: Vector2i, platforms: Array, block_batch: 
 	if rng.randf() < structure_chance:
 		spawn_feature_structure(rng, half_chunk, chunk_center, obstacles, platforms, block_batch, block_body)
 
+	# Is this a DESERT chunk? A desert keeps only one scattered block in
+	# DESERT_BLOCK_KEEP_EVERY (the skip is applied inside the loop below), which is
+	# what makes it read as sparse without touching objects_per_chunk.
+	var desert_chunk := biome_at(chunk_center.x, chunk_center.z) == Biome.DESERT
+
 	# Store positions of scattered objects to check spacing between them
 	var spawned_positions: Array[Vector3] = []
 
@@ -1265,6 +1363,19 @@ func spawn_objects_in_chunk(chunk_pos: Vector2i, platforms: Array, block_batch: 
 		# position on rejection) would shift the whole stream and reshuffle the
 		# world. Same discipline in every biome exclusion below.
 		if valid_position and is_river_at(chunk_center + object_pos):
+			valid_position = false
+
+		# ...and, in a DESERT, only one candidate in DESERT_BLOCK_KEEP_EVERY
+		# survives — that thinning IS the desert's emptiness.
+		#
+		# EDUCATIONAL NOTE — WHY A COUNTER AND NOT A RANDOM ROLL: the obvious
+		# "rng.randf() < 0.33" would insert a draw into the SHARED chunk stream, and
+		# every block, structure, crocodile and coin drawn after it in this chunk
+		# would shift. The loop's own `attempts` counter is already deterministic
+		# (it is a pure function of how the loop ran, which is itself seeded), so
+		# keying the skip off it thins the desert while leaving the RNG sequence
+		# byte-identical — exactly the same discipline as the river skip above.
+		if valid_position and desert_chunk and attempts % DESERT_BLOCK_KEEP_EVERY != 0:
 			valid_position = false
 
 		if not valid_position:
@@ -2523,18 +2634,209 @@ func _biome_spot_ok(world_x: float, world_z: float, road_clearance: float) -> bo
 
 
 func _spawn_desert_content(chunk_center: Vector3, rng: RandomNumberGenerator, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
-	"""Cactus stacks. Built in the next task — see the plan's Task 6 (DESERT)."""
-	pass
+	"""
+	DESERT — a handful of cactus stacks on an otherwise thinned-out plain.
+
+	@param chunk_center: World centre of the chunk (positions handed to create_box
+	                     are chunk-LOCAL; the biome/road questions are asked in
+	                     WORLD space, so the two are converted here).
+	@param rng: The biome stream's private RNG — draws here touch nothing else.
+	@param obstacles: Each cactus appends one small NON-climbable footprint.
+	@param block_batch / block_body: The chunk's single MultiMesh + collision body.
+
+	The emptiness of a desert is NOT made here — it is made by the one-in-N skip in
+	spawn_objects_in_chunk. This function only adds the thing that says "desert" at
+	a glance. Crocodile density is deliberately UNCHANGED in a desert: the project
+	rule is that entity counts are never trimmed, so a desert feels empty through
+	decoration alone.
+
+	A cactus is 2-3 thin tall green boxes stacked, sometimes with one short arm box
+	off to the side — enough silhouette to read at distance, four boxes at most.
+	"""
+	var half := chunk_size / 2.0 - 3.0
+	var count := rng.randi_range(CACTUS_MIN, CACTUS_MAX)
+
+	for _i in count:
+		var local_x := rng.randf_range(-half, half)
+		var local_z := rng.randf_range(-half, half)
+		# Rejection is a `continue` AFTER the position draws, so a rejected cactus
+		# costs a spot and not a shift in this (or any) RNG sequence.
+		if not _biome_spot_ok(chunk_center.x + local_x, chunk_center.z + local_z, CACTUS_ROAD_CLEARANCE):
+			continue
+
+		var width := rng.randf_range(CACTUS_WIDTH_MIN, CACTUS_WIDTH_MAX)
+		var segments := rng.randi_range(2, 3)
+		var yaw := rng.randf_range(0.0, TAU)
+		var top_y := 0.0
+
+		for _s in segments:
+			var seg_h := rng.randf_range(CACTUS_SEGMENT_MIN, CACTUS_SEGMENT_MAX)
+			create_box(
+				Vector3(local_x, top_y + seg_h * 0.5, local_z),
+				Vector3(width, seg_h, width),
+				yaw, rng, block_batch, block_body, 0.0, CACTUS_COLOR
+			)
+			top_y += seg_h
+
+		# Optional arm: a short horizontal box budding from the middle of the stack.
+		if rng.randf() < CACTUS_ARM_CHANCE:
+			var arm_len := width * rng.randf_range(2.0, 3.0)
+			var arm_y := top_y * rng.randf_range(0.45, 0.7)
+			var arm_dir := Vector3(cos(yaw), 0.0, sin(yaw)) * (arm_len * 0.5 + width * 0.5)
+			create_box(
+				Vector3(local_x, arm_y, local_z) + arm_dir,
+				Vector3(arm_len, width, width),
+				yaw, rng, block_batch, block_body, 0.0, CACTUS_COLOR
+			)
+
+		# NOT climbable: a cactus is a thing you walk around, and a coin perched on
+		# a spiky 3 m pole would be unreachable anyway (see _settle_coin_y).
+		obstacles.append({ "pos": Vector3(local_x, 0, local_z), "radius": width * 1.2, "top": top_y, "climbable": false })
 
 
 func _spawn_forest_content(chunk_center: Vector3, rng: RandomNumberGenerator, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
-	"""Trunk + canopy trees. Built in the next task — see the plan's Task 6 (FOREST)."""
-	pass
+	"""
+	FOREST — many simple trees: one solid trunk box plus a stack of visual-only
+	canopy boxes.
+
+	@param chunk_center: World centre of the chunk (create_box takes chunk-LOCAL).
+	@param rng: The biome stream's private RNG.
+	@param obstacles: One NON-climbable footprint per trunk.
+	@param block_batch / block_body: The chunk's single MultiMesh + collision body.
+
+	PERF (the reason a forest is affordable at all): 25-40 trees × ~4 boxes are all
+	create_box entries, so they join the chunk's ONE MultiMeshInstance3D — a forest
+	chunk is the SAME single block draw call as a plains chunk. Only the trunks pay
+	a CollisionShape3D: the canopies pass collide = false, which is exactly why that
+	parameter exists. Leaves you can walk under cost nothing but instances.
+
+	EDGE FEATHERING: each tree re-tests biome_at at ITS OWN position, not just the
+	chunk centre's. Without that, a forest would stop dead along a straight chunk
+	seam; with it, the tree line follows the noise contour and the wood dissolves
+	into the plain the way a real one does. One extra noise eval per candidate.
+	"""
+	var half := chunk_size / 2.0 - 2.0
+	var count := rng.randi_range(FOREST_TREES_MIN, FOREST_TREES_MAX)
+
+	for _i in count:
+		var local_x := rng.randf_range(-half, half)
+		var local_z := rng.randf_range(-half, half)
+		var world_x := chunk_center.x + local_x
+		var world_z := chunk_center.z + local_z
+		# Both rejections are post-draw `continue`s (see _spawn_desert_content).
+		if not _biome_spot_ok(world_x, world_z, FOREST_ROAD_CLEARANCE):
+			continue
+		if biome_at(world_x, world_z) != Biome.FOREST:
+			continue
+
+		var trunk_w := rng.randf_range(TREE_TRUNK_WIDTH_MIN, TREE_TRUNK_WIDTH_MAX)
+		var trunk_h := rng.randf_range(TREE_TRUNK_HEIGHT_MIN, TREE_TRUNK_HEIGHT_MAX)
+		var yaw := rng.randf_range(0.0, TAU)
+
+		# Trunk: solid, so you bump into it and crocodiles' raycasts see it.
+		create_box(
+			Vector3(local_x, trunk_h * 0.5, local_z),
+			Vector3(trunk_w, trunk_h, trunk_w),
+			yaw, rng, block_batch, block_body, 0.0, TREE_TRUNK_COLOR
+		)
+
+		# Canopy: 2-3 shrinking slabs stacked from just below the trunk top, each
+		# VISUAL ONLY (collide = false) — you walk under a tree, not into its leaves.
+		var layers := rng.randi_range(TREE_CANOPY_LAYERS_MIN, TREE_CANOPY_LAYERS_MAX)
+		var canopy_w := rng.randf_range(TREE_CANOPY_WIDTH_MIN, TREE_CANOPY_WIDTH_MAX)
+		var canopy_y := trunk_h - TREE_CANOPY_LAYER_HEIGHT * 0.3
+		for _l in layers:
+			create_box(
+				Vector3(local_x, canopy_y + TREE_CANOPY_LAYER_HEIGHT * 0.5, local_z),
+				Vector3(canopy_w, TREE_CANOPY_LAYER_HEIGHT, canopy_w),
+				yaw, rng, block_batch, block_body, 0.0, TREE_LEAF_COLOR, false
+			)
+			canopy_y += TREE_CANOPY_LAYER_HEIGHT * 0.8
+			canopy_w *= TREE_CANOPY_TAPER
+
+		# Footprint stops at the TRUNK top, and is NOT climbable, on purpose: a
+		# climbable footprint would let _settle_coin_y perch a road coin on the
+		# obstacle's `top`, and with the canopy height that coin would float 5 m up
+		# a tree where nobody can reach it. Non-climbable means such a coin is
+		# SKIPPED instead. Crocodiles read the same footprint and steer around the
+		# trunk.
+		obstacles.append({ "pos": Vector3(local_x, 0, local_z), "radius": trunk_w * 0.71 + 0.3, "top": trunk_h, "climbable": false })
 
 
 func _spawn_mountain_content(chunk_center: Vector3, rng: RandomNumberGenerator, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
-	"""Impassable block massifs. Built in the next task — see the plan's Task 6 (MOUNTAIN)."""
-	pass
+	"""
+	MOUNTAIN — 2-4 impassable massifs, each a stack of progressively smaller boxes.
+
+	@param chunk_center: World centre of the chunk (create_box takes chunk-LOCAL).
+	@param rng: The biome stream's private RNG.
+	@param obstacles: One NON-climbable footprint per massif, with its real height.
+	@param block_batch / block_body: The chunk's single MultiMesh + collision body.
+
+	THE FLAT-WORLD INVARIANT IS WHY THIS EXISTS AT ALL: the ground stays a flat
+	y = 0 plane (see the ponytail note in the BIOME FIELD CONFIGURATION block), so a
+	mountain is not raised terrain — it is a pile of ordinary blocks, 8-20 m tall
+	and several metres wide, that you walk AROUND. It rides the chunk's single
+	MultiMesh and single collision body like everything else.
+
+	THE ROAD IS NEVER BLOCKED: every massif must sit at least
+	MOUNTAIN_ROAD_CLEARANCE from the coin-road centerline. That one rule is what
+	carves a canyon through a range for free — the peaks refuse to stand near the
+	road, so the road threads between them and stays followable.
+
+	Per layer the box is narrower, a touch shorter, randomly yawed and laterally
+	jittered, so a massif reads as a crude rocky peak rather than a wedding cake.
+	"""
+	var half := chunk_size / 2.0 - MOUNTAIN_EDGE_MARGIN
+	if half <= 0.0:
+		return
+	var count := rng.randi_range(MOUNTAIN_MASSIF_MIN, MOUNTAIN_MASSIF_MAX)
+
+	for _i in count:
+		# Try a few spots; take the first that clears the road, the river and is
+		# still inside the mountain band at its OWN position (edge feathering, same
+		# as the forest). Every draw happens whether or not a try is accepted.
+		var local_x := 0.0
+		var local_z := 0.0
+		var placed := false
+		var tries := 0
+		while tries < MOUNTAIN_PLACE_TRIES and not placed:
+			tries += 1
+			local_x = rng.randf_range(-half, half)
+			local_z = rng.randf_range(-half, half)
+			var wx := chunk_center.x + local_x
+			var wz := chunk_center.z + local_z
+			if _biome_spot_ok(wx, wz, MOUNTAIN_ROAD_CLEARANCE) and biome_at(wx, wz) == Biome.MOUNTAIN:
+				placed = true
+		if not placed:
+			continue
+
+		var height := rng.randf_range(MOUNTAIN_HEIGHT_MIN, MOUNTAIN_HEIGHT_MAX)
+		var base_w := rng.randf_range(MOUNTAIN_BASE_WIDTH_MIN, MOUNTAIN_BASE_WIDTH_MAX)
+		var layers := rng.randi_range(MOUNTAIN_LAYERS_MIN, MOUNTAIN_LAYERS_MAX)
+		var snowy := height >= MOUNTAIN_SNOW_HEIGHT
+		var layer_h := height / float(layers)
+
+		var width := base_w
+		var y := 0.0
+		for layer_index in layers:
+			# The top MOUNTAIN_SNOW_LAYERS boxes of a tall massif are forced white:
+			# a snow cap is the cheapest possible "this one is high" signal.
+			var is_snow := snowy and layer_index >= layers - MOUNTAIN_SNOW_LAYERS
+			var color: Color = MOUNTAIN_SNOW_COLOR if is_snow else MOUNTAIN_ROCK_A.lerp(MOUNTAIN_ROCK_B, rng.randf())
+			var jitter_x := rng.randf_range(-MOUNTAIN_LAYER_JITTER, MOUNTAIN_LAYER_JITTER)
+			var jitter_z := rng.randf_range(-MOUNTAIN_LAYER_JITTER, MOUNTAIN_LAYER_JITTER)
+			create_box(
+				Vector3(local_x + jitter_x, y + layer_h * 0.5, local_z + jitter_z),
+				Vector3(width, layer_h, width),
+				rng.randf_range(0.0, TAU), rng, block_batch, block_body, 0.0, color
+			)
+			y += layer_h
+			width *= MOUNTAIN_LAYER_TAPER
+
+		# One footprint for the whole massif, NOT climbable and carrying the real
+		# top height: crocodiles avoid it, and a road coin that would otherwise be
+		# perched 15 m up a peak is skipped instead (see _settle_coin_y).
+		obstacles.append({ "pos": Vector3(local_x, 0, local_z), "radius": base_w * 0.71 + MOUNTAIN_LAYER_JITTER, "top": height, "climbable": false })
 
 # ============================================================================
 # BIOME FIELD (one noise field; four biomes + rivers read out of it)
