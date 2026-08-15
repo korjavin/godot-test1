@@ -43,6 +43,16 @@ const HEARTBEAT_PITCH_NEAR: float = 1.8
 const HEARTBEAT_VOLUME_FAR_DB: float = -18.0
 const HEARTBEAT_VOLUME_NEAR_DB: float = -6.0
 
+## How long (seconds) the danger level must stay at zero before the heartbeat
+## loop is actually stopped. Jumping is the documented way to break a
+## crocodile's scent (piglet_crocodile_ai clears is_chasing the moment the
+## player leaves the ground), so a normal run-and-jump chase drops the level to
+## 0 for roughly a second at a time. Without this hold the loop would stop and
+## restart FROM SAMPLE 0 on every jump — the "lub" is the loudest sample in the
+## cycle, so each restart clicks. Holding through the gap keeps one continuous
+## heartbeat for one continuous chase; a real escape still silences it.
+const HEARTBEAT_HOLD: float = 1.5
+
 ## The edge-vignette shader. Radial distance from screen centre, remapped so
 ## the middle of the screen stays untouched and only the border band tints
 ## red. Alpha is a uniform driven from _process each frame.
@@ -75,6 +85,9 @@ var _display_alpha: float = 0.0
 
 ## Whether WE started the heartbeat loop (so we know to stop it when safe).
 var _heartbeat_playing: bool = false
+
+## Seconds of continuous "no danger" so far, against HEARTBEAT_HOLD (see there).
+var _heartbeat_quiet: float = 0.0
 
 ## The fullscreen quad running the vignette shader.
 var _rect: ColorRect
@@ -131,14 +144,14 @@ func _process(delta: float) -> void:
 	if visible:
 		(_rect.material as ShaderMaterial).set_shader_parameter("vignette_alpha", _display_alpha)
 
-	_update_heartbeat(t)
+	_update_heartbeat(t, delta)
 
 
 # ============================================================================
 # HEARTBEAT
 # ============================================================================
 
-func _update_heartbeat(t: float) -> void:
+func _update_heartbeat(t: float, delta: float) -> void:
 	## Drive the sound manager's looping heartbeat from the raw danger level
 	## (not the eased alpha — audio should track the actual threat instantly).
 	var sm := get_tree().get_first_node_in_group("sound_manager")
@@ -147,6 +160,7 @@ func _update_heartbeat(t: float) -> void:
 		return
 
 	var in_danger: bool = t > 0.0
+	_heartbeat_quiet = 0.0 if in_danger else _heartbeat_quiet + delta
 
 	if in_danger and not _heartbeat_playing:
 		# The gesture gate only guards the manager's own play_* methods; loop
@@ -154,14 +168,25 @@ func _update_heartbeat(t: float) -> void:
 		# gate is still closed we simply retry next frame (no state latched).
 		if not (sm.has_method("is_unlocked") and sm.is_unlocked()):
 			return
+		# Set the ramp BEFORE play(): the loop player is built with the engine
+		# default 0 dB (unlike the wind bed, which gets WIND_VOLUME_DB), and the
+		# "lub" is the loudest sample in the cycle, so starting it before the
+		# first volume write pops at full scale instead of the intended -18 dB.
+		_apply_heartbeat_ramp(sm, t)
 		sm.get_loop_player("heartbeat").play()
 		_heartbeat_playing = true
-	elif not in_danger and _heartbeat_playing:
+	elif _heartbeat_playing and _heartbeat_quiet >= HEARTBEAT_HOLD:
+		# Genuinely clear — not just a jump-length gap (see HEARTBEAT_HOLD).
 		sm.get_loop_player("heartbeat").stop()
 		_heartbeat_playing = false
 
 	if _heartbeat_playing:
-		# Faster and louder as the croc closes 15 m → 0.
-		var p: AudioStreamPlayer = sm.get_loop_player("heartbeat")
-		p.pitch_scale = lerpf(HEARTBEAT_PITCH_FAR, HEARTBEAT_PITCH_NEAR, t)
-		p.volume_db = lerpf(HEARTBEAT_VOLUME_FAR_DB, HEARTBEAT_VOLUME_NEAR_DB, t)
+		_apply_heartbeat_ramp(sm, t)
+
+
+func _apply_heartbeat_ramp(sm: Node, t: float) -> void:
+	## Faster and louder as the chaser closes detection_radius → 0. Split out so
+	## the pre-play() write and the per-frame write can never drift apart.
+	var p: AudioStreamPlayer = sm.get_loop_player("heartbeat")
+	p.pitch_scale = lerpf(HEARTBEAT_PITCH_FAR, HEARTBEAT_PITCH_NEAR, t)
+	p.volume_db = lerpf(HEARTBEAT_VOLUME_FAR_DB, HEARTBEAT_VOLUME_NEAR_DB, t)

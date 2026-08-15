@@ -60,6 +60,12 @@ const LIVE_DATA_EPSILON: float = 0.05
 ## `has_data()` should report false rather than steer on a frozen reading.
 const JS_SAMPLE_TIMEOUT: float = 1.0
 
+## Smoothing weight for the low-pass gravity estimate used ONLY on browsers that
+## deliver `accelerationIncludingGravity` but no `acceleration` (see _read_js).
+## Small = slow tracking = gravity only, leaving footstep peaks in the residual;
+## at ~60 Hz events this settles a reorientation in roughly a second.
+const JS_GRAVITY_LP_ALPHA: float = 0.05
+
 ## Standard gravity magnitude. Used to normalise the gravity vector into a clean
 ## "down" direction for the tilt math, independent of the device's exact reading.
 const GRAVITY_MAGNITUDE: float = 9.80665
@@ -85,6 +91,11 @@ var _gravity: Vector3 = Vector3.ZERO
 ## as `accel - gravity`; the JS `devicemotion.acceleration` field already excludes
 ## gravity, so we copy it straight in.
 var _linear: Vector3 = Vector3.ZERO
+
+## Low-pass gravity estimate for the gravity-only JS path (see JS_GRAVITY_LP_ALPHA
+## and _read_js). Zero means "not seeded yet"; unused on the native path and on
+## browsers that deliver a real `acceleration`.
+var _gravity_lp: Vector3 = Vector3.ZERO
 
 ## Angular velocity (rad/s) — gyro. Twist-yaw integrates `z` from this when no
 ## absolute compass heading is available.
@@ -580,6 +591,10 @@ func _select_and_read_source(delta: float) -> void:
 	_has_live = false
 	_has_orientation = false
 	_linear = Vector3.ZERO
+	# Drop the low-pass gravity estimate too: when the stream resumes the phone may
+	# be held quite differently, and a stale estimate would read as one long phantom
+	# step burst until it converged. Zero means "re-seed from the first sample".
+	_gravity_lp = Vector3.ZERO
 	_current_source = "none"  # diagnostics: panel shows "Sensor: NO DATA".
 
 
@@ -661,9 +676,27 @@ func _read_js(delta: float) -> void:
 
 	# Gravity isn't delivered directly by devicemotion; recover it as
 	# (accelIncludingGravity − acceleration), which is exactly the gravity vector.
-	_gravity = accel - _linear
-	if _gravity.length() <= LIVE_DATA_EPSILON:
-		_gravity = accel
+	if _linear.length() <= LIVE_DATA_EPSILON and accel.length() > LIVE_DATA_EPSILON:
+		# GRAVITY-ONLY DEVICE. Plenty of browsers send `acceleration` null but a
+		# perfectly good `accelerationIncludingGravity` (the listener zeroes the
+		# former, see _on_js_devicemotion). Subtracting straight through would
+		# leave `_linear` permanently ZERO — tilt steering would still work, so
+		# nothing looks broken, but step-to-walk (the headline mobile feature)
+		# would never register a single step. Recover the linear component with a
+		# low-pass gravity estimate instead: gravity is the slow part of the
+		# signal, footsteps are the fast part, so accel − low-passed accel IS the
+		# step signal. Seeded from the first sample so it doesn't have to converge
+		# from zero (which would read as one huge phantom step).
+		if _gravity_lp.length() <= LIVE_DATA_EPSILON:
+			_gravity_lp = accel
+		else:
+			_gravity_lp = _gravity_lp.lerp(accel, JS_GRAVITY_LP_ALPHA)
+		_gravity = _gravity_lp
+		_linear = accel - _gravity_lp
+	else:
+		_gravity = accel - _linear
+		if _gravity.length() <= LIVE_DATA_EPSILON:
+			_gravity = accel
 
 	# Absolute orientation (deviceorientation): alpha/beta/gamma in degrees.
 	# `__gd_has_orient` is set to 1 by the orientation listener once it fires — but the

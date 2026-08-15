@@ -284,10 +284,13 @@ chunk's ~12 scattered blocks because `obstacles` does not exist yet at that poin
 - **Camp footprint**: `{ "pos": Vector3, "radius": CAMP_RADIUS, "top": <hut top>,
   "climbable": false }` — non-climbable so a stray road coin is skipped rather than perched
   on thin air (cannot happen given the road clearance, but the rule stays honest).
-- **Boss exclusion invariant**: `CAMP_ROAD_CLEARANCE > CAMP_RADIUS + BOSS_LATERAL_MAX`.
-  A boss sits at most `BOSS_LATERAL_MAX` from the road centerline; a camp centre is at
-  least `CAMP_ROAD_CLEARANCE` from it; so the boss is always outside the camp circle. If
-  either constant is ever retuned, this inequality is the thing to re-check.
+- **Boss exclusion invariant**:
+  `CAMP_ROAD_CLEARANCE > CAMP_RADIUS + sqrt(BOSS_FORWARD_OFFSET² + BOSS_LATERAL_MAX²)`
+  (22.0 > 9.4 + 8.94 = 18.34 ✓). The camp test measures distance to road STATION CENTRES,
+  and `_boss_at` places a boss `BOSS_FORWARD_OFFSET` along the tangent as well as up to
+  `BOSS_LATERAL_MAX` across it — so the along-road leg belongs in the bound too; the
+  lateral leg alone understates the requirement by 8 m. Re-check this inequality if any
+  of the four constants in it is retuned.
 - **Animal record shape** (unchanged, species-agnostic):
   `{ root, body, legs (FL/FR/RL/RR or L/R), neck, neck_rest, trunk, offset, phase }`.
 

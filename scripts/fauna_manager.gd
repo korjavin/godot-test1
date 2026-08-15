@@ -58,6 +58,18 @@ const FIELD_RADIUS: float = 140.0
 ## animal (not just every spawn) on solid ground.
 const DESPAWN_RADIUS: float = 150.0
 
+## Hard lifetime cap (seconds) for one herd, checked alongside DESPAWN_RADIUS.
+## The distance test is RELATIVE to the live player, so a player travelling on
+## the herd's heading at the herd's speed (2–3 m/s — squarely inside the duck
+## gait's 2.25–2.875) pins the distance forever: the herd never despawns, the
+## event timer never re-arms, and because _spawn_herd early-returns while
+## _animals is non-empty NO fauna event ever happens again for the rest of the
+## run, while _update_herd keeps writing ~90 node properties every frame. The
+## cap is the escape hatch. A normal crossing with a STATIONARY player is the
+## longest legitimate one — FIELD_RADIUS + DESPAWN_RADIUS = 290 m at the slowest
+## 2 m/s ≈ 145 s — so 240 s never truncates a real crossing.
+const MAX_HERD_LIFETIME: float = 240.0
+
 ## Lateral offset (metres) of the migration line from the player, so a herd
 ## walks PAST them rather than THROUGH them. Without it the line is aimed
 ## exactly at the player's position at spawn time (the origin is placed on the
@@ -375,6 +387,10 @@ var _herd_lateral: Vector3 = Vector3.ZERO
 var _herd_position: Vector3 = Vector3.ZERO
 var _herd_speed: float = 0.0
 var _herd_travelled: float = 0.0
+
+## Seconds this herd has been alive, against MAX_HERD_LIFETIME (see there for
+## why a purely relative despawn test can stall forever).
+var _herd_age: float = 0.0
 
 # ============================================================================
 # SHARED RESOURCES (static — one per PROCESS, not one per manager/animal)
@@ -963,6 +979,7 @@ func _spawn_herd() -> void:
 	_herd_position = player_ground - _herd_heading * setback + _herd_lateral * miss
 	_herd_speed = _rng.randf_range(WALK_SPEED_MIN, WALK_SPEED_MAX)
 	_herd_travelled = 0.0
+	_herd_age = 0.0
 
 	# Build the members with their formation offsets (herd-local lateral/long
 	# pairs turned into world-space vectors — heading never changes, so the
@@ -1094,7 +1111,14 @@ func _update_herd(delta: float) -> void:
 	# the LIVE player position each tick, so "the herd walked past" and "the
 	# player ran away from the herd" are the same check. No player at all
 	# (scene torn down mid-walk) also ends the event.
-	if player == null or _herd_position.distance_to(player.global_position) > DESPAWN_RADIUS:
+	# The lifetime cap is the second half of that test: the distance is measured
+	# against a MOVING player, so a player travelling with the herd at the herd's
+	# own speed keeps it in range forever and the feature stalls for good (see
+	# MAX_HERD_LIFETIME).
+	_herd_age += delta
+	if player == null \
+			or _herd_age > MAX_HERD_LIFETIME \
+			or _herd_position.distance_to(player.global_position) > DESPAWN_RADIUS:
 		_despawn_herd()
 		return
 

@@ -397,6 +397,13 @@ func _physics_process(delta: float) -> void:
 	else:
 		velocity.y = 0.0
 
+	# Snapshot BEFORE the branch below, which can clear is_paused mid-frame. The
+	# collision check after move_and_slide must judge the frame we actually just
+	# simulated: on the frame a pause expires the crocodile still stood perfectly
+	# still, so handling collisions there would re-arm the bite a frame early and
+	# defeat the point of _pause_and_change_direction's recovery window.
+	var was_paused: bool = is_paused
+
 	if is_paused:
 		# Stand still while paused (still breathes via _animate_body below).
 		pause_time_remaining -= delta
@@ -457,7 +464,7 @@ func _physics_process(delta: float) -> void:
 	# Move and resolve collisions (collisions are ignored while paused, matching
 	# the original "harmless while recovering" behaviour).
 	move_and_slide()
-	if not is_paused:
+	if not was_paused:
 		_handle_collisions()
 
 	# Hard backstop: pin a patrol crocodile inside its platform so it can never
@@ -888,6 +895,11 @@ func _animate_bite(delta: float) -> void:
 	bite_timer -= delta
 	if bite_timer <= 0.0:
 		is_biting = false
+		# Put the model back on the capsule's centreline. _animate_body only ever
+		# writes position.y, so without this the last drawn lunge frame (~3.6 cm
+		# of forward +Z) would stay baked into the model FOREVER — every crocodile
+		# that has ever bitten drifts permanently ahead of its own collider.
+		model.position = Vector3(0.0, model_base_y, 0.0)
 		return
 
 	# Progress through the bite: 0 at the start, 1 at the end.

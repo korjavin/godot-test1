@@ -196,6 +196,17 @@ const BIRD_SPEED: float = 9.0
 const BIRD_SPAWN_DISTANCE: float = 160.0
 const BIRD_DESPAWN_DISTANCE: float = 200.0
 
+## Hard lifetime cap (seconds) for one flock, checked alongside the distance
+## test. That test is RELATIVE to the live player, and BIRD_SPEED (9.0) is
+## exactly the slowest character's run speed (RUN_SPEED 10 x CHARACTER_SPEED
+## 0.9) while _bird_dir is drawn over the full circle — so a player running
+## under a same-direction flock pins the distance forever: the flock never
+## retires, _bird_timer never re-arms (no flock ever spawns again), and
+## _write_bird_instances keeps running every frame on birds nobody can see.
+## A full crossing with a stationary player is 160 + 200 = 360 m at 9 m/s
+## = 40 s, so 90 s never truncates a real one.
+const BIRD_MAX_LIFETIME: float = 90.0
+
 ## Wing beats per second, and how far (radians) a wing swings up/down from
 ## level at the extremes of the beat.
 const BIRD_FLAP_HZ: float = 3.0
@@ -301,6 +312,9 @@ var _birds: Array = []
 ## flock spawns (rolled from BIRD_INTERVAL_MIN/MAX after each one leaves).
 var _bird_dir: Vector3 = Vector3.FORWARD
 var _bird_timer: float = 0.0
+
+## Seconds the current flock has been airborne, against BIRD_MAX_LIFETIME.
+var _bird_age: float = 0.0
 
 ## Running clock for the wing beat. Separate from _time because birds are
 ## updated EVERY frame while _time only advances on the 10 Hz tick.
@@ -742,15 +756,20 @@ func _update_birds(delta: float) -> void:
 		return
 
 	_bird_time += delta
+	_bird_age += delta
 	for bird in _birds:
 		bird["pos"] += _bird_dir * BIRD_SPEED * delta
 	_write_bird_instances()
 
 	# The flock leads with _birds[0]; once IT is far past the player the whole
-	# flock has crossed, so retire them and roll the next wait.
+	# flock has crossed, so retire them and roll the next wait. The lifetime cap
+	# is the second half of the test — the distance is relative to a player who
+	# may be flying along with the flock at exactly BIRD_SPEED, which would
+	# otherwise strand it forever (see BIRD_MAX_LIFETIME).
 	if is_instance_valid(_player):
 		var lead: Vector3 = _birds[0]["pos"] - _player.global_position
-		if Vector2(lead.x, lead.z).length() > BIRD_DESPAWN_DISTANCE:
+		if Vector2(lead.x, lead.z).length() > BIRD_DESPAWN_DISTANCE \
+				or _bird_age > BIRD_MAX_LIFETIME:
 			_birds.clear()
 			_park_bird_instances()
 			_bird_timer = _rng.randf_range(BIRD_INTERVAL_MIN, BIRD_INTERVAL_MAX)
@@ -777,6 +796,7 @@ func _spawn_flock(player_pos: Vector3) -> void:
 
 	var count: int = _rng.randi_range(BIRD_FLOCK_MIN, BIRD_FLOCK_MAX)
 	_birds.clear()
+	_bird_age = 0.0
 	for i in count:
 		# Bird 0 is the leader (exact lead_pos); the rest trail and spread out
 		# around it, each with its own wing-beat phase so the flock doesn't flap

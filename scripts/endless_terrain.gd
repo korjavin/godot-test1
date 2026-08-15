@@ -448,13 +448,21 @@ const CAMP_RADIUS: float = 9.4
 
 ## Minimum lateral distance from the coin-road centerline.
 ##
-## INVARIANT — "no boss ever stands inside a camp": a boss is placed at most
-## BOSS_LATERAL_MAX (4.0 m) off the centerline, and a camp centre is at least
-## CAMP_ROAD_CLEARANCE from it, so the two can never overlap as long as
-##     CAMP_ROAD_CLEARANCE > CAMP_RADIUS + BOSS_LATERAL_MAX
-##     22.0              >  9.4        + 4.0  = 13.4    ✓ (8.6 m of slack)
-## That inequality is the WHOLE boss exclusion — spawn_bosses_in_chunk needs no
-## edit and no extra test. If either constant is ever retuned, re-check this line.
+## INVARIANT — "no boss ever stands inside a camp". The camp test measures the
+## distance to STATION CENTRES (that is all _road_lateral_distance computes), and
+## a boss does NOT stand on its station centre: _boss_at offsets it
+## BOSS_FORWARD_OFFSET (8.0 m) along the tangent AND up to BOSS_LATERAL_MAX
+## (4.0 m) across it. Both legs must appear in the bound, or the invariant is
+## checked against a number 8 m smaller than the real one:
+##     CAMP_ROAD_CLEARANCE > CAMP_RADIUS + sqrt(BOSS_FORWARD_OFFSET^2 + BOSS_LATERAL_MAX^2)
+##     22.0                > 9.4         + sqrt(8.0^2 + 4.0^2) = 9.4 + 8.94 = 18.34  ✓
+## i.e. 3.66 m of slack, not the 8.6 the lateral leg alone suggests. (The real
+## clearance is larger still — stations are only _road_spacing() 6 m apart, so
+## the boss is in practice ~4.5 m from its NEAREST station centre rather than
+## 8.94 — but the hypotenuse is the bound that holds without assuming anything
+## about station spacing.) That inequality is the WHOLE boss exclusion —
+## spawn_bosses_in_chunk needs no edit and no extra test. Re-check this line if
+## ANY of the four constants named in it is retuned, BOSS_FORWARD_OFFSET included.
 ##
 ## 22 also clears the widest coin swath (road_width_max * 0.5 = 10 m) by a wide
 ## margin, so camp coins can never be confused with road coins.
