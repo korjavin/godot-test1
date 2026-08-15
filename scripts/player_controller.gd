@@ -506,6 +506,17 @@ func _input(event: InputEvent) -> void:
 			# Desktop only: re-capture on a second ESC. A touch session never re-captures.
 			Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 
+	# DESKTOP-WEB CLICK-TO-CAPTURE: browsers refuse pointer lock outside a user
+	# gesture, so the `_ready()` capture silently fails on a fresh web page load
+	# and the camera is dead until the (undiscoverable) double-ESC re-capture.
+	# Any click while the mouse is free re-captures it — a click IS the required
+	# gesture. Same touch-session guard as the sites above, and never during Game
+	# Over (the Play Again button needs a visible, clickable cursor).
+	if event is InputEventMouseButton and event.pressed:
+		if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED \
+				and not MobileSensors.is_touch_session() and not is_game_over:
+			Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+
 	# Handle character switching with E key
 	if event.is_action_pressed("switch_character"):
 		switch_to_next_character()
