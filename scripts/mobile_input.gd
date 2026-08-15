@@ -450,14 +450,23 @@ func disable() -> void:
 ## leaving motion permanently dead after the resume tap (the UI has no other
 ## re-enable path).
 func pause_game() -> void:
-	if get_tree().paused:
+	var tree := get_tree()
+	if tree.paused:
+		return
+	# Never pause over the Game Over screen — same rule as pause_controller's
+	# _toggle_pause(). The resume overlay lives inside TouchControls, which sits
+	# BELOW the full-rect GameOver panel in the HUD; a paused Control gets no GUI
+	# input but still blocks the PROCESS_MODE_ALWAYS one beneath it, so "Play
+	# Again" and the resume tap would BOTH be dead and only a page reload escapes.
+	var player := tree.get_first_node_in_group("player")
+	if player != null and bool(player.get("is_game_over")):
 		return
 	# Remember whether motion was running so the resume tap can restore it, then
 	# disable FIRST (releases every held action so nothing stays latched pressed
 	# through the pause) and freeze the whole tree.
 	_was_active_before_pause = active
 	disable()
-	get_tree().paused = true
+	tree.paused = true
 
 
 ## Unfreeze the tree after a focus-loss pause. Called by the touch UI's full-screen

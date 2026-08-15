@@ -26,6 +26,24 @@ const RUN_SPEED: float = 10.0
 ## Note: Ducking is slower than walking for realism
 const DUCK_SPEED: float = 2.5
 
+## Speed multiplier applied to the GROUNDED gaits (duck/run/walk) while the
+## player is standing in a river — see is_wading and calculate_current_speed().
+## 0.6 is a ~40% slowdown: enough to feel like wading and to make crossing a
+## river a real decision. Deliberately NOT applied to Windman's Air Rush —
+## flying over a river is not wading.
+const WADE_SPEED_FACTOR: float = 0.6
+
+## Floor under the RUN gait while wading. The project's difficulty contract is
+## "running always escapes": crocodile chase speed is capped at MAX_CHASE_SPEED
+## (8.5 in piglet_crocodile_ai.gd) precisely so it stays under the slowest
+## character's run (RUN_SPEED 10.0 × CHARACTER_SPEED 0.9 = 9.0). Applying the
+## full wade factor to the run gait drops that to 5.4 — below even the BASE
+## chase speed of 5.5 — which would make a river band an unescapable death
+## trap rather than a decision, and river crossings are not length-bounded (see
+## the RIVER_HALF_WIDTH note in endless_terrain.gd). So walk and duck take the
+## full drag and the run is floored here instead.
+const WADE_RUN_MIN_SPEED: float = 9.0
+
 ## How fast A / D rotate the character, in radians per second.
 ## A and D no longer strafe — they turn the body (tank-style steering), so
 ## whatever way the character ends up facing is the way W will walk.
@@ -159,6 +177,13 @@ var is_ducking: bool = false
 
 ## Tracks if the player is currently running
 var is_running: bool = false
+
+## True while the player is standing in a river band (see the terrain's biome
+## field). Recomputed from scratch every physics tick — it is a pure question
+## about where we are standing right now, so it holds no history and needs no
+## reset plumbing on respawn/restart. Drives the WADE_SPEED_FACTOR slowdown and
+## swaps the footstep sound for a splash.
+var is_wading: bool = false
 
 ## Sidestep state. While a "step aside" is playing we slide sideways for a short
 ## burst and run a matching leg animation; new step requests are ignored until it
@@ -713,6 +738,13 @@ func _physics_process(delta: float) -> void:
 	# STEP 6: Advance any in-progress sidestep, and start a new one on Q / E
 	update_sidestep(delta)
 
+	# STEP 6.5: Are we standing in a river? One noise evaluation per physics tick
+	# (see the terrain's is_river_at) — that is the entire budget for wading, and
+	# it is asked BEFORE calculate_current_speed() below so this frame's speed
+	# already knows. Only meaningful with feet on the ground: a jumping or flying
+	# player is over the water, not in it.
+	is_wading = is_on_floor() and _terrain_is_river_here()
+
 	# STEP 7: Read forward/back input and the current movement speed
 	var input_dir := get_input_direction()
 	var current_speed := calculate_current_speed()
@@ -820,6 +852,7 @@ func calculate_current_speed() -> float:
 	"""
 	# Windman's Air Rush overrides everything while he is airborne — a wind-fast
 	# flight through the sky (~5× walk speed, "Shift pressed five times over").
+	# Deliberately BEFORE the wading factor: flying over a river is not wading.
 	if windman_boost_timer > 0.0 and not is_on_floor():
 		return WINDMAN_AIR_SPEED
 
@@ -829,9 +862,24 @@ func calculate_current_speed() -> float:
 	var char_name: String = CHARACTERS[current_character_index]["name"]
 	var speed_scale: float = float(CHARACTER_SPEED.get(char_name, 1.0))
 
+	# Wading through a river drags on every grounded gait (see WADE_SPEED_FACTOR).
+	# Folded into the same multiplier so duck/run/walk all slow by the same share.
+	if is_wading:
+		speed_scale *= WADE_SPEED_FACTOR
+
 	if is_ducking:
 		return DUCK_SPEED * speed_scale
 	elif is_running:
+		# The wading drag applies here too, but never below WADE_RUN_MIN_SPEED:
+		# running has to keep outpacing a chasing crocodile even in the water.
+		#
+		# AS THE CONSTANTS STAND THE FLOOR ALWAYS WINS: the fastest character is
+		# 10.0 * 1.15 * 0.6 = 6.9, under the 9.0 floor, so EVERY character runs at
+		# exactly 9.0 while wading and the drag is fully absorbed. The maxf stays
+		# as the general expression — retune CHARACTER_SPEED or WADE_SPEED_FACTOR
+		# and the drag starts biting again without this line needing a thought.
+		if is_wading:
+			return maxf(RUN_SPEED * speed_scale, WADE_RUN_MIN_SPEED)
 		return RUN_SPEED * speed_scale
 	else:
 		return WALK_SPEED * speed_scale
@@ -1313,9 +1361,11 @@ func animate_walking(delta: float, speed_multiplier: float) -> void:
 	# time_factor already advances 1.5× when running, the step rate speeds up
 	# automatically. Sign 0 is the "just started walking" reset state: record
 	# the current sign silently so the first frame never mis-fires a step.
+	# Wading swaps the pat for a wet slap on the very same trigger, so the
+	# "occasional splash" cadence comes free from the walk cycle — no new timer.
 	var sine_sign: int = 1 if sin(time_factor) >= 0.0 else -1
 	if _last_walk_sine_sign != 0 and sine_sign != _last_walk_sine_sign and is_on_floor():
-		_sfx("play_footstep")
+		_sfx("play_splash" if is_wading else "play_footstep")
 	_last_walk_sine_sign = sine_sign
 
 	# Apply rotations (arms and legs swing opposite to each other)
@@ -1632,6 +1682,12 @@ func restart_game() -> void:
 	is_game_over = false
 	is_caught = false
 	is_respawning = false
+	# Ability cooldowns are NOT part of reset_position()'s wipe list, and
+	# _update_ability_timers() sits below the is_game_over early return in
+	# _physics_process — so they freeze the moment the run ends and would carry
+	# into the new one at full value (die right after a Stink Wave, hit Play
+	# Again, and F is refused for ~12 s with the HUD dial nearly full).
+	ability_cooldowns.fill(0.0)
 	# Drop any mid-blink i-frames and restore model visibility for the current
 	# view — blink state must never leak into a fresh run.
 	respawn_blink_timer = 0.0
@@ -1878,6 +1934,27 @@ func _weather_is_raining_here() -> bool:
 	var weather := get_tree().get_first_node_in_group("weather")
 	if weather and weather.has_method("is_raining_at"):
 		return weather.is_raining_at(global_position)
+	return false
+
+
+func _terrain_is_river_here() -> bool:
+	"""
+	Whether the player is standing in a river band, asked of the terrain through
+	the "terrain" group — the same null-safe group + has_method shape as
+	_weather_is_raining_here() above and _sfx(), so the player scene run on its
+	own (no EndlessTerrain in the tree) simply answers "no river" instead of
+	erroring.
+
+	EDUCATIONAL NOTE:
+	- is_river_at() is one evaluation of the terrain's biome noise: no allocation,
+	  no physics query, no node lookup beyond this one — cheap enough to ask
+	  every physics tick, which is exactly what _physics_process does.
+
+	@return bool: true when this exact spot is inside a river band.
+	"""
+	var terrain := get_tree().get_first_node_in_group("terrain")
+	if terrain and terrain.has_method("is_river_at"):
+		return terrain.is_river_at(global_position)
 	return false
 
 
@@ -2147,6 +2224,14 @@ func _reset_ability_states() -> void:
 	"""Clear transient ability state on respawn (air boost, giant/small form)."""
 	windman_boost_timer = 0.0
 	_revert_teibi_to_normal()
+	# Sidestep is transient too: the caught/respawn/game-over branches all return
+	# BEFORE update_sidestep(), so a player caught mid-step would otherwise come
+	# back with is_stepping still true and slide sideways out of the spawn.
+	if is_stepping:
+		is_stepping = false
+		step_timer = 0.0
+		step_direction = 0.0
+		reset_sidestep_pose()
 
 
 func _revert_teibi_to_normal() -> void:

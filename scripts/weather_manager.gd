@@ -350,7 +350,7 @@ func _process(delta: float) -> void:
 	if _clouds.is_empty():
 		for i in CLOUD_COUNT:
 			var cloud: Dictionary = _make_cloud()
-			_place_cloud_around(cloud, player_pos, false)
+			_place_cloud_around(cloud, player_pos, Vector3.ZERO)
 			_clouds.append(cloud)
 
 	_update_clouds(player_pos, elapsed)
@@ -623,19 +623,18 @@ func _make_cloud() -> Dictionary:
 	}
 
 
-func _place_cloud_around(cloud: Dictionary, player_pos: Vector3, ahead_only: bool) -> void:
+func _place_cloud_around(cloud: Dictionary, player_pos: Vector3, rim_dir: Vector3) -> void:
 	## Position a cloud in the field disc around the player at a fresh altitude.
-	## Initial fill (`ahead_only = false`): anywhere in the disc, so the sky is
-	## populated in every direction from frame one. Recycling
-	## (`ahead_only = true`): only along the UPWIND edge — the cloud re-enters
-	## far away where the fog hides it and drifts back across the field, so the
-	## player never sees one pop in.
+	## Initial fill (`rim_dir == ZERO`): anywhere in the disc, so the sky is
+	## populated in every direction from frame one. Recycling (`rim_dir` = the
+	## flat unit direction to re-enter FROM): the cloud reappears on that rim, far
+	## away where the fog hides it, so the player never sees one pop in.
 	var pos: Vector3
-	if ahead_only:
-		# A point on the upwind semicircle rim: start FIELD_RADIUS upwind of the
-		# player, then swing up to ±90° around them so re-entries spread out.
+	if rim_dir != Vector3.ZERO:
+		# A point on that semicircle rim: start FIELD_RADIUS out along rim_dir,
+		# then swing up to ±90° around the player so re-entries spread out.
 		var angle: float = _rng.randf_range(-PI * 0.5, PI * 0.5)
-		pos = player_pos + (-WIND_DIR * FIELD_RADIUS).rotated(Vector3.UP, angle)
+		pos = player_pos + (rim_dir * FIELD_RADIUS).rotated(Vector3.UP, angle)
 	else:
 		# Uniform-ish point in the disc (sqrt for area-uniform radial density).
 		var angle: float = _rng.randf_range(0.0, TAU)
@@ -651,11 +650,19 @@ func _update_clouds(player_pos: Vector3, elapsed: float) -> void:
 	## MultiMesh.
 	for cloud in _clouds:
 		cloud["center"] += WIND_DIR * cloud["speed"] * elapsed
-		# "Behind" = along-wind offset from the player, projected onto WIND_DIR.
 		var to_cloud: Vector3 = cloud["center"] - player_pos
 		to_cloud.y = 0.0
-		if to_cloud.dot(WIND_DIR) > FIELD_RADIUS:
-			# Drifted past the downwind edge: re-roll shape + re-enter upwind.
+		# Recycle on leaving the disc in ANY direction, not just downwind. WIND_SPEED
+		# is 1.6 m/s and WIND_DIR is mostly +X, while the player runs +X at 5-10 (25
+		# during Air Rush) — so in practice clouds are left BEHIND, never overtaken.
+		# A downwind-only test therefore never fires: the whole field strands out of
+		# range within ~40 s and the sky is empty for the rest of the run, taking
+		# is_raining_at() (hence rain particles, the rain bed and both Windman rules)
+		# down with it.
+		if to_cloud.length() > FIELD_RADIUS:
+			# Re-enter on the rim OPPOSITE the side it left by, so a cloud dropped
+			# behind a sprinting player comes back in ahead of them.
+			var rim_dir := -to_cloud.normalized()
 			var fresh: Dictionary = _make_cloud()
 			cloud["boxes"] = fresh["boxes"]
 			cloud["speed"] = fresh["speed"]
@@ -663,7 +670,7 @@ func _update_clouds(player_pos: Vector3, elapsed: float) -> void:
 			cloud["brightness"] = fresh["brightness"]
 			cloud["is_storm"] = fresh["is_storm"]
 			cloud["radius"] = fresh["radius"]
-			_place_cloud_around(cloud, player_pos, true)
+			_place_cloud_around(cloud, player_pos, rim_dir)
 	_write_cloud_instances()
 
 
