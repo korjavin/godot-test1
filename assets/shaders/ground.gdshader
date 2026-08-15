@@ -1,19 +1,41 @@
-// Ground shader — gives the infinite green plane a subtle large-scale
-// mottling (two greens blended by noise) so it reads as terrain instead of
-// a flat billiard table.
+// Ground shader — gives the infinite flat plane its look: a subtle large-scale
+// mottling (two greens blended by noise) so it reads as terrain instead of a
+// flat billiard table, PLUS the biome tint (desert / plains / forest / mountain)
+// and the blue river bands laid over it.
+//
+// THE GROUND IS ALWAYS FLAT (y = 0). Biomes and rivers are a PAINT JOB here plus
+// block geometry and a speed penalty on the CPU side — there is no heightfield,
+// no water mesh, no transparency. See the BIOME FIELD section of
+// scripts/endless_terrain.gd for why (and for the upgrade path).
+//
+// CPU/GPU PARITY CONTRACT: biome_noise() below is the GPU copy of _biome_noise()
+// in endless_terrain.gd, built out of the same hash2/value_noise this file
+// already had. The blue band the player SEES and the wading zone the player
+// FEELS are the same field, so the two copies MUST BE EDITED TOGETHER. The
+// uniforms marked "must match GDScript" are pushed from
+// _apply_biome_shader_params(); the pure-art colours below are shader-side only,
+// so an art pass can retint from the material without touching GDScript.
 //
 // PERFORMANCE CONTRACT (why this is nearly free, even on web/gl_compatibility):
-// - ALL the noise math runs in vertex() — the chunk plane is subdivided 16x16
-//   (see _get_shared_ground_mesh in endless_terrain.gd), so that's a few
-//   hundred vertices per chunk, once each, not per pixel.
-// - fragment() does ONLY a mix() between two uniform colors using the
-//   interpolated varying. Fill rate is untouched vs the old StandardMaterial3D.
+// - ALL the noise math — the ground mottling AND the biome field — runs in
+//   vertex(). The chunk plane is subdivided 16x16 (see _get_shared_ground_mesh
+//   in endless_terrain.gd), so that's a few hundred vertices per chunk, once
+//   each, not per pixel.
+// - fragment() does a handful of mix()/smoothstep() ops on interpolated
+//   varyings: no noise, no texture fetch, no branching for the 95% of the world
+//   that is dry land.
+// - The ONE per-pixel extra is the river shimmer, and it lives inside
+//   `if (v_river > 0.0)` so only pixels actually inside a river band pay for it.
+//   WebGL2 fill rate is the tightest budget in the project — keep it that way.
 //
-// SEAMLESSNESS CONTRACT: the noise is sampled at the WORLD-space XZ of each
-// vertex (MODEL_MATRIX applied), so the pattern is one continuous field across
-// the whole world — chunk seams land wherever they land in it and are
-// invisible. Zero per-chunk setup, zero uniforms to update per chunk, which is
-// what lets every chunk share ONE mesh + ONE material.
+// SEAMLESSNESS CONTRACT: every noise here is sampled at the WORLD-space XZ of
+// each vertex (MODEL_MATRIX applied), so both the mottling and the biome field
+// are one continuous field across the whole world — chunk seams land wherever
+// they land in it and are invisible. Biome BOUNDARIES are softened separately,
+// by the smoothstep blends in fragment() over biome_blend: that softness is
+// about the desert-meets-plains edge, not the chunk edge. Zero per-chunk setup,
+// zero per-chunk uniforms, which is what lets every chunk share ONE mesh + ONE
+// material.
 shader_type spatial;
 
 // The two greens the noise blends between. Exposed as uniforms so an art pass
@@ -21,8 +43,39 @@ shader_type spatial;
 uniform vec3 green_a: source_color = vec3(0.42, 0.55, 0.24); // sunlit grass
 uniform vec3 green_b: source_color = vec3(0.20, 0.44, 0.26); // shaded moss
 
-// Noise value computed per-vertex, interpolated for free across the triangle.
+// --- Biome field parameters — MUST MATCH the GDScript constants -------------
+// Defaults equal the GDScript values, so the shader still looks right if
+// nothing ever pushes them (e.g. the material previewed in the editor).
+uniform vec2 biome_offset = vec2(0.0);        // per-run domain shift (run_seed)
+uniform float biome_cell_size = 400.0;        // noise wavelength in metres
+uniform float biome_desert_max = 0.34;        // n < this  -> desert
+uniform float biome_plains_max = 0.62;        // n < this  -> plains
+uniform float biome_forest_max = 0.82;        // n < this  -> forest, else mountain
+uniform float river_level = 0.5;              // the contour rivers follow
+uniform float river_half_width = 0.02;        // half-thickness of that contour
+uniform float biome_blend = 0.05;             // smoothstep radius at each threshold
+
+// --- Biome colours — pure art, never read by GDScript -----------------------
+uniform vec3 desert_color: source_color = vec3(0.78, 0.68, 0.44);   // ochre sand
+uniform vec3 forest_color: source_color = vec3(0.13, 0.30, 0.17);   // deep cool green
+uniform vec3 mountain_color: source_color = vec3(0.45, 0.43, 0.40); // grey-brown scree
+uniform vec3 river_color: source_color = vec3(0.10, 0.28, 0.34);    // dark blue-teal
+
+// How much of the band's half-width is full-strength river before the tint
+// starts fading out. A hard edge would alias badly at 16x16 vertex density
+// (the band is only ~8 m wide, a chunk vertex spacing is ~3 m), so the edge is
+// softened over the outer 45% of the band.
+const float RIVER_EDGE_SOFT = 0.55;
+
+// Ground mottling computed per-vertex, interpolated for free across the triangle.
 varying float v_noise;
+// The raw biome field value at this vertex — thresholded in fragment().
+varying float v_biome;
+// River strength: 1 in the band centre, falling to 0 at the band edge.
+varying float v_river;
+// World XZ, carried through only so the river shimmer can animate in world
+// space (so it doesn't swim when the chunk it belongs to is elsewhere).
+varying vec2 v_world_xz;
 
 // Sine-free 2D lattice hash: turns a lattice point into a pseudo-random 0..1
 // value. Deterministic (pure function of position), so the pattern never
@@ -58,18 +111,66 @@ float value_noise(vec2 p) {
 	return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
 }
 
+// THE biome field — the GPU twin of _biome_noise() in endless_terrain.gd.
+// Reusing hash2/value_noise above is the whole point: one lattice hash, one
+// blend recipe, so the CPU port has exactly one thing to mirror and parity
+// stays honest. Regions AND rivers are both readouts of this single number,
+// which is why they agree with each other for free.
+float biome_noise(vec2 world_xz) {
+	vec2 p = world_xz / biome_cell_size + biome_offset;
+	return clamp(value_noise(p), 0.0, 1.0);
+}
+
 void vertex() {
 	// World-space XZ of this vertex — the key to cross-chunk continuity.
 	vec2 world_xz = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xz;
+	v_world_xz = world_xz;
 	// Two octaves: a broad ~40 m wash (dominant) plus ~13 m detail on top.
 	// Weights sum to 1 so the result stays in 0..1 for the fragment lerp.
 	float n = value_noise(world_xz * (1.0 / 40.0)) * 0.65
 			+ value_noise(world_xz * (1.0 / 13.0)) * 0.35;
 	v_noise = clamp(n, 0.0, 1.0);
+
+	// The biome field, sampled once per vertex like everything else here.
+	v_biome = biome_noise(world_xz);
+	// River = a thin CONTOUR of that same field. Distance from the contour,
+	// remapped so the centre of the band is 1 and the edge fades to 0.
+	float from_contour = abs(v_biome - river_level);
+	v_river = 1.0 - smoothstep(river_half_width * RIVER_EDGE_SOFT, river_half_width, from_contour);
 }
 
 void fragment() {
-	// Just the lerp — see the performance contract at the top.
-	ALBEDO = mix(green_a, green_b, v_noise);
-	ROUGHNESS = 0.8; // match the old StandardMaterial3D ground roughness
+	// Plains stays exactly what it always was: the two-green mottle.
+	vec3 albedo = mix(green_a, green_b, v_noise);
+	// The same mottle, as a brightness wobble, keeps the other three biomes
+	// from reading as flat painted plastic. Three multiplies, no extra noise.
+	float mottle = mix(0.88, 1.12, v_noise);
+	// Blend across each threshold with smoothstep over biome_blend, so a biome
+	// boundary is a soft gradient several metres wide rather than a hard line.
+	// Chained low-to-high: desert below, then plains, forest, mountain.
+	albedo = mix(desert_color * mottle, albedo,
+			smoothstep(biome_desert_max - biome_blend, biome_desert_max + biome_blend, v_biome));
+	albedo = mix(albedo, forest_color * mottle,
+			smoothstep(biome_plains_max - biome_blend, biome_plains_max + biome_blend, v_biome));
+	albedo = mix(albedo, mountain_color * mottle,
+			smoothstep(biome_forest_max - biome_blend, biome_forest_max + biome_blend, v_biome));
+
+	float roughness = 0.8; // matches the old StandardMaterial3D ground roughness
+
+	// River last, on top of whatever biome it cuts through — rivers are an
+	// overlay, not a biome (same rule as is_river_at() on the CPU side).
+	if (v_river > 0.0) {
+		// Cheap crossed-sine shimmer: two sines drifting in opposite senses so
+		// the interference pattern never reads as a repeating grid. World-space
+		// input keeps it continuous across chunk seams, TIME makes it flow.
+		float shimmer = sin(v_world_xz.x * 1.7 + TIME * 1.3)
+				* sin(v_world_xz.y * 2.3 - TIME * 0.9);
+		vec3 wet = river_color * (1.0 + shimmer * 0.12);
+		albedo = mix(albedo, wet, v_river);
+		// Wet sheen for free — no transparency, no reflection, no extra pass.
+		roughness = mix(roughness, 0.3, v_river);
+	}
+
+	ALBEDO = albedo;
+	ROUGHNESS = roughness;
 }
