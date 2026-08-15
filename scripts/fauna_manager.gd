@@ -69,6 +69,41 @@ const WALK_SPEED_MAX: float = 3.0
 const ELEPHANT_CHANCE: float = 0.5
 
 # ============================================================================
+# CONSTANTS — herd composition and formation
+# ============================================================================
+
+## Elephant family size: a small tight group — 1–2 adults leading, the rest
+## calves trailing behind them (see _spawn_herd for the placement rule).
+const ELEPHANT_HERD_MIN: int = 3
+const ELEPHANT_HERD_MAX: int = 5
+const ELEPHANT_ADULTS_MIN: int = 1
+const ELEPHANT_ADULTS_MAX: int = 2
+
+## Giraffe flock size: a looser, larger group in a diagonal spread.
+const GIRAFFE_FLOCK_MIN: int = 4
+const GIRAFFE_FLOCK_MAX: int = 8
+
+## Formation spread (metres): how far members sit from the herd centre,
+## sideways (perpendicular to travel) and along the travel direction.
+const HERD_SPREAD_LATERAL: float = 6.0
+const HERD_SPREAD_LONG: float = 5.0
+
+## How far (metres) behind its parent adult an elephant calf walks.
+const CALF_TRAIL_DISTANCE: float = 2.5
+
+## Gentle shared meander: the herd centre swings MEANDER_AMPLITUDE metres
+## sideways as sin(travelled * MEANDER_FREQUENCY) — frequency is per METRE
+## travelled, not per second, so slower herds meander over the same ground.
+## 0.03 gives a ~200 m wavelength: visibly "not a laser line", never a loop.
+const MEANDER_AMPLITUDE: float = 6.0
+const MEANDER_FREQUENCY: float = 0.03
+
+## How quickly (1/s) each animal eases toward its formation slot. Low on
+## purpose: the lag makes members drift in and out of formation like animals,
+## not like a rigid parade float.
+const FORMATION_LERP_SPEED: float = 1.5
+
+# ============================================================================
 # CONSTANTS — elephant geometry
 # ============================================================================
 # All sizes in metres as Vector3(width, height, length). The animal's local
@@ -158,6 +193,16 @@ var _animals: Array[Dictionary] = []
 ## deliberately non-deterministic ambience — it must NOT draw from any seeded
 ## stream tied to the terrain's run_seed contract.
 var _rng := RandomNumberGenerator.new()
+
+## The live herd's shared movement state. Heading and lateral are fixed unit
+## XZ vectors for the herd's whole life (the migration LINE); position is the
+## herd centre (y = 0) including the meander; travelled is metres walked,
+## which drives the meander phase. All meaningless while _animals is empty.
+var _herd_heading: Vector3 = Vector3.ZERO
+var _herd_lateral: Vector3 = Vector3.ZERO
+var _herd_position: Vector3 = Vector3.ZERO
+var _herd_speed: float = 0.0
+var _herd_travelled: float = 0.0
 
 # ============================================================================
 # SHARED RESOURCES (static — one per PROCESS, not one per manager/animal)
@@ -489,14 +534,163 @@ func _find_player() -> Node3D:
 
 
 func _spawn_herd() -> void:
-	## Build and place one herd (filled in by the spawning task). Stub: does
-	## nothing yet beyond respecting the null-safe no-player case.
+	## Build and place one herd on the edge of the field, aimed to walk
+	## through the player's general area and out the far side.
+	##
+	## Placement: pick a random compass heading, put the herd origin on the
+	## field circle at player_pos - heading * FIELD_RADIUS, and walk along
+	## +heading — so the migration line always crosses TOWARD and PAST the
+	## player's area rather than skimming the horizon.
+	##
+	## The animals are parented to THIS manager, never to a terrain chunk:
+	## chunk unloading frees everything under a chunk mesh, and a herd must
+	## survive its whole crossing regardless of which chunks come and go.
+	##
+	## ponytail: the bead's optional elephant trumpet is skipped this cycle —
+	## sound_manager.gd is owned by a parallel executor; the upgrade path is a
+	## play_*-style one-shot there plus a null-safe "sound_manager" group
+	## lookup right here at spawn time.
+	if not _animals.is_empty():
+		# The ONE-HERD INVARIANT — this early-return IS the perf story: the
+		# feature's worst case is a single ≤ 8-animal herd, ever.
+		return
 	var player := _find_player()
 	if player == null:
 		return
 
+	var angle := _rng.randf_range(0.0, TAU)
+	_herd_heading = Vector3(cos(angle), 0.0, sin(angle))
+	# Lateral = heading rotated 90° in the ground plane; with heading, it is
+	# the herd-local frame every formation offset is expressed in.
+	_herd_lateral = Vector3(-_herd_heading.z, 0.0, _herd_heading.x)
+	var player_ground := Vector3(player.global_position.x, 0.0, player.global_position.z)
+	_herd_position = player_ground - _herd_heading * FIELD_RADIUS
+	_herd_speed = _rng.randf_range(WALK_SPEED_MIN, WALK_SPEED_MAX)
+	_herd_travelled = 0.0
 
-func _update_herd(_delta: float) -> void:
-	## Advance, animate, and despawn-check the live herd (filled in by the
-	## movement/animation tasks). Stub for now.
-	pass
+	# Build the members with their formation offsets (herd-local lateral/long
+	# pairs turned into world-space vectors — heading never changes, so the
+	# world-space offset is valid for the herd's whole life).
+	if _rng.randf() < ELEPHANT_CHANCE:
+		_spawn_elephant_family()
+	else:
+		_spawn_giraffe_flock()
+
+
+func _spawn_elephant_family() -> void:
+	## An elephant family: 1–2 adults spread abreast at the front, the calves
+	## each trailing CALF_TRAIL_DISTANCE behind a randomly chosen adult with a
+	## small lateral jitter — the classic "calf shadows its parent" read.
+	var herd_size := _rng.randi_range(ELEPHANT_HERD_MIN, ELEPHANT_HERD_MAX)
+	var adult_count := mini(_rng.randi_range(ELEPHANT_ADULTS_MIN, ELEPHANT_ADULTS_MAX), herd_size)
+
+	var adult_offsets: Array[Vector3] = []
+	for i: int in adult_count:
+		# Adults abreast: centred lateral slots at the formation's front.
+		var lat := (float(i) - float(adult_count - 1) * 0.5) * HERD_SPREAD_LATERAL
+		var offset := _herd_lateral * lat + _herd_heading * _rng.randf_range(0.0, HERD_SPREAD_LONG * 0.4)
+		adult_offsets.append(offset)
+		_add_animal(_build_elephant(true), offset)
+	for i: int in herd_size - adult_count:
+		var parent_offset: Vector3 = adult_offsets[_rng.randi_range(0, adult_count - 1)]
+		var jitter := _rng.randf_range(-HERD_SPREAD_LATERAL * 0.3, HERD_SPREAD_LATERAL * 0.3)
+		var offset := parent_offset - _herd_heading * CALF_TRAIL_DISTANCE + _herd_lateral * jitter
+		_add_animal(_build_elephant(false), offset)
+
+
+func _spawn_giraffe_flock() -> void:
+	## A giraffe flock: a loose DIAGONAL spread — each member steps a slot
+	## along BOTH the heading and the lateral axis (plus jitter), so the line
+	## reads as a staggered echelon rather than a row or a queue.
+	var flock_size := _rng.randi_range(GIRAFFE_FLOCK_MIN, GIRAFFE_FLOCK_MAX)
+	for i: int in flock_size:
+		var step := float(i) - float(flock_size - 1) * 0.5
+		var lat := step * HERD_SPREAD_LATERAL * 0.6 + _rng.randf_range(-1.5, 1.5)
+		var lon := step * HERD_SPREAD_LONG * 0.5 + _rng.randf_range(-1.5, 1.5)
+		_add_animal(_build_giraffe(), _herd_lateral * lat + _herd_heading * lon)
+
+
+func _add_animal(root: Node3D, offset: Vector3) -> void:
+	## Parent one built animal, place it at its formation slot, face it along
+	## the herd heading, and store its record. The record caches EVERY node
+	## reference the movement/animation code will ever touch (limb pivots,
+	## neck, trunk chain, rest poses) so the per-frame loops never call
+	## get_node — lookups happen exactly once, here at spawn.
+	add_child(root)
+	root.global_position = _herd_position + offset
+	root.rotation.y = atan2(-_herd_heading.x, -_herd_heading.z)
+
+	var body := root.get_node("Body") as Node3D
+	var legs: Array[Node3D] = []
+	for leg_name: String in ["LegFL", "LegFR", "LegRL", "LegRR"]:
+		legs.append(body.get_node(leg_name) as Node3D)
+	var neck := body.get_node_or_null("Neck") as Node3D
+	var trunk: Array[Node3D] = []
+	var seg: Node3D = body.get_node_or_null("Trunk0") as Node3D
+	while seg != null:
+		trunk.append(seg)
+		seg = seg.get_node_or_null("Trunk%d" % trunk.size()) as Node3D
+
+	_animals.append({
+		"root": root,
+		"body": body,
+		"legs": legs,
+		"neck": neck,                    # null for elephants
+		"trunk": trunk,                  # empty for giraffes
+		"offset": offset,                # formation slot, world-space
+		"phase": _rng.randf_range(0.0, TAU),  # stride offset — no lockstep
+		"neck_rest": neck.rotation.x if neck != null else 0.0,
+		"body_rest_y": body.position.y,
+	})
+
+
+func _update_herd(delta: float) -> void:
+	## Advance the shared herd centre along the migration line, ease every
+	## member toward its formation slot, and despawn once the crossing is
+	## done. Feet stay at y = 0 by construction: the ground is one flat plane
+	## at world y = 0 (see endless_terrain.gd), so there is no raycast and no
+	## terrain query anywhere in fauna.
+	##
+	## ponytail: walk-through is the accepted ceiling — no collision bodies
+	## and no obstacle avoidance, so a herd may clip a decorative block on its
+	## way past; capsule bodies + a cheap forward raycast nudge are the
+	## upgrade path if it ever reads badly in play.
+	var player := _find_player()
+	# Despawn when the crossing is over: the herd centre is measured against
+	# the LIVE player position each tick, so "the herd walked past" and "the
+	# player ran away from the herd" are the same check. No player at all
+	# (scene torn down mid-walk) also ends the event.
+	if player == null or _herd_position.distance_to(player.global_position) > DESPAWN_RADIUS:
+		_despawn_herd()
+		return
+
+	_herd_travelled += _herd_speed * delta
+	# Centre = straight line along the heading + the gentle shared meander on
+	# the lateral axis, phased by distance walked (see MEANDER_FREQUENCY).
+	_herd_position += _herd_heading * (_herd_speed * delta)
+	var centre := _herd_position \
+			+ _herd_lateral * (sin(_herd_travelled * MEANDER_FREQUENCY) * MEANDER_AMPLITUDE)
+
+	var ease_weight := minf(1.0, FORMATION_LERP_SPEED * delta)
+	for animal: Dictionary in _animals:
+		var root: Node3D = animal["root"]
+		var target: Vector3 = centre + animal["offset"]
+		var old_pos := root.position
+		root.position = old_pos.lerp(target, ease_weight)
+		# Face along the animal's OWN travel direction (not the herd heading):
+		# the formation ease + meander give each member its own curved path,
+		# and yawing along it is what makes the drift look deliberate. Local
+		# forward is -Z, hence the negated atan2 arguments.
+		var motion := root.position - old_pos
+		if motion.length_squared() > 0.000001:
+			root.rotation.y = atan2(-motion.x, -motion.z)
+
+
+func _despawn_herd() -> void:
+	## Free every animal, forget the herd, and re-arm the event timer with the
+	## steady-state gap — the field goes back to costing one subtraction per
+	## frame until the next migration.
+	for animal: Dictionary in _animals:
+		(animal["root"] as Node3D).queue_free()
+	_animals.clear()
+	_event_timer = _rng.randf_range(FAUNA_INTERVAL_MIN, FAUNA_INTERVAL_MAX)

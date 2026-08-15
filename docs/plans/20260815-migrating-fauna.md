@@ -202,39 +202,39 @@ Dependencies identified: none new. No asset files, no Python pipeline, no autolo
 
 ### Task 4: Herd spawning, migration line, and despawn
 
-- [ ] add herd constants: `ELEPHANT_HERD_MIN := 3` / `ELEPHANT_HERD_MAX := 5`,
+- [x] add herd constants: `ELEPHANT_HERD_MIN := 3` / `ELEPHANT_HERD_MAX := 5`,
       `ELEPHANT_ADULTS_MIN := 1` / `ELEPHANT_ADULTS_MAX := 2`,
       `GIRAFFE_FLOCK_MIN := 4` / `GIRAFFE_FLOCK_MAX := 8`, `HERD_SPREAD_LATERAL`,
       `HERD_SPREAD_LONG`, `CALF_TRAIL_DISTANCE`, `MEANDER_AMPLITUDE`, `MEANDER_FREQUENCY`,
       `FORMATION_LERP_SPEED`
-- [ ] `_spawn_herd()`: pick the species by `ELEPHANT_CHANCE`, pick a random compass heading,
+- [x] `_spawn_herd()`: pick the species by `ELEPHANT_CHANCE`, pick a random compass heading,
       place the **herd origin** on the field circle at `player_pos - heading * FIELD_RADIUS`
       (so it walks *toward and past* the player's area), roll one shared
       `_herd_speed` in `[WALK_SPEED_MIN, WALK_SPEED_MAX]`, build the members, and parent them
       to the manager's own parent (or to the manager) — **not** to a terrain chunk, since
       chunk unloading must never free a herd mid-walk
-- [ ] give each member a per-animal record holding its lateral/longitudinal **formation
+- [x] give each member a per-animal record holding its lateral/longitudinal **formation
       offset**, its `phase` (a random stride phase offset so the herd is not in lockstep —
       same idea as the crocodile's `instance_phase`), and its limb pivot references
-- [ ] elephants: 1–2 adults lead, the rest are calves placed **behind** an adult
+- [x] elephants: 1–2 adults lead, the rest are calves placed **behind** an adult
       (`CALF_TRAIL_DISTANCE` back plus a small lateral jitter); giraffes: a loose **diagonal**
       spread (offsets stepped along both the heading and the lateral axis)
-- [ ] `_update_herd(delta)`: advance a single shared `_herd_position` along the heading at
+- [x] `_update_herd(delta)`: advance a single shared `_herd_position` along the heading at
       `_herd_speed`, add a gentle shared meander
       (`sin(_herd_travelled * MEANDER_FREQUENCY) * MEANDER_AMPLITUDE` on the lateral axis),
       then for each animal lerp its position toward `herd_position + its offset` at
       `FORMATION_LERP_SPEED` and face it along its own travel direction. Feet stay at
       **y = 0** (flat ground — no raycast, comment why)
-- [ ] despawn: when the herd centre is farther than `DESPAWN_RADIUS` from the player (or the
+- [x] despawn: when the herd centre is farther than `DESPAWN_RADIUS` from the player (or the
       player is gone), `queue_free()` every animal, clear `_animals`, and re-arm the event
       timer. Also handle "the player ran away from the herd" — the same distance check covers
       it, since it measures against the live player position each tick
-- [ ] add the two required `ponytail:` comments: (a) **walk-through is the accepted ceiling**
+- [x] add the two required `ponytail:` comments: (a) **walk-through is the accepted ceiling**
       — no collision bodies and no obstacle avoidance, so a herd may clip a decorative block;
       capsule bodies + a cheap raycast nudge are the upgrade path if it ever reads badly;
       (b) **the elephant trumpet sound is skipped** — `sound_manager.gd` is owned by a
       parallel executor this cycle; a `play_*`-style one-shot is the upgrade path
-- [ ] enforce the **one-herd invariant** explicitly: `_spawn_herd()` early-returns if
+- [x] enforce the **one-herd invariant** explicitly: `_spawn_herd()` early-returns if
       `_animals` is non-empty, with a comment that this is the whole perf story
 
 ### Task 5: Procedural walk animation (single loop over all animals)
