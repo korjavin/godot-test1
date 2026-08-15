@@ -286,6 +286,97 @@ const BOSS_FORWARD_OFFSET: float = 8.0
 ## of the procedural world byte-for-byte identically.
 const BOSS_SEED: int = 0xB0_55  # "BOSS"-ish; arbitrary fixed constant
 
+# ----------------------------------------------------------------------------
+# ARTIFACTS (rare deterministic "lost civilization" landmarks, off the road)
+# ----------------------------------------------------------------------------
+##
+## An artifact is a rare, weathered landmark (a leaning monolith, a broken arch,
+## a stone circle, a half-buried colossus head, a spiral of steps) built entirely
+## from the same block primitives as ordinary chunk scenery — its stone rides the
+## chunk's MultiMesh + BlockCollision body, so it costs zero extra draw calls.
+## Placement uses its OWN independent hash stream (the BOSS_SEED / ROAD_COIN_SEED
+## pattern): a private RNG seeded from chunk coords + run_seed ^ ARTIFACT_SALT.
+## It consumes NO draw from the shared chunk RNG, so on the ~19 of 20 chunks
+## without an artifact the generated world is byte-for-byte identical to before.
+##
+## The determinism contract, spelled out:
+## - INDEPENDENT STREAM: _artifact_at() is a pure function of chunk coords +
+##   run_seed. No draw from the shared chunk RNG is consumed, inserted, or
+##   moved — every existing block/crocodile/coin stays exactly where it was.
+## - WITHIN A RUN: a revisited chunk regenerates the identical artifact (same
+##   shape, same spot, same stones), just like blocks and crocodile positions.
+## - ACROSS RUNS: new_run() re-rolls run_seed, so artifacts land elsewhere —
+##   run 2 is a fresh world, artifacts included.
+## - PER-CHUNK PARENTING: everything an artifact spawns (accents, coins, gem)
+##   is a child of the chunk MeshInstance3D, so it unloads with the chunk and
+##   nothing leaks.
+## - RENDER SPLIT: all SOLID geometry routes through create_box into the
+##   chunk's single MultiMesh + single BlockCollision body (zero extra draws,
+##   zero extra bodies); only the GLOW accents are real MeshInstance3Ds — at
+##   most ARTIFACT_MAX_ACCENTS of them, cast_shadow OFF.
+##
+## Honest deferral: an optional proximity "shimmer" hum per artifact was
+## SKIPPED. sound_manager.get_loop_player() returns a non-positional
+## AudioStreamPlayer, so a per-artifact 3D hum would need a new positional
+## audio path plus a per-frame proximity scan against artifact centres —
+## out of proportion to the quiet polish it buys.
+
+## Kill switch, mirrors spawn_coins / spawn_crocodiles.
+@export var spawn_artifacts: bool = true
+
+## Per-chunk chance of hosting an artifact: 0.05 ≈ one per 20 chunks, inside the
+## one-per-15-to-25 target band. Rarity is also the draw-call budget (see
+## ARTIFACT_MAX_ACCENTS below).
+const ARTIFACT_CHANCE: float = 0.05
+
+## Fixed salt XORed into run_seed for the artifact hash stream — same spirit as
+## BOSS_SEED / ROAD_COIN_SEED: an arbitrary constant that keeps this stream
+## independent of every other deterministic spawn site.
+const ARTIFACT_SALT: int = 0xA27_1FA
+
+## Candidate spots tried inside a chunk before giving up (a try is rejected when
+## it lands too close to the coin road — see ARTIFACT_ROAD_CLEARANCE).
+const ARTIFACT_PLACE_TRIES: int = 4
+
+## Minimum lateral distance from the road centerline. The widest coin band
+## half-width is road_width_max * 0.5 = 10, so 14 keeps artifacts clear of the
+## coin swath (never on the road, always a deliberate detour) while still
+## leaving them visible from it.
+const ARTIFACT_ROAD_CLEARANCE: float = 14.0
+
+## Keeps the whole artifact inside its chunk so nothing straddles a seam
+## (an artifact is spawned and parented by exactly one chunk).
+const ARTIFACT_EDGE_MARGIN: float = 12.0
+
+## Weathered stone palette — deliberately DISTINCT from the curated block ramps
+## (RAMP_SANDSTONE_* / RAMP_SLATE_* / RAMP_MOSS_*): neutral desaturated greys
+## plus a dead-moss green, no warm sandstone undertone, no blue slate. The point
+## is that an artifact reads as "from another age" next to ordinary blocks.
+const ARTIFACT_STONE_A := Color(0.40, 0.41, 0.39)
+const ARTIFACT_STONE_B := Color(0.60, 0.61, 0.58)
+const ARTIFACT_MOSS := Color(0.33, 0.40, 0.30)
+const ARTIFACT_MOSS_MAX: float = 0.35  # max lerp toward moss per stone
+
+## Emissive accent glow: cold cyan — nothing else in the world is this colour.
+## main.tscn has glow_enabled with glow_hdr_threshold = 0.85, so an emission
+## energy of 3.0 pushes the accents over the threshold and they bloom for free.
+const ARTIFACT_GLOW_COLOR := Color(0.45, 0.95, 1.0)
+const ARTIFACT_GLOW_ENERGY: float = 3.0
+
+## Hard cap on real emissive MeshInstance3Ds per artifact — the draw-call
+## budget. Accents can't join the block MultiMesh (one shared non-emissive
+## material), so each is a real instance; rarity × this cap keeps the worst
+## case on screen to a handful of extra unshadowed draws.
+const ARTIFACT_MAX_ACCENTS: int = 4
+
+## Coin reward: 3-5 ordinary coins ring the artifact's base (ring radius =
+## footprint radius + a pad in [PAD_MIN, PAD_MAX]) plus exactly one gem at the
+## centre — the incentive to detour off the coin road.
+const ARTIFACT_COIN_MIN: int = 3
+const ARTIFACT_COIN_MAX: int = 5
+const ARTIFACT_COIN_RING_PAD_MIN: float = 1.5
+const ARTIFACT_COIN_RING_PAD_MAX: float = 4.0
+
 # ============================================================================
 # SECTION 2: INTERNAL STATE
 # ============================================================================
@@ -440,6 +531,11 @@ var _shared_ground_mesh: PlaneMesh
 ## `albedo_color` (sRGB→linear) path produced. See the COLOUR SPACE note in create_box.
 var _shared_block_material: StandardMaterial3D
 
+## Lazily-created shared material for artifact glow accents (rune strips, eyes,
+## missing keystones — see the ARTIFACTS section). ONE material shared by every
+## accent in the world, same lazy-singleton discipline as _shared_block_material.
+var _shared_artifact_glow_material: StandardMaterial3D
+
 ## A representative roughness for the shared block material. The old per-block code
 ## picked a random roughness in [0.7, 1.0]; since MultiMesh can't vary roughness
 ## per instance, we use one mid-range value for all blocks. (We still CONSUME the
@@ -501,6 +597,44 @@ func _get_shared_block_material() -> StandardMaterial3D:
 		# Single representative roughness (see SHARED_BLOCK_ROUGHNESS note above).
 		_shared_block_material.roughness = SHARED_BLOCK_ROUGHNESS
 	return _shared_block_material
+
+func _get_artifact_glow_material() -> StandardMaterial3D:
+	"""
+	Returns the shared emissive material for artifact glow accents, creating it on
+	first use (same lazy-singleton shape as _get_shared_block_material). The
+	emission energy (3.0) sits well above main.tscn's glow_hdr_threshold (0.85),
+	so the already-paid glow post-process picks these up and they bloom for free —
+	no extra render passes. UNSHADED because a glowing rune should not go dark
+	when it falls inside the key light's shadow.
+	"""
+	if _shared_artifact_glow_material == null:
+		_shared_artifact_glow_material = StandardMaterial3D.new()
+		_shared_artifact_glow_material.albedo_color = ARTIFACT_GLOW_COLOR
+		_shared_artifact_glow_material.emission_enabled = true
+		_shared_artifact_glow_material.emission = ARTIFACT_GLOW_COLOR
+		_shared_artifact_glow_material.emission_energy_multiplier = ARTIFACT_GLOW_ENERGY
+		_shared_artifact_glow_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	return _shared_artifact_glow_material
+
+func _spawn_artifact_accent(parent_chunk: MeshInstance3D, local_pos: Vector3, dimensions: Vector3, yaw: float, tilt: float) -> void:
+	"""
+	Spawns one emissive accent box (a rune strip, an eye, a missing keystone) as a
+	REAL MeshInstance3D parented to the chunk (per-chunk parenting rule: it unloads
+	with the chunk). Accents cannot join the block MultiMesh — that batch has one
+	shared NON-emissive material — so each accent is a genuine extra draw call.
+	That is exactly why artifacts are rare and capped at ARTIFACT_MAX_ACCENTS
+	accents each: worst case on screen is a handful of extra unshadowed draws.
+	Same Basis(UP, yaw) * Basis(RIGHT, tilt) rotation order as create_box, so an
+	accent can sit flush on a tilted stone.
+	"""
+	var accent := MeshInstance3D.new()
+	accent.mesh = _get_shared_unit_box_mesh()  # shared cube; transform carries the size
+	accent.transform = Transform3D((Basis(Vector3.UP, yaw) * Basis(Vector3.RIGHT, tilt)).scaled_local(dimensions), local_pos)
+	accent.material_override = _get_artifact_glow_material()
+	# A fist-sized glowing strip casting a shadow would cost a shadow-pass draw
+	# for no visible payoff — accents glow, they don't shade.
+	accent.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	parent_chunk.add_child(accent)
 
 # ============================================================================
 # INITIALIZATION
@@ -855,6 +989,14 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 
 	if spawn_objects:
 		obstacles = spawn_objects_in_chunk(chunk_pos, platforms, block_batch, block_body)
+
+	# Rare lost-civilization artifact (independent ARTIFACT_SALT hash stream — no
+	# shared RNG draws consumed). ORDERING REQUIREMENT: this must run AFTER
+	# spawn_objects_in_chunk (so its footprint appends to the finished obstacles
+	# list) and BEFORE _build_block_multimesh / the block_body attach below, so
+	# the artifact's stone joins the chunk's single MultiMesh draw call and its
+	# single consolidated collision body.
+	spawn_artifact_in_chunk(chunk_pos, mesh_instance, obstacles, block_batch, block_body)
 
 	# Build the chunk's batched block visuals. If any blocks were placed, collapse
 	# them all into one MultiMeshInstance3D parented to this chunk (so it is freed
@@ -1242,7 +1384,7 @@ func create_block(center_pos: Vector3, size: float, yaw: float, rng: RandomNumbe
 	"""
 	create_box(center_pos, Vector3(size, size, size), yaw, rng, block_batch, block_body)
 
-func create_box(center_pos: Vector3, dimensions: Vector3, yaw: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> void:
+func create_box(center_pos: Vector3, dimensions: Vector3, yaw: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D, tilt: float = 0.0, color_override: Color = Color(0.0, 0.0, 0.0, 0.0)) -> void:
 	"""
 	Register one box for rendering AND register its physics collision shape. Used for
 	cube blocks and for the flat slabs that make up pyramids.
@@ -1288,6 +1430,13 @@ func create_box(center_pos: Vector3, dimensions: Vector3, yaw: float, rng: Rando
 	                   colour here for the chunk's MultiMesh.
 	@param block_body: The chunk's single shared StaticBody3D; we add this block's
 	                   CollisionShape3D child to it (see WHY note above).
+	@param tilt: OPTIONAL rotation about the local X axis (radians), applied AFTER
+	             yaw. Used by the lost-civilization artifacts for leaning stones.
+	             Defaults to 0.0 — the extra Basis is then the identity, so every
+	             existing call site produces a bit-for-bit identical transform.
+	@param color_override: OPTIONAL colour that replaces the curated-ramp pick when
+	                       its alpha > 0 (the default is fully transparent = inert).
+	                       Used by artifacts for their weathered palette.
 	"""
 	# ----- Pick the block colour from a curated ramp -----------------------------
 	# IMPORTANT (determinism): the chunk's world layout is seeded from this same RNG.
@@ -1326,6 +1475,16 @@ func create_box(center_pos: Vector3, dimensions: Vector3, yaw: float, rng: Rando
 	# randf_range purely for its determinism side effect is enough.
 	rng.randf_range(0.7, 1.0)
 
+	# ----- Optional colour override (artifacts) ----------------------------------
+	# Applied AFTER the ramp match on purpose: the ramp draws above belong to the
+	# CALLER'S RNG stream and must always happen to keep that stream's sequence
+	# intact. Ordinary chunk blocks pass the shared chunk RNG (where skipping draws
+	# would shift the whole world); artifacts pass their own private RNG, so the
+	# discarded draws cost nothing. Either way the shared-stream discipline of this
+	# function stays untouched — we only swap which colour VALUE gets used.
+	if color_override.a > 0.0:
+		chosen_color = color_override
+
 	# ----- Append this block to the chunk's MultiMesh batch (VISUALS) ------------
 	# A MultiMesh instance is just a Transform3D applied to the shared UNIT cube.
 	# We build the basis as: rotate around UP by `yaw`, THEN scale each LOCAL axis by
@@ -1361,9 +1520,17 @@ func create_box(center_pos: Vector3, dimensions: Vector3, yaw: float, rng: Rando
 	# equals srgb_to_linear(chosen_color), exactly as the old material produced. This is
 	# a pure value transform on an already-computed Color — it consumes NO RNG, so the
 	# deterministic world layout is unchanged.
-	var basis := Basis(Vector3.UP, yaw).scaled_local(dimensions)
+	#
+	# TILT (artifacts): the rotation is built ONCE as `Basis(UP, yaw) * Basis(RIGHT,
+	# tilt)` — yaw first, then a lean about the local X axis — and that SAME `rot` is
+	# used for both halves: the visual gets `rot.scaled_local(dimensions)` (still the
+	# `R * S` order documented above) and the collision shape below gets plain `rot`
+	# on its own transform. Sharing one basis is what keeps a TILTED box's visual and
+	# collision in lockstep. With the default `tilt == 0.0` the extra Basis is the
+	# identity, so this transform is bit-for-bit what the yaw-only code produced.
+	var rot := Basis(Vector3.UP, yaw) * Basis(Vector3.RIGHT, tilt)
 	block_batch.append({
-		"transform": Transform3D(basis, center_pos),
+		"transform": Transform3D(rot.scaled_local(dimensions), center_pos),
 		"color": chosen_color.srgb_to_linear(),
 	})
 
@@ -1380,9 +1547,12 @@ func create_box(center_pos: Vector3, dimensions: Vector3, yaw: float, rng: Rando
 	# Default collision layer/mask (1/1) — block_body never sets them, exactly like the
 	# old per-block bodies, so the player's collision and crocodile avoidance raycasts
 	# keep hitting blocks the same way.
+	# The shape reuses the SAME `rot` basis the visual used (see the TILT note
+	# above) via a whole-transform assignment — for the default tilt of 0 this is
+	# exactly the old `position = center_pos; rotation.y = yaw` pair, and for a
+	# tilted artifact stone it keeps collision matched to the leaning visual.
 	var collision_shape := CollisionShape3D.new()
-	collision_shape.position = center_pos
-	collision_shape.rotation.y = yaw
+	collision_shape.transform = Transform3D(rot, center_pos)
 
 	var box_shape := BoxShape3D.new()
 	box_shape.size = dimensions
@@ -1678,6 +1848,352 @@ func spawn_bosses_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D) ->
 		croc.setup_as_boss(boss.scale)
 		parent_chunk.add_child(croc)
 
+func _artifact_at(chunk_pos: Vector2i) -> Dictionary:
+	"""
+	Deterministic artifact placement for one chunk — the _boss_at of artifacts.
+	Pure function of chunk coords + run_seed via the independent ARTIFACT_SALT
+	hash stream: it consumes NO draw from the shared chunk RNG, so every existing
+	block/crocodile/coin is exactly where it was before artifacts existed.
+
+	@param chunk_pos: Chunk coordinates to decide for.
+	@return: {} when this chunk has no artifact (the ~19-in-20 case, or when every
+	         candidate spot fell too close to the coin road); otherwise
+	         { "local": Vector3 (chunk-LOCAL position, y = 0),
+	           "kind": int (0..4, which of the five shapes),
+	           "seed": int (seeds the shape builder's own private RNG) }.
+
+	EDUCATIONAL NOTE — the determinism contract:
+	- Within a run the same chunk yields the IDENTICAL artifact (same spot, same
+	  shape, same builder seed) no matter how often it unloads and regenerates —
+	  the RNG is seeded purely from chunk coords + run_seed, and its draw order
+	  below is fixed (chance roll, then 2 draws per placement try, then kind,
+	  then builder seed).
+	- Across runs, new_run() re-rolls run_seed, so artifacts land elsewhere.
+	- The road-clearance test reads the station cache (pure in `k`), so it too is
+	  load-order independent: rejection is a property of the POSITION, not of
+	  when the chunk happened to generate.
+	"""
+	var rng := RandomNumberGenerator.new()
+	# Same coordinate mixing as the chunk object seed, but salted so this stream
+	# never collides with (or perturbs) any other deterministic spawn site.
+	rng.seed = hash(Vector3i(chunk_pos.x * 73856093, chunk_pos.y * 19349663, run_seed ^ ARTIFACT_SALT))
+
+	# 1. Rarity roll — most chunks bail here.
+	if rng.randf() >= ARTIFACT_CHANCE:
+		return {}
+
+	var center := chunk_to_world(chunk_pos)
+	# Candidates stay ARTIFACT_EDGE_MARGIN inside the chunk so the whole artifact
+	# (widest footprint < the margin) never straddles a seam.
+	var half := chunk_size / 2.0 - ARTIFACT_EDGE_MARGIN
+
+	# 2. Try a few candidate spots; accept the FIRST one far enough from the road
+	# centerline. This is what produces the off-road bias AND the hard "never on
+	# the centerline" rule. Acceptance stops the loop, so the draw sequence is
+	# still fixed for a given outcome (2 draws per try until the accepted try),
+	# and the kind/seed draws always follow in the same order.
+	var local_x := 0.0
+	var local_z := 0.0
+	var placed := false
+	var tries := 0
+	while tries < ARTIFACT_PLACE_TRIES and not placed:
+		tries += 1
+		local_x = rng.randf_range(-half, half)
+		local_z = rng.randf_range(-half, half)
+		if _road_lateral_distance(center.x + local_x, center.z + local_z) >= ARTIFACT_ROAD_CLEARANCE:
+			placed = true
+	if not placed:
+		return {}
+
+	# 3. Which of the five shapes, and 4. a further seed for the shape builder's
+	# own RNG (so builders can draw freely without this function caring how many
+	# draws each shape needs).
+	var kind := rng.randi_range(0, 4)
+	var builder_seed := rng.randi()
+	return { "local": Vector3(local_x, 0.0, local_z), "kind": kind, "seed": builder_seed }
+
+# ============================================================================
+# ARTIFACT SHAPE BUILDERS (the five code-built "lost civilization" landmarks)
+# ============================================================================
+#
+# Every builder shares ONE signature and ONE contract:
+#   _artifact_<shape>(center, rng, parent_chunk, block_batch, block_body)
+#     -> { "radius": float, "top": float, "gem_offset": Vector3 }
+# - ALL solid stone goes through create_box(..., tilt, _artifact_stone_color(rng)),
+#   so it joins the chunk's single block MultiMesh and single BlockCollision body:
+#   an artifact's stone costs ZERO extra draw calls and ZERO extra physics bodies.
+# - ALL glow goes through _spawn_artifact_accent — real MeshInstance3Ds, at most
+#   ARTIFACT_MAX_ACCENTS per artifact. That is the entire per-artifact draw budget.
+# - `rng` is the artifact's PRIVATE RNG (seeded from _artifact_at's "seed"), so
+#   builders draw as freely as they like without touching any shared stream.
+# - The returned radius/top approximate the footprint for the chunk's `obstacles`
+#   list (crocodile spawn rejection + the coin perch rule). Conservative (a touch
+#   generous) is fine; exact is not required.
+# - gem_offset is where the single reward gem goes, as an offset from `center` on
+#   the ground plane: Vector3.ZERO for the shapes with an open middle, and a step
+#   clear of the stone for the two whose centre is solid (monolith, colossus
+#   head) so the prize is never spawned inside a block.
+
+func _artifact_stone_color(rng: RandomNumberGenerator) -> Color:
+	"""
+	One weathered stone colour: a random spot on the ARTIFACT_STONE_A → B grey
+	ramp, then pushed a random amount (up to ARTIFACT_MOSS_MAX) toward dead-moss
+	green. Every stone comes out a slightly different grey-green — deliberately
+	DISTINCT from the warm/blue curated RAMP_* block colours, so an artifact reads
+	as "from another age" at a glance.
+	"""
+	var grey := ARTIFACT_STONE_A.lerp(ARTIFACT_STONE_B, rng.randf())
+	return grey.lerp(ARTIFACT_MOSS, rng.randf() * ARTIFACT_MOSS_MAX)
+
+func _artifact_monolith(center: Vector3, rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	Shape 0 — LEANING HALF-BURIED MONOLITH: one tall slab sunk into the ground at
+	a drunken angle, with three glowing rune strips stacked up its exposed face.
+	The tilt is the whole point (it is why create_box grew the tilt parameter).
+	"""
+	var yaw := rng.randf_range(0.0, TAU)
+	# Lean 0.12..0.25 rad to a random side — enough to read as "toppling for a
+	# thousand years", not enough to look knocked over.
+	var tilt := rng.randf_range(0.12, 0.25) * (1.0 if rng.randf() < 0.5 else -1.0)
+	var dims := Vector3(1.8, 8.0, 1.1)
+	var buried := rng.randf_range(1.2, 2.2)
+	# Centre BELOW y=0 by `buried`, so the base is swallowed by the ground.
+	var slab_center := center + Vector3(0.0, dims.y / 2.0 - buried, 0.0)
+	create_box(slab_center, dims, yaw, rng, block_batch, block_body, tilt, _artifact_stone_color(rng))
+	# Three rune strips up the slab's front (+Z) face. Positions are rotated by
+	# the SAME yaw*tilt basis as the slab, then pushed just past the face along
+	# its normal so each strip sits proud of the stone instead of z-fighting it.
+	var rot := Basis(Vector3.UP, yaw) * Basis(Vector3.RIGHT, tilt)
+	for i in 3:
+		var local_offset := Vector3(0.0, 0.6 + 1.5 * float(i), dims.z / 2.0 + 0.06)
+		_spawn_artifact_accent(parent_chunk, slab_center + rot * local_offset, Vector3(1.1, 0.35, 0.08), yaw, tilt)
+	# Horizontal reach ≈ half width + the lean's horizontal throw; 2.5 covers it.
+	# gem_offset: the centre column is solid slab, so the prize sits just off the
+	# runed face where the player can actually reach it (rotated by the slab yaw).
+	return {
+		"radius": 2.5,
+		"top": slab_center.y + (dims.y / 2.0) * cos(tilt),
+		"gem_offset": Basis(Vector3.UP, yaw) * Vector3(0.0, 0.0, dims.z / 2.0 + 1.2),
+	}
+
+func _artifact_arch(center: Vector3, rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	Shape 1 — BROKEN ARCH OF FLOATING STONES: 7-9 rough blocks along a vertical
+	half-circle, with 1-2 consecutive stones MISSING so the arc reads as broken;
+	a single glowing accent hangs in the gap — the keystone that is not there.
+	(Static geometry needs no support, so the remaining stones simply float.)
+	"""
+	var yaw := rng.randf_range(0.0, TAU)
+	var radius := 5.0
+	var count := rng.randi_range(7, 9)
+	var gap_len := rng.randi_range(1, 2)
+	# Gap somewhere in the upper body of the arc — never the feet, so both ends
+	# still stand on the ground and the silhouette stays readable as an arch.
+	var gap_start := rng.randi_range(2, count - 2 - gap_len)
+	var rot_arch := Basis(Vector3.UP, yaw)
+	var i := 0
+	while i < count:
+		var a := PI * float(i) / float(count - 1)  # 0..PI sweeps foot → top → foot
+		if i >= gap_start and i < gap_start + gap_len:
+			i += 1
+			continue  # the broken part — no stone, no RNG draws (sequence still fixed: gap indices were drawn above)
+		var pos := center + rot_arch * Vector3(cos(a) * radius, sin(a) * radius, 0.0)
+		var dims := Vector3(rng.randf_range(1.1, 1.5), rng.randf_range(0.9, 1.3), 1.0)
+		create_box(pos, dims, yaw + rng.randf_range(-0.15, 0.15), rng, block_batch, block_body, rng.randf_range(-0.2, 0.2), _artifact_stone_color(rng))
+		i += 1
+	# The missing keystone: one accent floating at the gap's mid-angle.
+	var a_mid := PI * (float(gap_start) + float(gap_len - 1) / 2.0) / float(count - 1)
+	_spawn_artifact_accent(parent_chunk, center + rot_arch * Vector3(cos(a_mid) * radius, sin(a_mid) * radius, 0.0), Vector3(0.7, 0.7, 0.7), yaw, 0.0)
+	# Hollow centre — the gem sits on the ground under the arch (offset ZERO).
+	return { "radius": radius + 1.0, "top": radius + 1.0, "gem_offset": Vector3.ZERO }
+
+func _artifact_stone_circle(center: Vector3, rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	Shape 2 — CIRCLE OF TILTED STANDING STONES: 6-9 slabs on a ring, each facing
+	the centre and leaning drunkenly inward or outward, around a low central slab
+	with one wide flat glowing panel lying on its top face.
+	"""
+	var base_yaw := rng.randf_range(0.0, TAU)
+	var ring_r := rng.randf_range(4.0, 6.0)
+	var count := rng.randi_range(6, 9)
+	# Low central slab — the "altar" the glow panel lies on.
+	var slab_dims := Vector3(3.0, 0.6, 3.0)
+	create_box(center + Vector3(0.0, slab_dims.y / 2.0, 0.0), slab_dims, base_yaw, rng, block_batch, block_body, 0.0, _artifact_stone_color(rng))
+	var tallest_top := slab_dims.y
+	var i := 0
+	while i < count:
+		var a := base_yaw + TAU * float(i) / float(count)
+		# yaw = PI/2 - a points the slab's local Z (its thin depth axis) along the
+		# radial direction — i.e. the slab FACES the centre — which makes tilt
+		# (about local X, the tangent) lean it radially inward/outward.
+		var stone_yaw := PI / 2.0 - a
+		var lean := rng.randf_range(-0.3, 0.3)
+		var stone_dims := Vector3(1.3, rng.randf_range(2.8, 4.0), 0.7)
+		var sink := rng.randf_range(0.3, 0.7)  # half-buried, like the monolith
+		var pos := center + Vector3(cos(a) * ring_r, stone_dims.y / 2.0 - sink, sin(a) * ring_r)
+		create_box(pos, stone_dims, stone_yaw, rng, block_batch, block_body, lean, _artifact_stone_color(rng))
+		tallest_top = maxf(tallest_top, pos.y + (stone_dims.y / 2.0) * cos(lean))
+		i += 1
+	# One wide, nearly-flat glow panel on the centre slab's top face.
+	_spawn_artifact_accent(parent_chunk, center + Vector3(0.0, slab_dims.y + 0.05, 0.0), Vector3(2.0, 0.08, 2.0), base_yaw, 0.0)
+	# Offset ZERO: the gem sits dead centre, hovering just over the glowing altar
+	# slab (COIN_GROUND_HEIGHT 0.9 clears its 0.6 top) — the obvious prize spot.
+	return { "radius": ring_r + 1.0, "top": tallest_top, "gem_offset": Vector3.ZERO }
+
+func _artifact_colossus_head(center: Vector3, rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	Shape 3 — HALF-BURIED COLOSSUS HEAD: a huge jaw box sunk into the ground, a
+	narrower brow box stacked on top, a slab nose on the front face, all sharing
+	one yaw so they read as a single fallen statue; two glowing eyes inset under
+	the brow. Ozymandias, in cubes.
+	"""
+	var yaw := rng.randf_range(0.0, TAU)
+	var rot := Basis(Vector3.UP, yaw)
+	var stone := _artifact_stone_color(rng)  # ONE colour for the whole head — it is one statue, not a pile
+	var jaw := Vector3(3.6, 2.4, 3.0)
+	var jaw_center := center + Vector3(0.0, jaw.y / 2.0 - rng.randf_range(0.8, 1.4), 0.0)
+	create_box(jaw_center, jaw, yaw, rng, block_batch, block_body, 0.0, stone)
+	# Brow: narrower, pushed slightly back so the face has a step.
+	var brow := Vector3(3.2, 1.4, 2.4)
+	var brow_center := jaw_center + rot * Vector3(0.0, jaw.y / 2.0 + brow.y / 2.0, -0.3)
+	create_box(brow_center, brow, yaw, rng, block_batch, block_body, 0.0, stone)
+	# Nose: a thin slab proud of the jaw's front (+Z) face, reaching up to the brow.
+	var nose := Vector3(0.8, 1.7, 0.6)
+	create_box(jaw_center + rot * Vector3(0.0, jaw.y / 2.0 + 0.2, jaw.z / 2.0 - 0.1), nose, yaw, rng, block_batch, block_body, 0.0, stone)
+	# Two eyes, inset just under the brow's front face, either side of the nose.
+	for side in [-1.0, 1.0]:
+		var eye_pos := brow_center + rot * Vector3(side * 0.9, -brow.y / 2.0 - 0.15, brow.z / 2.0 + 0.05)
+		_spawn_artifact_accent(parent_chunk, eye_pos, Vector3(0.5, 0.3, 0.12), yaw, 0.0)
+	# gem_offset: the centre column is solid head, so the prize lies on the ground
+	# in front of the face — under its gaze, and reachable.
+	return {
+		"radius": 3.2,
+		"top": brow_center.y + brow.y / 2.0,
+		"gem_offset": rot * Vector3(0.0, 0.0, jaw.z / 2.0 + 1.2),
+	}
+
+func _artifact_spiral_steps(center: Vector3, rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	Shape 4 — SPIRAL OF STEPS TO NOWHERE: 10-16 floating step slabs winding up a
+	helix, each facing the centre so its long edge follows the curve (a climbable
+	staircase); one glowing accent hovers over the final, highest step — the
+	destination that is not there.
+	"""
+	var base_a := rng.randf_range(0.0, TAU)
+	var spiral_r := rng.randf_range(3.0, 4.0)
+	var count := rng.randi_range(10, 16)
+	var rise := 0.55  # per-step climb — jumpable by every character
+	var step_dims := Vector3(1.6, 0.4, 0.9)
+	var last_pos := center
+	var last_yaw := 0.0
+	var i := 0
+	while i < count:
+		var a := base_a + 0.6 * float(i)
+		var pos := center + Vector3(cos(a) * spiral_r, step_dims.y / 2.0 + rise * float(i), sin(a) * spiral_r)
+		# Same face-the-centre yaw as the stone circle: local Z radial, long X tangent.
+		last_yaw = PI / 2.0 - a
+		create_box(pos, step_dims, last_yaw, rng, block_batch, block_body, 0.0, _artifact_stone_color(rng))
+		last_pos = pos
+		i += 1
+	# The non-destination: one small glow hovering above the top step.
+	_spawn_artifact_accent(parent_chunk, last_pos + Vector3(0.0, 0.6, 0.0), Vector3(0.5, 0.5, 0.5), last_yaw, 0.0)
+	# The helix winds AROUND an empty core, so the gem sits on the ground at the
+	# centre of the spiral (offset ZERO) — you walk into the eye of the staircase.
+	return { "radius": spiral_r + 1.2, "top": rise * float(count - 1) + step_dims.y, "gem_offset": Vector3.ZERO }
+
+func spawn_artifact_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
+	"""
+	Spawn this chunk's artifact, if _artifact_at says it has one (~1 in 20), plus
+	its coin reward. Called from create_chunk AFTER spawn_objects_in_chunk and
+	BEFORE _build_block_multimesh / the block_body attach, so the artifact's stone
+	joins the chunk's single MultiMesh and single BlockCollision body.
+
+	@param chunk_pos: Chunk coordinates being generated.
+	@param parent_chunk: The chunk mesh — accents and reward coins parent here
+	                     (per-chunk parenting rule: they unload with the chunk).
+	@param obstacles: The chunk's block-footprint list; the artifact appends its
+	                  own footprint so later spawners react to it (see below).
+	@param block_batch / block_body: The chunk's visual batch + collision body,
+	                                 threaded through to create_box.
+	"""
+	if not spawn_artifacts:
+		return
+	var art := _artifact_at(chunk_pos)
+	if art.is_empty():
+		return
+
+	# The shape builder draws from its OWN RNG, seeded by _artifact_at's "seed"
+	# draw — so each builder can consume as many draws as its shape needs without
+	# the placement function (or anything else) caring.
+	var rng := RandomNumberGenerator.new()
+	rng.seed = art.seed
+	var center: Vector3 = art.local
+
+	var footprint: Dictionary
+	match int(art.kind):
+		0: footprint = _artifact_monolith(center, rng, parent_chunk, block_batch, block_body)
+		1: footprint = _artifact_arch(center, rng, parent_chunk, block_batch, block_body)
+		2: footprint = _artifact_stone_circle(center, rng, parent_chunk, block_batch, block_body)
+		3: footprint = _artifact_colossus_head(center, rng, parent_chunk, block_batch, block_body)
+		_: footprint = _artifact_spiral_steps(center, rng, parent_chunk, block_batch, block_body)
+
+	# --- The reward: a ring of ordinary coins around the base + ONE gem at the
+	# artifact's centre (the incentive to detour off the coin road). Guarded like
+	# every other coin spawn; these are ordinary chunk-local coins parented to the
+	# chunk — the road's station-claim logic is not involved in any way.
+	#
+	# ORDER MATTERS: the artifact's own footprint is appended to `obstacles` only
+	# AFTER these coins are placed. Its footprint is a CIRCLE, but three of the
+	# five shapes (arch, stone circle, spiral) are mostly HOLLOW — settling their
+	# reward coins against that circle would perch them on the silhouette top,
+	# i.e. floating several metres up in open air. Placing the reward first means
+	# it settles only against real block stone, so it lies on the ground where the
+	# player can actually pick it up.
+	if spawn_coins and coin_scene != null:
+		var coin_count := rng.randi_range(ARTIFACT_COIN_MIN, ARTIFACT_COIN_MAX)
+		var ring_radius: float = footprint.radius + rng.randf_range(ARTIFACT_COIN_RING_PAD_MIN, ARTIFACT_COIN_RING_PAD_MAX)
+		var i := 0
+		while i < coin_count:
+			i += 1
+			var a := rng.randf_range(0.0, TAU)
+			var cx := center.x + cos(a) * ring_radius
+			var cz := center.z + sin(a) * ring_radius
+			# Same perch-or-skip rule as road coins (one home: _settle_coin_y):
+			# the ring can graze a neighbouring block, so a coin perches on a
+			# climbable top or is dropped under a sheer wall.
+			var cy := _settle_coin_y(cx, cz, COIN_GROUND_HEIGHT, obstacles)
+			if is_inf(cy):
+				continue
+			var coin := coin_scene.instantiate()
+			coin.position = Vector3(cx, cy, cz)
+			parent_chunk.add_child(coin)
+
+		# Exactly ONE gem, at the artifact's centre — offset by the shape's own
+		# `gem_offset` for the two shapes whose centre is solid stone (monolith,
+		# colossus head), so the prize sits at the foot of the landmark instead of
+		# inside it. Hollow shapes return ZERO and keep the gem dead centre.
+		# make_gem() BEFORE add_child, per coin.gd's contract (it fetches nodes
+		# with get_node, not @onready).
+		var gem_pos: Vector3 = center + footprint.gem_offset
+		var gem_y := _settle_coin_y(gem_pos.x, gem_pos.z, COIN_GROUND_HEIGHT, obstacles)
+		if not is_inf(gem_y):
+			var gem := coin_scene.instantiate()
+			gem.position = Vector3(gem_pos.x, gem_y, gem_pos.z)
+			gem.make_gem()
+			parent_chunk.add_child(gem)
+
+	# Register the artifact as one round obstacle footprint, exactly like a normal
+	# block. CONSEQUENCE (deliberate): crocodiles reject spawn points inside it,
+	# and any ROAD coin whose column crosses it PERCHES on its top (climbable =
+	# true) instead of being buried in the stone — artifact stone behaves like
+	# ordinary block stone everywhere downstream.
+	# ponytail: a hollow artifact (arch/circle/spiral) can float a road coin over
+	# its empty middle, because one circle+top is the whole footprint vocabulary
+	# the coin rule speaks. Erring this way never BURIES a coin in stone, which is
+	# the failure the rule exists to prevent; if it ever looks wrong, give the
+	# footprint a per-shape "solid centre height" rather than a taller vocabulary.
+	obstacles.append({ "pos": center, "radius": footprint.radius, "top": footprint.top, "climbable": true })
+
 # ============================================================================
 # COIN ROAD MATH (deterministic, pure-in-k parametric centerline + coin placement)
 # ============================================================================
@@ -1969,6 +2485,44 @@ func _road_coins_at(k: int) -> Array:
 		coins.append({ "pos": Vector3(p.x, COIN_GROUND_HEIGHT, p.y), "gem": gem })
 	return coins
 
+func _road_lateral_distance(world_x: float, world_z: float) -> float:
+	"""
+	Minimum distance (world metres, XZ plane) from the point (world_x, world_z)
+	to any road centerline station near it. Used by artifact placement to keep
+	landmarks off the coin road (see ARTIFACT_ROAD_CLEARANCE).
+
+	@param world_x, world_z: World-space point to test.
+	@return: Distance to the nearest scanned station centre, or INF when no
+	         station falls in the scan window (the point is far off-road in X —
+	         "very far from the road" and "no road here" both mean "clear").
+
+	EDUCATIONAL NOTE:
+	- We only need to know whether the point is WITHIN ARTIFACT_ROAD_CLEARANCE of
+	  the centerline, so scanning the stations inside a padded X-window around the
+	  point suffices: any station outside that window is already further away in X
+	  alone than the clearance we test against. The pad adds two station spacings
+	  so the sampled polyline can't cut a corner past the window edge.
+	- Same manual-counter scan as spawn_coins_in_chunk — NOT `for k in range(...)`,
+	  which would eagerly materialise an O(total cached suffix) int Array per call
+	  just to visit a handful of stations (see the allocation note there).
+	- Reads only the station cache (pure in `k`), so the answer for a given point
+	  is deterministic and load-order independent.
+	"""
+	var pad := ARTIFACT_ROAD_CLEARANCE + _road_spacing() * 2.0
+	_road_extend_to_x(world_x - pad, world_x + pad)
+
+	var best := INF
+	var k := _road_first_k_at_or_after_x(world_x - pad)
+	while k <= road_k_max:
+		var st: Dictionary = _road_station(k)
+		k += 1
+		if st.center.x > world_x + pad:
+			break  # past the window — X only grows from here, so stop
+		var d := Vector2(world_x, world_z).distance_to(st.center)
+		if d < best:
+			best = d
+	return best
+
 func spawn_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array) -> void:
 	"""
 	Lay this chunk's slice of the COIN ROAD — the single continuous, deterministic
@@ -2074,34 +2628,12 @@ func spawn_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obs
 			# chunk-parented node), so the coin sits at the right world spot.
 			var local := Vector3(cw_pos.x - center.x, cw_pos.y, cw_pos.z - center.z)
 
-			# If the road runs over a block footprint, the ground-height coin would be
-			# buried. A coin must clear EVERYTHING it overlaps, not just whatever block we'd
-			# like to perch it on — so the TALLEST overlapping block governs:
-			#   - if the tallest overlap is climbable, perch on it (its top is above every
-			#     other block the coin covers, so nothing buries it);
-			#   - if the tallest overlap is NON-climbable (a sheer wall/roof higher than a
-			#     jump), SKIP the coin entirely. Perching on a SHORTER climbable block here
-			#     would leave the coin embedded inside that taller wall — visually buried and
-			#     effectively unreachable, which is worse than dropping one coin (structures
-			#     are sparse, so the visible swath stays intact).
-			#
-			# We scan ALL overlapping blocks (never break on the first) to find that tallest
-			# top. obstacles is in a fixed order and ties keep the first-encountered block, so
-			# this stays a pure deterministic function of the obstacles list.
-			if _point_over_block(local.x, local.z, obstacles):
-				var found := false
-				var tallest_top := 0.0
-				var tallest_climbable := false
-				for ob in obstacles:
-					if _block_overlaps(local.x, local.z, ob):
-						# Strict `>` keeps the FIRST block on a tie (deterministic).
-						if not found or ob.top > tallest_top:
-							tallest_top = ob.top
-							tallest_climbable = ob.get("climbable", false)
-							found = true
-				if not tallest_climbable:
-					continue
-				local.y = tallest_top + COIN_BLOCK_OFFSET
+			# Perch-or-skip against the chunk's block footprints. The rule lives in
+			# _settle_coin_y (ONE home, shared with artifact reward coins so the two
+			# spawners can never drift apart); INF means "skip this coin".
+			local.y = _settle_coin_y(local.x, local.z, local.y, obstacles)
+			if is_inf(local.y):
+				continue
 
 			# Spawn the coin (position is local to the chunk, like blocks/crocodiles).
 			# A gem entry is upgraded BEFORE entering the tree (make_gem recolours a
@@ -2111,6 +2643,48 @@ func spawn_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obs
 			if cw.gem:
 				coin.make_gem()
 			parent_chunk.add_child(coin)
+
+func _settle_coin_y(local_x: float, local_z: float, ground_y: float, obstacles: Array) -> float:
+	"""
+	The SINGLE home of the coin perch-or-skip rule, shared by road coins
+	(spawn_coins_in_chunk) and artifact reward coins (spawn_artifact_in_chunk) so
+	the two spawners can never drift apart.
+
+	@param local_x, local_z: The coin's column, chunk-LOCAL (same frame as ob.pos).
+	@param ground_y: The y to use when the column is over open ground.
+	@param obstacles: The chunk's block-footprint list.
+	@return: The y to place the coin at, or INF meaning "skip this coin".
+
+	If the column runs over a block footprint, a ground-height coin would be
+	buried. A coin must clear EVERYTHING it overlaps, not just whatever block we'd
+	like to perch it on — so the TALLEST overlapping block governs:
+	  - if the tallest overlap is climbable, perch on its top (which is above every
+	    other block the coin covers, so nothing buries it);
+	  - if the tallest overlap is NON-climbable (a sheer wall/roof higher than a
+	    jump), skip the coin entirely (return INF). Perching on a SHORTER climbable
+	    block here would leave the coin embedded inside that taller wall — visually
+	    buried and effectively unreachable, which is worse than dropping one coin
+	    (structures are sparse, so the visible trail stays intact).
+
+	We scan ALL overlapping blocks (never break on the first) to find that tallest
+	top. obstacles is in a fixed order and the strict `>` keeps the FIRST block on
+	a tie, so this stays a pure deterministic function of the obstacles list.
+	"""
+	if not _point_over_block(local_x, local_z, obstacles):
+		return ground_y
+	var found := false
+	var tallest_top := 0.0
+	var tallest_climbable := false
+	for ob in obstacles:
+		if _block_overlaps(local_x, local_z, ob):
+			# Strict `>` keeps the FIRST block on a tie (deterministic).
+			if not found or ob.top > tallest_top:
+				tallest_top = ob.top
+				tallest_climbable = ob.get("climbable", false)
+				found = true
+	if not tallest_climbable:
+		return INF
+	return tallest_top + COIN_BLOCK_OFFSET
 
 func _block_overlaps(x: float, z: float, ob: Dictionary) -> bool:
 	"""
