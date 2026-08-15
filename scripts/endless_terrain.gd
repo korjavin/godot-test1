@@ -377,6 +377,61 @@ const ARTIFACT_COIN_MAX: int = 5
 const ARTIFACT_COIN_RING_PAD_MIN: float = 1.5
 const ARTIFACT_COIN_RING_PAD_MAX: float = 4.0
 
+# ----------------------------------------------------------------------------
+# BIOME FIELD CONFIGURATION (desert / plains / forest / mountain + rivers)
+# ----------------------------------------------------------------------------
+##
+## ponytail: the ground stays a FLAT y = 0 plane. Mountains are block massifs you
+## walk AROUND and rivers are flat tinted wading bands, because a real heightfield
+## would break coin heights (COIN_GROUND_HEIGHT), the coin-road placement, the
+## crocodiles' gravity settle, the player spawn at (0, 2, 0) and the per-chunk box
+## ground collision all at once. Upgrade path if a real heightfield is ever wanted:
+## give the ground mesh vertex displacement plus a MATCHING CPU height function,
+## then make every y-placement site (COIN_GROUND_HEIGHT, croc spawn y, the spawn
+## point, block bases) ask that function instead of assuming 0.
+##
+## The whole biome system is ONE octave of world-space value noise (see
+## _biome_noise below). Thresholding its 0..1 output gives the four bands; a thin
+## CONTOUR of it (|n - RIVER_LEVEL| < RIVER_HALF_WIDTH) gives winding rivers for
+## free — a river is wherever the field crosses one particular level, which is
+## exactly the shape of a contour line on a map: long, winding, and never a blob.
+
+## Enum for readability at every call site (biome_at returns one of these).
+## NOTE: there is deliberately no Biome.RIVER — a river is an OVERLAY on whatever
+## biome the ground under it is, tested separately with is_river_at().
+enum Biome { PLAINS, DESERT, FOREST, MOUNTAIN }
+
+## Fixed salt XORed into run_seed for every biome hash stream — same spirit as
+## ARTIFACT_SALT / BOSS_SEED / ROAD_COIN_SEED: an arbitrary constant that keeps
+## this stream independent of every other deterministic spawn site.
+const BIOME_SALT: int = 0xB10_11E
+
+## Noise wavelength in metres. Chunks are 50 m, so a biome cell spans ~8 chunks:
+## big enough that you walk through a region rather than past it, small enough
+## that a ~1 km run crosses several.
+const BIOME_CELL_SIZE: float = 400.0
+
+## Thresholds splitting the 0..1 noise into the four bands:
+##   n < DESERT_MAX          -> DESERT
+##   n < PLAINS_MAX          -> PLAINS   (the widest band: the current look stays
+##   n < FOREST_MAX          -> FOREST    the most common thing you see)
+##   otherwise               -> MOUNTAIN (the rarest — massifs are the heaviest)
+const BIOME_DESERT_MAX: float = 0.34
+const BIOME_PLAINS_MAX: float = 0.62
+const BIOME_FOREST_MAX: float = 0.82
+
+## River contour: the band is the set of points whose noise value sits within
+## RIVER_HALF_WIDTH of RIVER_LEVEL. Width in metres ≈ RIVER_HALF_WIDTH / |∇n|;
+## at a 400 m wavelength the gradient is roughly 0.005 /m, so 0.02 gives a river
+## about 8 m across. TUNE BY EYE — that estimate is only a starting point.
+const RIVER_LEVEL: float = 0.5
+const RIVER_HALF_WIDTH: float = 0.02
+
+## Noise-space half-width of the soft colour transition between biomes, used as
+## a smoothstep radius in the ground shader. Purely cosmetic: gameplay reads the
+## hard thresholds above, the eye reads this blend.
+const BIOME_BLEND: float = 0.05
+
 # ============================================================================
 # SECTION 2: INTERNAL STATE
 # ============================================================================
@@ -483,6 +538,18 @@ var pending_chunks: Array[Vector2i] = []
 ## We roll it with a local RandomNumberGenerator (randomize() + randi()) instead of
 ## the global randi() so we don't disturb the global RNG state other scripts use.
 var run_seed: int = 0
+
+## Per-run DOMAIN OFFSET for the biome noise field, in noise-space units.
+##
+## EDUCATIONAL NOTE — why this exists at all instead of just hashing run_seed:
+## the biome field has to be evaluated in TWO places, GDScript (gameplay: where
+## the rivers and mountains are) and GLSL (the ground shader: what colour the
+## ground is). A shader uniform cannot take a 64-bit int seed, and re-deriving a
+## hash from one inside GLSL would be a second thing to keep in sync. So the run
+## seed reaches the GPU as a plain vec2 SHIFT of the noise domain: sampling the
+## same noise at a different place is exactly as good as reseeding it, and it is
+## one uniform. Rolled by _roll_biome_offset() from its own RNG stream.
+var biome_offset: Vector2 = Vector2.ZERO
 
 # ----------------------------------------------------------------------------
 # SHARED RESOURCES FOR MULTIMESH BLOCK RENDERING (created once, reused forever)
@@ -649,6 +716,30 @@ func _roll_run_seed() -> void:
 	var seed_rng := RandomNumberGenerator.new()
 	seed_rng.randomize()
 	run_seed = seed_rng.randi()
+	# The biome field is derived from run_seed, so re-roll it here — that way both
+	# callers (_ready and new_run) get a fresh biome layout for free and the two
+	# sites can't drift apart.
+	_roll_biome_offset()
+
+
+func _roll_biome_offset() -> void:
+	"""
+	Derive this run's biome noise domain offset from run_seed.
+
+	Uses its OWN RandomNumberGenerator seeded hash(Vector3i(BIOME_SALT, 0, run_seed))
+	— an independent stream in the same shape as _boss_at / _artifact_at, so it
+	consumes zero draws from any chunk/coin/croc RNG and the rest of the world is
+	byte-identical to a run without biomes.
+
+	The range is deliberately large (±4096 noise cells ≈ ±1600 km of world) so two
+	runs essentially never land on the same slice of the field.
+	"""
+	var offset_rng := RandomNumberGenerator.new()
+	offset_rng.seed = hash(Vector3i(BIOME_SALT, 0, run_seed))
+	biome_offset = Vector2(
+		offset_rng.randf_range(-4096.0, 4096.0),
+		offset_rng.randf_range(-4096.0, 4096.0)
+	)
 
 
 func _ready() -> void:
@@ -2193,6 +2284,131 @@ func spawn_artifact_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, 
 	# the failure the rule exists to prevent; if it ever looks wrong, give the
 	# footprint a per-shape "solid centre height" rather than a taller vocabulary.
 	obstacles.append({ "pos": center, "radius": footprint.radius, "top": footprint.top, "climbable": true })
+
+# ============================================================================
+# BIOME FIELD (one noise field; four biomes + rivers read out of it)
+# ============================================================================
+#
+# ponytail: the ground stays a FLAT y = 0 plane — see the full note in the BIOME
+# FIELD CONFIGURATION block at the top of the file for why (coin heights, road
+# placement, croc gravity settle, spawn, and the box ground collision all assume
+# it) and for the heightfield upgrade path.
+#
+# Everything below is a PURE function of world position plus biome_offset (which
+# is constant for a whole run), so:
+#   - a revisited chunk classifies identically no matter when it is built, which
+#     is what makes the time-sliced, arbitrary-order chunk generation safe;
+#   - no RNG stream is touched anywhere in here — there are no draws at all.
+
+func _biome_hash2(p: Vector2) -> float:
+	"""
+	GDScript port of `hash2` in assets/shaders/ground.gdshader.
+
+	@param p: Lattice point.
+	@return: Pseudo-random value in 0..1, a pure function of `p`.
+
+	SHADER-PARITY CONTRACT: this function, _biome_value_noise and _biome_noise are
+	line-for-line ports of their GLSL twins. EDIT THEM TOGETHER — if the CPU and
+	GPU copies drift, the blue band the player SEES stops matching the wading zone
+	the player FEELS, which is the one bug this whole arrangement exists to avoid.
+
+	The mod(p, 289.0) wrap is not decoration: see the PRECISION note in the shader
+	(world X reaches kilometres and fp32 hashing collapses out there). It is kept
+	here so both copies tile at exactly the same place.
+	"""
+	var q := Vector2(fposmod(p.x, 289.0), fposmod(p.y, 289.0))
+	q = Vector2(q.x * 0.1031, q.y * 0.1030)
+	q = Vector2(q.x - floorf(q.x), q.y - floorf(q.y))
+	var d := q.dot(Vector2(q.y + 33.33, q.x + 33.33))
+	q += Vector2(d, d)
+	var v := (q.x + q.y) * q.x
+	return v - floorf(v)
+
+
+func _biome_value_noise(p: Vector2) -> float:
+	"""
+	GDScript port of `value_noise` in assets/shaders/ground.gdshader: one octave of
+	value noise — hash the four corners of the lattice cell `p` falls in, blend with
+	the smoothstep weight f*f*(3-2f) so the gradient stays continuous.
+
+	@param p: Sample point in noise space (world metres / BIOME_CELL_SIZE).
+	@return: Value in 0..1.
+	"""
+	var i := Vector2(floorf(p.x), floorf(p.y))
+	var f := p - i
+	var u := Vector2(f.x * f.x * (3.0 - 2.0 * f.x), f.y * f.y * (3.0 - 2.0 * f.y))
+	var a := _biome_hash2(i)
+	var b := _biome_hash2(i + Vector2(1.0, 0.0))
+	var c := _biome_hash2(i + Vector2(0.0, 1.0))
+	var d := _biome_hash2(i + Vector2(1.0, 1.0))
+	return lerpf(lerpf(a, b, u.x), lerpf(c, d, u.x), u.y)
+
+
+func _biome_noise(world_x: float, world_z: float) -> float:
+	"""
+	THE biome field: one octave of value noise at wavelength BIOME_CELL_SIZE,
+	domain-shifted by this run's biome_offset. Every biome question in the game —
+	which biome, is this a river, what colour is the ground — is a readout of this
+	single number, which is why regions and rivers agree with each other for free.
+
+	@param world_x, world_z: World-space point (metres).
+	@return: Field value clamped to 0..1.
+
+	SHADER-PARITY CONTRACT: mirrors `biome_noise` in ground.gdshader exactly (same
+	offset, same 1/BIOME_CELL_SIZE scale, same clamp). Edit both together.
+
+	ponytail: GDScript floats are doubles while GLSL runs fp32, so the two copies
+	can disagree in the last bits — the river band edge may sit a fraction of a
+	metre apart between the blue tint and the wading zone. Harmless (you are wading
+	the moment you look wet), and far cheaper than uploading a field texture or
+	reading anything back from the GPU.
+	"""
+	var p := Vector2(world_x, world_z) / BIOME_CELL_SIZE + biome_offset
+	return clampf(_biome_value_noise(p), 0.0, 1.0)
+
+
+func biome_at(world_x: float, world_z: float) -> Biome:
+	"""
+	Classify a world position into one of the four biomes.
+
+	@param world_x, world_z: World-space point (metres).
+	@return: The Biome band the field falls in at that point.
+
+	Pure function, no RNG, no allocation — safe to call from any spawner in any
+	order. Rivers are NOT a return value here: they are an overlay, tested with
+	is_river_at().
+	"""
+	var n := _biome_noise(world_x, world_z)
+	if n < BIOME_DESERT_MAX:
+		return Biome.DESERT
+	if n < BIOME_PLAINS_MAX:
+		return Biome.PLAINS
+	if n < BIOME_FOREST_MAX:
+		return Biome.FOREST
+	return Biome.MOUNTAIN
+
+
+func is_river_at(world_pos: Vector3) -> bool:
+	"""
+	Is this world position inside a river band?
+
+	@param world_pos: World-space position (Y is ignored — the world is flat).
+	@return: true when the point sits within RIVER_HALF_WIDTH of the RIVER_LEVEL
+	         contour of the biome field.
+
+	THE PUBLIC GAMEPLAY API: the player polls this once per physics tick for the
+	wading slowdown, and the terrain's own spawners call it to keep blocks,
+	structures and crocodiles out of the water. One noise evaluation, zero
+	allocation — cheap enough for a per-frame call.
+
+	EDUCATIONAL NOTE — why a contour makes a river: thresholding noise gives you
+	BLOBS (regions), but the boundary BETWEEN two thresholds is a contour line, and
+	contour lines are long, thin and winding — exactly a river. So a river costs no
+	extra field, no path integration and no state: it is the same number the biome
+	colours read, just asked a different question.
+	"""
+	return absf(_biome_noise(world_pos.x, world_pos.z) - RIVER_LEVEL) < RIVER_HALF_WIDTH
+
 
 # ============================================================================
 # COIN ROAD MATH (deterministic, pure-in-k parametric centerline + coin placement)
