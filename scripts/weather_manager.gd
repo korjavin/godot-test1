@@ -102,6 +102,33 @@ const STORM_SIZE_FACTOR: float = 1.5
 const RAIN_ZONE_FACTOR: float = 1.2
 
 # ============================================================================
+# RAIN PARTICLE TUNABLES
+# ============================================================================
+
+## Live particle budget for the rain. 120 thin streaks recycled continuously
+## reads as steady rain without denting the web frame budget.
+const RAIN_PARTICLE_COUNT: int = 120
+
+## How high above the player's position the emitter box sits. High enough that
+## streaks are already at full speed when they cross eye level.
+const RAIN_SPAWN_HEIGHT: float = 14.0
+
+## Half-extent (metres, X and Z) of the emission box around the player — the
+## visible "it is raining here" bubble that follows them through the zone.
+const RAIN_AREA_EXTENT: float = 12.0
+
+## Fall speed (m/s) and streak lifetime. Lifetime is sized so a streak spawned
+## RAIN_SPAWN_HEIGHT up at this speed falls just past ground level, then recycles.
+const RAIN_FALL_SPEED: float = 20.0
+const RAIN_LIFETIME: float = 0.9
+
+## Streak mesh dimensions: a thin elongated box motion-stretched by eye.
+const RAIN_STREAK_SIZE: Vector3 = Vector3(0.03, 0.7, 0.03)
+
+## Pale grey-blue, unshaded — rain should read as neutral streaks, not lit geometry.
+const RAIN_COLOR: Color = Color(0.65, 0.70, 0.78)
+
+# ============================================================================
 # STATE
 # ============================================================================
 
@@ -141,6 +168,11 @@ var _time: float = 0.0
 ## holding every box of every cloud (see _build_cloud_multimesh()).
 var _cloud_mmi: MultiMeshInstance3D = null
 
+## The one rain emitter (see _build_rain_particles()). `emitting` is flipped
+## ONLY on the _player_in_rain enter/exit transition, so outside a rain zone
+## the entire rain path costs nothing beyond the manager's own tick.
+var _rain: CPUParticles3D = null
+
 
 # ============================================================================
 # LIFECYCLE
@@ -150,6 +182,7 @@ func _ready() -> void:
 	add_to_group("weather")
 	_rng.randomize()
 	_build_cloud_multimesh()
+	_build_rain_particles()
 
 
 func _process(delta: float) -> void:
@@ -182,7 +215,16 @@ func _process(delta: float) -> void:
 
 	# Rain state: recomputed once per tick (not per frame) so downstream
 	# systems (particles, audio fades) get clean ~10 Hz enter/exit transitions.
-	_player_in_rain = is_raining_at(player_pos)
+	var now_in_rain: bool = is_raining_at(player_pos)
+	if now_in_rain != _player_in_rain:
+		_player_in_rain = now_in_rain
+		# Transition-only toggle: while dry, the emitter is fully off and the
+		# rain path costs nothing.
+		_rain.emitting = now_in_rain
+	if _player_in_rain:
+		# Follow the player through the zone (throttled tick only — streaks are
+		# world-space, so the box lagging a step behind is invisible).
+		_rain.global_position = player_pos + Vector3(0.0, RAIN_SPAWN_HEIGHT, 0.0)
 
 
 # ============================================================================
@@ -248,6 +290,47 @@ func _write_cloud_instances() -> void:
 			else:
 				# Unused slot for this cloud (it rolled fewer than max boxes).
 				mm.set_instance_transform(idx, parked)
+
+
+# ============================================================================
+# RAIN PARTICLES
+# ============================================================================
+
+func _build_rain_particles() -> void:
+	## ONE CPUParticles3D for all rain — NOT GPUParticles3D, because the web
+	## build runs gl_compatibility where GPU particles are unsupported/flaky;
+	## 120 CPU-simulated streaks is nothing. Starts silent (`emitting = false`)
+	## and is only ever toggled on the rain-zone enter/exit transition.
+	_rain = CPUParticles3D.new()
+	_rain.emitting = false
+	_rain.amount = RAIN_PARTICLE_COUNT
+	# World-space streaks: the emitter box follows the player, but already-
+	# spawned drops must keep falling straight where they are, not drag along.
+	_rain.local_coords = false
+	_rain.lifetime = RAIN_LIFETIME
+	# Fast vertical fall with a slight lean along the wind, so the rain visibly
+	# belongs to the same weather as the drifting clouds above it.
+	_rain.direction = (Vector3.DOWN + WIND_DIR * 0.15).normalized()
+	_rain.spread = 0.0
+	_rain.initial_velocity_min = RAIN_FALL_SPEED
+	_rain.initial_velocity_max = RAIN_FALL_SPEED * 1.25
+	_rain.gravity = Vector3.ZERO  # constant terminal velocity; no accel needed
+
+	# Spawn drops in a flat box above the player's head covering the play area.
+	_rain.emission_shape = CPUParticles3D.EMISSION_SHAPE_BOX
+	_rain.emission_box_extents = Vector3(RAIN_AREA_EXTENT, 1.0, RAIN_AREA_EXTENT)
+
+	# Thin elongated streak, unshaded pale grey-blue — one shared mesh+material
+	# for every drop.
+	var streak := BoxMesh.new()
+	streak.size = RAIN_STREAK_SIZE
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.albedo_color = RAIN_COLOR
+	streak.material = mat
+	_rain.mesh = streak
+	_rain.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(_rain)
 
 
 # ============================================================================

@@ -149,17 +149,17 @@ Dependencies identified: none new. No assets, no GPUParticles3D (web runs
       per tick rather than per frame
 
 ### Task 4: Rain particles — one CPUParticles3D, active only inside a zone
-- [ ] in `_ready()` build ONE `CPUParticles3D` child (`_rain`) — NOT `GPUParticles3D`
+- [x] in `_ready()` build ONE `CPUParticles3D` child (`_rain`) — NOT `GPUParticles3D`
       (the web build runs `gl_compatibility`; comment this) — with `emitting = false`,
       `amount = RAIN_PARTICLE_COUNT` (120), `local_coords = false` (so the streaks stay in
       world space while the emitter follows the player), `lifetime`, `gravity` and
       `direction`/`initial_velocity` set for a fast vertical fall plus a slight wind lean
-- [ ] mesh: a thin elongated `BoxMesh` streak with a shared unshaded-ish grey material
+- [x] mesh: a thin elongated `BoxMesh` streak with a shared unshaded-ish grey material
       (`albedo_color` pale grey-blue, `shading_mode` unshaded, `cast_shadow` OFF)
-- [ ] emission: `EMISSION_SHAPE_BOX` with half-extents covering the play area around the
+- [x] emission: `EMISSION_SHAPE_BOX` with half-extents covering the play area around the
       player, the emitter parked `RAIN_SPAWN_HEIGHT` above the player's head; reposition
       it on the throttled tick only while raining
-- [ ] toggle `emitting` ONLY on the `_player_in_rain` transition, so the whole rain path
+- [x] toggle `emitting` ONLY on the `_player_in_rain` transition, so the whole rain path
       costs literally nothing when it is not raining (beyond the manager's own tick)
 
 ### Task 5: Rain sound loop + wind ducking
