@@ -409,7 +409,7 @@ const ARTIFACT_COIN_RING_PAD_MAX: float = 4.0
 
 ## Per-chunk chance of hosting a camp, BEFORE the placement rejections in
 ## spawn_camp_in_chunk. Those rejections are severe and that is why this number
-## looks large: a camp needs a CAMP_RADIUS (9 m) circle clear of the ~12
+## looks large: a camp needs a CAMP_RADIUS (9.4 m) circle clear of the ~12
 ## scattered blocks a chunk already holds, and 12 exclusion discs of radius
 ## (9 + block radius) cover more than a chunk's area, so most tries lose. Measured
 ## over 5 x 121 startup chunks with the roll forced to 1.0: 14% of rolled camps
@@ -418,6 +418,8 @@ const ARTIFACT_COIN_RING_PAD_MAX: float = 4.0
 ## 8 x 121 chunks at this value, 31 camps — against the artifacts' ~1 per 24, so
 ## a village still reads as the rarer find. Retune by MEASURING, not by algebra:
 ## the survival rate depends on the block density the biome mix produces.
+## (Those runs were measured at CAMP_RADIUS 9.0; the 9.4 it takes to bound the
+## huts is marginally stricter, so the built rate is a shade under 1 in 31.)
 const CAMP_CHANCE: float = 0.18
 
 ## Fixed salt XORed into run_seed for the camp hash stream — same spirit as
@@ -433,9 +435,16 @@ const CAMP_SALT: int = 0xCA_1117  # "CAMP"-ish; arbitrary fixed constant
 ## lose is what puts camps in open ground where a village belongs.
 const CAMP_PLACE_TRIES: int = 4
 
-## Radius of the camp circle: the fire pit sits at the centre, huts ring it at
-## CAMP_HUT_RING_*, so ~9 m covers the whole village plus a walking margin.
-const CAMP_RADIUS: float = 9.0
+## Radius of the camp circle: the fire pit sits at the centre and the huts ring
+## it, so this covers the whole village plus a walking margin. It MUST cover the
+## widest hut on the outermost ring, because the same number is both the
+## placement test (_biome_spot_ok) and the footprint appended afterwards:
+##     CAMP_HUT_RING_MAX + (CAMP_HUT_WIDTH_MAX * 0.71 + 0.3)
+##     6.5              + (3.6 * 0.71 + 0.3) = 9.36    <= 9.4  ✓
+## At 9.0 the outer third of a metre of hut stone stood in ground the placement
+## test never checked; 9.4 makes the circle a true bound, which is also why no
+## per-hut footprint is appended (spawn_camp_in_chunk, step 5).
+const CAMP_RADIUS: float = 9.4
 
 ## Minimum lateral distance from the coin-road centerline.
 ##
@@ -443,7 +452,7 @@ const CAMP_RADIUS: float = 9.0
 ## BOSS_LATERAL_MAX (4.0 m) off the centerline, and a camp centre is at least
 ## CAMP_ROAD_CLEARANCE from it, so the two can never overlap as long as
 ##     CAMP_ROAD_CLEARANCE > CAMP_RADIUS + BOSS_LATERAL_MAX
-##     22.0              >  9.0        + 4.0  = 13.0    ✓ (9 m of slack)
+##     22.0              >  9.4        + 4.0  = 13.4    ✓ (8.6 m of slack)
 ## That inequality is the WHOLE boss exclusion — spawn_bosses_in_chunk needs no
 ## edit and no extra test. If either constant is ever retuned, re-check this line.
 ##
@@ -452,7 +461,7 @@ const CAMP_RADIUS: float = 9.0
 const CAMP_ROAD_CLEARANCE: float = 22.0
 
 ## Keeps the whole camp inside its own chunk so no hut straddles a seam (same rule
-## as ARTIFACT_EDGE_MARGIN). MUST exceed CAMP_RADIUS: 12.0 > 9.0 ✓.
+## as ARTIFACT_EDGE_MARGIN). MUST exceed CAMP_RADIUS: 12.0 > 9.4 ✓.
 ## With chunk_size 50 that still leaves a 26x26 m placement box.
 const CAMP_EDGE_MARGIN: float = 12.0
 
@@ -468,7 +477,10 @@ const CAMP_HUT_TIER_MAX: int = 3
 const CAMP_HUT_TIER_HEIGHT: float = 0.9   # each tier's height
 const CAMP_HUT_TIER_SHRINK: float = 0.62  # each tier's width vs the one below
 const CAMP_HUT_YAW_JITTER: float = 0.25   # per-tier yaw wobble (radians)
-const CAMP_HUT_DOOR_SIZE := Vector3(0.7, 1.0, 0.5)
+## Door height MUST stay under CAMP_HUT_TIER_HEIGHT (0.9): the doorway sits on
+## the ground tier's outer face, and the tier above is narrower (TIER_SHRINK), so
+## anything taller than one tier pokes out over the roofline as a dark nub.
+const CAMP_HUT_DOOR_SIZE := Vector3(0.7, 0.8, 0.5)
 
 ## --- Fire pit: a ring of small dark stones + one emissive ember at the centre.
 const CAMP_FIRE_STONES: int = 7
@@ -2912,7 +2924,7 @@ func _camp_fire_pit(center: Vector3, rng: RandomNumberGenerator, parent_chunk: M
 	# The one ember. Sits just clear of the ground so it never z-fights the plane.
 	_spawn_artifact_accent(parent_chunk, center + Vector3(0.0, CAMP_EMBER_SIZE.y / 2.0 + 0.05, 0.0), CAMP_EMBER_SIZE, rng.randf_range(0.0, TAU), 0.0, _get_camp_ember_material())
 
-func _camp_props(center: Vector3, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> void:
+func _camp_props(center: Vector3, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D, huts: Array) -> void:
 	"""
 	Scatter the lived-in clutter on a jittered ring between the fire and the huts:
 	a few weathered crates/bundles and 2-3 tall thin tether posts (where the pack
@@ -2922,24 +2934,49 @@ func _camp_props(center: Vector3, rng: RandomNumberGenerator, block_batch: Array
 	@param center: Camp centre (chunk-local, y = 0); the ring is measured from here.
 	@param rng: The camp's private RNG.
 	@param block_batch / block_body: The chunk's visual batch + collision body.
+	@param huts: The huts already built ({ "pos", "radius" }), so a prop never ends
+	             up buried in a wall — see _camp_prop_clear.
+
+	A candidate that lands in a hut is DROPPED, not retried: the counts are pure
+	ambience, and one crate fewer reads better than a loop that can still fail.
 	"""
 	var crates := rng.randi_range(CAMP_CRATE_MIN, CAMP_CRATE_MAX)
 	var i := 0
 	while i < crates:
+		i += 1
 		var a := rng.randf_range(0.0, TAU)
 		var r := rng.randf_range(CAMP_PROP_RING_MIN, CAMP_PROP_RING_MAX)
 		# Cubes, not slabs: one size draw keeps a crate reading as a crate.
 		var s := rng.randf_range(CAMP_CRATE_SIZE_MIN, CAMP_CRATE_SIZE_MAX)
-		create_box(center + Vector3(cos(a) * r, s / 2.0, sin(a) * r), Vector3(s, s, s), rng.randf_range(0.0, TAU), rng, block_batch, block_body, 0.0, CAMP_WOOD)
-		i += 1
+		var pos := center + Vector3(cos(a) * r, s / 2.0, sin(a) * r)
+		if not _camp_prop_clear(pos, s * 0.71, huts):
+			continue
+		create_box(pos, Vector3(s, s, s), rng.randf_range(0.0, TAU), rng, block_batch, block_body, 0.0, CAMP_WOOD)
 
 	var posts := rng.randi_range(CAMP_POST_MIN, CAMP_POST_MAX)
 	i = 0
 	while i < posts:
+		i += 1
 		var a := rng.randf_range(0.0, TAU)
 		var r := rng.randf_range(CAMP_PROP_RING_MIN, CAMP_PROP_RING_MAX)
-		create_box(center + Vector3(cos(a) * r, CAMP_POST_SIZE.y / 2.0, sin(a) * r), CAMP_POST_SIZE, rng.randf_range(0.0, TAU), rng, block_batch, block_body, 0.0, CAMP_WOOD)
-		i += 1
+		var pos := center + Vector3(cos(a) * r, CAMP_POST_SIZE.y / 2.0, sin(a) * r)
+		if not _camp_prop_clear(pos, CAMP_POST_SIZE.x * 0.71, huts):
+			continue
+		create_box(pos, CAMP_POST_SIZE, rng.randf_range(0.0, TAU), rng, block_batch, block_body, 0.0, CAMP_WOOD)
+
+func _camp_prop_clear(pos: Vector3, radius: float, huts: Array) -> bool:
+	"""
+	True when a prop at `pos` clears every hut built so far. The prop ring
+	(CAMP_PROP_RING_*) and the hut ring (CAMP_HUT_RING_*) touch at 4 m, but a hut
+	is up to 2.9 m of radius around ITS ring position, so its stone reaches inward
+	to ~1.1 m — well into the prop band. Without this test roughly a fifth of all
+	props spawned inside a hut wall, and props collide, so the player bumped
+	geometry they could not see.
+	"""
+	for hut in huts:
+		if Vector2(pos.x - hut.pos.x, pos.z - hut.pos.z).length() < hut.radius + radius:
+			return false
+	return true
 
 func spawn_camp_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
 	"""
@@ -2960,8 +2997,8 @@ func spawn_camp_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obst
 	@param parent_chunk: The chunk mesh — the ember and the camp's coins parent
 	                     here (per-chunk parenting rule: they unload with it).
 	@param obstacles: The chunk's block-footprint list. Read to place the camp,
-	                  then extended with ONE round footprint (plus its huts'),
-	                  which is what keeps crocodiles out — see the bottom.
+	                  then extended with ONE round footprint over the whole
+	                  village, which is what keeps crocodiles out — see the bottom.
 	@param block_batch / block_body: The chunk's visual batch + collision body.
 	"""
 	if not spawn_camps:
@@ -3023,8 +3060,10 @@ func spawn_camp_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obst
 		camp_top = maxf(camp_top, footprint.top)
 		h += 1
 
-	# 3. The lived-in clutter, on its own tighter ring between fire and huts.
-	_camp_props(center, rng, block_batch, block_body)
+	# 3. The lived-in clutter, on its own tighter ring between fire and huts. The
+	# huts go in FIRST so the props can be tested against them: the two rings
+	# touch, and a hut is nearly 3 m of radius around its ring position.
+	_camp_props(center, rng, block_batch, block_body, hut_footprints)
 
 	# 4. A couple of scattered coins by the fire — a small "someone lives here"
 	# reward, NOT a treasure haul. There is deliberately NO GEM: the guaranteed gem
@@ -3070,14 +3109,12 @@ func spawn_camp_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obst
 	# climbable = false: a road coin over a camp would be skipped rather than
 	# perched on thin air. That cannot happen given CAMP_ROAD_CLEARANCE, but the
 	# rule stays honest either way.
+	# ONE circle is enough: CAMP_RADIUS is chosen to bound the widest hut on the
+	# outermost ring (9.36 <= 9.4, see the constant), so per-hut footprints would
+	# add 3-6 entries to a list every _settle_coin_y / _point_over_block call scans
+	# and reject nothing the circle does not already reject. `hut_footprints` stays
+	# a local, read by _camp_props above.
 	obstacles.append({ "pos": center, "radius": CAMP_RADIUS, "top": camp_top, "climbable": false })
-	# The huts' own footprints, so anything reading `obstacles` sees real hut stone
-	# rather than only the village-sized abstraction. The camp circle very nearly
-	# covers them already — a widest hut on the outermost ring reaches
-	# 6.5 + (3.6 * 0.71 + 0.3) = 9.36 m vs CAMP_RADIUS 9.0 — so this mostly matters
-	# for that last third of a metre today, and matters entirely if CAMP_RADIUS or
-	# the hut ring is ever retuned.
-	obstacles.append_array(hut_footprints)
 
 # ============================================================================
 # BIOME CONTENT (the geometry each biome adds on top of the ordinary blocks)

@@ -245,7 +245,19 @@ const CARAVAN_BEASTS_MAX: int = 6
 ## Line formation: gap (metres) between consecutive members along the heading,
 ## and the lateral wobble each member gets so the file reads as a loose trail
 ## rather than a marching column.
-const CARAVAN_LINE_SPACING: float = 3.0
+##
+## The spacing is BOUNDED by the field, not chosen by eye. The line is centred on
+## the herd position, which spawns exactly on the FIELD_RADIUS circle, so the rear
+## member sits half a line-length further out and must still land inside
+## DESPAWN_RADIUS — and inside the ~150 m the web terrain actually reaches, which
+## is the whole reason FIELD_RADIUS is 140:
+##     (CARAVAN_HERDERS_MAX + CARAVAN_BEASTS_MAX - 1) / 2 * SPACING
+##      <= DESPAWN_RADIUS - FIELD_RADIUS
+##     4.5 * 2.2 = 9.9 <= 10.0   ✓
+## At 3.0 a full ten-member caravan reached 13.5 m, putting its tail 153.5 m out —
+## standing over open sky on the web build. Retune the party size and this
+## together.
+const CARAVAN_LINE_SPACING: float = 2.2
 const CARAVAN_LINE_JITTER: float = 1.6
 
 ## The herder: an upright blocky figure, deliberately human-scaled (~1.9 m to
@@ -784,8 +796,8 @@ func _build_pack_beast() -> Dictionary:
 	var shag_y := body_center_y - BEAST_BODY_SIZE.y * 0.5 + BEAST_SHAG_SIZE.y * 0.35
 	for i: int in BEAST_SHAG_PER_SIDE:
 		# Evenly spaced along the barrel: i / (n-1) mapped onto -0.35..0.35 of
-		# the body length (guarded so a single-slab fringe sits mid-body).
-		var t := 0.0 if BEAST_SHAG_PER_SIDE < 2 else float(i) / float(BEAST_SHAG_PER_SIDE - 1) - 0.5
+		# the body length.
+		var t := float(i) / float(BEAST_SHAG_PER_SIDE - 1) - 0.5
 		var shag_z := t * BEAST_BODY_SIZE.z * 0.7
 		for side: float in [-1.0, 1.0]:
 			body.add_child(_make_box_part("Shag%d%s" % [i, "L" if side < 0.0 else "R"],
