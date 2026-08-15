@@ -37,6 +37,14 @@ const TURN_SPEED: float = 2.6
 const STEP_SPEED: float = 5.5
 const STEP_DURATION: float = 0.28
 
+## How quickly horizontal velocity approaches the input's target speed, in m/s².
+## Instead of snapping instantly to full speed the moment W is pressed, velocity
+## ramps toward it — at 40 m/s² a standing start reaches walk speed (5 m/s) in
+## ~0.125 s. Barely perceptible as "sluggishness", but it gives starts and
+## direction changes a sense of weight. Stopping keeps the separate friction
+## branch below, which was already gradual.
+const MOVE_ACCELERATION: float = 40.0
+
 # ============================================================================
 # SECTION 2: JUMP AND PHYSICS CONSTANTS
 # ============================================================================
@@ -44,22 +52,48 @@ const STEP_DURATION: float = 0.28
 ## Jump velocity determines how high the character can jump
 ## Higher values = higher jumps
 ## Physics Note: This is the initial upward velocity when jumping.
-## Apex height scales with the SQUARE of this. With gravity = 3.6 the apex is
-## about JUMP_VELOCITY^2 / (2 * gravity): 5.1 -> ~3.6 m. Single blocks top out at
-## 2.5 m and structures are climbed in <=3 m steps, so everything stays jumpable.
-const JUMP_VELOCITY: float = 5.1
+## Apex height scales with the SQUARE of this: JUMP_VELOCITY^2 / (2 * gravity).
+## We doubled velocity (5.1 -> 10.2) AND quadrupled gravity (3.6 -> 14.4), so the
+## apex is EXACTLY unchanged: 10.2^2 / (2 * 14.4) = 3.6125 m — same as the old
+## 5.1^2 / (2 * 3.6). Single blocks top out at 2.5 m and structures are climbed
+## in <=3 m steps, so everything stays jumpable. What DID change is airtime
+## (2v/g): 2.83 s -> 1.42 s — the jump reads arcade-snappy instead of floaty.
+const JUMP_VELOCITY: float = 10.2
 
 ## Gravity value (meters per second squared)
-## This matches Earth's gravity. The physics engine uses this to pull
-## the character down when they're in the air.
-## Try changing this to simulate different planets!
-## - Moon: 1.6
-## - Mars: 3.7
-## - Earth: 9.8
-## - Jupiter: 24.8
-var gravity: float = 3.6
+## Deliberately unphysical: 14.4 (about 1.5× Earth) makes the jump arc snappy —
+## the character pops up and comes right back down instead of floating. Paired
+## with JUMP_VELOCITY above so the apex height is preserved (see the math there).
+## For reference, real planets: Moon 1.6, Mars 3.7, Earth 9.8, Jupiter 24.8.
+var gravity: float = 14.4
 
 ##  ProjectSettings.get_setting("physics/3d/default_gravity")
+
+## Coyote time: for this many seconds AFTER walking off a ledge the jump still
+## fires, as if the ground were still underfoot. Players expect it — without it
+## a jump pressed one frame late at a block edge silently eats the input.
+const COYOTE_TIME: float = 0.12
+## Jump buffer: a jump pressed this many seconds BEFORE landing is remembered
+## and fires on the first grounded frame, so button-mashing near the ground
+## never drops a jump.
+const JUMP_BUFFER_TIME: float = 0.12
+## Countdown timers for the two grace windows above (ticked in _physics_process).
+var coyote_timer: float = 0.0
+var jump_buffer_timer: float = 0.0
+
+## Landing impact ("squash"): touching down compresses the character for a brief
+## moment, scaled by how fast we were falling — a soft hop barely dips, a long
+## drop visibly squashes. Purely visual; the collision capsule never changes.
+const LAND_SQUASH_DURATION: float = 0.18
+## Impacts faster than this (m/s downward) also get a small camera shake and a
+## flat dust ring at the feet — the "heavy landing" tier.
+const LAND_HARD_SPEED: float = 4.0
+## Seconds left in the current squash (0 = none) and its 0.2–1.0 strength.
+var land_squash_timer: float = 0.0
+var land_squash_strength: float = 0.0
+## Downward speed recorded every airborne falling frame — move_and_slide zeroes
+## velocity.y on touchdown, so the landing code reads this instead.
+var _fall_speed: float = 0.0
 
 # ============================================================================
 # SECTION 3: CAMERA AND ROTATION SETTINGS
@@ -70,12 +104,39 @@ var gravity: float = 3.6
 ## Lower values = slower rotation (smoother but less responsive)
 const ROTATION_SPEED: float = 10.0
 
-## Camera reference - we'll set this up in the scene
+## Camera rig references. The chain is CameraPivot → CameraArm → Camera3D:
+## the pivot carries the mouse-look pitch, and the SpringArm3D between pivot
+## and camera pulls the camera in whenever a wall/block sits in the way, so the
+## view never clips through geometry. NOTE: a SpringArm3D OVERRIDES its
+## children's local position every physics frame (it slides them along its
+## local Z by the collision-clamped length) — so nothing may ever write
+## camera.position. The bite shake uses Camera3D.h_offset/v_offset (view-space
+## offsets the arm doesn't touch) and first-person moves the ARM itself
+## (see _apply_view_mode).
 @onready var camera_pivot: Node3D = $CameraPivot
-@onready var camera: Camera3D = $CameraPivot/Camera3D
+@onready var camera_arm: SpringArm3D = $CameraPivot/CameraArm
+@onready var camera: Camera3D = $CameraPivot/CameraArm/Camera3D
 
 ## Mouse sensitivity for camera rotation
 const MOUSE_SENSITIVITY: float = 0.003
+
+## Keyboard-turn camera easing: when A/D spin the body, the camera pivot lags
+## the turn and eases back in at this rate (higher = catches up faster), so a
+## keyboard turn sweeps smoothly instead of snapping with the body. MOUSE turns
+## deliberately bypass this (they never touch camera_yaw_lag) and stay 1:1.
+const CAMERA_TURN_EASE: float = 10.0
+
+## Speed-scaled field of view: the camera widens from FOV_BASE (the Camera3D
+## default) toward FOV_MAX as horizontal speed climbs from WALK_SPEED up to
+## Windman's air-rush speed — fast movement literally looks fast. Eased at
+## FOV_EASE per second so the lens never snaps.
+const FOV_BASE: float = 75.0
+const FOV_MAX: float = 97.0
+const FOV_EASE: float = 5.0
+## Transient FOV kick on Windman's Air Rush launch (degrees) and how fast the
+## kick bleeds off (degrees per second) — a punch, not a sustained zoom.
+const FOV_PUNCH_WINDMAN: float = 12.0
+const FOV_PUNCH_DECAY: float = 30.0
 
 ## Camera pitch limits (prevents camera from flipping over)
 const CAMERA_PITCH_MIN: float = -60.0  # Looking down limit (degrees)
@@ -179,28 +240,55 @@ const MAX_LIVES: int = 3
 var lives: int = MAX_LIVES
 var is_game_over: bool = false
 
-## Post-respawn grace: after losing a life we stand frozen and invulnerable for
-## RESPAWN_GRACE_DURATION seconds (with crocodiles swept out of the area) before
-## control returns, so a wandering crocodile can't bite us the instant we recover.
+## Post-respawn grace, in TWO phases. Phase 1: after losing a life we stand
+## frozen and invulnerable for RESPAWN_GRACE_DURATION seconds (with crocodiles
+## swept out of the area). Phase 2: control returns immediately after, but we
+## stay invulnerable for RESPAWN_BLINK_DURATION more seconds while the model
+## blinks (classic arcade i-frames) — so we get moving again fast without a
+## wandering crocodile biting us the instant we recover. The blink toggles
+## visibility every RESPAWN_BLINK_CADENCE seconds (skipped in first-person,
+## where the model is already hidden). hit_by_crocodile treats a running
+## respawn_blink_timer exactly like the frozen window: bites are ignored.
 var is_respawning: bool = false
 var respawn_timer: float = 0.0
-const RESPAWN_GRACE_DURATION: float = 5.0
+var respawn_blink_timer: float = 0.0
+const RESPAWN_GRACE_DURATION: float = 1.5
+const RESPAWN_BLINK_DURATION: float = 2.5
+const RESPAWN_BLINK_CADENCE: float = 0.1
 
 ## Camera shake, used by the crocodile-bite hit effect. Decays back to 0.
+## The shake drives Camera3D.h_offset/v_offset (view-space slide of the lens),
+## NOT camera.position — the SpringArm3D owns the camera's local position and
+## would stomp any write there every physics frame. Offsets also work
+## identically in first-person, so the shake needs no per-view rest caching.
 var shake_amount: float = 0.0
 const SHAKE_MAX: float = 0.25
 const SHAKE_DECAY: float = 1.0
-## Resting local position of the camera, so shake can offset from it and restore.
-var camera_rest_position: Vector3 = Vector3.ZERO
+
+## Keyboard-turn camera lag (radians). handle_turning subtracts each frame's
+## body turn into this; _process applies it to the pivot's yaw and decays it to
+## zero, so the camera trails an A/D turn and eases in behind the body. Mouse
+## turns never touch it, keeping mouse look 1:1. Zeroed in reset_position().
+var camera_yaw_lag: float = 0.0
+
+## Transient FOV kick (degrees) added on top of the speed-scaled target — set
+## to FOV_PUNCH_WINDMAN by Windman's Air Rush launch, decayed back to zero at
+## FOV_PUNCH_DECAY per second by the FOV code in _process.
+var fov_punch: float = 0.0
 
 ## First-person view mode. This is a player PREFERENCE, not transient state: it
 ## deliberately survives respawn, restart, and character switches (nothing in
 ## those paths resets it). Toggled with C in _physics_process (STEP 0.55).
 var first_person: bool = false
-## The camera's original scene-file transform (position (0,2,8), baked −15°
-## pitch), cached in _ready() so leaving first-person restores the shipped
-## third-person view byte-for-byte instead of rebuilding an approximation.
-var third_person_camera_transform: Transform3D = Transform3D.IDENTITY
+## The spring arm's original scene-file transform (−14° pitch at the pivot) and
+## length (8.25 — the old camera's (0,2,8) offset expressed as an arm), plus the
+## camera's residual −1° pitch, cached in _ready() so leaving first-person
+## restores the shipped third-person framing byte-for-byte. First-person
+## commandeers the ARM (identity basis at the eyes, zero length ⇒ no collision
+## cast ⇒ the arm is bypassed in FP for free) — see _apply_view_mode().
+var third_person_arm_transform: Transform3D = Transform3D.IDENTITY
+var third_person_arm_length: float = 0.0
+var third_person_camera_rotation: Vector3 = Vector3.ZERO
 
 ## Character's visual mesh (for ducking animation)
 @onready var mesh_instance: Node3D = $MeshInstance3D
@@ -288,6 +376,13 @@ var original_rotations: Dictionary = {}
 ## Track if character was on floor last frame (for landing detection)
 var was_on_floor: bool = true
 
+## Footstep tracking: the sign of the walk-cycle sine last frame. Each sign flip
+## of sin(time_factor) is one leg passing through centre — i.e. one foot
+## planting — so flips are exactly the footstep moments, at any walk/run speed.
+## 0 means "not walking" (the reset state), so the first frame of a new walk
+## just records the sign instead of mis-firing a step.
+var _last_walk_sine_sign: int = 0
+
 # ============================================================================
 # INITIALIZATION
 # ============================================================================
@@ -347,12 +442,17 @@ func _ready() -> void:
 	preload_all_characters()
 	set_active_character(current_character_index)
 
-	# Remember the camera's resting spot so the hit-shake can offset from it,
-	# and cache the full scene transform so the first-person toggle (C) can
-	# restore the exact shipped third-person view when switching back.
+	# Cache the spring arm's scene pose (transform + length) and the camera's
+	# residual pitch so the first-person toggle (C) can restore the exact
+	# shipped third-person view when switching back. Also exclude our own
+	# capsule from the arm's collision cast — otherwise the arm would "hit"
+	# the player and yank the camera into the back of our head.
+	if camera_arm:
+		camera_arm.add_excluded_object(get_rid())
+		third_person_arm_transform = camera_arm.transform
+		third_person_arm_length = camera_arm.spring_length
 	if camera:
-		camera_rest_position = camera.position
-		third_person_camera_transform = camera.transform
+		third_person_camera_rotation = camera.rotation
 
 	print("Player Controller initialized!")
 	print("Controls:")
@@ -406,6 +506,17 @@ func _input(event: InputEvent) -> void:
 			# Desktop only: re-capture on a second ESC. A touch session never re-captures.
 			Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 
+	# DESKTOP-WEB CLICK-TO-CAPTURE: browsers refuse pointer lock outside a user
+	# gesture, so the `_ready()` capture silently fails on a fresh web page load
+	# and the camera is dead until the (undiscoverable) double-ESC re-capture.
+	# Any click while the mouse is free re-captures it — a click IS the required
+	# gesture. Same touch-session guard as the sites above, and never during Game
+	# Over (the Play Again button needs a visible, clickable cursor).
+	if event is InputEventMouseButton and event.pressed:
+		if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED \
+				and not MobileSensors.is_touch_session() and not is_game_over:
+			Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+
 	# Handle character switching with E key
 	if event.is_action_pressed("switch_character"):
 		switch_to_next_character()
@@ -420,31 +531,39 @@ func _apply_view_mode() -> void:
 	mode. Deliberately idempotent — safe to re-run any time (e.g. after a Teibi
 	resize or a character switch) without tracking what the previous state was.
 	"""
-	if not camera:
+	if not camera or not camera_arm:
 		return
 	if first_person:
-		# Identity basis zeroes the camera's baked −15° third-person pitch, so
-		# the pivot's pitch alone (mouse-look) is the look pitch. Position puts
-		# the camera at the character's eyes. Hide the model so we don't see
-		# our own head from the inside.
-		camera.transform = Transform3D(Basis.IDENTITY, _first_person_eye_position())
+		# First-person commandeers the ARM, not the camera (the arm owns the
+		# camera's local position — see the rig note in SECTION 3). Identity
+		# basis zeroes the arm's −14° scene pitch so the pivot's pitch alone
+		# (mouse-look) is the look pitch; the arm origin moves to the eyes; and
+		# zero spring length means the camera slides to the arm origin AND no
+		# collision ray is cast — the arm is bypassed in FP for free. The
+		# camera's residual −1° pitch is zeroed too. Hide the model so we
+		# don't see our own head from the inside.
+		camera_arm.spring_length = 0.0
+		camera_arm.transform = Transform3D(Basis.IDENTITY, _first_person_eye_position())
+		camera.rotation = Vector3.ZERO
 		if character_container:
 			character_container.visible = false
 	else:
-		# Restore the CACHED scene transform — byte-identical to the shipped
-		# third-person view — and show the model again.
-		camera.transform = third_person_camera_transform
+		# Restore the CACHED scene arm pose + camera pitch — byte-identical to
+		# the shipped third-person view — and show the model again.
+		camera_arm.transform = third_person_arm_transform
+		camera_arm.spring_length = third_person_arm_length
+		camera.rotation = third_person_camera_rotation
 		if character_container:
 			character_container.visible = true
-	# The bite-shake offsets the camera from camera_rest_position and snaps
-	# back to it, so it MUST track the current view's rest spot — otherwise a
-	# shake would teleport the camera into the other view.
-	camera_rest_position = camera.position
+	# No shake bookkeeping needed here: the bite shake lives on the camera's
+	# h_offset/v_offset, which are view-space and identical in both views.
 
 
 func _first_person_eye_position() -> Vector3:
 	"""
-	The first-person camera's local position UNDER THE PIVOT. The pivot sits at
+	The first-person eye point as a local position UNDER THE PIVOT (in FP the
+	spring arm gets an identity basis, so arm-local == pivot-local and this
+	value seats the ARM — the camera rides at its origin). The pivot sits at
 	a fixed local height (1.5), so we subtract it from the desired eye height.
 	Deriving the scale from the collision capsule means Teibi's small/giant
 	forms move the eyes down/up automatically.
@@ -470,7 +589,7 @@ func _physics_process(delta: float) -> void:
 	# switch_character gotcha in CLAUDE.md. Polled BEFORE the frozen-state early
 	# returns below so a press during the caught/respawn/game-over windows isn't
 	# silently dropped — the view is a pure camera preference and safe to flip
-	# while frozen (_apply_view_mode() only touches the camera and model).
+	# while frozen (_apply_view_mode() only touches the camera rig and model).
 	if Input.is_action_just_pressed("toggle_camera"):
 		first_person = not first_person
 		_apply_view_mode()
@@ -496,9 +615,10 @@ func _physics_process(delta: float) -> void:
 			_on_caught_finished()
 		return
 
-	# STEP 0c: Post-respawn grace. We keep standing still and invulnerable (see
-	# hit_by_crocodile) while a short countdown runs, then hand control back. A
-	# final crocodile sweep on the last frame keeps the resume spot clear.
+	# STEP 0c: Post-respawn grace, phase 1 (frozen). We keep standing still and
+	# invulnerable (see hit_by_crocodile) while a short countdown runs, then hand
+	# control back and start the phase-2 blink i-frames. A final crocodile sweep
+	# on the last frame keeps the resume spot clear.
 	if is_respawning:
 		_freeze_with_gravity(delta)
 		update_character_animation(delta, Vector2.ZERO)
@@ -508,7 +628,23 @@ func _physics_process(delta: float) -> void:
 			is_respawning = false
 			_hide_respawn_message()
 			clear_nearby_crocodiles(global_position)
+			respawn_blink_timer = RESPAWN_BLINK_DURATION
 		return
+
+	# STEP 0.35: Post-respawn grace, phase 2 (blinking i-frames). We move
+	# NORMALLY — no freeze branch — but stay invulnerable while the timer runs,
+	# with the model blinking on a fixed cadence so the protection is readable.
+	# First-person skips the toggle (the model is already hidden there); when
+	# the timer expires, _apply_view_mode() restores visibility idempotently,
+	# respecting whichever view we're in.
+	if respawn_blink_timer > 0.0:
+		respawn_blink_timer = maxf(0.0, respawn_blink_timer - delta)
+		if respawn_blink_timer <= 0.0:
+			_apply_view_mode()
+		elif not first_person and character_container:
+			# One on/off blink per two cadence intervals: visible for the first
+			# half of each 2×cadence window, hidden for the second.
+			character_container.visible = fmod(respawn_blink_timer, RESPAWN_BLINK_CADENCE * 2.0) < RESPAWN_BLINK_CADENCE
 
 	# STEP 0.4: Record the headline distance score — the farthest horizontal
 	# displacement from the spawn point reached this run (see run_distance above
@@ -539,13 +675,30 @@ func _physics_process(delta: float) -> void:
 			frame_gravity *= WINDMAN_GRAVITY_FACTOR
 		# Note: We multiply by delta to make it frame-rate independent
 		velocity.y -= frame_gravity * delta
+		# Record the fall speed while dropping — move_and_slide zeroes velocity.y
+		# the frame we touch down, so the landing squash reads this snapshot.
+		if velocity.y < 0.0:
+			_fall_speed = -velocity.y
 
-	# STEP 2: Handle Jumping
-	# Check if jump button is pressed AND character is on the ground. Giant Teibi
+	# STEP 2: Handle Jumping (with coyote time + jump buffer — see SECTION 2)
+	# Refresh the coyote window while grounded; tick it down while airborne.
+	if is_on_floor():
+		coyote_timer = COYOTE_TIME
+	else:
+		coyote_timer = maxf(0.0, coyote_timer - delta)
+	# A fresh press arms the buffer; otherwise the buffer ticks down.
+	if Input.is_action_just_pressed("jump"):
+		jump_buffer_timer = JUMP_BUFFER_TIME
+	else:
+		jump_buffer_timer = maxf(0.0, jump_buffer_timer - delta)
+	# Fire when a buffered press meets ground OR the coyote window. Giant Teibi
 	# is too heavy to leave the ground, so he can't jump while transformed.
-	if Input.is_action_just_pressed("jump") and is_on_floor() and not is_giant:
-		# Set upward velocity for jump
+	if jump_buffer_timer > 0.0 and (is_on_floor() or coyote_timer > 0.0) and not is_giant:
+		# Set upward velocity for jump. Zero BOTH timers so the same press can't
+		# fire twice (e.g. a coyote jump immediately re-triggering off the buffer).
 		velocity.y = JUMP_VELOCITY
+		coyote_timer = 0.0
+		jump_buffer_timer = 0.0
 		_sfx("play_jump")
 
 	# STEP 3: Handle Ducking
@@ -580,9 +733,10 @@ func _physics_process(delta: float) -> void:
 		planar_velocity += step_dir * STEP_SPEED
 
 	if planar_velocity != Vector3.ZERO:
-		# Set horizontal velocity (X and Z)
-		velocity.x = planar_velocity.x
-		velocity.z = planar_velocity.z
+		# Accelerate toward the target velocity instead of snapping to it —
+		# see MOVE_ACCELERATION in SECTION 1 for the feel rationale.
+		velocity.x = move_toward(velocity.x, planar_velocity.x, MOVE_ACCELERATION * delta)
+		velocity.z = move_toward(velocity.z, planar_velocity.z, MOVE_ACCELERATION * delta)
 	else:
 		# No input: gradually slow down (friction)
 		velocity.x = move_toward(velocity.x, 0, current_speed * delta * 10.0)
@@ -597,23 +751,42 @@ func _physics_process(delta: float) -> void:
 
 func _process(delta: float) -> void:
 	"""
-	Per-frame visual updates that don't belong in the physics step. Right now this
-	is just the camera shake from being bitten — it offsets the camera by a small
-	random amount that decays back to zero.
+	Per-frame visual camera work that doesn't belong in the physics step:
+	the bite shake (random view-space offsets that decay to zero), the eased
+	keyboard-turn lag, and the speed-scaled FOV.
 	"""
 	if not camera:
 		return
 
+	# Bite shake — driven through h_offset/v_offset (a view-space slide of the
+	# lens), because the SpringArm3D overwrites camera.position every physics
+	# frame. Offsets ride on top of whatever the arm decides, in both views.
 	if shake_amount > 0.0:
 		shake_amount = maxf(0.0, shake_amount - SHAKE_DECAY * delta)
-		camera.position = camera_rest_position + Vector3(
-			randf_range(-1.0, 1.0),
-			randf_range(-1.0, 1.0),
-			0.0
-		) * shake_amount
-	elif camera.position != camera_rest_position:
+		camera.h_offset = randf_range(-1.0, 1.0) * shake_amount
+		camera.v_offset = randf_range(-1.0, 1.0) * shake_amount
+	elif camera.h_offset != 0.0 or camera.v_offset != 0.0:
 		# Settle exactly back to rest once the shake is done.
-		camera.position = camera_rest_position
+		camera.h_offset = 0.0
+		camera.v_offset = 0.0
+
+	# Eased keyboard turn: the pivot's yaw holds the lag handle_turning banked,
+	# then the lag decays toward zero — so the camera starts behind an A/D turn
+	# and smoothly catches up. Mouse turns never bank lag, so they stay 1:1.
+	camera_pivot.rotation.y = camera_yaw_lag
+	camera_yaw_lag = lerpf(camera_yaw_lag, 0.0, minf(1.0, CAMERA_TURN_EASE * delta))
+
+	# Speed-scaled FOV: map horizontal speed from WALK_SPEED → Windman's
+	# air-rush speed onto FOV_BASE → FOV_MAX, add any transient ability punch,
+	# and ease the lens toward it. A Camera3D property, so it applies
+	# identically in first- and third-person.
+	var horizontal_speed := Vector2(velocity.x, velocity.z).length()
+	var speed_blend := clampf(
+		(horizontal_speed - WALK_SPEED) / (WINDMAN_AIR_SPEED - WALK_SPEED), 0.0, 1.0)
+	var target_fov := lerpf(FOV_BASE, FOV_MAX, speed_blend) + fov_punch
+	camera.fov = lerpf(camera.fov, target_fov, minf(1.0, FOV_EASE * delta))
+	# The launch punch bleeds off on its own, so the kick reads then settles.
+	fov_punch = maxf(0.0, fov_punch - FOV_PUNCH_DECAY * delta)
 
 # ============================================================================
 # HELPER FUNCTIONS
@@ -701,7 +874,13 @@ func handle_turning(delta: float) -> void:
 	if absf(turn_input) > 0.01:
 		# A positive angle spins counter-clockwise around +Y, i.e. to the
 		# character's left — which matches A producing a positive turn_input.
-		rotate_y(turn_input * TURN_SPEED * delta)
+		var turn_delta := turn_input * TURN_SPEED * delta
+		rotate_y(turn_delta)
+		# Bank the same turn as camera lag: the pivot counter-rotates by it and
+		# eases back to zero in _process, so the camera trails the keyboard
+		# turn instead of snapping with the body. (Mouse turns happen in
+		# _input and never touch this, keeping mouse look 1:1.)
+		camera_yaw_lag -= turn_delta
 
 func update_sidestep(delta: float) -> void:
 	"""
@@ -1050,6 +1229,17 @@ func update_character_animation(delta: float, input_dir: Vector2) -> void:
 	if current_on_floor and not was_on_floor \
 			and not (is_caught or is_respawning or is_game_over):
 		_sfx("play_land")
+		# Start the landing squash, scaled by impact speed (see SECTION 2). The
+		# eased dip itself is applied AFTER the branch chain below, so the walk
+		# bob / idle breathe can't overwrite it on the same frame.
+		land_squash_timer = LAND_SQUASH_DURATION
+		land_squash_strength = clampf(_fall_speed / 10.0, 0.2, 1.0)
+		# Heavy landings additionally kick the camera and puff a flat dust ring
+		# at the feet (the thud above already covers audio on every landing).
+		if _fall_speed > LAND_HARD_SPEED:
+			shake_amount = maxf(shake_amount, 0.12)
+			_spawn_ability_effect(global_position, Color(0.75, 0.7, 0.6, 0.45), 1.6, 0.3)
+		_fall_speed = 0.0
 
 	# Jump/Fall animation
 	if not current_on_floor:
@@ -1067,6 +1257,32 @@ func update_character_animation(delta: float, input_dir: Vector2) -> void:
 	# Idle animation
 	else:
 		animate_idle(delta)
+
+	# Landing squash — applied AFTER the branch chain so whatever body position
+	# the active animation just wrote gets the dip added on top (instead of the
+	# walk bob / idle breathe overwriting it). A sin(progress * PI) arc eases the
+	# compression in and back out, ending at exactly zero so the pose hands back
+	# to the animations with no snap. The scale squash stretches the container
+	# wide and short (volume-preserving cartoon squash) around the current Teibi
+	# base scale; it is skipped while a Teibi resize tween is animating that same
+	# property, so the two never fight.
+	if land_squash_timer > 0.0:
+		land_squash_timer = maxf(0.0, land_squash_timer - delta)
+		var squash_progress := 1.0 - land_squash_timer / LAND_SQUASH_DURATION
+		var k := sin(squash_progress * PI) * land_squash_strength
+		if character_body:
+			character_body.position.y -= 0.14 * k
+		if character_container and (_teibi_tween == null or not _teibi_tween.is_running()):
+			var base := _current_teibi_scale()
+			character_container.scale = base * Vector3(1.0 + 0.2 * k, 1.0 - 0.3 * k, 1.0 + 0.2 * k)
+
+	# Not in the walking state (idle, airborne)? Reset the footstep tracker to
+	# its "no history" sentinel so the first frame of the next walk records the
+	# sine sign instead of mis-firing a phantom step. (A sidestep deliberately
+	# does NOT reset it — the walk cycle resumes where it left off, and a step
+	# sound on the post-sidestep foot plant is a real plant anyway.)
+	if not (is_moving and current_on_floor):
+		_last_walk_sine_sign = 0
 
 	# Update floor tracking
 	was_on_floor = current_on_floor
@@ -1091,6 +1307,16 @@ func animate_walking(delta: float, speed_multiplier: float) -> void:
 	var time_factor = animation_time * walk_speed
 	var arm_swing = sin(time_factor) * arm_swing_amount
 	var leg_swing = sin(time_factor) * leg_swing_amount
+
+	# Footstep sounds, keyed to the walk cycle itself: each sign flip of the
+	# swing sine is a leg passing through centre — a foot planting. Because
+	# time_factor already advances 1.5× when running, the step rate speeds up
+	# automatically. Sign 0 is the "just started walking" reset state: record
+	# the current sign silently so the first frame never mis-fires a step.
+	var sine_sign: int = 1 if sin(time_factor) >= 0.0 else -1
+	if _last_walk_sine_sign != 0 and sine_sign != _last_walk_sine_sign and is_on_floor():
+		_sfx("play_footstep")
+	_last_walk_sine_sign = sine_sign
 
 	# Apply rotations (arms and legs swing opposite to each other)
 	left_arm.rotation.x = original_rotations["left_arm"].x + arm_swing
@@ -1192,14 +1418,13 @@ func animate_jumping() -> void:
 
 func animate_landing() -> void:
 	"""
-	Brief animation when the character lands on the ground.
-	Creates a small impact pose and lowers the wings back to rest.
+	Brief animation when the character lands on the ground. The impact crouch
+	itself is no longer set here — the eased landing squash at the end of
+	update_character_animation drives it over LAND_SQUASH_DURATION instead of
+	the old single -0.1 frame — so this only lowers the wings back to rest.
 	"""
 	if not character_body:
 		return
-
-	# Small crouch on landing
-	character_body.position.y = -0.1
 
 	# Drop the wings (arm roll) back to the sides now that we're grounded. The
 	# walk/idle animations only drive the X axis, so without this the arms would
@@ -1280,10 +1505,11 @@ func hit_by_crocodile() -> void:
 	When that window ends _on_caught_finished() spends a life and either respawns
 	us in place or ends the run.
 
-	Bites are ignored while we are already caught, inside the post-respawn grace
-	window, or on the game-over screen — those three states make us invulnerable.
+	Bites are ignored while we are already caught, inside either post-respawn
+	grace phase (frozen OR blinking), or on the game-over screen — those states
+	make us invulnerable.
 	"""
-	if is_caught or is_respawning or is_game_over:
+	if is_caught or is_respawning or is_game_over or respawn_blink_timer > 0.0:
 		return
 	# A real bite breaks the coin streak. Deliberately AFTER the invulnerability
 	# early-return above, so an ignored bite (grace window etc.) costs nothing.
@@ -1406,6 +1632,10 @@ func restart_game() -> void:
 	is_game_over = false
 	is_caught = false
 	is_respawning = false
+	# Drop any mid-blink i-frames and restore model visibility for the current
+	# view — blink state must never leak into a fresh run.
+	respawn_blink_timer = 0.0
+	_apply_view_mode()
 	_hide_respawn_message()
 	# Re-roll the world BEFORE teleporting back to spawn: new_run() re-seeds the
 	# terrain and synchronously rebuilds the chunks around (0,0), so reset_position()
@@ -1440,11 +1670,15 @@ func _freeze_with_gravity(delta: float) -> void:
 
 
 func _show_respawn_countdown() -> void:
-	"""Show the centred respawn countdown (a plain Label found via group)."""
+	"""
+	Show the centred respawn countdown (a plain Label found via group). The
+	frozen window is only 1.5 s now, so a one-decimal readout keeps the short
+	countdown visibly moving (a whole-seconds "2... 1..." would barely change).
+	"""
 	var label := get_tree().get_first_node_in_group("respawn_label")
 	if label:
 		label.visible = true
-		label.text = "Caught! Back in %d..." % int(ceil(respawn_timer))
+		label.text = "Caught! Back in %.1f..." % maxf(respawn_timer, 0.0)
 
 
 func _hide_respawn_message() -> void:
@@ -1486,10 +1720,16 @@ func reset_position() -> void:
 	if camera_pivot:
 		camera_pivot.rotation.x = 0.0  # Reset camera vertical rotation
 		camera_pivot.rotation.y = 0.0  # Reset camera horizontal rotation
+	camera_yaw_lag = 0.0  # Drop any keyboard-turn lag along with the pivot yaw
 
 	# Reset character state
 	is_ducking = false
 	is_running = false
+
+	# Drop any mid-blink i-frames and restore model visibility for the current
+	# view (idempotent — see _apply_view_mode).
+	respawn_blink_timer = 0.0
+	_apply_view_mode()
 
 	# Drop any active ability state (air boost, giant form, odd size) on respawn.
 	_reset_ability_states()
@@ -1575,7 +1815,10 @@ const WINDMAN_AIR_SPEED: float = WALK_SPEED * 5.0
 ## How long the boost lasts, in seconds.
 const WINDMAN_BOOST_DURATION: float = 4.0
 ## Gravity multiplier while boosting, so Windman glides instead of dropping.
-const WINDMAN_GRAVITY_FACTOR: float = 0.45
+## Retuned with the snappy-jump gravity change: 14.4 × 0.1125 = 1.62 m/s² —
+## byte-identical to the old 3.6 × 0.45, so the Air Rush glide feel is
+## preserved exactly even though base gravity quadrupled.
+const WINDMAN_GRAVITY_FACTOR: float = 0.1125
 ## Upward launch applied on activation so he gets airborne to use the speed.
 const WINDMAN_LIFT: float = 6.0
 
@@ -1619,6 +1862,24 @@ var teibi_form_timer: float = 0.0
 ## True only while Teibi is giant — makes him crush crocodiles on contact.
 var is_giant: bool = false
 
+## The Teibi resize scale tween, when one is animating character_container.scale
+## (null/finished otherwise). The landing squash checks it so the two writers of
+## that property never fight.
+var _teibi_tween: Tween = null
+
+
+func _weather_is_raining_here() -> bool:
+	"""
+	Whether the player is standing in a storm cloud's rain zone, asked of the
+	weather manager through the "weather" group — null-safe with a has_method
+	guard exactly like _sfx(), so a scene without the manager (or the player
+	scene run on its own) simply answers "no rain" instead of erroring.
+	"""
+	var weather := get_tree().get_first_node_in_group("weather")
+	if weather and weather.has_method("is_raining_at"):
+		return weather.is_raining_at(global_position)
+	return false
+
 
 func _update_ability_timers(delta: float) -> void:
 	"""Count down cooldowns, the Windman air boost, and Teibi's form timer."""
@@ -1627,6 +1888,12 @@ func _update_ability_timers(delta: float) -> void:
 			ability_cooldowns[i] = maxf(0.0, ability_cooldowns[i] - delta)
 	if windman_boost_timer > 0.0:
 		windman_boost_timer = maxf(0.0, windman_boost_timer - delta)
+		# Wet wings: a Windman who flies INTO a storm cloud's rain zone drops out
+		# of the Air Rush immediately — the boost timer is zeroed and the normal
+		# gravity/speed rules take back over mid-air. (Only checked while a boost
+		# is actually running, so a grounded player never pays for this.)
+		if windman_boost_timer > 0.0 and _weather_is_raining_here():
+			windman_boost_timer = 0.0
 	# Teibi's small/giant form expires on its own after a while, snapping him back
 	# to normal size with no extra press — so he can never get stuck transformed.
 	if teibi_size_state != 0 and teibi_form_timer > 0.0:
@@ -1643,8 +1910,25 @@ func try_activate_ability() -> void:
 	"""
 	var char_name: String = CHARACTERS[current_character_index]["name"]
 
-	# Still cooling down? Ignore the press.
+	# Still cooling down? The press doesn't fire, but it must not feel dead:
+	# flash the cooldown dial red (via the "ability_hud" group — null-safe, no
+	# hard reference, like every other HUD hookup) and play a low denial buzz.
 	if ability_cooldowns[current_character_index] > 0.0:
+		var hud := get_tree().get_first_node_in_group("ability_hud")
+		if hud and hud.has_method("flash_blocked"):
+			hud.flash_blocked()
+		_sfx("play_buzz")
+		return
+
+	# Windman can't take off in the rain: pressing F inside a storm cloud's rain
+	# zone fails EXACTLY like a cooling-down press (same dial flash, same denial
+	# buzz) — and crucially costs no cooldown, so the player can try again the
+	# moment they walk out from under the storm.
+	if char_name == "windman" and _weather_is_raining_here():
+		var rain_hud := get_tree().get_first_node_in_group("ability_hud")
+		if rain_hud and rain_hud.has_method("flash_blocked"):
+			rain_hud.flash_blocked()
+		_sfx("play_buzz")
 		return
 
 	var used := false
@@ -1672,6 +1956,9 @@ func _ability_windman() -> bool:
 	forward = forward.normalized()
 
 	windman_boost_timer = WINDMAN_BOOST_DURATION
+	# Kick the lens wide for the launch moment — the FOV code in _process adds
+	# this on top of the speed-scaled target and decays it back to zero.
+	fov_punch = FOV_PUNCH_WINDMAN
 	# Launch: up so he is airborne, plus an immediate forward shove so even a
 	# standing press blasts off into the wind right away.
 	velocity.y = WINDMAN_LIFT
@@ -1714,8 +2001,13 @@ func _ability_primm() -> bool:
 	if not found:
 		return false
 
-	# A quick flash where he leaves and where he arrives, to sell the teleport.
+	# A quick flash where he leaves and where he arrives, to sell the teleport —
+	# plus three small staggered flashes along the path between them, so the eye
+	# can track WHERE the blink went instead of seeing two disconnected pops.
 	_spawn_ability_effect(global_position, Color(0.45, 0.5, 1.0, 0.5), 2.0, 0.35)
+	for i in range(3):
+		_spawn_ability_effect(global_position.lerp(target, (i + 1) / 4.0),
+			Color(0.45, 0.5, 1.0, 0.4), 1.0, 0.25, i * 0.05)
 	global_position = target
 	velocity = Vector3.ZERO  # land cleanly on the far side, no carried momentum
 	_spawn_ability_effect(global_position, Color(0.45, 0.5, 1.0, 0.5), 2.0, 0.35)
@@ -1788,6 +2080,19 @@ func _ability_phoboman() -> bool:
 	return true
 
 
+func _current_teibi_scale() -> float:
+	"""The character's current base scale from Teibi's size cycle (1.0 for every
+	other character — their state is always 0). The landing squash multiplies
+	around this so a squashed small/giant Teibi stays small/giant."""
+	match teibi_size_state:
+		1:
+			return TEIBI_SCALE_SMALL
+		2:
+			return TEIBI_SCALE_BIG
+		_:
+			return 1.0
+
+
 func _apply_teibi_scale(s: float) -> void:
 	"""
 	Resize the visible model AND the collision capsule to scale `s`, keeping the
@@ -1799,13 +2104,22 @@ func _apply_teibi_scale(s: float) -> void:
 	the node so the bottom stays exactly where it was at normal size.
 	"""
 	if character_container:
-		character_container.scale = Vector3(s, s, s)
+		# The VISUAL scale tweens with a springy overshoot so the resize pops
+		# instead of snapping. Kill any in-flight resize tween first so rapid
+		# F-presses don't leave two tweens fighting over the same property.
+		if _teibi_tween:
+			_teibi_tween.kill()
+		_teibi_tween = create_tween().set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		_teibi_tween.tween_property(character_container, "scale", Vector3(s, s, s), 0.25)
 	if collision_shape:
+		# The COLLISION capsule snaps to the new size instantly — physics must
+		# never lag the visual, or a "still shrinking" giant could clip blocks
+		# and the first-person eye height would be mid-tween wrong.
 		collision_shape.scale = Vector3(s, s, s)
 		var bottom := collision_base_y - collision_half_height
 		collision_shape.position.y = bottom + s * collision_half_height
 	# First-person eyes are derived from this capsule scale, so a resize must
-	# immediately re-seat the camera (and the shake rest position) at the new
+	# immediately re-seat the spring arm (which carries the camera) at the new
 	# height — small Teibi looks from down low, giant Teibi from up high.
 	# _apply_view_mode() is idempotent, so this is safe from every caller
 	# (F-cycle, form timeout, character switch, respawn).

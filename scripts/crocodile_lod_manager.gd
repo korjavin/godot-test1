@@ -171,6 +171,13 @@ func _scan_crocodiles() -> void:
 	## One LOD pass: decide, for every crocodile, whether it should be awake
 	## (fully simulating) or asleep (frozen), and tell it only when that decision
 	## actually changes — so we never spam the setter every tick.
+	##
+	## The same loop ALSO feeds the danger telegraph for free: we track the
+	## nearest croc that is actively chasing (`is_chasing`) and publish that
+	## distance to the DangerVignette after the loop — zero extra passes. This
+	## is guaranteed complete because any croc that could be chasing is inside
+	## DETECTION_RADIUS (15 m), far inside SIM_RADIUS (45 m), so it is always
+	## awake and always seen by this scan.
 
 	# Be defensive about the player ref: it can go stale if the player node is
 	# ever freed/replaced. If we don't have a valid one, try to (re)acquire it.
@@ -183,6 +190,10 @@ func _scan_crocodiles() -> void:
 			return
 
 	var player_pos: Vector3 = _player.global_position
+
+	# Squared distance to the nearest croc currently chasing the player; INF
+	# when nobody is hunting. Published to the danger vignette after the loop.
+	var nearest_chasing_dist_sq: float = INF
 
 	for croc in get_tree().get_nodes_in_group("crocodile"):
 		# Skip anything that isn't a live Node3D (e.g. queued for deletion).
@@ -197,6 +208,13 @@ func _scan_crocodiles() -> void:
 		# Squared distance is enough to compare against our squared thresholds, and
 		# avoids a sqrt per crocodile per scan.
 		var dist_sq: float = croc.global_position.distance_squared_to(player_pos)
+
+		# Danger telegraph: remember the closest ACTIVE hunter. The `in` guard
+		# keeps us safe against a group member that doesn't expose the flag
+		# (same defensive style as the has_method filter above). Bosses live in
+		# the same group and expose the same flag, so they telegraph too.
+		if "is_chasing" in croc and croc.is_chasing:
+			nearest_chasing_dist_sq = minf(nearest_chasing_dist_sq, dist_sq)
 
 		# Read the crocodile's current LOD state so we can apply hysteresis and
 		# only call the setter on a real transition. We already filtered to crocs
@@ -220,6 +238,14 @@ func _scan_crocodiles() -> void:
 		# also idempotent, but skipping the call entirely keeps this loop cheap.
 		if should_be_active != currently_active:
 			croc.set_lod_active(should_be_active)
+
+	# Publish the danger distance (metres; INF = nobody chasing — sqrt(INF) is
+	# still INF, so one unconditional sqrt covers both cases). Group-based and
+	# null-safe like every other cross-system hook: no vignette in the scene
+	# (e.g. a character scene run in isolation) means we simply skip it.
+	var vignette := get_tree().get_first_node_in_group("danger_vignette")
+	if vignette != null and vignette.has_method("set_danger_distance"):
+		vignette.set_danger_distance(sqrt(nearest_chasing_dist_sq))
 
 
 func _scan_coins() -> void:

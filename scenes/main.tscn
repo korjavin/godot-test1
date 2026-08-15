@@ -1,4 +1,4 @@
-[gd_scene load_steps=19 format=3 uid="uid://clqb4rcmjrpgs"]
+[gd_scene load_steps=22 format=3 uid="uid://clqb4rcmjrpgs"]
 
 [ext_resource type="PackedScene" uid="uid://bqtq2xtxqnvvr" path="res://scenes/player.tscn" id="1_main"]
 [ext_resource type="Script" uid="uid://b07rwceo0eo4o" path="res://scripts/endless_terrain.gd" id="2_terrain"]
@@ -14,7 +14,10 @@
 [ext_resource type="PackedScene" uid="uid://b8touchctrls01" path="res://scenes/ui/touch_controls.tscn" id="12_touch"]
 [ext_resource type="Script" path="res://scripts/mobile_settings_panel.gd" id="13_tune"]
 [ext_resource type="Script" path="res://scripts/sound_manager.gd" id="14_sound"]
-[ext_resource type="Script" path="res://scripts/fauna_manager.gd" id="15_fauna"]
+[ext_resource type="Script" path="res://scripts/danger_vignette.gd" id="15_danger"]
+[ext_resource type="Script" path="res://scripts/capture_hint.gd" id="16_capture"]
+[ext_resource type="Script" path="res://scripts/weather_manager.gd" id="17_weather"]
+[ext_resource type="Script" path="res://scripts/fauna_manager.gd" id="18_fauna"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_1"]
 sky_top_color = Color(0.25, 0.45, 0.75, 1)
@@ -57,8 +60,11 @@ script = ExtResource("11_mobileinput")
 [node name="SoundManager" type="Node" parent="."]
 script = ExtResource("14_sound")
 
+[node name="Weather" type="Node" parent="." groups=["weather"]]
+script = ExtResource("17_weather")
+
 [node name="FaunaManager" type="Node" parent="."]
-script = ExtResource("15_fauna")
+script = ExtResource("18_fauna")
 
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
 transform = Transform3D(-0.573576, 0.469846, -0.67101, 0, 0.819152, 0.573576, 0.819152, 0.32899, -0.469846, 0, 10, 0)
@@ -75,6 +81,15 @@ directional_shadow_max_distance = 55.0
 environment = SubResource("Environment_1")
 
 [node name="HUD" type="CanvasLayer" parent="."]
+
+[node name="DangerVignette" type="Control" parent="HUD"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("15_danger")
 
 [node name="HitFlash" type="ColorRect" parent="HUD"]
 anchors_preset = 15
@@ -153,6 +168,29 @@ theme_override_font_sizes/font_size = 48
 text = ""
 horizontal_alignment = 1
 vertical_alignment = 1
+
+[node name="CaptureHint" type="Label" parent="HUD"]
+visible = false
+anchors_preset = 7
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -200.0
+offset_top = -80.0
+offset_right = 200.0
+offset_bottom = -48.0
+grow_horizontal = 2
+grow_vertical = 0
+mouse_filter = 2
+theme_override_colors/font_color = Color(1, 1, 1, 0.9)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 6
+theme_override_font_sizes/font_size = 22
+text = "Click to look around"
+horizontal_alignment = 1
+vertical_alignment = 1
+script = ExtResource("16_capture")
 
 [node name="MotionDebug" type="Label" parent="HUD" groups=["motion_debug"]]
 anchors_preset = 2

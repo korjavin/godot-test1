@@ -945,9 +945,37 @@ func _on_player_collision(player: Node) -> void:
 		return
 
 	# Giant Teibi squashes crocodiles on contact instead of being bitten.
+	# Instead of vanishing in one frame, the croc visibly dies: physics stops,
+	# a dust puff pops, a crunch plays, the player's camera gets a tiny kick,
+	# and the body squashes flat before freeing itself.
 	if player.has_method("crushes_crocodiles") and player.crushes_crocodiles():
 		print("🐊 Squashed by a giant!")
-		queue_free()
+		# Guard re-entry FIRST: stop physics and leave the "crocodile" group so
+		# the dying body can't crush-trigger a second time (or be found by the
+		# stink wave / danger telegraph) during the short squash tween below.
+		set_physics_process(false)
+		remove_from_group("crocodile")
+		# Dust puff at the body, parented to the croc's PARENT (the chunk) so it
+		# outlives this node — the same self-freeing wave pattern as the coin pop.
+		var fx_parent := get_parent()
+		if fx_parent:
+			var fx := MeshInstance3D.new()
+			fx.set_script(preload("res://scripts/ability_effect.gd"))
+			fx_parent.add_child(fx)
+			fx.global_position = global_position
+			fx.setup(Color(0.75, 0.7, 0.6, 0.5), 1.8, 0.3)
+		# Crunch sound + a small nudge on the player's camera shake (both null-safe,
+		# matching the project's group-lookup convention).
+		var sound_manager := get_tree().get_first_node_in_group("sound_manager")
+		if sound_manager and sound_manager.has_method("play_crunch"):
+			sound_manager.play_crunch()
+		if "shake_amount" in player:
+			player.shake_amount = maxf(player.shake_amount, 0.15)
+		# Squash flat, then free — the TWEEN owns the queue_free. A tween dies
+		# with its node, so a chunk unloading mid-squash frees us safely anyway.
+		var squash := create_tween()
+		squash.tween_property(self, "scale:y", scale.y * 0.15, 0.12)
+		squash.tween_callback(queue_free)
 		return
 
 	# While fleeing Phoboman's stink, crocodiles can't bring themselves to bite.
