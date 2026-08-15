@@ -177,6 +177,53 @@ const GIRAFFE_PATCH_COUNT: int = 3
 const GIRAFFE_PATCH_SIZE: Vector3 = Vector3(0.06, 0.45, 0.55)
 
 # ============================================================================
+# CONSTANTS — procedural walk animation
+# ============================================================================
+# Same idiom as piglet_crocodile_ai._animate_body: no AnimationPlayer anywhere,
+# just sine waves written onto limb pivots. The one twist here is that the
+# stride phase is a pure function of METRES WALKED, not of accumulated time —
+# see STRIDE_FREQUENCY.
+
+## Radians of stride phase per METRE the herd travels. Tying the stride to
+## distance instead of elapsed time does two things for free: feet keep pace
+## with the ground at any walk speed (a faster herd steps faster, exactly like
+## the crocodile's move_factor-scaled stride), and the phase is stateless — it
+## is recomputed from _herd_travelled every frame, so it can never drift.
+## 1.6 rad/m at ~2.5 m/s is a ~0.6 Hz gait: a heavy, unhurried big-animal walk.
+const STRIDE_FREQUENCY: float = 1.6
+
+## Peak leg swing (degrees about the hip pivot's X axis).
+const LEG_SWING_DEG: float = 18.0
+
+## Stride phase offset per leg, in the fixed FL/FR/RL/RR order every builder
+## uses. Diagonal pairs move together (front-left with rear-right) and the two
+## diagonals are half a cycle apart — a real quadruped trot, which is what a
+## walking elephant or giraffe reads as at this distance.
+const LEG_PHASE_OFFSETS: Array[float] = [0.0, PI, PI, 0.0]
+
+## Vertical body bob (metres), oscillating at TWICE the stride rate — one dip
+## per footfall rather than one per full cycle. Same bob-is-double-the-stride
+## relationship as the crocodile's _animate_body.
+const BODY_BOB_AMOUNT: float = 0.06
+
+## Giraffe neck bob: a couple of degrees at HALF the stride rate (a long neck
+## swings slowly), layered on top of the neck's rest lean — never overwriting
+## it, the same compose-on-rest-pose discipline as the crocodile's
+## model_base_scale / model_base_y.
+const NECK_BOB_DEG: float = 3.5
+
+## Elephant trunk sway (degrees per segment, side to side about Z) and the
+## phase LAG between consecutive segments. The lag is what makes the chain read
+## as floppy: each segment starts its swing slightly after its parent, so the
+## trunk trails in an S instead of swinging as one rigid bar.
+const TRUNK_SWAY_DEG: float = 7.0
+const TRUNK_SEGMENT_LAG: float = 0.6
+
+## Trunk sway rate as a fraction of the stride rate — slower than the legs, so
+## the trunk drifts rather than marching in time with the feet.
+const TRUNK_SWAY_RATE: float = 0.7
+
+# ============================================================================
 # STATE
 # ============================================================================
 
@@ -518,7 +565,7 @@ func _process(delta: float) -> void:
 
 
 # ============================================================================
-# CORE (stubs — herd building/movement/animation land in later tasks)
+# CORE (herd spawning, migration movement, animation)
 # ============================================================================
 
 func _find_player() -> Node3D:
@@ -684,6 +731,53 @@ func _update_herd(delta: float) -> void:
 		var motion := root.position - old_pos
 		if motion.length_squared() > 0.000001:
 			root.rotation.y = atan2(-motion.x, -motion.z)
+
+	_animate_animals()
+
+
+func _animate_animals() -> void:
+	## The ONE animation loop for every live animal — there are no per-animal
+	## scripts and no AnimationPlayer anywhere in this feature, exactly like the
+	## player's limb sines and the crocodile's _animate_body.
+	##
+	## Everything here is a pure function of _herd_travelled (metres walked) plus
+	## the animal's own random phase offset, so nothing accumulates and nothing
+	## drifts: the herd's stride is literally "where its feet are on the ground".
+	## The loop allocates nothing per frame — every node reference was cached at
+	## spawn in _add_animal, so there is not one get_node() call in here.
+	var leg_swing := deg_to_rad(LEG_SWING_DEG)
+	var neck_bob := deg_to_rad(NECK_BOB_DEG)
+	var trunk_sway := deg_to_rad(TRUNK_SWAY_DEG)
+
+	for animal: Dictionary in _animals:
+		# Per-animal phase offset — the herd is never in lockstep, same reason
+		# the crocodiles carry an instance_phase.
+		var stride: float = _herd_travelled * STRIDE_FREQUENCY + float(animal["phase"])
+
+		# Legs: swing from the hip, diagonal pairs in trot phase (see
+		# LEG_PHASE_OFFSETS). The pivot is at hip height with the box hung
+		# below it, so this rotation reads as a real limb swing.
+		var legs: Array[Node3D] = animal["legs"]
+		for i: int in legs.size():
+			legs[i].rotation.x = sin(stride + LEG_PHASE_OFFSETS[i]) * leg_swing
+
+		# Body: one shallow dip per footfall, i.e. twice the stride rate,
+		# composed on the body's cached rest height.
+		var body: Node3D = animal["body"]
+		body.position.y = float(animal["body_rest_y"]) + sin(stride * 2.0) * BODY_BOB_AMOUNT
+
+		# Giraffe neck: a slow bob layered ON TOP of the rest lean (null for
+		# elephants — the record simply carries no neck for that species).
+		var neck: Node3D = animal["neck"]
+		if neck != null:
+			neck.rotation.x = float(animal["neck_rest"]) + sin(stride * 0.5) * neck_bob
+
+		# Elephant trunk: each chained segment sways side to side one
+		# TRUNK_SEGMENT_LAG behind its parent, so the chain trails in a soft S.
+		# (Empty for giraffes.)
+		var trunk: Array[Node3D] = animal["trunk"]
+		for i: int in trunk.size():
+			trunk[i].rotation.z = sin(stride * TRUNK_SWAY_RATE - float(i) * TRUNK_SEGMENT_LAG) * trunk_sway
 
 
 func _despawn_herd() -> void:

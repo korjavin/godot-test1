@@ -239,24 +239,24 @@ Dependencies identified: none new. No asset files, no Python pipeline, no autolo
 
 ### Task 5: Procedural walk animation (single loop over all animals)
 
-- [ ] add animation constants: `STRIDE_FREQUENCY`, `LEG_SWING_DEG`, `BODY_BOB_AMOUNT`,
+- [x] add animation constants: `STRIDE_FREQUENCY`, `LEG_SWING_DEG`, `BODY_BOB_AMOUNT`,
       `NECK_BOB_DEG`, `NECK_BOB_FREQUENCY`, `TRUNK_SWAY_DEG`, `TRUNK_SWAY_FREQUENCY`
-- [ ] in `_process`, after the herd movement, run ONE loop over `_animals` that advances a
+- [x] in `_process`, after the herd movement, run ONE loop over `_animals` that advances a
       shared `_animation_time` and per-animal `stride_phase += delta * STRIDE_FREQUENCY`
       (scaled by the herd walk speed so faster herds step faster — same `move_factor` idea as
       `_animate_body`)
-- [ ] legs: `pivot.rotation.x = sin(stride_phase + leg_phase_offset) * LEG_SWING_DEG` in
+- [x] legs: `pivot.rotation.x = sin(stride_phase + leg_phase_offset) * LEG_SWING_DEG` in
       radians, with the diagonal pairs a half-cycle apart (front-left/rear-right in phase,
       the other diagonal offset by `PI`) — a real quadruped trot, and comment it as such
-- [ ] body: a small vertical bob at **twice** the stride rate (`sin(stride_phase * 2.0)`),
+- [x] body: a small vertical bob at **twice** the stride rate (`sin(stride_phase * 2.0)`),
       exactly the crocodile's bob relationship, applied to the `Body` node's local y
-- [ ] giraffe neck: a gentle bob — `neck.rotation.x` oscillating a couple of degrees at
+- [x] giraffe neck: a gentle bob — `neck.rotation.x` oscillating a couple of degrees at
       `NECK_BOB_FREQUENCY`, layered on the neck's **rest angle** (cache the rest rotation at
       build time so the animation composes on top instead of overwriting it — same
       `model_base_scale` / `model_base_y` discipline as the crocodile)
-- [ ] elephant trunk: each chained segment sways on `rotation.z` (or x) with a small
+- [x] elephant trunk: each chained segment sways on `rotation.z` (or x) with a small
       **per-segment phase lag**, so the trunk reads as a floppy chain rather than a rigid bar
-- [ ] verify by reading the code that the loop does **zero allocations per frame** (no
+- [x] verify by reading the code that the loop does **zero allocations per frame** (no
       `Array`/`Dictionary`/`Basis` construction in the inner loop beyond cheap value types,
       no `get_node()` calls — all pivots are cached references from build time)
 
