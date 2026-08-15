@@ -10,6 +10,14 @@ extends SceneTree
 # (s * 0.71 for a prop, base_width * 0.71 + 0.3 for a hut) and create_box emits
 # exactly those boxes at exactly those positions — so after the fix, no two
 # half-diagonal circles may overlap at all. Expected result: 0.
+#
+# SECOND CHECK, same loop: every solid must also fit INSIDE the CAMP_RADIUS circle
+# the camp appends to `obstacles`. That one number is simultaneously the placement
+# test against the chunk's blocks, the crocodile exclusion and the road-coin skip
+# radius — so a camp whose geometry pokes outside it makes all three quietly false
+# (huts fused into scattered blocks and massifs, on ground the placement test never
+# checked). Without this, retuning CAMP_HUT_RING_MAX 6.5 -> 7.5 breaks the bound
+# (reach 10.36 > 9.4) and the pair check above still prints a clean 0.
 
 func _init() -> void:
 	var terrain_script := load("res://scripts/endless_terrain.gd")
@@ -18,6 +26,8 @@ func _init() -> void:
 
 	var camps := 0
 	var bad_camps := 0
+	var over_radius := 0
+	var worst_reach := 0.0
 	var solids_total := 0
 
 	for i in range(4000):
@@ -64,10 +74,26 @@ func _init() -> void:
 				bad_camps += 1
 				break
 
+		# Containment: the LAST obstacle appended is the camp's own footprint circle
+		# (spawn_camp_in_chunk appends exactly one, and this harness passes an
+		# otherwise empty list). Every solid circle must lie wholly inside it.
+		var camp_ob: Dictionary = obstacles[obstacles.size() - 1]
+		var camp_xz := Vector2(camp_ob.pos.x, camp_ob.pos.z)
+		var outside := false
+		for c in circles:
+			var reach: float = camp_xz.distance_to(c.pos) + c.r
+			worst_reach = maxf(worst_reach, reach)
+			if reach > float(camp_ob.radius) + 0.001:
+				outside = true
+		if outside:
+			over_radius += 1
+
 		mesh.free()
 		body.free()
 
 	print("camps built: %d, solids: %d, camps with an interpenetrating pair: %d (%.1f%%)"
 		% [camps, solids_total, bad_camps, 100.0 * float(bad_camps) / maxf(1.0, float(camps))])
+	print("camps with geometry outside CAMP_RADIUS: %d, worst reach from centre: %.3f m"
+		% [over_radius, worst_reach])
 	terrain.free()
 	quit()

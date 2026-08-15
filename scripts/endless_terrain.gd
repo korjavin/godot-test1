@@ -324,10 +324,14 @@ const BOSS_SEED: int = 0xB0_55  # "BOSS"-ish; arbitrary fixed constant
 ## Kill switch, mirrors spawn_coins / spawn_crocodiles.
 @export var spawn_artifacts: bool = true
 
-## Per-chunk chance of hosting an artifact: 0.05 ≈ one per 20 chunks, inside the
-## one-per-15-to-25 target band. Rarity is also the draw-call budget (see
-## ARTIFACT_MAX_ACCENTS below).
-const ARTIFACT_CHANCE: float = 0.05
+## Per-chunk chance of ROLLING an artifact, before the candidate loop rejects
+## spots on the road, in a river, or on stone already in the chunk. Measured
+## survival across a 61x61 field is 59.5%, so 0.08 lands ~1 built artifact per 24
+## chunks — the same rarity the 0.05 roll produced when placement was unchecked
+## and the one-per-15-to-25 target band. Retuned alongside the overlap test: with
+## rejections added and the chance left at 0.05 the rate fell to 1 per 38.
+## Rarity is also the draw-call budget (see ARTIFACT_MAX_ACCENTS below).
+const ARTIFACT_CHANCE: float = 0.08
 
 ## Fixed salt XORed into run_seed for the artifact hash stream — same spirit as
 ## BOSS_SEED / ROAD_COIN_SEED: an arbitrary constant that keeps this stream
@@ -335,8 +339,20 @@ const ARTIFACT_CHANCE: float = 0.05
 const ARTIFACT_SALT: int = 0xA27_1FA
 
 ## Candidate spots tried inside a chunk before giving up (a try is rejected when
-## it lands too close to the coin road — see ARTIFACT_ROAD_CLEARANCE).
+## it lands too close to the coin road, in a river, or on stone that is already
+## there — see spawn_artifact_in_chunk, which owns the loop).
 const ARTIFACT_PLACE_TRIES: int = 4
+
+## Placement radius (metres) — the WIDEST footprint any of the five shapes can
+## return, used by the candidate test because the real radius is only known once
+## the builder has run. Bounded by the stone circle, the widest of the five:
+##     stone circle: ring_r (4..6) + 1.0        -> 7.0   <- the max
+##     arch:         radius (fixed 5.0) + 1.0   -> 6.0
+##     spiral:       spiral_r (3..4) + 1.2      -> 5.2
+##     colossus head: 3.2      monolith: 2.5
+## Must stay under ARTIFACT_EDGE_MARGIN (12) or an artifact could straddle a chunk
+## seam. Retune any builder's radius and this moves with it.
+const ARTIFACT_RADIUS: float = 7.0
 
 ## Minimum lateral distance from the road centerline. The widest coin band
 ## half-width is road_width_max * 0.5 = 10, so 14 keeps artifacts clear of the
@@ -2440,67 +2456,46 @@ func _artifact_at(chunk_pos: Vector2i) -> Dictionary:
 	block/crocodile/coin is exactly where it was before artifacts existed.
 
 	@param chunk_pos: Chunk coordinates to decide for.
-	@return: {} when this chunk has no artifact (the ~19-in-20 case, or when every
-	         candidate spot fell too close to the coin road or into a river);
-	         otherwise
-	         { "local": Vector3 (chunk-LOCAL position, y = 0),
-	           "kind": int (0..4, which of the five shapes),
-	           "seed": int (seeds the shape builder's own private RNG) }.
+	@return: {} when this chunk has no artifact (the ~19-in-20 case); otherwise
+	         { "seed": int } — the seed for the artifact's private RNG, which
+	         spawn_artifact_in_chunk uses for placement, shape and geometry.
+
+	WHY THE CANDIDATE LOOP IS NOT HERE — same split, for the same reason, as
+	_camp_at / spawn_camp_in_chunk: when this runs the chunk has no geometry yet,
+	so the only tests available are road + river, and neither rejects the thing
+	that actually matters. Judging candidates here left artifacts placed with NO
+	obstacle test at all: measured over a 61x61 chunk field, 51.5% of artifacts
+	interpenetrated a scattered block or a feature structure, one of them buried
+	16.5 m deep inside a pyramid — taking its coin ring and its ONE guaranteed gem,
+	the whole reason to detour off the road, into the stone with it. That is
+	exactly the fused-solids bug _camp_spot_clear exists to prevent, one landmark
+	over. The loop therefore lives in spawn_artifact_in_chunk, where `obstacles`
+	exists.
 
 	EDUCATIONAL NOTE — the determinism contract:
 	- Within a run the same chunk yields the IDENTICAL artifact (same spot, same
-	  shape, same builder seed) no matter how often it unloads and regenerates —
-	  the RNG is seeded purely from chunk coords + run_seed, and its draw order
-	  below is fixed (chance roll, then 2 draws per placement try, then kind,
-	  then builder seed).
+	  shape, same stones) no matter how often it unloads and regenerates: the RNG
+	  is seeded purely from chunk coords + run_seed, and every draw downstream
+	  comes off that one seeded stream in a fixed order.
 	- Across runs, new_run() re-rolls run_seed, so artifacts land elsewhere.
-	- The road-clearance test reads the station cache (pure in `k`) and the river
-	  test reads the biome field (pure in world position + run_seed), so both are
-	  load-order independent: rejection is a property of the POSITION, not of
-	  when the chunk happened to generate.
+	- The road-clearance test reads the station cache (pure in `k`), the river test
+	  reads the biome field (pure in world position + run_seed), and the overlap
+	  test reads the chunk's own obstacle list (pure in chunk coords + run_seed) —
+	  so all three are load-order independent: rejection is a property of the
+	  POSITION, not of when the chunk happened to generate.
 	"""
 	var rng := RandomNumberGenerator.new()
 	# Same coordinate mixing as the chunk object seed, but salted so this stream
 	# never collides with (or perturbs) any other deterministic spawn site.
 	rng.seed = hash(Vector3i(chunk_pos.x * 73856093, chunk_pos.y * 19349663, run_seed ^ ARTIFACT_SALT))
 
-	# 1. Rarity roll — most chunks bail here.
+	# Rarity roll — most chunks bail here. This is the ONLY draw taken from the
+	# stream at this point; the rest happen in spawn_artifact_in_chunk off an RNG
+	# re-seeded from `seed`, so the two stay a single fixed sequence per chunk.
 	if rng.randf() >= ARTIFACT_CHANCE:
 		return {}
 
-	var center := chunk_to_world(chunk_pos)
-	# Candidates stay ARTIFACT_EDGE_MARGIN inside the chunk so the whole artifact
-	# (widest footprint < the margin) never straddles a seam.
-	var half := chunk_size / 2.0 - ARTIFACT_EDGE_MARGIN
-
-	# 2. Try a few candidate spots; accept the FIRST one far enough from the road
-	# centerline AND out of the water. This is what produces the off-road bias AND
-	# the hard "never on the centerline" rule. Acceptance stops the loop, so the
-	# draw sequence is still fixed for a given outcome (2 draws per try until the
-	# accepted try), and the kind/seed draws always follow in the same order.
-	# Adding the river test to the SAME acceptance condition keeps that shape: an
-	# artifact whose first candidate lands in a river just tries the next spot, or
-	# is skipped entirely — no draw is inserted or removed.
-	var local_x := 0.0
-	var local_z := 0.0
-	var placed := false
-	var tries := 0
-	while tries < ARTIFACT_PLACE_TRIES and not placed:
-		tries += 1
-		local_x = rng.randf_range(-half, half)
-		local_z = rng.randf_range(-half, half)
-		if _road_lateral_distance(center.x + local_x, center.z + local_z, ARTIFACT_ROAD_CLEARANCE) >= ARTIFACT_ROAD_CLEARANCE \
-				and not is_river_at(Vector3(center.x + local_x, 0.0, center.z + local_z)):
-			placed = true
-	if not placed:
-		return {}
-
-	# 3. Which of the five shapes, and 4. a further seed for the shape builder's
-	# own RNG (so builders can draw freely without this function caring how many
-	# draws each shape needs).
-	var kind := rng.randi_range(0, 4)
-	var builder_seed := rng.randi()
-	return { "local": Vector3(local_x, 0.0, local_z), "kind": kind, "seed": builder_seed }
+	return { "seed": rng.randi() }
 
 # ============================================================================
 # ARTIFACT SHAPE BUILDERS (the five code-built "lost civilization" landmarks)
@@ -2701,8 +2696,9 @@ func spawn_artifact_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, 
 	@param chunk_pos: Chunk coordinates being generated.
 	@param parent_chunk: The chunk mesh — accents and reward coins parent here
 	                     (per-chunk parenting rule: they unload with the chunk).
-	@param obstacles: The chunk's block-footprint list; the artifact appends its
-	                  own footprint so later spawners react to it (see below).
+	@param obstacles: The chunk's block-footprint list — READ to reject candidate
+	                  spots that would bury the artifact in existing stone, then
+	                  appended to with the artifact's own footprint (see below).
 	@param block_batch / block_body: The chunk's visual batch + collision body,
 	                                 threaded through to create_box.
 	"""
@@ -2712,15 +2708,47 @@ func spawn_artifact_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, 
 	if art.is_empty():
 		return
 
-	# The shape builder draws from its OWN RNG, seeded by _artifact_at's "seed"
-	# draw — so each builder can consume as many draws as its shape needs without
-	# the placement function (or anything else) caring.
+	# Everything below draws from ONE private RNG seeded by _artifact_at's roll, so
+	# each builder can consume as many draws as its shape needs without any other
+	# stream caring.
 	var rng := RandomNumberGenerator.new()
 	rng.seed = art.seed
-	var center: Vector3 = art.local
+
+	var chunk_center := chunk_to_world(chunk_pos)
+	# Candidates stay ARTIFACT_EDGE_MARGIN (12) inside the chunk so the whole
+	# artifact (widest footprint ARTIFACT_RADIUS 7.0 < the margin) never straddles
+	# a seam.
+	var half := chunk_size / 2.0 - ARTIFACT_EDGE_MARGIN
+
+	# Try a few candidate spots; accept the FIRST one that clears the road, the
+	# water AND the stone already in this chunk. The road rejection is what
+	# produces the off-road bias and the hard "never on the centerline" rule;
+	# the overlap rejection is what keeps the landmark readable (see _artifact_at
+	# for the 51.5%-interpenetration measurement that put it here). Every try
+	# failing means NO artifact — a monolith fused into a mountain massif reads
+	# worse than a chunk without one, which is the same call camps make.
+	# _biome_spot_ok is the single home of that whole rule; ARTIFACT_RADIUS is the
+	# widest any of the five shapes can be, since the real one is only known after
+	# its builder runs.
+	var local_x := 0.0
+	var local_z := 0.0
+	var placed := false
+	var tries := 0
+	while tries < ARTIFACT_PLACE_TRIES and not placed:
+		tries += 1
+		local_x = rng.randf_range(-half, half)
+		local_z = rng.randf_range(-half, half)
+		if _biome_spot_ok(chunk_center, local_x, local_z, ARTIFACT_RADIUS, ARTIFACT_ROAD_CLEARANCE, obstacles):
+			placed = true
+	if not placed:
+		return
+
+	# Which of the five shapes.
+	var kind := rng.randi_range(0, 4)
+	var center := Vector3(local_x, 0.0, local_z)
 
 	var footprint: Dictionary
-	match int(art.kind):
+	match kind:
 		0: footprint = _artifact_monolith(center, rng, parent_chunk, block_batch, block_body)
 		1: footprint = _artifact_arch(center, rng, parent_chunk, block_batch, block_body)
 		2: footprint = _artifact_stone_circle(center, rng, parent_chunk, block_batch, block_body)

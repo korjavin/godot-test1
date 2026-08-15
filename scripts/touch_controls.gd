@@ -653,6 +653,18 @@ func _process(delta: float) -> void:
 	_resume_overlay.visible = _is_touch and get_tree().paused and not _enable_overlay.visible
 
 
+## True while one of the three full-rect overlays owns the screen (first-run enable,
+## focus-loss resume, portrait guard). All three are meant to be EXCLUSIVE — they
+## swallow every tap — but they can only swallow taps that reach them, and any HUD
+## sibling declared after TouchControls draws on top and wins hit-testing. So a
+## sibling with its own always-on button (the tuning gear) asks this and hides while
+## it is true. Getting it wrong is not cosmetic: a tap stolen from the enable overlay
+## is the ONE user gesture iOS grants DeviceMotionEvent.requestPermission() and the
+## browser grants WebAudio, so motion AND all audio stay dead for the session.
+func has_modal() -> bool:
+	return _enable_overlay.visible or _resume_overlay.visible or _portrait_guard.visible
+
+
 ## Watch for motion to actually start after an enable tap. While `_motion_watching`:
 ## if a fresh real motion sample is flowing, CONFIRM — latch `_motion_enabled` and stop
 ## watching (the overlay is already hidden). Otherwise count down `MOTION_ENABLE_TIMEOUT`;

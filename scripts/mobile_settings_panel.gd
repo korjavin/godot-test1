@@ -187,6 +187,23 @@ func _input(event: InputEvent) -> void:
 
 
 func _process(_delta: float) -> void:
+	# Yield the screen to any TouchControls full-rect overlay. This node is the HUD
+	# sibling declared AFTER TouchControls, so it draws last and WINS hit-testing:
+	# the gear is a Button (MOUSE_FILTER_STOP) parked bottom-left over the whole
+	# region of the enable / resume / portrait overlays, all three of which exist to
+	# swallow every tap. Worst case is the first-run enable overlay, whose tap is the
+	# one user gesture iOS needs for DeviceMotionEvent.requestPermission() and the
+	# browser needs to unlock audio — spend it on the gear and motion and sound stay
+	# dead for the session. The panel body is force-closed too, or it covers the
+	# resume overlay it just stole the tap from. Runs before the open/visible
+	# early-return below because it must apply while the panel is CLOSED.
+	if _gear_button != null:
+		var touch_ui: Node = get_tree().get_first_node_in_group("touch_controls")
+		var modal: bool = touch_ui != null and touch_ui.has_method("has_modal") and touch_ui.has_modal()
+		_gear_button.visible = not modal
+		if modal and _panel_open:
+			_set_panel_open(false)
+
 	# Only do work while the panel is actually open and visible — the diagnostics read
 	# is cheap but pointless when nobody can see it, and on desktop the panel is hidden
 	# so this early-returns immediately.

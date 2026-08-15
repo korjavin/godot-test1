@@ -49,6 +49,18 @@ extends Node
 ## on solid ground on both platforms.
 const FIELD_RADIUS: float = 140.0
 
+## Longest formation offset (metres) any member can sit from its herd centre.
+## _spawn_herd places the CENTRE and _add_animal then adds each member's offset on
+## top, so the spawn circle has to be FIELD_RADIUS pulled in by this, or the
+## outermost member lands past the terrain FIELD_RADIUS was sized for. Bounded by
+## the giraffe echelon, the widest of the three formations:
+##     lat = 3.5 * HERD_SPREAD_LATERAL * 0.6 + 1.5 = 14.1
+##     lon = 3.5 * HERD_SPREAD_LONG    * 0.5 + 1.5 = 10.25   (step = (8-1)/2)
+##     |offset| = 17.43   <= 17.5   ✓
+## The caravan line is second at sqrt(9.9² + 1.6²) = 10.03. Retune GIRAFFE_FLOCK_MAX,
+## HERD_SPREAD_*, or the caravan line and this moves with them.
+const FORMATION_MAX_EXTENT: float = 17.5
+
 ## Distance (metres) from the live player position beyond which a herd is
 ## freed. Past FIELD_RADIUS so a herd is never culled mid-view — it always
 ## walks fully out of the visible field before despawning — but bounded by the
@@ -260,13 +272,16 @@ const CARAVAN_BEASTS_MAX: int = 6
 ## rather than a marching column.
 ##
 ## The spacing is BOUNDED by the field, not chosen by eye. The line is centred on
-## the herd position, which spawns exactly on the FIELD_RADIUS circle, so the rear
-## member sits half a line-length further out and must still land inside
-## DESPAWN_RADIUS — and inside the ~150 m the web terrain actually reaches, which
-## is the whole reason FIELD_RADIUS is 140:
-##     (CARAVAN_HERDERS_MAX + CARAVAN_BEASTS_MAX - 1) / 2 * SPACING
-##      <= DESPAWN_RADIUS - FIELD_RADIUS
-##     4.5 * 2.2 = 9.9 <= 10.0   ✓
+## the herd position, so the rear member sits half a line-length further out and
+## must still land inside the ~150 m the web terrain actually reaches. That bound
+## is now enforced structurally by FORMATION_MAX_EXTENT (the spawn circle is pulled
+## in by it, and the despawn test subtracts the herd's real widest offset), so what
+## this has to satisfy is the caravan's own contribution to that extent:
+##     hypot((HERDERS_MAX + BEASTS_MAX - 1) / 2 * SPACING, JITTER)
+##      <= FORMATION_MAX_EXTENT
+##     hypot(4.5 * 2.2, 1.6) = hypot(9.9, 1.6) = 10.03 <= 17.5   ✓
+## Note the JITTER leg: the rear member is offset laterally as well as back, so the
+## plain 9.9 understates it.
 ## At 3.0 a full ten-member caravan reached 13.5 m, putting its tail 153.5 m out —
 ## standing over open sky on the web build. Retune the party size and this
 ## together.
@@ -391,6 +406,14 @@ var _herd_travelled: float = 0.0
 ## Seconds this herd has been alive, against MAX_HERD_LIFETIME (see there for
 ## why a purely relative despawn test can stall forever).
 var _herd_age: float = 0.0
+
+## Longest formation offset this herd actually built, filled in by _add_animal.
+## The despawn test measures the herd CENTRE, so without subtracting this the
+## members on the far side of the formation walk that much further than
+## DESPAWN_RADIUS — over open sky on the web build. Bounded by
+## FORMATION_MAX_EXTENT; using the herd's real value keeps a small elephant
+## family on screen as long as it always was.
+var _herd_offset_max: float = 0.0
 
 # ============================================================================
 # SHARED RESOURCES (static — one per PROCESS, not one per manager/animal)
@@ -971,15 +994,21 @@ func _spawn_herd() -> void:
 	var miss := _rng.randf_range(MIGRATION_MISS_MIN, MIGRATION_MISS_MAX)
 	if _rng.randf() < 0.5:
 		miss = -miss
-	# The along-heading setback shrinks to keep the origin ON the FIELD_RADIUS
-	# circle (Pythagoras), not past it — otherwise the lateral offset would push
-	# the spawn beyond DESPAWN_RADIUS and the herd would be freed on its first
-	# update frame. |miss| < FIELD_RADIUS always, so the root is real.
-	var setback := sqrt(FIELD_RADIUS * FIELD_RADIUS - miss * miss)
+	# The along-heading setback shrinks to keep the origin ON the spawn circle
+	# (Pythagoras), not past it — otherwise the lateral offset would push the spawn
+	# beyond DESPAWN_RADIUS and the herd would be freed on its first update frame.
+	# The circle is FIELD_RADIUS pulled in by FORMATION_MAX_EXTENT, because
+	# _add_animal places each member at `centre + offset` and never subtracts: with
+	# the centre ON the 140 m circle the outermost giraffe stood at ~157 m, over the
+	# open sky past the web build's ~150 m of terrain — the exact failure
+	# FIELD_RADIUS exists to prevent. |miss| < spawn_radius always, so the root is real.
+	var spawn_radius := FIELD_RADIUS - FORMATION_MAX_EXTENT
+	var setback := sqrt(spawn_radius * spawn_radius - miss * miss)
 	_herd_position = player_ground - _herd_heading * setback + _herd_lateral * miss
 	_herd_speed = _rng.randf_range(WALK_SPEED_MIN, WALK_SPEED_MAX)
 	_herd_travelled = 0.0
 	_herd_age = 0.0
+	_herd_offset_max = 0.0
 
 	# Build the members with their formation offsets (herd-local lateral/long
 	# pairs turned into world-space vectors — heading never changes, so the
@@ -1093,6 +1122,8 @@ func _add_animal(record: Dictionary, offset: Vector3) -> void:
 	record["offset"] = offset                       # formation slot, world-space
 	record["phase"] = _rng.randf_range(0.0, TAU)    # stride offset — no lockstep
 	_animals.append(record)
+	# Widest slot in this formation — the despawn test subtracts it (see the var).
+	_herd_offset_max = maxf(_herd_offset_max, offset.length())
 
 
 func _update_herd(delta: float) -> void:
@@ -1115,19 +1146,28 @@ func _update_herd(delta: float) -> void:
 	# against a MOVING player, so a player travelling with the herd at the herd's
 	# own speed keeps it in range forever and the feature stalls for good (see
 	# MAX_HERD_LIFETIME).
-	_herd_age += delta
-	if player == null \
-			or _herd_age > MAX_HERD_LIFETIME \
-			or _herd_position.distance_to(player.global_position) > DESPAWN_RADIUS:
+	if player == null or _herd_age + delta > MAX_HERD_LIFETIME:
 		_despawn_herd()
 		return
 
+	_herd_age += delta
 	_herd_travelled += _herd_speed * delta
 	# Centre = straight line along the heading + the gentle shared meander on
 	# the lateral axis, phased by distance walked (see MEANDER_FREQUENCY).
 	_herd_position += _herd_heading * (_herd_speed * delta)
 	var centre := _herd_position \
 			+ _herd_lateral * (sin(_herd_travelled * MEANDER_FREQUENCY) * MEANDER_AMPLITUDE)
+
+	# The distance test measures `centre` — the point every member is actually
+	# placed relative to, meander included — reduced by this herd's widest
+	# formation offset. Measuring _herd_position instead (no meander) and not
+	# subtracting the offset let the far side of the line walk ~14 m past the
+	# radius, which is exactly the terrain extent DESPAWN_RADIUS is bounded by
+	# (see _herd_offset_max). It runs AFTER the advance so the point tested is the
+	# one the members are about to be eased toward, not last tick's.
+	if centre.distance_to(player.global_position) > DESPAWN_RADIUS - _herd_offset_max:
+		_despawn_herd()
+		return
 
 	# Facing: the centre's own velocity — the heading plus the meander's
 	# derivative, which is exact and needs no previous-frame state. Computed
