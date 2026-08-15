@@ -200,11 +200,11 @@ Dependencies identified: none new. No assets, no GPUParticles3D (web runs
       skip it rather than growing `sound_manager.gd`, and note the skip in the comment
 
 ### Task 7: Wire the manager into `scenes/main.tscn` (minimal diff)
-- [ ] add exactly one `[ext_resource type="Script" path="res://scripts/weather_manager.gd" id="15_weather"]`
+- [x] add exactly one `[ext_resource type="Script" path="res://scripts/weather_manager.gd" id="15_weather"]`
       line and one node block
       `[node name="Weather" type="Node" parent="." groups=["weather"]]` with its
       `script = ExtResource("15_weather")`, placed next to `SoundManager`
-- [ ] bump `load_steps` accordingly and change NOTHING else in the file — a parallel
+- [x] bump `load_steps` accordingly and change NOTHING else in the file — a parallel
       fauna executor is adding its own node line, so the merge must stay trivial
 
 ### Task 8: The TWO Windman hooks in `scripts/player_controller.gd` (do LAST)
