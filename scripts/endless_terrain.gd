@@ -2935,11 +2935,23 @@ func _camp_props(center: Vector3, rng: RandomNumberGenerator, block_batch: Array
 	@param rng: The camp's private RNG.
 	@param block_batch / block_body: The chunk's visual batch + collision body.
 	@param huts: The huts already built ({ "pos", "radius" }), so a prop never ends
-	             up buried in a wall — see _camp_prop_clear.
+	             up buried in a wall — see _camp_spot_clear.
 
 	A candidate that lands in a hut is DROPPED, not retried: the counts are pure
 	ambience, and one crate fewer reads better than a loop that can still fail.
+
+	EACH ACCEPTED PROP JOINS THE TEST LIST. Testing only against the huts was the
+	same bug one scale down: 3-6 crates and 2-3 posts share ONE 2.0-4.0 m ring, so
+	two crates land within a crate's width of each other often — measured a third of
+	camps had an interpenetrating solid pair, and both crates and posts collide, so
+	it was a merged blob the player walked into. Appending after the create_box is
+	free for determinism: every draw for a candidate happens BEFORE the test, so a
+	drop consumes exactly the same draws as a placement.
 	"""
+	# huts is the caller's list — copy it, so growing it here can never leak a prop
+	# into the hut footprints the caller still holds.
+	var solids: Array = huts.duplicate()
+
 	var crates := rng.randi_range(CAMP_CRATE_MIN, CAMP_CRATE_MAX)
 	var i := 0
 	while i < crates:
@@ -2949,9 +2961,11 @@ func _camp_props(center: Vector3, rng: RandomNumberGenerator, block_batch: Array
 		# Cubes, not slabs: one size draw keeps a crate reading as a crate.
 		var s := rng.randf_range(CAMP_CRATE_SIZE_MIN, CAMP_CRATE_SIZE_MAX)
 		var pos := center + Vector3(cos(a) * r, s / 2.0, sin(a) * r)
-		if not _camp_spot_clear(pos, s * 0.71, huts):
+		var crate_radius := s * 0.71
+		if not _camp_spot_clear(pos, crate_radius, solids):
 			continue
 		create_box(pos, Vector3(s, s, s), rng.randf_range(0.0, TAU), rng, block_batch, block_body, 0.0, CAMP_WOOD)
+		solids.append({ "pos": pos, "radius": crate_radius })
 
 	var posts := rng.randi_range(CAMP_POST_MIN, CAMP_POST_MAX)
 	i = 0
@@ -2960,15 +2974,20 @@ func _camp_props(center: Vector3, rng: RandomNumberGenerator, block_batch: Array
 		var a := rng.randf_range(0.0, TAU)
 		var r := rng.randf_range(CAMP_PROP_RING_MIN, CAMP_PROP_RING_MAX)
 		var pos := center + Vector3(cos(a) * r, CAMP_POST_SIZE.y / 2.0, sin(a) * r)
-		if not _camp_spot_clear(pos, CAMP_POST_SIZE.x * 0.71, huts):
+		var post_radius := CAMP_POST_SIZE.x * 0.71
+		if not _camp_spot_clear(pos, post_radius, solids):
 			continue
 		create_box(pos, CAMP_POST_SIZE, rng.randf_range(0.0, TAU), rng, block_batch, block_body, 0.0, CAMP_WOOD)
+		solids.append({ "pos": pos, "radius": post_radius })
 
-func _camp_spot_clear(pos: Vector3, radius: float, huts: Array) -> bool:
+func _camp_spot_clear(pos: Vector3, radius: float, solids: Array) -> bool:
 	"""
-	True when a `radius` circle at `pos` clears every hut built so far. Used for
-	BOTH of the camp's overlap rules, because both are the same test:
+	True when a `radius` circle at `pos` clears every solid thing built so far
+	({ "pos", "radius" } records). It is the camp's ONE overlap rule, and every
+	solid the camp builds is judged by it against everything solid before it:
 
+	- PROPS vs PROPS: 3-6 crates and 2-3 posts all sit on the same 2.0-4.0 m ring,
+	  so without this a third of camps had at least one interpenetrating pair.
 	- PROPS vs huts: the prop ring (CAMP_PROP_RING_*) and the hut ring
 	  (CAMP_HUT_RING_*) touch at 4 m, but a hut is up to 2.9 m of radius around ITS
 	  ring position, so its stone reaches inward to ~1.1 m — well into the prop
@@ -2984,8 +3003,8 @@ func _camp_spot_clear(pos: Vector3, radius: float, huts: Array) -> bool:
 	  36 six-hut camps and half of the five-hut ones. Both huts collide, so that was
 	  a merged, unreadable blob the player walked into. After: 0 of 175.
 	"""
-	for hut in huts:
-		if Vector2(pos.x - hut.pos.x, pos.z - hut.pos.z).length() < hut.radius + radius:
+	for other in solids:
+		if Vector2(pos.x - other.pos.x, pos.z - other.pos.z).length() < other.radius + radius:
 			return false
 	return true
 
@@ -3078,7 +3097,9 @@ func spawn_camp_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obst
 		# (sin yaw, 0, cos yaw), and we want that to equal -(cos a, sin a).
 		var yaw := atan2(-cos(a), -sin(a))
 		var footprint := _camp_hut(hut_center, yaw, rng, block_batch, block_body)
-		hut_footprints.append({ "pos": hut_center, "radius": footprint.radius, "top": footprint.top, "climbable": false })
+		# Only "pos"/"radius" — this list never reaches `obstacles` (see step 5), so
+		# the "top"/"climbable" an obstacle record carries would be read by nothing.
+		hut_footprints.append({ "pos": hut_center, "radius": footprint.radius })
 		camp_top = maxf(camp_top, footprint.top)
 
 	# 3. The lived-in clutter, on its own tighter ring between fire and huts. The
@@ -3238,13 +3259,21 @@ func _biome_spot_ok(chunk_center: Vector3, local_x: float, local_z: float, radiu
 	the clearance is a parameter rather than a constant read in here; it is handed
 	straight to _road_lateral_distance, which sizes its scan window from it.
 
-	ponytail: the river test is INERT as the constants stand — RIVER_LEVEL (0.5)
-	sits inside the PLAINS band, and all three callers only ever place geometry in
-	desert/forest/mountain, so no candidate here has ever been in the water. It is
-	kept because it costs one noise eval at generation time and is the thing that
-	stays correct if RIVER_LEVEL or the band thresholds are ever retuned. The river
-	exclusions that DO fire live in the plains-capable spawners: the scattered-block
-	scatter, the four feature-structure builders, the crocodiles and _artifact_at.
+	THE RIVER TEST IS LIVE — do not delete it as dead code. It is inert for the
+	three BIOME callers (cactus/forest/mountain), because RIVER_LEVEL (0.5) sits
+	inside the PLAINS band and those three only ever place geometry in
+	desert/forest/mountain. But spawn_camp_in_chunk is a fourth caller and camps are
+	PLAINS-CAPABLE, so for camps this branch actually rejects — it is the whole of
+	the "no village pitched mid-river" rule. The other river exclusions live in the
+	plains-capable spawners: the scattered-block scatter, the four feature-structure
+	builders, the crocodiles and _artifact_at.
+
+	ponytail: like every other caller, the test is asked at the spot's CENTRE only,
+	not over its `radius`. For a 1-2 m cactus that is exact; for a 9.4 m camp it
+	means a village centred near a bank can still put a hut in the band (~5% of
+	camps, by the measured ~8 m band width). Cosmetic — a river is a flat tint with
+	no mesh — so it is left alone; the upgrade is four extra is_river_at evals at
+	`radius` on the cardinals.
 	"""
 	var world_x := chunk_center.x + local_x
 	var world_z := chunk_center.z + local_z
