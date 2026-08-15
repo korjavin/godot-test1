@@ -540,14 +540,6 @@ func _ensure_driver() -> Node:
 	return _driver
 
 
-## Is the current tree pause the driver's own (focus loss / portrait guard)? Used to
-## keep the resume overlay off a pause somebody else owns — see the ownership gate in
-## `_process`. No driver at all means nothing of ours is paused.
-func _is_driver_pause() -> bool:
-	var driver: Node = _ensure_driver()
-	return driver != null and driver.has_method("is_paused_by_driver") and driver.is_paused_by_driver()
-
-
 # ============================================================================
 # BUTTON ROUTING → INPUT ACTIONS
 # ============================================================================
@@ -639,17 +631,9 @@ func _process(delta: float) -> void:
 	# resume overlay — but never over the initial enable overlay: if the tab was
 	# backgrounded before first enable, the enable overlay stays the one prompt (its
 	# tap enables motion, then THIS overlay appears for the unpause tap). Gated on
-	# the real touch predicate so a desktop pause never shows a phone overlay —
-	# desktop stays byte-for-byte unchanged.
-	#
-	# OWNERSHIP GATE (`is_paused_by_driver`): the tree has TWO pause owners — this
-	# driver (focus loss / portrait) and pause_controller.gd (the desktop P key) —
-	# and a touchscreen laptop or keyboard-equipped tablet is both platforms at
-	# once. Showing this overlay for a P-key pause would let the resume tap unpause
-	# the tree while pause_controller's click-swallowing "PAUSED" overlay stayed up
-	# over a now-running game. So we offer the resume tap only for our own pause.
-	_resume_overlay.visible = (_is_touch and get_tree().paused
-			and _is_driver_pause() and not _enable_overlay.visible)
+	# the real touch predicate so a desktop pause (from any future source) never
+	# shows a phone overlay — desktop stays byte-for-byte unchanged.
+	_resume_overlay.visible = _is_touch and get_tree().paused and not _enable_overlay.visible
 
 
 ## Watch for motion to actually start after an enable tap. While `_motion_watching`:
@@ -813,9 +797,9 @@ func _on_enable_overlay_pressed() -> void:
 ## Resume overlay tap → unfreeze the game. Routed through the driver's
 ## `resume_from_pause()` so the driver can also restore its pre-pause active state
 ## (it remembers whether motion was running when focus was lost). The no-driver
-## `else` is unreachable today: the overlay is only shown when `_is_driver_pause()`
-## is true, which already implies the driver exists — kept as a two-line
-## anti-softlock belt so the player is never stuck on a frozen screen.
+## `else` is unreachable today (only mobile_input.gd ever pauses the tree, so a
+## paused tree implies the driver exists) — kept as a two-line anti-softlock belt
+## so the player is never stuck on a frozen screen if a future pause source appears.
 func _on_resume_overlay_pressed() -> void:
 	var driver: Node = _ensure_driver()
 	if driver != null:

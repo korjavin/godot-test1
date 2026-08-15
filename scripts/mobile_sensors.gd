@@ -64,14 +64,6 @@ const JS_SAMPLE_TIMEOUT: float = 1.0
 ## "down" direction for the tilt math, independent of the device's exact reading.
 const GRAVITY_MAGNITUDE: float = 9.80665
 
-## Per-sample blend factor for the gravity estimate used ONLY on the JS path when
-## the browser sends `accelerationIncludingGravity` but a null `acceleration`
-## (common on gyro-less Android). Low-passing the total acceleration recovers
-## gravity; total minus that estimate recovers the linear (step) signal. Small
-## enough that a footstep — a few tenths of a second — passes straight through,
-## large enough that slowly re-aiming the phone settles into "gravity" in ~1 s.
-const GRAVITY_LOWPASS_ALPHA: float = 0.06
-
 # --- Public state ----------------------------------------------------------
 
 ## When false the node does no per-frame work and reports `has_data() == false`,
@@ -91,13 +83,8 @@ var _gravity: Vector3 = Vector3.ZERO
 
 ## Player-motion acceleration (gravity already removed). On native we compute it
 ## as `accel - gravity`; the JS `devicemotion.acceleration` field already excludes
-## gravity, so we copy it straight in — unless the browser sends that field null,
-## in which case we high-pass the total ourselves (see `_grav_lowpass`).
+## gravity, so we copy it straight in.
 var _linear: Vector3 = Vector3.ZERO
-
-## Running low-passed total acceleration — our gravity estimate on the JS path
-## when `devicemotion.acceleration` is absent. See GRAVITY_LOWPASS_ALPHA.
-var _grav_lowpass: Vector3 = Vector3.ZERO
 
 ## Angular velocity (rad/s) — gyro. Twist-yaw integrates `z` from this when no
 ## absolute compass heading is available.
@@ -182,16 +169,6 @@ var _neutral_gravity: Vector3 = Vector3.DOWN * GRAVITY_MAGNITUDE
 
 ## Absolute yaw (degrees) captured at calibrate, when a compass heading exists.
 var _neutral_yaw_deg: float = 0.0
-
-## Whether `_neutral_yaw_deg` holds a REAL captured heading (vs. the 0.0 default).
-## The compass (`deviceorientation`) usually starts firing AFTER the first motion
-## sample, and calibration is satisfied by gravity alone — so a calibrate that
-## lands in that gap would leave the neutral heading at 0° while `yaw()` later
-## reads a live `alpha` of, say, 250°, reporting a permanent ~110° twist and
-## pinning `turn_right` on a motionless phone. We therefore capture the neutral
-## heading the first time orientation becomes available after each `calibrate()`,
-## not only at the calibrate instant. Cleared by `calibrate()`.
-var _neutral_yaw_captured: bool = false
 
 ## Gyro-integrated yaw accumulator (radians), used as the twist source when no
 ## absolute compass alpha is available. Reset to zero on `calibrate()`.
@@ -420,11 +397,7 @@ func yaw() -> float:
 	if not _has_live:
 		return 0.0
 
-	# The captured-neutral test is not redundant with `_has_orientation`: the poll
-	# captures a late-arriving compass neutral, and until it has, measuring against
-	# the 0° default would report a huge bogus twist. Falling through to the
-	# integrated gyro (zeroed at calibrate) reads as "no twist", which is correct.
-	if _has_orientation and _neutral_yaw_captured:
+	if _has_orientation:
 		# Absolute heading available: alpha is degrees [0,360). Offset from the
 		# neutral heading captured at calibrate, wrapped to (-PI, PI].
 		var cur_yaw := deg_to_rad(_orientation.x)
@@ -461,9 +434,6 @@ func request_permission() -> void:
 ## stream has warmed up), we capture neutral immediately so an explicit re-zero — e.g.
 ## the steer-mode toggle — still takes effect right away. Safe to call any time.
 func calibrate() -> void:
-	# A fresh calibrate always re-arms the heading capture: whatever neutral
-	# heading we hold is stale, and the compass may still be warming up.
-	_neutral_yaw_captured = false
 	if _has_live and _gravity.length() > LIVE_DATA_EPSILON:
 		# Data is live now: capture neutral immediately and clear any pending arm.
 		_apply_calibration()
@@ -482,11 +452,8 @@ func _apply_calibration() -> void:
 	if _gravity.length() > LIVE_DATA_EPSILON:
 		_neutral_gravity = _gravity
 	# Capture the current absolute heading (if any) as the zero for twist-yaw.
-	# If the compass hasn't started yet, `_neutral_yaw_captured` stays false and
-	# the poll captures it on the first orientation sample instead.
 	if _has_orientation:
 		_neutral_yaw_deg = _orientation.x
-		_neutral_yaw_captured = true
 	# Reset the drift-prone integrated yaw so the new neutral really is zero twist.
 	_integrated_yaw = 0.0
 
@@ -522,15 +489,6 @@ func _poll_sources(delta: float) -> void:
 	if _calibrate_pending and _has_live and _gravity.length() > LIVE_DATA_EPSILON:
 		_apply_calibration()
 		_calibrate_pending = false
-
-	# LATE-COMPASS CAPTURE: the neutral heading is captured from gravity-driven
-	# calibration only if orientation happened to be live at that instant. The
-	# compass typically warms up a few frames later, so grab the neutral the
-	# first time it appears — otherwise TWIST steering measures against a 0°
-	# neutral and commands a permanent full turn (see `_neutral_yaw_captured`).
-	if not _neutral_yaw_captured and _has_orientation:
-		_neutral_yaw_deg = _orientation.x
-		_neutral_yaw_captured = true
 
 
 ## Pick the live source and fill the source-agnostic "current sample" from it. Split
@@ -666,30 +624,8 @@ func _read_js(delta: float) -> void:
 	# we just read primitives (robust across browsers that null out sub-objects).
 	var accel := Vector3(
 		_js_num("__gd_acc_g_x"), _js_num("__gd_acc_g_y"), _js_num("__gd_acc_g_z"))
-
-	# GYRO-LESS-DEVICE PATH. The DOM spec allows `devicemotion.acceleration` to be
-	# null while `accelerationIncludingGravity` is perfectly valid — that is what a
-	# lot of cheap Android hardware sends. The event handler flags which case this
-	# is (`__gd_has_lin`). Reading the zeroed fields unconditionally would freeze
-	# `_linear` at zero forever on those phones: tilt steering would work (gravity
-	# is recovered below) while the step detector never crossed its threshold once,
-	# so the player could steer but could NEVER walk — silently, with no error and
-	# no retry prompt, because the accel/gravity sample still counts as live. So
-	# when the field is missing we recover the step signal ourselves by high-passing
-	# the total: linear = total − low-passed(total).
-	if _js_num("__gd_has_lin") > 0.5:
-		_linear = Vector3(
-			_js_num("__gd_acc_x"), _js_num("__gd_acc_y"), _js_num("__gd_acc_z"))
-		# Keep the estimate warm in case the device later stops sending the field.
-		_grav_lowpass = accel - _linear
-	elif _grav_lowpass.length() <= LIVE_DATA_EPSILON:
-		# First sample: seed the estimate with the whole vector, so the very first
-		# frame reports no motion instead of one huge phantom step.
-		_grav_lowpass = accel
-		_linear = Vector3.ZERO
-	else:
-		_grav_lowpass = _grav_lowpass.lerp(accel, GRAVITY_LOWPASS_ALPHA)
-		_linear = accel - _grav_lowpass
+	_linear = Vector3(
+		_js_num("__gd_acc_x"), _js_num("__gd_acc_y"), _js_num("__gd_acc_z"))
 
 	# Gyro: browsers report rotationRate in **degrees/sec**; convert to rad/s to
 	# match the native path's units so downstream math is identical either way.
@@ -880,16 +816,12 @@ func _on_js_devicemotion(args: Array) -> void:
 		_js_window.__gd_acc_x = acc.x
 		_js_window.__gd_acc_y = acc.y if acc.y != null else 0.0
 		_js_window.__gd_acc_z = acc.z if acc.z != null else 0.0
-		_js_window.__gd_has_lin = 1.0
 		got_data = true
 		got_motion = true  # real linear-accel sample — tilt/step can go live
 	else:
 		_js_window.__gd_acc_x = 0.0
 		_js_window.__gd_acc_y = 0.0
 		_js_window.__gd_acc_z = 0.0
-		# Flag the absence so `_read_js` high-passes the total instead of reading
-		# these zeroes as "the player is standing perfectly still" forever.
-		_js_window.__gd_has_lin = 0.0
 
 	var rot: JavaScriptObject = ev.rotationRate
 	if rot != null and rot.alpha != null:
