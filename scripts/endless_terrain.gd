@@ -1818,6 +1818,70 @@ func spawn_bosses_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D) ->
 		croc.setup_as_boss(boss.scale)
 		parent_chunk.add_child(croc)
 
+func _artifact_at(chunk_pos: Vector2i) -> Dictionary:
+	"""
+	Deterministic artifact placement for one chunk — the _boss_at of artifacts.
+	Pure function of chunk coords + run_seed via the independent ARTIFACT_SALT
+	hash stream: it consumes NO draw from the shared chunk RNG, so every existing
+	block/crocodile/coin is exactly where it was before artifacts existed.
+
+	@param chunk_pos: Chunk coordinates to decide for.
+	@return: {} when this chunk has no artifact (the ~19-in-20 case, or when every
+	         candidate spot fell too close to the coin road); otherwise
+	         { "local": Vector3 (chunk-LOCAL position, y = 0),
+	           "kind": int (0..4, which of the five shapes),
+	           "seed": int (seeds the shape builder's own private RNG) }.
+
+	EDUCATIONAL NOTE — the determinism contract:
+	- Within a run the same chunk yields the IDENTICAL artifact (same spot, same
+	  shape, same builder seed) no matter how often it unloads and regenerates —
+	  the RNG is seeded purely from chunk coords + run_seed, and its draw order
+	  below is fixed (chance roll, then 2 draws per placement try, then kind,
+	  then builder seed).
+	- Across runs, new_run() re-rolls run_seed, so artifacts land elsewhere.
+	- The road-clearance test reads the station cache (pure in `k`), so it too is
+	  load-order independent: rejection is a property of the POSITION, not of
+	  when the chunk happened to generate.
+	"""
+	var rng := RandomNumberGenerator.new()
+	# Same coordinate mixing as the chunk object seed, but salted so this stream
+	# never collides with (or perturbs) any other deterministic spawn site.
+	rng.seed = hash(Vector3i(chunk_pos.x * 73856093, chunk_pos.y * 19349663, run_seed ^ ARTIFACT_SALT))
+
+	# 1. Rarity roll — most chunks bail here.
+	if rng.randf() >= ARTIFACT_CHANCE:
+		return {}
+
+	var center := chunk_to_world(chunk_pos)
+	# Candidates stay ARTIFACT_EDGE_MARGIN inside the chunk so the whole artifact
+	# (widest footprint < the margin) never straddles a seam.
+	var half := chunk_size / 2.0 - ARTIFACT_EDGE_MARGIN
+
+	# 2. Try a few candidate spots; accept the FIRST one far enough from the road
+	# centerline. This is what produces the off-road bias AND the hard "never on
+	# the centerline" rule. Acceptance stops the loop, so the draw sequence is
+	# still fixed for a given outcome (2 draws per try until the accepted try),
+	# and the kind/seed draws always follow in the same order.
+	var local_x := 0.0
+	var local_z := 0.0
+	var placed := false
+	var tries := 0
+	while tries < ARTIFACT_PLACE_TRIES and not placed:
+		tries += 1
+		local_x = rng.randf_range(-half, half)
+		local_z = rng.randf_range(-half, half)
+		if _road_lateral_distance(center.x + local_x, center.z + local_z) >= ARTIFACT_ROAD_CLEARANCE:
+			placed = true
+	if not placed:
+		return {}
+
+	# 3. Which of the five shapes, and 4. a further seed for the shape builder's
+	# own RNG (so builders can draw freely without this function caring how many
+	# draws each shape needs).
+	var kind := rng.randi_range(0, 4)
+	var builder_seed := rng.randi()
+	return { "local": Vector3(local_x, 0.0, local_z), "kind": kind, "seed": builder_seed }
+
 # ============================================================================
 # COIN ROAD MATH (deterministic, pure-in-k parametric centerline + coin placement)
 # ============================================================================
@@ -2108,6 +2172,44 @@ func _road_coins_at(k: int) -> Array:
 		var gem := rng.randf() < ROAD_GEM_CHANCE
 		coins.append({ "pos": Vector3(p.x, COIN_GROUND_HEIGHT, p.y), "gem": gem })
 	return coins
+
+func _road_lateral_distance(world_x: float, world_z: float) -> float:
+	"""
+	Minimum distance (world metres, XZ plane) from the point (world_x, world_z)
+	to any road centerline station near it. Used by artifact placement to keep
+	landmarks off the coin road (see ARTIFACT_ROAD_CLEARANCE).
+
+	@param world_x, world_z: World-space point to test.
+	@return: Distance to the nearest scanned station centre, or INF when no
+	         station falls in the scan window (the point is far off-road in X —
+	         "very far from the road" and "no road here" both mean "clear").
+
+	EDUCATIONAL NOTE:
+	- We only need to know whether the point is WITHIN ARTIFACT_ROAD_CLEARANCE of
+	  the centerline, so scanning the stations inside a padded X-window around the
+	  point suffices: any station outside that window is already further away in X
+	  alone than the clearance we test against. The pad adds two station spacings
+	  so the sampled polyline can't cut a corner past the window edge.
+	- Same manual-counter scan as spawn_coins_in_chunk — NOT `for k in range(...)`,
+	  which would eagerly materialise an O(total cached suffix) int Array per call
+	  just to visit a handful of stations (see the allocation note there).
+	- Reads only the station cache (pure in `k`), so the answer for a given point
+	  is deterministic and load-order independent.
+	"""
+	var pad := ARTIFACT_ROAD_CLEARANCE + _road_spacing() * 2.0
+	_road_extend_to_x(world_x - pad, world_x + pad)
+
+	var best := INF
+	var k := _road_first_k_at_or_after_x(world_x - pad)
+	while k <= road_k_max:
+		var st: Dictionary = _road_station(k)
+		k += 1
+		if st.center.x > world_x + pad:
+			break  # past the window — X only grows from here, so stop
+		var d := Vector2(world_x, world_z).distance_to(st.center)
+		if d < best:
+			best = d
+	return best
 
 func spawn_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array) -> void:
 	"""

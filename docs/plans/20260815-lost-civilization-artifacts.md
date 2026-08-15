@@ -196,7 +196,7 @@ Dependencies identified: none new. No new files, no new assets, no scene edits.
       and why artifacts are rare
 
 ### Task 4: Add the road-distance helper and the deterministic placement function
-- [ ] add `_road_lateral_distance(world_x: float, world_z: float) -> float`
+- [x] add `_road_lateral_distance(world_x: float, world_z: float) -> float`
       in the COIN ROAD MATH section: extend the station cache over
       `[world_x - pad, world_x + pad]` (pad = `ARTIFACT_ROAD_CLEARANCE + _road_spacing() * 2.0`),
       jump to `_road_first_k_at_or_after_x(world_x - pad)`, walk forward with a
@@ -204,7 +204,7 @@ Dependencies identified: none new. No new files, no new assets, no scene edits.
       documents), `break` once `station.center.x > world_x + pad`, and return the
       minimum distance from `(world_x, world_z)` to any scanned station centre;
       return `INF` when no station is in range (treat as "far off road")
-- [ ] add `_artifact_at(chunk_pos: Vector2i) -> Dictionary` — the **pure**
+- [x] add `_artifact_at(chunk_pos: Vector2i) -> Dictionary` — the **pure**
       placement function, modelled on `_boss_at`: seed a private
       `RandomNumberGenerator` with
       `hash(Vector3i(chunk_pos.x * 73856093, chunk_pos.y * 19349663, run_seed ^ ARTIFACT_SALT))`
@@ -219,7 +219,7 @@ Dependencies identified: none new. No new files, no new assets, no scene edits.
       3. pick the shape with `rng.randi_range(0, 4)`,
       4. return `{ "local": Vector3, "kind": int, "seed": int }` where `seed` is
          a further `rng.randi()` used to seed the shape builder's own RNG
-- [ ] document in the docstring: within a run the same chunk yields the identical
+- [x] document in the docstring: within a run the same chunk yields the identical
       artifact (pure function of chunk coords + run_seed); across runs `run_seed`
       changes so artifacts land elsewhere; the chunk RNG stream is never touched
 
