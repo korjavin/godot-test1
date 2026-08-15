@@ -2243,7 +2243,10 @@ func spawn_crocodiles_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D
 
 		# Crocodiles don't stand in rivers — the water is the player's, and a river
 		# reads as a small safe(r) crossing. Rejected AFTER the position draws, so
-		# the stream is untouched (see the same note in spawn_objects_in_chunk).
+		# the candidate itself costs the stream nothing extra — but a rejection
+		# still skips the successful spawn's `rotation.y` draw below, so the rest
+		# of this chunk's crocodile positions shift. Deterministic within a run
+		# (is_river_at is pure), just not identical to a river-free chunk.
 		#
 		# chunk_croc_target is deliberately NOT reduced: density is a DESIGN number
 		# (the difficulty gradient), never trimmed for a biome. The while loop's
@@ -2944,9 +2947,14 @@ func _camp_props(center: Vector3, rng: RandomNumberGenerator, block_batch: Array
 	same bug one scale down: 3-6 crates and 2-3 posts share ONE 2.0-4.0 m ring, so
 	two crates land within a crate's width of each other often — measured a third of
 	camps had an interpenetrating solid pair, and both crates and posts collide, so
-	it was a merged blob the player walked into. Appending after the create_box is
-	free for determinism: every draw for a candidate happens BEFORE the test, so a
-	drop consumes exactly the same draws as a placement.
+	it was a merged blob the player walked into.
+
+	DETERMINISM, HONESTLY: a drop does NOT consume the same draws as a placement —
+	it skips create_box's yaw argument plus its colour selector, ramp and discarded
+	roughness draws (and a dropped hut skips the whole of _camp_hut). That is
+	harmless ONLY because this rng is private to the camp and the placement/rarity
+	streams are decided before any geometry is drawn. Never lift this drop-mid-build
+	pattern onto a shared chunk stream.
 	"""
 	# huts is the caller's list — copy it, so growing it here can never leak a prop
 	# into the hut footprints the caller still holds.
@@ -3153,8 +3161,13 @@ func spawn_camp_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obst
 	# EXCLUSION, and it needs no edit anywhere else: spawn_crocodiles_in_chunk
 	# already rejects any spawn candidate within ob.radius + min_object_clearance of
 	# a footprint, so a CAMP_RADIUS circle simply reads as "occupied" and the camp
-	# stays the calm pocket it is meant to be — with ZERO shifted RNG draws (the
-	# crocodile loop's rejections are absorbed by its existing retry budget).
+	# stays the calm pocket it is meant to be — with NO EDIT to the crocodile
+	# spawner. Its retry budget absorbs the rejections, so the croc COUNT is
+	# unchanged; the positions are not. A rejected candidate skips the successful
+	# spawn's `rotation.y` draw, so the rest of that chunk's crocodile stream
+	# shifts — same as the river skip just above it. Harmless (within-run
+	# determinism holds: the camp is a pure function of chunk coords + run_seed),
+	# but do not read this as "camp chunks generate crocodiles byte-identically".
 	# climbable = false: a road coin over a camp would be skipped rather than
 	# perched on thin air. That cannot happen given CAMP_ROAD_CLEARANCE, but the
 	# rule stays honest either way.

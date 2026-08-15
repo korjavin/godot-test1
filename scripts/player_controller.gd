@@ -296,6 +296,17 @@ const SHAKE_DECAY: float = 1.0
 ## turns never touch it, keeping mouse look 1:1. Zeroed in reset_position().
 var camera_yaw_lag: float = 0.0
 
+## Mouse-look pitch (radians), tracked HERE rather than read back off the pivot.
+## THIS IS LOAD-BEARING, not bookkeeping: the pivot now carries yaw (the lag
+## above), and Node3D.rotate_x PRE-multiplies (basis = Rx(d) * Ry(yaw) * Rx(p)),
+## which has no zero-roll YXZ decomposition — so reading `rotation.x` back and
+## writing only it BAKES a parasitic `rotation.z` that nothing ever clears
+## (measured: -76 deg of permanent horizon cant while holding A and dragging the
+## mouse down; it survives respawn and restart). Every write to the pivot's
+## rotation therefore goes through the full Vector3 below, with an explicit 0
+## roll term. Never reintroduce rotate_x() here.
+var camera_pitch: float = 0.0
+
 ## Transient FOV kick (degrees) added on top of the speed-scaled target — set
 ## to FOV_PUNCH_WINDMAN by Windman's Air Rush launch, decayed back to zero at
 ## FOV_PUNCH_DECAY per second by the FOV code in _process.
@@ -508,13 +519,12 @@ func _input(event: InputEvent) -> void:
 			# Rotate the entire character body left/right (yaw)
 			rotate_y(-event.relative.x * MOUSE_SENSITIVITY)
 
-			# Rotate the camera pivot up/down (pitch)
-			camera_pivot.rotate_x(-event.relative.y * MOUSE_SENSITIVITY)
-
-			# Clamp the camera pitch to prevent over-rotation
-			var pitch = rad_to_deg(camera_pivot.rotation.x)
-			pitch = clamp(pitch, CAMERA_PITCH_MIN, CAMERA_PITCH_MAX)
-			camera_pivot.rotation.x = deg_to_rad(pitch)
+			# Pitch the camera pivot up/down. Accumulated and clamped in our own
+			# float, then written as a WHOLE rotation with a zero roll term —
+			# see camera_pitch for why rotate_x() must not come back here.
+			camera_pitch = clampf(camera_pitch - event.relative.y * MOUSE_SENSITIVITY,
+					deg_to_rad(CAMERA_PITCH_MIN), deg_to_rad(CAMERA_PITCH_MAX))
+			camera_pivot.rotation = Vector3(camera_pitch, camera_yaw_lag, 0.0)
 
 	# Allow player to release mouse with ESC.
 	# TOUCH-SESSION GUARD: on a phone/tablet we deliberately keep the mouse VISIBLE so
@@ -805,7 +815,7 @@ func _process(delta: float) -> void:
 	# Eased keyboard turn: the pivot's yaw holds the lag handle_turning banked,
 	# then the lag decays toward zero — so the camera starts behind an A/D turn
 	# and smoothly catches up. Mouse turns never bank lag, so they stay 1:1.
-	camera_pivot.rotation.y = camera_yaw_lag
+	camera_pivot.rotation = Vector3(camera_pitch, camera_yaw_lag, 0.0)
 	camera_yaw_lag = lerpf(camera_yaw_lag, 0.0, minf(1.0, CAMERA_TURN_EASE * delta))
 
 	# Speed-scaled FOV: map horizontal speed from WALK_SPEED → Windman's
@@ -1773,10 +1783,10 @@ func reset_position() -> void:
 
 	# Reset camera and character rotation to default
 	rotation.y = SPAWN_FACING_Y  # Face straight down the coin road (+X)
-	if camera_pivot:
-		camera_pivot.rotation.x = 0.0  # Reset camera vertical rotation
-		camera_pivot.rotation.y = 0.0  # Reset camera horizontal rotation
+	camera_pitch = 0.0  # Reset camera vertical rotation
 	camera_yaw_lag = 0.0  # Drop any keyboard-turn lag along with the pivot yaw
+	if camera_pivot:
+		camera_pivot.rotation = Vector3.ZERO  # Whole rotation, so roll can't survive
 
 	# Reset character state
 	is_ducking = false
