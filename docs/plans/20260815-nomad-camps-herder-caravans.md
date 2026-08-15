@@ -266,11 +266,17 @@ chunk's ~12 scattered blocks because `obstacles` does not exist yet at that poin
       `--import` and `--quit-after 400` both re-run clean
 
 ### Task 7: [Final] Update documentation
-- [ ] add a "Nomad camps" paragraph to the terrain section of `CLAUDE.md` (rarity, salt
+- [x] add a "Nomad camps" paragraph to the terrain section of `CLAUDE.md` (rarity, salt
       stream, off-road/river rules, the boss-exclusion-by-clearance argument, the single
-      camp footprint doing the crocodile exclusion, no gem)
-- [ ] extend the "Ambient fauna" section of `CLAUDE.md` with the caravan migration type
-      and its deferrals
+      camp footprint doing the crocodile exclusion, no gem) — added after the artifacts
+      paragraph, with the measured ~1-per-31 rate, the two-function placement split and
+      the reason for it, and the live inequalities (22 > 9 + 4, 12 > 9)
+- [x] extend the "Ambient fauna" section of `CLAUDE.md` with the caravan migration type
+      and its deferrals — section heading now "migrating herds + herder caravans"; two new
+      bullets (the roll-first `CARAVAN_CHANCE` branch + line formation reusing
+      `_add_animal`; the species-agnostic herder/pack-beast records, shadow discipline and
+      isolation contract), the shared-material count corrected 4 → 6, and both `ponytail:`
+      deferrals (no bell, no camp pathing) folded into the existing "Deferred by design" line
 
 ## Technical Details
 
