@@ -196,17 +196,64 @@ any existing RNG stream.
       would misread)
 
 ### Task 6: Verify acceptance criteria
-- [ ] `godot --headless --path . --import` runs clean (no errors/warnings from the two
+- [x] `godot --headless --path . --import` runs clean (no errors/warnings from the two
       edited scripts)
-- [ ] `godot --headless --path . scenes/main.tscn --quit-after 3` runs clean
-- [ ] re-read both diffs for the project conventions: explicit type hints, constants at
-      top, teaching-density comments
-- [ ] confirm determinism by inspection: camps draw from their own salted stream only;
-      no existing RNG call was inserted, removed, or reordered; every rejection is a
-      `continue`/`return` after its draws
-- [ ] confirm batching by inspection: all camp solid geometry goes through `create_box`
-      (one MultiMesh, one collision body per chunk) and the ember is the only extra
-      MeshInstance3D per camp
+- [x] `godot --headless --path . scenes/main.tscn --quit-after 3` runs clean — also ran
+      `--quit-after 400` (whole 121-chunk startup ring built) with zero errors, and a
+      temporary forced run (`CAMP_CHANCE = 1.0`, `CARAVAN_CHANCE = 1.0`, fauna interval
+      shortened) to actually EXERCISE both new code paths rather than pass by never
+      reaching them: camps built with 3–6 huts across many chunks and a caravan spawned,
+      all clean. Instrumentation reverted (`git checkout --`), tree verified clean after.
+- [x] re-read both diffs for the project conventions: explicit type hints, constants at
+      top, teaching-density comments — all present. Herder/pack-beast records match the
+      species-agnostic shape, shadow discipline (ON for torso/legs/body/neck, OFF for
+      staff/fringe/bundles/head nubs) is followed, and both `ponytail:` deferrals
+      (no camp pathing, no bell one-shot) are recorded in the agreed shape.
+- [x] confirm determinism by inspection: camps draw from their own salted stream only
+      (`hash(Vector3i(cx * 40960001, cy * 26463089, run_seed ^ CAMP_SALT))` — coordinate
+      primes distinct from the object/artifact 73856093/19349663 and the biome
+      83492791/15485863); no existing RNG call was inserted, removed or reordered;
+      `spawn_bosses_in_chunk` untouched; every rejection is a `return` after its draws.
+      Boss-exclusion inequality re-checked against live constants:
+      `CAMP_ROAD_CLEARANCE 22.0 > CAMP_RADIUS 9.0 + BOSS_LATERAL_MAX 4.0 = 13.0` ✓, and
+      `CAMP_EDGE_MARGIN 12.0 > CAMP_RADIUS 9.0` ✓.
+- [x] confirm batching by inspection: every camp solid (hut tiers, doorway, fire stones,
+      crates, posts) routes through `create_box` into the chunk's one MultiMesh and one
+      `BlockCollision` body; the single ember via `_spawn_artifact_accent` is the only
+      extra `MeshInstance3D` per camp, carrying the shared `_get_camp_ember_material()`.
+
+⚠️ **Finding (measured, not a blocker for Task 6 — the five criteria above all pass):
+camps are ~10× rarer than the Overview specifies.** Instrumented headless runs over the
+121-chunk startup ring with `CAMP_CHANCE` forced to 1.0: `_camp_at` accepted 110/121
+chunks (its own road+river test rejected only 11), but `_biome_spot_ok` in
+`spawn_camp_in_chunk` then rejected 101 of those 110 — an ~8–11% acceptance rate. At the
+shipped `CAMP_CHANCE` 0.025 that is **~1 camp per 400–500 chunks**, against the Overview's
+stated ~1 per 30–50 (artifacts, for comparison, land at ~1 per 24). A camp every ~25 km
+is effectively never seen.
+
+Root cause is structural, not a bad constant: `_camp_at` burns its `CAMP_PLACE_TRIES`
+candidate spots on the road/river test, which almost never rejects, and is blind to the
+chunk's ~12 scattered blocks because `obstacles` does not exist yet at that point. The
+`CAMP_RADIUS` 9 m circle then meets an all-or-nothing overlap test in
+`spawn_camp_in_chunk`. The retry loop is simply in the wrong function.
+
+### ➕ Task 6a: Move the camp candidate loop to where `obstacles` exists
+- [ ] reduce `_camp_at` to the rarity roll + seed (keep its own salted stream and its
+      docstring determinism contract verbatim); delete its duplicated road/river test and
+      its candidate loop, since `_biome_spot_ok` already covers river + road clearance +
+      obstacle overlap in one call
+- [ ] move the `CAMP_PLACE_TRIES` candidate loop into `spawn_camp_in_chunk`, drawing each
+      candidate from the camp's private RNG and accepting the first that clears
+      `_biome_spot_ok(chunk_center, local_x, local_z, CAMP_RADIUS, CAMP_ROAD_CLEARANCE, obstacles)`
+      — so all four tries vary the test that actually rejects
+- [ ] keep the existing bail-out behaviour when every try fails (no camp beats a camp
+      shoved through a mountain massif), and keep the `CAMP_EDGE_MARGIN` candidate box
+- [ ] re-measure the acceptance rate the same way (force `CAMP_CHANCE = 1.0`, count built
+      camps over the startup ring) and retune `CAMP_CHANCE` so the post-rejection rate
+      lands in the Overview's ~1 per 30–50 chunks; update the constant's comment with the
+      measured number, in the style of the artifacts' "~1 per 24 chunks after rejections"
+- [ ] determinism unchanged: the camp stream stays independent and no shared-RNG draw is
+      inserted, removed or reordered; re-run the headless import + run to confirm clean
 
 ### Task 7: [Final] Update documentation
 - [ ] add a "Nomad camps" paragraph to the terrain section of `CLAUDE.md` (rarity, salt
