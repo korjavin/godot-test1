@@ -164,7 +164,7 @@ This is a state split, not new logic; the invulnerability guard must stay airtig
 - [x] headless web export builds: `mkdir -p build/web && godot --headless --export-release "Web" build/web/index.html` — exit 0, full build output (index.wasm/pck/html) produced
 
 ### Task 12: Update documentation
-- [ ] `CLAUDE.md`: update the affected sections — jump/gravity convention note (gravity is now 14.4 with the preserved 3.61 m apex), the camera rig (SpringArm3D + h/v_offset shake + FOV, and how FP bypasses the arm), the respawn contract (1.5 s frozen + 2.5 s blink phases, the extended invulnerability guard), the danger telegraph (LOD manager publish + vignette/heartbeat), the new sound manager bakers, and the hit_flash color arg
+- [x] `CLAUDE.md`: update the affected sections — jump/gravity convention note (gravity is now 14.4 with the preserved 3.61 m apex), the camera rig (SpringArm3D + h/v_offset shake + FOV, and how FP bypasses the arm), the respawn contract (1.5 s frozen + 2.5 s blink phases, the extended invulnerability guard), the danger telegraph (LOD manager publish + vignette/heartbeat), the new sound manager bakers, and the hit_flash color arg
 
 ## Technical Details
 - Apex math: `10.2² / (2 × 14.4) = 3.6125 m` (old: `5.1² / (2 × 3.6) = 3.6125 m`) — identical. Airtime `2v/g`: 2.833 s → 1.417 s.
