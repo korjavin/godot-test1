@@ -175,7 +175,7 @@ Dependencies identified: none new. No new files, no new assets, no scene edits.
       positionally and the new params default)
 
 ### Task 3: Add the shared emissive accent material + accent spawner
-- [ ] add `var _shared_artifact_glow_material: StandardMaterial3D` near the other
+- [x] add `var _shared_artifact_glow_material: StandardMaterial3D` near the other
       shared-resource vars, plus `_get_artifact_glow_material() -> StandardMaterial3D`
       following the exact lazy-singleton shape of `_get_shared_block_material()`:
       `albedo_color = ARTIFACT_GLOW_COLOR`, `emission_enabled = true`,
@@ -184,13 +184,13 @@ Dependencies identified: none new. No new files, no new assets, no scene edits.
       `shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED` (a rune should not go
       dark in shadow), with a teaching comment on how it feeds the `glow_enabled`
       post-process in `main.tscn`
-- [ ] add `_spawn_artifact_accent(parent_chunk: MeshInstance3D, local_pos: Vector3, dimensions: Vector3, yaw: float, tilt: float) -> void`:
+- [x] add `_spawn_artifact_accent(parent_chunk: MeshInstance3D, local_pos: Vector3, dimensions: Vector3, yaw: float, tilt: float) -> void`:
       a `MeshInstance3D` using the **shared unit box mesh**
       (`_get_shared_unit_box_mesh()`), `transform = Transform3D((Basis(Vector3.UP, yaw) * Basis(Vector3.RIGHT, tilt)).scaled_local(dimensions), local_pos)`,
       `material_override = _get_artifact_glow_material()`,
       `cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF`, parented to
       `parent_chunk` (per-chunk parenting rule)
-- [ ] comment the draw-call budget explicitly: accents are real mesh instances
+- [x] comment the draw-call budget explicitly: accents are real mesh instances
       (they cannot join the block MultiMesh, which has one shared non-emissive
       material), which is why there are at most `ARTIFACT_MAX_ACCENTS` of them
       and why artifacts are rare

@@ -509,6 +509,11 @@ var _shared_ground_mesh: PlaneMesh
 ## `albedo_color` (sRGB→linear) path produced. See the COLOUR SPACE note in create_box.
 var _shared_block_material: StandardMaterial3D
 
+## Lazily-created shared material for artifact glow accents (rune strips, eyes,
+## missing keystones — see the ARTIFACTS section). ONE material shared by every
+## accent in the world, same lazy-singleton discipline as _shared_block_material.
+var _shared_artifact_glow_material: StandardMaterial3D
+
 ## A representative roughness for the shared block material. The old per-block code
 ## picked a random roughness in [0.7, 1.0]; since MultiMesh can't vary roughness
 ## per instance, we use one mid-range value for all blocks. (We still CONSUME the
@@ -570,6 +575,44 @@ func _get_shared_block_material() -> StandardMaterial3D:
 		# Single representative roughness (see SHARED_BLOCK_ROUGHNESS note above).
 		_shared_block_material.roughness = SHARED_BLOCK_ROUGHNESS
 	return _shared_block_material
+
+func _get_artifact_glow_material() -> StandardMaterial3D:
+	"""
+	Returns the shared emissive material for artifact glow accents, creating it on
+	first use (same lazy-singleton shape as _get_shared_block_material). The
+	emission energy (3.0) sits well above main.tscn's glow_hdr_threshold (0.85),
+	so the already-paid glow post-process picks these up and they bloom for free —
+	no extra render passes. UNSHADED because a glowing rune should not go dark
+	when it falls inside the key light's shadow.
+	"""
+	if _shared_artifact_glow_material == null:
+		_shared_artifact_glow_material = StandardMaterial3D.new()
+		_shared_artifact_glow_material.albedo_color = ARTIFACT_GLOW_COLOR
+		_shared_artifact_glow_material.emission_enabled = true
+		_shared_artifact_glow_material.emission = ARTIFACT_GLOW_COLOR
+		_shared_artifact_glow_material.emission_energy_multiplier = ARTIFACT_GLOW_ENERGY
+		_shared_artifact_glow_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	return _shared_artifact_glow_material
+
+func _spawn_artifact_accent(parent_chunk: MeshInstance3D, local_pos: Vector3, dimensions: Vector3, yaw: float, tilt: float) -> void:
+	"""
+	Spawns one emissive accent box (a rune strip, an eye, a missing keystone) as a
+	REAL MeshInstance3D parented to the chunk (per-chunk parenting rule: it unloads
+	with the chunk). Accents cannot join the block MultiMesh — that batch has one
+	shared NON-emissive material — so each accent is a genuine extra draw call.
+	That is exactly why artifacts are rare and capped at ARTIFACT_MAX_ACCENTS
+	accents each: worst case on screen is a handful of extra unshadowed draws.
+	Same Basis(UP, yaw) * Basis(RIGHT, tilt) rotation order as create_box, so an
+	accent can sit flush on a tilted stone.
+	"""
+	var accent := MeshInstance3D.new()
+	accent.mesh = _get_shared_unit_box_mesh()  # shared cube; transform carries the size
+	accent.transform = Transform3D((Basis(Vector3.UP, yaw) * Basis(Vector3.RIGHT, tilt)).scaled_local(dimensions), local_pos)
+	accent.material_override = _get_artifact_glow_material()
+	# A fist-sized glowing strip casting a shadow would cost a shadow-pass draw
+	# for no visible payoff — accents glow, they don't shade.
+	accent.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	parent_chunk.add_child(accent)
 
 # ============================================================================
 # INITIALIZATION
