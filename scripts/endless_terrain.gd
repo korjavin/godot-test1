@@ -968,6 +968,14 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 	if spawn_objects:
 		obstacles = spawn_objects_in_chunk(chunk_pos, platforms, block_batch, block_body)
 
+	# Rare lost-civilization artifact (independent ARTIFACT_SALT hash stream — no
+	# shared RNG draws consumed). ORDERING REQUIREMENT: this must run AFTER
+	# spawn_objects_in_chunk (so its footprint appends to the finished obstacles
+	# list) and BEFORE _build_block_multimesh / the block_body attach below, so
+	# the artifact's stone joins the chunk's single MultiMesh draw call and its
+	# single consolidated collision body.
+	spawn_artifact_in_chunk(chunk_pos, mesh_instance, obstacles, block_batch, block_body)
+
 	# Build the chunk's batched block visuals. If any blocks were placed, collapse
 	# them all into one MultiMeshInstance3D parented to this chunk (so it is freed
 	# automatically when the chunk unloads, like every other per-chunk node).
@@ -2050,6 +2058,84 @@ func _artifact_spiral_steps(center: Vector3, rng: RandomNumberGenerator, parent_
 	_spawn_artifact_accent(parent_chunk, last_pos + Vector3(0.0, 0.6, 0.0), Vector3(0.5, 0.5, 0.5), last_yaw, 0.0)
 	return { "radius": spiral_r + 1.2, "top": rise * float(count - 1) + step_dims.y }
 
+func spawn_artifact_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
+	"""
+	Spawn this chunk's artifact, if _artifact_at says it has one (~1 in 20), plus
+	its coin reward. Called from create_chunk AFTER spawn_objects_in_chunk and
+	BEFORE _build_block_multimesh / the block_body attach, so the artifact's stone
+	joins the chunk's single MultiMesh and single BlockCollision body.
+
+	@param chunk_pos: Chunk coordinates being generated.
+	@param parent_chunk: The chunk mesh — accents and reward coins parent here
+	                     (per-chunk parenting rule: they unload with the chunk).
+	@param obstacles: The chunk's block-footprint list; the artifact appends its
+	                  own footprint so later spawners react to it (see below).
+	@param block_batch / block_body: The chunk's visual batch + collision body,
+	                                 threaded through to create_box.
+	"""
+	if not spawn_artifacts:
+		return
+	var art := _artifact_at(chunk_pos)
+	if art.is_empty():
+		return
+
+	# The shape builder draws from its OWN RNG, seeded by _artifact_at's "seed"
+	# draw — so each builder can consume as many draws as its shape needs without
+	# the placement function (or anything else) caring.
+	var rng := RandomNumberGenerator.new()
+	rng.seed = art.seed
+	var center: Vector3 = art.local
+
+	var footprint: Dictionary
+	match int(art.kind):
+		0: footprint = _artifact_monolith(center, rng, parent_chunk, block_batch, block_body)
+		1: footprint = _artifact_arch(center, rng, parent_chunk, block_batch, block_body)
+		2: footprint = _artifact_stone_circle(center, rng, parent_chunk, block_batch, block_body)
+		3: footprint = _artifact_colossus_head(center, rng, parent_chunk, block_batch, block_body)
+		_: footprint = _artifact_spiral_steps(center, rng, parent_chunk, block_batch, block_body)
+
+	# Register the artifact as one round obstacle footprint, exactly like a normal
+	# block. CONSEQUENCE (deliberate): crocodiles reject spawn points inside it,
+	# and any road coin whose column crosses it PERCHES on its top (climbable =
+	# true) instead of being buried in the stone — artifact stone behaves like
+	# ordinary block stone everywhere downstream.
+	obstacles.append({ "pos": center, "radius": footprint.radius, "top": footprint.top, "climbable": true })
+
+	# --- The reward: a ring of ordinary coins around the base + ONE gem at the
+	# centre (the incentive to detour off the coin road). Guarded like every other
+	# coin spawn; these are ordinary chunk-local coins parented to the chunk — the
+	# road's station-claim logic is not involved in any way.
+	if not spawn_coins or coin_scene == null:
+		return
+	var coin_count := rng.randi_range(ARTIFACT_COIN_MIN, ARTIFACT_COIN_MAX)
+	var ring_radius: float = footprint.radius + rng.randf_range(ARTIFACT_COIN_RING_PAD_MIN, ARTIFACT_COIN_RING_PAD_MAX)
+	var i := 0
+	while i < coin_count:
+		i += 1
+		var a := rng.randf_range(0.0, TAU)
+		var cx := center.x + cos(a) * ring_radius
+		var cz := center.z + sin(a) * ring_radius
+		# Same perch-or-skip rule as road coins (one home: _settle_coin_y). The
+		# ring can graze the artifact's own footprint or a neighbouring block —
+		# the coin perches on a climbable top, or is dropped under a sheer wall.
+		var cy := _settle_coin_y(cx, cz, COIN_GROUND_HEIGHT, obstacles)
+		if is_inf(cy):
+			continue
+		var coin := coin_scene.instantiate()
+		coin.position = Vector3(cx, cy, cz)
+		parent_chunk.add_child(coin)
+
+	# Exactly one gem at the artifact centre. The artifact's own footprint is in
+	# `obstacles` (climbable), so _settle_coin_y perches the gem ON TOP of the
+	# shape — intended: the prize rewards a climb. make_gem() BEFORE add_child,
+	# per coin.gd's contract (it fetches nodes with get_node, not @onready).
+	var gem_y := _settle_coin_y(center.x, center.z, COIN_GROUND_HEIGHT, obstacles)
+	if not is_inf(gem_y):
+		var gem := coin_scene.instantiate()
+		gem.position = Vector3(center.x, gem_y, center.z)
+		gem.make_gem()
+		parent_chunk.add_child(gem)
+
 # ============================================================================
 # COIN ROAD MATH (deterministic, pure-in-k parametric centerline + coin placement)
 # ============================================================================
@@ -2484,34 +2570,12 @@ func spawn_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obs
 			# chunk-parented node), so the coin sits at the right world spot.
 			var local := Vector3(cw_pos.x - center.x, cw_pos.y, cw_pos.z - center.z)
 
-			# If the road runs over a block footprint, the ground-height coin would be
-			# buried. A coin must clear EVERYTHING it overlaps, not just whatever block we'd
-			# like to perch it on — so the TALLEST overlapping block governs:
-			#   - if the tallest overlap is climbable, perch on it (its top is above every
-			#     other block the coin covers, so nothing buries it);
-			#   - if the tallest overlap is NON-climbable (a sheer wall/roof higher than a
-			#     jump), SKIP the coin entirely. Perching on a SHORTER climbable block here
-			#     would leave the coin embedded inside that taller wall — visually buried and
-			#     effectively unreachable, which is worse than dropping one coin (structures
-			#     are sparse, so the visible swath stays intact).
-			#
-			# We scan ALL overlapping blocks (never break on the first) to find that tallest
-			# top. obstacles is in a fixed order and ties keep the first-encountered block, so
-			# this stays a pure deterministic function of the obstacles list.
-			if _point_over_block(local.x, local.z, obstacles):
-				var found := false
-				var tallest_top := 0.0
-				var tallest_climbable := false
-				for ob in obstacles:
-					if _block_overlaps(local.x, local.z, ob):
-						# Strict `>` keeps the FIRST block on a tie (deterministic).
-						if not found or ob.top > tallest_top:
-							tallest_top = ob.top
-							tallest_climbable = ob.get("climbable", false)
-							found = true
-				if not tallest_climbable:
-					continue
-				local.y = tallest_top + COIN_BLOCK_OFFSET
+			# Perch-or-skip against the chunk's block footprints. The rule lives in
+			# _settle_coin_y (ONE home, shared with artifact reward coins so the two
+			# spawners can never drift apart); INF means "skip this coin".
+			local.y = _settle_coin_y(local.x, local.z, local.y, obstacles)
+			if is_inf(local.y):
+				continue
 
 			# Spawn the coin (position is local to the chunk, like blocks/crocodiles).
 			# A gem entry is upgraded BEFORE entering the tree (make_gem recolours a
@@ -2521,6 +2585,48 @@ func spawn_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obs
 			if cw.gem:
 				coin.make_gem()
 			parent_chunk.add_child(coin)
+
+func _settle_coin_y(local_x: float, local_z: float, ground_y: float, obstacles: Array) -> float:
+	"""
+	The SINGLE home of the coin perch-or-skip rule, shared by road coins
+	(spawn_coins_in_chunk) and artifact reward coins (spawn_artifact_in_chunk) so
+	the two spawners can never drift apart.
+
+	@param local_x, local_z: The coin's column, chunk-LOCAL (same frame as ob.pos).
+	@param ground_y: The y to use when the column is over open ground.
+	@param obstacles: The chunk's block-footprint list.
+	@return: The y to place the coin at, or INF meaning "skip this coin".
+
+	If the column runs over a block footprint, a ground-height coin would be
+	buried. A coin must clear EVERYTHING it overlaps, not just whatever block we'd
+	like to perch it on — so the TALLEST overlapping block governs:
+	  - if the tallest overlap is climbable, perch on its top (which is above every
+	    other block the coin covers, so nothing buries it);
+	  - if the tallest overlap is NON-climbable (a sheer wall/roof higher than a
+	    jump), skip the coin entirely (return INF). Perching on a SHORTER climbable
+	    block here would leave the coin embedded inside that taller wall — visually
+	    buried and effectively unreachable, which is worse than dropping one coin
+	    (structures are sparse, so the visible trail stays intact).
+
+	We scan ALL overlapping blocks (never break on the first) to find that tallest
+	top. obstacles is in a fixed order and the strict `>` keeps the FIRST block on
+	a tie, so this stays a pure deterministic function of the obstacles list.
+	"""
+	if not _point_over_block(local_x, local_z, obstacles):
+		return ground_y
+	var found := false
+	var tallest_top := 0.0
+	var tallest_climbable := false
+	for ob in obstacles:
+		if _block_overlaps(local_x, local_z, ob):
+			# Strict `>` keeps the FIRST block on a tie (deterministic).
+			if not found or ob.top > tallest_top:
+				tallest_top = ob.top
+				tallest_climbable = ob.get("climbable", false)
+				found = true
+	if not tallest_climbable:
+		return INF
+	return tallest_top + COIN_BLOCK_OFFSET
 
 func _block_overlaps(x: float, z: float, ob: Dictionary) -> bool:
 	"""

@@ -258,7 +258,7 @@ Dependencies identified: none new. No new files, no new assets, no scene edits.
       arch 1, circle 1, head 2, spiral 1)
 
 ### Task 6: Wire the artifact spawner into create_chunk (with coins + gem)
-- [ ] extract the coin perch/skip rule out of `spawn_coins_in_chunk` into
+- [x] extract the coin perch/skip rule out of `spawn_coins_in_chunk` into
       `_settle_coin_y(local_x: float, local_z: float, ground_y: float, obstacles: Array) -> float`:
       returns the y to place the coin at, or `INF` to mean "skip this coin"
       (tallest overlapping block is non-climbable). Rewrite that stretch of
@@ -266,14 +266,14 @@ Dependencies identified: none new. No new files, no new assets, no scene edits.
       (same tallest-overlap scan, same strict `>` tie-break, same
       `COIN_BLOCK_OFFSET`). One home for the rule so artifact coins and road
       coins can never drift apart
-- [ ] add `spawn_artifact_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void`:
+- [x] add `spawn_artifact_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void`:
       early-return unless `spawn_artifacts`; call `_artifact_at(chunk_pos)` and
       return on `{}`; seed a builder RNG from the returned `seed`; dispatch on
       `kind` to the five builders; append the returned footprint to `obstacles`
       as `{ "pos": ..., "radius": ..., "top": ..., "climbable": true }` (so
       crocodiles avoid the artifact and road coins perch on it rather than being
       buried in it — comment this consequence)
-- [ ] in the same function, spawn the reward (guarded by
+- [x] in the same function, spawn the reward (guarded by
       `spawn_coins and coin_scene != null`): `ARTIFACT_COIN_MIN..MAX` coins on a
       ring at `radius + randf_range(ARTIFACT_COIN_RING_PAD_MIN, ARTIFACT_COIN_RING_PAD_MAX)`
       at `COIN_GROUND_HEIGHT`, plus **exactly one** gem at the artifact centre
@@ -281,7 +281,7 @@ Dependencies identified: none new. No new files, no new assets, no scene edits.
       runs through `_settle_coin_y` and is skipped when it returns `INF`. All
       coins are chunk-LOCAL and parented to `parent_chunk`. Do NOT touch the road
       station claim logic — these are ordinary chunk-local coins
-- [ ] call `spawn_artifact_in_chunk(chunk_pos, mesh_instance, obstacles, block_batch, block_body)`
+- [x] call `spawn_artifact_in_chunk(chunk_pos, mesh_instance, obstacles, block_batch, block_body)`
       in `create_chunk` **after** the `spawn_objects_in_chunk` block and
       **before** `_build_block_multimesh` / the `block_body` attach, so artifact
       stone joins the chunk's single MultiMesh and single collision body. Comment
