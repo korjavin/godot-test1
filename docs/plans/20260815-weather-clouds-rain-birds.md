@@ -208,33 +208,33 @@ Dependencies identified: none new. No assets, no GPUParticles3D (web runs
       fauna executor is adding its own node line, so the merge must stay trivial
 
 ### Task 8: The TWO Windman hooks in `scripts/player_controller.gd` (do LAST)
-- [ ] FIRST run `git fetch origin master && git merge origin/master` — a parallel executor
+- [x] FIRST run `git fetch origin master && git merge origin/master` — a parallel executor
       is heavily rewriting this file; do this task only after that merge is clean
-- [ ] add a small null-safe helper (`_weather_is_raining_here() -> bool`) that finds the
+- [x] add a small null-safe helper (`_weather_is_raining_here() -> bool`) that finds the
       `"weather"` group node and calls `is_raining_at(global_position)` behind a
       `has_method` guard, so scenes without the manager behave exactly as today
-- [ ] hook (a): in `try_activate_ability()`, when the current character is `windman` and
+- [x] hook (a): in `try_activate_ability()`, when the current character is `windman` and
       `_weather_is_raining_here()`, bail out BEFORE firing — do NOT set the cooldown, do
       NOT play the whoosh — and surface the existing blocked-press feedback by calling
       `flash_blocked()` on the `"ability_hud"` group node behind a `has_method` guard
       (the parallel game-feel PR adds it; degrade silently if it is not there yet)
-- [ ] hook (b): in `_update_ability_timers()`, when `windman_boost_timer > 0.0` and
+- [x] hook (b): in `_update_ability_timers()`, when `windman_boost_timer > 0.0` and
       `_weather_is_raining_here()`, zero the boost timer so wet wings drop him back into
       normal gravity mid-flight
-- [ ] keep the `player_controller.gd` diff to exactly these three additions — nothing else
+- [x] keep the `player_controller.gd` diff to exactly these three additions — nothing else
 
 ### Task 9: Verify acceptance criteria
-- [ ] verify every Overview requirement is implemented (clouds drift + recycle, storm
+- [x] verify every Overview requirement is implemented (clouds drift + recycle, storm
       clouds define moving rain zones, rain particles + sound only inside a zone,
       `is_raining_at()` exists and is used by both Windman hooks, birds cross rarely)
-- [ ] verify edge cases: no player in the scene (manager idles), no sound manager (silent,
+- [x] verify edge cases: no player in the scene (manager idles), no sound manager (silent,
       no errors), audio not yet unlocked (no `play()`), no weather node (player
       unaffected), rain zone entered/exited repeatedly (fade never latches, `emitting`
       never left on)
-- [ ] `godot --headless --path . --import` runs clean (no script/parse errors)
-- [ ] `godot --headless --path . scenes/main.tscn --quit-after 3` runs clean (no runtime
+- [x] `godot --headless --path . --import` runs clean (no script/parse errors)
+- [x] `godot --headless --path . scenes/main.tscn --quit-after 3` runs clean (no runtime
       errors or warnings from the new script)
-- [ ] confirm the draw-call budget: clouds = 1 MultiMesh, birds = 1 MultiMesh, rain = 1
+- [x] confirm the draw-call budget: clouds = 1 MultiMesh, birds = 1 MultiMesh, rain = 1
       particle system only while raining — a few extra draw calls, not a few hundred
       (the F3 perf overlay is the measure)
 
