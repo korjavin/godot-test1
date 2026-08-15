@@ -427,10 +427,19 @@ const BIOME_FOREST_MAX: float = 0.82
 
 ## River contour: the band is the set of points whose noise value sits within
 ## RIVER_HALF_WIDTH of RIVER_LEVEL. Width in metres ≈ RIVER_HALF_WIDTH / |∇n|;
-## at a 400 m wavelength the gradient is roughly 0.005 /m, so 0.02 gives a river
-## about 8 m across. TUNE BY EYE — that estimate is only a starting point.
+## MEASURED over a 4 km field, one octave at a 400 m wavelength has a mean
+## gradient near 0.0017 /m, so 0.007 gives crossings with a median of ~11 m along
+## +X (a perpendicular width of roughly 8-9 m — a couple of wading strides).
+## The earlier 0.02 was tuned from a guessed 0.005 /m gradient and made 6.7% of
+## the world water, with a median crossing of 31 m.
+##
+## ponytail: value noise has ZERO gradient at every lattice corner, so wherever a
+## 400 m corner hashes near RIVER_LEVEL the contour still widens into an
+## occasional lake (measured p95 crossing 61 m, worst case a few hundred). Rare
+## enough to be a landmark rather than a bug; if it ever grates, gate the band on
+## a minimum |∇n| or drive the contour from a second, higher-frequency octave.
 const RIVER_LEVEL: float = 0.5
-const RIVER_HALF_WIDTH: float = 0.02
+const RIVER_HALF_WIDTH: float = 0.007
 
 ## Noise-space half-width of the soft colour transition between biomes, used as
 ## a smoothstep radius in the ground shader. Purely cosmetic: gameplay reads the
@@ -445,10 +454,10 @@ const BIOME_BLEND: float = 0.05
 ## all spend the same currency — create_box entries in the chunk's single
 ## MultiMesh — so "more content" costs instances, not draw calls.
 
-## DESERT — sparsity is achieved by KEEPING ONLY ONE IN N of the ordinary
-## scattered blocks (see spawn_objects_in_chunk). Deliberately a counter rule and
-## NOT an RNG roll: an extra draw there would shift the shared chunk stream and
-## reshuffle every block, crocodile and coin in the chunk.
+## DESERT — sparsity is achieved by dividing the ordinary scattered-block TARGET
+## by N (see spawn_objects_in_chunk). Deliberately a target and NOT an RNG roll:
+## an extra draw there would shift the shared chunk stream and reshuffle every
+## block, crocodile and coin in the chunk.
 const DESERT_BLOCK_KEEP_EVERY: int = 3
 
 ## DESERT — cactus stacks: how many candidates, how big, how far from the road.
@@ -458,7 +467,12 @@ const DESERT_BLOCK_KEEP_EVERY: int = 3
 ## per the project's "entity counts are never reduced" rule.
 const CACTUS_MIN: int = 4
 const CACTUS_MAX: int = 9
-const CACTUS_ROAD_CLEARANCE: float = 10.0
+## 12 m, not 10: a cactus footprint is NON-climbable, so _settle_coin_y SKIPS any
+## road coin it overlaps rather than perching one on top (unlike the ordinary
+## scattered blocks, which are climbable and may stand on the swath freely). At
+## exactly road_width_max * 0.5 = 10 a cactus sits on the outermost coin lane and
+## punches silent holes in the trail; 12 clears the swath plus a cactus radius.
+const CACTUS_ROAD_CLEARANCE: float = 12.0
 const CACTUS_WIDTH_MIN: float = 0.45
 const CACTUS_WIDTH_MAX: float = 0.75
 const CACTUS_SEGMENT_MIN: float = 0.9   # height of one stacked segment
@@ -507,16 +521,27 @@ const MOUNTAIN_LAYERS_MAX: int = 7
 const MOUNTAIN_LAYER_TAPER: float = 0.74  # each layer up is this fraction as wide
 const MOUNTAIN_LAYER_JITTER: float = 0.5  # metres of lateral wobble per layer
 
+## MOUNTAIN — minimum height of one layer, in metres. A massif is only "walk
+## around it" if you cannot simply hop up its steps: the player's jump apex is
+## 3.61 m (see the gravity note in CLAUDE.md), so every step has to clear that.
+## The drawn layer count is capped by height / this, which is what stops a short
+## wide many-layered roll from generating a climbable ziggurat.
+const MOUNTAIN_MIN_LAYER_HEIGHT: float = 4.0
+
 ## MOUNTAIN — keeps the base well inside the chunk so a massif never straddles a
 ## seam and gets half-unloaded (same idea as ARTIFACT_EDGE_MARGIN, bigger because
-## a massif is bigger).
-const MOUNTAIN_EDGE_MARGIN: float = 14.0
+## a massif is bigger). The widest possible base half-width plus its layer jitter
+## is 7.0 m, so 8.0 clears a seam with room to spare while still leaving a 34 x 34
+## m placement box — wide enough that 2-4 massifs spread across the chunk instead
+## of piling into the middle of every one and reading as a per-chunk grid.
+const MOUNTAIN_EDGE_MARGIN: float = 8.0
 
 ## MOUNTAIN — the road clearance is what cuts a CANYON through a range: the
 ## massifs simply refuse to stand near the centerline, so the coin road threads
 ## between them. Comfortably larger than FOREST_ROAD_CLEARANCE (a tree you can
-## sidestep; a massif you would have to walk minutes around). Kept under the ~26 m
-## honest-answer bound documented on _biome_spot_ok.
+## sidestep; a massif you would have to walk minutes around). Any value is safe:
+## _road_lateral_distance sizes its station scan window from the clearance it is
+## given, so the answer stays honest however far this is pushed.
 const MOUNTAIN_ROAD_CLEARANCE: float = 24.0
 
 ## MOUNTAIN — a massif at least this tall gets its top layers forced snow-white.
@@ -829,14 +854,18 @@ func _roll_biome_offset() -> void:
 	consumes zero draws from any chunk/coin/croc RNG and the rest of the world is
 	byte-identical to a run without biomes.
 
-	The range is deliberately large (±4096 noise cells ≈ ±1600 km of world) so two
-	runs essentially never land on the same slice of the field.
+	The range is 0..289 noise cells, which covers EVERY distinct field: _biome_hash2
+	wraps its lattice point with mod(p, 289.0), so shifting the offset by a whole
+	289 lands on exactly the same field. A wider range would buy no extra variety
+	and would cost precision — the shader is fp32, where an offset near 4096 has a
+	ULP of 4.9e-4 noise units (~0.2 m of world), quantising every river edge onto a
+	visible 0.2 m staircase and widening the CPU/GPU parity gap for nothing.
 	"""
 	var offset_rng := RandomNumberGenerator.new()
 	offset_rng.seed = hash(Vector3i(BIOME_SALT, 0, run_seed))
 	biome_offset = Vector2(
-		offset_rng.randf_range(-4096.0, 4096.0),
-		offset_rng.randf_range(-4096.0, 4096.0)
+		offset_rng.randf_range(0.0, 289.0),
+		offset_rng.randf_range(0.0, 289.0)
 	)
 
 
@@ -1316,9 +1345,21 @@ func spawn_objects_in_chunk(chunk_pos: Vector2i, platforms: Array, block_batch: 
 		spawn_feature_structure(rng, half_chunk, chunk_center, obstacles, platforms, block_batch, block_body)
 
 	# Is this a DESERT chunk? A desert keeps only one scattered block in
-	# DESERT_BLOCK_KEEP_EVERY (the skip is applied inside the loop below), which is
-	# what makes it read as sparse without touching objects_per_chunk.
+	# DESERT_BLOCK_KEEP_EVERY, which is what makes it read as sparse.
+	#
+	# EDUCATIONAL NOTE — WHY THIS IS A TARGET AND NOT A ROLL: the obvious
+	# "rng.randf() < 0.33" inside the loop would insert a draw into the SHARED
+	# chunk stream, and every block, structure, crocodile and coin drawn after it
+	# would shift. Lowering the loop's TARGET instead adds no draw at all.
+	#
+	# (An earlier version keyed the skip off the loop's `attempts` counter. That
+	# was silently a no-op: max_attempts is objects_per_chunk * 3 and the keep-rule
+	# was `attempts % 3`, leaving exactly objects_per_chunk eligible attempts — so
+	# the quota still filled and a desert kept ~84% of its blocks, not a third.)
 	var desert_chunk := biome_at(chunk_center.x, chunk_center.z) == Biome.DESERT
+	var object_target := objects_per_chunk
+	if desert_chunk:
+		object_target = maxi(1, objects_per_chunk / DESERT_BLOCK_KEEP_EVERY)
 
 	# Store positions of scattered objects to check spacing between them
 	var spawned_positions: Array[Vector3] = []
@@ -1327,7 +1368,7 @@ func spawn_objects_in_chunk(chunk_pos: Vector2i, platforms: Array, block_batch: 
 	var attempts := 0
 	var max_attempts := objects_per_chunk * 3  # Allow multiple attempts per object
 
-	while spawned_positions.size() < objects_per_chunk and attempts < max_attempts:
+	while spawned_positions.size() < object_target and attempts < max_attempts:
 		attempts += 1
 
 		# Generate random position within chunk bounds
@@ -1363,19 +1404,6 @@ func spawn_objects_in_chunk(chunk_pos: Vector2i, platforms: Array, block_batch: 
 		# position on rejection) would shift the whole stream and reshuffle the
 		# world. Same discipline in every biome exclusion below.
 		if valid_position and is_river_at(chunk_center + object_pos):
-			valid_position = false
-
-		# ...and, in a DESERT, only one candidate in DESERT_BLOCK_KEEP_EVERY
-		# survives — that thinning IS the desert's emptiness.
-		#
-		# EDUCATIONAL NOTE — WHY A COUNTER AND NOT A RANDOM ROLL: the obvious
-		# "rng.randf() < 0.33" would insert a draw into the SHARED chunk stream, and
-		# every block, structure, crocodile and coin drawn after it in this chunk
-		# would shift. The loop's own `attempts` counter is already deterministic
-		# (it is a pure function of how the loop ran, which is itself seeded), so
-		# keying the skip off it thins the desert while leaving the RNG sequence
-		# byte-identical — exactly the same discipline as the river skip above.
-		if valid_position and desert_chunk and attempts % DESERT_BLOCK_KEEP_EVERY != 0:
 			valid_position = false
 
 		if not valid_position:
@@ -2605,32 +2633,49 @@ func spawn_biome_content_in_chunk(chunk_pos: Vector2i, obstacles: Array, block_b
 			pass
 
 
-func _biome_spot_ok(world_x: float, world_z: float, road_clearance: float) -> bool:
+func _biome_spot_ok(chunk_center: Vector3, local_x: float, local_z: float, radius: float, road_clearance: float, obstacles: Array) -> bool:
 	"""
 	The single home of the "is this a legal spot for biome geometry" rule.
 
-	@param world_x, world_z: Candidate world position.
+	@param chunk_center: World centre of the chunk (create_box and `obstacles` are
+	                     both chunk-LOCAL; the river/road field is asked in WORLD
+	                     space, so the conversion happens here once).
+	@param local_x, local_z: Candidate position, chunk-local.
+	@param radius: Footprint radius of the thing about to be built, used for the
+	               overlap test. Pass the WIDEST the thing could be — the actual
+	               width is usually drawn after this call, and reordering the draws
+	               to know it exactly would shift the biome stream for nothing.
 	@param road_clearance: Minimum distance to the coin-road centerline (metres).
-	@return: true when the spot is NOT in a river AND at least `road_clearance`
-	         from the road centerline.
+	@param obstacles: Footprints already placed in this chunk (scattered blocks,
+	                  feature structures, artifacts, and earlier biome geometry).
+	@return: true when the spot is NOT in a river, is at least `road_clearance`
+	         from the road centerline, and overlaps nothing already placed.
 
-	WHY BOTH TESTS LIVE TOGETHER: they answer the same question — "would putting
-	something solid here spoil a route the player needs?". Rivers must stay wadeable
-	(a tree in the water is nonsense and a massif would dam it), and the coin road
-	must stay followable — a forest leaves the coin swath clear, and a mountain
-	range leaves a canyon through itself, purely by asking for a bigger clearance.
+	WHY THE TESTS LIVE TOGETHER: they answer one question — "would putting
+	something solid here spoil what is already there?". Rivers must stay wadeable
+	(a tree in the water is nonsense and a massif would dam it), the coin road must
+	stay followable — a forest leaves the coin swath clear, and a mountain range
+	leaves a canyon through itself, purely by asking for a bigger clearance — and
+	nothing may grow THROUGH something else: without the overlap test a massif
+	(radius ~7 m, covering an eighth of a chunk) entombs the scattered blocks under
+	it and trees sprout out of walls. The overlap test also gives massifs their
+	mutual spacing for free, since each appends its own footprint before the next
+	is tried.
 
 	Callers pass DIFFERENT clearances (trees a little, massifs a lot), which is why
-	the clearance is a parameter rather than a constant read in here.
-
-	Keep every clearance at or below ~26 m: _road_lateral_distance scans a station
-	window padded by ARTIFACT_ROAD_CLEARANCE (14) + two station spacings, which
-	bounds honest answers to about that distance. Anything further away in X is
-	already further than 26 m in a straight line, so the answer stays correct.
+	the clearance is a parameter rather than a constant read in here; it is handed
+	straight to _road_lateral_distance, which sizes its scan window from it.
 	"""
+	var world_x := chunk_center.x + local_x
+	var world_z := chunk_center.z + local_z
 	if is_river_at(Vector3(world_x, 0.0, world_z)):
 		return false
-	return _road_lateral_distance(world_x, world_z) >= road_clearance
+	if _road_lateral_distance(world_x, world_z, road_clearance) < road_clearance:
+		return false
+	for ob in obstacles:
+		if Vector2(local_x - ob.pos.x, local_z - ob.pos.z).length() < radius + ob.radius:
+			return false
+	return true
 
 
 func _spawn_desert_content(chunk_center: Vector3, rng: RandomNumberGenerator, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
@@ -2661,7 +2706,7 @@ func _spawn_desert_content(chunk_center: Vector3, rng: RandomNumberGenerator, ob
 		var local_z := rng.randf_range(-half, half)
 		# Rejection is a `continue` AFTER the position draws, so a rejected cactus
 		# costs a spot and not a shift in this (or any) RNG sequence.
-		if not _biome_spot_ok(chunk_center.x + local_x, chunk_center.z + local_z, CACTUS_ROAD_CLEARANCE):
+		if not _biome_spot_ok(chunk_center, local_x, local_z, CACTUS_WIDTH_MAX * 1.2, CACTUS_ROAD_CLEARANCE, obstacles):
 			continue
 
 		var width := rng.randf_range(CACTUS_WIDTH_MIN, CACTUS_WIDTH_MAX)
@@ -2724,7 +2769,9 @@ func _spawn_forest_content(chunk_center: Vector3, rng: RandomNumberGenerator, ob
 		var world_x := chunk_center.x + local_x
 		var world_z := chunk_center.z + local_z
 		# Both rejections are post-draw `continue`s (see _spawn_desert_content).
-		if not _biome_spot_ok(world_x, world_z, FOREST_ROAD_CLEARANCE):
+		# The radius is the widest a TRUNK can be — the canopy is visual-only, and
+		# leaves brushing a nearby block is exactly what a real wood looks like.
+		if not _biome_spot_ok(chunk_center, local_x, local_z, TREE_TRUNK_WIDTH_MAX * 0.71 + 0.3, FOREST_ROAD_CLEARANCE, obstacles):
 			continue
 		if biome_at(world_x, world_z) != Biome.FOREST:
 			continue
@@ -2787,9 +2834,16 @@ func _spawn_mountain_content(chunk_center: Vector3, rng: RandomNumberGenerator, 
 	jittered, so a massif reads as a crude rocky peak rather than a wedding cake.
 	"""
 	var half := chunk_size / 2.0 - MOUNTAIN_EDGE_MARGIN
-	if half <= 0.0:
-		return
 	var count := rng.randi_range(MOUNTAIN_MASSIF_MIN, MOUNTAIN_MASSIF_MAX)
+
+	# Massifs are checked for overlap against EACH OTHER ONLY, not against the whole
+	# `obstacles` list. A massif's footprint radius is ~9.7 m, so demanding clearance
+	# from all dozen scattered blocks would cover the entire chunk and mountains
+	# would essentially stop generating. Overlapping a scattered block is also
+	# harmless — the block ends up INSIDE the rock, invisible, at worst reading as a
+	# boulder at the foot of the flank. Massif-on-massif is the overlap that matters:
+	# without this list, 2-4 peaks drawn from the same box merge into one lumpy blob.
+	var placed_massifs: Array = []
 
 	for _i in count:
 		# Try a few spots; take the first that clears the road, the river and is
@@ -2805,7 +2859,11 @@ func _spawn_mountain_content(chunk_center: Vector3, rng: RandomNumberGenerator, 
 			local_z = rng.randf_range(-half, half)
 			var wx := chunk_center.x + local_x
 			var wz := chunk_center.z + local_z
-			if _biome_spot_ok(wx, wz, MOUNTAIN_ROAD_CLEARANCE) and biome_at(wx, wz) == Biome.MOUNTAIN:
+			# MOUNTAIN_BASE_WIDTH_MAX is the widest base that could be drawn below —
+			# the real width is drawn after this test, and reordering the draws to
+			# know it exactly would shift the biome stream for nothing.
+			if _biome_spot_ok(chunk_center, local_x, local_z, MOUNTAIN_BASE_WIDTH_MAX * 0.71 + MOUNTAIN_LAYER_JITTER, MOUNTAIN_ROAD_CLEARANCE, placed_massifs) \
+					and biome_at(wx, wz) == Biome.MOUNTAIN:
 				placed = true
 		if not placed:
 			continue
@@ -2813,6 +2871,13 @@ func _spawn_mountain_content(chunk_center: Vector3, rng: RandomNumberGenerator, 
 		var height := rng.randf_range(MOUNTAIN_HEIGHT_MIN, MOUNTAIN_HEIGHT_MAX)
 		var base_w := rng.randf_range(MOUNTAIN_BASE_WIDTH_MIN, MOUNTAIN_BASE_WIDTH_MAX)
 		var layers := rng.randi_range(MOUNTAIN_LAYERS_MIN, MOUNTAIN_LAYERS_MAX)
+		# Cap the drawn count so no single step is short enough to jump onto. The
+		# draw itself still happens (the stream keeps its shape); we only clamp the
+		# result. Without this an 8 m massif split into 7 layers is a 1.14 m
+		# staircase with a 1.7 m ledge at each level — a walkable ziggurat, which
+		# would break the "impassable, you go around" contract that the whole
+		# mountains-as-blocks design rests on under the flat-world invariant.
+		layers = clampi(int(height / MOUNTAIN_MIN_LAYER_HEIGHT), 2, layers)
 		var snowy := height >= MOUNTAIN_SNOW_HEIGHT
 		var layer_h := height / float(layers)
 
@@ -2835,8 +2900,11 @@ func _spawn_mountain_content(chunk_center: Vector3, rng: RandomNumberGenerator, 
 
 		# One footprint for the whole massif, NOT climbable and carrying the real
 		# top height: crocodiles avoid it, and a road coin that would otherwise be
-		# perched 15 m up a peak is skipped instead (see _settle_coin_y).
-		obstacles.append({ "pos": Vector3(local_x, 0, local_z), "radius": base_w * 0.71 + MOUNTAIN_LAYER_JITTER, "top": height, "climbable": false })
+		# perched 15 m up a peak is skipped instead (see _settle_coin_y). It goes
+		# into placed_massifs too, so the next massif keeps its distance from it.
+		var footprint := { "pos": Vector3(local_x, 0, local_z), "radius": base_w * 0.71 + MOUNTAIN_LAYER_JITTER, "top": height, "climbable": false }
+		obstacles.append(footprint)
+		placed_massifs.append(footprint)
 
 # ============================================================================
 # BIOME FIELD (one noise field; four biomes + rivers read out of it)
@@ -3254,30 +3322,37 @@ func _road_coins_at(k: int) -> Array:
 		coins.append({ "pos": Vector3(p.x, COIN_GROUND_HEIGHT, p.y), "gem": gem })
 	return coins
 
-func _road_lateral_distance(world_x: float, world_z: float) -> float:
+func _road_lateral_distance(world_x: float, world_z: float, clearance: float = ARTIFACT_ROAD_CLEARANCE) -> float:
 	"""
 	Minimum distance (world metres, XZ plane) from the point (world_x, world_z)
 	to any road centerline station near it. Used by artifact placement to keep
-	landmarks off the coin road (see ARTIFACT_ROAD_CLEARANCE).
+	landmarks off the coin road (see ARTIFACT_ROAD_CLEARANCE) and by biome
+	geometry to keep the coin swath clear (see _biome_spot_ok).
 
 	@param world_x, world_z: World-space point to test.
+	@param clearance: The distance the caller is about to compare against. Only
+	                  used to size the scan window — pass the SAME value you test
+	                  with, or the answer may be capped short of it.
 	@return: Distance to the nearest scanned station centre, or INF when no
 	         station falls in the scan window (the point is far off-road in X —
 	         "very far from the road" and "no road here" both mean "clear").
 
 	EDUCATIONAL NOTE:
-	- We only need to know whether the point is WITHIN ARTIFACT_ROAD_CLEARANCE of
-	  the centerline, so scanning the stations inside a padded X-window around the
+	- We only need to know whether the point is WITHIN `clearance` of the
+	  centerline, so scanning the stations inside a padded X-window around the
 	  point suffices: any station outside that window is already further away in X
 	  alone than the clearance we test against. The pad adds two station spacings
-	  so the sampled polyline can't cut a corner past the window edge.
+	  so the sampled polyline can't cut a corner past the window edge. Deriving the
+	  pad from the caller's own clearance is what keeps that guarantee true for
+	  every caller — an earlier version hardcoded ARTIFACT_ROAD_CLEARANCE, which
+	  left MOUNTAIN_ROAD_CLEARANCE (24) a hair under the honest-answer bound.
 	- Same manual-counter scan as spawn_coins_in_chunk — NOT `for k in range(...)`,
 	  which would eagerly materialise an O(total cached suffix) int Array per call
 	  just to visit a handful of stations (see the allocation note there).
 	- Reads only the station cache (pure in `k`), so the answer for a given point
 	  is deterministic and load-order independent.
 	"""
-	var pad := ARTIFACT_ROAD_CLEARANCE + _road_spacing() * 2.0
+	var pad := clearance + _road_spacing() * 2.0
 	_road_extend_to_x(world_x - pad, world_x + pad)
 
 	var best := INF

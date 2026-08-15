@@ -52,7 +52,7 @@ uniform float biome_desert_max = 0.34;        // n < this  -> desert
 uniform float biome_plains_max = 0.62;        // n < this  -> plains
 uniform float biome_forest_max = 0.82;        // n < this  -> forest, else mountain
 uniform float river_level = 0.5;              // the contour rivers follow
-uniform float river_half_width = 0.02;        // half-thickness of that contour
+uniform float river_half_width = 0.007;       // half-thickness of that contour
 uniform float biome_blend = 0.05;             // smoothstep radius at each threshold
 
 // --- Biome colours — pure art, never read by GDScript -----------------------
