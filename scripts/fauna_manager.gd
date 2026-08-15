@@ -107,6 +107,41 @@ const ELEPHANT_TUSK_SIZE: Vector3 = Vector3(0.12, 0.55, 0.12)
 const CALF_SCALE: float = 0.55
 
 # ============================================================================
+# CONSTANTS — giraffe geometry
+# ============================================================================
+# Same conventions as the elephant block: metres, Vector3(width, height,
+# length), local forward -Z, feet at local y = 0.
+
+## The torso block — smaller than an elephant's barrel; a giraffe's read is
+## all in the legs and neck, not the body mass.
+const GIRAFFE_BODY_SIZE: Vector3 = Vector3(1.0, 1.1, 1.9)
+
+## One long thin leg column; its y doubles as hip height (same trick as the
+## elephant), which is most of what makes the silhouette unmistakably giraffe.
+const GIRAFFE_LEG_SIZE: Vector3 = Vector3(0.25, 1.9, 0.25)
+
+## The neck box, hung from a shoulder pivot and tilted forward — its y is the
+## neck LENGTH along the pivot's local up axis.
+const GIRAFFE_NECK_SIZE: Vector3 = Vector3(0.35, 1.9, 0.35)
+
+## Neck lean (degrees about the pivot's X): negative tips the top toward -Z
+## (the animal's forward), giving the classic angled-forward giraffe neck.
+const GIRAFFE_NECK_ANGLE_DEG: float = -28.0
+
+## The small head block riding the far end of the neck.
+const GIRAFFE_HEAD_SIZE: Vector3 = Vector3(0.42, 0.40, 0.75)
+
+## One ossicone horn nub (two per head), tiny accent boxes on the crown.
+const GIRAFFE_HORN_SIZE: Vector3 = Vector3(0.08, 0.22, 0.08)
+
+## A FEW darker coat patches — thin slabs sitting just proud of the body's
+## sides. Deliberately 2–3 and NOT a checker pattern: a real giraffe pattern
+## would need a texture, and this feature ships zero asset files; a handful of
+## darker slabs is enough to say "giraffe" at FIELD_RADIUS through the fog.
+const GIRAFFE_PATCH_COUNT: int = 3
+const GIRAFFE_PATCH_SIZE: Vector3 = Vector3(0.06, 0.45, 0.55)
+
+# ============================================================================
 # STATE
 # ============================================================================
 
@@ -130,7 +165,7 @@ var _rng := RandomNumberGenerator.new()
 # Same discipline as endless_terrain._get_shared_unit_box_mesh() and
 # ToonShading's static material cache: every animal that will ever exist is
 # built from ONE unit BoxMesh scaled per part, and the total material count
-# for the whole feature is a small constant (2 species + 1 accent), no matter
+# for the whole feature is a small constant (2 species + 2 accents), no matter
 # how many animals spawn over a session. Never duplicate() these per animal —
 # that would defeat batching and grow memory with every herd.
 
@@ -138,6 +173,7 @@ static var _shared_box_mesh: BoxMesh = null
 static var _elephant_material: StandardMaterial3D = null
 static var _giraffe_material: StandardMaterial3D = null
 static var _accent_material: StandardMaterial3D = null
+static var _patch_material: StandardMaterial3D = null
 
 
 static func _get_shared_box_mesh() -> BoxMesh:
@@ -171,15 +207,26 @@ static func _get_giraffe_material() -> StandardMaterial3D:
 
 
 static func _get_accent_material() -> StandardMaterial3D:
-	## The ONE accent material, shared across species for the small trim
-	## pieces (off-white elephant tusks, and it doubles for giraffe details
-	## where an off-white read is fine). Keeping accents on a single shared
-	## material caps the feature's total material count at a constant 3.
+	## The ONE light accent material (off-white elephant tusks). Shared by
+	## every tusk of every elephant ever spawned — accents follow the same
+	## one-shared-material rule as the species hides.
 	if _accent_material == null:
 		_accent_material = StandardMaterial3D.new()
 		_accent_material.albedo_color = Color(0.92, 0.90, 0.82)
 		_accent_material.roughness = 0.7
 	return _accent_material
+
+
+static func _get_patch_material() -> StandardMaterial3D:
+	## The ONE dark accent material (darker-brown giraffe coat patches and
+	## horn nubs — both need a darker-than-coat read, so they share it). With
+	## this the feature's total material count is capped at a constant 4,
+	## independent of how many animals ever spawn.
+	if _patch_material == null:
+		_patch_material = StandardMaterial3D.new()
+		_patch_material.albedo_color = Color(0.48, 0.32, 0.16)
+		_patch_material.roughness = 0.9
+	return _patch_material
 
 
 # ============================================================================
@@ -312,6 +359,87 @@ func _build_elephant(is_adult: bool) -> Node3D:
 	# smaller boxes, no second code path to keep in sync.
 	if not is_adult:
 		root.scale = Vector3.ONE * CALF_SCALE
+	return root
+
+
+func _build_giraffe() -> Node3D:
+	## Assemble one giraffe from the same shared unit BoxMesh + shared
+	## materials, under the SAME node-structure contract as _build_elephant so
+	## the animal record (and the animation loop reading it) stays
+	## species-agnostic: root Node3D (feet at y = 0, faces -Z) -> "Body"
+	## Node3D -> four hip-pivot legs added in FL/FR/RL/RR order. The only
+	## species difference is the extras slot: a giraffe has a "Neck" pivot
+	## (elephants: null) and no trunk chain (elephants: "Trunk0..N") — the
+	## record simply carries null/empty for the other species' extra.
+	var mat := _get_giraffe_material()
+
+	var root := Node3D.new()
+	root.name = "Giraffe"
+	var body := Node3D.new()
+	body.name = "Body"
+	root.add_child(body)
+
+	# Torso: rests on the long leg columns, so its centre is hip + half height.
+	var body_center_y := GIRAFFE_LEG_SIZE.y + GIRAFFE_BODY_SIZE.y * 0.5
+	body.add_child(_make_box_part("BodyBox", GIRAFFE_BODY_SIZE,
+			Vector3(0.0, body_center_y, 0.0), mat, true))
+
+	# Coat patches: a few darker slabs just proud of the torso's flanks, at
+	# fixed hand-picked spots (alternating sides, staggered along the body) —
+	# see GIRAFFE_PATCH_COUNT for why this is NOT a checker pattern. Shadow
+	# OFF: a 6 cm slab flush against the body adds a shadow-pass draw and
+	# nothing to the silhouette.
+	var patch_x := GIRAFFE_BODY_SIZE.x * 0.5 + GIRAFFE_PATCH_SIZE.x * 0.5 - 0.02
+	var patch_sides: Array[float] = [-1.0, 1.0, -1.0]
+	var patch_offsets: Array[Vector3] = [
+		Vector3(0.0, 0.12, -0.55), Vector3(0.0, -0.10, 0.10), Vector3(0.0, 0.18, 0.60),
+	]
+	for i: int in GIRAFFE_PATCH_COUNT:
+		body.add_child(_make_box_part("Patch%d" % i, GIRAFFE_PATCH_SIZE,
+				Vector3(patch_sides[i] * patch_x, body_center_y, 0.0) + patch_offsets[i],
+				_get_patch_material(), false))
+
+	# Neck: a pivot Node3D at the shoulders (front-top of the torso) with the
+	# neck box hung half a length ABOVE it along the pivot's local up — the
+	# same offset-from-pivot trick as the legs, so the neck-bob animation can
+	# swing the whole neck (head and horns included) from the shoulders. The
+	# forward lean is the pivot's REST rotation; Task 5 caches it and layers
+	# the bob on top instead of overwriting it.
+	var neck := Node3D.new()
+	neck.name = "Neck"
+	neck.position = Vector3(0.0, body_center_y + GIRAFFE_BODY_SIZE.y * 0.35,
+			-(GIRAFFE_BODY_SIZE.z * 0.5 - GIRAFFE_NECK_SIZE.z * 0.5))
+	neck.rotation_degrees.x = GIRAFFE_NECK_ANGLE_DEG
+	body.add_child(neck)
+	neck.add_child(_make_box_part("NeckBox", GIRAFFE_NECK_SIZE,
+			Vector3(0.0, GIRAFFE_NECK_SIZE.y * 0.5, 0.0), mat, true))
+
+	# Head + horn nubs live in NECK-local space at the neck's far end, so they
+	# ride every neck swing for free. The head is a silhouette part (shadow
+	# stays ON like body/legs/neck); the horn nubs are accents (shadow OFF).
+	var head_pos := Vector3(0.0, GIRAFFE_NECK_SIZE.y + GIRAFFE_HEAD_SIZE.y * 0.5 - 0.08,
+			-(GIRAFFE_HEAD_SIZE.z * 0.5 - GIRAFFE_NECK_SIZE.z * 0.5))
+	neck.add_child(_make_box_part("Head", GIRAFFE_HEAD_SIZE, head_pos, mat, true))
+	for side: float in [-1.0, 1.0]:
+		neck.add_child(_make_box_part("HornL" if side < 0.0 else "HornR",
+				GIRAFFE_HORN_SIZE,
+				head_pos + Vector3(side * 0.12,
+						GIRAFFE_HEAD_SIZE.y * 0.5 + GIRAFFE_HORN_SIZE.y * 0.5, 0.1),
+				_get_patch_material(), false))
+
+	# Legs, always in FL/FR/RL/RR order — the species-agnostic contract the
+	# animation loop relies on (diagonal trot pairs are picked by index).
+	var hip_x := GIRAFFE_BODY_SIZE.x * 0.5 - GIRAFFE_LEG_SIZE.x * 0.5
+	var hip_z := GIRAFFE_BODY_SIZE.z * 0.5 - GIRAFFE_LEG_SIZE.z * 0.5
+	var hip_y := GIRAFFE_LEG_SIZE.y
+	body.add_child(_make_leg("LegFL", Vector3(-hip_x, hip_y, -hip_z),
+			GIRAFFE_LEG_SIZE, mat, true))
+	body.add_child(_make_leg("LegFR", Vector3(hip_x, hip_y, -hip_z),
+			GIRAFFE_LEG_SIZE, mat, true))
+	body.add_child(_make_leg("LegRL", Vector3(-hip_x, hip_y, hip_z),
+			GIRAFFE_LEG_SIZE, mat, true))
+	body.add_child(_make_leg("LegRR", Vector3(hip_x, hip_y, hip_z),
+			GIRAFFE_LEG_SIZE, mat, true))
 	return root
 
 

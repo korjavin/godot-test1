@@ -182,19 +182,23 @@ Dependencies identified: none new. No asset files, no Python pipeline, no autolo
 
 ### Task 3: Giraffe model builder
 
-- [ ] add giraffe geometry constants: body, long thin legs, neck length/angle, head, horn
+- [x] add giraffe geometry constants: body, long thin legs, neck length/angle, head, horn
       nubs, and the count of darker-brown accent patch boxes (a **few** — 2–3 — explicitly
       NOT a checker pattern; comment that a real pattern would need a texture and is not
       worth an asset file)
-- [ ] add `_build_giraffe() -> Node3D` with the same node structure contract as the
+- [x] add `_build_giraffe() -> Node3D` with the same node structure contract as the
       elephant: root → `Body` → four hip-pivoted leg `Node3D`s → a **`Neck` pivot** at the
       shoulders holding the angled neck box, with the small head + horn nubs parented to the
       neck's far end so they swing with it
-- [ ] `cast_shadow` OFF on horn nubs and the accent patch boxes; ON for body/legs/neck
-- [ ] keep both builders returning the same shape of animal record so Task 5's animation
+- [x] `cast_shadow` OFF on horn nubs and the accent patch boxes; ON for body/legs/neck
+- [x] keep both builders returning the same shape of animal record so Task 5's animation
       loop is species-agnostic: legs are always four pivots in a known order
       (front-left, front-right, rear-left, rear-right), and species-specific extras (`neck`,
       `trunk` segments) are simply empty/null for the other species
+- ➕ the darker-brown patches/horns get their own shared static material
+      (`_get_patch_material()`) rather than reusing the off-white tusk accent — allowed by
+      Hard constraint 6 ("one extra shared accent material"); feature material total is a
+      constant 4
 
 ### Task 4: Herd spawning, migration line, and despawn
 
