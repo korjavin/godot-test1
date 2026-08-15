@@ -1868,6 +1868,19 @@ var is_giant: bool = false
 var _teibi_tween: Tween = null
 
 
+func _weather_is_raining_here() -> bool:
+	"""
+	Whether the player is standing in a storm cloud's rain zone, asked of the
+	weather manager through the "weather" group — null-safe with a has_method
+	guard exactly like _sfx(), so a scene without the manager (or the player
+	scene run on its own) simply answers "no rain" instead of erroring.
+	"""
+	var weather := get_tree().get_first_node_in_group("weather")
+	if weather and weather.has_method("is_raining_at"):
+		return weather.is_raining_at(global_position)
+	return false
+
+
 func _update_ability_timers(delta: float) -> void:
 	"""Count down cooldowns, the Windman air boost, and Teibi's form timer."""
 	for i in ability_cooldowns.size():
@@ -1875,6 +1888,12 @@ func _update_ability_timers(delta: float) -> void:
 			ability_cooldowns[i] = maxf(0.0, ability_cooldowns[i] - delta)
 	if windman_boost_timer > 0.0:
 		windman_boost_timer = maxf(0.0, windman_boost_timer - delta)
+		# Wet wings: a Windman who flies INTO a storm cloud's rain zone drops out
+		# of the Air Rush immediately — the boost timer is zeroed and the normal
+		# gravity/speed rules take back over mid-air. (Only checked while a boost
+		# is actually running, so a grounded player never pays for this.)
+		if windman_boost_timer > 0.0 and _weather_is_raining_here():
+			windman_boost_timer = 0.0
 	# Teibi's small/giant form expires on its own after a while, snapping him back
 	# to normal size with no extra press — so he can never get stuck transformed.
 	if teibi_size_state != 0 and teibi_form_timer > 0.0:
@@ -1898,6 +1917,17 @@ func try_activate_ability() -> void:
 		var hud := get_tree().get_first_node_in_group("ability_hud")
 		if hud and hud.has_method("flash_blocked"):
 			hud.flash_blocked()
+		_sfx("play_buzz")
+		return
+
+	# Windman can't take off in the rain: pressing F inside a storm cloud's rain
+	# zone fails EXACTLY like a cooling-down press (same dial flash, same denial
+	# buzz) — and crucially costs no cooldown, so the player can try again the
+	# moment they walk out from under the storm.
+	if char_name == "windman" and _weather_is_raining_here():
+		var rain_hud := get_tree().get_first_node_in_group("ability_hud")
+		if rain_hud and rain_hud.has_method("flash_blocked"):
+			rain_hud.flash_blocked()
 		_sfx("play_buzz")
 		return
 
