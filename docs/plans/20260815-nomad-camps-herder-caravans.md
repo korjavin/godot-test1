@@ -148,28 +148,28 @@ any existing RNG stream.
       `road_width_max / 2` scatter band)
 
 ### Task 4: Herder + pack-beast model builders in fauna_manager.gd
-- [ ] add a `CONSTANTS — caravan geometry` block in the existing commented style: herder
+- [x] add a `CONSTANTS — caravan geometry` block in the existing commented style: herder
       torso/head/leg sizes, staff size, pack-beast body/leg/neck/head sizes, shag fringe box
       size and count, bundle box size, plus `CARAVAN_HERDERS_MIN/MAX` (2–4),
       `CARAVAN_BEASTS_MIN/MAX` (3–6) and the line-formation spacing
-- [ ] add two shared `static var` materials with lazy getters in the existing style —
+- [x] add two shared `static var` materials with lazy getters in the existing style —
       `_get_cloak_material()` (muted cloak) and `_get_wool_material()` (light-brown/cream) —
       and reuse `_get_patch_material()` (dark brown) for staffs/bundles/hooves. Total feature
       material count stays a small constant; **never `duplicate()` per animal**
-- [ ] add `_build_herder() -> Dictionary` returning the SAME record shape
+- [x] add `_build_herder() -> Dictionary` returning the SAME record shape
       (`root`/`body`/`legs`/`neck`/`neck_rest`/`trunk`): torso box + head box + **two**
       hip-pivot legs via the existing `_make_leg` (the animation loop indexes
       `LEG_PHASE_OFFSETS` by leg index, so two legs get the 0/PI alternating stride for
       free), plus a staff box angled at the side; `neck = null`, `trunk = []`
-- [ ] add `_build_pack_beast() -> Dictionary`: woolly body box + a row of shag fringe boxes
+- [x] add `_build_pack_beast() -> Dictionary`: woolly body box + a row of shag fringe boxes
       along its lower flanks, four `_make_leg` legs in the FL/FR/RL/RR order the animation
       loop requires, a curved neck as a short chain of pivots (or a neck pivot with a second
       angled segment) ending in a small head, and 1–2 bundle boxes strapped on the back.
       Use the `neck` slot so the existing neck-bob animation drives it, and cache
       `neck_rest`
-- [ ] follow the existing shadow discipline: `cast_shadow` ON for big silhouette parts
+- [x] follow the existing shadow discipline: `cast_shadow` ON for big silhouette parts
       (torso, legs, beast body/neck), OFF for small accents (staff, fringe, bundles, head nubs)
-- [ ] feet rest at local y = 0 and local forward is -Z, like every other fauna builder
+- [x] feet rest at local y = 0 and local forward is -Z, like every other fauna builder
 
 ### Task 5: Caravan as the third migration type
 - [ ] add `CARAVAN_CHANCE` (weighted clearly rarer than the two herds — e.g. 0.15) with a

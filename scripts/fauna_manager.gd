@@ -212,6 +212,67 @@ const GIRAFFE_PATCH_COUNT: int = 3
 const GIRAFFE_PATCH_SIZE: Vector3 = Vector3(0.06, 0.45, 0.55)
 
 # ============================================================================
+# CONSTANTS — caravan geometry (herders + pack beasts)
+# ============================================================================
+# Same conventions as the two herd blocks: metres, Vector3(width, height,
+# length), local forward -Z, feet at local y = 0. A caravan is the nomad
+# camps' people out on the move — a couple of upright herders leading a short
+# file of woolly, laden pack beasts.
+
+## Caravan party size. Small on purpose: the read is "a few people walking
+## their animals somewhere", not a second herd. Worst case 4 + 6 = 10 members,
+## which is the largest event this manager can produce (the herds cap at 8) and
+## still one event at a time, so the one-herd perf invariant is unchanged.
+const CARAVAN_HERDERS_MIN: int = 2
+const CARAVAN_HERDERS_MAX: int = 4
+const CARAVAN_BEASTS_MIN: int = 3
+const CARAVAN_BEASTS_MAX: int = 6
+
+## Line formation: gap (metres) between consecutive members along the heading,
+## and the lateral wobble each member gets so the file reads as a loose trail
+## rather than a marching column.
+const CARAVAN_LINE_SPACING: float = 3.0
+const CARAVAN_LINE_JITTER: float = 1.6
+
+## The herder: an upright blocky figure, deliberately human-scaled (~1.9 m to
+## the crown) so a pack beast beside them reads as a big animal.
+const HERDER_TORSO_SIZE: Vector3 = Vector3(0.52, 0.80, 0.34)
+const HERDER_HEAD_SIZE: Vector3 = Vector3(0.32, 0.32, 0.32)
+
+## One herder leg column; its y doubles as hip height, same trick as every
+## other fauna limb (see _make_leg).
+const HERDER_LEG_SIZE: Vector3 = Vector3(0.17, 0.80, 0.17)
+
+## The walking staff, carried at one side and leaned forward a few degrees —
+## the single silhouette cue that says "herder" rather than "person".
+const HERDER_STAFF_SIZE: Vector3 = Vector3(0.07, 1.85, 0.07)
+const HERDER_STAFF_LEAN_DEG: float = -8.0
+
+## The pack beast: a heavy woolly barrel on short legs (a llama/yak read), so
+## it never gets mistaken for the taller, leggier giraffe at FIELD_RADIUS.
+const BEAST_BODY_SIZE: Vector3 = Vector3(0.85, 0.90, 1.70)
+const BEAST_LEG_SIZE: Vector3 = Vector3(0.20, 0.80, 0.20)
+
+## The neck is built as TWO segments so it curves: a lower segment leaning
+## forward off the shoulders and an upper one bending back toward vertical,
+## with the head on top. One pivot drives the whole chain (see _build_pack_beast).
+const BEAST_NECK_SIZE: Vector3 = Vector3(0.28, 0.70, 0.28)
+const BEAST_NECK_ANGLE_DEG: float = -34.0
+const BEAST_NECK_UPPER_SIZE: Vector3 = Vector3(0.24, 0.55, 0.24)
+const BEAST_NECK_UPPER_ANGLE_DEG: float = 30.0
+const BEAST_HEAD_SIZE: Vector3 = Vector3(0.26, 0.28, 0.44)
+
+## Shag fringe: thin slabs hung along the lower flanks, in the SAME spirit as
+## the giraffe's coat patches — a handful of boxes standing in for fur this
+## feature has no texture (and no asset files) to draw.
+const BEAST_SHAG_PER_SIDE: int = 3
+const BEAST_SHAG_SIZE: Vector3 = Vector3(0.07, 0.42, 0.42)
+
+## The cargo: one or two strapped bundles riding the beast's back — the whole
+## point of a pack animal, and what separates a caravan from a wild herd.
+const BEAST_BUNDLE_SIZE: Vector3 = Vector3(0.72, 0.42, 0.52)
+
+# ============================================================================
 # CONSTANTS — procedural walk animation
 # ============================================================================
 # Same idiom as piglet_crocodile_ai._animate_body: no AnimationPlayer anywhere,
@@ -303,6 +364,8 @@ static var _elephant_material: StandardMaterial3D = null
 static var _giraffe_material: StandardMaterial3D = null
 static var _accent_material: StandardMaterial3D = null
 static var _patch_material: StandardMaterial3D = null
+static var _cloak_material: StandardMaterial3D = null
+static var _wool_material: StandardMaterial3D = null
 
 
 static func _get_shared_box_mesh() -> BoxMesh:
@@ -348,14 +411,37 @@ static func _get_accent_material() -> StandardMaterial3D:
 
 static func _get_patch_material() -> StandardMaterial3D:
 	## The ONE dark accent material (darker-brown giraffe coat patches and
-	## horn nubs — both need a darker-than-coat read, so they share it). With
-	## this the feature's total material count is capped at a constant 4,
+	## horn nubs — both need a darker-than-coat read, so they share it). The
+	## caravan reuses it as-is for staffs, straps and bundles rather than adding
+	## a third brown, so the feature's total material count is a constant 6,
 	## independent of how many animals ever spawn.
 	if _patch_material == null:
 		_patch_material = StandardMaterial3D.new()
 		_patch_material.albedo_color = Color(0.48, 0.32, 0.16)
 		_patch_material.roughness = 0.9
 	return _patch_material
+
+
+static func _get_cloak_material() -> StandardMaterial3D:
+	## The ONE herder material (muted dusty mauve cloak). Picked to sit apart
+	## from BOTH herd hides (elephant grey, giraffe tan) and from the nomad
+	## camps' bone-white huts, so a caravan reads as "people" at a glance.
+	## Same sharing rule as every material above — never duplicate() per herder.
+	if _cloak_material == null:
+		_cloak_material = StandardMaterial3D.new()
+		_cloak_material.albedo_color = Color(0.43, 0.34, 0.40)
+		_cloak_material.roughness = 0.95
+	return _cloak_material
+
+
+static func _get_wool_material() -> StandardMaterial3D:
+	## The ONE pack-beast material (cream wool). Shared by every body, leg,
+	## neck and shag slab of every beast ever spawned.
+	if _wool_material == null:
+		_wool_material = StandardMaterial3D.new()
+		_wool_material.albedo_color = Color(0.86, 0.79, 0.63)
+		_wool_material.roughness = 0.95
+	return _wool_material
 
 
 # ============================================================================
@@ -594,6 +680,164 @@ func _build_giraffe() -> Dictionary:
 		# cached model_base_scale / model_base_y).
 		"neck_rest": neck.rotation.x,
 		"trunk": [] as Array[Node3D],   # giraffes have no trunk chain
+	}
+
+
+func _build_herder() -> Dictionary:
+	## Assemble one caravan herder — a two-legged blocky figure with a staff —
+	## and return the SAME species-agnostic record shape as the two herd
+	## builders, so nothing downstream learns a new case.
+	##
+	## The legs slot carries TWO pivots instead of four, and that costs no code
+	## at all: _animate_animals indexes LEG_PHASE_OFFSETS by leg index, and its
+	## first two entries are 0 and PI — exactly the alternating left/right
+	## stride a biped wants. (The quadruped order is FL/FR/RL/RR, so index 0/1
+	## being the left/right pair is not a coincidence to preserve here, it is
+	## the same convention: even index = left, odd = right.)
+	var mat := _get_cloak_material()
+
+	var root := Node3D.new()
+	root.name = "Herder"
+	var body := Node3D.new()
+	body.name = "Body"
+	root.add_child(body)
+
+	# Torso: rests on the leg tops, so its centre is hip + half height.
+	var torso_center_y := HERDER_LEG_SIZE.y + HERDER_TORSO_SIZE.y * 0.5
+	body.add_child(_make_box_part("TorsoBox", HERDER_TORSO_SIZE,
+			Vector3(0.0, torso_center_y, 0.0), mat, true))
+
+	# Head, sitting straight on the shoulders. Small, but it is the part that
+	# makes the silhouette read as a person, so it keeps its shadow.
+	body.add_child(_make_box_part("Head", HERDER_HEAD_SIZE,
+			Vector3(0.0, torso_center_y + HERDER_TORSO_SIZE.y * 0.5 + HERDER_HEAD_SIZE.y * 0.5,
+					0.0), mat, true))
+
+	# Staff: a thin pole carried at the right side, leaned forward a few
+	# degrees. Shadow OFF — a 7 cm pole is a pure accent (same rule as tusks).
+	var staff := _make_box_part("Staff", HERDER_STAFF_SIZE,
+			Vector3(HERDER_TORSO_SIZE.x * 0.5 + 0.10, HERDER_STAFF_SIZE.y * 0.5, -0.05),
+			_get_patch_material(), false)
+	staff.rotation_degrees.x = HERDER_STAFF_LEAN_DEG
+	body.add_child(staff)
+
+	# Two hip pivots, left then right (see the leg-order note above).
+	var hip_x := HERDER_TORSO_SIZE.x * 0.5 - HERDER_LEG_SIZE.x * 0.5
+	var legs: Array[Node3D] = [
+		_make_leg("LegL", Vector3(-hip_x, HERDER_LEG_SIZE.y, 0.0), HERDER_LEG_SIZE, mat, true),
+		_make_leg("LegR", Vector3(hip_x, HERDER_LEG_SIZE.y, 0.0), HERDER_LEG_SIZE, mat, true),
+	]
+	for leg: Node3D in legs:
+		body.add_child(leg)
+
+	return {
+		"root": root,
+		"body": body,
+		"legs": legs,
+		"neck": null,                   # a herder's head rides the torso directly
+		"neck_rest": 0.0,               # unused while neck is null
+		"trunk": [] as Array[Node3D],   # no trunk chain
+	}
+
+
+func _build_pack_beast() -> Dictionary:
+	## Assemble one laden pack beast: a woolly barrel on four short legs with a
+	## curved neck, a small head and one or two bundles strapped to its back.
+	## Same record shape as every other builder — the neck slot is filled, so
+	## the existing neck-bob animation drives it with no new code.
+	##
+	## The neck CURVES using one pivot, not two animated ones: the lower
+	## segment leans forward off the shoulders and carries a nested upper
+	## segment bent back toward vertical, with the head on top of that. Only
+	## the outer pivot is ever animated, and everything downstream rides it —
+	## the same parent-swings-the-chain structure as the elephant's trunk.
+	var mat := _get_wool_material()
+
+	var root := Node3D.new()
+	root.name = "PackBeast"
+	var body := Node3D.new()
+	body.name = "Body"
+	root.add_child(body)
+
+	# Barrel: bottom rests on the leg tops, so its centre is hip + half height.
+	var body_center_y := BEAST_LEG_SIZE.y + BEAST_BODY_SIZE.y * 0.5
+	body.add_child(_make_box_part("BodyBox", BEAST_BODY_SIZE,
+			Vector3(0.0, body_center_y, 0.0), mat, true))
+
+	# Shag fringe: slabs hung along the lower flanks, spaced down the length.
+	# Shadow OFF (accents), like the giraffe's coat patches.
+	var shag_x := BEAST_BODY_SIZE.x * 0.5 + BEAST_SHAG_SIZE.x * 0.5 - 0.02
+	var shag_y := body_center_y - BEAST_BODY_SIZE.y * 0.5 + BEAST_SHAG_SIZE.y * 0.35
+	for i: int in BEAST_SHAG_PER_SIDE:
+		# Evenly spaced along the barrel: i / (n-1) mapped onto -0.35..0.35 of
+		# the body length (guarded so a single-slab fringe sits mid-body).
+		var t := 0.0 if BEAST_SHAG_PER_SIDE < 2 else float(i) / float(BEAST_SHAG_PER_SIDE - 1) - 0.5
+		var shag_z := t * BEAST_BODY_SIZE.z * 0.7
+		for side: float in [-1.0, 1.0]:
+			body.add_child(_make_box_part("Shag%d%s" % [i, "L" if side < 0.0 else "R"],
+					BEAST_SHAG_SIZE, Vector3(side * shag_x, shag_y, shag_z), mat, false))
+
+	# Bundles: the cargo, sitting on top of the barrel in dark strap-brown.
+	# Shadow OFF — they are small and already inside the body's own shadow.
+	var bundle_count := _rng.randi_range(1, 2)
+	var bundle_y := body_center_y + BEAST_BODY_SIZE.y * 0.5 + BEAST_BUNDLE_SIZE.y * 0.5 - 0.05
+	for i: int in bundle_count:
+		var bundle_z := (float(i) - float(bundle_count - 1) * 0.5) * (BEAST_BUNDLE_SIZE.z + 0.08)
+		body.add_child(_make_box_part("Bundle%d" % i, BEAST_BUNDLE_SIZE,
+				Vector3(0.0, bundle_y, bundle_z), _get_patch_material(), false))
+
+	# Neck: pivot at the shoulders, leaning forward; box hung half a length
+	# ABOVE it along the pivot's local up (the same offset trick as the legs
+	# and the giraffe neck), so the bob swings neck, head and all.
+	var neck := Node3D.new()
+	neck.name = "Neck"
+	neck.position = Vector3(0.0, body_center_y + BEAST_BODY_SIZE.y * 0.35,
+			-(BEAST_BODY_SIZE.z * 0.5 - BEAST_NECK_SIZE.z * 0.5))
+	neck.rotation_degrees.x = BEAST_NECK_ANGLE_DEG
+	body.add_child(neck)
+	neck.add_child(_make_box_part("NeckBox", BEAST_NECK_SIZE,
+			Vector3(0.0, BEAST_NECK_SIZE.y * 0.5, 0.0), mat, true))
+
+	# Upper neck: a child pivot at the lower segment's top, bent BACK so the
+	# pair reads as a curve rather than one straight bar. Not animated — it is
+	# rest geometry that rides the parent pivot.
+	var neck_upper := Node3D.new()
+	neck_upper.name = "NeckUpper"
+	neck_upper.position = Vector3(0.0, BEAST_NECK_SIZE.y, 0.0)
+	neck_upper.rotation_degrees.x = BEAST_NECK_UPPER_ANGLE_DEG
+	neck.add_child(neck_upper)
+	neck_upper.add_child(_make_box_part("NeckUpperBox", BEAST_NECK_UPPER_SIZE,
+			Vector3(0.0, BEAST_NECK_UPPER_SIZE.y * 0.5, 0.0), mat, true))
+
+	# Head, in UPPER-NECK-local space at the far end, so it rides the whole
+	# chain for free. Shadow OFF — a 26 cm nub adds nothing to the silhouette.
+	neck_upper.add_child(_make_box_part("Head", BEAST_HEAD_SIZE,
+			Vector3(0.0, BEAST_NECK_UPPER_SIZE.y + BEAST_HEAD_SIZE.y * 0.5 - 0.05,
+					-(BEAST_HEAD_SIZE.z * 0.5 - BEAST_NECK_UPPER_SIZE.z * 0.5)), mat, false))
+
+	# Legs, always in FL/FR/RL/RR order — the species-agnostic contract the
+	# animation loop relies on (diagonal trot pairs are picked by index).
+	var hip_x := BEAST_BODY_SIZE.x * 0.5 - BEAST_LEG_SIZE.x * 0.5
+	var hip_z := BEAST_BODY_SIZE.z * 0.5 - BEAST_LEG_SIZE.z * 0.5
+	var hip_y := BEAST_LEG_SIZE.y
+	var legs: Array[Node3D] = [
+		_make_leg("LegFL", Vector3(-hip_x, hip_y, -hip_z), BEAST_LEG_SIZE, mat, true),
+		_make_leg("LegFR", Vector3(hip_x, hip_y, -hip_z), BEAST_LEG_SIZE, mat, true),
+		_make_leg("LegRL", Vector3(-hip_x, hip_y, hip_z), BEAST_LEG_SIZE, mat, true),
+		_make_leg("LegRR", Vector3(hip_x, hip_y, hip_z), BEAST_LEG_SIZE, mat, true),
+	]
+	for leg: Node3D in legs:
+		body.add_child(leg)
+
+	return {
+		"root": root,
+		"body": body,
+		"legs": legs,
+		"neck": neck,
+		# The forward lean is the neck's REST pose: the bob is layered on top of
+		# it, never overwriting it (same discipline as the giraffe's neck).
+		"neck_rest": neck.rotation.x,
+		"trunk": [] as Array[Node3D],   # no trunk chain
 	}
 
 
