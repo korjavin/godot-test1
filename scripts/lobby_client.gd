@@ -22,8 +22,9 @@ class_name LobbyClient
 ##   * peer ids are 16 lowercase hex characters.
 ##   * the lobby never inspects `payload`, so anything JSON-serialisable relays.
 ##
-## `heroes` / `pong` are parsed but deliberately unused: hero assignment and
-## stall detection are phase 4/5 concerns.
+## `heroes` is parsed and published as `heroes_changed` (phase 4's hero split —
+## the lobby is the source of truth for who holds which body). `pong` is still
+## parsed and deliberately unused: stall detection is a phase 5 concern.
 
 # =============================================================================
 # CONFIGURATION
@@ -80,6 +81,13 @@ signal lobby_error(message: String)
 ## The socket closed, for any reason including a clean `disconnect_from_room()`.
 signal closed(code: int, reason: String)
 
+## The room's hero assignments changed: `heroes` maps hero name → holder peer id,
+## `pool` is every hero the lobby offers. Emitted from the `welcome` frame (which
+## carries both) and from every later `heroes` broadcast (which carries only the
+## assignments, so the last-seen pool is re-emitted with it — a subscriber always
+## gets the complete picture and never has to remember half of it).
+signal heroes_changed(heroes: Dictionary, pool: Array)
+
 # =============================================================================
 # STATE
 # =============================================================================
@@ -92,6 +100,10 @@ var _lobby_url: String = ""
 
 ## Child `HTTPRequest`, created lazily on the first `fetch_ice()` call.
 var _http: HTTPRequest = null
+
+## The hero pool as the `welcome` frame reported it. Kept because the lobby's
+## later `heroes` broadcasts carry assignments only — see `heroes_changed`.
+var _hero_pool: Array = []
 
 
 # =============================================================================
@@ -195,6 +207,19 @@ func send_signal_to(to: String, payload: Dictionary) -> void:
 	_send({"type": "signal", "to": to, "payload": payload})
 
 
+func send_hero(hero: String) -> void:
+	"""
+	Claim a hero; `""` releases the one we hold. The lobby answers with a `heroes`
+	broadcast on success and a plain `error` frame (`"unknown hero"` / `"hero
+	already taken"`) on refusal — **without** closing the socket, so a refusal is
+	not a disconnect.
+
+	The lobby holds at most one hero per member, so claiming a second releases the
+	first for us; there is no separate release-then-claim dance to do here.
+	"""
+	_send({"type": "hero", "hero": hero})
+
+
 func _send(frame: Dictionary) -> void:
 	"""Serialise and send one frame, silently dropping it if the socket is not open."""
 	if not is_connected_to_lobby():
@@ -274,6 +299,12 @@ func _handle_text(text: String) -> void:
 				str(frame.get("master", "")),
 				members as Array
 			)
+			# The welcome is the only frame carrying the pool, so it is where the
+			# pool is remembered. Both fields are type-checked and default to
+			# empty: a malformed welcome must still produce a usable room, not a
+			# crash, and an empty pool simply means "no heroes to offer yet".
+			_hero_pool = _array_or_empty(frame.get("pool", []))
+			heroes_changed.emit(_dict_or_empty(frame.get("heroes", {})), _hero_pool)
 		"peer_join":
 			var peer: Variant = frame.get("peer", null)
 			if typeof(peer) != TYPE_DICTIONARY:
@@ -286,6 +317,11 @@ func _handle_text(text: String) -> void:
 			peer_left.emit(str(frame.get("id", "")))
 		"master":
 			master_changed.emit(str(frame.get("id", "")))
+		"heroes":
+			# Broadcast whenever a hero is claimed or released (including the
+			# server-side release when a member leaves). It carries no `pool`, so
+			# the one the welcome brought is re-emitted alongside it.
+			heroes_changed.emit(_dict_or_empty(frame.get("heroes", {})), _hero_pool)
 		"signal":
 			var payload: Variant = frame.get("payload", null)
 			if typeof(payload) != TYPE_DICTIONARY:
@@ -294,9 +330,19 @@ func _handle_text(text: String) -> void:
 		"error":
 			lobby_error.emit(str(frame.get("error", "unknown lobby error")))
 		_:
-			# `heroes` and `pong` land here, as will anything phases 4/5 add.
-			# Ignoring unknown types is what makes this client forward compatible.
+			# `pong` lands here, as will anything phase 5 adds. Ignoring unknown
+			# types is what makes this client forward compatible.
 			pass
+
+
+static func _dict_or_empty(value: Variant) -> Dictionary:
+	"""Untrusted field → Dictionary. Anything else is empty, never null."""
+	return value as Dictionary if typeof(value) == TYPE_DICTIONARY else {}
+
+
+static func _array_or_empty(value: Variant) -> Array:
+	"""Untrusted field → Array. Anything else is empty, never null."""
+	return value as Array if typeof(value) == TYPE_ARRAY else []
 
 
 # =============================================================================

@@ -220,15 +220,15 @@ spent.
 
 ### Task 3: `lobby_client.gd` — hero frames
 
-- [ ] add `signal heroes_changed(heroes: Dictionary, pool: Array)`.
-- [ ] in `_handle_text`, emit it from **both** the `welcome` branch (type-checking
+- [x] add `signal heroes_changed(heroes: Dictionary, pool: Array)`.
+- [x] in `_handle_text`, emit it from **both** the `welcome` branch (type-checking
       `frame["heroes"]` as a Dictionary and `frame["pool"]` as an Array, each
       defaulting to empty — malformed means empty, never a crash) and a new
       `"heroes"` branch (which carries no `pool`; re-emit the pool we last saw,
       stored in a member var, so subscribers always get a complete picture).
-- [ ] add `func send_hero(hero: String) -> void:` → `_send({"type": "hero", "hero": hero})`.
+- [x] add `func send_hero(hero: String) -> void:` → `_send({"type": "hero", "hero": hero})`.
       `""` releases.
-- [ ] update the file's header comment: `heroes` is no longer "parsed but
+- [x] update the file's header comment: `heroes` is no longer "parsed but
       deliberately unused"; `pong` still is.
 
 ### Task 4: `mp_manager.gd` — hero pool
