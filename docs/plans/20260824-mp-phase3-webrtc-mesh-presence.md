@@ -382,14 +382,14 @@ A code-built `Control` under `HUD`, in the style of `mobile_settings_panel.gd`.
 
 ### Task 6: Wire into `main.tscn`
 
-- [ ] add `[node name="Multiplayer" type="Node" parent="." groups=["mp"]]` with
+- [x] add `[node name="Multiplayer" type="Node" parent="." groups=["mp"]]` with
       `scripts/mp_manager.gd`, and `[node name="MultiplayerUI" type="Control" parent="HUD"]`
       with `scripts/mp_ui.gd` (full-rect anchors, `mouse_filter` set so the panel
       does not eat gameplay clicks while closed).
-- [ ] add both `[ext_resource type="Script" path="res://scripts/..." id="..."]`
+- [x] add both `[ext_resource type="Script" path="res://scripts/..." id="..."]`
       lines **without a `uid=` attribute**, matching the existing path-only
       entries, and bump `load_steps` in the `[gd_scene]` header accordingly.
-- [ ] `godot --headless --path . --import` must complete with no errors, then
+- [x] `godot --headless --path . --import` must complete with no errors, then
       `godot --headless --path . scenes/main.tscn --quit-after 120` must boot and
       exit clean. Both are required before this task is marked done.
 
