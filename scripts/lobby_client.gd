@@ -177,11 +177,6 @@ func is_connected_to_lobby() -> bool:
 	return _socket != null and _socket.get_ready_state() == WebSocketPeer.STATE_OPEN
 
 
-func get_lobby_url() -> String:
-	"""The base URL actually in use, for the UI's status line."""
-	return _lobby_url
-
-
 # =============================================================================
 # SENDING
 # =============================================================================

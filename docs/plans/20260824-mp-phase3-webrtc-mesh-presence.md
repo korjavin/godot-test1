@@ -372,8 +372,22 @@ A code-built `Control` under `HUD`, in the style of `mobile_settings_panel.gd`.
       project uses; subscribe to its `room_changed` / `status` signals.
 - [x] **mouse handling**: opening the panel releases a captured mouse and closing
       recaptures it, copying `pause_controller.gd`'s `_recapture_mouse` flag so it
-      never fights the pause overlay or the touch path. Do **not** pause the tree —
-      the world keeps running while the panel is open.
+      never fights the pause overlay or the touch path. **REVERSED DURING
+      IMPLEMENTATION** — this originally said "do **not** pause the tree", which
+      does not survive contact with the controller: `player_controller` reads
+      gameplay through the *global* polled `Input` state and through `_input()`,
+      neither of which a focused `Control` suppresses. Left running, every click
+      inside the panel re-fires the desktop-web click-to-capture (warping the
+      cursor to screen centre, so nothing in the panel is clickable twice) and
+      typing an invite code walks, turns, switches character and fires abilities,
+      because the lobby's code alphabet contains W, A, S, D, E, F, C and R. The
+      panel therefore **pauses the tree** with the same `_paused_by_us` ownership
+      guard `pause_controller.gd` and `mobile_input.gd` use, and `MpManager` is
+      `PROCESS_MODE_ALWAYS` so the socket and mesh keep running underneath it.
+      Exception: it does **not** pause over the Game Over screen (`GameOverUI` is
+      PAUSABLE, so pausing there kills Play Again), and the decision is
+      re-evaluated every frame so Play Again does not leave a live world under an
+      open panel.
 - [x] touch-friendly: minimum ~48 px touch targets, and the panel must be usable
       with the on-screen keyboard (`LineEdit` handles the virtual keyboard).
       Unlike `touch_controls`, this UI is **visible on every platform** — desktop

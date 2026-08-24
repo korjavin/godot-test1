@@ -197,6 +197,11 @@ func _process(_delta: float) -> void:
 	if modal and _panel_open:
 		_set_panel_open(false)
 
+	# The pause decision is re-evaluated every frame, not just at open time —
+	# see `_apply_pause()` for why (this node is PROCESS_MODE_ALWAYS, so it keeps
+	# ticking under its own pause).
+	_apply_pause(_panel_open)
+
 
 # ============================================================================
 # UI CONSTRUCTION
@@ -477,23 +482,7 @@ func _set_panel_open(open: bool) -> void:
 	if _panel_body != null:
 		_panel_body.visible = open
 
-	var tree := get_tree()
-	# Never pause over the Game Over screen — the same rule (and the same reason)
-	# as `pause_controller._toggle_pause()` and `mobile_input.pause_game()`:
-	# `GameOverUI` is PAUSABLE, so a pause here kills both its "Play Again" button
-	# and its `ui_accept` handler, and the phone's resume overlay is gated on
-	# `paused_by_driver` so it would not appear either. The panel still OPENS —
-	# it is readable and closable — it just does not freeze the tree, which is
-	# safe because a game-over player is already frozen and the desktop-web
-	# click-to-capture is itself guarded on `is_game_over`.
-	var player := tree.get_first_node_in_group("player")
-	var game_over: bool = player != null and bool(player.get("is_game_over"))
-	if open and not tree.paused and not game_over:
-		tree.paused = true
-		_paused_by_us = true
-	elif not open and _paused_by_us:
-		_paused_by_us = false
-		tree.paused = false
+	_apply_pause(open)
 
 	if open:
 		# Clamp the panel to the space actually above the button — a phone's
@@ -513,6 +502,40 @@ func _set_panel_open(open: bool) -> void:
 		# needs, so this works on desktop web too.
 		_recapture_mouse = false
 		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+
+
+## Take or release the pause for the panel's current state.
+##
+## Called every frame from `_process`, not just at open time, because the
+## game-over exemption below is a MOVING condition: open the panel over the Game
+## Over screen (deliberately unpaused), then hit Play Again or Enter, and the
+## world is live again underneath a panel that never took the pause — restoring
+## both failures the pause exists to prevent (clicks re-capturing the mouse,
+## typed invite codes walking the player, since the code alphabet holds W/A/S/D).
+##
+## Never pause over the Game Over screen itself — the same rule (and the same
+## reason) as `pause_controller._toggle_pause()` and `mobile_input.pause_game()`:
+## `GameOverUI` is PAUSABLE, so a pause there kills both its "Play Again" button
+## and its `ui_accept` handler, and the phone's resume overlay is gated on
+## `paused_by_driver` so it would not appear either. The panel still OPENS — it
+## is readable and closable — it just does not freeze the tree, which is safe
+## because a game-over player is already frozen and the desktop-web
+## click-to-capture is itself guarded on `is_game_over`.
+func _apply_pause(open: bool) -> void:
+	if not open and not _paused_by_us:
+		return  # The overwhelmingly common case: closed panel, nothing to undo.
+	var tree := get_tree()
+	var player := tree.get_first_node_in_group("player")
+	var game_over: bool = player != null and bool(player.get("is_game_over"))
+	if open and not game_over:
+		if not tree.paused:
+			tree.paused = true
+			_paused_by_us = true
+	elif _paused_by_us:
+		# Only ever release OUR pause — `pause_controller` and `mobile_input`
+		# carry the mirror-image guard so neither can cancel the other's.
+		_paused_by_us = false
+		tree.paused = false
 
 
 ## Re-render everything that depends on the manager's state: which actions are

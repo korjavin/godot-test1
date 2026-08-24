@@ -57,6 +57,14 @@ func _check_avatar_isolation() -> String:
 	avatar.setup("selfcheck-peer")
 	avatar.set_character(0)
 
+	# `set_character` has four SILENT early-return paths (bad index, same index,
+	# the swap cooldown, a load() that returned null). Any of them would leave an
+	# empty subtree here and the walk below would pass by covering nothing —
+	# a green run that guards precisely zero of the contract. Assert it loaded.
+	if avatar.character_node == null:
+		avatar.free()
+		return "set_character(0) instanced no model — the isolation walk would be vacuous"
+
 	var failure: String = _walk_isolation(avatar, avatar)
 	avatar.free()
 	return failure
@@ -95,6 +103,15 @@ func _check_presence_parser() -> String:
 		return "parser rejected a well-formed packet"
 	if decoded["p"] != good["p"] or decoded["c"] != 0 or decoded["g"] != true:
 		return "parser mangled a well-formed packet: %s" % decoded
+
+	# A finite but absurd yaw must come out BOUNDED, not merely accepted: it is
+	# assigned straight to RemoteAvatar.rotation.y, and lerp_angle's `from +
+	# short_way * weight` leaves 1e30 at 1e30 forever.
+	var wild: Dictionary = MPManager.decode_presence(var_to_bytes({
+		"p": Vector3.ZERO, "y": 1.0e30, "c": 0, "s": 0.0, "g": true
+	}))
+	if wild.is_empty() or absf(wild["y"]) > TAU:
+		return "parser let an absurd yaw through unbounded: %s" % wild
 
 	# Each of these must be dropped whole, and none may crash the parser.
 	# Two of them make the engine print a "decode_variant ... ERR_INVALID_DATA"

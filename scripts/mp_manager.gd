@@ -744,6 +744,7 @@ func _process(delta: float) -> void:
 	# The mesh is a plain PacketPeer here — nobody else polls it for us, because
 	# it was deliberately never handed to the global MultiplayerAPI.
 	_rtc.poll()
+	_prune_dead_connections()
 	_receive_presence()
 
 	_send_accum += delta
@@ -751,6 +752,38 @@ func _process(delta: float) -> void:
 	if _send_accum >= interval:
 		_send_accum = fmod(_send_accum, interval)
 		_send_presence()
+
+
+func _prune_dead_connections() -> void:
+	"""
+	Drop the avatar of a peer whose WebRTC connection died while its LOBBY socket
+	stayed up — a network change, a NAT rebind, a TURN allocation expiring.
+
+	`peer_left` never fires for those (the lobby still has them in the room), and
+	`_rtc.poll()` drops them from the MESH only, so without this their avatar
+	stands frozen exactly where the last presence packet put it for the rest of
+	the room's life. Only the two TERMINAL states count: STATE_DISCONNECTED is
+	ICE's "lost it, still trying" and recovers on its own.
+
+	The peer is deliberately left in `_members` — it IS still in the room, and
+	the member list reports lobby membership, not reachability.
+	"""
+	for id: String in _connections.keys():
+		var conn: WebRTCPeerConnection = _connections[id]
+		var conn_state: int = conn.get_connection_state()
+		if conn_state != WebRTCPeerConnection.STATE_FAILED \
+				and conn_state != WebRTCPeerConnection.STATE_CLOSED:
+			continue
+		conn.close()
+		_connections.erase(id)
+		_pending_signals.erase(id)
+		if _avatars.has(id):
+			(_avatars[id] as RemoteAvatar).queue_free()
+			_avatars.erase(id)
+		# Same rule as `_on_lobby_peer_left`: only remove a peer the mesh still
+		# holds, because `remove_peer()` errors on an unknown id.
+		if _rtc.has_peer(peer_int_id(id)):
+			_rtc.remove_peer(peer_int_id(id))
 
 
 func _send_presence() -> void:
@@ -875,6 +908,15 @@ static func decode_presence(bytes: PackedByteArray) -> Dictionary:
 	var speed: float = float(state["s"])
 	if not (is_finite(yaw) and is_finite(speed)):
 		return {}
+
+	# `y` LATCHES TOO, and wrapping is the whole fix: an angle has no natural
+	# magnitude limit, but `RemoteAvatar` assigns it to `rotation.y` (float32) and
+	# then eases it with `lerp_angle`, which is `from + short_way * weight` — and
+	# `1e30 + anything small IS 1e30`. One packet and that avatar's basis is
+	# garbage (sin/cos of 1e30) for the rest of the room, with no path back.
+	# Wrapping into [0, TAU) is lossless for every honest sender, so this
+	# normalises rather than dropping.
+	yaw = fposmod(yaw, TAU)
 
 	# FINITE IS NOT THE SAME AS SANE, and `s` is the one that latches: 1e38 is
 	# finite, and `RemoteAvatar._animate` does `stride_phase += move_speed *
