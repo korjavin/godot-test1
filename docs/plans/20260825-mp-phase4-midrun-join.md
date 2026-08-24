@@ -477,14 +477,14 @@ has no `webrtc-native` addon — so **none** of the relay path (seed, snapshots,
 heroes) can be exercised automatically today. That is exactly why the production
 bug above shipped.
 
-- [ ] `var lobby_only: bool = false`, set in `_init()`/`_ready()` from
+- [x] `var lobby_only: bool = false`, set in `_init()`/`_ready()` from
       `--lobby-only` in `OS.get_cmdline_user_args()` — the same precedence shape
       `LobbyClient.resolve_lobby_url()` uses for `--lobby=`.
-- [ ] `join()` skips the `webrtc_available()` refusal when `lobby_only`;
+- [x] `join()` skips the `webrtc_available()` refusal when `lobby_only`;
       `_on_lobby_joined` skips `fetch_ice(...)` (and so the mesh) when `lobby_only`.
       Everything over the relay keeps working; there are simply no avatars and no
       presence.
-- [ ] `ponytail:` name the ceiling in a comment — this is a **test/dev** mode for
+- [x] `ponytail:` name the ceiling in a comment — this is a **test/dev** mode for
       the headless E2E and for a desktop developer with no addon, not a shipped
       degraded mode. It is opt-in from the command line only; nothing in the UI
       exposes it and the web build never sets it.

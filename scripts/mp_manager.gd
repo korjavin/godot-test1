@@ -157,6 +157,18 @@ var _lobby: LobbyClient = null
 ## assigned to `multiplayer.multiplayer_peer`.
 var _rtc: WebRTCMultiplayerPeer = null
 
+## Relay-only mode: join the room over the lobby socket and skip the WebRTC mesh
+## entirely, so the seed / snapshot / hero path can be exercised where WebRTC does
+## not exist. Set once in `_init()` from `--lobby-only` in the user command line,
+## the same precedence shape `LobbyClient.resolve_lobby_url()` uses for `--lobby=`.
+##
+## ponytail: a TEST/DEV mode for the headless E2E (scripts/mp_e2e.sh) and for a
+## desktop developer with no `webrtc-native` addon — NOT a shipped degraded mode.
+## Its ceiling is that there is no mesh, so no presence and no avatars: you are in
+## the room and share its world, but nobody moves. Opt-in from the command line
+## only — nothing in the UI exposes it and the web build never sets it.
+var lobby_only: bool = false
+
 ## lobby id (16 hex chars) → WebRTCPeerConnection
 var _connections: Dictionary = {}
 
@@ -243,6 +255,8 @@ func _init() -> void:
 	# frame later and would undo a `set_process(true)` issued by a caller that
 	# joins immediately.
 	set_process(false)
+	# Relay-only opt-in, command line only. See `lobby_only`'s own comment.
+	lobby_only = OS.get_cmdline_user_args().has("--lobby-only")
 	# Keep polling the socket and the mesh while the tree is paused. A pause
 	# (the P key, the mobile focus-loss pause, an open MP panel) that stopped
 	# `_process` would stop `LobbyClient`'s `_socket.poll()` too, and the lobby
@@ -312,7 +326,7 @@ func join(code: String) -> void:
 	Join room `code` (empty = create). Idempotent in the sense that joining while
 	already in a room leaves the old one first — there is only ever one mesh.
 	"""
-	if not webrtc_available():
+	if not lobby_only and not webrtc_available():
 		status.emit("Multiplayer needs the WebRTC addon on desktop — see README")
 		return
 
@@ -472,7 +486,11 @@ func _on_lobby_joined(you: String, room: String, master: String, members: Array)
 	_broadcast_seed_if_master()
 
 	# The mesh cannot start before we know which STUN/TURN servers to use, so the
-	# rest of setup hangs off the /ice callback.
+	# rest of setup hangs off the /ice callback. `lobby_only` stops here: no /ice,
+	# no mesh, no presence — everything above this line rides the relay and keeps
+	# working, which is the whole point of the mode.
+	if lobby_only:
+		return
 	_lobby.fetch_ice(_on_ice_ready)
 
 
