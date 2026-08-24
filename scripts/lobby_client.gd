@@ -29,13 +29,18 @@ class_name LobbyClient
 # CONFIGURATION
 # =============================================================================
 
-## Fallback lobby URL, used when nothing overrides it.
+## Fallback lobby URL, used when nothing overrides it: the deployed phase-2 lobby.
 ##
-## ponytail: this is a **placeholder pending the phase-2 deployment hostname** —
-## the production lobby host is not settled yet, and inventing one would be worse
-## than an obvious stub. `?lobby=<url>` (web) or `--lobby=<url>` (desktop)
-## overrides it with no rebuild, so playtesting is never blocked on this literal.
-const DEFAULT_LOBBY_URL: String = "wss://lobby.example.com"
+## This is the ORIGIN only — `/ws` and `/ice` are appended by the two callers, so
+## it carries no path and no trailing slash (_strip_trailing_slash enforces that
+## for the override paths too). The deployment serves the socket at
+## `wss://ck.wandergeek.org/ws` and the STUN/TURN config at
+## `https://ck.wandergeek.org/ice`, whose CORS allowlist covers the game's
+## GitHub Pages origin.
+##
+## `?lobby=<url>` (web) or `--lobby=<url>` (desktop) still overrides it with no
+## rebuild — that is how a locally running `go run ./server` is targeted.
+const DEFAULT_LOBBY_URL: String = "wss://ck.wandergeek.org"
 
 ## Used when `/ice` cannot be reached or returns nonsense. A STUN-only mesh still
 ## connects on most home networks; failing the whole join because the TURN relay
