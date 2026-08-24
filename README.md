@@ -89,6 +89,45 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 
 See [QUICKSTART.md](QUICKSTART.md) for the 5-minute version.
 
+## Multiplayer (dev setup)
+
+2–4 browsers in a room run through the **same** world (shared seed) and see each
+other move. The shipping target is the **web build, which needs no extra setup** —
+browsers already speak WebRTC.
+
+**Desktop needs one addon.** Godot's desktop builds ship no WebRTC
+implementation, so testing with two editor instances needs the official
+GDExtension:
+
+1. Download the `webrtc-native` release for Godot 4.x from
+   https://github.com/godotengine/webrtc-native/releases
+2. Unzip it into `addons/` (so you get `addons/webrtc/…`).
+3. Restart the editor.
+
+`addons/` is gitignored — the addon is fetched, not vendored. Without it the MP
+panel says WebRTC is unavailable and the rest of the game plays as normal.
+
+**Iterating against a local lobby.** Run the Go lobby from `server/`:
+
+```bash
+cd server && go run .        # http://localhost:8080, websocket at /ws
+```
+
+Then point the clients at it. A build with no override talks to the **deployed**
+lobby (`LobbyClient.DEFAULT_LOBBY_URL` = `wss://ck.wandergeek.org`), so an
+override is only needed to test against a lobby running on your own machine.
+
+```bash
+# Two desktop instances (needs the addon above) — run this twice
+godot --path . scenes/main.tscn -- --lobby=ws://localhost:8080
+
+# Or the web build, opened in two tabs
+./serve.sh   # then visit http://localhost:8000/?lobby=ws://localhost:8080
+```
+
+One side clicks **Host** and shares the 6-character invite code; the other pastes
+it into **Join**.
+
 ## How it's built
 
 The codebase is written to be read — scripts are heavily commented, explaining

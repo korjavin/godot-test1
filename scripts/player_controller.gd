@@ -565,8 +565,11 @@ func _input(event: InputEvent) -> void:
 				and not MobileSensors.is_touch_session() and not is_game_over:
 			Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 
-	# Handle character switching with E key
-	if event.is_action_pressed("switch_character"):
+	# Handle character switching with E key. Not while the Game Over screen is up:
+	# the cursor is free and other UI has focus there, and the MP panel's invite
+	# codes are drawn from an alphabet that contains R (the second `switch_character`
+	# binding), so typing one would otherwise swap the frozen player's model.
+	if event.is_action_pressed("switch_character") and not is_game_over:
 		switch_to_next_character()
 
 # ============================================================================
@@ -634,11 +637,17 @@ func _physics_process(delta: float) -> void:
 	# STEP 0: First-person toggle (C). POLLED rather than handled in _input() on
 	# purpose: the touch UI synthesizes actions via Input.parse_input_event,
 	# which polled is_action_just_pressed() sees reliably — same reasoning as the
-	# switch_character gotcha in CLAUDE.md. Polled BEFORE the frozen-state early
-	# returns below so a press during the caught/respawn/game-over windows isn't
-	# silently dropped — the view is a pure camera preference and safe to flip
-	# while frozen (_apply_view_mode() only touches the camera rig and model).
-	if Input.is_action_just_pressed("toggle_camera"):
+	# switch_character gotcha in CLAUDE.md. Polled BEFORE the caught/respawn early
+	# returns below so a press during those frozen windows isn't silently dropped —
+	# the view is a pure camera preference and safe to flip while frozen
+	# (_apply_view_mode() only touches the camera rig and model).
+	#
+	# NOT while the Game Over screen is up, for exactly the reason switch_character
+	# carries the same guard: the MP panel deliberately does not pause there, and
+	# the lobby's invite-code alphabet contains C (the toggle_camera binding), so
+	# typing a code would flip the view. View mode is a preference nothing resets,
+	# so the next run would start in the wrong camera with no explanation.
+	if Input.is_action_just_pressed("toggle_camera") and not is_game_over:
 		first_person = not first_person
 		_apply_view_mode()
 
@@ -1731,7 +1740,20 @@ func restart_game() -> void:
 	# lookup with a has_method guard — the project's no-hard-references convention.
 	var terrain := get_tree().get_first_node_in_group("terrain")
 	if terrain and terrain.has_method("new_run"):
-		terrain.new_run()
+		# IN A MULTIPLAYER ROOM, "Play Again" must rebuild the SHARED world, not
+		# roll a private one — a re-roll here would leave this peer walking
+		# different terrain, biomes and rivers from everyone else for the rest of
+		# the room's life, with the avatars still drawing at coordinates that no
+		# longer mean anything. Same null-safe group + has_method shape as
+		# _terrain_is_river_here() / _weather_is_raining_here(); `null` (offline,
+		# or no seed yet) falls through to the ordinary random re-roll, and `0` is
+		# a legitimate seed, which is why this is a null and not a sentinel int.
+		var mp := get_tree().get_first_node_in_group("mp")
+		var shared_seed: Variant = mp.room_seed() if mp and mp.has_method("room_seed") else null
+		if shared_seed == null:
+			terrain.new_run()
+		else:
+			terrain.new_run(shared_seed)
 	reset_position()
 	# Recapture the mouse — but ONLY when this is NOT a touch session, mirroring the
 	# `_ready()` guard via the SAME canonical `MobileSensors.is_touch_session()` rule.

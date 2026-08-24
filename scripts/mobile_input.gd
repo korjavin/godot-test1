@@ -449,6 +449,14 @@ func disable() -> void:
 	_reset_steer_state()
 
 
+## True only while the tree pause was created by `pause_game()` (focus loss or the
+## portrait guard). The touch UI's full-screen "tap to resume" overlay is gated on
+## this, because a tree pause is no longer ours alone — the multiplayer panel pauses
+## too, and an overlay claiming the screen for somebody else's pause both hides that
+## panel and unpauses the game out from under it on the next tap.
+var paused_by_driver: bool = false
+
+
 ## Freeze the tree, remembering whether motion was running so `resume_from_pause()`
 ## can restore it. Called on focus loss (above) and by the touch UI when the phone
 ## rotates to portrait. IDEMPOTENT — the early return when already paused matters:
@@ -474,6 +482,7 @@ func pause_game() -> void:
 	_was_active_before_pause = active
 	disable()
 	tree.paused = true
+	paused_by_driver = true
 
 
 ## Unfreeze the tree after a focus-loss pause. Called by the touch UI's full-screen
@@ -483,6 +492,7 @@ func pause_game() -> void:
 ## however they're NOW holding the phone.
 func resume_from_pause() -> void:
 	get_tree().paused = false
+	paused_by_driver = false
 	if _was_active_before_pause:
 		enable()
 	_was_active_before_pause = false
