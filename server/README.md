@@ -105,7 +105,10 @@ branch and pokes Portainer, which re-pulls.
 `.github/workflows/build.yml` builds *both* images (lobby from `server/`, client
 from the web export), pushes them tagged with the commit SHA — never `:latest` —
 then rewrites both `LOBBY_IMAGE` and `WEB_IMAGE` in this directory's compose file
-in a single commit and force-pushes `deploy`. The branch is maintained by
+in a single commit and force-pushes `deploy`. It is gated on this workflow's test
+job, which it calls (`workflow_call`) rather than copying — `needs:` cannot reach
+across workflows, so without that a master push could publish a lobby that fails
+`go test`. The branch is maintained by
 force-push, so a second workflow writing it would reset it to its own checkout and
 clobber the other's pin; keeping one writer is why `lobby.yml` now only tests.
 The cost, accepted: the lobby image rebuilds on every master push rather than only

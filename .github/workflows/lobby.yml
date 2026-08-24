@@ -8,6 +8,12 @@ name: 🛰️ Lobby service
 # `deploy` branch live in build.yml's deploy-stack job, which is the single writer
 # of that force-pushed branch — see the comment there. The tradeoff is that the
 # lobby image rebuilds on every master push instead of only on server/** changes.
+#
+# `workflow_call` exists so build.yml can gate that deploy on THESE checks: a job
+# cannot depend on a job in another workflow, and the two run concurrently, so
+# without it a master push could publish a lobby that fails `go test`. Calling the
+# job rather than copying its steps keeps one definition — a check added here
+# gates the deploy automatically instead of silently not gating it.
 on:
   push:
     branches: [ master ]
@@ -15,6 +21,7 @@ on:
   pull_request:
     branches: [ master ]
     paths: [ 'server/**', '.github/workflows/lobby.yml' ]
+  workflow_call:
   workflow_dispatch:
 
 jobs:

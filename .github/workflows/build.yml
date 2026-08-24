@@ -86,13 +86,27 @@ jobs:
   # The cost, accepted deliberately: the lobby image now rebuilds on every master
   # push rather than only on server/** changes. It is a small Go build.
   #
+  # It publishes a lobby image, so it is gated on the lobby's own checks through
+  # the reusable lobby-checks job below — `needs:` cannot reach into another
+  # workflow, and lobby.yml runs concurrently, so a failing `go test` would
+  # otherwise not stop the deploy.
+  #
   # Same export, second home: GitHub Pages keeps serving the game, and the web
   # image puts it behind Traefik at https://${LOBBY_HOST}/ from the same stack as
   # the lobby, so the game and the lobby it talks to share one origin.
   # ============================================================================
+  # The lobby's own checks, reused rather than re-typed — deploy-stack publishes a
+  # lobby image, so it must not run before `go vet` / gofmt / `go test -race` pass.
+  # lobby.yml is a separate workflow running concurrently, and `needs:` cannot
+  # reach across workflows, so the deploy gate has to call it.
+  lobby-checks:
+    name: 🧪 Lobby checks
+    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+    uses: ./.github/workflows/lobby.yml
+
   deploy-stack:
     name: 🚀 Publish images and redeploy stack
-    needs: build
+    needs: [ build, lobby-checks ]
     # Master pushes only — a PR must not build or push any image.
     if: github.ref == 'refs/heads/master' && github.event_name == 'push'
     runs-on: ubuntu-latest
