@@ -1,0 +1,61 @@
+# Lobby + TURN stack. Portainer watches the `deploy` branch and reads this file at
+# server/docker-compose.yml; CI rewrites LOBBY_IMAGE's tag to the commit SHA there.
+#
+# Traefik terminates TLS and proxies the websocket, so clients reach the lobby at
+# wss://${LOBBY_HOST}/ws. No special Traefik configuration is needed for the
+# upgrade — it forwards Connection/Upgrade headers by default.
+
+services:
+  lobby:
+    image: ${LOBBY_IMAGE:-ghcr.io/korjavin/godot-test1-lobby:latest}
+    container_name: ${LOBBY_CONTAINER_NAME:-godot-lobby}
+    restart: unless-stopped
+    networks:
+      - traefik_network
+    environment:
+      LOBBY_ADDR: ":8080"
+      # Comma-separated origin patterns, or "*" for any page. The lobby holds no
+      # credential, so "*" is a deliberate default rather than an oversight.
+      LOBBY_ALLOWED_ORIGINS: ${LOBBY_ALLOWED_ORIGINS:-*}
+      # Handed to clients verbatim by GET /ice, so TURN credentials never get
+      # baked into the game build.
+      STUN_URL: ${STUN_URL:-stun:stun.l.google.com:19302}
+      TURN_URL: ${TURN_URL:-}
+      TURN_USER: ${TURN_USER:-}
+      TURN_PASSWORD: ${TURN_PASSWORD:-}
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=${TRAEFIK_NETWORK_NAME:-traefik_default}"
+      - "traefik.http.routers.godot-lobby.rule=Host(`${LOBBY_HOST}`)"
+      - "traefik.http.routers.godot-lobby.entrypoints=websecure"
+      - "traefik.http.routers.godot-lobby.tls.certresolver=${TRAEFIK_CERTRESOLVER:-myresolver}"
+      - "traefik.http.services.godot-lobby.loadbalancer.server.port=8080"
+
+  # coturn runs on the host network on purpose: a TURN relay hands out ports from
+  # a range (TURN_MIN_PORT..TURN_MAX_PORT), and publishing dozens of UDP ports
+  # through the bridge is both slow to start and easy to get wrong. Traefik is not
+  # involved — TURN is not HTTP.
+  coturn:
+    image: ${COTURN_IMAGE:-coturn/coturn:4.6-alpine}
+    container_name: ${COTURN_CONTAINER_NAME:-godot-coturn}
+    restart: unless-stopped
+    network_mode: host
+    command: >
+      -n --log-file=stdout --no-cli
+      --lt-cred-mech --fingerprint
+      --realm=${TURN_REALM}
+      --user=${TURN_USER}:${TURN_PASSWORD}
+      --listening-port=${TURN_LISTEN_PORT:-3478}
+      --min-port=${TURN_MIN_PORT:-49160}
+      --max-port=${TURN_MAX_PORT:-49200}
+      --external-ip=${TURN_EXTERNAL_IP}
+      --no-tls --no-dtls
+      --no-multicast-peers
+      --denied-peer-ip=10.0.0.0-10.255.255.255
+      --denied-peer-ip=172.16.0.0-172.31.255.255
+      --denied-peer-ip=192.168.0.0-192.168.255.255
+
+networks:
+  traefik_network:
+    external: true
+    name: ${TRAEFIK_NETWORK_NAME:-traefik_default}
