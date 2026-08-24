@@ -202,21 +202,21 @@ spent.
 
 ### Task 2: coin identity in `coin.gd`
 
-- [ ] add `const COIN_ID_QUANT: float = 8.0` and
+- [x] add `const COIN_ID_QUANT: float = 8.0` and
       `static func id_at(pos: Vector3) -> int` returning
       `hash(Vector3i(roundi(pos.x * COIN_ID_QUANT), roundi(pos.y * COIN_ID_QUANT), roundi(pos.z * COIN_ID_QUANT)))`.
       Static and pure so the selfcheck can exercise it. Document the scheme and
       both `ponytail:` ceilings from the Context section above.
-- [ ] add `func coin_id() -> int: return id_at(global_position)`.
-- [ ] in `_ready()`, **after** `base_y` is captured: ask the `"mp"` group node
+- [x] add `func coin_id() -> int: return id_at(global_position)`.
+- [x] in `_ready()`, **after** `base_y` is captured: ask the `"mp"` group node
       (null-safe, `has_method("is_coin_collected")`) whether this id is already
       collected; if so `queue_free()` and return before connecting `body_entered`.
       Offline there is no `"mp"` node method answer to give, so the branch is a
       single failed group lookup per coin — note that cost is paid once per coin
       at spawn, never per frame.
-- [ ] in `_on_body_entered()`, after `body.collect_coin(value)`, report the
+- [x] in `_on_body_entered()`, after `body.collect_coin(value)`, report the
       pickup to the same group node via `has_method("report_coin_collected")`.
-- [ ] **do not** touch the three spawners in `endless_terrain.gd`.
+- [x] **do not** touch the three spawners in `endless_terrain.gd`.
 
 ### Task 3: `lobby_client.gd` — hero frames
 
