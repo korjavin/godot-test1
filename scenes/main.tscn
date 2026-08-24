@@ -1,4 +1,4 @@
-[gd_scene load_steps=24 format=3 uid="uid://clqb4rcmjrpgs"]
+[gd_scene load_steps=25 format=3 uid="uid://clqb4rcmjrpgs"]
 
 [ext_resource type="PackedScene" uid="uid://bqtq2xtxqnvvr" path="res://scenes/player.tscn" id="1_main"]
 [ext_resource type="Script" uid="uid://b07rwceo0eo4o" path="res://scripts/endless_terrain.gd" id="2_terrain"]
@@ -20,6 +20,7 @@
 [ext_resource type="Script" path="res://scripts/fauna_manager.gd" id="18_fauna"]
 [ext_resource type="Script" path="res://scripts/mp_manager.gd" id="19_mp"]
 [ext_resource type="Script" path="res://scripts/mp_ui.gd" id="20_mpui"]
+[ext_resource type="Script" path="res://scripts/minimap_hud.gd" id="21_minimap"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_1"]
 sky_top_color = Color(0.25, 0.45, 0.75, 1)
@@ -157,6 +158,18 @@ offset_right = 160.0
 offset_bottom = 64.0
 mouse_filter = 2
 script = ExtResource("8_lives")
+
+[node name="MinimapHUD" type="Control" parent="HUD"]
+anchors_preset = 4
+anchor_top = 0.5
+anchor_bottom = 0.5
+offset_left = 16.0
+offset_top = -95.0
+offset_right = 156.0
+offset_bottom = 95.0
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("21_minimap")
 
 [node name="RespawnLabel" type="Label" parent="HUD" groups=["respawn_label"]]
 visible = false
