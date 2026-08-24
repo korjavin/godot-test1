@@ -174,24 +174,24 @@ The bead: *"needs a 'set seed explicitly' entry point next to `_roll_run_seed()`
 A bare `Node`, `class_name LobbyClient`. Owns **only** the lobby socket; knows
 nothing about WebRTC, the game, or the UI.
 
-- [ ] `_process`-driven `WebSocketPeer` lifecycle: `poll()` every frame, drain
+- [x] `_process`-driven `WebSocketPeer` lifecycle: `poll()` every frame, drain
       `get_available_packet_count()`, `JSON.parse_string` each text packet,
       dispatch on `type`. Handle `STATE_CLOSED` → emit `closed(code, reason)` and
       stop polling. Ignore unknown frame types (including `heroes` and `pong`) —
       forward compatibility with phases 4/5 costs one `_:` branch.
-- [ ] signals: `joined(you: String, room: String, master: String, members: Array)`,
+- [x] signals: `joined(you: String, room: String, master: String, members: Array)`,
       `peer_joined(id: String, name: String)`, `peer_left(id: String)`,
       `master_changed(id: String)`, `relay(from: String, payload: Dictionary)`,
       `lobby_error(message: String)`, `closed(code: int, reason: String)`.
-- [ ] `connect_to_room(code: String, display_name: String) -> void` builds
+- [x] `connect_to_room(code: String, display_name: String) -> void` builds
       `"%s/ws?room=%s&name=%s"` with `String.uri_encode()` on **both** query
       values and calls `WebSocketPeer.connect_to_url()`. An empty `code` is a
       create — send it as an empty parameter, exactly as the JS test page does.
-- [ ] `send_signal_to(to: String, payload: Dictionary) -> void` →
+- [x] `send_signal_to(to: String, payload: Dictionary) -> void` →
       `{"type":"signal","to":to,"payload":payload}`. `to == ""` broadcasts.
-- [ ] `disconnect_from_room() -> void` — close the socket, clear state, safe to
+- [x] `disconnect_from_room() -> void` — close the socket, clear state, safe to
       call when never connected.
-- [ ] `fetch_ice(callback: Callable) -> void`: a child `HTTPRequest` GETs
+- [x] `fetch_ice(callback: Callable) -> void`: a child `HTTPRequest` GETs
       `<http(s) form of lobby_url>/ice`, parses `{"iceServers":[...]}` and hands
       the **whole dictionary through unchanged** to the callback — it is already
       the shape `WebRTCPeerConnection.initialize()` takes. On any failure
@@ -200,7 +200,7 @@ nothing about WebRTC, the game, or the UI.
       warning: a STUN-only mesh still works on most networks, and failing the
       whole join because TURN is unreachable would be worse than degrading.
       Derive the HTTP URL by swapping the scheme (`wss:`→`https:`, `ws:`→`http:`).
-- [ ] **URL resolution** — a `static func resolve_lobby_url(override: String) -> String`
+- [x] **URL resolution** — a `static func resolve_lobby_url(override: String) -> String`
       with this precedence, documented in a comment:
       1. `--lobby=<url>` in `OS.get_cmdline_user_args()` (desktop dev: two editor
          instances against `ws://localhost:8080`),
