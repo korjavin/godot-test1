@@ -495,7 +495,7 @@ Required by the bead's updated acceptance. It needs **no WebRTC** (Task 9b), so
 two headless desktop instances against a locally-run lobby cover the whole seed
 path — the exact thing that broke in production.
 
-- [ ] `scripts/mp_e2e.gd`, a `SceneTree` script in the style of
+- [x] `scripts/mp_e2e.gd`, a `SceneTree` script in the style of
       `mp_selfcheck.gd` (explicit `if`s, no `assert`). It loads
       `res://scenes/main.tscn`, reads `--role=host|join` and `--code=XXXXXX` from
       `OS.get_cmdline_user_args()`, finds the `"mp"` node, sets `lobby_only`, and
@@ -510,19 +510,35 @@ path — the exact thing that broke in production.
       stdout. Say this in the file's header so nobody "simplifies" it back.
       The host must also stay alive until the joiner is done — take a
       `--hold=<seconds>` argument.
-- [ ] `scripts/mp_e2e.sh` — the harness: start `go run ./server` (a free port,
+- [x] `scripts/mp_e2e.sh` — the harness: start `go run ./server` (a free port,
       `LOBBY_ADDR`/`PORT` per `server/`'s own flags), wait for `/healthz`, run the
       host instance in the background pointing at `--lobby=ws://127.0.0.1:<port>`,
       scrape `E2E_ROOM=`, run the joiner with that code, compare the two
       `E2E_SEED=` values, and exit non-zero on mismatch, timeout, or a missing
       line. `trap` cleanup so it never leaves a lobby or a Godot process behind.
       Keep it POSIX-ish `bash`, no new dependencies.
-- [ ] run it and paste the result into the plan. A **mismatch or a timeout is a
+- [x] run it and paste the result into the plan. A **mismatch or a timeout is a
       failing task**, not a note — this test is the acceptance evidence that the
       production bug is fixed.
-- [ ] `ponytail:` note the ceiling — it covers the relay path (seed adoption), not
+
+      ```
+      $ bash scripts/mp_e2e.sh
+      E2E: building lobby
+      E2E: starting lobby on 18397
+      E2E: hosting
+      E2E: room DXQ3GJ, joining
+      E2E OK: room DXQ3GJ, shared seed 1593677959
+      $ echo $?
+      0
+      ```
+
+      Both instances report the same `run_seed`, and the joiner's is read off
+      `endless_terrain` (not off `MpManager`), so the ground was really rebuilt
+      from the room's seed. `godot --headless --path . --script
+      res://scripts/mp_selfcheck.gd` still prints `SELFCHECK OK`.
+- [x] `ponytail:` note the ceiling — it covers the relay path (seed adoption), not
       the WebRTC mesh or avatars, which still need two real browsers.
-- [ ] **Do NOT edit `.github/workflows/`** — a parallel bead owns CI. Mention in
+- [x] **Do NOT edit `.github/workflows/`** — a parallel bead owns CI. Mention in
       the handoff that wiring this script into CI is a one-job follow-up.
 
 ### Task 10: [Final] Update documentation
