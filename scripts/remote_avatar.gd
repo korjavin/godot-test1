@@ -96,6 +96,10 @@ var peer_label: String = ""
 ## Which CHARACTERS entry is currently instanced (-1 = nothing yet).
 var character_index: int = -1
 
+## Minimum gap between model swaps — see the rate-limit note in `set_character()`.
+const SWAP_COOLDOWN_MS: int = 500
+var _last_swap_ms: int = -SWAP_COOLDOWN_MS
+
 ## Latest presence sample: where this peer says it is, and what it is doing.
 var target_pos: Vector3 = Vector3.ZERO
 var target_yaw: float = 0.0
@@ -185,6 +189,18 @@ func set_character(index: int) -> void:
 		return
 	if index == character_index:
 		return
+	# RATE LIMIT — the range check makes `c` safe to index, but not safe to OBEY
+	# 15 times a second: a peer alternating between two valid indices in its
+	# presence stream would force a queue_free + PackedScene.instantiate + a full
+	# recursive `_style_model_meshes` walk per packet, per peer, which is a
+	# remote-triggered frame-rate collapse on the gl_compatibility web build.
+	# Dropping the swap is safe rather than lossy: presence repeats `c` every
+	# packet, so a genuine switch simply applies on the first packet past the
+	# window. A real player pressing E cannot beat this cadence anyway.
+	var now: int = Time.get_ticks_msec()
+	if now - _last_swap_ms < SWAP_COOLDOWN_MS:
+		return
+	_last_swap_ms = now
 	character_index = index
 
 	# Drop the old model and every reference into it, so a half-freed limb can

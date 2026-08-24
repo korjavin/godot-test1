@@ -635,7 +635,13 @@ func _process(delta: float) -> void:
 		# neutral, so tilt steering saturates and the hero spins/walks blind.
 		# After rotating back the guard hides and the standard "tap to resume"
 		# overlay (which re-enables + recalibrates motion) takes over.
-		if portrait and not _portrait_guard.visible:
+		# Gated on the TREE's paused state, not on the guard's visibility: with
+		# somebody else's pause already up (the MP panel), `pause_game()` early-
+		# returns while `visible` latches true, and when that other pause is
+		# released nothing ever re-pauses — the game would run in portrait behind
+		# an opaque guard with tilt steering saturated ~90° off neutral, and only
+		# rotating out and back would recover. `pause_game()` is itself idempotent.
+		if portrait and not get_tree().paused:
 			var driver: Node = _ensure_driver()
 			if driver != null:
 				driver.pause_game()
@@ -848,7 +854,10 @@ func _on_enable_overlay_pressed() -> void:
 	# overlay must not sit over live play), and a focus-loss pause before the first
 	# enable is suppressed from showing the resume overlay while we are visible. Both
 	# are cleared here, so a single tap always returns the player to a running game.
-	if get_tree().paused:
+	# Ownership-gated exactly like the resume overlay above: a tree pause is no
+	# longer ours alone (the MP panel pauses too), and unpausing somebody else's
+	# pause would leave the game live and driveable under their still-open panel.
+	if get_tree().paused and bool(_driver.get("paused_by_driver")):
 		_driver.resume_from_pause()
 
 ## Resume overlay tap → unfreeze the game. Routed through the driver's

@@ -257,11 +257,18 @@ func _handle_text(text: String) -> void:
 
 	match str(frame.get("type", "")):
 		"welcome":
+			# Type-check `members` for the same reason `peer` and `payload` below
+			# are checked: casting a non-Array Variant with `as` yields NULL, not
+			# an empty array, and `_on_lobby_joined` calls `members.size()` on it
+			# immediately — one malformed frame would crash the join.
+			var members: Variant = frame.get("members", [])
+			if typeof(members) != TYPE_ARRAY:
+				return
 			joined.emit(
 				str(frame.get("you", "")),
 				str(frame.get("room", "")),
 				str(frame.get("master", "")),
-				frame.get("members", []) as Array
+				members as Array
 			)
 		"peer_join":
 			var peer: Variant = frame.get("peer", null)

@@ -168,6 +168,25 @@ func _ready() -> void:
 	_refresh()
 
 
+## Yield the screen to TouchControls' full-rect overlays — the exact three lines
+## `mobile_settings_panel.gd` runs for its ⚙ gear, for the exact same reason.
+## This Control is the LAST child of `HUD`, so it draws above TouchControls and
+## wins hit-testing: an unhidden MP button in the bottom-left corner steals taps
+## from the first-run "tap to enable motion controls" overlay — and that tap is
+## the ONE user gesture iOS grants `DeviceMotionEvent.requestPermission()` and
+## the browser grants WebAudio, so motion AND all audio would stay dead for the
+## session. The panel body is force-closed too (which also releases our pause),
+## or it covers the overlay it just stole the tap from.
+func _process(_delta: float) -> void:
+	if _mp_button == null:
+		return
+	var touch_ui: Node = get_tree().get_first_node_in_group("touch_controls")
+	var modal: bool = touch_ui != null and touch_ui.has_method("has_modal") and touch_ui.has_modal()
+	_mp_button.visible = not modal
+	if modal and _panel_open:
+		_set_panel_open(false)
+
+
 # ============================================================================
 # UI CONSTRUCTION
 # ============================================================================
@@ -443,7 +462,17 @@ func _set_panel_open(open: bool) -> void:
 		_panel_body.visible = open
 
 	var tree := get_tree()
-	if open and not tree.paused:
+	# Never pause over the Game Over screen — the same rule (and the same reason)
+	# as `pause_controller._toggle_pause()` and `mobile_input.pause_game()`:
+	# `GameOverUI` is PAUSABLE, so a pause here kills both its "Play Again" button
+	# and its `ui_accept` handler, and the phone's resume overlay is gated on
+	# `paused_by_driver` so it would not appear either. The panel still OPENS —
+	# it is readable and closable — it just does not freeze the tree, which is
+	# safe because a game-over player is already frozen and the desktop-web
+	# click-to-capture is itself guarded on `is_game_over`.
+	var player := tree.get_first_node_in_group("player")
+	var game_over: bool = player != null and bool(player.get("is_game_over"))
+	if open and not tree.paused and not game_over:
 		tree.paused = true
 		_paused_by_us = true
 	elif not open and _paused_by_us:
