@@ -95,17 +95,50 @@ See [QUICKSTART.md](QUICKSTART.md) for the 5-minute version.
 other move. The shipping target is the **web build, which needs no extra setup** —
 browsers already speak WebRTC.
 
-**Desktop needs one addon.** Godot's desktop builds ship no WebRTC
-implementation, so testing with two editor instances needs the official
-GDExtension:
+**Desktop needs one addon.** Godot's desktop builds ship the WebRTC *classes*
+but no implementation, so testing with two editor instances needs the official
+[`webrtc-native`](https://github.com/godotengine/webrtc-native) GDExtension.
+From a fresh clone, one command installs and verifies it:
 
-1. Download the `webrtc-native` release for Godot 4.x from
-   https://github.com/godotengine/webrtc-native/releases
-2. Unzip it into `addons/` (so you get `addons/webrtc/…`).
-3. Restart the editor.
+```bash
+./fetch_webrtc_addon.sh
+```
 
-`addons/` is gitignored — the addon is fetched, not vendored. Without it the MP
-panel says WebRTC is unavailable and the rest of the game plays as normal.
+It downloads a pinned release, checks the SHA-256, unpacks it to
+`addons/webrtc/`, and — if `godot` is on your PATH — proves it works:
+
+```
+Checksum OK.
+Installed to …/addons/webrtc (gitignored).
+Verifying...
+WEBRTC OK
+```
+
+Then **restart the editor** (Godot loads GDExtensions at startup). You can
+re-run the proof at any time:
+
+```bash
+godot --headless --path . --import      # only needed on a never-opened clone
+godot --headless --path . --script res://scripts/webrtc_addon_check.gd
+```
+
+Two instances joining one room, end to end:
+
+```bash
+godot --path . scenes/main.tscn   # run this twice; one clicks Host, the other
+                                  # pastes the 6-character code into Join
+```
+
+Both reach the deployed lobby at `wss://ck.wandergeek.org/ws` by default, so no
+local server is needed — see below to point them at your own instead.
+
+`addons/` is **gitignored — the addon is fetched, not vendored.** It is 37 MB of
+prebuilt binaries for twelve platform/arch pairs that the production build never
+uses (browsers have WebRTC built in), and its bundled libraries are MPL-2.0,
+which attaches source-availability duties to anyone redistributing them. The web
+export excludes `addons/*` outright, so an installed addon cannot change the
+build CI publishes. Without the addon the MP panel says WebRTC is unavailable
+and the rest of the game plays as normal.
 
 **Iterating against a local lobby.** Run the Go lobby from `server/`:
 
@@ -118,7 +151,7 @@ lobby (`LobbyClient.DEFAULT_LOBBY_URL` = `wss://ck.wandergeek.org`), so an
 override is only needed to test against a lobby running on your own machine.
 
 ```bash
-# Two desktop instances (needs the addon above) — run this twice
+# Two desktop instances (needs ./fetch_webrtc_addon.sh) — run this twice
 godot --path . scenes/main.tscn -- --lobby=ws://localhost:8080
 
 # Or the web build, opened in two tabs
