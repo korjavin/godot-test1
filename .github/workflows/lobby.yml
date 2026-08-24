@@ -54,6 +54,10 @@ jobs:
     permissions:
       contents: write
       packages: write
+    # Job-level env, so the "is the webhook configured?" test below reads an
+    # ordinary variable rather than the secrets context.
+    env:
+      PORTAINER_HOOK: ${{ secrets.PORTAINER_REDEPLOY_HOOK }}
     steps:
       - name: 📥 Checkout code
         uses: actions/checkout@v4
@@ -89,7 +93,7 @@ jobs:
 
       # Optional: only fires once the owner adds the stack's webhook as a secret.
       - name: 🪝 Trigger Portainer redeploy
-        if: ${{ secrets.PORTAINER_REDEPLOY_HOOK != '' }}
+        if: env.PORTAINER_HOOK != ''
         uses: distributhor/workflow-webhook@2381f0e9c7b6bf061fb1405bd0804b8706116369 # v3.0.8
         with:
           webhook_url: ${{ secrets.PORTAINER_REDEPLOY_HOOK }}
