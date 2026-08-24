@@ -45,6 +45,10 @@ const FALLBACK_ICE: Dictionary = {
 	"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]
 }
 
+## How long to wait for `/ice` before giving up and using FALLBACK_ICE. Short,
+## because the whole mesh is gated behind this one request — see `fetch_ice()`.
+const ICE_TIMEOUT_SEC: float = 5.0
+
 # =============================================================================
 # SIGNALS
 # =============================================================================
@@ -311,6 +315,15 @@ func fetch_ice(callback: Callable) -> void:
 	"""
 	if _http == null:
 		_http = HTTPRequest.new()
+		# HTTPRequest's default timeout is 0 = wait forever, and this request is
+		# the ONLY path to `MpManager._setup_mesh()`. A lobby whose /ws upgrades
+		# but whose /ice blackholes (mixed-content block, a proxy forwarding only
+		# the upgrade path, a hanging TLS handshake) would then leave the mesh
+		# unbuilt for the session with the UI cheerfully reporting a room — and
+		# the stuck request makes every later fetch_ice return ERR_BUSY, so that
+		# session never gets TURN again either. RESULT_TIMEOUT already lands in
+		# `_on_ice_completed`'s degrade-to-STUN branch.
+		_http.timeout = ICE_TIMEOUT_SEC
 		add_child(_http)
 
 	# The lobby serves both the socket and /ice; only the scheme differs.

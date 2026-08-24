@@ -53,6 +53,12 @@ const DEFAULT_DISPLAY_NAME: String = "player"
 ## handful; this is the trust-boundary cap, not a capacity estimate.
 const MAX_BUFFERED_SIGNALS: int = 64
 
+## Sanity bounds on a presence packet's position and speed. Generous by design —
+## a real run is a few km along +X — because these exist to reject hostile
+## garbage, not to police where a peer may stand. See `decode_presence()`.
+const MAX_PRESENCE_COORD: float = 1.0e7
+const MAX_PRESENCE_SPEED: float = 1.0e4
+
 ## Where the desktop WebRTC GDExtension lives when a developer has installed it.
 ## See README — the browser build needs nothing, desktop needs this addon.
 const WEBRTC_ADDON_PATH: String = "res://addons/webrtc/webrtc.gdextension"
@@ -117,6 +123,13 @@ var _you: String = ""
 var _room: String = ""
 var _master: String = ""
 var _members: Array = []
+
+## The invite code the player actually typed ("" when hosting). The lobby CREATES
+## a room for any well-formed code it does not know (server/room.go's Join), so a
+## one-character typo joins a brand-new empty room and reports it as success —
+## which is exactly what a real join looks like from the `welcome` frame alone.
+## Keeping the request is what lets `_on_lobby_joined` tell them apart.
+var _requested_code: String = ""
 
 ## The world seed shared by everyone in this room, and whether we know it yet.
 ## `0` is a legitimate seed value, hence the separate flag rather than a sentinel.
@@ -225,6 +238,7 @@ func join(code: String) -> void:
 		_lobby.lobby_error.connect(_on_lobby_error)
 		_lobby.closed.connect(_on_lobby_closed)
 
+	_requested_code = code
 	_state = State.CONNECTING
 	set_process(true)
 	var label: String = display_name if not display_name.is_empty() else DEFAULT_DISPLAY_NAME
@@ -265,6 +279,7 @@ func leave() -> void:
 	_room = ""
 	_master = ""
 	_members = []
+	_requested_code = ""
 	_ice = {}
 	_send_accum = 0.0
 	# `_room_seed` is deliberately kept: leaving a room does not regenerate the
@@ -319,6 +334,17 @@ func _on_lobby_joined(you: String, room: String, master: String, members: Array)
 	The `welcome` frame — always the first one, and it already carries the master
 	and the full member list (including us). Everything the mesh needs to start.
 	"""
+	# A TYPO IS NOT A ROOM. The lobby creates any well-formed code it does not
+	# know, so "join ABC123" with one wrong character succeeds into a fresh empty
+	# room — two friends then sit in different rooms, each watching a member list
+	# that will never grow, with no error anywhere. We asked for a code and came
+	# out alone AND master, which only happens when the lobby minted the room for
+	# us: that is the typo, so say so instead of reporting a room.
+	if not _requested_code.is_empty() and master == you and members.size() <= 1:
+		status.emit("No room %s — check the code" % room)
+		leave()
+		return
+
 	_you = you
 	_room = room
 	_master = master
@@ -336,6 +362,13 @@ func _on_ice_ready(ice: Dictionary) -> void:
 	"""ICE config in hand (real or the STUN-only fallback) — build the mesh."""
 	if _state != State.IN_ROOM:
 		return  # Left the room while /ice was in flight.
+	# The mesh's ICE config is fixed for the room's life. A stale reply landing
+	# after `_setup_mesh()` already ran off FALLBACK_ICE (see the ERR_BUSY path
+	# below) must NOT overwrite `_ice`: peers added before it would be STUN-only
+	# and peers added after would have TURN, so in a 3–4 player room behind
+	# symmetric NAT some pairs connect and some silently never do.
+	if _rtc != null:
+		return
 	_ice = ice
 	_setup_mesh()
 
@@ -406,9 +439,13 @@ func _on_lobby_peer_left(id: String) -> void:
 	if _connections.has(id):
 		(_connections[id] as WebRTCPeerConnection).close()
 		_connections.erase(id)
-		# Only ever remove a peer we actually added — `remove_peer()` errors on an
-		# unknown id, and a peer that left during the /ice window was never added.
-		if _rtc != null:
+		# Only ever remove a peer the MESH still holds — `remove_peer()` errors on
+		# an unknown id. `_connections` is not that answer: a peer that left in
+		# the /ice window was never added, and `WebRTCMultiplayerPeer.poll()`
+		# drops failed/closed connections itself, so a peer whose ICE never
+		# completed is already gone from the mesh while `_connections` still
+		# lists it. Ask the mesh.
+		if _rtc != null and _rtc.has_peer(peer_int_id(id)):
 			_rtc.remove_peer(peer_int_id(id))
 
 	for i: int in range(_members.size() - 1, -1, -1):
@@ -632,6 +669,14 @@ func _broadcast_seed_if_master() -> void:
 	if _master != _you or _state != State.IN_ROOM:
 		return
 
+	# A RE-ELECTED master re-sends the seed it already adopted and never re-reads
+	# the terrain. The two are normally the same value — `_receive_seed` set the
+	# terrain from `_room_seed` — but the room's agreed seed is the authority
+	# here, not whatever this peer's ground happens to be running on.
+	if _has_seed:
+		_lobby.send_signal_to("", {"mp": "seed", "seed": _room_seed})
+		return
+
 	var terrain: Node = get_tree().get_first_node_in_group("terrain")
 	if terrain == null or not ("run_seed" in terrain):
 		return
@@ -788,6 +833,15 @@ static func decode_presence(bytes: PackedByteArray) -> Dictionary:
 	var yaw: float = float(state["y"])
 	var speed: float = float(state["s"])
 	if not (is_finite(yaw) and is_finite(speed)):
+		return {}
+
+	# FINITE IS NOT THE SAME AS SANE, and `s` is the one that latches: 1e38 is
+	# finite, and `RemoteAvatar._animate` does `stride_phase += move_speed *
+	# delta * ...`, so ONE such packet makes the accumulator infinite and every
+	# limb rotation NaN for the rest of the room — the same permanent poisoning
+	# the position's finiteness check exists to prevent. Bound both.
+	if absf(pos.x) > MAX_PRESENCE_COORD or absf(pos.y) > MAX_PRESENCE_COORD \
+			or absf(pos.z) > MAX_PRESENCE_COORD or absf(speed) > MAX_PRESENCE_SPEED:
 		return {}
 
 	var char_index: int = int(state["c"])

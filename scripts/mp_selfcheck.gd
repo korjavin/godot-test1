@@ -118,6 +118,15 @@ func _check_presence_parser() -> String:
 		["NaN position", var_to_bytes({
 			"p": Vector3(NAN, 0.0, 0.0), "y": 0.0, "c": 0, "s": 0.0, "g": true
 		})],
+		# Finite but absurd. `s` is the one that latches: RemoteAvatar._animate
+		# accumulates it into stride_phase, so one such packet makes every limb
+		# rotation NaN for the rest of the room.
+		["absurd speed", var_to_bytes({
+			"p": Vector3.ZERO, "y": 0.0, "c": 0, "s": 1.0e30, "g": true
+		})],
+		["absurd position", var_to_bytes({
+			"p": Vector3(1.0e30, 0.0, 0.0), "y": 0.0, "c": 0, "s": 0.0, "g": true
+		})],
 	]
 	for case in bad:
 		var result: Dictionary = MPManager.decode_presence(case[1])

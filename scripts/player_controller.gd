@@ -565,8 +565,11 @@ func _input(event: InputEvent) -> void:
 				and not MobileSensors.is_touch_session() and not is_game_over:
 			Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 
-	# Handle character switching with E key
-	if event.is_action_pressed("switch_character"):
+	# Handle character switching with E key. Not while the Game Over screen is up:
+	# the cursor is free and other UI has focus there, and the MP panel's invite
+	# codes are drawn from an alphabet that contains R (the second `switch_character`
+	# binding), so typing one would otherwise swap the frozen player's model.
+	if event.is_action_pressed("switch_character") and not is_game_over:
 		switch_to_next_character()
 
 # ============================================================================
