@@ -48,6 +48,11 @@ const PRESENCE_HZ: float = 15.0
 ## characters server-side, so we do not need to.
 const DEFAULT_DISPLAY_NAME: String = "player"
 
+## How many relayed signals we will hold for a peer whose connection does not
+## exist yet (see `_buffer_signal`). One offer plus its ICE candidates is a
+## handful; this is the trust-boundary cap, not a capacity estimate.
+const MAX_BUFFERED_SIGNALS: int = 64
+
 ## Where the desktop WebRTC GDExtension lives when a developer has installed it.
 ## See README — the browser build needs nothing, desktop needs this addon.
 const WEBRTC_ADDON_PATH: String = "res://addons/webrtc/webrtc.gdextension"
@@ -101,9 +106,10 @@ var _connections: Dictionary = {}
 ## lobby id → RemoteAvatar (a child of this node)
 var _avatars: Dictionary = {}
 
-## mesh int id → lobby id. Presence packets arrive tagged with the int id, so
-## this is how a packet finds its avatar.
-var _int_to_lobby: Dictionary = {}
+## lobby id → Array of relayed payloads that arrived BEFORE we had a connection
+## to that peer, replayed in order by `_add_peer`. See `_buffer_signal()` for
+## why this window exists at all.
+var _pending_signals: Dictionary = {}
 
 ## Our own lobby id, the room code, the current master's id, and the member list
 ## exactly as the lobby reports it.
@@ -129,6 +135,12 @@ func _init() -> void:
 	# reason LobbyClient does it: `_ready` runs an idle frame later and would
 	# undo a `set_process(true)` issued by a caller that joins immediately.
 	set_process(false)
+	# Keep polling the socket and the mesh while the tree is paused. A pause
+	# (the P key, the mobile focus-loss pause, an open MP panel) that stopped
+	# `_process` would stop `LobbyClient`'s `_socket.poll()` too, and the lobby
+	# reaps a peer that stops answering its 20 s ping — pausing would silently
+	# drop you out of the room. Children (the socket, the avatars) inherit this.
+	process_mode = Node.PROCESS_MODE_ALWAYS
 
 
 # =============================================================================
@@ -230,27 +242,32 @@ func leave() -> void:
 	for conn: WebRTCPeerConnection in _connections.values():
 		conn.close()
 	_connections.clear()
-	_int_to_lobby.clear()
+	_pending_signals.clear()
 
 	if _rtc != null:
 		_rtc.close()
 		_rtc = null
 
+	# Set OFFLINE *before* closing the socket, so the `closed` signal this
+	# provokes is recognised as our own teardown and not a lost connection.
+	_state = State.OFFLINE
 	if _lobby != null:
-		# Set OFFLINE *before* closing, so the `closed` signal this provokes is
-		# recognised as our own teardown and not reported as a lost connection.
-		_state = State.OFFLINE
 		_lobby.disconnect_from_room()
 
-	_state = State.OFFLINE
 	_you = ""
 	_room = ""
 	_master = ""
 	_members = []
 	_ice = {}
 	_send_accum = 0.0
-	# `_room_seed` / `_has_seed` are deliberately kept: leaving a room does not
-	# regenerate the world, so the player keeps walking the terrain they are on.
+	# `_room_seed` is deliberately kept: leaving a room does not regenerate the
+	# world, so the player keeps walking the terrain they are on. `_has_seed` is
+	# CLEARED, because it is the "we already adopted this room's seed" latch that
+	# `_receive_seed` early-returns on — carrying it across a leave would make
+	# the next room's seed be dropped on the floor ("host, nobody joins, leave,
+	# join a friend's code" is the ordinary flow that hits it), and the two peers
+	# would walk visibly different worlds while the UI reported success.
+	_has_seed = false
 	set_process(false)
 	room_changed.emit("", [])
 
@@ -268,6 +285,22 @@ func get_members() -> Array:
 func is_online() -> bool:
 	"""True from `welcome` until `leave()` — i.e. while a room actually exists."""
 	return _state == State.IN_ROOM
+
+
+func room_seed() -> Variant:
+	"""
+	The world seed everyone in this room shares, or `null` when there is no room
+	or its seed has not arrived yet.
+
+	Untyped-with-a-null-default for the same reason `endless_terrain.new_run()`'s
+	`forced_seed` is: `0` is a legitimate seed, so no int can mean "none". This
+	exists for `player_controller.restart_game()` — "Play Again" must regenerate
+	the SHARED world, not roll a private one, or the first death in a room ends
+	the whole premise with two peers on different terrain.
+	"""
+	if _state != State.IN_ROOM or not _has_seed:
+		return null
+	return _room_seed
 
 
 # =============================================================================
@@ -348,16 +381,18 @@ func _on_lobby_peer_joined(id: String, peer_name: String) -> void:
 
 
 func _on_lobby_peer_left(id: String) -> void:
-	"""A peer left: drop its avatar, its connection and its id mapping."""
+	"""A peer left: drop its avatar, its connection and anything buffered for it."""
 	if _avatars.has(id):
 		(_avatars[id] as RemoteAvatar).queue_free()
 		_avatars.erase(id)
+	_pending_signals.erase(id)
 	if _connections.has(id):
 		(_connections[id] as WebRTCPeerConnection).close()
 		_connections.erase(id)
-	_int_to_lobby.erase(peer_int_id(id))
-	if _rtc != null:
-		_rtc.remove_peer(peer_int_id(id))
+		# Only ever remove a peer we actually added — `remove_peer()` errors on an
+		# unknown id, and a peer that left during the /ice window was never added.
+		if _rtc != null:
+			_rtc.remove_peer(peer_int_id(id))
 
 	for i: int in range(_members.size() - 1, -1, -1):
 		var member: Variant = _members[i]
@@ -423,13 +458,14 @@ func _add_peer(id: String, peer_name: String) -> void:
 	conn.session_description_created.connect(_on_session_description_created.bind(id))
 	conn.ice_candidate_created.connect(_on_ice_candidate_created.bind(id))
 
-	var int_id: int = peer_int_id(id)
-	if _rtc.add_peer(conn, int_id) != OK:
-		push_warning("MpManager: could not add peer %s to the mesh" % id)
+	if _rtc.add_peer(conn, peer_int_id(id)) != OK:
+		# Close the half-built connection rather than leaving it alive with its
+		# signals still bound to us, relaying candidates for a peer we dropped.
+		conn.close()
+		status.emit("Could not add %s to the mesh" % id)
 		return
 
 	_connections[id] = conn
-	_int_to_lobby[int_id] = id
 
 	# The avatar exists from now on, but stays hidden until its first presence
 	# packet — otherwise a nameplate hovers over the spawn point on a body that
@@ -443,6 +479,13 @@ func _add_peer(id: String, peer_name: String) -> void:
 
 	if _you < id:
 		conn.create_offer()
+
+	# Anything this peer relayed before the connection existed is replayed now,
+	# in arrival order (offer first, then its ICE candidates — which is the order
+	# WebRTC requires). See `_buffer_signal()`.
+	for payload: Dictionary in _pending_signals.get(id, [] as Array):
+		_on_lobby_relay(id, payload)
+	_pending_signals.erase(id)
 
 
 func _on_session_description_created(type: String, sdp: String, id: String) -> void:
@@ -484,6 +527,7 @@ func _on_lobby_relay(from: String, payload: Dictionary) -> void:
 				push_warning("MpManager: dropped %s with no sdp from %s" % [payload["mp"], from])
 				return
 			if not _connections.has(from):
+				_buffer_signal(from, payload)
 				return
 			var conn: WebRTCPeerConnection = _connections[from]
 			# Setting a remote OFFER makes the connection generate an answer,
@@ -497,6 +541,7 @@ func _on_lobby_relay(from: String, payload: Dictionary) -> void:
 				push_warning("MpManager: dropped malformed ice candidate from %s" % from)
 				return
 			if not _connections.has(from):
+				_buffer_signal(from, payload)
 				return
 			(_connections[from] as WebRTCPeerConnection).add_ice_candidate(
 				str(payload["media"]), int(payload["index"]), str(payload["name"])
@@ -506,6 +551,34 @@ func _on_lobby_relay(from: String, payload: Dictionary) -> void:
 		_:
 			# An "mp" verb from a later phase. Ignore it, do not warn.
 			pass
+
+
+func _buffer_signal(from: String, payload: Dictionary) -> void:
+	"""
+	Hold an offer/candidate that arrived before we had a connection to `from`,
+	for `_add_peer` to replay.
+
+	THE WINDOW IS REAL, and dropping these is a connection that never forms.
+	`_on_lobby_joined` cannot build the mesh straight away — it first has to
+	fetch `/ice` over HTTP — while the lobby tells the peers already in the room
+	about us *immediately*. Whichever of them sorts lower by the offer rule then
+	offers at once, and over the internet that offer beats our `/ice` round trip
+	roughly half the time. Nothing re-offers and nothing times out, so both sides
+	would sit in a room showing each other's names with avatars that never
+	appear. (On localhost `/ice` answers in ~1 ms, which is exactly why the
+	documented dev recipe never reproduces it.)
+
+	Bounded because this is peer input over an opaque relay: past
+	`MAX_BUFFERED_SIGNALS` the peer is not racing us, it is flooding us.
+	"""
+	if _state != State.IN_ROOM:
+		return
+	var queued: Array = _pending_signals.get(from, [] as Array)
+	if queued.size() >= MAX_BUFFERED_SIGNALS:
+		push_warning("MpManager: dropping relayed signal from %s — buffer full" % from)
+		return
+	queued.append(payload)
+	_pending_signals[from] = queued
 
 
 static func _is_number(value: Variant) -> bool:
@@ -643,9 +716,14 @@ func _receive_presence() -> void:
 	while _rtc.get_available_packet_count() > 0:
 		var from_int: int = _rtc.get_packet_peer()
 		var bytes: PackedByteArray = _rtc.get_packet()
-		if not _int_to_lobby.has(from_int):
-			continue
-		var avatar: RemoteAvatar = _avatars.get(_int_to_lobby[from_int], null)
+		# ponytail: linear scan rather than a third dictionary kept in step with
+		# `_connections` and `_avatars` — `peer_int_id` is pure and a room holds
+		# at most 4 peers, so this is 3 hashes against a map that could desync.
+		var avatar: RemoteAvatar = null
+		for id: String in _avatars:
+			if peer_int_id(id) == from_int:
+				avatar = _avatars[id]
+				break
 		if avatar == null:
 			continue
 

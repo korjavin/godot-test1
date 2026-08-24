@@ -113,7 +113,9 @@ panel says WebRTC is unavailable and the rest of the game plays as normal.
 cd server && go run .        # http://localhost:8080, websocket at /ws
 ```
 
-Then point the clients at it (the default is the deployed lobby):
+Then point the clients at it. One of these overrides is **currently required**:
+`LobbyClient.DEFAULT_LOBBY_URL` is still the placeholder `wss://lobby.example.com`
+pending the deployment hostname, so a build with no override cannot connect.
 
 ```bash
 # Two desktop instances (needs the addon above) — run this twice

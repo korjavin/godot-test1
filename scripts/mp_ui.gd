@@ -114,6 +114,11 @@ var _panel_open: bool = false
 ## on close. See the header — never recapture a mouse we did not release.
 var _recapture_mouse: bool = false
 
+## True only while the CURRENT tree pause was started by us, so closing the panel
+## can never cancel somebody else's pause (`pause_controller.gd`'s P key, or
+## `mobile_input.gd`'s focus-loss pause). Same guard those two use on each other.
+var _paused_by_us: bool = false
+
 # --- Child node references (built in _ready, not from a .tscn) --------------
 
 var _mp_button: Button = null
@@ -412,11 +417,36 @@ func _on_status(message: String) -> void:
 # PANEL STATE
 # ============================================================================
 
-## Open or close the panel body, handling the mouse capture handover.
+## Open or close the panel body, handling the tree pause and the mouse handover.
+##
+## THE PANEL PAUSES THE GAME, and that is not decoration — `player_controller`
+## reads gameplay through the GLOBAL polled `Input` state and through `_input()`,
+## neither of which a focused `Control` suppresses. Left running:
+##
+##   * every click INSIDE the panel re-triggers the desktop-web click-to-capture
+##     in `player_controller._input()`, which warps the cursor to screen centre —
+##     so after the first click Join / Copy / Leave / Close are all unreachable
+##     and the camera swings behind the open panel; and
+##   * typing an invite code drives the player, because the lobby's code alphabet
+##     (`23456789ABCDEFGHJKMNPQRSTUVWXYZ`) contains W, A, S, D, E, F, C and R —
+##     the player walks, turns, switches character, fires its ability and flips
+##     to first person while crocodiles keep hunting.
+##
+## Pausing is the one-line fix for both, because `process_mode` gates `_input`
+## and `_physics_process` together. `MpManager` sets itself PROCESS_MODE_ALWAYS,
+## so the socket and the mesh keep being polled while the panel is up.
 func _set_panel_open(open: bool) -> void:
 	_panel_open = open
 	if _panel_body != null:
 		_panel_body.visible = open
+
+	var tree := get_tree()
+	if open and not tree.paused:
+		tree.paused = true
+		_paused_by_us = true
+	elif not open and _paused_by_us:
+		_paused_by_us = false
+		tree.paused = false
 
 	if open:
 		# Clamp the panel to the space actually above the button — a phone's

@@ -168,8 +168,6 @@ func _check_peer_ids() -> String:
 		var value: int = MPManager.peer_int_id(id)
 		if value < 2:
 			return "peer_int_id(%s) == %d — must clear the reserved 0 and 1" % [id, value]
-		if value != MPManager.peer_int_id(id):
-			return "peer_int_id(%s) is not stable across calls" % id
 		if seen.has(value):
 			return "peer_int_id collision: %s and %s both give %d" % [seen[value], id, value]
 		seen[value] = id

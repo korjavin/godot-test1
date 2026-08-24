@@ -239,7 +239,6 @@ func _cache_limbs() -> void:
 		rest_rotations["left_leg"] = left_leg.rotation
 	if right_leg:
 		rest_rotations["right_leg"] = right_leg.rotation
-	rest_rotations["body"] = character_body.rotation
 
 
 func _style_model_meshes(node: Node) -> void:

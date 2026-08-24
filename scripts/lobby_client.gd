@@ -129,10 +129,7 @@ static func resolve_lobby_url(override: String) -> String:
 
 static func _strip_trailing_slash(url: String) -> String:
 	"""Normalise so we can always concatenate `/ws` and `/ice` without doubling."""
-	var trimmed: String = url.strip_edges()
-	while trimmed.ends_with("/"):
-		trimmed = trimmed.substr(0, trimmed.length() - 1)
-	return trimmed
+	return url.strip_edges().rstrip("/")
 
 
 # =============================================================================

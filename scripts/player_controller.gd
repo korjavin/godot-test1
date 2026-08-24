@@ -1731,7 +1731,20 @@ func restart_game() -> void:
 	# lookup with a has_method guard — the project's no-hard-references convention.
 	var terrain := get_tree().get_first_node_in_group("terrain")
 	if terrain and terrain.has_method("new_run"):
-		terrain.new_run()
+		# IN A MULTIPLAYER ROOM, "Play Again" must rebuild the SHARED world, not
+		# roll a private one — a re-roll here would leave this peer walking
+		# different terrain, biomes and rivers from everyone else for the rest of
+		# the room's life, with the avatars still drawing at coordinates that no
+		# longer mean anything. Same null-safe group + has_method shape as
+		# _terrain_is_river_here() / _weather_is_raining_here(); `null` (offline,
+		# or no seed yet) falls through to the ordinary random re-roll, and `0` is
+		# a legitimate seed, which is why this is a null and not a sentinel int.
+		var mp := get_tree().get_first_node_in_group("mp")
+		var shared_seed: Variant = mp.room_seed() if mp and mp.has_method("room_seed") else null
+		if shared_seed == null:
+			terrain.new_run()
+		else:
+			terrain.new_run(shared_seed)
 	reset_position()
 	# Recapture the mouse — but ONLY when this is NOT a touch session, mirroring the
 	# `_ready()` guard via the SAME canonical `MobileSensors.is_touch_session()` rule.
