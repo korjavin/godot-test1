@@ -79,6 +79,14 @@ const MAX_STATE_COUNTER: int = 1000000000
 ## that range, so anything beyond it is refused before the cast.
 const MAX_STATE_ID_MAGNITUDE: float = 9007199254740992.0
 
+## How far the group may be spread before its centroid stops being a sensible
+## place to arrive. Tuned BY EYE, not derived: 60 m is a bit over one chunk, well
+## inside the fog, so a joiner landing at the centroid of a group this tight can
+## still see somebody. Past it the centroid is empty ground between two players
+## who have gone their separate ways, so the master's own position is used
+## instead — arriving beside one player beats arriving beside none.
+const GROUP_SPREAD_MAX: float = 60.0
+
 ## The lobby errors that must NOT end the session. `server/room.go` answers a
 ## refused hero claim with a plain `error` frame on a socket it deliberately
 ## keeps OPEN (`errUnknownHero` / `errHeroTaken`), and two peers reaching for the
@@ -190,6 +198,14 @@ var _pool: Array[String] = []
 ## matter how many coins it banks.
 var _collected_ids: Dictionary = {}
 var _peer_state: Dictionary = {}
+
+## JOIN PLACEMENT, which happens at most once per room. `_first_member` is true
+## when the `welcome` frame found us alone — a host has nobody to join, so its
+## spawn is left exactly as phase 3 left it. `_join_applied` is the latch that
+## keeps the placement to one shot even though it is attempted from both the
+## seed and every snapshot (either may land first). Both are reset by `leave()`.
+var _first_member: bool = true
+var _join_applied: bool = false
 
 ## The FROZEN contributions of members who have left. A departing peer's coins
 ## and spent lives are folded in here rather than dropped: dropping them would
@@ -347,6 +363,8 @@ func leave() -> void:
 	_pool = []
 	_collected_ids = {}
 	_peer_state = {}
+	_first_member = true
+	_join_applied = false
 	_gone_coins = 0
 	_gone_spent = 0
 	_ice = {}
@@ -419,6 +437,9 @@ func _on_lobby_joined(you: String, room: String, master: String, members: Array)
 	_room = room
 	_master = master
 	_members = members
+	# Alone in the `welcome` frame means the lobby just minted this room for us:
+	# there is no run in progress to join, so no placement is ever applied.
+	_first_member = members.size() <= 1
 	_state = State.IN_ROOM
 	status.emit("In room %s (%d/4)" % [room, members.size()])
 	room_changed.emit(room, members)
@@ -986,6 +1007,10 @@ func _receive_seed(payload: Dictionary) -> void:
 	local player back at spawn, so a joiner starts at the beginning of the shared
 	world rather than at whatever coordinates its solo run had reached.
 
+	That spawn reset is the path for a room with nothing to join yet. When a join
+	snapshot has already told us where the group is standing, `_apply_join_placement()`
+	takes over instead and the origin is never touched.
+
 	JSON NUMBER GOTCHA: `JSON.parse_string` produces floats for every number, so
 	`payload["seed"]` arrives as a `float`. `run_seed` comes from
 	`RandomNumberGenerator.randi()` (0…2³²−1), which a double represents exactly,
@@ -997,6 +1022,17 @@ func _receive_seed(payload: Dictionary) -> void:
 		return
 	_room_seed = int(payload["seed"])
 	_has_seed = true
+	status.emit("Shared world seed received")
+
+	# A MID-RUN JOINER MUST NOT BE RESET TO THE ORIGIN. Once a snapshot is in
+	# hand the group's position is known, so hand straight over to the join
+	# placement — it rebuilds the terrain around the anchor itself and must not
+	# be preceded by a rebuild around (0,0) plus a teleport to spawn. The two
+	# lines below stay the HOST / no-snapshot-yet path; a snapshot that arrives
+	# after this calls `_apply_join_placement()` in its own turn.
+	if _can_join_place():
+		_apply_join_placement()
+		return
 
 	var terrain: Node = get_tree().get_first_node_in_group("terrain")
 	if terrain != null and terrain.has_method("new_run"):
@@ -1006,7 +1042,72 @@ func _receive_seed(payload: Dictionary) -> void:
 	if player != null and player.has_method("reset_position"):
 		player.reset_position()
 
-	status.emit("Shared world seed received")
+
+# =============================================================================
+# JOIN PLACEMENT — arrive beside the group, not at the world origin
+# =============================================================================
+
+func _can_join_place() -> bool:
+	"""
+	Whether a join placement is still owed: we joined a room that already had
+	somebody in it, we have not placed yet, and both halves of what a placement
+	needs — the world seed and at least one snapshot position — are in hand.
+	"""
+	return not _join_applied and not _first_member and _has_seed and not _peer_state.is_empty()
+
+
+func _apply_join_placement() -> void:
+	"""
+	Drop this peer into the run beside the group, ONCE per room.
+
+	Called from both `_receive_seed()` and `_receive_state()` because either can
+	be the last piece to land, and guarded by `_can_join_place()` so whichever
+	arrives second is the one that does the work.
+
+	The terrain is rebuilt AROUND THE ANCHOR rather than around chunk (0,0):
+	`new_run`'s `around` parameter puts the synchronously-built safety ring where
+	the player is about to stand, so a joiner does not spend a frame over unbuilt
+	ground kilometres from the origin.
+	"""
+	if not _can_join_place():
+		return
+	_join_applied = true
+
+	var anchor: Vector3 = _join_anchor()
+	var terrain: Node = get_tree().get_first_node_in_group("terrain")
+	if terrain != null and terrain.has_method("new_run") and terrain.has_method("world_to_chunk"):
+		terrain.new_run(_room_seed, terrain.world_to_chunk(anchor))
+
+	var player: Node = get_tree().get_first_node_in_group("player")
+	if player != null and player.has_method("join_at"):
+		player.join_at(anchor)
+
+	status.emit("Joined the run at %dm" % int(anchor.x))
+
+
+func _join_anchor() -> Vector3:
+	"""
+	Where to arrive: the centroid of the snapshot positions, unless the group is
+	spread wider than `GROUP_SPREAD_MAX`, in which case the MASTER's position —
+	the centroid of two players who have gone opposite ways is empty ground
+	between them, and arriving beside one player beats arriving beside none.
+	A master that sent no snapshot (it may have joined after us and not yet
+	replied) leaves the centroid as the fallback.
+
+	`_peer_state` holds only other members, and this is only reached with at
+	least one entry in it, so the divide is safe.
+	"""
+	var centroid: Vector3 = Vector3.ZERO
+	for id: String in _peer_state:
+		centroid += _peer_state[id]["pos"] as Vector3
+	centroid /= float(_peer_state.size())
+
+	for id: String in _peer_state:
+		if (_peer_state[id]["pos"] as Vector3).distance_to(centroid) > GROUP_SPREAD_MAX:
+			if _peer_state.has(_master):
+				return _peer_state[_master]["pos"] as Vector3
+			return centroid
+	return centroid
 
 
 # =============================================================================
@@ -1088,6 +1189,9 @@ func _receive_state(from: String, snapshot: Dictionary) -> void:
 		"pos": snapshot["pos"],
 	}
 	_absorb_collected(snapshot["ids"])
+	# The snapshot may be the last thing the placement was waiting on (the seed
+	# can equally well be). Both call in; the latch inside decides.
+	_apply_join_placement()
 
 
 func _absorb_collected(ids: Array) -> void:

@@ -9,6 +9,8 @@ extends Control
 ##   * **Join** one by typing a friend's code,
 ##   * show the room's code large with a **Copy** button so it can be pasted
 ##     into a chat, plus who is currently in the room,
+##   * **pick a hero** from the lobby's pool — one button per hero, the ones
+##     other players hold disabled and named with their holder,
 ##   * **Leave**, returning to solo play.
 ##
 ## Everything is built in code in `_ready()` — the same convention as
@@ -21,11 +23,12 @@ extends Control
 ## This panel never holds a scene path or an exported reference to the manager.
 ## It locates it through the `"mp"` group with `get_first_node_in_group(...)`
 ## and talks only to its public API (`host()`, `join()`, `leave()`,
-## `get_room_code()`, `get_members()`, `is_online()`), every call behind a
-## `has_method` guard. So a scene run WITHOUT the Multiplayer node (say
-## `scenes/characters/primm.tscn` standalone) shows an inert button instead of
-## erroring. Live updates arrive on the manager's `room_changed` / `status`
-## signals, connected once when the manager is first found.
+## `get_room_code()`, `get_members()`, `is_online()`, `my_hero()`,
+## `claim_hero()`), every call behind a `has_method` guard. So a scene run
+## WITHOUT the Multiplayer node (say `scenes/characters/primm.tscn` standalone)
+## shows an inert button instead of erroring. Live updates arrive on the
+## manager's `room_changed` / `status` / `heroes_changed` signals, connected
+## once when the manager is first found.
 ##
 ## ----------------------------------------------------------------------------
 ## Visible on EVERY platform — deliberately not touch-gated
@@ -77,10 +80,12 @@ const TUNE_GEAR_HEIGHT: float = 60.0
 const BUTTON_STACK_GAP: float = 8.0
 
 ## The open panel's size. Tall enough for the status line, the host/join
-## controls, the code + member list and Leave; scrollable so a short phone
-## screen can still reach the bottom row.
+## controls, the hero row, the code + member list and Leave; scrollable so a
+## short phone screen can still reach the bottom row. Grown from 420 by one
+## `TOUCH_MIN_HEIGHT` button plus the VBox separation and the row's own label,
+## which is what the hero picker added.
 const PANEL_WIDTH: float = 360.0
-const PANEL_HEIGHT: float = 420.0
+const PANEL_HEIGHT: float = 510.0
 
 ## Minimum height for every interactive row (button, LineEdit). Past the ~44-48
 ## pt minimum touch target so the panel is thumb-usable on a phone.
@@ -140,6 +145,15 @@ var _code_input: LineEdit = null
 
 ## Who is in the room, one line each. Empty while offline.
 var _members_label: Label = null
+
+## The hero picker: one button per hero the lobby offers. `_hero_pool` is the
+## pool the buttons were built for, so the row is rebuilt only when the lobby's
+## offer actually changes (once per room in practice) and merely relabelled on
+## every `heroes` broadcast. Hidden entirely while offline — solo play cycles
+## characters with E and has no pool to pick from.
+var _hero_row: VBoxContainer = null
+var _hero_buttons: Array[Button] = []
+var _hero_pool: Array[String] = []
 
 ## Host / Join are only useful offline, Leave only in a room — `_refresh()`
 ## flips them so the panel never offers a meaningless action.
@@ -308,6 +322,22 @@ func _build_ui() -> void:
 	_join_button.size_flags_horizontal = Control.SIZE_SHRINK_END
 	join_row.add_child(_join_button)
 
+	# --- Hero picker (shown only while in a room) -------------------------
+	# Built empty: the pool arrives with the lobby's `welcome` frame, so the
+	# buttons are filled in by `_rebuild_hero_buttons()` the first time a
+	# `heroes` broadcast names one.
+	_hero_row = VBoxContainer.new()
+	_hero_row.name = "Heroes"
+	_hero_row.add_theme_constant_override("separation", 6)
+	_hero_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_hero_row.visible = false
+	vbox.add_child(_hero_row)
+
+	var hero_title := Label.new()
+	hero_title.text = "Hero"
+	hero_title.add_theme_font_size_override("font_size", BODY_FONT_SIZE)
+	_hero_row.add_child(hero_title)
+
 	# --- Current room code + Copy (shown only while in a room) ------------
 	_code_row = HBoxContainer.new()
 	_code_row.add_theme_constant_override("separation", 8)
@@ -377,6 +407,8 @@ func _ensure_manager() -> Node:
 			_manager.room_changed.connect(_on_room_changed)
 		if _manager.has_signal("status"):
 			_manager.status.connect(_on_status)
+		if _manager.has_signal("heroes_changed"):
+			_manager.heroes_changed.connect(_on_heroes_changed)
 		_signals_connected = true
 	return _manager
 
@@ -453,6 +485,94 @@ func _on_room_changed(_code: String, _members: Array) -> void:
 func _on_status(message: String) -> void:
 	if _status_label != null:
 		_status_label.text = message
+
+
+# ============================================================================
+# HERO PICKER
+# ============================================================================
+## THE LOBBY IS THE SOURCE OF TRUTH. Pressing a hero only sends a claim; the
+## button state below is redrawn from the `heroes` broadcast that answers it, so
+## two players reaching for the same hero can never both look like they got it.
+## A refused claim comes back as a status line and leaves the room intact (see
+## `MpManager.HERO_ERRORS`), which is why nothing here has a failure path of its
+## own.
+
+func _on_heroes_changed(heroes: Dictionary, pool: Array) -> void:
+	var names: Array[String] = []
+	for hero: Variant in pool:
+		names.append(String(hero))
+	if names != _hero_pool:
+		_rebuild_hero_buttons(names)
+	_refresh_hero_buttons(heroes)
+
+
+## Replace the row's buttons, one per hero the lobby offers. Called only when the
+## pool itself changes — in practice once per room, and once more with an empty
+## pool when `leave()` emits `heroes_changed({}, [])`.
+func _rebuild_hero_buttons(pool: Array[String]) -> void:
+	if _hero_row == null:
+		return
+	for button: Button in _hero_buttons:
+		# Unparent BEFORE freeing: `queue_free` only takes effect at the end of
+		# the frame, so a button left in place would sit under the replacements
+		# added just below for one frame of a visibly doubled row.
+		_hero_row.remove_child(button)
+		button.queue_free()
+	_hero_buttons.clear()
+	_hero_pool = pool
+	for hero: String in pool:
+		# `bind` rather than a capturing lambda so the hero name a button sends
+		# is fixed at build time and cannot drift with the loop variable.
+		var button := _make_button(hero.capitalize(), _on_hero_pressed.bind(hero))
+		_hero_row.add_child(button)
+		_hero_buttons.append(button)
+
+
+## Relabel every hero button for the current assignments: ours is marked, one
+## somebody else holds is disabled and named with its holder, a free one is
+## pressable.
+func _refresh_hero_buttons(heroes: Dictionary) -> void:
+	var manager := _ensure_manager()
+	var mine: String = ""
+	if manager != null and manager.has_method("my_hero"):
+		mine = String(manager.my_hero())
+	for i: int in range(_hero_buttons.size()):
+		var hero: String = _hero_pool[i]
+		var button: Button = _hero_buttons[i]
+		var holder: String = String(heroes.get(hero, ""))
+		if hero == mine:
+			button.text = "%s  ✓ you" % hero.capitalize()
+			button.disabled = false
+		elif holder.is_empty():
+			button.text = hero.capitalize()
+			button.disabled = false
+		else:
+			button.text = "%s — %s" % [hero.capitalize(), _member_name(manager, holder)]
+			button.disabled = true
+	# Visibility is decided the same way in `_refresh()`; both paths run, because
+	# a `heroes` broadcast and a `room_changed` do not arrive together.
+	if _hero_row != null:
+		var online: bool = manager != null and manager.has_method("is_online") and bool(manager.is_online())
+		_hero_row.visible = online and not _hero_buttons.is_empty()
+
+
+func _on_hero_pressed(hero: String) -> void:
+	var manager := _ensure_manager()
+	if manager == null or not manager.has_method("claim_hero"):
+		_on_status("Multiplayer is not available in this scene")
+		return
+	manager.claim_hero(hero)
+
+
+## A lobby id's display name, falling back to a short form of the id itself so a
+## held hero is never labelled with a blank. The member list is parsed JSON from
+## the lobby, so every entry is checked before it is read.
+func _member_name(manager: Node, id: String) -> String:
+	if manager != null and manager.has_method("get_members"):
+		for member: Variant in manager.get_members():
+			if member is Dictionary and String((member as Dictionary).get("id", "")) == id:
+				return String((member as Dictionary).get("name", ""))
+	return id.substr(0, 4)
 
 
 # ============================================================================
@@ -561,6 +681,9 @@ func _refresh() -> void:
 		_code_input.editable = not online
 	if _leave_button != null:
 		_leave_button.disabled = not online
+
+	if _hero_row != null:
+		_hero_row.visible = online and not _hero_buttons.is_empty()
 
 	if _code_row != null:
 		_code_row.visible = not code.is_empty()

@@ -378,7 +378,7 @@ of `_weather_is_raining_here()`.
 
 ### Task 8: `mp_manager.gd` — apply the join, and `mp_ui.gd` — the hero picker
 
-- [ ] `_apply_join_placement()` runs once per room, when the seed **and** at least
+- [x] `_apply_join_placement()` runs once per room, when the seed **and** at least
       one snapshot are in hand (guard with a `_joined_applied` latch cleared by
       `leave()`), and only when we were **not** the room's first member (a host
       has nobody to join — leave its spawn exactly as phase 3 left it):
@@ -396,7 +396,7 @@ of `_weather_is_raining_here()`.
       Keep that as the **host / no-snapshot** path, but do not let it fight the
       join placement: if a snapshot has already arrived, go straight to
       `_apply_join_placement()` instead of resetting to the origin.
-- [ ] `mp_ui.gd`: a hero row in the panel — one button per `pool` entry, built
+- [x] `mp_ui.gd`: a hero row in the panel — one button per `pool` entry, built
       once and refreshed on `heroes_changed`. A hero held by someone else is
       `disabled` and labelled with the holder's name; the one we hold is visibly
       selected. Pressing one calls `manager.claim_hero(name)`. Same
