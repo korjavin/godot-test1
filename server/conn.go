@@ -61,7 +61,13 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 	c.SetReadLimit(readLimit)
 	defer c.CloseNow() //nolint:errcheck // best-effort teardown
 
-	code := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("room")))
+	// Cap the query value before anything else looks at it: an over-long code is
+	// rejected by validCode below, but there is no reason to carry it that far.
+	raw := r.URL.Query().Get("room")
+	if len(raw) > codeLength {
+		raw = raw[:codeLength+1] // one over, so validCode still refuses it
+	}
+	code := strings.ToUpper(strings.TrimSpace(raw))
 	name := trimName(r.URL.Query().Get("name"))
 
 	room, me, err := h.Join(code, name, newID())

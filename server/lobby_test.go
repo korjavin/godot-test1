@@ -275,3 +275,65 @@ func TestJoiningAnUnknownCodeCreatesIt(t *testing.T) {
 		t.Fatalf("room = %q, wanted ABC234", p.room)
 	}
 }
+
+// TestMalformedRoomCodeRejected: the room map is keyed by invite codes, so a
+// client does not get to choose the key or its length.
+func TestMalformedRoomCodeRejected(t *testing.T) {
+	base := newServer(t)
+	for _, code := range []string{"abc", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "AAAAA0", "AAAAAAA"} {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		c, _, err := websocket.Dial(ctx, base+"?room="+code+"&name=x", nil)
+		if err != nil {
+			cancel()
+			t.Fatalf("dial %q: %v", code, err)
+		}
+		_, data, err := c.Read(ctx)
+		if err != nil {
+			cancel()
+			t.Fatalf("read %q: %v", code, err)
+		}
+		var f frame
+		_ = json.Unmarshal(data, &f)
+		if f["type"] != "error" || f["error"] != errBadCode.Error() {
+			t.Errorf("code %q was accepted: %v", code, f)
+		}
+		_ = c.CloseNow()
+		cancel()
+	}
+}
+
+// TestICECORS: the game is served from a different origin than the lobby, so
+// /ice must carry Access-Control-Allow-Origin — and, because the body is the TURN
+// credentials, must honour the same allowlist as the websocket upgrade.
+func TestICECORS(t *testing.T) {
+	restore := allowedOrigins
+	t.Cleanup(func() { allowedOrigins = restore })
+
+	cases := []struct {
+		allow  []string
+		origin string
+		want   string
+	}{
+		{[]string{"*"}, "https://korjavin.github.io", "*"},
+		{[]string{"*"}, "", "*"},
+		{[]string{"korjavin.github.io"}, "https://korjavin.github.io", "https://korjavin.github.io"},
+		{[]string{"korjavin.github.io"}, "https://evil.example", ""},
+		{[]string{"*.example.com"}, "https://game.example.com", "https://game.example.com"},
+		{[]string{"korjavin.github.io"}, "", ""},
+	}
+	for _, tc := range cases {
+		allowedOrigins = tc.allow
+		req := httptest.NewRequest(http.MethodGet, "/ice", nil)
+		if tc.origin != "" {
+			req.Header.Set("Origin", tc.origin)
+		}
+		rec := httptest.NewRecorder()
+		iceHandler(rec, req)
+		if got := rec.Header().Get("Access-Control-Allow-Origin"); got != tc.want {
+			t.Errorf("allow=%v origin=%q: header = %q, wanted %q", tc.allow, tc.origin, got, tc.want)
+		}
+		if rec.Code != http.StatusOK {
+			t.Errorf("status %d", rec.Code)
+		}
+	}
+}

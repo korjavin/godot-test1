@@ -12,7 +12,9 @@ Everything else about the multiplayer feature is peer-to-peer.
 Connect a websocket to `wss://<host>/ws?room=<CODE>&name=<label>`.
 
 - An **empty or unknown** `room` creates one; the code comes back in the welcome
-  frame. Codes are 6 characters from an alphabet with no `0/O/1/I/L`.
+  frame. Codes are 6 characters from an alphabet with no `0/O/1/I/L`; anything
+  else is refused with a `malformed room code` error, since the room map is keyed
+  by these strings and a client does not get to pick the key or its length.
 - A room holds at most **4** members (the game's player cap); the fifth gets an
   `error` frame and is closed.
 
@@ -55,7 +57,10 @@ leaving the room master-less.
 - `GET /` — a plain-JS test page (embedded in the binary). Open it in two tabs to
   exercise every acceptance criterion by hand, TURN included.
 - `GET /ice` — the `RTCPeerConnection` config, built from the STUN/TURN
-  environment variables, so credentials never get baked into the game build.
+  environment variables, so credentials never get baked into the game build. It is
+  fetched cross-origin (the game is on GitHub Pages, the lobby on its own host),
+  so it sends `Access-Control-Allow-Origin` — honouring `LOBBY_ALLOWED_ORIGINS`
+  rather than a blanket `*`, because the body *is* the TURN credentials.
 - `GET /healthz` — `{"ok":true,"rooms":N}`.
 
 ## Running it locally

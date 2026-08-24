@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"strings"
 	"sync"
 )
 
@@ -38,7 +39,23 @@ var (
 	errRoomFull    = errors.New("room is full")
 	errUnknownHero = errors.New("unknown hero")
 	errHeroTaken   = errors.New("hero already taken")
+	errBadCode     = errors.New("malformed room code")
 )
+
+// validCode reports whether s is a well-formed invite code. Anything else is
+// refused rather than silently becoming a room: the room map is keyed by these
+// strings, so without the check a client picks both the key and its length.
+func validCode(s string) bool {
+	if len(s) != codeLength {
+		return false
+	}
+	for _, c := range s {
+		if !strings.ContainsRune(codeAlphabet, c) {
+			return false
+		}
+	}
+	return true
+}
 
 // Member is one connected peer.
 type Member struct {
@@ -145,6 +162,9 @@ func (h *Hub) Join(code, name, id string) (*Room, *Member, error) {
 	defer h.mu.Unlock()
 
 	var room *Room
+	if code != "" && !validCode(code) {
+		return nil, nil, errBadCode
+	}
 	if code == "" {
 		fresh, err := h.newCodeLocked()
 		if err != nil {

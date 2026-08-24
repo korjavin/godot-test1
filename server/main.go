@@ -9,7 +9,9 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
+	"path"
 	"strings"
 	"time"
 )
@@ -57,9 +59,43 @@ func main() {
 	}
 }
 
+// corsOrigin returns the Access-Control-Allow-Origin value for this request, or
+// "" when the origin is not allowed.
+//
+// /ice is fetched cross-origin by design — the game is served from GitHub Pages
+// while the lobby lives on its own host — so without this header the browser
+// discards the response and the client never gets its TURN credentials. Because
+// the body *is* the TURN credentials, it honours the same allowlist as the
+// websocket upgrade instead of answering "*" unconditionally.
+func corsOrigin(origin string) string {
+	if len(allowedOrigins) == 1 && allowedOrigins[0] == "*" {
+		return "*"
+	}
+	if origin == "" {
+		return ""
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	host := strings.ToLower(u.Host)
+	for _, pat := range allowedOrigins {
+		// path.Match gives "*.example.com" wildcards for free; a host has no "/",
+		// so its one restriction does not bite.
+		if ok, err := path.Match(strings.ToLower(pat), host); ok && err == nil {
+			return origin
+		}
+	}
+	return ""
+}
+
 // iceHandler hands clients the ICE server list so TURN credentials live in the
 // deployment's environment rather than baked into the game build.
 func iceHandler(w http.ResponseWriter, r *http.Request) {
+	if o := corsOrigin(r.Header.Get("Origin")); o != "" {
+		w.Header().Set("Access-Control-Allow-Origin", o)
+		w.Header().Set("Vary", "Origin")
+	}
 	servers := []map[string]any{}
 	if stun := env("STUN_URL", "stun:stun.l.google.com:19302"); stun != "" {
 		servers = append(servers, map[string]any{"urls": splitList(stun)})
