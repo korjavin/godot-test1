@@ -1094,10 +1094,26 @@ func _roll_run_seed() -> void:
 	"""
 	var seed_rng := RandomNumberGenerator.new()
 	seed_rng.randomize()
-	run_seed = seed_rng.randi()
-	# The biome field is derived from run_seed, so re-roll it here — that way both
-	# callers (_ready and new_run) get a fresh biome layout for free and the two
-	# sites can't drift apart.
+	# Both seed paths (rolled here, or forced from outside) converge on
+	# set_run_seed, so the biome re-roll below can never be forgotten by one of them.
+	set_run_seed(seed_rng.randi())
+
+
+func set_run_seed(value: int) -> void:
+	"""
+	Assign this run's world seed explicitly. THE ONLY PLACE run_seed IS WRITTEN.
+
+	Every deterministic hash site in this file mixes run_seed in, and the biome
+	field's domain offset is DERIVED from it — so an assignment that skips the
+	_roll_biome_offset() below leaves the ground shader drawing the old run's blue
+	river bands while is_river_at() reports the new run's, i.e. the blue you see and
+	the wading you feel part company. Route every run_seed write through here.
+
+	Callers: _roll_run_seed() (the ordinary random path) and new_run(forced_seed)
+	(multiplayer — every peer in a room is handed the same seed so they walk the
+	same world).
+	"""
+	run_seed = value
 	_roll_biome_offset()
 
 
@@ -4434,15 +4450,22 @@ func remove_chunk(chunk_pos: Vector2i) -> void:
 		chunk.queue_free()
 		active_chunks.erase(chunk_pos)
 
-func new_run() -> void:
+func new_run(forced_seed = null) -> void:
 	"""
-	Reset the world for a brand-new run: re-roll the per-run seed and rebuild
+	Reset the world for a brand-new run: set the per-run seed and rebuild
 	everything derived from it. Called by player_controller.restart_game() (via the
 	"terrain" group) BEFORE the player is teleported back to the (0,2,0) spawn.
 
+	forced_seed is deliberately UNTYPED with a null default rather than an int
+	sentinel: 0 is a perfectly legitimate seed value, so there is no int that could
+	mean "no seed given". Passing one (multiplayer hands every peer in a room the
+	same seed) makes this run that exact world; omitting it keeps the solo path
+	byte-identical to before this parameter existed.
+
 	EDUCATIONAL NOTE — the order matters:
-	1. Re-roll run_seed — every hash site mixes it in, so all downstream content
-	   (blocks, crocodiles, road, coins) will come out different.
+	1. Set run_seed — re-rolled at random, or taken from forced_seed. Every hash
+	   site mixes it in, so all downstream content (blocks, crocodiles, road,
+	   coins) comes out of that one number.
 	2. Clear the road station cache — its entries were computed with the OLD seed
 	   and would poison the new road (the cache is "correct forever" only while the
 	   seed is constant). Reset the bounds to the empty sentinel (min > max) exactly
@@ -4456,10 +4479,14 @@ func new_run() -> void:
 	   land on solid new-world ground instead of falling through a hole. Setting
 	   last_player_chunk to (0,0) keeps _process from redundantly rebuilding.
 	"""
-	# 1. New seed (same roll as _ready()). _roll_run_seed also re-rolls biome_offset,
-	# so the ground shader has to be re-fed immediately after it — otherwise the new
-	# run's rivers would be walked through while the OLD run's blue bands are drawn.
-	_roll_run_seed()
+	# 1. New seed (same roll as _ready()), or the one we were handed. Both paths
+	# re-roll biome_offset (set_run_seed does it), so the ground shader has to be
+	# re-fed immediately after — otherwise the new run's rivers would be walked
+	# through while the OLD run's blue bands are drawn.
+	if forced_seed == null:
+		_roll_run_seed()
+	else:
+		set_run_seed(int(forced_seed))
 	_apply_biome_shader_params()
 
 	# 2. Road cache back to its declared empty state, and the old-world pending
