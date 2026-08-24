@@ -449,7 +449,7 @@ explicit checks (asserts are stripped in release builds).
 
 ### Task 10: [Final] Update documentation
 
-- [ ] add a **"Multiplayer (phase 3): WebRTC mesh + presence"** section to
+- [x] add a **"Multiplayer (phase 3): WebRTC mesh + presence"** section to
       `CLAUDE.md`, matching the density and voice of its neighbours. It must
       record, at minimum: the hard isolation contract and why (naming the
       `get_first_node_in_group("player")` callers); that `_rtc` is deliberately
@@ -458,10 +458,12 @@ explicit checks (asserts are stripped in release builds).
       travels over the **lobby relay** rather than the mesh, and why; the
       `bytes_to_var`-not-`_with_objects` rule; the lobby-URL precedence; and that
       desktop needs the webrtc-native addon while web does not.
-- [ ] update the `CLAUDE.md` "Node discovery is group-based" section to list the
+- [x] update the `CLAUDE.md` "Node discovery is group-based" section to list the
       new `"mp"` group, and note that `"player"` still means **only** the local
       player.
-- [ ] add the dev-setup section to `README.md` (Task 7).
+- [x] add the dev-setup section to `README.md` — already delivered in Task 7
+      (`README.md` "Multiplayer (dev setup)": addon download, `go run .` lobby,
+      the two `--lobby=` / `?lobby=` recipes); verified present, no edit needed.
 
 ## Technical Details
 
