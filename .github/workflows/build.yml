@@ -72,6 +72,118 @@ jobs:
           retention-days: 7
 
   # ============================================================================
+  # Publish the godot-mp stack (only from master branch)
+  #
+  # THIS JOB IS THE SINGLE OWNER OF THE `deploy` BRANCH. Portainer reads
+  # server/docker-compose.yml from that branch, and the branch is maintained by a
+  # force-push — so it can only have one writer. Two workflows force-pushing it
+  # (which is what a separate lobby deploy job would be) would each reset the
+  # branch to their own checkout and silently clobber the other's image pin.
+  # That is why both images are built here, and why `.github/workflows/lobby.yml`
+  # keeps only its test job. Both tags are pinned in the SAME commit, so the two
+  # containers of a deploy always come from one master commit.
+  #
+  # The cost, accepted deliberately: the lobby image now rebuilds on every master
+  # push rather than only on server/** changes. It is a small Go build.
+  #
+  # It publishes a lobby image, so it is gated on the lobby's own checks through
+  # the reusable lobby-checks job below — `needs:` cannot reach into another
+  # workflow, and lobby.yml runs concurrently, so a failing `go test` would
+  # otherwise not stop the deploy.
+  #
+  # Same export, second home: GitHub Pages keeps serving the game, and the web
+  # image puts it behind Traefik at https://${LOBBY_HOST}/ from the same stack as
+  # the lobby, so the game and the lobby it talks to share one origin.
+  # ============================================================================
+  # The lobby's own checks, reused rather than re-typed — deploy-stack publishes a
+  # lobby image, so it must not run before `go vet` / gofmt / `go test -race` pass.
+  # lobby.yml is a separate workflow running concurrently, and `needs:` cannot
+  # reach across workflows, so the deploy gate has to call it.
+  lobby-checks:
+    name: 🧪 Lobby checks
+    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+    uses: ./.github/workflows/lobby.yml
+
+  deploy-stack:
+    name: 🚀 Publish images and redeploy stack
+    needs: [ build, lobby-checks ]
+    # Master pushes only — a PR must not build or push any image.
+    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # force-pushes the deploy branch
+      packages: write
+    # Job-level env, so the "is the webhook configured?" test below reads an
+    # ordinary variable rather than the secrets context (same as lobby.yml).
+    env:
+      PORTAINER_HOOK: ${{ secrets.PORTAINER_REDEPLOY_HOOK }}
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      # Lands beside web/Dockerfile as the ./site directory it COPYs — the
+      # Dockerfile only copies the export, it does not build the game.
+      - name: 📦 Download the web export
+        uses: actions/download-artifact@v4
+        with:
+          name: web-build
+          path: web/site
+
+      - name: 🔐 Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # SHA tags only, for both images — production is never :latest, so a
+      # redeploy can never quietly pick up a different build than the one pinned.
+      - name: 🐳 Build and push the lobby image
+        uses: docker/build-push-action@v6
+        with:
+          context: server
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/godot-test1-lobby:${{ github.sha }}
+
+      - name: 🐳 Build and push the web client image
+        uses: docker/build-push-action@v6
+        with:
+          context: web
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/godot-test1-web:${{ github.sha }}
+
+      # Both pins land in one commit, after both images exist in the registry.
+      - name: 🌿 Pin both images on the deploy branch
+        env:
+          REPO_OWNER: ${{ github.repository_owner }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          git config user.name "GitHub Actions Bot"
+          git config user.email "actions@github.com"
+          git checkout -B deploy
+          sed -i \
+            -e "s|\${LOBBY_IMAGE:-ghcr.io/${REPO_OWNER}/godot-test1-lobby:[^}]*}|\${LOBBY_IMAGE:-ghcr.io/${REPO_OWNER}/godot-test1-lobby:${COMMIT_SHA}}|g" \
+            -e "s|\${WEB_IMAGE:-ghcr.io/${REPO_OWNER}/godot-test1-web:[^}]*}|\${WEB_IMAGE:-ghcr.io/${REPO_OWNER}/godot-test1-web:${COMMIT_SHA}}|g" \
+            server/docker-compose.yml
+          # A silently no-op sed would deploy a stale image forever, so prove both
+          # pins landed before the branch moves.
+          for image in lobby web; do
+            grep -q "godot-test1-${image}:${COMMIT_SHA}" server/docker-compose.yml \
+              || { echo "::error::failed to pin godot-test1-${image} in server/docker-compose.yml"; exit 1; }
+          done
+          git add server/docker-compose.yml
+          git commit -m "ci: pin lobby and web images to ${COMMIT_SHA}" || echo "nothing to commit"
+          git push origin deploy --force
+
+      # Skipped when the secret is absent, so the images still publish without it.
+      - name: 🪝 Trigger Portainer redeploy
+        if: env.PORTAINER_HOOK != ''
+        uses: distributhor/workflow-webhook@2381f0e9c7b6bf061fb1405bd0804b8706116369 # v3.0.8
+        with:
+          webhook_url: ${{ secrets.PORTAINER_REDEPLOY_HOOK }}
+          webhook_secret: "trigger"
+
+  # ============================================================================
   # Deploy to GitHub Pages (only from master branch)
   # ============================================================================
   deploy:
