@@ -410,20 +410,20 @@ of `_weather_is_raining_here()`.
 Add checks only for the new **pure** logic. Same explicit-`if` style (no
 `assert` — release builds strip them), same "first failure wins" structure.
 
-- [ ] `Coin.id_at()` is stable for the same position, differs for positions a
+- [x] `Coin.id_at()` is stable for the same position, differs for positions a
       metre apart, and survives a sub-millimetre jitter on the same coin.
-- [ ] `MpManager.decode_state()` against hostile input: not a dictionary, missing
+- [x] `MpManager.decode_state()` against hostile input: not a dictionary, missing
       fields, NaN/INF position, absurd coordinates, negative counters, an `ids`
       array that is not an array, an over-long `ids` array (truncated or
       rejected — assert whichever the implementation chose), and a well-formed
       payload (accepted, fields correct).
-- [ ] `MpManager.decode_presence()` still accepts a **phase-3 shaped** packet
+- [x] `MpManager.decode_presence()` still accepts a **phase-3 shaped** packet
       (no `cc`/`lv`/`dd`) — the backward-compatibility rule from Task 6.
-- [ ] `MpManager.shared_lives_from()` arithmetic: base case, extra lives from the
+- [x] `MpManager.shared_lives_from()` arithmetic: base case, extra lives from the
       bank, spending below zero clamps to 0, and the `LIVES_CAP` clamp.
-- [ ] hero index by name: every `player_controller.CHARACTERS` name resolves, and
+- [x] hero index by name: every `player_controller.CHARACTERS` name resolves, and
       an unknown name resolves to `-1`.
-- [ ] the existing four checks must still pass unchanged.
+- [x] the existing four checks must still pass unchanged.
 
 ### ➕ Task 9a: seed delivery must not depend on the mesh (PRODUCTION BUG)
 
