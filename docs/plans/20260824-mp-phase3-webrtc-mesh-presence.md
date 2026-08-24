@@ -358,23 +358,23 @@ is inert until `host()`/`join()` is called**, and `_process` early-returns while
 
 A code-built `Control` under `HUD`, in the style of `mobile_settings_panel.gd`.
 
-- [ ] a small **"MP"** button in a corner that does not collide with the existing
+- [x] a small **"MP"** button in a corner that does not collide with the existing
       HUD furniture (lives top-left, coins/ability top-right, tune gear top-left
       under lives, view/steer toggles top-centre) — put it **bottom-left**. Opens
       and closes the panel.
-- [ ] panel contents: a status line, a **Host** button, a `LineEdit` for the
+- [x] panel contents: a status line, a **Host** button, a `LineEdit` for the
       invite code + a **Join** button, the room code shown large with a **Copy**
       button once in a room (`DisplayServer.clipboard_set`), a member list, and a
       **Leave** button. Uppercase the typed code and set `max_length = 6` on the
       `LineEdit` so a typo is rejected client-side before the lobby has to.
-- [ ] wire to the manager through the **`"mp"` group only** (`get_first_node_in_group`
+- [x] wire to the manager through the **`"mp"` group only** (`get_first_node_in_group`
       + `has_method` guards) — the same no-hard-references rule the rest of the
       project uses; subscribe to its `room_changed` / `status` signals.
-- [ ] **mouse handling**: opening the panel releases a captured mouse and closing
+- [x] **mouse handling**: opening the panel releases a captured mouse and closing
       recaptures it, copying `pause_controller.gd`'s `_recapture_mouse` flag so it
       never fights the pause overlay or the touch path. Do **not** pause the tree —
       the world keeps running while the panel is open.
-- [ ] touch-friendly: minimum ~48 px touch targets, and the panel must be usable
+- [x] touch-friendly: minimum ~48 px touch targets, and the panel must be usable
       with the on-screen keyboard (`LineEdit` handles the virtual keyboard).
       Unlike `touch_controls`, this UI is **visible on every platform** — desktop
       needs it too (acceptance criterion 4) — so it is **not** gated on
