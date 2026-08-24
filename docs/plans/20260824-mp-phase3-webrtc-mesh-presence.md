@@ -418,21 +418,21 @@ two-editor-instance testing needs the official `webrtc-native` GDExtension.
 `SELFCHECK OK` and quits 0, or prints the failure and quits 1. Plain `assert`-free
 explicit checks (asserts are stripped in release builds).
 
-- [ ] **isolation contract** (the reason this file exists): build a `RemoteAvatar`,
+- [x] **isolation contract** (the reason this file exists): build a `RemoteAvatar`,
       `set_character(0)`, then assert its `get_groups()` is empty, every node in
       its subtree has empty groups, and **no node in the subtree is a
       `CollisionObject3D`**. This is the guard that a future refactor cannot
       silently make crocodiles chase a remote avatar.
-- [ ] **untrusted packet parser**: the presence decoder accepts a well-formed
+- [x] **untrusted packet parser**: the presence decoder accepts a well-formed
       packet and rejects, without crashing, each of: random bytes, a
       `var_to_bytes` of a non-dictionary, a dictionary missing `p`, a dictionary
       with `p` as a String, and a `c` far out of range.
-- [ ] **forced seed**: instance `endless_terrain.gd`, call `set_run_seed(12345)`
+- [x] **forced seed**: instance `endless_terrain.gd`, call `set_run_seed(12345)`
       twice and assert `run_seed == 12345` and that `biome_offset` is identical
       both times (the seed→biome derivation is deterministic).
-- [ ] **peer id mapping**: `peer_int_id` is ≥ 2, stable across calls, and
+- [x] **peer id mapping**: `peer_int_id` is ≥ 2, stable across calls, and
       distinct for a handful of sample 16-hex-char ids.
-- [ ] run it and make it pass.
+- [x] run it and make it pass.
 
 ### Task 9: Verify acceptance criteria
 

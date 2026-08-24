@@ -508,7 +508,7 @@ func _on_lobby_relay(from: String, payload: Dictionary) -> void:
 			pass
 
 
-func _is_number(value: Variant) -> bool:
+static func _is_number(value: Variant) -> bool:
 	"""JSON gives ints and floats interchangeably, so accept either."""
 	return typeof(value) == TYPE_INT or typeof(value) == TYPE_FLOAT
 
@@ -649,28 +649,45 @@ func _receive_presence() -> void:
 		if avatar == null:
 			continue
 
-		var decoded: Variant = bytes_to_var(bytes)
-		if typeof(decoded) != TYPE_DICTIONARY:
+		var state: Dictionary = decode_presence(bytes)
+		if state.is_empty():
 			continue
-		var state: Dictionary = decoded as Dictionary
-
-		if typeof(state.get("p", null)) != TYPE_VECTOR3 \
-				or typeof(state.get("g", null)) != TYPE_BOOL \
-				or not _is_number(state.get("y", null)) \
-				or not _is_number(state.get("s", null)) \
-				or not _is_number(state.get("c", null)):
-			continue
-
-		var pos: Vector3 = state["p"]
-		if not (is_finite(pos.x) and is_finite(pos.y) and is_finite(pos.z)):
-			continue
-		var yaw: float = float(state["y"])
-		var speed: float = float(state["s"])
-		if not (is_finite(yaw) and is_finite(speed)):
-			continue
-
-		var roster_size: int = RemoteAvatar.PLAYER_SCRIPT.CHARACTERS.size()
-		var char_index: int = clampi(int(state["c"]), 0, roster_size - 1)
 
 		avatar.visible = true
-		avatar.receive_state(pos, yaw, char_index, speed, state["g"])
+		avatar.receive_state(state["p"], state["y"], state["c"], state["s"], state["g"])
+
+
+static func decode_presence(bytes: PackedByteArray) -> Dictionary:
+	"""
+	The presence packet parser, and the whole trust boundary in one pure function.
+
+	Returns the validated state, or an EMPTY DICTIONARY for anything that fails —
+	a packet is trusted whole or dropped whole, there is no partial trust. Static
+	and `_rtc`-free so scripts/mp_selfcheck.gd can hold it to that with a fistful
+	of malformed byte arrays.
+	"""
+	var decoded: Variant = bytes_to_var(bytes)
+	if typeof(decoded) != TYPE_DICTIONARY:
+		return {}
+	var state: Dictionary = decoded as Dictionary
+
+	if typeof(state.get("p", null)) != TYPE_VECTOR3 \
+			or typeof(state.get("g", null)) != TYPE_BOOL \
+			or not _is_number(state.get("y", null)) \
+			or not _is_number(state.get("s", null)) \
+			or not _is_number(state.get("c", null)):
+		return {}
+
+	var pos: Vector3 = state["p"]
+	if not (is_finite(pos.x) and is_finite(pos.y) and is_finite(pos.z)):
+		return {}
+	var yaw: float = float(state["y"])
+	var speed: float = float(state["s"])
+	if not (is_finite(yaw) and is_finite(speed)):
+		return {}
+
+	var char_index: int = int(state["c"])
+	if char_index < 0 or char_index >= RemoteAvatar.PLAYER_SCRIPT.CHARACTERS.size():
+		return {}
+
+	return { "p": pos, "y": yaw, "c": char_index, "s": speed, "g": state["g"] }
