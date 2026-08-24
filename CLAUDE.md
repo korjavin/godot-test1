@@ -10,7 +10,7 @@ A Godot 3rd-person endless-runner-style adventure game ("Zelda-like Educational 
 
 ## Commands
 
-There is **no test suite, linter, or build script** — this is a pure Godot project driven from the editor and CI.
+The **game** has **no test suite, linter, or build script** — it is a pure Godot project driven from the editor and CI. (The multiplayer lobby in `server/` is a separate Go service with its own `go test` suite; see "Multiplayer lobby service" below.)
 
 ```bash
 # Run the game from the CLI (main scene)
@@ -232,6 +232,16 @@ When optimizing, follow the split this work established:
 - **Visual-affecting changes are web-gated.** Anything a player could see (renderer, MSAA, shadow size, internal resolution, render distance) must be limited to the web build via `OS.has_feature("web")` at runtime or a `.web` project-setting override. Desktop/editor stay at full quality. **One sanctioned exception: fog is universal** — an owner-approved art-direction call (desktop gets the thin 0.0022 haze so the horizon dissolves instead of hard-edging). The fog *density* is still platform-gated, so the perf/view-distance side of fog remains a web concern; don't use the fog exception as precedent for other visual changes.
 - **Purely invisible optimizations are global.** MultiMesh batching, crocodile simulation LOD, and consolidated collision change neither look nor gameplay anywhere, so they run on every platform (and benefit desktop too).
 - **Entity counts are never reduced as an optimization.** Same blocks per chunk as before; croc count per chunk changes only by *design* (the distance-scaled density in the difficulty gradient), never for perf. (Coins are an exception only because their placement changed by *design*, not for perf: they are now road-shaped rather than uniform per-chunk scatter, so off-road chunks legitimately have no coins — see "coin road" above.) Distant crocodiles are **slept** (frozen, monitoring off), never removed — counts stay unchanged and gameplay near the player is identical.
+
+## Multiplayer lobby service (`server/`)
+A small Go service — **the only server in the multiplayer architecture** — sharing this repository with the game and nothing else. It does **signalling, membership and master-naming**, and deliberately no game logic, no game state and no persistence: rooms live in memory in one `Hub`, and a restart just drops them (clients re-create a room from its 6-character invite code). Everything else about multiplayer is peer-to-peer.
+
+- **Three files, one responsibility each.** `room.go` is the whole state machine (rooms, membership, master election, hero assignments, signal fan-out) and imports no network types, so tests drive it directly; `conn.go` is the websocket layer that turns a socket into a `*Member` and translates inbound JSON into `Room` method calls; `main.go` is config-from-env plus four routes (`/ws`, `/ice`, `/healthz`, and the embedded test page at `/`). Full protocol table in `server/README.md`.
+- **The master is the oldest surviving member** (lowest global join `seq`). Re-elected on master disconnect, and when strictly more than half of the *non-master* members send a `stalled` report naming it — the stall *detection* is client-side (a later phase); the lobby only counts votes. A voted-out peer is never elected again while the room lives, **unless** every remaining member has been voted out, in which case the slate is wiped rather than leaving the room master-less.
+- **The lobby never inspects `payload`.** Offers, answers and ICE candidates all ride the same opaque `signal` relay — that opacity is the point, and it is what keeps the server out of the game.
+- **Trust-boundary guards that must stay:** a 64 KB read limit, a 32-character display-name clamp, a 4-member room cap (the game's player limit), and a bounded per-peer send queue — a peer that cannot drain it is disconnected rather than silently dropped, because a lost ICE candidate is a connection that never forms. A ping every 20 s reaps peers whose TCP died without a close frame; without it a crashed master would hold its title forever.
+- **`GET /ice` serves the STUN/TURN config from the deployment's environment**, so TURN credentials are never baked into the game build.
+- Deployment is the owner's standard git-ops compose pattern: `server/Dockerfile` + `server/docker-compose.yml` (lobby behind Traefik at `wss://$LOBBY_HOST/ws`, plus a coturn container on the **host network** — a TURN relay hands out a port range, which the bridge would make painful). `.github/workflows/lobby.yml` is gated on `server/**` and never touches the Pages deploy; on master it publishes to GHCR, pins the SHA on the `deploy` branch and pokes the Portainer webhook.
 
 ## CI/CD
 `.github/workflows/build.yml` builds the web export on every push. Deploy to GitHub Pages happens **only on push to `master`**; `claude/*` branches build (and upload a downloadable `web-build` artifact) but do not deploy. So merging to `master` is what publishes the playable build.

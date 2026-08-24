@@ -1,0 +1,162 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Lobby test page</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  body { font: 14px/1.5 system-ui, sans-serif; margin: 1.5rem; max-width: 52rem; color: #222; }
+  h1 { font-size: 1.2rem; }
+  fieldset { border: 1px solid #ccc; margin: 0 0 1rem; }
+  input, button, select { font: inherit; padding: .25rem .4rem; }
+  #log { background: #111; color: #d8d8d8; padding: .6rem; height: 22rem; overflow: auto;
+         white-space: pre-wrap; font: 12px/1.45 ui-monospace, monospace; }
+  .me { color: #7fd; } .ev { color: #fd7; } .err { color: #f88; }
+  code { background: #eee; padding: 0 .2rem; }
+</style>
+
+<h1>Lobby test page</h1>
+<p>Open this in two tabs. Tab 1: <b>Connect</b> with an empty code to create a room.
+Tab 2: paste the code and <b>Connect</b>. Then swap signalling payloads, watch the
+membership and master events, and close the master tab to see the re-election.</p>
+
+<fieldset>
+  <legend>Room</legend>
+  <label>code <input id="code" size="8" placeholder="(blank = new)"></label>
+  <label>name <input id="name" size="10" value="tab"></label>
+  <button id="connect">Connect</button>
+  <button id="disconnect" disabled>Disconnect</button>
+  <span id="status">idle</span>
+</fieldset>
+
+<fieldset>
+  <legend>Signal</legend>
+  <label>to <select id="to"><option value="">(everyone)</option></select></label>
+  <label>payload <input id="payload" size="34" value='{"sdp":"fake-offer"}'></label>
+  <button id="send" disabled>Send</button>
+</fieldset>
+
+<fieldset>
+  <legend>Hero &amp; master</legend>
+  <select id="hero"></select>
+  <button id="claim" disabled>Claim hero</button>
+  <button id="release" disabled>Release</button>
+  <button id="stall" disabled>Report master stalled</button>
+</fieldset>
+
+<fieldset>
+  <legend>TURN</legend>
+  <button id="turn">Test TURN (relay-only candidate check)</button>
+  <span id="turnres"></span>
+</fieldset>
+
+<div id="log"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const logEl = $('log');
+let ws = null, me = null, master = null, members = new Map();
+
+function log(msg, cls) {
+  const line = document.createElement('div');
+  if (cls) line.className = cls;
+  line.textContent = new Date().toLocaleTimeString() + '  ' + msg;
+  logEl.appendChild(line);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function refreshPeers() {
+  const sel = $('to'), keep = sel.value;
+  sel.innerHTML = '<option value="">(everyone)</option>';
+  for (const [id, name] of members) {
+    if (id === me) continue;
+    const o = document.createElement('option');
+    o.value = id; o.textContent = name + ' · ' + id;
+    sel.appendChild(o);
+  }
+  sel.value = keep;
+}
+
+function setConnected(on) {
+  for (const id of ['disconnect', 'send', 'claim', 'release', 'stall']) $(id).disabled = !on;
+  $('connect').disabled = on;
+}
+
+$('connect').onclick = () => {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const url = `${proto}//${location.host}/ws?room=${encodeURIComponent($('code').value.trim())}`
+            + `&name=${encodeURIComponent($('name').value.trim())}`;
+  log('connecting to ' + url);
+  ws = new WebSocket(url);
+  ws.onopen = () => { $('status').textContent = 'connected'; setConnected(true); };
+  ws.onclose = (e) => { $('status').textContent = 'closed (' + e.code + ' ' + e.reason + ')';
+                        setConnected(false); ws = null; };
+  ws.onerror = () => log('socket error', 'err');
+  ws.onmessage = (e) => onFrame(JSON.parse(e.data));
+};
+
+$('disconnect').onclick = () => ws && ws.close();
+
+function onFrame(m) {
+  switch (m.type) {
+    case 'welcome':
+      me = m.you; master = m.master;
+      $('code').value = m.room;
+      members = new Map(m.members.map((p) => [p.id, p.name]));
+      $('hero').innerHTML = m.pool.map((h) => `<option>${h}</option>`).join('');
+      log(`welcome: you=${me} room=${m.room} master=${m.master} members=${m.members.length}`, 'me');
+      refreshPeers();
+      break;
+    case 'peer_join':
+      members.set(m.peer.id, m.peer.name);
+      log(`peer_join: ${m.peer.name} (${m.peer.id})`, 'ev'); refreshPeers(); break;
+    case 'peer_leave':
+      members.delete(m.id);
+      log(`peer_leave: ${m.id}`, 'ev'); refreshPeers(); break;
+    case 'master':
+      master = m.id;
+      log(`MASTER = ${m.id}${m.id === me ? '  <-- that is me' : ''}`, 'ev'); break;
+    case 'heroes':
+      log('heroes: ' + JSON.stringify(m.heroes), 'ev'); break;
+    case 'signal':
+      log(`signal from ${m.from}: ${JSON.stringify(m.payload)}`); break;
+    case 'error':
+      log('error: ' + m.error, 'err'); break;
+    default:
+      log('frame: ' + JSON.stringify(m));
+  }
+}
+
+$('send').onclick = () => {
+  let payload;
+  try { payload = JSON.parse($('payload').value); }
+  catch { payload = $('payload').value; }   // arbitrary payloads: strings are fine too
+  ws.send(JSON.stringify({ type: 'signal', to: $('to').value, payload }));
+  log('sent signal to ' + ($('to').value || 'everyone'), 'me');
+};
+
+$('claim').onclick = () => ws.send(JSON.stringify({ type: 'hero', hero: $('hero').value }));
+$('release').onclick = () => ws.send(JSON.stringify({ type: 'hero', hero: '' }));
+$('stall').onclick = () => {
+  ws.send(JSON.stringify({ type: 'stalled', id: master }));
+  log('reported master ' + master + ' stalled', 'me');
+};
+
+// Relay-only ICE gathering: any candidate at all means TURN answered and the
+// credentials were accepted. Same check the trickle-ice page performs.
+$('turn').onclick = async () => {
+  $('turnres').textContent = 'testing…';
+  const cfg = await (await fetch('/ice')).json();
+  log('ice config: ' + JSON.stringify(cfg));
+  const pc = new RTCPeerConnection({ ...cfg, iceTransportPolicy: 'relay' });
+  let relays = 0;
+  pc.onicecandidate = (e) => {
+    if (e.candidate) { relays++; log('relay candidate: ' + e.candidate.candidate); }
+    else {
+      $('turnres').textContent = relays > 0
+        ? `OK — ${relays} relay candidate(s)` : 'FAILED — no relay candidates';
+      pc.close();
+    }
+  };
+  pc.createDataChannel('probe');
+  await pc.setLocalDescription(await pc.createOffer());
+};
+</script>
