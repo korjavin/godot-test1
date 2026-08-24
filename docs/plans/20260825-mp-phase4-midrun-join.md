@@ -543,7 +543,7 @@ path — the exact thing that broke in production.
 
 ### Task 10: [Final] Update documentation
 
-- [ ] `CLAUDE.md`: extend the "Multiplayer (phase 3)" section into a phase-3/4
+- [x] `CLAUDE.md`: extend the "Multiplayer (phase 3)" section into a phase-3/4
       account. Cover, in the file's existing voice and density: the hero pool and
       that the **lobby is the source of truth** (with the "release on leave is
       server-side" note), the E-cycle restriction, the coin-id scheme and both its
@@ -559,9 +559,13 @@ path — the exact thing that broke in production.
       `mp_selfcheck.gd` in the "Commands" section. Move the phase-4 items out of the "deliberately
       not built" list and leave phase 5's there (shared croc sim, coin claim
       arbitration, migration, stall detection).
-- [ ] **Do not touch `README.md`, `project.godot` or `.github/`** — a parallel
+- [x] **Do not touch `README.md`, `project.godot` or `.github/`** — a parallel
       bead owns those.
-- [ ] re-run all three verification commands from Development Approach.
+- [x] re-run all three verification commands from Development Approach.
+      Result: `--import` clean, `scenes/main.tscn --quit-after 240` boots and exits 0
+      with no script errors, `mp_selfcheck.gd` prints `SELFCHECK OK` (exit 0), and
+      `bash scripts/mp_e2e.sh` prints `E2E OK: room EP8UWG, shared seed 3529165304`
+      (exit 0).
 
 ## Technical Details
 
