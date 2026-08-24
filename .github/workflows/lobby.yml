@@ -3,6 +3,17 @@ name: 🛰️ Lobby service
 # The multiplayer lobby in server/ is an independent Go service — it shares this
 # repository with the Godot game and nothing else, so it gets its own workflow
 # gated on server/** and never touches the GitHub Pages deploy in build.yml.
+#
+# This workflow TESTS only. Publishing the lobby image and pinning it on the
+# `deploy` branch live in build.yml's deploy-stack job, which is the single writer
+# of that force-pushed branch — see the comment there. The tradeoff is that the
+# lobby image rebuilds on every master push instead of only on server/** changes.
+#
+# `workflow_call` exists so build.yml can gate that deploy on THESE checks: a job
+# cannot depend on a job in another workflow, and the two run concurrently, so
+# without it a master push could publish a lobby that fails `go test`. Calling the
+# job rather than copying its steps keeps one definition — a check added here
+# gates the deploy automatically instead of silently not gating it.
 on:
   push:
     branches: [ master ]
@@ -10,6 +21,7 @@ on:
   pull_request:
     branches: [ master ]
     paths: [ 'server/**', '.github/workflows/lobby.yml' ]
+  workflow_call:
   workflow_dispatch:
 
 jobs:
@@ -39,62 +51,9 @@ jobs:
         run: go test -race ./...
 
       # Build-only, so a broken Dockerfile fails the PR rather than the deploy.
+      # The pushing build of this same context lives in build.yml's deploy-stack job.
       - name: 🐳 Build image (no push)
         uses: docker/build-push-action@v6
         with:
           context: server
           push: false
-
-  # Only master publishes. A PR gets the test job and nothing else.
-  deploy:
-    name: 🚀 Publish image and redeploy
-    needs: test
-    if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      packages: write
-    # Job-level env, so the "is the webhook configured?" test below reads an
-    # ordinary variable rather than the secrets context.
-    env:
-      PORTAINER_HOOK: ${{ secrets.PORTAINER_REDEPLOY_HOOK }}
-    steps:
-      - name: 📥 Checkout code
-        uses: actions/checkout@v4
-
-      - name: 🔐 Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: 🐳 Build and push image
-        uses: docker/build-push-action@v6
-        with:
-          context: server
-          push: true
-          tags: ghcr.io/${{ github.repository_owner }}/godot-test1-lobby:${{ github.sha }}
-
-      # Portainer watches the `deploy` branch, which carries the compose file
-      # pinned to this commit's image. Never :latest in production.
-      - name: 🌿 Pin the image on the deploy branch
-        env:
-          REPO_OWNER: ${{ github.repository_owner }}
-          COMMIT_SHA: ${{ github.sha }}
-        run: |
-          git config user.name "GitHub Actions Bot"
-          git config user.email "actions@github.com"
-          git checkout -B deploy
-          sed -i "s|\${LOBBY_IMAGE:-ghcr.io/${REPO_OWNER}/godot-test1-lobby:[^}]*}|\${LOBBY_IMAGE:-ghcr.io/${REPO_OWNER}/godot-test1-lobby:${COMMIT_SHA}}|g" server/docker-compose.yml
-          git add server/docker-compose.yml
-          git commit -m "ci: pin lobby image to ${COMMIT_SHA}" || echo "nothing to commit"
-          git push origin deploy --force
-
-      # Optional: only fires once the owner adds the stack's webhook as a secret.
-      - name: 🪝 Trigger Portainer redeploy
-        if: env.PORTAINER_HOOK != ''
-        uses: distributhor/workflow-webhook@2381f0e9c7b6bf061fb1405bd0804b8706116369 # v3.0.8
-        with:
-          webhook_url: ${{ secrets.PORTAINER_REDEPLOY_HOOK }}
-          webhook_secret: "trigger"
