@@ -315,6 +315,17 @@ func _check_state_parser() -> String:
 		return "state parser mangled the position: %s" % snapshot["pos"]
 	if snapshot["ids"] != [111, 222, -333]:
 		return "state parser mangled the id list: %s" % snapshot["ids"]
+	# `gc`/`gs` (the room's frozen departed-member totals) follow the presence
+	# counters' rule: MISSING IS NOT MALFORMED. `good` above carries neither, so
+	# an older peer's snapshot still lands, reading as zero.
+	if snapshot["gc"] != 0 or snapshot["gs"] != 0:
+		return "state parser invented departed-member totals: %s" % snapshot
+	var with_gone: Dictionary = MPManager.decode_state({
+		"cc": 0.0, "ls": 0.0, "dd": 0.0, "px": 0.0, "py": 0.0, "pz": 0.0,
+		"gc": 500.0, "gs": 3.0, "ids": [],
+	})
+	if with_gone.is_empty() or with_gone["gc"] != 500 or with_gone["gs"] != 3:
+		return "state parser mangled the departed-member totals: %s" % with_gone
 
 	# An over-long list is TRUNCATED, not rejected — the ids are sent
 	# most-recent-first, so the head is the part nearest the joiner, and the
@@ -377,6 +388,16 @@ func _check_state_parser() -> String:
 		["absurd position", {
 			"cc": 0.0, "ls": 0.0, "dd": 0.0, "px": 1.0e30, "py": 0.0, "pz": 0.0,
 			"ids": []
+		}],
+		# Absent gc/gs is fine (above); PRESENT AND BAD still drops the payload,
+		# like every other field here.
+		["gc as String", {
+			"cc": 0.0, "ls": 0.0, "dd": 0.0, "px": 0.0, "py": 0.0, "pz": 0.0,
+			"gc": "loads", "ids": []
+		}],
+		["negative gs", {
+			"cc": 0.0, "ls": 0.0, "dd": 0.0, "px": 0.0, "py": 0.0, "pz": 0.0,
+			"gs": -1.0, "ids": []
 		}],
 	]
 	for case in bad:

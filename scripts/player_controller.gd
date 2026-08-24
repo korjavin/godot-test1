@@ -246,6 +246,12 @@ var next_extra_life_at: int = EXTRA_LIFE_COINS
 var own_coins: int = 0
 var own_lives_spent: int = 0
 
+## True while _refresh_shared_totals is overwriting the displayed score fields
+## with the room's totals. It exists purely to catch the falling edge — the frame
+## the room ends — so this peer's own numbers can be put back; without it the
+## room's totals are simply abandoned in the HUD fields for the rest of the run.
+var _showing_shared_totals: bool = false
+
 ## This peer's OWN farthest displacement this run. Not a contribution the room
 ## sums (distance is a max, and run_distance already latches the room's — see
 ## _refresh_shared_totals); it exists because run_distance is OVERWRITTEN with
@@ -253,6 +259,15 @@ var own_lives_spent: int = 0
 ## _trigger_game_over() must be this player's own run, not the furthest
 ## teammate's. Solo the two numbers are identical.
 var own_distance: int = 0
+
+## Where own_distance is measured FROM, on the XZ plane. Normally the (0,0) spawn,
+## which is why the two distances agree solo. A mid-run joiner is placed beside a
+## group that may be kilometres out (see join_at), and measuring from the origin
+## there would write the group's distance straight into user://best_run.cfg as
+## this player's personal best without them having run a metre — the one thing
+## own_distance exists to prevent. run_distance keeps measuring from the origin:
+## it is the run's position on the shared map, not a personal record.
+var own_distance_origin: Vector2 = Vector2.ZERO
 
 ## Headline score: how far this run has travelled, in metres — the farthest
 ## HORIZONTAL DISPLACEMENT from the (0,0) spawn point ever reached this run.
@@ -740,9 +755,12 @@ func _physics_process(delta: float) -> void:
 	# displacement from the spawn point reached this run (see run_distance above
 	# for why displacement, not raw X). Spawn is world (0,0) on the XZ plane, so
 	# the displacement is just the length of the horizontal position.
-	var travelled: int = int(Vector2(global_position.x, global_position.z).length())
+	var here := Vector2(global_position.x, global_position.z)
+	var travelled: int = int(here.length())
 	run_distance = maxi(run_distance, travelled)
-	own_distance = maxi(own_distance, travelled)
+	# Measured from own_distance_origin, which is the spawn except after a mid-run
+	# join — see that field for why the personal record cannot use `travelled`.
+	own_distance = maxi(own_distance, int((here - own_distance_origin).length()))
 
 	# STEP 0.42: In a multiplayer room the score fields the two HUDs read become
 	# the ROOM's, not this peer's. Done here, immediately after the local
@@ -1194,13 +1212,19 @@ func set_active_character(index: int) -> void:
 	original_rotations = character_rest_poses[index].duplicate()
 	restore_rest_pose(index)
 
-	# A freshly selected character always starts at normal size with no giant
-	# crush — Teibi's resize state must not carry across a switch (otherwise a
-	# different character could inherit Teibi's giant body or shrunken capsule).
-	# This also re-applies the first-person view when active: _apply_teibi_scale
-	# ends with `if first_person: _apply_view_mode()`, keeping the model hidden
-	# and the camera at the eyes across the switch.
-	_revert_teibi_to_normal()
+	# A freshly selected character always starts with NO transient ability state:
+	# not Teibi's resize (a different character would inherit the giant body or
+	# the shrunken capsule) and not Windman's air boost, which is read off a timer
+	# rather than off the character — so a body swapped mid-Air-Rush would keep
+	# flying at WINDMAN_AIR_SPEED under softened gravity as somebody else.
+	# switch_to_next_character() refuses a mid-ability press, but the multiplayer
+	# hero split calls in here directly (mp_manager._apply_my_hero) and the lobby
+	# is not asking permission, so the clear has to live at this end.
+	# _reset_ability_states() calls _revert_teibi_to_normal(), which re-applies
+	# the first-person view when active (_apply_teibi_scale ends with
+	# `if first_person: _apply_view_mode()`), keeping the model hidden and the
+	# camera at the eyes across the switch.
+	_reset_ability_states()
 
 func capture_rest_pose(instance: Node3D) -> Dictionary:
 	"""
@@ -1798,6 +1822,15 @@ func restart_game() -> void:
 	# (own_coins / own_lives_spent / own_distance) are all wiped by
 	# reset_position() below — the one owner of the "hard reset" wipe list, so
 	# the two can never drift out of sync.
+	#
+	# IN A ROOM, freeze that contribution before the wipe. own_lives_spent is
+	# SUBTRACTED from the room's shared hearts, so a bare wipe refunds every life
+	# this peer spent to everybody else (and drops the room's bank by its coins) —
+	# the exact failure the manager's frozen `_gone_*` totals exist to prevent,
+	# just on the restart path instead of the leave path. A no-op offline.
+	var restart_mp := _mp()
+	if restart_mp and restart_mp.has_method("retire_own_contribution"):
+		restart_mp.retire_own_contribution(own_coins, own_lives_spent)
 	lives = MAX_LIVES
 	is_game_over = false
 	is_caught = false
@@ -1894,6 +1927,7 @@ func reset_position() -> void:
 	own_lives_spent = 0  # ... and the lives it owes that room's shared hearts.
 	run_distance = 0
 	own_distance = 0
+	own_distance_origin = Vector2.ZERO  # ... back to the origin spawn it teleports to.
 	coin_streak = 0
 	streak_timer = 0.0
 	next_extra_life_at = EXTRA_LIFE_COINS
@@ -2014,6 +2048,27 @@ func join_at(anchor: Vector3) -> void:
 	# and coming back at zero is what stops it being counted twice.)
 	own_coins = 0
 	own_lives_spent = 0
+	# The personal distance record restarts from where we arrived, or the group's
+	# kilometres are banked into user://best_run.cfg as ours (see the field).
+	own_distance = 0
+	own_distance_origin = Vector2(global_position.x, global_position.z)
+
+	# JOINING FROM THE GAME OVER SCREEN IS A SUPPORTED FLOW — mp_ui deliberately
+	# does not pause over it, so the panel's Join button works there. Without this
+	# the joiner is placed beside the group and left frozen: is_game_over
+	# early-returns _physics_process above _refresh_shared_totals, so the room's
+	# hearts never even reach it. The room owns the lives from the next tick.
+	if is_game_over:
+		is_game_over = false
+		is_caught = false
+		is_respawning = false
+		ability_cooldowns.fill(0.0)  # Frozen at full since the run ended (see restart_game).
+		_hide_respawn_message()
+		var over_ui := get_tree().get_first_node_in_group("game_over_ui")
+		if over_ui and over_ui.has_method("hide_game_over"):
+			over_ui.hide_game_over()
+		if not MobileSensors.is_touch_session():
+			Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 
 	# A joiner must not be bitten on its first frame in somebody else's run.
 	clear_nearby_crocodiles(global_position)
@@ -2169,7 +2224,21 @@ func _refresh_shared_totals() -> void:
 		return
 	var bank: Variant = mp.shared_bank(own_coins)
 	if bank == null:
-		return  # Manager present but no room: solo semantics, untouched.
+		# Manager present but no room: solo semantics, untouched — EXCEPT on the
+		# frame the room ends. The three displayed fields are still holding the
+		# room's totals, and nothing else ever writes them back: leaving a room
+		# whose shared hearts were at 0 would carry `lives = 0` into solo play
+		# (the next bite is an instant game over), and a room's four-figure bank
+		# would sit in coins_collected with next_extra_life_at driven far past it,
+		# so solo extra lives never come again. Restore this peer's own numbers.
+		if _showing_shared_totals:
+			_showing_shared_totals = false
+			coins_collected = own_coins
+			run_distance = own_distance
+			next_extra_life_at = (own_coins / EXTRA_LIFE_COINS + 1) * EXTRA_LIFE_COINS
+			lives = clampi(MAX_LIVES + own_coins / EXTRA_LIFE_COINS - own_lives_spent, 0, LIVES_CAP)
+		return
+	_showing_shared_totals = true
 	var spent: Variant = mp.shared_lives_spent(own_lives_spent)
 	var distance: Variant = mp.shared_distance(run_distance)
 	coins_collected = int(bank)
