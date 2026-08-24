@@ -436,15 +436,15 @@ explicit checks (asserts are stripped in release builds).
 
 ### Task 9: Verify acceptance criteria
 
-- [ ] **solo unchanged**: `grep` every new group name and confirm no new node
+- [x] **solo unchanged**: `grep` every new group name and confirm no new node
       joins `"player"`; confirm `mp_manager._process` early-returns while offline;
       confirm `multiplayer.multiplayer_peer` is never assigned anywhere
       (`grep -rn 'multiplayer_peer' scripts/` must show no assignment);
       confirm `new_run()` with no argument follows exactly the old path.
-- [ ] `godot --headless --path . --import` clean.
-- [ ] `godot --headless --path . scenes/main.tscn --quit-after 120` clean.
-- [ ] `scripts/mp_selfcheck.gd` passes.
-- [ ] `cd server && go build ./... && go test ./...` still passes (the lobby is
+- [x] `godot --headless --path . --import` clean.
+- [x] `godot --headless --path . scenes/main.tscn --quit-after 120` clean.
+- [x] `scripts/mp_selfcheck.gd` passes.
+- [x] `cd server && go build ./... && go test ./...` still passes (the lobby is
       untouched, but the PR must not break it).
 
 ### Task 10: [Final] Update documentation
