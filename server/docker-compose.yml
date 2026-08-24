@@ -1,5 +1,7 @@
-# Lobby + TURN stack. Portainer watches the `deploy` branch and reads this file at
-# server/docker-compose.yml; CI rewrites LOBBY_IMAGE's tag to the commit SHA there.
+# Lobby + web client + TURN stack. Portainer watches the `deploy` branch and reads
+# this file at server/docker-compose.yml; CI rewrites both LOBBY_IMAGE's and
+# WEB_IMAGE's tag to the commit SHA there, in one commit from one job
+# (build.yml's deploy-stack) — the branch is force-pushed, so it has one writer.
 #
 # Traefik terminates TLS and proxies the websocket, so clients reach the lobby at
 # wss://${LOBBY_HOST}/ws. No special Traefik configuration is needed for the
@@ -37,14 +39,13 @@ services:
       - "traefik.http.routers.godot-lobby.tls.certresolver=${TRAEFIK_CERTRESOLVER:-myresolver}"
       - "traefik.http.services.godot-lobby.loadbalancer.server.port=8080"
 
-  # The Godot web export behind nginx — the same build GitHub Pages serves, from
-  # ghcr.io/korjavin/godot-test1-web (built by .github/workflows/build.yml).
+  # The Godot web export behind nginx — the same build GitHub Pages serves.
   # Catch-all rule at priority 1: everything the lobby did not claim above.
   #
-  # Stays on :latest by design — this stack has ForcePullImage on, so a redeploy
-  # re-pulls the tag. It is deliberately NOT SHA-pinned on the `deploy` branch the
-  # way LOBBY_IMAGE is: two workflows force-pushing that branch would clobber each
-  # other's pins. WEB_IMAGE is the manual rollback knob (set it to a :<sha> tag).
+  # :latest here is a placeholder that only master ever sees. Exactly like
+  # LOBBY_IMAGE, CI rewrites this tag to the commit SHA on the `deploy` branch —
+  # both in the same commit, from the same job, so the two containers of a deploy
+  # always come from one master commit. Never :latest in production.
   web:
     image: ${WEB_IMAGE:-ghcr.io/korjavin/godot-test1-web:latest}
     container_name: ${WEB_CONTAINER_NAME:-godot-web}

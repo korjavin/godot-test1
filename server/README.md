@@ -88,12 +88,9 @@ paths it needs. The consequence to remember: the embedded test page at `/` is
 unreachable in production — it is not gone, just out-ranked. Add a path to the
 lobby's rule if you ever need it back.
 
-The client image is `ghcr.io/korjavin/godot-test1-web`, built by
-`.github/workflows/build.yml` from the same web export that goes to GitHub Pages
-(so the game is served from both). It rides `:latest`, because the stack has
-*ForcePullImage* on and SHA-pinning it would mean a second workflow force-pushing
-the `deploy` branch, clobbering the lobby's pin. To roll back, set `WEB_IMAGE` to
-one of its `:<commit-sha>` tags.
+The client image is `ghcr.io/korjavin/godot-test1-web`, built from the same web
+export that goes to GitHub Pages (so the game is served from both). Both it and the
+lobby image are SHA-pinned on the `deploy` branch — see *Deploying* below.
 
 Both containers need `Cross-Origin-Opener-Policy: same-origin` and
 `Cross-Origin-Embedder-Policy: require-corp` on the game's HTML — Godot's export
@@ -101,8 +98,19 @@ needs `SharedArrayBuffer` — which is the whole of `web/coop-coep.conf`.
 
 ## Deploying
 
-Standard git-ops compose stack: CI builds the image, pins it on the `deploy`
+Standard git-ops compose stack: CI builds the images, pins them on the `deploy`
 branch and pokes Portainer, which re-pulls.
+
+**One job owns the deploy branch.** `deploy-stack` in
+`.github/workflows/build.yml` builds *both* images (lobby from `server/`, client
+from the web export), pushes them tagged with the commit SHA — never `:latest` —
+then rewrites both `LOBBY_IMAGE` and `WEB_IMAGE` in this directory's compose file
+in a single commit and force-pushes `deploy`. The branch is maintained by
+force-push, so a second workflow writing it would reset it to its own checkout and
+clobber the other's pin; keeping one writer is why `lobby.yml` now only tests.
+The cost, accepted: the lobby image rebuilds on every master push rather than only
+on `server/**` changes. To roll back, set `LOBBY_IMAGE`/`WEB_IMAGE` in the stack's
+environment to an older `:<commit-sha>` tag.
 
 1. **GitHub secret** — Settings → Secrets → Actions → `PORTAINER_REDEPLOY_HOOK`,
    the stack's webhook URL from Portainer. (The workflow skips the poke when the
