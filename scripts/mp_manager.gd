@@ -184,11 +184,19 @@ var _pool: Array[String] = []
 ## kept in INSERTION ORDER so `_recent_collected_ids()` can truncate the oldest.
 ## `_peer_state` holds one entry per other member,
 ## `{"coins": int, "spent": int, "dist": int, "pos": Vector3}`, seeded by that
-## peer's join snapshot. Both are room-scoped: `leave()` empties them and
-## `report_coin_collected()` refuses to record while offline, so a solo session
-## allocates nothing here no matter how many coins it banks.
+## peer's join snapshot and kept current by every presence packet afterwards.
+## Both are room-scoped: `leave()` empties them and `report_coin_collected()`
+## refuses to record while offline, so a solo session allocates nothing here no
+## matter how many coins it banks.
 var _collected_ids: Dictionary = {}
 var _peer_state: Dictionary = {}
+
+## The FROZEN contributions of members who have left. A departing peer's coins
+## and spent lives are folded in here rather than dropped: dropping them would
+## shrink the room's bank in front of everyone and — much worse — REFUND the
+## lives that peer spent. Room-scoped like the two above.
+var _gone_coins: int = 0
+var _gone_spent: int = 0
 
 ## The `/ice` payload, fetched once per join and reused for every connection.
 var _ice: Dictionary = {}
@@ -339,6 +347,8 @@ func leave() -> void:
 	_pool = []
 	_collected_ids = {}
 	_peer_state = {}
+	_gone_coins = 0
+	_gone_spent = 0
 	_ice = {}
 	_send_accum = 0.0
 	# `_room_seed` is deliberately kept: leaving a room does not regenerate the
@@ -499,7 +509,17 @@ func _on_lobby_peer_joined(id: String, peer_name: String) -> void:
 
 
 func _on_lobby_peer_left(id: String) -> void:
-	"""A peer left: drop its avatar, its connection and anything buffered for it."""
+	"""
+	A peer left: drop its avatar, its connection and anything buffered for it —
+	but FREEZE its contribution to the room's totals rather than dropping it (see
+	`_gone_coins`). Distance needs no freezing: it is a max, and the local
+	`run_distance` is a running max that already latched it.
+	"""
+	if _peer_state.has(id):
+		var gone: Dictionary = _peer_state[id]
+		_gone_coins += int(gone.get("coins", 0))
+		_gone_spent += int(gone.get("spent", 0))
+		_peer_state.erase(id)
 	if _avatars.has(id):
 		(_avatars[id] as RemoteAvatar).queue_free()
 		_avatars.erase(id)
@@ -1185,6 +1205,67 @@ static func decode_state(payload: Dictionary) -> Dictionary:
 
 
 # =============================================================================
+# SHARED TOTALS
+# =============================================================================
+# The room's bank, spent lives and distance are the SUM (or, for distance, the
+# max) of every member's own contribution, with no authority and no round trips:
+# each peer broadcasts its own absolute numbers and each peer adds them up. Every
+# reader gets the same answer within one presence interval, and a peer that
+# leaves has its share frozen rather than dropped.
+#
+# All three take the CALLER's own contribution as a parameter and return `null`
+# offline, so the player falls through to today's solo behaviour with one
+# `== null` test and the manager never has to reach into the player.
+
+func shared_bank(own_coins: int) -> Variant:
+	"""The room's banked coins, or `null` offline."""
+	if _state != State.IN_ROOM:
+		return null
+	var total: int = own_coins + _gone_coins
+	for state: Dictionary in _peer_state.values():
+		total += int(state.get("coins", 0))
+	return total
+
+
+func shared_lives_spent(own_spent: int) -> Variant:
+	"""Lives spent by everyone who has been in this room, or `null` offline."""
+	if _state != State.IN_ROOM:
+		return null
+	var total: int = own_spent + _gone_spent
+	for state: Dictionary in _peer_state.values():
+		total += int(state.get("spent", 0))
+	return total
+
+
+func shared_distance(own_distance: int) -> Variant:
+	"""
+	The furthest anyone in the room has got, or `null` offline.
+
+	A max, so feeding it back into the player's own running max cannot inflate it
+	— which is also why a departed peer needs no frozen accumulator: whatever it
+	reached was already folded in while it was here.
+	"""
+	if _state != State.IN_ROOM:
+		return null
+	var best: int = own_distance
+	for state: Dictionary in _peer_state.values():
+		best = maxi(best, int(state.get("dist", 0)))
+	return best
+
+
+static func shared_lives_from(bank: int, spent: int, max_lives: int, per_extra: int, cap: int) -> int:
+	"""
+	The room's remaining lives: the starting hearts, plus one per `per_extra`
+	coins the room has banked, minus every life anyone has spent, clamped into
+	[0, cap]. Pure and static so scripts/mp_selfcheck.gd can pin the arithmetic
+	without a room.
+	"""
+	if per_extra <= 0:
+		return clampi(max_lives - spent, 0, cap)  # No extra-life threshold: just the base.
+	return clampi(max_lives + bank / per_extra - spent, 0, cap)
+
+
+# =============================================================================
 # PER-FRAME: PRESENCE SEND + RECEIVE
 # =============================================================================
 
@@ -1241,7 +1322,9 @@ func _send_presence() -> void:
 	"""
 	Broadcast one presence packet: where the local player is, which way it faces,
 	who it is playing, how fast it is going and whether it is on the ground —
-	everything `RemoteAvatar` needs to draw a convincing runner, and nothing else.
+	everything `RemoteAvatar` needs to draw a convincing runner — plus this peer's
+	own coins, spent lives and distance, which are what the room's shared totals
+	are summed from.
 
 	Sent UNRELIABLE on purpose: a dropped sample is replaced by the next one 66 ms
 	later, and re-transmitting stale positions would be strictly worse than
@@ -1271,12 +1354,22 @@ func _send_presence() -> void:
 		var v: Vector3 = player.get("velocity")
 		speed = Vector2(v.x, v.z).length()
 
+	# `cc` / `lv` / `dd` are this peer's OWN contributions to the room's shared
+	# bank, spent lives and distance — ABSOLUTE values, never deltas, so the
+	# unreliable channel is self-healing: a dropped packet is corrected 66 ms
+	# later instead of leaving the totals permanently short. Note `own_coins`,
+	# not `coins_collected`: in a room the latter is already the room's total and
+	# summing it would compound. The `in` guards keep a standalone player scene
+	# answering something sane, exactly like `c` above.
 	var state: Dictionary = {
 		"p": player.global_position,
 		"y": player.rotation.y,
 		"c": int(player.get("current_character_index")) if "current_character_index" in player else 0,
 		"s": speed,
 		"g": player.is_on_floor() if player.has_method("is_on_floor") else true,
+		"cc": int(player.get("own_coins")) if "own_coins" in player else 0,
+		"lv": int(player.get("own_lives_spent")) if "own_lives_spent" in player else 0,
+		"dd": int(player.get("run_distance")) if "run_distance" in player else 0,
 	}
 
 	var bytes: PackedByteArray = var_to_bytes(state)
@@ -1316,9 +1409,11 @@ func _receive_presence() -> void:
 		# `_connections` and `_avatars` — `peer_int_id` is pure and a room holds
 		# at most 4 peers, so this is 3 hashes against a map that could desync.
 		var avatar: RemoteAvatar = null
+		var from_id: String = ""
 		for id: String in _avatars:
 			if peer_int_id(id) == from_int:
 				avatar = _avatars[id]
+				from_id = id
 				break
 		if avatar == null:
 			continue
@@ -1329,6 +1424,15 @@ func _receive_presence() -> void:
 
 		avatar.visible = true
 		avatar.receive_state(state["p"], state["y"], state["c"], state["s"], state["g"])
+		# Keep this peer's contribution to the shared totals current. The join
+		# snapshot only bootstraps it; from here on presence carries it, and the
+		# values being absolute means a lost packet costs nothing.
+		_peer_state[from_id] = {
+			"coins": state["cc"],
+			"spent": state["lv"],
+			"dist": state["dd"],
+			"pos": state["p"],
+		}
 
 
 static func decode_presence(bytes: PackedByteArray) -> Dictionary:
@@ -1386,4 +1490,25 @@ static func decode_presence(bytes: PackedByteArray) -> Dictionary:
 	if char_index < 0 or char_index >= RemoteAvatar.PLAYER_SCRIPT.CHARACTERS.size():
 		return {}
 
-	return { "p": pos, "y": yaw, "c": char_index, "s": speed, "g": state["g"] }
+	# The shared-total fields, validated exactly like `c`: number, finite,
+	# non-negative, bounded. MISSING IS NOT MALFORMED — a phase-3 peer sends a
+	# packet without them, and dropping those whole would make an older peer
+	# invisible rather than merely un-counted — so absent reads as 0 and only a
+	# value that is PRESENT and bad drops the packet.
+	var counters: Dictionary = {}
+	for key: String in ["cc", "lv", "dd"]:
+		var raw: Variant = state.get(key, null)
+		if raw == null:
+			counters[key] = 0
+			continue
+		if not _is_number(raw):
+			return {}
+		var value: float = float(raw)
+		if not is_finite(value) or value < 0.0 or value > float(MAX_STATE_COUNTER):
+			return {}
+		counters[key] = int(value)
+
+	return {
+		"p": pos, "y": yaw, "c": char_index, "s": speed, "g": state["g"],
+		"cc": counters["cc"], "lv": counters["lv"], "dd": counters["dd"],
+	}

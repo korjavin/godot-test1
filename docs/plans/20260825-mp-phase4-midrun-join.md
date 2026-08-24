@@ -304,28 +304,28 @@ ICE completes), one message per incumbent, sent only to the new peer:
 
 ### Task 6: `mp_manager.gd` — shared totals + extended presence
 
-- [ ] extend the presence packet with `"cc"` (own coins), `"lv"` (own lives
+- [x] extend the presence packet with `"cc"` (own coins), `"lv"` (own lives
       spent) and `"dd"` (own distance), read off the player through the same
       `"x" in player` style guards `_send_presence` already uses. Update the
       packet's docstring and the CLAUDE.md description in Task 10.
-- [ ] `decode_presence` validates the three new fields exactly like `c`: number,
+- [x] `decode_presence` validates the three new fields exactly like `c`: number,
       finite, non-negative, bounded. **Keep it static and keep the
       trusted-whole-or-dropped-whole rule** — a packet missing them is *not*
       malformed (forward/backward compatibility with a phase-3 peer): treat
       missing as 0 and only reject values that are present and bad.
-- [ ] `_receive_presence` updates `_peer_state[id]` from those three fields.
-- [ ] `_on_lobby_peer_left` folds the departing peer's `_peer_state` entry into
+- [x] `_receive_presence` updates `_peer_state[id]` from those three fields.
+- [x] `_on_lobby_peer_left` folds the departing peer's `_peer_state` entry into
       `_gone_coins` / `_gone_spent` before erasing it, and drops its
       `_peer_state`. (Distance needs no freezing — it is a max, and the local
       `run_distance` already latched it.)
-- [ ] public API, each returning `null` when offline so the player can fall
+- [x] public API, each returning `null` when offline so the player can fall
       through to today's solo behaviour with one `== null` test:
       - `shared_bank(own_coins: int) -> Variant`
       - `shared_lives_spent(own_spent: int) -> Variant`
       - `shared_distance(own_distance: int) -> Variant`
       Taking the caller's own contribution as a parameter keeps *all* the summing
       in one place and means the manager never has to reach into the player.
-- [ ] a **static, pure** `shared_lives_from(bank: int, spent: int, max_lives: int, per_extra: int, cap: int) -> int`
+- [x] a **static, pure** `shared_lives_from(bank: int, spent: int, max_lives: int, per_extra: int, cap: int) -> int`
       implementing `clampi(max_lives + bank / per_extra - spent, 0, cap)`, so the
       selfcheck can pin the arithmetic without a room.
 
