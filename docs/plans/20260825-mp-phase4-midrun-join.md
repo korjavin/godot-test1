@@ -158,6 +158,8 @@ spent.
     any error here means solo play was broken),
   - `godot --headless --path . --script res://scripts/mp_selfcheck.gd` — prints
     `SELFCHECK OK`, exits 0.
+  - `bash scripts/mp_e2e.sh` (from Task 9c onward) — two headless instances
+    against a local lobby agree on `run_seed`, exit 0.
 - **NEVER run frontend/JS tests.** The web export is CI's gate, not a local one.
 - Complete each task fully before moving to the next.
 - **Match the project's comment density.** CLAUDE.md: "the codebase is written to
@@ -269,12 +271,12 @@ ICE completes), one message per incumbent, sent only to the new peer:
  "px": float, "py": float, "pz": float, "ids": [int, ...]}
 ```
 
-- [ ] in `_on_lobby_peer_joined`, **every** member (not just the master) sends its
+- [x] in `_on_lobby_peer_joined`, **every** member (not just the master) sends its
       own snapshot to the joining id, right beside the master's existing seed
       send. Document why it is every member: the collected-coin set is the *union*
       across the room and each peer only knows its own, and per-peer contributions
       are what the shared totals sum.
-- [ ] `"state"` is handled in `_on_lobby_relay` as a third verb. **It is the third
+- [x] `"state"` is handled in `_on_lobby_relay` as a third verb. **It is the third
       trust boundary in this file** — type-check every field, reject non-finite or
       out-of-range positions with the existing `MAX_PRESENCE_COORD` bound, clamp
       `cc`/`ls`/`dd` to non-negative and to sane caps, and accept at most
@@ -282,19 +284,19 @@ ICE completes), one message per incumbent, sent only to the new peer:
       whole. Factor the parse into a **static** `decode_state(payload) -> Dictionary`
       (empty on failure) so the selfcheck can beat on it, exactly like
       `decode_presence`.
-- [ ] `MAX_STATE_IDS` is also the cap on the set we **send** (most recent first —
+- [x] `MAX_STATE_IDS` is also the cap on the set we **send** (most recent first —
       keep the collected set in insertion order). `ponytail:` name the ceiling: a
       very long run's oldest collected coins are in chunks nobody is near any
       more, so truncating the tail costs a joiner nothing; the upgrade path is
       filtering by proximity to the anchor before sending.
-- [ ] merging: `_collected_ids` (a `Dictionary` used as a set) absorbs the ids;
+- [x] merging: `_collected_ids` (a `Dictionary` used as a set) absorbs the ids;
       `_peer_state[from] = {"coins": cc, "spent": ls, "dist": dd}`.
-- [ ] **`_absorb_collected(ids)` also sweeps the live world**: for every node in
+- [x] **`_absorb_collected(ids)` also sweeps the live world**: for every node in
       the `"coin"` group whose `coin_id()` is in the newly-absorbed set,
       `queue_free()` it. This is what makes a snapshot that lands *after* the
       terrain was already built still correct, and it is why the ordering of the
       seed and the snapshots does not need coordinating.
-- [ ] `is_coin_collected(id: int) -> bool` and `report_coin_collected(id: int) -> void`
+- [x] `is_coin_collected(id: int) -> bool` and `report_coin_collected(id: int) -> void`
       are the public API `coin.gd` calls. `report_coin_collected` records into
       `_collected_ids` **only while in a room** (offline it must be a no-op, so
       solo play allocates nothing and the set cannot grow unbounded across a
@@ -423,6 +425,106 @@ Add checks only for the new **pure** logic. Same explicit-`if` style (no
       an unknown name resolves to `-1`.
 - [ ] the existing four checks must still pass unchanged.
 
+### ➕ Task 9a: seed delivery must not depend on the mesh (PRODUCTION BUG)
+
+⚠️ Folded in from an owner playtest on the live lobby (see the bd note on
+`godot-test1-s86.4`): a joiner entered a **valid** room code and the terrain did
+not regenerate — it kept walking its own private world — with no error anywhere.
+
+**Root cause, established by reading phase 3's own code:** `_has_seed` is latched
+in exactly one place, `_broadcast_seed_if_master()`, which is called only from
+`_setup_mesh()`, which is called only from `_on_ice_ready()`. So the master does
+not consider itself to *have* a seed until an HTTP round trip to `/ice` finishes.
+Two things then go wrong together: the initial broadcast went out before the
+joiner existed, and `_on_lobby_peer_joined`'s direct send is gated on
+`_has_seed` and is therefore **silently skipped**. Nothing retries, nothing times
+out, and the UI reports a healthy room. The seed travels over the lobby relay and
+has no business waiting on ICE at all.
+
+- [ ] **Latch early.** Call `_broadcast_seed_if_master()` from `_on_lobby_joined`,
+      immediately after `room_changed.emit(...)` and **before** `fetch_ice(...)`.
+      The master then adopts and publishes its terrain's `run_seed` the moment the
+      `welcome` frame lands. Leave the existing call in `_setup_mesh()` — it is
+      idempotent (`_has_seed` short-circuits it to a re-send) and keeps a
+      re-elected master's path working. Document that seed distribution is now
+      **mesh-independent**, which is the whole point of the fix.
+- [ ] **Retry / self-heal.** New consts `SEED_REQUEST_INTERVAL: float = 2.0` and
+      `SEED_REQUEST_MAX_TRIES: int = 10`. In `_process` (already gated on
+      `_state != OFFLINE`), while `IN_ROOM and not _has_seed and _master != _you`,
+      tick an accumulator and every interval `send_signal_to(_master, {"mp": "seed_req"})`,
+      up to `SEED_REQUEST_MAX_TRIES`. Reset the accumulator and the try counter in
+      `leave()`.
+- [ ] **Answer it.** Handle `"seed_req"` as a verb in `_on_lobby_relay`: if
+      `_you == _master`, call `_broadcast_seed_if_master()` (which latches from the
+      terrain if it has not already) and then `send_signal_to(from, {"mp": "seed", "seed": _room_seed})`
+      so the asker gets it directly. A non-master ignores the request. There are no
+      payload fields to validate, so the trust boundary costs nothing here — but
+      say that in a comment rather than leaving it looking unchecked.
+      ⚠️ This also repairs the gap `_on_lobby_master_changed` documents as
+      "phase 4's problem": a master elected before the seed reached it now answers
+      from its own terrain when asked.
+- [ ] **Make a silent failure visible.** On the first retry emit
+      `status("Waiting for the shared world…")`; after `SEED_REQUEST_MAX_TRIES`
+      emit `status("No world from the host — is their tab still open?")` and stop
+      asking (stay in the room; do **not** `leave()`). `mp_ui.gd` already renders
+      `status`, so this needs no UI change — confirm that and note it.
+- [ ] the ordering fix and the retry are independent belts: keep both, and say so.
+
+### ➕ Task 9b: `--lobby-only` mode, so the relay path is testable without WebRTC
+
+`join()` refuses outright when `webrtc_available()` is false, and desktop headless
+has no `webrtc-native` addon — so **none** of the relay path (seed, snapshots,
+heroes) can be exercised automatically today. That is exactly why the production
+bug above shipped.
+
+- [ ] `var lobby_only: bool = false`, set in `_init()`/`_ready()` from
+      `--lobby-only` in `OS.get_cmdline_user_args()` — the same precedence shape
+      `LobbyClient.resolve_lobby_url()` uses for `--lobby=`.
+- [ ] `join()` skips the `webrtc_available()` refusal when `lobby_only`;
+      `_on_lobby_joined` skips `fetch_ice(...)` (and so the mesh) when `lobby_only`.
+      Everything over the relay keeps working; there are simply no avatars and no
+      presence.
+- [ ] `ponytail:` name the ceiling in a comment — this is a **test/dev** mode for
+      the headless E2E and for a desktop developer with no addon, not a shipped
+      degraded mode. It is opt-in from the command line only; nothing in the UI
+      exposes it and the web build never sets it.
+
+### ➕ Task 9c: automated two-instance headless E2E of join + seed adoption
+
+Required by the bead's updated acceptance. It needs **no WebRTC** (Task 9b), so
+two headless desktop instances against a locally-run lobby cover the whole seed
+path — the exact thing that broke in production.
+
+- [ ] `scripts/mp_e2e.gd`, a `SceneTree` script in the style of
+      `mp_selfcheck.gd` (explicit `if`s, no `assert`). It loads
+      `res://scenes/main.tscn`, reads `--role=host|join` and `--code=XXXXXX` from
+      `OS.get_cmdline_user_args()`, finds the `"mp"` node, sets `lobby_only`, and
+      calls `host()` or `join(code)`. It then polls until the room code is known
+      (host) / the seed is adopted (joiner), prints `E2E_ROOM=<code>` and
+      `E2E_SEED=<terrain.run_seed>` on their own lines, and `quit(0)`. On a
+      wall-clock timeout it prints `E2E_TIMEOUT` and `quit(1)`.
+      ⚠️ The **host must use `host()`**, not `join("FIXED1")`: `_on_lobby_joined`'s
+      typo guard drops a peer that asked for a code and came out alone AND master,
+      which is precisely what a fixed shared code looks like to the first
+      instance. The harness therefore scrapes the generated code from the host's
+      stdout. Say this in the file's header so nobody "simplifies" it back.
+      The host must also stay alive until the joiner is done — take a
+      `--hold=<seconds>` argument.
+- [ ] `scripts/mp_e2e.sh` — the harness: start `go run ./server` (a free port,
+      `LOBBY_ADDR`/`PORT` per `server/`'s own flags), wait for `/healthz`, run the
+      host instance in the background pointing at `--lobby=ws://127.0.0.1:<port>`,
+      scrape `E2E_ROOM=`, run the joiner with that code, compare the two
+      `E2E_SEED=` values, and exit non-zero on mismatch, timeout, or a missing
+      line. `trap` cleanup so it never leaves a lobby or a Godot process behind.
+      Keep it POSIX-ish `bash`, no new dependencies.
+- [ ] run it and paste the result into the plan. A **mismatch or a timeout is a
+      failing task**, not a note — this test is the acceptance evidence that the
+      production bug is fixed.
+- [ ] `ponytail:` note the ceiling — it covers the relay path (seed adoption), not
+      the WebRTC mesh or avatars, which still need two real browsers.
+- [ ] **Do NOT edit `.github/workflows/`** — a parallel bead owns CI. Mention in
+      the handoff that wiring this script into CI is a one-job follow-up.
+
 ### Task 10: [Final] Update documentation
 
 - [ ] `CLAUDE.md`: extend the "Multiplayer (phase 3)" section into a phase-3/4
@@ -433,7 +535,12 @@ Add checks only for the new **pure** logic. Same explicit-`if` style (no
       contributions with departed peers frozen**, the join snapshot as the
       **third trust boundary**, the `new_run(seed, around)` parameter and why the
       anchor chunk matters, and the hero-error-is-not-fatal landmine. Update the
-      presence-packet field list. Move the phase-4 items out of the "deliberately
+      presence-packet field list. Also cover the Task 9a/9b/9c work: **seed
+      distribution is mesh-independent and self-healing** (latched at `welcome`,
+      `seed_req` retry every 2 s, visible status when it does not arrive) and why
+      — the production bug it fixes; the `--lobby-only` dev/test flag; and
+      `scripts/mp_e2e.sh` as the automated two-instance check next to
+      `mp_selfcheck.gd` in the "Commands" section. Move the phase-4 items out of the "deliberately
       not built" list and leave phase 5's there (shared croc sim, coin claim
       arbitration, migration, stall detection).
 - [ ] **Do not touch `README.md`, `project.godot` or `.github/`** — a parallel
@@ -470,3 +577,15 @@ message stays unused). Do not implement any of these.
 - Two peers pressing the same hero button at once: one wins, the other gets a
   status line and **stays in the room**.
 - Solo: boot with no room, play a run, die, Play Again — identical to master.
+- **The production bug, re-checked on the live lobby**: host a room, join it from
+  a second browser, confirm the joiner's world regenerates. Then repeat with the
+  host tab **backgrounded** before the joiner arrives — the owner's third
+  suspect. The `seed_req` retry means the joiner keeps asking, so a throttled
+  host should still answer within a few seconds; if it does not, the honest
+  outcome is the visible "No world from the host" status rather than a silent
+  private universe, and a presence-over-relay fallback becomes a phase 5 bead.
+- **The other half of the playtest report** — no host avatar — is a WebRTC mesh
+  or TURN question, not a seed question. `scripts/mp_e2e.sh` deliberately does not
+  cover it (it runs `--lobby-only`). If the seed now arrives but the avatar still
+  does not, that is a separate bead against the mesh, and `/ice` reachability from
+  the game's origin is the first thing to check.

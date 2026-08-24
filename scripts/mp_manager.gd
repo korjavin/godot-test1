@@ -65,6 +65,20 @@ const MAX_BUFFERED_SIGNALS: int = 64
 const MAX_PRESENCE_COORD: float = 1.0e7
 const MAX_PRESENCE_SPEED: float = 1.0e4
 
+## Caps on a join snapshot — see `decode_state()`. `MAX_STATE_IDS` bounds BOTH
+## ends of the collected-coin set: the one we send and the one we accept.
+## `MAX_STATE_COUNTER` is a sanity bound on the coin/life/distance counters,
+## generous by design because it exists to reject hostile garbage, not to police
+## how long a run may get.
+const MAX_STATE_IDS: int = 2048
+const MAX_STATE_COUNTER: int = 1000000000
+
+## Coin ids are `hash()` output, so 32 bits — but they cross the relay as JSON
+## doubles, and `int()` on a value past a double's exact-integer range is
+## undefined (on wasm the float→int trunc can trap the module outright). 2⁵³ is
+## that range, so anything beyond it is refused before the cast.
+const MAX_STATE_ID_MAGNITUDE: float = 9007199254740992.0
+
 ## The lobby errors that must NOT end the session. `server/room.go` answers a
 ## refused hero claim with a plain `error` frame on a socket it deliberately
 ## keeps OPEN (`errUnknownHero` / `errHeroTaken`), and two peers reaching for the
@@ -164,6 +178,17 @@ var _has_seed: bool = false
 ## releases a departing member's hero itself, so this client must never do that.
 var _heroes: Dictionary = {}
 var _pool: Array[String] = []
+
+## JOIN-TIME STATE REPLAY. `_collected_ids` is the union of every coin id anyone
+## in this room has banked — a Dictionary used as a set (the value is ignored),
+## kept in INSERTION ORDER so `_recent_collected_ids()` can truncate the oldest.
+## `_peer_state` holds one entry per other member,
+## `{"coins": int, "spent": int, "dist": int, "pos": Vector3}`, seeded by that
+## peer's join snapshot. Both are room-scoped: `leave()` empties them and
+## `report_coin_collected()` refuses to record while offline, so a solo session
+## allocates nothing here no matter how many coins it banks.
+var _collected_ids: Dictionary = {}
+var _peer_state: Dictionary = {}
 
 ## The `/ice` payload, fetched once per join and reused for every connection.
 var _ice: Dictionary = {}
@@ -312,6 +337,8 @@ func leave() -> void:
 	_requested_code = ""
 	_heroes = {}
 	_pool = []
+	_collected_ids = {}
+	_peer_state = {}
 	_ice = {}
 	_send_accum = 0.0
 	# `_room_seed` is deliberately kept: leaving a room does not regenerate the
@@ -459,6 +486,14 @@ func _on_lobby_peer_joined(id: String, peer_name: String) -> void:
 	# the master, send the seed straight to it.
 	if _master == _you and _has_seed:
 		_lobby.send_signal_to(id, {"mp": "seed", "seed": _room_seed})
+	# EVERY member snapshots itself to the joiner, not just the master. The seed
+	# above is a single value the master owns, but the join state is not: the
+	# collected-coin set is the UNION across the room and each peer only knows
+	# the ids it banked itself, while the shared bank, lives and distance are a
+	# sum over per-peer contributions. A snapshot from the master alone would
+	# hand the joiner a world still full of coins the others took and a bank
+	# missing their share.
+	_send_state_to(id)
 	status.emit("%s joined" % peer_name)
 	room_changed.emit(_room, _members)
 
@@ -842,6 +877,15 @@ func _on_lobby_relay(from: String, payload: Dictionary) -> void:
 				push_warning("MpManager: ignoring seed from non-master %s" % from)
 				return
 			_receive_seed(payload)
+		"state":
+			# A join snapshot from an incumbent. THE THIRD TRUST BOUNDARY in
+			# this file: `decode_state()` validates it whole, and anything that
+			# fails any part of it is dropped whole.
+			var snapshot: Dictionary = decode_state(payload)
+			if snapshot.is_empty():
+				push_warning("MpManager: dropped malformed state snapshot from %s" % from)
+				return
+			_receive_state(from, snapshot)
 		_:
 			# An "mp" verb from a later phase. Ignore it, do not warn.
 			pass
@@ -943,6 +987,201 @@ func _receive_seed(payload: Dictionary) -> void:
 		player.reset_position()
 
 	status.emit("Shared world seed received")
+
+
+# =============================================================================
+# JOIN-TIME STATE REPLAY
+# =============================================================================
+#
+# A peer joining a game already in progress has to be told what it missed: which
+# coins are gone, how much the room has banked, how many lives it has spent, how
+# far it has run, and where everybody is standing. That rides the LOBBY RELAY
+# for the same reason the seed does — it must be usable BEFORE any data channel
+# opens, and ICE takes seconds — and it is sent exactly once per
+# (incumbent, joiner) pair, so the relay carries at most three of these a join.
+#
+# Presence (below) keeps the counters current afterwards; this only bootstraps.
+
+func _send_state_to(id: String) -> void:
+	"""
+	Send this peer's own contribution to a peer that has just joined.
+
+	ABSOLUTE VALUES, never deltas — a joiner has exactly one chance to hear this,
+	so nothing here may depend on having heard anything earlier.
+	"""
+	if _state != State.IN_ROOM or _lobby == null:
+		return
+
+	var player: Node = get_tree().get_first_node_in_group("player")
+	var pos: Vector3 = Vector3.ZERO
+	var coins: int = 0
+	var spent: int = 0
+	var dist: int = 0
+	if player != null:
+		pos = player.global_position
+		# `own_coins` / `own_lives_spent` are this peer's OWN contributions,
+		# which is what the room sums; `coins_collected` is the DISPLAYED number
+		# and in a room that is already the room's total, so it must not be read
+		# here. The `in` guards are the ones `_send_presence()` uses, for the
+		# same reason: a player scene run standalone still answers something sane.
+		coins = int(player.get("own_coins")) if "own_coins" in player else 0
+		spent = int(player.get("own_lives_spent")) if "own_lives_spent" in player else 0
+		dist = int(player.get("run_distance")) if "run_distance" in player else 0
+
+	_lobby.send_signal_to(id, {
+		"mp": "state",
+		"cc": coins,
+		"ls": spent,
+		"dd": dist,
+		"px": pos.x,
+		"py": pos.y,
+		"pz": pos.z,
+		"ids": _recent_collected_ids(),
+	})
+
+
+func _recent_collected_ids() -> Array:
+	"""
+	The collected-coin ids to replay: MOST RECENT FIRST, capped at
+	`MAX_STATE_IDS` — the same cap `decode_state()` enforces on the way in.
+
+	ponytail: a long enough run overflows the cap and the OLDEST ids are the ones
+	dropped. The ceiling is one already-taken coin reappearing kilometres behind
+	the group, in chunks nobody is near and the joiner's terrain will not even
+	have built. The upgrade path is filtering by distance to the join anchor
+	rather than by age, which needs the anchor to be known before the send.
+	"""
+	var ids: Array = _collected_ids.keys()
+	var oldest_kept: int = maxi(0, ids.size() - MAX_STATE_IDS)
+	var recent: Array = []
+	for i: int in range(ids.size() - 1, oldest_kept - 1, -1):
+		recent.append(ids[i])
+	return recent
+
+
+func _receive_state(from: String, snapshot: Dictionary) -> void:
+	"""Merge one validated join snapshot. `snapshot` came from `decode_state()`."""
+	_peer_state[from] = {
+		"coins": snapshot["cc"],
+		"spent": snapshot["ls"],
+		"dist": snapshot["dd"],
+		"pos": snapshot["pos"],
+	}
+	_absorb_collected(snapshot["ids"])
+
+
+func _absorb_collected(ids: Array) -> void:
+	"""
+	Fold somebody else's collected-coin ids into ours AND sweep the live world.
+
+	THE SWEEP IS WHAT MAKES ORDERING IRRELEVANT. A snapshot landing after the
+	terrain was already built despawns the coins it names right here, and a coin
+	spawned after the snapshot asks `is_coin_collected()` in its own `_ready()`
+	and frees itself — so the seed and the snapshots may arrive in either order
+	and neither has to wait on the other.
+	"""
+	var fresh: Dictionary = {}
+	for id: int in ids:
+		if _collected_ids.has(id):
+			continue
+		_collected_ids[id] = true
+		fresh[id] = true
+	if fresh.is_empty():
+		return
+	for coin: Node in get_tree().get_nodes_in_group("coin"):
+		if coin.has_method("coin_id") and fresh.has(coin.coin_id()):
+			coin.queue_free()
+
+
+func is_coin_collected(id: int) -> bool:
+	"""
+	True when somebody in this room has already banked the coin with this id.
+
+	`coin.gd` asks this once per coin at spawn through the `"mp"` group. Offline
+	the set is empty and the answer is always false, so a solo coin is never
+	removed and the cost is one failed group lookup per coin — paid at spawn,
+	never per frame.
+	"""
+	return _state == State.IN_ROOM and _collected_ids.has(id)
+
+
+func report_coin_collected(id: int) -> void:
+	"""
+	Record a local pickup so a peer joining later has it replayed.
+
+	OFFLINE THIS IS A NO-OP, deliberately: solo play must allocate nothing here,
+	and without the guard the set would grow for every coin of every solo run in
+	the session. `leave()` empties it.
+	"""
+	if _state != State.IN_ROOM:
+		return
+	_collected_ids[id] = true
+
+
+static func decode_state(payload: Dictionary) -> Dictionary:
+	"""
+	The join-snapshot parser, and the THIRD trust boundary in this file.
+
+	The lobby never inspects a relayed payload — that opacity is what keeps game
+	logic off the server — so this is unvalidated peer input, arriving over JSON
+	where *every* number is a float. Returns the validated snapshot
+	(`{"cc": int, "ls": int, "dd": int, "pos": Vector3, "ids": Array[int]}`) or
+	an EMPTY DICTIONARY: trusted whole or dropped whole, exactly like
+	`decode_presence()`, and static and `_rtc`-free for the same reason — so
+	scripts/mp_selfcheck.gd can beat on it with a fistful of hostile payloads.
+	"""
+	for key: String in ["cc", "ls", "dd", "px", "py", "pz"]:
+		if not _is_number(payload.get(key, null)):
+			return {}
+
+	# Finiteness is tested BEFORE every cast, for the reason `decode_presence()`
+	# folds `c` into its finite gate: `int(NAN)` is undefined and on wasm the
+	# trunc can trap the module, taking the tab down before any range check runs.
+	var counters: Array[int] = []
+	for key: String in ["cc", "ls", "dd"]:
+		var raw: float = float(payload[key])
+		if not is_finite(raw) or raw < 0.0 or raw > float(MAX_STATE_COUNTER):
+			return {}
+		counters.append(int(raw))
+
+	var pos: Vector3 = Vector3(
+		float(payload["px"]), float(payload["py"]), float(payload["pz"])
+	)
+	if not (is_finite(pos.x) and is_finite(pos.y) and is_finite(pos.z)):
+		return {}
+	# Same bound as a presence position, and for the same reason: this feeds the
+	# join placement, and an absurd-but-finite anchor would teleport the joiner
+	# somewhere the terrain will never build.
+	if absf(pos.x) > MAX_PRESENCE_COORD or absf(pos.y) > MAX_PRESENCE_COORD \
+			or absf(pos.z) > MAX_PRESENCE_COORD:
+		return {}
+
+	if typeof(payload.get("ids", null)) != TYPE_ARRAY:
+		return {}
+	var raw_ids: Array = payload["ids"]
+	# An over-long id list is TRUNCATED, not rejected — the one place this parser
+	# keeps part of a payload. The sender orders the ids most-recent-first, so the
+	# head is the part nearest the joiner, and a snapshot whose list is too long
+	# is still worth its position and its counters, which are what the join
+	# placement and the shared bank actually need. A malformed *entry* is a
+	# different thing and still drops the whole snapshot.
+	var ids: Array[int] = []
+	for i: int in range(mini(raw_ids.size(), MAX_STATE_IDS)):
+		var entry: Variant = raw_ids[i]
+		if not _is_number(entry):
+			return {}
+		var value: float = float(entry)
+		if not is_finite(value) or absf(value) > MAX_STATE_ID_MAGNITUDE:
+			return {}
+		ids.append(int(value))
+
+	return {
+		"cc": counters[0],
+		"ls": counters[1],
+		"dd": counters[2],
+		"pos": pos,
+		"ids": ids,
+	}
 
 
 # =============================================================================
