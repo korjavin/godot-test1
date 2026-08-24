@@ -7,6 +7,7 @@
 [sub_resource type="CapsuleShape3D" id="CapsuleShape_2"]
 
 [node name="Player" type="CharacterBody3D" groups=["player"]]
+collision_mask = 5
 script = ExtResource("1_player")
 
 [node name="MeshInstance3D" type="MeshInstance3D" parent="."]
