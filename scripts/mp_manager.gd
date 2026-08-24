@@ -744,7 +744,19 @@ func _send_presence() -> void:
 	later, and re-transmitting stale positions would be strictly worse than
 	skipping them.
 	"""
-	if _connections.is_empty():
+	# `_connections` holds every peer we have STARTED negotiating with — a peer
+	# lands there the moment `_rtc.add_peer()` succeeds, long before ICE finishes
+	# and its data channels open. A channel only accepts packets once it is open,
+	# so broadcasting off `_connections` pushes packets at peers that are still
+	# CONNECTING: send errors at 15 Hz through the whole negotiation, and forever
+	# for a peer whose ICE never completes. `get_peers()` is the mesh's own answer
+	# to "who is actually reachable", so send targeted to those and nobody else.
+	var peers: Dictionary = _rtc.get_peers()
+	var connected: Array[int] = []
+	for pid: int in peers:
+		if bool((peers[pid] as Dictionary).get("connected", false)):
+			connected.append(pid)
+	if connected.is_empty():
 		return  # Nobody to tell.
 
 	var player: Node = get_tree().get_first_node_in_group("player")
@@ -764,9 +776,11 @@ func _send_presence() -> void:
 		"g": player.is_on_floor() if player.has_method("is_on_floor") else true,
 	}
 
+	var bytes: PackedByteArray = var_to_bytes(state)
 	_rtc.set_transfer_mode(MultiplayerPeer.TRANSFER_MODE_UNRELIABLE)
-	_rtc.set_target_peer(MultiplayerPeer.TARGET_PEER_BROADCAST)
-	_rtc.put_packet(var_to_bytes(state))
+	for pid: int in connected:
+		_rtc.set_target_peer(pid)
+		_rtc.put_packet(bytes)
 
 
 func _receive_presence() -> void:
