@@ -189,16 +189,16 @@ spent.
 
 ### Task 1: `endless_terrain.new_run` can rebuild around any chunk
 
-- [ ] change the signature to
+- [x] change the signature to
       `func new_run(forced_seed = null, around: Vector2i = Vector2i.ZERO) -> void:`
       and replace the two hardcoded `Vector2i(0, 0)` uses in step 4
       (`update_chunks(...)` and `last_player_chunk = ...`) with `around`.
-- [ ] the default keeps every existing call site (`restart_game`, `_receive_seed`)
+- [x] the default keeps every existing call site (`restart_game`, `_receive_seed`)
       byte-identical — say so in the docstring, and explain that a mid-run joiner
       passes the chunk it is about to be placed in so the synchronous
       `SYNC_RING` build lands under its feet in the same frame, exactly as the
       spawn-chunk build does for a restart.
-- [ ] no other change to the terrain in this task.
+- [x] no other change to the terrain in this task.
 
 ### Task 2: coin identity in `coin.gd`
 
