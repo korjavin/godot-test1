@@ -219,17 +219,17 @@ nothing about WebRTC, the game, or the UI.
 `extends Node3D`, `class_name RemoteAvatar`. **This file is where the hard
 isolation contract lives — lead the docstring with it.**
 
-- [ ] header docstring stating the contract explicitly: this node joins **no
+- [x] header docstring stating the contract explicitly: this node joins **no
       group**, adds **no** `CollisionObject3D`/`Area3D`, and is parented to the
       MP manager (never to a terrain chunk). Name the systems that call
       `get_tree().get_first_node_in_group("player")` and must keep meaning the
       **local** player: terrain chunk streaming, `piglet_crocodile_ai.gd` chase,
       `crocodile_lod_manager.gd`, `danger_vignette.gd`, `fauna_manager.gd`,
       `weather_manager.gd`. Point at `fauna_manager.gd` as the precedent.
-- [ ] `setup(peer_name: String) -> void`: build a billboarded `Label3D` ~2.2 m up
+- [x] `setup(peer_name: String) -> void`: build a billboarded `Label3D` ~2.2 m up
       showing the peer's name (small, `no_depth_test = false`, `pixel_size` tuned
       so it is readable but not a banner). One `Label3D` — nothing else chrome.
-- [ ] `set_character(index: int) -> void`: free the current model and instance
+- [x] `set_character(index: int) -> void`: free the current model and instance
       `preload("res://scripts/player_controller.gd").CHARACTERS[index]["scene_path"]`
       under a `$Model` `Node3D`; clamp/ignore an out-of-range index (untrusted
       input from the network). Cache the `Body`/`LeftArm`/`RightArm`/`LeftLeg`/
@@ -240,9 +240,9 @@ isolation contract lives — lead the docstring with it.**
       **ponytail:** models are instanced on demand rather than preloaded four-deep
       per peer — a character switch on a remote peer is rare; upgrade to the
       player's preload-all-and-toggle-visibility scheme if switching ever hitches.
-- [ ] `receive_state(pos: Vector3, yaw: float, char_index: int, speed: float, on_floor: bool) -> void`
+- [x] `receive_state(pos: Vector3, yaw: float, char_index: int, speed: float, on_floor: bool) -> void`
       stores the target; a character index change calls `set_character`.
-- [ ] `_process(delta)`: move toward the target with
+- [x] `_process(delta)`: move toward the target with
       `global_position = global_position.lerp(target_pos, 1.0 - exp(-INTERP_RATE * delta))`
       and `rotation.y = lerp_angle(rotation.y, target_yaw, ...)` — frame-rate
       independent smoothing, `INTERP_RATE` ≈ 12.0. Snap instead of lerping when
@@ -251,7 +251,7 @@ isolation contract lives — lead the docstring with it.**
       **ponytail:** exponential smoothing toward the latest sample, not a
       timestamped interpolation buffer — at 15 Hz over a LAN/TURN hop it reads
       smooth; upgrade to a buffered-delay interpolator if it visibly rubber-bands.
-- [ ] walk animation: advance a phase by `speed * delta * STRIDE_FREQUENCY` and
+- [x] walk animation: advance a phase by `speed * delta * STRIDE_FREQUENCY` and
       drive the limb rotations from sines off the cached rest pose, mirroring the
       player's walk cycle (arms and legs in diagonal opposition). Fade to the rest
       pose as `speed` approaches 0. Airborne (`on_floor == false`) uses a static
