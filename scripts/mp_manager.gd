@@ -95,6 +95,15 @@ const GROUP_SPREAD_MAX: float = 60.0
 ## Matched by exact string, because the string is all the frame carries.
 const HERO_ERRORS: PackedStringArray = ["unknown hero", "hero already taken"]
 
+## SEED SELF-HEAL. A joiner with no seed asks the master for one every
+## `SEED_REQUEST_INTERVAL` seconds, `SEED_REQUEST_MAX_TRIES` times, then gives up
+## asking (but stays in the room). 2 s is well over a relay round trip on any
+## connection worth playing on, and 10 tries is 20 s — long enough to cover a
+## master still booting its terrain, short enough that a dead host is reported
+## while the player is still looking at the panel.
+const SEED_REQUEST_INTERVAL: float = 2.0
+const SEED_REQUEST_MAX_TRIES: int = 10
+
 ## Where the desktop WebRTC GDExtension lives when a developer has installed it.
 ## See README — the browser build needs nothing, desktop needs this addon.
 const WEBRTC_ADDON_PATH: String = "res://addons/webrtc/webrtc.gdextension"
@@ -219,6 +228,11 @@ var _ice: Dictionary = {}
 
 ## Presence send accumulator (seconds).
 var _send_accum: float = 0.0
+
+## Seed self-heal state: seconds since the last `seed_req` went out, and how many
+## have gone out this room. Both are room-scoped and reset by `leave()`.
+var _seed_req_accum: float = 0.0
+var _seed_req_tries: int = 0
 
 
 func _init() -> void:
@@ -369,6 +383,8 @@ func leave() -> void:
 	_gone_spent = 0
 	_ice = {}
 	_send_accum = 0.0
+	_seed_req_accum = 0.0
+	_seed_req_tries = 0
 	# `_room_seed` is deliberately kept: leaving a room does not regenerate the
 	# world, so the player keeps walking the terrain they are on. `_has_seed` is
 	# CLEARED, because it is the "we already adopted this room's seed" latch that
@@ -444,6 +460,17 @@ func _on_lobby_joined(you: String, room: String, master: String, members: Array)
 	status.emit("In room %s (%d/4)" % [room, members.size()])
 	room_changed.emit(room, members)
 
+	# SEED DISTRIBUTION IS MESH-INDEPENDENT, and this line is what makes it so.
+	# The seed rides the lobby relay, which is open the moment `welcome` lands —
+	# it has no business waiting on ICE. It used to: `_has_seed` was latched only
+	# inside `_setup_mesh()`, i.e. after an HTTP round trip to `/ice`, so a master
+	# whose fetch was still in flight when somebody joined answered the direct
+	# send in `_on_lobby_peer_joined` with a silently skipped `_has_seed` check —
+	# the joiner then walked its own private world for the room's life with no
+	# error anywhere. Latching here publishes the master's terrain seed as soon as
+	# there is a room to publish it to.
+	_broadcast_seed_if_master()
+
 	# The mesh cannot start before we know which STUN/TURN servers to use, so the
 	# rest of setup hangs off the /ice callback.
 	_lobby.fetch_ice(_on_ice_ready)
@@ -503,7 +530,10 @@ func _setup_mesh() -> void:
 			continue
 		_add_peer(id, str((member as Dictionary).get("name", "")))
 
-	# The master hands out the world seed the moment it has a mesh to talk about.
+	# Idempotent re-send. `_on_lobby_joined` already latched and published the
+	# seed, so this short-circuits through `_has_seed` to a plain re-broadcast —
+	# kept because a master RE-ELECTED while its own mesh was still building
+	# reaches this line without having passed the one above.
 	_broadcast_seed_if_master()
 
 
@@ -578,8 +608,10 @@ func _on_lobby_master_changed(id: String) -> void:
 	# PRIVATE solo world as the room's seed — which every peer that already holds
 	# the real one drops on `_receive_seed`'s latch, leaving the master alone on
 	# different ground for the room's life while the UI reports success. Staying
-	# quiet keeps the peers that already agree agreeing. Asking a member for the
-	# seed is phase 4's problem, along with the rest of mid-run state replay.
+	# quiet keeps the peers that already agree agreeing — and the gap it leaves
+	# is now closed from the other end: a seedless peer keeps sending `seed_req`
+	# to whoever the master currently is, and this one answers off its own
+	# terrain when asked.
 	if _has_seed:
 		_broadcast_seed_if_master()
 
@@ -918,6 +950,20 @@ func _on_lobby_relay(from: String, payload: Dictionary) -> void:
 				push_warning("MpManager: ignoring seed from non-master %s" % from)
 				return
 			_receive_seed(payload)
+		"seed_req":
+			# A peer that has not got the world seed asking us for it. The verb
+			# IS the whole message — there are no payload fields, so there is
+			# nothing to validate; that is why no check follows, rather than an
+			# oversight at a trust boundary. A non-master has no answer to give.
+			if _you != _master:
+				return
+			# Latches from our own terrain first if we never had one (the case
+			# `_on_lobby_master_changed` used to leave open: a master elected
+			# before the seed reached it), then answers the asker directly —
+			# it already missed at least one broadcast, so a broadcast is no use.
+			_broadcast_seed_if_master()
+			if _has_seed:
+				_lobby.send_signal_to(from, {"mp": "seed", "seed": _room_seed})
 		"state":
 			# A join snapshot from an incumbent. THE THIRD TRUST BOUNDARY in
 			# this file: `decode_state()` validates it whole, and anything that
@@ -1374,7 +1420,15 @@ static func shared_lives_from(bank: int, spent: int, max_lives: int, per_extra: 
 # =============================================================================
 
 func _process(delta: float) -> void:
-	if _state == State.OFFLINE or _rtc == null:
+	if _state == State.OFFLINE:
+		return
+
+	# Runs BEFORE the `_rtc` guard on purpose: the seed travels over the lobby
+	# relay, so a room whose mesh never built (or was never asked for) must still
+	# be able to self-heal a missing world.
+	_tick_seed_request(delta)
+
+	if _rtc == null:
 		return
 
 	# The mesh is a plain PacketPeer here — nobody else polls it for us, because
@@ -1388,6 +1442,40 @@ func _process(delta: float) -> void:
 	if _send_accum >= interval:
 		_send_accum = fmod(_send_accum, interval)
 		_send_presence()
+
+
+func _tick_seed_request(delta: float) -> void:
+	"""
+	Ask the master for the world seed until it arrives — the second, independent
+	belt against the bug `_on_lobby_joined`'s early latch fixes at the source.
+
+	Both belts stay. The ordering fix removes the known way the direct send got
+	skipped; this one covers every unknown way a single relayed message can go
+	missing (a master mid-election, a frame lost while its socket reconnected, a
+	peer that joined during the master's own boot). One retry loop is cheaper
+	than a class of silent failures where the UI reports a healthy room.
+	"""
+	if _state != State.IN_ROOM or _has_seed or _master == _you or _master.is_empty():
+		return
+	if _seed_req_tries > SEED_REQUEST_MAX_TRIES:
+		return  # Given up asking. We stay in the room; the player was told.
+
+	_seed_req_accum += delta
+	if _seed_req_accum < SEED_REQUEST_INTERVAL:
+		return
+	_seed_req_accum = 0.0
+	_seed_req_tries += 1
+
+	if _seed_req_tries > SEED_REQUEST_MAX_TRIES:
+		# One past the budget: the give-up message, emitted exactly once because
+		# the early return above catches every later tick.
+		status.emit("No world from the host — is their tab still open?")
+		return
+	if _seed_req_tries == 1:
+		# Make a silent failure visible. `mp_ui.gd` renders `status` straight
+		# into the panel's label, so this needs no UI change.
+		status.emit("Waiting for the shared world…")
+	_lobby.send_signal_to(_master, {"mp": "seed_req"})
 
 
 func _prune_dead_connections() -> void:

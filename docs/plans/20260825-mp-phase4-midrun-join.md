@@ -441,20 +441,20 @@ joiner existed, and `_on_lobby_peer_joined`'s direct send is gated on
 out, and the UI reports a healthy room. The seed travels over the lobby relay and
 has no business waiting on ICE at all.
 
-- [ ] **Latch early.** Call `_broadcast_seed_if_master()` from `_on_lobby_joined`,
+- [x] **Latch early.** Call `_broadcast_seed_if_master()` from `_on_lobby_joined`,
       immediately after `room_changed.emit(...)` and **before** `fetch_ice(...)`.
       The master then adopts and publishes its terrain's `run_seed` the moment the
       `welcome` frame lands. Leave the existing call in `_setup_mesh()` — it is
       idempotent (`_has_seed` short-circuits it to a re-send) and keeps a
       re-elected master's path working. Document that seed distribution is now
       **mesh-independent**, which is the whole point of the fix.
-- [ ] **Retry / self-heal.** New consts `SEED_REQUEST_INTERVAL: float = 2.0` and
+- [x] **Retry / self-heal.** New consts `SEED_REQUEST_INTERVAL: float = 2.0` and
       `SEED_REQUEST_MAX_TRIES: int = 10`. In `_process` (already gated on
       `_state != OFFLINE`), while `IN_ROOM and not _has_seed and _master != _you`,
       tick an accumulator and every interval `send_signal_to(_master, {"mp": "seed_req"})`,
       up to `SEED_REQUEST_MAX_TRIES`. Reset the accumulator and the try counter in
       `leave()`.
-- [ ] **Answer it.** Handle `"seed_req"` as a verb in `_on_lobby_relay`: if
+- [x] **Answer it.** Handle `"seed_req"` as a verb in `_on_lobby_relay`: if
       `_you == _master`, call `_broadcast_seed_if_master()` (which latches from the
       terrain if it has not already) and then `send_signal_to(from, {"mp": "seed", "seed": _room_seed})`
       so the asker gets it directly. A non-master ignores the request. There are no
@@ -463,12 +463,12 @@ has no business waiting on ICE at all.
       ⚠️ This also repairs the gap `_on_lobby_master_changed` documents as
       "phase 4's problem": a master elected before the seed reached it now answers
       from its own terrain when asked.
-- [ ] **Make a silent failure visible.** On the first retry emit
+- [x] **Make a silent failure visible.** On the first retry emit
       `status("Waiting for the shared world…")`; after `SEED_REQUEST_MAX_TRIES`
       emit `status("No world from the host — is their tab still open?")` and stop
       asking (stay in the room; do **not** `leave()`). `mp_ui.gd` already renders
       `status`, so this needs no UI change — confirm that and note it.
-- [ ] the ordering fix and the retry are independent belts: keep both, and say so.
+- [x] the ordering fix and the retry are independent belts: keep both, and say so.
 
 ### ➕ Task 9b: `--lobby-only` mode, so the relay path is testable without WebRTC
 
