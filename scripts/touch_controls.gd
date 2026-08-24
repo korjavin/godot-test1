@@ -286,6 +286,15 @@ func _build_ui() -> void:
 	# tap will flip it.
 	_steer_toggle = Button.new()
 	_steer_toggle.name = "SteerToggle"
+	# FOCUS_NONE on EVERY button this HUD builds. `BaseButton` defaults to
+	# FOCUS_ALL and keeps the focus after a tap, and a focused button is fired by
+	# `ui_accept` — i.e. SPACE, which is also `jump`. So one tap here would make
+	# every later jump ALSO flip the steer mode / fire the ability / switch
+	# character, forever. This UI is touch-gated, but touch-gated is not
+	# keyboard-free: `DisplayServer.is_touchscreen_available()` is true on a
+	# touchscreen laptop or a Windows tablet that has a real keyboard attached
+	# (and the F6 debug force-show puts it on any desktop).
+	_steer_toggle.focus_mode = Control.FOCUS_NONE
 	_steer_toggle.custom_minimum_size = Vector2(TOGGLE_WIDTH, TOGGLE_HEIGHT)
 	_steer_toggle.add_theme_font_size_override("font_size", 30)
 	# Same translucent family look as the action circles; half-height radius = pill.
@@ -314,6 +323,7 @@ func _build_ui() -> void:
 	# mirrored on the toggle's left where the fullscreen button sits on its right.
 	_view_button = Button.new()
 	_view_button.name = "ViewButton"
+	_view_button.focus_mode = Control.FOCUS_NONE  # see the steer toggle above
 	_view_button.text = "View"
 	_view_button.custom_minimum_size = Vector2(TOGGLE_HEIGHT, TOGGLE_HEIGHT)
 	_view_button.add_theme_font_size_override("font_size", 24)
@@ -343,6 +353,7 @@ func _build_ui() -> void:
 	# browser requires before it will grant an enter-fullscreen request.
 	_fullscreen_button = Button.new()
 	_fullscreen_button.name = "FullscreenButton"
+	_fullscreen_button.focus_mode = Control.FOCUS_NONE  # see the steer toggle above
 	_fullscreen_button.text = "⛶"
 	_fullscreen_button.custom_minimum_size = Vector2(TOGGLE_HEIGHT, TOGGLE_HEIGHT)
 	_fullscreen_button.add_theme_font_size_override("font_size", 30)
@@ -434,6 +445,10 @@ func _make_action_button(label: String, node_name: String, slot: int) -> Button:
 	var button := Button.new()
 	button.name = node_name
 	button.text = label
+	# see the steer toggle in `_build_ui` — Space is `ui_accept` AND `jump`, so a
+	# focused Jump/Special/Switch button re-fires on every jump for the rest of
+	# the session. These three are the sharpest case: they ARE gameplay actions.
+	button.focus_mode = Control.FOCUS_NONE
 	button.add_theme_font_size_override("font_size", 26)
 	button.custom_minimum_size = Vector2(ACTION_BUTTON_SIZE, ACTION_BUTTON_SIZE)
 	# Fire on touch-DOWN, not on release (Godot's default for a Button). These are
@@ -494,6 +509,7 @@ func _make_overlay_button(node_name: String) -> Button:
 	var button := Button.new()
 	button.name = node_name
 	button.text = ""
+	button.focus_mode = Control.FOCUS_NONE  # see the steer toggle in `_build_ui`
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0.0, 0.0, 0.0, 0.72)
 	button.add_theme_stylebox_override("normal", style)

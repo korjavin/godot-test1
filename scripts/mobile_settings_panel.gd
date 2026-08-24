@@ -239,6 +239,14 @@ func _build_ui() -> void:
 	# (anchor y = 1) so it hugs the corner on any screen.
 	_gear_button = Button.new()
 	_gear_button.name = "TuneButton"
+	# FOCUS_NONE on every button this panel builds. `BaseButton` defaults to
+	# FOCUS_ALL and keeps the focus after a tap, and `ui_accept` fires a focused
+	# button — `ui_accept` is SPACE, which is also `jump`. So one tap on the gear
+	# would re-open this panel on every jump for the rest of the session. Same
+	# rule, same reason as `mp_ui.gd` and `touch_controls.gd`; touch-gated is not
+	# keyboard-free (a touchscreen laptop has both, and F7 force-shows the gear
+	# on any desktop).
+	_gear_button.focus_mode = Control.FOCUS_NONE
 	_gear_button.text = "⚙ Tune"  # ⚙ gear glyph + label
 	_gear_button.add_theme_font_size_override("font_size", 26)
 	_gear_button.custom_minimum_size = Vector2(GEAR_WIDTH, GEAR_HEIGHT)
@@ -326,6 +334,9 @@ func _build_ui() -> void:
 	# --- Invert steering checkbox ----------------------------------------
 	_invert_check = CheckButton.new()
 	_invert_check.name = "InvertSteering"
+	# A CheckButton is a BaseButton too, so it defaults to FOCUS_ALL and would
+	# invert the steering on every jump once tapped. See the gear above.
+	_invert_check.focus_mode = Control.FOCUS_NONE
 	_invert_check.text = "Invert steering"
 	_invert_check.add_theme_font_size_override("font_size", 22)
 	_invert_check.custom_minimum_size = Vector2(0.0, ACTION_ROW_HEIGHT)
@@ -346,6 +357,7 @@ func _build_ui() -> void:
 func _make_action_button(text: String, handler: Callable) -> Button:
 	var button := Button.new()
 	button.text = text
+	button.focus_mode = Control.FOCUS_NONE  # see the gear button in `_build_ui`
 	button.add_theme_font_size_override("font_size", 22)
 	button.custom_minimum_size = Vector2(0.0, ACTION_ROW_HEIGHT)
 	button.pressed.connect(handler)
@@ -400,6 +412,7 @@ func _build_stepper_row(parent: VBoxContainer, spec: Array) -> void:
 func _make_step_button(text: String, key: String, direction: float) -> Button:
 	var button := Button.new()
 	button.text = text
+	button.focus_mode = Control.FOCUS_NONE  # see the gear button in `_build_ui`
 	button.add_theme_font_size_override("font_size", 34)
 	button.custom_minimum_size = Vector2(STEP_BUTTON_SIZE, STEP_BUTTON_SIZE)
 	button.pressed.connect(_on_step_pressed.bind(key, direction))
