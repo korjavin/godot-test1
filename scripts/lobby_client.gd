@@ -203,15 +203,14 @@ func _send(frame: Dictionary) -> void:
 # =============================================================================
 
 func _init() -> void:
-	# Idle until connect_to_room() — the whole feature is inert until a room is
-	# joined, so an unused LobbyClient costs nothing per frame.
-	#
-	# This lives in `_init`, NOT `_ready`, and that is load-bearing: a node added
-	# to a tree that has not started yet gets its `_ready` on the first idle frame,
-	# i.e. *after* a caller that does `add_child(client)` then `connect_to_room()`
-	# in the same frame. A `_ready` that disabled processing would silently undo
-	# that call's `set_process(true)` and the socket would never be polled past
-	# STATE_CONNECTING. `_init` runs at construction, so nothing can race it.
+	# Idle until connect_to_room(). Note this is belt-and-braces only: Godot's
+	# NOTIFICATION_READY turns `_process` back ON for any script that overrides
+	# it, so from the first idle frame this node IS ticked regardless — the real
+	# guard is `_process`'s `_socket == null` early return, which costs one
+	# comparison. Do NOT move this to `_ready` and call it an optimisation:
+	# `_ready` runs an idle frame after `add_child`, so it would land *after* a
+	# caller that adds the node and joins in the same frame and would undo that
+	# call's `set_process(true)`.
 	set_process(false)
 
 
@@ -222,7 +221,13 @@ func _process(_delta: float) -> void:
 
 	match _socket.get_ready_state():
 		WebSocketPeer.STATE_OPEN:
-			while _socket.get_available_packet_count() > 0:
+			# `_socket != null` is re-tested every iteration on purpose: `_handle_text`
+			# emits signals, and a handler is allowed to tear us down mid-drain
+			# (MpManager's `lobby_error` handler calls `leave()` →
+			# `disconnect_from_room()`, and the lobby sends error frames without
+			# closing the socket). Reading the member again after that nulled it
+			# crashed on `get_available_packet_count()`.
+			while _socket != null and _socket.get_available_packet_count() > 0:
 				_handle_text(_socket.get_packet().get_string_from_utf8())
 		WebSocketPeer.STATE_CLOSED:
 			var code: int = _socket.get_close_code()

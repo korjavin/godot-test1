@@ -650,7 +650,12 @@ func _process(delta: float) -> void:
 	# tap enables motion, then THIS overlay appears for the unpause tap). Gated on
 	# the real touch predicate so a desktop pause (from any future source) never
 	# shows a phone overlay — desktop stays byte-for-byte unchanged.
-	_resume_overlay.visible = _is_touch and get_tree().paused and not _enable_overlay.visible
+	# `paused_by_driver` narrows "the tree is paused" to "WE paused it": the MP
+	# panel pauses as well, and this overlay is full-rect — it would cover that
+	# panel and its tap would unpause the game the panel deliberately froze.
+	var driver: Node = _ensure_driver()
+	var ours: bool = driver != null and bool(driver.get("paused_by_driver"))
+	_resume_overlay.visible = _is_touch and get_tree().paused and ours and not _enable_overlay.visible
 
 
 ## True while one of the three full-rect overlays owns the screen (first-run enable,

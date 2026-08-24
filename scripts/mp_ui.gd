@@ -38,16 +38,18 @@ extends Control
 ## on a phone for free.
 ##
 ## ----------------------------------------------------------------------------
-## The tree is NOT paused while the panel is open
+## The tree IS paused while the panel is open
 ## ----------------------------------------------------------------------------
-## Deliberate: the world keeps running behind the panel, because the mesh, the
-## lobby socket and the presence stream all live on `_process` — pausing would
-## stall the very connection the player is waiting on. What the panel DOES do is
-## release a captured mouse so the buttons are clickable, and recapture it on
-## close. That flag (`_recapture_mouse`) is copied from `pause_controller.gd`
-## for the same reason it exists there: we must only ever recapture a mouse WE
-## released, or this panel would silently steal the cursor back from the pause
-## overlay or from a touch session that never captured it in the first place.
+## See `_set_panel_open()` for why (clicks re-capturing the mouse, and an invite
+## code whose alphabet contains W A S D E F C R driving the player). Nothing is
+## lost by it: `MpManager` is PROCESS_MODE_ALWAYS, so the mesh, the lobby socket
+## and the presence stream keep ticking underneath — pausing must never stall the
+## very connection the player is waiting on. The panel also releases a captured
+## mouse so the buttons are clickable, and recaptures it on close. That flag
+## (`_recapture_mouse`) is copied from `pause_controller.gd` for the same reason
+## it exists there: we must only ever recapture a mouse WE released, or this
+## panel would silently steal the cursor back from the pause overlay or from a
+## touch session that never captured it in the first place.
 
 # ============================================================================
 # CONSTANTS — layout

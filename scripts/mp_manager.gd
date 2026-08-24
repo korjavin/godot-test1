@@ -131,9 +131,12 @@ var _send_accum: float = 0.0
 
 
 func _init() -> void:
-	# Idle until host()/join(). In `_init` rather than `_ready` for the same
-	# reason LobbyClient does it: `_ready` runs an idle frame later and would
-	# undo a `set_process(true)` issued by a caller that joins immediately.
+	# Idle until host()/join(). Belt-and-braces only: NOTIFICATION_READY turns
+	# `_process` back on for any script that overrides it, so the real guard is
+	# `_process`'s `_state == OFFLINE` early return. In `_init` rather than
+	# `_ready` for the same reason LobbyClient does it: `_ready` runs an idle
+	# frame later and would undo a `set_process(true)` issued by a caller that
+	# joins immediately.
 	set_process(false)
 	# Keep polling the socket and the mesh while the tree is paused. A pause
 	# (the P key, the mobile focus-loss pause, an open MP panel) that stopped
@@ -225,8 +228,12 @@ func join(code: String) -> void:
 	_state = State.CONNECTING
 	set_process(true)
 	var label: String = display_name if not display_name.is_empty() else DEFAULT_DISPLAY_NAME
+	# Status FIRST: `connect_to_room` can fail synchronously (a malformed URL
+	# emits `lobby_error` before it returns), and that handler's own status line
+	# has to be the one left standing — otherwise the panel reports "Connecting…"
+	# forever for a join that never started.
+	status.emit("Connecting to %s…" % LobbyClient.resolve_lobby_url(lobby_url))
 	_lobby.connect_to_room(code, label, lobby_url)
-	status.emit("Connecting to %s…" % _lobby.get_lobby_url())
 
 
 func leave() -> void:
@@ -346,6 +353,16 @@ func _setup_mesh() -> void:
 	phase has no shared simulation to replicate, so the whole high-level
 	multiplayer stack would be cost with no benefit.
 	"""
+	# Build the mesh once per room. A second call would strand the working one:
+	# `_add_peer` early-returns for every id already in `_connections`, so the
+	# replacement `_rtc` would carry zero peers — a room whose avatars never
+	# appear and which nothing times out. The path in is a stale `/ice` reply:
+	# `leave()` does not cancel an in-flight HTTPRequest, and a rejoin inside
+	# that window gets ERR_BUSY → the synchronous FALLBACK_ICE builds the mesh,
+	# then the original request lands on the same callback.
+	if _rtc != null:
+		return
+
 	_rtc = WebRTCMultiplayerPeer.new()
 	var err: int = _rtc.create_mesh(peer_int_id(_you))
 	if err != OK:
@@ -547,6 +564,15 @@ func _on_lobby_relay(from: String, payload: Dictionary) -> void:
 				str(payload["media"]), int(payload["index"]), str(payload["name"])
 			)
 		"seed":
+			# ONLY the master hands out the world seed. The relay is opaque to
+			# the lobby, so without this any member could race the master's
+			# broadcast; `_receive_seed`'s `_has_seed` latch would then drop the
+			# real seed and that peer walks a different world for the room's
+			# life. `_master` is always current here — the lobby's `master`
+			# frame reaches us before a re-elected master can rebroadcast.
+			if from != _master:
+				push_warning("MpManager: ignoring seed from non-master %s" % from)
+				return
 			_receive_seed(payload)
 		_:
 			# An "mp" verb from a later phase. Ignore it, do not warn.
