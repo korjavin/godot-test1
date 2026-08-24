@@ -160,6 +160,10 @@ func _ready() -> void:
 	# their own STOP filter (Button/PanelContainer default) — still receive their taps.
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 
+	# Discoverable by group like every other HUD sibling, so `mp_ui.gd` can yield
+	# the bottom-left corner while this panel is open (see `is_panel_open()`).
+	add_to_group("mobile_settings")
+
 	# Find the motion driver by group (no hard reference). May be null on a stripped
 	# build; every handler guards for it via `_ensure_driver()`.
 	_driver = get_tree().get_first_node_in_group("mobile_input")
@@ -173,6 +177,13 @@ func _ready() -> void:
 	# Decide initial visibility from the platform: shown on touch / when force-shown,
 	# hidden + inert on desktop so keyboard+mouse play is untouched.
 	_apply_platform_visibility()
+
+
+## True while the panel body is actually on screen. Public because the MP button
+## sits INSIDE this panel's rect and has to hide while it is open — see the yield
+## in `mp_ui._process()`.
+func is_panel_open() -> bool:
+	return visible and _panel_open
 
 
 func _input(event: InputEvent) -> void:

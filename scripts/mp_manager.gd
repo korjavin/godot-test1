@@ -44,6 +44,11 @@ class_name MpManager
 ## outbound, which is smaller than the UDP headers carrying it.
 const PRESENCE_HZ: float = 15.0
 
+## Presence packets read per peer per frame before the rest of the backlog is
+## dropped. Sized a few times over PRESENCE_HZ / physics rate so an honest peer's
+## burst after a hitch still drains, while a flood cannot.
+const MAX_PRESENCE_PACKETS_PER_PEER: int = 8
+
 ## Fallback display name when none was configured. The lobby clamps names to 32
 ## characters server-side, so we do not need to.
 const DEFAULT_DISPLAY_NAME: String = "player"
@@ -463,7 +468,16 @@ func _on_lobby_master_changed(id: String) -> void:
 	replay is phase 4's problem.
 	"""
 	_master = id
-	_broadcast_seed_if_master()
+	# ONLY re-broadcast a seed we actually adopted. A master elected before the
+	# seed reached it (the old master dropping inside our /ice window) has
+	# `_has_seed` false, and the terrain-read path below would publish its own
+	# PRIVATE solo world as the room's seed — which every peer that already holds
+	# the real one drops on `_receive_seed`'s latch, leaving the master alone on
+	# different ground for the room's life while the UI reports success. Staying
+	# quiet keeps the peers that already agree agreeing. Asking a member for the
+	# seed is phase 4's problem, along with the rest of mid-run state replay.
+	if _has_seed:
+		_broadcast_seed_if_master()
 
 
 func _on_lobby_error(message: String) -> void:
@@ -507,6 +521,10 @@ func _add_peer(id: String, peer_name: String) -> void:
 	var conn: WebRTCPeerConnection = WebRTCPeerConnection.new()
 	if conn.initialize(_ice) != OK:
 		status.emit("WebRTC unavailable — see README for the desktop addon")
+		# Drop anything buffered for a peer we will never connect: nothing replays
+		# it, and every later relay from that peer keeps appending until
+		# MAX_BUFFERED_SIGNALS, warning once per candidate for the room's life.
+		_pending_signals.erase(id)
 		return
 
 	conn.session_description_created.connect(_on_session_description_created.bind(id))
@@ -517,6 +535,7 @@ func _add_peer(id: String, peer_name: String) -> void:
 		# signals still bound to us, relaying candidates for a peer we dropped.
 		conn.close()
 		status.emit("Could not add %s to the mesh" % id)
+		_pending_signals.erase(id)
 		return
 
 	_connections[id] = conn
@@ -798,7 +817,15 @@ func _receive_presence() -> void:
 	and the character index is range-checked before it can index CHARACTERS. A
 	packet that fails any of it is dropped whole — there is no partial trust.
 	"""
-	while _rtc.get_available_packet_count() > 0:
+	# BOUNDED DRAIN. Room membership is an invite code shared over chat, so a peer
+	# in the room is not trusted — that is the premise of both trust boundaries
+	# here. An unbounded `while` lets one peer flooding the unreliable channel
+	# stall the frame on the gl_compatibility web build. Discarding the backlog is
+	# strictly correct rather than lossy: presence is unreliable and every packet
+	# fully replaces the last, so the newest state still arrives 66 ms later.
+	var budget: int = MAX_PRESENCE_PACKETS_PER_PEER * maxi(1, _avatars.size())
+	while budget > 0 and _rtc.get_available_packet_count() > 0:
+		budget -= 1
 		var from_int: int = _rtc.get_packet_peer()
 		var bytes: PackedByteArray = _rtc.get_packet()
 		# ponytail: linear scan rather than a third dictionary kept in step with

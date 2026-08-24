@@ -637,11 +637,17 @@ func _physics_process(delta: float) -> void:
 	# STEP 0: First-person toggle (C). POLLED rather than handled in _input() on
 	# purpose: the touch UI synthesizes actions via Input.parse_input_event,
 	# which polled is_action_just_pressed() sees reliably — same reasoning as the
-	# switch_character gotcha in CLAUDE.md. Polled BEFORE the frozen-state early
-	# returns below so a press during the caught/respawn/game-over windows isn't
-	# silently dropped — the view is a pure camera preference and safe to flip
-	# while frozen (_apply_view_mode() only touches the camera rig and model).
-	if Input.is_action_just_pressed("toggle_camera"):
+	# switch_character gotcha in CLAUDE.md. Polled BEFORE the caught/respawn early
+	# returns below so a press during those frozen windows isn't silently dropped —
+	# the view is a pure camera preference and safe to flip while frozen
+	# (_apply_view_mode() only touches the camera rig and model).
+	#
+	# NOT while the Game Over screen is up, for exactly the reason switch_character
+	# carries the same guard: the MP panel deliberately does not pause there, and
+	# the lobby's invite-code alphabet contains C (the toggle_camera binding), so
+	# typing a code would flip the view. View mode is a preference nothing resets,
+	# so the next run would start in the wrong camera with no explanation.
+	if Input.is_action_just_pressed("toggle_camera") and not is_game_over:
 		first_person = not first_person
 		_apply_view_mode()
 

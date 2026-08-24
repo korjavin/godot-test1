@@ -182,6 +182,17 @@ func _process(_delta: float) -> void:
 		return
 	var touch_ui: Node = get_tree().get_first_node_in_group("touch_controls")
 	var modal: bool = touch_ui != null and touch_ui.has_method("has_modal") and touch_ui.has_modal()
+
+	# Yield to the ⚙ Tune panel for the same reason, one sibling further along.
+	# That panel's body opens UPWARD from just above its gear — bottom offsets
+	# [-664, -84], left [16, 396] — which contains this button's [-140, -84] x
+	# [16, 126] entirely. MultiplayerUI is the LAST HUD child, so it draws over
+	# the panel and wins hit-testing: without this the panel's bottom-left corner
+	# (where its Close row sits) opens the MP panel instead.
+	var tune_ui: Node = get_tree().get_first_node_in_group("mobile_settings")
+	if tune_ui != null and tune_ui.has_method("is_panel_open") and tune_ui.is_panel_open():
+		modal = true
+
 	_mp_button.visible = not modal
 	if modal and _panel_open:
 		_set_panel_open(false)
@@ -348,6 +359,11 @@ func _make_button(label: String, handler: Callable) -> Button:
 func _ensure_manager() -> Node:
 	if _manager != null and is_instance_valid(_manager):
 		return _manager
+	# The cached node is gone (or was never found). Any connection we made was to
+	# THAT object, so clear the latch — otherwise the re-fetch below hands back a
+	# manager whose `room_changed`/`status` are silently unwired and the panel
+	# goes permanently stale, which is the opposite of what this re-fetch promises.
+	_signals_connected = false
 	_manager = get_tree().get_first_node_in_group("mp")
 	if _manager != null and not _signals_connected:
 		# `has_signal` guards keep this safe against a stand-in node that merely

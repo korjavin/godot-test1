@@ -200,8 +200,6 @@ func set_character(index: int) -> void:
 	var now: int = Time.get_ticks_msec()
 	if now - _last_swap_ms < SWAP_COOLDOWN_MS:
 		return
-	_last_swap_ms = now
-	character_index = index
 
 	# Drop the old model and every reference into it, so a half-freed limb can
 	# never be animated on the frame between queue_free() and the actual free.
@@ -220,6 +218,14 @@ func set_character(index: int) -> void:
 	if not scene:
 		push_warning("RemoteAvatar: could not load character scene %s" % scene_path)
 		return
+
+	# `character_index` and the cooldown are committed HERE, not before the load:
+	# the `index == character_index` no-op at the top of this function short-
+	# circuits every repeat of `c`, so recording a swap that then failed would
+	# leave this peer permanently model-less with no retry path. Presence repeats
+	# `c` every packet, so leaving them uncommitted means the next packet retries.
+	_last_swap_ms = now
+	character_index = index
 
 	character_node = scene.instantiate()
 	model_root.add_child(character_node)
