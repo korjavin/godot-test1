@@ -318,6 +318,15 @@ const BOSS_PLACE_TRIES: int = 4
 ## of the procedural world byte-for-byte identically.
 const BOSS_SEED: int = 0xB0_55  # "BOSS"-ish; arbitrary fixed constant
 
+## Fixed salt for the per-crocodile SIZE/SPEED roll seed — its OWN independent
+## hash stream (the BOSS_SEED / ARTIFACT_SALT / CAMP_SALT pattern). See
+## _croc_roll_seed() below: it consumes ZERO draws from the crocodile spawner's
+## RNG, so every crocodile's POSITION is byte-for-byte what it was before the
+## rolls were determinized — only the size/speed a crocodile rolls for itself
+## changed, from "randomize() per instance" to "a pure function of chunk coords,
+## croc index and run_seed".
+const CROC_ROLL_SALT: int = 0xC20_C  # "CROC"-ish; arbitrary fixed constant
+
 # ----------------------------------------------------------------------------
 # ARTIFACTS (rare deterministic "lost civilization" landmarks, off the road)
 # ----------------------------------------------------------------------------
@@ -2335,6 +2344,12 @@ func spawn_crocodiles_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D
 		# Random initial rotation for variety
 		crocodile_instance.rotation.y = rng.randf_range(0, TAU)
 
+		# CALL-ORDER CONTRACT (the setup_as_boss shape): hand over the deterministic
+		# size/speed roll seed BEFORE add_child, so the croc's _ready() sees it and
+		# seeds its own rng from it instead of randomize()ing. Non-negative index =
+		# the ground crocodile stream (see _croc_roll_seed).
+		crocodile_instance.setup_roll_seed(_croc_roll_seed(chunk_pos, spawned_positions.size()))
+
 		# Add to chunk (so it gets removed when chunk is removed)
 		parent_chunk.add_child(crocodile_instance)
 		spawned_positions.append(crocodile_pos)
@@ -2376,6 +2391,11 @@ func spawn_platform_crocodiles(chunk_pos: Vector2i, parent_chunk: MeshInstance3D
 		# Spawn just above the surface so gravity settles it onto the platform.
 		crocodile.position = Vector3(center.x + sx, center.y + 0.6, center.z + sz)
 		crocodile.rotation.y = rng.randf_range(0.0, TAU)
+		# Same BEFORE-add_child contract as the ground spawner above. NEGATIVE indices
+		# (-1, -2, …) keep the platform guards on their own slice of the roll stream,
+		# so platform guard #0 and ground crocodile #0 in the same chunk don't roll
+		# the identical size and speed.
+		crocodile.setup_roll_seed(_croc_roll_seed(chunk_pos, -1 - count))
 		parent_chunk.add_child(crocodile)
 
 		# Confine it to this platform (in world space) so it can never wander off.
@@ -2384,6 +2404,36 @@ func spawn_platform_crocodiles(chunk_pos: Vector2i, parent_chunk: MeshInstance3D
 			crocodile.set_confinement(center_global, half)
 
 		count += 1
+
+func _croc_roll_seed(chunk_pos: Vector2i, index: int) -> int:
+	"""
+	Deterministic seed for one crocodile's per-instance SIZE/SPEED rolls.
+
+	@param chunk_pos: Chunk that spawns the crocodile
+	@param index: Which crocodile in that chunk. Ground crocodiles pass their
+	              spawn slot (0, 1, 2, …); platform guards pass -1 - count, so the
+	              two spawners can never hand the same seed to two crocodiles in
+	              the same chunk.
+	@return: Seed to hand the instance via setup_roll_seed()
+
+	This is its OWN independent hash stream — the _boss_at / _artifact_at /
+	_camp_at pattern — mixing chunk coords, the croc index and run_seed with
+	coordinate primes distinct from the object (73856093 / 19349663), biome
+	(83492791 / 15485863) and camp (40960001 / 26463089) streams. It draws from NO
+	RandomNumberGenerator at all, so the crocodile spawner's own sequence — and
+	therefore every crocodile POSITION — is byte-for-byte unchanged.
+
+	WHY it exists: multiplayer needs every peer to compute identical crocodile
+	spawn state from the shared run_seed. Everything else in world generation was
+	already a pure function of chunk coords + run_seed; the crocodile's size/speed
+	rolls were the one single-player-era exception (a randomize()d per-instance
+	RNG), and this is what closes it.
+	"""
+	return hash(Vector3i(
+		chunk_pos.x * 179424673 + index,
+		chunk_pos.y * 32452843,
+		run_seed ^ CROC_ROLL_SALT
+	))
 
 func _boss_at(i: int) -> Dictionary:
 	"""

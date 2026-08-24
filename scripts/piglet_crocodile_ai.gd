@@ -201,6 +201,17 @@ var is_boss: bool = false
 ## Uniform body scale for a boss (from the terrain's size schedule; 1.0 = unused).
 var boss_scale: float = 1.0
 
+## Deterministic seed for this crocodile's per-instance speed/size rolls, handed
+## over by the terrain via setup_roll_seed() BEFORE this node enters the tree —
+## the same call-order contract as setup_as_boss(), for the same reason (_ready()
+## is where the rolls happen). When it is set, `rng` is seeded from it instead of
+## randomize()d, so every peer in a multiplayer session derives the same pack from
+## the shared run_seed. When it is NOT set — piglet_crocodile.tscn run standalone,
+## or any future spawner that doesn't know about the contract — _ready() falls
+## back to rng.randomize() and the crocodile behaves exactly as it always did.
+var roll_seed: int = 0
+var has_roll_seed: bool = false
+
 ## This crocodile's effective "smell" range — the ONE place that resolves the
 ## regular-vs-boss detection radius. `_update_chase_state` reads it, and so does
 ## the danger telegraph in `crocodile_lod_manager` (which must normalise each
@@ -271,8 +282,15 @@ const CONFINE_MARGIN: float = 0.9
 
 func _ready() -> void:
 	"""Initialize the crocodile NPC."""
-	# Randomize the RNG
-	rng.randomize()
+	# Seed the RNG. The terrain hands every crocodile it spawns a deterministic
+	# seed (setup_roll_seed, called before add_child), so the size/speed rolls
+	# below — and every other draw this instance ever takes — are a pure function
+	# of chunk coords + croc index + run_seed. Only a crocodile spawned WITHOUT
+	# that seed (the standalone scene) falls back to a random one.
+	if has_roll_seed:
+		rng.seed = roll_seed
+	else:
+		rng.randomize()
 
 	# Difficulty gradient: scale CHASE speed up with distance from the world origin.
 	# global_position is already valid here because the terrain parents the crocodile
@@ -783,6 +801,24 @@ func setup_as_boss(body_scale: float) -> void:
 	"""
 	is_boss = true
 	boss_scale = body_scale
+
+
+func setup_roll_seed(seed_value: int) -> void:
+	"""
+	Hand this crocodile the deterministic seed for its per-instance speed/size
+	rolls. CALL-ORDER CONTRACT, exactly like setup_as_boss above: the terrain must
+	call this on the fresh instance BEFORE add_child(), because _ready() is where
+	the rolls happen — seeding after the node enters the tree would be too late and
+	the crocodile would already have randomize()d itself.
+
+	Bosses may be given a seed too; it simply goes unused, since the is_boss branch
+	in _ready() takes no size/speed roll at all.
+
+	@param seed_value: Seed from the terrain's independent croc-roll hash stream
+	    (see endless_terrain._croc_roll_seed)
+	"""
+	roll_seed = seed_value
+	has_roll_seed = true
 
 
 # ============================================================================
