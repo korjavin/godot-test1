@@ -335,14 +335,14 @@ Keep every existing solo path byte-identical. All new MP reads go through **one*
 null-safe helper, `_mp()` (group `"mp"`, returns the node or `null`), in the shape
 of `_weather_is_raining_here()`.
 
-- [ ] new fields: `var own_coins: int = 0` and `var own_lives_spent: int = 0` —
+- [x] new fields: `var own_coins: int = 0` and `var own_lives_spent: int = 0` —
       this peer's contributions, which are what gets broadcast. `collect_coin()`
       adds the same multiplied value to `own_coins` that it adds to
       `coins_collected` (one line); `_on_caught_finished()` increments
       `own_lives_spent` where it already spends a life. `reset_position()` (the
       hard-reset wipe list) and `restart_game()` reset both, next to the existing
       `coins_collected = 0` / `lives = MAX_LIVES` lines.
-- [ ] once per physics tick, after the existing `run_distance` update and **only**
+- [x] once per physics tick, after the existing `run_distance` update and **only**
       when `_mp()` reports a room, overwrite the three *displayed* fields:
       - `coins_collected = shared_bank(own_coins)`
       - `run_distance = shared_distance(run_distance)`
@@ -354,13 +354,13 @@ of `_weather_is_raining_here()`.
       same frame, and remember `collect_coin`'s solo extra-life `while` loop still
       runs — in a room the shared recompute overwrites `lives` right after, which
       is intended and must be commented as such.
-- [ ] `switch_to_next_character()`: keep the existing ability guard first, then
+- [x] `switch_to_next_character()`: keep the existing ability guard first, then
       ask `_mp().my_character_indices()`. `null` → today's `(i + 1) % size`
       behaviour, unchanged. An array → step to the next entry in it (wrapping);
       when it holds one entry the press is a no-op — fire the same
       `ability_hud.flash_blocked()` + `play_buzz()` feedback a refused F press
       uses, so the player learns the hero is locked rather than thinking E broke.
-- [ ] `func join_at(anchor: Vector3) -> void:` — the joiner's placement, called by
+- [x] `func join_at(anchor: Vector3) -> void:` — the joiner's placement, called by
       the manager:
       - scan for a clear spot: `JOIN_RING_RADII` (e.g. 3, 5, 8, 12 m) × 8 evenly
         spaced angles around `anchor`, taking the first where

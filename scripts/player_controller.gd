@@ -234,6 +234,18 @@ const EXTRA_LIFE_COINS: int = 75
 const LIVES_CAP: int = 5
 var next_extra_life_at: int = EXTRA_LIFE_COINS
 
+## MULTIPLAYER CONTRIBUTIONS. Inside a room the three numbers the HUD shows —
+## coins_collected, run_distance and lives — become the ROOM's totals, summed by
+## mp_manager.gd from what every member contributes. These two fields are what
+## THIS peer contributes: the coins it banked itself and the lives it spent
+## itself. They have to be kept apart from the displayed fields, because those
+## are overwritten with the shared totals every physics tick (see
+## _refresh_shared_totals) and would otherwise feed their own room total back
+## into itself, doubling the bank on every frame. Offline they are simply
+## carried along and never read, so solo play is unchanged.
+var own_coins: int = 0
+var own_lives_spent: int = 0
+
 ## Headline score: how far this run has travelled, in metres — the farthest
 ## HORIZONTAL DISPLACEMENT from the (0,0) spawn point ever reached this run.
 ## (Originally this tracked farthest world X — the coin road's forward axis —
@@ -250,6 +262,17 @@ var run_distance: int = 0
 ## distance counter climbs immediately. (With the default 0.0 facing, a new
 ## player walks off along Z, sees Distance stuck at 0, and reads it as a bug.)
 const SPAWN_FACING_Y: float = -PI / 2
+
+## MID-RUN MULTIPLAYER JOIN. A joiner does not restart at the origin — it drops
+## in beside the group (see join_at). We try the first clear spot on these rings
+## (in metres) around the group's anchor, JOIN_RING_ANGLES evenly spaced
+## candidates per ring, nearest ring first: close enough to see the others, far
+## enough not to materialise on top of one. Tuned by eye.
+const JOIN_RING_RADII: Array[float] = [3.0, 5.0, 8.0, 12.0]
+const JOIN_RING_ANGLES: int = 8
+## Drop-in height, the same short fall onto the flat ground reset_position()'s
+## spawn point uses, so the landing squash reads instead of a hard snap.
+const JOIN_SPAWN_HEIGHT: float = 2.0
 
 ## Best-run records, persisted across sessions in a ConfigFile at
 ## BEST_RUN_CONFIG_PATH (same pattern as mobile_input.gd's tuning file: on web
@@ -711,6 +734,12 @@ func _physics_process(delta: float) -> void:
 	# the displacement is just the length of the horizontal position.
 	run_distance = maxi(run_distance, int(Vector2(global_position.x, global_position.z).length()))
 
+	# STEP 0.42: In a multiplayer room the score fields the two HUDs read become
+	# the ROOM's, not this peer's. Done here, immediately after the local
+	# distance max above, so this frame's own contribution is already folded in.
+	# Costs one group lookup and nothing else when there is no room.
+	_refresh_shared_totals()
+
 	# STEP 0.45: Tick the coin-streak window down; when it lapses the streak is
 	# over and the score multiplier drops back to x1 (see collect_coin).
 	if streak_timer > 0.0:
@@ -1050,13 +1079,40 @@ func switch_to_next_character() -> void:
 
 	This is now just a visibility swap between already-instanced models, so it
 	happens instantly with no loading hitch.
+
+	IN A MULTIPLAYER ROOM the lobby owns who plays which hero, so the cycle is
+	restricted to the characters this peer was assigned (see below).
 	"""
 	# Block switching while a prolonged ability (flying/resize) is active
 	if windman_boost_timer > 0.0 or teibi_size_state != 0:
 		return
 
-	# Increment the character index
-	current_character_index = (current_character_index + 1) % CHARACTERS.size()
+	# Which characters may we step to? `null` — offline, no room, or holding no
+	# hero yet — means "all of them", i.e. exactly today's behaviour behind one
+	# == null test. An array restricts the cycle to those indices.
+	var allowed: Variant = null
+	var mp := _mp()
+	if mp and mp.has_method("my_character_indices"):
+		allowed = mp.my_character_indices()
+
+	if allowed == null:
+		# Increment the character index
+		current_character_index = (current_character_index + 1) % CHARACTERS.size()
+	else:
+		var indices: Array = allowed
+		# The lobby holds at most one hero per member, so this is normally a
+		# singleton and the press is a refusal. Give it the SAME dial flash and
+		# denial buzz a refused F press gets, so the player reads "this hero is
+		# locked" rather than "E is broken". (A body outside the allowed set is
+		# momentary — the manager applies the confirmed hero itself through
+		# set_active_character — so there is nothing to correct here.)
+		if indices.size() <= 1:
+			_flash_blocked_feedback()
+			return
+		var slot: int = indices.find(current_character_index)
+		# find() returning -1 wraps to the first allowed entry, which is the
+		# right answer when we are not currently in any of them.
+		current_character_index = int(indices[(slot + 1) % indices.size()])
 
 	# Show the newly selected character
 	set_active_character(current_character_index)
@@ -1563,6 +1619,10 @@ func collect_coin(value: int = 1) -> void:
 	streak_timer = STREAK_WINDOW
 	coin_streak += 1
 	coins_collected += value * get_streak_multiplier()
+	# The same multiplied value, banked again as THIS peer's contribution to a
+	# multiplayer room (see own_coins). Untouched by the shared recompute, which
+	# overwrites coins_collected but never this.
+	own_coins += value * get_streak_multiplier()
 	while coins_collected >= next_extra_life_at:
 		next_extra_life_at += EXTRA_LIFE_COINS
 		if lives < LIVES_CAP:
@@ -1627,6 +1687,9 @@ func _on_caught_finished() -> void:
 	either respawn in place (lives left) or end the run (no lives left).
 	"""
 	lives -= 1
+	# This peer's contribution to the room's spent-lives total. Counted even solo
+	# (it is simply never read there), so there is no branch to get wrong.
+	own_lives_spent += 1
 	print("Caught! Lives remaining: %d" % lives)
 	if lives <= 0:
 		lives = 0
@@ -1720,6 +1783,7 @@ func restart_game() -> void:
 	# Coins/distance/streak are wiped by reset_position() below — the one owner of
 	# the "hard reset" wipe list, so the two can never drift out of sync.
 	lives = MAX_LIVES
+	own_lives_spent = 0  # A fresh run owes the room nothing (own_coins: reset_position).
 	is_game_over = false
 	is_caught = false
 	is_respawning = false
@@ -1811,6 +1875,7 @@ func reset_position() -> void:
 	# A full restart wipes the coin count, the distance score, and the streak /
 	# extra-life progress that hangs off the coin count.
 	coins_collected = 0
+	own_coins = 0  # ... and this peer's share of a room's bank along with it.
 	run_distance = 0
 	coin_streak = 0
 	streak_timer = 0.0
@@ -1876,6 +1941,62 @@ func clear_nearby_crocodiles(spawn_point: Vector3) -> void:
 
 	if removed_count > 0:
 		print("Cleared %d crocodile(s) near spawn point" % removed_count)
+
+
+func join_at(anchor: Vector3) -> void:
+	"""
+	Mid-run multiplayer join: drop in beside the group instead of at the world
+	origin. Called once per room by mp_manager.gd, with `anchor` the group's
+	centroid (or the master's position when the group is spread out).
+
+	THIS IS NOT A RESTART. The coins, distance, lives and streak belong to the
+	room and must survive — so this performs exactly the teleport hygiene
+	reset_position() does (velocity, facing, camera pivot, ability state, blink
+	i-frames) and none of its score wipe.
+
+	@param anchor: world position to arrive next to.
+	"""
+	# Find a clear spot on a ring around the anchor so we never materialise
+	# inside a block. Nearest ring first, JOIN_RING_ANGLES evenly spaced
+	# candidates each, taking the first the body actually fits in — the same
+	# probe Primm's Phase Step lands with, which ignores the flat ground and only
+	# senses what rises above it. The ground IS flat, so every one of the ~32
+	# candidates being blocked needs a landscape of solid stone; the anchor
+	# itself is the fallback for that, and at worst costs one shove-out from the
+	# physics engine.
+	var spot := anchor
+	for radius: float in JOIN_RING_RADII:
+		var placed := false
+		for i: int in range(JOIN_RING_ANGLES):
+			var angle: float = TAU * i / float(JOIN_RING_ANGLES)
+			var candidate := Vector3(anchor.x + cos(angle) * radius, 0.0, anchor.z + sin(angle) * radius)
+			if not _is_body_blocked_at(candidate):
+				spot = candidate
+				placed = true
+				break
+		if placed:
+			break
+
+	global_position = Vector3(spot.x, JOIN_SPAWN_HEIGHT, spot.z)
+	velocity = Vector3.ZERO
+	rotation.y = SPAWN_FACING_Y  # Face down the coin road, like the origin spawn
+	camera_pitch = 0.0
+	camera_yaw_lag = 0.0
+	if camera_pivot:
+		camera_pivot.rotation = Vector3.ZERO  # Whole rotation, so roll can't survive
+	is_ducking = false
+	is_running = false
+
+	# A joiner must not be bitten on its first frame in somebody else's run.
+	clear_nearby_crocodiles(global_position)
+
+	# Drop any mid-blink i-frames / active ability state and restore model
+	# visibility for the current view (idempotent — see _apply_view_mode).
+	respawn_blink_timer = 0.0
+	_apply_view_mode()
+	_reset_ability_states()
+
+	print("Joined the run near %v" % anchor)
 
 
 # ============================================================================
@@ -1988,6 +2109,50 @@ var is_giant: bool = false
 var _teibi_tween: Tween = null
 
 
+func _mp() -> Node:
+	"""
+	The multiplayer manager, or null when there is none in the tree (solo play,
+	or the player scene run on its own). The single door every multiplayer read
+	in this script goes through — same null-safe group lookup shape as
+	_weather_is_raining_here() / _terrain_is_river_here() below.
+	"""
+	return get_tree().get_first_node_in_group("mp")
+
+
+func _refresh_shared_totals() -> void:
+	"""
+	While in a multiplayer room, overwrite the three DISPLAYED score fields with
+	the room's totals: the bank is the sum of every member's own coins, the
+	distance the furthest anyone has reached, and the lives what is left of the
+	room's shared hearts (base hearts + bank/EXTRA_LIFE_COINS - lives spent).
+
+	The two HUD scripts are deliberately NOT edited — coin_hud.gd and lives_hud.gd
+	read these very fields, so they show the room's numbers in a room and this
+	peer's own numbers solo, with no branch of their own.
+
+	Offline (or with no room joined) every call below answers null and nothing is
+	written, so solo play is byte-for-byte what it was. Note that collect_coin()'s
+	solo bookkeeping — including its extra-life while-loop — still runs in a room
+	and is simply overwritten here in the same frame. That is intended: a room's
+	lives come from the ROOM's bank, not from this peer's private threshold.
+	"""
+	var mp := _mp()
+	if mp == null or not mp.has_method("shared_bank"):
+		return
+	var bank: Variant = mp.shared_bank(own_coins)
+	if bank == null:
+		return  # Manager present but no room: solo semantics, untouched.
+	var spent: Variant = mp.shared_lives_spent(own_lives_spent)
+	var distance: Variant = mp.shared_distance(run_distance)
+	coins_collected = int(bank)
+	if distance != null:
+		# A max, and run_distance is itself a running max, so feeding the room's
+		# best back in can never inflate it.
+		run_distance = int(distance)
+	if spent != null:
+		lives = mp.shared_lives_from(int(bank), int(spent), MAX_LIVES, EXTRA_LIFE_COINS, LIVES_CAP)
+
+
 func _weather_is_raining_here() -> bool:
 	"""
 	Whether the player is standing in a storm cloud's rain zone, asked of the
@@ -2055,10 +2220,7 @@ func try_activate_ability() -> void:
 	# flash the cooldown dial red (via the "ability_hud" group — null-safe, no
 	# hard reference, like every other HUD hookup) and play a low denial buzz.
 	if ability_cooldowns[current_character_index] > 0.0:
-		var hud := get_tree().get_first_node_in_group("ability_hud")
-		if hud and hud.has_method("flash_blocked"):
-			hud.flash_blocked()
-		_sfx("play_buzz")
+		_flash_blocked_feedback()
 		return
 
 	# Windman can't take off in the rain: pressing F inside a storm cloud's rain
@@ -2066,10 +2228,7 @@ func try_activate_ability() -> void:
 	# buzz) — and crucially costs no cooldown, so the player can try again the
 	# moment they walk out from under the storm.
 	if char_name == "windman" and _weather_is_raining_here():
-		var rain_hud := get_tree().get_first_node_in_group("ability_hud")
-		if rain_hud and rain_hud.has_method("flash_blocked"):
-			rain_hud.flash_blocked()
-		_sfx("play_buzz")
+		_flash_blocked_feedback()
 		return
 
 	var used := false
@@ -2088,6 +2247,20 @@ func try_activate_ability() -> void:
 		# Whoosh only when the ability actually fired — a failed Primm blink that
 		# costs no cooldown stays silent too.
 		_sfx("play_ability", char_name)
+
+
+func _flash_blocked_feedback() -> void:
+	"""
+	The one "that press was refused" signal: flash the cooldown dial red (via the
+	"ability_hud" group — null-safe, no hard reference, like every other HUD
+	hookup) and play the low denial buzz. Shared by the cooling-down F press,
+	Windman-in-the-rain, and an E press locked to a single hero by the lobby, so
+	a refusal always feels the same wherever it comes from.
+	"""
+	var hud := get_tree().get_first_node_in_group("ability_hud")
+	if hud and hud.has_method("flash_blocked"):
+		hud.flash_blocked()
+	_sfx("play_buzz")
 
 
 func _ability_windman() -> bool:
