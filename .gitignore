@@ -67,3 +67,7 @@ ios/
 # Don't ignore export_presets.cfg - we want this in version control
 # so CI/CD can use it
 !export_presets.cfg
+
+# Godot addons — the desktop-only WebRTC GDExtension (webrtc-native) is fetched
+# from its releases page, never vendored. The web build needs no addon at all.
+addons/

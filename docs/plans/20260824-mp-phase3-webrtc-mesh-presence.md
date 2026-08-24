@@ -399,14 +399,14 @@ The web build needs nothing. Desktop has no WebRTC implementation, so
 two-editor-instance testing needs the official `webrtc-native` GDExtension.
 **Do not commit binaries.**
 
-- [ ] add `addons/` to `.gitignore` (if not already ignored) with a comment saying
+- [x] add `addons/` to `.gitignore` (if not already ignored) with a comment saying
       the WebRTC addon is fetched, not vendored.
-- [ ] add `server/../docs` — no: document it in **`README.md`** under a short
+- [x] add `server/../docs` — no: document it in **`README.md`** under a short
       "Multiplayer (dev setup)" heading: download the `webrtc-native` release for
       Godot 4.x from `https://github.com/godotengine/webrtc-native/releases`,
       unzip into `addons/`, restart the editor. Note that the **web export needs
       none of this**.
-- [ ] document the two dev-iteration recipes in the same section: run the lobby
+- [x] document the two dev-iteration recipes in the same section: run the lobby
       with `cd server && go run .`, then launch two instances with
       `godot --path . scenes/main.tscn -- --lobby=ws://localhost:8080`, or open the
       web build twice with `?lobby=ws://localhost:8080`.
