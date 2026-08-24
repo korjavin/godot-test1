@@ -72,6 +72,15 @@ var base_y: float = 0.0
 var spin_angle: float = 0.0
 var mesh_base_basis: Basis
 
+## This coin's multiplayer id, LATCHED IN _ready() and never recomputed.
+## Latching is not an optimisation — it is the contract. `_process` bobs the
+## coin by BOB_AMOUNT (0.12 m) around base_y, which is ±0.96 of a 12.5 cm id
+## cell, so an id derived from the LIVE position at collection time names a
+## different cell than the one derived at spawn: `is_coin_collected()` would ask
+## about one id, `report_coin_collected()` would publish another, and the whole
+## join replay would miss on most pickups.
+var _id: int = 0
+
 # ============================================================================
 # IDENTITY (multiplayer)
 # ============================================================================
@@ -106,8 +115,9 @@ static func id_at(pos: Vector3) -> int:
 
 func coin_id() -> int:
 	"""This coin's id. Valid from _ready on — every spawner sets the coin's
-	position BEFORE add_child, so global_position is already final."""
-	return id_at(global_position)
+	position BEFORE add_child, so global_position is already final at the latch
+	(see _id: the bob must never be allowed to rename a coin)."""
+	return _id
 
 
 # ============================================================================
@@ -119,6 +129,11 @@ func _ready() -> void:
 
 	# Remember where we were placed so the bob oscillates around it.
 	base_y = position.y
+
+	# Latch the multiplayer id from the REST position, before _process ever bobs
+	# us off it. Every spawner sets the position before add_child, so this is the
+	# final placement (see _id).
+	_id = id_at(global_position)
 
 	# MULTIPLAYER: a coin an incumbent already banked must not exist for a peer
 	# that joined mid-run. The MP manager holds the collected set replayed to us

@@ -8,7 +8,10 @@ extends SceneTree
 ## Everything here is an explicit `if` rather than an `assert` on purpose:
 ## asserts are stripped from release builds, and this file's whole value is that
 ## it keeps working when somebody runs it a year from now against a release
-## export. It touches no network, no WebRTC and no scene — only the pure parts.
+## export. It touches no network and no WebRTC — only the pure parts, plus two
+## scenes instanced into a throwaway node (the avatar's model and one coin),
+## because two of the contracts below live in `_ready()` and cannot be checked
+## without one.
 ##
 ## What it guards, and why each one is worth a check:
 ##
@@ -20,7 +23,8 @@ extends SceneTree
 ##      peers in one room walk different worlds.
 ##   4. The peer-id derivation — stable, ≥ 2, and collision-free over samples.
 ##   5. Coin identity — the id is a pure function of position, so two peers
-##      sharing a seed name the same coin the same thing.
+##      sharing a seed name the same coin the same thing; AND a live coin latches
+##      that id at spawn, so its bob (nearly a whole id cell) cannot rename it.
 ##   6. The join-snapshot parser against hostile payloads — the third trust
 ##      boundary, and the one that feeds the joiner's placement.
 ##   7. Backward compatibility: a phase-3 presence packet (no shared totals)
@@ -35,6 +39,11 @@ const Player: GDScript = preload("res://scripts/player_controller.gd")
 
 
 func _initialize() -> void:
+	# WAIT ONE FRAME FIRST. At `_initialize` the SceneTree's own root is not yet
+	# inside the tree, so a node added to it never gets `_ready()` and reports a
+	# zero `global_transform` — which would make the live-coin check below pass
+	# vacuously against a coin that was never actually spawned.
+	await process_frame
 	var failure: String = _run_checks()
 	if failure.is_empty():
 		print("SELFCHECK OK")
@@ -252,12 +261,32 @@ func _check_coin_ids() -> String:
 	if Coin.id_at(here + Vector3(0.0, 0.0, 1.0)) == id:
 		return "Coin.id_at collided across a metre in z"
 
-	# The same coin, jittered by less than a millimetre: this is the case that
-	# matters in practice, because the bob in _process moves a coin and two peers
-	# reach a given coin at different times. Sub-cell motion must NOT rename it.
+	# The same coin, jittered by less than a millimetre: sub-cell motion must NOT
+	# rename it.
 	for jitter in [Vector3(0.0004, -0.0004, 0.0004), Vector3(-0.0009, 0.0009, -0.0009)]:
 		if Coin.id_at(here + jitter) != id:
 			return "Coin.id_at renamed a coin over a %s jitter" % jitter
+
+	# THE BOB IS NOT SUB-CELL, and that is why a live coin must LATCH its id at
+	# spawn instead of recomputing it from global_position. `_process` swings the
+	# coin BOB_AMOUNT (0.12 m) about base_y — ±0.96 of a 12.5 cm cell — so an id
+	# read at collection time would name a different cell than the one read at
+	# spawn: the joiner asks `is_coin_collected()` about one id and the collector
+	# publishes another, and the replay misses on most pickups. Check the real
+	# node, not the pure function: the pure function is SUPPOSED to differ here.
+	if Coin.id_at(here) == Coin.id_at(here + Vector3(0.0, Coin.BOB_AMOUNT, 0.0)):
+		return "the bob no longer crosses an id cell — this check has stopped guarding anything"
+	var coin: Node3D = load("res://scenes/collectibles/coin.tscn").instantiate()
+	coin.position = here
+	root.add_child(coin)
+	var spawn_id: int = coin.coin_id()
+	coin.position.y = here.y + Coin.BOB_AMOUNT  # what _process does every frame
+	var bobbed_id: int = coin.coin_id()
+	coin.free()
+	if bobbed_id != spawn_id:
+		return "a bobbing coin renamed itself (%d -> %d) — coin_id must be latched at spawn" % [
+			spawn_id, bobbed_id
+		]
 	return ""
 
 

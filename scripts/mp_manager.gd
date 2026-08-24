@@ -548,11 +548,17 @@ func _setup_mesh() -> void:
 			continue
 		_add_peer(id, str((member as Dictionary).get("name", "")))
 
-	# Idempotent re-send. `_on_lobby_joined` already latched and published the
-	# seed, so this short-circuits through `_has_seed` to a plain re-broadcast —
-	# kept because a master RE-ELECTED while its own mesh was still building
-	# reaches this line without having passed the one above.
-	_broadcast_seed_if_master()
+	# Idempotent re-send, kept because a master RE-ELECTED while its own mesh was
+	# still building reaches this line without having passed the one above.
+	# GUARDED BY `_has_seed` FOR THE SAME REASON `_on_lobby_master_changed` is:
+	# without it, a peer promoted inside its own `/ice` window arrives here with
+	# no seed, falls through to `_broadcast_seed_if_master`'s read-the-terrain
+	# path and publishes its own PRIVATE solo world as the room's — which every
+	# peer already holding the real seed drops on `_receive_seed`'s latch,
+	# leaving the master alone on different ground while the UI reports success.
+	# The genuinely seedless room is covered from the other end, by `seed_req`.
+	if _has_seed:
+		_broadcast_seed_if_master()
 
 
 func _on_lobby_peer_joined(id: String, peer_name: String) -> void:
@@ -1142,6 +1148,16 @@ func _apply_join_placement() -> void:
 	if terrain != null and terrain.has_method("new_run") and terrain.has_method("world_to_chunk"):
 		terrain.new_run(_room_seed, terrain.world_to_chunk(anchor))
 
+	# WAIT ONE PHYSICS FRAME BEFORE PLACING. We are on an idle frame (this whole
+	# chain hangs off LobbyClient's `_process`), and `new_run()` has just freed
+	# the old chunks — deferred to the end of the frame — and added the new ones,
+	# neither of which the physics space knows about until it next steps. Placing
+	# now would run `join_at`'s ~32 clear-spot probes against the OLD run's
+	# geometry: every candidate judged on blocks that no longer exist, none on
+	# the blocks that now do, and the joiner dropped inside one of them.
+	# `_join_applied` was latched above, so nothing can re-enter across the await.
+	await get_tree().physics_frame
+
 	var player: Node = get_tree().get_first_node_in_group("player")
 	if player != null and player.has_method("join_at"):
 		player.join_at(anchor)
@@ -1237,11 +1253,9 @@ func _recent_collected_ids() -> Array:
 	rather than by age, which needs the anchor to be known before the send.
 	"""
 	var ids: Array = _collected_ids.keys()
-	var oldest_kept: int = maxi(0, ids.size() - MAX_STATE_IDS)
-	var recent: Array = []
-	for i: int in range(ids.size() - 1, oldest_kept - 1, -1):
-		recent.append(ids[i])
-	return recent
+	ids = ids.slice(maxi(0, ids.size() - MAX_STATE_IDS))  # keep the newest tail
+	ids.reverse()  # ... most recent first
+	return ids
 
 
 func _receive_state(from: String, snapshot: Dictionary) -> void:

@@ -246,6 +246,14 @@ var next_extra_life_at: int = EXTRA_LIFE_COINS
 var own_coins: int = 0
 var own_lives_spent: int = 0
 
+## This peer's OWN farthest displacement this run. Not a contribution the room
+## sums (distance is a max, and run_distance already latches the room's — see
+## _refresh_shared_totals); it exists because run_distance is OVERWRITTEN with
+## the room's max every tick, and the persisted personal records in
+## _trigger_game_over() must be this player's own run, not the furthest
+## teammate's. Solo the two numbers are identical.
+var own_distance: int = 0
+
 ## Headline score: how far this run has travelled, in metres — the farthest
 ## HORIZONTAL DISPLACEMENT from the (0,0) spawn point ever reached this run.
 ## (Originally this tracked farthest world X — the coin road's forward axis —
@@ -732,7 +740,9 @@ func _physics_process(delta: float) -> void:
 	# displacement from the spawn point reached this run (see run_distance above
 	# for why displacement, not raw X). Spawn is world (0,0) on the XZ plane, so
 	# the displacement is just the length of the horizontal position.
-	run_distance = maxi(run_distance, int(Vector2(global_position.x, global_position.z).length()))
+	var travelled: int = int(Vector2(global_position.x, global_position.z).length())
+	run_distance = maxi(run_distance, travelled)
+	own_distance = maxi(own_distance, travelled)
 
 	# STEP 0.42: In a multiplayer room the score fields the two HUDs read become
 	# the ROOM's, not this peer's. Done here, immediately after the local
@@ -1734,10 +1744,14 @@ func _trigger_game_over() -> void:
 	# "NEW BEST!" flash; the coin record updates on its own max independently
 	# (see the comment block above BEST_RUN_CONFIG_PATH). Only write the file
 	# when a record actually moved — no pointless disk/IndexedDB churn.
-	var is_new_best := run_distance > best_distance
-	if is_new_best or coins_collected > best_coins:
-		best_distance = maxi(best_distance, run_distance)
-		best_coins = maxi(best_coins, coins_collected)
+	# Records are read off own_distance / own_coins, NOT the displayed fields: in
+	# a room those are the ROOM's totals (see _refresh_shared_totals), so writing
+	# them here would persist the furthest teammate's distance and the whole
+	# room's bank as this player's personal best. Solo the pairs are identical.
+	var is_new_best := own_distance > best_distance
+	if is_new_best or own_coins > best_coins:
+		best_distance = maxi(best_distance, own_distance)
+		best_coins = maxi(best_coins, own_coins)
 		_save_best_run()
 
 	var panel := get_tree().get_first_node_in_group("game_over_ui")
@@ -1780,10 +1794,11 @@ func restart_game() -> void:
 	Everything resets: coins to 0, lives back to full, and the player is sent to
 	the origin spawn with the mouse recaptured.
 	"""
-	# Coins/distance/streak are wiped by reset_position() below — the one owner of
-	# the "hard reset" wipe list, so the two can never drift out of sync.
+	# Coins, distance, streak AND this peer's multiplayer contributions
+	# (own_coins / own_lives_spent / own_distance) are all wiped by
+	# reset_position() below — the one owner of the "hard reset" wipe list, so
+	# the two can never drift out of sync.
 	lives = MAX_LIVES
-	own_lives_spent = 0  # A fresh run owes the room nothing (own_coins: reset_position).
 	is_game_over = false
 	is_caught = false
 	is_respawning = false
@@ -1876,7 +1891,9 @@ func reset_position() -> void:
 	# extra-life progress that hangs off the coin count.
 	coins_collected = 0
 	own_coins = 0  # ... and this peer's share of a room's bank along with it.
+	own_lives_spent = 0  # ... and the lives it owes that room's shared hearts.
 	run_distance = 0
+	own_distance = 0
 	coin_streak = 0
 	streak_timer = 0.0
 	next_extra_life_at = EXTRA_LIFE_COINS
@@ -1986,6 +2003,17 @@ func join_at(anchor: Vector3) -> void:
 		camera_pivot.rotation = Vector3.ZERO  # Whole rotation, so roll can't survive
 	is_ducking = false
 	is_running = false
+
+	# This peer's SOLO tally is not the room's. own_coins would inflate the
+	# shared bank with coins banked in a different world, and own_lives_spent is
+	# worse — it is subtracted from the room's shared hearts, so joining after a
+	# couple of solo deaths would take those hearts off everybody. The displayed
+	# coins/distance are the room's from the next tick either way, so zeroing
+	# these two costs nothing visible. (It also makes a reconnect safe: the
+	# incumbents froze this peer's old contribution in _gone_coins/_gone_spent,
+	# and coming back at zero is what stops it being counted twice.)
+	own_coins = 0
+	own_lives_spent = 0
 
 	# A joiner must not be bitten on its first frame in somebody else's run.
 	clear_nearby_crocodiles(global_position)
