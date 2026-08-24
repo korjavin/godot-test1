@@ -265,26 +265,26 @@ isolation contract lives — lead the docstring with it.**
 is inert until `host()`/`join()` is called**, and `_process` early-returns while
 `_state == State.OFFLINE` — mirror `mobile_input.gd`'s "idle unless active" rule.
 
-- [ ] `@export var lobby_url: String = ""` (empty = use `LobbyClient.resolve_lobby_url`
+- [x] `@export var lobby_url: String = ""` (empty = use `LobbyClient.resolve_lobby_url`
       precedence) and `@export var display_name: String = ""` (empty = "player").
-- [ ] `host() -> void` / `join(code: String) -> void` / `leave() -> void`, plus
+- [x] `host() -> void` / `join(code: String) -> void` / `leave() -> void`, plus
       signals `room_changed(code: String, members: Array)` and
       `status(message: String)` for the UI. `host()` is `join("")`.
-- [ ] **WebRTC availability probe**, run before anything else on `host()`/`join()`:
+- [x] **WebRTC availability probe**, run before anything else on `host()`/`join()`:
       available when `OS.has_feature("web")`, else when
       `FileAccess.file_exists("res://addons/webrtc/webrtc.gdextension")`.
       Unavailable → emit `status("Multiplayer needs the WebRTC addon on desktop — see README")`
       and stay `OFFLINE`. **ponytail:** a file probe, because Godot exposes no API
       to ask whether a default WebRTC extension is registered; upgrade if one ever
       lands.
-- [ ] **Peer-id mapping.** `WebRTCMultiplayerPeer` needs `int` ids; the lobby
+- [x] **Peer-id mapping.** `WebRTCMultiplayerPeer` needs `int` ids; the lobby
       gives 16-hex-char strings. Map with a `static func peer_int_id(lobby_id: String) -> int`
       returning `("0x" + lobby_id.substr(0, 7)).hex_to_int() + 2` — 28 bits, always
       ≥ 2 so it can never collide with the MultiplayerPeer-reserved 0 and 1. Every
       peer derives every other peer's int id the same way, so the mesh agrees with
       no extra protocol. **ponytail:** birthday collision across 4 peers is ~2e-7;
       upgrade path is master-assigned ids over the relay if it ever matters.
-- [ ] **Mesh setup.** On `welcome`: fetch `/ice`, then
+- [x] **Mesh setup.** On `welcome`: fetch `/ice`, then
       `WebRTCMultiplayerPeer.new()` + `create_mesh(peer_int_id(you))`. For each
       already-present member other than yourself, and for each later `peer_join`,
       create a `WebRTCPeerConnection`, `initialize(ice_config)`, connect its
@@ -296,11 +296,11 @@ is inert until `host()`/`join()` is called**, and `_process` early-returns while
       leaving the global `MultiplayerAPI` untouched is what keeps solo play
       byte-for-byte unchanged and keeps RPC/replication out of the picture — this
       phase has no shared simulation to replicate.
-- [ ] **Glare-free offer rule**: the peer whose **lobby id string sorts lower**
+- [x] **Glare-free offer rule**: the peer whose **lobby id string sorts lower**
       creates the offer (`conn.create_offer()`); the other waits. Deterministic on
       both sides from data both already have, so no negotiation round-trip.
       Comment it.
-- [ ] **Signalling payloads** over the lobby relay, always addressed `to` the
+- [x] **Signalling payloads** over the lobby relay, always addressed `to` the
       specific peer:
       - `{"mp":"offer","sdp":<String>}`
       - `{"mp":"answer","sdp":<String>}`
@@ -312,7 +312,7 @@ is inert until `host()`/`join()` is called**, and `_process` early-returns while
       carrying the wrong type, is dropped with a warning, never trusted. Ignore
       any relay payload without an `"mp"` key (forward compatibility with later
       phases sharing the same relay).
-- [ ] **Seed distribution over the lobby relay, not the mesh** — it must work
+- [x] **Seed distribution over the lobby relay, not the mesh** — it must work
       before any data channel is open:
       - keep `_room_seed: int`;
       - if `welcome.master == welcome.you`, I am master: read the terrain's
@@ -329,7 +329,7 @@ is inert until `host()`/`join()` is called**, and `_process` early-returns while
         exactly — but the `int()` cast is mandatory, not cosmetic.
       - on `master_changed`, the new master keeps `_room_seed` and re-broadcasts
         it; it does **not** re-roll. (Phase 4 owns real mid-run state replay.)
-- [ ] **Presence send** on a `PRESENCE_HZ = 15.0` accumulator (not every frame).
+- [x] **Presence send** on a `PRESENCE_HZ = 15.0` accumulator (not every frame).
       Read the local player via the `"player"` group; build
       `{"p": Vector3, "y": float, "c": int, "s": float, "g": bool}` (position,
       body yaw, character index, horizontal speed, on-floor), then
@@ -337,7 +337,7 @@ is inert until `host()`/`join()` is called**, and `_process` early-returns while
       `set_target_peer(MultiplayerPeer.TARGET_PEER_BROADCAST)`,
       `put_packet(var_to_bytes(state))`. Skip the send entirely when no peer is
       connected.
-- [ ] **Presence receive** — the trust boundary, so validate hard:
+- [x] **Presence receive** — the trust boundary, so validate hard:
       drain packets in `_process`; for each, `get_packet_peer()` gives the sender's
       int id → look up its `RemoteAvatar`. Decode with **`bytes_to_var`, never
       `bytes_to_var_with_objects`** (which would let a peer instantiate objects in
@@ -346,12 +346,12 @@ is inert until `host()`/`join()` is called**, and `_process` early-returns while
       (`p` `TYPE_VECTOR3`, `y`/`s` numeric, `c` numeric, `g` `TYPE_BOOL`) before
       use; reject the packet otherwise. Clamp `c` into `CHARACTERS` range and
       guard `p` against non-finite components (`is_finite`).
-- [ ] **Avatar lifecycle**: create a `RemoteAvatar` on `peer_join` (and for every
+- [x] **Avatar lifecycle**: create a `RemoteAvatar` on `peer_join` (and for every
       member already in `welcome`), `add_child` it **to this manager**, and
       `queue_free` it on `peer_left`. `leave()` frees every avatar, closes every
       `WebRTCPeerConnection`, drops `_rtc`, disconnects the lobby and returns to
       `OFFLINE` — leaving no trace, so solo play resumes exactly as before.
-- [ ] `get_room_code()`, `get_members()`, `is_online()` for the UI; `_process`
+- [x] `get_room_code()`, `get_members()`, `is_online()` for the UI; `_process`
       early-return while `OFFLINE`.
 
 ### Task 5: `scripts/mp_ui.gd` — host / join panel
