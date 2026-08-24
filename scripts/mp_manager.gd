@@ -29,10 +29,11 @@ class_name MpManager
 ## WHAT IS DELIBERATELY NOT HERE (phase 3 scope)
 ## ----------------------------------------------------------------------------
 ## No shared crocodiles, no shared coins (each peer collects its own), no mid-run
-## state replay (a joiner restarts at spawn in the shared world), no hero-split
-## enforcement and no stall detection — the lobby's `hero` and `stalled` messages
-## are left unused on purpose. Crocodiles, coins, weather and fauna stay fully
-## local per peer and ignore remote players entirely.
+## state replay (a joiner restarts at spawn in the shared world) and no stall
+## detection — the lobby's `stalled` message is left unused on purpose.
+## Crocodiles, coins, weather and fauna stay fully local per peer and ignore
+## remote players entirely. The hero split IS implemented: see the HERO POOL
+## section, where the lobby is the source of truth.
 
 # =============================================================================
 # CONFIGURATION
@@ -63,6 +64,14 @@ const MAX_BUFFERED_SIGNALS: int = 64
 ## garbage, not to police where a peer may stand. See `decode_presence()`.
 const MAX_PRESENCE_COORD: float = 1.0e7
 const MAX_PRESENCE_SPEED: float = 1.0e4
+
+## The lobby errors that must NOT end the session. `server/room.go` answers a
+## refused hero claim with a plain `error` frame on a socket it deliberately
+## keeps OPEN (`errUnknownHero` / `errHeroTaken`), and two peers reaching for the
+## same hero at the same moment is an ordinary event — the blanket `leave()`
+## every other error takes would drop BOTH of them out of a perfectly good room.
+## Matched by exact string, because the string is all the frame carries.
+const HERO_ERRORS: PackedStringArray = ["unknown hero", "hero already taken"]
 
 ## Where the desktop WebRTC GDExtension lives when a developer has installed it.
 ## See README — the browser build needs nothing, desktop needs this addon.
@@ -97,6 +106,12 @@ signal room_changed(code: String, members: Array)
 ## Human-readable one-liner for the UI's status line. Every failure path emits
 ## one of these rather than crashing or leaving a half-torn-down mesh.
 signal status(message: String)
+
+## The room's hero assignments changed: `heroes` maps hero name → holder peer id,
+## `pool` is every hero the lobby offers. A straight re-emit of `LobbyClient`'s
+## signal of the same name, so the UI only ever talks to the manager — the same
+## shape, and the same reason, as `room_changed`.
+signal heroes_changed(heroes: Dictionary, pool: Array)
 
 # =============================================================================
 # STATE
@@ -140,6 +155,15 @@ var _requested_code: String = ""
 ## `0` is a legitimate seed value, hence the separate flag rather than a sentinel.
 var _room_seed: int = 0
 var _has_seed: bool = false
+
+## THE LOBBY IS THE SOURCE OF TRUTH FOR HEROES. `_heroes` maps hero name → the
+## lobby id holding it, `_pool` is every hero the lobby offers. Both are replaced
+## wholesale by each `heroes` broadcast and are never edited locally: a claim
+## changes this peer's body only once the lobby confirms it, which is what makes
+## two peers racing for the same hero impossible to get wrong. The lobby also
+## releases a departing member's hero itself, so this client must never do that.
+var _heroes: Dictionary = {}
+var _pool: Array[String] = []
 
 ## The `/ice` payload, fetched once per join and reused for every connection.
 var _ice: Dictionary = {}
@@ -240,6 +264,7 @@ func join(code: String) -> void:
 		_lobby.peer_left.connect(_on_lobby_peer_left)
 		_lobby.master_changed.connect(_on_lobby_master_changed)
 		_lobby.relay.connect(_on_lobby_relay)
+		_lobby.heroes_changed.connect(_on_lobby_heroes)
 		_lobby.lobby_error.connect(_on_lobby_error)
 		_lobby.closed.connect(_on_lobby_closed)
 
@@ -285,6 +310,8 @@ func leave() -> void:
 	_master = ""
 	_members = []
 	_requested_code = ""
+	_heroes = {}
+	_pool = []
 	_ice = {}
 	_send_accum = 0.0
 	# `_room_seed` is deliberately kept: leaving a room does not regenerate the
@@ -297,6 +324,7 @@ func leave() -> void:
 	_has_seed = false
 	set_process(false)
 	room_changed.emit("", [])
+	heroes_changed.emit({}, [])
 
 
 func get_room_code() -> String:
@@ -481,7 +509,18 @@ func _on_lobby_master_changed(id: String) -> void:
 
 
 func _on_lobby_error(message: String) -> void:
-	"""Bad room code, room full, malformed frame — all of them end the attempt."""
+	"""
+	Bad room code, room full, malformed frame — all of them end the attempt.
+
+	**Except a refused hero claim.** The lobby keeps the socket open for those and
+	its last `heroes` broadcast is still the truth, so we report it, re-publish
+	that truth (which snaps the UI's hero row back off the button the player
+	optimistically pressed) and stay in the room. See HERO_ERRORS.
+	"""
+	if HERO_ERRORS.has(message):
+		status.emit("Hero: %s" % message)
+		heroes_changed.emit(_heroes, _pool)
+		return
 	status.emit("Lobby: %s" % message)
 	leave()
 
@@ -495,6 +534,179 @@ func _on_lobby_closed(code: int, reason: String) -> void:
 		return
 	status.emit("Disconnected from the lobby (%d %s)" % [code, reason])
 	leave()
+
+
+# =============================================================================
+# HERO POOL — who is playing which body, decided by the lobby
+# =============================================================================
+#
+# The lobby already owns this: `server/room.go` holds one hero per member, hands
+# the assignments out in `welcome` (with the full `pool`) and broadcasts a
+# `heroes` frame on every claim, release and departure. So there is no election
+# and no arbitration here — this side asks, applies what comes back, and offers
+# the result to the UI. Everything is derived BY NAME, never by index, so a
+# reorder of the lobby's `Heroes` slice or of `CHARACTERS` cannot silently swap
+# two players' bodies.
+
+func my_hero() -> String:
+	"""The hero this peer holds, or "" when offline or holding none."""
+	if _state != State.IN_ROOM:
+		return ""
+	for hero: String in _heroes:
+		if str(_heroes[hero]) == _you:
+			return hero
+	return ""
+
+
+func hero_holder(hero: String) -> String:
+	"""The lobby id holding `hero`, or "" if nobody does."""
+	if _state != State.IN_ROOM:
+		return ""
+	return str(_heroes.get(hero, ""))
+
+
+func available_heroes() -> Array[String]:
+	"""
+	Every hero this peer may press: the unclaimed ones, plus the one we already
+	hold — re-picking what you have is a no-op, not a refusal. Empty when offline.
+	"""
+	var free: Array[String] = []
+	if _state != State.IN_ROOM:
+		return free
+	var mine: String = my_hero()
+	for hero: String in _pool:
+		if hero == mine or hero_holder(hero).is_empty():
+			free.append(hero)
+	return free
+
+
+func claim_hero(hero: String) -> void:
+	"""
+	Ask the lobby for `hero` (`""` releases the one we hold).
+
+	**Nothing changes locally here.** The body only moves when the lobby's
+	`heroes` broadcast confirms the claim, so two peers pressing the same button
+	in the same frame can never both end up in the same body — one is refused, and
+	a refusal is a status line rather than a disconnect (see HERO_ERRORS).
+	"""
+	if _state != State.IN_ROOM or _lobby == null:
+		return
+	_lobby.send_hero(hero)
+
+
+func my_character_indices() -> Variant:
+	"""
+	Which `CHARACTERS` entries this peer may embody, or `null` meaning "all of
+	them" — the solo semantics, which is also what an offline peer and a peer
+	holding no hero get. `player_controller.switch_to_next_character()` therefore
+	keeps its existing behaviour behind a single `== null` test.
+
+	The lobby holds at most one hero per member, so in practice this is a
+	singleton and the E-cycle degenerates to a no-op; the set form costs nothing
+	and needs no special case if that ever changes.
+	"""
+	if _state != State.IN_ROOM:
+		return null
+	var indices: Array[int] = []
+	for hero: String in _heroes:
+		if str(_heroes[hero]) != _you:
+			continue
+		var index: int = hero_index(hero)
+		if index >= 0:
+			indices.append(index)
+	# Holding nothing — or only heroes this build has no character for — means
+	# UNRESTRICTED, not frozen: locking E against an empty set would be a worse
+	# answer than solo behaviour to a state that is normally momentary (the gap
+	# between `welcome` and our auto-claim being confirmed).
+	if indices.is_empty():
+		return null
+	return indices
+
+
+static func hero_index(hero: String) -> int:
+	"""
+	The `player_controller.CHARACTERS` index of a hero name, or -1 if this build
+	has no such character. Static and pure so scripts/mp_selfcheck.gd can pin it.
+	"""
+	var characters: Array = RemoteAvatar.PLAYER_SCRIPT.CHARACTERS
+	for i: int in range(characters.size()):
+		if str((characters[i] as Dictionary).get("name", "")) == hero:
+			return i
+	return -1
+
+
+func _on_lobby_heroes(heroes: Dictionary, pool: Array) -> void:
+	"""
+	The lobby published the room's hero assignments — from `welcome`, or from any
+	later claim, release or departure (the lobby releases a leaver's hero itself,
+	which is why nothing here does).
+	"""
+	if _state != State.IN_ROOM:
+		return
+
+	# The lobby is our own server, but this is still parsed JSON: keep both sides
+	# of the mapping strings so `hero_holder()` can never hand back a float.
+	_heroes = {}
+	for hero: Variant in heroes:
+		_heroes[str(hero)] = str(heroes[hero])
+	_pool = []
+	for hero: Variant in pool:
+		_pool.append(str(hero))
+
+	heroes_changed.emit(_heroes, _pool)
+	_apply_my_hero()
+	_auto_claim_hero()
+
+
+func _apply_my_hero() -> void:
+	"""
+	Put the local player in the body the lobby says we hold.
+
+	**Routed through `set_active_character()`, never by poking
+	`current_character_index`.** That setter is what frees the old model,
+	instances the new one, clears Teibi's resize state, re-runs `_apply_view_mode()`
+	and restores the rest pose — writing the index alone leaves the player wearing
+	the wrong body with the right number.
+	"""
+	var hero: String = my_hero()
+	if hero.is_empty():
+		return
+	var index: int = hero_index(hero)
+	if index < 0:
+		return  # A hero the lobby offers that this build has no character for.
+	var player: Node = get_tree().get_first_node_in_group("player")
+	if player == null or not player.has_method("set_active_character"):
+		return
+	if "current_character_index" in player and int(player.get("current_character_index")) == index:
+		return
+	player.set_active_character(index)
+
+
+func _auto_claim_hero() -> void:
+	"""
+	Claim a hero as soon as the pool is known, so nobody has to open the panel to
+	end up a distinct character. Preference is the body the player is already in;
+	if somebody else holds it, take the first hero nobody holds.
+
+	AT MOST ONE CLAIM PER `heroes` FRAME, and never a loop: the lobby answers a
+	claim with another `heroes` broadcast, so retrying in place would be a claim
+	storm. Losing the race just means the next broadcast lands us on the next free
+	hero.
+	"""
+	if not my_hero().is_empty():
+		return
+	var free: Array[String] = available_heroes()
+	if free.is_empty():
+		return  # 4 heroes, 4-member cap — only reachable if the pool arrived empty.
+
+	var wanted: String = ""
+	var player: Node = get_tree().get_first_node_in_group("player")
+	if player != null and "current_character_index" in player:
+		var index: int = int(player.get("current_character_index"))
+		var characters: Array = RemoteAvatar.PLAYER_SCRIPT.CHARACTERS
+		if index >= 0 and index < characters.size():
+			wanted = str((characters[index] as Dictionary).get("name", ""))
+	claim_hero(wanted if free.has(wanted) else free[0])
 
 
 # =============================================================================

@@ -233,11 +233,11 @@ spent.
 
 ### Task 4: `mp_manager.gd` — hero pool
 
-- [ ] state: `_heroes: Dictionary` (hero name → peer id), `_pool: Array[String]`,
+- [x] state: `_heroes: Dictionary` (hero name → peer id), `_pool: Array[String]`,
       wired from `LobbyClient.heroes_changed`. Cleared by `leave()`.
-- [ ] `signal heroes_changed(heroes: Dictionary, pool: Array)` re-emitted for
+- [x] `signal heroes_changed(heroes: Dictionary, pool: Array)` re-emitted for
       `mp_ui.gd` (the only listener), same shape as `room_changed`.
-- [ ] public API, all null-returning/empty when offline so callers stay trivial:
+- [x] public API, all null-returning/empty when offline so callers stay trivial:
       - `available_heroes() -> Array[String]` — pool entries with no holder, plus
         our own current hero (a player may always re-pick what it already holds).
       - `my_hero() -> String` — the hero this peer holds, `""` if none.
@@ -248,14 +248,14 @@ spent.
       - `my_character_indices() -> Variant` — `null` when offline or when no hero
         is held (solo semantics: every character allowed), otherwise an
         `Array[int]` of `CHARACTERS` indices this peer may use. Derived **by name**.
-- [ ] on `welcome`/`heroes`: if we hold a hero whose index differs from the
+- [x] on `welcome`/`heroes`: if we hold a hero whose index differs from the
       player's `current_character_index`, call `player.set_active_character(idx)`
       through the `"player"` group with a `has_method` guard. **Never** poke
       `current_character_index` directly (the bead's landmine).
-- [ ] **auto-claim on join**: once `_heroes` is known, if we hold nothing, claim
+- [x] **auto-claim on join**: once `_heroes` is known, if we hold nothing, claim
       the player's current character when it is unclaimed, else the first
       available hero. One claim attempt per `heroes` frame at most — do not loop.
-- [ ] `_on_lobby_error`: hero rejections (`"unknown hero"`, `"hero already
+- [x] `_on_lobby_error`: hero rejections (`"unknown hero"`, `"hero already
       taken"`) emit a status line and **return**; everything else keeps today's
       `leave()`. See the ⚠️ LANDMINE above.
 
