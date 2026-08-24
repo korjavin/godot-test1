@@ -2,19 +2,40 @@ extends Node
 ## Ambient migrating fauna: elephant families and giraffe flocks.
 ##
 ## From time to time a herd of migrating animals walks across the landscape in
-## the distance — PURE SCENERY, nothing else. The animals never react to the
-## player, the crocodiles, or any special ability; they have no collision
-## bodies, no Area3Ds, no per-animal scripts, and they belong to NO gameplay
-## group (see below for why that matters). They enter at the edge of a
-## ~FIELD_RADIUS circle around the player, walk a straight-ish migration line
-## at a calm 2–3 m/s, and are freed once past DESPAWN_RADIUS.
+## the distance — near enough to PURE SCENERY: the animals never react to the
+## player, the crocodiles, or any special ability; they have no Area3Ds, no
+## per-animal scripts, and they belong to NO gameplay group (see below for why
+## that matters). They enter at the edge of a ~FIELD_RADIUS circle around the
+## player, walk a straight-ish migration line at a calm 2–3 m/s, and are freed
+## once past DESPAWN_RADIUS.
+##
+## RIDEABLE FAUNA — the ONE clause loosened in the isolation contract.
+## The four-legged animals (elephant, giraffe, pack beast) each carry ONE box
+## collider so the player can jump onto their back and be carried along like a
+## moving platform: walking off IS the dismount, there is no mount state, no
+## camera change and no input handling anywhere. Everything else about the
+## isolation contract stands unchanged — fauna is still in no group, still
+## invisible to the stink wave, the LOD manager and the danger vignette, and
+## still reacts to nothing. The isolation is enforced by the PHYSICS LAYER, not
+## by absence: see FAUNA_COLLISION_LAYER for why crocodiles still walk straight
+## through a camel. HERDERS stay walk-through — there is nothing to stand on top
+## of a person, and a walking human pillar that blocks the player adds nothing.
+##
+## Multiplayer note (cross-ref godot-test1-s86.3): a player standing on a camel
+## is just a player transform, which peer presence already carries — no sync work
+## here. But fauna is local and non-deterministic, so a remote peer does NOT see
+## the camel and a ridden avatar appears to glide ~2 m above the ground on their
+## screen. Known, accepted cosmetic artifact; do not design around it.
 ##
 ## This node (named FaunaManager, added once under Main in main.tscn, in group
 ## "fauna") is the ENTIRE feature — sibling in spirit to
 ## crocodile_lod_manager.gd and sound_manager.gd: a single self-contained
 ## manager that owns its own entities, builds their meshes fully in code (no
 ## asset files), and drives all of their movement and animation from one
-## _process. It holds no hard references to any other system; the player is
+## _physics_process (physics, not idle: the platform velocity a rider inherits
+## is computed from the collider's per-PHYSICS-step transform delta, so moving
+## the animals on the render frame would hand riders garbage — see
+## _make_rideable_root). It holds no hard references to any other system; the player is
 ## found through the "player" group like everything else in this codebase.
 ##
 ## The perf story is deliberately boring:
@@ -81,6 +102,18 @@ const DESPAWN_RADIUS: float = 150.0
 ## longest legitimate one — FIELD_RADIUS + DESPAWN_RADIUS = 290 m at the slowest
 ## 2 m/s ≈ 145 s — so 240 s never truncates a real crossing.
 const MAX_HERD_LIFETIME: float = 240.0
+
+## Physics layer the rideable quadruped bodies live on: layer 3 (bit value 4).
+##
+## THE LAYER CHOICE IS THE WHOLE ISOLATION MECHANISM, so it is not free to
+## change. The player's CharacterBody3D masks layers 1 and 3 (scenes/player.tscn,
+## collision_mask = 5), so it — and ONLY it — collides with fauna. Crocodiles are
+## layer 2 / mask 3 (layers 1 and 2, see piglet_crocodile.tscn), so they never
+## see layer 3: a croc still walks straight through a camel, its obstacle
+## avoidance never fires on one, and its physics are byte-for-byte what they were
+## before fauna had colliders. Putting fauna on layer 1 would silently undo all
+## of that, because the croc mask includes layer 1.
+const FAUNA_COLLISION_LAYER: int = 4
 
 ## Lateral offset (metres) of the migration line from the player, so a herd
 ## walks PAST them rather than THROUGH them. Without it the line is aimed
@@ -534,6 +567,62 @@ static func _make_box_part(part_name: String, size: Vector3, local_pos: Vector3,
 	return part
 
 
+static func _make_rideable_root(root_name: String, barrel_size: Vector3,
+		bottom_y: float, top_y: float) -> AnimatableBody3D:
+	## Build the ROOT node of a rideable quadruped: an AnimatableBody3D carrying
+	## ONE box collider around the animal's barrel, so the player can jump on and
+	## be carried like a moving platform (see the RIDEABLE FAUNA contract at the
+	## head of this file).
+	##
+	## WHY THE ROOT ITSELF IS THE BODY, and not a body parented under a plain
+	## Node3D root: an AnimatableBody3D only pushes a new transform to the
+	## physics server when its OWN transform changes. _update_herd moves the
+	## ROOT, so a body hanging underneath never sees a local transform change —
+	## measured headlessly, its collider stays pinned at the spawn point while
+	## the visual walks away, and a player "standing" on it is standing on a
+	## phantom 12 m behind the animal with platform_velocity (0,0,0). With the
+	## root as the body the same write reaches physics: measured 12.077 m of
+	## beast travel against 12.077 m of player travel, platform velocity matching
+	## the herd speed. Do NOT demote this back to a child body.
+	##
+	## The collider sits on the ROOT, never on "Body": Body bobs BODY_BOB_AMOUNT
+	## every footfall (see _animate_animals), and a collider riding that would
+	## shove the rider up and down a few centimetres at stride rate. The root
+	## holds a still, flat deck at the animal's real back height.
+	##
+	## Layer 3 / mask 0 is the whole isolation story — see the contract at the
+	## head of the file for why it must not be layer 1.
+	var root := AnimatableBody3D.new()
+	root.name = root_name
+	# sync_to_physics MUST STAY OFF, and this is the second trap in a row.
+	# It is the property every moving-platform tutorial turns ON, but it means
+	# "physics drives this node": on every local-transform write the node is
+	# immediately snapped BACK to the last transform the physics server
+	# confirmed. _update_herd moves an animal with `root.position =
+	# root.position.lerp(target, w)` — a read of its own position — so the snap
+	# pins the read at the spawn transform and the animal never moves at all.
+	# Measured with it on: 16.6 m of herd travel, 0.00 m of animal travel, and a
+	# read-back immediately after writing position.x = -99 returned 0.0.
+	# With it off the writes stick, and a rider is carried just the same:
+	# Godot derives an AnimatableBody3D's platform velocity from its transform
+	# delta across one PHYSICS step either way. Measured with it off: 12.077 m of
+	# beast travel against 12.077 m of player travel, platform velocity
+	# -2.4996 m/s against a herd speed of 2.5. Nothing is lost by teleporting
+	# rather than sweeping at these speeds — 2–3 m/s is ~4 cm per step.
+	root.sync_to_physics = false
+	root.collision_layer = FAUNA_COLLISION_LAYER
+	root.collision_mask = 0
+
+	var shape := BoxShape3D.new()
+	shape.size = Vector3(barrel_size.x, top_y - bottom_y, barrel_size.z)
+	var collider := CollisionShape3D.new()
+	collider.name = "PlatformShape"
+	collider.shape = shape
+	collider.position = Vector3(0.0, (bottom_y + top_y) * 0.5, 0.0)
+	root.add_child(collider)
+	return root
+
+
 static func _make_leg(leg_name: String, hip_pos: Vector3, leg_size: Vector3,
 		material: StandardMaterial3D, casts_shadow: bool) -> Node3D:
 	## One leg = a bare pivot Node3D AT HIP HEIGHT with the visible box hung
@@ -568,14 +657,18 @@ func _build_elephant(is_adult: bool) -> Dictionary:
 	# fidelity headroom for the adults (whose shadows sell the size contrast).
 	var body_shadows := is_adult
 
-	var root := Node3D.new()
-	root.name = "Elephant"
+	# Barrel: bottom rests on the leg tops, so its centre is hip + half height.
+	var body_center_y := ELEPHANT_LEG_SIZE.y + ELEPHANT_BODY_SIZE.y * 0.5
+
+	# The root is the ride platform (see _make_rideable_root): one box around
+	# the barrel, from the leg tops to the elephant's back at 2.6 m — under the
+	# player's 3.61 m jump apex, so the back is reachable from flat ground.
+	var root := _make_rideable_root("Elephant", ELEPHANT_BODY_SIZE,
+			ELEPHANT_LEG_SIZE.y, body_center_y + ELEPHANT_BODY_SIZE.y * 0.5)
 	var body := Node3D.new()
 	body.name = "Body"
 	root.add_child(body)
 
-	# Barrel: bottom rests on the leg tops, so its centre is hip + half height.
-	var body_center_y := ELEPHANT_LEG_SIZE.y + ELEPHANT_BODY_SIZE.y * 0.5
 	body.add_child(_make_box_part("BodyBox", ELEPHANT_BODY_SIZE,
 			Vector3(0.0, body_center_y, 0.0), mat, body_shadows))
 
@@ -665,14 +758,19 @@ func _build_giraffe() -> Dictionary:
 	## — the record simply carries null/empty for the other species' extra.
 	var mat := _get_giraffe_material()
 
-	var root := Node3D.new()
-	root.name = "Giraffe"
+	# Torso: rests on the long leg columns, so its centre is hip + half height.
+	var body_center_y := GIRAFFE_LEG_SIZE.y + GIRAFFE_BODY_SIZE.y * 0.5
+
+	# Ride platform on the root (see _make_rideable_root): the TORSO only — the
+	# neck is animated and is not somewhere to stand. Its back is the tallest
+	# rideable surface in the feature at 3.0 m, still under the player's 3.61 m
+	# jump apex, so a giraffe stays mountable from flat ground.
+	var root := _make_rideable_root("Giraffe", GIRAFFE_BODY_SIZE,
+			GIRAFFE_LEG_SIZE.y, body_center_y + GIRAFFE_BODY_SIZE.y * 0.5)
 	var body := Node3D.new()
 	body.name = "Body"
 	root.add_child(body)
 
-	# Torso: rests on the long leg columns, so its centre is hip + half height.
-	var body_center_y := GIRAFFE_LEG_SIZE.y + GIRAFFE_BODY_SIZE.y * 0.5
 	body.add_child(_make_box_part("BodyBox", GIRAFFE_BODY_SIZE,
 			Vector3(0.0, body_center_y, 0.0), mat, true))
 
@@ -760,6 +858,12 @@ func _build_herder() -> Dictionary:
 	## stride a biped wants. (The quadruped order is FL/FR/RL/RR, so index 0/1
 	## being the left/right pair is not a coincidence to preserve here, it is
 	## the same convention: even index = left, odd = right.)
+	##
+	## A herder is the ONE member that stays fully walk-through: a plain Node3D
+	## root with no collider, unlike the three rideable quadrupeds (see
+	## _make_rideable_root). There is nothing to stand on atop a person, and a
+	## solid walking human that blocks or shoves the player buys nothing. Adding
+	## one later is a single _make_rideable_root call if that ever changes.
 	var mat := _get_cloak_material()
 
 	var root := Node3D.new()
@@ -819,14 +923,20 @@ func _build_pack_beast() -> Dictionary:
 	## the same parent-swings-the-chain structure as the elephant's trunk.
 	var mat := _get_wool_material()
 
-	var root := Node3D.new()
-	root.name = "PackBeast"
+	# Barrel: bottom rests on the leg tops, so its centre is hip + half height.
+	var body_center_y := BEAST_LEG_SIZE.y + BEAST_BODY_SIZE.y * 0.5
+
+	# Ride platform on the root (see _make_rideable_root). The deck reaches the
+	# BUNDLE tops, not the barrel's: the cargo is what a rider actually stands
+	# on, and a collider stopping at the barrel would leave the player floating
+	# inside the bundles. The height is independent of how many bundles get
+	# rolled below — they share one top face (see bundle_y).
+	var root := _make_rideable_root("PackBeast", BEAST_BODY_SIZE, BEAST_LEG_SIZE.y,
+			body_center_y + BEAST_BODY_SIZE.y * 0.5 + BEAST_BUNDLE_SIZE.y - 0.05)
 	var body := Node3D.new()
 	body.name = "Body"
 	root.add_child(body)
 
-	# Barrel: bottom rests on the leg tops, so its centre is hip + half height.
-	var body_center_y := BEAST_LEG_SIZE.y + BEAST_BODY_SIZE.y * 0.5
 	body.add_child(_make_box_part("BodyBox", BEAST_BODY_SIZE,
 			Vector3(0.0, body_center_y, 0.0), mat, true))
 
@@ -920,10 +1030,19 @@ func _ready() -> void:
 	_event_timer = _rng.randf_range(FIRST_EVENT_DELAY_MIN, FIRST_EVENT_DELAY_MAX)
 
 
-func _process(delta: float) -> void:
+func _physics_process(delta: float) -> void:
 	## The whole per-frame driver. With a herd alive it advances and animates
 	## it; with none alive the ENTIRE cost of this feature is the one float
 	## subtraction and compare below — that's the idle perf story.
+	##
+	## PHYSICS frame, not idle, and that is load-bearing: the animals' roots are
+	## AnimatableBody3Ds (see _make_rideable_root), and Godot derives the platform
+	## velocity a rider inherits from the body's transform delta ACROSS ONE
+	## PHYSICS STEP. Driving them from _process would mean several render frames
+	## per physics step (or none), so the delta the rider inherits would be a
+	## render-clock artifact rather than the herd's speed. 60 Hz costs nothing
+	## here either — a stride is ~0.6 Hz, so the weather manager's birds-alias
+	## argument (which justified per-frame updates there) simply does not apply.
 	if not _animals.is_empty():
 		_update_herd(delta)
 		return
@@ -1069,11 +1188,14 @@ func _spawn_caravan() -> void:
 	## a caravan is just N records of the same species-agnostic shape.
 	##
 	## ISOLATION CONTRACT (identical to the two herds, and non-negotiable):
-	## caravan members join NO group and carry NO collision. Phoboman's Stink
-	## Wave iterates "crocodile" and crocodile_lod_manager.gd iterates it too, so
-	## a fauna node in any enemy group would be grabbed by both. They ignore the
-	## player, crocodiles, abilities and rain completely, and nothing can touch
-	## them back — they are scenery that happens to walk.
+	## caravan members join NO group. Phoboman's Stink Wave iterates "crocodile"
+	## and crocodile_lod_manager.gd iterates it too, so a fauna node in any enemy
+	## group would be grabbed by both. They ignore the player, crocodiles,
+	## abilities and rain completely — they are scenery that happens to walk.
+	## The pack beasts DO carry a rideable collider on layer 3 (see
+	## _make_rideable_root), which is the single loosened clause: the player can
+	## stand on one, and nothing else in the game can touch them. The herders
+	## carry no collider at all.
 	##
 	## ponytail: a caravan does NOT path to or from a nomad camp — the two
 	## halves of the feature are thematically linked and mechanically
@@ -1126,6 +1248,30 @@ func _add_animal(record: Dictionary, offset: Vector3) -> void:
 	_herd_offset_max = maxf(_herd_offset_max, offset.length())
 
 
+func _player_is_riding(player: Node3D) -> bool:
+	## True while the player is in contact with one of THIS herd's animals —
+	## the guard that stops MAX_HERD_LIFETIME dropping a rider (see _update_herd).
+	##
+	## The test is the player's own slide collisions from its last
+	## move_and_slide, matched against the animal roots (which ARE the collision
+	## bodies — see _make_rideable_root), so the manager needs no reference to
+	## the player's internals and no second bookkeeping list. Standing on a beast
+	## is a floor contact, so it always shows up here.
+	##
+	## Called only on the tick the cap would otherwise fire, so its cost is a
+	## handful of comparisons once per frame after four minutes, not per frame.
+	## has_method keeps it null-safe for a non-CharacterBody3D player (a bare
+	## scene run standalone), matching the defensive style of _find_player.
+	if not player.has_method("get_slide_collision_count"):
+		return false
+	for i: int in player.get_slide_collision_count():
+		var collider: Object = player.get_slide_collision(i).get_collider()
+		for animal: Dictionary in _animals:
+			if animal["root"] == collider:
+				return true
+	return false
+
+
 func _update_herd(delta: float) -> void:
 	## Advance the shared herd centre along the migration line, ease every
 	## member toward its formation slot, and despawn once the crossing is
@@ -1133,10 +1279,12 @@ func _update_herd(delta: float) -> void:
 	## at world y = 0 (see endless_terrain.gd), so there is no raycast and no
 	## terrain query anywhere in fauna.
 	##
-	## ponytail: walk-through is the accepted ceiling — no collision bodies
-	## and no obstacle avoidance, so a herd may clip a decorative block on its
-	## way past; capsule bodies + a cheap forward raycast nudge are the
-	## upgrade path if it ever reads badly in play.
+	## ponytail: walking through SCENERY is still the accepted ceiling — the
+	## animals' bodies mask nothing (see FAUNA_COLLISION_LAYER), so a herd may
+	## clip a decorative block on its way past; a cheap forward raycast nudge is
+	## the upgrade path if it ever reads badly in play. The rideable colliders
+	## added for the player deliberately did NOT change this: giving fauna a mask
+	## would make herds shove each other and stall against terrain.
 	var player := _find_player()
 	# Despawn when the crossing is over: the herd centre is measured against
 	# the LIVE player position each tick, so "the herd walked past" and "the
@@ -1146,7 +1294,13 @@ func _update_herd(delta: float) -> void:
 	# against a MOVING player, so a player travelling with the herd at the herd's
 	# own speed keeps it in range forever and the feature stalls for good (see
 	# MAX_HERD_LIFETIME).
-	if player == null or _herd_age + delta > MAX_HERD_LIFETIME:
+	# The lifetime cap is DEFERRED, never skipped, while the player is standing
+	# on one of this herd's animals. Riding is precisely the "player pins the
+	# herd alive" case the cap was written for, so it is exactly the case that
+	# trips it — and firing it would free the whole herd out from under the
+	# player's feet mid-stride, dropping them ~2 m. Re-tested every tick, so the
+	# cap resumes the instant they step off and the herd despawns normally.
+	if player == null or (_herd_age + delta > MAX_HERD_LIFETIME and not _player_is_riding(player)):
 		_despawn_herd()
 		return
 
