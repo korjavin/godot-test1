@@ -906,7 +906,11 @@ static func decode_presence(bytes: PackedByteArray) -> Dictionary:
 		return {}
 	var yaw: float = float(state["y"])
 	var speed: float = float(state["s"])
-	if not (is_finite(yaw) and is_finite(speed)):
+	# `c` is folded into the SAME gate rather than trusted up to its range check:
+	# `_is_number` accepts a float, and `int(NAN)` is undefined — on wasm the
+	# float→int trunc can trap the module outright, so one hostile packet would
+	# take the tab down before `char_index < 0` ever ran.
+	if not (is_finite(yaw) and is_finite(speed) and is_finite(float(state["c"]))):
 		return {}
 
 	# `y` LATCHES TOO, and wrapping is the whole fix: an angle has no natural

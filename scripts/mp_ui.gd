@@ -491,11 +491,6 @@ func _set_panel_open(open: bool) -> void:
 		# its own ScrollContainer (which scrolls its CONTENT, not its frame).
 		var view_height: float = get_viewport().get_visible_rect().size.y
 		_panel_body.offset_top = maxf(_panel_body.offset_bottom - PANEL_HEIGHT, -view_height + EDGE_MARGIN)
-		# Free a captured mouse so the buttons can be clicked. Only remember the
-		# handover when WE did it — see the header comment.
-		if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
-			Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
-			_recapture_mouse = true
 		_refresh()
 	elif _recapture_mouse:
 		# Closing is a user gesture, which is exactly what browser pointer-lock
@@ -531,6 +526,17 @@ func _apply_pause(open: bool) -> void:
 		if not tree.paused:
 			tree.paused = true
 			_paused_by_us = true
+			# Free a captured mouse so the buttons can be clicked. This lives HERE
+			# and not in `_set_panel_open` because the pause is taken lazily: open
+			# the panel over Game Over (exempt, mouse already free), then hit Play
+			# Again — `restart_game()` re-captures the mouse and the NEXT frame this
+			# function finally pauses. Releasing only at open time left that path
+			# paused with a captured cursor pinned to screen centre and every escape
+			# hatch dead (ESC/P/`ui_accept` all run on PAUSABLE nodes) — a softlock.
+			# Only remember the handover when WE did it — see the header comment.
+			if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
+				Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+				_recapture_mouse = true
 	elif _paused_by_us:
 		# Only ever release OUR pause — `pause_controller` and `mobile_input`
 		# carry the mirror-image guard so neither can cancel the other's.
