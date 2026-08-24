@@ -4,6 +4,11 @@
 # Traefik terminates TLS and proxies the websocket, so clients reach the lobby at
 # wss://${LOBBY_HOST}/ws. No special Traefik configuration is needed for the
 # upgrade — it forwards Connection/Upgrade headers by default.
+#
+# One host, two containers: the game client owns `/` and the lobby keeps only its
+# three endpoints. Traefik picks the most specific rule by priority (higher wins),
+# so the lobby's narrow rule at 10 beats the client's catch-all at 1. Consequence
+# worth knowing: the lobby's embedded test page at `/` is shadowed in production.
 
 services:
   lobby:
@@ -26,10 +31,34 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=${TRAEFIK_NETWORK_NAME:-traefik_default}"
-      - "traefik.http.routers.godot-lobby.rule=Host(`${LOBBY_HOST}`)"
+      - "traefik.http.routers.godot-lobby.rule=Host(`${LOBBY_HOST}`) && (Path(`/ws`) || Path(`/ice`) || Path(`/healthz`))"
+      - "traefik.http.routers.godot-lobby.priority=10"
       - "traefik.http.routers.godot-lobby.entrypoints=websecure"
       - "traefik.http.routers.godot-lobby.tls.certresolver=${TRAEFIK_CERTRESOLVER:-myresolver}"
       - "traefik.http.services.godot-lobby.loadbalancer.server.port=8080"
+
+  # The Godot web export behind nginx — the same build GitHub Pages serves, from
+  # ghcr.io/korjavin/godot-test1-web (built by .github/workflows/build.yml).
+  # Catch-all rule at priority 1: everything the lobby did not claim above.
+  #
+  # Stays on :latest by design — this stack has ForcePullImage on, so a redeploy
+  # re-pulls the tag. It is deliberately NOT SHA-pinned on the `deploy` branch the
+  # way LOBBY_IMAGE is: two workflows force-pushing that branch would clobber each
+  # other's pins. WEB_IMAGE is the manual rollback knob (set it to a :<sha> tag).
+  web:
+    image: ${WEB_IMAGE:-ghcr.io/korjavin/godot-test1-web:latest}
+    container_name: ${WEB_CONTAINER_NAME:-godot-web}
+    restart: unless-stopped
+    networks:
+      - traefik_network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=${TRAEFIK_NETWORK_NAME:-traefik_default}"
+      - "traefik.http.routers.godot-web.rule=Host(`${LOBBY_HOST}`)"
+      - "traefik.http.routers.godot-web.priority=1"
+      - "traefik.http.routers.godot-web.entrypoints=websecure"
+      - "traefik.http.routers.godot-web.tls.certresolver=${TRAEFIK_CERTRESOLVER:-myresolver}"
+      - "traefik.http.services.godot-web.loadbalancer.server.port=80"
 
   # coturn runs on the host network on purpose: a TURN relay hands out ports from
   # a range (TURN_MIN_PORT..TURN_MAX_PORT), and publishing dozens of UDP ports

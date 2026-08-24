@@ -55,7 +55,9 @@ leaving the room master-less.
 ### Other routes
 
 - `GET /` — a plain-JS test page (embedded in the binary). Open it in two tabs to
-  exercise every acceptance criterion by hand, TURN included.
+  exercise every acceptance criterion by hand, TURN included. **In production this
+  page is shadowed by the game client** — see [Routing](#routing) below; reach it
+  by running the lobby locally, or by hitting the container directly on the host.
 - `GET /ice` — the `RTCPeerConnection` config, built from the STUN/TURN
   environment variables, so credentials never get baked into the game build. It is
   fetched cross-origin (the game is on GitHub Pages, the lobby on its own host),
@@ -70,6 +72,32 @@ cd server
 go test -race ./...     # the acceptance criteria, over real websockets
 go run .                # then open http://localhost:8080 in two tabs
 ```
+
+## Routing
+
+The stack serves two containers on one hostname. Traefik matches the most
+specific router first (higher `priority` wins), so:
+
+| router | rule | priority | container |
+|---|---|---|---|
+| `godot-lobby` | ``Host(`$LOBBY_HOST`) && (Path(`/ws`) \|\| Path(`/ice`) \|\| Path(`/healthz`))`` | 10 | this service |
+| `godot-web` | ``Host(`$LOBBY_HOST`)`` | 1 | the Godot web export on nginx |
+
+So `https://$LOBBY_HOST/` is the **game**, and the lobby keeps exactly the three
+paths it needs. The consequence to remember: the embedded test page at `/` is
+unreachable in production — it is not gone, just out-ranked. Add a path to the
+lobby's rule if you ever need it back.
+
+The client image is `ghcr.io/korjavin/godot-test1-web`, built by
+`.github/workflows/build.yml` from the same web export that goes to GitHub Pages
+(so the game is served from both). It rides `:latest`, because the stack has
+*ForcePullImage* on and SHA-pinning it would mean a second workflow force-pushing
+the `deploy` branch, clobbering the lobby's pin. To roll back, set `WEB_IMAGE` to
+one of its `:<commit-sha>` tags.
+
+Both containers need `Cross-Origin-Opener-Policy: same-origin` and
+`Cross-Origin-Embedder-Policy: require-corp` on the game's HTML — Godot's export
+needs `SharedArrayBuffer` — which is the whole of `web/coop-coep.conf`.
 
 ## Deploying
 
