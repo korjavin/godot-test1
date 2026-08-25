@@ -1694,6 +1694,16 @@ func collect_coin(value: int = 1) -> void:
 	# multiplayer room (see own_coins). Untouched by the shared recompute, which
 	# overwrites coins_collected but never this.
 	own_coins += value * get_streak_multiplier()
+	# META-PROGRESSION: the PRE-STREAK value, because lifetime coins count what
+	# was physically picked up (a coin is 1, a gem is 10) while the streak is a
+	# SCORE multiplier on what the run is worth. This is also the only place
+	# lifetime coins are credited, so it is deliberately the LOCAL player's own
+	# pickup — a multiplayer room's shared bank is a run-scoped total summed
+	# across peers and has nothing to do with this counter. See progression.gd's
+	# header for the ceiling that leaves in a room.
+	var progression := get_tree().get_first_node_in_group("progression")
+	if progression and progression.has_method("add_coins"):
+		progression.add_coins(value)
 	while coins_collected >= next_extra_life_at:
 		next_extra_life_at += EXTRA_LIFE_COINS
 		if lives < LIVES_CAP:
@@ -1905,6 +1915,13 @@ func _trigger_game_over() -> void:
 		best_coins = maxi(best_coins, own_coins)
 		if best_run_store:
 			best_run_store.submit(best_distance, best_coins)
+
+	# Meta-progression banks itself on every level-up, so this only catches the
+	# coins picked up SINCE the last one — the partial progress toward the next
+	# level, which is exactly what a player would notice missing on the next boot.
+	var progression := get_tree().get_first_node_in_group("progression")
+	if progression and progression.has_method("save"):
+		progression.save()
 
 	var panel := get_tree().get_first_node_in_group("game_over_ui")
 	if panel and panel.has_method("show_game_over"):

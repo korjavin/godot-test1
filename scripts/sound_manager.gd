@@ -130,6 +130,14 @@ const SPLASH_PITCH_JITTER: float = 0.18  # slightly wider jitter than dry steps 
 										# water is messier than dirt
 const SPLASH_VOLUME_DB: float = -9.0    # ~5 dB above a footstep: wading is loud
 
+# --- Level-up chime: the coin blip replayed twice, a fifth apart (see the
+# play_splash precedent above — a reused sample, not a fourth synth function).
+# ponytail: two taps of one buffer; add a real _synth_chime() only if it reads
+# as "you got two coins" rather than "you levelled up".
+const LEVEL_UP_PITCH_LOW: float = 1.0
+const LEVEL_UP_PITCH_HIGH: float = 1.5  # a perfect fifth above the coin blip
+const LEVEL_UP_VOLUME_DB: float = -6.0  # a couple of dB above a pickup: rarer, louder
+
 # --- Blocked-ability buzz: a curt low square "nope" (F pressed on cooldown). ---
 const BUZZ_FREQ: float = 90.0
 const BUZZ_DURATION: float = 0.15
@@ -339,6 +347,19 @@ func play_splash() -> void:
 	## _play_oneshot also means it inherits the _unlocked gesture gate for free.
 	_play_oneshot("footstep", SPLASH_VOLUME_DB,
 			SPLASH_PITCH + randf_range(-SPLASH_PITCH_JITTER, SPLASH_PITCH_JITTER))
+
+
+func play_level_up() -> void:
+	## Meta-progression level-up (see scripts/progression.gd).
+	##
+	## Same trick as play_splash: it REPLAYS the "coin" buffer rather than baking a
+	## new stream, twice — once at the coin's own pitch and once a fifth above it,
+	## which reads as a small rising chime instead of a fourth kind of coin blip.
+	## The two taps overlap because one-shots go through the round-robin player
+	## pool, so no scheduling or extra state is needed, and the "no audio asset
+	## files" invariant holds.
+	_play_oneshot("coin", LEVEL_UP_VOLUME_DB, LEVEL_UP_PITCH_LOW)
+	_play_oneshot("coin", LEVEL_UP_VOLUME_DB, LEVEL_UP_PITCH_HIGH)
 
 
 func play_buzz() -> void:

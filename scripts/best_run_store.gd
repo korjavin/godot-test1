@@ -52,6 +52,15 @@ class_name BestRunStore
 ## Deliberately NOT here: a leaderboard (owner: personal bests only), any
 ## authentication (see `server/best.go`'s trust-model note), and any retry timer —
 ## the next game over posts again.
+##
+## IT ALSO CARRIES THE META-PROGRESSION COUNTERS (`lifetime_coins` /
+## `spent_points`), and that is reuse rather than scope creep: they are keyed by
+## the same player id, want the same monotone merge, the same local layers and the
+## same silent-failure rule, so a store of their own would have been this file
+## twice plus a second `/best`-shaped route (and a second entry in the Traefik
+## path rule in `server/docker-compose.yml`). They ride the SAME record on the
+## server — see `server/best.go`. `scripts/progression.gd` owns what they MEAN;
+## this file only knows they are two numbers that never go down.
 
 # =============================================================================
 # CONFIGURATION
@@ -68,6 +77,13 @@ const CONFIG_PLAYER_SECTION: String = "player"
 const LS_PLAYER_ID: String = "ck_player_id"
 const LS_DISTANCE: String = "ck_best_distance"
 const LS_COINS: String = "ck_best_coins"
+const LS_LIFETIME: String = "ck_lifetime_coins"
+const LS_SPENT: String = "ck_spent_points"
+
+## Desktop section for the progression counters. A section of its own so a
+## player's meta-progression is legible in `best_run.cfg` and so deleting it by
+## hand (the bead's "clean profile" case) does not touch their best run.
+const CONFIG_PROGRESSION_SECTION: String = "progression"
 
 ## The player id is 128 random bits as 32 hex characters — inside the lobby's
 ## `^[A-Za-z0-9_-]{8,64}$` guard, and wide enough that guessing somebody else's
@@ -87,6 +103,11 @@ const REQUEST_TIMEOUT_SEC: float = 5.0
 ## it knows better); the values only ever rise.
 signal loaded(distance: int, coins: int)
 
+## Best-known progression counters. Same contract as `loaded`: fires once with
+## the local values inside `fetch()`, and again only if the server knew better.
+## The values only ever rise, so a listener folds each in with `maxi`.
+signal progression_loaded(lifetime_coins: int, spent_points: int)
+
 # =============================================================================
 # STATE
 # =============================================================================
@@ -94,6 +115,14 @@ signal loaded(distance: int, coins: int)
 ## Best known to this store. Public so a caller can read them without waiting.
 var distance: int = 0
 var coins: int = 0
+
+## Meta-progression, same monotone rule. `lifetime_coins` is cumulative coins
+## picked up across every run ever and is NEVER deducted (owner, 2026-08-25);
+## spending a skill point raises `spent_points` instead. The LEVEL is not stored
+## anywhere — `progression.gd` derives it from `lifetime_coins`, so a stored level
+## cannot drift from the count that produced it.
+var lifetime_coins: int = 0
+var spent_points: int = 0
 
 var _player_id: String = ""
 
@@ -117,6 +146,7 @@ func fetch() -> void:
 	"""
 	_read_local()
 	loaded.emit(distance, coins)
+	progression_loaded.emit(lifetime_coins, spent_points)
 	_request_get()
 
 
@@ -133,6 +163,22 @@ func submit(new_distance: int, new_coins: int) -> void:
 	_read_local()
 	distance = maxi(distance, new_distance)
 	coins = maxi(coins, new_coins)
+	_write_local()
+	_request_post()
+
+
+func submit_progression(new_lifetime: int, new_spent: int) -> void:
+	"""
+	Record the meta-progression counters. Called by `progression.gd` on a level-up
+	and at game over — not a per-pickup path.
+
+	Same shape and same reasoning as `submit()`, including the `_read_local()`
+	first: without it a store whose `fetch()` never ran would write its zeroes over
+	a real lifetime total, which on this record is a player's LEVEL.
+	"""
+	_read_local()
+	lifetime_coins = maxi(lifetime_coins, new_lifetime)
+	spent_points = maxi(spent_points, new_spent)
 	_write_local()
 	_request_post()
 
@@ -166,12 +212,23 @@ func _read_local() -> void:
 	if OS.has_feature("web"):
 		distance = maxi(distance, maxi(0, _ls_get(LS_DISTANCE).to_int()))
 		coins = maxi(coins, maxi(0, _ls_get(LS_COINS).to_int()))
+		lifetime_coins = maxi(lifetime_coins, maxi(0, _ls_get(LS_LIFETIME).to_int()))
+		spent_points = maxi(spent_points, maxi(0, _ls_get(LS_SPENT).to_int()))
 	var cfg := ConfigFile.new()
 	# A missing file (first ever run) is NOT an error — the zero defaults stand.
+	# That is also the bead's "delete the file, get a clean level-0 profile" case.
 	if cfg.load(CONFIG_PATH) != OK:
 		return
 	distance = maxi(distance, maxi(0, int(cfg.get_value(CONFIG_SECTION, "distance", 0))))
 	coins = maxi(coins, maxi(0, int(cfg.get_value(CONFIG_SECTION, "coins", 0))))
+	lifetime_coins = maxi(
+		lifetime_coins,
+		maxi(0, int(cfg.get_value(CONFIG_PROGRESSION_SECTION, "lifetime_coins", 0)))
+	)
+	spent_points = maxi(
+		spent_points,
+		maxi(0, int(cfg.get_value(CONFIG_PROGRESSION_SECTION, "spent_points", 0)))
+	)
 
 
 func _write_local() -> void:
@@ -183,11 +240,15 @@ func _write_local() -> void:
 	if OS.has_feature("web"):
 		_ls_set(LS_DISTANCE, str(distance))
 		_ls_set(LS_COINS, str(coins))
+		_ls_set(LS_LIFETIME, str(lifetime_coins))
+		_ls_set(LS_SPENT, str(spent_points))
 		return
 	var cfg := ConfigFile.new()
 	cfg.load(CONFIG_PATH)  # keep any other section (the player id) intact
 	cfg.set_value(CONFIG_SECTION, "distance", distance)
 	cfg.set_value(CONFIG_SECTION, "coins", coins)
+	cfg.set_value(CONFIG_PROGRESSION_SECTION, "lifetime_coins", lifetime_coins)
+	cfg.set_value(CONFIG_PROGRESSION_SECTION, "spent_points", spent_points)
 	cfg.save(CONFIG_PATH)
 
 
@@ -293,21 +354,37 @@ func _on_get_completed(
 	var data := json.data as Dictionary
 	var server_distance := maxi(0, int(data.get("distance", 0)))
 	var server_coins := maxi(0, int(data.get("coins", 0)))
+	# A lobby too old to know about progression simply omits these, which reads as
+	# zero and raises nothing — the same forward/backward compatibility the server
+	# side has for an old client's POST.
+	var server_lifetime := maxi(0, int(data.get("lifetime", 0)))
+	var server_spent := maxi(0, int(data.get("spent", 0)))
 	# The server can be BEHIND us: a record set before this feature shipped, one
 	# migrated out of the old `user://` file, or simply a run banked while the
 	# lobby was unreachable. Without this the whole local history sits here until
 	# the player happens to beat it, and never reaches their other devices — the
 	# reply is the only moment we know what the server has, so it is where the
 	# catch-up POST belongs. It converges: the next boot finds them equal.
-	var server_is_behind := server_distance < distance or server_coins < coins
+	var server_is_behind := (
+		server_distance < distance
+		or server_coins < coins
+		or server_lifetime < lifetime_coins
+		or server_spent < spent_points
+	)
 	var raised := server_distance > distance or server_coins > coins
+	var progression_raised := server_lifetime > lifetime_coins or server_spent > spent_points
 
 	distance = maxi(distance, server_distance)
 	coins = maxi(coins, server_coins)
-	if raised:
+	lifetime_coins = maxi(lifetime_coins, server_lifetime)
+	spent_points = maxi(spent_points, server_spent)
+	if raised or progression_raised:
 		# Mirror down, so the next boot has them even with the lobby unreachable.
 		_write_local()
+	if raised:
 		loaded.emit(distance, coins)
+	if progression_raised:
+		progression_loaded.emit(lifetime_coins, spent_points)
 	if server_is_behind:
 		_request_post()
 
@@ -324,7 +401,12 @@ func _request_post() -> void:
 		_post_http = HTTPRequest.new()
 		_post_http.timeout = REQUEST_TIMEOUT_SEC
 		add_child(_post_http)
-	var body := JSON.stringify({"distance": distance, "coins": coins})
+	var body := JSON.stringify({
+		"distance": distance,
+		"coins": coins,
+		"lifetime": lifetime_coins,
+		"spent": spent_points,
+	})
 	var err: int = _post_http.request(
 		_endpoint(), ["Content-Type: application/json"], HTTPClient.METHOD_POST, body
 	)
