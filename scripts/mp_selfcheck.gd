@@ -41,6 +41,11 @@ extends SceneTree
 ##  13. The group anchor rule — where a mid-run joiner lands AND where a death
 ##      inside a room respawns. A spread group must never anchor on the empty
 ##      midpoint, INCLUDING for a dying master, which is never in the map.
+##  14. The two join-snapshot WORLD SWEEPS, measured as effects on real nodes
+##      with a negative control each: the kill list must squash the crocodile it
+##      names and no other, and the collected set must spend the chest it names
+##      and no other. Both bugs look like nothing on a headless machine and need
+##      two browsers plus a giant Teibi to reproduce by hand.
 
 const MPManager: GDScript = preload("res://scripts/mp_manager.gd")
 const Terrain: GDScript = preload("res://scripts/endless_terrain.gd")
@@ -102,7 +107,10 @@ func _run_checks() -> String:
 	failure = _check_room_multiplier()
 	if not failure.is_empty():
 		return failure
-	return _check_group_anchor()
+	failure = _check_group_anchor()
+	if not failure.is_empty():
+		return failure
+	return _check_join_world_sweeps()
 
 
 # =============================================================================
@@ -360,6 +368,18 @@ func _check_state_parser() -> String:
 		return "state parser mangled the position: %s" % snapshot["pos"]
 	if snapshot["ids"] != [111, 222, -333]:
 		return "state parser mangled the id list: %s" % snapshot["ids"]
+	# `dead` (the room's crushed-crocodile kill list) follows `gc`/`gs`'s rule, not
+	# `ids`': MISSING IS NOT MALFORMED, because a peer on a build without the field
+	# is still worth its position, its counters and its coin ids. `good` above
+	# carries none, so it must read as an empty list rather than dropping.
+	if snapshot["dead"] != ([] as Array[int]):
+		return "state parser invented a kill list: %s" % snapshot["dead"]
+	var with_dead: Dictionary = MPManager.decode_state({
+		"cc": 0.0, "ls": 0.0, "dd": 0.0, "px": 0.0, "py": 0.0, "pz": 0.0,
+		"ids": [], "dead": [7.0, -8.0],
+	})
+	if with_dead.is_empty() or with_dead["dead"] != [7, -8]:
+		return "state parser mangled the kill list: %s" % with_dead
 	# `gc`/`gs` (the room's frozen departed-member totals) follow the presence
 	# counters' rule: MISSING IS NOT MALFORMED. `good` above carries neither, so
 	# an older peer's snapshot still lands, reading as zero.
@@ -387,6 +407,18 @@ func _check_state_parser() -> String:
 	if (truncated["ids"] as Array).size() != MPManager.MAX_STATE_IDS:
 		return "state parser truncated to %d ids, expected %d" % [
 			(truncated["ids"] as Array).size(), MPManager.MAX_STATE_IDS
+		]
+	# The kill list is bounded by the SAME cap at the SAME end, or a hostile peer
+	# buys an unbounded `_dead_crocs` write with one snapshot.
+	var long_dead: Dictionary = MPManager.decode_state({
+		"cc": 0.0, "ls": 0.0, "dd": 0.0, "px": 0.0, "py": 0.0, "pz": 0.0,
+		"ids": [], "dead": long_ids,
+	})
+	if long_dead.is_empty():
+		return "state parser dropped an over-long kill list instead of truncating it"
+	if (long_dead["dead"] as Array).size() != MPManager.MAX_STATE_IDS:
+		return "state parser truncated the kill list to %d ids, expected %d" % [
+			(long_dead["dead"] as Array).size(), MPManager.MAX_STATE_IDS
 		]
 
 	# Each of these must be dropped WHOLE — a snapshot is trusted entire or not
@@ -443,6 +475,26 @@ func _check_state_parser() -> String:
 		["negative gs", {
 			"cc": 0.0, "ls": 0.0, "dd": 0.0, "px": 0.0, "py": 0.0, "pz": 0.0,
 			"gs": -1.0, "ids": []
+		}],
+		# Absent `dead` is fine (above); PRESENT AND BAD drops the payload whole,
+		# exactly as a bad `ids` does — same validator, same rule.
+		["dead not an array", {
+			"cc": 0.0, "ls": 0.0, "dd": 0.0, "px": 0.0, "py": 0.0, "pz": 0.0,
+			"ids": [], "dead": "all of them"
+		}],
+		["a dead id that is not a number", {
+			"cc": 0.0, "ls": 0.0, "dd": 0.0, "px": 0.0, "py": 0.0, "pz": 0.0,
+			"ids": [], "dead": [1.0, "two", 3.0]
+		}],
+		["NaN dead id", {
+			"cc": 0.0, "ls": 0.0, "dd": 0.0, "px": 0.0, "py": 0.0, "pz": 0.0,
+			"ids": [], "dead": [NAN]
+		}],
+		# Past 2^53 an int() cast is undefined and on wasm the trunc can trap the
+		# module — the reason MAX_STATE_ID_MAGNITUDE exists, now on both lists.
+		["dead id past the double's exact range", {
+			"cc": 0.0, "ls": 0.0, "dd": 0.0, "px": 0.0, "py": 0.0, "pz": 0.0,
+			"ids": [], "dead": [1.0e30]
 		}],
 	]
 	for case in bad:
@@ -811,4 +863,163 @@ func _check_group_anchor() -> String:
 			+ "— a dying master would respawn on empty ground between its teammates") % str(midpoint)
 	if no_master.distance_to(a) > 0.01 and no_master.distance_to(far) > 0.01:
 		return "_anchor_of answered %s, which is nobody's position" % str(no_master)
+	return ""
+
+
+# =============================================================================
+# 14. JOIN-SNAPSHOT WORLD SWEEPS (dead crocodiles, emptied chests)
+# =============================================================================
+
+func _check_join_world_sweeps() -> String:
+	"""
+	The two sweeps that make a joiner's world agree with the room's — measured as
+	EFFECTS on real nodes, with a negative control each, never as getter
+	read-backs.
+
+	Both failures are silent and cosmetic-looking from the inside: a decoder that
+	parses `dead` perfectly and an `_absorb_dead` that walks the wrong group both
+	"work", and the only symptom is a crocodile alive on one screen and gone on
+	another — which nobody sees on a headless machine and nobody reproduces
+	without two browsers and a giant Teibi. So each sweep is given one node it
+	MUST take and one node it MUST NOT, and the pair is what the check is:
+	asserting only the hit would pass just as well for a sweep that flattens
+	every crocodile in the world.
+
+	No socket, no room: `_absorb_collected` / `_absorb_dead` deliberately carry no
+	`_state` guard (the room-scoped guard lives on `is_coin_collected` /
+	`is_croc_dead`, which are what the world ASKS), so the sweeps are drivable
+	exactly as a relayed snapshot drives them.
+	"""
+	var mp: Node = MPManager.new()
+	mp.add_to_group("mp")  # `treasure_chest.setup()` finds the manager by group.
+	root.add_child(mp)
+
+	# --- Crocodiles. The kill list names one of the two.
+	var doomed: Node = load("res://scenes/characters/piglet_crocodile.tscn").instantiate()
+	doomed.name = "Crocodile_9_9_0"
+	root.add_child(doomed)
+	var spared: Node = load("res://scenes/characters/piglet_crocodile.tscn").instantiate()
+	spared.name = "Crocodile_9_9_1"
+	root.add_child(spared)
+	if not doomed.is_in_group("crocodile") or not spared.is_in_group("crocodile"):
+		return "a freshly spawned crocodile is not in the \"crocodile\" group — the sweep check would be vacuous"
+
+	mp._absorb_dead([doomed.croc_id()])
+
+	var doomed_alive: bool = doomed.is_in_group("crocodile")
+	var spared_alive: bool = spared.is_in_group("crocodile")
+	var dead_recorded: bool = mp._dead_crocs.has(doomed.croc_id())
+	doomed.free()
+	spared.free()
+	if doomed_alive:
+		mp.free()
+		return "_absorb_dead left a crushed crocodile alive — a joiner sees a crocodile nobody else has"
+	if not spared_alive:
+		mp.free()
+		return "_absorb_dead squashed a crocodile the kill list never named"
+	if not dead_recorded:
+		mp.free()
+		return "_absorb_dead swept the world without recording the id — the croc walks back in on a chunk reload"
+
+	# --- The kill list's AUTHORITY rule, which the coin ids beside it deliberately
+	# do not share: a crush is arbitrated by the master, so a stranger's `dead`
+	# array is not a contribution, it is a request to delete crocodiles on our
+	# machine. Every room code is public over `GET /rooms`, so "a member" means
+	# anyone. Driven through `_receive_state` because that is where the sender is
+	# known — `_absorb_dead` itself has no business asking who called it.
+	var authority_failure: String = _check_kill_list_authority(mp)
+	if not authority_failure.is_empty():
+		mp.free()
+		return authority_failure
+
+	# --- Chests. Same shape one thing over: the collected set names one of two.
+	# Two positions well over `Coin.id_at`'s 12.5 cm quantisation apart, so the
+	# ids cannot collide and the control is a real control.
+	var emptied: Area3D = _spawn_chest(Vector3(20.0, 0.0, 0.0))
+	var untouched: Area3D = _spawn_chest(Vector3(-20.0, 0.0, 0.0))
+	if emptied.chest_id() == untouched.chest_id():
+		emptied.free()
+		untouched.free()
+		mp.free()
+		return "two chests 40 m apart share a chest_id — the negative control below would be meaningless"
+	if not emptied.is_in_group("chest") or not untouched.is_in_group("chest"):
+		emptied.free()
+		untouched.free()
+		mp.free()
+		return "a chest is not in the \"chest\" group — _absorb_collected can never sweep it"
+
+	mp._absorb_collected([emptied.chest_id()])
+
+	var emptied_spent: bool = emptied.is_queued_for_deletion()
+	var untouched_spent: bool = untouched.is_queued_for_deletion()
+	if not emptied_spent:
+		untouched.free()
+		mp.free()
+		return "_absorb_collected left an emptied chest standing — opening it pays nothing and plays the shower anyway"
+	if untouched_spent:
+		mp.free()
+		return "_absorb_collected consumed a chest the room never emptied"
+	untouched.free()
+	mp.free()
+	return ""
+
+
+func _spawn_chest(at: Vector3) -> Area3D:
+	"""
+	One live chest at `at`, built exactly as `endless_terrain.spawn_chest_in_chunk`
+	builds one — position, then add_child, then setup() — because the id is
+	latched from `global_position` inside setup() and any other order latches it
+	from the origin.
+	"""
+	var chest := Area3D.new()
+	chest.set_script(load("res://scripts/treasure_chest.gd"))
+	chest.position = at
+	root.add_child(chest)
+	chest.setup(8, 0.8)
+	return chest
+
+
+func _check_kill_list_authority(mp: Node) -> String:
+	"""
+	A snapshot's `dead` array is honoured from the MASTER and nobody else — the
+	one asymmetry with the `ids` beside it, because a kill is arbitrated while the
+	collected set is a union.
+
+	The positive half matters as much as the negative one: a `from == _master`
+	test that never passes would silently take the whole fix back out, and every
+	other assertion in this section would still be green, because they drive
+	`_absorb_dead` directly and never go through `_receive_state` at all.
+	"""
+	var snapshot := {
+		"cc": 0.0, "ls": 0.0, "dd": 0.0, "px": 0.0, "py": 0.0, "pz": 0.0, "ids": [],
+	}
+	mp._master = "the-real-master"
+
+	# NEGATIVE: a stranger's kill list must delete nothing. Room codes are public
+	# over `GET /rooms`, so "a member of the room" means anybody at all.
+	var victim: Node = load("res://scenes/characters/piglet_crocodile.tscn").instantiate()
+	victim.name = "Crocodile_11_11_0"
+	root.add_child(victim)
+	var hostile: Dictionary = snapshot.duplicate()
+	hostile["dead"] = [float(victim.croc_id())]
+	mp._receive_state("some-other-member", MPManager.decode_state(hostile))
+	var survived: bool = victim.is_in_group("crocodile")
+	var leaked: bool = mp._dead_crocs.has(victim.croc_id())
+	victim.free()
+	if not survived:
+		return "a NON-MASTER's join snapshot deleted a crocodile — the master-only kill authority is bypassable over the relay"
+	if leaked:
+		return "a NON-MASTER's join snapshot wrote _dead_crocs — the crocodile stays deleted through every later chunk reload"
+
+	# POSITIVE: the master's must land, or the fix is not there at all.
+	var doomed: Node = load("res://scenes/characters/piglet_crocodile.tscn").instantiate()
+	doomed.name = "Crocodile_11_11_1"
+	root.add_child(doomed)
+	var ruling: Dictionary = snapshot.duplicate()
+	ruling["dead"] = [float(doomed.croc_id())]
+	mp._receive_state("the-real-master", MPManager.decode_state(ruling))
+	var still_alive: bool = doomed.is_in_group("crocodile")
+	doomed.free()
+	if still_alive:
+		return "the MASTER's join snapshot did not apply its kill list — a joiner still sees crushed crocodiles alive"
 	return ""

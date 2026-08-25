@@ -72,7 +72,8 @@ const MAX_PRESENCE_COORD: float = 1.0e7
 const MAX_PRESENCE_SPEED: float = 1.0e4
 
 ## Caps on a join snapshot — see `decode_state()`. `MAX_STATE_IDS` bounds BOTH
-## ends of the collected-coin set: the one we send and the one we accept.
+## ends of BOTH id lists — the collected-coin set and the crushed-crocodile kill
+## list, each in the one we send and the one we accept.
 ## `MAX_STATE_COUNTER` is a sanity bound on the coin/life/distance counters,
 ## generous by design because it exists to reject hostile garbage, not to police
 ## how long a run may get.
@@ -1991,6 +1992,11 @@ func _send_state_to(id: String) -> void:
 		"gc": _gone_coins,
 		"gs": _gone_spent,
 		"ids": _recent_collected_ids(),
+		# The room's KILL LIST, replayed for the same reason `ids` is: a joiner's
+		# own terrain generates every crocodile the seed describes, including the
+		# ones giant Teibi already crushed, so without this the newcomer walks into
+		# a pack containing animals nobody else can see. Bounded like `ids`.
+		"dead": _recent_dead_ids(),
 	})
 
 
@@ -2006,6 +2012,29 @@ func _recent_collected_ids() -> Array:
 	rather than by age, which needs the anchor to be known before the send.
 	"""
 	var ids: Array = _collected_ids.keys()
+	ids = ids.slice(maxi(0, ids.size() - MAX_STATE_IDS))  # keep the newest tail
+	ids.reverse()  # ... most recent first
+	return ids
+
+
+func _recent_dead_ids() -> Array:
+	"""
+	The crushed-crocodile ids to replay, MOST RECENT FIRST and capped at
+	`MAX_STATE_IDS` — the same shape, and the same cap, as
+	`_recent_collected_ids()`, because the joiner-side parser bounds both with it.
+
+	ponytail: the cap is shared rather than a `dead`-specific constant because the
+	two lists are the same kind of thing and one number is one number to keep in
+	step. The ceiling is the collected set's, one class quieter: a room that
+	crushes more than `MAX_STATE_IDS` crocodiles drops the OLDEST kills, so a
+	joiner can see one alive again — kilometres behind the group, in a chunk its
+	terrain will not even have built, and cosmetic when it does (a crocodile too
+	many, never a wrong bank or a wrong heart count). Reaching that cap means
+	2048 crushes in one room, each of which needs a player standing on a
+	crocodile as giant Teibi. The upgrade path is `_recent_collected_ids()`'s:
+	filter by distance to the join anchor rather than by age.
+	"""
+	var ids: Array = _dead_crocs.keys()
 	ids = ids.slice(maxi(0, ids.size() - MAX_STATE_IDS))  # keep the newest tail
 	ids.reverse()  # ... most recent first
 	return ids
@@ -2027,6 +2056,29 @@ func _receive_state(from: String, snapshot: Dictionary) -> void:
 	_gone_coins = maxi(_gone_coins, int(snapshot["gc"]))
 	_gone_spent = maxi(_gone_spent, int(snapshot["gs"]))
 	_absorb_collected(snapshot["ids"])
+	# THE KILL LIST IS TAKEN FROM THE MASTER ALONE, and that asymmetry with `ids`
+	# right above it is the point. The collected set is a UNION — each peer only
+	# knows the coins it banked itself, so every incumbent's ids are needed and
+	# every incumbent is entitled to assert them. A kill is the opposite: it is
+	# ARBITRATED (`_resolve_kill` on the master, broadcast as `dead`), so every
+	# member's `_dead_crocs` is already a copy of the master's one set and there
+	# is nothing a non-master can add — while `_apply_dead` deletes a crocodile
+	# permanently on this peer, which is exactly why `_receive_dead` accepts the
+	# live verb from the master only. Honouring a stranger's list here would have
+	# reopened that hole through the relay, which any room member can reach
+	# (`GET /rooms` makes every code public).
+	#
+	# APPLYING THE SNAPSHOT'S WORLD-STATE DELTAS AT ALL IS THE JOIN EVENT ITSELF,
+	# not a replay of somebody else's events: the `_state_received` latch above
+	# admits exactly one snapshot per sender for the room's life, so neither sweep
+	# can ever run a second time for the same peer.
+	#
+	# The cost of the rule is that a wedged or older-build master leaves the
+	# joiner without a kill list — the same degradation its missing coin ids
+	# already cause, and `JOIN_SNAPSHOT_WAIT` already refuses to strand the
+	# joiner over it.
+	if from == _master:
+		_absorb_dead(snapshot["dead"])
 	# The snapshot may be the last thing the placement was waiting on (the seed
 	# can equally well be). Both call in; the latch inside decides.
 	_apply_join_placement()
@@ -2041,6 +2093,16 @@ func _absorb_collected(ids: Array) -> void:
 	spawned after the snapshot asks `is_coin_collected()` in its own `_ready()`
 	and frees itself — so the seed and the snapshots may arrive in either order
 	and neither has to wait on the other.
+
+	CHESTS ARE SWEPT BY THE SAME PASS, and that is the whole of the "a chest
+	somebody else emptied still stands and pays nothing" fix. A chest's id IS a
+	coin id (`treasure_chest.gd` latches `Coin.id_at(global_position)`), so its
+	id already rode the snapshot's `ids` and already rides every `cnf` confirm —
+	the only thing missing was that this sweep walked the `"coin"` group and a
+	chest is not in it. It is in `"chest"`, hence the second loop, and fixing it
+	HERE rather than at the join covers the live case too: a teammate emptying a
+	chest mid-run now spends our copy of it the moment the confirm lands, not
+	just for a peer who happens to join afterwards.
 	"""
 	var fresh: Dictionary = {}
 	for id: int in ids:
@@ -2053,6 +2115,47 @@ func _absorb_collected(ids: Array) -> void:
 	for coin: Node in get_tree().get_nodes_in_group("coin"):
 		if coin.has_method("coin_id") and fresh.has(coin.coin_id()):
 			coin.queue_free()
+	for chest: Node in get_tree().get_nodes_in_group("chest"):
+		if chest.has_method("chest_id") and fresh.has(chest.chest_id()):
+			# NOT queue_free() — a chest mid-burst is paying out an award the room
+			# already priced, and freeing it would cut that short. The chest owns
+			# that decision; see `treasure_chest.consume_silently()`.
+			chest.consume_silently()
+
+
+func _absorb_dead(ids: Array) -> void:
+	"""
+	Fold the room's kill list into ours AND sweep the live world, the exact shape
+	`_absorb_collected()` uses one thing over — including the reason for the
+	shape: a joiner's snapshot may land before or after its terrain built the
+	chunk holding a crushed crocodile, and this covers the "after" while
+	`piglet_crocodile_ai._ready()`'s `is_croc_dead()` check covers the "before".
+
+	ONE group walk for the whole list, never one per id. `_apply_dead()` is the
+	single-id path and rebuilds the id cache on a miss, which is right for the one
+	kill it handles and quadratic here — a joiner's list is mostly ids naming
+	crocodiles in chunks this peer has not built, i.e. mostly misses.
+	"""
+	var fresh: Dictionary = {}
+	for id: int in ids:
+		if _dead_crocs.has(id):
+			continue
+		_dead_crocs[id] = true
+		fresh[id] = true
+	if fresh.is_empty():
+		return
+	for croc: Node in get_tree().get_nodes_in_group("crocodile"):
+		if not croc.has_method("croc_id"):
+			continue
+		var id: int = croc.croc_id()
+		if not fresh.has(id):
+			continue
+		# Same bookkeeping drop as `_apply_dead()`: a dead crocodile is nobody's to
+		# drive, and the cache holds a hard reference to a node about to free itself.
+		_synced_crocs.erase(id)
+		_croc_seen.erase(id)
+		if croc.has_method("squash_and_die"):
+			croc.squash_and_die()
 
 
 func is_coin_collected(id: int) -> bool:
@@ -2087,7 +2190,8 @@ static func decode_state(payload: Dictionary) -> Dictionary:
 	The lobby never inspects a relayed payload — that opacity is what keeps game
 	logic off the server — so this is unvalidated peer input, arriving over JSON
 	where *every* number is a float. Returns the validated snapshot
-	(`{"cc": int, "ls": int, "dd": int, "pos": Vector3, "ids": Array[int]}`) or
+	(`{"cc": int, "ls": int, "dd": int, "gc": int, "gs": int, "pos": Vector3,
+	"ids": Array[int], "dead": Array[int]}`) or
 	an EMPTY DICTIONARY: trusted whole or dropped whole, exactly like
 	`decode_presence()`, and static and `_rtc`-free for the same reason — so
 	scripts/mp_selfcheck.gd can beat on it with a fistful of hostile payloads.
@@ -2134,22 +2238,21 @@ static func decode_state(payload: Dictionary) -> Dictionary:
 
 	if typeof(payload.get("ids", null)) != TYPE_ARRAY:
 		return {}
-	var raw_ids: Array = payload["ids"]
-	# An over-long id list is TRUNCATED, not rejected — the one place this parser
-	# keeps part of a payload. The sender orders the ids most-recent-first, so the
-	# head is the part nearest the joiner, and a snapshot whose list is too long
-	# is still worth its position and its counters, which are what the join
-	# placement and the shared bank actually need. A malformed *entry* is a
-	# different thing and still drops the whole snapshot.
-	var ids: Array[int] = []
-	for i: int in range(mini(raw_ids.size(), MAX_STATE_IDS)):
-		var entry: Variant = raw_ids[i]
-		if not _is_number(entry):
+	var ids: Variant = _decode_id_list(payload["ids"])
+	if ids == null:
+		return {}
+
+	# The kill list. MISSING IS NOT MALFORMED, the rule `gc`/`gs` above follow and
+	# for the same reason: a peer on a build without this field is still worth its
+	# position, its counters and its coin ids. Present-but-not-an-array, or one bad
+	# entry, still drops the whole snapshot.
+	var dead: Variant = []
+	if payload.has("dead"):
+		if typeof(payload["dead"]) != TYPE_ARRAY:
 			return {}
-		var value: float = float(entry)
-		if not is_finite(value) or absf(value) > MAX_STATE_ID_MAGNITUDE:
+		dead = _decode_id_list(payload["dead"])
+		if dead == null:
 			return {}
-		ids.append(int(value))
 
 	return {
 		"cc": counters[0],
@@ -2159,7 +2262,35 @@ static func decode_state(payload: Dictionary) -> Dictionary:
 		"gs": counters[4],
 		"pos": pos,
 		"ids": ids,
+		"dead": dead,
 	}
+
+
+static func _decode_id_list(raw: Array) -> Variant:
+	"""
+	Validate one snapshot id array — the coin ids or the crocodile kill list, which
+	are the same kind of thing over the same wire and so get one validator rather
+	than two that can drift.
+
+	Returns `Array[int]`, or `null` meaning "drop the whole snapshot".
+
+	An over-long list is TRUNCATED, not rejected — the one place this parser keeps
+	part of a payload. The sender orders both lists most-recent-first, so the head
+	is the part nearest the joiner, and a snapshot whose list is too long is still
+	worth its position and its counters, which are what the join placement and the
+	shared bank actually need. A malformed *entry* is a different thing and still
+	drops the whole snapshot.
+	"""
+	var ids: Array[int] = []
+	for i: int in range(mini(raw.size(), MAX_STATE_IDS)):
+		var entry: Variant = raw[i]
+		if not _is_number(entry):
+			return null
+		var value: float = float(entry)
+		if not is_finite(value) or absf(value) > MAX_STATE_ID_MAGNITUDE:
+			return null
+		ids.append(int(value))
+	return ids
 
 
 # =============================================================================
@@ -3577,12 +3708,12 @@ func is_croc_dead(id: int) -> bool:
 	not walk the crocodile back in. False offline, where the set is always empty
 	anyway.
 
-	ponytail: the dead set is NOT replayed in the join snapshot, so a peer joining
-	later sees a crushed crocodile alive again, and a peer that left and rejoined
-	can resurrect one on a chunk reload. Same class of ceiling as MAX_STATE_IDS
-	(and cosmetic in the same way — a crocodile too many, never a wrong bank); the
-	upgrade path is an extra `dead` array on the snapshot, bounded exactly like
-	`ids`.
+	The set IS replayed in the join snapshot (`_recent_dead_ids()` on the way out,
+	`_absorb_dead()` on the way in), so a peer joining after a crush no longer
+	sees the crocodile alive again. What remains is `_recent_dead_ids()`'s
+	`MAX_STATE_IDS` ceiling, documented there. A peer that left and rejoined
+	starts from an empty set of its own and re-learns the room's from the
+	incumbents' snapshots — the same answer by a different route.
 	"""
 	return _state == State.IN_ROOM and _dead_crocs.has(id)
 
