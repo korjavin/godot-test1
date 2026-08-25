@@ -219,6 +219,17 @@ const PLAYER_SCRIPT := preload("res://scripts/player_controller.gd")
 ## instead — arriving beside one player beats arriving beside none.
 const GROUP_SPREAD_MAX: float = 60.0
 
+## PEER COLOUR — how many distinct hues `peer_color()` can hand out, and the
+## saturation/value it paints them at. One hue per degree is finer than any eye
+## needs; what matters is that the mapping is a pure function of the peer id, so
+## every surface that draws a teammate (the minimap dots, the locator strip, and
+## anything added later) agrees on the colour with no shared state and no lookup
+## table to keep in step. Saturation stays under 1 so the colours read on a light
+## sky, value stays at 1 so they read on the minimap's dark disc.
+const PEER_HUE_STEPS: int = 360
+const PEER_COLOR_SATURATION: float = 0.75
+const PEER_COLOR_VALUE: float = 1.0
+
 ## The lobby errors that must NOT end the session. `server/room.go` answers a
 ## refused hero claim with a plain `error` frame on a socket it deliberately
 ## keeps OPEN (`errUnknownHero` / `errHeroTaken`), and two peers reaching for the
@@ -1232,6 +1243,63 @@ func nearest_member_position(from: Vector3) -> Variant:
 			best_dist_sq = dist_sq
 			best = pos
 	return best
+
+
+static func peer_color(peer_id: String) -> Color:
+	"""
+	The colour a given peer is drawn in, ANYWHERE it is drawn. A pure function of
+	the lobby id, so the minimap dot and the locator marker for one teammate are
+	the same colour without either surface telling the other anything — and the
+	colour survives a master migration, a rejoin and a hero swap, because none of
+	those change the id.
+
+	Static on purpose: it needs no room and no manager, so a HUD can colour a peer
+	from a join snapshot, and `mp_selfcheck.gd` can pin its stability without a
+	socket. `String.hash()` is the same 32-bit hash `croc_id_for()` leans on; here
+	only its distribution matters (a collision means two teammates share a hue,
+	which is a legibility annoyance, not a correctness bug), so no sign extension
+	is needed — the modulo of an unsigned value is already in range.
+	"""
+	var hue := float(peer_id.hash() % PEER_HUE_STEPS) / float(PEER_HUE_STEPS)
+	return Color.from_hsv(hue, PEER_COLOR_SATURATION, PEER_COLOR_VALUE)
+
+
+func peer_markers() -> Variant:
+	"""
+	Every OTHER member of the room as `{"id": String, "pos": Vector3, "color":
+	Color}`, or `null` when there is no room — the same "`null` means fall through
+	to solo behaviour" shape `peer_positions()` and `shared_bank()` use, so a HUD
+	needs one `== null` test and no branch of its own.
+
+	WHY THIS EXISTS BESIDE `peer_positions()`, which looks like the same query:
+	that one is deliberately MASTER-ONLY (see its comment — waking crocodiles for
+	the whole room is a cost only the master gets anything back for) and hands out
+	bare positions with no ids. A locator bar on a non-master would therefore
+	show nothing at all, and neither surface could colour a peer stably. This one
+	answers for every member of the room, and carries the id and its colour.
+
+	It ALLOCATES (one array, one small dictionary per peer), which is why it is
+	documented for HUD tick rates — the two callers ask at 5 Hz — and why
+	`nearest_member_position()` still exists for the per-physics-frame crocodile
+	query that must allocate nothing. Do not call this per frame.
+
+	`stale` peers are skipped for the reason the two siblings skip them: their
+	position is frozen and nobody is standing on it, so a marker there points at
+	empty ground.
+	"""
+	if _state != State.IN_ROOM:
+		return null
+	var markers: Array[Dictionary] = []
+	for peer: String in _peer_state:
+		var state: Dictionary = _peer_state[peer]
+		if bool(state.get("stale", false)):
+			continue
+		markers.append({
+			"id": peer,
+			"pos": state["pos"] as Vector3,
+			"color": peer_color(peer),
+		})
+	return markers
 
 
 func my_character_indices() -> Variant:
