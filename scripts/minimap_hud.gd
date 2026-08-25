@@ -542,9 +542,13 @@ func _gather_peers() -> void:
 		var markers: Variant = _mp.peer_markers()
 		if markers is Array:
 			var scale := _map_scale()
-			# Keep the whole tick inside the disc: a dot's own radius is subtracted
-			# so a rim-clamped tick does not poke out past the ring.
-			var rim := MAP_RADIUS - PEER_EDGE_TICK
+			# OFF-MAP IS CLASSIFIED AGAINST THE DISC EDGE ITSELF, never against an
+			# inset. The two are easy to conflate — the tick has to START inset so
+			# it does not poke past the ring — but using the inset as the TEST too
+			# declares the outer band of the map off-map: at MAP_RADIUS 62 and a
+			# PEER_EDGE_TICK 7 inset, a teammate anywhere in the outer 11% of the
+			# disc (54-60 m at the default zoom) would be drawn as an outward "keep
+			# going that way" tick while actually standing inside the view.
 			for entry: Variant in markers:
 				if _peer_count >= MAX_PEER_DOTS:
 					break
@@ -556,16 +560,23 @@ func _gather_peers() -> void:
 				var offset := Vector2(pos.x - _player_pos.x, pos.z - _player_pos.z) * scale
 				var a: Vector2
 				var b: Vector2
-				if offset.length() > rim:
-					# OFF THE MAP: a tick on the rim, pointing out along the bearing.
-					var dir := offset.normalized()
-					a = MAP_CENTER + dir * rim
-					b = a + dir * PEER_EDGE_TICK
+				var dist := offset.length()
+				if dist > MAP_RADIUS:
+					# OFF THE MAP: a tick ending ON the rim and pointing out along
+					# the bearing. Only the tick's own length is inset (the division
+					# is safe — this branch needs dist > MAP_RADIUS > 0).
+					var dir := offset / dist
+					a = MAP_CENTER + dir * (MAP_RADIUS - PEER_EDGE_TICK)
+					b = MAP_CENTER + dir * MAP_RADIUS
 					color.a *= PEER_EDGE_ALPHA
 				else:
 					# ON the map: a segment as long as it is wide, i.e. a dot — the
-					# same trick the crocodile dots use.
-					var c := MAP_CENTER + offset
+					# same trick the crocodile dots use. The centre is pulled in by
+					# the dot's own radius so a teammate right at the view's edge
+					# does not have their blob poke past the ring; that moves the
+					# dot by at most PEER_DOT_RADIUS and never changes the
+					# on-map/off-map classification above.
+					var c := MAP_CENTER + offset.limit_length(MAP_RADIUS - PEER_DOT_RADIUS)
 					a = c - Vector2(PEER_DOT_RADIUS, 0.0)
 					b = c + Vector2(PEER_DOT_RADIUS, 0.0)
 				_peer_points[_peer_count * 2] = a

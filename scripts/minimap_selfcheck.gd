@@ -384,16 +384,27 @@ func _check_teammate_layers(map: Control, locator: Control, player: Node3D, orig
 	if far_dist < map.MAP_RADIUS - map.PEER_EDGE_TICK - 1.0:
 		return "an off-map teammate was not clamped to the rim (%.1f px from centre)" % far_dist
 
+	# OFF-MAP MUST BE JUDGED AGAINST THE DISC EDGE, not against the inset the tick
+	# is drawn from. 58 m is inside the 60 m view but in the outer band, and an
+	# implementation that tests against `MAP_RADIUS - PEER_EDGE_TICK` declares the
+	# whole of that band off-map — a teammate you can see gets drawn as a "keep
+	# going" tick. That is a real bug this check caught; keep it.
+	var stub: Node = get_first_node_in_group("mp")
+	stub.markers = [{"id": "peer-outer", "pos": origin + Vector3(58.0, 0.0, 0.0), "color": Color(1, 1, 1, 1)}]
+	map._tick()
+	if _dot_is_clamped(map, 0):
+		return ("a teammate 58 m away was drawn as an off-map tick on the %.0f m map " \
+			+ "— off-map is being judged against an inset, not the disc edge") % LEGACY_VIEW_RADIUS
+
 	# The teammate layer follows the ZOOM like every other layer. 70 m is off a
 	# 60 m map and on a 130 m one, so the same peer must clamp at one zoom and not
 	# at the other — a layer with its own hardcoded reach clamps at both.
-	var stub: Node = get_first_node_in_group("mp")
 	stub.markers = [{"id": "peer-mid", "pos": origin + Vector3(70.0, 0.0, 0.0), "color": Color(1, 1, 1, 1)}]
 	map._tick()
-	var clamped_near_zoom: bool = (_dot_center(map, 0) - map.MAP_CENTER as Vector2).length() >= float(map.MAP_RADIUS) - float(map.PEER_EDGE_TICK) - 1.0
+	var clamped_near_zoom := _dot_is_clamped(map, 0)
 	map._zoom_index = map.ZOOM_RADII.size() - 1
 	map._tick()
-	var clamped_far_zoom: bool = (_dot_center(map, 0) - map.MAP_CENTER as Vector2).length() >= float(map.MAP_RADIUS) - float(map.PEER_EDGE_TICK) - 1.0
+	var clamped_far_zoom := _dot_is_clamped(map, 0)
 	map._zoom_index = map.ZOOM_DEFAULT_INDEX
 	if not clamped_near_zoom:
 		return "a teammate 70 m away was not clamped on the %.0f m map" % LEGACY_VIEW_RADIUS
@@ -433,6 +444,18 @@ func _check_teammate_layers(map: Control, locator: Control, player: Node3D, orig
 	print("teammates: 3 dots, rim clamp at %.0f px, locator ahead/right/behind = %.0f/%.0f/%.0f of %.0f" \
 		% [map.MAP_RADIUS, bar_ahead, bar_right, bar_behind, locator.size.x])
 	return ""
+
+
+func _dot_is_clamped(map: Control, index: int) -> bool:
+	"""Whether a teammate dot was drawn as an off-map rim tick.
+
+	Read off the ALPHA rather than the geometry, because that is unambiguous: an
+	off-map tick is the only thing that scales the peer's colour by
+	PEER_EDGE_ALPHA, while a tick and an on-map blob are within 0.2 px of the same
+	length and can sit at the same distance from the centre. It also happens to
+	check the visual distinction the design promises."""
+	var alpha: float = (map._peer_colors[index] as Color).a
+	return alpha < 0.99
 
 
 func _dot_center(map: Control, index: int) -> Vector2:
