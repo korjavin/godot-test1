@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -130,6 +131,31 @@ func TestBestFileSurvivesRestart(t *testing.T) {
 	third := newBestStore(path)
 	if _, ok := third.recs["not a valid id"]; ok {
 		t.Errorf("a malformed id survived a load")
+	}
+}
+
+// TestBestFailedDumpStaysDirty — `dirty` is cleared BEFORE the write (so a merge
+// landing mid-write is not swallowed), which means a failed write has to put it
+// back. Without that the ticker's next pass sees a clean store and does nothing,
+// and one transient failure — ENOSPC, or a volume not mounted yet — silently
+// costs every record until somebody happens to write again.
+func TestBestFailedDumpStaysDirty(t *testing.T) {
+	// A path whose parent is a FILE, so MkdirAll fails every time.
+	blocker := filepath.Join(t.TempDir(), "blocker")
+	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	s := newBestStore(filepath.Join(blocker, "sub", "best.json"))
+	s.merge("player-eeee", 10, 1)
+
+	if err := s.dump(); err == nil {
+		t.Fatalf("dump into %s unexpectedly succeeded", s.path)
+	}
+	s.mu.Lock()
+	dirty := s.dirty
+	s.mu.Unlock()
+	if !dirty {
+		t.Fatalf("a failed dump left the store clean — every later tick is a no-op")
 	}
 }
 

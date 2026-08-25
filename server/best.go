@@ -196,13 +196,24 @@ func (s *bestStore) dump() error {
 		return err
 	}
 	tmp := path + ".tmp"
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
+	err = os.MkdirAll(filepath.Dir(path), 0o755)
+	if err == nil {
+		err = os.WriteFile(tmp, b, 0o644)
 	}
-	if err := os.WriteFile(tmp, b, 0o644); err != nil {
-		return err
+	if err == nil {
+		err = os.Rename(tmp, path)
 	}
-	return os.Rename(tmp, path)
+	if err != nil {
+		// `dirty` was cleared before the I/O so a merge landing mid-write is not
+		// swallowed. Put it back on failure, or the ticker's next pass sees a
+		// clean store and does nothing — one transient ENOSPC or a volume not yet
+		// mounted would then quietly cost every record until somebody happens to
+		// write again.
+		s.mu.Lock()
+		s.dirty = true
+		s.mu.Unlock()
+	}
+	return err
 }
 
 // runDumper flushes the store on a ticker for the process's lifetime.

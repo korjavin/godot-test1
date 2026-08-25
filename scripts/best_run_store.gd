@@ -283,13 +283,23 @@ func _on_get_completed(
 	var data := json.data as Dictionary
 	var server_distance := maxi(0, int(data.get("distance", 0)))
 	var server_coins := maxi(0, int(data.get("coins", 0)))
-	if server_distance <= distance and server_coins <= coins:
-		return
+	# The server can be BEHIND us: a record set before this feature shipped, one
+	# migrated out of the old `user://` file, or simply a run banked while the
+	# lobby was unreachable. Without this the whole local history sits here until
+	# the player happens to beat it, and never reaches their other devices — the
+	# reply is the only moment we know what the server has, so it is where the
+	# catch-up POST belongs. It converges: the next boot finds them equal.
+	var server_is_behind := server_distance < distance or server_coins < coins
+	var raised := server_distance > distance or server_coins > coins
+
 	distance = maxi(distance, server_distance)
 	coins = maxi(coins, server_coins)
-	# Mirror down, so the next boot has them even with the lobby unreachable.
-	_write_local()
-	loaded.emit(distance, coins)
+	if raised:
+		# Mirror down, so the next boot has them even with the lobby unreachable.
+		_write_local()
+		loaded.emit(distance, coins)
+	if server_is_behind:
+		_request_post()
 
 
 func _request_post() -> void:

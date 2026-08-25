@@ -142,7 +142,37 @@ func _run() -> void:
 			% [reader.coins, target_coins])
 		return
 
+	# CATCH-UP: a record the server has never seen — the upgrade case, where a
+	# player already has a local best from before this feature shipped, or banked
+	# one while the lobby was unreachable. `fetch()` must PUSH it, not merely read
+	# past it, or that history never reaches the player's other devices until they
+	# happen to beat it. `_write_local` is the store's own path, so this fakes the
+	# pre-existing record the way the old build would have left it.
+	var catch_up := target_distance + 1000
+	var cfg := ConfigFile.new()
+	cfg.load(BestRunStore.CONFIG_PATH)
+	cfg.set_value(BestRunStore.CONFIG_SECTION, "distance", catch_up)
+	cfg.save(BestRunStore.CONFIG_PATH)
+
+	var upgrader := _make_store()
+	upgrader.fetch()
+	await create_timer(2.0).timeout
+
+	# Clear local again, so only the lobby can supply the number.
+	_clear_local_records()
+	var checker := _make_store()
+	waited = 0.0
+	while waited < TIMEOUT_SEC and checker.distance < catch_up:
+		checker.fetch()
+		await create_timer(POLL_SEC).timeout
+		waited += POLL_SEC
+	if checker.distance < catch_up:
+		_finish(1, "BEST_RUN FAILED: a pre-existing local record was never pushed to the server (got %d, wanted %d)"
+			% [checker.distance, catch_up])
+		return
+
 	# "Records only ever go up" is pinned server-side in server/best_test.go, which
 	# is where it belongs — repeating it from here would only re-test the Go code
 	# over a slower wire.
-	_finish(0, "BEST_RUN OK: id %s, distance %d, coins %d" % [id, reader.distance, reader.coins])
+	_finish(0, "BEST_RUN OK: id %s, distance %d, coins %d, catch-up %d"
+		% [id, reader.distance, reader.coins, checker.distance])
