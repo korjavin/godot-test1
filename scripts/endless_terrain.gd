@@ -773,14 +773,21 @@ const TREASURE_CHEST_SCRIPT := preload("res://scripts/treasure_chest.gd")
 ## too near the coin road, or overlapping stone already in the chunk — and a
 ## 9.5 m circle is camp-sized, so the overlap test rejects a great deal.
 ##
-## ponytail: PLACEHOLDER, to be retuned from a measured survival rate (see the
-## sweep in the plan's Task 7), targeting 1 BUILT landmark per 40-60 chunks —
+## MEASURED, never derived by algebra — the survival rate depends on the block
+## density the biome mix happens to produce, which is why every sibling constant
+## carries its own number (CAMP_CHANCE 0.18 -> 14% survival -> 1 per 31;
+## CHEST_CHANCE 0.08 -> 98.5% -> 1 per 12.5, the same roll meaning wildly
+## different things). Throwaway headless sweep over a 41x41 = 1681 chunk field
+## with every spawner that runs BEFORE this one on (crocodiles and coins spawn
+## after it and cannot reach its candidate loop): 224 chunks ROLLED a landmark
+## and 32 BUILT one — 14.3% survival, 1 built landmark per 52.5 chunks, all
+## eight kinds appearing. That lands in the intended 1-per-40-60 band —
 ## deliberately rarer than the artifacts' 1-in-23, because these are destinations
-## rather than scenery. Retune by MEASURING, never by algebra: the survival rate
-## depends on the block density the biome mix happens to produce, which is why
-## the camp and chest constants each carry their own measured number
-## (CAMP_CHANCE 0.18 -> 14% survival -> 1 per 31; CHEST_CHANCE 0.08 -> 98.5%
-## survival -> 1 per 12.5, the same roll meaning wildly different things).
+## rather than scenery — so 0.15 stands as measured. Survival is camp-like
+## (14%) rather than chest-like (98.5%) for the same reason a camp's is: the
+## overlap test rejects almost everything for a 9.5 m circle and almost nothing
+## for a 1.5 m one.
+## Re-measure this pair if the radius, the clearances or the biome mix change.
 const LANDMARK_CHANCE: float = 0.15
 
 ## Fixed salt XORed into run_seed for the landmark hash stream, in the

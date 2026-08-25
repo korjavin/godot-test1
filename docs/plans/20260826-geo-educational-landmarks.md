@@ -447,30 +447,39 @@ it, record the numbers, then **delete the file before committing** — this is t
 throwaway-sweep precedent the camp and chest work used. The numbers go into the PR
 body and into CLAUDE.md.
 
-- [ ] **Measurement A — rarity and survival.** Over a 41×41 = 1681 chunk field with
+- [x] **Measurement A — rarity and survival.** Over a 41×41 = 1681 chunk field with
       every spawner on: how many chunks **rolled** a landmark, how many actually
       **built** one, the survival rate, and the resulting **chunks per built
       landmark**. Also report the per-kind distribution (all eight should appear).
-- [ ] **Retune `LANDMARK_CHANCE`** from that survival rate so the built rate lands in
+- [x] **Retune `LANDMARK_CHANCE`** from that survival rate so the built rate lands in
       **1 per 40–60 chunks**, re-run the sweep to confirm, and write both the measured
-      survival and the final built rate into the constant's comment — the camp/chest
+      survival and the final built rate into the constant's comment
+      — MEASURED: 224 rolled / 32 built over 1681 chunks = 14.3% survival,
+      1 per 52.5 chunks, already inside the 40–60 band, so `LANDMARK_CHANCE`
+      stays 0.15 and the measured numbers replaced the placeholder comment. — the camp/chest
       precedent (`CAMP_CHANCE` 0.18 → 14% survival → 1 per 31;
       `CHEST_CHANCE` 0.08 → 98.5% → 1 per 12.5).
-- [ ] **Measurement B — byte-identity on landmark-free chunks.** Generate the field
+- [x] **Measurement B — byte-identity on landmark-free chunks.** Generate the field
       twice, once with `spawn_landmarks = true` and once with `false`, and compare per
       chunk: the block MultiMesh instance transforms + colours, every crocodile
       position, every coin position. **Every chunk that did not build a landmark must
       be byte-identical on all three.** Report the counts (e.g. "N/N landmark-free
       chunks identical"). If any landmark-free chunk differs, that is a bug in the
       independent-stream claim — find it, do not paper over it.
-- [ ] **Measurement C — within-run determinism.** Generate the same field twice with
+- [x] **Measurement C — within-run determinism.** Generate the same field twice with
       the same `run_seed` and require byte-identical blocks, crocodiles, coins and
       landmark spots/kinds. Report the counts.
-- [ ] **Measurement D — the honest caveat, measured.** In chunks that DID build a
+- [x] **Measurement D — the honest caveat, measured.** In chunks that DID build a
       landmark, report how many crocodiles moved (expected: some — the 9.5 m
       non-climbable footprint shifts the croc stream exactly as a camp's does) and how
       many coins changed. State the number rather than claiming "nothing moved".
-- [ ] Delete the sweep script. Confirm `git status` shows no stray file.
+      — MEASURED (17×17, 6 landmark chunks): the croc COUNT is unchanged (62 on
+      / 62 off) but 5 of the 6 chunks have shifted croc POSITIONS, and all 6
+      have changed coins (28 reward-ring coins on / 0 off). Landmark-free
+      chunks: 283/283 identical blocks, crocodiles and coins. Within-run
+      determinism: 289/289 identical blocks, crocodiles, coins and landmark
+      spots/kinds.
+- [x] Delete the sweep script. Confirm `git status` shows no stray file.
 
 ### Task 8: Documentation
 
