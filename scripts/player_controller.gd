@@ -1720,6 +1720,17 @@ func _on_caught_finished() -> void:
 	Called once the "caught" freeze ends. One bite costs one life; from there we
 	either respawn in place (lives left) or end the run (no lives left).
 	"""
+	# IN A ROOM, RE-READ THE ROOM'S HEARTS BEFORE SPENDING ONE. `_physics_process`
+	# early-returns for the whole `is_caught` freeze (CAUGHT_DURATION, 0.55 s), so
+	# `_refresh_shared_totals()` has not run since the bite landed and `lives` is
+	# up to half a second stale — long enough for a teammate's coin pickup to have
+	# crossed an EXTRA_LIFE_COINS threshold, or for another member's death to have
+	# arrived. Branching on the stale value ends this player's run on a heart the
+	# room actually has. Done here, at the one place the decision is made, rather
+	# than inside the caught branch: the freeze is 33 frames of work to fix a
+	# single read. A no-op offline, where the call returns before touching anything.
+	_refresh_shared_totals()
+
 	lives -= 1
 	# This peer's contribution to the room's spent-lives total. Counted even solo
 	# (it is simply never read there), so there is no branch to get wrong.
