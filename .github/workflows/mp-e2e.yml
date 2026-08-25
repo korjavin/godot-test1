@@ -25,6 +25,8 @@ on:
     paths:
       - 'scripts/mp_*.gd'
       - 'scripts/mp_e2e.sh'
+      # The relay client both instances drive — it does not match mp_*.gd.
+      - 'scripts/lobby_client.gd'
       - 'server/**'
       - '.github/workflows/mp-e2e.yml'
   pull_request:
@@ -32,6 +34,8 @@ on:
     paths:
       - 'scripts/mp_*.gd'
       - 'scripts/mp_e2e.sh'
+      # The relay client both instances drive — it does not match mp_*.gd.
+      - 'scripts/lobby_client.gd'
       - 'server/**'
       - '.github/workflows/mp-e2e.yml'
   workflow_dispatch:
