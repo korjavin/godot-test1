@@ -659,6 +659,16 @@ func get_members() -> Array:
 	return _members
 
 
+func my_id() -> String:
+	"""Our own 16-hex lobby id, or "" when offline."""
+	return _you
+
+
+func get_master() -> String:
+	"""The room's current master id, or "" when offline. `get_master() == my_id()` is "we are the master"."""
+	return _master
+
+
 func is_online() -> bool:
 	"""True from `welcome` until `leave()` — i.e. while a room actually exists."""
 	return _state == State.IN_ROOM

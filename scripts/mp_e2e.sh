@@ -2,7 +2,10 @@
 # Two-instance headless end-to-end check of the multiplayer LOBBY RELAY path:
 # start a local lobby, host a room from one Godot instance, check the room shows
 # up in the public `/rooms` list, join it from a second instance, and prove both
-# ended up on the SAME world seed.
+# ended up on the SAME world seed. Then a second phase proves phase 5's MASTER
+# MIGRATION over the same relay: the host stops heartbeating while keeping its
+# socket open (a throttled tab), and a fresh joiner must vote it out and come out
+# master itself.
 #
 #     bash scripts/mp_e2e.sh
 #
@@ -11,10 +14,11 @@
 # for the production bug where a joiner silently walked its own private world
 # (the seed used to be latched only after the /ice fetch; see Task 9a).
 #
-# ponytail: covers the relay only — the room, the seed and its adoption. The
-# WebRTC mesh and the remote avatars still need two real browsers, because
-# desktop headless has no `webrtc-native` addon (hence `--lobby-only`). Wiring
-# this into CI is a one-job follow-up; `.github/workflows/` is owned elsewhere.
+# ponytail: covers the relay only — the room, the seed, its adoption and the
+# stall vote. The WebRTC mesh, the remote avatars and the croc sync still need
+# two real browsers, because desktop headless has no `webrtc-native` addon
+# (hence `--lobby-only`). Wiring this into CI is a one-job follow-up;
+# `.github/workflows/` is owned elsewhere.
 set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -23,7 +27,11 @@ GODOT="${GODOT:-godot}"
 # probe: that needs a helper binary, and a busy port shows up as "lobby never
 # became healthy" with the bind error right there in the log.
 PORT="${PORT:-$((18000 + $$ % 1000))}"
-HOST_HOLD=45
+# The one host process outlives BOTH phases (the stall phase needs the deposed
+# host still connected, or the lobby's ordinary disconnect re-election would fire
+# instead of a vote). Cleanup kills it the moment the script ends, so an
+# over-generous hold costs nothing but a slow one fails the run.
+HOST_HOLD=120
 LOG_DIR="$(mktemp -d)"
 LOBBY_PID=""
 HOST_PID=""
@@ -77,8 +85,10 @@ run_instance() {
 		--lobby="$LOBBY_URL" --lobby-only "$@" >"$log" 2>&1
 }
 
+# `--stall` from the start: it only silences the heartbeat, and the seed phase's
+# joiner is gone long before the manager's 4 s + 2 s stall clock could fire.
 echo "E2E: hosting"
-run_instance "$LOG_DIR/host.log" --role=host --hold="$HOST_HOLD" &
+run_instance "$LOG_DIR/host.log" --role=host --hold="$HOST_HOLD" --stall &
 HOST_PID=$!
 
 ROOM=""
@@ -115,5 +125,25 @@ JOIN_SEED="$(grep -m1 '^E2E_SEED=' "$LOG_DIR/join.log" | cut -d= -f2 | tr -d '\r
 [ -n "$JOIN_SEED" ] || fail "joiner never printed E2E_SEED"
 [ "$HOST_SEED" = "$JOIN_SEED" ] || fail "seed mismatch: host=${HOST_SEED} join=${JOIN_SEED}"
 
-echo "E2E OK: room ${ROOM}, shared seed ${HOST_SEED}"
+# ---------------------------------------------------------------------------
+# Phase 2: the stalled host is voted out and the joiner becomes master.
+# ---------------------------------------------------------------------------
+echo "E2E: stall phase — waiting for the vote to depose the host"
+kill -0 "$HOST_PID" 2>/dev/null || fail "host exited before the stall phase"
+
+run_instance "$LOG_DIR/join2.log" --role=join --code="$ROOM" --await-master
+STALL_STATUS=$?
+
+HOST_ID="$(grep -m1 '^E2E_YOU=' "$LOG_DIR/host.log" | cut -d= -f2 | tr -d '\r')"
+JOIN2_ID="$(grep -m1 '^E2E_YOU=' "$LOG_DIR/join2.log" | cut -d= -f2 | tr -d '\r')"
+NEW_MASTER="$(grep -m1 '^E2E_NEWMASTER=' "$LOG_DIR/join2.log" | cut -d= -f2 | tr -d '\r')"
+
+[ "$STALL_STATUS" -eq 0 ] || fail "stall joiner exited ${STALL_STATUS} (never became master?)"
+[ -n "$HOST_ID" ] || fail "host never printed E2E_YOU"
+[ -n "$JOIN2_ID" ] || fail "stall joiner never printed E2E_YOU"
+[ -n "$NEW_MASTER" ] || fail "stall joiner never printed E2E_NEWMASTER"
+[ "$NEW_MASTER" = "$JOIN2_ID" ] || fail "new master ${NEW_MASTER} is not the joiner ${JOIN2_ID}"
+[ "$NEW_MASTER" != "$HOST_ID" ] || fail "master never migrated off the stalled host ${HOST_ID}"
+
+echo "E2E OK: room ${ROOM}, shared seed ${HOST_SEED}, master migrated ${HOST_ID} -> ${NEW_MASTER}"
 exit 0

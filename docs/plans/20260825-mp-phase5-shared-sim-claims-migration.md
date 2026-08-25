@@ -637,7 +637,7 @@ stalled master, a quorum vote, a lobby re-election and the survivor learning it
 is master. That is precisely the part `mp_selfcheck` cannot reach and two
 browsers are needed for everything else.
 
-- [ ] `mp_e2e.gd`: print `E2E_YOU=<our lobby id>` and `E2E_MASTER=<master id>`
+- [x] `mp_e2e.gd`: print `E2E_YOU=<our lobby id>` and `E2E_MASTER=<master id>`
       alongside the existing `E2E_ROOM=` / `E2E_SEED=` lines. Add a `--stall`
       flag for the host role that sets `mp.heartbeat_enabled = false` once the
       room exists — the simulated throttled tab. The host **must keep its socket
@@ -645,21 +645,21 @@ browsers are needed for everything else.
       re-election fires and the test would pass for the wrong reason. Say that in
       the file's header comment, in the same voice as the existing "the host must
       use `host()`, not a fixed code" warning.
-- [ ] `mp_e2e.gd`: add a `--await-master` flag for the join role — after printing
+- [x] `mp_e2e.gd`: add a `--await-master` flag for the join role — after printing
       its lines, poll until the manager reports **itself** as master, then print
       `E2E_NEWMASTER=<id>` and quit 0; time out into the existing `_fail` path.
       Expose whatever minimal read it needs (`mp.get_master()` — add it to the
       manager if it does not exist; it is one line and `mp_ui.gd` can use it too).
-- [ ] `mp_e2e.sh`: after the existing seed assertion, keep the same host process
+- [x] `mp_e2e.sh`: after the existing seed assertion, keep the same host process
       alive and add the stall phase — host started with `--stall`, joiner with
       `--await-master`; assert `E2E_NEWMASTER` from the joiner equals the joiner's
       own `E2E_YOU` and differs from the host's `E2E_YOU`. Size the host's
       `--hold` so it outlives the vote. Report a failure the way the script
       already does (`fail`, with the tail of every log), never as a note.
-- [ ] keep the whole script's existing structure: per-run port, built (not
+- [x] keep the whole script's existing structure: per-run port, built (not
       `go run`) lobby binary, `cleanup` trap, `/rooms` check, seed comparison.
       Add a phase; do not restructure it.
-- [ ] **Do NOT edit `.github/workflows/`.** Note in the handoff that wiring this
+- [x] **Do NOT edit `.github/workflows/`.** Note in the handoff that wiring this
       script into CI remains the one-job follow-up phase 4 already recorded.
 
 ### Task 10: [Final] Update documentation

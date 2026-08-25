@@ -11,10 +11,29 @@ extends SceneTree
 ## It prints, on their own lines:
 ##
 ##     E2E_ROOM=<6-character invite code>
+##     E2E_YOU=<our own 16-hex lobby id>
+##     E2E_MASTER=<the master's lobby id>
 ##     E2E_SEED=<endless_terrain.run_seed>
 ##
 ## and quits 0, or prints `E2E_TIMEOUT` and quits 1. The harness compares the two
 ## seeds — they must be equal, because that is the whole promise of a room.
+##
+## Phase 5 adds the STALL → RE-ELECTION half, which is the one part of master
+## migration a headless run can reach (`--lobby-only` has no mesh, and the
+## heartbeat rides the relay precisely so it works without one):
+##
+##     --stall         (host) stop heartbeating once the room exists
+##     --await-master  (join) wait until WE are the master, then print
+##                     E2E_NEWMASTER=<our id>
+##
+## ⚠️ A STALLED HOST MUST KEEP ITS SOCKET OPEN. `--stall` only silences the
+## heartbeat — it is the simulated throttled tab, where the TCP connection is
+## alive and the room is intact but nothing is being sent. If the host process
+## exited instead, the lobby's ORDINARY disconnect re-election would fire and the
+## joiner would become master without a single vote being cast, so the test would
+## pass while proving nothing about stall detection. The host therefore still
+## `--hold`s, sized to outlive the vote. Same family of trap as the fixed-code
+## one below: a green run for the wrong reason.
 ##
 ## ⚠️ THE HOST MUST USE `host()`, NOT A FIXED SHARED CODE. `MpManager`'s typo
 ## guard drops a peer that asked for a code and came out alone AND master, since
@@ -39,6 +58,13 @@ extends SceneTree
 ## machine that would otherwise have passed.
 const TIMEOUT_SEC: float = 60.0
 
+## Extra budget granted to `--await-master` when it starts waiting. The vote is
+## paced by the manager's own constants (`HEARTBEAT_TIMEOUT` 4 s of silence, then
+## a vote every `STALL_REPORT_INTERVAL` 2 s), so the wait itself is ~6 s — but it
+## begins AFTER the boot the 60 s budget was sized for, and a deadline already
+## half spent on importing would report a working migration as a timeout.
+const MASTER_WAIT_SEC: float = 30.0
+
 ## How long the host lingers after printing its code, so the joiner has a room
 ## to join. Overridden with `--hold=<seconds>`; the harness sizes it to its own
 ## joiner timeout.
@@ -47,6 +73,8 @@ const DEFAULT_HOLD_SEC: float = 20.0
 var _role: String = ""
 var _code: String = ""
 var _hold: float = DEFAULT_HOLD_SEC
+var _stall: bool = false
+var _await_master: bool = false
 var _deadline_msec: int = 0
 
 
@@ -77,6 +105,10 @@ func _read_args() -> void:
 			_code = arg.substr("--code=".length()).to_upper()
 		elif arg.begins_with("--hold="):
 			_hold = maxf(0.0, arg.substr("--hold=".length()).to_float())
+		elif arg == "--stall":
+			_stall = true
+		elif arg == "--await-master":
+			_await_master = true
 
 
 func _run() -> void:
@@ -111,11 +143,26 @@ func _run() -> void:
 			_fail("seed never arrived")
 			return
 
+	# The throttled tab: beats stop, socket stays. See the header warning.
+	if _stall:
+		mp.heartbeat_enabled = false
+
 	print("E2E_ROOM=%s" % mp.get_room_code())
+	print("E2E_YOU=%s" % mp.my_id())
+	print("E2E_MASTER=%s" % mp.get_master())
 	# The TERRAIN's seed, not the manager's: the point of the test is that the
 	# ground was actually regenerated from the room's seed, not merely that a
 	# number was received and stored.
 	print("E2E_SEED=%d" % int(terrain.get("run_seed")))
+
+	if _await_master:
+		_deadline_msec = maxi(
+			_deadline_msec, Time.get_ticks_msec() + int(MASTER_WAIT_SEC * 1000.0)
+		)
+		if not await _await_until(func() -> bool: return mp.get_master() == mp.my_id()):
+			_fail("never became master — the stalled host was not deposed")
+			return
+		print("E2E_NEWMASTER=%s" % mp.my_id())
 
 	if _role == "host":
 		await _hold_open()
