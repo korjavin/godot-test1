@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Two-instance headless end-to-end check of the multiplayer LOBBY RELAY path:
-# start a local lobby, host a room from one Godot instance, join it from a
-# second, and prove both ended up on the SAME world seed.
+# start a local lobby, host a room from one Godot instance, check the room shows
+# up in the public `/rooms` list, join it from a second instance, and prove both
+# ended up on the SAME world seed.
 #
 #     bash scripts/mp_e2e.sh
 #
@@ -88,6 +89,19 @@ for _ in $(seq 1 90); do
 	sleep 1
 done
 [ -n "$ROOM" ] || fail "host never printed E2E_ROOM"
+
+# The public room list, against the same live lobby the game is talking to. The
+# Go tests cover ListRooms' logic; this covers the thing they cannot — that a
+# room a real client actually hosted is reachable over HTTP at /rooms, which is
+# the single request the Join panel's list is built from.
+echo "E2E: checking /rooms lists ${ROOM}"
+ROOMS_BODY="$(curl -fsS "http://127.0.0.1:${PORT}/rooms" 2>/dev/null)" \
+	|| fail "/rooms request failed"
+case "$ROOMS_BODY" in
+	*"\"$ROOM\""*) ;;
+	*) fail "/rooms did not list the hosted room ${ROOM}: ${ROOMS_BODY}" ;;
+esac
+
 echo "E2E: room ${ROOM}, joining"
 
 run_instance "$LOG_DIR/join.log" --role=join --code="$ROOM"

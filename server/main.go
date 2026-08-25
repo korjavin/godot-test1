@@ -1,6 +1,6 @@
 package main
 
-// main.go — process entry: config from the environment, four routes, no state of
+// main.go — process entry: config from the environment, five routes, no state of
 // its own. The lobby does signalling, membership and master-naming and nothing
 // else: no game logic, no persistence, no database.
 
@@ -35,6 +35,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", hub.ServeWS)
 	mux.HandleFunc("/ice", iceHandler)
+	mux.HandleFunc("/rooms", hub.roomsHandler)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(mustJSON(map[string]any{"ok": true, "rooms": hub.Rooms()}))
@@ -110,6 +111,28 @@ func iceHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	_, _ = w.Write(mustJSON(map[string]any{"iceServers": servers}))
+}
+
+// roomsHandler publishes the open-room list, so a player picks a room from a
+// list instead of being handed a code by a friend.
+//
+// It is HTTP rather than a websocket message ON PURPOSE: `/ws` *joins* on
+// connect, and an unknown-but-well-formed code CREATES a room (see `Hub.Join`),
+// so a client asking "what rooms exist?" over the socket would first have to
+// make a junk room to ask from — which would then appear in its own answer.
+//
+// Same CORS rule as /ice: the game is served from a different origin than the
+// lobby, so without the header the browser discards the response. Unlike /ice
+// the body is not a credential, but honouring one allowlist rather than two is
+// the simpler thing to keep correct.
+func (h *Hub) roomsHandler(w http.ResponseWriter, r *http.Request) {
+	if o := corsOrigin(r.Header.Get("Origin")); o != "" {
+		w.Header().Set("Access-Control-Allow-Origin", o)
+		w.Header().Set("Vary", "Origin")
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write(mustJSON(map[string]any{"rooms": h.ListRooms()}))
 }
 
 func env(key, def string) string {
