@@ -247,7 +247,7 @@ All of them:
 
 ### Task 3: `spawn_landmark_in_chunk` + wiring into `create_chunk`
 
-- [ ] Add
+- [x] Add
       `spawn_landmark_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void`,
       modelled on `spawn_chest_in_chunk`:
       - early-return on `not spawn_landmarks` / empty `_landmark_at`;
@@ -259,7 +259,7 @@ All of them:
         make, and worth a comment: the Eiffel Tower sticking out of a mountain massif
         reads worse than a chunk without one.
       - dispatch the builder: `var footprint: Dictionary = call(LANDMARKS[kind].builder, center, rng, parent_chunk, block_batch, block_body)`.
-- [ ] **Reward, in this order (the ordering gotcha):** spawn
+- [x] **Reward, in this order (the ordering gotcha):** spawn
       `LANDMARK_COIN_MIN..MAX` ordinary coins on a ring at
       `footprint.radius + randf_range(pad_min, pad_max)`, each settled through
       `_settle_coin_y` and skipped when it returns `INF`, parented to `parent_chunk` —
@@ -267,7 +267,7 @@ All of them:
       perch on the footprint circle's top and float metres above a hollow shape
       (Stonehenge, the Plaza and the Golden Gate are all mostly hollow). **No gem.**
       Guard with `if spawn_coins and coin_scene != null`, like the artifact reward.
-- [ ] **The marker node** — the landmark's only other non-batched node, and it has no
+- [x] **The marker node** — the landmark's only other non-batched node, and it has no
       mesh, no script and no physics: a bare `Node3D` named `"LandmarkMarker"`, added
       to the group `"landmark"`, parented to `parent_chunk` at the landmark's centre,
       carrying three metas: `set_meta("name_key", entry.name)`,
@@ -277,7 +277,7 @@ All of them:
       parenting means it is freed automatically when the chunk unloads, so there is no
       registry to keep in step and nothing to leak. A bare `Node3D` costs zero draw
       calls and zero physics.
-- [ ] Append ONE round footprint:
+- [x] Append ONE round footprint:
       `obstacles.append({ "pos": center, "radius": footprint.radius, "top": footprint.top, "climbable": false })`.
       **Non-climbable**, unlike a chest: these are 5–18 m tall, so a road coin perched
       on the "top" of the circle would float unreachably (the tree/canopy rule). This
@@ -287,7 +287,7 @@ All of them:
       do: the croc *count* is unchanged (the retry budget absorbs it) but the croc
       *positions* in a landmark chunk shift, because a rejected candidate skips the
       successful spawn's `rotation.y` draw.
-- [ ] Call it from `create_chunk` **AFTER `spawn_camp_in_chunk` and BEFORE
+- [x] Call it from `create_chunk` **AFTER `spawn_camp_in_chunk` and BEFORE
       `spawn_chest_in_chunk`**, with the same ordering comment its siblings carry.
       Two reasons to state there: (a) it must run before `_build_block_multimesh` and
       the `block_body` attach, so its stone joins the chunk's one MultiMesh and one

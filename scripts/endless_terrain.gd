@@ -2027,15 +2027,29 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 	# that is what lets its single footprint keep crocodiles out of the camp.
 	spawn_camp_in_chunk(chunk_pos, mesh_instance, obstacles, block_batch, block_body)
 
+	# A rare geo landmark — a recognizable famous place (independent LANDMARK_SALT
+	# hash stream, no shared RNG draws consumed). SAME ORDERING REQUIREMENT as the
+	# three above, for the same two reasons: (a) it must run after them so its
+	# candidate loop is judged against the finished obstacles list (and its own
+	# footprint appends to it), and before _build_block_multimesh / the block_body
+	# attach so all its stone joins the chunk's ONE MultiMesh draw call and ONE
+	# collision body; (b) it must run BEFORE the chest so a chest is never placed
+	# inside a landmark — the chest keeps its "last of the family" position, and the
+	# only behavioural consequence is that in a landmark chunk the chest's candidate
+	# loop now also has to clear the landmark footprint. It runs BEFORE
+	# spawn_crocodiles_in_chunk below, which is what lets its single footprint keep
+	# crocodiles out of the monument.
+	spawn_landmark_in_chunk(chunk_pos, mesh_instance, obstacles, block_batch, block_body)
+
 	# A treasure chest — the small, common third member of the artifact/camp family
 	# (independent CHEST_SALT hash stream, no shared RNG draws consumed). SAME
 	# ORDERING REQUIREMENT as the three above, for the same reasons: after them so
 	# its candidate loop is judged against the finished obstacles list (and its own
 	# footprint appends to it), and before _build_block_multimesh / the block_body
 	# attach so its wood and brass join the chunk's ONE MultiMesh draw call and ONE
-	# collision body. It runs LAST of the four so a chest can never be placed inside
-	# a camp or an artifact — the reverse order would let a camp be pitched on top of
-	# a chest that was already there.
+	# collision body. It runs LAST of the five so a chest can never be placed inside
+	# a camp, an artifact or a landmark — the reverse order would let a camp be
+	# pitched on top of a chest that was already there.
 	spawn_chest_in_chunk(chunk_pos, mesh_instance, obstacles, block_batch, block_body)
 
 	# Build the chunk's batched block visuals. If any blocks were placed, collapse
@@ -4587,6 +4601,160 @@ func _landmark_taj(center: Vector3, rng: RandomNumberGenerator, _parent_chunk: M
 
 	return { "radius": 8.6, "top": y + 1.2 }
 
+
+func spawn_landmark_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
+	"""
+	Spawn this chunk's geo landmark, if _landmark_at says it has one, plus its coin
+	ring and its marker node. Called from create_chunk AFTER spawn_camp_in_chunk and
+	BEFORE spawn_chest_in_chunk (and therefore before _build_block_multimesh + the
+	block_body attach), so every box the builder emits joins the chunk's SINGLE
+	MultiMesh draw call and SINGLE BlockCollision body — a whole Eiffel Tower costs
+	zero extra draw calls and zero extra physics bodies.
+
+	That ordering is also WHY the candidate loop lives here rather than in
+	_landmark_at: by this point the chunk's scattered blocks, feature structure,
+	artifact, biome geometry and camp are all in `obstacles`, so every try is judged
+	against the test that actually rejects. Both artifacts and camps had to have
+	that loop dug back OUT of their roll for exactly this reason.
+
+	@param chunk_pos: Chunk coordinates being generated.
+	@param parent_chunk: The chunk mesh — the reward coins, any emissive accent and
+	                     the marker Node3D parent here (per-chunk parenting rule:
+	                     they are freed automatically when the chunk unloads, so
+	                     there is no registry to keep in step and nothing to leak).
+	@param obstacles: The chunk's footprint list. READ to place the landmark, then
+	                  appended to with the landmark's own single footprint.
+	@param block_batch / block_body: The chunk's visual batch + collision body,
+	                                 threaded through to create_box.
+	"""
+	if not spawn_landmarks:
+		return
+	var lm := _landmark_at(chunk_pos)
+	if lm.is_empty():
+		return
+
+	# The landmark's OWN private RNG, seeded from _landmark_at's roll: it picks the
+	# spot AND feeds the builder AND draws the coin ring, so each consumes as many
+	# draws as it needs without the rarity roll (or any other stream) caring.
+	var rng := RandomNumberGenerator.new()
+	rng.seed = lm.seed
+
+	var chunk_center := chunk_to_world(chunk_pos)
+	# Candidates stay LANDMARK_EDGE_MARGIN (12 > LANDMARK_RADIUS 9.5) inside the
+	# chunk, so nothing the builder emits straddles a seam.
+	var half := chunk_size / 2.0 - LANDMARK_EDGE_MARGIN
+
+	# Try a few spots; accept the FIRST that clears _biome_spot_ok — the single home
+	# of the river + road-clearance + overlap rule (do not write a second copy). The
+	# road half is what makes a landmark an off-road DESTINATION rather than
+	# something you trip over on the trail; the overlap half is what keeps the
+	# silhouette readable.
+	#
+	# EVERY TRY FAILING MEANS NO LANDMARK — the same call artifacts and camps both
+	# make, and the right one here too: the Eiffel Tower sticking out of a mountain
+	# massif reads far worse than a chunk without one, and a higher LANDMARK_CHANCE
+	# reaches the same built rate. LANDMARK_RADIUS is handed over as "the widest this
+	# could be", because the shape's real radius is only known after its builder has
+	# run (the house rule every sibling spawner follows).
+	var local_x := 0.0
+	var local_z := 0.0
+	var placed := false
+	var tries := 0
+	while tries < LANDMARK_PLACE_TRIES and not placed:
+		tries += 1
+		local_x = rng.randf_range(-half, half)
+		local_z = rng.randf_range(-half, half)
+		if _biome_spot_ok(chunk_center, local_x, local_z, LANDMARK_RADIUS, LANDMARK_ROAD_CLEARANCE, obstacles):
+			placed = true
+	if not placed:
+		return
+
+	var center := Vector3(local_x, 0.0, local_z)
+
+	# --- Build it. The registry is pure data, so the dispatch is one call() on a
+	# method-name String and adding a ninth famous place touches no code here at
+	# all. `builder` being a String rather than a Callable is what lets LANDMARKS be
+	# a `const`; the cost is that a typo'd method name is caught at call time, which
+	# is why landmark_selfcheck.gd calls every builder in the table.
+	var entry: Dictionary = LANDMARKS[lm.kind]
+	var footprint: Dictionary = call(entry.builder, center, rng, parent_chunk, block_batch, block_body)
+
+	# --- The reward: a small ring of ordinary coins round the base, and
+	# DELIBERATELY NO GEM (the guaranteed gem stays the artifacts' distinction — see
+	# the REWARD DECISION in the constant banner). These are ordinary chunk-local
+	# coins parented to the chunk; the road's station-claim logic is not involved.
+	#
+	# ORDER MATTERS, and this is the same ordering gotcha artifacts and camps both
+	# carry: the landmark's own footprint is appended to `obstacles` only AFTER these
+	# coins are settled. That footprint is a CIRCLE with a `top`, but Stonehenge, the
+	# Plaza Mayor and the Golden Gate are mostly HOLLOW — settling their reward coins
+	# against that circle would perch them on the silhouette top, i.e. floating
+	# several metres up in open air over an empty middle. Settling first means they
+	# meet only real block stone and land where the player can actually pick them up.
+	if spawn_coins and coin_scene != null:
+		var coin_count := rng.randi_range(LANDMARK_COIN_MIN, LANDMARK_COIN_MAX)
+		var ring_radius: float = footprint.radius + rng.randf_range(LANDMARK_COIN_RING_PAD_MIN, LANDMARK_COIN_RING_PAD_MAX)
+		var i := 0
+		while i < coin_count:
+			i += 1
+			var a := rng.randf_range(0.0, TAU)
+			var cx := center.x + cos(a) * ring_radius
+			var cz := center.z + sin(a) * ring_radius
+			# Same perch-or-skip rule as road coins (one home: _settle_coin_y): the
+			# ring can graze a neighbouring block, so a coin perches on a climbable
+			# top or is dropped under a sheer wall.
+			var cy := _settle_coin_y(cx, cz, COIN_GROUND_HEIGHT, obstacles)
+			if is_inf(cy):
+				continue
+			var coin := coin_scene.instantiate()
+			coin.position = Vector3(cx, cy, cz)
+			parent_chunk.add_child(coin)
+
+	# --- The marker: the landmark's only other non-batched node, and it has no mesh,
+	# no script and no physics — a bare Node3D costs ZERO draw calls and ZERO
+	# physics. It exists so scripts/landmark_toast.gd can find landmarks the way
+	# EVERY other system in this project finds things: BY GROUP, never by reference
+	# (CLAUDE.md "Node discovery is group-based"). Parenting it to the chunk means it
+	# is freed automatically when the chunk unloads, so there is no registry to keep
+	# in step, nothing to leak, and a landmark that streams back in re-registers
+	# itself for free.
+	#
+	# The three metas are the whole contract with the toast: the English name and
+	# fact (which ARE the translation keys — CLAUDE.md Localization RULE 1) and the
+	# shape's real radius, so the toast can measure "within ~15 m of the STONE"
+	# rather than "within 15 m of a point" and a small statue and a wide plaza both
+	# trigger where they look like they should.
+	var marker := Node3D.new()
+	marker.name = "LandmarkMarker"
+	marker.position = center
+	marker.add_to_group("landmark")
+	marker.set_meta("name_key", entry.name)
+	marker.set_meta("fact_key", entry.fact)
+	marker.set_meta("radius", footprint.radius)
+	parent_chunk.add_child(marker)
+
+	# --- ONE round footprint, and it is NON-CLIMBABLE, unlike a chest's. These are
+	# 5-18 m tall, so a road coin perched on the "top" of the circle would float
+	# unreachably high — the same call the tree/canopy and cactus footprints make.
+	# _settle_coin_y therefore SKIPS a road coin whose column crosses a landmark
+	# instead of stranding it in the sky.
+	#
+	# This single footprint IS the crocodile exclusion: spawn_crocodiles_in_chunk
+	# already rejects candidates within ob.radius + min_object_clearance of a
+	# footprint, so a landmark reads as a calm pocket with NO EDIT to the crocodile
+	# spawner. Known consequence, exactly as camps document it: the croc COUNT is
+	# unchanged (the retry budget absorbs the rejections) but the croc POSITIONS in a
+	# landmark chunk DO shift, because a rejected candidate skips the successful
+	# spawn's rotation.y draw and shifts the rest of that chunk's croc stream.
+	# Within-run determinism still holds unconditionally — the footprint is a pure
+	# function of chunk coords + run_seed.
+	#
+	# ponytail: one circle + one top is the whole footprint vocabulary the coin and
+	# crocodile rules speak, so a hollow landmark reserves its empty middle too. That
+	# errs toward "no coin here" rather than "a coin buried in stone", which is the
+	# failure the rule exists to prevent; if it ever looks wrong, give the footprint
+	# a per-shape solid-centre height rather than a richer vocabulary.
+	obstacles.append({ "pos": center, "radius": footprint.radius, "top": footprint.top, "climbable": false })
 # ============================================================================
 # BIOME CONTENT (the geometry each biome adds on top of the ordinary blocks)
 # ============================================================================
