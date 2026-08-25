@@ -755,7 +755,8 @@ const TREASURE_CHEST_SCRIPT := preload("res://scripts/treasure_chest.gd")
 ##   - all stone goes through create_box into the chunk's ONE MultiMesh and ONE
 ##     BlockCollision body, so a whole Eiffel Tower costs ZERO extra draw calls
 ##     and ZERO extra physics bodies. The only non-batched nodes a landmark may
-##     add are at most LANDMARK_MAX_ACCENTS emissive accents and one script-free
+##     add are at most ONE emissive accent (three of the eight builders spend it;
+##     see the accent-budget note by LANDMARK_EDGE_MARGIN) and one script-free
 ##     marker Node3D (which has no mesh and no physics either).
 ##
 ## THE REGISTRY IS THE EXTENSION POINT. LANDMARKS below is pure data — builder
@@ -791,13 +792,24 @@ const TREASURE_CHEST_SCRIPT := preload("res://scripts/treasure_chest.gd")
 ## with every spawner that runs BEFORE this one on (crocodiles and coins spawn
 ## after it and cannot reach its candidate loop): 224 chunks ROLLED a landmark
 ## and 32 BUILT one — 14.3% survival, 1 built landmark per 52.5 chunks, all
-## eight kinds appearing. That lands in the intended 1-per-40-60 band —
-## deliberately rarer than the artifacts' 1-in-23, because these are destinations
-## rather than scenery — so 0.15 stands as measured. Survival is camp-like
-## (14%) rather than chest-like (98.5%) for the same reason a camp's is: the
-## overlap test rejects almost everything for a 9.5 m circle and almost nothing
-## for a 1.5 m one.
-## Re-measure this pair if the radius, the clearances or the biome mix change.
+## eight kinds appearing.
+##
+## MEASURE ACROSS SEEDS, NOT ONE. That first figure is a SINGLE run_seed, and the
+## rate is far more seed-dependent than the sibling constants' are, because what
+## rejects a candidate here is overlap with a chunk's biome content — so a seed
+## whose biome offset lands more of the field in sparse desert builds many more
+## landmarks than one that lands it in forest. Five further seeds over 25x25 = 625
+## chunks each: 1 per 52.1, 28.4, 41.7, 56.8 and 52.1 (survival 12.4-25.0%).
+## AGGREGATED over all six sweeps — 4806 chunks, 673 rolled, 104 built — that is
+## 15.5% survival and 1 built landmark per 46.2 chunks, inside the intended
+## 1-per-40-60 band and deliberately rarer than the artifacts' 1-in-23, because
+## these are destinations rather than scenery. So 0.15 stands as measured, with
+## the honest caveat that any ONE world sits somewhere in 1-per-28..57.
+## Survival is camp-like (~15%) rather than chest-like (98.5%) for the same reason
+## a camp's is: the overlap test rejects almost everything for a 9.5 m circle and
+## almost nothing for a 1.5 m one.
+## Re-measure this pair — over SEVERAL seeds — if the radius, the clearances or
+## the biome mix change.
 const LANDMARK_CHANCE: float = 0.15
 
 ## Fixed salt XORed into run_seed for the landmark hash stream, in the
@@ -855,19 +867,38 @@ const LANDMARK_ROAD_CLEARANCE: float = 22.0
 ## spread around their chunk instead of piling into its centre.
 const LANDMARK_EDGE_MARGIN: float = 12.0
 
-## The emissive-accent budget per landmark, the same rule as ARTIFACT_MAX_ACCENTS:
-## an accent is a real extra MeshInstance3D and therefore a real extra DRAW CALL,
-## which is the one cost that does not batch. Builders use at most ONE each, and
-## only where a real light belongs (a torch, a beacon, a gilded capstone).
-const LANDMARK_MAX_ACCENTS: int = 4
+## THE EMISSIVE-ACCENT BUDGET IS A RULE FOR BUILDER AUTHORS, NOT A CONSTANT.
+## An accent is a real extra MeshInstance3D and therefore a real extra DRAW CALL,
+## which is the one cost that does not batch — so a builder spends at most ONE,
+## and only where a real light belongs (Liberty's torch, the Eiffel beacon, Giza's
+## gilded capstone; the other five spend none). This was a `const` of 4 for one
+## commit, which was a comment wearing a type: nothing read it, no builder or
+## dispatch path enforced it, and a const nothing checks is worse than a sentence
+## because it reads like a guard. If a budget ever needs ENFORCING, count the
+## _spawn_artifact_accent calls in spawn_landmark_in_chunk rather than re-adding a
+## number beside them.
 
 ## Coin reward: a small ring round the base. NO GEM — see the banner above.
 const LANDMARK_COIN_MIN: int = 3
 const LANDMARK_COIN_MAX: int = 5
 ## How far outside the shape's own radius the ring sits, so the coins are found
 ## by walking AROUND the landmark rather than by clipping into it.
+##
+## THE MAX IS BOUNDED BY THE EDGE MARGIN, NOT CHOSEN BY EYE, and this is the one
+## place the landmark recipe could NOT just copy the artifacts'. A landmark centre
+## sits at most (chunk_size / 2 - LANDMARK_EDGE_MARGIN) from the chunk centre on
+## each axis, so a reward coin stays inside its own chunk only while
+##     LANDMARK_RADIUS + LANDMARK_COIN_RING_PAD_MAX <= LANDMARK_EDGE_MARGIN
+## i.e. 9.5 + 2.0 = 11.5 <= 12.0 ✓ (landmark_selfcheck.gd asserts it). The
+## artifacts' identical 1.5/4.0 pair is safe there only because ARTIFACT_RADIUS is
+## 7.0 (7.0 + 4.0 = 11.0 < 12.0); at the landmarks' camp-sized 9.5 the same pair
+## reached 13.4 and a coin near a chunk edge could land OUTSIDE the chunk that
+## owns it — settled by _settle_coin_y against a footprint list describing the
+## wrong ground, and freed when the wrong chunk unloads. Rare (0 hits in a 41x41
+## sweep: it needs a landmark near an edge midpoint AND a large pad roll) but the
+## bound costs nothing, so it is a bound rather than a note.
 const LANDMARK_COIN_RING_PAD_MIN: float = 1.5
-const LANDMARK_COIN_RING_PAD_MAX: float = 4.0
+const LANDMARK_COIN_RING_PAD_MAX: float = 2.0
 
 ## --- Palette. Deliberately distinct from the warm RAMP_* block ramps, the
 ## artifacts' grey-green weathered stone and the camps' bone white, because the
@@ -4348,11 +4379,21 @@ func _landmark_golden_gate(center: Vector3, rng: RandomNumberGenerator, _parent_
 	spanning and overhanging them, and the main cable as a chain of small boxes
 	sagging from tower top to tower top in a shallow catenary.
 
-	THE DECK IS SOLID AND CLIMBABLE-LOOKING ON PURPOSE. It goes through create_box
-	like every other solid, so downstream it IS ordinary block stone: the player can
-	stand on it, a road coin whose column crosses the landmark footprint perches on
-	it, and crocodiles treat the footprint as an obstacle. A bridge you cannot walk
-	across would be a strange thing to put in a game about walking.
+	THE DECK IS SOLID ON PURPOSE. It goes through create_box like every other solid,
+	so downstream it IS ordinary block stone: it has a real CollisionShape3D in the
+	chunk's one BlockCollision body and the player stands on it rather than falling
+	through, which is what stops the span reading as a painted backdrop.
+
+	ponytail: it is solid but NOT REACHABLE from flat ground — the deck top sits at
+	DECK_Y + DECK.y/2 = 5.3 m against the player's 3.6125 m jump apex, and the
+	towers are smooth 11 m boxes with no ledge. So you walk under this bridge, not
+	over it. Upgrade path if crossing it is ever wanted: drop DECK_Y to ~2.9 (top
+	3.2), or add a step block at each abutment; both change the silhouette's
+	proportions, which is why neither was done for a shape whose whole job is to be
+	recognisable at 30 m. Note also that a road coin whose column crosses this
+	landmark is SKIPPED, not perched — spawn_landmark_in_chunk appends the footprint
+	`climbable: false` for every landmark (they are 5-18 m tall), so _settle_coin_y
+	drops it rather than stranding it on the circle's top.
 
 	RADIUS ARITHMETIC (declared 9.4). The deck is the widest box:
 	0.5*sqrt(17.0^2 + 3.0^2) = 8.63. A tower leg sits at sqrt(5.5^2 + 1.2^2) = 5.63
@@ -4440,12 +4481,22 @@ func _landmark_liberty(center: Vector3, rng: RandomNumberGenerator, parent_chunk
 
 	# The seven-point crown: spikes radiating outward and up. Trim only (they hang
 	# off the head's own volume), so collide = false.
+	#
+	# SIGN GOTCHA, the same one the Eiffel legs record and the treasure chest's lid
+	# records before that: create_box composes Basis(UP, yaw) * Basis(RIGHT, tilt),
+	# Basis(RIGHT, t) tips local +Y toward local +Z, and the yaw PI/2 - a maps local
+	# +Z onto (cos a, sin a) — radially OUTWARD. So "radiating outward" is a POSITIVE
+	# tilt. Measured with it negative, the spikes ran from r = 1.07 at their bases to
+	# r = 0.63 at their tips: a cage closing over the head rather than a crown.
 	for i in 7:
 		var a := yaw + PI * (float(i) / 6.0 - 0.5)   # a half-circle fan, facing forward
 		create_box(center + Vector3(cos(a) * 0.85, crown_y + 0.15, sin(a) * 0.85), Vector3(0.22, 1.0, 0.22),
-				PI / 2.0 - a, rng, block_batch, block_body, -0.45, copper, false)
+				PI / 2.0 - a, rng, block_batch, block_body, 0.45, copper, false)
 
-	# The raised arm: upper arm angled out, forearm going straight up, torch on top.
+	# The raised arm: two vertical boxes stepping outward and up (upper arm, then
+	# forearm), with the torch on top. Deliberately NOT tilted — a tilted arm box
+	# would need its own sign reasoning for a limb that reads fine as a step at the
+	# 30 m the silhouette is judged from.
 	var shoulder := center + rot * Vector3(1.0, y - 0.6, 0.0)
 	create_box(shoulder + rot * Vector3(0.35, 0.8, 0.0), Vector3(0.5, 2.0, 0.5), yaw, rng, block_batch, block_body, 0.0, copper)
 	var hand := shoulder + rot * Vector3(0.7, 2.6, 0.0)
@@ -4545,12 +4596,25 @@ func _landmark_eiffel(center: Vector3, rng: RandomNumberGenerator, parent_chunk:
 	# Four legs at the corners of a square, each leaning toward the axis. The tilt
 	# is applied about the leg's own local X after a yaw that points that X along
 	# the tangent, so every leg leans INWARD rather than all four leaning north.
+	#
+	# THE TILT IS NEGATED, AND THAT SIGN IS THE WHOLE SHAPE. create_box composes
+	# Basis(UP, yaw) * Basis(RIGHT, tilt), and Basis(RIGHT, t) tips the box's local
+	# +Y toward its local +Z (the same gotcha the treasure chest's lid records, one
+	# axis over). The yaw here is PI/2 - a, which maps local +Z onto (cos a, sin a)
+	# — i.e. RADIALLY OUTWARD from the tower axis. So a POSITIVE tilt splays the
+	# legs out. Measured with the sign wrong: the lower segment ran from r = 1.67 at
+	# the ground to r = 2.73 at its top, the upper segment restarted at r = 0.90 and
+	# rose to 1.50, so all four legs flared outward AND had a 1.83 m horizontal
+	# discontinuity where the two segments are supposed to meet. Negated, the lower
+	# runs 2.73 -> 1.67 and the upper 1.50 -> 0.90: converging, and the joint closes
+	# to a 0.17 m step. The radius bound is unaffected either way (the magnitude of
+	# the widest leg point is the same, it just moves from the top to the bottom).
 	for corner in 4:
 		var a := yaw + PI / 4.0 + PI / 2.0 * float(corner)
 		var lower := center + Vector3(cos(a) * 2.2, SEG.y / 2.0, sin(a) * 2.2)
-		create_box(lower, SEG, PI / 2.0 - a, rng, block_batch, block_body, LEG_TILT, iron)
+		create_box(lower, SEG, PI / 2.0 - a, rng, block_batch, block_body, -LEG_TILT, iron)
 		var upper := center + Vector3(cos(a) * 1.2, SEG.y * 1.5 - 0.1, sin(a) * 1.2)
-		create_box(upper, Vector3(SEG.x * 0.85, SEG.y, SEG.z * 0.85), PI / 2.0 - a, rng, block_batch, block_body, LEG_TILT * 0.55, iron)
+		create_box(upper, Vector3(SEG.x * 0.85, SEG.y, SEG.z * 0.85), PI / 2.0 - a, rng, block_batch, block_body, -LEG_TILT * 0.55, iron)
 
 	# First platform — the wide one you can see people standing on from the Champ
 	# de Mars, and here a genuinely reachable roof if you climb the legs.

@@ -226,8 +226,13 @@ func _scan() -> void:
 	var nearest: Node3D = null
 	var nearest_distance: float = INF
 	for node in get_tree().get_nodes_in_group("landmark"):
+		# No is_instance_valid() here on purpose: get_nodes_in_group() only ever
+		# hands back live instances, so the only reachable miss is the cast failing
+		# on a non-Node3D somebody added to the group. (The is_instance_valid on
+		# `_active` above IS load-bearing — that one is a LATCHED reference, and a
+		# marker frees with its chunk.)
 		var marker := node as Node3D
-		if marker == null or not is_instance_valid(marker):
+		if marker == null:
 			continue
 		var distance := _xz_distance(origin, marker.global_position)
 		if distance >= _marker_radius(marker) + APPROACH_PAD:

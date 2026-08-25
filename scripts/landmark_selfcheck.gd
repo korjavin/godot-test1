@@ -19,14 +19,16 @@ extends SceneTree
 ##      which is what makes `builder` being a method-name STRING (the price of a
 ##      const registry) safe: a typo'd or renamed method fails here rather than in
 ##      one chunk in fifty, on somebody's machine.
-##   2. THE CONSTANT CHAIN HOLDS. Three inequalities that a future retune breaks
+##   2. THE CONSTANT CHAIN HOLDS. Four inequalities that a future retune breaks
 ##      silently: every registry radius <= LANDMARK_RADIUS (or the placement test
 ##      stops bounding the shape it admits), LANDMARK_EDGE_MARGIN > LANDMARK_RADIUS
-##      (or a landmark straddles a seam), and the boss-exclusion arithmetic
+##      (or a landmark straddles a seam), the boss-exclusion arithmetic
 ##      LANDMARK_ROAD_CLEARANCE > LANDMARK_RADIUS + hypot(BOSS_FORWARD_OFFSET,
 ##      BOSS_LATERAL_MAX) — which is what makes "a boss can never stand inside a
-##      landmark" true BY CONSTRUCTION, with zero edits to spawn_bosses_in_chunk.
-##      Nothing else in the game asserts any of the three.
+##      landmark" true BY CONSTRUCTION, with zero edits to spawn_bosses_in_chunk —
+##      and LANDMARK_RADIUS + LANDMARK_COIN_RING_PAD_MAX <= LANDMARK_EDGE_MARGIN,
+##      which is the same seam rule for the REWARD COINS, which sit outside the
+##      stone the third inequality bounds. Nothing else asserts any of the four.
 ##   3. EVERY REGISTRY FACT IS ACTUALLY TRANSLATED. The educational payload is the
 ##      whole point of the feature, and adding a ninth landmark while forgetting
 ##      its two CSV rows is invisible to locale_selfcheck.gd — that file validates
@@ -50,7 +52,7 @@ extends SceneTree
 ## approach radius but inside the leave radius — because that is the only place
 ## APPROACH_PAD and LEAVE_PAD being equal is observable.
 ##
-## MUTATION-TESTED (all four caught, re-run these if you touch this file):
+## MUTATION-TESTED (all five caught, re-run these if you touch this file):
 ##   (a) LANDMARKS[0].radius 7.6 -> 4.0  ->  FAIL: Stonehenge (seed 22): emits
 ##       stone out to 6.35 m, past its declared radius 4.00 — it would straddle a
 ##       chunk seam.  And 7.6 -> 12.0 -> FAIL: builder returned radius 7.60 but
@@ -62,6 +64,10 @@ extends SceneTree
 ##   (d) LANDMARK_ROAD_CLEARANCE 22.0 -> 18.0
 ##       ->  FAIL: LANDMARK_ROAD_CLEARANCE (18.00) must exceed LANDMARK_RADIUS
 ##       (9.50) + boss reach (8.94) = 18.44.
+##   (e) LANDMARK_COIN_RING_PAD_MAX 2.0 -> 4.0 (the artifacts' value, which is the
+##       drift this exists to catch)  ->  FAIL: LANDMARK_RADIUS (9.50) +
+##       LANDMARK_COIN_RING_PAD_MAX (4.00) = 13.50 exceeds LANDMARK_EDGE_MARGIN
+##       (12.00) — a reward coin can land outside its own chunk.
 ##
 ## Don't grow this into a suite.
 
@@ -238,7 +244,7 @@ func _worst_horizontal_extent(block_batch: Array) -> float:
 
 func _check_constants(consts: Dictionary, registry: Array) -> void:
 	"""
-	Three inequalities. Each one is currently true by a comfortable margin, which
+	Four inequalities. Each one is currently true by a comfortable margin, which
 	is exactly why nothing would notice if a retune made one false.
 	"""
 	var radius: float = float(consts["LANDMARK_RADIUS"])
@@ -246,6 +252,7 @@ func _check_constants(consts: Dictionary, registry: Array) -> void:
 	var road_clearance: float = float(consts["LANDMARK_ROAD_CLEARANCE"])
 	var boss_forward: float = float(consts["BOSS_FORWARD_OFFSET"])
 	var boss_lateral: float = float(consts["BOSS_LATERAL_MAX"])
+	var coin_pad_max: float = float(consts["LANDMARK_COIN_RING_PAD_MAX"])
 
 	# (i) LANDMARK_RADIUS is handed to _biome_spot_ok as "the widest this could
 	# be", before the shape's real radius is known. A registry entry above it
@@ -273,6 +280,20 @@ func _check_constants(consts: Dictionary, registry: Array) -> void:
 	if road_clearance <= radius + boss_reach:
 		_fail("LANDMARK_ROAD_CLEARANCE (%.2f) must exceed LANDMARK_RADIUS (%.2f) + boss reach (%.2f) = %.2f — a boss could stand inside a landmark"
 				% [road_clearance, radius, boss_reach, radius + boss_reach])
+
+	# (iv) THE REWARD RING HAS TO FIT INSIDE THE CHUNK TOO, and (ii) alone does not
+	# give that — (ii) bounds the STONE, while the coins sit OUTSIDE the stone by up
+	# to LANDMARK_COIN_RING_PAD_MAX. The placement box puts a landmark centre at most
+	# (chunk_size / 2 - edge_margin) from the chunk centre per axis, so a coin at
+	# ring radius r stays in its own chunk exactly while r <= edge_margin. Break this
+	# and a coin near an edge is settled by _settle_coin_y against the WRONG chunk's
+	# obstacle list and freed when the WRONG chunk unloads — silent, and rare enough
+	# (a landmark near an edge midpoint plus a large pad roll) that a playtest never
+	# finds it. The artifacts' identical pad pair is safe only because their radius
+	# is 7.0, not 9.5, so this is exactly the inequality copying that recipe lost.
+	if radius + coin_pad_max > edge_margin + RADIUS_EPSILON:
+		_fail("LANDMARK_RADIUS (%.2f) + LANDMARK_COIN_RING_PAD_MAX (%.2f) = %.2f exceeds LANDMARK_EDGE_MARGIN (%.2f) — a reward coin can land outside its own chunk"
+				% [radius, coin_pad_max, radius + coin_pad_max, edge_margin])
 
 
 # ============================================================================
