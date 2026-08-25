@@ -53,6 +53,12 @@ extends SceneTree
 ## already been placed before the harness could throttle anything). See
 ## `_run_drag_check()`.
 ##
+## A FOURTH ROLE, `--role=respawn`, is the same shape again and covers bead
+## godot-test1-s86.18 — a death respawn inside a room puts the player back with
+## the group, while a solo one still leaves them exactly where they fell. Both
+## halves run in the one process, the solo negative control first. See
+## `_run_respawn_check()`.
+##
 ## ponytail: this covers the LOBBY RELAY — the room, the seed broadcast and its
 ## adoption, i.e. the path that broke in production (see Task 9a). It covers
 ## neither the WebRTC mesh nor the avatars, because desktop headless has no
@@ -90,6 +96,30 @@ const DRAG_AWAY := Vector3(400.0, 2.0, 0.0)
 const DRAG_TOLERANCE: float = 3.0
 const DRAG_SEED: int = 123456
 
+## `--role=respawn` fixtures (bead godot-test1-s86.18). Same single-instance,
+## no-socket shape as `--role=drag` above, and for a related reason: the thing
+## under test is a LOCAL event (`_respawn_in_place()`), so a second process would
+## add a scheduler to the test without adding anything to the assertion.
+const RESPAWN_MASTER_ID: String = "cccccccccccccccc"
+const RESPAWN_ME_ID: String = "dddddddddddddddd"
+const RESPAWN_SEED: int = 654321
+## Where the "group" (one master peer) is standing. Far enough from the spawn
+## that landing beside it cannot be confused with not having moved.
+const RESPAWN_GROUP := Vector3(600.0, 2.0, 0.0)
+## Where this peer has walked off to and dies. The origin, i.e. 600 m of
+## unmissable gap from the group.
+const RESPAWN_AWAY := Vector3(0.0, 2.0, 0.0)
+## Where the NEGATIVE CONTROL dies, with no room at all. Nowhere near either of
+## the two above, so "did not move" is a real measurement and not the origin
+## being the answer to everything.
+const RESPAWN_SOLO_SPOT := Vector3(120.0, 2.0, -40.0)
+## A solo respawn keeps the player EXACTLY where it fell, so this is slack for
+## the physics settle of a body parked in mid-air, nothing more.
+const RESPAWN_SOLO_TOLERANCE: float = 1.0
+## How close to the anchor counts as "with the group": the widest ring
+## `player_controller.JOIN_RING_RADII` probes (12 m) plus slack.
+const RESPAWN_NEAR_MAX: float = 16.0
+
 var _role: String = ""
 var _code: String = ""
 var _hold: float = DEFAULT_HOLD_SEC
@@ -104,8 +134,11 @@ func _initialize() -> void:
 	if _role == "drag":
 		_run_drag_check.call_deferred()
 		return
+	if _role == "respawn":
+		_run_respawn_check.call_deferred()
+		return
 	if _role != "host" and _role != "join":
-		printerr("E2E: --role=host, --role=join or --role=drag is required")
+		printerr("E2E: --role=host, --role=join, --role=drag or --role=respawn is required")
 		quit(1)
 		return
 	if _role == "join" and _code.is_empty():
@@ -288,6 +321,110 @@ func _run_drag_check() -> void:
 		return
 
 	print("E2E_NODRAG=%d" % DRAG_SEED)
+	quit(0)
+
+
+func _run_respawn_check() -> void:
+	"""
+	BEAD godot-test1-s86.18: in a room, a death respawn puts the player back with
+	the group; solo it still leaves them exactly where they fell.
+
+	The NEGATIVE CONTROL runs FIRST, out of a room, and is the half that keeps
+	this honest: "landed near the group" is also true of a `_respawn_in_place()`
+	that teleports unconditionally, and the whole promise of the change is that
+	single-player is untouched. So the same call is made twice — once with no
+	room, where the player must not move by so much as a metre, and once in a
+	room 600 m from the group, where it must end up inside the join ring.
+
+	Single instance and no socket, exactly like `_run_drag_check()` above: the
+	trigger under test is a LOCAL event (`_on_caught_finished()` → this), so a
+	second process would add scheduling to the test without adding anything to
+	the assertion. The room is entered by driving `_on_lobby_joined()` /
+	`_on_lobby_relay()` directly, with a never-connected `LobbyClient` whose
+	outbound frames drop silently.
+
+	⚠️ AND IT ASSERTS THE ANCHOR THE MANAGER ACTUALLY OFFERED, not only where the
+	body ended up — the same anti-vacuity rule the drag check's seed-adoption
+	assertion follows. Without it a run in which the manager never entered the
+	room would report `group_anchor() == null`, take the solo path, and the
+	"moved to the group" test would be the only thing standing between a silent
+	no-op and a green tick.
+	"""
+	change_scene_to_file("res://scenes/main.tscn")
+	var mp: Node = await _await_group("mp")
+	var player: Node3D = await _await_group("player") as Node3D
+	if mp == null or player == null:
+		_fail("scene has no \"mp\" / \"player\" node")
+		return
+
+	# --- NEGATIVE CONTROL: solo, so nothing may move -------------------------
+	player.global_position = RESPAWN_SOLO_SPOT
+	if mp.group_anchor() != null:
+		_fail("respawn: group_anchor() is not null while OFFLINE — the solo path is gone")
+		return
+	player._respawn_in_place()
+	await _sleep(0.5)
+	var solo_drift: float = player.global_position.distance_to(RESPAWN_SOLO_SPOT)
+	if solo_drift > RESPAWN_SOLO_TOLERANCE:
+		_fail("respawn: a SOLO respawn moved the player %.1f m (to %s) — it must stay put"
+			% [solo_drift, player.global_position])
+		return
+	# The grace window the control just started would otherwise still be running
+	# under the room half (the headless boot is paused, so nothing ticks it down).
+	player.is_respawning = false
+	player.respawn_timer = 0.0
+
+	# --- IN A ROOM: come back with the group ---------------------------------
+	mp.lobby_only = true
+	mp._ensure_lobby()
+	mp._on_lobby_joined(RESPAWN_ME_ID, "RSPN01", RESPAWN_MASTER_ID, [
+		{"id": RESPAWN_MASTER_ID, "name": "host"}, {"id": RESPAWN_ME_ID, "name": "me"},
+	])
+	if mp.get_room_code() != "RSPN01":
+		_fail("respawn: the manager did not enter the room")
+		return
+	mp._on_lobby_relay(RESPAWN_MASTER_ID, {"mp": "seed", "seed": RESPAWN_SEED})
+	mp._on_lobby_relay(RESPAWN_MASTER_ID, {
+		"mp": "state", "cc": 0, "ls": 0, "dd": 0,
+		"px": RESPAWN_GROUP.x, "py": RESPAWN_GROUP.y, "pz": RESPAWN_GROUP.z,
+		"gc": 0, "gs": 0, "ids": [],
+	})
+	# The join placement itself awaits a physics frame before it moves anybody.
+	await _sleep(1.0)
+
+	var anchor: Variant = mp.group_anchor()
+	if typeof(anchor) != TYPE_VECTOR3 or (anchor as Vector3).distance_to(RESPAWN_GROUP) > 0.5:
+		_fail("respawn: group_anchor() answered %s, not the group at %s — the "
+			% [str(anchor), str(RESPAWN_GROUP)] + "placement test would be vacuous")
+		return
+
+	# Walk away from the group and die there. One teleport stands in for walking:
+	# the StartOverlay holds a headless boot paused, which is also what makes the
+	# assertion sharp — nothing but the respawn can move the player.
+	player.global_position = RESPAWN_AWAY
+	var origin_before: Vector2 = player.own_distance_origin
+	player._respawn_in_place()
+	await _sleep(0.5)
+
+	var landed: Vector3 = player.global_position
+	var from_group: float = landed.distance_to(RESPAWN_GROUP)
+	if from_group > RESPAWN_NEAR_MAX:
+		_fail("respawn: died at %s in a room and came back %.1f m from the group (at %s)"
+			% [str(RESPAWN_AWAY), from_group, str(landed)])
+		return
+
+	# ...and the teleport was not banked as distance RUN, or dying beside a team
+	# kilometres down the road writes THEIR distance into this player's personal
+	# best (see player_controller.own_distance_origin).
+	var expected_origin: Vector2 = origin_before \
+		+ Vector2(landed.x, landed.z) - Vector2(RESPAWN_AWAY.x, RESPAWN_AWAY.z)
+	if player.own_distance_origin.distance_to(expected_origin) > 0.5:
+		_fail("respawn: own_distance_origin is %s, expected %s — the regroup teleport "
+			% [str(player.own_distance_origin), str(expected_origin)]
+			+ "would inflate the personal distance record")
+		return
+
+	print("E2E_REGROUP=%d" % int(from_group))
 	quit(0)
 
 

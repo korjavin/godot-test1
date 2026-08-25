@@ -5,7 +5,10 @@
 # ended up on the SAME world seed. Then a second phase proves phase 5's MASTER
 # MIGRATION over the same relay: the host stops heartbeating while keeping its
 # socket open (a throttled tab), and a fresh joiner must vote it out and come out
-# master itself.
+# master itself. Two further phases run one instance each with no lobby traffic,
+# because what they assert is local: `--role=drag` (a playing peer is never
+# repositioned by packets it was owed at arrival) and `--role=respawn` (a death
+# respawn in a room comes back with the group, a solo one does not move).
 #
 #     bash scripts/mp_e2e.sh
 #
@@ -233,5 +236,24 @@ DRAG_OK="$(grep -m1 '^E2E_NODRAG=' "$LOG_DIR/drag.log" | cut -d= -f2 | tr -d '\r
 # mean anything.
 [ -n "$DRAG_OK" ] || fail "drag check never printed E2E_NODRAG"
 
-echo "E2E OK: room ${ROOM}, shared seed ${HOST_SEED}, master migrated ${HOST_ID} -> ${NEW_MASTER}, no mid-run drag"
+# ---------------------------------------------------------------------------
+# Phase 4: a death respawn inside a room comes back WITH the group, and a solo
+# one still does not move at all (bead godot-test1-s86.18).
+# ---------------------------------------------------------------------------
+# Single instance for the same reason phase 3 is: the trigger is the local
+# respawn EVENT, not anything on the wire. The solo negative control runs first
+# inside the same process — see mp_e2e.gd's `_run_respawn_check()`.
+echo "E2E: respawn phase — dying in a room must put the player back with the group"
+run_instance "$LOG_DIR/respawn.log" --role=respawn
+RESPAWN_STATUS=$?
+REGROUP_M="$(grep -m1 '^E2E_REGROUP=' "$LOG_DIR/respawn.log" | cut -d= -f2 | tr -d '\r')"
+
+[ "$RESPAWN_STATUS" -eq 0 ] \
+	|| fail "respawn check exited ${RESPAWN_STATUS}: $(grep -m1 '^E2E: respawn' "$LOG_DIR/respawn.log" || echo 'timeout?')"
+# The marker is only printed after the solo control, the anchor check and the
+# distance-record check have all passed, so its absence means the run never got
+# far enough for "landed with the group" to mean anything.
+[ -n "$REGROUP_M" ] || fail "respawn check never printed E2E_REGROUP"
+
+echo "E2E OK: room ${ROOM}, shared seed ${HOST_SEED}, master migrated ${HOST_ID} -> ${NEW_MASTER}, no mid-run drag, respawn regrouped within ${REGROUP_M}m"
 exit 0
