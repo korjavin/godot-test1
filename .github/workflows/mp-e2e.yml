@@ -65,6 +65,14 @@ jobs:
       - name: 🌐 Install curl
         run: apt-get update && apt-get install -y --no-install-recommends curl
 
+      # actions/checkout leaves the tree owned by the runner uid while a
+      # container job runs as root, so git refuses it as "dubious ownership"
+      # (exit 128) — and `go build` stamps VCS info, so the script's own build
+      # of the lobby fails before it starts. Trusting the path keeps the stamp
+      # rather than turning it off with -buildvcs=false.
+      - name: 🔒 Trust the checkout
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       # The script needs `go` on PATH (it builds and starts the lobby itself).
       - name: 🐹 Set up Go
         uses: actions/setup-go@v5
