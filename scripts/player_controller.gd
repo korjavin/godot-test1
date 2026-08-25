@@ -622,6 +622,7 @@ func _ready() -> void:
 	print("  Ctrl - Duck")
 	print("  R - Switch Character")
 	print("  F - Special ability (unique per character)")
+	print("  K - Skill tree")
 	print("  Mouse - Look around")
 	print("  ESC - Release mouse")
 
@@ -1089,8 +1090,21 @@ func calculate_current_speed() -> float:
 	if is_wading:
 		speed_scale *= WADE_SPEED_FACTOR
 
+	# Passive movement skills (see `_skill_mult`) scale the RUN and DUCK gaits and
+	# NOTHING ELSE. That is the catchable-walk contract, restated as code: a
+	# walking player has to stay catchable (BASE_CHASE_SPEED 5.5 > WALK_SPEED 5.0,
+	# and Primm already walks at 5.75), so no skill may reach the `else` branch
+	# below. Deliberately computed HERE, above the branch, so the walk return is
+	# textually the only one that does not use it.
+	var gait_mult: float = _skill_mult("run_speed")
+	# Teibi's Scurry rides the same axis but only while he is SMALL (state 1) —
+	# `skill_mult` already answers 1.0 for every other character, so the size test
+	# is the only gate needed.
+	if teibi_size_state == 1:
+		gait_mult *= _skill_mult("teibi_small_speed")
+
 	if is_ducking:
-		return DUCK_SPEED * speed_scale
+		return DUCK_SPEED * speed_scale * gait_mult
 	elif is_running:
 		# The wading drag applies here too, but never below WADE_RUN_MIN_SPEED:
 		# running has to keep outpacing a chasing crocodile even in the water.
@@ -1100,10 +1114,16 @@ func calculate_current_speed() -> float:
 		# exactly 9.0 while wading and the drag is fully absorbed. The maxf stays
 		# as the general expression — retune CHARACTER_SPEED or WADE_SPEED_FACTOR
 		# and the drag starts biting again without this line needing a thought.
+		#
+		# The skill multiplier goes INSIDE the maxf, i.e. it is applied BEFORE the
+		# floor, which is what keeps the floor a floor: skills only ever raise this
+		# number, so the result is still at least WADE_RUN_MIN_SPEED and a speed
+		# passive cannot re-open the river-trap bug the floor exists to close.
 		if is_wading:
-			return maxf(RUN_SPEED * speed_scale, WADE_RUN_MIN_SPEED)
-		return RUN_SPEED * speed_scale
+			return maxf(RUN_SPEED * speed_scale * gait_mult, WADE_RUN_MIN_SPEED)
+		return RUN_SPEED * speed_scale * gait_mult
 	else:
+		# NO `gait_mult` HERE, ever. See the comment above the branch.
 		return WALK_SPEED * speed_scale
 
 func handle_ducking() -> void:
@@ -2511,6 +2531,12 @@ var ability_cooldowns: Array[float] = []
 ## Windman boost time remaining (seconds; > 0 means the Air Rush is active).
 var windman_boost_timer: float = 0.0
 
+## Seconds of cooldown an ability earned back DURING its own activation, consumed
+## by `try_activate_ability()` the moment it charges the cooldown. Written only by
+## an ability that returns true (today: Primm's Phase Echo, on a wall-pass) and
+## zeroed on use and on respawn, so it can never leak into the next press.
+var _pending_cooldown_refund: float = 0.0
+
 ## Teibi's size cycle: 0 = normal, 1 = small, 2 = giant.
 var teibi_size_state: int = 0
 
@@ -2666,6 +2692,50 @@ func _terrain_is_river_here() -> bool:
 	return false
 
 
+# --- Meta-progression skills (bead godot-test1-20z.3) ------------------------
+#
+# The passive skill trees are DATA in `scripts/progression.gd`, and they reach
+# gameplay by multiplying an existing constant AT ITS POINT OF USE. The constants
+# below stay `const`: `WINDMAN_BOOST_DURATION` is still 4.0 seconds and
+# `ABILITY_COOLDOWN["teibi"]` is still 4.0 — a skilled hero simply reads
+# `CONST * _skill_mult("...")` where it used to read `CONST`.
+#
+# Everything goes through the two null-safe lookups below, modelled on
+# `_weather_is_raining_here()` / `_terrain_is_river_here()`: no Progression node
+# in the tree (the player scene run standalone, the self-checks, any scene
+# without `Main`) means every multiplier is 1.0 and every bonus 0.0, i.e. the
+# game before this bead, exactly.
+
+func _progression() -> Node:
+	"""The Progression node, or null. Group lookup, no hard reference, no cache —
+	this runs on a key press and on the gait branch, never per frame per entity."""
+	var node := get_tree().get_first_node_in_group("progression")
+	return node if node != null and node.has_method("skill_mult") else null
+
+
+func _skill_mult(effect: String) -> float:
+	"""
+	The skill multiplier for `effect` on the CURRENT character, or 1.0 when there
+	is no progression. The hard caps (−40% cooldown, +20% run speed) live inside
+	`Progression.skill_mult()`, so no call site can breach one by accident.
+	"""
+	var progression := _progression()
+	if progression == null:
+		return 1.0
+	return float(progression.skill_mult(CHARACTERS[current_character_index]["name"], effect))
+
+
+func _skill_bonus(effect: String) -> float:
+	"""
+	The raw summed bonus for `effect` (0.0 with no progression) — for the one
+	effect that is a flat amount rather than a factor, Primm's cooldown refund.
+	"""
+	var progression := _progression()
+	if progression == null:
+		return 0.0
+	return float(progression.skill_bonus(CHARACTERS[current_character_index]["name"], effect))
+
+
 func _update_ability_timers(delta: float) -> void:
 	"""Count down cooldowns, the Windman air boost, and Teibi's form timer."""
 	for i in ability_cooldowns.size():
@@ -2722,7 +2792,15 @@ func try_activate_ability() -> void:
 			used = _ability_phoboman()
 
 	if used:
-		ability_cooldowns[current_character_index] = float(ABILITY_COOLDOWN.get(char_name, 10.0))
+		# The skilled duration, and it MUST be the same expression
+		# `get_ability_cooldown_ratio()` divides by — see the note there.
+		var cooldown := _skilled_ability_cooldown()
+		# ...minus anything an ability earned back on the way through (Primm's
+		# Phase Echo). A generic one-shot rather than a Primm branch: it costs one
+		# float, and the active-skills bead has more of these coming.
+		cooldown = maxf(0.0, cooldown - _pending_cooldown_refund)
+		_pending_cooldown_refund = 0.0
+		ability_cooldowns[current_character_index] = cooldown
 		# Whoosh only when the ability actually fired — a failed Primm blink that
 		# costs no cooldown stays silent too.
 		_sfx("play_ability", char_name)
@@ -2748,13 +2826,20 @@ func _ability_windman() -> bool:
 	forward.y = 0.0
 	forward = forward.normalized()
 
-	windman_boost_timer = WINDMAN_BOOST_DURATION
+	windman_boost_timer = WINDMAN_BOOST_DURATION * _skill_mult("windman_boost")
 	# Kick the lens wide for the launch moment — the FOV code in _process adds
 	# this on top of the speed-scaled target and decays it back to zero.
 	fov_punch = FOV_PUNCH_WINDMAN
 	# Launch: up so he is airborne, plus an immediate forward shove so even a
 	# standing press blasts off into the wind right away.
-	velocity.y = WINDMAN_LIFT
+	#
+	# WINDMAN_LIFT is the ONE thing a skill may make jump higher, and that is an
+	# epic-level decision rather than a local one: mountain massifs are impassable
+	# because the base jump apex (3.6125 m) is under MOUNTAIN_MIN_LAYER_HEIGHT
+	# (4.0), so there is deliberately NO skill anywhere touching JUMP_VELOCITY.
+	# The "fly higher" fantasy routes through Air Rush, which is already the
+	# sanctioned way over terrain.
+	velocity.y = WINDMAN_LIFT * _skill_mult("windman_lift")
 	velocity.x = forward.x * WINDMAN_AIR_SPEED
 	velocity.z = forward.z * WINDMAN_AIR_SPEED
 
@@ -2780,19 +2865,33 @@ func _ability_primm() -> bool:
 	forward = forward.normalized()
 
 	# March outward for the first position where Primm's body is NOT inside a block.
+	# Long Step lengthens the DESIRED distance only; the scan still gives up at
+	# PRIMM_BLINK_MAX_DISTANCE, which is what bounds the skill without a cap of its
+	# own (a blink that lands past 40 m simply never happens).
 	var target := global_position
 	var found := false
-	var d := PRIMM_BLINK_DISTANCE
+	var blocked_on_the_way := false
+	var d := PRIMM_BLINK_DISTANCE * _skill_mult("primm_blink")
 	while d <= PRIMM_BLINK_MAX_DISTANCE:
 		var candidate := global_position + forward * d
 		if not _is_body_blocked_at(candidate):
 			target = candidate
 			found = true
 			break
+		# The desired spot was solid, so this blink genuinely passed THROUGH
+		# something — which is what Phase Echo pays out for. Open-ground blinks
+		# (the common case) never set this and never refund.
+		blocked_on_the_way = true
 		d += PRIMM_BLINK_STEP
 
 	if not found:
 		return false
+
+	# Phase Echo: a wall-pass hands back whole seconds of cooldown, applied by
+	# `try_activate_ability()` when it charges it. 0.0 without the skill, so this
+	# line is inert for an unranked Primm.
+	if blocked_on_the_way:
+		_pending_cooldown_refund = _skill_bonus("primm_refund")
 
 	# A quick flash where he leaves and where he arrives, to sell the teleport —
 	# plus three small staggered flashes along the path between them, so the eye
@@ -2854,22 +2953,33 @@ func _ability_teibi() -> bool:
 	if teibi_size_state == 0:
 		teibi_form_timer = 0.0
 	elif prev_state == 0:
-		teibi_form_timer = TEIBI_FORM_DURATION
+		teibi_form_timer = TEIBI_FORM_DURATION * _skill_mult("teibi_form")
 	return true
 
 
 func _ability_phoboman() -> bool:
 	"""Stink Wave: send out smelly waves; every crocodile flees for a while."""
 	# A few staggered green waves so it reads as rolling stench, not one pop.
-	_spawn_ability_effect(global_position, Color(0.55, 0.85, 0.2, 0.55), PHOBOMAN_STINK_RADIUS, 0.9, 0.0)
-	_spawn_ability_effect(global_position, Color(0.5, 0.8, 0.25, 0.45), PHOBOMAN_STINK_RADIUS, 0.9, 0.18)
-	_spawn_ability_effect(global_position, Color(0.45, 0.75, 0.3, 0.4), PHOBOMAN_STINK_RADIUS, 0.9, 0.36)
+	#
+	# Billowing Cloud widens the VISIBLE wave. Worth being honest about what that
+	# is and is not: the flee below is a walk of the whole "crocodile" group with
+	# no distance test at all, so PHOBOMAN_STINK_RADIUS has never been a gameplay
+	# bound — the skill buys reach in the telegraph, not in the effect.
+	# `ponytail:` making it a real bound means giving the group walk a radius test,
+	# which would NERF the unranked ability (an unbounded sweep becoming a 9 m one)
+	# and is a balance change this bead does not own. Left as a visual upgrade;
+	# the upgrade path is one `distance_to` in the loop plus a re-tune of the base.
+	var stink_radius: float = PHOBOMAN_STINK_RADIUS * _skill_mult("phoboman_radius")
+	_spawn_ability_effect(global_position, Color(0.55, 0.85, 0.2, 0.55), stink_radius, 0.9, 0.0)
+	_spawn_ability_effect(global_position, Color(0.5, 0.8, 0.25, 0.45), stink_radius, 0.9, 0.18)
+	_spawn_ability_effect(global_position, Color(0.45, 0.75, 0.3, 0.4), stink_radius, 0.9, 0.36)
 
 	# Repel every crocodile via the group (no hard references), matching the
 	# project's group-based discovery convention.
+	var flee_duration: float = PHOBOMAN_FLEE_DURATION * _skill_mult("phoboman_flee")
 	for croc in get_tree().get_nodes_in_group("crocodile"):
 		if croc.has_method("flee_from"):
-			croc.flee_from(global_position, PHOBOMAN_FLEE_DURATION)
+			croc.flee_from(global_position, flee_duration)
 
 	# ...and in a multiplayer room, ask the master to do the same to the
 	# crocodiles IT drives — a no-op offline. The loop above is deliberately left
@@ -2879,7 +2989,7 @@ func _ability_phoboman() -> bool:
 	# the master's copy of the flight reaches every screen on the next sample.
 	var mp := _mp()
 	if mp and mp.has_method("request_croc_flee"):
-		mp.request_croc_flee(global_position, PHOBOMAN_FLEE_DURATION)
+		mp.request_croc_flee(global_position, flee_duration)
 	return true
 
 
@@ -2949,6 +3059,7 @@ func _spawn_ability_effect(pos: Vector3, color: Color, max_radius: float, lifeti
 func _reset_ability_states() -> void:
 	"""Clear transient ability state on respawn (air boost, giant/small form)."""
 	windman_boost_timer = 0.0
+	_pending_cooldown_refund = 0.0
 	_revert_teibi_to_normal()
 	# Sidestep is transient too: the caught/respawn/game-over branches all return
 	# BEFORE update_sidestep(), so a player caught mid-step would otherwise come
@@ -2977,10 +3088,23 @@ func get_ability_name() -> String:
 	return ABILITY_NAME.get(char_name, "Ability")
 
 
+func _skilled_ability_cooldown() -> float:
+	"""
+	The current character's cooldown length AFTER its skill tree, in seconds. The
+	single expression both the charge in `try_activate_ability()` and the HUD dial
+	divide by — which is the whole reason it is a function.
+
+	Divide the dial by the UNSKILLED constant and a hero with cooldown ranks
+	arrives at a dial that starts at 0.6 full and empties early: not an error
+	anywhere, just a HUD that quietly stops meaning what it says.
+	"""
+	var char_name: String = CHARACTERS[current_character_index]["name"]
+	return float(ABILITY_COOLDOWN.get(char_name, 10.0)) * _skill_mult("cooldown")
+
+
 func get_ability_cooldown_ratio() -> float:
 	"""Cooldown progress for the HUD dial: 1.0 just-used → 0.0 fully ready."""
-	var char_name: String = CHARACTERS[current_character_index]["name"]
-	var duration: float = float(ABILITY_COOLDOWN.get(char_name, 10.0))
+	var duration: float = _skilled_ability_cooldown()
 	if duration <= 0.0:
 		return 0.0
 	return clampf(ability_cooldowns[current_character_index] / duration, 0.0, 1.0)

@@ -1,4 +1,4 @@
-[gd_scene load_steps=27 format=3 uid="uid://clqb4rcmjrpgs"]
+[gd_scene load_steps=28 format=3 uid="uid://clqb4rcmjrpgs"]
 
 [ext_resource type="PackedScene" uid="uid://bqtq2xtxqnvvr" path="res://scenes/player.tscn" id="1_main"]
 [ext_resource type="Script" uid="uid://b07rwceo0eo4o" path="res://scripts/endless_terrain.gd" id="2_terrain"]
@@ -24,6 +24,7 @@
 [ext_resource type="Script" path="res://scripts/minimap_hud.gd" id="21_minimap"]
 [ext_resource type="Script" path="res://scripts/teammate_locator.gd" id="22_locator"]
 [ext_resource type="Script" path="res://scripts/progression.gd" id="23_progression"]
+[ext_resource type="Script" path="res://scripts/skill_tree_ui.gd" id="24_skilltree"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_1"]
 sky_top_color = Color(0.25, 0.45, 0.75, 1)
@@ -294,6 +295,15 @@ grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
 script = ExtResource("20_mpui")
+
+[node name="SkillTreeUI" type="Control" parent="HUD"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("24_skilltree")
 
 [node name="StartOverlay" type="Control" parent="HUD"]
 anchors_preset = 15
