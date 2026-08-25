@@ -611,23 +611,23 @@ room's multiplier after the award (for the HUD suffix).
 Pure logic only. Keep the existing checks passing and follow their style — each
 check is a function returning `""` on success or a message on failure.
 
-- [ ] `_check_croc_sync_parser()`: a well-formed packet decodes with the right
+- [x] `_check_croc_sync_parser()`: a well-formed packet decodes with the right
       counts; each of these is dropped **whole**: a missing field, a wrong type
       per field (`Array` where a `PackedInt32Array` is required), `i.size()`
       mismatching `f.size()`, `x.size()` not `4 * i.size()`, a count past
       `MAX_CROC_SYNC`, a NaN, an infinity, a coordinate past `MAX_PRESENCE_COORD`.
       Also assert a `1e30` yaw comes back wrapped into `[0, TAU)` rather than
       dropped — the same normalise-don't-drop rule `decode_presence` applies.
-- [ ] `_check_croc_ids()`: `croc_id_for("Crocodile_3_-4_2")` is stable across
+- [x] `_check_croc_ids()`: `croc_id_for("Crocodile_3_-4_2")` is stable across
       calls, differs from `Crocodile_3_-4_3` and from `PatrolCrocodile_3_-4_2`,
       and a live croc's `croc_id()` matches `croc_id_for(String(croc.name))`.
-- [ ] `_check_room_multiplier()`: pin `room_multiplier_from` against the same
+- [x] `_check_room_multiplier()`: pin `room_multiplier_from` against the same
       table `player_controller.get_streak_multiplier()` produces — x1 at 0, the
       step at `STREAK_COINS_PER_STEP`, the cap at `1 + STREAK_MAX_BONUS`.
-- [ ] `_check_presence_backcompat()` (existing) must still pass: a phase-3/4
+- [x] `_check_presence_backcompat()` (existing) must still pass: a phase-3/4
       packet with **no** `"t"` key still decodes. Add the mirror: a packet whose
       `"t"` names an unknown verb is ignored rather than treated as presence.
-- [ ] register the new checks in `_run_checks()` and keep the final
+- [x] register the new checks in `_run_checks()` and keep the final
       `SELFCHECK OK` / exit 0 contract.
 
 ### Task 9: extend `scripts/mp_e2e.gd` + `scripts/mp_e2e.sh` — stall → re-election
