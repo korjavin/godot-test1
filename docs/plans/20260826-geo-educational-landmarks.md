@@ -483,7 +483,7 @@ body and into CLAUDE.md.
 
 ### Task 8: Documentation
 
-- [ ] Add a **`Geo-educational landmarks`** subsection to `CLAUDE.md`, immediately
+- [x] Add a **`Geo-educational landmarks`** subsection to `CLAUDE.md`, immediately
       after the treasure-chest one, in the same density and voice as its three
       siblings. It must carry:
       - the family recipe restated for this member (own salt + fresh primes, roll-only
@@ -504,7 +504,7 @@ body and into CLAUDE.md.
       - **multiplayer: zero work by construction** (pure `run_seed` world-gen, local
         HUD read-out);
       - any `ponytail:` deferrals, honestly (see Task 9).
-- [ ] Add the `landmark_selfcheck.gd` line to the `## Commands` block.
+- [x] Add the `landmark_selfcheck.gd` line to the `## Commands` block. (already present — added with Task 6)
 
 ### Task 9: Verify acceptance criteria
 
