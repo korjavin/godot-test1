@@ -32,7 +32,23 @@ func _initialize() -> void:
 
 
 func _run() -> void:
-	root.add_child(load("res://scenes/main.tscn").instantiate())
+	var main: Node = load("res://scenes/main.tscn").instantiate()
+	root.add_child(main)
+	# The start overlay PAUSES THE TREE until somebody presses PLAY SOLO, and a
+	# paused tree runs neither the minimap's `_process` nor the SceneTree timer
+	# below — so without this the check would time out against a world frozen on
+	# frame one and report "minimap never read the player". Pressing solo is
+	# exactly what a player does; `has_method` keeps this inert if the overlay is
+	# ever renamed or dropped.
+	#
+	# The `await` is load-bearing: `_initialize()` runs BEFORE the first idle
+	# frame, so the scene's `_ready()`s have not run yet and dismissing here would
+	# be undone by the overlay's own `_ready()` taking the pause a moment later —
+	# with its `_process` already switched off, nothing would ever release it.
+	await process_frame
+	var overlay: Node = main.get_node_or_null("HUD/StartOverlay")
+	if overlay != null and overlay.has_method("_on_play_solo_pressed"):
+		overlay._on_play_solo_pressed()
 	# Two seconds: long enough for the spawn ring of chunks to build (which is what
 	# fills the road station cache) and for several 5 Hz minimap ticks to run.
 	await create_timer(2.0).timeout

@@ -316,26 +316,34 @@ for the final task's gate run.
 
 ### Task 2: `crocodile_lod_manager.gd` — awake means near ANY peer
 
-- [ ] in `_scan_crocodiles()`, build the position set once per scan:
+- [x] in `_scan_crocodiles()`, build the position set once per scan:
       the local player's `global_position`, plus — when the `"mp"` group node
       answers `has_method("peer_positions")` — every position it returns.
       `peer_positions()` returns `null` offline (Task 3), so the offline set is a
       one-element array and **the whole pass stays byte-identical**. Say that in
       the comment: it is the load-bearing claim for "solo play is unchanged".
-- [ ] replace `dist_sq` with the **minimum** squared distance over that set. This
+- [x] replace `dist_sq` with the **minimum** squared distance over that set. This
       is the "generalisation of the LOD test" the bead specifies, and it is what
       keeps `SIM_RADIUS ≫ DETECTION_RADIUS` true for every member, not just for
       the local one.
-- [ ] the danger-telegraph read (`is_chasing` / `detection_radius`) must keep
+- [x] the danger-telegraph read (`is_chasing` / `detection_radius`) must keep
       using the **local player's** distance, not the min — the vignette is this
       player's own danger, not the room's. Keep both distances; name them
       clearly (`dist_sq_any` vs `dist_sq_local`).
-- [ ] skip the awake/asleep **decision** for a croc with `remote_driven == true`
+- [x] skip the awake/asleep **decision** for a croc with `remote_driven == true`
       (`in` guard, same defensive style as `is_boss`) — the sync layer owns its
       processing and the LOD manager must not fight it. Do **not** skip the croc
       before the danger read: a synced croc chasing this player must still light
       the vignette.
-- [ ] `_scan_coins()` is unchanged.
+- [x] `_scan_coins()` is unchanged.
+- ➕ [x] `scripts/minimap_selfcheck.gd`: dismiss the start overlay (added by
+      `s86.9`, merged into this branch's base) before the 2 s wait. The overlay
+      pauses the tree at boot, so the gate was failing with "minimap never read
+      the player" **before this task's first line** — verified against the
+      unmodified file. The `await process_frame` before the press is load-bearing:
+      `_initialize()` runs ahead of the scene's `_ready()`s, so an earlier press
+      is undone by the overlay taking the pause afterwards with its `_process`
+      already off. Gate now prints `SELFCHECK OK`.
 
 ### Task 3: `mp_manager.gd` — the fourth trust boundary and mesh packet dispatch
 
