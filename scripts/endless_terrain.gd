@@ -990,6 +990,66 @@ const SYNC_RING: int = 1
 ## naturally drops queued chunks that fell back out of range.
 var pending_chunks: Array[Vector2i] = []
 
+# ----------------------------------------------------------------------------
+# FOCUS POINTS (multiplayer: keep chunks loaded around FAR TEAMMATES too)
+# ----------------------------------------------------------------------------
+##
+## THE BOUNDARY, AND IT IS ABSOLUTE: focus points decide only WHICH CHUNKS STAY
+## LOADED. They never touch what a chunk CONTAINS. Every chunk's content is a
+## pure function of its own coords + `run_seed` (see the determinism note above
+## `pending_chunks`), and generation ORDER already cannot change it, so a chunk
+## built because a teammate stands on it is byte-for-byte the chunk the local
+## player would have built by walking there. Nothing below reads a focus point
+## during generation, and nothing may ever be added that does.
+##
+## WHY THIS EXISTS (bead godot-test1-s86.14): the room master simulates the
+## crocodiles for everybody, but it can only simulate the ones ITS OWN terrain
+## has loaded. A peer more than `render_distance` × `chunk_size` away (150 m on
+## web) therefore got no samples for its neighbours and they fell back to local
+## simulation after `MpManager.CROC_SYNC_TIMEOUT`. `set_focus_points()` closes
+## that: `crocodile_lod_manager.gd` — which already builds exactly this array,
+## master-gated, on its throttled scan — hands it here, and the union of peer
+## areas stays loaded.
+##
+## FOCUS_RING IS 1, AND THAT IS A DERIVATION RATHER THAN A GUESS. A 3×3 block of
+## `chunk_size` (50 m) chunks around the chunk a peer stands in guarantees at
+## least 50 m of loaded ground in every direction from that peer (worst case: the
+## peer on a chunk edge, 50 m to the far side of the neighbouring chunk), which
+## covers `crocodile_lod_manager.SIM_RADIUS` (45) — the radius inside which a
+## crocodile is awake, and therefore the radius inside which the master has
+## anything to publish at all. A ring of 2 would be 25 chunks per peer for
+## crocodiles nobody is awake for.
+const FOCUS_RING: int = 1
+
+## HARD MEMORY CAP, and the reason there is one: the union of peer areas
+## MULTIPLIES the active chunk count, and the web build is the platform this
+## whole file's perf work exists to protect. At most `MAX_FOCUS_POINTS` points
+## are honoured (a room holds 4 players, so 3 teammates) and at most
+## `MAX_FOCUS_CHUNKS` chunks are admitted BEYOND the ones the local player's own
+## square already covers. Worst case on web is 49 + 27 = 76 active chunks
+## (+55%); on desktop 121 + 27 = 148 (+22%). Points past the cap are dropped
+## rather than rotated, so the set is stable frame to frame — a peer whose
+## chunks flicker in and out would be worse than a peer with none.
+##
+## The cap is also the trust bound: these positions originate in presence
+## packets, i.e. peer input, and `MpManager` bounds them by `MAX_PRESENCE_COORD`
+## (huge) rather than by anything the terrain could afford. A peer claiming to
+## stand 1e6 m away costs 9 useless chunks here, never more.
+const MAX_FOCUS_POINTS: int = 3
+const MAX_FOCUS_CHUNKS: int = 27
+
+## The chunks focus points currently pin, as Dictionary KEYS (value `true`) for
+## the same O(1)-membership reason `chunks_to_load` uses one. Empty offline and
+## on a non-master, which is what makes single-player byte-for-byte unchanged:
+## `update_chunks` iterates nothing extra and `_process` never re-triggers.
+var focus_chunks: Dictionary = {}
+
+## Set when `focus_chunks` actually CHANGED, so `_process` can re-run
+## `update_chunks` off a boundary crossing. Without it a teammate walking into
+## fresh territory would pin nothing until the LOCAL player happened to cross a
+## chunk edge, which is exactly the far-apart case this feature is for.
+var focus_dirty: bool = false
+
 ## PER-RUN WORLD SEED — makes run 2 a different world from run 1.
 ##
 ## EDUCATIONAL NOTE — the determinism contract:
@@ -1445,8 +1505,13 @@ func _process(_delta: float) -> void:
 	# Calculate which chunk the player is currently in
 	var player_chunk := world_to_chunk(player.global_position)
 
-	# Only update if player moved to a different chunk
-	if player_chunk != last_player_chunk:
+	# Only update if player moved to a different chunk — OR if the multiplayer
+	# focus set changed under us (a teammate crossed a chunk edge, joined or
+	# left). Without the second half a far peer's ground would only be pinned
+	# when the LOCAL player happened to cross a boundary, which is precisely the
+	# far-apart case set_focus_points() exists for.
+	if player_chunk != last_player_chunk or focus_dirty:
+		focus_dirty = false
 		update_chunks(player_chunk)
 		last_player_chunk = player_chunk
 
@@ -1463,6 +1528,50 @@ func _process(_delta: float) -> void:
 # ============================================================================
 # CHUNK MANAGEMENT FUNCTIONS
 # ============================================================================
+
+func set_focus_points(points: Array) -> void:
+	"""
+	Keep chunks loaded around these extra world positions as well as around the
+	player — the multiplayer "far teammate" hook (bead godot-test1-s86.14).
+
+	THIS ONLY EVER DECIDES WHICH CHUNKS STAY LOADED. It cannot, and must never,
+	influence what a chunk contains: chunk content is a pure function of the
+	chunk's own coords + `run_seed`, so a chunk pinned by a teammate is
+	byte-identical to the one the local player would build by walking there. See
+	the `focus_chunks` banner in SECTION 2.
+
+	Call it as often as you like — an unchanged set is a no-op (one Dictionary
+	compare), so the 9 Hz caller in `crocodile_lod_manager.gd` costs nothing
+	while nobody moves between chunks. An EMPTY array releases every pinned
+	chunk, which is what a non-master (or a peer leaving a room) publishes.
+
+	@param points: world positions. At most `MAX_FOCUS_POINTS` are honoured and
+	    at most `MAX_FOCUS_CHUNKS` chunks are pinned; see those constants for why
+	    the cap exists and what it costs on web.
+	"""
+	var pinned: Dictionary = {}
+	var honoured: int = 0
+	for point: Variant in points:
+		if not (point is Vector3):
+			continue  # Peer input; a malformed entry is skipped, never trusted.
+		if honoured >= MAX_FOCUS_POINTS:
+			break
+		honoured += 1
+		var center := world_to_chunk(point as Vector3)
+		for x in range(-FOCUS_RING, FOCUS_RING + 1):
+			for z in range(-FOCUS_RING, FOCUS_RING + 1):
+				if pinned.size() >= MAX_FOCUS_CHUNKS:
+					break
+				pinned[Vector2i(center.x + x, center.y + z)] = true
+
+	# NO-OP ON AN UNCHANGED SET. `focus_dirty` is what makes `_process` rebuild
+	# the chunk field off a boundary crossing, and rebuilding it 9 times a second
+	# for a stationary room would throw away the "only on boundary crossings"
+	# rule the whole time-slicing design rests on.
+	if pinned == focus_chunks:
+		return
+	focus_chunks = pinned
+	focus_dirty = true
 
 func world_to_chunk(world_pos: Vector3) -> Vector2i:
 	"""
@@ -1519,6 +1628,15 @@ func update_chunks(player_chunk: Vector2i) -> void:
 		for z in range(-render_distance, render_distance + 1):
 			var chunk_pos := Vector2i(player_chunk.x + x, player_chunk.y + z)
 			chunks_to_load[chunk_pos] = true
+
+	# STEP 1b: ...plus the chunks pinned by multiplayer focus points, so the room
+	# master keeps simulating the crocodiles standing next to a FAR teammate.
+	# Purely additive — a focus chunk is an ordinary chunk built from its own
+	# coords + run_seed, and nothing downstream can tell why it was asked for.
+	# `focus_chunks` is empty offline and on a non-master, so single player and
+	# every non-master peer take exactly the loop above and nothing else.
+	for chunk_pos: Vector2i in focus_chunks:
+		chunks_to_load[chunk_pos] = true
 
 	# STEP 2: Remove chunks that are too far away
 	var chunks_to_remove: Array[Vector2i] = []

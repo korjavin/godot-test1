@@ -1712,7 +1712,7 @@ func collect_coin(value: int = 1) -> void:
 	print("Collected a coin worth %d (x%d streak)! Total: %d" % [value, get_streak_multiplier(), coins_collected])
 
 
-func bank_awarded(amount: int) -> void:
+func bank_awarded(amount: int, base_total: int = 0) -> void:
 	"""
 	Bank a pickup the MULTIPLAYER MASTER has already priced (see
 	mp_manager._apply_confirm). Called only for the peer that won the claim.
@@ -1725,6 +1725,14 @@ func bank_awarded(amount: int) -> void:
 	The streak itself is deliberately NOT touched: in a room the multiplier the HUD
 	shows comes from the room (see get_streak_multiplier), and this peer's private
 	coin_streak has no say in it.
+
+	@param base_total: what the claim was worth BEFORE the room's multiplier —
+	    `count` pickups at their base value each (a coin 1, a gem 10), threaded out
+	    of the master's ruling as the confirm's `b` field. This is the ONLY figure
+	    meta-progression may see (bead godot-test1-42n): lifetime coins count what
+	    was physically picked up, and `amount` has a x1..x5 score multiplier baked
+	    into it. Trailing, defaulting to 0, and 0 credits nothing — so a call site
+	    that does not know about it behaves exactly as it did before.
 	"""
 	# NO extra-life while-loop, unlike collect_coin(). This path only ever runs in
 	# a room, where the hearts come from the ROOM's bank: _refresh_shared_totals()
@@ -1733,6 +1741,16 @@ func bank_awarded(amount: int) -> void:
 	# would be recomputed away before anything could read it.
 	coins_collected += amount
 	own_coins += amount
+	# META-PROGRESSION, at the PRE-MULTIPLIER value — the SAME null-safe group
+	# call collect_coin() makes, and deliberately the same rule: a coin won
+	# through the claim protocol has to credit the player exactly what it would
+	# have credited them solo. Before bead godot-test1-42n this path credited
+	# NOTHING, so a peer in a room levelled only off the pickups it happened to
+	# lose the race for (which pay through collect_coin's local fallback).
+	if base_total > 0:
+		var progression := get_tree().get_first_node_in_group("progression")
+		if progression and progression.has_method("add_coins"):
+			progression.add_coins(base_total)
 
 
 func get_streak_multiplier() -> int:
@@ -2463,8 +2481,16 @@ func _refresh_shared_totals() -> void:
 		# A max, and run_distance is itself a running max, so feeding the room's
 		# best back in can never inflate it.
 		run_distance = int(distance)
+	# THE ROOM'S HEARTS COME FROM THE ROOM'S MASTER, which owns them as real
+	# state and publishes them (bead godot-test1-s86.15) — the same shape the
+	# room's coin multiplier already uses. `shared_lives()` falls back internally
+	# to the old stateless `shared_lives_from()` arithmetic when nothing has been
+	# published, so there is no second branch to keep here. The `spent != null`
+	# test above stays as the "the join has settled" gate the two other totals use.
 	if spent != null:
-		lives = mp.shared_lives_from(int(bank), int(spent), MAX_LIVES, EXTRA_LIFE_COINS, LIVES_CAP)
+		var room_lives: Variant = mp.shared_lives(own_coins, own_lives_spent)
+		if room_lives != null:
+			lives = int(room_lives)
 
 
 func _check_shared_game_over() -> void:

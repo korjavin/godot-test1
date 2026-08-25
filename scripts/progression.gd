@@ -26,18 +26,21 @@ class_name Progression
 ##     this file.
 ##   * In multiplayer the count is PERSONAL — see the hook note below.
 ##
-## WHERE THE COUNT COMES FROM, AND WHY IT IS NOT THE ROOM'S BANK. The single hook
-## is `player_controller.collect_coin()`, i.e. THIS player physically touching a
-## coin, at its PRE-STREAK value (a plain coin is 1, a gem is 10). The streak
-## multiplier is a SCORE multiplier — it multiplies what the run is worth, not how
-## many coins were picked up — and a room's shared bank (mp phases 4–5) is a
-## run-scoped display total summed across peers. Neither belongs here. `ponytail:`
-## the ceiling that follows is that in a multiplayer room a coin won through the
-## claim protocol pays through `player_controller.bank_awarded()` instead, which
-## receives only the already-multiplied total, so those pickups currently credit
-## no lifetime coins; crediting them needs the claim's base value threaded into
-## `bank_awarded()` from `mp_manager.gd`, which this bead deliberately did not
-## touch (a parallel branch owns that file).
+## WHERE THE COUNT COMES FROM, AND WHY IT IS NOT THE ROOM'S BANK. There are TWO
+## hooks and they credit the same thing: `player_controller.collect_coin()`, i.e.
+## THIS player physically touching a coin, at its PRE-STREAK value (a plain coin
+## is 1, a gem is 10) — and, in a multiplayer room, `bank_awarded()`, which pays a
+## pickup won through the claim protocol at its PRE-MULTIPLIER value (the
+## confirm's `b` field, bead godot-test1-42n). The streak multiplier is a SCORE
+## multiplier — it multiplies what the run is worth, not how many coins were
+## picked up — and a room's shared bank (mp phases 4–5) is a run-scoped display
+## total summed across peers. Neither belongs here, which is why both hooks take
+## the base figure and why the self-check measures them through the real
+## functions rather than trusting the call site.
+##
+## So a player in a room banks exactly the lifetime coins they would have banked
+## solo. Before 42n `bank_awarded()` had no hook at all, and since a claim is won
+## for every coin a peer reaches first, that peer levelled almost not at all.
 ##
 ## PERSISTENCE IS `BestRunStore`, NOT A SECOND STORE. It already does exactly this
 ## job for the best-run records — a `ConfigFile` on desktop, `localStorage` on web,
