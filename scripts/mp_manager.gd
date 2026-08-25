@@ -104,6 +104,19 @@ const HERO_ERRORS: PackedStringArray = ["unknown hero", "hero already taken"]
 const SEED_REQUEST_INTERVAL: float = 2.0
 const SEED_REQUEST_MAX_TRIES: int = 10
 
+## How long a joiner waits for EVERY incumbent's join snapshot before placing
+## itself with whatever arrived.
+##
+## The anchor is the centroid of the group (or the master's position when the
+## group is spread), so it is only the documented anchor once all the snapshots
+## are in — place on the first one and a three-player room drops the joiner beside
+## whichever peer's relay message happened to win the race. The snapshots are one
+## small message each, sent the instant the lobby announces the join, so in
+## practice they land together and this deadline never fires. It exists because
+## the alternative is waiting forever on a peer that is wedged, on an older build,
+## or gone: falling back to a worse anchor beats never placing the player at all.
+const JOIN_SNAPSHOT_WAIT: float = 1.5
+
 ## Where the desktop WebRTC GDExtension lives when a developer has installed it.
 ## See README — the browser build needs nothing, desktop needs this addon.
 const WEBRTC_ADDON_PATH: String = "res://addons/webrtc/webrtc.gdextension"
@@ -242,6 +255,27 @@ var _join_applied: bool = false
 ## lives that peer spent. Room-scoped like the two above.
 var _gone_coins: int = 0
 var _gone_spent: int = 0
+
+## THIS peer's own contribution from runs it has already finished in this room —
+## what "Play Again" retired when `reset_position()` zeroed `own_coins` /
+## `own_lives_spent` (see `retire_own_contribution`).
+##
+## Deliberately NOT folded into `_gone_*`. Those are the room-wide frozen share of
+## members who LEFT, and every peer derives them independently from the same
+## `peer_leave` frame, so they converge. A restart is observed by nobody else: a
+## `_gone_*` write here would raise this peer's totals alone, while every other
+## peer saw the restarter's next presence packet report zero and dropped the
+## coins and REFUNDED the lives — the room permanently disagreeing about its own
+## bank and hearts. Kept as part of our OWN contribution instead, it rides the
+## existing `cc`/`lv` fields in presence and in the join snapshot, so every peer
+## sums the same numbers with no new protocol and no extra message.
+var _retired_coins: int = 0
+var _retired_spent: int = 0
+
+## How many join snapshots this peer is still waiting on before it places itself,
+## and how long it has waited (seconds). See `JOIN_SNAPSHOT_WAIT`.
+var _expected_snapshots: int = 0
+var _join_wait: float = 0.0
 
 ## The `/ice` payload, fetched once per join and reused for every connection.
 var _ice: Dictionary = {}
@@ -404,6 +438,10 @@ func leave() -> void:
 	_join_applied = false
 	_gone_coins = 0
 	_gone_spent = 0
+	_retired_coins = 0
+	_retired_spent = 0
+	_expected_snapshots = 0
+	_join_wait = 0.0
 	_ice = {}
 	_send_accum = 0.0
 	_seed_req_accum = 0.0
@@ -479,6 +517,13 @@ func _on_lobby_joined(you: String, room: String, master: String, members: Array)
 	# Alone in the `welcome` frame means the lobby just minted this room for us:
 	# there is no run in progress to join, so no placement is ever applied.
 	_first_member = members.size() <= 1
+	# Every member already here sends us exactly one join snapshot, so this is how
+	# many the placement waits for (see JOIN_SNAPSHOT_WAIT). Peers arriving AFTER
+	# us are deliberately not counted: the protocol sends snapshots to the joiner,
+	# so a later arrival never sends us one and waiting for it would always burn
+	# the full deadline.
+	_expected_snapshots = maxi(0, members.size() - 1)
+	_join_wait = 0.0
 	_state = State.IN_ROOM
 	status.emit("In room %s (%d/4)" % [room, members.size()])
 	room_changed.emit(room, members)
@@ -1152,7 +1197,14 @@ func _can_join_place() -> bool:
 	somebody in it, we have not placed yet, and both halves of what a placement
 	needs — the world seed and at least one snapshot position — are in hand.
 	"""
-	return not _join_applied and not _first_member and _has_seed and not _peer_state.is_empty()
+	if _join_applied or _first_member or not _has_seed or _peer_state.is_empty():
+		return false
+	# ... and either every incumbent's snapshot is in, so the anchor is the whole
+	# group's, or we waited long enough that a missing one is not coming. Counted
+	# off `_state_received` (snapshots) rather than `_peer_state`, which presence
+	# packets also fill — a peer whose mesh connected before its snapshot landed
+	# would otherwise be counted as having sent one.
+	return _state_received.size() >= _expected_snapshots or _join_wait >= JOIN_SNAPSHOT_WAIT
 
 
 func _apply_join_placement() -> void:
@@ -1261,8 +1313,10 @@ func _send_state_to(id: String) -> void:
 		# and in a room that is already the room's total, so it must not be read
 		# here. The `in` guards are the ones `_send_presence()` uses, for the
 		# same reason: a player scene run standalone still answers something sane.
-		coins = int(player.get("own_coins")) if "own_coins" in player else 0
-		spent = int(player.get("own_lives_spent")) if "own_lives_spent" in player else 0
+		# Through `own_reported_*` so an earlier run retired by "Play Again" in this
+		# room travels with the live one — see `_retired_coins`.
+		coins = own_reported_coins(int(player.get("own_coins")) if "own_coins" in player else 0)
+		spent = own_reported_spent(int(player.get("own_lives_spent")) if "own_lives_spent" in player else 0)
 		dist = int(player.get("run_distance")) if "run_distance" in player else 0
 
 	_lobby.send_signal_to(id, {
@@ -1475,18 +1529,38 @@ func retire_own_contribution(coins: int, spent: int) -> void:
 	everyone and — much worse — every life that peer spent is REFUNDED to the
 	shared hearts. One member restarting would top the room's lives back up
 	indefinitely. A no-op offline, so a solo restart still costs nothing.
+
+	It lands in `_retired_*`, NOT `_gone_*` — see those fields for why the
+	distinction is the whole fix: a restart is invisible to every other peer, so
+	the frozen amount has to travel as part of what we REPORT as our own
+	contribution, not as a room-wide total only we know about.
 	"""
 	if _state != State.IN_ROOM:
 		return
-	_gone_coins += coins
-	_gone_spent += spent
+	_retired_coins += coins
+	_retired_spent += spent
+
+
+func own_reported_coins(own_coins: int) -> int:
+	"""
+	What this peer contributes to the room's bank: its live run plus everything
+	earlier runs in this room retired. THE ONE PLACE that sum is written, so the
+	four sites that report or use it — presence, the join snapshot, `shared_bank`
+	and `shared_lives_spent`'s sibling below — cannot drift apart.
+	"""
+	return own_coins + _retired_coins
+
+
+func own_reported_spent(own_spent: int) -> int:
+	"""Lives this peer owes the room: its live run plus what earlier runs retired."""
+	return own_spent + _retired_spent
 
 
 func shared_bank(own_coins: int) -> Variant:
 	"""The room's banked coins, or `null` offline."""
 	if _state != State.IN_ROOM:
 		return null
-	var total: int = own_coins + _gone_coins
+	var total: int = own_reported_coins(own_coins) + _gone_coins
 	for state: Dictionary in _peer_state.values():
 		total += int(state.get("coins", 0))
 	return total
@@ -1496,7 +1570,7 @@ func shared_lives_spent(own_spent: int) -> Variant:
 	"""Lives spent by everyone who has been in this room, or `null` offline."""
 	if _state != State.IN_ROOM:
 		return null
-	var total: int = own_spent + _gone_spent
+	var total: int = own_reported_spent(own_spent) + _gone_spent
 	for state: Dictionary in _peer_state.values():
 		total += int(state.get("spent", 0))
 	return total
@@ -1542,6 +1616,7 @@ func _process(delta: float) -> void:
 	# relay, so a room whose mesh never built (or was never asked for) must still
 	# be able to self-heal a missing world.
 	_tick_seed_request(delta)
+	_tick_join_wait(delta)
 
 	if _rtc == null:
 		return
@@ -1557,6 +1632,26 @@ func _process(delta: float) -> void:
 	if _send_accum >= interval:
 		_send_accum = fmod(_send_accum, interval)
 		_send_presence()
+
+
+func _tick_join_wait(delta: float) -> void:
+	"""
+	Run the join-placement deadline.
+
+	`_apply_join_placement()` is otherwise only called when a seed or a snapshot
+	arrives, so a room where the last snapshot never comes has nothing left to
+	re-trigger it and the joiner would stand at the origin for the room's life.
+	This is the only thing that fires that case. It stops the moment the placement
+	is applied (`_join_applied`), so it costs one float add per frame for at most
+	`JOIN_SNAPSHOT_WAIT` seconds, once per room, and nothing at all for a host.
+	"""
+	if _state != State.IN_ROOM or _join_applied or _first_member:
+		return
+	if _join_wait >= JOIN_SNAPSHOT_WAIT:
+		return  # Deadline already spent; the attempt below has run at least once.
+	_join_wait += delta
+	if _join_wait >= JOIN_SNAPSHOT_WAIT:
+		_apply_join_placement()
 
 
 func _tick_seed_request(delta: float) -> void:
@@ -1674,8 +1769,11 @@ func _send_presence() -> void:
 		"c": int(player.get("current_character_index")) if "current_character_index" in player else 0,
 		"s": speed,
 		"g": player.is_on_floor() if player.has_method("is_on_floor") else true,
-		"cc": int(player.get("own_coins")) if "own_coins" in player else 0,
-		"lv": int(player.get("own_lives_spent")) if "own_lives_spent" in player else 0,
+		# `own_reported_*` folds in what "Play Again" retired in this room, so a
+		# restart never makes this peer's contribution appear to drop — see
+		# `_retired_coins` for the desync that caused.
+		"cc": own_reported_coins(int(player.get("own_coins")) if "own_coins" in player else 0),
+		"lv": own_reported_spent(int(player.get("own_lives_spent")) if "own_lives_spent" in player else 0),
 		"dd": int(player.get("run_distance")) if "run_distance" in player else 0,
 	}
 
