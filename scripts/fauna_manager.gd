@@ -215,42 +215,71 @@ const FORMATION_LERP_SPEED: float = 1.5
 # ============================================================================
 # A herd used to walk straight through mountains, camps and trees — the ceiling
 # the old ponytail: note in _update_herd named. The fix steers the SHARED HERD
-# CENTRE with three cheap feeler rays and blends the result into the existing
+# CENTRE with one cheap swept-box probe and blends the result into the existing
 # meander, so every member inherits the detour through its formation offset:
 # zero per-animal work, no new state in _animate_animals, and nothing about the
-# isolation contract moves (the rays READ the world, they are not contacts —
+# isolation contract moves (the query READS the world, it is not a contact —
 # fauna keeps collision_mask 0 and still touches nothing but the player).
 #
 # WHY RAYS AND NOT THE TERRAIN'S FOOTPRINTS: endless_terrain builds an exact
 # `obstacles` list per chunk (pos/radius/top), which sounds like the cheaper
 # source — but it is a local inside create_chunk, handed down the spawner chain
 # and dropped when the chunk finishes. Nothing retains it, so querying it means
-# a new public API on the terrain. A layer-1 ray needs no such API and sees
+# a new public API on the terrain. A layer-1 query needs no such API and sees
 # strictly more: massif layers, camp huts, tree trunks, chest bodies, artifact
 # stone and scattered blocks are all in the same per-chunk BlockCollision body.
+#
+# WHY A SWEPT BOX AND NOT THREE PARALLEL RAYS (the v1 shape): three rays are
+# three infinitely thin samples of a ~30 m corridor, so everything between them
+# is invisible — an owner playtest walked elephants straight through the 1–2 m
+# scattered decorative blocks, which is exactly the ceiling the old ponytail:
+# note predicted. One box the full width of the formation, swept along the
+# heading with cast_motion, has NO gaps by construction: anything solid standing
+# in the swath is hit whatever its width, so DETECTION and the measured distance
+# both come from that ONE query now.
+#
+# The two EDGE RAYS survive, and only to choose a side: cast_motion answers how
+# far the box got, never what it grazed, so it cannot say which way to go round
+# (see _edge_clear for the measured failure of deriving that from a rest point).
+# They are cast only on a tick that is already blocked, so open country — the
+# 99% case — costs ONE query where v1 paid three, and a blocked tick costs the
+# same three v1 always paid. Same throttled tick, same steering maths.
 
 ## How often (seconds) the lookahead is probed. Throttled like every other
 ## manager's scan (crocodile_lod_manager, weather_manager): a herd ambles 2–3
-## m/s, so 0.25 s is 0.75 m of travel against a 26 m feeler — the steering
-## target cannot go visibly stale, and the whole feature costs 12 rays/second
-## while a herd is alive and NOTHING at all between events.
+## m/s, so 0.25 s is 0.75 m of travel against a 26 m lookahead — the steering
+## target cannot go visibly stale, and the whole feature costs 4 physics queries
+## a second in open country (12 while actually swerving round something) while a
+## herd is alive, and NOTHING at all between events.
 const AVOID_PROBE_INTERVAL: float = 0.25
 
-## Feeler length (metres). Sized from the worst case it has to solve, not by
+## Sweep length (metres). Sized from the worst case it has to solve, not by
 ## eye: a mountain massif is ~20 m across and the giraffe echelon is ~28 m wide,
 ## so the CENTRE has to end up ~25 m off the line before the last member clears
 ## stone. At AVOID_EASE_SPEED that takes ~13 s, i.e. ~32 m of walking at the
 ## mean amble — so the warning has to arrive further out than that.
 const AVOID_LOOKAHEAD: float = 45.0
 
-## Height (metres) the feelers are cast at. Above the chunk ground collision
-## (a 0.1 m box straddling y = 0, so its top is 0.05) and below the top of
-## every solid worth avoiding — the shortest is a 1.3 m chest body.
+## Centre height (metres) of the swept box. Its bottom (centre − half of
+## AVOID_PROBE_BOX_HEIGHT = 0.2) clears the chunk ground collision (a 0.1 m box
+## straddling y = 0, so its top is 0.05) — without that margin the sweep would
+## report the FLOOR as an obstacle and every herd everywhere would swerve.
 const AVOID_PROBE_HEIGHT: float = 1.0
 
+## Height (metres) of the swept box. Deliberately short: it only has to span
+## from just above the ground slab to the top of the SHORTEST solid worth
+## avoiding (a 1.3 m chest body), and a taller box would start catching the
+## overhanging canopy slabs that carry no collision anyway.
+const AVOID_PROBE_BOX_HEIGHT: float = 1.6
+
+## Thickness (metres) of the swept box along the heading. Thin on purpose — the
+## sweep is what covers the corridor's length; depth here only decides how far
+## an obstacle level with the box's start still counts (see AVOID_PROBE_SETBACK).
+const AVOID_PROBE_BOX_DEPTH: float = 0.4
+
 ## Extra clearance (metres) added outside the herd's widest formation slot when
-## the two edge feelers are placed, so the swath the herd tests is a little
-## wider than the swath it fills and members clear stone rather than shave it.
+## the swept box is sized, so the swath the herd tests is a little wider than
+## the swath it fills and members clear stone rather than shave it.
 const AVOID_EDGE_MARGIN: float = 2.0
 
 ## Widest lateral detour (metres) the centre will open up. Covers massif half
@@ -261,19 +290,19 @@ const AVOID_EDGE_MARGIN: float = 2.0
 ## instead of walking members off the far edge of the streamed terrain.
 const AVOID_MAX_OFFSET: float = 30.0
 
-## How far BEHIND the formation the feelers start, on top of the herd's own
+## How far BEHIND the formation the sweep starts, on top of the herd's own
 ## widest slot. This is what makes the berth hold until the herd is genuinely
 ## past what it stepped around, and it replaces a travel-distance latch that did
 ## the same job worse.
 ##
-## The feelers point forward, so a herd that has opened enough berth stops
+## The sweep points forward, so a herd that has opened enough berth stops
 ## hitting anything while the obstacle is still abeam — unwinding there sends the
 ## formation back into the flank it just walked around, and the rear members are
 ## the ones it catches (measured with forward-from-centre rays: 97.5% of aimed
 ## trials clipping, and with a 30 m travel latch bolted on, still 32-55%, every
-## residual failure on the unwind). Starting the rays behind the formation means
-## an obstacle level with the swath is still ON the ray, so "clear" cannot become
-## true until the whole herd is past it. No latch, no extra ray, no new state.
+## residual failure on the unwind). Starting the box behind the formation means
+## an obstacle level with the swath is still IN the swept volume, so "clear"
+## cannot become true until the whole herd is past it. No latch, no new state.
 const AVOID_PROBE_SETBACK: float = 4.0
 
 ## How fast (m/s) the detour opens and closes. Under WALK_SPEED_MIN so the herd
@@ -282,7 +311,7 @@ const AVOID_PROBE_SETBACK: float = 4.0
 ## the same rate closing is what makes it visibly REFORM on the far side.
 const AVOID_EASE_SPEED: float = 2.2
 
-## Physics layer the feelers see: layer 1, the world-geometry layer every chunk
+## Physics layer the sweep sees: layer 1, the world-geometry layer every chunk
 ## puts its ground and its single BlockCollision body on. Crocodiles (layer 2)
 ## and fauna itself (layer 3) are invisible to it by construction — the herd
 ## cannot react to a croc even by accident. The PLAYER is on layer 1, so it is
@@ -542,18 +571,26 @@ var _avoid_velocity: float = 0.0
 var _probe_timer: float = 0.0
 
 ## Metres-travelled mark before which the berth is HELD rather than unwound.
-## Set from the distance the feelers actually measured, so it scales itself to
+## Set from the distance the sweep actually measured, so it scales itself to
 ## what was seen instead of guessing (see _update_avoid_target).
 var _avoid_hold_until: float = 0.0
 
 
-## The ONE ray query object, built in _ready and MUTATED per feeler — never
-## re-created. PhysicsRayQueryParameters3D.create() (the crocodile's idiom)
-## allocates a RefCounted per call, and this casts three feelers a tick.
-## ponytail: intersect_ray still returns a fresh Dictionary per hit, which is
-## the one allocation left in the path — unavoidable through the public physics
-## API, and it happens 12×/second only while a herd is alive.
-var _probe_params: PhysicsRayQueryParameters3D = null
+## The ONE shape query object and the ONE box it carries, both built in _ready
+## and MUTATED per probe — never re-created. The box is resized only when this
+## herd's formation width actually differs from the last one (a size write
+## notifies the physics server), and the transform/motion are rewritten per tick.
+## ponytail: cast_motion returns a fresh PackedFloat32Array and get_rest_info a
+## fresh Dictionary — the allocations left in the path, unavoidable through the
+## public physics API, and they happen 8×/second only while a herd is alive.
+var _probe_params: PhysicsShapeQueryParameters3D = null
+var _probe_shape: BoxShape3D = null
+
+## The ONE ray query object, likewise built in _ready and mutated per edge —
+## PhysicsRayQueryParameters3D.create() (the crocodile's idiom) allocates a
+## RefCounted per call. It is cast ONLY on a tick where the box found something,
+## purely to choose a side (see _edge_clear).
+var _ray_params: PhysicsRayQueryParameters3D = null
 
 ## Reusable exclude list holding just the player's collider RID (see
 ## AVOID_WORLD_MASK). Kept as a member so assigning it costs no allocation.
@@ -1140,11 +1177,16 @@ func _ready() -> void:
 	_rng.randomize()
 	_event_timer = _rng.randf_range(FIRST_EVENT_DELAY_MIN, FIRST_EVENT_DELAY_MAX)
 
-	# The one ray query object for the obstacle lookahead — built once here,
-	# mutated per feeler (see _probe_clear), never re-created.
-	_probe_params = PhysicsRayQueryParameters3D.new()
+	# The one shape query object for the obstacle lookahead — built once here,
+	# mutated per probe (see _swath_clear), never re-created.
+	_probe_shape = BoxShape3D.new()
+	_probe_params = PhysicsShapeQueryParameters3D.new()
+	_probe_params.shape = _probe_shape
 	_probe_params.collision_mask = AVOID_WORLD_MASK
 	_probe_params.collide_with_areas = false
+	_ray_params = PhysicsRayQueryParameters3D.new()
+	_ray_params.collision_mask = AVOID_WORLD_MASK
+	_ray_params.collide_with_areas = false
 
 
 func _physics_process(delta: float) -> void:
@@ -1406,7 +1448,7 @@ func _update_herd(delta: float) -> void:
 	##
 	## Scenery is steered around, not collided with: the animals' bodies still
 	## mask nothing (see FAUNA_COLLISION_LAYER) — the detour comes entirely from
-	## the lookahead feelers below, which READ the world and never touch it.
+	## the lookahead sweep below, which READS the world and never touches it.
 	## Giving fauna a collision mask instead would make herds shove each other
 	## and stall against terrain, which is why that is still not done.
 	var player := _find_player()
@@ -1439,7 +1481,7 @@ func _update_herd(delta: float) -> void:
 	var meander := sin(_herd_travelled * MEANDER_FREQUENCY) * MEANDER_AMPLITUDE
 
 	# Obstacle lookahead, on its own throttled tick. Probed from where the herd
-	# centre actually IS (detour included), so the feelers describe the corridor
+	# centre actually IS (detour included), so the sweep describes the corridor
 	# the herd is currently committed to rather than the undeflected line.
 	_probe_timer -= delta
 	if _probe_timer <= 0.0:
@@ -1494,63 +1536,100 @@ func _update_herd(delta: float) -> void:
 
 
 func _refresh_probe_exclude(player: Node3D) -> void:
-	## Point the feelers' exclude list at the player's collider, once per herd.
+	## Point the sweep's exclude list at the player's collider, once per herd.
 	##
 	## The player is a CharacterBody3D on layer 1 (scenes/player.tscn leaves
-	## collision_layer at the default), i.e. on the very layer the feelers watch,
+	## collision_layer at the default), i.e. on the very layer the sweep watches,
 	## so without this a herd would swerve around the PLAYER — the loudest
 	## possible breach of the isolation contract, and one that would only show up
 	## when somebody happened to stand in front of a passing herd. Excluding by
 	## RID (not by an is_in_group check on the hit, the crocodile's idiom) is what
-	## lets the ray carry on THROUGH the player to the massif behind them.
+	## lets the box sweep on THROUGH the player to the massif behind them.
+	##
+	## PhysicsShapeQueryParameters3D carries `exclude` with exactly the same
+	## meaning PhysicsRayQueryParameters3D did, so the shape-cast upgrade left
+	## this rule untouched — and the layer-1-only mask still hides crocodiles
+	## (layer 2) and fauna's own rideable bodies (layer 3) by construction.
 	_probe_exclude.clear()
 	if player.has_method("get_rid"):
 		_probe_exclude.append(player.get_rid())
 	_probe_params.exclude = _probe_exclude
+	_ray_params.exclude = _probe_exclude
 
 
-func _probe_clear(space: PhysicsDirectSpaceState3D, origin: Vector3, dir: Vector3,
+func _swath_clear(space: PhysicsDirectSpaceState3D, length: float) -> float:
+	## Sweep the box (already sized, oriented and positioned by the caller) and
+	## return how far it got: the distance to the first contact, or the full
+	## `length` when the corridor is empty. Distance rather than a bool because
+	## the caller grades the hold by how far off the blockage was.
+	_probe_params.motion = _herd_heading * length
+	var fractions := space.cast_motion(_probe_params)
+	if fractions.size() < 2:
+		# The engine could not answer (documented for a shape that cannot move).
+		# Read that as open country, NEVER as blocked: a herd that reads an
+		# unusable answer as "obstacle at zero metres" pins itself at the full
+		# AVOID_MAX_OFFSET berth for the rest of the crossing, in open field.
+		return length
+	return fractions[0] * length
+
+
+func _edge_clear(space: PhysicsDirectSpaceState3D, origin: Vector3,
 		length: float) -> float:
-	## Cast ONE feeler and return how far it got: the hit distance, or the full
-	## `length` when nothing is in the way. Distance rather than a bool
-	## (the crocodile's _feeler_blocked) because the caller steers by comparing
-	## the three feelers' room, and grades the detour by how close the blockage is.
-	_probe_params.from = origin
-	_probe_params.to = origin + dir * length
-	var hit := space.intersect_ray(_probe_params)
+	## Cast ONE edge ray and return how far it got: the hit distance, or the full
+	## `length` when nothing is on that line. Distance rather than a bool (the
+	## crocodile's _feeler_blocked) because the caller steers by comparing the
+	## two edges' room.
+	##
+	## THESE TWO RAYS ARE NOT DETECTION and must not be folded into `tightest` —
+	## the swept box already covers everything between and including them. They
+	## survive from v1 for the one job a swept box cannot do: a cast_motion
+	## answers HOW FAR it got, never WHAT it grazed, so it cannot say which way
+	## to go round. "Is the extreme edge of the swath free?" is exactly the
+	## question that answers it, and a thin sample of a line the obstacle
+	## probably is not on is the right shape for that question — a rest point
+	## from the box was tried and is the version that FAILS (12.5% of aimed
+	## massif trials clipped, worst −2.44 m): the contact it reports can sit
+	## anywhere on the manifold, so a massif lying mostly to the left reports a
+	## contact on its right edge and sends the herd left into the bulk of it.
+	_ray_params.from = origin
+	_ray_params.to = origin + _herd_heading * length
+	var hit := space.intersect_ray(_ray_params)
 	if hit.is_empty():
 		return length
 	return origin.distance_to(hit["position"])
 
 
 func _update_avoid_target(centre: Vector3) -> void:
-	## Three feelers along the heading — one from the centre and one from each
-	## EDGE of the formation — turned into ONE signed lateral target the caller
-	## eases toward.
+	## ONE box the full width of the formation, swept along the heading, turned
+	## into ONE signed lateral target the caller eases toward.
 	##
-	## The edge feelers are PARALLEL, not angled whiskers, and that is the whole
-	## reason this works on the case that matters. The bead's acceptance case is a
-	## mountain massif, ~20 m across; the giraffe echelon is ~28 m wide. Angled
-	## whiskers off the centre report where the CENTRE can walk, so a herd steers
-	## until its middle is clear and drags its outermost giraffe straight through
-	## the rock (measured: 100% of aimed trials still clipped, mean penetration
-	## 6.0 m). Parallel rays offset by this herd's own widest slot test the
-	## corridor the MEMBERS occupy, so "clear" means clear for the whole swath.
+	## The box is the width of the MEMBERS, not of the centre's line, and that is
+	## the whole reason this works on the case that matters. The first acceptance
+	## case is a mountain massif, ~20 m across; the giraffe echelon is ~28 m wide.
+	## Angled whiskers off the centre report where the CENTRE can walk, so a herd
+	## steers until its middle is clear and drags its outermost giraffe straight
+	## through the rock (measured: 100% of aimed trials still clipped, mean
+	## penetration 6.0 m).
 	##
-	## Side choice is the clearer edge, with ties going to the side already
-	## committed to — a herd mid-swerve must never change its mind halfway, and a
-	## symmetric obstacle dead ahead (both edges clear, centre blocked) is exactly
-	## a tie.
+	## The v1 of this used three PARALLEL rays — centre plus both edges — which
+	## fixed the massif but left three thin samples of a 30 m corridor, so an
+	## owner playtest walked elephants through the 1–2 m scattered blocks the
+	## rays passed between. A swept box has no gaps: anything solid standing in
+	## the swath is hit whatever its width. Everything downstream of `tightest`
+	## and `side` is unchanged from v1, because the failure modes those two lines
+	## were tuned against have not moved.
 	##
-	## ponytail: coarse by design and by the bead — three rays through a 30 m
-	## swath will walk a 1–2 m scattered block between two feelers, and a herd
-	## that meets a massif with less than ~35 m of warning (a chunk streaming in
-	## late, or a mountain range with no gap) runs out of room to open the full
-	## berth and still grazes stone. Mountains, camps and tree stands are what
-	## matter and they are covered. The upgrade path is a shape cast — one capsule
-	## the width of the formation instead of three rays — which is strictly more
-	## expensive and buys only the clutter nobody notices.
-	if _probe_params == null:
+	## Side choice is still the two edge rays' comparison, unchanged — see
+	## _edge_clear for why a swept box cannot answer that question and for the
+	## measurement of what happens when you make it try.
+	##
+	## ponytail: the remaining ceiling is warning DISTANCE, not width — a herd
+	## that meets a massif with less than ~35 m of notice (a chunk streaming in
+	## late, or a mountain range with no gap) still runs out of room to open the
+	## full berth and grazes stone. The upgrade path is a longer AVOID_LOOKAHEAD
+	## plus a faster AVOID_EASE_SPEED, both of which cost readability of the
+	## swerve; not worth it until somebody sees it happen.
+	if _probe_params == null or _probe_shape == null or _ray_params == null:
 		return
 	var viewport := get_viewport()
 	if viewport == null:
@@ -1559,19 +1638,23 @@ func _update_avoid_target(centre: Vector3) -> void:
 	if space == null:
 		return
 
-	# The feelers bracket the whole formation: offset sideways by this herd's own
-	# widest slot, and started behind it, so between them they sweep the corridor
-	# the MEMBERS occupy rather than the line the centre walks.
+	# The box brackets the whole formation: as wide as this herd's own widest
+	# slot either side of the centre, and started behind it, so the sweep covers
+	# the corridor the MEMBERS occupy rather than the line the centre walks.
 	var reach := _herd_offset_max + AVOID_EDGE_MARGIN
 	var origin := Vector3(centre.x, AVOID_PROBE_HEIGHT, centre.z) \
 			- _herd_heading * (reach + AVOID_PROBE_SETBACK)
 	var length := AVOID_LOOKAHEAD + reach + AVOID_PROBE_SETBACK
-	var edge := _herd_lateral * reach
-	var forward_clear := _probe_clear(space, origin, _herd_heading, length)
-	var plus_clear := _probe_clear(space, origin + edge, _herd_heading, length)
-	var minus_clear := _probe_clear(space, origin - edge, _herd_heading, length)
+	var want_size := Vector3(reach * 2.0, AVOID_PROBE_BOX_HEIGHT, AVOID_PROBE_BOX_DEPTH)
+	if _probe_shape.size != want_size:
+		_probe_shape.size = want_size
+	# Local X is the lateral axis and local Z the heading, so the box's width
+	# spans the formation. lateral × UP == -heading (lateral is the heading
+	# yawed 90°), which is what makes this basis right-handed.
+	_probe_params.transform = Transform3D(
+			Basis(_herd_lateral, Vector3.UP, -_herd_heading), origin)
 
-	var tightest := minf(forward_clear, minf(plus_clear, minus_clear))
+	var tightest := _swath_clear(space, length)
 	if tightest >= length:
 		# Open country — the 99% case, and the one that costs the least: the
 		# detour unwinds and the herd is back on its migration line, but ONLY
@@ -1580,6 +1663,18 @@ func _update_avoid_target(centre: Vector3) -> void:
 			_avoid_target = 0.0
 		return
 
+	# Only now, with something actually in the way, are the two edge rays cast —
+	# so open country (the 99% case) costs ONE query a tick where v1 paid three,
+	# and a blocked tick costs the same three it always did.
+	#
+	# Side choice is v1's rule unchanged, because v1's rule measured 0% clipped
+	# and nothing about it was the bug: the clearer edge wins, and ties go to the
+	# side already committed to — a herd mid-swerve must never change its mind
+	# halfway, and a symmetric massif dead ahead (both edges clear, middle
+	# blocked) is exactly a tie.
+	var edge := _herd_lateral * reach
+	var plus_clear := _edge_clear(space, origin + edge, length)
+	var minus_clear := _edge_clear(space, origin - edge, length)
 	var side := 1.0 if plus_clear > minus_clear else -1.0
 	if absf(plus_clear - minus_clear) < 0.01:
 		side = 1.0 if _avoid_target >= 0.0 else -1.0
@@ -1596,16 +1691,15 @@ func _update_avoid_target(centre: Vector3) -> void:
 	# corridor is what buys the room.
 	_avoid_target = side * AVOID_MAX_OFFSET
 	# Hold this berth until the herd has walked past the thing that caused it.
-	# THE FEELERS CANNOT TELL US WHEN THAT IS: they point forward, and a herd
-	# that has swerved WIDER than the obstacle no longer has any ray crossing it
-	# — the rock is inboard of the innermost feeler. So "all clear" arrives while
-	# the obstacle is still abeam, and unwinding there walks the rear of the
-	# formation straight back into it (measured: 45% of aimed trials still
-	# clipping, every failure on the unwind, with the offset already decayed to
-	# 3-7 m at closest approach).
+	# THE SWEEP CANNOT TELL US WHEN THAT IS: it points forward, and a herd that
+	# has swerved WIDER than the obstacle no longer has the rock inside its box
+	# at all. So "all clear" arrives while the obstacle is still abeam, and
+	# unwinding there walks the rear of the formation straight back into it
+	# (measured: 45% of aimed trials still clipping, every failure on the unwind,
+	# with the offset already decayed to 3-7 m at closest approach).
 	#
-	# The mark is derived from what the ray actually measured rather than from a
-	# guessed constant, so it scales with how far off the obstacle was: travel
+	# The mark is derived from what the sweep actually measured rather than from
+	# a guessed constant, so it scales with how far off the obstacle was: travel
 	# past where it was seen, plus the formation's own depth so the REAR members
 	# clear it too.
 	_avoid_hold_until = _herd_travelled + tightest + reach
