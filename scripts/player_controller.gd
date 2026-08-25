@@ -2054,12 +2054,15 @@ func clear_nearby_crocodiles(spawn_point: Vector3) -> void:
 	only thing that unparks the master's copy from a peer it just bit — the local
 	`is_paused` a bite sets is overwritten by the next sample 100 ms later, so
 	without it the same crocodile bites again the instant the i-frames lapse.
+	SPAWN_SAFE_RADIUS is carried INTO that request, because this is a bounded
+	sweep: an unbounded flee disarmed every awake crocodile in the room, on every
+	screen, for the whole grace window — once per death by any peer.
 
 	@param spawn_point: The position to check distance from
 	"""
 	var mp := _mp()
 	if mp != null and mp.has_method("request_croc_flee") \
-			and mp.request_croc_flee(spawn_point, RESPAWN_GRACE_DURATION + RESPAWN_BLINK_DURATION):
+			and mp.request_croc_flee(spawn_point, RESPAWN_GRACE_DURATION + RESPAWN_BLINK_DURATION, SPAWN_SAFE_RADIUS):
 		return
 
 	var crocodiles = get_tree().get_nodes_in_group("crocodile")

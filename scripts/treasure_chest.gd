@@ -162,6 +162,16 @@ func _on_body_entered(body: Node) -> void:
 	var mp := get_tree().get_first_node_in_group("mp")
 	_room_claimed = mp != null and mp.has_method("claim_pickup") \
 			and mp.claim_pickup(_id, _remaining, 1)
+	if not _room_claimed and mp and mp.has_method("report_coin_collected"):
+		# The room could not arbitrate (no mesh yet, or offline), so we pay the
+		# burst ourselves below — which means the room has to be told this chest
+		# is empty, exactly as coin.gd does on its own unclaimed path. ONLY on
+		# this path: on the claimed one `_resolve_claim` is the single writer of
+		# the collected set. Without it `setup()`'s `is_coin_collected` check —
+		# the chest's ONLY de-duplication, since nothing sweeps chests the way
+		# `_absorb_collected` sweeps the "coin" group — misses on a chunk reload
+		# or a later joiner, and the shared bank pays a second 8-15 coin burst.
+		mp.report_coin_collected(_id)
 
 	# Stop listening. MUST be deferred: Godot blocks direct property writes to a
 	# monitoring Area3D from inside its own body_entered signal ("Function blocked

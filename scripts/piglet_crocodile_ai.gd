@@ -229,9 +229,13 @@ var is_chasing: bool = false
 var is_fleeing: bool = false
 ## Seconds of fleeing left (counts down to 0).
 var flee_time_remaining: float = 0.0
-## The smell's origin, used only as a fallback "run from here" point if the player
-## reference is momentarily missing while fleeing.
+## The smell's origin — the "run from here" point whenever the wave did not come
+## from the local player (see flee_from), and the fallback when it did but the
+## player reference is momentarily missing.
 var flee_source: Vector3 = Vector3.ZERO
+## Whether this flight tracks the LOCAL player (true: the player's own wave) or
+## the fixed `flee_source` (false: a wave relayed from another peer in the room).
+var flee_tracks_player: bool = true
 
 ## Boss flags, set by the terrain via setup_as_boss() BEFORE this node enters
 ## the tree (so _ready sees them). A boss skips the per-instance random
@@ -720,9 +724,14 @@ func _flee() -> void:
 	the current heading if we somehow sit right on top of the source.
 	"""
 	var away := Vector3.ZERO
-	if player_node:
+	if player_node and flee_tracks_player:
 		away = global_position - player_node.global_position
 	else:
+		# `flee_tracks_player` false means the smell came from SOMEBODY ELSE'S
+		# screen (MpManager relayed it to the master). The local player is then
+		# the wrong reference entirely — running from it would herd the pack
+		# straight at the peer who cast the wave — so the remembered origin is
+		# the only correct one. See flee_from().
 		away = global_position - flee_source
 	away.y = 0.0
 
@@ -735,12 +744,19 @@ func _flee() -> void:
 	wander_heading = atan2(movement_direction.x, movement_direction.z)
 
 
-func flee_from(source: Vector3, duration: float) -> void:
+func flee_from(source: Vector3, duration: float, tracks_player: bool = true) -> void:
 	"""
 	Public hook called by Phoboman's Stink Wave (via the "crocodile" group): make
 	this crocodile turn tail and run from the player for `duration` seconds. Drops
-	any current chase. `source` is the smell's origin, used only as a fallback
-	direction if the player can't be located on a given frame.
+	any current chase. `source` is the smell's origin.
+
+	`tracks_player` is what makes the source mean something. Solo — and for the
+	local player's own wave — it stays true and the flight tracks the player as it
+	always has. A wave RELAYED from another peer passes false, because the master
+	applying it has no body for the caster: `_flee()` would otherwise run every
+	crocodile away from the MASTER's player, i.e. straight toward the peer who
+	actually cast it, and `player_controller.clear_nearby_crocodiles()` would herd
+	the pack onto a respawning teammate instead of off them.
 	"""
 	# Bosses shrug the stink off. They KEEP group "crocodile" membership — the
 	# wave still finds them, they just don't care; immunity lives here, not in
@@ -765,6 +781,7 @@ func flee_from(source: Vector3, duration: float) -> void:
 	is_fleeing = true
 	flee_time_remaining = duration
 	flee_source = source
+	flee_tracks_player = tracks_player
 	is_chasing = false
 
 

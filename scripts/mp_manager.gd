@@ -626,6 +626,22 @@ func leave() -> void:
 	connections, no mesh, no socket, no per-frame work. Solo play resumes exactly
 	as it was. Safe to call from any state, including OFFLINE.
 	"""
+	# RESOLVE PENDING CLAIMS FIRST, before anything below is torn down. Every one
+	# of them names a pickup the player has already visibly taken: `coin.gd` hid
+	# the coin and left it UNFREED for the confirm's sweep to collect, and
+	# `treasure_chest.gd` skipped its own award for the same reason. Wiping the
+	# dictionary alone stranded that coin in the tree and in the "coin" group
+	# until its chunk unloaded — invisible, uncollectable, paying nothing, still
+	# ticked by the LOD manager's coin scan — and paid a chest's whole 8-15 coin
+	# burst nothing at all while running the full shower animation.
+	# `_resolve_claim_locally` is exactly the path `_tick_claims` would have taken
+	# a second later, and it needs `_state` still IN_ROOM, hence the position at
+	# the very top of this function.
+	for pickup_id: int in _pending_claims.keys():
+		var claim: Dictionary = _pending_claims[pickup_id]
+		_resolve_claim_locally(pickup_id, int(claim["n"]), int(claim["v"]))
+	_pending_claims.clear()
+
 	for avatar: RemoteAvatar in _avatars.values():
 		avatar.queue_free()
 	_avatars.clear()
@@ -670,10 +686,9 @@ func leave() -> void:
 	_last_hb_msec = 0
 	_stall_accum = 0.0
 	_stall_reported = false
-	# Any claim still waiting on a confirm dies with the room. The pickup it named
-	# is already hidden on our side, so dropping it here loses at most one coin's
-	# worth of bank — against re-driving claims at a master we are no longer
-	# talking to, which would never resolve.
+	# Already drained at the top of this function (see there): each pending claim
+	# was resolved locally so its hidden pickup is freed and paid, rather than
+	# re-driven at a master we are no longer talking to.
 	_pending_claims = {}
 	_room_streak = 0
 	_room_multiplier = 1
@@ -951,6 +966,20 @@ func _on_lobby_master_changed(id: String) -> void:
 	_last_hb_msec = Time.get_ticks_msec()
 	_stall_accum = 0.0
 	_stall_reported = false
+	# A NEW MASTER IS A NEW CHANCE AT THE SEED, so the retry budget is a new one
+	# too. `_tick_seed_request` gives up permanently past SEED_REQUEST_MAX_TRIES,
+	# and phase 5 made spending that budget on a master that cannot answer the
+	# ordinary case: a host whose tab is throttled is exactly what the stall vote
+	# deposes, and it takes 20 s of unanswered `seed_req` down with it. Without
+	# this reset the peer never asks the NEW master — which does hold the real
+	# seed — so `_has_seed` stays false, `room_seed()` answers null, the join
+	# placement never runs, and that player walks a private world for the room's
+	# life while the panel reports a healthy room. The comment below promising
+	# that "a seedless peer keeps sending seed_req to whoever the master
+	# currently is" is only true because of these three lines.
+	if not _has_seed:
+		_seed_req_tries = 0
+		_seed_req_accum = 0.0
 	# PROMOTION IS A HOT STANDBY HANDOVER, and it is one loop because the replica
 	# is just the local nodes. Every crocodile we have been rendering from the old
 	# master's samples is a real local body holding that master's last known
@@ -2339,10 +2368,6 @@ func _receive_mesh_packets() -> void:
 		drained += 1
 		var from_int: int = _rtc.get_packet_peer()
 		var bytes: PackedByteArray = _rtc.get_packet()
-		var used: int = int(per_peer.get(from_int, 0))
-		per_peer[from_int] = used + 1
-		if used >= MAX_PRESENCE_PACKETS_PER_PEER:
-			continue
 		# ponytail: linear scan rather than a third dictionary kept in step with
 		# `_connections` and `_avatars` — `peer_int_id` is pure and a room holds
 		# at most 4 peers, so this is 3 hashes against a map that could desync.
@@ -2366,6 +2391,24 @@ func _receive_mesh_packets() -> void:
 		var kind: String = packet_kind(packet)
 		if not kind.is_empty():
 			_receive_mesh_verb(from_id, kind, packet)
+			continue
+
+		# THE PER-SENDER BUDGET METERS PRESENCE ONLY, and it has to sit BELOW the
+		# discriminator to do that. Applied above it, it discarded whatever the
+		# peer had sent past its quota REGARDLESS OF KIND — including the master's
+		# RELIABLE `cnf` / `dead`, which no re-send replaces. The master alone
+		# sends 25 packets/s (15 Hz presence + 10 Hz croc sync), so any ~330 ms
+		# gap between `_process` calls — one chunk-generation hitch, a tab
+		# regaining focus — overran the 8-packet quota with no hostile peer
+		# involved, and a dropped `cnf` is precisely the double-bank the claim
+		# protocol exists to prevent (the loser gets no reply by design, so
+		# `_tick_claims` times out and pays the pickup a second time), while a
+		# dropped `dead` walks a crushed crocodile back into the world.
+		# The verbs are not unmetered: `MAX_DRAIN_PACKETS_PER_FRAME` bounds the
+		# whole drain and `VERB_BUDGET_PER_SEC` bounds each verb per peer.
+		var used: int = int(per_peer.get(from_int, 0))
+		per_peer[from_int] = used + 1
+		if used >= MAX_PRESENCE_PACKETS_PER_PEER:
 			continue
 
 		var state: Dictionary = _decode_presence_dict(packet)
@@ -2545,8 +2588,19 @@ func room_multiplier() -> Variant:
 
 	Expires on its own: a room that stops picking things up for STREAK_WINDOW is
 	back to x1 without anybody having to send a "streak broke" message.
+
+	THE GUARDS MUST MATCH `claim_pickup()`'s EXACTLY, and that pairing is the
+	whole correctness of the fall-through. When arbitration is impossible
+	(`--lobby-only`, ICE never completed, a symmetric NAT with no TURN) that
+	function banks the pickup through the ordinary solo path — but this one used
+	to keep answering non-null on `_state` alone, and only `_apply_confirm` ever
+	advances the room streak, so it returned a hard `1` forever: every coin banked
+	at x1 with `(x1)` on the HUD while the peer's own perfectly good `coin_streak`
+	was ignored. Falling through to solo has to be BOTH halves or it is neither.
 	"""
-	if _state != State.IN_ROOM:
+	if _state != State.IN_ROOM or _rtc == null:
+		return null
+	if _master != _you and not _is_mesh_peer_connected(peer_int_id(_master)):
 		return null
 	if Time.get_ticks_msec() > _room_streak_deadline_msec:
 		return 1
@@ -3047,45 +3101,66 @@ func _release_synced_crocs() -> void:
 # broadcast only because it FREES a node, which no amount of transform sync can
 # express.
 
-func request_croc_flee(origin: Vector3, duration: float) -> bool:
+func request_croc_flee(origin: Vector3, duration: float, radius: float = 0.0) -> bool:
 	"""
-	Phoboman's Stink Wave, made room-wide: ask the master to scare the crocodiles
-	IT is the authority for, so a wave set off on one screen turns the pack on
-	every other one too.
+	Phoboman's Stink Wave, made room-wide: scare the crocodiles this peer can see
+	AND ask the master to scare the ones it is the authority for, so a wave set
+	off on one screen turns the pack on every other one too.
 
-	A NO-OP OFFLINE. The caller's own local loop stays exactly as it was — it is
-	correct for every crocodile this peer still simulates itself and harmless on
-	the remote-driven ones (whose state the next sample overwrites regardless);
-	this only adds the half that loop cannot reach.
+	A NO-OP OFFLINE. `_ability_phoboman()`'s own local loop stays exactly as it
+	was; the local pass here is what `clear_nearby_crocodiles()` needs, since that
+	caller has no local alternative left in a room. Applying locally as well as
+	relaying is not redundant: the master only drives the crocodiles ITS terrain
+	has loaded, so a peer more than a render distance away from the master gets
+	nothing back at all — the same coverage ceiling the croc sync documents — and
+	a respawning player would have had no spawn protection whatsoever.
 
-	RETURNS whether the room has taken it over — false offline, and false whenever
-	the request could not actually leave — so a caller whose LOCAL alternative
-	would break the room (`player_controller.clear_nearby_crocodiles()`, which
-	frees bodies the master is the authority for) can fall through on one test,
-	the same shape `request_croc_kill()` uses. `_ability_phoboman()` ignores it:
-	its own loop already ran and is correct either way.
+	`radius` bounds the wave to `radius` metres of `origin`; 0.0 means unbounded
+	(Phoboman's wave, which is global by design). WITHOUT IT the bounded sweep
+	`clear_nearby_crocodiles()` performs solo became a room-wide one: every death
+	by any peer disarmed every awake crocodile in the room for four seconds.
+
+	RETURNS whether the room has taken it over — false offline only, so a caller
+	whose LOCAL alternative would break the room
+	(`player_controller.clear_nearby_crocodiles()`, which frees bodies the master
+	is the authority for) can fall through on one test, the same shape
+	`request_croc_kill()` uses. It is true even when the relay could not leave,
+	because the local pass above still ran and freeing is never right in a room.
 	"""
-	if _state != State.IN_ROOM or _rtc == null:
+	if _state != State.IN_ROOM:
 		return false
+	# Whatever we can reach ourselves, scare now. Harmless on remote-driven
+	# crocodiles (the next sample overwrites the flag 100 ms later) and on the
+	# master this IS the authoritative application.
+	_apply_flee(origin, duration, radius)
 	if _master == _you:
-		_apply_flee(origin, duration)
 		return true
-	return _send_reliable_to_master(var_to_bytes({
-		"t": "flee", "x": origin.x, "y": origin.y, "z": origin.z, "d": duration,
+	_send_reliable_to_master(var_to_bytes({
+		"t": "flee", "x": origin.x, "y": origin.y, "z": origin.z,
+		"d": duration, "r": radius,
 	}))
+	return true
 
 
-func _apply_flee(origin: Vector3, duration: float) -> void:
+func _apply_flee(origin: Vector3, duration: float, radius: float = 0.0, tracks_player: bool = true) -> void:
 	"""
-	MASTER ONLY in practice: the same group loop `player_controller._ability_phoboman()`
-	runs, over the crocodiles this peer is the authority for.
+	The same group loop `player_controller._ability_phoboman()` runs, over the
+	crocodiles this peer drives.
 
 	No boss test here on purpose — `flee_from()` itself early-returns for a boss
 	(Stink Wave immunity), so the rule stays in the one file that owns it.
+
+	`tracks_player` is false for a RELAYED wave: this peer has no body for the
+	caster, so the flight must run from the fixed `origin` rather than from our
+	own player — see `piglet_crocodile_ai.flee_from()`.
 	"""
+	var radius_sq: float = radius * radius
 	for croc: Node in get_tree().get_nodes_in_group("crocodile"):
-		if is_instance_valid(croc) and croc.has_method("flee_from"):
-			croc.flee_from(origin, duration)
+		if not is_instance_valid(croc) or not croc.has_method("flee_from"):
+			continue
+		if radius > 0.0 and (croc as Node3D).global_position.distance_squared_to(origin) > radius_sq:
+			continue
+		croc.flee_from(origin, duration, tracks_player)
 
 
 func _receive_flee(_from_id: String, packet: Dictionary) -> void:
@@ -3115,7 +3190,17 @@ func _receive_flee(_from_id: String, packet: Dictionary) -> void:
 		return
 	if not is_finite(duration) or duration <= 0.0 or duration > MAX_FLEE_DURATION:
 		return
-	_apply_flee(origin, duration)
+	# `r` is optional (a phase-5.0 peer sends none) and bounded like everything
+	# else here; a missing or malformed one reads as 0.0 = unbounded, which is
+	# what that older peer meant.
+	var radius: float = 0.0
+	if _is_number(packet.get("r", null)):
+		radius = float(packet["r"])
+		if not is_finite(radius) or radius < 0.0 or radius > MAX_PRESENCE_COORD:
+			return
+	# tracks_player FALSE: the caster is on another screen, so the crocodiles must
+	# run from `origin`, not from our own player.
+	_apply_flee(origin, duration, radius, false)
 
 
 func request_croc_kill(id: int) -> bool:
