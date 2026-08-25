@@ -583,6 +583,130 @@ const CAMP_COIN_MIN: int = 2
 const CAMP_COIN_MAX: int = 4
 
 # ----------------------------------------------------------------------------
+# TREASURE CHESTS (small, common, opened on touch for a coin shower)
+# ----------------------------------------------------------------------------
+##
+## The third landmark in the artifact / camp family, and deliberately the SMALLEST
+## and COMMONEST of the three — a snack, not a monument. The reward hierarchy is
+## the whole reason each exists at its own rarity:
+##
+##   artifact  ~1 chunk in 23  huge ruin, 3-5 coins AND the one guaranteed GEM
+##   camp      ~1 chunk in 31  a whole village, 2-4 coins, no gem
+##   chest     ~1 chunk in 13  a 1.3 m box, 8-15 coins in a burst, NO GEM
+##
+## A chest gets NO gem for exactly the reason a camp gets none: the guaranteed gem
+## is the artifacts' distinction, and handing one to the commonest landmark in the
+## world would flatten "an ancient prize worth a detour" into "a box I walked past".
+##
+## Structurally this is the artifact/camp recipe with nothing added:
+##   - _chest_at()          the rarity roll ALONE, on its own independent hash
+##                          stream (CHEST_SALT + its own coordinate primes), so it
+##                          consumes ZERO draws from the shared chunk RNG.
+##   - spawn_chest_in_chunk() holds the candidate loop, because that is the only
+##                          place `obstacles` exists — see _chest_at's docstring
+##                          for why putting the loop in the roll is the bug both
+##                          artifacts and camps had to have moved out of it.
+##   - all wood and brass goes through create_box into the chunk's ONE MultiMesh
+##     and ONE BlockCollision body, so a chest costs ZERO extra draw calls and
+##     ZERO extra physics bodies. Its single non-batched node is the open trigger.
+##
+## OPENED STATE IS PER-RUN AND CHUNK-LOCAL, ON PURPOSE. A chest is rebuilt closed
+## when its chunk unloads and regenerates — there is no opened-chest registry.
+## That is exactly what ROAD COINS already do (they respawn with their chunk too),
+## and the road's strictly-increasing X (see the coin-road section) makes walking
+## far enough backwards to re-farm a chest a deliberate, slow act rather than an
+## accident. A registry would need per-run persistence keyed by a stable chest id
+## and would buy nothing a player would notice; skipped.
+
+## Kill switch, mirroring spawn_artifacts / spawn_camps.
+@export var spawn_chests: bool = true
+
+## Probability that a chunk ROLLS a chest. This is NOT the built rate: the
+## candidate loop below rejects spots that are in a river, too near the coin road,
+## or overlapping stone already in the chunk.
+##
+## MEASURED (throwaway headless generator sweep, 41x41 = 1681 chunks, run_seed
+## 12345): 136 chunks rolled a chest and 134 BUILT one — 98.5% survival, i.e.
+## 1 built chest per 12.5 chunks, inside the intended 1-in-12-to-15 band.
+##
+## Survival is that high because CHEST_RADIUS (1.5 m) is a sixth of a camp's 9.4
+## and a fifth of an artifact's 7.0: the overlap test, which rejects 86% of camp
+## candidates, almost never fires on something this small, and four tries make the
+## remaining road/river rejections cheap. Survival barely moves with the chance, so
+## the built rate scales essentially linearly — 0.05 would give ~1 in 20, 0.14 ~1
+## in 7. Note 0.08 is coincidentally the same number as ARTIFACT_CHANCE and means
+## something completely different there: an artifact survives placement only 59.5%
+## of the time, so the same roll yields 1 in 23.
+const CHEST_CHANCE: float = 0.08
+
+## Salt for the chest's independent hash stream, in the ARTIFACT_SALT / CAMP_SALT /
+## BIOME_SALT / BOSS_SEED family: an arbitrary fixed constant XORed into run_seed so
+## this stream can never collide with (or perturb) any other deterministic site.
+const CHEST_SALT: int = 0xC4_E57  # "CHEST"-ish; arbitrary fixed constant
+
+## Coordinate multiplier primes for the chest stream, deliberately DIFFERENT from
+## every other stream in this file — object/artifact (73856093 / 19349663), camp
+## (40960001 / 26463089), biome (83492791 / 15485863) and croc-roll (179424673 /
+## 32452843) — so no two streams can correlate on a shared lattice.
+const CHEST_HASH_PRIME_X: int = 86028121
+const CHEST_HASH_PRIME_Y: int = 50331653
+
+## Candidate spots tried before giving up on this chunk's chest. Every try failing
+## means NO chest — a chest fused into a mountain massif is worse than no chest, and
+## a higher CHEST_CHANCE reaches the same built rate.
+const CHEST_PLACE_TRIES: int = 4
+
+## Footprint radius, and the value handed to _biome_spot_ok as "the widest this
+## could be". The chest box is 1.3 x 0.9 m, whose rotated half-diagonal is 0.79 m;
+## 1.5 rounds that generously up so a chest never quite touches a neighbouring
+## block, and it is also the radius of the obstacle appended to `obstacles`
+## (crocodile spawn rejection + the road-coin perch rule).
+const CHEST_RADIUS: float = 1.5
+
+## Minimum distance from the coin-road CENTERLINE. Equal to road_width_max / 2
+## (10 m), the outer edge of the widest coin scatter band, so a chest is never
+## standing in the middle of the trail you are already following — it always sits
+## at the swath's edge or beyond, which is what makes finding one feel like
+## looking around rather than walking forward. A road coin CAN still perch on the
+## lid at the exact boundary; that is harmless because the chest footprint is
+## climbable (see spawn_chest_in_chunk).
+const CHEST_ROAD_CLEARANCE: float = 10.0
+
+## Keep candidate spots this far inside the chunk. MUST exceed CHEST_RADIUS (1.5)
+## so no chest box straddles a seam, and it also exceeds TreasureChest's
+## TRIGGER_RADIUS (2.0) so the whole pickup volume stays in its own chunk.
+const CHEST_EDGE_MARGIN: float = 4.0
+
+## Chest geometry (metres). The body is a squat box, the lid a slab tilted open.
+const CHEST_BODY_SIZE := Vector3(1.3, 0.75, 0.9)
+const CHEST_LID_SIZE := Vector3(1.36, 0.26, 0.96)
+## How far the lid leans back off the body, radians about its local X axis. Enough
+## to read as "already ajar" at a distance without looking knocked off.
+const CHEST_LID_TILT_MIN: float = 0.35
+const CHEST_LID_TILT_MAX: float = 0.6
+## The brass band across the chest's waist. Visual only (collide = false) — it is
+## 6 cm of trim and the body box underneath already carries the collision.
+const CHEST_BAND_SIZE := Vector3(1.34, 0.14, 0.94)
+
+## Palette — dark oiled wood and warm brass, deliberately distinct from the warm
+## RAMP_* block ramps, the artifacts' grey-green stone and the camps' bone white.
+const CHEST_WOOD := Color(0.30, 0.19, 0.11)
+const CHEST_BRASS := Color(0.72, 0.55, 0.20)
+
+## Payout: how many SINGLE-coin awards a chest pays, and over how long. The count
+## is drawn from the chest's own seeded RNG, so it is deterministic within a run.
+## See treasure_chest.gd for why this is N x collect_coin(1) and never
+## collect_coin(N): the streak machinery counts pickups, not value.
+const CHEST_COINS_MIN: int = 8
+const CHEST_COINS_MAX: int = 15
+## Comfortably inside the player's STREAK_WINDOW (2.5 s), so the whole burst is
+## one unbroken streak chain.
+const CHEST_BURST_DURATION: float = 0.8
+
+## The chest's one non-batched node.
+const TREASURE_CHEST_SCRIPT := preload("res://scripts/treasure_chest.gd")
+
+# ----------------------------------------------------------------------------
 # BIOME FIELD CONFIGURATION (desert / plains / forest / mountain + rivers)
 # ----------------------------------------------------------------------------
 ##
@@ -1546,6 +1670,17 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 	# and ONE collision body. Note it runs BEFORE spawn_crocodiles_in_chunk below —
 	# that is what lets its single footprint keep crocodiles out of the camp.
 	spawn_camp_in_chunk(chunk_pos, mesh_instance, obstacles, block_batch, block_body)
+
+	# A treasure chest — the small, common third member of the artifact/camp family
+	# (independent CHEST_SALT hash stream, no shared RNG draws consumed). SAME
+	# ORDERING REQUIREMENT as the three above, for the same reasons: after them so
+	# its candidate loop is judged against the finished obstacles list (and its own
+	# footprint appends to it), and before _build_block_multimesh / the block_body
+	# attach so its wood and brass join the chunk's ONE MultiMesh draw call and ONE
+	# collision body. It runs LAST of the four so a chest can never be placed inside
+	# a camp or an artifact — the reverse order would let a camp be pitched on top of
+	# a chest that was already there.
+	spawn_chest_in_chunk(chunk_pos, mesh_instance, obstacles, block_batch, block_body)
 
 	# Build the chunk's batched block visuals. If any blocks were placed, collapse
 	# them all into one MultiMeshInstance3D parented to this chunk (so it is freed
@@ -3378,6 +3513,199 @@ func spawn_camp_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obst
 	# and reject nothing the circle does not already reject. `hut_footprints` stays
 	# a local, read by _camp_props above.
 	obstacles.append({ "pos": center, "radius": CAMP_RADIUS, "top": camp_top, "climbable": false })
+
+# ============================================================================
+# TREASURE CHESTS (see the TREASURE CHESTS constant banner)
+# ============================================================================
+
+func _chest_at(chunk_pos: Vector2i) -> Dictionary:
+	"""
+	Deterministic treasure-chest placement for one chunk — _artifact_at / _camp_at
+	for chests, same shape, same guarantees. Pure function of chunk coords +
+	run_seed via the independent CHEST_SALT hash stream, so it consumes NO draw
+	from the shared chunk RNG: every block, crocodile and coin the generator
+	produced before chests existed is still exactly where it was.
+
+	@param chunk_pos: Chunk coordinates to decide for.
+	@return: {} when this chunk rolled no chest (the ~12-in-13 case); otherwise
+	         { "seed": int } — the seed for the chest's private RNG, which
+	         spawn_chest_in_chunk uses for placement, geometry and payout.
+
+	WHY THERE IS NO CANDIDATE LOOP HERE. This is the landmine both artifacts and
+	camps had to be dug out of, and it is worth restating rather than cross-
+	referencing: when this function runs the chunk has NO GEOMETRY YET. The only
+	tests available are river and road, and neither rejects the thing that actually
+	matters — overlap with the chunk's ~12 scattered blocks and its feature
+	structure. Camps measured 11 rejections in 121 chunks from river+road alone,
+	then ~9% survival once the real test was applied where it belongs, landing
+	camps ~10x rarer than the constant said. So the CHEST_PLACE_TRIES loop lives in
+	spawn_chest_in_chunk, where `obstacles` exists, and this function does exactly
+	one thing: roll.
+
+	EDUCATIONAL NOTE — the determinism contract:
+	- Within a run the same chunk yields the IDENTICAL chest (same spot, same lid
+	  angle, same payout) however often it unloads and regenerates: the RNG is
+	  seeded purely from chunk coords + run_seed, and every draw downstream comes
+	  off that one stream in a fixed order.
+	- Across runs, new_run() re-rolls run_seed, so chests land elsewhere.
+	- Whether a candidate is ACCEPTED is likewise load-order independent: the road
+	  test reads the station cache (pure in `k`), the river test reads the biome
+	  field (pure in world position + run_seed) and the overlap test reads the
+	  chunk's own obstacle list (pure in chunk coords + run_seed).
+	"""
+	var rng := RandomNumberGenerator.new()
+	# Own coordinate primes AND own salt — see the CHEST_HASH_PRIME_* constants for
+	# why they differ from every other stream in this file.
+	rng.seed = hash(Vector3i(chunk_pos.x * CHEST_HASH_PRIME_X, chunk_pos.y * CHEST_HASH_PRIME_Y, run_seed ^ CHEST_SALT))
+
+	# The rarity roll — most chunks bail here, and this is the ONLY draw taken from
+	# the stream at this point. The rest happen in spawn_chest_in_chunk off an RNG
+	# re-seeded from `seed`, so the two together stay one fixed sequence per chunk.
+	if rng.randf() >= CHEST_CHANCE:
+		return {}
+
+	return { "seed": rng.randi() }
+
+
+func spawn_chest_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
+	"""
+	Spawn this chunk's treasure chest, if _chest_at says it has one. Called from
+	create_chunk AFTER spawn_biome_content_in_chunk / spawn_camp_in_chunk and
+	BEFORE _build_block_multimesh + the block_body attach, so the chest's wood and
+	brass join the chunk's SINGLE MultiMesh draw call and its SINGLE BlockCollision
+	body — a chest costs ZERO extra draw calls and ZERO extra physics bodies. Its
+	one non-batched node is the open trigger (treasure_chest.gd), which has no mesh.
+
+	That ordering is also WHY the candidate loop lives here rather than in
+	_chest_at: by this point the chunk's scattered blocks, feature structure,
+	artifact, biome geometry and camp are all in `obstacles`, so every try is judged
+	against the test that actually rejects.
+
+	@param chunk_pos: Chunk coordinates being generated.
+	@param parent_chunk: The chunk mesh — the trigger parents here (per-chunk
+	                     parenting rule: it unloads with the chunk, which is also
+	                     what makes a chest regenerate closed; see the banner).
+	@param obstacles: The chunk's footprint list. READ to place the chest, then
+	                  appended to with the chest's own small climbable footprint.
+	@param block_batch / block_body: The chunk's visual batch + collision body.
+	"""
+	if not spawn_chests:
+		return
+	var chest := _chest_at(chunk_pos)
+	if chest.is_empty():
+		return
+
+	# The chest's OWN RNG, seeded by _chest_at's roll: it picks the spot AND feeds
+	# the geometry AND draws the payout, so each consumes as many draws as it needs
+	# without the rarity roll (or any other stream) caring.
+	var rng := RandomNumberGenerator.new()
+	rng.seed = chest.seed
+
+	var chunk_center := chunk_to_world(chunk_pos)
+	# Candidates stay CHEST_EDGE_MARGIN (> CHEST_RADIUS, and > the trigger radius)
+	# inside the chunk, so neither the box nor its pickup sphere straddles a seam.
+	var half := chunk_size / 2.0 - CHEST_EDGE_MARGIN
+
+	# Try a few spots; accept the FIRST that clears _biome_spot_ok — the single home
+	# of the river + road-clearance + overlap rule. The road half is what keeps
+	# chests off the coin swath (see CHEST_ROAD_CLEARANCE); the overlap half is what
+	# stops one appearing half-swallowed by a wall. Bailing after every try is
+	# deliberate and matches artifacts and camps: nothing downstream expects a chest.
+	var local_x := 0.0
+	var local_z := 0.0
+	var placed := false
+	var tries := 0
+	while tries < CHEST_PLACE_TRIES and not placed:
+		tries += 1
+		local_x = rng.randf_range(-half, half)
+		local_z = rng.randf_range(-half, half)
+		if _biome_spot_ok(chunk_center, local_x, local_z, CHEST_RADIUS, CHEST_ROAD_CLEARANCE, obstacles):
+			placed = true
+	if not placed:
+		return
+
+	var center := Vector3(local_x, 0.0, local_z)
+	var yaw := rng.randf_range(0.0, TAU)
+
+	# --- The box itself. All three parts go through create_box, so all three land
+	# in the chunk's one MultiMesh; only the body carries collision.
+	# The body sits ON the ground: centre at half its height.
+	create_box(center + Vector3(0.0, CHEST_BODY_SIZE.y / 2.0, 0.0), CHEST_BODY_SIZE, yaw, rng, block_batch, block_body, 0.0, CHEST_WOOD)
+
+	# The brass band across the waist — collide = false, exactly like a tree canopy
+	# or a camp fire stone: it is 6 cm of trim sitting inside the body's own
+	# collision box, so a shape for it would be pure cost.
+	create_box(center + Vector3(0.0, CHEST_BODY_SIZE.y * 0.55, 0.0), CHEST_BAND_SIZE, yaw, rng, block_batch, block_body, 0.0, CHEST_BRASS, false)
+
+	# The lid, TILTED OPEN. This is the same `tilt` parameter the artifacts' leaning
+	# monolith uses, and create_box applies it identically to the visual basis and to
+	# the CollisionShape3D transform, so the lid you see is the lid you bump into.
+	#
+	# THE LID IS HINGED, NOT JUST TILTED, and the difference is visible. create_box
+	# rotates a box about its own CENTRE, so simply tilting a lid parked on the rim
+	# drives its rear half straight down through the body — at the widest angle here
+	# the back corner would sink 0.25 m into a 0.75 m box, reading as a lid melting
+	# into the chest rather than opening. So we place the centre where a lid hinged
+	# on the REAR RIM would actually end up: take the hinge at (0, body top, -half
+	# depth), and rotate the lid's rest offset from that hinge, (0, +half height,
+	# +half depth), by the same angle. Three lines of trig, and the lid pivots.
+	#
+	# Sign: Basis(RIGHT, t) sends z toward -y, so a POSITIVE tilt would push the
+	# FRONT edge down. The lid opens with a negative tilt and `theta` below is the
+	# positive open angle.
+	var theta := rng.randf_range(CHEST_LID_TILT_MIN, CHEST_LID_TILT_MAX)
+	var hy := CHEST_LID_SIZE.y * 0.5
+	var hz := CHEST_LID_SIZE.z * 0.5
+	var lid_local := Vector3(
+		0.0,
+		CHEST_BODY_SIZE.y + hy * cos(theta) + hz * sin(theta),
+		-hz - hy * sin(theta) + hz * cos(theta)
+	)
+	create_box(center + Basis(Vector3.UP, yaw) * lid_local, CHEST_LID_SIZE, yaw, rng, block_batch, block_body, -theta, CHEST_WOOD)
+
+	# --- The open trigger: the chest's ONE non-batched node. No mesh, no material,
+	# so the F3 overlay's draw-call count does not move. Parented to the chunk like
+	# every other per-chunk node, so it frees with the chunk.
+	#
+	# The payout count is drawn from the chest's own RNG, so two visits to the same
+	# chunk in one run find the same chest holding the same number of coins.
+	var coin_count := rng.randi_range(CHEST_COINS_MIN, CHEST_COINS_MAX)
+	var trigger := Area3D.new()
+	trigger.name = "TreasureChest"
+	trigger.set_script(TREASURE_CHEST_SCRIPT)
+	# Centred on the box so the sphere reaches equally from every side.
+	trigger.position = center + Vector3(0.0, CHEST_BODY_SIZE.y / 2.0, 0.0)
+	parent_chunk.add_child(trigger)
+	# setup() AFTER add_child, per treasure_chest.gd's contract (it builds its own
+	# CollisionShape3D child and connects its own signal there) — the same
+	# add-then-setup shape ability_effect.gd uses.
+	trigger.setup(coin_count, CHEST_BURST_DURATION)
+
+	# --- One small CLIMBABLE footprint. Climbable is the right call for a 1 m box:
+	# a road coin whose column crosses it perches on the lid (reachable, and a nice
+	# accident) instead of being skipped, which is what a non-climbable footprint
+	# would do — that rule exists for trees and cacti, where the top is 5 m up in a
+	# canopy. Crocodiles reject spawn candidates inside the footprint either way, so
+	# a chest is never found already occupied by a crocodile standing in it.
+	#
+	# MEASURED (same sweep, 17x17 chunks with every spawner on, chests on vs off):
+	# the only chunks whose block MultiMesh changed are the 20 that actually built a
+	# chest, and NOT ONE crocodile or coin moved anywhere — 289/289 chunks identical
+	# on both. That is stronger than camps manage (a 9.4 m camp circle does shift the
+	# croc stream), because a 1.5 m circle plus min_object_clearance is a 3 m disc in
+	# a 50 m chunk and the croc spawner's retry budget never had to touch it here.
+	# The mechanism still exists in principle — a rejected croc candidate skips the
+	# successful spawn's rotation.y draw — so do not read this as a guarantee, only
+	# as "this footprint is small enough that it did not fire". Within-run
+	# determinism holds unconditionally either way (the chest is a pure function of
+	# chunk coords + run_seed): the same sweep regenerated 289 chunks twice and got
+	# byte-identical blocks, crocodiles, coins and chest spots both times.
+	#
+	# MULTIPLAYER (phase 1, known and accepted): opening is per-peer and local — the
+	# trigger fires for whoever walks into their OWN copy, and a chest one peer has
+	# opened still stands closed for another. Contested-chest arbitration belongs to
+	# the same claim machinery the epic defers for coins (godot-test1-s86.5).
+	obstacles.append({ "pos": center, "radius": CHEST_RADIUS, "top": CHEST_BODY_SIZE.y, "climbable": true })
 
 # ============================================================================
 # BIOME CONTENT (the geometry each biome adds on top of the ordinary blocks)
