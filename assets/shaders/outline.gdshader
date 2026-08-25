@@ -2,7 +2,7 @@
 // Cel / toon OUTLINE shader  (inverted-hull technique)
 // ============================================================================
 // This draws a crisp black silhouette around a mesh, like the outlines in
-// Zelda: Wind Waker or Okami. It is meant to be assigned as a *material
+// classic cel-shaded games such as Okami. It is meant to be assigned as a *material
 // overlay* on a MeshInstance3D, so it renders as an extra pass on top of the
 // character's normal (toon) material without replacing it.
 //

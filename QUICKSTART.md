@@ -57,4 +57,4 @@ const BASE_CHASE_SPEED: float = 5.5   # how scary are the crocs?
 
 ---
 
-**Welcome to the Crimekickers universe! 🐊**
+**Welcome to the CrimeKickers universe! 🐊**

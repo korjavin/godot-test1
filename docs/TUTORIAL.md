@@ -1,6 +1,6 @@
 # Tutorial: Customizing Your Hero and Understanding Physics 🎨⚡
 
-This tutorial will teach you how to customize your character's appearance and understand the physics behind movement in your Zelda-like game.
+This tutorial will teach you how to customize your character's appearance and understand the physics behind movement in CrimeKickers.
 
 ## Table of Contents
 

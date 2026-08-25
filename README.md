@@ -1,8 +1,8 @@
-# Crimekickers: The Endless Road 🐊
+# CrimeKickers: The Endless Road 🐊
 
-An endless-runner adventure in the **Crimekickers universe**, built with **Godot 4.5**.
+An endless-runner adventure in the **CrimeKickers universe**, built with **Godot 4.5**.
 
-You are a Crimekicker dropped into an infinite, procedurally generated world. A
+You are a CrimeKicker dropped into an infinite, procedurally generated world. A
 trail of coins — the **coin road** — winds off toward the horizon. Follow it as
 far as you can: the further you get, the meaner and denser the crocodile piglets
 chasing you become. Switch between four heroes on the fly, each with their own
@@ -15,7 +15,7 @@ Works on desktop and on phones — on mobile you literally **step in place to
 walk** and **tilt your phone to steer** (device motion sensors), with on-screen
 buttons for everything else.
 
-## The Crimekickers
+## The CrimeKickers
 
 | Hero | Special (F) | What it does |
 |---|---|---|

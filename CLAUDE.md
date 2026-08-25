@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-A Godot 3rd-person endless-runner-style adventure game ("Zelda-like Educational Game"). The player walks an infinite procedurally generated field, switches between several characters, and is chased by hostile NPC crocodiles. The codebase is written to be read — scripts are heavily commented for teaching purposes, so match that density when editing existing files.
+A Godot 3rd-person endless-runner-style adventure game ("CrimeKickers"). The player walks an infinite procedurally generated field, switches between several characters, and is chased by hostile NPC crocodiles. The codebase is written to be read — scripts are heavily commented for teaching purposes, so match that density when editing existing files.
 
 **Engine version:** The actual target is **Godot 4.5** (`project.godot` declares `config/features=("4.5", ...)` and CI uses `barichello/godot-ci:4.5`). README.md and QUICKSTART.md say 4.3 — they are stale; trust 4.5.
 
