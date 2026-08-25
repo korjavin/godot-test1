@@ -143,11 +143,14 @@ const MAX_CLAIM_VALUE: int = 1000
 ## PHOBOMAN_FLEE_DURATION is 10 s, so this is six times the honest value.
 const MAX_FLEE_DURATION: float = 60.0
 
-## The player script, preloaded ONLY to read its coin-economy constants
-## (STREAK_WINDOW / STREAK_COINS_PER_STEP / STREAK_MAX_BONUS) from the one place
-## that owns them. The room's streak has to step on exactly the same schedule as
+## The player script, preloaded ONLY to read constants it owns: the coin-economy
+## ones (STREAK_WINDOW / STREAK_COINS_PER_STEP / STREAK_MAX_BONUS) and the
+## CHARACTERS list. The room's streak has to step on exactly the same schedule as
 ## a solo one or the `(xN)` the HUD shows would mean something different in a
-## room; re-typing the numbers here is precisely how that drifts.
+## room; re-typing the numbers here is precisely how that drifts. ONE name for
+## this resource in this file, please — reaching it a second way (through
+## `RemoteAvatar.PLAYER_SCRIPT`, which is the same preload) just makes a reader
+## check whether the two are the same thing.
 const PLAYER_SCRIPT := preload("res://scripts/player_controller.gd")
 
 ## How far the group may be spread before its centroid stops being a sensible
@@ -345,22 +348,6 @@ var _join_applied: bool = false
 ## lives that peer spent. Room-scoped like the two above.
 var _gone_coins: int = 0
 var _gone_spent: int = 0
-
-## THIS peer's own contribution from runs it has already finished in this room —
-## what "Play Again" retired when `reset_position()` zeroed `own_coins` /
-## `own_lives_spent` (see `retire_own_contribution`).
-##
-## Deliberately NOT folded into `_gone_*`. Those are the room-wide frozen share of
-## members who LEFT, and every peer derives them independently from the same
-## `peer_leave` frame, so they converge. A restart is observed by nobody else: a
-## `_gone_*` write here would raise this peer's totals alone, while every other
-## peer saw the restarter's next presence packet report zero and dropped the
-## coins and REFUNDED the lives — the room permanently disagreeing about its own
-## bank and hearts. Kept as part of our OWN contribution instead, it rides the
-## existing `cc`/`lv` fields in presence and in the join snapshot, so every peer
-## sums the same numbers with no new protocol and no extra message.
-var _retired_coins: int = 0
-var _retired_spent: int = 0
 
 ## How many join snapshots this peer is still waiting on before it places itself,
 ## and how long it has waited (seconds). See `JOIN_SNAPSHOT_WAIT`.
@@ -608,8 +595,6 @@ func leave() -> void:
 	_join_applied = false
 	_gone_coins = 0
 	_gone_spent = 0
-	_retired_coins = 0
-	_retired_spent = 0
 	_expected_snapshots = 0
 	_join_wait = 0.0
 	_ice = {}
@@ -1033,6 +1018,33 @@ func peer_positions() -> Variant:
 	return positions
 
 
+func nearest_member_position(from: Vector3) -> Variant:
+	"""
+	The closest OTHER member's last known position, or `null` when there is no
+	room (or nobody else's presence has arrived yet) — the same "`null` means fall
+	through to solo behaviour" shape `peer_positions()` above uses.
+
+	`scripts/piglet_crocodile_ai.gd` is the caller, and it needs the *nearest one*
+	rather than the whole array so its per-frame detection test allocates nothing.
+	Why it needs it at all: in a room the master simulates every awake crocodile
+	for everybody, and by the isolation contract a remote peer is a `RemoteAvatar`
+	in NO group — so a crocodile resolving "the player" through
+	`get_nodes_in_group("player")` can only ever hunt whoever happens to be
+	master, and every other peer walks through the pack untouched.
+	"""
+	if _state != State.IN_ROOM:
+		return null
+	var best: Variant = null
+	var best_dist_sq: float = INF
+	for state: Dictionary in _peer_state.values():
+		var pos: Vector3 = state["pos"] as Vector3
+		var dist_sq: float = from.distance_squared_to(pos)
+		if dist_sq < best_dist_sq:
+			best_dist_sq = dist_sq
+			best = pos
+	return best
+
+
 func my_character_indices() -> Variant:
 	"""
 	Which `CHARACTERS` entries this peer may embody, or `null` meaning "all of
@@ -1067,7 +1079,7 @@ static func hero_index(hero: String) -> int:
 	The `player_controller.CHARACTERS` index of a hero name, or -1 if this build
 	has no such character. Static and pure so scripts/mp_selfcheck.gd can pin it.
 	"""
-	var characters: Array = RemoteAvatar.PLAYER_SCRIPT.CHARACTERS
+	var characters: Array = PLAYER_SCRIPT.CHARACTERS
 	for i: int in range(characters.size()):
 		if str((characters[i] as Dictionary).get("name", "")) == hero:
 			return i
@@ -1142,7 +1154,7 @@ func _auto_claim_hero() -> void:
 	var player: Node = get_tree().get_first_node_in_group("player")
 	if player != null and "current_character_index" in player:
 		var index: int = int(player.get("current_character_index"))
-		var characters: Array = RemoteAvatar.PLAYER_SCRIPT.CHARACTERS
+		var characters: Array = PLAYER_SCRIPT.CHARACTERS
 		if index >= 0 and index < characters.size():
 			wanted = str((characters[index] as Dictionary).get("name", ""))
 	claim_hero(wanted if free.has(wanted) else free[0])
@@ -1577,10 +1589,8 @@ func _send_state_to(id: String) -> void:
 		# and in a room that is already the room's total, so it must not be read
 		# here. The `in` guards are the ones `_send_presence()` uses, for the
 		# same reason: a player scene run standalone still answers something sane.
-		# Through `own_reported_*` so an earlier run retired by "Play Again" in this
-		# room travels with the live one — see `_retired_coins`.
-		coins = own_reported_coins(int(player.get("own_coins")) if "own_coins" in player else 0)
-		spent = own_reported_spent(int(player.get("own_lives_spent")) if "own_lives_spent" in player else 0)
+		coins = int(player.get("own_coins")) if "own_coins" in player else 0
+		spent = int(player.get("own_lives_spent")) if "own_lives_spent" in player else 0
 		dist = int(player.get("run_distance")) if "run_distance" in player else 0
 
 	_lobby.send_signal_to(id, {
@@ -1783,48 +1793,17 @@ static func decode_state(payload: Dictionary) -> Dictionary:
 # offline, so the player falls through to today's solo behaviour with one
 # `== null` test and the manager never has to reach into the player.
 
-func retire_own_contribution(coins: int, spent: int) -> void:
-	"""
-	Freeze this peer's own coins and spent lives into the room's totals before it
-	wipes them, exactly as `_on_lobby_peer_left` does for a departing member.
-
-	"Play Again" inside a room is the case: `reset_position()` zeroes `own_coins`
-	and `own_lives_spent`, and without this the room's bank shrinks in front of
-	everyone and — much worse — every life that peer spent is REFUNDED to the
-	shared hearts. One member restarting would top the room's lives back up
-	indefinitely. A no-op offline, so a solo restart still costs nothing.
-
-	It lands in `_retired_*`, NOT `_gone_*` — see those fields for why the
-	distinction is the whole fix: a restart is invisible to every other peer, so
-	the frozen amount has to travel as part of what we REPORT as our own
-	contribution, not as a room-wide total only we know about.
-	"""
-	if _state != State.IN_ROOM:
-		return
-	_retired_coins += coins
-	_retired_spent += spent
-
-
-func own_reported_coins(own_coins: int) -> int:
-	"""
-	What this peer contributes to the room's bank: its live run plus everything
-	earlier runs in this room retired. THE ONE PLACE that sum is written, so the
-	four sites that report or use it — presence, the join snapshot, `shared_bank`
-	and `shared_lives_spent`'s sibling below — cannot drift apart.
-	"""
-	return own_coins + _retired_coins
-
-
-func own_reported_spent(own_spent: int) -> int:
-	"""Lives this peer owes the room: its live run plus what earlier runs retired."""
-	return own_spent + _retired_spent
-
+# THERE IS NO "retired contribution" HERE, and that is deliberate. "Play Again"
+# inside a room LEAVES the room first (see `player_controller.restart_game`),
+# because the shared hearts cannot recover from a local wipe — so this peer's
+# contribution is always simply its live `own_coins` / `own_lives_spent`, and a
+# restart never has to be hidden from the room's totals.
 
 func shared_bank(own_coins: int) -> Variant:
 	"""The room's banked coins, or `null` offline."""
 	if _state != State.IN_ROOM:
 		return null
-	var total: int = own_reported_coins(own_coins) + _gone_coins
+	var total: int = own_coins + _gone_coins
 	for state: Dictionary in _peer_state.values():
 		total += int(state.get("coins", 0))
 	return total
@@ -1834,7 +1813,7 @@ func shared_lives_spent(own_spent: int) -> Variant:
 	"""Lives spent by everyone who has been in this room, or `null` offline."""
 	if _state != State.IN_ROOM:
 		return null
-	var total: int = own_reported_spent(own_spent) + _gone_spent
+	var total: int = own_spent + _gone_spent
 	for state: Dictionary in _peer_state.values():
 		total += int(state.get("spent", 0))
 	return total
@@ -2125,11 +2104,8 @@ func _send_presence() -> void:
 		"c": int(player.get("current_character_index")) if "current_character_index" in player else 0,
 		"s": speed,
 		"g": player.is_on_floor() if player.has_method("is_on_floor") else true,
-		# `own_reported_*` folds in what "Play Again" retired in this room, so a
-		# restart never makes this peer's contribution appear to drop — see
-		# `_retired_coins` for the desync that caused.
-		"cc": own_reported_coins(int(player.get("own_coins")) if "own_coins" in player else 0),
-		"lv": own_reported_spent(int(player.get("own_lives_spent")) if "own_lives_spent" in player else 0),
+		"cc": int(player.get("own_coins")) if "own_coins" in player else 0,
+		"lv": int(player.get("own_lives_spent")) if "own_lives_spent" in player else 0,
 		"dd": int(player.get("run_distance")) if "run_distance" in player else 0,
 	}
 
@@ -3042,7 +3018,7 @@ static func _decode_presence_dict(state: Dictionary) -> Dictionary:
 		return {}
 
 	var char_index: int = int(state["c"])
-	if char_index < 0 or char_index >= RemoteAvatar.PLAYER_SCRIPT.CHARACTERS.size():
+	if char_index < 0 or char_index >= PLAYER_SCRIPT.CHARACTERS.size():
 		return {}
 
 	# The shared-total fields, validated exactly like `c`: number, finite,

@@ -250,6 +250,17 @@ var detection_radius: float = DETECTION_RADIUS
 ## Reference to the player node
 var player_node: Node3D = null
 
+## The multiplayer manager, cached once in _find_player() (it is a fixed child of
+## Main, so it exists for the whole session and never has to be re-looked-up).
+## Null in any scene without it, which is what keeps solo play untouched.
+var mp_node: Node = null
+
+## Where this crocodile is currently heading when chasing — the local player, or
+## in a room the nearest MEMBER of it. Refreshed by _update_chase_state() every
+## frame it runs, read by _chase_player(). See _update_chase_state for why the
+## local player alone is not enough.
+var chase_target: Vector3 = Vector3.ZERO
+
 ## Random number generator for movement
 var rng: RandomNumberGenerator = RandomNumberGenerator.new()
 
@@ -568,26 +579,58 @@ func _physics_process(delta: float) -> void:
 # ============================================================================
 
 func _find_player() -> void:
-	"""Find and store reference to the player node."""
+	"""Find and store reference to the player node (plus the MP manager, if any)."""
 	var players = get_tree().get_nodes_in_group("player")
 	if players.size() > 0:
 		player_node = players[0]
+	# Cached once, group-based and null-safe like every other cross-system lookup
+	# in this project — a scene run without Main simply leaves it null and every
+	# read below falls through to the single-player behaviour.
+	var mp := get_tree().get_first_node_in_group("mp")
+	if mp != null and mp.has_method("nearest_member_position"):
+		mp_node = mp
 
 
 func _update_chase_state() -> void:
-	"""Check distance to player and update chase state."""
+	"""Check distance to the nearest quarry and update chase state."""
 	if not player_node:
 		is_chasing = false
 		return
 
 	# Calculate distance to player
-	var distance_to_player = global_position.distance_to(player_node.global_position)
+	chase_target = player_node.global_position
+	var distance_to_player = global_position.distance_to(chase_target)
 
 	# Check if player is grounded (can be smelled)
 	# If player jumps (is not on floor), crocodiles lose the scent
 	var player_is_grounded = true
 	if player_node.has_method("is_on_floor"):
 		player_is_grounded = player_node.is_on_floor()
+
+	# IN A ROOM, "the player" means "the nearest MEMBER of the room". The master
+	# simulates every awake crocodile for everybody, and by the isolation contract
+	# a remote peer is a RemoteAvatar in NO group — so a crocodile that resolves
+	# its quarry through group "player" alone can only ever hunt whoever happens
+	# to be master, and the other one to three peers walk through the pack
+	# untouched on every screen. Offline `nearest_member_position` answers null
+	# and this whole block is skipped, so single-player is byte-for-byte unchanged.
+	#
+	# The bite still lands correctly with no protocol: the crocodile is
+	# remote-driven on the quarry's own machine, where _tick_remote runs
+	# move_and_slide + _handle_collisions against a real local player body.
+	#
+	# ponytail: a remote member is always treated as smellable — presence carries
+	# an on-floor bit but peer_positions()/nearest_member_position() do not, so the
+	# "jumping breaks the scent" escape hatch stays local-only. Thread `g` through
+	# the manager if that asymmetry ever matters.
+	if mp_node != null:
+		var remote: Variant = mp_node.nearest_member_position(global_position)
+		if remote != null:
+			var remote_distance: float = global_position.distance_to(remote as Vector3)
+			if remote_distance < distance_to_player:
+				distance_to_player = remote_distance
+				chase_target = remote as Vector3
+				player_is_grounded = true
 
 	# Update chase state based on detection radius AND player grounded state.
 	# Bosses smell farther (still well under the LOD SIM_RADIUS — see the const);
@@ -612,12 +655,14 @@ func _update_chase_state() -> void:
 
 
 func _chase_player() -> void:
-	"""Set movement direction toward the player."""
+	"""Set movement direction toward whatever _update_chase_state picked."""
 	if not player_node:
 		return
 
-	# Calculate direction to player (on XZ plane)
-	var direction_to_player = player_node.global_position - global_position
+	# Calculate direction to the quarry (on XZ plane). `chase_target` is the local
+	# player's position solo, and in a room the nearest member's — see
+	# _update_chase_state; it is only ever read on a frame that function just set it.
+	var direction_to_player = chase_target - global_position
 	direction_to_player.y = 0  # Keep movement on horizontal plane
 	movement_direction = direction_to_player.normalized()
 
@@ -916,6 +961,14 @@ func set_remote_state(pos: Vector3, yaw: float, flags: int) -> void:
 	    rather than a raw assignment, so the chomp gets its usual timer and the
 	    local animation clears it — a flag that only ever says "started".
 	"""
+	# A body already dying (squash_and_die leaves the group and stops physics) is
+	# never driven again — the sample forcing processing back on below would
+	# otherwise walk a corpse through its own squash tween, still solid and still
+	# able to bite. The manager erases a killed id from its cache, so this only
+	# catches a sample that was already in flight.
+	if not is_in_group("crocodile"):
+		return
+
 	_remote_pos = pos
 	_remote_yaw = fposmod(yaw, TAU)
 
@@ -932,6 +985,23 @@ func set_remote_state(pos: Vector3, yaw: float, flags: int) -> void:
 
 	_has_remote_sample = true
 	remote_driven = true
+
+	# TURN THE PHYSICS CALLBACK BACK ON. A crocodile the LOD manager had already
+	# put to sleep has had set_physics_process(false) called on it, so
+	# _tick_remote() — which lives at the top of _physics_process — would never
+	# run: the body would jump CROC_TELEPORT_DISTANCE at a time on the snap
+	# branch above, never animate, and (the sharp part) never reach
+	# move_and_slide/_handle_collisions, so it would be neither solid nor able to
+	# bite. That last one breaks the rule this whole phase is specified against —
+	# the BITTEN peer detects its own bite locally.
+	#
+	# It is not an edge case: the master syncs every crocodile within
+	# CROC_SYNC_RADIUS (55 m) of a peer, while that peer's own LOD sleeps anything
+	# past SIM_RADIUS + HYSTERESIS_MARGIN (50 m), so the 50–55 m band is exactly
+	# this. `lod_active` is deliberately left alone — the sync layer owns the
+	# processing switch only while it is driving, and clear_remote_drive() hands
+	# it straight back to whatever the LOD manager last decided.
+	set_physics_process(true)
 
 
 func clear_remote_drive() -> void:
@@ -951,6 +1021,12 @@ func clear_remote_drive() -> void:
 	remote_driven = false
 	_has_remote_sample = false
 	velocity = Vector3.ZERO
+	# Hand the physics switch back to the LOD manager's last decision. While we
+	# were remote-driven set_remote_state() forced processing ON regardless of
+	# `lod_active` (see there); leaving it on for a crocodile the manager thinks is
+	# asleep would silently un-sleep it — and it would not sleep again, because
+	# set_lod_active() no-ops when the state already matches.
+	set_physics_process(lod_active)
 
 
 func squash_and_die() -> void:

@@ -262,9 +262,11 @@ func _scan_crocodiles() -> void:
 			danger_level = maxf(danger_level, 1.0 - sqrt(dist_sq_local) / radius)
 
 		# A remote-driven crocodile (one the room master is simulating for us) is
-		# owned by the sync layer: it turns that croc's `_physics_process` off and
-		# writes the transform itself. The LOD manager must not fight it for that
-		# switch — but this `continue` sits BELOW the danger read on purpose, so a
+		# owned by the sync layer: `set_remote_state()` forces that croc's
+		# `_physics_process` ON so it can tick the samples in, and
+		# `clear_remote_drive()` hands the switch back to whatever we last decided
+		# here. The LOD manager must not fight it for that switch in between — but
+		# this `continue` sits BELOW the danger read on purpose, so a
 		# synced croc chasing us still lights the vignette. Same defensive `in`
 		# guard as the `is_chasing` / `is_boss` reads.
 		if "remote_driven" in croc and croc.remote_driven:

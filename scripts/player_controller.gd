@@ -1682,18 +1682,13 @@ func bank_awarded(amount: int) -> void:
 	shows comes from the room (see get_streak_multiplier), and this peer's private
 	coin_streak has no say in it.
 	"""
+	# NO extra-life while-loop, unlike collect_coin(). This path only ever runs in
+	# a room, where the hearts come from the ROOM's bank: _refresh_shared_totals()
+	# overwrites `lives` (and `next_extra_life_at`, on the frame the room ends)
+	# from the shared totals every physics tick, so a private threshold walk here
+	# would be recomputed away before anything could read it.
 	coins_collected += amount
 	own_coins += amount
-	# The same extra-life while-loop collect_coin runs, and for the same reason: a
-	# chest's whole burst arrives as ONE award here, so it can jump clean across a
-	# threshold (or several). In a room _refresh_shared_totals overwrites `lives`
-	# from the room's bank in the same frame anyway; this keeps the solo-shaped
-	# bookkeeping consistent rather than letting next_extra_life_at fall behind.
-	while coins_collected >= next_extra_life_at:
-		next_extra_life_at += EXTRA_LIFE_COINS
-		if lives < LIVES_CAP:
-			lives += 1
-			print("Extra life! Lives: %d" % lives)
 
 
 func get_streak_multiplier() -> int:
@@ -1876,14 +1871,31 @@ func restart_game() -> void:
 	# reset_position() below — the one owner of the "hard reset" wipe list, so
 	# the two can never drift out of sync.
 	#
-	# IN A ROOM, freeze that contribution before the wipe. own_lives_spent is
-	# SUBTRACTED from the room's shared hearts, so a bare wipe refunds every life
-	# this peer spent to everybody else (and drops the room's bank by its coins) —
-	# the exact failure the manager's frozen `_gone_*` totals exist to prevent,
-	# just on the restart path instead of the leave path. A no-op offline.
+	# IN A ROOM, "Play Again" LEAVES THE ROOM FIRST, and that is a correctness fix
+	# rather than a policy choice. The hearts are shared — base hearts + the room's
+	# bank/EXTRA_LIFE_COINS minus the room's spent lives — and this method's ONE
+	# caller is the Game Over screen, which in a room can only be up because that
+	# figure hit zero (a peer with hearts left soft-respawns in _on_caught_finished
+	# instead). Wiping our own numbers cannot bring the room's total back: the
+	# lives another peer spent still count, so _refresh_shared_totals() re-zeroes
+	# `lives` on the very next physics tick and _check_shared_game_over() fires the
+	# Game Over screen straight back up. Play Again was an infinite loop with no
+	# way out but leaving — so leave, and hand the player the fresh solo run the
+	# button promises. leave() is the manager's single complete unwind, so the
+	# collected-coin set, the dead-crocodile set, the frozen `_gone_*` totals and
+	# the room streak all go with it, and room_seed() then answers null below so
+	# the world is re-rolled rather than replayed with every coin already taken.
+	#
+	# ponytail: the room dissolves as each member presses the button; playing
+	# together again is a re-host or one tap in the room list. The upgrade path is
+	# a room-wide restart verb the master broadcasts (`{"t":"rst"}` alongside
+	# `cnf`/`dead`), on which every peer clears `_collected_ids`, `_dead_crocs`,
+	# `_gone_*` and restarts in place — a real shared "Play Again" that keeps the
+	# room, at the cost of a new protocol message and its own arbitration.
 	var restart_mp := _mp()
-	if restart_mp and restart_mp.has_method("retire_own_contribution"):
-		restart_mp.retire_own_contribution(own_coins, own_lives_spent)
+	if restart_mp and restart_mp.has_method("leave") and restart_mp.has_method("shared_bank") \
+			and restart_mp.shared_bank(own_coins) != null:
+		restart_mp.leave()
 	lives = MAX_LIVES
 	is_game_over = false
 	is_caught = false
