@@ -1,8 +1,9 @@
 extends Node
 class_name LobbyClient
 ## Thin `WebSocketPeer` wrapper over the multiplayer lobby's `/ws` protocol
-## (implemented in `server/conn.go` + `server/room.go`), plus an `HTTPRequest`
-## fetch of `/ice` for the STUN/TURN configuration.
+## (implemented in `server/conn.go` + `server/room.go`), plus two `HTTPRequest`
+## fetches: `/ice` for the STUN/TURN configuration, and `/rooms` for the public
+## list of open rooms the join panel leads with.
 ##
 ## This file owns **only the lobby socket**. It knows nothing about WebRTC, the
 ## game world, or the UI — it turns JSON frames into signals and turns
@@ -55,6 +56,13 @@ const FALLBACK_ICE: Dictionary = {
 ## because the whole mesh is gated behind this one request — see `fetch_ice()`.
 const ICE_TIMEOUT_SEC: float = 5.0
 
+## How long to wait for `/rooms` before giving up and reporting an empty list.
+## Same reason ICE_TIMEOUT_SEC exists: `HTTPRequest`'s default timeout is *wait
+## forever*, and a stuck request makes every later one on that node return
+## ERR_BUSY — here that would leave the join panel's room list dead for the rest
+## of the session, with no error and no way back.
+const ROOMS_TIMEOUT_SEC: float = 5.0
+
 # =============================================================================
 # SIGNALS
 # =============================================================================
@@ -100,6 +108,16 @@ var _lobby_url: String = ""
 
 ## Child `HTTPRequest`, created lazily on the first `fetch_ice()` call.
 var _http: HTTPRequest = null
+
+## A SECOND `HTTPRequest`, for `/rooms` only — deliberately not `_http`.
+##
+## An `HTTPRequest` handles one request at a time and answers ERR_BUSY while one
+## is in flight. `/rooms` is fetched from the *join panel*, before any room
+## exists; `/ice` is fetched *during* a join and is the only path to the mesh. On
+## one shared node, a player who opens the panel and immediately taps a room
+## would have their `/ice` fetch refused — degrading that session to STUN-only
+## with nothing anywhere saying so. Two nodes, no interaction.
+var _rooms_http: HTTPRequest = null
 
 ## The hero pool as the `welcome` frame reported it. Kept because the lobby's
 ## later `heroes` broadcasts carry assignments only — see `heroes_changed`.
@@ -349,6 +367,76 @@ static func _array_or_empty(value: Variant) -> Array:
 # ICE CONFIGURATION
 # =============================================================================
 
+static func _http_base(url: String) -> String:
+	"""
+	`wss://host` → `https://host`, `ws://host` → `http://host`.
+
+	The lobby serves the socket and its HTTP endpoints from one origin; only the
+	scheme differs. Anything else (already an http URL, or something unexpected)
+	is passed through untouched — the request will simply fail and each caller
+	already has a degrade path.
+	"""
+	if url.begins_with("wss://"):
+		return "https://" + url.substr("wss://".length())
+	if url.begins_with("ws://"):
+		return "http://" + url.substr("ws://".length())
+	return url
+
+
+func fetch_rooms(callback: Callable, lobby_url_override: String = "") -> void:
+	"""
+	GET `<lobby>/rooms` and hand `callback` the raw array of
+	`{"code": String, "members": int, "heroes": Array}` entries.
+
+	Unlike `fetch_ice()` this runs **before any room exists**, so it resolves the
+	lobby URL itself rather than relying on `connect_to_room()` having set
+	`_lobby_url` — browsing the list is the step that comes *first*.
+
+	Every failure — transport error, non-200, unparseable body, a lobby too old
+	to have the route — hands back an **empty array**, never an error: "no rooms
+	right now" is what the panel should say, with the invite-code field still
+	sitting underneath as the fallback. Entries are passed through unvalidated;
+	the lobby is a trust boundary and `mp_ui.gd` checks each row where it renders
+	it, the same way it already checks the member list.
+	"""
+	if _rooms_http == null:
+		_rooms_http = HTTPRequest.new()
+		_rooms_http.timeout = ROOMS_TIMEOUT_SEC
+		add_child(_rooms_http)
+
+	var base: String = _http_base(resolve_lobby_url(lobby_url_override))
+	var err: int = _rooms_http.request(base + "/rooms")
+	if err != OK:
+		# ERR_BUSY lands here when a refresh is spammed faster than the lobby
+		# answers. Reporting empty would blank a good list, so say nothing and let
+		# the in-flight request's own callback paint the rows.
+		if err != ERR_BUSY:
+			push_warning("LobbyClient: /rooms request failed to start (%d)" % err)
+			callback.call([])
+		return
+	_rooms_http.request_completed.connect(_on_rooms_completed.bind(callback), CONNECT_ONE_SHOT)
+
+
+func _on_rooms_completed(
+	result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray,
+	callback: Callable
+) -> void:
+	"""Validate the /rooms response, degrading to an empty list on anything unexpected."""
+	if result != HTTPRequest.RESULT_SUCCESS or response_code != 200:
+		push_warning("LobbyClient: /rooms unreachable (result %d, HTTP %d)"
+			% [result, response_code])
+		callback.call([])
+		return
+
+	var json: JSON = JSON.new()
+	if json.parse(body.get_string_from_utf8()) != OK or typeof(json.data) != TYPE_DICTIONARY:
+		push_warning("LobbyClient: /rooms body unusable")
+		callback.call([])
+		return
+
+	callback.call(_array_or_empty((json.data as Dictionary).get("rooms", [])))
+
+
 func fetch_ice(callback: Callable) -> void:
 	"""
 	GET `<lobby>/ice` and hand the parsed body to `callback` as a Dictionary.
@@ -372,12 +460,7 @@ func fetch_ice(callback: Callable) -> void:
 		_http.timeout = ICE_TIMEOUT_SEC
 		add_child(_http)
 
-	# The lobby serves both the socket and /ice; only the scheme differs.
-	var http_url: String = _lobby_url
-	if http_url.begins_with("wss://"):
-		http_url = "https://" + http_url.substr("wss://".length())
-	elif http_url.begins_with("ws://"):
-		http_url = "http://" + http_url.substr("ws://".length())
+	var http_url: String = _http_base(_lobby_url)
 
 	# Connect only once the request is actually in flight, so a refused request
 	# leaves no dangling callback behind. CONNECT_ONE_SHOT drops the binding as

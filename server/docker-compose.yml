@@ -8,7 +8,10 @@
 # upgrade — it forwards Connection/Upgrade headers by default.
 #
 # One host, two containers: the game client owns `/` and the lobby keeps only its
-# three endpoints. Traefik picks the most specific rule by priority (higher wins),
+# four endpoints. ADD EVERY NEW LOBBY ROUTE TO THAT RULE — the client's catch-all
+# swallows anything the narrow rule does not name, so a route that works locally
+# would 404 (or serve the game's index.html) in production.
+# Traefik picks the most specific rule by priority (higher wins),
 # so the lobby's narrow rule at 10 beats the client's catch-all at 1. Consequence
 # worth knowing: the lobby's embedded test page at `/` is shadowed in production.
 
@@ -33,7 +36,7 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=${TRAEFIK_NETWORK_NAME:-traefik_default}"
-      - "traefik.http.routers.godot-lobby.rule=Host(`${LOBBY_HOST}`) && (Path(`/ws`) || Path(`/ice`) || Path(`/healthz`))"
+      - "traefik.http.routers.godot-lobby.rule=Host(`${LOBBY_HOST}`) && (Path(`/ws`) || Path(`/ice`) || Path(`/rooms`) || Path(`/healthz`))"
       - "traefik.http.routers.godot-lobby.priority=10"
       - "traefik.http.routers.godot-lobby.entrypoints=websecure"
       - "traefik.http.routers.godot-lobby.tls.certresolver=${TRAEFIK_CERTRESOLVER:-myresolver}"

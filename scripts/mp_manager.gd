@@ -373,7 +373,29 @@ func join(code: String) -> void:
 		return
 
 	leave()
+	_ensure_lobby()
 
+	_requested_code = code
+	_state = State.CONNECTING
+	set_process(true)
+	var label: String = display_name if not display_name.is_empty() else DEFAULT_DISPLAY_NAME
+	# Status FIRST: `connect_to_room` can fail synchronously (a malformed URL
+	# emits `lobby_error` before it returns), and that handler's own status line
+	# has to be the one left standing — otherwise the panel reports "Connecting…"
+	# forever for a join that never started.
+	status.emit("Connecting to %s…" % LobbyClient.resolve_lobby_url(lobby_url))
+	_lobby.connect_to_room(code, label, lobby_url)
+
+
+func _ensure_lobby() -> LobbyClient:
+	"""
+	The `LobbyClient` child, created and wired on first use.
+
+	Creating it opens NO socket and changes no state — `connect_to_room()` does
+	that — which is what lets `list_rooms()` browse the lobby while still fully
+	OFFLINE. `leave()` deliberately keeps the node, so the wiring below happens
+	once per session however many rooms are joined.
+	"""
 	if _lobby == null:
 		_lobby = LobbyClient.new()
 		_lobby.name = "Lobby"
@@ -386,17 +408,23 @@ func join(code: String) -> void:
 		_lobby.heroes_changed.connect(_on_lobby_heroes)
 		_lobby.lobby_error.connect(_on_lobby_error)
 		_lobby.closed.connect(_on_lobby_closed)
+	return _lobby
 
-	_requested_code = code
-	_state = State.CONNECTING
-	set_process(true)
-	var label: String = display_name if not display_name.is_empty() else DEFAULT_DISPLAY_NAME
-	# Status FIRST: `connect_to_room` can fail synchronously (a malformed URL
-	# emits `lobby_error` before it returns), and that handler's own status line
-	# has to be the one left standing — otherwise the panel reports "Connecting…"
-	# forever for a join that never started.
-	status.emit("Connecting to %s…" % LobbyClient.resolve_lobby_url(lobby_url))
-	_lobby.connect_to_room(code, label, lobby_url)
+
+func list_rooms(callback: Callable) -> void:
+	"""
+	Ask the lobby for its open rooms and hand `callback` the array (see
+	`LobbyClient.fetch_rooms` for the shape and for why failure reads as an empty
+	list rather than an error).
+
+	Exposed here so `mp_ui.gd` keeps talking only to the manager through the `"mp"`
+	group — it never learns the lobby URL, or that a `LobbyClient` exists at all.
+
+	Works while OFFLINE, which is the entire point: the list is what a player
+	browses *before* joining anything. It opens no socket and does not touch
+	`_state`, so calling it changes nothing about a solo run.
+	"""
+	_ensure_lobby().fetch_rooms(callback, lobby_url)
 
 
 func leave() -> void:

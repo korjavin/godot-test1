@@ -1,4 +1,4 @@
-[gd_scene load_steps=25 format=3 uid="uid://clqb4rcmjrpgs"]
+[gd_scene load_steps=26 format=3 uid="uid://clqb4rcmjrpgs"]
 
 [ext_resource type="PackedScene" uid="uid://bqtq2xtxqnvvr" path="res://scenes/player.tscn" id="1_main"]
 [ext_resource type="Script" uid="uid://b07rwceo0eo4o" path="res://scripts/endless_terrain.gd" id="2_terrain"]
@@ -20,6 +20,7 @@
 [ext_resource type="Script" path="res://scripts/fauna_manager.gd" id="18_fauna"]
 [ext_resource type="Script" path="res://scripts/mp_manager.gd" id="19_mp"]
 [ext_resource type="Script" path="res://scripts/mp_ui.gd" id="20_mpui"]
+[ext_resource type="Script" path="res://scripts/start_overlay.gd" id="21_start"]
 [ext_resource type="Script" path="res://scripts/minimap_hud.gd" id="21_minimap"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_1"]
@@ -255,3 +256,12 @@ grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
 script = ExtResource("20_mpui")
+
+[node name="StartOverlay" type="Control" parent="HUD"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("21_start")

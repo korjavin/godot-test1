@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -133,6 +134,59 @@ func (h *Hub) Rooms() int {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return len(h.rooms)
+}
+
+// RoomInfo is one open room as the public listing reports it.
+//
+// Deliberately NOT peerInfo-shaped: this is browsed *before* joining, by someone
+// who is not in the room, so it carries no peer ids and no display names — only
+// what a stranger needs in order to pick a room. The heroes are the bodies
+// already embodied, so the list reads "two players, one of them Windman".
+type RoomInfo struct {
+	Code    string   `json:"code"`
+	Members int      `json:"members"`
+	Heroes  []string `json:"heroes"`
+}
+
+// ListRooms returns every open, joinable room, sorted by code so a client's list
+// does not reshuffle between refreshes.
+//
+// EVERY open room is listed: the owner's decision is that rooms are public by
+// default and an invite code is the way to reach one *specific* friend, not the
+// only way in. There is no per-room "listed" flag and none is wanted.
+//
+// Two kinds of room are withheld, both for the same reason — a row you cannot
+// join is worse than no row:
+//
+//   - a FULL room, which would only produce a refused join; and
+//   - an EMPTY room, i.e. one mid-teardown. `Leave` deletes a room the instant
+//     its last member goes, and it does so under this same mutex, so today the
+//     empty case is unreachable rather than merely rare. The check is kept
+//     because it is the invariant this listing depends on: any future path that
+//     builds a room before its first member (or drains one before deleting it)
+//     would otherwise start advertising rooms nobody is in.
+func (h *Hub) ListRooms() []RoomInfo {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	out := make([]RoomInfo, 0, len(h.rooms))
+	for code, r := range h.rooms {
+		n := len(r.members)
+		if n == 0 || n >= MaxMembers {
+			continue
+		}
+		heroes := make([]string, 0, len(r.heroes))
+		for hero := range r.heroes {
+			heroes = append(heroes, hero)
+		}
+		// Map iteration is random, so both levels are sorted: without this the
+		// same unchanged room renders its heroes in a different order on every
+		// refresh.
+		sort.Strings(heroes)
+		out = append(out, RoomInfo{Code: code, Members: n, Heroes: heroes})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Code < out[j].Code })
+	return out
 }
 
 // newCode returns an unused invite code. Caller holds h.mu.

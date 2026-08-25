@@ -63,6 +63,15 @@ leaving the room master-less.
   fetched cross-origin (the game is on GitHub Pages, the lobby on its own host),
   so it sends `Access-Control-Allow-Origin` — honouring `LOBBY_ALLOWED_ORIGINS`
   rather than a blanket `*`, because the body *is* the TURN credentials.
+- `GET /rooms` — `{"rooms":[{"code":"ABC234","members":2,"heroes":["primm","windman"]}]}`:
+  every **open** room, so the game's Join panel can lead with a list instead of
+  asking for a code. Rooms are public by default — there is no opt-in flag and no
+  way to hide one; the invite code is how you reach a *specific* friend's room,
+  not the only way in. Full rooms and member-less (mid-teardown) rooms are
+  withheld, because a row you cannot join is worse than no row. Same CORS
+  allowlist as `/ice`, and `Cache-Control: no-store` so a refresh is a refresh.
+  It is HTTP rather than a websocket message because `/ws` *joins* on connect —
+  asking over the socket would mean creating a junk room to ask from.
 - `GET /healthz` — `{"ok":true,"rooms":N}`.
 
 ## Running it locally
@@ -80,11 +89,13 @@ specific router first (higher `priority` wins), so:
 
 | router | rule | priority | container |
 |---|---|---|---|
-| `godot-lobby` | ``Host(`$LOBBY_HOST`) && (Path(`/ws`) \|\| Path(`/ice`) \|\| Path(`/healthz`))`` | 10 | this service |
+| `godot-lobby` | ``Host(`$LOBBY_HOST`) && (Path(`/ws`) \|\| Path(`/ice`) \|\| Path(`/rooms`) \|\| Path(`/healthz`))`` | 10 | this service |
 | `godot-web` | ``Host(`$LOBBY_HOST`)`` | 1 | the Godot web export on nginx |
 
-So `https://$LOBBY_HOST/` is the **game**, and the lobby keeps exactly the three
-paths it needs. The consequence to remember: the embedded test page at `/` is
+So `https://$LOBBY_HOST/` is the **game**, and the lobby keeps exactly the four
+paths it needs. **A new lobby route must be added to that rule**, or the
+catch-all serves the game's `index.html` for it and the endpoint that worked
+locally silently returns HTML in production. The consequence to remember: the embedded test page at `/` is
 unreachable in production — it is not gone, just out-ranked. Add a path to the
 lobby's rule if you ever need it back.
 
