@@ -143,10 +143,19 @@ func _process(_delta: float) -> void:
 	var blocked: bool = _touch_modal_up()
 	if _body != null:
 		_body.visible = not blocked
-	# Do not hold the pause while invisible: `touch_controls`' resume overlay is
-	# gated on the pause being ITS own, so a pause held by an unseen node here
-	# would leave the player looking at a frozen game with nothing to press.
-	_apply_pause(not blocked)
+	# HIDE, BUT KEEP THE PAUSE. The overlay that is actually up at this moment on
+	# every phone is the first-run "tap to enable motion controls" one
+	# (`touch_controls` shows it whenever motion is not yet enabled), so releasing
+	# here meant `_ready()`'s pause lasted exactly one frame and the world ran live
+	# — crocodiles closing on a spawn bubble only 25 m wide — while the player had
+	# not yet chosen PLAY SOLO or MULTIPLAYER. That is the one thing this node
+	# exists to prevent.
+	#
+	# Nothing is stranded behind the held pause: all three of `has_modal()`'s
+	# overlays are PROCESS_MODE_ALWAYS and dismiss themselves, and the resume
+	# overlay in particular can never be the blocker here — it is gated on
+	# `mobile_input.paused_by_driver`, which is false while WE own the pause.
+	_apply_pause(true)
 
 
 ## True while `touch_controls.gd` has one of its own full-rect overlays up.

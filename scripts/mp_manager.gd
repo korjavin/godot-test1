@@ -1129,7 +1129,21 @@ func peer_positions() -> Variant:
 	frozen and nobody is standing on it, so holding crocodiles awake around it
 	would burn the pack on empty ground for the room's life.
 	"""
-	if _state != State.IN_ROOM:
+	# MASTER ONLY, and that is a perf rule rather than a correctness one. The only
+	# thing the union buys is that the master keeps awake every crocodile it has
+	# to PUBLISH — `_send_croc_sync()` skips sleeping bodies, and it is the sole
+	# consumer of that state. On a non-master the extra bodies woken are exactly
+	# those >SIM_RADIUS from us and within it of a teammate: past our fog and past
+	# VISUAL_CULL_DISTANCE, never sent to us either (the sync filters per peer by
+	# THAT peer's position), so they simulate invisibly and authoritatively for
+	# nobody — up to ~4x the pack in a spread-out four-player room, each body a
+	# move_and_slide plus three avoidance raycasts per physics tick, on the
+	# gl_compatibility web build this manager exists to protect.
+	#
+	# Safe in both directions: a remote-driven croc is skipped by the awake/asleep
+	# decision anyway, and on promotion the union is back within one SCAN_INTERVAL
+	# (0.11 s), two orders of magnitude inside CROC_SYNC_TIMEOUT (2 s).
+	if _state != State.IN_ROOM or _master != _you:
 		return null
 	var positions: Array[Vector3] = []
 	for state: Dictionary in _peer_state.values():
@@ -1946,6 +1960,37 @@ static func decode_state(payload: Dictionary) -> Dictionary:
 # contribution is always simply its live `own_coins` / `own_lives_spent`, and a
 # restart never has to be hidden from the room's totals.
 
+func _contributing() -> bool:
+	"""
+	Whether this peer's own coins / spent lives / distance belong in the room's
+	totals yet.
+
+	A MID-RUN JOINER'S SOLO TALLY IS NOT THE ROOM'S. `join_at()` zeroes
+	`own_coins` / `own_lives_spent` / `own_distance` / `run_distance` for exactly
+	that reason — but it only runs at PLACEMENT, which waits on the seed and on
+	every incumbent's snapshot, while presence starts the moment the mesh
+	connects. Nothing orders those two, so without this gate a joiner publishes
+	its old world's numbers in the window between: `dd` is folded in with `maxi`,
+	so a 3 km solo run raises the room's distance PERMANENTLY for everyone (a max
+	has no way back down), and `lv` is subtracted from the room's shared hearts,
+	so joining after two solo deaths takes two hearts off the whole room — and
+	can drive it to zero and game-over everybody.
+
+	Reading it locally is the same bug from the other end: a joiner who died solo
+	sums its own `own_lives_spent` into `shared_lives_spent()`, computes zero
+	hearts in a healthy room and fires `_check_shared_game_over()` on itself,
+	which only the (seed-gated) placement can undo.
+
+	Zeroing at `welcome` instead would not work: `run_distance` is recomputed as
+	`maxi(run_distance, int(global_position.x))` every physics tick, so it climbs
+	straight back while the player is still standing in the solo world.
+
+	A host contributes from the start — `_first_member` means there was no run to
+	join, and its own tally IS the room's opening balance.
+	"""
+	return _first_member or _join_applied
+
+
 func _join_settled() -> bool:
 	"""
 	Whether the room's totals can be trusted yet.
@@ -1973,7 +2018,7 @@ func shared_bank(own_coins: int) -> Variant:
 	"""The room's banked coins, or `null` offline / before the join settles."""
 	if _state != State.IN_ROOM or not _join_settled():
 		return null
-	var total: int = own_coins + _gone_coins
+	var total: int = (own_coins if _contributing() else 0) + _gone_coins
 	for state: Dictionary in _peer_state.values():
 		total += int(state.get("coins", 0))
 	return total
@@ -1984,7 +2029,7 @@ func shared_lives_spent(own_spent: int) -> Variant:
 	before the join settles (see `_join_settled`)."""
 	if _state != State.IN_ROOM or not _join_settled():
 		return null
-	var total: int = own_spent + _gone_spent
+	var total: int = (own_spent if _contributing() else 0) + _gone_spent
 	for state: Dictionary in _peer_state.values():
 		total += int(state.get("spent", 0))
 	return total
@@ -2002,7 +2047,7 @@ func shared_distance(own_distance: int) -> Variant:
 	"""
 	if _state != State.IN_ROOM or not _join_settled():
 		return null
-	var best: int = own_distance
+	var best: int = own_distance if _contributing() else 0
 	for state: Dictionary in _peer_state.values():
 		best = maxi(best, int(state.get("dist", 0)))
 	return best
@@ -2302,15 +2347,20 @@ func _send_presence() -> void:
 	# not `coins_collected`: in a room the latter is already the room's total and
 	# summing it would compound. The `in` guards keep a standalone player scene
 	# answering something sane, exactly like `c` above.
+	# Until the join lands, this peer contributes NOTHING to the room's totals —
+	# its counters still describe the solo world it came from. See
+	# `_contributing()`; publishing them early raises the room's distance
+	# permanently and spends the room's hearts on deaths that happened elsewhere.
+	var mine: bool = _contributing()
 	var state: Dictionary = {
 		"p": player.global_position,
 		"y": player.rotation.y,
 		"c": int(player.get("current_character_index")) if "current_character_index" in player else 0,
 		"s": speed,
 		"g": player.is_on_floor() if player.has_method("is_on_floor") else true,
-		"cc": int(player.get("own_coins")) if "own_coins" in player else 0,
-		"lv": int(player.get("own_lives_spent")) if "own_lives_spent" in player else 0,
-		"dd": int(player.get("run_distance")) if "run_distance" in player else 0,
+		"cc": int(player.get("own_coins")) if mine and "own_coins" in player else 0,
+		"lv": int(player.get("own_lives_spent")) if mine and "own_lives_spent" in player else 0,
+		"dd": int(player.get("run_distance")) if mine and "run_distance" in player else 0,
 	}
 
 	var bytes: PackedByteArray = var_to_bytes(state)
@@ -3156,7 +3206,11 @@ func _apply_flee(origin: Vector3, duration: float, radius: float = 0.0, tracks_p
 	"""
 	var radius_sq: float = radius * radius
 	for croc: Node in get_tree().get_nodes_in_group("crocodile"):
-		if not is_instance_valid(croc) or not croc.has_method("flee_from"):
+		# `is Node3D` alongside the has_method guard, like every other group loop
+		# here: `croc as Node3D` on a non-Node3D yields null, and the property read
+		# below is then a hard error — which in GDScript unwinds the whole function,
+		# abandoning every remaining crocodile mid-sweep.
+		if not is_instance_valid(croc) or not (croc is Node3D) or not croc.has_method("flee_from"):
 			continue
 		if radius > 0.0 and (croc as Node3D).global_position.distance_squared_to(origin) > radius_sq:
 			continue

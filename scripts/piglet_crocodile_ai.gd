@@ -1107,6 +1107,15 @@ func clear_remote_drive() -> void:
 		return
 	remote_driven = false
 	_has_remote_sample = false
+	# Same guard, same reason, as set_remote_state(): a body already dying
+	# (squash_and_die left the group and stopped physics) must not have physics
+	# handed back to it. It can still be remote-driven here — a local crush runs
+	# when request_croc_kill() could not reach the master, so no `dead` broadcast
+	# erases us from the manager's cache — and the set_physics_process below would
+	# then walk the corpse through its own squash tween under the FULL LOCAL AI,
+	# solid and able to bite.
+	if not is_in_group("crocodile"):
+		return
 	velocity = Vector3.ZERO
 	# Hand the physics switch back to the LOD manager's last decision. While we
 	# were remote-driven set_remote_state() forced processing ON regardless of

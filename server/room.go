@@ -95,7 +95,12 @@ type Member struct {
 	Name string
 
 	seq     uint64 // global join order; the lowest surviving seq is the master
-	stalled bool   // quorum-reported stalled — never eligible for master again
+	stalled bool   // quorum-reported stalled — barred from master and from voting
+	// stalledAt is when `stalled` was set. The bar EXPIRES (see ReportStalled):
+	// a permanent one is a room-killer, because only a non-stalled member may
+	// vote — so in a two-member room, once each peer has hiccuped once, nobody
+	// can ever depose the next master and the room strands on it for the run.
+	stalledAt time.Time
 
 	// lastSeen is when the read loop last got a frame from this peer, in Unix
 	// nanoseconds. Atomic because it is written from the peer's own read
@@ -483,8 +488,16 @@ func (r *Room) ReportStalled(reporter *Member, subject string) {
 	// vote. Otherwise one peer that hiccuped once (or one that is malicious)
 	// forms a quorum against every master the room ever elects, churning the
 	// title indefinitely — each migration costing a visible croc-sim handover.
+	now := time.Now()
 	if reporter.stalled {
-		return
+		// ...but the bar EXPIRES, exactly as the votes themselves do. A peer that
+		// has been back and talking to the lobby for a full stallVoteTTL has
+		// demonstrably recovered, and leaving it disenfranchised forever means a
+		// two-member room whose peers each hiccuped once can never migrate again.
+		if now.Sub(reporter.stalledAt) < stallVoteTTL || reporter.silentFor(now) >= stallMasterSilence {
+			return
+		}
+		reporter.stalled = false
 	}
 	// CORROBORATE. The claim is "the master has gone quiet"; the lobby is a peer
 	// of the master too and can simply check. See stallMasterSilence.
@@ -497,7 +510,6 @@ func (r *Room) ReportStalled(reporter *Member, subject string) {
 		set = make(map[string]time.Time)
 		r.reports[subject] = set
 	}
-	now := time.Now()
 	set[reporter.ID] = now
 	// Prune before counting, so only peers that still believe the master is gone
 	// right now contribute to the quorum.
@@ -529,6 +541,7 @@ func (r *Room) ReportStalled(reporter *Member, subject string) {
 		return
 	}
 	master.stalled = true
+	master.stalledAt = now
 	delete(r.reports, subject)
 	if r.electLocked() {
 		r.announceMasterLocked("")
@@ -552,6 +565,7 @@ func (r *Room) electLocked() bool {
 	if best == "" && len(r.members) > 0 {
 		for _, m := range r.members {
 			m.stalled = false
+			m.stalledAt = time.Time{}
 		}
 		r.reports = make(map[string]map[string]time.Time)
 		for id, m := range r.members {

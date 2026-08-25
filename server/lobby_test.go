@@ -211,6 +211,87 @@ func TestStallQuorumReElects(t *testing.T) {
 	}
 }
 
+// rehabilitate ages a member's stalled bar past stallVoteTTL, standing in for
+// "the peer has been back and talking for a full TTL" without a real 10 s sleep.
+func rehabilitate(hub *Hub, code, id string) {
+	hub.mu.Lock()
+	defer hub.mu.Unlock()
+	if m := hub.rooms[code].members[id]; m != nil {
+		m.stalledAt = time.Now().Add(-2 * stallVoteTTL)
+		m.Touch()
+	}
+}
+
+// TestStalledPeerRegainsVote is the SECOND migration, which nothing else covers.
+// A deposed master keeps its socket and loses its vote — but if that bar were
+// permanent, a two-member room whose peers each hiccup once could never migrate
+// again: only a non-stalled member may vote, and it may not vote against itself.
+// The room would strand on a dead master for the rest of the run (no seed for
+// joiners, no croc sync, every pickup claim timing out and double-paying).
+func TestStalledPeerRegainsVote(t *testing.T) {
+	base, hub := newServerHub(t)
+
+	a := dial(t, base, "", "alice")
+	b := dial(t, base, a.room, "bob")
+	silence(hub, a.room, a.id)
+
+	// Migration 1: alice throttles, bob (the only other member) is a quorum of one.
+	b.send(map[string]any{"type": "stalled", "id": a.id})
+	if m := b.want("master"); m["id"] != b.id {
+		t.Fatalf("first migration: master = %v, wanted bob (%v)", m["id"], b.id)
+	}
+	_ = a.want("master")
+
+	// Alice comes back and stays back for longer than the bar lasts; bob then
+	// throttles in turn.
+	rehabilitate(hub, a.room, a.id)
+	silence(hub, a.room, b.id)
+
+	// Migration 2: alice's vote must count again.
+	a.send(map[string]any{"type": "stalled", "id": b.id})
+	if m := a.want("master"); m["id"] != a.id {
+		t.Fatalf("second migration: master = %v, wanted alice (%v)", m["id"], a.id)
+	}
+}
+
+// TestStalledPeerBarredWhileStillSilent is the other half: rehabilitation is
+// earned by being back, not merely by the clock. A peer still silent to the
+// lobby keeps its bar however long ago it was deposed, so a permanently dead
+// tab cannot vote out the master that replaced it.
+func TestStalledPeerBarredWhileStillSilent(t *testing.T) {
+	base, hub := newServerHub(t)
+
+	a := dial(t, base, "", "alice")
+	b := dial(t, base, a.room, "bob")
+	c := dial(t, base, a.room, "carol")
+	_ = b.want("peer_join")
+	silence(hub, a.room, a.id)
+
+	b.send(map[string]any{"type": "stalled", "id": a.id})
+	c.send(map[string]any{"type": "stalled", "id": a.id})
+	if m := b.want("master"); m["id"] != b.id {
+		t.Fatalf("first migration: master = %v, wanted bob (%v)", m["id"], b.id)
+	}
+	_ = c.want("master")
+
+	// Age alice's bar but leave her silent, and quieten bob so the only thing
+	// standing between carol and a migration is whether alice's vote counts.
+	hub.mu.Lock()
+	hub.rooms[a.room].members[a.id].stalledAt = time.Now().Add(-2 * stallVoteTTL)
+	hub.mu.Unlock()
+	silence(hub, a.room, a.id)
+	silence(hub, a.room, b.id)
+
+	// Alice alone is not a quorum of the two eligible non-master members (carol
+	// and, if the bar lifted wrongly, alice) — and with the bar held she is not
+	// even one vote.
+	a.send(map[string]any{"type": "stalled", "id": b.id})
+	c.send(map[string]any{"type": "signal", "to": c.id, "payload": "ping"})
+	if f := c.next(); f["type"] == "master" {
+		t.Fatalf("a still-silent stalled peer voted: %v", f)
+	}
+}
+
 // TestStallVotesExpire pins the TTL: a vote is evidence about right now, so a
 // stale one must not add up with a fresh one from a different peer. Without the
 // prune in ReportStalled, two peers that each hiccuped once — an hour apart, with

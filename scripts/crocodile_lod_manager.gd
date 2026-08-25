@@ -206,6 +206,11 @@ func _scan_crocodiles() -> void:
 	# set is the one-element array [player_pos] and the minimum over it is exactly
 	# the old single distance. No branch below can behave differently.
 	#
+	# It also returns null on a NON-MASTER, because only the master publishes
+	# crocodile state and so only its LOD decision can strand a teammate's
+	# neighbours unsimulated — see `MpManager.peer_positions()` for why widening
+	# the set anywhere else is pure cost.
+	#
 	# Group-based + null-safe like every other cross-system hook: no MP manager in
 	# the scene (a character scene run in isolation) means we simply skip it.
 	var focus_points: Array[Vector3] = [player_pos]
