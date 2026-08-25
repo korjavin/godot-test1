@@ -22,6 +22,14 @@ extends Area3D
 ## Staggering is therefore mechanical, not decorative: it is what makes a chest
 ## read (and score) as a coin *shower* rather than a single fat pickup.
 ##
+## IN A MULTIPLAYER ROOM the payout is arbitrated instead: the chest claims its
+## whole burst as ONE pickup event and the master prices it (see `_room_claimed`),
+## so the burst below runs purely as animation. ponytail: a chest another peer
+## already emptied is not swept out of the world the way a claimed coin is —
+## `_absorb_collected` sweeps the `"coin"` group and a chest is not in it — so it
+## still stands, and opening it plays the shower and pays nothing. The upgrade
+## path is a second group for the sweep; the ceiling is one wasted animation.
+##
 ## Spawned exactly like ability_effect.gd — a bare node, `set_script`, `add_child`,
 ## then `setup()` — so there is no .tscn to keep in step with this file.
 ##
@@ -67,6 +75,22 @@ var _timer: float = 0.0
 ## underneath a running effect.
 var _player: Node = null
 
+## MULTIPLAYER. `_id` is this chest's stable id — the SAME scheme coins use
+## (Coin.id_at on the position), because a chest is deterministic in exactly the
+## same way: every peer in a room has its own copy of it in the same place, so the
+## position alone names it and no id had to be threaded out of the terrain.
+##
+## `_room_claimed` is set when the room's claim machinery took the payout over. In
+## that case the master has ALREADY computed the whole award (the chest claims its
+## entire burst as ONE claim, with the coin count as the pickup count, so the
+## room's streak steps exactly as it would solo) and paid it through the confirm.
+## The chest's job in a room is then purely the animation: the burst still runs, it
+## still blips, it simply never calls collect_coin — awarding again would pay the
+## room twice for one chest, which is the whole bug claims exist to fix.
+const COIN_SCRIPT := preload("res://scripts/coin.gd")
+var _id: int = 0
+var _room_claimed: bool = false
+
 
 static func _get_shared_shape() -> SphereShape3D:
 	if _shared_shape == null:
@@ -107,6 +131,19 @@ func setup(coin_count: int, burst_duration: float) -> void:
 	# Idle until opened — a closed chest costs one physics-server area and no
 	# script dispatch at all.
 	set_process(false)
+
+	# MULTIPLAYER: latch the id and check whether the room already emptied this
+	# chest. Latched HERE rather than in a _ready(), because the terrain sets our
+	# position BEFORE add_child and calls setup() straight after it — so
+	# global_position is already final, and unlike a coin a chest never moves at
+	# all, so there is no bob for the id to drift with. One failed group lookup per
+	# chest at spawn, never per frame, exactly like coin.gd's.
+	_id = COIN_SCRIPT.id_at(global_position)
+	var mp := get_tree().get_first_node_in_group("mp")
+	if mp and mp.has_method("is_coin_collected") and mp.is_coin_collected(_id):
+		queue_free()
+		return
+
 	body_entered.connect(_on_body_entered)
 
 
@@ -117,6 +154,14 @@ func _on_body_entered(body: Node) -> void:
 		return
 	_opened = true
 	_player = body
+
+	# MULTIPLAYER: claim the WHOLE burst as one pickup event, `_remaining` pickups
+	# of value 1 — one claim, not one per coin, so a chest is arbitrated in a
+	# single round trip and the master advances the room's streak the same number
+	# of steps the burst would have. False offline, and then nothing below changes.
+	var mp := get_tree().get_first_node_in_group("mp")
+	_room_claimed = mp != null and mp.has_method("claim_pickup") \
+			and mp.claim_pickup(_id, _remaining, 1)
 
 	# Stop listening. MUST be deferred: Godot blocks direct property writes to a
 	# monitoring Area3D from inside its own body_entered signal ("Function blocked
@@ -157,9 +202,13 @@ func _process(delta: float) -> void:
 func _award_one() -> void:
 	"""
 	One ordinary coin, through the ordinary path — the whole point of the burst.
+
+	IN A ROOM the award is skipped entirely (see `_room_claimed`): the master
+	already priced the whole chest and paid the winner through the confirm, so all
+	that is left here is the shower — the stagger, the blips and the flash.
 	"""
 	_remaining -= 1
-	if is_instance_valid(_player) and _player.has_method("collect_coin"):
+	if not _room_claimed and is_instance_valid(_player) and _player.has_method("collect_coin"):
 		_player.collect_coin(1)
 
 	# The pickup blip, through the manager's own player pool (we free ourselves at

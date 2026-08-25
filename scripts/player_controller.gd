@@ -1665,12 +1665,51 @@ func collect_coin(value: int = 1) -> void:
 	print("Collected a coin worth %d (x%d streak)! Total: %d" % [value, get_streak_multiplier(), coins_collected])
 
 
+func bank_awarded(amount: int) -> void:
+	"""
+	Bank a pickup the MULTIPLAYER MASTER has already priced (see
+	mp_manager._apply_confirm). Called only for the peer that won the claim.
+
+	THE MULTIPLIER IS ALREADY IN `amount` — the master owns the room's coin streak
+	and applied it when it resolved the claim, so multiplying again here would pay
+	the winner the square of the room's multiplier. That is the whole difference
+	from collect_coin(), which stays exactly as it was and is still the solo path.
+
+	The streak itself is deliberately NOT touched: in a room the multiplier the HUD
+	shows comes from the room (see get_streak_multiplier), and this peer's private
+	coin_streak has no say in it.
+	"""
+	coins_collected += amount
+	own_coins += amount
+	# The same extra-life while-loop collect_coin runs, and for the same reason: a
+	# chest's whole burst arrives as ONE award here, so it can jump clean across a
+	# threshold (or several). In a room _refresh_shared_totals overwrites `lives`
+	# from the room's bank in the same frame anyway; this keeps the solo-shaped
+	# bookkeeping consistent rather than letting next_extra_life_at fall behind.
+	while coins_collected >= next_extra_life_at:
+		next_extra_life_at += EXTRA_LIFE_COINS
+		if lives < LIVES_CAP:
+			lives += 1
+			print("Extra life! Lives: %d" % lives)
+
+
 func get_streak_multiplier() -> int:
 	"""
 	Current score multiplier from the coin streak: x1 with no streak, +1 per
 	STREAK_COINS_PER_STEP consecutive coins, capped at 1 + STREAK_MAX_BONUS.
 	Read by the coin HUD to show the "(xN)" suffix.
+
+	IN A ROOM THE STREAK IS THE ROOM'S. The master owns one streak for everybody
+	(it is the thing that prices every claim), so this defers to it — which makes
+	coin_hud.gd show the room's "(xN)" with NO HUD change, the same trick phase 4
+	used for the bank and the hearts. `room_multiplier()` answers null offline and
+	this falls through to the local value on one test.
 	"""
+	var mp := _mp()
+	if mp != null and mp.has_method("room_multiplier"):
+		var room: Variant = mp.room_multiplier()
+		if room != null:
+			return int(room)
 	return 1 + mini(STREAK_MAX_BONUS, coin_streak / STREAK_COINS_PER_STEP)
 
 

@@ -459,11 +459,11 @@ base value per pickup (1, or `Coin.GEM_VALUE`), `by` = the winner's
 `peer_int_id`, `a` = the total awarded after the room's multiplier, `m` = the
 room's multiplier after the award (for the HUD suffix).
 
-- [ ] `mp_manager.gd`: `func claim_pickup(id: int, count: int, value: int) -> bool`.
+- [x] `mp_manager.gd`: `func claim_pickup(id: int, count: int, value: int) -> bool`.
       Returns **false offline** so every caller falls through to today's solo path
       on one test. In a room: if we are the master, resolve immediately; else send
       the claim and park it in `_pending_claims[id]`.
-- [ ] master resolution, `_resolve_claim(id, by_int, count, value)`:
+- [x] master resolution, `_resolve_claim(id, by_int, count, value)`:
       refuse if `_collected_ids.has(id)` (**first claim wins**, and this reuses the
       set phase 4 already keeps and already replays to joiners — do not add a
       second set); otherwise record it, advance the **room streak** `count` times
@@ -471,26 +471,26 @@ room's multiplier after the award (for the HUD suffix).
       window and the step come from `player_controller`'s existing constants,
       referenced, never re-typed), accumulate `value * multiplier` per pickup, and
       broadcast the confirm to every connected peer **and apply it locally**.
-- [ ] the room multiplier is one pure static function so the selfcheck can pin it:
+- [x] the room multiplier is one pure static function so the selfcheck can pin it:
       `static func room_multiplier_from(streak: int, per_step: int, max_bonus: int) -> int`
       — the same arithmetic as `player_controller.get_streak_multiplier()`,
       extracted rather than duplicated in spirit. Expose
       `func room_multiplier() -> Variant` returning `null` offline.
-- [ ] confirm handling on every peer: record the id in `_collected_ids`, sweep the
+- [x] confirm handling on every peer: record the id in `_collected_ids`, sweep the
       live world for it (**reuse `_absorb_collected([id])`** — it already frees
       matching coins and makes arrival order irrelevant), drop any
       `_pending_claims[id]`, store `m`, and — only when `by == peer_int_id(_you)`
       — call `player.bank_awarded(a)`.
-- [ ] claim retry: `const CLAIM_RETRY_SEC: float = 0.5`,
+- [x] claim retry: `const CLAIM_RETRY_SEC: float = 0.5`,
       `const CLAIM_MAX_TRIES: int = 4`. Re-send an unconfirmed claim on that
       cadence; when the budget runs out, **resolve it locally** (bank it with the
       local multiplier and record the id) rather than eating the pickup.
       `ponytail:` the ceiling is a rare double-count when the confirm was merely
       slow; the alternative — a coin that vanished and paid nothing — is worse,
       and the upgrade path is a master ACK on the claim itself.
-- [ ] `_pending_claims` must be cleared by `leave()` and re-driven from `_process`
+- [x] `_pending_claims` must be cleared by `leave()` and re-driven from `_process`
       (one dictionary walk, only while non-empty).
-- [ ] `coin.gd` `_on_body_entered`: when `mp.claim_pickup(coin_id(), 1, value)`
+- [x] `coin.gd` `_on_body_entered`: when `mp.claim_pickup(coin_id(), 1, value)`
       returns true, set `collected = true`, hide the coin
       (`visible = false`, `set_deferred("monitoring", false)`) and play the pop and
       the blip so the pickup still *feels* instant — but **do not** call
@@ -499,7 +499,7 @@ room's multiplier after the award (for the HUD suffix).
       `report_coin_collected` call is now redundant on the claim path — keep it
       only on the offline path, or drop it and let `_resolve_claim` be the single
       writer; say which in a comment.
-- [ ] `treasure_chest.gd`: give the chest the same id
+- [x] `treasure_chest.gd`: give the chest the same id
       (`Coin.id_at(global_position)`, latched in `_ready()` before anything moves
       it) and the same `is_coin_collected` check at spawn. In `_on_body_entered`,
       claim `(id, coin_count, 1)` as **one** claim; start the burst only when the
@@ -508,13 +508,13 @@ room's multiplier after the award (for the HUD suffix).
       plays its visual burst with **no** `collect_coin` calls at all in a room).
       Pick the second: the master already computed the whole award, so the chest's
       job in a room is purely the animation. Say so in the docstring.
-- [ ] `player_controller.gd`: add
+- [x] `player_controller.gd`: add
       `func bank_awarded(amount: int) -> void` — `coins_collected += amount`,
       `own_coins += amount`, and the existing extra-life `while` loop, with a
       docstring saying the multiplier was **already applied by the master** so it
       must not be applied again. `collect_coin()` stays the solo/offline path,
       unchanged.
-- [ ] `player_controller.get_streak_multiplier()` consults the `"mp"` group's
+- [x] `player_controller.get_streak_multiplier()` consults the `"mp"` group's
       `room_multiplier()` and uses it when it is not null, else today's local
       value. That is one edit in one function, and it makes `coin_hud.gd` show the
       room's `(xN)` with **no HUD change** — the same trick phase 4 used for the
