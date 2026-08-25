@@ -142,8 +142,8 @@ const ROTATION_SPEED: float = 10.0
 ## children's local position every physics frame (it slides them along its
 ## local Z by the collision-clamped length) — so nothing may ever write
 ## camera.position. The bite shake uses Camera3D.h_offset/v_offset (view-space
-## offsets the arm doesn't touch) and first-person moves the ARM itself
-## (see _apply_view_mode).
+## offsets the arm doesn't touch), and both the first-person and front views move
+## the ARM itself (see _apply_view_mode).
 @onready var camera_pivot: Node3D = $CameraPivot
 @onready var camera_arm: SpringArm3D = $CameraPivot/CameraArm
 @onready var camera: Camera3D = $CameraPivot/CameraArm/Camera3D
@@ -173,10 +173,17 @@ const FOV_PUNCH_DECAY: float = 30.0
 const CAMERA_PITCH_MIN: float = -60.0  # Looking down limit (degrees)
 const CAMERA_PITCH_MAX: float = 60.0   # Looking up limit (degrees)
 
-## First-person view (toggled with C / the "toggle_camera" action).
+## First-person view (one stop on the C / "toggle_camera" cycle).
 ## Eye height above the FEET at normal scale — just under the ~1.8 m head top,
 ## so the camera sits where the character's eyes would be.
 const FIRST_PERSON_EYE_HEIGHT: float = 1.65
+
+## The three camera views C cycles through, in cycle order.
+enum ViewMode {
+	THIRD_PERSON,  ## The shipped view: boom behind and above, looking forward.
+	FIRST_PERSON,  ## From the character's own eyes; the model is hidden.
+	FRONT,         ## Boom in FRONT looking back — the hero's face, plus what is behind them.
+}
 
 ## Safe spawn radius - crocodiles within this distance will be removed on respawn
 const SPAWN_SAFE_RADIUS: float = 25.0
@@ -375,10 +382,13 @@ var camera_pitch: float = 0.0
 ## FOV_PUNCH_DECAY per second by the FOV code in _process.
 var fov_punch: float = 0.0
 
-## First-person view mode. This is a player PREFERENCE, not transient state: it
-## deliberately survives respawn, restart, and character switches (nothing in
-## those paths resets it). Toggled with C in _physics_process (STEP 0.55).
-var first_person: bool = false
+## Which of the three views we are in. This is a player PREFERENCE, not transient
+## state: it deliberately survives respawn, restart, and character switches
+## (nothing in those paths resets it). Cycled with C in _physics_process (STEP 0).
+## Typed `int` rather than `ViewMode` on purpose: the cycle below is plain modular
+## arithmetic, and GDScript will not implicitly narrow an int expression back into
+## an enum type.
+var view_mode: int = ViewMode.THIRD_PERSON
 ## The spring arm's original scene-file transform (−14° pitch at the pivot) and
 ## length (8.25 — the old camera's (0,2,8) offset expressed as an arm), plus the
 ## camera's residual −1° pitch, cached in _ready() so leaving first-person
@@ -627,7 +637,7 @@ func _input(event: InputEvent) -> void:
 		switch_to_next_character()
 
 # ============================================================================
-# FIRST-PERSON VIEW TOGGLE
+# CAMERA VIEW CYCLE (third-person / first-person / front)
 # ============================================================================
 
 func _apply_view_mode() -> void:
@@ -638,7 +648,7 @@ func _apply_view_mode() -> void:
 	"""
 	if not camera or not camera_arm:
 		return
-	if first_person:
+	if view_mode == ViewMode.FIRST_PERSON:
 		# First-person commandeers the ARM, not the camera (the arm owns the
 		# camera's local position — see the rig note in SECTION 3). Identity
 		# basis zeroes the arm's −14° scene pitch so the pivot's pitch alone
@@ -653,15 +663,23 @@ func _apply_view_mode() -> void:
 		if character_container:
 			character_container.visible = false
 	else:
-		# Restore the CACHED scene arm pose + camera pitch — byte-identical to
-		# the shipped third-person view — and show the model again.
-		camera_arm.transform = third_person_arm_transform
+		# THIRD_PERSON restores the CACHED scene arm pose (byte-identical to the
+		# shipped view); FRONT is that same pose YAWED 180° in pivot space, so the
+		# arm's +Z — the axis a SpringArm3D slides its children along — points
+		# ahead of the body instead of behind it. The camera looks down its own
+		# −Z, which the same flip turns back toward us: the hero's face in frame
+		# and the ground they just covered behind them. Length is untouched, so
+		# the front boom is collision-clamped exactly like the back one and can't
+		# clip through a block. Nothing writes camera.position (SpringArm gotcha).
+		var flip := Basis(Vector3.UP, PI) if view_mode == ViewMode.FRONT else Basis.IDENTITY
+		camera_arm.transform = Transform3D(
+				flip * third_person_arm_transform.basis, third_person_arm_transform.origin)
 		camera_arm.spring_length = third_person_arm_length
 		camera.rotation = third_person_camera_rotation
 		if character_container:
 			character_container.visible = true
 	# No shake bookkeeping needed here: the bite shake lives on the camera's
-	# h_offset/v_offset, which are view-space and identical in both views.
+	# h_offset/v_offset, which are view-space and identical in every view.
 
 
 func _first_person_eye_position() -> Vector3:
@@ -701,8 +719,15 @@ func _physics_process(delta: float) -> void:
 	# the lobby's invite-code alphabet contains C (the toggle_camera binding), so
 	# typing a code would flip the view. View mode is a preference nothing resets,
 	# so the next run would start in the wrong camera with no explanation.
+	#
+	# C CYCLES three views (third-person → eyes → front/mirror → third-person)
+	# rather than toggling two. CONTROLS ARE NEVER MIRRORED WITH THE CAMERA: in
+	# the front view A/D and the mouse still turn the BODY the same way they do
+	# in third-person, and the camera swings with it. Inverting them to match
+	# what the player sees on screen reads clever and plays terribly — the world
+	# stops agreeing with the stick. Only the picture is mirrored.
 	if Input.is_action_just_pressed("toggle_camera") and not is_game_over:
-		first_person = not first_person
+		view_mode = (view_mode + 1) % ViewMode.size()
 		_apply_view_mode()
 
 	# STEP 0a: Game over — out of lives. Stand frozen (the Game Over screen is up
@@ -747,14 +772,15 @@ func _physics_process(delta: float) -> void:
 	# STEP 0.35: Post-respawn grace, phase 2 (blinking i-frames). We move
 	# NORMALLY — no freeze branch — but stay invulnerable while the timer runs,
 	# with the model blinking on a fixed cadence so the protection is readable.
-	# First-person skips the toggle (the model is already hidden there); when
+	# First-person skips the toggle (the model is already hidden there); the FRONT
+	# view blinks like third-person, since the model is exactly what it shows. When
 	# the timer expires, _apply_view_mode() restores visibility idempotently,
 	# respecting whichever view we're in.
 	if respawn_blink_timer > 0.0:
 		respawn_blink_timer = maxf(0.0, respawn_blink_timer - delta)
 		if respawn_blink_timer <= 0.0:
 			_apply_view_mode()
-		elif not first_person and character_container:
+		elif view_mode != ViewMode.FIRST_PERSON and character_container:
 			# One on/off blink per two cadence intervals: visible for the first
 			# half of each 2×cadence window, hidden for the second.
 			character_container.visible = fmod(respawn_blink_timer, RESPAWN_BLINK_CADENCE * 2.0) < RESPAWN_BLINK_CADENCE
@@ -1233,7 +1259,7 @@ func set_active_character(index: int) -> void:
 	# is not asking permission, so the clear has to live at this end.
 	# _reset_ability_states() calls _revert_teibi_to_normal(), which re-applies
 	# the first-person view when active (_apply_teibi_scale ends with
-	# `if first_person: _apply_view_mode()`), keeping the model hidden and the
+	# `if view_mode == ViewMode.FIRST_PERSON: _apply_view_mode()`), keeping the model hidden and the
 	# camera at the eyes across the switch.
 	_reset_ability_states()
 
@@ -1957,7 +1983,9 @@ func _show_respawn_countdown() -> void:
 	var label := get_tree().get_first_node_in_group("respawn_label")
 	if label:
 		label.visible = true
-		label.text = "Caught! Back in %.1f..." % maxf(respawn_timer, 0.0)
+		# tr() on the FORMAT STRING, not the result — the formatted text ("Caught!
+		# Back in 1.2...") is a key in no table. See CLAUDE.md's localization RULE 2.
+		label.text = tr("Caught! Back in %.1f...") % maxf(respawn_timer, 0.0)
 
 
 func _hide_respawn_message() -> void:
@@ -2670,7 +2698,7 @@ func _apply_teibi_scale(s: float) -> void:
 	# height — small Teibi looks from down low, giant Teibi from up high.
 	# _apply_view_mode() is idempotent, so this is safe from every caller
 	# (F-cycle, form timeout, character switch, respawn).
-	if first_person:
+	if view_mode == ViewMode.FIRST_PERSON:
 		_apply_view_mode()
 
 
