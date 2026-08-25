@@ -15,6 +15,11 @@ const POP_RECOVER_SPEED: float = 10.0
 ## Cached player reference (re-fetched if it ever goes away).
 var player: Node = null
 
+## Cached meta-progression node (scripts/progression.gd), for the "Lv N" prefix.
+## Cached exactly like `player` — a group lookup per frame for a label that may
+## legitimately never have one is the wrong shape.
+var progression: Node = null
+
 ## Last coin count we displayed — an increase means a pickup just happened.
 var _last_coins: int = 0
 
@@ -22,6 +27,8 @@ var _last_coins: int = 0
 func _process(delta: float) -> void:
 	if player == null or not is_instance_valid(player):
 		player = get_tree().get_first_node_in_group("player")
+	if progression == null or not is_instance_valid(progression):
+		progression = get_tree().get_first_node_in_group("progression")
 
 	# Ease any active pop back toward normal size every frame.
 	scale = scale.lerp(Vector2.ONE, minf(1.0, POP_RECOVER_SPEED * delta))
@@ -39,7 +46,23 @@ func _process(delta: float) -> void:
 		# not a key in any translation. The rule across the project: a plain
 		# literal assigned to `.text` needs no `tr()`; a format string does, and
 		# the `tr()` goes on the format string, before the `%`.
-		text = tr("Distance: %dm   Coins: %d") % [player.run_distance, player.coins_collected]
+		# The level prefix is only rendered when a Progression node exists (found by
+		# group, like everything else here), so this label keeps working unchanged
+		# in a scene without one — and both format strings are CSV rows.
+		if progression and "level" in progression and progression.has_method("unspent_points"):
+			text = tr("Lv %d   Distance: %dm   Coins: %d") % [
+				progression.level, player.run_distance, player.coins_collected
+			]
+			# Unspent skill points, shown only when there are any — the same
+			# suffix-when-it-matters rule the streak "(xN)" below follows. Nothing
+			# spends them yet (bead godot-test1-20z.3).
+			var points: int = progression.unspent_points()
+			if points > 0:
+				text += tr("  %d SP") % points
+		else:
+			text = tr("Distance: %dm   Coins: %d") % [
+				player.run_distance, player.coins_collected
+			]
 		# Show the coin-streak multiplier only while it's actually boosting (>1),
 		# e.g. "Distance: 240m   Coins: 87 (x3)" — see get_streak_multiplier().
 		var mult: int = player.get_streak_multiplier()

@@ -72,6 +72,8 @@ func _clear_local_records() -> void:
 	cfg.load(BestRunStore.CONFIG_PATH)
 	cfg.set_value(BestRunStore.CONFIG_SECTION, "distance", 0)
 	cfg.set_value(BestRunStore.CONFIG_SECTION, "coins", 0)
+	cfg.set_value(BestRunStore.CONFIG_PROGRESSION_SECTION, "lifetime_coins", 0)
+	cfg.set_value(BestRunStore.CONFIG_PROGRESSION_SECTION, "spent_points", 0)
 	cfg.save(BestRunStore.CONFIG_PATH)
 
 
@@ -171,8 +173,43 @@ func _run() -> void:
 			% [checker.distance, catch_up])
 		return
 
+	# PROGRESSION (bead godot-test1-20z.2). Lifetime coins and spent skill points
+	# ride the SAME record and the SAME request, so the only thing left to prove
+	# from the client side is that they actually survive the round trip — a field
+	# the server drops, or a response key the parser never reads, is invisible on
+	# this side and shows up as a player's LEVEL resetting on their next device.
+	# Driven through the same store, so it also covers the local layer.
+	var target_lifetime := 700000 + (Time.get_ticks_msec() % 1000)
+	var target_spent := 7
+	var writer := _make_store()
+	writer.submit_progression(target_lifetime, target_spent)
+	_clear_local_records()
+
+	var prog_reader := _make_store()
+	waited = 0.0
+	while waited < TIMEOUT_SEC and prog_reader.lifetime_coins < target_lifetime:
+		prog_reader.fetch()
+		await create_timer(POLL_SEC).timeout
+		waited += POLL_SEC
+	if prog_reader.lifetime_coins < target_lifetime:
+		_finish(1, "BEST_RUN FAILED: server never returned lifetime coins (got %d, wanted %d)"
+			% [prog_reader.lifetime_coins, target_lifetime])
+		return
+	if prog_reader.spent_points < target_spent:
+		_finish(1, "BEST_RUN FAILED: server returned spent points %d, wanted at least %d"
+			% [prog_reader.spent_points, target_spent])
+		return
+	# The level the player would come back to. Derived, never stored — this is the
+	# thing the whole round trip exists to protect.
+	var level := Progression.level_for(prog_reader.lifetime_coins)
+	if level <= 0:
+		_finish(1, "BEST_RUN FAILED: %d lifetime coins derived level %d"
+			% [prog_reader.lifetime_coins, level])
+		return
+
 	# "Records only ever go up" is pinned server-side in server/best_test.go, which
 	# is where it belongs — repeating it from here would only re-test the Go code
 	# over a slower wire.
-	_finish(0, "BEST_RUN OK: id %s, distance %d, coins %d, catch-up %d"
-		% [id, reader.distance, reader.coins, checker.distance])
+	_finish(0, "BEST_RUN OK: id %s, distance %d, coins %d, catch-up %d, lifetime %d (level %d), spent %d"
+		% [id, reader.distance, reader.coins, checker.distance,
+			prog_reader.lifetime_coins, level, prog_reader.spent_points])

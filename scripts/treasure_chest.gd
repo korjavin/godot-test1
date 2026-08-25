@@ -24,11 +24,12 @@ extends Area3D
 ##
 ## IN A MULTIPLAYER ROOM the payout is arbitrated instead: the chest claims its
 ## whole burst as ONE pickup event and the master prices it (see `_room_claimed`),
-## so the burst below runs purely as animation. ponytail: a chest another peer
-## already emptied is not swept out of the world the way a claimed coin is —
-## `_absorb_collected` sweeps the `"coin"` group and a chest is not in it — so it
-## still stands, and opening it plays the shower and pays nothing. The upgrade
-## path is a second group for the sweep; the ceiling is one wasted animation.
+## so the burst below runs purely as animation. A chest another peer already
+## emptied IS swept out of the world now: every chest joins group `CHEST_GROUP`
+## and `mp_manager._absorb_collected()` walks it beside the `"coin"` group,
+## calling `consume_silently()`. That covers both halves of the old gap — a chest
+## emptied before we joined (the join snapshot's `ids` carry its id) and one a
+## teammate empties while we stand next to it (the `cnf` confirm carries it).
 ##
 ## Spawned exactly like ability_effect.gd — a bare node, `set_script`, `add_child`,
 ## then `setup()` — so there is no .tscn to keep in step with this file.
@@ -88,6 +89,14 @@ var _player: Node = null
 ## still blips, it simply never calls collect_coin — awarding again would pay the
 ## room twice for one chest, which is the whole bug claims exist to fix.
 const COIN_SCRIPT := preload("res://scripts/coin.gd")
+
+## The group `mp_manager._absorb_collected()` sweeps for chests, beside the
+## `"coin"` group it already sweeps for coins. Chests are deliberately NOT in
+## `"coin"`: the crocodile LOD manager gates that group's `set_process` on
+## distance, and a chest's `_process` is its payout burst — a chest opened 31 m
+## from the local player would freeze mid-shower and never free itself.
+const CHEST_GROUP: StringName = &"chest"
+
 var _id: int = 0
 var _room_claimed: bool = false
 
@@ -144,7 +153,40 @@ func setup(coin_count: int, burst_duration: float) -> void:
 		queue_free()
 		return
 
+	# Joined only once the chest is known to be UNSPENT: a chest that just freed
+	# itself has nothing for the sweep to do, and the group is exactly "chests the
+	# room might still have to empty".
+	add_to_group(CHEST_GROUP)
+
 	body_entered.connect(_on_body_entered)
+
+
+func chest_id() -> int:
+	"""
+	This chest's stable id — a COIN id, because a chest is arbitrated as a pickup
+	like any other (`Coin.id_at` on its position). Named for the sweep in
+	`mp_manager._absorb_collected()`, which reads it off the `CHEST_GROUP` node the
+	same way it reads `coin_id()` off a coin.
+	"""
+	return _id
+
+
+func consume_silently() -> void:
+	"""
+	The room already emptied this chest: take it out of the world with no shower,
+	no blips and no award.
+
+	A CHEST MID-BURST IS LEFT ALONE, and that is why this is a method rather than
+	a `queue_free()` at the call site. `_opened` means we are paying out an award
+	the master already priced through `claim_pickup()`; cutting it short would
+	swallow the shower the player is watching and — offline or on an unclaimed
+	path — the coins it is still owed. The burst frees the node itself when it
+	ends, and the id is already in the room's collected set either way.
+	"""
+	if _opened:
+		return
+	_opened = true
+	queue_free()
 
 
 func _on_body_entered(body: Node) -> void:

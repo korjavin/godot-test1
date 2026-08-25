@@ -38,22 +38,56 @@ func TestBestRecordsOnlyGoUp(t *testing.T) {
 		t.Fatalf("unknown id read as %+v, wanted zeroes", rec)
 	}
 
-	if rec := s.merge("player-aaaa", 500, 12); rec.Distance != 500 || rec.Coins != 12 {
+	if rec := s.merge("player-aaaa", 500, 12, 0, 0); rec.Distance != 500 || rec.Coins != 12 {
 		t.Fatalf("first merge = %+v", rec)
 	}
 	// A shorter but richer run raises coins ONLY — the two records are independent.
-	if rec := s.merge("player-aaaa", 100, 40); rec.Distance != 500 || rec.Coins != 40 {
+	if rec := s.merge("player-aaaa", 100, 40, 0, 0); rec.Distance != 500 || rec.Coins != 40 {
 		t.Fatalf("independent maxima broken: %+v", rec)
 	}
 	// A stale replay changes nothing.
-	if rec := s.merge("player-aaaa", 100, 40); rec.Distance != 500 || rec.Coins != 40 {
+	if rec := s.merge("player-aaaa", 100, 40, 0, 0); rec.Distance != 500 || rec.Coins != 40 {
 		t.Fatalf("replay moved the record: %+v", rec)
 	}
 	// Another player is a separate record.
-	if rec := s.merge("player-bbbb", 7, 0); rec.Distance != 7 {
+	if rec := s.merge("player-bbbb", 7, 0, 0, 0); rec.Distance != 7 {
 		t.Fatalf("ids leaked into each other: %+v", rec)
 	}
 	if rec := s.get("player-aaaa"); rec.Distance != 500 || rec.Coins != 40 {
+		t.Fatalf("read back %+v", rec)
+	}
+}
+
+// TestBestProgressionOnlyGoesUp pins the meta-progression half of the record.
+// It is a separate test because the failure it guards is different in kind: a
+// lifetime coin total that can go DOWN takes a player's LEVEL down with it, and
+// the client posts its whole record on every game over, so one stale POST from a
+// second device (or a retried one) would do it.
+func TestBestProgressionOnlyGoesUp(t *testing.T) {
+	s := newBestStore("")
+
+	if rec := s.merge("player-prog", 0, 0, 500, 3); rec.Lifetime != 500 || rec.Spent != 3 {
+		t.Fatalf("first progression merge = %+v", rec)
+	}
+	// A stale device posts an older, smaller lifetime — it must not be believed.
+	if rec := s.merge("player-prog", 0, 0, 120, 1); rec.Lifetime != 500 || rec.Spent != 3 {
+		t.Fatalf("a stale progression POST lowered the record: %+v", rec)
+	}
+	// Lifetime and spent move independently, exactly like distance and coins.
+	if rec := s.merge("player-prog", 0, 0, 900, 3); rec.Lifetime != 900 || rec.Spent != 3 {
+		t.Fatalf("lifetime did not rise alone: %+v", rec)
+	}
+	if rec := s.merge("player-prog", 0, 0, 900, 5); rec.Lifetime != 900 || rec.Spent != 5 {
+		t.Fatalf("spent did not rise alone: %+v", rec)
+	}
+	// The best-run half is untouched by progression traffic, and vice versa —
+	// this is the "an older client posts no lifetime/spent" case, which decodes
+	// as 0 and must raise nothing.
+	if rec := s.merge("player-prog", 42, 7, 0, 0); rec.Lifetime != 900 || rec.Spent != 5 ||
+		rec.Distance != 42 || rec.Coins != 7 {
+		t.Fatalf("an old-client POST clobbered progression: %+v", rec)
+	}
+	if rec := s.get("player-prog"); rec.Lifetime != 900 || rec.Spent != 5 {
 		t.Fatalf("read back %+v", rec)
 	}
 }
@@ -75,7 +109,7 @@ func TestBestEvictsLeastRecentlySeen(t *testing.T) {
 
 	// Reading the oldest promotes it past the runner-up.
 	s.get(oldest)
-	s.merge(padID(maxBestRecords), 1, 1)
+	s.merge(padID(maxBestRecords), 1, 1, 0, 0)
 
 	if len(s.recs) != maxBestRecords {
 		t.Fatalf("map grew to %d, cap is %d", len(s.recs), maxBestRecords)
@@ -95,7 +129,7 @@ func TestBestEvictsLeastRecentlySeen(t *testing.T) {
 // one, so the only job is keeping absurd numbers out of the dump file.
 func TestBestClampsHostileValues(t *testing.T) {
 	s := newBestStore("")
-	rec := s.merge("player-cccc", clampBestValue(-5), clampBestValue(1<<40))
+	rec := s.merge("player-cccc", clampBestValue(-5), clampBestValue(1<<40), 0, 0)
 	if rec.Distance != 0 {
 		t.Errorf("negative distance stored as %d", rec.Distance)
 	}
@@ -110,7 +144,7 @@ func TestBestFileSurvivesRestart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nested", "best.json")
 
 	s := newBestStore(path)
-	s.merge("player-dddd", 1234, 56)
+	s.merge("player-dddd", 1234, 56, 0, 0)
 	if err := s.dump(); err != nil {
 		t.Fatalf("dump: %v", err)
 	}
@@ -146,7 +180,7 @@ func TestBestFailedDumpStaysDirty(t *testing.T) {
 		t.Fatalf("setup: %v", err)
 	}
 	s := newBestStore(filepath.Join(blocker, "sub", "best.json"))
-	s.merge("player-eeee", 10, 1)
+	s.merge("player-eeee", 10, 1, 0, 0)
 
 	if err := s.dump(); err == nil {
 		t.Fatalf("dump into %s unexpectedly succeeded", s.path)
