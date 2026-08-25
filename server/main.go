@@ -1,8 +1,10 @@
 package main
 
-// main.go — process entry: config from the environment, five routes, no state of
-// its own. The lobby does signalling, membership and master-naming and nothing
-// else: no game logic, no persistence, no database.
+// main.go — process entry: config from the environment, six routes, and one
+// small piece of state. The lobby does signalling, membership and master-naming
+// and no game logic, but it is no longer entirely stateless: /best keeps
+// per-player best-run records (best.go), because the game's own `user://` store
+// does not survive on the web export. Still no database.
 
 import (
 	"crypto/hmac"
@@ -44,10 +46,20 @@ func main() {
 	}
 
 	hub := NewHub()
+	// The lobby's ONE piece of persistent state — see best.go for why it exists at
+	// all. LOBBY_BEST_FILE unset means memory-only: records still work for the
+	// life of the process, they just do not survive a redeploy.
+	best := newBestStore(env("LOBBY_BEST_FILE", ""))
+	go best.runDumper()
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", hub.ServeWS)
 	mux.HandleFunc("/ice", iceHandler)
 	mux.HandleFunc("/rooms", hub.roomsHandler)
+	// ⚠️ A NEW ROUTE ALSO NEEDS THE TRAEFIK PATH LIST in server/docker-compose.yml
+	// — the game client's catch-all owns `/` in production, so a route missing
+	// from the lobby's narrow rule silently serves index.html instead.
+	mux.HandleFunc("/best", best.handler)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(mustJSON(map[string]any{"ok": true, "rooms": hub.Rooms()}))

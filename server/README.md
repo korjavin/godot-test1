@@ -72,6 +72,27 @@ leaving the room master-less.
   allowlist as `/ice`, and `Cache-Control: no-store` so a refresh is a refresh.
   It is HTTP rather than a websocket message because `/ws` *joins* on connect —
   asking over the socket would mean creating a junk room to ask from.
+- `GET`/`POST /best?id=<player id>` — `{"distance":N,"coins":N}`: one player's
+  personal best-run records. `POST` merges (both fields are independent maxima
+  that only ever rise, so it is idempotent and safe to retry) and answers with
+  the merged record; `GET` reads it, and an unknown id reads as zeroes rather
+  than a 404.
+
+  **This is the lobby's only persistent state**, and a deliberate exception to
+  the rule the rest of this file states. The game kept its records in Godot's
+  `user://`, which on the web export is an IndexedDB mount — measured working end
+  to end in Chromium and WebKit, but IndexedDB is site storage: Safari/iOS purges
+  it for sites without recent interaction, a private window keeps none of it, and
+  the GitHub Pages build and the deployed host are two different origins with two
+  different stores. A record kept here survives all three, and follows a player
+  between devices. **Personal bests only — there is no leaderboard and no listing
+  route.** Unauthenticated like `/ice`, so anyone who knows an id can read and
+  raise that record; the id is a client-generated 128-bit token that appears in no
+  listing, the stake is a number in a toy game, and `server/best.go` says so at
+  length. `LOBBY_BEST_FILE` (default `/data/best.json`, on a named volume) is
+  where it is dumped every 30 s; unset it and records live only as long as the
+  container. Unlike the other routes this one also answers `OPTIONS`: the POST
+  carries a JSON content type, so the browser preflights it.
 - `GET /healthz` — `{"ok":true,"rooms":N}`.
 
 ## Running it locally

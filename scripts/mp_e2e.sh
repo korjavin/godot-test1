@@ -152,6 +152,20 @@ case "$ROOMS_BODY" in
 	*) fail "/rooms did not list the hosted room ${ROOM}: ${ROOMS_BODY}" ;;
 esac
 
+# The personal best-run store (`/best` + scripts/best_run_store.gd). It rides
+# this script because it needs the same thing the relay phases need — a real
+# lobby on a real socket — and for the same reason the /rooms curl above is here:
+# the Go tests cover the semantics, this covers the client actually reaching the
+# route. It is deliberately BEFORE the join phase, so a failure here is not
+# mistaken for a seed problem.
+echo "E2E: checking the personal best-run round trip"
+perl -e 'alarm shift; exec @ARGV or exit 127' "$INSTANCE_TIMEOUT" \
+	"$GODOT" --headless --path "$ROOT" --script res://scripts/best_run_e2e.gd -- \
+	--lobby="$LOBBY_URL" >"$LOG_DIR/best.log" 2>&1
+BEST_STATUS=$?
+[ "$BEST_STATUS" -eq 0 ] || fail "best-run round trip exited ${BEST_STATUS}"
+grep -q '^BEST_RUN OK' "$LOG_DIR/best.log" || fail "best-run round trip never printed BEST_RUN OK"
+
 echo "E2E: room ${ROOM}, joining"
 
 run_instance "$LOG_DIR/join.log" --role=join --code="$ROOM"
