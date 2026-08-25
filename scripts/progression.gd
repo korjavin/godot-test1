@@ -446,6 +446,32 @@ func skill_mult(hero: String, effect: String) -> float:
 			return 1.0 + total
 
 
+func gait_mult(hero: String, small_form: bool) -> float:
+	"""
+	THE multiplier `calculate_current_speed()` applies to the run and duck gaits —
+	and the single place the +20% cap is enforced over EVERY movement passive at
+	once.
+
+	Why this exists rather than the caller multiplying two `skill_mult()` answers:
+	Teibi's Scurry is a movement passive too, just a conditional one, so a product
+	of two separately-capped numbers reaches x1.254 (x1.14 fully-ranked Fleet Foot
+	× x1.10 Scurry) and quietly passes a cap both halves individually respect. The
+	epic's guardrail is "+20% TOTAL", so the bonuses are summed and clamped once.
+
+	The consequence is worth stating: a small Teibi who has already maxed Fleet
+	Foot gets +6% from Scurry rather than +10%, because the cap is doing its job.
+	Scurry is still worth its point for a Teibi who has not (a full +10%), and the
+	self-check measures both so neither is a node that silently buys nothing.
+
+	`small_form` is passed in rather than read here because this file knows nothing
+	about the player's state — the same reason every other getter in it is pure.
+	"""
+	var total := skill_bonus(hero, "run_speed")
+	if small_form:
+		total += skill_bonus(hero, "teibi_small_speed")
+	return minf(1.0 + total, RUN_SPEED_MULT_MAX)
+
+
 func skill_bonus(hero: String, effect: String) -> float:
 	"""
 	The raw summed bonus for `effect` — `per_rank * rank`, over every node in the

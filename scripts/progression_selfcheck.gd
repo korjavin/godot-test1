@@ -534,6 +534,36 @@ func _check_caps() -> void:
 	if progression.skill_mult(hero, "run_speed") > Progression.RUN_SPEED_MULT_MAX:
 		_fail("the run multiplier passed its own cap")
 
+	# THE STACKING CASE. Teibi's Scurry is a movement passive too, so the +20% cap
+	# has to hold over the SUM rather than over each half: multiplying a capped
+	# x1.14 by a capped x1.10 gives x1.254, which both halves individually respect
+	# and the guardrail does not. `gait_mult()` is the one place that is decided.
+	if not is_equal_approx(progression.gait_mult(hero, false), 1.14):
+		_fail("a normal-form fully-ranked Teibi has a gait multiplier of x%.3f, wanted x1.14"
+				% progression.gait_mult(hero, false))
+	_spend_or_fail(progression, hero, "hold")  # Scurry's prerequisite
+	_spend_or_fail(progression, hero, "scurry")
+	if progression.gait_mult(hero, true) > Progression.RUN_SPEED_MULT_MAX + 0.0001:
+		_fail("Fleet Foot + Scurry stack to x%.3f in small form, past the x%.3f cap"
+				% [progression.gait_mult(hero, true), Progression.RUN_SPEED_MULT_MAX])
+	if not is_equal_approx(progression.gait_mult(hero, true), Progression.RUN_SPEED_MULT_MAX):
+		_fail("a maxed small Teibi has a gait multiplier of x%.3f, wanted the x%.3f cap"
+				% [progression.gait_mult(hero, true), Progression.RUN_SPEED_MULT_MAX])
+	# NEGATIVE CONTROL for that clamp: Scurry must still be worth its point to a
+	# Teibi who has NOT maxed Fleet Foot, or the cap has turned it into a node that
+	# silently buys nothing. Measured on a second, otherwise-empty profile.
+	var lone := _make_progression()
+	_grant_points(lone, 2)
+	_spend_or_fail(lone, "teibi", "hold")
+	_spend_or_fail(lone, "teibi", "scurry")
+	if not is_equal_approx(lone.gait_mult("teibi", true), 1.10):
+		_fail("Scurry alone gives x%.3f in small form, wanted x1.10"
+				% lone.gait_mult("teibi", true))
+	if not is_equal_approx(lone.gait_mult("teibi", false), 1.0):
+		_fail("Scurry applies at x%.3f in NORMAL form — it is a small-form skill"
+				% lone.gait_mult("teibi", false))
+	lone.free()
+
 	# THE CLAMP ITSELF, exercised past what the tree can reach: the caps are a
 	# balance contract, so they have to hold for a hand-edited or migrated profile
 	# too, not only for one the UI produced.
@@ -771,6 +801,89 @@ func _check_skill_effects_on_player() -> void:
 	player.queue_free()
 
 
+func _check_phase_echo_refunds_a_wall_pass() -> void:
+	"""
+	Primm's Phase Echo pays out for going THROUGH something, and the wall is
+	usually NOT at the landing spot.
+
+	This is the bug the review found, kept as a check because it is invisible in
+	every other way: the landing scan starts at the desired distance and only ever
+	walks outward, so a 2 m block three metres ahead — the ordinary case, and the
+	whole point of Phase Step — leaves the first candidate clear and the refund
+	silently never fires. Nothing errors; the skill just does nothing most of the
+	time.
+
+	So it is measured against REAL geometry, with the negative control first: the
+	same blink over open ground must refund nothing, or "the refund fired" would
+	also be true of a build that refunds unconditionally.
+	"""
+	var packed: PackedScene = load(PLAYER_SCENE)
+	if packed == null:
+		_fail("could not load %s" % PLAYER_SCENE)
+		return
+	var player: Node3D = packed.instantiate()
+	root.add_child(player)
+	await physics_frame
+
+	var primm_index: int = -1
+	for index in player.CHARACTERS.size():
+		if String(player.CHARACTERS[index]["name"]) == "primm":
+			primm_index = index
+	if primm_index < 0:
+		_fail("no primm in CHARACTERS — the Phase Echo measurement needs it")
+		player.queue_free()
+		return
+	player.set_active_character(primm_index)
+	player.global_position = Vector3.ZERO
+	player.global_rotation = Vector3.ZERO  # facing -Z, which is `-basis.z`
+
+	var progression := _make_progression()
+	_grant_points(progression, 4)
+	_spend_or_fail(progression, "primm", "reach")  # Phase Echo's prerequisite
+	_spend_or_fail(progression, "primm", "echo")
+	var want_refund: float = progression.skill_bonus("primm", "primm_refund")
+	if want_refund <= 0.0:
+		_fail("Phase Echo is ranked but refunds %.3f s — nothing below can be measured"
+				% want_refund)
+
+	# NEGATIVE CONTROL: open ground, so no wall was passed and nothing is refunded.
+	player._pending_cooldown_refund = 0.0
+	if not player._ability_primm():
+		_fail("the open-ground blink did not fire")
+	if not is_equal_approx(player._pending_cooldown_refund, 0.0):
+		_fail("a blink across open ground refunded %.3f s of cooldown"
+				% player._pending_cooldown_refund)
+
+	# Now a thin wall BETWEEN Primm and a clear landing spot. 2 m deep at 3 m out,
+	# so the 7.2 m landing point (6.0 x Long Step's +20%) is well past it and the
+	# landing scan's first candidate is clear — exactly the case that used to pay
+	# nothing.
+	player.global_position = Vector3.ZERO
+	player.velocity = Vector3.ZERO
+	var wall := StaticBody3D.new()
+	var shape := CollisionShape3D.new()
+	var box := BoxShape3D.new()
+	box.size = Vector3(8.0, 4.0, 2.0)
+	shape.shape = box
+	wall.add_child(shape)
+	root.add_child(wall)
+	wall.global_position = Vector3(0.0, 1.0, -3.0)
+	await physics_frame
+	await physics_frame
+
+	player._pending_cooldown_refund = 0.0
+	if not player._ability_primm():
+		_fail("the wall-pass blink did not fire — is the landing spot blocked too?")
+	if not is_equal_approx(player._pending_cooldown_refund, want_refund):
+		_fail("blinking through a wall refunded %.3f s, wanted %.3f — the refund only "
+				% [player._pending_cooldown_refund, want_refund]
+				+ "sees a wall AT the landing spot, not one on the way")
+
+	wall.queue_free()
+	progression.free()
+	player.queue_free()
+
+
 func _check_panel_spends_and_releases_its_pause() -> void:
 	"""
 	The panel buys a rank, and it hands the pause back.
@@ -839,5 +952,6 @@ func _run() -> void:
 	_check_ranks_merge_is_monotone()
 	await _check_streak_does_not_inflate_lifetime()
 	await _check_skill_effects_on_player()
+	await _check_phase_echo_refunds_a_wall_pass()
 	await _check_panel_spends_and_releases_its_pause()
 	_report()

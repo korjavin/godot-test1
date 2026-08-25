@@ -1096,12 +1096,12 @@ func calculate_current_speed() -> float:
 	# and Primm already walks at 5.75), so no skill may reach the `else` branch
 	# below. Deliberately computed HERE, above the branch, so the walk return is
 	# textually the only one that does not use it.
-	var gait_mult: float = _skill_mult("run_speed")
-	# Teibi's Scurry rides the same axis but only while he is SMALL (state 1) —
-	# `skill_mult` already answers 1.0 for every other character, so the size test
-	# is the only gate needed.
-	if teibi_size_state == 1:
-		gait_mult *= _skill_mult("teibi_small_speed")
+	# ONE call, not a product of two: Teibi's Scurry is a movement passive as much
+	# as Fleet Foot is, and multiplying two separately-capped multipliers reaches
+	# x1.254 — past the +20% both halves individually respect. `gait_mult()` sums
+	# the bonuses and clamps once, which is why the small-form test is a parameter
+	# rather than a second multiplication here.
+	var gait_mult: float = _skill_gait_mult()
 
 	if is_ducking:
 		return DUCK_SPEED * speed_scale * gait_mult
@@ -2736,6 +2736,21 @@ func _skill_bonus(effect: String) -> float:
 	return float(progression.skill_bonus(CHARACTERS[current_character_index]["name"], effect))
 
 
+func _skill_gait_mult() -> float:
+	"""
+	The run/duck multiplier for the current character in its current form, capped
+	at `RUN_SPEED_MULT_MAX` over ALL movement passives together (Fleet Foot and
+	Teibi's small-form Scurry). One call, so the cap has one home — see
+	`Progression.gait_mult()`. 1.0 with no progression.
+	"""
+	var progression := _progression()
+	if progression == null:
+		return 1.0
+	return float(progression.gait_mult(
+		CHARACTERS[current_character_index]["name"], teibi_size_state == 1
+	))
+
+
 func _update_ability_timers(delta: float) -> void:
 	"""Count down cooldowns, the Windman air boost, and Teibi's form timer."""
 	for i in ability_cooldowns.size():
@@ -2870,7 +2885,6 @@ func _ability_primm() -> bool:
 	# own (a blink that lands past 40 m simply never happens).
 	var target := global_position
 	var found := false
-	var blocked_on_the_way := false
 	var d := PRIMM_BLINK_DISTANCE * _skill_mult("primm_blink")
 	while d <= PRIMM_BLINK_MAX_DISTANCE:
 		var candidate := global_position + forward * d
@@ -2878,20 +2892,26 @@ func _ability_primm() -> bool:
 			target = candidate
 			found = true
 			break
-		# The desired spot was solid, so this blink genuinely passed THROUGH
-		# something — which is what Phase Echo pays out for. Open-ground blinks
-		# (the common case) never set this and never refund.
-		blocked_on_the_way = true
 		d += PRIMM_BLINK_STEP
 
 	if not found:
 		return false
 
 	# Phase Echo: a wall-pass hands back whole seconds of cooldown, applied by
-	# `try_activate_ability()` when it charges it. 0.0 without the skill, so this
-	# line is inert for an unranked Primm.
-	if blocked_on_the_way:
-		_pending_cooldown_refund = _skill_bonus("primm_refund")
+	# `try_activate_ability()` when it charges it.
+	#
+	# THE WALL IS USUALLY NOT AT THE LANDING SPOT, which is why this needs its own
+	# scan rather than a flag set by the loop above. That loop starts at the
+	# DESIRED distance and only ever walks OUTWARD, so the ordinary case — a single
+	# 2 m block three metres ahead, with the 6 m landing spot in open ground — sees
+	# a clear first candidate and never notices the wall it just went through. The
+	# whole travelled segment is what has to be tested.
+	#
+	# Gated on the skill being ranked, so an unranked Primm pays for none of these
+	# extra shape queries; and it is a key press either way, not a per-frame path.
+	var refund := _skill_bonus("primm_refund")
+	if refund > 0.0 and _blink_passed_through(target):
+		_pending_cooldown_refund = refund
 
 	# A quick flash where he leaves and where he arrives, to sell the teleport —
 	# plus three small staggered flashes along the path between them, so the eye
@@ -2904,6 +2924,33 @@ func _ability_primm() -> bool:
 	velocity = Vector3.ZERO  # land cleanly on the far side, no carried momentum
 	_spawn_ability_effect(global_position, Color(0.45, 0.5, 1.0, 0.5), 2.0, 0.35)
 	return true
+
+
+func _blink_passed_through(target: Vector3) -> bool:
+	"""
+	True when solid geometry stands anywhere BETWEEN the player and `target` — i.e.
+	when the blink about to happen is a genuine wall-pass rather than a hop across
+	open ground. Sampled at `PRIMM_BLINK_STEP` with the same capsule-centre probe
+	the landing scan uses, so the flat ground never counts and the two agree about
+	what "solid" means.
+
+	Called only for a Primm who has bought Phase Echo (see `_ability_primm`), on a
+	key press, so a dozen shape queries is the right shape of cost. `ponytail:` a
+	single swept capsule would be one query instead — the ceiling here is a wall
+	thinner than the 0.5 m step slipping between two samples, which reads as "no
+	refund that time", never as a wrong teleport.
+	"""
+	var travel := target - global_position
+	var distance := travel.length()
+	if distance <= PRIMM_BLINK_STEP:
+		return false
+	var direction := travel / distance
+	var d := PRIMM_BLINK_STEP
+	while d < distance:
+		if _is_body_blocked_at(global_position + direction * d):
+			return true
+		d += PRIMM_BLINK_STEP
+	return false
 
 
 func _is_body_blocked_at(pos: Vector3) -> bool:
