@@ -801,6 +801,64 @@ func _check_skill_effects_on_player() -> void:
 	player.queue_free()
 
 
+func _check_ranks_survive_a_relaunch() -> void:
+	"""
+	Ranks come back after the game is closed — the bead's own acceptance line, and
+	the one thing `merge_ranks()` on its own cannot prove.
+
+	That unit check pins the MERGE RULE; this pins the SERIALIZATION either side of
+	it, which fails in ways the merge never sees: a mistyped ConfigFile key, a
+	Dictionary written raw where the reader expects JSON, or a `_read_local()` that
+	simply never looks. All of those leave every in-memory assertion green and
+	silently drop a player's whole tree on the next launch.
+
+	Driven against the LOCAL layer only — a second `BestRunStore` reading what the
+	first wrote IS what "relaunch" means here — so it makes no network request and
+	POSTs nothing. `user://best_run.cfg` is already backed up and restored around
+	this whole file (see the header), which is what makes writing to it safe.
+	"""
+	var ranks: Dictionary = {"windman": {"cd1": 2, "gale": 1}, "teibi": {"fleet": 2}}
+
+	var writer := BestRunStore.new()
+	writer.lifetime_coins = 1234
+	writer.spent_points = 5
+	BestRunStore.merge_ranks(writer.skill_ranks, ranks)
+	writer._write_local()
+	writer.free()
+
+	# A brand-new store, exactly as the next launch would build one.
+	var reader := BestRunStore.new()
+	reader._read_local()
+	if reader.spent_points != 5 or reader.lifetime_coins != 1234:
+		_fail("the counters did not survive a relaunch: %d coins / %d spent"
+				% [reader.lifetime_coins, reader.spent_points])
+	if int(reader.skill_ranks.get("windman", {}).get("cd1", 0)) != 2 \
+			or int(reader.skill_ranks.get("windman", {}).get("gale", 0)) != 1 \
+			or int(reader.skill_ranks.get("teibi", {}).get("fleet", 0)) != 2:
+		_fail("the skill ranks did not survive a relaunch: %s" % [reader.skill_ranks])
+
+	# ...and a `Progression` built on that store reads them back as real ranks,
+	# which is the half that would still be broken if `_on_progression_loaded`
+	# ignored `store.skill_ranks` (it cannot come through the signal — see there).
+	var progression := _make_progression()
+	progression.store = reader
+	progression._on_progression_loaded(reader.lifetime_coins, reader.spent_points)
+	if progression.rank_of("windman", "cd1") != 2:
+		_fail("a relaunched profile has %d ranks of windman.cd1, wanted 2"
+				% progression.rank_of("windman", "cd1"))
+	# NEGATIVE CONTROL: the ranks are the ones that were STORED, not a default —
+	# an untouched node must still read 0, or "the ranks loaded" would also be true
+	# of a loader that filled the tree in.
+	if progression.rank_of("windman", "cd2") != 0:
+		_fail("a relaunched profile invented %d ranks of an unbought skill"
+				% progression.rank_of("windman", "cd2"))
+	# The store is freed by hand rather than by the node, since it was never
+	# added as a child.
+	progression.store = null
+	progression.free()
+	reader.free()
+
+
 func _check_phase_echo_refunds_a_wall_pass() -> void:
 	"""
 	Primm's Phase Echo pays out for going THROUGH something, and the wall is
@@ -950,6 +1008,7 @@ func _run() -> void:
 	_check_spending()
 	_check_caps()
 	_check_ranks_merge_is_monotone()
+	_check_ranks_survive_a_relaunch()
 	await _check_streak_does_not_inflate_lifetime()
 	await _check_skill_effects_on_player()
 	await _check_phase_echo_refunds_a_wall_pass()

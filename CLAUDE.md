@@ -71,7 +71,8 @@ godot --headless --path . --script res://scripts/view_selfcheck.gd
 # coins, not 30; bank_awarded: a claim won in a room must credit its
 # pre-multiplier base, not the award), AND the whole skill tree — the tree data,
 # spending with a negative control per refusal, both hard caps (including past
-# what the tree can buy), the rank merge, and the effects MEASURED on a live
+# what the tree can buy), the rank merge, ranks surviving a relaunch (a second
+# BestRunStore reading what the first wrote), and the effects MEASURED on a live
 # player: walk speed byte-identical with every speed node maxed, running risen,
 # the cooldown dial still exactly full, the refund consumed, and a panel that
 # hands its pause back. Prints "SELFCHECK OK", exits 0.
