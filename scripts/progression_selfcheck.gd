@@ -23,10 +23,19 @@ extends SceneTree
 ## the first half is true of the bug it exists to catch.
 ##
 ## PERSISTENCE IS DELIBERATELY NOT HERE. `progression.persistence_enabled` is off
-## throughout, so this never touches the developer's `user://best_run.cfg` and
-## never POSTs to the deployed lobby; the store round trip (local layer AND server)
-## is driven end to end by `scripts/best_run_e2e.gd` against the local lobby
-## `scripts/mp_e2e.sh` already starts.
+## throughout, so no progression store is built and nothing here reads, rewrites
+## or POSTs a profile; the store round trip (local layer AND server) is driven end
+## to end by `scripts/best_run_e2e.gd` against the local lobby `scripts/mp_e2e.sh`
+## already starts.
+##
+## THE ONE THING THAT STILL TOUCHES `user://best_run.cfg` IS THE PLAYER SCENE, and
+## it is backed up and restored around the run. `player_controller._ready()`
+## unconditionally builds its own `BestRunStore` and calls `fetch()`, which on a
+## machine with no profile MINTS AND WRITES a player id — so booting the real
+## player (which the streak check has to, since measuring the real
+## `collect_coin()` is its whole point) leaves a file behind unless something puts
+## it back. `_backup_local` / `_restore_local` are `best_run_e2e.gd`'s, verbatim,
+## for the same reason.
 ##
 ## Deliberately NOT localized (a debug surface, per CLAUDE.md).
 
@@ -37,6 +46,26 @@ const PLAYER_SCENE: String = "res://scenes/player.tscn"
 const Coin: GDScript = preload("res://scripts/coin.gd")
 
 var _failures: Array[String] = []
+
+## The pre-run contents of `user://best_run.cfg`, restored on the way out. `null`
+## when there was no file (the fresh-machine case), which `_restore_local`
+## deletes for.
+var _saved_cfg: Variant = null
+
+
+func _backup_local() -> void:
+	if FileAccess.file_exists(BestRunStore.CONFIG_PATH):
+		_saved_cfg = FileAccess.get_file_as_bytes(BestRunStore.CONFIG_PATH)
+
+
+func _restore_local() -> void:
+	if _saved_cfg == null:
+		DirAccess.remove_absolute(BestRunStore.CONFIG_PATH)
+		return
+	var f := FileAccess.open(BestRunStore.CONFIG_PATH, FileAccess.WRITE)
+	if f:
+		f.store_buffer(_saved_cfg as PackedByteArray)
+		f.close()
 
 
 func _initialize() -> void:
@@ -51,6 +80,7 @@ func _fail(message: String) -> void:
 
 
 func _report() -> void:
+	_restore_local()
 	if _failures.is_empty():
 		print("SELFCHECK OK")
 		quit(0)
@@ -242,6 +272,8 @@ func _run() -> void:
 	# built before the first frame has run its own setup yet. One frame here makes
 	# every later `add_child()` ready synchronously.
 	await process_frame
+	# Before anything can boot the player scene and mint a profile id into it.
+	_backup_local()
 	_check_curve()
 	_check_points_and_levelling()
 	_check_store_load_is_monotone()

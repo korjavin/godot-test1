@@ -175,6 +175,12 @@ func submit_progression(new_lifetime: int, new_spent: int) -> void:
 	Same shape and same reasoning as `submit()`, including the `_read_local()`
 	first: without it a store whose `fetch()` never ran would write its zeroes over
 	a real lifetime total, which on this record is a player's LEVEL.
+
+	A save landing while the previous POST is still in flight is answered ERR_BUSY
+	and dropped — a level-up followed closely by a game over is the realistic case.
+	That costs only the SERVER half (the local layer is written above, before the
+	request), and it is self-repairing rather than lost: the next boot's GET sees a
+	server behind the local record and fires the catch-up POST for exactly this.
 	"""
 	_read_local()
 	lifetime_coins = maxi(lifetime_coins, new_lifetime)
@@ -236,7 +242,19 @@ func _write_local() -> void:
 	Persist the records (and the player id, which shares the store). Failures are
 	ignored: an unpersisted record is non-fatal and must never interrupt the
 	game-over flow.
+
+	EVERY WRITE IS A READ-MODIFY-WRITE MERGE, and that is what makes two stores on
+	one file safe. A store serializes ALL its fields, but it only ever *changes*
+	the two it was told about — the other pair is whatever it happened to read at
+	boot. So without the `_read_local()` below, the player's store mirroring a
+	late GET reply would write its boot-time `lifetime_coins` over a level the
+	player earned in between (and the progression store would do the same to a
+	fresh best run). Reading first makes the write a merge instead of an
+	overwrite: `_read_local()` only ever raises, so this cannot lower anything,
+	and the cost is one file open on a path that runs at a level-up and a game
+	over, never per frame.
 	"""
+	_read_local()
 	if OS.has_feature("web"):
 		_ls_set(LS_DISTANCE, str(distance))
 		_ls_set(LS_COINS, str(coins))
