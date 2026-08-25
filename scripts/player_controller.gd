@@ -2537,6 +2537,10 @@ var windman_boost_timer: float = 0.0
 ## zeroed on use and on respawn, so it can never leak into the next press.
 var _pending_cooldown_refund: float = 0.0
 
+## Cached `Progression` node — see `_progression()` for why this one is cached
+## when the sibling weather/terrain lookups beside it are not.
+var _progression_node: Node = null
+
 ## Teibi's size cycle: 0 = normal, 1 = small, 2 = giant.
 var teibi_size_state: int = 0
 
@@ -2707,10 +2711,25 @@ func _terrain_is_river_here() -> bool:
 # game before this bead, exactly.
 
 func _progression() -> Node:
-	"""The Progression node, or null. Group lookup, no hard reference, no cache —
-	this runs on a key press and on the gait branch, never per frame per entity."""
-	var node := get_tree().get_first_node_in_group("progression")
-	return node if node != null and node.has_method("skill_mult") else null
+	"""
+	The Progression node, or null. Group lookup, no hard reference — but CACHED,
+	because two of the callers really are per-frame paths: `_skill_gait_mult()`
+	runs from `calculate_current_speed()` in `_physics_process`, and
+	`_skilled_ability_cooldown()` runs from `get_ability_cooldown_ratio()`, which
+	`ability_hud.gd` polls every frame. Same caching (and the same
+	`is_instance_valid` re-resolve) as `coin_hud.gd` and the skill panel, for the
+	same reason: a group lookup per frame for a node that may legitimately never
+	exist is the wrong shape.
+
+	A null result is deliberately NOT cached — a scene with no Progression node
+	pays one lookup per frame, exactly as `_weather_is_raining_here()` and
+	`_terrain_is_river_here()` beside it already do, and the node cannot appear
+	late in any scene that has one.
+	"""
+	if _progression_node == null or not is_instance_valid(_progression_node):
+		var node := get_tree().get_first_node_in_group("progression")
+		_progression_node = node if node != null and node.has_method("skill_mult") else null
+	return _progression_node
 
 
 func _skill_mult(effect: String) -> float:

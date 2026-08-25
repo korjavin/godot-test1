@@ -59,10 +59,14 @@ extends Control
 ## together, so one pause fixes both. `PROCESS_MODE_ALWAYS` here is what lets the
 ## key that CLOSES the panel still be heard under that pause.
 ##
-## **It will not open over somebody else's pause.** The start overlay, the P-pause
-## overlay and the MP panel all draw at or above this node, so a panel opened
-## underneath one of them would be invisible while still holding input; refusing
-## is one line (`tree.paused and not _paused_by_us`) and covers all three at once.
+## **It will not open over somebody else's pause.** The start overlay is a later
+## `HUD` child and the P-pause overlay is its own `CanvasLayer` at 90, so both
+## draw above this node and a card opened underneath either would be invisible
+## while still holding input. (The MP panel is the exception that does not need
+## the argument — this node is declared after it, so this one draws on top — but
+## two panels open at once is still nobody's idea of a good screen.) Refusing is
+## one line, `tree.paused and not _paused_by_us`, and it covers all three plus
+## whatever takes the same pause next.
 ## The Game Over screen is the mirror case `mp_ui` documents: it is PAUSABLE, so
 ## pausing there would kill Play Again — the panel still opens, it just leaves the
 ## tree running, which is safe because a game-over player is already frozen.
