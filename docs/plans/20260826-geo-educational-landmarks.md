@@ -209,38 +209,38 @@ All of them:
   `_spawn_artifact_accent(..., _get_camp_ember_material())` (warm) for flames/beacons.
   **Do not add a third glow material.**
 
-- [ ] `_landmark_stonehenge` — outer ring of 5 trilithons on a ~6 m radius: two
+- [x] `_landmark_stonehenge` — outer ring of 5 trilithons on a ~6 m radius: two
       uprights (≈1.0 × 4.2 × 1.0) plus a lintel (≈3.4 × 0.8 × 1.0) laid across their
       tops, each trilithon yawed to face the centre; an inner horseshoe of 4 shorter
       standing stones with a slight `tilt`. `LM_STONE_GREY`, per-stone colour jitter.
       Return radius ≈ 7.6. No accent.
-- [ ] `_landmark_moai` — a low ahu platform slab (≈11 × 0.7 × 3) with 5 statues
+- [x] `_landmark_moai` — a low ahu platform slab (≈11 × 0.7 × 3) with 5 statues
       standing in a row on it, all facing the same way: body (≈1.3 × 3.0 × 0.9),
       head (≈1.15 × 1.5 × 1.0) with the classic heavy brow as a small `collide = false`
       dark box, and a slight per-statue yaw wobble. `LM_BASALT`. Radius ≈ 6.6. No accent.
-- [ ] `_landmark_giza` — three stepped pyramids of different sizes (about 9, 7 and 5
+- [x] `_landmark_giza` — three stepped pyramids of different sizes (about 9, 7 and 5
       tapering layers) on a shallow diagonal, `LM_SANDSTONE`, plus ONE emissive
       capstone accent on the largest. Keep the triangle compact: radius ≈ 9.4.
-- [ ] `_landmark_golden_gate` — two towers ~11 m apart, each two vertical legs
+- [x] `_landmark_golden_gate` — two towers ~11 m apart, each two vertical legs
       (≈0.9 × 11 × 0.9) tied by two horizontal crossbeams; a deck slab (≈17 × 0.6 × 3)
       spanning between them and overhanging both ends; and the main cable approximated
       by a chain of small boxes in a shallow catenary from tower top to tower top,
       dipping to the deck at mid-span. `LM_ORANGE`. Radius ≈ 9.4. No accent.
       Note in a comment that the deck is *solid* and climbable-looking on purpose —
       it registers as ordinary block stone downstream.
-- [ ] `_landmark_liberty` — a stepped pedestal (3 shrinking slabs), a tapering robe
+- [x] `_landmark_liberty` — a stepped pedestal (3 shrinking slabs), a tapering robe
       (3–4 stacked boxes narrowing upward), a head, a crown of ~7 small spiked boxes
       radiating with `tilt`, and a raised arm (two boxes at an angle) topped by ONE
       emissive torch accent. `LM_COPPER`. Radius ≈ 5.4, top ≈ 13.
-- [ ] `_landmark_plaza_mayor` — a square arcaded courtyard: four building rows
+- [x] `_landmark_plaza_mayor` — a square arcaded courtyard: four building rows
       (≈12 m outer side, 3 storeys) enclosing an open plaza, with an arched gap in one
       side; a row of small pillars along each inner face as the arcade; `LM_OCHRE`
       walls with an `LM_ROOF` cornice band; a small statue plinth at the centre.
       Radius ≈ 8.6. No accent.
-- [ ] `_landmark_eiffel` — four tilted legs converging inward, a first platform slab,
+- [x] `_landmark_eiffel` — four tilted legs converging inward, a first platform slab,
       a second smaller platform, a tapering shaft of 3–4 stacked boxes, and an antenna,
       `LM_IRON`; ONE emissive beacon accent at the top. Radius ≈ 6.2, top ≈ 18.
-- [ ] `_landmark_taj` — a white marble plinth (≈12 m), a main cube, a dome as a stack
+- [x] `_landmark_taj` — a white marble plinth (≈12 m), a main cube, a dome as a stack
       of 3 shrinking boxes plus a finial, four corner minarets (thin tall boxes with a
       small cap), and a dark `collide = false` iwan arch recess on the front face.
       `LM_MARBLE`. Radius ≈ 8.6. No accent.
