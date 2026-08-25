@@ -774,7 +774,16 @@ func _hero_summary(value: Variant) -> String:
 func _on_heroes_changed(heroes: Dictionary, pool: Array) -> void:
 	var names: Array[String] = []
 	for hero: Variant in pool:
-		names.append(String(hero))
+		# TYPE-CHECKED, not converted, for exactly the reason spelled out over the
+		# room rows in `_on_rooms_listed`: `String(v)` is a Variant CONSTRUCTOR
+		# with no overload for most types, and the resulting runtime error unwinds
+		# this whole function. `LobbyClient` type-checks the CONTAINER, never the
+		# elements, so one non-string in the pool from a hostile or older lobby
+		# (the URL is settable with `?lobby=`) aborted before `_rebuild_hero_buttons`
+		# ever ran — leaving the room with no hero picker at all.
+		if typeof(hero) != TYPE_STRING:
+			continue
+		names.append(hero as String)
 	if names != _hero_pool:
 		_rebuild_hero_buttons(names)
 	_refresh_hero_buttons(heroes)
@@ -813,7 +822,11 @@ func _refresh_hero_buttons(heroes: Dictionary) -> void:
 	for i: int in range(_hero_buttons.size()):
 		var hero: String = _hero_pool[i]
 		var button: Button = _hero_buttons[i]
-		var holder: String = String(heroes.get(hero, ""))
+		# Same trust boundary as the pool above: an assignment whose holder is not
+		# a string must read as "free", not abort the relabel loop and leave the
+		# rest of the row stuck on stale text and a stale `disabled`.
+		var raw_holder: Variant = heroes.get(hero, "")
+		var holder: String = (raw_holder as String) if typeof(raw_holder) == TYPE_STRING else ""
 		if hero == mine:
 			button.text = "%s  ✓ you" % hero.capitalize()
 			button.disabled = false
@@ -844,8 +857,17 @@ func _on_hero_pressed(hero: String) -> void:
 func _member_name(manager: Node, id: String) -> String:
 	if manager != null and manager.has_method("get_members"):
 		for member: Variant in manager.get_members():
-			if member is Dictionary and String((member as Dictionary).get("id", "")) == id:
-				return String((member as Dictionary).get("name", ""))
+			if typeof(member) != TYPE_DICTIONARY:
+				continue
+			var entry: Dictionary = member as Dictionary
+			# Type-checked rather than converted — see `_on_heroes_changed`.
+			var raw_id: Variant = entry.get("id", "")
+			if typeof(raw_id) != TYPE_STRING or (raw_id as String) != id:
+				continue
+			var raw_name: Variant = entry.get("name", "")
+			if typeof(raw_name) == TYPE_STRING:
+				return raw_name as String
+			break
 	return id.substr(0, 4)
 
 
@@ -1042,8 +1064,14 @@ func _member_lines(manager: Node) -> String:
 		return ""
 	var lines: PackedStringArray = PackedStringArray()
 	for member: Variant in manager.get_members():
-		if member is Dictionary and member.has("name"):
-			lines.append("• %s" % String(member["name"]))
+		if typeof(member) != TYPE_DICTIONARY:
+			continue
+		# Type-checked rather than converted — see `_on_heroes_changed`. `has("name")`
+		# only proved the key exists, so a non-string name still aborted the render
+		# and blanked the whole member list.
+		var raw_name: Variant = (member as Dictionary).get("name", null)
+		if typeof(raw_name) == TYPE_STRING:
+			lines.append("• %s" % (raw_name as String))
 	if lines.is_empty():
 		return ""
 	return "In room:\n" + "\n".join(lines)

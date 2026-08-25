@@ -599,3 +599,74 @@ func TestStallQuorumNeedsSilentMaster(t *testing.T) {
 		t.Fatalf("after the master went silent, master = %v, wanted %v", m["id"], intruder.id)
 	}
 }
+
+// TestTinyFrameFloodEvictsTheFlooderNotTheRoom is the negative control for the
+// frame-rate bucket. The byte bucket alone did not bound MESSAGE count, so a
+// stream of tiny broadcast `signal` frames stayed inside its 256 KB budget while
+// fanning out enough frames to overflow every other member's 64-deep send queue —
+// `Member.send` then killed the VICTIMS with "peer too slow", leaving the flooder
+// alone in the room and elected master without a single stall vote being cast.
+//
+// The flood is deliberately sized to stay WELL under msgRateBurst bytes (asserted
+// below), so the only thing that can refuse it is the frame bucket: remove that
+// and this test fails with the flooder still happily connected.
+func TestTinyFrameFloodEvictsTheFlooderNotTheRoom(t *testing.T) {
+	base, hub := newServerHub(t)
+	host := dial(t, base, "", "host")
+	flooder := dial(t, base, host.room, "flooder")
+	host.want("peer_join")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	body, _ := json.Marshal(map[string]any{"type": "signal", "payload": json.RawMessage(`1`)})
+	// A LITERAL count, not one derived from frameRateBurst: deriving it makes the
+	// flood grow with the constant, so raising the constant to disable the bucket
+	// would also make the flood pass the byte budget and the test would fail for
+	// the wrong reason instead of catching the removal.
+	const frames = 3000
+	if frames <= frameRateBurst {
+		t.Fatalf("flood of %d frames no longer exceeds frameRateBurst (%d)", frames, frameRateBurst)
+	}
+	if total := len(body) * frames; total >= msgRateBurst {
+		t.Fatalf("flood of %d bytes is inside the BYTE budget (%d) — the test would "+
+			"pass on the byte bucket alone and prove nothing", total, msgRateBurst)
+	}
+	for i := 0; i < frames; i++ {
+		// The write fails once the lobby closes the socket, which is the intended
+		// outcome — stop there rather than failing.
+		if err := flooder.c.Write(ctx, websocket.MessageText, body); err != nil {
+			break
+		}
+	}
+
+	// Read until the socket errors: that is the lobby's close frame arriving.
+	rctx, rcancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer rcancel()
+	for {
+		if _, _, err := flooder.c.Read(rctx); err != nil {
+			if rctx.Err() != nil {
+				t.Fatal("the lobby never refused the flood — the frame bucket is not firing")
+			}
+			break
+		}
+	}
+
+	// `Leave` runs in the flooder's own goroutine after the close, so settle first.
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		hub.mu.Lock()
+		r := hub.rooms[host.room]
+		var names []string
+		if r != nil {
+			for _, m := range r.members {
+				names = append(names, m.Name)
+			}
+		}
+		hub.mu.Unlock()
+		if len(names) == 1 && names[0] == "host" {
+			return // Flooder gone, host still in its own room.
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("the flooder was not evicted, or it took the host down with it")
+}

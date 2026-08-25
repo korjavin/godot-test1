@@ -986,8 +986,22 @@ static func croc_id_for(node_name: String) -> int:
 	~1000 loaded crocodiles is a ~1e-4 birthday chance per run. The upgrade path
 	for both is the coin id's: thread an explicit (chunk, index) id out of the
 	spawners.
+
+	SIGN-EXTENDED TO int32, AND THAT IS LOAD-BEARING, NOT TIDINESS. String.hash()
+	is an unsigned 32-bit value widened into a GDScript int, so it runs to 2^32-1
+	— but mp_manager ships these ids in the sync packet's PackedInt32Array ("i"),
+	which stores int32_t. Every id above INT32_MAX therefore WRAPPED NEGATIVE in
+	transit, missed the receiver's `_synced_crocs` lookup (whose keys were the
+	unwrapped values), and landed on the deliberately-silent "this peer has not
+	generated that chunk" path. Measured over the real name scheme, 43% of
+	crocodiles hash above INT32_MAX — so nearly half the pack was silently never
+	synced, fell back to local simulation after CROC_SYNC_TIMEOUT and drifted, in
+	the one code path engineered to say nothing. Sign-extending here (rather than
+	widening the packet) keeps sender, receiver, `_dead_crocs` and `_synced_crocs`
+	all naming a crocodile by the same number, at zero bandwidth.
 	"""
-	return node_name.hash()
+	var h: int = node_name.hash()
+	return h - 4294967296 if h > 2147483647 else h
 
 
 func croc_id() -> int:
@@ -1156,7 +1170,16 @@ func _tick_remote(delta: float) -> void:
 	rotation.y = lerp_angle(rotation.y, _remote_yaw, minf(delta * CROC_REMOTE_TURN_RATE, 1.0))
 
 	move_and_slide()
-	_handle_collisions()
+	# GATED ON is_paused, exactly as the local path gates on `was_paused`. The
+	# pause IS _pause_and_change_direction's post-bite recovery window, and the
+	# master ships it in the sample's CROC_FLAG_PAUSED bit precisely so every peer
+	# knows this crocodile is standing down. Ungated, a synced crocodile kept
+	# re-triggering _on_player_collision throughout a pause the master treats as
+	# harmless — so the peer it had just bitten could be bitten again the instant
+	# its respawn i-frames lapsed, i.e. bites were strictly harsher for everyone
+	# who is not the master, which is the opposite of what the sync is for.
+	if not is_paused:
+		_handle_collisions()
 
 	# Animate from the speed we actually moved at, exactly like the local path.
 	_animate_body(delta)

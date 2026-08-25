@@ -220,10 +220,18 @@ func (h *Hub) ListRooms() []RoomInfo {
 	defer h.mu.Unlock()
 
 	out := make([]RoomInfo, 0, min(len(h.rooms), maxListedRooms))
+	// Bounded on rooms EXAMINED, not rooms emitted. Breaking on len(out) bounded
+	// only the response: full and mid-teardown rooms never increment it, so a hub
+	// full of them was scanned end to end under h.mu — the same lock every Signal,
+	// Join and election serialises on — for one unauthenticated, unrated GET.
+	// Join creates a room for any well-formed unknown code, so the room count is
+	// caller-controlled at one room per socket.
+	examined := 0
 	for code, r := range h.rooms {
-		if len(out) >= maxListedRooms {
+		if examined >= maxListedRooms {
 			break
 		}
+		examined++
 		n := len(r.members)
 		if n == 0 || n >= MaxMembers {
 			continue

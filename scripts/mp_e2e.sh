@@ -114,7 +114,21 @@ run_instance() {
 # `--stall` from the start: it only silences the heartbeat, and the seed phase's
 # joiner is gone long before the manager's 4 s + 2 s stall clock could fire.
 echo "E2E: hosting"
-run_instance "$LOG_DIR/host.log" --role=host --hold="$HOST_HOLD" --stall &
+# NOT `run_instance ... &`. Backgrounding a shell FUNCTION forks a subshell, and
+# with traps installed bash cannot apply its last-command exec optimisation — so
+# `$!` was the wrapper, `kill "$HOST_PID"` in `cleanup` killed only the wrapper,
+# and the exec'd Godot was reparented to init and ran on for the rest of its 180 s
+# alarm: one stray headless instance per run (and per Ctrl-C), still talking to a
+# lobby this script had already killed and writing into a $LOG_DIR it had already
+# removed. `exec` inside the subshell makes the backgrounded job BE perl, which
+# then execs Godot in place, so $! names the process under test. (`run_instance`
+# stays as it is — the two joiner calls run in the foreground.)
+(
+	exec perl -e 'alarm shift; exec @ARGV or exit 127' "$INSTANCE_TIMEOUT" \
+		"$GODOT" --headless --path "$ROOT" --script res://scripts/mp_e2e.gd -- \
+		--lobby="$LOBBY_URL" --lobby-only --role=host --hold="$HOST_HOLD" --stall \
+		>"$LOG_DIR/host.log" 2>&1
+) &
 HOST_PID=$!
 
 ROOM=""

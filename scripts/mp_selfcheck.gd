@@ -690,6 +690,25 @@ func _check_croc_ids() -> String:
 	if CrocAI.croc_id_for("PatrolCrocodile_3_-4_2") == id:
 		return "croc_id_for collided across the spawner prefix"
 
+	# EVERY id MUST SURVIVE THE WIRE. The sync packet carries ids in a
+	# PackedInt32Array, so an id above INT32_MAX wraps negative in transit, misses
+	# the receiver's `_synced_crocs` lookup and is dropped on the deliberately
+	# SILENT "not my chunk" path — which is why the stability and distinctness
+	# checks above passed while 43% of the pack was never synced at all. Sweep the
+	# real name scheme rather than one hand-picked name: the failure is a property
+	# of the hash's range, so a single example only pins whichever half it landed in.
+	var wire: PackedInt32Array = PackedInt32Array()
+	for cx: int in range(-6, 7):
+		for i: int in range(10):
+			var probe: String = "Crocodile_%d_%d_%d" % [cx, cx * 3 - 1, i]
+			var probe_id: int = CrocAI.croc_id_for(probe)
+			wire.clear()
+			wire.append(probe_id)
+			if wire[0] != probe_id:
+				return "croc_id_for(%s) == %d does not survive PackedInt32Array (%d)" % [
+					probe, probe_id, wire[0]
+				]
+
 	# The live node LATCHES it in _ready(), so nothing that touches the node later
 	# can quietly rename this crocodile mid-run — check the real thing, because
 	# the pure function passing says nothing about where the node reads its name.

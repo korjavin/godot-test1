@@ -14,9 +14,14 @@ permissions:
   pages: write
   id-token: write
 
-# Allow only one concurrent deployment
+# Allow only one concurrent run PER REF. A static "pages" group is shared by
+# every trigger this workflow has — including pull_request and claude/* pushes —
+# so opening a PR while master was mid-run cancelled the master run, and
+# deploy-stack could be killed after pushing images to GHCR but before pinning
+# the deploy branch and poking Portainer: production silently stays on the
+# previous SHA with a green-looking (cancelled) run behind it.
 concurrency:
-  group: "pages"
+  group: pages-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -38,7 +43,7 @@ jobs:
           lfs: true
 
       - name: 📦 Cache Godot imports
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: |
             .godot/imported

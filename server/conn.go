@@ -45,8 +45,24 @@ const (
 	// other peer — whose queues are only sendBuffer (64) frames deep. Measured on
 	// a 4-peer room, every victim was evicted inside 100 ms while the flooder was
 	// still inside its budget, i.e. exactly the outcome this exists to prevent.
-	msgRateBurst  = 256 << 10
-	msgRatePerSec = 32 << 10
+	// BUT BYTES ALONE ARE NOT ENOUGH, and that was a second, live hole: with no
+	// minimum frame size a byte budget is a huge MESSAGE budget. 256 KB of burst
+	// buys ~6900 ~38-byte broadcast `signal` frames and ~860/s sustained, each
+	// fanned to every other member — far more than the sendBuffer (64) frames a
+	// victim's queue holds, so `Member.send` killed the VICTIMS with "peer too
+	// slow" while the flooder stayed inside its budget. Reproduced against a host
+	// actively reading 500 frames/s (~1000x the honest relay rate): evicted in
+	// 1.7 s, leaving the attacker alone in the room and elected master — i.e. a
+	// room takeover that never casts a vote, so stallMasterSilence never sees it.
+	//
+	// So meter frames as well. Honest traffic is an offer, an answer and a handful
+	// of ICE candidates per peer pair at join, then a 1 Hz heartbeat and the
+	// occasional hero claim or stall report, so this is still orders of magnitude
+	// clear of a real client.
+	msgRateBurst    = 256 << 10
+	msgRatePerSec   = 32 << 10
+	frameRateBurst  = 120
+	frameRatePerSec = 30
 	// maxPayload bounds the opaque `signal` payload the lobby relays. The lobby
 	// never inspects it, but it does re-frame it, and readLimit bounds the INBOUND
 	// message rather than the outbound one: a 65509-byte payload is accepted at
@@ -115,6 +131,7 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 	// Token bucket, refilled from the clock rather than a ticker so an idle peer
 	// costs nothing.
 	tokens := float64(msgRateBurst)
+	frames := float64(frameRateBurst)
 	last := time.Now()
 
 	for {
@@ -124,13 +141,16 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 		}
 
 		now := time.Now()
-		tokens = math.Min(float64(msgRateBurst), tokens+now.Sub(last).Seconds()*msgRatePerSec)
+		elapsed := now.Sub(last).Seconds()
+		tokens = math.Min(float64(msgRateBurst), tokens+elapsed*msgRatePerSec)
+		frames = math.Min(float64(frameRateBurst), frames+elapsed*frameRatePerSec)
 		last = now
-		if tokens < float64(len(data)) {
+		if tokens < float64(len(data)) || frames < 1 {
 			c.Close(websocket.StatusPolicyViolation, "sending too fast") //nolint:errcheck
 			return
 		}
 		tokens -= float64(len(data))
+		frames--
 
 		me.Touch()
 

@@ -169,7 +169,22 @@ const MAX_FLEE_DURATION: float = 60.0
 ## ponytail: a whole-second window rather than a token bucket, so a peer can spend
 ## its budget in one frame and then wait. Fine here — the point is the sustained
 ## rate, and a dropped claim is re-driven by `_tick_claims` 0.5 s later.
-const VERB_BUDGET_PER_SEC: Dictionary = {"clm": 30, "kill": 10, "flee": 4}
+##
+## THE MASTER-ONLY VERBS ARE METERED TOO, and the authority check is not a
+## substitute. "Master" is just the oldest member — and anyone may HOST a room,
+## which is then listed publicly over `/rooms` — so a hostile master is an
+## ordinary peer with a title, not a trusted party. Unmetered, each of its three
+## verbs is the same amplifier the budgets above exist to close, at the bounded
+## drain's ~1440 packets/s: `dead` writes an unbounded `_dead_crocs` entry and
+## rescans the ~1000-node "crocodile" group, `cnf` writes an unbounded
+## `_collected_ids` entry and sweeps the whole "coin" group, `croc` carries up to
+## MAX_CROC_SYNC entries and rescans the group on a miss. The ceilings below sit
+## far above honest play: `croc` is sent at CROC_SYNC_HZ (10), and `cnf`/`dead`
+## are each bounded by the `clm`/`kill` budgets of the up-to-three peers the
+## master answers.
+const VERB_BUDGET_PER_SEC: Dictionary = {
+	"clm": 30, "kill": 10, "flee": 4, "croc": 40, "cnf": 150, "dead": 60,
+}
 
 ## The player script, preloaded ONLY to read constants it owns: the coin-economy
 ## ones (STREAK_WINDOW / STREAK_COINS_PER_STEP / STREAK_MAX_BONUS) and the
@@ -1064,11 +1079,18 @@ func peer_positions() -> Variant:
 	Positions come from `_peer_state`, which the join snapshot seeds and every
 	presence packet refreshes at 15 Hz — so a peer whose mesh has not come up yet
 	simply is not in the set, which is the correct answer rather than a stale one.
+
+	A peer whose mesh connection died while its lobby socket stayed up is marked
+	`stale` by `_prune_dead_connections()` and skipped here: its last position is
+	frozen and nobody is standing on it, so holding crocodiles awake around it
+	would burn the pack on empty ground for the room's life.
 	"""
 	if _state != State.IN_ROOM:
 		return null
 	var positions: Array[Vector3] = []
 	for state: Dictionary in _peer_state.values():
+		if bool(state.get("stale", false)):
+			continue
 		positions.append(state["pos"] as Vector3)
 	return positions
 
@@ -1086,6 +1108,9 @@ func nearest_member_position(from: Vector3) -> Variant:
 	in NO group — so a crocodile resolving "the player" through
 	`get_nodes_in_group("player")` can only ever hunt whoever happens to be
 	master, and every other peer walks through the pack untouched.
+
+	Skips `stale` peers for the same reason `peer_positions()` does — a whole pack
+	hunting a coordinate nobody is standing on is worse than not hunting at all.
 	"""
 	if _state != State.IN_ROOM:
 		return null
@@ -1097,6 +1122,8 @@ func nearest_member_position(from: Vector3) -> Variant:
 	# nothing" is the contract; keep it true.
 	for peer: String in _peer_state:
 		var state: Dictionary = _peer_state[peer]
+		if bool(state.get("stale", false)):
+			continue
 		var pos: Vector3 = state["pos"] as Vector3
 		var dist_sq: float = from.distance_squared_to(pos)
 		if dist_sq < best_dist_sq:
@@ -1931,6 +1958,20 @@ static func shared_lives_from(bank: int, spent: int, max_lives: int, per_extra: 
 	coins the room has banked, minus every life anyone has spent, clamped into
 	[0, cap]. Pure and static so scripts/mp_selfcheck.gd can pin the arithmetic
 	without a room.
+
+	ponytail: STATELESS, so it cannot reproduce solo exactly, and the difference
+	is worth knowing. Solo grants at the moment a threshold is crossed and DROPS
+	the grant if `lives` is already at the cap (player_controller.collect_coin's
+	`if lives < LIVES_CAP`), i.e. overshoot is burnt. Here the overshoot is banked:
+	while `bank / per_extra - spent` exceeds the cap headroom the HUD pins at `cap`
+	and a death changes nothing visible, so a room that banks fast becomes hard to
+	lose. No formula over (bank, spent) alone can fix that — solo's outcome depends
+	on the ORDER of grants and deaths — and the obvious alternative
+	(`mini(max_lives + bank / per_extra, cap) - spent`) trades it for a worse one:
+	the room would get exactly `cap` lives for the whole run, and coins banked
+	after a death would stop buying hearts back, which solo definitely does allow.
+	The upgrade path is the master keeping the room's hearts as real state and
+	broadcasting it, the way it already owns the room's streak.
 	"""
 	if per_extra <= 0:
 		return clampi(max_lives - spent, 0, cap)  # No extra-life threshold: just the base.
@@ -2136,19 +2177,23 @@ func _prune_dead_connections() -> void:
 		conn.close()
 		_connections.erase(id)
 		_pending_signals.erase(id)
-		# Freeze and drop its contribution exactly as `_on_lobby_peer_left` does.
-		# `_peer_state` is the ONLY source for `peer_positions()` (the LOD
-		# manager's focus points) and `nearest_member_position()` (what every
-		# crocodile hunts), and no `peer_left` is coming for this peer — so
-		# leaving the entry meant the master's whole pack chased, and the LOD
-		# manager held awake, an empty patch of ground for the room's life, while
-		# the peer went on banking coins nobody could count. A later real
-		# `peer_left` finds nothing here and folds nothing twice.
+		# MARKED STALE, NOT FROZEN-AND-ERASED. `_peer_state` is the ONLY source
+		# for `peer_positions()` (the LOD manager's focus points) and
+		# `nearest_member_position()` (what every crocodile hunts), and no
+		# `peer_left` is coming — so leaving the entry live meant the master's
+		# whole pack chased, and the LOD manager held awake, an empty patch of
+		# ground for the room's life. But folding it into `_gone_*` the way
+		# `_on_lobby_peer_left` does is wrong here for the opposite reason: THIS
+		# PEER HAS NOT LEFT. It is still in the room, still playing, still counted
+		# live by every peer whose mesh link to it survived — and we replay
+		# `_gone_*` to future joiners as `gc`/`gs`, which they merge alongside that
+		# same peer's own snapshot and presence, counting its coins and its SPENT
+		# LIVES twice (hearts the room actually has, gone from the joiner's HUD).
+		# So keep the counters attributed to the peer, drop only its position from
+		# the per-frame readers, and let the real `peer_left` freeze the correct
+		# final figure if and when it ever arrives.
 		if _peer_state.has(id):
-			var gone: Dictionary = _peer_state[id]
-			_gone_coins += int(gone.get("coins", 0))
-			_gone_spent += int(gone.get("spent", 0))
-			_peer_state.erase(id)
+			(_peer_state[id] as Dictionary)["stale"] = true
 		if _avatars.has(id):
 			(_avatars[id] as RemoteAvatar).queue_free()
 			_avatars.erase(id)
@@ -2352,9 +2397,9 @@ func _receive_mesh_verb(from_id: String, verb: String, packet: Dictionary) -> vo
 func _verb_rate_ok(from_id: String, verb: String) -> bool:
 	"""
 	Whether this peer may spend one more of this verb in the current one-second
-	window. Verbs not listed in VERB_BUDGET_PER_SEC (`croc`, `cnf`, `dead`) are
-	unmetered — they carry their own authority check (master only) and cost a
-	dictionary write, so the master's own send rate already bounds them.
+	window. Every verb `_receive_mesh_verb` dispatches is listed in
+	VERB_BUDGET_PER_SEC, including the master-only ones — see the constant for why
+	"only the master sends this" is not a rate bound.
 
 	Dropped silently, like every other trust-boundary rejection here: a peer over
 	budget is either hostile or on a broken build, and neither is worth one warning
