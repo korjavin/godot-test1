@@ -1183,6 +1183,34 @@ func _check_room_lives_ordering() -> String:
 		mp.free()
 		return "a fresh room started on %s hearts, expected MAX_LIVES (%d)" % [str(fresh), base]
 
+	# TAKING OWNERSHIP MUST NOT REFILL HEARTS THAT ARE ALREADY SPENT. Two ways in
+	# and both already have deaths behind them: hosting from a live solo run in
+	# which the player has been bitten (a host's own tally IS the room's opening
+	# balance), and a promotion where no `rl` ever arrived. Seeding at MAX_LIVES
+	# and then marking those deaths already-charged handed the room free lives.
+	var wounded: Node = MPManager.new()
+	root.add_child(wounded)
+	wounded._state = MPManager.State.IN_ROOM
+	wounded._you = "me"
+	wounded._master = "me"
+	wounded._first_member = true
+	wounded._peer_state = {}
+	wounded._tick_room_lives()  # own_spent is read off the player group: none here...
+	# ...so drive the death through this peer's OWN contribution, which is what a
+	# host arriving from a solo run actually carries.
+	wounded._room_lives_owned = false
+	wounded._peer_state = {"aaa": {"pos": Vector3.ZERO, "floor": true, "coins": 0, "spent": 1, "dist": 0}}
+	wounded._tick_room_lives()
+	var wounded_start: Variant = wounded.shared_lives(0, 0)
+	wounded.free()
+	if wounded_start == base:
+		return ("a room seeded while a life was already spent started on MAX_LIVES (%d) — taking "
+			+ "ownership refilled a heart the room had lost") % base
+	if wounded_start != base - 1:
+		return "a room seeded with one life spent started on %s hearts, expected %d" % [
+			str(wounded_start), base - 1
+		]
+
 	# Bank far past the cap without dying: every grant beyond LIVES_CAP is BURNT,
 	# exactly as solo burns it.
 	peer["coins"] = per * 20
@@ -1379,6 +1407,13 @@ func _check_confirm_base_bounds() -> String:
 	mp._receive_confirm(mp._master, {"t": "cnf", "id": 2, "by": me, "a": 40, "m": 4, "b": 1 << 40})
 	var hostile_calls: int = stub.calls
 
+	# `b` LARGER THAN `a`, which is the bound that actually binds. Every honest
+	# claim multiplies each pickup by at least x1, so `a >= b` always — and
+	# without the test a master could mint lifetime coins (monotone, persisted,
+	# not a score that ends with the run) off a pickup that awarded nothing.
+	mp._receive_confirm(mp._master, {"t": "cnf", "id": 4, "by": me, "a": 0, "m": 1, "b": 64000})
+	var inflated_calls: int = stub.calls
+
 	# HONEST `b`: accepted.
 	mp._receive_confirm(mp._master, {"t": "cnf", "id": 3, "by": me, "a": 40, "m": 4, "b": 10})
 	var good_calls: int = stub.calls
@@ -1393,6 +1428,9 @@ func _check_confirm_base_bounds() -> String:
 		return "a confirm with no `b` credited %d base coins, expected 0" % legacy_base
 	if hostile_calls != legacy_calls:
 		return "a confirm with an out-of-range `b` was applied — a hostile master could mint levels"
+	if inflated_calls != legacy_calls:
+		return ("a confirm whose `b` exceeded its `a` was applied — a master could credit lifetime "
+			+ "coins for a pickup that awarded nothing")
 	if good_calls != legacy_calls + 1 or good_base != 10:
 		return "an honest `b` of 10 was not applied (calls %d, base %d)" % [good_calls, good_base]
 	return ""

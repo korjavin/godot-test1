@@ -2574,12 +2574,27 @@ func _tick_room_lives() -> void:
 
 	if not _room_lives_owned:
 		_room_lives_owned = true
-		# SEED, don't reset. A promoted master adopts the count the deposed one
-		# was publishing (`_room_lives_seen`), because a migration must not hand
-		# the room three fresh hearts — the stall vote takes ~6 s and a room can
-		# easily be on its last one by then. With nothing published (we hosted, or
-		# every master so far was on an older build) the room starts at MAX_LIVES.
-		_room_lives = _room_lives_seen if _room_lives_seen >= 0 else PLAYER_SCRIPT.MAX_LIVES
+		# SEED, don't reset. A promoted master adopts the count the deposed one was
+		# publishing (`_room_lives_seen`), because a migration must not hand the
+		# room three fresh hearts — the stall vote takes ~6 s and a room can easily
+		# be on its last one by then.
+		#
+		# WITH NOTHING PUBLISHED, SEED FROM THE STATELESS FORMULA — never from
+		# MAX_LIVES. Two cases reach here and both already have deaths behind them:
+		# a player who hosts from a live solo run in which they have been bitten
+		# (`_first_member` makes their own tally the room's opening balance, deaths
+		# included), and a promotion where no `rl` ever arrived (an older master, or
+		# one deposed before its first presence packet). Starting at MAX_LIVES and
+		# then marking those deaths as already charged handed the room hearts it
+		# had spent. `shared_lives_from()` is exactly the number the room was
+		# showing a moment ago, which is the honest place to take over from.
+		if _room_lives_seen >= 0:
+			_room_lives = _room_lives_seen
+		else:
+			_room_lives = shared_lives_from(
+				bank, spent,
+				PLAYER_SCRIPT.MAX_LIVES, PLAYER_SCRIPT.EXTRA_LIFE_COINS, PLAYER_SCRIPT.LIVES_CAP
+			)
 		# And seed the two watermarks from the CURRENT totals, never from zero:
 		# every death and every threshold up to this moment is already reflected
 		# in the count we just adopted, so re-walking them would charge the room
@@ -3513,6 +3528,15 @@ func _receive_confirm(from_id: String, packet: Dictionary) -> void:
 			return
 		base_total = int(raw_base)
 		if base_total < 0 or base_total > MAX_CLAIM_PICKUPS * MAX_CLAIM_VALUE:
+			return
+		# AND `b` CAN NEVER EXCEED `a`, which is the bound that actually binds. The
+		# award loop multiplies every pickup by at least x1, so `awarded >=
+		# base_total` holds for every honest claim — without this a master could
+		# send `{"a": 0, "b": 64000}`, a confirm that is valid on every other test,
+		# and permanently credit the winner 64000 lifetime coins for a pickup worth
+		# nothing. Lifetime coins are monotone and persisted, so that is not a
+		# score exploit that ends with the run.
+		if base_total > awarded:
 			return
 	_apply_confirm(int(packet["id"]), int(packet["by"]), awarded, multiplier, base_total)
 
