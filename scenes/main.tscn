@@ -1,4 +1,4 @@
-[gd_scene load_steps=26 format=3 uid="uid://clqb4rcmjrpgs"]
+[gd_scene load_steps=27 format=3 uid="uid://clqb4rcmjrpgs"]
 
 [ext_resource type="PackedScene" uid="uid://bqtq2xtxqnvvr" path="res://scenes/player.tscn" id="1_main"]
 [ext_resource type="Script" uid="uid://b07rwceo0eo4o" path="res://scripts/endless_terrain.gd" id="2_terrain"]
@@ -22,6 +22,7 @@
 [ext_resource type="Script" path="res://scripts/mp_ui.gd" id="20_mpui"]
 [ext_resource type="Script" path="res://scripts/start_overlay.gd" id="21_start"]
 [ext_resource type="Script" path="res://scripts/minimap_hud.gd" id="21_minimap"]
+[ext_resource type="Script" path="res://scripts/teammate_locator.gd" id="22_locator"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_1"]
 sky_top_color = Color(0.25, 0.45, 0.75, 1)
@@ -171,6 +172,22 @@ offset_bottom = 95.0
 grow_vertical = 2
 mouse_filter = 2
 script = ExtResource("21_minimap")
+
+[node name="TeammateLocator" type="Control" parent="HUD"]
+visible = false
+anchors_preset = 7
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -160.0
+offset_top = -70.0
+offset_right = 160.0
+offset_bottom = -42.0
+grow_horizontal = 2
+grow_vertical = 0
+mouse_filter = 2
+script = ExtResource("22_locator")
 
 [node name="RespawnLabel" type="Label" parent="HUD" groups=["respawn_label"]]
 visible = false
