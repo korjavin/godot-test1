@@ -767,6 +767,9 @@ func _physics_process(delta: float) -> void:
 	# distance max above, so this frame's own contribution is already folded in.
 	# Costs one group lookup and nothing else when there is no room.
 	_refresh_shared_totals()
+	# STEP 0.43: ...and in a room, the run ends for EVERYONE when the shared
+	# hearts run out — including the peers who were not the one bitten.
+	_check_shared_game_over()
 
 	# STEP 0.45: Tick the coin-streak window down; when it lapses the streak is
 	# over and the score multiplier drops back to x1 (see collect_coin).
@@ -1665,12 +1668,46 @@ func collect_coin(value: int = 1) -> void:
 	print("Collected a coin worth %d (x%d streak)! Total: %d" % [value, get_streak_multiplier(), coins_collected])
 
 
+func bank_awarded(amount: int) -> void:
+	"""
+	Bank a pickup the MULTIPLAYER MASTER has already priced (see
+	mp_manager._apply_confirm). Called only for the peer that won the claim.
+
+	THE MULTIPLIER IS ALREADY IN `amount` — the master owns the room's coin streak
+	and applied it when it resolved the claim, so multiplying again here would pay
+	the winner the square of the room's multiplier. That is the whole difference
+	from collect_coin(), which stays exactly as it was and is still the solo path.
+
+	The streak itself is deliberately NOT touched: in a room the multiplier the HUD
+	shows comes from the room (see get_streak_multiplier), and this peer's private
+	coin_streak has no say in it.
+	"""
+	# NO extra-life while-loop, unlike collect_coin(). This path only ever runs in
+	# a room, where the hearts come from the ROOM's bank: _refresh_shared_totals()
+	# overwrites `lives` (and `next_extra_life_at`, on the frame the room ends)
+	# from the shared totals every physics tick, so a private threshold walk here
+	# would be recomputed away before anything could read it.
+	coins_collected += amount
+	own_coins += amount
+
+
 func get_streak_multiplier() -> int:
 	"""
 	Current score multiplier from the coin streak: x1 with no streak, +1 per
 	STREAK_COINS_PER_STEP consecutive coins, capped at 1 + STREAK_MAX_BONUS.
 	Read by the coin HUD to show the "(xN)" suffix.
+
+	IN A ROOM THE STREAK IS THE ROOM'S. The master owns one streak for everybody
+	(it is the thing that prices every claim), so this defers to it — which makes
+	coin_hud.gd show the room's "(xN)" with NO HUD change, the same trick phase 4
+	used for the bank and the hearts. `room_multiplier()` answers null offline and
+	this falls through to the local value on one test.
 	"""
+	var mp := _mp()
+	if mp != null and mp.has_method("room_multiplier"):
+		var room: Variant = mp.room_multiplier()
+		if room != null:
+			return int(room)
 	return 1 + mini(STREAK_MAX_BONUS, coin_streak / STREAK_COINS_PER_STEP)
 
 
@@ -1834,14 +1871,31 @@ func restart_game() -> void:
 	# reset_position() below — the one owner of the "hard reset" wipe list, so
 	# the two can never drift out of sync.
 	#
-	# IN A ROOM, freeze that contribution before the wipe. own_lives_spent is
-	# SUBTRACTED from the room's shared hearts, so a bare wipe refunds every life
-	# this peer spent to everybody else (and drops the room's bank by its coins) —
-	# the exact failure the manager's frozen `_gone_*` totals exist to prevent,
-	# just on the restart path instead of the leave path. A no-op offline.
+	# IN A ROOM, "Play Again" LEAVES THE ROOM FIRST, and that is a correctness fix
+	# rather than a policy choice. The hearts are shared — base hearts + the room's
+	# bank/EXTRA_LIFE_COINS minus the room's spent lives — and this method's ONE
+	# caller is the Game Over screen, which in a room can only be up because that
+	# figure hit zero (a peer with hearts left soft-respawns in _on_caught_finished
+	# instead). Wiping our own numbers cannot bring the room's total back: the
+	# lives another peer spent still count, so _refresh_shared_totals() re-zeroes
+	# `lives` on the very next physics tick and _check_shared_game_over() fires the
+	# Game Over screen straight back up. Play Again was an infinite loop with no
+	# way out but leaving — so leave, and hand the player the fresh solo run the
+	# button promises. leave() is the manager's single complete unwind, so the
+	# collected-coin set, the dead-crocodile set, the frozen `_gone_*` totals and
+	# the room streak all go with it, and room_seed() then answers null below so
+	# the world is re-rolled rather than replayed with every coin already taken.
+	#
+	# ponytail: the room dissolves as each member presses the button; playing
+	# together again is a re-host or one tap in the room list. The upgrade path is
+	# a room-wide restart verb the master broadcasts (`{"t":"rst"}` alongside
+	# `cnf`/`dead`), on which every peer clears `_collected_ids`, `_dead_crocs`,
+	# `_gone_*` and restarts in place — a real shared "Play Again" that keeps the
+	# room, at the cost of a new protocol message and its own arbitration.
 	var restart_mp := _mp()
-	if restart_mp and restart_mp.has_method("retire_own_contribution"):
-		restart_mp.retire_own_contribution(own_coins, own_lives_spent)
+	if restart_mp and restart_mp.has_method("leave") and restart_mp.has_method("shared_bank") \
+			and restart_mp.shared_bank(own_coins) != null:
+		restart_mp.leave()
 	lives = MAX_LIVES
 	is_game_over = false
 	is_caught = false
@@ -1987,8 +2041,30 @@ func clear_nearby_crocodiles(spawn_point: Vector3) -> void:
 	invulnerability that follows are long enough to run, and running (>= 9.0)
 	beats MAX_CHASE_SPEED (8.5) by design.
 
+	IN A MULTIPLAYER ROOM NOTHING IS FREED — the room is asked to scare them off
+	instead. Phase 5 makes the master the authority for every awake crocodile, and
+	the sync layer's standing contract is that it never creates, re-parents or
+	frees one; this sweep is outside that layer and would break it from both ends.
+	Freeing on the MASTER stops it broadcasting those ids, so every other peer
+	times out after CROC_SYNC_TIMEOUT and resumes local AI for ~10 crocodiles the
+	authority no longer has — divergent packs, right where players are together.
+	Freeing on a NON-master silently deletes bodies the master keeps sending
+	samples for. The flee request is the arbitrated equivalent: it reaches every
+	screen through the sync packet's CROC_FLAG_FLEEING bit, and it is also the
+	only thing that unparks the master's copy from a peer it just bit — the local
+	`is_paused` a bite sets is overwritten by the next sample 100 ms later, so
+	without it the same crocodile bites again the instant the i-frames lapse.
+	SPAWN_SAFE_RADIUS is carried INTO that request, because this is a bounded
+	sweep: an unbounded flee disarmed every awake crocodile in the room, on every
+	screen, for the whole grace window — once per death by any peer.
+
 	@param spawn_point: The position to check distance from
 	"""
+	var mp := _mp()
+	if mp != null and mp.has_method("request_croc_flee") \
+			and mp.request_croc_flee(spawn_point, RESPAWN_GRACE_DURATION + RESPAWN_BLINK_DURATION, SPAWN_SAFE_RADIUS):
+		return
+
 	var crocodiles = get_tree().get_nodes_in_group("crocodile")
 	var removed_count = 0
 
@@ -2255,7 +2331,17 @@ func _refresh_shared_totals() -> void:
 			coins_collected = own_coins
 			run_distance = own_distance
 			next_extra_life_at = (own_coins / EXTRA_LIFE_COINS + 1) * EXTRA_LIFE_COINS
-			lives = clampi(MAX_LIVES + own_coins / EXTRA_LIFE_COINS - own_lives_spent, 0, LIVES_CAP)
+			# FLOORED AT ONE HEART, not zero. own_lives_spent counts deaths the
+			# ROOM's bank paid for — a mid-run joiner starts at own_coins = 0 by
+			# design, and a peer whose teammate does the collecting banks little
+			# either — so three deaths over a long room left this at 0. The room
+			# ending is not a game over (leave() fires on a dropped socket, a
+			# lobby restart or the Leave button), so that handed the player a solo
+			# run with no hearts, no warning and an instant game over on the next
+			# bite. Charging them again for deaths the room already paid for is
+			# the bug; the counter is cleared so it cannot be charged a third time.
+			lives = clampi(MAX_LIVES + own_coins / EXTRA_LIFE_COINS - own_lives_spent, 1, LIVES_CAP)
+			own_lives_spent = 0
 		return
 	_showing_shared_totals = true
 	var spent: Variant = mp.shared_lives_spent(own_lives_spent)
@@ -2267,6 +2353,35 @@ func _refresh_shared_totals() -> void:
 		run_distance = int(distance)
 	if spent != null:
 		lives = mp.shared_lives_from(int(bank), int(spent), MAX_LIVES, EXTRA_LIFE_COINS, LIVES_CAP)
+
+
+func _check_shared_game_over() -> void:
+	"""
+	In a multiplayer room the hearts are shared, so when the room's last one goes
+	the run is over for everybody — not only for whoever happened to be bitten.
+	That peer ends its own run in _on_caught_finished(); this is how every OTHER
+	peer learns the room is finished.
+
+	IN A ROOM ONLY, and the shared_lives_spent() null test is the guard. Solo,
+	`lives` only ever reaches 0 inside _on_caught_finished(), which already ends
+	the run there and then — firing from here as well would change solo behaviour
+	and play the game-over sting twice.
+
+	Called from _physics_process immediately after _refresh_shared_totals(), which
+	is past the is_game_over / is_caught / is_respawning early-returns, so this can
+	never end a run mid-bite before that bite has been counted. The two flags are
+	re-tested anyway, cheaply, because "the caller is past the guards" is exactly
+	the kind of invariant a later edit breaks silently.
+	"""
+	if lives > 0 or is_game_over or is_caught:
+		return
+	var mp := _mp()
+	if mp == null or not mp.has_method("shared_lives_spent"):
+		return
+	if mp.shared_lives_spent(own_lives_spent) == null:
+		return  # Manager present but no room: solo semantics, untouched.
+	print("💀 The room is out of hearts — the run is over for everyone.")
+	_trigger_game_over()
 
 
 func _weather_is_raining_here() -> bool:
@@ -2507,6 +2622,16 @@ func _ability_phoboman() -> bool:
 	for croc in get_tree().get_nodes_in_group("crocodile"):
 		if croc.has_method("flee_from"):
 			croc.flee_from(global_position, PHOBOMAN_FLEE_DURATION)
+
+	# ...and in a multiplayer room, ask the master to do the same to the
+	# crocodiles IT drives — a no-op offline. The loop above is deliberately left
+	# exactly as it was: it is correct for every crocodile this peer still
+	# simulates and harmless on the remote-driven ones. Nothing comes back, and
+	# nothing needs to: a crocodile's `is_fleeing` is a bit in the sync packet, so
+	# the master's copy of the flight reaches every screen on the next sample.
+	var mp := _mp()
+	if mp and mp.has_method("request_croc_flee"):
+		mp.request_croc_flee(global_position, PHOBOMAN_FLEE_DURATION)
 	return true
 
 

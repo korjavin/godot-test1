@@ -61,9 +61,14 @@ jobs:
 
       # barichello/godot-ci:4.5 (Ubuntu 24.04) ships NO curl, and the script
       # polls /healthz with it and asserts the hosted room is listed on /rooms
-      # — without this the run dies as "lobby never became healthy".
-      - name: 🌐 Install curl
-        run: apt-get update && apt-get install -y --no-install-recommends curl
+      # — without this the run dies as "lobby never became healthy". `perl` is
+      # the script's per-instance timeout (chosen over coreutils `timeout`
+      # because macOS has no `timeout`); it comes from Ubuntu's `perl-base`,
+      # which is Priority: required, so this is belt-and-braces — apt is a
+      # no-op for an already-installed package, and the script refuses to run
+      # without it.
+      - name: 🌐 Install curl and perl
+        run: apt-get update && apt-get install -y --no-install-recommends curl perl
 
       # actions/checkout leaves the tree owned by the runner uid while a
       # container job runs as root, so git refuses it as "dubious ownership"

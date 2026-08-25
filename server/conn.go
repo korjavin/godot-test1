@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -27,6 +28,48 @@ const (
 	pingInterval = 20 * time.Second
 	pingTimeout  = 10 * time.Second
 	writeTimeout = 10 * time.Second
+	// msgRateBurst / msgRatePerSec bound how fast one peer may send, IN BYTES.
+	// Signalling is tiny and bursty — an offer, an answer and a handful of ICE
+	// candidates per peer, then a heartbeat a second — so this is orders of
+	// magnitude above honest traffic.
+	//
+	// It exists because `signal` is a 1:N amplifier and the read loop is otherwise
+	// unmetered: a member (and every room code is public over /rooms, so that
+	// means anyone) can fan frames out to the rest of the room as fast as the
+	// socket accepts them, and when their queues fill it is THEY who get dropped
+	// with "peer too slow" while the flooder keeps its connection. So the budget
+	// disconnects the SENDER, before Room ever sees the message.
+	//
+	// BYTES, NOT MESSAGES, and that is the whole point: a per-message bucket let
+	// through 130 x 64 KB frames before firing, which is ~8 MB fanned at every
+	// other peer — whose queues are only sendBuffer (64) frames deep. Measured on
+	// a 4-peer room, every victim was evicted inside 100 ms while the flooder was
+	// still inside its budget, i.e. exactly the outcome this exists to prevent.
+	// BUT BYTES ALONE ARE NOT ENOUGH, and that was a second, live hole: with no
+	// minimum frame size a byte budget is a huge MESSAGE budget. 256 KB of burst
+	// buys ~6900 ~38-byte broadcast `signal` frames and ~860/s sustained, each
+	// fanned to every other member — far more than the sendBuffer (64) frames a
+	// victim's queue holds, so `Member.send` killed the VICTIMS with "peer too
+	// slow" while the flooder stayed inside its budget. Reproduced against a host
+	// actively reading 500 frames/s (~1000x the honest relay rate): evicted in
+	// 1.7 s, leaving the attacker alone in the room and elected master — i.e. a
+	// room takeover that never casts a vote, so stallMasterSilence never sees it.
+	//
+	// So meter frames as well. Honest traffic is an offer, an answer and a handful
+	// of ICE candidates per peer pair at join, then a 1 Hz heartbeat and the
+	// occasional hero claim or stall report, so this is still orders of magnitude
+	// clear of a real client.
+	msgRateBurst    = 256 << 10
+	msgRatePerSec   = 32 << 10
+	frameRateBurst  = 120
+	frameRatePerSec = 30
+	// maxPayload bounds the opaque `signal` payload the lobby relays. The lobby
+	// never inspects it, but it does re-frame it, and readLimit bounds the INBOUND
+	// message rather than the outbound one: a 65509-byte payload is accepted at
+	// exactly 65536 and relayed as 65562 bytes, past the 65535-byte default
+	// inbound buffer of the Godot WebSocketPeer on the other end — so one message
+	// drops every other peer in the room. SDP offers are a few KB.
+	maxPayload = 32 << 10
 )
 
 // clientMsg is every message a client may send. Unknown types are answered with
@@ -61,13 +104,16 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 	c.SetReadLimit(readLimit)
 	defer c.CloseNow() //nolint:errcheck // best-effort teardown
 
-	// Cap the query value before anything else looks at it: an over-long code is
-	// rejected by validCode below, but there is no reason to carry it that far.
-	raw := r.URL.Query().Get("room")
+	// TRIM FIRST, then cap: trimming exists precisely to tolerate surrounding
+	// whitespace, and slicing ahead of it eats real code characters instead —
+	// "  ABC234" would come out as "ABC23" and be refused as malformed. The cap
+	// is still one over codeLength so validCode refuses anything genuinely long
+	// without it being carried any further.
+	raw := strings.TrimSpace(r.URL.Query().Get("room"))
 	if len(raw) > codeLength {
-		raw = raw[:codeLength+1] // one over, so validCode still refuses it
+		raw = raw[:codeLength+1]
 	}
-	code := strings.ToUpper(strings.TrimSpace(raw))
+	code := strings.ToUpper(raw)
 	name := trimName(r.URL.Query().Get("name"))
 
 	room, me, err := h.Join(code, name, newID())
@@ -82,11 +128,32 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	go writePump(ctx, cancel, c, me)
 
+	// Token bucket, refilled from the clock rather than a ticker so an idle peer
+	// costs nothing.
+	tokens := float64(msgRateBurst)
+	frames := float64(frameRateBurst)
+	last := time.Now()
+
 	for {
 		typ, data, err := c.Read(ctx)
 		if err != nil {
 			return
 		}
+
+		now := time.Now()
+		elapsed := now.Sub(last).Seconds()
+		tokens = math.Min(float64(msgRateBurst), tokens+elapsed*msgRatePerSec)
+		frames = math.Min(float64(frameRateBurst), frames+elapsed*frameRatePerSec)
+		last = now
+		if tokens < float64(len(data)) || frames < 1 {
+			c.Close(websocket.StatusPolicyViolation, "sending too fast") //nolint:errcheck
+			return
+		}
+		tokens -= float64(len(data))
+		frames--
+
+		me.Touch()
+
 		if typ != websocket.MessageText {
 			continue
 		}
@@ -97,6 +164,10 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 		}
 		switch msg.Type {
 		case "signal":
+			if len(msg.Payload) > maxPayload {
+				me.send(mustJSON(map[string]any{"type": "error", "error": "payload too large"}))
+				continue
+			}
 			room.Signal(me, msg.To, msg.Payload)
 		case "hero":
 			if err := room.SetHero(me, msg.Hero); err != nil {
@@ -107,7 +178,9 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 		case "ping":
 			me.send(mustJSON(map[string]any{"type": "pong"}))
 		default:
-			me.send(mustJSON(map[string]any{"type": "error", "error": "unknown message type: " + msg.Type}))
+			// The client's own string is NOT echoed: it is unvalidated input up
+			// to readLimit, and this is a server-built frame.
+			me.send(mustJSON(map[string]any{"type": "error", "error": "unknown message type"}))
 		}
 	}
 }
@@ -162,12 +235,17 @@ func newID() string {
 // trimName bounds an attacker-supplied display name; it is echoed to every other
 // peer, so it does not get to be unbounded.
 func trimName(s string) string {
+	// ToValidUTF8 AFTER the byte cap but BEFORE the empty check. After, because
+	// the cap is a byte slice and can land mid-rune; before, because a name made
+	// entirely of invalid UTF-8 is dropped to "" by it, and validating last would
+	// hand that empty string to every peer instead of the "player" default.
 	s = strings.TrimSpace(s)
 	if len(s) > 32 {
 		s = s[:32]
 	}
+	s = strings.ToValidUTF8(s, "")
 	if s == "" {
 		s = "player"
 	}
-	return strings.ToValidUTF8(s, "")
+	return s
 }

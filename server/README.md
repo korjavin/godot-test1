@@ -138,12 +138,29 @@ environment to an older `:<commit-sha>` tag.
    branch **`deploy`** (not master), compose path **`server/docker-compose.yml`**,
    and the environment variables from [.env.example](.env.example). The four
    without a usable default are `LOBBY_HOST`, `TURN_URL`, `TURN_PASSWORD` and
-   `TURN_EXTERNAL_IP`.
+   `TURN_EXTERNAL_IP`. Set `TURN_SECRET` too — see below.
 5. **First deploy** — push to master (or run the *Lobby service* workflow by hand),
    then hit the webhook once from Portainer.
 
 Traefik terminates TLS and proxies the websocket upgrade with no extra
 configuration, so the client URL is `wss://${LOBBY_HOST}/ws`.
+
+### TURN credentials expire — set `TURN_SECRET`
+
+`GET /ice` is unauthenticated by necessity: the game build is a static download
+and cannot hold a secret, and CORS is enforced by browsers only, so `curl /ice`
+returns whatever it returns. With `TURN_SECRET` set, what it returns is a coturn
+REST credential — username `<unix expiry>:ck`, credential
+`base64(HMAC-SHA1(secret, username))` — that stops relaying after
+`turnCredentialTTL` (24 h) rather than never, and the secret itself never leaves
+the deployment.
+
+Both halves flip off that one variable and **cannot be migrated one at a time**:
+`docker-compose.yml` passes coturn `--use-auth-secret`/`--static-auth-secret`
+only when it is set, and coturn refuses the static `--user` pair the moment it
+is (`check_stun_auth: Cannot find credentials of user <...>`). Unset, everything
+stays on the static pair, so an existing deployment is unaffected until the
+operator creates a secret and redeploys.
 
 ### Verifying TURN
 

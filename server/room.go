@@ -16,6 +16,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 )
 
 // MaxMembers caps a room at the game's 4 players.
@@ -35,6 +37,35 @@ const codeLength = 6
 // Signalling traffic is tiny and bursty; a peer that cannot drain 64 messages is
 // not coming back, so we kill it rather than silently drop an ICE candidate.
 const sendBuffer = 64
+
+// stallVoteTTL is how long one peer's "the master has stalled" vote counts
+// toward a quorum. Roughly 5x the client's STALL_REPORT_INTERVAL (2 s), so a peer
+// that still believes the master is gone keeps its vote alive by re-sending,
+// while a peer whose connection merely hiccuped once stops contributing.
+const stallVoteTTL = 10 * time.Second
+
+// stallMasterSilence is how long the LOBBY ITSELF must have heard nothing from
+// the master before any quorum of stall votes is acted on.
+//
+// Without it a vote is taken purely on the reporters' word, and "strictly more
+// than half of the non-master members" is ONE vote in a two-member room — so a
+// stranger (every room code is public over /rooms) joins a room somebody is
+// hosting alone, sends a single `stalled` frame, and is master. The client trusts
+// the master for pickup arbitration, crocodile sync, `dead`/`flee` broadcasts and
+// as the only accepted `seed` source, so that is the whole room.
+//
+// The master heartbeats over the relay once a second (mp_manager.HEARTBEAT_INTERVAL),
+// which is a socket read here, so a healthy master is never 3 s silent and a
+// genuinely throttled tab is silent immediately. Corroboration, not a second
+// detector: the clients still decide, the lobby just refuses to act on a claim it
+// can see is false.
+const stallMasterSilence = 3 * time.Second
+
+// maxListedRooms bounds the work one unauthenticated GET /rooms can provoke under
+// the hub mutex — the same lock every signal, join and election serialises on.
+// ponytail: which rooms are dropped is map-iteration order, i.e. arbitrary. The
+// upgrade path is a cached listing if a lobby ever really holds this many.
+const maxListedRooms = 200
 
 var (
 	errRoomFull    = errors.New("room is full")
@@ -64,7 +95,18 @@ type Member struct {
 	Name string
 
 	seq     uint64 // global join order; the lowest surviving seq is the master
-	stalled bool   // quorum-reported stalled — never eligible for master again
+	stalled bool   // quorum-reported stalled — barred from master and from voting
+	// stalledAt is when `stalled` was set. The bar EXPIRES (see ReportStalled):
+	// a permanent one is a room-killer, because only a non-stalled member may
+	// vote — so in a two-member room, once each peer has hiccuped once, nobody
+	// can ever depose the next master and the room strands on it for the run.
+	stalledAt time.Time
+
+	// lastSeen is when the read loop last got a frame from this peer, in Unix
+	// nanoseconds. Atomic because it is written from the peer's own read
+	// goroutine and read under the hub mutex during an election — see
+	// stallMasterSilence for why it exists.
+	lastSeen atomic.Int64
 
 	out      chan []byte
 	quit     chan struct{}
@@ -80,6 +122,14 @@ func (m *Member) send(b []byte) {
 	default:
 		m.kill()
 	}
+}
+
+// Touch records that a frame just arrived from this peer.
+func (m *Member) Touch() { m.lastSeen.Store(time.Now().UnixNano()) }
+
+// silentFor reports how long the lobby has heard nothing from this peer.
+func (m *Member) silentFor(now time.Time) time.Duration {
+	return now.Sub(time.Unix(0, m.lastSeen.Load()))
 }
 
 // kill signals the peer's writer to stop; the connection layer then closes the
@@ -109,8 +159,13 @@ type Room struct {
 	heroes  map[string]string // hero name -> member id
 	master  string
 
-	// reports[subject] is the set of member ids that reported subject stalled.
-	reports map[string]map[string]bool
+	// reports[subject][reporterID] is when that reporter last voted subject
+	// stalled. Timestamped rather than a plain set because a vote must EXPIRE:
+	// a stall report is evidence about right now, and a monotone set means two
+	// peers whose connections hiccuped at completely unrelated moments an hour
+	// apart still add up to a quorum against a perfectly healthy master. See
+	// stallVoteTTL.
+	reports map[string]map[string]time.Time
 }
 
 // Hub owns every room.
@@ -122,6 +177,12 @@ type Hub struct {
 	mu    sync.Mutex
 	rooms map[string]*Room
 	seq   uint64
+
+	// Cached GET /rooms body — see listedRoomsJSON. Its own mutex on purpose: a
+	// cache hit must not touch h.mu at all, which is the entire point.
+	listMu   sync.Mutex
+	listBody []byte
+	listAt   time.Time
 }
 
 // NewHub returns an empty hub.
@@ -169,8 +230,19 @@ func (h *Hub) ListRooms() []RoomInfo {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	out := make([]RoomInfo, 0, len(h.rooms))
+	out := make([]RoomInfo, 0, min(len(h.rooms), maxListedRooms))
+	// Bounded on rooms EXAMINED, not rooms emitted. Breaking on len(out) bounded
+	// only the response: full and mid-teardown rooms never increment it, so a hub
+	// full of them was scanned end to end under h.mu — the same lock every Signal,
+	// Join and election serialises on — for one unauthenticated, unrated GET.
+	// Join creates a room for any well-formed unknown code, so the room count is
+	// caller-controlled at one room per socket.
+	examined := 0
 	for code, r := range h.rooms {
+		if examined >= maxListedRooms {
+			break
+		}
+		examined++
 		n := len(r.members)
 		if n == 0 || n >= MaxMembers {
 			continue
@@ -187,6 +259,37 @@ func (h *Hub) ListRooms() []RoomInfo {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Code < out[j].Code })
 	return out
+}
+
+// listCacheTTL bounds how often GET /rooms may reach h.mu.
+const listCacheTTL = time.Second
+
+// listedRoomsJSON is the /rooms response body, rebuilt at most once per
+// listCacheTTL.
+//
+// maxListedRooms bounds the work of ONE call; nothing bounded the RATE. /rooms
+// is unauthenticated and unrated (ServeWS has a two-dimensional token bucket for
+// exactly this reason; the HTTP surface has none), and h.mu is the single
+// process-wide lock that Join, Leave, Signal, SetHero, ReportStalled and every
+// election serialise on. So a client hammering this over keep-alive acquired it
+// thousands of times a second — each time scanning up to 200 rooms and running
+// two sort passes inside the critical section — and stalled offer/answer/ICE
+// relay for every real player, at the cost of one TCP write per stall.
+//
+// Caching the BODY rather than the []RoomInfo is what makes the hit path free:
+// no allocation, no marshal, no h.mu. A second of staleness is invisible — the
+// client pulls this on panel open and on Refresh, never on a timer.
+func (h *Hub) listedRoomsJSON() []byte {
+	h.listMu.Lock()
+	defer h.listMu.Unlock()
+	if h.listBody != nil && time.Since(h.listAt) < listCacheTTL {
+		return h.listBody
+	}
+	// Lock order is listMu -> h.mu, and nothing anywhere takes them the other
+	// way round, so this cannot deadlock.
+	h.listBody = mustJSON(map[string]any{"rooms": h.ListRooms()})
+	h.listAt = time.Now()
+	return h.listBody
 }
 
 // newCode returns an unused invite code. Caller holds h.mu.
@@ -233,7 +336,7 @@ func (h *Hub) Join(code, name, id string) (*Room, *Member, error) {
 			Code:    code,
 			members: make(map[string]*Member),
 			heroes:  make(map[string]string),
-			reports: make(map[string]map[string]bool),
+			reports: make(map[string]map[string]time.Time),
 		}
 		h.rooms[code] = room
 	}
@@ -249,6 +352,9 @@ func (h *Hub) Join(code, name, id string) (*Room, *Member, error) {
 		out:  make(chan []byte, sendBuffer),
 		quit: make(chan struct{}),
 	}
+	// A member that has not spoken yet is not a silent one: without this its
+	// lastSeen is the zero time and the very first vote against it succeeds.
+	m.Touch()
 	room.members[m.ID] = m
 
 	// Welcome goes out before any broadcast so the joiner's first frame always
@@ -378,20 +484,64 @@ func (r *Room) ReportStalled(reporter *Member, subject string) {
 	if _, ok := r.members[reporter.ID]; !ok {
 		return
 	}
-	set := r.reports[subject]
-	if set == nil {
-		set = make(map[string]bool)
-		r.reports[subject] = set
+	// A member the room has already voted out keeps its socket but loses its
+	// vote. Otherwise one peer that hiccuped once (or one that is malicious)
+	// forms a quorum against every master the room ever elects, churning the
+	// title indefinitely — each migration costing a visible croc-sim handover.
+	now := time.Now()
+	if reporter.stalled {
+		// ...but the bar EXPIRES, exactly as the votes themselves do. A peer that
+		// has been back and talking to the lobby for a full stallVoteTTL has
+		// demonstrably recovered, and leaving it disenfranchised forever means a
+		// two-member room whose peers each hiccuped once can never migrate again.
+		if now.Sub(reporter.stalledAt) < stallVoteTTL || reporter.silentFor(now) >= stallMasterSilence {
+			return
+		}
+		reporter.stalled = false
 	}
-	set[reporter.ID] = true
-
-	others := len(r.members) - 1
-	if others < 1 || len(set)*2 <= others {
+	// CORROBORATE. The claim is "the master has gone quiet"; the lobby is a peer
+	// of the master too and can simply check. See stallMasterSilence.
+	master, ok := r.members[subject]
+	if !ok {
 		return
 	}
-	if target, ok := r.members[subject]; ok {
-		target.stalled = true
+	set := r.reports[subject]
+	if set == nil {
+		set = make(map[string]time.Time)
+		r.reports[subject] = set
 	}
+	set[reporter.ID] = now
+	// Prune before counting, so only peers that still believe the master is gone
+	// right now contribute to the quorum.
+	for id, at := range set {
+		if now.Sub(at) > stallVoteTTL {
+			delete(set, id)
+		}
+	}
+
+	if master.silentFor(now) < stallMasterSilence {
+		return
+	}
+
+	// Count only members that can still vote — a stalled member is neither an
+	// eligible reporter (above) nor part of the electorate, so counting it in the
+	// denominator would mean neither "half the live peers" nor "half the eligible
+	// ones".
+	others, votes := 0, 0
+	for id, m := range r.members {
+		if id == subject || m.stalled {
+			continue
+		}
+		others++
+		if _, voted := set[id]; voted {
+			votes++
+		}
+	}
+	if others < 1 || votes*2 <= others {
+		return
+	}
+	master.stalled = true
+	master.stalledAt = now
 	delete(r.reports, subject)
 	if r.electLocked() {
 		r.announceMasterLocked("")
@@ -415,8 +565,9 @@ func (r *Room) electLocked() bool {
 	if best == "" && len(r.members) > 0 {
 		for _, m := range r.members {
 			m.stalled = false
+			m.stalledAt = time.Time{}
 		}
-		r.reports = make(map[string]map[string]bool)
+		r.reports = make(map[string]map[string]time.Time)
 		for id, m := range r.members {
 			if m.seq < bestSeq {
 				best, bestSeq = id, m.seq

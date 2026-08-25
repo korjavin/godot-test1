@@ -7,9 +7,13 @@ package main
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha1" //nolint:gosec // the TURN REST API specifies HMAC-SHA1
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -29,10 +33,18 @@ type peer struct {
 
 func newServer(t *testing.T) string {
 	t.Helper()
+	base, _ := newServerHub(t)
+	return base
+}
+
+// newServerHub is newServer for the one test that has to reach past the wire and
+// touch lobby state directly (ageing a stall vote — there is no clock to inject).
+func newServerHub(t *testing.T) (string, *Hub) {
+	t.Helper()
 	hub := NewHub()
 	srv := httptest.NewServer(http.HandlerFunc(hub.ServeWS))
 	t.Cleanup(srv.Close)
-	return "ws" + strings.TrimPrefix(srv.URL, "http")
+	return "ws" + strings.TrimPrefix(srv.URL, "http"), hub
 }
 
 // dial connects and consumes the welcome frame.
@@ -156,14 +168,27 @@ func TestMasterIsOldestAndReElects(t *testing.T) {
 	}
 }
 
+// silence backdates one member's lastSeen so the lobby believes it has gone
+// quiet, without sleeping for stallMasterSilence. Same "age it in place" trick
+// TestStallVotesExpire uses on the votes themselves.
+func silence(hub *Hub, code, id string) {
+	hub.mu.Lock()
+	defer hub.mu.Unlock()
+	if m := hub.rooms[code].members[id]; m != nil {
+		m.lastSeen.Store(time.Now().Add(-2 * stallMasterSilence).UnixNano())
+	}
+}
+
 // TestStallQuorumReElects covers the phase-5 hook: the lobby re-elects once
-// strictly more than half of the non-master members report the master stalled.
+// strictly more than half of the non-master members report the master stalled
+// AND the lobby has itself heard nothing from that master.
 func TestStallQuorumReElects(t *testing.T) {
-	base := newServer(t)
+	base, hub := newServerHub(t)
 
 	a := dial(t, base, "", "alice")
 	b := dial(t, base, a.room, "bob")
 	c := dial(t, base, a.room, "carol")
+	silence(hub, a.room, a.id)
 
 	// One of two non-master members is not a quorum.
 	b.send(map[string]any{"type": "stalled", "id": a.id})
@@ -183,6 +208,123 @@ func TestStallQuorumReElects(t *testing.T) {
 	// The stalled peer is told too, and is not re-elected on the next change.
 	if m := a.want("master"); m["id"] != b.id {
 		t.Fatalf("alice saw master = %v", m["id"])
+	}
+}
+
+// rehabilitate ages a member's stalled bar past stallVoteTTL, standing in for
+// "the peer has been back and talking for a full TTL" without a real 10 s sleep.
+func rehabilitate(hub *Hub, code, id string) {
+	hub.mu.Lock()
+	defer hub.mu.Unlock()
+	if m := hub.rooms[code].members[id]; m != nil {
+		m.stalledAt = time.Now().Add(-2 * stallVoteTTL)
+		m.Touch()
+	}
+}
+
+// TestStalledPeerRegainsVote is the SECOND migration, which nothing else covers.
+// A deposed master keeps its socket and loses its vote — but if that bar were
+// permanent, a two-member room whose peers each hiccup once could never migrate
+// again: only a non-stalled member may vote, and it may not vote against itself.
+// The room would strand on a dead master for the rest of the run (no seed for
+// joiners, no croc sync, every pickup claim timing out and double-paying).
+func TestStalledPeerRegainsVote(t *testing.T) {
+	base, hub := newServerHub(t)
+
+	a := dial(t, base, "", "alice")
+	b := dial(t, base, a.room, "bob")
+	silence(hub, a.room, a.id)
+
+	// Migration 1: alice throttles, bob (the only other member) is a quorum of one.
+	b.send(map[string]any{"type": "stalled", "id": a.id})
+	if m := b.want("master"); m["id"] != b.id {
+		t.Fatalf("first migration: master = %v, wanted bob (%v)", m["id"], b.id)
+	}
+	_ = a.want("master")
+
+	// Alice comes back and stays back for longer than the bar lasts; bob then
+	// throttles in turn.
+	rehabilitate(hub, a.room, a.id)
+	silence(hub, a.room, b.id)
+
+	// Migration 2: alice's vote must count again.
+	a.send(map[string]any{"type": "stalled", "id": b.id})
+	if m := a.want("master"); m["id"] != a.id {
+		t.Fatalf("second migration: master = %v, wanted alice (%v)", m["id"], a.id)
+	}
+}
+
+// TestStalledPeerBarredWhileStillSilent is the other half: rehabilitation is
+// earned by being back, not merely by the clock. A peer still silent to the
+// lobby keeps its bar however long ago it was deposed, so a permanently dead
+// tab cannot vote out the master that replaced it.
+func TestStalledPeerBarredWhileStillSilent(t *testing.T) {
+	base, hub := newServerHub(t)
+
+	a := dial(t, base, "", "alice")
+	b := dial(t, base, a.room, "bob")
+	c := dial(t, base, a.room, "carol")
+	_ = b.want("peer_join")
+	silence(hub, a.room, a.id)
+
+	b.send(map[string]any{"type": "stalled", "id": a.id})
+	c.send(map[string]any{"type": "stalled", "id": a.id})
+	if m := b.want("master"); m["id"] != b.id {
+		t.Fatalf("first migration: master = %v, wanted bob (%v)", m["id"], b.id)
+	}
+	_ = c.want("master")
+
+	// Age alice's bar but leave her silent, and quieten bob so the only thing
+	// standing between carol and a migration is whether alice's vote counts.
+	hub.mu.Lock()
+	hub.rooms[a.room].members[a.id].stalledAt = time.Now().Add(-2 * stallVoteTTL)
+	hub.mu.Unlock()
+	silence(hub, a.room, a.id)
+	silence(hub, a.room, b.id)
+
+	// Alice alone is not a quorum of the two eligible non-master members (carol
+	// and, if the bar lifted wrongly, alice) — and with the bar held she is not
+	// even one vote.
+	a.send(map[string]any{"type": "stalled", "id": b.id})
+	c.send(map[string]any{"type": "signal", "to": c.id, "payload": "ping"})
+	if f := c.next(); f["type"] == "master" {
+		t.Fatalf("a still-silent stalled peer voted: %v", f)
+	}
+}
+
+// TestStallVotesExpire pins the TTL: a vote is evidence about right now, so a
+// stale one must not add up with a fresh one from a different peer. Without the
+// prune in ReportStalled, two peers that each hiccuped once — an hour apart, with
+// a perfectly healthy master in between — reach quorum and depose it.
+func TestStallVotesExpire(t *testing.T) {
+	base, hub := newServerHub(t)
+
+	a := dial(t, base, "", "alice")
+	b := dial(t, base, a.room, "bob")
+	c := dial(t, base, a.room, "carol")
+	_ = b.want("peer_join")
+	silence(hub, a.room, a.id)
+
+	b.send(map[string]any{"type": "stalled", "id": a.id})
+	// Round-trip a frame so bob's vote is definitely recorded before we age it.
+	b.send(map[string]any{"type": "ping"})
+	_ = b.want("pong")
+
+	// Age bob's vote past the TTL, in place — there is no clock to inject and
+	// sleeping for stallVoteTTL would make this the slowest test in the file.
+	hub.mu.Lock()
+	for _, set := range hub.rooms[a.room].reports {
+		for id := range set {
+			set[id] = time.Now().Add(-2 * stallVoteTTL)
+		}
+	}
+	hub.mu.Unlock()
+
+	// Carol's fresh vote is now the ONLY live one, and one of two is not a quorum.
+	c.send(map[string]any{"type": "stalled", "id": a.id})
+	c.send(map[string]any{"type": "signal", "to": c.id, "payload": "ping"})
+	if f := c.next(); f["type"] == "master" {
+		t.Fatalf("an expired vote still counted toward quorum: %v", f)
 	}
 }
 
@@ -438,7 +580,7 @@ func TestListRoomsSkipsMemberlessRoom(t *testing.T) {
 		Code:    "ZZZZZZ",
 		members: make(map[string]*Member),
 		heroes:  make(map[string]string),
-		reports: make(map[string]map[string]bool),
+		reports: make(map[string]map[string]time.Time),
 	}
 	if got := hub.ListRooms(); len(got) != 0 {
 		t.Fatalf("a member-less room was listed: %+v", got)
@@ -500,4 +642,188 @@ func TestRoomsEndpoint(t *testing.T) {
 	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
 		t.Errorf("evil origin got %q", got)
 	}
+}
+
+// TestStallQuorumNeedsSilentMaster is the negative control for
+// stallMasterSilence, and it covers a live griefing route rather than a
+// hypothetical: room codes are public over GET /rooms, "strictly more than half
+// the non-master members" is ONE vote in a two-member room, and the client trusts
+// whoever is master with pickup arbitration, crocodile sync and the world seed.
+// So a stranger joining a solo host must not be able to take the room with a
+// single frame while the host is heartbeating normally.
+func TestStallQuorumNeedsSilentMaster(t *testing.T) {
+	base, hub := newServerHub(t)
+
+	host := dial(t, base, "", "host")
+	intruder := dial(t, base, host.room, "intruder")
+	_ = host.want("peer_join")
+
+	// The host is talking (its 1 Hz heartbeat is a signal frame), so the lobby
+	// can see for itself that the report is false.
+	host.send(map[string]any{"type": "signal", "payload": "hb"})
+	_ = intruder.want("signal")
+
+	intruder.send(map[string]any{"type": "stalled", "id": host.id})
+	intruder.send(map[string]any{"type": "ping"})
+	if f := intruder.want("pong"); f["type"] != "pong" {
+		t.Fatalf("wanted pong, got %v", f)
+	}
+	hub.mu.Lock()
+	master := hub.rooms[host.room].master
+	hub.mu.Unlock()
+	if master != host.id {
+		t.Fatalf("a single vote against a live master took the room: master = %v, host = %v", master, host.id)
+	}
+
+	// ...and once the host really does go quiet, the same vote works. A
+	// re-send is needed because the refused one is still in the set but the
+	// count only runs when a report arrives.
+	silence(hub, host.room, host.id)
+	intruder.send(map[string]any{"type": "stalled", "id": host.id})
+	if m := intruder.want("master"); m["id"] != intruder.id {
+		t.Fatalf("after the master went silent, master = %v, wanted %v", m["id"], intruder.id)
+	}
+}
+
+// TestTinyFrameFloodEvictsTheFlooderNotTheRoom is the negative control for the
+// frame-rate bucket. The byte bucket alone did not bound MESSAGE count, so a
+// stream of tiny broadcast `signal` frames stayed inside its 256 KB budget while
+// fanning out enough frames to overflow every other member's 64-deep send queue —
+// `Member.send` then killed the VICTIMS with "peer too slow", leaving the flooder
+// alone in the room and elected master without a single stall vote being cast.
+//
+// The flood is deliberately sized to stay WELL under msgRateBurst bytes (asserted
+// below), so the only thing that can refuse it is the frame bucket: remove that
+// and this test fails with the flooder still happily connected.
+func TestTinyFrameFloodEvictsTheFlooderNotTheRoom(t *testing.T) {
+	base, hub := newServerHub(t)
+	host := dial(t, base, "", "host")
+	flooder := dial(t, base, host.room, "flooder")
+	host.want("peer_join")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	body, _ := json.Marshal(map[string]any{"type": "signal", "payload": json.RawMessage(`1`)})
+	// A LITERAL count, not one derived from frameRateBurst: deriving it makes the
+	// flood grow with the constant, so raising the constant to disable the bucket
+	// would also make the flood pass the byte budget and the test would fail for
+	// the wrong reason instead of catching the removal.
+	const frames = 3000
+	if frames <= frameRateBurst {
+		t.Fatalf("flood of %d frames no longer exceeds frameRateBurst (%d)", frames, frameRateBurst)
+	}
+	if total := len(body) * frames; total >= msgRateBurst {
+		t.Fatalf("flood of %d bytes is inside the BYTE budget (%d) — the test would "+
+			"pass on the byte bucket alone and prove nothing", total, msgRateBurst)
+	}
+	for i := 0; i < frames; i++ {
+		// The write fails once the lobby closes the socket, which is the intended
+		// outcome — stop there rather than failing.
+		if err := flooder.c.Write(ctx, websocket.MessageText, body); err != nil {
+			break
+		}
+	}
+
+	// Read until the socket errors: that is the lobby's close frame arriving.
+	rctx, rcancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer rcancel()
+	for {
+		if _, _, err := flooder.c.Read(rctx); err != nil {
+			if rctx.Err() != nil {
+				t.Fatal("the lobby never refused the flood — the frame bucket is not firing")
+			}
+			break
+		}
+	}
+
+	// `Leave` runs in the flooder's own goroutine after the close, so settle first.
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		hub.mu.Lock()
+		r := hub.rooms[host.room]
+		var names []string
+		if r != nil {
+			for _, m := range r.members {
+				names = append(names, m.Name)
+			}
+		}
+		hub.mu.Unlock()
+		if len(names) == 1 && names[0] == "host" {
+			return // Flooder gone, host still in its own room.
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("the flooder was not evicted, or it took the host down with it")
+}
+
+// TestICETURNCredentialsExpire is the security property of /ice: the endpoint is
+// unauthenticated by necessity (the game build cannot hold a secret) and CORS is
+// browser-only, so a scraped response must go stale by itself. With TURN_SECRET
+// set the pair is coturn's REST form; without one the static pair still comes
+// out, because coturn cannot be migrated one half at a time.
+func TestICETURNCredentialsExpire(t *testing.T) {
+	t.Setenv("TURN_URL", "turn:turn.example:3478")
+	t.Setenv("TURN_USER", "static-user")
+	t.Setenv("TURN_PASSWORD", "static-pass")
+
+	t.Run("static without a secret", func(t *testing.T) {
+		user, cred := iceTURN(t)
+		if user != "static-user" || cred != "static-pass" {
+			t.Fatalf("got %q/%q, wanted the static pair", user, cred)
+		}
+	})
+
+	t.Run("REST credentials with a secret", func(t *testing.T) {
+		t.Setenv("TURN_SECRET", "s3cret")
+		user, cred := iceTURN(t)
+
+		expiry, name, ok := strings.Cut(user, ":")
+		if !ok || name == "" {
+			t.Fatalf("username %q is not coturn's <expiry>:<name> REST form", user)
+		}
+		at, err := strconv.ParseInt(expiry, 10, 64)
+		if err != nil {
+			t.Fatalf("username %q: expiry is not a unix timestamp: %v", user, err)
+		}
+		// Bounded on BOTH sides: an expiry in the past never authenticates, and
+		// one far in the future is the "static and unrotated" leak again.
+		if d := time.Until(time.Unix(at, 0)); d <= 0 || d > turnCredentialTTL+time.Minute {
+			t.Errorf("credential lives for %v, wanted (0, %v]", d, turnCredentialTTL)
+		}
+		// The exact bytes coturn checks — verified against coturn 4.6.3, which
+		// completes an allocation with this pair and refuses the static user
+		// once --use-auth-secret is on.
+		mac := hmac.New(sha1.New, []byte("s3cret"))
+		mac.Write([]byte(user))
+		if want := base64.StdEncoding.EncodeToString(mac.Sum(nil)); cred != want {
+			t.Errorf("credential = %q, wanted base64(HMAC-SHA1(secret, username)) = %q", cred, want)
+		}
+		if cred == "static-pass" {
+			t.Error("static password served while a TURN secret is configured")
+		}
+	})
+}
+
+// iceTURN calls the real handler and digs the TURN entry out of the response.
+func iceTURN(t *testing.T) (string, string) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	iceHandler(rec, httptest.NewRequest(http.MethodGet, "/ice", nil))
+	var body struct {
+		ICEServers []struct {
+			URLs       []string `json:"urls"`
+			Username   string   `json:"username"`
+			Credential string   `json:"credential"`
+		} `json:"iceServers"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("/ice body: %v", err)
+	}
+	for _, s := range body.ICEServers {
+		if len(s.URLs) > 0 && strings.HasPrefix(s.URLs[0], "turn:") {
+			return s.Username, s.Credential
+		}
+	}
+	t.Fatalf("no TURN entry in %s", rec.Body.String())
+	return "", ""
 }

@@ -143,10 +143,19 @@ func _process(_delta: float) -> void:
 	var blocked: bool = _touch_modal_up()
 	if _body != null:
 		_body.visible = not blocked
-	# Do not hold the pause while invisible: `touch_controls`' resume overlay is
-	# gated on the pause being ITS own, so a pause held by an unseen node here
-	# would leave the player looking at a frozen game with nothing to press.
-	_apply_pause(not blocked)
+	# HIDE, BUT KEEP THE PAUSE. The overlay that is actually up at this moment on
+	# every phone is the first-run "tap to enable motion controls" one
+	# (`touch_controls` shows it whenever motion is not yet enabled), so releasing
+	# here meant `_ready()`'s pause lasted exactly one frame and the world ran live
+	# — crocodiles closing on a spawn bubble only 25 m wide — while the player had
+	# not yet chosen PLAY SOLO or MULTIPLAYER. That is the one thing this node
+	# exists to prevent.
+	#
+	# Nothing is stranded behind the held pause: all three of `has_modal()`'s
+	# overlays are PROCESS_MODE_ALWAYS and dismiss themselves, and the resume
+	# overlay in particular can never be the blocker here — it is gated on
+	# `mobile_input.paused_by_driver`, which is false while WE own the pause.
+	_apply_pause(true)
 
 
 ## True while `touch_controls.gd` has one of its own full-rect overlays up.
@@ -265,7 +274,11 @@ func _make_button(label: String, handler: Callable) -> Button:
 ## `_make_button`) — this Control is PROCESS_MODE_ALWAYS, so it receives input
 ## under its own pause with nothing focused at all.
 func _unhandled_input(event: InputEvent) -> void:
-	if _dismissed or event == null:
+	# The touch-modal test is the same one `_process` uses to hide the body: while
+	# one of `touch_controls`' full-rect overlays is up this card is INVISIBLE, and
+	# without the test one Enter dismissed it anyway — permanently and unseen,
+	# since `_dismissed` is one-way and there is no route back to this screen.
+	if _dismissed or event == null or _touch_modal_up():
 		return
 	if event.is_action_pressed("ui_accept"):
 		get_viewport().set_input_as_handled()
@@ -277,7 +290,14 @@ func _on_play_solo_pressed() -> void:
 
 
 func _on_multiplayer_pressed() -> void:
-	_dismiss()
+	# NOT capturing the mouse: the panel is about to open and wants the cursor.
+	# On web `Input.set_mouse_mode(CAPTURED)` only REQUESTS pointer lock — the
+	# browser grants it on a later task — so `mp_ui._apply_pause()`'s
+	# `mouse_mode == MOUSE_MODE_CAPTURED` test would read VISIBLE, decline to
+	# release it, and the lock would then land with the panel open: cursor warped
+	# to screen centre, Join/Copy/Leave/Close unreachable. Exactly the failure the
+	# panel's pause exists to prevent.
+	_dismiss(false)
 	# Open the MP panel through the group, no hard reference — the same discovery
 	# rule the rest of the HUD follows. `_dismiss()` released our pause and the
 	# panel takes its own synchronously inside `open_panel()`, so the world is
@@ -289,7 +309,7 @@ func _on_multiplayer_pressed() -> void:
 
 ## Stand down for good: hide, stop processing, release the pause, hand the mouse
 ## back to the game.
-func _dismiss() -> void:
+func _dismiss(capture_mouse: bool = true) -> void:
 	if _dismissed:
 		return
 	_dismissed = true
@@ -315,7 +335,7 @@ func _dismiss() -> void:
 	# 2. Pointer lock. Skipped on a touch session for the same reason
 	#    `player_controller._ready()` skips it: there is no mouse to capture and
 	#    the request would pop a useless prompt over the touch controls.
-	if not _is_touch:
+	if capture_mouse and not _is_touch:
 		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 
 

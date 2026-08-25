@@ -31,11 +31,19 @@ extends SceneTree
 ##      must still decode, or an older peer goes invisible instead of uncounted.
 ##   8. The shared-lives arithmetic — the room's hearts, off by one is a death.
 ##   9. Hero name → CHARACTERS index, the lookup the hero split rides on.
+##  10. The crocodile-sync parser against hostile packets — the fourth trust
+##      boundary, and the one that drives every crocodile in the room.
+##  11. Crocodile identity — the id is a pure function of the node name, which
+##      the terrain derives deterministically, so two peers name the same
+##      crocodile the same thing; AND a live croc latches it in _ready().
+##  12. The room's coin multiplier arithmetic, pinned against the player's own
+##      streak constants — the master prices every claim with it.
 
 const MPManager: GDScript = preload("res://scripts/mp_manager.gd")
 const Terrain: GDScript = preload("res://scripts/endless_terrain.gd")
 const Coin: GDScript = preload("res://scripts/coin.gd")
 const Player: GDScript = preload("res://scripts/player_controller.gd")
+const CrocAI: GDScript = preload("res://scripts/piglet_crocodile_ai.gd")
 
 
 func _initialize() -> void:
@@ -79,7 +87,16 @@ func _run_checks() -> String:
 	failure = _check_shared_lives()
 	if not failure.is_empty():
 		return failure
-	return _check_hero_index()
+	failure = _check_hero_index()
+	if not failure.is_empty():
+		return failure
+	failure = _check_croc_sync_parser()
+	if not failure.is_empty():
+		return failure
+	failure = _check_croc_ids()
+	if not failure.is_empty():
+		return failure
+	return _check_room_multiplier()
 
 
 # =============================================================================
@@ -87,21 +104,33 @@ func _run_checks() -> String:
 # =============================================================================
 
 func _check_avatar_isolation() -> String:
-	var avatar := RemoteAvatar.new()
-	avatar.setup("selfcheck-peer")
-	avatar.set_character(0)
+	# EVERY playable character, not just CHARACTERS[0]. The contract is that no
+	# remote model joins a group or carries a CollisionObject3D, and an Area3D
+	# added to primm/teibi/phoboman is exactly the regression this exists to catch
+	# — walking one scene would let three of the four through.
+	#
+	# A FRESH AVATAR PER INDEX is load-bearing: `set_character` silently drops a
+	# swap inside SWAP_COOLDOWN_MS (500 ms), so successive calls on one avatar
+	# would all keep the first model and three quarters of the loop would re-walk
+	# the same scene.
+	for index: int in Player.CHARACTERS.size():
+		var avatar := RemoteAvatar.new()
+		avatar.setup("selfcheck-peer")
+		avatar.set_character(index)
 
-	# `set_character` has four SILENT early-return paths (bad index, same index,
-	# the swap cooldown, a load() that returned null). Any of them would leave an
-	# empty subtree here and the walk below would pass by covering nothing —
-	# a green run that guards precisely zero of the contract. Assert it loaded.
-	if avatar.character_node == null:
+		# `set_character` has four SILENT early-return paths (bad index, same index,
+		# the swap cooldown, a load() that returned null). Any of them would leave an
+		# empty subtree here and the walk below would pass by covering nothing —
+		# a green run that guards precisely zero of the contract. Assert it loaded.
+		if avatar.character_node == null:
+			avatar.free()
+			return "set_character(%d) instanced no model — the isolation walk would be vacuous" % index
+
+		var failure: String = _walk_isolation(avatar, avatar)
 		avatar.free()
-		return "set_character(0) instanced no model — the isolation walk would be vacuous"
-
-	var failure: String = _walk_isolation(avatar, avatar)
-	avatar.free()
-	return failure
+		if not failure.is_empty():
+			return "%s (character %d)" % [failure, index]
+	return ""
 
 
 func _walk_isolation(node: Node, root: Node) -> String:
@@ -202,12 +231,22 @@ func _check_forced_seed() -> String:
 
 	terrain.set_run_seed(12345)
 	var second: Vector2 = terrain.biome_offset
+
+	# A DIFFERENT seed must give a DIFFERENT offset. Without this the two checks
+	# below are satisfied by a `_roll_biome_offset()` that ignores its seed
+	# entirely and returns a fixed non-zero constant — i.e. they do not pin the
+	# property this check is named for, that `run_seed` actually reaches the
+	# biome field.
+	terrain.set_run_seed(54321)
+	var other: Vector2 = terrain.biome_offset
 	terrain.free()
 
 	if first != second:
 		return "same seed gave different biome offsets: %s vs %s" % [first, second]
 	if first == Vector2.ZERO:
 		return "set_run_seed did not derive a biome offset"
+	if other == first:
+		return "a different seed gave the same biome offset — run_seed does not reach the biome field"
 	return ""
 
 
@@ -431,6 +470,24 @@ func _check_presence_backcompat() -> String:
 	}))
 	if not poisoned.is_empty():
 		return "parser accepted a negative coin contribution: %s" % poisoned
+
+	# THE MIRROR OF THE SAME RULE, from the other side. Phase 5 discriminates
+	# packet kinds on a `"t"` key and absence means presence, so a packet from a
+	# LATER build — one carrying a verb this one has never heard of — must be
+	# ignored, not fed to the presence path. It would decode there: the fields
+	# below are a perfectly valid presence packet, so ONLY THE DISCRIMINATOR stops
+	# it. Pin the discriminator itself: driving `_receive_mesh_verb()` instead
+	# would assert nothing at all, because that function has no presence branch to
+	# leak through and so passes however the dispatch is written.
+	var later_build: Dictionary = {
+		"t": "zzz_a_verb_from_a_later_build",
+		"p": Vector3.ZERO, "y": 0.0, "c": 0, "s": 0.0, "g": true, "cc": 99,
+	}
+	if MPManager.packet_kind(later_build) != "zzz_a_verb_from_a_later_build":
+		return "a packet carrying an unknown verb did not read as that verb"
+	var phase4: Dictionary = {"p": Vector3.ZERO, "y": 0.0, "c": 0, "s": 0.0, "g": true}
+	if MPManager.packet_kind(phase4) != "":
+		return "a phase-3/4 packet with no \"t\" did not read as presence"
 	return ""
 
 
@@ -481,4 +538,222 @@ func _check_hero_index() -> String:
 	for unknown in ["", "gandalf", "WINDMAN"]:
 		if MPManager.hero_index(unknown) != -1:
 			return "hero_index(%s) resolved — an unknown hero must give -1" % unknown
+	return ""
+
+
+# =============================================================================
+# 10. CROCODILE SYNC PARSER
+# =============================================================================
+
+func _check_croc_sync_parser() -> String:
+	"""
+	`decode_croc_sync()` — the FOURTH trust boundary, and the widest-reaching one:
+	an accepted packet drives every crocodile in the room, so a NaN that gets
+	through interpolates to NaN for the room's life with no path back. Whole or
+	nothing, exactly like the other three parsers.
+	"""
+	var good := {
+		"t": "croc",
+		"i": PackedInt32Array([11, 22]),
+		"x": PackedFloat32Array([
+			1.0, 0.0, 2.0, 0.5,
+			-3.0, 0.0, 4.0, 1.25,
+		]),
+		"f": PackedByteArray([MPManager.CROC_FLAG_CHASING, 0]),
+	}
+	var sync: Dictionary = MPManager.decode_croc_sync(good)
+	if sync.is_empty():
+		return "croc-sync parser rejected a well-formed packet"
+	var ids: PackedInt32Array = sync["ids"]
+	var xf: PackedFloat32Array = sync["xf"]
+	var flags: PackedByteArray = sync["flags"]
+	if ids.size() != 2 or flags.size() != 2 or xf.size() != 8:
+		return "croc-sync parser mangled the entry counts: %d/%d/%d" % [
+			ids.size(), xf.size(), flags.size()
+		]
+	if ids[1] != 22 or flags[0] != MPManager.CROC_FLAG_CHASING \
+			or not is_equal_approx(xf[4], -3.0):
+		return "croc-sync parser mangled a well-formed packet: %s" % sync
+
+	# An absurd yaw comes back WRAPPED, not dropped — the same normalise-rather-
+	# than-refuse rule `decode_presence` applies to `y`, and for the same reason:
+	# the receiver eases it with lerp_angle, which is `from + short_way * weight`,
+	# and `1e30 + anything small IS 1e30`.
+	var wild: Dictionary = MPManager.decode_croc_sync({
+		"i": PackedInt32Array([1]),
+		"x": PackedFloat32Array([0.0, 0.0, 0.0, 1.0e30]),
+		"f": PackedByteArray([0]),
+	})
+	if wild.is_empty():
+		return "croc-sync parser dropped an absurd yaw instead of wrapping it"
+	var wrapped: float = (wild["xf"] as PackedFloat32Array)[3]
+	if wrapped < 0.0 or wrapped >= TAU:
+		return "croc-sync parser let an absurd yaw through unbounded: %f" % wrapped
+
+	# One entry too many. Built at the cap + 1 so the check pins the BOUNDARY, not
+	# merely "some big number is refused".
+	var over_ids := PackedInt32Array()
+	var over_xf := PackedFloat32Array()
+	var over_flags := PackedByteArray()
+	for i: int in range(MPManager.MAX_CROC_SYNC + 1):
+		over_ids.append(i)
+		over_flags.append(0)
+		over_xf.append_array(PackedFloat32Array([0.0, 0.0, 0.0, 0.0]))
+
+	# Each of these must be dropped WHOLE.
+	var bad: Array = [
+		["empty payload", {}],
+		["missing i", {
+			"x": PackedFloat32Array([0.0, 0.0, 0.0, 0.0]), "f": PackedByteArray([0])
+		}],
+		["missing x", {"i": PackedInt32Array([1]), "f": PackedByteArray([0])}],
+		["missing f", {
+			"i": PackedInt32Array([1]), "x": PackedFloat32Array([0.0, 0.0, 0.0, 0.0])
+		}],
+		# A plain Array indexes just fine and would then hand a String to
+		# `global_position` — the exact type confusion the EXACT packed-type test
+		# in the parser exists to stop.
+		["i as a plain Array", {
+			"i": [1], "x": PackedFloat32Array([0.0, 0.0, 0.0, 0.0]),
+			"f": PackedByteArray([0])
+		}],
+		["x as a plain Array", {
+			"i": PackedInt32Array([1]), "x": [0.0, 0.0, 0.0, 0.0],
+			"f": PackedByteArray([0])
+		}],
+		["f as a plain Array", {
+			"i": PackedInt32Array([1]), "x": PackedFloat32Array([0.0, 0.0, 0.0, 0.0]),
+			"f": [0]
+		}],
+		# The three arrays describe the SAME entries, so a size mismatch is a
+		# truncated or hostile packet and walking it reads off the end of one.
+		["f shorter than i", {
+			"i": PackedInt32Array([1, 2]),
+			"x": PackedFloat32Array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+			"f": PackedByteArray([0])
+		}],
+		["x not 4 per entry", {
+			"i": PackedInt32Array([1]), "x": PackedFloat32Array([0.0, 0.0, 0.0]),
+			"f": PackedByteArray([0])
+		}],
+		["more entries than MAX_CROC_SYNC", {
+			"i": over_ids, "x": over_xf, "f": over_flags
+		}],
+		["NaN coordinate", {
+			"i": PackedInt32Array([1]), "x": PackedFloat32Array([NAN, 0.0, 0.0, 0.0]),
+			"f": PackedByteArray([0])
+		}],
+		["INF coordinate", {
+			"i": PackedInt32Array([1]), "x": PackedFloat32Array([0.0, INF, 0.0, 0.0]),
+			"f": PackedByteArray([0])
+		}],
+		# Finite but absurd: a crocodile stands in the same world a player does,
+		# so it takes the presence packet's coordinate bound.
+		["coordinate past MAX_PRESENCE_COORD", {
+			"i": PackedInt32Array([1]),
+			"x": PackedFloat32Array([
+				0.0, 0.0, MPManager.MAX_PRESENCE_COORD * 10.0, 0.0
+			]),
+			"f": PackedByteArray([0])
+		}],
+		["NaN yaw", {
+			"i": PackedInt32Array([1]), "x": PackedFloat32Array([0.0, 0.0, 0.0, NAN]),
+			"f": PackedByteArray([0])
+		}],
+	]
+	for case in bad:
+		var result: Dictionary = MPManager.decode_croc_sync(case[1])
+		if not result.is_empty():
+			return "croc-sync parser accepted a bad packet (%s): %s" % [case[0], result]
+	return ""
+
+
+# =============================================================================
+# 11. CROCODILE IDENTITY
+# =============================================================================
+
+func _check_croc_ids() -> String:
+	"""
+	`croc_id_for()` is the whole crocodile-identity scheme, and it is the coin's
+	argument one level up: no id is ever transmitted with a crocodile, so the
+	master driving a peer's crocodile works ONLY if the terrain's deterministic
+	node name names the same animal on both. Two crocodiles that differ by their
+	index — or by their spawner's prefix — must not collide, or the master's
+	sync drives the wrong body.
+	"""
+	var name_a: String = "Crocodile_3_-4_2"
+	var id: int = CrocAI.croc_id_for(name_a)
+	if CrocAI.croc_id_for(name_a) != id:
+		return "croc_id_for is not stable for the same name"
+	if CrocAI.croc_id_for("Crocodile_3_-4_3") == id:
+		return "croc_id_for collided across the spawn index"
+	if CrocAI.croc_id_for("PatrolCrocodile_3_-4_2") == id:
+		return "croc_id_for collided across the spawner prefix"
+
+	# EVERY id MUST SURVIVE THE WIRE. The sync packet carries ids in a
+	# PackedInt32Array, so an id above INT32_MAX wraps negative in transit, misses
+	# the receiver's `_synced_crocs` lookup and is dropped on the deliberately
+	# SILENT "not my chunk" path — which is why the stability and distinctness
+	# checks above passed while 43% of the pack was never synced at all. Sweep the
+	# real name scheme rather than one hand-picked name: the failure is a property
+	# of the hash's range, so a single example only pins whichever half it landed in.
+	var wire: PackedInt32Array = PackedInt32Array()
+	for cx: int in range(-6, 7):
+		for i: int in range(10):
+			var probe: String = "Crocodile_%d_%d_%d" % [cx, cx * 3 - 1, i]
+			var probe_id: int = CrocAI.croc_id_for(probe)
+			wire.clear()
+			wire.append(probe_id)
+			if wire[0] != probe_id:
+				return "croc_id_for(%s) == %d does not survive PackedInt32Array (%d)" % [
+					probe, probe_id, wire[0]
+				]
+
+	# The live node LATCHES it in _ready(), so nothing that touches the node later
+	# can quietly rename this crocodile mid-run — check the real thing, because
+	# the pure function passing says nothing about where the node reads its name.
+	var croc: Node = load("res://scenes/characters/piglet_crocodile.tscn").instantiate()
+	croc.name = name_a
+	root.add_child(croc)
+	var live_id: int = croc.croc_id()
+	croc.free()
+	if live_id != id:
+		return "a live crocodile's croc_id() (%d) does not match croc_id_for(%s) (%d)" % [
+			live_id, name_a, id
+		]
+	return ""
+
+
+# =============================================================================
+# 12. ROOM COIN MULTIPLIER
+# =============================================================================
+
+func _check_room_multiplier() -> String:
+	"""
+	The master prices EVERY claim in the room with this, so a drift from the
+	player's own `get_streak_multiplier()` pays every coin in the room at the
+	wrong rate. Pinned against the player's constants, not against a copy of the
+	expression.
+	"""
+	var step: int = Player.STREAK_COINS_PER_STEP
+	var bonus: int = Player.STREAK_MAX_BONUS
+
+	var cases: Array = [
+		# [streak, expected, what it pins]
+		[0, 1, "no streak is x1"],
+		[step - 1, 1, "the step is a floor, not a rounding"],
+		[step, 2, "one step of STREAK_COINS_PER_STEP is +1"],
+		[step * bonus, 1 + bonus, "the cap is 1 + STREAK_MAX_BONUS"],
+		[step * (bonus + 99), 1 + bonus, "past the cap stays at the cap"],
+	]
+	for case in cases:
+		var got: int = MPManager.room_multiplier_from(case[0], step, bonus)
+		if got != case[1]:
+			return "room_multiplier_from(%d) == %d, expected %d — %s" % [
+				case[0], got, case[1], case[2]
+			]
+
+	# A zero step size would be a division by zero on the master's hot path.
+	if MPManager.room_multiplier_from(50, 0, bonus) != 1:
+		return "room_multiplier_from did not guard a zero step size"
 	return ""

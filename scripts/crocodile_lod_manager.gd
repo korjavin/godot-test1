@@ -192,6 +192,36 @@ func _scan_crocodiles() -> void:
 
 	var player_pos: Vector3 = _player.global_position
 
+	# ------------------------------------------------------------------------
+	# WHO COUNTS AS "NEAR" (multiplayer generalisation)
+	# ------------------------------------------------------------------------
+	# A crocodile must be awake when it is near ANY member of the room, not only
+	# when it is near the local player: in a room the master simulates every awake
+	# croc for everybody, so a croc slept here because *we* walked away would stop
+	# being simulated for the teammate standing next to it. The awake test is
+	# therefore the MINIMUM distance over the whole set of member positions.
+	#
+	# LOAD-BEARING CLAIM FOR "SOLO PLAY IS BYTE-FOR-BYTE UNCHANGED": offline (and
+	# in a room before the mesh comes up) `peer_positions()` returns null, so this
+	# set is the one-element array [player_pos] and the minimum over it is exactly
+	# the old single distance. No branch below can behave differently.
+	#
+	# It also returns null on a NON-MASTER, because only the master publishes
+	# crocodile state and so only its LOD decision can strand a teammate's
+	# neighbours unsimulated — see `MpManager.peer_positions()` for why widening
+	# the set anywhere else is pure cost.
+	#
+	# Group-based + null-safe like every other cross-system hook: no MP manager in
+	# the scene (a character scene run in isolation) means we simply skip it.
+	var focus_points: Array[Vector3] = [player_pos]
+	var mp := get_tree().get_first_node_in_group("mp")
+	if mp != null and mp.has_method("peer_positions"):
+		var remotes: Variant = mp.peer_positions()
+		if remotes is Array:
+			for p: Variant in remotes:
+				if p is Vector3:
+					focus_points.append(p)
+
 	# Danger telegraph level: 0 = nobody hunting, 1 = a chaser at point blank.
 	# NORMALISED per chaser (distance ÷ that croc's own detection radius) rather
 	# than published as raw metres, because a boss acquires the player at 25 m
@@ -211,8 +241,19 @@ func _scan_crocodiles() -> void:
 			continue
 
 		# Squared distance is enough to compare against our squared thresholds, and
-		# avoids a sqrt per crocodile per scan.
-		var dist_sq: float = croc.global_position.distance_squared_to(player_pos)
+		# avoids a sqrt per crocodile per scan. TWO distances, deliberately:
+		#   * `dist_sq_local` — to THIS player, and only this player. It feeds the
+		#     danger telegraph, which is this player's own fear, not the room's: a
+		#     croc hunting a teammate 80 m away must not redden our screen.
+		#   * `dist_sq_any` — the minimum over every member position, which is what
+		#     the awake/asleep decision uses so `SIM_RADIUS ≫ DETECTION_RADIUS`
+		#     holds for every member rather than only for us.
+		# Offline the two are the same number (focus_points is [player_pos]).
+		var croc_pos: Vector3 = croc.global_position
+		var dist_sq_local: float = croc_pos.distance_squared_to(player_pos)
+		var dist_sq_any: float = dist_sq_local
+		for i: int in range(1, focus_points.size()):
+			dist_sq_any = minf(dist_sq_any, croc_pos.distance_squared_to(focus_points[i]))
 
 		# Danger telegraph: remember the closest ACTIVE hunter. The `in` guard
 		# keeps us safe against a group member that doesn't expose the flag
@@ -223,7 +264,18 @@ func _scan_crocodiles() -> void:
 			# 25 boss) — never a constant duplicated here, so retuning either radius
 			# moves the telegraph with it. maxf guards a hand-zeroed radius.
 			var radius: float = maxf(croc.detection_radius, 0.001)
-			danger_level = maxf(danger_level, 1.0 - sqrt(dist_sq) / radius)
+			danger_level = maxf(danger_level, 1.0 - sqrt(dist_sq_local) / radius)
+
+		# A remote-driven crocodile (one the room master is simulating for us) is
+		# owned by the sync layer: `set_remote_state()` forces that croc's
+		# `_physics_process` ON so it can tick the samples in, and
+		# `clear_remote_drive()` hands the switch back to whatever we last decided
+		# here. The LOD manager must not fight it for that switch in between — but
+		# this `continue` sits BELOW the danger read on purpose, so a
+		# synced croc chasing us still lights the vignette. Same defensive `in`
+		# guard as the `is_chasing` / `is_boss` reads.
+		if "remote_driven" in croc and croc.remote_driven:
+			continue
 
 		# Read the crocodile's current LOD state so we can apply hysteresis and
 		# only call the setter on a real transition. We already filtered to crocs
@@ -248,11 +300,11 @@ func _scan_crocodiles() -> void:
 			should_be_active = true
 		elif currently_active:
 			# Awake → only sleep once we're clearly OUTSIDE the buffer (hysteresis).
-			if dist_sq > SLEEP_DISTANCE_SQ:
+			if dist_sq_any > SLEEP_DISTANCE_SQ:
 				should_be_active = false
 		else:
 			# Asleep → wake as soon as we're back INSIDE SIM_RADIUS.
-			if dist_sq <= WAKE_DISTANCE_SQ:
+			if dist_sq_any <= WAKE_DISTANCE_SQ:
 				should_be_active = true
 
 		# Only notify the crocodile when its state actually flips. The setter is

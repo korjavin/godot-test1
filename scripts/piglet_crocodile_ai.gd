@@ -165,6 +165,45 @@ const BITE_PITCH: float = 26.0 * PI / 180.0
 ## How far the body lunges forward during the bite (metres).
 const BITE_LUNGE: float = 0.35
 
+## ---------------------------------------------------------------------------
+## MULTIPLAYER SYNC (phase 5) — see set_remote_state() for the whole scheme
+## ---------------------------------------------------------------------------
+
+## How far a synced sample may land from the body before we SNAP to it instead of
+## easing. A master migration, a chunk rebuild or a burst of dropped packets all
+## move a crocodile further than one 10 Hz step ever could; without the snap the
+## body would take a long serene glide to catch up. Same rule, same reason, as
+## RemoteAvatar's TELEPORT_DISTANCE.
+const CROC_TELEPORT_DISTANCE: float = 8.0
+
+## Ceiling on the velocity a remote sample may ask for (m/s). The samples already
+## passed the manager's decoder, so this is belt-and-braces: it bounds how far one
+## bad-but-finite sample can fling the body. Comfortably above MAX_CHASE_SPEED
+## (8.5), so honest catch-up after a dropped packet still works.
+const CROC_REMOTE_MAX_SPEED: float = 40.0
+
+## How fast a remote-driven crocodile eases toward the synced yaw (per second).
+const CROC_REMOTE_TURN_RATE: float = 12.0
+
+## How fast a remote-driven crocodile closes the gap to the latest sample (per
+## second). Deliberately the SAMPLE rate (MpManager.CROC_SYNC_HZ), never the frame
+## rate: dividing the gap by the frame delta asks for a velocity that lands
+## exactly on the sample THIS frame, so the body arrives in one frame and then
+## sits at velocity ~0 for the other five — a 10 Hz teleport-and-freeze rather
+## than the easing this is documented to do. Worse, `_animate_body` derives its
+## stride from `velocity`, so those five frames take the `move_factor < 0.05`
+## branch and the crocodile visibly flips between sprinting and idle breathing ten
+## times a second on every peer that is NOT the master. Closing over the sample
+## period instead gives the same exponential smoothing RemoteAvatar uses, and a
+## croc moving at its own top speed asks for its own top speed.
+const CROC_REMOTE_INTERP_RATE: float = 10.0
+
+## How near the local player a giant-Teibi crush has to be for it to kick the
+## camera (metres). Only ever meaningful in a room, where squash_and_die() also
+## runs for a teammate's kill an unknown distance away; a contact crush is a
+## couple of metres, so the single-player feel is unchanged.
+const CRUSH_SHAKE_RADIUS: float = 6.0
+
 # ============================================================================
 # STATE VARIABLES
 # ============================================================================
@@ -190,9 +229,13 @@ var is_chasing: bool = false
 var is_fleeing: bool = false
 ## Seconds of fleeing left (counts down to 0).
 var flee_time_remaining: float = 0.0
-## The smell's origin, used only as a fallback "run from here" point if the player
-## reference is momentarily missing while fleeing.
+## The smell's origin — the "run from here" point whenever the wave did not come
+## from the local player (see flee_from), and the fallback when it did but the
+## player reference is momentarily missing.
 var flee_source: Vector3 = Vector3.ZERO
+## Whether this flight tracks the LOCAL player (true: the player's own wave) or
+## the fixed `flee_source` (false: a wave relayed from another peer in the room).
+var flee_tracks_player: bool = true
 
 ## Boss flags, set by the terrain via setup_as_boss() BEFORE this node enters
 ## the tree (so _ready sees them). A boss skips the per-instance random
@@ -223,6 +266,17 @@ var detection_radius: float = DETECTION_RADIUS
 
 ## Reference to the player node
 var player_node: Node3D = null
+
+## The multiplayer manager, cached once in _find_player() (it is a fixed child of
+## Main, so it exists for the whole session and never has to be re-looked-up).
+## Null in any scene without it, which is what keeps solo play untouched.
+var mp_node: Node = null
+
+## Where this crocodile is currently heading when chasing — the local player, or
+## in a room the nearest MEMBER of it. Refreshed by _update_chase_state() every
+## frame it runs, read by _chase_player(). See _update_chase_state for why the
+## local player alone is not enough.
+var chase_target: Vector3 = Vector3.ZERO
 
 ## Random number generator for movement
 var rng: RandomNumberGenerator = RandomNumberGenerator.new()
@@ -265,6 +319,46 @@ var bite_timer: float = 0.0
 ## first scan behaves normally for that brief window (the manager will sleep it on
 ## its next tick if it's far away). See crocodile_lod_manager.gd for the contract.
 var lod_active: bool = true
+
+## ---------------------------------------------------------------------------
+## MULTIPLAYER IDENTITY AND REMOTE DRIVE (phase 5)
+## ---------------------------------------------------------------------------
+## This crocodile's room-wide id, LATCHED IN _ready() from the node name and never
+## recomputed — the same contract, for the same reason, as coin.gd's `_id`.
+var _croc_id: int = 0
+
+## True while the room MASTER is driving this body (see set_remote_state, the only
+## place that turns it on, and clear_remote_drive, the only place that turns it
+## off). Always false outside a room, which is what keeps solo play unchanged.
+var remote_driven: bool = false
+## The last transform the master sent, and whether any sample has arrived yet.
+var _remote_pos: Vector3 = Vector3.ZERO
+var _remote_yaw: float = 0.0
+var _has_remote_sample: bool = false
+
+## When this body last asked the room master to kill it (giant-Teibi crush), in
+## `Time.get_ticks_msec()`, or -1 for never.
+##
+## The master's `dead` broadcast is a round trip, and the body stays alive, solid
+## and overlapping the player until it lands — so `_handle_collisions` fires the
+## crush again on EVERY physics frame in between, and each one would put another
+## RELIABLE packet on the one channel that also carries claims and confirms.
+## Latched here rather than in the manager because the request is per-crocodile.
+##
+## It EXPIRES rather than latching forever, because nothing acknowledges the
+## request: `request_croc_kill()` reports only that the packet left. The master's
+## own `VERB_BUDGET_PER_SEC` drops `kill` past 10/s per peer SILENTLY, and a
+## giant Teibi crossing a dense far-out pack touches more than that in a second —
+## so a permanent latch left those crocodiles unable to be crushed AND unable to
+## bite (the early return is above the bite path), i.e. immortal harmless
+## obstacles for the rest of the run. A stall vote deposing the master mid-round-
+## trip, or a channel mid-renegotiation, lose a request the same way.
+var _kill_requested_msec: int = -1
+## How long to wait for the master's ruling before asking again. Long enough that
+## the per-frame re-send this exists to suppress still costs one packet; short
+## enough that a dropped request is retried while the player is still standing on
+## the crocodile.
+const KILL_RETRY_MSEC: int = 1000
 
 ## Confinement: elevated "patrol" crocodiles are pinned to a structure top (a
 ## pyramid apex or wall ridge) and can never wander off it, since they can't jump
@@ -332,9 +426,23 @@ func _ready() -> void:
 	# Set initial random direction
 	_choose_new_direction()
 
+	# Latch this crocodile's room-wide id from its (deterministic) node name, before
+	# anything downstream can rename the node — see croc_id_for() for the scheme.
+	_croc_id = croc_id_for(String(name))
+
 	# Add to "crocodile" group for easy detection
 	add_to_group("crocodile")
 	add_to_group("enemy")
+
+	# In a multiplayer room, a crocodile the ROOM has already killed (giant Teibi
+	# crushed it on some peer and the master confirmed) must not come back when its
+	# chunk regenerates here. One failed group lookup per crocodile AT SPAWN, never
+	# per frame, and a plain no-op offline — exactly the shape and placement coin.gd
+	# uses for is_coin_collected.
+	var mp := get_tree().get_first_node_in_group("mp")
+	if mp and mp.has_method("is_croc_dead") and mp.is_croc_dead(croc_id()):
+		queue_free()
+		return
 
 	# Start with a random offset to avoid all crocodiles changing direction at once
 	time_since_direction_change = randf() * DIRECTION_CHANGE_INTERVAL
@@ -393,6 +501,19 @@ func _style_model_meshes(node: Node) -> void:
 
 func _physics_process(delta: float) -> void:
 	"""Update movement, body animation and collisions every physics frame."""
+	# ------------------------------------------------------------------------
+	# REMOTE DRIVE (multiplayer phase 5) — ABOVE the LOD backstop on purpose
+	# ------------------------------------------------------------------------
+	# In a room the master simulates every awake crocodile and broadcasts its
+	# transform at 10 Hz; every other peer renders that instead of running its own
+	# AI, so the whole room sees one crocodile in one place. This sits above the
+	# lod_active backstop because a remote-driven crocodile is by definition near
+	# SOME peer and must keep moving even in the window before this peer's own LOD
+	# bookkeeping has caught up with that.
+	if remote_driven:
+		_tick_remote(delta)
+		return
+
 	# ------------------------------------------------------------------------
 	# LOD SLEEP GATE (simulation level-of-detail) — BACKSTOP ONLY
 	# ------------------------------------------------------------------------
@@ -499,31 +620,72 @@ func _physics_process(delta: float) -> void:
 # ============================================================================
 
 func _find_player() -> void:
-	"""Find and store reference to the player node."""
+	"""Find and store reference to the player node (plus the MP manager, if any)."""
 	var players = get_tree().get_nodes_in_group("player")
 	if players.size() > 0:
 		player_node = players[0]
+	# Cached once, group-based and null-safe like every other cross-system lookup
+	# in this project — a scene run without Main simply leaves it null and every
+	# read below falls through to the single-player behaviour.
+	var mp := get_tree().get_first_node_in_group("mp")
+	if mp != null and mp.has_method("nearest_member_position"):
+		mp_node = mp
 
 
 func _update_chase_state() -> void:
-	"""Check distance to player and update chase state."""
+	"""Check distance to the nearest quarry and update chase state."""
 	if not player_node:
 		is_chasing = false
 		return
 
-	# Calculate distance to player
-	var distance_to_player = global_position.distance_to(player_node.global_position)
-
-	# Check if player is grounded (can be smelled)
-	# If player jumps (is not on floor), crocodiles lose the scent
+	# Check if the local player is grounded (can be smelled).
+	# If the player jumps (is not on floor), crocodiles lose the scent.
 	var player_is_grounded = true
 	if player_node.has_method("is_on_floor"):
 		player_is_grounded = player_node.is_on_floor()
 
-	# Update chase state based on detection radius AND player grounded state.
+	# Nearest SMELLABLE quarry, not nearest quarry — the two candidates are judged
+	# INDEPENDENTLY. Letting the nearest one's groundedness stand for both means
+	# one airborne peer vetoes the scent of a grounded teammate standing right
+	# beside it, and on the master (which simulates the pack for everybody) that is
+	# one player bunny-hopping to call every crocodile in range off their friend.
+	chase_target = player_node.global_position
+	var distance_to_player: float = INF
+	if player_is_grounded:
+		distance_to_player = global_position.distance_to(chase_target)
+
+	# IN A ROOM, "the player" means "the nearest MEMBER of the room". The master
+	# simulates every awake crocodile for everybody, and by the isolation contract
+	# a remote peer is a RemoteAvatar in NO group — so a crocodile that resolves
+	# its quarry through group "player" alone can only ever hunt whoever happens
+	# to be master, and the other one to three peers walk through the pack
+	# untouched on every screen. Offline `nearest_member_position` answers null
+	# and this whole block is skipped, so single-player is byte-for-byte unchanged.
+	#
+	# The bite still lands correctly with no protocol: the crocodile is
+	# remote-driven on the quarry's own machine, where _tick_remote runs
+	# move_and_slide + _handle_collisions against a real local player body.
+	#
+	# ponytail: a remote member is always treated as smellable — presence carries
+	# an on-floor bit but peer_positions()/nearest_member_position() do not, so the
+	# "jumping breaks the scent" escape hatch stays local-only. Thread `g` through
+	# the manager if that asymmetry ever matters.
+	if mp_node != null:
+		var remote: Variant = mp_node.nearest_member_position(global_position)
+		if remote != null:
+			# A remote member is always smellable (see the ponytail note above), so
+			# it is a candidate unconditionally — which is also what makes it able
+			# to win when the local player is mid-jump and therefore not one.
+			var remote_distance: float = global_position.distance_to(remote as Vector3)
+			if remote_distance < distance_to_player:
+				distance_to_player = remote_distance
+				chase_target = remote as Vector3
+
+	# Update chase state based on detection radius. `distance_to_player` is INF
+	# when nothing is smellable, so the grounded rule is folded into this one test.
 	# Bosses smell farther (still well under the LOD SIM_RADIUS — see the const);
 	# `detection_radius` is resolved once in _ready(), see the var.
-	if distance_to_player <= detection_radius and player_is_grounded:
+	if distance_to_player <= detection_radius:
 		if not is_chasing:
 			# Just started chasing
 			is_chasing = true
@@ -543,12 +705,14 @@ func _update_chase_state() -> void:
 
 
 func _chase_player() -> void:
-	"""Set movement direction toward the player."""
+	"""Set movement direction toward whatever _update_chase_state picked."""
 	if not player_node:
 		return
 
-	# Calculate direction to player (on XZ plane)
-	var direction_to_player = player_node.global_position - global_position
+	# Calculate direction to the quarry (on XZ plane). `chase_target` is the local
+	# player's position solo, and in a room the nearest member's — see
+	# _update_chase_state; it is only ever read on a frame that function just set it.
+	var direction_to_player = chase_target - global_position
 	direction_to_player.y = 0  # Keep movement on horizontal plane
 	movement_direction = direction_to_player.normalized()
 
@@ -560,9 +724,14 @@ func _flee() -> void:
 	the current heading if we somehow sit right on top of the source.
 	"""
 	var away := Vector3.ZERO
-	if player_node:
+	if player_node and flee_tracks_player:
 		away = global_position - player_node.global_position
 	else:
+		# `flee_tracks_player` false means the smell came from SOMEBODY ELSE'S
+		# screen (MpManager relayed it to the master). The local player is then
+		# the wrong reference entirely — running from it would herd the pack
+		# straight at the peer who cast the wave — so the remembered origin is
+		# the only correct one. See flee_from().
 		away = global_position - flee_source
 	away.y = 0.0
 
@@ -575,12 +744,19 @@ func _flee() -> void:
 	wander_heading = atan2(movement_direction.x, movement_direction.z)
 
 
-func flee_from(source: Vector3, duration: float) -> void:
+func flee_from(source: Vector3, duration: float, tracks_player: bool = true) -> void:
 	"""
 	Public hook called by Phoboman's Stink Wave (via the "crocodile" group): make
 	this crocodile turn tail and run from the player for `duration` seconds. Drops
-	any current chase. `source` is the smell's origin, used only as a fallback
-	direction if the player can't be located on a given frame.
+	any current chase. `source` is the smell's origin.
+
+	`tracks_player` is what makes the source mean something. Solo — and for the
+	local player's own wave — it stays true and the flight tracks the player as it
+	always has. A wave RELAYED from another peer passes false, because the master
+	applying it has no body for the caster: `_flee()` would otherwise run every
+	crocodile away from the MASTER's player, i.e. straight toward the peer who
+	actually cast it, and `player_controller.clear_nearby_crocodiles()` would herd
+	the pack onto a respawning teammate instead of off them.
 	"""
 	# Bosses shrug the stink off. They KEEP group "crocodile" membership — the
 	# wave still finds them, they just don't care; immunity lives here, not in
@@ -596,9 +772,16 @@ func flee_from(source: Vector3, duration: float) -> void:
 	# SIM_RADIUS in crocodile_lod_manager); no smell reaches that far anyway.
 	if not lod_active:
 		return
+	# NOT guarded on remote_driven, and that is deliberate — do not "fix" it. A
+	# remote-driven crocodile takes its motion (and its flee flag) from the
+	# master's samples, so setting the flag here is harmless: the next sample
+	# overwrites it. Meanwhile the master, whose own crocodiles are never
+	# remote-driven, gets the real flee from this very call — see
+	# MpManager.request_croc_flee.
 	is_fleeing = true
 	flee_time_remaining = duration
 	flee_source = source
+	flee_tracks_player = tracks_player
 	is_chasing = false
 
 
@@ -708,7 +891,17 @@ func _feeler_blocked(space: PhysicsDirectSpaceState3D, origin: Vector3, dir: Vec
 	@param reach: Ray length — AVOID_LOOK_AHEAD scaled by the body (see _avoid_obstacles)
 	@return true if the ray hits something we should steer around
 	"""
-	var query := PhysicsRayQueryParameters3D.create(origin, origin + dir.normalized() * reach)
+	# OUR OWN MASK, not `create()`'s default of all 32 layers. Fauna roots are
+	# `AnimatableBody3D` bodies on layer 3 which crocodiles deliberately do not
+	# mask (mask 3 = layers 1+2), and they are in no group, so the group test
+	# below cannot reject them. Ordinary crocodiles are saved only by geometry —
+	# the feeler sits at 0.28-0.43 m, under every deck — but `_avoid_obstacles`
+	# scales both probe dimensions by the body, so a boss at scale >= 3.375 lifts
+	# it to 1.1 m+ and starts swerving away from, and cutting speed for, a pack
+	# beast it cannot touch.
+	var query := PhysicsRayQueryParameters3D.create(
+		origin, origin + dir.normalized() * reach, collision_mask
+	)
 	query.exclude = [get_rid()]  # never sense our own collider
 	query.collide_with_areas = false
 	var hit := space.intersect_ray(query)
@@ -783,6 +976,239 @@ func set_lod_active(active: bool) -> void:
 		# Rush across the 50 m sleep boundary.
 		is_fleeing = false
 		flee_time_remaining = 0.0
+
+
+# ============================================================================
+# MULTIPLAYER SYNC (phase 5)
+# ============================================================================
+
+static func croc_id_for(node_name: String) -> int:
+	"""
+	This crocodile's room-wide id, derived from its NODE NAME alone.
+
+	Every crocodile the terrain spawns is named deterministically BEFORE add_child
+	from data that is a pure function of chunk coords + run_seed
+	(`Crocodile_<cx>_<cy>_<index>`, `PatrolCrocodile_<cx>_<cy>_<count>`,
+	`BossCrocodile_<index>`), so two peers sharing a run_seed put the SAME
+	crocodile, under the SAME name, in the same place. The name therefore
+	identifies it across the room — which is why not one line of
+	endless_terrain.gd has to change. Exactly the reasoning, and exactly the
+	shape, of Coin.id_at().
+
+	ponytail: two ceilings, both cosmetic by construction. (1) A crocodile spawned
+	OUTSIDE the terrain (the standalone piglet_crocodile.tscn, or a future
+	spawner) has a non-unique name and could collide with another's id; it never
+	happens in a room, and the failure mode is one crocodile following another's
+	transform, not a crash. (2) String.hash() is 32-bit, so a collision across the
+	~1000 loaded crocodiles is a ~1e-4 birthday chance per run. The upgrade path
+	for both is the coin id's: thread an explicit (chunk, index) id out of the
+	spawners.
+
+	SIGN-EXTENDED TO int32, AND THAT IS LOAD-BEARING, NOT TIDINESS. String.hash()
+	is an unsigned 32-bit value widened into a GDScript int, so it runs to 2^32-1
+	— but mp_manager ships these ids in the sync packet's PackedInt32Array ("i"),
+	which stores int32_t. Every id above INT32_MAX therefore WRAPPED NEGATIVE in
+	transit, missed the receiver's `_synced_crocs` lookup (whose keys were the
+	unwrapped values), and landed on the deliberately-silent "this peer has not
+	generated that chunk" path. Measured over the real name scheme, 43% of
+	crocodiles hash above INT32_MAX — so nearly half the pack was silently never
+	synced, fell back to local simulation after CROC_SYNC_TIMEOUT and drifted, in
+	the one code path engineered to say nothing. Sign-extending here (rather than
+	widening the packet) keeps sender, receiver, `_dead_crocs` and `_synced_crocs`
+	all naming a crocodile by the same number, at zero bandwidth.
+	"""
+	var h: int = node_name.hash()
+	return h - 4294967296 if h > 2147483647 else h
+
+
+func croc_id() -> int:
+	"""This crocodile's room-wide id. Valid from _ready on — the name is latched
+	once there and never recomputed (see _croc_id), so nothing that touches the
+	node later can quietly rename this crocodile mid-run."""
+	return _croc_id
+
+
+func set_remote_state(pos: Vector3, yaw: float, flags: int) -> void:
+	"""
+	Overlay the MASTER's simulation of this crocodile onto this local body.
+
+	The sync layer never creates, re-parents or frees a crocodile: crocs stay
+	chunk-parented, per-peer, deterministic and freed on chunk unload exactly as
+	in single player. This only overlays DYNAMIC state onto a node that already
+	exists here, matched by croc_id(); a sample naming a crocodile this peer has
+	not generated is dropped by the manager before it ever reaches this method.
+
+	This is the ONLY place remote_driven is turned on. The first sample — and any
+	sample further than CROC_TELEPORT_DISTANCE from where the body currently
+	stands — SNAPS; everything else is eased in _tick_remote, so 10 Hz samples
+	read as smooth motion at 60 fps.
+
+	@param flags: the state byte, decoded with MpManager.CROC_FLAG_* so the
+	    encoder and this decoder cannot drift. Biting goes through _start_bite()
+	    rather than a raw assignment, so the chomp gets its usual timer and the
+	    local animation clears it — a flag that only ever says "started".
+	"""
+	# A body already dying (squash_and_die leaves the group and stops physics) is
+	# never driven again — the sample forcing processing back on below would
+	# otherwise walk a corpse through its own squash tween, still solid and still
+	# able to bite. The manager erases a killed id from its cache, so this only
+	# catches a sample that was already in flight.
+	if not is_in_group("crocodile"):
+		return
+
+	_remote_pos = pos
+	_remote_yaw = fposmod(yaw, TAU)
+
+	is_chasing = (flags & MpManager.CROC_FLAG_CHASING) != 0
+	is_fleeing = (flags & MpManager.CROC_FLAG_FLEEING) != 0
+	is_paused = (flags & MpManager.CROC_FLAG_PAUSED) != 0
+	if (flags & MpManager.CROC_FLAG_BITING) != 0:
+		_start_bite()
+
+	if not _has_remote_sample or global_position.distance_to(pos) > CROC_TELEPORT_DISTANCE:
+		global_position = pos
+		rotation.y = _remote_yaw
+		velocity = Vector3.ZERO
+
+	_has_remote_sample = true
+	remote_driven = true
+
+	# TURN THE PHYSICS CALLBACK BACK ON. A crocodile the LOD manager had already
+	# put to sleep has had set_physics_process(false) called on it, so
+	# _tick_remote() — which lives at the top of _physics_process — would never
+	# run: the body would jump CROC_TELEPORT_DISTANCE at a time on the snap
+	# branch above, never animate, and (the sharp part) never reach
+	# move_and_slide/_handle_collisions, so it would be neither solid nor able to
+	# bite. That last one breaks the rule this whole phase is specified against —
+	# the BITTEN peer detects its own bite locally.
+	#
+	# It is not an edge case: the master syncs every crocodile within
+	# CROC_SYNC_RADIUS (55 m) of a peer, while that peer's own LOD sleeps anything
+	# past SIM_RADIUS + HYSTERESIS_MARGIN (50 m), so the 50–55 m band is exactly
+	# this. `lod_active` is deliberately left alone — the sync layer owns the
+	# processing switch only while it is driving, and clear_remote_drive() hands
+	# it straight back to whatever the LOD manager last decided.
+	set_physics_process(true)
+
+
+func clear_remote_drive() -> void:
+	"""
+	Hand this crocodile back to its own local AI, from wherever the body now
+	stands. Called when the master's samples stop arriving (the sync timeout — the
+	master is too far away to have this chunk loaded, or the room ended) and when
+	THIS peer is promoted to master.
+
+	Promotion is seamless precisely because a synced crocodile is a real local
+	node holding the master's last known transform: dropping the flag resumes
+	simulation from that exact spot, so the whole pack is a hot standby replica
+	for free.
+	"""
+	if not remote_driven:
+		return
+	remote_driven = false
+	_has_remote_sample = false
+	# Same guard, same reason, as set_remote_state(): a body already dying
+	# (squash_and_die left the group and stopped physics) must not have physics
+	# handed back to it. It can still be remote-driven here — a local crush runs
+	# when request_croc_kill() could not reach the master, so no `dead` broadcast
+	# erases us from the manager's cache — and the set_physics_process below would
+	# then walk the corpse through its own squash tween under the FULL LOCAL AI,
+	# solid and able to bite.
+	if not is_in_group("crocodile"):
+		return
+	velocity = Vector3.ZERO
+	# Hand the physics switch back to the LOD manager's last decision. While we
+	# were remote-driven set_remote_state() forced processing ON regardless of
+	# `lod_active` (see there); leaving it on for a crocodile the manager thinks is
+	# asleep would silently un-sleep it — and it would not sleep again, because
+	# set_lod_active() no-ops when the state already matches.
+	set_physics_process(lod_active)
+
+
+func squash_and_die() -> void:
+	"""
+	Die the giant-Teibi death: physics stops, a dust puff pops, a crunch plays,
+	the nearby player's camera gets a tiny kick, and the body squashes flat before
+	freeing itself.
+
+	Public because in a multiplayer room the crush is arbitrated by the master, so
+	this has to be runnable from `mp_manager._apply_dead()` on a peer where nobody
+	touched this crocodile at all — a crush must READ as a crush on every screen,
+	not as a crocodile blinking out. Idempotent: a second call finds us already out
+	of the "crocodile" group and returns.
+	"""
+	if not is_in_group("crocodile"):
+		return
+	print("🐊 Squashed by a giant!")
+	# Guard re-entry FIRST: stop physics and leave the "crocodile" group so
+	# the dying body can't crush-trigger a second time (or be found by the
+	# stink wave / danger telegraph / croc sync) during the short squash tween.
+	set_physics_process(false)
+	remove_from_group("crocodile")
+	# Dust puff at the body, parented to the croc's PARENT (the chunk) so it
+	# outlives this node — the same self-freeing wave pattern as the coin pop.
+	var fx_parent := get_parent()
+	if fx_parent:
+		var fx := MeshInstance3D.new()
+		fx.set_script(preload("res://scripts/ability_effect.gd"))
+		fx_parent.add_child(fx)
+		fx.global_position = global_position
+		fx.setup(Color(0.75, 0.7, 0.6, 0.5), 1.8, 0.3)
+	# Crunch sound + a small nudge on the player's camera shake (both null-safe,
+	# matching the project's group-lookup convention).
+	var sound_manager := get_tree().get_first_node_in_group("sound_manager")
+	if sound_manager and sound_manager.has_method("play_crunch"):
+		sound_manager.play_crunch()
+	# The shake is RANGE-GATED, which it did not have to be when this only ever ran
+	# on the crushing player's own screen: in a room a teammate's kill three chunks
+	# away arrives here as a "dead" packet, and jolting the camera for a crocodile
+	# nobody can see reads as a bug. Contact crushes are metres away, so the local
+	# case is unchanged.
+	var player := get_tree().get_first_node_in_group("player")
+	if player is Node3D and "shake_amount" in player \
+			and global_position.distance_to((player as Node3D).global_position) <= CRUSH_SHAKE_RADIUS:
+		player.shake_amount = maxf(player.shake_amount, 0.15)
+	# Squash flat, then free — the TWEEN owns the queue_free. A tween dies
+	# with its node, so a chunk unloading mid-squash frees us safely anyway.
+	var squash := create_tween()
+	squash.tween_property(self, "scale:y", scale.y * 0.15, 0.12)
+	squash.tween_callback(queue_free)
+
+
+func _tick_remote(delta: float) -> void:
+	"""
+	Drive the body toward the master's latest sample for one physics frame.
+
+	move_and_slide() here is DELIBERATE, not incidental: it is what keeps a synced
+	crocodile SOLID to the player, and what makes the BITTEN peer detect its own
+	bite locally through _handle_collisions — which is the bite rule this whole
+	phase is specified against ("the bite is decided by the peer being bitten, on
+	its own machine"). Never replace it with a direct global_position write.
+	"""
+	# Velocity that closes the gap over one SAMPLE period, not one frame — see
+	# CROC_REMOTE_INTERP_RATE for why the frame delta is the wrong divisor.
+	# Clamped so one bad-but-finite sample cannot launch the body across the map.
+	var wanted: Vector3 = (_remote_pos - global_position) * CROC_REMOTE_INTERP_RATE
+	if wanted.length() > CROC_REMOTE_MAX_SPEED:
+		wanted = wanted.normalized() * CROC_REMOTE_MAX_SPEED
+	velocity = wanted
+
+	rotation.y = lerp_angle(rotation.y, _remote_yaw, minf(delta * CROC_REMOTE_TURN_RATE, 1.0))
+
+	move_and_slide()
+	# GATED ON is_paused, exactly as the local path gates on `was_paused`. The
+	# pause IS _pause_and_change_direction's post-bite recovery window, and the
+	# master ships it in the sample's CROC_FLAG_PAUSED bit precisely so every peer
+	# knows this crocodile is standing down. Ungated, a synced crocodile kept
+	# re-triggering _on_player_collision throughout a pause the master treats as
+	# harmless — so the peer it had just bitten could be bitten again the instant
+	# its respawn i-frames lapsed, i.e. bites were strictly harsher for everyone
+	# who is not the master, which is the opposite of what the sync is for.
+	if not is_paused:
+		_handle_collisions()
+
+	# Animate from the speed we actually moved at, exactly like the local path.
+	_animate_body(delta)
 
 
 # ============================================================================
@@ -1047,33 +1473,20 @@ func _on_player_collision(player: Node) -> void:
 	# a dust puff pops, a crunch plays, the player's camera gets a tiny kick,
 	# and the body squashes flat before freeing itself.
 	if player.has_method("crushes_crocodiles") and player.crushes_crocodiles():
-		print("🐊 Squashed by a giant!")
-		# Guard re-entry FIRST: stop physics and leave the "crocodile" group so
-		# the dying body can't crush-trigger a second time (or be found by the
-		# stink wave / danger telegraph) during the short squash tween below.
-		set_physics_process(false)
-		remove_from_group("crocodile")
-		# Dust puff at the body, parented to the croc's PARENT (the chunk) so it
-		# outlives this node — the same self-freeing wave pattern as the coin pop.
-		var fx_parent := get_parent()
-		if fx_parent:
-			var fx := MeshInstance3D.new()
-			fx.set_script(preload("res://scripts/ability_effect.gd"))
-			fx_parent.add_child(fx)
-			fx.global_position = global_position
-			fx.setup(Color(0.75, 0.7, 0.6, 0.5), 1.8, 0.3)
-		# Crunch sound + a small nudge on the player's camera shake (both null-safe,
-		# matching the project's group-lookup convention).
-		var sound_manager := get_tree().get_first_node_in_group("sound_manager")
-		if sound_manager and sound_manager.has_method("play_crunch"):
-			sound_manager.play_crunch()
-		if "shake_amount" in player:
-			player.shake_amount = maxf(player.shake_amount, 0.15)
-		# Squash flat, then free — the TWEEN owns the queue_free. A tween dies
-		# with its node, so a chunk unloading mid-squash frees us safely anyway.
-		var squash := create_tween()
-		squash.tween_property(self, "scale:y", scale.y * 0.15, 0.12)
-		squash.tween_callback(queue_free)
+		# In a ROOM the kill belongs to the master, not to whichever screen it
+		# happened on: it has to free the SAME crocodile on every peer. The manager
+		# answers true when it is in a room and has relayed the request, and we then
+		# return WITHOUT squashing — the master's kill broadcast frees this body
+		# everywhere, including here. Offline, or with no manager in the scene, it
+		# answers false and the squash below runs byte-for-byte unchanged.
+		var now_msec: int = Time.get_ticks_msec()
+		if _kill_requested_msec >= 0 and now_msec - _kill_requested_msec < KILL_RETRY_MSEC:
+			return  # Already asked; waiting on the master's ruling. See the var.
+		var mp := get_tree().get_first_node_in_group("mp")
+		if mp and mp.has_method("request_croc_kill") and mp.request_croc_kill(croc_id()):
+			_kill_requested_msec = now_msec
+			return
+		squash_and_die()
 		return
 
 	# While fleeing Phoboman's stink, crocodiles can't bring themselves to bite.

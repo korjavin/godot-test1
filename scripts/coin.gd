@@ -218,15 +218,28 @@ func _on_body_entered(body: Node) -> void:
 		return
 
 	collected = true
-	if body.has_method("collect_coin"):
-		body.collect_coin(value)
 
-	# MULTIPLAYER: tell the room this coin is gone, so a peer joining later never
-	# sees it. Null-safe group lookup like the sound manager below; the manager
-	# records only while in a room, so offline this is a no-op.
+	# MULTIPLAYER: in a room the coin is CLAIMED, not collected. The master decides
+	# who gets it (first claim wins) and how much it is worth after the room's
+	# multiplier, then broadcasts a confirm — so two peers walking over the same
+	# coin can no longer both bank it. claim_pickup() returns false offline and
+	# whenever there is no mesh to arbitrate over, and then everything below runs
+	# exactly as it always has.
 	var mp := get_tree().get_first_node_in_group("mp")
-	if mp and mp.has_method("report_coin_collected"):
-		mp.report_coin_collected(coin_id())
+	var claimed: bool = mp != null and mp.has_method("claim_pickup") \
+			and mp.claim_pickup(coin_id(), 1, value)
+
+	if not claimed:
+		if body.has_method("collect_coin"):
+			body.collect_coin(value)
+		# Tell the room this coin is gone, so a peer joining later never sees it.
+		# ONLY on this path: on the claim path `_resolve_claim` is the single
+		# writer of the collected set, and calling this here would record the id
+		# before the master had ruled on it — a claim we then LOST would still be
+		# remembered locally as ours. The manager records only while in a room, so
+		# offline this stays the no-op it has always been.
+		if mp and mp.has_method("report_coin_collected"):
+			mp.report_coin_collected(coin_id())
 
 	# Pickup blip. The MANAGER owns the audio players — this coin queue_free()s
 	# itself right below, so a sound attached to this dying node would be cut off.
@@ -245,6 +258,16 @@ func _on_body_entered(body: Node) -> void:
 		fx_parent.add_child(fx)
 		fx.global_position = global_position
 		fx.setup(Color(1.0, 0.85, 0.2, 0.5), 1.2, 0.25)
+
+	if claimed:
+		# The pickup has to FEEL instant even though the award is a round trip
+		# away, so the coin disappears now — but it is not freed here: the confirm
+		# sweeps it (`_absorb_collected`), which is also what removes it on every
+		# other peer. `monitoring` must be deferred, exactly like treasure_chest's:
+		# Godot blocks a direct write from inside the Area3D's own body_entered.
+		visible = false
+		set_deferred("monitoring", false)
+		return
 
 	# Remove the coin now that it's been picked up.
 	queue_free()
