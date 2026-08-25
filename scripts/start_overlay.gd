@@ -61,6 +61,32 @@ extends Control
 ## waiting for the click-to-capture fallback.
 ##
 ## ----------------------------------------------------------------------------
+## ----------------------------------------------------------------------------
+## It is also the game's language switcher (EN / DE)
+## ----------------------------------------------------------------------------
+## This screen is the one place every player passes through exactly once before
+## play, with the cursor already free and the tree already paused — so it is where
+## the language switch lives, rather than in a settings screen this game does not
+## have.
+##
+## **Almost all of the localization is the ENGINE's, not this file's.** Every
+## user-facing string in the project is keyed by its own English text in
+## `assets/translations/ui.csv`, and Godot's `Control` auto-translation runs
+## `Label.text` / `Button.text` through the `TranslationServer` at draw time —
+## re-running it on `NOTIFICATION_TRANSLATION_CHANGED`, which
+## `TranslationServer.set_locale()` broadcasts to the whole tree. So pressing DE
+## re-renders every open label in German with **no rebuild, no reload and no
+## per-screen re-apply hook**. See CLAUDE.md's "Localization" section.
+##
+## The startup language is likewise free: Godot seeds `TranslationServer` from
+## `OS.get_locale()`, so a German browser is already in German before this node
+## exists. `apply_saved_locale()` only applies an explicit OVERRIDE the player
+## chose on a previous visit — and being a nice-to-have is why a missing or
+## unreadable config file is silently ignored rather than reported (`user://` is
+## IndexedDB-backed on web and is known to be flaky there; auto-detection is the
+## load-bearing half).
+##
+## ----------------------------------------------------------------------------
 ## On a phone it waits its turn
 ## ----------------------------------------------------------------------------
 ## `touch_controls.gd` opens with a full-rect "tap to enable motion controls"
@@ -92,6 +118,34 @@ const BUTTON_FONT_SIZE: int = 24
 const HINT_FONT_SIZE: int = 16
 
 # ============================================================================
+# CONSTANTS — language switcher
+# ============================================================================
+
+## Where an explicit language choice is remembered, in the same shape as
+## `best_run.cfg` and `mobile_tuning.cfg`.
+const LOCALE_CONFIG_PATH: String = "user://locale.cfg"
+const LOCALE_CONFIG_SECTION: String = "locale"
+const LOCALE_CONFIG_KEY: String = "code"
+
+## The languages offered, as `[locale code, button label]`. The labels are
+## deliberately NOT translated — "EN" and "DE" must read the same whichever
+## language is currently active, or a player who cannot read the current one
+## cannot find their way out of it.
+const LOCALES: Array = [["en", "EN"], ["de", "DE"]]
+
+## Font size of the small EN/DE pills, and their fixed size. Small on purpose:
+## the two gameplay choices are the point of this screen, and on a correctly
+## auto-detected locale nobody ever needs to touch these.
+const LOCALE_BUTTON_FONT_SIZE: int = 16
+const LOCALE_BUTTON_SIZE: Vector2 = Vector2(52.0, 36.0)
+
+## Font colours marking which language is active. The inactive one is dimmed
+## rather than disabled — a disabled Button greys its label to near-invisible,
+## and this row has to stay readable to a player who is in the wrong language.
+const LOCALE_ACTIVE_COLOR: Color = Color(1.0, 0.92, 0.6)
+const LOCALE_INACTIVE_COLOR: Color = Color(0.62, 0.65, 0.72)
+
+# ============================================================================
 # STATE
 # ============================================================================
 
@@ -115,6 +169,10 @@ var _is_touch: bool = false
 ## the overlay is completely transparent to input.
 var _body: Control = null
 
+## The EN/DE pills, keyed by locale code, so `_refresh_locale_buttons()` can
+## re-tint them without a node lookup.
+var _locale_buttons: Dictionary = {}
+
 
 func _ready() -> void:
 	# Must keep running under its own pause, like every other always-available
@@ -124,6 +182,12 @@ func _ready() -> void:
 	# The root spans the screen but is never a hit-test target itself; `_body`
 	# below is the modal that actually swallows input.
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	# Before the UI is built, so the card is drawn in the chosen language from its
+	# very first frame rather than flipping one frame later. (Every OTHER screen
+	# in the game is fixed up for free by the engine's translation-changed
+	# notification, so only this one needs the ordering.)
+	apply_saved_locale()
 
 	_is_touch = MobileSensors.is_touch_session()
 	_build_ui()
@@ -245,6 +309,96 @@ func _build_ui() -> void:
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	vbox.add_child(hint)
+
+	vbox.add_child(_build_locale_row())
+
+
+## The EN / DE pills, centred under the hint. One press sets the locale, saves it
+## and re-tints the row; every visible label in the game re-translates itself,
+## because that is what `TranslationServer.set_locale()` notifies the tree to do.
+func _build_locale_row() -> Control:
+	var row := HBoxContainer.new()
+	row.name = "Language"
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("separation", 8)
+	for entry: Array in LOCALES:
+		var code: String = entry[0]
+		var button := Button.new()
+		button.text = entry[1]
+		# FOCUS_NONE for the same reason every other button on this card has it —
+		# see `_make_button()`. Space is `ui_accept` AND `jump`, and this card's
+		# `ui_accept` handler starts the game, so a focused pill would re-fire on
+		# the player's first jump.
+		button.focus_mode = Control.FOCUS_NONE
+		button.add_theme_font_size_override("font_size", LOCALE_BUTTON_FONT_SIZE)
+		button.custom_minimum_size = LOCALE_BUTTON_SIZE
+		button.pressed.connect(_on_locale_pressed.bind(code))
+		row.add_child(button)
+		_locale_buttons[code] = button
+	_refresh_locale_buttons()
+	return row
+
+
+func _on_locale_pressed(code: String) -> void:
+	save_locale(code)
+	_refresh_locale_buttons()
+
+
+## Tint the pill of the active language and dim the rest. `get_locale()` can be a
+## full code like "de_DE" (that is what a German browser reports), so the match is
+## on the LANGUAGE part — otherwise no pill would ever look active on the very
+## locale auto-detection got right.
+func _refresh_locale_buttons() -> void:
+	var active: String = TranslationServer.get_locale().split("_")[0]
+	for code: String in _locale_buttons:
+		var button: Button = _locale_buttons[code]
+		var colour: Color = LOCALE_ACTIVE_COLOR if code == active else LOCALE_INACTIVE_COLOR
+		button.add_theme_color_override("font_color", colour)
+		button.add_theme_color_override("font_hover_color", colour)
+		button.add_theme_color_override("font_pressed_color", colour)
+
+
+# ============================================================================
+# LANGUAGE PERSISTENCE
+#
+# Static so they need no node — `_ready()` above applies the saved choice before
+# it builds anything, and `scripts/locale_selfcheck.gd` drives the round trip
+# headlessly without instancing a scene.
+# ============================================================================
+
+## Apply a language the player explicitly chose on an earlier visit, if any.
+## Doing NOTHING is the correct behaviour for a missing/unreadable file or an
+## unrecognised code: Godot has already seeded the locale from `OS.get_locale()`,
+## which is the better default and the reason this is only a nice-to-have.
+static func apply_saved_locale() -> void:
+	var config := ConfigFile.new()
+	if config.load(LOCALE_CONFIG_PATH) != OK:
+		return
+	var code: String = String(config.get_value(LOCALE_CONFIG_SECTION, LOCALE_CONFIG_KEY, ""))
+	if code.is_empty() or not _is_known_locale(code):
+		return
+	TranslationServer.set_locale(code)
+
+
+## Switch to `code` now and remember it for next time. The set happens first and
+## unconditionally: a failed save costs the player the memory of their choice,
+## never the choice itself.
+static func save_locale(code: String) -> void:
+	if not _is_known_locale(code):
+		return
+	TranslationServer.set_locale(code)
+	var config := ConfigFile.new()
+	config.set_value(LOCALE_CONFIG_SECTION, LOCALE_CONFIG_KEY, code)
+	config.save(LOCALE_CONFIG_PATH)
+
+
+## Guard on the way IN as well as out, so a corrupt or hand-edited config file
+## cannot strand the game in a locale with no translations and no visible pill.
+static func _is_known_locale(code: String) -> bool:
+	for entry: Array in LOCALES:
+		if String(entry[0]) == code:
+			return true
+	return false
 
 
 ## One full-width, thumb-sized button. FOCUS_NONE is copied from

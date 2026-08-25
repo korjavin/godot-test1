@@ -134,7 +134,12 @@ services:
       - "--no-tls"
       - "--no-dtls"
       - "--no-multicast-peers"
-      - "--no-loopback-peers"
+      # NO --no-loopback-peers: coturn 4.6 REMOVED the option (loopback denial
+      # became the default), and the unknown flag makes the binary exit 255
+      # before logging anything — measured on this host: the container
+      # crashlooped 500+ times with only the config-file warning printed, and
+      # the same argv minus this one flag runs clean. Loopback stays blocked
+      # twice over: the 4.6 default plus the explicit 127/8 range below.
       - "--denied-peer-ip=0.0.0.0-0.255.255.255"
       - "--denied-peer-ip=10.0.0.0-10.255.255.255"
       - "--denied-peer-ip=100.64.0.0-100.127.255.255"

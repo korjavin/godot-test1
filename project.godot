@@ -36,6 +36,24 @@ window/stretch/mode="canvas_items"
 window/stretch/aspect="keep"
 window/stretch/aspect.web="expand"
 
+[internationalization]
+
+; --- UI translations (en / de) --------------------------------------------
+; `assets/translations/ui.csv` is imported by Godot's CSV translation importer,
+; which emits one `.translation` resource per locale column. The KEY of every
+; row is the ENGLISH SOURCE STRING, not an abstract identifier — that is what
+; lets Godot's built-in Control auto-translation do nearly all the work with no
+; `tr()` call at the assignment site (a `Label.text` / `Button.text` literal is
+; run through the TranslationServer at draw time and re-run on every locale
+; change), and it makes English the automatic fallback for any key a translator
+; has not filled in yet. See the "Localization" section of CLAUDE.md.
+;
+; The startup locale comes from `OS.get_locale()` for free — a German browser
+; starts in German with no code at all. `start_overlay.gd` only ever applies an
+; explicit OVERRIDE saved in `user://locale.cfg`.
+locale/translations=PackedStringArray("res://assets/translations/ui.en.translation", "res://assets/translations/ui.de.translation")
+locale/fallback="en"
+
 [input]
 
 move_forward={

@@ -1,0 +1,82 @@
+keys,en,de
+"PLAY SOLO","PLAY SOLO","ALLEIN SPIELEN"
+"MULTIPLAYER","MULTIPLAYER","MEHRSPIELER"
+"Run the road. Outrun the crocodiles.","Run the road. Outrun the crocodiles.","Folge dem Weg. Lauf den Krokodilen davon."
+"Multiplayer: play the same world with up to 4 friends","Multiplayer: play the same world with up to 4 friends","Mehrspieler: dieselbe Welt mit bis zu 4 Freunden"
+"GAME OVER","GAME OVER","SPIEL VORBEI"
+"NEW BEST!","NEW BEST!","NEUER REKORD!"
+"Play Again","Play Again","Nochmal spielen"
+"Distance: %dm","Distance: %dm","Strecke: %dm"
+"Coins collected: %d","Coins collected: %d","Münzen: %d"
+"Best: %dm / %d coins","Best: %dm / %d coins","Rekord: %dm / %d Münzen"
+"Distance: %dm   Coins: %d","Distance: %dm   Coins: %d","Strecke: %dm   Münzen: %d"
+"PAUSED
+
+Press P to resume","PAUSED
+
+Press P to resume","PAUSE
+
+P drücken zum Fortsetzen"
+"Click to look around","Click to look around","Klicken zum Umsehen"
+"PLAINS","PLAINS","EBENE"
+"DESERT","DESERT","WÜSTE"
+"FOREST","FOREST","WALD"
+"MOUNTAIN","MOUNTAIN","GEBIRGE"
+"  ~ river ~","  ~ river ~","  ~ Fluss ~"
+"JUMP","JUMP","SPRUNG"
+"SPECIAL
+(F)","SPECIAL
+(F)","SPEZIAL
+(F)"
+"SWITCH
+(R)","SWITCH
+(R)","TAUSCH
+(R)"
+"View","View","Sicht"
+"Tilt/Twist","Tilt/Twist","Neig/Dreh"
+"Steer: Tilt","Steer: Tilt","Neigen"
+"Steer: Twist","Steer: Twist","Drehen"
+"TAP TO START","TAP TO START","TIPPEN ZUM START"
+"Motion unavailable — tap to retry","Motion unavailable — tap to retry","Kein Sensor — nochmal tippen"
+"Step in place to walk
+Tilt your phone to steer
+Buttons bottom-right: Jump / Special / Switch","Step in place to walk
+Tilt your phone to steer
+Buttons bottom-right: Jump / Special / Switch","Auf der Stelle gehen zum Laufen
+Handy neigen zum Lenken
+Tasten unten rechts: Sprung / Spezial / Tausch"
+"Paused — tap to resume","Paused — tap to resume","Pause — tippen zum Fortsetzen"
+"Rotate your device
+(landscape only)","Rotate your device
+(landscape only)","Gerät drehen
+(nur Querformat)"
+"⚙ Tune","⚙ Tune","⚙ Setup"
+"DIAGNOSTICS","DIAGNOSTICS","DIAGNOSE"
+"TUNING  (tap −/+)","TUNING  (tap −/+)","REGLER  (−/+ tippen)"
+"Invert steering","Invert steering","Lenkung umkehren"
+"How to play","How to play","Spielanleitung"
+"Recalibrate (re-zero)","Recalibrate (re-zero)","Neu kalibrieren"
+"Reset to defaults","Reset to defaults","Zurücksetzen"
+"Close","Close","Schließen"
+"Step threshold","Step threshold","Schrittschwelle"
+"Step power","Step power","Schrittkraft"
+"Walk decay","Walk decay","Abklingen"
+"Step min interval","Step min interval","Min. Schrittabstand"
+"Steer deadzone","Steer deadzone","Lenk-Totzone"
+"Steer full angle","Steer full angle","Voller Lenkwinkel"
+"Open rooms","Open rooms","Offene Räume"
+"Refresh","Refresh","Neu laden"
+"Host a new room","Host a new room","Neuen Raum öffnen"
+"…or join by invite code","…or join by invite code","…oder mit Einladungscode"
+"Join","Join","Beitreten"
+"Hero","Hero","Held"
+"Copy","Copy","Kopieren"
+"Leave room","Leave room","Raum verlassen"
+"Multiplayer is not available in this scene","Multiplayer is not available in this scene","Mehrspieler ist in dieser Szene nicht verfügbar"
+"An invite code is %d characters","An invite code is %d characters","Ein Einladungscode hat %d Zeichen"
+"Copied %s to the clipboard","Copied %s to the clipboard","%s in die Zwischenablage kopiert"
+"Looking for rooms…","Looking for rooms…","Suche Räume…"
+"No open rooms — host one and a friend can join it here","No open rooms — host one and a friend can join it here","Keine offenen Räume — öffne einen, ein Freund kann beitreten"
+"Tap a room to join","Tap a room to join","Zum Beitreten Raum antippen"
+"%s  ✓ you","%s  ✓ you","%s  ✓ du"
+"In room:","In room:","Im Raum:"

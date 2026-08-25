@@ -37,6 +37,10 @@ extends Label
 ## showing all-zeros on desktop is the *expected, correct* behaviour, and the
 ## `MobileSensors.has_data()` line correctly reads "no". Both prove the scripts
 ## load and run without disturbing keyboard+mouse play.
+##
+## **Not localized, deliberately.** This is a debug surface (F4), read while
+## tuning against English documentation, and it is excluded from the game's
+## en/de translation pass by design — see CLAUDE.md "Localization".
 
 ## Key that toggles the readout on/off. F4 is unused by any gameplay input action
 ## (move/jump/run/duck/switch_character/special_ability in project.godot) and sits

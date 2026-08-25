@@ -53,7 +53,7 @@ jobs:
           path: |
             .godot/imported
             .godot/shader_cache
-          key: godot-imports-${{ hashFiles('**/*.tscn', '**/*.tres', '**/*.gd', 'project.godot') }}
+          key: godot-imports-${{ hashFiles('**/*.tscn', '**/*.tres', '**/*.gd', '**/*.csv', 'project.godot') }}
           restore-keys: |
             godot-imports-
 
@@ -61,6 +61,23 @@ jobs:
         run: |
           mkdir -v -p ~/.local/share/godot/export_templates
           mv /root/.local/share/godot/export_templates/${GODOT_VERSION}.stable ~/.local/share/godot/export_templates/${GODOT_VERSION}.stable
+
+      # Import BEFORE exporting, explicitly. A fresh clone has no .godot cache, and
+      # `assets/translations/ui.csv` only becomes the `ui.en.translation` /
+      # `ui.de.translation` resources that `project.godot`'s
+      # `locale/translations` names once the CSV importer has run. Both generated
+      # files are gitignored (`*.translation`, `*.import`), so this step is what
+      # produces them in CI — and its failure mode is the reason it is not left to
+      # the export's own implicit import: a missing translation resource does not
+      # fail an export, it ships a build that is silently English in every locale.
+      # Same command CLAUDE.md tells a human to run in a fresh clone.
+      - name: 🌍 Import assets (generates the translation resources)
+        run: |
+          godot --headless --path . --import
+          for locale in en de; do
+            test -f "assets/translations/ui.${locale}.translation" \
+              || { echo "::error::assets/translations/ui.${locale}.translation was not generated — the en/de UI would ship untranslated"; exit 1; }
+          done
 
       - name: 🔨 Build for Web
         run: |

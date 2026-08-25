@@ -534,6 +534,12 @@ func _update_diagnostics() -> void:
 	if driver == null:
 		_diag_label.text = "Sensor: (no driver)"
 		return
+	# NOT LOCALIZED, deliberately. Everything below this line is raw sensor
+	# telemetry for tuning a device — the same class of surface as the F3 perf
+	# overlay and the F4 motion read-out, which the localization pass leaves in
+	# English on purpose (see CLAUDE.md "Localization"). The panel's own labels
+	# and buttons above ARE translated; these numbers are read against the
+	# tuning instructions, which are written in English.
 	var d: Dictionary = driver.get_diagnostics()
 	var has_data: bool = bool(d.get("has_data", false))
 	var source: String = String(d.get("source", "none"))
