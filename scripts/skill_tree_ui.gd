@@ -140,6 +140,10 @@ var _view_hero: String = ""
 var _paused_by_us: bool = false
 var _recapture_mouse: bool = false
 
+## Last unspent-point count painted on the opener. -1 until the first frame, so
+## the label is always drawn once — see `_refresh_open_button()`.
+var _last_points: int = -1
+
 # --- Child node references (built in _ready, not from a .tscn) --------------
 
 var _open_button: Button = null
@@ -184,6 +188,20 @@ func _process(_delta: float) -> void:
 	# pause is taken lazily (it is declined over Game Over), so a Play Again
 	# pressed with this panel up must not leave it running unpaused afterwards.
 	_apply_pause(_panel_open)
+
+
+func _notification(what: int) -> void:
+	# Godot re-translates a plain `Label`/`Button` literal for free on this
+	# notification (localization RULE 1), but the two strings this file COMPOSES —
+	# the opener's "Skills (N)" and the card's title — are built with an explicit
+	# `tr()` and would keep the old language until something else happened to
+	# rewrite them. RULE 2's "every such site re-runs on its own" used to be true
+	# here because `_refresh_open_button()` repainted every frame; gating that on a
+	# change is what makes this hook necessary, so the two belong together.
+	if what == NOTIFICATION_TRANSLATION_CHANGED:
+		_last_points = -1  # force the opener to repaint in the new language
+		if _panel_open:
+			_rebuild()
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -307,9 +325,17 @@ func _make_button(label: String, handler: Callable, height: float) -> Button:
 # LOOKUPS (group-based, null-safe — the project convention)
 # ============================================================================
 
+## Cached exactly like `coin_hud.gd` caches its own, and for the same reason: a
+## group lookup per frame for a node that may legitimately never exist is the
+## wrong shape. Re-resolved whenever it is missing or has been freed.
+var _progression_node: Node = null
+
+
 func _progression() -> Node:
-	var node := get_tree().get_first_node_in_group("progression")
-	return node if node != null and node.has_method("skill_mult") else null
+	if _progression_node == null or not is_instance_valid(_progression_node):
+		var node := get_tree().get_first_node_in_group("progression")
+		_progression_node = node if node != null and node.has_method("skill_mult") else null
+	return _progression_node
 
 
 ## The hero the player is currently in, or "" when there is no player. Used to
@@ -410,6 +436,14 @@ func _refresh_open_button() -> void:
 		return
 	var progression := _progression()
 	var points: int = int(progression.unspent_points()) if progression != null else 0
+	# ONLY ON A CHANGE — the same discipline `crocodile_lod_manager` applies to its
+	# state flips. This runs every frame, and rewriting a theme override and a
+	# translated string sixty times a second to say the same thing is exactly the
+	# kind of idle cost the web build's perf work exists to avoid. -1 is the "not
+	# yet drawn" sentinel, so the first frame always paints.
+	if points == _last_points:
+		return
+	_last_points = points
 	_open_button.text = tr("Skills") + (" (%d)" % points if points > 0 else "")
 	_open_button.add_theme_color_override(
 		"font_color", COLOR_AVAILABLE if points > 0 else Color.WHITE
