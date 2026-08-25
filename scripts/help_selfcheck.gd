@@ -62,6 +62,9 @@ const MinimapHud := preload("res://scripts/minimap_hud.gd")
 const PauseController := preload("res://scripts/pause_controller.gd")
 const PerfOverlay := preload("res://scripts/perf_overlay.gd")
 const MotionDebug := preload("res://scripts/motion_debug.gd")
+const MobileInput := preload("res://scripts/mobile_input.gd")
+const TouchControls := preload("res://scripts/touch_controls.gd")
+const MobileSettingsPanel := preload("res://scripts/mobile_settings_panel.gd")
 const PlayerController := preload("res://scripts/player_controller.gd")
 
 ## `[input-map action, the key legend its row must carry]`. The legend may list
@@ -151,6 +154,13 @@ func _check_table() -> String:
 		[PauseController.PAUSE_KEY, "P", "pause_controller.PAUSE_KEY"],
 		[PerfOverlay.TOGGLE_KEYCODE, "F3", "perf_overlay.TOGGLE_KEYCODE"],
 		[MotionDebug.TOGGLE_KEYCODE, "F4", "motion_debug.TOGGLE_KEYCODE"],
+		[MobileInput.FORCE_ENABLE_KEYCODE, "F5", "mobile_input.FORCE_ENABLE_KEYCODE"],
+		[TouchControls.FORCE_SHOW_KEYCODE, "F6", "touch_controls.FORCE_SHOW_KEYCODE"],
+		[MobileSettingsPanel.FORCE_SHOW_KEYCODE, "F7", "mobile_settings_panel.FORCE_SHOW_KEYCODE"],
+		# The zoom pair only asserts that a row for them EXISTS. Their keycodes are
+		# punctuation whose `OS.get_keycode_string` name ("Equal", "Minus") is not the
+		# legend a player reads, and re-listing the accepted keycodes here would only
+		# restate the constant back to itself — a tautology, not a check.
 		[MinimapHud.ZOOM_IN_KEYCODES[0], "+ / -", "minimap_hud.ZOOM_IN_KEYCODES[0]"],
 		[MinimapHud.ZOOM_OUT_KEYCODES[0], "+ / -", "minimap_hud.ZOOM_OUT_KEYCODES[0]"],
 	]
@@ -319,7 +329,7 @@ func _check_live() -> String:
 	if failure.is_empty():
 		failure = await _check_pause_is_shared()
 	if failure.is_empty():
-		failure = _check_no_double_capture()
+		failure = await _check_no_double_capture()
 	return failure
 
 
@@ -425,10 +435,23 @@ func _check_no_double_capture() -> String:
 	Headless has no pointer lock, so the capture handover itself cannot be driven
 	here — but this half needs none: the rule is "only give back what we took",
 	and a `_recapture_mouse` armed after opening over a free cursor is exactly the
-	bug that grabs the pointer from a player who had deliberately released it."""
+	bug that grabs the pointer from a player who had deliberately released it.
+
+	It SETS the cursor free and opens the overlay itself rather than reading the
+	flag after the checks above: those all end with the overlay closed, and
+	closing clears the flag — so a version that armed it wrongly on every open
+	would still show false here. Measure the effect, do not read the state back."""
+	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 	if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
-		return ""  # not the state under test; headless never reaches it
-	if _overlay._recapture_mouse:
+		return "could not free the cursor — the re-capture check would be vacuous"
+	await _press_help_key()
+	if not _overlay._open:
+		return "the help overlay would not open for the mouse check"
+	var armed: bool = _overlay._recapture_mouse
+	await _press_help_key()
+	if armed:
 		return "the help overlay armed a mouse re-capture without ever releasing the cursor"
+	if paused:
+		return "STUCK PAUSE — the mouse check left the tree paused"
 	print("pause: taken and released cleanly, foreign pause survives, no phantom re-capture")
 	return ""
