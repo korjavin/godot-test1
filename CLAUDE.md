@@ -39,7 +39,16 @@ godot --headless --path . --script res://scripts/mp_selfcheck.gd
 # headless instance, joins from a second, and fails unless both agree on
 # run_seed. Needs `go` and `godot` on PATH; covers the relay, not the mesh.
 bash scripts/mp_e2e.sh
+
+# Minimap self-check — boots main.tscn, presses PLAY SOLO and asserts the map
+# actually read the world (road window, north-up signs, croc-dot cap).
+# Prints "SELFCHECK OK", exits 0.
+godot --headless --path . --script res://scripts/minimap_selfcheck.gd
 ```
+
+**Run `godot --headless --path . --import` once in a fresh clone before any of the headless checks above.** A never-opened checkout has an empty global class cache, so every `class_name` type (`MobileSensors`, `ToonShading`, `LobbyClient`, …) fails to resolve and the scripts using them **silently fail to attach** — the scene still boots, just missing pieces. `webrtc_addon_check.gd` documents the same trap; `minimap_selfcheck.gd` now detects it and fails loudly rather than passing vacuously (a scriptless `StartOverlay` means nothing paused because nothing loaded).
+
+**Any headless harness that boots `main.tscn` must press PLAY SOLO before it measures anything.** `start_overlay.gd` takes `get_tree().paused = true` in its `_ready()` and re-asserts it every `_process`, so a `PAUSABLE` node — which is most of them — never takes a frame; and `SceneTree.create_timer()` defaults to `process_always = true`, so a wait elapses under that pause and the check runs against a world that never ran. Two ordering gotchas in `minimap_selfcheck._run()`: `_ready()` is **deferred** for a scene added from `_initialize()` (dismiss on that first frame and the overlay's `_ready()` re-pauses behind you — `await process_frame` first), and the dismissal must be re-tested (`if paused:`) because another node may hold its own pause. `mp_selfcheck.gd` boots no scene and `mp_e2e.gd`'s `MpManager` is `PROCESS_MODE_ALWAYS`, which is why neither noticed.
 
 Editing is expected to happen in the Godot editor (`godot project.godot`); the editor reimports assets into the gitignored `.godot/` cache. Each `.gd` has a sibling `.gd.uid` — Godot manages these; don't hand-edit them. (Note: `scripts/windman_whole_body_animator.gd.uid` is orphaned — its `.gd` no longer exists.)
 
