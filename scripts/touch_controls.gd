@@ -10,7 +10,8 @@ extends Control
 ##   * **Special (F)**→ fires the polled `special_ability` action.
 ##   * **Switch (R)** → fires the *event-driven* `switch_character` action.
 ##   * **steer toggle**→ flips the driver between TILT and TWIST steering.
-##   * **View**       → fires the polled `toggle_camera` action (C key: 1st/3rd person).
+##   * **View**       → fires the polled `toggle_camera` action (C key: cycles
+##     third-person → first-person → front/mirror).
 ##
 ## plus a first-run **"TAP TO START"** onboarding overlay (a mini how-to that also
 ## satisfies iOS Safari's user-gesture requirement for motion permission and
@@ -764,8 +765,9 @@ func _on_switch_pressed() -> void:
 	_fire_action("switch_character")
 
 
-## View button → the polled `toggle_camera` action (C key equivalent): flips the
-## player between 3rd-person and first-person view.
+## View button → the polled `toggle_camera` action (C key equivalent): steps the
+## player one stop along the third-person → first-person → front/mirror cycle.
+## The label stays the mode-agnostic "View", so a third stop needed no UI change.
 func _on_view_pressed() -> void:
 	_fire_action("toggle_camera")
 
