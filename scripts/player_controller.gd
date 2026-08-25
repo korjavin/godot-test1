@@ -1821,8 +1821,53 @@ func _respawn_in_place() -> void:
 	area and start a short, frozen grace window (see the is_respawning branch in
 	_physics_process) so we can't be re-bitten the moment we recover. Any active
 	ability state (air boost, giant/small form) is also cleared.
+
+	IN A ROOM, "IN PLACE" BECOMES "BACK WITH THE GROUP" (bead godot-test1-s86.18).
+	Dying 300 m behind the team ends that player's session in every way that
+	matters — the group walks on while they walk back alone through the pack that
+	just ate them — so the respawn reuses the mid-run join's placement wholesale:
+	the group's anchor from `MpManager.group_anchor()` (centroid, or the master
+	when the group is spread), the same `_place_near()` ring probe for a spot the
+	body fits in, and the same crocodile sweep at the spot actually landed on,
+	not the one we died on. Solo `group_anchor()` answers `null` and every line
+	below is byte-for-byte what it has always been.
+
+	THE RELOCATION FIRES ON THE RESPAWN EVENT AND NOTHING ELSE, which is the
+	standing lesson of the drag bug (bead godot-test1-s86.17): placement belongs
+	to an EVENT, never to the arrival of data that happens to complete a
+	condition. `_on_caught_finished()` calls this exactly once per death, so
+	there is no arrival window to gate and no latch to keep — and `group_anchor()`
+	is deliberately a pure query with no latch of its own, so it cannot grow one.
+
+	It composes with the grace freeze rather than fighting it: the move happens
+	HERE, at the same moment the respawn settles the body, so the whole frozen
+	countdown — and the blink invulnerability that follows it — is spent at the
+	NEW spot. Landing first and being frozen afterwards would be the same two
+	things in the wrong order: a player unfrozen, unswept and standing in the
+	group's crocodiles.
+
+	ponytail: the group can be past this peer's loaded terrain (web streams only
+	~150 m), so the ring probe may judge candidates whose blocks do not exist
+	yet, and the ground under the landing is built by the terrain's own streaming
+	on the next frame — harmless because the body is frozen for
+	RESPAWN_GRACE_DURATION either way, at the cost of at worst one shove-out from
+	a block that turned up underneath. The upgrade path is asking the terrain to
+	build around the anchor first, the way `_apply_join_placement()` does, which
+	then also needs its `await get_tree().physics_frame`.
 	"""
 	_reset_ability_states()
+	var anchor: Variant = _room_group_anchor()
+	if anchor != null:
+		var from_xz := Vector2(global_position.x, global_position.z)
+		_place_near(anchor as Vector3)
+		# A TELEPORT IS NOT DISTANCE RUN. own_distance is measured from
+		# own_distance_origin, so shifting the origin by exactly the jump leaves
+		# the banked figure untouched and starts the next leg from here. Without
+		# it, dying next to a team that is kilometres down the road would write
+		# their distance into user://best_run.cfg as this player's personal best
+		# — the one thing own_distance_origin exists to prevent, and the same
+		# reason join_at() re-origins a mid-run joiner.
+		own_distance_origin += Vector2(global_position.x, global_position.z) - from_xz
 	clear_nearby_crocodiles(global_position)
 	velocity = Vector3.ZERO
 	is_ducking = false
@@ -2114,36 +2159,7 @@ func join_at(anchor: Vector3) -> void:
 
 	@param anchor: world position to arrive next to.
 	"""
-	# Find a clear spot on a ring around the anchor so we never materialise
-	# inside a block. Nearest ring first, JOIN_RING_ANGLES evenly spaced
-	# candidates each, taking the first the body actually fits in — the same
-	# probe Primm's Phase Step lands with, which ignores the flat ground and only
-	# senses what rises above it. The ground IS flat, so every one of the ~32
-	# candidates being blocked needs a landscape of solid stone; the anchor
-	# itself is the fallback for that, and at worst costs one shove-out from the
-	# physics engine.
-	var spot := anchor
-	for radius: float in JOIN_RING_RADII:
-		var placed := false
-		for i: int in range(JOIN_RING_ANGLES):
-			var angle: float = TAU * i / float(JOIN_RING_ANGLES)
-			var candidate := Vector3(anchor.x + cos(angle) * radius, 0.0, anchor.z + sin(angle) * radius)
-			if not _is_body_blocked_at(candidate):
-				spot = candidate
-				placed = true
-				break
-		if placed:
-			break
-
-	global_position = Vector3(spot.x, JOIN_SPAWN_HEIGHT, spot.z)
-	velocity = Vector3.ZERO
-	rotation.y = SPAWN_FACING_Y  # Face down the coin road, like the origin spawn
-	camera_pitch = 0.0
-	camera_yaw_lag = 0.0
-	if camera_pivot:
-		camera_pivot.rotation = Vector3.ZERO  # Whole rotation, so roll can't survive
-	is_ducking = false
-	is_running = false
+	_place_near(anchor)
 
 	# This peer's SOLO tally is not the room's. own_coins would inflate the
 	# shared bank with coins banked in a different world, and own_lives_spent is
@@ -2195,6 +2211,65 @@ func join_at(anchor: Vector3) -> void:
 	_reset_ability_states()
 
 	print("Joined the run near %v" % anchor)
+
+
+func _place_near(anchor: Vector3) -> void:
+	"""
+	Put the body down on a clear spot beside `anchor` and reset it to the neutral
+	pose the origin spawn uses. Shared by the two moments a player is set down
+	next to the group: the mid-run join (`join_at`) and, in a room, the
+	death respawn (`_respawn_in_place`).
+
+	Find a clear spot on a ring around the anchor so we never materialise inside
+	a block. Nearest ring first, JOIN_RING_ANGLES evenly spaced candidates each,
+	taking the first the body actually fits in — the same probe Primm's Phase
+	Step lands with, which ignores the flat ground and only senses what rises
+	above it. The ground IS flat, so every one of the ~32 candidates being
+	blocked needs a landscape of solid stone; the anchor itself is the fallback
+	for that, and at worst costs one shove-out from the physics engine.
+
+	IT MOVES THE BODY AND NOTHING ELSE — no coins, no lives, no distance, no run
+	state. Both callers own their own bookkeeping, and keeping it out of here is
+	exactly what lets one of them zero a solo tally while the other carries a
+	live run across the teleport untouched.
+
+	@param anchor: world position to arrive next to.
+	"""
+	var spot := anchor
+	for radius: float in JOIN_RING_RADII:
+		var placed := false
+		for i: int in range(JOIN_RING_ANGLES):
+			var angle: float = TAU * i / float(JOIN_RING_ANGLES)
+			var candidate := Vector3(anchor.x + cos(angle) * radius, 0.0, anchor.z + sin(angle) * radius)
+			if not _is_body_blocked_at(candidate):
+				spot = candidate
+				placed = true
+				break
+		if placed:
+			break
+
+	global_position = Vector3(spot.x, JOIN_SPAWN_HEIGHT, spot.z)
+	velocity = Vector3.ZERO
+	rotation.y = SPAWN_FACING_Y  # Face down the coin road, like the origin spawn
+	camera_pitch = 0.0
+	camera_yaw_lag = 0.0
+	if camera_pivot:
+		camera_pivot.rotation = Vector3.ZERO  # Whole rotation, so roll can't survive
+	is_ducking = false
+	is_running = false
+
+
+func _room_group_anchor() -> Variant:
+	"""
+	Where the room's other members are standing, or `null` when there is no room
+	(or no manager at all, so the player scene still runs standalone). One
+	null-safe hop into the `"mp"` group, the same shape as `_sfx()` and
+	`_weather_is_raining_here()`.
+	"""
+	var mp := _mp()
+	if mp != null and mp.has_method("group_anchor"):
+		return mp.group_anchor()
+	return null
 
 
 # ============================================================================

@@ -1841,26 +1841,98 @@ func _apply_join_placement() -> void:
 
 func _join_anchor() -> Vector3:
 	"""
-	Where to arrive: the centroid of the snapshot positions, unless the group is
-	spread wider than `GROUP_SPREAD_MAX`, in which case the MASTER's position —
-	the centroid of two players who have gone opposite ways is empty ground
-	between them, and arriving beside one player beats arriving beside none.
-	A master that sent no snapshot (it may have joined after us and not yet
-	replied) leaves the centroid as the fallback.
+	Where to arrive: `_anchor_of()` over the JOIN SNAPSHOT positions, which is all
+	a peer that has not seen a single presence packet yet has to go on.
 
 	`_peer_state` holds only other members, and this is only reached with at
-	least one entry in it, so the divide is safe.
+	least one entry in it, so `_anchor_of()`'s divide is safe. Stale entries are
+	deliberately NOT skipped here (unlike `group_anchor()` below): during the
+	arrival window nothing has had time to be pruned, and skipping is a behaviour
+	change on a path the drag fix (bead godot-test1-s86.17) already pinned.
+	"""
+	var positions: Dictionary = {}
+	for id: String in _peer_state:
+		positions[id] = _peer_state[id]["pos"] as Vector3
+	return _anchor_of(positions, _master)
+
+
+func group_anchor() -> Variant:
+	"""
+	Where the group is standing RIGHT NOW, or `null` when there is no room and
+	nobody to stand beside — the same "`null` means fall through to solo
+	behaviour" shape `peer_positions()` and `shared_bank()` use, so the caller
+	needs one `== null` test and no branch of its own.
+
+	`player_controller._respawn_in_place()` is the caller (bead
+	godot-test1-s86.18): dying in a room brings you back beside your team instead
+	of alone at whatever end of the map the pack ran you down at — the same
+	reason a mid-run joiner is placed at `_join_anchor()`. The anchor RULE is
+	shared with the join (`_anchor_of()` is the one implementation of "centroid,
+	unless the group is spread, then the master"); only the INPUT differs — this
+	reads the LIVE presence positions, the join reads the one-shot snapshots.
+
+	`stale` peers are skipped for exactly the reason `peer_positions()` skips
+	them: a peer whose mesh died while its lobby socket stayed up holds a frozen
+	coordinate nobody is standing on, and respawning onto that is strictly worse
+	than respawning where you fell. An empty set answers `null`, never the origin.
+
+	IT ONLY ANSWERS — no latch, no window, no side effect. The one-shot
+	discipline the drag fix (bead godot-test1-s86.17) established stays where it
+	belongs: this is read from the respawn EVENT, never from a packet arrival
+	that happens to complete a condition, so there is nothing here to gate.
+	"""
+	if _state != State.IN_ROOM:
+		return null
+	var positions: Dictionary = {}
+	for id: String in _peer_state:
+		if bool((_peer_state[id] as Dictionary).get("stale", false)):
+			continue
+		positions[id] = _peer_state[id]["pos"] as Vector3
+	if positions.is_empty():
+		return null
+	return _anchor_of(positions, _master)
+
+
+static func _anchor_of(positions: Dictionary, master_id: String) -> Vector3:
+	"""
+	The group's anchor over a NON-EMPTY `lobby id -> Vector3` map: the centroid,
+	unless somebody is further than `GROUP_SPREAD_MAX` from it, in which case a
+	real player's position — the centroid of two players who have gone opposite
+	ways is empty ground between them, and standing beside one player beats
+	standing beside none. `master_id` is the preferred pick when the group is
+	spread, because it is the one member every peer agrees on.
+
+	**A SPREAD GROUP NEVER FALLS BACK TO THE CENTROID.** `master_id` can be
+	missing from the map two ways — a master that has not reported yet or has
+	gone `stale`, and (the one `group_anchor()` hits) a **dying master**, whose
+	own position is never in `_peer_state` at all, since that dictionary holds
+	only OTHER members. Returning the centroid there would put exactly the anchor
+	rule's stated failure back: the master respawning onto empty ground between
+	two teammates who went opposite ways. So the fallback is the live position
+	NEAREST the centroid — still a real player, still deterministic, and still
+	the most central one.
+
+	Static and `_rtc`-free, so `mp_selfcheck.gd` can pin it; callers guarantee a
+	non-empty map, so the divide is safe.
 	"""
 	var centroid: Vector3 = Vector3.ZERO
-	for id: String in _peer_state:
-		centroid += _peer_state[id]["pos"] as Vector3
-	centroid /= float(_peer_state.size())
+	for id: String in positions:
+		centroid += positions[id] as Vector3
+	centroid /= float(positions.size())
 
-	for id: String in _peer_state:
-		if (_peer_state[id]["pos"] as Vector3).distance_to(centroid) > GROUP_SPREAD_MAX:
-			if _peer_state.has(_master):
-				return _peer_state[_master]["pos"] as Vector3
-			return centroid
+	for id: String in positions:
+		if (positions[id] as Vector3).distance_to(centroid) > GROUP_SPREAD_MAX:
+			if positions.has(master_id):
+				return positions[master_id] as Vector3
+			var nearest: Vector3 = centroid
+			var best_sq: float = INF
+			for other: String in positions:
+				var pos: Vector3 = positions[other] as Vector3
+				var dist_sq: float = pos.distance_squared_to(centroid)
+				if dist_sq < best_sq:
+					best_sq = dist_sq
+					nearest = pos
+			return nearest
 	return centroid
 
 
