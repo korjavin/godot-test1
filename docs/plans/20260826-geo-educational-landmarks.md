@@ -397,7 +397,7 @@ An `extends SceneTree` script, run with
 with a negative control**, never a getter read-back, and the whole thing is
 mutation-tested before it is called done.
 
-- [ ] **Check 1 — the declared radius is a TRUE BOUND on the stone each builder
+- [x] **Check 1 — the declared radius is a TRUE BOUND on the stone each builder
       emits.** For every registry entry: make a detached node with the terrain script,
       a throwaway `block_batch: Array`, a throwaway `StaticBody3D` and a detached
       `MeshInstance3D` as the accent parent; call the builder with a seeded RNG;
@@ -406,19 +406,19 @@ mutation-tested before it is called done.
       builder (e.g. 25) so a random-driven shape cannot pass by luck.
       **This is the check that keeps landmarks off chunk seams** — an overflowing
       builder is otherwise silent until a player finds half a bridge cut by a seam.
-- [ ] **Check 2 — the constant chain holds:** every `entry.radius <= LANDMARK_RADIUS`,
+- [x] **Check 2 — the constant chain holds:** every `entry.radius <= LANDMARK_RADIUS`,
       `LANDMARK_EDGE_MARGIN > LANDMARK_RADIUS`, and
       `LANDMARK_ROAD_CLEARANCE > LANDMARK_RADIUS + sqrt(BOSS_FORWARD_OFFSET^2 + BOSS_LATERAL_MAX^2)`
       (the boss-exclusion-by-construction inequality). Three lines, and they are the
       ones a future retune silently breaks.
-- [ ] **Check 3 — every registry fact is actually translated.** Set the locale to
+- [x] **Check 3 — every registry fact is actually translated.** Set the locale to
       `de` and require `tr(entry.fact) != entry.fact` for all eight. This is the drift
       that a new landmark introduces most easily (a builder added, the CSV rows
       forgotten) and it is invisible to `locale_selfcheck.gd`, which only validates
       rows that exist. Do **not** assert the same for `name` — four of the eight names
       are legitimately identical in German and therefore deliberately have no row.
       Restore the locale afterwards.
-- [ ] **Check 4 — the toast fires once per approach and re-arms on leaving.** Drive
+- [x] **Check 4 — the toast fires once per approach and re-arms on leaving.** Drive
       the real `landmark_toast.gd` against a stub player node in the `"player"` group
       and a stub marker `Node3D` in the `"landmark"` group with the same three metas
       the spawner sets. Sequence, forcing the tick each step:
@@ -432,12 +432,12 @@ mutation-tested before it is called done.
          down rather than resetting);
       4. player moved beyond the leave radius, then back inside → card shown again
          (the re-arm half).
-- [ ] **Mutation-test it and record the results in the script's header comment**, the
+- [x] **Mutation-test it and record the results in the script's header comment**, the
       house rule. At minimum: (a) inflate one registry radius → Check 1 fails;
       (b) drop the hysteresis so leave == approach → Check 4 step 3 or 4 fails;
       (c) delete one fact's CSV row → Check 3 fails; (d) break the boss inequality →
       Check 2 fails.
-- [ ] Add the invocation to the `## Commands` block in `CLAUDE.md`, in the same
+- [x] Add the invocation to the `## Commands` block in `CLAUDE.md`, in the same
       commented shape as the other self-checks.
 
 ### Task 7: The measured sweep — rarity tuning + determinism (THROWAWAY)

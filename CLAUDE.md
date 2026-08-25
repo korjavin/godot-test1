@@ -76,6 +76,15 @@ godot --headless --path . --script res://scripts/progression_selfcheck.gd
 # actually read the world (road window, north-up signs, croc-dot cap).
 # Prints "SELFCHECK OK", exits 0.
 godot --headless --path . --script res://scripts/minimap_selfcheck.gd
+
+# Geo-landmark self-check — calls all eight landmark builders over 25 seeds each
+# and MEASURES that the stone they emit fits inside the radius the registry
+# declares (the bound that keeps a landmark off a chunk seam), pins the constant
+# chain (edge margin > radius; the boss-exclusion arithmetic), requires every
+# registry fact to really translate to German, and drives the real toast through
+# far → near → still-near → dead-band → left-and-back.
+# Prints "SELFCHECK OK", exits 0.
+godot --headless --path . --script res://scripts/landmark_selfcheck.gd
 ```
 
 **Run `godot --headless --path . --import` once in a fresh clone before any of the headless checks above.** A never-opened checkout has an empty global class cache, so every `class_name` type (`MobileSensors`, `ToonShading`, `LobbyClient`, …) fails to resolve and the scripts using them **silently fail to attach** — the scene still boots, just missing pieces. `webrtc_addon_check.gd` documents the same trap; `minimap_selfcheck.gd` now detects it and fails loudly rather than passing vacuously (a scriptless `StartOverlay` means nothing paused because nothing loaded).
