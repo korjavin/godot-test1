@@ -156,7 +156,9 @@ func (h *Hub) roomsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
-	_, _ = w.Write(mustJSON(map[string]any{"rooms": h.ListRooms()}))
+	// Cached for a second — see listedRoomsJSON: this route is unauthenticated
+	// and unrated, and ListRooms holds the hub mutex every signal serialises on.
+	_, _ = w.Write(h.listedRoomsJSON())
 }
 
 // turnCredentialTTL is how long a minted TURN credential stays usable.

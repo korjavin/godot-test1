@@ -172,6 +172,12 @@ type Hub struct {
 	mu    sync.Mutex
 	rooms map[string]*Room
 	seq   uint64
+
+	// Cached GET /rooms body — see listedRoomsJSON. Its own mutex on purpose: a
+	// cache hit must not touch h.mu at all, which is the entire point.
+	listMu   sync.Mutex
+	listBody []byte
+	listAt   time.Time
 }
 
 // NewHub returns an empty hub.
@@ -248,6 +254,37 @@ func (h *Hub) ListRooms() []RoomInfo {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Code < out[j].Code })
 	return out
+}
+
+// listCacheTTL bounds how often GET /rooms may reach h.mu.
+const listCacheTTL = time.Second
+
+// listedRoomsJSON is the /rooms response body, rebuilt at most once per
+// listCacheTTL.
+//
+// maxListedRooms bounds the work of ONE call; nothing bounded the RATE. /rooms
+// is unauthenticated and unrated (ServeWS has a two-dimensional token bucket for
+// exactly this reason; the HTTP surface has none), and h.mu is the single
+// process-wide lock that Join, Leave, Signal, SetHero, ReportStalled and every
+// election serialise on. So a client hammering this over keep-alive acquired it
+// thousands of times a second — each time scanning up to 200 rooms and running
+// two sort passes inside the critical section — and stalled offer/answer/ICE
+// relay for every real player, at the cost of one TCP write per stall.
+//
+// Caching the BODY rather than the []RoomInfo is what makes the hit path free:
+// no allocation, no marshal, no h.mu. A second of staleness is invisible — the
+// client pulls this on panel open and on Refresh, never on a timer.
+func (h *Hub) listedRoomsJSON() []byte {
+	h.listMu.Lock()
+	defer h.listMu.Unlock()
+	if h.listBody != nil && time.Since(h.listAt) < listCacheTTL {
+		return h.listBody
+	}
+	// Lock order is listMu -> h.mu, and nothing anywhere takes them the other
+	// way round, so this cannot deadlock.
+	h.listBody = mustJSON(map[string]any{"rooms": h.ListRooms()})
+	h.listAt = time.Now()
+	return h.listBody
 }
 
 // newCode returns an unused invite code. Caller holds h.mu.

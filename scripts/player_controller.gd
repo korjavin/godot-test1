@@ -2041,8 +2041,27 @@ func clear_nearby_crocodiles(spawn_point: Vector3) -> void:
 	invulnerability that follows are long enough to run, and running (>= 9.0)
 	beats MAX_CHASE_SPEED (8.5) by design.
 
+	IN A MULTIPLAYER ROOM NOTHING IS FREED — the room is asked to scare them off
+	instead. Phase 5 makes the master the authority for every awake crocodile, and
+	the sync layer's standing contract is that it never creates, re-parents or
+	frees one; this sweep is outside that layer and would break it from both ends.
+	Freeing on the MASTER stops it broadcasting those ids, so every other peer
+	times out after CROC_SYNC_TIMEOUT and resumes local AI for ~10 crocodiles the
+	authority no longer has — divergent packs, right where players are together.
+	Freeing on a NON-master silently deletes bodies the master keeps sending
+	samples for. The flee request is the arbitrated equivalent: it reaches every
+	screen through the sync packet's CROC_FLAG_FLEEING bit, and it is also the
+	only thing that unparks the master's copy from a peer it just bit — the local
+	`is_paused` a bite sets is overwritten by the next sample 100 ms later, so
+	without it the same crocodile bites again the instant the i-frames lapse.
+
 	@param spawn_point: The position to check distance from
 	"""
+	var mp := _mp()
+	if mp != null and mp.has_method("request_croc_flee") \
+			and mp.request_croc_flee(spawn_point, RESPAWN_GRACE_DURATION + RESPAWN_BLINK_DURATION):
+		return
+
 	var crocodiles = get_tree().get_nodes_in_group("crocodile")
 	var removed_count = 0
 
@@ -2309,7 +2328,17 @@ func _refresh_shared_totals() -> void:
 			coins_collected = own_coins
 			run_distance = own_distance
 			next_extra_life_at = (own_coins / EXTRA_LIFE_COINS + 1) * EXTRA_LIFE_COINS
-			lives = clampi(MAX_LIVES + own_coins / EXTRA_LIFE_COINS - own_lives_spent, 0, LIVES_CAP)
+			# FLOORED AT ONE HEART, not zero. own_lives_spent counts deaths the
+			# ROOM's bank paid for — a mid-run joiner starts at own_coins = 0 by
+			# design, and a peer whose teammate does the collecting banks little
+			# either — so three deaths over a long room left this at 0. The room
+			# ending is not a game over (leave() fires on a dropped socket, a
+			# lobby restart or the Leave button), so that handed the player a solo
+			# run with no hearts, no warning and an instant game over on the next
+			# bite. Charging them again for deaths the room already paid for is
+			# the bug; the counter is cleared so it cannot be charged a third time.
+			lives = clampi(MAX_LIVES + own_coins / EXTRA_LIFE_COINS - own_lives_spent, 1, LIVES_CAP)
+			own_lives_spent = 0
 		return
 	_showing_shared_totals = true
 	var spent: Variant = mp.shared_lives_spent(own_lives_spent)

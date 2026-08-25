@@ -50,6 +50,12 @@ const PRESENCE_HZ: float = 15.0
 ## burst after a hitch still drains, while a flood cannot.
 const MAX_PRESENCE_PACKETS_PER_PEER: int = 8
 
+## Hard ceiling on packets DEQUEUED per frame, across every sender. Sized well
+## above MAX_PRESENCE_PACKETS_PER_PEER × MAX_MEMBERS so an honest room never
+## reaches it: it exists only so that discarding one peer's over-quota flood
+## (which costs a `get_packet` each) still terminates the loop.
+const MAX_DRAIN_PACKETS_PER_FRAME: int = 256
+
 ## Fallback display name when none was configured. The lobby clamps names to 32
 ## characters server-side, so we do not need to.
 const DEFAULT_DISPLAY_NAME: String = "player"
@@ -2315,11 +2321,28 @@ func _receive_mesh_packets() -> void:
 	# stall the frame on the gl_compatibility web build. Discarding the backlog is
 	# strictly correct rather than lossy: presence is unreliable and every packet
 	# fully replaces the last, so the newest state still arrives 66 ms later.
-	var budget: int = MAX_PRESENCE_PACKETS_PER_PEER * maxi(1, _avatars.size())
-	while budget > 0 and _rtc.get_available_packet_count() > 0:
-		budget -= 1
+	#
+	# THE BUDGET IS PER SENDER, not one shared pool, and that distinction is the
+	# whole point: WebRTCMultiplayerPeer merges every peer's channels into ONE
+	# FIFO, so a shared pool is owned by whoever fills the queue. One peer
+	# flooding the unreliable channel then starved the honest ones out of their
+	# own share — stale `_peer_state` positions (which is what every crocodile on
+	# the master hunts, and what the LOD manager holds chunks awake around) and,
+	# worse, the master's RELIABLE `cnf`/`dead` packets queued behind the flood
+	# until `_tick_claims` gave up and double-banked the pickup, which is exactly
+	# what the claim protocol exists to prevent. Over-quota packets are still
+	# DEQUEUED (a `get_packet` and an int compare) rather than left in the FIFO,
+	# so the drain still reaches everybody else's traffic behind them.
+	var per_peer: Dictionary = {}
+	var drained: int = 0
+	while drained < MAX_DRAIN_PACKETS_PER_FRAME and _rtc.get_available_packet_count() > 0:
+		drained += 1
 		var from_int: int = _rtc.get_packet_peer()
 		var bytes: PackedByteArray = _rtc.get_packet()
+		var used: int = int(per_peer.get(from_int, 0))
+		per_peer[from_int] = used + 1
+		if used >= MAX_PRESENCE_PACKETS_PER_PEER:
+			continue
 		# ponytail: linear scan rather than a third dictionary kept in step with
 		# `_connections` and `_avatars` — `peer_int_id` is pure and a room holds
 		# at most 4 peers, so this is 3 hashes against a map that could desync.
@@ -2494,6 +2517,17 @@ func claim_pickup(id: int, count: int, value: int) -> bool:
 		# Somebody already took it. Claim it anyway (true) so the caller hides the
 		# pickup without awarding: that is the truth on every other screen.
 		return true
+	if _master != _you and not _is_mesh_peer_connected(peer_int_id(_master)):
+		# A MESH THAT EXISTS IS NOT A MESH THAT CONNECTS. `_rtc` is built the
+		# moment /ice answers, seconds before any data channel opens — and never
+		# opens at all behind a symmetric NAT with no TURN — so the guard above
+		# does not actually cover the case its comment describes. Answering true
+		# here hid the pickup, sent a claim nobody could receive, and paid it
+		# CLAIM_RETRY_SEC × CLAIM_MAX_TRIES (2 s) later from `_tick_claims`; worse,
+		# only `_apply_confirm` advances `room_multiplier()`, so with no confirms
+		# landing the room was pinned at x1 for the whole run. Same discipline as
+		# `request_croc_kill()`: if the request cannot leave, fall through NOW.
+		return false
 	if _master == _you:
 		_resolve_claim(id, peer_int_id(_you), count, value)
 		return true
@@ -2972,7 +3006,13 @@ func _rebuild_croc_cache() -> void:
 	since the last scan, and re-caching one id at a time would rescan per entry."""
 	_synced_crocs.clear()
 	for croc: Node in get_tree().get_nodes_in_group("crocodile"):
-		if is_instance_valid(croc) and croc.has_method("croc_id"):
+		# Filtered on the method the SYNC needs, not merely on `croc_id` — every
+		# consumer of this cache calls `set_remote_state` / `clear_remote_drive`
+		# straight off it, and a group member exposing an id but not the phase-5
+		# API would be a hard runtime error inside `_process`. GDScript unwinds
+		# the whole erroring function, so that would silently abandon the rest of
+		# the sync packet and the timeout sweep with it.
+		if is_instance_valid(croc) and croc.has_method("set_remote_state"):
 			_synced_crocs[croc.croc_id()] = croc
 
 
@@ -3007,7 +3047,7 @@ func _release_synced_crocs() -> void:
 # broadcast only because it FREES a node, which no amount of transform sync can
 # express.
 
-func request_croc_flee(origin: Vector3, duration: float) -> void:
+func request_croc_flee(origin: Vector3, duration: float) -> bool:
 	"""
 	Phoboman's Stink Wave, made room-wide: ask the master to scare the crocodiles
 	IT is the authority for, so a wave set off on one screen turns the pack on
@@ -3017,13 +3057,20 @@ func request_croc_flee(origin: Vector3, duration: float) -> void:
 	correct for every crocodile this peer still simulates itself and harmless on
 	the remote-driven ones (whose state the next sample overwrites regardless);
 	this only adds the half that loop cannot reach.
+
+	RETURNS whether the room has taken it over — false offline, and false whenever
+	the request could not actually leave — so a caller whose LOCAL alternative
+	would break the room (`player_controller.clear_nearby_crocodiles()`, which
+	frees bodies the master is the authority for) can fall through on one test,
+	the same shape `request_croc_kill()` uses. `_ability_phoboman()` ignores it:
+	its own loop already ran and is correct either way.
 	"""
 	if _state != State.IN_ROOM or _rtc == null:
-		return
+		return false
 	if _master == _you:
 		_apply_flee(origin, duration)
-		return
-	_send_reliable_to_master(var_to_bytes({
+		return true
+	return _send_reliable_to_master(var_to_bytes({
 		"t": "flee", "x": origin.x, "y": origin.y, "z": origin.z, "d": duration,
 	}))
 

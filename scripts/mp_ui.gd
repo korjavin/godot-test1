@@ -686,7 +686,14 @@ func _on_rooms_listed(rooms: Array) -> void:
 		var raw_count: Variant = room.get("members", 0)
 		if typeof(raw_count) != TYPE_INT and typeof(raw_count) != TYPE_FLOAT:
 			continue
-		var count: int = int(raw_count)
+		# Finiteness BEFORE the cast, the rule every decoder in mp_manager.gd
+		# states: `1e999` is well-formed JSON, parses to INF, and the lobby URL is
+		# attacker-settable with `?lobby=` — so on wasm a crafted /rooms body
+		# could trap the module on the float→int trunc the moment the panel opens.
+		var count_f: float = float(raw_count)
+		if not is_finite(count_f):
+			continue
+		var count: int = int(count_f)
 		# The lobby already withholds full and empty rooms; re-checking here means
 		# an older or misbehaving lobby cannot put an unjoinable row on screen.
 		if count < 1 or count >= MAX_MEMBERS:
