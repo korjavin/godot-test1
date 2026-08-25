@@ -399,15 +399,15 @@ for the final task's gate run.
 
 ### Task 4: `mp_manager.gd` — master croc simulation and the sync broadcast
 
-- [ ] add `const CROC_SYNC_HZ: float = 10.0` and a `_croc_accum` accumulator
+- [x] add `const CROC_SYNC_HZ: float = 10.0` and a `_croc_accum` accumulator
       ticked in `_process` alongside `_send_accum`. Only the master sends.
-- [ ] add `const CROC_SYNC_RADIUS: float = 55.0` — the radius around **each
+- [x] add `const CROC_SYNC_RADIUS: float = 55.0` — the radius around **each
       target peer** whose crocs that peer is sent. It must exceed the LOD
       manager's sleep radius (`SIM_RADIUS + HYSTERESIS_MARGIN` = 50) so a croc
       cannot be awake-for-that-peer yet outside its sync window; assert the
       relationship in a comment, exactly as `SIM_RADIUS ≫ DETECTION_RADIUS` is
       asserted in the LOD manager.
-- [ ] `_send_croc_sync()` (master only, mesh, **unreliable** — a dropped sample is
+- [x] `_send_croc_sync()` (master only, mesh, **unreliable** — a dropped sample is
       replaced 100 ms later and re-sending a stale transform would be strictly
       worse, the same argument presence makes): iterate the `"crocodile"` group
       **once**, and for each croc that is `is_instance_valid`, `lod_active`, not
@@ -419,31 +419,31 @@ for the final task's gate run.
       peer × 21 bytes × 10 Hz ≈ 5 KB/s per peer, against ~100 KB/s for an
       unfiltered broadcast of the whole awake set. Put those numbers in the
       docstring — the file already documents presence's bandwidth this way.
-- [ ] receive side (non-master): on a `"croc"` packet, **drop it unless it came
+- [x] receive side (non-master): on a `"croc"` packet, **drop it unless it came
       from the master** (`from_id != _master`), for the same reason only the
       master's `seed` is accepted — the mesh is peer input and a member could
       otherwise drive everyone's crocodiles. Then, for each entry, find the local
       croc with that id and call `set_remote_state(...)`. Record
       `_croc_seen[id] = Time.get_ticks_msec()`.
-- [ ] **croc lookup must not be a group scan per entry.** Maintain
+- [x] **croc lookup must not be a group scan per entry.** Maintain
       `_synced_crocs: Dictionary` (croc id → the croc node), populated lazily: on
       a miss, scan the `"crocodile"` group once, cache every id, and retry. Purge
       invalid instances on each sync tick. A miss that stays a miss (the chunk is
       not loaded here) is dropped silently — that is the expected case, not an
       error, and it must not warn at 10 Hz.
-- [ ] add `const CROC_SYNC_TIMEOUT: float = 2.0` and a tick that calls
+- [x] add `const CROC_SYNC_TIMEOUT: float = 2.0` and a tick that calls
       `clear_remote_drive()` on any croc whose last sample is older than that.
       This is what makes the master's **coverage ceiling** degrade gracefully
       (Context) *and* what makes migration seamless: a ~1 s election gap is well
       inside the window, so crocs never visibly stall during a handover.
-- [ ] on `_on_lobby_master_changed`, if **we** became master, call
+- [x] on `_on_lobby_master_changed`, if **we** became master, call
       `clear_remote_drive()` on every synced croc immediately and empty
       `_synced_crocs` / `_croc_seen`. That is the "resume from the hot-standby
       replica" step, and it is one loop because the replica is just the local
       nodes holding the last synced transform.
-- [ ] on `leave()`, clear the remote drive on everything — a peer that leaves a
+- [x] on `leave()`, clear the remote drive on everything — a peer that leaves a
       room must not be left holding frozen crocodiles in its solo run.
-- [ ] `ponytail:` comment naming the coverage ceiling and the
+- [x] `ponytail:` comment naming the coverage ceiling and the
       `terrain.set_focus_points()` upgrade path from the Context section.
 
 ### Task 5: pickup claims — `mp_manager.gd`, `coin.gd`, `treasure_chest.gd`, `player_controller.gd`

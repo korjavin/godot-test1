@@ -93,6 +93,35 @@ const CROC_FLAG_BITING: int = 8
 ## hostile garbage before it is walked, not to police the size of the pack.
 const MAX_CROC_SYNC: int = 192
 
+## How often the room master broadcasts crocodile sync packets, in hertz.
+## Deliberately slower than PRESENCE_HZ: a crocodile is a background actor the
+## receiver eases toward (see `piglet_crocodile_ai._tick_remote`), while the
+## player avatar is what the eye tracks. 10 Hz is the cheapest rate at which the
+## easing still reads as motion rather than as stepping.
+const CROC_SYNC_HZ: float = 10.0
+
+## Radius (metres) around EACH TARGET PEER whose crocodiles that peer is sent.
+##
+## THE RELATIONSHIP THAT MUST HOLD — and it is the same kind of invariant as the
+## LOD manager's `SIM_RADIUS ≫ DETECTION_RADIUS`: this must EXCEED the LOD
+## manager's sleep radius, `SIM_RADIUS + HYSTERESIS_MARGIN` = 50 m. A crocodile
+## between the two would be awake for that peer (so its local AI is running) yet
+## outside its sync window (so no sample ever arrives), and the two simulations
+## would silently disagree about a crocodile close enough to bite. 55 > 50 leaves
+## 5 m of slack; retune this if either LOD constant moves.
+const CROC_SYNC_RADIUS: float = 55.0
+
+## How long a crocodile keeps following the master's samples after the last one
+## arrived, in seconds, before it is handed back to its own local AI.
+##
+## This is what makes the master's COVERAGE CEILING degrade gracefully (a peer
+## further than the master's render distance gets no samples for its neighbours,
+## so they simply resume local simulation — today's behaviour, for peers who
+## cannot see each other anyway) AND what makes migration seamless: a lobby
+## re-election takes ~1 s, well inside this window, so crocodiles never visibly
+## stall during a handover.
+const CROC_SYNC_TIMEOUT: float = 2.0
+
 ## How far the group may be spread before its centroid stops being a sensible
 ## place to arrive. Tuned BY EYE, not derived: 60 m is a bit over one chunk, well
 ## inside the fog, so a joiner landing at the centroid of a group this tight can
@@ -297,6 +326,20 @@ var _ice: Dictionary = {}
 ## Presence send accumulator (seconds).
 var _send_accum: float = 0.0
 
+## Crocodile-sync send accumulator (seconds). See CROC_SYNC_HZ.
+var _croc_accum: float = 0.0
+
+## Crocodile id → the local crocodile node with that id, populated LAZILY on a
+## lookup miss (one scan of the `"crocodile"` group caches every id at once) and
+## purged of freed instances on each sync tick. It exists so that receiving a
+## packet naming 25 crocodiles is 25 dictionary hits rather than 25 scans of a
+## group holding ~1000 nodes at 10 Hz.
+var _synced_crocs: Dictionary = {}
+
+## Crocodile id → `Time.get_ticks_msec()` of the last sample the master sent for
+## it. Drives CROC_SYNC_TIMEOUT. Room-scoped, cleared by `leave()`.
+var _croc_seen: Dictionary = {}
+
 ## Seed self-heal state: seconds since the last `seed_req` went out, and how many
 ## have gone out this room. Both are room-scoped and reset by `leave()`.
 var _seed_req_accum: float = 0.0
@@ -486,8 +529,13 @@ func leave() -> void:
 	_join_wait = 0.0
 	_ice = {}
 	_send_accum = 0.0
+	_croc_accum = 0.0
 	_seed_req_accum = 0.0
 	_seed_req_tries = 0
+	# Hand every synced crocodile back to its own AI. A peer that leaves a room
+	# must not be left standing in its solo run among frozen crocodiles waiting
+	# for samples from a master it is no longer talking to.
+	_release_synced_crocs()
 	# `_room_seed` is deliberately kept: leaving a room does not regenerate the
 	# world, so the player keeps walking the terrain they are on. `_has_seed` is
 	# CLEARED, because it is the "we already adopted this room's seed" latch that
@@ -722,6 +770,14 @@ func _on_lobby_master_changed(id: String) -> void:
 	replay is phase 4's problem.
 	"""
 	_master = id
+	# PROMOTION IS A HOT STANDBY HANDOVER, and it is one loop because the replica
+	# is just the local nodes. Every crocodile we have been rendering from the old
+	# master's samples is a real local body holding that master's last known
+	# transform, so dropping the remote-drive flag resumes simulation from exactly
+	# where each one stands — no state replay, no snapshot, no gap.
+	if _master == _you:
+		_release_synced_crocs()
+
 	# ONLY re-broadcast a seed we actually adopted. A master elected before the
 	# seed reached it (the old master dropping inside our /ice window) has
 	# `_has_seed` false, and the terrain-read path below would publish its own
@@ -1699,6 +1755,17 @@ func _process(delta: float) -> void:
 		_send_accum = fmod(_send_accum, interval)
 		_send_presence()
 
+	# The crocodile sync runs on its own, slower accumulator. The master sends;
+	# everybody else watches the clock on what it last sent them.
+	_croc_accum += delta
+	var croc_interval: float = 1.0 / CROC_SYNC_HZ
+	if _croc_accum >= croc_interval:
+		_croc_accum = fmod(_croc_accum, croc_interval)
+		if _master == _you:
+			_send_croc_sync()
+		else:
+			_tick_croc_timeout()
+
 
 func _tick_join_wait(delta: float) -> void:
 	"""
@@ -1943,9 +2010,244 @@ func _receive_mesh_verb(from_id: String, verb: String, packet: Dictionary) -> vo
 	should keep working rather than spew one line per packet per second.
 	"""
 	match verb:
+		"croc":
+			_receive_croc_sync(from_id, packet)
 		_:
 			# Forward compatibility. Not a warning — see the docstring.
 			pass
+
+
+# =============================================================================
+# CROCODILE SYNC (phase 5)
+# =============================================================================
+#
+# The room MASTER simulates the crocodiles and broadcasts their transforms; every
+# other peer stops running that crocodile's AI and renders the synced state.
+#
+# THE SYNC LAYER NEVER CREATES, RE-PARENTS OR FREES A CROCODILE. Crocodiles stay
+# chunk-parented, per-peer, deterministic and freed on chunk unload exactly as in
+# single player; this only overlays dynamic state onto nodes that already exist
+# locally, matched by `croc_id()`. That is what keeps a sleeping crocodile free:
+# its spawn state is already a pure function of chunk coords + `run_seed`, which
+# every peer computes identically, so only the AWAKE ones cost any network at all.
+#
+# ponytail: THE COVERAGE CEILING is "crocodiles further than the master's own
+# render distance are simulated locally". The master only simulates the chunks
+# ITS terrain has loaded (`render_distance` × 50 m = 150 m on web, 250 m on
+# desktop), so a peer beyond that gets no samples for its neighbours and they
+# fall back to local simulation after CROC_SYNC_TIMEOUT — i.e. today's behaviour,
+# for exactly the peers who are too far apart to see each other (150 m is well
+# past the fog). Nothing duplicates, nothing vanishes. The upgrade path is a
+# terrain hook the master calls with the union of peer positions,
+# `terrain.set_focus_points(points: Array[Vector3])`, so chunks stay loaded around
+# every peer rather than only around the local player.
+
+func _send_croc_sync() -> void:
+	"""
+	Master only: send each connected peer the crocodiles awake near IT.
+
+	Sent UNRELIABLE, for the same reason presence is: a dropped sample is
+	replaced 100 ms later, and re-transmitting a stale transform would be strictly
+	worse than skipping it.
+
+	PER-PEER FILTERING IS WHAT KEEPS THIS AFFORDABLE. ~25 crocodiles inside
+	CROC_SYNC_RADIUS of one peer × 21 bytes an entry × 10 Hz ≈ 5 KB/s per peer,
+	against ~100 KB/s if the whole awake set (which spans the whole room) were
+	broadcast unfiltered.
+
+	ONE PASS OVER THE GROUP, N BUFFERS — never one pass per peer. The group holds
+	~1000 nodes and this runs 10 times a second, so the loop order is the whole
+	cost model.
+	"""
+	# Who is actually reachable, and where they last told us they were. Built off
+	# `_rtc.get_peers()` rather than `_connections` for the reason `_send_presence`
+	# spells out: `_connections` holds peers whose channels are still negotiating.
+	var peers: Dictionary = _rtc.get_peers()
+	var target_int: Array[int] = []
+	var target_pos: Array[Vector3] = []
+	for id: String in _peer_state:
+		var pid: int = peer_int_id(id)
+		if not peers.has(pid) or not bool((peers[pid] as Dictionary).get("connected", false)):
+			continue
+		target_int.append(pid)
+		target_pos.append(_peer_state[id]["pos"])
+	if target_int.is_empty():
+		return  # Nobody to tell.
+
+	var count: int = target_int.size()
+	var buf_ids: Array[PackedInt32Array] = []
+	var buf_xf: Array[PackedFloat32Array] = []
+	var buf_flags: Array[PackedByteArray] = []
+	for _t: int in count:
+		buf_ids.append(PackedInt32Array())
+		buf_xf.append(PackedFloat32Array())
+		buf_flags.append(PackedByteArray())
+
+	var radius_sq: float = CROC_SYNC_RADIUS * CROC_SYNC_RADIUS
+	for croc: Node in get_tree().get_nodes_in_group("crocodile"):
+		# Defensive `in` / `has_method` guards in the LOD manager's style: the
+		# group is a contract, not a type.
+		if not is_instance_valid(croc) or not croc.has_method("croc_id") or not (croc is Node3D):
+			continue
+		# Asleep crocodiles cost zero network — every peer already agrees on where
+		# a sleeping one stands, because that is its deterministic spawn state.
+		if "lod_active" in croc and not croc.lod_active:
+			continue
+		# A crocodile WE are being driven on is not ours to publish. This cannot
+		# normally be true on the master (promotion releases them all), but a
+		# sample in flight across an election could land just after we were
+		# elected, and echoing it back would be a loop.
+		if "remote_driven" in croc and croc.remote_driven:
+			continue
+
+		var body: Node3D = croc as Node3D
+		var pos: Vector3 = body.global_position
+		var id: int = croc.croc_id()
+		var flags: int = _croc_flags(croc)
+		# `rotation.y`, not a global yaw: `set_remote_state()` writes `rotation.y`
+		# on the far side, and a chunk (the crocodile's parent) is never rotated,
+		# so the two are the same number and the round trip is symmetric.
+		var yaw: float = body.rotation.y
+
+		for t: int in count:
+			if buf_ids[t].size() >= MAX_CROC_SYNC:
+				continue  # Packet full for this peer; the rest wait 100 ms.
+			if pos.distance_squared_to(target_pos[t]) > radius_sq:
+				continue
+			buf_ids[t].append(id)
+			buf_xf[t].append(pos.x)
+			buf_xf[t].append(pos.y)
+			buf_xf[t].append(pos.z)
+			buf_xf[t].append(yaw)
+			buf_flags[t].append(flags)
+
+	_rtc.set_transfer_mode(MultiplayerPeer.TRANSFER_MODE_UNRELIABLE)
+	for t: int in count:
+		if buf_ids[t].is_empty():
+			continue
+		var bytes: PackedByteArray = var_to_bytes({
+			"t": "croc", "i": buf_ids[t], "x": buf_xf[t], "f": buf_flags[t],
+		})
+		_rtc.set_target_peer(target_int[t])
+		_rtc.put_packet(bytes)
+
+
+static func _croc_flags(croc: Node) -> int:
+	"""
+	Pack one crocodile's coarse behaviour into the state byte.
+
+	Read back through the same CROC_FLAG_* constants in
+	`piglet_crocodile_ai.set_remote_state()`, which is why they live in this file
+	once — an encoder and a decoder that name their bits separately drift.
+	"""
+	var flags: int = 0
+	if "is_chasing" in croc and croc.is_chasing:
+		flags |= CROC_FLAG_CHASING
+	if "is_fleeing" in croc and croc.is_fleeing:
+		flags |= CROC_FLAG_FLEEING
+	if "is_paused" in croc and croc.is_paused:
+		flags |= CROC_FLAG_PAUSED
+	if "is_biting" in croc and croc.is_biting:
+		flags |= CROC_FLAG_BITING
+	return flags
+
+
+func _receive_croc_sync(from_id: String, packet: Dictionary) -> void:
+	"""
+	Apply one crocodile-sync packet from the master.
+
+	DROPPED UNLESS IT CAME FROM THE MASTER, for exactly the reason only the
+	master's `seed` is accepted: the mesh is peer input, and without this check
+	any member of the room could drive everybody's crocodiles. A packet arriving
+	while WE are the master is dropped too — we are the authority, not a listener.
+	"""
+	if from_id != _master or _master == _you:
+		return
+	var sync: Dictionary = decode_croc_sync(packet)
+	if sync.is_empty():
+		return  # The fourth trust boundary refused it; whole or nothing.
+
+	var ids: PackedInt32Array = sync["ids"]
+	var xf: PackedFloat32Array = sync["xf"]
+	var flags: PackedByteArray = sync["flags"]
+	var now: int = Time.get_ticks_msec()
+	# At most ONE group scan per packet, not one per missing id.
+	var rescanned: bool = false
+
+	for entry: int in ids.size():
+		var id: int = ids[entry]
+		var croc: Node = _croc_by_id(id)
+		if croc == null and not rescanned:
+			_rebuild_croc_cache()
+			rescanned = true
+			croc = _croc_by_id(id)
+		if croc == null:
+			# EXPECTED, NOT AN ERROR: this peer has not generated the chunk that
+			# crocodile lives in. Silent on purpose — warning here would be one
+			# line per crocodile at 10 Hz.
+			continue
+		var base: int = entry * 4
+		croc.set_remote_state(
+			Vector3(xf[base], xf[base + 1], xf[base + 2]), xf[base + 3], int(flags[entry])
+		)
+		_croc_seen[id] = now
+
+
+func _tick_croc_timeout() -> void:
+	"""
+	Hand back any crocodile whose samples have stopped, and purge the id cache of
+	crocodiles whose chunk has since unloaded.
+
+	Runs on the sync tick (10 Hz) rather than per frame — CROC_SYNC_TIMEOUT is
+	2 s, so a tenth of a second of granularity is free.
+	"""
+	var cutoff: int = Time.get_ticks_msec() - int(CROC_SYNC_TIMEOUT * 1000.0)
+	for id: int in _croc_seen.keys():
+		if int(_croc_seen[id]) > cutoff:
+			continue
+		_croc_seen.erase(id)
+		var croc: Node = _croc_by_id(id)
+		if croc != null:
+			croc.clear_remote_drive()
+
+	# The cache holds hard references, so a crocodile freed with its chunk would
+	# otherwise sit here as a freed instance until its id came round again.
+	for id: int in _synced_crocs.keys():
+		if not is_instance_valid(_synced_crocs[id]):
+			_synced_crocs.erase(id)
+
+
+func _croc_by_id(id: int) -> Node:
+	"""The local crocodile with this id, or `null`. Purges a freed instance it
+	finds on the way; does NOT scan the group — see `_rebuild_croc_cache()`."""
+	var cached: Variant = _synced_crocs.get(id, null)
+	if cached == null:
+		return null
+	if not is_instance_valid(cached):
+		_synced_crocs.erase(id)
+		return null
+	return cached as Node
+
+
+func _rebuild_croc_cache() -> void:
+	"""Cache every loaded crocodile's id in one pass. Called on a lookup miss —
+	at most once per packet — because a miss usually means a chunk streamed in
+	since the last scan, and re-caching one id at a time would rescan per entry."""
+	_synced_crocs.clear()
+	for croc: Node in get_tree().get_nodes_in_group("crocodile"):
+		if is_instance_valid(croc) and croc.has_method("croc_id"):
+			_synced_crocs[croc.croc_id()] = croc
+
+
+func _release_synced_crocs() -> void:
+	"""Hand every crocodile we were rendering from the master's samples back to
+	its own AI, and forget the sync bookkeeping. Used by promotion (the hot
+	standby handover) and by `leave()`."""
+	for croc: Variant in _synced_crocs.values():
+		if is_instance_valid(croc) and (croc as Node).has_method("clear_remote_drive"):
+			(croc as Node).clear_remote_drive()
+	_synced_crocs.clear()
+	_croc_seen.clear()
 
 
 static func decode_presence(bytes: PackedByteArray) -> Dictionary:
