@@ -398,6 +398,18 @@ static func _http_base(url: String) -> String:
 	return url
 
 
+static func http_url(lobby_url_override: String = "") -> String:
+	"""
+	The lobby's origin as an `http(s)://` URL, honouring the whole `--lobby=` /
+	`?lobby=` / export / default precedence.
+
+	Public and static because the plain-HTTP endpoints are useful to callers that
+	never open a socket: `best_run_store.gd` posts personal records to `/best` at
+	boot and at game over, with no room and no `LobbyClient` instance in sight.
+	"""
+	return _http_base(resolve_lobby_url(lobby_url_override))
+
+
 func fetch_rooms(callback: Callable, lobby_url_override: String = "") -> void:
 	"""
 	GET `<lobby>/rooms` and hand `callback` the raw array of
