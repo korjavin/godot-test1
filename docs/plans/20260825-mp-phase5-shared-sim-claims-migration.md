@@ -522,18 +522,18 @@ room's multiplier after the award (for the HUD suffix).
 
 ### Task 6: abilities through the master, and the shared game over
 
-- [ ] `mp_manager.gd`: `func request_croc_flee(origin: Vector3, duration: float) -> void`
+- [x] `mp_manager.gd`: `func request_croc_flee(origin: Vector3, duration: float) -> void`
       — a no-op offline. On the master, apply it directly to the local
       `"crocodile"` group (the existing loop); on a non-master, send
       `{"t":"flee","x","y","z","d"}` to the master, reliable. The master applies
       `flee_from` on receipt; the resulting `is_fleeing` reaches every peer in the
       next sync packet's flag byte, so **no separate flee broadcast is needed**.
       Validate `x`/`y`/`z`/`d` finite and bounded — it is peer input.
-- [ ] `player_controller.gd` Stink Wave: keep the existing local loop **exactly as
+- [x] `player_controller.gd` Stink Wave: keep the existing local loop **exactly as
       it is** (harmless on remote-driven crocs, correct on locally-simulated ones)
       and additionally call `request_croc_flee(...)` through the null-safe `_mp()`
       helper. One added line.
-- [ ] `mp_manager.gd`: `func request_croc_kill(id: int) -> bool` — false offline
+- [x] `mp_manager.gd`: `func request_croc_kill(id: int) -> bool` — false offline
       (so Task 1's crush branch falls through to today's squash). In a room:
       master resolves immediately, non-master sends `{"t":"kill","id":int}`.
       Master resolution records the id in `_dead_crocs`, broadcasts
@@ -541,7 +541,7 @@ room's multiplier after the award (for the HUD suffix).
       `"dead"`: record the id, find the croc (via the same `_synced_crocs` cache
       plus a group fallback) and run the existing squash-and-free visual, so a
       crush still *reads* as a crush on every screen.
-- [ ] `func is_croc_dead(id: int) -> bool` — `_state == IN_ROOM and _dead_crocs.has(id)`,
+- [x] `func is_croc_dead(id: int) -> bool` — `_state == IN_ROOM and _dead_crocs.has(id)`,
       for Task 1's `_ready()` check. `_dead_crocs` is room-scoped and cleared by
       `leave()`.
       `ponytail:` the dead set is **not** replayed in the join snapshot, so a peer
@@ -549,7 +549,7 @@ room's multiplier after the award (for the HUD suffix).
       resurrect one for a peer whose set was cleared. It is the same class of
       ceiling as `MAX_STATE_IDS`; the upgrade path is an extra `dead` array on the
       join snapshot, bounded the same way.
-- [ ] **shared game over.** In `player_controller._refresh_shared_totals()` (or
+- [x] **shared game over.** In `player_controller._refresh_shared_totals()` (or
       immediately after it in `_physics_process`), when the room's hearts are 0,
       we are not already `is_game_over`, and not mid-`is_caught`, call
       `_trigger_game_over()`. That is what makes "the run ends for everyone
@@ -557,7 +557,7 @@ room's multiplier after the award (for the HUD suffix).
       fire in a room (`shared_lives_spent(...) != null`) — solo, hearts only reach
       0 through `_on_caught_finished`, which already ends the run, and firing here
       would change solo behaviour.
-- [ ] Windman and Primm are **not** touched — they are self-only.
+- [x] Windman and Primm are **not** touched — they are self-only.
 
 ### Task 7: heartbeat, stall detection, migration — `lobby_client.gd` + `mp_manager.gd`
 

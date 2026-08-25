@@ -185,6 +185,12 @@ const CROC_REMOTE_MAX_SPEED: float = 40.0
 ## How fast a remote-driven crocodile eases toward the synced yaw (per second).
 const CROC_REMOTE_TURN_RATE: float = 12.0
 
+## How near the local player a giant-Teibi crush has to be for it to kick the
+## camera (metres). Only ever meaningful in a room, where squash_and_die() also
+## runs for a teammate's kill an unknown distance away; a contact crush is a
+## couple of metres, so the single-player feel is unchanged.
+const CRUSH_SHAKE_RADIUS: float = 6.0
+
 # ============================================================================
 # STATE VARIABLES
 # ============================================================================
@@ -947,6 +953,56 @@ func clear_remote_drive() -> void:
 	velocity = Vector3.ZERO
 
 
+func squash_and_die() -> void:
+	"""
+	Die the giant-Teibi death: physics stops, a dust puff pops, a crunch plays,
+	the nearby player's camera gets a tiny kick, and the body squashes flat before
+	freeing itself.
+
+	Public because in a multiplayer room the crush is arbitrated by the master, so
+	this has to be runnable from `mp_manager._apply_dead()` on a peer where nobody
+	touched this crocodile at all — a crush must READ as a crush on every screen,
+	not as a crocodile blinking out. Idempotent: a second call finds us already out
+	of the "crocodile" group and returns.
+	"""
+	if not is_in_group("crocodile"):
+		return
+	print("🐊 Squashed by a giant!")
+	# Guard re-entry FIRST: stop physics and leave the "crocodile" group so
+	# the dying body can't crush-trigger a second time (or be found by the
+	# stink wave / danger telegraph / croc sync) during the short squash tween.
+	set_physics_process(false)
+	remove_from_group("crocodile")
+	# Dust puff at the body, parented to the croc's PARENT (the chunk) so it
+	# outlives this node — the same self-freeing wave pattern as the coin pop.
+	var fx_parent := get_parent()
+	if fx_parent:
+		var fx := MeshInstance3D.new()
+		fx.set_script(preload("res://scripts/ability_effect.gd"))
+		fx_parent.add_child(fx)
+		fx.global_position = global_position
+		fx.setup(Color(0.75, 0.7, 0.6, 0.5), 1.8, 0.3)
+	# Crunch sound + a small nudge on the player's camera shake (both null-safe,
+	# matching the project's group-lookup convention).
+	var sound_manager := get_tree().get_first_node_in_group("sound_manager")
+	if sound_manager and sound_manager.has_method("play_crunch"):
+		sound_manager.play_crunch()
+	# The shake is RANGE-GATED, which it did not have to be when this only ever ran
+	# on the crushing player's own screen: in a room a teammate's kill three chunks
+	# away arrives here as a "dead" packet, and jolting the camera for a crocodile
+	# nobody can see reads as a bug. Contact crushes are metres away, so the local
+	# case is unchanged.
+	var player := get_tree().get_first_node_in_group("player")
+	if player is Node3D and "shake_amount" in player \
+			and global_position.distance_to((player as Node3D).global_position) <= CRUSH_SHAKE_RADIUS:
+		player.shake_amount = maxf(player.shake_amount, 0.15)
+	# Squash flat, then free — the TWEEN owns the queue_free. A tween dies
+	# with its node, so a chunk unloading mid-squash frees us safely anyway.
+	var squash := create_tween()
+	squash.tween_property(self, "scale:y", scale.y * 0.15, 0.12)
+	squash.tween_callback(queue_free)
+
+
 func _tick_remote(delta: float) -> void:
 	"""
 	Drive the body toward the master's latest sample for one physics frame.
@@ -1244,33 +1300,7 @@ func _on_player_collision(player: Node) -> void:
 		var mp := get_tree().get_first_node_in_group("mp")
 		if mp and mp.has_method("request_croc_kill") and mp.request_croc_kill(croc_id()):
 			return
-		print("🐊 Squashed by a giant!")
-		# Guard re-entry FIRST: stop physics and leave the "crocodile" group so
-		# the dying body can't crush-trigger a second time (or be found by the
-		# stink wave / danger telegraph) during the short squash tween below.
-		set_physics_process(false)
-		remove_from_group("crocodile")
-		# Dust puff at the body, parented to the croc's PARENT (the chunk) so it
-		# outlives this node — the same self-freeing wave pattern as the coin pop.
-		var fx_parent := get_parent()
-		if fx_parent:
-			var fx := MeshInstance3D.new()
-			fx.set_script(preload("res://scripts/ability_effect.gd"))
-			fx_parent.add_child(fx)
-			fx.global_position = global_position
-			fx.setup(Color(0.75, 0.7, 0.6, 0.5), 1.8, 0.3)
-		# Crunch sound + a small nudge on the player's camera shake (both null-safe,
-		# matching the project's group-lookup convention).
-		var sound_manager := get_tree().get_first_node_in_group("sound_manager")
-		if sound_manager and sound_manager.has_method("play_crunch"):
-			sound_manager.play_crunch()
-		if "shake_amount" in player:
-			player.shake_amount = maxf(player.shake_amount, 0.15)
-		# Squash flat, then free — the TWEEN owns the queue_free. A tween dies
-		# with its node, so a chunk unloading mid-squash frees us safely anyway.
-		var squash := create_tween()
-		squash.tween_property(self, "scale:y", scale.y * 0.15, 0.12)
-		squash.tween_callback(queue_free)
+		squash_and_die()
 		return
 
 	# While fleeing Phoboman's stink, crocodiles can't bring themselves to bite.

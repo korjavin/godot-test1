@@ -136,6 +136,13 @@ const CLAIM_MAX_TRIES: int = 4
 const MAX_CLAIM_PICKUPS: int = 64
 const MAX_CLAIM_VALUE: int = 1000
 
+## Trust-boundary bound on a relayed Stink Wave (see `_receive_flee`). A flee
+## duration is peer input and it is applied to the WHOLE pack, so an unbounded one
+## would leave every crocodile in the room fleeing — and a fleeing crocodile is
+## harmless — for the room's life: a one-packet griefing button. Phoboman's own
+## PHOBOMAN_FLEE_DURATION is 10 s, so this is six times the honest value.
+const MAX_FLEE_DURATION: float = 60.0
+
 ## The player script, preloaded ONLY to read its coin-economy constants
 ## (STREAK_WINDOW / STREAK_COINS_PER_STEP / STREAK_MAX_BONUS) from the one place
 ## that owns them. The room's streak has to step on exactly the same schedule as
@@ -361,6 +368,14 @@ var _synced_crocs: Dictionary = {}
 ## it. Drives CROC_SYNC_TIMEOUT. Room-scoped, cleared by `leave()`.
 var _croc_seen: Dictionary = {}
 
+## Crocodile ids the ROOM has killed (giant Teibi crushed one on some peer and the
+## master ruled on it). Read by `is_croc_dead()` from every crocodile's `_ready()`,
+## so one that dies here does not walk back in when its chunk regenerates.
+## Room-scoped and cleared by `leave()`; unbounded within a room, which is fine
+## because entries only ever arrive at the rate a player can physically stand on
+## crocodiles as giant Teibi.
+var _dead_crocs: Dictionary = {}
+
 ## Seed self-heal state: seconds since the last `seed_req` went out, and how many
 ## have gone out this room. Both are room-scoped and reset by `leave()`.
 var _seed_req_accum: float = 0.0
@@ -580,6 +595,9 @@ func leave() -> void:
 	_room_streak = 0
 	_room_multiplier = 1
 	_room_streak_deadline_msec = 0
+	# The room's kill list dies with the room: back in solo play every crocodile
+	# the local terrain generates is this player's own again.
+	_dead_crocs = {}
 	# Hand every synced crocodile back to its own AI. A peer that leaves a room
 	# must not be left standing in its solo run among frozen crocodiles waiting
 	# for samples from a master it is no longer talking to.
@@ -2068,6 +2086,12 @@ func _receive_mesh_verb(from_id: String, verb: String, packet: Dictionary) -> vo
 			_receive_claim(from_id, packet)
 		"cnf":
 			_receive_confirm(from_id, packet)
+		"flee":
+			_receive_flee(from_id, packet)
+		"kill":
+			_receive_kill(from_id, packet)
+		"dead":
+			_receive_dead(from_id, packet)
 		_:
 			# Forward compatibility. Not a warning — see the docstring.
 			pass
@@ -2228,14 +2252,27 @@ func _apply_confirm(id: int, by_int: int, awarded: int, multiplier: int) -> void
 func _send_claim(id: int, count: int, value: int) -> void:
 	"""Send one claim to the master, RELIABLE. A no-op when the master's data
 	channel is not open — `_tick_claims` will try again."""
+	_send_reliable_to_master(var_to_bytes({"t": "clm", "id": id, "n": count, "v": value}))
+
+
+func _send_reliable_to_master(bytes: PackedByteArray) -> bool:
+	"""
+	Send one packet to the room's master, RELIABLE, and report whether it left.
+
+	False means there was nobody to send it to — no mesh, no master yet, we ARE
+	the master (callers resolve those locally instead), or the master's data
+	channel is still negotiating. Every caller uses that answer to fall back
+	rather than to drop something on the floor.
+	"""
 	if _rtc == null or _master == "" or _master == _you:
-		return
+		return false
 	var master_int: int = peer_int_id(_master)
 	if not _is_mesh_peer_connected(master_int):
-		return
+		return false
 	_rtc.set_transfer_mode(MultiplayerPeer.TRANSFER_MODE_RELIABLE)
 	_rtc.set_target_peer(master_int)
-	_rtc.put_packet(var_to_bytes({"t": "clm", "id": id, "n": count, "v": value}))
+	_rtc.put_packet(bytes)
+	return true
 
 
 func _broadcast_reliable(bytes: PackedByteArray) -> void:
@@ -2594,6 +2631,199 @@ func _release_synced_crocs() -> void:
 			(croc as Node).clear_remote_drive()
 	_synced_crocs.clear()
 	_croc_seen.clear()
+
+
+# =============================================================================
+# CROCODILE ABILITIES THROUGH THE MASTER (phase 5)
+# =============================================================================
+#
+# Two player abilities change a crocodile's state rather than merely reading it,
+# and once the master simulates the pack, a peer doing either LOCALLY changes
+# nothing anybody else can see — the very next sync packet overwrites it. So both
+# are routed to the master, over the MESH and RELIABLE (each is a one-off event:
+# a lost one is an ability that visibly did nothing):
+#
+#     flee   peer   → master   {"t":"flee","x","y","z","d"}    Phoboman's wave
+#     kill   peer   → master   {"t":"kill","id":int}           giant Teibi's crush
+#     dead   master → everyone {"t":"dead","id":int}           the kill ruling
+#
+# THERE IS DELIBERATELY NO `flee` BROADCAST: `is_fleeing` is already a bit in the
+# sync packet's flag byte, so the master applying `flee_from()` reaches every peer
+# 100 ms later through machinery that already exists. A kill needs its own
+# broadcast only because it FREES a node, which no amount of transform sync can
+# express.
+
+func request_croc_flee(origin: Vector3, duration: float) -> void:
+	"""
+	Phoboman's Stink Wave, made room-wide: ask the master to scare the crocodiles
+	IT is the authority for, so a wave set off on one screen turns the pack on
+	every other one too.
+
+	A NO-OP OFFLINE. The caller's own local loop stays exactly as it was — it is
+	correct for every crocodile this peer still simulates itself and harmless on
+	the remote-driven ones (whose state the next sample overwrites regardless);
+	this only adds the half that loop cannot reach.
+	"""
+	if _state != State.IN_ROOM or _rtc == null:
+		return
+	if _master == _you:
+		_apply_flee(origin, duration)
+		return
+	_send_reliable_to_master(var_to_bytes({
+		"t": "flee", "x": origin.x, "y": origin.y, "z": origin.z, "d": duration,
+	}))
+
+
+func _apply_flee(origin: Vector3, duration: float) -> void:
+	"""
+	MASTER ONLY in practice: the same group loop `player_controller._ability_phoboman()`
+	runs, over the crocodiles this peer is the authority for.
+
+	No boss test here on purpose — `flee_from()` itself early-returns for a boss
+	(Stink Wave immunity), so the rule stays in the one file that owns it.
+	"""
+	for croc: Node in get_tree().get_nodes_in_group("crocodile"):
+		if is_instance_valid(croc) and croc.has_method("flee_from"):
+			croc.flee_from(origin, duration)
+
+
+func _receive_flee(_from_id: String, packet: Dictionary) -> void:
+	"""
+	MASTER ONLY: another peer's Stink Wave, arriving over the mesh as unvalidated
+	peer input — so the origin and the duration are both checked finite and
+	bounded before either reaches a crocodile, and a packet failing any of it is
+	dropped whole (no partial trust, exactly like the other boundaries here).
+
+	`d` is the field that matters: a fleeing crocodile is a harmless one, so an
+	unbounded duration would disarm the whole room for its lifetime.
+	"""
+	if _master != _you:
+		return
+	if not _is_number(packet.get("x", null)) or not _is_number(packet.get("y", null)) \
+			or not _is_number(packet.get("z", null)) or not _is_number(packet.get("d", null)):
+		return
+	var origin := Vector3(float(packet["x"]), float(packet["y"]), float(packet["z"]))
+	var duration: float = float(packet["d"])
+	# Finiteness is checked BEFORE anything is derived from these, the same rule
+	# decode_presence() states: a NaN origin would poison every flee heading it
+	# touched, and on wasm a non-finite float→int trunc can trap the module.
+	if not is_finite(origin.x) or not is_finite(origin.y) or not is_finite(origin.z):
+		return
+	if absf(origin.x) > MAX_PRESENCE_COORD or absf(origin.y) > MAX_PRESENCE_COORD \
+			or absf(origin.z) > MAX_PRESENCE_COORD:
+		return
+	if not is_finite(duration) or duration <= 0.0 or duration > MAX_FLEE_DURATION:
+		return
+	_apply_flee(origin, duration)
+
+
+func request_croc_kill(id: int) -> bool:
+	"""
+	Giant Teibi crushed a crocodile: ask the room to kill THAT crocodile
+	everywhere.
+
+	Returns true when the room has taken it over — the caller must then NOT run
+	its own squash, because the master's `dead` broadcast frees the body on every
+	peer including this one. FALSE OFFLINE, and false whenever the request could
+	not actually leave (no mesh, master's channel still negotiating), so the
+	caller falls through to today's local squash on one test rather than leaving a
+	crocodile the player visibly stood on still walking around.
+	"""
+	if _state != State.IN_ROOM or _rtc == null:
+		return false
+	if _dead_crocs.has(id):
+		# Already dead room-wide, but this body is somehow still standing (a chunk
+		# that regenerated between the broadcast and now). Free it here rather than
+		# answering true and leaving it: the packet that killed it has been and gone.
+		_apply_dead(id)
+		return true
+	if _master == _you:
+		_resolve_kill(id)
+		return true
+	return _send_reliable_to_master(var_to_bytes({"t": "kill", "id": id}))
+
+
+func _resolve_kill(id: int) -> void:
+	"""
+	MASTER ONLY: rule that a crocodile is dead, tell the room, and kill our own
+	copy through the same path everyone else takes.
+
+	First kill wins and a repeat is dropped silently — the same shape
+	`_resolve_claim()` uses for a pickup, one set per thing being arbitrated.
+	"""
+	if _dead_crocs.has(id):
+		return
+	_broadcast_reliable(var_to_bytes({"t": "dead", "id": id}))
+	_apply_dead(id)
+
+
+func _apply_dead(id: int) -> void:
+	"""
+	Every peer's half of a kill: remember the id and run the ORDINARY squash on
+	the local body, so a crush READS as a crush on every screen rather than as a
+	crocodile blinking out.
+
+	The id is recorded even when no body is found, which is the common case and
+	NOT an error: this peer may never have generated that chunk, and the record is
+	what stops the crocodile walking back in when it does
+	(`piglet_crocodile_ai._ready()` asks `is_croc_dead`).
+	"""
+	_dead_crocs[id] = true
+	var croc: Node = _croc_by_id(id)
+	if croc == null:
+		# At most one group scan, and only on a miss — see `_rebuild_croc_cache()`.
+		_rebuild_croc_cache()
+		croc = _croc_by_id(id)
+	# Drop the sync bookkeeping either way: a dead crocodile is nobody's to drive,
+	# and the cache holds a hard reference to a node about to free itself.
+	_synced_crocs.erase(id)
+	_croc_seen.erase(id)
+	if croc != null and croc.has_method("squash_and_die"):
+		croc.squash_and_die()
+
+
+func _receive_kill(_from_id: String, packet: Dictionary) -> void:
+	"""
+	MASTER ONLY: a peer's crush. One int to validate, and nothing to bound — the
+	id space is the whole of `String.hash()`, so an id naming no crocodile simply
+	finds nothing and costs one dictionary write.
+	"""
+	if _master != _you:
+		return
+	if typeof(packet.get("id", null)) != TYPE_INT:
+		return
+	_resolve_kill(int(packet["id"]))
+
+
+func _receive_dead(from_id: String, packet: Dictionary) -> void:
+	"""
+	The master's kill ruling. ONLY the master's is accepted, the same authority
+	rule `_receive_confirm()` and `_receive_croc_sync()` enforce: the mesh is
+	peer-to-peer, so without it any member could free every crocodile in the room.
+	"""
+	if from_id != _master:
+		return
+	if typeof(packet.get("id", null)) != TYPE_INT:
+		return
+	_apply_dead(int(packet["id"]))
+
+
+func is_croc_dead(id: int) -> bool:
+	"""
+	Whether the ROOM has already killed this crocodile. Asked once per crocodile
+	AT SPAWN, never per frame — the same shape and placement `coin.gd` uses for
+	`is_coin_collected` — so a chunk regenerating on a peer that saw the kill does
+	not walk the crocodile back in. False offline, where the set is always empty
+	anyway.
+
+	ponytail: the dead set is NOT replayed in the join snapshot, so a peer joining
+	later sees a crushed crocodile alive again, and a peer that left and rejoined
+	can resurrect one on a chunk reload. Same class of ceiling as MAX_STATE_IDS
+	(and cosmetic in the same way — a crocodile too many, never a wrong bank); the
+	upgrade path is an extra `dead` array on the snapshot, bounded exactly like
+	`ids`.
+	"""
+	return _state == State.IN_ROOM and _dead_crocs.has(id)
 
 
 static func decode_presence(bytes: PackedByteArray) -> Dictionary:

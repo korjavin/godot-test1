@@ -767,6 +767,9 @@ func _physics_process(delta: float) -> void:
 	# distance max above, so this frame's own contribution is already folded in.
 	# Costs one group lookup and nothing else when there is no room.
 	_refresh_shared_totals()
+	# STEP 0.43: ...and in a room, the run ends for EVERYONE when the shared
+	# hearts run out — including the peers who were not the one bitten.
+	_check_shared_game_over()
 
 	# STEP 0.45: Tick the coin-streak window down; when it lapses the streak is
 	# over and the score multiplier drops back to x1 (see collect_coin).
@@ -2308,6 +2311,35 @@ func _refresh_shared_totals() -> void:
 		lives = mp.shared_lives_from(int(bank), int(spent), MAX_LIVES, EXTRA_LIFE_COINS, LIVES_CAP)
 
 
+func _check_shared_game_over() -> void:
+	"""
+	In a multiplayer room the hearts are shared, so when the room's last one goes
+	the run is over for everybody — not only for whoever happened to be bitten.
+	That peer ends its own run in _on_caught_finished(); this is how every OTHER
+	peer learns the room is finished.
+
+	IN A ROOM ONLY, and the shared_lives_spent() null test is the guard. Solo,
+	`lives` only ever reaches 0 inside _on_caught_finished(), which already ends
+	the run there and then — firing from here as well would change solo behaviour
+	and play the game-over sting twice.
+
+	Called from _physics_process immediately after _refresh_shared_totals(), which
+	is past the is_game_over / is_caught / is_respawning early-returns, so this can
+	never end a run mid-bite before that bite has been counted. The two flags are
+	re-tested anyway, cheaply, because "the caller is past the guards" is exactly
+	the kind of invariant a later edit breaks silently.
+	"""
+	if lives > 0 or is_game_over or is_caught:
+		return
+	var mp := _mp()
+	if mp == null or not mp.has_method("shared_lives_spent"):
+		return
+	if mp.shared_lives_spent(own_lives_spent) == null:
+		return  # Manager present but no room: solo semantics, untouched.
+	print("💀 The room is out of hearts — the run is over for everyone.")
+	_trigger_game_over()
+
+
 func _weather_is_raining_here() -> bool:
 	"""
 	Whether the player is standing in a storm cloud's rain zone, asked of the
@@ -2546,6 +2578,16 @@ func _ability_phoboman() -> bool:
 	for croc in get_tree().get_nodes_in_group("crocodile"):
 		if croc.has_method("flee_from"):
 			croc.flee_from(global_position, PHOBOMAN_FLEE_DURATION)
+
+	# ...and in a multiplayer room, ask the master to do the same to the
+	# crocodiles IT drives — a no-op offline. The loop above is deliberately left
+	# exactly as it was: it is correct for every crocodile this peer still
+	# simulates and harmless on the remote-driven ones. Nothing comes back, and
+	# nothing needs to: a crocodile's `is_fleeing` is a bit in the sync packet, so
+	# the master's copy of the flight reaches every screen on the next sample.
+	var mp := _mp()
+	if mp and mp.has_method("request_croc_flee"):
+		mp.request_croc_flee(global_position, PHOBOMAN_FLEE_DURATION)
 	return true
 
 
