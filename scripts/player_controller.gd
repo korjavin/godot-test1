@@ -2392,6 +2392,16 @@ func _place_near(anchor: Vector3) -> void:
 		camera_pivot.rotation = Vector3.ZERO  # Whole rotation, so roll can't survive
 	is_ducking = false
 	is_running = false
+	# Lift the model back out of the water, exactly as reset_position() does and
+	# for the same reason: this is a teleport, so the river we were standing in is
+	# not here any more. It matters most on the in-room respawn, where the grace
+	# freeze early-returns out of _physics_process — without this the hero (and,
+	# in first person, the camera) would sit 0.35 m sunk at the group's dry feet
+	# for the whole countdown. Landing in ANOTHER river just eases straight back
+	# down over the next fifth of a second, which is the correct reading of
+	# "arrived somewhere new".
+	_wade_sink = 0.0
+	_apply_wade_sink()
 
 
 func _room_group_anchor() -> Variant:
