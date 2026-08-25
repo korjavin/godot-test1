@@ -212,12 +212,16 @@ func _check_store_load_is_monotone() -> void:
 
 func _check_streak_does_not_inflate_lifetime() -> void:
 	"""
-	THE HOOK, measured through the real `player_controller.collect_coin()`.
+	BOTH HOOKS, measured through the real `player_controller` — `collect_coin()`
+	(solo, and the loser of a multiplayer claim) and `bank_awarded()` (the winner
+	of one, bead godot-test1-42n).
 
-	Lifetime counts PICKUPS at their base worth; the streak multiplies the SCORE.
-	Wiring the hook to the multiplied value is the easy mistake — the line right
-	above it does exactly that for `own_coins` — and it inflates every player's
-	level by up to 5x with no error anywhere.
+	Lifetime counts PICKUPS at their base worth; the streak and the room's
+	multiplier multiply the SCORE. Wiring either hook to the multiplied value is
+	the easy mistake — the line right above `collect_coin`'s does exactly that for
+	`own_coins` — and it inflates every player's level by up to 5x with no error
+	anywhere. Both halves therefore run against a live player and a live
+	Progression, with the multiplier proven above 1 first.
 	"""
 	var packed: PackedScene = load(PLAYER_SCENE)
 	if packed == null:
@@ -262,6 +266,46 @@ func _check_streak_does_not_inflate_lifetime() -> void:
 	if progression.lifetime_coins != gem_value + 1:
 		_fail("a plain coin credited %d lifetime coins, wanted %d"
 				% [progression.lifetime_coins - gem_value, 1])
+
+	# THE SECOND HOOK, and the same rule (bead godot-test1-42n). In a multiplayer
+	# room a pickup this peer WON is paid by `bank_awarded()`, which receives the
+	# amount the room's master already multiplied plus, separately, what the claim
+	# was worth before that multiplier. Only the second may reach lifetime coins,
+	# or a room inflates every level by up to 5x — and before this bead the hook
+	# was simply absent, so a peer in a room levelled almost not at all.
+	#
+	# The two figures are deliberately far apart and neither is zero, because the
+	# two ways to get this wrong are "credit nothing" and "credit the award", and
+	# an assertion that merely watched the count rise would pass for the second.
+	var base_total: int = 30      # 3 gems, at their base worth.
+	var awarded: int = 120        # ...priced by the room at x4.
+	var before_award: int = progression.lifetime_coins
+	var coins_before_award: int = player.coins_collected
+	player.bank_awarded(awarded, base_total)
+	var credited: int = progression.lifetime_coins - before_award
+	if credited == 0:
+		_fail("bank_awarded credited no lifetime coins — a pickup won through the "
+				+ "multiplayer claim protocol still pays no progression")
+	elif credited == awarded:
+		_fail("bank_awarded credited the MULTIPLIED award (%d) as lifetime coins, "
+				% awarded + "wanted the pre-multiplier base (%d)" % base_total)
+	elif credited != base_total:
+		_fail("bank_awarded credited %d lifetime coins, wanted the base total %d"
+				% [credited, base_total])
+	# ...while the run's own score still takes the full multiplied award, which is
+	# the whole reason the two numbers travel separately.
+	if player.coins_collected - coins_before_award != awarded:
+		_fail("bank_awarded added %d to the run score, wanted the awarded %d"
+				% [player.coins_collected - coins_before_award, awarded])
+
+	# NEGATIVE CONTROL: the pre-42n call shape must still credit NOTHING, which is
+	# what makes the trailing parameter a zero-behaviour-change API change.
+	var before_default: int = progression.lifetime_coins
+	player.bank_awarded(awarded)
+	if progression.lifetime_coins != before_default:
+		_fail("bank_awarded(amount) with no base_total credited %d lifetime coins — "
+				% (progression.lifetime_coins - before_default)
+				+ "the default must stay inert")
 
 	progression.free()
 	player.queue_free()

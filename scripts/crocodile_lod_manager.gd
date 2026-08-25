@@ -222,6 +222,29 @@ func _scan_crocodiles() -> void:
 				if p is Vector3:
 					focus_points.append(p)
 
+	# THE SAME SET, HANDED TO THE TERRAIN (bead godot-test1-s86.14). Waking a
+	# crocodile standing next to a far teammate is only half the job — the master
+	# can only simulate crocodiles its own terrain has LOADED, so past
+	# `render_distance` (150 m on web) there was nothing awake to wake and those
+	# crocodiles fell back to local simulation on every peer. `set_focus_points`
+	# keeps the chunks around each teammate loaded; it decides only which chunks
+	# STAY loaded and never what one contains (see its docstring).
+	#
+	# `slice(1)` drops the local player, whose chunks the terrain already owns —
+	# spending one of the terrain's three focus slots on it would be pure waste.
+	# Sent EVERY scan, including the empty array: offline / on a non-master
+	# `peer_positions()` is null, the slice is empty, and that empty push is what
+	# RELEASES chunks pinned by a room this peer has left. `set_focus_points`
+	# no-ops on an unchanged set, so the steady state costs one compare at 9 Hz.
+	#
+	# This manager is the caller rather than `mp_manager.gd` because it already
+	# builds exactly this array, already master-gates it (that is what
+	# `peer_positions()` returning null on a non-master means) and already runs on
+	# a throttled tick — no new state, no new tick, no second group lookup.
+	var terrain := get_tree().get_first_node_in_group("terrain")
+	if terrain != null and terrain.has_method("set_focus_points"):
+		terrain.set_focus_points(focus_points.slice(1))
+
 	# Danger telegraph level: 0 = nobody hunting, 1 = a chaser at point blank.
 	# NORMALISED per chaser (distance ÷ that croc's own detection radius) rather
 	# than published as raw metres, because a boss acquires the player at 25 m

@@ -46,6 +46,18 @@ extends SceneTree
 ##      names and no other, and the collected set must spend the chest it names
 ##      and no other. Both bugs look like nothing on a headless machine and need
 ##      two browsers plus a giant Teibi to reproduce by hand.
+##  15. The jump hatch for REMOTE members — a teammate who is off the ground must
+##      not be offered as a crocodile's quarry, and one jumper must not veto the
+##      scent of the grounded teammate beside them.
+##  16. The room's HEARTS as the master's own state, pinned against the stateless
+##      formula it replaces: a grant that lands at LIVES_CAP is burnt, a death is
+##      charged once, and a master migration carries the count over.
+##  17. The claim confirm's BASE VALUE, which is what a room's pickups credit to
+##      meta-progression — non-zero, distinct from the multiplied award, bounded
+##      as peer input, and tolerated when a master on an older build omits it.
+##  18. Terrain FOCUS POINTS — the chunks that stay loaded around a far teammate,
+##      so the master has crocodiles there to simulate at all. Measured in metres
+##      against SIM_RADIUS, with the memory cap and the release both pinned.
 
 const MPManager: GDScript = preload("res://scripts/mp_manager.gd")
 const Terrain: GDScript = preload("res://scripts/endless_terrain.gd")
@@ -110,7 +122,19 @@ func _run_checks() -> String:
 	failure = _check_group_anchor()
 	if not failure.is_empty():
 		return failure
-	return _check_join_world_sweeps()
+	failure = _check_join_world_sweeps()
+	if not failure.is_empty():
+		return failure
+	failure = _check_remote_scent()
+	if not failure.is_empty():
+		return failure
+	failure = _check_room_lives_ordering()
+	if not failure.is_empty():
+		return failure
+	failure = _check_claim_base_value()
+	if not failure.is_empty():
+		return failure
+	return _check_terrain_focus_points()
 
 
 # =============================================================================
@@ -1023,3 +1047,472 @@ func _check_kill_list_authority(mp: Node) -> String:
 	if still_alive:
 		return "the MASTER's join snapshot did not apply its kill list — a joiner still sees crushed crocodiles alive"
 	return ""
+
+
+# =============================================================================
+# 15. THE JUMP HATCH FOR REMOTE MEMBERS (bead godot-test1-s86.15)
+# =============================================================================
+
+func _check_remote_scent() -> String:
+	"""
+	`nearest_member_position()` must not offer a teammate who is off the ground.
+
+	WHY THIS IS A CHECK AND NOT A COMMENT: the bug it replaces was invisible from
+	every side. Presence has always carried the on-floor bit (`g`), the decoder has
+	always validated it, `RemoteAvatar` has always been handed it — and this one
+	function simply never looked. Solo the jump hatch worked, and against your own
+	crocodiles it worked; only on the MASTER, which simulates the pack for
+	everybody, did a teammate find that jumping did nothing at all. Noticing that
+	by hand needs two browsers and somebody willing to jump.
+
+	Every case pins WHO comes back rather than that somebody does, because
+	"answered null" is also true of a function that has stopped answering for
+	anyone — which is the OTHER way to get this wrong (one airborne peer vetoing
+	the scent of a grounded teammate beside it).
+	"""
+	var mp: Node = MPManager.new()
+	mp._state = MPManager.State.IN_ROOM
+
+	var near := Vector3(10.0, 0.0, 0.0)
+	var far := Vector3(100.0, 0.0, 0.0)
+	var origin := Vector3.ZERO
+
+	# CONTROL: both grounded — the nearer wins. This is the shipped behaviour and
+	# the baseline the airborne cases are measured against.
+	mp._peer_state = {
+		"aaa": {"pos": near, "floor": true},
+		"bbb": {"pos": far, "floor": true},
+	}
+	var both: Variant = mp.nearest_member_position(origin)
+	if both == null or (both as Vector3).distance_to(near) > 0.01:
+		mp.free()
+		return "two grounded members: nearest_member_position answered %s, expected the nearer %s" % [
+			str(both), str(near)
+		]
+
+	# THE FIX: the nearer one jumps, so the FARTHER one becomes the quarry.
+	mp._peer_state = {
+		"aaa": {"pos": near, "floor": false},
+		"bbb": {"pos": far, "floor": true},
+	}
+	var jumped: Variant = mp.nearest_member_position(origin)
+	if jumped == null:
+		mp.free()
+		return ("one member jumping made nearest_member_position answer null — a single airborne peer "
+			+ "must not veto the scent of a grounded teammate")
+	if (jumped as Vector3).distance_to(far) > 0.01:
+		mp.free()
+		return "a jumping member was still offered as quarry: answered %s, expected the grounded %s" % [
+			str(jumped), str(far)
+		]
+
+	# Everybody airborne: nothing to smell at all.
+	mp._peer_state = {
+		"aaa": {"pos": near, "floor": false},
+		"bbb": {"pos": far, "floor": false},
+	}
+	var all_up: Variant = mp.nearest_member_position(origin)
+	if all_up != null:
+		mp.free()
+		return "every member airborne but nearest_member_position still answered %s" % str(all_up)
+
+	# A PEER WHOSE POSE IS UNKNOWN IS GROUNDED. A join snapshot carries no `g`, so
+	# an entry with no `floor` key must still be huntable — defaulting the other
+	# way would make every incumbent unsmellable until its first presence packet.
+	mp._peer_state = {"aaa": {"pos": near}}
+	var no_bit: Variant = mp.nearest_member_position(origin)
+	if no_bit == null:
+		mp.free()
+		return ("a peer with no on-floor bit (i.e. a join snapshot) was treated as airborne — every "
+			+ "incumbent would be unsmellable to a joiner's crocodiles for its first 66 ms")
+
+	# And the bit must NOT reach `peer_positions()`: that one is the LOD manager's
+	# awake set, and the crocodiles a teammate is jumping over have to stay
+	# simulated for them to land among.
+	mp._master = "me"
+	mp._you = "me"
+	mp._peer_state = {"aaa": {"pos": near, "floor": false}}
+	var awake: Variant = mp.peer_positions()
+	mp.free()
+	if not (awake is Array) or (awake as Array).size() != 1:
+		return ("peer_positions() dropped an airborne member — the crocodiles around a jumping teammate "
+			+ "would fall asleep under them")
+	return ""
+
+
+# =============================================================================
+# 16. THE ROOM'S HEARTS, OWNED BY THE MASTER (bead godot-test1-s86.15)
+# =============================================================================
+
+func _check_room_lives_ordering() -> String:
+	"""
+	The room's hearts must behave like solo's, and the property that pins that is
+	the CAP BURN: solo DROPS an extra life granted while already at `LIVES_CAP`
+	(`collect_coin`'s `if lives < LIVES_CAP`), so a death after a long rich spell
+	is visible. The stateless `shared_lives_from()` banks the overshoot instead,
+	which is what made a fast-banking room effectively unlosable.
+
+	THE NEGATIVE CONTROL IS THE OLD FUNCTION ITSELF. The scenario is built so the
+	two answers DIFFER, and the check fails if they agree — because a
+	`shared_lives()` that quietly forwarded to the stateless formula would satisfy
+	every "the hearts went down" assertion just as well.
+	"""
+	var per: int = Player.EXTRA_LIFE_COINS
+	var cap: int = Player.LIVES_CAP
+	var base: int = Player.MAX_LIVES
+
+	var mp: Node = MPManager.new()
+	root.add_child(mp)
+	mp._state = MPManager.State.IN_ROOM
+	mp._you = "me"
+	mp._master = "me"
+	# Contributing, and the join settled, with no snapshots to wait for.
+	mp._first_member = true
+
+	# One remote peer carries the room's whole bank and death count — that is what
+	# `shared_bank()` / `shared_lives_spent()` sum, so no player node is needed.
+	var peer: Dictionary = {"pos": Vector3.ZERO, "floor": true, "coins": 0, "spent": 0, "dist": 0}
+	mp._peer_state = {"aaa": peer}
+
+	mp._tick_room_lives()
+	if not mp._room_lives_owned:
+		mp.free()
+		return "the master did not take ownership of the room's hearts"
+	if mp.shared_lives(0, 0) != base:
+		var fresh: Variant = mp.shared_lives(0, 0)
+		mp.free()
+		return "a fresh room started on %s hearts, expected MAX_LIVES (%d)" % [str(fresh), base]
+
+	# Bank far past the cap without dying: every grant beyond LIVES_CAP is BURNT,
+	# exactly as solo burns it.
+	peer["coins"] = per * 20
+	mp._tick_room_lives()
+	if mp.shared_lives(0, 0) != cap:
+		var pinned: Variant = mp.shared_lives(0, 0)
+		mp.free()
+		return "a room banking %d coins holds %s hearts, expected the cap (%d)" % [
+			int(peer["coins"]), str(pinned), cap
+		]
+
+	# NOW DIE. Solo this shows immediately (the overshoot was never kept); the
+	# stateless formula still has ~17 unspent grants in hand and shows nothing.
+	peer["spent"] = 1
+	mp._tick_room_lives()
+	var owned: Variant = mp.shared_lives(0, 0)
+	var stateless: int = MPManager.shared_lives_from(int(peer["coins"]), 1, base, per, cap)
+	if owned != cap - 1:
+		mp.free()
+		return ("a death after a rich spell left %s hearts, expected %d — the cap overshoot is being "
+			+ "banked again") % [str(owned), cap - 1]
+	if stateless == owned:
+		mp.free()
+		return ("the stateless formula agrees with the owned count in the very scenario built to "
+			+ "separate them — this check can no longer tell the fix from the bug")
+
+	# A SECOND TICK WITH NOTHING NEW MUST CHANGE NOTHING. The death is charged as a
+	# delta against `_room_spent_seen`; charging the absolute total every frame
+	# would drain the room in about a second.
+	mp._tick_room_lives()
+	if mp.shared_lives(0, 0) != cap - 1:
+		var redrained: Variant = mp.shared_lives(0, 0)
+		mp.free()
+		return "re-ticking with no new events moved the hearts to %s — the death delta is re-charged" % str(redrained)
+
+	# Coins banked AFTER a death still buy a heart back — the thing the obvious
+	# alternative formula (`mini(base + bank/per, cap) - spent`) would have broken.
+	peer["coins"] = int(peer["coins"]) + per
+	mp._tick_room_lives()
+	if mp.shared_lives(0, 0) != cap:
+		var bought: Variant = mp.shared_lives(0, 0)
+		mp.free()
+		return "banking another %d coins after a death did not buy the heart back (%s)" % [per, str(bought)]
+
+	# MASTER MIGRATION MUST NOT REFILL THE ROOM. Demote, then promote: the new
+	# owner adopts what the old one published rather than starting at MAX_LIVES,
+	# and must not re-walk thresholds the room has already been paid for.
+	# One more death, chosen so the room lands on a count that is NOT MAX_LIVES —
+	# otherwise "adopted" and "reset to MAX_LIVES" are the same number and the
+	# assertion below would pass for a migration that silently refilled the room.
+	peer["spent"] = 2
+	mp._tick_room_lives()
+	var before_migration: Variant = mp.shared_lives(0, 0)
+	mp._master = "someone-else"
+	mp._tick_room_lives()  # Demotes: ownership dropped.
+	if mp._room_lives_owned:
+		mp.free()
+		return "a demoted master kept ownership of the room's hearts"
+	mp._room_lives_seen = int(before_migration)  # What the new master had been publishing.
+	mp._master = "me"
+	mp._tick_room_lives()  # Promotes: adopt, do not reset.
+	var after_migration: Variant = mp.shared_lives(0, 0)
+	mp.free()
+	if after_migration == base:
+		return ("the promoted master landed on exactly MAX_LIVES, so this check cannot tell adoption "
+			+ "from a reset — rebuild the scenario")
+	if after_migration != before_migration:
+		return "a master migration moved the room from %s hearts to %s — the count must carry over" % [
+			str(before_migration), str(after_migration)
+		]
+	return ""
+
+
+# =============================================================================
+# 17. THE CLAIM'S BASE VALUE ON THE WIRE (bead godot-test1-42n)
+# =============================================================================
+
+## A stand-in for `player_controller.bank_awarded()`, so the manager's half of the
+## payout can be measured without booting the player scene (which mints a profile
+## id into `user://best_run.cfg` — `scripts/progression_selfcheck.gd` owns the
+## end-to-end version of this check for exactly that reason, and backs the file
+## up). Built from source at runtime rather than kept as a file: it is four lines
+## and a file would be a scene-tree fixture nobody maintains.
+const BANK_STUB_SOURCE := """extends Node
+var banked: int = -1
+var base_seen: int = -1
+var calls: int = 0
+func bank_awarded(amount: int, base_total: int = 0) -> void:
+	banked = amount
+	base_seen = base_total
+	calls += 1
+"""
+
+
+func _check_claim_base_value() -> String:
+	"""
+	The master's ruling must carry the pickup's PRE-MULTIPLIER worth, and it must
+	reach the winner.
+
+	Lifetime coins count what was physically picked up; `a` has a x1..x5 score
+	multiplier baked in. Before this bead the confirm carried no base value at all,
+	so every coin a peer WON in a room credited nothing towards its level — the
+	peer that lost each race was the one that levelled, through `collect_coin`.
+
+	Two assertions, and each exists because the other alone passes for the bug:
+	the base must be non-zero (crediting nothing is what shipped) AND it must
+	differ from `a` (crediting `a` is the easy mistake and inflates a level 5x).
+	The scenario is a chest burst at a wound-up room streak precisely so the two
+	numbers cannot coincide.
+	"""
+	var stub_script := GDScript.new()
+	stub_script.source_code = BANK_STUB_SOURCE
+	var compiled: int = stub_script.reload()
+	if compiled != OK:
+		return "the bank_awarded stub script did not compile (%d)" % compiled
+	var stub: Node = Node.new()
+	stub.set_script(stub_script)
+	stub.add_to_group("player")
+	root.add_child(stub)
+
+	var mp: Node = MPManager.new()
+	root.add_child(mp)
+	mp._state = MPManager.State.IN_ROOM
+	mp._you = "0123456789abcdef"
+	mp._master = mp._you
+	# No `_rtc`, so `_broadcast_reliable` is a no-op — the master applies its own
+	# ruling locally, which is the path the winner-is-the-master case takes anyway.
+
+	# Wind the room's streak past a step so the multiplier is genuinely above 1,
+	# or `a` and `b` would be the same number and this check would prove nothing.
+	mp._room_streak = Player.STREAK_COINS_PER_STEP * 2
+	mp._room_streak_deadline_msec = Time.get_ticks_msec() + 60000
+
+	var count: int = 3
+	var value: int = Coin.GEM_VALUE
+	mp._resolve_claim(12345, MPManager.peer_int_id(mp._you), count, value)
+
+	var banked: int = stub.banked
+	var base_seen: int = stub.base_seen
+	var calls: int = stub.calls
+	stub.free()
+	mp.free()
+
+	if calls != 1:
+		return "_resolve_claim called bank_awarded %d times, expected exactly 1" % calls
+	if base_seen == 0:
+		return ("the confirm carried no base value — a pickup won through the claim protocol still "
+			+ "credits no lifetime coins")
+	if base_seen != count * value:
+		return "the confirm's base value was %d, expected %d pickups x %d = %d" % [
+			base_seen, count, value, count * value
+		]
+	if banked == base_seen:
+		return ("the awarded amount equals the base value, so the room's multiplier was never applied "
+			+ "and this check cannot tell the two apart — rebuild the scenario")
+	if banked <= base_seen:
+		return "the awarded amount %d is not above the base %d — the multiplier went backwards" % [
+			banked, base_seen
+		]
+
+	# THE TRUST BOUNDARY. `b` is peer input like everything else on the mesh, and
+	# it feeds a permanent, monotone counter — so an absurd one must be refused,
+	# while a MISSING one (an older master) must cost only the progression credit
+	# and never the coin itself.
+	var boundary: String = _check_confirm_base_bounds()
+	if not boundary.is_empty():
+		return boundary
+	return ""
+
+
+func _check_confirm_base_bounds() -> String:
+	"""`b`'s validation, from both sides — see `_receive_confirm`."""
+	var stub_script := GDScript.new()
+	stub_script.source_code = BANK_STUB_SOURCE
+	stub_script.reload()
+	var stub: Node = Node.new()
+	stub.set_script(stub_script)
+	stub.add_to_group("player")
+	root.add_child(stub)
+
+	var mp: Node = MPManager.new()
+	root.add_child(mp)
+	mp._state = MPManager.State.IN_ROOM
+	mp._you = "0123456789abcdef"
+	mp._master = "fedcba9876543210"
+	var me: int = MPManager.peer_int_id(mp._you)
+
+	# MISSING `b`: an older master. The coin must still be banked.
+	mp._receive_confirm(mp._master, {"t": "cnf", "id": 1, "by": me, "a": 40, "m": 4})
+	var legacy_calls: int = stub.calls
+	var legacy_base: int = stub.base_seen
+
+	# ABSURD `b`: refused whole, so nothing is banked at all.
+	mp._receive_confirm(mp._master, {"t": "cnf", "id": 2, "by": me, "a": 40, "m": 4, "b": 1 << 40})
+	var hostile_calls: int = stub.calls
+
+	# HONEST `b`: accepted.
+	mp._receive_confirm(mp._master, {"t": "cnf", "id": 3, "by": me, "a": 40, "m": 4, "b": 10})
+	var good_calls: int = stub.calls
+	var good_base: int = stub.base_seen
+
+	stub.free()
+	mp.free()
+
+	if legacy_calls != 1:
+		return "a confirm with no `b` was not applied — an older master would cost the winner the coin itself"
+	if legacy_base != 0:
+		return "a confirm with no `b` credited %d base coins, expected 0" % legacy_base
+	if hostile_calls != legacy_calls:
+		return "a confirm with an out-of-range `b` was applied — a hostile master could mint levels"
+	if good_calls != legacy_calls + 1 or good_base != 10:
+		return "an honest `b` of 10 was not applied (calls %d, base %d)" % [good_calls, good_base]
+	return ""
+
+
+# =============================================================================
+# 18. TERRAIN FOCUS POINTS (bead godot-test1-s86.14)
+# =============================================================================
+
+func _check_terrain_focus_points() -> String:
+	"""
+	`endless_terrain.set_focus_points()` must keep chunks loaded around a FAR
+	teammate — and must keep the promise it makes about how many.
+
+	The failure it guards is a quiet one. With no pinned chunks the master has no
+	crocodiles loaded beside a distant peer, so it publishes none, that peer's
+	copies time out after `CROC_SYNC_TIMEOUT` and fall back to local simulation.
+	Nothing errors, nothing duplicates, nothing is visible headless — it is a
+	divergence between two browsers, which is the class of bug the whole
+	multiplayer selfcheck exists for.
+
+	Measured as an EFFECT on a real terrain's chunk field, with a control at each
+	step: the far chunk must appear when focused and disappear when released,
+	because "chunks exist" is true of every terrain ever built.
+	"""
+	# A bare terrain: every content spawner off, so it builds ground planes and
+	# nothing else. The question is WHICH chunks exist, and generating a thousand
+	# crocodiles to answer it would be a minute of nothing.
+	var terrain = Terrain.new()
+	terrain.spawn_objects = false
+	terrain.spawn_crocodiles = false
+	terrain.spawn_coins = false
+	terrain.spawn_artifacts = false
+	terrain.spawn_camps = false
+	terrain.spawn_chests = false
+	terrain.spawn_biome_content = false
+	terrain.render_distance = 1
+	terrain.terrain_material = StandardMaterial3D.new()
+	root.add_child(terrain)
+
+	# 1 km down the road — far past `render_distance` x `chunk_size`, i.e. exactly
+	# the peer this feature exists for.
+	var far_peer := Vector3(1000.0, 0.0, 0.0)
+	var far_chunk: Vector2i = terrain.world_to_chunk(far_peer)
+
+	# CONTROL FIRST: with no focus points that chunk is nowhere in the field.
+	terrain.update_chunks(Vector2i.ZERO)
+	if _terrain_holds(terrain, far_chunk):
+		terrain.free()
+		return "a terrain with no focus points already covers %s — the check below would be vacuous" % str(far_chunk)
+
+	# THE EFFECT.
+	terrain.set_focus_points([far_peer])
+	if not terrain.focus_dirty:
+		terrain.free()
+		return "set_focus_points did not raise focus_dirty — _process would never rebuild the field"
+	terrain.update_chunks(Vector2i.ZERO)
+	if not _terrain_holds(terrain, far_chunk):
+		terrain.free()
+		return "the chunk a focused teammate stands in (%s) is neither active nor pending" % str(far_chunk)
+
+	# COVERAGE IN METRES, not in chunks — the claim `FOCUS_RING` actually rests on.
+	# A 3x3 block guarantees at least `chunk_size` of loaded ground in every
+	# direction from the peer, covering the 45 m radius inside which a crocodile is
+	# awake at all. Measured from the WORST spot in the chunk: a corner.
+	var corner := Vector3(
+		float(far_chunk.x) * terrain.chunk_size, 0.0, float(far_chunk.y) * terrain.chunk_size
+	)
+	terrain.set_focus_points([corner])
+	for step: int in 16:
+		var angle: float = TAU * float(step) / 16.0
+		var probe: Vector3 = corner + Vector3(cos(angle), 0.0, sin(angle)) * 45.0
+		if not terrain.focus_chunks.has(terrain.world_to_chunk(probe)):
+			terrain.free()
+			return ("a point 45 m from a focused peer (%s) falls in an unpinned chunk — the master would "
+				+ "lack the crocodiles the LOD manager holds awake for that peer") % str(probe)
+	# ...and the other half of the same claim: the ring must not be WIDER than it
+	# says, or the memory cap it documents is fiction.
+	if terrain.focus_chunks.has(terrain.world_to_chunk(corner + Vector3(200.0, 0.0, 0.0))):
+		terrain.free()
+		return "a point 200 m from a focused peer is pinned — FOCUS_RING is wider than documented"
+
+	# THE CAP, which is the whole memory argument for shipping this on web.
+	var many: Array = []
+	for i: int in 10:
+		many.append(Vector3(float(i) * 900.0, 0.0, float(i) * 700.0))
+	terrain.set_focus_points(many)
+	if terrain.focus_chunks.size() > Terrain.MAX_FOCUS_CHUNKS:
+		var overflow: int = terrain.focus_chunks.size()
+		terrain.free()
+		return "ten focus points pinned %d chunks, over the MAX_FOCUS_CHUNKS cap of %d" % [
+			overflow, Terrain.MAX_FOCUS_CHUNKS
+		]
+
+	# IDEMPOTENT: the same set again must not dirty the field, or the 9 Hz caller
+	# would rebuild the whole pending queue nine times a second forever.
+	terrain.focus_dirty = false
+	terrain.set_focus_points(many)
+	if terrain.focus_dirty:
+		terrain.free()
+		return "set_focus_points dirtied the field for an UNCHANGED set — the chunk queue would rebuild at the caller's tick rate"
+
+	# RELEASE: an empty set (offline, a non-master, a peer that left) must drop
+	# every pinned chunk, or a room would leak its chunks into solo play.
+	terrain.set_focus_points([])
+	terrain.update_chunks(Vector2i.ZERO)
+	var still_pinned: bool = _terrain_holds(terrain, far_chunk)
+	var leftover: int = terrain.focus_chunks.size()
+	terrain.free()
+	if leftover != 0:
+		return "set_focus_points([]) left %d pinned chunks" % leftover
+	if still_pinned:
+		return "releasing the focus points left the far chunk %s in the field" % str(far_chunk)
+	return ""
+
+
+func _terrain_holds(terrain, chunk: Vector2i) -> bool:
+	"""
+	Whether a chunk is in the terrain's field at all — built, or queued to be built.
+	Both count: the time-slicing means "pending" is simply "built a few frames from
+	now", and a focus chunk is never inside the synchronous safety ring.
+	"""
+	return terrain.active_chunks.has(chunk) or terrain.pending_chunks.has(chunk)
