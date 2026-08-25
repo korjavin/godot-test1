@@ -707,6 +707,244 @@ const CHEST_BURST_DURATION: float = 0.8
 const TREASURE_CHEST_SCRIPT := preload("res://scripts/treasure_chest.gd")
 
 # ----------------------------------------------------------------------------
+# GEO LANDMARKS (rare recognizable famous places)
+# ----------------------------------------------------------------------------
+##
+## The FOURTH member of the artifact / camp / chest landmark family, and the one
+## that carries the game's educational identity: walk far enough and you come over
+## a rise to find Stonehenge, the Moai of Easter Island, the Pyramids of Giza, the
+## Golden Gate Bridge, the Statue of Liberty, the Plaza Mayor, the Eiffel Tower or
+## the Taj Mahal, and a small card tells you one true thing about it.
+##
+## The bar the owner set is "not necessarily ideal, but RECOGNIZABLE": blocky
+## code-built sculpture in the house style, read at a glance from 30 m away, not
+## an architectural model. Every builder therefore spends its box budget on the
+## one or two silhouette features a person actually identifies the place by (the
+## trilithons, the brow line, the stepped triangle, the orange towers and cable,
+## the crown and torch, the arcade, the four splayed legs, the dome and minarets)
+## and nothing at all on detail that vanishes at distance.
+##
+## The reward hierarchy this slots into, and why each rarity is what it is:
+##
+##   chest     ~1 chunk in 13   a 1.3 m box, 8-15 coins in a burst, NO GEM
+##   artifact  ~1 chunk in 23   huge ruin, 3-5 coins AND the one guaranteed GEM
+##   camp      ~1 chunk in 31   a whole village, 2-4 coins, no gem
+##   landmark  ~1 chunk in 40-60  a famous place, 3-5 coins, NO GEM, plus a fact
+##
+## REWARD DECISION — a small coin ring (LANDMARK_COIN_MIN..MAX, 3-5 ordinary
+## coins) and DELIBERATELY NO GEM. This is exactly the rule that kept gems out of
+## camps and chests: the guaranteed gem is the ARTIFACTS' distinction, and a
+## fourth source of one would flatten "an ancient prize worth a detour" into
+## "another thing I walked past". But a landmark sits LANDMARK_ROAD_CLEARANCE
+## (22 m) off the coin road, so a destination with no reward at all is a trap that
+## teaches players not to detour — and the detour is the whole feature. A ring
+## without a gem pays for the walk without touching the hierarchy above it. The
+## real reward is the card (see scripts/landmark_toast.gd); the coins are the
+## apology for the distance.
+##
+## Structurally this is the chest/camp/artifact recipe with NOTHING added:
+##   - _landmark_at()             the rarity roll ALONE, on its own independent
+##                                hash stream (LANDMARK_SALT + its own coordinate
+##                                primes), so it consumes ZERO draws from the
+##                                shared chunk RNG.
+##   - spawn_landmark_in_chunk()  holds the candidate loop, because that is the
+##                                only place `obstacles` exists — see
+##                                _landmark_at's docstring for why putting the
+##                                loop in the roll is the bug BOTH artifacts and
+##                                camps had to have dug out of them.
+##   - all stone goes through create_box into the chunk's ONE MultiMesh and ONE
+##     BlockCollision body, so a whole Eiffel Tower costs ZERO extra draw calls
+##     and ZERO extra physics bodies. The only non-batched nodes a landmark may
+##     add are at most LANDMARK_MAX_ACCENTS emissive accents and one script-free
+##     marker Node3D (which has no mesh and no physics either).
+##
+## THE REGISTRY IS THE EXTENSION POINT. LANDMARKS below is pure data — builder
+## method NAME, English name, English fact, footprint radius — so a later wave of
+## places is ONE builder function, ONE registry entry and TWO CSV rows. Nothing
+## else in this file, in the toast, or in the self-check has to learn about it.
+
+## Kill switch, mirroring spawn_artifacts / spawn_camps / spawn_chests. The
+## measurement sweep needs it to generate the same field with and without
+## landmarks and diff the two.
+@export var spawn_landmarks: bool = true
+
+## Probability that a chunk ROLLS a landmark. This is NOT the built rate: the
+## candidate loop in spawn_landmark_in_chunk rejects spots that are in a river,
+## too near the coin road, or overlapping stone already in the chunk — and a
+## 9.5 m circle is camp-sized, so the overlap test rejects a great deal.
+##
+## ponytail: PLACEHOLDER, to be retuned from a measured survival rate (see the
+## sweep in the plan's Task 7), targeting 1 BUILT landmark per 40-60 chunks —
+## deliberately rarer than the artifacts' 1-in-23, because these are destinations
+## rather than scenery. Retune by MEASURING, never by algebra: the survival rate
+## depends on the block density the biome mix happens to produce, which is why
+## the camp and chest constants each carry their own measured number
+## (CAMP_CHANCE 0.18 -> 14% survival -> 1 per 31; CHEST_CHANCE 0.08 -> 98.5%
+## survival -> 1 per 12.5, the same roll meaning wildly different things).
+const LANDMARK_CHANCE: float = 0.15
+
+## Fixed salt XORed into run_seed for the landmark hash stream, in the
+## ARTIFACT_SALT / CAMP_SALT / CHEST_SALT / BIOME_SALT / BOSS_SEED family: an
+## arbitrary fixed constant that keeps this stream independent of every other
+## deterministic spawn site, so it can never collide with (or perturb) one.
+const LANDMARK_SALT: int = 0x1A_D3A2C  # "LANDMARK"-ish; arbitrary fixed constant
+
+## Coordinate multiplier primes for the landmark stream, deliberately DIFFERENT
+## from every other stream in this file — object/artifact (73856093 / 19349663),
+## camp (40960001 / 26463089), biome (83492791 / 15485863), chest (86028121 /
+## 50331653) and croc-roll (179424673 / 32452843) — so no two streams can
+## correlate on a shared lattice (which would put, say, every landmark in a
+## chunk that also rolled a camp).
+const LANDMARK_HASH_PRIME_X: int = 32452867
+const LANDMARK_HASH_PRIME_Y: int = 49979687
+
+## Candidate spots tried inside a chunk before giving up. Every try failing means
+## NO LANDMARK — the same call artifacts and camps both make, and the right one:
+## the Eiffel Tower sticking out of a mountain massif reads far worse than a
+## chunk without one, and a higher LANDMARK_CHANCE reaches the same built rate.
+const LANDMARK_PLACE_TRIES: int = 4
+
+## The WIDEST footprint any registry entry may declare, and therefore the value
+## handed to _biome_spot_ok as "the widest this thing could be" — the house rule,
+## because the real shape is only known after its builder has run. Every
+## LANDMARKS[i].radius must be <= this; landmark_selfcheck.gd asserts both that
+## and that each declared radius is a TRUE BOUND on the stone its builder emits.
+const LANDMARK_RADIUS: float = 9.5
+
+## Minimum lateral distance from the coin-road centerline.
+##
+## INVARIANT — "no boss ever stands inside a landmark", exactly the camp's
+## arithmetic. The test measures distance to STATION CENTRES (that is all
+## _road_lateral_distance computes), and a boss does NOT stand on its station
+## centre: _boss_at offsets it BOSS_FORWARD_OFFSET (8.0 m) along the tangent AND
+## up to BOSS_LATERAL_MAX (4.0 m) across it, so BOTH legs belong in the bound:
+##     LANDMARK_ROAD_CLEARANCE > LANDMARK_RADIUS + sqrt(BOSS_FORWARD_OFFSET^2 + BOSS_LATERAL_MAX^2)
+##     22.0                    > 9.5             + sqrt(8.0^2 + 4.0^2) = 9.5 + 8.94 = 18.44  ✓
+## i.e. 3.56 m of slack, NOT the 8.5 the lateral leg alone suggests. That single
+## inequality IS the whole boss exclusion — spawn_bosses_in_chunk needs no edit
+## and no extra test. Re-check this line if ANY of the four constants named in it
+## is retuned, BOSS_FORWARD_OFFSET included.
+##
+## 22 is also comfortably above road_width_max / 2 (10 m), the outer edge of the
+## widest coin scatter band, so the coin swath stays clear of the stone and a
+## landmark reads as an OFF-ROAD DESTINATION you deliberately detour to rather
+## than something you trip over while following the trail.
+const LANDMARK_ROAD_CLEARANCE: float = 22.0
+
+## Keeps the whole landmark inside its own chunk so nothing straddles a seam
+## (same rule as ARTIFACT_EDGE_MARGIN / CAMP_EDGE_MARGIN).
+## MUST exceed LANDMARK_RADIUS: 12.0 > 9.5 ✓ — landmark_selfcheck.gd asserts it.
+## With chunk_size 50 that still leaves a 26x26 m placement box, so landmarks
+## spread around their chunk instead of piling into its centre.
+const LANDMARK_EDGE_MARGIN: float = 12.0
+
+## The emissive-accent budget per landmark, the same rule as ARTIFACT_MAX_ACCENTS:
+## an accent is a real extra MeshInstance3D and therefore a real extra DRAW CALL,
+## which is the one cost that does not batch. Builders use at most ONE each, and
+## only where a real light belongs (a torch, a beacon, a gilded capstone).
+const LANDMARK_MAX_ACCENTS: int = 4
+
+## Coin reward: a small ring round the base. NO GEM — see the banner above.
+const LANDMARK_COIN_MIN: int = 3
+const LANDMARK_COIN_MAX: int = 5
+## How far outside the shape's own radius the ring sits, so the coins are found
+## by walking AROUND the landmark rather than by clipping into it.
+const LANDMARK_COIN_RING_PAD_MIN: float = 1.5
+const LANDMARK_COIN_RING_PAD_MAX: float = 4.0
+
+## --- Palette. Deliberately distinct from the warm RAMP_* block ramps, the
+## artifacts' grey-green weathered stone and the camps' bone white, because the
+## whole point of a landmark is that it does not read as scenery. Each place gets
+## the colour a person would actually name it by.
+const LM_STONE_GREY := Color(0.62, 0.61, 0.57)   # Stonehenge sarsen
+const LM_BASALT := Color(0.34, 0.32, 0.30)       # Moai volcanic tuff
+const LM_SANDSTONE := Color(0.80, 0.68, 0.44)    # Giza limestone
+const LM_GRANITE := Color(0.48, 0.46, 0.47)      # plinths, pedestals, ahu
+const LM_ORANGE := Color(0.75, 0.24, 0.10)       # Golden Gate International Orange
+const LM_COPPER := Color(0.42, 0.71, 0.60)       # Liberty's oxidised copper
+const LM_OCHRE := Color(0.72, 0.44, 0.24)        # Plaza Mayor walls
+const LM_ROOF := Color(0.36, 0.20, 0.15)         # Plaza Mayor slate/tile trim
+const LM_IRON := Color(0.45, 0.36, 0.28)         # Eiffel "brun tour Eiffel"
+const LM_MARBLE := Color(0.93, 0.91, 0.87)       # Taj Mahal marble
+
+## THE REGISTRY. Pure data, so it can be a `const` — and it is const precisely to
+## make "add a place" a data edit rather than a code edit.
+##
+## `builder` is a METHOD-NAME STRING, invoked as call(entry.builder, ...). It is a
+## String and not a Callable because a `const` Array cannot hold a Callable (a
+## Callable binds an object at runtime, so it is not a constant expression); a
+## String keeps the whole registry pure data and const-able, at the cost of the
+## method name being checked at call time rather than parse time — which
+## landmark_selfcheck.gd covers by calling every builder in the table.
+##
+## `name` and `fact` are the ENGLISH SOURCE STRINGS, not identifiers, because in
+## this project THE TRANSLATION KEY IS THE ENGLISH SOURCE STRING (CLAUDE.md
+## Localization RULE 1). The toast assigns them straight to a Label.text and gets
+## translation AND live locale-switching for free, with no tr() call anywhere. Do
+## not "fix" that by inventing HUD_LANDMARK_* keys — it would break the fallback
+## that makes a place with no CSV row render as readable English.
+##
+## `radius` is that shape's OWN footprint radius (metres), which is what the
+## reward ring and the obstacle footprint are measured from. It must be
+## <= LANDMARK_RADIUS, and it must be a true bound on the stone the builder
+## actually emits; landmark_selfcheck.gd measures both.
+##
+## ORDER IS LOAD-BEARING ONLY IN THAT IT IS THE KIND ROLL — _landmark_at draws
+## randi_range(0, LANDMARKS.size() - 1) into this array, so appending is safe and
+## reordering re-rolls every landmark in every existing world (harmless: worlds
+## are per-run anyway).
+const LANDMARKS: Array = [
+	{
+		"builder": "_landmark_stonehenge",
+		"name": "Stonehenge",
+		"fact": "A Neolithic stone circle on Salisbury Plain, England, raised around 2500 BC.",
+		"radius": 7.6,
+	},
+	{
+		"builder": "_landmark_moai",
+		"name": "Moai of Easter Island",
+		"fact": "Nearly 900 stone figures carved by the Rapa Nui on Easter Island, Chile, between 1250 and 1500.",
+		"radius": 6.6,
+	},
+	{
+		"builder": "_landmark_giza",
+		"name": "Pyramids of Giza",
+		"fact": "Three royal tombs near Cairo, Egypt, built around 2560 BC — the last surviving Wonder of the Ancient World.",
+		"radius": 9.4,
+	},
+	{
+		"builder": "_landmark_golden_gate",
+		"name": "Golden Gate Bridge",
+		"fact": "A 2.7 km suspension bridge over San Francisco Bay, USA, opened in 1937 and painted International Orange.",
+		"radius": 9.4,
+	},
+	{
+		"builder": "_landmark_liberty",
+		"name": "Statue of Liberty",
+		"fact": "A 93 m copper statue in New York Harbor, USA — a gift from France, dedicated in 1886.",
+		"radius": 5.4,
+	},
+	{
+		"builder": "_landmark_plaza_mayor",
+		"name": "Plaza Mayor",
+		"fact": "The arcaded central square of Madrid, Spain, completed in 1619 and ringed by 237 balconies.",
+		"radius": 8.6,
+	},
+	{
+		"builder": "_landmark_eiffel",
+		"name": "Eiffel Tower",
+		"fact": "A 330 m iron tower in Paris, France, built for the 1889 World's Fair and meant to stand only 20 years.",
+		"radius": 6.2,
+	},
+	{
+		"builder": "_landmark_taj",
+		"name": "Taj Mahal",
+		"fact": "A white marble mausoleum in Agra, India, built by Shah Jahan for his wife Mumtaz Mahal in 1653.",
+		"radius": 8.6,
+	},
+]
+
+# ----------------------------------------------------------------------------
 # BIOME FIELD CONFIGURATION (desert / plains / forest / mountain + rivers)
 # ----------------------------------------------------------------------------
 ##
@@ -3824,6 +4062,75 @@ func spawn_chest_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obs
 	# opened still stands closed for another. Contested-chest arbitration belongs to
 	# the same claim machinery the epic defers for coins (godot-test1-s86.5).
 	obstacles.append({ "pos": center, "radius": CHEST_RADIUS, "top": CHEST_BODY_SIZE.y, "climbable": true })
+
+# ============================================================================
+# GEO LANDMARKS (see the GEO LANDMARKS constant banner)
+# ============================================================================
+
+func _landmark_at(chunk_pos: Vector2i) -> Dictionary:
+	"""
+	Deterministic geo-landmark placement for one chunk — _chest_at / _camp_at /
+	_artifact_at for famous places, same shape, same guarantees. Pure function of
+	chunk coords + run_seed via the independent LANDMARK_SALT hash stream, so it
+	consumes NO draw from the shared chunk RNG: every block, crocodile and coin the
+	generator produced before landmarks existed is still exactly where it was in
+	every chunk that does not build one.
+
+	@param chunk_pos: Chunk coordinates to decide for.
+	@return: {} when this chunk rolled no landmark (the overwhelming majority);
+	         otherwise { "seed": int, "kind": int } — the seed for the landmark's
+	         private RNG (spawn_landmark_in_chunk uses it for placement, geometry
+	         and the coin ring) and the index into LANDMARKS of WHICH famous place
+	         this is.
+
+	WHY THERE IS NO CANDIDATE LOOP HERE. This is the landmine that BOTH artifacts
+	and camps had to be dug out of, and it is worth restating rather than cross-
+	referencing, because the next person to add a landmark family member will reach
+	for it again: when this function runs, THE CHUNK HAS NO GEOMETRY YET. The only
+	tests available are river and road, and neither rejects the thing that actually
+	matters — overlap with the chunk's ~12 scattered blocks, its feature structure,
+	its biome trees and massifs, its artifact and its camp. Camps measured 11
+	rejections in 121 chunks from river+road alone, i.e. ~91% of rolled camps
+	"survived" a test that checked nothing, and then ~9% survived once the real
+	test was applied where it belongs — landing camps roughly 10x rarer than the
+	constant said, with no error anywhere. So the LANDMARK_PLACE_TRIES loop lives
+	in spawn_landmark_in_chunk, where `obstacles` exists, and this function does
+	exactly two things: roll whether, and roll which.
+
+	EDUCATIONAL NOTE — the determinism contract:
+	- Within a run the same chunk yields the IDENTICAL landmark (same place, same
+	  spot, same stone jitter, same coin ring) however often it unloads and
+	  regenerates: the RNG is seeded purely from chunk coords + run_seed, and every
+	  draw downstream comes off that one stream in a fixed order.
+	- Across runs, new_run() re-rolls run_seed, so a new world puts different
+	  places in different chunks.
+	- MULTIPLAYER NEEDS ZERO WORK because of exactly that: run_seed is already
+	  shared by every peer in a room, so every peer generates the same landmark in
+	  the same chunk by construction. No packet, no claim, no sync.
+	- Whether a candidate is ACCEPTED is likewise load-order independent: the road
+	  test reads the station cache (pure in `k`), the river test reads the biome
+	  field (pure in world position + run_seed) and the overlap test reads the
+	  chunk's own obstacle list (pure in chunk coords + run_seed).
+	"""
+	var rng := RandomNumberGenerator.new()
+	# Own coordinate primes AND own salt — see the LANDMARK_HASH_PRIME_* constants
+	# for why they differ from every other stream in this file.
+	rng.seed = hash(Vector3i(chunk_pos.x * LANDMARK_HASH_PRIME_X, chunk_pos.y * LANDMARK_HASH_PRIME_Y, run_seed ^ LANDMARK_SALT))
+
+	# The rarity roll — almost every chunk bails here, and this is the ONLY draw
+	# taken from the stream at this point. The rest happen in
+	# spawn_landmark_in_chunk off an RNG re-seeded from `seed`, so the two together
+	# stay one fixed sequence per chunk.
+	if rng.randf() >= LANDMARK_CHANCE:
+		return {}
+
+	# WHICH place. Drawn here rather than in the spawner so the kind is decided by
+	# the same pure function as the rarity: a chunk's landmark identity is known
+	# without building anything, which is what lets the measurement sweep report a
+	# per-kind distribution over a field it never renders.
+	var kind := rng.randi_range(0, LANDMARKS.size() - 1)
+
+	return { "seed": rng.randi(), "kind": kind }
 
 # ============================================================================
 # BIOME CONTENT (the geometry each biome adds on top of the ordinary blocks)

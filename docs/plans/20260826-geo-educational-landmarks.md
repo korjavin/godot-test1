@@ -113,7 +113,7 @@ HUD read-out with no state anyone else needs. No packet, no claim, no sync.
 
 ### Task 1: Constants banner + the registry + `_landmark_at`
 
-- [ ] Add a `GEO LANDMARKS (rare recognizable famous places)` constant banner in
+- [x] Add a `GEO LANDMARKS (rare recognizable famous places)` constant banner in
       `scripts/endless_terrain.gd`, placed after the `TREASURE CHESTS` banner and
       written in the same heavily-commented style. Constants:
       - `@export var spawn_landmarks: bool = true` (the on/off switch the sweep needs)
@@ -152,13 +152,13 @@ HUD read-out with no state anyone else needs. No packet, no claim, no sync.
         `LM_STONE_GREY`, `LM_BASALT`, `LM_SANDSTONE`, `LM_GRANITE`, `LM_ORANGE`
         (International Orange), `LM_COPPER` (oxidised green), `LM_OCHRE`, `LM_ROOF`,
         `LM_IRON`, `LM_MARBLE`.
-- [ ] **REWARD DECISION, write it into the banner:** a small coin ring
+- [x] **REWARD DECISION, write it into the banner:** a small coin ring
       (`LANDMARK_COIN_MIN..MAX`, 3–5 ordinary coins) and **deliberately NO GEM** — the
       guaranteed gem stays the artifacts' distinction, exactly the rule that kept gems
       out of camps and chests. Rationale to record: a landmark is 22 m off the coin
       road, so a destination with no reward at all is a trap; a ring without a gem
       pays the detour without flattening the reward hierarchy.
-- [ ] Add the registry as a `const`:
+- [x] Add the registry as a `const`:
       ```gdscript
       const LANDMARKS: Array = [
           { "builder": "_landmark_stonehenge",   "name": "Stonehenge",              "fact": "...", "radius": 7.6 },
@@ -175,7 +175,7 @@ HUD read-out with no state anyone else needs. No packet, no claim, no sync.
       Eight entries, in this order (the index is the deterministic kind roll):
       Stonehenge, Moai of Easter Island, Pyramids of Giza, Golden Gate Bridge,
       Statue of Liberty, Plaza Mayor, Eiffel Tower, Taj Mahal.
-- [ ] Add `_landmark_at(chunk_pos: Vector2i) -> Dictionary`, modelled line-for-line on
+- [x] Add `_landmark_at(chunk_pos: Vector2i) -> Dictionary`, modelled line-for-line on
       `_chest_at`: its own `RandomNumberGenerator` seeded
       `hash(Vector3i(chunk_pos.x * LANDMARK_HASH_PRIME_X, chunk_pos.y * LANDMARK_HASH_PRIME_Y, run_seed ^ LANDMARK_SALT))`;
       one `rng.randf()` rarity roll; returns `{}` or `{ "seed": int, "kind": int }`
