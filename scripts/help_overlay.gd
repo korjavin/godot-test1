@@ -3,7 +3,7 @@ extends Control
 ## HELP OVERLAY — "?" pauses the game and shows every key, with one line each
 ## ============================================================================
 ## The problem: this game has grown a keyboard. W/S/A/D/Q/E, Space, Shift, Ctrl,
-## R, F, C, M, +/-, P, Esc — fifteen keys, and the only place any of them were
+## R, F, C, K, M, +/-, P, Esc — sixteen keys, and the only place any of them were
 ## ever written down was a `print()` in `player_controller._ready()` that a web
 ## player cannot see, and which is already **incomplete** — it predates the C
 ## view cycle, the M minimap and its +/- zoom, and the P pause. The prose has
@@ -130,6 +130,7 @@ const ROWS: Array = [
 	["R", "Switch hero: Windman, Primm, Teibi, Phoboman.", Mode.DESKTOP],
 	["F", "Special ability: Air Rush, Phase Step, Resize or Stink Wave.", Mode.DESKTOP],
 	["C", "Cycle the view: over the shoulder, eyes, front.", Mode.DESKTOP],
+	["K", "Open the skill tree — also the Skills button, top right.", Mode.DESKTOP],
 	["M", "Show or hide the minimap.", Mode.DESKTOP],
 	["+ / -", "Zoom the minimap in and out.", Mode.DESKTOP],
 	["P", "Pause the game.", Mode.DESKTOP],
@@ -145,6 +146,9 @@ const ROWS: Array = [
 	["SPECIAL\n(F)", "Special ability: Air Rush, Phase Step, Resize or Stink Wave.", Mode.TOUCH],
 	["SWITCH\n(R)", "Switch hero: Windman, Primm, Teibi, Phoboman.", Mode.TOUCH],
 	["View", "Cycle the view: over the shoulder, eyes, front.", Mode.TOUCH],
+	# "Skills" is the opener button's own CSV key, so this legend reads in German
+	# exactly like the button does. A phone has no K.
+	["Skills", "Open the skill tree and spend skill points.", Mode.TOUCH],
 	["⚙ Tune", "Tune step and steering feel, or read how to play again.", Mode.TOUCH],
 
 	["MP", "Multiplayer: host or join a room for up to 4 players.", Mode.BOTH],

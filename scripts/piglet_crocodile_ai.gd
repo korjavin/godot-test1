@@ -666,16 +666,18 @@ func _update_chase_state() -> void:
 	# remote-driven on the quarry's own machine, where _tick_remote runs
 	# move_and_slide + _handle_collisions against a real local player body.
 	#
-	# ponytail: a remote member is always treated as smellable — presence carries
-	# an on-floor bit but peer_positions()/nearest_member_position() do not, so the
-	# "jumping breaks the scent" escape hatch stays local-only. Thread `g` through
-	# the manager if that asymmetry ever matters.
+	# THE JUMP HATCH APPLIES TO REMOTE MEMBERS TOO (bead godot-test1-s86.15).
+	# `nearest_member_position()` now honours the on-floor bit presence has always
+	# carried, so it simply does not offer a teammate who is mid-jump — there is
+	# no branch here, because "not smellable" and "not in the room" are the same
+	# answer (`null`, or a nearer grounded member) to this loop.
 	if mp_node != null:
 		var remote: Variant = mp_node.nearest_member_position(global_position)
 		if remote != null:
-			# A remote member is always smellable (see the ponytail note above), so
-			# it is a candidate unconditionally — which is also what makes it able
-			# to win when the local player is mid-jump and therefore not one.
+			# Whatever comes back is grounded by construction, so it is a candidate
+			# unconditionally — which is what makes it able to win when the LOCAL
+			# player is mid-jump and therefore not one. The two candidates stay
+			# judged independently; see the comment above.
 			var remote_distance: float = global_position.distance_to(remote as Vector3)
 			if remote_distance < distance_to_player:
 				distance_to_player = remote_distance
