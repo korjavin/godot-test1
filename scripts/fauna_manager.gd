@@ -211,6 +211,86 @@ const MEANDER_FREQUENCY: float = 0.03
 const FORMATION_LERP_SPEED: float = 1.5
 
 # ============================================================================
+# CONSTANTS — obstacle lookahead (steer the CENTRE, never the individuals)
+# ============================================================================
+# A herd used to walk straight through mountains, camps and trees — the ceiling
+# the old ponytail: note in _update_herd named. The fix steers the SHARED HERD
+# CENTRE with three cheap feeler rays and blends the result into the existing
+# meander, so every member inherits the detour through its formation offset:
+# zero per-animal work, no new state in _animate_animals, and nothing about the
+# isolation contract moves (the rays READ the world, they are not contacts —
+# fauna keeps collision_mask 0 and still touches nothing but the player).
+#
+# WHY RAYS AND NOT THE TERRAIN'S FOOTPRINTS: endless_terrain builds an exact
+# `obstacles` list per chunk (pos/radius/top), which sounds like the cheaper
+# source — but it is a local inside create_chunk, handed down the spawner chain
+# and dropped when the chunk finishes. Nothing retains it, so querying it means
+# a new public API on the terrain. A layer-1 ray needs no such API and sees
+# strictly more: massif layers, camp huts, tree trunks, chest bodies, artifact
+# stone and scattered blocks are all in the same per-chunk BlockCollision body.
+
+## How often (seconds) the lookahead is probed. Throttled like every other
+## manager's scan (crocodile_lod_manager, weather_manager): a herd ambles 2–3
+## m/s, so 0.25 s is 0.75 m of travel against a 26 m feeler — the steering
+## target cannot go visibly stale, and the whole feature costs 12 rays/second
+## while a herd is alive and NOTHING at all between events.
+const AVOID_PROBE_INTERVAL: float = 0.25
+
+## Feeler length (metres). Sized from the worst case it has to solve, not by
+## eye: a mountain massif is ~20 m across and the giraffe echelon is ~28 m wide,
+## so the CENTRE has to end up ~25 m off the line before the last member clears
+## stone. At AVOID_EASE_SPEED that takes ~13 s, i.e. ~32 m of walking at the
+## mean amble — so the warning has to arrive further out than that.
+const AVOID_LOOKAHEAD: float = 45.0
+
+## Height (metres) the feelers are cast at. Above the chunk ground collision
+## (a 0.1 m box straddling y = 0, so its top is 0.05) and below the top of
+## every solid worth avoiding — the shortest is a 1.3 m chest body.
+const AVOID_PROBE_HEIGHT: float = 1.0
+
+## Extra clearance (metres) added outside the herd's widest formation slot when
+## the two edge feelers are placed, so the swath the herd tests is a little
+## wider than the swath it fills and members clear stone rather than shave it.
+const AVOID_EDGE_MARGIN: float = 2.0
+
+## Widest lateral detour (metres) the centre will open up. Covers massif half
+## width (10) + the widest formation slot (17.5) with a little to spare.
+## Deliberately NOT bounded by a new terrain-extent constant: the despawn test
+## already measures the FULLY offset centre (meander + detour) against
+## DESPAWN_RADIUS, so a big detour simply ends the crossing a little sooner
+## instead of walking members off the far edge of the streamed terrain.
+const AVOID_MAX_OFFSET: float = 30.0
+
+## How far BEHIND the formation the feelers start, on top of the herd's own
+## widest slot. This is what makes the berth hold until the herd is genuinely
+## past what it stepped around, and it replaces a travel-distance latch that did
+## the same job worse.
+##
+## The feelers point forward, so a herd that has opened enough berth stops
+## hitting anything while the obstacle is still abeam — unwinding there sends the
+## formation back into the flank it just walked around, and the rear members are
+## the ones it catches (measured with forward-from-centre rays: 97.5% of aimed
+## trials clipping, and with a 30 m travel latch bolted on, still 32-55%, every
+## residual failure on the unwind). Starting the rays behind the formation means
+## an obstacle level with the swath is still ON the ray, so "clear" cannot become
+## true until the whole herd is past it. No latch, no extra ray, no new state.
+const AVOID_PROBE_SETBACK: float = 4.0
+
+## How fast (m/s) the detour opens and closes. Under WALK_SPEED_MIN so the herd
+## reads as *curving* around a massif rather than crab-walking sideways (the
+## facing yaw follows the detour's rate, so it turns into its own swerve), and
+## the same rate closing is what makes it visibly REFORM on the far side.
+const AVOID_EASE_SPEED: float = 2.2
+
+## Physics layer the feelers see: layer 1, the world-geometry layer every chunk
+## puts its ground and its single BlockCollision body on. Crocodiles (layer 2)
+## and fauna itself (layer 3) are invisible to it by construction — the herd
+## cannot react to a croc even by accident. The PLAYER is on layer 1, so it is
+## excluded by RID instead (see _refresh_probe_exclude): swerving around the
+## player would break the isolation contract just as loudly.
+const AVOID_WORLD_MASK: int = 1
+
+# ============================================================================
 # CONSTANTS — elephant geometry
 # ============================================================================
 # All sizes in metres as Vector3(width, height, length). The animal's local
@@ -447,6 +527,37 @@ var _herd_age: float = 0.0
 ## FORMATION_MAX_EXTENT; using the herd's real value keeps a small elephant
 ## family on screen as long as it always was.
 var _herd_offset_max: float = 0.0
+
+## Lateral detour (metres, on the _herd_lateral axis) the lookahead is asking
+## for, and the eased value actually applied. `_avoid_velocity` is the applied
+## value's exact per-second rate, which the facing yaw needs so the herd LOOKS
+## where it is swerving instead of walking sideways with its head straight on.
+## All three are reset per herd in _spawn_herd; meaningless while _animals is
+## empty, like every other field above.
+var _avoid_target: float = 0.0
+var _avoid_offset: float = 0.0
+var _avoid_velocity: float = 0.0
+
+## Countdown to the next lookahead probe (see AVOID_PROBE_INTERVAL).
+var _probe_timer: float = 0.0
+
+## Metres-travelled mark before which the berth is HELD rather than unwound.
+## Set from the distance the feelers actually measured, so it scales itself to
+## what was seen instead of guessing (see _update_avoid_target).
+var _avoid_hold_until: float = 0.0
+
+
+## The ONE ray query object, built in _ready and MUTATED per feeler — never
+## re-created. PhysicsRayQueryParameters3D.create() (the crocodile's idiom)
+## allocates a RefCounted per call, and this casts three feelers a tick.
+## ponytail: intersect_ray still returns a fresh Dictionary per hit, which is
+## the one allocation left in the path — unavoidable through the public physics
+## API, and it happens 12×/second only while a herd is alive.
+var _probe_params: PhysicsRayQueryParameters3D = null
+
+## Reusable exclude list holding just the player's collider RID (see
+## AVOID_WORLD_MASK). Kept as a member so assigning it costs no allocation.
+var _probe_exclude: Array[RID] = []
 
 # ============================================================================
 # SHARED RESOURCES (static — one per PROCESS, not one per manager/animal)
@@ -1029,6 +1140,12 @@ func _ready() -> void:
 	_rng.randomize()
 	_event_timer = _rng.randf_range(FIRST_EVENT_DELAY_MIN, FIRST_EVENT_DELAY_MAX)
 
+	# The one ray query object for the obstacle lookahead — built once here,
+	# mutated per feeler (see _probe_clear), never re-created.
+	_probe_params = PhysicsRayQueryParameters3D.new()
+	_probe_params.collision_mask = AVOID_WORLD_MASK
+	_probe_params.collide_with_areas = false
+
 
 func _physics_process(delta: float) -> void:
 	## The whole per-frame driver. With a herd alive it advances and animates
@@ -1128,6 +1245,14 @@ func _spawn_herd() -> void:
 	_herd_travelled = 0.0
 	_herd_age = 0.0
 	_herd_offset_max = 0.0
+	# Fresh herd, fresh detour state — a herd that despawned mid-swerve must not
+	# hand its offset to the next one, which walks a completely different line.
+	_avoid_target = 0.0
+	_avoid_offset = 0.0
+	_avoid_velocity = 0.0
+	_probe_timer = 0.0
+	_avoid_hold_until = 0.0
+	_refresh_probe_exclude(player)
 
 	# Build the members with their formation offsets (herd-local lateral/long
 	# pairs turned into world-space vectors — heading never changes, so the
@@ -1279,12 +1404,11 @@ func _update_herd(delta: float) -> void:
 	## at world y = 0 (see endless_terrain.gd), so there is no raycast and no
 	## terrain query anywhere in fauna.
 	##
-	## ponytail: walking through SCENERY is still the accepted ceiling — the
-	## animals' bodies mask nothing (see FAUNA_COLLISION_LAYER), so a herd may
-	## clip a decorative block on its way past; a cheap forward raycast nudge is
-	## the upgrade path if it ever reads badly in play. The rideable colliders
-	## added for the player deliberately did NOT change this: giving fauna a mask
-	## would make herds shove each other and stall against terrain.
+	## Scenery is steered around, not collided with: the animals' bodies still
+	## mask nothing (see FAUNA_COLLISION_LAYER) — the detour comes entirely from
+	## the lookahead feelers below, which READ the world and never touch it.
+	## Giving fauna a collision mask instead would make herds shove each other
+	## and stall against terrain, which is why that is still not done.
 	var player := _find_player()
 	# Despawn when the crossing is over: the herd centre is measured against
 	# the LIVE player position each tick, so "the herd walked past" and "the
@@ -1307,10 +1431,27 @@ func _update_herd(delta: float) -> void:
 	_herd_age += delta
 	_herd_travelled += _herd_speed * delta
 	# Centre = straight line along the heading + the gentle shared meander on
-	# the lateral axis, phased by distance walked (see MEANDER_FREQUENCY).
+	# the lateral axis, phased by distance walked (see MEANDER_FREQUENCY), plus
+	# the obstacle detour below — all three ride the SAME lateral axis, which is
+	# why steering needed no new geometry: it is one more term in the sum every
+	# member is already placed against.
 	_herd_position += _herd_heading * (_herd_speed * delta)
-	var centre := _herd_position \
-			+ _herd_lateral * (sin(_herd_travelled * MEANDER_FREQUENCY) * MEANDER_AMPLITUDE)
+	var meander := sin(_herd_travelled * MEANDER_FREQUENCY) * MEANDER_AMPLITUDE
+
+	# Obstacle lookahead, on its own throttled tick. Probed from where the herd
+	# centre actually IS (detour included), so the feelers describe the corridor
+	# the herd is currently committed to rather than the undeflected line.
+	_probe_timer -= delta
+	if _probe_timer <= 0.0:
+		_probe_timer = AVOID_PROBE_INTERVAL
+		_update_avoid_target(_herd_position + _herd_lateral * (meander + _avoid_offset))
+	# Ease toward the target and record the EXACT rate applied — the facing yaw
+	# below reads it, so a swerving herd turns into its swerve.
+	var avoid_before := _avoid_offset
+	_avoid_offset = move_toward(_avoid_offset, _avoid_target, AVOID_EASE_SPEED * delta)
+	_avoid_velocity = (_avoid_offset - avoid_before) / delta
+
+	var centre := _herd_position + _herd_lateral * (meander + _avoid_offset)
 
 	# The distance test measures `centre` — the point every member is actually
 	# placed relative to, meander included — reduced by this herd's widest
@@ -1330,8 +1471,12 @@ func _update_herd(delta: float) -> void:
 	# every member's motion vector is provably identical and N atan2 calls
 	# would all return the same number. Local forward is -Z, hence the negated
 	# atan2 arguments.
+	# The detour's rate is added in metres per SECOND while the meander's term is
+	# per metre travelled, hence the _herd_speed divide — both legs have to be in
+	# the same units before they can share one atan2.
 	var centre_velocity := _herd_heading + _herd_lateral \
-			* (cos(_herd_travelled * MEANDER_FREQUENCY) * MEANDER_AMPLITUDE * MEANDER_FREQUENCY)
+			* (cos(_herd_travelled * MEANDER_FREQUENCY) * MEANDER_AMPLITUDE * MEANDER_FREQUENCY
+					+ _avoid_velocity / maxf(_herd_speed, 0.001))
 	var yaw := atan2(-centre_velocity.x, -centre_velocity.z)
 
 	# The ease is a soft, uniform lag on the whole formation (members start
@@ -1346,6 +1491,124 @@ func _update_herd(delta: float) -> void:
 		root.rotation.y = yaw
 
 	_animate_animals()
+
+
+func _refresh_probe_exclude(player: Node3D) -> void:
+	## Point the feelers' exclude list at the player's collider, once per herd.
+	##
+	## The player is a CharacterBody3D on layer 1 (scenes/player.tscn leaves
+	## collision_layer at the default), i.e. on the very layer the feelers watch,
+	## so without this a herd would swerve around the PLAYER — the loudest
+	## possible breach of the isolation contract, and one that would only show up
+	## when somebody happened to stand in front of a passing herd. Excluding by
+	## RID (not by an is_in_group check on the hit, the crocodile's idiom) is what
+	## lets the ray carry on THROUGH the player to the massif behind them.
+	_probe_exclude.clear()
+	if player.has_method("get_rid"):
+		_probe_exclude.append(player.get_rid())
+	_probe_params.exclude = _probe_exclude
+
+
+func _probe_clear(space: PhysicsDirectSpaceState3D, origin: Vector3, dir: Vector3,
+		length: float) -> float:
+	## Cast ONE feeler and return how far it got: the hit distance, or the full
+	## `length` when nothing is in the way. Distance rather than a bool
+	## (the crocodile's _feeler_blocked) because the caller steers by comparing
+	## the three feelers' room, and grades the detour by how close the blockage is.
+	_probe_params.from = origin
+	_probe_params.to = origin + dir * length
+	var hit := space.intersect_ray(_probe_params)
+	if hit.is_empty():
+		return length
+	return origin.distance_to(hit["position"])
+
+
+func _update_avoid_target(centre: Vector3) -> void:
+	## Three feelers along the heading — one from the centre and one from each
+	## EDGE of the formation — turned into ONE signed lateral target the caller
+	## eases toward.
+	##
+	## The edge feelers are PARALLEL, not angled whiskers, and that is the whole
+	## reason this works on the case that matters. The bead's acceptance case is a
+	## mountain massif, ~20 m across; the giraffe echelon is ~28 m wide. Angled
+	## whiskers off the centre report where the CENTRE can walk, so a herd steers
+	## until its middle is clear and drags its outermost giraffe straight through
+	## the rock (measured: 100% of aimed trials still clipped, mean penetration
+	## 6.0 m). Parallel rays offset by this herd's own widest slot test the
+	## corridor the MEMBERS occupy, so "clear" means clear for the whole swath.
+	##
+	## Side choice is the clearer edge, with ties going to the side already
+	## committed to — a herd mid-swerve must never change its mind halfway, and a
+	## symmetric obstacle dead ahead (both edges clear, centre blocked) is exactly
+	## a tie.
+	##
+	## ponytail: coarse by design and by the bead — three rays through a 30 m
+	## swath will walk a 1–2 m scattered block between two feelers, and a herd
+	## that meets a massif with less than ~35 m of warning (a chunk streaming in
+	## late, or a mountain range with no gap) runs out of room to open the full
+	## berth and still grazes stone. Mountains, camps and tree stands are what
+	## matter and they are covered. The upgrade path is a shape cast — one capsule
+	## the width of the formation instead of three rays — which is strictly more
+	## expensive and buys only the clutter nobody notices.
+	if _probe_params == null:
+		return
+	var viewport := get_viewport()
+	if viewport == null:
+		return
+	var space := viewport.world_3d.direct_space_state
+	if space == null:
+		return
+
+	# The feelers bracket the whole formation: offset sideways by this herd's own
+	# widest slot, and started behind it, so between them they sweep the corridor
+	# the MEMBERS occupy rather than the line the centre walks.
+	var reach := _herd_offset_max + AVOID_EDGE_MARGIN
+	var origin := Vector3(centre.x, AVOID_PROBE_HEIGHT, centre.z) \
+			- _herd_heading * (reach + AVOID_PROBE_SETBACK)
+	var length := AVOID_LOOKAHEAD + reach + AVOID_PROBE_SETBACK
+	var edge := _herd_lateral * reach
+	var forward_clear := _probe_clear(space, origin, _herd_heading, length)
+	var plus_clear := _probe_clear(space, origin + edge, _herd_heading, length)
+	var minus_clear := _probe_clear(space, origin - edge, _herd_heading, length)
+
+	var tightest := minf(forward_clear, minf(plus_clear, minus_clear))
+	if tightest >= length:
+		# Open country — the 99% case, and the one that costs the least: the
+		# detour unwinds and the herd is back on its migration line, but ONLY
+		# once it has walked past what it stepped around (see _avoid_hold_until).
+		if _herd_travelled >= _avoid_hold_until:
+			_avoid_target = 0.0
+		return
+
+	var side := 1.0 if plus_clear > minus_clear else -1.0
+	if absf(plus_clear - minus_clear) < 0.01:
+		side = 1.0 if _avoid_target >= 0.0 else -1.0
+	# Blocked: walk toward the cap on the clear side. The target is only ever a
+	# DIRECTION — AVOID_EASE_SPEED is the rate limiter, and the moment the
+	# corridor clears the branch above pulls the target back to zero, so the herd
+	# stops exactly as far out as it needed to be rather than at the cap.
+	#
+	# Grading the push by distance (target = offset + step × how-near-it-is) was
+	# tried first and is the version that FAILS: it barely pushes at range, so a
+	# herd that needs ~28 m of berth around a massif only starts moving at ~20 m
+	# out and arrives half-swerved (measured 92.5% of aimed trials still clipping,
+	# 5.1 m mean penetration). Starting the swerve the instant anything enters the
+	# corridor is what buys the room.
+	_avoid_target = side * AVOID_MAX_OFFSET
+	# Hold this berth until the herd has walked past the thing that caused it.
+	# THE FEELERS CANNOT TELL US WHEN THAT IS: they point forward, and a herd
+	# that has swerved WIDER than the obstacle no longer has any ray crossing it
+	# — the rock is inboard of the innermost feeler. So "all clear" arrives while
+	# the obstacle is still abeam, and unwinding there walks the rear of the
+	# formation straight back into it (measured: 45% of aimed trials still
+	# clipping, every failure on the unwind, with the offset already decayed to
+	# 3-7 m at closest approach).
+	#
+	# The mark is derived from what the ray actually measured rather than from a
+	# guessed constant, so it scales with how far off the obstacle was: travel
+	# past where it was seen, plus the formation's own depth so the REAR members
+	# clear it too.
+	_avoid_hold_until = _herd_travelled + tightest + reach
 
 
 func _animate_animals() -> void:
