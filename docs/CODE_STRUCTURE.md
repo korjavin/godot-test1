@@ -1,6 +1,6 @@
 # Code Structure and Architecture Guide 🏗️
 
-This document explains the architecture, design patterns, and code organization of the Zelda-like educational game project.
+This document explains the architecture, design patterns, and code organization of the CrimeKickers project.
 
 ## Table of Contents
 

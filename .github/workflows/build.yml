@@ -21,7 +21,6 @@ concurrency:
 
 env:
   GODOT_VERSION: 4.5
-  EXPORT_NAME: zelda-like-game
 
 jobs:
   # ============================================================================
