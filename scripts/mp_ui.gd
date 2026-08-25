@@ -230,6 +230,16 @@ func _build_ui() -> void:
 	_mp_button.text = "MP"
 	_mp_button.add_theme_font_size_override("font_size", 24)
 	_mp_button.custom_minimum_size = Vector2(MP_BUTTON_WIDTH, MP_BUTTON_HEIGHT)
+	# NEVER let a gameplay HUD button take keyboard focus. Godot's `BaseButton`
+	# defaults to `FOCUS_ALL` and KEEPS the focus after a click, and a focused
+	# button is activated by `ui_accept` — which is SPACE, which is also `jump`.
+	# So one click on "MP" turned every later jump into another panel toggle, for
+	# the rest of the session, with no way to click the focus away (this Control
+	# is MOUSE_FILTER_IGNORE, so a click on the world lands on nothing focusable).
+	# This button is the one that bites hardest because it never hides — the
+	# panel's own buttons at least lose focus when the panel is hidden — but every
+	# Button here is FOCUS_NONE for the same reason. See `_make_button`.
+	_mp_button.focus_mode = Control.FOCUS_NONE
 	_mp_button.anchor_left = 0.0
 	_mp_button.anchor_right = 0.0
 	_mp_button.anchor_top = 1.0
@@ -373,10 +383,17 @@ func _build_ui() -> void:
 
 
 ## Make one full-width, thumb-sized button wired to `handler`. Every button in
-## the panel goes through here so the touch-target minimum can't be forgotten.
+## the panel goes through here so the touch-target minimum — and the FOCUS_NONE
+## rule below — can't be forgotten by the next button somebody adds.
 func _make_button(label: String, handler: Callable) -> Button:
 	var button := Button.new()
 	button.text = label
+	# Keyboard focus is poison on a gameplay HUD — see `_build_ui`. Space is both
+	# `ui_accept` and `jump`, so a focused Host/Join/Copy/Leave button fires again
+	# on every jump. Panel buttons are less sticky than the MP toggle (hiding the
+	# panel drops focus), but "less sticky" is not "fixed": Host and Join leave the
+	# panel OPEN, so the very next Space press re-hosts or re-joins.
+	button.focus_mode = Control.FOCUS_NONE
 	button.add_theme_font_size_override("font_size", BODY_FONT_SIZE)
 	button.custom_minimum_size = Vector2(0.0, TOUCH_MIN_HEIGHT)
 	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -439,6 +456,12 @@ func _on_join_pressed() -> void:
 	if code.length() != CODE_LENGTH:
 		_on_status("An invite code is %d characters" % CODE_LENGTH)
 		return
+	# Done typing — drop the caret so a phone's on-screen keyboard folds away and
+	# stops covering the status line this join is about to write. Both entry
+	# points land here (the Join button and Enter/"go" via `text_submitted`), so
+	# this is the one place it belongs. It matters MORE now that Join is
+	# FOCUS_NONE: tapping the button no longer steals the focus off the field.
+	_code_input.release_focus()
 	var manager := _ensure_manager()
 	if manager == null or not manager.has_method("join"):
 		_on_status("Multiplayer is not available in this scene")
@@ -612,11 +635,20 @@ func _set_panel_open(open: bool) -> void:
 		var view_height: float = get_viewport().get_visible_rect().size.y
 		_panel_body.offset_top = maxf(_panel_body.offset_bottom - PANEL_HEIGHT, -view_height + EDGE_MARGIN)
 		_refresh()
-	elif _recapture_mouse:
-		# Closing is a user gesture, which is exactly what browser pointer-lock
-		# needs, so this works on desktop web too.
-		_recapture_mouse = false
-		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+	else:
+		# The code field is the ONE control in this panel that legitimately takes
+		# keyboard focus — you have to type into it — so it cannot be FOCUS_NONE
+		# like the buttons. Hand the focus back on the way out: hiding a Control
+		# already drops it, but this also dismisses a phone's on-screen keyboard,
+		# and it means no future refactor that closes the panel WITHOUT hiding it
+		# can leave a text field quietly eating W/A/S/D.
+		if _code_input != null:
+			_code_input.release_focus()
+		if _recapture_mouse:
+			# Closing is a user gesture, which is exactly what browser pointer-lock
+			# needs, so this works on desktop web too.
+			_recapture_mouse = false
+			Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 
 
 ## Take or release the pause for the panel's current state.

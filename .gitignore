@@ -69,5 +69,7 @@ ios/
 !export_presets.cfg
 
 # Godot addons — the desktop-only WebRTC GDExtension (webrtc-native) is fetched
-# from its releases page, never vendored. The web build needs no addon at all.
+# by ./fetch_webrtc_addon.sh from a pinned release, never vendored (37 MB of
+# binaries, MPL-2.0 bundled libs). The web build needs no addon at all, and the
+# Web export preset excludes addons/* so an installed one cannot reach it.
 addons/
