@@ -5,8 +5,13 @@ extends Control
 ## The player-facing face of `mp_manager.gd`. A small "MP" button parked in the
 ## bottom-left corner opens a panel that can:
 ##
+##   * show the **list of open rooms** the lobby is currently hosting, one
+##     tappable row each, and join one in a single press — this LEADS the panel
+##     because the owner's verdict on the invite-code-only flow was "copy code
+##     not convenient, show a list of opened lobbies",
 ##   * **Host** a room (the lobby mints a fresh 6-character invite code),
-##   * **Join** one by typing a friend's code,
+##   * **Join** one by typing a friend's code — kept as the fallback for reaching
+##     one *specific* person's room, not the way in,
 ##   * show the room's code large with a **Copy** button so it can be pasted
 ##     into a chat, plus who is currently in the room,
 ##   * **pick a hero** from the lobby's pool — one button per hero, the ones
@@ -29,6 +34,15 @@ extends Control
 ## shows an inert button instead of erroring. Live updates arrive on the
 ## manager's `room_changed` / `status` / `heroes_changed` signals, connected
 ## once when the manager is first found.
+##
+## ----------------------------------------------------------------------------
+## The MP button IS the room indicator
+## ----------------------------------------------------------------------------
+## While in a room the toggle relabels itself to the code and the head count
+## ("ABC234  2/4") instead of "MP". That is the persistent "you are online"
+## indicator the plan asks for, at the cost of no extra node and no extra draw:
+## the one control that is always on screen already, saying the one thing a
+## player in a room needs to see without opening anything.
 ##
 ## ----------------------------------------------------------------------------
 ## Visible on EVERY platform — deliberately not touch-gated
@@ -68,6 +82,13 @@ extends Control
 const MP_BUTTON_WIDTH: float = 110.0
 const MP_BUTTON_HEIGHT: float = 56.0
 
+## The same button, widened for its in-room label ("ABC234  2/4"). Six code
+## characters plus the head count do not fit the 110 px "MP" width, and a button
+## that clips its own room code is not an indicator.
+const MP_BUTTON_WIDTH_ONLINE: float = 190.0
+const MP_BUTTON_FONT_SIZE: int = 24
+const MP_BUTTON_FONT_SIZE_ONLINE: int = 19
+
 ## Margin (px) from the screen edge, matching the settings panel's spacing.
 const EDGE_MARGIN: float = 16.0
 
@@ -85,7 +106,7 @@ const BUTTON_STACK_GAP: float = 8.0
 ## `TOUCH_MIN_HEIGHT` button plus the VBox separation and the row's own label,
 ## which is what the hero picker added.
 const PANEL_WIDTH: float = 360.0
-const PANEL_HEIGHT: float = 510.0
+const PANEL_HEIGHT: float = 620.0
 
 ## Minimum height for every interactive row (button, LineEdit). Past the ~44-48
 ## pt minimum touch target so the panel is thumb-usable on a phone.
@@ -95,6 +116,24 @@ const TOUCH_MIN_HEIGHT: float = 48.0
 ## an alphabet with no `0/O/1/I/L`. Clamping the LineEdit means an over-long
 ## typo is rejected before the lobby ever has to see it.
 const CODE_LENGTH: int = 6
+
+## The lobby's room cap (`server/room.go`'s `MaxMembers`). Mirrored rather than
+## fetched, exactly like `TUNE_GEAR_HEIGHT` above: a stale value here costs a
+## wrong "n/4" in a label, never a wrong join — the lobby refuses a fifth member
+## whatever this says.
+const MAX_MEMBERS: int = 4
+
+## How many room rows to draw at most. The lobby's answer is untrusted input off
+## an HTTP socket, and a busy public lobby is a legitimate reason for it to be
+## long; either way a panel with two hundred buttons in it is not a list a player
+## reads. Refresh is the way to see a changed set, not scrolling.
+const ROOM_ROW_MAX: int = 8
+
+## How many claimed heroes a room row names before it stops. The row is one
+## clipped line inside a 360 px panel, so this is a width budget: two names plus
+## the code and the head count is about what fits before the clip starts eating
+## characters.
+const ROOM_ROW_HERO_MAX: int = 2
 
 ## Font sizes: the room code is shown large because it is the thing a player
 ## reads aloud or copies to a friend.
@@ -155,6 +194,20 @@ var _hero_row: VBoxContainer = null
 var _hero_buttons: Array[Button] = []
 var _hero_pool: Array[String] = []
 
+## The open-room list: the section wrapper (hidden while in a room — there is
+## nothing to pick once you are in one), the one-line status/empty message, the
+## box the room buttons live in, and those buttons. Rebuilt wholesale on every
+## answer, like `_rebuild_hero_buttons()`, because a room list is small and a
+## diff of it would be more code than a rebuild.
+var _rooms_section: VBoxContainer = null
+var _rooms_status: Label = null
+var _rooms_box: VBoxContainer = null
+var _rooms_buttons: Array[Button] = []
+
+## True while a `/rooms` fetch is in flight, so a mashed ↻ does not stack
+## requests the lobby will answer with ERR_BUSY anyway.
+var _rooms_pending: bool = false
+
 ## Host / Join are only useful offline, Leave only in a room — `_refresh()`
 ## flips them so the panel never offers a meaningless action.
 var _host_button: Button = null
@@ -177,6 +230,10 @@ func _ready() -> void:
 	# and the open panel body keep their own STOP filter and still get their taps.
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 
+	# The start overlay's "Multiplayer" button opens this panel through the group,
+	# the same no-hard-references rule everything else here follows.
+	add_to_group("mp_ui")
+
 	_build_ui()
 	_ensure_manager()
 	_refresh()
@@ -184,7 +241,8 @@ func _ready() -> void:
 
 ## Yield the screen to TouchControls' full-rect overlays — the exact three lines
 ## `mobile_settings_panel.gd` runs for its ⚙ gear, for the exact same reason.
-## This Control is the LAST child of `HUD`, so it draws above TouchControls and
+## This Control draws above TouchControls (only `StartOverlay`, the boot-time
+## modal, sits later in `HUD` than it does) and
 ## wins hit-testing: an unhidden MP button in the bottom-left corner steals taps
 ## from the first-run "tap to enable motion controls" overlay — and that tap is
 ## the ONE user gesture iOS grants `DeviceMotionEvent.requestPermission()` and
@@ -200,7 +258,7 @@ func _process(_delta: float) -> void:
 	# Yield to the ⚙ Tune panel for the same reason, one sibling further along.
 	# That panel's body opens UPWARD from just above its gear — bottom offsets
 	# [-664, -84], left [16, 396] — which contains this button's [-140, -84] x
-	# [16, 126] entirely. MultiplayerUI is the LAST HUD child, so it draws over
+	# [16, 126] entirely. MultiplayerUI draws after MobileSettingsPanel, so it wins
 	# the panel and wins hit-testing: without this the panel's bottom-left corner
 	# (where its Close row sits) opens the MP panel instead.
 	var tune_ui: Node = get_tree().get_first_node_in_group("mobile_settings")
@@ -228,7 +286,7 @@ func _build_ui() -> void:
 	_mp_button = Button.new()
 	_mp_button.name = "MPButton"
 	_mp_button.text = "MP"
-	_mp_button.add_theme_font_size_override("font_size", 24)
+	_mp_button.add_theme_font_size_override("font_size", MP_BUTTON_FONT_SIZE)
 	_mp_button.custom_minimum_size = Vector2(MP_BUTTON_WIDTH, MP_BUTTON_HEIGHT)
 	# NEVER let a gameplay HUD button take keyboard focus. Godot's `BaseButton`
 	# defaults to `FOCUS_ALL` and KEEPS the focus after a click, and a focused
@@ -300,11 +358,57 @@ func _build_ui() -> void:
 	_status_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	vbox.add_child(_status_label)
 
+	# --- Open rooms: the LEADING way in -----------------------------------
+	# Every open room on the lobby is public and appears here (`GET /rooms`) —
+	# there is no opt-in and no way to hide a room. One press on a row joins it,
+	# which is the whole reason this exists: the owner's playtest verdict on the
+	# code-only flow was that copying a code around is not convenient.
+	_rooms_section = VBoxContainer.new()
+	_rooms_section.name = "Rooms"
+	_rooms_section.add_theme_constant_override("separation", 6)
+	_rooms_section.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	vbox.add_child(_rooms_section)
+
+	var rooms_header := HBoxContainer.new()
+	rooms_header.add_theme_constant_override("separation", 8)
+	rooms_header.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_rooms_section.add_child(rooms_header)
+
+	var rooms_title := Label.new()
+	rooms_title.text = "Open rooms"
+	rooms_title.add_theme_font_size_override("font_size", BODY_FONT_SIZE)
+	rooms_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	rooms_header.add_child(rooms_title)
+
+	var refresh_button := _make_button("Refresh", _on_refresh_rooms_pressed)
+	refresh_button.size_flags_horizontal = Control.SIZE_SHRINK_END
+	rooms_header.add_child(refresh_button)
+
+	_rooms_status = Label.new()
+	_rooms_status.name = "RoomsStatus"
+	_rooms_status.text = ""
+	_rooms_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_rooms_status.add_theme_font_size_override("font_size", BODY_FONT_SIZE)
+	_rooms_status.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_rooms_section.add_child(_rooms_status)
+
+	_rooms_box = VBoxContainer.new()
+	_rooms_box.name = "RoomList"
+	_rooms_box.add_theme_constant_override("separation", 6)
+	_rooms_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_rooms_section.add_child(_rooms_box)
+
 	# --- Host -------------------------------------------------------------
-	_host_button = _make_button("Host a room", _on_host_pressed)
+	_host_button = _make_button("Host a new room", _on_host_pressed)
 	vbox.add_child(_host_button)
 
-	# --- Join by code -----------------------------------------------------
+	# --- Join by code (the FALLBACK, for reaching one specific friend) -----
+	var code_title := Label.new()
+	code_title.text = "…or join by invite code"
+	code_title.add_theme_font_size_override("font_size", BODY_FONT_SIZE)
+	code_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	vbox.add_child(code_title)
+
 	var join_row := HBoxContainer.new()
 	join_row.add_theme_constant_override("separation", 8)
 	join_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -511,6 +615,139 @@ func _on_status(message: String) -> void:
 
 
 # ============================================================================
+# OPEN-ROOM LIST
+# ============================================================================
+## EVERY open room on the lobby appears here — rooms are public by default and
+## there is no opt-in flag (the owner overrode the epic's invite-code-only
+## framing: "copy code not convenient, show a list of opened lobbies"). The
+## invite code stays as the way to reach one *specific* friend's room.
+##
+## The list is pulled on demand — when the panel opens and when Refresh is
+## pressed — and never polled. A timer would run for the whole session to keep a
+## list fresh that is only looked at in the seconds the panel is open, and the
+## lobby has no push channel for it that would not mean joining a room first.
+
+func _on_refresh_rooms_pressed() -> void:
+	_refresh_rooms()
+
+
+## Ask the manager for the lobby's open rooms. Safe to call any time: in a room
+## the section is hidden and there is nothing to draw, and without a manager it
+## says so instead of erroring.
+func _refresh_rooms() -> void:
+	if _rooms_pending:
+		return
+	var manager := _ensure_manager()
+	if manager == null or not manager.has_method("list_rooms"):
+		_clear_room_buttons()
+		_set_rooms_status("Multiplayer is not available in this scene")
+		return
+	_rooms_pending = true
+	_set_rooms_status("Looking for rooms…")
+	manager.list_rooms(_on_rooms_listed)
+
+
+## Draw the lobby's answer.
+##
+## The array is untrusted input off an HTTP socket, so every row is checked
+## whole before it becomes a button — the same rule `_member_lines()` applies to
+## the member list, and for the same reason: a malformed entry must cost that one
+## row, not the panel. A code that is not exactly `CODE_LENGTH` characters is
+## dropped rather than trimmed, because a button that joins a code the lobby
+## never offered would create a junk room.
+func _on_rooms_listed(rooms: Array) -> void:
+	_rooms_pending = false
+	# The fetch outlives nothing here (this is a HUD node), but a callback landing
+	# after a scene change would otherwise touch freed children.
+	if not is_inside_tree():
+		return
+	_clear_room_buttons()
+
+	for entry: Variant in rooms:
+		if _rooms_buttons.size() >= ROOM_ROW_MAX:
+			break
+		if typeof(entry) != TYPE_DICTIONARY:
+			continue
+		var room: Dictionary = entry as Dictionary
+		var code: String = String(room.get("code", "")).strip_edges().to_upper()
+		if code.length() != CODE_LENGTH:
+			continue
+		var count: int = int(room.get("members", 0))
+		# The lobby already withholds full and empty rooms; re-checking here means
+		# an older or misbehaving lobby cannot put an unjoinable row on screen.
+		if count < 1 or count >= MAX_MEMBERS:
+			continue
+		var label: String = "%s  ·  %d/%d" % [code, count, MAX_MEMBERS]
+		var heroes: String = _hero_summary(room.get("heroes", []))
+		if not heroes.is_empty():
+			label += "  ·  %s" % heroes
+		# `bind` rather than a capturing lambda, for the same reason the hero
+		# buttons use it: the code a row joins is fixed at build time.
+		var button := _make_button(label, _on_room_row_pressed.bind(code))
+		# One line, clipped rather than wrapped or widened: the row must stay a
+		# fixed-height touch target whatever the lobby put in it, and the code —
+		# the part that identifies the room — is at the front where clipping
+		# cannot reach it.
+		button.clip_text = true
+		_rooms_box.add_child(button)
+		_rooms_buttons.append(button)
+
+	if _rooms_buttons.is_empty():
+		_set_rooms_status("No open rooms — host one and a friend can join it here")
+	else:
+		_set_rooms_status("Tap a room to join")
+	# Rows are only pressable while offline; `_refresh()` owns that rule.
+	_refresh()
+
+
+## One press on a row IS the join — no code to read, type or copy.
+func _on_room_row_pressed(code: String) -> void:
+	var manager := _ensure_manager()
+	if manager == null or not manager.has_method("join"):
+		_on_status("Multiplayer is not available in this scene")
+		return
+	manager.join(code)
+
+
+func _clear_room_buttons() -> void:
+	if _rooms_box == null:
+		return
+	for button: Button in _rooms_buttons:
+		# Unparent BEFORE freeing — `queue_free` only lands at the end of the
+		# frame, so a stale row would sit under its replacement for one frame of a
+		# visibly doubled list. Same rule as `_rebuild_hero_buttons()`.
+		_rooms_box.remove_child(button)
+		button.queue_free()
+	_rooms_buttons.clear()
+
+
+func _set_rooms_status(message: String) -> void:
+	if _rooms_status != null:
+		_rooms_status.text = message
+
+
+## "Windman, Primm" from the lobby's hero array, so a row says who is already in
+## the room. Untrusted like everything else in the entry: non-strings are skipped
+## and the list is capped, because this is a button label, not a document.
+func _hero_summary(value: Variant) -> String:
+	if typeof(value) != TYPE_ARRAY:
+		return ""
+	var names: PackedStringArray = PackedStringArray()
+	for hero: Variant in value as Array:
+		if names.size() >= ROOM_ROW_HERO_MAX:
+			break
+		if typeof(hero) != TYPE_STRING:
+			continue
+		var text: String = (hero as String).strip_edges()
+		if text.is_empty():
+			continue
+		names.append(text.capitalize())
+	if names.is_empty():
+		return ""
+	return ", ".join(names)
+
+
+# ============================================================================
 # HERO PICKER
 # ============================================================================
 ## THE LOBBY IS THE SOURCE OF TRUTH. Pressing a hero only sends a claim; the
@@ -620,6 +857,17 @@ func _member_name(manager: Node, id: String) -> String:
 ## Pausing is the one-line fix for both, because `process_mode` gates `_input`
 ## and `_physics_process` together. `MpManager` sets itself PROCESS_MODE_ALWAYS,
 ## so the socket and the mesh keep being polled while the panel is up.
+## Open the panel from outside — the start overlay's "Multiplayer" button, found
+## through the `"mp_ui"` group. Idempotent, so a second press is harmless.
+##
+## The overlay releases its own pause before calling this, and `_set_panel_open`
+## takes ours synchronously, so the tree is never unpaused for even one frame
+## between the two.
+func open_panel() -> void:
+	if not _panel_open:
+		_set_panel_open(true)
+
+
 func _set_panel_open(open: bool) -> void:
 	_panel_open = open
 	if _panel_body != null:
@@ -635,6 +883,12 @@ func _set_panel_open(open: bool) -> void:
 		var view_height: float = get_viewport().get_visible_rect().size.y
 		_panel_body.offset_top = maxf(_panel_body.offset_bottom - PANEL_HEIGHT, -view_height + EDGE_MARGIN)
 		_refresh()
+		# Pull the room list on open — the panel is the only place it is read, so
+		# this is the moment it needs to be fresh, and it is why no timer polls it.
+		# Skipped in a room: the section is hidden there and a request for a list
+		# nobody can see is a request not worth making.
+		if not _is_online():
+			_refresh_rooms()
 	else:
 		# The code field is the ONE control in this panel that legitimately takes
 		# keyboard focus — you have to type into it — so it cannot be FOCUS_NONE
@@ -714,6 +968,31 @@ func _refresh() -> void:
 	if _leave_button != null:
 		_leave_button.disabled = not online
 
+	# The room list is a way IN, so it is hidden once you are in a room — unlike
+	# Host/Join it is not merely meaningless there, it is a whole section of rows
+	# that would push everything a player actually needs (code, heroes, Leave)
+	# below the fold. Rows are disabled too, in case one is somehow pressed
+	# between a join landing and this refresh.
+	if _rooms_section != null:
+		_rooms_section.visible = not online
+	for button: Button in _rooms_buttons:
+		button.disabled = online
+
+	# THE PERSISTENT ROOM INDICATOR. The always-on toggle becomes the read-out:
+	# code plus head count while in a room, plain "MP" while solo. See the header.
+	if _mp_button != null:
+		if online and not code.is_empty():
+			var count: int = 0
+			if manager.has_method("get_members"):
+				count = manager.get_members().size()
+			_mp_button.text = "%s  %d/%d" % [code, count, MAX_MEMBERS]
+			_mp_button.add_theme_font_size_override("font_size", MP_BUTTON_FONT_SIZE_ONLINE)
+			_mp_button.offset_right = EDGE_MARGIN + MP_BUTTON_WIDTH_ONLINE
+		else:
+			_mp_button.text = "MP"
+			_mp_button.add_theme_font_size_override("font_size", MP_BUTTON_FONT_SIZE)
+			_mp_button.offset_right = EDGE_MARGIN + MP_BUTTON_WIDTH
+
 	if _hero_row != null:
 		_hero_row.visible = online and not _hero_buttons.is_empty()
 
@@ -724,6 +1003,13 @@ func _refresh() -> void:
 
 	if _members_label != null:
 		_members_label.text = _member_lines(manager)
+
+
+## True while the manager reports an actual room. False with no manager at all,
+## so a scene without the Multiplayer node reads as "solo" everywhere.
+func _is_online() -> bool:
+	var manager := _ensure_manager()
+	return manager != null and manager.has_method("is_online") and bool(manager.is_online())
 
 
 ## The current room code, or "" when there is no room (or no manager).

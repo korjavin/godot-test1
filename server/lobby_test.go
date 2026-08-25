@@ -337,3 +337,167 @@ func TestICECORS(t *testing.T) {
 		}
 	}
 }
+
+// codes is the invite codes ListRooms currently advertises, for assertions that
+// only care about which rooms are on the list.
+func codes(rooms []RoomInfo) []string {
+	out := make([]string, 0, len(rooms))
+	for _, r := range rooms {
+		out = append(out, r.Code)
+	}
+	return out
+}
+
+// TestListRoomsTracksMembership is the public room list's acceptance criterion:
+// EVERY open room is listed (rooms are public by default — there is no opt-in),
+// the member count follows joins and leaves, a room that fills up drops off the
+// list, and the last member leaving takes the room with it.
+func TestListRoomsTracksMembership(t *testing.T) {
+	hub := NewHub()
+	if got := hub.ListRooms(); len(got) != 0 {
+		t.Fatalf("fresh hub listed %v", codes(got))
+	}
+
+	// Create — one member, immediately listed with no opt-in of any kind.
+	room, host, err := hub.Join("", "host", "id-1")
+	if err != nil {
+		t.Fatalf("join: %v", err)
+	}
+	got := hub.ListRooms()
+	if len(got) != 1 || got[0].Code != room.Code || got[0].Members != 1 {
+		t.Fatalf("after create: %+v", got)
+	}
+	if len(got[0].Heroes) != 0 {
+		t.Fatalf("nobody has claimed a hero yet: %v", got[0].Heroes)
+	}
+
+	// Join — the count follows, and embodied heroes show up so the list can say
+	// who is already in the room.
+	_, second, err := hub.Join(room.Code, "second", "id-2")
+	if err != nil {
+		t.Fatalf("join 2: %v", err)
+	}
+	if err := room.SetHero(second, "primm"); err != nil {
+		t.Fatalf("set hero: %v", err)
+	}
+	if err := room.SetHero(host, "windman"); err != nil {
+		t.Fatalf("set hero: %v", err)
+	}
+	got = hub.ListRooms()
+	if len(got) != 1 || got[0].Members != 2 {
+		t.Fatalf("after second join: %+v", got)
+	}
+	// Sorted, so an unchanged room does not reshuffle between refreshes.
+	if len(got[0].Heroes) != 2 || got[0].Heroes[0] != "primm" || got[0].Heroes[1] != "windman" {
+		t.Fatalf("heroes = %v, wanted [primm windman]", got[0].Heroes)
+	}
+
+	// Fill it — a full room is not joinable, so it must not be offered.
+	if _, _, err := hub.Join(room.Code, "third", "id-3"); err != nil {
+		t.Fatalf("join 3: %v", err)
+	}
+	_, fourth, err := hub.Join(room.Code, "fourth", "id-4")
+	if err != nil {
+		t.Fatalf("join 4: %v", err)
+	}
+	if got := hub.ListRooms(); len(got) != 0 {
+		t.Fatalf("a full room was listed: %+v", got)
+	}
+
+	// One leaves — a seat opened, so the room is joinable and listed again.
+	room.Leave(fourth)
+	got = hub.ListRooms()
+	if len(got) != 1 || got[0].Members != 3 {
+		t.Fatalf("after a leave: %+v", got)
+	}
+
+	// Everybody leaves — the room is collected, so nothing is left to list.
+	for _, m := range []*Member{host, second} {
+		room.Leave(m)
+	}
+	if got := hub.ListRooms(); len(got) != 1 || got[0].Members != 1 {
+		t.Fatalf("expected the last member's room still listed: %+v", got)
+	}
+	for _, m := range room.members {
+		room.Leave(m)
+	}
+	if got := hub.ListRooms(); len(got) != 0 {
+		t.Fatalf("an emptied room was still listed: %v", codes(got))
+	}
+}
+
+// TestListRoomsSkipsMemberlessRoom guards the invariant the listing depends on:
+// a room with no members is a room mid-teardown and must never be advertised.
+// `Leave` deletes such a room under the same mutex, so this state is unreachable
+// through the public API today — it is built by hand precisely because the check
+// exists to survive a future path that does not hold that property.
+func TestListRoomsSkipsMemberlessRoom(t *testing.T) {
+	hub := NewHub()
+	hub.rooms["ZZZZZZ"] = &Room{
+		h:       hub,
+		Code:    "ZZZZZZ",
+		members: make(map[string]*Member),
+		heroes:  make(map[string]string),
+		reports: make(map[string]map[string]bool),
+	}
+	if got := hub.ListRooms(); len(got) != 0 {
+		t.Fatalf("a member-less room was listed: %+v", got)
+	}
+}
+
+// TestRoomsEndpoint checks the wire shape the game parses, plus the CORS header
+// it needs to be readable at all from the GitHub Pages origin.
+func TestRoomsEndpoint(t *testing.T) {
+	restore := allowedOrigins
+	t.Cleanup(func() { allowedOrigins = restore })
+	allowedOrigins = []string{"korjavin.github.io"}
+
+	hub := NewHub()
+	room, m, err := hub.Join("", "host", "id-1")
+	if err != nil {
+		t.Fatalf("join: %v", err)
+	}
+	if err := room.SetHero(m, "teibi"); err != nil {
+		t.Fatalf("set hero: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/rooms", nil)
+	req.Header.Set("Origin", "https://korjavin.github.io")
+	rec := httptest.NewRecorder()
+	hub.roomsHandler(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "https://korjavin.github.io" {
+		t.Errorf("CORS header = %q", got)
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("Cache-Control = %q, wanted no-store", got)
+	}
+
+	var body struct {
+		Rooms []RoomInfo `json:"rooms"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal %q: %v", rec.Body.String(), err)
+	}
+	if len(body.Rooms) != 1 {
+		t.Fatalf("rooms = %+v", body.Rooms)
+	}
+	if body.Rooms[0].Code != room.Code || body.Rooms[0].Members != 1 {
+		t.Errorf("room = %+v, wanted %s with 1 member", body.Rooms[0], room.Code)
+	}
+	if len(body.Rooms[0].Heroes) != 1 || body.Rooms[0].Heroes[0] != "teibi" {
+		t.Errorf("heroes = %v, wanted [teibi]", body.Rooms[0].Heroes)
+	}
+
+	// An unlisted origin gets no header, exactly like /ice.
+	req = httptest.NewRequest(http.MethodGet, "/rooms", nil)
+	req.Header.Set("Origin", "https://evil.example")
+	rec = httptest.NewRecorder()
+	hub.roomsHandler(rec, req)
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Errorf("evil origin got %q", got)
+	}
+}
