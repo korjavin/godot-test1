@@ -27,11 +27,21 @@ class_name BestRunStore
 ##     best is thrown away by the switch; see `_read_local`.
 ##
 ##   * SERVER — `GET`/`POST <lobby>/best?id=<player id>` on the same Go lobby the
-##     multiplayer code already talks to (`server/best.go`). This is what makes a
-##     best follow a player **between devices**, and it is the owner-chosen fix.
-##     Every failure is silent and non-fatal: the local layer has already
-##     answered, so a lobby that is down, old, or blocked by CORS costs nothing
-##     but the cross-device half.
+##     multiplayer code already talks to (`server/best.go`). It is the
+##     owner-chosen fix, and what it actually buys is that a record survives the
+##     browser throwing site storage away. Every failure is silent and non-fatal:
+##     the local layer has already answered, so a lobby that is down, old, or
+##     blocked by CORS costs nothing but the server half.
+##
+##     **CEILING — "follows you between devices" means devices that SHARE THE ID,
+##     and nothing here transfers one.** The id is minted per browser profile and
+##     per install, so a second device starts a fresh record; wiping localStorage
+##     *and* `user://` on the one device orphans the old record too (it stays on
+##     the server, unreachable, until the cap evicts it). That is the bead's own
+##     design — this game has no accounts and the owner scoped the acceptance to
+##     "devices sharing the player id". `ponytail:` the upgrade path is showing
+##     the id somewhere the player can copy it and accepting a pasted one, which
+##     is a UI feature, not a change here; a real login is the one after that.
 ##
 ## RECORDS ONLY EVER GO UP, on both layers and on the server. That is what makes
 ## the ordering irrelevant: `loaded` fires once with the local values (inside

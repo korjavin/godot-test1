@@ -11,8 +11,12 @@ package main
 // the failure is not the code: it is SITE STORAGE not surviving in a particular
 // browser (Safari/iOS purges IndexedDB for sites without recent interaction, a
 // private window keeps nothing, and two origins have two stores). No amount of
-// client-side cleverness fixes that. A record kept on the server does, and it
-// follows a player between devices as well.
+// client-side cleverness fixes that. A record kept on the server does.
+//
+// It also follows a player between devices — but only devices that SHARE THE ID,
+// and nothing mints or transfers one but the client's own local store. There are
+// no accounts in this game; the owner scoped it to "devices sharing the player
+// id" deliberately. See the ceiling note in scripts/best_run_store.gd.
 //
 // PERSONAL BESTS ONLY. There is no leaderboard, no listing route, and nothing
 // here is ever enumerated to a client — a caller can read and raise exactly the

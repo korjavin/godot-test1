@@ -84,9 +84,11 @@ leaving the room master-less.
   to end in Chromium and WebKit, but IndexedDB is site storage: Safari/iOS purges
   it for sites without recent interaction, a private window keeps none of it, and
   the GitHub Pages build and the deployed host are two different origins with two
-  different stores. A record kept here survives all three, and follows a player
-  between devices. **Personal bests only — there is no leaderboard and no listing
-  route.** Unauthenticated like `/ice`, so anyone who knows an id can read and
+  different stores. A record kept here survives all three. It also follows a
+  player between devices — but only devices that **share the id**, and nothing
+  mints or transfers one but the client's own local store; this game has no
+  accounts, and the owner scoped it that way. **Personal bests only — there is no
+  leaderboard and no listing route.** Unauthenticated like `/ice`, so anyone who knows an id can read and
   raise that record; the id is a client-generated 128-bit token that appears in no
   listing, the stake is a number in a toy game, and `server/best.go` says so at
   length. `LOBBY_BEST_FILE` (default `/data/best.json`, on a named volume) is
