@@ -298,7 +298,7 @@ All of them:
 
 ### Task 4: The educational toast (`scripts/landmark_toast.gd`, new)
 
-- [ ] New `Control` script, built **entirely in code** in `_ready()` (the
+- [x] New `Control` script, built **entirely in code** in `_ready()` (the
       `touch_controls.gd` / `mobile_settings_panel.gd` precedent), so `main.tscn`
       needs only one node. Structure: a translucent rounded `PanelContainer` (or a
       `ColorRect` backing) holding a `VBoxContainer` with two `Label`s —
@@ -309,14 +309,14 @@ All of them:
       (which occupies `offset_top -80 .. -48`) — e.g. `offset_top -230`,
       `offset_bottom -110`. Verify against the existing HUD anchors in `main.tscn`
       that it collides with nothing else.
-- [ ] **Localization comes for free and must stay free:** assign the registry's
+- [x] **Localization comes for free and must stay free:** assign the registry's
       English source strings **directly** to `Label.text` — no `tr()` call. Every
       `Control` runs its own `text` through the `TranslationServer` at draw time and
       re-runs it on `NOTIFICATION_TRANSLATION_CHANGED`, so the card is translated
       *and* live-switches with the locale with zero code (CLAUDE.md Localization
       RULE 1). Write that into the comment so nobody "fixes" it by adding `tr()` on a
       composed string later.
-- [ ] **Proximity on a throttled tick, never per frame.** `TICK_INTERVAL = 0.25`
+- [x] **Proximity on a throttled tick, never per frame.** `TICK_INTERVAL = 0.25`
       accumulated in `_process` (the `minimap_hud.gd` shape). Each tick:
       - find the player via `get_tree().get_first_node_in_group("player")`; bail
         (and clear state) when absent, so the script is inert in a scene without one;
@@ -333,14 +333,14 @@ All of them:
         `radius + LEAVE_PAD` (`LEAVE_PAD = 14.0` — hysteresis, so standing on the
         trigger boundary cannot flicker the card, the same dead-band discipline
         `crocodile_lod_manager.gd` uses).
-- [ ] Display: `TOAST_DURATION = 6.0` s visible, then fade out over
+- [x] Display: `TOAST_DURATION = 6.0` s visible, then fade out over
       `FADE_DURATION = 0.5` s via `modulate.a` in `_process`; fade IN over the same
       time when shown. `visible = false` when fully faded, so a hidden card costs
       nothing. A new approach while a card is up **replaces** it (re-shows with the
       new text, timer reset) rather than queueing.
-- [ ] No group membership needed (nobody calls into it) and **no hard references** —
+- [x] No group membership needed (nobody calls into it) and **no hard references** —
       player by group, landmarks by group, exactly the project's discovery convention.
-- [ ] Add the node to `scenes/main.tscn`: ONE `[ext_resource type="Script"
+- [x] Add the node to `scenes/main.tscn`: ONE `[ext_resource type="Script"
       path="res://scripts/landmark_toast.gd" id="..."]` line and ONE
       `[node name="LandmarkToast" type="Control" parent="HUD"]` block. Place it in the
       HUD stack **below `GameOver` / `MultiplayerUI` / `StartOverlay`** so those still

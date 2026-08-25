@@ -24,6 +24,7 @@
 [ext_resource type="Script" path="res://scripts/minimap_hud.gd" id="21_minimap"]
 [ext_resource type="Script" path="res://scripts/teammate_locator.gd" id="22_locator"]
 [ext_resource type="Script" path="res://scripts/progression.gd" id="23_progression"]
+[ext_resource type="Script" path="res://scripts/landmark_toast.gd" id="24_landmark"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_1"]
 sky_top_color = Color(0.25, 0.45, 0.75, 1)
@@ -277,6 +278,21 @@ grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 1
 script = ExtResource("13_tune")
+
+[node name="LandmarkToast" type="Control" parent="HUD"]
+anchors_preset = 7
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -320.0
+offset_top = -230.0
+offset_right = 320.0
+offset_bottom = -110.0
+grow_horizontal = 2
+grow_vertical = 0
+mouse_filter = 2
+script = ExtResource("24_landmark")
 
 [node name="GameOver" type="Control" parent="HUD"]
 anchors_preset = 15
