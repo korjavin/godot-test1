@@ -24,6 +24,10 @@ extends Label
 ## It lives in the HUD CanvasLayer as a plain Label. It does not touch gameplay:
 ## it only reads counters and prints them. It ignores mouse input and starts
 ## hidden in release builds so it never ends up in a player's face.
+##
+## **Not localized, deliberately.** This is a debug surface (F3), read while
+## tuning against English documentation, and it is excluded from the game's
+## en/de translation pass by design — see CLAUDE.md "Localization".
 
 ## Key that toggles the overlay on/off. F3 is the conventional "debug stats" key
 ## and does not collide with any of our gameplay input actions (move/jump/run/

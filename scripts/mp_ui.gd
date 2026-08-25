@@ -558,7 +558,7 @@ func _on_join_pressed() -> void:
 	# frame a round-trip later.
 	var code: String = _code_input.text.strip_edges().to_upper()
 	if code.length() != CODE_LENGTH:
-		_on_status("An invite code is %d characters" % CODE_LENGTH)
+		_on_status(tr("An invite code is %d characters") % CODE_LENGTH)
 		return
 	# Done typing — drop the caret so a phone's on-screen keyboard folds away and
 	# stops covering the status line this join is about to write. Both entry
@@ -587,7 +587,7 @@ func _on_copy_pressed() -> void:
 	if code.is_empty():
 		return
 	DisplayServer.clipboard_set(code)
-	_on_status("Copied %s to the clipboard" % code)
+	_on_status(tr("Copied %s to the clipboard") % code)
 
 
 ## Keep the typed code upper-case without eating the caret position. Godot moves
@@ -835,7 +835,7 @@ func _refresh_hero_buttons(heroes: Dictionary) -> void:
 		var raw_holder: Variant = heroes.get(hero, "")
 		var holder: String = (raw_holder as String) if typeof(raw_holder) == TYPE_STRING else ""
 		if hero == mine:
-			button.text = "%s  ✓ you" % hero.capitalize()
+			button.text = tr("%s  ✓ you") % hero.capitalize()
 			button.disabled = false
 		elif holder.is_empty():
 			button.text = hero.capitalize()
@@ -1081,4 +1081,4 @@ func _member_lines(manager: Node) -> String:
 			lines.append("• %s" % (raw_name as String))
 	if lines.is_empty():
 		return ""
-	return "In room:\n" + "\n".join(lines)
+	return tr("In room:") + "\n" + "\n".join(lines)

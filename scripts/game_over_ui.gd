@@ -143,11 +143,11 @@ func show_game_over(coins: int, distance: int, best_distance: int,
 	"NEW BEST!" flash. The player computes/persists the records; we only display.
 	"""
 	if distance_label:
-		distance_label.text = "Distance: %dm" % distance
+		distance_label.text = tr("Distance: %dm") % distance
 	if coins_label:
-		coins_label.text = "Coins collected: %d" % coins
+		coins_label.text = tr("Coins collected: %d") % coins
 	if best_label:
-		best_label.text = "Best: %dm / %d coins" % [best_distance, best_coins]
+		best_label.text = tr("Best: %dm / %d coins") % [best_distance, best_coins]
 	if new_best_label:
 		new_best_label.visible = is_new_best
 		# Any previous pulse was already killed by _on_restart_pressed — the only
