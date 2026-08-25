@@ -260,22 +260,22 @@ build a second mechanism for it.
 
 ### Task 1: `piglet_crocodile_ai.gd` — identity, remote-driven mode, the dead set
 
-- [ ] add `static func croc_id_for(node_name: String) -> int: return node_name.hash()`
+- [x] add `static func croc_id_for(node_name: String) -> int: return node_name.hash()`
       and `var _croc_id: int = 0` latched in `_ready()` from `String(name)`,
       exposed as `func croc_id() -> int`. Document the scheme and both
       `ponytail:` ceilings from the Context section. **Latch in `_ready()`, never
       recompute** — the same contract, for the same reason, as `coin.gd`'s `_id`.
-- [ ] add `var remote_driven: bool = false` plus
+- [x] add `var remote_driven: bool = false` plus
       `func set_remote_state(pos: Vector3, yaw: float, flags: int) -> void`, which
       stores `_remote_pos` / `_remote_yaw`, decodes the flag bits into
       `is_chasing` / `is_fleeing` / `is_paused` / `is_biting`, and on the FIRST
       sample (or when `global_position.distance_to(pos) > CROC_TELEPORT_DISTANCE`,
       a new `const` = 8.0) snaps rather than interpolates. Set
       `remote_driven = true` here; it is the only place that turns it on.
-- [ ] add `func clear_remote_drive() -> void` — `remote_driven = false`, resume
+- [x] add `func clear_remote_drive() -> void` — `remote_driven = false`, resume
       normal simulation from wherever the body currently stands. Called on the
       sync timeout and on promotion to master.
-- [ ] at the very top of `_physics_process`, **above** the `lod_active` backstop,
+- [x] at the very top of `_physics_process`, **above** the `lod_active` backstop,
       add the remote branch:
       ```gdscript
       if remote_driven:
@@ -291,23 +291,28 @@ build a second mechanism for it.
       synced croc solid to the player and what makes the *bitten* peer detect its
       own bite locally, which is the bite rule this phase is specified against.
       Say so in the docstring.
-- [ ] in `_ready()`, after the group joins, ask the `"mp"` group (null-safe,
+- [x] in `_ready()`, after the group joins, ask the `"mp"` group (null-safe,
       `has_method("is_croc_dead")`) whether this id was already killed in this
       room; if so `queue_free()` and return. **Exactly the shape and placement
       `coin.gd` uses for `is_coin_collected`** — one failed group lookup per croc
       at spawn, never per frame, and a no-op offline.
-- [ ] in `_on_player_collision`, the giant-Teibi crush block: in a room the crush
+- [x] in `_on_player_collision`, the giant-Teibi crush block: in a room the crush
       must be the master's decision, not this peer's. Before the local squash,
       ask the `"mp"` group `has_method("request_croc_kill")`; if it answers
       `true` (meaning "in a room — I have relayed the request"), **return without
       squashing** and let the master's kill broadcast free this croc. Offline (or
       when the manager is absent) it returns false and the existing squash runs
       **byte-for-byte unchanged**.
-- [ ] `flee_from()` is NOT changed. A remote-driven croc's flee state arrives in
+- [x] `flee_from()` is NOT changed. A remote-driven croc's flee state arrives in
       the flags byte; the local call is harmless because a remote-driven croc
       takes its motion from the samples. Say so in a comment so the next reader
       does not "fix" it.
-- [ ] `set_lod_active` is NOT changed.
+- [x] `set_lod_active` is NOT changed.
+
+⚠️ `minimap_selfcheck.gd` already fails on this branch's base commit
+("SELFCHECK FAILED: minimap never read the player") — verified by stashing this
+task's diff and re-running. Pre-existing and unrelated to phase 5; flagged here
+for the final task's gate run.
 
 ### Task 2: `crocodile_lod_manager.gd` — awake means near ANY peer
 

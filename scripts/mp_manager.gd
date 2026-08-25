@@ -79,6 +79,14 @@ const MAX_STATE_COUNTER: int = 1000000000
 ## that range, so anything beyond it is refused before the cast.
 const MAX_STATE_ID_MAGNITUDE: float = 9007199254740992.0
 
+## State byte carried by a crocodile sync entry (see `_send_croc_sync()` and
+## `decode_croc_sync()`). Declared HERE, once, so the encoder on the master and
+## the decoder in `piglet_crocodile_ai.set_remote_state()` cannot drift apart.
+const CROC_FLAG_CHASING: int = 1
+const CROC_FLAG_FLEEING: int = 2
+const CROC_FLAG_PAUSED: int = 4
+const CROC_FLAG_BITING: int = 8
+
 ## How far the group may be spread before its centroid stops being a sensible
 ## place to arrive. Tuned BY EYE, not derived: 60 m is a bit over one chunk, well
 ## inside the fog, so a joiner landing at the centroid of a group this tight can

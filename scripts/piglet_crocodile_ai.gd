@@ -165,6 +165,26 @@ const BITE_PITCH: float = 26.0 * PI / 180.0
 ## How far the body lunges forward during the bite (metres).
 const BITE_LUNGE: float = 0.35
 
+## ---------------------------------------------------------------------------
+## MULTIPLAYER SYNC (phase 5) — see set_remote_state() for the whole scheme
+## ---------------------------------------------------------------------------
+
+## How far a synced sample may land from the body before we SNAP to it instead of
+## easing. A master migration, a chunk rebuild or a burst of dropped packets all
+## move a crocodile further than one 10 Hz step ever could; without the snap the
+## body would take a long serene glide to catch up. Same rule, same reason, as
+## RemoteAvatar's TELEPORT_DISTANCE.
+const CROC_TELEPORT_DISTANCE: float = 8.0
+
+## Ceiling on the velocity a remote sample may ask for (m/s). The samples already
+## passed the manager's decoder, so this is belt-and-braces: it bounds how far one
+## bad-but-finite sample can fling the body. Comfortably above MAX_CHASE_SPEED
+## (8.5), so honest catch-up after a dropped packet still works.
+const CROC_REMOTE_MAX_SPEED: float = 40.0
+
+## How fast a remote-driven crocodile eases toward the synced yaw (per second).
+const CROC_REMOTE_TURN_RATE: float = 12.0
+
 # ============================================================================
 # STATE VARIABLES
 # ============================================================================
@@ -266,6 +286,22 @@ var bite_timer: float = 0.0
 ## its next tick if it's far away). See crocodile_lod_manager.gd for the contract.
 var lod_active: bool = true
 
+## ---------------------------------------------------------------------------
+## MULTIPLAYER IDENTITY AND REMOTE DRIVE (phase 5)
+## ---------------------------------------------------------------------------
+## This crocodile's room-wide id, LATCHED IN _ready() from the node name and never
+## recomputed — the same contract, for the same reason, as coin.gd's `_id`.
+var _croc_id: int = 0
+
+## True while the room MASTER is driving this body (see set_remote_state, the only
+## place that turns it on, and clear_remote_drive, the only place that turns it
+## off). Always false outside a room, which is what keeps solo play unchanged.
+var remote_driven: bool = false
+## The last transform the master sent, and whether any sample has arrived yet.
+var _remote_pos: Vector3 = Vector3.ZERO
+var _remote_yaw: float = 0.0
+var _has_remote_sample: bool = false
+
 ## Confinement: elevated "patrol" crocodiles are pinned to a structure top (a
 ## pyramid apex or wall ridge) and can never wander off it, since they can't jump
 ## or climb back up. Set up by the terrain via set_confinement().
@@ -332,9 +368,23 @@ func _ready() -> void:
 	# Set initial random direction
 	_choose_new_direction()
 
+	# Latch this crocodile's room-wide id from its (deterministic) node name, before
+	# anything downstream can rename the node — see croc_id_for() for the scheme.
+	_croc_id = croc_id_for(String(name))
+
 	# Add to "crocodile" group for easy detection
 	add_to_group("crocodile")
 	add_to_group("enemy")
+
+	# In a multiplayer room, a crocodile the ROOM has already killed (giant Teibi
+	# crushed it on some peer and the master confirmed) must not come back when its
+	# chunk regenerates here. One failed group lookup per crocodile AT SPAWN, never
+	# per frame, and a plain no-op offline — exactly the shape and placement coin.gd
+	# uses for is_coin_collected.
+	var mp := get_tree().get_first_node_in_group("mp")
+	if mp and mp.has_method("is_croc_dead") and mp.is_croc_dead(croc_id()):
+		queue_free()
+		return
 
 	# Start with a random offset to avoid all crocodiles changing direction at once
 	time_since_direction_change = randf() * DIRECTION_CHANGE_INTERVAL
@@ -393,6 +443,19 @@ func _style_model_meshes(node: Node) -> void:
 
 func _physics_process(delta: float) -> void:
 	"""Update movement, body animation and collisions every physics frame."""
+	# ------------------------------------------------------------------------
+	# REMOTE DRIVE (multiplayer phase 5) — ABOVE the LOD backstop on purpose
+	# ------------------------------------------------------------------------
+	# In a room the master simulates every awake crocodile and broadcasts its
+	# transform at 10 Hz; every other peer renders that instead of running its own
+	# AI, so the whole room sees one crocodile in one place. This sits above the
+	# lod_active backstop because a remote-driven crocodile is by definition near
+	# SOME peer and must keep moving even in the window before this peer's own LOD
+	# bookkeeping has caught up with that.
+	if remote_driven:
+		_tick_remote(delta)
+		return
+
 	# ------------------------------------------------------------------------
 	# LOD SLEEP GATE (simulation level-of-detail) — BACKSTOP ONLY
 	# ------------------------------------------------------------------------
@@ -596,6 +659,12 @@ func flee_from(source: Vector3, duration: float) -> void:
 	# SIM_RADIUS in crocodile_lod_manager); no smell reaches that far anyway.
 	if not lod_active:
 		return
+	# NOT guarded on remote_driven, and that is deliberate — do not "fix" it. A
+	# remote-driven crocodile takes its motion (and its flee flag) from the
+	# master's samples, so setting the flag here is harmless: the next sample
+	# overwrites it. Meanwhile the master, whose own crocodiles are never
+	# remote-driven, gets the real flee from this very call — see
+	# MpManager.request_croc_flee.
 	is_fleeing = true
 	flee_time_remaining = duration
 	flee_source = source
@@ -783,6 +852,125 @@ func set_lod_active(active: bool) -> void:
 		# Rush across the 50 m sleep boundary.
 		is_fleeing = false
 		flee_time_remaining = 0.0
+
+
+# ============================================================================
+# MULTIPLAYER SYNC (phase 5)
+# ============================================================================
+
+static func croc_id_for(node_name: String) -> int:
+	"""
+	This crocodile's room-wide id, derived from its NODE NAME alone.
+
+	Every crocodile the terrain spawns is named deterministically BEFORE add_child
+	from data that is a pure function of chunk coords + run_seed
+	(`Crocodile_<cx>_<cy>_<index>`, `PatrolCrocodile_<cx>_<cy>_<count>`,
+	`BossCrocodile_<index>`), so two peers sharing a run_seed put the SAME
+	crocodile, under the SAME name, in the same place. The name therefore
+	identifies it across the room — which is why not one line of
+	endless_terrain.gd has to change. Exactly the reasoning, and exactly the
+	shape, of Coin.id_at().
+
+	ponytail: two ceilings, both cosmetic by construction. (1) A crocodile spawned
+	OUTSIDE the terrain (the standalone piglet_crocodile.tscn, or a future
+	spawner) has a non-unique name and could collide with another's id; it never
+	happens in a room, and the failure mode is one crocodile following another's
+	transform, not a crash. (2) String.hash() is 32-bit, so a collision across the
+	~1000 loaded crocodiles is a ~1e-4 birthday chance per run. The upgrade path
+	for both is the coin id's: thread an explicit (chunk, index) id out of the
+	spawners.
+	"""
+	return node_name.hash()
+
+
+func croc_id() -> int:
+	"""This crocodile's room-wide id. Valid from _ready on — the name is latched
+	once there and never recomputed (see _croc_id), so nothing that touches the
+	node later can quietly rename this crocodile mid-run."""
+	return _croc_id
+
+
+func set_remote_state(pos: Vector3, yaw: float, flags: int) -> void:
+	"""
+	Overlay the MASTER's simulation of this crocodile onto this local body.
+
+	The sync layer never creates, re-parents or frees a crocodile: crocs stay
+	chunk-parented, per-peer, deterministic and freed on chunk unload exactly as
+	in single player. This only overlays DYNAMIC state onto a node that already
+	exists here, matched by croc_id(); a sample naming a crocodile this peer has
+	not generated is dropped by the manager before it ever reaches this method.
+
+	This is the ONLY place remote_driven is turned on. The first sample — and any
+	sample further than CROC_TELEPORT_DISTANCE from where the body currently
+	stands — SNAPS; everything else is eased in _tick_remote, so 10 Hz samples
+	read as smooth motion at 60 fps.
+
+	@param flags: the state byte, decoded with MpManager.CROC_FLAG_* so the
+	    encoder and this decoder cannot drift. Biting goes through _start_bite()
+	    rather than a raw assignment, so the chomp gets its usual timer and the
+	    local animation clears it — a flag that only ever says "started".
+	"""
+	_remote_pos = pos
+	_remote_yaw = fposmod(yaw, TAU)
+
+	is_chasing = (flags & MpManager.CROC_FLAG_CHASING) != 0
+	is_fleeing = (flags & MpManager.CROC_FLAG_FLEEING) != 0
+	is_paused = (flags & MpManager.CROC_FLAG_PAUSED) != 0
+	if (flags & MpManager.CROC_FLAG_BITING) != 0:
+		_start_bite()
+
+	if not _has_remote_sample or global_position.distance_to(pos) > CROC_TELEPORT_DISTANCE:
+		global_position = pos
+		rotation.y = _remote_yaw
+		velocity = Vector3.ZERO
+
+	_has_remote_sample = true
+	remote_driven = true
+
+
+func clear_remote_drive() -> void:
+	"""
+	Hand this crocodile back to its own local AI, from wherever the body now
+	stands. Called when the master's samples stop arriving (the sync timeout — the
+	master is too far away to have this chunk loaded, or the room ended) and when
+	THIS peer is promoted to master.
+
+	Promotion is seamless precisely because a synced crocodile is a real local
+	node holding the master's last known transform: dropping the flag resumes
+	simulation from that exact spot, so the whole pack is a hot standby replica
+	for free.
+	"""
+	if not remote_driven:
+		return
+	remote_driven = false
+	_has_remote_sample = false
+	velocity = Vector3.ZERO
+
+
+func _tick_remote(delta: float) -> void:
+	"""
+	Drive the body toward the master's latest sample for one physics frame.
+
+	move_and_slide() here is DELIBERATE, not incidental: it is what keeps a synced
+	crocodile SOLID to the player, and what makes the BITTEN peer detect its own
+	bite locally through _handle_collisions — which is the bite rule this whole
+	phase is specified against ("the bite is decided by the peer being bitten, on
+	its own machine"). Never replace it with a direct global_position write.
+	"""
+	# Velocity that would land exactly on the sample this frame, clamped so one
+	# bad-but-finite sample cannot launch the body across the map.
+	var wanted: Vector3 = (_remote_pos - global_position) / maxf(delta, 0.0001)
+	if wanted.length() > CROC_REMOTE_MAX_SPEED:
+		wanted = wanted.normalized() * CROC_REMOTE_MAX_SPEED
+	velocity = wanted
+
+	rotation.y = lerp_angle(rotation.y, _remote_yaw, minf(delta * CROC_REMOTE_TURN_RATE, 1.0))
+
+	move_and_slide()
+	_handle_collisions()
+
+	# Animate from the speed we actually moved at, exactly like the local path.
+	_animate_body(delta)
 
 
 # ============================================================================
@@ -1047,6 +1235,15 @@ func _on_player_collision(player: Node) -> void:
 	# a dust puff pops, a crunch plays, the player's camera gets a tiny kick,
 	# and the body squashes flat before freeing itself.
 	if player.has_method("crushes_crocodiles") and player.crushes_crocodiles():
+		# In a ROOM the kill belongs to the master, not to whichever screen it
+		# happened on: it has to free the SAME crocodile on every peer. The manager
+		# answers true when it is in a room and has relayed the request, and we then
+		# return WITHOUT squashing — the master's kill broadcast frees this body
+		# everywhere, including here. Offline, or with no manager in the scene, it
+		# answers false and the squash below runs byte-for-byte unchanged.
+		var mp := get_tree().get_first_node_in_group("mp")
+		if mp and mp.has_method("request_croc_kill") and mp.request_croc_kill(croc_id()):
+			return
 		print("🐊 Squashed by a giant!")
 		# Guard re-entry FIRST: stop physics and leave the "crocodile" group so
 		# the dying body can't crush-trigger a second time (or be found by the
