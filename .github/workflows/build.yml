@@ -14,12 +14,17 @@ permissions:
   pages: write
   id-token: write
 
-# Allow only one concurrent run PER REF. A static "pages" group is shared by
-# every trigger this workflow has — including pull_request and claude/* pushes —
-# so opening a PR while master was mid-run cancelled the master run, and
-# deploy-stack could be killed after pushing images to GHCR but before pinning
-# the deploy branch and poking Portainer: production silently stays on the
-# previous SHA with a green-looking (cancelled) run behind it.
+# Allow only one concurrent deployment — but the group MUST be keyed by ref.
+# An unkeyed `pages` group is repo-wide, so two parallel PR branches landed in
+# the same group and cancelled each other's Build Web Export mid-docker-pull,
+# which reads as a build failure (it bit one PR three times in one evening).
+#
+# Keying by ref preserves the master-deploy serialization exactly: every run
+# that can deploy is a push to `refs/heads/master` (the `deploy` and
+# `deploy-stack` jobs both gate on that), so all of them still share the single
+# `pages-refs/heads/master` group and still supersede each other. A PR run
+# (`refs/pull/N/merge`) or a `claude/*` branch push now only supersedes stale
+# runs of its own ref, and can never touch master's.
 concurrency:
   group: pages-${{ github.ref }}
   cancel-in-progress: true

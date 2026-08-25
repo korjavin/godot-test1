@@ -32,33 +32,61 @@ func _initialize() -> void:
 
 
 func _run() -> void:
-	var main: Node = load("res://scenes/main.tscn").instantiate()
-	root.add_child(main)
-	# The start overlay PAUSES THE TREE until somebody presses PLAY SOLO, and a
-	# paused tree runs neither the minimap's `_process` nor the SceneTree timer
-	# below — so without this the check would time out against a world frozen on
-	# frame one and report "minimap never read the player". Pressing solo is
-	# exactly what a player does; `has_method` keeps this inert if the overlay is
-	# ever renamed or dropped.
-	#
-	# The `await` is load-bearing: `_initialize()` runs BEFORE the first idle
-	# frame, so the scene's `_ready()`s have not run yet and dismissing here would
-	# be undone by the overlay's own `_ready()` taking the pause a moment later —
-	# with its `_process` already switched off, nothing would ever release it.
+	root.add_child(load("res://scenes/main.tscn").instantiate())
+	# ONE FRAME BEFORE TOUCHING ANYTHING. `_initialize()` runs before the main loop
+	# starts, so nothing added here has had `_ready()` called yet — every node's
+	# script state is still default. Dismissing the start overlay in this window
+	# looks like it worked and is then undone the moment its real `_ready()` runs
+	# and takes the pause for the first time.
 	await process_frame
-	var overlay: Node = main.get_node_or_null("HUD/StartOverlay")
-	if overlay != null and overlay.has_method("_on_play_solo_pressed"):
-		overlay._on_play_solo_pressed()
-	# Two seconds: long enough for the spawn ring of chunks to build (which is what
-	# fills the road station cache) and for several 5 Hz minimap ticks to run.
-	await create_timer(2.0).timeout
-	var failure := _check()
+	var failure := _start_the_game()
+	if failure.is_empty():
+		# Two seconds: long enough for the spawn ring of chunks to build (which is
+		# what fills the road station cache) and for several 5 Hz minimap ticks.
+		await create_timer(2.0).timeout
+		failure = _check()
 	if failure.is_empty():
 		print("SELFCHECK OK")
 		quit(0)
 	else:
 		printerr("SELFCHECK FAILED: " + failure)
 		quit(1)
+
+
+func _start_the_game() -> String:
+	"""Press PLAY SOLO, because main.tscn no longer starts on its own.
+
+	`start_overlay.gd` takes `tree.paused = true` in its `_ready()` — before this
+	function gets control — and RE-ASSERTS it every `_process`, so simply clearing
+	`paused` here would be undone on the next frame. The minimap is PAUSABLE (as it
+	should be: a map has no business ticking behind a menu), so under that pause its
+	`_process` is never dispatched, `_tick()` never runs and `_have_data` stays
+	false — which is exactly the "minimap never read the player" failure this
+	harness reported for a HUD that works fine in game. `SceneTree.create_timer()`
+	defaults to `process_always = true`, so the 2 s wait below elapses under the
+	pause and the check ran against a world that had never taken a frame.
+
+	Any future harness that boots main.tscn and needs the game actually RUNNING has
+	to do this too. `mp_selfcheck.gd` does not boot a scene, and `mp_e2e.gd`'s
+	MpManager is PROCESS_MODE_ALWAYS, which is why neither noticed."""
+	var overlay: Node = root.get_node_or_null("Main/HUD/StartOverlay")
+	if overlay == null:
+		return "no StartOverlay under Main/HUD — was it dropped from main.tscn?"
+	# A missing _dismiss means the script failed to PARSE, and there is exactly one
+	# way that happens here: run against a never-opened clone, whose empty global
+	# class cache leaves `class_name` types (MobileSensors, ToonShading, …)
+	# unresolved. Scripts then silently fail to attach — including this overlay's,
+	# which is why a cold clone used to print SELFCHECK OK for the worst possible
+	# reason: nothing paused because nothing loaded. Fail loudly instead.
+	if not overlay.has_method("_dismiss"):
+		return "StartOverlay has no script — run `godot --headless --path . --import` " \
+			+ "first to build the global class cache, or every class_name type fails " \
+			+ "to resolve and this check passes vacuously"
+	overlay._dismiss()
+	if paused:
+		return "the tree is still paused after dismissing StartOverlay — something " \
+			+ "else took a pause, and the minimap (PAUSABLE) will never tick"
+	return ""
 
 
 func _check() -> String:
