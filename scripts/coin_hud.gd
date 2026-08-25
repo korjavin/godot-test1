@@ -34,7 +34,12 @@ func _process(delta: float) -> void:
 			pivot_offset = size * 0.5
 			scale = Vector2.ONE * POP_SCALE
 		_last_coins = player.coins_collected
-		text = "Distance: %dm   Coins: %d" % [player.run_distance, player.coins_collected]
+		# `tr()` explicitly, because Godot's Control auto-translation would only
+		# ever see the FORMATTED result ("Distance: 240m   Coins: 87"), which is
+		# not a key in any translation. The rule across the project: a plain
+		# literal assigned to `.text` needs no `tr()`; a format string does, and
+		# the `tr()` goes on the format string, before the `%`.
+		text = tr("Distance: %dm   Coins: %d") % [player.run_distance, player.coins_collected]
 		# Show the coin-streak multiplier only while it's actually boosting (>1),
 		# e.g. "Distance: 240m   Coins: 87 (x3)" — see get_streak_multiplier().
 		var mult: int = player.get_streak_multiplier()

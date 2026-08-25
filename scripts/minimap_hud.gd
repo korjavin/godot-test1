@@ -407,10 +407,16 @@ func _draw() -> void:
 	#    construction), so the number doubles as "how far have I got". The outline
 	#    is not optional: this text sits outside the dark disc, over whatever the
 	#    world happens to be, and the sky here is nearly white.
-	var text := "X %d   Z %d\n%s" % [roundi(_player_pos.x), roundi(_player_pos.z), BIOME_NAMES[_biome]]
+	#    The two words are `tr()`d individually: this caption is painted with
+	#    `draw_multiline_string`, not assigned to a `Control.text`, so Godot's
+	#    automatic Control translation never sees it. X and Z are axis letters and
+	#    stay as they are. `_draw()` re-runs on the 0.2 s tick, so a language
+	#    switched mid-run reaches this caption within one tick like everything else.
+	var text := "X %d   Z %d\n%s" % [roundi(_player_pos.x), roundi(_player_pos.z),
+		tr(BIOME_NAMES[_biome])]
 	var color := COLOR_TEXT
 	if _in_river:
-		text += "  ~ river ~"
+		text += tr("  ~ river ~")
 		color = COLOR_RIVER_TEXT
 	# draw_multiline_string* is what keeps this at 2 draw calls instead of 4: the
 	# per-line draw_string()/draw_string_outline() pair it replaced cost one each.
