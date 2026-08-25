@@ -1,0 +1,94 @@
+name: 🔗 Multiplayer E2E
+
+# `scripts/mp_e2e.sh` — starts a local Go lobby, hosts a room from one headless
+# Godot instance, checks the room is listed on `/rooms`, joins from a second
+# instance and fails unless both agree on `run_seed`. It is the standing
+# evidence for the production bug where a joiner silently walked its own
+# private world, so it belongs in CI rather than in a developer's memory.
+#
+# WHY ITS OWN WORKFLOW, and not a job in build.yml or lobby.yml:
+#   * Only workflow-level `on.paths` can path-gate. A job inside build.yml has
+#     no such gate — it would run on every push, including pure art or shader
+#     changes that cannot affect the relay.
+#   * lobby.yml is reached by build.yml's deploy-stack through `workflow_call`,
+#     and `needs:` waits on the WHOLE called workflow. Adding this job there
+#     would put a new, unproven, multi-minute check in front of every master
+#     deploy — exactly what this must not do while it earns its keep.
+# So it is deliberately NOT in any deploy `needs:` chain: it fails the PR, it
+# never delays the deploy. Promote it into lobby.yml's chain once it has proven
+# stable if the deploy should start gating on it.
+on:
+  push:
+    branches: [ master ]
+    # Duplicated below rather than shared through a YAML anchor: GitHub
+    # Actions' workflow parser does not support anchors/aliases.
+    paths:
+      - 'scripts/mp_*.gd'
+      - 'scripts/mp_e2e.sh'
+      # The relay client both instances drive — it does not match mp_*.gd.
+      - 'scripts/lobby_client.gd'
+      - 'server/**'
+      - '.github/workflows/mp-e2e.yml'
+  pull_request:
+    branches: [ master ]
+    paths:
+      - 'scripts/mp_*.gd'
+      - 'scripts/mp_e2e.sh'
+      # The relay client both instances drive — it does not match mp_*.gd.
+      - 'scripts/lobby_client.gd'
+      - 'server/**'
+      - '.github/workflows/mp-e2e.yml'
+  workflow_dispatch:
+
+# Keyed by ref for the same reason build.yml's is: a superseded run of THIS
+# branch is worth cancelling, another branch's run never is.
+concurrency:
+  group: mp-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: 🎮 Lobby relay end-to-end
+    runs-on: ubuntu-latest
+    # The same Godot the Build Web Export job uses — one place decides which
+    # engine CI runs, and `godot` is already on PATH inside it. No export
+    # templates are set up here: this job only imports and runs a script.
+    container:
+      image: barichello/godot-ci:4.5
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      # barichello/godot-ci:4.5 (Ubuntu 24.04) ships NO curl, and the script
+      # polls /healthz with it and asserts the hosted room is listed on /rooms
+      # — without this the run dies as "lobby never became healthy".
+      - name: 🌐 Install curl
+        run: apt-get update && apt-get install -y --no-install-recommends curl
+
+      # actions/checkout leaves the tree owned by the runner uid while a
+      # container job runs as root, so git refuses it as "dubious ownership"
+      # (exit 128) — and `go build` stamps VCS info, so the script's own build
+      # of the lobby fails before it starts. Trusting the path keeps the stamp
+      # rather than turning it off with -buildvcs=false.
+      - name: 🔒 Trust the checkout
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      # The script needs `go` on PATH (it builds and starts the lobby itself).
+      - name: 🐹 Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache-dependency-path: server/go.sum
+
+      # LOAD-BEARING, not a warm-up. A never-opened clone has no import cache
+      # and no global class cache, so scenes instantiate WITHOUT their scripts:
+      # measured on a cold worktree, every crocodile came up as a bare
+      # CharacterBody3D ("Nonexistent function 'setup_roll_seed'") and the host
+      # instance never got as far as printing E2E_ROOM. Same gotcha
+      # `scripts/webrtc_addon_check.gd` documents. With this step the whole
+      # script runs in ~3 s.
+      - name: 📦 Import the project
+        run: godot --headless --path . --import
+
+      - name: 🔗 Lobby relay end-to-end
+        run: bash scripts/mp_e2e.sh
