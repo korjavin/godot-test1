@@ -79,6 +79,15 @@ const MAX_STATE_COUNTER: int = 1000000000
 ## that range, so anything beyond it is refused before the cast.
 const MAX_STATE_ID_MAGNITUDE: float = 9007199254740992.0
 
+## The world seed's accepted range — `endless_terrain._roll_run_seed()` takes it
+## from `RandomNumberGenerator.randi()`, so 0…2³²−1 is every seed that can
+## honestly appear. It arrives over the relay as a JSON double, and a master is
+## only the oldest member of a room whose code is public over `/rooms`, so this
+## is peer input like any other: `1e999` parses to `INF`, and `int(INF)` is the
+## undefined cast `MAX_STATE_ID_MAGNITUDE` exists to keep out (on wasm the
+## float→int trunc can trap the module outright).
+const MAX_RUN_SEED: float = 4294967295.0
+
 ## State byte carried by a crocodile sync entry (see `_send_croc_sync()` and
 ## `decode_croc_sync()`). Declared HERE, once, so the encoder on the master and
 ## the decoder in `piglet_crocodile_ai.set_remote_state()` cannot drift apart.
@@ -1528,10 +1537,22 @@ func _receive_seed(payload: Dictionary) -> void:
 	so the value round-trips without loss — but the `int()` cast below is
 	**mandatory, not cosmetic**: passing the float straight through would make
 	every downstream `hash(Vector3i(...))` see a different type.
+
+	...and that cast is why `_is_number()` alone is NOT the check. It accepts any
+	float, `1e999` is well-formed JSON that parses to `INF`, and `int(INF)` is
+	undefined — on wasm the float→int trunc can trap the module. `MAX_RUN_SEED`
+	is the same finite-and-bounded-before-any-cast rule `decode_state()` and
+	`decode_presence()` already apply to every other number a peer sends; a
+	master is only the oldest member of a room whose code is public over
+	`/rooms`, so its `seed` is peer input like the rest.
 	"""
 	if _has_seed or not _is_number(payload.get("seed", null)):
 		return
-	_room_seed = int(payload["seed"])
+	var raw_seed: float = float(payload["seed"])
+	if not is_finite(raw_seed) or raw_seed < 0.0 or raw_seed > MAX_RUN_SEED:
+		push_warning("MpManager: dropping out-of-range world seed")
+		return
+	_room_seed = int(raw_seed)
 	_has_seed = true
 	status.emit("Shared world seed received")
 

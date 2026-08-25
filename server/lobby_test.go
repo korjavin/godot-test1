@@ -7,9 +7,13 @@ package main
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha1" //nolint:gosec // the TURN REST API specifies HMAC-SHA1
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -669,4 +673,76 @@ func TestTinyFrameFloodEvictsTheFlooderNotTheRoom(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatal("the flooder was not evicted, or it took the host down with it")
+}
+
+// TestICETURNCredentialsExpire is the security property of /ice: the endpoint is
+// unauthenticated by necessity (the game build cannot hold a secret) and CORS is
+// browser-only, so a scraped response must go stale by itself. With TURN_SECRET
+// set the pair is coturn's REST form; without one the static pair still comes
+// out, because coturn cannot be migrated one half at a time.
+func TestICETURNCredentialsExpire(t *testing.T) {
+	t.Setenv("TURN_URL", "turn:turn.example:3478")
+	t.Setenv("TURN_USER", "static-user")
+	t.Setenv("TURN_PASSWORD", "static-pass")
+
+	t.Run("static without a secret", func(t *testing.T) {
+		user, cred := iceTURN(t)
+		if user != "static-user" || cred != "static-pass" {
+			t.Fatalf("got %q/%q, wanted the static pair", user, cred)
+		}
+	})
+
+	t.Run("REST credentials with a secret", func(t *testing.T) {
+		t.Setenv("TURN_SECRET", "s3cret")
+		user, cred := iceTURN(t)
+
+		expiry, name, ok := strings.Cut(user, ":")
+		if !ok || name == "" {
+			t.Fatalf("username %q is not coturn's <expiry>:<name> REST form", user)
+		}
+		at, err := strconv.ParseInt(expiry, 10, 64)
+		if err != nil {
+			t.Fatalf("username %q: expiry is not a unix timestamp: %v", user, err)
+		}
+		// Bounded on BOTH sides: an expiry in the past never authenticates, and
+		// one far in the future is the "static and unrotated" leak again.
+		if d := time.Until(time.Unix(at, 0)); d <= 0 || d > turnCredentialTTL+time.Minute {
+			t.Errorf("credential lives for %v, wanted (0, %v]", d, turnCredentialTTL)
+		}
+		// The exact bytes coturn checks — verified against coturn 4.6.3, which
+		// completes an allocation with this pair and refuses the static user
+		// once --use-auth-secret is on.
+		mac := hmac.New(sha1.New, []byte("s3cret"))
+		mac.Write([]byte(user))
+		if want := base64.StdEncoding.EncodeToString(mac.Sum(nil)); cred != want {
+			t.Errorf("credential = %q, wanted base64(HMAC-SHA1(secret, username)) = %q", cred, want)
+		}
+		if cred == "static-pass" {
+			t.Error("static password served while a TURN secret is configured")
+		}
+	})
+}
+
+// iceTURN calls the real handler and digs the TURN entry out of the response.
+func iceTURN(t *testing.T) (string, string) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	iceHandler(rec, httptest.NewRequest(http.MethodGet, "/ice", nil))
+	var body struct {
+		ICEServers []struct {
+			URLs       []string `json:"urls"`
+			Username   string   `json:"username"`
+			Credential string   `json:"credential"`
+		} `json:"iceServers"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("/ice body: %v", err)
+	}
+	for _, s := range body.ICEServers {
+		if len(s.URLs) > 0 && strings.HasPrefix(s.URLs[0], "turn:") {
+			return s.Username, s.Credential
+		}
+	}
+	t.Fatalf("no TURN entry in %s", rec.Body.String())
+	return "", ""
 }

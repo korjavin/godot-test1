@@ -5,13 +5,17 @@ package main
 // else: no game logic, no persistence, no database.
 
 import (
+	"crypto/hmac"
+	"crypto/sha1" //nolint:gosec // the TURN REST API specifies HMAC-SHA1; coturn implements exactly that
 	"embed"
+	"encoding/base64"
 	"io/fs"
 	"log"
 	"net/http"
 	"net/url"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -84,13 +88,9 @@ func main() {
 //
 // ⚠️ IT IS NOT ACCESS CONTROL. CORS is enforced by browsers only: `curl /ice`
 // returns the TURN credentials in full whatever the allowlist says, and the
-// shipped default is "*" anyway. The credentials in TURN_USER/TURN_PASSWORD are
-// static and unrotated, so anyone who asks gets an unmetered relay on the
-// operator's bandwidth. The fix is coturn's --use-auth-secret with time-limited
-// REST credentials minted here (username "<unix expiry>:<anything>", credential
-// base64(HMAC-SHA1(secret, username))) plus --user-quota/--total-quota; it needs
-// a TURN_SECRET in the deployment environment, so it is an operator change, not
-// a code-only one.
+// shipped default is "*" anyway. What bounds the damage is that the credentials
+// EXPIRE — see turnCredentials, which mints coturn REST credentials whenever the
+// deployment has a TURN_SECRET.
 func corsOrigin(origin string) string {
 	if len(allowedOrigins) == 1 && allowedOrigins[0] == "*" {
 		return "*"
@@ -125,10 +125,11 @@ func iceHandler(w http.ResponseWriter, r *http.Request) {
 		servers = append(servers, map[string]any{"urls": splitList(stun)})
 	}
 	if turn := env("TURN_URL", ""); turn != "" {
+		user, cred := turnCredentials(time.Now())
 		servers = append(servers, map[string]any{
 			"urls":       splitList(turn),
-			"username":   env("TURN_USER", ""),
-			"credential": env("TURN_PASSWORD", ""),
+			"username":   user,
+			"credential": cred,
 		})
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -156,6 +157,44 @@ func (h *Hub) roomsHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	_, _ = w.Write(mustJSON(map[string]any{"rooms": h.ListRooms()}))
+}
+
+// turnCredentialTTL is how long a minted TURN credential stays usable.
+//
+// It is a CEILING ON A LEAK, not a session timer, and it has a floor as well as
+// a ceiling: coturn re-checks the timestamp on every authentication, so a
+// credential that expires mid-room kills the relay under a player who is still
+// in it. A day covers any browser session while still meaning a scraped /ice
+// response is worthless tomorrow.
+const turnCredentialTTL = 24 * time.Hour
+
+// turnCredentials builds the username/credential pair /ice hands out.
+//
+// With TURN_SECRET set this is coturn's REST form (`--use-auth-secret`):
+// username "<unix expiry>:ck", credential base64(HMAC-SHA1(secret, username)).
+// The shared secret never leaves the deployment, and a scraped credential stops
+// relaying at the expiry instead of never — /ice is unauthenticated by
+// necessity (the game build cannot hold a secret) and CORS is browser-only, so
+// expiry is the only bound there is. SHA-1 is not a choice: the TURN REST API
+// specifies HMAC-SHA1 and coturn implements exactly that.
+//
+// UNSET, IT FALLS BACK TO THE STATIC PAIR ON PURPOSE. coturn's --use-auth-secret
+// and its static --user list are mutually exclusive — measured against
+// coturn 4.6.3, with the secret configured the static user is refused with
+// "check_stun_auth: Cannot find credentials of user <alice>" — so this returning
+// a REST pair against a relay the operator has not migrated yet would take TURN
+// down for everybody. The two halves flip together off one environment variable:
+// docker-compose.yml passes coturn --use-auth-secret/--static-auth-secret only
+// when TURN_SECRET is set, and this mints the matching credential.
+func turnCredentials(now time.Time) (string, string) {
+	secret := env("TURN_SECRET", "")
+	if secret == "" {
+		return env("TURN_USER", ""), env("TURN_PASSWORD", "")
+	}
+	user := strconv.FormatInt(now.Add(turnCredentialTTL).Unix(), 10) + ":ck"
+	mac := hmac.New(sha1.New, []byte(secret))
+	mac.Write([]byte(user))
+	return user, base64.StdEncoding.EncodeToString(mac.Sum(nil))
 }
 
 func env(key, def string) string {

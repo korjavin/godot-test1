@@ -33,6 +33,12 @@ services:
       TURN_URL: ${TURN_URL:-}
       TURN_USER: ${TURN_USER:-}
       TURN_PASSWORD: ${TURN_PASSWORD:-}
+      # Set this and BOTH halves flip together: coturn below takes
+      # --use-auth-secret, and /ice mints a time-limited credential per call
+      # instead of handing out the static pair forever. Unset, both stay on the
+      # static pair — see turnCredentials in main.go for why they cannot be
+      # migrated one at a time.
+      TURN_SECRET: ${TURN_SECRET:-}
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=${TRAEFIK_NETWORK_NAME:-traefik_default}"
@@ -89,14 +95,30 @@ services:
     # itself, and anything else that trusts 127/8), cloud instance metadata on
     # 169.254/16, CGNAT, and EVERY IPv6 address relayable.
     #
-    # The quotas: the credentials are static and public until the
-    # --use-auth-secret migration main.go names; without them the relay is metered
-    # only by the operator's bandwidth bill.
+    # The quotas: /ice is unauthenticated by necessity (the game build cannot hold
+    # a secret) and CORS is browser-only, so the quotas are what bound a scraped
+    # credential's blast radius while it is still valid.
+    #
+    # AUTH MODE, and why it is two conditional arguments rather than a rewrite:
+    # with TURN_SECRET set, coturn takes TIME-LIMITED REST credentials, which
+    # main.go mints per /ice call (username "<expiry>:ck", credential
+    # base64(HMAC-SHA1(secret, username))) — so a scraped response stops relaying
+    # at the expiry instead of never. `${VAR:+...}` expands to the flag only when
+    # the variable is set, and to an empty argument otherwise, which coturn
+    # ignores (measured against coturn 4.6.3) — so a deployment WITHOUT a secret
+    # gets byte-identical arguments to the static setup this ran on before. The
+    # `--user` line below stays either way and needs no condition: with the
+    # secret configured coturn refuses it anyway ("check_stun_auth: Cannot find
+    # credentials"), which is exactly why main.go must not mint REST credentials
+    # until the operator has created the secret. Keep the secret alphanumeric —
+    # the coturn image's entrypoint runs `eval` over each argument.
     command:
       - "-n"
       - "--log-file=stdout"
       - "--no-cli"
       - "--lt-cred-mech"
+      - "${TURN_SECRET:+--use-auth-secret}"
+      - "${TURN_SECRET:+--static-auth-secret=${TURN_SECRET}}"
       - "--fingerprint"
       - "--realm=${TURN_REALM}"
       - "--user=${TURN_USER}:${TURN_PASSWORD}"
