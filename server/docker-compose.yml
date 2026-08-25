@@ -8,7 +8,7 @@
 # upgrade — it forwards Connection/Upgrade headers by default.
 #
 # One host, two containers: the game client owns `/` and the lobby keeps only its
-# four endpoints. ADD EVERY NEW LOBBY ROUTE TO THAT RULE — the client's catch-all
+# five endpoints. ADD EVERY NEW LOBBY ROUTE TO THAT RULE — the client's catch-all
 # swallows anything the narrow rule does not name, so a route that works locally
 # would 404 (or serve the game's index.html) in production.
 # Traefik picks the most specific rule by priority (higher wins),
@@ -39,10 +39,15 @@ services:
       # static pair — see turnCredentials in main.go for why they cannot be
       # migrated one at a time.
       TURN_SECRET: ${TURN_SECRET:-}
+      # Personal best-run records (GET/POST /best). The lobby's only persistent
+      # state; unset it and records live only as long as the container does.
+      LOBBY_BEST_FILE: ${LOBBY_BEST_FILE:-/data/best.json}
+    volumes:
+      - lobby_data:/data
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=${TRAEFIK_NETWORK_NAME:-traefik_default}"
-      - "traefik.http.routers.godot-lobby.rule=Host(`${LOBBY_HOST}`) && (Path(`/ws`) || Path(`/ice`) || Path(`/rooms`) || Path(`/healthz`))"
+      - "traefik.http.routers.godot-lobby.rule=Host(`${LOBBY_HOST}`) && (Path(`/ws`) || Path(`/ice`) || Path(`/rooms`) || Path(`/best`) || Path(`/healthz`))"
       - "traefik.http.routers.godot-lobby.priority=10"
       - "traefik.http.routers.godot-lobby.entrypoints=websecure"
       - "traefik.http.routers.godot-lobby.tls.certresolver=${TRAEFIK_CERTRESOLVER:-myresolver}"
@@ -129,7 +134,12 @@ services:
       - "--no-tls"
       - "--no-dtls"
       - "--no-multicast-peers"
-      - "--no-loopback-peers"
+      # NO --no-loopback-peers: coturn 4.6 REMOVED the option (loopback denial
+      # became the default), and the unknown flag makes the binary exit 255
+      # before logging anything — measured on this host: the container
+      # crashlooped 500+ times with only the config-file warning printed, and
+      # the same argv minus this one flag runs clean. Loopback stays blocked
+      # twice over: the 4.6 default plus the explicit 127/8 range below.
       - "--denied-peer-ip=0.0.0.0-0.255.255.255"
       - "--denied-peer-ip=10.0.0.0-10.255.255.255"
       - "--denied-peer-ip=100.64.0.0-100.127.255.255"
@@ -148,3 +158,9 @@ networks:
   traefik_network:
     external: true
     name: ${TRAEFIK_NETWORK_NAME:-traefik_default}
+
+# The best-run records file. A named volume rather than a bind mount so the
+# deployment needs no host path prepared; losing it costs everyone their personal
+# best and nothing else.
+volumes:
+  lobby_data:
