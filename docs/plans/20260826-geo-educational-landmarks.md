@@ -348,10 +348,10 @@ All of them:
 
 ### Task 5: Localization rows (`assets/translations/ui.csv`)
 
-- [ ] Append the rows (never reorder existing ones). Write **real facts** and
+- [x] Append the rows (never reorder existing ones). Write **real facts** and
       **native-quality German** — this is the educational payload, so a machine-shaped
       translation is a defect. Use the exact strings from the registry as keys.
-- [ ] **CRITICAL RULE (`scripts/locale_selfcheck.gd` enforces it and will FAIL the
+- [x] **CRITICAL RULE (`scripts/locale_selfcheck.gd` enforces it and will FAIL the
       build otherwise): a row whose `de` column is identical to its `en` column is a
       hard error.** A name that is the same word in German must therefore have **NO
       CSV ROW AT ALL** — it falls back to its own English text, which is exactly what
@@ -382,10 +382,10 @@ All of them:
           → `Ein 330 m hoher Eisenturm in Paris, Frankreich, für die Weltausstellung 1889 erbaut und nur für 20 Jahre gedacht.`
         - `A white marble mausoleum in Agra, India, built by Shah Jahan for his wife Mumtaz Mahal in 1653.`
           → `Ein Mausoleum aus weißem Marmor in Agra, Indien, das Schah Jahan 1653 für seine Frau Mumtaz Mahal errichten ließ.`
-- [ ] **No `WIDTH_BUDGETS` entry is needed and none may be added**: the card's labels
+- [x] **No `WIDTH_BUDGETS` entry is needed and none may be added**: the card's labels
       autowrap inside a container that grows, which is the same structural exemption
       the start-overlay and game-over labels already have. Say so in a comment.
-- [ ] Re-run `godot --headless --path . --import` **before** running
+- [x] Re-run `godot --headless --path . --import` **before** running
       `locale_selfcheck.gd` — the check reads the *imported* table and will otherwise
       report the stale one.
 
