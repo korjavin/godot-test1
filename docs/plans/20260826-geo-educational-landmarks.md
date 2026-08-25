@@ -508,19 +508,19 @@ body and into CLAUDE.md.
 
 ### Task 9: Verify acceptance criteria
 
-- [ ] `godot --headless --path . --import` runs clean.
-- [ ] `godot --headless --path . scenes/main.tscn --quit-after 120` boots with no
+- [x] `godot --headless --path . --import` runs clean.
+- [x] `godot --headless --path . scenes/main.tscn --quit-after 120` boots with no
       errors or warnings from the edited/added scripts.
-- [ ] `godot --headless --path . --script res://scripts/landmark_selfcheck.gd` prints
+- [x] `godot --headless --path . --script res://scripts/landmark_selfcheck.gd` prints
       `SELFCHECK OK`, exit 0.
-- [ ] All existing self-checks still pass:
+- [x] All existing self-checks still pass:
       `fauna_selfcheck.gd`, `mp_selfcheck.gd`, `locale_selfcheck.gd`,
       `view_selfcheck.gd`, `progression_selfcheck.gd`, `minimap_selfcheck.gd`.
-- [ ] `bash scripts/mp_e2e.sh` passes.
-- [ ] `git status` is clean of throwaway files; `scripts/player_controller.gd` is
+- [x] `bash scripts/mp_e2e.sh` passes.
+- [x] `git status` is clean of throwaway files; `scripts/player_controller.gd` is
       **untouched**; `scenes/main.tscn` shows exactly one added `ext_resource` line
       and one added node block.
-- [ ] Record every deliberate simplification as a `ponytail:` comment with its ceiling
+- [x] Record every deliberate simplification as a `ponytail:` comment with its ceiling
       and upgrade path. Known ones to write down:
       - no per-landmark ambient audio (the sound manager's loop players are
         non-positional; a landmark hum needs a positional audio path — the same

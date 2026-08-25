@@ -762,6 +762,16 @@ const TREASURE_CHEST_SCRIPT := preload("res://scripts/treasure_chest.gd")
 ## method NAME, English name, English fact, footprint radius — so a later wave of
 ## places is ONE builder function, ONE registry entry and TWO CSV rows. Nothing
 ## else in this file, in the toast, or in the self-check has to learn about it.
+##
+## ponytail: NO per-landmark ambient audio — the same deferral, for the same
+## reason, that the artifacts recorded above. sound_manager.get_loop_player()
+## returns a NON-POSITIONAL AudioStreamPlayer, so a monument hum that grew as you
+## approached the Eiffel Tower would need a whole new positional audio path
+## (AudioStreamPlayer3D, which nothing in this project uses yet) plus a per-frame
+## proximity scan against landmark centres — out of proportion to the quiet
+## polish it buys, and the toast already marks the arrival. Upgrade path: an
+## AudioStreamPlayer3D parented to the marker Node3D that spawn_landmark_in_chunk
+## already creates, which then frees with the chunk for free.
 
 ## Kill switch, mirroring spawn_artifacts / spawn_camps / spawn_chests. The
 ## measurement sweep needs it to generate the same field with and without

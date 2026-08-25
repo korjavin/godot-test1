@@ -41,6 +41,15 @@ extends Control
 ## later "fix" that composes "Name — fact" into one label would silently break
 ## both languages.
 ##
+## ponytail: a locale switch WHILE a card is up re-renders both labels live (that
+## is RULE 1 doing its job — NOTIFICATION_TRANSLATION_CHANGED reaches them like
+## any other Control) but does NOT extend the card's remaining display time, so a
+## player who switches language with one second left gets one second of German.
+## Purely cosmetic, and the alternative — listening for the notification here just
+## to top _hold back up — is more moving parts than the case is worth. Upgrade
+## path: override _notification(NOTIFICATION_TRANSLATION_CHANGED) and reset _hold
+## to TOAST_DURATION while visible.
+##
 ## PERFORMANCE SHAPE (this is a web-build feature, so it is the design)
 ##   * The proximity scan runs on a throttled TICK_INTERVAL tick, NEVER per frame
 ##     — the same discipline as minimap_hud.gd's 5 Hz tick and
@@ -104,6 +113,16 @@ var fact_label: Label = null
 ## single reference IS the "once per approach" rule: a card is shown when the
 ## nearest in-range marker is not this one, and this is cleared once the player is
 ## past radius + LEAVE_PAD (or the marker's chunk unloaded under it).
+##
+## ponytail: this is per-APPROACH memory, NOT per-run memory — there is
+## deliberately no "you have already seen this one" set. Walk away from Stonehenge
+## and back and the card shows again, because the card IS the reward for the
+## detour and suppressing it would punish returning to a landmark you liked. It
+## also means a landmark whose chunk streamed out and back re-announces itself,
+## which is the same behaviour and costs nothing to allow. Upgrade path, if the
+## repeat ever reads as noise: a seen-set keyed on the registry index (the marker
+## would need to carry it as a fourth meta), which survives chunk unload because
+## it is keyed on the PLACE and not on the node.
 var _active: Node3D = null
 
 ## Seconds of full visibility left before the fade-out starts. > 0 means "fade
