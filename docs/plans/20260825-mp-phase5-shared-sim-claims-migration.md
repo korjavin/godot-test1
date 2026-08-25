@@ -664,7 +664,7 @@ browsers are needed for everything else.
 
 ### Task 10: [Final] Update documentation
 
-- [ ] `CLAUDE.md`: extend "Multiplayer (phases 3–4)" into a phases 3–5 account, in
+- [x] `CLAUDE.md`: extend "Multiplayer (phases 3–4)" into a phases 3–5 account, in
       the file's existing voice and density. It must cover, at minimum:
       - **the croc-lifetime decision and why it is the shape it is** — crocs stay
         chunk-parented and per-peer; the sync layer only overlays dynamic state on
@@ -693,9 +693,22 @@ browsers are needed for everything else.
         synced crocs *are* the replica;
       - move the phase-5 items out of "deliberately not built".
       Also update the "Commands" block if the E2E's description changed.
-- [ ] **Do not touch** `README.md`, `project.godot`, `.github/` or
+- [x] **Do not touch** `README.md`, `project.godot`, `.github/` or
       `scripts/endless_terrain.gd`.
-- [ ] re-run **every** gate from Development Approach and record the results here.
+- [x] re-run **every** gate from Development Approach and record the results here:
+      - `godot --headless --path . --import` — clean, no script errors.
+      - `godot --headless --path . scenes/main.tscn --quit-after 240` — exit 0, no
+        errors in the log (the solo-play regression gate).
+      - `godot --headless --path . --script res://scripts/mp_selfcheck.gd` —
+        `SELFCHECK OK`, exit 0. (The stack traces in its output are the *expected*
+        engine prints from the hostile-input checks, not failures.)
+      - `godot --headless --path . --script res://scripts/minimap_selfcheck.gd` —
+        `SELFCHECK OK`, exit 0.
+      - `cd server && go build ./... && go test ./...` — green; no server code was
+        added in this phase.
+      - `bash scripts/mp_e2e.sh` — exit 0:
+        `E2E OK: room USR9T3, shared seed 548104826, master migrated e87cf4d4… -> 0ba4e524…`
+        (the seed assertion **and** the new stall → re-election phase).
 
 ## Technical Details
 
