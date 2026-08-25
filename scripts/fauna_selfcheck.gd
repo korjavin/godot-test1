@@ -34,10 +34,15 @@ const DT: float = 1.0 / 60.0
 const MASSIF_AHEAD: float = 70.0      # metres down the herd's freshly rolled line
 const MASSIF_HALF: float = 10.0       # half-width of the test massif (a real one is ~9.7)
 const ANIMAL_HALF_WIDTH: float = 1.0  # credited to the animal when measuring clearance
+const PLAYER_AHEAD: float = 30.0      # empty-field trials: player parked this far down the line
+## Lifts the player's 2 m capsule so it straddles fauna_manager's probe height
+## (1.0) instead of ending exactly on it.
+const PLAYER_Y: float = 0.5
 
 var _root: Node3D = null
 var _manager: Node = null
 var _massif: StaticBody3D = null
+var _player: CharacterBody3D = null
 var _massif_live: bool = true
 
 var _trial: int = 0
@@ -67,16 +72,22 @@ func _initialize() -> void:
 	ground.add_child(ground_shape)
 	_root.add_child(ground)
 
-	# A real CharacterBody3D in group "player", left at the origin — which is
-	# where every herd's migration line is aimed, so the open-field trials below
-	# put it squarely in front of the herd. Layer defaults to 1 exactly like
-	# scenes/player.tscn: this node IS check 2.
-	var player := CharacterBody3D.new()
-	player.add_to_group("player")
+	# A real CharacterBody3D in group "player", on layer 1 exactly like
+	# scenes/player.tscn — this node IS check 2, and the empty-field trials MOVE
+	# it onto the herd's feeler corridor (see _start_trial). Leaving it at the
+	# origin is not enough and looks like it is: _spawn_herd offsets the whole
+	# migration line by MIGRATION_MISS_MIN..MAX (25-60 m), which is wider than
+	# the feelers reach, so a player at the origin is outside them and the check
+	# passes whether or not the RID exclusion exists.
+	_player = CharacterBody3D.new()
+	_player.add_to_group("player")
 	var player_shape := CollisionShape3D.new()
-	player_shape.shape = CapsuleShape3D.new()
-	player.add_child(player_shape)
-	_root.add_child(player)
+	var capsule := CapsuleShape3D.new()
+	capsule.radius = 0.5
+	capsule.height = 2.0
+	player_shape.shape = capsule
+	_player.add_child(player_shape)
+	_root.add_child(_player)
 
 	# The massif: one 20 x 12 x 20 block, parked out of the world until a trial
 	# moves it onto the herd's line.
@@ -126,12 +137,18 @@ func _start_trial() -> void:
 		_finish_trial()
 		return
 	_spawned += 1
+	var herd_pos: Vector3 = _manager.get("_herd_position")
+	var heading: Vector3 = _manager.get("_herd_heading")
 	if _massif_live:
-		var herd_pos: Vector3 = _manager.get("_herd_position")
-		var heading: Vector3 = _manager.get("_herd_heading")
 		_massif.position = herd_pos + heading * MASSIF_AHEAD
+		_player.position = Vector3(0.0, PLAYER_Y, 0.0)
 	else:
+		# Empty field, and the player parked squarely ON the herd's feeler
+		# corridor at probe height — so a herd that reacts to the player has
+		# nothing else it could be reacting to. Placed AFTER _spawn_herd, which
+		# reads the player position to lay the migration line out.
 		_massif.position = Vector3(0.0, 0.0, 9000.0)
+		_player.position = herd_pos + heading * PLAYER_AHEAD + Vector3(0.0, PLAYER_Y, 0.0)
 	_ticks = 0
 	_trial_min_gap = 1e9
 	_wait = 0
