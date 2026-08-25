@@ -28,10 +28,15 @@ const DUCK_SPEED: float = 2.5
 
 ## Speed multiplier applied to the GROUNDED gaits (duck/run/walk) while the
 ## player is standing in a river — see is_wading and calculate_current_speed().
-## 0.6 is a ~40% slowdown: enough to feel like wading and to make crossing a
+## 0.5 is a 50% slowdown: enough to feel like wading and to make crossing a
 ## river a real decision. Deliberately NOT applied to Windman's Air Rush —
 ## flying over a river is not wading.
-const WADE_SPEED_FACTOR: float = 0.6
+##
+## This started at 0.6 and was deepened on owner feedback ("slower in general
+## while submerged"). It bites on WALK and DUCK only: the run gait is floored at
+## WADE_RUN_MIN_SPEED below, which already absorbed the whole drag at 0.6 and
+## still does — deepening the factor must never be read as making the run slower.
+const WADE_SPEED_FACTOR: float = 0.5
 
 ## Floor under the RUN gait while wading. The project's difficulty contract is
 ## "running always escapes": crocodile chase speed is capped at MAX_CHASE_SPEED
@@ -43,6 +48,39 @@ const WADE_SPEED_FACTOR: float = 0.6
 ## the RIVER_HALF_WIDTH note in endless_terrain.gd). So walk and duck take the
 ## full drag and the run is floored here instead.
 const WADE_RUN_MIN_SPEED: float = 9.0
+
+## How deep the MODEL sinks into a river, in metres, and how fast the offset
+## eases in and out (metres per second — depth / ~0.2 s, so stepping in or out
+## of the water takes about a fifth of a second instead of popping).
+##
+## VISUAL ONLY, AND THAT IS A HARD CONSTRAINT: this is written to
+## $CharacterModel.position.y, exactly like the walk bob and the landing squash
+## write to the model's own nodes. The CollisionShape3D, the body's global_position
+## and the flat-world y = 0 ground plane are all untouched — every y-placement
+## site in the project (coin heights, croc gravity settle, spawn point, block
+## bases) assumes that plane, so "submerged" has to be a picture, never physics.
+## Nothing else writes $CharacterModel.position, so this offset owns it outright:
+## Teibi's resize tweens `scale` and the landing squash writes `scale` plus
+## $CharacterModel/Body.position — different properties, so none of them fight.
+##
+## ponytail: a fixed depth, not one scaled by Teibi's form. A river is a river —
+## giant Teibi wades the same 0.35 m and is barely wet, small Teibi is in it up
+## to the chest. That reads correctly and costs no coupling to the resize state.
+const WADE_SINK_DEPTH: float = 0.35
+const WADE_SINK_EASE_SPEED: float = WADE_SINK_DEPTH / 0.2
+
+## Multiplier on JUMP_VELOCITY for a jump that STARTS from wading — you cannot
+## push off properly against water. 0.75 drops the apex from JUMP_VELOCITY^2 /
+## (2 * gravity) = 3.61 m to 2.03 m, which is BELOW the 2.5 m top of a single
+## decorative block: a block you can hop onto from dry land is genuinely
+## unjumpable from inside the river. That is the intended reading of "jumping is
+## harder in water", not a bug — wade out first.
+##
+## Keyed off `is_wading`, which is only ever true while is_on_floor(), so a
+## COYOTE-TIME jump (fired from the air, up to COYOTE_TIME after leaving a ledge)
+## sees `false` and keeps FULL power. is_wading is recomputed at STEP 1.5, above
+## the jump step, precisely so this reads the current frame rather than the last.
+const WADE_JUMP_FACTOR: float = 0.75
 
 ## How fast A / D rotate the character, in radians per second.
 ## A and D no longer strafe — they turn the body (tank-style steering), so
@@ -204,6 +242,13 @@ var is_running: bool = false
 ## reset plumbing on respawn/restart. Drives the WADE_SPEED_FACTOR slowdown and
 ## swaps the footstep sound for a splash.
 var is_wading: bool = false
+
+## How far the MODEL is currently sunk below its rest position, in metres, eased
+## toward WADE_SINK_DEPTH while wading and back to 0 on dry land. Unlike is_wading
+## this one DOES hold history (it is the eased value), so reset_position() zeroes
+## it — a hard teleport to the dry spawn point must not leave the hero standing
+## in a puddle that is not there for the fifth of a second the ease would take.
+var _wade_sink: float = 0.0
 
 ## Sidestep state. While a "step aside" is playing we slide sideways for a short
 ## burst and run a matching leg animation; new step requests are ignored until it
@@ -692,7 +737,43 @@ func _first_person_eye_position() -> Vector3:
 	forms move the eyes down/up automatically.
 	"""
 	var scale_y: float = collision_shape.scale.y if collision_shape else 1.0
-	return Vector3(0.0, scale_y * FIRST_PERSON_EYE_HEIGHT - camera_pivot.position.y, 0.0)
+	# Wading dips the eyes by exactly the same offset the model sinks by, so the
+	# submersion is FELT in first person and not merely watched in third. Folded
+	# in here rather than at the call sites so every path that re-seats the arm
+	# (_apply_view_mode, the Teibi resize, a character switch) gets it for free.
+	return Vector3(0.0,
+			scale_y * FIRST_PERSON_EYE_HEIGHT - camera_pivot.position.y - _wade_sink, 0.0)
+
+
+func _tick_wade_sink(delta: float) -> void:
+	"""
+	Ease the model's submersion offset toward wherever `is_wading` says it should
+	be, and apply it. Called once per physics tick from _physics_process, right
+	after is_wading is recomputed.
+
+	Note it is BELOW the frozen-window early returns (game over / caught /
+	respawn grace), which is deliberate: a player frozen mid-river should stay
+	sunk rather than rise out of the water while the countdown runs.
+	"""
+	var target: float = WADE_SINK_DEPTH if is_wading else 0.0
+	if is_equal_approx(_wade_sink, target):
+		return
+	_wade_sink = move_toward(_wade_sink, target, WADE_SINK_EASE_SPEED * delta)
+	_apply_wade_sink()
+
+
+func _apply_wade_sink() -> void:
+	"""
+	Push the current submersion offset onto the model — and, in first person,
+	onto the spring arm carrying the camera (the eyes ride the same dip).
+
+	Idempotent, like _apply_view_mode(), so it is safe to call from anywhere.
+	"""
+	if character_container:
+		character_container.position.y = -_wade_sink
+	if view_mode == ViewMode.FIRST_PERSON and camera_arm:
+		# FP gives the arm an identity basis, so only the origin needs re-seating.
+		camera_arm.transform = Transform3D(Basis.IDENTITY, _first_person_eye_position())
 
 # ============================================================================
 # PHYSICS PROCESSING (CALLED EVERY FRAME)
@@ -833,6 +914,21 @@ func _physics_process(delta: float) -> void:
 		if velocity.y < 0.0:
 			_fall_speed = -velocity.y
 
+	# STEP 1.5: Are we standing in a river? One noise evaluation per physics tick
+	# (see the terrain's is_river_at) — that is the entire budget for wading.
+	# Only meaningful with feet on the ground: a jumping or flying player is over
+	# the water, not in it.
+	#
+	# IT MUST STAY ABOVE THE JUMP STEP. Two consumers read it later in this same
+	# tick — WADE_JUMP_FACTOR below and calculate_current_speed() at STEP 7 — and
+	# computing it after the jump would hand the jump the PREVIOUS frame's answer,
+	# which is exactly wrong in the one case that matters: a coyote-time jump one
+	# frame after walking off a river bank would be weakened, when the whole point
+	# of WADE_JUMP_FACTOR keying off is_wading is that an airborne jump is not one.
+	is_wading = is_on_floor() and _terrain_is_river_here()
+	# Ease the model's submersion offset (visual only — see WADE_SINK_DEPTH).
+	_tick_wade_sink(delta)
+
 	# STEP 2: Handle Jumping (with coyote time + jump buffer — see SECTION 2)
 	# Refresh the coyote window while grounded; tick it down while airborne.
 	if is_on_floor():
@@ -849,7 +945,10 @@ func _physics_process(delta: float) -> void:
 	if jump_buffer_timer > 0.0 and (is_on_floor() or coyote_timer > 0.0) and not is_giant:
 		# Set upward velocity for jump. Zero BOTH timers so the same press can't
 		# fire twice (e.g. a coyote jump immediately re-triggering off the buffer).
-		velocity.y = JUMP_VELOCITY
+		# A jump pushed off from inside a river is weaker (see WADE_JUMP_FACTOR);
+		# is_wading is false whenever we are airborne, so a coyote jump that
+		# started on dry ground — or off a river bank — keeps full power.
+		velocity.y = JUMP_VELOCITY * (WADE_JUMP_FACTOR if is_wading else 1.0)
 		coyote_timer = 0.0
 		jump_buffer_timer = 0.0
 		_sfx("play_jump")
@@ -866,14 +965,9 @@ func _physics_process(delta: float) -> void:
 	# STEP 6: Advance any in-progress sidestep, and start a new one on Q / E
 	update_sidestep(delta)
 
-	# STEP 6.5: Are we standing in a river? One noise evaluation per physics tick
-	# (see the terrain's is_river_at) — that is the entire budget for wading, and
-	# it is asked BEFORE calculate_current_speed() below so this frame's speed
-	# already knows. Only meaningful with feet on the ground: a jumping or flying
-	# player is over the water, not in it.
-	is_wading = is_on_floor() and _terrain_is_river_here()
-
 	# STEP 7: Read forward/back input and the current movement speed
+	# (is_wading was computed back at STEP 1.5, so calculate_current_speed()
+	# below already knows about the river underfoot.)
 	var input_dir := get_input_direction()
 	var current_speed := calculate_current_speed()
 
@@ -2121,6 +2215,12 @@ func reset_position() -> void:
 	# view (idempotent — see _apply_view_mode).
 	respawn_blink_timer = 0.0
 	_apply_view_mode()
+
+	# Lift the model back out of the water. This is a hard teleport to the dry
+	# spawn point, so easing the offset out over the next fifth of a second would
+	# just be a visible glitch at a place with no river in it.
+	_wade_sink = 0.0
+	_apply_wade_sink()
 
 	# Drop any active ability state (air boost, giant form, odd size) on respawn.
 	_reset_ability_states()

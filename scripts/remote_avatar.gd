@@ -128,6 +128,19 @@ var rest_rotations: Dictionary = {}
 ## time, so the stride keeps pace with the peer's actual speed.
 var stride_phase: float = 0.0
 
+## How far the model is currently sunk into a river, mirroring the local player's
+## own `_wade_sink` (same constants, read straight off PLAYER_SCRIPT so the two
+## can never drift). It is computed LOCALLY rather than carried on the wire:
+## `is_river_at` is a pure function of world position + the shared run seed, and
+## presence already carries the peer's position and its on-floor bit, so a peer
+## standing in a river is something every other peer can work out for itself for
+## free. Nothing was added to the presence packet for this.
+var _wade_sink: float = 0.0
+## Cached "terrain" group node, resolved lazily like the crocodile AI caches the
+## "mp" node — the group lookup is the only cost this feature could have had at
+## frame rate, so it is paid once.
+var _terrain: Node = null
+
 # ============================================================================
 # SETUP
 # ============================================================================
@@ -320,7 +333,42 @@ func _process(delta: float) -> void:
 		# the avatar the long way.
 		rotation.y = lerp_angle(rotation.y, target_yaw, weight)
 
+	_tick_wade_sink(delta)
 	_animate(delta)
+
+
+func _tick_wade_sink(delta: float) -> void:
+	"""
+	Sink the model when this peer is standing in a river, exactly as the local
+	player sinks its own — same depth, same ease, same constants.
+
+	The name tag is deliberately NOT sunk: it hangs off the avatar root, not off
+	model_root, so a teammate wading is still labelled at a readable height.
+	"""
+	if model_root == null:
+		return
+	var wading: bool = on_floor and _terrain_is_river_at(target_pos)
+	var target: float = PLAYER_SCRIPT.WADE_SINK_DEPTH if wading else 0.0
+	if is_equal_approx(_wade_sink, target):
+		return
+	_wade_sink = move_toward(_wade_sink, target, PLAYER_SCRIPT.WADE_SINK_EASE_SPEED * delta)
+	model_root.position.y = -_wade_sink
+
+
+func _terrain_is_river_at(pos: Vector3) -> bool:
+	"""
+	Null-safe group lookup, the shape player_controller._terrain_is_river_here()
+	uses: false when there is no terrain (the avatar must still run in a scene
+	without one), and the has_method guard covers an older/stubbed terrain.
+	"""
+	if _terrain == null or not is_instance_valid(_terrain):
+		# Re-resolved rather than latched: an avatar can be built before the
+		# terrain node exists, and a latched null would stay null for the room's
+		# life. Once found it is cached, so the steady state is zero lookups.
+		_terrain = get_tree().get_first_node_in_group("terrain")
+	if _terrain == null or not _terrain.has_method("is_river_at"):
+		return false
+	return _terrain.is_river_at(pos)
 
 
 func _animate(delta: float) -> void:
