@@ -2503,6 +2503,15 @@ func shared_lives(own_bank: int, own_spent: int) -> Variant:
 	sensible rather than nothing, and the stateless answer is exactly what
 	shipped before this bead.
 
+	ponytail: WITH NO MESH the master answers from its own state while everybody
+	else answers from the formula, so the two can differ once the cap burn bites.
+	Not worth closing, because with no mesh there is no presence AT ALL: no peer's
+	coins, deaths or distance reach anyone, so every shared total is already each
+	peer's own private number and the hearts are the least of it — that is the
+	documented ceiling of `--lobby-only`, which is a dev/test mode. The upgrade
+	path, if a real degraded mode is ever wanted, is putting the room's totals on
+	the lobby relay the way the seed and the heartbeat already ride it.
+
 	@param own_bank: this peer's own coin contribution, as `shared_bank()` takes it.
 	@param own_spent: this peer's own spent lives, as `shared_lives_spent()` takes it.
 	"""
@@ -3320,18 +3329,24 @@ func _resolve_claim(id: int, by_int: int, count: int, value: int) -> void:
 	)
 	_room_streak_deadline_msec = now + int(PLAYER_SCRIPT.STREAK_WINDOW * 1000.0)
 
-	# `b` is the PRE-MULTIPLIER worth of the whole claim — `count` pickups at
-	# `value` each. It exists for meta-progression (bead godot-test1-42n): lifetime
-	# coins count what was physically picked up, so they must be credited from the
-	# base value and never from `a`, which the room's multiplier is already in.
-	# `a` and `b` are deliberately separate fields rather than `a` plus the
-	# multiplier, because the award loop above steps the multiplier PER PICKUP —
-	# a chest crossing a streak threshold mid-burst has no single multiplier that
-	# divides `a` back into a base.
+	# The PRE-MULTIPLIER worth of the whole claim — `count` pickups at `value`
+	# each — for meta-progression (bead godot-test1-42n): lifetime coins count what
+	# was physically picked up, so they can never be credited from `a`, which the
+	# room's multiplier is already in.
+	#
+	# IT DOES NOT GO ON THE WIRE, and that is a security decision rather than a
+	# saving. A confirm is signed by nothing: the master names the winner in `by`,
+	# so a hostile master could address a confirm to somebody else and, with a base
+	# value on the wire, hand them any number of LIFETIME coins — which are
+	# monotone and persisted, so unlike the run-scoped `a` beside it the damage
+	# outlives the room. Every peer can derive this figure for itself instead: the
+	# master from the claim it is resolving right here, and a non-master from its
+	# own `_pending_claims` entry, which still holds `n`/`v` when the confirm lands
+	# (see `_receive_confirm`). So `bank_awarded`'s base total is never anything a
+	# peer told us.
 	var base_total: int = count * value
 	var confirm: Dictionary = {
 		"t": "cnf", "id": id, "by": by_int, "a": awarded, "m": _room_multiplier,
-		"b": base_total,
 	}
 	_broadcast_reliable(var_to_bytes(confirm))
 	# And apply it to ourselves: the master is a player too, and this is the only
@@ -3350,10 +3365,14 @@ func _apply_confirm(id: int, by_int: int, awarded: int, multiplier: int, base_to
 	in its own `_ready()`).
 
 	@param base_total: the claim's PRE-MULTIPLIER worth, for the lifetime-coin
-	    counter — see the `b` field in `_resolve_claim()`. Trailing and defaulting
-	    to 0 so nothing that does not know about it changes behaviour: 0 means
-	    "no base value known" and `bank_awarded()` credits no lifetime coins,
-	    which is exactly what every call did before bead godot-test1-42n.
+	    counter. ALWAYS DERIVED BY THE CALLER FROM ITS OWN STATE — the master from
+	    the claim it is resolving, a peer from its own `_pending_claims` entry —
+	    and never taken off the wire, because a confirm names its own winner and a
+	    forgeable base value would mint PERSISTED progression rather than a
+	    run-scoped bank. Trailing and defaulting to 0 so nothing that does not know
+	    about it changes behaviour: 0 means "no base value known" and
+	    `bank_awarded()` credits no lifetime coins, which is exactly what every
+	    call did before bead godot-test1-42n.
 	"""
 	_absorb_collected([id])
 	_pending_claims.erase(id)
@@ -3514,31 +3533,31 @@ func _receive_confirm(from_id: String, packet: Dictionary) -> void:
 	# The multiplier only ever feeds the HUD suffix, but it is clamped to the range
 	# the game can actually produce so a hostile master cannot print "x9000".
 	var multiplier: int = clampi(int(packet["m"]), 1, 1 + PLAYER_SCRIPT.STREAK_MAX_BONUS)
-	# `b` — the claim's pre-multiplier worth, for lifetime coins (bead
-	# godot-test1-42n). MISSING IS NOT MALFORMED, the same rule presence uses for
-	# its counters: a master on an older build sends no `b`, and dropping the
-	# whole confirm over it would cost the winner the coin itself rather than only
-	# its progression credit. Present-but-bad still drops the packet, and the
-	# bound is tight — `MAX_CLAIM_PICKUPS * MAX_CLAIM_VALUE` is the most any
-	# honest claim can be worth, so a hostile master cannot mint levels.
+	# THE BASE VALUE FOR META-PROGRESSION IS DERIVED HERE, NEVER READ OFF THE WIRE
+	# (bead godot-test1-42n). It comes from OUR OWN pending claim — the entry we
+	# wrote in `claim_pickup()` before sending the claim, which still holds `n`/`v`
+	# because `_apply_confirm` only erases it further down.
+	#
+	# Why not a `b` field with a bound on it: a confirm names its own winner, so a
+	# hostile master could address one to another member with any base value it
+	# liked, and that member would permanently gain those LIFETIME coins for a
+	# pickup it never claimed. `a` is forgeable the same way and always has been,
+	# but that inflates a run-scoped bank; lifetime coins are monotone and
+	# persisted, so the same forgery there outlives the room. Deriving it locally
+	# is both smaller and unforgeable: a peer credits progression only for a pickup
+	# it can prove to itself that it asked for.
+	#
+	# Zero when there is no matching claim, which is the correct answer in all
+	# three cases it happens: the confirm is for somebody else (we do not bank at
+	# all), it is a duplicate whose entry we already consumed, or `_tick_claims`
+	# gave up and `_resolve_claim_locally` already paid the progression through
+	# `collect_coin`.
+	var pickup_id: int = int(packet["id"])
 	var base_total: int = 0
-	var raw_base: Variant = packet.get("b", null)
-	if raw_base != null:
-		if typeof(raw_base) != TYPE_INT:
-			return
-		base_total = int(raw_base)
-		if base_total < 0 or base_total > MAX_CLAIM_PICKUPS * MAX_CLAIM_VALUE:
-			return
-		# AND `b` CAN NEVER EXCEED `a`, which is the bound that actually binds. The
-		# award loop multiplies every pickup by at least x1, so `awarded >=
-		# base_total` holds for every honest claim — without this a master could
-		# send `{"a": 0, "b": 64000}`, a confirm that is valid on every other test,
-		# and permanently credit the winner 64000 lifetime coins for a pickup worth
-		# nothing. Lifetime coins are monotone and persisted, so that is not a
-		# score exploit that ends with the run.
-		if base_total > awarded:
-			return
-	_apply_confirm(int(packet["id"]), int(packet["by"]), awarded, multiplier, base_total)
+	if _pending_claims.has(pickup_id):
+		var claim: Dictionary = _pending_claims[pickup_id]
+		base_total = int(claim["n"]) * int(claim["v"])
+	_apply_confirm(pickup_id, int(packet["by"]), awarded, multiplier, base_total)
 
 
 # =============================================================================

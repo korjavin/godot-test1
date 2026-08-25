@@ -52,9 +52,10 @@ extends SceneTree
 ##  16. The room's HEARTS as the master's own state, pinned against the stateless
 ##      formula it replaces: a grant that lands at LIVES_CAP is burnt, a death is
 ##      charged once, and a master migration carries the count over.
-##  17. The claim confirm's BASE VALUE, which is what a room's pickups credit to
-##      meta-progression — non-zero, distinct from the multiplied award, bounded
-##      as peer input, and tolerated when a master on an older build omits it.
+##  17. The claim's BASE VALUE, which is what a room's pickups credit to
+##      meta-progression — non-zero, distinct from the multiplied award, and
+##      UNFORGEABLE: derived from the winner's own pending claim rather than from
+##      the confirm, so a hostile master cannot mint persisted progression.
 ##  18. Terrain FOCUS POINTS — the chunks that stay loaded around a far teammate,
 ##      so the master has crocodiles there to simulate at all. Measured in metres
 ##      against SIM_RADIUS, with the memory cap and the release both pinned.
@@ -1307,19 +1308,19 @@ func bank_awarded(amount: int, base_total: int = 0) -> void:
 
 func _check_claim_base_value() -> String:
 	"""
-	The master's ruling must carry the pickup's PRE-MULTIPLIER worth, and it must
-	reach the winner.
+	A pickup won through the claim protocol must reach `bank_awarded()` with its
+	PRE-MULTIPLIER worth beside the multiplied award.
 
 	Lifetime coins count what was physically picked up; `a` has a x1..x5 score
-	multiplier baked in. Before this bead the confirm carried no base value at all,
-	so every coin a peer WON in a room credited nothing towards its level — the
-	peer that lost each race was the one that levelled, through `collect_coin`.
+	multiplier baked in. Before this bead nothing carried a base value at all, so
+	every coin a peer WON in a room credited nothing towards its level — the peer
+	that LOST each race was the one that levelled, through `collect_coin`.
 
 	Two assertions, and each exists because the other alone passes for the bug:
 	the base must be non-zero (crediting nothing is what shipped) AND it must
-	differ from `a` (crediting `a` is the easy mistake and inflates a level 5x).
-	The scenario is a chest burst at a wound-up room streak precisely so the two
-	numbers cannot coincide.
+	differ from the award (crediting the award is the easy mistake and inflates a
+	level 5x). The scenario is a chest burst at a wound-up room streak precisely
+	so the two numbers cannot coincide.
 	"""
 	var stub_script := GDScript.new()
 	stub_script.source_code = BANK_STUB_SOURCE
@@ -1339,8 +1340,8 @@ func _check_claim_base_value() -> String:
 	# No `_rtc`, so `_broadcast_reliable` is a no-op — the master applies its own
 	# ruling locally, which is the path the winner-is-the-master case takes anyway.
 
-	# Wind the room's streak past a step so the multiplier is genuinely above 1,
-	# or `a` and `b` would be the same number and this check would prove nothing.
+	# Wind the room's streak past a step so the multiplier is genuinely above 1, or
+	# the award and the base would be the same number and this proves nothing.
 	mp._room_streak = Player.STREAK_COINS_PER_STEP * 2
 	mp._room_streak_deadline_msec = Time.get_ticks_msec() + 60000
 
@@ -1357,10 +1358,10 @@ func _check_claim_base_value() -> String:
 	if calls != 1:
 		return "_resolve_claim called bank_awarded %d times, expected exactly 1" % calls
 	if base_seen == 0:
-		return ("the confirm carried no base value — a pickup won through the claim protocol still "
+		return ("no base value reached bank_awarded — a pickup won through the claim protocol still "
 			+ "credits no lifetime coins")
 	if base_seen != count * value:
-		return "the confirm's base value was %d, expected %d pickups x %d = %d" % [
+		return "the base value was %d, expected %d pickups x %d = %d" % [
 			base_seen, count, value, count * value
 		]
 	if banked == base_seen:
@@ -1371,18 +1372,23 @@ func _check_claim_base_value() -> String:
 			banked, base_seen
 		]
 
-	# THE TRUST BOUNDARY. `b` is peer input like everything else on the mesh, and
-	# it feeds a permanent, monotone counter — so an absurd one must be refused,
-	# while a MISSING one (an older master) must cost only the progression credit
-	# and never the coin itself.
-	var boundary: String = _check_confirm_base_bounds()
-	if not boundary.is_empty():
-		return boundary
-	return ""
+	# THE TRUST BOUNDARY, and the reason the base value is not on the wire at all.
+	return _check_confirm_base_is_unforgeable()
 
 
-func _check_confirm_base_bounds() -> String:
-	"""`b`'s validation, from both sides — see `_receive_confirm`."""
+func _check_confirm_base_is_unforgeable() -> String:
+	"""
+	A NON-MASTER's base value must come from its own pending claim and from
+	nothing a peer sent it — see `_receive_confirm`.
+
+	The confirm names its own winner (`by`), so a hostile master can address one
+	to any member. `a` has always been forgeable that way and inflates a
+	RUN-SCOPED bank; a forgeable base value would mint LIFETIME coins, which are
+	monotone and persisted and therefore outlive the room. So the check is not
+	"is the field bounded" but "is there a field to forge": a confirm for a pickup
+	this peer never claimed must credit ZERO however generous it looks, and a
+	confirm for one it did claim must credit exactly what it asked for.
+	"""
 	var stub_script := GDScript.new()
 	stub_script.source_code = BANK_STUB_SOURCE
 	stub_script.reload()
@@ -1398,41 +1404,34 @@ func _check_confirm_base_bounds() -> String:
 	mp._master = "fedcba9876543210"
 	var me: int = MPManager.peer_int_id(mp._you)
 
-	# MISSING `b`: an older master. The coin must still be banked.
-	mp._receive_confirm(mp._master, {"t": "cnf", "id": 1, "by": me, "a": 40, "m": 4})
-	var legacy_calls: int = stub.calls
-	var legacy_base: int = stub.base_seen
+	# FORGED: a confirm naming us the winner of a pickup we never claimed, with a
+	# `b` a hostile master would love us to believe. The coin is still banked (the
+	# run-scoped `a` was always the master's to say), but the level must not move.
+	mp._receive_confirm(mp._master, {"t": "cnf", "id": 1, "by": me, "a": 64000, "m": 1, "b": 64000})
+	var forged_calls: int = stub.calls
+	var forged_base: int = stub.base_seen
 
-	# ABSURD `b`: refused whole, so nothing is banked at all.
-	mp._receive_confirm(mp._master, {"t": "cnf", "id": 2, "by": me, "a": 40, "m": 4, "b": 1 << 40})
-	var hostile_calls: int = stub.calls
-
-	# `b` LARGER THAN `a`, which is the bound that actually binds. Every honest
-	# claim multiplies each pickup by at least x1, so `a >= b` always — and
-	# without the test a master could mint lifetime coins (monotone, persisted,
-	# not a score that ends with the run) off a pickup that awarded nothing.
-	mp._receive_confirm(mp._master, {"t": "cnf", "id": 4, "by": me, "a": 0, "m": 1, "b": 64000})
-	var inflated_calls: int = stub.calls
-
-	# HONEST `b`: accepted.
-	mp._receive_confirm(mp._master, {"t": "cnf", "id": 3, "by": me, "a": 40, "m": 4, "b": 10})
-	var good_calls: int = stub.calls
-	var good_base: int = stub.base_seen
+	# HONEST: a pickup we really did claim, so our own entry says what it was
+	# worth. Two gems, and a `b` on the wire that contradicts it — which must be
+	# ignored in favour of what we asked for.
+	mp._pending_claims[7] = {"n": 2, "v": Coin.GEM_VALUE, "age": 0.0, "tries": 1}
+	mp._receive_confirm(mp._master, {"t": "cnf", "id": 7, "by": me, "a": 40, "m": 2, "b": 99999})
+	var honest_calls: int = stub.calls
+	var honest_base: int = stub.base_seen
 
 	stub.free()
 	mp.free()
 
-	if legacy_calls != 1:
-		return "a confirm with no `b` was not applied — an older master would cost the winner the coin itself"
-	if legacy_base != 0:
-		return "a confirm with no `b` credited %d base coins, expected 0" % legacy_base
-	if hostile_calls != legacy_calls:
-		return "a confirm with an out-of-range `b` was applied — a hostile master could mint levels"
-	if inflated_calls != legacy_calls:
-		return ("a confirm whose `b` exceeded its `a` was applied — a master could credit lifetime "
-			+ "coins for a pickup that awarded nothing")
-	if good_calls != legacy_calls + 1 or good_base != 10:
-		return "an honest `b` of 10 was not applied (calls %d, base %d)" % [good_calls, good_base]
+	if forged_calls != 1:
+		return "a confirm naming us the winner was not applied at all — the coin itself is lost"
+	if forged_base != 0:
+		return ("a confirm for a pickup we never claimed credited %d lifetime coins — a hostile master "
+			+ "can mint PERSISTED progression for any member") % forged_base
+	if honest_calls != 2:
+		return "the confirm for a pickup we did claim was not applied (%d calls)" % honest_calls
+	if honest_base != 2 * Coin.GEM_VALUE:
+		return ("a claim of 2 gems credited %d lifetime coins, expected %d — the base must come from "
+			+ "our own pending claim, not from the packet") % [honest_base, 2 * Coin.GEM_VALUE]
 	return ""
 
 
