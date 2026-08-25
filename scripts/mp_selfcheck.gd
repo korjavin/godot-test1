@@ -38,7 +38,10 @@ extends SceneTree
 ##      crocodile the same thing; AND a live croc latches it in _ready().
 ##  12. The room's coin multiplier arithmetic, pinned against the player's own
 ##      streak constants — the master prices every claim with it.
-##  13. The two join-snapshot WORLD SWEEPS, measured as effects on real nodes
+##  13. The group anchor rule — where a mid-run joiner lands AND where a death
+##      inside a room respawns. A spread group must never anchor on the empty
+##      midpoint, INCLUDING for a dying master, which is never in the map.
+##  14. The two join-snapshot WORLD SWEEPS, measured as effects on real nodes
 ##      with a negative control each: the kill list must squash the crocodile it
 ##      names and no other, and the collected set must spend the chest it names
 ##      and no other. Both bugs look like nothing on a headless machine and need
@@ -102,6 +105,9 @@ func _run_checks() -> String:
 	if not failure.is_empty():
 		return failure
 	failure = _check_room_multiplier()
+	if not failure.is_empty():
+		return failure
+	failure = _check_group_anchor()
 	if not failure.is_empty():
 		return failure
 	return _check_join_world_sweeps()
@@ -812,7 +818,56 @@ func _check_room_multiplier() -> String:
 
 
 # =============================================================================
-# 13. JOIN-SNAPSHOT WORLD SWEEPS (dead crocodiles, emptied chests)
+# 13. GROUP ANCHOR (where a joiner arrives, and where a death respawns)
+# =============================================================================
+
+func _check_group_anchor() -> String:
+	"""
+	`_anchor_of()` decides where a mid-run joiner lands (`_join_anchor()`) AND
+	where a player who dies inside a room comes back (`group_anchor()`), so a
+	wrong answer here teleports somebody into empty ground with nothing to see
+	and no error anywhere — the class of failure a headless run cannot eyeball.
+
+	The third case is the one that bites and the reason this check exists:
+	`_peer_state` holds only OTHER members, so a DYING MASTER is never in the
+	map it hands over. If the spread branch fell back to the centroid for a
+	missing master, that master would respawn onto the empty midpoint between two
+	teammates who went opposite ways — precisely the outcome the whole spread
+	branch exists to avoid.
+	"""
+	var spread: float = MPManager.GROUP_SPREAD_MAX
+	var a := Vector3(0.0, 2.0, 0.0)
+	var b := Vector3(10.0, 2.0, 0.0)
+	var far := Vector3(spread * 4.0, 2.0, 0.0)
+
+	# Tight group: the plain centroid, master or no master.
+	var tight: Vector3 = MPManager._anchor_of({"m": a, "p": b}, "m")
+	if tight.distance_to((a + b) * 0.5) > 0.01:
+		return "_anchor_of on a tight group answered %s, expected the centroid %s" % [
+			str(tight), str((a + b) * 0.5)
+		]
+
+	# Spread group WITH the master in the map: the master, not the midpoint.
+	var with_master: Vector3 = MPManager._anchor_of({"m": a, "p": far}, "m")
+	if with_master.distance_to(a) > 0.01:
+		return "_anchor_of on a spread group answered %s, expected the master at %s" % [
+			str(with_master), str(a)
+		]
+
+	# Spread group WITHOUT the master (a dying master anchoring on its peers):
+	# some real peer, never the empty midpoint between them.
+	var no_master: Vector3 = MPManager._anchor_of({"p": a, "q": far}, "m")
+	var midpoint: Vector3 = (a + far) * 0.5
+	if no_master.distance_to(midpoint) < 0.01:
+		return ("_anchor_of fell back to the centroid %s for a master absent from the map "
+			+ "— a dying master would respawn on empty ground between its teammates") % str(midpoint)
+	if no_master.distance_to(a) > 0.01 and no_master.distance_to(far) > 0.01:
+		return "_anchor_of answered %s, which is nobody's position" % str(no_master)
+	return ""
+
+
+# =============================================================================
+# 14. JOIN-SNAPSHOT WORLD SWEEPS (dead crocodiles, emptied chests)
 # =============================================================================
 
 func _check_join_world_sweeps() -> String:
