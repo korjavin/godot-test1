@@ -1785,7 +1785,7 @@ func _join_anchor() -> Vector3:
 	var positions: Dictionary = {}
 	for id: String in _peer_state:
 		positions[id] = _peer_state[id]["pos"] as Vector3
-	return _anchor_of(positions)
+	return _anchor_of(positions, _master)
 
 
 func group_anchor() -> Variant:
@@ -1822,19 +1822,30 @@ func group_anchor() -> Variant:
 		positions[id] = _peer_state[id]["pos"] as Vector3
 	if positions.is_empty():
 		return null
-	return _anchor_of(positions)
+	return _anchor_of(positions, _master)
 
 
-func _anchor_of(positions: Dictionary) -> Vector3:
+static func _anchor_of(positions: Dictionary, master_id: String) -> Vector3:
 	"""
 	The group's anchor over a NON-EMPTY `lobby id -> Vector3` map: the centroid,
-	unless somebody is further than `GROUP_SPREAD_MAX` from it, in which case the
-	MASTER's position — the centroid of two players who have gone opposite ways
-	is empty ground between them, and standing beside one player beats standing
-	beside none. A master missing from the map (it may have joined after us and
-	not yet reported, or it may be stale) leaves the centroid as the fallback.
+	unless somebody is further than `GROUP_SPREAD_MAX` from it, in which case a
+	real player's position — the centroid of two players who have gone opposite
+	ways is empty ground between them, and standing beside one player beats
+	standing beside none. `master_id` is the preferred pick when the group is
+	spread, because it is the one member every peer agrees on.
 
-	Callers guarantee non-empty, so the divide is safe.
+	**A SPREAD GROUP NEVER FALLS BACK TO THE CENTROID.** `master_id` can be
+	missing from the map two ways — a master that has not reported yet or has
+	gone `stale`, and (the one `group_anchor()` hits) a **dying master**, whose
+	own position is never in `_peer_state` at all, since that dictionary holds
+	only OTHER members. Returning the centroid there would put exactly the anchor
+	rule's stated failure back: the master respawning onto empty ground between
+	two teammates who went opposite ways. So the fallback is the live position
+	NEAREST the centroid — still a real player, still deterministic, and still
+	the most central one.
+
+	Static and `_rtc`-free, so `mp_selfcheck.gd` can pin it; callers guarantee a
+	non-empty map, so the divide is safe.
 	"""
 	var centroid: Vector3 = Vector3.ZERO
 	for id: String in positions:
@@ -1843,9 +1854,17 @@ func _anchor_of(positions: Dictionary) -> Vector3:
 
 	for id: String in positions:
 		if (positions[id] as Vector3).distance_to(centroid) > GROUP_SPREAD_MAX:
-			if positions.has(_master):
-				return positions[_master] as Vector3
-			return centroid
+			if positions.has(master_id):
+				return positions[master_id] as Vector3
+			var nearest: Vector3 = centroid
+			var best_sq: float = INF
+			for other: String in positions:
+				var pos: Vector3 = positions[other] as Vector3
+				var dist_sq: float = pos.distance_squared_to(centroid)
+				if dist_sq < best_sq:
+					best_sq = dist_sq
+					nearest = pos
+			return nearest
 	return centroid
 
 
