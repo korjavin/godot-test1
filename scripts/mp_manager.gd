@@ -1984,11 +1984,29 @@ func _receive_state(from: String, snapshot: Dictionary) -> void:
 	_gone_coins = maxi(_gone_coins, int(snapshot["gc"]))
 	_gone_spent = maxi(_gone_spent, int(snapshot["gs"]))
 	_absorb_collected(snapshot["ids"])
-	# APPLYING THE SNAPSHOT'S WORLD-STATE DELTAS HERE IS THE JOIN EVENT ITSELF,
+	# THE KILL LIST IS TAKEN FROM THE MASTER ALONE, and that asymmetry with `ids`
+	# right above it is the point. The collected set is a UNION — each peer only
+	# knows the coins it banked itself, so every incumbent's ids are needed and
+	# every incumbent is entitled to assert them. A kill is the opposite: it is
+	# ARBITRATED (`_resolve_kill` on the master, broadcast as `dead`), so every
+	# member's `_dead_crocs` is already a copy of the master's one set and there
+	# is nothing a non-master can add — while `_apply_dead` deletes a crocodile
+	# permanently on this peer, which is exactly why `_receive_dead` accepts the
+	# live verb from the master only. Honouring a stranger's list here would have
+	# reopened that hole through the relay, which any room member can reach
+	# (`GET /rooms` makes every code public).
+	#
+	# APPLYING THE SNAPSHOT'S WORLD-STATE DELTAS AT ALL IS THE JOIN EVENT ITSELF,
 	# not a replay of somebody else's events: the `_state_received` latch above
 	# admits exactly one snapshot per sender for the room's life, so neither sweep
 	# can ever run a second time for the same peer.
-	_absorb_dead(snapshot["dead"])
+	#
+	# The cost of the rule is that a wedged or older-build master leaves the
+	# joiner without a kill list — the same degradation its missing coin ids
+	# already cause, and `JOIN_SNAPSHOT_WAIT` already refuses to strand the
+	# joiner over it.
+	if from == _master:
+		_absorb_dead(snapshot["dead"])
 	# The snapshot may be the last thing the placement was waiting on (the seed
 	# can equally well be). Both call in; the latch inside decides.
 	_apply_join_placement()

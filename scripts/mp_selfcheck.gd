@@ -866,6 +866,17 @@ func _check_join_world_sweeps() -> String:
 		mp.free()
 		return "_absorb_dead swept the world without recording the id — the croc walks back in on a chunk reload"
 
+	# --- The kill list's AUTHORITY rule, which the coin ids beside it deliberately
+	# do not share: a crush is arbitrated by the master, so a stranger's `dead`
+	# array is not a contribution, it is a request to delete crocodiles on our
+	# machine. Every room code is public over `GET /rooms`, so "a member" means
+	# anyone. Driven through `_receive_state` because that is where the sender is
+	# known — `_absorb_dead` itself has no business asking who called it.
+	var authority_failure: String = _check_kill_list_authority(mp)
+	if not authority_failure.is_empty():
+		mp.free()
+		return authority_failure
+
 	# --- Chests. Same shape one thing over: the collected set names one of two.
 	# Two positions well over `Coin.id_at`'s 12.5 cm quantisation apart, so the
 	# ids cannot collide and the control is a real control.
@@ -911,3 +922,49 @@ func _spawn_chest(at: Vector3) -> Area3D:
 	root.add_child(chest)
 	chest.setup(8, 0.8)
 	return chest
+
+
+func _check_kill_list_authority(mp: Node) -> String:
+	"""
+	A snapshot's `dead` array is honoured from the MASTER and nobody else — the
+	one asymmetry with the `ids` beside it, because a kill is arbitrated while the
+	collected set is a union.
+
+	The positive half matters as much as the negative one: a `from == _master`
+	test that never passes would silently take the whole fix back out, and every
+	other assertion in this section would still be green, because they drive
+	`_absorb_dead` directly and never go through `_receive_state` at all.
+	"""
+	var snapshot := {
+		"cc": 0.0, "ls": 0.0, "dd": 0.0, "px": 0.0, "py": 0.0, "pz": 0.0, "ids": [],
+	}
+	mp._master = "the-real-master"
+
+	# NEGATIVE: a stranger's kill list must delete nothing. Room codes are public
+	# over `GET /rooms`, so "a member of the room" means anybody at all.
+	var victim: Node = load("res://scenes/characters/piglet_crocodile.tscn").instantiate()
+	victim.name = "Crocodile_11_11_0"
+	root.add_child(victim)
+	var hostile: Dictionary = snapshot.duplicate()
+	hostile["dead"] = [float(victim.croc_id())]
+	mp._receive_state("some-other-member", MPManager.decode_state(hostile))
+	var survived: bool = victim.is_in_group("crocodile")
+	var leaked: bool = mp._dead_crocs.has(victim.croc_id())
+	victim.free()
+	if not survived:
+		return "a NON-MASTER's join snapshot deleted a crocodile — the master-only kill authority is bypassable over the relay"
+	if leaked:
+		return "a NON-MASTER's join snapshot wrote _dead_crocs — the crocodile stays deleted through every later chunk reload"
+
+	# POSITIVE: the master's must land, or the fix is not there at all.
+	var doomed: Node = load("res://scenes/characters/piglet_crocodile.tscn").instantiate()
+	doomed.name = "Crocodile_11_11_1"
+	root.add_child(doomed)
+	var ruling: Dictionary = snapshot.duplicate()
+	ruling["dead"] = [float(doomed.croc_id())]
+	mp._receive_state("the-real-master", MPManager.decode_state(ruling))
+	var still_alive: bool = doomed.is_in_group("crocodile")
+	doomed.free()
+	if still_alive:
+		return "the MASTER's join snapshot did not apply its kill list — a joiner still sees crushed crocodiles alive"
+	return ""
