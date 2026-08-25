@@ -84,9 +84,28 @@ services:
       --external-ip=${TURN_EXTERNAL_IP}
       --no-tls --no-dtls
       --no-multicast-peers
+      --no-loopback-peers
+      # The relay runs with network_mode: host, so an unblocked range is a
+      # PIVOT INTO THE DEPLOYMENT HOST, and /ice hands the credentials to anyone
+      # who asks. RFC1918 alone left loopback (the lobby itself, and anything
+      # else that trusts 127/8), cloud instance metadata on 169.254/16, CGNAT,
+      # and EVERY IPv6 address relayable.
+      --denied-peer-ip=0.0.0.0-0.255.255.255
       --denied-peer-ip=10.0.0.0-10.255.255.255
+      --denied-peer-ip=100.64.0.0-100.127.255.255
+      --denied-peer-ip=127.0.0.0-127.255.255.255
+      --denied-peer-ip=169.254.0.0-169.254.255.255
       --denied-peer-ip=172.16.0.0-172.31.255.255
+      --denied-peer-ip=192.0.0.0-192.0.0.255
       --denied-peer-ip=192.168.0.0-192.168.255.255
+      --denied-peer-ip=::1-::1
+      --denied-peer-ip=fc00::-fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+      --denied-peer-ip=fe80::-febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+      # Quotas, because the credentials are static and public until the
+      # --use-auth-secret migration main.go names: without them the relay is
+      # metered only by the operator's bandwidth bill.
+      --user-quota=${TURN_USER_QUOTA:-12}
+      --total-quota=${TURN_TOTAL_QUOTA:-200}
 
 networks:
   traefik_network:

@@ -332,13 +332,29 @@ var _remote_pos: Vector3 = Vector3.ZERO
 var _remote_yaw: float = 0.0
 var _has_remote_sample: bool = false
 
-## True once this body has asked the room master to kill it (giant-Teibi crush).
+## When this body last asked the room master to kill it (giant-Teibi crush), in
+## `Time.get_ticks_msec()`, or -1 for never.
+##
 ## The master's `dead` broadcast is a round trip, and the body stays alive, solid
 ## and overlapping the player until it lands — so `_handle_collisions` fires the
 ## crush again on EVERY physics frame in between, and each one would put another
 ## RELIABLE packet on the one channel that also carries claims and confirms.
 ## Latched here rather than in the manager because the request is per-crocodile.
-var _kill_requested: bool = false
+##
+## It EXPIRES rather than latching forever, because nothing acknowledges the
+## request: `request_croc_kill()` reports only that the packet left. The master's
+## own `VERB_BUDGET_PER_SEC` drops `kill` past 10/s per peer SILENTLY, and a
+## giant Teibi crossing a dense far-out pack touches more than that in a second —
+## so a permanent latch left those crocodiles unable to be crushed AND unable to
+## bite (the early return is above the bite path), i.e. immortal harmless
+## obstacles for the rest of the run. A stall vote deposing the master mid-round-
+## trip, or a channel mid-renegotiation, lose a request the same way.
+var _kill_requested_msec: int = -1
+## How long to wait for the master's ruling before asking again. Long enough that
+## the per-frame re-send this exists to suppress still costs one packet; short
+## enough that a dropped request is retried while the player is still standing on
+## the crocodile.
+const KILL_RETRY_MSEC: int = 1000
 
 ## Confinement: elevated "patrol" crocodiles are pinned to a structure top (a
 ## pyramid apex or wall ridge) and can never wander off it, since they can't jump
@@ -858,7 +874,17 @@ func _feeler_blocked(space: PhysicsDirectSpaceState3D, origin: Vector3, dir: Vec
 	@param reach: Ray length — AVOID_LOOK_AHEAD scaled by the body (see _avoid_obstacles)
 	@return true if the ray hits something we should steer around
 	"""
-	var query := PhysicsRayQueryParameters3D.create(origin, origin + dir.normalized() * reach)
+	# OUR OWN MASK, not `create()`'s default of all 32 layers. Fauna roots are
+	# `AnimatableBody3D` bodies on layer 3 which crocodiles deliberately do not
+	# mask (mask 3 = layers 1+2), and they are in no group, so the group test
+	# below cannot reject them. Ordinary crocodiles are saved only by geometry —
+	# the feeler sits at 0.28-0.43 m, under every deck — but `_avoid_obstacles`
+	# scales both probe dimensions by the body, so a boss at scale >= 3.375 lifts
+	# it to 1.1 m+ and starts swerving away from, and cutting speed for, a pack
+	# beast it cannot touch.
+	var query := PhysicsRayQueryParameters3D.create(
+		origin, origin + dir.normalized() * reach, collision_mask
+	)
 	query.exclude = [get_rid()]  # never sense our own collider
 	query.collide_with_areas = false
 	var hit := space.intersect_ray(query)
@@ -1404,11 +1430,12 @@ func _on_player_collision(player: Node) -> void:
 		# return WITHOUT squashing — the master's kill broadcast frees this body
 		# everywhere, including here. Offline, or with no manager in the scene, it
 		# answers false and the squash below runs byte-for-byte unchanged.
-		if _kill_requested:
+		var now_msec: int = Time.get_ticks_msec()
+		if _kill_requested_msec >= 0 and now_msec - _kill_requested_msec < KILL_RETRY_MSEC:
 			return  # Already asked; waiting on the master's ruling. See the var.
 		var mp := get_tree().get_first_node_in_group("mp")
 		if mp and mp.has_method("request_croc_kill") and mp.request_croc_kill(croc_id()):
-			_kill_requested = true
+			_kill_requested_msec = now_msec
 			return
 		squash_and_die()
 		return

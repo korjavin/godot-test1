@@ -164,14 +164,27 @@ func TestMasterIsOldestAndReElects(t *testing.T) {
 	}
 }
 
+// silence backdates one member's lastSeen so the lobby believes it has gone
+// quiet, without sleeping for stallMasterSilence. Same "age it in place" trick
+// TestStallVotesExpire uses on the votes themselves.
+func silence(hub *Hub, code, id string) {
+	hub.mu.Lock()
+	defer hub.mu.Unlock()
+	if m := hub.rooms[code].members[id]; m != nil {
+		m.lastSeen.Store(time.Now().Add(-2 * stallMasterSilence).UnixNano())
+	}
+}
+
 // TestStallQuorumReElects covers the phase-5 hook: the lobby re-elects once
-// strictly more than half of the non-master members report the master stalled.
+// strictly more than half of the non-master members report the master stalled
+// AND the lobby has itself heard nothing from that master.
 func TestStallQuorumReElects(t *testing.T) {
-	base := newServer(t)
+	base, hub := newServerHub(t)
 
 	a := dial(t, base, "", "alice")
 	b := dial(t, base, a.room, "bob")
 	c := dial(t, base, a.room, "carol")
+	silence(hub, a.room, a.id)
 
 	// One of two non-master members is not a quorum.
 	b.send(map[string]any{"type": "stalled", "id": a.id})
@@ -205,6 +218,7 @@ func TestStallVotesExpire(t *testing.T) {
 	b := dial(t, base, a.room, "bob")
 	c := dial(t, base, a.room, "carol")
 	_ = b.want("peer_join")
+	silence(hub, a.room, a.id)
 
 	b.send(map[string]any{"type": "stalled", "id": a.id})
 	// Round-trip a frame so bob's vote is definitely recorded before we age it.
@@ -542,5 +556,46 @@ func TestRoomsEndpoint(t *testing.T) {
 	hub.roomsHandler(rec, req)
 	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
 		t.Errorf("evil origin got %q", got)
+	}
+}
+
+// TestStallQuorumNeedsSilentMaster is the negative control for
+// stallMasterSilence, and it covers a live griefing route rather than a
+// hypothetical: room codes are public over GET /rooms, "strictly more than half
+// the non-master members" is ONE vote in a two-member room, and the client trusts
+// whoever is master with pickup arbitration, crocodile sync and the world seed.
+// So a stranger joining a solo host must not be able to take the room with a
+// single frame while the host is heartbeating normally.
+func TestStallQuorumNeedsSilentMaster(t *testing.T) {
+	base, hub := newServerHub(t)
+
+	host := dial(t, base, "", "host")
+	intruder := dial(t, base, host.room, "intruder")
+	_ = host.want("peer_join")
+
+	// The host is talking (its 1 Hz heartbeat is a signal frame), so the lobby
+	// can see for itself that the report is false.
+	host.send(map[string]any{"type": "signal", "payload": "hb"})
+	_ = intruder.want("signal")
+
+	intruder.send(map[string]any{"type": "stalled", "id": host.id})
+	intruder.send(map[string]any{"type": "ping"})
+	if f := intruder.want("pong"); f["type"] != "pong" {
+		t.Fatalf("wanted pong, got %v", f)
+	}
+	hub.mu.Lock()
+	master := hub.rooms[host.room].master
+	hub.mu.Unlock()
+	if master != host.id {
+		t.Fatalf("a single vote against a live master took the room: master = %v, host = %v", master, host.id)
+	}
+
+	// ...and once the host really does go quiet, the same vote works. A
+	// re-send is needed because the refused one is still in the set but the
+	// count only runs when a report arrives.
+	silence(hub, host.room, host.id)
+	intruder.send(map[string]any{"type": "stalled", "id": host.id})
+	if m := intruder.want("master"); m["id"] != intruder.id {
+		t.Fatalf("after the master went silent, master = %v, wanted %v", m["id"], intruder.id)
 	}
 }

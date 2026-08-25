@@ -31,7 +31,14 @@ PORT="${PORT:-$((18000 + $$ % 1000))}"
 # host still connected, or the lobby's ordinary disconnect re-election would fire
 # instead of a vote). Cleanup kills it the moment the script ends, so an
 # over-generous hold costs nothing but a slow one fails the run.
-HOST_HOLD=120
+# ABOVE INSTANCE_TIMEOUT (180), deliberately. The hold never needs to expire —
+# the EXIT trap kills the host either way — and an expiring hold is precisely the
+# trap the stall phase's liveness check exists to catch, yet cannot: the returning
+# _hold_open calls leave(), whose disconnect fires the lobby's ORDINARY
+# re-election, while `kill -0` (which runs only after the joiner has exited) still
+# sees the process during SceneTree teardown. Below the timeout it is also a plain
+# flake on a cold runner — two headless boots plus the ~6 s vote can outrun 120 s.
+HOST_HOLD=240
 LOG_DIR="$(mktemp -d)"
 LOBBY_PID=""
 HOST_PID=""

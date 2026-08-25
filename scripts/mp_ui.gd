@@ -669,10 +669,24 @@ func _on_rooms_listed(rooms: Array) -> void:
 		if typeof(entry) != TYPE_DICTIONARY:
 			continue
 		var room: Dictionary = entry as Dictionary
-		var code: String = String(room.get("code", "")).strip_edges().to_upper()
+		# TYPE-CHECKED, not converted. `String(v)` / `int(v)` are Variant
+		# CONSTRUCTORS with no overload for most types — `String({})` raises
+		# "Nonexistent 'String' constructor" at runtime, and a GDScript runtime
+		# error unwinds the whole calling function, so one malformed row from a
+		# hostile or buggy lobby (the URL is settable with `?lobby=`) aborted this
+		# loop mid-way: the rows already built stayed on screen and the trailing
+		# `_set_rooms_status()` / `_refresh()` never ran, leaving the panel stuck
+		# on "Looking for rooms…". `_hero_summary()` below already does it this way.
+		var raw_code: Variant = room.get("code", "")
+		if typeof(raw_code) != TYPE_STRING:
+			continue
+		var code: String = (raw_code as String).strip_edges().to_upper()
 		if code.length() != CODE_LENGTH:
 			continue
-		var count: int = int(room.get("members", 0))
+		var raw_count: Variant = room.get("members", 0)
+		if typeof(raw_count) != TYPE_INT and typeof(raw_count) != TYPE_FLOAT:
+			continue
+		var count: int = int(raw_count)
 		# The lobby already withholds full and empty rooms; re-checking here means
 		# an older or misbehaving lobby cannot put an unjoinable row on screen.
 		if count < 1 or count >= MAX_MEMBERS:

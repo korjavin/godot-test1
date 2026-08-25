@@ -1863,9 +1863,32 @@ static func decode_state(payload: Dictionary) -> Dictionary:
 # contribution is always simply its live `own_coins` / `own_lives_spent`, and a
 # restart never has to be hidden from the room's totals.
 
+func _join_settled() -> bool:
+	"""
+	Whether the room's totals can be trusted yet.
+
+	A joiner is IN_ROOM from the `welcome` frame, but `_peer_state` fills one
+	relayed snapshot at a time — and each snapshot carries one peer's coins AND
+	its spent lives, so a HALF-ARRIVED SET IS NOT A PARTIAL AVERAGE: it can be all
+	of the room's deaths and none of the bank that paid for the extra hearts. A
+	joiner reading it mid-fill computes zero hearts in a perfectly healthy room,
+	`_check_shared_game_over()` fires, and the Game Over screen goes up — undone
+	only if the placement runs, so a joiner still waiting on the seed sits there
+	for the whole 20 s `seed_req` budget, or forever if the seed never lands.
+
+	Until this is true the three getters below answer `null` and the player falls
+	through to solo semantics on the `== null` test it already makes. Same
+	condition `_can_join_place()` uses, minus the seed: the totals become readable
+	as soon as the SNAPSHOTS are in (or their deadline is spent), whether or not a
+	world has arrived to place into.
+	"""
+	return _first_member or _join_applied \
+		or _state_received.size() >= _expected_snapshots or _join_wait >= JOIN_SNAPSHOT_WAIT
+
+
 func shared_bank(own_coins: int) -> Variant:
-	"""The room's banked coins, or `null` offline."""
-	if _state != State.IN_ROOM:
+	"""The room's banked coins, or `null` offline / before the join settles."""
+	if _state != State.IN_ROOM or not _join_settled():
 		return null
 	var total: int = own_coins + _gone_coins
 	for state: Dictionary in _peer_state.values():
@@ -1874,8 +1897,9 @@ func shared_bank(own_coins: int) -> Variant:
 
 
 func shared_lives_spent(own_spent: int) -> Variant:
-	"""Lives spent by everyone who has been in this room, or `null` offline."""
-	if _state != State.IN_ROOM:
+	"""Lives spent by everyone who has been in this room, or `null` offline /
+	before the join settles (see `_join_settled`)."""
+	if _state != State.IN_ROOM or not _join_settled():
 		return null
 	var total: int = own_spent + _gone_spent
 	for state: Dictionary in _peer_state.values():
@@ -1890,8 +1914,10 @@ func shared_distance(own_distance: int) -> Variant:
 	A max, so feeding it back into the player's own running max cannot inflate it
 	— which is also why a departed peer needs no frozen accumulator: whatever it
 	reached was already folded in while it was here.
+
+	`null` offline, and while the join is still settling (see `_join_settled`).
 	"""
-	if _state != State.IN_ROOM:
+	if _state != State.IN_ROOM or not _join_settled():
 		return null
 	var best: int = own_distance
 	for state: Dictionary in _peer_state.values():
@@ -2110,6 +2136,19 @@ func _prune_dead_connections() -> void:
 		conn.close()
 		_connections.erase(id)
 		_pending_signals.erase(id)
+		# Freeze and drop its contribution exactly as `_on_lobby_peer_left` does.
+		# `_peer_state` is the ONLY source for `peer_positions()` (the LOD
+		# manager's focus points) and `nearest_member_position()` (what every
+		# crocodile hunts), and no `peer_left` is coming for this peer — so
+		# leaving the entry meant the master's whole pack chased, and the LOD
+		# manager held awake, an empty patch of ground for the room's life, while
+		# the peer went on banking coins nobody could count. A later real
+		# `peer_left` finds nothing here and folds nothing twice.
+		if _peer_state.has(id):
+			var gone: Dictionary = _peer_state[id]
+			_gone_coins += int(gone.get("coins", 0))
+			_gone_spent += int(gone.get("spent", 0))
+			_peer_state.erase(id)
 		if _avatars.has(id):
 			(_avatars[id] as RemoteAvatar).queue_free()
 			_avatars.erase(id)
@@ -2441,7 +2480,18 @@ func _resolve_claim(id: int, by_int: int, count: int, value: int) -> void:
 	"""
 	if _collected_ids.has(id):
 		return
-	_collected_ids[id] = true
+	# NOT recorded here: `_apply_confirm` below records it, through
+	# `_absorb_collected`, which skips ids already in the set and then returns
+	# early when nothing was fresh. Recording it up front therefore turned the
+	# master's own sweep of the `"coin"` group into a no-op, and `coin.gd`
+	# deliberately does not `queue_free()` on the claimed path (it only hides the
+	# coin and stops monitoring) — so every coin the MASTER picked up stayed in
+	# the tree, invisible and still in the `"coin"` group, until its chunk
+	# unloaded. `_resolve_kill` has the same shape and gets it right: `_dead_crocs`
+	# is written inside `_apply_dead`, not before it.
+	#
+	# Safe because nothing between here and `_apply_confirm` re-enters this
+	# function: `_broadcast_reliable` is a synchronous `put_packet` loop.
 
 	var now: int = Time.get_ticks_msec()
 	if now > _room_streak_deadline_msec:

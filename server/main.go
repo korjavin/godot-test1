@@ -28,7 +28,15 @@ var allowedOrigins = []string{"*"}
 func main() {
 	addr := env("LOBBY_ADDR", ":8080")
 	if o := env("LOBBY_ALLOWED_ORIGINS", "*"); o != "" {
-		allowedOrigins = splitList(o)
+		parsed := splitList(o)
+		// An unparseable list yields NO origins, which refuses every upgrade and
+		// makes corsOrigin answer "" for everything — i.e. multiplayer is simply
+		// broken, with `origins=[]` in the startup log and nothing complaining.
+		// Fail loudly instead.
+		if len(parsed) == 0 {
+			log.Fatalf("lobby: LOBBY_ALLOWED_ORIGINS=%q parsed to no origins", o)
+		}
+		allowedOrigins = parsed
 	}
 
 	hub := NewHub()
@@ -51,6 +59,11 @@ func main() {
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
 		// No WriteTimeout: it would guillotine long-lived websockets.
+		// IdleTimeout DOES apply, though — a hijacked websocket is outside the
+		// keep-alive loop entirely, while an ordinary client that fetches
+		// /healthz once and then goes silent would otherwise hold its fd forever
+		// on a public unauthenticated service.
+		IdleTimeout: 60 * time.Second,
 	}
 	log.Printf("lobby: listening on %s (origins=%v)", addr, allowedOrigins)
 	// ponytail: no graceful shutdown. Rooms are in-memory and disposable — on

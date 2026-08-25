@@ -28,19 +28,32 @@ const (
 	pingInterval = 20 * time.Second
 	pingTimeout  = 10 * time.Second
 	writeTimeout = 10 * time.Second
-	// msgRateBurst / msgRatePerSec bound how fast one peer may send. Signalling is
-	// tiny and bursty — an offer, an answer and a handful of ICE candidates per
-	// peer, then a heartbeat a second — so this is orders of magnitude above
-	// honest traffic.
+	// msgRateBurst / msgRatePerSec bound how fast one peer may send, IN BYTES.
+	// Signalling is tiny and bursty — an offer, an answer and a handful of ICE
+	// candidates per peer, then a heartbeat a second — so this is orders of
+	// magnitude above honest traffic.
 	//
 	// It exists because `signal` is a 1:N amplifier and the read loop is otherwise
 	// unmetered: a member (and every room code is public over /rooms, so that
-	// means anyone) can fan 64 KB frames out to the rest of the room as fast as
-	// the socket accepts them, and when their queues fill it is THEY who get
-	// dropped with "peer too slow" while the flooder keeps its connection. So the
-	// budget disconnects the SENDER, before Room ever sees the message.
-	msgRateBurst  = 120
-	msgRatePerSec = 40
+	// means anyone) can fan frames out to the rest of the room as fast as the
+	// socket accepts them, and when their queues fill it is THEY who get dropped
+	// with "peer too slow" while the flooder keeps its connection. So the budget
+	// disconnects the SENDER, before Room ever sees the message.
+	//
+	// BYTES, NOT MESSAGES, and that is the whole point: a per-message bucket let
+	// through 130 x 64 KB frames before firing, which is ~8 MB fanned at every
+	// other peer — whose queues are only sendBuffer (64) frames deep. Measured on
+	// a 4-peer room, every victim was evicted inside 100 ms while the flooder was
+	// still inside its budget, i.e. exactly the outcome this exists to prevent.
+	msgRateBurst  = 256 << 10
+	msgRatePerSec = 32 << 10
+	// maxPayload bounds the opaque `signal` payload the lobby relays. The lobby
+	// never inspects it, but it does re-frame it, and readLimit bounds the INBOUND
+	// message rather than the outbound one: a 65509-byte payload is accepted at
+	// exactly 65536 and relayed as 65562 bytes, past the 65535-byte default
+	// inbound buffer of the Godot WebSocketPeer on the other end — so one message
+	// drops every other peer in the room. SDP offers are a few KB.
+	maxPayload = 32 << 10
 )
 
 // clientMsg is every message a client may send. Unknown types are answered with
@@ -113,11 +126,13 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 		now := time.Now()
 		tokens = math.Min(float64(msgRateBurst), tokens+now.Sub(last).Seconds()*msgRatePerSec)
 		last = now
-		if tokens < 1 {
+		if tokens < float64(len(data)) {
 			c.Close(websocket.StatusPolicyViolation, "sending too fast") //nolint:errcheck
 			return
 		}
-		tokens--
+		tokens -= float64(len(data))
+
+		me.Touch()
 
 		if typ != websocket.MessageText {
 			continue
@@ -129,6 +144,10 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 		}
 		switch msg.Type {
 		case "signal":
+			if len(msg.Payload) > maxPayload {
+				me.send(mustJSON(map[string]any{"type": "error", "error": "payload too large"}))
+				continue
+			}
 			room.Signal(me, msg.To, msg.Payload)
 		case "hero":
 			if err := room.SetHero(me, msg.Hero); err != nil {
@@ -139,7 +158,9 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 		case "ping":
 			me.send(mustJSON(map[string]any{"type": "pong"}))
 		default:
-			me.send(mustJSON(map[string]any{"type": "error", "error": "unknown message type: " + msg.Type}))
+			// The client's own string is NOT echoed: it is unvalidated input up
+			// to readLimit, and this is a server-built frame.
+			me.send(mustJSON(map[string]any{"type": "error", "error": "unknown message type"}))
 		}
 	}
 }
