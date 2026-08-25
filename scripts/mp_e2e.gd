@@ -153,7 +153,17 @@ func _run() -> void:
 	# The TERRAIN's seed, not the manager's: the point of the test is that the
 	# ground was actually regenerated from the room's seed, not merely that a
 	# number was received and stored.
-	print("E2E_SEED=%d" % int(terrain.get("run_seed")))
+	#
+	# TYPE-CHECKED, because `Object.get()` on a property that does not exist
+	# answers `null` and `int(null)` is 0 — so a renamed or getter-wrapped
+	# `run_seed` would make BOTH instances print `E2E_SEED=0`, the harness's
+	# equality test hold, and the one assertion this whole script exists for pass
+	# while proving nothing.
+	var seed_value: Variant = terrain.get("run_seed")
+	if typeof(seed_value) != TYPE_INT:
+		_fail("terrain exposes no int run_seed — the seed comparison would be vacuous")
+		return
+	print("E2E_SEED=%d" % (seed_value as int))
 
 	if _await_master:
 		_deadline_msec = maxi(

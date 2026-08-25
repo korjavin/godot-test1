@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 // MaxMembers caps a room at the game's 4 players.
@@ -35,6 +36,12 @@ const codeLength = 6
 // Signalling traffic is tiny and bursty; a peer that cannot drain 64 messages is
 // not coming back, so we kill it rather than silently drop an ICE candidate.
 const sendBuffer = 64
+
+// stallVoteTTL is how long one peer's "the master has stalled" vote counts
+// toward a quorum. Roughly 5x the client's STALL_REPORT_INTERVAL (2 s), so a peer
+// that still believes the master is gone keeps its vote alive by re-sending,
+// while a peer whose connection merely hiccuped once stops contributing.
+const stallVoteTTL = 10 * time.Second
 
 var (
 	errRoomFull    = errors.New("room is full")
@@ -109,8 +116,13 @@ type Room struct {
 	heroes  map[string]string // hero name -> member id
 	master  string
 
-	// reports[subject] is the set of member ids that reported subject stalled.
-	reports map[string]map[string]bool
+	// reports[subject][reporterID] is when that reporter last voted subject
+	// stalled. Timestamped rather than a plain set because a vote must EXPIRE:
+	// a stall report is evidence about right now, and a monotone set means two
+	// peers whose connections hiccuped at completely unrelated moments an hour
+	// apart still add up to a quorum against a perfectly healthy master. See
+	// stallVoteTTL.
+	reports map[string]map[string]time.Time
 }
 
 // Hub owns every room.
@@ -233,7 +245,7 @@ func (h *Hub) Join(code, name, id string) (*Room, *Member, error) {
 			Code:    code,
 			members: make(map[string]*Member),
 			heroes:  make(map[string]string),
-			reports: make(map[string]map[string]bool),
+			reports: make(map[string]map[string]time.Time),
 		}
 		h.rooms[code] = room
 	}
@@ -380,10 +392,18 @@ func (r *Room) ReportStalled(reporter *Member, subject string) {
 	}
 	set := r.reports[subject]
 	if set == nil {
-		set = make(map[string]bool)
+		set = make(map[string]time.Time)
 		r.reports[subject] = set
 	}
-	set[reporter.ID] = true
+	now := time.Now()
+	set[reporter.ID] = now
+	// Prune before counting, so only peers that still believe the master is gone
+	// right now contribute to the quorum.
+	for id, at := range set {
+		if now.Sub(at) > stallVoteTTL {
+			delete(set, id)
+		}
+	}
 
 	others := len(r.members) - 1
 	if others < 1 || len(set)*2 <= others {
@@ -416,7 +436,7 @@ func (r *Room) electLocked() bool {
 		for _, m := range r.members {
 			m.stalled = false
 		}
-		r.reports = make(map[string]map[string]bool)
+		r.reports = make(map[string]map[string]time.Time)
 		for id, m := range r.members {
 			if m.seq < bestSeq {
 				best, bestSeq = id, m.seq

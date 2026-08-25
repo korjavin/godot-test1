@@ -65,9 +65,19 @@ func main() {
 //
 // /ice is fetched cross-origin by design — the game is served from GitHub Pages
 // while the lobby lives on its own host — so without this header the browser
-// discards the response and the client never gets its TURN credentials. Because
-// the body *is* the TURN credentials, it honours the same allowlist as the
-// websocket upgrade instead of answering "*" unconditionally.
+// discards the response and the client never gets its TURN credentials. It
+// honours the same allowlist as the websocket upgrade instead of answering "*"
+// unconditionally, which narrows which PAGES may read the body.
+//
+// ⚠️ IT IS NOT ACCESS CONTROL. CORS is enforced by browsers only: `curl /ice`
+// returns the TURN credentials in full whatever the allowlist says, and the
+// shipped default is "*" anyway. The credentials in TURN_USER/TURN_PASSWORD are
+// static and unrotated, so anyone who asks gets an unmetered relay on the
+// operator's bandwidth. The fix is coturn's --use-auth-secret with time-limited
+// REST credentials minted here (username "<unix expiry>:<anything>", credential
+// base64(HMAC-SHA1(secret, username))) plus --user-quota/--total-quota; it needs
+// a TURN_SECRET in the deployment environment, so it is an operator change, not
+// a code-only one.
 func corsOrigin(origin string) string {
 	if len(allowedOrigins) == 1 && allowedOrigins[0] == "*" {
 		return "*"

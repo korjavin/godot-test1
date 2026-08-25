@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -27,6 +28,19 @@ const (
 	pingInterval = 20 * time.Second
 	pingTimeout  = 10 * time.Second
 	writeTimeout = 10 * time.Second
+	// msgRateBurst / msgRatePerSec bound how fast one peer may send. Signalling is
+	// tiny and bursty — an offer, an answer and a handful of ICE candidates per
+	// peer, then a heartbeat a second — so this is orders of magnitude above
+	// honest traffic.
+	//
+	// It exists because `signal` is a 1:N amplifier and the read loop is otherwise
+	// unmetered: a member (and every room code is public over /rooms, so that
+	// means anyone) can fan 64 KB frames out to the rest of the room as fast as
+	// the socket accepts them, and when their queues fill it is THEY who get
+	// dropped with "peer too slow" while the flooder keeps its connection. So the
+	// budget disconnects the SENDER, before Room ever sees the message.
+	msgRateBurst  = 120
+	msgRatePerSec = 40
 )
 
 // clientMsg is every message a client may send. Unknown types are answered with
@@ -61,13 +75,16 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 	c.SetReadLimit(readLimit)
 	defer c.CloseNow() //nolint:errcheck // best-effort teardown
 
-	// Cap the query value before anything else looks at it: an over-long code is
-	// rejected by validCode below, but there is no reason to carry it that far.
-	raw := r.URL.Query().Get("room")
+	// TRIM FIRST, then cap: trimming exists precisely to tolerate surrounding
+	// whitespace, and slicing ahead of it eats real code characters instead —
+	// "  ABC234" would come out as "ABC23" and be refused as malformed. The cap
+	// is still one over codeLength so validCode refuses anything genuinely long
+	// without it being carried any further.
+	raw := strings.TrimSpace(r.URL.Query().Get("room"))
 	if len(raw) > codeLength {
-		raw = raw[:codeLength+1] // one over, so validCode still refuses it
+		raw = raw[:codeLength+1]
 	}
-	code := strings.ToUpper(strings.TrimSpace(raw))
+	code := strings.ToUpper(raw)
 	name := trimName(r.URL.Query().Get("name"))
 
 	room, me, err := h.Join(code, name, newID())
@@ -82,11 +99,26 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	go writePump(ctx, cancel, c, me)
 
+	// Token bucket, refilled from the clock rather than a ticker so an idle peer
+	// costs nothing.
+	tokens := float64(msgRateBurst)
+	last := time.Now()
+
 	for {
 		typ, data, err := c.Read(ctx)
 		if err != nil {
 			return
 		}
+
+		now := time.Now()
+		tokens = math.Min(float64(msgRateBurst), tokens+now.Sub(last).Seconds()*msgRatePerSec)
+		last = now
+		if tokens < 1 {
+			c.Close(websocket.StatusPolicyViolation, "sending too fast") //nolint:errcheck
+			return
+		}
+		tokens--
+
 		if typ != websocket.MessageText {
 			continue
 		}
@@ -162,12 +194,17 @@ func newID() string {
 // trimName bounds an attacker-supplied display name; it is echoed to every other
 // peer, so it does not get to be unbounded.
 func trimName(s string) string {
+	// ToValidUTF8 AFTER the byte cap but BEFORE the empty check. After, because
+	// the cap is a byte slice and can land mid-rune; before, because a name made
+	// entirely of invalid UTF-8 is dropped to "" by it, and validating last would
+	// hand that empty string to every peer instead of the "player" default.
 	s = strings.TrimSpace(s)
 	if len(s) > 32 {
 		s = s[:32]
 	}
+	s = strings.ToValidUTF8(s, "")
 	if s == "" {
 		s = "player"
 	}
-	return strings.ToValidUTF8(s, "")
+	return s
 }

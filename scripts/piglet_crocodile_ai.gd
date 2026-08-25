@@ -185,6 +185,19 @@ const CROC_REMOTE_MAX_SPEED: float = 40.0
 ## How fast a remote-driven crocodile eases toward the synced yaw (per second).
 const CROC_REMOTE_TURN_RATE: float = 12.0
 
+## How fast a remote-driven crocodile closes the gap to the latest sample (per
+## second). Deliberately the SAMPLE rate (MpManager.CROC_SYNC_HZ), never the frame
+## rate: dividing the gap by the frame delta asks for a velocity that lands
+## exactly on the sample THIS frame, so the body arrives in one frame and then
+## sits at velocity ~0 for the other five — a 10 Hz teleport-and-freeze rather
+## than the easing this is documented to do. Worse, `_animate_body` derives its
+## stride from `velocity`, so those five frames take the `move_factor < 0.05`
+## branch and the crocodile visibly flips between sprinting and idle breathing ten
+## times a second on every peer that is NOT the master. Closing over the sample
+## period instead gives the same exponential smoothing RemoteAvatar uses, and a
+## croc moving at its own top speed asks for its own top speed.
+const CROC_REMOTE_INTERP_RATE: float = 10.0
+
 ## How near the local player a giant-Teibi crush has to be for it to kick the
 ## camera (metres). Only ever meaningful in a room, where squash_and_die() also
 ## runs for a teammate's kill an unknown distance away; a contact crush is a
@@ -318,6 +331,14 @@ var remote_driven: bool = false
 var _remote_pos: Vector3 = Vector3.ZERO
 var _remote_yaw: float = 0.0
 var _has_remote_sample: bool = false
+
+## True once this body has asked the room master to kill it (giant-Teibi crush).
+## The master's `dead` broadcast is a round trip, and the body stays alive, solid
+## and overlapping the player until it lands — so `_handle_collisions` fires the
+## crush again on EVERY physics frame in between, and each one would put another
+## RELIABLE packet on the one channel that also carries claims and confirms.
+## Latched here rather than in the manager because the request is per-crocodile.
+var _kill_requested: bool = false
 
 ## Confinement: elevated "patrol" crocodiles are pinned to a structure top (a
 ## pyramid apex or wall ridge) and can never wander off it, since they can't jump
@@ -597,15 +618,21 @@ func _update_chase_state() -> void:
 		is_chasing = false
 		return
 
-	# Calculate distance to player
-	chase_target = player_node.global_position
-	var distance_to_player = global_position.distance_to(chase_target)
-
-	# Check if player is grounded (can be smelled)
-	# If player jumps (is not on floor), crocodiles lose the scent
+	# Check if the local player is grounded (can be smelled).
+	# If the player jumps (is not on floor), crocodiles lose the scent.
 	var player_is_grounded = true
 	if player_node.has_method("is_on_floor"):
 		player_is_grounded = player_node.is_on_floor()
+
+	# Nearest SMELLABLE quarry, not nearest quarry — the two candidates are judged
+	# INDEPENDENTLY. Letting the nearest one's groundedness stand for both means
+	# one airborne peer vetoes the scent of a grounded teammate standing right
+	# beside it, and on the master (which simulates the pack for everybody) that is
+	# one player bunny-hopping to call every crocodile in range off their friend.
+	chase_target = player_node.global_position
+	var distance_to_player: float = INF
+	if player_is_grounded:
+		distance_to_player = global_position.distance_to(chase_target)
 
 	# IN A ROOM, "the player" means "the nearest MEMBER of the room". The master
 	# simulates every awake crocodile for everybody, and by the isolation contract
@@ -626,16 +653,19 @@ func _update_chase_state() -> void:
 	if mp_node != null:
 		var remote: Variant = mp_node.nearest_member_position(global_position)
 		if remote != null:
+			# A remote member is always smellable (see the ponytail note above), so
+			# it is a candidate unconditionally — which is also what makes it able
+			# to win when the local player is mid-jump and therefore not one.
 			var remote_distance: float = global_position.distance_to(remote as Vector3)
 			if remote_distance < distance_to_player:
 				distance_to_player = remote_distance
 				chase_target = remote as Vector3
-				player_is_grounded = true
 
-	# Update chase state based on detection radius AND player grounded state.
+	# Update chase state based on detection radius. `distance_to_player` is INF
+	# when nothing is smellable, so the grounded rule is folded into this one test.
 	# Bosses smell farther (still well under the LOD SIM_RADIUS — see the const);
 	# `detection_radius` is resolved once in _ready(), see the var.
-	if distance_to_player <= detection_radius and player_is_grounded:
+	if distance_to_player <= detection_radius:
 		if not is_chasing:
 			# Just started chasing
 			is_chasing = true
@@ -1089,9 +1119,10 @@ func _tick_remote(delta: float) -> void:
 	phase is specified against ("the bite is decided by the peer being bitten, on
 	its own machine"). Never replace it with a direct global_position write.
 	"""
-	# Velocity that would land exactly on the sample this frame, clamped so one
-	# bad-but-finite sample cannot launch the body across the map.
-	var wanted: Vector3 = (_remote_pos - global_position) / maxf(delta, 0.0001)
+	# Velocity that closes the gap over one SAMPLE period, not one frame — see
+	# CROC_REMOTE_INTERP_RATE for why the frame delta is the wrong divisor.
+	# Clamped so one bad-but-finite sample cannot launch the body across the map.
+	var wanted: Vector3 = (_remote_pos - global_position) * CROC_REMOTE_INTERP_RATE
 	if wanted.length() > CROC_REMOTE_MAX_SPEED:
 		wanted = wanted.normalized() * CROC_REMOTE_MAX_SPEED
 	velocity = wanted
@@ -1373,8 +1404,11 @@ func _on_player_collision(player: Node) -> void:
 		# return WITHOUT squashing — the master's kill broadcast frees this body
 		# everywhere, including here. Offline, or with no manager in the scene, it
 		# answers false and the squash below runs byte-for-byte unchanged.
+		if _kill_requested:
+			return  # Already asked; waiting on the master's ruling. See the var.
 		var mp := get_tree().get_first_node_in_group("mp")
 		if mp and mp.has_method("request_croc_kill") and mp.request_croc_kill(croc_id()):
+			_kill_requested = true
 			return
 		squash_and_die()
 		return

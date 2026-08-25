@@ -104,21 +104,33 @@ func _run_checks() -> String:
 # =============================================================================
 
 func _check_avatar_isolation() -> String:
-	var avatar := RemoteAvatar.new()
-	avatar.setup("selfcheck-peer")
-	avatar.set_character(0)
+	# EVERY playable character, not just CHARACTERS[0]. The contract is that no
+	# remote model joins a group or carries a CollisionObject3D, and an Area3D
+	# added to primm/teibi/phoboman is exactly the regression this exists to catch
+	# — walking one scene would let three of the four through.
+	#
+	# A FRESH AVATAR PER INDEX is load-bearing: `set_character` silently drops a
+	# swap inside SWAP_COOLDOWN_MS (500 ms), so successive calls on one avatar
+	# would all keep the first model and three quarters of the loop would re-walk
+	# the same scene.
+	for index: int in Player.CHARACTERS.size():
+		var avatar := RemoteAvatar.new()
+		avatar.setup("selfcheck-peer")
+		avatar.set_character(index)
 
-	# `set_character` has four SILENT early-return paths (bad index, same index,
-	# the swap cooldown, a load() that returned null). Any of them would leave an
-	# empty subtree here and the walk below would pass by covering nothing —
-	# a green run that guards precisely zero of the contract. Assert it loaded.
-	if avatar.character_node == null:
+		# `set_character` has four SILENT early-return paths (bad index, same index,
+		# the swap cooldown, a load() that returned null). Any of them would leave an
+		# empty subtree here and the walk below would pass by covering nothing —
+		# a green run that guards precisely zero of the contract. Assert it loaded.
+		if avatar.character_node == null:
+			avatar.free()
+			return "set_character(%d) instanced no model — the isolation walk would be vacuous" % index
+
+		var failure: String = _walk_isolation(avatar, avatar)
 		avatar.free()
-		return "set_character(0) instanced no model — the isolation walk would be vacuous"
-
-	var failure: String = _walk_isolation(avatar, avatar)
-	avatar.free()
-	return failure
+		if not failure.is_empty():
+			return "%s (character %d)" % [failure, index]
+	return ""
 
 
 func _walk_isolation(node: Node, root: Node) -> String:
@@ -219,12 +231,22 @@ func _check_forced_seed() -> String:
 
 	terrain.set_run_seed(12345)
 	var second: Vector2 = terrain.biome_offset
+
+	# A DIFFERENT seed must give a DIFFERENT offset. Without this the two checks
+	# below are satisfied by a `_roll_biome_offset()` that ignores its seed
+	# entirely and returns a fixed non-zero constant — i.e. they do not pin the
+	# property this check is named for, that `run_seed` actually reaches the
+	# biome field.
+	terrain.set_run_seed(54321)
+	var other: Vector2 = terrain.biome_offset
 	terrain.free()
 
 	if first != second:
 		return "same seed gave different biome offsets: %s vs %s" % [first, second]
 	if first == Vector2.ZERO:
 		return "set_run_seed did not derive a biome offset"
+	if other == first:
+		return "a different seed gave the same biome offset — run_seed does not reach the biome field"
 	return ""
 
 
@@ -453,18 +475,19 @@ func _check_presence_backcompat() -> String:
 	# packet kinds on a `"t"` key and absence means presence, so a packet from a
 	# LATER build — one carrying a verb this one has never heard of — must be
 	# ignored, not fed to the presence path. It would decode there: the fields
-	# below are a perfectly valid presence packet, so only the dispatch stops it.
-	# Drive the dispatcher directly (never added to the tree — nothing here opens
-	# a socket) and assert it recorded no contribution for that peer.
-	var manager := MPManager.new() as Node
-	manager._receive_mesh_verb("selfcheck-peer", "zzz_a_verb_from_a_later_build", {
+	# below are a perfectly valid presence packet, so ONLY THE DISCRIMINATOR stops
+	# it. Pin the discriminator itself: driving `_receive_mesh_verb()` instead
+	# would assert nothing at all, because that function has no presence branch to
+	# leak through and so passes however the dispatch is written.
+	var later_build: Dictionary = {
 		"t": "zzz_a_verb_from_a_later_build",
 		"p": Vector3.ZERO, "y": 0.0, "c": 0, "s": 0.0, "g": true, "cc": 99,
-	})
-	var leaked: bool = not (manager._peer_state as Dictionary).is_empty()
-	manager.free()
-	if leaked:
-		return "an unknown mesh verb was applied as a presence packet"
+	}
+	if MPManager.packet_kind(later_build) != "zzz_a_verb_from_a_later_build":
+		return "a packet carrying an unknown verb did not read as that verb"
+	var phase4: Dictionary = {"p": Vector3.ZERO, "y": 0.0, "c": 0, "s": 0.0, "g": true}
+	if MPManager.packet_kind(phase4) != "":
+		return "a phase-3/4 packet with no \"t\" did not read as presence"
 	return ""
 
 

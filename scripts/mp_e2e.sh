@@ -42,7 +42,12 @@ cleanup() {
 	wait 2>/dev/null
 	rm -rf "$LOG_DIR"
 }
-trap cleanup EXIT INT TERM
+# INT/TERM must EXIT, not just clean up: `cleanup` returns, and a bare
+# `trap cleanup INT` would hand control back to the interrupted line with the
+# lobby killed and $LOG_DIR already removed — the run then carries on and fails
+# with a nonsense message, cleaning up a second time on the way out.
+trap cleanup EXIT
+trap 'cleanup; exit 130' INT TERM
 
 fail() {
 	echo "E2E FAILED: $*" >&2
@@ -56,6 +61,11 @@ fail() {
 
 command -v go >/dev/null || fail "go is not installed"
 command -v "$GODOT" >/dev/null || fail "godot is not on PATH (override with GODOT=...)"
+# Probed like the other two: without curl the health loop below fails all 60
+# iterations and reports "lobby never became healthy", pointing the reader at
+# entirely the wrong component after burning a minute.
+command -v curl >/dev/null || fail "curl is not installed"
+command -v perl >/dev/null || fail "perl is not installed (used as the instance timeout)"
 
 LOBBY_URL="ws://127.0.0.1:${PORT}"
 
@@ -77,11 +87,20 @@ for _ in $(seq 1 60); do
 done
 curl -fsS "http://127.0.0.1:${PORT}/healthz" >/dev/null 2>&1 || fail "lobby never became healthy"
 
+# A HARD EXTERNAL LIMIT on every instance. mp_e2e.gd's own TIMEOUT_SEC only
+# fires while _run() is still running, and a GDScript runtime error unwinds the
+# erroring function and returns — so an error anywhere in _run() means quit() is
+# never reached and the process idles forever, blocking this script (and
+# cleanup's `wait`) with no failure ever reported. macOS has no timeout(1), hence
+# perl's alarm.
+INSTANCE_TIMEOUT=180
+
 run_instance() {
 	# run_instance <logfile> <extra args...>
 	local log="$1"
 	shift
-	"$GODOT" --headless --path "$ROOT" --script res://scripts/mp_e2e.gd -- \
+	perl -e 'alarm shift; exec @ARGV or exit 127' "$INSTANCE_TIMEOUT" \
+		"$GODOT" --headless --path "$ROOT" --script res://scripts/mp_e2e.gd -- \
 		--lobby="$LOBBY_URL" --lobby-only "$@" >"$log" 2>&1
 }
 
@@ -134,12 +153,25 @@ kill -0 "$HOST_PID" 2>/dev/null || fail "host exited before the stall phase"
 run_instance "$LOG_DIR/join2.log" --role=join --code="$ROOM" --await-master
 STALL_STATUS=$?
 
+# THE HOST MUST STILL BE CONNECTED. Checking only before the joiner runs leaves
+# the trap the header warns about wide open: if the host's --hold expired
+# mid-phase (a cold import on a CI runner easily outruns it), it called leave()
+# and the lobby's ORDINARY disconnect re-election made the joiner master with
+# zero votes cast — every assertion below then holds while proving nothing about
+# stall detection.
+kill -0 "$HOST_PID" 2>/dev/null \
+	|| fail "host's hold expired during the stall phase — the migration would be a plain disconnect re-election, not a vote"
+
 HOST_ID="$(grep -m1 '^E2E_YOU=' "$LOG_DIR/host.log" | cut -d= -f2 | tr -d '\r')"
+HOST_MASTER="$(grep -m1 '^E2E_MASTER=' "$LOG_DIR/host.log" | cut -d= -f2 | tr -d '\r')"
 JOIN2_ID="$(grep -m1 '^E2E_YOU=' "$LOG_DIR/join2.log" | cut -d= -f2 | tr -d '\r')"
 NEW_MASTER="$(grep -m1 '^E2E_NEWMASTER=' "$LOG_DIR/join2.log" | cut -d= -f2 | tr -d '\r')"
 
 [ "$STALL_STATUS" -eq 0 ] || fail "stall joiner exited ${STALL_STATUS} (never became master?)"
 [ -n "$HOST_ID" ] || fail "host never printed E2E_YOU"
+# Without this the "master migrated off the host" test below is satisfied by any
+# run in which the host was never master to begin with.
+[ "$HOST_MASTER" = "$HOST_ID" ] || fail "host was not the master to begin with (${HOST_MASTER:-<none>}) — nothing to migrate off"
 [ -n "$JOIN2_ID" ] || fail "stall joiner never printed E2E_YOU"
 [ -n "$NEW_MASTER" ] || fail "stall joiner never printed E2E_NEWMASTER"
 [ "$NEW_MASTER" = "$JOIN2_ID" ] || fail "new master ${NEW_MASTER} is not the joiner ${JOIN2_ID}"

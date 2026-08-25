@@ -29,10 +29,18 @@ type peer struct {
 
 func newServer(t *testing.T) string {
 	t.Helper()
+	base, _ := newServerHub(t)
+	return base
+}
+
+// newServerHub is newServer for the one test that has to reach past the wire and
+// touch lobby state directly (ageing a stall vote — there is no clock to inject).
+func newServerHub(t *testing.T) (string, *Hub) {
+	t.Helper()
 	hub := NewHub()
 	srv := httptest.NewServer(http.HandlerFunc(hub.ServeWS))
 	t.Cleanup(srv.Close)
-	return "ws" + strings.TrimPrefix(srv.URL, "http")
+	return "ws" + strings.TrimPrefix(srv.URL, "http"), hub
 }
 
 // dial connects and consumes the welcome frame.
@@ -183,6 +191,41 @@ func TestStallQuorumReElects(t *testing.T) {
 	// The stalled peer is told too, and is not re-elected on the next change.
 	if m := a.want("master"); m["id"] != b.id {
 		t.Fatalf("alice saw master = %v", m["id"])
+	}
+}
+
+// TestStallVotesExpire pins the TTL: a vote is evidence about right now, so a
+// stale one must not add up with a fresh one from a different peer. Without the
+// prune in ReportStalled, two peers that each hiccuped once — an hour apart, with
+// a perfectly healthy master in between — reach quorum and depose it.
+func TestStallVotesExpire(t *testing.T) {
+	base, hub := newServerHub(t)
+
+	a := dial(t, base, "", "alice")
+	b := dial(t, base, a.room, "bob")
+	c := dial(t, base, a.room, "carol")
+	_ = b.want("peer_join")
+
+	b.send(map[string]any{"type": "stalled", "id": a.id})
+	// Round-trip a frame so bob's vote is definitely recorded before we age it.
+	b.send(map[string]any{"type": "ping"})
+	_ = b.want("pong")
+
+	// Age bob's vote past the TTL, in place — there is no clock to inject and
+	// sleeping for stallVoteTTL would make this the slowest test in the file.
+	hub.mu.Lock()
+	for _, set := range hub.rooms[a.room].reports {
+		for id := range set {
+			set[id] = time.Now().Add(-2 * stallVoteTTL)
+		}
+	}
+	hub.mu.Unlock()
+
+	// Carol's fresh vote is now the ONLY live one, and one of two is not a quorum.
+	c.send(map[string]any{"type": "stalled", "id": a.id})
+	c.send(map[string]any{"type": "signal", "to": c.id, "payload": "ping"})
+	if f := c.next(); f["type"] == "master" {
+		t.Fatalf("an expired vote still counted toward quorum: %v", f)
 	}
 }
 
@@ -438,7 +481,7 @@ func TestListRoomsSkipsMemberlessRoom(t *testing.T) {
 		Code:    "ZZZZZZ",
 		members: make(map[string]*Member),
 		heroes:  make(map[string]string),
-		reports: make(map[string]map[string]bool),
+		reports: make(map[string]map[string]time.Time),
 	}
 	if got := hub.ListRooms(); len(got) != 0 {
 		t.Fatalf("a member-less room was listed: %+v", got)

@@ -143,6 +143,34 @@ const MAX_CLAIM_VALUE: int = 1000
 ## PHOBOMAN_FLEE_DURATION is 10 s, so this is six times the honest value.
 const MAX_FLEE_DURATION: float = 60.0
 
+## Trust-boundary bound on the RATE of the three state-mutating verbs, per peer
+## per second. Bounding their fields is not enough: the drain budget passes up to
+## MAX_PRESENCE_PACKETS_PER_PEER × peers (24) packets per FRAME, and each of these
+## verbs is expensive out of all proportion to its 20-odd bytes —
+##
+##   flee  walks the whole "crocodile" group (~1000 nodes) calling flee_from on
+##         every one. At the drain rate that is ~1.4 M calls/s: a hard frame stall
+##         on the gl_compatibility web build, and MAX_FLEE_DURATION does nothing
+##         about it because re-sending every frame keeps the pack harmless just as
+##         effectively as one long duration would.
+##   kill  writes an unbounded `_dead_crocs` entry, and on the common id-names-no-
+##         local-croc path triggers a full group rescan — on the master AND, via
+##         the `dead` broadcast it provokes, on every other peer. ~4× amplified.
+##   clm   writes an unbounded `_collected_ids` entry (the set replayed to every
+##         future joiner), broadcasts a reliable confirm to the room, and makes
+##         every peer sweep the whole "coin" group in `_absorb_collected`.
+##
+## Room codes are public over `/rooms`, so "a peer in the room" means "anyone" —
+## the same premise `_receive_mesh_packets`' bounded drain is written against. The
+## budgets are far above honest play: Phoboman's ability cools down for seconds, a
+## crush needs a body under your feet (and `piglet_crocodile_ai` latches its
+## request), and a running player crosses a coin every few hundred ms.
+##
+## ponytail: a whole-second window rather than a token bucket, so a peer can spend
+## its budget in one frame and then wait. Fine here — the point is the sustained
+## rate, and a dropped claim is re-driven by `_tick_claims` 0.5 s later.
+const VERB_BUDGET_PER_SEC: Dictionary = {"clm": 30, "kill": 10, "flee": 4}
+
 ## The player script, preloaded ONLY to read constants it owns: the coin-economy
 ## ones (STREAK_WINDOW / STREAK_COINS_PER_STEP / STREAK_MAX_BONUS) and the
 ## CHARACTERS list. The room's streak has to step on exactly the same schedule as
@@ -379,8 +407,14 @@ var _croc_seen: Dictionary = {}
 ## so one that dies here does not walk back in when its chunk regenerates.
 ## Room-scoped and cleared by `leave()`; unbounded within a room, which is fine
 ## because entries only ever arrive at the rate a player can physically stand on
-## crocodiles as giant Teibi.
+## crocodiles as giant Teibi — a rate the `kill` verb's VERB_BUDGET_PER_SEC entry
+## is what actually holds a hostile peer to.
 var _dead_crocs: Dictionary = {}
+
+## `"<peer id>:<verb>"` → `{"start": msec, "count": int}`: the current one-second
+## window of the rate limit on state-mutating mesh verbs. See VERB_BUDGET_PER_SEC
+## and `_verb_rate_ok()`. Room-scoped, cleared by `leave()`.
+var _verb_rate: Dictionary = {}
 
 ## Seed self-heal state: seconds since the last `seed_req` went out, and how many
 ## have gone out this room. Both are room-scoped and reset by `leave()`.
@@ -617,6 +651,7 @@ func leave() -> void:
 	# The room's kill list dies with the room: back in solo play every crocodile
 	# the local terrain generates is this player's own again.
 	_dead_crocs = {}
+	_verb_rate = {}
 	# Hand every synced crocodile back to its own AI. A peer that leaves a room
 	# must not be left standing in its solo run among frozen crocodiles waiting
 	# for samples from a master it is no longer talking to.
@@ -811,6 +846,13 @@ func _on_lobby_peer_joined(id: String, peer_name: String) -> void:
 	"""A peer arrived after us. Same setup as a welcome-list member."""
 	if _state != State.IN_ROOM or id.is_empty() or id == _you:
 		return
+	# Append only if this id is not already listed. `_members.size()` is
+	# load-bearing — `_tick_stall_watch` uses it as the "is there anybody to elect"
+	# guard — so a duplicate `peer_join` (a reconnect race, a malformed frame)
+	# must not inflate it. Mirrors the removal loop in `_on_lobby_peer_left`.
+	for member: Variant in _members:
+		if typeof(member) == TYPE_DICTIONARY and str((member as Dictionary).get("id", "")) == id:
+			return
 	_members.append({"id": id, "name": peer_name})
 	_add_peer(id, peer_name)
 	# A joiner missed the broadcast that went out before it existed, so if we are
@@ -893,6 +935,19 @@ func _on_lobby_master_changed(id: String) -> void:
 	if _master == _you:
 		_release_synced_crocs()
 		_hb_accum = 0.0
+		# ADOPT OUR OWN PENDING CLAIMS. A claim waiting on the old master's confirm
+		# can never get one now: `_send_reliable_to_master` refuses to send to
+		# ourselves, so `_tick_claims` would just count `tries` up and then resolve
+		# the pickup LOCALLY — banking it with the local multiplier and recording
+		# the id in nobody's set but ours. The coin would still be standing on every
+		# other screen, and the next peer to walk over it would claim it to us, get
+		# refused by `_collected_ids` (silently, with no confirm), time out and bank
+		# it a second time. Arbitrating them here is the same path they were always
+		# headed for; `.keys()` is a copy, so `_apply_confirm`'s erase is safe.
+		for pickup_id: int in _pending_claims.keys():
+			var claim: Dictionary = _pending_claims[pickup_id]
+			_pending_claims.erase(pickup_id)
+			_resolve_claim(pickup_id, peer_int_id(_you), int(claim["n"]), int(claim["v"]))
 
 	# ONLY re-broadcast a seed we actually adopted. A master elected before the
 	# seed reached it (the old master dropping inside our /ice window) has
@@ -1036,7 +1091,12 @@ func nearest_member_position(from: Vector3) -> Variant:
 		return null
 	var best: Variant = null
 	var best_dist_sq: float = INF
-	for state: Dictionary in _peer_state.values():
+	# Iterated by key, NOT through `.values()`: that builds a fresh Array on every
+	# call, and this runs once per awake crocodile per physics frame — on the
+	# master, the union of every member's 45 m sphere. The docstring's "allocates
+	# nothing" is the contract; keep it true.
+	for peer: String in _peer_state:
+		var state: Dictionary = _peer_state[peer]
 		var pos: Vector3 = state["pos"] as Vector3
 		var dist_sq: float = from.distance_squared_to(pos)
 		if dist_sq < best_dist_sq:
@@ -1318,6 +1378,10 @@ func _on_lobby_relay(from: String, payload: Dictionary) -> void:
 			if from != _master:
 				return
 			_last_hb_msec = Time.get_ticks_msec()
+			# Both halves of the stall clock, not just the flag: a residual accumulator
+			# left over from an episode that recovered makes the NEXT episode's first
+			# vote fire early, before a full STALL_REPORT_INTERVAL of silence.
+			_stall_accum = 0.0
 			_stall_reported = false
 		"state":
 			# A join snapshot from an incumbent. THE THIRD TRUST BOUNDARY in
@@ -2171,8 +2235,9 @@ func _receive_mesh_packets() -> void:
 			continue
 		var packet: Dictionary = decoded as Dictionary
 
-		if packet.has("t"):
-			_receive_mesh_verb(from_id, str(packet["t"]), packet)
+		var kind: String = packet_kind(packet)
+		if not kind.is_empty():
+			_receive_mesh_verb(from_id, kind, packet)
 			continue
 
 		var state: Dictionary = _decode_presence_dict(packet)
@@ -2192,6 +2257,23 @@ func _receive_mesh_packets() -> void:
 		}
 
 
+static func packet_kind(packet: Dictionary) -> String:
+	"""
+	Which kind of mesh packet this is: `""` for presence, otherwise the verb.
+
+	THE WHOLE BACKWARD-COMPATIBILITY RULE LIVES HERE. A phase-3/4 peer sends no
+	`"t"` key, so its packet must land on the presence path; a packet carrying a
+	verb — including one from a LATER build that this one has never heard of —
+	must NOT, because the fields beside the verb can be a perfectly valid presence
+	packet and would decode there. Pulled out as a pure static rather than left
+	inline so `scripts/mp_selfcheck.gd` can pin both directions: driving
+	`_receive_mesh_verb()` directly cannot test this, since that function has no
+	presence branch to leak through and the assertion passes no matter what the
+	dispatch does.
+	"""
+	return str(packet["t"]) if packet.has("t") else ""
+
+
 func _receive_mesh_verb(from_id: String, verb: String, packet: Dictionary) -> void:
 	"""
 	Handle one non-presence mesh packet, identified by its `"t"` discriminator.
@@ -2208,6 +2290,8 @@ func _receive_mesh_verb(from_id: String, verb: String, packet: Dictionary) -> vo
 	a later build may send packet kinds this one has never heard of, and a room
 	should keep working rather than spew one line per packet per second.
 	"""
+	if not _verb_rate_ok(from_id, verb):
+		return
 	match verb:
 		"croc":
 			_receive_croc_sync(from_id, packet)
@@ -2224,6 +2308,31 @@ func _receive_mesh_verb(from_id: String, verb: String, packet: Dictionary) -> vo
 		_:
 			# Forward compatibility. Not a warning — see the docstring.
 			pass
+
+
+func _verb_rate_ok(from_id: String, verb: String) -> bool:
+	"""
+	Whether this peer may spend one more of this verb in the current one-second
+	window. Verbs not listed in VERB_BUDGET_PER_SEC (`croc`, `cnf`, `dead`) are
+	unmetered — they carry their own authority check (master only) and cost a
+	dictionary write, so the master's own send rate already bounds them.
+
+	Dropped silently, like every other trust-boundary rejection here: a peer over
+	budget is either hostile or on a broken build, and neither is worth one warning
+	line per packet. The map is keyed by peer and verb, so it holds at most
+	`members × VERB_BUDGET_PER_SEC.size()` entries and cannot grow with traffic.
+	"""
+	if not VERB_BUDGET_PER_SEC.has(verb):
+		return true
+	var key: String = from_id + ":" + verb
+	var now: int = Time.get_ticks_msec()
+	var window: Dictionary = _verb_rate.get(key, {"start": 0, "count": 0})
+	if now - int(window["start"]) >= 1000:
+		window = {"start": now, "count": 0}
+	var spent: int = int(window["count"])
+	window["count"] = spent + 1
+	_verb_rate[key] = window
+	return spent < int(VERB_BUDGET_PER_SEC[verb])
 
 
 # =============================================================================
@@ -3077,17 +3186,22 @@ static func decode_croc_sync(state: Dictionary) -> Dictionary:
 
 	var ids: PackedInt32Array = state["i"]
 	var flags: PackedByteArray = state["f"]
-	# Copied because the yaw wrap below writes into it, and a packed array read
-	# out of a Dictionary is a reference until it is written to.
-	var xf: PackedFloat32Array = (state["x"] as PackedFloat32Array).duplicate()
+	var raw_xf: PackedFloat32Array = state["x"]
 
-	# The three arrays describe the SAME entries, so their sizes are not
-	# independent. A mismatch is exactly the shape a truncated or hostile packet
-	# takes, and walking it would read off the end of one of them per entry.
-	if ids.size() != flags.size() or xf.size() != ids.size() * 4:
+	# SIZES FIRST, before anything is copied: the `duplicate()` below is a full
+	# allocation, and an oversized hostile packet must not get to pay for one on
+	# its way to being rejected. The three arrays describe the SAME entries, so
+	# their sizes are not independent — a mismatch is exactly the shape a truncated
+	# or hostile packet takes, and walking it would read off the end of one of them
+	# per entry.
+	if ids.size() != flags.size() or raw_xf.size() != ids.size() * 4:
 		return {}
 	if ids.size() > MAX_CROC_SYNC:
 		return {}
+
+	# Copied because the yaw wrap below writes into it, and a packed array read
+	# out of a Dictionary is a reference until it is written to.
+	var xf: PackedFloat32Array = raw_xf.duplicate()
 
 	for entry: int in ids.size():
 		var base: int = entry * 4
