@@ -2052,6 +2052,14 @@ func join_at(anchor: Vector3) -> void:
 	# kilometres are banked into user://best_run.cfg as ours (see the field).
 	own_distance = 0
 	own_distance_origin = Vector2(global_position.x, global_position.z)
+	# run_distance goes with them, and for the same reason one level up: it is a
+	# running MAX and it is what this peer publishes as the room's distance (`dd`
+	# in presence, and shared_distance()'s own input). Left at a long solo run's
+	# value it would not merely look wrong here — a peer that walked 3 km alone and
+	# then joined a room 100 m in would raise the shared distance to 3 km for
+	# EVERYONE, permanently, because a max never comes back down. The room's real
+	# figure arrives from the snapshots and the next presence packet.
+	run_distance = 0
 
 	# JOINING FROM THE GAME OVER SCREEN IS A SUPPORTED FLOW — mp_ui deliberately
 	# does not pause over it, so the panel's Join button works there. Without this
