@@ -198,5 +198,26 @@ NEW_MASTER="$(grep -m1 '^E2E_NEWMASTER=' "$LOG_DIR/join2.log" | cut -d= -f2 | tr
 [ "$NEW_MASTER" = "$JOIN2_ID" ] || fail "new master ${NEW_MASTER} is not the joiner ${JOIN2_ID}"
 [ "$NEW_MASTER" != "$HOST_ID" ] || fail "master never migrated off the stalled host ${HOST_ID}"
 
-echo "E2E OK: room ${ROOM}, shared seed ${HOST_SEED}, master migrated ${HOST_ID} -> ${NEW_MASTER}"
+# ---------------------------------------------------------------------------
+# Phase 3: a peer that is alive and playing is never repositioned from the wire
+# (bead godot-test1-s86.17 — "players dragged toward each other").
+# ---------------------------------------------------------------------------
+# Deliberately a SINGLE instance and no lobby traffic: the assertion is about
+# arrival TIMING, and two real processes cannot schedule "late" — the joiner is
+# placed within one relay round trip, long before this script could throttle
+# anything (measured while writing it). `--role=drag` therefore drives the
+# manager's lobby handlers directly. See mp_e2e.gd's `_run_drag_check()`.
+echo "E2E: drag phase — a playing peer must not be repositioned by late packets"
+run_instance "$LOG_DIR/drag.log" --role=drag
+DRAG_STATUS=$?
+DRAG_OK="$(grep -m1 '^E2E_NODRAG=' "$LOG_DIR/drag.log" | cut -d= -f2 | tr -d '\r')"
+
+[ "$DRAG_STATUS" -eq 0 ] \
+	|| fail "drag check exited ${DRAG_STATUS}: $(grep -m1 '^E2E: drag' "$LOG_DIR/drag.log" || echo 'timeout?')"
+# The marker is only printed after the late seed was proven ADOPTED, so its
+# absence means the run never got far enough for "the player did not move" to
+# mean anything.
+[ -n "$DRAG_OK" ] || fail "drag check never printed E2E_NODRAG"
+
+echo "E2E OK: room ${ROOM}, shared seed ${HOST_SEED}, master migrated ${HOST_ID} -> ${NEW_MASTER}, no mid-run drag"
 exit 0

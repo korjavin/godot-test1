@@ -261,6 +261,38 @@ const STALL_REPORT_INTERVAL: float = 2.0
 ## or gone: falling back to a worse anchor beats never placing the player at all.
 const JOIN_SNAPSHOT_WAIT: float = 1.5
 
+## HOW LONG AFTER `welcome` A RELAY PACKET MAY STILL MOVE THE LOCAL PLAYER.
+##
+## The placement is owed to the ARRIVAL, not to the data, and this is the whole
+## difference. `_can_join_place()` is otherwise a pure state test — "we still owe
+## a placement, and both inputs are now in hand" — and `JOIN_SNAPSHOT_WAIT` does
+## not disarm it: that deadline only stops the WAITING (`_tick_join_wait` returns
+## early once it is spent), it never says "too late". So whichever of the two
+## inputs is last to land fires the teleport, however many seconds of play later
+## that is — and either one can be arbitrarily late: a backgrounded browser tab
+## stops polling its socket, `seed_req` retries for `SEED_REQUEST_INTERVAL` ×
+## `SEED_REQUEST_MAX_TRIES` (20 s), and a master migration hands that whole budget
+## back (`_on_lobby_master_changed`). Measured before this window existed: a peer
+## that arrived, waited out the deadline with a silent master, then walked 400 m
+## was teleported to the world origin by the late `seed` (via `reset_position()`,
+## which also wipes its coins, distance and streak) and then onto the group's ring
+## by the late `state` — 397 m of drag, twice, while alive and playing.
+##
+## The healthy case is nowhere near this bound: every incumbent sends the seed and
+## its snapshot from the SAME handler that observes our arrival
+## (`_on_lobby_peer_joined`), so both land in one relay round trip — tens of ms.
+## Five seconds is ~100× that, so the only joins this window ever refuses are the
+## ones where the player has genuinely been playing.
+##
+## ponytail: a wall clock, so it cannot tell "playing for 5 s" from "tab
+## backgrounded for 5 s during the arrival" — the latter loses its placement and
+## plays on where it stands (and, having never run `join_at()`, stays a
+## non-contributor to the room's totals, exactly as a peer whose seed never
+## arrived at all already did). That is the safe direction to be wrong in: the
+## upgrade path is the player publishing a "has taken control" bit for this to
+## read instead of a clock, which needs a `player_controller.gd` change.
+const JOIN_PLACE_WINDOW: float = 5.0
+
 ## Where the desktop WebRTC GDExtension lives when a developer has installed it.
 ## See README — the browser build needs nothing, desktop needs this addon.
 const WEBRTC_ADDON_PATH: String = "res://addons/webrtc/webrtc.gdextension"
@@ -411,6 +443,14 @@ var _gone_spent: int = 0
 ## and how long it has waited (seconds). See `JOIN_SNAPSHOT_WAIT`.
 var _expected_snapshots: int = 0
 var _join_wait: float = 0.0
+
+## When the `welcome` frame landed, i.e. when the arrival this peer owes a
+## placement for happened. Read only through `_arriving()`; see
+## `JOIN_PLACE_WINDOW` for why the placement needs an expiry and not just a latch.
+## A wall-clock stamp rather than a ticked accumulator on purpose: it costs no
+## per-frame work, and it keeps running while a throttled tab's `_process` does
+## not — which is the case the window exists to refuse.
+var _join_msec: int = 0
 
 ## The `/ice` payload, fetched once per join and reused for every connection.
 var _ice: Dictionary = {}
@@ -677,6 +717,7 @@ func leave() -> void:
 	_gone_spent = 0
 	_expected_snapshots = 0
 	_join_wait = 0.0
+	_join_msec = 0
 	_ice = {}
 	_send_accum = 0.0
 	_croc_accum = 0.0
@@ -789,6 +830,9 @@ func _on_lobby_joined(you: String, room: String, master: String, members: Array)
 	# the full deadline.
 	_expected_snapshots = maxi(0, members.size() - 1)
 	_join_wait = 0.0
+	# The arrival the placement is owed to. Past `JOIN_PLACE_WINDOW` from here,
+	# nothing on the wire may move the local player again (see the constant).
+	_join_msec = Time.get_ticks_msec()
 	# ARRIVING COUNTS AS A BEAT. Without this stamp `_last_hb_msec` is 0, i.e.
 	# already `HEARTBEAT_TIMEOUT` in the past, and a joiner votes to depose a
 	# perfectly healthy master four seconds after walking in — before that master
@@ -1616,10 +1660,27 @@ func _receive_seed(payload: Dictionary) -> void:
 		return
 
 	var terrain: Node = get_tree().get_first_node_in_group("terrain")
+	var player: Node = get_tree().get_first_node_in_group("player")
+
+	# A LATE SEED MUST NOT YANK A PLAYING PEER BACK TO SPAWN. The two lines below
+	# are the host / nothing-to-join-yet path, where the player is standing on the
+	# spawn point anyway and the reset is free. Once the arrival window has closed
+	# they are neither: `reset_position()` teleports to the world origin AND wipes
+	# the coins, distance and streak of a run in progress — which is what a peer
+	# whose master was silent for the first few seconds used to get the moment that
+	# master woke up. So outside the window we adopt the seed exactly the same way
+	# and simply rebuild the world AROUND THE PLAYER instead of around chunk (0,0):
+	# same shared world, no teleport, and still on solid ground the same frame
+	# (`new_run`'s `around` builds that chunk plus ring 1 synchronously — the
+	# guarantee a mid-run joiner already relies on).
+	if not _arriving() and player != null and terrain != null \
+			and terrain.has_method("new_run") and terrain.has_method("world_to_chunk"):
+		terrain.new_run(_room_seed, terrain.world_to_chunk(player.global_position))
+		return
+
 	if terrain != null and terrain.has_method("new_run"):
 		terrain.new_run(_room_seed)
 
-	var player: Node = get_tree().get_first_node_in_group("player")
 	if player != null and player.has_method("reset_position"):
 		player.reset_position()
 
@@ -1628,13 +1689,33 @@ func _receive_seed(payload: Dictionary) -> void:
 # JOIN PLACEMENT — arrive beside the group, not at the world origin
 # =============================================================================
 
+func _arriving() -> bool:
+	"""
+	Whether this peer is still ARRIVING, i.e. whether a relay packet is still
+	allowed to move the local player.
+
+	This is the one-shot gate the placement is missing without it: `_join_applied`
+	stops a SECOND placement, but nothing stopped the FIRST one from landing
+	minutes into a run on whatever packet finally completed the condition. Both
+	placement sites — the group pull in `_apply_join_placement()` and
+	`_receive_seed()`'s teleport back to spawn — are gated on this, so a player who
+	is alive and playing is never repositioned from the network. See
+	`JOIN_PLACE_WINDOW` for the measured failure this closes and for the ceiling.
+	"""
+	return Time.get_ticks_msec() - _join_msec <= int(JOIN_PLACE_WINDOW * 1000.0)
+
+
 func _can_join_place() -> bool:
 	"""
 	Whether a join placement is still owed: we joined a room that already had
-	somebody in it, we have not placed yet, and both halves of what a placement
-	needs — the world seed and at least one snapshot position — are in hand.
+	somebody in it, we have not placed yet, we are still ARRIVING (see
+	`_arriving()` — placement belongs to the arrival, never to mid-run play), and
+	both halves of what a placement needs — the world seed and at least one
+	snapshot position — are in hand.
 	"""
 	if _join_applied or _first_member or not _has_seed or _peer_state.is_empty():
+		return false
+	if not _arriving():
 		return false
 	# ... and either every incumbent's snapshot is in, so the anchor is the whole
 	# group's, or we waited long enough that a missing one is not coming. Counted

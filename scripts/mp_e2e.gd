@@ -45,6 +45,14 @@ extends SceneTree
 ## the harness scrapes it and hands it to the joiner. Do not "simplify" this
 ## back to a hardcoded code.
 ##
+## A THIRD ROLE, `--role=drag`, needs no lobby and no second process. It is the
+## regression check for bead godot-test1-s86.17 — "players get dragged toward each
+## other during normal play" — and it drives `MpManager`'s lobby handlers directly
+## rather than over a socket, because the bug is about WHEN a packet arrives and a
+## two-process run cannot schedule "late" reliably (measured: the joiner had
+## already been placed before the harness could throttle anything). See
+## `_run_drag_check()`.
+##
 ## ponytail: this covers the LOBBY RELAY — the room, the seed broadcast and its
 ## adoption, i.e. the path that broke in production (see Task 9a). It covers
 ## neither the WebRTC mesh nor the avatars, because desktop headless has no
@@ -70,6 +78,18 @@ const MASTER_WAIT_SEC: float = 30.0
 ## joiner timeout.
 const DEFAULT_HOLD_SEC: float = 20.0
 
+## `--role=drag` fixtures. The two ids are the lobby's shape — 16 lowercase hex
+## characters — because `peer_int_id()` slices the first seven of them.
+const DRAG_MASTER_ID: String = "aaaaaaaaaaaaaaaa"
+const DRAG_ME_ID: String = "bbbbbbbbbbbbbbbb"
+## Far enough from spawn that either teleport the bug produced (the world origin,
+## or the group's ring around it) is an unmissable failure rather than a nudge.
+const DRAG_AWAY := Vector3(400.0, 2.0, 0.0)
+## Slack for the physics settle of a body parked in mid-air. The failures this
+## guards against are hundreds of metres, so this is nowhere near a knife edge.
+const DRAG_TOLERANCE: float = 3.0
+const DRAG_SEED: int = 123456
+
 var _role: String = ""
 var _code: String = ""
 var _hold: float = DEFAULT_HOLD_SEC
@@ -81,8 +101,11 @@ var _deadline_msec: int = 0
 func _initialize() -> void:
 	_deadline_msec = Time.get_ticks_msec() + int(TIMEOUT_SEC * 1000.0)
 	_read_args()
+	if _role == "drag":
+		_run_drag_check.call_deferred()
+		return
 	if _role != "host" and _role != "join":
-		printerr("E2E: --role=host or --role=join is required")
+		printerr("E2E: --role=host, --role=join or --role=drag is required")
 		quit(1)
 		return
 	if _role == "join" and _code.is_empty():
@@ -178,6 +201,100 @@ func _run() -> void:
 		await _hold_open()
 	mp.leave()
 	quit(0)
+
+
+func _run_drag_check() -> void:
+	"""
+	REGRESSION CHECK (bead godot-test1-s86.17): nothing on the wire may move the
+	local player once it is alive and playing.
+
+	The bug: `_can_join_place()` is a pure STATE test — "we still owe a placement
+	and both inputs are in hand" — and `JOIN_SNAPSHOT_WAIT` never disarmed it, it
+	only stopped the waiting. So a peer whose master was silent for the first few
+	seconds (a backgrounded tab, a `seed_req` retry, a master migration handing the
+	retry budget back) kept the placement armed indefinitely, and the packets it
+	was owed at ARRIVAL fired it minutes later: the late `seed` teleported it to
+	the world origin through `reset_position()` — wiping the run's coins, distance
+	and streak — and the late `state` snapshot then pulled it onto the group's
+	ring. Measured before the fix: 397 m of drag, twice, at 400 m from spawn.
+
+	Driven through `_on_lobby_joined` / `_on_lobby_relay` directly, with no socket:
+	the assertion is about arrival TIMING, and two real processes cannot schedule
+	"late" — the joiner is placed within one relay round trip, long before a
+	harness can throttle anything. `_ensure_lobby()` gives the manager a
+	LobbyClient that was never connected, so its outbound frames drop silently
+	(`LobbyClient._send` bails on a closed socket) instead of erroring on a null.
+
+	⚠️ THE SEED-ADOPTION ASSERTION IS WHAT STOPS THIS PASSING VACUOUSLY. "The
+	player did not move" is also true if the packets were dropped outright, or if
+	the manager never entered the room at all — so the run seed the terrain ends up
+	on must equal the one the late packet carried. Same trap, and same guard, as
+	the `E2E_SEED` type-check above.
+	"""
+	change_scene_to_file("res://scenes/main.tscn")
+	var mp: Node = await _await_group("mp")
+	var terrain: Node = await _await_group("terrain")
+	var player: Node3D = await _await_group("player") as Node3D
+	if mp == null or terrain == null or player == null:
+		_fail("scene has no \"mp\" / \"terrain\" / \"player\" node")
+		return
+	mp.lobby_only = true
+	mp._ensure_lobby()
+
+	# Arrive into a room that already holds somebody, so a placement really is owed
+	# (a host is `_first_member` and is never placed).
+	mp._on_lobby_joined(DRAG_ME_ID, "DRAG01", DRAG_MASTER_ID, [
+		{"id": DRAG_MASTER_ID, "name": "host"}, {"id": DRAG_ME_ID, "name": "me"},
+	])
+	if mp.get_room_code() != "DRAG01":
+		_fail("drag: the manager did not enter the room")
+		return
+
+	# The master says nothing at all, so the snapshot deadline burns down and the
+	# placement finds neither of its two inputs.
+	await _sleep(MpManager.JOIN_SNAPSHOT_WAIT + 1.0)
+
+	# NORMAL PLAY: walk away from the group. The StartOverlay holds the tree paused
+	# in a headless boot, so one teleport stands in for walking — and that is what
+	# makes the assertion sharp, because nothing else can move the player.
+	player.global_position = DRAG_AWAY
+	await _sleep(MpManager.JOIN_PLACE_WINDOW)
+
+	# The packets this peer was owed at arrival finally land.
+	mp._on_lobby_relay(DRAG_MASTER_ID, {"mp": "seed", "seed": DRAG_SEED})
+	await _sleep(0.5)
+	var after_seed: Vector3 = player.global_position
+	mp._on_lobby_relay(DRAG_MASTER_ID, {
+		"mp": "state", "cc": 0, "ls": 0, "dd": 0,
+		"px": 0.0, "py": 2.0, "pz": 0.0, "gc": 0, "gs": 0, "ids": [],
+	})
+	await _sleep(1.0)
+	var after_snapshot: Vector3 = player.global_position
+
+	if after_seed.distance_to(DRAG_AWAY) > DRAG_TOLERANCE:
+		_fail("drag: a late seed moved the player %.1f m (to %s)"
+			% [after_seed.distance_to(DRAG_AWAY), after_seed])
+		return
+	if after_snapshot.distance_to(DRAG_AWAY) > DRAG_TOLERANCE:
+		_fail("drag: a late join snapshot moved the player %.1f m (to %s)"
+			% [after_snapshot.distance_to(DRAG_AWAY), after_snapshot])
+		return
+
+	# ...and the packets were genuinely acted on, so the check is not vacuous.
+	var seed_value: Variant = terrain.get("run_seed")
+	if typeof(seed_value) != TYPE_INT or int(seed_value) != DRAG_SEED:
+		_fail("drag: the late seed was never adopted (run_seed=%s) — the "
+			% str(seed_value) + "no-movement assertion would be vacuous")
+		return
+
+	print("E2E_NODRAG=%d" % DRAG_SEED)
+	quit(0)
+
+
+func _sleep(sec: float) -> void:
+	var until_msec: int = Time.get_ticks_msec() + int(sec * 1000.0)
+	while Time.get_ticks_msec() < until_msec:
+		await process_frame
 
 
 func _await_group(group: String) -> Node:
