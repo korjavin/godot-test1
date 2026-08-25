@@ -561,15 +561,15 @@ room's multiplier after the award (for the HUD suffix).
 
 ### Task 7: heartbeat, stall detection, migration — `lobby_client.gd` + `mp_manager.gd`
 
-- [ ] `lobby_client.gd`: `func send_stalled(master_id: String) -> void` sending
+- [x] `lobby_client.gd`: `func send_stalled(master_id: String) -> void` sending
       `{"type": "stalled", "id": master_id}`. One method, matching `send_hero`'s
       shape and docstring style, including the note that the lobby answers with a
       `master` broadcast **only** once the quorum is reached and says nothing
       otherwise — a vote is not a request.
-- [ ] `mp_manager.gd`: `const HEARTBEAT_INTERVAL: float = 1.0`,
+- [x] `mp_manager.gd`: `const HEARTBEAT_INTERVAL: float = 1.0`,
       `const HEARTBEAT_TIMEOUT: float = 4.0`,
       `const STALL_REPORT_INTERVAL: float = 2.0`.
-- [ ] **the heartbeat rides the LOBBY RELAY, not the mesh, and that is a
+- [x] **the heartbeat rides the LOBBY RELAY, not the mesh, and that is a
       deliberate deviation from the bead's wording — document it.** Three
       reasons, all of which belong in the docstring: (1) it is what a *throttled
       tab* stops doing, and a throttled tab stops polling the socket and the mesh
@@ -578,17 +578,17 @@ room's multiplier after the award (for the HUD suffix).
       headless — and `scripts/mp_e2e.sh` is where this phase's automated evidence
       lives; (3) it is 1 Hz to at most 3 peers, i.e. nothing, on a socket that
       already carries a 20 s ping.
-- [ ] master side: broadcast `{"mp": "hb"}` through `_lobby.send_signal_to("")`
+- [x] master side: broadcast `{"mp": "hb"}` through `_lobby.send_signal_to("")`
       every `HEARTBEAT_INTERVAL`. Add
       `@export var heartbeat_enabled: bool = true` so a headless test (and a
       developer) can simulate a throttled tab by turning it off — name it for what
       it is in the export's comment, and note that nothing in the UI exposes it.
-- [ ] peer side: handle `"hb"` in `_on_lobby_relay` — accept it **only from the
+- [x] peer side: handle `"hb"` in `_on_lobby_relay` — accept it **only from the
       master** (the same rule as `seed`), stamp `_last_hb_msec`. The verb *is* the
       whole message, so there is nothing to validate; say that explicitly, as the
       `seed_req` handler already does, so it does not read as a missing check at a
       trust boundary.
-- [ ] `_tick_stall_watch(delta)` in `_process`, ordered **before** the `_rtc`
+- [x] `_tick_stall_watch(delta)` in `_process`, ordered **before** the `_rtc`
       guard for the same reason `_tick_seed_request` is — it must work with no
       mesh. Early-return unless `IN_ROOM`, `_master` is non-empty, `_master != _you`
       and there is more than one member. When `now - _last_hb_msec > HEARTBEAT_TIMEOUT`,
@@ -596,15 +596,15 @@ room's multiplier after the award (for the HUD suffix).
       and emit a `status` line once ("Host not responding — voting to migrate…"),
       so a silent failure is visible in the panel with **no UI change**, exactly
       as the seed retry does.
-- [ ] `_last_hb_msec` must be **stamped fresh** in `_on_lobby_joined` and in
+- [x] `_last_hb_msec` must be **stamped fresh** in `_on_lobby_joined` and in
       `_on_lobby_master_changed`. Without that a joiner votes to depose a
       perfectly healthy master four seconds after arriving, and a new master is
       deposed by the timer that was running against the old one.
-- [ ] `_on_lobby_master_changed` additionally: reset the stall clock, and if we
+- [x] `_on_lobby_master_changed` additionally: reset the stall clock, and if we
       are the new master do Task 4's promotion (`clear_remote_drive()` on
       everything) and start heartbeating. If we are **not**, keep waiting on the
       new master. The existing seed re-broadcast behaviour stays exactly as it is.
-- [ ] `leave()` resets the heartbeat and stall state.
+- [x] `leave()` resets the heartbeat and stall state.
 
 ### Task 8: extend `scripts/mp_selfcheck.gd`
 

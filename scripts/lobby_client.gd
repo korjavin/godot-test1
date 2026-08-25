@@ -238,6 +238,21 @@ func send_hero(hero: String) -> void:
 	_send({"type": "hero", "hero": hero})
 
 
+func send_stalled(master_id: String) -> void:
+	"""
+	Cast ONE vote that `master_id` — who must be the current master — has stopped
+	responding. The lobby (`server/room.go`'s `ReportStalled`) drops the vote
+	unless the subject really is the master and the reporter is not the subject.
+
+	A VOTE IS NOT A REQUEST. The lobby answers with a `master` broadcast **only**
+	once the quorum is reached (strictly more than half of the non-master members
+	have voted) and says nothing at all otherwise — no ack, no refusal. So the
+	caller must never wait for a reply to this: it keeps voting on its own timer
+	until either a `master` frame lands or the old master answers again.
+	"""
+	_send({"type": "stalled", "id": master_id})
+
+
 func _send(frame: Dictionary) -> void:
 	"""Serialise and send one frame, silently dropping it if the socket is not open."""
 	if not is_connected_to_lobby():

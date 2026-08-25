@@ -175,6 +175,18 @@ const HERO_ERRORS: PackedStringArray = ["unknown hero", "hero already taken"]
 const SEED_REQUEST_INTERVAL: float = 2.0
 const SEED_REQUEST_MAX_TRIES: int = 10
 
+## STALL DETECTION. The master says "still here" every `HEARTBEAT_INTERVAL`
+## seconds; a peer that has heard nothing for `HEARTBEAT_TIMEOUT` votes to depose
+## it, at most once per `STALL_REPORT_INTERVAL`. 1 s / 4 s means three consecutive
+## missed beats are needed to fire — well past any ordinary relay hiccup — and the
+## first vote goes out `STALL_REPORT_INTERVAL` after that, so a genuinely dead
+## host is reported within about six seconds. The report interval is slower than
+## the beat so a room that is merely slow to re-elect does not spray votes the
+## lobby has already counted.
+const HEARTBEAT_INTERVAL: float = 1.0
+const HEARTBEAT_TIMEOUT: float = 4.0
+const STALL_REPORT_INTERVAL: float = 2.0
+
 ## How long a joiner waits for EVERY incumbent's join snapshot before placing
 ## itself with whatever arrived.
 ##
@@ -209,6 +221,13 @@ enum State { OFFLINE, CONNECTING, IN_ROOM }
 
 ## Name shown on this peer's avatar to everyone else. Empty = DEFAULT_DISPLAY_NAME.
 @export var display_name: String = ""
+
+## Send the master's heartbeat. TRUE in every real session — turning it off is
+## how a headless test (and a developer) SIMULATES A THROTTLED TAB: the socket
+## stays open and the room stays intact, but the beats stop, which is exactly
+## what a backgrounded browser tab looks like from the other peers' side. Nothing
+## in the UI exposes this; `scripts/mp_e2e.gd`'s `--stall` flag is its one caller.
+@export var heartbeat_enabled: bool = true
 
 # =============================================================================
 # SIGNALS (for scripts/mp_ui.gd — nothing else listens)
@@ -380,6 +399,17 @@ var _dead_crocs: Dictionary = {}
 ## have gone out this room. Both are room-scoped and reset by `leave()`.
 var _seed_req_accum: float = 0.0
 var _seed_req_tries: int = 0
+
+## STALL WATCH. `_hb_accum` paces the master's own beat; `_last_hb_msec` is when
+## we last heard one (or joined, or learned of a new master — see
+## `_tick_stall_watch`, which explains why both of those count as a beat);
+## `_stall_accum` paces our votes and `_stall_reported` keeps the status line to
+## one message per stall rather than one every two seconds. All room-scoped and
+## reset by `leave()`.
+var _hb_accum: float = 0.0
+var _last_hb_msec: int = 0
+var _stall_accum: float = 0.0
+var _stall_reported: bool = false
 
 ## PICKUP CLAIMS AWAITING A CONFIRM: pickup id → `{"n": int, "v": int,
 ## "age": float, "tries": int}`. Only ever non-empty on a NON-master peer in a
@@ -587,6 +617,10 @@ func leave() -> void:
 	_croc_accum = 0.0
 	_seed_req_accum = 0.0
 	_seed_req_tries = 0
+	_hb_accum = 0.0
+	_last_hb_msec = 0
+	_stall_accum = 0.0
+	_stall_reported = false
 	# Any claim still waiting on a confirm dies with the room. The pickup it named
 	# is already hidden on our side, so dropping it here loses at most one coin's
 	# worth of bank — against re-driving claims at a master we are no longer
@@ -680,6 +714,13 @@ func _on_lobby_joined(you: String, room: String, master: String, members: Array)
 	# the full deadline.
 	_expected_snapshots = maxi(0, members.size() - 1)
 	_join_wait = 0.0
+	# ARRIVING COUNTS AS A BEAT. Without this stamp `_last_hb_msec` is 0, i.e.
+	# already `HEARTBEAT_TIMEOUT` in the past, and a joiner votes to depose a
+	# perfectly healthy master four seconds after walking in — before that master
+	# has had a chance to send its first beat.
+	_last_hb_msec = Time.get_ticks_msec()
+	_stall_accum = 0.0
+	_stall_reported = false
 	_state = State.IN_ROOM
 	status.emit("In room %s (%d/4)" % [room, members.size()])
 	room_changed.emit(room, members)
@@ -836,13 +877,27 @@ func _on_lobby_master_changed(id: String) -> void:
 	replay is phase 4's problem.
 	"""
 	_master = id
+	# A NEW MASTER STARTS WITH A CLEAN STALL CLOCK. The timer that was running
+	# against the old master must not carry over, or the peer that just deposed a
+	# dead host immediately deposes its replacement too — the replacement has by
+	# definition not sent a beat yet.
+	_last_hb_msec = Time.get_ticks_msec()
+	_stall_accum = 0.0
+	_stall_reported = false
 	# PROMOTION IS A HOT STANDBY HANDOVER, and it is one loop because the replica
 	# is just the local nodes. Every crocodile we have been rendering from the old
 	# master's samples is a real local body holding that master's last known
 	# transform, so dropping the remote-drive flag resumes simulation from exactly
 	# where each one stands — no state replay, no snapshot, no gap.
+	#
+	# We also start heartbeating from here: `_tick_heartbeat` reads `_master`
+	# every frame, so there is nothing to switch on beyond the beat accumulator,
+	# which is zeroed so the first beat goes out a full interval from now rather
+	# than at whatever phase the old accumulator happened to be in. If we are NOT
+	# the new master we simply keep waiting, now on the new one's beats.
 	if _master == _you:
 		_release_synced_crocs()
+		_hb_accum = 0.0
 
 	# ONLY re-broadcast a seed we actually adopted. A master elected before the
 	# seed reached it (the old master dropping inside our /ice window) has
@@ -1231,6 +1286,17 @@ func _on_lobby_relay(from: String, payload: Dictionary) -> void:
 			_latch_seed_from_terrain()
 			if _has_seed:
 				_lobby.send_signal_to(from, {"mp": "seed", "seed": _room_seed})
+		"hb":
+			# The master's heartbeat. Accepted ONLY from the master, the same
+			# rule (and for the same reason) as `seed`: the relay is opaque to
+			# the lobby, so any member could otherwise forge beats and keep a
+			# dead host in office forever. The verb IS the whole message — there
+			# are no payload fields, so there is nothing to validate; that is why
+			# no check follows, rather than an oversight at a trust boundary.
+			if from != _master:
+				return
+			_last_hb_msec = Time.get_ticks_msec()
+			_stall_reported = false
 		"state":
 			# A join snapshot from an incumbent. THE THIRD TRUST BOUNDARY in
 			# this file: `decode_state()` validates it whole, and anything that
@@ -1809,6 +1875,10 @@ func _process(delta: float) -> void:
 	# still run its retry budget down and resolve locally if the mesh dies, or the
 	# player would have watched a coin vanish and pay nothing.
 	_tick_claims(delta)
+	# ALSO above the `_rtc` guard, and that is the whole point of putting the
+	# heartbeat on the relay — see the section comment on `_tick_heartbeat`.
+	_tick_heartbeat(delta)
+	_tick_stall_watch(delta)
 
 	if _rtc == null:
 		return
@@ -1889,6 +1959,79 @@ func _tick_seed_request(delta: float) -> void:
 		# into the panel's label, so this needs no UI change.
 		status.emit("Waiting for the shared world…")
 	_lobby.send_signal_to(_master, {"mp": "seed_req"})
+
+
+# =============================================================================
+# HEARTBEAT, STALL DETECTION AND MASTER MIGRATION (phase 5)
+# =============================================================================
+#
+# THE HEARTBEAT RIDES THE LOBBY RELAY, NOT THE MESH — a deliberate deviation
+# from the epic's wording, for three reasons:
+#
+#   1. What this detects is a THROTTLED OR DEAD TAB, and such a tab stops
+#      polling its socket and its mesh alike. Either transport detects it
+#      equally well, so the choice is free on the merits and decided by the two
+#      reasons below.
+#   2. `--lobby-only` has no mesh at all. A mesh heartbeat would make the whole
+#      migration path untestable headless, and `scripts/mp_e2e.sh` is where this
+#      phase's automated evidence lives.
+#   3. The cost is nothing: 1 Hz to at most three peers, on a socket that
+#      already carries the lobby's own 20 s ping.
+#
+# The lobby already implements the re-election (`server/room.go`'s
+# `ReportStalled` + `electLocked`), so no server code exists for this — a peer
+# votes, and the lobby decides.
+
+func _tick_heartbeat(delta: float) -> void:
+	"""
+	Say "still here" once per `HEARTBEAT_INTERVAL` while we are the master.
+
+	Broadcast (`send_signal_to("")`) rather than addressed per peer: every member
+	needs it, and the lobby fans one frame out for us. A room of one still beats —
+	nobody is listening, but branching on the member count would only add a way
+	for the first joiner's window to be silent.
+	"""
+	if _state != State.IN_ROOM or _master != _you or not heartbeat_enabled:
+		return
+	_hb_accum += delta
+	if _hb_accum < HEARTBEAT_INTERVAL:
+		return
+	_hb_accum = 0.0
+	_lobby.send_signal_to("", {"mp": "hb"})
+
+
+func _tick_stall_watch(delta: float) -> void:
+	"""
+	Watch the master's beats and vote to depose it when they stop.
+
+	The vote goes to the lobby, which counts it: a re-election happens only once
+	strictly more than half of the non-master members agree, so one peer whose own
+	connection is the broken one cannot depose a healthy host on its own. We keep
+	voting every `STALL_REPORT_INTERVAL` until either a `master` frame lands (which
+	resets this clock through `_on_lobby_master_changed`) or the old master's beats
+	resume (which reset it through the `hb` relay handler) — the lobby says nothing
+	to a vote that has not reached quorum, so there is no reply to wait for.
+
+	Silent only until the first vote: the status line makes a stalled host visible
+	in the panel with NO UI change, exactly as the seed retry does.
+	"""
+	if _state != State.IN_ROOM or _master.is_empty() or _master == _you:
+		return
+	# Alone in the room there is nobody to elect and the lobby would drop the vote
+	# anyway (`len(votes)*2 > len(members)-1` is unsatisfiable at one member).
+	if _members.size() <= 1:
+		return
+	if Time.get_ticks_msec() - _last_hb_msec <= int(HEARTBEAT_TIMEOUT * 1000.0):
+		return
+
+	_stall_accum += delta
+	if _stall_accum < STALL_REPORT_INTERVAL:
+		return
+	_stall_accum = 0.0
+	if not _stall_reported:
+		_stall_reported = true
+		status.emit("Host not responding — voting to migrate…")
+	_lobby.send_stalled(_master)
 
 
 func _prune_dead_connections() -> void:
