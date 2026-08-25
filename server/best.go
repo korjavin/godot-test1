@@ -73,12 +73,30 @@ const (
 // client's format still works.
 var playerIDRe = regexp.MustCompile(`^[A-Za-z0-9_-]{8,64}$`)
 
-// bestRecord is one player's records. Distance and coins are INDEPENDENT maxima,
+// bestRecord is one player's records. Every field is an INDEPENDENT maximum,
 // matching the client: a long-but-poor run can set one without the other.
+//
+// Lifetime and Spent are the META-PROGRESSION half (lifetime cumulative coins →
+// levels → skill points) and they ride this record rather than a route of their
+// own, because they are keyed by the same player id, want the same
+// only-ever-upward merge, the same eviction and the same file. A second endpoint
+// would also have meant a second entry in the Traefik path rule in
+// server/docker-compose.yml — see the reminder at main.go's mux.
+//
+// LIFETIME NEVER GOES DOWN AND IS NEVER DEDUCTED (owner, 2026-08-25): spending a
+// skill point raises Spent, it does not lower Lifetime. That is exactly why both
+// can use the same monotone merge, and why a stale client POST cannot cost a
+// player their level.
 type bestRecord struct {
-	Distance int   `json:"distance"`
-	Coins    int   `json:"coins"`
-	Seen     int64 `json:"seen"` // unix seconds; refreshed by read AND write
+	Distance int `json:"distance"`
+	Coins    int `json:"coins"`
+	// Lifetime is cumulative coins picked up across every run ever; the client
+	// derives the level from it, so there is no stored level to drift.
+	Lifetime int `json:"lifetime"`
+	// Spent is skill points spent. 0 until the skill-tree phase exists; stored
+	// now so that phase touches no server code.
+	Spent int   `json:"spent"`
+	Seen  int64 `json:"seen"` // unix seconds; refreshed by read AND write
 }
 
 type bestStore struct {
@@ -117,11 +135,15 @@ func (s *bestStore) get(id string) bestRecord {
 	return rec
 }
 
-// merge raises the stored record toward (distance, coins) and returns the result.
-// Both fields move independently and only ever upward, so a client that posts a
+// merge raises the stored record toward the given values and returns the result.
+// Every field moves independently and only ever upward, so a client that posts a
 // stale value cannot lower anything — which is what makes the POST idempotent
 // and safe to retry.
-func (s *bestStore) merge(id string, distance, coins int) bestRecord {
+//
+// An older client that does not know about progression posts no `lifetime` /
+// `spent` at all; JSON decodes those as 0, and 0 raises nothing. That is the
+// whole backward-compatibility story.
+func (s *bestStore) merge(id string, distance, coins, lifetime, spent int) bestRecord {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rec, existed := s.recs[id]
@@ -133,6 +155,12 @@ func (s *bestStore) merge(id string, distance, coins int) bestRecord {
 	}
 	if coins > rec.Coins {
 		rec.Coins = coins
+	}
+	if lifetime > rec.Lifetime {
+		rec.Lifetime = lifetime
+	}
+	if spent > rec.Spent {
+		rec.Spent = spent
 	}
 	rec.Seen = time.Now().Unix()
 	s.recs[id] = rec
@@ -175,6 +203,8 @@ func (s *bestStore) load() error {
 		}
 		rec.Distance = clampBestValue(rec.Distance)
 		rec.Coins = clampBestValue(rec.Coins)
+		rec.Lifetime = clampBestValue(rec.Lifetime)
+		rec.Spent = clampBestValue(rec.Spent)
 		s.recs[id] = rec
 		if len(s.recs) >= maxBestRecords {
 			break
@@ -244,8 +274,8 @@ func clampBestValue(v int) int {
 
 // bestHandler serves GET/POST /best?id=<player id>.
 //
-//	GET  → {"distance":N,"coins":N}          the stored record (zeroes if unknown)
-//	POST → {"distance":N,"coins":N}          the record AFTER merging the body
+//	GET  → {"distance":N,"coins":N,"lifetime":N,"spent":N}   stored (zeroes if unknown)
+//	POST → {"distance":N,"coins":N,"lifetime":N,"spent":N}   AFTER merging the body
 //
 // Same CORS rule as /ice and /rooms — the game is served from a different origin
 // than the lobby, so without the header the browser discards the response. Unlike
@@ -280,12 +310,16 @@ func (s *bestStore) handler(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Distance int `json:"distance"`
 			Coins    int `json:"coins"`
+			Lifetime int `json:"lifetime"`
+			Spent    int `json:"spent"`
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBestBody)).Decode(&body); err != nil {
 			http.Error(w, "bad body", http.StatusBadRequest)
 			return
 		}
-		rec = s.merge(id, clampBestValue(body.Distance), clampBestValue(body.Coins))
+		rec = s.merge(id,
+			clampBestValue(body.Distance), clampBestValue(body.Coins),
+			clampBestValue(body.Lifetime), clampBestValue(body.Spent))
 	default:
 		w.Header().Set("Allow", "GET, POST, OPTIONS")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -296,5 +330,10 @@ func (s *bestStore) handler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	// `seen` is bookkeeping, not the client's business — it is deliberately not
 	// in the response shape.
-	_, _ = w.Write(mustJSON(map[string]any{"distance": rec.Distance, "coins": rec.Coins}))
+	_, _ = w.Write(mustJSON(map[string]any{
+		"distance": rec.Distance,
+		"coins":    rec.Coins,
+		"lifetime": rec.Lifetime,
+		"spent":    rec.Spent,
+	}))
 }

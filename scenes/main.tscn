@@ -23,6 +23,7 @@
 [ext_resource type="Script" path="res://scripts/start_overlay.gd" id="21_start"]
 [ext_resource type="Script" path="res://scripts/minimap_hud.gd" id="21_minimap"]
 [ext_resource type="Script" path="res://scripts/teammate_locator.gd" id="22_locator"]
+[ext_resource type="Script" path="res://scripts/progression.gd" id="23_progression"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_1"]
 sky_top_color = Color(0.25, 0.45, 0.75, 1)
@@ -73,6 +74,9 @@ script = ExtResource("18_fauna")
 
 [node name="Multiplayer" type="Node" parent="." groups=["mp"]]
 script = ExtResource("19_mp")
+
+[node name="Progression" type="Node" parent="." groups=["progression"]]
+script = ExtResource("23_progression")
 
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
 transform = Transform3D(-0.573576, 0.469846, -0.67101, 0, 0.819152, 0.573576, 0.819152, 0.32899, -0.469846, 0, 10, 0)
@@ -201,6 +205,23 @@ theme_override_colors/font_color = Color(1, 1, 1, 1)
 theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
 theme_override_constants/outline_size = 8
 theme_override_font_sizes/font_size = 48
+text = ""
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="LevelUpLabel" type="Label" parent="HUD" groups=["level_up_label"]]
+visible = false
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = -140.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+theme_override_colors/font_color = Color(1, 0.93, 0.55, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 8
+theme_override_font_sizes/font_size = 40
 text = ""
 horizontal_alignment = 1
 vertical_alignment = 1
