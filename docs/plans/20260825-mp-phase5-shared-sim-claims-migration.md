@@ -347,7 +347,7 @@ for the final task's gate run.
 
 ### Task 3: `mp_manager.gd` — the fourth trust boundary and mesh packet dispatch
 
-- [ ] introduce the `"t"` discriminator. Split the current `_receive_presence()`
+- [x] introduce the `"t"` discriminator. Split the current `_receive_presence()`
       loop so it decodes `bytes_to_var` **once** into a Dictionary, then:
       no `"t"` key → today's presence path; `"t"` present → `match str(state["t"])`
       over the new verbs; an unknown verb is ignored **without** a warning
@@ -356,9 +356,9 @@ for the final task's gate run.
       exactly as it is** — `mp_selfcheck.gd` pins it. Factor its body into a
       `static func _decode_presence_dict(state: Dictionary) -> Dictionary` that
       both paths call, so there is one validator, not two.
-- [ ] **`bytes_to_var`, never `bytes_to_var_with_objects`** — restate that in the
+- [x] **`bytes_to_var`, never `bytes_to_var_with_objects`** — restate that in the
       new dispatcher's docstring. It is the sharpest rule in the file.
-- [ ] add the croc-sync decoder, the fourth trust boundary, static and
+- [x] add the croc-sync decoder, the fourth trust boundary, static and
       `_rtc`-free so the selfcheck can beat on it:
       ```gdscript
       static func decode_croc_sync(state: Dictionary) -> Dictionary
@@ -380,16 +380,22 @@ for the final task's gate run.
       Return `{"ids": PackedInt32Array, "xf": PackedFloat32Array, "flags": PackedByteArray}`.
       Wrap yaw with `fposmod(yaw, TAU)` for the same reason `decode_presence`
       does — `lerp_angle` is `from + short_way * weight` and `1e30 + small IS 1e30`.
-- [ ] add the state-byte constants next to it and use them on both sides:
+- [x] add the state-byte constants next to it and use them on both sides:
       `CROC_FLAG_CHASING = 1`, `CROC_FLAG_FLEEING = 2`, `CROC_FLAG_PAUSED = 4`,
       `CROC_FLAG_BITING = 8`. One place, so the encoder and decoder cannot drift.
-- [ ] add `func peer_positions() -> Variant` — an `Array[Vector3]` of every other
+      *(Landed with Task 1, which needed them for `set_remote_state()`; the
+      encoder in Task 4 reads the same consts.)*
+- [x] add `func peer_positions() -> Variant` — an `Array[Vector3]` of every other
       member's last known position (from `_peer_state`), or **`null` offline**, so
       the LOD manager falls through to solo behaviour on one `== null` test. Same
       `null`-means-solo shape as `my_character_indices()` and `shared_bank()`.
-- [ ] `leave()` must reset every new room-scoped field this phase adds. It is
+- [x] `leave()` must reset every new room-scoped field this phase adds. It is
       already the single unwind point and it must stay complete — a field left
       behind is a bug that only shows up on the second room of a session.
+      *(Verified: this task adds no new room-scoped mutable field — the decoder
+      and the presence split are static/pure, and `peer_positions()` derives from
+      `_peer_state`, which `leave()` already empties. Tasks 4 and 7 add fields and
+      must extend `leave()` themselves.)*
 
 ### Task 4: `mp_manager.gd` — master croc simulation and the sync broadcast
 

@@ -87,6 +87,12 @@ const CROC_FLAG_FLEEING: int = 2
 const CROC_FLAG_PAUSED: int = 4
 const CROC_FLAG_BITING: int = 8
 
+## Most crocodile entries one sync packet may carry — see `decode_croc_sync()`.
+## Generous by design: the master only ever sends the crocs awake around one
+## peer, which is a couple of dozen. Like `MAX_STATE_IDS`, this exists to reject
+## hostile garbage before it is walked, not to police the size of the pack.
+const MAX_CROC_SYNC: int = 192
+
 ## How far the group may be spread before its centroid stops being a sensible
 ## place to arrive. Tuned BY EYE, not derived: 60 m is a bit over one chunk, well
 ## inside the fog, so a joiner landing at the centroid of a group this tight can
@@ -814,6 +820,30 @@ func claim_hero(hero: String) -> void:
 	if _state != State.IN_ROOM or _lobby == null:
 		return
 	_lobby.send_hero(hero)
+
+
+func peer_positions() -> Variant:
+	"""
+	Where every OTHER member of the room last reported standing, or `null` when
+	there is no room — the same "`null` means fall through to solo behaviour"
+	shape `my_character_indices()` and `shared_bank()` use, so a caller needs one
+	`== null` test and no branch of its own.
+
+	`scripts/crocodile_lod_manager.gd` is the caller: a crocodile must be awake
+	when it is near ANY member, not only near us. Offline this returns `null`, the
+	manager's focus set stays the one-element `[player_pos]`, and its awake test is
+	byte-for-byte the single-player one it has always been.
+
+	Positions come from `_peer_state`, which the join snapshot seeds and every
+	presence packet refreshes at 15 Hz — so a peer whose mesh has not come up yet
+	simply is not in the set, which is the correct answer rather than a stale one.
+	"""
+	if _state != State.IN_ROOM:
+		return null
+	var positions: Array[Vector3] = []
+	for state: Dictionary in _peer_state.values():
+		positions.append(state["pos"] as Vector3)
+	return positions
 
 
 func my_character_indices() -> Variant:
@@ -1661,7 +1691,7 @@ func _process(delta: float) -> void:
 	# it was deliberately never handed to the global MultiplayerAPI.
 	_rtc.poll()
 	_prune_dead_connections()
-	_receive_presence()
+	_receive_mesh_packets()
 
 	_send_accum += delta
 	var interval: float = 1.0 / PRESENCE_HZ
@@ -1820,20 +1850,29 @@ func _send_presence() -> void:
 		_rtc.put_packet(bytes)
 
 
-func _receive_presence() -> void:
+func _receive_mesh_packets() -> void:
 	"""
-	Drain inbound presence packets and feed them to the right avatar.
+	Drain the mesh and dispatch each packet to the handler for its kind.
 
 	**This is the other trust boundary, and the sharper one.** Decoding uses
 	`bytes_to_var`, *never* `bytes_to_var_with_objects` — the "with objects" form
 	will instantiate arbitrary classes named in the byte stream, which hands any
 	peer in the room code execution in our process. There is no situation in this
-	game where a peer needs to send us an object.
+	game where a peer needs to send us an object. That rule holds for EVERY packet
+	kind below; there is exactly one `bytes_to_var` call in this function and
+	every handler is handed the Dictionary it produced.
 
 	Past that, every field is type-checked, the position is rejected if any
 	component is non-finite (a NaN would poison the avatar's smoothing forever),
 	and the character index is range-checked before it can index CHARACTERS. A
 	packet that fails any of it is dropped whole — there is no partial trust.
+
+	PACKET KINDS ARE DISCRIMINATED BY A `"t"` KEY, and its absence is the presence
+	packet — which is what keeps a phase-3/4 peer working: it sends no `"t"`, so
+	it lands on the presence path, and a packet kind it has never heard of falls
+	through its own validation and is dropped. Symmetrically, an unknown verb here
+	is ignored SILENTLY (no warning), the same forward-compatibility rule
+	`_on_lobby_relay` states for relayed verbs.
 	"""
 	# BOUNDED DRAIN. Room membership is an invite code shared over chat, so a peer
 	# in the room is not trusted — that is the premise of both trust boundaries
@@ -1859,7 +1898,18 @@ func _receive_presence() -> void:
 		if avatar == null:
 			continue
 
-		var state: Dictionary = decode_presence(bytes)
+		# ONE `bytes_to_var` FOR EVERY PACKET KIND — see the docstring. A packet
+		# that is not even a Dictionary is dropped here, before any handler runs.
+		var decoded: Variant = bytes_to_var(bytes)
+		if typeof(decoded) != TYPE_DICTIONARY:
+			continue
+		var packet: Dictionary = decoded as Dictionary
+
+		if packet.has("t"):
+			_receive_mesh_verb(from_id, str(packet["t"]), packet)
+			continue
+
+		var state: Dictionary = _decode_presence_dict(packet)
 		if state.is_empty():
 			continue
 
@@ -1876,6 +1926,28 @@ func _receive_presence() -> void:
 		}
 
 
+func _receive_mesh_verb(from_id: String, verb: String, packet: Dictionary) -> void:
+	"""
+	Handle one non-presence mesh packet, identified by its `"t"` discriminator.
+
+	@param from_id: the lobby id of the sender — already resolved from the mesh's
+	    integer peer id, so a packet from someone we have no avatar for never got
+	    here. Handlers that need an authority check (only the master may drive the
+	    crocodiles) test it against `_master` themselves.
+	@param verb: `str(packet["t"])`.
+	@param packet: the already-`bytes_to_var`-decoded packet. NEVER
+	    `bytes_to_var_with_objects` — see `_receive_mesh_packets()`.
+
+	An unknown verb returns silently and deliberately WITHOUT a warning: a peer on
+	a later build may send packet kinds this one has never heard of, and a room
+	should keep working rather than spew one line per packet per second.
+	"""
+	match verb:
+		_:
+			# Forward compatibility. Not a warning — see the docstring.
+			pass
+
+
 static func decode_presence(bytes: PackedByteArray) -> Dictionary:
 	"""
 	The presence packet parser, and the whole trust boundary in one pure function.
@@ -1884,12 +1956,23 @@ static func decode_presence(bytes: PackedByteArray) -> Dictionary:
 	a packet is trusted whole or dropped whole, there is no partial trust. Static
 	and `_rtc`-free so scripts/mp_selfcheck.gd can hold it to that with a fistful
 	of malformed byte arrays.
+
+	Kept as the byte-array entry point even though `_receive_mesh_packets()` now
+	decodes once and dispatches on `"t"`: the selfcheck pins this signature, and
+	the validation itself lives in `_decode_presence_dict()` so there is ONE
+	validator rather than two that can drift.
 	"""
 	var decoded: Variant = bytes_to_var(bytes)
 	if typeof(decoded) != TYPE_DICTIONARY:
 		return {}
-	var state: Dictionary = decoded as Dictionary
+	return _decode_presence_dict(decoded as Dictionary)
 
+
+static func _decode_presence_dict(state: Dictionary) -> Dictionary:
+	"""
+	Validate an already-decoded presence Dictionary. See `decode_presence()` for
+	the contract: whole or nothing, `{}` on any failure.
+	"""
 	if typeof(state.get("p", null)) != TYPE_VECTOR3 \
 			or typeof(state.get("g", null)) != TYPE_BOOL \
 			or not _is_number(state.get("y", null)) \
@@ -1953,3 +2036,72 @@ static func decode_presence(bytes: PackedByteArray) -> Dictionary:
 		"p": pos, "y": yaw, "c": char_index, "s": speed, "g": state["g"],
 		"cc": counters["cc"], "lv": counters["lv"], "dd": counters["dd"],
 	}
+
+
+static func decode_croc_sync(state: Dictionary) -> Dictionary:
+	"""
+	The crocodile-sync parser — the FOURTH trust boundary, and built exactly like
+	the other three: static and `_rtc`-free so scripts/mp_selfcheck.gd can beat on
+	it with hostile input, and whole-or-nothing, returning an EMPTY DICTIONARY for
+	anything that fails so the caller drops the packet entire.
+
+	Wire format, the `var_to_bytes` of:
+
+	    {"t": "croc",
+	     "i": PackedInt32Array,    # one crocodile id per entry
+	     "x": PackedFloat32Array,  # 4 per entry: px, py, pz, yaw
+	     "f": PackedByteArray}     # one CROC_FLAG_* state byte per entry
+
+	Three parallel packed arrays rather than an array of Dictionaries because this
+	goes out at 10 Hz to every peer: packed arrays serialise as a flat block with
+	no per-entry key strings.
+
+	@param state: the already-`bytes_to_var`-decoded packet — NEVER
+	    `bytes_to_var_with_objects`, see `_receive_mesh_packets()`.
+	@return `{"ids": PackedInt32Array, "xf": PackedFloat32Array,
+	    "flags": PackedByteArray}` with every yaw wrapped into `[0, TAU)`, or `{}`.
+	"""
+	# EXACT packed types, not "some array": a plain Array of the right length
+	# would index fine and then hand a String to `global_position`.
+	if typeof(state.get("i", null)) != TYPE_PACKED_INT32_ARRAY \
+			or typeof(state.get("x", null)) != TYPE_PACKED_FLOAT32_ARRAY \
+			or typeof(state.get("f", null)) != TYPE_PACKED_BYTE_ARRAY:
+		return {}
+
+	var ids: PackedInt32Array = state["i"]
+	var flags: PackedByteArray = state["f"]
+	# Copied because the yaw wrap below writes into it, and a packed array read
+	# out of a Dictionary is a reference until it is written to.
+	var xf: PackedFloat32Array = (state["x"] as PackedFloat32Array).duplicate()
+
+	# The three arrays describe the SAME entries, so their sizes are not
+	# independent. A mismatch is exactly the shape a truncated or hostile packet
+	# takes, and walking it would read off the end of one of them per entry.
+	if ids.size() != flags.size() or xf.size() != ids.size() * 4:
+		return {}
+	if ids.size() > MAX_CROC_SYNC:
+		return {}
+
+	for entry: int in ids.size():
+		var base: int = entry * 4
+		# FINITENESS BEFORE ANY USE, for the reason `decode_presence()` spells
+		# out at length: a crocodile assigned a NaN position interpolates to NaN
+		# forever after, with no path back for the room's life, and 1e30 is
+		# finite but just as permanent. The coordinate bound is the presence
+		# packet's — a croc stands in the same world a player does.
+		for axis: int in 3:
+			var value: float = xf[base + axis]
+			if not is_finite(value) or absf(value) > MAX_PRESENCE_COORD:
+				return {}
+		var yaw: float = xf[base + 3]
+		if not is_finite(yaw):
+			return {}
+		# WRAPPED, not bounded, exactly as `decode_presence()` wraps `y`: an angle
+		# has no natural magnitude limit, but it is eased with `lerp_angle`, which
+		# is `from + short_way * weight` — and `1e30 + anything small IS 1e30`.
+		xf[base + 3] = fposmod(yaw, TAU)
+
+	# `flags` needs no validation: every one of the 256 byte values is a legal
+	# combination of CROC_FLAG_* bits plus unknown bits, and the receiver reads it
+	# with `&` so bits it does not know are ignored.
+	return {"ids": ids, "xf": xf, "flags": flags}
