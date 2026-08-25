@@ -38,6 +38,10 @@ const ABILITY_EFFECT := preload("res://scripts/ability_effect.gd")
 const BOB_SPEED: float = 2.0
 const BOB_AMOUNT: float = 0.12
 
+## Multiplayer coin identity: how many id cells there are per metre. 8.0 means a
+## 12.5 cm cell — see id_at() for the whole scheme and its two ceilings.
+const COIN_ID_QUANT: float = 8.0
+
 # ============================================================================
 # STATE
 # ============================================================================
@@ -68,6 +72,54 @@ var base_y: float = 0.0
 var spin_angle: float = 0.0
 var mesh_base_basis: Basis
 
+## This coin's multiplayer id, LATCHED IN _ready() and never recomputed.
+## Latching is not an optimisation — it is the contract. `_process` bobs the
+## coin by BOB_AMOUNT (0.12 m) around base_y, which is ±0.96 of a 12.5 cm id
+## cell, so an id derived from the LIVE position at collection time names a
+## different cell than the one derived at spawn: `is_coin_collected()` would ask
+## about one id, `report_coin_collected()` would publish another, and the whole
+## join replay would miss on most pickups.
+var _id: int = 0
+
+# ============================================================================
+# IDENTITY (multiplayer)
+# ============================================================================
+
+static func id_at(pos: Vector3) -> int:
+	"""
+	The stable id of the coin standing at `pos`, as a pure function of position.
+
+	Every coin in the world is spawned by one of THREE deterministic spawners in
+	endless_terrain.gd (the road scatter, the artifact reward ring and the camp
+	fire coins), all seeded from run_seed — so two peers sharing a seed put the
+	same coin at the same place, and the position alone identifies it. Deriving
+	the id here rather than threading one through three call sites is why none of
+	those spawners needed a single edit.
+
+	ponytail: two ceilings, both cosmetic by construction.
+	  1. Two DISTINCT coins landing inside the same 12.5 cm cell share an id, so a
+	     joiner would despawn one coin too many. The road scatter makes that
+	     vanishingly rare and the cost is one missing coin, never a wrong bank.
+	  2. A coin sitting exactly on a cell boundary can round the other way on a
+	     peer whose float arithmetic differs by an ulp; its id then does not match
+	     and the coin is simply NOT despawned — a duplicate, not a crash.
+	The upgrade path for both is threading an explicit (k, slot) / (chunk, index)
+	id out of the three spawners.
+	"""
+	return hash(Vector3i(
+		roundi(pos.x * COIN_ID_QUANT),
+		roundi(pos.y * COIN_ID_QUANT),
+		roundi(pos.z * COIN_ID_QUANT)
+	))
+
+
+func coin_id() -> int:
+	"""This coin's id. Valid from _ready on — every spawner sets the coin's
+	position BEFORE add_child, so global_position is already final at the latch
+	(see _id: the bob must never be allowed to rename a coin)."""
+	return _id
+
+
 # ============================================================================
 # LIFECYCLE
 # ============================================================================
@@ -77,6 +129,21 @@ func _ready() -> void:
 
 	# Remember where we were placed so the bob oscillates around it.
 	base_y = position.y
+
+	# Latch the multiplayer id from the REST position, before _process ever bobs
+	# us off it. Every spawner sets the position before add_child, so this is the
+	# final placement (see _id).
+	_id = id_at(global_position)
+
+	# MULTIPLAYER: a coin an incumbent already banked must not exist for a peer
+	# that joined mid-run. The MP manager holds the collected set replayed to us
+	# on join; offline the group lookup finds nothing and this is one failed
+	# lookup per coin AT SPAWN — never per frame. Done before body_entered is
+	# connected, so a coin freed here can never fire a pickup on its way out.
+	var mp := get_tree().get_first_node_in_group("mp")
+	if mp and mp.has_method("is_coin_collected") and mp.is_coin_collected(coin_id()):
+		queue_free()
+		return
 
 	# Cache the scene-authored mesh pose; the spin/tilt compose on top of it.
 	mesh_base_basis = mesh.basis
@@ -153,6 +220,13 @@ func _on_body_entered(body: Node) -> void:
 	collected = true
 	if body.has_method("collect_coin"):
 		body.collect_coin(value)
+
+	# MULTIPLAYER: tell the room this coin is gone, so a peer joining later never
+	# sees it. Null-safe group lookup like the sound manager below; the manager
+	# records only while in a room, so offline this is a no-op.
+	var mp := get_tree().get_first_node_in_group("mp")
+	if mp and mp.has_method("report_coin_collected"):
+		mp.report_coin_collected(coin_id())
 
 	# Pickup blip. The MANAGER owns the audio players — this coin queue_free()s
 	# itself right below, so a sound attached to this dying node would be cut off.

@@ -162,14 +162,22 @@ func show_game_over(coins: int, distance: int, best_distance: int,
 	visible = true
 
 
-func _on_restart_pressed() -> void:
-	"""Hide the screen and tell the player to start a fresh run."""
+func hide_game_over() -> void:
+	"""
+	Take the screen down. Called by _on_restart_pressed below, and by the player
+	when a mid-run multiplayer join revives a game-over run (see join_at).
+	"""
 	visible = false
 	# Stop the "NEW BEST!" pulse — a looping tween must not keep ticking behind
 	# a hidden screen for the whole next run.
 	if new_best_tween:
 		new_best_tween.kill()
 		new_best_tween = null
+
+
+func _on_restart_pressed() -> void:
+	"""Hide the screen and tell the player to start a fresh run."""
+	hide_game_over()
 	var player := get_tree().get_first_node_in_group("player")
 	if player and player.has_method("restart_game"):
 		player.restart_game()

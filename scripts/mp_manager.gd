@@ -29,10 +29,11 @@ class_name MpManager
 ## WHAT IS DELIBERATELY NOT HERE (phase 3 scope)
 ## ----------------------------------------------------------------------------
 ## No shared crocodiles, no shared coins (each peer collects its own), no mid-run
-## state replay (a joiner restarts at spawn in the shared world), no hero-split
-## enforcement and no stall detection — the lobby's `hero` and `stalled` messages
-## are left unused on purpose. Crocodiles, coins, weather and fauna stay fully
-## local per peer and ignore remote players entirely.
+## state replay (a joiner restarts at spawn in the shared world) and no stall
+## detection — the lobby's `stalled` message is left unused on purpose.
+## Crocodiles, coins, weather and fauna stay fully local per peer and ignore
+## remote players entirely. The hero split IS implemented: see the HERO POOL
+## section, where the lobby is the source of truth.
 
 # =============================================================================
 # CONFIGURATION
@@ -63,6 +64,58 @@ const MAX_BUFFERED_SIGNALS: int = 64
 ## garbage, not to police where a peer may stand. See `decode_presence()`.
 const MAX_PRESENCE_COORD: float = 1.0e7
 const MAX_PRESENCE_SPEED: float = 1.0e4
+
+## Caps on a join snapshot — see `decode_state()`. `MAX_STATE_IDS` bounds BOTH
+## ends of the collected-coin set: the one we send and the one we accept.
+## `MAX_STATE_COUNTER` is a sanity bound on the coin/life/distance counters,
+## generous by design because it exists to reject hostile garbage, not to police
+## how long a run may get.
+const MAX_STATE_IDS: int = 2048
+const MAX_STATE_COUNTER: int = 1000000000
+
+## Coin ids are `hash()` output, so 32 bits — but they cross the relay as JSON
+## doubles, and `int()` on a value past a double's exact-integer range is
+## undefined (on wasm the float→int trunc can trap the module outright). 2⁵³ is
+## that range, so anything beyond it is refused before the cast.
+const MAX_STATE_ID_MAGNITUDE: float = 9007199254740992.0
+
+## How far the group may be spread before its centroid stops being a sensible
+## place to arrive. Tuned BY EYE, not derived: 60 m is a bit over one chunk, well
+## inside the fog, so a joiner landing at the centroid of a group this tight can
+## still see somebody. Past it the centroid is empty ground between two players
+## who have gone their separate ways, so the master's own position is used
+## instead — arriving beside one player beats arriving beside none.
+const GROUP_SPREAD_MAX: float = 60.0
+
+## The lobby errors that must NOT end the session. `server/room.go` answers a
+## refused hero claim with a plain `error` frame on a socket it deliberately
+## keeps OPEN (`errUnknownHero` / `errHeroTaken`), and two peers reaching for the
+## same hero at the same moment is an ordinary event — the blanket `leave()`
+## every other error takes would drop BOTH of them out of a perfectly good room.
+## Matched by exact string, because the string is all the frame carries.
+const HERO_ERRORS: PackedStringArray = ["unknown hero", "hero already taken"]
+
+## SEED SELF-HEAL. A joiner with no seed asks the master for one every
+## `SEED_REQUEST_INTERVAL` seconds, `SEED_REQUEST_MAX_TRIES` times, then gives up
+## asking (but stays in the room). 2 s is well over a relay round trip on any
+## connection worth playing on, and 10 tries is 20 s — long enough to cover a
+## master still booting its terrain, short enough that a dead host is reported
+## while the player is still looking at the panel.
+const SEED_REQUEST_INTERVAL: float = 2.0
+const SEED_REQUEST_MAX_TRIES: int = 10
+
+## How long a joiner waits for EVERY incumbent's join snapshot before placing
+## itself with whatever arrived.
+##
+## The anchor is the centroid of the group (or the master's position when the
+## group is spread), so it is only the documented anchor once all the snapshots
+## are in — place on the first one and a three-player room drops the joiner beside
+## whichever peer's relay message happened to win the race. The snapshots are one
+## small message each, sent the instant the lobby announces the join, so in
+## practice they land together and this deadline never fires. It exists because
+## the alternative is waiting forever on a peer that is wedged, on an older build,
+## or gone: falling back to a worse anchor beats never placing the player at all.
+const JOIN_SNAPSHOT_WAIT: float = 1.5
 
 ## Where the desktop WebRTC GDExtension lives when a developer has installed it.
 ## See README — the browser build needs nothing, desktop needs this addon.
@@ -98,6 +151,12 @@ signal room_changed(code: String, members: Array)
 ## one of these rather than crashing or leaving a half-torn-down mesh.
 signal status(message: String)
 
+## The room's hero assignments changed: `heroes` maps hero name → holder peer id,
+## `pool` is every hero the lobby offers. A straight re-emit of `LobbyClient`'s
+## signal of the same name, so the UI only ever talks to the manager — the same
+## shape, and the same reason, as `room_changed`.
+signal heroes_changed(heroes: Dictionary, pool: Array)
+
 # =============================================================================
 # STATE
 # =============================================================================
@@ -110,6 +169,18 @@ var _lobby: LobbyClient = null
 ## The mesh. See the big comment on `_setup_mesh()` for why this is NEVER
 ## assigned to `multiplayer.multiplayer_peer`.
 var _rtc: WebRTCMultiplayerPeer = null
+
+## Relay-only mode: join the room over the lobby socket and skip the WebRTC mesh
+## entirely, so the seed / snapshot / hero path can be exercised where WebRTC does
+## not exist. Set once in `_init()` from `--lobby-only` in the user command line,
+## the same precedence shape `LobbyClient.resolve_lobby_url()` uses for `--lobby=`.
+##
+## ponytail: a TEST/DEV mode for the headless E2E (scripts/mp_e2e.sh) and for a
+## desktop developer with no `webrtc-native` addon — NOT a shipped degraded mode.
+## Its ceiling is that there is no mesh, so no presence and no avatars: you are in
+## the room and share its world, but nobody moves. Opt-in from the command line
+## only — nothing in the UI exposes it and the web build never sets it.
+var lobby_only: bool = false
 
 ## lobby id (16 hex chars) → WebRTCPeerConnection
 var _connections: Dictionary = {}
@@ -141,11 +212,81 @@ var _requested_code: String = ""
 var _room_seed: int = 0
 var _has_seed: bool = false
 
+## THE LOBBY IS THE SOURCE OF TRUTH FOR HEROES. `_heroes` maps hero name → the
+## lobby id holding it, `_pool` is every hero the lobby offers. Both are replaced
+## wholesale by each `heroes` broadcast and are never edited locally: a claim
+## changes this peer's body only once the lobby confirms it, which is what makes
+## two peers racing for the same hero impossible to get wrong. The lobby also
+## releases a departing member's hero itself, so this client must never do that.
+var _heroes: Dictionary = {}
+var _pool: Array[String] = []
+
+## JOIN-TIME STATE REPLAY. `_collected_ids` is the union of every coin id anyone
+## in this room has banked — a Dictionary used as a set (the value is ignored),
+## kept in INSERTION ORDER so `_recent_collected_ids()` can truncate the oldest.
+## `_peer_state` holds one entry per other member,
+## `{"coins": int, "spent": int, "dist": int, "pos": Vector3}`, seeded by that
+## peer's join snapshot and kept current by every presence packet afterwards.
+## Both are room-scoped: `leave()` empties them and `report_coin_collected()`
+## refuses to record while offline, so a solo session allocates nothing here no
+## matter how many coins it banks.
+var _collected_ids: Dictionary = {}
+var _peer_state: Dictionary = {}
+
+## ONE SNAPSHOT PER SENDER, EVER — the set of peers whose `state` frame we have
+## already folded in. The protocol sends exactly one per (incumbent, joiner) pair,
+## but a relayed payload is unvalidated peer input: without this latch a member
+## looping `state` frames grows `_collected_ids` without limit (the
+## `MAX_STATE_IDS` cap bounds one message, not the total) and forces a full
+## `"coin"` group sweep per frame. Room-scoped like the two above.
+var _state_received: Dictionary = {}
+
+## JOIN PLACEMENT, which happens at most once per room. `_first_member` is true
+## when the `welcome` frame found us alone — a host has nobody to join, so its
+## spawn is left exactly as phase 3 left it. `_join_applied` is the latch that
+## keeps the placement to one shot even though it is attempted from both the
+## seed and every snapshot (either may land first). Both are reset by `leave()`.
+var _first_member: bool = true
+var _join_applied: bool = false
+
+## The FROZEN contributions of members who have left. A departing peer's coins
+## and spent lives are folded in here rather than dropped: dropping them would
+## shrink the room's bank in front of everyone and — much worse — REFUND the
+## lives that peer spent. Room-scoped like the two above.
+var _gone_coins: int = 0
+var _gone_spent: int = 0
+
+## THIS peer's own contribution from runs it has already finished in this room —
+## what "Play Again" retired when `reset_position()` zeroed `own_coins` /
+## `own_lives_spent` (see `retire_own_contribution`).
+##
+## Deliberately NOT folded into `_gone_*`. Those are the room-wide frozen share of
+## members who LEFT, and every peer derives them independently from the same
+## `peer_leave` frame, so they converge. A restart is observed by nobody else: a
+## `_gone_*` write here would raise this peer's totals alone, while every other
+## peer saw the restarter's next presence packet report zero and dropped the
+## coins and REFUNDED the lives — the room permanently disagreeing about its own
+## bank and hearts. Kept as part of our OWN contribution instead, it rides the
+## existing `cc`/`lv` fields in presence and in the join snapshot, so every peer
+## sums the same numbers with no new protocol and no extra message.
+var _retired_coins: int = 0
+var _retired_spent: int = 0
+
+## How many join snapshots this peer is still waiting on before it places itself,
+## and how long it has waited (seconds). See `JOIN_SNAPSHOT_WAIT`.
+var _expected_snapshots: int = 0
+var _join_wait: float = 0.0
+
 ## The `/ice` payload, fetched once per join and reused for every connection.
 var _ice: Dictionary = {}
 
 ## Presence send accumulator (seconds).
 var _send_accum: float = 0.0
+
+## Seed self-heal state: seconds since the last `seed_req` went out, and how many
+## have gone out this room. Both are room-scoped and reset by `leave()`.
+var _seed_req_accum: float = 0.0
+var _seed_req_tries: int = 0
 
 
 func _init() -> void:
@@ -156,6 +297,8 @@ func _init() -> void:
 	# frame later and would undo a `set_process(true)` issued by a caller that
 	# joins immediately.
 	set_process(false)
+	# Relay-only opt-in, command line only. See `lobby_only`'s own comment.
+	lobby_only = OS.get_cmdline_user_args().has("--lobby-only")
 	# Keep polling the socket and the mesh while the tree is paused. A pause
 	# (the P key, the mobile focus-loss pause, an open MP panel) that stopped
 	# `_process` would stop `LobbyClient`'s `_socket.poll()` too, and the lobby
@@ -225,7 +368,7 @@ func join(code: String) -> void:
 	Join room `code` (empty = create). Idempotent in the sense that joining while
 	already in a room leaves the old one first — there is only ever one mesh.
 	"""
-	if not webrtc_available():
+	if not lobby_only and not webrtc_available():
 		status.emit("Multiplayer needs the WebRTC addon on desktop — see README")
 		return
 
@@ -240,6 +383,7 @@ func join(code: String) -> void:
 		_lobby.peer_left.connect(_on_lobby_peer_left)
 		_lobby.master_changed.connect(_on_lobby_master_changed)
 		_lobby.relay.connect(_on_lobby_relay)
+		_lobby.heroes_changed.connect(_on_lobby_heroes)
 		_lobby.lobby_error.connect(_on_lobby_error)
 		_lobby.closed.connect(_on_lobby_closed)
 
@@ -285,8 +429,23 @@ func leave() -> void:
 	_master = ""
 	_members = []
 	_requested_code = ""
+	_heroes = {}
+	_pool = []
+	_collected_ids = {}
+	_peer_state = {}
+	_state_received = {}
+	_first_member = true
+	_join_applied = false
+	_gone_coins = 0
+	_gone_spent = 0
+	_retired_coins = 0
+	_retired_spent = 0
+	_expected_snapshots = 0
+	_join_wait = 0.0
 	_ice = {}
 	_send_accum = 0.0
+	_seed_req_accum = 0.0
+	_seed_req_tries = 0
 	# `_room_seed` is deliberately kept: leaving a room does not regenerate the
 	# world, so the player keeps walking the terrain they are on. `_has_seed` is
 	# CLEARED, because it is the "we already adopted this room's seed" latch that
@@ -297,6 +456,7 @@ func leave() -> void:
 	_has_seed = false
 	set_process(false)
 	room_changed.emit("", [])
+	heroes_changed.emit({}, [])
 
 
 func get_room_code() -> String:
@@ -354,12 +514,37 @@ func _on_lobby_joined(you: String, room: String, master: String, members: Array)
 	_room = room
 	_master = master
 	_members = members
+	# Alone in the `welcome` frame means the lobby just minted this room for us:
+	# there is no run in progress to join, so no placement is ever applied.
+	_first_member = members.size() <= 1
+	# Every member already here sends us exactly one join snapshot, so this is how
+	# many the placement waits for (see JOIN_SNAPSHOT_WAIT). Peers arriving AFTER
+	# us are deliberately not counted: the protocol sends snapshots to the joiner,
+	# so a later arrival never sends us one and waiting for it would always burn
+	# the full deadline.
+	_expected_snapshots = maxi(0, members.size() - 1)
+	_join_wait = 0.0
 	_state = State.IN_ROOM
 	status.emit("In room %s (%d/4)" % [room, members.size()])
 	room_changed.emit(room, members)
 
+	# SEED DISTRIBUTION IS MESH-INDEPENDENT, and this line is what makes it so.
+	# The seed rides the lobby relay, which is open the moment `welcome` lands —
+	# it has no business waiting on ICE. It used to: `_has_seed` was latched only
+	# inside `_setup_mesh()`, i.e. after an HTTP round trip to `/ice`, so a master
+	# whose fetch was still in flight when somebody joined answered the direct
+	# send in `_on_lobby_peer_joined` with a silently skipped `_has_seed` check —
+	# the joiner then walked its own private world for the room's life with no
+	# error anywhere. Latching here publishes the master's terrain seed as soon as
+	# there is a room to publish it to.
+	_broadcast_seed_if_master()
+
 	# The mesh cannot start before we know which STUN/TURN servers to use, so the
-	# rest of setup hangs off the /ice callback.
+	# rest of setup hangs off the /ice callback. `lobby_only` stops here: no /ice,
+	# no mesh, no presence — everything above this line rides the relay and keeps
+	# working, which is the whole point of the mode.
+	if lobby_only:
+		return
 	_lobby.fetch_ice(_on_ice_ready)
 
 
@@ -417,8 +602,17 @@ func _setup_mesh() -> void:
 			continue
 		_add_peer(id, str((member as Dictionary).get("name", "")))
 
-	# The master hands out the world seed the moment it has a mesh to talk about.
-	_broadcast_seed_if_master()
+	# Idempotent re-send, kept because a master RE-ELECTED while its own mesh was
+	# still building reaches this line without having passed the one above.
+	# GUARDED BY `_has_seed` FOR THE SAME REASON `_on_lobby_master_changed` is:
+	# without it, a peer promoted inside its own `/ice` window arrives here with
+	# no seed, falls through to `_broadcast_seed_if_master`'s read-the-terrain
+	# path and publishes its own PRIVATE solo world as the room's — which every
+	# peer already holding the real seed drops on `_receive_seed`'s latch,
+	# leaving the master alone on different ground while the UI reports success.
+	# The genuinely seedless room is covered from the other end, by `seed_req`.
+	if _has_seed:
+		_broadcast_seed_if_master()
 
 
 func _on_lobby_peer_joined(id: String, peer_name: String) -> void:
@@ -431,12 +625,30 @@ func _on_lobby_peer_joined(id: String, peer_name: String) -> void:
 	# the master, send the seed straight to it.
 	if _master == _you and _has_seed:
 		_lobby.send_signal_to(id, {"mp": "seed", "seed": _room_seed})
+	# EVERY member snapshots itself to the joiner, not just the master. The seed
+	# above is a single value the master owns, but the join state is not: the
+	# collected-coin set is the UNION across the room and each peer only knows
+	# the ids it banked itself, while the shared bank, lives and distance are a
+	# sum over per-peer contributions. A snapshot from the master alone would
+	# hand the joiner a world still full of coins the others took and a bank
+	# missing their share.
+	_send_state_to(id)
 	status.emit("%s joined" % peer_name)
 	room_changed.emit(_room, _members)
 
 
 func _on_lobby_peer_left(id: String) -> void:
-	"""A peer left: drop its avatar, its connection and anything buffered for it."""
+	"""
+	A peer left: drop its avatar, its connection and anything buffered for it —
+	but FREEZE its contribution to the room's totals rather than dropping it (see
+	`_gone_coins`). Distance needs no freezing: it is a max, and the local
+	`run_distance` is a running max that already latched it.
+	"""
+	if _peer_state.has(id):
+		var gone: Dictionary = _peer_state[id]
+		_gone_coins += int(gone.get("coins", 0))
+		_gone_spent += int(gone.get("spent", 0))
+		_peer_state.erase(id)
 	if _avatars.has(id):
 		(_avatars[id] as RemoteAvatar).queue_free()
 		_avatars.erase(id)
@@ -474,14 +686,27 @@ func _on_lobby_master_changed(id: String) -> void:
 	# PRIVATE solo world as the room's seed — which every peer that already holds
 	# the real one drops on `_receive_seed`'s latch, leaving the master alone on
 	# different ground for the room's life while the UI reports success. Staying
-	# quiet keeps the peers that already agree agreeing. Asking a member for the
-	# seed is phase 4's problem, along with the rest of mid-run state replay.
+	# quiet keeps the peers that already agree agreeing — and the gap it leaves
+	# is now closed from the other end: a seedless peer keeps sending `seed_req`
+	# to whoever the master currently is, and this one answers off its own
+	# terrain when asked.
 	if _has_seed:
 		_broadcast_seed_if_master()
 
 
 func _on_lobby_error(message: String) -> void:
-	"""Bad room code, room full, malformed frame — all of them end the attempt."""
+	"""
+	Bad room code, room full, malformed frame — all of them end the attempt.
+
+	**Except a refused hero claim.** The lobby keeps the socket open for those and
+	its last `heroes` broadcast is still the truth, so we report it, re-publish
+	that truth (which snaps the UI's hero row back off the button the player
+	optimistically pressed) and stay in the room. See HERO_ERRORS.
+	"""
+	if HERO_ERRORS.has(message):
+		status.emit("Hero: %s" % message)
+		heroes_changed.emit(_heroes, _pool)
+		return
 	status.emit("Lobby: %s" % message)
 	leave()
 
@@ -495,6 +720,179 @@ func _on_lobby_closed(code: int, reason: String) -> void:
 		return
 	status.emit("Disconnected from the lobby (%d %s)" % [code, reason])
 	leave()
+
+
+# =============================================================================
+# HERO POOL — who is playing which body, decided by the lobby
+# =============================================================================
+#
+# The lobby already owns this: `server/room.go` holds one hero per member, hands
+# the assignments out in `welcome` (with the full `pool`) and broadcasts a
+# `heroes` frame on every claim, release and departure. So there is no election
+# and no arbitration here — this side asks, applies what comes back, and offers
+# the result to the UI. Everything is derived BY NAME, never by index, so a
+# reorder of the lobby's `Heroes` slice or of `CHARACTERS` cannot silently swap
+# two players' bodies.
+
+func my_hero() -> String:
+	"""The hero this peer holds, or "" when offline or holding none."""
+	if _state != State.IN_ROOM:
+		return ""
+	for hero: String in _heroes:
+		if str(_heroes[hero]) == _you:
+			return hero
+	return ""
+
+
+func hero_holder(hero: String) -> String:
+	"""The lobby id holding `hero`, or "" if nobody does."""
+	if _state != State.IN_ROOM:
+		return ""
+	return str(_heroes.get(hero, ""))
+
+
+func available_heroes() -> Array[String]:
+	"""
+	Every hero this peer may press: the unclaimed ones, plus the one we already
+	hold — re-picking what you have is a no-op, not a refusal. Empty when offline.
+	"""
+	var free: Array[String] = []
+	if _state != State.IN_ROOM:
+		return free
+	var mine: String = my_hero()
+	for hero: String in _pool:
+		if hero == mine or hero_holder(hero).is_empty():
+			free.append(hero)
+	return free
+
+
+func claim_hero(hero: String) -> void:
+	"""
+	Ask the lobby for `hero` (`""` releases the one we hold).
+
+	**Nothing changes locally here.** The body only moves when the lobby's
+	`heroes` broadcast confirms the claim, so two peers pressing the same button
+	in the same frame can never both end up in the same body — one is refused, and
+	a refusal is a status line rather than a disconnect (see HERO_ERRORS).
+	"""
+	if _state != State.IN_ROOM or _lobby == null:
+		return
+	_lobby.send_hero(hero)
+
+
+func my_character_indices() -> Variant:
+	"""
+	Which `CHARACTERS` entries this peer may embody, or `null` meaning "all of
+	them" — the solo semantics, which is also what an offline peer and a peer
+	holding no hero get. `player_controller.switch_to_next_character()` therefore
+	keeps its existing behaviour behind a single `== null` test.
+
+	The lobby holds at most one hero per member, so in practice this is a
+	singleton and the E-cycle degenerates to a no-op; the set form costs nothing
+	and needs no special case if that ever changes.
+	"""
+	if _state != State.IN_ROOM:
+		return null
+	var indices: Array[int] = []
+	for hero: String in _heroes:
+		if str(_heroes[hero]) != _you:
+			continue
+		var index: int = hero_index(hero)
+		if index >= 0:
+			indices.append(index)
+	# Holding nothing — or only heroes this build has no character for — means
+	# UNRESTRICTED, not frozen: locking E against an empty set would be a worse
+	# answer than solo behaviour to a state that is normally momentary (the gap
+	# between `welcome` and our auto-claim being confirmed).
+	if indices.is_empty():
+		return null
+	return indices
+
+
+static func hero_index(hero: String) -> int:
+	"""
+	The `player_controller.CHARACTERS` index of a hero name, or -1 if this build
+	has no such character. Static and pure so scripts/mp_selfcheck.gd can pin it.
+	"""
+	var characters: Array = RemoteAvatar.PLAYER_SCRIPT.CHARACTERS
+	for i: int in range(characters.size()):
+		if str((characters[i] as Dictionary).get("name", "")) == hero:
+			return i
+	return -1
+
+
+func _on_lobby_heroes(heroes: Dictionary, pool: Array) -> void:
+	"""
+	The lobby published the room's hero assignments — from `welcome`, or from any
+	later claim, release or departure (the lobby releases a leaver's hero itself,
+	which is why nothing here does).
+	"""
+	if _state != State.IN_ROOM:
+		return
+
+	# The lobby is our own server, but this is still parsed JSON: keep both sides
+	# of the mapping strings so `hero_holder()` can never hand back a float.
+	_heroes = {}
+	for hero: Variant in heroes:
+		_heroes[str(hero)] = str(heroes[hero])
+	_pool = []
+	for hero: Variant in pool:
+		_pool.append(str(hero))
+
+	heroes_changed.emit(_heroes, _pool)
+	_apply_my_hero()
+	_auto_claim_hero()
+
+
+func _apply_my_hero() -> void:
+	"""
+	Put the local player in the body the lobby says we hold.
+
+	**Routed through `set_active_character()`, never by poking
+	`current_character_index`.** That setter is what frees the old model,
+	instances the new one, clears Teibi's resize state, re-runs `_apply_view_mode()`
+	and restores the rest pose — writing the index alone leaves the player wearing
+	the wrong body with the right number.
+	"""
+	var hero: String = my_hero()
+	if hero.is_empty():
+		return
+	var index: int = hero_index(hero)
+	if index < 0:
+		return  # A hero the lobby offers that this build has no character for.
+	var player: Node = get_tree().get_first_node_in_group("player")
+	if player == null or not player.has_method("set_active_character"):
+		return
+	if "current_character_index" in player and int(player.get("current_character_index")) == index:
+		return
+	player.set_active_character(index)
+
+
+func _auto_claim_hero() -> void:
+	"""
+	Claim a hero as soon as the pool is known, so nobody has to open the panel to
+	end up a distinct character. Preference is the body the player is already in;
+	if somebody else holds it, take the first hero nobody holds.
+
+	AT MOST ONE CLAIM PER `heroes` FRAME, and never a loop: the lobby answers a
+	claim with another `heroes` broadcast, so retrying in place would be a claim
+	storm. Losing the race just means the next broadcast lands us on the next free
+	hero.
+	"""
+	if not my_hero().is_empty():
+		return
+	var free: Array[String] = available_heroes()
+	if free.is_empty():
+		return  # 4 heroes, 4-member cap — only reachable if the pool arrived empty.
+
+	var wanted: String = ""
+	var player: Node = get_tree().get_first_node_in_group("player")
+	if player != null and "current_character_index" in player:
+		var index: int = int(player.get("current_character_index"))
+		var characters: Array = RemoteAvatar.PLAYER_SCRIPT.CHARACTERS
+		if index >= 0 and index < characters.size():
+			wanted = str((characters[index] as Dictionary).get("name", ""))
+	claim_hero(wanted if free.has(wanted) else free[0])
 
 
 # =============================================================================
@@ -630,6 +1028,36 @@ func _on_lobby_relay(from: String, payload: Dictionary) -> void:
 				push_warning("MpManager: ignoring seed from non-master %s" % from)
 				return
 			_receive_seed(payload)
+		"seed_req":
+			# A peer that has not got the world seed asking us for it. The verb
+			# IS the whole message — there are no payload fields, so there is
+			# nothing to validate; that is why no check follows, rather than an
+			# oversight at a trust boundary. A non-master has no answer to give.
+			if _you != _master:
+				return
+			# Latches from our own terrain first if we never had one (the case
+			# `_on_lobby_master_changed` used to leave open: a master elected
+			# before the seed reached it), then answers the asker directly —
+			# it already missed at least one broadcast, so a broadcast is no use,
+			# and answering room-wide would let one peer's spam evict the others.
+			_latch_seed_from_terrain()
+			if _has_seed:
+				_lobby.send_signal_to(from, {"mp": "seed", "seed": _room_seed})
+		"state":
+			# A join snapshot from an incumbent. THE THIRD TRUST BOUNDARY in
+			# this file: `decode_state()` validates it whole, and anything that
+			# fails any part of it is dropped whole.
+			# One per sender for the room's life (see `_state_received`). A peer
+			# that drops and reconnects gets a fresh lobby id, so this can never
+			# refuse a snapshot the protocol actually wanted to send.
+			if _state_received.has(from):
+				return
+			var snapshot: Dictionary = decode_state(payload)
+			if snapshot.is_empty():
+				push_warning("MpManager: dropped malformed state snapshot from %s" % from)
+				return
+			_state_received[from] = true
+			_receive_state(from, snapshot)
 		_:
 			# An "mp" verb from a later phase. Ignore it, do not warn.
 			pass
@@ -689,19 +1117,32 @@ func _broadcast_seed_if_master() -> void:
 		return
 
 	# A RE-ELECTED master re-sends the seed it already adopted and never re-reads
-	# the terrain. The two are normally the same value — `_receive_seed` set the
-	# terrain from `_room_seed` — but the room's agreed seed is the authority
-	# here, not whatever this peer's ground happens to be running on.
+	# the terrain (`_latch_seed_from_terrain` early-returns on `_has_seed`). The
+	# two are normally the same value — `_receive_seed` set the terrain from
+	# `_room_seed` — but the room's agreed seed is the authority here, not
+	# whatever this peer's ground happens to be running on.
+	_latch_seed_from_terrain()
 	if _has_seed:
 		_lobby.send_signal_to("", {"mp": "seed", "seed": _room_seed})
-		return
 
+
+func _latch_seed_from_terrain() -> void:
+	"""
+	Adopt our own terrain's `run_seed` as the room's, if we have not got one yet.
+
+	Split out of `_broadcast_seed_if_master()` so the `seed_req` handler can latch
+	WITHOUT broadcasting: answering a request room-wide turns one peer's message
+	into N, and the relay payload is unvalidated peer input, so a member spamming
+	`seed_req` would fill every other member's bounded lobby send queue and get
+	them disconnected (`server/room.go` drops a peer that cannot drain).
+	"""
+	if _has_seed:
+		return
 	var terrain: Node = get_tree().get_first_node_in_group("terrain")
 	if terrain == null or not ("run_seed" in terrain):
 		return
 	_room_seed = int(terrain.get("run_seed"))
 	_has_seed = true
-	_lobby.send_signal_to("", {"mp": "seed", "seed": _room_seed})
 
 
 func _receive_seed(payload: Dictionary) -> void:
@@ -709,6 +1150,10 @@ func _receive_seed(payload: Dictionary) -> void:
 	Adopt the master's world seed: regenerate the terrain from it and put the
 	local player back at spawn, so a joiner starts at the beginning of the shared
 	world rather than at whatever coordinates its solo run had reached.
+
+	That spawn reset is the path for a room with nothing to join yet. When a join
+	snapshot has already told us where the group is standing, `_apply_join_placement()`
+	takes over instead and the origin is never touched.
 
 	JSON NUMBER GOTCHA: `JSON.parse_string` produces floats for every number, so
 	`payload["seed"]` arrives as a `float`. `run_seed` comes from
@@ -721,6 +1166,17 @@ func _receive_seed(payload: Dictionary) -> void:
 		return
 	_room_seed = int(payload["seed"])
 	_has_seed = true
+	status.emit("Shared world seed received")
+
+	# A MID-RUN JOINER MUST NOT BE RESET TO THE ORIGIN. Once a snapshot is in
+	# hand the group's position is known, so hand straight over to the join
+	# placement — it rebuilds the terrain around the anchor itself and must not
+	# be preceded by a rebuild around (0,0) plus a teleport to spawn. The two
+	# lines below stay the HOST / no-snapshot-yet path; a snapshot that arrives
+	# after this calls `_apply_join_placement()` in its own turn.
+	if _can_join_place():
+		_apply_join_placement()
+		return
 
 	var terrain: Node = get_tree().get_first_node_in_group("terrain")
 	if terrain != null and terrain.has_method("new_run"):
@@ -730,7 +1186,422 @@ func _receive_seed(payload: Dictionary) -> void:
 	if player != null and player.has_method("reset_position"):
 		player.reset_position()
 
-	status.emit("Shared world seed received")
+
+# =============================================================================
+# JOIN PLACEMENT — arrive beside the group, not at the world origin
+# =============================================================================
+
+func _can_join_place() -> bool:
+	"""
+	Whether a join placement is still owed: we joined a room that already had
+	somebody in it, we have not placed yet, and both halves of what a placement
+	needs — the world seed and at least one snapshot position — are in hand.
+	"""
+	if _join_applied or _first_member or not _has_seed or _peer_state.is_empty():
+		return false
+	# ... and either every incumbent's snapshot is in, so the anchor is the whole
+	# group's, or we waited long enough that a missing one is not coming. Counted
+	# off `_state_received` (snapshots) rather than `_peer_state`, which presence
+	# packets also fill — a peer whose mesh connected before its snapshot landed
+	# would otherwise be counted as having sent one.
+	return _state_received.size() >= _expected_snapshots or _join_wait >= JOIN_SNAPSHOT_WAIT
+
+
+func _apply_join_placement() -> void:
+	"""
+	Drop this peer into the run beside the group, ONCE per room.
+
+	Called from both `_receive_seed()` and `_receive_state()` because either can
+	be the last piece to land, and guarded by `_can_join_place()` so whichever
+	arrives second is the one that does the work.
+
+	The terrain is rebuilt AROUND THE ANCHOR rather than around chunk (0,0):
+	`new_run`'s `around` parameter puts the synchronously-built safety ring where
+	the player is about to stand, so a joiner does not spend a frame over unbuilt
+	ground kilometres from the origin.
+	"""
+	if not _can_join_place():
+		return
+	_join_applied = true
+
+	var anchor: Vector3 = _join_anchor()
+	var terrain: Node = get_tree().get_first_node_in_group("terrain")
+	if terrain != null and terrain.has_method("new_run") and terrain.has_method("world_to_chunk"):
+		terrain.new_run(_room_seed, terrain.world_to_chunk(anchor))
+
+	# WAIT ONE PHYSICS FRAME BEFORE PLACING. We are on an idle frame (this whole
+	# chain hangs off LobbyClient's `_process`), and `new_run()` has just freed
+	# the old chunks — deferred to the end of the frame — and added the new ones,
+	# neither of which the physics space knows about until it next steps. Placing
+	# now would run `join_at`'s ~32 clear-spot probes against the OLD run's
+	# geometry: every candidate judged on blocks that no longer exist, none on
+	# the blocks that now do, and the joiner dropped inside one of them.
+	# `_join_applied` was latched above, so nothing can re-enter across the await.
+	await get_tree().physics_frame
+
+	# The Leave button, a dropped socket or a lobby error can all land inside that
+	# one-frame window. Teleporting a player into a room they are no longer in is
+	# bad enough; `join_at` also zeroes their own contributions on the way, which
+	# would silently wipe the solo run they just fell back to.
+	if _state != State.IN_ROOM:
+		return
+
+	var player: Node = get_tree().get_first_node_in_group("player")
+	if player != null and player.has_method("join_at"):
+		player.join_at(anchor)
+
+	status.emit("Joined the run at %dm" % int(anchor.x))
+
+
+func _join_anchor() -> Vector3:
+	"""
+	Where to arrive: the centroid of the snapshot positions, unless the group is
+	spread wider than `GROUP_SPREAD_MAX`, in which case the MASTER's position —
+	the centroid of two players who have gone opposite ways is empty ground
+	between them, and arriving beside one player beats arriving beside none.
+	A master that sent no snapshot (it may have joined after us and not yet
+	replied) leaves the centroid as the fallback.
+
+	`_peer_state` holds only other members, and this is only reached with at
+	least one entry in it, so the divide is safe.
+	"""
+	var centroid: Vector3 = Vector3.ZERO
+	for id: String in _peer_state:
+		centroid += _peer_state[id]["pos"] as Vector3
+	centroid /= float(_peer_state.size())
+
+	for id: String in _peer_state:
+		if (_peer_state[id]["pos"] as Vector3).distance_to(centroid) > GROUP_SPREAD_MAX:
+			if _peer_state.has(_master):
+				return _peer_state[_master]["pos"] as Vector3
+			return centroid
+	return centroid
+
+
+# =============================================================================
+# JOIN-TIME STATE REPLAY
+# =============================================================================
+#
+# A peer joining a game already in progress has to be told what it missed: which
+# coins are gone, how much the room has banked, how many lives it has spent, how
+# far it has run, and where everybody is standing. That rides the LOBBY RELAY
+# for the same reason the seed does — it must be usable BEFORE any data channel
+# opens, and ICE takes seconds — and it is sent exactly once per
+# (incumbent, joiner) pair, so the relay carries at most three of these a join.
+#
+# Presence (below) keeps the counters current afterwards; this only bootstraps.
+
+func _send_state_to(id: String) -> void:
+	"""
+	Send this peer's own contribution to a peer that has just joined.
+
+	ABSOLUTE VALUES, never deltas — a joiner has exactly one chance to hear this,
+	so nothing here may depend on having heard anything earlier.
+	"""
+	if _state != State.IN_ROOM or _lobby == null:
+		return
+
+	var player: Node = get_tree().get_first_node_in_group("player")
+	var pos: Vector3 = Vector3.ZERO
+	var coins: int = 0
+	var spent: int = 0
+	var dist: int = 0
+	if player != null:
+		pos = player.global_position
+		# `own_coins` / `own_lives_spent` are this peer's OWN contributions,
+		# which is what the room sums; `coins_collected` is the DISPLAYED number
+		# and in a room that is already the room's total, so it must not be read
+		# here. The `in` guards are the ones `_send_presence()` uses, for the
+		# same reason: a player scene run standalone still answers something sane.
+		# Through `own_reported_*` so an earlier run retired by "Play Again" in this
+		# room travels with the live one — see `_retired_coins`.
+		coins = own_reported_coins(int(player.get("own_coins")) if "own_coins" in player else 0)
+		spent = own_reported_spent(int(player.get("own_lives_spent")) if "own_lives_spent" in player else 0)
+		dist = int(player.get("run_distance")) if "run_distance" in player else 0
+
+	_lobby.send_signal_to(id, {
+		"mp": "state",
+		"cc": coins,
+		"ls": spent,
+		"dd": dist,
+		"px": pos.x,
+		"py": pos.y,
+		"pz": pos.z,
+		# The FROZEN share of members who left before the joiner arrived. Presence
+		# only ever carries a live member's own numbers, so without these the
+		# joiner's `shared_bank`/`shared_lives_spent` would be short by exactly
+		# `_gone_*` for the room's life — a permanently smaller bank and fewer
+		# hearts than everyone else is looking at.
+		"gc": _gone_coins,
+		"gs": _gone_spent,
+		"ids": _recent_collected_ids(),
+	})
+
+
+func _recent_collected_ids() -> Array:
+	"""
+	The collected-coin ids to replay: MOST RECENT FIRST, capped at
+	`MAX_STATE_IDS` — the same cap `decode_state()` enforces on the way in.
+
+	ponytail: a long enough run overflows the cap and the OLDEST ids are the ones
+	dropped. The ceiling is one already-taken coin reappearing kilometres behind
+	the group, in chunks nobody is near and the joiner's terrain will not even
+	have built. The upgrade path is filtering by distance to the join anchor
+	rather than by age, which needs the anchor to be known before the send.
+	"""
+	var ids: Array = _collected_ids.keys()
+	ids = ids.slice(maxi(0, ids.size() - MAX_STATE_IDS))  # keep the newest tail
+	ids.reverse()  # ... most recent first
+	return ids
+
+
+func _receive_state(from: String, snapshot: Dictionary) -> void:
+	"""Merge one validated join snapshot. `snapshot` came from `decode_state()`."""
+	_peer_state[from] = {
+		"coins": snapshot["cc"],
+		"spent": snapshot["ls"],
+		"dist": snapshot["dd"],
+		"pos": snapshot["pos"],
+	}
+	# Adopt the room's frozen departed-member share with `maxi`, NOT `+=`: every
+	# incumbent replays the same figure, so adding them would multiply it by the
+	# number of snapshots received. `maxi` is also what keeps this correct once a
+	# peer leaves AFTER we joined — we then fold that peer in ourselves, exactly
+	# like the incumbents do, and the two paths converge on the same number.
+	_gone_coins = maxi(_gone_coins, int(snapshot["gc"]))
+	_gone_spent = maxi(_gone_spent, int(snapshot["gs"]))
+	_absorb_collected(snapshot["ids"])
+	# The snapshot may be the last thing the placement was waiting on (the seed
+	# can equally well be). Both call in; the latch inside decides.
+	_apply_join_placement()
+
+
+func _absorb_collected(ids: Array) -> void:
+	"""
+	Fold somebody else's collected-coin ids into ours AND sweep the live world.
+
+	THE SWEEP IS WHAT MAKES ORDERING IRRELEVANT. A snapshot landing after the
+	terrain was already built despawns the coins it names right here, and a coin
+	spawned after the snapshot asks `is_coin_collected()` in its own `_ready()`
+	and frees itself — so the seed and the snapshots may arrive in either order
+	and neither has to wait on the other.
+	"""
+	var fresh: Dictionary = {}
+	for id: int in ids:
+		if _collected_ids.has(id):
+			continue
+		_collected_ids[id] = true
+		fresh[id] = true
+	if fresh.is_empty():
+		return
+	for coin: Node in get_tree().get_nodes_in_group("coin"):
+		if coin.has_method("coin_id") and fresh.has(coin.coin_id()):
+			coin.queue_free()
+
+
+func is_coin_collected(id: int) -> bool:
+	"""
+	True when somebody in this room has already banked the coin with this id.
+
+	`coin.gd` asks this once per coin at spawn through the `"mp"` group. Offline
+	the set is empty and the answer is always false, so a solo coin is never
+	removed and the cost is one failed group lookup per coin — paid at spawn,
+	never per frame.
+	"""
+	return _state == State.IN_ROOM and _collected_ids.has(id)
+
+
+func report_coin_collected(id: int) -> void:
+	"""
+	Record a local pickup so a peer joining later has it replayed.
+
+	OFFLINE THIS IS A NO-OP, deliberately: solo play must allocate nothing here,
+	and without the guard the set would grow for every coin of every solo run in
+	the session. `leave()` empties it.
+	"""
+	if _state != State.IN_ROOM:
+		return
+	_collected_ids[id] = true
+
+
+static func decode_state(payload: Dictionary) -> Dictionary:
+	"""
+	The join-snapshot parser, and the THIRD trust boundary in this file.
+
+	The lobby never inspects a relayed payload — that opacity is what keeps game
+	logic off the server — so this is unvalidated peer input, arriving over JSON
+	where *every* number is a float. Returns the validated snapshot
+	(`{"cc": int, "ls": int, "dd": int, "pos": Vector3, "ids": Array[int]}`) or
+	an EMPTY DICTIONARY: trusted whole or dropped whole, exactly like
+	`decode_presence()`, and static and `_rtc`-free for the same reason — so
+	scripts/mp_selfcheck.gd can beat on it with a fistful of hostile payloads.
+	"""
+	for key: String in ["cc", "ls", "dd", "px", "py", "pz"]:
+		if not _is_number(payload.get(key, null)):
+			return {}
+
+	# Finiteness is tested BEFORE every cast, for the reason `decode_presence()`
+	# folds `c` into its finite gate: `int(NAN)` is undefined and on wasm the
+	# trunc can trap the module, taking the tab down before any range check runs.
+	var counters: Array[int] = []
+	for key: String in ["cc", "ls", "dd"]:
+		var raw: float = float(payload[key])
+		if not is_finite(raw) or raw < 0.0 or raw > float(MAX_STATE_COUNTER):
+			return {}
+		counters.append(int(raw))
+
+	# The departed-members totals. MISSING IS NOT MALFORMED — the same rule
+	# `decode_presence()` applies to its counters: a peer on an older build sends
+	# no `gc`/`gs`, and dropping its whole snapshot would cost the joiner a
+	# position and an id list over two optional fields. Present-but-bad still
+	# drops the payload, like every other field here.
+	for key: String in ["gc", "gs"]:
+		if not payload.has(key):
+			counters.append(0)
+			continue
+		var raw: float = float(payload[key]) if _is_number(payload[key]) else NAN
+		if not is_finite(raw) or raw < 0.0 or raw > float(MAX_STATE_COUNTER):
+			return {}
+		counters.append(int(raw))
+
+	var pos: Vector3 = Vector3(
+		float(payload["px"]), float(payload["py"]), float(payload["pz"])
+	)
+	if not (is_finite(pos.x) and is_finite(pos.y) and is_finite(pos.z)):
+		return {}
+	# Same bound as a presence position, and for the same reason: this feeds the
+	# join placement, and an absurd-but-finite anchor would teleport the joiner
+	# somewhere the terrain will never build.
+	if absf(pos.x) > MAX_PRESENCE_COORD or absf(pos.y) > MAX_PRESENCE_COORD \
+			or absf(pos.z) > MAX_PRESENCE_COORD:
+		return {}
+
+	if typeof(payload.get("ids", null)) != TYPE_ARRAY:
+		return {}
+	var raw_ids: Array = payload["ids"]
+	# An over-long id list is TRUNCATED, not rejected — the one place this parser
+	# keeps part of a payload. The sender orders the ids most-recent-first, so the
+	# head is the part nearest the joiner, and a snapshot whose list is too long
+	# is still worth its position and its counters, which are what the join
+	# placement and the shared bank actually need. A malformed *entry* is a
+	# different thing and still drops the whole snapshot.
+	var ids: Array[int] = []
+	for i: int in range(mini(raw_ids.size(), MAX_STATE_IDS)):
+		var entry: Variant = raw_ids[i]
+		if not _is_number(entry):
+			return {}
+		var value: float = float(entry)
+		if not is_finite(value) or absf(value) > MAX_STATE_ID_MAGNITUDE:
+			return {}
+		ids.append(int(value))
+
+	return {
+		"cc": counters[0],
+		"ls": counters[1],
+		"dd": counters[2],
+		"gc": counters[3],
+		"gs": counters[4],
+		"pos": pos,
+		"ids": ids,
+	}
+
+
+# =============================================================================
+# SHARED TOTALS
+# =============================================================================
+# The room's bank, spent lives and distance are the SUM (or, for distance, the
+# max) of every member's own contribution, with no authority and no round trips:
+# each peer broadcasts its own absolute numbers and each peer adds them up. Every
+# reader gets the same answer within one presence interval, and a peer that
+# leaves has its share frozen rather than dropped.
+#
+# All three take the CALLER's own contribution as a parameter and return `null`
+# offline, so the player falls through to today's solo behaviour with one
+# `== null` test and the manager never has to reach into the player.
+
+func retire_own_contribution(coins: int, spent: int) -> void:
+	"""
+	Freeze this peer's own coins and spent lives into the room's totals before it
+	wipes them, exactly as `_on_lobby_peer_left` does for a departing member.
+
+	"Play Again" inside a room is the case: `reset_position()` zeroes `own_coins`
+	and `own_lives_spent`, and without this the room's bank shrinks in front of
+	everyone and — much worse — every life that peer spent is REFUNDED to the
+	shared hearts. One member restarting would top the room's lives back up
+	indefinitely. A no-op offline, so a solo restart still costs nothing.
+
+	It lands in `_retired_*`, NOT `_gone_*` — see those fields for why the
+	distinction is the whole fix: a restart is invisible to every other peer, so
+	the frozen amount has to travel as part of what we REPORT as our own
+	contribution, not as a room-wide total only we know about.
+	"""
+	if _state != State.IN_ROOM:
+		return
+	_retired_coins += coins
+	_retired_spent += spent
+
+
+func own_reported_coins(own_coins: int) -> int:
+	"""
+	What this peer contributes to the room's bank: its live run plus everything
+	earlier runs in this room retired. THE ONE PLACE that sum is written, so the
+	four sites that report or use it — presence, the join snapshot, `shared_bank`
+	and `shared_lives_spent`'s sibling below — cannot drift apart.
+	"""
+	return own_coins + _retired_coins
+
+
+func own_reported_spent(own_spent: int) -> int:
+	"""Lives this peer owes the room: its live run plus what earlier runs retired."""
+	return own_spent + _retired_spent
+
+
+func shared_bank(own_coins: int) -> Variant:
+	"""The room's banked coins, or `null` offline."""
+	if _state != State.IN_ROOM:
+		return null
+	var total: int = own_reported_coins(own_coins) + _gone_coins
+	for state: Dictionary in _peer_state.values():
+		total += int(state.get("coins", 0))
+	return total
+
+
+func shared_lives_spent(own_spent: int) -> Variant:
+	"""Lives spent by everyone who has been in this room, or `null` offline."""
+	if _state != State.IN_ROOM:
+		return null
+	var total: int = own_reported_spent(own_spent) + _gone_spent
+	for state: Dictionary in _peer_state.values():
+		total += int(state.get("spent", 0))
+	return total
+
+
+func shared_distance(own_distance: int) -> Variant:
+	"""
+	The furthest anyone in the room has got, or `null` offline.
+
+	A max, so feeding it back into the player's own running max cannot inflate it
+	— which is also why a departed peer needs no frozen accumulator: whatever it
+	reached was already folded in while it was here.
+	"""
+	if _state != State.IN_ROOM:
+		return null
+	var best: int = own_distance
+	for state: Dictionary in _peer_state.values():
+		best = maxi(best, int(state.get("dist", 0)))
+	return best
+
+
+static func shared_lives_from(bank: int, spent: int, max_lives: int, per_extra: int, cap: int) -> int:
+	"""
+	The room's remaining lives: the starting hearts, plus one per `per_extra`
+	coins the room has banked, minus every life anyone has spent, clamped into
+	[0, cap]. Pure and static so scripts/mp_selfcheck.gd can pin the arithmetic
+	without a room.
+	"""
+	if per_extra <= 0:
+		return clampi(max_lives - spent, 0, cap)  # No extra-life threshold: just the base.
+	return clampi(max_lives + bank / per_extra - spent, 0, cap)
 
 
 # =============================================================================
@@ -738,7 +1609,16 @@ func _receive_seed(payload: Dictionary) -> void:
 # =============================================================================
 
 func _process(delta: float) -> void:
-	if _state == State.OFFLINE or _rtc == null:
+	if _state == State.OFFLINE:
+		return
+
+	# Runs BEFORE the `_rtc` guard on purpose: the seed travels over the lobby
+	# relay, so a room whose mesh never built (or was never asked for) must still
+	# be able to self-heal a missing world.
+	_tick_seed_request(delta)
+	_tick_join_wait(delta)
+
+	if _rtc == null:
 		return
 
 	# The mesh is a plain PacketPeer here — nobody else polls it for us, because
@@ -752,6 +1632,60 @@ func _process(delta: float) -> void:
 	if _send_accum >= interval:
 		_send_accum = fmod(_send_accum, interval)
 		_send_presence()
+
+
+func _tick_join_wait(delta: float) -> void:
+	"""
+	Run the join-placement deadline.
+
+	`_apply_join_placement()` is otherwise only called when a seed or a snapshot
+	arrives, so a room where the last snapshot never comes has nothing left to
+	re-trigger it and the joiner would stand at the origin for the room's life.
+	This is the only thing that fires that case. It stops the moment the placement
+	is applied (`_join_applied`), so it costs one float add per frame for at most
+	`JOIN_SNAPSHOT_WAIT` seconds, once per room, and nothing at all for a host.
+	"""
+	if _state != State.IN_ROOM or _join_applied or _first_member:
+		return
+	if _join_wait >= JOIN_SNAPSHOT_WAIT:
+		return  # Deadline already spent; the attempt below has run at least once.
+	_join_wait += delta
+	if _join_wait >= JOIN_SNAPSHOT_WAIT:
+		_apply_join_placement()
+
+
+func _tick_seed_request(delta: float) -> void:
+	"""
+	Ask the master for the world seed until it arrives — the second, independent
+	belt against the bug `_on_lobby_joined`'s early latch fixes at the source.
+
+	Both belts stay. The ordering fix removes the known way the direct send got
+	skipped; this one covers every unknown way a single relayed message can go
+	missing (a master mid-election, a frame lost while its socket reconnected, a
+	peer that joined during the master's own boot). One retry loop is cheaper
+	than a class of silent failures where the UI reports a healthy room.
+	"""
+	if _state != State.IN_ROOM or _has_seed or _master == _you or _master.is_empty():
+		return
+	if _seed_req_tries > SEED_REQUEST_MAX_TRIES:
+		return  # Given up asking. We stay in the room; the player was told.
+
+	_seed_req_accum += delta
+	if _seed_req_accum < SEED_REQUEST_INTERVAL:
+		return
+	_seed_req_accum = 0.0
+	_seed_req_tries += 1
+
+	if _seed_req_tries > SEED_REQUEST_MAX_TRIES:
+		# One past the budget: the give-up message, emitted exactly once because
+		# the early return above catches every later tick.
+		status.emit("No world from the host — is their tab still open?")
+		return
+	if _seed_req_tries == 1:
+		# Make a silent failure visible. `mp_ui.gd` renders `status` straight
+		# into the panel's label, so this needs no UI change.
+		status.emit("Waiting for the shared world…")
+	_lobby.send_signal_to(_master, {"mp": "seed_req"})
 
 
 func _prune_dead_connections() -> void:
@@ -790,7 +1724,9 @@ func _send_presence() -> void:
 	"""
 	Broadcast one presence packet: where the local player is, which way it faces,
 	who it is playing, how fast it is going and whether it is on the ground —
-	everything `RemoteAvatar` needs to draw a convincing runner, and nothing else.
+	everything `RemoteAvatar` needs to draw a convincing runner — plus this peer's
+	own coins, spent lives and distance, which are what the room's shared totals
+	are summed from.
 
 	Sent UNRELIABLE on purpose: a dropped sample is replaced by the next one 66 ms
 	later, and re-transmitting stale positions would be strictly worse than
@@ -820,12 +1756,25 @@ func _send_presence() -> void:
 		var v: Vector3 = player.get("velocity")
 		speed = Vector2(v.x, v.z).length()
 
+	# `cc` / `lv` / `dd` are this peer's OWN contributions to the room's shared
+	# bank, spent lives and distance — ABSOLUTE values, never deltas, so the
+	# unreliable channel is self-healing: a dropped packet is corrected 66 ms
+	# later instead of leaving the totals permanently short. Note `own_coins`,
+	# not `coins_collected`: in a room the latter is already the room's total and
+	# summing it would compound. The `in` guards keep a standalone player scene
+	# answering something sane, exactly like `c` above.
 	var state: Dictionary = {
 		"p": player.global_position,
 		"y": player.rotation.y,
 		"c": int(player.get("current_character_index")) if "current_character_index" in player else 0,
 		"s": speed,
 		"g": player.is_on_floor() if player.has_method("is_on_floor") else true,
+		# `own_reported_*` folds in what "Play Again" retired in this room, so a
+		# restart never makes this peer's contribution appear to drop — see
+		# `_retired_coins` for the desync that caused.
+		"cc": own_reported_coins(int(player.get("own_coins")) if "own_coins" in player else 0),
+		"lv": own_reported_spent(int(player.get("own_lives_spent")) if "own_lives_spent" in player else 0),
+		"dd": int(player.get("run_distance")) if "run_distance" in player else 0,
 	}
 
 	var bytes: PackedByteArray = var_to_bytes(state)
@@ -865,9 +1814,11 @@ func _receive_presence() -> void:
 		# `_connections` and `_avatars` — `peer_int_id` is pure and a room holds
 		# at most 4 peers, so this is 3 hashes against a map that could desync.
 		var avatar: RemoteAvatar = null
+		var from_id: String = ""
 		for id: String in _avatars:
 			if peer_int_id(id) == from_int:
 				avatar = _avatars[id]
+				from_id = id
 				break
 		if avatar == null:
 			continue
@@ -878,6 +1829,15 @@ func _receive_presence() -> void:
 
 		avatar.visible = true
 		avatar.receive_state(state["p"], state["y"], state["c"], state["s"], state["g"])
+		# Keep this peer's contribution to the shared totals current. The join
+		# snapshot only bootstraps it; from here on presence carries it, and the
+		# values being absolute means a lost packet costs nothing.
+		_peer_state[from_id] = {
+			"coins": state["cc"],
+			"spent": state["lv"],
+			"dist": state["dd"],
+			"pos": state["p"],
+		}
 
 
 static func decode_presence(bytes: PackedByteArray) -> Dictionary:
@@ -935,4 +1895,25 @@ static func decode_presence(bytes: PackedByteArray) -> Dictionary:
 	if char_index < 0 or char_index >= RemoteAvatar.PLAYER_SCRIPT.CHARACTERS.size():
 		return {}
 
-	return { "p": pos, "y": yaw, "c": char_index, "s": speed, "g": state["g"] }
+	# The shared-total fields, validated exactly like `c`: number, finite,
+	# non-negative, bounded. MISSING IS NOT MALFORMED — a phase-3 peer sends a
+	# packet without them, and dropping those whole would make an older peer
+	# invisible rather than merely un-counted — so absent reads as 0 and only a
+	# value that is PRESENT and bad drops the packet.
+	var counters: Dictionary = {}
+	for key: String in ["cc", "lv", "dd"]:
+		var raw: Variant = state.get(key, null)
+		if raw == null:
+			counters[key] = 0
+			continue
+		if not _is_number(raw):
+			return {}
+		var value: float = float(raw)
+		if not is_finite(value) or value < 0.0 or value > float(MAX_STATE_COUNTER):
+			return {}
+		counters[key] = int(value)
+
+	return {
+		"p": pos, "y": yaw, "c": char_index, "s": speed, "g": state["g"],
+		"cc": counters["cc"], "lv": counters["lv"], "dd": counters["dd"],
+	}

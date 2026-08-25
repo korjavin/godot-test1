@@ -4450,7 +4450,7 @@ func remove_chunk(chunk_pos: Vector2i) -> void:
 		chunk.queue_free()
 		active_chunks.erase(chunk_pos)
 
-func new_run(forced_seed = null) -> void:
+func new_run(forced_seed = null, around: Vector2i = Vector2i.ZERO) -> void:
 	"""
 	Reset the world for a brand-new run: set the per-run seed and rebuild
 	everything derived from it. Called by player_controller.restart_game() (via the
@@ -4462,6 +4462,14 @@ func new_run(forced_seed = null) -> void:
 	same seed) makes this run that exact world; omitting it keeps the solo path
 	byte-identical to before this parameter existed.
 
+	`around` is the chunk the rebuild centres on, defaulting to the spawn chunk
+	(0,0) — so BOTH existing call sites (player_controller.restart_game() and
+	mp_manager._receive_seed(), neither of which passes it) behave byte-identically
+	to before this parameter existed. A mid-run multiplayer joiner passes the chunk
+	it is about to be PLACED in instead of the origin, so the synchronous SYNC_RING
+	build in step 4 lands under ITS feet in the same frame — exactly the guarantee
+	the spawn-chunk build gives a restart, just centred somewhere else.
+
 	EDUCATIONAL NOTE — the order matters:
 	1. Set run_seed — re-rolled at random, or taken from forced_seed. Every hash
 	   site mixes it in, so all downstream content (blocks, crocodiles, road,
@@ -4472,12 +4480,13 @@ func new_run(forced_seed = null) -> void:
 	   as declared, so the next _road_extend_to_x re-seeds station 0. Also clear the
 	   pending-chunk queue — anything queued was computed for the old world.
 	3. Free every active chunk and clear the dictionary — old-world geometry.
-	4. Rebuild around the spawn chunk (0,0) via update_chunks — which builds the
-	   spawn chunk + SYNC_RING ring 1 SYNCHRONOUSLY and queues the rest for
-	   progressive fill. The respawned player is teleported to (0,2,0) this SAME
-	   frame, so that ring-1-sync build is the load-bearing guarantee that they
-	   land on solid new-world ground instead of falling through a hole. Setting
-	   last_player_chunk to (0,0) keeps _process from redundantly rebuilding.
+	4. Rebuild around chunk `around` (the spawn chunk (0,0) unless a caller says
+	   otherwise) via update_chunks — which builds that chunk + SYNC_RING ring 1
+	   SYNCHRONOUSLY and queues the rest for progressive fill. The respawned player
+	   is teleported into that chunk this SAME frame, so that ring-1-sync build is
+	   the load-bearing guarantee that they land on solid new-world ground instead
+	   of falling through a hole. Setting last_player_chunk to `around` keeps
+	   _process from redundantly rebuilding.
 	"""
 	# 1. New seed (same roll as _ready()), or the one we were handed. Both paths
 	# re-roll biome_offset (set_run_seed does it), so the ground shader has to be
@@ -4502,10 +4511,10 @@ func new_run(forced_seed = null) -> void:
 		active_chunks[chunk_pos].queue_free()
 	active_chunks.clear()
 
-	# 4. Rebuild the spawn ring synchronously (+ queue the rest) so the
-	# respawning player has ground under (0,2,0) this frame.
-	update_chunks(Vector2i(0, 0))
-	last_player_chunk = Vector2i(0, 0)
+	# 4. Rebuild the ring around `around` synchronously (+ queue the rest) so the
+	# player teleported into that chunk has ground under them this frame.
+	update_chunks(around)
+	last_player_chunk = around
 
 	print("New run started (run_seed = %d)" % run_seed)
 
