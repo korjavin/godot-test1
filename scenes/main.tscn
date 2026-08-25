@@ -25,6 +25,7 @@
 [ext_resource type="Script" path="res://scripts/teammate_locator.gd" id="22_locator"]
 [ext_resource type="Script" path="res://scripts/progression.gd" id="23_progression"]
 [ext_resource type="Script" path="res://scripts/skill_tree_ui.gd" id="24_skilltree"]
+[ext_resource type="Script" path="res://scripts/help_overlay.gd" id="25_help"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_1"]
 sky_top_color = Color(0.25, 0.45, 0.75, 1)
@@ -313,3 +314,12 @@ grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
 script = ExtResource("21_start")
+
+[node name="HelpOverlay" type="Control" parent="HUD"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("25_help")
