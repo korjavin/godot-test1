@@ -1854,9 +1854,12 @@ var pending_chunks: Array[Vector2i] = []
 ##     below drops it from this queue. (Same rebuild discipline as
 ##     pending_chunks: it only runs on boundary crossings, dedupes for free, and
 ##     drops entries that fell back into range.)
-##   * NO LEAK — the queue can never hold more than `active_chunks` does, and
-##     `update_chunks` re-derives it from `active_chunks` on every crossing, so
-##     anything still loaded and out of range is queued again next time.
+##   * NO LEAK — `update_chunks` re-derives the queue from `active_chunks` on
+##     every crossing, so anything still loaded and out of range is queued again
+##     next time, and _process drains anything BEYOND one column's backlog in
+##     the same frame. Chunks that fall out of range faster than one per frame
+##     are therefore still freed at the rate they arrive; only the steady-state
+##     trickle is throttled.
 ##
 ## Costs a few chunks' worth of memory for a few frames, and makes the F3
 ## "Chunks" readout briefly count them — both correct: they ARE still loaded.
@@ -2427,13 +2430,24 @@ func _process(_delta: float) -> void:
 	if not pending_chunks.is_empty():
 		create_chunk(pending_chunks.pop_front())
 
-	# TIME-SLICED TEARDOWN: free exactly ONE queued chunk per frame, the mirror
-	# of the fill above (see the pending_removals comment in SECTION 2). The
-	# queue is sorted farthest-first, so the chunk the player is least likely to
-	# walk back onto goes first. remove_chunk() re-checks `active_chunks`, so a
-	# position that was already freed drains harmlessly.
-	if not pending_removals.is_empty():
+	# TIME-SLICED TEARDOWN: free ONE queued chunk per frame, the mirror of the
+	# fill above (see the pending_removals comment in SECTION 2). The queue is
+	# sorted farthest-first, so the chunk the player is least likely to walk back
+	# onto goes first. remove_chunk() re-checks `active_chunks`, so a position
+	# that was already freed drains harmlessly.
+	#
+	# ...PLUS THE OVERFLOW, which is what makes this a throttle and not a leak.
+	# One per frame keeps up only while boundary crossings are further apart than
+	# a column is long, which walking always is (a 50 m chunk at 9 m/s is ~5.5 s,
+	# and a column is 7 chunks on web / 11 on desktop). If anything ever crosses
+	# faster than that, the queue is drained down to one column's worth THIS
+	# frame instead of carrying the debt forward — so `active_chunks` can never
+	# creep upward crossing after crossing, and the worst frame is still bounded
+	# by the burst that caused it rather than by the whole backlog.
+	var drain: int = 1 + maxi(0, pending_removals.size() - (2 * render_distance + 1))
+	while drain > 0 and not pending_removals.is_empty():
 		remove_chunk(pending_removals.pop_front())
+		drain -= 1
 
 # ============================================================================
 # CHUNK MANAGEMENT FUNCTIONS
