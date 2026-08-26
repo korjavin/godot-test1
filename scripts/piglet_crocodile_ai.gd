@@ -155,6 +155,49 @@ const CHASE_PITCH: float = 10.0 * PI / 180.0
 const BREATHE_SPEED: float = 2.0
 const BREATHE_AMOUNT: float = 0.012
 
+# ----- River submersion (VISUAL ONLY) -----
+## How far the MODEL drops, in model-local metres, while the crocodile is
+## standing in a river. The player's own wading sink (WADE_SINK_DEPTH 0.35) is
+## the pattern; the DEPTH is not, and could not be — measured off the GLB, this
+## crocodile is 1.40 m long and only 0.276 m TALL (local y −0.036 .. +0.240), so
+## the player's 0.35 would bury it, mud and all, with nothing to see.
+##
+## 0.18 leaves the top 0.060 m proud — a quarter of the 0.240 m that stands above
+## the ground plane — and shrinks the visible silhouette from the full 1.40 m
+## down to the 0.75 m of it that reaches above y = 0.18. Half the crocodile's
+## outline, at a tenth of its height: hard to pick out of a river, exactly the
+## point. There is no water MESH (a river is a tint on the flat y = 0 ground
+## plane), so what hides the rest is the opaque ground itself.
+##
+## HONEST NOTE ON "just the snout": this mesh has no raised eye/nostril bump. Its
+## back is a flat plateau at y ≈ 0.239 running from the shoulders (x = −0.2) to
+## the skull (x = +0.5), and the snout TIP is the LOW point of the head at
+## y = 0.120. So no depth exists that shows the nose while hiding the back — sink
+## past 0.12 and the nose tip goes under before the spine does. What 0.18 gives
+## is the "log in the water" read: a thin dark ridge of back-and-skull. Wanting a
+## literal periscope snout is a MODEL change (raise the nostrils above the back),
+## not a constant change here.
+##
+## VISUAL ONLY, AND THAT IS A HARD CONSTRAINT — same rule as the player's sink:
+## this never touches the CharacterBody3D, its CollisionShape3D, or global_position.
+## Bite range, chase mechanics and the flat-world y = 0 invariant are byte-identical
+## wet or dry. A submerged crocodile is exactly as dangerous as a dry one; it is
+## only harder to SEE, and the danger vignette + heartbeat still telegraph it the
+## moment it starts chasing (crocodile_lod_manager publishes that from the same
+## scan, and it reads `is_chasing`, which this does not touch).
+##
+## BOSSES NEED NO SPECIAL CASE. _ready() sets `scale = Vector3.ONE * boss_scale`
+## on the BODY, and the model is its child, so this local offset is scaled by the
+## engine: a 6x boss sinks 6 × 0.18 = 1.08 m in world space and shows 6 × 0.060 =
+## 0.36 m of ridge. The submerged FRACTION is identical at every scale, which is
+## what "a proportional snout" actually means. Same free ride for the ±25%
+## SIZE_RANDOM_FACTOR roll on regular crocodiles.
+const RIVER_SINK_DEPTH: float = 0.18
+
+## Ease rate (m/s), sized so the full sink takes ~0.2 s — the player's ease time,
+## so a crocodile and the hero wading beside it settle at the same visual pace.
+const RIVER_SINK_EASE_SPEED: float = RIVER_SINK_DEPTH / 0.2
+
 # ----- Bite -----
 ## How long the chomp animation plays when the crocodile catches the player (s).
 const BITE_DURATION: float = 0.5
@@ -297,7 +340,22 @@ var model: Node3D = null
 
 ## Cached rest scale / height of the model so animation composes on top
 var model_base_scale: Vector3 = Vector3.ONE
+## The height the animation composes its bob/lunge ON TOP OF — i.e. the model's
+## CURRENT rest height, which the river sink eases up and down (see
+## RIVER_SINK_DEPTH). _animate_body / _animate_bite only ever READ this; the sink
+## is the sole writer after _ready(), which is what keeps the two from fighting.
+## They own `model.position` outright, so the sink deliberately does not touch it.
 var model_base_y: float = 0.0
+## The model's DRY rest height, latched once in _ready() and never written again.
+## The fixed end of the ease `model_base_y` travels between.
+var model_rest_y: float = 0.0
+
+## The terrain, resolved once in _ready() — cached rather than looked up per tick
+## because _animate_body runs every physics frame on every AWAKE crocodile (the
+## player affords a per-tick group lookup at 1 node; a pack does not). Held only
+## if it answers `is_river_at`, so the null check below is the whole guard and the
+## standalone piglet_crocodile.tscn simply never sinks.
+var terrain: Node = null
 
 ## Stride / idle phase accumulators
 var stride_phase: float = 0.0
@@ -457,9 +515,17 @@ func _ready() -> void:
 	if model:
 		model_base_scale = model.scale
 		model_base_y = model.position.y
+		model_rest_y = model_base_y
 		# One walk over the model subtree applies all per-mesh styling (draw
 		# cull + shared toon materials).
 		_style_model_meshes(model)
+
+	# Cached here, not per tick — see the `terrain` var. Safe at this point in the
+	# spawn order: endless_terrain joins the "terrain" group at the top of its own
+	# _ready(), long before it generates the chunk this crocodile is parented into.
+	var found_terrain := get_tree().get_first_node_in_group("terrain")
+	if found_terrain and found_terrain.has_method("is_river_at"):
+		terrain = found_terrain
 
 	# Find the player node (defer to allow scene to fully load)
 	call_deferred("_find_player")
@@ -1343,6 +1409,11 @@ func _animate_body(delta: float) -> void:
 	if not model:
 		return
 
+	# Ease the river submersion FIRST, and above the bite branch: it moves the rest
+	# height both animation branches compose on, so a crocodile that chomps you
+	# from the water stays in the water for the whole chomp.
+	_tick_river_sink(delta)
+
 	animation_time += delta
 
 	# A bite overrides the normal locomotion animation while it plays.
@@ -1378,6 +1449,35 @@ func _animate_body(delta: float) -> void:
 	var oscillation := Basis.from_euler(Vector3(current_pitch, yaw_sway, roll))
 	model.transform.basis = (oscillation * facing).scaled(model_base_scale)
 	model.position.y = model_base_y + bob
+
+
+func _tick_river_sink(delta: float) -> void:
+	"""
+	Ease the model's rest height toward "sunk" while standing in a river and back
+	to dry otherwise. Called once per physics frame from the top of _animate_body,
+	so both the local and the remote-driven (multiplayer) paths get it for free —
+	they already share that one call.
+
+	Grounded only, exactly like the player's `is_wading`: a crocodile mid-air over
+	a river (spawn drop, a shove off a ledge) is not in the water.
+
+	Writes ONLY `model_base_y`, never `model.position` — the animation owns that
+	outright and rewrites it every frame from `model_base_y`, so this is the one
+	property the two do not both touch.
+
+	LOD: a slept crocodile has set_physics_process(false), so nothing here is
+	dispatched at all — the sink costs a slept crocodile exactly zero, and its
+	offset simply freezes wherever it was. On wake it eases on from there, which
+	is the right answer in both directions: slept dry and woken in a river it sinks
+	over the usual ~0.2 s, and slept sunk it rises the same way. There is no state
+	to reconcile, because the target is recomputed from scratch every frame.
+	"""
+	var target_y: float = model_rest_y
+	if terrain and is_on_floor() and terrain.is_river_at(global_position):
+		target_y = model_rest_y - RIVER_SINK_DEPTH
+	if is_equal_approx(model_base_y, target_y):
+		return
+	model_base_y = move_toward(model_base_y, target_y, RIVER_SINK_EASE_SPEED * delta)
 
 
 func _animate_bite(delta: float) -> void:
