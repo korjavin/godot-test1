@@ -83,6 +83,9 @@ const BUILDERS: Array = [
 	["FOREST", "_prop_log_pile"],
 	["MOUNTAIN", "_prop_scree_cluster"],
 	["MOUNTAIN", "_prop_cairn"],
+	["CITY", "_prop_crate_stack"],
+	["CITY", "_prop_garden_wall"],
+	["CITY", "_prop_paving_stack"],
 ]
 
 ## Seeds per builder per size. Every variant is random-driven (tier heights,
@@ -128,7 +131,7 @@ const ROLES: Array = [
 
 ## The territories, as [label, Biome enum value]. Read off the terrain script's
 ## own enum rather than re-typed, so a renamed band fails loudly here.
-const TERRITORIES: Array = ["PLAINS", "DESERT", "FOREST", "MOUNTAIN"]
+const TERRITORIES: Array = ["PLAINS", "DESERT", "FOREST", "MOUNTAIN", "CITY"]
 
 ## Structure trials per role per territory. Structures draw far more than a prop
 ## does (length, doubling, gaps, lintels), so the sweep needs breadth; 40 x 4 x 4
@@ -160,12 +163,15 @@ func _run() -> void:
 		_check_constants(consts)
 		_check_chunk_purity(terrain_script, consts)
 		_check_structures(terrain_script, consts)
+		_check_biome_bands(terrain_script, consts)
+		_check_city_content(terrain_script, consts)
 
 	if _failures.is_empty():
 		print("props: %d builders x %d seeds x %d sizes measured; radius bound, climb ladder, box budget and chunk purity OK"
 				% [BUILDERS.size(), SEEDS_PER_BUILDER, SIZES.size()])
 		print("structures: %d roles x %d territories x %d seeds measured; palette, patrol platforms and pyramid retirement OK"
 				% [ROLES.size(), TERRITORIES.size(), STRUCTURE_SEEDS])
+		print("bands:      threshold chain, river-in-plains, city band width and the shader parity uniforms OK")
 		print("SELFCHECK OK")
 		quit(0)
 		return
@@ -656,6 +662,262 @@ func _check_structures(terrain_script: GDScript, consts: Dictionary) -> void:
 func _color_close(a: Color, b: Color) -> bool:
 	"""True when two colours are the same to within one sRGB round trip."""
 	return absf(a.r - b.r) <= COLOR_EPSILON and absf(a.g - b.g) <= COLOR_EPSILON and absf(a.b - b.b) <= COLOR_EPSILON
+
+
+
+# ============================================================================
+# CHECK 6 — the biome BAND CHAIN and its half of the CPU/GPU parity contract
+# ============================================================================
+
+## The parity-critical uniforms _apply_biome_shader_params is supposed to push.
+## Written out rather than derived, for BUILDERS' reason: there is no registry to
+## read, and a uniform that GDScript pushes but the GLSL never declares (or the
+## reverse) is exactly the drift a hand-written list makes visible in review.
+const PARITY_UNIFORMS: Array = [
+	["biome_desert_max", "BIOME_DESERT_MAX"],
+	["biome_plains_max", "BIOME_PLAINS_MAX"],
+	["biome_city_max", "BIOME_CITY_MAX"],
+	["biome_forest_max", "BIOME_FOREST_MAX"],
+	["river_level", "RIVER_LEVEL"],
+	["river_half_width", "RIVER_HALF_WIDTH"],
+	["biome_blend", "BIOME_BLEND"],
+]
+
+const GROUND_SHADER: String = "res://assets/shaders/ground.gdshader"
+
+## A uniform the shader must NOT have. The declared-uniform read is the whole
+## basis of the parity check, and a read that answered "declared" to everything
+## would pass it vacuously.
+const ABSENT_UNIFORM: String = "biome_ocean_max"
+
+
+func _check_biome_bands(terrain_script: GDScript, consts: Dictionary) -> void:
+	"""
+	Adding a band to the biome field is four edits in two languages, and three of
+	the four ways to get it wrong are invisible from inside the game.
+
+	  a. THE CHAIN. The thresholds must be strictly increasing, and — the part
+	     monotonicity alone does not give you — every band must be REACHABLE by
+	     biome_at over the real field. A typo that leaves a band with zero width,
+	     or an if-chain that tests them out of order, produces a perfectly ordered
+	     set of constants and a territory that simply never generates.
+	  b. RIVER_LEVEL MUST STAY INSIDE THE PLAINS BAND. Rivers are a contour of the
+	     same field, so a retune that slides a band boundary across RIVER_LEVEL
+	     puts every river in the world inside the new band instead.
+	  c. THE CITY BAND MUST BE WIDER THAN ONE BLEND RADIUS, or the two smoothsteps
+	     either side of it overlap completely and the colour never reaches full
+	     strength anywhere — a band you can stand in and not see.
+	  d. PARITY. Every threshold has to exist on BOTH sides: declared as a uniform
+	     in ground.gdshader AND pushed by _apply_biome_shader_params. Miss the
+	     GDScript half and the shader silently keeps its default (the ground shows
+	     the OLD band layout while the CPU spawns the new one); miss the GLSL half
+	     and the push is silently discarded. Neither errors anywhere.
+	"""
+	var desert_max: float = float(consts["BIOME_DESERT_MAX"])
+	var plains_max: float = float(consts["BIOME_PLAINS_MAX"])
+	var city_max: float = float(consts["BIOME_CITY_MAX"])
+	var forest_max: float = float(consts["BIOME_FOREST_MAX"])
+	var river_level: float = float(consts["RIVER_LEVEL"])
+	var river_half: float = float(consts["RIVER_HALF_WIDTH"])
+	var blend: float = float(consts["BIOME_BLEND"])
+	var biome_enum: Dictionary = consts["Biome"]
+
+	# ---- a. the chain is strictly increasing --------------------------------
+	var chain: Array = [
+		["BIOME_DESERT_MAX", desert_max], ["BIOME_PLAINS_MAX", plains_max],
+		["BIOME_CITY_MAX", city_max], ["BIOME_FOREST_MAX", forest_max],
+	]
+	for i in range(1, chain.size()):
+		if float(chain[i][1]) <= float(chain[i - 1][1]):
+			_fail("%s (%.3f) is not above %s (%.3f) — that band has zero or negative width"
+					% [chain[i][0], chain[i][1], chain[i - 1][0], chain[i - 1][1]])
+
+	# ---- a (control). every band is actually reachable through biome_at ------
+	# Sweep the real field rather than the constants: this is what catches an
+	# if-chain that tests the thresholds in the wrong order, which leaves the
+	# constants perfectly ordered and a band unreachable.
+	var terrain := Node3D.new()
+	terrain.set_script(terrain_script)
+	terrain.set_run_seed(20260826)
+	var seen: Dictionary = {}
+	for ix in 220:
+		for iz in 220:
+			seen[terrain.biome_at(float(ix) * 20.0, float(iz) * 20.0)] = true
+	for name_variant: Variant in biome_enum.keys():
+		var band_name: String = String(name_variant)
+		if not seen.has(int(biome_enum[band_name])):
+			_fail("Biome.%s is never returned by biome_at anywhere in a 4.4 km field — the band is unreachable"
+					% band_name)
+
+	# ---- b. the river contour stays in plains -------------------------------
+	# Tested on the constants, because that is where the rule lives: the band is
+	# river_level +/- river_half_width, and both edges must classify as PLAINS.
+	if desert_max >= river_level - river_half or plains_max <= river_level + river_half:
+		_fail("the river contour %.3f +/- %.3f is not strictly inside the plains band [%.3f, %.3f) — rivers would move biome"
+				% [river_level, river_half, desert_max, plains_max])
+
+	# ---- c. the city band is wide enough to render ---------------------------
+	if city_max - plains_max <= blend:
+		_fail("the city band is %.3f wide against a blend radius of %.3f — its colour never reaches full strength"
+				% [city_max - plains_max, blend])
+
+	# ---- d. parity, both directions -----------------------------------------
+	var shader: Shader = load(GROUND_SHADER)
+	if shader == null:
+		_fail("could not load %s — the shader half of the parity contract cannot be checked" % GROUND_SHADER)
+		terrain.free()
+		return
+
+	var declared: Dictionary = {}
+	for entry_variant: Variant in shader.get_shader_uniform_list():
+		var entry: Dictionary = entry_variant
+		declared[String(entry["name"])] = true
+	if declared.has(ABSENT_UNIFORM) or declared.is_empty():
+		_fail("the shader's declared-uniform list is not trustworthy (%d entries, has %s: %s) — the parity check below would pass vacuously"
+				% [declared.size(), ABSENT_UNIFORM, declared.has(ABSENT_UNIFORM)])
+
+	var mat := ShaderMaterial.new()
+	mat.shader = shader
+	terrain.set("terrain_material", mat)
+	terrain.call("_apply_biome_shader_params")
+
+	for pair_variant: Variant in PARITY_UNIFORMS:
+		var pair: Array = pair_variant
+		var uniform: String = String(pair[0])
+		var const_name: String = String(pair[1])
+		if not declared.has(uniform):
+			_fail("ground.gdshader declares no uniform '%s' — GDScript pushes a value the GPU discards, and the ground keeps drawing the old band layout"
+					% uniform)
+			continue
+		if not consts.has(const_name):
+			_fail("endless_terrain.gd has no constant %s" % const_name)
+			continue
+		var pushed: Variant = mat.get_shader_parameter(uniform)
+		if pushed == null:
+			_fail("_apply_biome_shader_params never pushes '%s' — the shader silently keeps its own default for it"
+					% uniform)
+			continue
+		if absf(float(pushed) - float(consts[const_name])) > 1e-6:
+			_fail("uniform '%s' was pushed as %.6f but %s is %.6f — the band the player SEES is not the band the CPU decides"
+					% [uniform, float(pushed), const_name, float(consts[const_name])])
+
+	print("  bands      %d thresholds, %d parity uniforms, %d bands reachable"
+			% [chain.size(), PARITY_UNIFORMS.size(), seen.size()])
+	terrain.free()
+
+
+# ============================================================================
+# CHECK 7 — the CITY territory's own contracts, measured on real geometry
+# ============================================================================
+
+func _check_city_content(terrain_script: GDScript, consts: Dictionary) -> void:
+	"""
+	Build real city chunks and measure the three things this territory promises.
+
+	  1. EVERY HOUSE ROOF IS REACHABLE. A city's whole gameplay contribution is
+	     that its roofs give back the rest-from-crocodiles role the trees and
+	     massifs took away, and the only thing standing between that and a field
+	     of unclimbable boxes is one constant (CITY_HOUSE_HEIGHT_MAX) staying under
+	     PROP_MAX_STEP. So every CLIMBABLE footprint the builder appends is
+	     measured against PROP_MAX_STEP, with "it appended at least one climbable
+	     footprint" as the negative control — a builder that placed nothing but
+	     lamp posts satisfies "no roof is too high" perfectly.
+	  2. NOTHING STRADDLES THE CHUNK SEAM. A chunk's mesh and collision belong to
+	     one chunk, so an overhang vanishes the moment that chunk unloads while its
+	     neighbour stays loaded. The city is the first builder whose positions are
+	     SNAPPED to a grid after being drawn inside the margin, which is exactly the
+	     way to push one back out over the edge.
+	  3. THE COLLISION BUDGET, AS AN EXACT INVARIANT: every city building pays
+	     EXACTLY ONE CollisionShape3D, so the collider count must equal the
+	     footprint count. A house is a solid hull plus a roof slab, a door and its
+	     windows; a stall is a solid counter plus an awning and two posts; a signal
+	     is a solid mast plus a head and three lamps — trim, all of it. A ">= some
+	     fraction" bound is NOT enough here and was measured not to be: making just
+	     the roof slabs solid takes the chunk from 142 to 241 colliders, which any
+	     loose bound still passes, while the equality catches it exactly.
+	"""
+	var max_step: float = float(consts["PROP_MAX_STEP"])
+	var biome_enum: Dictionary = consts["Biome"]
+	var city_value: int = int(biome_enum["CITY"])
+
+	var terrain := Node3D.new()
+	terrain.set_script(terrain_script)
+	terrain.set_run_seed(20260826)
+	var chunk_size: float = float(terrain.get("chunk_size"))
+	var half_chunk := chunk_size * 0.5
+
+	# Find real city chunks in the real field — driving the builder at made-up
+	# coordinates would exercise the edge-feathering rejection instead of the city.
+	var city_chunks: Array[Vector2i] = []
+	for cx in range(-40, 41):
+		for cz in range(-40, 41):
+			if city_chunks.size() >= 12:
+				break
+			var centre: Vector3 = terrain.chunk_to_world(Vector2i(cx, cz))
+			if terrain.biome_at(centre.x, centre.z) == city_value:
+				city_chunks.append(Vector2i(cx, cz))
+
+	if city_chunks.size() < 6:
+		_fail("only %d city chunks found in an 81x81 field — the city band is far rarer than the measured 12%% share"
+				% city_chunks.size())
+		terrain.free()
+		return
+
+	var climbable := 0
+	var footprints := 0
+	var boxes := 0
+	var solids := 0
+	var worst_top := 0.0
+	var worst_reach := 0.0
+
+	for chunk: Vector2i in city_chunks:
+		var centre: Vector3 = terrain.chunk_to_world(chunk)
+		var rng := RandomNumberGenerator.new()
+		rng.seed = hash(Vector3i(chunk.x, chunk.y, 4242))
+		var batch: Array = []
+		var body := StaticBody3D.new()
+		var obstacles: Array = []
+		terrain.call("_spawn_city_content", centre, rng, obstacles, batch, body)
+
+		boxes += batch.size()
+		solids += body.get_child_count()
+		body.free()
+
+		for entry_variant: Variant in batch:
+			var entry: Dictionary = entry_variant
+			var xform: Transform3D = entry["transform"]
+			for corner: Vector3 in UNIT_CORNERS:
+				var p: Vector3 = xform * corner
+				worst_reach = maxf(worst_reach, maxf(absf(p.x), absf(p.z)))
+
+		footprints += obstacles.size()
+		for ob_variant: Variant in obstacles:
+			var ob: Dictionary = ob_variant
+			if not bool(ob["climbable"]):
+				continue
+			climbable += 1
+			worst_top = maxf(worst_top, float(ob["top"]))
+
+	if climbable == 0:
+		_fail("%d city chunks produced NO climbable footprint at all — the roofs that are supposed to be the city's rest spots are not being recorded"
+				% city_chunks.size())
+	elif worst_top > max_step + EPSILON:
+		_fail("a city roof is recorded at %.3f m, past PROP_MAX_STEP %.2f — it cannot be jumped onto from the pavement"
+				% [worst_top, max_step])
+
+	if worst_reach > half_chunk + EPSILON:
+		_fail("city geometry reaches %.2f m from the chunk centre, past the %.2f m seam — it would vanish with its own chunk"
+				% [worst_reach, half_chunk])
+
+	if boxes == 0:
+		_fail("the city builder emitted no geometry at all across %d city chunks" % city_chunks.size())
+	elif solids != footprints:
+		_fail("%d city buildings produced %d collision shapes — one per building is the budget; roofs, doors, windows, awnings, posts and lamps are supposed to be visual-only trim"
+				% [footprints, solids])
+
+	print("  city       %d chunks, %d boxes (%d collide, %d buildings), %d roofs, tallest %.2f m, reach %.2f / %.1f m"
+			% [city_chunks.size(), boxes, solids, footprints, climbable, worst_top, worst_reach, half_chunk])
+	terrain.free()
 
 
 func _color_on_ramp(c: Color, a: Color, b: Color) -> bool:

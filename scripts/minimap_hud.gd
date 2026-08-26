@@ -216,7 +216,10 @@ const BIOME_TINTS: Array[Color] = [
 	Color(0.16, 0.34, 0.20, 0.60),  # FOREST   — deep green
 	Color(0.40, 0.40, 0.44, 0.55),  # MOUNTAIN — grey
 ]
-const BIOME_NAMES: Array[String] = ["PLAINS", "DESERT", "FOREST", "MOUNTAIN"]
+## Indexed by endless_terrain.Biome, so the ORDER here is the enum's integer
+## order and NOT the order the bands sit in the noise field — CITY is appended
+## because the enum appends it (its band lies between plains and forest).
+const BIOME_NAMES: Array[String] = ["PLAINS", "DESERT", "FOREST", "MOUNTAIN", "CITY"]
 
 # ============================================================================
 # STATE (written by the tick, read by _draw — they never disagree)

@@ -180,29 +180,6 @@ const PROP_SCREE_A := Color(0.57, 0.57, 0.59)     # mountain scree …
 const PROP_SCREE_B := Color(0.39, 0.40, 0.43)     # … to shadowed rock
 const PROP_CAIRN := Color(0.50, 0.49, 0.46)       # stacked cairn slabs
 
-## --- CITY palette. Eight new colours for a whole territory, and the count is a
-## decision rather than an accident: the phase-1 rule is that every colour added
-## is one more thing for a MultiMesh of boxes to fail to be distinct from, so the
-## city reuses PROP_CRATE for every piece of timber it owns (doors, stall
-## counters, market crates) and PROP_RUIN_STONE for its paving and garden walls,
-## and spends new constants only where a city is unmistakable: limewashed
-## plaster, a tiled or slated roof, and the three signal lamps.
-##
-## THE PLASTER RAMP IS DELIBERATELY BRIGHTER THAN EVERY OTHER TERRITORY'S STONE
-## (r 0.71-0.87 against a highest-elsewhere 0.82 at the desert's sandstone, which
-## is two bands away and can never touch it). That is not taste — prop_selfcheck
-## requires each territory's stone_a to lie off every other territory's ramp, and
-## the near-miss it is dodging is the mountain's PROP_SCREE_A, which sits almost
-## exactly on a cooler grey plaster ramp.
-const CITY_PLASTER_A := Color(0.87, 0.85, 0.79)   # limewashed wall, sunlit …
-const CITY_PLASTER_B := Color(0.71, 0.66, 0.58)   # … to weathered render
-const CITY_ROOF_TILE := Color(0.55, 0.29, 0.21)   # terracotta pantile
-const CITY_ROOF_SLATE := Color(0.33, 0.34, 0.37)  # slate roof / awning canvas
-const CITY_METAL := Color(0.26, 0.27, 0.29)       # lamp post, signal mast, head
-const CITY_LAMP_AMBER := Color(0.96, 0.82, 0.36)  # bright ALBEDO, never emissive
-const CITY_LAMP_RED := Color(0.86, 0.24, 0.20)
-const CITY_LAMP_GREEN := Color(0.32, 0.76, 0.36)
-
 # ----------------------------------------------------------------------------
 # THEMED FEATURE STRUCTURES — the same re-skin, one scale up from the props
 # ----------------------------------------------------------------------------
@@ -282,7 +259,6 @@ const STRUCTURE_MIX: Dictionary = {
 	Biome.DESERT: [0.22, 0.52, 0.72, 1.00],   # colonnades and mesas carry the desert
 	Biome.FOREST: [0.32, 0.60, 0.86, 1.00],   # log bridges are the forest signature
 	Biome.MOUNTAIN: [0.42, 0.74, 1.00, 1.00], # fort walls and watchtower bases only
-	Biome.CITY: [0.26, 0.60, 0.80, 1.00],     # the ALLEY is the city's signature
 }
 
 ## Per-territory dressing. Every colour is one the phase-1 prop palette already
@@ -336,19 +312,6 @@ const STRUCTURE_THEMES: Dictionary = {
 		"lane_spaced": false, "lintel_chance": 0.0,
 		"gate_style": STRUCT_GATE_LINTEL,
 	},
-	# CITY — a street block. The four roles need no new builder to read as urban:
-	# the SOLID lane (lane_spaced false) is two building faces with an alley
-	# between them, which is why the lane band is the widest here; the wall is a
-	# render boundary wall with the occasional parapet (double_chance) and a tiled
-	# cap; the gate is a monumental arch over a street; the mound is a stepped
-	# plaza. Timber trim is PROP_CRATE — scaffold and stacked goods against a wall.
-	Biome.CITY: {
-		"stone_a": CITY_PLASTER_A, "stone_b": CITY_PLASTER_B, "trim": PROP_CRATE,
-		"cap": CITY_ROOF_TILE,
-		"gap_chance": 0.10, "double_chance": 0.35,
-		"lane_spaced": false, "lintel_chance": 0.0,
-		"gate_style": STRUCT_GATE_LINTEL,
-	},
 }
 
 ## Enable/disable crocodile spawning on terrain
@@ -384,6 +347,20 @@ const SPAWN_SAFE_RADIUS: float = 25.0
 ## gets a rare crocodile patrolling it. Kept moderate so they're an occasional
 ## surprise, not on every structure.
 @export var platform_crocodile_chance: float = 0.4
+
+## How far ABOVE a platform's `top` (its tallest stone, NOT the surface it paces)
+## a patrol guard is dropped in, so gravity settles it onto the structure.
+##
+## THIS IS THE PENETRATION DEPTH WHEN THE DROP-IN HEIGHT IS WRONG, which is why
+## it is a named constant rather than a literal at the one call site: a guard
+## dropped from a height that some stone in its own footprint reaches ends up
+## this far INSIDE that stone. See the platform "top" note in spawn_wall.
+const PLATFORM_SPAWN_HEIGHT: float = 0.6
+
+## How far in from a platform's edge the guard's spawn point is drawn, so it
+## lands cleanly on the surface rather than half off it. Read by
+## croc_spawn_selfcheck.gd, which walks the same inset ellipse at every angle.
+const PLATFORM_SPAWN_EDGE_INSET: float = 1.0
 
 ## Enable/disable collectible coin spawning on terrain
 @export var spawn_coins: bool = true
@@ -1186,7 +1163,7 @@ const LANDMARK_COIN_RING_PAD_MAX: float = 2.0
 ## point, block bases) ask that function instead of assuming 0.
 ##
 ## The whole biome system is ONE octave of world-space value noise (see
-## _biome_noise below). Thresholding its 0..1 output gives the five bands; a thin
+## _biome_noise below). Thresholding its 0..1 output gives the four bands; a thin
 ## CONTOUR of it (|n - RIVER_LEVEL| < RIVER_HALF_WIDTH) gives winding rivers for
 ## free — a river is wherever the field crosses one particular level, which is
 ## exactly the shape of a contour line on a map: long, winding, and never a blob.
@@ -1199,13 +1176,7 @@ const LANDMARK_COIN_RING_PAD_MAX: float = 2.0
 ## Enum for readability at every call site (biome_at returns one of these).
 ## NOTE: there is deliberately no Biome.RIVER — a river is an OVERLAY on whatever
 ## biome the ground under it is, tested separately with is_river_at().
-##
-## CITY IS APPENDED, NEVER INSERTED, even though its BAND sits between plains and
-## forest. The enum's integer values index tables outside this file —
-## minimap_hud.gd's BIOME_NAMES is the live one — so inserting CITY at position 2
-## would silently relabel every forest and mountain on the map. Band ORDER is a
-## property of the thresholds in biome_at(), not of the enum's numbering.
-enum Biome { PLAINS, DESERT, FOREST, MOUNTAIN, CITY }
+enum Biome { PLAINS, DESERT, FOREST, MOUNTAIN }
 
 ## Fixed salt XORed into run_seed for every biome hash stream — same spirit as
 ## ARTIFACT_SALT / BOSS_SEED / ROAD_COIN_SEED: an arbitrary constant that keeps
@@ -1217,40 +1188,13 @@ const BIOME_SALT: int = 0xB10_11E
 ## that a ~1 km run crosses several.
 const BIOME_CELL_SIZE: float = 400.0
 
-## Thresholds splitting the 0..1 noise into the five bands:
+## Thresholds splitting the 0..1 noise into the four bands:
 ##   n < DESERT_MAX          -> DESERT
-##   n < PLAINS_MAX          -> PLAINS   (still the widest band: the shipped look
-##   n < CITY_MAX            -> CITY      stays the most common thing you see)
-##   n < FOREST_MAX          -> FOREST
+##   n < PLAINS_MAX          -> PLAINS   (the widest band: the current look stays
+##   n < FOREST_MAX          -> FOREST    the most common thing you see)
 ##   otherwise               -> MOUNTAIN (the rarest — massifs are the heaviest)
-##
-## THE CITY BAND WAS CUT OUT OF PLAINS AND FOREST, AND THE SPLIT WAS MEASURED,
-## NOT GUESSED. Value noise is bell-shaped around 0.5, so a band's AREA share is
-## nothing like its threshold width and the only honest way to place a new band is
-## to sample the real field. Over 1.44 M samples spread across 16 run seeds:
-##
-##   shipped 4-band  (0.34 / 0.62 / — / 0.82)  desert 27.4  plains 42.8  city  0.0  forest 23.1  mtn 6.7
-##   THIS            (0.34 / 0.575 / 0.66 / 0.82)  desert 27.4  plains 36.3  city 12.1  forest 17.5  mtn 6.7
-##
-## so city lands inside the 10-12% the design asked for, and — the reason these
-## particular numbers — BIOME_DESERT_MAX and BIOME_FOREST_MAX did not move at all,
-## which leaves the desert (27.4%) and the already-rarest mountain (6.7%) shares
-## byte-identical. Only BIOME_PLAINS_MAX moved (0.62 -> 0.575). Walking +X, a city
-## region is crossed every ~780 m on average (median gap 565 m) and the crossing
-## itself runs ~116 m (median 65 m).
-##
-## TWO INEQUALITIES TO RE-CHECK IF THESE MOVE:
-##   1. RIVER_LEVEL (0.5) must stay strictly inside the PLAINS band, i.e.
-##      BIOME_DESERT_MAX < 0.493 and BIOME_PLAINS_MAX > 0.507 (the river band is
-##      RIVER_LEVEL +/- RIVER_HALF_WIDTH). At 0.575 the visual plains->city blend
-##      does not even begin until 0.525, so no city tint reaches the water either.
-##   2. The city band must be at least ~2 * BIOME_BLEND (0.10) wide or the city
-##      colour never reaches full strength between its two smoothstep blends. It
-##      is 0.085 wide, and the two blends overlap by only 0.015, so the midpoint
-##      still renders 96.8% city.
 const BIOME_DESERT_MAX: float = 0.34
-const BIOME_PLAINS_MAX: float = 0.575
-const BIOME_CITY_MAX: float = 0.66
+const BIOME_PLAINS_MAX: float = 0.62
 const BIOME_FOREST_MAX: float = 0.82
 
 ## River contour: the band is the set of points whose noise value sits within
@@ -1397,120 +1341,6 @@ const MOUNTAIN_ROAD_CLEARANCE: float = 24.0
 const MOUNTAIN_SNOW_HEIGHT: float = 14.0
 const MOUNTAIN_SNOW_LAYERS: int = 2      # how many top layers turn to snow
 const MOUNTAIN_SNOW_COLOR := Color(0.92, 0.94, 0.96)
-
-# ----------------------------------------------------------------------------
-# CITY — small houses, market stalls, traffic lights and lamp posts
-# ----------------------------------------------------------------------------
-##
-## THE ROOFS ARE THE POINT. Every biome so far took the rest-from-crocodiles role
-## AWAY (a cactus, a tree trunk and a massif all record NON-climbable footprints,
-## so a road coin over one is skipped rather than perched). The city gives it back
-## at scale: every house is capped at CITY_HOUSE_HEIGHT_MAX = PROP_MAX_STEP, so
-## every flat roof in a city is one jump from the pavement and a city block is a
-## field of croc-free perches. That is what pays for the reduced croc density
-## below reading as "a safer place" rather than as "an emptier place".
-##
-## NO EMISSIVE ANYTHING, and the budget spent is exactly ZERO of the four
-## _spawn_artifact_accent slots an artifact may use. Lamps and signals are BRIGHT
-## ALBEDO boxes in the chunk's one MultiMesh — a city of glowing traffic lights is
-## the single fastest way to turn a batched territory into dozens of real
-## MeshInstance3D nodes with an unshaded material each.
-##
-## THERE IS NO STREET NETWORK AND THERE IS NOT GOING TO BE ONE. A road network is
-## a layout system (graph, intersections, parcels, frontage) that this engine has
-## no use for anywhere else, and the coin road already IS the one road in the
-## world — it threads through a city as its main street for free, because
-## CITY_ROAD_CLEARANCE keeps the buildings off the coin swath. What produces the
-## street READ instead costs two lines: candidate positions are snapped to a
-## coarse CITY_BLOCK_PITCH grid with a little jitter, and house yaws are quantised
-## to quarter turns. Rows of parallel facades along shared lines is what a person
-## recognises as a town; a real network is not.
-
-## How many house SITES are tried per city chunk. A house footprint is ~2.5-3.5 m
-## and _biome_spot_ok rejects any overlap with the ~12 scattered props already in
-## the chunk, so this is a candidate count, not a house count — measured, it
-## yields roughly 4-7 built houses per chunk.
-const CITY_HOUSE_TRIES_MIN: int = 10
-const CITY_HOUSE_TRIES_MAX: int = 16
-
-## Market stall and street-light candidate counts, same "tries, not results" rule.
-const CITY_STALL_TRIES_MIN: int = 2
-const CITY_STALL_TRIES_MAX: int = 5
-const CITY_LIGHT_TRIES_MIN: int = 4
-const CITY_LIGHT_TRIES_MAX: int = 7
-
-## Minimum distance from the coin-road centerline. 13, like FOREST_ROAD_CLEARANCE
-## (14) and for the same arithmetic: the widest coin band half-width is
-## road_width_max * 0.5 = 10, so this keeps the whole scattered coin swath clear
-## of buildings and the road stays followable — the city's "main street".
-## Houses record CLIMBABLE footprints, so unlike a tree a house standing on the
-## swath would perch coins on its roof rather than punch holes in the trail; 13 is
-## still the right number, because a coin trail that climbs a building is a trail
-## the player has to leave the ground to follow.
-const CITY_ROAD_CLEARANCE: float = 13.0
-
-## Coarse grid the candidate positions snap to, plus the wobble left on top of it.
-## The pitch is a bit wider than the widest house so neighbours on the same line
-## do not touch; the jitter keeps the grid from reading as graph paper.
-const CITY_BLOCK_PITCH: float = 9.0
-const CITY_BLOCK_JITTER: float = 1.3
-
-## HOUSE — hull proportions. HEIGHT_MAX IS THE CLIMBABILITY CONTRACT AS A NUMBER:
-## it must stay <= PROP_MAX_STEP (2.6), or the roofs stop being reachable from
-## flat ground and the whole "the city is the rest spot" design silently dies.
-const CITY_HOUSE_WIDTH_MIN: float = 3.0
-const CITY_HOUSE_WIDTH_MAX: float = 4.4
-const CITY_HOUSE_DEPTH_FACTOR_MIN: float = 0.70   # depth as a fraction of width
-const CITY_HOUSE_DEPTH_FACTOR_MAX: float = 1.00
-const CITY_HOUSE_HEIGHT_MIN: float = 2.0
-const CITY_HOUSE_HEIGHT_MAX: float = 2.6
-
-## HOUSE — the roof slab: how far it oversails the walls, and how thick it is. The
-## slab is collide = false, so the surface the player actually stands on is the
-## HULL top (the height recorded as the footprint's `top`) and the slab is a thin
-## film over it — exactly the rule STRUCTURE_THEMES' `cap` follows. Keep it thin:
-## the film is what the player's feet are inside while standing on the roof.
-const CITY_ROOF_EAVES: float = 0.25
-const CITY_ROOF_THICKNESS: float = 0.14
-
-## HOUSE — the widest footprint a house can claim, used as the "widest this could
-## be" radius handed to _biome_spot_ok before the real width is drawn:
-## 0.5 * hypot(W_MAX + 2*EAVES, W_MAX + 2*EAVES) = 0.5 * hypot(4.9, 4.9) = 3.47.
-##
-## THIS IS DELIBERATELY ABOVE MOUNTAIN_AVOID_RADIUS (2.0) and that is the correct
-## side to be on, not an oversight: a chunk straddling the city/forest/mountain
-## feather can hold both, and a massif is supposed to refuse to grow through a
-## house exactly as it refuses to grow through an artifact or a mound.
-const CITY_HOUSE_RADIUS_MAX: float = 3.47
-
-## STALL — a market counter under an awning. NON-climbable on purpose even though
-## the counter is only ~1 m: the awning hangs over it, so a road coin perched on
-## the counter would sit inside canvas. Non-climbable means _settle_coin_y skips
-## it instead (the cactus / tree-canopy call).
-const CITY_STALL_WIDTH_MIN: float = 1.8
-const CITY_STALL_WIDTH_MAX: float = 2.8
-const CITY_STALL_COUNTER_HEIGHT: float = 1.0
-const CITY_STALL_AWNING_HEIGHT: float = 2.3
-const CITY_STALL_RADIUS_MAX: float = 2.2
-
-## STREET FURNITURE — a traffic signal (mast + head + three lamps) or a lamp post
-## (mast + arm + one lamp), rolled per candidate. Thin, so its footprint is small
-## and NON-climbable (a mast has no top to stand on).
-const CITY_LIGHT_HEIGHT_MIN: float = 3.2
-const CITY_LIGHT_HEIGHT_MAX: float = 4.4
-const CITY_LIGHT_MAST_WIDTH: float = 0.20
-const CITY_LIGHT_LAMP: float = 0.22       # one signal lamp box, a side
-const CITY_LIGHT_RADIUS_MAX: float = 0.95
-const CITY_SIGNAL_CHANCE: float = 0.55    # else a lamp post
-
-## CITY — the crocodile TARGET is divided by this in the city band. Owner call
-## (2026-08-26): a city is not croc-free, it is quieter. This is a DESIGN number
-## exactly like DESERT_BLOCK_KEEP_EVERY and the distance gradient, not a perf
-## trim, so the "entity counts are never reduced as an optimization" convention is
-## intact. Like the desert's, it lowers a TARGET and inserts NO RNG DRAW anywhere:
-## the surviving crocodiles are byte-for-byte the FIRST target/N of the undivided
-## stream, in the same positions, with the tail simply not spawned.
-const CITY_CROC_DIVISOR: float = 2.5
 
 ## MOUNTAIN — grey scree ramp for the rock itself. Cooler and flatter than both
 ## the warm RAMP_* block colours and the artifacts' grey-green, so a massif reads
@@ -1982,11 +1812,6 @@ func _apply_biome_shader_params() -> void:
 	mat.set_shader_parameter("biome_cell_size", BIOME_CELL_SIZE)
 	mat.set_shader_parameter("biome_desert_max", BIOME_DESERT_MAX)
 	mat.set_shader_parameter("biome_plains_max", BIOME_PLAINS_MAX)
-	# The city band's upper edge. Parity-critical like its siblings: the band the
-	# player SEES paved has to be the band spawn_biome_content_in_chunk fills with
-	# houses. The city COLOUR stays a shader default (pure art), same rule as the
-	# other four.
-	mat.set_shader_parameter("biome_city_max", BIOME_CITY_MAX)
 	mat.set_shader_parameter("biome_forest_max", BIOME_FOREST_MAX)
 	mat.set_shader_parameter("river_level", RIVER_LEVEL)
 	mat.set_shader_parameter("river_half_width", RIVER_HALF_WIDTH)
@@ -2858,9 +2683,14 @@ func spawn_terraced_mound(rng: RandomNumberGenerator, half_chunk: float, chunk_c
 	obstacles.append({ "pos": Vector3(cx, 0, cz), "radius": base_size * 0.71, "top": y, "climbable": true })
 
 	# Register the flat summit as a patrol platform (if it's big enough to stand on).
+	# `top` equals `center.y` here — the summit slab IS the tallest SOLID thing in
+	# its own footprint (the themed cap above it is collide = false, and the fallen
+	# trim is ringed outside the slab), so the patrol guard's drop-in height is the
+	# surface height. A wall's is not; see the platform "top" note in spawn_wall
+	# for why the two are separate fields at all.
 	var plat_half := top_half - 0.3
 	if plat_half > 0.4:
-		platforms.append({ "center": Vector3(top_x, y, top_z), "half": Vector2(plat_half, plat_half) })
+		platforms.append({ "center": Vector3(top_x, y, top_z), "half": Vector2(plat_half, plat_half), "top": y })
 
 func spawn_gate(rng: RandomNumberGenerator, half_chunk: float, chunk_center: Vector3, theme: Dictionary, obstacles: Array, platforms: Array, block_batch: Array, block_body: StaticBody3D) -> void:
 	"""
@@ -2982,12 +2812,19 @@ func spawn_gate(rng: RandomNumberGenerator, half_chunk: float, chunk_center: Vec
 	# THE LOG BRIDGE IS THE ONE GATE WITH A WALKABLE DECK, so it is the one gate
 	# that feeds spawn_platform_crocodiles. Half-extents are the beam's own, inset
 	# so a patrol never paces off the end.
+	#
+	# `top` equals `center.y` here — the beam IS the tallest solid thing in its own
+	# footprint, and the one thing that could stand above it (the cornice) is built
+	# only for a NON-log-bridge gate, so it can never be over this deck. See the
+	# platform "top" note in spawn_wall for why the field exists at all: the patrol
+	# guard is dropped in from it, and a `top` that under-declares its stone puts
+	# the guard inside that stone.
 	if log_bridge:
 		var half_along := beam_w * 0.5 - 0.4
 		var half_across := depth * 0.5 - 0.3
 		var deck_half: Vector2 = Vector2(half_along, half_across) if along_x else Vector2(half_across, half_along)
 		if half_along > 1.0 and half_across > 0.2:
-			platforms.append({ "center": Vector3(beam_x, beam_top, beam_z), "half": deck_half })
+			platforms.append({ "center": Vector3(beam_x, beam_top, beam_z), "half": deck_half, "top": beam_top })
 
 func spawn_corridor(rng: RandomNumberGenerator, half_chunk: float, chunk_center: Vector3, theme: Dictionary, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
 	"""
@@ -3166,6 +3003,14 @@ func spawn_wall(rng: RandomNumberGenerator, half_chunk: float, chunk_center: Vec
 	var best_start := 0
 	var best_len := 0
 
+	# Each section's own top, so the patrol platform below can take the MAXIMUM over
+	# the surviving run it actually registers rather than over the whole wall. A
+	# fallen section keeps its 0.0 and is never inside a run by construction. See
+	# the platform "top" note at the bottom of this function for why the maximum
+	# (and not the walkable height) is what the patrol spawner needs.
+	var section_top := PackedFloat32Array()
+	section_top.resize(length)
+
 	for i in length:
 		var along := start + i * step
 		var x := along if along_x else fixed
@@ -3218,6 +3063,7 @@ func spawn_wall(rng: RandomNumberGenerator, half_chunk: float, chunk_center: Vec
 					rng, block_batch, block_body, 0.0, cap, false
 				)
 
+		section_top[i] = top
 		obstacles.append({ "pos": Vector3(x, 0, z), "radius": block_size * 0.71, "top": top, "climbable": climbable })
 
 	if run_len > best_len:
@@ -3227,14 +3073,42 @@ func spawn_wall(rng: RandomNumberGenerator, half_chunk: float, chunk_center: Vec
 	# Register the surviving ridge as a thin patrol platform (a crocodile can pace
 	# it end to end). Surface is the single-block height; doubled humps just become
 	# obstacles its feelers turn it back at.
+	#
+	# WHY THE DICT CARRIES BOTH `center.y` AND `top`, and why they differ here:
+	# `center.y` is the SURFACE the guard paces — the single-block height, and the
+	# height set_confinement is handed (which reads only .x/.z, so nothing else
+	# consumes it). `top` is the TALLEST SOLID STONE standing anywhere inside the
+	# platform's footprint, which for a wall is the doubled humps.
+	# spawn_platform_crocodiles drops its guard in from `top`, not from `center.y`,
+	# and that distinction is the whole bug this pair exists to close: a share of a
+	# wall's sections are doubled, occupying y in [block_size, 2 * block_size], and
+	# the spawner picks a point at a RANDOM ANGLE along the ridge with no idea
+	# which sections those are. Dropping in at `center.y + PLATFORM_SPAWN_HEIGHT`
+	# therefore put the guard INSIDE a hump whenever the angle landed on one —
+	# penetrating by up to the full drop-in offset. Measured over a 17x17 chunk
+	# field on four run seeds: 3-7 patrol crocodiles per field stood in solid
+	# stone, i.e. 12-18% of every platform guard the world spawned, and EVERY
+	# crocodile-in-stone in the whole field was one of them (the ground and boss
+	# spawners, which do test `obstacles`, were clean at 0). Dropping in from the
+	# maximum instead lands the guard on the ridge or on a hump's top face and
+	# gravity settles it either way.
+	#
+	# The maximum is taken over the SURVIVING RUN this platform actually covers,
+	# not over the whole wall: a hump in a section that fell, or in a stretch on
+	# the far side of a gap, is not inside this footprint and would only lift the
+	# drop-in for nothing. The hump capstones are collide = false, so they are
+	# correctly not part of it.
 	if best_len > 0:
 		var ridge_along := start + (best_start + (best_len - 1) * 0.5) * step
 		var ridge_center: Vector3 = Vector3(ridge_along, block_size, fixed) if along_x else Vector3(fixed, block_size, ridge_along)
 		var half_along := (best_len - 1) * step * 0.5 + block_size * 0.5 - 0.4
 		var half_across := block_size * 0.5 - 0.3
 		var ridge_half: Vector2 = Vector2(half_along, half_across) if along_x else Vector2(half_across, half_along)
+		var ridge_top := block_size
+		for i in range(best_start, best_start + best_len):
+			ridge_top = maxf(ridge_top, section_top[i])
 		if half_along > 1.0 and half_across > 0.2:
-			platforms.append({ "center": ridge_center, "half": ridge_half })
+			platforms.append({ "center": ridge_center, "half": ridge_half, "top": ridge_top })
 
 # ============================================================================
 # THEMED SCATTERED PROPS
@@ -3323,14 +3197,6 @@ func _build_prop(local: Vector3, size: float, prop_seed: int, chunk_center: Vect
 					return _prop_scree_cluster(local, size, rng, block_batch, block_body)
 				_:
 					return _prop_cairn(local, size, rng, block_batch, block_body)
-		Biome.CITY:
-			match rng.randi_range(0, 2):
-				0:
-					return _prop_crate_stack(local, size, rng, block_batch, block_body)
-				1:
-					return _prop_garden_wall(local, size, rng, block_batch, block_body)
-				_:
-					return _prop_paving_stack(local, size, rng, block_batch, block_body)
 		_:  # PLAINS — also the fallback, so a future biome band still gets props.
 			match rng.randi_range(0, 2):
 				0:
@@ -3742,132 +3608,6 @@ func _prop_cairn(local: Vector3, size: float, rng: RandomNumberGenerator, block_
 
 	return { "radius": r, "top": top, "climbable": true }
 
-# ----- CITY -----------------------------------------------------------------
-#
-# Street clutter, at the same scale the bare cubes were: crates against a wall, a
-# low garden wall with its planter, a pallet of paving slabs from the roadworks.
-# All three keep the climbability contract (the box whose top face is the returned
-# `top` is untilted, colliding and centred on the prop), and all three reuse the
-# existing PROP_CRATE / PROP_RUIN_STONE timber and stone rather than adding a
-# colour — the CITY_* palette is spent on the buildings, which is where a person
-# actually reads "city".
-
-func _prop_crate_stack(local: Vector3, size: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
-	"""
-	CITY — two market crates stacked against each other with a third tipped over
-	beside them. The stack is the perch: both crates untilted, colliding and
-	centred, each one a short step. The tipped crate carries the tilt and is trim.
-	3 boxes, 2 collide.
-	"""
-	var r := size * PROP_RADIUS_FACTOR
-	var yaw := rng.randf_range(0.0, TAU)
-	var w := size * 0.62
-	var top := 0.0
-
-	for i in 2:
-		var th := minf(size * rng.randf_range(0.42, 0.60), PROP_MAX_STEP)
-		create_box(
-			local + Vector3(0.0, top + th * 0.5, 0.0), Vector3(w, th, w * 0.95),
-			yaw + rng.randf_range(-0.25, 0.25), rng, block_batch, block_body, 0.0,
-			PROP_CRATE.lerp(CITY_PLASTER_B, rng.randf() * 0.35)
-		)
-		top += th
-		w *= 0.88
-
-	# The tipped crate. Its offset is bounded by half its own 3D diagonal
-	# (cs * 0.866 for a near-cube), because a box carrying a yaw AND a tilt can
-	# present a corner in any direction: 0.30 + 0.32 * 0.866 = 0.577 of size,
-	# inside PROP_RADIUS_FACTOR 0.71.
-	var cs := size * rng.randf_range(0.24, 0.32)
-	var a := rng.randf_range(0.0, TAU)
-	create_box(
-		local + Vector3(cos(a) * size * 0.30, cs * 0.45, sin(a) * size * 0.30),
-		Vector3(cs, cs * 0.9, cs), rng.randf_range(0.0, TAU),
-		rng, block_batch, block_body, rng.randf_range(-0.5, 0.5),
-		PROP_CRATE.lerp(CITY_PLASTER_B, rng.randf() * 0.35), false
-	)
-
-	return { "radius": r, "top": top, "climbable": true }
-
-func _prop_garden_wall(local: Vector3, size: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
-	"""
-	CITY — a stub of low garden wall with a planter box set against it and a
-	couple of pots tipped at its foot.
-
-	The wall is the perch and is CENTRED on the prop, which is the part that
-	matters: prop_selfcheck's climb ladder only counts untilted colliding boxes
-	whose footprint covers the prop's centre, so a pair of offset wall segments
-	with nothing in the middle would be a prop that records climbable = true and
-	has nothing to stand on. 4 boxes, 2 collide.
-	"""
-	var r := size * PROP_RADIUS_FACTOR
-	var yaw := rng.randf_range(0.0, TAU)
-	var h := minf(size * rng.randf_range(0.55, 0.80), PROP_MAX_STEP)
-	var wall_len := size * 1.02
-	var wall_d := size * 0.28
-
-	create_box(
-		local + Vector3(0.0, h * 0.5, 0.0), Vector3(wall_len, h, wall_d), yaw,
-		rng, block_batch, block_body, 0.0,
-		PROP_RUIN_STONE.lerp(CITY_PLASTER_B, rng.randf())
-	)
-
-	# Planter, set against the wall's face. Reach = 0.40 + 0.5*hypot(0.34, 0.34)
-	# = 0.64 of size, inside the declared 0.71.
-	var pw := size * 0.34
-	var side := 1.0 if rng.randf() < 0.5 else -1.0
-	var normal := Vector3(cos(yaw + PI * 0.5), 0.0, sin(yaw + PI * 0.5))
-	create_box(
-		local + normal * (size * 0.40 * side) + Vector3(0.0, pw * 0.5, 0.0),
-		Vector3(pw, pw, pw), yaw, rng, block_batch, block_body, 0.0, PROP_CRATE
-	)
-
-	for _i in 2:
-		var cs := size * rng.randf_range(0.13, 0.18)
-		var a := rng.randf_range(0.0, TAU)
-		create_box(
-			local + Vector3(cos(a) * size * 0.42, cs * 0.45, sin(a) * size * 0.42),
-			Vector3(cs, cs * 1.1, cs), rng.randf_range(0.0, TAU),
-			rng, block_batch, block_body, rng.randf_range(-0.4, 0.4),
-			CITY_ROOF_TILE, false
-		)
-
-	return { "radius": r, "top": h, "climbable": true }
-
-func _prop_paving_stack(local: Vector3, size: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
-	"""
-	CITY — a pallet of paving slabs from the roadworks, with a couple of loose
-	slabs leaning against it. Flat, wide and low: the shortest climb in the set.
-	4-5 boxes, 2-3 collide.
-	"""
-	var r := size * PROP_RADIUS_FACTOR
-	var yaw := rng.randf_range(0.0, TAU)
-	var w := size * 0.72
-	var top := 0.0
-
-	for _i in rng.randi_range(2, 3):
-		var th := minf(size * rng.randf_range(0.22, 0.34), PROP_MAX_STEP)
-		create_box(
-			local + Vector3(0.0, top + th * 0.5, 0.0), Vector3(w, th, w * 0.82),
-			yaw + rng.randf_range(-0.12, 0.12), rng, block_batch, block_body, 0.0,
-			PROP_RUIN_STONE.lerp(CITY_METAL, rng.randf() * 0.35)
-		)
-		top += th
-		w *= 0.94
-
-	# Loose slabs, leaning. Half their 3D diagonal is 0.5 * |(0.50, 0.09, 0.42)|
-	# = 0.338 of size, so a 0.34 ring reaches 0.678 — inside the declared 0.71.
-	for _i in 2:
-		var a := rng.randf_range(0.0, TAU)
-		create_box(
-			local + Vector3(cos(a) * size * 0.34, size * 0.10, sin(a) * size * 0.34),
-			Vector3(size * 0.50, size * 0.09, size * 0.42), rng.randf_range(0.0, TAU),
-			rng, block_batch, block_body, rng.randf_range(-0.7, 0.7),
-			PROP_RUIN_STONE.lerp(CITY_METAL, rng.randf() * 0.35), false
-		)
-
-	return { "radius": r, "top": top, "climbable": true }
-
 func create_block(center_pos: Vector3, size: float, yaw: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> void:
 	"""
 	Create one cube block. Thin wrapper over create_box for the common case where
@@ -4162,20 +3902,6 @@ func spawn_crocodiles_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D
 	# distant crocodiles cheap: they are slept (frozen, monitoring off), never removed.
 	var chunk_croc_target := crocodiles_per_chunk + mini(8, absi(chunk_pos.x) / 6)
 
-	# CITY — the one band whose croc target is divided (owner call, 2026-08-26: a
-	# city is not croc-free, it is QUIETER; the roofs are the real safety).
-	#
-	# A TARGET, NOT A ROLL, exactly like DESERT_BLOCK_KEEP_EVERY: the biome is a
-	# pure function of chunk coords, so the branch costs no RNG draw and inserts
-	# none. The consequence is worth stating precisely — the surviving crocodiles
-	# are byte-for-byte the FIRST target/N of the undivided stream, standing in the
-	# same positions, with the tail simply never spawned. Nothing shifts.
-	#
-	# This is a DESIGN number (the difficulty gradient's sibling), not a perf trim,
-	# so the "entity counts are never reduced as an optimization" convention holds.
-	if biome_at(chunk_world_pos.x, chunk_world_pos.z) == Biome.CITY:
-		chunk_croc_target = maxi(1, int(roundf(float(chunk_croc_target) / CITY_CROC_DIVISOR)))
-
 	# Try to spawn crocodiles with proper spacing
 	var attempts := 0
 	var max_attempts := chunk_croc_target * 5  # Allow multiple attempts per crocodile
@@ -4260,7 +3986,11 @@ func spawn_platform_crocodiles(chunk_pos: Vector2i, parent_chunk: MeshInstance3D
 
 	@param chunk_pos: Chunk coordinates for seeded random generation
 	@param parent_chunk: The chunk mesh to attach the crocodiles to
-	@param platforms: Walkable-top descriptors ({ "center": Vector3, "half": Vector2 })
+	@param platforms: Walkable-top descriptors
+	                  ({ "center": Vector3, "half": Vector2, "top": float }) —
+	                  `center.y` is the surface the guard paces, `top` is the
+	                  TALLEST stone inside the footprint, which is what the guard
+	                  is dropped in from (see the note in spawn_wall).
 	"""
 	if not crocodile_scene or platforms.is_empty():
 		return
@@ -4281,13 +4011,18 @@ func spawn_platform_crocodiles(chunk_pos: Vector2i, parent_chunk: MeshInstance3D
 
 		# Start a little in from the edges so it lands cleanly on the surface.
 		var ang := rng.randf_range(0.0, TAU)
-		var sx := maxf(0.0, half.x - 1.0) * cos(ang)
-		var sz := maxf(0.0, half.y - 1.0) * sin(ang)
+		var sx := maxf(0.0, half.x - PLATFORM_SPAWN_EDGE_INSET) * cos(ang)
+		var sz := maxf(0.0, half.y - PLATFORM_SPAWN_EDGE_INSET) * sin(ang)
 
 		var crocodile := crocodile_scene.instantiate()
 		crocodile.name = "PatrolCrocodile_%d_%d_%d" % [chunk_pos.x, chunk_pos.y, count]
-		# Spawn just above the surface so gravity settles it onto the platform.
-		crocodile.position = Vector3(center.x + sx, center.y + 0.6, center.z + sz)
+		# Spawn just above the TALLEST stone in the platform's footprint, not above
+		# the paced surface, so gravity settles it onto the ridge or onto a hump
+		# instead of dropping it INSIDE one. `sx`/`sz` above pick a random angle
+		# along the platform and nothing here knows which sections are doubled, so
+		# the maximum is the only height that is clear at every angle — see the
+		# platform "top" note in spawn_wall for the measurement.
+		crocodile.position = Vector3(center.x + sx, platform.top + PLATFORM_SPAWN_HEIGHT, center.z + sz)
 		crocodile.rotation.y = rng.randf_range(0.0, TAU)
 		# Same BEFORE-add_child contract as the ground spawner above. NEGATIVE indices
 		# (-1, -2, …) keep the platform guards on their own slice of the roll stream,
@@ -5747,8 +5482,6 @@ func spawn_biome_content_in_chunk(chunk_pos: Vector2i, obstacles: Array, block_b
 			_spawn_forest_content(center, rng, obstacles, block_batch, block_body)
 		Biome.MOUNTAIN:
 			_spawn_mountain_content(center, rng, obstacles, block_batch, block_body)
-		Biome.CITY:
-			_spawn_city_content(center, rng, obstacles, block_batch, block_body)
 		_:
 			# PLAINS is the baseline look — the ordinary scattered blocks ARE its
 			# content, so it deliberately builds nothing extra here.
@@ -6074,246 +5807,8 @@ func _spawn_mountain_content(chunk_center: Vector3, rng: RandomNumberGenerator, 
 		obstacles.append(footprint)
 		avoid.append(footprint)
 
-
-func _spawn_city_content(chunk_center: Vector3, rng: RandomNumberGenerator, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
-	"""
-	CITY — small flat-roofed houses, market stalls under awnings, and traffic
-	signals / lamp posts along the street lines.
-
-	@param chunk_center: World centre of the chunk (create_box takes chunk-LOCAL).
-	@param rng: The biome stream's private RNG.
-	@param obstacles: One footprint per building — CLIMBABLE for houses (see
-	                  below), non-climbable for stalls and street furniture.
-	@param block_batch / block_body: The chunk's single MultiMesh + collision body.
-
-	EVERY HOUSE ROOF IS A REST SPOT, and that is this territory's whole gameplay
-	contribution. `CITY_HOUSE_HEIGHT_MAX` is `PROP_MAX_STEP` (2.6), so a hull top
-	is one jump from the pavement; the footprint records `climbable: true` at that
-	hull height, so crocodiles keep off it and `_settle_coin_y` perches a road coin
-	on it rather than skipping. Every other biome's content is non-climbable — the
-	city is the one that gives the bare cubes' role back at scale.
-
-	CROC DENSITY IS REDUCED HERE and it is the ONE band where that is true; the
-	division lives in spawn_crocodiles_in_chunk (see CITY_CROC_DIVISOR), not here.
-
-	THE STREET READ COSTS TWO LINES, and there is deliberately NO road network:
-	candidate positions are snapped to a coarse CITY_BLOCK_PITCH grid with jitter,
-	and house yaws are quantised to quarter turns. Parallel facades along shared
-	lines is what reads as a town. See the CITY banner in SECTION 1.
-
-	EDGE FEATHERING: like the forest and the mountains, every candidate re-tests
-	biome_at at ITS OWN position, so a city dissolves into the plain along the
-	noise contour instead of stopping dead on a chunk seam.
-
-	PERF: everything here is a create_box entry, so a city chunk is the SAME single
-	block draw call as a plains chunk; only hulls, counters and masts pay a
-	CollisionShape3D. There are ZERO emissive accent nodes — lamps are bright
-	albedo boxes in the batch.
-	"""
-	var half := chunk_size / 2.0 - CITY_HOUSE_RADIUS_MAX
-
-	# ---- HOUSES ------------------------------------------------------------
-	for _i in rng.randi_range(CITY_HOUSE_TRIES_MIN, CITY_HOUSE_TRIES_MAX):
-		var local_x := _city_snap(rng.randf_range(-half, half), rng)
-		var local_z := _city_snap(rng.randf_range(-half, half), rng)
-		# Quarter-turn yaw plus a little slop: facades line up along the grid.
-		var yaw := float(rng.randi_range(0, 3)) * (PI * 0.5) + rng.randf_range(-0.08, 0.08)
-		var width := rng.randf_range(CITY_HOUSE_WIDTH_MIN, CITY_HOUSE_WIDTH_MAX)
-		var depth := width * rng.randf_range(CITY_HOUSE_DEPTH_FACTOR_MIN, CITY_HOUSE_DEPTH_FACTOR_MAX)
-		var height := rng.randf_range(CITY_HOUSE_HEIGHT_MIN, CITY_HOUSE_HEIGHT_MAX)
-		var wall := CITY_PLASTER_A.lerp(CITY_PLASTER_B, rng.randf())
-		var roof := CITY_ROOF_TILE if rng.randf() < 0.6 else CITY_ROOF_SLATE
-		var windows := rng.randi_range(1, 2)
-		# The snap can push a candidate back outside the margin, so clamp rather
-		# than redraw — a redraw would be a draw, and every rejection in this file
-		# is a post-draw `continue` for exactly that reason.
-		local_x = clampf(local_x, -half, half)
-		local_z = clampf(local_z, -half, half)
-		if not _biome_spot_ok(chunk_center, local_x, local_z, CITY_HOUSE_RADIUS_MAX, CITY_ROAD_CLEARANCE, obstacles):
-			continue
-		if biome_at(chunk_center.x + local_x, chunk_center.z + local_z) != Biome.CITY:
-			continue
-
-		var local := Vector3(local_x, 0.0, local_z)
-		var right := Vector3(cos(yaw), 0.0, sin(yaw))
-		var front := Vector3(-sin(yaw), 0.0, cos(yaw))
-
-		# Hull: the ONLY colliding box, and the one whose top face the footprint
-		# names. Untilted, full size, centred — the climbability contract.
-		create_box(
-			local + Vector3(0.0, height * 0.5, 0.0), Vector3(width, height, depth),
-			yaw, rng, block_batch, block_body, 0.0, wall
-		)
-
-		# Roof: a thin film over the hull top, collide = false, oversailing the
-		# walls as eaves. The player stands on the HULL, inside this film — the
-		# same arrangement STRUCTURE_THEMES' `cap` uses over a wall's ridge, and
-		# the reason CITY_ROOF_THICKNESS is small.
-		create_box(
-			local + Vector3(0.0, height + CITY_ROOF_THICKNESS * 0.5, 0.0),
-			Vector3(width + CITY_ROOF_EAVES * 2.0, CITY_ROOF_THICKNESS, depth + CITY_ROOF_EAVES * 2.0),
-			yaw, rng, block_batch, block_body, 0.0, roof, false
-		)
-
-		# Door, on the front face. Visual only — it is inside the hull's own
-		# collision box, so making it solid would buy nothing but a snag.
-		var door_h := height * 0.62
-		create_box(
-			local + front * (depth * 0.5) + Vector3(0.0, door_h * 0.5, 0.0),
-			Vector3(width * 0.24, door_h, 0.10), yaw,
-			rng, block_batch, block_body, 0.0, PROP_CRATE, false
-		)
-
-		# Windows, spread along the front. Same reasoning: trim, never solid.
-		for w in windows:
-			var offset := (float(w) - float(windows - 1) * 0.5) * width * 0.32
-			create_box(
-				local + front * (depth * 0.5) + right * (offset + width * 0.26)
-						+ Vector3(0.0, height * 0.62, 0.0),
-				Vector3(width * 0.16, height * 0.22, 0.10), yaw,
-				rng, block_batch, block_body, 0.0, CITY_ROOF_SLATE, false
-			)
-
-		# ONE circle per house, CLIMBABLE, with the hull top as its height. The
-		# radius is the honest bound on the roof slab's rotated half-diagonal, so
-		# it is above MOUNTAIN_AVOID_RADIUS (2.0) — deliberately, see the constant.
-		obstacles.append({
-			"pos": local,
-			"radius": 0.5 * sqrt(pow(width + CITY_ROOF_EAVES * 2.0, 2.0) + pow(depth + CITY_ROOF_EAVES * 2.0, 2.0)),
-			"top": height,
-			"climbable": true,
-		})
-
-	# ---- MARKET STALLS -----------------------------------------------------
-	for _i in rng.randi_range(CITY_STALL_TRIES_MIN, CITY_STALL_TRIES_MAX):
-		var sx := _city_snap(rng.randf_range(-half, half), rng)
-		var sz := _city_snap(rng.randf_range(-half, half), rng)
-		var syaw := float(rng.randi_range(0, 3)) * (PI * 0.5) + rng.randf_range(-0.15, 0.15)
-		var sw := rng.randf_range(CITY_STALL_WIDTH_MIN, CITY_STALL_WIDTH_MAX)
-		var canvas := CITY_ROOF_TILE if rng.randf() < 0.5 else CITY_ROOF_SLATE
-		sx = clampf(sx, -half, half)
-		sz = clampf(sz, -half, half)
-		if not _biome_spot_ok(chunk_center, sx, sz, CITY_STALL_RADIUS_MAX, CITY_ROAD_CLEARANCE, obstacles):
-			continue
-		if biome_at(chunk_center.x + sx, chunk_center.z + sz) != Biome.CITY:
-			continue
-
-		var s_local := Vector3(sx, 0.0, sz)
-		var s_right := Vector3(cos(syaw), 0.0, sin(syaw))
-
-		# Counter — solid, so you bump into it and the crocodiles' raycasts see it.
-		create_box(
-			s_local + Vector3(0.0, CITY_STALL_COUNTER_HEIGHT * 0.5, 0.0),
-			Vector3(sw, CITY_STALL_COUNTER_HEIGHT, sw * 0.5), syaw,
-			rng, block_batch, block_body, 0.0, PROP_CRATE
-		)
-		# Awning + its two posts — all visual, you walk under a stall.
-		create_box(
-			s_local + Vector3(0.0, CITY_STALL_AWNING_HEIGHT, 0.0),
-			Vector3(sw * 1.25, 0.12, sw * 0.85), syaw,
-			rng, block_batch, block_body, rng.randf_range(-0.14, 0.14), canvas, false
-		)
-		for p in 2:
-			var s := 1.0 if p == 0 else -1.0
-			create_box(
-				s_local + s_right * (sw * 0.5 * s) + Vector3(0.0, CITY_STALL_AWNING_HEIGHT * 0.5, 0.0),
-				Vector3(0.10, CITY_STALL_AWNING_HEIGHT, 0.10), syaw,
-				rng, block_batch, block_body, 0.0, CITY_METAL, false
-			)
-		# NON-climbable: the awning hangs over the counter, so a road coin perched
-		# on it would sit inside canvas. Skipped is the right answer.
-		obstacles.append({
-			"pos": s_local,
-			"radius": sw * 0.68,
-			"top": CITY_STALL_COUNTER_HEIGHT,
-			"climbable": false,
-		})
-
-	# ---- TRAFFIC SIGNALS / LAMP POSTS --------------------------------------
-	for _i in rng.randi_range(CITY_LIGHT_TRIES_MIN, CITY_LIGHT_TRIES_MAX):
-		var lx := _city_snap(rng.randf_range(-half, half), rng)
-		var lz := _city_snap(rng.randf_range(-half, half), rng)
-		var lyaw := float(rng.randi_range(0, 3)) * (PI * 0.5)
-		var lh := rng.randf_range(CITY_LIGHT_HEIGHT_MIN, CITY_LIGHT_HEIGHT_MAX)
-		var is_signal := rng.randf() < CITY_SIGNAL_CHANCE
-		lx = clampf(lx, -half, half)
-		lz = clampf(lz, -half, half)
-		if not _biome_spot_ok(chunk_center, lx, lz, CITY_LIGHT_RADIUS_MAX, CITY_ROAD_CLEARANCE, obstacles):
-			continue
-		if biome_at(chunk_center.x + lx, chunk_center.z + lz) != Biome.CITY:
-			continue
-
-		var l_local := Vector3(lx, 0.0, lz)
-		var l_front := Vector3(-sin(lyaw), 0.0, cos(lyaw))
-
-		# Mast — the one colliding box.
-		create_box(
-			l_local + Vector3(0.0, lh * 0.5, 0.0),
-			Vector3(CITY_LIGHT_MAST_WIDTH, lh, CITY_LIGHT_MAST_WIDTH), lyaw,
-			rng, block_batch, block_body, 0.0, CITY_METAL
-		)
-
-		if is_signal:
-			# Head + the three-lamp stack. The stack IS the silhouette that says
-			# "traffic light" at 30 m, which is why the three lamp colours are the
-			# only colours the city palette spends on furniture. BRIGHT ALBEDO,
-			# never emissive: this is one MultiMesh instance each, not a node.
-			var head_h := CITY_LIGHT_LAMP * 3.4
-			create_box(
-				l_local + Vector3(0.0, lh + head_h * 0.5, 0.0),
-				Vector3(CITY_LIGHT_LAMP * 1.5, head_h, CITY_LIGHT_LAMP * 1.4), lyaw,
-				rng, block_batch, block_body, 0.0, CITY_METAL, false
-			)
-			var lamps := [CITY_LAMP_RED, CITY_LAMP_AMBER, CITY_LAMP_GREEN]
-			for j in 3:
-				create_box(
-					l_local + l_front * (CITY_LIGHT_LAMP * 0.75)
-							+ Vector3(0.0, lh + head_h - CITY_LIGHT_LAMP * (0.7 + float(j) * 1.05), 0.0),
-					Vector3(CITY_LIGHT_LAMP, CITY_LIGHT_LAMP, CITY_LIGHT_LAMP * 0.4), lyaw,
-					rng, block_batch, block_body, 0.0, lamps[j], false
-				)
-		else:
-			# Lamp post: a cantilever arm with one shade on the end.
-			var arm := rng.randf_range(0.7, 1.1)
-			create_box(
-				l_local + l_front * (arm * 0.5) + Vector3(0.0, lh, 0.0),
-				Vector3(0.09, 0.09, arm), lyaw, rng, block_batch, block_body, 0.0, CITY_METAL, false
-			)
-			create_box(
-				l_local + l_front * arm + Vector3(0.0, lh - CITY_LIGHT_LAMP * 0.5, 0.0),
-				Vector3(CITY_LIGHT_LAMP * 1.6, CITY_LIGHT_LAMP, CITY_LIGHT_LAMP * 1.6), lyaw,
-				rng, block_batch, block_body, 0.0, CITY_LAMP_AMBER, false
-			)
-
-		# NON-climbable: a mast has no top to stand on, and its "top" is 4 m up.
-		obstacles.append({
-			"pos": l_local,
-			"radius": CITY_LIGHT_RADIUS_MAX,
-			"top": lh,
-			"climbable": false,
-		})
-
-
-func _city_snap(value: float, rng: RandomNumberGenerator) -> float:
-	"""
-	Snap one chunk-local coordinate onto the city's coarse street grid, plus a
-	little jitter so the result reads as a town rather than as graph paper.
-
-	@param value: The raw chunk-local coordinate already drawn by the caller.
-	@param rng: The biome stream's private RNG — one draw, for the jitter.
-	@return: The snapped coordinate.
-
-	The snap is world-independent (it works in CHUNK-local space) on purpose: a
-	world-space grid would have to survive the chunk-local/world conversion at
-	every call site for nothing, since a 50 m chunk is a whole number of 9 m
-	pitches nowhere and the grid is a READ, not a layout system. Neighbouring
-	chunks therefore have their own street lines, which is exactly what a town
-	that grew looks like.
-	"""
-	return roundf(value / CITY_BLOCK_PITCH) * CITY_BLOCK_PITCH + rng.randf_range(-CITY_BLOCK_JITTER, CITY_BLOCK_JITTER)
-
 # ============================================================================
-# BIOME FIELD (one noise field; five biomes + rivers read out of it)
+# BIOME FIELD (one noise field; four biomes + rivers read out of it)
 # ============================================================================
 #
 # ponytail: the ground stays a FLAT y = 0 plane — see the full note in the BIOME
@@ -6420,7 +5915,7 @@ func _biome_noise(world_x: float, world_z: float) -> float:
 
 func biome_at(world_x: float, world_z: float) -> Biome:
 	"""
-	Classify a world position into one of the five biomes.
+	Classify a world position into one of the four biomes.
 
 	@param world_x, world_z: World-space point (metres).
 	@return: The Biome band the field falls in at that point.
@@ -6434,8 +5929,6 @@ func biome_at(world_x: float, world_z: float) -> Biome:
 		return Biome.DESERT
 	if n < BIOME_PLAINS_MAX:
 		return Biome.PLAINS
-	if n < BIOME_CITY_MAX:
-		return Biome.CITY
 	if n < BIOME_FOREST_MAX:
 		return Biome.FOREST
 	return Biome.MOUNTAIN

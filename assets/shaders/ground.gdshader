@@ -1,6 +1,7 @@
 // Ground shader — gives the infinite flat plane its look: a subtle large-scale
 // mottling (two greens blended by noise) so it reads as terrain instead of a
-// flat billiard table, PLUS the biome tint (desert / plains / forest / mountain)
+// flat billiard table, PLUS the biome tint (desert / plains / city / forest /
+// mountain)
 // and the blue river bands laid over it.
 //
 // THE GROUND IS ALWAYS FLAT (y = 0). Biomes and rivers are a PAINT JOB here plus
@@ -52,7 +53,8 @@ uniform vec3 green_b: source_color = vec3(0.20, 0.44, 0.26); // shaded moss
 uniform vec2 biome_offset = vec2(0.0);        // per-run domain shift (run_seed)
 uniform float biome_cell_size = 400.0;        // noise wavelength in metres
 uniform float biome_desert_max = 0.34;        // n < this  -> desert
-uniform float biome_plains_max = 0.62;        // n < this  -> plains
+uniform float biome_plains_max = 0.575;       // n < this  -> plains
+uniform float biome_city_max = 0.66;          // n < this  -> city
 uniform float biome_forest_max = 0.82;        // n < this  -> forest, else mountain
 uniform float river_level = 0.5;              // the contour rivers follow
 uniform float river_half_width = 0.007;       // half-thickness of that contour
@@ -60,6 +62,11 @@ uniform float biome_blend = 0.05;             // smoothstep radius at each thres
 
 // --- Biome colours — pure art, never read by GDScript -----------------------
 uniform vec3 desert_color: source_color = vec3(0.78, 0.68, 0.44);   // ochre sand
+// Paved warm grey — dusty flagstone / worn asphalt. Deliberately well clear of
+// mountain_color's grey-brown, even though the two bands can never touch (forest
+// always sits between them), so a screenshot of one is never mistaken for the
+// other.
+uniform vec3 city_color: source_color = vec3(0.50, 0.48, 0.45);     // paved grey
 uniform vec3 forest_color: source_color = vec3(0.13, 0.30, 0.17);   // deep cool green
 uniform vec3 mountain_color: source_color = vec3(0.45, 0.43, 0.40); // grey-brown scree
 uniform vec3 river_color: source_color = vec3(0.10, 0.28, 0.34);    // dark blue-teal
@@ -153,11 +160,18 @@ void fragment() {
 	float mottle = mix(0.88, 1.12, v_noise);
 	// Blend across each threshold with smoothstep over biome_blend, so a biome
 	// boundary is a soft gradient several metres wide rather than a hard line.
-	// Chained low-to-high: desert below, then plains, forest, mountain.
+	// Chained low-to-high: desert below, then plains, city, forest, mountain.
+	// The chain is why adding a band is one extra mix() in the right place and
+	// nothing else — each step only has to say "above THIS threshold, become the
+	// NEXT band". The city band is 0.085 wide against a 0.10 blend diameter, so
+	// its two smoothsteps overlap by 0.015 and the midpoint still renders 96.8%
+	// city; a narrower band would wash out (see the note on BIOME_CITY_MAX).
 	albedo = mix(desert_color * mottle, albedo,
 			smoothstep(biome_desert_max - biome_blend, biome_desert_max + biome_blend, v_biome));
-	albedo = mix(albedo, forest_color * mottle,
+	albedo = mix(albedo, city_color * mottle,
 			smoothstep(biome_plains_max - biome_blend, biome_plains_max + biome_blend, v_biome));
+	albedo = mix(albedo, forest_color * mottle,
+			smoothstep(biome_city_max - biome_blend, biome_city_max + biome_blend, v_biome));
 	albedo = mix(albedo, mountain_color * mottle,
 			smoothstep(biome_forest_max - biome_blend, biome_forest_max + biome_blend, v_biome));
 
