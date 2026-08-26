@@ -558,6 +558,18 @@ func _check_structures(terrain_script: GDScript, consts: Dictionary) -> void:
 				built += 1
 				boxes += batch.size()
 
+				# ---- CHECK 5c: nothing straddles the chunk seam ----------------
+				# A structure's mesh and collision belong to ONE chunk, so anything
+				# reaching past the seam VANISHES when that chunk unloads while its
+				# neighbour is still loaded. Every builder sizes a `limit` for this;
+				# the trap is sizing it off an UNROTATED half-width when the box
+				# carries a yaw (a mound terrace at 0.35 rad reaches 0.641 of its
+				# base_size, not 0.5).
+				var reach := _axis_reach(batch)
+				if reach > half_chunk + EPSILON:
+					_fail("%s/%s seed %d: geometry reaches %.2f m from the chunk centre, past the %.2f m seam — it would vanish with its own chunk"
+							% [territory, label, s, reach, half_chunk])
+
 				# ---- CHECK 5a: every colour comes off THIS territory's palette --
 				for entry_variant: Variant in batch:
 					var entry: Dictionary = entry_variant
@@ -678,3 +690,20 @@ func _has_top(tops: Array[float], y: float) -> bool:
 		if absf(top - y) <= EPSILON:
 			return true
 	return false
+
+
+func _axis_reach(batch: Array) -> float:
+	"""
+	The furthest any emitted corner gets from the chunk centre along X or Z.
+
+	Per-AXIS, unlike _measured_reach's radial distance: a chunk is a square, so
+	what a seam test needs is max(|x|, |z|), not the length of the offset.
+	"""
+	var worst := 0.0
+	for entry_variant: Variant in batch:
+		var entry: Dictionary = entry_variant
+		var xform: Transform3D = entry["transform"]
+		for corner: Vector3 in UNIT_CORNERS:
+			var p := xform * corner
+			worst = maxf(worst, maxf(absf(p.x), absf(p.z)))
+	return worst

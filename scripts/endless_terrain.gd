@@ -218,6 +218,22 @@ const STRUCT_GATE_ARCH: int = 0   # broken arch: one stunted pillar, a stub lint
 const STRUCT_GATE_LINTEL: int = 1 # intact monumental gate (+ a cornice if capped)
 const STRUCT_GATE_LOG: int = 2    # a felled giant on two stumps — a WALKABLE deck
 
+## The widest a mound terrace can reach in WORLD X/Z as a fraction of base_size.
+## A terrace is a (w, d) slab turned by up to MOUND_TERRACE_YAW, so its rotated
+## world half-extent is 0.5 * (w * cos + d * sin) — at the base terrace's widest
+## (d == w == base_size) and the full yaw, 0.5 * (cos 0.35 + sin 0.35) = 0.641 of
+## base_size, NOT the 0.5 the unrotated half-width suggests. That difference is up
+## to 2.8 m on a 20 m mound, which is enough to hang a terrace over the chunk seam
+## — and a mound's mesh and collision belong to ONE chunk, so the overhang would
+## vanish the moment that chunk unloaded while its neighbour stayed loaded.
+## 0.65 bounds 0.641 with slack; it stays under the footprint radius factor 0.71,
+## so the obstacle circle is still an honest bound on the stone.
+const MOUND_ROT_EXTENT: float = 0.65
+
+## The most a terrace may be turned. Bounded rather than free because
+## MOUND_ROT_EXTENT above is derived from it — widen one and re-derive the other.
+const MOUND_TERRACE_YAW: float = 0.35
+
 ## Lateral wobble (metres) allowed per terrace of a terraced mound. Bounded, not
 ## chosen by eye: the mound's footprint radius is base_size * 0.71 and a terrace
 ## above the base is at most 0.72 * base_size wide, i.e. 0.51 * base_size of
@@ -2538,7 +2554,9 @@ func spawn_terraced_mound(rng: RandomNumberGenerator, half_chunk: float, chunk_c
 
 	# Keep the whole base inside the chunk. The jitter allowance is in the bound
 	# because an upper terrace may sit that far off the base's centre.
-	var limit := half_chunk - (base_size * 0.5 + 1.0 + MOUND_TERRACE_JITTER)
+	# The ROTATED extent, not the half-width — see MOUND_ROT_EXTENT for why the
+	# difference is load-bearing at a chunk seam.
+	var limit := half_chunk - (base_size * MOUND_ROT_EXTENT + 1.0 + MOUND_TERRACE_JITTER)
 	if limit <= 0.0:
 		return  # chunk too small for this mound; skip it
 	var cx := rng.randf_range(-limit, limit)
@@ -2566,7 +2584,7 @@ func spawn_terraced_mound(rng: RandomNumberGenerator, half_chunk: float, chunk_c
 		var d := w * rng.randf_range(0.78, 1.0)
 		# YAW, never tilt: a yawed box still presents a flat top to stand on,
 		# which is what the climb ladder and the patrol platform both need.
-		var yaw := rng.randf_range(-0.35, 0.35)
+		var yaw := rng.randf_range(-MOUND_TERRACE_YAW, MOUND_TERRACE_YAW)
 		create_box(
 			Vector3(cx + jx, y + terrace_h * 0.5, cz + jz), Vector3(w, terrace_h, d), yaw,
 			rng, block_batch, block_body, 0.0, _structure_stone(theme, rng)
@@ -2612,6 +2630,17 @@ func spawn_terraced_mound(rng: RandomNumberGenerator, half_chunk: float, chunk_c
 
 	# One footprint for the whole base; top = summit height. Mounds are climbable
 	# via their terraces, so a coin on the summit is reachable (just a climb).
+	#
+	# ponytail: ONE CIRCLE WITH ONE TOP is the whole vocabulary the coin and
+	# crocodile rules speak (the same ceiling CLAUDE.md records for landmarks), so
+	# a road coin landing near the rim is perched at the SUMMIT height with only
+	# the base terrace under it. That is inherited from the pyramid, not
+	# introduced here, and it is the cheaper end of it: measured over 25x25 chunks
+	# x 4 seeds, perched road coins with no floor under them went 15 -> 13 and the
+	# worst air gap 4.43 m -> 2.86 m (coins buried IN stone stayed 0). The real fix
+	# is a richer footprint (per-tier tops, or a solid-centre height) in
+	# _settle_coin_y, which every landmark, camp and artifact would have to learn
+	# — deliberately out of this bead.
 	obstacles.append({ "pos": Vector3(cx, 0, cz), "radius": base_size * 0.71, "top": y, "climbable": true })
 
 	# Register the flat summit as a patrol platform (if it's big enough to stand on).
