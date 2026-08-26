@@ -30,9 +30,21 @@ extends SceneTree
 ## has a negative control beside it, since "no crocodile was in stone" is also
 ## true of a sweep that generated no crocodiles, no stone, or no doubled wall.
 ##
-## Cost: the whole file is ~2 s for 2 seeds x 289 chunks. Don't grow it into a
+## Cost: the whole file is ~1.3 s for 2 seeds x 289 chunks. Don't grow it into a
 ## suite; if a fourth spawner appears, it belongs in check 1's sweep, not in a
 ## new file.
+##
+## THE ONE THING IT PRINTS THAT IS NOT ITS OWN: a handful of "RID allocations …
+## were leaked at exit" / "resources still in use at exit" lines AFTER the
+## verdict. Those are the engine reporting the STATIC shared caches this project
+## deliberately keeps — endless_terrain's shared unit box and ground meshes, the
+## artifact glow and camp ember materials, ToonShading's styled-material cache,
+## and the two PackedScenes loaded below — none of which is owned by, or
+## releasable from, a check. They are the same lines any harness that loads the
+## crocodile scene prints, they appear after the exit code is decided, and they
+## are NOT a failure. Everything else must stay silent: a run that prints a
+## SCRIPT ERROR beside SELFCHECK OK is measuring a world it did not build (see
+## _make_chunk_parent and _boot for the two traps that caused exactly that).
 
 const TERRAIN_SCRIPT: String = "res://scripts/endless_terrain.gd"
 const CROC_SCENE: String = "res://scenes/characters/piglet_crocodile.tscn"
@@ -59,6 +71,21 @@ var _failures: Array[String] = []
 
 
 func _initialize() -> void:
+	_boot()
+
+
+func _boot() -> void:
+	"""
+	Wait ONE frame before generating anything.
+
+	A node added to `root` from inside _initialize() is not `is_inside_tree()`
+	until the first frame — the same trap best_run_e2e.gd is written around (there
+	it makes HTTPRequest.request() answer ERR_UNCONFIGURED). Here it would make
+	every chunk parent _make_chunk_parent() creates a detached node in disguise,
+	so `treasure_chest.setup()` would still get a null tree and a zero global
+	transform, and the check would go on printing engine errors beside its own OK.
+	"""
+	await process_frame
 	_run()
 
 
@@ -138,7 +165,7 @@ func _sweep(terrain_script: GDScript, run_seed: int, spawn_height: float, edge_i
 		for cz in range(-half_field, half_field + 1):
 			var chunk_pos := Vector2i(cx, cz)
 			var origin: Vector3 = terrain.chunk_to_world(chunk_pos)
-			var parent := MeshInstance3D.new()
+			var parent := _make_chunk_parent(origin)
 			var obstacles: Array = []
 			var platforms: Array = []
 			var batch: Array = []
@@ -180,7 +207,7 @@ func _sweep(terrain_script: GDScript, run_seed: int, spawn_height: float, edge_i
 		for cz in range(-half_field, half_field + 1):
 			var chunk_pos := Vector2i(cx, cz)
 			var origin: Vector3 = terrain.chunk_to_world(chunk_pos)
-			var parent := MeshInstance3D.new()
+			var parent := _make_chunk_parent(origin)
 			var obstacles: Array = chunk_obstacles[chunk_pos]
 
 			terrain.spawn_crocodiles_in_chunk(chunk_pos, parent, obstacles)
@@ -200,7 +227,7 @@ func _sweep(terrain_script: GDScript, run_seed: int, spawn_height: float, edge_i
 					continue
 				counts[kind] = int(counts[kind]) + 1
 
-				var world_pos: Vector3 = (child as Node3D).position + origin
+				var world_pos: Vector3 = (child as Node3D).global_position
 				var depth := _depth_in_stone(chunk_solids, chunk_pos, world_pos)
 				if depth > EPSILON:
 					in_stone += 1
@@ -286,6 +313,34 @@ func _sweep(terrain_script: GDScript, run_seed: int, spawn_height: float, edge_i
 	print("seed %d: measured %d ground / %d platform / %d boss crocodiles against %d collision shapes, plus %d angle probes over %d platforms (%d humped)"
 			% [run_seed, counts["ground"], counts["platform"], counts["boss"], solid_count,
 			   platforms_seen * PLATFORM_ANGLE_SAMPLES, platforms_seen, humped_platforms])
+
+
+func _make_chunk_parent(origin: Vector3) -> MeshInstance3D:
+	"""
+	A stand-in for the chunk MeshInstance3D, IN THE TREE at its world origin.
+
+	@param origin: The chunk's world position (chunk_to_world).
+	@return The parent node the spawners are handed. Freed with queue_free().
+
+	IT HAS TO BE IN THE TREE, unlike prop_selfcheck.gd's terrain node, and the
+	difference is which functions are being driven. A prop builder reaches only
+	create_box; the chunk spawners reach node code that asks the tree about
+	itself — `treasure_chest.setup()` calls `get_global_transform()` and
+	`get_tree().get_first_node_in_group(...)`, and `spawn_platform_crocodiles`
+	hands `set_confinement` a `parent_chunk.global_position`. Detached, all three
+	answer with an engine error and a zero: a run printed 195 error lines and
+	still exited 0 with SELFCHECK OK, which is the exact "green lie" this
+	project's checks exist to avoid (its two siblings print none). In the tree at
+	the real origin they are all simply correct, and `global_position` can then be
+	read straight off a crocodile rather than reconstructed.
+
+	The terrain node itself stays DETACHED — its _ready() would roll a random run
+	seed over the one this sweep set and start streaming chunks of its own.
+	"""
+	var parent := MeshInstance3D.new()
+	parent.position = origin
+	root.add_child(parent)
+	return parent
 
 
 func _depth_in_stone(chunk_solids: Dictionary, chunk_pos: Vector2i, world_pos: Vector3) -> float:
