@@ -19,6 +19,10 @@ extends Control
 ##   * The coin road centerline as a polyline, read straight out of the terrain's
 ##     existing station cache (see _gather_road below).
 ##   * Crocodiles within range as small red dots.
+##   * Geo landmarks (Stonehenge, Giza, the Eiffel Tower — see endless_terrain's
+##     GEO LANDMARKS banner) as small violet X marks, clamped to the rim and
+##     dimmed when they are off the map. They are destinations, so a rim hint is
+##     the point: at the default zoom most loaded landmarks are past the disc.
 ##   * Multiplayer teammates as dots in their own stable per-peer colour, clamped
 ##     to the rim (as a radial tick, not a blob) when they are off the map. Solo,
 ##     there is no teammate layer at all and nothing is drawn or scanned.
@@ -44,8 +48,10 @@ extends Control
 ##   * Every drawing primitive was picked for its DRAW CALL count, measured against
 ##     a frozen world with the same counters perf_overlay.gd (F3) reads: one
 ##     polyline for the road rather than ~20 lines, one multiline for the whole
-##     crocodile pack rather than one circle each, one two-line string rather than
-##     two. Total cost of the map: +10 draw calls, no measurable CPU change.
+##     crocodile pack rather than one circle each, ONE multiline for every landmark
+##     X on screen rather than a polygon each, one two-line string rather than
+##     two. Total cost of the map: +10 draw calls, +1 more while any landmark is
+##     loaded (0 when none is), no measurable CPU change.
 ##
 ## Toggle with M (a raw keycode like perf_overlay's F3 and motion_debug's F4, so it
 ## stays outside the project input map and can't collide with a gameplay action).
@@ -126,6 +132,35 @@ const PEER_DOT_RADIUS: float = 3.6
 ## on peer-supplied data, in the same spirit as every other bound on the relay.
 const MAX_PEER_DOTS: int = 8
 
+## Geo-landmark marker: half-length of each arm of the X, and the width the two
+## crossing segments are stroked at. An X rather than a dot or a diamond outline
+## because SHAPE is what survives at this size: a 4 px diamond outline is
+## indistinguishable from the square blobs the crocodile and teammate layers draw,
+## while a cross reads as "a marked site" at a glance and costs two segments.
+const LANDMARK_MARK_RADIUS: float = 3.4
+const LANDMARK_MARK_WIDTH: float = 1.6
+
+## How far an X reaches from its own centre: the arm's half-DIAGONAL (its corners
+## sit at (±arm, ±arm), so the reach is arm * sqrt(2), not arm) plus half the
+## stroke width. THIS, never LANDMARK_MARK_RADIUS, is what the rim inset below
+## subtracts — inset by the arm length alone and a clamped X pokes its corners
+## ~1.4 px past the ring, which is precisely the "does not poke past the ring"
+## rule the crocodile and teammate dots get for free by being horizontal segments
+## as long as they are wide. Written as a literal multiplier because GDScript
+## cannot call sqrt() in a const expression.
+const LANDMARK_MARK_REACH: float = LANDMARK_MARK_RADIUS * 1.4142136 + LANDMARK_MARK_WIDTH * 0.5
+
+## Hard cap on landmark markers, and the size of the landmark buffers. Landmarks
+## are ~1 per 46 chunks and only 49 (web) to 121 (desktop) chunks are ever active,
+## so the group holds typically 0-3 nodes: this is a genuine bound on a group
+## another script fills, never a limit play reaches.
+const MAX_LANDMARK_DOTS: int = 12
+
+## Alpha a rim-clamped (off-map) landmark X is drawn at, relative to one on the
+## map — the teammate tick's rule, for the teammate tick's reason: off the map is
+## less certain information and must not out-shout a landmark you can walk to.
+const LANDMARK_EDGE_ALPHA: float = 0.7
+
 ## Length in pixels of the radial tick an OFF-MAP teammate is drawn as. A dot
 ## clamped to the rim would read as a teammate standing exactly at the map's edge;
 ## a tick pointing outward along their bearing reads as "further, that way".
@@ -165,6 +200,9 @@ const RIM_WIDTH: float = 1.5
 const COLOR_ROAD := Color(1.0, 0.85, 0.15, 0.9)      # coin gold, matches the coins
 const COLOR_CROC := Color(0.95, 0.25, 0.2, 0.95)     # threat red, matches the vignette
 const COLOR_PLAYER := Color(0.4, 0.95, 1.0, 1.0)     # cyan, nothing else on the map is
+## Violet, deliberately away from every other hue on the disc — the road's gold,
+## the crocodiles' red, the player's cyan — and legible on all four biome tints.
+const COLOR_LANDMARK := Color(0.85, 0.55, 1.0, 0.95)
 const COLOR_TEXT := Color(1, 1, 1, 0.95)
 const COLOR_RIVER_TEXT := Color(0.45, 0.75, 1.0, 0.95)
 
@@ -249,6 +287,17 @@ var _peer_points: PackedVector2Array = PackedVector2Array()
 var _peer_colors: PackedColorArray = PackedColorArray()
 var _peer_count: int = 0
 
+## Landmark X marks, in the teammate buffers' form with one difference: each marker
+## is TWO segments (the crossing arms), so it is FOUR points and TWO colours, and
+## `_landmark_colors` is again half the length of `_landmark_points` because
+## `draw_multiline_colors()` wants one colour per SEGMENT. Both are sized once to
+## MAX_LANDMARK_DOTS and never resized; the unused tail is parked off-control and
+## transparent exactly like the crocodile and teammate tails. The per-segment
+## colour is what carries the dimmed rim clamp through the SAME single draw call.
+var _landmark_points: PackedVector2Array = PackedVector2Array()
+var _landmark_colors: PackedColorArray = PackedColorArray()
+var _landmark_count: int = 0
+
 
 func _ready() -> void:
 	# Never let the map eat clicks meant for the game or the touch UI.
@@ -264,6 +313,9 @@ func _ready() -> void:
 	# Same discipline for the teammate buffers — two points and ONE colour per dot.
 	_peer_points.resize(MAX_PEER_DOTS * 2)
 	_peer_colors.resize(MAX_PEER_DOTS)
+	# And for the landmarks — FOUR points and TWO colours per X (two segments).
+	_landmark_points.resize(MAX_LANDMARK_DOTS * 4)
+	_landmark_colors.resize(MAX_LANDMARK_DOTS * 2)
 	_build_zoom_buttons()
 
 
@@ -390,6 +442,7 @@ func _tick() -> void:
 	_gather_world()
 	_gather_road()
 	_gather_crocodiles()
+	_gather_landmarks()
 	_gather_peers()
 
 	_have_data = true
@@ -519,6 +572,80 @@ func _gather_crocodiles() -> void:
 		_croc_points[i] = PARKED_SEGMENT
 
 
+func _gather_landmarks() -> void:
+	"""Geo landmarks, on the same ~5 Hz tick — the map's "where is there something
+	worth walking to" layer.
+
+	The draw set needs no bookkeeping at all: `spawn_landmark_in_chunk` parents a
+	mesh-free, script-free marker Node3D to the chunk and puts it in the "landmark"
+	group, so the group holds exactly the landmarks whose chunks are loaded and a
+	landmark that streams back in re-registers itself. Reading position off the node
+	is the whole contract used here — the `name_key` / `fact_key` / `radius` metas
+	belong to landmark_toast.gd, and a marker is deliberately mute on the map (the
+	toast already names it on approach), so nothing here reads a meta and nothing
+	here adds a string.
+
+	Each marker is an X: two crossing SEGMENTS, so the whole set is ONE
+	`draw_multiline_colors()` — the crocodile pack's draw-call discipline, through
+	the `_colors` variant for the same reason the teammate layer uses it, since the
+	rim clamp needs a per-marker alpha and `draw_multiline()` takes exactly one
+	colour.
+
+	OFF-MAP LANDMARKS ARE CLAMPED TO THE RIM AND DIMMED, not dropped, and unlike a
+	teammate they stay an X rather than becoming a radial tick. A landmark does not
+	move, so "further, that way" is answered by walking toward the mark and watching
+	it slide inward; what a tick WOULD cost is the shape that says "monument"
+	instead of "peer". Dropping them was the other option and it is the wrong one:
+	the group spans the whole loaded field (~150 m on web, ~250 m on desktop) while
+	the disc reaches 30-130 m, so at the default zoom most loaded landmarks are off
+	it and the layer would be blank almost all the time."""
+	_landmark_count = 0
+	var scale := _map_scale()
+	var arm := LANDMARK_MARK_RADIUS
+	for node in get_tree().get_nodes_in_group("landmark"):
+		if _landmark_count >= MAX_LANDMARK_DOTS:
+			break
+		var marker := node as Node3D
+		if marker == null:
+			continue
+		# Same north-up mapping as every other layer, off the SAME shared scale:
+		# world (x, z) → screen (x, y). See `_view_radius()`.
+		var offset := Vector2(marker.global_position.x - _player_pos.x,
+			marker.global_position.z - _player_pos.z) * scale
+		var color := COLOR_LANDMARK
+		var center: Vector2
+		var dist := offset.length()
+		if dist > MAP_RADIUS:
+			# OFF THE MAP — classified against the DISC EDGE itself, never against
+			# the inset the mark is drawn at, for the reason `_gather_peers` spells
+			# out: testing against the inset declares the outer band of the disc
+			# off-map and dims a landmark you can actually see. The division is safe
+			# — this branch needs dist > MAP_RADIUS > 0.
+			center = MAP_CENTER + (offset / dist) * (MAP_RADIUS - LANDMARK_MARK_REACH)
+			color.a *= LANDMARK_EDGE_ALPHA
+		else:
+			# ON the map, pulled in by the mark's own REACH (see LANDMARK_MARK_REACH
+			# — the corner, not the arm) so an X at the very edge of the view does
+			# not poke past the ring. That moves it by at most that reach and never
+			# changes the classification above.
+			center = MAP_CENTER + offset.limit_length(MAP_RADIUS - LANDMARK_MARK_REACH)
+		var p := _landmark_count * 4
+		_landmark_points[p] = center + Vector2(-arm, -arm)
+		_landmark_points[p + 1] = center + Vector2(arm, arm)
+		_landmark_points[p + 2] = center + Vector2(-arm, arm)
+		_landmark_points[p + 3] = center + Vector2(arm, -arm)
+		_landmark_colors[_landmark_count * 2] = color
+		_landmark_colors[_landmark_count * 2 + 1] = color
+		_landmark_count += 1
+	# Park the unused tail off-control and transparent, for the reason the crocodile
+	# and teammate tails are parked: the buffers are permanently sized so the tick
+	# never allocates, and `draw_multiline_colors()` consumes the whole array.
+	for i in range(_landmark_count * 4, _landmark_points.size()):
+		_landmark_points[i] = PARKED_SEGMENT
+	for i in range(_landmark_count * 2, _landmark_colors.size()):
+		_landmark_colors[i] = Color(0, 0, 0, 0)
+
+
 func _gather_peers() -> void:
 	"""Multiplayer teammates, on the same ~5 Hz tick.
 
@@ -612,6 +739,12 @@ func _draw() -> void:
 	#    do not batch. The points are already absolute and rim-clamped.
 	if _road_count >= 2:
 		draw_polyline(_road_points, COLOR_ROAD, ROAD_WIDTH, true)
+
+	# 2b. Landmarks — ONE draw call for every X on screen (see _gather_landmarks),
+	#     and ZERO while no landmark chunk is loaded. Under the crocodiles on
+	#     purpose: a destination must never hide a threat.
+	if _landmark_count > 0:
+		draw_multiline_colors(_landmark_points, _landmark_colors, LANDMARK_MARK_WIDTH)
 
 	# 3. Crocodiles — one draw call for the whole pack (see _gather_crocodiles).
 	if _croc_count > 0:
