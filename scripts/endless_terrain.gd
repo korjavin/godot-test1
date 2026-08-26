@@ -1264,6 +1264,12 @@ enum Biome { PLAINS, DESERT, FOREST, MOUNTAIN, CITY, SNOW }
 ## this stream independent of every other deterministic spawn site.
 const BIOME_SALT: int = 0xB10_11E
 
+## Salt for desert oasis placement decisions (independent hash stream).
+const OASIS_SALT: int = 0x0A_5157  # "OASIS" ish
+
+## Salt for desert dune placement decisions (independent hash stream).
+const DUNE_SALT: int = 0xD0_1D4E  # "DUNE" ish
+
 ## Noise wavelength in metres. Chunks are 50 m, so a biome cell spans ~8 chunks:
 ## big enough that you walk through a region rather than past it, small enough
 ## that a ~1 km run crosses several.
@@ -1654,6 +1660,40 @@ const MAMMOTH_TUSK_SEGMENTS: Array = [[0.95, 1.35], [0.85, 0.95], [0.70, 0.55]]
 ## as bare rock rather than as a very large block or a ruin.
 const MOUNTAIN_ROCK_A := Color(0.42, 0.42, 0.44)
 const MOUNTAIN_ROCK_B := Color(0.58, 0.57, 0.55)
+
+## DESERT OASIS — rare flat-water pool with palm trees, reeds, and climbable boulders.
+## ~1 in 8 desert chunks. Water is visual-only (collide=false), with a non-climbable
+## footprint so coins don't perch. Palms (trunk + fronds) and boulders are solid.
+const OASIS_CHANCE: float = 0.12  # ~1 in 8
+const OASIS_PLACE_TRIES: int = 4
+const OASIS_RADIUS: float = 8.0  # water slab radius
+const OASIS_ROAD_CLEARANCE: float = 16.0
+const OASIS_WATER_DEPTH: float = 0.1  # visual slab thickness (y height)
+const OASIS_WATER_COLOR := Color(0.20, 0.55, 0.75)
+const OASIS_WATER_RIM_COLOR := Color(0.15, 0.45, 0.65)
+const OASIS_PALM_MIN: int = 2
+const OASIS_PALM_MAX: int = 4
+const OASIS_PALM_TRUNK_WIDTH: float = 0.6
+const OASIS_PALM_TRUNK_HEIGHT: float = 4.5
+const OASIS_PALM_FROND_WIDTH: float = 3.0
+const OASIS_PALM_FROND_COUNT: int = 4
+const OASIS_BOULDER_MIN: int = 3
+const OASIS_BOULDER_MAX: int = 6
+const OASIS_BOULDER_SIZE_MIN: float = 0.8
+const OASIS_BOULDER_SIZE_MAX: float = 1.8
+const OASIS_REED_CHANCE: float = 0.8  # 80% of oases get reeds
+
+## DESERT DUNES — low sandy mounds that are climbable. ~1 in 5 desert chunks.
+## Dunes are short and wide (≤1.5 m tall) to read as walkable hills, not obstacles.
+const DUNE_CHANCE: float = 0.20  # ~1 in 5
+const DUNE_PLACE_TRIES: int = 3
+const DUNE_HEIGHT_MIN: float = 0.8
+const DUNE_HEIGHT_MAX: float = 1.5
+const DUNE_WIDTH_MIN: float = 6.0
+const DUNE_WIDTH_MAX: float = 12.0
+const DUNE_ROAD_CLEARANCE: float = 14.0  # keep dunes off the coin path
+const DUNE_COLOR_A := Color(0.70, 0.60, 0.45)  # sandy
+const DUNE_COLOR_B := Color(0.60, 0.50, 0.35)  # darker sandy
 
 # ============================================================================
 # SECTION 2: INTERNAL STATE
@@ -6042,6 +6082,39 @@ func spawn_landmark_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, 
 #   - FOOTPRINTS: each thing built appends a round obstacle to `obstacles`, which
 #     later spawners (crocodiles, coins) already know how to read.
 
+func _oasis_at(chunk_pos: Vector2i) -> Dictionary:
+	"""
+	Deterministic oasis placement for one desert chunk — the pattern of _artifact_at
+	/ _camp_at applied to rare water features. Pure function of chunk coords + run_seed
+	on its own independent hash stream (OASIS_SALT): consumes NO draw from the shared
+	biome RNG, so every existing cactus/dune is exactly where it was before oases existed.
+
+	@return: {} when this chunk has no oasis (the common case); otherwise { "seed": int }
+	         used by _spawn_desert_oasis for placement and geometry.
+	"""
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(Vector3i(chunk_pos.x * 73856093, chunk_pos.y * 19349663, run_seed ^ OASIS_SALT))
+
+	if rng.randf() >= OASIS_CHANCE:
+		return {}
+
+	return { "seed": rng.randi() }
+
+func _dune_at(chunk_pos: Vector2i) -> Dictionary:
+	"""
+	Deterministic sand dune placement for one desert chunk — same split-placement
+	pattern as oases, with its own independent DUNE_SALT hash stream.
+
+	@return: {} when this chunk has no dunes; otherwise { "seed": int } for dune RNG.
+	"""
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(Vector3i(chunk_pos.x * 73856093, chunk_pos.y * 19349663, run_seed ^ DUNE_SALT))
+
+	if rng.randf() >= DUNE_CHANCE:
+		return {}
+
+	return { "seed": rng.randi() }
+
 func spawn_biome_content_in_chunk(chunk_pos: Vector2i, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
 	"""
 	Build this chunk's biome-specific geometry (cacti / trees / massifs). Called
@@ -6223,6 +6296,173 @@ func _spawn_desert_content(chunk_center: Vector3, rng: RandomNumberGenerator, ob
 		# NOT climbable: a cactus is a thing you walk around, and a coin perched on
 		# a spiky 3 m pole would be unreachable anyway (see _settle_coin_y).
 		obstacles.append({ "pos": Vector3(local_x, 0, local_z), "radius": width * 1.2, "top": top_y, "climbable": false })
+
+	# Rare oases and dunes. Placements are deterministic on their own hash streams
+	# (like artifacts/camps), so they consume zero draws from the biome RNG and
+	# cacti are byte-identically placed whether oases/dunes exist or not.
+	var chunk_pos := world_to_chunk(chunk_center)
+	var oasis_data := _oasis_at(chunk_pos)
+	if not oasis_data.is_empty():
+		var oasis_rng := RandomNumberGenerator.new()
+		oasis_rng.seed = oasis_data["seed"]
+		_spawn_desert_oasis(chunk_center, chunk_pos, oasis_rng, obstacles, block_batch, block_body)
+
+	var dune_data := _dune_at(chunk_pos)
+	if not dune_data.is_empty():
+		var dune_rng := RandomNumberGenerator.new()
+		dune_rng.seed = dune_data["seed"]
+		_spawn_desert_dunes(chunk_center, chunk_pos, dune_rng, obstacles, block_batch, block_body)
+
+
+func _spawn_desert_oasis(chunk_center: Vector3, chunk_pos: Vector2i, rng: RandomNumberGenerator, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
+	"""
+	Build one desert oasis: a flat water slab, palm trees, reeds, and climbable boulders.
+	Uses the split-placement pattern: this function tries OASIS_PLACE_TRIES candidates
+	and picks the first one that passes _biome_spot_ok (not in river, far from road,
+	no overlap with existing obstacles).
+	"""
+	var half := chunk_size / 2.0 - OASIS_RADIUS - 2.0
+	for _try in OASIS_PLACE_TRIES:
+		var local_x := rng.randf_range(-half, half)
+		var local_z := rng.randf_range(-half, half)
+
+		if not _biome_spot_ok(chunk_center, local_x, local_z, OASIS_RADIUS, OASIS_ROAD_CLEARANCE, obstacles):
+			continue
+
+		# Build water slab: a flat disk (visual only, collide=false)
+		create_box(
+			Vector3(local_x, -OASIS_WATER_DEPTH * 0.5, local_z),
+			Vector3(OASIS_RADIUS * 2.0, OASIS_WATER_DEPTH, OASIS_RADIUS * 2.0),
+			0.0, rng, block_batch, block_body, 0.0, OASIS_WATER_COLOR, false
+		)
+
+		# Dark rim: a slightly wider ring to frame the water
+		var rim_radius := OASIS_RADIUS * 1.15
+		create_box(
+			Vector3(local_x, -OASIS_WATER_DEPTH * 0.5, local_z),
+			Vector3(rim_radius * 2.0, OASIS_WATER_DEPTH, rim_radius * 2.0),
+			0.0, rng, block_batch, block_body, 0.0, OASIS_WATER_RIM_COLOR, false
+		)
+
+		# Non-climbable footprint so coins don't perch on water
+		obstacles.append({ "pos": Vector3(local_x, 0, local_z), "radius": OASIS_RADIUS, "top": OASIS_WATER_DEPTH, "climbable": false })
+
+		# Palm trees around the oasis
+		var palm_count := rng.randi_range(OASIS_PALM_MIN, OASIS_PALM_MAX)
+		for _p in palm_count:
+			var palm_angle := rng.randf_range(0.0, TAU)
+			var palm_dist := rng.randf_range(OASIS_RADIUS * 0.7, OASIS_RADIUS * 1.3)
+			var palm_x := local_x + cos(palm_angle) * palm_dist
+			var palm_z := local_z + sin(palm_angle) * palm_dist
+
+			# Keep palm within chunk bounds
+			if absf(palm_x) > chunk_size * 0.5 - 2.0 or absf(palm_z) > chunk_size * 0.5 - 2.0:
+				continue
+
+			var trunk_yaw := rng.randf_range(0.0, TAU)
+			# Trunk (colliding)
+			create_box(
+				Vector3(palm_x, OASIS_PALM_TRUNK_HEIGHT * 0.5, palm_z),
+				Vector3(OASIS_PALM_TRUNK_WIDTH, OASIS_PALM_TRUNK_HEIGHT, OASIS_PALM_TRUNK_WIDTH),
+				trunk_yaw, rng, block_batch, block_body, 0.0, Color(0.40, 0.32, 0.22)
+			)
+
+			# Fronds (visual only, collide=false) — 4 layers fanning out
+			for _f in OASIS_PALM_FROND_COUNT:
+				var frond_height := OASIS_PALM_TRUNK_HEIGHT - 0.5
+				var frond_yaw := trunk_yaw + (TAU / OASIS_PALM_FROND_COUNT) * _f
+				create_box(
+					Vector3(palm_x, frond_height + 0.3, palm_z),
+					Vector3(OASIS_PALM_FROND_WIDTH, 0.6, 0.4),
+					frond_yaw, rng, block_batch, block_body, 0.0, Color(0.28, 0.48, 0.28), false
+				)
+
+			# Small trunk footprint
+			obstacles.append({ "pos": Vector3(palm_x, 0, palm_z), "radius": OASIS_PALM_TRUNK_WIDTH * 0.71, "top": OASIS_PALM_TRUNK_HEIGHT, "climbable": false })
+
+		# Climbable boulders scattered around
+		var boulder_count := rng.randi_range(OASIS_BOULDER_MIN, OASIS_BOULDER_MAX)
+		for _b in boulder_count:
+			var boulder_angle := rng.randf_range(0.0, TAU)
+			var boulder_dist := rng.randf_range(OASIS_RADIUS * 1.2, OASIS_RADIUS * 2.0)
+			var boulder_x := local_x + cos(boulder_angle) * boulder_dist
+			var boulder_z := local_z + sin(boulder_angle) * boulder_dist
+
+			# Keep within chunk
+			if absf(boulder_x) > chunk_size * 0.5 - 1.5 or absf(boulder_z) > chunk_size * 0.5 - 1.5:
+				continue
+
+			var boulder_size := rng.randf_range(OASIS_BOULDER_SIZE_MIN, OASIS_BOULDER_SIZE_MAX)
+			# Climbable rocks (collide=true) — round-ish color
+			create_box(
+				Vector3(boulder_x, boulder_size * 0.5, boulder_z),
+				Vector3(boulder_size, boulder_size * 0.8, boulder_size),
+				rng.randf_range(0.0, TAU), rng, block_batch, block_body, 0.0,
+				Color(0.55, 0.48, 0.40), true
+			)
+			obstacles.append({ "pos": Vector3(boulder_x, 0, boulder_z), "radius": boulder_size * 0.7, "top": boulder_size * 0.8, "climbable": true })
+
+		# Optional reed clusters around the edge
+		if rng.randf() < OASIS_REED_CHANCE:
+			for _r in rng.randi_range(1, 3):
+				var reed_angle := rng.randf_range(0.0, TAU)
+				var reed_x := local_x + cos(reed_angle) * OASIS_RADIUS * 0.9
+				var reed_z := local_z + sin(reed_angle) * OASIS_RADIUS * 0.9
+				# Thin visual-only reeds (collide=false)
+				create_box(
+					Vector3(reed_x, 1.0, reed_z),
+					Vector3(0.3, 2.0, 0.3),
+					rng.randf_range(0.0, TAU), rng, block_batch, block_body, 0.0,
+					Color(0.35, 0.45, 0.25), false
+				)
+
+		# Success — one oasis placed
+		return
+
+
+func _spawn_desert_dunes(chunk_center: Vector3, chunk_pos: Vector2i, rng: RandomNumberGenerator, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
+	"""
+	Build sand dunes: low, wide, climbable mounds (~1.5 m max height). Same split-placement
+	pattern as oases: DUNE_PLACE_TRIES candidates, pick the first that passes spot checks.
+	"""
+	var half := chunk_size / 2.0 - DUNE_WIDTH_MAX * 0.71
+	for _try in DUNE_PLACE_TRIES:
+		var local_x := rng.randf_range(-half, half)
+		var local_z := rng.randf_range(-half, half)
+
+		if not _biome_spot_ok(chunk_center, local_x, local_z, DUNE_WIDTH_MAX * 0.71, DUNE_ROAD_CLEARANCE, obstacles):
+			continue
+
+		# Pick dune height and width
+		var height := rng.randf_range(DUNE_HEIGHT_MIN, DUNE_HEIGHT_MAX)
+		var width := rng.randf_range(DUNE_WIDTH_MIN, DUNE_WIDTH_MAX)
+
+		# Build dune as a slightly tapered stack (wider at base, narrower at top)
+		var layer_height := height / 2.0  # two layers
+		var base_width := width
+		var top_width := width * 0.75
+		var color := DUNE_COLOR_A.lerp(DUNE_COLOR_B, rng.randf())
+
+		# Base layer (wider)
+		create_box(
+			Vector3(local_x, layer_height * 0.5, local_z),
+			Vector3(base_width, layer_height, base_width),
+			rng.randf_range(0.0, 0.3), rng, block_batch, block_body, 0.0, color
+		)
+
+		# Top layer (narrower, for taper)
+		create_box(
+			Vector3(local_x, layer_height + layer_height * 0.5, local_z),
+			Vector3(top_width, layer_height, top_width),
+			rng.randf_range(0.0, 0.3), rng, block_batch, block_body, 0.0, color
+		)
+
+		# Climbable footprint (slightly conservative to stay within chunk)
+		var footprint_radius := width * 0.5
+		obstacles.append({ "pos": Vector3(local_x, 0, local_z), "radius": footprint_radius, "top": height, "climbable": true })
+
+		# Success — one dune placed
+		return
 
 
 func _spawn_forest_content(chunk_center: Vector3, rng: RandomNumberGenerator, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
