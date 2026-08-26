@@ -3091,7 +3091,9 @@ func spawn_gate(rng: RandomNumberGenerator, half_chunk: float, chunk_center: Vec
 		)
 		# Each pillar is its own footprint, so crocodiles can still pass through
 		# the opening between them.
-		obstacles.append({ "pos": Vector3(px, 0, pz), "radius": maxf(pillar_w, depth) * 0.71, "top": ph, "climbable": true })
+		# `guarded` only for the log bridge — it is the one gate style that registers
+		# a patrol deck, so it is the one whose stone a massif must keep off.
+		obstacles.append({ "pos": Vector3(px, 0, pz), "radius": maxf(pillar_w, depth) * 0.71, "top": ph, "climbable": true, "guarded": log_bridge })
 
 	# The beam. An arch's is a shortened stub pushed back over the tall upright;
 	# every style keeps it UNTILTED, because a tilted beam has no flat top and the
@@ -3124,7 +3126,7 @@ func spawn_gate(rng: RandomNumberGenerator, half_chunk: float, chunk_center: Vec
 	# Register the beam centre as a coin perch. For a log bridge it is a genuine
 	# rest spot one hop off the ground; for the other styles it is the shipped
 	# deliberately-awkward one.
-	obstacles.append({ "pos": Vector3(beam_x, 0, beam_z), "radius": 1.0, "top": beam_top, "climbable": true })
+	obstacles.append({ "pos": Vector3(beam_x, 0, beam_z), "radius": 1.0, "top": beam_top, "climbable": true, "guarded": log_bridge })
 
 	# THE LOG BRIDGE IS THE ONE GATE WITH A WALKABLE DECK, so it is the one gate
 	# that feeds spawn_platform_crocodiles. Half-extents are the beam's own, inset
@@ -3381,7 +3383,10 @@ func spawn_wall(rng: RandomNumberGenerator, half_chunk: float, chunk_center: Vec
 				)
 
 		section_top[i] = top
-		obstacles.append({ "pos": Vector3(x, 0, z), "radius": block_size * 0.71, "top": top, "climbable": climbable })
+		# `guarded` marks stone that a patrol crocodile is going to be dropped onto,
+		# and it exists for exactly one reader: _spawn_mountain_content's avoid-list.
+		# A massif must clear it whatever its radius or height — see the note there.
+		obstacles.append({ "pos": Vector3(x, 0, z), "radius": block_size * 0.71, "top": top, "climbable": climbable, "guarded": true })
 
 	if run_len > best_len:
 		best_len = run_len
@@ -6336,9 +6341,23 @@ func _spawn_mountain_content(chunk_center: Vector3, rng: RandomNumberGenerator, 
 	# cheap to avoid: see MOUNTAIN_AVOID_RADIUS.
 	# ...and so does anything TALL enough to be climbed onto the massif from (see
 	# MOUNTAIN_AVOID_TOP) — a block tower is narrow but it is still a staircase.
+	#
+	# ...and so does anything a PATROL CROCODILE is going to be dropped onto, which
+	# is what the `guarded` key marks (spawn_wall's blocks and the log bridge's
+	# stone). This third clause closes the one hazard CLAUDE.md recorded as
+	# deliberately unfired: a wall block's footprint is only block_size * 0.71 =
+	# 1.14-1.70 m wide and a doubled section tops out at 2 * block_size = 3.2 m, so
+	# BOTH of the tests above miss it (radius < MOUNTAIN_AVOID_RADIUS 2.0, top <
+	# MOUNTAIN_AVOID_TOP 3.61) and a massif was free to grow straight over a ridge,
+	# burying the guard in rock the platform descriptor knows nothing about. It went
+	# unfired through 4 x 289 chunks — and then fired the moment the snow band's
+	# threshold retune reshuffled the field, at 1.14 m deep, caught by
+	# croc_spawn_selfcheck.gd's check 1 exactly as that note predicted it would be.
+	# The mound needs no marking: its footprint radius is base_size * 0.71 >= 5.68,
+	# so the first clause has always covered it.
 	var avoid: Array = []
 	for ob in obstacles:
-		if ob.radius >= MOUNTAIN_AVOID_RADIUS or ob.top >= MOUNTAIN_AVOID_TOP:
+		if ob.radius >= MOUNTAIN_AVOID_RADIUS or ob.top >= MOUNTAIN_AVOID_TOP or ob.get("guarded", false):
 			avoid.append(ob)
 
 	for _i in count:
