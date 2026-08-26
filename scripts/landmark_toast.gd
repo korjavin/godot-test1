@@ -83,8 +83,12 @@ const APPROACH_PAD: float = 6.0
 ## crocodile_lod_manager.gd uses for its sleep/wake radii (45 in, 50 out).
 const LEAVE_PAD: float = 14.0
 
-## Seconds the card stays fully visible before it starts fading out. Long enough
-## to read two lines without being long enough to sit over the game.
+## Seconds the card holds before it starts fading out. Long enough to read two
+## lines without being long enough to sit over the game. Note the hold counts down
+## THROUGH the fade-in rather than starting after it, so the card is on screen for
+## TOAST_DURATION + FADE_DURATION (6.5 s) in total and fully opaque for about
+## TOAST_DURATION - FADE_DURATION — near enough for a read-it-and-move-on card, and
+## a phase that started the hold only once opaque would be two states, not one.
 const TOAST_DURATION: float = 6.0
 
 ## Seconds the card takes to fade in and to fade out, via modulate.a.
@@ -204,7 +208,10 @@ func _scan() -> void:
 	One throttled proximity pass: find the nearest in-range landmark and, if it is
 	not the one this approach already belongs to, pop its card.
 	"""
-	var player := get_tree().get_first_node_in_group("player")
+	# Cast, don't assume: the marker loop below already refuses a non-Node3D in its
+	# group, and the player group deserves the same treatment — a bare Node in
+	# "player" would otherwise error on global_position rather than being ignored.
+	var player := get_tree().get_first_node_in_group("player") as Node3D
 	if player == null:
 		# No local player (a scene run standalone, or mid-teardown): re-arm and do
 		# nothing, so the next player to appear gets a fresh approach.
@@ -241,10 +248,23 @@ func _scan() -> void:
 			nearest_distance = distance
 			nearest = marker
 
-	# A new approach REPLACES whatever is on screen (new text, timer reset) rather
-	# than queueing: two landmarks close enough to overlap triggers is rare, and a
-	# queue would show the card for a place the player has already left.
-	if nearest != null and nearest != _active:
+	# ONE APPROACH AT A TIME: a card is only raised when nothing is latched. The
+	# re-arm block above is the ONLY thing that clears `_active`, so a landmark
+	# holds the approach until the player is genuinely `radius + LEAVE_PAD` away
+	# from it.
+	#
+	# WHY THIS IS NOT "replace whatever is on screen with the nearest". Trigger
+	# zones DO overlap: LANDMARK_EDGE_MARGIN (12) lets a landmark sit 13 m from a
+	# chunk edge, so two in adjacent chunks can be ~26 m apart while two 15.4 m
+	# trigger radii reach 30.8 m. Under a `nearest != _active` rule, a player
+	# wandering the equidistant line between them flips `nearest` back and forth
+	# and gets a FRESH CARD EVERY 0.25 s TICK, alternating, without ever leaving
+	# either landmark — measured against this script: z=10.5 → "Stonehenge",
+	# z=9.0 → "Taj Mahal", z=10.5 → "Stonehenge" again. The dead-band protects one
+	# marker's range test; it cannot protect a comparison BETWEEN two markers.
+	# Latching the first arrival is both the correct reading of "once per approach"
+	# and the simpler rule.
+	if _active == null and nearest != null:
 		_active = nearest
 		_show(nearest)
 
