@@ -250,6 +250,15 @@ func _check_radii(terrain_script: GDScript, builders_script: GDScript, registry:
 			chunk.free()
 			seed_index += 1
 
+		# REPORT THE MEASUREMENT, don't just pass on it. The whole point of measuring
+		# emitted corners over many seeds is the number, and a check that prints only
+		# "ok" leaves the next person adding a place with no idea whether a radius has
+		# 3 m of headroom or 3 cm — which is exactly what they need to know before
+		# nudging one. Printed rather than asserted for the reason the note below
+		# gives: a tight fit is correct and a loose one is correct.
+		print("landmark_selfcheck: %-24s declared %5.2f  measured %5.2f  headroom %5.2f"
+				% [place, declared, worst_overall, declared - worst_overall])
+
 		# DELIBERATELY NOT ASSERTED: "the radius is not much LARGER than the stone".
 		# Over-declaring is safe for every rule the radius feeds — the seam bound,
 		# the footprint and the reward ring all stay correct, the landmark merely

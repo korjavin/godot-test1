@@ -1353,7 +1353,7 @@ var run_seed: int = 0
 ## Constants are the other half: `LandmarkBuilders.LANDMARKS` is a compile-time
 ## constant lookup and is written that way at its two call sites, so the registry
 ## stays checked at parse time while only the dynamic dispatch goes through here.
-var LANDMARK_BUILDERS: GDScript = preload("res://scripts/landmark_builders.gd")
+var _landmark_builders: GDScript = preload("res://scripts/landmark_builders.gd")
 
 ## Per-run DOMAIN OFFSET for the biome noise field, in noise-space units.
 ##
@@ -4790,7 +4790,7 @@ func spawn_landmark_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, 
 	# create_box / _spawn_artifact_accent. Object.call() dispatches a GDScript
 	# static method exactly as it dispatched these when they were methods here.
 	var entry: Dictionary = LandmarkBuilders.LANDMARKS[lm.kind]
-	var footprint: Dictionary = LANDMARK_BUILDERS.call(entry.builder, self, center, rng, parent_chunk, block_batch, block_body)
+	var footprint: Dictionary = _landmark_builders.call(entry.builder, self, center, rng, parent_chunk, block_batch, block_body)
 
 	# --- The reward: a small ring of ordinary coins round the base, and
 	# DELIBERATELY NO GEM (the guaranteed gem stays the artifacts' distinction — see

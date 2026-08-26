@@ -51,7 +51,17 @@ const LM_COPPER := Color(0.42, 0.71, 0.60)       # Liberty's oxidised copper
 const LM_OCHRE := Color(0.72, 0.44, 0.24)        # Plaza Mayor walls
 const LM_ROOF := Color(0.36, 0.20, 0.15)         # Plaza Mayor slate/tile trim
 const LM_IRON := Color(0.45, 0.36, 0.28)         # Eiffel "brun tour Eiffel"
-const LM_MARBLE := Color(0.93, 0.91, 0.87)       # Taj Mahal marble
+const LM_MARBLE := Color(0.93, 0.91, 0.87)       # Taj Mahal marble, Neuschwanstein limestone
+## Wave 2. Only TWO new entries for ten new places, on purpose: a landmark is
+## recognised by its silhouette, and every colour added is one more thing for a
+## MultiMesh of grey boxes to fail to be distinct from. Where an existing entry is
+## honestly the right colour it is reused — the Sphinx is Giza's own limestone,
+## the Colosseum and the Great Wall are weathered sarsen grey, Cologne's soot-black
+## Gothic stone is the Moai's basalt, and Neuschwanstein's white walls are the
+## Taj's marble (its BLUE ROOFS are what tell the two apart at 30 m, which is
+## exactly why the slate blue is one of the two that earned its place).
+const LM_VERMILION := Color(0.78, 0.20, 0.14)    # Itsukushima torii lacquer
+const LM_SLATE_BLUE := Color(0.30, 0.34, 0.45)   # Neuschwanstein's blue-grey spire roofs
 
 ## THE REGISTRY. Pure data, so it can be a `const` — and it is const precisely to
 ## make "add a place" a data edit rather than a code edit.
@@ -126,6 +136,73 @@ const LANDMARKS: Array = [
 		"builder": "_landmark_taj",
 		"name": "Taj Mahal",
 		"fact": "A white marble mausoleum in Agra, India, built by Shah Jahan for his wife Mumtaz Mahal in 1653.",
+		"radius": 8.6,
+	},
+	# --- WAVE 2 (appended, never inserted — see the ORDER note above). Ten more
+	# places chosen for one property only: whether a person names them from the
+	# SILHOUETTE alone. A ring of arches, a clock tower, a stack that leans, a lion
+	# with a human head, a figure with its arms out, a two-beam gate, a wall with a
+	# watchtower, a colonnade under a chariot, a castle of blue spires, twin
+	# openwork spires. Three are German because the game's players are, and three
+	# is the cap: the rest of that pool is a wave of its own.
+	{
+		"builder": "_landmark_colosseum",
+		"name": "Colosseum",
+		"fact": "A Roman amphitheatre completed in AD 80 that seated over 50,000 spectators in the heart of Rome, Italy.",
+		"radius": 8.6,
+	},
+	{
+		"builder": "_landmark_big_ben",
+		"name": "Big Ben",
+		"fact": "The 96 m clock tower of the Palace of Westminster in London, England — Big Ben is properly the bell inside it.",
+		"radius": 4.4,
+	},
+	{
+		"builder": "_landmark_pisa",
+		"name": "Leaning Tower of Pisa",
+		"fact": "A 12th-century bell tower in Pisa, Italy that began tilting during construction because of the soft ground beneath it.",
+		"radius": 4.4,
+	},
+	{
+		"builder": "_landmark_sphinx",
+		"name": "Great Sphinx of Giza",
+		"fact": "A 73 m limestone lion with a human head, carved from the bedrock at Giza, Egypt around 2500 BC.",
+		"radius": 7.6,
+	},
+	{
+		"builder": "_landmark_redeemer",
+		"name": "Christ the Redeemer",
+		"fact": "A 30 m soapstone statue that has stood on Corcovado mountain above Rio de Janeiro, Brazil since 1931.",
+		"radius": 4.8,
+	},
+	{
+		"builder": "_landmark_torii",
+		"name": "Itsukushima Torii",
+		"fact": "The vermilion gate of Itsukushima Shrine in Japan, which stands in the sea and appears to float at high tide.",
+		"radius": 5.6,
+	},
+	{
+		"builder": "_landmark_great_wall",
+		"name": "Great Wall of China",
+		"fact": "A chain of walls and watchtowers across northern China, over 20,000 km long and built over some 2,000 years.",
+		"radius": 9.4,
+	},
+	{
+		"builder": "_landmark_brandenburg",
+		"name": "Brandenburg Gate",
+		"fact": "A sandstone gate in Berlin, Germany, finished in 1791 and crowned by the Quadriga — a chariot drawn by four horses.",
+		"radius": 8.4,
+	},
+	{
+		"builder": "_landmark_neuschwanstein",
+		"name": "Neuschwanstein Castle",
+		"fact": "A hillside castle in Bavaria, Germany, begun in 1869 for King Ludwig II and never finished in his lifetime.",
+		"radius": 8.0,
+	},
+	{
+		"builder": "_landmark_cologne",
+		"name": "Cologne Cathedral",
+		"fact": "A Gothic cathedral in Cologne, Germany — begun in 1248, halted for 300 years and completed only in 1880.",
 		"radius": 8.6,
 	},
 ]
@@ -617,3 +694,584 @@ static func _landmark_taj(terrain: Node3D, center: Vector3, rng: RandomNumberGen
 		terrain.create_box(spot + Vector3(0.0, PLINTH.y + 8.35, 0.0), Vector3(1.1, 0.7, 1.1), yaw, rng, block_batch, block_body, 0.0, marble)
 
 	return { "radius": 8.6, "top": y + 1.2 }
+
+# ----------------------------------------------------------------------------
+# WAVE 2 — TEN MORE PLACES
+# ----------------------------------------------------------------------------
+##
+## Same four rules as the eight above (batched stone through create_box, collide =
+## false for trim inside another box's volume, a declared radius that BOUNDS every
+## emitted corner, at most ONE emissive accent and only where a real lamp belongs).
+## Two of the ten spend their accent — Big Ben's Ayrton Light, which is a real lamp
+## lit while Parliament sits, and the Great Wall's beacon tower, whose entire
+## purpose was to be set on fire. The other eight spend none.
+##
+## RADIUS ARITHMETIC, once, because all ten comments use it: the self-check
+## transforms the unit cube's corners by each box's real basis, which is
+## Basis(UP, yaw) * Basis(RIGHT, tilt) scaled by the dimensions. Yaw only rotates
+## within the XZ plane, so the horizontal half-extent of one box is
+##     sqrt( (w/2)^2 + (h/2 * |sin tilt| + d/2 * |cos tilt|)^2 )
+## which at tilt = 0 is the familiar half-diagonal 0.5 * sqrt(w^2 + d^2). Each
+## comment gives the worst box as "centre offset + that", which is an upper bound
+## on what the check measures (it assumes the offset and the corner point the same
+## way). Over-declaring is SAFE — see the note at the end of the self-check's
+## check 1 — and two entries here deliberately do it, for a reason that is about
+## the TOAST rather than the stone: the card's trigger distance is the declared
+## radius + APPROACH_PAD, so a tall thin tower declaring its true 3.1 m footprint
+## would only announce itself once the player was already standing in it.
+
+static func _landmark_colosseum(terrain: Node3D, center: Vector3, rng: RandomNumberGenerator, _parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	Kind 8 — COLOSSEUM: an elliptical ring of arcade piers carrying a lintel band,
+	a second tier standing on part of it, and a stub of a third — the collapsed
+	half is the recognition cue every bit as much as the arches are, because a
+	complete ring reads as a fort.
+
+	RADIUS ARITHMETIC (declared 8.6). The widest box is a first-tier LINTEL, which
+	is the one that bridges two piers and is therefore much longer than a pier:
+	half-extent 0.5*sqrt(2.7^2 + 1.3^2) = 1.50 at the ellipse's semi-major 6.9, so
+	6.9 + 1.50 = 8.40 <= 8.6. A pier is 6.9 + 0.99 = 7.89, and the arena floor is
+	one 9.0 x 7.2 slab at the centre, i.e. 0.5*sqrt(9.0^2 + 7.2^2) = 5.76.
+	RING_A is 6.9 rather than the 7.6 the footprint would allow precisely because
+	of that lintel term — the Stonehenge lesson, one landmark on.
+	NO ACCENT.
+	"""
+	const PIERS := 16
+	const RING_A := 6.9          # ellipse semi-major
+	const RING_B := 5.5          # semi-minor
+	const PIER := Vector3(1.5, 3.0, 1.3)
+	const LINTEL := Vector3(2.7, 0.7, 1.3)
+	const PIER2 := Vector3(1.3, 2.6, 1.1)
+	const LINTEL2 := Vector3(2.5, 0.6, 1.1)
+	var yaw := rng.randf_range(0.0, TAU)
+	var rot := Basis(Vector3.UP, yaw)
+	var stone := _lm_shade(LM_STONE_GREY, rng, 0.04)
+
+	# The arena floor, a shade darker so the ring reads as enclosing something.
+	terrain.create_box(center + Vector3(0.0, 0.17, 0.0), Vector3(9.0, 0.35, 7.2), yaw,
+			rng, block_batch, block_body, 0.0, _lm_shade(LM_SANDSTONE, rng).darkened(0.25))
+
+	# How much of the upper ring survives — 9 to 12 of 16 bays, which is what makes
+	# one side a broken cliff and the other a wall.
+	var standing := rng.randi_range(9, 12)
+	var tier1_top := PIER.y + LINTEL.y
+	var tier2_top := tier1_top + PIER2.y + LINTEL2.y
+
+	for i in PIERS:
+		var a := TAU * float(i) / float(PIERS)
+		# Positions ride the ellipse; orientation uses the circle's tangent rule
+		# (yaw + PI/2 - a, the same face-the-centre trick Stonehenge uses). A true
+		# elliptical normal would differ by a few degrees, which is invisible in
+		# boxes and would cost a second trig pair per pier.
+		var spot: Vector3 = center + rot * Vector3(cos(a) * RING_A, 0.0, sin(a) * RING_B)
+		var face := yaw + PI / 2.0 - a
+		terrain.create_box(spot + Vector3(0.0, PIER.y / 2.0, 0.0), PIER, face, rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03))
+		# The lintel bridging this bay to the next — trim, sitting on the piers'
+		# own collision volumes, so collide = false keeps the arcade walkable.
+		terrain.create_box(spot + Vector3(0.0, PIER.y + LINTEL.y / 2.0, 0.0), LINTEL, face,
+				rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03), false)
+		if i >= standing:
+			continue
+		terrain.create_box(spot + Vector3(0.0, tier1_top + PIER2.y / 2.0, 0.0), PIER2, face, rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03))
+		terrain.create_box(spot + Vector3(0.0, tier1_top + PIER2.y + LINTEL2.y / 2.0, 0.0), LINTEL2, face,
+				rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03), false)
+		# The attic wall, on a shorter arc still, so the ruin steps down twice.
+		if i < standing - 4:
+			terrain.create_box(spot + Vector3(0.0, tier2_top + 1.0, 0.0), Vector3(1.2, 2.0, 0.9), face,
+					rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03))
+
+	return { "radius": 8.6, "top": tier2_top + 2.0 }
+
+static func _landmark_big_ben(terrain: Node3D, center: Vector3, rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	Kind 9 — BIG BEN (properly the Elizabeth Tower; Big Ben is the bell, which the
+	fact says so the card teaches something): a square shaft, four pale clock faces
+	under a parapet, a steep spire, and ONE emissive lamp at the very top.
+
+	RADIUS ARITHMETIC (declared 4.4, honestly 3.11). The widest box is the base
+	plinth, 0.5*sqrt(2 * 4.4^2) = 3.11 at the centre; the parapet is 2.76 and a
+	clock face reaches 1.78 + 1.00 = 2.78. The declared 4.4 is DELIBERATELY LOOSE
+	and the reason is the toast, not the stone: the card fires at radius +
+	APPROACH_PAD (6), so a true 3.1 would only announce an 18 m tower from 9 m
+	away, i.e. from inside its own shadow. Over-declaring costs a little reserved
+	ground and nothing else (see the self-check's note).
+	THE one accent: the Ayrton Light, lit above the clock while Parliament sits.
+	"""
+	const PLINTH := Vector3(4.4, 1.0, 4.4)
+	const SHAFT := Vector3(3.0, 4.2, 3.0)
+	const CLOCK_STAGE := Vector3(3.4, 3.0, 3.4)
+	const PARAPET := Vector3(3.9, 0.55, 3.9)
+	var yaw := rng.randf_range(0.0, TAU)
+	var stone := _lm_shade(LM_SANDSTONE, rng, 0.03)
+
+	terrain.create_box(center + Vector3(0.0, PLINTH.y / 2.0, 0.0), PLINTH, yaw, rng, block_batch, block_body, 0.0, _lm_shade(LM_GRANITE, rng))
+	var y := PLINTH.y
+	for i in 2:
+		terrain.create_box(center + Vector3(0.0, y + SHAFT.y / 2.0, 0.0), SHAFT, yaw, rng, block_batch, block_body, 0.0, stone)
+		y += SHAFT.y
+
+	# The clock stage, and the four faces on it. The faces are trim on the stage's
+	# own collision volume, so collide = false — and they are the brightest albedo
+	# on the tower, because at 30 m the pale discs are what say "clock".
+	terrain.create_box(center + Vector3(0.0, y + CLOCK_STAGE.y / 2.0, 0.0), CLOCK_STAGE, yaw, rng, block_batch, block_body, 0.0, stone)
+	var dial := _lm_shade(LM_MARBLE, rng, 0.02)
+	for side in 4:
+		var face_yaw := yaw + PI / 2.0 * float(side)
+		var out: Vector3 = Basis(Vector3.UP, face_yaw) * Vector3(0.0, 0.0, CLOCK_STAGE.z / 2.0 + 0.08)
+		terrain.create_box(center + Vector3(0.0, y + CLOCK_STAGE.y / 2.0, 0.0) + out, Vector3(2.0, 2.0, 0.16),
+				face_yaw, rng, block_batch, block_body, 0.0, dial, false)
+	y += CLOCK_STAGE.y
+
+	terrain.create_box(center + Vector3(0.0, y + PARAPET.y / 2.0, 0.0), PARAPET, yaw, rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03))
+	y += PARAPET.y
+
+	# The spire: four boxes narrowing to a point.
+	for i in 4:
+		var w: float = 3.0 - float(i) * 0.68
+		var h := 1.3
+		terrain.create_box(center + Vector3(0.0, y + h / 2.0, 0.0), Vector3(w, h, w), yaw, rng, block_batch, block_body, 0.0, _lm_shade(LM_ROOF, rng, 0.04))
+		y += h
+	terrain.create_box(center + Vector3(0.0, y + 0.35, 0.0), Vector3(0.25, 0.7, 0.25), yaw, rng, block_batch, block_body, 0.0, stone)
+	y += 0.7
+	terrain._spawn_artifact_accent(parent_chunk, center + Vector3(0.0, y + 0.3, 0.0), Vector3(0.4, 0.5, 0.4), yaw, 0.0, terrain._get_camp_ember_material())
+
+	return { "radius": 4.4, "top": y + 0.6 }
+
+static func _landmark_pisa(terrain: Node3D, center: Vector3, rng: RandomNumberGenerator, _parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	Kind 10 — LEANING TOWER OF PISA: eight stacked drums with overhanging gallery
+	lips, the whole stack tilted off vertical along one bearing.
+
+	THE LEAN IS THE WHOLE LANDMARK, so it is built as a real tilted AXIS rather
+	than as a stack of boxes each given a tilt: every drum's centre is placed at
+	arc length `s` along a line leaning LEAN (0.10 rad, about 5.7 deg — the real
+	tower is 4, exaggerated so it reads at 30 m) toward a rolled bearing, i.e.
+	centre + lean_dir * (s * sin LEAN) + UP * (s * cos LEAN). A stack of tilted
+	boxes at vertical offsets would shear apart at the joints.
+
+	SIGN GOTCHA, the third instance of the one the Eiffel legs and Liberty's crown
+	both record: create_box composes Basis(UP, yaw) * Basis(RIGHT, tilt), and
+	Basis(RIGHT, t) tips local +Y toward local +Z, while yaw = PI/2 - a maps local
+	+Z onto (cos a, sin a). So a POSITIVE tilt leans the drum's top toward bearing
+	a — which is the direction the centres are being offset in, so the two agree
+	and the drums stay stacked. Negate it and the stack scissors open.
+
+	RADIUS ARITHMETIC (declared 4.4). The widest thing is a gallery LIP near the
+	top of the stack, where the lean offset has grown: at s = 9.0 the offset is
+	9.0 * sin(0.10) = 0.90 and a 4.5 x 0.25 lip tilted 0.10 has half-extent
+	0.5*sqrt(4.5^2 + (0.25*0.0998 + 4.5*0.995)^2) = 3.18, so 4.08 <= 4.4. The base
+	drum is 0.17 + 3.16 = 3.33; the belfry lip is 1.05 + 2.62 = 3.67.
+	NO ACCENT.
+	"""
+	const LEAN := 0.10
+	const BASE_DRUM := Vector3(4.4, 1.7, 4.4)
+	const GALLERY := Vector3(4.0, 1.45, 4.0)
+	const BELFRY := Vector3(3.2, 1.6, 3.2)
+	const GALLERIES := 5
+	var lean_a := rng.randf_range(0.0, TAU)
+	var drum_yaw := PI / 2.0 - lean_a
+	var lean_dir := Vector3(cos(lean_a), 0.0, sin(lean_a))
+	var marble := _lm_shade(LM_MARBLE, rng, 0.03)
+
+	# One helper closure would be tidier, but GDScript lambdas cannot be static-
+	# friendly here; the two lines are cheaper than the indirection.
+	var s := 0.0
+	var tiers: Array = [BASE_DRUM]
+	for i in GALLERIES:
+		tiers.append(GALLERY)
+	tiers.append(BELFRY)
+
+	for tier_variant: Variant in tiers:
+		var dims: Vector3 = tier_variant
+		var mid := s + dims.y / 2.0
+		var drum_pos := center + lean_dir * (mid * sin(LEAN)) + Vector3(0.0, mid * cos(LEAN), 0.0)
+		terrain.create_box(drum_pos, dims, drum_yaw, rng, block_batch, block_body, LEAN, _lm_shade(marble, rng, 0.02))
+		# The gallery lip capping this drum — pure overhang, sitting on the drum's
+		# own collision volume, so collide = false. It is what makes the stack read
+		# as a colonnaded tower rather than as a pile of blocks.
+		var lip_s := s + dims.y
+		var lip_pos := center + lean_dir * (lip_s * sin(LEAN)) + Vector3(0.0, lip_s * cos(LEAN), 0.0)
+		terrain.create_box(lip_pos, Vector3(dims.x + 0.5, 0.25, dims.z + 0.5), drum_yaw,
+				rng, block_batch, block_body, LEAN, _lm_shade(marble, rng, 0.02).darkened(0.12), false)
+		s += dims.y
+
+	return { "radius": 4.4, "top": s * cos(LEAN) }
+
+static func _landmark_sphinx(terrain: Node3D, center: Vector3, rng: RandomNumberGenerator, _parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	Kind 11 — GREAT SPHINX OF GIZA: a long low recumbent body with two forepaws
+	stretched out in front, a raised chest, and a small head under the striped
+	nemes headdress. The proportion — a body five times the height of the head,
+	with paws out front — is the whole recognition cue.
+
+	It reuses LM_SANDSTONE deliberately: this IS Giza's limestone, and the two
+	never appear in the same chunk.
+
+	RADIUS ARITHMETIC (declared 7.6). The widest reach is a FOREPAW: centre at
+	sqrt(4.9^2 + 1.05^2) = 5.01 with half-diagonal 0.5*sqrt(4.2^2 + 1.0^2) = 2.16,
+	so 7.17 <= 7.6. The body slab is 0.8 + 0.5*sqrt(9.4^2 + 3.4^2) = 0.8 + 5.00 =
+	5.80, and the headdress is 1.6 + 1.91 = 3.51.
+	NO ACCENT: the Sphinx has no light and never had one.
+	"""
+	var yaw := rng.randf_range(0.0, TAU)
+	var rot := Basis(Vector3.UP, yaw)
+	var stone := _lm_shade(LM_SANDSTONE, rng, 0.04)
+
+	# The body, lying along local +X with its front end toward +X.
+	const BODY := Vector3(9.4, 2.4, 3.4)
+	terrain.create_box(center + rot * Vector3(-0.8, BODY.y / 2.0, 0.0), BODY, yaw, rng, block_batch, block_body, 0.0, stone)
+	# The rear haunch, a little higher than the back.
+	terrain.create_box(center + rot * Vector3(-3.6, BODY.y + 0.55, 0.0), Vector3(3.0, 1.1, 3.4), yaw, rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03))
+
+	# The two forepaws. They collide — walking into a paw is the scale cue.
+	for side in [-1.0, 1.0]:
+		terrain.create_box(center + rot * Vector3(4.9, 0.45, side * 1.05), Vector3(4.2, 0.9, 1.0), yaw, rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03))
+
+	# Chest and head.
+	const CHEST := Vector3(2.6, 3.0, 3.0)
+	var chest_y := BODY.y + CHEST.y / 2.0
+	terrain.create_box(center + rot * Vector3(1.5, chest_y, 0.0), CHEST, yaw, rng, block_batch, block_body, 0.0, stone)
+	var head_base := BODY.y + CHEST.y
+	terrain.create_box(center + rot * Vector3(1.5, head_base + 0.9, 0.0), Vector3(2.0, 1.8, 2.0), yaw, rng, block_batch, block_body, 0.0, stone)
+	# The nemes headdress — the flared cloth that makes the head read as a pharaoh
+	# rather than as a lion's. Trim on the head's own volume.
+	terrain.create_box(center + rot * Vector3(1.5, head_base + 1.5, 0.0), Vector3(2.8, 1.4, 2.6), yaw,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03).darkened(0.12), false)
+	# The famous missing nose, as a shadowed recess.
+	terrain.create_box(center + rot * Vector3(1.5 + 1.0, head_base + 0.85, 0.0), Vector3(0.35, 0.6, 0.5), yaw,
+			rng, block_batch, block_body, 0.0, LM_SANDSTONE.darkened(0.6), false)
+
+	return { "radius": 7.6, "top": head_base + 2.2 }
+
+static func _landmark_redeemer(terrain: Node3D, center: Vector3, rng: RandomNumberGenerator, _parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	Kind 12 — CHRIST THE REDEEMER: a two-step pedestal, a robe tapering upward, a
+	small head, and ONE horizontal box for the whole arm span. That single box is
+	the landmark: a figure whose arms are wider than it is tall is unmistakable in
+	silhouette and unrecoverable if the arms are built as two stepped limbs.
+
+	RADIUS ARITHMETIC (declared 4.8). The arm span box is 8.4 x 0.85 at the centre,
+	half-extent 0.5*sqrt(8.4^2 + 0.85^2) = 4.22; the drape blocks hanging at its
+	ends reach 3.95 + 0.55 = 4.50; the pedestal is 0.5*sqrt(2 * 4.2^2) = 2.97.
+	NO ACCENT: the floodlights are on the mountain, not on the statue.
+	"""
+	var yaw := rng.randf_range(0.0, TAU)
+	var rot := Basis(Vector3.UP, yaw)
+	var soapstone := _lm_shade(LM_STONE_GREY, rng, 0.03)
+
+	var y := 0.0
+	for dims in [Vector3(4.2, 1.2, 4.2), Vector3(3.0, 1.6, 3.0)]:
+		terrain.create_box(center + Vector3(0.0, y + dims.y / 2.0, 0.0), dims, yaw, rng, block_batch, block_body, 0.0, _lm_shade(LM_GRANITE, rng))
+		y += dims.y
+
+	# The robe: three boxes narrowing as they rise, the house's cone.
+	for i in 3:
+		var w: float = 2.0 - float(i) * 0.2
+		var h := 2.2
+		terrain.create_box(center + Vector3(0.0, y + h / 2.0, 0.0), Vector3(w, h, w * 0.8), yaw, rng, block_batch, block_body, 0.0, soapstone)
+		y += h
+
+	# THE ARMS — one box, and the reason this shape works at all.
+	var shoulder_y := y - 1.1
+	terrain.create_box(center + Vector3(0.0, shoulder_y, 0.0), Vector3(8.4, 0.75, 0.85), yaw, rng, block_batch, block_body, 0.0, soapstone)
+	# The robe hanging off each hand, which is what stops the span reading as a
+	# plank. Trim beside the arm rather than inside it, but small and high, so
+	# collide = false keeps the arms a clean single collision box.
+	for side in [-1.0, 1.0]:
+		terrain.create_box(center + rot * Vector3(side * 3.95, shoulder_y - 0.75, 0.0), Vector3(0.75, 1.1, 0.8), yaw,
+				rng, block_batch, block_body, 0.0, soapstone, false)
+
+	# Head and shoulders above the arms.
+	terrain.create_box(center + Vector3(0.0, y + 0.5, 0.0), Vector3(0.9, 1.0, 0.9), yaw, rng, block_batch, block_body, 0.0, soapstone)
+
+	return { "radius": 4.8, "top": y + 1.0 }
+
+static func _landmark_torii(terrain: Node3D, center: Vector3, rng: RandomNumberGenerator, _parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	Kind 13 — ITSUKUSHIMA TORII: two vermilion pillars on four splayed feet under
+	TWO crossbeams — the upper one (kasagi) sweeping upward at its ends, the lower
+	one (nuki) running straight through the pillars and out the far side. Two beams
+	rather than one is what separates a torii from a goalpost.
+
+	THE UPWARD SWEEP IS BUILT AS STEPS, not as a rotation. create_box offers yaw
+	and a tilt about the box's local X; the kasagi's long axis IS local X, so no
+	tilt available here can lift its ends. Five segments at rising heights give the
+	curve in the house's own vocabulary, which is what every other curve in this
+	file does too (the Golden Gate's cable, the Taj's dome).
+
+	RADIUS ARITHMETIC (declared 5.6). The widest are the kasagi's end caps, at
+	x = 4.5 with half-diagonal 0.5*sqrt(1.2^2 + 1.0^2) = 0.78, so 5.28 <= 5.6. The
+	outer kasagi segments are 3.6 + 1.14 = 4.74 and the nuki is 0.5*sqrt(7.6^2 +
+	0.9^2) = 3.83.
+	NO ACCENT.
+	"""
+	const PILLAR := Vector3(0.95, 6.0, 0.95)
+	const PILLAR_X := 2.8
+	var yaw := rng.randf_range(0.0, TAU)
+	var rot := Basis(Vector3.UP, yaw)
+	var lacquer := _lm_shade(LM_VERMILION, rng, 0.04)
+
+	for side in [-1.0, 1.0]:
+		terrain.create_box(center + rot * Vector3(side * PILLAR_X, PILLAR.y / 2.0, 0.0), PILLAR, yaw, rng, block_batch, block_body, 0.0, lacquer)
+		# The four splayed support legs that make this the ITSUKUSHIMA torii rather
+		# than a plain one — the shrine's gate stands in the sea on exactly these.
+		for z_side in [-1.0, 1.0]:
+			terrain.create_box(center + rot * Vector3(side * (PILLAR_X + 0.15), 1.9, z_side * 1.5), Vector3(0.5, 3.8, 0.5),
+					yaw, rng, block_batch, block_body, 0.0, _lm_shade(lacquer, rng, 0.03))
+
+	# The nuki: straight, and deliberately longer than the pillar spacing so it
+	# protrudes on both sides. Trim (it threads the pillars' own volumes).
+	terrain.create_box(center + Vector3(0.0, 4.3, 0.0), Vector3(7.6, 0.6, 0.9), yaw, rng, block_batch, block_body, 0.0, lacquer, false)
+	# The gakuzuka, the short strut standing on the nuki.
+	terrain.create_box(center + Vector3(0.0, 5.35, 0.0), Vector3(0.5, 1.5, 0.5), yaw, rng, block_batch, block_body, 0.0, lacquer, false)
+
+	# The shimaki (the flat second beam) and the kasagi above it, both stepped
+	# upward toward the ends. All trim: a beam 6 m up is not something to stand on.
+	var dark := _lm_shade(LM_VERMILION, rng, 0.03).darkened(0.2)
+	terrain.create_box(center + Vector3(0.0, 6.1, 0.0), Vector3(7.4, 0.5, 1.0), yaw, rng, block_batch, block_body, 0.0, dark, false)
+	const KASAGI_X: Array = [-3.6, -1.8, 0.0, 1.8, 3.6]
+	const KASAGI_Y: Array = [6.78, 6.64, 6.58, 6.64, 6.78]
+	for i in KASAGI_X.size():
+		terrain.create_box(center + rot * Vector3(KASAGI_X[i], KASAGI_Y[i], 0.0), Vector3(2.0, 0.55, 1.1), yaw,
+				rng, block_batch, block_body, 0.0, lacquer, false)
+	for side in [-1.0, 1.0]:
+		terrain.create_box(center + rot * Vector3(side * 4.5, 6.95, 0.0), Vector3(1.2, 0.5, 1.0), yaw,
+				rng, block_batch, block_body, 0.0, lacquer, false)
+
+	return { "radius": 5.6, "top": 7.2 }
+
+static func _landmark_great_wall(terrain: Node3D, center: Vector3, rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	Kind 14 — GREAT WALL OF CHINA: a battlemented wall running clean across the
+	chunk with a square watchtower astride it, the wall's height stepping up and
+	down so it reads as following a ridge rather than as a fence.
+
+	FIVE SEGMENTS, NOT ONE WALL, and it is the Plaza Mayor's reason exactly: a
+	single 17 m box has a half-diagonal of 8.6 which, added to nothing at all,
+	already crowds the bound, and there is then no room for the watchtower. Five
+	3.5 m bays put the outermost centre at 6.8 with a half-diagonal of 2.12.
+
+	RADIUS ARITHMETIC (declared 9.4, honestly 8.92). The end bay is 6.8 + 2.12 =
+	8.92; a merlon on the parapet reaches 8.0 + 0.47 = 8.47; the tower roof is
+	0.5*sqrt(4.9^2 + 4.1^2) = 3.19. Declared loose for the toast's sake, like Big
+	Ben — this landmark is 17 m long and a card that fired at 15 m would go off
+	while the player was already walking along the parapet.
+	THE one accent: the beacon fire on the watchtower. Signal fires are what these
+	towers were FOR — the wall was a communication line before it was a barrier.
+	"""
+	const BAYS := 5
+	const BAY_STEP := 3.4
+	const BAY := Vector3(3.5, 0.0, 2.4)   # y filled in per bay
+	var yaw := rng.randf_range(0.0, TAU)
+	var rot := Basis(Vector3.UP, yaw)
+	var stone := _lm_shade(LM_STONE_GREY, rng, 0.04)
+
+	var tallest := 0.0
+	for i in BAYS:
+		var along := (float(i) - float(BAYS - 1) / 2.0) * BAY_STEP
+		var h := rng.randf_range(2.6, 3.6)
+		tallest = maxf(tallest, h)
+		terrain.create_box(center + rot * Vector3(along, h / 2.0, 0.0), Vector3(BAY.x, h, BAY.z), yaw,
+				rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03))
+		# The battlements: alternating merlons along the outer edge of this bay.
+		# Trim on the wall's own volume — a 0.65 m block on a parapet is not a step.
+		for m in 2:
+			var mx := along + (float(m) - 0.5) * 1.7
+			terrain.create_box(center + rot * Vector3(mx, h + 0.32, -BAY.z / 2.0 + 0.28), Vector3(0.75, 0.65, 0.55), yaw,
+					rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03), false)
+
+	# The watchtower, astride the middle bay.
+	var tower_h: float = tallest + 2.4
+	terrain.create_box(center + Vector3(0.0, tower_h / 2.0, 0.0), Vector3(4.2, tower_h, 3.4), yaw, rng, block_batch, block_body, 0.0, stone)
+	terrain.create_box(center + Vector3(0.0, tower_h + 0.25, 0.0), Vector3(4.9, 0.5, 4.1), yaw,
+			rng, block_batch, block_body, 0.0, _lm_shade(LM_ROOF, rng, 0.04), false)
+	# Two dark window slots, so the tower reads as occupied.
+	for side in [-1.0, 1.0]:
+		terrain.create_box(center + rot * Vector3(side * 1.1, tower_h - 1.0, 1.68), Vector3(0.6, 1.0, 0.3), yaw,
+				rng, block_batch, block_body, 0.0, LM_STONE_GREY.darkened(0.7), false)
+	terrain._spawn_artifact_accent(parent_chunk, center + Vector3(0.0, tower_h + 0.9, 0.0), Vector3(0.7, 0.7, 0.7), yaw, 0.0, terrain._get_camp_ember_material())
+
+	return { "radius": 9.4, "top": tower_h + 0.5 }
+
+static func _landmark_brandenburg(terrain: Node3D, center: Vector3, rng: RandomNumberGenerator, _parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	Kind 15 — BRANDENBURG GATE (Brandenburger Tor): twelve Doric columns in two
+	rows under a three-bay entablature, flanked by the two pavilion wings, with the
+	copper Quadriga — a chariot and four horses — standing on the attic.
+
+	The gate you can WALK THROUGH is the point: the columns collide and the bays
+	between them do not, so the five passages are real.
+
+	RADIUS ARITHMETIC (declared 8.4). The widest reach is a flanking WING: centre
+	at 6.0 with half-diagonal 0.5*sqrt(1.8^2 + 3.8^2) = 2.10, so 8.10 <= 8.4. The
+	plinth slab is 0.5*sqrt(12.6^2 + 4.8^2) = 6.74 at the centre, an architrave bay
+	is 4.4 + 3.04 = 7.44, and a corner column is 5.23 + 0.64 = 5.87.
+	NO ACCENT.
+	"""
+	const COL := Vector3(0.95, 6.0, 0.95)
+	const COL_X: Array = [-5.0, -3.0, -1.0, 1.0, 3.0, 5.0]
+	const COL_Z := 1.55
+	var yaw := rng.randf_range(0.0, TAU)
+	var rot := Basis(Vector3.UP, yaw)
+	var stone := _lm_shade(LM_SANDSTONE, rng, 0.03)
+
+	terrain.create_box(center + Vector3(0.0, 0.3, 0.0), Vector3(12.6, 0.6, 4.8), yaw, rng, block_batch, block_body, 0.0, _lm_shade(LM_GRANITE, rng))
+	var col_base := 0.6
+
+	for cx_variant: Variant in COL_X:
+		var cx: float = cx_variant
+		for z_side in [-1.0, 1.0]:
+			terrain.create_box(center + rot * Vector3(cx, col_base + COL.y / 2.0, z_side * COL_Z), COL, yaw, rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02))
+
+	# The entablature, in three bays for the Plaza Mayor's radius reason.
+	var arch_y := col_base + COL.y
+	for bx in [-4.4, 0.0, 4.4]:
+		terrain.create_box(center + rot * Vector3(bx, arch_y + 0.5, 0.0), Vector3(4.4, 1.0, 4.2), yaw, rng, block_batch, block_body, 0.0, stone)
+	# The attic block the Quadriga stands on.
+	var attic_y := arch_y + 1.0
+	terrain.create_box(center + Vector3(0.0, attic_y + 0.8, 0.0), Vector3(7.2, 1.6, 3.2), yaw, rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02))
+
+	# The flanking pavilion wings.
+	for side in [-1.0, 1.0]:
+		terrain.create_box(center + rot * Vector3(side * 6.0, 2.2, 0.0), Vector3(1.8, 4.4, 3.8), yaw, rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02))
+
+	# THE QUADRIGA — chariot plus four horses, in oxidised copper so it reads
+	# against the sandstone. All trim: it is 11 m up and nothing may stand on it.
+	var q_y := attic_y + 1.6
+	var copper := _lm_shade(LM_COPPER, rng, 0.03)
+	terrain.create_box(center + rot * Vector3(-1.2, q_y + 0.55, 0.0), Vector3(1.4, 1.1, 1.3), yaw, rng, block_batch, block_body, 0.0, copper, false)
+	for h in 4:
+		var hx: float = 0.2 + float(h) * 0.85
+		terrain.create_box(center + rot * Vector3(hx, q_y + 0.6, (float(h) - 1.5) * 0.55), Vector3(1.6, 1.2, 0.55), yaw,
+				rng, block_batch, block_body, 0.0, copper, false)
+		terrain.create_box(center + rot * Vector3(hx + 0.85, q_y + 1.15, (float(h) - 1.5) * 0.55), Vector3(0.5, 0.5, 0.4), yaw,
+				rng, block_batch, block_body, 0.0, copper, false)
+
+	return { "radius": 8.4, "top": q_y + 1.4 }
+
+static func _landmark_neuschwanstein(terrain: Node3D, center: Vector3, rng: RandomNumberGenerator, _parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	Kind 16 — NEUSCHWANSTEIN CASTLE: a white castle on a grey crag — a tall slender
+	keep, a long palas beside it, a lower gatehouse, three corner turrets, and a
+	blue-grey conical roof on every one of them. The BLUE ROOFS are the recognition
+	cue and the reason LM_SLATE_BLUE is one of the two colours wave 2 added: the
+	walls reuse the Taj's marble, so without them a distant white castle is a
+	distant white mausoleum.
+
+	RADIUS ARITHMETIC (declared 8.0). The widest reach is the GATEHOUSE, centre at
+	sqrt(4.8^2 + 0.8^2) = 4.87 with half-diagonal 0.5*sqrt(3.2^2 + 3.4^2) = 2.33,
+	so 7.20 <= 8.0. The crag slab is 0.5*sqrt(7.6^2 + 6.4^2) = 4.97, a turret's
+	roof base reaches 5.2 + 1.27 = 6.47, and the keep is 4.05 + 1.56 = 5.61.
+	NO ACCENT.
+	"""
+	var yaw := rng.randf_range(0.0, TAU)
+	var rot := Basis(Vector3.UP, yaw)
+	var wall := _lm_shade(LM_MARBLE, rng, 0.02)
+	var roof := _lm_shade(LM_SLATE_BLUE, rng, 0.04)
+
+	# The crag. Two grey slabs, so the castle stands on rock rather than on grass.
+	terrain.create_box(center + Vector3(0.0, 0.5, 0.0), Vector3(7.6, 1.0, 6.4), yaw, rng, block_batch, block_body, 0.0, _lm_shade(LM_GRANITE, rng, 0.05))
+	terrain.create_box(center + rot * Vector3(-0.4, 1.7, 0.0), Vector3(5.4, 1.4, 5.0), yaw, rng, block_batch, block_body, 0.0, _lm_shade(LM_GRANITE, rng, 0.05))
+	const CRAG := 2.4
+
+	# The palas, in two bays.
+	for bx in [-2.2, 2.2]:
+		terrain.create_box(center + rot * Vector3(bx, CRAG + 3.2, 0.0), Vector3(4.2, 6.4, 4.2), yaw, rng, block_batch, block_body, 0.0, _lm_shade(wall, rng, 0.02))
+	# A gabled roof band over the palas — trim on the bays' own volumes.
+	terrain.create_box(center + Vector3(0.0, CRAG + 6.8, 0.0), Vector3(8.8, 0.8, 4.6), yaw, rng, block_batch, block_body, 0.0, roof, false)
+
+	# The gatehouse, lower and off to one side.
+	terrain.create_box(center + rot * Vector3(4.8, CRAG + 2.3, 0.8), Vector3(3.2, 4.6, 3.4), yaw, rng, block_batch, block_body, 0.0, _lm_shade(wall, rng, 0.02))
+	terrain.create_box(center + rot * Vector3(4.8, CRAG + 4.9, 0.8), Vector3(3.6, 0.7, 3.8), yaw, rng, block_batch, block_body, 0.0, roof, false)
+	# Its dark arched doorway.
+	terrain.create_box(center + rot * Vector3(4.8, CRAG + 1.2, 2.55), Vector3(1.2, 2.2, 0.4), yaw,
+			rng, block_batch, block_body, 0.0, LM_MARBLE.darkened(0.72), false)
+
+	# The keep — the tall slender one, and the tallest thing here.
+	const KEEP := Vector3(2.2, 10.5, 2.2)
+	var keep_spot := center + rot * Vector3(-3.8, 0.0, -1.4)
+	terrain.create_box(keep_spot + Vector3(0.0, CRAG + KEEP.y / 2.0, 0.0), KEEP, yaw, rng, block_batch, block_body, 0.0, _lm_shade(wall, rng, 0.02))
+	var top := CRAG + KEEP.y
+	# Its spire: three shrinking slabs to a point.
+	for i in 3:
+		var w: float = 2.7 - float(i) * 0.75
+		terrain.create_box(keep_spot + Vector3(0.0, top + 0.6, 0.0), Vector3(w, 1.2, w), yaw, rng, block_batch, block_body, 0.0, roof, false)
+		top += 1.2
+
+	# Three corner turrets, each with its own cone.
+	const TURRET_SPOTS: Array = [Vector2(-4.4, 2.6), Vector2(1.4, -3.4), Vector2(4.4, -2.4)]
+	for spot_variant: Variant in TURRET_SPOTS:
+		var spot: Vector2 = spot_variant
+		var base := center + rot * Vector3(spot.x, 0.0, spot.y)
+		var t_h := rng.randf_range(6.0, 7.4)
+		terrain.create_box(base + Vector3(0.0, CRAG + t_h / 2.0, 0.0), Vector3(1.3, t_h, 1.3), yaw, rng, block_batch, block_body, 0.0, _lm_shade(wall, rng, 0.02))
+		var ty := CRAG + t_h
+		for i in 2:
+			var w: float = 1.8 - float(i) * 0.7
+			terrain.create_box(base + Vector3(0.0, ty + 0.45, 0.0), Vector3(w, 0.9, w), yaw, rng, block_batch, block_body, 0.0, roof, false)
+			ty += 0.9
+
+	return { "radius": 8.0, "top": top }
+
+static func _landmark_cologne(terrain: Node3D, center: Vector3, rng: RandomNumberGenerator, _parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	Kind 17 — COLOGNE CATHEDRAL (Kölner Dom): TWIN openwork spires over a west
+	front, a nave running back behind them under a steep ridge roof, and a small
+	apse at the far end. Twin spires of equal height is the cue — one spire is a
+	church, two is the Dom.
+
+	It reuses LM_BASALT: Cologne's stone is near-black with centuries of soot, and
+	nothing else in the registry is that dark except the Moai, whose silhouette
+	could not be confused with this one at any distance.
+
+	RADIUS ARITHMETIC (declared 8.6). The furthest box is the APSE at the far end
+	of the nave: centre at 6.2 with half-diagonal 0.5*sqrt(3.6^2 + 2.2^2) = 2.11,
+	so 8.31 <= 8.6. A nave bay is 4.0 + 3.28 = 7.28, the roof ridge is 2.3 + 4.47 =
+	6.77, and a tower is sqrt(2.2^2 + 3.0^2) = 3.72 + 2.12 = 5.84.
+	NO ACCENT: a Gothic cathedral lit from within would need windows, and windows
+	are exactly the detail that vanishes at 30 m.
+	"""
+	const TOWER := Vector3(3.0, 13.0, 3.0)
+	const TOWER_X := 2.2
+	const TOWER_Z := -3.0
+	var yaw := rng.randf_range(0.0, TAU)
+	var rot := Basis(Vector3.UP, yaw)
+	var stone := _lm_shade(LM_BASALT, rng, 0.03)
+
+	# The nave, two bays, plus the ridge roof over them.
+	for bz in [0.6, 4.0]:
+		terrain.create_box(center + rot * Vector3(0.0, 3.6, bz), Vector3(5.6, 7.2, 3.4), yaw, rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02))
+	terrain.create_box(center + rot * Vector3(0.0, 7.85, 2.3), Vector3(5.0, 1.3, 7.4), yaw,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02).darkened(0.2), false)
+	# The apse closing the far end.
+	terrain.create_box(center + rot * Vector3(0.0, 3.3, 6.2), Vector3(3.6, 6.6, 2.2), yaw, rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02))
+	# Buttress stubs down the flanks — the ribs that say Gothic in four boxes.
+	for bx in [-3.6, 3.6]:
+		for bz in [1.0, 4.2]:
+			terrain.create_box(center + rot * Vector3(bx, 2.6, bz), Vector3(0.9, 5.2, 0.9), yaw, rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03))
+
+	# The west front between the towers.
+	terrain.create_box(center + rot * Vector3(0.0, 5.25, TOWER_Z), Vector3(1.8, 10.5, 3.0), yaw, rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02))
+	# The great west portal, dark and deep.
+	terrain.create_box(center + rot * Vector3(0.0, 1.7, TOWER_Z - 1.6), Vector3(1.4, 3.4, 0.5), yaw,
+			rng, block_batch, block_body, 0.0, LM_BASALT.darkened(0.6), false)
+
+	# THE TWIN TOWERS and their spires — equal height, deliberately, because that
+	# is the whole recognition cue.
+	var tip := 0.0
+	for side in [-1.0, 1.0]:
+		var base := center + rot * Vector3(side * TOWER_X, 0.0, TOWER_Z)
+		terrain.create_box(base + Vector3(0.0, TOWER.y / 2.0, 0.0), TOWER, yaw, rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02))
+		var y := TOWER.y
+		# Four shrinking slabs to a needle point. Trim: it is 13 m up.
+		for i in 4:
+			var w: float = 2.7 - float(i) * 0.6
+			var h := 1.5
+			terrain.create_box(base + Vector3(0.0, y + h / 2.0, 0.0), Vector3(w, h, w), yaw,
+					rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false)
+			y += h
+		terrain.create_box(base + Vector3(0.0, y + 0.5, 0.0), Vector3(0.3, 1.0, 0.3), yaw,
+				rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false)
+		tip = y + 1.0
+
+	return { "radius": 8.6, "top": tip }
