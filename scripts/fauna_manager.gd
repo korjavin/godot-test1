@@ -210,6 +210,43 @@ const MEANDER_FREQUENCY: float = 0.03
 ## not like a rigid parade float.
 const FORMATION_LERP_SPEED: float = 1.5
 
+## Hard cap (rad/s) on how fast an animal's facing yaw may CHANGE. This is a
+## RIDER safety rule, not a look tweak, and it is the third trap in the same
+## family as the two in _make_rideable_root.
+##
+## Each rideable root is an AnimatableBody3D, and Godot derives such a body's
+## ANGULAR velocity from its basis delta across one physics step exactly as it
+## derives the linear one from the origin delta. A CharacterBody3D standing on
+## it inherits the platform velocity AT ITS OWN POINT — `linear + angular × r` —
+## so a yaw that jumps in a single tick hands the rider a tangential impulse
+## proportional to how far out on the barrel they are standing.
+##
+## The facing yaw is derived from the herd centre's velocity, whose lateral leg
+## carries `_avoid_velocity` — and that is a STEP function: move_toward runs at
+## exactly ±AVOID_EASE_SPEED while a swerve is easing and exactly 0 otherwise,
+## so the yaw snapped ~0.77 rad (44°) in ONE tick on both the entry and the exit
+## of every avoidance swerve. Measured by fauna_selfcheck.gd's row 4, with a
+## rider parked at the deck's far corner (the longest lever arm) and driven
+## through a meander plus a swerve out and back, that snap moved the player
+## 1.26 m in a SINGLE tick on an elephant — 30x the herd's own 0.042 m step —
+## against 0.88 on a giraffe and 0.74 on a pack beast. The barrel's half-diagonal
+## IS the lever arm (1.53 / 1.07 / 0.95 m), which is exactly why the owner
+## reported elephants and not the narrower camels. It threw the rider off: it
+## slid 5.64 m across an elephant's deck and travelled only 81% of the animal's
+## distance, i.e. it was flung off the back and left behind.
+##
+## 0.5 rad/s (~29°/s) is derived, not taste. The lever arm is the distance from
+## the yaw axis (the root origin) to the rider, so the bound is the widest deck's
+## half-DIAGONAL, not its half-width: the elephant's 1.6 x 2.6 m barrel gives
+## hypot(0.8, 1.3) = 1.53 m (giraffe 1.07, pack beast 0.95). That bounds the
+## tangential carry at ~0.77 m/s — under a third of the herd's own walking speed,
+## i.e. a gentle carry-turn — while still completing a full 44° swerve turn in
+## 1.5 s, inside the ~1.8 s the offset ease itself takes.
+## Rate-limiting the OUTPUT rather than smoothing `_avoid_velocity` is deliberate:
+## it bounds the angular velocity whatever feeds the yaw, so a future steering
+## term cannot re-open this.
+const FACING_YAW_RATE_MAX: float = 0.5
+
 # ============================================================================
 # CONSTANTS — obstacle lookahead (steer the CENTRE, never the individuals)
 # ============================================================================
@@ -566,6 +603,15 @@ var _herd_offset_max: float = 0.0
 var _avoid_target: float = 0.0
 var _avoid_offset: float = 0.0
 var _avoid_velocity: float = 0.0
+
+## The facing yaw actually APPLIED to every animal this tick — the herd shares
+## one, because every member shares one centre path (see _update_herd). It is
+## the slew-limited follower of the centre velocity's raw angle, and it is state
+## rather than a per-tick derivation precisely because the limit needs somewhere
+## to start from. Seeded to the migration heading in _spawn_herd so the first
+## tick does not slew in from zero. See FACING_YAW_RATE_MAX for why the limit
+## exists at all — it is a rider contract, not a look tweak.
+var _facing_yaw: float = 0.0
 
 ## Countdown to the next lookahead probe (see AVOID_PROBE_INTERVAL).
 var _probe_timer: float = 0.0
@@ -1294,6 +1340,10 @@ func _spawn_herd() -> void:
 	_avoid_velocity = 0.0
 	_probe_timer = 0.0
 	_avoid_hold_until = 0.0
+	# Seed the slew-limited facing at the migration heading — the same expression
+	# _add_animal places each member with — so the first tick has nothing to slew
+	# toward and the herd does not spin up from world north (see FACING_YAW_RATE_MAX).
+	_facing_yaw = atan2(-_herd_heading.x, -_herd_heading.z)
 	_refresh_probe_exclude(player)
 
 	# Build the members with their formation offsets (herd-local lateral/long
@@ -1406,7 +1456,9 @@ func _add_animal(record: Dictionary, offset: Vector3) -> void:
 	var root: Node3D = record["root"]
 	add_child(root)
 	root.position = _herd_position + offset
-	root.rotation.y = atan2(-_herd_heading.x, -_herd_heading.z)
+	# The herd's one shared facing, seeded from the heading in _spawn_herd — not
+	# recomputed here, so spawn and every later tick cannot drift apart.
+	root.rotation.y = _facing_yaw
 
 	record["offset"] = offset                       # formation slot, world-space
 	record["phase"] = _rng.randf_range(0.0, TAU)    # stride offset — no lockstep
@@ -1519,7 +1571,16 @@ func _update_herd(delta: float) -> void:
 	var centre_velocity := _herd_heading + _herd_lateral \
 			* (cos(_herd_travelled * MEANDER_FREQUENCY) * MEANDER_AMPLITUDE * MEANDER_FREQUENCY
 					+ _avoid_velocity / maxf(_herd_speed, 0.001))
-	var yaw := atan2(-centre_velocity.x, -centre_velocity.z)
+	# ...and then SLEW-LIMITED before it reaches a node. The raw angle is a step
+	# function (the lateral leg carries _avoid_velocity, which move_toward pins at
+	# exactly ±AVOID_EASE_SPEED or exactly 0), and these roots are AnimatableBody3Ds
+	# whose angular velocity Godot derives from the basis delta — so writing the
+	# raw angle handed a rider `angular × r` and flung them off the barrel. See
+	# FACING_YAW_RATE_MAX; this one line is the whole fix and it bounds every
+	# future steering term for free.
+	var yaw := rotate_toward(_facing_yaw, atan2(-centre_velocity.x, -centre_velocity.z),
+			FACING_YAW_RATE_MAX * delta)
+	_facing_yaw = yaw
 
 	# The ease is a soft, uniform lag on the whole formation (members start
 	# exactly on their slots, so nothing here spreads them apart): it takes the
