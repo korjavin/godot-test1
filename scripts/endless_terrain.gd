@@ -1780,6 +1780,22 @@ var active_chunks: Dictionary = {}
 var last_player_chunk: Vector2i = Vector2i(999999, 999999)
 
 # ----------------------------------------------------------------------------
+# FRAME-SPIKE TELEMETRY COUNTERS (read-only for everybody else)
+# ----------------------------------------------------------------------------
+## Lifetime totals of chunks built and freed. `perf_overlay.gd` samples these
+## once per frame and records the DELTA next to any frame that spiked, which is
+## how "the world froze for 60 ms" becomes "the world froze for 60 ms while it
+## built 3 chunks and freed 5". Monotonic and never reset (not even by
+## `new_run`) so a sampler can always subtract two readings without worrying
+## about a wrap — the overlay's own reset just re-baselines its previous value.
+##
+## Deliberately plain ints incremented at the two (three, counting new_run's
+## bulk free) sites that change `active_chunks`, not a signal: the sampler polls
+## at its own rate and must never be able to perturb generation.
+var chunks_created_total: int = 0
+var chunks_removed_total: int = 0
+
+# ----------------------------------------------------------------------------
 # TIME-SLICED CHUNK GENERATION (one chunk per frame, nearest-first)
 # ----------------------------------------------------------------------------
 ##
@@ -2575,6 +2591,7 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 	# Add to scene and register in our dictionary
 	add_child(mesh_instance)
 	active_chunks[chunk_pos] = mesh_instance
+	chunks_created_total += 1
 
 	# Spawn objects in this chunk if enabled. This returns the footprint of every
 	# block placed (walls included) so crocodiles can avoid spawning inside them,
@@ -7855,6 +7872,7 @@ func remove_chunk(chunk_pos: Vector2i) -> void:
 		var chunk = active_chunks[chunk_pos]
 		chunk.queue_free()
 		active_chunks.erase(chunk_pos)
+		chunks_removed_total += 1
 
 func new_run(forced_seed = null, around: Vector2i = Vector2i.ZERO) -> void:
 	"""
@@ -7913,6 +7931,9 @@ func new_run(forced_seed = null, around: Vector2i = Vector2i.ZERO) -> void:
 	pending_chunks.clear()
 
 	# 3. Drop every old-world chunk (queue_free is the safe removal, as in remove_chunk).
+	# The bulk free bypasses remove_chunk, so count it here or the telemetry
+	# would under-report the single biggest removal event in the game.
+	chunks_removed_total += active_chunks.size()
 	for chunk_pos in active_chunks.keys():
 		active_chunks[chunk_pos].queue_free()
 	active_chunks.clear()
