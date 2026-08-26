@@ -1627,9 +1627,9 @@ const CITY_CROC_DIVISOR: float = 2.5
 ## It is the same trick, for the same reason, as CITY_CROC_DIVISOR right above
 ## and DESERT_BLOCK_KEEP_EVERY: derive from the biome, never draw for it.
 ##
-## A biome with no entry gets the crocodile — which is why PLAINS, FOREST,
-## MOUNTAIN, CITY and SNOW are absent rather than spelled out as "crocodile".
-## Absent is the statement: nothing about their spawning changed.
+## A biome with no entry gets the crocodile — which is why PLAINS, MOUNTAIN,
+## CITY and SNOW are absent rather than spelled out as "crocodile". Absent is the
+## statement: nothing about their spawning changed.
 ##
 ## ADDING A SPECIES (asc.3/.5/.6/.9 each add exactly one) is three things and no
 ## more: a row in `SPECIES` in piglet_crocodile_ai.gd, a .tscn beside
@@ -1644,6 +1644,16 @@ const BIOME_SPECIES: Dictionary = {
 	Biome.DESERT: {
 		"species": "sand_viper",
 		"scene": "res://scenes/characters/sand_viper.tscn",
+	},
+	## The forest is the one band that already crowds the player's SIGHT — it is
+	## the densest tree cover in the world — so it is the right one to put an
+	## enemy in that crowds their SPACE. The wolf's pack steering (see
+	## piglet_crocodile_ai.pack_steer_point) has each animal swing to its own slot
+	## on a ring, and trunks are what make that read: the wolf you lost behind one
+	## is the wolf arriving from the side.
+	Biome.FOREST: {
+		"species": "timber_wolf",
+		"scene": "res://scenes/characters/timber_wolf.tscn",
 	},
 }
 
