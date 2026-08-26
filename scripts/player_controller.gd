@@ -907,7 +907,12 @@ func _physics_process(delta: float) -> void:
 	if not is_on_floor():
 		var frame_gravity := gravity
 		if windman_boost_timer > 0.0:
-			frame_gravity *= WINDMAN_GRAVITY_FACTOR
+			# Feather Fall softens the glide further (`windman_gravity` is a
+			# REDUCING effect, capped at −20% inside Progression.skill_mult — see
+			# WINDMAN_GRAVITY_MULT_MIN there for the measured arc this produces).
+			# Only evaluated for an airborne, boosting Windman, so no other
+			# character and no grounded frame pays for the lookup.
+			frame_gravity *= WINDMAN_GRAVITY_FACTOR * _skill_mult("windman_gravity")
 		# Note: We multiply by delta to make it frame-rate independent
 		velocity.y -= frame_gravity * delta
 		# Record the fall speed while dropping — move_and_slide zeroes velocity.y
@@ -1803,6 +1808,7 @@ func collect_coin(value: int = 1) -> void:
 	"""
 	streak_timer = STREAK_WINDOW
 	coin_streak += 1
+	_maybe_start_speed_burst()
 	coins_collected += value * get_streak_multiplier()
 	# The same multiplied value, banked again as THIS peer's contribution to a
 	# multiplayer room (see own_coins). Untouched by the shared recompute, which
@@ -1865,6 +1871,43 @@ func bank_awarded(amount: int, base_total: int = 0) -> void:
 		var progression := get_tree().get_first_node_in_group("progression")
 		if progression and progression.has_method("add_coins"):
 			progression.add_coins(base_total)
+
+
+func _maybe_start_speed_burst() -> void:
+	"""
+	Adrenaline: every `STREAK_COINS_PER_STEP` coins in one unbroken streak, a
+	hero who has bought the node gets `speed_burst_timer` seconds of extra run and
+	duck speed. Called from `collect_coin()` immediately after `coin_streak` rises,
+	i.e. on exactly the pickups that step the streak multiplier up — so the burst
+	lands on the moment the player already feels as a reward.
+
+	Re-triggering REPLACES the timer rather than adding to it, which is what keeps
+	the effect a burst: a treasure chest pays 8–15 pickups inside 0.8 s and would
+	otherwise bank a minute of speed out of one box.
+
+	NOT A COOLDOWN-GATED ACTIVE, so there is nothing to refuse and no dial to
+	flash — an unranked hero simply reads a 0 s bonus and this is inert.
+
+	MULTIPLAYER: this is a client-local stat change on the local player's own
+	client-authoritative movement (the epic's locked default), so it composes with
+	a room by construction — nothing is sent and nothing is arbitrated. `ponytail:`
+	it hangs off the LOCAL `coin_streak`, and in a room a pickup won through the
+	claim protocol lands in `bank_awarded()`, which deliberately does not touch
+	that counter (the room owns the multiplier) and cannot recover the pickup
+	COUNT from the confirm's totals. So in co-op the burst fires off the pickups
+	that resolve locally rather than off every pickup — rarer, never wrong, and
+	never a burst somebody else earned. The upgrade path is threading the claim's
+	pickup count through `bank_awarded()`, which is a wire-format change.
+	"""
+	if coin_streak % STREAK_COINS_PER_STEP != 0:
+		return
+	var duration := _skill_bonus("streak_burst")
+	if duration <= 0.0:
+		return
+	speed_burst_timer = duration
+	# One quick warm flash at the feet so the burst is visible rather than merely
+	# felt — the same self-freeing effect every ability uses, no new node type.
+	_spawn_ability_effect(global_position, Color(1.0, 0.75, 0.3, 0.45), 2.5, 0.4)
 
 
 func get_streak_multiplier() -> int:
@@ -2519,17 +2562,50 @@ const TEIBI_SCALE_BIG: float = 2.2
 ## the whole small/giant excursion: switching small↔giant does not refill it.
 const TEIBI_FORM_DURATION: float = 10.0
 
+## Seconds of shockwave flight Teibi's Crush Quake buys (the `quake` skill node).
+## Deliberately far shorter than Phoboman's whole ability — the quake is a
+## side-effect of a transformation Teibi wanted anyway, not a fear power.
+const TEIBI_QUAKE_FLEE_DURATION: float = 3.0
+
 # --- Phoboman: Stink Wave ---
 ## How long crocodiles flee after one whiff, in seconds.
 const PHOBOMAN_FLEE_DURATION: float = 10.0
 ## Visual reach of the stink waves, in metres.
 const PHOBOMAN_STINK_RADIUS: float = 9.0
+## GAMEPLAY reach of the stink — how far a crocodile may be and still flee.
+##
+## THIS IS NEW IN BEAD godot-test1-20z.4 AND IT IS A DELIBERATE NERF; the number
+## is derived rather than picked. Before it, `_ability_phoboman()` walked the
+## whole "crocodile" group with no distance test at all, so the ability's only
+## bound was an accident of `flee_from()`'s slept-crocodile early return (the LOD
+## manager sleeps past `SIM_RADIUS` + hysteresis = 50 m). One press therefore
+## disarmed every crocodile within ~50 m — including the pack 40 m down the road
+## the player was about to run into — while the telegraph the player saw was a
+## 9 m sphere. It also made `phoboman_radius` (Billowing Cloud) a node that cost
+## a point and changed nothing but the picture.
+##
+## 22 m is the smallest honest bound: `DETECTION_RADIUS` is 15, so nothing
+## outside 15 m can acquire the player at all, and the extra 7 m covers a
+## crocodile closing at `MAX_CHASE_SPEED` (8.5) for the ~0.8 s the wave takes to
+## play. Bosses are unaffected either way — `flee_from()` early-returns for one.
+## So the crocodiles that stop being feared are the ones in the 22–50 m band,
+## which could not have hunted the player during the flight anyway: the nerf is
+## real on paper and close to invisible in play, and it buys a live skill node.
+const PHOBOMAN_FLEE_RADIUS: float = 22.0
 
 ## Per-character cooldown timers (seconds remaining; 0 = ready). Sized in _ready().
 var ability_cooldowns: Array[float] = []
 
 ## Windman boost time remaining (seconds; > 0 means the Air Rush is active).
 var windman_boost_timer: float = 0.0
+
+## Seconds left on an Adrenaline speed burst (0 = none running). THE ONE ACTIVE
+## SKILL WITH NO KEY: it is triggered by a passive event (crossing a streak step
+## in `collect_coin`) precisely so it costs no second keybind, no second cooldown
+## dial and no third touch button — see `Progression.SKILL_TREES`' header. Read
+## by `_skill_gait_mult()`, ticked by `_update_ability_timers()`, cleared by
+## `_reset_ability_states()` like every other transient ability state.
+var speed_burst_timer: float = 0.0
 
 ## Seconds of cooldown an ability earned back DURING its own activation, consumed
 ## by `try_activate_ability()` the moment it charges the cooldown. Written only by
@@ -2766,15 +2842,19 @@ func _skill_gait_mult() -> float:
 	if progression == null:
 		return 1.0
 	return float(progression.gait_mult(
-		CHARACTERS[current_character_index]["name"], teibi_size_state == 1
+		CHARACTERS[current_character_index]["name"], teibi_size_state == 1,
+		speed_burst_timer > 0.0
 	))
 
 
 func _update_ability_timers(delta: float) -> void:
-	"""Count down cooldowns, the Windman air boost, and Teibi's form timer."""
+	"""Count down cooldowns, the Windman air boost, Teibi's form timer and the
+	Adrenaline speed burst."""
 	for i in ability_cooldowns.size():
 		if ability_cooldowns[i] > 0.0:
 			ability_cooldowns[i] = maxf(0.0, ability_cooldowns[i] - delta)
+	if speed_burst_timer > 0.0:
+		speed_burst_timer = maxf(0.0, speed_burst_timer - delta)
 	if windman_boost_timer > 0.0:
 		windman_boost_timer = maxf(0.0, windman_boost_timer - delta)
 		# Wet wings: a Windman who flies INTO a storm cloud's rain zone drops out
@@ -3020,6 +3100,22 @@ func _ability_teibi() -> bool:
 		teibi_form_timer = 0.0
 	elif prev_state == 0:
 		teibi_form_timer = TEIBI_FORM_DURATION * _skill_mult("teibi_form")
+
+	# CRUSH QUAKE (the `quake` skill node): landing in giant form shakes the
+	# ground and scatters the crocodiles standing on it. `skill_bonus` IS the
+	# radius in metres, so an unranked Teibi reads 0 and none of this runs —
+	# no branch on the rank, no second constant to keep in step.
+	#
+	# BOSS IMMUNITY IS NOT RE-IMPLEMENTED HERE and must not be: `flee_from()`
+	# early-returns for `is_boss`, which is where Stink Wave's immunity already
+	# lives, so a boss shrugs the quake off through the one rule that owns it.
+	# (A boss also bites giant Teibi rather than being crushed — `is_boss` is
+	# checked above the crush block in `_on_player_collision` — so the tooltip's
+	# "bosses shrug it off" is true of both halves of the giant form.)
+	var quake_radius := _skill_bonus("teibi_quake")
+	if is_giant and quake_radius > 0.0:
+		_spawn_ability_effect(global_position, Color(0.95, 0.7, 0.35, 0.5), quake_radius, 0.5)
+		_scare_crocodiles(global_position, TEIBI_QUAKE_FLEE_DURATION, quake_radius)
 	return true
 
 
@@ -3027,36 +3123,59 @@ func _ability_phoboman() -> bool:
 	"""Stink Wave: send out smelly waves; every crocodile flees for a while."""
 	# A few staggered green waves so it reads as rolling stench, not one pop.
 	#
-	# Billowing Cloud widens the VISIBLE wave. Worth being honest about what that
-	# is and is not: the flee below is a walk of the whole "crocodile" group with
-	# no distance test at all, so PHOBOMAN_STINK_RADIUS has never been a gameplay
-	# bound — the skill buys reach in the telegraph, not in the effect.
-	# `ponytail:` making it a real bound means giving the group walk a radius test,
-	# which would NERF the unranked ability (an unbounded sweep becoming a 9 m one)
-	# and is a balance change this bead does not own. Left as a visual upgrade;
-	# the upgrade path is one `distance_to` in the loop plus a re-tune of the base.
-	var stink_radius: float = PHOBOMAN_STINK_RADIUS * _skill_mult("phoboman_radius")
+	# TWO RADII, ON PURPOSE. `PHOBOMAN_STINK_RADIUS` (9) is the TELEGRAPH — what
+	# the player sees — and `PHOBOMAN_FLEE_RADIUS` (22) is the EFFECT. They are
+	# deliberately different because a 22 m sphere drawn at the player's feet
+	# fills the screen and reads as a bug rather than as a smell. Billowing Cloud
+	# (`phoboman_radius`) scales BOTH by the same multiplier, so the picture and
+	# the reach stay in proportion however the node is ranked — and, since bead
+	# godot-test1-20z.4 gave the sweep a real bound, that node now buys reach in
+	# the effect and not only in the picture. See PHOBOMAN_FLEE_RADIUS for the
+	# derivation of 22 and for what the bound costs.
+	var reach_mult: float = _skill_mult("phoboman_radius")
+	var stink_radius: float = PHOBOMAN_STINK_RADIUS * reach_mult
 	_spawn_ability_effect(global_position, Color(0.55, 0.85, 0.2, 0.55), stink_radius, 0.9, 0.0)
 	_spawn_ability_effect(global_position, Color(0.5, 0.8, 0.25, 0.45), stink_radius, 0.9, 0.18)
 	_spawn_ability_effect(global_position, Color(0.45, 0.75, 0.3, 0.4), stink_radius, 0.9, 0.36)
 
-	# Repel every crocodile via the group (no hard references), matching the
-	# project's group-based discovery convention.
 	var flee_duration: float = PHOBOMAN_FLEE_DURATION * _skill_mult("phoboman_flee")
-	for croc in get_tree().get_nodes_in_group("crocodile"):
-		if croc.has_method("flee_from"):
-			croc.flee_from(global_position, flee_duration)
+	_scare_crocodiles(global_position, flee_duration, PHOBOMAN_FLEE_RADIUS * reach_mult)
+	return true
 
-	# ...and in a multiplayer room, ask the master to do the same to the
-	# crocodiles IT drives — a no-op offline. The loop above is deliberately left
-	# exactly as it was: it is correct for every crocodile this peer still
-	# simulates and harmless on the remote-driven ones. Nothing comes back, and
-	# nothing needs to: a crocodile's `is_fleeing` is a bit in the sync packet, so
-	# the master's copy of the flight reaches every screen on the next sample.
+
+func _scare_crocodiles(origin: Vector3, duration: float, radius: float) -> void:
+	"""
+	THE one "make the crocodiles round here run away" path, shared by Phoboman's
+	Stink Wave and Teibi's Crush Quake — a helper rather than two loops, so the
+	radius test, the group discovery and the multiplayer relay each have exactly
+	one home and a third fear effect is one call.
+
+	Discovery stays group-based with no hard references, per the project's
+	convention, and boss/slept immunity is NOT re-implemented here: `flee_from()`
+	owns both early returns, which is what keeps the rule in one file.
+
+	MULTIPLAYER: the local loop runs on EVERY caller, master or not — it is
+	correct for the crocodiles this peer still simulates and harmless on the
+	remote-driven ones (the next 10 Hz sample overwrites the flag) — and the
+	`request_croc_flee` relay asks the master to do the same to the crocodiles it
+	is the authority for. That is the same master path bead godot-test1-s86.5
+	already built for the Stink Wave, so a new fear effect needs no protocol work
+	at all; `radius` is carried INTO the request, so a bounded sweep stays bounded
+	room-wide (an unbounded one disarmed every awake crocodile on every screen).
+	Nothing comes back and nothing needs to: `is_fleeing` is a bit in the sync
+	packet, so the master's copy of the flight reaches every screen for free.
+	"""
+	var radius_sq := radius * radius
+	for croc in get_tree().get_nodes_in_group("crocodile"):
+		if not (croc is Node3D) or not croc.has_method("flee_from"):
+			continue
+		if (croc as Node3D).global_position.distance_squared_to(origin) > radius_sq:
+			continue
+		croc.flee_from(origin, duration)
+
 	var mp := _mp()
 	if mp and mp.has_method("request_croc_flee"):
-		mp.request_croc_flee(global_position, flee_duration)
-	return true
+		mp.request_croc_flee(origin, duration, radius)
 
 
 func _current_teibi_scale() -> float:
@@ -3125,6 +3244,7 @@ func _spawn_ability_effect(pos: Vector3, color: Color, max_radius: float, lifeti
 func _reset_ability_states() -> void:
 	"""Clear transient ability state on respawn (air boost, giant/small form)."""
 	windman_boost_timer = 0.0
+	speed_burst_timer = 0.0
 	_pending_cooldown_refund = 0.0
 	_revert_teibi_to_normal()
 	# Sidestep is transient too: the caught/respawn/game-over branches all return

@@ -32,6 +32,13 @@ extends SceneTree
 ##   5. TEAMMATES: that the multiplayer teammate layer draws where it should, in
 ##      the peer's own colour, edge-clamps rather than clips, and — the negative
 ##      control that matters most — is completely absent solo.
+##   6. LANDMARKS: that a marker in the "landmark" group gets an X where it should,
+##      that the rim clamp follows the shared zoom scale, and — the negative
+##      control — that nothing at all is drawn when the group is empty. The whole
+##      interface to the landmark feature is that group name, so this is also the
+##      alarm for it being renamed out from under the map (which, like the road
+##      cache above, would fail SILENTLY: the map keeps drawing, just with no
+##      landmarks on it).
 ##
 ## It boots the real main scene, because the road station cache only exists once a
 ## chunk has generated — there is nothing pure to test in isolation here.
@@ -89,6 +96,8 @@ func _run() -> void:
 		failure = _check_zoom()
 	if failure.is_empty():
 		failure = _check_teammates()
+	if failure.is_empty():
+		failure = _check_landmarks()
 	if failure.is_empty():
 		print("SELFCHECK OK")
 		quit(0)
@@ -444,6 +453,155 @@ func _check_teammate_layers(map: Control, locator: Control, player: Node3D, orig
 	print("teammates: 3 dots, rim clamp at %.0f px, locator ahead/right/behind = %.0f/%.0f/%.0f of %.0f" \
 		% [map.MAP_RADIUS, bar_ahead, bar_right, bar_behind, locator.size.x])
 	return ""
+
+
+func _check_landmarks() -> String:
+	"""The geo-landmark layer: an X where the landmark is, a rim clamp that follows
+	the shared zoom scale, and NOTHING drawn when the group is empty.
+
+	Driven from a bare probe Node3D in the "landmark" group, because that group IS
+	the entire interface between the terrain's landmark spawner and this HUD — the
+	map reads a position off a group member and nothing else. A real landmark is
+	~1 chunk in 46 and lands 22 m off the road, so waiting for one to generate near
+	spawn is not a test, it is a coin flip.
+
+	Every assertion is a WITH/WITHOUT pair around the probe rather than an absolute
+	count, for the reason the crocodile zoom check gives: the world is allowed to
+	have landmarks of its own loaded, and an absolute count would then be measuring
+	the seed rather than the layer."""
+	var map: Control = root.get_node_or_null("Main/HUD/MinimapHUD")
+	var player: Node3D = get_first_node_in_group("player")
+	if map == null or player == null:
+		return "no MinimapHUD or no player for the landmark checks"
+
+	map._zoom_index = map.ZOOM_DEFAULT_INDEX
+	map._tick()
+	var baseline: int = map._landmark_count
+	if baseline >= map.MAX_LANDMARK_DOTS:
+		return "landmark marker cap (%d) is already biting with no probe placed" \
+			% map.MAX_LANDMARK_DOTS
+
+	var probe := Node3D.new()
+	root.add_child(probe)
+	var origin := player.global_position
+	var failure := ""
+	while true:  # one pass; every `break` still frees the probe below
+		# 1. NEAR — 10 m along +X, comfortably inside the 60 m disc. It must add
+		#    exactly one marker, land to the RIGHT of centre (north-up, the same
+		#    sign convention the player arrow and the teammate dots are checked
+		#    against) and be drawn at full strength, i.e. NOT rim-clamped.
+		probe.global_position = origin + Vector3(10.0, 0.0, 0.0)
+		probe.add_to_group("landmark")
+		map._tick()
+		if map._landmark_count != baseline + 1:
+			failure = ("a landmark 10 m away drew %d markers, not the %d expected — " \
+				+ "the map is not reading the \"landmark\" group") \
+				% [map._landmark_count, baseline + 1]
+			break
+		var near := _landmark_center(map, baseline)
+		if near.x <= map.MAP_CENTER.x + 1.0 or absf(near.y - map.MAP_CENTER.y) > 1.0:
+			failure = "the landmark 10 m along +X did not land to the RIGHT of centre (%s)" % near
+			break
+		if _landmark_reach(map, baseline) > map.MAP_RADIUS:
+			failure = "a landmark inside the view was drawn outside the disc (%s)" % near
+			break
+		if _landmark_is_clamped(map, baseline):
+			failure = "a landmark 10 m away was dimmed as if it were off the map"
+			break
+
+		# 2. THE ZOOM, measured as an EFFECT with the pair that only the shared
+		#    scale can satisfy: 70 m is off a 60 m map and on a 130 m one, so the
+		#    same probe must clamp at one zoom and not at the other. A layer with
+		#    its own hardcoded reach clamps at both — that is the negative control
+		#    the crocodile and teammate zoom checks are built on too.
+		probe.global_position = origin + Vector3(70.0, 0.0, 0.0)
+		map._tick()
+		var clamped_near_zoom := _landmark_is_clamped(map, baseline)
+		var clamped_dist: float = (_landmark_center(map, baseline) - map.MAP_CENTER as Vector2).length()
+		# Measured on the FURTHEST PAINTED CORNER, not the centre. An X's corners sit
+		# at arm * sqrt(2) from its centre, so a rim inset that subtracts the arm
+		# length instead of the real reach clamps the centre perfectly and still
+		# hangs the corners over the ring — invisible to a centre-only assertion.
+		var clamped_reach: float = _landmark_reach(map, baseline)
+		map._zoom_index = map.ZOOM_RADII.size() - 1
+		map._tick()
+		var clamped_far_zoom := _landmark_is_clamped(map, baseline)
+		map._zoom_index = map.ZOOM_DEFAULT_INDEX
+		if not clamped_near_zoom:
+			failure = "a landmark 70 m away was not rim-clamped on the %.0f m map" % LEGACY_VIEW_RADIUS
+			break
+		if clamped_reach > map.MAP_RADIUS:
+			failure = ("an off-map landmark's X reaches %.1f px from the centre, past the " \
+				+ "%.1f px disc — the rim inset is not the mark's real reach") \
+				% [clamped_reach, map.MAP_RADIUS]
+			break
+		if clamped_dist < map.MAP_RADIUS - map.LANDMARK_MARK_REACH - 1.0:
+			failure = "an off-map landmark was not clamped to the rim (%.1f px from centre)" % clamped_dist
+			break
+		if clamped_far_zoom:
+			failure = ("a landmark 70 m away is still rim-clamped on the %.0f m map — the " \
+				+ "landmark layer is not using the shared scale") \
+				% map.ZOOM_RADII[map.ZOOM_RADII.size() - 1]
+			break
+		break
+
+	# 3. THE NEGATIVE CONTROL, in two halves. First: with the probe out of the group
+	#    the layer must fall back to exactly what it drew before it. Then the one
+	#    that matters — the group is emptied OUTRIGHT (the world's own markers are
+	#    pulled out of it too, and put straight back) and the layer must draw
+	#    NOTHING. Comparing against `baseline` alone is not enough on a seed that
+	#    loaded a real landmark: a layer that drew its group members correctly AND
+	#    one extra marker unconditionally keeps the same delta and passes.
+	probe.remove_from_group("landmark")
+	map._tick()
+	if failure.is_empty() and map._landmark_count != baseline:
+		failure = "removing the probe left %d markers, not the %d there were before it" \
+			% [map._landmark_count, baseline]
+	probe.queue_free()
+	var real_markers := get_nodes_in_group("landmark")
+	for marker in real_markers:
+		marker.remove_from_group("landmark")
+	map._tick()
+	var empty_count: int = map._landmark_count
+	for marker in real_markers:
+		marker.add_to_group("landmark")
+	map._zoom_index = map.ZOOM_DEFAULT_INDEX
+	map._tick()
+	if not failure.is_empty():
+		return failure
+	if empty_count != 0:
+		return "the map drew %d landmark markers with an EMPTY \"landmark\" group" % empty_count
+
+	print("landmarks: %d loaded + probe -> X at disc, rim clamp follows zoom, none when unregistered" \
+		% baseline)
+	return ""
+
+
+func _landmark_is_clamped(map: Control, index: int) -> bool:
+	"""Whether a landmark X was drawn as an off-map (rim-clamped) mark.
+
+	Read off the ALPHA for the reason `_dot_is_clamped` gives: an off-map mark is
+	the only thing that scales the colour by LANDMARK_EDGE_ALPHA, while a clamped
+	X and one drawn at the very edge of the view sit within a pixel of each other."""
+	var alpha: float = (map._landmark_colors[index * 2] as Color).a
+	return alpha < map.COLOR_LANDMARK.a - 0.001
+
+
+func _landmark_center(map: Control, index: int) -> Vector2:
+	"""The centre of a landmark X — the midpoint of its first arm, which is the
+	same point both arms cross at."""
+	return (map._landmark_points[index * 4] + map._landmark_points[index * 4 + 1]) * 0.5
+
+
+func _landmark_reach(map: Control, index: int) -> float:
+	"""How far the furthest PAINTED point of a landmark X sits from the map centre
+	— the four arm ends, plus half the stroke width the two segments are drawn at.
+	The mark's ink, not its anchor, is what may not cross the ring."""
+	var furthest := 0.0
+	for i in range(index * 4, index * 4 + 4):
+		var d: float = (map._landmark_points[i] - map.MAP_CENTER as Vector2).length()
+		furthest = maxf(furthest, d)
+	return furthest + map.LANDMARK_MARK_WIDTH * 0.5
 
 
 func _dot_is_clamped(map: Control, index: int) -> bool:

@@ -127,6 +127,10 @@ const WIDTH_BUDGETS: Array = [
 	["Scurry", 18, 232.0, "skill node name"],
 	["Lingering Reek", 18, 232.0, "skill node name"],
 	["Billowing Cloud", 18, 232.0, "skill node name"],
+	# The active/exotic nodes (bead godot-test1-20z.4) share the same column.
+	["Adrenaline", 18, 232.0, "skill node name"],
+	["Feather Fall", 18, 232.0, "skill node name"],
+	["Crush Quake", 18, 232.0, "skill node name"],
 	# Branch headings are plain Labels the full width of their column.
 	["Focus", 16, 292.0, "skill branch heading"],
 	["Air Rush", 16, 292.0, "skill branch heading"],
