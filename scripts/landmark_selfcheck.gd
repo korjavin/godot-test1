@@ -103,6 +103,11 @@ extends SceneTree
 
 const TERRAIN_SCRIPT: String = "res://scripts/endless_terrain.gd"
 const TOAST_SCRIPT: String = "res://scripts/landmark_toast.gd"
+## The registry and the shape builders live here; the PLACEMENT POLICY constants
+## check 2 reads still live on the terrain. Both scripts are loaded because the
+## inequality chain spans the seam — an entry's own `radius` comes from this file,
+## the LANDMARK_RADIUS that must bound it comes from the terrain.
+const BUILDERS_SCRIPT: String = "res://scripts/landmark_builders.gd"
 
 ## Seeds per builder for check 1. The shapes are random-driven (stone jitter,
 ## per-tier yaw, leg splay), so one seed proves nothing — 25 is enough that a
@@ -144,12 +149,13 @@ func _run() -> void:
 	# are not properties, so `terrain.get("LANDMARK_RADIUS")` answers null and a
 	# check written that way would pass vacuously against nothing at all.
 	var consts: Dictionary = terrain_script.get_script_constant_map()
-	var registry: Array = consts.get("LANDMARKS", [])
+	var builders_script: GDScript = load(BUILDERS_SCRIPT)
+	var registry: Array = builders_script.get_script_constant_map().get("LANDMARKS", [])
 
 	if registry.is_empty():
-		_fail("endless_terrain.gd has no LANDMARKS registry")
+		_fail("landmark_builders.gd has no LANDMARKS registry")
 	else:
-		_check_radii(terrain_script, registry)
+		_check_radii(terrain_script, builders_script, registry)
 		_check_constants(consts, registry)
 		_check_facts(registry)
 		await _check_toast(registry)
@@ -174,7 +180,7 @@ func _fail(message: String) -> void:
 # CHECK 1 — the declared radius bounds the stone the builder actually emits
 # ============================================================================
 
-func _check_radii(terrain_script: GDScript, registry: Array) -> void:
+func _check_radii(terrain_script: GDScript, builders_script: GDScript, registry: Array) -> void:
 	"""
 	Call every builder for real and measure what it emitted.
 
@@ -182,7 +188,8 @@ func _check_radii(terrain_script: GDScript, registry: Array) -> void:
 	rolls a run seed, builds fog, materials and the first chunks, none of which a
 	builder needs — a builder touches only create_box, _spawn_artifact_accent and
 	the shared ember material. Keeping it out of the tree keeps this check to the
-	geometry it is about.
+	geometry it is about. It is still a real terrain node, because that is exactly
+	what the builders take as their first argument now that they are static.
 	"""
 	var terrain := Node3D.new()
 	terrain.set_script(terrain_script)
@@ -196,7 +203,9 @@ func _check_radii(terrain_script: GDScript, registry: Array) -> void:
 		var place: String = String(entry["name"])
 		var builder: String = String(entry["builder"])
 
-		if not terrain.has_method(builder):
+		# has_method on the SCRIPT object, because the builders are static on
+		# LandmarkBuilders rather than methods on the terrain node.
+		if not builders_script.has_method(builder):
 			_fail("%s: no such builder method %s — the registry's method-name String is stale"
 					% [place, builder])
 			continue
@@ -211,7 +220,7 @@ func _check_radii(terrain_script: GDScript, registry: Array) -> void:
 			# Distinct per (builder, seed) so no two rows measure the same shape.
 			rng.seed = hash(Vector3i(seed_index, builder.hash(), 0))
 
-			var footprint: Variant = terrain.call(builder, Vector3.ZERO, rng, chunk, block_batch, block_body)
+			var footprint: Variant = builders_script.call(builder, terrain, Vector3.ZERO, rng, chunk, block_batch, block_body)
 
 			if not (footprint is Dictionary) or not (footprint as Dictionary).has("radius") \
 					or not (footprint as Dictionary).has("top"):
