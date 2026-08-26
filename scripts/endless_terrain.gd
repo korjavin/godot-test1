@@ -1122,6 +1122,28 @@ const TREASURE_CHEST_SCRIPT := preload("res://scripts/treasure_chest.gd")
 ## 0.19 puts the category back in the middle of the band (1 per 43) without
 ## touching the "landmarks are destinations, not scenery" rarity that keeps them
 ## well behind the artifacts' 1-in-23.
+##
+## WAVE 4 (the German pack, 28 -> 38 kinds): SWEPT AGAIN AND NOT RETUNED. The
+## epic's rule is to re-measure at every new kind count, and this time the sweep
+## was pointed straight at the claim the paragraph above makes rather than at the
+## rate — because the rate is the thing that claim says CANNOT move, and a rate
+## measured on a different harness cannot tell the two apart.
+##
+## So the harness digested the whole BUILT SET — every built chunk's coords and
+## its landmark's spot to a millimetre, over the same 17x17 field x 60 seeds
+## (17340 chunks) — and was run twice against the same code, once with all 38
+## registry entries and once with the ten wave-4 entries cut back out:
+##   38 kinds: 3245 rolled, 357 built, digest 4242030217
+##   28 kinds: 3245 rolled, 357 built, digest 4242030217
+## BIT-IDENTICAL. Not "the same rate" — the same chunks, in the same places. That
+## is randi_range consuming exactly one draw whatever its range, measured rather
+## than argued, and it is the property that makes appending kinds free forever.
+##
+## The rate that harness reports is 11.0% survival, 1 per 48.6 — inside the
+## intended 1-per-40-60 band, so LANDMARK_CHANCE stays at 0.19. It is NOT
+## comparable to the three rows above (different harness: coins, chests and
+## crocodiles disabled, and its own seed set), which is precisely why the digest
+## is the measurement that decided this and the rate is only the sanity check.
 const LANDMARK_CHANCE: float = 0.19
 
 ## Fixed salt XORed into run_seed for the landmark hash stream, in the

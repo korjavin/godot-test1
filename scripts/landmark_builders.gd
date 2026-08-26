@@ -286,6 +286,97 @@ const LANDMARKS: Array = [
 		"fact": "A 100 m lighthouse on the island of Pharos at Alexandria, Egypt — a Wonder of the Ancient World, toppled by earthquakes.",
 		"radius": 6.6,
 	},
+	# --- WAVE 4, THE GERMAN PACK (appended, never inserted — see the ORDER note
+	# above). Ten places from one country, which no earlier wave did and which is
+	# the whole point: the game's players are German-speaking, waves 2 and 3
+	# deliberately rationed and then withheld this pool so it would not be spent on
+	# leftovers, and this is the wave it was being saved for. With the three wave-2
+	# entries (Brandenburger Tor, Neuschwanstein, Kölner Dom) that takes German
+	# coverage to 13 of 38.
+	#
+	# THE SELECTION RULE IS THE SAME ONE, unchanged: does a person name the place
+	# from the SILHOUETTE alone. A domed parliament, a sphere on a needle, a black
+	# Roman gate, two fat brick towers, a stone bell, a glass wave on a warehouse,
+	# a cross on a summit, a keep over a timbered hall, ONE colossal steeple, and
+	# four animals standing on each other. Ten shapes, and no two of them are the
+	# same shape — which matters more here than in any earlier wave, because ten
+	# entries from one country is also ten chances to build the same church twice.
+	#
+	# The two that come closest to an existing entry are called out in their own
+	# docstrings rather than hidden: Ulm is deliberately the ONE-spire answer to
+	# Cologne's two (which is the real recognition cue between them, and Cologne's
+	# docstring already said so), and the Wartburg is deliberately stone-and-timber
+	# ochre against Neuschwanstein's white-and-blue-cones, because "a castle" is a
+	# silhouette two entries could share and a colour scheme is not.
+	#
+	# ZERO NEW PALETTE ENTRIES, for the third wave running and for wave 2's stated
+	# reason. Northern brick Gothic and Hamburg's harbour warehouse both want a
+	# brick red, which is LM_VERMILION darkened — the torii's lacquer is bright and
+	# a wall of it is not, and their silhouettes could not be confused at any
+	# distance. Glass is LM_SLATE_BLUE lightened, patinated bronze is LM_COPPER
+	# darkened, and the Porta Nigra's soot-blackened sandstone is LM_STONE_GREY
+	# darkened rather than the Moai's LM_BASALT — a third near-black entry in the
+	# registry would have been one too many.
+	{
+		"builder": "_landmark_reichstag",
+		"name": "Reichstag Building",
+		"fact": "The seat of the German parliament in Berlin, opened in 1894 and crowned in 1999 with a glass dome the public may climb.",
+		"radius": 8.4,
+	},
+	{
+		"builder": "_landmark_fernsehturm",
+		"name": "Berlin TV Tower",
+		"fact": "At 368 m the tallest structure in Germany, raised in East Berlin in 1969 — sunlight on its sphere draws a cross the state could never remove.",
+		"radius": 6.4,
+	},
+	{
+		"builder": "_landmark_porta_nigra",
+		"name": "Porta Nigra",
+		"fact": "A Roman city gate in Trier from around AD 170, built of sandstone blocks set without mortar — the largest still standing north of the Alps.",
+		"radius": 8.2,
+	},
+	{
+		"builder": "_landmark_holstentor",
+		"name": "Holsten Gate",
+		"fact": "The western gate of Lübeck, finished in 1478 in northern brick Gothic — its two round towers lean because the marshy ground gave way.",
+		"radius": 7.8,
+	},
+	{
+		"builder": "_landmark_frauenkirche",
+		"name": "Dresden Frauenkirche",
+		"fact": "A Baroque church of 1743 whose great stone dome fell in the firestorm of 1945 — rebuilt from its own rubble and reconsecrated in 2005.",
+		"radius": 7.2,
+	},
+	{
+		"builder": "_landmark_elbphilharmonie",
+		"name": "Elbphilharmonie",
+		"fact": "A concert hall opened in Hamburg in 2017 — a wave of glass set on top of a brick harbour warehouse from 1963.",
+		"radius": 7.4,
+	},
+	{
+		"builder": "_landmark_zugspitze",
+		"name": "Zugspitze Summit Cross",
+		"fact": "A gilded cross on Germany's highest peak, 2,962 m up in the Alps — first raised in 1851 after being carried up in pieces.",
+		"radius": 6.0,
+	},
+	{
+		"builder": "_landmark_wartburg",
+		"name": "Wartburg Castle",
+		"fact": "A castle above Eisenach founded in 1067, where Martin Luther hid as 'Junker Jörg' and translated the New Testament in eleven weeks.",
+		"radius": 7.2,
+	},
+	{
+		"builder": "_landmark_ulm_minster",
+		"name": "Ulm Minster",
+		"fact": "The tallest church steeple in the world at 161.5 m, begun in Ulm in 1377 and finished only in 1890 — 768 steps to the viewing gallery.",
+		"radius": 8.0,
+	},
+	{
+		"builder": "_landmark_bremen_musicians",
+		"name": "Bremen Town Musicians",
+		"fact": "A donkey, dog, cat and rooster from the Grimm tale of 1819, cast in bronze at Bremen in 1953 — grasp the donkey's forelegs for luck.",
+		"radius": 4.2,
+	},
 ]
 
 # ----------------------------------------------------------------------------
@@ -2003,3 +2094,876 @@ static func _landmark_pharos(terrain: Node3D, center: Vector3, rng: RandomNumber
 			yaw, 0.0, terrain._get_camp_ember_material())
 
 	return { "radius": 6.6, "top": y + 1.6 }
+
+# ----------------------------------------------------------------------------
+# WAVE 4 — THE GERMAN PACK
+# ----------------------------------------------------------------------------
+##
+## Ten places from one country, and the one risk that carries which no earlier
+## wave had: ten entries from one national pool is also ten chances to build the
+## same church twice. So every builder below is checked against the other nine on
+## SILHOUETTE FIRST — a domed parliament, a sphere on a needle, a black Roman
+## gate, two fat leaning brick towers, a stone bell, a glass wave on a warehouse,
+## a cross on a summit, a keep beside a timbered hall, ONE colossal steeple, and
+## four animals standing on each other. Where two came close it is said out loud
+## in the builder's own docstring (Ulm vs Cologne, Wartburg vs Neuschwanstein)
+## rather than left for the next reader to discover at 30 m.
+##
+## FOUR SHARED SHAPE IDIOMS get reused here rather than reinvented, which is the
+## other half of keeping ten German boxes distinguishable — the differences that
+## remain are then real differences and not accidents of how each was built:
+##   - THE OCTAGON: two boxes crossed at PI/4, from St Basil's centre shaft and
+##     the Pharos' middle stage. Every round tower here is one (Fernsehturm base,
+##     Porta Nigra's east tower, the Holstentor's drums, Ulm's octagon stage).
+##   - THE BULGE STACK: a stack whose MIDDLE box is the widest, from _lm_onion.
+##     The Frauenkirche's stone bell and the Fernsehturm's sphere are both this,
+##     at very different proportions.
+##   - THE LEANING AXIS: centres placed along a tilted line rather than boxes
+##     each given a tilt, from Pisa — used by the Holstentor's sinking towers,
+##     including Pisa's sign gotcha, which is recorded there and holds here.
+##   - THE SHRINKING SPIRE: from Cologne and Neuschwanstein, used by Ulm.
+
+static func _landmark_reichstag(terrain: Node3D, center: Vector3, rng: RandomNumberGenerator, _parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	Kind 28 — REICHSTAG BUILDING: a broad classical block with a corner tower at
+	each of its four corners, a six-column portico under a pediment on the front,
+	and Foster's GLASS DOME sitting in the middle of the roof.
+
+	THE DOME IS THE WHOLE ENTRY, and it is why this is not simply "a parliament".
+	A wide stone block with corner towers is every 19th-century government building
+	in Europe; a wide stone block with corner towers and a transparent blue-white
+	drum on top is the Reichstag and nothing else. So the dome gets the pale glass
+	(LM_SLATE_BLUE lightened — the wave-4 palette note) and everything under it
+	stays quiet sandstone, which is also the real contrast: the 1894 stone was
+	deliberately left scarred and the 1999 dome deliberately made to read as new.
+
+	RADIUS ARITHMETIC (declared 8.4). The widest reach is a CORNER TOWER CAP:
+	centre at sqrt(5.4^2 + 3.4^2) = 6.38 with half-diagonal 0.5*sqrt(2 * 2.6^2) =
+	1.84, so 8.22 <= 8.4. The cornice slab is 0.5*sqrt(13.8^2 + 9.0^2) = 8.24, the
+	pediment is 4.6 + 0.5*sqrt(7.0^2 + 1.2^2) = 4.6 + 3.55 = 8.15, and the plinth
+	is 0.5*sqrt(13.6^2 + 9.2^2) = 8.21. Four boxes within 0.2 m of the declared
+	radius is deliberate: this shape is a rectangle, and a rectangle spends its
+	budget on the corners it actually has.
+	NO ACCENT: the dome is daylit by a mirrored cone, which is exactly the detail
+	an emissive box cannot say.
+	"""
+	const BLOCK := Vector3(13.0, 5.6, 8.6)
+	const TOWER_X := 5.4
+	const TOWER_Z := 3.4
+	var yaw := rng.randf_range(0.0, TAU)
+	var rot := Basis(Vector3.UP, yaw)
+	var stone := _lm_shade(LM_SANDSTONE, rng, 0.03)
+	var glass := _lm_shade(LM_SLATE_BLUE, rng, 0.03).lightened(0.32)
+
+	terrain.create_box(center + Vector3(0.0, 0.35, 0.0), Vector3(13.6, 0.7, 9.2), yaw, rng, block_batch, block_body,
+			0.0, _lm_shade(LM_GRANITE, rng, 0.04))
+	var y := 0.7
+	terrain.create_box(center + Vector3(0.0, y + BLOCK.y / 2.0, 0.0), BLOCK, yaw, rng, block_batch, block_body,
+			0.0, _lm_shade(stone, rng, 0.02))
+	# Pilaster strips down the long flanks — the rhythm that says "classical" in
+	# eight boxes. Trim: they sit on the block's own collision volume.
+	for px in [-4.8, -2.4, 0.0, 2.4, 4.8]:
+		for z_side in [-1.0, 1.0]:
+			terrain.create_box(center + rot * Vector3(px, y + BLOCK.y / 2.0, z_side * (BLOCK.z / 2.0 + 0.12)),
+					Vector3(0.7, BLOCK.y - 0.8, 0.24), yaw, rng, block_batch, block_body,
+					0.0, _lm_shade(stone, rng, 0.03).darkened(0.1), false)
+	y += BLOCK.y
+	terrain.create_box(center + Vector3(0.0, y + 0.25, 0.0), Vector3(13.8, 0.5, 9.0), yaw, rng, block_batch, block_body,
+			0.0, _lm_shade(stone, rng, 0.02), false)
+
+	# THE PORTICO — six columns standing proud of the front face, under a pediment.
+	# The columns collide, so walking into the front of the building is walking into
+	# a colonnade rather than into a flat wall.
+	for cx in [-3.0, -1.8, -0.6, 0.6, 1.8, 3.0]:
+		terrain.create_box(center + rot * Vector3(cx, 0.7 + 2.6, -(BLOCK.z / 2.0 + 0.3)), Vector3(0.9, 5.2, 0.9),
+				yaw, rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02))
+	terrain.create_box(center + rot * Vector3(0.0, y + 0.9, -(BLOCK.z / 2.0 + 0.3)), Vector3(7.0, 1.4, 1.2), yaw,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false)
+	# The dark recess behind the columns, so the portico reads as a porch.
+	terrain.create_box(center + rot * Vector3(0.0, 0.7 + 2.2, -(BLOCK.z / 2.0 - 0.1)), Vector3(6.4, 4.4, 0.4), yaw,
+			rng, block_batch, block_body, 0.0, LM_SANDSTONE.darkened(0.62), false)
+
+	# The four corner towers.
+	for x_side in [-1.0, 1.0]:
+		for z_side in [-1.0, 1.0]:
+			var spot := center + rot * Vector3(x_side * TOWER_X, 0.0, z_side * TOWER_Z)
+			terrain.create_box(spot + Vector3(0.0, y + 1.7, 0.0), Vector3(2.2, 3.4, 2.2), yaw,
+					rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02))
+			terrain.create_box(spot + Vector3(0.0, y + 3.65, 0.0), Vector3(2.6, 0.5, 2.6), yaw,
+					rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03).darkened(0.14), false)
+
+	# THE GLASS DOME on its stone drum. Four shrinking glass boxes and a lantern —
+	# the same shrinking stack as every cone in this file, but the colour is what
+	# stops it reading as one, and the SLIGHT re-yaw per tier is what stops it
+	# reading as a pyramid.
+	terrain.create_box(center + Vector3(0.0, y + 0.6, 0.0), Vector3(5.6, 1.2, 5.6), yaw, rng, block_batch, block_body,
+			0.0, _lm_shade(stone, rng, 0.02))
+	var dy := y + 1.2
+	for i in 4:
+		var w: float = 5.0 - float(i) * 0.95
+		terrain.create_box(center + Vector3(0.0, dy + 0.55, 0.0), Vector3(w, 1.1, w), yaw + float(i) * PI / 8.0,
+				rng, block_batch, block_body, 0.0, _lm_shade(glass, rng, 0.02), false)
+		dy += 1.1
+	terrain.create_box(center + Vector3(0.0, dy + 0.4, 0.0), Vector3(0.8, 0.8, 0.8), yaw, rng, block_batch, block_body,
+			0.0, _lm_shade(glass, rng, 0.02), false)
+
+	return { "radius": 8.4, "top": dy + 0.8 }
+
+static func _landmark_fernsehturm(terrain: Node3D, center: Vector3, rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	Kind 29 — BERLIN TV TOWER (Fernsehturm): a low octagonal pavilion, a needle
+	shaft rising out of it, a SPHERE threaded onto the shaft two-thirds of the way
+	up, and an antenna above that. The sphere-on-a-needle is unmistakable and is
+	shared with no other entry in the registry.
+
+	THE SPHERE IS A BULGE STACK — five boxes whose MIDDLE one is widest, the
+	_lm_onion trick at different proportions (an onion is a teardrop, this is
+	symmetric top-to-bottom, which is the whole difference between a dome and a
+	ball). Building it as a shrinking stack would give a diamond, and a diamond on
+	a stick is a spire.
+
+	THE ANTENNA IS THE TALL PART, deliberately: this is the tallest structure in
+	Germany and the fact says so, so the silhouette has to earn that claim rather
+	than stop at the sphere the postcards crop to.
+
+	RADIUS ARITHMETIC (declared 6.4, honestly 5.37). The widest box is the pavilion
+	octagon, 7.6 square, so 0.5*sqrt(2 * 7.6^2) = 5.37. The sphere's widest boxes
+	are 4.8 square => 3.39, and the shaft is 2.6 square => 1.84. The declared 6.4 is
+	loose for Big Ben's reason — a 26 m needle whose stone is 5 m wide would
+	otherwise announce itself from 11 m away, i.e. from directly underneath.
+	THE one accent: the aviation warning light at the antenna tip, which is a real
+	light in the only place a real light is on this structure.
+	"""
+	var yaw := rng.randf_range(0.0, TAU)
+	var pale := _lm_shade(LM_MARBLE, rng, 0.02)
+	var steel := _lm_shade(LM_STONE_GREY, rng, 0.03)
+
+	# The pavilion at the foot — an octagon, so the tower stands on something with
+	# a plan rather than sprouting out of the grass.
+	for k in 2:
+		terrain.create_box(center + Vector3(0.0, 0.8, 0.0), Vector3(7.6, 1.6, 7.6), yaw + float(k) * PI / 4.0,
+				rng, block_batch, block_body, 0.0, _lm_shade(pale, rng, 0.02))
+	var y := 1.6
+
+	# THE SHAFT, in two tapering stages so it reads as a needle rather than a post.
+	const SHAFT_TOP := 17.4
+	terrain.create_box(center + Vector3(0.0, y + 4.0, 0.0), Vector3(2.6, 8.0, 2.6), yaw, rng, block_batch, block_body,
+			0.0, _lm_shade(pale, rng, 0.02))
+	terrain.create_box(center + Vector3(0.0, 9.6 + (SHAFT_TOP - 9.6) / 2.0, 0.0), Vector3(2.1, SHAFT_TOP - 9.6, 2.1),
+			yaw, rng, block_batch, block_body, 0.0, _lm_shade(pale, rng, 0.02))
+
+	# THE SPHERE, threaded onto the shaft at 11 m. All trim — it hangs in the air on
+	# the shaft's own collision volume and there is nothing there to stand on.
+	const SPHERE_W: Array = [3.0, 4.2, 4.8, 4.2, 3.0]
+	const SPHERE_H := 0.94
+	var sy := 11.0 - SPHERE_H * float(SPHERE_W.size()) / 2.0
+	for i in SPHERE_W.size():
+		var w: float = SPHERE_W[i]
+		# The band at the sphere's equator is the observation deck, and the two
+		# above it are the revolving restaurant's glazing — darker, so the ball has
+		# a horizon line instead of reading as one smooth lump.
+		var tint: Color = steel if i == 2 else pale
+		terrain.create_box(center + Vector3(0.0, sy + SPHERE_H / 2.0, 0.0), Vector3(w, SPHERE_H, w),
+				yaw + float(i) * PI / 10.0, rng, block_batch, block_body, 0.0, _lm_shade(tint, rng, 0.02), false)
+		sy += SPHERE_H
+
+	# THE ANTENNA — four thinning segments, red and white banded the way every tall
+	# mast in Europe is, then the light.
+	y = SHAFT_TOP
+	for i in 4:
+		var w: float = 1.3 - float(i) * 0.22
+		var h := 2.2
+		var band: Color = _lm_shade(LM_VERMILION, rng, 0.03) if i % 2 == 1 else _lm_shade(pale, rng, 0.02)
+		terrain.create_box(center + Vector3(0.0, y + h / 2.0, 0.0), Vector3(w, h, w), yaw,
+				rng, block_batch, block_body, 0.0, band, false)
+		y += h
+	terrain._spawn_artifact_accent(parent_chunk, center + Vector3(0.0, y + 0.4, 0.0), Vector3(0.5, 0.6, 0.5),
+			yaw, 0.0, terrain._get_camp_ember_material())
+
+	return { "radius": 6.4, "top": y + 0.8 }
+
+static func _landmark_porta_nigra(terrain: Node3D, center: Vector3, rng: RandomNumberGenerator, _parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	Kind 30 — PORTA NIGRA: a long soot-black Roman gate — two ground-level
+	passages between three piers, two storeys of blind arcading above them, and one
+	end tower carried a storey higher than the other. It is the LOPSIDEDNESS that
+	makes it this gate and not a generic wall: the real Porta Nigra's east tower
+	was finished and its west tower never was.
+
+	THE TWO PASSAGES ARE REAL — the piers collide and the gaps between them do not,
+	so a player walks through the gate exactly as the Brandenburg Gate's colonnade
+	lets them walk through it. That is the same decision, made for the same reason:
+	a gate you cannot pass is a wall.
+
+	Its stone is LM_STONE_GREY darkened rather than the Moai's LM_BASALT — the
+	registry banner's reason: a third near-black entry would start costing the two
+	that already earned it. Trier's blocks went black from 1,800 years of weather,
+	not from being volcanic, and a very dark grey is honestly what that looks like.
+
+	RADIUS ARITHMETIC (declared 8.2). The widest reach is an OUTER PIER: centre at
+	5.0 with half-diagonal 0.5*sqrt(2.0^2 + 5.0^2) = 2.69, so 7.69 <= 8.2. The east
+	tower is 5.4 + 0.5*sqrt(2 * 3.2^2) = 5.4 + 2.26 = 7.66, the plinth is
+	0.5*sqrt(12.6^2 + 5.6^2) = 6.89, and a storey band is 0.5*sqrt(12.0^2 + 5.0^2)
+	= 6.50.
+	NO ACCENT.
+	"""
+	const PIER := Vector3(2.0, 4.6, 5.0)
+	const PIER_X: Array = [-5.0, 0.0, 5.0]
+	const STOREY := 3.2
+	var yaw := rng.randf_range(0.0, TAU)
+	var rot := Basis(Vector3.UP, yaw)
+	var soot := _lm_shade(LM_STONE_GREY, rng, 0.03).darkened(0.46)
+
+	terrain.create_box(center + Vector3(0.0, 0.3, 0.0), Vector3(12.6, 0.6, 5.6), yaw, rng, block_batch, block_body,
+			0.0, _lm_shade(LM_GRANITE, rng, 0.04).darkened(0.3))
+	var y := 0.6
+
+	# GROUND STOREY — three piers, two passages.
+	for px_variant: Variant in PIER_X:
+		var px: float = px_variant
+		terrain.create_box(center + rot * Vector3(px, y + PIER.y / 2.0, 0.0), PIER, yaw, rng, block_batch, block_body,
+				0.0, _lm_shade(soot, rng, 0.02))
+	y += PIER.y
+	terrain.create_box(center + Vector3(0.0, y + 0.4, 0.0), Vector3(12.0, 0.8, 5.0), yaw, rng, block_batch, block_body,
+			0.0, _lm_shade(soot, rng, 0.02))
+	y += 0.8
+
+	# THE TWO ARCADED STOREYS. Each is a solid band with a row of colonnettes stood
+	# against the front and back faces — trim on the band's own volume, and the only
+	# thing on this shape that says "Roman arcade" rather than "long wall".
+	for storey in 2:
+		terrain.create_box(center + Vector3(0.0, y + STOREY / 2.0, 0.0), Vector3(11.6, STOREY, 4.6), yaw,
+				rng, block_batch, block_body, 0.0, _lm_shade(soot, rng, 0.02))
+		for cx in [-4.8, -3.2, -1.6, 0.0, 1.6, 3.2, 4.8]:
+			for z_side in [-1.0, 1.0]:
+				terrain.create_box(center + rot * Vector3(cx, y + STOREY / 2.0, z_side * 2.36), Vector3(0.55, STOREY - 0.7, 0.4),
+						yaw, rng, block_batch, block_body, 0.0, _lm_shade(soot, rng, 0.03).darkened(0.12), false)
+		y += STOREY
+		terrain.create_box(center + Vector3(0.0, y + 0.35, 0.0), Vector3(12.0, 0.7, 5.0), yaw, rng, block_batch, block_body,
+				0.0, _lm_shade(soot, rng, 0.02))
+		y += 0.7
+
+	# THE EAST TOWER, one storey higher and rounded — an octagon, the house idiom.
+	# The west end gets a low unfinished stub instead, which is the lopsidedness.
+	var east := center + rot * Vector3(5.4, 0.0, 0.0)
+	for k in 2:
+		terrain.create_box(east + Vector3(0.0, 0.6 + (y - 0.6) / 2.0 + 1.7, 0.0), Vector3(3.2, y - 0.6 + 3.4, 3.2),
+				yaw + float(k) * PI / 4.0, rng, block_batch, block_body, 0.0, _lm_shade(soot, rng, 0.02))
+	terrain.create_box(east + Vector3(0.0, y + 3.6, 0.0), Vector3(3.6, 0.5, 3.6), yaw, rng, block_batch, block_body,
+			0.0, _lm_shade(soot, rng, 0.03).darkened(0.14), false)
+	terrain.create_box(center + rot * Vector3(-5.4, 0.6 + (y - 0.6) / 2.0, 0.0), Vector3(3.0, y - 0.6, 3.0), yaw,
+			rng, block_batch, block_body, 0.0, _lm_shade(soot, rng, 0.02))
+
+	return { "radius": 8.2, "top": y + 3.9 }
+
+static func _landmark_holstentor(terrain: Node3D, center: Vector3, rng: RandomNumberGenerator, _parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	Kind 31 — HOLSTEN GATE (Holstentor): two FAT round brick towers under conical
+	roofs with a lower gabled block wedged between them, the whole thing LEANING
+	inward and forward the way the real gate has sunk into Lübeck's marsh since
+	1478.
+
+	FAT IS THE RECOGNITION CUE and the reason the drums are 4.2 m across on an 8 m
+	tower. Every other tower in this registry is slender (Big Ben, the Fernsehturm,
+	Ulm, Cologne); the Holstentor's are almost as wide as they are tall, which is
+	what makes a two-tower gate read as THIS two-tower gate.
+
+	THE LEAN USES PISA'S LEANING AXIS, not a per-box tilt: each tower is four
+	octagonal drums whose CENTRES walk outward along a line leaning LEAN (0.045 rad)
+	away from the gate, and Pisa's sign gotcha holds unchanged — create_box composes
+	Basis(UP, yaw) * Basis(RIGHT, tilt), so the tilt handed to each drum has to
+	agree with the direction its centre was offset in or the drums scissor apart.
+	Here the lean bearing is fixed (straight out along local X, away from the
+	centre), so the yaw that maps local +Z onto that bearing is yaw + side*PI/2 —
+	worked out in full at the line itself, because on an OCTAGONAL drum the wrong
+	sign is invisible in plan and shows up only as a scissored tower.
+
+	RADIUS ARITHMETIC (declared 7.8). The widest reach is a tower's ROOF CONE at the
+	top of the lean: the tower centre is 3.8 out, the lean has added
+	8.0 * sin(0.045) = 0.36, and the widest cone box is 4.6 square with half-diagonal
+	0.5*sqrt(2 * 4.6^2) = 3.25 — so 3.8 + 0.36 + 3.25 = 7.41 <= 7.8. The topmost
+	drum is 4.16 + 2.97 = 7.13 and the plinth is 0.5*sqrt(11.6^2 + 5.6^2) = 6.44.
+	NO ACCENT.
+	"""
+	const LEAN := 0.045
+	const TOWER_X := 3.8
+	const DRUMS := 4
+	const DRUM_H := 2.0
+	var yaw := rng.randf_range(0.0, TAU)
+	var rot := Basis(Vector3.UP, yaw)
+	var brick := _lm_shade(LM_VERMILION, rng, 0.03).darkened(0.44)
+	var roof := _lm_shade(LM_ROOF, rng, 0.04)
+
+	terrain.create_box(center + Vector3(0.0, 0.3, 0.0), Vector3(11.6, 0.6, 5.6), yaw, rng, block_batch, block_body,
+			0.0, _lm_shade(LM_GRANITE, rng, 0.04))
+
+	var tower_top := 0.0
+	for side in [-1.0, 1.0]:
+		var lean_dir := rot * Vector3(side, 0.0, 0.0)
+		var foot := center + rot * Vector3(side * TOWER_X, 0.0, 0.0) + Vector3(0.0, 0.6, 0.0)
+		# THE SIGN, derived rather than guessed, because Pisa's gotcha bites here in a
+		# form Pisa's own wording does not cover: the drums are OCTAGONS (two boxes
+		# crossed at PI/4) and the roof cones are squares, so a drum_yaw that is 180
+		# degrees wrong looks IDENTICAL in plan — only the tilt direction flips, and
+		# the tower then scissors inward against a centreline walking outward. There
+		# is nothing to see in a footprint measurement and nothing for the self-check
+		# to catch; it is visible only as a seam on the model.
+		#
+		# create_box composes Basis(UP, drum_yaw) * Basis(RIGHT, tilt), and
+		# Basis(RIGHT, +t) tips local +Y toward local +Z — so a POSITIVE tilt leans
+		# the drum's top toward wherever local +Z points, and the requirement is
+		# exactly Basis(UP, drum_yaw) * +Z == lean_dir. With
+		# lean_dir = Basis(UP, yaw) * (side, 0, 0) = side * (cos yaw, 0, -sin yaw),
+		# and Basis(UP, d) * +Z = (sin d, 0, cos d), that needs
+		# sin d = side * cos yaw and cos d = -side * sin yaw, i.e. d = yaw + side*PI/2.
+		# The MINUS form is the trap: it satisfies both equations up to sign, points
+		# local +Z at -lean_dir, and leans every drum the wrong way. MEASURED both
+		# ways with a throwaway harness that compares each drum's top face centre
+		# against the next drum's bottom face centre: 0.0000 m at every one of the
+		# six joints as written, and 0.1799 m — an open wedge you can see through —
+		# with the sign flipped back.
+		var drum_yaw: float = yaw + side * PI / 2.0
+		var s := 0.0
+		for i in DRUMS:
+			var mid := s + DRUM_H / 2.0
+			var pos := foot + lean_dir * (mid * sin(LEAN)) + Vector3(0.0, mid * cos(LEAN), 0.0)
+			for k in 2:
+				terrain.create_box(pos, Vector3(4.2, DRUM_H, 4.2), drum_yaw + float(k) * PI / 4.0,
+						rng, block_batch, block_body, LEAN, _lm_shade(brick, rng, 0.02))
+			s += DRUM_H
+		# The dark arrow-slit band round each drum stack, and the conical roof over
+		# it. Both trim: they sit on the drums' own collision volume.
+		var slit := foot + lean_dir * (4.6 * sin(LEAN)) + Vector3(0.0, 4.6 * cos(LEAN), 0.0)
+		terrain.create_box(slit, Vector3(4.4, 0.5, 4.4), drum_yaw, rng, block_batch, block_body, LEAN,
+				_lm_shade(brick, rng, 0.03).darkened(0.3), false)
+		var cy := s
+		for i in 3:
+			var w: float = 4.6 - float(i) * 1.4
+			var mid := cy + 0.85
+			var pos := foot + lean_dir * (mid * sin(LEAN)) + Vector3(0.0, mid * cos(LEAN), 0.0)
+			terrain.create_box(pos, Vector3(w, 1.7, w), drum_yaw, rng, block_batch, block_body, LEAN,
+					_lm_shade(roof, rng, 0.03), false)
+			cy += 1.7
+		tower_top = 0.6 + cy * cos(LEAN)
+
+	# THE CENTRE BLOCK between the towers, lower, with the stepped gable that fills
+	# the gap above the archway.
+	terrain.create_box(center + Vector3(0.0, 0.6 + 3.2, 0.0), Vector3(4.4, 6.4, 4.6), yaw, rng, block_batch, block_body,
+			0.0, _lm_shade(brick, rng, 0.02))
+	# The archway — a deep dark recess rather than a hole, because a real opening
+	# would need the block split in two and this one is only 4.4 m wide.
+	for z_side in [-1.0, 1.0]:
+		terrain.create_box(center + rot * Vector3(0.0, 0.6 + 1.9, z_side * 2.15), Vector3(2.4, 3.8, 0.5), yaw,
+				rng, block_batch, block_body, 0.0, LM_VERMILION.darkened(0.8), false)
+	var gy := 0.6 + 6.4
+	for i in 3:
+		var w: float = 4.0 - float(i) * 1.1
+		terrain.create_box(center + Vector3(0.0, gy + 0.55, 0.0), Vector3(w, 1.1, 4.2), yaw,
+				rng, block_batch, block_body, 0.0, _lm_shade(brick, rng, 0.03), false)
+		gy += 1.1
+
+	return { "radius": 7.8, "top": maxf(tower_top, gy) }
+
+static func _landmark_frauenkirche(terrain: Node3D, center: Vector3, rng: RandomNumberGenerator, _parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	Kind 32 — DRESDEN FRAUENKIRCHE: a near-square sandstone body with a corner
+	turret at each of its four corners, carrying the STEINERNE GLOCKE — the stone
+	bell — with a lantern and a cross on top.
+
+	THE BELL IS A BULGE STACK, and getting the bulge right is the entire entry.
+	The Frauenkirche's dome is famous for being STONE where every other Baroque
+	dome of its size is timber and lead, and the way that reads is that it swells
+	OUTWARD above its base before it turns in — a bell, not a cone. So the widest
+	box in the stack is the SECOND one, exactly as _lm_onion does it, and the six
+	tiers then close in. Build it as a shrinking stack and it becomes Chichén Itzá
+	with a spike on top.
+
+	The stone is LM_SANDSTONE darkened: Dresden's Elbe sandstone blackens with age,
+	and the rebuilt church is famously PIEBALD — the 43% of blocks salvaged from
+	the 1945 rubble went back black while the new stone went back pale. That is
+	what the per-box _lm_shade jitter is doing here at a deliberately wide 0.06
+	rather than the usual 0.02-0.03: on this one building the patchwork is the point.
+
+	RADIUS ARITHMETIC (declared 7.2). The widest box is the PLINTH, 9.2 square, so
+	0.5*sqrt(2 * 9.2^2) = 6.51 <= 7.2. The body is 8.0 square => 5.66, the bell's
+	widest tier is 6.9 square => 4.88, and a corner turret is sqrt(2 * 3.4^2) = 4.81
+	+ 0.5*sqrt(2 * 1.3^2) = 0.92 => 5.73.
+	NO ACCENT.
+	"""
+	const BODY := 8.0
+	const TURRET_XZ := 3.4
+	var yaw := rng.randf_range(0.0, TAU)
+	var rot := Basis(Vector3.UP, yaw)
+	var stone := _lm_shade(LM_SANDSTONE, rng, 0.03).darkened(0.16)
+
+	terrain.create_box(center + Vector3(0.0, 0.4, 0.0), Vector3(9.2, 0.8, 9.2), yaw, rng, block_batch, block_body,
+			0.0, _lm_shade(LM_GRANITE, rng, 0.04))
+	var y := 0.8
+
+	# The body, plus a 45-degree crossed box so the corners read as chamfered — the
+	# real plan is a square with its corners cut, which is what the four turrets
+	# stand on.
+	terrain.create_box(center + Vector3(0.0, y + 3.2, 0.0), Vector3(BODY, 6.4, BODY), yaw, rng, block_batch, block_body,
+			0.0, _lm_shade(stone, rng, 0.06))
+	terrain.create_box(center + Vector3(0.0, y + 3.2, 0.0), Vector3(7.4, 6.4, 7.4), yaw + PI / 4.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.06))
+	y += 6.4
+	terrain.create_box(center + Vector3(0.0, y + 0.3, 0.0), Vector3(8.6, 0.6, 8.6), yaw, rng, block_batch, block_body,
+			0.0, _lm_shade(stone, rng, 0.04), false)
+	y += 0.6
+
+	# The four corner turrets — the stair towers, and the only vertical accents on
+	# a building that is otherwise all curve.
+	for x_side in [-1.0, 1.0]:
+		for z_side in [-1.0, 1.0]:
+			var spot := center + rot * Vector3(x_side * TURRET_XZ, 0.0, z_side * TURRET_XZ)
+			terrain.create_box(spot + Vector3(0.0, 0.8 + 4.1, 0.0), Vector3(1.3, 8.2, 1.3), yaw,
+					rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.05))
+			terrain.create_box(spot + Vector3(0.0, 0.8 + 8.6, 0.0), Vector3(1.0, 0.8, 1.0), yaw,
+					rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.04), false)
+
+	# THE STONE BELL. Widest tier SECOND — see the docstring.
+	const BELL_W: Array = [6.6, 6.9, 6.4, 5.4, 4.0, 2.6]
+	const BELL_H: Array = [1.0, 1.1, 1.1, 1.1, 1.0, 0.9]
+	for i in BELL_W.size():
+		var w: float = BELL_W[i]
+		var h: float = BELL_H[i]
+		terrain.create_box(center + Vector3(0.0, y + h / 2.0, 0.0), Vector3(w, h, w), yaw + float(i) * PI / 12.0,
+				rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.06), false)
+		y += h
+
+	# The lantern, its little cupola, and the golden cross that went back up in 2004
+	# — made in London by the son of one of the bomber crews, which is the kind of
+	# thing a one-line fact has no room for and a shape can at least gesture at.
+	terrain.create_box(center + Vector3(0.0, y + 0.9, 0.0), Vector3(2.0, 1.8, 2.0), yaw, rng, block_batch, block_body,
+			0.0, _lm_shade(stone, rng, 0.04), false)
+	y += 1.8
+	for i in 2:
+		var w: float = 1.7 - float(i) * 0.6
+		terrain.create_box(center + Vector3(0.0, y + 0.4, 0.0), Vector3(w, 0.8, w), yaw, rng, block_batch, block_body,
+				0.0, _lm_shade(stone, rng, 0.04), false)
+		y += 0.8
+	var gold := _lm_shade(LM_SANDSTONE, rng, 0.02)
+	terrain.create_box(center + Vector3(0.0, y + 0.9, 0.0), Vector3(0.22, 1.8, 0.22), yaw, rng, block_batch, block_body,
+			0.0, gold, false)
+	terrain.create_box(center + Vector3(0.0, y + 1.2, 0.0), Vector3(0.9, 0.22, 0.2), yaw, rng, block_batch, block_body,
+			0.0, gold, false)
+
+	return { "radius": 7.2, "top": y + 1.8 }
+
+static func _landmark_elbphilharmonie(terrain: Node3D, center: Vector3, rng: RandomNumberGenerator, _parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	Kind 33 — ELBPHILHARMONIE: a plain brick harbour warehouse with a GLASS BODY
+	set on top of it, roofed by a run of peaks and troughs — the wave.
+
+	THE JOINT IS THE LANDMARK. Neither half is remarkable alone: a brick box is
+	every warehouse on the Elbe, and a glass box is every office built since 1990.
+	What people photograph is the SEAM — the moment where the 1963 Kaispeicher A
+	stops dead and something transparent starts. So the two halves are built as two
+	deliberately unblended volumes, the brick pilaster strips stop exactly at the
+	seam, and the wave sits inset from the glass below it so the profile steps.
+
+	THE WAVE IS AN EXPLICIT HEIGHT TABLE, not a sine. Eight segments at heights
+	that rise and fall unevenly, because the real roof is not periodic — it peaks
+	high at one end, dips, peaks higher in the middle and tapers off. A sine would
+	read as corrugation, which is the one thing this roof must not look like.
+
+	RADIUS ARITHMETIC (declared 7.4). The widest box is the QUAY, 11.6 x 7.4, so
+	0.5*sqrt(11.6^2 + 7.4^2) = 6.88 <= 7.4. The warehouse is 0.5*sqrt(10.8^2 +
+	6.6^2) = 6.33, the glass body is 0.5*sqrt(10.4^2 + 6.2^2) = 6.05, and the
+	outermost wave segment is 4.2 + 0.5*sqrt(1.4^2 + 5.6^2) = 4.2 + 2.89 = 7.09.
+	NO ACCENT: the building is lit from inside by 2,100 windows, and one emissive
+	box would say "bonfire on a roof".
+	"""
+	const WAREHOUSE := Vector3(10.8, 6.2, 6.6)
+	const GLASS_BODY := Vector3(10.4, 4.4, 6.2)
+	## The wave. Eight segment tops, deliberately not periodic — see the docstring.
+	const WAVE_H: Array = [1.7, 0.8, 2.3, 1.1, 2.7, 1.4, 2.0, 0.9]
+	const WAVE_W := 1.4
+	const WAVE_D := 5.6
+	var yaw := rng.randf_range(0.0, TAU)
+	var rot := Basis(Vector3.UP, yaw)
+	var brick := _lm_shade(LM_VERMILION, rng, 0.03).darkened(0.52)
+	var glass := _lm_shade(LM_SLATE_BLUE, rng, 0.03).lightened(0.3)
+
+	terrain.create_box(center + Vector3(0.0, 0.25, 0.0), Vector3(11.6, 0.5, 7.4), yaw, rng, block_batch, block_body,
+			0.0, _lm_shade(LM_GRANITE, rng, 0.04).darkened(0.2))
+	var y := 0.5
+
+	# THE WAREHOUSE, and the pilaster strips that stop at the seam.
+	terrain.create_box(center + Vector3(0.0, y + WAREHOUSE.y / 2.0, 0.0), WAREHOUSE, yaw, rng, block_batch, block_body,
+			0.0, _lm_shade(brick, rng, 0.02))
+	for px in [-4.2, -2.8, -1.4, 0.0, 1.4, 2.8, 4.2]:
+		for z_side in [-1.0, 1.0]:
+			terrain.create_box(center + rot * Vector3(px, y + WAREHOUSE.y / 2.0, z_side * (WAREHOUSE.z / 2.0 + 0.1)),
+					Vector3(0.6, WAREHOUSE.y - 0.6, 0.2), yaw, rng, block_batch, block_body,
+					0.0, _lm_shade(brick, rng, 0.03).darkened(0.16), false)
+	y += WAREHOUSE.y
+
+	# THE SEAM — a thin dark band, which is the plaza deck between the two halves.
+	terrain.create_box(center + Vector3(0.0, y + 0.2, 0.0), Vector3(11.2, 0.4, 7.0), yaw, rng, block_batch, block_body,
+			0.0, LM_SLATE_BLUE.darkened(0.55), false)
+	y += 0.4
+
+	# THE GLASS BODY.
+	terrain.create_box(center + Vector3(0.0, y + GLASS_BODY.y / 2.0, 0.0), GLASS_BODY, yaw, rng, block_batch, block_body,
+			0.0, _lm_shade(glass, rng, 0.02))
+	y += GLASS_BODY.y
+
+	# THE WAVE. Each segment is a slab plus a narrower cap, so a peak comes to a
+	# ridge rather than to a flat top. All trim, 11 m up on the glass body's volume.
+	var top := y
+	for i in WAVE_H.size():
+		var h: float = WAVE_H[i]
+		var x: float = (float(i) - 3.5) * 1.2
+		terrain.create_box(center + rot * Vector3(x, y + h / 2.0, 0.0), Vector3(WAVE_W, h, WAVE_D), yaw,
+				rng, block_batch, block_body, 0.0, _lm_shade(glass, rng, 0.03), false)
+		terrain.create_box(center + rot * Vector3(x, y + h + 0.25, 0.0), Vector3(WAVE_W * 0.6, 0.5, WAVE_D * 0.8), yaw,
+				rng, block_batch, block_body, 0.0, _lm_shade(glass, rng, 0.03).darkened(0.1), false)
+		top = maxf(top, y + h + 0.5)
+
+	return { "radius": 7.4, "top": top }
+
+static func _landmark_zugspitze(terrain: Node3D, center: Vector3, rng: RandomNumberGenerator, _parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	Kind 34 — ZUGSPITZE SUMMIT CROSS: a rock summit of five tapering tiers with
+	snow on the top two and the GILDED CROSS standing on the highest stone.
+
+	THE ONLY ENTRY IN THE REGISTRY THAT IS A PIECE OF LANDSCAPE, and the scale is
+	honest about that: at 12 m it is a crag, not a 2,962 m mountain. What makes it
+	read is the CROSS, which is why the cross is exaggerated — 3.4 m of it on a
+	9 m crag, where the real one is 4.9 m on a mountain. Shrink it to scale and
+	this becomes an anonymous rock, which the mountain biome already builds by the
+	dozen.
+
+	IT DELIBERATELY BORROWS THE MOUNTAIN BIOME'S OWN RULES — tapering layers, a
+	per-layer yaw, a small lateral jitter so it does not read as a wedding cake, and
+	snow forced onto the top layers — because a player who has walked past a hundred
+	massifs should recognise the family and then notice the one thing that is
+	different. That is the joke, and it only works if the family resemblance is real.
+
+	RADIUS ARITHMETIC (declared 6.0). The widest box is the BASE TIER, 7.4 square,
+	with the lateral jitter at its worst: 0.5*sqrt(2 * 7.4^2) + JITTER (0.25) =
+	5.23 + 0.25 = 5.48 <= 6.0. A foot boulder is at most 4.3 out with half-diagonal
+	0.5*sqrt(2 * 1.4^2) = 0.99 => 5.29, and the cross arms are 0.5*sqrt(2.0^2 +
+	0.26^2) = 1.01 at the axis.
+	NO ACCENT: the cross is gilded, not lit — the same call St Basil's domes make.
+	"""
+	const TIER_W: Array = [7.4, 6.0, 4.7, 3.4, 2.0]
+	const TIER_H: Array = [2.2, 2.0, 1.8, 1.6, 1.4]
+	const JITTER := 0.25
+	const SNOW_FROM := 3  # the top two tiers, the same "above the snow line" rule
+	var yaw := rng.randf_range(0.0, TAU)
+	var rot := Basis(Vector3.UP, yaw)
+	var rock := _lm_shade(LM_GRANITE, rng, 0.05)
+	var snow := _lm_shade(LM_MARBLE, rng, 0.02)
+
+	var y := 0.0
+	for i in TIER_W.size():
+		var w: float = TIER_W[i]
+		var h: float = TIER_H[i]
+		var jx := rng.randf_range(-JITTER, JITTER)
+		var jz := rng.randf_range(-JITTER, JITTER)
+		var tint: Color = snow if i >= SNOW_FROM else rock
+		terrain.create_box(center + rot * Vector3(jx, y + h / 2.0, jz), Vector3(w, h, w),
+				yaw + rng.randf_range(-0.5, 0.5), rng, block_batch, block_body, 0.0, _lm_shade(tint, rng, 0.04))
+		y += h
+
+	# Scree at the foot — the loose boulders that say "this broke off the thing
+	# above it" rather than "this was placed here".
+	var boulders := rng.randi_range(4, 6)
+	for i in boulders:
+		var a := rng.randf_range(0.0, TAU)
+		var r := rng.randf_range(3.1, 4.3)
+		var w := rng.randf_range(0.7, 1.4)
+		terrain.create_box(center + Vector3(cos(a) * r, w / 2.0, sin(a) * r), Vector3(w, w, w),
+				rng.randf_range(0.0, TAU), rng, block_batch, block_body, 0.0, _lm_shade(rock, rng, 0.05))
+
+	# THE CROSS. Trim: it stands on the summit's own collision volume 9 m up, and a
+	# 22 cm post is not something to walk into.
+	var gold := _lm_shade(LM_SANDSTONE, rng, 0.02)
+	terrain.create_box(center + Vector3(0.0, y + 1.7, 0.0), Vector3(0.26, 3.4, 0.26), yaw, rng, block_batch, block_body,
+			0.0, gold, false)
+	terrain.create_box(center + Vector3(0.0, y + 2.55, 0.0), Vector3(2.0, 0.26, 0.24), yaw, rng, block_batch, block_body,
+			0.0, gold, false)
+	# The little sunburst at the crossing, which every Alpine Gipfelkreuz has.
+	terrain.create_box(center + Vector3(0.0, y + 2.55, 0.0), Vector3(0.6, 0.6, 0.3), yaw + PI / 4.0,
+			rng, block_batch, block_body, 0.0, gold, false)
+
+	return { "radius": 6.0, "top": y + 3.4 }
+
+static func _landmark_wartburg(terrain: Node3D, center: Vector3, rng: RandomNumberGenerator, _parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	Kind 35 — WARTBURG CASTLE: a square stone keep (the Bergfried, with its cross)
+	standing over a long HALF-TIMBERED hall, a gate tower at one end and a low
+	curtain wall closing the courtyard, all of it on a rock outcrop.
+
+	DELIBERATELY NOT NEUSCHWANSTEIN, and the registry banner says why: "a castle" is
+	a silhouette two entries could share, so the separation has to be COLOUR and
+	MASS. Neuschwanstein is white walls, blue cones and a tall slender keep — a
+	fairy tale seen from below. The Wartburg is ochre and dark timber, wide and low,
+	with a square battlemented keep and no cone anywhere on it — a fortress that
+	was a fortress. Put them side by side and nothing about them matches.
+
+	THE TIMBER FRAMING IS THE HALF THAT DOES THE WORK. Fachwerk — dark beams laid
+	over pale infill in horizontals and diagonals — is a pattern nothing else in the
+	registry has, and it is eight thin trim boxes on the hall's front face. Without
+	it the hall is a beige shed.
+
+	RADIUS ARITHMETIC (declared 7.2). The widest reach is the GATE TOWER'S ROOF (not
+	the tower under it — the roof oversails it by 0.2 m on each side, which is
+	exactly the kind of trim that quietly becomes the binding box): centre at
+	sqrt(4.6^2 + 2.2^2) = 5.10 with half-diagonal 0.5*sqrt(2.8^2 + 3.0^2) = 2.05, so
+	7.15 <= 7.2. The tower itself is 5.10 + 1.77 = 6.87, the hall is 1.79 +
+	0.5*sqrt(7.0^2 + 4.4^2) = 1.79 + 4.13 = 5.92, its roof 1.79 + 4.41 = 6.20, the
+	outcrop 0.5*sqrt(9.0^2 + 7.0^2) = 5.70, and the keep sqrt(3.0^2 + 1.2^2) = 3.23
+	+ 2.26 = 5.49. This is the tightest entry in the registry (0.15 m of headroom,
+	measured), and it is safe because every one of those terms is yaw-INVARIANT —
+	a box's offset and its own half-diagonal both rotate with the shape — so the
+	self-check's 25-seed sweep is not what is holding it up.
+	NO ACCENT.
+	"""
+	const HALL := Vector3(7.0, 5.6, 4.4)
+	const KEEP := Vector3(3.2, 11.0, 3.2)
+	var yaw := rng.randf_range(0.0, TAU)
+	var rot := Basis(Vector3.UP, yaw)
+	var stone := _lm_shade(LM_STONE_GREY, rng, 0.04)
+	var plaster := _lm_shade(LM_OCHRE, rng, 0.04)
+	var timber := _lm_shade(LM_ROOF, rng, 0.03).darkened(0.25)
+
+	# The outcrop. Two slabs, so the castle stands on rock — Neuschwanstein's crag,
+	# reused because a castle on grass reads as a model of a castle.
+	terrain.create_box(center + Vector3(0.0, 0.5, 0.0), Vector3(9.0, 1.0, 7.0), yaw, rng, block_batch, block_body,
+			0.0, _lm_shade(LM_GRANITE, rng, 0.05))
+	terrain.create_box(center + rot * Vector3(0.2, 1.55, 0.0), Vector3(7.6, 1.1, 5.8), yaw, rng, block_batch, block_body,
+			0.0, _lm_shade(LM_GRANITE, rng, 0.05))
+	const ROCK := 2.1
+
+	# THE HALL (the Palas), in stone up to first-floor level and half-timbered above
+	# — which is how the real one is built and why the two-tone matters.
+	var hall_spot := center + rot * Vector3(1.6, 0.0, 0.8)
+	terrain.create_box(hall_spot + Vector3(0.0, ROCK + 1.4, 0.0), Vector3(HALL.x, 2.8, HALL.z), yaw,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03))
+	terrain.create_box(hall_spot + Vector3(0.0, ROCK + 2.8 + 1.4, 0.0), Vector3(HALL.x, 2.8, HALL.z), yaw,
+			rng, block_batch, block_body, 0.0, _lm_shade(plaster, rng, 0.03))
+	# THE FACHWERK — three horizontal rails and four diagonal braces on the front
+	# face, plus a post at each end. Trim on the hall's own volume.
+	var timber_y := ROCK + 2.8
+	var face_z := -(HALL.z / 2.0 + 0.1)
+	for rail in 3:
+		terrain.create_box(hall_spot + rot * Vector3(0.0, timber_y + 0.25 + float(rail) * 1.25, face_z),
+				Vector3(HALL.x, 0.22, 0.2), yaw, rng, block_batch, block_body, 0.0, timber, false)
+	for i in 4:
+		var bx: float = (float(i) - 1.5) * 1.7
+		terrain.create_box(hall_spot + rot * Vector3(bx, timber_y + 1.4, face_z), Vector3(0.24, 2.4, 0.2),
+				yaw, rng, block_batch, block_body, 0.0, timber, false)
+	# The steep roof over the hall.
+	terrain.create_box(hall_spot + Vector3(0.0, ROCK + 5.6 + 0.8, 0.0), Vector3(HALL.x + 0.4, 1.6, HALL.z + 0.4), yaw,
+			rng, block_batch, block_body, 0.0, _lm_shade(LM_ROOF, rng, 0.04), false)
+	terrain.create_box(hall_spot + Vector3(0.0, ROCK + 7.2 + 0.5, 0.0), Vector3(HALL.x - 1.6, 1.0, HALL.z - 1.8), yaw,
+			rng, block_batch, block_body, 0.0, _lm_shade(LM_ROOF, rng, 0.04), false)
+
+	# THE BERGFRIED — square, battlemented, no cone. The tallest thing here.
+	var keep_spot := center + rot * Vector3(-3.0, 0.0, -1.2)
+	terrain.create_box(keep_spot + Vector3(0.0, ROCK + KEEP.y / 2.0, 0.0), KEEP, yaw, rng, block_batch, block_body,
+			0.0, _lm_shade(stone, rng, 0.03))
+	var keep_top := ROCK + KEEP.y
+	# Its battlements: four merlons per side is too many boxes for what it says, so
+	# it is one ring band with the four corner merlons standing on it.
+	terrain.create_box(keep_spot + Vector3(0.0, keep_top + 0.3, 0.0), Vector3(3.8, 0.6, 3.8), yaw,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.04), false)
+	for x_side in [-1.0, 1.0]:
+		for z_side in [-1.0, 1.0]:
+			terrain.create_box(keep_spot + rot * Vector3(x_side * 1.5, keep_top + 1.0, z_side * 1.5),
+					Vector3(0.8, 1.4, 0.8), yaw, rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.04), false)
+	# The cross on the keep, which is the one thing the fact's Luther hook can point
+	# at without a signpost.
+	terrain.create_box(keep_spot + Vector3(0.0, keep_top + 2.6, 0.0), Vector3(0.2, 2.0, 0.2), yaw,
+			rng, block_batch, block_body, 0.0, _lm_shade(LM_SANDSTONE, rng, 0.02), false)
+	terrain.create_box(keep_spot + Vector3(0.0, keep_top + 2.9, 0.0), Vector3(0.9, 0.2, 0.18), yaw,
+			rng, block_batch, block_body, 0.0, _lm_shade(LM_SANDSTONE, rng, 0.02), false)
+
+	# The gate tower and the curtain wall closing the courtyard.
+	var gate_spot := center + rot * Vector3(4.6, 0.0, -2.2)
+	terrain.create_box(gate_spot + Vector3(0.0, ROCK + 3.0, 0.0), Vector3(2.4, 6.0, 2.6), yaw,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03))
+	terrain.create_box(gate_spot + Vector3(0.0, ROCK + 6.6, 0.0), Vector3(2.8, 1.2, 3.0), yaw,
+			rng, block_batch, block_body, 0.0, _lm_shade(LM_ROOF, rng, 0.04), false)
+	terrain.create_box(gate_spot + rot * Vector3(0.0, ROCK + 1.3, -1.4), Vector3(1.2, 2.6, 0.4), yaw,
+			rng, block_batch, block_body, 0.0, LM_OCHRE.darkened(0.78), false)
+	for wx in [-1.4, 0.6, 2.6]:
+		terrain.create_box(center + rot * Vector3(wx, ROCK + 1.1, -3.0), Vector3(2.0, 2.2, 0.9), yaw,
+				rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.04))
+
+	return { "radius": 7.2, "top": keep_top + 3.6 }
+
+static func _landmark_ulm_minster(terrain: Node3D, center: Vector3, rng: RandomNumberGenerator, _parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	Kind 36 — ULM MINSTER: ONE colossal steeple over a modest nave, and the tower
+	is the tallest thing in the whole registry because that is the fact — 161.5 m,
+	the tallest church steeple on Earth, on a parish church in a town of 130,000.
+
+	DELIBERATELY THE ONE-SPIRE ANSWER TO COLOGNE, which Cologne's own docstring
+	already set up: "one spire is a church, two is the Dom". So this builder is not
+	allowed to hedge. The tower is single, it is CENTRED on the west front rather
+	than flanking it, it is far taller relative to its nave than Cologne's, and the
+	nave behind it is deliberately low and plain so nothing competes. Read the two
+	silhouettes side by side and the difference is not a detail, it is the subject.
+
+	The stone is LM_MARBLE darkened — Ulm's is pale limestone, near-white and a
+	world away from Cologne's soot-black basalt, which is the second separator.
+
+	RADIUS ARITHMETIC (declared 8.0). The widest reach is the CHOIR at the far end
+	of the nave: centre at 5.8 with half-diagonal 0.5*sqrt(3.4^2 + 2.2^2) = 2.03, so
+	7.83 <= 8.0. The far nave bay is 4.0 + 0.5*sqrt(6.0^2 + 3.2^2) = 4.0 + 3.40 =
+	7.40, the roof ridge is 2.5 + 0.5*sqrt(5.4^2 + 7.4^2) = 2.5 + 4.58 = 7.08, and
+	the tower's base stage is 3.6 + 0.5*sqrt(2 * 5.2^2) = 3.6 + 3.68 = 7.28.
+	NO ACCENT, for Cologne's reason: a Gothic church lit from within needs windows,
+	and windows are what vanishes at 30 m.
+	"""
+	const NAVE := Vector3(6.0, 7.6, 3.2)
+	const TOWER_Z := -3.6
+	var yaw := rng.randf_range(0.0, TAU)
+	var rot := Basis(Vector3.UP, yaw)
+	var stone := _lm_shade(LM_MARBLE, rng, 0.03).darkened(0.14)
+
+	# The nave — two low bays, plain, and it stays plain on purpose.
+	for bz in [1.0, 4.0]:
+		terrain.create_box(center + rot * Vector3(0.0, NAVE.y / 2.0, bz), NAVE, yaw, rng, block_batch, block_body,
+				0.0, _lm_shade(stone, rng, 0.02))
+	terrain.create_box(center + rot * Vector3(0.0, NAVE.y + 0.7, 2.5), Vector3(5.4, 1.4, 7.4), yaw,
+			rng, block_batch, block_body, 0.0, _lm_shade(LM_ROOF, rng, 0.04), false)
+	terrain.create_box(center + rot * Vector3(0.0, 3.3, 5.8), Vector3(3.4, 6.6, 2.2), yaw, rng, block_batch, block_body,
+			0.0, _lm_shade(stone, rng, 0.02))
+	# Flying-buttress stubs down the flanks.
+	for bx in [-3.8, 3.8]:
+		for bz in [1.0, 4.2]:
+			terrain.create_box(center + rot * Vector3(bx, 2.5, bz), Vector3(0.9, 5.0, 0.9), yaw,
+					rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03))
+
+	# THE TOWER. Square base stage, a narrower shaft, then an OCTAGON stage (the
+	# house idiom) and the openwork spire — which is the real tower's own sequence
+	# and the reason it does not read as a chimney.
+	var base := center + rot * Vector3(0.0, 0.0, TOWER_Z)
+	terrain.create_box(base + Vector3(0.0, 4.0, 0.0), Vector3(5.2, 8.0, 5.2), yaw, rng, block_batch, block_body,
+			0.0, _lm_shade(stone, rng, 0.02))
+	# The great west portal, dark and deep.
+	terrain.create_box(base + rot * Vector3(0.0, 2.0, -2.5), Vector3(1.8, 4.0, 0.5), yaw, rng, block_batch, block_body,
+			0.0, LM_MARBLE.darkened(0.66), false)
+	terrain.create_box(base + Vector3(0.0, 12.0, 0.0), Vector3(4.4, 8.0, 4.4), yaw, rng, block_batch, block_body,
+			0.0, _lm_shade(stone, rng, 0.02))
+	var y := 16.0
+	for k in 2:
+		terrain.create_box(base + Vector3(0.0, y + 2.6, 0.0), Vector3(3.4, 5.2, 3.4), yaw + float(k) * PI / 4.0,
+				rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02))
+	y += 5.2
+
+	# THE OPENWORK SPIRE — six shrinking boxes, each re-yawed a little so the taper
+	# reads as a pierced stone filigree rather than as a smooth cone. Trim: 21 m up.
+	for i in 6:
+		var w: float = 3.0 - float(i) * 0.44
+		var h := 1.6
+		terrain.create_box(base + Vector3(0.0, y + h / 2.0, 0.0), Vector3(w, h, w), yaw + float(i) * PI / 16.0,
+				rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false)
+		y += h
+	terrain.create_box(base + Vector3(0.0, y + 0.7, 0.0), Vector3(0.28, 1.4, 0.28), yaw, rng, block_batch, block_body,
+			0.0, _lm_shade(stone, rng, 0.02), false)
+
+	return { "radius": 8.0, "top": y + 1.4 }
+
+static func _landmark_bremen_musicians(terrain: Node3D, center: Vector3, rng: RandomNumberGenerator, _parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	Kind 37 — BREMEN TOWN MUSICIANS: a donkey with a dog on its back, a cat on the
+	dog and a rooster on the cat, in patinated bronze on a two-step plinth.
+
+	THE STACK IS THE LANDMARK, so everything is subordinate to reading it as FOUR
+	ANIMALS and not as one totem pole. Each one therefore gets a head that sticks
+	out FORWARD (so the profile is a staircase of muzzles, not a column) and each is
+	visibly smaller than the one below by more than its share — donkey, dog, cat,
+	rooster in a 1 : 0.62 : 0.42 : 0.28 body length ratio, wider than life so the
+	four steps survive the 30 m the whole registry is judged at.
+
+	THE ONLY FIGURATIVE GROUP IN THE REGISTRY and by far the smallest entry, which
+	is exactly right: it is a 4 m bronze on a street corner, not a monument. Its
+	radius is DELIBERATELY LOOSE for Big Ben's reason — the honest stone reaches
+	2.55 m, and a 2.55 m radius would fire the toast from 8.5 m, i.e. from close
+	enough that the card and the statue fight for the same screen.
+
+	The forelegs are given their own boxes and made deliberately prominent because
+	the fact ends on them: grasping the donkey's forelegs is what the queue on
+	Bremen's Marktplatz is actually there to do, and a fact that points at a detail
+	the shape does not have is a fact about somewhere else.
+
+	RADIUS ARITHMETIC (declared 4.2, honestly 2.55). The widest box is the lower
+	plinth step, 3.6 square, so 0.5*sqrt(2 * 3.6^2) = 2.55. The donkey's muzzle is
+	the furthest-out small box at 1.75 + 0.5*sqrt(1.1^2 + 0.6^2) = 1.75 + 0.63 =
+	2.38, and its tail reaches 1.5 + 0.28 = 1.78.
+	NO ACCENT.
+	"""
+	var yaw := rng.randf_range(0.0, TAU)
+	var rot := Basis(Vector3.UP, yaw)
+	var bronze := _lm_shade(LM_COPPER, rng, 0.03).darkened(0.38)
+	var patina := _lm_shade(LM_COPPER, rng, 0.04)
+
+	terrain.create_box(center + Vector3(0.0, 0.35, 0.0), Vector3(3.6, 0.7, 3.6), yaw, rng, block_batch, block_body,
+			0.0, _lm_shade(LM_GRANITE, rng, 0.04))
+	terrain.create_box(center + Vector3(0.0, 0.95, 0.0), Vector3(2.6, 0.5, 2.6), yaw, rng, block_batch, block_body,
+			0.0, _lm_shade(LM_GRANITE, rng, 0.03))
+	const PLINTH := 1.2
+
+	# THE DONKEY. Four legs, and the FORELEGS (at +x, the front) are thicker and
+	# stand clear of the body — see the docstring.
+	for x_side in [-1.0, 1.0]:
+		for z_side in [-1.0, 1.0]:
+			var thick: float = 0.34 if x_side > 0.0 else 0.28
+			terrain.create_box(center + rot * Vector3(x_side * 0.95, PLINTH + 0.6, z_side * 0.38),
+					Vector3(thick, 1.2, thick), yaw, rng, block_batch, block_body, 0.0, _lm_shade(bronze, rng, 0.02))
+	var body_y := PLINTH + 1.2 + 0.62
+	terrain.create_box(center + Vector3(0.0, body_y, 0.0), Vector3(2.6, 1.24, 1.1), yaw, rng, block_batch, block_body,
+			0.0, _lm_shade(bronze, rng, 0.02))
+	# Neck, muzzle and the two long ears — the ears are what make it a donkey and
+	# not a horse, and they are 20 cm boxes, so they are worth the two lines.
+	terrain.create_box(center + rot * Vector3(1.15, body_y + 0.75, 0.0), Vector3(0.65, 1.2, 0.7), yaw,
+			rng, block_batch, block_body, 0.0, _lm_shade(bronze, rng, 0.02), false)
+	terrain.create_box(center + rot * Vector3(1.75, body_y + 1.15, 0.0), Vector3(1.1, 0.6, 0.6), yaw,
+			rng, block_batch, block_body, 0.0, _lm_shade(bronze, rng, 0.02), false)
+	for z_side in [-1.0, 1.0]:
+		terrain.create_box(center + rot * Vector3(1.25, body_y + 1.75, z_side * 0.2), Vector3(0.22, 0.8, 0.3), yaw,
+				rng, block_batch, block_body, 0.0, _lm_shade(bronze, rng, 0.02), false)
+	terrain.create_box(center + rot * Vector3(-1.5, body_y - 0.1, 0.0), Vector3(0.5, 0.7, 0.2), yaw,
+			rng, block_batch, block_body, 0.0, _lm_shade(bronze, rng, 0.02), false)
+
+	# THE DOG, standing on the donkey's back. From here up everything is trim: it is
+	# stacked on the donkey's own collision volume, and a bronze cat is not a ledge.
+	var dog_y := body_y + 0.62 + 0.42
+	terrain.create_box(center + rot * Vector3(-0.05, dog_y, 0.0), Vector3(1.62, 0.84, 0.75), yaw,
+			rng, block_batch, block_body, 0.0, _lm_shade(patina, rng, 0.02), false)
+	terrain.create_box(center + rot * Vector3(0.9, dog_y + 0.5, 0.0), Vector3(0.72, 0.62, 0.6), yaw,
+			rng, block_batch, block_body, 0.0, _lm_shade(patina, rng, 0.02), false)
+	for z_side in [-1.0, 1.0]:
+		terrain.create_box(center + rot * Vector3(0.78, dog_y + 0.9, z_side * 0.2), Vector3(0.24, 0.4, 0.26), yaw,
+				rng, block_batch, block_body, 0.0, _lm_shade(patina, rng, 0.02), false)
+
+	# THE CAT.
+	var cat_y := dog_y + 0.42 + 0.3
+	terrain.create_box(center + rot * Vector3(-0.05, cat_y, 0.0), Vector3(1.1, 0.6, 0.55), yaw,
+			rng, block_batch, block_body, 0.0, _lm_shade(bronze, rng, 0.02), false)
+	terrain.create_box(center + rot * Vector3(0.6, cat_y + 0.42, 0.0), Vector3(0.5, 0.46, 0.46), yaw,
+			rng, block_batch, block_body, 0.0, _lm_shade(bronze, rng, 0.02), false)
+	terrain.create_box(center + rot * Vector3(-0.72, cat_y + 0.35, 0.0), Vector3(0.18, 0.8, 0.18), yaw,
+			rng, block_batch, block_body, 0.0, _lm_shade(bronze, rng, 0.02), false)
+
+	# THE ROOSTER, and its comb — the top of the stack, and the one that has to be
+	# unmistakable in profile because there is nothing above it to give it context.
+	var bird_y := cat_y + 0.3 + 0.32
+	terrain.create_box(center + rot * Vector3(0.0, bird_y, 0.0), Vector3(0.72, 0.64, 0.5), yaw,
+			rng, block_batch, block_body, 0.0, _lm_shade(patina, rng, 0.02), false)
+	terrain.create_box(center + rot * Vector3(0.22, bird_y + 0.52, 0.0), Vector3(0.34, 0.42, 0.32), yaw,
+			rng, block_batch, block_body, 0.0, _lm_shade(patina, rng, 0.02), false)
+	terrain.create_box(center + rot * Vector3(0.22, bird_y + 0.82, 0.0), Vector3(0.4, 0.26, 0.14), yaw,
+			rng, block_batch, block_body, 0.0, _lm_shade(LM_VERMILION, rng, 0.03), false)
+	# The tail, swept up and back.
+	terrain.create_box(center + rot * Vector3(-0.46, bird_y + 0.42, 0.0), Vector3(0.5, 0.7, 0.16), yaw,
+			rng, block_batch, block_body, 0.0, _lm_shade(patina, rng, 0.02), false)
+
+	return { "radius": 4.2, "top": bird_y + 0.95 }
