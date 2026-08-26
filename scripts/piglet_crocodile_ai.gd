@@ -2543,11 +2543,20 @@ func _tick_river_sink(delta: float) -> void:
 	# A REMOTE-DRIVEN crocodile never runs the behaviour dispatch — it renders the
 	# master's samples instead of simulating — so the ambush arm's flag would stay
 	# false and a viper the master has buried would sit on the sand on every other
-	# peer. `is_chasing` DOES arrive, in every sample's flag byte, and the arm's
-	# whole rule is `not is_chasing`, so recomputing it here cannot disagree with
-	# the arm. Keyed off the row's own tunable, exactly like the ease below: no
-	# species name is tested anywhere but the dispatch.
-	if remote_driven:
+	# peer. Every input the arm uses arrives in the sample's flag byte, so the flag
+	# is recomputed here from the arm's own rule.
+	#
+	# UNDER THE SAME GUARD AS THE ARM, WHICH IS THE WHOLE SUBTLETY. The master
+	# reaches _update_chase_state only when it is neither paused nor fleeing;
+	# through either state its `is_burrowed` FREEZES at whatever it last was. A
+	# peer that kept recomputing would not freeze with it — a striking viper hit
+	# by a Stink Wave clears `is_chasing` on its way into the flee, so the master
+	# would hold it surfaced for the whole flight while every client buried it.
+	# Both flags ride the same sample byte (CROC_FLAG_PAUSED / CROC_FLAG_FLEEING),
+	# so freezing on both sides freezes at the same value. Keyed off the row's own
+	# tunable, exactly like the ease below: no species name is tested outside the
+	# dispatch.
+	if remote_driven and not is_paused and not is_fleeing:
 		is_burrowed = not is_chasing and spec.has("ambush_burrow_depth")
 
 	var target_y: float = model_rest_y
