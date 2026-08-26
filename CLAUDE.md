@@ -170,6 +170,15 @@ var assigned **before `add_child`** (same call-order contract as `setup_as_boss(
 a new entry there plus at most one new arm in a `match` — never a new script and never a
 subclass. Game-wide contracts stay top-level consts and no species may opt out of them.
 
+**Which species a chunk spawns is PURE DISPATCH on `biome_at(chunk_centre)`** —
+`BIOME_SPECIES` in `endless_terrain.gd`, a biome with no entry getting the crocodile.
+It must never cost an RNG draw: the chunk's crocodile RNG is one shared stream, so a
+single extra draw slides every crocodile in the world to a new spot. Same rule, same
+reason, as `CITY_CROC_DIVISOR` and `DESERT_BLOCK_KEEP_EVERY`. Adding a predator is a
+`SPECIES` row, a `.tscn` beside `sand_viper.tscn`, and one line in that map;
+`croc_spawn_selfcheck` fails if the row is incomplete, breaks the speed lattice, or
+is assigned after `add_child`.
+
 Per-instance speed and size rolls are **not** deterministic (they use a `randomize()`d
 RNG); only *positions* are. Bosses skip both rolls — `setup_as_boss()` must be called
 **before** `add_child`, because `_ready()` is where the rolls happen.
