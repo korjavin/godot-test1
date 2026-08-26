@@ -151,17 +151,27 @@ crushes crocodiles and cannot jump); phoboman → Stink Wave (crocodiles flee).
 
 ### Crocodiles
 `scripts/piglet_crocodile_ai.gd` + `scenes/characters/piglet_crocodile.tscn` is the enemy
-the terrain spawns. It wanders, chases within `DETECTION_RADIUS`, and calls
+the terrain spawns. It wanders, chases within its detection radius, and calls
 `player.hit_by_crocodile()`. Crocodiles are solid to one another (`collision_mask = 3`);
 the player stays mask 1 and passes through, so damage is decided entirely by the
 crocodile's own collision handling.
+
+**Species are data, not subclasses.** Every trait that makes one predator feel different —
+speeds, detection, wander rhythm, obstacle feelers, waddle/bite geometry, river sink — is a
+row of the `SPECIES` const dict of plain dicts at the top of `piglet_crocodile_ai.gd`, the
+same shape as `Progression.SKILL_TREES`. An instance's `species` field is a plain public
+var assigned **before `add_child`** (same call-order contract as `setup_as_boss()`), and
+`_ready()` resolves it once into `spec`, which the per-frame paths read. A new predator is
+a new entry there plus at most one new arm in a `match` — never a new script and never a
+subclass. Game-wide contracts stay top-level consts and no species may opt out of them.
 
 Per-instance speed and size rolls are **not** deterministic (they use a `randomize()`d
 RNG); only *positions* are. Bosses skip both rolls — `setup_as_boss()` must be called
 **before** `add_child`, because `_ready()` is where the rolls happen.
 
-`BASE_CHASE_SPEED` (5.5) is deliberately above `WALK_SPEED` (5.0) so walking gets you
-caught, and `MAX_CHASE_SPEED` (8.5) is deliberately below the slowest character's run, so
+The species `chase_speed` (5.5 for the crocodile) is deliberately above `WALK_SPEED` (5.0)
+so walking gets you caught, and `MAX_CHASE_SPEED` (8.5) — a top-level const every species
+is clamped to — is deliberately below the slowest character's run, so
 **running always escapes**. Keep that chain intact when retuning anything in it — the
 river wade factor is floored for the same reason.
 
@@ -173,7 +183,8 @@ The spawn point is a crocodile-free bubble enforced in generation
 `set_lod_active(false)` (which zeroes velocity and stops `_physics_process`), and freezes
 coin animation beyond its own radius. Two invariants:
 
-- **`SIM_RADIUS` (45) must stay well above `DETECTION_RADIUS` (15).** Anything that could
+- **`SIM_RADIUS` (45) must stay well above every species' `detection_radius` (15 for the
+  crocodile, 25 for a boss).** Anything that could
   chase or touch the player is always fully awake, so near-player behaviour is unchanged.
 - **Crocodiles are slept, never removed.** Entity counts stay the same.
 

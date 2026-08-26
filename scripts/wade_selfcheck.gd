@@ -43,6 +43,11 @@ const CROC_SCRIPT: GDScript = preload("res://scripts/piglet_crocodile_ai.gd")
 ## Crocodiles wade too (checks 6 and 7) — deeper, because they lie low.
 const CROC_SCENE: String = "res://scenes/characters/piglet_crocodile.tscn"
 
+## The crocodile's model sink depth, read from its row of the AI's SPECIES table
+## (the sink is a per-species trait — it is measured off one particular GLB), for
+## the same "read it from the file that owns it" reason as CROC_SCRIPT above.
+const CROC_SINK_DEPTH: float = CROC_SCRIPT.SPECIES["crocodile"]["river_sink_depth"]
+
 ## Metre / m-per-second slop. The effects measured here are 0.35 m and ~2.5 m/s,
 ## so a centimetre of tolerance is still unambiguous.
 const EPS: float = 0.01
@@ -278,16 +283,16 @@ func _check_croc_sink(terrain: StubTerrain) -> void:
 	terrain.river = true
 	await physics_frame
 	var stepped: float = croc.model_rest_y - croc.model_base_y
-	if stepped <= 0.0 or stepped >= CROC_SCRIPT.RIVER_SINK_DEPTH:
+	if stepped <= 0.0 or stepped >= CROC_SINK_DEPTH:
 		_fail("croc: after ONE frame in the river the model is %.3f m down — it must "
 				% stepped + "be part way (0 < d < %.2f), i.e. eased, not snapped"
-				% CROC_SCRIPT.RIVER_SINK_DEPTH)
+				% CROC_SINK_DEPTH)
 
 	await _frames(SETTLE_FRAMES)
 	var wet: float = dry_model_y - model.position.y
-	if absf(wet - CROC_SCRIPT.RIVER_SINK_DEPTH) > CROC_EPS:
+	if absf(wet - CROC_SINK_DEPTH) > CROC_EPS:
 		_fail("croc: model settled %.3f m down in the river, expected %.2f"
-				% [wet, CROC_SCRIPT.RIVER_SINK_DEPTH])
+				% [wet, CROC_SINK_DEPTH])
 
 	# ABSOLUTE, not relative: how much of the animal is still above the river
 	# plane. Everything else here measures DISPLACEMENT, which stays perfect
@@ -383,7 +388,7 @@ func _check_boss_sink_scales(terrain: StubTerrain) -> void:
 	terrain.river = true
 	await _frames(SETTLE_FRAMES)
 	var sunk: float = dry_world_y - model.global_position.y
-	var want: float = CROC_SCRIPT.RIVER_SINK_DEPTH * BOSS_TEST_SCALE
+	var want: float = CROC_SINK_DEPTH * BOSS_TEST_SCALE
 	if absf(sunk - want) > CROC_EPS * BOSS_TEST_SCALE:
 		_fail("boss: a %.1fx boss sank %.3f m in world space, expected %.3f "
 				% [BOSS_TEST_SCALE, sunk, want]
