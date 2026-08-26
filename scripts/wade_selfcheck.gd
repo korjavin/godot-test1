@@ -19,6 +19,12 @@ extends SceneTree
 ##      frame's answer — which is wrong exactly once, on a coyote-time jump off
 ##      a river bank, i.e. the one case the spec calls out and the one case no
 ##      amount of playing notices.
+##   1b. Crocodiles submerge too, deeper (RIVER_SINK_DEPTH), and there the same
+##      mistake is worse than a broken invariant: moving the BODY instead of the
+##      model changes where a hidden crocodile can bite you from, which is a
+##      difficulty change nobody asked for and nobody can see. Bosses get the
+##      depth scaled by the engine rather than by code, so a "fix" that divides by
+##      boss_scale looks reasonable and is wrong — check 7 pins it.
 ##   3. The wade drag must never take the RUN gait under the crocodile chase cap
 ##      (MAX_CHASE_SPEED), or a river becomes an inescapable trap. That is a
 ##      cross-file inequality between two constants that nothing else checks.
@@ -34,10 +40,27 @@ const PLAYER_SCRIPT: GDScript = preload("res://scripts/player_controller.gd")
 ## The crocodile's chase-speed cap, read from the file that owns it rather than
 ## re-typed here — the whole point of check 3 is that the two must stay in step.
 const CROC_SCRIPT: GDScript = preload("res://scripts/piglet_crocodile_ai.gd")
+## Crocodiles wade too (checks 6 and 7) — deeper, because they lie low.
+const CROC_SCENE: String = "res://scenes/characters/piglet_crocodile.tscn"
 
 ## Metre / m-per-second slop. The effects measured here are 0.35 m and ~2.5 m/s,
 ## so a centimetre of tolerance is still unambiguous.
 const EPS: float = 0.01
+
+## Slop for measurements taken off the crocodile's DRAWN model, which is never
+## perfectly still: a paused crocodile still breathes at BREATHE_AMOUNT (0.012 m)
+## on the very property the sink moves. The two ends of each comparison are drawn
+## at UNRELATED breathing phases, so the budget is the peak-to-peak swing
+## (2 * 0.012) and not the amplitude — 0.02 was too tight and failed the dry
+## return by 0.022 (measured). Still six times under the 0.18 m effect.
+## Measurements that dodge the animation entirely (model_base_y, the body, the
+## capsule) use the tighter EPS.
+const CROC_EPS: float = 0.03
+
+## Boss scale used by check 7. Deliberately BOSS_MAX_SCALE, the biggest the
+## terrain's schedule ever builds — if the proportional sink holds anywhere it
+## holds here, and a 6x error is impossible to write off as slop.
+const BOSS_TEST_SCALE: float = 6.0
 
 ## Physics frames to run for an ease to finish. The sink eases over ~0.2 s; 30
 ## frames at 60 Hz is 0.5 s, comfortably past it.
@@ -141,8 +164,181 @@ func _run() -> void:
 	_check_speed(player)
 	await _check_remote_avatar(terrain)
 
+	# Freed BEFORE the crocodile checks: a live player in the same tiny test world
+	# is inside DETECTION_RADIUS of everything, so the crocodile would chase, bite
+	# and play its chomp animation over the top of the measurement.
 	player.queue_free()
+	await _frames(2)
+	await _check_croc_sink(terrain)
+	await _check_boss_sink_scales(terrain)
+
 	_report()
+
+
+func _check_croc_sink(terrain: StubTerrain) -> void:
+	"""
+	CHECK 6 — a crocodile standing in a river sinks its MODEL, and only its model.
+
+	Same shape as CHECK 1 one species over, and it exists for the same reason: a
+	sink written to the body or the capsule instead looks identical on screen and
+	silently changes where the crocodile can bite you from. So the effect is
+	measured on the drawn model while the body y and the CollisionShape3D are
+	asserted UNMOVED — this is visual danger, not a mechanics change.
+
+	Negative controls, both of them: the dry measurement at each end (a sink
+	applied unconditionally passes "it sank" and fails "it came back out"), and an
+	AIRBORNE crocodile held over the river, which must not sink — grounded-only is
+	the same rule the player's `is_wading` follows.
+	"""
+	var packed: PackedScene = load(CROC_SCENE)
+	if packed == null:
+		_fail("croc: could not load %s" % CROC_SCENE)
+		return
+	var croc: CharacterBody3D = packed.instantiate()
+	croc.position = Vector3(20.0, 0.5, 0.0)
+	root.add_child(croc)
+	await _frames(SETTLE_FRAMES)
+
+	if not croc.has_method("_tick_river_sink"):
+		_fail("croc: no _tick_river_sink() on %s — did the script fail to attach? "
+				% CROC_SCENE + "(a fresh clone needs `godot --headless --path . --import`)")
+		croc.queue_free()
+		return
+	var model: Node3D = croc.get_node_or_null("Model")
+	var capsule: Node3D = croc.get_node_or_null("CollisionShape3D")
+	if model == null or capsule == null:
+		_fail("croc: Model or CollisionShape3D missing from %s" % CROC_SCENE)
+		croc.queue_free()
+		return
+	if not croc.is_on_floor():
+		_fail("croc: never settled on the test floor (y=%.2f)" % croc.global_position.y)
+		croc.queue_free()
+		return
+	if croc.terrain == null:
+		_fail("croc: did not resolve the terrain in _ready() — the sink can never "
+				+ "fire (is the stub in group \"terrain\" before the croc is added?)")
+
+	# Stand it still. A wandering crocodile's bob is up to BOB_AMOUNT * 1.6 = 4 cm,
+	# which would swamp CROC_EPS; paused it breathes at BREATHE_AMOUNT (1.2 cm),
+	# which CROC_EPS is sized to absorb.
+	croc.is_paused = true
+	croc.pause_time_remaining = 1e9
+
+	terrain.river = false
+	await _frames(SETTLE_FRAMES)
+	var dry_model_y: float = model.position.y
+	var dry_body_y: float = croc.global_position.y
+	var dry_capsule_y: float = capsule.position.y
+	if absf(dry_model_y - croc.model_rest_y) > CROC_EPS:
+		_fail("croc: model sits %.3f m off its rest height on DRY land, expected 0"
+				% (dry_model_y - croc.model_rest_y))
+
+	# ONE frame of river, not thirty: the offset must EASE. A snap-to-depth
+	# implementation passes the settled measurement below and fails this one.
+	# Read off model_base_y rather than the drawn position — the ease step at
+	# 60 Hz is ~1.5 cm, the same order as the idle breathing on top of it.
+	terrain.river = true
+	await physics_frame
+	var stepped: float = croc.model_rest_y - croc.model_base_y
+	if stepped <= 0.0 or stepped >= CROC_SCRIPT.RIVER_SINK_DEPTH:
+		_fail("croc: after ONE frame in the river the model is %.3f m down — it must "
+				% stepped + "be part way (0 < d < %.2f), i.e. eased, not snapped"
+				% CROC_SCRIPT.RIVER_SINK_DEPTH)
+
+	await _frames(SETTLE_FRAMES)
+	var wet: float = dry_model_y - model.position.y
+	if absf(wet - CROC_SCRIPT.RIVER_SINK_DEPTH) > CROC_EPS:
+		_fail("croc: model settled %.3f m down in the river, expected %.2f"
+				% [wet, CROC_SCRIPT.RIVER_SINK_DEPTH])
+
+	# THE POINT OF THE WHOLE CHECK. Submersion is a picture: the body and the
+	# capsule stand exactly where they did dry, so bite range is byte-identical.
+	# Mutation-tested: sinking the CollisionShape3D fails BOTH lines below.
+	# Honest limit — writing `position.y` alone does NOT fail them, because the
+	# floor pushes the body straight back out on the same move_and_slide; that
+	# mutation also leaves bite range unchanged, so it is not the bug guarded here.
+	if absf(croc.global_position.y - dry_body_y) > EPS:
+		_fail("croc: the BODY moved %.3f m — submersion must be a model offset only "
+				% (croc.global_position.y - dry_body_y)
+				+ "(flat-world invariant, and bite range must not change)")
+	if absf(capsule.position.y - dry_capsule_y) > EPS:
+		_fail("croc: the CollisionShape3D moved %.3f m — submersion must never touch "
+				% (capsule.position.y - dry_capsule_y) + "collision")
+
+	# AIRBORNE over the river — the grounded-only negative control. Held above the
+	# floor every frame so gravity cannot land it mid-measurement.
+	for _i in SETTLE_FRAMES:
+		croc.global_position.y = 4.0
+		croc.velocity = Vector3.ZERO
+		await physics_frame
+	if croc.is_on_floor():
+		_fail("croc: could not stage the airborne case — still on the floor")
+	elif absf(croc.model_base_y - croc.model_rest_y) > EPS:
+		_fail("croc: model stayed %.3f m down while AIRBORNE over a river — "
+				% (croc.model_rest_y - croc.model_base_y)
+				+ "flying over water is not wading")
+
+	# Dry land again — it must come back OUT.
+	terrain.river = false
+	croc.global_position = Vector3(20.0, 0.5, 0.0)
+	await _frames(SETTLE_FRAMES)
+	if absf(model.position.y - dry_model_y) > CROC_EPS:
+		_fail("croc: model stayed %.3f m down after leaving the river, expected 0"
+				% (dry_model_y - model.position.y))
+
+	croc.queue_free()
+
+
+func _check_boss_sink_scales(terrain: StubTerrain) -> void:
+	"""
+	CHECK 7 — a boss sinks in PROPORTION, with no boss-specific code.
+
+	RIVER_SINK_DEPTH is a model-LOCAL offset and _ready() scales the whole body by
+	boss_scale, so the engine scales the sink for free: the submerged fraction is
+	identical at every size, which is what "a proportional snout" means. Measured
+	in WORLD space so the free ride is what is actually asserted — dividing the
+	depth by boss_scale "to compensate", or hoisting the offset onto the unscaled
+	body, both break this and neither breaks anything visible on a regular croc.
+	"""
+	var packed: PackedScene = load(CROC_SCENE)
+	if packed == null:
+		_fail("boss: could not load %s" % CROC_SCENE)
+		return
+	var croc: CharacterBody3D = packed.instantiate()
+	# CALL-ORDER CONTRACT: setup_as_boss() must run BEFORE add_child, because
+	# _ready() is what applies the scale.
+	croc.setup_as_boss(BOSS_TEST_SCALE)
+	croc.position = Vector3(-20.0, 0.5, 0.0)
+	root.add_child(croc)
+	await _frames(SETTLE_FRAMES)
+
+	var model: Node3D = croc.get_node_or_null("Model")
+	if model == null or not croc.is_on_floor():
+		_fail("boss: model missing, or the boss never settled on the test floor")
+		croc.queue_free()
+		return
+	if absf(croc.scale.y - BOSS_TEST_SCALE) > EPS:
+		_fail("boss: body scale is %.2f, expected setup_as_boss(%.1f) to apply it"
+				% [croc.scale.y, BOSS_TEST_SCALE])
+	croc.is_paused = true
+	croc.pause_time_remaining = 1e9
+
+	terrain.river = false
+	await _frames(SETTLE_FRAMES)
+	var dry_world_y: float = model.global_position.y
+
+	terrain.river = true
+	await _frames(SETTLE_FRAMES)
+	var sunk: float = dry_world_y - model.global_position.y
+	var want: float = CROC_SCRIPT.RIVER_SINK_DEPTH * BOSS_TEST_SCALE
+	if absf(sunk - want) > CROC_EPS * BOSS_TEST_SCALE:
+		_fail("boss: a %.1fx boss sank %.3f m in world space, expected %.3f "
+				% [BOSS_TEST_SCALE, sunk, want]
+				+ "(RIVER_SINK_DEPTH * boss_scale) — the sink is a model-LOCAL "
+				+ "offset and must ride the body scale, not compensate for it")
+
+	terrain.river = false
+	croc.queue_free()
 
 
 func _check_remote_avatar(terrain: StubTerrain) -> void:
