@@ -1856,10 +1856,10 @@ var pending_chunks: Array[Vector2i] = []
 ##     drops entries that fell back into range.)
 ##   * NO LEAK — `update_chunks` re-derives the queue from `active_chunks` on
 ##     every crossing, so anything still loaded and out of range is queued again
-##     next time, and _process drains anything BEYOND one column's backlog in
-##     the same frame. Chunks that fall out of range faster than one per frame
-##     are therefore still freed at the rate they arrive; only the steady-state
-##     trickle is throttled.
+##     next time, and _process drains anything beyond the ceiling described
+##     there in the same frame. Chunks that fall out of range faster than the
+##     queue drains are therefore still freed at the rate they arrive; only the
+##     steady-state trickle is throttled.
 ##
 ## Costs a few chunks' worth of memory for a few frames, and makes the F3
 ## "Chunks" readout briefly count them — both correct: they ARE still loaded.
@@ -2437,14 +2437,25 @@ func _process(_delta: float) -> void:
 	# that was already freed drains harmlessly.
 	#
 	# ...PLUS THE OVERFLOW, which is what makes this a throttle and not a leak.
-	# One per frame keeps up only while boundary crossings are further apart than
-	# a column is long, which walking always is (a 50 m chunk at 9 m/s is ~5.5 s,
-	# and a column is 7 chunks on web / 11 on desktop). If anything ever crosses
-	# faster than that, the queue is drained down to one column's worth THIS
-	# frame instead of carrying the debt forward — so `active_chunks` can never
-	# creep upward crossing after crossing, and the worst frame is still bounded
-	# by the burst that caused it rather than by the whole backlog.
-	var drain: int = 1 + maxi(0, pending_removals.size() - (2 * render_distance + 1))
+	# One per frame keeps up only while the events that queue chunks are further
+	# apart than their backlog is long, which they always are in practice, but
+	# nothing enforces it — so past a ceiling the debt is paid in the same frame
+	# rather than carried forward, and `active_chunks` can never creep upward
+	# event after event.
+	#
+	# THE CEILING IS THE LARGEST BACKLOG A SINGLE LEGITIMATE EVENT CAN PRODUCE,
+	# so no legitimate event ever trips it and every one of them stays fully
+	# time-sliced. Two events queue chunks, and they can coincide:
+	#   * a boundary crossing drops a COLUMN — 2 x render_distance + 1 (7 on web,
+	#     11 on desktop);
+	#   * a multiplayer peer leaving (or the room emptying) releases the whole
+	#     pinned set at once — up to MAX_FOCUS_CHUNKS (27), which is exactly the
+	#     burst this change exists to spread out, so it must sit UNDER the
+	#     ceiling, not over it.
+	# Anything past their sum is a rate no event produces, i.e. a backlog that is
+	# actually falling behind, and freeing it now is the correct answer.
+	var drain: int = 1 + maxi(0,
+			pending_removals.size() - (2 * render_distance + 1 + MAX_FOCUS_CHUNKS))
 	while drain > 0 and not pending_removals.is_empty():
 		remove_chunk(pending_removals.pop_front())
 		drain -= 1
