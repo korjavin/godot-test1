@@ -1010,7 +1010,32 @@ const TREASURE_CHEST_SCRIPT := preload("res://scripts/treasure_chest.gd")
 ## almost nothing for a 1.5 m one.
 ## Re-measure this pair — over SEVERAL seeds — if the radius, the clearances or
 ## the biome mix change.
-const LANDMARK_CHANCE: float = 0.15
+##
+## WAVE 3 RETUNE, 0.15 -> 0.19, AND IT IS NOT ABOUT THE KIND COUNT. Adding kinds
+## cannot move the built rate at all — _landmark_at draws randf() then
+## randi_range(0, size - 1), and randi_range consumes exactly one draw whatever
+## its range, so the seed handed to the spawner and therefore the SPOT are
+## bit-identical however many places exist (measured again at 28 kinds: over a
+## 17x17 field x 6 seeds the same 30 chunks built a landmark before and after,
+## and 1704/1704 landmark-free chunks were byte-identical). What moved is the
+## judgement about where in the intended 1-per-40-60 band this should sit.
+##
+## MEASURED ON THIS BRANCH, one harness, all three rows the same 17x17 field:
+##   18 kinds, chance 0.15, 40 seeds (11560 chunks): 1652 rolled, 201 built —
+##      12.2% survival, 1 per 57.5
+##   28 kinds, chance 0.15, 60 seeds (17340 chunks): 2487 rolled, 309 built —
+##      12.4% survival, 1 per 56.1  (unchanged, as the paragraph above requires)
+##   28 kinds, chance 0.19, 60 seeds (17340 chunks): 3217 rolled, 402 built —
+##      12.5% survival, 1 per 43.1
+## Survival is flat across all three because the candidate loop judges a spot
+## against the chunk's geometry and knows nothing about how often it is asked, so
+## the rate scales with the chance almost exactly: 56.1 * 0.15 / 0.19 = 44.3
+## predicted against 43.1 measured. 0.15 had drifted to the SPARSE EDGE of the
+## band while each individual place got 28 times rarer than it was at eight kinds;
+## 0.19 puts the category back in the middle of the band (1 per 43) without
+## touching the "landmarks are destinations, not scenery" rarity that keeps them
+## well behind the artifacts' 1-in-23.
+const LANDMARK_CHANCE: float = 0.19
 
 ## Fixed salt XORed into run_seed for the landmark hash stream, in the
 ## ARTIFACT_SALT / CAMP_SALT / CHEST_SALT / BIOME_SALT / BOSS_SEED family: an
