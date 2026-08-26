@@ -203,6 +203,26 @@ const CITY_LAMP_AMBER := Color(0.96, 0.82, 0.36)  # bright ALBEDO, never emissiv
 const CITY_LAMP_RED := Color(0.86, 0.24, 0.20)
 const CITY_LAMP_GREEN := Color(0.32, 0.76, 0.36)
 
+## --- SNOW palette. FOUR new colours for a whole territory — the leanest of the
+## six, and deliberately so: a tundra is a place with almost nothing in it, so the
+## one thing it must not do is arrive with a paint box. Ice gets a ramp (it is the
+## territory's stone), snow gets one flat near-white, and dead timber gets one
+## grey-brown. Everything BONE reuses PROP_BONE, which the desert's bone pile
+## already defines — the desert band (n < 0.34) and the snow band (n >= 0.83) can
+## never touch, and a mammoth's ribs and a camel's ribs are honestly the same
+## colour, so a fifth constant would buy nothing but one more near-white for a
+## MultiMesh of boxes to fail to be distinct from.
+##
+## SNOW_ICE_A IS THE ONLY ONE WITH A CONSTRAINT ON IT: prop_selfcheck requires each
+## territory's structure `stone_a` to lie off every other territory's ramp, and the
+## near-miss it is dodging here is CITY_PLASTER_A — a bright off-white that a
+## desaturated pale ice would sit straight on top of. The blue cast (b 0.96 against
+## a red 0.80) is what separates them, not the brightness.
+const SNOW_ICE_A := Color(0.80, 0.90, 0.96)     # sunlit glacier ice …
+const SNOW_ICE_B := Color(0.50, 0.66, 0.80)     # … to its blue shadowed core
+const SNOW_PACK := Color(0.95, 0.96, 0.98)      # wind-packed drift snow
+const SNOW_DEADWOOD := Color(0.47, 0.44, 0.42)  # frost-bleached dead timber
+
 # ----------------------------------------------------------------------------
 # THEMED FEATURE STRUCTURES — the same re-skin, one scale up from the props
 # ----------------------------------------------------------------------------
@@ -283,6 +303,7 @@ const STRUCTURE_MIX: Dictionary = {
 	Biome.FOREST: [0.32, 0.60, 0.86, 1.00],   # log bridges are the forest signature
 	Biome.MOUNTAIN: [0.42, 0.74, 1.00, 1.00], # fort walls and watchtower bases only
 	Biome.CITY: [0.26, 0.60, 0.80, 1.00],     # the ALLEY is the city's signature
+	Biome.SNOW: [0.40, 0.68, 0.84, 1.00],     # wind-break walls carry the tundra
 }
 
 ## Per-territory dressing. Every colour is one the phase-1 prop palette already
@@ -348,6 +369,21 @@ const STRUCTURE_THEMES: Dictionary = {
 		"gap_chance": 0.10, "double_chance": 0.35,
 		"lane_spaced": false, "lintel_chance": 0.0,
 		"gate_style": STRUCT_GATE_LINTEL,
+	},
+	# SNOW — ice cut into blocks and left to weather. The wall is a wind-break with
+	# a snow cornice on every doubled hump (`cap` SNOW_PACK, which is also the free
+	# visual rhyme with the massif snow caps one band down); the lane is an avenue
+	# of standing ice pillars (lane_spaced, no lintel — ice does not span); the gate
+	# is a broken arch, because the intact version reads as built rather than
+	# frozen; and the mound is a drift barrow. Trim is dead timber, the only warm
+	# thing in the territory and therefore the only thing that reads at all against
+	# the white.
+	Biome.SNOW: {
+		"stone_a": SNOW_ICE_A, "stone_b": SNOW_ICE_B, "trim": SNOW_DEADWOOD,
+		"cap": SNOW_PACK,
+		"gap_chance": 0.22, "double_chance": 0.25,
+		"lane_spaced": true, "lintel_chance": 0.0,
+		"gate_style": STRUCT_GATE_ARCH,
 	},
 }
 
@@ -1200,7 +1236,7 @@ const LANDMARK_COIN_RING_PAD_MAX: float = 2.0
 ## point, block bases) ask that function instead of assuming 0.
 ##
 ## The whole biome system is ONE octave of world-space value noise (see
-## _biome_noise below). Thresholding its 0..1 output gives the five bands; a thin
+## _biome_noise below). Thresholding its 0..1 output gives the six bands; a thin
 ## CONTOUR of it (|n - RIVER_LEVEL| < RIVER_HALF_WIDTH) gives winding rivers for
 ## free — a river is wherever the field crosses one particular level, which is
 ## exactly the shape of a contour line on a map: long, winding, and never a blob.
@@ -1219,7 +1255,9 @@ const LANDMARK_COIN_RING_PAD_MAX: float = 2.0
 ## minimap_hud.gd's BIOME_NAMES is the live one — so inserting CITY at position 2
 ## would silently relabel every forest and mountain on the map. Band ORDER is a
 ## property of the thresholds in biome_at(), not of the enum's numbering.
-enum Biome { PLAINS, DESERT, FOREST, MOUNTAIN, CITY }
+## SNOW follows the same rule and happens to be appended in band order anyway (it
+## is the topmost band); that is a coincidence, not a licence to insert the next one.
+enum Biome { PLAINS, DESERT, FOREST, MOUNTAIN, CITY, SNOW }
 
 ## Fixed salt XORed into run_seed for every biome hash stream — same spirit as
 ## ARTIFACT_SALT / BOSS_SEED / ROAD_COIN_SEED: an arbitrary constant that keeps
@@ -1231,41 +1269,56 @@ const BIOME_SALT: int = 0xB10_11E
 ## that a ~1 km run crosses several.
 const BIOME_CELL_SIZE: float = 400.0
 
-## Thresholds splitting the 0..1 noise into the five bands:
+## Thresholds splitting the 0..1 noise into the six bands:
 ##   n < DESERT_MAX          -> DESERT
 ##   n < PLAINS_MAX          -> PLAINS   (still the widest band: the shipped look
 ##   n < CITY_MAX            -> CITY      stays the most common thing you see)
 ##   n < FOREST_MAX          -> FOREST
-##   otherwise               -> MOUNTAIN (the rarest — massifs are the heaviest)
+##   n < MOUNTAIN_MAX        -> MOUNTAIN
+##   otherwise               -> SNOW     (the rarest — above the treeline)
 ##
-## THE CITY BAND WAS CUT OUT OF PLAINS AND FOREST, AND THE SPLIT WAS MEASURED,
-## NOT GUESSED. Value noise is bell-shaped around 0.5, so a band's AREA share is
-## nothing like its threshold width and the only honest way to place a new band is
-## to sample the real field. Over 1.44 M samples spread across 16 run seeds:
+## EVERY BAND SPLIT IN THIS FILE HAS BEEN MEASURED, NEVER GUESSED. Value noise is
+## bell-shaped around 0.5, so a band's AREA share is nothing like its threshold
+## width and the only honest way to place a new band is to sample the real field.
+## Over 1.44 M samples spread across 16 run seeds:
 ##
-##   shipped 4-band  (0.34 / 0.62 / — / 0.82)  desert 27.4  plains 42.8  city  0.0  forest 23.1  mtn 6.7
-##   THIS            (0.34 / 0.575 / 0.66 / 0.82)  desert 27.4  plains 36.3  city 12.1  forest 17.5  mtn 6.7
+##   4-band  (0.34 / 0.62  / —    / 0.82 / —   )  desert 27.4  plains 42.8  city  0.0  forest 23.1  mtn 6.7  snow 0.0
+##   5-band  (0.34 / 0.575 / 0.66 / 0.82 / —   )  desert 27.4  plains 36.3  city 12.1  forest 17.5  mtn 6.7  snow 0.0
+##   THIS    (0.34 / 0.575 / 0.66 / 0.75 / 0.83)  desert 27.4  plains 36.3  city 12.1  forest 10.7  mtn 7.6  snow 6.0
 ##
-## so city lands inside the 10-12% the design asked for, and — the reason these
-## particular numbers — BIOME_DESERT_MAX and BIOME_FOREST_MAX did not move at all,
-## which leaves the desert (27.4%) and the already-rarest mountain (6.7%) shares
-## byte-identical. Only BIOME_PLAINS_MAX moved (0.62 -> 0.575). Walking +X, a city
-## region is crossed every ~780 m on average (median gap 565 m) and the crossing
-## itself runs ~116 m (median 65 m).
+## THE SNOW BAND WAS CUT OUT OF FOREST, NOT OUT OF MOUNTAIN, and that is forced by
+## the arithmetic rather than chosen: the whole shipped tail above BIOME_FOREST_MAX
+## was only 6.7% of the world, so carving snow off the TOP of mountain (the obvious
+## reading of "snow above the treeline") would have left mountain at 1-2% — a band
+## you would go a run without seeing. Instead the treeline moved DOWN
+## (BIOME_FOREST_MAX 0.82 -> 0.75), which widens the cold tail, and the tail is then
+## split at BIOME_MOUNTAIN_MAX 0.83 into rock below and snow above. Mountain comes
+## out slightly MORE common than it shipped (6.7 -> 7.6%), snow lands at 6.0% (the
+## bottom of the 6-10% the design asked for), and desert / plains / city are
+## byte-identical because none of their thresholds moved. Walking +X, a snow region
+## is crossed every ~3131 m on average (median gap 2255 m) and the crossing itself
+## runs ~267 m (median 215 m) — a long trudge across a cold place, which is the
+## read a tundra wants.
 ##
-## TWO INEQUALITIES TO RE-CHECK IF THESE MOVE:
+## THREE INEQUALITIES TO RE-CHECK IF THESE MOVE (prop_selfcheck.gd asserts all of
+## them, so a retune that breaks one fails in CI rather than in a screenshot):
 ##   1. RIVER_LEVEL (0.5) must stay strictly inside the PLAINS band, i.e.
 ##      BIOME_DESERT_MAX < 0.493 and BIOME_PLAINS_MAX > 0.507 (the river band is
 ##      RIVER_LEVEL +/- RIVER_HALF_WIDTH). At 0.575 the visual plains->city blend
 ##      does not even begin until 0.525, so no city tint reaches the water either.
-##   2. The city band must be at least ~2 * BIOME_BLEND (0.10) wide or the city
-##      colour never reaches full strength between its two smoothstep blends. It
-##      is 0.085 wide, and the two blends overlap by only 0.015, so the midpoint
-##      still renders 96.8% city.
+##   2. Every INTERIOR band must be at least ~2 * BIOME_BLEND (0.10) wide, or its
+##      colour never reaches full strength between its two smoothstep blends. City
+##      is 0.085 (midpoint renders 96.8% city), forest 0.09 (98.6%) and MOUNTAIN
+##      0.08 (94.5%) — mountain is now the tightest and the one to watch. Snow is
+##      exempt by construction: it is the topmost band, so it has only a lower edge
+##      and reaches full strength outright.
+##   3. The chain must stay strictly increasing. A threshold typed out of order
+##      leaves the constants looking fine and makes one territory unreachable.
 const BIOME_DESERT_MAX: float = 0.34
 const BIOME_PLAINS_MAX: float = 0.575
 const BIOME_CITY_MAX: float = 0.66
-const BIOME_FOREST_MAX: float = 0.82
+const BIOME_FOREST_MAX: float = 0.75
+const BIOME_MOUNTAIN_MAX: float = 0.83
 
 ## River contour: the band is the set of points whose noise value sits within
 ## RIVER_HALF_WIDTH of RIVER_LEVEL. Width in metres ≈ RIVER_HALF_WIDTH / |∇n|;
@@ -1525,6 +1578,76 @@ const CITY_SIGNAL_CHANCE: float = 0.55    # else a lamp post
 ## the surviving crocodiles are byte-for-byte the FIRST target/N of the undivided
 ## stream, in the same positions, with the tail simply not spawned.
 const CITY_CROC_DIVISOR: float = 2.5
+
+# ----------------------------------------------------------------------------
+# SNOW — frozen dead trees and mammoth skeletons on an open tundra
+# ----------------------------------------------------------------------------
+##
+## WHAT MAKES THIS BAND DIFFERENT FROM ITS NEIGHBOURS, in one line each: the city
+## is the SAFE territory (roofs everywhere, croc target divided), the mountain is
+## the IMPASSABLE one (massifs you route around), and the snow is the HOSTILE one —
+## croc density is the ordinary distance-scaled figure, nothing is thinned, and the
+## only shelter is the ice you can climb onto. That is why all three SNOW props
+## record climbable footprints and everything the builder below adds does not.
+##
+## THE BUILDER ADDS THE BIG, SPARSE THINGS ONLY. Ice rocks and drifts are SCATTERED
+## PROPS (the phase-1 machinery — see _prop_ice_rock and friends), because they are
+## exactly the 0.7-1.8 m clutter the bare cubes used to be. What lives here is what
+## a prop cannot be: a 4 m dead tree, and a skeleton the size of a small building.
+
+## Frozen dead trees per snow chunk. Deliberately far below the forest's 25-40: a
+## tundra is not a thinned wood, it is open ground with the occasional dead thing
+## standing in it, and the emptiness between them is the whole read.
+const FROZEN_TREE_MIN: int = 6
+const FROZEN_TREE_MAX: int = 14
+
+## Same arithmetic as FOREST_ROAD_CLEARANCE (14) one notch tighter: the widest coin
+## band half-width is road_width_max * 0.5 = 10, so 12 keeps the scattered coin
+## swath clear of trunks. It can be tighter than the forest's because these trees
+## are bare — there is no canopy to close over the trail.
+const FROZEN_TREE_ROAD_CLEARANCE: float = 12.0
+
+const FROZEN_TREE_TRUNK_WIDTH_MIN: float = 0.34
+const FROZEN_TREE_TRUNK_WIDTH_MAX: float = 0.60
+const FROZEN_TREE_HEIGHT_MIN: float = 2.6
+const FROZEN_TREE_HEIGHT_MAX: float = 4.6
+const FROZEN_TREE_BRANCH_LEN: float = 1.5   # one bare branch box, long side
+
+## MAMMOTH SKELETONS — the territory's marquee prop, and the one place in this file
+## where create_box's `tilt` is doing work nothing else could do: a rib is a thin
+## box that has to lean INWARD over the spine, and a tusk is a curve made of three
+## boxes each leaning further forward than the last.
+##
+## THE TUSK CURVE NEEDS A YAW OF +PI/2 AND THAT IS NOT A HACK, IT IS THE ONLY WAY.
+## create_box offers a yaw (about world Y) and a tilt (about the box's own local X
+## AFTER that yaw), so a plain tilt tips a box SIDEWAYS relative to the skeleton's
+## axis — fine for a rib, useless for a tusk, which has to sweep FORWARD. Turning
+## the box a quarter turn first swings its local X round to the skeleton's lateral
+## axis, and the tilt then tips it along the skeleton's length. This is the same
+## limitation landmark_builders.gd records on the Kinderdijk sails (there is no
+## roll about the third axis at all); a tusk is the shape that happens to fit
+## through the gap.
+##
+## NOT CLIMBABLE, NO NAME, NO TOAST, NO REWARD. It is ambient texture, not a cz3
+## destination — the epic's territories-versus-landmarks split — and non-climbable
+## for the tree-canopy reason: the footprint is a 5 m circle whose "top" is the
+## spine ridge, so a road coin perched on it would float over open ground inside a
+## ribcage. _settle_coin_y skips it instead.
+const MAMMOTH_MAX: int = 2                  # candidates per snow chunk, 0-2
+const MAMMOTH_PLACE_TRIES: int = 4
+const MAMMOTH_RADIUS: float = 5.0           # the honest bound; MEASURED at 4.21
+const MAMMOTH_ROAD_CLEARANCE: float = 16.0  # > MAMMOTH_RADIUS + road_width_max/2
+const MAMMOTH_EDGE_MARGIN: float = 8.0      # > MAMMOTH_RADIUS, so never on a seam
+const MAMMOTH_SPINE_LEN_MIN: float = 3.2
+const MAMMOTH_SPINE_LEN_MAX: float = 4.2
+const MAMMOTH_RIB_PAIRS_MIN: int = 4
+const MAMMOTH_RIB_PAIRS_MAX: int = 5
+const MAMMOTH_RIB_HEIGHT: float = 1.7
+const MAMMOTH_RIB_TILT: float = 0.70        # radians, leaning in over the spine
+const MAMMOTH_RIB_HALF_SPREAD: float = 0.90 # rib base offset either side of centre
+## Tusk segments, front to tip: [length, tilt]. The tilt SHRINKS along the curve,
+## which is what makes a tusk leave the skull almost horizontal and curl upward.
+const MAMMOTH_TUSK_SEGMENTS: Array = [[0.95, 1.35], [0.85, 0.95], [0.70, 0.55]]
 
 ## MOUNTAIN — grey scree ramp for the rock itself. Cooler and flatter than both
 ## the warm RAMP_* block colours and the artifacts' grey-green, so a massif reads
@@ -2002,6 +2125,11 @@ func _apply_biome_shader_params() -> void:
 	# other four.
 	mat.set_shader_parameter("biome_city_max", BIOME_CITY_MAX)
 	mat.set_shader_parameter("biome_forest_max", BIOME_FOREST_MAX)
+	# The mountain/snow split. Parity-critical for the same reason as its siblings:
+	# the ground the player sees turn white has to be the ground
+	# spawn_biome_content_in_chunk fills with ice rocks and mammoth bones. The snow
+	# COLOUR stays a shader default (pure art), same rule as the other five.
+	mat.set_shader_parameter("biome_mountain_max", BIOME_MOUNTAIN_MAX)
 	mat.set_shader_parameter("river_level", RIVER_LEVEL)
 	mat.set_shader_parameter("river_half_width", RIVER_HALF_WIDTH)
 	mat.set_shader_parameter("biome_blend", BIOME_BLEND)
@@ -2963,7 +3091,9 @@ func spawn_gate(rng: RandomNumberGenerator, half_chunk: float, chunk_center: Vec
 		)
 		# Each pillar is its own footprint, so crocodiles can still pass through
 		# the opening between them.
-		obstacles.append({ "pos": Vector3(px, 0, pz), "radius": maxf(pillar_w, depth) * 0.71, "top": ph, "climbable": true })
+		# `guarded` only for the log bridge — it is the one gate style that registers
+		# a patrol deck, so it is the one whose stone a massif must keep off.
+		obstacles.append({ "pos": Vector3(px, 0, pz), "radius": maxf(pillar_w, depth) * 0.71, "top": ph, "climbable": true, "guarded": log_bridge })
 
 	# The beam. An arch's is a shortened stub pushed back over the tall upright;
 	# every style keeps it UNTILTED, because a tilted beam has no flat top and the
@@ -2996,7 +3126,7 @@ func spawn_gate(rng: RandomNumberGenerator, half_chunk: float, chunk_center: Vec
 	# Register the beam centre as a coin perch. For a log bridge it is a genuine
 	# rest spot one hop off the ground; for the other styles it is the shipped
 	# deliberately-awkward one.
-	obstacles.append({ "pos": Vector3(beam_x, 0, beam_z), "radius": 1.0, "top": beam_top, "climbable": true })
+	obstacles.append({ "pos": Vector3(beam_x, 0, beam_z), "radius": 1.0, "top": beam_top, "climbable": true, "guarded": log_bridge })
 
 	# THE LOG BRIDGE IS THE ONE GATE WITH A WALKABLE DECK, so it is the one gate
 	# that feeds spawn_platform_crocodiles. Half-extents are the beam's own, inset
@@ -3253,7 +3383,10 @@ func spawn_wall(rng: RandomNumberGenerator, half_chunk: float, chunk_center: Vec
 				)
 
 		section_top[i] = top
-		obstacles.append({ "pos": Vector3(x, 0, z), "radius": block_size * 0.71, "top": top, "climbable": climbable })
+		# `guarded` marks stone that a patrol crocodile is going to be dropped onto,
+		# and it exists for exactly one reader: _spawn_mountain_content's avoid-list.
+		# A massif must clear it whatever its radius or height — see the note there.
+		obstacles.append({ "pos": Vector3(x, 0, z), "radius": block_size * 0.71, "top": top, "climbable": climbable, "guarded": true })
 
 	if run_len > best_len:
 		best_len = run_len
@@ -3394,6 +3527,14 @@ func _build_prop(local: Vector3, size: float, prop_seed: int, chunk_center: Vect
 					return _prop_garden_wall(local, size, rng, block_batch, block_body)
 				_:
 					return _prop_paving_stack(local, size, rng, block_batch, block_body)
+		Biome.SNOW:
+			match rng.randi_range(0, 2):
+				0:
+					return _prop_ice_rock(local, size, rng, block_batch, block_body)
+				1:
+					return _prop_snow_drift(local, size, rng, block_batch, block_body)
+				_:
+					return _prop_frozen_stump(local, size, rng, block_batch, block_body)
 		_:  # PLAINS — also the fallback, so a future biome band still gets props.
 			match rng.randi_range(0, 2):
 				0:
@@ -3930,6 +4071,128 @@ func _prop_paving_stack(local: Vector3, size: float, rng: RandomNumberGenerator,
 		)
 
 	return { "radius": r, "top": top, "climbable": true }
+
+# ----- SNOW -----------------------------------------------------------------
+#
+# The tundra's small clutter, at the same scale the bare cubes were. All three are
+# CLIMBABLE, and in this one territory that is a design statement rather than an
+# incidental: snow is the most hostile band in the game (croc density is the
+# ordinary distance-scaled figure — only the city thins it), so the ice you can
+# stand on top of is the whole of the rest-from-crocodiles role out here. Every
+# perch is therefore an untilted, colliding, centred box whose top face IS the
+# returned `top`; the shards, scour lumps and broken branches carry the tilt and
+# sit beside the prop, never on it.
+
+func _prop_ice_rock(local: Vector3, size: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	SNOW — a flat-topped block of glacier ice with two or three shards split off it
+	and leaning against its flanks. The block is the perch. 3-4 boxes, 1 collides.
+
+	OPAQUE, never transparent: the blue-white ramp is what has to read as ice, and
+	an alpha-blended box would cost fill rate on a mobile GPU AND drop out of the
+	chunk's one MultiMesh (which has a single opaque material) for the privilege.
+	"""
+	var r := size * PROP_RADIUS_FACTOR
+	var yaw := rng.randf_range(0.0, TAU)
+	var w := size * 0.86
+	var h := minf(size * rng.randf_range(0.60, 0.95), PROP_MAX_STEP)
+
+	create_box(
+		local + Vector3(0.0, h * 0.5, 0.0), Vector3(w, h, w * 0.90), yaw,
+		rng, block_batch, block_body, 0.0, SNOW_ICE_A.lerp(SNOW_ICE_B, rng.randf() * 0.7)
+	)
+
+	# The split shards. Half a shard's 3D diagonal is
+	# 0.5 * |(0.16, 0.55, 0.20)| = 0.303 of size, so a 0.38 ring reaches 0.683 —
+	# inside the declared 0.71, whatever yaw and tilt it ends up carrying.
+	for _i in rng.randi_range(2, 3):
+		var a := rng.randf_range(0.0, TAU)
+		create_box(
+			local + Vector3(cos(a) * size * 0.38, size * 0.24, sin(a) * size * 0.38),
+			Vector3(size * 0.16, size * 0.55, size * 0.20), rng.randf_range(0.0, TAU),
+			rng, block_batch, block_body, rng.randf_range(-0.55, 0.55),
+			SNOW_ICE_A.lerp(SNOW_ICE_B, rng.randf()), false
+		)
+
+	return { "radius": r, "top": h, "climbable": true }
+
+func _prop_snow_drift(local: Vector3, size: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	SNOW — a wind-packed drift: two wide shallow tiers with a couple of scour lumps
+	tumbled off the lee side. The lowest, widest prop in the whole set — a drift is
+	a shape the wind made, so it spreads rather than stacks. 4-5 boxes, 2 collide.
+	"""
+	var r := size * PROP_RADIUS_FACTOR
+	var yaw := rng.randf_range(0.0, TAU)
+	# Half-diagonal of the base tier is 0.5 * |(0.95, 0.85)| = 0.637 of size, so
+	# even at full yaw the widest tier stays inside the declared 0.71.
+	var w := size * 0.95
+	var top := 0.0
+
+	for _i in 2:
+		var th := minf(size * rng.randf_range(0.20, 0.32), PROP_MAX_STEP)
+		create_box(
+			local + Vector3(0.0, top + th * 0.5, 0.0), Vector3(w, th, w * 0.89),
+			yaw + rng.randf_range(-0.18, 0.18), rng, block_batch, block_body, 0.0,
+			SNOW_PACK.lerp(SNOW_ICE_A, rng.randf() * 0.5)
+		)
+		top += th
+		w *= 0.80
+
+	# Scour lumps. Half a lump's 3D diagonal at its widest is
+	# 0.5 * 0.22 * |(1, 0.7, 1.3)| = 0.196 of size; a 0.42 ring reaches 0.616.
+	for _i in rng.randi_range(1, 2):
+		var cs := size * rng.randf_range(0.14, 0.22)
+		var a := rng.randf_range(0.0, TAU)
+		create_box(
+			local + Vector3(cos(a) * size * 0.42, cs * 0.42, sin(a) * size * 0.42),
+			Vector3(cs, cs * 0.7, cs * 1.3), rng.randf_range(0.0, TAU),
+			rng, block_batch, block_body, rng.randf_range(-0.35, 0.35),
+			SNOW_PACK.lerp(SNOW_ICE_A, rng.randf() * 0.5), false
+		)
+
+	return { "radius": r, "top": top, "climbable": true }
+
+func _prop_frozen_stump(local: Vector3, size: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	SNOW — the frost-split stump of a dead tree, with two or three broken branch
+	stubs still jutting out of it and a cap of drifted snow on the break.
+
+	The stump is the perch, so the snow cap is a THIN FILM over it (collide = false,
+	the STRUCTURE_THEMES `cap` arrangement) rather than another tier: the surface
+	the player stands on is the stump's own top face, which is the height returned.
+	4-6 boxes, 1 collides.
+	"""
+	var r := size * PROP_RADIUS_FACTOR
+	var yaw := rng.randf_range(0.0, TAU)
+	var w := size * 0.62
+	# Capped at the bare cube's proven 2.5 m rather than at PROP_MAX_STEP (2.6), the
+	# same call _prop_ruin_fragment makes and for the same reason: a perch that
+	# needed the very last centimetre of the jump arc is a rest spot only on paper.
+	var h := minf(size * rng.randf_range(0.70, 1.05), 2.5)
+
+	create_box(
+		local + Vector3(0.0, h * 0.5, 0.0), Vector3(w, h, w * 0.94), yaw,
+		rng, block_batch, block_body, 0.0, SNOW_DEADWOOD
+	)
+
+	# Snow on the break: a film, not a step. 6 cm of it at size 1.
+	create_box(
+		local + Vector3(0.0, h + size * 0.03, 0.0), Vector3(w * 1.05, size * 0.06, w * 0.99),
+		yaw, rng, block_batch, block_body, 0.0, SNOW_PACK, false
+	)
+
+	# Broken branch stubs. Half a stub's 3D diagonal is
+	# 0.5 * |(0.10, 0.42, 0.10)| = 0.222 of size; a 0.24 ring reaches 0.462.
+	for _i in rng.randi_range(2, 3):
+		var a := rng.randf_range(0.0, TAU)
+		create_box(
+			local + Vector3(cos(a) * size * 0.24, h * rng.randf_range(0.45, 0.85), sin(a) * size * 0.24),
+			Vector3(size * 0.10, size * 0.42, size * 0.10), a,
+			rng, block_batch, block_body, rng.randf_range(0.7, 1.2), SNOW_DEADWOOD, false
+		)
+
+	return { "radius": r, "top": h, "climbable": true }
 
 func create_block(center_pos: Vector3, size: float, yaw: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> void:
 	"""
@@ -5821,6 +6084,8 @@ func spawn_biome_content_in_chunk(chunk_pos: Vector2i, obstacles: Array, block_b
 			_spawn_mountain_content(center, rng, obstacles, block_batch, block_body)
 		Biome.CITY:
 			_spawn_city_content(center, rng, obstacles, block_batch, block_body)
+		Biome.SNOW:
+			_spawn_snow_content(center, rng, obstacles, block_batch, block_body)
 		_:
 			# PLAINS is the baseline look — the ordinary scattered blocks ARE its
 			# content, so it deliberately builds nothing extra here.
@@ -6076,9 +6341,23 @@ func _spawn_mountain_content(chunk_center: Vector3, rng: RandomNumberGenerator, 
 	# cheap to avoid: see MOUNTAIN_AVOID_RADIUS.
 	# ...and so does anything TALL enough to be climbed onto the massif from (see
 	# MOUNTAIN_AVOID_TOP) — a block tower is narrow but it is still a staircase.
+	#
+	# ...and so does anything a PATROL CROCODILE is going to be dropped onto, which
+	# is what the `guarded` key marks (spawn_wall's blocks and the log bridge's
+	# stone). This third clause closes the one hazard CLAUDE.md recorded as
+	# deliberately unfired: a wall block's footprint is only block_size * 0.71 =
+	# 1.14-1.70 m wide and a doubled section tops out at 2 * block_size = 3.2 m, so
+	# BOTH of the tests above miss it (radius < MOUNTAIN_AVOID_RADIUS 2.0, top <
+	# MOUNTAIN_AVOID_TOP 3.61) and a massif was free to grow straight over a ridge,
+	# burying the guard in rock the platform descriptor knows nothing about. It went
+	# unfired through 4 x 289 chunks — and then fired the moment the snow band's
+	# threshold retune reshuffled the field, at 1.14 m deep, caught by
+	# croc_spawn_selfcheck.gd's check 1 exactly as that note predicted it would be.
+	# The mound needs no marking: its footprint radius is base_size * 0.71 >= 5.68,
+	# so the first clause has always covered it.
 	var avoid: Array = []
 	for ob in obstacles:
-		if ob.radius >= MOUNTAIN_AVOID_RADIUS or ob.top >= MOUNTAIN_AVOID_TOP:
+		if ob.radius >= MOUNTAIN_AVOID_RADIUS or ob.top >= MOUNTAIN_AVOID_TOP or ob.get("guarded", false):
 			avoid.append(ob)
 
 	for _i in count:
@@ -6366,6 +6645,226 @@ func _spawn_city_content(chunk_center: Vector3, rng: RandomNumberGenerator, obst
 		})
 
 
+func _spawn_snow_content(chunk_center: Vector3, rng: RandomNumberGenerator, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
+	"""
+	SNOW — bare frozen trees scattered thinly, and the occasional mammoth skeleton.
+
+	@param chunk_center: World centre of the chunk (create_box takes chunk-LOCAL).
+	@param rng: The biome stream's private RNG.
+	@param obstacles: One NON-climbable footprint per trunk, one per skeleton.
+	@param block_batch / block_body: The chunk's single MultiMesh + collision body.
+
+	EVERYTHING HERE IS NON-CLIMBABLE, and that is the deliberate half of the
+	territory's shape. The three SNOW scattered props (ice rock, drift, stump) carry
+	the whole rest-from-crocodiles role out here; a dead tree's top is 4 m up in the
+	branches and a skeleton's "top" is its spine ridge with a ribcage arched over
+	it, so a road coin perched on either would be unreachable. Non-climbable means
+	_settle_coin_y SKIPS such a coin instead — the cactus / tree-canopy call.
+
+	CROC DENSITY IS UNTOUCHED. The city is the one band whose target is divided
+	(owner call, and it buys back the safety with its roofs); snow is deliberately
+	the hostile end of the same spectrum, so nothing here thins the pack.
+
+	EDGE FEATHERING: like every other biome builder, each candidate re-tests
+	biome_at at ITS OWN position, so a tundra dissolves into the rock along the
+	noise contour instead of stopping dead on a chunk seam.
+
+	PERF: every box is a create_box entry, so a snow chunk is the SAME single block
+	draw call as a plains chunk. A whole mammoth pays exactly TWO CollisionShape3Ds
+	(the skull and the spine); its 8-10 ribs and 6 tusk segments are visual-only
+	trim, the forest-canopy rule at a different scale.
+	"""
+	# ---- FROZEN DEAD TREES -------------------------------------------------
+	# THE SEAM MARGIN AND THE FOOTPRINT RADIUS ARE TWO DIFFERENT NUMBERS HERE, the
+	# same split the forest makes and for the same two reasons.
+	#
+	# The seam margin has to bound EVERY box, visual-only ones included — a branch
+	# that hangs over the seam vanishes when its chunk unloads while the neighbour
+	# is still drawn, and a disappearing branch looks exactly as broken as a
+	# disappearing trunk. A branch is OFFSET from the trunk and THEN carries a yaw
+	# and a tilt, so its reach is the offset PLUS half its own 3D diagonal — writing
+	# only the half-diagonal (the bound a prop builder's centred decoration needs)
+	# understates it by the offset, which is 0.63 m of the 1.40 and measured 24.81 m
+	# of a 25.00 m seam over just fourteen chunks.
+	var branch_reach := FROZEN_TREE_BRANCH_LEN * 0.42 + 0.5 * Vector3(FROZEN_TREE_BRANCH_LEN, 0.22, 0.22).length()
+	var tree_half := chunk_size / 2.0 - (FROZEN_TREE_TRUNK_WIDTH_MAX * 0.71 + branch_reach)
+	for _i in rng.randi_range(FROZEN_TREE_MIN, FROZEN_TREE_MAX):
+		var local_x := rng.randf_range(-tree_half, tree_half)
+		var local_z := rng.randf_range(-tree_half, tree_half)
+		# The FOOTPRINT, by contrast, bounds the TRUNK only — the forest's rule
+		# verbatim: branches are collide = false, so nothing can be stuck inside one,
+		# and demanding clearance for the whole span would space dead trees out like
+		# massifs. `+ 0.3` is the forest's own slack figure.
+		#
+		# Both rejections are post-draw `continue`s, the discipline every removal in
+		# this file follows: the draws still advance the stream.
+		if not _biome_spot_ok(chunk_center, local_x, local_z, FROZEN_TREE_TRUNK_WIDTH_MAX * 0.71 + 0.3, FROZEN_TREE_ROAD_CLEARANCE, obstacles):
+			continue
+		if biome_at(chunk_center.x + local_x, chunk_center.z + local_z) != Biome.SNOW:
+			continue
+
+		var trunk_w := rng.randf_range(FROZEN_TREE_TRUNK_WIDTH_MIN, FROZEN_TREE_TRUNK_WIDTH_MAX)
+		var trunk_h := rng.randf_range(FROZEN_TREE_HEIGHT_MIN, FROZEN_TREE_HEIGHT_MAX)
+		var yaw := rng.randf_range(0.0, TAU)
+
+		# Trunk: solid, so you bump into it and the crocodiles' raycasts see it.
+		create_box(
+			Vector3(local_x, trunk_h * 0.5, local_z), Vector3(trunk_w, trunk_h, trunk_w),
+			yaw, rng, block_batch, block_body, 0.0, SNOW_DEADWOOD
+		)
+
+		# Bare branches — no canopy, that is the point of a dead tree. Visual only:
+		# you walk under them exactly as you walk under a forest canopy.
+		for _b in rng.randi_range(2, 3):
+			var a := rng.randf_range(0.0, TAU)
+			var by := trunk_h * rng.randf_range(0.55, 0.92)
+			var dir := Vector3(cos(a), 0.0, sin(a)) * (FROZEN_TREE_BRANCH_LEN * 0.42)
+			create_box(
+				Vector3(local_x, by, local_z) + dir,
+				Vector3(FROZEN_TREE_BRANCH_LEN, 0.22, 0.22),
+				a + PI * 0.5, rng, block_batch, block_body, rng.randf_range(-0.5, 0.5),
+				SNOW_DEADWOOD, false
+			)
+
+		# Footprint stops at the TRUNK top and is NOT climbable — the forest's rule,
+		# for the forest's reason.
+		obstacles.append({
+			"pos": Vector3(local_x, 0, local_z),
+			"radius": trunk_w * 0.71 + 0.3,
+			"top": trunk_h,
+			"climbable": false,
+		})
+
+	# ---- MAMMOTH SKELETONS -------------------------------------------------
+	var mammoth_half := chunk_size / 2.0 - MAMMOTH_EDGE_MARGIN
+	for _i in rng.randi_range(0, MAMMOTH_MAX):
+		# The candidate loop lives HERE rather than in a rarity roll, for the reason
+		# camps and artifacts both had theirs moved: this is where `obstacles`
+		# exists, and overlap is the test that actually rejects. Every draw happens
+		# whether or not a try is accepted.
+		var mx := 0.0
+		var mz := 0.0
+		var placed := false
+		var tries := 0
+		while tries < MAMMOTH_PLACE_TRIES and not placed:
+			tries += 1
+			mx = rng.randf_range(-mammoth_half, mammoth_half)
+			mz = rng.randf_range(-mammoth_half, mammoth_half)
+			if _biome_spot_ok(chunk_center, mx, mz, MAMMOTH_RADIUS, MAMMOTH_ROAD_CLEARANCE, obstacles) \
+					and biome_at(chunk_center.x + mx, chunk_center.z + mz) == Biome.SNOW:
+				placed = true
+		if not placed:
+			# Every try failing means NO skeleton. A mammoth shoved through a stand
+			# of trees reads worse than a chunk without one — the camp's rule.
+			continue
+
+		var top := _snow_mammoth(Vector3(mx, 0.0, mz), rng, block_batch, block_body)
+
+		obstacles.append({
+			"pos": Vector3(mx, 0, mz),
+			"radius": MAMMOTH_RADIUS,
+			"top": top,
+			"climbable": false,
+		})
+
+
+func _snow_mammoth(local: Vector3, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> float:
+	"""
+	Build one mammoth skeleton and return the height of its spine ridge.
+
+	@param local: Chunk-local position of the ribcage's rear end (see the frame
+	              note below); the skeleton lies along its own yaw from there.
+	@param rng: The biome stream's private RNG.
+	@param block_batch / block_body: The chunk's single MultiMesh + collision body.
+	@return: The top of the spine slab — the `top` its footprint records.
+
+	16-18 boxes, EXACTLY TWO OF WHICH COLLIDE (the skull and the spine slab). The
+	ribs and the tusks are silhouette, and a silhouette does not need to be solid;
+	making them solid would take one skeleton from 2 collision shapes to 18 and put
+	a snag in the middle of the tundra for no gameplay at all.
+
+	THE FRAME: everything below is written in the skeleton's own coordinates —
+	local +X runs nose-forward along the animal, local Z is lateral — and every
+	offset is rotated into the chunk by `yaw` before it is handed to create_box.
+	The spine spans x in [-spine_len, 0] and the skull sits at x = +0.7, so the
+	piece is roughly centred on `local` and the one round footprint circle is a
+	tight-ish bound in both directions rather than a tight one forward and a wasteful
+	one behind.
+
+	A SKELETON READS BY SILHOUETTE AND NOTHING ELSE, which is the whole reason the
+	box budget is spent where it is: two tusk curves and a row of rib arches are what
+	a person names a mammoth by at 30 m. There are deliberately no legs, no pelvis
+	and no detail — at that distance they are noise, and every one would be another
+	box in the chunk's MultiMesh.
+	"""
+	var yaw := rng.randf_range(0.0, TAU)
+	var fwd := Vector3(cos(yaw), 0.0, -sin(yaw))   # Basis(UP, yaw) * Vector3.RIGHT
+	var side := Vector3(sin(yaw), 0.0, cos(yaw))   # Basis(UP, yaw) * Vector3.BACK
+	var spine_len := rng.randf_range(MAMMOTH_SPINE_LEN_MIN, MAMMOTH_SPINE_LEN_MAX)
+	var pairs := rng.randi_range(MAMMOTH_RIB_PAIRS_MIN, MAMMOTH_RIB_PAIRS_MAX)
+	var rib_top := MAMMOTH_RIB_HEIGHT * cos(MAMMOTH_RIB_TILT)
+	var bone := PROP_BONE.lerp(SNOW_ICE_B, rng.randf() * 0.18)
+
+	# --- RIBS. Each pair is two thin boxes whose BASES sit wide on the ground and
+	# whose TOPS lean in over the spine. The tilt sign is what does that: a tilt
+	# about the box's local X sends its up-vector toward local +Z, so the rib on
+	# the -Z side takes a POSITIVE tilt and its mirror a negative one. Get the sign
+	# backwards and the ribcage splays outward like a flower, which looks wrong and
+	# raises nothing.
+	for i in pairs:
+		var t := (float(i) + 0.5) / float(pairs)
+		var x := -spine_len * (0.08 + 0.84 * t)
+		var rib_h := MAMMOTH_RIB_HEIGHT * rng.randf_range(0.88, 1.05)
+		for s: float in [-1.0, 1.0]:
+			create_box(
+				local + fwd * x + side * (MAMMOTH_RIB_HALF_SPREAD * s)
+						+ Vector3(0.0, rib_h * 0.5 * cos(MAMMOTH_RIB_TILT), 0.0),
+				Vector3(0.16, rib_h, 0.30), yaw,
+				rng, block_batch, block_body, -MAMMOTH_RIB_TILT * s,
+				bone, false
+			)
+
+	# --- SPINE. One slab lying along the top of the ribcage, and one of the two
+	# boxes that collide. It spans exactly x in [-spine_len, 0], so the footprint's
+	# rear reach is spine_len and needs no separate bound.
+	var spine_top := rib_top + 0.30
+	create_box(
+		local + fwd * (-spine_len * 0.5) + Vector3(0.0, rib_top + 0.15, 0.0),
+		Vector3(spine_len, 0.30, 0.45), yaw,
+		rng, block_batch, block_body, 0.0, bone
+	)
+
+	# --- SKULL. The other colliding box: a blunt mass at the front, which is what
+	# the tusks have to come out of for the pair to read as one animal.
+	create_box(
+		local + fwd * 0.70 + Vector3(0.0, 0.60, 0.0),
+		Vector3(1.40, 1.15, 1.25), yaw,
+		rng, block_batch, block_body, 0.0, bone
+	)
+
+	# --- TUSKS. Two curves of three boxes, walked segment by segment from the
+	# skull's front face. See the MAMMOTH_TUSK_SEGMENTS banner for why the yaw
+	# carries a quarter turn: it is the only way to make a box lean along the
+	# skeleton's LENGTH rather than across it.
+	var tusk_yaw := yaw + PI * 0.5
+	for s: float in [-1.0, 1.0]:
+		var pos := local + fwd * 1.35 + side * (0.40 * s) + Vector3(0.0, 0.45, 0.0)
+		for seg_variant: Variant in MAMMOTH_TUSK_SEGMENTS:
+			var seg: Array = seg_variant
+			var seg_len: float = float(seg[0])
+			var tilt: float = float(seg[1])
+			# The segment's own up-vector, in world terms: Basis(UP, yaw + PI/2) *
+			# Basis(RIGHT, tilt) * UP works out to fwd * sin(tilt) + UP * cos(tilt).
+			var dir := fwd * sin(tilt) + Vector3.UP * cos(tilt)
+			create_box(
+				pos + dir * (seg_len * 0.5), Vector3(0.18, seg_len, 0.18),
+				tusk_yaw, rng, block_batch, block_body, tilt, bone, false
+			)
+			pos += dir * seg_len
+
+	return spine_top
+
+
 func _city_snap(value: float, rng: RandomNumberGenerator) -> float:
 	"""
 	Snap one chunk-local coordinate onto the city's coarse street grid, plus a
@@ -6385,7 +6884,7 @@ func _city_snap(value: float, rng: RandomNumberGenerator) -> float:
 	return roundf(value / CITY_BLOCK_PITCH) * CITY_BLOCK_PITCH + rng.randf_range(-CITY_BLOCK_JITTER, CITY_BLOCK_JITTER)
 
 # ============================================================================
-# BIOME FIELD (one noise field; five biomes + rivers read out of it)
+# BIOME FIELD (one noise field; six biomes + rivers read out of it)
 # ============================================================================
 #
 # ponytail: the ground stays a FLAT y = 0 plane — see the full note in the BIOME
@@ -6492,7 +6991,7 @@ func _biome_noise(world_x: float, world_z: float) -> float:
 
 func biome_at(world_x: float, world_z: float) -> Biome:
 	"""
-	Classify a world position into one of the five biomes.
+	Classify a world position into one of the six biomes.
 
 	@param world_x, world_z: World-space point (metres).
 	@return: The Biome band the field falls in at that point.
@@ -6510,7 +7009,9 @@ func biome_at(world_x: float, world_z: float) -> Biome:
 		return Biome.CITY
 	if n < BIOME_FOREST_MAX:
 		return Biome.FOREST
-	return Biome.MOUNTAIN
+	if n < BIOME_MOUNTAIN_MAX:
+		return Biome.MOUNTAIN
+	return Biome.SNOW
 
 
 func is_river_at(world_pos: Vector3) -> bool:
