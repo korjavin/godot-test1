@@ -98,6 +98,23 @@ extends SceneTree
 ##   (h) LEAVE_PAD 14.0 -> 6.0 also trips the direct inequality in step 4, which is
 ##       there because the probe alone decides that case on float32 rounding — see
 ##       the comment at that assertion.
+##   (i) landmark_toast._claim_treasure's `if _visited.has(id): return 0` removed
+##       (the per-run latch re-arms with the card)  ->  FAIL: re-approaching the
+##       same landmark in the same run paid 18 more coins.
+##   (j) the `_visited.clear()` on a run_seed change removed (a new run keeps the
+##       old visited set)  ->  FAIL: after run_seed changed to 1 the same landmark
+##       paid 0 coins, outside 15..25 (× 6 seeds), plus the determinism row.
+##   (k) run_seed dropped from the amount hash  ->  FAIL: one landmark paid the
+##       same 22 coins across six different run_seeds. NOTE step 5d passes under
+##       this one — a constant IS deterministic — which is why the six-seed sweep
+##       exists beside it.
+##   (l) the amount rolled off rng.randomize() instead of the hash  ->  FAIL: the
+##       same landmark on the same run_seed paid 16 coins and then 18. NOTE the
+##       six-seed sweep passes under THIS one, which is why 5d exists beside it —
+##       the pair is deliberately two controls, not one.
+##   (m) `_burst_remaining = amount` -> `= 1` (one fat pickup instead of the
+##       staggered burst, i.e. the streak-killing bug the chest's design note is
+##       about)  ->  FAIL: the first approach paid 1 coins, outside 15..25.
 ##
 ## Don't grow this into a suite.
 
@@ -162,7 +179,7 @@ func _run() -> void:
 		await _check_toast_radius_derived(registry)
 
 	if _failures.is_empty():
-		print("landmarks: %d builders × %d seeds measured, toast once-per-approach + radius-derived trigger OK"
+		print("landmarks: %d builders × %d seeds measured, toast once-per-approach + radius-derived trigger + first-visit treasure OK"
 				% [registry.size(), SEEDS_PER_BUILDER])
 		print("SELFCHECK OK")
 		quit(0)
@@ -412,21 +429,50 @@ func _check_facts(registry: Array) -> void:
 # CHECK 4 — the toast fires once per approach and re-arms on leaving
 # ============================================================================
 
-## The stub player. The toast reads exactly one thing off the "player" group
-## node — global_position — so that is all this is; nothing else about the real
-## player is relevant, and a full player scene would drag in the whole HUD.
+## The stub player. The toast reads two things off the "player" group node —
+## global_position, and (since the first-visit treasure) collect_coin() — so that
+## is all this is; nothing else about the real player is relevant, and a full
+## player scene would drag in the whole HUD.
+##
+## `coins_paid` counts PICKUPS, deliberately not value, because that is the whole
+## mechanical point of the staggered burst: the streak multiplier steps every
+## STREAK_COINS_PER_STEP *pickups*, so a burst that "worked" by calling
+## collect_coin(20) once would light no streak at all. Counting calls here is
+## what makes that measurable — summing `value` would pass either way.
 class StubPlayer extends Node3D:
-	pass
+	var coins_paid: int = 0
+
+	func collect_coin(_value: int = 1) -> void:
+		coins_paid += 1
+
+
+## The stub terrain. The toast reads exactly one thing off the "terrain" group
+## node — `run_seed` — which IS the run identity: new_run() re-rolls it, and
+## that is how the per-run treasure latch learns a new run has started without
+## any signal to subscribe to.
+class StubTerrain extends Node:
+	var run_seed: int = 0
 
 
 func _check_toast(registry: Array) -> void:
+	var toast_consts: Dictionary = load(TOAST_SCRIPT).get_script_constant_map()
 	var toast_script: GDScript = load(TOAST_SCRIPT)
-	var approach_pad: float = float(toast_script.get_script_constant_map()["APPROACH_PAD"])
-	var leave_pad: float = float(toast_script.get_script_constant_map()["LEAVE_PAD"])
+	var approach_pad: float = float(toast_consts["APPROACH_PAD"])
+	var leave_pad: float = float(toast_consts["LEAVE_PAD"])
+	var treasure_min: int = int(toast_consts["TREASURE_COINS_MIN"])
+	var treasure_max: int = int(toast_consts["TREASURE_COINS_MAX"])
 
 	var player := StubPlayer.new()
 	player.add_to_group("player")
 	root.add_child(player)
+
+	# The run the treasure latch belongs to. Seed 0 would be indistinguishable
+	# from "no terrain in the tree", which is exactly the state the toast falls
+	# back to in a standalone scene — so start somewhere else.
+	var terrain := StubTerrain.new()
+	terrain.run_seed = 424242
+	terrain.add_to_group("terrain")
+	root.add_child(terrain)
 
 	# TWO markers, and that is the negative control for the TEXT assertion: with
 	# one marker, a card that always showed registry entry 0 would pass. The
@@ -458,6 +504,13 @@ func _check_toast(registry: Array) -> void:
 	if toast.visible:
 		_fail("toast: the card is visible with the player %.0f m from every landmark"
 				% (radius + leave_pad + 50.0))
+	# TREASURE NEGATIVE CONTROL, and the one that matters most: a burst that fired
+	# on the tick rather than on the approach would pay here, with the player
+	# 60-odd metres from anything.
+	toast.call("_update_burst", 100.0)
+	if player.coins_paid != 0:
+		_fail("treasure: %d coins were paid with the player %.0f m from every landmark"
+				% [player.coins_paid, radius + leave_pad + 50.0])
 
 	# --- Step 2: inside the approach radius → the card shows THIS landmark.
 	player.global_position = Vector3(0.0, 0.0, radius + approach_pad - 1.0)
@@ -469,6 +522,20 @@ func _check_toast(registry: Array) -> void:
 	if shown_name != String(entry["name"]) or shown_fact != String(entry["fact"]):
 		_fail("toast: showed \"%s\" / \"%s\", expected \"%s\" / \"%s\" — it read the wrong marker"
 				% [shown_name, shown_fact, String(entry["name"]), String(entry["fact"])])
+
+	# TREASURE: the first approach of the run pays, and the amount is inside the
+	# declared band. Flushing the burst with an absurd delta is what drives the
+	# stagger to completion here — _process is off, so without it only the coin
+	# _claim_treasure pays on contact would land, and the check would pass against
+	# a burst whose remaining 14-24 coins never arrive.
+	toast.call("_update_burst", 100.0)
+	var paid_first: int = player.coins_paid
+	if paid_first < treasure_min or paid_first > treasure_max:
+		_fail("treasure: the first approach paid %d coins, outside TREASURE_COINS_MIN..MAX (%d..%d)"
+				% [paid_first, treasure_min, treasure_max])
+	var treasure_label: Label = toast.get("treasure_label")
+	if not treasure_label.visible or treasure_label.text.is_empty():
+		_fail("treasure: the card showed no \"+N coins\" line on the approach that paid %d" % paid_first)
 
 	# --- Step 3: still inside → must NOT re-show. Clearing the labels first is
 	# what makes that measurable: _show() is the only thing that writes them, so
@@ -514,6 +581,65 @@ func _check_toast(registry: Array) -> void:
 	if _labels_clear(toast):
 		_fail("toast: the card did not re-show after the player left and came back — it never re-arms")
 
+	# --- Step 5b: THE TREASURE LATCH DOES NOT RE-ARM WITH THE CARD, and this is
+	# the load-bearing difference between the two latches. Step 5 just proved the
+	# CARD re-shows after a genuine departure (deliberate: the card is the reward
+	# for the detour). The treasure must NOT: a landmark pays once per run, or the
+	# whole feature is a coin farm you pace back and forth over.
+	#
+	# Steps 3 and 4 are covered by the same assertion — neither re-showed a card,
+	# so neither may have paid either, and coins_paid has not been touched since
+	# step 2.
+	toast.call("_update_burst", 100.0)
+	if player.coins_paid != paid_first:
+		_fail("treasure: re-approaching the same landmark in the same run paid %d more coins — the per-run latch re-arms with the card"
+				% (player.coins_paid - paid_first))
+	if treasure_label.visible:
+		_fail("treasure: the \"+N coins\" line was shown on a re-visit that paid nothing")
+
+	# --- Step 5c: A NEW RUN CLEARS THE LATCH, and the amount is a pure function
+	# of (landmark, run_seed).
+	#
+	# Driving it through the terrain's `run_seed` is driving the real trigger:
+	# new_run() re-rolls that seed and restart_game() goes through new_run(), so
+	# this is the same event a player pressing Play Again produces. A RESPAWN
+	# re-rolls nothing, which is why the design says a death costs you no landmark
+	# you had already emptied — and why there is deliberately nothing to drive for
+	# that case beyond step 5b, which is exactly it.
+	var amounts: Array[int] = []
+	# Six seeds: enough that "the roll ignores run_seed entirely" cannot survive
+	# the all-equal test below by luck (11 possible amounts, so 11^-5 ≈ 6e-6),
+	# while every one of them independently proves the latch cleared.
+	for probe_seed: int in [1, 2, 3, 5, 8, 13]:
+		terrain.run_seed = probe_seed
+		var before: int = player.coins_paid
+		_approach_again(toast, player, radius + approach_pad - 1.0, radius + leave_pad + 5.0)
+		var paid: int = player.coins_paid - before
+		amounts.append(paid)
+		if paid < treasure_min or paid > treasure_max:
+			_fail("treasure: after run_seed changed to %d the same landmark paid %d coins, outside %d..%d — a new run did not clear the visited set"
+					% [probe_seed, paid, treasure_min, treasure_max])
+	var all_equal := true
+	for paid: int in amounts:
+		if paid != amounts[0]:
+			all_equal = false
+	if all_equal:
+		_fail("treasure: one landmark paid the same %d coins across six different run_seeds — the amount does not depend on run_seed"
+				% amounts[0])
+
+	# --- Step 5d: DETERMINISM. Back on the original run seed, the same landmark
+	# must pay the SAME amount it paid at step 2. That is the multiplayer promise
+	# ("the same landmark pays the same amount to everyone in a run") measured
+	# from the only side a single process can measure it: a roll off randomize(),
+	# randi() or a shared stream cannot repeat a number six approaches later.
+	terrain.run_seed = 424242
+	var before_repeat: int = player.coins_paid
+	_approach_again(toast, player, radius + approach_pad - 1.0, radius + leave_pad + 5.0)
+	var paid_repeat: int = player.coins_paid - before_repeat
+	if paid_repeat != paid_first:
+		_fail("treasure: the same landmark on the same run_seed paid %d coins and then %d — the amount is not deterministic"
+				% [paid_first, paid_repeat])
+
 	# --- Step 6: TWO LANDMARKS IN RANGE AT ONCE must not ping-pong. Trigger zones
 	# genuinely overlap — LANDMARK_EDGE_MARGIN lets a landmark sit 13 m from a
 	# chunk edge, so two in adjacent chunks can be ~26 m apart while two 15.4 m
@@ -544,6 +670,24 @@ func _check_toast(registry: Array) -> void:
 	marker.queue_free()
 	decoy.queue_free()
 	player.queue_free()
+	terrain.queue_free()
+	# Freed nodes leave their groups on the NEXT frame, so without this check 5's
+	# markers and toasts would still see this check's player and terrain.
+	await process_frame
+
+
+func _approach_again(toast: Control, player: Node3D, near: float, far: float) -> void:
+	"""
+	Walk the player genuinely out of range and back in, then flush whatever burst
+	the arrival armed. Leaving first is what re-arms the CARD latch (`_active`),
+	which is the only way to reach `_show` — and therefore the only way to reach
+	the treasure claim — a second time.
+	"""
+	player.global_position = Vector3(0.0, 0.0, far)
+	toast.call("_scan")
+	player.global_position = Vector3(0.0, 0.0, near)
+	toast.call("_scan")
+	toast.call("_update_burst", 100.0)
 
 
 # ============================================================================

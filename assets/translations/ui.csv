@@ -9,6 +9,7 @@ keys,en,de
 "Distance: %dm","Distance: %dm","Strecke: %dm"
 "Coins collected: %d","Coins collected: %d","Münzen: %d"
 "Best: %dm / %d coins","Best: %dm / %d coins","Rekord: %dm / %d Münzen"
+"+%d coins","+%d coins","+%d Münzen"
 "Distance: %dm   Coins: %d","Distance: %dm   Coins: %d","Strecke: %dm   Münzen: %d"
 "Lv %d   Distance: %dm   Coins: %d","Lv %d   Distance: %dm   Coins: %d","St. %d   Strecke: %dm   Münzen: %d"
 "  %d SP","  %d SP","  %d FP"

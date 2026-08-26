@@ -1,11 +1,16 @@
 extends Control
-## Landmark toast — the educational half of the geo-landmark feature.
+## Landmark toast — the educational half of the geo-landmark feature, plus the
+## FIRST-VISIT TREASURE that pays for the detour.
 ##
 ## Walk within a few metres of Stonehenge, the Pyramids of Giza or the Eiffel
 ## Tower and a small card slides up at the bottom of the screen naming the place
 ## and giving one real fact about it. That card IS the reward for detouring to a
 ## landmark (the coin ring round the base is a garnish — see the REWARD DECISION
 ## in endless_terrain.gd's GEO LANDMARKS constant banner).
+##
+## THE FIRST APPROACH TO EACH LANDMARK IN A RUN ALSO PAYS A COIN BURST — see the
+## TREASURE section below. The ring round the base is the lure you can see from
+## across the field; the burst is the payoff for actually walking over.
 ##
 ## Built entirely in code in _ready(), like touch_controls.gd and
 ## mobile_settings_panel.gd, so scenes/main.tscn needs exactly ONE node and one
@@ -103,6 +108,76 @@ const FACT_COLOR := Color(0.92, 0.94, 0.97, 1.0)
 
 const NAME_FONT_SIZE: int = 28
 const FACT_FONT_SIZE: int = 18
+const TREASURE_FONT_SIZE: int = 20
+const TREASURE_COLOR := Color(1.0, 0.85, 0.35, 1.0)
+
+
+# ============================================================================
+# TREASURE CONFIGURATION — the first-visit coin burst
+# ============================================================================
+#
+# WHY IT LIVES BESIDE THE APPROACH LATCH. The moment a landmark "opens" is
+# exactly the moment its card fires, and this script already owns that moment,
+# already knows which marker it was, and already runs a throttled tick. Putting
+# the trigger anywhere else would mean a second proximity scan measuring the
+# same distances against the same group.
+#
+# BUT IT IS A SEPARATE LATCH, and the difference is the whole design: `_active`
+# is per-APPROACH memory that deliberately re-arms (walk away from Stonehenge
+# and back and the card shows again — the card is the reward for the detour),
+# while `_visited` is per-RUN memory that NEVER re-arms. A landmark pays exactly
+# once per run; the card is what you can have as often as you like.
+#
+# HOW THE REWARD IS PAID — the treasure_chest.gd mechanism, verbatim, and for
+# the same mechanical reason. The burst does NOT call collect_coin(N) once and
+# does NOT spawn coin nodes: the coin economy counts PICKUPS, not value, so the
+# streak multiplier steps every STREAK_COINS_PER_STEP *pickups* and a single fat
+# collect_coin(20) would be one link in the chain and never light the streak up
+# at all. `_award_one()` is called TREASURE amount times, spread over
+# TREASURE_BURST_DURATION — comfortably inside the 2.5 s STREAK_WINDOW, so the
+# whole burst is one unbroken chain — and the extra-life threshold, the HUD, the
+# play_coin blip and the lifetime-coin credit for meta-progression all come free
+# off the existing collect_coin path (progression takes the PRE-streak value, so
+# a 20-coin burst credits 20 lifetime coins whatever the multiplier).
+#
+# DELIBERATELY NO GEM. The guaranteed gem is the ARTIFACTS' distinction (camps
+# and chests were held to the same rule); a fourth source would flatten "an
+# ancient prize worth a detour" into "another thing I walked past".
+#
+# MULTIPLAYER: THE TREASURE IS PERSONAL, WITH NO CLAIM ARBITRATION, ON PURPOSE.
+# Visiting a landmark is an individual act — the card is already local and
+# per-player by the isolation contract (the "player" group is the LOCAL player
+# and nothing else) — so every member of a room gets their own first-visit burst
+# for the same landmark, and there is deliberately no `claim_pickup` round trip
+# the way treasure_chest.gd has one. A chest is ONE physical box that two peers
+# race for, so paying both would pay the room twice for one object; a visit is
+# not an object and cannot be raced for. The shared bank still receives it
+# through the ordinary mechanics: collect_coin raises `own_coins`, which the
+# presence packet already carries as this peer's contribution.
+
+## Coins paid by one landmark's first visit, drawn from that landmark's OWN
+## deterministic roll (see `_claim_treasure`). Sized ABOVE a treasure chest's
+## 8-15 so that walking 22 m off the road to a landmark beats brushing past a
+## chest on it — the detour has to be worth more than the snack.
+const TREASURE_COINS_MIN: int = 15
+const TREASURE_COINS_MAX: int = 25
+
+## Seconds the burst is spread over. Must stay well under player_controller's
+## STREAK_WINDOW (2.5 s) or the shower breaks into two streak chains.
+const TREASURE_BURST_DURATION: float = 1.2
+
+## Fixed salt for the treasure's hash stream, in the ARTIFACT_SALT / CAMP_SALT /
+## CHEST_SALT family: an arbitrary fixed constant that keeps the amount roll
+## independent of every other deterministic site, so it can never correlate with
+## (or perturb) one. It draws from no shared RandomNumberGenerator at all.
+const TREASURE_SALT: int = 0x7EA5
+
+## coin.gd is preloaded ONLY for its static `id_at()` — the project's one
+## "identify a deterministic world thing by where it stands" helper, which is
+## exactly what a landmark needs (its marker never moves, so the id is stable by
+## construction — unlike a coin, whose id had to be latched against its bob).
+## Reusing it is also why nothing had to be threaded out of endless_terrain.gd.
+const COIN_SCRIPT := preload("res://scripts/coin.gd")
 
 # ============================================================================
 # STATE
@@ -112,6 +187,10 @@ const FACT_FONT_SIZE: int = 18
 ## them; nothing outside this script ever touches them.
 var name_label: Label = null
 var fact_label: Label = null
+
+## The "+N coins" line, shown only on the approach that actually paid. Hidden the
+## rest of the time, so a re-visit's card is visibly the plain educational card.
+var treasure_label: Label = null
 
 ## The landmark whose card this approach belongs to, or null when re-armed. This
 ## single reference IS the "once per approach" rule: a card is shown when the
@@ -135,6 +214,32 @@ var _hold: float = 0.0
 
 ## Throttle accumulator for the proximity scan.
 var _tick_timer: float = 0.0
+
+## THE TREASURE LATCH — landmark id (COIN_SCRIPT.id_at of the marker's world
+## position) -> true, for every landmark this run has already paid out. Unlike
+## `_active` it NEVER re-arms: leaving and coming back re-shows the card and pays
+## nothing. Keyed on the PLACE rather than on the node, so a landmark whose chunk
+## streamed out and back is still remembered as visited.
+var _visited: Dictionary = {}
+
+## The run the `_visited` set belongs to. `endless_terrain.run_seed` IS the run
+## identity — new_run() re-rolls it, and restart_game() goes through new_run() —
+## so watching it clears the set on a restart and on a multiplayer room's shared
+## world arriving, while a RESPAWN (which touches nothing about the world) leaves
+## it standing, which is exactly the rule the design asks for. Reading the seed
+## the terrain already publishes needs no new API and no signal to subscribe to.
+##
+## ponytail: a new_run that happened to re-roll the identical seed would keep the
+## old visited set (1 in 2^32, and the world would be identical anyway, so the
+## landmarks in it are the ones you already emptied). Upgrade path if that ever
+## matters: a monotonically increasing run counter on the terrain.
+var _visited_run_seed: int = 0
+
+## Burst state, the treasure_chest.gd shape: how many single-coin awards are
+## still owed, the gap between them, and the countdown to the next one.
+var _burst_remaining: int = 0
+var _burst_interval: float = 0.0
+var _burst_timer: float = 0.0
 
 
 func _ready() -> void:
@@ -188,8 +293,25 @@ func _ready() -> void:
 	fact_label.add_theme_font_size_override("font_size", FACT_FONT_SIZE)
 	box.add_child(fact_label)
 
+	# The treasure line. Same "no tr() needed" rule does NOT apply here — this one
+	# is COMPOSED at runtime (a count formatted into a sentence), so it is
+	# Localization RULE 2: tr() on the FORMAT STRING, never on the result. See
+	# _show(). It autowraps inside the same growing container as the fact line, so
+	# it needs no locale_selfcheck.gd WIDTH_BUDGETS row either.
+	treasure_label = Label.new()
+	treasure_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	treasure_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	treasure_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	treasure_label.add_theme_color_override("font_color", TREASURE_COLOR)
+	treasure_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 1))
+	treasure_label.add_theme_constant_override("outline_size", 5)
+	treasure_label.add_theme_font_size_override("font_size", TREASURE_FONT_SIZE)
+	treasure_label.visible = false
+	box.add_child(treasure_label)
+
 
 func _process(delta: float) -> void:
+	_update_burst(delta)
 	_update_fade(delta)
 
 	_tick_timer += delta
@@ -266,7 +388,9 @@ func _scan() -> void:
 	# and the simpler rule.
 	if _active == null and nearest != null:
 		_active = nearest
-		_show(nearest)
+		# Claim FIRST, show second: the card renders the amount the claim paid, and
+		# a re-visit (which claims nothing) must render without the treasure line.
+		_show(nearest, _claim_treasure(nearest))
 
 
 func _marker_radius(marker: Node3D) -> float:
@@ -287,15 +411,22 @@ func _xz_distance(a: Vector3, b: Vector3) -> float:
 # DISPLAY
 # ============================================================================
 
-func _show(marker: Node3D) -> void:
+func _show(marker: Node3D, treasure: int) -> void:
 	"""
 	Put this landmark's name and fact on the card and start the hold timer.
 
 	The two strings go STRAIGHT onto Label.text with no tr() — see the
 	localization note at the top of the file before changing that.
+
+	@param treasure: coins this approach paid out, or 0 on a re-visit. The one
+	                 line on this card that IS composed at runtime, hence the
+	                 tr() on the format string (Localization RULE 2).
 	"""
 	name_label.text = str(marker.get_meta("name_key", ""))
 	fact_label.text = str(marker.get_meta("fact_key", ""))
+	treasure_label.visible = treasure > 0
+	if treasure > 0:
+		treasure_label.text = tr("+%d coins") % treasure
 	_hold = TOAST_DURATION
 	visible = true
 
@@ -317,3 +448,90 @@ func _update_fade(delta: float) -> void:
 	modulate.a = maxf(modulate.a - step, 0.0)
 	if modulate.a <= 0.0:
 		visible = false
+
+
+# ============================================================================
+# TREASURE — the first-visit coin burst (see the TREASURE CONFIGURATION banner)
+# ============================================================================
+
+func _claim_treasure(marker: Node3D) -> int:
+	"""
+	If this is the run's FIRST approach to this landmark, arm the coin burst and
+	answer how many coins it will pay; otherwise answer 0 and arm nothing.
+
+	THE AMOUNT IS A PURE FUNCTION OF (landmark position, run_seed) and is drawn
+	from a private RandomNumberGenerator seeded from its own hash stream, so it
+	consumes no draw from anything else in the project. That purity is what makes
+	the multiplayer promise honest: every peer in a room shares run_seed and
+	generates the landmark in the same place, so the same landmark pays the same
+	amount to everyone — with no packet, no arbitration and no server involved.
+	"""
+	# THE RUN GATE. Reading the seed fresh on every claim (rather than latching it
+	# in _ready) is what makes this work with no signal and no reset plumbing: a
+	# new_run() — an explicit restart, or a multiplayer room's shared world
+	# arriving — re-rolls run_seed, and the very next claim notices and empties the
+	# set. A respawn re-rolls nothing, so a death costs you no landmark you had
+	# already emptied.
+	var terrain := get_tree().get_first_node_in_group("terrain")
+	var run_seed: int = 0
+	if terrain != null and "run_seed" in terrain:
+		run_seed = int(terrain.run_seed)
+	if run_seed != _visited_run_seed:
+		_visited.clear()
+		_visited_run_seed = run_seed
+
+	var id: int = COIN_SCRIPT.id_at(marker.global_position)
+	if _visited.has(id):
+		return 0
+	_visited[id] = true
+
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(Vector3i(id, TREASURE_SALT, run_seed))
+	var amount: int = rng.randi_range(TREASURE_COINS_MIN, TREASURE_COINS_MAX)
+
+	# Spread across the window rather than dividing into it, treasure_chest.gd's
+	# rule: the first coin is paid on arrival and the rest follow.
+	_burst_remaining = amount
+	_burst_interval = TREASURE_BURST_DURATION / float(amount)
+	_burst_timer = _burst_interval
+	_award_one()
+	return amount
+
+
+func _update_burst(delta: float) -> void:
+	"""
+	Pay out whatever the burst still owes. Runs from _process, ABOVE the fade and
+	outside the proximity throttle, so the shower keeps paying at the frame rate
+	while the card is fading and after it has gone.
+
+	A `while`, not an `if`, for treasure_chest.gd's reason: at TREASURE_COINS_MAX
+	over TREASURE_BURST_DURATION the gap is ~48 ms, which one frame hitch (or a
+	browser tab regaining focus) easily overruns — paying a single coin per frame
+	would silently stretch the burst past the streak window.
+	"""
+	if _burst_remaining <= 0:
+		return
+	_burst_timer -= delta
+	while _burst_remaining > 0 and _burst_timer <= 0.0:
+		_burst_timer += _burst_interval
+		_award_one()
+
+
+func _award_one() -> void:
+	"""
+	One ordinary coin, through the ordinary path — the whole point of the burst
+	(see the TREASURE CONFIGURATION banner for why it is never collect_coin(N)).
+
+	The player is re-fetched per coin rather than held: a respawn, a restart or a
+	room's join placement can all move or free things underneath a running burst,
+	and a group lookup 20 times over a second is nothing. Both lookups are the
+	project's standard null-safe group + has_method shape, so a scene with neither
+	a player nor a SoundManager pays silently instead of erroring.
+	"""
+	_burst_remaining -= 1
+	var player := get_tree().get_first_node_in_group("player")
+	if player != null and player.has_method("collect_coin"):
+		player.collect_coin(1)
+	var sm := get_tree().get_first_node_in_group("sound_manager")
+	if sm != null and sm.has_method("play_coin"):
+		sm.play_coin()
