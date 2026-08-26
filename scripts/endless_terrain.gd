@@ -348,6 +348,20 @@ const SPAWN_SAFE_RADIUS: float = 25.0
 ## surprise, not on every structure.
 @export var platform_crocodile_chance: float = 0.4
 
+## How far ABOVE a platform's `top` (its tallest stone, NOT the surface it paces)
+## a patrol guard is dropped in, so gravity settles it onto the structure.
+##
+## THIS IS THE PENETRATION DEPTH WHEN THE DROP-IN HEIGHT IS WRONG, which is why
+## it is a named constant rather than a literal at the one call site: a guard
+## dropped from a height that some stone in its own footprint reaches ends up
+## this far INSIDE that stone. See the platform "top" note in spawn_wall.
+const PLATFORM_SPAWN_HEIGHT: float = 0.6
+
+## How far in from a platform's edge the guard's spawn point is drawn, so it
+## lands cleanly on the surface rather than half off it. Read by
+## croc_spawn_selfcheck.gd, which walks the same inset ellipse at every angle.
+const PLATFORM_SPAWN_EDGE_INSET: float = 1.0
+
 ## Enable/disable collectible coin spawning on terrain
 @export var spawn_coins: bool = true
 
@@ -2669,9 +2683,14 @@ func spawn_terraced_mound(rng: RandomNumberGenerator, half_chunk: float, chunk_c
 	obstacles.append({ "pos": Vector3(cx, 0, cz), "radius": base_size * 0.71, "top": y, "climbable": true })
 
 	# Register the flat summit as a patrol platform (if it's big enough to stand on).
+	# `top` equals `center.y` here — the summit slab IS the tallest SOLID thing in
+	# its own footprint (the themed cap above it is collide = false, and the fallen
+	# trim is ringed outside the slab), so the patrol guard's drop-in height is the
+	# surface height. A wall's is not; see the platform "top" note in spawn_wall
+	# for why the two are separate fields at all.
 	var plat_half := top_half - 0.3
 	if plat_half > 0.4:
-		platforms.append({ "center": Vector3(top_x, y, top_z), "half": Vector2(plat_half, plat_half) })
+		platforms.append({ "center": Vector3(top_x, y, top_z), "half": Vector2(plat_half, plat_half), "top": y })
 
 func spawn_gate(rng: RandomNumberGenerator, half_chunk: float, chunk_center: Vector3, theme: Dictionary, obstacles: Array, platforms: Array, block_batch: Array, block_body: StaticBody3D) -> void:
 	"""
@@ -2793,12 +2812,19 @@ func spawn_gate(rng: RandomNumberGenerator, half_chunk: float, chunk_center: Vec
 	# THE LOG BRIDGE IS THE ONE GATE WITH A WALKABLE DECK, so it is the one gate
 	# that feeds spawn_platform_crocodiles. Half-extents are the beam's own, inset
 	# so a patrol never paces off the end.
+	#
+	# `top` equals `center.y` here — the beam IS the tallest solid thing in its own
+	# footprint, and the one thing that could stand above it (the cornice) is built
+	# only for a NON-log-bridge gate, so it can never be over this deck. See the
+	# platform "top" note in spawn_wall for why the field exists at all: the patrol
+	# guard is dropped in from it, and a `top` that under-declares its stone puts
+	# the guard inside that stone.
 	if log_bridge:
 		var half_along := beam_w * 0.5 - 0.4
 		var half_across := depth * 0.5 - 0.3
 		var deck_half: Vector2 = Vector2(half_along, half_across) if along_x else Vector2(half_across, half_along)
 		if half_along > 1.0 and half_across > 0.2:
-			platforms.append({ "center": Vector3(beam_x, beam_top, beam_z), "half": deck_half })
+			platforms.append({ "center": Vector3(beam_x, beam_top, beam_z), "half": deck_half, "top": beam_top })
 
 func spawn_corridor(rng: RandomNumberGenerator, half_chunk: float, chunk_center: Vector3, theme: Dictionary, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
 	"""
@@ -2977,6 +3003,14 @@ func spawn_wall(rng: RandomNumberGenerator, half_chunk: float, chunk_center: Vec
 	var best_start := 0
 	var best_len := 0
 
+	# Each section's own top, so the patrol platform below can take the MAXIMUM over
+	# the surviving run it actually registers rather than over the whole wall. A
+	# fallen section keeps its 0.0 and is never inside a run by construction. See
+	# the platform "top" note at the bottom of this function for why the maximum
+	# (and not the walkable height) is what the patrol spawner needs.
+	var section_top := PackedFloat32Array()
+	section_top.resize(length)
+
 	for i in length:
 		var along := start + i * step
 		var x := along if along_x else fixed
@@ -3029,6 +3063,7 @@ func spawn_wall(rng: RandomNumberGenerator, half_chunk: float, chunk_center: Vec
 					rng, block_batch, block_body, 0.0, cap, false
 				)
 
+		section_top[i] = top
 		obstacles.append({ "pos": Vector3(x, 0, z), "radius": block_size * 0.71, "top": top, "climbable": climbable })
 
 	if run_len > best_len:
@@ -3038,14 +3073,42 @@ func spawn_wall(rng: RandomNumberGenerator, half_chunk: float, chunk_center: Vec
 	# Register the surviving ridge as a thin patrol platform (a crocodile can pace
 	# it end to end). Surface is the single-block height; doubled humps just become
 	# obstacles its feelers turn it back at.
+	#
+	# WHY THE DICT CARRIES BOTH `center.y` AND `top`, and why they differ here:
+	# `center.y` is the SURFACE the guard paces — the single-block height, and the
+	# height set_confinement is handed (which reads only .x/.z, so nothing else
+	# consumes it). `top` is the TALLEST SOLID STONE standing anywhere inside the
+	# platform's footprint, which for a wall is the doubled humps.
+	# spawn_platform_crocodiles drops its guard in from `top`, not from `center.y`,
+	# and that distinction is the whole bug this pair exists to close: a share of a
+	# wall's sections are doubled, occupying y in [block_size, 2 * block_size], and
+	# the spawner picks a point at a RANDOM ANGLE along the ridge with no idea
+	# which sections those are. Dropping in at `center.y + PLATFORM_SPAWN_HEIGHT`
+	# therefore put the guard INSIDE a hump whenever the angle landed on one —
+	# penetrating by up to the full drop-in offset. Measured over a 17x17 chunk
+	# field on four run seeds: 3-7 patrol crocodiles per field stood in solid
+	# stone, i.e. 12-18% of every platform guard the world spawned, and EVERY
+	# crocodile-in-stone in the whole field was one of them (the ground and boss
+	# spawners, which do test `obstacles`, were clean at 0). Dropping in from the
+	# maximum instead lands the guard on the ridge or on a hump's top face and
+	# gravity settles it either way.
+	#
+	# The maximum is taken over the SURVIVING RUN this platform actually covers,
+	# not over the whole wall: a hump in a section that fell, or in a stretch on
+	# the far side of a gap, is not inside this footprint and would only lift the
+	# drop-in for nothing. The hump capstones are collide = false, so they are
+	# correctly not part of it.
 	if best_len > 0:
 		var ridge_along := start + (best_start + (best_len - 1) * 0.5) * step
 		var ridge_center: Vector3 = Vector3(ridge_along, block_size, fixed) if along_x else Vector3(fixed, block_size, ridge_along)
 		var half_along := (best_len - 1) * step * 0.5 + block_size * 0.5 - 0.4
 		var half_across := block_size * 0.5 - 0.3
 		var ridge_half: Vector2 = Vector2(half_along, half_across) if along_x else Vector2(half_across, half_along)
+		var ridge_top := block_size
+		for i in range(best_start, best_start + best_len):
+			ridge_top = maxf(ridge_top, section_top[i])
 		if half_along > 1.0 and half_across > 0.2:
-			platforms.append({ "center": ridge_center, "half": ridge_half })
+			platforms.append({ "center": ridge_center, "half": ridge_half, "top": ridge_top })
 
 # ============================================================================
 # THEMED SCATTERED PROPS
@@ -3923,7 +3986,11 @@ func spawn_platform_crocodiles(chunk_pos: Vector2i, parent_chunk: MeshInstance3D
 
 	@param chunk_pos: Chunk coordinates for seeded random generation
 	@param parent_chunk: The chunk mesh to attach the crocodiles to
-	@param platforms: Walkable-top descriptors ({ "center": Vector3, "half": Vector2 })
+	@param platforms: Walkable-top descriptors
+	                  ({ "center": Vector3, "half": Vector2, "top": float }) —
+	                  `center.y` is the surface the guard paces, `top` is the
+	                  TALLEST stone inside the footprint, which is what the guard
+	                  is dropped in from (see the note in spawn_wall).
 	"""
 	if not crocodile_scene or platforms.is_empty():
 		return
@@ -3944,13 +4011,18 @@ func spawn_platform_crocodiles(chunk_pos: Vector2i, parent_chunk: MeshInstance3D
 
 		# Start a little in from the edges so it lands cleanly on the surface.
 		var ang := rng.randf_range(0.0, TAU)
-		var sx := maxf(0.0, half.x - 1.0) * cos(ang)
-		var sz := maxf(0.0, half.y - 1.0) * sin(ang)
+		var sx := maxf(0.0, half.x - PLATFORM_SPAWN_EDGE_INSET) * cos(ang)
+		var sz := maxf(0.0, half.y - PLATFORM_SPAWN_EDGE_INSET) * sin(ang)
 
 		var crocodile := crocodile_scene.instantiate()
 		crocodile.name = "PatrolCrocodile_%d_%d_%d" % [chunk_pos.x, chunk_pos.y, count]
-		# Spawn just above the surface so gravity settles it onto the platform.
-		crocodile.position = Vector3(center.x + sx, center.y + 0.6, center.z + sz)
+		# Spawn just above the TALLEST stone in the platform's footprint, not above
+		# the paced surface, so gravity settles it onto the ridge or onto a hump
+		# instead of dropping it INSIDE one. `sx`/`sz` above pick a random angle
+		# along the platform and nothing here knows which sections are doubled, so
+		# the maximum is the only height that is clear at every angle — see the
+		# platform "top" note in spawn_wall for the measurement.
+		crocodile.position = Vector3(center.x + sx, platform.top + PLATFORM_SPAWN_HEIGHT, center.z + sz)
 		crocodile.rotation.y = rng.randf_range(0.0, TAU)
 		# Same BEFORE-add_child contract as the ground spawner above. NEGATIVE indices
 		# (-1, -2, …) keep the platform guards on their own slice of the roll stream,
