@@ -357,6 +357,8 @@ func _check_tree_data() -> void:
 		"primm_blink", "primm_refund",
 		"teibi_form", "teibi_small_speed",
 		"phoboman_flee", "phoboman_radius",
+		# The active/exotic nodes (bead godot-test1-20z.4).
+		"streak_burst", "windman_gravity", "teibi_quake",
 	]
 	for hero: String in Progression.SKILL_TREES:
 		var seen: Array[String] = []
@@ -575,6 +577,42 @@ func _check_caps() -> void:
 	if not is_equal_approx(progression.skill_mult(hero, "run_speed"), Progression.RUN_SPEED_MULT_MAX):
 		_fail("99 run ranks broke the +20%% cap: x%.3f"
 				% progression.skill_mult(hero, "run_speed"))
+
+	# THE THIRD CAP (bead godot-test1-20z.4): Air Rush gravity. Same three-part
+	# shape as the two above — inert unranked, exact at the buyable maximum, and
+	# still clamped past what the tree can reach.
+	var flier := _make_progression()
+	if not is_equal_approx(flier.skill_mult("windman", "windman_gravity"), 1.0):
+		_fail("an unranked Windman's Air Rush gravity is x%.3f, wanted 1.0"
+				% flier.skill_mult("windman", "windman_gravity"))
+	_grant_points(flier, 6)
+	_spend_or_fail(flier, "windman", "gale")
+	_spend_or_fail(flier, "windman", "updraft")
+	_spend_or_fail(flier, "windman", "updraft")
+	_spend_or_fail(flier, "windman", "soar")
+	_spend_or_fail(flier, "windman", "soar")
+	if not is_equal_approx(flier.skill_mult("windman", "windman_gravity"),
+			Progression.WINDMAN_GRAVITY_MULT_MIN):
+		_fail("a fully-ranked Feather Fall gives x%.3f, wanted the x%.3f cap"
+				% [flier.skill_mult("windman", "windman_gravity"),
+					Progression.WINDMAN_GRAVITY_MULT_MIN])
+	# The second Updraft rank the active-skills bead added has to be REACHABLE,
+	# not merely declared — a max_ranks bump with a stale prereq buys nothing.
+	if not is_equal_approx(flier.skill_mult("windman", "windman_lift"), 1.40):
+		_fail("Updraft x2 gives x%.3f lift, wanted x1.40"
+				% flier.skill_mult("windman", "windman_lift"))
+	flier.skill_ranks["windman"]["soar"] = 99
+	if not is_equal_approx(flier.skill_mult("windman", "windman_gravity"),
+			Progression.WINDMAN_GRAVITY_MULT_MIN):
+		_fail("99 Feather Fall ranks broke the −20%% gravity cap: x%.3f"
+				% flier.skill_mult("windman", "windman_gravity"))
+	# NEGATIVE CONTROL for the clamp's direction: gravity is a REDUCING effect, so
+	# a getter that fell through to the default `1.0 + total` branch would read
+	# 1.20 here and make a skilled Air Rush drop FASTER than an unskilled one.
+	if flier.skill_mult("windman", "windman_gravity") >= 1.0:
+		_fail("Feather Fall did not reduce Air Rush gravity (x%.3f)"
+				% flier.skill_mult("windman", "windman_gravity"))
+	flier.free()
 
 	progression.free()
 
@@ -994,6 +1032,382 @@ func _check_panel_spends_and_releases_its_pause() -> void:
 	progression.free()
 
 
+# =============================================================================
+# ACTIVE / EXOTIC SKILLS (bead godot-test1-20z.4)
+# =============================================================================
+
+class StubCroc extends Node3D:
+	## The smallest thing `player_controller._scare_crocodiles()` will talk to: a
+	## Node3D in the "crocodile" group carrying `flee_from`. A REAL crocodile is
+	## no use here — `piglet_crocodile_ai._ready()` needs a terrain, a player and a
+	## `lod_active` the LOD manager owns, and its own early returns (boss, slept)
+	## would then decide the answer instead of the radius under test.
+	var flee_calls: int = 0
+	var last_duration: float = 0.0
+
+	func flee_from(_origin: Vector3, duration: float, _tracks_player: bool = true) -> void:
+		flee_calls += 1
+		last_duration = duration
+
+
+func _spawn_stub_croc(at: Vector3) -> StubCroc:
+	var croc := StubCroc.new()
+	root.add_child(croc)
+	croc.global_position = at
+	croc.add_to_group("crocodile")
+	return croc
+
+
+func _check_active_skills_on_player() -> void:
+	"""
+	THE ACCEPTANCE MEASUREMENT for the three active/exotic nodes, all driven
+	through the real player and the real trigger rather than by poking the state
+	they set. Every assertion that something HAPPENED is paired with one that it
+	does not happen unranked or out of range — the file's standing rule, and the
+	sharp one here, because each of these three effects is silent when it fails:
+	a burst that never fires, a gravity multiplier that scales the wrong way and a
+	shockwave with no bound all leave no error anywhere.
+	"""
+	var packed: PackedScene = load(PLAYER_SCENE)
+	if packed == null:
+		_fail("could not load %s" % PLAYER_SCENE)
+		return
+	var player: Node = packed.instantiate()
+	root.add_child(player)
+	await physics_frame
+	if not player.has_method("calculate_current_speed"):
+		_fail("player has no calculate_current_speed() — did the script fail to attach?")
+		player.queue_free()
+		return
+	player.is_wading = false
+
+	var progression := _make_progression()
+	# Comfortably more than this function spends (2 fleet + 2 adrenaline + 5
+	# windman + 4 teibi + 3 phoboman = 16); `_spend_or_fail` says so if not.
+	_grant_points(progression, 30)
+
+	await _check_speed_burst(player, progression)
+	_check_air_rush_arc(player, progression)
+	await _check_crush_quake(player, progression)
+	await _check_stink_is_bounded(player, progression)
+
+	progression.free()
+	player.queue_free()
+
+
+func _check_speed_burst(player: Node, progression: Progression) -> void:
+	"""
+	ADRENALINE. The trigger is a real `collect_coin()` streak, not an assignment to
+	`speed_burst_timer`, because the whole design decision behind this node is that
+	it has NO key of its own — if the streak hook is wrong the skill is unreachable
+	and a state-poking check would never notice.
+	"""
+	var hero_index: int = -1
+	for index in player.CHARACTERS.size():
+		if String(player.CHARACTERS[index]["name"]) == "windman":
+			hero_index = index
+	if hero_index < 0:
+		_fail("no windman in CHARACTERS — the speed-burst measurement needs one")
+		return
+	player.set_active_character(hero_index)
+	_spend_or_fail(progression, "windman", "fleet")
+	_spend_or_fail(progression, "windman", "fleet")
+	_spend_or_fail(progression, "windman", "adrenaline")
+	_spend_or_fail(progression, "windman", "adrenaline")
+	var want_duration: float = 2.0 * 1.5
+
+	player.speed_burst_timer = 0.0
+	player.coin_streak = 0
+	player.is_ducking = false
+	player.is_running = false
+	var walk_calm: float = float(player.calculate_current_speed())
+	player.is_running = true
+	var run_calm: float = float(player.calculate_current_speed())
+
+	# NINE coins are not a streak step, so nothing may fire. Without this the
+	# check would also pass on a burst that started on every single pickup — i.e.
+	# on a permanent +30%, which is the failure mode a cap exists to prevent.
+	for _i in 9:
+		player.collect_coin(1)
+	if player.speed_burst_timer > 0.0:
+		_fail("a speed burst started after 9 coins (%.2f s left) — it must take a full streak step"
+				% player.speed_burst_timer)
+	player.collect_coin(1)
+	if not is_equal_approx(player.speed_burst_timer, want_duration):
+		_fail("the 10th coin started a %.2f s burst, wanted %.2f"
+				% [player.speed_burst_timer, want_duration])
+
+	var run_burst: float = float(player.calculate_current_speed())
+	player.is_running = false
+	var walk_burst: float = float(player.calculate_current_speed())
+	player.is_running = true
+
+	# THE CATCHABLE-WALK CONTRACT, again and for the active too: a burst is a
+	# run/duck effect and walking must be byte-identical through one.
+	if walk_burst != walk_calm:
+		_fail("a speed burst moved WALK speed from %.6f to %.6f — the catchable-walk contract forbids it"
+				% [walk_calm, walk_burst])
+	# ...with the negative control right beside it, or "walk unchanged" would also
+	# pass on a burst that does nothing at all.
+	if not is_equal_approx(run_burst, run_calm * (1.0 + Progression.BURST_RUN_BONUS)):
+		_fail("a burst runs at %.3f, wanted %.3f (x%.2f on the passive %.3f)"
+				% [run_burst, run_calm * (1.0 + Progression.BURST_RUN_BONUS),
+					1.0 + Progression.BURST_RUN_BONUS, run_calm])
+	# The composed worst case the constant's comment claims, pinned as arithmetic
+	# rather than as prose: maxed passives (+20% cap) times the burst.
+	var composed: float = Progression.RUN_SPEED_MULT_MAX * (1.0 + Progression.BURST_RUN_BONUS)
+	if composed > 1.56 + 0.0001:
+		_fail("passives + burst compose to x%.3f, past the documented x1.56" % composed)
+	# ...and the one thing that must never be true however they compose: a
+	# crocodile still cannot outrun a running player. (It can only have got safer
+	# — bursts raise the number — but this is the lattice's own assertion.)
+	if run_burst <= player.WADE_RUN_MIN_SPEED:
+		_fail("a bursting run is %.3f, at or under the %.3f escape floor"
+				% [run_burst, player.WADE_RUN_MIN_SPEED])
+
+	# THE BURST ENDS. A timer that latched would be a permanent +30%.
+	player._update_ability_timers(want_duration + 0.1)
+	if player.speed_burst_timer > 0.0:
+		_fail("the speed burst did not expire (%.2f s left after %.2f s)"
+				% [player.speed_burst_timer, want_duration + 0.1])
+	var run_after: float = float(player.calculate_current_speed())
+	if not is_equal_approx(run_after, run_calm):
+		_fail("run speed stayed at %.3f after the burst expired, wanted %.3f"
+				% [run_after, run_calm])
+
+	# NEGATIVE CONTROL: an UNRANKED hero crossing the same streak step gets
+	# nothing. Measured with the Progression node present and points unspent, so
+	# the only difference from the case above is the rank.
+	var other_index: int = -1
+	for index in player.CHARACTERS.size():
+		if String(player.CHARACTERS[index]["name"]) == "phoboman":
+			other_index = index
+	if other_index >= 0:
+		player.set_active_character(other_index)
+		player.speed_burst_timer = 0.0
+		player.coin_streak = 0
+		for _i in 10:
+			player.collect_coin(1)
+		if player.speed_burst_timer > 0.0:
+			_fail("an unranked hero got a %.2f s speed burst — Adrenaline must be bought"
+					% player.speed_burst_timer)
+	player.is_running = false
+	player.speed_burst_timer = 0.0
+
+
+func _check_air_rush_arc(player: Node, progression: Progression) -> void:
+	"""
+	HIGHER FLIGHT — the lift on the body, and the arc the two nodes compose into.
+
+	The arc is measured from the player's OWN constants rather than re-typed, so
+	this is the `WINDMAN_GRAVITY_MULT_MIN` comment made runnable: retune gravity,
+	the lift, the boost duration or either node's ranks and the numbers this
+	prints move, which is exactly when a human should be looking at them again.
+	"""
+	var windman_index: int = -1
+	for index in player.CHARACTERS.size():
+		if String(player.CHARACTERS[index]["name"]) == "windman":
+			windman_index = index
+	if windman_index < 0:
+		_fail("no windman in CHARACTERS — the Air Rush arc measurement needs one")
+		return
+	player.set_active_character(windman_index)
+
+	# The unranked arc first: it is the negative control for everything below.
+	var base_peak: float = _air_rush_peak(player, 1.0, 1.0, 1.0)
+	if not is_equal_approx(snappedf(base_peak, 0.01), 11.11):
+		_fail("an unranked Air Rush peaks at %.2f m, wanted the documented 11.11" % base_peak)
+	# THE BEAD'S PREMISE, PINNED AS FALSE ON PURPOSE. 20z.4 asked for a cap
+	# keeping the Air Rush under a mountain massif minimum (8 m) on the belief
+	# that the base arc was "well below" it. It never was. Recording it as an
+	# assertion means a future retune that DOES bring it under 8 m shows up as a
+	# failure here and gets a decision, instead of silently changing what the
+	# epic's "fly higher routes through Air Rush" rule means.
+	if base_peak <= 8.0:
+		_fail("the base Air Rush now peaks at %.2f m, under the 8 m massif minimum — "
+				% base_peak
+				+ "that is a DESIGN CHANGE (Windman could always clear a short massif)")
+
+	_spend_or_fail(progression, "windman", "gale")
+	_spend_or_fail(progression, "windman", "gale")
+	_spend_or_fail(progression, "windman", "updraft")
+	_spend_or_fail(progression, "windman", "updraft")
+	_spend_or_fail(progression, "windman", "soar")
+	_spend_or_fail(progression, "windman", "soar")
+
+	# The lift, measured on the BODY through the real ability.
+	player.windman_boost_timer = 0.0
+	player.velocity = Vector3.ZERO
+	player._ability_windman()
+	var lift: float = float(player.velocity.y)
+	player.windman_boost_timer = 0.0
+	player.velocity = Vector3.ZERO
+	if not is_equal_approx(lift, player.WINDMAN_LIFT * 1.40):
+		_fail("a fully-ranked Air Rush launched at %.3f, wanted %.3f (+40%%)"
+				% [lift, player.WINDMAN_LIFT * 1.40])
+
+	# The gravity multiplier the player actually reads at the gravity step.
+	var grav_mult: float = float(player._skill_mult("windman_gravity"))
+	if not is_equal_approx(grav_mult, Progression.WINDMAN_GRAVITY_MULT_MIN):
+		_fail("a fully-ranked Windman glides at x%.3f gravity, wanted x%.3f"
+				% [grav_mult, Progression.WINDMAN_GRAVITY_MULT_MIN])
+
+	var peak: float = _air_rush_peak(player, 1.40, grav_mult, 1.30)
+	if not is_equal_approx(snappedf(peak, 0.01), 26.25):
+		_fail("a fully-ranked Air Rush peaks at %.2f m, wanted the documented 26.25" % peak)
+
+	# NEGATIVE CONTROL for the whole branch: another hero reads neither effect, so
+	# `_skill_mult` is answering per-hero rather than globally.
+	var teibi_index: int = -1
+	for index in player.CHARACTERS.size():
+		if String(player.CHARACTERS[index]["name"]) == "teibi":
+			teibi_index = index
+	if teibi_index >= 0:
+		player.set_active_character(teibi_index)
+		if not is_equal_approx(float(player._skill_mult("windman_gravity")), 1.0):
+			_fail("teibi reads a windman_gravity multiplier of %.3f, wanted 1.0"
+					% player._skill_mult("windman_gravity"))
+
+
+func _air_rush_peak(player: Node, lift_mult: float, gravity_mult: float, boost_mult: float) -> float:
+	"""
+	Peak height of one Air Rush, in metres, from the player's own constants.
+
+	Two regimes and the boundary between them matters: if the apex arrives BEFORE
+	the boost runs out the answer is the ordinary v²/2g; if it does not, the wings
+	cut out mid-climb and the body coasts the rest of the way up under FULL
+	gravity. Fully ranked it is the second case, which is why the arc cannot be
+	read off the apex formula alone.
+	"""
+	var lift: float = float(player.WINDMAN_LIFT) * lift_mult
+	var soft: float = float(player.gravity) * float(player.WINDMAN_GRAVITY_FACTOR) * gravity_mult
+	var boost: float = float(player.WINDMAN_BOOST_DURATION) * boost_mult
+	var time_to_apex: float = lift / soft
+	if time_to_apex <= boost:
+		return lift * lift / (2.0 * soft)
+	var height_at_cutout: float = lift * boost - 0.5 * soft * boost * boost
+	var speed_at_cutout: float = lift - soft * boost
+	return height_at_cutout + speed_at_cutout * speed_at_cutout / (2.0 * float(player.gravity))
+
+
+func _check_crush_quake(player: Node, progression: Progression) -> void:
+	"""
+	CRUSH QUAKE. Two stub crocodiles — one inside the 6 m reach, one outside — so
+	"the near one fled" and "the far one did not" are asserted together; either
+	alone passes on a broken build (an unbounded sweep, or a quake that never
+	fires).
+	"""
+	var teibi_index: int = -1
+	for index in player.CHARACTERS.size():
+		if String(player.CHARACTERS[index]["name"]) == "teibi":
+			teibi_index = index
+	if teibi_index < 0:
+		_fail("no teibi in CHARACTERS — the Crush Quake measurement needs one")
+		return
+	player.set_active_character(teibi_index)
+	player.global_position = Vector3.ZERO
+	var near := _spawn_stub_croc(Vector3(3.0, 0.0, 0.0))
+	var far := _spawn_stub_croc(Vector3(12.0, 0.0, 0.0))
+	await physics_frame
+
+	# NEGATIVE CONTROL FIRST: an unranked Teibi turning giant scares nobody.
+	player._revert_teibi_to_normal()
+	player._ability_teibi()  # normal → small
+	player._ability_teibi()  # small → giant
+	if near.flee_calls != 0:
+		_fail("an unranked Teibi's giant form scared a crocodile %d time(s)" % near.flee_calls)
+	player._revert_teibi_to_normal()
+
+	_spend_or_fail(progression, "teibi", "hold")
+	_spend_or_fail(progression, "teibi", "scurry")
+	_spend_or_fail(progression, "teibi", "quake")
+
+	# SECOND NEGATIVE CONTROL: turning SMALL is not a quake. Without it, a quake
+	# fired on every resize press would pass the positive assertion below.
+	player._ability_teibi()  # normal → small
+	if near.flee_calls != 0:
+		_fail("Teibi's SMALL form fired the quake %d time(s) — it is a giant-form effect"
+				% near.flee_calls)
+
+	player._ability_teibi()  # small → giant
+	if near.flee_calls != 1:
+		_fail("a ranked Teibi turning giant fired %d quake(s) on a crocodile 3 m away, wanted 1"
+				% near.flee_calls)
+	if not is_equal_approx(near.last_duration, player.TEIBI_QUAKE_FLEE_DURATION):
+		_fail("the quake made a crocodile flee for %.2f s, wanted %.2f"
+				% [near.last_duration, player.TEIBI_QUAKE_FLEE_DURATION])
+	if far.flee_calls != 0:
+		_fail("the quake reached a crocodile 12 m away (%d call(s)) — its radius is %.1f m"
+				% [far.flee_calls, progression.skill_bonus("teibi", "teibi_quake")])
+
+	player._revert_teibi_to_normal()
+	near.queue_free()
+	far.queue_free()
+	await physics_frame
+
+
+func _check_stink_is_bounded(player: Node, progression: Progression) -> void:
+	"""
+	THE STINK WAVE'S NEW BOUND, and the node it makes live.
+
+	Through bead 20z.3 `_ability_phoboman()` swept the whole "crocodile" group with
+	no distance test, so `phoboman_radius` bought a wider picture and nothing else
+	(the architect's note on 20z.4). The bound is the balance change that decision
+	settled on; this is what stops it silently reverting to unbounded, and what
+	proves Billowing Cloud now buys reach.
+	"""
+	var phobo_index: int = -1
+	for index in player.CHARACTERS.size():
+		if String(player.CHARACTERS[index]["name"]) == "phoboman":
+			phobo_index = index
+	if phobo_index < 0:
+		_fail("no phoboman in CHARACTERS — the stink-radius measurement needs one")
+		return
+	player.set_active_character(phobo_index)
+	player.global_position = Vector3.ZERO
+
+	var inside := _spawn_stub_croc(Vector3(10.0, 0.0, 0.0))
+	# Between the unranked 22 m and the Billowing Cloud 27.5 m, so it is the ONE
+	# crocodile whose answer changes when the node is bought.
+	var edge := _spawn_stub_croc(Vector3(25.0, 0.0, 0.0))
+	var outside := _spawn_stub_croc(Vector3(60.0, 0.0, 0.0))
+	await physics_frame
+
+	player._ability_phoboman()
+	if inside.flee_calls != 1:
+		_fail("an unranked Stink Wave scared a crocodile 10 m away %d time(s), wanted 1"
+				% inside.flee_calls)
+	if edge.flee_calls != 0:
+		_fail("an unranked Stink Wave reached 25 m — PHOBOMAN_FLEE_RADIUS is %.1f m"
+				% player.PHOBOMAN_FLEE_RADIUS)
+	if outside.flee_calls != 0:
+		_fail("the Stink Wave reached a crocodile 60 m away — it is no longer bounded")
+	if not is_equal_approx(inside.last_duration, player.PHOBOMAN_FLEE_DURATION):
+		_fail("an unranked Stink Wave fled a crocodile for %.2f s, wanted %.2f"
+				% [inside.last_duration, player.PHOBOMAN_FLEE_DURATION])
+
+	_spend_or_fail(progression, "phoboman", "reek")
+	_spend_or_fail(progression, "phoboman", "billow")
+	player._ability_phoboman()
+	# THE POINT OF THE WHOLE CHANGE: the node moved a crocodile from out of reach
+	# to in reach. Before the bound existed this assertion was unwritable — every
+	# crocodile in the world already fled at rank 0.
+	if edge.flee_calls != 1:
+		_fail("Billowing Cloud did not extend the stink to 25 m (%d call(s)); reach is %.1f m"
+				% [edge.flee_calls, player.PHOBOMAN_FLEE_RADIUS
+					* progression.skill_mult("phoboman", "phoboman_radius")])
+	if outside.flee_calls != 0:
+		_fail("Billowing Cloud reached 60 m — the node scales the bound, it does not remove it")
+	if not is_equal_approx(inside.last_duration, player.PHOBOMAN_FLEE_DURATION * 1.20):
+		_fail("Lingering Reek fled a crocodile for %.2f s, wanted %.2f"
+				% [inside.last_duration, player.PHOBOMAN_FLEE_DURATION * 1.20])
+
+	inside.queue_free()
+	edge.queue_free()
+	outside.queue_free()
+	await physics_frame
+
+
 func _run() -> void:
 	# A node added from `_initialize()` gets its `_ready()` DEFERRED, so nothing
 	# built before the first frame has run its own setup yet. One frame here makes
@@ -1011,6 +1425,7 @@ func _run() -> void:
 	_check_ranks_survive_a_relaunch()
 	await _check_streak_does_not_inflate_lifetime()
 	await _check_skill_effects_on_player()
+	await _check_active_skills_on_player()
 	await _check_phase_echo_refunds_a_wall_pass()
 	await _check_panel_spends_and_releases_its_pause()
 	_report()

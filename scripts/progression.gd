@@ -109,6 +109,48 @@ const COOLDOWN_MULT_MIN: float = 0.60
 ## `WALK_SPEED` effect id anywhere in `SKILL_TREES`.
 const RUN_SPEED_MULT_MAX: float = 1.20
 
+## HARD CAP: the most Windman's Air Rush gravity may ever be softened, as a
+## multiplier on `WINDMAN_GRAVITY_FACTOR` (0.80 = −20%). Same shape and same
+## reasoning as `COOLDOWN_MULT_MIN` — a clamp in `skill_mult()`, not a promise
+## the rank arithmetic makes.
+##
+## THE ARC MATH THIS CAP IS ABOUT, measured rather than assumed (bead
+## godot-test1-20z.4 asked for it at the constant):
+##
+##   base   g_eff = 14.4 × 0.1125          = 1.620 m/s²,  lift 6.0,  boost 4.0 s
+##          apex reached at t = 3.70 s     → PEAK 11.11 m
+##   maxed  g_eff = 1.620 × 0.80           = 1.296 m/s²,  lift 8.4,  boost 5.2 s
+##          still rising when the boost ends → PEAK 26.25 m
+##
+## So the real bound on an Air Rush is `WINDMAN_BOOST_DURATION`, not the apex:
+## fully skilled, Windman never reaches his own apex before the wings cut out and
+## ordinary gravity (14.4) takes back over. **The bead's premise that the base
+## apex is "well below" a mountain massif minimum (8 m) is simply false — it is
+## 11.11 m, so Windman has ALWAYS been able to clear the shortest massifs.** That
+## is the epic's own rule rather than a leak: the base jump apex (3.6125 m) is
+## what mountain impassability rests on, and "fly higher" routes through Air Rush
+## precisely because Air Rush is the sanctioned way over terrain. Nothing here
+## touches `JUMP_VELOCITY`. If the owner wants the ceiling lower, the two knobs
+## are this constant and `updraft`'s `max_ranks` — nothing else needs a thought.
+const WINDMAN_GRAVITY_MULT_MIN: float = 0.80
+
+## The run/duck bonus a Speed Burst adds while it is running (see `gait_mult`).
+##
+## It is deliberately NOT inside the `RUN_SPEED_MULT_MAX` clamp: that cap is the
+## epic's guardrail on PASSIVE ranks — the thing a player buys once and keeps —
+## while a burst is a bounded transient the player has to earn again every ten
+## coins. The composed worst case is therefore a knowable constant rather than an
+## open-ended stack: x1.20 (maxed passives) × x1.30 = **x1.56**, i.e. the fastest
+## character's run reaches 10.0 × 1.15 × 1.56 = 17.9 m/s for a second or three.
+##
+## That is safe in the one direction the speed lattice cares about. Walking is
+## untouched (there is no walk effect id and `calculate_current_speed()` computes
+## none of this on the walk branch), and running only ever moves FURTHER above
+## `MAX_CHASE_SPEED` (8.5) — a burst widens the existing escape hatch and can
+## never close it. 17.9 m/s is also still under `WINDMAN_AIR_SPEED` (25), so the
+## speed-FOV ease is unchanged in shape.
+const BURST_RUN_BONUS: float = 0.30
+
 ## Every hero's tree: hero name → array of node defs, each a plain dict
 ##
 ##     { id, name, desc, branch, cost, max_ranks, prereq, effect, per_rank }
@@ -120,11 +162,31 @@ const RUN_SPEED_MULT_MAX: float = 1.20
 ## their own translation keys — see CLAUDE.md's localization RULE 1, and
 ## `assets/translations/ui.csv` for the German.
 ##
-## Deliberately SMALL: two branches of two-to-three nodes each. Every hero shares
-## the same "Focus" branch (cooldown ×2 + the movement node) so the shape is
-## learnable, and differs only in the power branch, which is the hero's own
-## signature ability turned up. Nothing here grants a new verb — that is the
-## active-skills bead (godot-test1-20z.4).
+## Deliberately SMALL: two branches of three-to-four nodes each. Every hero shares
+## the same "Focus" branch (cooldown ×2 + the movement node + Adrenaline) so the
+## shape is learnable, and differs only in the power branch, which is the hero's
+## own signature ability turned up.
+##
+## THE ACTIVE/EXOTIC NODES (bead godot-test1-20z.4) EXTEND THESE BRANCHES; they
+## are not a new tree and not a new verb the player has to learn a key for:
+##
+##   * `adrenaline` (all four heroes, Focus) — a **passive-TRIGGERED** burst, so
+##     there is deliberately no second keybind, no second cooldown dial and no
+##     third touch button. Every `STREAK_COINS_PER_STEP` coins in one streak
+##     grants a few seconds of `BURST_RUN_BONUS` run/duck speed.
+##   * `soar` (windman, Air Rush) — softens Air Rush gravity; `updraft` grew a
+##     second rank beside it. See `WINDMAN_GRAVITY_MULT_MIN` for the arc math.
+##   * `quake` (teibi, Resize) — turning giant scares nearby crocodiles, reusing
+##     Phoboman's existing `flee_from` hook (and, in a room, the same
+##     `request_croc_flee` master path).
+##
+## Deliberately NOT built here, and both for the same reason — they are the two
+## candidates that cost a new UI surface or a new per-frame path rather than a
+## line at an existing site: Primm's banked second blink charge (a charges
+## counter beside the cooldown dial, i.e. an `ability_hud.gd` `_draw` extension
+## and a second timer), and Phoboman's lingering repulsion ZONE (a persistent
+## world position re-triggering `flee_from` every tick for 5 s). Both are one
+## more node in an existing branch whenever the owner wants them.
 const SKILL_TREES: Dictionary = {
 	"windman": [
 		{
@@ -146,6 +208,14 @@ const SKILL_TREES: Dictionary = {
 			"effect": "run_speed", "per_rank": 0.07,
 		},
 		{
+			# `per_rank` is SECONDS of burst, not a factor — the `primm_refund`
+			# shape, read through `skill_bonus()` rather than `skill_mult()`.
+			"id": "adrenaline", "name": "Adrenaline", "branch": "Focus",
+			"desc": "Every 10 coins in a streak grants +30% run and duck speed for 1.5 s per rank.",
+			"cost": 1, "max_ranks": 2, "prereq": "fleet",
+			"effect": "streak_burst", "per_rank": 1.5,
+		},
+		{
 			"id": "gale", "name": "Long Gale", "branch": "Air Rush",
 			"desc": "Air Rush lasts +15% longer per rank.",
 			"cost": 1, "max_ranks": 2, "prereq": "",
@@ -153,9 +223,17 @@ const SKILL_TREES: Dictionary = {
 		},
 		{
 			"id": "updraft", "name": "Updraft", "branch": "Air Rush",
-			"desc": "Air Rush launches 20% higher.",
-			"cost": 1, "max_ranks": 1, "prereq": "gale",
+			"desc": "Air Rush launches +20% higher per rank.",
+			"cost": 1, "max_ranks": 2, "prereq": "gale",
 			"effect": "windman_lift", "per_rank": 0.20,
+		},
+		{
+			# Uncapped by the tree, capped by the getter — see
+			# `WINDMAN_GRAVITY_MULT_MIN` for the clamp AND for the measured arc.
+			"id": "soar", "name": "Feather Fall", "branch": "Air Rush",
+			"desc": "Air Rush gravity −10% per rank, so the glide carries further.",
+			"cost": 1, "max_ranks": 2, "prereq": "updraft",
+			"effect": "windman_gravity", "per_rank": 0.10,
 		},
 	],
 	"primm": [
@@ -176,6 +254,14 @@ const SKILL_TREES: Dictionary = {
 			"desc": "Running and ducking +7% per rank. Walking is never affected.",
 			"cost": 1, "max_ranks": 2, "prereq": "",
 			"effect": "run_speed", "per_rank": 0.07,
+		},
+		{
+			# `per_rank` is SECONDS of burst, not a factor — the `primm_refund`
+			# shape, read through `skill_bonus()` rather than `skill_mult()`.
+			"id": "adrenaline", "name": "Adrenaline", "branch": "Focus",
+			"desc": "Every 10 coins in a streak grants +30% run and duck speed for 1.5 s per rank.",
+			"cost": 1, "max_ranks": 2, "prereq": "fleet",
+			"effect": "streak_burst", "per_rank": 1.5,
 		},
 		{
 			"id": "reach", "name": "Long Step", "branch": "Phase Step",
@@ -210,6 +296,14 @@ const SKILL_TREES: Dictionary = {
 			"effect": "run_speed", "per_rank": 0.07,
 		},
 		{
+			# `per_rank` is SECONDS of burst, not a factor — the `primm_refund`
+			# shape, read through `skill_bonus()` rather than `skill_mult()`.
+			"id": "adrenaline", "name": "Adrenaline", "branch": "Focus",
+			"desc": "Every 10 coins in a streak grants +30% run and duck speed for 1.5 s per rank.",
+			"cost": 1, "max_ranks": 2, "prereq": "fleet",
+			"effect": "streak_burst", "per_rank": 1.5,
+		},
+		{
 			"id": "hold", "name": "Held Form", "branch": "Resize",
 			"desc": "Small and giant forms last +25% longer per rank.",
 			"cost": 1, "max_ranks": 2, "prereq": "",
@@ -220,6 +314,15 @@ const SKILL_TREES: Dictionary = {
 			"desc": "Small form runs and ducks 10% faster.",
 			"cost": 1, "max_ranks": 1, "prereq": "hold",
 			"effect": "teibi_small_speed", "per_rank": 0.10,
+		},
+		{
+			# `per_rank` is METRES of shockwave reach — the `primm_refund` shape
+			# again (a flat amount, read through `skill_bonus()`), so 0 metres is
+			# exactly "the node was never bought" and the whole effect is inert.
+			"id": "quake", "name": "Crush Quake", "branch": "Resize",
+			"desc": "Turning giant sends out a shockwave: crocodiles within 6 m flee. Bosses shrug it off.",
+			"cost": 1, "max_ranks": 1, "prereq": "scurry",
+			"effect": "teibi_quake", "per_rank": 6.0,
 		},
 	],
 	"phoboman": [
@@ -242,14 +345,26 @@ const SKILL_TREES: Dictionary = {
 			"effect": "run_speed", "per_rank": 0.07,
 		},
 		{
+			# `per_rank` is SECONDS of burst, not a factor — the `primm_refund`
+			# shape, read through `skill_bonus()` rather than `skill_mult()`.
+			"id": "adrenaline", "name": "Adrenaline", "branch": "Focus",
+			"desc": "Every 10 coins in a streak grants +30% run and duck speed for 1.5 s per rank.",
+			"cost": 1, "max_ranks": 2, "prereq": "fleet",
+			"effect": "streak_burst", "per_rank": 1.5,
+		},
+		{
 			"id": "reek", "name": "Lingering Reek", "branch": "Stink Wave",
 			"desc": "Crocodiles flee +20% longer per rank.",
 			"cost": 1, "max_ranks": 2, "prereq": "",
 			"effect": "phoboman_flee", "per_rank": 0.20,
 		},
 		{
+			# NO LONGER A COSMETIC NODE. Through bead godot-test1-20z.3 the stink
+			# swept the whole "crocodile" group with no distance test, so this
+			# bought a wider PICTURE and nothing else. 20z.4 gave the sweep a real
+			# bound (`player_controller.PHOBOMAN_FLEE_RADIUS`) and this scales it.
 			"id": "billow", "name": "Billowing Cloud", "branch": "Stink Wave",
-			"desc": "The stink wave spreads 25% wider.",
+			"desc": "The stink reaches 25% further.",
 			"cost": 1, "max_ranks": 1, "prereq": "reek",
 			"effect": "phoboman_radius", "per_rank": 0.25,
 		},
@@ -429,6 +544,10 @@ func skill_mult(hero: String, effect: String) -> float:
 
 	  * `"cooldown"`  → 1.0 down to `COOLDOWN_MULT_MIN` (−40% hard cap).
 	  * `"run_speed"` → 1.0 up to `RUN_SPEED_MULT_MAX` (+20% hard cap).
+	  * `"windman_gravity"` → 1.0 down to `WINDMAN_GRAVITY_MULT_MIN` (−20% cap).
+	    A REDUCING effect like `"cooldown"`, not a scaling one — the call site
+	    multiplies `WINDMAN_GRAVITY_FACTOR` by this, and softer gravity is a
+	    smaller number.
 	  * anything else → 1.0 + the summed per-rank bonus, uncapped, because those
 	    effects are bounded by the ability they scale (Primm's blink scan already
 	    stops at `PRIMM_BLINK_MAX_DISTANCE`, a longer Air Rush still ends).
@@ -442,11 +561,13 @@ func skill_mult(hero: String, effect: String) -> float:
 			return maxf(1.0 - total, COOLDOWN_MULT_MIN)
 		"run_speed":
 			return minf(1.0 + total, RUN_SPEED_MULT_MAX)
+		"windman_gravity":
+			return maxf(1.0 - total, WINDMAN_GRAVITY_MULT_MIN)
 		_:
 			return 1.0 + total
 
 
-func gait_mult(hero: String, small_form: bool) -> float:
+func gait_mult(hero: String, small_form: bool, burst: bool = false) -> float:
 	"""
 	THE multiplier `calculate_current_speed()` applies to the run and duck gaits —
 	and the single place the +20% cap is enforced over EVERY movement passive at
@@ -463,13 +584,23 @@ func gait_mult(hero: String, small_form: bool) -> float:
 	Scurry is still worth its point for a Teibi who has not (a full +10%), and the
 	self-check measures both so neither is a node that silently buys nothing.
 
-	`small_form` is passed in rather than read here because this file knows nothing
-	about the player's state — the same reason every other getter in it is pure.
+	`small_form` — and `burst` — are passed in rather than read here because this
+	file knows nothing about the player's state; the same reason every other getter
+	in it is pure.
+
+	`burst` is Adrenaline's transient (`player_controller.speed_burst_timer > 0`),
+	and it multiplies the clamped passive result rather than joining the sum —
+	see `BURST_RUN_BONUS` for why the epic's +20% is a cap on RANKS and what the
+	composed worst case therefore is. Both callers still make ONE call, so the
+	whole movement multiplier still has exactly one home.
 	"""
 	var total := skill_bonus(hero, "run_speed")
 	if small_form:
 		total += skill_bonus(hero, "teibi_small_speed")
-	return minf(1.0 + total, RUN_SPEED_MULT_MAX)
+	var mult := minf(1.0 + total, RUN_SPEED_MULT_MAX)
+	if burst:
+		mult *= 1.0 + BURST_RUN_BONUS
+	return mult
 
 
 func skill_bonus(hero: String, effect: String) -> float:
