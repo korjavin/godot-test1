@@ -2374,8 +2374,9 @@ static func _landmark_holstentor(terrain: Node3D, center: Vector3, rng: RandomNu
 	Basis(UP, yaw) * Basis(RIGHT, tilt), so the tilt handed to each drum has to
 	agree with the direction its centre was offset in or the drums scissor apart.
 	Here the lean bearing is fixed (straight out along local X, away from the
-	centre), so the yaw that maps local +Z onto that bearing is +-PI/2 and the tilt
-	sign flips with the side.
+	centre), so the yaw that maps local +Z onto that bearing is yaw + side*PI/2 —
+	worked out in full at the line itself, because on an OCTAGONAL drum the wrong
+	sign is invisible in plan and shows up only as a scissored tower.
 
 	RADIUS ARITHMETIC (declared 7.8). The widest reach is a tower's ROOF CONE at the
 	top of the lean: the tower centre is 3.8 out, the lean has added
@@ -2400,10 +2401,28 @@ static func _landmark_holstentor(terrain: Node3D, center: Vector3, rng: RandomNu
 	for side in [-1.0, 1.0]:
 		var lean_dir := rot * Vector3(side, 0.0, 0.0)
 		var foot := center + rot * Vector3(side * TOWER_X, 0.0, 0.0) + Vector3(0.0, 0.6, 0.0)
-		# yaw = PI/2 - a for the bearing a that lean_dir points along; with the
-		# bearing baked into the shared yaw, that is yaw + (side < 0 ? PI/2 : -PI/2),
-		# and the tilt then takes the sign that leans the drum's top the same way.
-		var drum_yaw: float = yaw - side * PI / 2.0
+		# THE SIGN, derived rather than guessed, because Pisa's gotcha bites here in a
+		# form Pisa's own wording does not cover: the drums are OCTAGONS (two boxes
+		# crossed at PI/4) and the roof cones are squares, so a drum_yaw that is 180
+		# degrees wrong looks IDENTICAL in plan — only the tilt direction flips, and
+		# the tower then scissors inward against a centreline walking outward. There
+		# is nothing to see in a footprint measurement and nothing for the self-check
+		# to catch; it is visible only as a seam on the model.
+		#
+		# create_box composes Basis(UP, drum_yaw) * Basis(RIGHT, tilt), and
+		# Basis(RIGHT, +t) tips local +Y toward local +Z — so a POSITIVE tilt leans
+		# the drum's top toward wherever local +Z points, and the requirement is
+		# exactly Basis(UP, drum_yaw) * +Z == lean_dir. With
+		# lean_dir = Basis(UP, yaw) * (side, 0, 0) = side * (cos yaw, 0, -sin yaw),
+		# and Basis(UP, d) * +Z = (sin d, 0, cos d), that needs
+		# sin d = side * cos yaw and cos d = -side * sin yaw, i.e. d = yaw + side*PI/2.
+		# The MINUS form is the trap: it satisfies both equations up to sign, points
+		# local +Z at -lean_dir, and leans every drum the wrong way. MEASURED both
+		# ways with a throwaway harness that compares each drum's top face centre
+		# against the next drum's bottom face centre: 0.0000 m at every one of the
+		# six joints as written, and 0.1799 m — an open wedge you can see through —
+		# with the sign flipped back.
+		var drum_yaw: float = yaw + side * PI / 2.0
 		var s := 0.0
 		for i in DRUMS:
 			var mid := s + DRUM_H / 2.0
