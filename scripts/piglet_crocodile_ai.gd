@@ -28,6 +28,17 @@ extends CharacterBody3D
 ## gravity, the visual cull, the multiplayer sync constants. A species may not
 ## opt out of the lattice: walking is caught, running escapes, at every entry.
 ##
+## READ THE LATTICE AS A STATEMENT ABOUT THE TABLE, NOT ABOUT EACH ANIMAL. It
+## constrains the ROW (`chase_speed` above WALK_SPEED) and the CEILING
+## (MAX_CHASE_SPEED clamps the product), and it deliberately says nothing about
+## an individual's roll. `speed_random_factor` exists precisely so some of them
+## are slow: at the origin the crocodile's ±50% puts 41% of the pack under a
+## walking player, and the sand viper's tighter ±35% puts 22% there. That is the
+## pack reading as a mix of stragglers and hunters, and a review that measures
+## the WORST roll against WALK_SPEED is measuring the wrong end — the promise the
+## game is balanced on is the other one, that the BEST roll still cannot outrun a
+## run, and MAX_CHASE_SPEED is what keeps it.
+##
 ## Resolved ONCE per instance into `spec` (see `species` below), then read
 ## straight off that dictionary in the per-frame paths. A dozen hash lookups per
 ## crocodile per frame is nothing beside the two obstacle raycasts sitting in
