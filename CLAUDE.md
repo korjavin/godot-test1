@@ -40,6 +40,7 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #   landmark_selfcheck       every builder fits its declared radius
 #   prop_selfcheck           prop/structure footprints, budgets, palettes
 #   croc_spawn_selfcheck     no crocodile spawns inside stone
+#   perf_selfcheck           frame-spike telemetry (thresholds, correlation, reset)
 
 bash scripts/mp_e2e.sh    # two-instance multiplayer e2e; needs go + godot on PATH
 ```
@@ -63,7 +64,7 @@ Systems never hold hard references to each other. Use
 `get_tree().get_first_node_in_group(...)`, not `$`-paths or exported references, and
 guard with `has_method` so a scene run standalone degrades instead of erroring. Groups:
 `player`, `crocodile`, `enemy`, `coin`, `landmark`, `terrain`, `weather`, `fauna`,
-`sound_manager`, `progression`, `mp`, plus one per HUD widget.
+`sound_manager`, `progression`, `mp`, `lod_manager`, plus one per HUD widget.
 
 **`"player"` means the LOCAL player and nothing else.** Terrain streaming, crocodile
 chase, the LOD manager, the danger vignette, fauna and weather all resolve "the player"
@@ -344,6 +345,13 @@ The web (WebGL) build is the performance-sensitive target.
 
 - `scripts/perf_overlay.gd` — **F3**. FPS, draw calls, node count, active/total crocs. This
   is the measurement tool; use it to prove a change and catch regressions.
+- The same script samples **every frame, hidden or not**, and logs any frame over 33 / 50 ms
+  with what the engine did on it (chunks built/freed, whether the LOD scan ticked, node
+  count) — to the console as `[SPIKE] …` and to `get_spike_log()` / `get_spike_summary()`.
+  Averages hide freezes; that log is what optimization work is measured against. It reads
+  `chunks_created_total` / `chunks_removed_total` on the terrain and `lod_scans_total` on
+  the LOD manager by **polling** — a spike source that wants to be visible exposes a
+  monotone counter, never a signal, so measuring can't perturb what it measures.
 - Web-only tuning in `project.godot` `[rendering]` via the `.web` suffix, plus a lower
   `render_distance` at runtime behind `OS.has_feature("web")`.
 - Fog is the one **universal** visual change (owner-approved); only its density is

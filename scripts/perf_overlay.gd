@@ -20,6 +20,36 @@ extends Label
 ##                          per-block collision in Task 5 should drop this hard).
 ##   * Crocodiles         — how many crocodiles exist, and (once Task 3 lands)
 ##                          how many are actually *simulating* vs frozen by LOD.
+##   * Spikes             — see below.
+##
+## ----------------------------------------------------------------------------
+## FRAME-SPIKE TELEMETRY (the measurement gate for the optimization phases)
+## ----------------------------------------------------------------------------
+## Average FPS hides the thing players actually complain about: the world runs
+## at 60 and then stops dead for a tenth of a second. The rows above are sampled
+## at 4 Hz and would never show that frame at all. So on EVERY frame — including
+## while the overlay is hidden, because the spike we care about most is the one
+## during startup before anyone pressed F3 — we compare the frame's own delta
+## against two thresholds and, when it is over, log the frame's magnitude
+## TOGETHER WITH what the engine did on that same frame:
+##
+##   * chunks built / freed this frame  (endless_terrain's lifetime counters)
+##   * whether the LOD scan ticked      (crocodile_lod_manager's counter)
+##   * the live node count
+##
+## That correlation is the whole point. "60 ms spike" is a complaint; "60 ms
+## spike on the frame that freed 5 chunks" is a bug report with an address, and
+## it is what the later optimization phases are measured against — each one has
+## to move these numbers, not a vibe. Every spike is also `print()`ed once, so a
+## web run leaves a readable trail in the browser console with no overlay open.
+##
+## Read the numbers back with `get_spike_summary()` / `get_spike_log()`, and
+## start a fresh measurement window with `reset_spike_stats()`.
+##
+## Sampling is POLL-based (we read plain counters off the two managers through
+## their groups) rather than the managers pushing events at us: the measurement
+## must never be able to change what it measures, and a poll that finds no
+## manager simply reports zero, so a scene run standalone still works.
 ##
 ## It lives in the HUD CanvasLayer as a plain Label. It does not touch gameplay:
 ## it only reads counters and prints them. It ignores mouse input and starts
@@ -40,8 +70,54 @@ const TOGGLE_KEYCODE: Key = KEY_F3
 ## smooth enough to read while staying cheap.
 const REFRESH_INTERVAL: float = 0.25
 
+## Frame-time (ms) at which a frame counts as a SPIKE. 33 ms is one missed frame
+## at 30 FPS — the point where a 60 FPS run visibly stutters rather than merely
+## dips. Anything under this is normal frame-to-frame jitter and logging it would
+## bury the real events.
+const SPIKE_WARN_MS: float = 33.0
+
+## Frame-time (ms) at which a spike counts as SEVERE — a hitch nobody misses.
+## Kept as a second threshold rather than replacing the first because the two
+## measure different things: the warn count is "is frame pacing rough?", the
+## severe count is "did the game freeze?", and an optimization can fix one
+## without touching the other.
+const SPIKE_SEVERE_MS: float = 50.0
+
+## How many spike records `get_spike_log()` keeps. Oldest are dropped once full.
+## A cap exists at all because a long session on a bad device could otherwise log
+## thousands and the telemetry would become its own memory leak; 32 is plenty to
+## eyeball a pattern and small enough that the drop is a trivial pop_front.
+const SPIKE_LOG_SIZE: int = 32
+
 ## Seconds left until the next text refresh (counts down each frame).
 var _time_until_refresh: float = 0.0
+
+# ----------------------------------------------------------------------------
+# FRAME-SPIKE TELEMETRY STATE
+# ----------------------------------------------------------------------------
+
+## The most recent spikes, oldest first, capped at SPIKE_LOG_SIZE. Each entry is
+## a plain Dictionary — see `_sample_frame` for the fields.
+var _spike_log: Array[Dictionary] = []
+
+## Totals since the last `reset_spike_stats()` (or since load).
+var _frames_sampled: int = 0
+var _spike_warn_count: int = 0
+var _spike_severe_count: int = 0
+var _worst_frame_ms: float = 0.0
+
+## Previous readings of the managers' lifetime counters, so each frame's DELTA
+## is a subtraction rather than anything the managers have to reset for us.
+var _prev_chunks_created: int = 0
+var _prev_chunks_removed: int = 0
+var _prev_lod_scans: int = 0
+
+## Cached manager references, re-acquired whenever they go stale — the same
+## group-lookup-plus-revalidate pattern crocodile_lod_manager uses for the
+## player. Cached because this samples every frame and a per-frame group lookup
+## in the measurement tool is exactly the kind of cost that biases the numbers.
+var _terrain: Node = null
+var _lod_manager: Node = null
 
 
 func _ready() -> void:
@@ -82,6 +158,13 @@ func _input(event: InputEvent) -> void:
 
 
 func _process(delta: float) -> void:
+	# Spike sampling runs on EVERY frame, hidden or not — a few int reads and a
+	# comparison, cheaper than the visibility check it sits above. It has to be
+	# here rather than below the early-return because the freezes we are hunting
+	# happen at startup and on chunk-boundary crossings, long before (or entirely
+	# without) anyone pressing F3.
+	_sample_frame(delta)
+
 	# Cheap-return while hidden so the overlay costs essentially nothing when off.
 	if not visible:
 		return
@@ -143,4 +226,166 @@ func _update_text() -> void:
 	text += "Draw calls: %d\n" % draw_calls
 	text += "Primitives: %d\n" % primitives
 	text += "Nodes: %d\n" % node_count
-	text += "Crocs (active/total): %d / %d" % [croc_active, croc_total]
+	text += "Crocs (active/total): %d / %d\n" % [croc_active, croc_total]
+
+	# --- Frame-spike telemetry ---------------------------------------------
+	# Chunk count first, because it is the number the chunk-streaming phases move
+	# and it makes the spike rows below readable at a glance.
+	if is_instance_valid(_terrain) and _terrain.has_method("get_chunk_count"):
+		text += "Chunks: %d\n" % int(_terrain.get_chunk_count())
+	var summary: Dictionary = get_spike_summary()
+	# Thresholds come from the constants, not typed into the string, so retuning
+	# one can't leave the label claiming a number the code no longer uses.
+	text += "Spikes >%d/>%d: %d / %d (worst %.0f ms)\n" % [
+		int(SPIKE_WARN_MS), int(SPIKE_SEVERE_MS),
+		summary["warn"], summary["severe"], summary["worst_ms"]
+	]
+	if not _spike_log.is_empty():
+		var last: Dictionary = _spike_log[-1]
+		text += "Last: %.0f ms  chunks +%d/-%d  lod %d" % [
+			last["ms"], last["chunks_created"], last["chunks_removed"], last["lod_scans"]
+		]
+	else:
+		text += "Last: none"
+
+
+# ============================================================================
+# FRAME-SPIKE TELEMETRY
+# ============================================================================
+
+func _sample_frame(delta: float) -> void:
+	## One frame's worth of spike detection. Called every frame; does almost
+	## nothing unless the frame was slow.
+	##
+	## `delta` is the engine's own frame delta, deliberately NOT a wall-clock
+	## difference we measure ourselves: a paused tree stops calling `_process`,
+	## and wall-clock would then report the whole pause (a skill tree left open
+	## for a minute) as a 60,000 ms "spike". The engine's delta is the frame's
+	## real duration either way.
+	_refresh_manager_refs()
+	_frames_sampled += 1
+
+	var frame_ms: float = delta * 1000.0
+	if frame_ms > _worst_frame_ms:
+		_worst_frame_ms = frame_ms
+
+	# Read the correlated counters EVERY frame, spike or not: they are lifetime
+	# totals, so skipping a frame would silently fold that frame's work into the
+	# next spike's delta and blame the wrong frame.
+	var chunks_created: int = _read_counter(_terrain, "chunks_created_total")
+	var chunks_removed: int = _read_counter(_terrain, "chunks_removed_total")
+	var lod_scans: int = _read_counter(_lod_manager, "lod_scans_total")
+
+	var d_created: int = chunks_created - _prev_chunks_created
+	var d_removed: int = chunks_removed - _prev_chunks_removed
+	var d_lod: int = lod_scans - _prev_lod_scans
+	_prev_chunks_created = chunks_created
+	_prev_chunks_removed = chunks_removed
+	_prev_lod_scans = lod_scans
+
+	if frame_ms < SPIKE_WARN_MS:
+		return
+
+	# --- This frame spiked. Record it with what the engine did on it. --------
+	var severe: bool = frame_ms >= SPIKE_SEVERE_MS
+	if severe:
+		_spike_severe_count += 1
+	else:
+		_spike_warn_count += 1
+
+	# The node count is read HERE and not above because it is the one monitor
+	# call in this function, and a spike frame is a rare frame — no reason to pay
+	# for it 60 times a second.
+	var record: Dictionary = {
+		"ms": frame_ms,
+		"severe": severe,
+		"uptime_ms": Time.get_ticks_msec(),
+		"chunks_created": d_created,
+		"chunks_removed": d_removed,
+		"lod_scans": d_lod,
+		"nodes": int(Performance.get_monitor(Performance.OBJECT_NODE_COUNT)),
+	}
+	_spike_log.append(record)
+	if _spike_log.size() > SPIKE_LOG_SIZE:
+		_spike_log.pop_front()
+
+	# One line per spike to the console/browser log. Spikes are by definition
+	# rare, so this cannot become spam — and it is the only way to capture the
+	# trail from a web build with no overlay open.
+	print("[SPIKE] %.1f ms%s | chunks +%d/-%d | lod scans %d | nodes %d" % [
+		frame_ms,
+		" SEVERE" if severe else "",
+		d_created,
+		d_removed,
+		d_lod,
+		record["nodes"],
+	])
+
+
+func _read_counter(cached: Node, property: String) -> int:
+	## Read one lifetime counter off a manager, or 0 if it isn't there.
+	##
+	## Defensive on purpose and in the project's usual style: a scene run
+	## standalone has no terrain and no LOD manager, and another node that
+	## happened to join the group may not expose the property. Neither is an
+	## error — the telemetry just reports no events from that source.
+	if not is_instance_valid(cached) or not (property in cached):
+		return 0
+	return int(cached.get(property))
+
+
+func _refresh_manager_refs() -> void:
+	## (Re)acquire the two managers we poll, through their groups (never a
+	## $-path or an exported reference). Only looks a manager up when we don't
+	## already hold a live one, so the steady state costs two validity checks per
+	## frame and no group lookup.
+	if not is_instance_valid(_terrain):
+		_terrain = get_tree().get_first_node_in_group("terrain")
+	if not is_instance_valid(_lod_manager):
+		_lod_manager = get_tree().get_first_node_in_group("lod_manager")
+
+
+# ----------------------------------------------------------------------------
+# PUBLIC TELEMETRY API (used by the later optimization phases and by selfchecks)
+# ----------------------------------------------------------------------------
+
+func get_spike_summary() -> Dictionary:
+	## Headline numbers for the current measurement window: how many frames were
+	## sampled, how many spiked (split by severity), and the worst frame seen.
+	## `spikes_per_min` is the comparable one — two runs of different lengths
+	## have incomparable raw counts. It assumes a 60 FPS nominal frame budget,
+	## which is what "frames sampled" has to be converted with; it is a rate for
+	## comparing two runs, not a wall-clock measurement.
+	var spikes: int = _spike_warn_count + _spike_severe_count
+	var minutes: float = maxf(float(_frames_sampled), 1.0) / (60.0 * 60.0)
+	return {
+		"frames": _frames_sampled,
+		"spikes": spikes,
+		"warn": _spike_warn_count,
+		"severe": _spike_severe_count,
+		"worst_ms": _worst_frame_ms,
+		"spikes_per_min": float(spikes) / minutes,
+	}
+
+
+func get_spike_log() -> Array[Dictionary]:
+	## The recorded spikes, oldest first (at most SPIKE_LOG_SIZE). Each entry:
+	## `ms`, `severe`, `uptime_ms`, `chunks_created`, `chunks_removed`,
+	## `lod_scans`, `nodes`. Returns the live array — read it, don't mutate it.
+	return _spike_log
+
+
+func reset_spike_stats() -> void:
+	## Start a fresh measurement window: take a before/after around the change
+	## you are testing. The managers' lifetime counters are NOT reset (they
+	## aren't ours); we only re-baseline our own previous readings so the first
+	## frame after a reset doesn't report every event since the game started.
+	_spike_log.clear()
+	_frames_sampled = 0
+	_spike_warn_count = 0
+	_spike_severe_count = 0
+	_worst_frame_ms = 0.0
+	_refresh_manager_refs()
+	_prev_chunks_created = _read_counter(_terrain, "chunks_created_total")
+	_prev_chunks_removed = _read_counter(_terrain, "chunks_removed_total")
+	_prev_lod_scans = _read_counter(_lod_manager, "lod_scans_total")

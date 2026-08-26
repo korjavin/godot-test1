@@ -126,12 +126,23 @@ var _player: Node3D = null
 ## Seconds left until the next scan (counts down each frame).
 var _time_until_scan: float = 0.0
 
+## Lifetime count of scan ticks run. Public and monotonic purely so
+## `perf_overlay.gd` can attribute a frame spike to "the LOD scan fired on this
+## frame" — a full ~1,000-crocodile pass is one of the few things that only
+## costs on some frames, which is exactly the signature of a periodic hitch.
+## Sampled by polling (never a signal), so it cannot perturb the scan it counts.
+var lod_scans_total: int = 0
+
 
 # ============================================================================
 # LIFECYCLE
 # ============================================================================
 
 func _ready() -> void:
+	# Group-based discovery, as everywhere else: the perf overlay finds us here
+	# to read `lod_scans_total`. Nothing gameplay-facing hangs off this group.
+	add_to_group("lod_manager")
+
 	# Find the player once up front; if it isn't ready yet (scene still loading),
 	# the scan loop will keep trying until it appears.
 	_find_player()
@@ -148,6 +159,7 @@ func _process(delta: float) -> void:
 	if _time_until_scan > 0.0:
 		return
 	_time_until_scan = SCAN_INTERVAL
+	lod_scans_total += 1
 
 	_scan_crocodiles()
 	_scan_coins()
