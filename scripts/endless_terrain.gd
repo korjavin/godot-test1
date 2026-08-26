@@ -407,8 +407,11 @@ const STRUCTURE_THEMES: Dictionary = {
 ## Without it the FIRST run of a session gets no spawn protection at all: the
 ## player's own clear_nearby_crocodiles() sweep only runs on respawn/restart, so a
 ## fresh boot drops the player into a chunk holding ~10 crocodiles with nothing
-## keeping them off (0,0) — several sit inside DETECTION_RADIUS (15) and start
-## chasing on frame one, and BASE_CHASE_SPEED (5.5) beats WALK_SPEED (5.0).
+## keeping them off (0,0) — several sit inside their own `detection_radius` (15
+## for a crocodile) and start chasing on frame one, and every species' chase_speed
+## beats WALK_SPEED (5.0) by construction. Both used to be the consts
+## DETECTION_RADIUS / BASE_CHASE_SPEED; they are SPECIES rows now, which is why
+## this bubble is stated as a radius and not as "bigger than the one number".
 ## Enforced here, in world generation, rather than as another sweep: it is a pure
 ## function of position, so it holds identically for new_run() and needs no
 ## ordering dance with the player's _ready(), which runs before any chunk exists.
@@ -1607,6 +1610,43 @@ const CITY_SIGNAL_CHANCE: float = 0.55    # else a lamp post
 ## stream, in the same positions, with the tail simply not spawned.
 const CITY_CROC_DIVISOR: float = 2.5
 
+# ============================================================================
+# WHICH PREDATOR A BIOME GETS
+# ============================================================================
+## The whole species dispatch, and it is a TABLE LOOKUP ON A PURE FUNCTION —
+## `biome_at(chunk_centre)` — with ZERO RNG draws behind it. Read that as the
+## hard constraint it is, not as a style preference:
+##
+##   The chunk's crocodile RNG is ONE shared stream. Every position in the chunk
+##   is the sequence of draws that came before it, so a single extra draw here
+##   would slide every crocodile in every chunk to a different spot — a whole new
+##   world, for free, on a change that was only ever supposed to swap a mesh.
+##   That is why species is DISPATCH and not a roll: variety comes from the biome
+##   field, which the world already has, and costs the stream nothing.
+##
+## It is the same trick, for the same reason, as CITY_CROC_DIVISOR right above
+## and DESERT_BLOCK_KEEP_EVERY: derive from the biome, never draw for it.
+##
+## A biome with no entry gets the crocodile — which is why PLAINS, FOREST,
+## MOUNTAIN, CITY and SNOW are absent rather than spelled out as "crocodile".
+## Absent is the statement: nothing about their spawning changed.
+##
+## ADDING A SPECIES (asc.3/.5/.6/.9 each add exactly one) is three things and no
+## more: a row in `SPECIES` in piglet_crocodile_ai.gd, a .tscn beside
+## sand_viper.tscn, and one line here. No new script, no subclass, no branch in
+## the spawner.
+##
+## The name must match a key of that SPECIES table. A typo does not crash: the
+## AI's _ready() warns and falls back to the crocodile row, and _species_scene()
+## below falls back to the crocodile scene, so a mistake here is a visibly wrong
+## animal rather than a dead chunk.
+const BIOME_SPECIES: Dictionary = {
+	Biome.DESERT: {
+		"species": "sand_viper",
+		"scene": "res://scenes/characters/sand_viper.tscn",
+	},
+}
+
 # ----------------------------------------------------------------------------
 # SNOW — frozen dead trees and mammoth skeletons on an open tundra
 # ----------------------------------------------------------------------------
@@ -1735,8 +1775,17 @@ const DUNE_COLOR_B := Color(0.60, 0.50, 0.35)  # darker sandy
 # SECTION 2: INTERNAL STATE
 # ============================================================================
 
-## Preloaded crocodile scene for spawning
+## Preloaded crocodile scene for spawning. Still the DEFAULT species' scene and
+## still the seam the kill switch and every self-check harness assign by hand, so
+## the non-crocodile species are cached separately below rather than folding this
+## one into a dictionary and quietly demoting it.
 var crocodile_scene: PackedScene
+
+## Scenes for the NON-crocodile species, keyed by Biome (see BIOME_SPECIES).
+## Loaded on first use rather than in _ready() because a run may never walk into a
+## desert; the dictionary exists so a desert chunk does not re-`load()` per chunk
+## once nothing else is holding the scene alive.
+var _species_scenes: Dictionary = {}
 
 ## Preloaded coin scene for spawning
 var coin_scene: PackedScene
@@ -4670,8 +4719,38 @@ func spawn_crocodiles_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D
 	#
 	# This is a DESIGN number (the difficulty gradient's sibling), not a perf trim,
 	# so the "entity counts are never reduced as an optimization" convention holds.
-	if biome_at(chunk_world_pos.x, chunk_world_pos.z) == Biome.CITY:
+	var chunk_biome: Biome = biome_at(chunk_world_pos.x, chunk_world_pos.z)
+	if chunk_biome == Biome.CITY:
 		chunk_croc_target = maxi(1, int(roundf(float(chunk_croc_target) / CITY_CROC_DIVISOR)))
+
+	# WHICH PREDATOR THIS CHUNK GETS — one table lookup on the biome already
+	# resolved above, and NOT ONE RNG DRAW (see BIOME_SPECIES for why that is a
+	# constraint rather than a preference). The whole chunk gets one species,
+	# because the biome field is what varies and it varies at the ~8-chunk scale
+	# of BIOME_CELL_SIZE; picking per crocodile would need a draw, and a draw is
+	# exactly what is not allowed here.
+	#
+	# `rng` is untouched by any of this, so a PLAINS chunk generates the identical
+	# crocodiles it always did, down to the last float.
+	#
+	# The crocodile stays the default, and a biome with no BIOME_SPECIES entry
+	# never even reaches the load: PLAINS takes the `crocodile_scene` it always
+	# took. A species whose scene fails to load also falls back rather than
+	# spawning nothing — same degrade-don't-crash rule as the AI's own unknown-
+	# species warning, and a visibly wrong animal beats an invisibly empty chunk.
+	var chunk_species: String = "crocodile"
+	var species_scene: PackedScene = crocodile_scene
+	if BIOME_SPECIES.has(chunk_biome):
+		var row: Dictionary = BIOME_SPECIES[chunk_biome]
+		if not _species_scenes.has(chunk_biome):
+			_species_scenes[chunk_biome] = load(row["scene"])
+			if not _species_scenes[chunk_biome]:
+				push_warning("endless_terrain: failed to load %s, using the crocodile"
+						% row["scene"])
+		var scene: PackedScene = _species_scenes[chunk_biome]
+		if scene:
+			chunk_species = row["species"]
+			species_scene = scene
 
 	# Try to spawn crocodiles with proper spacing
 	var attempts := 0
@@ -4729,8 +4808,14 @@ func spawn_crocodiles_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D
 		if not valid_position:
 			continue
 
-		# Instantiate the crocodile
-		var crocodile_instance = crocodile_scene.instantiate()
+		# Instantiate this chunk's predator (crocodile everywhere but the desert)
+		var crocodile_instance = species_scene.instantiate()
+		# NAMED "Crocodile_…" WHATEVER THE SPECIES, deliberately. The name is this
+		# spawn SLOT's identity, not a label: piglet_crocodile_ai.croc_id_for()
+		# hashes it into the room-wide id multiplayer syncs on, and
+		# croc_spawn_selfcheck classifies ground spawns by the prefix. Species is
+		# a pure function of position, so every peer already agrees on it — a
+		# per-species prefix would only churn every id for nothing.
 		crocodile_instance.name = "Crocodile_%d_%d_%d" % [chunk_pos.x, chunk_pos.y, spawned_positions.size()]
 
 		# Position relative to chunk
@@ -4744,6 +4829,11 @@ func spawn_crocodiles_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D
 		# seeds its own rng from it instead of randomize()ing. Non-negative index =
 		# the ground crocodile stream (see _croc_roll_seed).
 		crocodile_instance.setup_roll_seed(_croc_roll_seed(chunk_pos, spawned_positions.size()))
+		# SAME CALL-ORDER CONTRACT, and it is the reason `species` is a plain
+		# public field: _ready() is where it is resolved into `spec` and where the
+		# size/speed rolls that READ that spec happen, so assigning it after
+		# add_child() would roll a crocodile's numbers onto a viper's body.
+		crocodile_instance.species = chunk_species
 
 		# Add to chunk (so it gets removed when chunk is removed)
 		parent_chunk.add_child(crocodile_instance)

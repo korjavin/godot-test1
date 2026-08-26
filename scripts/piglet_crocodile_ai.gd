@@ -28,6 +28,17 @@ extends CharacterBody3D
 ## gravity, the visual cull, the multiplayer sync constants. A species may not
 ## opt out of the lattice: walking is caught, running escapes, at every entry.
 ##
+## READ THE LATTICE AS A STATEMENT ABOUT THE TABLE, NOT ABOUT EACH ANIMAL. It
+## constrains the ROW (`chase_speed` above WALK_SPEED) and the CEILING
+## (MAX_CHASE_SPEED clamps the product), and it deliberately says nothing about
+## an individual's roll. `speed_random_factor` exists precisely so some of them
+## are slow: at the origin the crocodile's ±50% puts 41% of the pack under a
+## walking player, and the sand viper's tighter ±35% puts 22% there. That is the
+## pack reading as a mix of stragglers and hunters, and a review that measures
+## the WORST roll against WALK_SPEED is measuring the wrong end — the promise the
+## game is balanced on is the other one, that the BEST roll still cannot outrun a
+## run, and MAX_CHASE_SPEED is what keeps it.
+##
 ## Resolved ONCE per instance into `spec` (see `species` below), then read
 ## straight off that dictionary in the per-frame paths. A dozen hash lookups per
 ## crocodile per frame is nothing beside the two obstacle raycasts sitting in
@@ -205,6 +216,164 @@ const SPECIES: Dictionary = {
 
 		## How far the body lunges forward during the bite (metres).
 		"bite_lunge": 0.35,
+	},
+
+	## ------------------------------------------------------------------------
+	## SAND VIPER — the DESERT band's predator.
+	## ------------------------------------------------------------------------
+	## The first entry that is not the crocodile, and the proof the table works:
+	## everything below is a NUMBER. The only other things a new predator needs
+	## are its own .tscn (a `Model` child and a CollisionShape3D that fit its
+	## mesh) and one line in endless_terrain.gd's BIOME_SPECIES map. No subclass,
+	## no new script, no new arm in any per-frame path.
+	##
+	## Every number that touches geometry is measured off
+	## assets/models/characters/snake.glb (built by scripts/generate_snake.py):
+	## 1.7345 m long (x -1.3625 .. +0.372), 0.4111 m across its resting S-curve,
+	## and 0.2065 m TALL — an eighth of its own length. It is a fundamentally
+	## different SHAPE from the crocodile (1.40 x 0.28 x 0.276), which is why so
+	## few of these numbers could have been shared as globals.
+	##
+	## THE CAPSULE IN sand_viper.tscn COMES OFF THE SAME THREE FIGURES, and it is
+	## recorded here because a .tscn cannot hold a comment an editor resave will
+	## not eat. `radius = 0.11, height = 1.75`, laid down on the travel axis with
+	## the crocodile's basis, at `(0, 0.11, -0.495)`:
+	##   * 0.11 makes a 0.22 m tube around a 0.2065 m body — the tightest fit the
+	##     mesh allows, and the point of it: a serpent's collision has to HUG the
+	##     ground. The crocodile's 0.16 would float this animal's head over its
+	##     own capsule. It is deliberately NARROWER than the 0.41 m S-curve too;
+	##     the wiggle is silhouette, not bulk, and a capsule fat enough to cover
+	##     it would wedge in gaps a snake ought to slip through.
+	##     0.11 IS ALSO THE SHAPE'S HEIGHT, and that is not a coincidence: a
+	##     CapsuleShape3D's transform origin is its CENTRE, so centre 0.11 with
+	##     radius 0.11 puts the capsule's bottom exactly on y = 0. The body then
+	##     settles with the mesh's own y = 0 underside on the ground. (The
+	##     crocodile's 0.16/0.16 is the same identity. Measured, because it reads
+	##     like a floating model and isn't: dropped onto a plane, the viper's
+	##     lowest vertex lands at y = -0.003 and the crocodile's at y = -0.035.)
+	##   * 1.75 covers the 1.7345 m length with the caps included.
+	##   * z = -0.495 is the ONE thing this scene does that the crocodile's does
+	##     not. generate_snake.py builds the viper HEAD-FIRST from the origin, so
+	##     the mesh is lopsided about it where the crocodile's is centred.
+	##     A capsule centred on the origin would put ~0.87 m of invisible solid
+	##     body out in front of the snout and leave the tail hanging with nothing
+	##     behind it. -0.495 is the mesh's own midpoint, so the shape covers
+	##     x -1.37 .. +0.38: the visible animal, and only it.
+	## What origin-at-the-head buys for free: bite range, the obstacle feelers and
+	## the chase distance are all measured from the node origin, which for this
+	## species is where its fangs are — and the right pivot for the asc.4 strike.
+	"sand_viper": {
+		## PHASE 2 SHIPS IT AS "solo": it wanders and chases exactly like the
+		## crocodile, and only its numbers and its mesh make it feel different.
+		## asc.4 is what turns this into "ambush" — burrow, wait, strike — along
+		## with the `match` arm that reads the string. A string with no arm
+		## behaves as solo, which is exactly what makes shipping the species and
+		## shipping its behaviour two safe beads instead of one big one.
+		"behavior": "solo",
+
+		# ----- Speed and detection -----
+		## THE LATTICE IS THE LATTICE: 5.0 (WALK_SPEED) < 6.2 <= 8.5
+		## (MAX_CHASE_SPEED) < 9.0 (the slowest character's run). A viper is a
+		## faster STRIKER than a crocodile (5.5) and a lazier cruiser (2.0 vs
+		## 2.5) — it lies about, then it moves. The worst case still clamps:
+		## 6.2 x 1.35 x 1.6 = 13.4 and MAX_CHASE_SPEED cuts it to 8.5, so running
+		## escapes a viper exactly as it escapes everything else.
+		"move_speed": 2.0,
+		"chase_speed": 6.2,
+
+		## Tighter spreads than the crocodile's ±50% / ±25%. A snake reads as one
+		## KIND of thing: a viper twice the length of the one beside it looks like
+		## a different animal, where two crocodiles of different sizes just look
+		## like two crocodiles.
+		"speed_random_factor": 0.35,
+		"size_random_factor": 0.2,
+
+		## Deliberately SHORTER than the crocodile's 15.0 — an ambusher trades
+		## senses for surprise, and asc.4 gets the danger back from the strike
+		## rather than from smelling further. Still far below the LOD manager's
+		## SIM_RADIUS (45.0), which is the invariant every species owes.
+		"detection_radius": 12.0,
+
+		# ----- Organic wandering -----
+		## Longer interval and a longer pause than the crocodile: a viper basks.
+		"direction_change_interval": 5.0,
+		"pause_duration": 0.8,
+
+		## Lazier drift, but a snappier TURN once it commits — a snake pivots
+		## along its own length instead of swinging a rigid body round.
+		"wander_turn_rate": 0.9,
+		"turn_smoothness": 6.0,
+
+		## Ebbs lower and slower than the crocodile (0.45 / 0.8), and pauses far
+		## more often (0.3). Roughly half its wandering life is spent lying still,
+		## which is what will make the phase-4 strike land as a surprise instead
+		## of as the next thing an obviously-moving animal did.
+		"min_wander_speed_factor": 0.35,
+		"speed_variation_freq": 0.6,
+		"sniff_pause_chance": 0.45,
+
+		# ----- Obstacle avoidance -----
+		## Look-ahead is the crocodile's ratio applied to this body: ~1.45x the
+		## mesh length, so it turns before the snout can reach a block. Wider
+		## feelers and a gentler slowdown than the crocodile — it whips around an
+		## obstacle rather than easing round it.
+		"avoid_look_ahead": 2.5,
+		"avoid_feeler_angle": PI / 4.0,  # 45°
+		## Cast just above the 0.13 m neck, so the probes sample a block's side
+		## wall and not the flat ground. The crocodile's 0.3 would fly clean over
+		## this animal's whole head.
+		"avoid_feeler_height": 0.15,
+		"avoid_speed_factor": 0.6,
+
+		# ----- Procedural body animation -----
+		## Same nose-along-+X model contract as every predator mesh, so the same
+		## -90° puts the snout on the travel axis.
+		"model_facing_offset": -PI / 2.0,
+
+		## THE SLITHER, and it is all in `sway_yaw`. The crocodile waddles: a big
+		## ROLL (9°) with a small yaw sway (5°). A snake is the exact inverse —
+		## it barely rolls (3°) and swings hugely in yaw (14°), which swings the
+		## mesh's built-in resting S-curve from side to side. Faster stride to
+		## match, and a bob a third of the crocodile's because a body 0.21 m tall
+		## that bobs 0.025 m does not undulate, it hops.
+		"stride_frequency": 12.0,
+		"waddle_roll": 3.0 * PI / 180.0,
+		"bob_amount": 0.008,
+		"sway_yaw": 14.0 * PI / 180.0,
+
+		## Rears its head a little when hunting, but a snake tracking prey stays
+		## LOW — a third of the crocodile's forward lean.
+		"chase_pitch": 6.0 * PI / 180.0,
+
+		## Slower and shallower idle breathing than the crocodile's: at this
+		## scale anything larger reads as twitching, not breathing.
+		"breathe_speed": 1.4,
+		"breathe_amount": 0.006,
+
+		# ----- River submersion (VISUAL ONLY) -----
+		## 0.10 m — and this species gets the read the crocodile's entry above
+		## explains it can never have. The crocodile's back is a flat plateau, so
+		## no depth exists that shows its nose while hiding its spine. The viper
+		## is the opposite shape: a 0.13 m body with a head standing 0.21 m up,
+		## so sinking 0.10 puts the entire body under and leaves the head —
+		## whose eyes and horned scales generate_snake.py deliberately sits at the
+		## top of the skull — gliding along the surface. A literal periscope, out
+		## of the same one constant.
+		##
+		## The hard constraint is unchanged and not negotiable: VISUAL ONLY. The
+		## CharacterBody3D, its CollisionShape3D and global_position never move,
+		## so a wading viper is exactly as dangerous as a dry one.
+		"river_sink_depth": 0.10,
+		## Same ~0.2 s ease as the crocodile and the player, written as
+		## depth/time so the derivation survives a retune of the depth above it.
+		"river_sink_ease_speed": 0.10 / 0.2,
+
+		# ----- Bite -----
+		## The strike: shorter, sharper and further than the crocodile's chomp
+		## (0.5 s / 26° / 0.35 m). A snake bite is one fast lunge, not a chew.
+		"bite_duration": 0.3,
+		"bite_pitch": 34.0 * PI / 180.0,
+		"bite_lunge": 0.5,
 	},
 }
 

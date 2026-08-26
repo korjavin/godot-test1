@@ -1,5 +1,11 @@
 extends SceneTree
-## Headless self-check: NO CROCODILE MAY SPAWN INSIDE SOLID STONE.
+## Headless self-check: NO CROCODILE MAY SPAWN INSIDE SOLID STONE — and, since
+## the biome-predator epic, EVERY PREDATOR IS THE SPECIES ITS BIOME ASKED FOR.
+##
+## The second subject lives here rather than in a file of its own because it is
+## the same measurement on the same sweep: the spawner that must not put a body
+## in stone is the spawner that decides what that body IS, and the failure has
+## the same shape — nothing errors, nothing logs, you just get the wrong animal.
 ##
 ##   godot --headless --path . --script res://scripts/croc_spawn_selfcheck.gd
 ##
@@ -47,6 +53,8 @@ extends SceneTree
 ## _make_chunk_parent and _boot for the two traps that caused exactly that).
 
 const TERRAIN_SCRIPT: String = "res://scripts/endless_terrain.gd"
+const CROC_AI_SCRIPT: String = "res://scripts/piglet_crocodile_ai.gd"
+const PLAYER_SCRIPT: String = "res://scripts/player_controller.gd"
 const CROC_SCENE: String = "res://scenes/characters/piglet_crocodile.tscn"
 const COIN_SCENE: String = "res://scenes/collectibles/coin.tscn"
 
@@ -68,6 +76,17 @@ const PLATFORM_ANGLE_SAMPLES: int = 16
 const EPSILON: float = 0.001
 
 var _failures: Array[String] = []
+
+## piglet_crocodile_ai.gd's SPECIES table and endless_terrain.gd's BIOME_SPECIES
+## map, read once in _run() through get_script_constant_map() — see the note there
+## on why a `const` cannot be read as a property.
+var _species_table: Dictionary = {}
+var _biome_species: Dictionary = {}
+
+## The two ends of the speed lattice, read off player_controller.gd and
+## piglet_crocodile_ai.gd rather than restated — see the note in _run().
+var _walk_speed: float = 0.0
+var _max_chase_speed: float = 0.0
 
 
 func _initialize() -> void:
@@ -104,10 +123,103 @@ func _run() -> void:
 	var spawn_height: float = float(consts["PLATFORM_SPAWN_HEIGHT"])
 	var edge_inset: float = float(consts["PLATFORM_SPAWN_EDGE_INSET"])
 
+	# The lattice's two ends are READ, never restated here: WALK_SPEED off the
+	# player and MAX_CHASE_SPEED off the AI, so retuning either moves this check
+	# with it instead of leaving it asserting a number nothing uses any more.
+	var croc_consts: Dictionary = load(CROC_AI_SCRIPT).get_script_constant_map()
+	_species_table = croc_consts.get("SPECIES", {})
+	_max_chase_speed = float(croc_consts.get("MAX_CHASE_SPEED", 0.0))
+	_walk_speed = float(load(PLAYER_SCRIPT).get_script_constant_map().get("WALK_SPEED", 0.0))
+	_biome_species = consts.get("BIOME_SPECIES", {})
+	_check_species_table()
+
 	for run_seed: int in RUN_SEEDS:
 		_sweep(terrain_script, run_seed, spawn_height, edge_inset)
 
 	_report()
+
+
+# ============================================================================
+# CHECK 4 (table half) — every SPECIES row is complete, legal and reachable
+# ============================================================================
+
+func _check_species_table() -> void:
+	"""
+	Read the two tables and prove a NEW ROW cannot ship broken.
+
+	This is the cheap half of check 4 — no world, no chunks, pure data — and it
+	exists because the biome-predator epic adds one species per bead, each of
+	them a hand-copied dictionary of ~30 keys. The three ways that goes wrong are
+	all silent from the outside, which is this file's whole subject:
+
+	  * A MISSING KEY is a crash in a per-frame path (`spec["sway_yaw"]` in
+	    _animate_body), on the first frame the first one of them is visible, and
+	    only in the biome that species lives in.
+	  * A chase_speed OVER the lattice quietly breaks the promise the whole game
+	    is balanced on — walking is caught, RUNNING ESCAPES. MAX_CHASE_SPEED
+	    clamps it at runtime so nothing ever looks wrong; the row is just a lie.
+	  * A dispatch entry naming a species that isn't in the table, or pointing at
+	    a scene that doesn't load, degrades to a crocodile — which reads as "the
+	    new predator isn't finished yet" rather than as a bug.
+
+	The key set is taken from the crocodile row rather than hardcoded here, so it
+	tracks the AI: add a key to the table and every row must grow it, delete one
+	and this stops demanding it. That is deliberately stricter than the engine —
+	an unused key on one row is not a crash — and it is the point: 'the crocodile
+	has it and you don't' is exactly the state that crashes later.
+	"""
+	if _species_table.is_empty():
+		_fail("piglet_crocodile_ai.gd exposes no SPECIES table — the species dispatch"
+				+ " this check measures has nothing to dispatch over")
+		return
+	if not _species_table.has("crocodile"):
+		_fail("SPECIES has no 'crocodile' row — it is the fallback every unknown"
+				+ " species name and every scene-less biome resolves to")
+		return
+
+	var required: Array = _species_table["crocodile"].keys()
+	for name_v: Variant in _species_table:
+		var species_name: String = String(name_v)
+		var row: Dictionary = _species_table[species_name]
+		for key_v: Variant in required:
+			if not row.has(key_v):
+				_fail("SPECIES['%s'] is missing '%s', which the crocodile row has —"
+						% [species_name, key_v]
+						+ " a per-frame path reads it and will crash on the first"
+						+ " frame one of these is on screen")
+		# The lattice, stated in CLAUDE.md and in the SPECIES doc block: walking
+		# (5.0) must be caught, and the slowest run (9.0) must escape. Every row
+		# owes both ends; MAX_CHASE_SPEED is the ceiling and no row may raise it.
+		if row.has("chase_speed"):
+			var chase: float = float(row["chase_speed"])
+			if chase <= _walk_speed:
+				_fail("SPECIES['%s'].chase_speed %.2f is at or below %.2f —"
+						% [species_name, chase, _walk_speed]
+						+ " a player could stroll away from it")
+			if chase > _max_chase_speed:
+				_fail("SPECIES['%s'].chase_speed %.2f exceeds %.2f —"
+						% [species_name, chase, _max_chase_speed]
+						+ " the clamp hides it at runtime, so the row is simply wrong")
+
+	# The dispatch map: names must resolve, scenes must load.
+	for biome_v: Variant in _biome_species:
+		var entry: Dictionary = _biome_species[biome_v]
+		var species_name: String = String(entry.get("species", ""))
+		if not _species_table.has(species_name):
+			_fail("BIOME_SPECIES[%s] dispatches to '%s', which is not a SPECIES row —"
+					% [biome_v, species_name]
+					+ " every crocodile in that biome would silently fall back")
+		var scene_path: String = String(entry.get("scene", ""))
+		if not ResourceLoader.exists(scene_path) or load(scene_path) == null:
+			_fail("BIOME_SPECIES[%s] points at '%s', which does not load"
+					% [biome_v, scene_path])
+
+	# The negative control for this half: a table with one row and an empty
+	# dispatch map passes every loop above without measuring anything.
+	if _species_table.size() < 2 or _biome_species.is_empty():
+		_fail("only %d SPECIES row(s) and %d dispatch entries — checks over the"
+				% [_species_table.size(), _biome_species.size()]
+				+ " species table ran against a world with one predator in it")
 
 
 func _fail(message: String) -> void:
@@ -202,6 +314,10 @@ func _sweep(terrain_script: GDScript, run_seed: int, spawn_height: float, edge_i
 	var worst_depth := 0.0
 	var worst_desc := ""
 	var in_stone := 0
+	# Check 4's live half — see the block inside the loop below.
+	var species_mismatches := 0
+	var species_worst := ""
+	var species_seen := {}
 
 	for cx in range(-half_field, half_field + 1):
 		for cz in range(-half_field, half_field + 1):
@@ -227,6 +343,41 @@ func _sweep(terrain_script: GDScript, run_seed: int, spawn_height: float, edge_i
 					continue
 				counts[kind] = int(counts[kind]) + 1
 
+				# CHECK 4 (live half): the biome dispatch actually reached the
+				# body. The table itself is checked once, off-world, in
+				# _check_species_table; what can only be seen HERE is whether
+				# spawn_crocodiles_in_chunk assigned `species` at all, whether it
+				# assigned it BEFORE add_child (an assignment after it leaves
+				# `spec` resolved to the crocodile row, so the field and the row
+				# disagree), and whether it picked the entry the chunk's biome
+				# calls for. A boss or a platform guard is deliberately exempt —
+				# neither is dispatched on a chunk centre.
+				if kind == "ground":
+					var want: String = _expected_species(terrain, origin)
+					var got: String = String(child.get("species"))
+					# `spec` is what the per-frame paths actually read, and it is
+					# resolved in _ready(). Comparing ONE number off it against
+					# the table is what catches the call-order break: assign
+					# `species` after add_child() and the field says "sand_viper"
+					# while every speed, feeler and animation stays a crocodile's.
+					var spec: Variant = child.get("spec")
+					var want_speed: float = float(_species_table[want]["chase_speed"])
+					var got_speed: float = (float(spec["chase_speed"])
+							if spec is Dictionary and spec.has("chase_speed") else NAN)
+					if got != want:
+						species_mismatches += 1
+						if species_worst == "":
+							species_worst = "%s (%s biome) is species '%s', expected '%s'" % [
+									node_name, _biome_name(origin, terrain), got, want]
+					elif not is_equal_approx(got_speed, want_speed):
+						species_mismatches += 1
+						if species_worst == "":
+							species_worst = ("%s says species '%s' but resolved a spec with"
+									+ " chase_speed %s, not the table's %s — `species` was"
+									+ " assigned AFTER add_child()") % [
+									node_name, got, got_speed, want_speed]
+					species_seen[want] = int(species_seen.get(want, 0)) + 1
+
 				var world_pos: Vector3 = (child as Node3D).global_position
 				var depth := _depth_in_stone(chunk_solids, chunk_pos, world_pos)
 				if depth > EPSILON:
@@ -241,6 +392,17 @@ func _sweep(terrain_script: GDScript, run_seed: int, spawn_height: float, edge_i
 		_fail("seed %d: %d of %d crocodiles spawned INSIDE solid stone (worst %.2f m deep: %s)"
 				% [run_seed, in_stone, counts["ground"] + counts["platform"] + counts["boss"],
 				   worst_depth, worst_desc])
+
+	if species_mismatches > 0:
+		_fail("seed %d: %d of %d ground predators are not the species their chunk's biome"
+				% [run_seed, species_mismatches, counts["ground"]]
+				+ " dispatches to (first: %s)" % species_worst)
+	# The negative control for the live half: a field that is all one biome, or a
+	# dispatch that never fired, agrees with itself perfectly and proves nothing.
+	if species_seen.size() < 2:
+		_fail("seed %d: every ground predator in the field was the same species (%s) —"
+				% [run_seed, species_seen.keys()]
+				+ " the biome dispatch was never actually exercised")
 
 	# ---- CHECK 2: every angle of every platform, not just the drawn one ------
 	# A guard's angle is one RNG draw, so check 1 samples ONE point per structure
@@ -313,6 +475,31 @@ func _sweep(terrain_script: GDScript, run_seed: int, spawn_height: float, edge_i
 	print("seed %d: measured %d ground / %d platform / %d boss crocodiles against %d collision shapes, plus %d angle probes over %d platforms (%d humped)"
 			% [run_seed, counts["ground"], counts["platform"], counts["boss"], solid_count,
 			   platforms_seen * PLATFORM_ANGLE_SAMPLES, platforms_seen, humped_platforms])
+	print("seed %d: ground predators by species %s" % [run_seed, species_seen])
+
+
+func _expected_species(terrain: Node, chunk_centre: Vector3) -> String:
+	"""
+	What BIOME_SPECIES says a chunk should spawn — recomputed from the PUBLIC
+	biome API, not read back off the spawner.
+
+	@param terrain: The detached terrain node driving this sweep.
+	@param chunk_centre: chunk_to_world(chunk_pos) — the exact point the spawner
+	                     dispatches on, which is the whole reason this is a
+	                     one-liner and not a reimplementation.
+	@return: A key of SPECIES; "crocodile" for any biome with no entry.
+	"""
+	var biome: int = terrain.biome_at(chunk_centre.x, chunk_centre.z)
+	if _biome_species.has(biome):
+		return String(_biome_species[biome]["species"])
+	return "crocodile"
+
+
+func _biome_name(chunk_centre: Vector3, terrain: Node) -> String:
+	"""The chunk's biome as a readable name, for failure messages only."""
+	var names: Array = ["PLAINS", "DESERT", "FOREST", "MOUNTAIN", "CITY", "SNOW"]
+	var biome: int = terrain.biome_at(chunk_centre.x, chunk_centre.z)
+	return names[biome] if biome >= 0 and biome < names.size() else str(biome)
 
 
 func _make_chunk_parent(origin: Vector3) -> MeshInstance3D:
