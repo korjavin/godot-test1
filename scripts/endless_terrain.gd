@@ -203,6 +203,26 @@ const CITY_LAMP_AMBER := Color(0.96, 0.82, 0.36)  # bright ALBEDO, never emissiv
 const CITY_LAMP_RED := Color(0.86, 0.24, 0.20)
 const CITY_LAMP_GREEN := Color(0.32, 0.76, 0.36)
 
+## --- SNOW palette. FOUR new colours for a whole territory — the leanest of the
+## six, and deliberately so: a tundra is a place with almost nothing in it, so the
+## one thing it must not do is arrive with a paint box. Ice gets a ramp (it is the
+## territory's stone), snow gets one flat near-white, and dead timber gets one
+## grey-brown. Everything BONE reuses PROP_BONE, which the desert's bone pile
+## already defines — the desert band (n < 0.34) and the snow band (n >= 0.83) can
+## never touch, and a mammoth's ribs and a camel's ribs are honestly the same
+## colour, so a fifth constant would buy nothing but one more near-white for a
+## MultiMesh of boxes to fail to be distinct from.
+##
+## SNOW_ICE_A IS THE ONLY ONE WITH A CONSTRAINT ON IT: prop_selfcheck requires each
+## territory's structure `stone_a` to lie off every other territory's ramp, and the
+## near-miss it is dodging here is CITY_PLASTER_A — a bright off-white that a
+## desaturated pale ice would sit straight on top of. The blue cast (b 0.96 against
+## a red 0.80) is what separates them, not the brightness.
+const SNOW_ICE_A := Color(0.80, 0.90, 0.96)     # sunlit glacier ice …
+const SNOW_ICE_B := Color(0.50, 0.66, 0.80)     # … to its blue shadowed core
+const SNOW_PACK := Color(0.95, 0.96, 0.98)      # wind-packed drift snow
+const SNOW_DEADWOOD := Color(0.47, 0.44, 0.42)  # frost-bleached dead timber
+
 # ----------------------------------------------------------------------------
 # THEMED FEATURE STRUCTURES — the same re-skin, one scale up from the props
 # ----------------------------------------------------------------------------
@@ -283,6 +303,7 @@ const STRUCTURE_MIX: Dictionary = {
 	Biome.FOREST: [0.32, 0.60, 0.86, 1.00],   # log bridges are the forest signature
 	Biome.MOUNTAIN: [0.42, 0.74, 1.00, 1.00], # fort walls and watchtower bases only
 	Biome.CITY: [0.26, 0.60, 0.80, 1.00],     # the ALLEY is the city's signature
+	Biome.SNOW: [0.40, 0.68, 0.84, 1.00],     # wind-break walls carry the tundra
 }
 
 ## Per-territory dressing. Every colour is one the phase-1 prop palette already
@@ -348,6 +369,21 @@ const STRUCTURE_THEMES: Dictionary = {
 		"gap_chance": 0.10, "double_chance": 0.35,
 		"lane_spaced": false, "lintel_chance": 0.0,
 		"gate_style": STRUCT_GATE_LINTEL,
+	},
+	# SNOW — ice cut into blocks and left to weather. The wall is a wind-break with
+	# a snow cornice on every doubled hump (`cap` SNOW_PACK, which is also the free
+	# visual rhyme with the massif snow caps one band down); the lane is an avenue
+	# of standing ice pillars (lane_spaced, no lintel — ice does not span); the gate
+	# is a broken arch, because the intact version reads as built rather than
+	# frozen; and the mound is a drift barrow. Trim is dead timber, the only warm
+	# thing in the territory and therefore the only thing that reads at all against
+	# the white.
+	Biome.SNOW: {
+		"stone_a": SNOW_ICE_A, "stone_b": SNOW_ICE_B, "trim": SNOW_DEADWOOD,
+		"cap": SNOW_PACK,
+		"gap_chance": 0.22, "double_chance": 0.25,
+		"lane_spaced": true, "lintel_chance": 0.0,
+		"gate_style": STRUCT_GATE_ARCH,
 	},
 }
 
@@ -3416,6 +3452,14 @@ func _build_prop(local: Vector3, size: float, prop_seed: int, chunk_center: Vect
 					return _prop_garden_wall(local, size, rng, block_batch, block_body)
 				_:
 					return _prop_paving_stack(local, size, rng, block_batch, block_body)
+		Biome.SNOW:
+			match rng.randi_range(0, 2):
+				0:
+					return _prop_ice_rock(local, size, rng, block_batch, block_body)
+				1:
+					return _prop_snow_drift(local, size, rng, block_batch, block_body)
+				_:
+					return _prop_frozen_stump(local, size, rng, block_batch, block_body)
 		_:  # PLAINS — also the fallback, so a future biome band still gets props.
 			match rng.randi_range(0, 2):
 				0:
@@ -3952,6 +3996,128 @@ func _prop_paving_stack(local: Vector3, size: float, rng: RandomNumberGenerator,
 		)
 
 	return { "radius": r, "top": top, "climbable": true }
+
+# ----- SNOW -----------------------------------------------------------------
+#
+# The tundra's small clutter, at the same scale the bare cubes were. All three are
+# CLIMBABLE, and in this one territory that is a design statement rather than an
+# incidental: snow is the most hostile band in the game (croc density is the
+# ordinary distance-scaled figure — only the city thins it), so the ice you can
+# stand on top of is the whole of the rest-from-crocodiles role out here. Every
+# perch is therefore an untilted, colliding, centred box whose top face IS the
+# returned `top`; the shards, scour lumps and broken branches carry the tilt and
+# sit beside the prop, never on it.
+
+func _prop_ice_rock(local: Vector3, size: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	SNOW — a flat-topped block of glacier ice with two or three shards split off it
+	and leaning against its flanks. The block is the perch. 3-4 boxes, 1 collides.
+
+	OPAQUE, never transparent: the blue-white ramp is what has to read as ice, and
+	an alpha-blended box would cost fill rate on a mobile GPU AND drop out of the
+	chunk's one MultiMesh (which has a single opaque material) for the privilege.
+	"""
+	var r := size * PROP_RADIUS_FACTOR
+	var yaw := rng.randf_range(0.0, TAU)
+	var w := size * 0.86
+	var h := minf(size * rng.randf_range(0.60, 0.95), PROP_MAX_STEP)
+
+	create_box(
+		local + Vector3(0.0, h * 0.5, 0.0), Vector3(w, h, w * 0.90), yaw,
+		rng, block_batch, block_body, 0.0, SNOW_ICE_A.lerp(SNOW_ICE_B, rng.randf() * 0.7)
+	)
+
+	# The split shards. Half a shard's 3D diagonal is
+	# 0.5 * |(0.16, 0.55, 0.20)| = 0.303 of size, so a 0.38 ring reaches 0.683 —
+	# inside the declared 0.71, whatever yaw and tilt it ends up carrying.
+	for _i in rng.randi_range(2, 3):
+		var a := rng.randf_range(0.0, TAU)
+		create_box(
+			local + Vector3(cos(a) * size * 0.38, size * 0.24, sin(a) * size * 0.38),
+			Vector3(size * 0.16, size * 0.55, size * 0.20), rng.randf_range(0.0, TAU),
+			rng, block_batch, block_body, rng.randf_range(-0.55, 0.55),
+			SNOW_ICE_A.lerp(SNOW_ICE_B, rng.randf()), false
+		)
+
+	return { "radius": r, "top": h, "climbable": true }
+
+func _prop_snow_drift(local: Vector3, size: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	SNOW — a wind-packed drift: two wide shallow tiers with a couple of scour lumps
+	tumbled off the lee side. The lowest, widest prop in the whole set — a drift is
+	a shape the wind made, so it spreads rather than stacks. 4-5 boxes, 2 collide.
+	"""
+	var r := size * PROP_RADIUS_FACTOR
+	var yaw := rng.randf_range(0.0, TAU)
+	# Half-diagonal of the base tier is 0.5 * |(0.95, 0.85)| = 0.637 of size, so
+	# even at full yaw the widest tier stays inside the declared 0.71.
+	var w := size * 0.95
+	var top := 0.0
+
+	for _i in 2:
+		var th := minf(size * rng.randf_range(0.20, 0.32), PROP_MAX_STEP)
+		create_box(
+			local + Vector3(0.0, top + th * 0.5, 0.0), Vector3(w, th, w * 0.89),
+			yaw + rng.randf_range(-0.18, 0.18), rng, block_batch, block_body, 0.0,
+			SNOW_PACK.lerp(SNOW_ICE_A, rng.randf() * 0.5)
+		)
+		top += th
+		w *= 0.80
+
+	# Scour lumps. Half a lump's 3D diagonal at its widest is
+	# 0.5 * 0.22 * |(1, 0.7, 1.3)| = 0.196 of size; a 0.42 ring reaches 0.616.
+	for _i in rng.randi_range(1, 2):
+		var cs := size * rng.randf_range(0.14, 0.22)
+		var a := rng.randf_range(0.0, TAU)
+		create_box(
+			local + Vector3(cos(a) * size * 0.42, cs * 0.42, sin(a) * size * 0.42),
+			Vector3(cs, cs * 0.7, cs * 1.3), rng.randf_range(0.0, TAU),
+			rng, block_batch, block_body, rng.randf_range(-0.35, 0.35),
+			SNOW_PACK.lerp(SNOW_ICE_A, rng.randf() * 0.5), false
+		)
+
+	return { "radius": r, "top": top, "climbable": true }
+
+func _prop_frozen_stump(local: Vector3, size: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	SNOW — the frost-split stump of a dead tree, with two or three broken branch
+	stubs still jutting out of it and a cap of drifted snow on the break.
+
+	The stump is the perch, so the snow cap is a THIN FILM over it (collide = false,
+	the STRUCTURE_THEMES `cap` arrangement) rather than another tier: the surface
+	the player stands on is the stump's own top face, which is the height returned.
+	4-6 boxes, 1 collides.
+	"""
+	var r := size * PROP_RADIUS_FACTOR
+	var yaw := rng.randf_range(0.0, TAU)
+	var w := size * 0.62
+	# Capped at the bare cube's proven 2.5 m rather than at PROP_MAX_STEP (2.6), the
+	# same call _prop_ruin_fragment makes and for the same reason: a perch that
+	# needed the very last centimetre of the jump arc is a rest spot only on paper.
+	var h := minf(size * rng.randf_range(0.70, 1.05), 2.5)
+
+	create_box(
+		local + Vector3(0.0, h * 0.5, 0.0), Vector3(w, h, w * 0.94), yaw,
+		rng, block_batch, block_body, 0.0, SNOW_DEADWOOD
+	)
+
+	# Snow on the break: a film, not a step. 6 cm of it at size 1.
+	create_box(
+		local + Vector3(0.0, h + size * 0.03, 0.0), Vector3(w * 1.05, size * 0.06, w * 0.99),
+		yaw, rng, block_batch, block_body, 0.0, SNOW_PACK, false
+	)
+
+	# Broken branch stubs. Half a stub's 3D diagonal is
+	# 0.5 * |(0.10, 0.42, 0.10)| = 0.222 of size; a 0.24 ring reaches 0.462.
+	for _i in rng.randi_range(2, 3):
+		var a := rng.randf_range(0.0, TAU)
+		create_box(
+			local + Vector3(cos(a) * size * 0.24, h * rng.randf_range(0.45, 0.85), sin(a) * size * 0.24),
+			Vector3(size * 0.10, size * 0.42, size * 0.10), a,
+			rng, block_batch, block_body, rng.randf_range(0.7, 1.2), SNOW_DEADWOOD, false
+		)
+
+	return { "radius": r, "top": h, "climbable": true }
 
 func create_block(center_pos: Vector3, size: float, yaw: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> void:
 	"""

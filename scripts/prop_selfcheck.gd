@@ -86,6 +86,9 @@ const BUILDERS: Array = [
 	["CITY", "_prop_crate_stack"],
 	["CITY", "_prop_garden_wall"],
 	["CITY", "_prop_paving_stack"],
+	["SNOW", "_prop_ice_rock"],
+	["SNOW", "_prop_snow_drift"],
+	["SNOW", "_prop_frozen_stump"],
 ]
 
 ## Seeds per builder per size. Every variant is random-driven (tier heights,
@@ -131,7 +134,7 @@ const ROLES: Array = [
 
 ## The territories, as [label, Biome enum value]. Read off the terrain script's
 ## own enum rather than re-typed, so a renamed band fails loudly here.
-const TERRITORIES: Array = ["PLAINS", "DESERT", "FOREST", "MOUNTAIN", "CITY"]
+const TERRITORIES: Array = ["PLAINS", "DESERT", "FOREST", "MOUNTAIN", "CITY", "SNOW"]
 
 ## Structure trials per role per territory. Structures draw far more than a prop
 ## does (length, doubling, gaps, lintels), so the sweep needs breadth; 40 x 4 x 4
