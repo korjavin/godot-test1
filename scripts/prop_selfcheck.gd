@@ -168,6 +168,7 @@ func _run() -> void:
 		_check_structures(terrain_script, consts)
 		_check_biome_bands(terrain_script, consts)
 		_check_city_content(terrain_script, consts)
+		_check_snow_content(terrain_script, consts)
 
 	if _failures.is_empty():
 		print("props: %d builders x %d seeds x %d sizes measured; radius bound, climb ladder, box budget and chunk purity OK"
@@ -175,6 +176,7 @@ func _run() -> void:
 		print("structures: %d roles x %d territories x %d seeds measured; palette, patrol platforms and pyramid retirement OK"
 				% [ROLES.size(), TERRITORIES.size(), STRUCTURE_SEEDS])
 		print("bands:      threshold chain, river-in-plains, interior band widths and the shader parity uniforms OK")
+		print("snow:       mammoth radius bound, 2-collider budget, non-climbable footprints and the chunk seam OK")
 		print("SELFCHECK OK")
 		quit(0)
 		return
@@ -932,6 +934,153 @@ func _check_city_content(terrain_script: GDScript, consts: Dictionary) -> void:
 
 	print("  city       %d chunks, %d boxes (%d collide, %d buildings), %d roofs, tallest %.2f m, reach %.2f / %.1f m"
 			% [city_chunks.size(), boxes, solids, footprints, climbable, worst_top, worst_reach, half_chunk])
+	terrain.free()
+
+
+# ============================================================================
+# CHECK 8 — the SNOW territory's own contracts, measured on real geometry
+# ============================================================================
+
+## Seeds the mammoth builder is driven over on its own. Its shape is random in
+## five places (yaw, spine length, rib count, per-rib height, bone tint), and the
+## radius bound is the kind of thing one lucky seed satisfies.
+const MAMMOTH_SEEDS: int = 40
+
+
+func _check_snow_content(terrain_script: GDScript, consts: Dictionary) -> void:
+	"""
+	Build real snow chunks and drive the mammoth builder on its own, measuring the
+	four things this territory promises that nothing else in the project asserts.
+
+	  1. THE MAMMOTH'S DECLARED RADIUS IS A TRUE BOUND ON ITS BONES. MAMMOTH_RADIUS
+	     is what the crocodile spawner keeps its NPCs out of and what the massif
+	     avoid-list reads, so a tusk poking outside it is a crocodile standing
+	     inside a skull with no error anywhere. This is check 1's rule applied to
+	     the one builder that is too big to be a scattered prop — and it is the
+	     check the tusk curve most deserves, because that curve is walked segment
+	     by segment through a quarter-turned yaw and a sign error anywhere in it
+	     sends the tusks out the back of the animal, still looking plausible.
+	  2. EXACTLY TWO COLLIDERS PER SKELETON. A skeleton is 16-18 boxes of which the
+	     skull and the spine collide; the ribs and tusks are silhouette. As an
+	     EXACT equality, not a bound — the failure being caught is a builder that
+	     quietly drops `false` from its create_box calls, which any "at most N"
+	     bound still passes while turning one skeleton into 18 collision shapes.
+	  3. NOTHING SNOW BUILDS IS CLIMBABLE, with "it appended at least one
+	     footprint" as the negative control. A climbable mammoth would let
+	     _settle_coin_y perch a road coin on the 5 m footprint circle's `top` —
+	     inside a ribcage, over open ground, unreachable.
+	  4. NOTHING STRADDLES THE CHUNK SEAM. A chunk's mesh and collision belong to
+	     one chunk, so an overhang vanishes the moment that chunk unloads while its
+	     neighbour stays loaded, and a 5 m skeleton on a 25 m half-chunk has real
+	     room to do it.
+	"""
+	var biome_enum: Dictionary = consts["Biome"]
+	var snow_value: int = int(biome_enum["SNOW"])
+	var mammoth_radius: float = float(consts["MAMMOTH_RADIUS"])
+	var edge_margin: float = float(consts["MAMMOTH_EDGE_MARGIN"])
+
+	# The seam bound the placement rests on, checked as arithmetic rather than
+	# hoped for: a margin under the radius puts bones over the edge by construction.
+	if edge_margin <= mammoth_radius:
+		_fail("MAMMOTH_EDGE_MARGIN (%.2f) is not above MAMMOTH_RADIUS (%.2f) — a skeleton can straddle a chunk seam"
+				% [edge_margin, mammoth_radius])
+
+	var terrain := Node3D.new()
+	terrain.set_script(terrain_script)
+	terrain.set_run_seed(20260826)
+	var chunk_size: float = float(terrain.get("chunk_size"))
+	var half_chunk := chunk_size * 0.5
+
+	# ---- 1 + 2. the mammoth builder, driven directly -------------------------
+	var worst_bone := 0.0
+	var boxes_min := 999
+	var boxes_max := 0
+	for s in MAMMOTH_SEEDS:
+		var rng := RandomNumberGenerator.new()
+		rng.seed = hash(Vector3i(s, 7717, 31))
+		var batch: Array = []
+		var body := StaticBody3D.new()
+		var top: float = terrain.call("_snow_mammoth", Vector3.ZERO, rng, batch, body)
+		var solids := body.get_child_count()
+		body.free()
+
+		boxes_min = mini(boxes_min, batch.size())
+		boxes_max = maxi(boxes_max, batch.size())
+		if solids != 2:
+			_fail("a mammoth skeleton emitted %d collision shapes — the budget is EXACTLY two (skull + spine); ribs and tusks are silhouette, not solids"
+					% solids)
+		if top <= 0.0:
+			_fail("a mammoth skeleton reported a spine height of %.3f m — its footprint would record a top at ground level" % top)
+		worst_bone = maxf(worst_bone, _measured_reach(batch))
+
+	if boxes_max == 0:
+		_fail("the mammoth builder emitted no geometry at all — nothing was measured")
+	elif worst_bone > mammoth_radius + EPSILON:
+		_fail("a mammoth reaches %.3f m from its centre, past the declared MAMMOTH_RADIUS %.2f — crocodiles would spawn inside it and road coins would be settled against the wrong circle"
+				% [worst_bone, mammoth_radius])
+
+	# ---- 3 + 4. whole snow chunks -------------------------------------------
+	# Real chunks in the real field, for _check_city_content's reason: driving the
+	# builder at made-up coordinates exercises the edge-feathering rejection
+	# instead of the territory.
+	var snow_chunks: Array[Vector2i] = []
+	for cx in range(-40, 41):
+		for cz in range(-40, 41):
+			if snow_chunks.size() >= 14:
+				break
+			var centre: Vector3 = terrain.chunk_to_world(Vector2i(cx, cz))
+			if terrain.biome_at(centre.x, centre.z) == snow_value:
+				snow_chunks.append(Vector2i(cx, cz))
+
+	if snow_chunks.size() < 6:
+		_fail("only %d snow chunks found in an 81x81 field — the snow band is far rarer than the measured 6%% share"
+				% snow_chunks.size())
+		terrain.free()
+		return
+
+	var boxes := 0
+	var solids_total := 0
+	var footprints := 0
+	var climbable := 0
+	var worst_reach := 0.0
+
+	for chunk: Vector2i in snow_chunks:
+		var centre: Vector3 = terrain.chunk_to_world(chunk)
+		var rng := RandomNumberGenerator.new()
+		rng.seed = hash(Vector3i(chunk.x, chunk.y, 4242))
+		var batch: Array = []
+		var body := StaticBody3D.new()
+		var obstacles: Array = []
+		terrain.call("_spawn_snow_content", centre, rng, obstacles, batch, body)
+
+		boxes += batch.size()
+		solids_total += body.get_child_count()
+		body.free()
+
+		worst_reach = maxf(worst_reach, _axis_reach(batch))
+		footprints += obstacles.size()
+		for ob_variant: Variant in obstacles:
+			var ob: Dictionary = ob_variant
+			if bool(ob["climbable"]):
+				climbable += 1
+
+	if boxes == 0:
+		_fail("the snow builder emitted no geometry at all across %d snow chunks" % snow_chunks.size())
+	if footprints == 0:
+		_fail("%d snow chunks produced NO footprint at all — nothing would keep a crocodile out of a dead tree or a skeleton"
+				% snow_chunks.size())
+	elif climbable > 0:
+		_fail("%d snow footprints record climbable = true — a dead tree's top is 4 m up in the branches and a skeleton's is inside its ribcage, so _settle_coin_y must SKIP a road coin there, not perch one"
+				% climbable)
+
+	if worst_reach > half_chunk + EPSILON:
+		_fail("snow geometry reaches %.2f m from the chunk centre, past the %.2f m seam — it would vanish with its own chunk"
+				% [worst_reach, half_chunk])
+
+	print("  snow       %d chunks, %d boxes (%d collide, %d footprints, 0 climbable), reach %.2f / %.1f m"
+			% [snow_chunks.size(), boxes, solids_total, footprints, worst_reach, half_chunk])
+	print("  mammoth    %d seeds, %d-%d boxes, 2 colliders each, worst bone %.3f / %.2f m declared"
+			% [MAMMOTH_SEEDS, boxes_min, boxes_max, worst_bone, mammoth_radius])
 	terrain.free()
 
 
