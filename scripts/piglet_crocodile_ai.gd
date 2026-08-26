@@ -12,7 +12,204 @@ extends CharacterBody3D
 ## - Fatal collision with player (resets player position)
 
 # ============================================================================
-# CONSTANTS
+# SPECIES TABLE
+# ============================================================================
+## Every trait that makes one predator FEEL different from another lives in
+## here: speeds, detection, wander rhythm, obstacle feelers, waddle and bite
+## geometry, river sink. One const dictionary of plain dictionaries — no class
+## hierarchy, no custom Resource. That is the same shape `progression.gd` uses
+## for `SKILL_TREES`, for the same reason: this is data you READ, not a type you
+## subclass, so a new predator is a new ENTRY here plus (at most) one new arm in
+## a `match`, never a new script and never a subclass of this one.
+##
+## What is deliberately NOT in here matters as much as what is. Anything that is
+## a GAME-WIDE contract rather than a species trait stays a top-level const
+## below — `MAX_CHASE_SPEED` (the speed-lattice ceiling), the distance gradient,
+## gravity, the visual cull, the multiplayer sync constants. A species may not
+## opt out of the lattice: walking is caught, running escapes, at every entry.
+##
+## Resolved ONCE per instance into `spec` (see `species` below), then read
+## straight off that dictionary in the per-frame paths. A dozen hash lookups per
+## crocodile per frame is nothing beside the two obstacle raycasts sitting in
+## the same tick, and it is what keeps the table a table instead of thirty
+## copied instance floats.
+const SPECIES: Dictionary = {
+	"crocodile": {
+		## Which arm of the behaviour dispatch in `_update_chase_state()` this
+		## species runs. "solo" is today's, and the only one implemented: wander
+		## alone, chase whatever you smell, flee a stink wave. Later species add
+		## their own strings here (pack, ambush, pounce, charge) together with
+		## the `match` arm that reads them — a string with no arm behaves as solo.
+		"behavior": "solo",
+
+		# ----- Speed and detection -----
+		## Movement speed in metres per second while wandering, and the chase
+		## speed used when pursuing the player. Chase is deliberately ABOVE the
+		## player's WALK_SPEED (5.0), so a merely-walking player WILL get caught —
+		## escaping a chase takes running, jumping (crocodiles lose the scent when
+		## you leave the ground), or a special ability. This is the game's core
+		## fail pressure, and every species entry has to honour it: the lattice is
+		## WALK_SPEED (5.0) < chase_speed <= MAX_CHASE_SPEED (8.5) < the slowest
+		## run (9.0).
+		"move_speed": 2.5,
+		"chase_speed": 5.5,
+
+		## Per-instance speed spread: each crocodile rolls ONE multiplier in
+		## [1-factor, 1+factor] and applies it to BOTH its wander and chase speed,
+		## so some crocodiles are clearly faster and some slower — yet a given
+		## crocodile's chase always still outpaces its own stroll (the two speeds
+		## never drift apart). ±50%.
+		"speed_random_factor": 0.5,
+
+		## Per-instance size spread: each crocodile rolls a uniform scale in
+		## [1-factor, 1+factor] applied to the whole body (visual model + physics
+		## capsule together), so the pack is a mix of smaller and larger
+		## crocodiles. ±25%.
+		"size_random_factor": 0.25,
+
+		## Detection radius — distance at which this predator can "smell" the
+		## player. INVARIANT for every species: must stay well below the LOD
+		## manager's SIM_RADIUS (45.0), because anything that can detect the
+		## player must always be awake.
+		"detection_radius": 15.0,
+
+		# ----- Organic wandering -----
+		## Time between direction changes (seconds) and the pause taken when one
+		## happens.
+		"direction_change_interval": 4.0,
+		"pause_duration": 0.5,
+
+		## How sharply the heading drifts while wandering (radians/sec of random
+		## steer). Small continuous nudges produce smooth, curved meandering
+		## instead of straight lines with hard turns.
+		"wander_turn_rate": 1.2,
+
+		## How smoothly the body turns to face its heading (higher = snappier)
+		"turn_smoothness": 5.0,
+
+		## Slowest wander speed as a fraction of the instance's base speed
+		"min_wander_speed_factor": 0.45,
+
+		## How quickly wander speed ebbs and flows (radians/sec)
+		"speed_variation_freq": 0.8,
+
+		## Chance (per direction-change interval) of pausing to "sniff" around
+		"sniff_pause_chance": 0.3,
+
+		# ----- Obstacle avoidance -----
+		## How far ahead (metres) the crocodile senses blocks. This is
+		## deliberately longer than the visual model so the crocodile turns away
+		## *before* its snout can reach a block — the snout poking into blocks is
+		## exactly what this fixes (the physics capsule is much shorter than the
+		## model, so move_and_slide alone stops the body but lets the longer nose
+		## overlap the block).
+		"avoid_look_ahead": 3.0,
+
+		## Angle of the left/right "feeler" probes used to find a clear way
+		## around (radians).
+		"avoid_feeler_angle": PI / 5.0,  # 36°
+
+		## Height above the body origin to cast the feelers from, so they sample
+		## the block's side walls rather than the flat ground.
+		"avoid_feeler_height": 0.3,
+
+		## Speed multiplier while steering around a block, so the crocodile eases
+		## off and curves around instead of ramming the block nose-first.
+		"avoid_speed_factor": 0.5,
+
+		# ----- Procedural body animation -----
+		## Yaw applied to the model so its snout points along the travel
+		## direction. The mesh is authored facing +X but the body travels +Z, so
+		## we rotate -90°. If a species' model ends up facing the wrong way
+		## in-editor, flip this sign in ITS entry.
+		"model_facing_offset": -PI / 2.0,
+
+		## Stride frequency at full speed (radians/sec) — drives the waddle/bob
+		"stride_frequency": 9.0,
+
+		## Side-to-side waddle roll amplitude (radians) — uses PI math so it
+		## stays a constant expression (deg_to_rad() can't be used in a const)
+		"waddle_roll": 9.0 * PI / 180.0,
+
+		## Vertical bob amplitude (metres)
+		"bob_amount": 0.025,
+
+		## Slow body "snaking" yaw amplitude (radians)
+		"sway_yaw": 5.0 * PI / 180.0,
+
+		## Forward lean while hunting the player (radians)
+		"chase_pitch": 10.0 * PI / 180.0,
+
+		## Idle breathing speed/amount when standing still
+		"breathe_speed": 2.0,
+		"breathe_amount": 0.012,
+
+		# ----- River submersion (VISUAL ONLY) -----
+		## How far the MODEL drops, in model-local metres, while the crocodile is
+		## standing in a river. The player's own wading sink (WADE_SINK_DEPTH
+		## 0.35) is the pattern; the DEPTH is not, and could not be — measured off
+		## the GLB, this crocodile is 1.40 m long and only 0.276 m TALL (local y
+		## −0.036 .. +0.240), so the player's 0.35 would bury it, mud and all,
+		## with nothing to see. Which is exactly why the depth is a SPECIES trait
+		## and not a global: it is measured off one particular model.
+		##
+		## 0.18 leaves the top 0.060 m proud — a quarter of the 0.240 m that
+		## stands above the ground plane — and shrinks the visible silhouette from
+		## the full 1.40 m down to the 0.75 m of it that reaches above y = 0.18.
+		## Half the crocodile's outline, at a tenth of its height: hard to pick
+		## out of a river, exactly the point. There is no water MESH (a river is a
+		## tint on the flat y = 0 ground plane), so what hides the rest is the
+		## opaque ground itself.
+		##
+		## HONEST NOTE ON "just the snout": this mesh has no raised eye/nostril
+		## bump. Its back is a flat plateau at y ≈ 0.239 running from the
+		## shoulders (x = −0.2) to the skull (x = +0.5), and the snout TIP is the
+		## LOW point of the head at y = 0.120. So no depth exists that shows the
+		## nose while hiding the back — sink past 0.12 and the nose tip goes under
+		## before the spine does. What 0.18 gives is the "log in the water" read:
+		## a thin dark ridge of back-and-skull. Wanting a literal periscope snout
+		## is a MODEL change (raise the nostrils above the back), not a constant
+		## change here.
+		##
+		## VISUAL ONLY, AND THAT IS A HARD CONSTRAINT — same rule as the player's
+		## sink: this never touches the CharacterBody3D, its CollisionShape3D, or
+		## global_position. Bite range, chase mechanics and the flat-world y = 0
+		## invariant are byte-identical wet or dry. A submerged crocodile is
+		## exactly as dangerous as a dry one; it is only harder to SEE, and the
+		## danger vignette + heartbeat still telegraph it the moment it starts
+		## chasing (crocodile_lod_manager publishes that from the same scan, and
+		## it reads `is_chasing`, which this does not touch).
+		##
+		## BOSSES NEED NO SPECIAL CASE. _ready() sets
+		## `scale = Vector3.ONE * boss_scale` on the BODY, and the model is its
+		## child, so this local offset is scaled by the engine: a 6x boss sinks
+		## 6 × 0.18 = 1.08 m in world space and shows 6 × 0.060 = 0.36 m of ridge.
+		## The submerged FRACTION is identical at every scale, which is what "a
+		## proportional snout" actually means. Same free ride for the ±25%
+		## size_random_factor roll on regular crocodiles.
+		"river_sink_depth": 0.18,
+
+		## Ease rate (m/s), sized so the full sink takes ~0.2 s — the player's
+		## ease time, so a crocodile and the hero wading beside it settle at the
+		## same visual pace. Written as depth/time rather than a bare number so
+		## the derivation survives a retune of the depth above it.
+		"river_sink_ease_speed": 0.18 / 0.2,
+
+		# ----- Bite -----
+		## How long the chomp animation plays when the crocodile catches the
+		## player (seconds).
+		"bite_duration": 0.5,
+
+		## How far the head snaps down/up during the chomp (radians).
+		"bite_pitch": 26.0 * PI / 180.0,
+
+		## How far the body lunges forward during the bite (metres).
+		"bite_lunge": 0.35,
+	},
+}
+
+# ============================================================================
+# CONSTANTS (game-wide — NOT per species)
 # ============================================================================
 
 ## Movement speed in meters per second (wandering)
@@ -21,45 +218,29 @@ var move_speed_instance: float = 0.0
 ## Chase speed when pursuing player (faster)
 var chase_speed_instance: float = 0.0
 
-## Base speeds for randomization. Chase speed is deliberately ABOVE the player's
-## WALK_SPEED (5.0), so a merely-walking player WILL get caught — escaping a chase
-## takes running, jumping (crocodiles lose the scent when you leave the ground), or
-## a special ability. This is the game's core fail pressure.
-const BASE_MOVE_SPEED: float = 2.5
-const BASE_CHASE_SPEED: float = 5.5
-
 ## Difficulty gradient: crocodiles chase faster the farther from origin they spawn.
 ## The multiplier is 1.0 + clamp(|x| / DENOM, 0, MAX) — +60% at 3 km and capped there,
 ## so late-run walking is lethal but running/abilities still escape.
 const DISTANCE_SPEED_SCALE_DENOM: float = 3000.0
 const DISTANCE_SPEED_SCALE_MAX: float = 0.6
 
-## Hard ceiling on the final chase speed. The per-croc ±50% roll and the distance
-## factor MULTIPLY (worst case 5.5 × 1.5 × 1.6 = 13.2), which would outrun even a
-## RUNNING player (RUN_SPEED 10.0 — 9.0 for the slowest character) and silently
-## break the "running still escapes" promise above. Capping just under the slowest
-## run speed keeps that escape hatch true; the gradient still bites walkers hard.
+## Hard ceiling on the final chase speed, applied to EVERY species. The
+## per-instance ±50% roll and the distance factor MULTIPLY (worst case
+## 5.5 × 1.5 × 1.6 = 13.2), which would outrun even a RUNNING player (RUN_SPEED
+## 10.0 — 9.0 for the slowest character) and silently break the "running still
+## escapes" promise above. Capping just under the slowest run speed keeps that
+## escape hatch true; the gradient still bites walkers hard. This is the top of
+## the speed lattice and lives OUTSIDE the species table on purpose — no entry in
+## SPECIES may raise it.
 const MAX_CHASE_SPEED: float = 8.5
-
-## Per-crocodile speed spread: each crocodile rolls ONE multiplier in
-## [1-FACTOR, 1+FACTOR] and applies it to BOTH its wander and chase speed, so some
-## crocodiles are clearly faster and some slower — yet a given crocodile's chase
-## always still outpaces its own stroll (the two speeds never drift apart). ±50%.
-const SPEED_RANDOM_FACTOR: float = 0.5
-
-## Per-crocodile size spread: each crocodile rolls a uniform scale in
-## [1-FACTOR, 1+FACTOR] applied to the whole body (visual model + physics capsule
-## together), so the pack is a mix of smaller and larger crocodiles. ±25%.
-const SIZE_RANDOM_FACTOR: float = 0.25
-
-## Detection radius - distance at which crocodile can "smell" the player
-const DETECTION_RADIUS: float = 15.0
 
 # ----- Boss crocodiles -----
 ## Bosses are the rare, huge road-guardian crocodiles the terrain places
 ## deterministically along the coin road (see endless_terrain.gd). They reuse
 ## this exact AI wholesale — a boss differs only in a handful of flags set via
-## setup_as_boss() below, never in behaviour code.
+## setup_as_boss() below, never in behaviour code. A boss is a MODIFIER on a
+## species, not a species of its own: it overrides the two numbers below and
+## inherits everything else from its `spec`.
 ##
 ## Boss chase speed: above WALK_SPEED (5.0) so a walking player is run down,
 ## but the MAX_CHASE_SPEED cap (8.5) keeps it under the slowest RUN (9.0), so
@@ -83,130 +264,8 @@ const VISUAL_CULL_DISTANCE: float = 60.0
 ## Fade margin for the cull boundary (Godot hysteresis band, avoids flicker).
 const VISUAL_CULL_MARGIN: float = 8.0
 
-## Time between direction changes (in seconds)
-const DIRECTION_CHANGE_INTERVAL: float = 4.0
-
-## Pause duration when changing direction (in seconds)
-const PAUSE_DURATION: float = 0.5
-
 ## Gravity acceleration (matches project default)
 const GRAVITY: float = 9.8
-
-# ----- Organic wandering -----
-## How sharply the heading drifts while wandering (radians/sec of random steer).
-## Small continuous nudges produce smooth, curved meandering instead of
-## straight lines with hard turns.
-const WANDER_TURN_RATE: float = 1.2
-
-## How smoothly the body turns to face its heading (higher = snappier)
-const TURN_SMOOTHNESS: float = 5.0
-
-## Slowest wander speed as a fraction of the instance's base speed
-const MIN_WANDER_SPEED_FACTOR: float = 0.45
-
-## How quickly wander speed ebbs and flows (radians/sec)
-const SPEED_VARIATION_FREQ: float = 0.8
-
-## Chance (per direction-change interval) of pausing to "sniff" around
-const SNIFF_PAUSE_CHANCE: float = 0.3
-
-# ----- Obstacle avoidance -----
-## How far ahead (metres) the crocodile senses blocks. This is deliberately
-## longer than the visual model so the crocodile turns away *before* its snout
-## can reach a block — the snout poking into blocks is exactly what this fixes
-## (the physics capsule is much shorter than the model, so move_and_slide alone
-## stops the body but lets the longer nose overlap the block).
-const AVOID_LOOK_AHEAD: float = 3.0
-
-## Angle of the left/right "feeler" probes used to find a clear way around (rad).
-const AVOID_FEELER_ANGLE: float = PI / 5.0  # 36°
-
-## Height above the body origin to cast the feelers from, so they sample the
-## block's side walls rather than the flat ground.
-const AVOID_FEELER_HEIGHT: float = 0.3
-
-## Speed multiplier while steering around a block, so the crocodile eases off and
-## curves around instead of ramming the block nose-first.
-const AVOID_SPEED_FACTOR: float = 0.5
-
-# ----- Procedural body animation -----
-## Yaw applied to the model so its snout points along the travel direction.
-## The mesh is authored facing +X but the body travels +Z, so we rotate -90°.
-## If the snout ends up pointing the wrong way in-editor, flip this sign.
-const MODEL_FACING_OFFSET: float = -PI / 2.0
-
-## Stride frequency at full speed (radians/sec) — drives the waddle/bob
-const STRIDE_FREQUENCY: float = 9.0
-
-## Side-to-side waddle roll amplitude (radians) — uses PI math so it stays a
-## constant expression (deg_to_rad() can't be used in a const)
-const WADDLE_ROLL: float = 9.0 * PI / 180.0
-
-## Vertical bob amplitude (metres)
-const BOB_AMOUNT: float = 0.025
-
-## Slow body "snaking" yaw amplitude (radians)
-const SWAY_YAW: float = 5.0 * PI / 180.0
-
-## Forward lean while hunting the player (radians)
-const CHASE_PITCH: float = 10.0 * PI / 180.0
-
-## Idle breathing speed/amount when standing still
-const BREATHE_SPEED: float = 2.0
-const BREATHE_AMOUNT: float = 0.012
-
-# ----- River submersion (VISUAL ONLY) -----
-## How far the MODEL drops, in model-local metres, while the crocodile is
-## standing in a river. The player's own wading sink (WADE_SINK_DEPTH 0.35) is
-## the pattern; the DEPTH is not, and could not be — measured off the GLB, this
-## crocodile is 1.40 m long and only 0.276 m TALL (local y −0.036 .. +0.240), so
-## the player's 0.35 would bury it, mud and all, with nothing to see.
-##
-## 0.18 leaves the top 0.060 m proud — a quarter of the 0.240 m that stands above
-## the ground plane — and shrinks the visible silhouette from the full 1.40 m
-## down to the 0.75 m of it that reaches above y = 0.18. Half the crocodile's
-## outline, at a tenth of its height: hard to pick out of a river, exactly the
-## point. There is no water MESH (a river is a tint on the flat y = 0 ground
-## plane), so what hides the rest is the opaque ground itself.
-##
-## HONEST NOTE ON "just the snout": this mesh has no raised eye/nostril bump. Its
-## back is a flat plateau at y ≈ 0.239 running from the shoulders (x = −0.2) to
-## the skull (x = +0.5), and the snout TIP is the LOW point of the head at
-## y = 0.120. So no depth exists that shows the nose while hiding the back — sink
-## past 0.12 and the nose tip goes under before the spine does. What 0.18 gives
-## is the "log in the water" read: a thin dark ridge of back-and-skull. Wanting a
-## literal periscope snout is a MODEL change (raise the nostrils above the back),
-## not a constant change here.
-##
-## VISUAL ONLY, AND THAT IS A HARD CONSTRAINT — same rule as the player's sink:
-## this never touches the CharacterBody3D, its CollisionShape3D, or global_position.
-## Bite range, chase mechanics and the flat-world y = 0 invariant are byte-identical
-## wet or dry. A submerged crocodile is exactly as dangerous as a dry one; it is
-## only harder to SEE, and the danger vignette + heartbeat still telegraph it the
-## moment it starts chasing (crocodile_lod_manager publishes that from the same
-## scan, and it reads `is_chasing`, which this does not touch).
-##
-## BOSSES NEED NO SPECIAL CASE. _ready() sets `scale = Vector3.ONE * boss_scale`
-## on the BODY, and the model is its child, so this local offset is scaled by the
-## engine: a 6x boss sinks 6 × 0.18 = 1.08 m in world space and shows 6 × 0.060 =
-## 0.36 m of ridge. The submerged FRACTION is identical at every scale, which is
-## what "a proportional snout" actually means. Same free ride for the ±25%
-## SIZE_RANDOM_FACTOR roll on regular crocodiles.
-const RIVER_SINK_DEPTH: float = 0.18
-
-## Ease rate (m/s), sized so the full sink takes ~0.2 s — the player's ease time,
-## so a crocodile and the hero wading beside it settle at the same visual pace.
-const RIVER_SINK_EASE_SPEED: float = RIVER_SINK_DEPTH / 0.2
-
-# ----- Bite -----
-## How long the chomp animation plays when the crocodile catches the player (s).
-const BITE_DURATION: float = 0.5
-
-## How far the head snaps down/up during the chomp (radians).
-const BITE_PITCH: float = 26.0 * PI / 180.0
-
-## How far the body lunges forward during the bite (metres).
-const BITE_LUNGE: float = 0.35
 
 ## ---------------------------------------------------------------------------
 ## MULTIPLAYER SYNC (phase 5) — see set_remote_state() for the whole scheme
@@ -250,6 +309,23 @@ const CRUSH_SHAKE_RADIUS: float = 6.0
 # ============================================================================
 # STATE VARIABLES
 # ============================================================================
+
+## Which entry of SPECIES this predator is. CALL-ORDER CONTRACT, exactly like
+## setup_as_boss() and setup_roll_seed(): a spawner assigns it on the fresh
+## instance BEFORE add_child(), because _ready() is where it is resolved into
+## `spec` and where the speed/size rolls that read `spec` happen. It is a plain
+## public field rather than a setup_*() call because there is a single value to
+## set and nothing to derive — _ready() does the validation and the fallback.
+## Left alone — piglet_crocodile.tscn run standalone, or any spawner that does
+## not know about the contract — it stays "crocodile" and the node behaves
+## exactly as it always did.
+var species: String = "crocodile"
+
+## This instance's row of the SPECIES table, resolved ONCE in _ready() and then
+## read directly by the per-frame paths (_wander, _avoid_obstacles,
+## _animate_body, _tick_river_sink, _animate_bite). Initialised here as well so
+## the dictionary is never empty for the window before _ready() runs.
+var spec: Dictionary = SPECIES["crocodile"]
 
 ## Current movement direction (normalized Vector3)
 var movement_direction: Vector3 = Vector3.ZERO
@@ -304,8 +380,10 @@ var has_roll_seed: bool = false
 ## chaser's distance by ITS OWN radius: a boss acquires the player at 25 m, so a
 ## telegraph hardcoded to the regular 15 m would stay dark and silent for the
 ## first 10 m of the game's biggest threat closing on you). Resolved in _ready()
-## because `setup_as_boss()` is contracted to run before the node enters the tree.
-var detection_radius: float = DETECTION_RADIUS
+## because `setup_as_boss()` is contracted to run before the node enters the tree,
+## and so is `setup_species()` — the non-boss value is this instance's
+## `spec.detection_radius`.
+var detection_radius: float = SPECIES["crocodile"]["detection_radius"]
 
 ## Reference to the player node
 var player_node: Node3D = null
@@ -342,7 +420,7 @@ var model: Node3D = null
 var model_base_scale: Vector3 = Vector3.ONE
 ## The height the animation composes its bob/lunge ON TOP OF — i.e. the model's
 ## CURRENT rest height, which the river sink eases up and down (see
-## RIVER_SINK_DEPTH). _animate_body / _animate_bite only ever READ this; the sink
+## `spec.river_sink_depth`). _animate_body / _animate_bite only ever READ this; the sink
 ## is the sole writer after _ready(), which is what keeps the two from fighting.
 ## They own `model.position` outright, so the sink deliberately does not touch it.
 var model_base_y: float = 0.0
@@ -434,6 +512,16 @@ const CONFINE_MARGIN: float = 0.9
 
 func _ready() -> void:
 	"""Initialize the crocodile NPC."""
+	# Resolve this instance's row of the SPECIES table FIRST — the rolls, the
+	# detection radius and every per-frame path below read it. An unknown name
+	# (a typo, or a save/scene from a build that had a species this one doesn't)
+	# falls back to the crocodile row rather than crashing the spawner: a wrong
+	# predator is a bug, a missing one is a dead chunk.
+	if not SPECIES.has(species):
+		push_warning("piglet_crocodile_ai: unknown species '%s', using 'crocodile'" % species)
+		species = "crocodile"
+	spec = SPECIES[species]
+
 	# Seed the RNG. The terrain hands every crocodile it spawns a deterministic
 	# seed (setup_roll_seed, called before add_child), so the size/speed rolls
 	# below — and every other draw this instance ever takes — are a pure function
@@ -459,7 +547,7 @@ func _ready() -> void:
 		# terrain's deterministic schedule (boss_scale) and their speeds are fixed,
 		# so a boss regenerates byte-identically when its chunk is revisited.
 		detection_radius = BOSS_DETECTION_RADIUS
-		move_speed_instance = BASE_MOVE_SPEED
+		move_speed_instance = spec["move_speed"]
 		# The MAX_CHASE_SPEED cap keeps the running-escape hatch true at any distance.
 		chase_speed_instance = minf(BOSS_CHASE_SPEED * distance_factor, MAX_CHASE_SPEED)
 		scale = Vector3.ONE * boss_scale
@@ -467,18 +555,25 @@ func _ready() -> void:
 		# Set instance-specific speeds. One shared multiplier drives both speeds, so a
 		# "fast" crocodile is fast at everything (and its chase always still outpaces its
 		# own wander) instead of the two speeds drifting apart independently.
-		var speed_factor := rng.randf_range(1.0 - SPEED_RANDOM_FACTOR, 1.0 + SPEED_RANDOM_FACTOR)
-		move_speed_instance = BASE_MOVE_SPEED * speed_factor
+		var speed_factor := rng.randf_range(
+				1.0 - spec["speed_random_factor"], 1.0 + spec["speed_random_factor"]
+		)
+		detection_radius = spec["detection_radius"]
+		move_speed_instance = spec["move_speed"] * speed_factor
 		# The min() keeps a top-rolled far croc from outrunning a RUNNING player — see
 		# MAX_CHASE_SPEED above.
-		chase_speed_instance = minf(BASE_CHASE_SPEED * speed_factor * distance_factor, MAX_CHASE_SPEED)
+		chase_speed_instance = minf(
+				spec["chase_speed"] * speed_factor * distance_factor, MAX_CHASE_SPEED
+		)
 
 		# Give this crocodile a randomized overall size. We scale the whole body
 		# uniformly so the visual model and the physics capsule grow/shrink together;
 		# gravity then settles it onto the ground regardless of size. The model's OWN
 		# local scale stays 1, so model_base_scale cached below is unaffected and the
 		# procedural body animation composes correctly on top of this body scale.
-		var size_scale := rng.randf_range(1.0 - SIZE_RANDOM_FACTOR, 1.0 + SIZE_RANDOM_FACTOR)
+		var size_scale := rng.randf_range(
+				1.0 - spec["size_random_factor"], 1.0 + spec["size_random_factor"]
+		)
 		scale = Vector3.ONE * size_scale
 
 	# Set initial random direction
@@ -503,7 +598,7 @@ func _ready() -> void:
 		return
 
 	# Start with a random offset to avoid all crocodiles changing direction at once
-	time_since_direction_change = randf() * DIRECTION_CHANGE_INTERVAL
+	time_since_direction_change = randf() * spec["direction_change_interval"]
 
 	# Per-instance phase offsets so a pack of crocodiles doesn't move in lockstep
 	instance_phase = rng.randf_range(0.0, TAU)
@@ -653,13 +748,13 @@ func _physics_process(delta: float) -> void:
 		if movement_direction.length() > 0.1:
 			var target_rotation := atan2(movement_direction.x, movement_direction.z)
 			# Turn harder while avoiding so we actually clear the block in time.
-			var turn_rate := TURN_SMOOTHNESS * (2.0 if avoiding else 1.0)
+			var turn_rate: float = spec["turn_smoothness"] * (2.0 if avoiding else 1.0)
 			rotation.y = lerp_angle(rotation.y, target_rotation, delta * turn_rate)
 
 			# Flee and chase both move at the faster "chase" speed.
 			var current_speed := chase_speed_instance if (is_chasing or is_fleeing) else _wander_speed(delta)
 			if avoiding:
-				current_speed *= AVOID_SPEED_FACTOR
+				current_speed *= spec["avoid_speed_factor"]
 			velocity.x = sin(rotation.y) * current_speed
 			velocity.z = cos(rotation.y) * current_speed
 		else:
@@ -861,16 +956,16 @@ func _wander(delta: float) -> void:
 	so often we apply a bigger course correction and occasionally pause to sniff.
 	"""
 	# Continuous gentle steering — this is what curves the path.
-	wander_heading += rng.randf_range(-1.0, 1.0) * WANDER_TURN_RATE * delta
+	wander_heading += rng.randf_range(-1.0, 1.0) * spec["wander_turn_rate"] * delta
 
 	# Periodic bigger nudges / occasional pauses to look around.
 	time_since_direction_change += delta
-	if time_since_direction_change >= DIRECTION_CHANGE_INTERVAL:
+	if time_since_direction_change >= spec["direction_change_interval"]:
 		time_since_direction_change = 0.0
 		wander_heading += rng.randf_range(-PI / 2.0, PI / 2.0)
-		if rng.randf() < SNIFF_PAUSE_CHANCE:
+		if rng.randf() < spec["sniff_pause_chance"]:
 			is_paused = true
-			pause_time_remaining = PAUSE_DURATION
+			pause_time_remaining = spec["pause_duration"]
 
 	# Convert heading to a direction vector on the XZ plane.
 	movement_direction = Vector3(sin(wander_heading), 0.0, cos(wander_heading))
@@ -881,9 +976,9 @@ func _wander_speed(delta: float) -> float:
 	A gently varying wander speed so crocodiles ease between strolling and a
 	brisker walk instead of gliding at one constant velocity.
 	"""
-	speed_phase += delta * SPEED_VARIATION_FREQ
+	speed_phase += delta * spec["speed_variation_freq"]
 	var t := 0.5 * (sin(speed_phase + instance_phase) + 1.0)  # 0..1
-	return move_speed_instance * lerp(MIN_WANDER_SPEED_FACTOR, 1.0, t)
+	return move_speed_instance * lerpf(spec["min_wander_speed_factor"], 1.0, t)
 
 
 func _avoid_obstacles() -> bool:
@@ -915,8 +1010,8 @@ func _avoid_obstacles() -> bool:
 	# wider and needs MORE clearance. The height likewise has to rise, or a big boss
 	# samples the ground at its own feet instead of a block's side wall.
 	var probe_scale := maxf(scale.x, scale.z)
-	var origin := global_position + Vector3(0.0, AVOID_FEELER_HEIGHT * scale.y, 0.0)
-	var reach := AVOID_LOOK_AHEAD * probe_scale
+	var origin := global_position + Vector3(0.0, spec["avoid_feeler_height"] * scale.y, 0.0)
+	var reach: float = spec["avoid_look_ahead"] * probe_scale
 	var forward := movement_direction.normalized()
 
 	# Nothing straight ahead? Then there's nothing to steer around.
@@ -924,8 +1019,8 @@ func _avoid_obstacles() -> bool:
 		return false
 
 	# Probe both sides and pick a clear way around.
-	var left_dir := forward.rotated(Vector3.UP, AVOID_FEELER_ANGLE)
-	var right_dir := forward.rotated(Vector3.UP, -AVOID_FEELER_ANGLE)
+	var left_dir := forward.rotated(Vector3.UP, spec["avoid_feeler_angle"])
+	var right_dir := forward.rotated(Vector3.UP, -spec["avoid_feeler_angle"])
 	var left_blocked := _feeler_blocked(space, origin, left_dir, reach)
 	var right_blocked := _feeler_blocked(space, origin, right_dir, reach)
 
@@ -956,7 +1051,7 @@ func _feeler_blocked(space: PhysicsDirectSpaceState3D, origin: Vector3, dir: Vec
 	@param space: The physics space to query
 	@param origin: Ray start, already lifted to feeler height
 	@param dir: Direction to probe (need not be normalized)
-	@param reach: Ray length — AVOID_LOOK_AHEAD scaled by the body (see _avoid_obstacles)
+	@param reach: Ray length — `spec.avoid_look_ahead` scaled by the body (see _avoid_obstacles)
 	@return true if the ray hits something we should steer around
 	"""
 	# OUR OWN MASK, not `create()`'s default of all 32 layers. Fauna roots are
@@ -1390,7 +1485,7 @@ func _choose_new_direction() -> void:
 func _pause_and_change_direction() -> void:
 	"""Pause briefly, then choose a new direction."""
 	is_paused = true
-	pause_time_remaining = PAUSE_DURATION
+	pause_time_remaining = spec["pause_duration"]
 	_choose_new_direction()
 
 
@@ -1423,29 +1518,29 @@ func _animate_body(delta: float) -> void:
 
 	# How fast are we actually moving along the ground? (0 = standing still)
 	var horizontal_speed := Vector2(velocity.x, velocity.z).length()
-	var move_factor := clampf(horizontal_speed / BASE_MOVE_SPEED, 0.0, 1.6)
+	var move_factor := clampf(horizontal_speed / spec["move_speed"], 0.0, 1.6)
 
 	# Advance the stride phase faster the quicker we move.
-	stride_phase += delta * STRIDE_FREQUENCY * move_factor
+	stride_phase += delta * spec["stride_frequency"] * move_factor
 
 	# Waddle (roll about the forward axis) + vertical bob (twice the stride rate).
-	var roll := sin(stride_phase) * WADDLE_ROLL * move_factor
-	var bob := sin(stride_phase * 2.0) * BOB_AMOUNT * move_factor
+	var roll: float = sin(stride_phase) * spec["waddle_roll"] * move_factor
+	var bob: float = sin(stride_phase * 2.0) * spec["bob_amount"] * move_factor
 
 	# Slow body "snaking" — a lazy yaw sway, offset per-instance.
-	var yaw_sway := sin(stride_phase * 0.5 + instance_phase) * SWAY_YAW * move_factor
+	var yaw_sway: float = sin(stride_phase * 0.5 + instance_phase) * spec["sway_yaw"] * move_factor
 
 	# Lean forward while hunting; ease back to level otherwise.
-	var target_pitch := CHASE_PITCH if is_chasing else 0.0
+	var target_pitch: float = spec["chase_pitch"] if is_chasing else 0.0
 	current_pitch = lerp(current_pitch, target_pitch, delta * 6.0)
 
 	# When basically still, replace the bob with a subtle breathing motion.
 	if move_factor < 0.05:
-		bob = sin(animation_time * BREATHE_SPEED) * BREATHE_AMOUNT
+		bob = sin(animation_time * spec["breathe_speed"]) * spec["breathe_amount"]
 
 	# Compose the transform: first align the snout to the travel direction, then
 	# layer the oscillations on top (re-applying the model's rest scale).
-	var facing := Basis(Vector3.UP, MODEL_FACING_OFFSET)
+	var facing := Basis(Vector3.UP, spec["model_facing_offset"])
 	var oscillation := Basis.from_euler(Vector3(current_pitch, yaw_sway, roll))
 	model.transform.basis = (oscillation * facing).scaled(model_base_scale)
 	model.position.y = model_base_y + bob
@@ -1474,10 +1569,10 @@ func _tick_river_sink(delta: float) -> void:
 	"""
 	var target_y: float = model_rest_y
 	if terrain and is_on_floor() and terrain.is_river_at(global_position):
-		target_y = model_rest_y - RIVER_SINK_DEPTH
+		target_y = model_rest_y - spec["river_sink_depth"]
 	if is_equal_approx(model_base_y, target_y):
 		return
-	model_base_y = move_toward(model_base_y, target_y, RIVER_SINK_EASE_SPEED * delta)
+	model_base_y = move_toward(model_base_y, target_y, spec["river_sink_ease_speed"] * delta)
 
 
 func _animate_bite(delta: float) -> void:
@@ -1498,14 +1593,14 @@ func _animate_bite(delta: float) -> void:
 		return
 
 	# Progress through the bite: 0 at the start, 1 at the end.
-	var p := 1.0 - clampf(bite_timer / BITE_DURATION, 0.0, 1.0)
+	var p := 1.0 - clampf(bite_timer / spec["bite_duration"], 0.0, 1.0)
 	# Two fast chomps (sin over two cycles) and a single forward lunge (sin over
 	# half a cycle, so it pushes out then pulls back to zero).
 	var chomp := sin(p * TAU * 2.0)
-	var lunge := sin(p * PI) * BITE_LUNGE
+	var lunge: float = sin(p * PI) * spec["bite_lunge"]
 
-	var facing := Basis(Vector3.UP, MODEL_FACING_OFFSET)
-	var snap := Basis.from_euler(Vector3(chomp * BITE_PITCH, 0.0, 0.0))
+	var facing := Basis(Vector3.UP, spec["model_facing_offset"])
+	var snap := Basis.from_euler(Vector3(chomp * spec["bite_pitch"], 0.0, 0.0))
 	model.transform.basis = (snap * facing).scaled(model_base_scale)
 	# Lunge along the body's forward axis (+Z) and lift a touch on each snap.
 	model.position = Vector3(0.0, model_base_y + absf(chomp) * 0.04, lunge)
@@ -1544,7 +1639,7 @@ func _start_bite() -> void:
 	if is_biting:
 		return
 	is_biting = true
-	bite_timer = BITE_DURATION
+	bite_timer = spec["bite_duration"]
 
 
 func _on_player_collision(player: Node) -> void:
