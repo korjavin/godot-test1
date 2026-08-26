@@ -1053,8 +1053,14 @@ var is_chasing: bool = false
 ## THE AMBUSH ARM'S ONE OUTPUT (`_behave_ambush`): true while this predator is
 ## lying buried and waiting. Read by `_tick_river_sink`, which owns the model's
 ## rest height, and by nothing else — the burrow is VISUAL, so no other system
-## has any business knowing about it. Always false for every species whose row
-## has no `ambush_burrow_depth`.
+## has any business knowing about it.
+##
+## TWO WRITERS, and the second is why this is a stored flag rather than a
+## derivation: the arm on a simulating machine, and `set_remote_state` from the
+## master's flag byte on every other peer in a room (MpManager.CROC_FLAG_BURROWED
+## carries the note on why the byte has to say it out loud). Locally it is only
+## ever raised on a row that has an `ambush_burrow_depth`; over the wire it is
+## peer input like everything else, so the reader checks the key.
 var is_burrowed: bool = false
 
 ## THE CHARGE ARM'S ONE PIECE OF MEMORY (`_behave_charge`): the bearing this bear
@@ -2191,6 +2197,11 @@ func set_remote_state(pos: Vector3, yaw: float, flags: int) -> void:
 	is_chasing = (flags & MpManager.CROC_FLAG_CHASING) != 0
 	is_fleeing = (flags & MpManager.CROC_FLAG_FLEEING) != 0
 	is_paused = (flags & MpManager.CROC_FLAG_PAUSED) != 0
+	# The burrow rides the byte rather than being re-derived here, and the reason
+	# is in CROC_FLAG_BURROWED's own note: it is the one part of the pose the
+	# other bits do not imply, because the behaviour dispatch that decides it is
+	# skipped for the whole of a pause or a flee.
+	is_burrowed = (flags & MpManager.CROC_FLAG_BURROWED) != 0
 	if (flags & MpManager.CROC_FLAG_BITING) != 0:
 		_start_bite()
 
@@ -2540,25 +2551,6 @@ func _tick_river_sink(delta: float) -> void:
 	over the usual ~0.2 s, and slept sunk it rises the same way. There is no state
 	to reconcile, because the target is recomputed from scratch every frame.
 	"""
-	# A REMOTE-DRIVEN crocodile never runs the behaviour dispatch — it renders the
-	# master's samples instead of simulating — so the ambush arm's flag would stay
-	# false and a viper the master has buried would sit on the sand on every other
-	# peer. Every input the arm uses arrives in the sample's flag byte, so the flag
-	# is recomputed here from the arm's own rule.
-	#
-	# UNDER THE SAME GUARD AS THE ARM, WHICH IS THE WHOLE SUBTLETY. The master
-	# reaches _update_chase_state only when it is neither paused nor fleeing;
-	# through either state its `is_burrowed` FREEZES at whatever it last was. A
-	# peer that kept recomputing would not freeze with it — a striking viper hit
-	# by a Stink Wave clears `is_chasing` on its way into the flee, so the master
-	# would hold it surfaced for the whole flight while every client buried it.
-	# Both flags ride the same sample byte (CROC_FLAG_PAUSED / CROC_FLAG_FLEEING),
-	# so freezing on both sides freezes at the same value. Keyed off the row's own
-	# tunable, exactly like the ease below: no species name is tested outside the
-	# dispatch.
-	if remote_driven and not is_paused and not is_fleeing:
-		is_burrowed = not is_chasing and spec.has("ambush_burrow_depth")
-
 	var target_y: float = model_rest_y
 	if terrain and is_on_floor() and terrain.is_river_at(global_position):
 		target_y = model_rest_y - spec["river_sink_depth"]
@@ -2568,7 +2560,12 @@ func _tick_river_sink(delta: float) -> void:
 	# function the single writer of `model_base_y` — the property the docstring
 	# above promises the animation does not fight over — instead of two easings
 	# racing for it.
-	if is_burrowed:
+	# `spec.has` rather than a bare `is_burrowed`, because on a remote-driven body
+	# the flag is UNVALIDATED PEER INPUT (see set_remote_state): a hostile or
+	# simply older master can set the bit on any species, and a row with no burrow
+	# has no depth to read. Locally the arm only ever raises it on the ambusher,
+	# so this costs one hash lookup on the frames the height is actually moving.
+	if is_burrowed and spec.has("ambush_burrow_depth"):
 		target_y = minf(target_y, model_rest_y - float(spec["ambush_burrow_depth"]))
 	if is_equal_approx(model_base_y, target_y):
 		return
