@@ -707,6 +707,292 @@ const CHEST_BURST_DURATION: float = 0.8
 const TREASURE_CHEST_SCRIPT := preload("res://scripts/treasure_chest.gd")
 
 # ----------------------------------------------------------------------------
+# GEO LANDMARKS (rare recognizable famous places)
+# ----------------------------------------------------------------------------
+##
+## The FOURTH member of the artifact / camp / chest landmark family, and the one
+## that carries the game's educational identity: walk far enough and you come over
+## a rise to find Stonehenge, the Moai of Easter Island, the Pyramids of Giza, the
+## Golden Gate Bridge, the Statue of Liberty, the Plaza Mayor, the Eiffel Tower or
+## the Taj Mahal, and a small card tells you one true thing about it.
+##
+## The bar the owner set is "not necessarily ideal, but RECOGNIZABLE": blocky
+## code-built sculpture in the house style, read at a glance from 30 m away, not
+## an architectural model. Every builder therefore spends its box budget on the
+## one or two silhouette features a person actually identifies the place by (the
+## trilithons, the brow line, the stepped triangle, the orange towers and cable,
+## the crown and torch, the arcade, the four splayed legs, the dome and minarets)
+## and nothing at all on detail that vanishes at distance.
+##
+## The reward hierarchy this slots into, and why each rarity is what it is:
+##
+##   chest     ~1 chunk in 13   a 1.3 m box, 8-15 coins in a burst, NO GEM
+##   artifact  ~1 chunk in 23   huge ruin, 3-5 coins AND the one guaranteed GEM
+##   camp      ~1 chunk in 31   a whole village, 2-4 coins, no gem
+##   landmark  ~1 chunk in 40-60  a famous place, 3-5 coins, NO GEM, plus a fact
+##
+## REWARD DECISION — a small coin ring (LANDMARK_COIN_MIN..MAX, 3-5 ordinary
+## coins) and DELIBERATELY NO GEM. This is exactly the rule that kept gems out of
+## camps and chests: the guaranteed gem is the ARTIFACTS' distinction, and a
+## fourth source of one would flatten "an ancient prize worth a detour" into
+## "another thing I walked past". But a landmark sits LANDMARK_ROAD_CLEARANCE
+## (22 m) off the coin road, so a destination with no reward at all is a trap that
+## teaches players not to detour — and the detour is the whole feature. A ring
+## without a gem pays for the walk without touching the hierarchy above it. The
+## real reward is the card (see scripts/landmark_toast.gd); the coins are the
+## apology for the distance.
+##
+## Structurally this is the chest/camp/artifact recipe with NOTHING added:
+##   - _landmark_at()             the rarity roll ALONE, on its own independent
+##                                hash stream (LANDMARK_SALT + its own coordinate
+##                                primes), so it consumes ZERO draws from the
+##                                shared chunk RNG.
+##   - spawn_landmark_in_chunk()  holds the candidate loop, because that is the
+##                                only place `obstacles` exists — see
+##                                _landmark_at's docstring for why putting the
+##                                loop in the roll is the bug BOTH artifacts and
+##                                camps had to have dug out of them.
+##   - all stone goes through create_box into the chunk's ONE MultiMesh and ONE
+##     BlockCollision body, so a whole Eiffel Tower costs ZERO extra draw calls
+##     and ZERO extra physics bodies. The only non-batched nodes a landmark may
+##     add are at most ONE emissive accent (three of the eight builders spend it;
+##     see the accent-budget note by LANDMARK_EDGE_MARGIN) and one script-free
+##     marker Node3D (which has no mesh and no physics either).
+##
+## THE REGISTRY IS THE EXTENSION POINT. LANDMARKS below is pure data — builder
+## method NAME, English name, English fact, footprint radius — so a later wave of
+## places is ONE builder function, ONE registry entry and TWO CSV rows. Nothing
+## else in this file, in the toast, or in the self-check has to learn about it.
+##
+## ponytail: NO per-landmark ambient audio — the same deferral, for the same
+## reason, that the artifacts recorded above. sound_manager.get_loop_player()
+## returns a NON-POSITIONAL AudioStreamPlayer, so a monument hum that grew as you
+## approached the Eiffel Tower would need a whole new positional audio path
+## (AudioStreamPlayer3D, which nothing in this project uses yet) plus a per-frame
+## proximity scan against landmark centres — out of proportion to the quiet
+## polish it buys, and the toast already marks the arrival. Upgrade path: an
+## AudioStreamPlayer3D parented to the marker Node3D that spawn_landmark_in_chunk
+## already creates, which then frees with the chunk for free.
+
+## Kill switch, mirroring spawn_artifacts / spawn_camps / spawn_chests. The
+## measurement sweep needs it to generate the same field with and without
+## landmarks and diff the two.
+@export var spawn_landmarks: bool = true
+
+## Probability that a chunk ROLLS a landmark. This is NOT the built rate: the
+## candidate loop in spawn_landmark_in_chunk rejects spots that are in a river,
+## too near the coin road, or overlapping stone already in the chunk — and a
+## 9.5 m circle is camp-sized, so the overlap test rejects a great deal.
+##
+## MEASURED, never derived by algebra — the survival rate depends on the block
+## density the biome mix happens to produce, which is why every sibling constant
+## carries its own number (CAMP_CHANCE 0.18 -> 14% survival -> 1 per 31;
+## CHEST_CHANCE 0.08 -> 98.5% -> 1 per 12.5, the same roll meaning wildly
+## different things). Throwaway headless sweep over a 41x41 = 1681 chunk field
+## with every spawner that runs BEFORE this one on (crocodiles and coins spawn
+## after it and cannot reach its candidate loop): 224 chunks ROLLED a landmark
+## and 32 BUILT one — 14.3% survival, 1 built landmark per 52.5 chunks, all
+## eight kinds appearing.
+##
+## MEASURE ACROSS SEEDS, NOT ONE. That first figure is a SINGLE run_seed, and the
+## rate is far more seed-dependent than the sibling constants' are, because what
+## rejects a candidate here is overlap with a chunk's biome content — so a seed
+## whose biome offset lands more of the field in sparse desert builds many more
+## landmarks than one that lands it in forest. Five further seeds over 25x25 = 625
+## chunks each: 1 per 52.1, 28.4, 41.7, 56.8 and 52.1 (survival 12.4-25.0%).
+## AGGREGATED over all six sweeps — 4806 chunks, 673 rolled, 104 built — that is
+## 15.5% survival and 1 built landmark per 46.2 chunks, inside the intended
+## 1-per-40-60 band and deliberately rarer than the artifacts' 1-in-23, because
+## these are destinations rather than scenery. So 0.15 stands as measured, with
+## the honest caveat that any ONE world sits somewhere in 1-per-28..57.
+## Survival is camp-like (~15%) rather than chest-like (98.5%) for the same reason
+## a camp's is: the overlap test rejects almost everything for a 9.5 m circle and
+## almost nothing for a 1.5 m one.
+## Re-measure this pair — over SEVERAL seeds — if the radius, the clearances or
+## the biome mix change.
+const LANDMARK_CHANCE: float = 0.15
+
+## Fixed salt XORed into run_seed for the landmark hash stream, in the
+## ARTIFACT_SALT / CAMP_SALT / CHEST_SALT / BIOME_SALT / BOSS_SEED family: an
+## arbitrary fixed constant that keeps this stream independent of every other
+## deterministic spawn site, so it can never collide with (or perturb) one.
+const LANDMARK_SALT: int = 0x1A_D3A2C  # "LANDMARK"-ish; arbitrary fixed constant
+
+## Coordinate multiplier primes for the landmark stream, deliberately DIFFERENT
+## from every other stream in this file — object/artifact (73856093 / 19349663),
+## camp (40960001 / 26463089), biome (83492791 / 15485863), chest (86028121 /
+## 50331653) and croc-roll (179424673 / 32452843) — so no two streams can
+## correlate on a shared lattice (which would put, say, every landmark in a
+## chunk that also rolled a camp).
+const LANDMARK_HASH_PRIME_X: int = 32452867
+const LANDMARK_HASH_PRIME_Y: int = 49979687
+
+## Candidate spots tried inside a chunk before giving up. Every try failing means
+## NO LANDMARK — the same call artifacts and camps both make, and the right one:
+## the Eiffel Tower sticking out of a mountain massif reads far worse than a
+## chunk without one, and a higher LANDMARK_CHANCE reaches the same built rate.
+const LANDMARK_PLACE_TRIES: int = 4
+
+## The WIDEST footprint any registry entry may declare, and therefore the value
+## handed to _biome_spot_ok as "the widest this thing could be" — the house rule,
+## because the real shape is only known after its builder has run. Every
+## LANDMARKS[i].radius must be <= this; landmark_selfcheck.gd asserts both that
+## and that each declared radius is a TRUE BOUND on the stone its builder emits.
+const LANDMARK_RADIUS: float = 9.5
+
+## Minimum lateral distance from the coin-road centerline.
+##
+## INVARIANT — "no boss ever stands inside a landmark", exactly the camp's
+## arithmetic. The test measures distance to STATION CENTRES (that is all
+## _road_lateral_distance computes), and a boss does NOT stand on its station
+## centre: _boss_at offsets it BOSS_FORWARD_OFFSET (8.0 m) along the tangent AND
+## up to BOSS_LATERAL_MAX (4.0 m) across it, so BOTH legs belong in the bound:
+##     LANDMARK_ROAD_CLEARANCE > LANDMARK_RADIUS + sqrt(BOSS_FORWARD_OFFSET^2 + BOSS_LATERAL_MAX^2)
+##     22.0                    > 9.5             + sqrt(8.0^2 + 4.0^2) = 9.5 + 8.94 = 18.44  ✓
+## i.e. 3.56 m of slack, NOT the 8.5 the lateral leg alone suggests. That single
+## inequality IS the whole boss exclusion — spawn_bosses_in_chunk needs no edit
+## and no extra test. Re-check this line if ANY of the four constants named in it
+## is retuned, BOSS_FORWARD_OFFSET included.
+##
+## 22 is also comfortably above road_width_max / 2 (10 m), the outer edge of the
+## widest coin scatter band, so the coin swath stays clear of the stone and a
+## landmark reads as an OFF-ROAD DESTINATION you deliberately detour to rather
+## than something you trip over while following the trail.
+const LANDMARK_ROAD_CLEARANCE: float = 22.0
+
+## Keeps the whole landmark inside its own chunk so nothing straddles a seam
+## (same rule as ARTIFACT_EDGE_MARGIN / CAMP_EDGE_MARGIN).
+## MUST exceed LANDMARK_RADIUS: 12.0 > 9.5 ✓ — landmark_selfcheck.gd asserts it.
+## With chunk_size 50 that still leaves a 26x26 m placement box, so landmarks
+## spread around their chunk instead of piling into its centre.
+const LANDMARK_EDGE_MARGIN: float = 12.0
+
+## THE EMISSIVE-ACCENT BUDGET IS A RULE FOR BUILDER AUTHORS, NOT A CONSTANT.
+## An accent is a real extra MeshInstance3D and therefore a real extra DRAW CALL,
+## which is the one cost that does not batch — so a builder spends at most ONE,
+## and only where a real light belongs (Liberty's torch, the Eiffel beacon, Giza's
+## gilded capstone; the other five spend none). This was a `const` of 4 for one
+## commit, which was a comment wearing a type: nothing read it, no builder or
+## dispatch path enforced it, and a const nothing checks is worse than a sentence
+## because it reads like a guard. If a budget ever needs ENFORCING, count the
+## _spawn_artifact_accent calls in spawn_landmark_in_chunk rather than re-adding a
+## number beside them.
+
+## Coin reward: a small ring round the base. NO GEM — see the banner above.
+const LANDMARK_COIN_MIN: int = 3
+const LANDMARK_COIN_MAX: int = 5
+## How far outside the shape's own radius the ring sits, so the coins are found
+## by walking AROUND the landmark rather than by clipping into it.
+##
+## THE MAX IS BOUNDED BY THE EDGE MARGIN, NOT CHOSEN BY EYE, and this is the one
+## place the landmark recipe could NOT just copy the artifacts'. A landmark centre
+## sits at most (chunk_size / 2 - LANDMARK_EDGE_MARGIN) from the chunk centre on
+## each axis, so a reward coin stays inside its own chunk only while
+##     LANDMARK_RADIUS + LANDMARK_COIN_RING_PAD_MAX <= LANDMARK_EDGE_MARGIN
+## i.e. 9.5 + 2.0 = 11.5 <= 12.0 ✓ (landmark_selfcheck.gd asserts it). The
+## artifacts' identical 1.5/4.0 pair is safe there only because ARTIFACT_RADIUS is
+## 7.0 (7.0 + 4.0 = 11.0 < 12.0); at the landmarks' camp-sized 9.5 the same pair
+## reached 13.4 and a coin near a chunk edge could land OUTSIDE the chunk that
+## owns it — settled by _settle_coin_y against a footprint list describing the
+## wrong ground, and freed when the wrong chunk unloads. Rare (0 hits in a 41x41
+## sweep: it needs a landmark near an edge midpoint AND a large pad roll) but the
+## bound costs nothing, so it is a bound rather than a note.
+const LANDMARK_COIN_RING_PAD_MIN: float = 1.5
+const LANDMARK_COIN_RING_PAD_MAX: float = 2.0
+
+## --- Palette. Deliberately distinct from the warm RAMP_* block ramps, the
+## artifacts' grey-green weathered stone and the camps' bone white, because the
+## whole point of a landmark is that it does not read as scenery. Each place gets
+## the colour a person would actually name it by.
+const LM_STONE_GREY := Color(0.62, 0.61, 0.57)   # Stonehenge sarsen
+const LM_BASALT := Color(0.34, 0.32, 0.30)       # Moai volcanic tuff
+const LM_SANDSTONE := Color(0.80, 0.68, 0.44)    # Giza limestone
+const LM_GRANITE := Color(0.48, 0.46, 0.47)      # plinths, pedestals, ahu
+const LM_ORANGE := Color(0.75, 0.24, 0.10)       # Golden Gate International Orange
+const LM_COPPER := Color(0.42, 0.71, 0.60)       # Liberty's oxidised copper
+const LM_OCHRE := Color(0.72, 0.44, 0.24)        # Plaza Mayor walls
+const LM_ROOF := Color(0.36, 0.20, 0.15)         # Plaza Mayor slate/tile trim
+const LM_IRON := Color(0.45, 0.36, 0.28)         # Eiffel "brun tour Eiffel"
+const LM_MARBLE := Color(0.93, 0.91, 0.87)       # Taj Mahal marble
+
+## THE REGISTRY. Pure data, so it can be a `const` — and it is const precisely to
+## make "add a place" a data edit rather than a code edit.
+##
+## `builder` is a METHOD-NAME STRING, invoked as call(entry.builder, ...). It is a
+## String and not a Callable because a `const` Array cannot hold a Callable (a
+## Callable binds an object at runtime, so it is not a constant expression); a
+## String keeps the whole registry pure data and const-able, at the cost of the
+## method name being checked at call time rather than parse time — which
+## landmark_selfcheck.gd covers by calling every builder in the table.
+##
+## `name` and `fact` are the ENGLISH SOURCE STRINGS, not identifiers, because in
+## this project THE TRANSLATION KEY IS THE ENGLISH SOURCE STRING (CLAUDE.md
+## Localization RULE 1). The toast assigns them straight to a Label.text and gets
+## translation AND live locale-switching for free, with no tr() call anywhere. Do
+## not "fix" that by inventing HUD_LANDMARK_* keys — it would break the fallback
+## that makes a place with no CSV row render as readable English.
+##
+## `radius` is that shape's OWN footprint radius (metres), which is what the
+## reward ring and the obstacle footprint are measured from. It must be
+## <= LANDMARK_RADIUS, and it must be a true bound on the stone the builder
+## actually emits; landmark_selfcheck.gd measures both.
+##
+## ORDER IS LOAD-BEARING ONLY IN THAT IT IS THE KIND ROLL — _landmark_at draws
+## randi_range(0, LANDMARKS.size() - 1) into this array, so appending is safe and
+## reordering re-rolls every landmark in every existing world (harmless: worlds
+## are per-run anyway).
+const LANDMARKS: Array = [
+	{
+		"builder": "_landmark_stonehenge",
+		"name": "Stonehenge",
+		"fact": "A Neolithic stone circle on Salisbury Plain, England, raised around 2500 BC.",
+		"radius": 7.6,
+	},
+	{
+		"builder": "_landmark_moai",
+		"name": "Moai of Easter Island",
+		"fact": "Nearly 900 stone figures carved by the Rapa Nui on Easter Island, Chile, between 1250 and 1500.",
+		"radius": 6.6,
+	},
+	{
+		"builder": "_landmark_giza",
+		"name": "Pyramids of Giza",
+		"fact": "Three royal tombs near Cairo, Egypt, built around 2560 BC — the last surviving Wonder of the Ancient World.",
+		"radius": 9.4,
+	},
+	{
+		"builder": "_landmark_golden_gate",
+		"name": "Golden Gate Bridge",
+		"fact": "A 2.7 km suspension bridge over San Francisco Bay, USA, opened in 1937 and painted International Orange.",
+		"radius": 9.4,
+	},
+	{
+		"builder": "_landmark_liberty",
+		"name": "Statue of Liberty",
+		"fact": "A 93 m copper statue in New York Harbor, USA — a gift from France, dedicated in 1886.",
+		"radius": 5.4,
+	},
+	{
+		"builder": "_landmark_plaza_mayor",
+		"name": "Plaza Mayor",
+		"fact": "The arcaded central square of Madrid, Spain, completed in 1619 and ringed by 237 balconies.",
+		"radius": 8.6,
+	},
+	{
+		"builder": "_landmark_eiffel",
+		"name": "Eiffel Tower",
+		"fact": "A 330 m iron tower in Paris, France, built for the 1889 World's Fair and meant to stand only 20 years.",
+		"radius": 6.2,
+	},
+	{
+		"builder": "_landmark_taj",
+		"name": "Taj Mahal",
+		"fact": "A white marble mausoleum in Agra, India, built by Shah Jahan for his wife Mumtaz Mahal in 1653.",
+		"radius": 8.6,
+	},
+]
+
+# ----------------------------------------------------------------------------
 # BIOME FIELD CONFIGURATION (desert / plains / forest / mountain + rivers)
 # ----------------------------------------------------------------------------
 ##
@@ -1789,15 +2075,29 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 	# that is what lets its single footprint keep crocodiles out of the camp.
 	spawn_camp_in_chunk(chunk_pos, mesh_instance, obstacles, block_batch, block_body)
 
+	# A rare geo landmark — a recognizable famous place (independent LANDMARK_SALT
+	# hash stream, no shared RNG draws consumed). SAME ORDERING REQUIREMENT as the
+	# three above, for the same two reasons: (a) it must run after them so its
+	# candidate loop is judged against the finished obstacles list (and its own
+	# footprint appends to it), and before _build_block_multimesh / the block_body
+	# attach so all its stone joins the chunk's ONE MultiMesh draw call and ONE
+	# collision body; (b) it must run BEFORE the chest so a chest is never placed
+	# inside a landmark — the chest keeps its "last of the family" position, and the
+	# only behavioural consequence is that in a landmark chunk the chest's candidate
+	# loop now also has to clear the landmark footprint. It runs BEFORE
+	# spawn_crocodiles_in_chunk below, which is what lets its single footprint keep
+	# crocodiles out of the monument.
+	spawn_landmark_in_chunk(chunk_pos, mesh_instance, obstacles, block_batch, block_body)
+
 	# A treasure chest — the small, common third member of the artifact/camp family
 	# (independent CHEST_SALT hash stream, no shared RNG draws consumed). SAME
 	# ORDERING REQUIREMENT as the three above, for the same reasons: after them so
 	# its candidate loop is judged against the finished obstacles list (and its own
 	# footprint appends to it), and before _build_block_multimesh / the block_body
 	# attach so its wood and brass join the chunk's ONE MultiMesh draw call and ONE
-	# collision body. It runs LAST of the four so a chest can never be placed inside
-	# a camp or an artifact — the reverse order would let a camp be pitched on top of
-	# a chest that was already there.
+	# collision body. It runs LAST of the five so a chest can never be placed inside
+	# a camp, an artifact or a landmark — the reverse order would let a camp be
+	# pitched on top of a chest that was already there.
 	spawn_chest_in_chunk(chunk_pos, mesh_instance, obstacles, block_batch, block_body)
 
 	# Build the chunk's batched block visuals. If any blocks were placed, collapse
@@ -3825,6 +4125,717 @@ func spawn_chest_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obs
 	# the same claim machinery the epic defers for coins (godot-test1-s86.5).
 	obstacles.append({ "pos": center, "radius": CHEST_RADIUS, "top": CHEST_BODY_SIZE.y, "climbable": true })
 
+# ============================================================================
+# GEO LANDMARKS (see the GEO LANDMARKS constant banner)
+# ============================================================================
+
+func _landmark_at(chunk_pos: Vector2i) -> Dictionary:
+	"""
+	Deterministic geo-landmark placement for one chunk — _chest_at / _camp_at /
+	_artifact_at for famous places, same shape, same guarantees. Pure function of
+	chunk coords + run_seed via the independent LANDMARK_SALT hash stream, so it
+	consumes NO draw from the shared chunk RNG: every block, crocodile and coin the
+	generator produced before landmarks existed is still exactly where it was in
+	every chunk that does not build one.
+
+	@param chunk_pos: Chunk coordinates to decide for.
+	@return: {} when this chunk rolled no landmark (the overwhelming majority);
+	         otherwise { "seed": int, "kind": int } — the seed for the landmark's
+	         private RNG (spawn_landmark_in_chunk uses it for placement, geometry
+	         and the coin ring) and the index into LANDMARKS of WHICH famous place
+	         this is.
+
+	WHY THERE IS NO CANDIDATE LOOP HERE. This is the landmine that BOTH artifacts
+	and camps had to be dug out of, and it is worth restating rather than cross-
+	referencing, because the next person to add a landmark family member will reach
+	for it again: when this function runs, THE CHUNK HAS NO GEOMETRY YET. The only
+	tests available are river and road, and neither rejects the thing that actually
+	matters — overlap with the chunk's ~12 scattered blocks, its feature structure,
+	its biome trees and massifs, its artifact and its camp. Camps measured 11
+	rejections in 121 chunks from river+road alone, i.e. ~91% of rolled camps
+	"survived" a test that checked nothing, and then ~9% survived once the real
+	test was applied where it belongs — landing camps roughly 10x rarer than the
+	constant said, with no error anywhere. So the LANDMARK_PLACE_TRIES loop lives
+	in spawn_landmark_in_chunk, where `obstacles` exists, and this function does
+	exactly two things: roll whether, and roll which.
+
+	EDUCATIONAL NOTE — the determinism contract:
+	- Within a run the same chunk yields the IDENTICAL landmark (same place, same
+	  spot, same stone jitter, same coin ring) however often it unloads and
+	  regenerates: the RNG is seeded purely from chunk coords + run_seed, and every
+	  draw downstream comes off that one stream in a fixed order.
+	- Across runs, new_run() re-rolls run_seed, so a new world puts different
+	  places in different chunks.
+	- MULTIPLAYER NEEDS ZERO WORK because of exactly that: run_seed is already
+	  shared by every peer in a room, so every peer generates the same landmark in
+	  the same chunk by construction. No packet, no claim, no sync.
+	- Whether a candidate is ACCEPTED is likewise load-order independent: the road
+	  test reads the station cache (pure in `k`), the river test reads the biome
+	  field (pure in world position + run_seed) and the overlap test reads the
+	  chunk's own obstacle list (pure in chunk coords + run_seed).
+	"""
+	var rng := RandomNumberGenerator.new()
+	# Own coordinate primes AND own salt — see the LANDMARK_HASH_PRIME_* constants
+	# for why they differ from every other stream in this file.
+	rng.seed = hash(Vector3i(chunk_pos.x * LANDMARK_HASH_PRIME_X, chunk_pos.y * LANDMARK_HASH_PRIME_Y, run_seed ^ LANDMARK_SALT))
+
+	# The rarity roll — almost every chunk bails here, and this is the ONLY draw
+	# taken from the stream at this point. The rest happen in
+	# spawn_landmark_in_chunk off an RNG re-seeded from `seed`, so the two together
+	# stay one fixed sequence per chunk.
+	if rng.randf() >= LANDMARK_CHANCE:
+		return {}
+
+	# WHICH place. Drawn here rather than in the spawner so the kind is decided by
+	# the same pure function as the rarity: a chunk's landmark identity is known
+	# without building anything, which is what lets the measurement sweep report a
+	# per-kind distribution over a field it never renders.
+	var kind := rng.randi_range(0, LANDMARKS.size() - 1)
+
+	return { "seed": rng.randi(), "kind": kind }
+
+# ----------------------------------------------------------------------------
+# THE EIGHT BUILDERS
+# ----------------------------------------------------------------------------
+##
+## Every builder has the identical signature
+##   _landmark_x(center, rng, parent_chunk, block_batch, block_body) -> Dictionary
+## and returns { "radius": float, "top": float } — no `gem_offset`, because a
+## landmark deliberately pays NO GEM (see the REWARD DECISION in the constant
+## banner). `center` is CHUNK-LOCAL, exactly as the artifact builders take it.
+##
+## Shared rules, all four of them load-bearing:
+##  1. EVERY solid box goes through create_box with a color_override, so it lands
+##     in the chunk's ONE MultiMesh and ONE BlockCollision body. A landmark is
+##     therefore free at the draw-call level however many boxes it is made of.
+##  2. `collide = false` for pure trim that sits INSIDE another box's collision
+##     volume (dark recesses, thin cornices, brows, cable strands overhead). The
+##     chest's brass band and the camp's fire stones are the precedent.
+##  3. The returned `radius` must BOUND every box actually emitted, measured as
+##     horizontal centre offset + the rotated box's horizontal half-diagonal —
+##     which is exactly what landmark_selfcheck.gd measures over 25 seeds per
+##     builder. Each builder's comment carries its own worst-case arithmetic, so
+##     a retune can be checked by reading rather than by running.
+##  4. AT MOST ONE emissive accent, and only where a real light belongs (a
+##     capstone, a torch, a beacon). An accent is a genuine extra draw call, and
+##     it reuses _get_camp_ember_material() — the warm one. DO NOT add a third
+##     glow material; two temperatures is the whole vocabulary.
+##
+## The RNG is the landmark's PRIVATE stream (seeded from _landmark_at's `seed`),
+## so a builder may draw as freely as its shape needs — nothing else reads it.
+
+func _lm_shade(base: Color, rng: RandomNumberGenerator, amount: float = 0.06) -> Color:
+	"""
+	One stone's colour: the landmark's base palette entry nudged by up to `amount`
+	in each channel. Mortared ruins and quarried blocks are never one flat colour,
+	and a per-box jitter is what stops a MultiMesh of identical greys reading as a
+	single extruded blob. Deliberately SMALL — a landmark has to stay recognizable,
+	which means its silhouette does the work and the colour stays quiet.
+	"""
+	var d := rng.randf_range(-amount, amount)
+	return Color(clampf(base.r + d, 0.0, 1.0), clampf(base.g + d, 0.0, 1.0), clampf(base.b + d, 0.0, 1.0))
+
+func _landmark_stonehenge(center: Vector3, rng: RandomNumberGenerator, _parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	Kind 0 — STONEHENGE: an outer ring of 5 trilithons (two uprights carrying a
+	lintel laid across their tops) around an inner horseshoe of 4 shorter, drunkenly
+	leaning standing stones. Salisbury Plain in cubes.
+
+	RADIUS ARITHMETIC (declared 7.6). The widest thing is a lintel: its centre sits
+	on the RING_R (5.6) ring and its horizontal half-diagonal is
+	0.5*sqrt(3.4^2 + 1.0^2) = 1.77, so 5.6 + 1.77 = 7.37 <= 7.6. The uprights sit
+	further out along the tangent (sqrt(5.6^2 + 1.2^2) = 5.73) but are much thinner
+	(half-diagonal 0.71), so 6.44. RING_R is 5.6 rather than the 6.0 a real plan
+	would suggest precisely because of that lintel term.
+	NO ACCENT: Stonehenge is a sundial, not a lamp.
+	"""
+	const RING_R := 5.6
+	const TRILITHONS := 5
+	const UPRIGHT := Vector3(1.0, 4.2, 1.0)
+	const LINTEL := Vector3(3.4, 0.8, 1.0)
+	# One shared orientation for the whole monument, so the ring reads as built
+	# rather than scattered.
+	var base_a := rng.randf_range(0.0, TAU)
+
+	for i in TRILITHONS:
+		var a := base_a + TAU * float(i) / float(TRILITHONS)
+		# yaw = PI/2 - a points the stone's local Z (its thin depth axis) along the
+		# radius, i.e. the trilithon FACES the centre and its long X axis runs along
+		# the tangent — the same face-the-centre trick the artifact stone circle uses.
+		var yaw := PI / 2.0 - a
+		var radial := Vector3(cos(a), 0.0, sin(a))
+		var tangent := Vector3(-sin(a), 0.0, cos(a))
+		var ring_pos := center + radial * RING_R
+		# The two uprights, offset along the tangent so the lintel bridges them.
+		for side in [-1.0, 1.0]:
+			create_box(ring_pos + tangent * (side * 1.2) + Vector3(0.0, UPRIGHT.y / 2.0, 0.0),
+					UPRIGHT, yaw + rng.randf_range(-0.05, 0.05), rng, block_batch, block_body,
+					0.0, _lm_shade(LM_STONE_GREY, rng))
+		# The lintel laid flat across both tops — the detail that makes a trilithon
+		# read as Stonehenge and not as a stone circle.
+		create_box(ring_pos + Vector3(0.0, UPRIGHT.y + LINTEL.y / 2.0, 0.0),
+				LINTEL, yaw, rng, block_batch, block_body, 0.0, _lm_shade(LM_STONE_GREY, rng))
+
+	# Inner horseshoe: 4 shorter bluestones over a 3/4 arc (a horseshoe, not a
+	# second ring), each leaning a little — a thousand years of frost heave.
+	const INNER_R := 2.8
+	for i in 4:
+		var a := base_a + 0.35 + (TAU * 0.75) * float(i) / 3.0
+		var dims := Vector3(1.0, rng.randf_range(2.2, 2.9), 0.7)
+		var lean := rng.randf_range(-0.15, 0.15)
+		create_box(center + Vector3(cos(a) * INNER_R, dims.y / 2.0 - 0.15, sin(a) * INNER_R),
+				dims, PI / 2.0 - a, rng, block_batch, block_body, lean, _lm_shade(LM_STONE_GREY, rng))
+
+	return { "radius": 7.6, "top": UPRIGHT.y + LINTEL.y }
+
+func _landmark_moai(center: Vector3, rng: RandomNumberGenerator, _parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	Kind 1 — MOAI OF EASTER ISLAND: five heavy figures standing shoulder to
+	shoulder on a low ahu platform, ALL FACING THE SAME WAY (inland, as the real
+	ones do). The row plus the shared gaze is the whole recognition cue.
+
+	RADIUS ARITHMETIC (declared 6.6). The ahu slab is the widest box:
+	0.5*sqrt(11.0^2 + 3.0^2) = 5.70. The outermost statue body sits at x = 4.4 with
+	half-diagonal 0.79 => 5.19. So 5.70 <= 6.6.
+	NO ACCENT.
+	"""
+	const AHU := Vector3(11.0, 0.7, 3.0)
+	const STATUES := 5
+	const SPACING := 2.2
+	var yaw := rng.randf_range(0.0, TAU)
+	var rot := Basis(Vector3.UP, yaw)
+	var stone := _lm_shade(LM_BASALT, rng, 0.03)  # one quarry, one colour family
+	create_box(center + Vector3(0.0, AHU.y / 2.0, 0.0), AHU, yaw, rng, block_batch, block_body, 0.0, _lm_shade(LM_GRANITE, rng))
+
+	var tallest := AHU.y
+	for i in STATUES:
+		var offset := (float(i) - float(STATUES - 1) / 2.0) * SPACING
+		var base := center + rot * Vector3(offset, 0.0, 0.0)
+		# Each figure is carved separately, so each leans a hair differently — but
+		# the wobble stays tiny, because "all facing one way" is the recognition cue.
+		var wobble := rng.randf_range(-0.09, 0.09)
+		var body := Vector3(1.3, rng.randf_range(2.7, 3.2), 0.9)
+		create_box(base + Vector3(0.0, AHU.y + body.y / 2.0, 0.0), body, yaw + wobble, rng, block_batch, block_body, 0.0, stone)
+		var head := Vector3(1.15, 1.5, 1.0)
+		var head_y := AHU.y + body.y + head.y / 2.0
+		create_box(base + Vector3(0.0, head_y, 0.0), head, yaw + wobble, rng, block_batch, block_body, 0.0, stone)
+		# The heavy brow ridge, proud of the face — visual trim only (it sits on the
+		# head's own collision volume), so collide = false.
+		create_box(base + Vector3(0.0, head_y + 0.25, 0.0) + Basis(Vector3.UP, yaw + wobble) * Vector3(0.0, 0.0, head.z / 2.0 + 0.06),
+				Vector3(1.2, 0.35, 0.18), yaw + wobble, rng, block_batch, block_body, 0.0,
+				_lm_shade(LM_BASALT, rng, 0.02).darkened(0.25), false)
+		tallest = maxf(tallest, AHU.y + body.y + head.y)
+
+	return { "radius": 6.6, "top": tallest }
+
+func _landmark_giza(center: Vector3, rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	Kind 2 — PYRAMIDS OF GIZA: three stepped pyramids of descending size on the
+	shallow diagonal the real ones stand on, plus ONE emissive capstone on the
+	Great Pyramid (the pyramidion that is missing in Cairo and present here).
+
+	RADIUS ARITHMETIC (declared 9.4). Worst case is the SMALLEST pyramid, because
+	it is the one pushed furthest out: centre offset sqrt(5.0^2 + 3.0^2) = 5.83 plus
+	its base half-diagonal 0.5*sqrt(2*4.0^2) = 2.83 => 8.66. The Great Pyramid is
+	2.5 out with a 4.95 half-diagonal => 7.45. So 8.66 <= 9.4.
+	Sizes and offsets are FIXED rather than rolled: three pyramids in descending
+	size on a diagonal IS the recognition cue, and a roll that shuffled them would
+	sometimes produce three equal lumps.
+	"""
+	# base width, layer count, offset from the group centre — largest first.
+	var plan := [
+		{ "base": 7.0, "layers": 9, "off": Vector2(-2.0, -1.5) },
+		{ "base": 5.5, "layers": 7, "off": Vector2(2.2, 1.0) },
+		{ "base": 4.0, "layers": 5, "off": Vector2(5.0, 3.0) },
+	]
+	var yaw := rng.randf_range(0.0, TAU)
+	var rot := Basis(Vector3.UP, yaw)
+	var great_top := 0.0
+	for p in plan:
+		var base_w: float = p.base
+		var layers: int = p.layers
+		var spot: Vector3 = center + rot * Vector3(p.off.x, 0.0, p.off.y)
+		# Same tapering-stack recipe as spawn_pyramid, so a stepped pyramid is
+		# climbable the same way theirs is.
+		var layer_h: float = base_w / float(layers) * 0.62
+		var shrink: float = base_w / float(layers + 1)
+		var y := 0.0
+		for i in layers:
+			var w: float = base_w - float(i) * shrink
+			create_box(spot + Vector3(0.0, y + layer_h / 2.0, 0.0), Vector3(w, layer_h, w), yaw,
+					rng, block_batch, block_body, 0.0, _lm_shade(LM_SANDSTONE, rng))
+			y += layer_h
+		if great_top == 0.0:
+			great_top = y
+			# THE one accent: a gilded capstone on the Great Pyramid.
+			_spawn_artifact_accent(parent_chunk, spot + Vector3(0.0, y + 0.35, 0.0),
+					Vector3(0.9, 0.7, 0.9), yaw, 0.0, _get_camp_ember_material())
+
+	return { "radius": 9.4, "top": great_top + 0.7 }
+
+func _landmark_golden_gate(center: Vector3, rng: RandomNumberGenerator, _parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	Kind 3 — GOLDEN GATE BRIDGE: two International Orange towers, a deck slab
+	spanning and overhanging them, and the main cable as a chain of small boxes
+	sagging from tower top to tower top in a shallow catenary.
+
+	THE DECK IS SOLID ON PURPOSE. It goes through create_box like every other solid,
+	so downstream it IS ordinary block stone: it has a real CollisionShape3D in the
+	chunk's one BlockCollision body and the player stands on it rather than falling
+	through, which is what stops the span reading as a painted backdrop.
+
+	ponytail: it is solid but NOT REACHABLE from flat ground — the deck top sits at
+	DECK_Y + DECK.y/2 = 5.3 m against the player's 3.6125 m jump apex, and the
+	towers are smooth 11 m boxes with no ledge. So you walk under this bridge, not
+	over it. Upgrade path if crossing it is ever wanted: drop DECK_Y to ~2.9 (top
+	3.2), or add a step block at each abutment; both change the silhouette's
+	proportions, which is why neither was done for a shape whose whole job is to be
+	recognisable at 30 m. Note also that a road coin whose column crosses this
+	landmark is SKIPPED, not perched — spawn_landmark_in_chunk appends the footprint
+	`climbable: false` for every landmark (they are 5-18 m tall), so _settle_coin_y
+	drops it rather than stranding it on the circle's top.
+
+	RADIUS ARITHMETIC (declared 9.4). The deck is the widest box:
+	0.5*sqrt(17.0^2 + 3.0^2) = 8.63. A tower leg sits at sqrt(5.5^2 + 1.2^2) = 5.63
+	with half-diagonal 0.64 => 6.27. So 8.63 <= 9.4.
+	NO ACCENT: the towers already carry the loudest colour in the whole palette.
+	"""
+	const TOWER_X := 5.5          # half the tower spacing (towers 11 m apart)
+	const LEG := Vector3(0.9, 11.0, 0.9)
+	const LEG_Z := 1.2            # half the spacing between a tower's two legs
+	const DECK := Vector3(17.0, 0.6, 3.0)
+	const DECK_Y := 5.0
+	var yaw := rng.randf_range(0.0, TAU)
+	var rot := Basis(Vector3.UP, yaw)
+	var orange := _lm_shade(LM_ORANGE, rng, 0.04)
+
+	for side in [-1.0, 1.0]:
+		for z_side in [-1.0, 1.0]:
+			create_box(center + rot * Vector3(side * TOWER_X, LEG.y / 2.0, z_side * LEG_Z),
+					LEG, yaw, rng, block_batch, block_body, 0.0, orange)
+		# Two crossbeams tying each tower's legs together — the ladder look that
+		# says "suspension tower" rather than "two posts".
+		for beam_y in [DECK_Y + 1.4, LEG.y - 1.0]:
+			create_box(center + rot * Vector3(side * TOWER_X, beam_y, 0.0),
+					Vector3(0.7, 0.6, LEG_Z * 2.0 + LEG.z), yaw, rng, block_batch, block_body, 0.0, orange)
+
+	# The deck, overhanging both towers so the span reads as part of a longer road.
+	create_box(center + rot * Vector3(0.0, DECK_Y, 0.0), DECK, yaw, rng, block_batch, block_body, 0.0,
+			_lm_shade(LM_ORANGE, rng, 0.04).darkened(0.2))
+
+	# The main cable: a chain of short boxes on a parabola from tower top, dipping
+	# to just above the deck at mid-span, back up to the other tower top. Two of
+	# them, one per side, hung off the same LEG_Z the legs use.
+	# collide = false — a 30 cm strand of cable overhead is decoration, and giving
+	# it a collision shape would let the player stand on thin air at mid-span.
+	const CABLE_SEGMENTS := 11
+	var top_y := LEG.y
+	var sag_y := DECK_Y + 0.9
+	for z_side in [-1.0, 1.0]:
+		for i in CABLE_SEGMENTS:
+			var t := float(i) / float(CABLE_SEGMENTS - 1)   # 0..1 across the span
+			var u := t * 2.0 - 1.0                          # -1..1, 0 at mid-span
+			var x := u * TOWER_X
+			var y: float = sag_y + (top_y - sag_y) * u * u   # parabola == shallow catenary
+			create_box(center + rot * Vector3(x, y, z_side * LEG_Z), Vector3(TOWER_X * 2.0 / float(CABLE_SEGMENTS - 1) + 0.15, 0.3, 0.3),
+					yaw, rng, block_batch, block_body, 0.0, orange, false)
+
+	return { "radius": 9.4, "top": LEG.y }
+
+func _landmark_liberty(center: Vector3, rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	Kind 4 — STATUE OF LIBERTY: a stepped pedestal, a robe tapering upward, a head
+	wearing a seven-point crown, and a raised right arm carrying ONE emissive torch.
+	The crown and the raised torch are the whole silhouette; everything else is
+	scaffolding for them.
+
+	RADIUS ARITHMETIC (declared 5.4). The widest box is the bottom pedestal slab,
+	0.5*sqrt(2*4.6^2) = 3.25, at the centre. The arm reaches out ~1.9 with a small
+	half-diagonal => under 3.0. So 3.25 <= 5.4, with room to spare for the crown
+	spikes' tilt.
+	"""
+	var yaw := rng.randf_range(0.0, TAU)
+	var rot := Basis(Vector3.UP, yaw)
+	var granite := _lm_shade(LM_GRANITE, rng)
+	var copper := _lm_shade(LM_COPPER, rng, 0.03)
+
+	# Pedestal: three shrinking slabs (Fort Wood's star fort, flattened to steps).
+	var y := 0.0
+	for i in 3:
+		var w := 4.6 - float(i) * 0.7
+		var h := 1.2
+		create_box(center + Vector3(0.0, y + h / 2.0, 0.0), Vector3(w, h, w), yaw, rng, block_batch, block_body, 0.0, granite)
+		y += h
+
+	# Robe: four boxes narrowing as they rise — a cone, in the house's box vocabulary.
+	for i in 4:
+		var w: float = 2.6 - float(i) * 0.33
+		var h := 1.6
+		create_box(center + Vector3(0.0, y + h / 2.0, 0.0), Vector3(w, h, w * 0.85), yaw, rng, block_batch, block_body, 0.0, copper)
+		y += h
+
+	# Head.
+	var head_h := 1.1
+	create_box(center + Vector3(0.0, y + head_h / 2.0, 0.0), Vector3(1.0, head_h, 1.0), yaw, rng, block_batch, block_body, 0.0, copper)
+	var crown_y := y + head_h
+
+	# The seven-point crown: spikes radiating outward and up. Trim only (they hang
+	# off the head's own volume), so collide = false.
+	#
+	# SIGN GOTCHA, the same one the Eiffel legs record and the treasure chest's lid
+	# records before that: create_box composes Basis(UP, yaw) * Basis(RIGHT, tilt),
+	# Basis(RIGHT, t) tips local +Y toward local +Z, and the yaw PI/2 - a maps local
+	# +Z onto (cos a, sin a) — radially OUTWARD. So "radiating outward" is a POSITIVE
+	# tilt. Measured with it negative, the spikes ran from r = 1.07 at their bases to
+	# r = 0.63 at their tips: a cage closing over the head rather than a crown.
+	for i in 7:
+		var a := yaw + PI * (float(i) / 6.0 - 0.5)   # a half-circle fan, facing forward
+		create_box(center + Vector3(cos(a) * 0.85, crown_y + 0.15, sin(a) * 0.85), Vector3(0.22, 1.0, 0.22),
+				PI / 2.0 - a, rng, block_batch, block_body, 0.45, copper, false)
+
+	# The raised arm: two vertical boxes stepping outward and up (upper arm, then
+	# forearm), with the torch on top. Deliberately NOT tilted — a tilted arm box
+	# would need its own sign reasoning for a limb that reads fine as a step at the
+	# 30 m the silhouette is judged from.
+	var shoulder := center + rot * Vector3(1.0, y - 0.6, 0.0)
+	create_box(shoulder + rot * Vector3(0.35, 0.8, 0.0), Vector3(0.5, 2.0, 0.5), yaw, rng, block_batch, block_body, 0.0, copper)
+	var hand := shoulder + rot * Vector3(0.7, 2.6, 0.0)
+	create_box(hand, Vector3(0.6, 1.6, 0.6), yaw, rng, block_batch, block_body, 0.0, copper)
+	# THE one accent: the torch flame, warm — the only thing on this statue that
+	# should be visible from the coin road at night.
+	_spawn_artifact_accent(parent_chunk, hand + Vector3(0.0, 1.2, 0.0), Vector3(0.55, 0.8, 0.55), yaw, 0.0, _get_camp_ember_material())
+
+	return { "radius": 5.4, "top": maxf(crown_y + 0.9, hand.y + 1.6) }
+
+func _landmark_plaza_mayor(center: Vector3, rng: RandomNumberGenerator, _parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	Kind 5 — PLAZA MAYOR: a square of three-storey ochre buildings enclosing an
+	open courtyard, with an arcade of pillars along the inner faces, an arched
+	entrance gap in one side, and a statue plinth in the middle. The one landmark
+	you go INSIDE.
+
+	WHY EACH SIDE IS THREE SEGMENTS AND NOT ONE LONG WALL. Purely the radius bound:
+	a single 11.4 m wall has a horizontal half-diagonal of 5.79, which added to its
+	4.7 offset is 10.5 — over the declared 8.6, even though its actual far corner is
+	only at 8.4. The bound the self-check measures is offset + half-diagonal, so
+	splitting each side into three bays (half-diagonal 2.14) brings the worst case
+	to sqrt(3.75^2 + 4.7^2) + 2.14 = 6.01 + 2.14 = 8.15 <= 8.6. It also happens to
+	read better: three bays per side is what an arcaded square looks like.
+	NO ACCENT.
+	"""
+	const SIDE := 11.4        # outer side of the square
+	const WALL_T := 2.0       # building depth
+	const BAY := 3.8          # one segment's length
+	const STOREY := 2.2
+	const STOREYS := 3
+	var yaw := rng.randf_range(0.0, TAU)
+	var wall_line := SIDE / 2.0 - WALL_T / 2.0
+	var ochre := _lm_shade(LM_OCHRE, rng, 0.05)
+
+	# Four sides; side 0 is the entrance side and skips its middle bay.
+	for side_i in 4:
+		var side_yaw := yaw + PI / 2.0 * float(side_i)
+		var side_rot := Basis(Vector3.UP, side_yaw)
+		for bay in 3:
+			if side_i == 0 and bay == 1:
+				continue  # the archway: left open, spanned by a lintel below
+			var along := (float(bay) - 1.0) * BAY
+			var foot := center + side_rot * Vector3(along, 0.0, wall_line)
+			for s in STOREYS:
+				create_box(foot + Vector3(0.0, STOREY * float(s) + STOREY / 2.0, 0.0),
+						Vector3(BAY, STOREY, WALL_T), side_yaw, rng, block_batch, block_body, 0.0, _lm_shade(ochre, rng, 0.03))
+			# Slate cornice capping the bay — trim sitting on the wall's own volume.
+			create_box(foot + Vector3(0.0, STOREY * float(STOREYS) + 0.18, 0.0),
+					Vector3(BAY + 0.2, 0.36, WALL_T + 0.3), side_yaw, rng, block_batch, block_body, 0.0, _lm_shade(LM_ROOF, rng, 0.04), false)
+		# The arcade: three squat pillars along this side's inner face, standing
+		# proud of the wall — the colonnade you walk behind.
+		for p in 3:
+			var px := (float(p) - 1.0) * BAY
+			create_box(center + side_rot * Vector3(px, STOREY / 2.0, wall_line - WALL_T / 2.0 - 0.35),
+					Vector3(0.5, STOREY, 0.5), side_yaw, rng, block_batch, block_body, 0.0, _lm_shade(LM_ROOF, rng, 0.05))
+
+	# The entrance arch: two piers either side of the missing bay plus a lintel over
+	# it, so the gap reads as a doorway rather than as a demolition.
+	var arch_rot := Basis(Vector3.UP, yaw)
+	for s in [-1.0, 1.0]:
+		create_box(center + arch_rot * Vector3(s * (BAY / 2.0 - 0.35), STOREY, wall_line),
+				Vector3(0.7, STOREY * 2.0, WALL_T), yaw, rng, block_batch, block_body, 0.0, ochre)
+	create_box(center + arch_rot * Vector3(0.0, STOREY * 2.0 + STOREY / 2.0, wall_line),
+			Vector3(BAY, STOREY, WALL_T), yaw, rng, block_batch, block_body, 0.0, ochre)
+
+	# The courtyard's centrepiece: Felipe III on his plinth, abstracted to two boxes.
+	create_box(center + Vector3(0.0, 0.4, 0.0), Vector3(1.4, 0.8, 1.4), yaw, rng, block_batch, block_body, 0.0, _lm_shade(LM_GRANITE, rng))
+	create_box(center + Vector3(0.0, 0.8 + 0.85, 0.0), Vector3(0.55, 1.7, 0.55), yaw, rng, block_batch, block_body, 0.0, _lm_shade(LM_ROOF, rng, 0.03))
+
+	# ponytail: the roof is a cornice band, not a pitched roof — a real one needs
+	# tilted slabs whose collision would then be a ramp the player slides off. Add
+	# tilted eaves if the square ever reads too flat from a distance.
+	return { "radius": 8.6, "top": STOREY * float(STOREYS) + 0.36 }
+
+func _landmark_eiffel(center: Vector3, rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	Kind 6 — EIFFEL TOWER: four legs leaning inward in two segments each (the
+	curve, in two straight pieces), a broad first platform, a smaller second one, a
+	tapering shaft and an antenna, with ONE emissive beacon at the top.
+
+	WHY THE LEGS ARE TWO SEGMENTS. Partly the curve — a single straight leg reads
+	as a pylon — and partly the radius bound: a tilted box contributes
+	sin(tilt) * height/2 of horizontal reach, so one 7 m leg tilted 0.3 rad reaches
+	further than two 3.5 m ones that each restart closer to the axis.
+
+	RADIUS ARITHMETIC (declared 6.2). Worst case is the FIRST PLATFORM,
+	0.5*sqrt(2*6.0^2) = 4.24 at the centre. A lower leg segment sits at
+	sqrt(2*2.2^2) = 3.11 with a tilted horizontal half-reach under 1.5 => 4.6.
+	So 4.6 <= 6.2.
+	"""
+	const LEG_TILT := 0.30
+	const SEG := Vector3(0.85, 3.6, 0.85)
+	var yaw := rng.randf_range(0.0, TAU)
+	var iron := _lm_shade(LM_IRON, rng, 0.04)
+
+	# Four legs at the corners of a square, each leaning toward the axis. The tilt
+	# is applied about the leg's own local X after a yaw that points that X along
+	# the tangent, so every leg leans INWARD rather than all four leaning north.
+	#
+	# THE TILT IS NEGATED, AND THAT SIGN IS THE WHOLE SHAPE. create_box composes
+	# Basis(UP, yaw) * Basis(RIGHT, tilt), and Basis(RIGHT, t) tips the box's local
+	# +Y toward its local +Z (the same gotcha the treasure chest's lid records, one
+	# axis over). The yaw here is PI/2 - a, which maps local +Z onto (cos a, sin a)
+	# — i.e. RADIALLY OUTWARD from the tower axis. So a POSITIVE tilt splays the
+	# legs out. Measured with the sign wrong: the lower segment ran from r = 1.67 at
+	# the ground to r = 2.73 at its top, the upper segment restarted at r = 0.90 and
+	# rose to 1.50, so all four legs flared outward AND had a 1.83 m horizontal
+	# discontinuity where the two segments are supposed to meet. Negated, the lower
+	# runs 2.73 -> 1.67 and the upper 1.50 -> 0.90: converging, and the joint closes
+	# to a 0.17 m step. The radius bound is unaffected either way (the magnitude of
+	# the widest leg point is the same, it just moves from the top to the bottom).
+	for corner in 4:
+		var a := yaw + PI / 4.0 + PI / 2.0 * float(corner)
+		var lower := center + Vector3(cos(a) * 2.2, SEG.y / 2.0, sin(a) * 2.2)
+		create_box(lower, SEG, PI / 2.0 - a, rng, block_batch, block_body, -LEG_TILT, iron)
+		var upper := center + Vector3(cos(a) * 1.2, SEG.y * 1.5 - 0.1, sin(a) * 1.2)
+		create_box(upper, Vector3(SEG.x * 0.85, SEG.y, SEG.z * 0.85), PI / 2.0 - a, rng, block_batch, block_body, -LEG_TILT * 0.55, iron)
+
+	# First platform — the wide one you can see people standing on from the Champ
+	# de Mars, and here a genuinely reachable roof if you climb the legs.
+	var p1_y := SEG.y * 2.0 - 0.2
+	create_box(center + Vector3(0.0, p1_y + 0.25, 0.0), Vector3(6.0, 0.5, 6.0), yaw, rng, block_batch, block_body, 0.0, iron)
+	# Second platform.
+	var p2_y := p1_y + 4.0
+	create_box(center + Vector3(0.0, p2_y + 0.2, 0.0), Vector3(3.6, 0.4, 3.6), yaw, rng, block_batch, block_body, 0.0, iron)
+
+	# The shaft between and above the platforms: three boxes narrowing upward.
+	var y := p1_y + 0.5
+	for i in 3:
+		var w: float = 2.4 - float(i) * 0.55
+		var h := 3.5
+		create_box(center + Vector3(0.0, y + h / 2.0, 0.0), Vector3(w, h, w), yaw, rng, block_batch, block_body, 0.0, iron)
+		y += h
+
+	# Antenna, and THE one accent: the aircraft beacon at the very top.
+	create_box(center + Vector3(0.0, y + 1.25, 0.0), Vector3(0.3, 2.5, 0.3), yaw, rng, block_batch, block_body, 0.0, iron)
+	_spawn_artifact_accent(parent_chunk, center + Vector3(0.0, y + 2.7, 0.0), Vector3(0.4, 0.4, 0.4), yaw, 0.0, _get_camp_ember_material())
+
+	return { "radius": 6.2, "top": y + 2.5 }
+
+func _landmark_taj(center: Vector3, rng: RandomNumberGenerator, _parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	Kind 7 — TAJ MAHAL: a white marble plinth carrying a cubic mausoleum under a
+	stacked onion dome, four corner minarets, and a dark iwan arch recessed into
+	the front face. Symmetry is the recognition cue, so nothing here is jittered
+	except the colour.
+
+	RADIUS ARITHMETIC (declared 8.6). The plinth is the widest box,
+	0.5*sqrt(2*11.6^2) = 8.20. A minaret stands at sqrt(2*4.6^2) = 6.51 with a
+	half-diagonal of 0.57 => 7.08. So 8.20 <= 8.6.
+	NO ACCENT: the marble is the brightest albedo in the palette already.
+	"""
+	const PLINTH := Vector3(11.6, 0.9, 11.6)
+	const HALL := Vector3(6.0, 5.0, 6.0)
+	const MINARET_OFF := 4.6
+	var yaw := rng.randf_range(0.0, TAU)
+	var rot := Basis(Vector3.UP, yaw)
+	var marble := _lm_shade(LM_MARBLE, rng, 0.02)
+
+	create_box(center + Vector3(0.0, PLINTH.y / 2.0, 0.0), PLINTH, yaw, rng, block_batch, block_body, 0.0, marble)
+	var hall_y := PLINTH.y
+	create_box(center + Vector3(0.0, hall_y + HALL.y / 2.0, 0.0), HALL, yaw, rng, block_batch, block_body, 0.0, marble)
+
+	# The iwan: a tall dark recess in the front (+Z) face. Trim only — it sits on
+	# the hall's own collision volume, so collide = false keeps the wall solid.
+	create_box(center + rot * Vector3(0.0, hall_y + 1.9, HALL.z / 2.0 - 0.05), Vector3(2.4, 3.4, 0.5),
+			yaw, rng, block_batch, block_body, 0.0, LM_MARBLE.darkened(0.72), false)
+
+	# The dome: three shrinking boxes plus a finial. Crude, and unmistakable.
+	var y := hall_y + HALL.y
+	for dims in [Vector3(3.6, 1.6, 3.6), Vector3(2.6, 1.2, 2.6), Vector3(1.6, 0.9, 1.6)]:
+		create_box(center + Vector3(0.0, y + dims.y / 2.0, 0.0), dims, yaw, rng, block_batch, block_body, 0.0, marble)
+		y += dims.y
+	create_box(center + Vector3(0.0, y + 0.6, 0.0), Vector3(0.35, 1.2, 0.35), yaw, rng, block_batch, block_body, 0.0, _lm_shade(LM_GRANITE, rng))
+
+	# Four minarets, one per plinth corner, each with a small cap.
+	for corner in 4:
+		var a := yaw + PI / 4.0 + PI / 2.0 * float(corner)
+		var spot := center + Vector3(cos(a) * MINARET_OFF * sqrt(2.0), 0.0, sin(a) * MINARET_OFF * sqrt(2.0))
+		create_box(spot + Vector3(0.0, PLINTH.y + 4.0, 0.0), Vector3(0.8, 8.0, 0.8), yaw, rng, block_batch, block_body, 0.0, marble)
+		create_box(spot + Vector3(0.0, PLINTH.y + 8.35, 0.0), Vector3(1.1, 0.7, 1.1), yaw, rng, block_batch, block_body, 0.0, marble)
+
+	return { "radius": 8.6, "top": y + 1.2 }
+
+
+func spawn_landmark_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
+	"""
+	Spawn this chunk's geo landmark, if _landmark_at says it has one, plus its coin
+	ring and its marker node. Called from create_chunk AFTER spawn_camp_in_chunk and
+	BEFORE spawn_chest_in_chunk (and therefore before _build_block_multimesh + the
+	block_body attach), so every box the builder emits joins the chunk's SINGLE
+	MultiMesh draw call and SINGLE BlockCollision body — a whole Eiffel Tower costs
+	zero extra draw calls and zero extra physics bodies.
+
+	That ordering is also WHY the candidate loop lives here rather than in
+	_landmark_at: by this point the chunk's scattered blocks, feature structure,
+	artifact, biome geometry and camp are all in `obstacles`, so every try is judged
+	against the test that actually rejects. Both artifacts and camps had to have
+	that loop dug back OUT of their roll for exactly this reason.
+
+	@param chunk_pos: Chunk coordinates being generated.
+	@param parent_chunk: The chunk mesh — the reward coins, any emissive accent and
+	                     the marker Node3D parent here (per-chunk parenting rule:
+	                     they are freed automatically when the chunk unloads, so
+	                     there is no registry to keep in step and nothing to leak).
+	@param obstacles: The chunk's footprint list. READ to place the landmark, then
+	                  appended to with the landmark's own single footprint.
+	@param block_batch / block_body: The chunk's visual batch + collision body,
+	                                 threaded through to create_box.
+	"""
+	if not spawn_landmarks:
+		return
+	var lm := _landmark_at(chunk_pos)
+	if lm.is_empty():
+		return
+
+	# The landmark's OWN private RNG, seeded from _landmark_at's roll: it picks the
+	# spot AND feeds the builder AND draws the coin ring, so each consumes as many
+	# draws as it needs without the rarity roll (or any other stream) caring.
+	var rng := RandomNumberGenerator.new()
+	rng.seed = lm.seed
+
+	var chunk_center := chunk_to_world(chunk_pos)
+	# Candidates stay LANDMARK_EDGE_MARGIN (12 > LANDMARK_RADIUS 9.5) inside the
+	# chunk, so nothing the builder emits straddles a seam.
+	var half := chunk_size / 2.0 - LANDMARK_EDGE_MARGIN
+
+	# Try a few spots; accept the FIRST that clears _biome_spot_ok — the single home
+	# of the river + road-clearance + overlap rule (do not write a second copy). The
+	# road half is what makes a landmark an off-road DESTINATION rather than
+	# something you trip over on the trail; the overlap half is what keeps the
+	# silhouette readable.
+	#
+	# EVERY TRY FAILING MEANS NO LANDMARK — the same call artifacts and camps both
+	# make, and the right one here too: the Eiffel Tower sticking out of a mountain
+	# massif reads far worse than a chunk without one, and a higher LANDMARK_CHANCE
+	# reaches the same built rate. LANDMARK_RADIUS is handed over as "the widest this
+	# could be", because the shape's real radius is only known after its builder has
+	# run (the house rule every sibling spawner follows).
+	var local_x := 0.0
+	var local_z := 0.0
+	var placed := false
+	var tries := 0
+	while tries < LANDMARK_PLACE_TRIES and not placed:
+		tries += 1
+		local_x = rng.randf_range(-half, half)
+		local_z = rng.randf_range(-half, half)
+		if _biome_spot_ok(chunk_center, local_x, local_z, LANDMARK_RADIUS, LANDMARK_ROAD_CLEARANCE, obstacles):
+			placed = true
+	if not placed:
+		return
+
+	var center := Vector3(local_x, 0.0, local_z)
+
+	# --- Build it. The registry is pure data, so the dispatch is one call() on a
+	# method-name String and adding a ninth famous place touches no code here at
+	# all. `builder` being a String rather than a Callable is what lets LANDMARKS be
+	# a `const`; the cost is that a typo'd method name is caught at call time, which
+	# is why landmark_selfcheck.gd calls every builder in the table.
+	var entry: Dictionary = LANDMARKS[lm.kind]
+	var footprint: Dictionary = call(entry.builder, center, rng, parent_chunk, block_batch, block_body)
+
+	# --- The reward: a small ring of ordinary coins round the base, and
+	# DELIBERATELY NO GEM (the guaranteed gem stays the artifacts' distinction — see
+	# the REWARD DECISION in the constant banner). These are ordinary chunk-local
+	# coins parented to the chunk; the road's station-claim logic is not involved.
+	#
+	# ORDER MATTERS, and this is the same ordering gotcha artifacts and camps both
+	# carry: the landmark's own footprint is appended to `obstacles` only AFTER these
+	# coins are settled. That footprint is a CIRCLE with a `top`, but Stonehenge, the
+	# Plaza Mayor and the Golden Gate are mostly HOLLOW — settling their reward coins
+	# against that circle would perch them on the silhouette top, i.e. floating
+	# several metres up in open air over an empty middle. Settling first means they
+	# meet only real block stone and land where the player can actually pick them up.
+	if spawn_coins and coin_scene != null:
+		var coin_count := rng.randi_range(LANDMARK_COIN_MIN, LANDMARK_COIN_MAX)
+		var ring_radius: float = footprint.radius + rng.randf_range(LANDMARK_COIN_RING_PAD_MIN, LANDMARK_COIN_RING_PAD_MAX)
+		var i := 0
+		while i < coin_count:
+			i += 1
+			var a := rng.randf_range(0.0, TAU)
+			var cx := center.x + cos(a) * ring_radius
+			var cz := center.z + sin(a) * ring_radius
+			# Same perch-or-skip rule as road coins (one home: _settle_coin_y): the
+			# ring can graze a neighbouring block, so a coin perches on a climbable
+			# top or is dropped under a sheer wall.
+			var cy := _settle_coin_y(cx, cz, COIN_GROUND_HEIGHT, obstacles)
+			if is_inf(cy):
+				continue
+			var coin := coin_scene.instantiate()
+			coin.position = Vector3(cx, cy, cz)
+			parent_chunk.add_child(coin)
+
+	# --- The marker: the landmark's only other non-batched node, and it has no mesh,
+	# no script and no physics — a bare Node3D costs ZERO draw calls and ZERO
+	# physics. It exists so scripts/landmark_toast.gd can find landmarks the way
+	# EVERY other system in this project finds things: BY GROUP, never by reference
+	# (CLAUDE.md "Node discovery is group-based"). Parenting it to the chunk means it
+	# is freed automatically when the chunk unloads, so there is no registry to keep
+	# in step, nothing to leak, and a landmark that streams back in re-registers
+	# itself for free.
+	#
+	# The three metas are the whole contract with the toast: the English name and
+	# fact (which ARE the translation keys — CLAUDE.md Localization RULE 1) and the
+	# shape's real radius, so the toast can measure "within ~15 m of the STONE"
+	# rather than "within 15 m of a point" and a small statue and a wide plaza both
+	# trigger where they look like they should.
+	var marker := Node3D.new()
+	marker.name = "LandmarkMarker"
+	marker.position = center
+	marker.add_to_group("landmark")
+	marker.set_meta("name_key", entry.name)
+	marker.set_meta("fact_key", entry.fact)
+	marker.set_meta("radius", footprint.radius)
+	parent_chunk.add_child(marker)
+
+	# --- ONE round footprint, and it is NON-CLIMBABLE, unlike a chest's. These are
+	# 5-18 m tall, so a road coin perched on the "top" of the circle would float
+	# unreachably high — the same call the tree/canopy and cactus footprints make.
+	# _settle_coin_y therefore SKIPS a road coin whose column crosses a landmark
+	# instead of stranding it in the sky.
+	#
+	# This single footprint IS the crocodile exclusion: spawn_crocodiles_in_chunk
+	# already rejects candidates within ob.radius + min_object_clearance of a
+	# footprint, so a landmark reads as a calm pocket with NO EDIT to the crocodile
+	# spawner. Known consequence, exactly as camps document it: the croc COUNT is
+	# unchanged (the retry budget absorbs the rejections) but the croc POSITIONS in a
+	# landmark chunk DO shift, because a rejected candidate skips the successful
+	# spawn's rotation.y draw and shifts the rest of that chunk's croc stream.
+	# Within-run determinism still holds unconditionally — the footprint is a pure
+	# function of chunk coords + run_seed.
+	#
+	# ponytail: one circle + one top is the whole footprint vocabulary the coin and
+	# crocodile rules speak, so a hollow landmark reserves its empty middle too. That
+	# errs toward "no coin here" rather than "a coin buried in stone", which is the
+	# failure the rule exists to prevent; if it ever looks wrong, give the footprint
+	# a per-shape solid-centre height rather than a richer vocabulary.
+	obstacles.append({ "pos": center, "radius": footprint.radius, "top": footprint.top, "climbable": false })
 # ============================================================================
 # BIOME CONTENT (the geometry each biome adds on top of the ordinary blocks)
 # ============================================================================

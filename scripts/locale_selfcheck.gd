@@ -56,7 +56,10 @@ const StartOverlay := preload("res://scripts/start_overlay.gd")
 ## stated in CLAUDE.md: the MP room rows set `clip_text = true` (structurally
 ## unable to overflow), the game-over and start-overlay labels autowrap inside a
 ## container that grows, and the panel bodies are 340–356 px wide against strings
-## a third of that.
+## a third of that. The landmark toast's name and fact labels have the same
+## structural exemption as the start-overlay ones — they autowrap inside a
+## VBoxContainer that grows to fit — so the geo-landmark names and facts need NO
+## budget entry here and none may be added.
 const WIDTH_BUDGETS: Array = [
 	# touch_controls.gd — ACTION_BUTTON_SIZE 120 square, font 26, no wrap.
 	["JUMP", 26, 112.0, "touch Jump button"],
