@@ -1,5 +1,6 @@
 extends SceneTree
-## Headless self-check for the themed scattered props.
+## Headless self-check for the themed scattered props AND the themed feature
+## structures.
 ##
 ##   godot --headless --path . --script res://scripts/prop_selfcheck.gd
 ##
@@ -43,6 +44,18 @@ extends SceneTree
 ##      in endless_terrain.gd). The same pass also pins that every footprint the
 ##      loop appends carries a prop radius, i.e. that the loop really routes
 ##      through _build_prop rather than through some surviving cube path.
+##
+##   5. THE FEATURE STRUCTURES ARE REALLY RE-THEMED, AND STILL FEED THE PATROL
+##      CROCODILES. Same shape of check, one scale up: every role builder is run
+##      against every territory's STRUCTURE_THEMES row and (a) every colour it
+##      emits must lie on THAT territory's ramp — the negative control for a
+##      builder that quietly fell back to create_block's global RAMP_* pick, which
+##      would look fine and simply stop being themed — and (b) every walkable top
+##      it registers in `platforms` must be reachable from the ground by untilted
+##      colliding box tops in steps no taller than PROP_MAX_STEP, or the crocodile
+##      confined to it is standing on nothing. The retirement of the Mayan pyramid
+##      is asserted here too, with its replacement's geometry as the positive
+##      control (an absent method is otherwise indistinguishable from a typo).
 ##
 ## HOUSE RULE, followed throughout: every check is an EFFECT measurement with a
 ## negative control, never a getter read-back. Check 1 is vacuous against a
@@ -102,6 +115,30 @@ const UNIT_CORNERS: Array[Vector3] = [
 	Vector3(0.5, 0.5, -0.5), Vector3(0.5, 0.5, 0.5),
 ]
 
+## The four feature-structure ROLES, as [label, method, takes_platforms]. Written
+## out for BUILDERS' reason: the dispatch is a threshold chain over STRUCTURE_MIX,
+## not a registry, so a role that exists but is never listed here is drift a
+## hand-written list makes visible in review.
+const ROLES: Array = [
+	["wall", "spawn_wall", true],
+	["lane", "spawn_corridor", false],
+	["gate", "spawn_gate", true],
+	["mound", "spawn_terraced_mound", true],
+]
+
+## The territories, as [label, Biome enum value]. Read off the terrain script's
+## own enum rather than re-typed, so a renamed band fails loudly here.
+const TERRITORIES: Array = ["PLAINS", "DESERT", "FOREST", "MOUNTAIN"]
+
+## Structure trials per role per territory. Structures draw far more than a prop
+## does (length, doubling, gaps, lintels), so the sweep needs breadth; 40 x 4 x 4
+## is 640 real structures and still runs in well under a second.
+const STRUCTURE_SEEDS: int = 40
+
+## Colour slack. Every emitted colour is stored srgb_to_linear'd in the batch and
+## converted back here, so a couple of round-trip ULPs have to be absorbed.
+const COLOR_EPSILON: float = 0.004
+
 var _failures: Array[String] = []
 
 
@@ -122,10 +159,13 @@ func _run() -> void:
 		_check_builders(terrain_script, consts)
 		_check_constants(consts)
 		_check_chunk_purity(terrain_script, consts)
+		_check_structures(terrain_script, consts)
 
 	if _failures.is_empty():
 		print("props: %d builders x %d seeds x %d sizes measured; radius bound, climb ladder, box budget and chunk purity OK"
 				% [BUILDERS.size(), SEEDS_PER_BUILDER, SIZES.size()])
+		print("structures: %d roles x %d territories x %d seeds measured; palette, patrol platforms and pyramid retirement OK"
+				% [ROLES.size(), TERRITORIES.size(), STRUCTURE_SEEDS])
 		print("SELFCHECK OK")
 		quit(0)
 		return
@@ -256,27 +296,7 @@ func _check_ladder(builder: String, size: float, seed_index: int, prop: Dictiona
 	together are what "flat top at the recorded height" means; each is a way a
 	builder can look right and silently stop being a rest spot.
 	"""
-	var tops: Array[float] = []
-	for shape_node: Node in body.get_children():
-		var shape := shape_node as CollisionShape3D
-		if shape == null:
-			continue
-		var box := shape.shape as BoxShape3D
-		if box == null:
-			continue
-		var basis := shape.transform.basis
-		# Untilted means the box's own Y axis is world-up: create_box builds
-		# Basis(UP, yaw) * Basis(RIGHT, tilt), so any tilt shows up here at once.
-		if absf(basis.y.x) > FLAT_EPSILON or absf(basis.y.z) > FLAT_EPSILON:
-			continue
-		# Does this box's footprint cover the prop centre? The box is yawed, so the
-		# test projects the centre offset onto the box's own horizontal axes.
-		var to_centre := -shape.transform.origin
-		if absf(to_centre.dot(basis.x.normalized())) > box.size.x * 0.5:
-			continue
-		if absf(to_centre.dot(basis.z.normalized())) > box.size.z * 0.5:
-			continue
-		tops.append(shape.transform.origin.y + box.size.y * 0.5)
+	var tops: Array[float] = _standable_tops(body, Vector3.ZERO)
 
 	if tops.is_empty():
 		# The negative control for this whole check: without it, a builder that
@@ -304,6 +324,48 @@ func _check_ladder(builder: String, size: float, seed_index: int, prop: Dictiona
 		_fail("%s size %.1f seed %d: records top %.3f m but its highest standable surface is %.3f m"
 				% [builder, size, seed_index, recorded, reached])
 	return worst_step
+
+
+func _standable_tops(body: StaticBody3D, centre: Vector3) -> Array[float]:
+	"""
+	The sorted heights of every surface a player could actually stand on above a
+	given XZ spot, read off the real collision shapes.
+
+	@param body: The collision body the builder filled.
+	@param centre: The XZ column to measure (Y ignored). Props measure their own
+	               origin; a structure measures a platform's centre.
+	@return Ascending top-face heights of every box that COLLIDES, is UNTILTED
+	        (so it presents a flat top rather than a slope), and whose footprint
+	        actually covers `centre`.
+
+	Those three conditions together are what "a flat top at this height" means,
+	and each is a way a builder can look right while silently ceasing to be
+	standable. Shared by the prop ladder and the structure platform check so the
+	two can never drift apart on what "standable" means.
+	"""
+	var tops: Array[float] = []
+	for shape_node: Node in body.get_children():
+		var shape := shape_node as CollisionShape3D
+		if shape == null:
+			continue
+		var box := shape.shape as BoxShape3D
+		if box == null:
+			continue
+		var basis := shape.transform.basis
+		# Untilted means the box's own Y axis is world-up: create_box builds
+		# Basis(UP, yaw) * Basis(RIGHT, tilt), so any tilt shows up here at once.
+		if absf(basis.y.x) > FLAT_EPSILON or absf(basis.y.z) > FLAT_EPSILON:
+			continue
+		# Does this box's footprint cover the column? The box is yawed, so the
+		# test projects the offset onto the box's own horizontal axes.
+		var to_centre := centre - shape.transform.origin
+		if absf(to_centre.dot(basis.x.normalized())) > box.size.x * 0.5:
+			continue
+		if absf(to_centre.dot(basis.z.normalized())) > box.size.z * 0.5:
+			continue
+		tops.append(shape.transform.origin.y + box.size.y * 0.5)
+	tops.sort()
+	return tops
 
 
 # ============================================================================
@@ -409,3 +471,210 @@ func _check_chunk_purity(terrain_script: GDScript, consts: Dictionary) -> void:
 
 	print("  purity     %d chunks regenerated twice, %d boxes compared" % [chunks.size(), props_seen])
 	terrain.free()
+
+
+# ============================================================================
+# CHECK 5 — the themed feature structures
+# ============================================================================
+
+func _check_structures(terrain_script: GDScript, consts: Dictionary) -> void:
+	"""
+	Run every feature-structure ROLE against every TERRITORY'S theme and measure
+	the two things the re-theme could break silently, plus the retirement.
+
+	WHY A ROLE x THEME SWEEP RATHER THAN THE DISPATCH: spawn_feature_structure
+	picks the theme from biome_at(chunk_center), so driving it would only ever
+	exercise whichever band the sweep's coordinates happened to land in — and the
+	bug being hunted is a builder that ignores the theme it was handed. Passing
+	the theme explicitly is what makes "desert stone in a desert structure" a
+	statement this file can actually falsify.
+	"""
+	var max_step: float = float(consts["PROP_MAX_STEP"])
+	var themes: Dictionary = consts["STRUCTURE_THEMES"]
+	var mix: Dictionary = consts["STRUCTURE_MIX"]
+	var biome_enum: Dictionary = consts["Biome"]
+
+	var terrain := Node3D.new()
+	terrain.set_script(terrain_script)
+	terrain.set_run_seed(20260826)
+	var half_chunk: float = float(terrain.get("chunk_size")) * 0.5
+
+	# ---- RETIREMENT: the Mayan step-pyramid is gone from the generic pool -----
+	# The positive control is spawn_terraced_mound below: an absent method on its
+	# own is indistinguishable from a typo in this check's own method name.
+	if terrain.has_method("spawn_pyramid"):
+		_fail("spawn_pyramid still exists — the Mayan step-pyramid was supposed to be retired from the territory pool (a proper Giza belongs in landmark_builders.gd)")
+
+	# ---- The four territories' palettes must be mutually distinguishable -----
+	# A re-theme that copied one row into another reads as "themed" from inside
+	# every other check in this function.
+	for i in TERRITORIES.size():
+		for j in TERRITORIES.size():
+			if i == j:
+				continue
+			var a: Dictionary = themes[biome_enum[TERRITORIES[i]]]
+			var b: Dictionary = themes[biome_enum[TERRITORIES[j]]]
+			if _color_on_ramp(a["stone_a"], b["stone_a"], b["stone_b"]):
+				_fail("%s's stone sits on %s's ramp — the two territories' structures would read as the same place"
+						% [TERRITORIES[i], TERRITORIES[j]])
+
+	for role_variant: Variant in ROLES:
+		var role: Array = role_variant
+		var label: String = String(role[0])
+		var method: String = String(role[1])
+		var takes_platforms: bool = bool(role[2])
+
+		if not terrain.has_method(method):
+			_fail("no such structure builder %s (role %s)" % [method, label])
+			continue
+
+		for territory: String in TERRITORIES:
+			var theme: Dictionary = themes[biome_enum[territory]]
+			var built := 0
+			var platforms_seen := 0
+			var worst_step := 0.0
+			var boxes := 0
+
+			for s in STRUCTURE_SEEDS:
+				var rng := RandomNumberGenerator.new()
+				rng.seed = hash(Vector3i(s, hash(method), hash(territory)))
+
+				# Spread the trials over the world so the river / bounds rejections
+				# every builder carries are genuinely exercised rather than avoided.
+				var chunk_center := Vector3((s % 8) * 50.0 - 200.0, 0.0, (s / 8) * 50.0 - 100.0)
+
+				var batch: Array = []
+				var body := StaticBody3D.new()
+				var obstacles: Array = []
+				var platforms: Array = []
+				if takes_platforms:
+					terrain.call(method, rng, half_chunk, chunk_center, theme, obstacles, platforms, batch, body)
+				else:
+					terrain.call(method, rng, half_chunk, chunk_center, theme, obstacles, batch, body)
+
+				if batch.is_empty():
+					body.free()
+					continue  # rejected by the river / bounds test — legitimate
+				built += 1
+				boxes += batch.size()
+
+				# ---- CHECK 5a: every colour comes off THIS territory's palette --
+				for entry_variant: Variant in batch:
+					var entry: Dictionary = entry_variant
+					# create_box stores the colour srgb_to_linear'd for the MultiMesh.
+					var c: Color = (entry["color"] as Color).linear_to_srgb()
+					if _color_on_ramp(c, theme["stone_a"], theme["stone_b"]):
+						continue
+					if _color_close(c, theme["trim"]):
+						continue
+					if (theme["cap"] as Color).a > 0.0 and _color_close(c, theme["cap"]):
+						continue
+					_fail("%s/%s seed %d: emitted %s, which is on no part of that territory's palette — the builder is not using its theme"
+							% [territory, label, s, c])
+					break
+
+				# ---- CHECK 5b: every patrol platform is real and reachable ------
+				for plat_variant: Variant in platforms:
+					var plat: Dictionary = plat_variant
+					var centre: Vector3 = plat["center"]
+					var half: Vector2 = plat["half"]
+					platforms_seen += 1
+					if half.x <= 0.0 or half.y <= 0.0:
+						_fail("%s/%s seed %d: registers a platform with half-extents %s — a crocodile confined to it has nowhere to pace"
+								% [territory, label, s, half])
+						continue
+					var tops: Array[float] = _standable_tops(body, centre)
+					if tops.is_empty():
+						_fail("%s/%s seed %d: registers a platform at %.2f m with NO untilted colliding box under it — its patrol crocodile stands on nothing"
+								% [territory, label, s, centre.y])
+						continue
+					# THE CORNERS, not just the centre. set_confinement clamps a guard
+					# against the WORLD X/Z extents of this rectangle, so every corner
+					# of it must have real floor at the platform height — a summit slab
+					# turned by a yaw is exactly the case where the centre is fine and
+					# a corner hangs over nothing.
+					var corner_ok := true
+					for sx in [-1.0, 1.0]:
+						for sz in [-1.0, 1.0]:
+							var corner := Vector3(centre.x + sx * half.x, centre.y, centre.z + sz * half.y)
+							if not _has_top(_standable_tops(body, corner), centre.y):
+								corner_ok = false
+					if not corner_ok:
+						_fail("%s/%s seed %d: platform corner at half-extents %s hangs over nothing at %.3f m — a confined patrol crocodile paces off the edge"
+								% [territory, label, s, half, centre.y])
+					var reached := 0.0
+					for top: float in tops:
+						if top > centre.y + EPSILON:
+							break  # decoration above the deck is not part of the climb
+						var step := top - reached
+						if step > max_step + EPSILON:
+							_fail("%s/%s seed %d: %.2f m step up to %.2f m on the way to its platform, past PROP_MAX_STEP %.2f"
+									% [territory, label, s, step, top, max_step])
+						worst_step = maxf(worst_step, step)
+						reached = maxf(reached, top)
+					if absf(reached - centre.y) > EPSILON:
+						_fail("%s/%s seed %d: platform sits at %.3f m but the highest standable surface under it is %.3f m"
+								% [territory, label, s, centre.y, reached])
+
+				body.free()
+
+			# Negative control for 5a: a builder rejected on every trial would
+			# satisfy every colour comparison above by emitting nothing at all.
+			if built < STRUCTURE_SEEDS / 2:
+				_fail("%s/%s built only %d of %d trials — nothing was measured"
+						% [territory, label, built, STRUCTURE_SEEDS])
+
+			# Negative control for 5b, and the actual acceptance criterion for the
+			# re-theme: the roles that carry a walkable top must still register one,
+			# or spawn_platform_crocodiles silently stops finding anything to guard.
+			var wants_platform := label == "wall" or label == "mound" or (label == "gate" and int(theme["gate_style"]) == 2)
+			var mound_banned := label == "mound" and float((mix[biome_enum[territory]] as Array)[3]) <= float((mix[biome_enum[territory]] as Array)[2])
+			if wants_platform and not mound_banned and platforms_seen == 0:
+				_fail("%s/%s registered NO patrol platform across %d trials — its walkable top is gone and platform crocodiles vanish with it"
+						% [territory, label, built])
+			if label == "lane" and platforms_seen > 0:
+				_fail("%s/lane registered a patrol platform — the corridor is deliberately sheer and taller than a jump" % territory)
+
+			print("  %-8s %-6s built %2d/%d  %4d boxes  %d platforms  worst climb step %.2f m"
+					% [territory, label, built, STRUCTURE_SEEDS, boxes, platforms_seen, worst_step])
+
+	terrain.free()
+
+
+func _color_close(a: Color, b: Color) -> bool:
+	"""True when two colours are the same to within one sRGB round trip."""
+	return absf(a.r - b.r) <= COLOR_EPSILON and absf(a.g - b.g) <= COLOR_EPSILON and absf(a.b - b.b) <= COLOR_EPSILON
+
+
+func _color_on_ramp(c: Color, a: Color, b: Color) -> bool:
+	"""
+	Is `c` a point on the straight line from `a` to `b` in sRGB?
+
+	_structure_stone samples exactly that line, so this is the test for "this box
+	was coloured by its territory's theme" — and, run across two different
+	territories, the test for "these two territories look different".
+	"""
+	var d := Vector3(b.r - a.r, b.g - a.g, b.b - a.b)
+	# Solve for t on whichever channel moves most, so a near-grey ramp does not
+	# divide by ~0 and answer yes to everything.
+	var axis := 0
+	if absf(d.y) > absf(d[axis]):
+		axis = 1
+	if absf(d.z) > absf(d[axis]):
+		axis = 2
+	if absf(d[axis]) < COLOR_EPSILON:
+		return _color_close(c, a)
+	var cv := Vector3(c.r, c.g, c.b)
+	var av := Vector3(a.r, a.g, a.b)
+	var t: float = (cv[axis] - av[axis]) / d[axis]
+	if t < -COLOR_EPSILON or t > 1.0 + COLOR_EPSILON:
+		return false
+	return (av + d * t - cv).length() <= COLOR_EPSILON * 2.0
+
+
+func _has_top(tops: Array[float], y: float) -> bool:
+	"""True when one of the standable surfaces sits at height `y`."""
+	for top: float in tops:
+		if absf(top - y) <= EPSILON:
+			return true
+	return false
