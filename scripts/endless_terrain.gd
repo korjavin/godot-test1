@@ -1832,6 +1832,44 @@ const SYNC_RING: int = 1
 ## naturally drops queued chunks that fell back out of range.
 var pending_chunks: Array[Vector2i] = []
 
+## Chunks that fell OUT of range and are awaiting their queue_free(), drained by
+## _process at one chunk per frame — the exact mirror of pending_chunks, and it
+## exists for the exact mirror of the reason (bead godot-test1-6mh.2).
+##
+## Teardown was the one half of chunk streaming still done in a single frame: a
+## boundary crossing drops a whole COLUMN of chunks (2 x render_distance + 1 —
+## 7 on web, 11 on desktop), and a chunk is not one node but a mesh + two
+## collision bodies + its crocodiles, coins, props and landmark nodes, so that
+## column is several hundred nodes queue_free()d at once, every ~7 s of walking.
+## Draining it one chunk per frame spreads the same work over as many frames.
+##
+## THE CHUNK STAYS FULLY ALIVE UNTIL ITS TURN — still in `active_chunks`, still
+## in the tree, still colliding. That is what makes the queue safe rather than
+## merely deferred, and it is why only positions are queued:
+##
+##   * NO DOUBLE FREE — remove_chunk() is the only freer and it erases from
+##     `active_chunks` in the same breath, so a stale position drains to a no-op.
+##   * NO RE-SERVED CORPSE — a chunk the player walks back onto is never a freed
+##     node handed out again; it simply never left, and the rebuild-from-scratch
+##     below drops it from this queue. (Same rebuild discipline as
+##     pending_chunks: it only runs on boundary crossings, dedupes for free, and
+##     drops entries that fell back into range.)
+##   * NO LEAK — `update_chunks` re-derives the queue from `active_chunks` on
+##     every crossing, so anything still loaded and out of range is queued again
+##     next time, and _process drains anything beyond the ceiling described
+##     there in the same frame. Chunks that fall out of range faster than the
+##     queue drains are therefore still freed at the rate they arrive; only the
+##     steady-state trickle is throttled.
+##
+## Costs a few chunks' worth of memory for a few frames, and makes the F3
+## "Chunks" readout briefly count them — both correct: they ARE still loaded.
+##
+## NOT used by new_run()'s bulk free, deliberately: that one drops OLD-WORLD
+## geometry while the new world builds on top of it, so a throttled teardown
+## would leave the previous run's blocks standing inside the new one for a
+## second. A restart is allowed to hitch; a walk is not.
+var pending_removals: Array[Vector2i] = []
+
 # ----------------------------------------------------------------------------
 # FOCUS POINTS (multiplayer: keep chunks loaded around FAR TEAMMATES too)
 # ----------------------------------------------------------------------------
@@ -2392,6 +2430,36 @@ func _process(_delta: float) -> void:
 	if not pending_chunks.is_empty():
 		create_chunk(pending_chunks.pop_front())
 
+	# TIME-SLICED TEARDOWN: free ONE queued chunk per frame, the mirror of the
+	# fill above (see the pending_removals comment in SECTION 2). The queue is
+	# sorted farthest-first, so the chunk the player is least likely to walk back
+	# onto goes first. remove_chunk() re-checks `active_chunks`, so a position
+	# that was already freed drains harmlessly.
+	#
+	# ...PLUS THE OVERFLOW, which is what makes this a throttle and not a leak.
+	# One per frame keeps up only while the events that queue chunks are further
+	# apart than their backlog is long, which they always are in practice, but
+	# nothing enforces it — so past a ceiling the debt is paid in the same frame
+	# rather than carried forward, and `active_chunks` can never creep upward
+	# event after event.
+	#
+	# THE CEILING IS THE LARGEST BACKLOG A SINGLE LEGITIMATE EVENT CAN PRODUCE,
+	# so no legitimate event ever trips it and every one of them stays fully
+	# time-sliced. Two events queue chunks, and they can coincide:
+	#   * a boundary crossing drops a COLUMN — 2 x render_distance + 1 (7 on web,
+	#     11 on desktop);
+	#   * a multiplayer peer leaving (or the room emptying) releases the whole
+	#     pinned set at once — up to MAX_FOCUS_CHUNKS (27), which is exactly the
+	#     burst this change exists to spread out, so it must sit UNDER the
+	#     ceiling, not over it.
+	# Anything past their sum is a rate no event produces, i.e. a backlog that is
+	# actually falling behind, and freeing it now is the correct answer.
+	var drain: int = 1 + maxi(0,
+			pending_removals.size() - (2 * render_distance + 1 + MAX_FOCUS_CHUNKS))
+	while drain > 0 and not pending_removals.is_empty():
+		remove_chunk(pending_removals.pop_front())
+		drain -= 1
+
 # ============================================================================
 # CHUNK MANAGEMENT FUNCTIONS
 # ============================================================================
@@ -2505,15 +2573,25 @@ func update_chunks(player_chunk: Vector2i) -> void:
 	for chunk_pos: Vector2i in focus_chunks:
 		chunks_to_load[chunk_pos] = true
 
-	# STEP 2: Remove chunks that are too far away
-	var chunks_to_remove: Array[Vector2i] = []
+	# STEP 2: Queue the chunks that are too far away for TIME-SLICED teardown.
+	#
+	# Rebuilt from scratch, exactly like pending_chunks in STEP 3 and for the
+	# same reasons: this only runs on boundary crossings, so a fresh derivation
+	# from `active_chunks` is cheap, dedupes for free, and drops any chunk that
+	# came back into range (which is also what makes walking back over a queued
+	# chunk safe — it never left the tree). _process drains it at one chunk per
+	# frame; anything still out of range is simply re-queued next crossing.
+	pending_removals.clear()
 
 	for chunk_pos in active_chunks.keys():
 		if chunk_pos not in chunks_to_load:
-			chunks_to_remove.append(chunk_pos)
+			pending_removals.append(chunk_pos)
 
-	for chunk_pos in chunks_to_remove:
-		remove_chunk(chunk_pos)
+	# Farthest-first — the mirror of the fill's nearest-first. The chunk deepest
+	# behind the player is the one least likely to be walked back onto, so it is
+	# the one whose nodes we can afford to destroy first.
+	pending_removals.sort_custom(func(a: Vector2i, b: Vector2i) -> bool:
+		return (a - player_chunk).length_squared() > (b - player_chunk).length_squared())
 
 	# STEP 3: Create new chunks that don't exist yet — TIME-SLICED.
 	#
@@ -7901,8 +7979,8 @@ func new_run(forced_seed = null, around: Vector2i = Vector2i.ZERO) -> void:
 	2. Clear the road station cache — its entries were computed with the OLD seed
 	   and would poison the new road (the cache is "correct forever" only while the
 	   seed is constant). Reset the bounds to the empty sentinel (min > max) exactly
-	   as declared, so the next _road_extend_to_x re-seeds station 0. Also clear the
-	   pending-chunk queue — anything queued was computed for the old world.
+	   as declared, so the next _road_extend_to_x re-seeds station 0. Also clear both
+	   pending queues — anything queued was computed for the old world.
 	3. Free every active chunk and clear the dictionary — old-world geometry.
 	4. Rebuild around chunk `around` (the spawn chunk (0,0) unless a caller says
 	   otherwise) via update_chunks — which builds that chunk + SYNC_RING ring 1
@@ -7922,13 +8000,17 @@ func new_run(forced_seed = null, around: Vector2i = Vector2i.ZERO) -> void:
 		set_run_seed(int(forced_seed))
 	_apply_biome_shader_params()
 
-	# 2. Road cache back to its declared empty state, and the old-world pending
-	# queue emptied (update_chunks below rebuilds it for the new world anyway;
-	# clearing here just makes the invariant explicit).
+	# 2. Road cache back to its declared empty state, and BOTH old-world pending
+	# queues emptied (update_chunks below rebuilds them for the new world anyway;
+	# clearing here just makes the invariant explicit). The removal queue in
+	# particular holds bare coordinates, and step 3 is about to free everything
+	# they name — leaving stale ones around a rebuild that re-uses the same
+	# coordinates is how a brand-new chunk would get freed a frame later.
 	road_stations = {}
 	road_k_min = 1
 	road_k_max = 0
 	pending_chunks.clear()
+	pending_removals.clear()
 
 	# 3. Drop every old-world chunk (queue_free is the safe removal, as in remove_chunk).
 	# The bulk free bypasses remove_chunk, so count it here or the telemetry
