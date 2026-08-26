@@ -225,16 +225,23 @@ const FORMATION_LERP_SPEED: float = 1.5
 ## carries `_avoid_velocity` — and that is a STEP function: move_toward runs at
 ## exactly ±AVOID_EASE_SPEED while a swerve is easing and exactly 0 otherwise,
 ## so the yaw snapped ~0.77 rad (44°) in ONE tick on both the entry and the exit
-## of every avoidance swerve. Measured with a rider parked near the barrel edge,
-## that snap moved the player 0.72 m in a single tick on an elephant (0.50 on a
-## giraffe, 0.38 on a pack beast — the barrel width IS the lever arm, which is
-## why the owner reported elephants and not camels) and threw them clean off:
-## 19 m behind the herd within one crossing.
+## of every avoidance swerve. Measured by fauna_selfcheck.gd's row 4, with a
+## rider parked at the deck's far corner (the longest lever arm) and driven
+## through a meander plus a swerve out and back, that snap moved the player
+## 1.26 m in a SINGLE tick on an elephant — 30x the herd's own 0.042 m step —
+## against 0.88 on a giraffe and 0.74 on a pack beast. The barrel's half-diagonal
+## IS the lever arm (1.53 / 1.07 / 0.95 m), which is exactly why the owner
+## reported elephants and not the narrower camels. It threw the rider off: it
+## slid 5.64 m across an elephant's deck and travelled only 81% of the animal's
+## distance, i.e. it was flung off the back and left behind.
 ##
-## 0.5 rad/s (~29°/s) is derived, not taste: the widest deck reaches ~2.2 m from
-## the yaw axis, so it bounds the tangential carry at ~1.1 m/s — under half the
-## herd's own walking speed, i.e. a gentle carry-turn — while still completing a
-## full 44° swerve turn in 1.5 s, inside the ~1.8 s the offset ease itself takes.
+## 0.5 rad/s (~29°/s) is derived, not taste. The lever arm is the distance from
+## the yaw axis (the root origin) to the rider, so the bound is the widest deck's
+## half-DIAGONAL, not its half-width: the elephant's 1.6 x 2.6 m barrel gives
+## hypot(0.8, 1.3) = 1.53 m (giraffe 1.07, pack beast 0.95). That bounds the
+## tangential carry at ~0.77 m/s — under a third of the herd's own walking speed,
+## i.e. a gentle carry-turn — while still completing a full 44° swerve turn in
+## 1.5 s, inside the ~1.8 s the offset ease itself takes.
 ## Rate-limiting the OUTPUT rather than smoothing `_avoid_velocity` is deliberate:
 ## it bounds the angular velocity whatever feeds the yaw, so a future steering
 ## term cannot re-open this.

@@ -33,10 +33,12 @@ extends SceneTree
 ##      facing yaw is derived from a term (`_avoid_velocity`) that is a step
 ##      function, so before FACING_YAW_RATE_MAX it snapped ~0.77 rad in a single
 ##      tick on both ends of every avoidance swerve and threw the player off the
-##      barrel: measured 0.72 m of rider travel in ONE tick on an elephant and
-##      19 m of deck drift over one crossing. Nothing errors, nothing logs, and
-##      the wider the animal the worse it is — which is the whole reason this
-##      row measures every species rather than one.
+##      barrel: measured here, 1.26 m of rider travel in ONE tick on an elephant
+##      (30x the herd's own step), 5.64 m of slide across its deck, and a rider
+##      that covered only 81% of the animal's distance because it had been left
+##      behind. Nothing errors and nothing logs, and the wider the animal the
+##      worse it is — which is the whole reason this row measures every species
+##      rather than one.
 ##
 ## Don't grow this into a suite. Two non-obvious things in here. (a) Rows 1-3
 ## drive the manager's own _physics_process by hand, SUB-STEPPED inside a real
@@ -97,28 +99,40 @@ const RIDE_PHASES: Array = [
 ]
 const RIDE_SETTLE_FRAMES: int = 10
 const RIDE_HERD_SPEED: float = 2.5
+## How far in from each deck edge the rider is parked. Small enough to keep the
+## lever arm near the corner's maximum, large enough that the 0.5 m capsule
+## still rests on the box rather than teetering off it — the narrowest deck is
+## the pack beast's 0.85 m, so an inset much past this would put the rider past
+## the far edge entirely.
+const RIDE_DECK_INSET: float = 0.3
 
 ## Worst per-tick rider displacement allowed BEYOND the animal's own. The herd
-## walks RIDE_HERD_SPEED / 60 = 0.0417 m per tick; measured after the fix the
-## worst excess is 0.0076 m (elephant, the widest deck), and with the yaw snap
-## it was 0.72 m. 0.02 leaves 2.6x headroom over the real figure while sitting
-## 36x under the bug — the gap this row exists in is two orders of magnitude, so
-## the exact threshold is not delicate.
+## walks RIDE_HERD_SPEED / 60 = 0.0417 m per tick. Measured after the fix:
+## 0.0066 / 0.0032 / 0.0023 m (elephant / giraffe / beast — the deck's
+## half-diagonal is the lever arm, so the order is the barrel order). With the
+## yaw snap: 1.26 / 0.88 / 0.74 m. 0.02 leaves 3x headroom over the worst real
+## figure while sitting 37x under the mildest bug reading, so the threshold sits
+## in a two-order-of-magnitude gap and is not delicate.
 const RIDE_EXCESS_MAX: float = 0.02
-## How far the rider may end up from where it was placed IN THE ANIMAL'S OWN
-## FRAME. Measured 0.40 m (elephant) after the fix, 19.11 m with the bug — i.e.
-## thrown off and left behind. 1.5 m is inside every deck.
-const RIDE_DRIFT_MAX: float = 1.5
+## How far the rider may SLIDE ACROSS THE DECK — displacement from where it
+## settled, in the animal's own frame (see _finish_ride for why displacement and
+## not distance-from-origin). Measured 0.04 m on every species after the fix,
+## against 5.64 / 1.36 / 1.24 m with the bug. 0.5 m is 12x the real figure and
+## still catches the mildest bug reading on every species, which the old 1.5 m
+## did only on the elephant.
+const RIDE_DRIFT_MAX: float = 0.5
 ## NEGATIVE CONTROL 1: the rider has to have been CARRIED for any of the above to
 ## mean anything. A rider that fell off on frame one and stood on the ground has
 ## a per-tick excess of zero (it moves less than the herd, not more) and would
 ## satisfy RIDE_EXCESS_MAX perfectly. So its total travel is measured against the
-## herd's and must be nearly all of it.
+## herd's and must be nearly all of it. Measured 98% after the fix; a rider left
+## behind by the elephant's snap covered 81%.
 const RIDE_CARRY_MIN: float = 0.9
 ## NEGATIVE CONTROL 2: the herd has to have actually TURNED. Delete the swerve
 ## script — or the yaw write itself — and a herd walking a straight line carries
 ## its rider flawlessly, passing every assertion above while testing nothing.
-## The scripted berth swings the facing ~0.77 rad each way.
+## The scripted berth swings the facing ~0.5 rad each way, i.e. ~1.0 rad
+## peak-to-peak across the swerve out and the unwind, which is what is measured.
 const RIDE_YAW_SWING_MIN: float = 0.4
 
 var _root: Node3D = null
@@ -150,6 +164,7 @@ var _ride_phase_i: int = 0
 var _ride_phase_left: int = 0
 var _ride_prev_rider: Vector3 = Vector3.ZERO
 var _ride_prev_herd: Vector3 = Vector3.ZERO
+var _ride_start_local: Vector2 = Vector2.ZERO
 var _ride_yaw_min: float = 0.0
 var _ride_yaw_max: float = 0.0
 var _ride_excess: float = 0.0
@@ -211,8 +226,12 @@ func _initialize() -> void:
 	_manager = Node.new()
 	_manager.set_script(load("res://scripts/fauna_manager.gd"))
 	_root.add_child(_manager)
-	# Park the manager's own event timer — trials drive _spawn_herd directly.
-	_manager.set("_event_timer", 1e9)
+	# NOTHING about the manager is configured here — see phase 0 in
+	# _physics_process. A node added from _initialize gets its _ready() on the
+	# FIRST FRAME, not now, and Godot's NOTIFICATION_READY re-enables
+	# set_physics_process(true) for any script that overrides _physics_process
+	# and re-runs fauna_manager._ready(), so both of the things phase 0 does to
+	# it would be silently undone if they were done here.
 
 
 func _physics_process(_delta: float) -> bool:
@@ -222,6 +241,20 @@ func _physics_process(_delta: float) -> bool:
 			# query is run against them.
 			_wait += 1
 			if _wait > 3:
+				# TURN THE MANAGER'S OWN PHYSICS CALLBACK OFF — here, past its
+				# _ready(), never in _initialize (see the note there). Every row
+				# drives _physics_process BY HAND, and a live node in the tree
+				# ALSO gets it dispatched by the engine every physics frame, so
+				# without this the manager ticks once MORE per frame than the row
+				# thinks it does: rows 1-3 got 61 sub-steps instead of 60
+				# (harmless), but row 4 ran at DOUBLE rate — i.e. it measured a
+				# world with twice the FACING_YAW_RATE_MAX under test, which is
+				# stricter than the real one and so silently misreports every
+				# figure the constant is tuned against. It also parks the event
+				# timer for good: _event_timer is only ever decremented inside
+				# _physics_process, so with the dispatch off no herd can spawn
+				# itself mid-trial.
+				_manager.set_physics_process(false)
 				_phase = 1
 		1:
 			_start_trial()
@@ -354,15 +387,20 @@ func _start_ride() -> void:
 		record = _manager.call(species["build"])
 	_manager.call("_add_animal", record, Vector3.ZERO)
 
-	# Park the rider near the barrel's EDGE. The flung distance is `angular × r`,
-	# so the edge is the worst case and the middle would understate every species
-	# — and understate the widest one most, which is the one that was reported.
+	# Park the rider at the deck's far CORNER — the LONGEST LEVER ARM, which is
+	# what the flung distance `angular × r` is proportional to and therefore the
+	# only worst case worth measuring. `r` is `hypot(local_x, local_z)` about the
+	# root origin, and every barrel is longer than it is wide, so an offset on
+	# the x axis alone is close to the MINIMUM: it gives r = 0.45 m on an
+	# elephant, 0.15 on a giraffe and 0.075 on a pack beast, against 1.05 / 0.62
+	# / 0.51 at the corner — i.e. a row 2-7x less sensitive than it reads.
 	var animal_root: Node3D = record["root"]
 	var shape: CollisionShape3D = animal_root.get_node("PlatformShape")
 	var box: BoxShape3D = shape.shape
 	var deck_top: float = shape.position.y + box.size.y * 0.5
-	var edge_x: float = box.size.x * 0.5 - 0.35
-	_player.global_position = animal_root.global_transform * Vector3(edge_x, deck_top + 1.05, 0.0)
+	var inset := RIDE_DECK_INSET
+	_player.global_position = animal_root.global_transform * Vector3(
+			box.size.x * 0.5 - inset, deck_top + 1.05, box.size.z * 0.5 - inset)
 	_player.velocity = Vector3.ZERO
 
 	_ride_phase_i = 0
@@ -383,9 +421,14 @@ func _settle_ride() -> void:
 	if _wait < RIDE_SETTLE_FRAMES:
 		return
 	var animals: Array = _manager.get("_animals")
+	var animal_root: Node3D = animals[0]["root"]
 	_ride_prev_rider = _player.global_position
-	_ride_prev_herd = (animals[0]["root"] as Node3D).global_position
-	var yaw: float = (animals[0]["root"] as Node3D).global_rotation.y
+	_ride_prev_herd = animal_root.global_position
+	# Where the rider is standing IN THE ANIMAL'S OWN FRAME, captured after the
+	# settle rather than at placement so the couple of centimetres gravity moves
+	# it are not counted as slide. _finish_ride measures against this point.
+	_ride_start_local = _local_xz(animal_root, _player.global_position)
+	var yaw: float = animal_root.global_rotation.y
 	_ride_yaw_min = yaw
 	_ride_yaw_max = yaw
 	_phase = 6
@@ -431,17 +474,24 @@ func _flat_distance(a: Vector3, b: Vector3) -> float:
 	return Vector2(a.x - b.x, a.z - b.z).length()
 
 
+func _local_xz(animal_root: Node3D, world_pos: Vector3) -> Vector2:
+	## Where a world point sits on the animal's deck, in the animal's own frame.
+	var local: Vector3 = animal_root.global_transform.affine_inverse() * world_pos
+	return Vector2(local.x, local.z)
+
+
 func _finish_ride() -> void:
 	var species_name: String = RIDE_SPECIES[_ride_species]["name"]
 	var animals: Array = _manager.get("_animals")
-	# Drift is measured in the ANIMAL'S OWN FRAME: "did the rider stay where it
-	# was put on the deck", which is what riding means and what the world-space
-	# per-tick figure alone cannot say.
+	# Drift is how far the rider SLID ACROSS THE DECK — the displacement from
+	# where it settled, measured in the ANIMAL'S OWN FRAME. That is what riding
+	# means, and it is what the world-space per-tick figure alone cannot say.
+	# Distance from the animal's ORIGIN would be the wrong quantity: the rider is
+	# parked at the deck corner, so it starts ~1.1 m out and a reading of 1.16 m
+	# would mean "barely moved" while reading like a metre of slide.
 	var drift := 1e9
 	if not animals.is_empty():
-		var animal_root: Node3D = animals[0]["root"]
-		var local: Vector3 = animal_root.global_transform.affine_inverse() * _player.global_position
-		drift = Vector2(local.x, local.z).length()
+		drift = _local_xz(animals[0]["root"], _player.global_position).distance_to(_ride_start_local)
 	var carried := 0.0
 	if _ride_herd_travel > 0.0:
 		carried = _ride_rider_travel / _ride_herd_travel
