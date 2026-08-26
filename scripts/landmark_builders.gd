@@ -286,6 +286,97 @@ const LANDMARKS: Array = [
 		"fact": "A 100 m lighthouse on the island of Pharos at Alexandria, Egypt — a Wonder of the Ancient World, toppled by earthquakes.",
 		"radius": 6.6,
 	},
+	# --- WAVE 4, THE GERMAN PACK (appended, never inserted — see the ORDER note
+	# above). Ten places from one country, which no earlier wave did and which is
+	# the whole point: the game's players are German-speaking, waves 2 and 3
+	# deliberately rationed and then withheld this pool so it would not be spent on
+	# leftovers, and this is the wave it was being saved for. With the three wave-2
+	# entries (Brandenburger Tor, Neuschwanstein, Kölner Dom) that takes German
+	# coverage to 13 of 38.
+	#
+	# THE SELECTION RULE IS THE SAME ONE, unchanged: does a person name the place
+	# from the SILHOUETTE alone. A domed parliament, a sphere on a needle, a black
+	# Roman gate, two fat brick towers, a stone bell, a glass wave on a warehouse,
+	# a cross on a summit, a keep over a timbered hall, ONE colossal steeple, and
+	# four animals standing on each other. Ten shapes, and no two of them are the
+	# same shape — which matters more here than in any earlier wave, because ten
+	# entries from one country is also ten chances to build the same church twice.
+	#
+	# The two that come closest to an existing entry are called out in their own
+	# docstrings rather than hidden: Ulm is deliberately the ONE-spire answer to
+	# Cologne's two (which is the real recognition cue between them, and Cologne's
+	# docstring already said so), and the Wartburg is deliberately stone-and-timber
+	# ochre against Neuschwanstein's white-and-blue-cones, because "a castle" is a
+	# silhouette two entries could share and a colour scheme is not.
+	#
+	# ZERO NEW PALETTE ENTRIES, for the third wave running and for wave 2's stated
+	# reason. Northern brick Gothic and Hamburg's harbour warehouse both want a
+	# brick red, which is LM_VERMILION darkened — the torii's lacquer is bright and
+	# a wall of it is not, and their silhouettes could not be confused at any
+	# distance. Glass is LM_SLATE_BLUE lightened, patinated bronze is LM_COPPER
+	# darkened, and the Porta Nigra's soot-blackened sandstone is LM_STONE_GREY
+	# darkened rather than the Moai's LM_BASALT — a third near-black entry in the
+	# registry would have been one too many.
+	{
+		"builder": "_landmark_reichstag",
+		"name": "Reichstag Building",
+		"fact": "The seat of the German parliament in Berlin, opened in 1894 and crowned in 1999 with a glass dome the public may climb.",
+		"radius": 8.4,
+	},
+	{
+		"builder": "_landmark_fernsehturm",
+		"name": "Berlin TV Tower",
+		"fact": "At 368 m the tallest structure in Germany, raised in East Berlin in 1969 — sunlight on its sphere draws a cross the state could never remove.",
+		"radius": 6.4,
+	},
+	{
+		"builder": "_landmark_porta_nigra",
+		"name": "Porta Nigra",
+		"fact": "A Roman city gate in Trier from around AD 170, built of sandstone blocks set without mortar — the largest still standing north of the Alps.",
+		"radius": 8.2,
+	},
+	{
+		"builder": "_landmark_holstentor",
+		"name": "Holsten Gate",
+		"fact": "The western gate of Lübeck, finished in 1478 in northern brick Gothic — its two round towers lean because the marshy ground gave way.",
+		"radius": 7.8,
+	},
+	{
+		"builder": "_landmark_frauenkirche",
+		"name": "Dresden Frauenkirche",
+		"fact": "A Baroque church of 1743 whose great stone dome fell in the firestorm of 1945 — rebuilt from its own rubble and reconsecrated in 2005.",
+		"radius": 7.2,
+	},
+	{
+		"builder": "_landmark_elbphilharmonie",
+		"name": "Elbphilharmonie",
+		"fact": "A concert hall opened in Hamburg in 2017 — a wave of glass set on top of a brick harbour warehouse from 1963.",
+		"radius": 7.4,
+	},
+	{
+		"builder": "_landmark_zugspitze",
+		"name": "Zugspitze Summit Cross",
+		"fact": "A gilded cross on Germany's highest peak, 2,962 m up in the Alps — first raised in 1851 after being carried up in pieces.",
+		"radius": 6.0,
+	},
+	{
+		"builder": "_landmark_wartburg",
+		"name": "Wartburg Castle",
+		"fact": "A castle above Eisenach founded in 1067, where Martin Luther hid as 'Junker Jörg' and translated the New Testament in eleven weeks.",
+		"radius": 7.2,
+	},
+	{
+		"builder": "_landmark_ulm_minster",
+		"name": "Ulm Minster",
+		"fact": "The tallest church steeple in the world at 161.5 m, begun in Ulm in 1377 and finished only in 1890 — 768 steps to the viewing gallery.",
+		"radius": 8.0,
+	},
+	{
+		"builder": "_landmark_bremen_musicians",
+		"name": "Bremen Town Musicians",
+		"fact": "A donkey, dog, cat and rooster from the Grimm tale of 1819, cast in bronze at Bremen in 1953 — grasp the donkey's forelegs for luck.",
+		"radius": 4.2,
+	},
 ]
 
 # ----------------------------------------------------------------------------
