@@ -179,6 +179,16 @@ reason, as `CITY_CROC_DIVISOR` and `DESERT_BLOCK_KEEP_EVERY`. Adding a predator 
 `croc_spawn_selfcheck` fails if the row is incomplete, breaks the speed lattice, or
 is assigned after `add_child`.
 
+**Behaviour is one `match` on `spec["behavior"]` at the end of `_update_chase_state()`,
+and every arm is one call to its own `_behave_*()`** — no logic in the arm, no state
+shared between arms, `"solo"` deliberately having no arm at all (it is the code above it,
+so an unknown behaviour string degrades to solo). An arm may bend `chase_target`, which is
+where a predator *steers*, never how far it can smell — the detection decision is made
+above the dispatch. The timber wolf is the first: each one steers to its own slot on a
+ring around the quarry, derived from its own deterministic id, so the pack surrounds with
+no coordinator, no registry and no group scan — which is also what makes it LOD-safe (a
+slept wolf corrupts nothing, a waking one recomputes with no lurch).
+
 Per-instance speed and size rolls are **not** deterministic (they use a `randomize()`d
 RNG); only *positions* are. Bosses skip both rolls — `setup_as_boss()` must be called
 **before** `add_child`, because `_ready()` is where the rolls happen.
@@ -197,8 +207,8 @@ The spawn point is a crocodile-free bubble enforced in generation
 `set_lod_active(false)` (which zeroes velocity and stops `_physics_process`), and freezes
 coin animation beyond its own radius. Two invariants:
 
-- **`SIM_RADIUS` (45) must stay well above every species' `detection_radius` (15 for the
-  crocodile, 25 for a boss).** Anything that could
+- **`SIM_RADIUS` (45) must stay well above every species' `detection_radius` (12–18 across
+  the table, 25 for a boss).** Anything that could
   chase or touch the player is always fully awake, so near-player behaviour is unchanged.
 - **Crocodiles are slept, never removed.** Entity counts stay the same.
 

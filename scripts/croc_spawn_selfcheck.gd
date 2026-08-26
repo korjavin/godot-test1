@@ -126,12 +126,14 @@ func _run() -> void:
 	# The lattice's two ends are READ, never restated here: WALK_SPEED off the
 	# player and MAX_CHASE_SPEED off the AI, so retuning either moves this check
 	# with it instead of leaving it asserting a number nothing uses any more.
-	var croc_consts: Dictionary = load(CROC_AI_SCRIPT).get_script_constant_map()
+	var croc_ai: GDScript = load(CROC_AI_SCRIPT)
+	var croc_consts: Dictionary = croc_ai.get_script_constant_map()
 	_species_table = croc_consts.get("SPECIES", {})
 	_max_chase_speed = float(croc_consts.get("MAX_CHASE_SPEED", 0.0))
 	_walk_speed = float(load(PLAYER_SCRIPT).get_script_constant_map().get("WALK_SPEED", 0.0))
 	_biome_species = consts.get("BIOME_SPECIES", {})
 	_check_species_table()
+	_check_pack_surround(croc_ai)
 
 	for run_seed: int in RUN_SEEDS:
 		_sweep(terrain_script, run_seed, spawn_height, edge_inset)
@@ -220,6 +222,252 @@ func _check_species_table() -> void:
 		_fail("only %d SPECIES row(s) and %d dispatch entries — checks over the"
 				% [_species_table.size(), _biome_species.size()]
 				+ " species table ran against a world with one predator in it")
+
+
+# ============================================================================
+# CHECK 5 — a pack ACTUALLY surrounds, and a solo predator actually doesn't
+# ============================================================================
+
+## How many wolves stand in for one chunk's pack, and over how many chunks the
+## measurement is repeated. The ids come from the REAL node-name scheme, so this
+## is not a sample of a random variable — every number below is a constant of the
+## shipped name hash and re-measuring gives the same answer forever.
+const PACK_PROBE_WOLVES: int = 6
+const PACK_PROBE_CHUNKS: int = 24
+
+## The pack starts clustered on ONE bearing at this range — the hardest possible
+## start for a surround, and the one a straight-line chaser handles perfectly.
+const PACK_PROBE_START: float = 16.0
+## Where a wolf counts as having ARRIVED, and where its attack bearing is read.
+## Well outside the ring (4 m) so the reading is not taken from the noise of the
+## final metre, and well inside the 18 m detection radius.
+const PACK_PROBE_ARRIVE: float = 3.0
+## Integration step and budget. 12 s is nearly double the ~6.5 s a 6.8 m/s wolf
+## needs to walk 16 m plus a half-circle, so failing to arrive means STALLED.
+const PACK_PROBE_DT: float = 1.0 / 30.0
+const PACK_PROBE_SECONDS: float = 12.0
+
+## The verdict. A pack's mean spread of attack bearings must clear 100°, and the
+## same wolves with the flank switched off must stay under 5° — see the note in
+## _check_pack_surround on why both numbers are stated and neither is tight.
+## Today's steering measures ~136° against ~0°.
+const PACK_SPREAD_MIN_DEG: float = 100.0
+const PACK_CONTROL_MAX_DEG: float = 5.0
+
+
+func _check_pack_surround(croc_ai: GDScript) -> void:
+	"""
+	MEASURE the surround. Do not assert it.
+
+	`pack_steer_point()` is easy to write in a way that reads correctly and does
+	not work: a ring that never tapers leaves the pack orbiting a player who can
+	stand still in the middle of it, a taper that closes too early collapses the
+	pack into the single-file queue it was built to replace, and an id-to-slot
+	mapping that degenerates (every wolf in a chunk drawing the same bearing)
+	looks fine in the source and produces a conga line on screen. None of those
+	is an error anywhere — which is this file's entire subject.
+
+	So this simulates. Six wolves, ids taken from the REAL deterministic node
+	names spawn_crocodiles_in_chunk gives them, all starting CLUSTERED ON ONE
+	BEARING 16 m out and all facing the quarry — the worst case for a surround
+	and the case a straight-line chaser handles perfectly. Each step re-runs the
+	shipped steering and the shipped two lines of movement (lerp_angle toward the
+	heading at the species' own turn_smoothness, then travel along the facing at
+	its own chase_speed), so what is being measured is the code that ships, not a
+	restatement of it. The bearing each wolf holds when it first closes to 3 m is
+	the angle it ATTACKED from, and the spread of those bearings is the surround.
+
+	THE NEGATIVE CONTROL IS THE OTHER HALF, following this file's house rule: the
+	identical run with the flank offset switched off must collapse to a single
+	bearing. Without it, "the wolves attacked from many angles" is also true of a
+	check that spread them out in its own setup.
+
+	WHAT THE MODEL LEAVES OUT, honestly: obstacle feelers, wolf-on-wolf collision
+	and gravity. All three perturb the PATH; none can change where the ring slots
+	are, because a slot is a pure function of an id. They would widen the arcs,
+	not narrow them.
+
+	The thresholds are deliberately loose — 100° against a measured ~136°, 5°
+	against a measured 0° — because this is a guard against the behaviour being
+	GONE or DEGENERATE, not a pin on today's exact tuning. Retuning
+	pack_flank_radius should not have to come here; PACK_FLANK_TAPER, which the
+	arc is directly proportional to, has a hard bound of its own checked below.
+	"""
+	var wolf_species := ""
+	for name_v: Variant in _species_table:
+		if String(_species_table[name_v].get("behavior", "")) == "pack":
+			wolf_species = String(name_v)
+			break
+	if wolf_species == "":
+		_fail("no SPECIES row has behavior 'pack' — the pack steering this check"
+				+ " measures is not reachable from any species")
+		return
+
+	var row: Dictionary = _species_table[wolf_species]
+	for key: String in ["pack_size", "pack_flank_radius"]:
+		if not row.has(key):
+			_fail("SPECIES['%s'] has behavior 'pack' but no '%s' —" % [wolf_species, key]
+					+ " _behave_pack reads it every frame it chases")
+			return
+	var pack_size: int = int(row["pack_size"])
+	var flank: float = float(row["pack_flank_radius"])
+	var speed: float = float(row["chase_speed"])
+	var turn: float = float(row["turn_smoothness"])
+	if pack_size < 2:
+		_fail("SPECIES['%s'].pack_size is %d — a ring with fewer than two slots"
+				% [wolf_species, pack_size] + " is a single-file queue")
+		return
+
+	# ---- the anti-orbit invariant, stated directly on the function ----------
+	# A wolf standing ON its own slot bearing at distance d is offered the point
+	# d * TAPER along that same bearing. At TAPER >= 1.0 that point is the wolf's
+	# own position (or further out) — every point of its slot ray is a fixed
+	# point, and the pack freezes in a ring around a player who then strolls
+	# away. This is the singularity PACK_FLANK_TAPER's doc block is about, and it
+	# is checked here rather than trusted because the failure is a pack that
+	# looks perfectly composed while being completely harmless.
+	#
+	# AND IT IS CHECKED AS ARITHMETIC RATHER THAN LEFT TO THE SIMULATION BELOW
+	# BECAUSE THE SIMULATION DOES NOT CATCH IT. Measured: with TAPER set to
+	# exactly 1.0 the probe still reports a healthy 152° of surround and every
+	# wolf still arrives, because a wolf approaching at an angle never lands
+	# exactly on its own slot ray and so never meets the fixed point. The freeze
+	# is a measure-zero set the integrator steps straight over, and a live wolf
+	# tracking a player who happens to walk along its bearing finds it. Two
+	# halves, then: the bound is proved, the shape is measured.
+	var taper: float = float(load(CROC_AI_SCRIPT).get_script_constant_map()
+			.get("PACK_FLANK_TAPER", 1.0))
+	if taper >= 1.0 or taper <= 0.0:
+		_fail("PACK_FLANK_TAPER is %.2f — outside (0, 1) the flank ring either" % taper
+				+ " vanishes or becomes an orbit no wolf can ever leave")
+	var quarry := Vector3(11.0, 0.0, -7.0)   # nothing special, just not the origin
+	for slot in range(pack_size):
+		for d: float in [0.5, 1.0, 4.0, 9.0, 18.0, 40.0]:
+			var from := quarry + Vector3(d, 0.0, 0.0)
+			var point: Vector3 = croc_ai.pack_steer_point(quarry, from, slot, pack_size, flank)
+			var ring: float = (point - quarry).length()
+			# Both ceilings the function promises: the taper (which is what
+			# guarantees a wolf always has somewhere left to walk) and the row's
+			# own flank radius.
+			if ring > d * taper + EPSILON:
+				_fail(("SPECIES['%s'] slot %d at %.1f m steers %.2f m off the quarry —"
+						% [wolf_species, slot, d, ring])
+						+ " past the %.2f taper, so a wolf on its own slot bearing" % taper
+						+ " has nowhere left to walk")
+			if ring > flank + EPSILON:
+				_fail("SPECIES['%s'] slot %d steers %.2f m off the quarry, past its own"
+						% [wolf_species, slot, ring]
+						+ " pack_flank_radius %.2f" % flank)
+
+	# ---- the emergence measurement -----------------------------------------
+	var pack_spread := 0.0
+	var control_spread := 0.0
+	var stalled := 0
+	var worst_stall := ""
+	var slots_seen_total := 0
+
+	for c in range(PACK_PROBE_CHUNKS):
+		# Real chunk coordinates, spread over the field so this is not one
+		# lucky corner of the hash. The name scheme is the spawner's own.
+		var chunk := Vector2i(c % 6 - 3, c / 6 - 2)
+		var ids: Array[int] = []
+		var slots := {}
+		for i in range(PACK_PROBE_WOLVES):
+			var id: int = croc_ai.croc_id_for("Crocodile_%d_%d_%d" % [chunk.x, chunk.y, i])
+			ids.append(id)
+			slots[posmod(id, pack_size)] = true
+		slots_seen_total += slots.size()
+
+		for flanking in [true, false]:
+			var bearings: Array[float] = []
+			for i in range(ids.size()):
+				# All six on the SAME spot 16 m out (+X), all facing the quarry.
+				# Identical starts are what make the negative control absolute:
+				# with the flank off, six wolves that begin at one point and run
+				# the same steering must arrive on ONE bearing, spread 0°. Any
+				# separation this probe could have handed them for free is a
+				# separation the flank did not have to earn.
+				var pos := quarry + Vector3(PACK_PROBE_START, 0.0, 0.0)
+				var yaw := atan2(quarry.x - pos.x, quarry.z - pos.z)
+				var arrived := false
+				var steps := int(PACK_PROBE_SECONDS / PACK_PROBE_DT)
+				for _step in range(steps):
+					var target: Vector3 = quarry
+					if flanking:
+						target = croc_ai.pack_steer_point(
+								quarry, pos, ids[i], pack_size, flank)
+					var to_target := target - pos
+					to_target.y = 0.0
+					# The two lines _physics_process actually runs, verbatim in
+					# shape: turn toward the heading, then travel along the
+					# facing (never along the raw direction).
+					if to_target.length() > 0.1:
+						yaw = lerp_angle(yaw, atan2(to_target.x, to_target.z),
+								PACK_PROBE_DT * turn)
+					pos += Vector3(sin(yaw), 0.0, cos(yaw)) * speed * PACK_PROBE_DT
+					if pos.distance_to(quarry) <= PACK_PROBE_ARRIVE:
+						arrived = true
+						# The bearing FROM the quarry: which side it came in on.
+						bearings.append(atan2(pos.x - quarry.x, pos.z - quarry.z))
+						break
+				if not arrived:
+					stalled += 1
+					if worst_stall == "":
+						worst_stall = "%s wolf %d of chunk %v stopped %.1f m out" % [
+								"flanking" if flanking else "control", i, chunk,
+								pos.distance_to(quarry)]
+			var spread := _bearing_spread_deg(bearings)
+			if flanking:
+				pack_spread += spread
+			else:
+				control_spread += spread
+
+	pack_spread /= float(PACK_PROBE_CHUNKS)
+	control_spread /= float(PACK_PROBE_CHUNKS)
+	var mean_slots := float(slots_seen_total) / float(PACK_PROBE_CHUNKS)
+	print("pack surround: %d wolves x %d chunks reach %.1f m on bearings spanning"
+			% [PACK_PROBE_WOLVES, PACK_PROBE_CHUNKS, PACK_PROBE_ARRIVE]
+			+ " %.0f° (same wolves, flank off: %.0f°); %.1f of %d ring slots claimed"
+			% [pack_spread, control_spread, mean_slots, pack_size])
+
+	if stalled > 0:
+		_fail("%d of %d pack probes never reached the quarry (first: %s) —" % [
+				stalled, PACK_PROBE_WOLVES * PACK_PROBE_CHUNKS * 2, worst_stall]
+				+ " the flank ring became an orbit")
+	if pack_spread < PACK_SPREAD_MIN_DEG:
+		_fail("a pack starting on one bearing attacks from only %.0f° of arc"
+				% pack_spread + " (want >= %.0f°) — the surround is gone"
+				% PACK_SPREAD_MIN_DEG)
+	if control_spread > PACK_CONTROL_MAX_DEG:
+		_fail("the NEGATIVE CONTROL spread %.0f° with the flank switched off"
+				% control_spread + " — the %.0f° measured with it on is coming from"
+				% pack_spread + " the probe's own setup, not from the steering")
+	# The pack must actually be USING its ring. Six ids collapsing onto one or two
+	# slots is a conga line the spread test above could still pass by luck.
+	if mean_slots < 3.0:
+		_fail("six wolves claim only %.1f of %d ring slots on average —" % [
+				mean_slots, pack_size]
+				+ " `id %% pack_size` has degenerated and they share bearings")
+
+
+func _bearing_spread_deg(bearings: Array[float]) -> float:
+	"""
+	The arc a set of compass bearings covers, in degrees.
+
+	Sort them, find the widest EMPTY gap on the circle, and the answer is 360°
+	minus that gap. This is the standard circular-range measure and it is the
+	right one here for a reason a naive max-minus-min would get wrong: bearings
+	wrap, so four wolves at 10°, 100°, 190° and 350° span 340°, not 340° in one
+	direction and a spurious 0 in the other.
+	"""
+	if bearings.size() < 2:
+		return 0.0
+	var sorted: Array[float] = bearings.duplicate()
+	sorted.sort()
+	var widest_gap: float = TAU - (sorted[-1] - sorted[0])   # the wrap-around gap
+	for i in range(1, sorted.size()):
+		widest_gap = maxf(widest_gap, sorted[i] - sorted[i - 1])
+	return rad_to_deg(TAU - widest_gap)
 
 
 func _fail(message: String) -> void:

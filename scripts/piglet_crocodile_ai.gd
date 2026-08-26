@@ -375,6 +375,211 @@ const SPECIES: Dictionary = {
 		"bite_pitch": 34.0 * PI / 180.0,
 		"bite_lunge": 0.5,
 	},
+
+	## ------------------------------------------------------------------------
+	## TIMBER WOLF — the FOREST band's predator, and the first entry whose
+	## `behavior` is not "solo".
+	## ------------------------------------------------------------------------
+	## Everything a wolf IS lives in two extra numbers at the bottom of this row
+	## (`pack_size`, `pack_flank_radius`) and one arm of the `match` in
+	## `_update_chase_state()`. There is no pack object, no leader, no registry
+	## and no group scan: each wolf reads its OWN deterministic id and steers to
+	## its OWN slot on a ring around the quarry, and the surround is what happens
+	## when several of them do that at once. See `pack_steer_point()` for the
+	## geometry, and for why that stays true when the LOD manager sleeps half of
+	## them.
+	##
+	## Geometry measured off assets/models/characters/wolf.glb (built by
+	## scripts/generate_wolf.py): 1.4265 m nose to tail (x -0.700 .. +0.7265),
+	## 0.325 m across (z ±0.1625) and 0.740 m TALL. Read those three together —
+	## it is almost exactly the crocodile's LENGTH (1.40) standing on legs that
+	## make it nearly three times the crocodile's HEIGHT (0.276). That one
+	## difference is where every number below diverges, and where the rest
+	## deliberately does not.
+	##
+	## THE CAPSULE IN timber_wolf.tscn COMES OFF THE SAME THREE FIGURES, recorded
+	## here because a .tscn cannot hold a comment an editor resave will not eat.
+	## `radius = 0.1625, height = 1.45`, laid down on the travel axis with the
+	## crocodile's basis, at `(0, 0.1625, 0)`:
+	##   * 0.1625 is EXACTLY the mesh's half-width, so the shape stops the body
+	##     at the precise distance where the wolf's flank meets a block face. The
+	##     crocodile's 0.16 is a near miss on a differently-shaped animal, not a
+	##     fit — this is the number that made it worth its own shape.
+	##   * 1.45 covers the 1.4265 m length with the caps included, the same
+	##     nose-out-of-the-block reason the crocodile's 1.4 covers its 1.40 — and
+	##     the reason this species does NOT get the upright capsule its standing
+	##     pose suggests. A column would leave 0.55 m of muzzle and 0.55 m of
+	##     tail free to slide into stone.
+	##   * radius == centre y, like both rows above, puts the capsule's bottom on
+	##     y = 0, so gravity settles the mesh's own feet onto the ground plane.
+	##   * WHAT THIS SHAPE DELIBERATELY DOES NOT COVER is the wolf ABOVE its
+	##     knees: the capsule occupies y 0 .. 0.325 while the torso sits at
+	##     0.40 .. 0.64. That costs nothing in a world whose blocks are solid
+	##     from the ground UP — anything that could touch the chest has already
+	##     stopped the legs — and buying the height instead would take radius
+	##     0.37: a 0.74 m thick log around a 0.325 m animal. Same call the
+	##     viper's row makes about its S-curve: the shape hugs the body, not the
+	##     pose.
+	## The mesh's own midpoint is x = +0.013, so the capsule is left centred on
+	## the origin; 13 mm is inside the noise of a 1.43 m animal, where the viper's
+	## head-first 0.495 m was not.
+	"timber_wolf": {
+		## The first non-solo arm. `_behave_pack()` is all it selects, and all
+		## that does is bend the chase TARGET onto this wolf's ring slot — chase
+		## acquisition, the jump hatch, the bite, the flee and the LOD sleep are
+		## untouched. A wolf is a crocodile that arrives from a different angle.
+		"behavior": "pack",
+
+		# ----- Speed and detection -----
+		## THE LATTICE IS THE LATTICE: 5.0 (WALK_SPEED) < 6.8 <= 8.5
+		## (MAX_CHASE_SPEED) < 9.0 (the slowest character's run). The wolf is the
+		## fastest cruiser in the table (3.0 against 2.5 and 2.0 — it covers
+		## ground even when it is not hunting) and the fastest pursuer, and it
+		## still cannot break the promise: 6.8 x 1.25 x 1.6 = 13.6, and
+		## MAX_CHASE_SPEED cuts it to 8.5. Running escapes a wolf pack exactly as
+		## it escapes everything else.
+		##
+		## 6.8 IS NOT A BUFF, IT IS THE FARE FOR THE ANGLE, and the arithmetic is
+		## worth stating because it is the whole design of this species. A
+		## flanking wolf does not spend its speed on the straight line to you: it
+		## holds a 37° lead angle (see PACK_FLANK_TAPER), so only cos(37°) = 0.80
+		## of it closes the gap — 6.8 x 0.80 = 5.44 m/s, which is the crocodile's
+		## 5.5 to within a rounding. A wolf therefore runs a walking player down
+		## at the same rate a crocodile does, having spent the difference on
+		## arriving from the side. That is what "dangerous by cutting angles, not
+		## by exceeding the ceiling" costs when you write it down.
+		"move_speed": 3.0,
+		"chase_speed": 6.8,
+
+		## ±25% / ±15% — the TIGHTEST spreads in the table, and that is a pack
+		## requirement rather than a taste. The crocodile's ±50% exists to string
+		## a crowd out into stragglers and hunters; do that to wolves and the slow
+		## half never arrives, the ring never closes, and the surround this
+		## species is built around simply never appears on screen. A pack has to
+		## travel at one pace to read as a pack.
+		"speed_random_factor": 0.25,
+		"size_random_factor": 0.15,
+
+		## The longest "smell" of any regular predator (crocodile 15, viper 12).
+		## A pack has to commit early, because a flanking approach is a LONGER
+		## path than a straight one — a wolf that only acquires you at 12 m has
+		## no room left to swing wide before it is already on top of you.
+		## INVARIANT, unchanged and not negotiable: far below the LOD manager's
+		## SIM_RADIUS (45.0), so anything that can detect the player is awake.
+		"detection_radius": 18.0,
+
+		# ----- Organic wandering -----
+		## Restless where the viper basks: the shortest interval and the shortest
+		## pause in the table. An idle wolf is a trotting wolf.
+		"direction_change_interval": 3.0,
+		"pause_duration": 0.35,
+
+		## The most agile steering in the table, and `turn_smoothness` in
+		## particular is load-bearing rather than flavour: a flanking wolf chases
+		## a target point that slides sideways as it closes, so a body that turns
+		## at the crocodile's 5.0 lags its own ring slot and cuts the very corner
+		## it was supposed to swing around.
+		"wander_turn_rate": 1.5,
+		"turn_smoothness": 7.0,
+
+		## Ebbs shallower than either row above (0.45 / 0.35) and varies faster:
+		## a wolf slows down to sniff, it does not stop to bask.
+		"min_wander_speed_factor": 0.55,
+		"speed_variation_freq": 1.0,
+		"sniff_pause_chance": 0.35,
+
+		# ----- Obstacle avoidance -----
+		## Look-ahead is ~2x the mesh length, a longer ratio than the crocodile's
+		## because this animal closes faster and needs the extra metre to commit
+		## a turn. Narrow feelers and a mild slowdown are the same idea from the
+		## other side: a wolf keeps its pace THROUGH a gap rather than easing
+		## around the outside of it.
+		"avoid_look_ahead": 3.0,
+		"avoid_feeler_angle": PI / 5.0,  # 36°
+		## Chest height on a 0.74 m animal, so the probes sample a block's side
+		## wall well above the ground plane. The crocodile's 0.3 would fire under
+		## this animal's belly (0.40) and read the empty air between its legs.
+		"avoid_feeler_height": 0.45,
+		"avoid_speed_factor": 0.65,
+
+		# ----- Procedural body animation -----
+		## Same nose-along-+X model contract as every predator mesh.
+		"model_facing_offset": -PI / 2.0,
+
+		## THE LOPE. The crocodile waddles (9° roll, 0.025 bob) because it is a
+		## long body dragged between splayed legs; the wolf is the opposite
+		## machine — a light frame on the longest legs of the five generated
+		## predators — so the roll drops to 4° and the BOB doubles the
+		## crocodile's. Vertical travel is what a bounding gait looks like, and
+		## 0.05 m is a fourteenth of this animal's own height, where the same
+		## number on the 0.21 m viper would read as hopping.
+		"stride_frequency": 10.0,
+		"waddle_roll": 4.0 * PI / 180.0,
+		"bob_amount": 0.05,
+		"sway_yaw": 6.0 * PI / 180.0,
+
+		## Head down, shoulders forward once it commits. Slightly past the
+		## crocodile's 10°, because the ruff over the chest (see
+		## generate_wolf.py) is what the lean shows off.
+		"chase_pitch": 12.0 * PI / 180.0,
+
+		"breathe_speed": 2.4,
+		"breathe_amount": 0.02,
+
+		# ----- River submersion (VISUAL ONLY) -----
+		## 0.25 m — and unlike the two rows above, this one is not hiding. A wolf
+		## does not submerge, it WADES: sink 0.25 and the legs (0 .. 0.40) go
+		## under while the belly line sits 0.15 m proud and the whole torso,
+		## saddle and head stay in plain view. That is the read this species
+		## wants — a crocodile in a river is a threat you cannot see, a wolf in a
+		## river is one you can, slowed to the same wade you are.
+		##
+		## Same hard constraint as every row: VISUAL ONLY. The CharacterBody3D,
+		## its CollisionShape3D and global_position never move, so a wading wolf
+		## is exactly as dangerous as a dry one.
+		"river_sink_depth": 0.25,
+		## Same ~0.2 s ease as the crocodile, the viper and the player, written
+		## as depth/time so the derivation survives a retune of the depth.
+		"river_sink_ease_speed": 0.25 / 0.2,
+
+		# ----- Bite -----
+		## Between the crocodile's chew (0.5 s) and the viper's strike (0.3 s):
+		## a wolf snaps and drives THROUGH, so the lunge is long and the pitch is
+		## a head dropping to the throat.
+		"bite_duration": 0.35,
+		"bite_pitch": 30.0 * PI / 180.0,
+		"bite_lunge": 0.45,
+
+		# ----- Pack steering (the "pack" behaviour reads these two) -----
+		## The only keys in this table no other row has, and the only two the
+		## surround needs. They live HERE rather than as file-level consts for
+		## the same reason every other number in this row does: the next
+		## behaviour bead adds ITS keys to ITS row, and a key a species does not
+		## use is a key it does not carry. (croc_spawn_selfcheck derives its
+		## required key set from the CROCODILE row, so behaviour-local keys are
+		## allowed — what it forbids is a row MISSING something the crocodile
+		## has.)
+		##
+		## How many slots the ring is divided into: five compass points, 72°
+		## apart. Deliberately ABOVE the number of wolves usually in earshot at
+		## once (a forest chunk holds a handful, and only the near ones are
+		## inside the 18 m detection radius), because slots are claimed by
+		## `id % pack_size` with nobody arbitrating — a smaller ring would collide
+		## slots often, and two wolves sharing a bearing is the single thing that
+		## reads as "they are NOT surrounding me". Five is also odd, so no two
+		## slots are exact opposites and a two-wolf pack never reads as a line.
+		"pack_size": 5,
+
+		## How far off the quarry the ring sits, in metres, at full spread. Four
+		## metres is a little over half of the wolf's 6.8 m/s chase — roughly the
+		## distance one covers in the time it takes to turn — so the swing is
+		## wide enough to see from inside it and short enough that the pack still
+		## arrives together. It is a MAXIMUM, not a standoff distance: the ring
+		## tapers to nothing as the wolf closes (see pack_steer_point), so this
+		## number shapes the APPROACH and never becomes an orbit the player can
+		## stand safely in the middle of.
+		"pack_flank_radius": 4.0,
+	},
 }
 
 # ============================================================================
@@ -402,6 +607,40 @@ const DISTANCE_SPEED_SCALE_MAX: float = 0.6
 ## the speed lattice and lives OUTSIDE the species table on purpose — no entry in
 ## SPECIES may raise it.
 const MAX_CHASE_SPEED: float = 8.5
+
+# ----- Pack steering (behavior == "pack") -----
+## How much of the remaining distance to the quarry the flank offset is allowed
+## to be. It is the ONE number that decides whether a ring is a flank or an
+## orbit, and it is a property of the algorithm rather than of any animal, which
+## is why it sits here and not in a SPECIES row.
+##
+## WHAT IT ACTUALLY CONTROLS IS A LEAD ANGLE. pack_steer_point() aims at a point
+## `ring` metres to one side of the quarry, where ring = min(flank_radius,
+## d * TAPER); once d is inside the flank ceiling, that is a target sitting at a
+## CONSTANT angle atan(TAPER) = 37° off the straight line in. A pursuer holding a
+## constant lead angle walks a logarithmic spiral, and the arc it sweeps closing
+## from d0 to d1 is exactly tan(TAPER's angle) * ln(d0 / d1) — 0.75 * ln(16/3) =
+## 68° each way for a wolf committing at 16 m, which is the ~136° of surround
+## croc_spawn_selfcheck measures out of a pack that all started on one bearing.
+## Turning this up widens the spiral; the two things that stop it are below.
+##
+## IT MUST STAY STRICTLY BELOW 1.0, and 1.0 is not a rounding but a singularity.
+## A wolf already ON its slot bearing at distance d is handed the target
+## quarry + d * TAPER * u, which at TAPER = 1.0 is the point it is standing on:
+## every point of its own slot ray becomes a fixed point and the pack freezes in
+## a ring around a player who can then stroll away. Below 1.0 the same wolf is
+## handed a point d * (1 - TAPER) in front of it and always has somewhere to
+## walk; its radial closing rate is v / sqrt(1 + TAPER^2), positive for any
+## finite value.
+##
+## AND THAT RATE IS THE REAL CEILING, because it is the walk-catch contract in
+## disguise. At 0.75 a wolf spends cos(37°) = 0.80 of its speed actually closing:
+## 6.8 * 0.80 = 5.44 m/s toward you, which is the crocodile's 5.5 almost exactly.
+## THAT is the number the wolf's chase_speed was chosen to land on — the extra
+## 1.3 m/s over a crocodile is the fare for the angle, not a faster catch. Push
+## TAPER to 0.85 and the same wolf closes at 5.18, a hair over WALK_SPEED (5.0),
+## and the species quietly stops being able to catch a walking player at all.
+const PACK_FLANK_TAPER: float = 0.75
 
 # ----- Boss crocodiles -----
 ## Bosses are the rare, huge road-guardian crocodiles the terrain places
@@ -562,10 +801,17 @@ var player_node: Node3D = null
 ## Null in any scene without it, which is what keeps solo play untouched.
 var mp_node: Node = null
 
-## Where this crocodile is currently heading when chasing — the local player, or
-## in a room the nearest MEMBER of it. Refreshed by _update_chase_state() every
-## frame it runs, read by _chase_player(). See _update_chase_state for why the
-## local player alone is not enough.
+## Where this crocodile is currently STEERING when chasing. It starts each frame
+## as the quarry — the local player, or in a room the nearest MEMBER of it — and
+## the behaviour dispatch at the end of _update_chase_state() may then bend it
+## somewhere else (a wolf aims at its own slot on a ring around the quarry, so
+## the pack arrives from every side at once). Refreshed by _update_chase_state()
+## every frame it runs, read by _chase_player(). See _update_chase_state for why
+## the local player alone is not enough to find the quarry with.
+##
+## The DETECTION decision above the dispatch is made against the quarry itself,
+## never against this, so bending it can only change the route a predator takes —
+## never whether it smelled you, and never how far it can smell.
 var chase_target: Vector3 = Vector3.ZERO
 
 ## Random number generator for movement
@@ -1034,6 +1280,116 @@ func _update_chase_state() -> void:
 			is_chasing = false
 			# Choose new random direction
 			_choose_new_direction()
+
+	# ------------------------------------------------------------------------
+	# BEHAVIOUR DISPATCH — the whole of it, and it is deliberately this small
+	# ------------------------------------------------------------------------
+	# Everything above this line is what EVERY predator does: find the quarry,
+	# decide whether it can be smelled, and set `is_chasing` / `chase_target`.
+	# Everything a SPECIES does differently hangs off the one `match` below, and
+	# the shape of it is a contract for the beads that follow this one:
+	#
+	#   ONE ARM, ONE CALL, NOTHING ELSE. An arm is a species' behaviour name and
+	#   a call to its own `_behave_*()`. No logic in the arm, no state shared
+	#   between arms, no `if` before the match. Ambush, pounce, charge and urban
+	#   patrol are each two lines here plus one function of their own, and none
+	#   of them has to read, or risk breaking, any of the others.
+	#
+	# "solo" has NO ARM on purpose — it is the code above, unmodified, which is
+	# also why an unknown or misspelled behaviour string degrades to solo instead
+	# of crashing. The same degrade-don't-crash rule as the unknown-species
+	# fallback in _ready().
+	#
+	# WHY IT LIVES AT THE END OF THIS FUNCTION rather than in _chase_player():
+	# a behaviour may want to act when the predator is NOT chasing (an ambusher
+	# has to burrow and wait), and this is the last point in the frame where both
+	# `is_chasing` and `chase_target` are settled. Each arm decides for itself
+	# whether it cares; `_behave_pack` returns immediately when idle.
+	match spec["behavior"]:
+		"pack":
+			_behave_pack()
+
+
+func _behave_pack() -> void:
+	"""
+	The wolf arm: aim at MY slot on a ring around the quarry, not at the quarry.
+
+	Three lines of work and no lines of coordination — see pack_steer_point() for
+	the geometry and for the three invariants (no coordinator, LOD-safe,
+	multiplayer-safe) that fall out of it being a pure function of this animal's
+	own id and its own position.
+	"""
+	if not is_chasing:
+		return
+	chase_target = pack_steer_point(
+			chase_target, global_position, croc_id(),
+			int(spec["pack_size"]), float(spec["pack_flank_radius"])
+	)
+
+
+static func pack_steer_point(quarry: Vector3, from: Vector3, id: int,
+		pack_size: int, flank_radius: float) -> Vector3:
+	"""
+	Where one pack hunter steers, given only ITS OWN id and ITS OWN position.
+
+	    slot  = id modulo pack_size          -> this animal's compass point
+	    ring  = min(flank_radius, d * TAPER) -> how wide the swing still is
+	    point = quarry + ring * (sin, 0, cos) of TAU * slot / pack_size
+
+	THE SURROUND IS EMERGENT, AND "EMERGENT" HERE HAS A PRECISE MEANING: nothing
+	in this function can see another wolf. There is no coordinator, no leader, no
+	registry, no group scan and not one byte of inter-agent communication — six
+	wolves each running this arrive on six different bearings for the same reason
+	six people each told to stand at a different hour of a clock face end up in a
+	circle. What they share is the CLOCK (this function), never a message.
+
+	Three properties follow from it being PURE, and each one is a requirement
+	this bead had to meet rather than a happy accident:
+
+	  * LOD-SAFE. The LOD manager sleeps distant crocodiles by zeroing velocity
+	    and switching off _physics_process. A slept wolf therefore stops steering
+	    — and cannot corrupt the pack's shape, because no other wolf was ever
+	    reading it. A waking one recomputes this from where it is standing NOW,
+	    with no integrator, no accumulated phase and no remembered target to
+	    catch up to, so it rejoins its slot with no lurch: the first frame back
+	    produces exactly the point it would have produced had it never slept.
+	  * MULTIPLAYER-SAFE. `quarry` is whatever _update_chase_state resolved,
+	    which in a room is the nearest ROOM MEMBER (a RemoteAvatar is in no
+	    group, so it is found through presence, never through group "player").
+	    This function only bends that point; it cannot widen who is hunted or
+	    reach past the detection radius, and every peer computing it gets the
+	    same answer from the same id.
+	  * SPEED-LATTICE-SAFE. It returns a POINT. Nothing here touches
+	    chase_speed_instance, which _ready() already clamped to MAX_CHASE_SPEED.
+	    A flanking wolf covers more ground than a charging one at the SAME speed,
+	    which is the entire trick: the pack is dangerous because it cuts angles,
+	    and running still escapes it.
+
+	The ring is anchored to WORLD compass bearings rather than to the quarry's
+	facing, deliberately. A ring that rotated with the player would swing every
+	wolf sideways the instant the player turned around — a pack that pirouettes
+	on camera input. World-anchored, a wolf holds its bearing and the player is
+	the one who has to keep turning to face it.
+
+	ponytail: slots are claimed by `id % pack_size` with nobody arbitrating, so
+	two wolves CAN draw the same bearing (see pack_size for why the ring is wider
+	than the pack). They are solid to one another (collision_mask 3) and simply
+	jostle, which reads as two wolves fighting over an angle. The upgrade path,
+	if it ever matters, is the one thing this bead was told not to build: a
+	claim, which needs a coordinator.
+	"""
+	if pack_size <= 0 or flank_radius <= 0.0:
+		return quarry
+
+	var to_quarry := quarry - from
+	to_quarry.y = 0.0
+	# The taper is what turns a ring into a spiral — see PACK_FLANK_TAPER for the
+	# proof that it converges. Note it uses the wolf's CURRENT distance, so the
+	# offset shrinks continuously rather than switching off at a threshold; there
+	# is no radius at which a wolf visibly changes its mind.
+	var ring := minf(flank_radius, to_quarry.length() * PACK_FLANK_TAPER)
+	var angle := TAU * float(posmod(id, pack_size)) / float(pack_size)
+	return quarry + Vector3(sin(angle), 0.0, cos(angle)) * ring
 
 
 func _chase_player() -> void:
