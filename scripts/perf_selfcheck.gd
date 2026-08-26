@@ -22,10 +22,13 @@ extends SceneTree
 ##     `if not visible: return` early-return, that spike is lost and nothing else
 ##     would notice.
 ##  2. **The two thresholds classify correctly**, and a warn is not a severe.
-##  3. **Correlation is PER FRAME, not cumulative.** Each spike must carry the
-##     chunks built/freed and LOD scans of *its own* frame — the whole point is
-##     attributing a freeze to an event, so a baseline that failed to advance
-##     would blame every past chunk on the next spike.
+##  3. **Correlation is PER FRAME, not cumulative, and lands on the RIGHT
+##     frame.** Each spike must carry the chunks built/freed and LOD scans of
+##     *its own* frame. Two ways that breaks, both silent: a baseline that fails
+##     to advance blames every past chunk on the next spike, and pairing the
+##     engine's `delta` (which reports the PREVIOUS frame) with counters read
+##     now blames the frame after the guilty one — a hitch logged as "+0 chunks"
+##     while the innocent next frame takes the credit. Both are checked here.
 ##  4. **The log is capped** — an all-day session on a slow phone must not turn
 ##     the telemetry into its own memory leak.
 ##  5. **`reset_spike_stats()` re-baselines** rather than merely clearing: after
@@ -71,6 +74,8 @@ func _run() -> void:
 	if failure.is_empty():
 		failure = _check_cap_and_reset()
 	if failure.is_empty():
+		failure = _check_first_frame()
+	if failure.is_empty():
 		failure = _check_standalone()
 	if failure.is_empty():
 		print("SELFCHECK OK")
@@ -105,11 +110,18 @@ func _check_sampling() -> String:
 	if summary["spikes"] != 0:
 		return "a 16.7 ms frame was logged as a spike"
 
-	# One severe frame, on which the world built 3 chunks, freed 5 and ran the
-	# LOD scan once.
+	# THE OFF-BY-ONE, REPLAYED EXACTLY AS THE ENGINE PRODUCES IT. A frame builds
+	# 3 chunks, frees 5 and runs the LOD scan — and the cost of that shows up as
+	# the delta handed to the NEXT `_process` call, because the engine reports the
+	# time elapsed since the previous frame. So: bump the counters, sample once at
+	# a normal delta (this is the callback that OBSERVES the work), then sample
+	# the 60 ms that the work actually cost. The record must carry +3/-5/1.
 	stub.chunks_created_total += 3
 	stub.chunks_removed_total += 5
 	stub.lod_scans_total += 1
+	overlay._process(1.0 / 60.0)
+	if not overlay.get_spike_log().is_empty():
+		return "the frame that OBSERVED the work was logged as a spike at 16.7 ms"
 	overlay._process(0.060)
 
 	var spikes: Array[Dictionary] = overlay.get_spike_log()
@@ -121,13 +133,14 @@ func _check_sampling() -> String:
 	if rec["ms"] < 59.0 or rec["ms"] > 61.0:
 		return "spike magnitude recorded as %.2f ms, expected ~60" % rec["ms"]
 	if rec["chunks_created"] != 3 or rec["chunks_removed"] != 5 or rec["lod_scans"] != 1:
-		return "spike correlation wrong: +%d/-%d chunks, %d lod scans (expected +3/-5, 1)" % [
+		return "spike correlation wrong: +%d/-%d chunks, %d lod scans (expected +3/-5, 1) " % [
 			rec["chunks_created"], rec["chunks_removed"], rec["lod_scans"]
-		]
+		] + "— a spike is being paired with the wrong frame's work"
 
 	# A second, milder spike on which only 2 chunks were built. Its counts must
 	# be THAT frame's 2, not the cumulative 5 — the baseline has to have advanced.
 	stub.chunks_created_total += 2
+	overlay._process(1.0 / 60.0)
 	overlay._process(0.040)
 	spikes = overlay.get_spike_log()
 	if spikes.size() != 2:
@@ -182,6 +195,37 @@ func _check_cap_and_reset() -> String:
 	if spikes[0]["chunks_created"] != 0:
 		return "after a reset the next spike reported %d chunks built — the " % spikes[0]["chunks_created"] \
 			+ "manager baselines were cleared to 0 instead of re-read"
+
+	_destroy(overlay)
+	_destroy(stub)
+	return ""
+
+
+func _check_first_frame() -> String:
+	"""The startup exception to guard 3, and the single most valuable record the
+	telemetry produces: everything before the main loop (scene load, every
+	`_ready`, the terrain's whole synchronous first build) lands in the FIRST
+	frame's delta and is already visible in the first counter reading, so frame
+	one must own the work it observes instead of shifting it to frame two."""
+	var stub := _make_stub()
+	var overlay := _make_overlay()
+	stub.chunks_created_total += 10
+	stub.lod_scans_total += 1
+	overlay._process(0.150)
+
+	var spikes: Array[Dictionary] = overlay.get_spike_log()
+	if spikes.size() != 1:
+		return "the startup frame was not recorded as a spike"
+	if spikes[0]["chunks_created"] != 10 or spikes[0]["lod_scans"] != 1:
+		return "startup spike reported +%d chunks / %d lod scans, expected +10 / 1 — " % [
+			spikes[0]["chunks_created"], spikes[0]["lod_scans"]
+		] + "the work done before the main loop is being shifted off frame one"
+
+	# ...and it must not be charged twice: the next frame owns nothing.
+	overlay._process(0.150)
+	spikes = overlay.get_spike_log()
+	if spikes[1]["chunks_created"] != 0:
+		return "the startup work was charged to a second frame as well"
 
 	_destroy(overlay)
 	_destroy(stub)

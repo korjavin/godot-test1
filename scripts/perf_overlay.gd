@@ -40,8 +40,10 @@ extends Label
 ## That correlation is the whole point. "60 ms spike" is a complaint; "60 ms
 ## spike on the frame that freed 5 chunks" is a bug report with an address, and
 ## it is what the later optimization phases are measured against — each one has
-## to move these numbers, not a vibe. Every spike is also `print()`ed once, so a
-## web run leaves a readable trail in the browser console with no overlay open.
+## to move these numbers, not a vibe. Getting the two lined up on the SAME frame
+## is the one subtle thing in here; see the off-by-one note in `_sample_frame`.
+## Spikes are also printed (throttled) as `[SPIKE]` lines, so a web run leaves a
+## readable trail in the browser console with no overlay open.
 ##
 ## Read the numbers back with `get_spike_summary()` / `get_spike_log()`, and
 ## start a fresh measurement window with `reset_spike_stats()`.
@@ -89,6 +91,13 @@ const SPIKE_SEVERE_MS: float = 50.0
 ## eyeball a pattern and small enough that the drop is a trivial pop_front.
 const SPIKE_LOG_SIZE: int = 32
 
+## Minimum gap (ms) between two `[SPIKE]` console lines. Every spike is still
+## counted and still recorded in the log — this throttles ONLY the printing,
+## because a device stuck at 25 FPS spikes on every single frame and 30 console
+## writes a second is a measurable cost on exactly the weak targets this tool
+## exists to measure.
+const SPIKE_PRINT_INTERVAL_MS: int = 1000
+
 ## Seconds left until the next text refresh (counts down each frame).
 var _time_until_refresh: float = 0.0
 
@@ -111,6 +120,16 @@ var _worst_frame_ms: float = 0.0
 var _prev_chunks_created: int = 0
 var _prev_chunks_removed: int = 0
 var _prev_lod_scans: int = 0
+
+## The PREVIOUS frame's deltas — the work that the `delta` we are handed next
+## call is the duration of. See the off-by-one note in `_sample_frame`: these,
+## not the freshly computed ones, are what a spike record is built from.
+var _pending_created: int = 0
+var _pending_removed: int = 0
+var _pending_lod: int = 0
+
+## When the last `[SPIKE]` line was printed, for the console throttle.
+var _last_spike_print_ms: int = -SPIKE_PRINT_INTERVAL_MS
 
 ## Cached manager references, re-acquired whenever they go stale — the same
 ## group-lookup-plus-revalidate pattern crocodile_lod_manager uses for the
@@ -271,7 +290,7 @@ func _sample_frame(delta: float) -> void:
 
 	# Read the correlated counters EVERY frame, spike or not: they are lifetime
 	# totals, so skipping a frame would silently fold that frame's work into the
-	# next spike's delta and blame the wrong frame.
+	# next reading and blame the wrong frame.
 	var chunks_created: int = _read_counter(_terrain, "chunks_created_total")
 	var chunks_removed: int = _read_counter(_terrain, "chunks_removed_total")
 	var lod_scans: int = _read_counter(_lod_manager, "lod_scans_total")
@@ -283,42 +302,90 @@ func _sample_frame(delta: float) -> void:
 	_prev_chunks_removed = chunks_removed
 	_prev_lod_scans = lod_scans
 
-	if frame_ms < SPIKE_WARN_MS:
-		return
+	# THE FIRST SAMPLED FRAME IS THE ONE EXCEPTION to the shift explained below,
+	# and it happens to be the frame we care about most (the startup freeze phase
+	# 3 is aimed at). Everything before the main loop — scene instantiation and
+	# every `_ready`, including the terrain's whole synchronous first build — is
+	# inside the very first `delta`, AND is already visible in this first counter
+	# reading. So frame one owns the work it just observed; it is consumed here so
+	# the next frame cannot be blamed for it a second time.
+	if _frames_sampled == 1:
+		_pending_created = d_created
+		_pending_removed = d_removed
+		_pending_lod = d_lod
+		d_created = 0
+		d_removed = 0
+		d_lod = 0
 
-	# --- This frame spiked. Record it with what the engine did on it. --------
+	if frame_ms >= SPIKE_WARN_MS:
+		# THE OFF-BY-ONE THAT WOULD MAKE ALL OF THIS LIE, and why the record uses
+		# `_pending_*` rather than the deltas just computed above:
+		#
+		# `delta` is the duration of the frame BEFORE this one — the engine hands
+		# `_process` the time elapsed since the previous frame. The counters, by
+		# contrast, are read now, so the work they just picked up belongs to the
+		# frame that is still running. Pairing the two directly would attribute
+		# every hitch to the frame AFTER the one that caused it: a spike caused by
+		# building ten chunks would be logged with "+0 chunks", and the next,
+		# perfectly fine frame would get the blame — exactly backwards for a tool
+		# whose entire job is naming the cause.
+		#
+		# So the deltas measured on the previous call (`_pending_*`, the work of
+		# the frame `delta` is now reporting the duration of) are what gets
+		# recorded. This holds because EndlessTerrain and CrocodileLODManager both
+		# sit above the HUD in main.tscn's tree order and so have already run when
+		# we sample; if a future scene reorders them below the HUD, a spike's
+		# counts would land one frame late again.
+		_record_spike(frame_ms)
+
+	_pending_created = d_created
+	_pending_removed = d_removed
+	_pending_lod = d_lod
+
+
+func _record_spike(frame_ms: float) -> void:
+	## Log one spiking frame, correlated with the work of that same frame (see the
+	## off-by-one note in `_sample_frame` for why that is `_pending_*`).
 	var severe: bool = frame_ms >= SPIKE_SEVERE_MS
 	if severe:
 		_spike_severe_count += 1
 	else:
 		_spike_warn_count += 1
 
-	# The node count is read HERE and not above because it is the one monitor
-	# call in this function, and a spike frame is a rare frame — no reason to pay
-	# for it 60 times a second.
+	# The node count is read HERE and not on every frame because it is the one
+	# monitor call in this path, and a spike frame is a rare frame.
 	var record: Dictionary = {
 		"ms": frame_ms,
 		"severe": severe,
 		"uptime_ms": Time.get_ticks_msec(),
-		"chunks_created": d_created,
-		"chunks_removed": d_removed,
-		"lod_scans": d_lod,
+		"chunks_created": _pending_created,
+		"chunks_removed": _pending_removed,
+		"lod_scans": _pending_lod,
 		"nodes": int(Performance.get_monitor(Performance.OBJECT_NODE_COUNT)),
 	}
 	_spike_log.append(record)
 	if _spike_log.size() > SPIKE_LOG_SIZE:
 		_spike_log.pop_front()
 
-	# One line per spike to the console/browser log. Spikes are by definition
-	# rare, so this cannot become spam — and it is the only way to capture the
-	# trail from a web build with no overlay open.
-	print("[SPIKE] %.1f ms%s | chunks +%d/-%d | lod scans %d | nodes %d" % [
+	# A line to the console/browser log — the only way to capture the trail from a
+	# web build nobody opened the overlay on. THROTTLED, because the case we most
+	# want to measure is a device sustaining 25 FPS, where EVERY frame clears the
+	# 33 ms bar: printing 30 lines a second into a browser console is itself
+	# expensive enough to change the numbers we came to read. The in-memory log
+	# and the counters are unthrottled, and the running spike total in the line
+	# below makes any suppressed run visible (the count jumps).
+	var now: int = Time.get_ticks_msec()
+	if now - _last_spike_print_ms < SPIKE_PRINT_INTERVAL_MS:
+		return
+	_last_spike_print_ms = now
+	print("[SPIKE] %.1f ms%s | chunks +%d/-%d | lod scans %d | nodes %d | #%d" % [
 		frame_ms,
 		" SEVERE" if severe else "",
-		d_created,
-		d_removed,
-		d_lod,
+		record["chunks_created"],
+		record["chunks_removed"],
+		record["lod_scans"],
 		record["nodes"],
+		_spike_warn_count + _spike_severe_count,
 	])
 
 
@@ -389,3 +456,8 @@ func reset_spike_stats() -> void:
 	_prev_chunks_created = _read_counter(_terrain, "chunks_created_total")
 	_prev_chunks_removed = _read_counter(_terrain, "chunks_removed_total")
 	_prev_lod_scans = _read_counter(_lod_manager, "lod_scans_total")
+	# The carried-over frame's work goes too, or the first spike after a reset
+	# would still be labelled with the events of the frame before it.
+	_pending_created = 0
+	_pending_removed = 0
+	_pending_lod = 0
