@@ -112,9 +112,18 @@ extends SceneTree
 ##       same landmark on the same run_seed paid 16 coins and then 18. NOTE the
 ##       six-seed sweep passes under THIS one, which is why 5d exists beside it —
 ##       the pair is deliberately two controls, not one.
-##   (m) `_burst_remaining = amount` -> `= 1` (one fat pickup instead of the
+##   (m) `_burst_remaining += amount` -> `= 1` (one fat pickup instead of the
 ##       staggered burst, i.e. the streak-killing bug the chest's design note is
 ##       about)  ->  FAIL: the first approach paid 1 coins, outside 15..25.
+##   (n) `_burst_remaining += amount` -> `= amount` (a second landmark reached
+##       mid-shower REPLACES the first one's remaining coins instead of joining
+##       them)  ->  FAIL: two landmarks visited inside one burst window paid 26
+##       coins in total, outside 2 × 15..25.
+##   (o) the `_burst_remaining = 0` in _sync_run's run-change branch removed  ->
+##       FAIL: 23 coins from the previous run were paid into a new one.
+##   (p) _update_burst's `_sync_run()` call removed, leaving the run gate lazy on
+##       the next CLAIM only  ->  same failure as (o), which is the point: the
+##       gate has to be where coins are paid, not only where they are armed.
 ##
 ## Don't grow this into a suite.
 
@@ -639,6 +648,66 @@ func _check_toast(registry: Array) -> void:
 	if paid_repeat != paid_first:
 		_fail("treasure: the same landmark on the same run_seed paid %d coins and then %d — the amount is not deterministic"
 				% [paid_first, paid_repeat])
+
+	# --- Step 5e: A SECOND LANDMARK REACHED MID-SHOWER MUST NOT SWALLOW THE FIRST
+	# ONE'S REMAINING COINS. Trigger zones genuinely overlap (see step 6) and 1.2 s
+	# of Air Rush covers 30 m, so leaving one landmark and arriving at the next
+	# while the first is still paying is reachable in play. Under a burst that
+	# ASSIGNS rather than ACCUMULATES, the first card advertises 15-25 coins and
+	# delivers one — the loss is silent, which is exactly why it is measured.
+	#
+	# Driven with the flush deliberately WITHHELD between the two arrivals: that
+	# is the whole scenario, and flushing first would make the two claims
+	# sequential and the assertion vacuous.
+	var far_marker := _make_marker(registry[0], Vector3(0.0, 0.0, 200.0))
+	root.add_child(far_marker)
+	terrain.run_seed = 909090
+	var before_overlap: int = player.coins_paid
+	# Arrive at the first landmark, but do NOT drain the shower.
+	player.global_position = Vector3(0.0, 0.0, radius + leave_pad + 5.0)
+	toast.call("_scan")
+	player.global_position = Vector3(0.0, 0.0, radius + approach_pad - 1.0)
+	toast.call("_scan")
+	var owed_first: int = int(toast.get("_burst_remaining"))
+	# Arrive at the second, still mid-shower.
+	player.global_position = Vector3(0.0, 0.0, 200.0)
+	toast.call("_scan")
+	var owed_both: int = int(toast.get("_burst_remaining"))
+	toast.call("_update_burst", 100.0)
+	var paid_overlap: int = player.coins_paid - before_overlap
+	if owed_both <= owed_first:
+		_fail("treasure: arriving at a second landmark mid-shower left %d coins owed, down from %d — the second burst replaced the first instead of joining it"
+				% [owed_both, owed_first])
+	if paid_overlap < treasure_min * 2 or paid_overlap > treasure_max * 2:
+		_fail("treasure: two landmarks visited inside one burst window paid %d coins in total, outside 2 × %d..%d"
+				% [paid_overlap, treasure_min, treasure_max])
+	far_marker.queue_free()
+
+	# --- Step 5f: A NEW RUN CANCELS A SHOWER STILL IN FLIGHT. new_run() can land
+	# mid-payout (Play Again, or a multiplayer room's seed arriving), and
+	# restart_game() wipes the run's coins immediately BEFORE it — so coins owed by
+	# a world that no longer exists must not trickle into the fresh run's counter
+	# for the next second. The visited-set clear alone does not cover this: it is
+	# lazy, and the next claim may be a kilometre away.
+	terrain.run_seed = 717171
+	var before_cancel: int = player.coins_paid
+	player.global_position = Vector3(0.0, 0.0, radius + leave_pad + 5.0)
+	toast.call("_scan")
+	player.global_position = Vector3(0.0, 0.0, radius + approach_pad - 1.0)
+	toast.call("_scan")
+	if int(toast.get("_burst_remaining")) <= 0:
+		_fail("treasure: nothing was owed after a fresh approach — step 5f cannot measure the cancel")
+	# The world changes underneath the shower.
+	terrain.run_seed = 636363
+	var mid_cancel: int = player.coins_paid
+	toast.call("_update_burst", 100.0)
+	if player.coins_paid != mid_cancel:
+		_fail("treasure: %d coins from the previous run were paid into a new one — a run change does not cancel a shower in flight"
+				% (player.coins_paid - mid_cancel))
+	# NEGATIVE CONTROL: the cancel must be the RUN change, not the burst quietly
+	# never paying. The approach that armed it did pay its arrival coin.
+	if mid_cancel <= before_cancel:
+		_fail("treasure: the approach before the run change paid nothing at all — step 5f's cancel assertion is vacuous")
 
 	# --- Step 6: TWO LANDMARKS IN RANGE AT ONCE must not ping-pong. Trigger zones
 	# genuinely overlap — LANDMARK_EDGE_MARGIN lets a landmark sit 13 m from a

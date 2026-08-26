@@ -154,6 +154,19 @@ const TREASURE_COLOR := Color(1.0, 0.85, 0.35, 1.0)
 # not an object and cannot be raced for. The shared bank still receives it
 # through the ordinary mechanics: collect_coin raises `own_coins`, which the
 # presence packet already carries as this peer's contribution.
+#
+# ponytail: THE CEILING THAT LEAVES, stated plainly — in a room the burst does
+# not advance the ROOM's streak. The master owns `_room_streak` and only
+# `_resolve_claim()` advances it, so a treasure's 15-25 pickups are paid at
+# whatever multiplier the room currently shows without building it further,
+# while solo the same burst reliably steps the multiplier a rank. It is the same
+# ceiling Adrenaline records for the same reason (a claim's pickup COUNT is not
+# recoverable from a confirm), and it is the price of the personal-treasure
+# decision above: making the room's streak move would need this to be claimed,
+# and a claimed landmark has exactly one winner — which is the thing the design
+# rules out. It is never WRONG, only less generous. Upgrade path, if it ever
+# matters: a room verb that reports N pickups without arbitrating a winner,
+# which is a wire-format change and belongs with the Adrenaline one.
 
 ## Coins paid by one landmark's first visit, drawn from that landmark's OWN
 ## deterministic roll (see `_claim_treasure`). Sized ABOVE a treasure chest's
@@ -466,19 +479,7 @@ func _claim_treasure(marker: Node3D) -> int:
 	generates the landmark in the same place, so the same landmark pays the same
 	amount to everyone — with no packet, no arbitration and no server involved.
 	"""
-	# THE RUN GATE. Reading the seed fresh on every claim (rather than latching it
-	# in _ready) is what makes this work with no signal and no reset plumbing: a
-	# new_run() — an explicit restart, or a multiplayer room's shared world
-	# arriving — re-rolls run_seed, and the very next claim notices and empties the
-	# set. A respawn re-rolls nothing, so a death costs you no landmark you had
-	# already emptied.
-	var terrain := get_tree().get_first_node_in_group("terrain")
-	var run_seed: int = 0
-	if terrain != null and "run_seed" in terrain:
-		run_seed = int(terrain.run_seed)
-	if run_seed != _visited_run_seed:
-		_visited.clear()
-		_visited_run_seed = run_seed
+	var run_seed: int = _sync_run()
 
 	var id: int = COIN_SCRIPT.id_at(marker.global_position)
 	if _visited.has(id):
@@ -489,13 +490,51 @@ func _claim_treasure(marker: Node3D) -> int:
 	rng.seed = hash(Vector3i(id, TREASURE_SALT, run_seed))
 	var amount: int = rng.randi_range(TREASURE_COINS_MIN, TREASURE_COINS_MAX)
 
-	# Spread across the window rather than dividing into it, treasure_chest.gd's
-	# rule: the first coin is paid on arrival and the rest follow.
-	_burst_remaining = amount
-	_burst_interval = TREASURE_BURST_DURATION / float(amount)
+	# ADD to whatever is still owed, never REPLACE it. Trigger zones genuinely
+	# overlap (see the selection-rule note in _scan: two landmarks in adjacent
+	# chunks can be ~26 m apart against 15.4 m trigger radii), and 1.2 s of Air
+	# Rush covers 30 m — so leaving one landmark and arriving at the next one
+	# mid-shower is reachable, and a plain assignment would silently swallow most
+	# of the first card's advertised reward. Re-dividing the FULL debt across
+	# TREASURE_BURST_DURATION is what keeps the merged shower inside the 2.5 s
+	# STREAK_WINDOW, which is the whole reason the stagger is timed at all.
+	_burst_remaining += amount
+	_burst_interval = TREASURE_BURST_DURATION / float(_burst_remaining)
 	_burst_timer = _burst_interval
+	# First coin on arrival, treasure_chest.gd's rule; the rest follow.
 	_award_one()
 	return amount
+
+
+func _sync_run() -> int:
+	"""
+	Answer the run this treasure state belongs to, emptying the per-run state
+	first if the run has changed underneath us. Returns the current run seed.
+
+	THE RUN GATE, and it is read fresh rather than latched in _ready(), which is
+	what makes the whole feature work with no signal and no reset plumbing: a
+	new_run() — an explicit restart, or a multiplayer room's shared world arriving
+	— re-rolls `endless_terrain.run_seed`, and this notices. A RESPAWN re-rolls
+	nothing, so a death costs you no landmark you had already emptied.
+
+	A RUNNING BURST IS CANCELLED WITH THE VISITED SET, not left to drain into the
+	new run. new_run() can land in the middle of the 1.2 s shower (Play Again, or
+	a room seed arriving), and restart_game() wipes the run's coins immediately
+	before it — so coins from a world that no longer exists would trickle into the
+	fresh run's counter for a second afterwards. That is also why this is called
+	from _update_burst and not only from the claim: nothing else runs while coins
+	are owed, and a lazy check on "the next claim" is a check that may be a
+	kilometre away.
+	"""
+	var terrain := get_tree().get_first_node_in_group("terrain")
+	var run_seed: int = 0
+	if terrain != null and "run_seed" in terrain:
+		run_seed = int(terrain.run_seed)
+	if run_seed != _visited_run_seed:
+		_visited_run_seed = run_seed
+		_visited.clear()
+		_burst_remaining = 0
+	return run_seed
 
 
 func _update_burst(delta: float) -> void:
@@ -509,6 +548,11 @@ func _update_burst(delta: float) -> void:
 	browser tab regaining focus) easily overruns — paying a single coin per frame
 	would silently stretch the burst past the streak window.
 	"""
+	if _burst_remaining <= 0:
+		return
+	# One group lookup per frame, but ONLY while coins are actually owed — at most
+	# 1.2 s per landmark visited, against a run measured in minutes. See _sync_run.
+	_sync_run()
 	if _burst_remaining <= 0:
 		return
 	_burst_timer -= delta
