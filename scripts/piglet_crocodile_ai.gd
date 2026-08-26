@@ -233,6 +233,13 @@ const SPECIES: Dictionary = {
 	##     own capsule. It is deliberately NARROWER than the 0.41 m S-curve too;
 	##     the wiggle is silhouette, not bulk, and a capsule fat enough to cover
 	##     it would wedge in gaps a snake ought to slip through.
+	##     0.11 IS ALSO THE SHAPE'S HEIGHT, and that is not a coincidence: a
+	##     CapsuleShape3D's transform origin is its CENTRE, so centre 0.11 with
+	##     radius 0.11 puts the capsule's bottom exactly on y = 0. The body then
+	##     settles with the mesh's own y = 0 underside on the ground. (The
+	##     crocodile's 0.16/0.16 is the same identity. Measured, because it reads
+	##     like a floating model and isn't: dropped onto a plane, the viper's
+	##     lowest vertex lands at y = -0.003 and the crocodile's at y = -0.035.)
 	##   * 1.75 covers the 1.7345 m length with the caps included.
 	##   * z = -0.495 is the ONE thing this scene does that the crocodile's does
 	##     not. generate_snake.py builds the viper HEAD-FIRST from the origin, so
