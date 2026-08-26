@@ -215,6 +215,7 @@ const BIOME_TINTS: Array[Color] = [
 	Color(0.55, 0.46, 0.26, 0.55),  # DESERT   — sand
 	Color(0.16, 0.34, 0.20, 0.60),  # FOREST   — deep green
 	Color(0.40, 0.40, 0.44, 0.55),  # MOUNTAIN — grey
+	Color(0.42, 0.40, 0.38, 0.55),  # CITY     — paved warm grey (matches ground.gdshader city_color)
 ]
 ## Indexed by endless_terrain.Biome, so the ORDER here is the enum's integer
 ## order and NOT the order the bands sit in the noise field — CITY is appended
