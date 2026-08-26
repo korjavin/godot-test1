@@ -111,12 +111,72 @@ const FOG_DENSITY_DESKTOP: float = 0.0022
 @export var wall_min_length: int = 4
 @export var wall_max_length: int = 7
 
-## Chance (0..1) that a scattered block gets extra blocks stacked on top of it,
-## so the terrain occasionally has little towers instead of only single cubes.
-@export var stack_chance: float = 0.25
+# ----------------------------------------------------------------------------
+# THEMED SCATTERED PROPS — the re-skin of the old bare cube / cube-tower scatter
+# ----------------------------------------------------------------------------
+# The scatter loop in spawn_objects_in_chunk is UNCHANGED in everything that has
+# consequences — same position draws, same min_object_spacing, same river skip,
+# same DESERT_BLOCK_KEEP_EVERY target, same footprint entry. The only thing that
+# changed is the GEOMETRY emitted at an accepted spot: instead of one cube (plus
+# an occasional cube tower, which is why the old `stack_chance` / `stack_max_extra`
+# exports are gone — the cairn and slab-stack VARIANTS are those towers now), a
+# themed prop builder runs, chosen by biome_at at the PROP'S OWN position so the
+# themes feather across a biome edge exactly like the biome content does.
+#
+# SHARED-STREAM RULE (the one thing a prop builder may never break): the chunk's
+# RNG pays a FIXED cost per accepted spot — one randf_range for `size`, then ONE
+# randi() as the prop SEED — whatever the variant. Builders run on a PRIVATE
+# RandomNumberGenerator built from that seed (the artifact/camp private-RNG
+# pattern, one level down) and are handed no shared rng at all, so a 3-box stump
+# and an 8-box bone pile advance the chunk stream identically and prop complexity
+# can never reshuffle the crocodiles, coins or structures that draw after them.
+# Byte-identity with the PRE-prop world is deliberately not preserved (the same
+# licence CLAUDE.md's biome feature-skip note takes); within-run purity is, and
+# it holds unconditionally because every placement is still a pure function of
+# chunk coords + run_seed.
 
-## Maximum number of extra blocks stacked on top of a stacked block.
-@export var stack_max_extra: int = 2
+## Footprint radius of a prop as a fraction of its drawn `size`. Every builder
+## keeps ALL of its geometry — including tilted decoration — inside this radius
+## of the prop's centre, so the returned radius stays an HONEST bound: it is what
+## _settle_coin_y perches road coins against, what spawn_crocodiles_in_chunk
+## keeps its NPCs out of, and what the mountain massifs avoid-list reads.
+##
+## 0.71 IS THE BARE CUBE'S OWN FACTOR, kept deliberately: the footprint rule is
+## then literally unchanged from the cubes, so `size` still means the same thing,
+## the range is still 0.71-1.78 m, and the value stays under MOUNTAIN_AVOID_RADIUS
+## (2.0) — props remain "fair game" to bury in a massif exactly as cubes were, and
+## the constant chain around that inequality needed no re-derivation.
+const PROP_RADIUS_FACTOR: float = 0.71
+
+## THE CLIMBABILITY CONTRACT, as a number. A prop that records `climbable: true`
+## must be mountable from flat ground in steps no taller than this, each step
+## landing on a FLAT (untilted) top — that is the "rest spot from crocodiles"
+## role the bare cubes carried, and it breaks difficulty silently if it is lost.
+## 2.6 sits under the player's jump apex (JUMP_VELOCITY^2 / 2*gravity = 3.6125 m)
+## with room for the arc, and matches the old 2.5 m single-cube step that has
+## been the proven size since the first chunk was generated.
+## prop_selfcheck.gd measures the emitted geometry against this, per variant.
+const PROP_MAX_STEP: float = 2.6
+
+## --- Prop palettes. Deliberately distinct from the warm RAMP_* block ramps (the
+## feature structures still use those), the artifacts' grey-green, the camps'
+## bone white and the landmarks' place-specific colours — a themed prop should
+## read as belonging to its BIOME, not to the generic block palette.
+const PROP_BOULDER_A := Color(0.54, 0.52, 0.47)   # plains fieldstone …
+const PROP_BOULDER_B := Color(0.40, 0.39, 0.36)   # … to darker granite
+const PROP_RUIN_STONE := Color(0.68, 0.64, 0.55)  # cut, weathered masonry
+const PROP_HAY := Color(0.79, 0.66, 0.31)         # straw bale
+const PROP_CRATE := Color(0.44, 0.31, 0.18)       # cart timber
+const PROP_SANDSTONE_A := Color(0.82, 0.67, 0.43) # wind-worn desert sandstone …
+const PROP_SANDSTONE_B := Color(0.66, 0.50, 0.32) # … to its shaded underside
+const PROP_BONE := Color(0.89, 0.87, 0.79)        # sun-bleached bone
+const PROP_MOSS_ROCK := Color(0.39, 0.44, 0.32)   # damp forest boulder
+const PROP_MOSS_CAP := Color(0.26, 0.41, 0.23)    # the moss growing on it
+const PROP_STUMP := Color(0.35, 0.25, 0.16)       # cut stump / root flare
+const PROP_LOG := Color(0.44, 0.32, 0.21)         # fallen log bark
+const PROP_SCREE_A := Color(0.57, 0.57, 0.59)     # mountain scree …
+const PROP_SCREE_B := Color(0.39, 0.40, 0.43)     # … to shadowed rock
+const PROP_CAIRN := Color(0.50, 0.49, 0.46)       # stacked cairn slabs
 
 ## Enable/disable crocodile spawning on terrain
 @export var spawn_crocodiles: bool = true
@@ -1156,7 +1216,7 @@ const MOUNTAIN_MIN_LAYER_HEIGHT: float = 4.0
 const MOUNTAIN_EDGE_MARGIN: float = 10.0
 
 ## MOUNTAIN — footprint radius above which an already-placed obstacle is treated
-## as "do not bury this" when siting a massif. Scattered blocks top out at
+## as "do not bury this" when siting a massif. Scattered props top out at
 ## object_size_max * 0.71 = 1.78 m and are deliberately fair game (see
 ## _spawn_mountain_content); artifacts start at 2.5 m, and an artifact sealed
 ## inside 20 m of rock takes its coin ring and its guaranteed gem with it.
@@ -2246,28 +2306,38 @@ func spawn_objects_in_chunk(chunk_pos: Vector2i, platforms: Array, block_batch: 
 		if not valid_position:
 			continue
 
-		# Base block sits on the ground.
+		# ----- THE PROP: exactly TWO draws from the shared chunk stream ----------
+		# `size` is the prop's overall scale (the same draw the bare cube used) and
+		# the randi() below is the PROP SEED. Both are unconditional, so the chunk
+		# stream advances by the same amount at every accepted spot no matter which
+		# biome we are in or which variant the private RNG picks — that fixed cost
+		# is what lets prop complexity change freely without reshuffling the
+		# crocodiles, coins and structures that draw from this same stream.
+		# (See the THEMED SCATTERED PROPS banner in SECTION 1.)
 		var size := rng.randf_range(object_size_min, object_size_max)
-		create_block(Vector3(random_x, size / 2.0, random_z), size, rng.randf_range(0, TAU), rng, block_batch, block_body)
+		var prop_seed := rng.randi()
 		spawned_positions.append(object_pos)
 
-		# Track the height of the top surface (grows if we stack a tower on top).
-		var top_y := size
+		# Everything below this line runs on the PRIVATE prop RNG. _build_prop is
+		# handed no shared rng at all, which is what makes the rule above
+		# structural rather than a discipline somebody has to remember.
+		var prop := _build_prop(
+			Vector3(random_x, 0.0, random_z), size, prop_seed, chunk_center, block_batch, block_body
+		)
 
-		# Sometimes stack a few smaller blocks on top to make a little tower.
-		if rng.randf() < stack_chance:
-			var stack_count := rng.randi_range(1, stack_max_extra)
-			for i in stack_count:
-				# Each block up the stack is a bit smaller, so towers taper and
-				# the random yaw doesn't make them overhang awkwardly.
-				var stack_size := size * rng.randf_range(0.6, 0.85)
-				create_block(Vector3(random_x, top_y + stack_size / 2.0, random_z), stack_size, rng.randf_range(0, TAU), rng, block_batch, block_body)
-				top_y += stack_size
-
-		# Record the footprint and final top height — used to keep crocodiles out
-		# of the block and to perch coins on top of it. Single blocks/towers are
-		# climbable (their steps are <= one jump), so coins may sit on top.
-		obstacles.append({ "pos": Vector3(random_x, 0, random_z), "radius": size * 0.71, "top": top_y, "climbable": true })
+		# Record the footprint exactly as the bare cube did — same keys, same
+		# meaning. `radius` is an honest bound on every box the builder emitted
+		# (prop_selfcheck.gd measures that), `top` is the flat surface a coin may
+		# perch on, and `climbable` says whether it is a rest spot at all: the one
+		# variant with no usable top (the desert bone pile — a heap of tilted ribs)
+		# records false, so _settle_coin_y SKIPS a road coin over it rather than
+		# floating one, exactly as it does over a tree canopy.
+		obstacles.append({
+			"pos": Vector3(random_x, 0, random_z),
+			"radius": prop.radius,
+			"top": prop.top,
+			"climbable": prop.climbable,
+		})
 
 	return obstacles
 
@@ -2552,6 +2622,504 @@ func spawn_wall(rng: RandomNumberGenerator, half_chunk: float, chunk_center: Vec
 	var ridge_half: Vector2 = Vector2(half_along, half_across) if along_x else Vector2(half_across, half_along)
 	if half_along > 1.0 and half_across > 0.2:
 		platforms.append({ "center": ridge_center, "half": ridge_half })
+
+# ============================================================================
+# THEMED SCATTERED PROPS
+# ============================================================================
+# Everything below runs on a PRIVATE RandomNumberGenerator seeded from the one
+# randi() the scatter loop drew for it. NONE of these functions takes the chunk
+# RNG, which is what makes the fixed-shared-stream-cost rule structural instead
+# of a discipline somebody has to remember. Draw as many or as few numbers as a
+# variant needs.
+#
+# THREE RULES EVERY BUILDER OBEYS, because breaking any of them fails silently:
+#
+#  1. EVERY BOX STAYS INSIDE `size * PROP_RADIUS_FACTOR` OF THE PROP CENTRE.
+#     That radius is the number returned, and it is what _settle_coin_y perches
+#     road coins against, what spawn_crocodiles_in_chunk keeps crocodiles out of,
+#     and what the massif avoid-list reads. A box poking outside it means a
+#     crocodile spawned inside stone or a coin buried in it, with no error
+#     anywhere. The bound used when sizing an offset decoration is half its own
+#     3D DIAGONAL (`0.5 * dims.length()`), because a box carrying both a yaw and
+#     a tilt can present a corner in any direction. prop_selfcheck.gd measures the
+#     real emitted corners rather than trusting these comments.
+#
+#  2. A CLIMBABLE PROP IS ACTUALLY CLIMBABLE. The box whose top face is the
+#     returned `top` is UNTILTED (a tilted box has no flat top to stand on) and
+#     centred on the prop, and the untilted collidable tops form a ladder from
+#     the ground up with no gap over PROP_MAX_STEP. Tilted decoration is welcome
+#     — it is what stops a prop reading as a box — but it goes BESIDE the prop,
+#     never on the surface the contract promises. This is the "rest spot from
+#     crocodiles" role the bare cubes carried.
+#
+#  3. 3-8 BOXES, OF WHICH 1-3 COLLIDE. The whole chunk draws in one MultiMesh
+#     whatever the box count, so instances are nearly free — but each colliding
+#     box is a real CollisionShape3D node on the chunk's shared body, and that is
+#     the budget the per-chunk node count lives on. Trim (chips, rubble, root
+#     flares, ribs, loose stones) passes `collide = false`, exactly as a forest
+#     canopy does.
+
+func _build_prop(local: Vector3, size: float, prop_seed: int, chunk_center: Vector3, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	Build ONE themed scattered prop at a spot the scatter loop already accepted.
+
+	@param local: The prop's chunk-LOCAL position, y = 0 (it sits on the ground).
+	@param size: The prop's overall scale — the same object_size_min..max draw the
+	             bare cube used, so props inherit the field's existing size spread.
+	@param prop_seed: The one randi() the chunk stream paid for this prop. Every
+	                  choice below hangs off it, so the prop is a pure function of
+	                  chunk coords + run_seed like everything else in generation.
+	@param chunk_center: World centre of the chunk — the prop's own WORLD position
+	                     is what picks the theme (see below).
+	@param block_batch / block_body: The chunk's single MultiMesh batch and single
+	                     collision body. A prop adds ZERO draw calls and at most
+	                     three collision shapes.
+	@return { "radius": float, "top": float, "climbable": bool } — the footprint
+	        the caller appends to `obstacles`, in exactly the shape the bare cube
+	        used to append.
+
+	THE THEME IS PICKED PER POSITION, NOT PER CHUNK CENTRE. That is deliberate and
+	it is the same rule the biome content builders follow: a chunk straddling a
+	forest edge grows stumps on the wooded half and boulders on the open half, so
+	the transition follows the noise contour instead of stopping dead on a straight
+	chunk seam. One extra noise evaluation per prop (~12 a chunk) buys it.
+	"""
+	var rng := RandomNumberGenerator.new()
+	rng.seed = prop_seed
+
+	match biome_at(chunk_center.x + local.x, chunk_center.z + local.z):
+		Biome.DESERT:
+			match rng.randi_range(0, 2):
+				0:
+					return _prop_sandstone_stack(local, size, rng, block_batch, block_body)
+				1:
+					return _prop_broken_column(local, size, rng, block_batch, block_body)
+				_:
+					return _prop_bone_pile(local, size, rng, block_batch, block_body)
+		Biome.FOREST:
+			match rng.randi_range(0, 2):
+				0:
+					return _prop_mossy_boulder(local, size, rng, block_batch, block_body)
+				1:
+					return _prop_tree_stump(local, size, rng, block_batch, block_body)
+				_:
+					return _prop_log_pile(local, size, rng, block_batch, block_body)
+		Biome.MOUNTAIN:
+			match rng.randi_range(0, 1):
+				0:
+					return _prop_scree_cluster(local, size, rng, block_batch, block_body)
+				_:
+					return _prop_cairn(local, size, rng, block_batch, block_body)
+		_:  # PLAINS — also the fallback, so a future biome band still gets props.
+			match rng.randi_range(0, 2):
+				0:
+					return _prop_boulder_cluster(local, size, rng, block_batch, block_body)
+				1:
+					return _prop_ruin_fragment(local, size, rng, block_batch, block_body)
+				_:
+					return _prop_bale_pile(local, size, rng, block_batch, block_body)
+
+# ----- PLAINS ---------------------------------------------------------------
+
+func _prop_boulder_cluster(local: Vector3, size: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	PLAINS — a field boulder with two smaller rocks nestled against it.
+
+	The big rock is the climbable one, so it stays UNTILTED and its top face is
+	the returned `top`. The companions carry the tilt that stops the whole thing
+	reading as a cube, and they sit beside it rather than on it (rule 2 above).
+	3 boxes, 3 collide.
+	"""
+	var r := size * PROP_RADIUS_FACTOR
+	var w := size * 0.9
+	var h := minf(size * 0.85, PROP_MAX_STEP)
+	var yaw := rng.randf_range(0.0, TAU)
+
+	create_box(
+		local + Vector3(0.0, h * 0.5, 0.0), Vector3(w, h, w * 0.92), yaw,
+		rng, block_batch, block_body, 0.0, PROP_BOULDER_A.lerp(PROP_BOULDER_B, rng.randf())
+	)
+
+	for _i in 2:
+		var cs := size * rng.randf_range(0.28, 0.42)
+		var a := rng.randf_range(0.0, TAU)
+		var ring := size * 0.32
+		create_box(
+			local + Vector3(cos(a) * ring, cs * 0.45, sin(a) * ring),
+			Vector3(cs, cs * 0.9, cs), rng.randf_range(0.0, TAU),
+			rng, block_batch, block_body, rng.randf_range(-0.35, 0.35),
+			PROP_BOULDER_A.lerp(PROP_BOULDER_B, rng.randf())
+		)
+
+	return { "radius": r, "top": h, "climbable": true }
+
+func _prop_ruin_fragment(local: Vector3, size: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	PLAINS — a stub of broken wall with one block fallen off it and rubble around.
+
+	The wall stub is the climbable perch (untilted, flat top). 4 boxes, 2 collide
+	— the chips are trim and would only make the base a snag to walk into.
+	"""
+	var r := size * PROP_RADIUS_FACTOR
+	var yaw := rng.randf_range(0.0, TAU)
+	# The tallest prop step in the set, and deliberately capped at the bare cube's
+	# own proven 2.5 m rather than at PROP_MAX_STEP: a stub that needed the very
+	# last centimetre of the jump arc would be a rest spot only in theory.
+	var h := minf(size * 1.05, 2.5)
+
+	create_box(
+		local + Vector3(0.0, h * 0.5, 0.0), Vector3(size * 0.85, h, size * 0.42), yaw,
+		rng, block_batch, block_body, 0.0, PROP_RUIN_STONE
+	)
+
+	# The fallen block, tilted where it came to rest, thrown clear of the wall face.
+	var bs := size * rng.randf_range(0.30, 0.42)
+	var ba := yaw + PI * 0.5 + rng.randf_range(-0.5, 0.5)
+	create_box(
+		local + Vector3(cos(ba) * size * 0.32, bs * 0.42, sin(ba) * size * 0.32),
+		Vector3(bs, bs * 0.85, bs * 1.1), rng.randf_range(0.0, TAU),
+		rng, block_batch, block_body, rng.randf_range(0.2, 0.5), PROP_RUIN_STONE
+	)
+
+	for _i in 2:
+		var cs := size * rng.randf_range(0.12, 0.22)
+		var a := rng.randf_range(0.0, TAU)
+		var ring := size * rng.randf_range(0.30, 0.45)
+		create_box(
+			local + Vector3(cos(a) * ring, cs * 0.4, sin(a) * ring),
+			Vector3(cs, cs * 0.7, cs), rng.randf_range(0.0, TAU),
+			rng, block_batch, block_body, rng.randf_range(-0.4, 0.4), PROP_RUIN_STONE, false
+		)
+
+	return { "radius": r, "top": h, "climbable": true }
+
+func _prop_bale_pile(local: Vector3, size: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	PLAINS — two stacked hay bales with a cart crate against them and loose planks.
+
+	The two-bale stack IS the old cube tower, re-skinned: both tiers are untilted
+	and each is one easy step, so the climb the towers provided survives intact.
+	5 boxes, 3 collide.
+	"""
+	var r := size * PROP_RADIUS_FACTOR
+	var yaw := rng.randf_range(0.0, TAU)
+
+	var h1 := minf(size * 0.66, PROP_MAX_STEP)
+	var w1 := size * 0.82
+	create_box(
+		local + Vector3(0.0, h1 * 0.5, 0.0), Vector3(w1, h1, w1 * 0.9), yaw,
+		rng, block_batch, block_body, 0.0, PROP_HAY
+	)
+
+	var h2 := minf(h1 * 0.8, PROP_MAX_STEP)
+	var w2 := w1 * 0.78
+	create_box(
+		local + Vector3(0.0, h1 + h2 * 0.5, 0.0), Vector3(w2, h2, w2 * 0.9),
+		yaw + rng.randf_range(-0.4, 0.4), rng, block_batch, block_body, 0.0, PROP_HAY
+	)
+
+	var cs := size * rng.randf_range(0.22, 0.34)
+	var ca := rng.randf_range(0.0, TAU)
+	create_box(
+		local + Vector3(cos(ca) * size * 0.38, cs * 0.5, sin(ca) * size * 0.38),
+		Vector3(cs, cs, cs), rng.randf_range(0.0, TAU),
+		rng, block_batch, block_body, rng.randf_range(-0.25, 0.25), PROP_CRATE
+	)
+
+	for _i in 2:
+		var pl := size * rng.randf_range(0.30, 0.45)
+		var pa := rng.randf_range(0.0, TAU)
+		var ring := size * rng.randf_range(0.25, 0.40)
+		create_box(
+			local + Vector3(cos(pa) * ring, size * 0.05, sin(pa) * ring),
+			Vector3(pl, size * 0.08, size * 0.16), pa + rng.randf_range(-0.5, 0.5),
+			rng, block_batch, block_body, rng.randf_range(-0.15, 0.15), PROP_CRATE, false
+		)
+
+	return { "radius": r, "top": h1 + h2, "climbable": true }
+
+# ----- DESERT ---------------------------------------------------------------
+
+func _prop_sandstone_stack(local: Vector3, size: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	DESERT — 2-3 wind-worn sandstone slabs stacked and shrinking, with one broken
+	flake leaning at the base.
+
+	The slabs are untilted so the stack climbs; the flake is the tilted character
+	and sits BESIDE the stack, never on the top slab. 3-4 boxes, 2-3 collide.
+	"""
+	var r := size * PROP_RADIUS_FACTOR
+	var tiers := rng.randi_range(2, 3)
+	var yaw := rng.randf_range(0.0, TAU)
+	var w := size * 0.88
+	var top := 0.0
+
+	for _i in tiers:
+		var th := minf(size * rng.randf_range(0.42, 0.68), PROP_MAX_STEP)
+		create_box(
+			local + Vector3(0.0, top + th * 0.5, 0.0), Vector3(w, th, w * 0.82),
+			yaw + rng.randf_range(-0.3, 0.3), rng, block_batch, block_body, 0.0,
+			PROP_SANDSTONE_A.lerp(PROP_SANDSTONE_B, rng.randf() * 0.7)
+		)
+		top += th
+		w *= 0.82
+
+	var fs := size * rng.randf_range(0.30, 0.45)
+	var fa := rng.randf_range(0.0, TAU)
+	create_box(
+		local + Vector3(cos(fa) * size * 0.32, fs * 0.5, sin(fa) * size * 0.32),
+		Vector3(fs, fs * 1.2, fs * 0.25), rng.randf_range(0.0, TAU),
+		rng, block_batch, block_body, rng.randf_range(0.5, 0.9), PROP_SANDSTONE_B, false
+	)
+
+	return { "radius": r, "top": top, "climbable": true }
+
+func _prop_broken_column(local: Vector3, size: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	DESERT — a half-buried column: one surviving drum still standing on its broken
+	flat top, the toppled shaft lying beside it, chips around the base.
+	4 boxes, 2 collide.
+	"""
+	var r := size * PROP_RADIUS_FACTOR
+	var yaw := rng.randf_range(0.0, TAU)
+	var dw := size * 0.62
+	var dh := minf(size * rng.randf_range(0.7, 1.0), PROP_MAX_STEP)
+
+	create_box(
+		local + Vector3(0.0, dh * 0.5, 0.0), Vector3(dw, dh, dw), yaw,
+		rng, block_batch, block_body, 0.0, PROP_SANDSTONE_A
+	)
+
+	# The fallen shaft, offset PERPENDICULAR to its own long axis so its length
+	# stays inside the radius (offsetting along the axis would push a corner out).
+	var sa := rng.randf_range(0.0, TAU)
+	var sl := size * rng.randf_range(0.55, 0.75)
+	var perp := Vector3(cos(sa + PI * 0.5), 0.0, sin(sa + PI * 0.5)) * size * 0.26
+	create_box(
+		local + perp + Vector3(0.0, dw * 0.28, 0.0),
+		Vector3(sl, dw * 0.56, dw * 0.56), sa,
+		rng, block_batch, block_body, rng.randf_range(-0.15, 0.15),
+		PROP_SANDSTONE_A.lerp(PROP_SANDSTONE_B, 0.5)
+	)
+
+	for _i in 2:
+		var cs := size * rng.randf_range(0.12, 0.20)
+		var a := rng.randf_range(0.0, TAU)
+		var ring := size * rng.randf_range(0.30, 0.42)
+		create_box(
+			local + Vector3(cos(a) * ring, cs * 0.45, sin(a) * ring),
+			Vector3(cs, cs * 0.8, cs), rng.randf_range(0.0, TAU),
+			rng, block_batch, block_body, rng.randf_range(-0.5, 0.5), PROP_SANDSTONE_B, false
+		)
+
+	return { "radius": r, "top": dh, "climbable": true }
+
+func _prop_bone_pile(local: Vector3, size: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	DESERT — a bleached ribcage scattered in the sand. THE ONE NON-CLIMBABLE
+	VARIANT: a heap of tilted ribs has no flat top to stand on, so it honestly
+	records climbable = false and _settle_coin_y SKIPS a road coin over it rather
+	than floating one on a surface that is not there (the tree-canopy rule).
+
+	Keeping it to one variant of eleven is deliberate — the bare cubes' rest-spot
+	role is the thing this whole re-skin must not quietly delete, so desert still
+	offers two climbable props in three and every other biome offers three.
+	5-7 boxes, 1 collides (the skull lump, so the heap is not walk-through).
+	"""
+	var r := size * PROP_RADIUS_FACTOR
+	var yaw := rng.randf_range(0.0, TAU)
+	var ss := size * rng.randf_range(0.30, 0.42)
+
+	create_box(
+		local + Vector3(0.0, ss * 0.45, 0.0), Vector3(ss, ss * 0.85, ss * 1.15), yaw,
+		rng, block_batch, block_body, rng.randf_range(-0.2, 0.2), PROP_BONE
+	)
+
+	for _i in rng.randi_range(4, 6):
+		var rib := size * rng.randf_range(0.35, 0.60)
+		var a := rng.randf_range(0.0, TAU)
+		var ring := size * rng.randf_range(0.0, 0.22)
+		create_box(
+			local + Vector3(cos(a) * ring, size * rng.randf_range(0.05, 0.18), sin(a) * ring),
+			Vector3(rib, size * 0.07, size * 0.09), a + rng.randf_range(-0.6, 0.6),
+			rng, block_batch, block_body, rng.randf_range(-0.5, 0.5), PROP_BONE, false
+		)
+
+	return { "radius": r, "top": ss * 0.9, "climbable": false }
+
+# ----- FOREST ---------------------------------------------------------------
+
+func _prop_mossy_boulder(local: Vector3, size: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	FOREST — a damp boulder wearing a cap of moss, with two small rocks at its foot.
+
+	The moss cap COLLIDES and its top face is the returned `top`, so you stand on
+	the moss rather than clipping into it — and the rock height is derived from
+	PROP_MAX_STEP minus the cap, so cap + rock together still clear in one jump
+	however object_size_max is retuned. 4 boxes, 2 collide.
+	"""
+	var r := size * PROP_RADIUS_FACTOR
+	var yaw := rng.randf_range(0.0, TAU)
+	var cap_h := size * 0.14
+	var bh := minf(size * 0.72, PROP_MAX_STEP - cap_h)
+	var bw := size * 0.88
+
+	create_box(
+		local + Vector3(0.0, bh * 0.5, 0.0), Vector3(bw, bh, bw * 0.9), yaw,
+		rng, block_batch, block_body, 0.0, PROP_MOSS_ROCK
+	)
+	create_box(
+		local + Vector3(0.0, bh + cap_h * 0.5, 0.0), Vector3(bw * 0.96, cap_h, bw * 0.87), yaw,
+		rng, block_batch, block_body, 0.0, PROP_MOSS_CAP
+	)
+
+	for _i in 2:
+		var cs := size * rng.randf_range(0.22, 0.34)
+		var a := rng.randf_range(0.0, TAU)
+		create_box(
+			local + Vector3(cos(a) * size * 0.34, cs * 0.4, sin(a) * size * 0.34),
+			Vector3(cs, cs * 0.75, cs), rng.randf_range(0.0, TAU),
+			rng, block_batch, block_body, rng.randf_range(-0.45, 0.45), PROP_MOSS_ROCK, false
+		)
+
+	return { "radius": r, "top": bh + cap_h, "climbable": true }
+
+func _prop_tree_stump(local: Vector3, size: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	FOREST — a wide cut stump with three root flares splaying out at ground level.
+
+	The roots are VISUAL ONLY: they spread past the stump's own width, and making
+	them solid would turn every stump into a ring of ankle-height snags. The flat
+	saw-cut top is the perch. 4 boxes, 1 collides.
+	"""
+	var r := size * PROP_RADIUS_FACTOR
+	var yaw := rng.randf_range(0.0, TAU)
+	var sw := size * 0.86
+	var sh := minf(size * rng.randf_range(0.55, 0.80), PROP_MAX_STEP)
+
+	create_box(
+		local + Vector3(0.0, sh * 0.5, 0.0), Vector3(sw, sh, sw * 0.94), yaw,
+		rng, block_batch, block_body, 0.0, PROP_STUMP
+	)
+
+	for i in 3:
+		var a := yaw + TAU * float(i) / 3.0 + rng.randf_range(-0.35, 0.35)
+		var rl := size * rng.randf_range(0.36, 0.50)
+		create_box(
+			local + Vector3(cos(a) * size * 0.36, size * 0.09, sin(a) * size * 0.36),
+			Vector3(rl, size * 0.18, size * 0.22), a,
+			rng, block_batch, block_body, rng.randf_range(-0.25, -0.05), PROP_STUMP, false
+		)
+
+	return { "radius": r, "top": sh, "climbable": true }
+
+func _prop_log_pile(local: Vector3, size: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	FOREST — two felled logs side by side with a third laid across them, plus a
+	couple of loose branches.
+
+	The upper log's top face is flat and one short step up, so the pile stays a
+	rest spot. 5 boxes, 3 collide.
+	"""
+	var r := size * PROP_RADIUS_FACTOR
+	var a := rng.randf_range(0.0, TAU)
+	var log_len := size * 0.9
+	var log_d := size * 0.30
+	var perp := Vector3(cos(a + PI * 0.5), 0.0, sin(a + PI * 0.5)) * log_d * 0.55
+
+	for i in 2:
+		var s := 1.0 if i == 0 else -1.0
+		create_box(
+			local + perp * s + Vector3(0.0, log_d * 0.5, 0.0),
+			Vector3(log_len, log_d, log_d), a,
+			rng, block_batch, block_body, 0.0, PROP_LOG
+		)
+
+	create_box(
+		local + Vector3(0.0, log_d * 1.5, 0.0),
+		Vector3(log_len * 0.85, log_d, log_d), a + rng.randf_range(-0.5, 0.5),
+		rng, block_batch, block_body, 0.0, PROP_LOG
+	)
+
+	for _i in 2:
+		var bl := size * rng.randf_range(0.25, 0.40)
+		var ba := rng.randf_range(0.0, TAU)
+		var ring := size * rng.randf_range(0.30, 0.42)
+		create_box(
+			local + Vector3(cos(ba) * ring, size * 0.05, sin(ba) * ring),
+			Vector3(bl, size * 0.10, size * 0.12), ba + rng.randf_range(-0.6, 0.6),
+			rng, block_batch, block_body, rng.randf_range(-0.3, 0.3), PROP_LOG, false
+		)
+
+	return { "radius": r, "top": log_d * 2.0, "climbable": true }
+
+# ----- MOUNTAIN -------------------------------------------------------------
+
+func _prop_scree_cluster(local: Vector3, size: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	MOUNTAIN — one flat slab of fallen rock with 3-4 shattered chips tumbled round
+	it. The slab is the perch; the chips carry the tilt. 4-5 boxes, 1 collides.
+	"""
+	var r := size * PROP_RADIUS_FACTOR
+	var yaw := rng.randf_range(0.0, TAU)
+	var sw := size * 0.84
+	var sh := minf(size * rng.randf_range(0.45, 0.70), PROP_MAX_STEP)
+
+	create_box(
+		local + Vector3(0.0, sh * 0.5, 0.0), Vector3(sw, sh, sw * 0.88), yaw,
+		rng, block_batch, block_body, 0.0, PROP_SCREE_A.lerp(PROP_SCREE_B, rng.randf())
+	)
+
+	for _i in rng.randi_range(3, 4):
+		var cs := size * rng.randf_range(0.16, 0.30)
+		var a := rng.randf_range(0.0, TAU)
+		var ring := size * rng.randf_range(0.30, 0.42)
+		create_box(
+			local + Vector3(cos(a) * ring, cs * 0.45, sin(a) * ring),
+			Vector3(cs, cs * 0.8, cs * 1.2), rng.randf_range(0.0, TAU),
+			rng, block_batch, block_body, rng.randf_range(-0.6, 0.6),
+			PROP_SCREE_A.lerp(PROP_SCREE_B, rng.randf()), false
+		)
+
+	return { "radius": r, "top": sh, "climbable": true }
+
+func _prop_cairn(local: Vector3, size: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	MOUNTAIN — a three-slab cairn with two loose stones at its foot. THIS IS THE
+	OLD CUBE TOWER, re-skinned: the tallest prop in the set, all three tiers
+	untilted and each one a short step, so the tower's climb survives its cube.
+
+	NO CAPSTONE ON TOP, deliberately — a tilted stone crowning the cairn would
+	look right and quietly destroy the flat surface the climbability contract
+	promises. The loose stones go beside it instead. 5 boxes, 3 collide.
+	"""
+	var r := size * PROP_RADIUS_FACTOR
+	var yaw := rng.randf_range(0.0, TAU)
+	var w := size * 0.72
+	var top := 0.0
+
+	for _i in 3:
+		var th := minf(size * rng.randf_range(0.38, 0.58), PROP_MAX_STEP)
+		create_box(
+			local + Vector3(0.0, top + th * 0.5, 0.0), Vector3(w, th, w * 0.9),
+			yaw + rng.randf_range(-0.5, 0.5), rng, block_batch, block_body, 0.0,
+			PROP_CAIRN.lerp(PROP_SCREE_B, rng.randf() * 0.5)
+		)
+		top += th
+		w *= 0.8
+
+	for _i in 2:
+		var cs := size * rng.randf_range(0.18, 0.28)
+		var a := rng.randf_range(0.0, TAU)
+		var ring := size * rng.randf_range(0.32, 0.44)
+		create_box(
+			local + Vector3(cos(a) * ring, cs * 0.45, sin(a) * ring),
+			Vector3(cs, cs * 0.85, cs), rng.randf_range(0.0, TAU),
+			rng, block_batch, block_body, rng.randf_range(-0.5, 0.5),
+			PROP_CAIRN.lerp(PROP_SCREE_B, rng.randf() * 0.5), false
+		)
+
+	return { "radius": r, "top": top, "climbable": true }
 
 func create_block(center_pos: Vector3, size: float, yaw: float, rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> void:
 	"""
