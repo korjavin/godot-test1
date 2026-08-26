@@ -284,10 +284,12 @@ func _worst_horizontal_extent(block_batch: Array) -> float:
 	The corners are transformed by the box's REAL Transform3D, so yaw and tilt are
 	both accounted for exactly — no half-diagonal approximation to get wrong.
 
-	ponytail: this measures `block_batch` (the batched stone), so the three
+	ponytail: this measures `block_batch` (the batched stone), so the five
 	`_spawn_artifact_accent` meshes — Giza's capstone, Liberty's torch, the Eiffel
-	beacon — are NOT measured. All three sit well inside their landmark today
-	(Liberty's torch, the furthest out, reaches 2.09 m against a declared 5.4), and
+	beacon, Big Ben's Ayrton Light and the Great Wall's beacon fire — are NOT
+	measured. All five sit well inside their landmark today (the last two are on
+	the landmark's own axis, and Liberty's torch, the furthest out of any of them,
+	reaches 2.09 m against a declared 5.4), and
 	an accent is a 0.5 m unlit glow box that nothing collides with, so the seam
 	consequence of one hanging over an edge is cosmetic rather than the "half a
 	bridge cut in two" this check exists for. The upgrade path, if a builder ever
