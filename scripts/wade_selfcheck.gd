@@ -74,6 +74,15 @@ const CROC_MESH_TOP: float = 0.240
 const CROC_RIDGE_MIN: float = 0.02
 const CROC_RIDGE_MAX: float = 0.10
 
+## Deterministic per-instance roll seed for check 6's crocodile — the terrain's
+## setup_roll_seed() contract used by a harness instead of by a chunk. Swept over
+## seeds 0..399: this is the one whose size roll lands closest to 1.000 (1.00017),
+## so the ridge band above, which was measured at scale 1, is compared against a
+## scale-1 crocodile. Any seed makes the check deterministic; this one also makes
+## it MEAN what its comment says. Check 7's boss needs none — the is_boss branch
+## takes no size roll at all.
+const CROC_ROLL_SEED: int = 230
+
 ## Boss scale used by check 7. Deliberately BOSS_MAX_SCALE, the biggest the
 ## terrain's schedule ever builds — if the proportional sink holds anywhere it
 ## holds here, and a 6x error is impossible to write off as slop.
@@ -212,6 +221,18 @@ func _check_croc_sink(terrain: StubTerrain) -> void:
 		_fail("croc: could not load %s" % CROC_SCENE)
 		return
 	var croc: CharacterBody3D = packed.instantiate()
+	# CALL-ORDER CONTRACT, the same one check 7 states for setup_as_boss: the seed
+	# must be handed over BEFORE add_child, because _ready() is where the rolls
+	# happen. WITHOUT IT this check is a coin flip. An unseeded crocodile falls
+	# back to rng.randomize() and applies the +/-25% SIZE_RANDOM_FACTOR to the
+	# whole body, which scales model.global_position.y while CROC_MESH_TOP below
+	# is a fixed model-local constant — so the absolute ridge came out anywhere in
+	# 0.015..0.105 m and fell outside the 0.02..0.10 band about one run in four.
+	# Every DISPLACEMENT assertion beside it was unaffected (they are relative),
+	# which is exactly why the flake looked like a phantom. CROC_ROLL_SEED is the
+	# seed nearest a 1.000 size roll, so the band — measured at scale 1 — means
+	# what it says rather than being tested against some other crocodile's size.
+	croc.setup_roll_seed(CROC_ROLL_SEED)
 	croc.position = Vector3(20.0, 0.5, 0.0)
 	root.add_child(croc)
 	await _frames(SETTLE_FRAMES)
