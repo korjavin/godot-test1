@@ -28,10 +28,15 @@ const DUCK_SPEED: float = 2.5
 
 ## Speed multiplier applied to the GROUNDED gaits (duck/run/walk) while the
 ## player is standing in a river — see is_wading and calculate_current_speed().
-## 0.6 is a ~40% slowdown: enough to feel like wading and to make crossing a
+## 0.5 is a 50% slowdown: enough to feel like wading and to make crossing a
 ## river a real decision. Deliberately NOT applied to Windman's Air Rush —
 ## flying over a river is not wading.
-const WADE_SPEED_FACTOR: float = 0.6
+##
+## This started at 0.6 and was deepened on owner feedback ("slower in general
+## while submerged"). It bites on WALK and DUCK only: the run gait is floored at
+## WADE_RUN_MIN_SPEED below, which already absorbed the whole drag at 0.6 and
+## still does — deepening the factor must never be read as making the run slower.
+const WADE_SPEED_FACTOR: float = 0.5
 
 ## Floor under the RUN gait while wading. The project's difficulty contract is
 ## "running always escapes": crocodile chase speed is capped at MAX_CHASE_SPEED
@@ -43,6 +48,39 @@ const WADE_SPEED_FACTOR: float = 0.6
 ## the RIVER_HALF_WIDTH note in endless_terrain.gd). So walk and duck take the
 ## full drag and the run is floored here instead.
 const WADE_RUN_MIN_SPEED: float = 9.0
+
+## How deep the MODEL sinks into a river, in metres, and how fast the offset
+## eases in and out (metres per second — depth / ~0.2 s, so stepping in or out
+## of the water takes about a fifth of a second instead of popping).
+##
+## VISUAL ONLY, AND THAT IS A HARD CONSTRAINT: this is written to
+## $CharacterModel.position.y, exactly like the walk bob and the landing squash
+## write to the model's own nodes. The CollisionShape3D, the body's global_position
+## and the flat-world y = 0 ground plane are all untouched — every y-placement
+## site in the project (coin heights, croc gravity settle, spawn point, block
+## bases) assumes that plane, so "submerged" has to be a picture, never physics.
+## Nothing else writes $CharacterModel.position, so this offset owns it outright:
+## Teibi's resize tweens `scale` and the landing squash writes `scale` plus
+## $CharacterModel/Body.position — different properties, so none of them fight.
+##
+## ponytail: a fixed depth, not one scaled by Teibi's form. A river is a river —
+## giant Teibi wades the same 0.35 m and is barely wet, small Teibi is in it up
+## to the chest. That reads correctly and costs no coupling to the resize state.
+const WADE_SINK_DEPTH: float = 0.35
+const WADE_SINK_EASE_SPEED: float = WADE_SINK_DEPTH / 0.2
+
+## Multiplier on JUMP_VELOCITY for a jump that STARTS from wading — you cannot
+## push off properly against water. 0.75 drops the apex from JUMP_VELOCITY^2 /
+## (2 * gravity) = 3.61 m to 2.03 m, which is BELOW the 2.5 m top of a single
+## decorative block: a block you can hop onto from dry land is genuinely
+## unjumpable from inside the river. That is the intended reading of "jumping is
+## harder in water", not a bug — wade out first.
+##
+## Keyed off `is_wading`, which is only ever true while is_on_floor(), so a
+## COYOTE-TIME jump (fired from the air, up to COYOTE_TIME after leaving a ledge)
+## sees `false` and keeps FULL power. is_wading is recomputed at STEP 1.5, above
+## the jump step, precisely so this reads the current frame rather than the last.
+const WADE_JUMP_FACTOR: float = 0.75
 
 ## How fast A / D rotate the character, in radians per second.
 ## A and D no longer strafe — they turn the body (tank-style steering), so
@@ -204,6 +242,13 @@ var is_running: bool = false
 ## reset plumbing on respawn/restart. Drives the WADE_SPEED_FACTOR slowdown and
 ## swaps the footstep sound for a splash.
 var is_wading: bool = false
+
+## How far the MODEL is currently sunk below its rest position, in metres, eased
+## toward WADE_SINK_DEPTH while wading and back to 0 on dry land. Unlike is_wading
+## this one DOES hold history (it is the eased value), so reset_position() zeroes
+## it — a hard teleport to the dry spawn point must not leave the hero standing
+## in a puddle that is not there for the fifth of a second the ease would take.
+var _wade_sink: float = 0.0
 
 ## Sidestep state. While a "step aside" is playing we slide sideways for a short
 ## burst and run a matching leg animation; new step requests are ignored until it
@@ -577,6 +622,7 @@ func _ready() -> void:
 	print("  Ctrl - Duck")
 	print("  R - Switch Character")
 	print("  F - Special ability (unique per character)")
+	print("  K - Skill tree")
 	print("  Mouse - Look around")
 	print("  ESC - Release mouse")
 
@@ -692,7 +738,43 @@ func _first_person_eye_position() -> Vector3:
 	forms move the eyes down/up automatically.
 	"""
 	var scale_y: float = collision_shape.scale.y if collision_shape else 1.0
-	return Vector3(0.0, scale_y * FIRST_PERSON_EYE_HEIGHT - camera_pivot.position.y, 0.0)
+	# Wading dips the eyes by exactly the same offset the model sinks by, so the
+	# submersion is FELT in first person and not merely watched in third. Folded
+	# in here rather than at the call sites so every path that re-seats the arm
+	# (_apply_view_mode, the Teibi resize, a character switch) gets it for free.
+	return Vector3(0.0,
+			scale_y * FIRST_PERSON_EYE_HEIGHT - camera_pivot.position.y - _wade_sink, 0.0)
+
+
+func _tick_wade_sink(delta: float) -> void:
+	"""
+	Ease the model's submersion offset toward wherever `is_wading` says it should
+	be, and apply it. Called once per physics tick from _physics_process, right
+	after is_wading is recomputed.
+
+	Note it is BELOW the frozen-window early returns (game over / caught /
+	respawn grace), which is deliberate: a player frozen mid-river should stay
+	sunk rather than rise out of the water while the countdown runs.
+	"""
+	var target: float = WADE_SINK_DEPTH if is_wading else 0.0
+	if is_equal_approx(_wade_sink, target):
+		return
+	_wade_sink = move_toward(_wade_sink, target, WADE_SINK_EASE_SPEED * delta)
+	_apply_wade_sink()
+
+
+func _apply_wade_sink() -> void:
+	"""
+	Push the current submersion offset onto the model — and, in first person,
+	onto the spring arm carrying the camera (the eyes ride the same dip).
+
+	Idempotent, like _apply_view_mode(), so it is safe to call from anywhere.
+	"""
+	if character_container:
+		character_container.position.y = -_wade_sink
+	if view_mode == ViewMode.FIRST_PERSON and camera_arm:
+		# FP gives the arm an identity basis, so only the origin needs re-seating.
+		camera_arm.transform = Transform3D(Basis.IDENTITY, _first_person_eye_position())
 
 # ============================================================================
 # PHYSICS PROCESSING (CALLED EVERY FRAME)
@@ -833,6 +915,21 @@ func _physics_process(delta: float) -> void:
 		if velocity.y < 0.0:
 			_fall_speed = -velocity.y
 
+	# STEP 1.5: Are we standing in a river? One noise evaluation per physics tick
+	# (see the terrain's is_river_at) — that is the entire budget for wading.
+	# Only meaningful with feet on the ground: a jumping or flying player is over
+	# the water, not in it.
+	#
+	# IT MUST STAY ABOVE THE JUMP STEP. Two consumers read it later in this same
+	# tick — WADE_JUMP_FACTOR below and calculate_current_speed() at STEP 7 — and
+	# computing it after the jump would hand the jump the PREVIOUS frame's answer,
+	# which is exactly wrong in the one case that matters: a coyote-time jump one
+	# frame after walking off a river bank would be weakened, when the whole point
+	# of WADE_JUMP_FACTOR keying off is_wading is that an airborne jump is not one.
+	is_wading = is_on_floor() and _terrain_is_river_here()
+	# Ease the model's submersion offset (visual only — see WADE_SINK_DEPTH).
+	_tick_wade_sink(delta)
+
 	# STEP 2: Handle Jumping (with coyote time + jump buffer — see SECTION 2)
 	# Refresh the coyote window while grounded; tick it down while airborne.
 	if is_on_floor():
@@ -849,7 +946,10 @@ func _physics_process(delta: float) -> void:
 	if jump_buffer_timer > 0.0 and (is_on_floor() or coyote_timer > 0.0) and not is_giant:
 		# Set upward velocity for jump. Zero BOTH timers so the same press can't
 		# fire twice (e.g. a coyote jump immediately re-triggering off the buffer).
-		velocity.y = JUMP_VELOCITY
+		# A jump pushed off from inside a river is weaker (see WADE_JUMP_FACTOR);
+		# is_wading is false whenever we are airborne, so a coyote jump that
+		# started on dry ground — or off a river bank — keeps full power.
+		velocity.y = JUMP_VELOCITY * (WADE_JUMP_FACTOR if is_wading else 1.0)
 		coyote_timer = 0.0
 		jump_buffer_timer = 0.0
 		_sfx("play_jump")
@@ -866,14 +966,9 @@ func _physics_process(delta: float) -> void:
 	# STEP 6: Advance any in-progress sidestep, and start a new one on Q / E
 	update_sidestep(delta)
 
-	# STEP 6.5: Are we standing in a river? One noise evaluation per physics tick
-	# (see the terrain's is_river_at) — that is the entire budget for wading, and
-	# it is asked BEFORE calculate_current_speed() below so this frame's speed
-	# already knows. Only meaningful with feet on the ground: a jumping or flying
-	# player is over the water, not in it.
-	is_wading = is_on_floor() and _terrain_is_river_here()
-
 	# STEP 7: Read forward/back input and the current movement speed
+	# (is_wading was computed back at STEP 1.5, so calculate_current_speed()
+	# below already knows about the river underfoot.)
 	var input_dir := get_input_direction()
 	var current_speed := calculate_current_speed()
 
@@ -995,8 +1090,21 @@ func calculate_current_speed() -> float:
 	if is_wading:
 		speed_scale *= WADE_SPEED_FACTOR
 
+	# Passive movement skills (see `_skill_mult`) scale the RUN and DUCK gaits and
+	# NOTHING ELSE. That is the catchable-walk contract, restated as code: a
+	# walking player has to stay catchable (BASE_CHASE_SPEED 5.5 > WALK_SPEED 5.0,
+	# and Primm already walks at 5.75), so no skill may reach the `else` branch
+	# below. Deliberately computed HERE, above the branch, so the walk return is
+	# textually the only one that does not use it.
+	# ONE call, not a product of two: Teibi's Scurry is a movement passive as much
+	# as Fleet Foot is, and multiplying two separately-capped multipliers reaches
+	# x1.254 — past the +20% both halves individually respect. `gait_mult()` sums
+	# the bonuses and clamps once, which is why the small-form test is a parameter
+	# rather than a second multiplication here.
+	var gait_mult: float = _skill_gait_mult()
+
 	if is_ducking:
-		return DUCK_SPEED * speed_scale
+		return DUCK_SPEED * speed_scale * gait_mult
 	elif is_running:
 		# The wading drag applies here too, but never below WADE_RUN_MIN_SPEED:
 		# running has to keep outpacing a chasing crocodile even in the water.
@@ -1006,10 +1114,16 @@ func calculate_current_speed() -> float:
 		# exactly 9.0 while wading and the drag is fully absorbed. The maxf stays
 		# as the general expression — retune CHARACTER_SPEED or WADE_SPEED_FACTOR
 		# and the drag starts biting again without this line needing a thought.
+		#
+		# The skill multiplier goes INSIDE the maxf, i.e. it is applied BEFORE the
+		# floor, which is what keeps the floor a floor: skills only ever raise this
+		# number, so the result is still at least WADE_RUN_MIN_SPEED and a speed
+		# passive cannot re-open the river-trap bug the floor exists to close.
 		if is_wading:
-			return maxf(RUN_SPEED * speed_scale, WADE_RUN_MIN_SPEED)
-		return RUN_SPEED * speed_scale
+			return maxf(RUN_SPEED * speed_scale * gait_mult, WADE_RUN_MIN_SPEED)
+		return RUN_SPEED * speed_scale * gait_mult
 	else:
+		# NO `gait_mult` HERE, ever. See the comment above the branch.
 		return WALK_SPEED * speed_scale
 
 func handle_ducking() -> void:
@@ -2122,6 +2236,12 @@ func reset_position() -> void:
 	respawn_blink_timer = 0.0
 	_apply_view_mode()
 
+	# Lift the model back out of the water. This is a hard teleport to the dry
+	# spawn point, so easing the offset out over the next fifth of a second would
+	# just be a visible glitch at a place with no river in it.
+	_wade_sink = 0.0
+	_apply_wade_sink()
+
 	# Drop any active ability state (air boost, giant form, odd size) on respawn.
 	_reset_ability_states()
 
@@ -2292,6 +2412,16 @@ func _place_near(anchor: Vector3) -> void:
 		camera_pivot.rotation = Vector3.ZERO  # Whole rotation, so roll can't survive
 	is_ducking = false
 	is_running = false
+	# Lift the model back out of the water, exactly as reset_position() does and
+	# for the same reason: this is a teleport, so the river we were standing in is
+	# not here any more. It matters most on the in-room respawn, where the grace
+	# freeze early-returns out of _physics_process — without this the hero (and,
+	# in first person, the camera) would sit 0.35 m sunk at the group's dry feet
+	# for the whole countdown. Landing in ANOTHER river just eases straight back
+	# down over the next fifth of a second, which is the correct reading of
+	# "arrived somewhere new".
+	_wade_sink = 0.0
+	_apply_wade_sink()
 
 
 func _room_group_anchor() -> Variant:
@@ -2400,6 +2530,16 @@ var ability_cooldowns: Array[float] = []
 
 ## Windman boost time remaining (seconds; > 0 means the Air Rush is active).
 var windman_boost_timer: float = 0.0
+
+## Seconds of cooldown an ability earned back DURING its own activation, consumed
+## by `try_activate_ability()` the moment it charges the cooldown. Written only by
+## an ability that returns true (today: Primm's Phase Echo, on a wall-pass) and
+## zeroed on use and on respawn, so it can never leak into the next press.
+var _pending_cooldown_refund: float = 0.0
+
+## Cached `Progression` node — see `_progression()` for why this one is cached
+## when the sibling weather/terrain lookups beside it are not.
+var _progression_node: Node = null
 
 ## Teibi's size cycle: 0 = normal, 1 = small, 2 = giant.
 var teibi_size_state: int = 0
@@ -2556,6 +2696,80 @@ func _terrain_is_river_here() -> bool:
 	return false
 
 
+# --- Meta-progression skills (bead godot-test1-20z.3) ------------------------
+#
+# The passive skill trees are DATA in `scripts/progression.gd`, and they reach
+# gameplay by multiplying an existing constant AT ITS POINT OF USE. The constants
+# below stay `const`: `WINDMAN_BOOST_DURATION` is still 4.0 seconds and
+# `ABILITY_COOLDOWN["teibi"]` is still 4.0 — a skilled hero simply reads
+# `CONST * _skill_mult("...")` where it used to read `CONST`.
+#
+# Everything goes through the two null-safe lookups below, modelled on
+# `_weather_is_raining_here()` / `_terrain_is_river_here()`: no Progression node
+# in the tree (the player scene run standalone, the self-checks, any scene
+# without `Main`) means every multiplier is 1.0 and every bonus 0.0, i.e. the
+# game before this bead, exactly.
+
+func _progression() -> Node:
+	"""
+	The Progression node, or null. Group lookup, no hard reference — but CACHED,
+	because two of the callers really are per-frame paths: `_skill_gait_mult()`
+	runs from `calculate_current_speed()` in `_physics_process`, and
+	`_skilled_ability_cooldown()` runs from `get_ability_cooldown_ratio()`, which
+	`ability_hud.gd` polls every frame. Same caching (and the same
+	`is_instance_valid` re-resolve) as `coin_hud.gd` and the skill panel, for the
+	same reason: a group lookup per frame for a node that may legitimately never
+	exist is the wrong shape.
+
+	A null result is deliberately NOT cached — a scene with no Progression node
+	pays one lookup per frame, exactly as `_weather_is_raining_here()` and
+	`_terrain_is_river_here()` beside it already do, and the node cannot appear
+	late in any scene that has one.
+	"""
+	if _progression_node == null or not is_instance_valid(_progression_node):
+		var node := get_tree().get_first_node_in_group("progression")
+		_progression_node = node if node != null and node.has_method("skill_mult") else null
+	return _progression_node
+
+
+func _skill_mult(effect: String) -> float:
+	"""
+	The skill multiplier for `effect` on the CURRENT character, or 1.0 when there
+	is no progression. The hard caps (−40% cooldown, +20% run speed) live inside
+	`Progression.skill_mult()`, so no call site can breach one by accident.
+	"""
+	var progression := _progression()
+	if progression == null:
+		return 1.0
+	return float(progression.skill_mult(CHARACTERS[current_character_index]["name"], effect))
+
+
+func _skill_bonus(effect: String) -> float:
+	"""
+	The raw summed bonus for `effect` (0.0 with no progression) — for the one
+	effect that is a flat amount rather than a factor, Primm's cooldown refund.
+	"""
+	var progression := _progression()
+	if progression == null:
+		return 0.0
+	return float(progression.skill_bonus(CHARACTERS[current_character_index]["name"], effect))
+
+
+func _skill_gait_mult() -> float:
+	"""
+	The run/duck multiplier for the current character in its current form, capped
+	at `RUN_SPEED_MULT_MAX` over ALL movement passives together (Fleet Foot and
+	Teibi's small-form Scurry). One call, so the cap has one home — see
+	`Progression.gait_mult()`. 1.0 with no progression.
+	"""
+	var progression := _progression()
+	if progression == null:
+		return 1.0
+	return float(progression.gait_mult(
+		CHARACTERS[current_character_index]["name"], teibi_size_state == 1
+	))
+
+
 func _update_ability_timers(delta: float) -> void:
 	"""Count down cooldowns, the Windman air boost, and Teibi's form timer."""
 	for i in ability_cooldowns.size():
@@ -2612,7 +2826,15 @@ func try_activate_ability() -> void:
 			used = _ability_phoboman()
 
 	if used:
-		ability_cooldowns[current_character_index] = float(ABILITY_COOLDOWN.get(char_name, 10.0))
+		# The skilled duration, and it MUST be the same expression
+		# `get_ability_cooldown_ratio()` divides by — see the note there.
+		var cooldown := _skilled_ability_cooldown()
+		# ...minus anything an ability earned back on the way through (Primm's
+		# Phase Echo). A generic one-shot rather than a Primm branch: it costs one
+		# float, and the active-skills bead has more of these coming.
+		cooldown = maxf(0.0, cooldown - _pending_cooldown_refund)
+		_pending_cooldown_refund = 0.0
+		ability_cooldowns[current_character_index] = cooldown
 		# Whoosh only when the ability actually fired — a failed Primm blink that
 		# costs no cooldown stays silent too.
 		_sfx("play_ability", char_name)
@@ -2638,13 +2860,20 @@ func _ability_windman() -> bool:
 	forward.y = 0.0
 	forward = forward.normalized()
 
-	windman_boost_timer = WINDMAN_BOOST_DURATION
+	windman_boost_timer = WINDMAN_BOOST_DURATION * _skill_mult("windman_boost")
 	# Kick the lens wide for the launch moment — the FOV code in _process adds
 	# this on top of the speed-scaled target and decays it back to zero.
 	fov_punch = FOV_PUNCH_WINDMAN
 	# Launch: up so he is airborne, plus an immediate forward shove so even a
 	# standing press blasts off into the wind right away.
-	velocity.y = WINDMAN_LIFT
+	#
+	# WINDMAN_LIFT is the ONE thing a skill may make jump higher, and that is an
+	# epic-level decision rather than a local one: mountain massifs are impassable
+	# because the base jump apex (3.6125 m) is under MOUNTAIN_MIN_LAYER_HEIGHT
+	# (4.0), so there is deliberately NO skill anywhere touching JUMP_VELOCITY.
+	# The "fly higher" fantasy routes through Air Rush, which is already the
+	# sanctioned way over terrain.
+	velocity.y = WINDMAN_LIFT * _skill_mult("windman_lift")
 	velocity.x = forward.x * WINDMAN_AIR_SPEED
 	velocity.z = forward.z * WINDMAN_AIR_SPEED
 
@@ -2670,9 +2899,12 @@ func _ability_primm() -> bool:
 	forward = forward.normalized()
 
 	# March outward for the first position where Primm's body is NOT inside a block.
+	# Long Step lengthens the DESIRED distance only; the scan still gives up at
+	# PRIMM_BLINK_MAX_DISTANCE, which is what bounds the skill without a cap of its
+	# own (a blink that lands past 40 m simply never happens).
 	var target := global_position
 	var found := false
-	var d := PRIMM_BLINK_DISTANCE
+	var d := PRIMM_BLINK_DISTANCE * _skill_mult("primm_blink")
 	while d <= PRIMM_BLINK_MAX_DISTANCE:
 		var candidate := global_position + forward * d
 		if not _is_body_blocked_at(candidate):
@@ -2683,6 +2915,22 @@ func _ability_primm() -> bool:
 
 	if not found:
 		return false
+
+	# Phase Echo: a wall-pass hands back whole seconds of cooldown, applied by
+	# `try_activate_ability()` when it charges it.
+	#
+	# THE WALL IS USUALLY NOT AT THE LANDING SPOT, which is why this needs its own
+	# scan rather than a flag set by the loop above. That loop starts at the
+	# DESIRED distance and only ever walks OUTWARD, so the ordinary case — a single
+	# 2 m block three metres ahead, with the 6 m landing spot in open ground — sees
+	# a clear first candidate and never notices the wall it just went through. The
+	# whole travelled segment is what has to be tested.
+	#
+	# Gated on the skill being ranked, so an unranked Primm pays for none of these
+	# extra shape queries; and it is a key press either way, not a per-frame path.
+	var refund := _skill_bonus("primm_refund")
+	if refund > 0.0 and _blink_passed_through(target):
+		_pending_cooldown_refund = refund
 
 	# A quick flash where he leaves and where he arrives, to sell the teleport —
 	# plus three small staggered flashes along the path between them, so the eye
@@ -2695,6 +2943,33 @@ func _ability_primm() -> bool:
 	velocity = Vector3.ZERO  # land cleanly on the far side, no carried momentum
 	_spawn_ability_effect(global_position, Color(0.45, 0.5, 1.0, 0.5), 2.0, 0.35)
 	return true
+
+
+func _blink_passed_through(target: Vector3) -> bool:
+	"""
+	True when solid geometry stands anywhere BETWEEN the player and `target` — i.e.
+	when the blink about to happen is a genuine wall-pass rather than a hop across
+	open ground. Sampled at `PRIMM_BLINK_STEP` with the same capsule-centre probe
+	the landing scan uses, so the flat ground never counts and the two agree about
+	what "solid" means.
+
+	Called only for a Primm who has bought Phase Echo (see `_ability_primm`), on a
+	key press, so a dozen shape queries is the right shape of cost. `ponytail:` a
+	single swept capsule would be one query instead — the ceiling here is a wall
+	thinner than the 0.5 m step slipping between two samples, which reads as "no
+	refund that time", never as a wrong teleport.
+	"""
+	var travel := target - global_position
+	var distance := travel.length()
+	if distance <= PRIMM_BLINK_STEP:
+		return false
+	var direction := travel / distance
+	var d := PRIMM_BLINK_STEP
+	while d < distance:
+		if _is_body_blocked_at(global_position + direction * d):
+			return true
+		d += PRIMM_BLINK_STEP
+	return false
 
 
 func _is_body_blocked_at(pos: Vector3) -> bool:
@@ -2744,22 +3019,33 @@ func _ability_teibi() -> bool:
 	if teibi_size_state == 0:
 		teibi_form_timer = 0.0
 	elif prev_state == 0:
-		teibi_form_timer = TEIBI_FORM_DURATION
+		teibi_form_timer = TEIBI_FORM_DURATION * _skill_mult("teibi_form")
 	return true
 
 
 func _ability_phoboman() -> bool:
 	"""Stink Wave: send out smelly waves; every crocodile flees for a while."""
 	# A few staggered green waves so it reads as rolling stench, not one pop.
-	_spawn_ability_effect(global_position, Color(0.55, 0.85, 0.2, 0.55), PHOBOMAN_STINK_RADIUS, 0.9, 0.0)
-	_spawn_ability_effect(global_position, Color(0.5, 0.8, 0.25, 0.45), PHOBOMAN_STINK_RADIUS, 0.9, 0.18)
-	_spawn_ability_effect(global_position, Color(0.45, 0.75, 0.3, 0.4), PHOBOMAN_STINK_RADIUS, 0.9, 0.36)
+	#
+	# Billowing Cloud widens the VISIBLE wave. Worth being honest about what that
+	# is and is not: the flee below is a walk of the whole "crocodile" group with
+	# no distance test at all, so PHOBOMAN_STINK_RADIUS has never been a gameplay
+	# bound — the skill buys reach in the telegraph, not in the effect.
+	# `ponytail:` making it a real bound means giving the group walk a radius test,
+	# which would NERF the unranked ability (an unbounded sweep becoming a 9 m one)
+	# and is a balance change this bead does not own. Left as a visual upgrade;
+	# the upgrade path is one `distance_to` in the loop plus a re-tune of the base.
+	var stink_radius: float = PHOBOMAN_STINK_RADIUS * _skill_mult("phoboman_radius")
+	_spawn_ability_effect(global_position, Color(0.55, 0.85, 0.2, 0.55), stink_radius, 0.9, 0.0)
+	_spawn_ability_effect(global_position, Color(0.5, 0.8, 0.25, 0.45), stink_radius, 0.9, 0.18)
+	_spawn_ability_effect(global_position, Color(0.45, 0.75, 0.3, 0.4), stink_radius, 0.9, 0.36)
 
 	# Repel every crocodile via the group (no hard references), matching the
 	# project's group-based discovery convention.
+	var flee_duration: float = PHOBOMAN_FLEE_DURATION * _skill_mult("phoboman_flee")
 	for croc in get_tree().get_nodes_in_group("crocodile"):
 		if croc.has_method("flee_from"):
-			croc.flee_from(global_position, PHOBOMAN_FLEE_DURATION)
+			croc.flee_from(global_position, flee_duration)
 
 	# ...and in a multiplayer room, ask the master to do the same to the
 	# crocodiles IT drives — a no-op offline. The loop above is deliberately left
@@ -2769,7 +3055,7 @@ func _ability_phoboman() -> bool:
 	# the master's copy of the flight reaches every screen on the next sample.
 	var mp := _mp()
 	if mp and mp.has_method("request_croc_flee"):
-		mp.request_croc_flee(global_position, PHOBOMAN_FLEE_DURATION)
+		mp.request_croc_flee(global_position, flee_duration)
 	return true
 
 
@@ -2839,6 +3125,7 @@ func _spawn_ability_effect(pos: Vector3, color: Color, max_radius: float, lifeti
 func _reset_ability_states() -> void:
 	"""Clear transient ability state on respawn (air boost, giant/small form)."""
 	windman_boost_timer = 0.0
+	_pending_cooldown_refund = 0.0
 	_revert_teibi_to_normal()
 	# Sidestep is transient too: the caught/respawn/game-over branches all return
 	# BEFORE update_sidestep(), so a player caught mid-step would otherwise come
@@ -2867,10 +3154,23 @@ func get_ability_name() -> String:
 	return ABILITY_NAME.get(char_name, "Ability")
 
 
+func _skilled_ability_cooldown() -> float:
+	"""
+	The current character's cooldown length AFTER its skill tree, in seconds. The
+	single expression both the charge in `try_activate_ability()` and the HUD dial
+	divide by — which is the whole reason it is a function.
+
+	Divide the dial by the UNSKILLED constant and a hero with cooldown ranks
+	arrives at a dial that starts at 0.6 full and empties early: not an error
+	anywhere, just a HUD that quietly stops meaning what it says.
+	"""
+	var char_name: String = CHARACTERS[current_character_index]["name"]
+	return float(ABILITY_COOLDOWN.get(char_name, 10.0)) * _skill_mult("cooldown")
+
+
 func get_ability_cooldown_ratio() -> float:
 	"""Cooldown progress for the HUD dial: 1.0 just-used → 0.0 fully ready."""
-	var char_name: String = CHARACTERS[current_character_index]["name"]
-	var duration: float = float(ABILITY_COOLDOWN.get(char_name, 10.0))
+	var duration: float = _skilled_ability_cooldown()
 	if duration <= 0.0:
 		return 0.0
 	return clampf(ability_cooldowns[current_character_index] / duration, 0.0, 1.0)

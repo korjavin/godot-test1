@@ -61,6 +61,27 @@ class_name BestRunStore
 ## path rule in `server/docker-compose.yml`). They ride the SAME record on the
 ## server — see `server/best.go`. `scripts/progression.gd` owns what they MEAN;
 ## this file only knows they are two numbers that never go down.
+##
+## THE PER-HERO SKILL RANKS (`skill_ranks`) ride the LOCAL layer AND NOTHING
+## ELSE, and that asymmetry with the two counters beside them is deliberate:
+##
+##   * `spent_points` — a scalar that only ever rises — stays the whole of the
+##     progression surface the server sees, so `server/best.go` needed no change,
+##     no new route appeared, and the Traefik path rule in
+##     `server/docker-compose.yml` stayed as it was. A dict of dicts on the wire
+##     would need a schema plus a per-entry merge rule on the Go side to keep the
+##     monotone guarantee that makes every POST idempotent.
+##   * The ranks merge **per entry with `maxi`** (`merge_ranks()`), which is the
+##     same monotone rule one dimension down, and is exactly right because v1 has
+##     no respec: a rank never falls, so a stale local copy can only ever be
+##     behind and merging can only ever be correct.
+##   * The ceiling, stated plainly: a device that somehow learns a HIGHER
+##     `spent_points` from the server than its own rank map accounts for has
+##     fewer points to spend and no extra ranks. `unspent_points()`'s `maxi(0, …)`
+##     absorbs it. Never a free rank, never a negative count — the safe
+##     direction, and unreachable in practice for the same reason the record
+##     "follows you between devices" ceiling above is: the player id is minted per
+##     browser profile and per install, so two devices are two profiles.
 
 # =============================================================================
 # CONFIGURATION
@@ -79,6 +100,11 @@ const LS_DISTANCE: String = "ck_best_distance"
 const LS_COINS: String = "ck_best_coins"
 const LS_LIFETIME: String = "ck_lifetime_coins"
 const LS_SPENT: String = "ck_spent_points"
+## The per-hero skill ranks, as a JSON object. JSON on BOTH layers (rather than a
+## ConfigFile-native Dictionary on desktop) so there is one parse path to get
+## wrong instead of two, and so a hand-edited or truncated value fails the same
+## way everywhere: it is ignored and the ranks stay as they were.
+const LS_RANKS: String = "ck_skill_ranks"
 
 ## Desktop section for the progression counters. A section of its own so a
 ## player's meta-progression is legible in `best_run.cfg` and so deleting it by
@@ -124,6 +150,10 @@ var coins: int = 0
 var lifetime_coins: int = 0
 var spent_points: int = 0
 
+## Per-hero skill ranks (`hero → { skill id: rank }`), LOCAL LAYER ONLY — see the
+## header for why they never reach the server. Merged, never assigned.
+var skill_ranks: Dictionary = {}
+
 var _player_id: String = ""
 
 ## Two `HTTPRequest` nodes, deliberately — one node answers ERR_BUSY while a
@@ -167,10 +197,16 @@ func submit(new_distance: int, new_coins: int) -> void:
 	_request_post()
 
 
-func submit_progression(new_lifetime: int, new_spent: int) -> void:
+func submit_progression(
+	new_lifetime: int, new_spent: int, new_ranks: Dictionary = {}
+) -> void:
 	"""
-	Record the meta-progression counters. Called by `progression.gd` on a level-up
-	and at game over — not a per-pickup path.
+	Record the meta-progression counters. Called by `progression.gd` on a level-up,
+	at game over, and on every skill point spent — not a per-pickup path.
+
+	`new_ranks` is a TRAILING parameter defaulting to {}, so the pre-skill-tree
+	call shape stays inert (an empty merge changes nothing); the ranks are merged
+	per entry, never assigned, for the monotone reason in the header.
 
 	Same shape and same reasoning as `submit()`, including the `_read_local()`
 	first: without it a store whose `fetch()` never ran would write its zeroes over
@@ -185,6 +221,7 @@ func submit_progression(new_lifetime: int, new_spent: int) -> void:
 	_read_local()
 	lifetime_coins = maxi(lifetime_coins, new_lifetime)
 	spent_points = maxi(spent_points, new_spent)
+	merge_ranks(skill_ranks, new_ranks)
 	_write_local()
 	_request_post()
 
@@ -220,6 +257,7 @@ func _read_local() -> void:
 		coins = maxi(coins, maxi(0, _ls_get(LS_COINS).to_int()))
 		lifetime_coins = maxi(lifetime_coins, maxi(0, _ls_get(LS_LIFETIME).to_int()))
 		spent_points = maxi(spent_points, maxi(0, _ls_get(LS_SPENT).to_int()))
+		merge_ranks(skill_ranks, _parse_ranks(_ls_get(LS_RANKS)))
 	var cfg := ConfigFile.new()
 	# A missing file (first ever run) is NOT an error — the zero defaults stand.
 	# That is also the bead's "delete the file, get a clean level-0 profile" case.
@@ -234,6 +272,10 @@ func _read_local() -> void:
 	spent_points = maxi(
 		spent_points,
 		maxi(0, int(cfg.get_value(CONFIG_PROGRESSION_SECTION, "spent_points", 0)))
+	)
+	merge_ranks(
+		skill_ranks,
+		_parse_ranks(String(cfg.get_value(CONFIG_PROGRESSION_SECTION, "skill_ranks", "")))
 	)
 
 
@@ -260,6 +302,7 @@ func _write_local() -> void:
 		_ls_set(LS_COINS, str(coins))
 		_ls_set(LS_LIFETIME, str(lifetime_coins))
 		_ls_set(LS_SPENT, str(spent_points))
+		_ls_set(LS_RANKS, JSON.stringify(skill_ranks))
 		return
 	var cfg := ConfigFile.new()
 	cfg.load(CONFIG_PATH)  # keep any other section (the player id) intact
@@ -267,7 +310,54 @@ func _write_local() -> void:
 	cfg.set_value(CONFIG_SECTION, "coins", coins)
 	cfg.set_value(CONFIG_PROGRESSION_SECTION, "lifetime_coins", lifetime_coins)
 	cfg.set_value(CONFIG_PROGRESSION_SECTION, "spent_points", spent_points)
+	cfg.set_value(CONFIG_PROGRESSION_SECTION, "skill_ranks", JSON.stringify(skill_ranks))
 	cfg.save(CONFIG_PATH)
+
+
+# =============================================================================
+# SKILL RANKS — the local-only third field (see the header)
+# =============================================================================
+
+static func merge_ranks(into: Dictionary, from: Dictionary) -> void:
+	"""
+	Fold `from` into `into` with a per-entry `maxi`, in place.
+
+	The same monotone rule the scalars use, one dimension down: because there is
+	no respec, a rank never falls, so the higher of two copies is always the newer
+	one and ordering stops mattering — a late load, a re-read before a write and a
+	retried save are all idempotent.
+
+	Every level is type-checked because one source of `from` is parsed JSON out of
+	`localStorage`, i.e. a string a player (or a broken write) can put anything in.
+	A malformed hero or rank is skipped rather than rejecting the whole map: the
+	rest of a player's tree is worth keeping.
+	"""
+	for hero: Variant in from:
+		if typeof(hero) != TYPE_STRING or typeof(from[hero]) != TYPE_DICTIONARY:
+			continue
+		var src: Dictionary = from[hero]
+		var dst: Dictionary = into.get(hero, {})
+		for skill_id: Variant in src:
+			if typeof(skill_id) != TYPE_STRING:
+				continue
+			var rank: Variant = src[skill_id]
+			if typeof(rank) != TYPE_INT and typeof(rank) != TYPE_FLOAT:
+				continue
+			dst[skill_id] = maxi(int(dst.get(skill_id, 0)), maxi(0, int(rank)))
+		into[hero] = dst
+
+
+static func _parse_ranks(raw: String) -> Dictionary:
+	"""
+	Decode a stored rank map. Anything that is not a JSON object reads as "no
+	ranks stored", which is the correct answer for a missing key, an empty string
+	and a corrupt value alike — and, thanks to the merge above, costs nothing when
+	the other local layer still has them.
+	"""
+	if raw.is_empty():
+		return {}
+	var parsed: Variant = JSON.parse_string(raw)
+	return parsed as Dictionary if typeof(parsed) == TYPE_DICTIONARY else {}
 
 
 func _load_or_make_player_id() -> String:

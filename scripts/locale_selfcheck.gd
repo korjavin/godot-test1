@@ -105,6 +105,37 @@ const WIDTH_BUDGETS: Array = [
 	# start_overlay.gd — CARD_WIDTH 420 with a 20 px content margin each side.
 	["PLAY SOLO", 26, 380.0, "start overlay Play Solo"],
 	["MULTIPLAYER", 24, 380.0, "start overlay Multiplayer"],
+	# skill_tree_ui.gd — only the strings that CANNOT wrap are budgeted. The node
+	# descriptions and the two hint lines autowrap inside their column, so German
+	# grows the card downward (it scrolls) instead of overflowing it; that is the
+	# same wrapping-not-clipping rule the help card uses, and it is why 11 long
+	# sentences are absent from this table.
+	#
+	# BUTTON_WIDTH 124, font 18, ~8 px of default-theme Button padding, and the
+	# opener also carries a " (N)" unspent-points suffix (~30 px at this size).
+	["Skills", 18, 84.0, "skill tree opener"],
+	# COLUMN_WIDTH 292, font 18, ~8 px Button padding, less the "   3/3" rank
+	# counter composed onto every node name (~48 px at this size).
+	["Quick Recovery", 18, 232.0, "skill node name"],
+	["Second Wind", 18, 232.0, "skill node name"],
+	["Fleet Foot", 18, 232.0, "skill node name"],
+	["Long Gale", 18, 232.0, "skill node name"],
+	["Updraft", 18, 232.0, "skill node name"],
+	["Long Step", 18, 232.0, "skill node name"],
+	["Phase Echo", 18, 232.0, "skill node name"],
+	["Held Form", 18, 232.0, "skill node name"],
+	["Scurry", 18, 232.0, "skill node name"],
+	["Lingering Reek", 18, 232.0, "skill node name"],
+	["Billowing Cloud", 18, 232.0, "skill node name"],
+	# Branch headings are plain Labels the full width of their column.
+	["Focus", 16, 292.0, "skill branch heading"],
+	["Air Rush", 16, 292.0, "skill branch heading"],
+	["Phase Step", 16, 292.0, "skill branch heading"],
+	["Resize", 16, 292.0, "skill branch heading"],
+	["Stink Wave", 16, 292.0, "skill branch heading"],
+	# The card title is one non-wrapping line across CARD_WIDTH 640 less the
+	# 18 px content margin each side and the ScrollContainer's own 36 px.
+	["%s — Level %d,  %d points", 22, 604.0, "skill tree card title"],
 ]
 
 var _failures: Array[String] = []
