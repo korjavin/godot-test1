@@ -263,36 +263,62 @@ const SPECIES: Dictionary = {
 	## the chase distance are all measured from the node origin, which for this
 	## species is where its fangs are — and the right pivot for the asc.4 strike.
 	"sand_viper": {
-		## PHASE 2 SHIPS IT AS "solo": it wanders and chases exactly like the
-		## crocodile, and only its numbers and its mesh make it feel different.
-		## asc.4 is what turns this into "ambush" — burrow, wait, strike — along
-		## with the `match` arm that reads the string. A string with no arm
-		## behaves as solo, which is exactly what makes shipping the species and
-		## shipping its behaviour two safe beads instead of one big one.
-		"behavior": "solo",
+		## THE AMBUSHER (asc.4). Phase 2 shipped this row as "solo" — a viper that
+		## wandered and chased exactly like a crocodile — and everything that turns
+		## it into an ambush is on this page: four NUMBERS below, plus one `match`
+		## arm (`_behave_ambush()`) that is a single assignment.
+		##
+		## READ THE THREE ZEROES-AND-FIVES TOGETHER, because separately none of
+		## them is the behaviour: move_speed 0.0 (it never leaves its patch),
+		## detection_radius 5.0 (it cannot smell you coming — you have to step on
+		## it) and ambush_burrow_depth (you cannot see it while it waits). A
+		## predator that does not move, does not sense and cannot be seen is not a
+		## weak crocodile; it is a different threat, one you walk INTO rather than
+		## one that hunts you. The 7.5 strike is what it spends the difference on.
+		"behavior": "ambush",
 
 		# ----- Speed and detection -----
-		## THE LATTICE IS THE LATTICE: 5.0 (WALK_SPEED) < 6.2 <= 8.5
-		## (MAX_CHASE_SPEED) < 9.0 (the slowest character's run). A viper is a
-		## faster STRIKER than a crocodile (5.5) and a lazier cruiser (2.0 vs
-		## 2.5) — it lies about, then it moves. The worst case still clamps:
-		## 6.2 x 1.35 x 1.6 = 13.4 and MAX_CHASE_SPEED cuts it to 8.5, so running
-		## escapes a viper exactly as it escapes everything else.
-		"move_speed": 2.0,
-		"chase_speed": 6.2,
+		## THE LATTICE IS THE LATTICE: 5.0 (WALK_SPEED) < 7.5 <= 8.5
+		## (MAX_CHASE_SPEED) < 9.0 (the slowest character's run). This is the
+		## fastest STRIKE in the table and it is the only thing this animal has.
+		## The worst case still clamps (7.5 x 1.2 x 1.6 = 14.4, cut to 8.5), so
+		## RUNNING ESCAPES A VIPER exactly as it escapes everything else — which is
+		## the whole counterplay, because escaping the strike means noticing it in
+		## the ~1 s it takes to cross 5 m.
+		##
+		## MOVE_SPEED IS ZERO, AND IT IS A BEHAVIOUR, NOT A TUNING. `_wander_speed`
+		## multiplies it, so a buried viper's wander velocity is identically 0 at
+		## every point of the sin cycle and for every roll of speed_factor: it
+		## holds the spot it spawned on until something walks into its 5 m. That is
+		## the "does not close distance on a passing player" half of the ambush,
+		## and croc_spawn_selfcheck MEASURES it against a walking quarry rather
+		## than trusting this number. The one place it needs care is
+		## `_animate_body`, whose stride divisor is this value — see the maxf()
+		## there, which exists for this row and only this row.
+		"move_speed": 0.0,
+		"chase_speed": 7.5,
 
-		## Tighter spreads than the crocodile's ±50% / ±25%. A snake reads as one
-		## KIND of thing: a viper twice the length of the one beside it looks like
-		## a different animal, where two crocodiles of different sizes just look
-		## like two crocodiles.
-		"speed_random_factor": 0.35,
+		## ±20% / ±20%. TIGHTER on speed than phase 2's ±35%, and that is the
+		## ambush changing the argument rather than a nerf being undone. The
+		## SPECIES doc block above is right that a slow roll is a feature — a
+		## straggler in a crowd reads as a straggler. An ambusher is not in a
+		## crowd: it gets ONE strike from 5 m, and at ±35% the bottom roll is
+		## 4.88 m/s, UNDER WALK_SPEED — not a straggler but a viper the player
+		## strolls away from mid-lunge with nothing on screen to explain it. ±20%
+		## floors the strike at 6.0: still caught by a run, never by a walk. Size
+		## keeps its ±20%; a fat viper is still a viper.
+		"speed_random_factor": 0.2,
 		"size_random_factor": 0.2,
 
-		## Deliberately SHORTER than the crocodile's 15.0 — an ambusher trades
-		## senses for surprise, and asc.4 gets the danger back from the strike
-		## rather than from smelling further. Still far below the LOD manager's
-		## SIM_RADIUS (45.0), which is the invariant every species owes.
-		"detection_radius": 12.0,
+		## THE TRIGGER RADIUS, and phase 2's row promised exactly this cut: an
+		## ambusher trades senses for surprise and gets the danger back from the
+		## strike. 5.0 m is about three body lengths — one second of walking, and
+		## barely further than the strike itself travels. It is a HYSTERESIS-FREE
+		## trigger, which is what makes the lunge SHORT with no timer anywhere: the
+		## same radius that fires the strike ends it, so a viper that has not
+		## closed the gap re-buries the moment you are 5 m clear. Still far below
+		## the LOD manager's SIM_RADIUS (45.0), the invariant every species owes.
+		"detection_radius": 5.0,
 
 		# ----- Organic wandering -----
 		## Longer interval and a longer pause than the crocodile: a viper basks.
@@ -304,13 +330,21 @@ const SPECIES: Dictionary = {
 		"wander_turn_rate": 0.9,
 		"turn_smoothness": 6.0,
 
-		## Ebbs lower and slower than the crocodile (0.45 / 0.8), and pauses far
-		## more often (0.3). Roughly half its wandering life is spent lying still,
-		## which is what will make the phase-4 strike land as a surprise instead
-		## of as the next thing an obviously-moving animal did.
+		## The wander SHAPE is now decoration on a stationary animal — move_speed
+		## 0.0 multiplies the first two into nothing — but the third is
+		## load-bearing, and its zero is not tidiness.
+		##
+		## `sniff_pause_chance` 0.0 IS THE TRIP-WIRE STAYING ARMED. Look at
+		## _physics_process: `is_paused` short-circuits the whole else-branch, so a
+		## paused predator never reaches _update_chase_state and cannot detect
+		## anything at all. At phase 2's 0.45 this viper would spend a 0.8 s pause
+		## BLIND on a coin flip every 5 s — roughly one ambusher in seven deaf at
+		## any instant, and deaf is fatal for a species whose entire behaviour is a
+		## 5 m trip-wire you are meant to walk into. Nothing about a buried animal
+		## needs to stop and sniff anyway: it already never moved.
 		"min_wander_speed_factor": 0.35,
 		"speed_variation_freq": 0.6,
-		"sniff_pause_chance": 0.45,
+		"sniff_pause_chance": 0.0,
 
 		# ----- Obstacle avoidance -----
 		## Look-ahead is the crocodile's ratio applied to this body: ~1.45x the
@@ -374,6 +408,52 @@ const SPECIES: Dictionary = {
 		"bite_duration": 0.3,
 		"bite_pitch": 34.0 * PI / 180.0,
 		"bite_lunge": 0.5,
+
+		# ----- The burrow (the "ambush" behaviour reads these two) -------------
+		## The only keys in this table no other row has, exactly like the wolf's
+		## two pack keys, and for the same reason: a key a species does not use is
+		## a key it does not carry. (croc_spawn_selfcheck derives its required key
+		## set from the CROCODILE row, so behaviour-local keys are allowed — what
+		## it forbids is a row MISSING something the crocodile has.)
+		##
+		## HOW DEEP THE MODEL SITS WHILE IT WAITS, in model-local metres, and it
+		## goes through `_tick_river_sink` — the same one property the sink already
+		## owns (`model_base_y`), eased the same way, composed as "whichever target
+		## is DEEPER". That reuse is the point and it was the bead's instruction:
+		## there is exactly one writer of the model's rest height, so a viper that
+		## is burrowed AND in a river is simply burrowed, with no second easing
+		## fighting the first.
+		##
+		## 0.24 IS MEASURED, NOT PICKED. snake.glb stands 0.2065 m tall, and the
+		## locomotion bob adds 0.008 on top of the rest height, so 0.2145 is the
+		## highest point this mesh ever reaches. 0.24 clears it by 25 mm and the
+		## opaque ground plane at y = 0 does the rest — there is no water mesh and
+		## no hole, the ground simply draws over it (see the crocodile row's
+		## river_sink note for why that is the whole trick). Deeper buys nothing;
+		## shallower leaves a snake-shaped ridge lying in the sand, which is the
+		## one thing an ambush cannot afford. croc_spawn_selfcheck measures this
+		## against the scene's real mesh AABB rather than trusting the number.
+		##
+		## Model-LOCAL, so the ±20% size roll and any boss scale carry it for free,
+		## exactly like the river sink. And VISUAL ONLY, the same hard constraint:
+		## the CharacterBody3D, its CollisionShape3D and global_position never
+		## move. A buried viper is exactly as dangerous as a surfaced one — you
+		## simply cannot see it, and the player's collision_mask 1 means they walk
+		## through it rather than into an invisible wall.
+		"ambush_burrow_depth": 0.24,
+
+		## HOW FAST IT COMES UP: 0.24 m in 0.12 s. Written as depth/time, like
+		## every ease in this table, so the derivation survives a retune of the
+		## depth above it.
+		##
+		## It is deliberately FOUR TIMES the sink ease (0.10 / 0.2 = 0.5 m/s) and
+		## the asymmetry is the animation: a strike ERUPTS and a re-burial SLIDES.
+		## _tick_river_sink picks this rate only when the rest height is RISING,
+		## so going back under is left at the species' ordinary sink ease and takes
+		## ~0.48 s. The body itself is not eased at all — physics lunges on frame
+		## one — so what this number sets is only how much of the animal you see
+		## while it is already on its way to you.
+		"ambush_surface_ease_speed": 0.24 / 0.12,
 	},
 
 	## ------------------------------------------------------------------------
@@ -580,6 +660,226 @@ const SPECIES: Dictionary = {
 		## stand safely in the middle of.
 		"pack_flank_radius": 4.0,
 	},
+
+	## ------------------------------------------------------------------------
+	## FROST BEAR — the SNOW band's predator, and the table's heavy.
+	## ------------------------------------------------------------------------
+	## Every other row in this table is an animal that STEERS. The bear is the one
+	## that does not: once it locks on it commits to a bearing and drives, and the
+	## counterplay is not outrunning it (though you can — the lattice is the
+	## lattice) but STEPPING OUT OF THE WAY. That is one extra number at the
+	## bottom of this row (`charge_commit`) and one arm of the `match` in
+	## _update_chase_state; see `charge_steer_point()` for the geometry.
+	##
+	## WHY THE SNOW GETS IT. endless_terrain's SNOW block calls the tundra the
+	## HOSTILE band: nothing is thinned, croc density is the full distance-scaled
+	## figure, and the only shelter is ice you can climb onto. It is also the most
+	## OPEN ground in the world — a handful of dead trees per chunk and a lot of
+	## nothing between them. Open ground is the one place a straight-line charger
+	## is readable from far enough away to dodge, and where a dodge has somewhere
+	## to go. Put this animal in the forest and it would spend its life bouncing
+	## off trunks; put the wolf out here and its flanking ring would have nothing
+	## to hide behind.
+	##
+	## Geometry measured off assets/models/characters/bear.glb (built by
+	## scripts/generate_bear.py): 1.2154 m nose to tail (x -0.460 .. +0.7554),
+	## 0.434 m across (z ±0.217) and 0.820 m TALL. Read those three against the
+	## wolf's (1.4265 / 0.325 / 0.740): the bear is SHORTER and yet a third wider
+	## and taller — the only predator in the set that is bulkier than it is long,
+	## which is exactly the silhouette generate_bear.py is after (shoulder hump,
+	## head slung low, short thick legs). It is why this row could not have reused
+	## the crocodile's capsule, and why its waddle is the heaviest in the table.
+	##
+	## THE CAPSULE IN frost_bear.tscn COMES OFF THE SAME THREE FIGURES, recorded
+	## here because a .tscn cannot hold a comment an editor resave will not eat.
+	## `radius = 0.217, height = 1.25`, laid down on the travel axis with the
+	## crocodile's basis, at `(0, 0.217, 0.148)`:
+	##   * 0.217 is EXACTLY the mesh's half-width, the same fit rule the wolf's
+	##     0.1625 follows. The crocodile's 0.16 would leave 5.7 cm of bear hanging
+	##     out of each flank — on the widest animal in the set, which is precisely
+	##     the one that cannot afford it, because a charger that clips a block it
+	##     is not touching stops dead mid-charge.
+	##   * 1.25 covers the 1.2154 m length with the caps included. Like the wolf,
+	##     the shape lies DOWN along the travel axis rather than standing up: a
+	##     column would leave the muzzle and the rump free to slide into stone.
+	##   * radius == centre y puts the capsule's bottom on y = 0, so gravity
+	##     settles the mesh's own paws onto the ground plane. Same identity as all
+	##     three rows above.
+	##   * z = +0.148 is the mesh's own midpoint, and this row needs it for the
+	##     reason the viper's -0.495 does and the wolf's +0.013 does not.
+	##     generate_bear.py hangs the head and snout off the front of a body
+	##     centred near the origin, so the mesh runs -0.460 .. +0.7554: centre the
+	##     capsule on the origin and 0.13 m of muzzle pokes out of the front of it.
+	##     On a charger, the muzzle is the end that arrives first.
+	##   * WHAT IT DELIBERATELY DOES NOT COVER, same call as the wolf's row: the
+	##     bear above 0.434 m. The torso sits at 0.34 .. 0.72 and the hump above
+	##     that; buying the height would take radius 0.41, a 0.82 m thick log
+	##     around a 0.43 m animal. In a world whose blocks are solid from the
+	##     ground UP, anything that could touch the chest has already stopped the
+	##     legs.
+	"frost_bear": {
+		## The second non-solo arm. `_behave_charge()` is all it selects, and all
+		## that does is bend the chase TARGET onto the bearing this bear committed
+		## to — chase acquisition, the jump hatch, the bite, the flee and the LOD
+		## sleep are untouched. A bear is a crocodile that will not turn.
+		"behavior": "charge",
+
+		# ----- Speed and detection -----
+		## THE LATTICE IS THE LATTICE: 5.0 (WALK_SPEED) < 6.0 <= 8.5
+		## (MAX_CHASE_SPEED) < 9.0 (the slowest character's run). 6.0 x 1.2 x 1.6
+		## = 11.5 and MAX_CHASE_SPEED cuts it to 8.5, so running escapes a bear
+		## exactly as it escapes everything else.
+		##
+		## 6.0 IS THE SLOWEST CHASE OF THE THREE NEW SPECIES ON PURPOSE, and the
+		## row is dangerous anyway, which is the point of the whole bead: the bear
+		## does not need to be fast because it is not trying to follow you. It
+		## needs to be faster than a WALK (it is, by a full metre per second) so
+		## that ignoring a charge is fatal, and it needs to be slow enough that
+		## the ~0.7 s of committed straight line below is a window you can see and
+		## use. A faster bear would cross its own commitment before you could
+		## react to it, and the behaviour would read as an unfair instant hit
+		## rather than as a dodge you missed.
+		##
+		## move_speed 1.6 is the slowest cruiser in the table (crocodile 2.5, wolf
+		## 3.0): the "slower base wander" half of the spec. An idle bear plods.
+		"move_speed": 1.6,
+		"chase_speed": 6.0,
+
+		## ±20% / ±15%. Speed is tight for the same reason the viper's is: the
+		## charge is a timing puzzle, and a bear rolling 4.2 m/s would be one the
+		## player strolls away from with no dodge needed, while the top roll is
+		## capped by the lattice regardless. Size is the wolf's ±15% — the mass is
+		## this animal's whole read, and a small one stops being a bear.
+		"speed_random_factor": 0.2,
+		"size_random_factor": 0.15,
+
+		## 14.0 — between the crocodile's 15 and the wolf's 18, and well above the
+		## viper's 5. A charger needs to acquire you EARLY, because the behaviour
+		## is a long straight line and a bear that only notices you at bite range
+		## has no line to run. INVARIANT, unchanged and not negotiable: far below
+		## the LOD manager's SIM_RADIUS (45.0), so anything that can detect the
+		## player is awake.
+		"detection_radius": 14.0,
+
+		# ----- Organic wandering -----
+		## The longest interval and the longest pause in the table: a bear ambles,
+		## stops, considers, ambles on.
+		"direction_change_interval": 6.0,
+		"pause_duration": 1.2,
+
+		## THE MOMENTUM, and `turn_smoothness` is the load-bearing one. 0.5 is the
+		## laziest drift in the table (the "slower base turn rate" half of the
+		## spec), but 3.0 against the crocodile's 5.0 and the wolf's 7.0 is what
+		## makes a bear that has committed hard to redirect: velocity is driven
+		## from the body's FACING, never from the raw movement direction (see
+		## _physics_process), so a slow lerp_angle is literally momentum.
+		##
+		## 3.0 AND NOT LOWER, DELIBERATELY. The commitment this species is built
+		## around comes from `charge_commit` below, not from here, and the two are
+		## not interchangeable: crank turn_smoothness down far enough and the bear
+		## also fails to leave its own charge, fails to round a block (the avoid
+		## path doubles this rate, and doubling something tiny is still tiny) and
+		## fails to acquire a quarry standing behind it. 3.0 keeps every one of
+		## those working while still reading as weight. croc_spawn_selfcheck
+		## measures the dodge against a bear with the charge arm SWITCHED OFF, so
+		## if the commitment ever quietly migrated from the arm into this number
+		## the negative control is what says so.
+		"wander_turn_rate": 0.5,
+		"turn_smoothness": 3.0,
+
+		## Ebbs deep and slow — a plod that varies, not a trot that pauses.
+		"min_wander_speed_factor": 0.5,
+		"speed_variation_freq": 0.5,
+		"sniff_pause_chance": 0.3,
+
+		# ----- Obstacle avoidance -----
+		## Look-ahead is ~3x the mesh length, the longest ratio in the table, and
+		## it is the fare for `turn_smoothness` 3.0: this animal needs the extra
+		## metre because it commits a turn slowly. The FEELERS are the widest too
+		## (45° against everyone else's 36°), because they are the one place the
+		## bear's bulk has to be paid for — a probe at the wolf's 36° sweeps a
+		## corridor narrower than this body actually is, so it clears a gap the
+		## flanks then catch on.
+		"avoid_look_ahead": 3.6,
+		"avoid_feeler_angle": PI / 4.0,  # 45°
+		## Chest height on a 0.82 m animal whose belly line is at 0.34, so the
+		## probes sample a block's side wall rather than the air under it.
+		"avoid_feeler_height": 0.5,
+		## The heaviest slowdown in the table, tied with the crocodile's: mass
+		## does not corner at speed.
+		"avoid_speed_factor": 0.5,
+
+		# ----- Procedural body animation -----
+		## Same nose-along-+X model contract as every predator mesh.
+		"model_facing_offset": -PI / 2.0,
+
+		## THE LUMBER. The slowest stride in the table over the biggest roll:
+		## generate_bear.py's own note says the low mass is what makes the
+		## existing waddle read as weight rather than as a stumble, and 11° is
+		## what cashes that in. The bob follows the roll up (0.035, between the
+		## crocodile's 0.025 and the wolf's 0.05) while the yaw sway drops to 4° —
+		## a bear swings side to side, it does not snake.
+		"stride_frequency": 7.0,
+		"waddle_roll": 11.0 * PI / 180.0,
+		"bob_amount": 0.035,
+		"sway_yaw": 4.0 * PI / 180.0,
+
+		## The deepest lean in the table. Shoulders down into the charge is the
+		## whole pose, and the hump generate_bear.py puts over the FRONT legs is
+		## the part of the silhouette the lean shows off.
+		"chase_pitch": 14.0 * PI / 180.0,
+
+		## Slow, deep idle breathing to match the mass.
+		"breathe_speed": 1.6,
+		"breathe_amount": 0.025,
+
+		# ----- River submersion (VISUAL ONLY) -----
+		## 0.30 m — the wolf's read on a bigger animal. The legs (0 .. 0.34) go
+		## under, the belly line sits 0.04 m proud and the whole torso, hump and
+		## head stay in plain view. A bear in a river is a threat you can see,
+		## slowed to the same wade you are; hiding this animal would waste the one
+		## silhouette in the set you are supposed to spot from a long way off.
+		##
+		## Same hard constraint as every row: VISUAL ONLY. The CharacterBody3D,
+		## its CollisionShape3D and global_position never move, so a wading bear is
+		## exactly as dangerous as a dry one.
+		"river_sink_depth": 0.30,
+		## Same ~0.2 s ease as every other row and as the player, written as
+		## depth/time so the derivation survives a retune of the depth.
+		"river_sink_ease_speed": 0.30 / 0.2,
+
+		# ----- Bite -----
+		## The slowest, heaviest maul in the table (crocodile 0.5, wolf 0.35, viper
+		## 0.3). A bear does not snap — it swats, and the pitch is shallow because
+		## the head is already slung low.
+		"bite_duration": 0.55,
+		"bite_pitch": 24.0 * PI / 180.0,
+		"bite_lunge": 0.4,
+
+		# ----- The charge (the "charge" behaviour reads this one) -------------
+		## HOW FAR THE BEAR RUNS BLIND, in metres, before it looks up and re-aims.
+		## The only key in this table no other row has besides the wolf's two and
+		## the viper's two, and the same rule applies: a key a species does not use
+		## is a key it does not carry.
+		##
+		## THIS NUMBER IS THE COUNTERPLAY, stated as a distance rather than a
+		## timer, and the distance form is not a style choice — _update_chase_state
+		## has no `delta` (see the note on the dispatch), so a timer would have
+		## needed one plumbed through every arm. A distance needs only the two
+		## things the bear already knows: where it locked on, and where it is now.
+		## It also happens to be the more honest quantity: what the player dodges
+		## is a body travelling through space, not a clock.
+		##
+		## 4.0 m is ~0.7 s at this row's chase speed, which is comfortably longer
+		## than a sidestep (a walking player covers 3.3 m in that time and the bear
+		## is 0.43 m wide) and comfortably shorter than the 14 m acquisition, so a
+		## charge is three or four committed runs rather than one unmissable
+		## freight train. Shorter and it degenerates into ordinary tracking with a
+		## slow turn; much longer and the bear stops being able to hit a player who
+		## is merely walking in a straight line, which is not a difficulty knob but
+		## a broken predator.
+		"charge_commit": 4.0,
+	},
 }
 
 # ============================================================================
@@ -749,6 +1049,22 @@ var pause_time_remaining: float = 0.0
 
 ## Is the crocodile currently chasing the player?
 var is_chasing: bool = false
+
+## THE AMBUSH ARM'S ONE OUTPUT (`_behave_ambush`): true while this predator is
+## lying buried and waiting. Read by `_tick_river_sink`, which owns the model's
+## rest height, and by nothing else — the burrow is VISUAL, so no other system
+## has any business knowing about it. Always false for every species whose row
+## has no `ambush_burrow_depth`.
+var is_burrowed: bool = false
+
+## THE CHARGE ARM'S ONE PIECE OF MEMORY (`_behave_charge`): the bearing this bear
+## committed to and the point it committed from, as { "dir": Vector3, "origin":
+## Vector3 }. Empty means "not committed". It is a Dictionary rather than two
+## floats so `charge_steer_point()` can be a STATIC function that both the arm
+## and croc_spawn_selfcheck's dodge probe drive — the check measures the shipped
+## steering instead of a restatement of it, exactly as it does for the wolf's
+## `pack_steer_point()`. Behaviour-local: nothing outside the charge reads it.
+var _charge_lock: Dictionary = {}
 
 ## Flee state. When Phoboman unleashes his Stink Wave, every crocodile turns tail
 ## and runs from the player for a while. Fleeing OVERRIDES both chase and wander,
@@ -1308,6 +1624,10 @@ func _update_chase_state() -> void:
 	match spec["behavior"]:
 		"pack":
 			_behave_pack()
+		"ambush":
+			_behave_ambush()
+		"charge":
+			_behave_charge()
 
 
 func _behave_pack() -> void:
@@ -1325,6 +1645,127 @@ func _behave_pack() -> void:
 			chase_target, global_position, croc_id(),
 			int(spec["pack_size"]), float(spec["pack_flank_radius"])
 	)
+
+
+func _behave_ambush() -> void:
+	"""
+	The viper arm: raise a flag, and let four numbers be the animal.
+
+	THIS IS THE SHORTEST ARM IN THE FILE AND THAT IS THE FINDING, not an
+	omission, so it is worth being able to check rather than take on faith. Walk
+	the ambush back to its parts:
+
+	  * "wander speed 0"      -> `move_speed` 0.0. `_wander_speed` multiplies it,
+	                             so the wander velocity is identically zero.
+	  * "reduced detection"   -> `detection_radius` 5.0, and because the trigger
+	                             has no hysteresis the same number ENDS the lunge:
+	                             that is the "short" in "short lunge", with no
+	                             timer and no second state anywhere.
+	  * "high-speed strike"   -> `chase_speed` 7.5, clamped by MAX_CHASE_SPEED
+	                             like every other row.
+	  * "surfaces rapidly"    -> `ambush_surface_ease_speed`, four times the sink.
+
+	Which leaves exactly one thing that is NOT a number: whether the model is
+	underground right now. That is this line. `_tick_river_sink` consumes it —
+	it already owns `model_base_y`, and one owner of the rest height is the rule
+	the burrow had to fit into rather than break.
+
+	WHY NOT-CHASING IS THE RIGHT TEST, including the two edges: a SLEPT viper
+	stops running this and freezes mid-ease, which is the same answer the river
+	sink gives and needs no reconciliation (the target is recomputed from scratch
+	every frame). A FLEEING viper never reaches here at all — the flee branch
+	sits above _update_chase_state — so it keeps whatever it had, which for an
+	animal that was by definition not chasing means it dives away under the sand.
+	That is the read a snake fleeing a stink wave should have anyway.
+	"""
+	is_burrowed = not is_chasing
+
+
+func _behave_charge() -> void:
+	"""
+	The bear arm: aim where I COMMITTED to go, not at where the quarry is now.
+
+	Two lines of work and one Dictionary of memory — see charge_steer_point() for
+	the geometry and for why the commitment is measured in metres rather than
+	seconds. Clearing the lock the moment the chase drops is what makes a bear
+	that reacquires you start a FRESH charge rather than resume a stale bearing.
+	"""
+	if not is_chasing:
+		_charge_lock.clear()
+		return
+	chase_target = charge_steer_point(
+			chase_target, global_position, _charge_lock, float(spec["charge_commit"])
+	)
+
+
+static func charge_steer_point(quarry: Vector3, from: Vector3, lock: Dictionary,
+		commit: float) -> Vector3:
+	"""
+	Where one heavy charger steers, given its own position and its own lock.
+
+	    re-lock when   dir is unset OR |from - lock.origin| >= commit
+	    on re-lock     dir := bearing to the quarry, origin := here
+	    point          from + dir        (one metre along the committed bearing)
+
+	THE BEHAVIOUR IS THE STALENESS. Every other predator in this game recomputes
+	its heading from the quarry's CURRENT position every frame, so it curves onto
+	you and a sidestep only ever buys the width of the curve. This one takes that
+	reading once and then spends `commit` metres refusing to take another, so a
+	sidestep during those metres is not a curve to be out-turned — the bear is
+	aiming at a place you are simply not standing any more. That is the entire
+	counterplay, and it is why the dodge works at a WALK against an animal faster
+	than a walk. croc_spawn_selfcheck measures it against the same bear with this
+	function switched off, because "the player dodged" is also true of a bear that
+	merely turns slowly.
+
+	IT RETURNS A POINT ONE METRE AHEAD, not a distant aim point, and the metre is
+	arbitrary in the only way that matters: `_chase_player` normalizes
+	`chase_target - global_position`, so any positive multiple of `dir` produces
+	the identical heading. One metre keeps the value readable in a debugger as
+	"just in front of its nose", which is exactly what a charging bear is looking
+	at.
+
+	Three properties follow from it being a pure function of the lock, and each
+	one was a requirement rather than a happy accident:
+
+	  * LOD-SAFE. A slept bear does not move, so `|from - origin|` does not grow
+	    and it wakes still committed to the bearing it slept on — with no timer to
+	    have drained meanwhile, which is precisely the bug a seconds-based commit
+	    would have had (see the note on `charge_commit` in the SPECIES row).
+	  * MULTIPLAYER-SAFE. `quarry` is whatever _update_chase_state resolved, which
+	    in a room is the nearest ROOM MEMBER. This only bends that point; it can
+	    neither widen who is hunted nor reach past the detection radius. A
+	    remote-driven bear never runs the arm at all — it renders the master's
+	    samples — so there is no second simulation to disagree.
+	  * SPEED-LATTICE-SAFE. It returns a POINT. Nothing here touches
+	    chase_speed_instance, which _ready() already clamped to MAX_CHASE_SPEED.
+	    A charging bear is dangerous because it does not need to slow down to
+	    turn, never because it is fast; running still escapes it.
+
+	@param quarry: where the chase currently wants to go
+	@param from: this bear's own position
+	@param lock: its committed bearing, MUTATED here — { "dir", "origin" }
+	@param commit: metres of straight line before it looks up again
+	@return the point to steer at this frame
+
+	ponytail: the lock is cleared by the arm on losing the chase and never
+	otherwise, so a bear that is knocked off course by a block finishes its
+	committed metres against the wall before re-aiming. That reads as a bear
+	shouldering into stone, which is the right animation for the wrong reason;
+	the upgrade path, if it ever matters, is to re-lock on a blocked feeler.
+	"""
+	var dir: Vector3 = lock.get("dir", Vector3.ZERO)
+	if dir == Vector3.ZERO or from.distance_to(lock["origin"]) >= commit:
+		var aim := quarry - from
+		aim.y = 0.0
+		if aim.length() < 0.01:
+			# Standing on top of the quarry: there is no bearing to commit to, so
+			# leave the lock alone and let the plain chase have this frame.
+			return quarry
+		dir = aim.normalized()
+		lock["dir"] = dir
+		lock["origin"] = from
+	return from + dir
 
 
 static func pack_steer_point(quarry: Vector3, from: Vector3, id: int,
@@ -2043,7 +2484,14 @@ func _animate_body(delta: float) -> void:
 
 	# How fast are we actually moving along the ground? (0 = standing still)
 	var horizontal_speed := Vector2(velocity.x, velocity.z).length()
-	var move_factor := clampf(horizontal_speed / spec["move_speed"], 0.0, 1.6)
+	# The divisor is the species' resting pace, and the AMBUSHER's is 0.0 — a
+	# buried viper does not stroll, so its row says so with a zero (see
+	# SPECIES.sand_viper.move_speed). Floored, because 0.0 / 0.0 is NAN and a NAN
+	# stride phase bakes a NAN basis into the model for the rest of its life. The
+	# floor only ever bites on that one row, and there it is exactly right: for an
+	# animal whose resting pace is zero, ANY motion at all is full effort, which
+	# is what a strike should look like.
+	var move_factor := clampf(horizontal_speed / maxf(spec["move_speed"], 0.01), 0.0, 1.6)
 
 	# Advance the stride phase faster the quicker we move.
 	stride_phase += delta * spec["stride_frequency"] * move_factor
@@ -2092,12 +2540,38 @@ func _tick_river_sink(delta: float) -> void:
 	over the usual ~0.2 s, and slept sunk it rises the same way. There is no state
 	to reconcile, because the target is recomputed from scratch every frame.
 	"""
+	# A REMOTE-DRIVEN crocodile never runs the behaviour dispatch — it renders the
+	# master's samples instead of simulating — so the ambush arm's flag would stay
+	# false and a viper the master has buried would sit on the sand on every other
+	# peer. `is_chasing` DOES arrive, in every sample's flag byte, and the arm's
+	# whole rule is `not is_chasing`, so recomputing it here cannot disagree with
+	# the arm. Keyed off the row's own tunable, exactly like the ease below: no
+	# species name is tested anywhere but the dispatch.
+	if remote_driven:
+		is_burrowed = not is_chasing and spec.has("ambush_burrow_depth")
+
 	var target_y: float = model_rest_y
 	if terrain and is_on_floor() and terrain.is_river_at(global_position):
 		target_y = model_rest_y - spec["river_sink_depth"]
+	# THE AMBUSHER'S BURROW COMPOSES HERE rather than in a second easing of its
+	# own, and "whichever target is DEEPER" is the whole composition: a viper that
+	# is burrowed AND standing in a river is simply burrowed. That keeps this
+	# function the single writer of `model_base_y` — the property the docstring
+	# above promises the animation does not fight over — instead of two easings
+	# racing for it.
+	if is_burrowed:
+		target_y = minf(target_y, model_rest_y - float(spec["ambush_burrow_depth"]))
 	if is_equal_approx(model_base_y, target_y):
 		return
-	model_base_y = move_toward(model_base_y, target_y, spec["river_sink_ease_speed"] * delta)
+	# RISING IS THE STRIKE. An ambusher surfaces four times faster than anything
+	# sinks (see ambush_surface_ease_speed), and the asymmetry is the animation:
+	# the strike erupts, the re-burial slides. Every other species, and this one
+	# going back under, takes the ordinary sink ease. The lookup sits BELOW the
+	# early-return, so it costs a settled crocodile nothing at all.
+	var ease: float = spec["river_sink_ease_speed"]
+	if target_y > model_base_y and spec.has("ambush_surface_ease_speed"):
+		ease = spec["ambush_surface_ease_speed"]
+	model_base_y = move_toward(model_base_y, target_y, ease * delta)
 
 
 func _animate_bite(delta: float) -> void:

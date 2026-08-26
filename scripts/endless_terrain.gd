@@ -1627,8 +1627,8 @@ const CITY_CROC_DIVISOR: float = 2.5
 ## It is the same trick, for the same reason, as CITY_CROC_DIVISOR right above
 ## and DESERT_BLOCK_KEEP_EVERY: derive from the biome, never draw for it.
 ##
-## A biome with no entry gets the crocodile — which is why PLAINS, MOUNTAIN,
-## CITY and SNOW are absent rather than spelled out as "crocodile". Absent is the
+## A biome with no entry gets the crocodile — which is why PLAINS, MOUNTAIN and
+## CITY are absent rather than spelled out as "crocodile". Absent is the
 ## statement: nothing about their spawning changed.
 ##
 ## ADDING A SPECIES (asc.3/.5/.6/.9 each add exactly one) is three things and no
@@ -1654,6 +1654,19 @@ const BIOME_SPECIES: Dictionary = {
 	Biome.FOREST: {
 		"species": "timber_wolf",
 		"scene": "res://scenes/characters/timber_wolf.tscn",
+	},
+	## The tundra is the band this file's SNOW section calls the HOSTILE one —
+	## nothing thinned, the full distance-scaled croc density, and the only shelter
+	## the ice you can climb onto. It is also the most OPEN ground in the world (a
+	## handful of dead trees per chunk and a lot of nothing between them), which is
+	## the one place a straight-line charger belongs: the frost bear's committed
+	## charge (see piglet_crocodile_ai.charge_steer_point) is only fair if you can
+	## see it coming and have somewhere to step, and both of those are what open
+	## ground is. The forest is the exact inverse — put this animal among trunks
+	## and it would spend its life shouldering into them.
+	Biome.SNOW: {
+		"species": "frost_bear",
+		"scene": "res://scenes/characters/frost_bear.tscn",
 	},
 }
 
