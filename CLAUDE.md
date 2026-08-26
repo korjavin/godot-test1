@@ -55,6 +55,11 @@ The lobby in `server/` is a separate Go service with its own `go test` suite.
 separate parts in `windman_parts/`, assembled by `scenes/characters/windman_updated.tscn`
 — not the monolithic `windman.glb`.
 
+The five biome-predator models share one toolkit, `scripts/predator_parts.py`, which
+carries the orientation / feet-at-y=0 / one-vertex-coloured-mesh contract an enemy model
+must honour and asserts it on every build. Running it directly rebuilds and checks all
+five: `python3 scripts/predator_parts.py` -> `SELFCHECK OK`.
+
 Each `.gd` has a sibling `.gd.uid` managed by Godot; don't hand-edit them.
 
 ## Architecture
