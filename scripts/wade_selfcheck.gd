@@ -57,6 +57,23 @@ const EPS: float = 0.01
 ## capsule) use the tighter EPS.
 const CROC_EPS: float = 0.03
 
+## Top of the crocodile mesh in MODEL-LOCAL metres, read out of
+## assets/models/characters/piglet_crocodile.glb's POSITION accessor (y spans
+## -0.036 .. +0.240). Used to turn the model's world y into "how much of the
+## animal is still above the river plane", which is the thing the feature is
+## actually about — see _check_croc_sink's absolute band.
+const CROC_MESH_TOP: float = 0.240
+
+## The band the visible ridge must land in, at scale 1. Both ends are the check:
+## below MIN the crocodile has vanished under an opaque ground plane (unfair —
+## the danger telegraph is not a substitute for being able to see the animal at
+## all), above MAX it is not hidden and the feature does nothing. Measured today:
+## 0.058 m. The band is what fails if the SCENE changes rather than the script —
+## lift the CollisionShape3D and the body no longer settles with its origin on
+## the ground, which moves the whole model up and no displacement test notices.
+const CROC_RIDGE_MIN: float = 0.02
+const CROC_RIDGE_MAX: float = 0.10
+
 ## Boss scale used by check 7. Deliberately BOSS_MAX_SCALE, the biggest the
 ## terrain's schedule ever builds — if the proportional sink holds anywhere it
 ## holds here, and a 6x error is impossible to write off as slop.
@@ -250,6 +267,21 @@ func _check_croc_sink(terrain: StubTerrain) -> void:
 	if absf(wet - CROC_SCRIPT.RIVER_SINK_DEPTH) > CROC_EPS:
 		_fail("croc: model settled %.3f m down in the river, expected %.2f"
 				% [wet, CROC_SCRIPT.RIVER_SINK_DEPTH])
+
+	# ABSOLUTE, not relative: how much of the animal is still above the river
+	# plane. Everything else here measures DISPLACEMENT, which stays perfect
+	# while the whole crocodile sits higher than it should — the body settles
+	# with its origin on the ground only because the capsule lies on its side
+	# (local centre 0.16, vertical half-extent = radius 0.16, so its bottom is
+	# at body y = 0). Move the CollisionShape3D in the scene and the sink still
+	# eases exactly 0.18 m onto a crocodile that is no longer in the water.
+	var ridge: float = model.global_position.y + CROC_MESH_TOP
+	if ridge < CROC_RIDGE_MIN or ridge > CROC_RIDGE_MAX:
+		_fail("croc: %.3f m of crocodile is left above the river plane, expected "
+				% ridge + "%.2f..%.2f — below that it has vanished entirely, above it "
+				% [CROC_RIDGE_MIN, CROC_RIDGE_MAX]
+				+ "it is not hidden at all (is the body still settling with its "
+				+ "origin on the ground?)")
 
 	# THE POINT OF THE WHOLE CHECK. Submersion is a picture: the body and the
 	# capsule stand exactly where they did dry, so bite range is byte-identical.
