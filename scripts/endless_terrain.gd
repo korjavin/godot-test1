@@ -1200,7 +1200,7 @@ const LANDMARK_COIN_RING_PAD_MAX: float = 2.0
 ## point, block bases) ask that function instead of assuming 0.
 ##
 ## The whole biome system is ONE octave of world-space value noise (see
-## _biome_noise below). Thresholding its 0..1 output gives the five bands; a thin
+## _biome_noise below). Thresholding its 0..1 output gives the six bands; a thin
 ## CONTOUR of it (|n - RIVER_LEVEL| < RIVER_HALF_WIDTH) gives winding rivers for
 ## free — a river is wherever the field crosses one particular level, which is
 ## exactly the shape of a contour line on a map: long, winding, and never a blob.
@@ -1219,7 +1219,9 @@ const LANDMARK_COIN_RING_PAD_MAX: float = 2.0
 ## minimap_hud.gd's BIOME_NAMES is the live one — so inserting CITY at position 2
 ## would silently relabel every forest and mountain on the map. Band ORDER is a
 ## property of the thresholds in biome_at(), not of the enum's numbering.
-enum Biome { PLAINS, DESERT, FOREST, MOUNTAIN, CITY }
+## SNOW follows the same rule and happens to be appended in band order anyway (it
+## is the topmost band); that is a coincidence, not a licence to insert the next one.
+enum Biome { PLAINS, DESERT, FOREST, MOUNTAIN, CITY, SNOW }
 
 ## Fixed salt XORed into run_seed for every biome hash stream — same spirit as
 ## ARTIFACT_SALT / BOSS_SEED / ROAD_COIN_SEED: an arbitrary constant that keeps
@@ -1231,41 +1233,56 @@ const BIOME_SALT: int = 0xB10_11E
 ## that a ~1 km run crosses several.
 const BIOME_CELL_SIZE: float = 400.0
 
-## Thresholds splitting the 0..1 noise into the five bands:
+## Thresholds splitting the 0..1 noise into the six bands:
 ##   n < DESERT_MAX          -> DESERT
 ##   n < PLAINS_MAX          -> PLAINS   (still the widest band: the shipped look
 ##   n < CITY_MAX            -> CITY      stays the most common thing you see)
 ##   n < FOREST_MAX          -> FOREST
-##   otherwise               -> MOUNTAIN (the rarest — massifs are the heaviest)
+##   n < MOUNTAIN_MAX        -> MOUNTAIN
+##   otherwise               -> SNOW     (the rarest — above the treeline)
 ##
-## THE CITY BAND WAS CUT OUT OF PLAINS AND FOREST, AND THE SPLIT WAS MEASURED,
-## NOT GUESSED. Value noise is bell-shaped around 0.5, so a band's AREA share is
-## nothing like its threshold width and the only honest way to place a new band is
-## to sample the real field. Over 1.44 M samples spread across 16 run seeds:
+## EVERY BAND SPLIT IN THIS FILE HAS BEEN MEASURED, NEVER GUESSED. Value noise is
+## bell-shaped around 0.5, so a band's AREA share is nothing like its threshold
+## width and the only honest way to place a new band is to sample the real field.
+## Over 1.44 M samples spread across 16 run seeds:
 ##
-##   shipped 4-band  (0.34 / 0.62 / — / 0.82)  desert 27.4  plains 42.8  city  0.0  forest 23.1  mtn 6.7
-##   THIS            (0.34 / 0.575 / 0.66 / 0.82)  desert 27.4  plains 36.3  city 12.1  forest 17.5  mtn 6.7
+##   4-band  (0.34 / 0.62  / —    / 0.82 / —   )  desert 27.4  plains 42.8  city  0.0  forest 23.1  mtn 6.7  snow 0.0
+##   5-band  (0.34 / 0.575 / 0.66 / 0.82 / —   )  desert 27.4  plains 36.3  city 12.1  forest 17.5  mtn 6.7  snow 0.0
+##   THIS    (0.34 / 0.575 / 0.66 / 0.75 / 0.83)  desert 27.4  plains 36.3  city 12.1  forest 10.7  mtn 7.6  snow 6.0
 ##
-## so city lands inside the 10-12% the design asked for, and — the reason these
-## particular numbers — BIOME_DESERT_MAX and BIOME_FOREST_MAX did not move at all,
-## which leaves the desert (27.4%) and the already-rarest mountain (6.7%) shares
-## byte-identical. Only BIOME_PLAINS_MAX moved (0.62 -> 0.575). Walking +X, a city
-## region is crossed every ~780 m on average (median gap 565 m) and the crossing
-## itself runs ~116 m (median 65 m).
+## THE SNOW BAND WAS CUT OUT OF FOREST, NOT OUT OF MOUNTAIN, and that is forced by
+## the arithmetic rather than chosen: the whole shipped tail above BIOME_FOREST_MAX
+## was only 6.7% of the world, so carving snow off the TOP of mountain (the obvious
+## reading of "snow above the treeline") would have left mountain at 1-2% — a band
+## you would go a run without seeing. Instead the treeline moved DOWN
+## (BIOME_FOREST_MAX 0.82 -> 0.75), which widens the cold tail, and the tail is then
+## split at BIOME_MOUNTAIN_MAX 0.83 into rock below and snow above. Mountain comes
+## out slightly MORE common than it shipped (6.7 -> 7.6%), snow lands at 6.0% (the
+## bottom of the 6-10% the design asked for), and desert / plains / city are
+## byte-identical because none of their thresholds moved. Walking +X, a snow region
+## is crossed every ~3131 m on average (median gap 2255 m) and the crossing itself
+## runs ~267 m (median 215 m) — a long trudge across a cold place, which is the
+## read a tundra wants.
 ##
-## TWO INEQUALITIES TO RE-CHECK IF THESE MOVE:
+## THREE INEQUALITIES TO RE-CHECK IF THESE MOVE (prop_selfcheck.gd asserts all of
+## them, so a retune that breaks one fails in CI rather than in a screenshot):
 ##   1. RIVER_LEVEL (0.5) must stay strictly inside the PLAINS band, i.e.
 ##      BIOME_DESERT_MAX < 0.493 and BIOME_PLAINS_MAX > 0.507 (the river band is
 ##      RIVER_LEVEL +/- RIVER_HALF_WIDTH). At 0.575 the visual plains->city blend
 ##      does not even begin until 0.525, so no city tint reaches the water either.
-##   2. The city band must be at least ~2 * BIOME_BLEND (0.10) wide or the city
-##      colour never reaches full strength between its two smoothstep blends. It
-##      is 0.085 wide, and the two blends overlap by only 0.015, so the midpoint
-##      still renders 96.8% city.
+##   2. Every INTERIOR band must be at least ~2 * BIOME_BLEND (0.10) wide, or its
+##      colour never reaches full strength between its two smoothstep blends. City
+##      is 0.085 (midpoint renders 96.8% city), forest 0.09 (98.6%) and MOUNTAIN
+##      0.08 (94.5%) — mountain is now the tightest and the one to watch. Snow is
+##      exempt by construction: it is the topmost band, so it has only a lower edge
+##      and reaches full strength outright.
+##   3. The chain must stay strictly increasing. A threshold typed out of order
+##      leaves the constants looking fine and makes one territory unreachable.
 const BIOME_DESERT_MAX: float = 0.34
 const BIOME_PLAINS_MAX: float = 0.575
 const BIOME_CITY_MAX: float = 0.66
-const BIOME_FOREST_MAX: float = 0.82
+const BIOME_FOREST_MAX: float = 0.75
+const BIOME_MOUNTAIN_MAX: float = 0.83
 
 ## River contour: the band is the set of points whose noise value sits within
 ## RIVER_HALF_WIDTH of RIVER_LEVEL. Width in metres ≈ RIVER_HALF_WIDTH / |∇n|;
@@ -2002,6 +2019,11 @@ func _apply_biome_shader_params() -> void:
 	# other four.
 	mat.set_shader_parameter("biome_city_max", BIOME_CITY_MAX)
 	mat.set_shader_parameter("biome_forest_max", BIOME_FOREST_MAX)
+	# The mountain/snow split. Parity-critical for the same reason as its siblings:
+	# the ground the player sees turn white has to be the ground
+	# spawn_biome_content_in_chunk fills with ice rocks and mammoth bones. The snow
+	# COLOUR stays a shader default (pure art), same rule as the other five.
+	mat.set_shader_parameter("biome_mountain_max", BIOME_MOUNTAIN_MAX)
 	mat.set_shader_parameter("river_level", RIVER_LEVEL)
 	mat.set_shader_parameter("river_half_width", RIVER_HALF_WIDTH)
 	mat.set_shader_parameter("biome_blend", BIOME_BLEND)
@@ -6385,7 +6407,7 @@ func _city_snap(value: float, rng: RandomNumberGenerator) -> float:
 	return roundf(value / CITY_BLOCK_PITCH) * CITY_BLOCK_PITCH + rng.randf_range(-CITY_BLOCK_JITTER, CITY_BLOCK_JITTER)
 
 # ============================================================================
-# BIOME FIELD (one noise field; five biomes + rivers read out of it)
+# BIOME FIELD (one noise field; six biomes + rivers read out of it)
 # ============================================================================
 #
 # ponytail: the ground stays a FLAT y = 0 plane — see the full note in the BIOME
@@ -6492,7 +6514,7 @@ func _biome_noise(world_x: float, world_z: float) -> float:
 
 func biome_at(world_x: float, world_z: float) -> Biome:
 	"""
-	Classify a world position into one of the five biomes.
+	Classify a world position into one of the six biomes.
 
 	@param world_x, world_z: World-space point (metres).
 	@return: The Biome band the field falls in at that point.
@@ -6510,7 +6532,9 @@ func biome_at(world_x: float, world_z: float) -> Biome:
 		return Biome.CITY
 	if n < BIOME_FOREST_MAX:
 		return Biome.FOREST
-	return Biome.MOUNTAIN
+	if n < BIOME_MOUNTAIN_MAX:
+		return Biome.MOUNTAIN
+	return Biome.SNOW
 
 
 func is_river_at(world_pos: Vector3) -> bool:

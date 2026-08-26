@@ -171,7 +171,7 @@ func _run() -> void:
 				% [BUILDERS.size(), SEEDS_PER_BUILDER, SIZES.size()])
 		print("structures: %d roles x %d territories x %d seeds measured; palette, patrol platforms and pyramid retirement OK"
 				% [ROLES.size(), TERRITORIES.size(), STRUCTURE_SEEDS])
-		print("bands:      threshold chain, river-in-plains, city band width and the shader parity uniforms OK")
+		print("bands:      threshold chain, river-in-plains, interior band widths and the shader parity uniforms OK")
 		print("SELFCHECK OK")
 		quit(0)
 		return
@@ -678,6 +678,7 @@ const PARITY_UNIFORMS: Array = [
 	["biome_plains_max", "BIOME_PLAINS_MAX"],
 	["biome_city_max", "BIOME_CITY_MAX"],
 	["biome_forest_max", "BIOME_FOREST_MAX"],
+	["biome_mountain_max", "BIOME_MOUNTAIN_MAX"],
 	["river_level", "RIVER_LEVEL"],
 	["river_half_width", "RIVER_HALF_WIDTH"],
 	["biome_blend", "BIOME_BLEND"],
@@ -704,9 +705,10 @@ func _check_biome_bands(terrain_script: GDScript, consts: Dictionary) -> void:
 	  b. RIVER_LEVEL MUST STAY INSIDE THE PLAINS BAND. Rivers are a contour of the
 	     same field, so a retune that slides a band boundary across RIVER_LEVEL
 	     puts every river in the world inside the new band instead.
-	  c. THE CITY BAND MUST BE WIDER THAN ONE BLEND RADIUS, or the two smoothsteps
-	     either side of it overlap completely and the colour never reaches full
-	     strength anywhere — a band you can stand in and not see.
+	  c. EVERY INTERIOR BAND MUST BE WIDER THAN ONE BLEND RADIUS, or the two
+	     smoothsteps either side of it overlap completely and the colour never
+	     reaches full strength anywhere — a band you can stand in and not see.
+	     The two OUTER bands are exempt by construction (one blend edge each).
 	  d. PARITY. Every threshold has to exist on BOTH sides: declared as a uniform
 	     in ground.gdshader AND pushed by _apply_biome_shader_params. Miss the
 	     GDScript half and the shader silently keeps its default (the ground shows
@@ -717,6 +719,7 @@ func _check_biome_bands(terrain_script: GDScript, consts: Dictionary) -> void:
 	var plains_max: float = float(consts["BIOME_PLAINS_MAX"])
 	var city_max: float = float(consts["BIOME_CITY_MAX"])
 	var forest_max: float = float(consts["BIOME_FOREST_MAX"])
+	var mountain_max: float = float(consts["BIOME_MOUNTAIN_MAX"])
 	var river_level: float = float(consts["RIVER_LEVEL"])
 	var river_half: float = float(consts["RIVER_HALF_WIDTH"])
 	var blend: float = float(consts["BIOME_BLEND"])
@@ -726,6 +729,7 @@ func _check_biome_bands(terrain_script: GDScript, consts: Dictionary) -> void:
 	var chain: Array = [
 		["BIOME_DESERT_MAX", desert_max], ["BIOME_PLAINS_MAX", plains_max],
 		["BIOME_CITY_MAX", city_max], ["BIOME_FOREST_MAX", forest_max],
+		["BIOME_MOUNTAIN_MAX", mountain_max],
 	]
 	for i in range(1, chain.size()):
 		if float(chain[i][1]) <= float(chain[i - 1][1]):
@@ -756,10 +760,18 @@ func _check_biome_bands(terrain_script: GDScript, consts: Dictionary) -> void:
 		_fail("the river contour %.3f +/- %.3f is not strictly inside the plains band [%.3f, %.3f) — rivers would move biome"
 				% [river_level, river_half, desert_max, plains_max])
 
-	# ---- c. the city band is wide enough to render ---------------------------
-	if city_max - plains_max <= blend:
-		_fail("the city band is %.3f wide against a blend radius of %.3f — its colour never reaches full strength"
-				% [city_max - plains_max, blend])
+	# ---- c. every INTERIOR band is wide enough to render ---------------------
+	# Generalised rather than written for the city alone: the snow band's arrival
+	# narrowed FOREST and MOUNTAIN too, and a per-band special case is exactly the
+	# thing that gets forgotten by the retune after next. The first band (below
+	# BIOME_DESERT_MAX) and the last (above BIOME_MOUNTAIN_MAX) are exempt by
+	# construction — each has only one blend edge, so it reaches full strength
+	# outright; only a band squeezed between two blends can wash out.
+	for i in range(1, chain.size()):
+		var band_width: float = float(chain[i][1]) - float(chain[i - 1][1])
+		if band_width <= blend:
+			_fail("the band below %s is %.3f wide against a blend radius of %.3f — its colour never reaches full strength anywhere"
+					% [chain[i][0], band_width, blend])
 
 	# ---- d. parity, both directions -----------------------------------------
 	var shader: Shader = load(GROUND_SHADER)

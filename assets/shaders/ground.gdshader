@@ -1,7 +1,7 @@
 // Ground shader — gives the infinite flat plane its look: a subtle large-scale
 // mottling (two greens blended by noise) so it reads as terrain instead of a
 // flat billiard table, PLUS the biome tint (desert / plains / city / forest /
-// mountain)
+// mountain / snow)
 // and the blue river bands laid over it.
 //
 // THE GROUND IS ALWAYS FLAT (y = 0). Biomes and rivers are a PAINT JOB here plus
@@ -55,7 +55,8 @@ uniform float biome_cell_size = 400.0;        // noise wavelength in metres
 uniform float biome_desert_max = 0.34;        // n < this  -> desert
 uniform float biome_plains_max = 0.575;       // n < this  -> plains
 uniform float biome_city_max = 0.66;          // n < this  -> city
-uniform float biome_forest_max = 0.82;        // n < this  -> forest, else mountain
+uniform float biome_forest_max = 0.75;        // n < this  -> forest
+uniform float biome_mountain_max = 0.83;      // n < this  -> mountain, else snow
 uniform float river_level = 0.5;              // the contour rivers follow
 uniform float river_half_width = 0.007;       // half-thickness of that contour
 uniform float biome_blend = 0.05;             // smoothstep radius at each threshold
@@ -69,6 +70,11 @@ uniform vec3 desert_color: source_color = vec3(0.78, 0.68, 0.44);   // ochre san
 uniform vec3 city_color: source_color = vec3(0.50, 0.48, 0.45);     // paved grey
 uniform vec3 forest_color: source_color = vec3(0.13, 0.30, 0.17);   // deep cool green
 uniform vec3 mountain_color: source_color = vec3(0.45, 0.43, 0.40); // grey-brown scree
+// Frost-pale tundra: near-white with a cold blue cast, deliberately a shade
+// DIMMER and BLUER than the massif snow caps (MOUNTAIN_SNOW_COLOR 0.92/0.94/0.96)
+// that now stand on it — close enough that a capped peak reads as the same
+// weather, far enough that the cap still separates from the ground behind it.
+uniform vec3 snow_color: source_color = vec3(0.85, 0.89, 0.93);     // frost-pale tundra
 uniform vec3 river_color: source_color = vec3(0.10, 0.28, 0.34);    // dark blue-teal
 
 // Width of the soft waterline, as a fraction of the band half-width, CENTRED on
@@ -160,12 +166,16 @@ void fragment() {
 	float mottle = mix(0.88, 1.12, v_noise);
 	// Blend across each threshold with smoothstep over biome_blend, so a biome
 	// boundary is a soft gradient several metres wide rather than a hard line.
-	// Chained low-to-high: desert below, then plains, city, forest, mountain.
+	// Chained low-to-high: desert below, then plains, city, forest, mountain, snow.
 	// The chain is why adding a band is one extra mix() in the right place and
 	// nothing else — each step only has to say "above THIS threshold, become the
-	// NEXT band". The city band is 0.085 wide against a 0.10 blend diameter, so
-	// its two smoothsteps overlap by 0.015 and the midpoint still renders 96.8%
-	// city; a narrower band would wash out (see the note on BIOME_CITY_MAX).
+	// NEXT band". An INTERIOR band is only as saturated as its width allows: its
+	// two smoothsteps overlap, so at the midpoint the band renders
+	// s(w) * (1 - (1 - s(w))) where s is the smoothstep at (w/2 + blend)/(2*blend).
+	// City 0.085 -> 96.8%, forest 0.09 -> 98.6%, mountain 0.08 -> 94.5%. The SNOW
+	// band is the topmost, so it has only a lower edge and reaches full strength
+	// outright — which is why the newly-narrowed mountain band, not snow, is the
+	// one the width rule is now watching (see the note on BIOME_MOUNTAIN_MAX).
 	albedo = mix(desert_color * mottle, albedo,
 			smoothstep(biome_desert_max - biome_blend, biome_desert_max + biome_blend, v_biome));
 	albedo = mix(albedo, city_color * mottle,
@@ -174,6 +184,8 @@ void fragment() {
 			smoothstep(biome_city_max - biome_blend, biome_city_max + biome_blend, v_biome));
 	albedo = mix(albedo, mountain_color * mottle,
 			smoothstep(biome_forest_max - biome_blend, biome_forest_max + biome_blend, v_biome));
+	albedo = mix(albedo, snow_color * mottle,
+			smoothstep(biome_mountain_max - biome_blend, biome_mountain_max + biome_blend, v_biome));
 
 	float roughness = 0.8; // matches the old StandardMaterial3D ground roughness
 
