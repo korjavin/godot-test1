@@ -1666,9 +1666,23 @@ const MOUNTAIN_ROCK_B := Color(0.58, 0.57, 0.55)
 ## footprint so coins don't perch. Palms (trunk + fronds) and boulders are solid.
 const OASIS_CHANCE: float = 0.12  # ~1 in 8
 const OASIS_PLACE_TRIES: int = 4
-const OASIS_RADIUS: float = 8.0  # water slab radius
+## Placement/clearance radius. Bounds the WHOLE oasis — water, palms AND boulders —
+## which is what makes the _biome_spot_ok call below an honest test. NOT the water size.
+const OASIS_RADIUS: float = 8.0
+## Water slab radius, deliberately a SEPARATE constant. Shrinking one constant for both
+## jobs would pull the spot check in to ~3 m while boulders still scattered to ~6 m, so
+## boulders would land inside cacti the check had just cleared — the fused-camp-huts bug
+## one scale down. Every ring below is rebased on whichever radius actually bounds it.
+const OASIS_WATER_RADIUS: float = 3.0  # ~6 m across, inside the design's 4-7 m
 const OASIS_ROAD_CLEARANCE: float = 16.0
 const OASIS_WATER_DEPTH: float = 0.1  # visual slab thickness (y height)
+## Both slabs sit ABOVE the y = 0 ground plane, water above rim. The ground, the rim top
+## and the water top sharing y = 0 is three coplanar surfaces, and a MultiMesh has no
+## depth sort, so that is guaranteed z-fighting — the pool flickers instead of reading as
+## water. Pushing the rim BELOW the ground is not the fix either: the ground plane is
+## opaque, so a buried rim is simply invisible. Keep both offsets distinct and positive.
+const OASIS_RIM_TOP_Y: float = 0.02
+const OASIS_WATER_TOP_Y: float = 0.05
 const OASIS_WATER_COLOR := Color(0.20, 0.55, 0.75)
 const OASIS_WATER_RIM_COLOR := Color(0.15, 0.45, 0.65)
 const OASIS_PALM_MIN: int = 2
@@ -6331,27 +6345,27 @@ func _spawn_desert_oasis(chunk_center: Vector3, chunk_pos: Vector2i, rng: Random
 
 		# Build water slab: a flat disk (visual only, collide=false)
 		create_box(
-			Vector3(local_x, -OASIS_WATER_DEPTH * 0.5, local_z),
-			Vector3(OASIS_RADIUS * 2.0, OASIS_WATER_DEPTH, OASIS_RADIUS * 2.0),
+			Vector3(local_x, OASIS_WATER_TOP_Y - OASIS_WATER_DEPTH * 0.5, local_z),
+			Vector3(OASIS_WATER_RADIUS * 2.0, OASIS_WATER_DEPTH, OASIS_WATER_RADIUS * 2.0),
 			0.0, rng, block_batch, block_body, 0.0, OASIS_WATER_COLOR, false
 		)
 
 		# Dark rim: a slightly wider ring to frame the water
-		var rim_radius := OASIS_RADIUS * 1.15
+		var rim_radius := OASIS_WATER_RADIUS * 1.15
 		create_box(
-			Vector3(local_x, -OASIS_WATER_DEPTH * 0.5, local_z),
+			Vector3(local_x, OASIS_RIM_TOP_Y - OASIS_WATER_DEPTH * 0.5, local_z),
 			Vector3(rim_radius * 2.0, OASIS_WATER_DEPTH, rim_radius * 2.0),
 			0.0, rng, block_batch, block_body, 0.0, OASIS_WATER_RIM_COLOR, false
 		)
 
 		# Non-climbable footprint so coins don't perch on water
-		obstacles.append({ "pos": Vector3(local_x, 0, local_z), "radius": OASIS_RADIUS, "top": OASIS_WATER_DEPTH, "climbable": false })
+		obstacles.append({ "pos": Vector3(local_x, 0, local_z), "radius": OASIS_RADIUS, "top": OASIS_WATER_TOP_Y, "climbable": false })
 
 		# Palm trees around the oasis
 		var palm_count := rng.randi_range(OASIS_PALM_MIN, OASIS_PALM_MAX)
 		for _p in palm_count:
 			var palm_angle := rng.randf_range(0.0, TAU)
-			var palm_dist := rng.randf_range(OASIS_RADIUS * 0.7, OASIS_RADIUS * 1.3)
+			var palm_dist := rng.randf_range(OASIS_WATER_RADIUS * 1.15, OASIS_WATER_RADIUS * 2.0)
 			var palm_x := local_x + cos(palm_angle) * palm_dist
 			var palm_z := local_z + sin(palm_angle) * palm_dist
 
@@ -6380,11 +6394,13 @@ func _spawn_desert_oasis(chunk_center: Vector3, chunk_pos: Vector2i, rng: Random
 			# Small trunk footprint
 			obstacles.append({ "pos": Vector3(palm_x, 0, palm_z), "radius": OASIS_PALM_TRUNK_WIDTH * 0.71, "top": OASIS_PALM_TRUNK_HEIGHT, "climbable": false })
 
-		# Climbable boulders scattered around
+		# Climbable boulders scattered around. The 0.8 upper bound is not taste: the ring
+		# max plus OASIS_BOULDER_SIZE_MAX * 0.7 has to stay inside OASIS_RADIUS, or a
+		# boulder lands outside the circle _biome_spot_ok actually cleared.
 		var boulder_count := rng.randi_range(OASIS_BOULDER_MIN, OASIS_BOULDER_MAX)
 		for _b in boulder_count:
 			var boulder_angle := rng.randf_range(0.0, TAU)
-			var boulder_dist := rng.randf_range(OASIS_RADIUS * 1.2, OASIS_RADIUS * 2.0)
+			var boulder_dist := rng.randf_range(OASIS_WATER_RADIUS * 1.5, OASIS_RADIUS * 0.8)
 			var boulder_x := local_x + cos(boulder_angle) * boulder_dist
 			var boulder_z := local_z + sin(boulder_angle) * boulder_dist
 
@@ -6406,8 +6422,8 @@ func _spawn_desert_oasis(chunk_center: Vector3, chunk_pos: Vector2i, rng: Random
 		if rng.randf() < OASIS_REED_CHANCE:
 			for _r in rng.randi_range(1, 3):
 				var reed_angle := rng.randf_range(0.0, TAU)
-				var reed_x := local_x + cos(reed_angle) * OASIS_RADIUS * 0.9
-				var reed_z := local_z + sin(reed_angle) * OASIS_RADIUS * 0.9
+				var reed_x := local_x + cos(reed_angle) * OASIS_WATER_RADIUS * 1.05
+				var reed_z := local_z + sin(reed_angle) * OASIS_WATER_RADIUS * 1.05
 				# Thin visual-only reeds (collide=false)
 				create_box(
 					Vector3(reed_x, 1.0, reed_z),
