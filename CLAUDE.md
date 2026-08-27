@@ -39,7 +39,8 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #   help_selfcheck           keymap card vs the real input map
 #   landmark_selfcheck       every builder fits its declared radius
 #   prop_selfcheck           prop/structure footprints, budgets, palettes
-#   croc_spawn_selfcheck     no crocodile spawns inside stone
+#   enemy_spawn_selfcheck    every species: no spawn in stone, deterministic
+#                            placement, biome dispatch, behaviour, MP identity
 #   perf_selfcheck           frame-spike telemetry (thresholds, correlation, reset)
 
 bash scripts/mp_e2e.sh    # two-instance multiplayer e2e; needs go + godot on PATH
@@ -176,8 +177,11 @@ It must never cost an RNG draw: the chunk's crocodile RNG is one shared stream, 
 single extra draw slides every crocodile in the world to a new spot. Same rule, same
 reason, as `CITY_CROC_DIVISOR` and `DESERT_BLOCK_KEEP_EVERY`. Adding a predator is a
 `SPECIES` row, a `.tscn` beside `sand_viper.tscn`, and one line in that map;
-`croc_spawn_selfcheck` fails if the row is incomplete, breaks the speed lattice, or
-is assigned after `add_child`.
+`enemy_spawn_selfcheck` fails if the row is incomplete, breaks the speed lattice, is
+assigned after `add_child`, is reachable from no biome, or carries a `behavior` string
+no probe in that file measures. **It iterates `SPECIES`, `BIOME_SPECIES` and the `Biome`
+enum, never a list of its own** — so a new predator is covered the day its row lands, and
+a new behaviour arm has to bring a probe with it. Keep it that way.
 
 **Behaviour is one `match` on `spec["behavior"]` at the end of `_update_chase_state()`,
 and every arm is one call to its own `_behave_*()`** — no logic in the arm, no state
@@ -205,7 +209,8 @@ river wade factor is floored for the same reason.
 9.0 run), then pay it back in a mandatory recovery leg. So the promise is not "nothing is
 ever faster than 8.5" but **running escapes across the whole pounce-and-recovery cycle** —
 a claim about a gap over time, and measured at both ends (a walking player must still be
-caught) by `croc_spawn_selfcheck` check 8. A new burst species extends that check.
+caught) by `enemy_spawn_selfcheck` check 8, which probes *every* row carrying the
+behaviour — a second burst species needs no edit there.
 
 The spawn point is a crocodile-free bubble enforced in generation
 (`SPAWN_SAFE_RADIUS`, mirrored in `player_controller`; keep the two in step).

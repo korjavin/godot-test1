@@ -318,7 +318,7 @@ const SPECIES: Dictionary = {
 		## every point of the sin cycle and for every roll of speed_factor: it
 		## holds the spot it spawned on until something walks into its 5 m. That is
 		## the "does not close distance on a passing player" half of the ambush,
-		## and croc_spawn_selfcheck MEASURES it against a walking quarry rather
+		## and enemy_spawn_selfcheck MEASURES it against a walking quarry rather
 		## than trusting this number. The one place it needs care is
 		## `_animate_body`, whose stride divisor is this value — see the maxf()
 		## there, which exists for this row and only this row.
@@ -445,7 +445,7 @@ const SPECIES: Dictionary = {
 		# ----- The burrow (the "ambush" behaviour reads these two) -------------
 		## The only keys in this table no other row has, exactly like the wolf's
 		## two pack keys, and for the same reason: a key a species does not use is
-		## a key it does not carry. (croc_spawn_selfcheck derives its required key
+		## a key it does not carry. (enemy_spawn_selfcheck derives its required key
 		## set from the CROCODILE row, so behaviour-local keys are allowed — what
 		## it forbids is a row MISSING something the crocodile has.)
 		##
@@ -464,7 +464,7 @@ const SPECIES: Dictionary = {
 		## no hole, the ground simply draws over it (see the crocodile row's
 		## river_sink note for why that is the whole trick). Deeper buys nothing;
 		## shallower leaves a snake-shaped ridge lying in the sand, which is the
-		## one thing an ambush cannot afford. croc_spawn_selfcheck measures this
+		## one thing an ambush cannot afford. enemy_spawn_selfcheck measures this
 		## against the scene's real mesh AABB rather than trusting the number.
 		##
 		## Model-LOCAL, so the ±20% size roll and any boss scale carry it for free,
@@ -668,7 +668,7 @@ const SPECIES: Dictionary = {
 		## surround needs. They live HERE rather than as file-level consts for
 		## the same reason every other number in this row does: the next
 		## behaviour bead adds ITS keys to ITS row, and a key a species does not
-		## use is a key it does not carry. (croc_spawn_selfcheck derives its
+		## use is a key it does not carry. (enemy_spawn_selfcheck derives its
 		## required key set from the CROCODILE row, so behaviour-local keys are
 		## allowed — what it forbids is a row MISSING something the crocodile
 		## has.)
@@ -813,7 +813,7 @@ const SPECIES: Dictionary = {
 		## also fails to leave its own charge, fails to round a block (the avoid
 		## path doubles this rate, and doubling something tiny is still tiny) and
 		## fails to acquire a quarry standing behind it. 3.0 keeps every one of
-		## those working while still reading as weight. croc_spawn_selfcheck
+		## those working while still reading as weight. enemy_spawn_selfcheck
 		## measures the dodge against a bear with the charge arm SWITCHED OFF, so
 		## if the commitment ever quietly migrated from the arm into this number
 		## the negative control is what says so.
@@ -945,7 +945,7 @@ const SPECIES: Dictionary = {
 	##   the gap grows without bound. Inside one cycle it dips — the pounce takes
 	##   0.74 m back over its 0.36 s — and then the recovery hands 2.78 m of it
 	##   straight back. A runner more than about a metre clear is never caught, and
-	##   croc_spawn_selfcheck's check 8 MEASURES that over repeated cycles rather
+	##   enemy_spawn_selfcheck's check 8 MEASURES that over repeated cycles rather
 	##   than trusting this arithmetic, with the recovery switched off as its
 	##   negative control (that control catches the runner, which is the proof the
 	##   recovery is what saves them).
@@ -1141,7 +1141,7 @@ const SPECIES: Dictionary = {
 		# ----- The pounce (the "burst" behaviour reads these four) -------------
 		## THE ONLY FOUR KEYS THAT MAKE THIS ANIMAL, and the same rule as the wolf's
 		## two, the viper's two and the bear's one applies: a key a species does not
-		## use is a key it does not carry. (croc_spawn_selfcheck derives its
+		## use is a key it does not carry. (enemy_spawn_selfcheck derives its
 		## required key set from the CROCODILE row, so behaviour-local keys are
 		## allowed — what it forbids is a row MISSING something the crocodile has.)
 		##
@@ -1446,7 +1446,7 @@ const MAX_CHASE_SPEED: float = 8.5
 ## constant lead angle walks a logarithmic spiral, and the arc it sweeps closing
 ## from d0 to d1 is exactly tan(TAPER's angle) * ln(d0 / d1) — 0.75 * ln(16/3) =
 ## 68° each way for a wolf committing at 16 m, which is the ~136° of surround
-## croc_spawn_selfcheck measures out of a pack that all started on one bearing.
+## enemy_spawn_selfcheck measures out of a pack that all started on one bearing.
 ## Turning this up widens the spiral; the two things that stop it are below.
 ##
 ## IT MUST STAY STRICTLY BELOW 1.0, and 1.0 is not a rounding but a singularity.
@@ -1592,7 +1592,7 @@ var is_burrowed: bool = false
 ## committed to and the point it committed from, as { "dir": Vector3, "origin":
 ## Vector3 }. Empty means "not committed". It is a Dictionary rather than two
 ## floats so `charge_steer_point()` can be a STATIC function that both the arm
-## and croc_spawn_selfcheck's dodge probe drive — the check measures the shipped
+## and enemy_spawn_selfcheck's dodge probe drive — the check measures the shipped
 ## steering instead of a restatement of it, exactly as it does for the wolf's
 ## `pack_steer_point()`. Behaviour-local: nothing outside the charge reads it.
 var _charge_lock: Dictionary = {}
@@ -1605,7 +1605,7 @@ var _charge_lock: Dictionary = {}
 ## where that is the difference between a bounded pounce and a cougar that
 ## circles you at 11 m/s forever. It is a
 ## Dictionary rather than a bool and a Vector3 so `burst_cycle_factor()` can be a
-## STATIC function that both the arm and croc_spawn_selfcheck's escape probe
+## STATIC function that both the arm and enemy_spawn_selfcheck's escape probe
 ## drive — the check measures the shipped cycle instead of a restatement of it,
 ## exactly as it does for the wolf's `pack_steer_point()` and the bear's
 ## `charge_steer_point()`. Behaviour-local: nothing outside the burst reads it.
@@ -2310,7 +2310,7 @@ func _behave_burst() -> void:
 	version is that "running always escapes" is a claim about whether a GAP
 	CLOSES, the gap is closed over time, and the mandatory recovery leg makes the
 	cycle average fall well under the slowest character's run at every roll. It is
-	measured in croc_spawn_selfcheck's check 8, over repeated cycles, against a
+	measured in enemy_spawn_selfcheck's check 8, over repeated cycles, against a
 	control with the recovery removed — which catches the runner, and is therefore
 	the proof that the recovery is what saves them.
 
@@ -2434,7 +2434,7 @@ static func charge_steer_point(quarry: Vector3, from: Vector3, lock: Dictionary,
 	sidestep during those metres is not a curve to be out-turned — the bear is
 	aiming at a place you are simply not standing any more. That is the entire
 	counterplay, and it is why the dodge works at a WALK against an animal faster
-	than a walk. croc_spawn_selfcheck measures it against the same bear with this
+	than a walk. enemy_spawn_selfcheck measures it against the same bear with this
 	function switched off, because "the player dodged" is also true of a bear that
 	merely turns slowly.
 
