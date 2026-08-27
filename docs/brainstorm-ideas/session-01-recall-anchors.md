@@ -316,6 +316,22 @@ locking the plot.
 
 ## 6. A chaptered world — author the grammar, not the metres
 
+> ## ⚠ SUPERSEDED — there are no chapters
+>
+> The owner replaced acts with an **open quest set**: enough quests, varied, all
+> **solo-completable in any order**. So there is no authored sequence, no act boundaries, and
+> **no boundary cordon**.
+>
+> **What survives:** the argument *against* a hand-authored world — determinism is still our
+> netcode for world content, streaming still exists because the web build is the perf target,
+> and `run_seed` still gives a fresh world per campaign. `ActSpec` as a *data row* remains a
+> good shape if we ever want per-region flavour; it is the **ordering** that is dead, not the
+> data-driven regions.
+>
+> **What replaces the sequence:** ordering emerges from **capability** — a demand gate you
+> cannot pass yet defers its quest until you can. See [README.md](README.md), "Quests are a
+> set, not a sequence".
+
 Late in the session the owner reopened the biggest constraint:
 
 > it's not carved in stone that it should be endless random world, we can change this to

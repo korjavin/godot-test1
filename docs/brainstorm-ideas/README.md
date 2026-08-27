@@ -70,7 +70,7 @@ practising all game.
 The signal you spend the whole game resolving resolves to **the facility**. You were running
 toward where you started.
 
-That is what makes the final act a **voluntary walk into the trap**, and it is the answer to
+That is what makes the ending a **voluntary walk into the trap**, and it is the answer to
 the obvious objection: nobody is working hard in order to be disintegrated. They are working
 hard to reach **the one being who has survived this before** — and the building that wants
 to un-make them is where that being is.
@@ -110,11 +110,13 @@ stand together.
 
 ### The hunt, and the one you lose
 
-At some point GastroDefense stops filing and starts **hunting** — a fleet of hunter robots
-whose job is not to hurt you but to **retrieve** you and carry you to the tower. Losing to a
-predator costs a life. Losing to a hunter costs a **person**.
+From the first day, the machines in the field are not there to hurt you — they are there to
+**retrieve** you and carry you to the tower. That is what makes them frightening: a predator
+can cost you coins, but a hunter is the only thing in the world that could cost you *someone*.
 
-And eventually one is lost. **Primm is taken** — not out-thought, but because the standard
+Almost always it doesn't. And then once, it does.
+
+**Primm is taken** — not out-thought, but because the standard
 containment box is steel, and its mass smothers his gravity field. The corporation does not
 outsmart him; **it owns a heavy box.** That is his canon weakness, so he is not chosen for
 plot convenience.
@@ -282,11 +284,17 @@ is dead on arrival no matter how good the story is — **except where the owner 
 one**, which is marked inline. Two have been lifted so far; both lifts buy real design
 freedom and cost real engineering, and the cost is stated rather than glossed.
 
-1. ~~**There are no walls.**~~ **RELAXED by the owner** (2026-08-27), who reopened the
-   endless-random-world assumption. The rule still holds *inside* an act — content is gated,
-   never passage, because on an open field walking around is always rational. But an **act
-   boundary may be a real barrier**, because the axis is now a story rather than infinite
-   sameness. See session 01 §6.
+1. ~~**There are no walls.**~~ **RELAXED by the owner** (2026-08-27), then reshaped by the
+   quest ruling. **Walls are legal — but they are gates, not boundaries.**
+
+   In the **open field**, the old rule still holds: content is gated, never passage, because
+   on an infinite plain walking around is always rational. In the **tower**, a wall is simply
+   a wall.
+
+   The *act-boundary cordon* is retired with the acts themselves — there are no chapters to
+   put a boundary between. What replaces it is the **demand gate**: a wall that stops you not
+   because the story says "not yet" but because *you* are not yet capable, and which opens
+   the moment you are.
 
 2. ~~**The ground is flat at y = 0 and must stay flat.**~~ **LIFTED by the owner**
    (2026-08-27): *"i don't think it's hard demand to stay flat. we can loose this one."*
