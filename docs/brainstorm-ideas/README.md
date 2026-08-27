@@ -138,6 +138,7 @@ what stays true across all of them — the constraints, and the map from lore to
 | File | What it is |
 | --- | --- |
 | [session-01-recall-anchors.md](session-01-recall-anchors.md) | Recall Anchors, Recall Pressure, and the signal-horizon spine |
+| [session-02-the-hunt.md](session-02-the-hunt.md) | Hunter robots, Primm's abduction, and the return to the tower |
 
 Lore source: `../crimekickerslor` (Obsidian vault). It is **inspiration, not a spec** —
 the owner's ruling is that we do not have to follow 100% of it.
