@@ -43,6 +43,7 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            placement, biome dispatch, behaviour, MP identity
 #   perf_selfcheck           frame-spike telemetry (thresholds, correlation, reset)
 #   chunk_stream_selfcheck   ground-first chunk streaming (floor, debt, determinism)
+#   intro_selfcheck          intro film: web gate, desktop PLAY SOLO path, JS shape
 
 bash scripts/mp_e2e.sh    # two-instance multiplayer e2e; needs go + godot on PATH
 ```
