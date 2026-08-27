@@ -96,46 +96,81 @@ Solo, you press `E` and do it yourself. In co-op, **one player's choice of ident
 where the whole party can go** — which is cooperation without ever requiring the party to
 stand together.
 
-### The tension: paperwork, not walls
+### The hunt, and the one you lose
 
-Skipping these is never punished with a wall. It advances **Recall Pressure** — the recall
-catching up. Hazards thicken, rewards thin; solving one vents it. At each act boundary the
-pressure you carried converts into how *corrupted your signal is*.
+At some point GastroDefense stops filing and starts **hunting** — a fleet of hunter robots
+whose job is not to hurt you but to **retrieve** you and carry you to the tower. Losing to a
+predator costs a life. Losing to a hunter costs a **person**.
 
-### The long game: signal resolution, not kilometres
+And eventually one is lost. **Primm is taken** — not out-thought, but because the standard
+containment box is steel, and its mass smothers his gravity field. The corporation does not
+outsmart him; **it owns a heavy box.** That is his canon weakness, so he is not chosen for
+plot convenience.
 
-AEGIS-3 sits on the horizon as a broken intake tower that **sharpens, shifts and reveals new
-architecture** every time enough coordinate shards decode another page of the Junior
-Engineer's stolen lab notebook. Ahead of you, the echo getting clearer. Behind you,
-GastroDefense's return geometry closing in.
+You are never asked to prevent it — you are asked to do something else, something you *can*
+do, and how well you do it decides the state of the rescue. **You do not lose one hero; you
+lose one hero and damage another**, because Windman is the only survivor for whom Primm's
+absence is literally a wound. His resonance does not break, it **changes** — into something
+unstable, more precise, and pointed at the rescue.
 
-The screen states the whole story without a word of dialogue.
+And every route that needed Primm's identity is now closed to you.
+
+### Two layers: the field farms, the tower demands
+
+| | The field | The tower |
+| --- | --- | --- |
+| Role | **farm** | **campaign** |
+| Verb | run, flee, collect | sneak, search, solve |
+| Threat | endless hunters and predators | few guards |
+| Yields | coins → skill points | story, keys, the mission |
+| Ends? | never | yes |
+
+**You can always leave.** Walk out of the tower, run the open field, take coins from
+landmarks and treasure, spend them on skills — and bring those skills back in.
+
+That is the loop: *go in, find the wall, go out, grow, come back.* And the wall is not an
+apology — **a gate you cannot pass yet is the reason the field exists.** It only has to be
+**diagnosable and forecastable**: after one look you know *which* capability is short, and
+that running the field will fix it. Hard and legible is content; hard and ambiguous is a bug.
+
+Nothing you *solved* is ever taken back — opened routes and met gates stay open — but the
+guards come back, so no cleared room becomes an empty corridor.
+
+*(Status: **Recall Pressure**, from session 01, has not been re-validated against this
+structure. Its original job was to punish skipping optional anchors, and there are no
+optional anchors now. The natural merge is that **the hunt itself is the pressure** — how
+close the fleet is to taking someone — but that is a proposal, not a settled decision.)*
 
 ### The ending: the mechanic was an argument all along
 
 At the facility, GastroDefense reads their successful cooperation as **proof they are one
-recoverable asset** — every anchor the player ever solved was also evidence filed against
-them. But the mechanic has been arguing the other way for the whole game: *chosen
-coordination between four selves is not the same thing as forced reintegration into one
-body.* Interdependence can be temporary, negotiated and revocable — that is what a relay
-teaches, six hours before anyone says it out loud.
+recoverable asset** — every gate the player ever opened was also evidence filed against them.
+But the mechanic has been arguing the other way for the whole game: *chosen coordination
+between four selves is not the same thing as forced reintegration into one body.*
+Interdependence can be temporary, negotiated and revocable — that is what switching teaches,
+hours before anyone says it out loud.
 
 The recall's offer is asymmetric: reintegrate two, dispose of two. So the question was never
 *do you erase them*, it is **who do you include, when including him buys you nothing**. And
-that has been in the socket table since the first anchor: **Pho-boman is unreadable to the
-classifier, and a link the classifier cannot classify is exactly what the third option
+that has been in the gate vocabulary since the very first one: **Pho-boman is unreadable to
+the classifier, and a link the classifier cannot classify is exactly what the third option
 needs.** The one marked for disposal is the only reason a third option exists.
+
+**And the rescue is what buys back the right to choose it** — with Primm gone, the refusal is
+not available. Getting him out is not a detour from the ending; it is the price of being
+allowed one.
 
 The choice is made with the game's verbs at a signposted fork, and **the hard route is the
 one that refuses**:
 
-- `RETURN TO ORIGIN` — **easy**. Two sockets, walk in, comply. This is the path that ends in
+- `RETURN TO ORIGIN` — **easy**. Walk in, comply. This is the path that ends in
   disintegration, and it is deliberately the path of least effort.
-- `EXCEPTION` — **the hardest coordination anchor in the game**, requiring all four. This is
-  the path that *refuses* disintegration.
+- `EXCEPTION` — the hardest thing in the game, and it needs **all four**. This is the path
+  that *refuses* disintegration.
 
-Nobody works hard in order to be un-made. The work buys the refusal. Then the campaign ends,
-and **Endless mode unlocks**: the world continuing after a choice.
+Nobody works hard in order to be un-made. **The work buys the refusal.** Then the campaign
+ends — and the field is still there, still endless, the way it was the whole time: the world
+continuing after a choice.
 
 ---
 
@@ -147,7 +182,7 @@ what stays true across all of them — the constraints, and the map from lore to
 
 | File | What it is |
 | --- | --- |
-| [session-01-recall-anchors.md](session-01-recall-anchors.md) | Recall Anchors, Recall Pressure, and the signal-horizon spine |
+| [session-01-recall-anchors.md](session-01-recall-anchors.md) | Recall Anchors and the story spine. **§3 superseded** — simultaneity is dead; kept as the record of how the design got here |
 | [session-02-the-hunt.md](session-02-the-hunt.md) | Hunter robots, Primm's abduction, and the return to the tower |
 | [session-03-the-loop.md](session-03-the-loop.md) | The field farms, the tower demands — rank gates as content, and what survives a tower exit |
 
