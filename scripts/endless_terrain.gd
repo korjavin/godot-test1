@@ -1943,14 +1943,45 @@ var chunks_removed_total: int = 0
 ## identical. So building chunks over 40 frames instead of 1 produces a
 ## byte-identical world.
 
-## Chunks within Chebyshev distance <= SYNC_RING of the player's chunk are built
-## SYNCHRONOUSLY in update_chunks. This is the load-bearing safety guarantee:
-## the player (walking, or teleported to spawn by new_run/restart) can only ever
-## reach an adjacent chunk this frame, so ring 1 being solid means they can
-## never stand over — or fall through — an unbuilt chunk while the rest of the
-## world fills in progressively. 9 chunks at startup/new_run, at most 3 new
-## ring chunks on a normal boundary crossing.
+## Chunks within Chebyshev distance <= SYNC_RING of the player's chunk get their
+## GROUND built SYNCHRONOUSLY in update_chunks. This is the load-bearing safety
+## guarantee: the player (walking, or teleported to spawn by new_run/restart) can
+## only ever reach an adjacent chunk this frame, so ring 1 having ground means
+## they can never stand over — or fall through — an unbuilt chunk while the rest
+## of the world fills in progressively. 9 chunks at startup/new_run, at most 3
+## new ring chunks on a normal boundary crossing.
 const SYNC_RING: int = 1
+
+## THE SYNC RING IS GROUND ONLY, AND THAT SPLIT IS THE WHOLE POINT (bead
+## godot-test1-6mh.3). What the safety guarantee above actually needs is a floor
+## under the player's feet — a shared PlaneMesh plus one 50x0.1x50 box shape.
+## What it USED to build was the entire chunk: ~12 props, a feature structure,
+## biome geometry, artifacts/camps/landmarks/chests, 10 crocodile scene
+## instantiations and the chunk's slice of the coin road. None of that can drop
+## anybody through the world, and all of it is where the time goes.
+##
+## MEASURED (M4 desktop, opengl3, the 3x3 startup ring, median of 3 run seeds):
+##   whole chunks  7.08 ms   <- what update_chunks used to do synchronously
+##   ground only   0.18 ms   <- what it does now (2.5% of it)
+##   worst frame   0.98 ms   <- the heaviest single chunk the drain then carries
+## The remaining 97% moved into the existing one-chunk-per-frame `pending_chunks`
+## drain, which already had to be safe for every chunk past ring 1. The phase-1
+## boot spike this bead chases (`[SPIKE] 150.0 ms SEVERE | chunks +10/-0`) scales
+## the same way: it was 10 whole chunks in one frame, and it is now 9 grounds
+## plus one populate.
+##
+## Ordering is untouched, so determinism is untouched: a chunk's content is a
+## pure function of its own coords + run_seed, so building the floor on frame 0
+## and the content on frame 4 produces exactly the bytes a single-frame build
+## produced (see the determinism note above `pending_chunks`).
+##
+## Chunks that have ground but no content yet — keys only, `true` values, for the
+## same O(1)-membership reason `chunks_to_load` uses a Dictionary. They are in
+## `active_chunks` and in the tree from the moment their ground exists, so
+## everything that iterates chunks keeps working; this is the one flag that says
+## "still owes its content", which is what stops update_chunks from skipping them
+## as already-loaded and lets create_chunk finish the job later.
+var bare_chunks: Dictionary = {}
 
 ## Missing chunks awaiting progressive creation, sorted nearest-first (squared
 ## distance to the player's chunk). Rebuilt from scratch on every update_chunks
@@ -1958,6 +1989,10 @@ const SYNC_RING: int = 1
 ## simpler than incremental surgery: it dedupes for free (each position comes
 ## from iterating the unique-keyed chunks_to_load Dictionary once) and
 ## naturally drops queued chunks that fell back out of range.
+##
+## The sync-ring chunks are queued here TOO, not instead: they were given ground
+## synchronously and still owe their content, so they ride the same drain as
+## everybody else — first, because the queue is sorted nearest-first.
 var pending_chunks: Array[Vector2i] = []
 
 ## Chunks that fell OUT of range and are awaiting their queue_free(), drained by
@@ -2552,9 +2587,11 @@ func _process(_delta: float) -> void:
 	# pending_chunks comment in SECTION 2). The queue is sorted nearest-first,
 	# so the chunks the player is most likely to see next appear first, and the
 	# per-frame cost is bounded by one chunk's generation instead of dozens.
-	# (No already-created check needed: the queue is rebuilt from scratch on
-	# every boundary crossing, and between crossings only this line creates
-	# chunks, so a queued position can never already be active.)
+	# (No duplicate-work check needed: the queue is rebuilt from scratch on every
+	# boundary crossing from a unique-keyed Dictionary, and between crossings only
+	# this line pops it, so a position can never be built twice. A queued position
+	# CAN already be in active_chunks — that is the safety ring, floored
+	# synchronously and still owing its content — and create_chunk expects it.)
 	if not pending_chunks.is_empty():
 		create_chunk(pending_chunks.pop_front())
 
@@ -2724,40 +2761,59 @@ func update_chunks(player_chunk: Vector2i) -> void:
 	# STEP 3: Create new chunks that don't exist yet — TIME-SLICED.
 	#
 	# Only the SAFETY RING (Chebyshev distance <= SYNC_RING around the player —
-	# the chunks the player could physically reach this frame) is built right
-	# now. Everything further out goes into pending_chunks, which _process
-	# drains at one chunk per frame. Rebuilding the queue from scratch here is
-	# deliberate: this only runs on boundary crossings, and a fresh build both
-	# dedupes for free and drops any previously-queued chunk that fell out of
-	# range. Generation ORDER doesn't matter for content — see the determinism
-	# note above pending_chunks in SECTION 2.
+	# the chunks the player could physically reach this frame) is touched right
+	# now, and even there only its GROUND: the floor is the entire safety
+	# guarantee, and it is ~3% of a chunk's build cost (see the bare_chunks
+	# comment in SECTION 2 for the measurement). EVERY missing chunk — ring
+	# included — then goes into pending_chunks, which _process drains at one
+	# chunk per frame, nearest-first, so the ring's content lands first.
+	#
+	# Rebuilding the queue from scratch here is deliberate: this only runs on
+	# boundary crossings, and a fresh build both dedupes for free and drops any
+	# previously-queued chunk that fell out of range. Generation ORDER doesn't
+	# matter for content — see the determinism note above pending_chunks in
+	# SECTION 2.
 	pending_chunks.clear()
 
 	for chunk_pos in chunks_to_load:
-		if chunk_pos in active_chunks:
+		# A chunk that is loaded AND populated needs nothing. A chunk that is
+		# loaded but still bare (ground laid on an earlier crossing, content not
+		# drained yet) must stay in the queue, or it would sit there floorless
+		# forever — this is the one place that would silently leak an empty chunk.
+		if chunk_pos in active_chunks and chunk_pos not in bare_chunks:
 			continue
 		var cheb := maxi(absi(chunk_pos.x - player_chunk.x), absi(chunk_pos.y - player_chunk.y))
 		if cheb <= SYNC_RING:
-			create_chunk(chunk_pos)
-		else:
-			pending_chunks.append(chunk_pos)
+			_ensure_chunk_ground(chunk_pos)
+		pending_chunks.append(chunk_pos)
 
 	# Nearest-first: sort by squared distance to the player's chunk so the fill
 	# grows outward from the player (the far edge, hidden by fog, comes last).
 	pending_chunks.sort_custom(func(a: Vector2i, b: Vector2i) -> bool:
 		return (a - player_chunk).length_squared() < (b - player_chunk).length_squared())
 
-func create_chunk(chunk_pos: Vector2i) -> void:
+func _ensure_chunk_ground(chunk_pos: Vector2i) -> MeshInstance3D:
 	"""
-	Creates a new terrain chunk at the specified chunk coordinates.
+	Lay a chunk's GROUND — the shared plane mesh plus its collision box — and
+	register it, or hand back the node if it already exists.
 
-	@param chunk_pos: Chunk coordinates where to create the terrain
+	@param chunk_pos: Chunk coordinates
+	@return MeshInstance3D: the chunk node, ready to be populated
 
-	EDUCATIONAL NOTE:
-	- We create a simple flat plane mesh procedurally
-	- Each chunk is a MeshInstance3D with collision
-	- In advanced games, you could add noise/procedural generation here!
+	This is the cheap half of create_chunk, split out so update_chunks can give
+	the safety ring a floor without paying for its contents (see the bare_chunks
+	comment in SECTION 2 for the measurement that motivated the split). It is
+	IDEMPOTENT on purpose: it is called both from the synchronous safety path and
+	again from create_chunk when the same chunk's turn comes up in the queue, and
+	building a second mesh + body over the first would leak the first one.
+
+	The chunk enters `active_chunks` here, at ground time — everything that
+	iterates chunks (removal, the F3 count, the multiplayer focus set) therefore
+	sees it from the moment it can be stood on, which is the only moment that
+	matters to any of them.
 	"""
+	if chunk_pos in active_chunks:
+		return active_chunks[chunk_pos]
 
 	# Create a new MeshInstance to hold the chunk's visual geometry
 	var mesh_instance := MeshInstance3D.new()
@@ -2777,13 +2833,14 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 	# Add the GROUND collision so the player doesn't fall through the plane.
 	#
 	# DESIGN CHOICE (Task 5 — consolidated collision): we keep the GROUND collision
-	# in its OWN StaticBody3D, SEPARATE from the per-chunk *block* body created below.
-	# The ground is a single shape created once per chunk, so folding it into the
-	# block body would save exactly one node and only muddle the code — there is no
-	# meaningful win. The real win is collapsing the MANY per-block bodies (one per
-	# decorative cube/slab — dozens per chunk) into a single body; that's what the
-	# block_body below does. Ground and blocks share the same default collision
-	# layer/mask, so keeping them in two bodies is purely cosmetic, not behavioural.
+	# in its OWN StaticBody3D, SEPARATE from the per-chunk *block* body created in
+	# create_chunk. The ground is a single shape created once per chunk, so folding
+	# it into the block body would save exactly one node and only muddle the code —
+	# there is no meaningful win. The real win is collapsing the MANY per-block
+	# bodies (one per decorative cube/slab — dozens per chunk) into a single body;
+	# that's what the block_body there does. Ground and blocks share the same
+	# default collision layer/mask, so keeping them in two bodies is purely
+	# cosmetic, not behavioural.
 	var static_body := StaticBody3D.new()
 	var collision_shape := CollisionShape3D.new()
 	var box_shape := BoxShape3D.new()
@@ -2794,10 +2851,40 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 	static_body.add_child(collision_shape)
 	mesh_instance.add_child(static_body)
 
-	# Add to scene and register in our dictionary
+	# Add to scene and register in our dictionary. `bare_chunks` is the debt note:
+	# create_chunk clears it once the content is in.
 	add_child(mesh_instance)
 	active_chunks[chunk_pos] = mesh_instance
-	chunks_created_total += 1
+	bare_chunks[chunk_pos] = true
+	return mesh_instance
+
+func create_chunk(chunk_pos: Vector2i) -> void:
+	"""
+	Creates a new terrain chunk at the specified chunk coordinates.
+
+	@param chunk_pos: Chunk coordinates where to create the terrain
+
+	EDUCATIONAL NOTE:
+	- We create a simple flat plane mesh procedurally
+	- Each chunk is a MeshInstance3D with collision
+	- In advanced games, you could add noise/procedural generation here!
+	"""
+
+	# ALREADY POPULATED? NOTHING TO DO. Loaded-and-not-bare is the exact inverse
+	# of the "still owes its content" test update_chunks uses, so this is the same
+	# statement in one place: content is additive (props, coins, crocodiles all
+	# get PARENTED to the chunk), so a second run over a finished chunk would
+	# double everything in it rather than overwrite it. The guard lives here, in
+	# the shared function, so `build_ring_now()` below can populate a chunk out of
+	# band and leave its stale entry in `pending_chunks` to drain to a harmless
+	# no-op — the same way remove_chunk() re-checks `active_chunks`.
+	if chunk_pos in active_chunks and chunk_pos not in bare_chunks:
+		return
+
+	# The ground half — freshly laid, or already there because this chunk is one
+	# of the safety-ring chunks update_chunks floored synchronously.
+	var mesh_instance := _ensure_chunk_ground(chunk_pos)
+	bare_chunks.erase(chunk_pos)
 
 	# Spawn objects in this chunk if enabled. This returns the footprint of every
 	# block placed (walls included) so crocodiles can avoid spawning inside them,
@@ -2921,6 +3008,13 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 	# crosses one — see spawn_coins_in_chunk).
 	if spawn_coins:
 		spawn_coins_in_chunk(chunk_pos, mesh_instance, obstacles)
+
+	# TELEMETRY, counted HERE and not in _ensure_chunk_ground: the counter exists
+	# to explain frame spikes (see its comment in SECTION 2), and after the
+	# ground/content split it is the content that costs anything — ~97% of a
+	# chunk. Counting the ground instead would credit the cheap frame and report
+	# "+0 chunks" on the frame that actually did the work.
+	chunks_created_total += 1
 
 func spawn_objects_in_chunk(chunk_pos: Vector2i, platforms: Array, block_batch: Array, block_body: StaticBody3D) -> Array:
 	"""
@@ -8119,6 +8213,10 @@ func remove_chunk(chunk_pos: Vector2i) -> void:
 		var chunk = active_chunks[chunk_pos]
 		chunk.queue_free()
 		active_chunks.erase(chunk_pos)
+		# A chunk can be freed while it still owes its content (grounded on one
+		# crossing, walked away from before the queue reached it). Clearing the
+		# debt note here is what stops a re-created chunk from inheriting it.
+		bare_chunks.erase(chunk_pos)
 		chunks_removed_total += 1
 
 func new_run(forced_seed = null, around: Vector2i = Vector2i.ZERO) -> void:
@@ -8138,7 +8236,7 @@ func new_run(forced_seed = null, around: Vector2i = Vector2i.ZERO) -> void:
 	mp_manager._receive_seed(), neither of which passes it) behave byte-identically
 	to before this parameter existed. A mid-run multiplayer joiner passes the chunk
 	it is about to be PLACED in instead of the origin, so the synchronous SYNC_RING
-	build in step 4 lands under ITS feet in the same frame — exactly the guarantee
+	ground in step 4 lands under ITS feet in the same frame — exactly the guarantee
 	the spawn-chunk build gives a restart, just centred somewhere else.
 
 	EDUCATIONAL NOTE — the order matters:
@@ -8152,12 +8250,14 @@ func new_run(forced_seed = null, around: Vector2i = Vector2i.ZERO) -> void:
 	   pending queues — anything queued was computed for the old world.
 	3. Free every active chunk and clear the dictionary — old-world geometry.
 	4. Rebuild around chunk `around` (the spawn chunk (0,0) unless a caller says
-	   otherwise) via update_chunks — which builds that chunk + SYNC_RING ring 1
-	   SYNCHRONOUSLY and queues the rest for progressive fill. The respawned player
-	   is teleported into that chunk this SAME frame, so that ring-1-sync build is
-	   the load-bearing guarantee that they land on solid new-world ground instead
-	   of falling through a hole. Setting last_player_chunk to `around` keeps
-	   _process from redundantly rebuilding.
+	   otherwise) via update_chunks — which floors that chunk + SYNC_RING ring 1
+	   SYNCHRONOUSLY and queues everything, content included, for progressive
+	   fill. The respawned player is teleported into that chunk this SAME frame,
+	   so that ring-1 ground is the load-bearing guarantee that they land on solid
+	   new-world ground instead of falling through a hole; the scenery around them
+	   arrives over the next few frames, exactly as it does when they walk into
+	   fresh territory. Setting last_player_chunk to `around` keeps _process from
+	   redundantly rebuilding.
 	"""
 	# 1. New seed (same roll as _ready()), or the one we were handed. Both paths
 	# re-roll biome_offset (set_run_seed does it), so the ground shader has to be
@@ -8188,6 +8288,8 @@ func new_run(forced_seed = null, around: Vector2i = Vector2i.ZERO) -> void:
 	for chunk_pos in active_chunks.keys():
 		active_chunks[chunk_pos].queue_free()
 	active_chunks.clear()
+	# Nothing is owed content any more — every chunk that owed it is gone.
+	bare_chunks.clear()
 
 	# 4. Rebuild the ring around `around` synchronously (+ queue the rest) so the
 	# player teleported into that chunk has ground under them this frame.
@@ -8195,6 +8297,36 @@ func new_run(forced_seed = null, around: Vector2i = Vector2i.ZERO) -> void:
 	last_player_chunk = around
 
 	print("New run started (run_seed = %d)" % run_seed)
+
+func build_ring_now(around: Vector2i) -> void:
+	"""
+	Populate the safety ring around `around` THIS FRAME instead of over the next
+	few, i.e. pay back on the spot the content debt `update_chunks` normally
+	leaves for the one-chunk-per-frame drain.
+
+	@param around: chunk coordinates at the centre of the ring
+
+	FOR THE ONE CALLER THAT PROBES THE WORLD RATHER THAN WALKING INTO IT.
+	Ground-first streaming is safe for anybody who arrives on foot: the floor is
+	under them immediately and the scenery catches up around them. A mid-run
+	multiplayer joiner is the exception — `MpManager._apply_join_placement()`
+	rebuilds the world around the group and then has `join_at()` ask the physics
+	space for a clear spot and sweep the crocodiles off it, and a question asked
+	of a world whose blocks and crocodiles have not been built yet gets the
+	answer "all clear" for every candidate. So that path, and only that path,
+	buys the ring's content up front and pays the one-frame hitch it used to pay
+	anyway.
+
+	Cost is bounded by the ring, not the render distance: 9 chunks, the exact
+	build `update_chunks` used to do synchronously on every new_run.
+
+	Stale queue entries are deliberately left alone — `create_chunk` returns
+	immediately for an already-populated chunk, so the drain reaching one later
+	is a no-op.
+	"""
+	for x in range(around.x - SYNC_RING, around.x + SYNC_RING + 1):
+		for z in range(around.y - SYNC_RING, around.y + SYNC_RING + 1):
+			create_chunk(Vector2i(x, z))
 
 # ============================================================================
 # DEBUG FUNCTIONS

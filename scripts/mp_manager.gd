@@ -1818,7 +1818,7 @@ func _receive_seed(payload: Dictionary) -> void:
 	# master woke up. So outside the window we adopt the seed exactly the same way
 	# and simply rebuild the world AROUND THE PLAYER instead of around chunk (0,0):
 	# same shared world, no teleport, and still on solid ground the same frame
-	# (`new_run`'s `around` builds that chunk plus ring 1 synchronously — the
+	# (`new_run`'s `around` floors that chunk plus ring 1 synchronously — the
 	# guarantee a mid-run joiner already relies on).
 	if not _arriving() and player != null and terrain != null \
 			and terrain.has_method("new_run") and terrain.has_method("world_to_chunk"):
@@ -1881,9 +1881,19 @@ func _apply_join_placement() -> void:
 	arrives second is the one that does the work.
 
 	The terrain is rebuilt AROUND THE ANCHOR rather than around chunk (0,0):
-	`new_run`'s `around` parameter puts the synchronously-built safety ring where
+	`new_run`'s `around` parameter puts the synchronously-floored safety ring where
 	the player is about to stand, so a joiner does not spend a frame over unbuilt
 	ground kilometres from the origin.
+
+	...AND THEN, UNIQUELY ON THIS PATH, ITS CONTENT TOO. `update_chunks` only
+	guarantees the ring's GROUND this frame; the blocks and crocodiles arrive over
+	the following frames, which is fine for everyone who walks into fresh terrain
+	and wrong for the one caller that INTERROGATES it: `join_at()` below probes
+	~32 candidate spots against the physics space and then sweeps crocodiles off
+	the winner. Against a ring that is still bare, every candidate reads clear and
+	the sweep finds nothing, so the joiner can land inside a block that appears two
+	frames later. `build_ring_now()` buys that ring up front — the same 9-chunk
+	build this path paid before the ground/content split existed.
 	"""
 	if not _can_join_place():
 		return
@@ -1893,6 +1903,8 @@ func _apply_join_placement() -> void:
 	var terrain: Node = get_tree().get_first_node_in_group("terrain")
 	if terrain != null and terrain.has_method("new_run") and terrain.has_method("world_to_chunk"):
 		terrain.new_run(_room_seed, terrain.world_to_chunk(anchor))
+		if terrain.has_method("build_ring_now"):
+			terrain.build_ring_now(terrain.world_to_chunk(anchor))
 
 	# WAIT ONE PHYSICS FRAME BEFORE PLACING. We are on an idle frame (this whole
 	# chain hangs off LobbyClient's `_process`), and `new_run()` has just freed
