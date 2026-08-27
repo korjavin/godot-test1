@@ -494,9 +494,24 @@ Worth saying out loud: this makes the capture penalty **scale with party size in
 favour.** A full room of four almost never benches anyone; a solo player feels every capture
 immediately. Probably the right direction, but better named now than discovered in testing.
 
-*Still open with the architect: whether the authored Primm beat survives as the scripted
-introduction to a mechanic that is systemic thereafter (my instinct: yes — it teaches the rule
-instead of springing it), and whether game over is a hard restart or something softer given
+### The authored Primm beat survives — as the teacher
+
+**Owner: "да, остаётся."** Confirmed, and its role has changed rather than shrunk.
+
+It is now the **one planned capture**, and everything after it is systemic. Which makes it the
+place the rule is **taught** instead of sprung: the first time you lose a hero it is explained,
+staged, and survivable, and every later loss trades on the understanding that scene built.
+
+That is a better job than "the big twist". A systemic mechanic introduced by a random field
+capture would read as a bug the first time it happened; introduced here, it reads as the
+system revealing itself.
+
+Everything already settled about the beat still holds: the floor-plus-story-beat trigger, the
+steel box rather than cleverness, the objective you *can* win while the outcome stays fixed,
+the rescue state set by how well you did it, and Windman's resonance changing because the one
+taken is his other half rather than a colleague.
+
+*Still open with the architect: whether game over is a hard restart or something softer, given
 "the game is the world".*
 
 ## What triggers the abduction — the owner named this as the hard part

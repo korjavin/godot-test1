@@ -452,16 +452,54 @@ mercy lives in the encounter director, *before contact* — and the director sim
 roster size as an input: fewer free heroes, gentler encounter geometry, invisibly. That
 lands in the hunter epic's director bead, not here.
 
-### Multiplayer — the cell role scales, the set must sync
+### Multiplayer — reassign first, imprison last (owner ruling)
 
-A captured hero belongs to some peer's hand. While the peer holds other heroes, they play
-on with a shorter hand — zero new UI, the existing indices filter does it. A peer whose
-**entire hand** is captive gets session 02's bounded in-the-cell role (mark patrols,
-operate two or three interior systems), which scales to several simultaneous captives
-as-is: same block, same verbs, one player per cell. The captured set itself must travel as
-a state-mutating verb with the standard MP discipline — type-checked, rate-limited,
-absolute values in the join snapshot — and "all four captive" is evaluated on the shared
-set, not per peer. Design notes for the MP bead; nothing here needs new authority.
+> *"если игроку в мультиплеере не осталось героев, то он может только ходить своим героем
+> внутри небольшой тюрьмы в замке. если же остались, например игрока два, а героев три, то
+> достается свободный"*
+
+The rule, in order: a player's active hero is captured → if **any free hero is unclaimed,
+the player is given one** and keeps playing in the field → only when **no free hero is
+available** does that player play as their captive **inside the prison**, in session 02's
+bounded role (mark patrols, operate two or three interior systems; no phasing, no combat
+loop, no solo escape).
+
+**Verified: the reassignment is one existing lobby call, not a subsystem.**
+`server/room.go:442` `SetHero` already atomically releases *all* of a member's hero claims
+and claims the new one, under the process-wide lock (`room.go:273`), refusing a contested
+claim with `errHeroTaken` (`room.go:73,458-460`) and re-broadcasting the `heroes` truth to
+the room. So when two players lose heroes at once, the lock serializes their claims: the
+first wins, the second gets the refusal plus the fresh truth and picks another free hero —
+or, none remaining, falls to the prison role. **Deterministic, race-free, zero server
+change.** What the lobby does *not* know is which heroes are captive — that is game state,
+and the lobby's design law is no game state. So the captive set travels the mesh and the
+join snapshot (absolute values, type-checked, rate-limited — the standard discipline), and
+clients simply never offer a captive hero for claiming. If a hostile client claiming a
+captive hero ever matters in practice, teaching the lobby a small captive set is the
+hardening — noted, not built.
+
+**Solo and co-op really are one rule.** A player's available heroes are
+`hand ∩ free` — the hand filter already exists (`my_character_indices()`,
+`player_controller.gd:1279-1284`), and the captive set is one more intersection. Solo, the
+hand is all four, so capture just shrinks the free set; the prison role triggers when a
+player's intersection is empty *while free heroes exist elsewhere* — impossible solo — and
+**game over is the same condition in both modes: the free-hero set is empty.** Solo that
+means all four caught (the owner's ruling verbatim); in a room it means every hero in the
+room is captive and every player is in the prison — nobody left to rescue anyone, which is
+exactly when the game should end. The roster is read as **shared, world-level** here (the
+owner's phrasing implies it); flagged below rather than silently assumed.
+
+Two consequences worth saying out loud rather than discovering in testing:
+
+- **The capture penalty scales with party size in the player's favour.** A full room of
+  four rarely benches anyone; a solo player feels every capture immediately. That is
+  probably the right direction — co-op as the gentler experience — but it is a tuning fact
+  the encounter director should know about, not an accident.
+- **The prison is a play space, not a story location.** A captive player *stands in it*,
+  so the cell block needs a playable interior (small, bounded, with its two or three
+  operable systems) and it is simultaneously the destination of every rescue route — the
+  many-paths requirement and the captive role meet in the same rooms. Design them once,
+  for both jobs.
 
 ### What game over means — owner decision still open
 
@@ -502,24 +540,61 @@ fork and it is the owner's, not ours.
 - LOD sleep radius is a 3D distance check (`crocodile_lod_manager.gd:288`), `SIM_RADIUS`
   45 (`crocodile_lod_manager.gd:63`) — near-tower field simulation behaves normally.
 
-## Owner decisions needed
+Added by the same-day amendment (§7):
 
-1. **The commute: how far is the tower from spawn?** Recommendation: 250–400 m on −X —
-   outside the spawn bubble and the initial render ring, under a minute's walk. This is a
-   feel constant; it should be picked once and early because the site function hard-codes it.
-2. **Re-instate the flat-field invariant?** The tower does not need the global lift (§3).
-   Recommendation: yes, re-instate for the field; verticality stays interior-only. This
-   reverses an explicit owner ruling, so it is his call, not ours.
-3. **Setback inside the tower** — does a guard catch cost the same 7% as a predator, with
-   knockback to the last checkpoint? Recommendation: yes; one arithmetic everywhere.
-4. **Re-entry point** — door-only v1, or the lift menu from the start?
-5. **The horizon impostor** — worth building at all, given fog and the minimap marker, or
-   is the tower's far presence carried entirely by the marker and Windman's scar?
+- `switch_to_next_character()` already cycles within an allowed-index set from
+  `my_character_indices()` (`player_controller.gd:1279-1284`), whose docstring says the set
+  form *"costs nothing and needs no special case if that ever changes"*
+  (`mp_manager.gd:1384`) — systemic capture is one more intersection on that set.
+- `game_over_ui.gd` exists, group-wired, built in code — the game-over surface is a
+  repurpose, not a new screen.
+- `server/room.go:442` `SetHero` atomically swaps a member's hero claims under the
+  process-wide lock (`room.go:273`) and refuses contested claims with `errHeroTaken`
+  (`room.go:73`) — capture reassignment is one existing lobby call.
+- The ground is a per-chunk `MeshInstance3D` sharing one `PlaneMesh` resource plus a
+  per-chunk ground `StaticBody3D` (`endless_terrain.gd:2141-2151`, ground-collision block
+  near `:2721`) — sub-levels would mean chunk-granularity ground holes, which is why depth
+  is the axis to skip.
+- Chunk keying is XZ-only (`endless_terrain.gd:2596-2597`) — floors are invisible to the
+  streamer.
+
+## Owner decisions — settled and open
+
+**Settled (2026-08-27, same-day rulings):**
+
+1. **Commute: 400 m**, and the tower must be visible on the minimap. (§1)
+2. **The flat-world invariant stays lifted** — ruled twice; the world may gain altitudes.
+   The consumer list is tracked as its own backlog epic, outside this one. (§3)
+3. **Capture is systemic** — the active hero is imprisoned in the HQ until liberated; all
+   caught = game over. (§7, the material change of this amendment)
+4. **Re-entry: both** — the door first, the lift-stop menu as an explicit later phase. (§5)
+5. **The horizon impostor is in** — restored once the term was explained; it ships with the
+   shell phase as wayfinding. (§1)
+6. **Softlock by redundancy, not removal** — many paths, a large-scale HQ; every free
+   subset keeps a route to the cells. (§7)
+7. **Multiplayer: reassign first, imprison last** — a benched player gets an unclaimed free
+   hero when one exists; the prison role is the last resort. (§7)
+
+**Still open:**
+
+1. **Guards are predator-class (7%), never capture** — recommended in §7 so the building
+   cannot game-over you while you are inside undoing a capture; wants his yes.
+2. **Systemic capture arms after the authored Primm beat** — recommended sequencing (§7)
+   so the mechanic is taught before it is armed; it interprets his ruling rather than
+   restating it.
+3. **What is behind the game-over screen** — hard (world ends, New Game only) vs soft
+   (Continue reopens the world with one hero freed by the Junior Engineer at a story
+   cost). Recommendation: soft, because the save *is* the world. (§7)
+4. **Game over in a room is world-level** — free-hero set empty across the whole room, not
+   per player. Adopted as the reading of his phrasing; flagged rather than assumed. (§7)
 
 ## Beads filed
 
 See the epic **The Tower — GastroDefense HQ as a place on the map** and its children:
-site + streamer exclusion (keystone), shell + minimap marker, interior v1 with the three
-gate classes and a checkpoint, gate graph + `tower_selfcheck`, persistence of the opened-set,
-guards + population reset, and the polish tail (horizon impostor, lift stops, more floors).
-Nothing here is built; the beads are the contract for whoever builds it.
+site + streamer exclusion (keystone), shell + impostor + minimap marker + door, interior v1
+with the three gate classes and a checkpoint, gate graph + the subset-reachability
+`tower_selfcheck` (load-bearing under the many-paths ruling), persistence of the opened
+sets, guards + population reset, the cell block + liberation + capture mechanic, the MP
+capture sync + captive role, and the staged scale-out (wings, floors, lift stops). The
+field-altitude consumer list is its own backlog epic, deliberately outside. Nothing here
+is built; the beads are the contract for whoever builds it.
