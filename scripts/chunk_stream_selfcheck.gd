@@ -4,7 +4,7 @@ extends SceneTree
 ##   godot --headless --path . --script res://scripts/chunk_stream_selfcheck.gd
 ##
 ## Prints "SELFCHECK OK" and exits 0, or prints what failed and exits 1 — the
-## same shape as croc_spawn_selfcheck.gd / prop_selfcheck.gd, and it exists for
+## same shape as enemy_spawn_selfcheck.gd / prop_selfcheck.gd, and it exists for
 ## the same reason those do: every way of breaking this looks like ordinary
 ## scenery from the outside.
 ##
@@ -38,7 +38,7 @@ extends SceneTree
 ## The "RID allocations … were leaked at exit" lines after the verdict are the
 ## engine reporting this project's deliberate static shared caches (the shared
 ## unit box and ground meshes, the crocodile/coin PackedScenes). They are not a
-## failure — same note as croc_spawn_selfcheck.gd's header.
+## failure — same note as enemy_spawn_selfcheck.gd's header.
 
 const TERRAIN_SCRIPT: String = "res://scripts/endless_terrain.gd"
 
@@ -55,7 +55,7 @@ func _initialize() -> void:
 
 
 func _boot() -> void:
-	# ONE FRAME BEFORE ANYTHING, for the reason croc_spawn_selfcheck.gd gives: a
+	# ONE FRAME BEFORE ANYTHING, for the reason enemy_spawn_selfcheck.gd gives: a
 	# node added to `root` from inside _initialize() is not `is_inside_tree()`
 	# until the first frame, so anything that reads a global transform (the
 	# treasure chest does) would silently measure a detached world.
@@ -245,7 +245,7 @@ func _check_two_frame_build_matches_one(built_over_two_frames: Node3D) -> void:
 func _has_ground_collision(chunk: Node, chunk_size: float) -> bool:
 	## A floor is a CollisionShape3D holding a BoxShape3D that spans the chunk.
 	## Measured off the real shape rather than trusted from the node's existence,
-	## the house rule croc_spawn_selfcheck.gd states.
+	## the house rule enemy_spawn_selfcheck.gd states.
 	for child: Node in chunk.get_children():
 		if not (child is StaticBody3D):
 			continue
