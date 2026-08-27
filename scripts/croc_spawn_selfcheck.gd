@@ -590,16 +590,31 @@ func _check_ambush_trip_wire() -> void:
 	# cannot see coming is paid in SURPRISE, so it does not also get to be the
 	# quickest thing in the world. Stated against the table rather than a literal,
 	# so retuning any other row keeps this honest.
-	var fastest := 0.0
-	var fastest_name := ""
+	#
+	# Stated as ">= the fastest OTHER row" rather than "is the max", because a TIE
+	# at the top is the same animal: a viper matching the cougar's 7.8 is jointly
+	# the fastest thing in the world and still invisible. Written the other way —
+	# scanning for the maximum and comparing names — a tie resolves to whichever
+	# row Dictionary iteration reached first, so the check would pass or fail on
+	# key order. A tie at the BOTTOM is fine and deliberate: 5.5 alongside the
+	# crocodile is exactly what this bead asked for.
+	var fastest_other := -INF
+	var fastest_other_name := ""
 	for name_v: Variant in _species_table:
+		if String(name_v) == ambush_species:
+			continue
 		var speed: float = float(_species_table[name_v].get("chase_speed", 0.0))
-		if speed > fastest:
-			fastest = speed
-			fastest_name = String(name_v)
-	if fastest_name == ambush_species:
-		_fail("'%s' has the highest chase_speed in SPECIES (%.2f) —" % [ambush_species, fastest]
-				+ " it is buried, unseen and the fastest animal in the game at once;"
+		if speed > fastest_other:
+			fastest_other = speed
+			fastest_other_name = String(name_v)
+	var ambush_speed: float = float(row.get("chase_speed", 0.0))
+	if fastest_other_name == "":
+		_fail("SPECIES has no non-ambush row to compare '%s' against —" % ambush_species
+				+ " the ambusher-is-not-a-sprinter check has nothing to measure")
+	elif ambush_speed >= fastest_other:
+		_fail("'%s' chase_speed %.2f is at or above the fastest other row ('%s' %.2f) —"
+				% [ambush_species, ambush_speed, fastest_other_name, fastest_other]
+				+ " it is buried, unseen and the quickest animal in the game at once;"
 				+ " the clamp hides it, and the player only finds out on the strike")
 
 	# ---- the trip-wire measurement ------------------------------------------
