@@ -158,6 +158,15 @@ var _dismissed: bool = false
 ## Whether the CURRENT tree pause is ours to release. See the header.
 var _paused_by_us: bool = false
 
+## True while the web intro film is on screen. This is NOT dismissal: the node
+## still holds the pause and the free cursor, and the card is merely hidden behind
+## the video — `_process` polls `IntroVideo.is_finished()` and runs the ordinary
+## `_dismiss()` when the film ends or is skipped, so mouse capture and the audio
+## unlock still happen exactly once and exactly where they always did. Never true
+## off-web: `IntroVideo.start()` answers false there without touching
+## `JavaScriptBridge`, the same desktop-safety shape `MobileSensors` uses.
+var _intro_playing: bool = false
+
 ## Cached once — the touch-session probe can reach into JavaScriptBridge, so it
 ## is not re-evaluated per frame (the same caching `touch_controls.gd` does).
 var _is_touch: bool = false
@@ -195,10 +204,29 @@ func _ready() -> void:
 	# Take the pause and the cursor now, before the first gameplay frame runs.
 	_apply_pause(true)
 
+	# Build the (hidden) intro <video> now so the browser buffers it while the
+	# player reads this card and playback starts instantly on the press. A no-op
+	# off-web, and nothing downstream depends on it having worked — `start()`
+	# rebuilds if it is missing.
+	IntroVideo.preload_element()
+
 
 func _process(_delta: float) -> void:
 	if _dismissed:
 		return
+
+	# The intro film owns the screen. Hold the pause and the free cursor exactly as
+	# the menu did, keep the card hidden behind the video, and do nothing else
+	# until the browser says the film ended or was skipped. This cannot wedge:
+	# every failure path inside `IntroVideo` reports finished (see its header), and
+	# off-web `is_finished()` is a constant true.
+	if _intro_playing:
+		_apply_pause(true)
+		if IntroVideo.is_finished():
+			_intro_playing = false
+			_dismiss()
+		return
+
 	# Yield the screen to TouchControls' full-rect overlays — see the header for
 	# why stealing that one tap would cost the session its motion permission and
 	# all of its audio. Re-evaluated every frame rather than latched at _ready:
@@ -432,18 +460,47 @@ func _unhandled_input(event: InputEvent) -> void:
 	# one of `touch_controls`' full-rect overlays is up this card is INVISIBLE, and
 	# without the test one Enter dismissed it anyway — permanently and unseen,
 	# since `_dismissed` is one-way and there is no route back to this screen.
-	if _dismissed or event == null or _touch_modal_up():
+	# `_intro_playing` is in the same guard for a sharper reason than the others:
+	# SPACE is `ui_accept` AND it is the film's skip key, so without it every skip
+	# attempt would ALSO re-enter `_on_play_solo_pressed()` from Godot's side while
+	# the film is still up.
+	if _dismissed or _intro_playing or event == null or _touch_modal_up():
 		return
 	if event.is_action_pressed("ui_accept"):
 		get_viewport().set_input_as_handled()
 		_on_play_solo_pressed()
 
 
+## Play the intro film first (web only), then start the game.
+##
+## Hooked HERE and deliberately not in `_dismiss()`: `_on_multiplayer_pressed()`
+## dismisses too, but it opens a panel rather than starting a game, and a film in
+## front of the room list would be nothing but a delay.
+##
+## The world stays paused behind the video for free — this node already holds the
+## pause and does not release it until `_dismiss()` — so `player_controller.gd`
+## needs no edit. `IntroVideo.start()` is false off-web and on every failure path
+## it knows of, so desktop, the editor, and a web build whose CDN is unreachable
+## all take the original one-line route unchanged.
 func _on_play_solo_pressed() -> void:
+	if _intro_playing:
+		return
+	if IntroVideo.start():
+		_intro_playing = true
+		# Hide the card but keep this node alive and processing: `_process` is what
+		# notices the film finishing. (Not `_dismiss()` — that would hand the mouse
+		# and the pause back with 47 seconds of film still to run.)
+		if _body != null:
+			_body.visible = false
+		return
 	_dismiss()
 
 
 func _on_multiplayer_pressed() -> void:
+	# Throw the preloaded intro film away: this press opens a panel rather than
+	# starting a game, so the film is never coming and a still-buffering 20 MB
+	# source has no business surviving into the multiplayer session.
+	IntroVideo.discard()
 	# NOT capturing the mouse: the panel is about to open and wants the cursor.
 	# On web `Input.set_mouse_mode(CAPTURED)` only REQUESTS pointer lock — the
 	# browser grants it on a later task — so `mp_ui._apply_pause()`'s
@@ -486,7 +543,13 @@ func _dismiss(capture_mouse: bool = true) -> void:
 	if sound != null and sound.has_method("unlock_audio"):
 		sound.unlock_audio()
 
-	# 2. Pointer lock. Skipped on a touch session for the same reason
+	# 2. Pointer lock. After the intro film this can arrive one browser task too
+	#    late to still count as a gesture (the press was 47 s ago), in which case
+	#    the request is simply declined and the existing desktop-web
+	#    click-to-capture fallback in `player_controller._input()` — the one
+	#    `capture_hint.gd` exists to advertise — picks it up on the first click,
+	#    exactly as it did before this screen existed.
+	#    Skipped on a touch session for the same reason
 	#    `player_controller._ready()` skips it: there is no mouse to capture and
 	#    the request would pop a useless prompt over the touch controls.
 	if capture_mouse and not _is_touch:
