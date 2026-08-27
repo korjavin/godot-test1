@@ -435,16 +435,33 @@ feature would be the quiet failure mode. So, plainly:
 
 So: **wings for routes, floors for scale, no digging.**
 
-### The authored Primm beat survives — capture is taught, then armed
+### The authored Primm beat survives — ruled, and it is the lesson
 
-Recommendation, stated as the coordinator asked: **yes, the beat survives.** Primm's
-capture stays the scripted story turn — the steel box, the floor-plus-beat encounter, the
-Windman wound, all of session 02. Systemic capture **arms after the beat**: before it,
-hunters cost the predator arithmetic (session 02's original rule), and the authored beat is
-the moment the rule visibly changes, demonstrated on the hero it hurts most. Arming it from
-minute one would let a random early grab pre-empt the authored scene and teach the
-mechanic as a surprise. **Owner confirmation wanted, since it sequences his ruling rather
-than restating it.**
+**Owner: "да, остаётся" — it stays.** Primm's capture remains the one *planned* capture —
+the steel box, the floor-plus-beat encounter, the Windman wound, all of session 02 — and
+everything after it is systemic. Its role changed rather than shrank: it is where the rule
+is **taught** rather than sprung. The first hero you lose, you lose in a staged, explained,
+survivable scene; every later loss trades on the understanding that scene built. A
+systemic mechanic introduced by a random field grab would read as a bug the first time it
+fired; introduced here, it reads as the system revealing itself. So systemic capture
+**arms after the beat**: before it, hunters cost the predator arithmetic (session 02's
+original rule), and the beat is the moment the stake visibly changes, demonstrated on the
+hero it hurts most.
+
+Two consequences for the building, stated deliberately rather than left to happen:
+
+- **The first rescue is the interior's tutorial, on purpose.** The prison supports two
+  kinds of arrival — the authored Primm rescue, story-staged, and the ordinary systemic
+  ones forever after. Making the authored visit double as the player's introduction to the
+  building's vocabulary (gates, checkpoints, the cell block, the lift) is a strong economy,
+  and the route it takes should be authored with that teaching job explicitly in mind —
+  the graph rows for that path are the curriculum.
+- **The cell block is uniform; the story dresses one cell first.** Any hero can land in
+  any cell at any time, so cells must be generic by construction — a distinguished,
+  hand-built Primm cell would be dead weight for the rest of the game. The authored beat
+  gets its identity from staging, not architecture: the steel-frame containment unit that
+  smothers his field is set dressing *inside* a standard cell, present for the first
+  rescue and gone after it.
 
 The death-spiral risk also needs naming: each capture closes identity routes and weakens
 the party, which invites more captures. The mitigation is already doctrine — session 02's
@@ -574,18 +591,18 @@ Added by the same-day amendment (§7):
    subset keeps a route to the cells. (§7)
 7. **Multiplayer: reassign first, imprison last** — a benched player gets an unclaimed free
    hero when one exists; the prison role is the last resort. (§7)
+8. **The authored Primm capture stays** (*"да, остаётся"*) — the one planned capture, the
+   scene where the systemic rule is taught; everything after it is systemic. (§7)
 
 **Still open:**
 
-1. **Guards are predator-class (7%), never capture** — recommended in §7 so the building
-   cannot game-over you while you are inside undoing a capture; wants his yes.
-2. **Systemic capture arms after the authored Primm beat** — recommended sequencing (§7)
-   so the mechanic is taught before it is armed; it interprets his ruling rather than
-   restating it.
-3. **What is behind the game-over screen** — hard (world ends, New Game only) vs soft
+1. **What is behind the game-over screen** — hard (world ends, New Game only) vs soft
    (Continue reopens the world with one hero freed by the Junior Engineer at a story
-   cost). Recommendation: soft, because the save *is* the world. (§7)
-4. **Game over in a room is world-level** — free-hero set empty across the whole room, not
+   cost). Recommendation: **soft**, because the save *is* the world and world deletion is
+   the harshest possible answer to hunter attrition — but this is his fork, not ours. (§7)
+2. **Guards are predator-class (7%), never capture** — recommended in §7 so the building
+   cannot game-over you while you are inside undoing a capture; wants his yes.
+3. **Game over in a room is world-level** — free-hero set empty across the whole room, not
    per player. Adopted as the reading of his phrasing; flagged rather than assumed. (§7)
 
 ## Beads filed

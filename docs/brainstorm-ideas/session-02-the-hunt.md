@@ -511,8 +511,81 @@ steel box rather than cleverness, the objective you *can* win while the outcome 
 the rescue state set by how well you did it, and Windman's resonance changing because the one
 taken is his other half rather than a colleague.
 
-*Still open with the architect: whether game over is a hard restart or something softer, given
-"the game is the world".*
+## Game over — the world ends and is *archived*, not erased
+
+**Proposal from codex; needs the owner's ruling.** It answers the question I could not.
+
+### First, a correction to my framing
+
+I described game over as "total erasure over four unlucky moments". **That is wrong**, and it
+was making the problem look worse than it is: since a rescue restores captured heroes, the
+four captures are **not cumulative across a campaign**. Game over happens only when the player
+lets the roster reach zero **without completing a rescue in between** — which reads as
+**strategic overextension**, not bad luck. Provided captures cannot chain unfairly.
+
+### Three fairness rules that make that true
+
+- After a capture, **hunter pressure drops** long enough to choose a rescue route.
+- **At one free hero**, every hunt is strongly telegraphed with an immediate escape route
+  available — no off-screen and no unavoidable final capture.
+- The **custody HUD and minimap make the consequence explicit**: continuing to farm with one
+  hero is a *chosen* risk, and the HQ is the visibly obvious recovery objective.
+
+### The ending itself: a full-custody protocol
+
+When the last free hero is captured, ordinary field play ends and the game enters **one
+authored scene inside the HQ**. All four are present — so solo switches among prisoners and
+multiplayer keeps **every player active**, which no other proposal managed.
+
+It is not another ordinary rescue and **not a repeatable extra life**. It is the campaign's
+final failure scene: one designed chance to exploit **what the party learned about the prison
+during earlier rescues.**
+
+- **Success** frees at least one hero and returns the world to systemic play — but leaves a
+  **permanent scar**: raised containment state, a closed shortcut, lost coins. Success must
+  not reset the failure system for free.
+- **Failure** completes GastroDefense's recall, plays an authored ending, and rolls credits.
+
+### And then the save is archived, not deleted
+
+The save becomes a **read-only completed world** — its ending, discoveries, time, captures,
+final roster. New Game creates a fresh zero-skill world under a **new save id**.
+
+**This creates no meta-layer** and so does not violate "the game is the world": nothing from
+the archived world powers the next one. The archive is simply that world's final state. With
+only Continue and New Game in the menu, **Continue on a completed world reopens the ending
+screen**, and New Game asks for confirmation.
+
+Codex prefers this to my "one hero escapes", and the reason is good: **an automatic escape
+turns zero-roster into just another cooldown.** A playable last protocol makes the ending
+*earned*, and archiving makes genuine failure bearable for someone who invested many hours.
+
+### The reachability rule, restated properly
+
+My version — *"for every subset S, some route to the cells is traversable by S"* — is
+necessary but **too weak**. Correctly:
+
+> For every non-empty free-hero subset, **from every legal HQ entry** and **every persistent
+> tower state reachable at that point in the campaign**, at least one route to a cell is
+> traversable using only the free heroes' **guaranteed current capabilities** and **no item
+> held by a captive**.
+
+Three softlocks my version allowed:
+
+1. **Rank, not just identity.** A route that "belongs to Tiebi" but needs a *Tiebi rank the
+   player may not own* is still a dead end. At least one rescue route per singleton must use
+   **base capability**, or a rank guaranteed earned before systemic capture can begin.
+2. **Items held by captives.** If the key is in the pocket of the hero in the cell, the route
+   is not traversable. Custody must be modelled, not just gates.
+3. **Persistent state, not the pristine building** — and this one is ours. Our permanent route
+   transformations mean the HQ *mutates*, and **a mutation can remove the last valid singleton
+   path later in the campaign.** So the property must be re-tested after **every** permanent
+   door or quest mutation.
+
+**And "many paths" is cheaper than it sounds:** not fifteen bespoke corridors, but **four
+base-kit rescue spines — one per hero — with shared neutral segments.** Every larger subset is
+covered as the *union* of its members' spines. Only the four singletons need bespoke
+guarantees.
 
 ## What triggers the abduction — the owner named this as the hard part
 
