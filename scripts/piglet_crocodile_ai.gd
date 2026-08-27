@@ -282,10 +282,10 @@ const SPECIES: Dictionary = {
 		## THE LATTICE IS THE LATTICE: 5.0 (WALK_SPEED) < 5.5 <= 8.5
 		## (MAX_CHASE_SPEED) < 9.0 (the slowest character's run).
 		##
-		## 7.5 UNTIL godot-test1-lyk, AND IT WAS THE FASTEST ROW IN THE TABLE.
-		## The lattice held — 7.5 x 1.2 clamps to 8.5 and a run still escapes — but
-		## it held on the CLAMP, and that is what made the row a lie in play. Read
-		## the two ends against a 9.0 run:
+		## 7.5 UNTIL godot-test1-lyk, WHICH MADE THE ANIMAL YOU CANNOT SEE THE
+		## FASTEST ROW IN THE TABLE. The lattice held — 7.5 x 1.2 clamps to 8.5 and
+		## a run still escapes — but it held on the CLAMP, and that is what made the
+		## row a lie in play. Read the two ends against a 9.0 run:
 		##
 		##   7.5: top roll 9.0 -> clamped 8.5, margin 0.5 m/s; median 7.5, margin
 		##        1.5. A player sprinting flat out pulled half a metre a second.
@@ -302,10 +302,16 @@ const SPECIES: Dictionary = {
 		## below is the beat it now gives you to react.
 		##
 		## THE FAR-FIELD IS NOT A LOOPHOLE AND IT IS NOT VIPER-SPECIFIC: the
-		## distance gradient tops out at x1.6, so ANY row above 8.5 / (1.2 x 1.6)
-		## = 4.43 pins to MAX_CHASE_SPEED out at 1800 m, the crocodile included.
+		## distance gradient tops out at x1.6, so EVERY non-burst row above
+		## 8.5 / (1.2 x 1.6) = 4.43 pins to MAX_CHASE_SPEED out at 1800 m, the
+		## crocodile included, and all of them measure the same +0.50 margin there.
 		## That ceiling is a game-wide contract; what this row owns is the near and
 		## middle field, which is where the ambush actually happens.
+		##
+		## AND THIS ROW IS NOT A BURST ROW. The pounce in `_behave_burst` is the
+		## one sanctioned way past MAX_CHASE_SPEED (see CLAUDE.md and check 8),
+		## it is paid back in a mandatory recovery leg, and an ambusher does not
+		## get one: the burrow already IS its opening move.
 		##
 		## MOVE_SPEED IS ZERO, AND IT IS A BEHAVIOUR, NOT A TUNING. `_wander_speed`
 		## multiplies it, so a buried viper's wander velocity is identically 0 at
