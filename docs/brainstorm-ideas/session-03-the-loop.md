@@ -196,6 +196,63 @@ into upkeep*, which is the one way to make this loop feel like a job.
 > The tower **demands** a capability at a decisive threshold. It does not repeatedly charge
 > the player for having earned it.
 
+## No lives, no game over — the game is endless
+
+**Owner ruling, 2026-08-27:**
+
+> Механика с жизнями и с окончанием игры больше не нужна… Когда тебя поймали крокодилы —
+> тебя отбрасывает назад, забирая часть монет, часть опыта, но ты остаёшься. В меню можно
+> будет продолжить игру и можно начать новую.
+
+So death is replaced by **setback**: a predator catches you, knocks you back, takes part of
+what you have — and **you continue.** The menu offers **Continue** and **New game**.
+
+### Where the game is saved today (he asked)
+
+Not cookies. Three layers, all owned by `best_run_store.gd`:
+
+| Layer | What |
+| --- | --- |
+| Local — desktop | `ConfigFile` at `user://best_run.cfg` |
+| Local — web | `window.localStorage` (a pre-existing `user://` record is still *read* on web, so nobody's old record is orphaned) |
+| Server | `GET`/`POST <lobby>/best?id=<player id>` on the same Go lobby the multiplayer uses |
+
+The player id is **per browser profile and per install**, so a second device starts a fresh
+record — nothing transfers one.
+
+### The invariant this ruling collides with
+
+**"Losing part of your experience" breaks something load-bearing.**
+`progression.gd:18-21`, verbatim:
+
+> Levels are LIFETIME-CUMULATIVE. **Coins are never deducted**, so … monotone `max` merge and
+> stop worrying about ordering, retries and stale [replies].
+
+Monotonicity is not a nicety — **it is why the three-layer save works at all.** All three are
+reconciled by a plain `max`, which is exactly what makes a late server reply harmless and
+every retry free. The moment a number can go *down*, `max` stops being a valid merge, and we
+would need real conflict resolution across three layers with **no authority anywhere**.
+
+### Resolution: you lose what you carry, never what you banked
+
+- **Lifetime coins stay monotone.** They are what levels derive from and what merges.
+- **The setback takes from a carried, unbanked pool only.**
+
+This satisfies the ruling as stated — you lose coins and progress, you stay alive — keeps the
+persistence model untouched, and is better design regardless: risk attaches to what you are
+*holding*, so **banking becomes a decision** instead of an invisible background fact.
+
+### Continue / New game maps onto shipped code
+
+`new_run()` re-rolls `run_seed`, and that is **the only place the world changes**. So:
+
+- **New game** → new seed → a genuinely fresh world.
+- **Continue** → same seed → the same world you left.
+
+*Open, put to codex: where banking happens in an endless field with no natural safe point;
+what supplies tension once the worst outcome is a knock-back; and what the shipped lives HUD
+and game-over UI become.*
+
 ## Open
 - Whether the tree needs a **tower branch** at all, or whether re-tuning the existing effects
   covers it.
