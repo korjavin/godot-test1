@@ -220,17 +220,55 @@ what stays true across all of them — the constraints, and the map from lore to
 | [session-02-the-hunt.md](session-02-the-hunt.md) | Hunter robots, Primm's abduction, the capture trigger, and hunter mercy |
 | [session-03-the-loop.md](session-03-the-loop.md) | The field farms, the tower demands — rank gates, no lives, and the save model |
 
-### Decisions still waiting on the owner
+### A note on vocabulary: there are no "anchors"
 
-1. **What do coins buy?** Levels derive from *gross* lifetime earnings, so the 7% death
-   penalty removes no progress. Without a real coin sink, 7% is a shrinking number with no
-   sting — and predators become interruption rather than stakes. (Session 03.)
-2. **Cross-device Continue.** Today `player_id` is per install, so no two devices share a
-   record and nothing needs reconciling. If that should change, a `save_id` alone cannot
-   choose which world is current. (Session 03.)
-3. **How many acts, and their shape** — with small quests inside each. (Session 01.)
-4. **What a failed anchor costs *in fiction*** — GastroDefense *filing* something is more on
-   tone than a damage number. (Session 01.)
+The word **anchor** is dead and should not be used again. It named the *simultaneous*
+multi-hero lock from session 01, which the owner rejected — and the term outlived the idea,
+which is why it kept turning up in questions that no longer made sense.
+
+The live vocabulary is:
+
+| Term | What it means |
+| --- | --- |
+| **Identity gate** | a place only one specific hero can get through — and when he does, **the route changes for everyone** |
+| **Demand gate** | a gate that needs *more capability than you have yet*: a purpose-built corporate mechanism that tells you which ability is short, so you know to go and grow it |
+| **Challenge space** | ordinary terrain, guards, hazards, puzzles — solvable as you are; ranks only make them safer |
+
+`session-01-recall-anchors.md` keeps the old word in its title and body deliberately: it is
+the record of a superseded design, not current vocabulary.
+
+### Owner rulings on the open questions (2026-08-27)
+
+1. **What do coins buy?** *"Позже мы придумаем механизм вещей… Пока можно считать, что это
+   просто очки игры."* — **Deferred.** Coins are score for now. Accepted consequence, stated
+   plainly: until a sink exists, the 7% is a number going down, so **predators are
+   interruption, not stakes**, and the hunters carry the tension alone.
+2. **Cross-device Continue.** — **Deferred.** `player_id` stays per install, no two devices
+   share a record, `current_save_id` stays local, nothing to reconcile.
+3. **Quests, not acts.** *"их должно быть достаточное количество разнообразное, но игрок
+   должен уметь проходить все сам в любом порядке."* — See below; this replaces the "acts"
+   question rather than answering it.
+4. ~~What a failed anchor costs in fiction~~ — **the question is void.** It belonged to the
+   moving, missable anchor, which no longer exists. A demand gate you cannot pass costs
+   nothing at all; you simply come back later. That *is* the design.
+
+### Quests are a set, not a sequence
+
+The owner's ruling replaces the chaptered-acts idea from session 01 §6:
+
+> There should be **enough of them and varied**, but the player must be able to complete
+> them **all himself, in any order.**
+
+Two requirements, both binding:
+
+- **Everything is solo-completable.** No content may require a second player. Co-op changes
+  *how* it feels, never *whether* it is possible.
+- **No authored order.** Quests are an open set, not chapters with boundaries.
+
+**And ordering still emerges anyway** — from capability, not from authorship. A demand gate
+you cannot pass yet quietly defers its quest until you can, so the player feels a difficulty
+curve without anyone imposing a sequence. That is the Metroidvania answer, and it is what
+lets "any order" and "a real progression" both be true at once.
 
 Lore source: `../crimekickerslor` (Obsidian vault). It is **inspiration, not a spec** —
 the owner's ruling is that we do not have to follow 100% of it.

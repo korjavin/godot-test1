@@ -4,7 +4,7 @@
 **Status:** design fiction. Nothing built.
 
 Read [README.md](README.md) for the constraints and [session 01](session-01-recall-anchors.md)
-for the anchor mechanic this builds on.
+for the identity-gate mechanic this builds on.
 
 ---
 
@@ -154,7 +154,7 @@ question and is listed as open below.)
 
 ### 3. It makes the story and the mechanic the same event — again
 
-Session 01's anchor needs **all four identities**. The moment Primm is taken, **every
+A four-identity gate needs **all four heroes**. The moment Primm is taken, **every
 four-socket lock in the world becomes unsolvable.**
 
 Treat that as the **crisis, not a bug**. The fourth socket stands there lit and unusable,
@@ -318,7 +318,7 @@ out of mercy.
 Note this is compatible with the existing rule that entity counts are never reduced *as an
 optimization* — this is a **design** change, which is exactly the sanctioned reason.
 
-### 3. The tower is puzzles, not anchors
+### 3. The tower is puzzles, not field gates
 
 > в башне тоже будут какие-то охранники, но их будет мало. И там в башне у нас будет в
 > основном загадки, квесты… типа найти ключ, потом ключом открыть комнату.
@@ -330,7 +330,7 @@ So the game has **two tempos**, and that is a feature:
 | | Outside | Inside the tower |
 | --- | --- | --- |
 | Verb | run | sneak, search, solve |
-| Locks | **moving** anchors, 8–12 s flow challenges | **static** locks you stand and think about |
+| Locks | identity gates you hit at speed | static gates you stand and think about |
 | Threat | hunters and predators | few guards |
 
 The identity-key idea carries across both — *who you are* is still what opens things — but

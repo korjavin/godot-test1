@@ -614,7 +614,15 @@ the climax without noticing. Codex's framing is the correct one.
 
 **Still open — design (next session starts here, agreed with codex):**
 
-2. **How many acts, and their shape.** Probably 4, matching the vault's four movements —
+2. ~~**How many acts, and their shape.**~~ **ANSWERED — and the question was the wrong one.**
+   The owner replaced acts with an open quest set: *"их должно быть достаточное количество
+   разнообразное, но игрок должен уметь проходить все сам в любом порядке."* Enough quests,
+   varied, **all solo-completable, in any order.** So there is no authored sequence and no act
+   boundaries; ordering emerges from **capability** instead, because a demand gate you cannot
+   pass yet defers its quest until you can. That also retires the act-boundary cordon from §6.
+   See [README.md](README.md), "Quests are a set, not a sequence".
+
+   *Original text, kept for the record:* Probably 4, matching the vault's four movements —
    the 20-episode arc is the obvious source but 20 acts is far too many. Includes mapping
    each act to existing biomes and predator species.
 
