@@ -1884,6 +1884,16 @@ func _apply_join_placement() -> void:
 	`new_run`'s `around` parameter puts the synchronously-floored safety ring where
 	the player is about to stand, so a joiner does not spend a frame over unbuilt
 	ground kilometres from the origin.
+
+	...AND THEN, UNIQUELY ON THIS PATH, ITS CONTENT TOO. `update_chunks` only
+	guarantees the ring's GROUND this frame; the blocks and crocodiles arrive over
+	the following frames, which is fine for everyone who walks into fresh terrain
+	and wrong for the one caller that INTERROGATES it: `join_at()` below probes
+	~32 candidate spots against the physics space and then sweeps crocodiles off
+	the winner. Against a ring that is still bare, every candidate reads clear and
+	the sweep finds nothing, so the joiner can land inside a block that appears two
+	frames later. `build_ring_now()` buys that ring up front — the same 9-chunk
+	build this path paid before the ground/content split existed.
 	"""
 	if not _can_join_place():
 		return
@@ -1893,6 +1903,8 @@ func _apply_join_placement() -> void:
 	var terrain: Node = get_tree().get_first_node_in_group("terrain")
 	if terrain != null and terrain.has_method("new_run") and terrain.has_method("world_to_chunk"):
 		terrain.new_run(_room_seed, terrain.world_to_chunk(anchor))
+		if terrain.has_method("build_ring_now"):
+			terrain.build_ring_now(terrain.world_to_chunk(anchor))
 
 	# WAIT ONE PHYSICS FRAME BEFORE PLACING. We are on an idle frame (this whole
 	# chain hangs off LobbyClient's `_process`), and `new_run()` has just freed

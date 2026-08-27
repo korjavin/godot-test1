@@ -74,6 +74,7 @@ func _run() -> void:
 
 	_check_ring_is_grounded_and_owed(terrain)
 	_check_second_crossing_keeps_the_debt(terrain)
+	_check_build_ring_now_pays_it_all_at_once(terrain)
 	_drain(terrain)
 	_check_drain_paid_the_debt(terrain)
 	_check_two_frame_build_matches_one(terrain)
@@ -168,6 +169,37 @@ func _check_second_crossing_keeps_the_debt(terrain: Node3D) -> void:
 	for chunk_pos: Vector2i in _ring():
 		if chunk_pos in terrain.bare_chunks and chunk_pos not in terrain.pending_chunks:
 			_fail("a second update_chunks dropped still-bare chunk %s from the queue — it would stay empty for the rest of the run" % chunk_pos)
+
+
+func _check_build_ring_now_pays_it_all_at_once(terrain: Node3D) -> void:
+	"""
+	Check 5. The multiplayer join escape hatch. A mid-run joiner probes the world
+	for a clear landing spot instead of walking into it, so it needs the ring's
+	CONTENT, not just its floor, before that probe runs — `build_ring_now()` is
+	what buys it, and the failure is silent in the worst way: the probe answers
+	"all clear" everywhere and drops the player inside a block that turns up two
+	frames later.
+
+	The second half is the reason `create_chunk` carries a populated-already
+	guard: `build_ring_now` deliberately leaves the ring's stale entries in
+	`pending_chunks`, so the ordinary drain reaches every one of them afterwards
+	and MUST do nothing. Without the guard it would parent a whole second set of
+	props, coins and crocodiles into a chunk that already has them.
+	"""
+	terrain.build_ring_now(Vector2i.ZERO)
+	for chunk_pos: Vector2i in _ring():
+		if chunk_pos in terrain.bare_chunks:
+			_fail("build_ring_now left chunk %s bare — a joining peer would probe a world with no blocks in it" % chunk_pos)
+
+	var before: Dictionary = {}
+	for chunk_pos: Vector2i in _ring():
+		before[chunk_pos] = _signature(terrain.active_chunks[chunk_pos])
+	_drain(terrain)
+	for chunk_pos: Vector2i in _ring():
+		var after := _signature(terrain.active_chunks[chunk_pos])
+		if after.size() != (before[chunk_pos] as Array).size():
+			_fail("draining the queue after build_ring_now rebuilt chunk %s (%d nodes -> %d) — create_chunk is not idempotent and doubled its contents" % [
+				chunk_pos, (before[chunk_pos] as Array).size(), after.size()])
 
 
 func _check_drain_paid_the_debt(terrain: Node3D) -> void:

@@ -2870,6 +2870,17 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 	- In advanced games, you could add noise/procedural generation here!
 	"""
 
+	# ALREADY POPULATED? NOTHING TO DO. Loaded-and-not-bare is the exact inverse
+	# of the "still owes its content" test update_chunks uses, so this is the same
+	# statement in one place: content is additive (props, coins, crocodiles all
+	# get PARENTED to the chunk), so a second run over a finished chunk would
+	# double everything in it rather than overwrite it. The guard lives here, in
+	# the shared function, so `build_ring_now()` below can populate a chunk out of
+	# band and leave its stale entry in `pending_chunks` to drain to a harmless
+	# no-op — the same way remove_chunk() re-checks `active_chunks`.
+	if chunk_pos in active_chunks and chunk_pos not in bare_chunks:
+		return
+
 	# The ground half — freshly laid, or already there because this chunk is one
 	# of the safety-ring chunks update_chunks floored synchronously.
 	var mesh_instance := _ensure_chunk_ground(chunk_pos)
@@ -8286,6 +8297,36 @@ func new_run(forced_seed = null, around: Vector2i = Vector2i.ZERO) -> void:
 	last_player_chunk = around
 
 	print("New run started (run_seed = %d)" % run_seed)
+
+func build_ring_now(around: Vector2i) -> void:
+	"""
+	Populate the safety ring around `around` THIS FRAME instead of over the next
+	few, i.e. pay back on the spot the content debt `update_chunks` normally
+	leaves for the one-chunk-per-frame drain.
+
+	@param around: chunk coordinates at the centre of the ring
+
+	FOR THE ONE CALLER THAT PROBES THE WORLD RATHER THAN WALKING INTO IT.
+	Ground-first streaming is safe for anybody who arrives on foot: the floor is
+	under them immediately and the scenery catches up around them. A mid-run
+	multiplayer joiner is the exception — `MpManager._apply_join_placement()`
+	rebuilds the world around the group and then has `join_at()` ask the physics
+	space for a clear spot and sweep the crocodiles off it, and a question asked
+	of a world whose blocks and crocodiles have not been built yet gets the
+	answer "all clear" for every candidate. So that path, and only that path,
+	buys the ring's content up front and pays the one-frame hitch it used to pay
+	anyway.
+
+	Cost is bounded by the ring, not the render distance: 9 chunks, the exact
+	build `update_chunks` used to do synchronously on every new_run.
+
+	Stale queue entries are deliberately left alone — `create_chunk` returns
+	immediately for an already-populated chunk, so the drain reaching one later
+	is a no-op.
+	"""
+	for x in range(around.x - SYNC_RING, around.x + SYNC_RING + 1):
+		for z in range(around.y - SYNC_RING, around.y + SYNC_RING + 1):
+			create_chunk(Vector2i(x, z))
 
 # ============================================================================
 # DEBUG FUNCTIONS
