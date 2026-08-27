@@ -3,6 +3,21 @@
 **Date:** 2026-08-27 · **Participants:** Claude + Codex (peer-chat), owner steering.
 **Status:** design fiction. Nothing here is built. No beads issues filed yet.
 
+> ## ⚠ §3 is SUPERSEDED
+>
+> The owner has rejected **simultaneity**. There is no requirement for two, three or four
+> heroes to hold anything at the same moment. Gating is **sequential**: a route contains
+> places only a specific hero can pass, and you must switch as you go.
+>
+> **Dead:** quorum, the phase schedule by room size, simultaneous holds, and the
+> `AttemptSnapshot` / master-authoritative machinery that existed to arbitrate them.
+>
+> **Alive:** identity-as-key (now the *only* rule), the socket→hero table, the tower
+> puzzles, and multi-hero hands per peer.
+>
+> See [session 02 — "The core rule, corrected"](session-02-the-hunt.md#the-core-rule-corrected).
+> The rest of this document is kept as the record of how the design got here.
+
 The brief: *invent a challenge that makes players cooperate in multiplayer, or switch
 characters in singleplayer, in order to progress* — and hang a story on it.
 

@@ -74,17 +74,27 @@ Every piece of GastroDefense field hardware is keyed to **identity, not ability*
 | **Primm** | the only one who fits the vent under a low ceiling |
 | **Pho-boman** | the only one the scanner *cannot see* — born of soup, not built, so he carries none of the incident-signature the others do. **His key is an absence.** |
 
-And the lock is **phased**: it needs all four, in sequence, and you cannot be two people at
-once. That single fact produces three different games:
+**Nobody ever has to gather.** The route simply contains places only one specific hero can
+get through, spread out along it — so **you cannot play as one hero the whole way. You must
+switch as you go.** That is the whole rule.
 
-- **Alone** — you are all four heroes but one body. A relay against a re-seal timer. The
-  switch key *is* the skill.
-- **Two players** — you each hold two heroes. Hold two sockets, both switch, hold the other
-  two. Cooperation and switching, at the same moment. The best version.
-- **Four players** — one hero each. Pure coordination, one clean simultaneous hold.
+And a hero does not pass an obstacle *for himself* — he **changes the route for everyone**:
 
-Same lock, every time. The difficulty changes *shape* with the number of people, and nobody
-gets to opt out of being needed.
+| | |
+| --- | --- |
+| **Tiebi** | moves a mass into a bridge |
+| **Windman** | clears a sealed passage |
+| **Primm** | reaches and unlatches a mechanism nothing else can reach |
+| **Pho-boman** | neutralizes a scanner |
+
+**One hero must be physically present to perform the transformation; once it succeeds, the
+route stays changed** and everyone follows through the altered world. No holding, no
+countdown, no waiting for the others to cross — a sustained hold would quietly reintroduce
+the "everybody in one place at once" problem this design exists to avoid.
+
+Solo, you press `E` and do it yourself. In co-op, **one player's choice of identity changes
+where the whole party can go** — which is cooperation without ever requiring the party to
+stand together.
 
 ### The tension: paperwork, not walls
 

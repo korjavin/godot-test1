@@ -8,6 +8,92 @@ for the anchor mechanic this builds on.
 
 ---
 
+## The core rule, corrected
+
+**This supersedes session 01 §3.** The owner rejected simultaneity outright:
+
+> Не надо обязательно, чтобы все вчетвером или все трое в каком-то месте. Главное, чтобы в
+> процессе игры тебе обязательно было нужно переключаться.
+>
+> *(There's no need for all four, or even all three, to be in one place. The essential thing
+> is only that during play you must switch.)*
+
+So the rule is **sequential gating, not simultaneous holding**:
+
+> A route contains places that only a specific hero can pass. You cannot play as one hero
+> the whole way. **You must switch as you go.**
+
+That is the entire requirement, and it is much smaller than what we built.
+
+### What dies
+
+- **Quorum** — the integer that scaled "how many sockets at once" to room size.
+- **The phase schedule table** by room size.
+- **Simultaneous holds** of any kind.
+- **The `AttemptSnapshot` machinery** — attempt ids, monotonic revisions, master-authoritative
+  phase completion. If nothing is contested by several players at the same instant, there is
+  almost nothing to arbitrate. This deletes what would have been the **first authoritative
+  object in the game**, and a genuinely large pile of netcode with it.
+
+Worth being blunt: that was a session's worth of careful design, and it was solving a
+problem the owner does not want solved.
+
+### What survives
+
+- **Identity-as-key — and it is now the *only* rule.** A place is passable by *who you are*.
+- **The socket→hero table**, unchanged, still drawn from the canon vulnerabilities: pressure
+  seal → Windman, steel mass → Tiebi, low vent → Primm, scanner field → Pho-boman.
+- **The tower puzzles**, which were already key-and-door rather than simultaneous.
+- **Multi-hero hands per peer** — and these are now *more* clearly necessary, not less: a
+  route needing all four in sequence must still be completable by a two-player room, so the
+  lobby still deals two heroes per peer at that size.
+
+### The one thing that could go wrong
+
+In solo the rule is trivially clear: you meet a gap only Tiebi crosses, you press `E`, you
+cross. **In multiplayer it is not.** If a barrier is passable only by whoever is currently
+Tiebi, what happens to the other three standing behind it? If each hero merely passes *for
+himself*, the party splits and this stops being cooperation at all — it becomes four solo
+runs sharing a screen.
+
+**The answer, confirmed and sharpened by codex:** a hero does not *pass* the obstacle, he
+**opens it for everybody** — and the gate must be a **shared, persistent route
+transformation**, not a personal permission check:
+
+| Hero | Transformation |
+| --- | --- |
+| Tiebi | moves a mass into a bridge |
+| Windman | clears a sealed passage |
+| Primm | reaches and unlatches a high/low mechanism |
+| Pho-boman | neutralizes a scanner |
+
+> **One hero must be physically present to perform a unique transformation. After it
+> succeeds, the route stays changed.**
+
+**And my own wording was the trap.** I wrote *"lifts the gate and holds it"* — codex flagged
+that any **sustained hold, countdown, or requirement for followers to cross before release
+quietly recreates the simultaneous-gather problem** the owner just rejected. No holding. The
+world changes and stays changed.
+
+That keeps the owner's rule exactly — you must still switch, nobody ever gathers — while
+making the switching **cooperative rather than parallel**: one player's choice of identity
+changes where the whole party can go.
+
+### Two failure modes codex named
+
+**1. Permanent, consequence-free gates make switching a one-time key press.** If every gate
+opens forever and costs nothing, one player becomes the doorman and everyone else convoys
+behind. The fix: each gate should **reveal the next segment's different identity
+requirement**, with traversal and puzzle consequences, and gates must be **distributed so
+that every controlled hand has to be selected over the course of a route.**
+
+**2. The post-capture path can softlock, and must be audited now.** Once Primm is abducted,
+**no mandatory Primm gate may remain** on any route the three can reach. Either three-hero
+routes avoid that identity entirely, or **Windman's resonance scar creates a new, explicitly
+weaker substitute route** — which is the better answer, because it makes the abduction
+*change how the team travels* instead of leaving an accidental dead end. It also gives his
+altered kit (see §"In solo you lose a person") a concrete job outside the rescue itself.
+
 ## The idea, as the owner gave it
 
 > GastroDefense realises at some point that the heroes are getting away, and starts an
