@@ -39,6 +39,17 @@ extends SceneTree
 ##      alarm for it being renamed out from under the map (which, like the road
 ##      cache above, would fail SILENTLY: the map keeps drawing, just with no
 ##      landmarks on it).
+##   7. TERRAIN: that the biome field painted across the disc is (a) drawn in the
+##      GROUND SHADER'S colours — parsed straight out of ground.gdshader, because a
+##      map that invents its own greens tells the player the desert is somewhere it
+##      isn't; (b) actually sampled from the world, run-length merged, spanning the
+##      disc in both axes and following the shared zoom scale; and (c) sampled on
+##      the TICK and never in `_draw()`, which is the whole performance shape of
+##      this widget.
+##   8. WIDGET RECT: MAP_RADIUS and MAP_CENTER live in minimap_hud.gd but the
+##      control's SIZE lives in main.tscn, so the two drift apart silently — a disc
+##      that outgrows its rect puts the caption off the disc's axis and walks the
+##      widget into its HUD neighbours.
 ##
 ## It boots the real main scene, because the road station cache only exists once a
 ## chunk has generated — there is nothing pure to test in isolation here.
@@ -49,6 +60,22 @@ extends SceneTree
 ## layer that hardcoded it instead of deriving from `_view_radius()`.
 const LEGACY_VIEW_RADIUS: float = 60.0
 const LEGACY_CROC_VIEW_RADIUS: float = 30.0
+
+## The ground shader, read as TEXT. Its `uniform vec3 <name>: source_color =
+## vec3(...)` defaults are the one true biome palette — endless_terrain pushes the
+## numeric biome params into the material but never the colours, which are declared
+## shader-side only, so this file is where the map's copy of them gets compared to
+## the original. Parsing the source is deliberate: reading the live material back
+## would answer with whatever an art pass happened to override, rather than with
+## what the two files agree on.
+const GROUND_SHADER_PATH: String = "res://assets/shaders/ground.gdshader"
+
+## Which shader uniform each row of `minimap_hud.BIOME_TINTS` must equal, indexed by
+## endless_terrain's Biome enum. PLAINS has no uniform of its own — the shader
+## mottles between `green_a` and `green_b` per vertex — so it is checked against
+## their MIDPOINT, which is what that mottle averages to.
+const BIOME_UNIFORMS: Array[String] = ["", "desert_color", "forest_color",
+	"mountain_color", "city_color", "snow_color"]
 
 
 ## A stand-in for `MpManager`, so the teammate layer can be driven with known
@@ -66,6 +93,36 @@ class StubMp extends Node:
 ## `minimap_hud._gather_crocodiles()` reads. `set_lod_active` and `is_chasing` are
 ## the two things the LOD manager touches on a group member, so both are here —
 ## without them the manager's own scan errors on this node.
+## A stand-in world for the terrain layer, so the samples it takes are KNOWN and
+## COUNTABLE: it answers `biome_at()` from a plain X split and records every call.
+## `minimap_hud._tick()` re-fetches its terrain only when the cached one is null or
+## freed, so assigning this over `map._terrain` redirects the layer for as long as
+## the check wants it and the real world goes straight back afterwards.
+class StubTerrain extends Node:
+	var calls: int = 0
+	var min_x: float = INF
+	var max_x: float = -INF
+	## World X the answer flips at, and the two biomes either side. INF puts the
+	## whole disc in `low`, which is the single-biome case.
+	var split_x: float = INF
+	var low: int = 1    # Biome.DESERT
+	var high: int = 5   # Biome.SNOW
+
+	func reset() -> void:
+		calls = 0
+		min_x = INF
+		max_x = -INF
+
+	func biome_at(world_x: float, _world_z: float) -> int:
+		calls += 1
+		min_x = minf(min_x, world_x)
+		max_x = maxf(max_x, world_x)
+		return low if world_x < split_x else high
+
+	func is_river_at(_world_pos: Vector3) -> bool:
+		return false
+
+
 class StubCroc extends Node3D:
 	var is_chasing: bool = false
 
@@ -98,6 +155,10 @@ func _run() -> void:
 		failure = _check_teammates()
 	if failure.is_empty():
 		failure = _check_landmarks()
+	if failure.is_empty():
+		failure = await _check_terrain()
+	if failure.is_empty():
+		failure = _check_widget_rect()
 	if failure.is_empty():
 		print("SELFCHECK OK")
 		quit(0)
@@ -574,6 +635,264 @@ func _check_landmarks() -> String:
 
 	print("landmarks: %d loaded + probe -> X at disc, rim clamp follows zoom, none when unregistered" \
 		% baseline)
+	return ""
+
+
+func _check_terrain() -> String:
+	"""The terrain colour layer: the ground shader's palette, sampled from the world
+	on the TICK, run-length merged, spanning the disc at every zoom.
+
+	The colour half is a FILE COMPARISON, because the failure it guards is not a
+	crash — a map painted in its own invented greens looks perfectly fine and lies
+	about where the desert is. It is the same parity discipline `_biome_noise`
+	carries against `biome_noise`, one layer up.
+
+	The sampling half is driven from a `StubTerrain`, for the reason `StubMp` exists:
+	assertions about how many samples were taken, where, and when need a world that
+	answers known values and counts the questions."""
+	var map: Control = root.get_node_or_null("Main/HUD/MinimapHUD")
+	var player: Node3D = get_first_node_in_group("player")
+	if map == null or player == null:
+		return "no MinimapHUD or no player for the terrain checks"
+
+	# 0. THE PALETTE IS THE GROUND SHADER'S, not the map's own.
+	var palette_failure := _check_palette_matches_shader(map)
+	if not palette_failure.is_empty():
+		return palette_failure
+
+	# 1. Against the REAL world: the layer painted something, and the cell under the
+	#    player arrow agrees with the biome the caption names. TERRAIN_GRID is odd on
+	#    purpose so the centre cell is sampled at the player's own position, which
+	#    makes this an exact cross-check of two independent reads rather than an
+	#    approximate one — and it is the alarm for the grid's world mapping being
+	#    offset by half a cell, which nothing else here would notice.
+	map._tick()
+	if map._terrain_count <= 0:
+		return "the terrain layer painted nothing — it never sampled the world"
+	var under := _terrain_biome_at_pixel(map, map.MAP_CENTER)
+	if under != map._biome:
+		return ("the terrain cell under the player arrow is biome %d but the caption " \
+			+ "says %d — the grid's world mapping is off") % [under, map._biome]
+
+	# 2. Everything below drives a STUB world. The real terrain goes back at the end.
+	var real_terrain: Node = map._terrain
+	var stub := StubTerrain.new()
+	map._terrain = stub
+	var failure := ""
+	var rows := 0
+	while true:  # one pass; every exit is a `break`, so the stub is always restored
+		# 2a. ONE BIOME EVERYWHERE. Each row of the grid must collapse to at most ONE
+		#     bar. The negative control is the obvious implementation: a rect per
+		#     cell would paint ~177 of them and cost ~177 draw calls instead of 1.
+		stub.reset()
+		stub.split_x = INF
+		map._tick()
+		rows = map._terrain_count
+		if rows <= 0 or rows > map.TERRAIN_GRID:
+			failure = ("a single-biome world painted %d bars for a %d-row grid — the " \
+				+ "run-length merge is not merging (one bar per CELL would be ~%d)") \
+				% [rows, map.TERRAIN_GRID, map.TERRAIN_GRID * map.TERRAIN_GRID * 3 / 4]
+			break
+		if stub.calls <= rows or stub.calls > map.TERRAIN_GRID * map.TERRAIN_GRID:
+			failure = ("the terrain layer took %d biome_at() samples for a %dx%d grid " \
+				+ "— it is not sampling a grid across the disc") \
+				% [stub.calls, map.TERRAIN_GRID, map.TERRAIN_GRID]
+			break
+
+		# 2b. TWO BIOMES, split at the player's own X. Every row must now split into
+		#     exactly two bars, DESERT to the left and SNOW to the right. That is the
+		#     terrain layer's own north-up assertion (+X is screen RIGHT, the check
+		#     the road and arrow layers each get separately) and its proof that the
+		#     grid spans the disc in X rather than sampling one column and flooding.
+		stub.reset()
+		stub.split_x = player.global_position.x
+		map._tick()
+		if map._terrain_count != rows * 2:
+			failure = ("a world split down the middle painted %d bars, not the %d a " \
+				+ "two-run row each would give — the grid does not span the disc in X") \
+				% [map._terrain_count, rows * 2]
+			break
+		var left := _terrain_biome_at_pixel(map, map.MAP_CENTER - Vector2(map.MAP_RADIUS * 0.5, 0.0))
+		var right := _terrain_biome_at_pixel(map, map.MAP_CENTER + Vector2(map.MAP_RADIUS * 0.5, 0.0))
+		if left != stub.low or right != stub.high:
+			failure = ("half a disc west of the player painted biome %d and half a disc " \
+				+ "east painted %d, expected %d / %d — the map is mirrored in X") \
+				% [left, right, stub.low, stub.high]
+			break
+
+		# 2c. THE GRID SPANS THE DISC AT EVERY ZOOM, measured as the world width the
+		#     samples actually covered. Sample CENTRES are inset half a cell at each
+		#     end, so the widest row spans (GRID-1)/GRID of the disc's diameter — in
+		#     metres, that over the shared scale. The negative control is a layer
+		#     with its own hardcoded reach: it reports the SAME span at both zooms.
+		var expected_default := _expected_sample_span(map)
+		stub.reset()
+		map._tick()
+		var span_default := stub.max_x - stub.min_x
+		if absf(span_default - expected_default) > 1.0:
+			failure = "the terrain grid sampled %.1f m across at the default zoom, expected %.1f m" \
+				% [span_default, expected_default]
+			break
+		map._zoom_by(1)
+		var expected_zoomed := _expected_sample_span(map)
+		stub.reset()
+		map._tick()
+		var span_zoomed := stub.max_x - stub.min_x
+		map._zoom_by(-1)
+		if absf(span_zoomed - expected_zoomed) > 1.0:
+			failure = ("the terrain grid sampled %.1f m across one zoom step out, expected " \
+				+ "%.1f m (a layer with its own hardcoded reach reports %.1f m at both)") \
+				% [span_zoomed, expected_zoomed, expected_default]
+			break
+
+		# 2d. THE TICK SAMPLES, `_draw()` NEVER DOES. This is the widget's whole
+		#     performance shape: a `biome_at()` grid inside `_draw()` would run at
+		#     frame rate instead of 5 Hz. The tick is pushed out of reach first so
+		#     `_process` cannot take one during the wait, then a redraw is forced and
+		#     the sample counter must not move. (Under the headless dummy renderer
+		#     `_draw()` may not be dispatched at all, which makes this half of the
+		#     assertion weak rather than wrong — the count check in 2a is what proves
+		#     the samples happen on the tick.)
+		stub.reset()
+		map._tick()
+		var after_tick: int = stub.calls
+		map._time_until_tick = 10.0
+		map.queue_redraw()
+		await process_frame
+		await process_frame
+		if stub.calls != after_tick:
+			failure = ("_draw() took %d biome_at() samples — the terrain layer must read " \
+				+ "the tick's snapshot, never the world") % [stub.calls - after_tick]
+			break
+		break
+
+	# Put the real world back whatever happened, and re-tick so the map is live again.
+	map._terrain = real_terrain
+	stub.free()
+	map._zoom_index = map.ZOOM_DEFAULT_INDEX
+	map._time_until_tick = 0.0
+	map._tick()
+	if not failure.is_empty():
+		return failure
+
+	print("terrain: palette matches ground.gdshader | %d bars/%d rows, run-length merged | " \
+		% [rows, map.TERRAIN_GRID] + "grid span follows zoom | no sampling in _draw()")
+	return ""
+
+
+func _check_palette_matches_shader(map: Control) -> String:
+	"""Every row of `minimap_hud.BIOME_TINTS` against the ground shader's own uniform
+	default. Parsed out of the shader SOURCE — see GROUND_SHADER_PATH."""
+	var text := FileAccess.get_file_as_string(GROUND_SHADER_PATH)
+	if text.is_empty():
+		return "could not read %s — the map's palette cannot be checked against the ground" \
+			% GROUND_SHADER_PATH
+	var green_a: Variant = _shader_color(text, "green_a")
+	var green_b: Variant = _shader_color(text, "green_b")
+	if green_a == null or green_b == null:
+		return "ground.gdshader has no green_a/green_b uniform — the PLAINS tint cannot be derived"
+	for biome in range(map.BIOME_TINTS.size()):
+		# PLAINS (the empty uniform name) is the midpoint of the two greens the
+		# shader mottles between; every other band has a uniform of its own.
+		var want: Variant = (green_a as Color).lerp(green_b as Color, 0.5) \
+			if BIOME_UNIFORMS[biome].is_empty() else _shader_color(text, BIOME_UNIFORMS[biome])
+		if want == null:
+			return "ground.gdshader has no `%s` uniform — the map mirrors a colour that is gone" \
+				% BIOME_UNIFORMS[biome]
+		var got: Color = map.BIOME_TINTS[biome]
+		var expect: Color = want
+		if absf(got.r - expect.r) > 0.005 or absf(got.g - expect.g) > 0.005 \
+				or absf(got.b - expect.b) > 0.005:
+			return ("minimap BIOME_TINTS[%d] is (%.3f, %.3f, %.3f) but ground.gdshader paints " \
+				+ "that biome (%.3f, %.3f, %.3f) — the map and the ground disagree about a colour") \
+				% [biome, got.r, got.g, got.b, expect.r, expect.g, expect.b]
+		if absf(got.a - map.TERRAIN_ALPHA) > 0.001:
+			return "minimap BIOME_TINTS[%d] is drawn at alpha %.3f, not TERRAIN_ALPHA" % [biome, got.a]
+	return ""
+
+
+func _shader_color(text: String, uniform: String) -> Variant:
+	"""One `uniform vec3 <name>: source_color = vec3(r, g, b);` default out of the
+	shader source, or null when there is no such uniform."""
+	var decl := text.find("uniform vec3 %s" % uniform)
+	if decl < 0:
+		return null
+	var open_paren := text.find("vec3(", decl + 13)
+	var close_paren := text.find(")", open_paren)
+	if open_paren < 0 or close_paren < 0:
+		return null
+	var parts := text.substr(open_paren + 5, close_paren - open_paren - 5).split(",")
+	if parts.size() != 3:
+		return null
+	return Color(parts[0].to_float(), parts[1].to_float(), parts[2].to_float())
+
+
+func _expected_sample_span(map: Control) -> float:
+	"""How wide in world metres the terrain grid's samples should reach at the
+	current zoom. Sample CENTRES sit half a cell in from each edge, so they span
+	(GRID-1)/GRID of the disc's diameter — which in metres is that over the ONE
+	shared scale, i.e. purely a function of `_view_radius()`."""
+	return float(map.TERRAIN_GRID - 1) / float(map.TERRAIN_GRID) * 2.0 * map._view_radius()
+
+
+func _terrain_biome_at_pixel(map: Control, at: Vector2) -> int:
+	"""Which biome the terrain layer actually PAINTED at a point on the widget: find
+	the bar covering it and match its colour back to a palette row. Reading the
+	painted output rather than re-sampling keeps every assertion above an EFFECT
+	measurement, in this file's usual style. -1 = nothing painted there, -2 = painted
+	a colour that is in no palette row."""
+	var half: float = map.TERRAIN_CELL * 0.5
+	for i in range(map._terrain_count):
+		var a: Vector2 = map._terrain_points[i * 2]
+		var b: Vector2 = map._terrain_points[i * 2 + 1]
+		if absf(at.y - a.y) > half or at.x < a.x or at.x > b.x:
+			continue
+		var painted: Color = map._terrain_colors[i]
+		for biome in range(map.BIOME_TINTS.size()):
+			if (map.BIOME_TINTS[biome] as Color).is_equal_approx(painted):
+				return biome
+		return -2
+	return -1
+
+
+func _check_widget_rect() -> String:
+	"""The widget's own rect, which lives in main.tscn while MAP_RADIUS/MAP_CENTER
+	live in minimap_hud.gd — two files that can drift apart in silence.
+
+	The caption is centred across `size.x` starting at x = 0, so a width that is not
+	exactly twice MAP_CENTER.x slides the coordinates off the disc's axis; a disc
+	taller than the rect walks the widget into whatever the HUD puts beside it. The
+	neighbour list is the LEFT-EDGE column — the only side this centre-left-anchored
+	widget can grow into — and includes the debug overlays, which are laid out
+	whether or not they happen to be visible."""
+	var map: Control = root.get_node_or_null("Main/HUD/MinimapHUD")
+	if map == null:
+		return "no MinimapHUD under Main/HUD"
+	if absf(map.size.x - map.MAP_CENTER.x * 2.0) > 0.5:
+		return ("the MinimapHUD control is %.0f px wide but the disc is centred at x = %.0f " \
+			+ "— the caption is centred across size.x and would sit off the disc's axis") \
+			% [map.size.x, map.MAP_CENTER.x]
+	if map.MAP_CENTER.x - map.MAP_RADIUS < 0.0 or map.MAP_CENTER.y - map.MAP_RADIUS < 0.0:
+		return "the %.0f px disc pokes out of the top/left of its own control" % map.MAP_RADIUS
+	# Two lines of caption below the disc: the first baseline sits TEXT_TOP_GAP under
+	# the rim, the second roughly a font size below that, plus its descent.
+	var caption_bottom: float = map.MAP_CENTER.y + map.MAP_RADIUS + map.TEXT_TOP_GAP \
+		+ map.TEXT_SIZE * 2.0
+	if map.size.y < caption_bottom:
+		return "the MinimapHUD control is %.0f px tall but the disc + caption need %.0f px" \
+			% [map.size.y, caption_bottom]
+	var rect := map.get_global_rect()
+	var viewport_width := map.get_viewport_rect().size.x
+	for neighbour_name in ["LivesHUD", "PerfOverlay", "MotionDebug", "TouchControls"]:
+		var other: Control = root.get_node_or_null("Main/HUD/%s" % neighbour_name) as Control
+		# Skip the full-screen overlays: they legitimately cover everything.
+		if other == null or other.size.x >= viewport_width - 1.0:
+			continue
+		if rect.intersects(other.get_global_rect()):
+			return "the %.0f px minimap widget overlaps %s (%s vs %s)" \
+				% [map.MAP_RADIUS, neighbour_name, rect, other.get_global_rect()]
+	print("widget: %.0f px disc in a %.0f x %.0f rect, clear of its HUD neighbours" \
+		% [map.MAP_RADIUS, map.size.x, map.size.y])
 	return ""
 
 
