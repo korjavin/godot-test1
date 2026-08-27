@@ -497,6 +497,10 @@ func _on_play_solo_pressed() -> void:
 
 
 func _on_multiplayer_pressed() -> void:
+	# Throw the preloaded intro film away: this press opens a panel rather than
+	# starting a game, so the film is never coming and a still-buffering 20 MB
+	# source has no business surviving into the multiplayer session.
+	IntroVideo.discard()
 	# NOT capturing the mouse: the panel is about to open and wants the cursor.
 	# On web `Input.set_mouse_mode(CAPTURED)` only REQUESTS pointer lock — the
 	# browser grants it on a later task — so `mp_ui._apply_pause()`'s

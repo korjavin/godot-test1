@@ -77,12 +77,20 @@ const VIDEO_URL: String = "https://img.cc.wandergeek.org/intro/episode.mp4"
 ## punishment.
 const SKIP_HOLD_SEC: float = 1.0
 
-## The "never hang" backstop: if no frame has been painted this long after
-## `start()`, give up and start the game. Armed at `start()` and cleared by the
-## first `playing` event, so it only ever fires when playback genuinely never
-## began — a stalled CDN, or a `play()` promise that neither settles nor errors.
-## Generous, because a slow phone on a slow network is not a failure.
-const START_TIMEOUT_SEC: float = 8.0
+## The "never hang" backstop: how long playback may make NO progress before the
+## film gives up and the game starts.
+##
+## It is a **rolling** watchdog — armed at `start()` and re-armed by every
+## `timeupdate` — rather than a start-only one, because "the stream never began"
+## and "the stream stopped halfway" are the same bug to the player and the DOM
+## fires no event that reliably covers the second. `ended` and `error` are not
+## guaranteed for a connection that simply goes quiet, `stalled`/`waiting` are
+## advisory and recoverable, and on a phone there is no keyboard to skip with. One
+## timer that only survives while `currentTime` keeps moving covers a dead CDN, a
+## `play()` promise that never settles, and a mid-film stall with no special case
+## for any of them. Generous, because a slow phone on a slow network is not a
+## failure — but finite, because a paused world behind a frozen film is.
+const STALL_TIMEOUT_SEC: float = 8.0
 
 ## The JS scratchpad key, in the same `window`-property style `mobile_sensors.gd`
 ## uses for its retained callbacks.
@@ -140,7 +148,7 @@ static func _start_js() -> String:
 				try { s.video.currentTime = 0; } catch (e) {}
 				window.addEventListener('keydown', s.onKeyDown, true);
 				window.addEventListener('keyup', s.onKeyUp, true);
-				s.startTimer = setTimeout(s.finish, %d);
+				s.armWatchdog();
 				var p = s.video.play();
 				if (p && p.catch) {
 					p.catch(function(){
@@ -159,8 +167,21 @@ static func _start_js() -> String:
 		JS_STATE,
 		JSON.stringify(String(TranslationServer.translate("Hold SPACE to skip"))),
 		JSON.stringify(String(TranslationServer.translate("Unmute"))),
-		int(START_TIMEOUT_SEC * 1000.0),
 	]
+
+
+## Throw the (possibly still buffering) element away without ever showing it —
+## what MULTIPLAYER does, because that press opens a panel instead of starting a
+## game and the film is never coming. `preload="auto"` is a hint the browser is
+## free to take seriously, so leaving a live 20 MB source attached for a whole
+## multiplayer session is bandwidth nobody asked for. Routed through the same
+## single `finish` exit as every other ending, so the teardown is the one that is
+## already known to be complete. Idempotent, and a no-op off-web.
+static func discard() -> void:
+	if not OS.has_feature("web"):
+		return
+	JavaScriptBridge.eval(
+		"(function(){try{var s=%s;if(s){s.finish();}}catch(e){}})()" % JS_STATE, true)
 
 
 ## True once the film has ended, been skipped, or failed. **Fails open**: off-web,
@@ -237,11 +258,24 @@ static func _create_js() -> String:
 				var s = {
 					root: root, video: v, hint: hint, bar: bar, unmute: unmute,
 					done: false, started: false, failed: false,
-					holdTimer: null, startTimer: null
+					holdTimer: null, stallTimer: null
+				};
+
+				/* The rolling no-progress watchdog. Re-armed from scratch every time
+				   `currentTime` moves, so it can only ever fire on a film that has
+				   genuinely stopped. See STALL_TIMEOUT_SEC. */
+				s.armWatchdog = function(){
+					/* Nothing to watch until the film is actually on screen — a
+					   `timeupdate` during preload must not arm a timer that would
+					   tear the buffered element down behind the menu. */
+					if (!s.started) { return; }
+					if (s.stallTimer) { clearTimeout(s.stallTimer); }
+					s.stallTimer = setTimeout(s.finish, %d);
 				};
 
 				/* THE SINGLE EXIT. Every ending — natural end, skip, decode error,
-				   both play() rejections, the start timeout — comes through here, and
+				   both play() rejections, the stall watchdog, the MULTIPLAYER
+				   discard that never shows the film at all — comes through here, and
 				   it leaves NOTHING over the canvas: listeners off, source released,
 				   element detached, scratchpad cleared. Idempotent, because several
 				   of those can race. */
@@ -249,7 +283,7 @@ static func _create_js() -> String:
 					if (s.done) { return; }
 					s.done = true;
 					if (s.holdTimer) { clearTimeout(s.holdTimer); s.holdTimer = null; }
-					if (s.startTimer) { clearTimeout(s.startTimer); s.startTimer = null; }
+					if (s.stallTimer) { clearTimeout(s.stallTimer); s.stallTimer = null; }
 					window.removeEventListener('keydown', s.onKeyDown, true);
 					window.removeEventListener('keyup', s.onKeyUp, true);
 					try { v.pause(); v.removeAttribute('src'); v.load(); } catch (e) {}
@@ -264,9 +298,26 @@ static func _create_js() -> String:
 					if (p && p.catch) { p.catch(function(){}); }
 				};
 
+				/* THE FILM IS MODAL, so it swallows EVERY key, not just its own.
+				   These are registered on `window` in the CAPTURE phase, which is the
+				   topmost target there is, so `stopPropagation()` here means Godot's
+				   own canvas/document listeners never see the event at all. Without
+				   it the game is still listening behind the video — the tree is
+				   paused, but every PROCESS_MODE_ALWAYS overlay (help card, skill
+				   tree, MP panel) is not, and one stray keypress would open a panel
+				   invisibly behind the film and be sitting over a running world the
+				   moment `_dismiss()` releases the pause.
+				   `preventDefault()` stays SPACE-only: it suppresses the browser's
+				   own default action (page scroll), which is ours to cancel for the
+				   skip key and nobody else's business for the rest. */
+				s.swallow = function(e){
+					e.stopPropagation();
+					if (e.stopImmediatePropagation) { e.stopImmediatePropagation(); }
+					if (e.code === 'Space' || e.key === ' ') { e.preventDefault(); return true; }
+					return false;
+				};
 				s.onKeyDown = function(e){
-					if (e.code !== 'Space' && e.key !== ' ') { return; }
-					e.preventDefault();
+					if (!s.swallow(e)) { return; }
 					/* Key auto-repeat fires keydown over and over while held — the
 					   first one owns the timer and the rest are ignored, or every
 					   repeat would restart the hold and it could never complete. */
@@ -276,8 +327,7 @@ static func _create_js() -> String:
 					s.holdTimer = setTimeout(s.finish, %d);
 				};
 				s.onKeyUp = function(e){
-					if (e.code !== 'Space' && e.key !== ' ') { return; }
-					e.preventDefault();
+					if (!s.swallow(e)) { return; }
 					if (s.holdTimer) { clearTimeout(s.holdTimer); s.holdTimer = null; }
 					bar.style.transition = 'width .15s ease-out';
 					bar.style.width = '0';
@@ -291,9 +341,9 @@ static func _create_js() -> String:
 				v.addEventListener('error', function(){
 					if (s.started) { s.finish(); } else { s.failed = true; }
 				});
-				v.addEventListener('playing', function(){
-					if (s.startTimer) { clearTimeout(s.startTimer); s.startTimer = null; }
-				});
+				/* `timeupdate` is the only "playback actually moved" signal the DOM
+				   offers, and it is exactly what the watchdog should live on. */
+				v.addEventListener('timeupdate', function(){ s.armWatchdog(); });
 
 				document.body.appendChild(root);
 				%s = s;
@@ -303,6 +353,7 @@ static func _create_js() -> String:
 	""" % [
 		JS_STATE,
 		JSON.stringify(VIDEO_URL),
+		int(STALL_TIMEOUT_SEC * 1000.0),
 		JS_STATE,
 		String.num(SKIP_HOLD_SEC, 3),
 		int(SKIP_HOLD_SEC * 1000.0),

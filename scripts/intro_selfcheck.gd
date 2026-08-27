@@ -120,10 +120,14 @@ func _check_web_gate() -> void:
 			+ "mixed content), got %s" % IntroVideo.VIDEO_URL)
 	if IntroVideo.SKIP_HOLD_SEC <= 0.0:
 		_fail("SKIP_HOLD_SEC must be positive, or a stray SPACE tap skips the film")
-	if IntroVideo.START_TIMEOUT_SEC <= IntroVideo.SKIP_HOLD_SEC:
-		_fail("START_TIMEOUT_SEC (%f) must exceed SKIP_HOLD_SEC (%f) — the hang " \
-			% [IntroVideo.START_TIMEOUT_SEC, IntroVideo.SKIP_HOLD_SEC] \
+	if IntroVideo.STALL_TIMEOUT_SEC <= IntroVideo.SKIP_HOLD_SEC:
+		_fail("STALL_TIMEOUT_SEC (%f) must exceed SKIP_HOLD_SEC (%f) — the hang " \
+			% [IntroVideo.STALL_TIMEOUT_SEC, IntroVideo.SKIP_HOLD_SEC] \
 			+ "backstop firing before a deliberate skip can complete is a bug")
+
+	# `discard()` is the MULTIPLAYER path's teardown. Off-web it must be as inert
+	# as the rest — it is called unconditionally from `_on_multiplayer_pressed()`.
+	IntroVideo.discard()
 
 
 # ============================================================================
@@ -153,9 +157,22 @@ func _check_generated_js() -> void:
 	if not start_js.contains("s.video.muted = true"):
 		_fail("_start_js() lost its muted retry — a browser that refuses audible " \
 			+ "autoplay would leave the player on a silent black rectangle")
-	if not start_js.contains("s.startTimer = setTimeout(s.finish"):
-		_fail("_start_js() no longer arms the start timeout — a stalled stream " \
-			+ "would hang the start menu forever")
+	if not start_js.contains("s.armWatchdog()"):
+		_fail("_start_js() no longer arms the stall watchdog — a stream that never " \
+			+ "plays would hang the start menu forever")
+
+	# The watchdog has to ROLL. A start-only timeout looks identical in a passing
+	# build and hangs the game on any mid-film stall, which fires no `ended`, no
+	# `error`, and cannot be skipped at all on a phone.
+	if not js.contains("addEventListener('timeupdate'"):
+		_fail("_create_js() no longer re-arms the watchdog on `timeupdate` — a film " \
+			+ "that stalls after it started playing would pause the world forever")
+	# The film is modal. Without capture-phase swallowing, a stray keypress opens a
+	# PROCESS_MODE_ALWAYS panel invisibly behind the video, and it is sitting over
+	# a running world the moment `_dismiss()` releases the pause.
+	if not js.contains("e.stopPropagation()"):
+		_fail("_create_js() no longer swallows keys — the game is still listening " \
+			+ "behind the film")
 
 	if not js.contains("width:100%;"):
 		_fail("_create_js() lost its `width:100%` — the CSS percentages did not " \
