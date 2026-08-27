@@ -38,12 +38,21 @@ Taken from the lore vault, lightly adapted.
 > law-enforcement unit loose in public is an existential problem for the company's name. The
 > hunt starts immediately.
 >
-> **What this costs, stated plainly:** the vault's "the menace is indifference" is no longer
-> literally true, and anything built on bureaucratic *slowness* — Recall Pressure as a
-> ticket escalating — needs re-checking. What survives, and must be protected, is
-> **soulless, not menacing**: nobody hates the heroes, the company is closing a liability
-> before anyone outside finds out. Urgency is not malice. The paragraphs below still read as
-> written *except* for the delay.
+> **What this costs, stated plainly.** The vault's "the menace is indifference" is no longer
+> true. Codex put the correction sharply: the rewrite preserves **impersonality**, but it
+> cannot preserve *indifference in time* — an immediate hunt is a knowing corporate action
+> with harmful consequences, so GastroDefense **is** an antagonist now, whether or not any
+> employee hates them. "No malice" prevents a cartoon villain; it does not make the company
+> morally neutral, and §4 below should not pretend otherwise.
+>
+> **What replaces it:** *ordinary containment procedure at emergency speed.* The system
+> classifies an uncontrolled prototype as a disclosure risk and executes retrieval; the
+> robots capture, catalogue and transport, and never taunt, torture or improvise.
+>
+> **Required downstream change:** **Recall Pressure is reframed as containment escalation** —
+> progressively more capable automated retrieval measures because the same *live* incident
+> stays unresolved. It is still a workflow; it is no longer a ticket waking up late. §4's
+> description of it as bureaucratic escalation is superseded by this.
 
 Project AEGIS-4 fractured in a lunchtime accident and walked out as four people.
 **GastroDefense Inc.** — the corporation that built it — is recalling the prototype, and

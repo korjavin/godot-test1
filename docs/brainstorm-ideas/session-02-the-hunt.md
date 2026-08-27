@@ -360,20 +360,50 @@ the player is free to decline to earn. And a threshold can trip in a **dramatica
 meaningless moment**, mid-field, because a counter ticked over while they were picking up
 coins.
 
-**Proposal: skill points are a *floor*, not a trigger.** The abduction requires both:
+**Settled: skill points are a *floor*, not a trigger.** The abduction requires both, and the
+two jobs stay separate:
 
-- **Mechanically ready** — enough skill points that the three-hero aftermath is survivable.
-  This is the owner's metric doing the job it is genuinely good at: guaranteeing fairness.
-- **Narratively positioned** — the player has reached a specific story beat, and *that* is
-  what fires it.
+- **Readiness floor** — prevents the three-hero aftermath from being unfair.
+- **Story beat** — determines *where and why* Primm is taken.
 
-The floor protects the player; the beat protects the story. The twist then always lands
-somewhere it means something, and never lands on someone who cannot cope with what follows.
+### Make it a *relevant capability* floor, not a point count
 
-*Put to codex, along with two follow-ups: what to do with a player who reaches the beat below
-the floor (my instinct — quietly make the last stretch generous rather than making them wait),
-and whether being **cornered by hunters** could itself be the trigger, which is more earned
-but risks punishing weak players with plot and rewarding strong ones with delay.*
+Codex's correction, and it matters: **generic skill points can be hoarded, or spent entirely
+on farm-only `run_speed` / `streak_burst`** — neither of which says anything about tower
+readiness. A player could cross a numeric threshold while being no better equipped than
+before.
+
+So count the **tower-relevant power actually available to the three survivors** — spent
+relevant ranks, plus any unspent points the player could immediately allocate — or require a
+small, visible **rescue-prep bundle**. This matters especially in multiplayer, where
+progression is personal and one player's hoarding is not the party's readiness.
+
+### At the beat but under the floor: stage it, don't stall it
+
+**Do not silently wait.** My instinct was to quietly make the last stretch generous; codex is
+right that **explicit beats invisible**. Instead, enter a visible **pre-capture staging
+state**:
+
+- The hunters have **found the route**.
+- The party recognises it **cannot survive the next escalation**.
+- The field offers **marked catch-up quests** with generous but **finite** coin rewards.
+
+The player now understands *both* what they need and where to get it. **The capture then
+fires on return to the marked narrative location — never on a random pickup.** Nobody wanders
+around wondering why the plot stopped.
+
+### Not the Nth hunter failure
+
+I asked whether being cornered by hunters could itself be the trigger. **No** — it punishes
+the player who is already struggling and makes expert players *delay a required story beat*.
+
+Instead the hunter encounter is the **texture** of a capture that floor-plus-beat has already
+decided. Once both conditions are met, the party faces an escalating, **playable** hunt:
+success changes the rescue state — alarm, route, supplies, intel, allies — but **Primm's steel
+containment is the fixed ending of that encounter.**
+
+This is the same rule as before, applied again: *the player is allowed to win the objective
+they were actually given, and is never tricked into believing they can avoid the unavoidable.*
 
 ## Still open
 

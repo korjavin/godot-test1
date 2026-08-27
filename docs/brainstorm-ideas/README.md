@@ -28,10 +28,16 @@ FACILITY` means **reintegration — un-make**: W-01 and P-03 are "specification 
 P-02 and T-04 are "non-specification outputs — disposal." Nobody asked them. The consent
 field was deleted in revision 3 and never written again.
 
-**There is still no villain to punch.** Nobody here hates them. GastroDefense is not
-pursuing four people out of malice — it is closing a liability before anyone outside finds
-out, which is the most corporate motive there is. It moves fast and it never stops, not
-because it is cruel, but because *reputational risk does not get tired.*
+**There is still no villain to punch** — but be honest about what changed. An immediate hunt
+is a *knowing* corporate action with harmful consequences, so GastroDefense **is** an
+antagonist now, whether or not a single employee hates them. "No malice" stops it becoming a
+cartoon villain; it does not make it morally neutral.
+
+What it is instead: **ordinary containment procedure at emergency speed.** The system
+classifies an uncontrolled prototype as a disclosure risk and executes retrieval. The robots
+**capture, catalogue and transport** — they do not taunt, torture or improvise. Nobody is
+pursuing these four *emotionally*. It moves fast and never stops, not because it is cruel,
+but because *reputational risk does not get tired.*
 
 ### What they run toward
 
@@ -142,10 +148,10 @@ that running the field will fix it. Hard and legible is content; hard and ambigu
 Nothing you *solved* is ever taken back — opened routes and met gates stay open — but the
 guards come back, so no cleared room becomes an empty corridor.
 
-*(Status: **Recall Pressure**, from session 01, has not been re-validated against this
-structure. Its original job was to punish skipping optional anchors, and there are no
-optional anchors now. The natural merge is that **the hunt itself is the pressure** — how
-close the fleet is to taking someone — but that is a proposal, not a settled decision.)*
+And behind all of it, the pressure rises. **Recall Pressure is now containment escalation:**
+progressively more capable automated retrieval measures, deployed because *the same live
+incident is still unresolved.* It is still a workflow — just one built to close a
+reputational emergency fast, rather than a ticket finally waking up after eighteen months.
 
 ### The ending: the mechanic was an argument all along
 
