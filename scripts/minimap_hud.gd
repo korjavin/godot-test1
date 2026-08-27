@@ -15,6 +15,12 @@ extends Control
 ##     (rather than rotating the map under a fixed arrow) is deliberate: the coin
 ##     road always trends +X by construction, so a fixed frame makes "the road goes
 ##     that way" readable at a glance, and it costs no per-point rotation.
+##   * The BIOME FIELD across the whole disc, as coloured bands — so the desert or
+##     the snow you are walking toward is visible before you reach it, not just the
+##     one you are standing in. The colours are copied from
+##     assets/shaders/ground.gdshader and checked against it by minimap_selfcheck:
+##     a map that disagrees with the ground about where a band sits is worse than a
+##     map with no colour (see BIOME_TINTS and _gather_terrain).
 ##   * The player as a triangle at the centre, rotated to the character's facing.
 ##   * The coin road centerline as a polyline, read straight out of the terrain's
 ##     existing station cache (see _gather_road below).
@@ -50,8 +56,15 @@ extends Control
 ##     polyline for the road rather than ~20 lines, one multiline for the whole
 ##     crocodile pack rather than one circle each, ONE multiline for every landmark
 ##     X on screen rather than a polygon each, one two-line string rather than
-##     two. Total cost of the map: +10 draw calls, +1 more while any landmark is
-##     loaded (0 when none is), no measurable CPU change.
+##     two, ONE multiline of run-length bars for the entire terrain field rather
+##     than a rect per cell. Total cost of the map: +10 draw calls, +1 more while
+##     any landmark is loaded (0 when none is), no measurable CPU change.
+##   * The terrain field is the one layer with a real CPU cost: TERRAIN_GRID^2
+##     `biome_at()` samples per TICK, measured at ~0.24 ms on desktop and ~1 ms in
+##     the browser — once every 200 ms, against a 33 ms spike threshold. It is
+##     sampled in `_gather_terrain()` into the same kind of reusable buffer every
+##     other layer uses; `_draw()` never calls `biome_at()`, and minimap_selfcheck
+##     measures that it doesn't.
 ##
 ## Toggle with M (a raw keycode like perf_overlay's F3 and motion_debug's F4, so it
 ## stays outside the project input map and can't collide with a gameplay action).
@@ -85,11 +98,18 @@ const ZOOM_DEFAULT_INDEX: int = 2
 const ZOOM_IN_KEYCODES: Array[Key] = [KEY_EQUAL, KEY_PLUS, KEY_KP_ADD]
 const ZOOM_OUT_KEYCODES: Array[Key] = [KEY_MINUS, KEY_KP_SUBTRACT]
 
-## Radius of the drawn map disc, in pixels.
-const MAP_RADIUS: float = 62.0
+## Radius of the drawn map disc, in pixels — 1.5x the 62 px the map shipped with.
+## PIXELS ONLY. How many METRES the disc reaches is `_view_radius()` and is
+## deliberately unchanged at every zoom step: growing the widget makes the same
+## world bigger on screen, it does not show more of it. The terrain layer below is
+## why it grew — a 15-cell grid across 62 px is 8 px cells, which reads as noise.
+const MAP_RADIUS: float = 93.0
 
-## Centre of the map disc within this control.
-const MAP_CENTER := Vector2(70.0, 70.0)
+## Centre of the map disc within this control. `scenes/main.tscn` sizes the
+## MinimapHUD control from these two numbers — its WIDTH must stay MAP_CENTER.x * 2,
+## because the caption below the disc is centred across `size.x` and would otherwise
+## drift off the disc's axis. `minimap_selfcheck` asserts the rect still holds both.
+const MAP_CENTER := Vector2(101.0, 101.0)
 
 ## Fraction of the map's reach within which crocodiles get a dot — a FRACTION, not
 ## a metre count, so it follows the zoom instead of needing its own step table.
@@ -188,6 +208,34 @@ const ROAD_WIDTH: float = 2.5
 const TEXT_SIZE: int = 15
 const TEXT_TOP_GAP: float = 18.0
 
+## Terrain layer: biome samples per axis across the disc's bounding square.
+##
+## COARSE ON PURPOSE. The biome field has a 400 m wavelength (BIOME_CELL_SIZE, ~8
+## chunks) while the disc reaches 30-130 m, so the whole map is a fraction of one
+## noise cell: a fine grid resolves nothing a coarse one misses, it just costs
+## samples. 15 is picked from the other end instead — it is the coarsest grid whose
+## cells (2 * MAP_RADIUS / 15 = 12.4 px) still read as a band rather than as
+## chequerboard — and being ODD puts a row and a column exactly on the centre, so
+## the cell under the player arrow is a real sample and not an interpolation of two.
+##
+## MEASURED COST (desktop, Godot 4.5): 177 of the 225 cells fall inside the disc and
+## `biome_at()` costs ~1.35 us, so a tick spends ~0.24 ms sampling — 1.2 ms per
+## second at the 5 Hz tick rate. Web GDScript runs this maybe 2-4x slower, so
+## ~0.5-1.0 ms once every 200 ms; the spike log's threshold is 33 ms.
+const TERRAIN_GRID: int = 15
+
+## Side of one terrain cell in pixels — DERIVED, never a second number: it is the
+## disc's own diameter cut into TERRAIN_GRID. It is also the draw width of the
+## horizontal bars the layer is painted with, which is what makes the rows tile.
+const TERRAIN_CELL: float = MAP_RADIUS * 2.0 / TERRAIN_GRID
+
+## Alpha every terrain cell is painted at. The RGB comes from the ground shader
+## (see BIOME_TINTS); this is the map's own dimming, and the only part of the
+## colour that is ours: the terrain is a BACKDROP for the road, the dots and the
+## arrow, and it must never out-shout them. 0.55 is what the single whole-disc
+## tint this layer replaced was already drawn at.
+const TERRAIN_ALPHA: float = 0.55
+
 # --- Colours ----------------------------------------------------------------
 const COLOR_BACKDROP := Color(0.0, 0.0, 0.0, 0.5)   # dark disc under everything
 const COLOR_RIM := Color(1, 1, 1, 0.35)              # thin ring round the disc
@@ -206,17 +254,30 @@ const COLOR_LANDMARK := Color(0.85, 0.55, 1.0, 0.95)
 const COLOR_TEXT := Color(1, 1, 1, 0.95)
 const COLOR_RIVER_TEXT := Color(0.45, 0.75, 1.0, 0.95)
 
-## Biome tint of the map disc, indexed by endless_terrain's Biome enum
-## (PLAINS, DESERT, FOREST, MOUNTAIN — the declaration order, which is what the
-## int we get across the group boundary means). Muted on purpose: this is a
-## backdrop for the road and the dots, not the subject.
+## The terrain palette, indexed by endless_terrain's Biome enum (PLAINS, DESERT,
+## FOREST, MOUNTAIN, CITY, SNOW — the declaration order, which is what the int we
+## get across the group boundary means).
+##
+## EVERY RGB HERE IS COPIED FROM assets/shaders/ground.gdshader AND IS NOT OURS TO
+## RETUNE. The shader is where the ground's colour is decided; a map that invents
+## its own greens tells the player the desert is somewhere it isn't, which is worse
+## than a map with no colour at all. So this is a THIRD copy of the same parity
+## discipline `_biome_noise` already carries (see the CPU/GPU parity contract in
+## endless_terrain.gd): mirrored by hand, and checked by machine —
+## `minimap_selfcheck.gd` parses the shader's uniform defaults and fails if any row
+## here has drifted from them. PLAINS has no uniform of its own: the shader mottles
+## between `green_a` and `green_b` per vertex, so the map uses their midpoint, which
+## is what that mottle averages to.
+##
+## The ALPHA is ours (TERRAIN_ALPHA) — the shader paints the world, we paint a
+## backdrop that the road, the dots and the arrow have to stay legible on top of.
 const BIOME_TINTS: Array[Color] = [
-	Color(0.30, 0.42, 0.24, 0.55),  # PLAINS   — green
-	Color(0.55, 0.46, 0.26, 0.55),  # DESERT   — sand
-	Color(0.16, 0.34, 0.20, 0.60),  # FOREST   — deep green
-	Color(0.40, 0.40, 0.44, 0.55),  # MOUNTAIN — grey
-	Color(0.42, 0.40, 0.38, 0.55),  # CITY     — paved warm grey (matches ground.gdshader city_color)
-	Color(0.72, 0.78, 0.84, 0.55),  # SNOW     — frost pale (matches ground.gdshader snow_color)
+	Color(0.31, 0.495, 0.25, TERRAIN_ALPHA),  # PLAINS   — midpoint of green_a/green_b
+	Color(0.78, 0.68, 0.44, TERRAIN_ALPHA),   # DESERT   — desert_color
+	Color(0.13, 0.30, 0.17, TERRAIN_ALPHA),   # FOREST   — forest_color
+	Color(0.45, 0.43, 0.40, TERRAIN_ALPHA),   # MOUNTAIN — mountain_color
+	Color(0.50, 0.48, 0.45, TERRAIN_ALPHA),   # CITY     — city_color
+	Color(0.85, 0.89, 0.93, TERRAIN_ALPHA),   # SNOW     — snow_color
 ]
 ## Indexed by endless_terrain.Biome, so the ORDER here is the enum's integer
 ## order and NOT the order the bands sit in the noise field — CITY is appended
@@ -258,6 +319,22 @@ var _facing: Vector2 = Vector2(1.0, 0.0)
 ## Snapshot of the world under the player.
 var _biome: int = 0
 var _in_river: bool = false
+
+## The terrain layer, in the same "segment pairs for ONE draw call" form the
+## teammate and landmark buffers use: each entry is a HORIZONTAL BAR — a run of
+## same-biome grid cells along one row, drawn through `draw_multiline_colors()` at
+## a width of TERRAIN_CELL so consecutive rows tile into a solid field. One colour
+## per SEGMENT, so `_terrain_colors` is half the length of `_terrain_points`.
+##
+## RUN-LENGTH IS WHAT KEEPS THIS ONE DRAW CALL AND CHEAP TO FILL: the biome field
+## is smooth at this scale, so a row is normally one or two runs, not fifteen —
+## but the buffers are sized for the worst case (every cell its own run) so the
+## tick never allocates and there is no cap that could ever bite and silently drop
+## part of the map. The unused tail is parked off-control and transparent, exactly
+## like the crocodile, teammate and landmark tails.
+var _terrain_points: PackedVector2Array = PackedVector2Array()
+var _terrain_colors: PackedColorArray = PackedColorArray()
+var _terrain_count: int = 0
 
 ## Road centerline in ABSOLUTE control-space pixels, already clamped inside the map
 ## disc, ready to hand straight to ONE draw_polyline(). It is resized only when the
@@ -322,6 +399,11 @@ func _ready() -> void:
 	# And for the landmarks — FOUR points and TWO colours per X (two segments).
 	_landmark_points.resize(MAX_LANDMARK_DOTS * 4)
 	_landmark_colors.resize(MAX_LANDMARK_DOTS * 2)
+	# The terrain field: worst case is every cell its own run, i.e. one bar per
+	# cell — two points and one colour each. Sized once here for that worst case so
+	# the tick never allocates and no run is ever dropped (see _gather_terrain).
+	_terrain_points.resize(TERRAIN_GRID * TERRAIN_GRID * 2)
+	_terrain_colors.resize(TERRAIN_GRID * TERRAIN_GRID)
 	_build_zoom_buttons()
 
 
@@ -446,6 +528,7 @@ func _tick() -> void:
 		_terrain = get_tree().get_first_node_in_group("terrain")
 
 	_gather_world()
+	_gather_terrain()
 	_gather_road()
 	_gather_crocodiles()
 	_gather_landmarks()
@@ -459,12 +542,20 @@ func _gather_world() -> void:
 	"""Biome + river underfoot: exactly TWO noise evaluations per tick.
 
 	Both are pure functions of world position (endless_terrain documents them as
-	safe to call every physics tick), so this is genuinely cheap. Sampling a GRID
-	of is_river_at() to draw river BANDS on the map was deliberately skipped: even
-	a coarse 9x9 grid is 81 noise evaluations per tick, a ~0.4 ms GDScript spike on
-	desktop and worse in the browser, for decoration. ponytail: if river bands are
-	wanted later, amortise them — sample a few grid cells per tick into a persistent
-	buffer instead of the whole grid at once."""
+	safe to call every physics tick), so this is genuinely cheap. `_biome` is still
+	read here, and separately from the terrain grid `_gather_terrain()` samples,
+	because the CAPTION must name the biome the player is actually standing in — a
+	grid cell is 12 px of map and its centre is not the player.
+
+	RIVER BANDS ARE STILL NOT DRAWN, and now for a sharper reason than cost. A river
+	is a ~8 m contour of the same field, which is 12 px at the default zoom — one
+	TERRAIN_CELL. Sampling it on the terrain grid would catch roughly every other
+	cell a river crosses, i.e. paint blue confetti along a line that is not the
+	line, and a map that puts the water in the wrong place is exactly the failure
+	the CPU/GPU parity contract exists to prevent. So the river stays what it was:
+	the honest "~ river ~" caption for the band you are standing in. ponytail: if
+	river bands are ever wanted on the disc they need contour tracing off the raw
+	field value, not a denser grid — a denser grid only makes the confetti finer."""
 	_biome = 0
 	_in_river = false
 	if _terrain == null:
@@ -476,6 +567,109 @@ func _gather_world() -> void:
 		_biome = clampi(b, 0, BIOME_NAMES.size() - 1)
 	if _terrain.has_method("is_river_at"):
 		_in_river = _terrain.is_river_at(_player_pos)
+
+
+func _gather_terrain() -> void:
+	"""Paint the biome FIELD across the disc — the map's bottom layer.
+
+	WHY A GRID AT ALL. The map used to tint the whole disc with the ONE biome under
+	the player, which answers "what am I in" and nothing about "what am I walking
+	toward". The field is what the player steers by, so the field is what gets drawn.
+
+	SHAPE OF THE WORK, and why it fits the tick budget:
+	  * TERRAIN_GRID x TERRAIN_GRID cells over the disc's bounding square, and only
+	    the ~78% whose centre falls inside the disc are sampled at all — 177 of 225
+	    `biome_at()` calls, ~0.24 ms (see TERRAIN_GRID for the measurement).
+	  * Each ROW is emitted as RUN-LENGTH bars: consecutive cells of the same biome
+	    become ONE horizontal segment. The field is smooth at this scale so a row is
+	    normally one or two bars, and the whole layer is ONE
+	    `draw_multiline_colors()` at TERRAIN_CELL width — the same draw-call
+	    discipline as the crocodile pack and the landmark X marks, and exactly the
+	    same cost as the single tinted circle it replaces.
+	  * Each row is clipped to the disc by its own CHORD, so the layer keeps the
+	    circular silhouette instead of painting a square. The steps that leaves at
+	    the rim are one cell tall and sit inside the smooth dark backdrop circle
+	    that is still drawn underneath.
+
+	EVERYTHING GEOMETRIC HERE COMES FROM MAP_RADIUS AND `_map_scale()`. TERRAIN_CELL
+	is the disc's own diameter cut into TERRAIN_GRID and the world extent of a cell
+	is that over the shared scale, so the grid covers exactly the disc at every zoom
+	and there is no second number meaning "how far the map reaches"."""
+	_terrain_count = 0
+	# A scene with no terrain (or an older one without the API) simply has no
+	# terrain layer — the dark backdrop disc underneath is what shows through.
+	if _terrain != null and _terrain.has_method("biome_at"):
+		# World metres per pixel — the inverse of the ONE shared scale factor.
+		var metres_per_px := 1.0 / _map_scale()
+		var origin := MAP_CENTER - Vector2(MAP_RADIUS, MAP_RADIUS)
+		var half_cell := TERRAIN_CELL * 0.5
+		for j in range(TERRAIN_GRID):
+			var py := origin.y + (float(j) + 0.5) * TERRAIN_CELL
+			var dy := py - MAP_CENTER.y
+			# The chord at the bar's OUTER EDGE, never at its centre line. A bar is
+			# TERRAIN_CELL tall, so clipping it to the centre-line chord hangs its
+			# outer corners several pixels past the ring — the same "the mark's ink,
+			# not its anchor" rule LANDMARK_MARK_REACH states for the landmark X.
+			# The price is that the outermost row of the grid always comes out empty
+			# (its outer edge sits exactly on the rim), so the field has a one-cell
+			# flat cap top and bottom, over the dark backdrop disc that is still a
+			# true circle. A cap inside the ring beats ink outside it.
+			var edge := absf(dy) + half_cell
+			var chord_sq := MAP_RADIUS * MAP_RADIUS - edge * edge
+			if chord_sq <= 0.0:
+				continue  # row's bar would not fit inside the disc
+			var chord := sqrt(chord_sq)
+			var left_limit := MAP_CENTER.x - chord
+			var right_limit := MAP_CENTER.x + chord
+			# The cells whose CENTRE falls inside the chord, solved directly rather
+			# than tested per cell: centre i sits at origin.x + (i + 0.5) * CELL.
+			var i0 := maxi(int(ceil((left_limit - origin.x) / TERRAIN_CELL - 0.5)), 0)
+			var i1 := mini(int(floor((right_limit - origin.x) / TERRAIN_CELL - 0.5)), TERRAIN_GRID - 1)
+			if i0 > i1:
+				continue
+			var world_z := _player_pos.z + dy * metres_per_px
+			var run_biome := -1
+			var run_left := 0.0
+			for i in range(i0, i1 + 1):
+				var px := origin.x + (float(i) + 0.5) * TERRAIN_CELL
+				# The enum arrives as a plain int across the group boundary and
+				# indexes our palette, so it is clamped like `_gather_world` does.
+				var b: int = clampi(_terrain.biome_at(_player_pos.x + (px - MAP_CENTER.x) * metres_per_px,
+					world_z), 0, BIOME_TINTS.size() - 1)
+				if b == run_biome:
+					continue  # extend the open run; nothing to emit yet
+				if run_biome >= 0:
+					_push_terrain_bar(run_left, px - half_cell, py, run_biome)
+				run_biome = b
+				# The first run of the row starts at the chord, not at its cell edge.
+				run_left = maxf(px - half_cell, left_limit)
+			# Flush the open run, ended at the chord for the same reason.
+			_push_terrain_bar(run_left,
+				minf(origin.x + (float(i1) + 1.0) * TERRAIN_CELL, right_limit), py, run_biome)
+	# Park the unused tail off-control and transparent, for the reason every other
+	# layer here parks its tail: the buffers are permanently sized so the tick never
+	# allocates, and `draw_multiline_colors()` consumes the whole array. Parking the
+	# WHOLE tail rather than only the slots that just went out of use was measured
+	# and kept: it is ~5% of this layer's tick, and it is one fewer piece of state
+	# than a high-water mark that four sibling layers here manage to live without.
+	for i in range(_terrain_count * 2, _terrain_points.size()):
+		_terrain_points[i] = PARKED_SEGMENT
+	for i in range(_terrain_count, _terrain_colors.size()):
+		_terrain_colors[i] = Color(0, 0, 0, 0)
+
+
+func _push_terrain_bar(x0: float, x1: float, y: float, biome: int) -> void:
+	"""Emit one run of same-biome cells as a horizontal bar. Zero-width runs (a run
+	whose whole cell was clipped away by the chord) are dropped rather than emitted
+	as a degenerate segment. The buffers are sized for one bar per cell, so there is
+	no bound to check here and no run that can ever be silently lost."""
+	if x1 <= x0 or biome < 0:
+		return
+	var p := _terrain_count * 2
+	_terrain_points[p] = Vector2(x0, y)
+	_terrain_points[p + 1] = Vector2(x1, y)
+	_terrain_colors[_terrain_count] = BIOME_TINTS[biome]
+	_terrain_count += 1
 
 
 func _gather_road() -> void:
@@ -733,11 +927,17 @@ func _draw() -> void:
 	if not _have_data:
 		return
 
-	# 1. The backdrop, painted outside-in: rim ring, dark disc, biome tint. Three
-	#    filled circles — see RIM_WIDTH for why the rim is not a draw_arc().
+	# 1. The backdrop, painted outside-in: rim ring, dark disc, then the biome FIELD.
+	#    Two filled circles — see RIM_WIDTH for why the rim is not a draw_arc() —
+	#    plus ONE multiline for the whole terrain layer, which is the same draw-call
+	#    cost as the single whole-disc tint circle it replaced. The dark disc stays
+	#    underneath: it is what gives the map its smooth circular edge (the terrain
+	#    rows are chord-clipped, so their own silhouette is stepped by one cell) and
+	#    what shows through in a scene with no terrain at all.
 	draw_circle(MAP_CENTER, MAP_RADIUS + RIM_WIDTH, COLOR_RIM)
 	draw_circle(MAP_CENTER, MAP_RADIUS, COLOR_BACKDROP)
-	draw_circle(MAP_CENTER, MAP_RADIUS, BIOME_TINTS[_biome])
+	if _terrain_count > 0:
+		draw_multiline_colors(_terrain_points, _terrain_colors, TERRAIN_CELL)
 
 	# 2. The coin road: ONE polyline for the whole window. The per-segment
 	#    draw_line() version this replaced cost ~20 draw calls on its own — the
