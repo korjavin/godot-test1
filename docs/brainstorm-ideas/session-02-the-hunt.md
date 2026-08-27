@@ -152,16 +152,114 @@ the problem; a second game was never the solution.
 
 If it plays well, expand that block into the richer two-sided rescue later.
 
-## Open questions
+## Owner rulings — all four questions answered (2026-08-27)
 
-1. **Difficulty on the return leg.** The difficulty gradient keys off distance from origin;
-   on the way back that *decreases*, so the game would get easier as the stakes rise —
-   exactly backwards. The return needs its own pressure curve (Recall Pressure and the
-   hunter density are the obvious candidates).
-2. **Solo abduction.** The owner thinks it happens in solo too. With one body holding all
-   four heroes, losing Primm means losing a *key*, not a player — probably the cleaner
-   version of the same beat, but it needs its own texture.
-3. **How many predators, and which.** "Reduce the number" is a ruling; the count and the
-   biome dispatch are a tuning job for later.
-4. **Does the tower use anchors at all**, or is the interior a different verb set? Sneaking
-   is not running.
+### 1. Distance is removed entirely
+
+> Забей на градиент… мы можем убрать совсем эту механику про расстояние.
+
+Not "fix the gradient" — **delete the distance mechanic.** This is larger than it sounds and
+it is a simplification, not a loss:
+
+- The return-leg problem **dissolves**. There is no longer a number that behaves wrongly
+  when you walk back, so the whole difficulty-inversion question disappears with it.
+- Session 01's *"signal resolution, not kilometres"* framing retires too — there are no
+  kilometres left to contrast against. Progress is quests and story, full stop.
+- **The game stops being a score chase and becomes an adventure.** That is the real content
+  of this ruling, and every other decision in this session points the same way.
+
+**What it touches** (scope, not resistance): `best_run_store.gd` persists best distance and
+merges it to the lobby via `/best`; `game_over_ui.gd` and the HUD display it;
+`mp_manager.gd` sums shared distance across the room. Removing the *mechanic* means deciding
+what those surfaces show instead. Most other `distance` references in the codebase are
+ordinary geometry (LOD radii, spawn checks) and are unaffected.
+
+### 2. Keep every predator — reduce the count
+
+> Оставляем всех, как сейчас, и этих микробоссов, и всех на свете, просто уменьшаем их
+> количество. Игра должна стать чуть попроще, потому что мы добавляем квесты, у игрока
+> должно быть время.
+
+All species stay, mini-bosses included. Only the **density** drops, and the reason is design
+reasoning rather than taste: **quests need time.** A player solving a puzzle cannot also be
+sprinting from a wolf pack. Difficulty is being *rebalanced toward attention*, not lowered
+out of mercy.
+
+Note this is compatible with the existing rule that entity counts are never reduced *as an
+optimization* — this is a **design** change, which is exactly the sanctioned reason.
+
+### 3. The tower is puzzles, not anchors
+
+> в башне тоже будут какие-то охранники, но их будет мало. И там в башне у нас будет в
+> основном загадки, квесты… типа найти ключ, потом ключом открыть комнату.
+
+Few guards. Mostly **puzzles and quests** — find a key, use the key to open a room.
+
+So the game has **two tempos**, and that is a feature:
+
+| | Outside | Inside the tower |
+| --- | --- | --- |
+| Verb | run | sneak, search, solve |
+| Locks | **moving** anchors, 8–12 s flow challenges | **static** locks you stand and think about |
+| Threat | hunters and predators | few guards |
+
+The identity-key idea carries across both — *who you are* is still what opens things — but
+outside it is a reflex under time pressure and inside it is a deliberate choice. Same idea,
+opposite tempo.
+
+### 4. In solo you lose a *person*, not a key
+
+> в соло тоже должен теряться игрок. Просто нужно придумать, как одна личность из этих
+> четырёх связанных меняется.
+
+I had proposed that solo loses a *key* rather than a player. **The owner rejected that**, and
+set the brief: work out how **one personality among the four linked ones changes.**
+
+The requirement, stated precisely: **the abduction must damage the survivors, not merely
+shorten the roster.** A roster is a menu, and pressing `E` past a missing entry is an
+inventory event, not a bereavement.
+
+**The answer, agreed with codex.** The loss is felt through the remaining *bodies*, and the
+vault names the mechanism: Windman and Primm are the two true fragments of one original,
+their incident-signature resonance is strongest between exactly those two, and E10 says that
+at the moment of capture **Windman feels the gap where the resonance used to be, and has no
+word for it.**
+
+So when Primm is taken, it is **Windman who changes** — because he lost half of himself
+rather than a colleague. *You do not lose one hero; you lose one hero and damage another.*
+Codex: *"Windman is the only survivor for whom Primm's absence is literally a wound."*
+
+Make it **specific**, not a stat change: altered idle and movement silhouette, broken or
+delayed voice responses, different reactions to the others, and a resonance scar that pulls
+his attention towerward.
+
+#### Change the kit — do not nerf it
+
+**This is where the idea breaks if we are careless**, and codex named it exactly: if "damage"
+means *permanently making the player worse at normal play, after an outcome they were never
+allowed to avoid*, that reads as **designer punishment, not grief.**
+
+So Windman's old resonance behaviour **becomes something else**: an unstable but more precise
+**rescue-facing** ability — expose a route, sense Primm's containment, interact with tower
+systems — carrying a situational cost or a loss of flexibility. He is genuinely not the same
+person, he remains **fully viable**, and his new state *matters to the rescue*. Grief without
+punishment.
+
+#### Two textures, both corrected by codex
+
+- **The `E` stumble happens once** — at the moment the player first tries to select Primm
+  after the capture. My version had it fire every time; codex is right that this *"turns
+  remembrance into input latency."* Afterwards the empty slot stays **visibly present**, with
+  a small non-blocking echo rather than a hitch.
+- **The compass is not a permanent arrow.** I proposed a direction indicator you cannot
+  switch off; codex is right that an exact permanent compass *trivializes navigation and
+  becomes visual noise*, especially once the tower is obvious anyway. Instead the **scar is
+  always present**, but the *direction* pulses or distorts at meaningful junctions and near
+  Primm-related systems. **Inescapable as a feeling, not as a GPS** — information only when
+  it creates a choice.
+
+## Still open
+
+- What the score/HUD surfaces show now that distance is gone.
+- The tower's puzzle vocabulary beyond key-and-door.
+- Exact predator density numbers.
