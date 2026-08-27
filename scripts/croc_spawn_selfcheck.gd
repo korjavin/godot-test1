@@ -88,6 +88,14 @@ var _biome_species: Dictionary = {}
 var _walk_speed: float = 0.0
 var _max_chase_speed: float = 0.0
 
+## The SLOWEST character's run — RUN_SPEED x the smallest CHARACTER_SPEED, both
+## read off player_controller.gd in _run(). This is the number MAX_CHASE_SPEED is
+## held under so that "running always escapes" is true, and check 8 races a burst
+## predator's whole pounce/recovery cycle against it. Derived rather than written
+## down as 9.0 because a new character with a lower speed stat would move it, and
+## a check asserting a stale 9.0 would pass while the promise quietly broke.
+var _slowest_run_speed: float = 0.0
+
 
 func _initialize() -> void:
 	_boot()
@@ -130,12 +138,23 @@ func _run() -> void:
 	var croc_consts: Dictionary = croc_ai.get_script_constant_map()
 	_species_table = croc_consts.get("SPECIES", {})
 	_max_chase_speed = float(croc_consts.get("MAX_CHASE_SPEED", 0.0))
-	_walk_speed = float(load(PLAYER_SCRIPT).get_script_constant_map().get("WALK_SPEED", 0.0))
+	var player_consts: Dictionary = load(PLAYER_SCRIPT).get_script_constant_map()
+	_walk_speed = float(player_consts.get("WALK_SPEED", 0.0))
+	# The slowest run, derived the way player_controller derives it (see
+	# _slowest_run_speed). An empty table would leave this 0.0, which check 8
+	# reports as a failure rather than passing vacuously against a zero ceiling.
+	var character_speed: Dictionary = player_consts.get("CHARACTER_SPEED", {})
+	var slowest_scale: float = INF
+	for name_v: Variant in character_speed:
+		slowest_scale = minf(slowest_scale, float(character_speed[name_v]))
+	if slowest_scale < INF:
+		_slowest_run_speed = float(player_consts.get("RUN_SPEED", 0.0)) * slowest_scale
 	_biome_species = consts.get("BIOME_SPECIES", {})
 	_check_species_table()
 	_check_pack_surround(croc_ai)
 	_check_ambush_trip_wire()
 	_check_charge_dodge(croc_ai)
+	_check_burst_escape(croc_ai)
 
 	for run_seed: int in RUN_SEEDS:
 		_sweep(terrain_script, run_seed, spawn_height, edge_inset)
@@ -842,6 +861,192 @@ func _charge_miss(croc_ai: GDScript, row: Dictionary, dodge_at: float,
 			yaw = lerp_angle(yaw, atan2(to_target.x, to_target.z), CHARGE_PROBE_DT * turn)
 		pos += Vector3(sin(yaw), 0.0, cos(yaw)) * chase * CHARGE_PROBE_DT
 	return closest
+
+
+# ============================================================================
+# CHECK 8 — a burst predator cannot outrun a RUNNING player, and CAN catch a
+#           walking one, measured over the WHOLE pounce/recovery cycle
+# ============================================================================
+
+## How long each straight-line race runs. Long enough for many complete cycles at
+## either species' cadence (the cougar's is ~1.0 s at the clamp, the hound's
+## ~0.61 s), because one cycle in isolation says nothing: the burst is supposed to
+## take ground back, and the recovery is supposed to hand more of it over.
+const BURST_RACE_SECONDS: float = 20.0
+const BURST_RACE_DT: float = 1.0 / 60.0
+
+## Where the quarry starts. Comfortably outside contact and inside every burst
+## row's detection radius, so the predator is locked on for the whole race.
+const BURST_RACE_GAP: float = 12.0
+
+## THE VERDICT AGAINST A RUNNER, and it is deliberately loose. A running player
+## must END the race further away than they started — the gap must GROW, not
+## merely fail to reach zero — by at least this much. It is a guard against the
+## recovery window being gone, not a pin on today's tuning: today's figures are
+## +39.8 m (cougar) and +30.4 m (hound) at the worst speed the game can produce.
+const BURST_RUNNER_GAIN_MIN: float = 5.0
+
+## THE VERDICT AGAINST A WALKER, the other end of the same lattice and the end a
+## burst is likelier to break. A recovery deep enough to drag the CYCLE AVERAGE
+## under WALK_SPEED would not be a nerf, it would be a predator you stroll away
+## from — so a nominal-speed animal must close the whole 12 m gap and make
+## contact inside the race.
+const BURST_WALKER_MUST_CATCH: bool = true
+
+
+func _check_burst_escape(croc_ai: GDScript) -> void:
+	"""
+	MEASURE the escape. Do not assert it.
+
+	THIS IS THE ONE CHECK IN THIS FILE GUARDING A DELIBERATE BREAK OF THE GAME'S
+	TIGHTEST CONTRACT. Every other species is clamped to MAX_CHASE_SPEED and that
+	is the end of it; the two `behavior: "burst"` rows multiply that clamped speed
+	by `burst_factor` for the length of a pounce, so a cougar at the top of the
+	distance gradient touches 11.05 m/s — above the ceiling AND above the slowest
+	character's run. The bead authorised that (">8.5 m/s"); what it authorised it
+	ON is that a running player still gets away across the FULL pounce-plus-
+	recovery cycle. That is a claim about a gap over time, so it is simulated
+	here rather than argued in a comment.
+
+	Three races per species, all straight lines, all driving the SHIPPED
+	`burst_cycle_factor` — the same static function the arm calls — so this
+	measures the cycle that ships and not a restatement of it:
+
+	  * A RUNNER at the slowest character's run, against the predator at the
+	    WORST speed the game can produce (chase clamped to MAX_CHASE_SPEED by the
+	    distance gradient). The gap must GROW.
+	  * A WALKER at WALK_SPEED, against the predator at its nominal chase speed.
+	    Contact must be made. Without this half, "the runner escapes" is also true
+	    of a species whose recovery made it slower than walking, which is not a
+	    predator.
+	  * THE NEGATIVE CONTROL: the same predator at the same clamped speed with the
+	    RECOVERY REMOVED (recover_factor pinned to the burst factor, i.e. a
+	    sustained burst). It MUST catch the runner. That is what separates "the
+	    recovery window is what saves the player" from "the numbers happened to
+	    work out": if the burst ever quietly stopped being applied at all — a
+	    typo'd key, a factor of 1.0, an arm that never fires — the control would
+	    stop catching and this check says so.
+
+	WHAT THE MODEL LEAVES OUT, honestly: turning, obstacle feelers, gravity, the
+	bite's own lunge and the per-instance size roll. All of them are straight-line
+	races down a corridor, which is both the simplest case and the WORST case for
+	the player — every one of those effects slows the predator relative to a
+	quarry running in a straight line, so a predator that cannot catch a runner
+	here cannot catch one anywhere.
+	"""
+	if _slowest_run_speed <= 0.0:
+		_fail("could not derive the slowest character's run from player_controller.gd"
+				+ " (RUN_SPEED x the smallest CHARACTER_SPEED) — check 8 would have"
+				+ " raced the burst against a ceiling of zero and passed vacuously")
+		return
+
+	var burst_species: Array[String] = []
+	for name_v: Variant in _species_table:
+		if String(_species_table[name_v].get("behavior", "")) == "burst":
+			burst_species.append(String(name_v))
+	if burst_species.is_empty():
+		_fail("no SPECIES row has behavior 'burst' — the bounded burst this check"
+				+ " measures is not reachable from any species")
+		return
+
+	for species_name: String in burst_species:
+		var row: Dictionary = _species_table[species_name]
+		var missing: Array[String] = []
+		for key: String in ["burst_distance", "recover_distance", "burst_factor",
+				"recover_factor"]:
+			if not row.has(key):
+				missing.append(key)
+		if not missing.is_empty():
+			_fail("SPECIES['%s'] has behavior 'burst' but no %s —" % [species_name, missing]
+					+ " burst_cycle_factor reads them every frame it chases, and"
+					+ " answers 1.0 (an ordinary chase) when they are gone")
+			continue
+
+		var chase: float = float(row["chase_speed"])
+		var burst_peak: float = _max_chase_speed * float(row["burst_factor"])
+
+		# THE BURST MUST ACTUALLY BE A BURST. A `burst_factor` at or under 1.0 is
+		# the silent failure this whole check exists for: everything below still
+		# runs, the runner still escapes, and the species is a slow crocodile with
+		# a long comment. The bead's own bar is the ceiling it is allowed to break.
+		if burst_peak <= _max_chase_speed:
+			_fail("SPECIES['%s'].burst_factor %.2f puts the peak at %.2f m/s, not"
+					% [species_name, float(row["burst_factor"]), burst_peak]
+					+ " above MAX_CHASE_SPEED (%.2f) — there is no burst" % _max_chase_speed)
+		if float(row["recover_factor"]) >= 1.0:
+			_fail("SPECIES['%s'].recover_factor %.2f is at or above 1.0 — the"
+					% [species_name, float(row["recover_factor"])]
+					+ " 'recovery' costs the animal nothing and the burst is a"
+					+ " permanent speed-up over the whole cycle")
+
+		# 1. The runner, against the fastest this species can ever be.
+		var runner := _burst_race(croc_ai, row, _max_chase_speed, _slowest_run_speed, false)
+		# 2. The walker, against the nominal animal.
+		var walker := _burst_race(croc_ai, row, chase, _walk_speed, false)
+		# 3. The control: same worst-case animal, recovery removed.
+		var control := _burst_race(croc_ai, row, _max_chase_speed, _slowest_run_speed, true)
+
+		print("burst escape (%s): peak %.2f m/s vs the %.2f ceiling; a %.1f m/s run"
+				% [species_name, burst_peak, _max_chase_speed, _slowest_run_speed]
+				+ " opens the %.1f m gap to %.1f m over %.0f s, a %.1f m/s walk closes"
+				% [BURST_RACE_GAP, runner, BURST_RACE_SECONDS, _walk_speed]
+				+ " it to %.1f m (same animal, recovery OFF: %.1f m)"
+				% [walker, control])
+
+		if runner - BURST_RACE_GAP < BURST_RUNNER_GAIN_MIN:
+			_fail("a running player only gained %.2f m on a %s over %.0f s"
+					% [runner - BURST_RACE_GAP, species_name, BURST_RACE_SECONDS]
+					+ " (want >= %.2f m) — the pounce is above MAX_CHASE_SPEED and"
+					% BURST_RUNNER_GAIN_MIN
+					+ " the recovery is no longer paying for it, so running has"
+					+ " stopped escaping and that is the promise the game is"
+					+ " balanced on")
+		if BURST_WALKER_MUST_CATCH and walker > 0.0:
+			_fail("a %s never caught a WALKING player — it stayed %.2f m short over"
+					% [species_name, walker] + " %.0f s. The cycle average has"
+					% BURST_RACE_SECONDS + " fallen under WALK_SPEED (%.2f), which"
+					% _walk_speed + " is not a difficulty knob but a broken predator")
+		if control > 0.0:
+			_fail("the NEGATIVE CONTROL for %s did NOT catch the runner with the"
+					% species_name + " RECOVERY SWITCHED OFF — it stayed %.2f m"
+					% control + " short. The escape measured with it on is therefore"
+					+ " not coming from the recovery window, so this check is not"
+					+ " measuring the burst at all")
+
+
+func _burst_race(croc_ai: GDScript, row: Dictionary, chase: float, quarry_speed: float,
+		no_recovery: bool) -> float:
+	"""
+	Race one burst predator against one quarry down a straight line.
+
+	@param croc_ai: the AI script, for its static burst_cycle_factor
+	@param row: the SPECIES row to simulate
+	@param chase: the predator's clamped chase speed (what _ready() resolved)
+	@param quarry_speed: the quarry's constant speed
+	@param no_recovery: the negative control — pin the recovery leg to the burst
+	                    factor, so the animal never pays for a pounce
+	@return the gap in metres at the end, or 0.0 if contact was made
+
+	The predator drives the SHIPPED `burst_cycle_factor` with the SHIPPED row, so
+	the leg lengths, the flip rule and both factors are the ones that ship. Only
+	the control mutates anything, and it mutates a COPY.
+	"""
+	var probe_row: Dictionary = row
+	if no_recovery:
+		probe_row = row.duplicate()
+		probe_row["recover_factor"] = row["burst_factor"]
+
+	var pos := Vector3.ZERO
+	var quarry := Vector3(0.0, 0.0, BURST_RACE_GAP)
+	var lock := {}
+	var steps := int(BURST_RACE_SECONDS / BURST_RACE_DT)
+	for _step in range(steps):
+		var factor: float = croc_ai.burst_cycle_factor(pos, lock, probe_row)
+		pos.z += chase * factor * BURST_RACE_DT
+		quarry.z += quarry_speed * BURST_RACE_DT
+		if quarry.z - pos.z <= 0.0:
+			return 0.0
+	return quarry.z - pos.z
 
 
 func _bearing_spread_deg(bearings: Array[float]) -> float:
