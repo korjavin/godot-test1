@@ -373,6 +373,24 @@ freedom and cost real engineering, and the cost is stated rather than glossed.
    abandoned. And note that `progression.gd` is today deliberately **run-independent** — the
    owner's ruling inverts that on purpose.
 
+8. **Permanent route mutations may only ADD.** A transformation can open a door, drop a
+   bridge, kill a scanner — it may **never remove a route**. Otherwise the guarantee below can
+   quietly break *later in the campaign*, long after the room that broke it was designed. The
+   **only** audited exception is the scar left by a successful full-custody protocol.
+
+9. **No item is held by a hero. Ever.** Keys, passes and anything else that opens something
+   belong to **the world**, not to a character — because any hero can be captured, and a
+   captive would carry the key into the cell you need it to reach.
+
+   This one is cheap to obey and quietly forbids a whole class of story beat: *"Primm hid the
+   access card on himself"* is not writable in this game. Better to know that now than to
+   discover it after the scene is written.
+
+   Both laws exist to protect the rescue guarantee: **for every non-empty subset of free
+   heroes, from every legal entry and every reachable tower state, at least one route to a
+   cell is traversable using only guaranteed capabilities and no item held by a captive.**
+   Fifteen subsets, four base-kit rescue spines, machine-checked.
+
 ## Lore → code: what already exists
 
 The vault's canon vulnerabilities map onto systems that are **already shipped**. This is
