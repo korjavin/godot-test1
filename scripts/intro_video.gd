@@ -139,7 +139,12 @@ static func _start_js() -> String:
 		(function(){
 			try {
 				var s = %s;
-				if (!s || s.failed || s.done) { return false; }
+				if (!s || s.done) { return false; }
+				/* The source already failed to load. Tear the dead element down
+				   through the single exit rather than just declining — otherwise a
+				   hidden <video> with its retained buffers outlives the whole
+				   session for a film that is never going to play. */
+				if (s.failed) { s.finish(); return false; }
 				if (s.started) { return true; }
 				s.started = true;
 				s.hint.textContent = %s;
@@ -258,7 +263,7 @@ static func _create_js() -> String:
 				var s = {
 					root: root, video: v, hint: hint, bar: bar, unmute: unmute,
 					done: false, started: false, failed: false,
-					holdTimer: null, stallTimer: null
+					holdTimer: null, stallTimer: null, seen: {}
 				};
 
 				/* The rolling no-progress watchdog. Re-armed from scratch every time
@@ -316,7 +321,9 @@ static func _create_js() -> String:
 					if (e.code === 'Space' || e.key === ' ') { e.preventDefault(); return true; }
 					return false;
 				};
+				s.keyOf = function(e){ return e.code || e.key; };
 				s.onKeyDown = function(e){
+					s.seen[s.keyOf(e)] = true;
 					if (!s.swallow(e)) { return; }
 					/* Key auto-repeat fires keydown over and over while held — the
 					   first one owns the timer and the rest are ignored, or every
@@ -327,6 +334,16 @@ static func _create_js() -> String:
 					s.holdTimer = setTimeout(s.finish, %d);
 				};
 				s.onKeyUp = function(e){
+					/* ONLY swallow the release of a press WE swallowed. The obvious
+					   victim otherwise is the SPACE that launched the film: PLAY SOLO
+					   has SPACE as its shortcut, so that keydown reached Godot before
+					   these listeners existed, and eating its keyup would leave
+					   `jump`/`ui_accept` latched down — the next press is then no
+					   longer a transition and the player's first jump after the film
+					   is silently eaten. */
+					var k = s.keyOf(e);
+					if (!s.seen[k]) { return; }
+					delete s.seen[k];
 					if (!s.swallow(e)) { return; }
 					if (s.holdTimer) { clearTimeout(s.holdTimer); s.holdTimer = null; }
 					bar.style.transition = 'width .15s ease-out';

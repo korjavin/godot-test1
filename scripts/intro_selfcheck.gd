@@ -173,6 +173,17 @@ func _check_generated_js() -> void:
 	if not js.contains("e.stopPropagation()"):
 		_fail("_create_js() no longer swallows keys — the game is still listening " \
 			+ "behind the film")
+	# ...but ONLY the release of a press it swallowed. PLAY SOLO's own shortcut is
+	# SPACE, so that keydown reached Godot before the listeners existed; eating its
+	# keyup latches `jump` down and the first jump after the film is swallowed too.
+	if not js.contains("if (!s.seen[k]) { return; }"):
+		_fail("_create_js() swallows keyups it never saw the keydown for — the " \
+			+ "SPACE that launched the film would stay latched in Godot")
+	# A source that failed during preload must be torn down, not merely declined,
+	# or a dead <video> and its buffers outlive the session.
+	if not start_js.contains("if (s.failed) { s.finish(); return false; }"):
+		_fail("_start_js() declines a failed source without tearing it down — the " \
+			+ "hidden element leaks for the rest of the session")
 
 	if not js.contains("width:100%;"):
 		_fail("_create_js() lost its `width:100%` — the CSS percentages did not " \
