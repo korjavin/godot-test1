@@ -513,7 +513,8 @@ taken is his other half rather than a colleague.
 
 ## Game over — the world ends and is *archived*, not erased
 
-**Proposal from codex; needs the owner's ruling.** It answers the question I could not.
+**SETTLED.** Proposed by codex, **approved by the owner** (2026-08-27): *"yes, to have game
+over is absolutely fine."* This is the last open question in the failure system.
 
 ### First, a correction to my framing
 

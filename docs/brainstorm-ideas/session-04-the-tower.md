@@ -386,6 +386,57 @@ With a large graph this audit is not something a human can eyeball, which is the
 change of status: **`tower_selfcheck` goes from nice-to-have to load-bearing.** Every new
 wing ships against it or does not ship.
 
+#### Codex strengthened the rule — my version had three holes, each a real softlock
+
+The subset rule as first stated is necessary but too weak. The correct statement:
+
+> For every non-empty free-hero subset, **from every legal HQ entry** and **every
+> persistent tower state reachable at that point in the campaign**, at least one route to
+> a cell is traversable using only the free heroes' **guaranteed current capabilities** and
+> **no item held by a captive.**
+
+What the first version missed, and — because a check that must enumerate "every reachable
+persistent state" is intractable as stated — the **design law that collapses each hole
+back into something a selfcheck can hold**:
+
+1. **Rank, not just identity.** A route that "belongs to Tiebi" but needs a Tiebi rank the
+   player may not own is still a dead end. The law: **each singleton rescue spine uses base
+   capability only, or ranks the readiness floor already guarantees** — and we have such a
+   floor for free: systemic capture arms after the authored Primm beat, which fires only
+   above session 02's tower-relevant capability floor. The floor the beat requires is
+   exactly the rank budget the spines may assume; the selfcheck reads one from the other
+   rather than trusting an author's memory.
+2. **Items held by captives.** If the key is in the pocket of the hero in the cell, the
+   route is not traversable. Rather than teach the selfcheck item custody, remove custody
+   from the design: **keys and quest items are party-level world state, never a hero's
+   inventory** — a found key joins the same monotone opened-set the gates live in. Nothing
+   is ever in a pocket, so nothing can be in a captive's pocket. (If a per-hero-carried
+   item is ever wanted for drama, the selfcheck must grow a custody model that day — the
+   law is what keeps that day from arriving by accident.)
+3. **Persistent state, not the pristine building.** Our own permanent route
+   transformations mutate the HQ, and a mutation could in principle *remove* the last
+   valid singleton path later in the campaign. The law: **permanent transformations are
+   edge-additive — a mutation may only open, never close or consume a passage.** (Session
+   02's table already leans this way: masses *become bridges*, seals *clear*.) Under that
+   law reachability is monotone in tower state, the pristine-plus-mandatory-story-flags
+   graph is the worst case, and "every reachable state" collapses to "the base graph, once
+   per story-flag state." The selfcheck asserts the law structurally over the mutation
+   table *and* runs reachability per story-flag state and per legal entry — the door and
+   every unlockable lift stop. If a route-destroying mutation is ever authored
+   deliberately, the check must then enumerate reachable states; that ceiling is recorded
+   here so it is a decision, not an accident.
+
+#### Four spines, not fifteen corridors
+
+Codex's structural answer to "many paths", adopted: **four base-kit rescue spines — one
+per hero — with shared neutral segments.** Each spine is traversable by its hero alone at
+floor capability; every larger subset is then covered by the *union* of its members'
+spines, for free, by the monotonicity law. The four singletons are the only cases needing
+bespoke guarantees, and they are exactly the four things the level design names and the
+selfcheck pins. This also gives "масштабен" a shape: four named routes through the
+building, braided through shared halls, is legible scale — fifteen bespoke corridors would
+be neither buildable nor readable.
+
 ### "Large-scale, many paths" — the price, stated honestly
 
 This ruling is the single biggest content commitment in these four sessions, and it
@@ -408,10 +459,12 @@ feature would be the quiet failure mode. So, plainly:
 - **The scale arrives in stages, and each stage is audit-green.** The minimum viable
   version that still *reads* as big: the entrance atrium with long sightlines up the
   building, the lift panel showing floors that exist but are not yet reachable, locked
-  routes you can see through, plus **two genuinely parallel routes to the cell block** on
-  day one — scale is felt through sightlines and denied doors, not through built volume.
-  Do not build fifteen routes up front; build the graph idiom that makes the sixteenth
-  cheap.
+  routes you can see through, and the **rescue spines** (see the softlock section: four
+  per-hero base-kit routes braided through shared neutral segments) arriving in stages —
+  the Primm-era building needs only the minus-Primm guarantee; all four spines must exist
+  by the moment systemic capture arms. Scale is felt through sightlines and denied doors,
+  not through built volume; build the graph idiom that makes the next route cheap, not
+  every route up front.
 - **Per-wing/per-floor visibility gating is mandatory from the first storey**, and each
   wing declares a draw-call budget the selfcheck asserts (the `landmark_selfcheck`
   discipline). A large interior that renders all at once does not survive the web target.
@@ -520,7 +573,7 @@ Two consequences worth saying out loud rather than discovering in testing:
 
 ### What game over means — owner decision still open
 
-The ruling names the trigger, not what is behind the screen. Two coherent options:
+The ruling names the trigger, not what is behind the screen. Three coherent options now:
 
 - **Hard:** the recall completes; the world is finished; the menu offers New Game only.
   Maximally literal, and brutal in a game whose save *is* the world.
@@ -528,10 +581,23 @@ The ruling names the trigger, not what is behind the screen. Two coherent option
   the Junior Engineer** — canon supports it (he returns running his own investigation), and
   it converts game over into a scripted bailout with a story cost rather than a deleted
   world.
+- **The full-custody protocol** — codex's proposal, and the strongest of the three: when
+  the last free hero is captured, field play ends and the party gets **one authored
+  break-out attempt inside the HQ**, using everything earlier rescues taught them about
+  the prison. All four heroes are present, so solo switches among the prisoners and every
+  multiplayer player stays active. Success frees at least one hero and returns to systemic
+  play **with a permanent scar**; failure completes the recall and ends the campaign. It
+  keeps the player's agency at the exact moment the other two options take it away, and it
+  gives every earlier rescue a second job: teaching the geography this scene is played in.
 
-Recommendation: the soft option, because "the game is the world" makes world deletion the
-harshest possible punishment for what is ultimately hunter attrition. But this is a real
-fork and it is the owner's, not ours.
+Recommendation: the **full-custody protocol**, with the soft option as the fallback if its
+authoring cost is refused — and never the hard option, because "the game is the world"
+makes world deletion the harshest possible punishment for what is ultimately hunter
+attrition. This is a real fork and it is the owner's, not ours. One planning consequence
+is flagged now, **conditional on his choice**: the protocol requires the cell block to
+support a full four-hero scene — a bounded one-captive role and a four-prisoner set piece
+are different room requirements, and the block should be designed toward the larger one
+deliberately rather than retrofitted.
 
 ## What was verified in code this session
 
@@ -596,14 +662,21 @@ Added by the same-day amendment (§7):
 
 **Still open:**
 
-1. **What is behind the game-over screen** — hard (world ends, New Game only) vs soft
-   (Continue reopens the world with one hero freed by the Junior Engineer at a story
-   cost). Recommendation: **soft**, because the save *is* the world and world deletion is
-   the harshest possible answer to hunter attrition — but this is his fork, not ours. (§7)
+1. **What is behind the game-over screen** — hard (world ends, New Game only), soft
+   (Continue with one hero freed by the Junior Engineer at a story cost), or codex's
+   **full-custody protocol** (one authored break-out attempt with all four prisoners;
+   success frees a hero and scars the world, failure ends the campaign). Recommendation:
+   the protocol, soft as fallback, never hard. The cell block's four-hero-scene
+   requirement is conditional on this ruling. (§7)
 2. **Guards are predator-class (7%), never capture** — recommended in §7 so the building
    cannot game-over you while you are inside undoing a capture; wants his yes.
 3. **Game over in a room is world-level** — free-hero set empty across the whole room, not
    per player. Adopted as the reading of his phrasing; flagged rather than assumed. (§7)
+4. **The edge-additive law and the no-custody law** (§7, codex pass) — two design laws
+   adopted to keep the strengthened softlock rule checkable: permanent transformations
+   only ever open passages, and keys are party-level state with no per-hero pockets.
+   Cheap to obey, load-bearing for the audit; the owner should know they exist before a
+   story idea collides with one.
 
 ## Beads filed
 

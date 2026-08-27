@@ -167,6 +167,15 @@ Which is also why the HQ is **large, with many ways through**. Any hero can be i
 the building has to hold a promise: **however few of you are left, there is a way in.** Not by
 making the route to the cells simple — by making sure there is always *another* one.
 
+And when the last one falls, the game does not simply stop. Field play ends and you get **one
+authored attempt inside the HQ** — all four of you in there, using everything the earlier
+rescues taught you about the building. Win, and someone walks out, and the world carries a
+scar. Lose, and GastroDefense completes its recall.
+
+Even then the world is **archived, not deleted**: it becomes a read-only record of how that
+campaign ended, and a new one starts beside it. Nothing carries over — but nothing is thrown
+away either.
+
 The menu offers **Continue** and **New Game**, and there is nothing else behind them, because
 **the game *is* the world**: one save is one world is one game. There is no account, no
 meta-layer, nothing that survives a New Game. Start over and **every hero is back to zero

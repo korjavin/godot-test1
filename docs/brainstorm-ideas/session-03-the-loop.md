@@ -385,6 +385,22 @@ colliding with the old one. Nothing about the merge logic changes; only what it 
 And a naming note worth keeping: if a command only re-rolls the field while keeping the
 campaign, it is **New World / Reroll Field**, not New Game.
 
+### A third save state: the completed world
+
+Game over does **not** delete the save. When the recall completes, that world becomes a
+**read-only completed world** — its ending, discoveries, time played, captures, final roster —
+and **Continue on it reopens the ending screen** rather than resuming play. New Game mints a
+fresh `save_id` and a zero-skill world beside it.
+
+**This creates no meta-layer**, so it does not violate "the game is the world": nothing from an
+archived world powers the next one. The archive is simply that world's final state, kept
+because deleting the evidence of a long campaign is a harsh way to treat someone who invested
+hours in it. See [session 02](session-02-the-hunt.md), "Game over".
+
+So a save is in one of three states: **active**, **completed** (read-only), or absent. The
+`save_id` namespacing already designed for New Game handles this without further work — a
+completed world is just a namespace nothing writes to any more.
+
 ### The 7% only bites if coins buy something — OWNER DECISION NEEDED
 
 Codex's sharpest point, and it is a design question rather than an engineering one:
