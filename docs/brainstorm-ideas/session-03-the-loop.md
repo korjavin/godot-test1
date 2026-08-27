@@ -110,17 +110,50 @@ lack the **rank**, lack the **execution**, or have the **wrong idea entirely** �
 the miserable version: banging your head against something that was never going to work, or
 farming for an hour to beat something that only wanted a better jump.
 
-> **A gate may be rank-gated, but it must be *legibly* rank-gated.** The game states the
-> requirement instead of letting the player infer it from repeated failure.
->
-> **Hard and legible is content. Hard and ambiguous is a bug.**
+My rule was *"a gate may be rank-gated, but it must be legibly rank-gated."* **Codex made it
+stronger, and the addition is the important half:**
 
-Preferably legible from the **fiction** rather than from a UI label — the mechanism is
-visibly too far, the gap visibly too wide — not `REQUIRES BLINK RANK 3` floating in the air.
+> A hard gate must be **diagnosable *and* forecastable**. Before repeated failure, the player
+> can tell **which capability is insufficient**, and **that field progress can improve it.**
 
-*Put to codex: how a gate announces its requirement without becoming a label, and whether
-skill-expressive obstacles and hard progression gates should be visually distinguishable on
-sight. Answer pending.*
+Legibility identifies the wall. **Forecastability tells the player what a trip to the field
+will actually change** — otherwise they understand the gate is rank-locked and still go farm
+*blindly*, which is the same misery wearing a different hat.
+
+**Validity test for any gate we build:** after one inspection or one attempt, the player can
+say *"I need more of **this** ability, and running the field can provide it."*
+
+### How a gate says that without a label
+
+No floating `REQUIRES BLINK RANK 3`. Instead, give every capability a **stable diegetic
+language**:
+
+- A demand gate is a **purpose-built corporate interface**, never ordinary geometry — a
+  phase receptacle, a mass cradle, a lift vane, a classifier screen.
+- Its **visible calibration bands and sockets** show the capability *category* and the *scale*
+  required. The hero's current effect is drawn in **the same visual language**, so a short
+  Blink and a far phase receptacle **visibly do not match**.
+- On the **first deliberate attempt**, a distinct *insufficient capacity* response: the
+  mechanism reacts **partway**, the hero says what is lacking, and the notebook records a
+  short phrasing — *"Primm's phase must reach farther."* **An explanation once, not a HUD
+  label everywhere.**
+- The skill screen then makes the direction of improvement obvious. Exact rank numbers are
+  optional; what the player needs is certainty that this is an **upgrade problem, not an
+  execution mystery.**
+
+### Two obstacle classes, unmistakable on sight
+
+| | **Challenge spaces** | **Demand gates** |
+| --- | --- | --- |
+| What | ordinary terrain, guards, moving hazards, puzzles | standardized corporate mechanisms |
+| Nature | **skill-expressive** — the base kit can solve them; ranks give safety, speed, recovery, an optional shortcut | **hard progression locks** |
+| They invite | **an attempt** | **inspection** |
+
+The reason this distinction earns its keep: **both may use a gap, or a guard.** A broad
+physical gap is a *challenge*; a **phase receptacle across it** is a declared *Primm demand*.
+Consistent silhouette, material, lighting and inspection feedback are what stop the player
+from mistaking one for the other — and mistaking them is exactly how a player ends up farming
+for a jump or grinding their face on a lock.
 
 ### Checkpoints
 
@@ -140,6 +173,7 @@ tension.
 | Persists | Resets |
 | --- | --- |
 | opened doors, bridges, permanent route transformations | ordinary guards and patrol positions |
+| **demand-gate unlocks** | temporary and timed mechanisms |
 | completed quest stages and story pages | ordinary combat outcomes |
 | unique keys | temporary and timed switches |
 | defeated **named** set-pieces | loose movable objects |
@@ -153,6 +187,14 @@ is what keeps the two layers doing different jobs instead of competing.
 This resolves both halves of the risk. Nothing you *solved* is taken back, so leaving is never
 punished; but nothing you *cleared* stays empty, so the tower never degrades into a checklist
 you grind down room by room.
+
+**A met demand gate never re-locks.** Once you have gone out, earned the rank and opened it,
+its opened state persists exactly like a door or a bridge. A player must not leave, farm,
+open a gate, and then find it shut again on the next visit — *that turns earned progression
+into upkeep*, which is the one way to make this loop feel like a job.
+
+> The tower **demands** a capability at a decisive threshold. It does not repeatedly charge
+> the player for having earned it.
 
 ## Open
 - Whether the tree needs a **tower branch** at all, or whether re-tuning the existing effects
