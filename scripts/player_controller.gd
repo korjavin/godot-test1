@@ -2167,8 +2167,9 @@ func restart_game() -> void:
 	_apply_view_mode()
 	_hide_respawn_message()
 	# Re-roll the world BEFORE teleporting back to spawn: new_run() re-seeds the
-	# terrain and synchronously rebuilds the chunks around (0,0), so reset_position()
-	# lands us on freshly generated solid ground in the same frame. Group-based
+	# terrain and synchronously lays the ground around (0,0), so reset_position()
+	# lands us on solid new-world ground in the same frame (the scenery on it fills
+	# in over the next few frames). Group-based
 	# lookup with a has_method guard — the project's no-hard-references convention.
 	var terrain := get_tree().get_first_node_in_group("terrain")
 	if terrain and terrain.has_method("new_run"):

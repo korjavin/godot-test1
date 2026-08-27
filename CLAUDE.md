@@ -41,6 +41,7 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #   prop_selfcheck           prop/structure footprints, budgets, palettes
 #   croc_spawn_selfcheck     no crocodile spawns inside stone
 #   perf_selfcheck           frame-spike telemetry (thresholds, correlation, reset)
+#   chunk_stream_selfcheck   ground-first chunk streaming (floor, debt, determinism)
 
 bash scripts/mp_e2e.sh    # two-instance multiplayer e2e; needs go + godot on PATH
 ```
@@ -74,7 +75,9 @@ silently follow a hologram.
 ### Everything in the world is spawned procedurally from the terrain
 `scripts/endless_terrain.gd` is the world engine: a dictionary of chunks keyed by
 `Vector2i`, rebuilt when the player crosses a chunk boundary. Generation is time-sliced
-— a synchronous safety ring around the player, everything else one chunk per frame.
+— the safety ring around the player gets its GROUND synchronously (the floor is the
+whole fall-through guarantee and ~3% of a chunk's cost), and every chunk's contents,
+ring included, are built one chunk per frame.
 
 Load-bearing rules:
 
