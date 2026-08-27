@@ -246,34 +246,61 @@ And then he asked the question neither codex nor I had asked:
 >
 > *(Why can't we build monotonicity on something other than the coins?)*
 
-**We can, and it dissolves the problem entirely.** Move monotonicity off the **balance** and
-onto its **components**. The balance is never stored — it is derived from three counters that
-only ever rise:
+**We can — but my first version of it was wrong, and codex broke it with a counterexample.**
 
-| Counter | Rises when | Monotone? |
-| --- | --- | --- |
-| `lifetime_earned` | a coin is picked up | yes |
-| `lifetime_spent` | points are spent on skills | yes |
-| `lifetime_lost` | a 7% death deduction is applied | yes |
+I proposed three counters — `earned`, `spent`, `lost` — each max-merged, with
+`wallet = earned − spent − lost`. **That can go negative:**
 
 ```
-wallet = lifetime_earned − lifetime_spent − lifetime_lost
-levels = f(lifetime_earned)
+both devices see earned = 100
+device A spends 100 coins        →  spent = 100, lost = 0
+device B dies and loses 7 coins  →  spent = 0,   lost = 7
+componentwise max merge          →  wallet = 100 − 100 − 7 = −7
 ```
 
-Each of the three still merges across all three save layers with a plain `max`, exactly as
-today. **The wallet can fall; nothing that travels ever does.** A late server reply stays
-harmless and a retry stays free. And since levels derive from `lifetime_earned`, **levels
-never fall** — which is what the owner confirmed he wants. Both of his statements are
-satisfied at once: *levels are genuinely lifetime-cumulative, and coins drop 7% on death.*
+**Two independently max-merged consumers of the same pool are unsafe.**
 
-This is the standard decomposition — a PN-counter is two monotone counters — and it needs no
-conflict resolution at all.
+### The correct shape: one earn counter, one debit counter
 
-**One property to write down rather than discover:** merging `lifetime_spent` by `max` means
-**concurrent spends on two devices are under-counted** (spend 50 on each of two devices and
-the merge records 50, not 100). The error falls in the *player's* favour, which is the same
-direction the existing design already chose deliberately.
+```
+coin_wallet = max(0, lifetime_earned_coins − lifetime_debited_coins)
+```
+
+**Both purchases and death losses increment the same `lifetime_debited_coins`.** Every local
+operation preserves `debited ≤ earned`, and therefore componentwise `max` preserves it too —
+because whichever device produced `max(debited)` had that value under *its own* earned, which
+is itself ≤ `max(earned)`. The wallet cannot merge negative.
+
+### And I had the units wrong
+
+Verified in the code: `lifetime_coins` counts **coins**; `spent_points` counts **skill
+points**; and unspent points are `maxi(0, level * POINTS_PER_LEVEL - spent_points)`. These are
+**two different currencies**, and my single equation silently mixed them. The shipped model is
+two equations:
+
+```
+coin_wallet          = lifetime_earned_coins − lifetime_debited_coins
+unspent_skill_points = level(lifetime_earned_coins) * POINTS_PER_LEVEL − spent_skill_points
+```
+
+Levels derive from **gross lifetime earnings**, so **levels never fall** — which is what the
+owner confirmed he wants. Both of his statements hold at once: *levels are genuinely
+lifetime-cumulative, and coins drop 7% on death.*
+
+### Two corrections to things I asserted
+
+**It is not a PN-counter, and the error is not always in the player's favour.** I claimed
+scalar max-merge was a PN-counter that erred kindly. Neither is true. Two scalar maxima are
+not a multi-writer PN-counter, and **concurrent *earnings* are under-counted the same way
+spends are** — `+20` on each of two devices merges as `+20`, not `+40`. Exact multi-device
+accumulation needs per-device components summed, or a single authoritative writer. Scalar max
+may still be an acceptable cheap policy, but it can lose the player money, not only save them
+money.
+
+**Store the resolved integer, never a percentage log.** At death, compute 7% of the wallet
+visible *at that moment*, pick one explicit rounding rule, increment the debit counter **once**,
+and save immediately. A retried `POST` then carries the same absolute total and stays
+idempotent. A percentage log would need ordering and historical balances to replay correctly.
 
 ### Continue / New game — I was wrong, this is not free
 
@@ -321,12 +348,49 @@ server's remembered maximum and **restores the campaign you just abandoned.** Ma
 not just fail to help here — it resurrects deleted progress.
 
 **Fix: the record must be keyed per *world*, not per player** — player id **plus a save id**.
-Then `max`-merge stays valid *within* a save (which is what the three-counter decomposition
-needs), and a New Game simply starts a new record instead of colliding with the old one.
-Nothing about the merge logic changes; only what it is keyed on.
+Then `max`-merge stays valid *within* a save, and a New Game starts a new record instead of
+colliding with the old one. Nothing about the merge logic changes; only what it is keyed on.
+
+**Necessary, but codex is right that it is not sufficient.** Three additions:
+
+1. **All three layers must be namespaced by an immutable `save_id`** — `ConfigFile`,
+   `localStorage` and the server record alike. New Game mints a fresh random `save_id` and
+   **selects it before fetching any counters**. Never zero an object that is still attached to
+   the old key.
+2. **There are two identifiers, not one.** `save_id` is the identity of a world and is
+   immutable for its lifetime. `current_save_id` is a *pointer* saying which world Continue
+   opens — and that pointer is where two-device disagreement would live. Since `player_id` is
+   minted **per install / per browser profile**, devices do not share records today, so
+   `current_save_id` can simply be **local** and there is no cross-device "current" to
+   reconcile. If shared cross-device Continue ever becomes a requirement, a save id alone
+   cannot choose the current world: either expose **save slots and let the user pick**, or
+   synchronise a pointer with an authoritative server revision / CAS. A `(generation,
+   device_id)` tuple converges without a server clock, but simultaneous New Games then pick a
+   winner arbitrarily — that is convergence, not intent.
+3. **Keying per world does not solve same-world state merges.** Position, active quest, Primm's
+   capture state and unfinished room configuration are **not monotone maxima**. The per-world
+   key prevents *cross-world resurrection*; a **world snapshot / revision policy** still has to
+   decide which same-world state wins.
 
 And a naming note worth keeping: if a command only re-rolls the field while keeping the
 campaign, it is **New World / Reroll Field**, not New Game.
+
+### The 7% only bites if coins buy something — OWNER DECISION NEEDED
+
+Codex's sharpest point, and it is a design question rather than an engineering one:
+
+> A 7% haircut scales cleanly, but it only creates tension if the remaining coin wallet has a
+> use the player values. Because levels derive from **gross** lifetime earnings, the haircut
+> does not delay levels or remove skills. **If coins buy nothing else, 7% is only a shrinking
+> display number and will become emotionally empty.**
+
+That is the direct consequence of "levels never fall" — which the owner wants — meeting "the
+penalty is 7% of coins". The two are consistent, but together they can cancel each other's
+teeth.
+
+**So the loop needs a real coin sink**, even a modest one — something the wallet buys that the
+player would rather not lose. Otherwise we should accept honestly that predators provide
+*interruption* rather than *stakes*, and let the hunters carry the tension alone.
 
 ### The setback moment
 

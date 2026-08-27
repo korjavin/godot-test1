@@ -202,9 +202,24 @@ and closing pursuit do the work; actual capture is spent sparingly.
 
 **One condition on which this depends entirely: the mercy has to be invisible.** A player who
 notices the game is pulling its punches loses the fear immediately, and once lost it does not
-come back — a hunter that has visibly failed to catch you twice is scenery. Which means the
-leniency must be expressed as **hunters making plausible mistakes** — losing the line, being
-blocked by terrain, arriving a beat late — never as damage that mysteriously does not land.
+come back — a hunter that has visibly failed to catch you twice is scenery.
+
+**Codex supplied the principled way to do it, and it is better than "hunters make mistakes":
+tune the mercy in the encounter director, *before contact*, and keep the local hunter rules
+completely honest.**
+
+- Spawn most hunts with **at least one viable escape route** and no instant surround.
+- Vary approach angle, terrain obstruction, squad composition and warning time.
+- Cap simultaneous pursuers; enforce a cooldown after a hard chase.
+- **Adjust those hidden setup variables — never grab range or collision after the player has
+  already been caught.**
+- Once a hunter visibly *earns* a grab, **resolve it consistently.**
+
+Then rarity comes from **favourable encounter geometry plus player counterplay**, not from an
+actor visibly pulling its punch. And the thing players *do* learn — how hunters turn, how they
+see, how they lose line of sight — is **healthy mastery rather than exposed mercy.** That is
+the distinction my "plausible mistakes" version blurred: a mistake the player can predict is
+still a tell.
 
 They are the Retrieval Division made visible, and the vault has them: the
 **GD-SURVEY-ENTRÉE … GD-SURVEY-DESSERT** field-survey fleet — food-safety inspection units
