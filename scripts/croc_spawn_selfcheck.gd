@@ -563,6 +563,26 @@ func _check_ambush_trip_wire() -> void:
 				float(row["ambush_surface_ease_speed"]), float(row["river_sink_ease_speed"])]
 				+ " an ambusher that rises no faster than it settles has no strike")
 
+	# ---- AN AMBUSHER IS NOT A SPRINTER (bead godot-test1-lyk) ---------------
+	# It shipped as the FASTEST chase_speed in the table, and the lattice never
+	# noticed because MAX_CHASE_SPEED clamped the product — the row was legal and
+	# unplayable at the same time, which is precisely the state _check_species_table
+	# says a bad row hides in. The design rule that came out of it: a predator you
+	# cannot see coming is paid in SURPRISE, so it does not also get to be the
+	# quickest thing in the world. Stated against the table rather than a literal,
+	# so retuning any other row keeps this honest.
+	var fastest := 0.0
+	var fastest_name := ""
+	for name_v: Variant in _species_table:
+		var speed: float = float(_species_table[name_v].get("chase_speed", 0.0))
+		if speed > fastest:
+			fastest = speed
+			fastest_name = String(name_v)
+	if fastest_name == ambush_species:
+		_fail("'%s' has the highest chase_speed in SPECIES (%.2f) —" % [ambush_species, fastest]
+				+ " it is buried, unseen and the fastest animal in the game at once;"
+				+ " the clamp hides it, and the player only finds out on the strike")
+
 	# ---- the trip-wire measurement ------------------------------------------
 	var results := {}
 	for probe_species: String in [ambush_species, "crocodile"]:

@@ -274,17 +274,38 @@ const SPECIES: Dictionary = {
 		## it) and ambush_burrow_depth (you cannot see it while it waits). A
 		## predator that does not move, does not sense and cannot be seen is not a
 		## weak crocodile; it is a different threat, one you walk INTO rather than
-		## one that hunts you. The 7.5 strike is what it spends the difference on.
+		## one that hunts you. Surprise and position ARE the weapon — see the
+		## chase_speed note for why the foot race stopped being one.
 		"behavior": "ambush",
 
 		# ----- Speed and detection -----
-		## THE LATTICE IS THE LATTICE: 5.0 (WALK_SPEED) < 7.5 <= 8.5
-		## (MAX_CHASE_SPEED) < 9.0 (the slowest character's run). This is the
-		## fastest STRIKE in the table and it is the only thing this animal has.
-		## The worst case still clamps (7.5 x 1.2 x 1.6 = 14.4, cut to 8.5), so
-		## RUNNING ESCAPES A VIPER exactly as it escapes everything else — which is
-		## the whole counterplay, because escaping the strike means noticing it in
-		## the ~1 s it takes to cross 5 m.
+		## THE LATTICE IS THE LATTICE: 5.0 (WALK_SPEED) < 5.5 <= 8.5
+		## (MAX_CHASE_SPEED) < 9.0 (the slowest character's run).
+		##
+		## 7.5 UNTIL godot-test1-lyk, AND IT WAS THE FASTEST ROW IN THE TABLE.
+		## The lattice held — 7.5 x 1.2 clamps to 8.5 and a run still escapes — but
+		## it held on the CLAMP, and that is what made the row a lie in play. Read
+		## the two ends against a 9.0 run:
+		##
+		##   7.5: top roll 9.0 -> clamped 8.5, margin 0.5 m/s; median 7.5, margin
+		##        1.5. A player sprinting flat out pulled half a metre a second.
+		##   5.5: top roll 5.9, margin 3.1 m/s; median 5.5, margin 3.5. The SAME
+		##        margin a crocodile leaves, which is the number this game's feel
+		##        was tuned around.
+		##
+		## An ambusher is the one species that does not need the foot race. It
+		## already has the burrow, a trip-wire you have to walk into, and a lunge
+		## that erupts from 5 m — it earns kills from SURPRISE AND POSITION, and
+		## paying for that twice (invisible AND fastest) is what the owner reported
+		## as unsurvivable. Matching the crocodile's 5.5 is the deliberate reading:
+		## the viper is a normal-speed animal you did not see coming, and the hiss
+		## below is the beat it now gives you to react.
+		##
+		## THE FAR-FIELD IS NOT A LOOPHOLE AND IT IS NOT VIPER-SPECIFIC: the
+		## distance gradient tops out at x1.6, so ANY row above 8.5 / (1.2 x 1.6)
+		## = 4.43 pins to MAX_CHASE_SPEED out at 1800 m, the crocodile included.
+		## That ceiling is a game-wide contract; what this row owns is the near and
+		## middle field, which is where the ambush actually happens.
 		##
 		## MOVE_SPEED IS ZERO, AND IT IS A BEHAVIOUR, NOT A TUNING. `_wander_speed`
 		## multiplies it, so a buried viper's wander velocity is identically 0 at
@@ -296,18 +317,24 @@ const SPECIES: Dictionary = {
 		## `_animate_body`, whose stride divisor is this value — see the maxf()
 		## there, which exists for this row and only this row.
 		"move_speed": 0.0,
-		"chase_speed": 7.5,
+		"chase_speed": 5.5,
 
-		## ±20% / ±20%. TIGHTER on speed than phase 2's ±35%, and that is the
-		## ambush changing the argument rather than a nerf being undone. The
-		## SPECIES doc block above is right that a slow roll is a feature — a
-		## straggler in a crowd reads as a straggler. An ambusher is not in a
-		## crowd: it gets ONE strike from 5 m, and at ±35% the bottom roll is
-		## 4.88 m/s, UNDER WALK_SPEED — not a straggler but a viper the player
-		## strolls away from mid-lunge with nothing on screen to explain it. ±20%
-		## floors the strike at 6.0: still caught by a run, never by a walk. Size
-		## keeps its ±20%; a fat viper is still a viper.
-		"speed_random_factor": 0.2,
+		## ±7% / ±20%, and the SPEED figure is a consequence of 5.5 above, not an
+		## independent nerf. The argument this row has always made is unchanged:
+		## the SPECIES doc block is right that a slow roll is a feature — a
+		## straggler in a crowd reads as a straggler — but an ambusher is not in a
+		## crowd. It gets ONE strike from 5 m, so a roll that drops it under
+		## WALK_SPEED (5.0) is not a straggler, it is a viper the player strolls
+		## away from mid-lunge with nothing on screen to explain it. Phase 2's ±35%
+		## floored at 4.88 and was cut to ±20% for exactly that reason.
+		##
+		## ±20% ON 5.5 FLOORS AT 4.40, which is further under WALK_SPEED than the
+		## number that cut was made to fix, so the spread had to come down with the
+		## speed: ±7% floors the strike at 5.115 and caps it at 5.885. Every viper
+		## in the world still catches a WALKING player — the one thing an ambusher
+		## must do — and none of them comes near a run. Size keeps its ±20%; a fat
+		## viper is still a viper, and its size never decided a chase.
+		"speed_random_factor": 0.07,
 		"size_random_factor": 0.2,
 
 		## THE TRIGGER RADIUS, and phase 2's row promised exactly this cut: an
@@ -1589,13 +1616,26 @@ func _update_chase_state() -> void:
 		if not is_chasing:
 			# Just started chasing
 			is_chasing = true
-			# Bosses announce themselves with a growl on the not-chasing →
-			# chasing transition (null-safe group lookup, like every SFX hook —
-			# a scene run without Main just stays silent).
+			# ANNOUNCE THE ACQUISITION. Bosses growl; an ambusher hisses. Both
+			# fire HERE and only here, on the not-chasing → chasing edge, which
+			# is what makes it one cue per engagement rather than one per frame —
+			# the boss growl has always worked this way and the hiss is its exact
+			# sibling. Null-safe group lookup like every SFX hook, so a scene run
+			# without Main just stays silent, and both route through the
+			# sound_manager's _unlocked browser-gesture gate.
+			#
+			# The ambusher is the species that most needs it: it is buried and
+			# smells only 5 m, so with no sound the first signal the player gets
+			# is the strike already landing. Keyed on the BEHAVIOUR, not the
+			# species name, because "you cannot see me coming" is the trait that
+			# owes the player a warning.
+			var sm := get_tree().get_first_node_in_group("sound_manager")
 			if is_boss:
-				var sm := get_tree().get_first_node_in_group("sound_manager")
 				if sm and sm.has_method("play_boss_growl"):
 					sm.play_boss_growl()
+			elif spec["behavior"] == "ambush":
+				if sm and sm.has_method("play_viper_hiss"):
+					sm.play_viper_hiss()
 	else:
 		if is_chasing:
 			# Lost the player (too far OR player jumped)
@@ -1667,8 +1707,11 @@ func _behave_ambush() -> void:
 	                             has no hysteresis the same number ENDS the lunge:
 	                             that is the "short" in "short lunge", with no
 	                             timer and no second state anywhere.
-	  * "high-speed strike"   -> `chase_speed` 7.5, clamped by MAX_CHASE_SPEED
-	                             like every other row.
+	  * "the strike"          -> `chase_speed` 5.5 (see the row: it is the
+	                             crocodile's speed on purpose — an ambusher is
+	                             paid in surprise, not in a foot race) plus
+	                             `bite_lunge`, which is a MODEL offset and moves
+	                             no body, so nothing here outruns the row.
 	  * "surfaces rapidly"    -> `ambush_surface_ease_speed`, four times the sink.
 
 	Which leaves exactly one thing that is NOT a number: whether the model is
