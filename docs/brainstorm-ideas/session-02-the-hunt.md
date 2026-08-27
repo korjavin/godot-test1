@@ -344,6 +344,37 @@ punishment.
   Primm-related systems. **Inescapable as a feeling, not as a GPS** — information only when
   it creates a choice.
 
+## What triggers the abduction — the owner named this as the hard part
+
+Confirmed by him that it happens (*"at some point they will get prim, yes"*), and then:
+
+> hard part it to decide when we are ready, what the trigger, we need to figure out it, I
+> believe we will consider metric as skill points
+
+**Skill points are the sensible metric** — distance is deleted, and skill points are the one
+number that reliably tracks how equipped the player is.
+
+**But a bare threshold breaks two ways.** A player who deliberately does not farm never
+crosses it, so **the plot simply never fires** — we would have gated the story on a number
+the player is free to decline to earn. And a threshold can trip in a **dramatically
+meaningless moment**, mid-field, because a counter ticked over while they were picking up
+coins.
+
+**Proposal: skill points are a *floor*, not a trigger.** The abduction requires both:
+
+- **Mechanically ready** — enough skill points that the three-hero aftermath is survivable.
+  This is the owner's metric doing the job it is genuinely good at: guaranteeing fairness.
+- **Narratively positioned** — the player has reached a specific story beat, and *that* is
+  what fires it.
+
+The floor protects the player; the beat protects the story. The twist then always lands
+somewhere it means something, and never lands on someone who cannot cope with what follows.
+
+*Put to codex, along with two follow-ups: what to do with a player who reaches the beat below
+the floor (my instinct — quietly make the last stretch generous rather than making them wait),
+and whether being **cornered by hunters** could itself be the trigger, which is more earned
+but risks punishing weak players with plot and rewarding strong ones with delay.*
+
 ## Still open
 
 - What the score/HUD surfaces show now that distance is gone.

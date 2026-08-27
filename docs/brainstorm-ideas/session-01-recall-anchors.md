@@ -29,6 +29,22 @@ Read [README.md](README.md) first; it holds the constraints this design is shape
 
 Taken from the lore vault, lightly adapted.
 
+> **Amended 2026-08-27 by the owner.** The vault's eighteen-month delay is gone:
+>
+> > no, they noticed immediatelly, and understood how dangerous for their reputation it is
+> > and started hunted robots to bring our heroes back
+>
+> So GastroDefense notices **at once**, and the motive is **reputational**: a prototype
+> law-enforcement unit loose in public is an existential problem for the company's name. The
+> hunt starts immediately.
+>
+> **What this costs, stated plainly:** the vault's "the menace is indifference" is no longer
+> literally true, and anything built on bureaucratic *slowness* — Recall Pressure as a
+> ticket escalating — needs re-checking. What survives, and must be protected, is
+> **soulless, not menacing**: nobody hates the heroes, the company is closing a liability
+> before anyone outside finds out. Urgency is not malice. The paragraphs below still read as
+> written *except* for the delay.
+
 Project AEGIS-4 fractured in a lunchtime accident and walked out as four people.
 **GastroDefense Inc.** — the corporation that built it — is recalling the prototype, and
 the recall is *not* a vendetta. It is a **workflow**: a contract performance notice, a

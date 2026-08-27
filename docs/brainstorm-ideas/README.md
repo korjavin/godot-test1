@@ -4,9 +4,12 @@
 
 **You are not being hunted. You are being processed.**
 
-Four beings walked out of a lunchtime accident that fractured Project AEGIS-4. Eighteen
-months later the corporation that built it — GastroDefense Inc. — notices its prototype
-never came back, and opens a ticket.
+Four beings walked out of a lunchtime accident that fractured Project AEGIS-4 — and
+GastroDefense Inc. **noticed at once.** Not eighteen months later, not when an invoice went
+unpaid. Immediately, because a prototype law-enforcement unit loose in public is not a
+missing asset, it is **an existential problem for the company's reputation**. So they did
+what a corporation does when the risk is optics: they moved fast, and they sent machines to
+**bring the heroes back.**
 
 **Two of them know exactly what that means.** Pho-boman and Tiebi were never part of the
 machine, so there is nothing in them worth putting back. They will be **erased as
@@ -25,7 +28,10 @@ FACILITY` means **reintegration — un-make**: W-01 and P-03 are "specification 
 P-02 and T-04 are "non-specification outputs — disposal." Nobody asked them. The consent
 field was deleted in revision 3 and never written again.
 
-There is no villain to punch. The threat is a workflow, and workflows do not get tired.
+**There is still no villain to punch.** Nobody here hates them. GastroDefense is not
+pursuing four people out of malice — it is closing a liability before anyone outside finds
+out, which is the most corporate motive there is. It moves fast and it never stops, not
+because it is cruel, but because *reputational risk does not get tired.*
 
 ### What they run toward
 
