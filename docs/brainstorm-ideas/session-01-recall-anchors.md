@@ -31,6 +31,40 @@ That gives us the two best things a runner can have and rarely gets:
 **The destination:** the still-warm **AEGIS-3** fragment signal — proof the four are not
 the first, and the only lead that isn't owned by the people recalling them.
 
+### What the first draft got wrong — and the owner caught it
+
+The owner's revdiff pass found a hole neither codex nor I had noticed, twice over:
+
+> I don't understand there motivation of our heroes, so corp work them back. Do they want it
+> also or they try to escape?
+
+> what is the motivations for chars to work hard to be disintegrated?
+
+He is right on both counts. We had written the **corporation's** motivation in full and
+never once written the **heroes'** — un-make was stated as a spec fact, with the reader left
+to supply the fear. Worse, our destination and our climax were in **two different places**:
+the whole game you chase the AEGIS-3 signal *away* from the recall, and then the ending
+happens at the Origin Facility, with nothing explaining the transit. Read literally, the
+heroes work hard in order to arrive at their own disintegration.
+
+Three fixes, all now in the pitch (see [README.md](README.md)):
+
+1. **The motivation is asymmetric, and the asymmetry is the engine.** Pho-boman and Tiebi
+   are non-specification outputs: disposal, no ambiguity, no upside — they are *certain*.
+   Windman and Primm are the two who would actually be reintegrated, and they are the two
+   who genuinely **do not know what that is** (E18: it does not feel like extinction, it
+   feels like a word they have no word for). Two fleeing a certainty, two fleeing a
+   question. That is what lets the ending be a choice rather than a survival reflex.
+2. **The destination and the trap are the same place.** The signal resolves to the facility;
+   you were running toward where you started. The final act is a **voluntary walk into the
+   trap**, and nobody is working hard to be un-made — they are working hard to reach the one
+   being who has survived this before.
+3. **Why the AEGIS-3 signal is still warm.** Its reintegration was *completed*, yet a
+   fragment signal persists — so it completed **with a piece missing**. AEGIS-3 survived
+   because one fragment was never recovered. **Incompleteness is what saved them**, which is
+   the same fact as Pho-boman's unreadability. What you cross the game to find is not a
+   rescuer or an ally but a **proof** that the spec can fail to close.
+
 ## 2. The core mechanic — Recall Anchors
 
 A **Recall Anchor** is GastroDefense field hardware that spawns deterministically on the
@@ -527,6 +561,16 @@ the climax without noticing. Codex's framing is the correct one.
 **Still open — design (next session starts here, agreed with codex):**
 
 3. **How many acts, and their shape.** Probably 4, matching the vault's four movements.
+
+   **Owner direction (2026-08-27, from the revdiff pass):** *"i'd prefer longer story with
+   subsections, like we learn something in small quests before we got to main tower."*
+
+   So an act is not one stretch of road with a cordon at the end — it contains **small
+   quests, each of which teaches one thing**, before the act's set-piece. That has an
+   obvious home: the notebook. Each small quest is one page, and a page is not lore
+   decoration, it is **the thing you learned**, which the next quest assumes you know. The
+   difficulty curve and the story curve become the same curve. Design the act's internal
+   beats next session, before naming the acts.
 4. **What a failed anchor costs *in fiction*,** not just in meter. GastroDefense *filing*
    something is more on-tone than a damage number.
 5. What the cordon **looks like** — it is the first hard barrier this game has ever had, and

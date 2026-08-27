@@ -13,9 +13,44 @@ consent field was deleted from the spec in revision 3 and never written again.
 
 There is no villain to punch. The threat is a workflow, and workflows do not get tired.
 
-So you run — toward the only lead not owned by the people recalling you: a **still-warm
-signal from AEGIS-3**, the prototype *before* them, which also fractured and also
-scattered. Somebody else survived this. Find them.
+### Why they run — and why they don't all run for the same reason
+
+**This asymmetry is the engine, not a gap.**
+
+- **Pho-boman and Tiebi** are "non-specification outputs." Disposal. No ambiguity and no
+  upside — they simply die. They are certain.
+- **Windman and Primm** are the two who would actually be *reintegrated*, and they are the
+  two who genuinely **do not know what that is**. Having felt proximity to it, it does not
+  feel like extinction to them. It feels like a word they have no word for.
+
+So the team is not four people fleeing one fate. It is **two people fleeing a certainty and
+two people fleeing a question** — which is the only reason the ending can be a real choice
+rather than a survival reflex.
+
+### What they run toward
+
+The only lead not owned by the people recalling them: a **still-warm signal from AEGIS-3**,
+the prototype *before* them, which also fractured and also scattered.
+
+**And why is that signal still warm?** AEGIS-3's reintegration was *completed* — and yet a
+fragment signal persists. Which can only mean it completed **with a piece missing**. AEGIS-3
+survived, in whatever partial sense it survived, precisely **because one fragment was never
+recovered. Incompleteness is what saved them.**
+
+So the thing you cross the whole game to find is not a rescuer and not an ally. It is
+**proof** — evidence that the spec can fail to close — delivered by the only entity that has
+ever survived it. It is the same fact as Pho-boman being unreadable to the classifier. The
+lesson AEGIS-3 teaches *is* the mechanic your hands have been practising all game.
+
+### The destination and the trap are the same place
+
+The signal you spend the whole game resolving resolves to **the facility**. You were running
+toward where you started.
+
+That is what makes the final act a **voluntary walk into the trap**, and it is the answer to
+the obvious objection: nobody is working hard in order to be disintegrated. They are working
+hard to reach **the one being who has survived this before** — and the building that wants
+to un-make them is where that being is.
 
 ### The mechanic: the lock reads who you are
 
@@ -70,9 +105,16 @@ that has been in the socket table since the first anchor: **Pho-boman is unreada
 classifier, and a link the classifier cannot classify is exactly what the third option
 needs.** The one marked for disposal is the only reason a third option exists.
 
-The choice is made with the game's verbs at a signposted fork — an easy `RETURN TO ORIGIN`
-lane, or an unstable `EXCEPTION` route that requires all four. Then the campaign ends, and
-**Endless mode unlocks**: the world continuing after a choice.
+The choice is made with the game's verbs at a signposted fork, and **the hard route is the
+one that refuses**:
+
+- `RETURN TO ORIGIN` — **easy**. Two sockets, walk in, comply. This is the path that ends in
+  disintegration, and it is deliberately the path of least effort.
+- `EXCEPTION` — **the hardest coordination anchor in the game**, requiring all four. This is
+  the path that *refuses* disintegration.
+
+Nobody works hard in order to be un-made. The work buys the refusal. Then the campaign ends,
+and **Endless mode unlocks**: the world continuing after a choice.
 
 ---
 
@@ -91,19 +133,31 @@ the owner's ruling is that we do not have to follow 100% of it.
 
 ---
 
-## The six constraints any idea must survive
+## The constraints any idea must survive
 
-Engineering facts, verified against the code, not opinions. An idea that breaks one of
-these is dead on arrival no matter how good the story is.
+Engineering facts, verified against the code, not opinions. An idea that breaks one of these
+is dead on arrival no matter how good the story is — **except where the owner has lifted
+one**, which is marked inline. Two have been lifted so far; both lifts buy real design
+freedom and cost real engineering, and the cost is stated rather than glossed.
 
-1. **There are no walls.** The field is infinite and flat, and the player can always walk
-   around anything. So we gate **content, never passage**. Anything shaped like a locked
-   door is the wrong shape for this game.
+1. ~~**There are no walls.**~~ **RELAXED by the owner** (2026-08-27), who reopened the
+   endless-random-world assumption. The rule still holds *inside* an act — content is gated,
+   never passage, because on an open field walking around is always rational. But an **act
+   boundary may be a real barrier**, because the axis is now a story rather than infinite
+   sameness. See session 01 §6.
 
-2. **The ground is flat at y = 0 and must stay flat.** Coin heights, road placement,
-   crocodile gravity settle and every block base assume it. Mountains are massifs you walk
-   *around*; rivers are tinted wading bands, not water. A beat that needs a pit, a chasm or
-   a raised platform needs a different beat.
+2. ~~**The ground is flat at y = 0 and must stay flat.**~~ **LIFTED by the owner**
+   (2026-08-27): *"i don't think it's hard demand to stay flat. we can loose this one."*
+   **Verticality is legal**, so the tower can be a real climbable object rather than a
+   horizon image.
+
+   Recorded honestly, because this is not a doc edit — it is the largest engineering item in
+   the whole design. Flat-at-zero is currently assumed by coin height settling, road
+   placement, crocodile gravity settle, the spawn point, and every block base; mountains are
+   impassable massifs *specifically because* the base jump apex (3.6125 m) is under
+   `MOUNTAIN_MIN_LAYER_HEIGHT` (4.0), which is also why no skill anywhere touches
+   `JUMP_VELOCITY`. Lifting the invariant means revisiting each of those, and it should be
+   scoped as its own epic rather than smuggled into a story feature.
 
 3. **Everything spawns deterministically from the terrain.** A spawn site is a pure
    function of (chunk coords or station index) plus `run_seed`, and a new feature takes its
