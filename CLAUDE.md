@@ -194,10 +194,18 @@ RNG); only *positions* are. Bosses skip both rolls — `setup_as_boss()` must be
 **before** `add_child`, because `_ready()` is where the rolls happen.
 
 The species `chase_speed` (5.5 for the crocodile) is deliberately above `WALK_SPEED` (5.0)
-so walking gets you caught, and `MAX_CHASE_SPEED` (8.5) — a top-level const every species
-is clamped to — is deliberately below the slowest character's run, so
+so walking gets you caught, and `MAX_CHASE_SPEED` (8.5) — a top-level const clamping every
+species' **sustained** speed — is deliberately below the slowest character's run, so
 **running always escapes**. Keep that chain intact when retuning anything in it — the
 river wade factor is floored for the same reason.
+
+**The `"burst"` arm is the one exception, and the only way anything in this game goes above
+8.5.** The mountain cougar and city alley hound multiply that already-clamped speed by a
+`burst_factor` for a bounded pounce (11.05 and 11.48 m/s — over the ceiling *and* over the
+9.0 run), then pay it back in a mandatory recovery leg. So the promise is not "nothing is
+ever faster than 8.5" but **running escapes across the whole pounce-and-recovery cycle** —
+a claim about a gap over time, and measured at both ends (a walking player must still be
+caught) by `croc_spawn_selfcheck` check 8. A new burst species extends that check.
 
 The spawn point is a crocodile-free bubble enforced in generation
 (`SPAWN_SAFE_RADIUS`, mirrored in `player_controller`; keep the two in step).
@@ -207,8 +215,9 @@ The spawn point is a crocodile-free bubble enforced in generation
 `set_lod_active(false)` (which zeroes velocity and stops `_physics_process`), and freezes
 coin animation beyond its own radius. Two invariants:
 
-- **`SIM_RADIUS` (45) must stay well above every species' `detection_radius` (12–18 across
-  the table, 25 for a boss).** Anything that could
+- **`SIM_RADIUS` (45) must stay well above every species' `detection_radius` (5–18 across
+  the table — the ambushing viper's 5 is the floor, the wolf's 18 the ceiling; 25 for a
+  boss).** Anything that could
   chase or touch the player is always fully awake, so near-player behaviour is unchanged.
 - **Crocodiles are slept, never removed.** Entity counts stay the same.
 
