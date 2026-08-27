@@ -582,6 +582,41 @@ func _check_ambush_trip_wire() -> void:
 				float(row["ambush_surface_ease_speed"]), float(row["river_sink_ease_speed"])]
 				+ " an ambusher that rises no faster than it settles has no strike")
 
+	# ---- AN AMBUSHER IS NOT A SPRINTER (bead godot-test1-lyk) ---------------
+	# It shipped as the FASTEST chase_speed in the table, and the lattice never
+	# noticed because MAX_CHASE_SPEED clamped the product — the row was legal and
+	# unplayable at the same time, which is precisely the state _check_species_table
+	# says a bad row hides in. The design rule that came out of it: a predator you
+	# cannot see coming is paid in SURPRISE, so it does not also get to be the
+	# quickest thing in the world. Stated against the table rather than a literal,
+	# so retuning any other row keeps this honest.
+	#
+	# Stated as ">= the fastest OTHER row" rather than "is the max", because a TIE
+	# at the top is the same animal: a viper matching the cougar's 7.8 is jointly
+	# the fastest thing in the world and still invisible. Written the other way —
+	# scanning for the maximum and comparing names — a tie resolves to whichever
+	# row Dictionary iteration reached first, so the check would pass or fail on
+	# key order. A tie at the BOTTOM is fine and deliberate: 5.5 alongside the
+	# crocodile is exactly what this bead asked for.
+	var fastest_other := -INF
+	var fastest_other_name := ""
+	for name_v: Variant in _species_table:
+		if String(name_v) == ambush_species:
+			continue
+		var speed: float = float(_species_table[name_v].get("chase_speed", 0.0))
+		if speed > fastest_other:
+			fastest_other = speed
+			fastest_other_name = String(name_v)
+	var ambush_speed: float = float(row.get("chase_speed", 0.0))
+	if fastest_other_name == "":
+		_fail("SPECIES has no non-ambush row to compare '%s' against —" % ambush_species
+				+ " the ambusher-is-not-a-sprinter check has nothing to measure")
+	elif ambush_speed >= fastest_other:
+		_fail("'%s' chase_speed %.2f is at or above the fastest other row ('%s' %.2f) —"
+				% [ambush_species, ambush_speed, fastest_other_name, fastest_other]
+				+ " it is buried, unseen and the quickest animal in the game at once;"
+				+ " the clamp hides it, and the player only finds out on the strike")
+
 	# ---- the trip-wire measurement ------------------------------------------
 	var results := {}
 	for probe_species: String in [ambush_species, "crocodile"]:

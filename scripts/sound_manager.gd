@@ -106,6 +106,29 @@ const GROWL_DURATION: float = 0.5
 const GROWL_NOISE_MIX: float = 0.35     # how much breathy noise rides on the saw
 const GROWL_VOLUME_DB: float = -8.0
 
+# --- Viper hiss: a bright noise burst when a sand viper acquires the player. ---
+## THE AMBUSHER'S TELEGRAPH, and the exact sibling of the boss growl above: both
+## fire ONCE on the not-chasing -> chasing transition, because a predator that
+## announces itself is the difference between a threat and an unfair one. The
+## viper needs it more than the boss does — it is buried and its detection radius
+## is 5 m, so without a sound the FIRST signal the player gets is already the
+## strike landing.
+##
+## Why it is the whoosh's synth with the filter opened up, and not a new idea:
+## every noise sound in this file is one-pole-low-passed noise, and the factor IS
+## the character (wind 0.02 rumbles, footstep 0.18 taps, whoosh 0.25 swells).
+## 0.55 barely filters at all, which leaves the sibilant top end the whoosh
+## deliberately throws away — that top end is what "hiss" means. The crunch shows
+## the other end: fully unfiltered noise reads as violence, not warning.
+const HISS_DURATION: float = 0.45
+const HISS_LOWPASS: float = 0.55        # one-pole factor — barely filtered, so
+										# the sibilant top end survives
+const HISS_ATTACK: float = 0.07         # soft swell in, so it warns rather than
+										# startles like the crunch's instant hit
+const HISS_DECAY: float = 5.0           # exponential taper — a breath running out
+const HISS_VOLUME_DB: float = -11.0     # between the growl (-8) and a footstep
+										# (-14): audible over a chase, not a jolt
+
 # --- Game over: a slow three-note descending minor phrase. ---
 const GAME_OVER_FREQS: Array[float] = [392.0, 311.1, 261.6]  # G4, Eb4, C4
 const GAME_OVER_NOTE_DURATION: float = 0.35
@@ -208,6 +231,7 @@ func _ready() -> void:
 	_streams["whoosh"] = _build_wav(_synth_whoosh())
 	_streams["bite"] = _build_wav(_synth_bite())
 	_streams["growl"] = _build_wav(_synth_growl())
+	_streams["hiss"] = _build_wav(_synth_hiss())
 	_streams["game_over"] = _build_wav(_synth_game_over())
 	_streams["footstep"] = _build_wav(_synth_footstep())
 	_streams["buzz"] = _build_wav(_synth_buzz())
@@ -321,6 +345,19 @@ func play_boss_growl() -> void:
 	## Boss crocodile acquiring the player — fired by piglet_crocodile_ai.gd on
 	## the not-chasing → chasing transition (bosses only).
 	_play_oneshot("growl", GROWL_VOLUME_DB)
+
+
+func play_viper_hiss() -> void:
+	## Sand viper acquiring the player — fired by piglet_crocodile_ai.gd on the
+	## not-chasing -> chasing transition, from the same branch as the boss growl
+	## and under the same rule: ONE cue per engagement, never per frame. The
+	## viper's trigger is hysteresis-free (see its SPECIES row), so the same 5 m
+	## that fires this ends the chase, and the next hiss is a genuinely new
+	## ambush rather than a stutter at the boundary.
+	##
+	## Routing through _play_oneshot is what keeps the browser-gesture gate
+	## honoured — there is no path here that bypasses _unlocked.
+	_play_oneshot("hiss", HISS_VOLUME_DB)
 
 
 func play_game_over() -> void:
@@ -514,6 +551,34 @@ func _synth_growl() -> PackedFloat32Array:
 		# Swell in over the first quarter, fade out over the rest.
 		var envelope: float = minf(progress * 4.0, 1.0) * (1.0 - progress)
 		samples.append(voice * envelope * 0.7)  # saws are loud at equal amplitude
+	return samples
+
+
+func _synth_hiss() -> PackedFloat32Array:
+	## Air forced through a snake's glottis: noise, and almost nothing else. The
+	## same one-pole low-pass every noise sound here uses, but opened to 0.55 —
+	## the whoosh's 0.25 exists to take "the harsh hiss edge off the raw noise",
+	## and this is the sound that wants that edge kept.
+	##
+	## The envelope is the whole difference between a warning and a hit. A soft
+	## swell in (HISS_ATTACK) reads as a breath starting; the exponential taper
+	## reads as one running out. The trailing (1 - progress) is not decoration —
+	## the exponential is still at ~0.1 when the buffer ends, and a buffer that
+	## stops at 0.1 ends in an audible click.
+	var samples := PackedFloat32Array()
+	var frames: int = int(HISS_DURATION * MIX_RATE)
+	var attack_frames: int = int(HISS_ATTACK * MIX_RATE)
+	var filtered: float = 0.0
+	for i in range(frames):
+		filtered += HISS_LOWPASS * (randf_range(-1.0, 1.0) - filtered)
+		var progress: float = float(i) / frames
+		var envelope: float
+		if i < attack_frames:
+			envelope = float(i) / attack_frames
+		else:
+			var t: float = float(i - attack_frames) / MIX_RATE
+			envelope = exp(-t * HISS_DECAY) * (1.0 - progress)
+		samples.append(filtered * envelope)
 	return samples
 
 
