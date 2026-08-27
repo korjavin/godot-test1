@@ -148,6 +148,28 @@ that running the field will fix it. Hard and legible is content; hard and ambigu
 Nothing you *solved* is ever taken back — opened routes and met gates stay open — but the
 guards come back, so no cleared room becomes an empty corridor.
 
+### Nobody dies. The game does not end.
+
+There are **no lives and no game over.** A predator catches you, knocks you back, takes
+**7% of your coins** — and you carry on. **Levels and skills are never touched**, so a bad
+moment costs you money, never your progress.
+
+The menu offers **Continue** and **New Game**, and there is nothing else behind them, because
+**the game *is* the world**: one save is one world is one game. There is no account, no
+meta-layer, nothing that survives a New Game. Start over and **every hero is back to zero
+skills and zero coins.**
+
+### Two things that carry the tension
+
+- **Predators cost coins.** An interruption, not a catastrophe.
+- **Hunters cost nothing — until they cost everything.** They frighten constantly and take
+  almost never, and the one time they succeed is authored. The dread differs; the arithmetic
+  usually does not.
+
+That leniency is tuned *before contact* — escape routes, approach angles, how many can chase
+at once — never by a hunter visibly pulling its punch. Once one honestly earns a grab, it
+lands. What the player learns is how hunters see and lose you, which is mastery, not a tell.
+
 And behind all of it, the pressure rises. **Recall Pressure is now containment escalation:**
 progressively more capable automated retrieval measures, deployed because *the same live
 incident is still unresolved.* It is still a workflow — just one built to close a
@@ -195,8 +217,20 @@ what stays true across all of them — the constraints, and the map from lore to
 | File | What it is |
 | --- | --- |
 | [session-01-recall-anchors.md](session-01-recall-anchors.md) | Recall Anchors and the story spine. **§3 superseded** — simultaneity is dead; kept as the record of how the design got here |
-| [session-02-the-hunt.md](session-02-the-hunt.md) | Hunter robots, Primm's abduction, and the return to the tower |
-| [session-03-the-loop.md](session-03-the-loop.md) | The field farms, the tower demands — rank gates as content, and what survives a tower exit |
+| [session-02-the-hunt.md](session-02-the-hunt.md) | Hunter robots, Primm's abduction, the capture trigger, and hunter mercy |
+| [session-03-the-loop.md](session-03-the-loop.md) | The field farms, the tower demands — rank gates, no lives, and the save model |
+
+### Decisions still waiting on the owner
+
+1. **What do coins buy?** Levels derive from *gross* lifetime earnings, so the 7% death
+   penalty removes no progress. Without a real coin sink, 7% is a shrinking number with no
+   sting — and predators become interruption rather than stakes. (Session 03.)
+2. **Cross-device Continue.** Today `player_id` is per install, so no two devices share a
+   record and nothing needs reconciling. If that should change, a `save_id` alone cannot
+   choose which world is current. (Session 03.)
+3. **How many acts, and their shape** — with small quests inside each. (Session 01.)
+4. **What a failed anchor costs *in fiction*** — GastroDefense *filing* something is more on
+   tone than a damage number. (Session 01.)
 
 Lore source: `../crimekickerslor` (Obsidian vault). It is **inspiration, not a spec** —
 the owner's ruling is that we do not have to follow 100% of it.
@@ -251,9 +285,27 @@ freedom and cost real engineering, and the cost is stated rather than glossed.
    "costs nothing and needs no special case if that ever changes." Giving a peer two heroes
    is a `server/room.go` change and **zero client change**.
 
-6. **Distance is the score, and it is `global_position.x`.** The coin road's X strictly
-   increases with station index. Anything we call a "destination" has to reckon with the
-   fact that the axis never ends.
+6. ~~**Distance is the score.**~~ **DELETED by the owner** (2026-08-27): *"мы можем убрать
+   совсем эту механику про расстояние."* Progress is now coins → skill points, and the story.
+
+   Two factual notes, since both were wrong in circulation. CLAUDE.md says distance is
+   `global_position.x`; it is **not** — `player_controller.gd:879` is
+   `maxi(own_distance, (here - own_distance_origin).length())`, i.e. **radial and monotone**.
+   That is why walking back toward the tower never cost score, and why the return leg was free
+   all along.
+
+7. **Nothing that travels between save layers may ever decrease.** The three layers — local
+   `ConfigFile`, `localStorage` on web, and the Go lobby's `/best` — are reconciled by a plain
+   `max` with **no authority anywhere**, which is what makes a late reply harmless and a retry
+   free. So a falling balance must be **derived**, never stored:
+   `wallet = max(0, lifetime_earned − lifetime_debited)`, with purchases *and* death losses
+   incrementing the **same** debit counter. Two independently merged consumers of one pool can
+   merge negative — see session 03 for the counterexample.
+
+   Corollary, now that **New Game zeroes everything**: the record must be keyed **per world**
+   (`player_id` + `save_id`), or the next merge restores the campaign the player just
+   abandoned. And note that `progression.gd` is today deliberately **run-independent** — the
+   owner's ruling inverts that on purpose.
 
 ## Lore → code: what already exists
 
@@ -272,11 +324,14 @@ Other lore hooks with code already under them:
 
 - **The incident-signature resonance** (strongest Windman ↔ Primm) — `teammate_locator.gd`
   already points at teammates. Flavouring it as the resonance costs nothing.
-- **GastroDefense is a workflow, not a villain** — so it never needs a boss fight, which is
-  lucky, because boss crocodiles on road stations are already the fight budget.
-- **Meta-progression is already run-independent.** `progression.gd` is untouched by
-  restart/new-run, and `best_run_store.gd` merges every field with a monotone `max`. A new
-  *lifetime* currency needs no new persistence layer.
+- **GastroDefense never needs a boss fight** — it is a containment procedure, not a dark lord,
+  which is lucky, because boss crocodiles on road stations are already the fight budget.
+- **The progression plumbing exists, but its policy is being inverted.** `progression.gd`
+  turns lifetime coins into levels into skill points and is **today** untouched by
+  restart/new-run, while `best_run_store.gd` merges every field with a monotone `max`. The
+  machinery is reusable; the *run-independence* is not — the owner's "the game is the world"
+  ruling requires New Game to reset precisely what that file was built never to reset. See
+  constraint 7.
 - **"No single member can clear an obstacle alone"** is stated outright in the vault
   (`Universe/The Crime Kickers.md`, "Power synergy"). We are implementing existing canon,
   not inventing against it.
