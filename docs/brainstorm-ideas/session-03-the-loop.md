@@ -292,8 +292,38 @@ checkpoints and capture state. The real contract:
 - **Continue** — load the saved seed, tower/campaign state, last checkpoint, roster and story
   state, and the banked profile.
 - **New Game** — after confirmation, create a fresh campaign: new seed, closed tower routes,
-  reset quests and capture state. *Open ruling: are account-level skills retained as
-  meta-progression, or reset with the campaign?*
+  reset quests and capture state, **and every hero back to zero skills and zero coins.**
+
+### There is no meta-layer — the game *is* the world
+
+**Owner ruling, and it is a real simplification:**
+
+> Когда начинаем новую игру, все герои начинаются с нуля, с нулевыми скиллами, с нулевыми
+> монетами… У нас вообще нет игры и мира, у нас всегда одно и то же. Игра — это одно и то же,
+> что и мир.
+
+So **skills and coins are world state, not account state.** There is no meta-progression
+surviving a New Game, and no separation between "the game" and "the world" — one save *is*
+one world *is* one game.
+
+**This inverts a shipped design decision**, which is worth stating plainly rather than
+discovering later: `progression.gd` is today deliberately **run-independent** — nothing in
+restart, new-run or reset touches lifetime coins. Under this ruling, New Game must reset
+exactly what that file was built never to reset.
+
+#### And it breaks the save key, not just the save contents
+
+This is the sharp edge. `best_run_store.gd` keys its record on **one player id per install**
+and merges every field by monotone `max`. That was correct while progress only ever grew.
+
+**It is now actively wrong:** start a New Game, drop to zero, and the next merge sees the
+server's remembered maximum and **restores the campaign you just abandoned.** Max-merge does
+not just fail to help here — it resurrects deleted progress.
+
+**Fix: the record must be keyed per *world*, not per player** — player id **plus a save id**.
+Then `max`-merge stays valid *within* a save (which is what the three-counter decomposition
+needs), and a New Game simply starts a new record instead of colliding with the old one.
+Nothing about the merge logic changes; only what it is keyed on.
 
 And a naming note worth keeping: if a command only re-rolls the field while keeping the
 campaign, it is **New World / Reroll Field**, not New Game.

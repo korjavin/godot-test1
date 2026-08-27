@@ -188,6 +188,24 @@ loss — and the **actual abduction stays reserved for the floor-plus-beat encou
 to a hunter in ordinary play costs what losing to a predator costs; what differs is the dread,
 not the arithmetic.
 
+**The owner's ruling makes this explicit, and adds a lever:**
+
+> охотник забирает героя — это правильно, но в целом мы, наверное, должны немножко читить,
+> так чтобы охотники пугали и мотивировали бегать по полю, но не особенно часто забирали.
+>
+> *(A hunter taking a hero is right, but broadly we should cheat a little, so that hunters
+> frighten and motivate you to keep moving, without actually taking someone very often.)*
+
+So the hunter is a **threat generator, not a loss generator.** The *appearance* of danger is
+frequent; the *realisation* of it is rare and largely authored. Near-misses, cut-off routes
+and closing pursuit do the work; actual capture is spent sparingly.
+
+**One condition on which this depends entirely: the mercy has to be invisible.** A player who
+notices the game is pulling its punches loses the fear immediately, and once lost it does not
+come back — a hunter that has visibly failed to catch you twice is scenery. Which means the
+leniency must be expressed as **hunters making plausible mistakes** — losing the line, being
+blocked by terrain, arriving a beat late — never as damage that mysteriously does not land.
+
 They are the Retrieval Division made visible, and the vault has them: the
 **GD-SURVEY-ENTRÉE … GD-SURVEY-DESSERT** field-survey fleet — food-safety inspection units
 given an unvalidated asset-recovery firmware update. Machines never designed for this,
