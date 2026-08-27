@@ -71,8 +71,8 @@ a major causal leap."* Asserting it makes the climax rest on a convenient infere
 proof is now **earned in two small quests** — an AEGIS record naming the missing piece, then
 a demonstrated parallel with Pho-boman's unreadability — after which it stops being a theory
 and becomes the deliberate strategy behind the `EXCEPTION` route. This is also the first
-concrete instance of the small-quest rule in item 3 below: the two quests are deposits on the
-climax, not lessons.
+concrete instance of the small-quest rule (see "Still open — design", item 2): the two
+quests are deposits on the climax, not lessons.
 
 Codex judged **fix 2 the strongest** ("it turns the approach into a knowingly dangerous
 search for agency, and it closes the missing travel logic"), and fix 1 necessary but
@@ -571,13 +571,12 @@ the climax without noticing. Codex's framing is the correct one.
    player can mint an id and unlock everything (see §6). Three options: accept it exactly as
    `best.go` already accepts it; keep **chapter unlock local** and put only Recall Exposure
    and shard totals on the server; or build real identity, which nobody wants for this game.
-2. **How many acts, and what they are.** Naming them and mapping each to existing biomes and
-   predator species. The 20-episode arc is the obvious source, but 20 acts is far too many —
-   probably 4, matching the vault's four movements.
 
 **Still open — design (next session starts here, agreed with codex):**
 
-3. **How many acts, and their shape.** Probably 4, matching the vault's four movements.
+2. **How many acts, and their shape.** Probably 4, matching the vault's four movements —
+   the 20-episode arc is the obvious source but 20 acts is far too many. Includes mapping
+   each act to existing biomes and predator species.
 
    **Owner direction (2026-08-27, from the revdiff pass):** *"i'd prefer longer story with
    subsections, like we learn something in small quests before we got to main tower."*
@@ -596,11 +595,11 @@ the climax without noticing. Codex's framing is the correct one.
    longer structure the owner asked for without tutorial texture — and it is also how the
    AEGIS-3 proof gets earned rather than asserted (see [README.md](README.md), "What they
    run toward"). Design the act's internal beats next session, before naming the acts.
-4. **What a failed anchor costs *in fiction*,** not just in meter. GastroDefense *filing*
+3. **What a failed anchor costs *in fiction*,** not just in meter. GastroDefense *filing*
    something is more on-tone than a damage number.
-5. What the cordon **looks like** — it is the first hard barrier this game has ever had, and
+4. What the cordon **looks like** — it is the first hard barrier this game has ever had, and
    the flat-world invariant still applies to whatever we build there.
-6. Whether the shipped **Windman rain gate** stays as-is once anchors exist. Local-only and
+5. Whether the shipped **Windman rain gate** stays as-is once anchors exist. Local-only and
    harmless today, but it is the one place a client-local roll changes what a player can do.
 
 **Not yet:** no beads issues, and no code. Nothing here is built.
