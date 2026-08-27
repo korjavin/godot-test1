@@ -134,6 +134,8 @@ func _run() -> void:
 	_biome_species = consts.get("BIOME_SPECIES", {})
 	_check_species_table()
 	_check_pack_surround(croc_ai)
+	_check_ambush_trip_wire()
+	_check_charge_dodge(croc_ai)
 
 	for run_seed: int in RUN_SEEDS:
 		_sweep(terrain_script, run_seed, spawn_height, edge_inset)
@@ -448,6 +450,398 @@ func _check_pack_surround(croc_ai: GDScript) -> void:
 		_fail("six wolves claim only %.1f of %d ring slots on average —" % [
 				mean_slots, pack_size]
 				+ " `id %% pack_size` has degenerated and they share bearings")
+
+
+# ============================================================================
+# CHECK 6 — an ambusher really does LIE THERE, and really does strike
+# ============================================================================
+
+## The two lanes a quarry is walked past the ambusher on, in metres of lateral
+## offset. OUTSIDE is beyond the viper's 5 m trigger and comfortably inside the
+## crocodile's 15 m one, which is what makes the same lane serve as this check's
+## negative control. INSIDE is a third of the trigger: unmistakably stepped on.
+const AMBUSH_LANE_OUTSIDE: float = 8.0
+const AMBUSH_LANE_INSIDE: float = 1.5
+
+## How far up and down the lane the quarry walks, and at what resolution. 12 m
+## either side of the predator is well past every detection radius in the table,
+## so every probe starts and ends with nothing smelled.
+const AMBUSH_WALK_HALF: float = 12.0
+const AMBUSH_PROBE_DT: float = 1.0 / 60.0
+
+## Where the strike counts as LANDED. The viper's node origin is its head (see
+## the capsule note in the SPECIES row) and the player is not a point, so a metre
+## between origins is contact with room to spare.
+const AMBUSH_STRUCK: float = 1.0
+
+## How far a predator may drift while a quarry walks past outside its trigger.
+## This is a real zero, not a tolerance: `move_speed` 0.0 makes the wander
+## velocity identically zero at every point of the sin cycle.
+const AMBUSH_DRIFT_MAX: float = EPSILON
+
+
+func _check_ambush_trip_wire() -> void:
+	"""
+	MEASURE the ambush. Do not assert it.
+
+	An ambusher is defined by two behaviours that are the opposite of each other,
+	and both of them are invisible from the outside — which is this file's whole
+	subject. It must NOT close on a player who walks past outside its trigger (a
+	viper that creeps is not buried, it is just a slow crocodile), and it MUST
+	strike a player who walks through it (a viper that does not is a rock). Every
+	way of losing either is silent: raise `move_speed` off zero and the ambusher
+	wanders out of the patch it was hiding in; drop `chase_speed` under WALK_SPEED
+	or let `sniff_pause_chance` back above zero and the strike simply never
+	arrives, with nothing logged anywhere.
+
+	So this walks a quarry past a stationary predator at WALK_SPEED, twice, and
+	runs the shipped movement shape each step: the detection test out of
+	_update_chase_state (distance against the row's own radius), then the two
+	lines out of _physics_process (lerp_angle toward the heading at the row's own
+	turn_smoothness, then travel along the FACING — never along the raw
+	direction — at the row's own speed).
+
+	THE NEGATIVE CONTROL IS THE SAME TWO WALKS RUN AGAINST THE CROCODILE ROW, and
+	the outside lane is chosen so it lands inside the crocodile's 15 m detection
+	and outside the viper's 5 m one. Without it, "the predator did not move" is
+	also true of a probe that never moves anything and "it never got closer" is
+	also true of a probe that measures the wrong distance.
+
+	WHAT THE MODEL LEAVES OUT, honestly: obstacle feelers, gravity, the per-frame
+	wander steer (the probe holds a fixed idle heading, so the drift it reports is
+	a floor on the real one, never a ceiling) and the per-instance speed roll. The
+	roll is covered separately and arithmetically — the row's spread is checked
+	against WALK_SPEED in _check_species_table — and it cannot rescue a zero:
+	anything times `move_speed` 0.0 is 0.0.
+	"""
+	var ambush_species := ""
+	for name_v: Variant in _species_table:
+		if String(_species_table[name_v].get("behavior", "")) == "ambush":
+			ambush_species = String(name_v)
+			break
+	if ambush_species == "":
+		_fail("no SPECIES row has behavior 'ambush' — the burrow-and-strike this"
+				+ " check measures is not reachable from any species")
+		return
+
+	var row: Dictionary = _species_table[ambush_species]
+	for key: String in ["ambush_burrow_depth", "ambush_surface_ease_speed"]:
+		if not row.has(key):
+			_fail("SPECIES['%s'] has behavior 'ambush' but no '%s' —" % [ambush_species, key]
+					+ " _tick_river_sink reads it on every frame it is buried")
+			return
+
+	# ---- the burrow actually buries, measured off the MESH --------------------
+	# The house rule again: the depth is checked against the model's real AABB,
+	# not against the figure quoted in the row's comment, because a regenerated
+	# GLB is exactly the kind of change that leaves a comment true and a number
+	# wrong — and the failure is a snake-shaped ridge lying in the sand, which no
+	# system anywhere considers an error.
+	var scene_path := ""
+	for biome_v: Variant in _biome_species:
+		if String(_biome_species[biome_v].get("species", "")) == ambush_species:
+			scene_path = String(_biome_species[biome_v].get("scene", ""))
+			break
+	var mesh_top: float = _model_top(scene_path)
+	var burrow: float = float(row["ambush_burrow_depth"])
+	# The bob is the highest the animation ever lifts the model off its rest
+	# height (breathing is shallower), so mesh top + bob is the tallest this
+	# animal ever stands and the depth has to clear it.
+	var needed: float = mesh_top + float(row["bob_amount"])
+	if mesh_top <= 0.0:
+		_fail("could not measure a model AABB for '%s' from '%s' —" % [ambush_species, scene_path]
+				+ " the burrow depth check has nothing to measure against")
+	elif burrow < needed:
+		_fail("SPECIES['%s'].ambush_burrow_depth %.3f does not clear its own mesh"
+				% [ambush_species, burrow]
+				+ " (%.4f tall + %.3f of bob) — it waits in ambush with its back out"
+				% [mesh_top, float(row["bob_amount"])])
+	# Surfacing must be FASTER than sinking, which is the whole "surfaces rapidly"
+	# half of the spec: at or below the sink ease the strike is a slow reveal.
+	if float(row["ambush_surface_ease_speed"]) <= float(row["river_sink_ease_speed"]):
+		_fail("SPECIES['%s'] surfaces at %.2f m/s but sinks at %.2f —" % [ambush_species,
+				float(row["ambush_surface_ease_speed"]), float(row["river_sink_ease_speed"])]
+				+ " an ambusher that rises no faster than it settles has no strike")
+
+	# ---- the trip-wire measurement ------------------------------------------
+	var results := {}
+	for probe_species: String in [ambush_species, "crocodile"]:
+		for lane: float in [AMBUSH_LANE_OUTSIDE, AMBUSH_LANE_INSIDE]:
+			results["%s@%.1f" % [probe_species, lane]] = _walk_past(
+					_species_table[probe_species], lane)
+
+	var out_amb: Dictionary = results["%s@%.1f" % [ambush_species, AMBUSH_LANE_OUTSIDE]]
+	var in_amb: Dictionary = results["%s@%.1f" % [ambush_species, AMBUSH_LANE_INSIDE]]
+	var out_croc: Dictionary = results["crocodile@%.1f" % AMBUSH_LANE_OUTSIDE]
+	var in_croc: Dictionary = results["crocodile@%.1f" % AMBUSH_LANE_INSIDE]
+
+	print("ambush trip-wire: a %.1f m/s quarry passing at %.1f m leaves the %s"
+			% [_walk_speed, AMBUSH_LANE_OUTSIDE, ambush_species]
+			+ " %.3f m from where it started (closest %.2f m) and the crocodile"
+			% [out_amb["travelled"], out_amb["closest"]]
+			+ " %.2f m (closest %.2f m); at %.1f m they close to %.2f m and %.2f m"
+			% [out_croc["travelled"], out_croc["closest"], AMBUSH_LANE_INSIDE,
+					in_amb["closest"], in_croc["closest"]])
+
+	if out_amb["travelled"] > AMBUSH_DRIFT_MAX:
+		_fail("'%s' moved %.3f m while a quarry walked past %.1f m away —" % [
+				ambush_species, out_amb["travelled"], AMBUSH_LANE_OUTSIDE]
+				+ " a buried ambusher does not close distance on anything")
+	if out_amb["closest"] < AMBUSH_LANE_OUTSIDE - EPSILON:
+		_fail("'%s' let the quarry get %.2f m away on a lane %.1f m wide —" % [
+				ambush_species, out_amb["closest"], AMBUSH_LANE_OUTSIDE]
+				+ " it followed rather than waited")
+	if in_amb["closest"] > AMBUSH_STRUCK:
+		_fail("'%s' only reached %.2f m of a quarry that walked straight through"
+				% [ambush_species, in_amb["closest"]]
+				+ " its %.1f m trigger (want <= %.1f m) — the strike is gone"
+				% [float(row["detection_radius"]), AMBUSH_STRUCK])
+	# The controls: the same two walks against a species that hunts.
+	if out_croc["travelled"] <= AMBUSH_DRIFT_MAX or out_croc["closest"] >= AMBUSH_LANE_OUTSIDE:
+		_fail("the NEGATIVE CONTROL: a crocodile moved %.3f m and closed to %.2f m"
+				% [out_croc["travelled"], out_croc["closest"]]
+				+ " on the same %.1f m lane — the probe cannot see a predator move,"
+				% AMBUSH_LANE_OUTSIDE + " so the ambusher's stillness measures nothing")
+	if in_croc["closest"] > AMBUSH_STRUCK:
+		_fail("the NEGATIVE CONTROL: a crocodile failed to reach a quarry walking"
+				+ " %.1f m past it (closest %.2f m) — the probe cannot see a strike"
+				% [AMBUSH_LANE_INSIDE, in_croc["closest"]])
+
+
+func _walk_past(row: Dictionary, lane: float) -> Dictionary:
+	"""
+	Walk a quarry in a straight line past a predator sitting at the origin, and
+	report how far the predator travelled and how close it ever got.
+
+	The predator starts facing +Z, which is across the quarry's +X path: it has a
+	quarter turn to make before it can strike, exactly as a real one would from
+	whatever heading `_choose_new_direction` left it on.
+
+	@param row: the SPECIES row to simulate
+	@param lane: the quarry's lateral offset in metres
+	@return { travelled: float, closest: float }
+	"""
+	var pos := Vector3.ZERO
+	var yaw := 0.0
+	var detect: float = float(row["detection_radius"])
+	var chase: float = float(row["chase_speed"])
+	var turn: float = float(row["turn_smoothness"])
+	# The fastest this row can ever wander: the top of the sin cycle, before the
+	# per-instance roll. The probe holds one idle heading rather than drifting, so
+	# the drift it reports is a floor on the real one — see the docstring.
+	var idle: float = float(row["move_speed"])
+	var closest := INF
+	var steps := int(2.0 * AMBUSH_WALK_HALF / (_walk_speed * AMBUSH_PROBE_DT))
+	for step in range(steps):
+		var quarry := Vector3(-AMBUSH_WALK_HALF + _walk_speed * float(step) * AMBUSH_PROBE_DT,
+				0.0, lane)
+		var distance := pos.distance_to(quarry)
+		closest = minf(closest, distance)
+		var speed := idle
+		if distance <= detect:
+			speed = chase
+			var to_quarry := quarry - pos
+			to_quarry.y = 0.0
+			if to_quarry.length() > 0.1:
+				yaw = lerp_angle(yaw, atan2(to_quarry.x, to_quarry.z),
+						AMBUSH_PROBE_DT * turn)
+		pos += Vector3(sin(yaw), 0.0, cos(yaw)) * speed * AMBUSH_PROBE_DT
+	return { "travelled": pos.length(), "closest": closest }
+
+
+func _model_top(scene_path: String) -> float:
+	"""
+	How tall the `Model` subtree of a predator scene stands, in model-local
+	metres, measured off the real mesh AABBs.
+
+	Instantiated but never added to the tree, so no _ready() runs and no physics
+	body is registered — the same detached-instance trick prop_selfcheck.gd uses,
+	and the reason this costs a few milliseconds rather than a frame.
+	"""
+	if scene_path == "" or not ResourceLoader.exists(scene_path):
+		return -1.0
+	var packed: PackedScene = load(scene_path)
+	if packed == null:
+		return -1.0
+	var instance: Node = packed.instantiate()
+	var model: Node = instance.get_node_or_null("Model")
+	var top := -1.0
+	if model != null:
+		top = _aabb_top(model, Transform3D.IDENTITY)
+	instance.free()
+	return top
+
+
+func _aabb_top(node: Node, xform: Transform3D) -> float:
+	"""The highest point of every VisualInstance3D under `node`, in `xform`'s frame."""
+	var here := xform
+	if node is Node3D:
+		here = xform * (node as Node3D).transform
+	var top := -1.0
+	if node is VisualInstance3D:
+		var box: AABB = here * (node as VisualInstance3D).get_aabb()
+		top = box.position.y + box.size.y
+	for child in node.get_children():
+		top = maxf(top, _aabb_top(child, here))
+	return top
+
+
+# ============================================================================
+# CHECK 7 — a committed charge can be SIDESTEPPED, and a tracking one cannot
+# ============================================================================
+
+## Where the quarry starts, straight in front of the charger. Inside the bear's
+## 14 m detection, so it is locked on from the first step and the charge is
+## already committed when the dodge happens.
+const CHARGE_PROBE_START: float = 12.0
+
+## The distances at which the quarry starts its sidestep. The lock refreshes
+## every `charge_commit` metres of TRAVEL, so a single trigger distance would
+## measure one arbitrary phase of that cycle — five of them, averaged, measure
+## the behaviour instead. All are inside the commitment and outside contact.
+const CHARGE_DODGE_AT: Array[float] = [3.0, 4.0, 5.0, 6.0, 7.0]
+
+const CHARGE_PROBE_DT: float = 1.0 / 60.0
+const CHARGE_PROBE_SECONDS: float = 6.0
+
+## The verdict, and both halves are deliberately loose — a guard against the
+## commitment being GONE, not a pin on today's tuning. A committed charge must
+## miss a WALKING sidestep by several times the bear's own 0.43 m width; the same
+## bear with the commitment switched off must stay inside a metre of the quarry,
+## which on a 0.43 m animal beside a player is on top of them. Today's numbers are
+## 3.02 m against 0.78 m — a four-fold difference, which is the statement, not the
+## two absolute figures.
+const CHARGE_DODGE_MIN: float = 1.5
+const CHARGE_TRACK_MAX: float = 1.0
+
+
+func _check_charge_dodge(croc_ai: GDScript) -> void:
+	"""
+	MEASURE the dodge. Do not assert it.
+
+	"High momentum" is the easiest thing in this epic to write in a way that reads
+	correctly and does nothing. A charge that re-aims every frame is an ordinary
+	chase with a heavy comment; a commitment shorter than a sidestep is invisible;
+	a commitment that never expires is a bear running off the edge of the world.
+	None of the three is an error anywhere — you get a predator that feels like
+	all the others, which is the one outcome this bead exists to prevent.
+
+	So this simulates the dodge and reports the miss. A quarry stands directly in
+	the bear's path at 12 m, lets it commit, and at `CHARGE_DODGE_AT` metres steps
+	sideways at WALK_SPEED — a walk, not a run, because the point of the behaviour
+	is that footwork beats a predator you cannot outrun. Each step runs the
+	SHIPPED steering (`charge_steer_point`, the same static function the arm
+	calls) and the shipped two lines of movement.
+
+	THE NEGATIVE CONTROL IS THE SAME BEAR WITH THE COMMITMENT SWITCHED OFF —
+	identical row, identical turn_smoothness, aiming at the quarry's live position
+	every frame. It must still catch the sidestep. That is what separates "the
+	charge commits" from "the bear turns slowly": if the momentum ever quietly
+	migrated out of `charge_steer_point` and into `turn_smoothness`, the control
+	would start missing too and this check says so.
+
+	WHAT THE MODEL LEAVES OUT, honestly: obstacle feelers, gravity, the bite's own
+	lunge and the per-instance speed roll. The first two perturb the path without
+	touching where the lock points; the roll is bounded by the lattice at one end
+	and by ±20% at the other, and a slower bear misses by MORE.
+	"""
+	var charge_species := ""
+	for name_v: Variant in _species_table:
+		if String(_species_table[name_v].get("behavior", "")) == "charge":
+			charge_species = String(name_v)
+			break
+	if charge_species == "":
+		_fail("no SPECIES row has behavior 'charge' — the committed charge this"
+				+ " check measures is not reachable from any species")
+		return
+
+	var row: Dictionary = _species_table[charge_species]
+	if not row.has("charge_commit"):
+		_fail("SPECIES['%s'] has behavior 'charge' but no 'charge_commit' —" % charge_species
+				+ " _behave_charge reads it every frame it chases")
+		return
+	var commit: float = float(row["charge_commit"])
+	if commit <= 0.0:
+		_fail("SPECIES['%s'].charge_commit is %.2f — a charge that re-aims every"
+				% [charge_species, commit] + " frame is an ordinary chase")
+		return
+
+	var committed := 0.0
+	var tracking := 0.0
+	for dodge_at: float in CHARGE_DODGE_AT:
+		committed += _charge_miss(croc_ai, row, dodge_at, true)
+		tracking += _charge_miss(croc_ai, row, dodge_at, false)
+	committed /= float(CHARGE_DODGE_AT.size())
+	tracking /= float(CHARGE_DODGE_AT.size())
+
+	print("charge dodge: a %.1f m/s sidestep at %s m beats a committed %s by"
+			% [_walk_speed, str(CHARGE_DODGE_AT), charge_species]
+			+ " %.2f m on average (same bear, commitment off: %.2f m)"
+			% [committed, tracking])
+
+	if committed < CHARGE_DODGE_MIN:
+		_fail("a walking sidestep only beats a committed charge by %.2f m" % committed
+				+ " (want >= %.2f m) — the commitment is gone and the bear is"
+				% CHARGE_DODGE_MIN + " just another chaser")
+	if tracking > CHARGE_TRACK_MAX:
+		_fail("the NEGATIVE CONTROL missed by %.2f m with the commitment SWITCHED"
+				% tracking + " OFF — the %.2f m measured with it on is coming from"
+				% committed + " turn_smoothness, not from charge_steer_point")
+
+
+func _charge_miss(croc_ai: GDScript, row: Dictionary, dodge_at: float,
+		committed: bool) -> float:
+	"""
+	Run one charge against one sidestep and report the closest the bear ever got.
+
+	@param croc_ai: the AI script, for its static charge_steer_point
+	@param row: the SPECIES row to simulate
+	@param dodge_at: how close the bear is when the quarry starts moving
+	@param committed: true to run the shipped steering, false for the control
+	@return closest approach in metres
+
+	THE RUN ENDS WHEN THE CHARGE IS SPENT — the first frame after the dodge began
+	on which the bear stops closing — and that window is the measurement, not a
+	convenience. Left running, every probe converges to zero and says nothing:
+	the quarry walks a straight line forever at 5 m/s and the bear does 6, so it
+	re-acquires from behind and eventually arrives no matter what happened at the
+	dodge. That is CORRECT (walking is caught, running escapes, and a dodge buys
+	the separation you then run with) and it is a different measurement from this
+	one, which asks only whether the sidestep beat the charge that was in flight.
+	The control does not trip the rule at all — a tracking bear never stops
+	closing — so it runs the full budget and reports the contact it makes.
+	"""
+	var quarry := Vector3(0.0, 0.0, CHARGE_PROBE_START)
+	var pos := Vector3.ZERO
+	var yaw := 0.0                      # already facing the quarry, along +Z
+	var chase: float = float(row["chase_speed"])
+	var turn: float = float(row["turn_smoothness"])
+	var commit: float = float(row["charge_commit"])
+	var lock := {}
+	var dodging := false
+	var closest := INF
+	var previous := INF
+	var steps := int(CHARGE_PROBE_SECONDS / CHARGE_PROBE_DT)
+	for _step in range(steps):
+		var distance := pos.distance_to(quarry)
+		if dodging and distance > previous + EPSILON:
+			break                       # the charge is spent — see the docstring
+		previous = distance
+		closest = minf(closest, distance)
+		if distance <= dodge_at:
+			dodging = true
+		if dodging:
+			# Straight across the bear's original line, at a WALK.
+			quarry.x += _walk_speed * CHARGE_PROBE_DT
+		var target := quarry
+		if committed:
+			target = croc_ai.charge_steer_point(quarry, pos, lock, commit)
+		var to_target := target - pos
+		to_target.y = 0.0
+		if to_target.length() > 0.1:
+			yaw = lerp_angle(yaw, atan2(to_target.x, to_target.z), CHARGE_PROBE_DT * turn)
+		pos += Vector3(sin(yaw), 0.0, cos(yaw)) * chase * CHARGE_PROBE_DT
+	return closest
 
 
 func _bearing_spread_deg(bearings: Array[float]) -> float:
