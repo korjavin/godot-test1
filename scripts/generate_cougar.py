@@ -18,11 +18,40 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 from predator_parts import box, quadruped, rgba, save  # noqa: E402
 
-# Desert-tan coat, cream underside, green eye (the one bright accent).
-COAT = "#b8894e"
-BELLY = "#e8dcc0"
-DARK = "#2a1f16"
-EYE = "#7ad14a"
+# --- Palette. Dark tawny cat on pale scree. READ THE GAMMA NOTE BEFORE EDITING. -
+#
+# THESE HEXES ARE LINEAR, NOT sRGB. Godot imports this GLB's vertex colours with
+# `vertex_color_is_srgb = false`, so each byte is fed to ALBEDO as-is and every
+# constant here renders MUCH LIGHTER than it looks in a text editor. `#170e06`
+# below is not "nearly black on screen", it is the dark tawny umber `#55422a`.
+# Pick a colour by deciding the DISPLAYED value and converting back
+# (`linear = ((srgb + 0.055) / 1.055) ** 2.4`), never by eye off the hex — that
+# mistake is what produced the sand viper's camouflage bug (see the same note in
+# generate_snake.py), and this animal shipped with the identical version of it.
+#
+# WHAT WAS WRONG. The art track built this cat desert-tan (`#b8894e`), which
+# DISPLAYS as `#ddc296` — a pale sandy cream. Its own ground is
+# ground.gdshader's `mountain_color` vec3(0.45, 0.43, 0.40), displaying `#b3afaa`.
+# That is a contrast ratio of 1.26:1, worse than the sand viper's 1.08:1 was by
+# any margin worth arguing about: the cougar WAS the mountain. On an animal whose
+# whole behaviour is a >8.5 m/s pounce out of nowhere, invisibility is not
+# atmosphere, it is a hit with no telegraph.
+#
+# WHAT IT IS NOW. The coat drops to a dark tawny umber and keeps its hue, so this
+# is still a big cat and still not the wolf's grey or the hound's rust. Measured
+# against that same ground across its ±12% mottling, coat-vs-scree is 3.91–4.85:1
+# (was 1.14–1.42:1). The cream belly (7.5:1 on the coat) and the green eye
+# (5.9:1) carry the internal form that a uniformly dark animal would lose.
+#
+# THE DARK TAIL TIP IS NOW A SILHOUETTE, NOT A FIELD MARK, and that is a real
+# consequence rather than an oversight. `DARK` sits at 1.8:1 against the new coat
+# — invisible AS a marking — but at 7.7:1 against the ground, which is where a
+# tail that swings clear of the body is actually read. The same is true of the
+# paws, which `quadruped` colours `DARK` for exactly that reason.
+COAT = "#170e06"     # coat / haunch -> shows #55422a, dark tawny umber
+BELLY = "#dcc498"    # underside -> shows #efe3cb, cream
+DARK = "#040302"     # paws, snout tip, pupil, tail tip -> shows #221c16
+EYE = "#46be1a"      # the one bright accent -> shows #8fe05a, hot green
 
 SHAPE = dict(
     body_len=0.72, body_h=0.22, body_w=0.24,

@@ -1627,14 +1627,17 @@ const CITY_CROC_DIVISOR: float = 2.5
 ## It is the same trick, for the same reason, as CITY_CROC_DIVISOR right above
 ## and DESERT_BLOCK_KEEP_EVERY: derive from the biome, never draw for it.
 ##
-## A biome with no entry gets the crocodile — which is why PLAINS, MOUNTAIN and
-## CITY are absent rather than spelled out as "crocodile". Absent is the
-## statement: nothing about their spawning changed.
+## A biome with no entry gets the crocodile — which is why PLAINS is absent
+## rather than spelled out as "crocodile". Absent is the statement: nothing about
+## its spawning changed, and with the epic complete PLAINS is the one band that
+## still keeps the original animal.
 ##
-## ADDING A SPECIES (asc.3/.5/.6/.9 each add exactly one) is three things and no
-## more: a row in `SPECIES` in piglet_crocodile_ai.gd, a .tscn beside
+## ADDING A SPECIES (asc.3/.5/.6/.9 each added exactly one) is three things and
+## no more: a row in `SPECIES` in piglet_crocodile_ai.gd, a .tscn beside
 ## sand_viper.tscn, and one line here. No new script, no subclass, no branch in
-## the spawner.
+## the spawner — and, as the mountain cougar and the city alley hound below
+## demonstrate, not even necessarily a new `match` arm: those two SHARE one
+## ("burst"), because a pounce and an alley sprint differ only in numbers.
 ##
 ## The name must match a key of that SPECIES table. A typo does not crash: the
 ## AI's _ready() warns and falls back to the crocodile row, and _species_scene()
@@ -1667,6 +1670,30 @@ const BIOME_SPECIES: Dictionary = {
 	Biome.SNOW: {
 		"species": "frost_bear",
 		"scene": "res://scenes/characters/frost_bear.tscn",
+	},
+	## A massif band is a MAZE — impassable block walls with long straight
+	## corridors between them (see the MOUNTAIN section: mountains are things you
+	## route around, never terrain you climb). That is the one place a burst
+	## predator belongs. The cougar's pounce (see piglet_crocodile_ai's
+	## burst_cycle_factor) is the only thing in this game that goes above
+	## MAX_CHASE_SPEED, and it is only fair where a corridor gives you the sight
+	## line to see it start and the walls give its recovery leg somewhere to break
+	## line of sight. Put it on the open tundra and it would be a 11 m/s animal
+	## visible from 40 m; put the bear in here and it would shoulder into rock.
+	Biome.MOUNTAIN: {
+		"species": "mountain_cougar",
+		"scene": "res://scenes/characters/mountain_cougar.tscn",
+	},
+	## The city is the SAFE band — CITY_CROC_DIVISOR above divides its predator
+	## target by 2.5 and the roofs are the real shelter — and that is exactly why
+	## its animal is the one with the tightest escape margin in the game. Density
+	## and danger are separate dials: this band turns the first one down, so the
+	## few hounds that are here are individually harder to shake (the alley sprint
+	## runs the same burst arm as the cougar at half the cycle length). The band
+	## stays safe because you meet one, not six.
+	Biome.CITY: {
+		"species": "alley_hound",
+		"scene": "res://scenes/characters/alley_hound.tscn",
 	},
 }
 
