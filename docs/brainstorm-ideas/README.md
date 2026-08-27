@@ -55,6 +55,25 @@ GastroDefense's return geometry closing in.
 
 The screen states the whole story without a word of dialogue.
 
+### The ending: the mechanic was an argument all along
+
+At the facility, GastroDefense reads their successful cooperation as **proof they are one
+recoverable asset** — every anchor the player ever solved was also evidence filed against
+them. But the mechanic has been arguing the other way for the whole game: *chosen
+coordination between four selves is not the same thing as forced reintegration into one
+body.* Interdependence can be temporary, negotiated and revocable — that is what a relay
+teaches, six hours before anyone says it out loud.
+
+The recall's offer is asymmetric: reintegrate two, dispose of two. So the question was never
+*do you erase them*, it is **who do you include, when including him buys you nothing**. And
+that has been in the socket table since the first anchor: **Pho-boman is unreadable to the
+classifier, and a link the classifier cannot classify is exactly what the third option
+needs.** The one marked for disposal is the only reason a third option exists.
+
+The choice is made with the game's verbs at a signposted fork — an easy `RETURN TO ORIGIN`
+lane, or an unstable `EXCEPTION` route that requires all four. Then the campaign ends, and
+**Endless mode unlocks**: the world continuing after a choice.
+
 ---
 
 Working notes for giving the endless runner a **story spine** and a **challenge that

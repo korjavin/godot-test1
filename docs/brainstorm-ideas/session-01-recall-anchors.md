@@ -376,6 +376,109 @@ horizon literally sharpens because you did the optional content.**
 
 That is where a physical barrier earns itself.
 
+## 7. The arc — and what the mechanic has secretly been arguing
+
+### The game has an ending, then an Endless mode
+
+Codex's call and it is right: *"the signal never resolves because runners run forever"*
+withholds the answer the whole game promised. Give the campaign a real ending, then unlock a
+**consciously named post-ending Endless mode**. The world continuing after a choice is not a
+contradiction — it is the point.
+
+### The mechanic is an argument, and I had it backwards
+
+I proposed that every cordon teaches *these four need each other*, so the ending should ask
+whether to merge them. **Codex inverted it, and the inversion is much sharper:**
+
+> chosen coordination between four selves is morally different from forced reintegration
+> into one body
+
+Every relay teaches that interdependence can be **temporary, negotiated and revocable**. So
+the mechanic was never arguing *for* the merge — it has been arguing against it the whole
+time, in the only language a game has: what the player's hands do for six hours.
+
+### The beat that poisons everything behind it
+
+Codex's best single contribution to the story: **at the facility, GastroDefense misreads
+their successful cooperation as proof they are one recoverable asset.**
+
+That retroactively poisons every anchor the player already solved. Every act of teamwork was
+*also* evidence filed against them. It is exactly the vault's register — the menace is
+indifference, the threat is paperwork, and nobody had to be cruel for it to happen.
+
+### Who the player is
+
+The **Junior Engineer** is the diegetic frame: the only human who saw the fracture start to
+finish, who already keeps the notebook we are using as the lore delivery system, and who in
+the vault returns on his own initiative running his own investigation. He is the
+**witness/operator who builds the channel** that lets the fragments speak together — *not*
+the sovereign who chooses their fate.
+
+Codex's clinching reason is a multiplayer one: one invisible chosen human controlling
+everyone is wrong for a game where the players **are** the field team. The players are the
+team; the Engineer's record gives the run its human point of view.
+
+### The climax — the choice is made with the hands
+
+Codex's ending — four distinct signatures jointly reject the classifier and establish a
+consent-based link — is thematically right, and I pushed back that **as stated it contains no
+choice**. It is a cutscene with a button. A climax the player cannot have failed to reach is
+not a climax.
+
+So: keep that ending, and put the choice where the vault already hides it. The recall spec
+does not offer one fate, it offers an **asymmetric deal** — W-01 and P-03 are "specification
+outputs" to be reintegrated; P-02 and T-04 are "non-specification outputs" for disposal. The
+system's offer processes two and discards two, and **Pho-boman has known since E09 that he is
+disposed of whatever the fragments decide.**
+
+So the question was never *do you erase them*. It is **who do you include, when including him
+buys you nothing and costs you everything.**
+
+And here is why this feels found rather than invented: **it has been built into the mechanic
+since the first anchor, and neither of us noticed.** Pho-boman's key has always been an
+*absence* — he is the only one the classifier cannot read. A link the classifier cannot
+classify is precisely what the third option requires. **The being GastroDefense marked for
+disposal is the only reason the third state is possible at all.** The socket table was
+foreshadowing the ending from act one.
+
+**How it plays:** no dialogue box. The choice is made with the game's own verbs — run,
+switch, hold — at an **unmistakable, mutually exclusive physical fork**:
+
+| Lane | What it is |
+| --- | --- |
+| `RETURN TO ORIGIN` | brightly signposted, two easy sockets **visibly naming W-01 / P-03** — with **P-02 / T-04 tagged disposal** on the same sign |
+| `EXCEPTION` | visible but unstable, unclassifiable, **requires all four identities** |
+
+The notebook and the UI must make both outcomes **legible before the player commits**.
+Compliance must never be takeable by accident, and never hidden behind the default coin road
+— it gets its own deliberate ending and after-run variant.
+
+That fork is also the best use of the vault's language in the whole design: the player reads
+the word **disposal** next to two of their own team, on a sign, and the sign is not
+threatening anyone. It is just correctly labelled. That is the most GastroDefense thing here.
+
+**Two rules on the exception route, both codex's, both important:**
+
+- **Do not lock morality behind execution skill.** It is the hardest coordination anchor in
+  the game, but it is **checkpointed and retryable without punishment**, with the same
+  accessible timing aids as the cordons. Its cost is effort, attention, and choosing to
+  include the person the workflow calls expendable — never a permanent loss to one mistimed
+  switch.
+- **2- and 3-player hand allocation must keep the exception route achievable.** This is a
+  hard constraint on the phase schedule table, not a nice-to-have.
+
+#### A correction worth recording
+
+I first wrote that solo, the player *"holds all four in turn, consenting on behalf of each."*
+Codex replied that the player is **not** consenting for them — the four identities are the
+four required affirmative signatures, and the player's role is to **make their joint refusal
+mechanically possible.**
+
+That is not a nicer phrasing of the same thing, it is the opposite thing. My version quietly
+did exactly what GastroDefense does: treat four selves as one asset somebody else can speak
+for. The entire story is about a deleted consent field, and I put the paternalism back in at
+the climax without noticing. Codex's framing is the correct one.
+
 ## What is settled, and what is not
 
 **Settled this session:**
@@ -397,6 +500,13 @@ That is where a physical barrier earns itself.
   failing it is retryable, never a run loss.
 - Recall Pressure is act-local and **converts** into campaign-scale Recall Exposure at the
   boundary — it does not merely reset.
+- The campaign **has an ending**, and Endless mode unlocks after it.
+- The climax is a signposted, mutually exclusive fork (`RETURN TO ORIGIN` vs `EXCEPTION`),
+  chosen with the game's verbs, never a dialogue box, never takeable by accident.
+- The exception route is the hardest coordination anchor but is **checkpointed and retryable**
+  — morality is never locked behind execution skill.
+- The **Junior Engineer** is the witness/operator who builds the channel, not the sovereign
+  who decides. The players are the field team.
 - Recall Pressure replaces "optional content": skipping advances it, solving vents it, it
   never blocks passage.
 - The long-form axis is **signal resolution**, not kilometres. Shards are a lifetime
@@ -414,14 +524,50 @@ That is where a physical barrier earns itself.
    predator species. The 20-episode arc is the obvious source, but 20 acts is far too many —
    probably 4, matching the vault's four movements.
 
-**Still open — design:**
+**Still open — design (next session starts here, agreed with codex):**
 
-3. What a **failed** anchor costs *in fiction*, not just in meter. GastroDefense filing
+3. **How many acts, and their shape.** Probably 4, matching the vault's four movements.
+4. **What a failed anchor costs *in fiction*,** not just in meter. GastroDefense *filing*
    something is more on-tone than a damage number.
-4. What the cordon **looks like** — it is the first hard barrier this game has ever had, and
+5. What the cordon **looks like** — it is the first hard barrier this game has ever had, and
    the flat-world invariant still applies to whatever we build there.
-5. Whether the shipped **Windman rain gate** should stay as-is once anchors exist. It is
-   local-only and harmless today, but it is the one place where a client-local roll changes
-   what a player can do.
+6. Whether the shipped **Windman rain gate** stays as-is once anchors exist. Local-only and
+   harmless today, but it is the one place a client-local roll changes what a player can do.
 
 **Not yet:** no beads issues, and no code. Nothing here is built.
+
+---
+
+## Where the design actually came from
+
+Recorded because it is useful to know which ideas survived contact and which did not.
+
+**Codex was right, I was wrong, on five things:**
+
+1. Framing anchors as optional content — on an infinite field, optional is rational to skip,
+   so the coop challenge would have become side content nobody sees. Recall Pressure fixes it.
+2. Quorum alone guarantees a solvable anchor but **forces nobody to switch**.
+3. My exclusion rule (*"a hero used last phase cannot count"*) is **arithmetically impossible**
+   for a 3-player room.
+4. Identity-as-key does **not** clear the ability lock — the lock is on the cast, not the pad.
+5. The mechanic argues **against** reintegration, not for it. My reading was backwards, and
+   the inversion is the best idea in the document.
+
+Plus two thematic contributions that are entirely codex's: GastroDefense misreading the
+team's cooperation as proof they are one asset, and the correction that the solo player does
+not consent *for* the four — they make the four's joint refusal mechanically possible.
+
+**I was right, and checked it in the code, on four things:**
+
+1. Rain is **per-client** (`weather_manager.gd:330` `_rng.randomize()`), so no shared puzzle
+   may read it. Codex withdrew it completely.
+2. Multi-hero hands need **zero client change** — `my_character_indices()` already returns an
+   array and `switch_to_next_character()` already cycles within it.
+3. `TEIBI_FORM_DURATION = 10.0` blocks switching for longer than an entire anchor, which is
+   what forced identity-keys.
+4. `server/best.go` already carries an owner-ordered exception to the "no state on the lobby"
+   rule, so server-side SOT has precedent — but it buys **durability, not integrity**.
+
+Where we landed disagreeing productively: authority split by **timescale** rather than by
+either of our starting positions, and an ending that keeps codex's theme but restores a real
+player choice.
