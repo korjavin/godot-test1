@@ -435,7 +435,7 @@ const PLATFORM_SPAWN_HEIGHT: float = 0.6
 
 ## How far in from a platform's edge the guard's spawn point is drawn, so it
 ## lands cleanly on the surface rather than half off it. Read by
-## croc_spawn_selfcheck.gd, which walks the same inset ellipse at every angle.
+## enemy_spawn_selfcheck.gd, which walks the same inset ellipse at every angle.
 const PLATFORM_SPAWN_EDGE_INSET: float = 1.0
 
 ## Enable/disable collectible coin spawning on terrain
@@ -4863,7 +4863,7 @@ func spawn_crocodiles_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D
 		# NAMED "Crocodile_…" WHATEVER THE SPECIES, deliberately. The name is this
 		# spawn SLOT's identity, not a label: piglet_crocodile_ai.croc_id_for()
 		# hashes it into the room-wide id multiplayer syncs on, and
-		# croc_spawn_selfcheck classifies ground spawns by the prefix. Species is
+		# enemy_spawn_selfcheck classifies ground spawns by the prefix. Species is
 		# a pure function of position, so every peer already agrees on it — a
 		# per-species prefix would only churn every id for nothing.
 		crocodile_instance.name = "Crocodile_%d_%d_%d" % [chunk_pos.x, chunk_pos.y, spawned_positions.size()]
@@ -6865,7 +6865,7 @@ func _spawn_mountain_content(chunk_center: Vector3, rng: RandomNumberGenerator, 
 	# burying the guard in rock the platform descriptor knows nothing about. It went
 	# unfired through 4 x 289 chunks — and then fired the moment the snow band's
 	# threshold retune reshuffled the field, at 1.14 m deep, caught by
-	# croc_spawn_selfcheck.gd's check 1 exactly as that note predicted it would be.
+	# enemy_spawn_selfcheck.gd's check 1 exactly as that note predicted it would be.
 	# The mound needs no marking: its footprint radius is base_size * 0.71 >= 5.68,
 	# so the first clause has always covered it.
 	var avoid: Array = []

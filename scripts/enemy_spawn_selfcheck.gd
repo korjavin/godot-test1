@@ -1,13 +1,28 @@
 extends SceneTree
-## Headless self-check: NO CROCODILE MAY SPAWN INSIDE SOLID STONE — and, since
-## the biome-predator epic, EVERY PREDATOR IS THE SPECIES ITS BIOME ASKED FOR.
+## Headless self-check for EVERY ENEMY THE TERRAIN SPAWNS, in every biome. Three
+## subjects, one sweep:
 ##
-## The second subject lives here rather than in a file of its own because it is
-## the same measurement on the same sweep: the spawner that must not put a body
-## in stone is the spawner that decides what that body IS, and the failure has
-## the same shape — nothing errors, nothing logs, you just get the wrong animal.
+##   OBSTACLE AVOIDANCE — no enemy of any species may spawn inside solid stone.
+##   DETERMINISTIC PLACEMENT — where and what a chunk spawns is a pure function
+##     of (chunk coords, run_seed), to the last bit, in any generation order.
+##   MULTIPLAYER IDENTITY — every species shares one deterministic node name and
+##     one state byte, which is the whole of how a peer recognises a predator.
 ##
-##   godot --headless --path . --script res://scripts/croc_spawn_selfcheck.gd
+## They live together rather than in three files because they are the same
+## measurement on the same field: the spawner that must not put a body in stone
+## is the spawner that decides what that body IS and what it is CALLED, and all
+## three failures have the same shape — nothing errors, nothing logs, you just
+## get the wrong animal, in the wrong place, that the room cannot agree on.
+##
+## THE COVERAGE IS DRIVEN BY THE TABLES, NOT BY A LIST IN THIS FILE. Adding a
+## predator to this game is a `SPECIES` row, a `.tscn` and one `BIOME_SPECIES`
+## line (see CLAUDE.md); so every loop below iterates those two tables and the
+## `Biome` enum, and nothing here names a species. The consequences are the
+## point: an unreachable row fails, an unvisited biome fails, a species the sweep
+## never spawned fails, and a `behavior` string with no probe in this file fails
+## by name. The SEVENTH predator is covered the day its row lands.
+##
+##   godot --headless --path . --script res://scripts/enemy_spawn_selfcheck.gd
 ##
 ## Prints "SELFCHECK OK" and exits 0, or prints what failed and exits 1 — the
 ## same shape as prop_selfcheck.gd / landmark_selfcheck.gd, and it exists for the
@@ -36,9 +51,11 @@ extends SceneTree
 ## has a negative control beside it, since "no crocodile was in stone" is also
 ## true of a sweep that generated no crocodiles, no stone, or no doubled wall.
 ##
-## Cost: the whole file is ~1.3 s for 2 seeds x 289 chunks. Don't grow it into a
-## suite; if a fourth spawner appears, it belongs in check 1's sweep, not in a
-## new file.
+## Cost: ~1.2 s for 2 seeds x 289 chunks plus a 49-chunk determinism field — the
+## same order as the single-species version it grew out of, because the added
+## coverage is per SPECIES (six probes) and not per body. Don't grow it into a
+## suite; if a fourth spawner appears it belongs in the sweep, not in a new file,
+## and a seventh species should cost it nothing at all.
 ##
 ## THE ONE THING IT PRINTS THAT IS NOT ITS OWN: a handful of "RID allocations …
 ## were leaked at exit" / "resources still in use at exit" lines AFTER the
@@ -55,8 +72,18 @@ extends SceneTree
 const TERRAIN_SCRIPT: String = "res://scripts/endless_terrain.gd"
 const CROC_AI_SCRIPT: String = "res://scripts/piglet_crocodile_ai.gd"
 const PLAYER_SCRIPT: String = "res://scripts/player_controller.gd"
+const MP_SCRIPT: String = "res://scripts/mp_manager.gd"
 const CROC_SCENE: String = "res://scenes/characters/piglet_crocodile.tscn"
 const COIN_SCENE: String = "res://scenes/collectibles/coin.tscn"
+
+## Every `behavior` string this file has a probe for. THE COVERAGE GATE: a
+## SPECIES row carrying a behaviour that is not in here fails the run by name,
+## because the alternative is the failure this whole epic's checks were written
+## against — a new arm that ships, reads correctly, does nothing, and is measured
+## by nobody. "solo" is in the list and has no probe of its own on purpose: it is
+## the code ABOVE the dispatch (see the behaviour `match` in _update_chase_state),
+## which the ambush trip-wire's crocodile control drives on every run.
+const PROBED_BEHAVIORS: Array[String] = ["solo", "pack", "ambush", "charge", "burst"]
 
 ## Field side in chunks. 17 x 17 = 289, the size every measurement in CLAUDE.md's
 ## terrain sections is quoted at, so a number printed here is comparable to them.
@@ -75,7 +102,55 @@ const PLATFORM_ANGLE_SAMPLES: int = 16
 ## Float slack. A body resting exactly on a face is correct, not a failure.
 const EPSILON: float = 0.001
 
+## Side of the field the determinism check regenerates, in chunks. Small on
+## purpose — determinism is a property of one chunk's hash stream, so 49 chunks
+## across four generations say everything 289 would, at a sixth of the cost.
+const DETERMINISM_FIELD: int = 7
+
+## The seed check 9's negative control regenerates the field under. ITS OWN
+## CONSTANT, not RUN_SEEDS[1], because shortening RUN_SEEDS is a legitimate thing
+## to do while bisecting a failure and an index off the end of it would take the
+## whole run down — silently, since a script error before _report() means quit()
+## is never reached and the process exits 0 with no verdict at all. That is the
+## exact green lie this file's header is written against.
+const DETERMINISM_CONTROL_SEED: int = 777
+
+## HOW TWO GENERATIONS OF THE SAME CHUNK ARE COMPARED: `var_to_bytes` of the
+## signature array, i.e. bit for bit, with no formatting step in the middle to
+## round anything away. That is the right instrument and a tolerance is not: two
+## peers sharing a run_seed do not average their worlds, they either agree or
+## they do not, and a placement that drifts in the last ulp is one that will
+## eventually round to a visibly different metre. (GDScript's `%` has no `%g`, so
+## a 17-digit text form is not available anyway — the bytes are both exact and
+## cheaper.)
+
 var _failures: Array[String] = []
+
+## endless_terrain.gd's `Biome` enum, read out of the script's constant map in
+## _run(). Read rather than restated so the biome COVERAGE gate below counts the
+## bands the world actually has: a seventh biome makes this check demand a
+## seventh band in the field, instead of silently never testing it.
+var _biomes: Dictionary = {}
+
+## Union across every run seed of the species the sweep actually spawned, and of
+## the biomes its chunks actually landed in. The coverage verdict is taken over
+## the UNION and not per seed, because a single 289-chunk field legitimately
+## misses a band (seed 12345 contains no snow at all) — what may not happen is
+## the whole run missing one.
+var _species_seen_all: Dictionary = {}
+var _biomes_seen_all: Dictionary = {}
+
+## Species whose multiplayer contract (check 10) has already been probed. One
+## probe per ROW, not per body: the contract is a property of the script and the
+## scene, and 2800 crocodiles a seed would pay for the same answer 2800 times.
+var _mp_probed: Dictionary = {}
+
+## mp_manager.gd's CROC_FLAG_* constants, read through get_script_constant_map()
+## for the same reason SPECIES is (a `const` is not a property, and MpManager
+## has no instance here). Named through CROC_STATE_BITS rather than restated, so
+## a bit that is renamed there fails check 10 by name instead of silently
+## comparing against a zero.
+var _mp_consts: Dictionary = {}
 
 ## piglet_crocodile_ai.gd's SPECIES table and endless_terrain.gd's BIOME_SPECIES
 ## map, read once in _run() through get_script_constant_map() — see the note there
@@ -149,17 +224,49 @@ func _run() -> void:
 		slowest_scale = minf(slowest_scale, float(character_speed[name_v]))
 	if slowest_scale < INF:
 		_slowest_run_speed = float(player_consts.get("RUN_SPEED", 0.0)) * slowest_scale
+	_mp_consts = load(MP_SCRIPT).get_script_constant_map()
 	_biome_species = consts.get("BIOME_SPECIES", {})
+	# The enum itself, so the coverage gate counts the bands the world HAS.
+	_biomes = consts.get("Biome", {})
+	if _biomes.is_empty():
+		_fail("endless_terrain.gd exposes no `Biome` enum — the biome coverage gate"
+				+ " has no list of bands to demand, so a band with no predator in it"
+				+ " would go untested rather than reported")
 	_check_species_table()
+	# One call per BEHAVIOUR, and each one probes EVERY species carrying it — see
+	# _species_with(). Nothing here names an animal; a second charger or a third
+	# burst row is measured the moment its row lands.
 	_check_pack_surround(croc_ai)
 	_check_ambush_trip_wire()
 	_check_charge_dodge(croc_ai)
 	_check_burst_escape(croc_ai)
+	_check_determinism(terrain_script)
 
 	for run_seed: int in RUN_SEEDS:
 		_sweep(terrain_script, run_seed, spawn_height, edge_inset)
 
+	_check_coverage()
 	_report()
+
+
+func _species_with(behavior: String) -> Array[String]:
+	"""
+	Every SPECIES row carrying this `behavior`, in table order.
+
+	@param behavior: the value of the row's "behavior" key
+	@return the species names, possibly empty
+
+	The reason the behaviour probes below take a LIST rather than the first match:
+	two rows already share the burst arm (the cougar and the alley hound, same
+	code and different numbers), which is the shape the epic settled on — so
+	"find the pack species" is a question with no stable answer, and a probe
+	written that way silently stops measuring the second wolf the day it ships.
+	"""
+	var found: Array[String] = []
+	for name_v: Variant in _species_table:
+		if String(_species_table[name_v].get("behavior", "")) == behavior:
+			found.append(String(name_v))
+	return found
 
 
 # ============================================================================
@@ -224,9 +331,47 @@ func _check_species_table() -> void:
 						% [species_name, chase, _max_chase_speed]
 						+ " the clamp hides it at runtime, so the row is simply wrong")
 
-	# The dispatch map: names must resolve, scenes must load.
+	# ---- EVERY BEHAVIOUR IN THE TABLE MUST HAVE A PROBE IN THIS FILE --------
+	# The gate that makes this check cover the SEVENTH predator without anyone
+	# extending a list. Behaviour is the one field that is not data — it selects a
+	# `match` arm of real code — so a new value here is new logic, and new logic
+	# with no probe is exactly what every bead in this epic had to add one for. A
+	# row is free to reuse an existing arm (two do); it is not free to invent an
+	# arm nobody measures.
+	for name_v: Variant in _species_table:
+		var behavior: String = String(_species_table[name_v].get("behavior", ""))
+		if behavior == "":
+			_fail("SPECIES['%s'] declares no 'behavior' — the dispatch at the end of"
+					% name_v + " _update_chase_state has no arm to send it to, so it"
+					+ " degrades to solo and its own code is dead")
+		elif not PROBED_BEHAVIORS.has(behavior):
+			_fail("SPECIES['%s'] has behavior '%s', which no probe in this file"
+					% [name_v, behavior] + " measures — add one beside the pack /"
+					+ " ambush / charge / burst probes and list it in"
+					+ " PROBED_BEHAVIORS, or the arm ships unmeasured")
+
+	# ---- EVERY ROW MUST BE REACHABLE ---------------------------------------
+	# A species is only ever instantiated through BIOME_SPECIES (the crocodile
+	# being the fallback every entry-less biome takes). A row nothing dispatches
+	# to is a predator that exists in the source, passes every check above, and
+	# has never once been in the world — which is a half-landed bead, not a
+	# feature, and the one failure mode a table-driven check can see and a
+	# hand-written list cannot.
+	var dispatched := { "crocodile": true }
+	for biome_v: Variant in _biome_species:
+		dispatched[String(_biome_species[biome_v].get("species", ""))] = true
+	for name_v: Variant in _species_table:
+		if not dispatched.has(String(name_v)):
+			_fail("SPECIES['%s'] is in the table but in no BIOME_SPECIES entry —"
+					% name_v + " nothing in the world can ever spawn it")
+
+	# The dispatch map: biomes must exist, names must resolve, scenes must load.
 	for biome_v: Variant in _biome_species:
 		var entry: Dictionary = _biome_species[biome_v]
+		if not _biomes.values().has(int(biome_v)):
+			_fail("BIOME_SPECIES has an entry for %s, which is not a value of the"
+					% biome_v + " Biome enum %s — biome_at() can never answer it,"
+					% _biomes.values() + " so that entry is dead")
 		var species_name: String = String(entry.get("species", ""))
 		if not _species_table.has(species_name):
 			_fail("BIOME_SPECIES[%s] dispatches to '%s', which is not a SPECIES row —"
@@ -314,16 +459,26 @@ func _check_pack_surround(croc_ai: GDScript) -> void:
 	pack_flank_radius should not have to come here; PACK_FLANK_TAPER, which the
 	arc is directly proportional to, has a hard bound of its own checked below.
 	"""
-	var wolf_species := ""
-	for name_v: Variant in _species_table:
-		if String(_species_table[name_v].get("behavior", "")) == "pack":
-			wolf_species = String(name_v)
-			break
-	if wolf_species == "":
+	var names: Array[String] = _species_with("pack")
+	if names.is_empty():
 		_fail("no SPECIES row has behavior 'pack' — the pack steering this check"
 				+ " measures is not reachable from any species")
 		return
+	for wolf_species: String in names:
+		_probe_pack(croc_ai, wolf_species)
 
+
+func _probe_pack(croc_ai: GDScript, wolf_species: String) -> void:
+	"""
+	Run the whole surround measurement against ONE pack species.
+
+	@param croc_ai: the AI script, for its static pack_steer_point
+	@param wolf_species: the SPECIES key to probe
+
+	Split out of _check_pack_surround — which holds the argument for all of this
+	— so that every row carrying the behaviour is measured, not the first one the
+	table happens to hand back.
+	"""
 	var row: Dictionary = _species_table[wolf_species]
 	for key: String in ["pack_size", "pack_flank_radius"]:
 		if not row.has(key):
@@ -533,16 +688,24 @@ func _check_ambush_trip_wire() -> void:
 	against WALK_SPEED in _check_species_table — and it cannot rescue a zero:
 	anything times `move_speed` 0.0 is 0.0.
 	"""
-	var ambush_species := ""
-	for name_v: Variant in _species_table:
-		if String(_species_table[name_v].get("behavior", "")) == "ambush":
-			ambush_species = String(name_v)
-			break
-	if ambush_species == "":
+	var names: Array[String] = _species_with("ambush")
+	if names.is_empty():
 		_fail("no SPECIES row has behavior 'ambush' — the burrow-and-strike this"
 				+ " check measures is not reachable from any species")
 		return
+	for ambush_species: String in names:
+		_probe_ambush(ambush_species)
 
+
+func _probe_ambush(ambush_species: String) -> void:
+	"""
+	Run the whole trip-wire measurement against ONE ambush species.
+
+	@param ambush_species: the SPECIES key to probe
+
+	Split out of _check_ambush_trip_wire — which holds the argument for all of
+	this — so every ambusher is measured rather than the first one found.
+	"""
 	var row: Dictionary = _species_table[ambush_species]
 	for key: String in ["ambush_burrow_depth", "ambush_surface_ease_speed"]:
 		if not row.has(key):
@@ -799,16 +962,25 @@ func _check_charge_dodge(croc_ai: GDScript) -> void:
 	touching where the lock points; the roll is bounded by the lattice at one end
 	and by ±20% at the other, and a slower bear misses by MORE.
 	"""
-	var charge_species := ""
-	for name_v: Variant in _species_table:
-		if String(_species_table[name_v].get("behavior", "")) == "charge":
-			charge_species = String(name_v)
-			break
-	if charge_species == "":
+	var names: Array[String] = _species_with("charge")
+	if names.is_empty():
 		_fail("no SPECIES row has behavior 'charge' — the committed charge this"
 				+ " check measures is not reachable from any species")
 		return
+	for charge_species: String in names:
+		_probe_charge(croc_ai, charge_species)
 
+
+func _probe_charge(croc_ai: GDScript, charge_species: String) -> void:
+	"""
+	Run the whole dodge measurement against ONE charging species.
+
+	@param croc_ai: the AI script, for its static charge_steer_point
+	@param charge_species: the SPECIES key to probe
+
+	Split out of _check_charge_dodge — which holds the argument for all of this —
+	so every charger is measured rather than the first one found.
+	"""
 	var row: Dictionary = _species_table[charge_species]
 	if not row.has("charge_commit"):
 		_fail("SPECIES['%s'] has behavior 'charge' but no 'charge_commit' —" % charge_species
@@ -1144,6 +1316,355 @@ func _burst_race(croc_ai: GDScript, row: Dictionary, chase: float, quarry_speed:
 	return quarry.z - pos.z
 
 
+# ============================================================================
+# CHECK 9 — PLACEMENT IS A PURE FUNCTION of (chunk coords, run_seed)
+# ============================================================================
+
+func _check_determinism(terrain_script: GDScript) -> void:
+	"""
+	Generate the same field THREE times and prove the world is reproducible.
+
+	This is the invariant CLAUDE.md's terrain section opens with, and the one the
+	whole multiplayer mesh is built on top of: two peers exchange a run_seed and
+	nothing else, and from that alone they must put the same predator, of the same
+	species, under the same name, at the same coordinates. Nothing checks it at
+	runtime — a peer whose vipers stand half a metre off is a peer whose crocodile
+	sync lands on bodies that are not quite where the master thinks, and the only
+	symptom is enemies that jitter for some players and not others.
+
+	Three generations, and the third is the negative control:
+
+	  * FORWARD — chunks generated in raster order, the order the streamer uses.
+	  * REVERSE — the SAME chunks, generated back to front. Byte-identical, or the
+	    generation is carrying state between chunks, which is the failure the
+	    "one shared hash stream" rule in CLAUDE.md exists to prevent: a revisited
+	    chunk (the streamer rebuilds one every time you cross a boundary) would
+	    then come back different from how you left it.
+	  * DETERMINISM_CONTROL_SEED — must DIFFER. Without it, "the two fields matched" is also
+	    true of a comparison of two empty fields, or of a signature that captured
+	    nothing that varies.
+
+	COMPARED AT 17 SIGNIFICANT DIGITS, i.e. bit for bit (see EXACT). A tolerance
+	would be the wrong instrument entirely: two peers do not average their
+	positions, they either agree or they do not.
+	"""
+	var forward: Dictionary = _generate_field(terrain_script, RUN_SEEDS[0], false)
+	var reverse: Dictionary = _generate_field(terrain_script, RUN_SEEDS[0], true)
+	var other: Dictionary = _generate_field(terrain_script, DETERMINISM_CONTROL_SEED, false)
+
+	var bodies := 0
+	var mismatches := 0
+	var first := ""
+	for key_v: Variant in forward:
+		bodies += (forward[key_v] as Array).size()
+		if var_to_bytes(forward[key_v]) != var_to_bytes(reverse.get(key_v, [])):
+			mismatches += 1
+			if first == "":
+				first = _first_difference(key_v, forward[key_v], reverse.get(key_v, []))
+
+	var differing := 0
+	for key_v: Variant in forward:
+		if var_to_bytes(forward[key_v]) != var_to_bytes(other.get(key_v, [])):
+			differing += 1
+
+	print("determinism: %d chunks / %d bodies regenerate identically back-to-front;"
+			% [forward.size(), bodies]
+			+ " %d of them differ under a second run seed" % differing)
+
+	if mismatches > 0:
+		_fail("%d of %d chunks generated DIFFERENTLY when the field was built back"
+				% [mismatches, forward.size()]
+				+ " to front — placement is not a pure function of (chunk coords,"
+				+ " run_seed), so a revisited chunk changes under you and two peers"
+				+ " sharing a seed do not share a world. First: %s" % first)
+	if bodies < 1:
+		_fail("the determinism field generated no enemies at all — the comparison"
+				+ " above matched two empty signatures and measured nothing")
+	if differing < forward.size() / 2:
+		_fail("only %d of %d chunks changed when run_seed changed —" % [
+				differing, forward.size()]
+				+ " the signature is not capturing what run_seed varies, so the"
+				+ " forward/reverse match above proves nothing")
+
+
+func _first_difference(chunk_pos: Variant, a: Array, b: Array) -> String:
+	"""
+	The first entry two generations of one chunk disagree on, as one line.
+
+	@param chunk_pos: the chunk, for the message
+	@param a: the forward generation's signature entries
+	@param b: the reverse generation's
+	@return a one-line description of the first difference
+
+	The first ENTRY rather than the whole chunk: a chunk holds a dozen bodies and
+	printing both signatures in full buries the one number that moved under two
+	kilobytes of the ones that did not.
+	"""
+	for i in range(maxi(a.size(), b.size())):
+		var one: Variant = a[i] if i < a.size() else null
+		var two: Variant = b[i] if i < b.size() else null
+		if var_to_bytes(one) != var_to_bytes(two):
+			return "chunk %s entry %d: forward %s, reverse %s" % [
+					chunk_pos, i, var_to_str(one), var_to_str(two)]
+	return "chunk %s (%d vs %d entries)" % [chunk_pos, a.size(), b.size()]
+
+
+func _generate_field(terrain_script: GDScript, run_seed: int, backwards: bool) -> Dictionary:
+	"""
+	Build a DETERMINISM_FIELD-square field and return each chunk's exact signature.
+
+	@param terrain_script: endless_terrain.gd
+	@param run_seed: the seed to force through the public set_run_seed() seam
+	@param backwards: generate the chunks in reverse raster order
+	@return Vector2i -> one signature entry per enemy the chunk spawned
+
+	A FRESH terrain node every call, so the second generation cannot be reading
+	anything the first one cached. The chunk order is the only difference between
+	the forward and reverse runs — same node type, same seed, same call sequence,
+	which is what makes a difference in the answer mean exactly one thing.
+	"""
+	var terrain := Node3D.new()
+	terrain.set_script(terrain_script)
+	terrain.set_run_seed(run_seed)
+	terrain.crocodile_scene = load(CROC_SCENE)
+	terrain.coin_scene = load(COIN_SCENE)
+
+	var order: Array[Vector2i] = []
+	var half := DETERMINISM_FIELD / 2
+	for cx in range(-half, half + 1):
+		for cz in range(-half, half + 1):
+			order.append(Vector2i(cx, cz))
+	if backwards:
+		order.reverse()
+
+	var signatures := {}
+	for chunk_pos: Vector2i in order:
+		signatures[chunk_pos] = _chunk_signature(terrain, chunk_pos)
+	return signatures
+
+
+func _chunk_signature(terrain: Node, chunk_pos: Vector2i) -> Array:
+	"""
+	Everything one chunk spawns, as raw comparable values.
+
+	@param terrain: a terrain node with its run seed already forced
+	@param chunk_pos: the chunk to generate
+	@return one [name, species, position, yaw] entry per enemy, unrounded
+
+	The call sequence is create_chunk's, for the reason the sweep's is: the later
+	spawners judge their candidates against footprints the earlier ones appended,
+	so a signature taken from the crocodile spawner alone would be blind to a
+	non-deterministic BLOCK — and a block that moves moves the crocodiles that
+	were placed around it.
+	"""
+	var parent := _make_chunk_parent(terrain.chunk_to_world(chunk_pos))
+	var platforms: Array = []
+	var batch: Array = []
+	var body := StaticBody3D.new()
+	var obstacles: Array = terrain.spawn_objects_in_chunk(chunk_pos, platforms, batch, body)
+	terrain.spawn_artifact_in_chunk(chunk_pos, parent, obstacles, batch, body)
+	terrain.spawn_biome_content_in_chunk(chunk_pos, obstacles, batch, body)
+	terrain.spawn_camp_in_chunk(chunk_pos, parent, obstacles, batch, body)
+	terrain.spawn_landmark_in_chunk(chunk_pos, parent, obstacles, batch, body)
+	terrain.spawn_chest_in_chunk(chunk_pos, parent, obstacles, batch, body)
+	terrain.spawn_crocodiles_in_chunk(chunk_pos, parent, obstacles)
+	terrain.spawn_platform_crocodiles(chunk_pos, parent, platforms)
+	terrain.spawn_bosses_in_chunk(chunk_pos, parent, obstacles)
+
+	var parts: Array = []
+	for child in parent.get_children():
+		if not child.is_in_group("crocodile"):
+			continue
+		var node := child as Node3D
+		parts.append([String(child.name), String(child.get("species")),
+				node.position, node.rotation.y])
+	parent.free()
+	body.free()
+	return parts
+
+
+# ============================================================================
+# CHECK 10 — one identity scheme and one state byte, SHARED BY EVERY SPECIES
+# ============================================================================
+
+## Which member of the AI carries each bit of the sync byte, named against
+## MpManager's own constants — the encoder's and the decoder's single source — so
+## a bit renamed on one side and not the other fails here rather than desyncing a
+## room.
+##
+## BITING is deliberately exempt from the "clears again" half below: it decodes
+## through _start_bite(), which is a one-way "the chomp STARTED" edge cleared by
+## the local animation timer, never by a zero in a later byte. That asymmetry is
+## the documented design (see set_remote_state), so the check states it rather
+## than measuring the opposite and failing on correct code.
+const CROC_STATE_BITS: Dictionary = {
+	"is_chasing": "CROC_FLAG_CHASING",
+	"is_fleeing": "CROC_FLAG_FLEEING",
+	"is_paused": "CROC_FLAG_PAUSED",
+	"is_biting": "CROC_FLAG_BITING",
+	"is_burrowed": "CROC_FLAG_BURROWED",
+}
+
+
+func _check_mp_contract(croc: Node, species_name: String, chunk_pos: Vector2i) -> void:
+	"""
+	Prove ONE live body of one species can be recognised and driven by a peer.
+
+	@param croc: a crocodile the sweep just spawned — a real body, _ready() run
+	@param species_name: the species it resolved to
+	@param chunk_pos: the chunk it was spawned in
+
+	CALLED ONCE PER SPECIES, on the first body of it the sweep produces, so the
+	cost is one probe per row rather than one per animal — and no species is
+	silently skipped either, because the coverage gate demands the sweep produce
+	one of each.
+
+	TWO HALVES, both of which the epic deliberately made species-blind:
+
+	  * IDENTITY. Every predator is named `Crocodile_<cx>_<cy>_<i>` whatever it
+	    is (see the note over that line in spawn_crocodiles_in_chunk), because the
+	    name IS the room-wide id — croc_id_for() hashes it, and species is a pure
+	    function of position, so a per-species prefix would churn every id in the
+	    room to say something both peers already knew. A viper that named itself
+	    is a viper no peer can address, which shows up as one animal syncing and
+	    another standing still.
+	  * THE STATE BYTE. Every bit MpManager encodes must decode back onto the
+	    same member of the same body, for every species — a row is data, and the
+	    sync layer is not allowed to grow a special case per animal.
+
+	AND THE BURROW IS THE POINTED CASE. It rides a bit precisely because it is
+	NOT derivable from the others (see CROC_FLAG_BURROWED): a peer recomputing
+	`is_burrowed = not is_chasing` for itself is a bug this epic already shipped
+	once and had to fix, and it looks like nothing at all — a viper standing on
+	the sand on one screen and buried on another. So the two decodes below are
+	chosen to be exactly the ones a re-derivation would get wrong: burrowed WHILE
+	chasing, and surfaced while NOT chasing.
+	"""
+	# ---- identity -----------------------------------------------------------
+	var node_name: String = String(croc.name)
+	var expected_prefix := "Crocodile_%d_%d_" % [chunk_pos.x, chunk_pos.y]
+	if not node_name.begins_with(expected_prefix):
+		_fail("a '%s' spawned in chunk %s is named '%s', not '%s<index>' —" % [
+				species_name, chunk_pos, node_name, expected_prefix]
+				+ " the node name IS the room-wide id, so a species that renames"
+				+ " itself is one no peer can address")
+	if croc.croc_id() != croc.croc_id_for(node_name):
+		_fail("'%s' latched croc_id %d, but its name '%s' hashes to %d — the id"
+				% [species_name, croc.croc_id(), node_name, croc.croc_id_for(node_name)]
+				+ " a peer derives from the name is not the id this body answers to")
+
+	# ---- the state byte, encode then decode ---------------------------------
+	for member_v: Variant in CROC_STATE_BITS:
+		var member: String = String(member_v)
+		var flag_name: String = String(CROC_STATE_BITS[member])
+		if not _mp_consts.has(flag_name):
+			_fail("mp_manager.gd has no %s — the bit '%s' rides is gone, so nothing"
+					% [flag_name, member] + " the master says about it reaches a peer")
+			continue
+		var bit: int = int(_mp_consts[flag_name])
+		for value: bool in [true, false]:
+			croc.set(member, value)
+			var carried: bool = (MpManager._croc_flags(croc) & bit) != 0
+			if carried != value:
+				_fail("'%s': MpManager._croc_flags() wrote %s for %s = %s —" % [
+						species_name, "1" if carried else "0", member, value]
+						+ " the master's byte does not describe this species, so"
+						+ " every peer draws it in a pose it is not in")
+		croc.set(member, false)
+
+	var here: Vector3 = (croc as Node3D).global_position
+	var all_bits: int = 0
+	for member_v: Variant in CROC_STATE_BITS:
+		all_bits |= int(_mp_consts.get(String(CROC_STATE_BITS[member_v]), 0))
+	croc.set_remote_state(here, 0.0, all_bits)
+	for member_v: Variant in CROC_STATE_BITS:
+		if not bool(croc.get(String(member_v))):
+			_fail("'%s': set_remote_state() ignored the %s bit — the master sends"
+					% [species_name, member_v] + " it and this species never reads it")
+	# And it clears again. BITING is exempt by design — see CROC_STATE_BITS.
+	croc.set_remote_state(here, 0.0, 0)
+	for member_v: Variant in CROC_STATE_BITS:
+		if String(member_v) == "is_biting":
+			continue
+		if bool(croc.get(String(member_v))):
+			_fail("'%s': %s stayed set through an all-clear state byte — it latches"
+					% [species_name, member_v] + " on a peer and never comes back")
+
+	# ---- the burrow is SENT, not re-derived ---------------------------------
+	croc.set_remote_state(here, 0.0,
+			int(_mp_consts.get("CROC_FLAG_CHASING", 0))
+			| int(_mp_consts.get("CROC_FLAG_BURROWED", 0)))
+	if not bool(croc.get("is_burrowed")):
+		_fail("'%s': a byte saying CHASING and BURROWED at once surfaced the body —"
+				% species_name + " the burrow is being re-derived from the chase"
+				+ " flag on the receiving peer instead of read from the byte")
+	croc.set_remote_state(here, 0.0, 0)
+	if bool(croc.get("is_burrowed")):
+		_fail("'%s': a byte with no BURROWED bit still left the body buried —"
+				% species_name + " the burrow is being re-derived from `not"
+				+ " is_chasing` on the receiving peer instead of read from the byte")
+
+
+# ============================================================================
+# THE COVERAGE VERDICT — every biome visited, every species actually spawned
+# ============================================================================
+
+func _check_coverage() -> void:
+	"""
+	The gate that makes this file's title true: ALL SIX BIOMES, ALL SIX SPECIES.
+
+	Everything above measures whatever the sweep happened to produce. This is what
+	says the sweep produced all of it — and it is stated against the `Biome` enum
+	and the `BIOME_SPECIES` map rather than a list here, so the seventh predator
+	is demanded of the field the day its row lands, and a band nobody put a
+	predator in is reported instead of quietly skipped.
+
+	Taken over the UNION of the run seeds, not per seed: one 289-chunk field
+	legitimately misses a band (seed 12345 contains no snow at all, which is a
+	fact about the biome noise, not a bug). What may not happen is the WHOLE run
+	missing one — the fix for that is another entry in RUN_SEEDS, and the failure
+	message says so.
+	"""
+	var missing_biomes: Array[String] = []
+	for name_v: Variant in _biomes:
+		if not _biomes_seen_all.has(int(_biomes[name_v])):
+			missing_biomes.append(String(name_v))
+	if not missing_biomes.is_empty():
+		_fail("no chunk of any run seed landed in %s — obstacle avoidance and"
+				% str(missing_biomes) + " species dispatch were never measured in"
+				+ " those bands. Add a run seed to RUN_SEEDS until they appear")
+
+	var want := { "crocodile": true }
+	for biome_v: Variant in _biome_species:
+		want[String(_biome_species[biome_v].get("species", ""))] = true
+	var missing_species: Array[String] = []
+	for name_v: Variant in want:
+		if not _species_seen_all.has(String(name_v)):
+			missing_species.append(String(name_v))
+	if not missing_species.is_empty():
+		_fail("%s is dispatched by BIOME_SPECIES but never spawned in any field —"
+				% str(missing_species) + " every measurement in this file skipped"
+				+ " it, so it ships unmeasured. Add a run seed to RUN_SEEDS")
+
+	# Check 10 is driven off the sweep, one probe on the first body of each
+	# species — so "every dispatched species spawned" and "every dispatched
+	# species had its multiplayer contract measured" are the same statement only
+	# as long as the probe is actually wired into the loop. Stated separately
+	# because that wiring is one `if` and this is what notices it going away.
+	var unprobed: Array[String] = []
+	for name_v: Variant in want:
+		if not _mp_probed.has(String(name_v)):
+			unprobed.append(String(name_v))
+	if not unprobed.is_empty():
+		_fail("%s never reached the multiplayer contract probe (check 10) —"
+				% str(unprobed) + " their node names and state bytes are unmeasured,"
+				+ " so a peer may not be able to address or pose them at all")
+
+	print("coverage: %d biomes visited, %d species multiplayer-probed, ground"
+			% [_biomes_seen_all.size(), _mp_probed.size()]
+			+ " predators by species over all seeds %s" % _species_seen_all)
+
+
 func _bearing_spread_deg(bearings: Array[float]) -> float:
 	"""
 	The arc a set of compass bearings covers, in degrees.
@@ -1256,6 +1777,10 @@ func _sweep(terrain_script: GDScript, run_seed: int, spawn_height: float, edge_i
 	var worst_depth := 0.0
 	var worst_desc := ""
 	var in_stone := 0
+	# Broken down by SPECIES, because "N crocodiles in stone" over a six-predator
+	# world does not say whether the clearance rule broke everywhere or one
+	# animal's footprint outgrew it — and those are different bugs.
+	var in_stone_by_species := {}
 	# Check 4's live half — see the block inside the loop below.
 	var species_mismatches := 0
 	var species_worst := ""
@@ -1267,6 +1792,10 @@ func _sweep(terrain_script: GDScript, run_seed: int, spawn_height: float, edge_i
 			var origin: Vector3 = terrain.chunk_to_world(chunk_pos)
 			var parent := _make_chunk_parent(origin)
 			var obstacles: Array = chunk_obstacles[chunk_pos]
+			# Which bands this field actually contains — the raw material of the
+			# coverage verdict, and the reason it is taken over the union of the
+			# seeds rather than per seed (see _check_coverage).
+			_biomes_seen_all[int(terrain.biome_at(origin.x, origin.z))] = true
 
 			terrain.spawn_crocodiles_in_chunk(chunk_pos, parent, obstacles)
 			terrain.spawn_platform_crocodiles(chunk_pos, parent, chunk_platforms[chunk_pos])
@@ -1282,8 +1811,23 @@ func _sweep(terrain_script: GDScript, run_seed: int, spawn_height: float, edge_i
 				elif node_name.begins_with("BossCrocodile_"):
 					kind = "boss"
 				else:
+					# THE THREE PREFIXES ARE THE WHOLE NAMING SCHEME, and every
+					# species shares them (see _check_mp_contract). Anything in
+					# group "crocodile" wearing another name is a body this file
+					# would silently stop measuring AND a body no peer can
+					# address — one bug with two faces, so it is caught by the
+					# classifier rather than by a count that quietly went down.
+					if child.is_in_group("crocodile"):
+						_fail("seed %d: chunk %s spawned '%s', which is in group"
+								% [run_seed, chunk_pos, node_name]
+								+ " \"crocodile\" but carries none of the three"
+								+ " deterministic name prefixes — croc_id_for()"
+								+ " cannot address it and this sweep cannot see it")
 					continue
 				counts[kind] = int(counts[kind]) + 1
+				# Set by the ground branch below; drives the once-per-species
+				# multiplayer probe at the end of this loop body.
+				var resolved_species := ""
 
 				# CHECK 4 (live half): the biome dispatch actually reached the
 				# body. The table itself is checked once, off-world, in
@@ -1296,6 +1840,15 @@ func _sweep(terrain_script: GDScript, run_seed: int, spawn_height: float, edge_i
 				# neither is dispatched on a chunk centre.
 				if kind == "ground":
 					var want: String = _expected_species(terrain, origin)
+					# A dispatch entry naming a row that is not in SPECIES is
+					# already reported once, by name, in _check_species_table.
+					# Guarded again HERE only so the sweep does not index a
+					# missing row and die mid-field: a script error before
+					# _report() means quit() is never reached and the process
+					# exits 0 with no verdict — the green lie this file exists
+					# to avoid, arrived at by way of a correct failure.
+					if not _species_table.has(want):
+						continue
 					var got: String = String(child.get("species"))
 					# `spec` is what the per-frame paths actually read, and it is
 					# resolved in _ready(). Comparing ONE number off it against
@@ -1319,21 +1872,33 @@ func _sweep(terrain_script: GDScript, run_seed: int, spawn_height: float, edge_i
 									+ " assigned AFTER add_child()") % [
 									node_name, got, got_speed, want_speed]
 					species_seen[want] = int(species_seen.get(want, 0)) + 1
+					_species_seen_all[got] = int(_species_seen_all.get(got, 0)) + 1
+					resolved_species = got
 
 				var world_pos: Vector3 = (child as Node3D).global_position
 				var depth := _depth_in_stone(chunk_solids, chunk_pos, world_pos)
 				if depth > EPSILON:
 					in_stone += 1
+					var label: String = resolved_species if resolved_species != "" else kind
+					in_stone_by_species[label] = int(in_stone_by_species.get(label, 0)) + 1
 					if depth > worst_depth:
 						worst_depth = depth
-						worst_desc = "%s crocodile %s at %v" % [kind, node_name, world_pos]
+						worst_desc = "%s %s %s at %v" % [kind, resolved_species, node_name, world_pos]
+
+				# CHECK 10, once per species and LAST in this loop body — it
+				# drives set_remote_state(), which moves the body, so it has to
+				# run after every measurement taken off this one's position.
+				if resolved_species != "" and not _mp_probed.has(resolved_species):
+					_mp_probed[resolved_species] = true
+					_check_mp_contract(child, resolved_species, chunk_pos)
 
 			parent.free()
 
 	if in_stone > 0:
-		_fail("seed %d: %d of %d crocodiles spawned INSIDE solid stone (worst %.2f m deep: %s)"
+		_fail("seed %d: %d of %d enemies spawned INSIDE solid stone, by species %s"
 				% [run_seed, in_stone, counts["ground"] + counts["platform"] + counts["boss"],
-				   worst_depth, worst_desc])
+				   in_stone_by_species]
+				+ " (worst %.2f m deep: %s)" % [worst_depth, worst_desc])
 
 	if species_mismatches > 0:
 		_fail("seed %d: %d of %d ground predators are not the species their chunk's biome"
@@ -1438,10 +2003,18 @@ func _expected_species(terrain: Node, chunk_centre: Vector3) -> String:
 
 
 func _biome_name(chunk_centre: Vector3, terrain: Node) -> String:
-	"""The chunk's biome as a readable name, for failure messages only."""
-	var names: Array = ["PLAINS", "DESERT", "FOREST", "MOUNTAIN", "CITY", "SNOW"]
+	"""
+	The chunk's biome as a readable name, for failure messages only.
+
+	Reverse-looked-up out of the real `Biome` enum rather than a list here — a
+	seventh band would otherwise print as a bare integer in exactly the message
+	someone reads while trying to work out which band broke.
+	"""
 	var biome: int = terrain.biome_at(chunk_centre.x, chunk_centre.z)
-	return names[biome] if biome >= 0 and biome < names.size() else str(biome)
+	for name_v: Variant in _biomes:
+		if int(_biomes[name_v]) == biome:
+			return String(name_v)
+	return str(biome)
 
 
 func _make_chunk_parent(origin: Vector3) -> MeshInstance3D:
