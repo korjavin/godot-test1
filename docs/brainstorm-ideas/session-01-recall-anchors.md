@@ -59,11 +59,28 @@ Three fixes, all now in the pitch (see [README.md](README.md)):
    you were running toward where you started. The final act is a **voluntary walk into the
    trap**, and nobody is working hard to be un-made — they are working hard to reach the one
    being who has survived this before.
-3. **Why the AEGIS-3 signal is still warm.** Its reintegration was *completed*, yet a
-   fragment signal persists — so it completed **with a piece missing**. AEGIS-3 survived
-   because one fragment was never recovered. **Incompleteness is what saved them**, which is
-   the same fact as Pho-boman's unreadability. What you cross the game to find is not a
-   rescuer or an ally but a **proof** that the spec can fail to close.
+3. **Why the AEGIS-3 signal is still warm.** Its reintegration is filed as *completed*, yet
+   a fragment still reads live — the hypothesis being that it closed **with a piece
+   missing**, so **incompleteness is what saved them**, the same fact as Pho-boman's
+   unreadability. What you cross the game to find is not a rescuer or an ally but a **proof**
+   that the spec can fail to close.
+
+**Codex reviewed all three and judged fix 3 the weakest — correctly.** Its objection:
+*"'the signal persists' does not by itself prove that incompleteness saved AEGIS-3; that is
+a major causal leap."* Asserting it makes the climax rest on a convenient inference. So the
+proof is now **earned in two small quests** — an AEGIS record naming the missing piece, then
+a demonstrated parallel with Pho-boman's unreadability — after which it stops being a theory
+and becomes the deliberate strategy behind the `EXCEPTION` route. This is also the first
+concrete instance of the small-quest rule in item 3 below: the two quests are deposits on the
+climax, not lessons.
+
+Codex judged **fix 2 the strongest** ("it turns the approach into a knowingly dangerous
+search for agency, and it closes the missing travel logic"), and fix 1 necessary but
+**badly phrased** — I had written it in the recall spec's vocabulary ("non-specification
+outputs") rather than a person's. Its phrasing, now in the pitch: Pho-boman and Tiebi
+**will be erased as mistakes** and have always known it; Windman and Primm cannot tell
+whether recall is death, because it is a change so total they have no word for it — and not
+knowing is frightening enough to run from.
 
 ## 2. The core mechanic — Recall Anchors
 
@@ -566,11 +583,19 @@ the climax without noticing. Codex's framing is the correct one.
    subsections, like we learn something in small quests before we got to main tower."*
 
    So an act is not one stretch of road with a cordon at the end — it contains **small
-   quests, each of which teaches one thing**, before the act's set-piece. That has an
-   obvious home: the notebook. Each small quest is one page, and a page is not lore
-   decoration, it is **the thing you learned**, which the next quest assumes you know. The
-   difficulty curve and the story curve become the same curve. Design the act's internal
-   beats next session, before naming the acts.
+   quests** before the act's set-piece, and each one is a notebook page.
+
+   My first version of the rule was *"a page is the thing you learned."* **Codex was right
+   that this is vague enough to justify a tutorial.** The rule that survives is stronger:
+
+   > A page is only real if it unlocks a **concrete new inference, route, trust choice, or
+   > action at the tower.**
+
+   So a quest is not a lesson, it is a **deposit on the climax**. Nothing is learned in the
+   abstract; every page changes what you can *do* at the ending. That is what produces the
+   longer structure the owner asked for without tutorial texture — and it is also how the
+   AEGIS-3 proof gets earned rather than asserted (see [README.md](README.md), "What they
+   run toward"). Design the act's internal beats next session, before naming the acts.
 4. **What a failed anchor costs *in fiction*,** not just in meter. GastroDefense *filing*
    something is more on-tone than a damage number.
 5. What the cordon **looks like** — it is the first hard barrier this game has ever had, and

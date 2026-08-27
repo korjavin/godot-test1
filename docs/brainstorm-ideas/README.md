@@ -5,42 +5,53 @@
 **You are not being hunted. You are being processed.**
 
 Four beings walked out of a lunchtime accident that fractured Project AEGIS-4. Eighteen
-months later, the corporation that built it — GastroDefense Inc. — notices its prototype
-never came back, and opens a ticket. `RETURN TO ORIGIN FACILITY` decodes to
-**reintegration: un-make.** Windman and Primm get melted back into one machine.
-Pho-boman and Tiebi are "non-specification outputs" — disposal. Nobody asked them. The
-consent field was deleted from the spec in revision 3 and never written again.
+months later the corporation that built it — GastroDefense Inc. — notices its prototype
+never came back, and opens a ticket.
+
+**Two of them know exactly what that means.** Pho-boman and Tiebi were never part of the
+machine, so there is nothing in them worth putting back. They will be **erased as
+mistakes**. They have been certain since the day they read it.
+
+**The other two cannot tell.** Windman and Primm are the two halves the recall actually
+wants, and neither can say whether being put back together is dying. It is a change so
+total they have no word for it — and not knowing is frightening enough to run from.
+
+So this is not four people fleeing one fate. It is **two fleeing a certainty and two
+fleeing a question**, which is the only reason the ending can be a choice rather than a
+survival reflex.
+
+Only afterwards does the file give you the corporate translation. `RETURN TO ORIGIN
+FACILITY` means **reintegration — un-make**: W-01 and P-03 are "specification outputs,"
+P-02 and T-04 are "non-specification outputs — disposal." Nobody asked them. The consent
+field was deleted in revision 3 and never written again.
 
 There is no villain to punch. The threat is a workflow, and workflows do not get tired.
-
-### Why they run — and why they don't all run for the same reason
-
-**This asymmetry is the engine, not a gap.**
-
-- **Pho-boman and Tiebi** are "non-specification outputs." Disposal. No ambiguity and no
-  upside — they simply die. They are certain.
-- **Windman and Primm** are the two who would actually be *reintegrated*, and they are the
-  two who genuinely **do not know what that is**. Having felt proximity to it, it does not
-  feel like extinction to them. It feels like a word they have no word for.
-
-So the team is not four people fleeing one fate. It is **two people fleeing a certainty and
-two people fleeing a question** — which is the only reason the ending can be a real choice
-rather than a survival reflex.
 
 ### What they run toward
 
 The only lead not owned by the people recalling them: a **still-warm signal from AEGIS-3**,
 the prototype *before* them, which also fractured and also scattered.
 
-**And why is that signal still warm?** AEGIS-3's reintegration was *completed* — and yet a
-fragment signal persists. Which can only mean it completed **with a piece missing**. AEGIS-3
-survived, in whatever partial sense it survived, precisely **because one fragment was never
-recovered. Incompleteness is what saved them.**
+**Why is that signal still warm?** AEGIS-3's reintegration is filed as *completed* — and yet
+a fragment still reads as live. That is an **anomaly, not an answer**, and the game must not
+hand you the answer: the leap from "a signal persists" to "incompleteness saved them" is a
+real causal jump, and asserting it makes the climax rest on a convenient inference.
 
-So the thing you cross the whole game to find is not a rescuer and not an ally. It is
-**proof** — evidence that the spec can fail to close — delivered by the only entity that has
-ever survived it. It is the same fact as Pho-boman being unreadable to the classifier. The
-lesson AEGIS-3 teaches *is* the mechanic your hands have been practising all game.
+**So you earn it.** The hypothesis forms early and is *confirmed in two pieces*, each one a
+small quest:
+
+1. An **AEGIS record that names the missing piece** — the recovery was closed short, and
+   somebody signed it off anyway.
+2. A **demonstrated parallel with Pho-boman's unreadability** — the same failure mode, alive
+   and standing next to you.
+
+Only then does it stop being a theory and become a **deliberate strategy**: the reason the
+`EXCEPTION` route exists at all, and the reason you know to reach for it.
+
+So what you cross the whole game to find is not a rescuer and not an ally. It is **proof** —
+evidence that the spec can fail to close — delivered by the only entity that ever survived
+it. And the lesson AEGIS-3 teaches turns out to be the mechanic your hands have been
+practising all game.
 
 ### The destination and the trap are the same place
 
