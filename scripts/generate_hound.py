@@ -18,11 +18,37 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 from predator_parts import box, quadruped, rgba, save  # noqa: E402
 
-# Rusty red coat, cream chest and underside, orange eye.
-COAT = "#8f4f2a"
-BELLY = "#e0c9a6"
-DARK = "#241511"
-EYE = "#e8a33c"
+# --- Palette. Deep rust on pale pavement. READ THE GAMMA NOTE BEFORE EDITING. --
+#
+# THESE HEXES ARE LINEAR, NOT sRGB. Godot imports this GLB's vertex colours with
+# `vertex_color_is_srgb = false`, so each byte is fed to ALBEDO as-is and every
+# constant here renders MUCH LIGHTER than it looks in a text editor. `#1b0904`
+# below is not "nearly black on screen", it is the deep rust `#5c3522`. Pick a
+# colour by deciding the DISPLAYED value and converting back
+# (`linear = ((srgb + 0.055) / 1.055) ** 2.4`), never by eye off the hex — that
+# mistake is what produced the sand viper's camouflage bug (see the same note in
+# generate_snake.py), and this animal shipped with the identical version of it.
+#
+# WHAT WAS WRONG. The rusty red `#8f4f2a` DISPLAYS as `#c59771`, a pale tan. Its
+# own ground is ground.gdshader's `city_color` vec3(0.50, 0.48, 0.45), displaying
+# `#bcb8b3`. That is 1.32:1 — the hound was the pavement. It matters more here
+# than for most: CITY_CROC_DIVISOR thins this band to ~40% of the usual predator
+# count precisely so the city reads as the SAFE territory, which means the few
+# that are there have to be seen, or the band stops being safe and starts being
+# quiet-then-fatal.
+#
+# WHAT IT IS NOW. The same rust, four stops down. Measured against that ground
+# across its ±12% mottling, coat-vs-pavement is 4.80–5.97:1 (was 1.18–1.47:1),
+# and against the city's own walls 4.6:1 (weathered render) to 7.5:1 (limewash).
+# The hue is untouched on purpose: rust is the one thing keeping this animal
+# apart from the timber wolf's grey at a distance, and the file header above is
+# right that losing it makes the two pack species interchangeable on screen.
+# The cream chest blaze below now runs 8.6:1 against the coat, so the head-on
+# silhouette this small dog is usually seen in is the highest-contrast view of it.
+COAT = "#1b0904"     # coat -> shows #5c3522, deep rust
+BELLY = "#decaa4"    # underside + chest blaze -> shows #f0e6d2, cream
+DARK = "#030201"     # paws, snout tip, pupil -> shows #1c160d
+EYE = "#ff8a08"      # hot amber, so the eye pops off a dark skull -> #ffc232
 
 SHAPE = dict(
     body_len=0.58, body_h=0.22, body_w=0.22,   # smaller in every axis than the wolf
