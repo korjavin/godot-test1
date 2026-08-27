@@ -92,13 +92,50 @@ between *Hades* and a bad mobile game.
 player who is good, and farming buys margin for a player who would rather not be. The loop
 stays *available* rather than *required*.
 
-*Put to codex; answer pending.*
+### Codex's tightening — adopt this version, not mine
+
+> **Every tower encounter needs a demonstrable zero-rank procedure before any skill can
+> improve it.** A longer blink may reach a shortcut or rescue a bad jump, but it cannot be
+> the only way to touch the mechanism.
+
+This is strictly better than what I wrote. Mine said *the tower should be beatable at zero
+skill* — which is a **hope**. Codex's says *every single encounter must have a known
+zero-rank solution* — which is a **rule you can actually check while building a room**. If
+you cannot demonstrate the zero-rank procedure, the room is not finished.
+
+### Checkpoints
+
+> Use a visible tower **checkpoint after each permanent route change**, so exit is safe
+> without making every cleared room permanently empty.
+
+This is what makes "you can always leave" safe to act on: the withdrawal point is visible and
+earned by the route change you just made, rather than being a save-anywhere that erases all
+tension.
+
+## What persists between tower visits — settled
+
+**Structure persists; population resets.** The governing sentence:
+
+> **Never erase an earned answer, but allow the next room's tactical challenge to return.**
+
+| Persists | Resets |
+| --- | --- |
+| opened doors, bridges, permanent route transformations | ordinary guards and patrol positions |
+| completed quest stages and story pages | ordinary combat outcomes |
+| unique keys | temporary and timed switches |
+| defeated **named** set-pieces | loose movable objects |
+| rescued-party state | alarms |
+| lifetime coins, levels, skill ranks | unfinished in-room puzzle configuration |
+
+Economy follows the same line: **tower chests and unique rewards are one-time**; **field coins
+are renewable at a controlled rate.** So the field can be farmed and the tower cannot — which
+is what keeps the two layers doing different jobs instead of competing.
+
+This resolves both halves of the risk. Nothing you *solved* is taken back, so leaving is never
+punished; but nothing you *cleared* stays empty, so the tower never degrades into a checklist
+you grind down room by room.
 
 ## Open
-
-- **What persists between tower visits, and what resets.** If everything persists, the tower
-  becomes a checklist you grind down. If nothing persists, the owner's go-out-and-farm loop
-  punishes you for leaving. Put to codex.
 - Whether the tree needs a **tower branch** at all, or whether re-tuning the existing effects
   covers it.
 - What the HUD shows now that distance is gone — coins and skill points are the obvious
