@@ -233,25 +233,78 @@ reconciled by a plain `max`, which is exactly what makes a late server reply har
 every retry free. The moment a number can go *down*, `max` stops being a valid merge, and we
 would need real conflict resolution across three layers with **no authority anywhere**.
 
-### Resolution: you lose what you carry, never what you banked
+### Resolution — the owner asked the better question
 
-- **Lifetime coins stay monotone.** They are what levels derive from and what merges.
-- **The setback takes from a carried, unbanked pool only.**
+I first proposed a carried-vs-banked split (you lose what you are holding, never what you
+handed in). **The owner rejected it** — he did not find the concept legible, and he was
+solving a different problem than I was. He wants the simple thing: **a flat 7% of coins taken
+on death**, no pools, no banking.
 
-This satisfies the ruling as stated — you lose coins and progress, you stay alive — keeps the
-persistence model untouched, and is better design regardless: risk attaches to what you are
-*holding*, so **banking becomes a decision** instead of an invisible background fact.
+And then he asked the question neither codex nor I had asked:
 
-### Continue / New game maps onto shipped code
+> Почему мы не можем монотонность строить не на монетах, а на чём-то ещё?
+>
+> *(Why can't we build monotonicity on something other than the coins?)*
 
-`new_run()` re-rolls `run_seed`, and that is **the only place the world changes**. So:
+**We can, and it dissolves the problem entirely.** Move monotonicity off the **balance** and
+onto its **components**. The balance is never stored — it is derived from three counters that
+only ever rise:
 
-- **New game** → new seed → a genuinely fresh world.
-- **Continue** → same seed → the same world you left.
+| Counter | Rises when | Monotone? |
+| --- | --- | --- |
+| `lifetime_earned` | a coin is picked up | yes |
+| `lifetime_spent` | points are spent on skills | yes |
+| `lifetime_lost` | a 7% death deduction is applied | yes |
 
-*Open, put to codex: where banking happens in an endless field with no natural safe point;
-what supplies tension once the worst outcome is a knock-back; and what the shipped lives HUD
-and game-over UI become.*
+```
+wallet = lifetime_earned − lifetime_spent − lifetime_lost
+levels = f(lifetime_earned)
+```
+
+Each of the three still merges across all three save layers with a plain `max`, exactly as
+today. **The wallet can fall; nothing that travels ever does.** A late server reply stays
+harmless and a retry stays free. And since levels derive from `lifetime_earned`, **levels
+never fall** — which is what the owner confirmed he wants. Both of his statements are
+satisfied at once: *levels are genuinely lifetime-cumulative, and coins drop 7% on death.*
+
+This is the standard decomposition — a PN-counter is two monotone counters — and it needs no
+conflict resolution at all.
+
+**One property to write down rather than discover:** merging `lifetime_spent` by `max` means
+**concurrent spends on two devices are under-counted** (spend 50 on each of two devices and
+the merge records 50, not 100). The error falls in the *player's* favour, which is the same
+direction the existing design already chose deliberately.
+
+### Continue / New game — I was wrong, this is not free
+
+I told the owner this mapped cleanly onto shipped code and that nothing needed inventing.
+**That was wrong**, and codex caught it. Verified:
+
+- `run_seed` appears **zero times** in `best_run_store.gd` — **the seed is not persisted at
+  all.**
+- `endless_terrain` does `seed_rng.randomize()` then `set_run_seed(seed_rng.randi())` at
+  startup — **a fresh random world every launch.**
+
+So **Continue cannot mean "keep the world" today, because there is no saved world to keep.**
+Nor can New Game mean merely "new seed" once the tower has persistent doors, quests,
+checkpoints and capture state. The real contract:
+
+- **Continue** — load the saved seed, tower/campaign state, last checkpoint, roster and story
+  state, and the banked profile.
+- **New Game** — after confirmation, create a fresh campaign: new seed, closed tower routes,
+  reset quests and capture state. *Open ruling: are account-level skills retained as
+  meta-progression, or reset with the campaign?*
+
+And a naming note worth keeping: if a command only re-rolls the field while keeping the
+campaign, it is **New World / Reroll Field**, not New Game.
+
+### The setback moment
+
+Replace the game-over screen with a short, **non-modal setback summary** after the knockback —
+`Lost 18 coins — levels and skills safe` — and let play resume automatically. The lives HUD
+gives way to the wallet, with permanent level and skill progress kept **visually separate**,
+so the player can see at a glance what a predator cannot take. Continue / New Game belong on
+the title and pause menus; a capture should never open a full-screen decision panel again.
 
 ## Open
 - Whether the tree needs a **tower branch** at all, or whether re-tuning the existing effects

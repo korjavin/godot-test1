@@ -174,8 +174,19 @@ A new enemy class that is **not** a predator, and the distinction is the point:
 | | Predators | Hunter robots |
 | --- | --- | --- |
 | Want | to hurt you | to **retrieve** you |
-| Losing to one means | damage, a life | **abduction** — carried to the tower |
+| Losing to one means | a setback — 7% of coins, a knockback | escalating pressure; **abduction only at the authored turn** |
 | Fiction | the world is hostile | the *workflow* has escalated |
+
+**Correction to my own earlier claim.** I told the owner the two enemy classes now carry
+different stakes — *a predator costs coins, a hunter costs a hero.* **Codex is right that this
+cannot be literally true.** Hero abduction cannot be the repeatable field stake: if ordinary
+hunter failure removes heroes, the roster collapses over a long session; and if it can only
+ever happen once, it cannot carry the field for the rest of the game either.
+
+So hunters are **escalating pressure** — they cut off routes, force detours, threaten a larger
+loss — and the **actual abduction stays reserved for the floor-plus-beat encounter.** Losing
+to a hunter in ordinary play costs what losing to a predator costs; what differs is the dread,
+not the arithmetic.
 
 They are the Retrieval Division made visible, and the vault has them: the
 **GD-SURVEY-ENTRÉE … GD-SURVEY-DESSERT** field-survey fleet — food-safety inspection units
