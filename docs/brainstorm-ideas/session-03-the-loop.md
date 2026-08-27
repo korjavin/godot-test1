@@ -1,4 +1,8 @@
-# Session 03 — The loop: field farms, tower spends
+# Session 03 — The loop: the field farms, the tower demands
+
+> **Vocabulary, corrected by the owner:** the tower does not *spend* — **the tower demands**
+> (*«башня не тратит, а башня требует»*). The emphasis matters: the tower is not where you
+> cash in what you earned, it is **what sets the bar** you have to meet.
 
 **Date:** 2026-08-27 · Owner's structure, stress-tested with Codex.
 **Status:** design fiction. Nothing built.
@@ -74,34 +78,49 @@ there:**
 Only **`run_speed`** and **`streak_burst`** look farm-only. So the connection the owner wants
 **mostly exists already** — this is a tuning and level-design job, not a new subsystem.
 
-## The risk that decides whether this loop is good or miserable
+## Rank gates ARE the content — owner ruling
 
-**A puzzle solved by having enough skill points is not a puzzle. It is a stat check.** A tower
-full of stat checks makes the farm **mandatory**, and mandatory farming is the difference
-between *Hades* and a bad mobile game.
+Codex and I both landed on a rule the owner has **overruled**, and it is worth recording
+because we were both wrong in the same direction.
 
-**Proposed rule: skills change reach and margin, never solutions.**
+- I proposed: *skills change reach and margin, never solutions* — the tower is always
+  beatable at zero skill.
+- Codex tightened it to: *every tower encounter needs a demonstrable zero-rank procedure
+  before any skill can improve it.*
 
-- A gate is opened by **the right identity and nothing else**. No amount of farming
-  substitutes for being the right hero.
-- What farming buys is **execution comfort**: the longer blink clears the ledge without a
-  frame-perfect jump; the longer form gives you time to think; the lower cooldown lets you
-  retry sooner.
+**The owner rejected both:**
 
-**Consequence, and it is the point:** the tower is **always beatable at zero skill** by a
-player who is good, and farming buys margin for a player who would rather not be. The loop
-stays *available* rather than *required*.
+> Вполне может быть, что некоторые препятствия не проходятся на нулевом ранге, и тогда надо
+> идти качаться. Наоборот, это наш стимул идти качаться.
+>
+> *(Some obstacles may simply not be passable at zero rank, and then you have to go level up.
+> On the contrary — that is our incentive to go level up.)*
 
-### Codex's tightening — adopt this version, not mine
+He is right, and the mistake we made was treating a progression gate as a **failure of
+design** when it is the **motor of the loop**. If the tower is always beatable as you are,
+there is no reason to ever leave it, and the field has no job. **Hitting a wall you cannot
+pass is the signal to go farm** — that is the entire point of a two-layer game. This is the
+Metroidvania model: the locked door is *content*, not something to apologise for.
 
-> **Every tower encounter needs a demonstrable zero-rank procedure before any skill can
-> improve it.** A longer blink may reach a shortcut or rescue a bad jump, but it cannot be
-> the only way to touch the mechanism.
+### The safeguard: legibility, not difficulty
 
-This is strictly better than what I wrote. Mine said *the tower should be beatable at zero
-skill* — which is a **hope**. Codex's says *every single encounter must have a known
-zero-rank solution* — which is a **rule you can actually check while building a room**. If
-you cannot demonstrate the zero-rank procedure, the room is not finished.
+The danger here is **not** that a gate is hard. It is that a gate is **ambiguous**. If an
+obstacle is merely difficult, the player cannot tell whether they are failing because they
+lack the **rank**, lack the **execution**, or have the **wrong idea entirely** — and that is
+the miserable version: banging your head against something that was never going to work, or
+farming for an hour to beat something that only wanted a better jump.
+
+> **A gate may be rank-gated, but it must be *legibly* rank-gated.** The game states the
+> requirement instead of letting the player infer it from repeated failure.
+>
+> **Hard and legible is content. Hard and ambiguous is a bug.**
+
+Preferably legible from the **fiction** rather than from a UI label — the mechanism is
+visibly too far, the gap visibly too wide — not `REQUIRES BLINK RANK 3` floating in the air.
+
+*Put to codex: how a gate announces its requirement without becoming a label, and whether
+skill-expressive obstacles and hard progression gates should be visually distinguishable on
+sight. Answer pending.*
 
 ### Checkpoints
 
