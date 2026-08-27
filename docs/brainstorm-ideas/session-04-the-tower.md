@@ -321,9 +321,9 @@ could not be literally true while abduction was once-only*). Now it is literally
 | Recovery | keep running | walk into the HQ and free him |
 
 Tower guards are **predator-class** — 7% and a knockback to the last checkpoint, never a
-capture. A guard that could capture would let the building game-over you *inside itself*
-while you are there to undo a capture, which is a spiral with no exit. (Flagged for owner
-confirmation, but it is hard to see the other answer surviving contact.)
+capture. **Ruled** (*"ok, agreed"*): a guard that could capture would let the building
+game-over you *inside itself* while you are there to undo a capture — a spiral with no
+exit, taking the last hero at the exact place the player came to recover the others.
 
 ### The mechanic is already half-built, verified
 
@@ -557,8 +557,8 @@ player's intersection is empty *while free heroes exist elsewhere* — impossibl
 **game over is the same condition in both modes: the free-hero set is empty.** Solo that
 means all four caught (the owner's ruling verbatim); in a room it means every hero in the
 room is captive and every player is in the prison — nobody left to rescue anyone, which is
-exactly when the game should end. The roster is read as **shared, world-level** here (the
-owner's phrasing implies it); flagged below rather than silently assumed.
+exactly when the game should end. The roster is read as **shared, world-level** here —
+**ruled** (*"ok, agreed"*), no longer a reading.
 
 Two consequences worth saying out loud rather than discovering in testing:
 
@@ -668,17 +668,17 @@ Added by the same-day amendment (§7):
    four-hero scene, its geography is deliberately memorable, and the scar is the one
    sanctioned exception to the edge-additive law, re-audited per scar state. (§7)
 
-**Still open:**
+10. **Guards are predator-class (7%), never capture** (*"ok, agreed"*) — the building
+    cannot game-over you while you are inside undoing a capture. (§7)
+11. **Game over in a room is world-level** (*"ok, agreed"*) — the free-hero set empty
+    across the whole room, not per player. (§7)
+12. **Both design laws are adopted** (*"ok, agreed"*) — permanent route mutations may only
+    *add* (sole exception: the protocol scar, enumerated and re-audited), and no item is
+    ever held by a hero. Recorded by the coordinator as constraints 8 and 9 in the README,
+    because they constrain future *story* ideas — the custody law forbids a whole class of
+    beat ("Primm hid the access card on himself") — not just the tower. (§7)
 
-1. **Guards are predator-class (7%), never capture** — recommended in §7 so the building
-   cannot game-over you while you are inside undoing a capture; wants his yes.
-2. **Game over in a room is world-level** — free-hero set empty across the whole room, not
-   per player. Adopted as the reading of his phrasing; flagged rather than assumed. (§7)
-3. **The edge-additive law and the no-custody law** (§7, codex pass) — two design laws
-   adopted to keep the strengthened softlock rule checkable: permanent transformations
-   only ever open passages (sole exception: the protocol scar, enumerated and re-audited),
-   and keys are party-level state with no per-hero pockets. Cheap to obey, load-bearing
-   for the audit; the owner should know they exist before a story idea collides with one.
+**Still open:** nothing. Every question raised in this session has an owner ruling above.
 
 ## Beads filed
 
