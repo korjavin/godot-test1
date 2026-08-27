@@ -163,6 +163,10 @@ So the heroes *are* the lives — four of them — except that unlike a life, **
 can be won back.** And that is what makes the tower unavoidable: you do not go there because
 the story asks you to, you go there because your team is inside it.
 
+Which is also why the HQ is **large, with many ways through**. Any hero can be in a cell, so
+the building has to hold a promise: **however few of you are left, there is a way in.** Not by
+making the route to the cells simple — by making sure there is always *another* one.
+
 The menu offers **Continue** and **New Game**, and there is nothing else behind them, because
 **the game *is* the world**: one save is one world is one game. There is no account, no
 meta-layer, nothing that survives a New Game. Start over and **every hero is back to zero

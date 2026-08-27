@@ -1,6 +1,8 @@
 # Session 04 — The tower: GastroDefense HQ as a place on the map
 
-**Date:** 2026-08-27 · Architect pass over the owner's two-layer structure.
+**Date:** 2026-08-27 · Architect pass over the owner's two-layer structure. Amended the
+same day after the owner ruled on all five open questions — §7 (systemic capture) is the
+material change; the others are settled inline where they were raised.
 **Status:** design fiction plus filed beads. Nothing built.
 
 Read [session 03](session-03-the-loop.md) for the loop this building serves, and
@@ -57,22 +59,26 @@ The river field varies per seed, so a fixed site will, on some seeds, sit on a r
 and then **every floor of the tower wades**, because a tower floor is a floor and the river
 test is XZ-only. A y-guard does not fix it: the ground floor is at y ≈ 0.
 
+**The distance is settled: 400 m.** Owner: *"not too far away, 400m seems ok"* — outside the
+spawn bubble and the initial render ring, under a minute's walk, and it **must be visible on
+the minimap** (which the rim-clamped marker below guarantees from any distance).
+
 So the site is **fixed-with-a-nudge**: `tower_site()` starts at the constant offset and scans
 deterministically (say, 25 m steps along −X, then lateral) until the footprint is clear of
 `is_river_at`. Pure function of `run_seed` (the river field is), no RNG draw, memoized once,
 same answer on every client. This is the entire concession to proceduralism the tower makes.
 
-### Minimap and horizon — be honest about the fog
+### Minimap yes, horizon impostor no — ruled
 
 - **Minimap:** the geo-landmark plumbing already draws off-disc markers *"clamped to the rim"*
   precisely because *"at the default zoom most loaded landmarks are past the disc"*
-  (`minimap_hud.gd:22-25`). The tower marker rides the same pattern with a unique glyph. Cheap.
-- **Horizon:** on web the render distance is 3 chunks = 150 m (`endless_terrain.gd:44`) and
-  the fog density is 0.005 (`endless_terrain.gd:71`). At a 300 m site the tower is **inside
-  the fog**, not on the horizon. A permanent fog-piercing silhouette is possible (an impostor
-  mesh with a fog-exempt material, always loaded, parented to main) but it is **polish, not
-  wayfinding** — the minimap marker and Windman's towerward scar (session 02) already carry
-  navigation. Filed as a polish bead, deliberately last.
+  (`minimap_hud.gd:22-25`). The tower marker rides the same pattern with a unique glyph.
+  Cheap, and now **required**: the owner's site ruling includes "visible on the minimap".
+- **Horizon impostor: cut, not deferred.** Owner: *"not needed."* The fog facts stand — web
+  render distance is 3 chunks = 150 m (`endless_terrain.gd:44`), fog density 0.005
+  (`endless_terrain.gd:71`), so at 400 m the tower is inside the fog and simply is not a
+  horizon object on web. The minimap marker and Windman's towerward scar (session 02) carry
+  all wayfinding. No fog-piercing silhouette will be built.
 
 ## 2. How an authored building coexists with the chunk streamer
 
@@ -174,13 +180,23 @@ by reading, both cheap:
    and gates — never ledges that tempt anyone to buff jump height, because the 3.6125 < 4.0
    chain is what keeps every mountain in the field impassable.
 
-**So the plain recommendation, and it is a challenge to the lift:** re-instate the
-flat-field invariant as written and scope the tower's verticality as *interior-only*. The
-lift as a **global** rule buys this feature nothing and leaves the door open to exactly the
-"largest engineering item in the whole design" the README warns about. If some later feature
-wants field verticality, lift it then, for that feature, as its own epic. **Owner decision
-— we should not quietly un-lift what he explicitly lifted, but he should know the tower
-does not spend that budget.**
+I recommended re-instating the invariant, since the tower does not spend it. **The owner
+has now ruled on this twice, and the ruling stands: the invariant stays lifted.**
+
+> *"i honestly not worried of this invariant, we can forget about it, our world can be with
+> altitudes."*
+
+So the world at large is allowed real elevation, and that is a direction, not a doc edit.
+Recorded honestly as **work now in scope rather than avoided** — the finding above still
+holds (the *tower* needs none of it, and this epic spends none of it), but whenever
+elevation actually enters the field, the full consumer list comes due: coin height settling,
+road placement, crocodile gravity settle, the spawn point, block bases, the XZ-only river
+test (`endless_terrain.gd:7503`), and the mountain-impassability chain (jump apex 3.6125 m
+under `MOUNTAIN_MIN_LAYER_HEIGHT` 4.0, which is also why no skill touches `JUMP_VELOCITY`).
+That is tracked as its own epic in the backlog, deliberately **outside** the tower epic, so
+the tower cannot silently inherit the largest engineering item in the design. Interior
+level design still respects the jump-apex constant regardless — stairs, lifts and gates,
+never jump-height demands.
 
 ## 4. Interior structure — rooms, gates, and one graph to rule them
 
@@ -238,9 +254,10 @@ anything costs: the 7% setback, no death, no game over. One arithmetic everywher
 - **Leaving is walking out** — or riding the lift down. Because opened routes persist and
   ordinary guards are the only thing that comes back, the walk out through cleared floors
   is fast but never empty.
-- Whether re-entry offers the lift menu (pick any unlocked stop) or always starts at the
-  door is an **owner call**; the lazy v1 is door-only, with the lift as the first polish
-  item, and nothing in the persistence design changes either way.
+- Re-entry is **ruled: both.** Owner: *"there should be a couple of options"* — the door
+  and the lift-stop menu. Door-only ships first; the lift menu is an explicit later phase,
+  not a maybe. Nothing in the persistence design changes between them (unlocked stops are
+  already a persisted monotone set).
 
 ## 6. What the abduction does to the building
 
@@ -265,6 +282,131 @@ three interior systems) lives in the same authored scene as ordinary rooms — i
 the building, not a second level. Windman's post-capture substitute routes are **route-state
 overlays keyed on the story flag**, in the same graph, covered by the same selfcheck run
 twice (pre- and post-capture roster).
+
+**Amended the same day:** the owner's systemic-capture ruling (§7) makes this audit a
+special case. The minus-Primm run above is still exactly right for the authored beat; §7
+generalizes it to every roster subset — and shows the generalization collapses to four
+singleton checks.
+
+## 7. The capture is systemic — heroes are the lives
+
+**Owner ruling, 2026-08-27, and it is the material change of this amendment:**
+
+> *"it's that this type of character that was active on moment of hunter bot caught you now
+> considered caught and prisoned in the hq, and player should play without it until
+> liberated in hq. if all caught - game over."*
+
+Read it plainly: **any** hero can be captured, **repeatedly** — whichever one was active
+when a hunter completed a grab. The captive sits in the HQ until you walk in and free him.
+**All four captive = game over.** We removed lives in session 03; the owner has
+reintroduced them as **the roster itself** — four heroes are four lives, except each one is
+*recoverable*, and the tower is where you recover it. That fuses the failure system with
+the campaign: the tower stops being optional in a way no coin penalty could ever achieve.
+
+### Two enemy classes, two real stakes — finally
+
+Session 02 wanted this split and admitted it could not have it (*"a hunter costs a hero"
+could not be literally true while abduction was once-only*). Now it is literally true:
+
+| | Predators | Hunters |
+| --- | --- | --- |
+| A loss costs | **7% of coins** + knockback | **the active hero** — and no coins |
+| Recovery | keep running | walk into the HQ and free him |
+
+Tower guards are **predator-class** — 7% and a knockback to the last checkpoint, never a
+capture. A guard that could capture would let the building game-over you *inside itself*
+while you are there to undo a capture, which is a spiral with no exit. (Flagged for owner
+confirmation, but it is hard to see the other answer surviving contact.)
+
+### The mechanic is already half-built, verified
+
+Capture = **removing an index from the allowed set the E-cycle already filters.**
+`switch_to_next_character()` already consults `my_character_indices()` and cycles within
+the returned array (`player_controller.gd:1279-1284`), and that function's own docstring
+says the set form *"costs nothing and needs no special case if that ever changes"*
+(`mp_manager.gd:1384`). Solo capture is the same shape: a local captured-set intersected
+into the allowed indices. At the grab, auto-switch the player to the next free hero on the
+spot while the hunter disengages carrying the body; if no hero remains, game over — and
+`game_over_ui.gd` already exists, group-wired, waiting to be repurposed.
+
+One save-model note, stated now so it is not discovered later: **the captured set is the
+first prominent non-monotone world field** — captures add, liberations remove — so it can
+never ride the union/max merge. It lives in the plain world snapshot (session 03's point 3),
+which is single-writer per install today, so a plain overwrite is correct.
+
+### The softlock audit, generalized — and why 15 subsets collapse to 4
+
+Any subset of the roster can be captive at once, so the rescue route must be traversable by
+**every possible surviving subset** — 15 of them. The catastrophe to design against: the
+only way to the cells is a scanner field only Pho-boman passes, and Pho-boman is in the
+cell — the run is dead with three heroes free and no game-over fired.
+
+Two facts shrink the problem to something a selfcheck can hold:
+
+1. **Gate passability is monotone in the roster.** Every gate keys on the *presence* of an
+   identity (even Pho-boman's "key is an absence" is *his* presence at the scanner); adding
+   a hero to the party never closes a route. This must be promoted to a design law — **no
+   gate may ever key on a hero's absence** — and then reachability for all 15 subsets
+   follows from the **4 singletons**: if each hero *alone* can reach the cells and perform
+   a liberation, every surviving subset can. `tower_selfcheck` runs four times, not fifteen.
+2. **The rescue corridor carries no gates at all.** Of the two options the coordinator
+   posed — a gate-free path to the prison, or per-identity alternatives on every gate —
+   the alternatives option is priced and rejected: it multiplies authoring by four per
+   gate, stays combinatorially fragile every time a floor is added, and *still* needs the
+   four-singleton verification. The gate-free corridor is one authoring rule plus one
+   selfcheck assertion. And note it must exclude **hero-specific demand gates too**: a
+   `primm_blink` demand is a Primm-absence trap wearing a different silhouette. So the law
+   is: **door → cell block is challenge-space only** — its difficulty is guards and
+   hazards, never gates. The fiction supports it for free: the prison block is the most
+   standardized, most-trafficked wing of the facility; its security is personnel, not
+   exotic locks.
+
+Corollary worth saying out loud: with the corridor gate-free, **a lone last hero can always
+attempt the rescue** — game over is genuinely "the hunters won four times," never "the
+level design won."
+
+### The authored Primm beat survives — capture is taught, then armed
+
+Recommendation, stated as the coordinator asked: **yes, the beat survives.** Primm's
+capture stays the scripted story turn — the steel box, the floor-plus-beat encounter, the
+Windman wound, all of session 02. Systemic capture **arms after the beat**: before it,
+hunters cost the predator arithmetic (session 02's original rule), and the authored beat is
+the moment the rule visibly changes, demonstrated on the hero it hurts most. Arming it from
+minute one would let a random early grab pre-empt the authored scene and teach the
+mechanic as a surprise. **Owner confirmation wanted, since it sequences his ruling rather
+than restating it.**
+
+The death-spiral risk also needs naming: each capture closes identity routes and weakens
+the party, which invites more captures. The mitigation is already doctrine — session 02's
+mercy lives in the encounter director, *before contact* — and the director simply gains
+roster size as an input: fewer free heroes, gentler encounter geometry, invisibly. That
+lands in the hunter epic's director bead, not here.
+
+### Multiplayer — the cell role scales, the set must sync
+
+A captured hero belongs to some peer's hand. While the peer holds other heroes, they play
+on with a shorter hand — zero new UI, the existing indices filter does it. A peer whose
+**entire hand** is captive gets session 02's bounded in-the-cell role (mark patrols,
+operate two or three interior systems), which scales to several simultaneous captives
+as-is: same block, same verbs, one player per cell. The captured set itself must travel as
+a state-mutating verb with the standard MP discipline — type-checked, rate-limited,
+absolute values in the join snapshot — and "all four captive" is evaluated on the shared
+set, not per peer. Design notes for the MP bead; nothing here needs new authority.
+
+### What game over means — owner decision still open
+
+The ruling names the trigger, not what is behind the screen. Two coherent options:
+
+- **Hard:** the recall completes; the world is finished; the menu offers New Game only.
+  Maximally literal, and brutal in a game whose save *is* the world.
+- **Soft:** a game-over screen, then Continue reopens the world with **one hero freed by
+  the Junior Engineer** — canon supports it (he returns running his own investigation), and
+  it converts game over into a scripted bailout with a story cost rather than a deleted
+  world.
+
+Recommendation: the soft option, because "the game is the world" makes world deletion the
+harshest possible punishment for what is ultimately hunter attrition. But this is a real
+fork and it is the owner's, not ours.
 
 ## What was verified in code this session
 

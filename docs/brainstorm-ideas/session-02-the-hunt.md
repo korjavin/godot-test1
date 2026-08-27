@@ -439,9 +439,32 @@ The catastrophe is easy to state: the only route to the cells passes a scanner f
 **only Pho-boman** can cross, and Pho-boman is the one in the cell. Three heroes still free,
 no game-over triggered, and the run is dead.
 
-So the path to the prison must either contain **no identity gates at all**, or **every gate
-on it must have a per-identity alternative.** This is now the sharpest constraint in the whole
-design, and it is being priced in [session 04](session-04-the-tower.md).
+My proposed fix was to strip identity gates from the prison route. **The owner's answer is
+better:**
+
+> должно быть много путей, hq должен быть масштабен
+>
+> *(there should be many paths; the HQ should be large-scale)*
+
+**Redundancy, not removal.** Identity gates stay meaningful everywhere — including on the
+routes to the cells — and safety comes from there being *more than one way through*. Mine
+would have made the most important corridor in the game the blandest one.
+
+And it turns a hand-audit into a **checkable graph property**:
+
+> For every non-empty subset **S** of free heroes, **at least one route to the cells must be
+> traversable by S alone.**
+
+With the captives being precisely the heroes *not* in S — so a hero in a cell can never be
+the one who opens a gate on the way to his own cell. That makes `tower_selfcheck` load-bearing
+rather than nice-to-have: on a large graph, subset reachability is not something a human can
+eyeball, and the check can enumerate all fifteen subsets mechanically.
+
+**The cost is real and is being priced in [session 04](session-04-the-tower.md).** "Large,
+with many paths" collides with three commitments already on the table: every quest
+solo-completable in any order, every subset able to reach the cells, and a project with no
+level-design pipeline and a web `gl_compatibility` performance target. It is the biggest
+content commitment proposed in any of these sessions.
 
 *Open, with the architect: whether the authored Primm beat survives as the scripted
 introduction to a mechanic that is systemic thereafter (my instinct: yes — it teaches the
