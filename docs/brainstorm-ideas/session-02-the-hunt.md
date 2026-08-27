@@ -76,6 +76,11 @@ and that is the emotional payload — the game does not need to tell you what yo
 because your hands hit it every time you try. Acts after the abduction must be solvable
 with three.
 
+**And codex supplied the link back to the ending that I had missed:** show the old
+four-person solution becoming impossible, then make **the rescue the act that restores the
+party's capacity to choose `EXCEPTION`.** The rescue is not a plot detour — it is what buys
+back the ability to refuse at the climax. Get him or the third option is closed to you.
+
 ## Hunter robots — capture, not kill
 
 A new enemy class that is **not** a predator, and the distinction is the point:
@@ -100,30 +105,52 @@ cannot take, which is precisely why he is the one who can walk into the tower.
 ### A. Making an inevitable capture feel earned, not scripted
 
 A scripted loss of agency is the classic way to make an audience feel cheated rather than
-moved. Working position:
+moved. **Codex's rule solves it, and it is sharper than mine:**
 
-- The capture must **not** fire off a distance counter at the end of a cutscene trigger.
-- The hunter robots must be a **real, escalating threat the player genuinely fights off
-  several times first**, so the player has a working model of how they are beaten.
-- The capture should land at a moment the player can look back on and believe **they nearly
-  prevented it**.
+> **Do not make the player fail at the stated goal.**
 
-In short: **scripted in outcome, not in texture.**
+- **Telegraph the steel containment** long before it matters, and let players **repel
+  earlier probes** — so they have a working model of how hunters are beaten.
+- At the capture, set a **survivable objective they genuinely can accomplish**: hold the
+  route, tag the carrier, get the others clear, choose which resource gets spent.
+- **The outcome is fixed; their performance sets the rescue state** — carrier route, alarm
+  level, supplies, allies, which tower entrance is open to them.
+
+So the near-save is **honest rather than fake**: Primm is caught because the heavy cage is a
+corporate procedure, while **the team wins the part it was told it could win.** The player
+never fails; they are simply not asked to prevent the unpreventable — and every bit of
+effort they spent is carried forward into the rescue instead of discarded.
+
+In short: **scripted in outcome, never in texture, and never in the player's own objective.**
 
 ### B. Multiplayer — whose hero is taken, and what do they do?
 
 If it is always Primm, one specific human is punished for nothing they did, and then has
 **nothing to do**. Dead time in a co-op game is fatal.
 
-**Proposal — asymmetric play.** The captured player keeps playing, **as Primm inside the
-tower**: weakened, no phasing, because of the steel. The other three approach from outside.
-The rescue becomes a **two-sided level** rather than a fetch quest.
+**The captured player keeps playing, as Primm inside the tower.** Weakened, no phasing,
+because of the steel. The vault supports the state: Primm phases out *himself* at the end of
+E14, with a field weakened after 72+ hours in steel. He is not rescued like luggage — he
+meets them halfway.
 
-The vault supports the state: Primm phases out *himself* at the end of E14, with a field
-weakened after 72+ hours in steel. He is not rescued like luggage; he meets them halfway.
+**But not as a second full level.** I proposed a fully simultaneous two-sided level and
+codex was right to push back: that needs separate objectives, networking, fail-state rules,
+pacing, and *content for both teams* — a second game, effectively.
 
-*Open: whether that is too much new game to build, and what the cheap version is that still
-avoids dead time. Put to codex; answer pending.*
+**The cheap version, which is what we build: a bounded Primm-in-the-cell role.**
+
+The Primm player searches **one containment block**. They:
+
+- read and **mark patrols and routes** for the team outside;
+- operate **two or three physical systems from inside** — release a lock, kill a scanner,
+  lower an interior lift.
+
+No phasing, no combat loop, **no solo escape**. The three outside reach the corresponding
+points. **Every inside action gives the outside team an immediate opening**, so the captured
+player is *essential* rather than sidelined — which is the actual requirement. Dead time was
+the problem; a second game was never the solution.
+
+If it plays well, expand that block into the richer two-sided rescue later.
 
 ## Open questions
 
