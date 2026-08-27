@@ -422,9 +422,10 @@ back into something a selfcheck can hold**:
    graph is the worst case, and "every reachable state" collapses to "the base graph, once
    per story-flag state." The selfcheck asserts the law structurally over the mutation
    table *and* runs reachability per story-flag state and per legal entry — the door and
-   every unlockable lift stop. If a route-destroying mutation is ever authored
-   deliberately, the check must then enumerate reachable states; that ceiling is recorded
-   here so it is a decision, not an accident.
+   every unlockable lift stop. **The law has exactly one sanctioned exception:** the
+   full-custody protocol's scar (ruled in below) may close passages, so scar states are
+   authored, enumerated, and each one re-runs the full property. Any *other*
+   route-destroying mutation stays illegal — a decision, not an accident.
 
 #### Four spines, not fifteen corridors
 
@@ -571,33 +572,34 @@ Two consequences worth saying out loud rather than discovering in testing:
   many-paths requirement and the captive role meet in the same rooms. Design them once,
   for both jobs.
 
-### What game over means — owner decision still open
+### What game over means — ruled: the full-custody protocol
 
-The ruling names the trigger, not what is behind the screen. Three coherent options now:
+The trigger was ruled first; the shape is now ruled too (*"yes, to have game over is
+absolutely fine"*): **codex's full-custody protocol**, which keeps the player's agency at
+the exact moment a plain screen would take it away. When the last free hero is captured,
+field play ends and the party gets **one authored break-out attempt inside the HQ**, using
+everything earlier rescues taught them about the prison. All four heroes are present, so
+solo switches among the prisoners and every multiplayer player stays active. **Success**
+frees at least one hero and returns to systemic play with a **permanent scar**;
+**failure** completes the recall and ends the campaign — the save becomes a read-only
+archived world (Continue reopens the ending screen; New Game mints a fresh `save_id` —
+the archive semantics live in session 03; the last scene here is what *produces* that
+state).
 
-- **Hard:** the recall completes; the world is finished; the menu offers New Game only.
-  Maximally literal, and brutal in a game whose save *is* the world.
-- **Soft:** a game-over screen, then Continue reopens the world with **one hero freed by
-  the Junior Engineer** — canon supports it (he returns running his own investigation), and
-  it converts game over into a scripted bailout with a story cost rather than a deleted
-  world.
-- **The full-custody protocol** — codex's proposal, and the strongest of the three: when
-  the last free hero is captured, field play ends and the party gets **one authored
-  break-out attempt inside the HQ**, using everything earlier rescues taught them about
-  the prison. All four heroes are present, so solo switches among the prisoners and every
-  multiplayer player stays active. Success frees at least one hero and returns to systemic
-  play **with a permanent scar**; failure completes the recall and ends the campaign. It
-  keeps the player's agency at the exact moment the other two options take it away, and it
-  gives every earlier rescue a second job: teaching the geography this scene is played in.
+Three hard consequences for this plan, no longer conditional:
 
-Recommendation: the **full-custody protocol**, with the soft option as the fallback if its
-authoring cost is refused — and never the hard option, because "the game is the world"
-makes world deletion the harshest possible punishment for what is ultimately hunter
-attrition. This is a real fork and it is the owner's, not ours. One planning consequence
-is flagged now, **conditional on his choice**: the protocol requires the cell block to
-support a full four-hero scene — a bounded one-captive role and a four-prisoner set piece
-are different room requirements, and the block should be designed toward the larger one
-deliberately rather than retrofitted.
+1. **The cell block supports a full four-hero authored scene**, not only the bounded
+   one-captive role — a hard layout requirement from day one, not a retrofit.
+2. **The block's geography must be legible and memorable by design.** Ordinary rescues
+   visit it repeatedly and are, deliberately, the tutorial for the one visit where it
+   matters most.
+3. **The scar is a persistent tower state change — and it is the one sanctioned exception
+   to the edge-additive law.** A scar may close a shortcut or raise containment, which is
+   precisely the "a mutation removes the last valid path later" case the law exists to
+   prevent — now triggerable by the game's own failure path. So scars are **authored,
+   enumerated, and few**, and `tower_selfcheck` runs the full subset-reachability property
+   in every scar state as well: a scar that would sever the last singleton rescue spine
+   fails the build, not the player.
 
 ## What was verified in code this session
 
@@ -659,32 +661,34 @@ Added by the same-day amendment (§7):
    hero when one exists; the prison role is the last resort. (§7)
 8. **The authored Primm capture stays** (*"да, остаётся"*) — the one planned capture, the
    scene where the systemic rule is taught; everything after it is systemic. (§7)
+9. **Game over is the full-custody protocol** (*"yes, to have game over is absolutely
+   fine"*) — one authored break-out attempt with all four prisoners; success frees a hero
+   and scars the world; failure archives the world (read-only save, ending screen —
+   session 03 carries the save side). Hard consequences: the cell block supports a
+   four-hero scene, its geography is deliberately memorable, and the scar is the one
+   sanctioned exception to the edge-additive law, re-audited per scar state. (§7)
 
 **Still open:**
 
-1. **What is behind the game-over screen** — hard (world ends, New Game only), soft
-   (Continue with one hero freed by the Junior Engineer at a story cost), or codex's
-   **full-custody protocol** (one authored break-out attempt with all four prisoners;
-   success frees a hero and scars the world, failure ends the campaign). Recommendation:
-   the protocol, soft as fallback, never hard. The cell block's four-hero-scene
-   requirement is conditional on this ruling. (§7)
-2. **Guards are predator-class (7%), never capture** — recommended in §7 so the building
+1. **Guards are predator-class (7%), never capture** — recommended in §7 so the building
    cannot game-over you while you are inside undoing a capture; wants his yes.
-3. **Game over in a room is world-level** — free-hero set empty across the whole room, not
+2. **Game over in a room is world-level** — free-hero set empty across the whole room, not
    per player. Adopted as the reading of his phrasing; flagged rather than assumed. (§7)
-4. **The edge-additive law and the no-custody law** (§7, codex pass) — two design laws
+3. **The edge-additive law and the no-custody law** (§7, codex pass) — two design laws
    adopted to keep the strengthened softlock rule checkable: permanent transformations
-   only ever open passages, and keys are party-level state with no per-hero pockets.
-   Cheap to obey, load-bearing for the audit; the owner should know they exist before a
-   story idea collides with one.
+   only ever open passages (sole exception: the protocol scar, enumerated and re-audited),
+   and keys are party-level state with no per-hero pockets. Cheap to obey, load-bearing
+   for the audit; the owner should know they exist before a story idea collides with one.
 
 ## Beads filed
 
-See the epic **The Tower — GastroDefense HQ as a place on the map** and its children:
-site + streamer exclusion (keystone), shell + impostor + minimap marker + door, interior v1
-with the three gate classes and a checkpoint, gate graph + the subset-reachability
-`tower_selfcheck` (load-bearing under the many-paths ruling), persistence of the opened
-sets, guards + population reset, the cell block + liberation + capture mechanic, the MP
-capture sync + captive role, and the staged scale-out (wings, floors, lift stops). The
-field-altitude consumer list is its own backlog epic, deliberately outside. Nothing here
-is built; the beads are the contract for whoever builds it.
+The epic **godot-test1-3iy** and its eleven phases: site + streamer exclusion (keystone),
+shell + impostor + minimap marker + door, interior v1 with the three gate classes and a
+checkpoint (keystone), `TOWER_GRAPH` + the 15-subset `tower_selfcheck` (load-bearing),
+persistence of the monotone opened sets, guards + population reset, staged scale-out
+(lift-stop re-entry, the wing/floor builder, many-paths growth), cell block + liberation +
+the four rescue spines, systemic capture core (solo), MP capture on `SetHero`, and the
+full-custody protocol scene. The field-altitude consumer list is **godot-test1-ope**, its
+own backlog epic, deliberately outside this one. The hunter epic (godot-test1-9rm) carries
+a note wiring the grab consequence and the roster-size mercy input. Nothing here is built;
+the beads are the contract for whoever builds it.
