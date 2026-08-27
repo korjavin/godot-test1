@@ -1565,8 +1565,12 @@ var is_burrowed: bool = false
 var _charge_lock: Dictionary = {}
 
 ## THE BURST ARM'S ONE PIECE OF MEMORY (`_behave_burst`): which leg of the
-## pounce/sprint cycle this animal is on and where that leg started, as
-## { "bursting": bool, "origin": Vector3 }. Empty means "not committed". It is a
+## pounce/sprint cycle this animal is on, how much of that leg it has spent, and
+## where it stood last frame, as { "bursting": bool, "travelled": float,
+## "last": Vector3 }. Empty means "not committed". The leg is spent in PATH
+## LENGTH rather than displacement from a fixed origin — see burst_cycle_factor,
+## where that is the difference between a bounded pounce and a cougar that
+## circles you at 11 m/s forever. It is a
 ## Dictionary rather than a bool and a Vector3 so `burst_cycle_factor()` can be a
 ## STATIC function that both the arm and croc_spawn_selfcheck's escape probe
 ## drive — the check measures the shipped cycle instead of a restatement of it,
@@ -2277,8 +2281,9 @@ static func burst_cycle_factor(from: Vector3, lock: Dictionary, row: Dictionary)
 	"""
 	Which leg of the burst cycle this animal is on, as a speed multiplier.
 
-	    flip when   |from - lock.origin| >= (burst_distance if bursting else recover_distance)
-	    on flip     bursting := not bursting, origin := here
+	    each frame  travelled += |from - lock.last|   (PATH LENGTH, see below)
+	    flip when   travelled >= (burst_distance if bursting else recover_distance)
+	    on flip     bursting := not bursting, travelled := 0
 	    factor      burst_factor while bursting, recover_factor while recovering
 
 	THE CYCLE IS MEASURED IN METRES, NOT SECONDS, and that is the same call
@@ -2289,6 +2294,21 @@ static func burst_cycle_factor(from: Vector3, lock: Dictionary, row: Dictionary)
 	wakes on the leg it slept on. A seconds-based cycle would have run down during
 	the sleep and handed the player a cougar that arrives already exhausted, or
 	one whose pounce was spent 40 m away where nobody could see it.
+
+	THE METRES ARE PATH LENGTH, NOT DISPLACEMENT FROM WHERE THE LEG STARTED, and
+	that distinction is the whole correctness of this function rather than a
+	refinement of it. The bear's `charge_steer_point` measures displacement from
+	its lock origin, which is right for a bear: what it is asking is "how far have
+	I got from where I took aim". Ask a BURST the same question and a predator
+	that never gets far from its starting point never finishes its pounce — a
+	cougar steered around a massif, or one following a player who circles it
+	inside a four-metre radius, stays inside `burst_distance` of its origin
+	forever and therefore runs at 11 m/s indefinitely, which is precisely the
+	promise this whole species was built to keep. Path length has no such hole:
+	every metre the animal actually covers is a metre of pounce spent, whatever
+	shape it covered it in. It also gives the pinned-against-a-block case the
+	physically honest answer for free — a body that is not moving is not spending
+	its burst, and it resumes with the metres it had left.
 
 	Three properties follow from it being a pure function of the lock, and each
 	one was a requirement rather than a happy accident:
@@ -2316,11 +2336,12 @@ static func burst_cycle_factor(from: Vector3, lock: Dictionary, row: Dictionary)
 	That is the same degrade-don't-crash rule as the unknown-species fallback in
 	_ready() and the unknown-behaviour fallback in the dispatch.
 
-	ponytail: the leg advances on DISTANCE FROM THE LEG'S ORIGIN, so a predator
-	pinned against a block does not advance and stays on whichever leg it was on.
-	Stuck mid-recovery is harmless; stuck mid-pounce means it comes round the
-	corner still at full burst, which reads as a cat coiled at the corner and is
-	the right animation for the wrong reason. The upgrade path, if it ever
+	ponytail: a predator pinned against a block covers no path, so it does not
+	advance its leg and resumes with the metres it had left. That is the right
+	answer rather than a shortcut — a pounce is metres of ground covered, and a
+	cat shouldering into stone has covered none of them. The one visible
+	consequence is that it comes round the corner still on the leg it arrived on,
+	which reads as a cat coiled at the corner. The upgrade path, if it ever
 	matters, is the bear's: flip the leg on a blocked feeler.
 	"""
 	var burst_distance: float = float(row.get("burst_distance", 0.0))
@@ -2328,15 +2349,23 @@ static func burst_cycle_factor(from: Vector3, lock: Dictionary, row: Dictionary)
 	if burst_distance <= 0.0 or recover_distance <= 0.0:
 		return 1.0
 
-	if not lock.has("origin"):
-		lock["origin"] = from
+	if not lock.has("last"):
+		lock["last"] = from
+		lock["travelled"] = 0.0
 		lock["bursting"] = true
+	# Path length, one frame at a time — see the docstring for why this is not
+	# `from.distance_to(origin)`. The step is the ground this body actually
+	# covered since the last frame it was chasing, so a curve spends its pounce
+	# at the same rate a straight line does.
+	var travelled: float = float(lock["travelled"]) + from.distance_to(lock["last"])
+	lock["last"] = from
 	var bursting: bool = bool(lock["bursting"])
 	var leg: float = burst_distance if bursting else recover_distance
-	if from.distance_to(lock["origin"]) >= leg:
+	if travelled >= leg:
 		bursting = not bursting
 		lock["bursting"] = bursting
-		lock["origin"] = from
+		travelled = 0.0
+	lock["travelled"] = travelled
 	return float(row["burst_factor"]) if bursting else float(row["recover_factor"])
 
 

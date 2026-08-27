@@ -893,6 +893,23 @@ const BURST_RUNNER_GAIN_MIN: float = 5.0
 ## contact inside the race.
 const BURST_WALKER_MUST_CATCH: bool = true
 
+## THE CIRCLING PROBE. Radius of the tight circle the fourth race walks, in
+## metres — deliberately SMALLER than either species' burst_distance (2.5 and
+## 4.0), so a predator that measured its leg as DISPLACEMENT FROM WHERE THE LEG
+## STARTED would never travel far enough from that point to finish a pounce and
+## would burst forever. That is not a hypothetical: it is what this function did
+## before review, and it is the one way a bounded burst silently becomes an
+## unbounded one. Path length has no such hole, so the fraction of frames spent
+## bursting on a circle must match the straight-line cycle.
+const BURST_CIRCLE_RADIUS: float = 1.5
+
+## Ceiling on the share of frames a circling predator may spend on the burst leg.
+## The honest figure is the cycle's own duty ratio — (Db/Fb) / (Db/Fb + Dr/Fr) —
+## which is 0.36 for the cougar and 0.36 for the hound; the displacement bug puts
+## it at 1.00. 0.60 sits far from both, so this fails on the bug and not on a
+## retune.
+const BURST_CIRCLE_DUTY_MAX: float = 0.60
+
 
 func _check_burst_escape(croc_ai: GDScript) -> void:
 	"""
@@ -985,13 +1002,17 @@ func _check_burst_escape(croc_ai: GDScript) -> void:
 		var walker := _burst_race(croc_ai, row, chase, _walk_speed, false)
 		# 3. The control: same worst-case animal, recovery removed.
 		var control := _burst_race(croc_ai, row, _max_chase_speed, _slowest_run_speed, true)
+		# 4. The circling probe — see BURST_CIRCLE_RADIUS.
+		var duty := _burst_circle_duty(croc_ai, row, _max_chase_speed)
 
 		print("burst escape (%s): peak %.2f m/s vs the %.2f ceiling; a %.1f m/s run"
 				% [species_name, burst_peak, _max_chase_speed, _slowest_run_speed]
 				+ " opens the %.1f m gap to %.1f m over %.0f s, a %.1f m/s walk closes"
 				% [BURST_RACE_GAP, runner, BURST_RACE_SECONDS, _walk_speed]
-				+ " it to %.1f m (same animal, recovery OFF: %.1f m)"
-				% [walker, control])
+				+ " it to %.1f m (same animal, recovery OFF: %.1f m);"
+				% [walker, control]
+				+ " circling inside %.1f m it bursts %.0f%% of frames"
+				% [BURST_CIRCLE_RADIUS, duty * 100.0])
 
 		if runner - BURST_RACE_GAP < BURST_RUNNER_GAIN_MIN:
 			_fail("a running player only gained %.2f m on a %s over %.0f s"
@@ -1012,6 +1033,45 @@ func _check_burst_escape(croc_ai: GDScript) -> void:
 					% control + " short. The escape measured with it on is therefore"
 					+ " not coming from the recovery window, so this check is not"
 					+ " measuring the burst at all")
+		if duty > BURST_CIRCLE_DUTY_MAX:
+			_fail("a %s circling inside %.1f m spent %.0f%% of its frames on the"
+					% [species_name, BURST_CIRCLE_RADIUS, duty * 100.0]
+					+ " BURST leg (want <= %.0f%%) — the leg is being measured as"
+					% (BURST_CIRCLE_DUTY_MAX * 100.0)
+					+ " displacement from where it started rather than as path"
+					+ " length, so a predator that never gets far from one spot"
+					+ " never finishes a pounce and holds a speed above"
+					+ " MAX_CHASE_SPEED indefinitely")
+
+
+func _burst_circle_duty(croc_ai: GDScript, row: Dictionary, chase: float) -> float:
+	"""
+	Walk a burst predator round a tight circle and report how much it spends bursting.
+
+	@param croc_ai: the AI script, for its static burst_cycle_factor
+	@param row: the SPECIES row to simulate
+	@param chase: the predator's clamped chase speed
+	@return the fraction of frames the cycle spent on the burst leg
+
+	The path is a circle of BURST_CIRCLE_RADIUS — smaller than the burst leg, so
+	the body never gets `burst_distance` away from any point on it while covering
+	unlimited GROUND. That is the real chase geometry this models: a player who
+	circles, or a predator steered round a massif by the obstacle feelers. Arc
+	length per frame is `chase * factor * dt`, so a bursting animal walks the
+	circle faster, exactly as it would in the world.
+	"""
+	var lock := {}
+	var angle := 0.0
+	var bursts := 0
+	var steps := int(BURST_RACE_SECONDS / BURST_RACE_DT)
+	var burst_factor: float = float(row["burst_factor"])
+	for _step in range(steps):
+		var pos := Vector3(cos(angle), 0.0, sin(angle)) * BURST_CIRCLE_RADIUS
+		var factor: float = croc_ai.burst_cycle_factor(pos, lock, row)
+		if is_equal_approx(factor, burst_factor):
+			bursts += 1
+		angle += (chase * factor * BURST_RACE_DT) / BURST_CIRCLE_RADIUS
+	return float(bursts) / float(steps)
 
 
 func _burst_race(croc_ai: GDScript, row: Dictionary, chase: float, quarry_speed: float,
