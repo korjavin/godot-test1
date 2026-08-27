@@ -12,7 +12,1403 @@ extends CharacterBody3D
 ## - Fatal collision with player (resets player position)
 
 # ============================================================================
-# CONSTANTS
+# SPECIES TABLE
+# ============================================================================
+## Every trait that makes one predator FEEL different from another lives in
+## here: speeds, detection, wander rhythm, obstacle feelers, waddle and bite
+## geometry, river sink. One const dictionary of plain dictionaries — no class
+## hierarchy, no custom Resource. That is the same shape `progression.gd` uses
+## for `SKILL_TREES`, for the same reason: this is data you READ, not a type you
+## subclass, so a new predator is a new ENTRY here plus (at most) one new arm in
+## a `match`, never a new script and never a subclass of this one.
+##
+## What is deliberately NOT in here matters as much as what is. Anything that is
+## a GAME-WIDE contract rather than a species trait stays a top-level const
+## below — `MAX_CHASE_SPEED` (the speed-lattice ceiling), the distance gradient,
+## gravity, the visual cull, the multiplayer sync constants. A species may not
+## opt out of the lattice: walking is caught, running escapes, at every entry.
+##
+## READ THE LATTICE AS A STATEMENT ABOUT THE TABLE, NOT ABOUT EACH ANIMAL. It
+## constrains the ROW (`chase_speed` above WALK_SPEED) and the CEILING
+## (MAX_CHASE_SPEED clamps the product), and it deliberately says nothing about
+## an individual's roll. `speed_random_factor` exists precisely so some of them
+## are slow: at the origin the crocodile's ±50% puts 41% of the pack under a
+## walking player, and the sand viper's tighter ±35% puts 22% there. That is the
+## pack reading as a mix of stragglers and hunters, and a review that measures
+## the WORST roll against WALK_SPEED is measuring the wrong end — the promise the
+## game is balanced on is the other one, that the BEST roll still cannot outrun a
+## run, and MAX_CHASE_SPEED is what keeps it.
+##
+## Resolved ONCE per instance into `spec` (see `species` below), then read
+## straight off that dictionary in the per-frame paths. A dozen hash lookups per
+## crocodile per frame is nothing beside the two obstacle raycasts sitting in
+## the same tick, and it is what keeps the table a table instead of thirty
+## copied instance floats.
+const SPECIES: Dictionary = {
+	"crocodile": {
+		## Which arm of the behaviour dispatch in `_update_chase_state()` this
+		## species runs. "solo" is today's, and the only one implemented: wander
+		## alone, chase whatever you smell, flee a stink wave. Later species add
+		## their own strings here (pack, ambush, pounce, charge) together with
+		## the `match` arm that reads them — a string with no arm behaves as solo.
+		"behavior": "solo",
+
+		# ----- Speed and detection -----
+		## Movement speed in metres per second while wandering, and the chase
+		## speed used when pursuing the player. Chase is deliberately ABOVE the
+		## player's WALK_SPEED (5.0), so a merely-walking player WILL get caught —
+		## escaping a chase takes running, jumping (crocodiles lose the scent when
+		## you leave the ground), or a special ability. This is the game's core
+		## fail pressure, and every species entry has to honour it: the lattice is
+		## WALK_SPEED (5.0) < chase_speed <= MAX_CHASE_SPEED (8.5) < the slowest
+		## run (9.0).
+		"move_speed": 2.5,
+		"chase_speed": 5.5,
+
+		## Per-instance speed spread: each crocodile rolls ONE multiplier in
+		## [1-factor, 1+factor] and applies it to BOTH its wander and chase speed,
+		## so some crocodiles are clearly faster and some slower — yet a given
+		## crocodile's chase always still outpaces its own stroll (the two speeds
+		## never drift apart). ±50%.
+		"speed_random_factor": 0.5,
+
+		## Per-instance size spread: each crocodile rolls a uniform scale in
+		## [1-factor, 1+factor] applied to the whole body (visual model + physics
+		## capsule together), so the pack is a mix of smaller and larger
+		## crocodiles. ±25%.
+		"size_random_factor": 0.25,
+
+		## Detection radius — distance at which this predator can "smell" the
+		## player. INVARIANT for every species: must stay well below the LOD
+		## manager's SIM_RADIUS (45.0), because anything that can detect the
+		## player must always be awake.
+		"detection_radius": 15.0,
+
+		# ----- Organic wandering -----
+		## Time between direction changes (seconds) and the pause taken when one
+		## happens.
+		"direction_change_interval": 4.0,
+		"pause_duration": 0.5,
+
+		## How sharply the heading drifts while wandering (radians/sec of random
+		## steer). Small continuous nudges produce smooth, curved meandering
+		## instead of straight lines with hard turns.
+		"wander_turn_rate": 1.2,
+
+		## How smoothly the body turns to face its heading (higher = snappier)
+		"turn_smoothness": 5.0,
+
+		## Slowest wander speed as a fraction of the instance's base speed
+		"min_wander_speed_factor": 0.45,
+
+		## How quickly wander speed ebbs and flows (radians/sec)
+		"speed_variation_freq": 0.8,
+
+		## Chance (per direction-change interval) of pausing to "sniff" around
+		"sniff_pause_chance": 0.3,
+
+		# ----- Obstacle avoidance -----
+		## How far ahead (metres) the crocodile senses blocks. This is
+		## deliberately longer than the visual model so the crocodile turns away
+		## *before* its snout can reach a block — the snout poking into blocks is
+		## exactly what this fixes (the physics capsule is much shorter than the
+		## model, so move_and_slide alone stops the body but lets the longer nose
+		## overlap the block).
+		"avoid_look_ahead": 3.0,
+
+		## Angle of the left/right "feeler" probes used to find a clear way
+		## around (radians).
+		"avoid_feeler_angle": PI / 5.0,  # 36°
+
+		## Height above the body origin to cast the feelers from, so they sample
+		## the block's side walls rather than the flat ground.
+		"avoid_feeler_height": 0.3,
+
+		## Speed multiplier while steering around a block, so the crocodile eases
+		## off and curves around instead of ramming the block nose-first.
+		"avoid_speed_factor": 0.5,
+
+		# ----- Procedural body animation -----
+		## Yaw applied to the model so its snout points along the travel
+		## direction. The mesh is authored facing +X but the body travels +Z, so
+		## we rotate -90°. If a species' model ends up facing the wrong way
+		## in-editor, flip this sign in ITS entry.
+		"model_facing_offset": -PI / 2.0,
+
+		## Stride frequency at full speed (radians/sec) — drives the waddle/bob
+		"stride_frequency": 9.0,
+
+		## Side-to-side waddle roll amplitude (radians) — uses PI math so it
+		## stays a constant expression (deg_to_rad() can't be used in a const)
+		"waddle_roll": 9.0 * PI / 180.0,
+
+		## Vertical bob amplitude (metres)
+		"bob_amount": 0.025,
+
+		## Slow body "snaking" yaw amplitude (radians)
+		"sway_yaw": 5.0 * PI / 180.0,
+
+		## Forward lean while hunting the player (radians)
+		"chase_pitch": 10.0 * PI / 180.0,
+
+		## Idle breathing speed/amount when standing still
+		"breathe_speed": 2.0,
+		"breathe_amount": 0.012,
+
+		# ----- River submersion (VISUAL ONLY) -----
+		## How far the MODEL drops, in model-local metres, while the crocodile is
+		## standing in a river. The player's own wading sink (WADE_SINK_DEPTH
+		## 0.35) is the pattern; the DEPTH is not, and could not be — measured off
+		## the GLB, this crocodile is 1.40 m long and only 0.276 m TALL (local y
+		## −0.036 .. +0.240), so the player's 0.35 would bury it, mud and all,
+		## with nothing to see. Which is exactly why the depth is a SPECIES trait
+		## and not a global: it is measured off one particular model.
+		##
+		## 0.18 leaves the top 0.060 m proud — a quarter of the 0.240 m that
+		## stands above the ground plane — and shrinks the visible silhouette from
+		## the full 1.40 m down to the 0.75 m of it that reaches above y = 0.18.
+		## Half the crocodile's outline, at a tenth of its height: hard to pick
+		## out of a river, exactly the point. There is no water MESH (a river is a
+		## tint on the flat y = 0 ground plane), so what hides the rest is the
+		## opaque ground itself.
+		##
+		## HONEST NOTE ON "just the snout": this mesh has no raised eye/nostril
+		## bump. Its back is a flat plateau at y ≈ 0.239 running from the
+		## shoulders (x = −0.2) to the skull (x = +0.5), and the snout TIP is the
+		## LOW point of the head at y = 0.120. So no depth exists that shows the
+		## nose while hiding the back — sink past 0.12 and the nose tip goes under
+		## before the spine does. What 0.18 gives is the "log in the water" read:
+		## a thin dark ridge of back-and-skull. Wanting a literal periscope snout
+		## is a MODEL change (raise the nostrils above the back), not a constant
+		## change here.
+		##
+		## VISUAL ONLY, AND THAT IS A HARD CONSTRAINT — same rule as the player's
+		## sink: this never touches the CharacterBody3D, its CollisionShape3D, or
+		## global_position. Bite range, chase mechanics and the flat-world y = 0
+		## invariant are byte-identical wet or dry. A submerged crocodile is
+		## exactly as dangerous as a dry one; it is only harder to SEE, and the
+		## danger vignette + heartbeat still telegraph it the moment it starts
+		## chasing (crocodile_lod_manager publishes that from the same scan, and
+		## it reads `is_chasing`, which this does not touch).
+		##
+		## BOSSES NEED NO SPECIAL CASE. _ready() sets
+		## `scale = Vector3.ONE * boss_scale` on the BODY, and the model is its
+		## child, so this local offset is scaled by the engine: a 6x boss sinks
+		## 6 × 0.18 = 1.08 m in world space and shows 6 × 0.060 = 0.36 m of ridge.
+		## The submerged FRACTION is identical at every scale, which is what "a
+		## proportional snout" actually means. Same free ride for the ±25%
+		## size_random_factor roll on regular crocodiles.
+		"river_sink_depth": 0.18,
+
+		## Ease rate (m/s), sized so the full sink takes ~0.2 s — the player's
+		## ease time, so a crocodile and the hero wading beside it settle at the
+		## same visual pace. Written as depth/time rather than a bare number so
+		## the derivation survives a retune of the depth above it.
+		"river_sink_ease_speed": 0.18 / 0.2,
+
+		# ----- Bite -----
+		## How long the chomp animation plays when the crocodile catches the
+		## player (seconds).
+		"bite_duration": 0.5,
+
+		## How far the head snaps down/up during the chomp (radians).
+		"bite_pitch": 26.0 * PI / 180.0,
+
+		## How far the body lunges forward during the bite (metres).
+		"bite_lunge": 0.35,
+	},
+
+	## ------------------------------------------------------------------------
+	## SAND VIPER — the DESERT band's predator.
+	## ------------------------------------------------------------------------
+	## The first entry that is not the crocodile, and the proof the table works:
+	## everything below is a NUMBER. The only other things a new predator needs
+	## are its own .tscn (a `Model` child and a CollisionShape3D that fit its
+	## mesh) and one line in endless_terrain.gd's BIOME_SPECIES map. No subclass,
+	## no new script, no new arm in any per-frame path.
+	##
+	## Every number that touches geometry is measured off
+	## assets/models/characters/snake.glb (built by scripts/generate_snake.py):
+	## 1.7345 m long (x -1.3625 .. +0.372), 0.4111 m across its resting S-curve,
+	## and 0.2065 m TALL — an eighth of its own length. It is a fundamentally
+	## different SHAPE from the crocodile (1.40 x 0.28 x 0.276), which is why so
+	## few of these numbers could have been shared as globals.
+	##
+	## THE CAPSULE IN sand_viper.tscn COMES OFF THE SAME THREE FIGURES, and it is
+	## recorded here because a .tscn cannot hold a comment an editor resave will
+	## not eat. `radius = 0.11, height = 1.75`, laid down on the travel axis with
+	## the crocodile's basis, at `(0, 0.11, -0.495)`:
+	##   * 0.11 makes a 0.22 m tube around a 0.2065 m body — the tightest fit the
+	##     mesh allows, and the point of it: a serpent's collision has to HUG the
+	##     ground. The crocodile's 0.16 would float this animal's head over its
+	##     own capsule. It is deliberately NARROWER than the 0.41 m S-curve too;
+	##     the wiggle is silhouette, not bulk, and a capsule fat enough to cover
+	##     it would wedge in gaps a snake ought to slip through.
+	##     0.11 IS ALSO THE SHAPE'S HEIGHT, and that is not a coincidence: a
+	##     CapsuleShape3D's transform origin is its CENTRE, so centre 0.11 with
+	##     radius 0.11 puts the capsule's bottom exactly on y = 0. The body then
+	##     settles with the mesh's own y = 0 underside on the ground. (The
+	##     crocodile's 0.16/0.16 is the same identity. Measured, because it reads
+	##     like a floating model and isn't: dropped onto a plane, the viper's
+	##     lowest vertex lands at y = -0.003 and the crocodile's at y = -0.035.)
+	##   * 1.75 covers the 1.7345 m length with the caps included.
+	##   * z = -0.495 is the ONE thing this scene does that the crocodile's does
+	##     not. generate_snake.py builds the viper HEAD-FIRST from the origin, so
+	##     the mesh is lopsided about it where the crocodile's is centred.
+	##     A capsule centred on the origin would put ~0.87 m of invisible solid
+	##     body out in front of the snout and leave the tail hanging with nothing
+	##     behind it. -0.495 is the mesh's own midpoint, so the shape covers
+	##     x -1.37 .. +0.38: the visible animal, and only it.
+	## What origin-at-the-head buys for free: bite range, the obstacle feelers and
+	## the chase distance are all measured from the node origin, which for this
+	## species is where its fangs are — and the right pivot for the asc.4 strike.
+	"sand_viper": {
+		## THE AMBUSHER (asc.4). Phase 2 shipped this row as "solo" — a viper that
+		## wandered and chased exactly like a crocodile — and everything that turns
+		## it into an ambush is on this page: four NUMBERS below, plus one `match`
+		## arm (`_behave_ambush()`) that is a single assignment.
+		##
+		## READ THE THREE ZEROES-AND-FIVES TOGETHER, because separately none of
+		## them is the behaviour: move_speed 0.0 (it never leaves its patch),
+		## detection_radius 5.0 (it cannot smell you coming — you have to step on
+		## it) and ambush_burrow_depth (you cannot see it while it waits). A
+		## predator that does not move, does not sense and cannot be seen is not a
+		## weak crocodile; it is a different threat, one you walk INTO rather than
+		## one that hunts you. Surprise and position ARE the weapon — see the
+		## chase_speed note for why the foot race stopped being one.
+		"behavior": "ambush",
+
+		# ----- Speed and detection -----
+		## THE LATTICE IS THE LATTICE: 5.0 (WALK_SPEED) < 5.5 <= 8.5
+		## (MAX_CHASE_SPEED) < 9.0 (the slowest character's run).
+		##
+		## 7.5 UNTIL godot-test1-lyk, WHICH MADE THE ANIMAL YOU CANNOT SEE THE
+		## FASTEST ROW IN THE TABLE. The lattice held — 7.5 x 1.2 clamps to 8.5 and
+		## a run still escapes — but it held on the CLAMP, and that is what made the
+		## row a lie in play. Read the two ends against a 9.0 run:
+		##
+		##   7.5: top roll 9.0 -> clamped 8.5, margin 0.5 m/s; median 7.5, margin
+		##        1.5. A player sprinting flat out pulled half a metre a second.
+		##   5.5: top roll 5.9, margin 3.1 m/s; median 5.5, margin 3.5. The SAME
+		##        margin a crocodile leaves, which is the number this game's feel
+		##        was tuned around.
+		##
+		## An ambusher is the one species that does not need the foot race. It
+		## already has the burrow, a trip-wire you have to walk into, and a lunge
+		## that erupts from 5 m — it earns kills from SURPRISE AND POSITION, and
+		## paying for that twice (invisible AND fastest) is what the owner reported
+		## as unsurvivable. Matching the crocodile's 5.5 is the deliberate reading:
+		## the viper is a normal-speed animal you did not see coming, and the hiss
+		## below is the beat it now gives you to react.
+		##
+		## THE FAR-FIELD IS NOT A LOOPHOLE AND IT IS NOT VIPER-SPECIFIC: the
+		## distance gradient tops out at x1.6, so EVERY non-burst row above
+		## 8.5 / (1.2 x 1.6) = 4.43 pins to MAX_CHASE_SPEED out at 1800 m, the
+		## crocodile included, and all of them measure the same +0.50 margin there.
+		## That ceiling is a game-wide contract; what this row owns is the near and
+		## middle field, which is where the ambush actually happens.
+		##
+		## AND THIS ROW IS NOT A BURST ROW. The pounce in `_behave_burst` is the
+		## one sanctioned way past MAX_CHASE_SPEED (see CLAUDE.md and check 8),
+		## it is paid back in a mandatory recovery leg, and an ambusher does not
+		## get one: the burrow already IS its opening move.
+		##
+		## MOVE_SPEED IS ZERO, AND IT IS A BEHAVIOUR, NOT A TUNING. `_wander_speed`
+		## multiplies it, so a buried viper's wander velocity is identically 0 at
+		## every point of the sin cycle and for every roll of speed_factor: it
+		## holds the spot it spawned on until something walks into its 5 m. That is
+		## the "does not close distance on a passing player" half of the ambush,
+		## and enemy_spawn_selfcheck MEASURES it against a walking quarry rather
+		## than trusting this number. The one place it needs care is
+		## `_animate_body`, whose stride divisor is this value — see the maxf()
+		## there, which exists for this row and only this row.
+		"move_speed": 0.0,
+		"chase_speed": 5.5,
+
+		## ±7% / ±20%, and the SPEED figure is a consequence of 5.5 above, not an
+		## independent nerf. The argument this row has always made is unchanged:
+		## the SPECIES doc block is right that a slow roll is a feature — a
+		## straggler in a crowd reads as a straggler — but an ambusher is not in a
+		## crowd. It gets ONE strike from 5 m, so a roll that drops it under
+		## WALK_SPEED (5.0) is not a straggler, it is a viper the player strolls
+		## away from mid-lunge with nothing on screen to explain it. Phase 2's ±35%
+		## floored at 4.88 and was cut to ±20% for exactly that reason.
+		##
+		## ±20% ON 5.5 FLOORS AT 4.40, which is further under WALK_SPEED than the
+		## number that cut was made to fix, so the spread had to come down with the
+		## speed: ±7% floors the strike at 5.115 and caps it at 5.885. Every viper
+		## in the world still catches a WALKING player — the one thing an ambusher
+		## must do — and none of them comes near a run. Size keeps its ±20%; a fat
+		## viper is still a viper, and its size never decided a chase.
+		"speed_random_factor": 0.07,
+		"size_random_factor": 0.2,
+
+		## THE TRIGGER RADIUS, and phase 2's row promised exactly this cut: an
+		## ambusher trades senses for surprise and gets the danger back from the
+		## strike. 5.0 m is about three body lengths — one second of walking, and
+		## barely further than the strike itself travels. It is a HYSTERESIS-FREE
+		## trigger, which is what makes the lunge SHORT with no timer anywhere: the
+		## same radius that fires the strike ends it, so a viper that has not
+		## closed the gap re-buries the moment you are 5 m clear. Still far below
+		## the LOD manager's SIM_RADIUS (45.0), the invariant every species owes.
+		"detection_radius": 5.0,
+
+		# ----- Organic wandering -----
+		## Longer interval and a longer pause than the crocodile: a viper basks.
+		"direction_change_interval": 5.0,
+		"pause_duration": 0.8,
+
+		## Lazier drift, but a snappier TURN once it commits — a snake pivots
+		## along its own length instead of swinging a rigid body round.
+		"wander_turn_rate": 0.9,
+		"turn_smoothness": 6.0,
+
+		## The wander SHAPE is now decoration on a stationary animal — move_speed
+		## 0.0 multiplies the first two into nothing — but the third is
+		## load-bearing, and its zero is not tidiness.
+		##
+		## `sniff_pause_chance` 0.0 IS THE TRIP-WIRE STAYING ARMED. Look at
+		## _physics_process: `is_paused` short-circuits the whole else-branch, so a
+		## paused predator never reaches _update_chase_state and cannot detect
+		## anything at all. At phase 2's 0.45 this viper would spend a 0.8 s pause
+		## BLIND on a coin flip every 5 s — roughly one ambusher in seven deaf at
+		## any instant, and deaf is fatal for a species whose entire behaviour is a
+		## 5 m trip-wire you are meant to walk into. Nothing about a buried animal
+		## needs to stop and sniff anyway: it already never moved.
+		"min_wander_speed_factor": 0.35,
+		"speed_variation_freq": 0.6,
+		"sniff_pause_chance": 0.0,
+
+		# ----- Obstacle avoidance -----
+		## Look-ahead is the crocodile's ratio applied to this body: ~1.45x the
+		## mesh length, so it turns before the snout can reach a block. Wider
+		## feelers and a gentler slowdown than the crocodile — it whips around an
+		## obstacle rather than easing round it.
+		"avoid_look_ahead": 2.5,
+		"avoid_feeler_angle": PI / 4.0,  # 45°
+		## Cast just above the 0.13 m neck, so the probes sample a block's side
+		## wall and not the flat ground. The crocodile's 0.3 would fly clean over
+		## this animal's whole head.
+		"avoid_feeler_height": 0.15,
+		"avoid_speed_factor": 0.6,
+
+		# ----- Procedural body animation -----
+		## Same nose-along-+X model contract as every predator mesh, so the same
+		## -90° puts the snout on the travel axis.
+		"model_facing_offset": -PI / 2.0,
+
+		## THE SLITHER, and it is all in `sway_yaw`. The crocodile waddles: a big
+		## ROLL (9°) with a small yaw sway (5°). A snake is the exact inverse —
+		## it barely rolls (3°) and swings hugely in yaw (14°), which swings the
+		## mesh's built-in resting S-curve from side to side. Faster stride to
+		## match, and a bob a third of the crocodile's because a body 0.21 m tall
+		## that bobs 0.025 m does not undulate, it hops.
+		"stride_frequency": 12.0,
+		"waddle_roll": 3.0 * PI / 180.0,
+		"bob_amount": 0.008,
+		"sway_yaw": 14.0 * PI / 180.0,
+
+		## Rears its head a little when hunting, but a snake tracking prey stays
+		## LOW — a third of the crocodile's forward lean.
+		"chase_pitch": 6.0 * PI / 180.0,
+
+		## Slower and shallower idle breathing than the crocodile's: at this
+		## scale anything larger reads as twitching, not breathing.
+		"breathe_speed": 1.4,
+		"breathe_amount": 0.006,
+
+		# ----- River submersion (VISUAL ONLY) -----
+		## 0.10 m — and this species gets the read the crocodile's entry above
+		## explains it can never have. The crocodile's back is a flat plateau, so
+		## no depth exists that shows its nose while hiding its spine. The viper
+		## is the opposite shape: a 0.13 m body with a head standing 0.21 m up,
+		## so sinking 0.10 puts the entire body under and leaves the head —
+		## whose eyes and horned scales generate_snake.py deliberately sits at the
+		## top of the skull — gliding along the surface. A literal periscope, out
+		## of the same one constant.
+		##
+		## The hard constraint is unchanged and not negotiable: VISUAL ONLY. The
+		## CharacterBody3D, its CollisionShape3D and global_position never move,
+		## so a wading viper is exactly as dangerous as a dry one.
+		"river_sink_depth": 0.10,
+		## Same ~0.2 s ease as the crocodile and the player, written as
+		## depth/time so the derivation survives a retune of the depth above it.
+		"river_sink_ease_speed": 0.10 / 0.2,
+
+		# ----- Bite -----
+		## The strike: shorter, sharper and further than the crocodile's chomp
+		## (0.5 s / 26° / 0.35 m). A snake bite is one fast lunge, not a chew.
+		"bite_duration": 0.3,
+		"bite_pitch": 34.0 * PI / 180.0,
+		"bite_lunge": 0.5,
+
+		# ----- The burrow (the "ambush" behaviour reads these two) -------------
+		## The only keys in this table no other row has, exactly like the wolf's
+		## two pack keys, and for the same reason: a key a species does not use is
+		## a key it does not carry. (enemy_spawn_selfcheck derives its required key
+		## set from the CROCODILE row, so behaviour-local keys are allowed — what
+		## it forbids is a row MISSING something the crocodile has.)
+		##
+		## HOW DEEP THE MODEL SITS WHILE IT WAITS, in model-local metres, and it
+		## goes through `_tick_river_sink` — the same one property the sink already
+		## owns (`model_base_y`), eased the same way, composed as "whichever target
+		## is DEEPER". That reuse is the point and it was the bead's instruction:
+		## there is exactly one writer of the model's rest height, so a viper that
+		## is burrowed AND in a river is simply burrowed, with no second easing
+		## fighting the first.
+		##
+		## 0.24 IS MEASURED, NOT PICKED. snake.glb stands 0.2065 m tall, and the
+		## locomotion bob adds 0.008 on top of the rest height, so 0.2145 is the
+		## highest point this mesh ever reaches. 0.24 clears it by 25 mm and the
+		## opaque ground plane at y = 0 does the rest — there is no water mesh and
+		## no hole, the ground simply draws over it (see the crocodile row's
+		## river_sink note for why that is the whole trick). Deeper buys nothing;
+		## shallower leaves a snake-shaped ridge lying in the sand, which is the
+		## one thing an ambush cannot afford. enemy_spawn_selfcheck measures this
+		## against the scene's real mesh AABB rather than trusting the number.
+		##
+		## Model-LOCAL, so the ±20% size roll and any boss scale carry it for free,
+		## exactly like the river sink. And VISUAL ONLY, the same hard constraint:
+		## the CharacterBody3D, its CollisionShape3D and global_position never
+		## move. A buried viper is exactly as dangerous as a surfaced one — you
+		## simply cannot see it, and the player's collision_mask 1 means they walk
+		## through it rather than into an invisible wall.
+		"ambush_burrow_depth": 0.24,
+
+		## HOW FAST IT COMES UP: 0.24 m in 0.12 s. Written as depth/time, like
+		## every ease in this table, so the derivation survives a retune of the
+		## depth above it.
+		##
+		## It is deliberately FOUR TIMES the sink ease (0.10 / 0.2 = 0.5 m/s) and
+		## the asymmetry is the animation: a strike ERUPTS and a re-burial SLIDES.
+		## _tick_river_sink picks this rate only when the rest height is RISING,
+		## so going back under is left at the species' ordinary sink ease and takes
+		## ~0.48 s. The body itself is not eased at all — physics lunges on frame
+		## one — so what this number sets is only how much of the animal you see
+		## while it is already on its way to you.
+		"ambush_surface_ease_speed": 0.24 / 0.12,
+	},
+
+	## ------------------------------------------------------------------------
+	## TIMBER WOLF — the FOREST band's predator, and the first entry whose
+	## `behavior` is not "solo".
+	## ------------------------------------------------------------------------
+	## Everything a wolf IS lives in two extra numbers at the bottom of this row
+	## (`pack_size`, `pack_flank_radius`) and one arm of the `match` in
+	## `_update_chase_state()`. There is no pack object, no leader, no registry
+	## and no group scan: each wolf reads its OWN deterministic id and steers to
+	## its OWN slot on a ring around the quarry, and the surround is what happens
+	## when several of them do that at once. See `pack_steer_point()` for the
+	## geometry, and for why that stays true when the LOD manager sleeps half of
+	## them.
+	##
+	## Geometry measured off assets/models/characters/wolf.glb (built by
+	## scripts/generate_wolf.py): 1.4265 m nose to tail (x -0.700 .. +0.7265),
+	## 0.325 m across (z ±0.1625) and 0.740 m TALL. Read those three together —
+	## it is almost exactly the crocodile's LENGTH (1.40) standing on legs that
+	## make it nearly three times the crocodile's HEIGHT (0.276). That one
+	## difference is where every number below diverges, and where the rest
+	## deliberately does not.
+	##
+	## THE CAPSULE IN timber_wolf.tscn COMES OFF THE SAME THREE FIGURES, recorded
+	## here because a .tscn cannot hold a comment an editor resave will not eat.
+	## `radius = 0.1625, height = 1.45`, laid down on the travel axis with the
+	## crocodile's basis, at `(0, 0.1625, 0)`:
+	##   * 0.1625 is EXACTLY the mesh's half-width, so the shape stops the body
+	##     at the precise distance where the wolf's flank meets a block face. The
+	##     crocodile's 0.16 is a near miss on a differently-shaped animal, not a
+	##     fit — this is the number that made it worth its own shape.
+	##   * 1.45 covers the 1.4265 m length with the caps included, the same
+	##     nose-out-of-the-block reason the crocodile's 1.4 covers its 1.40 — and
+	##     the reason this species does NOT get the upright capsule its standing
+	##     pose suggests. A column would leave 0.55 m of muzzle and 0.55 m of
+	##     tail free to slide into stone.
+	##   * radius == centre y, like both rows above, puts the capsule's bottom on
+	##     y = 0, so gravity settles the mesh's own feet onto the ground plane.
+	##   * WHAT THIS SHAPE DELIBERATELY DOES NOT COVER is the wolf ABOVE its
+	##     knees: the capsule occupies y 0 .. 0.325 while the torso sits at
+	##     0.40 .. 0.64. That costs nothing in a world whose blocks are solid
+	##     from the ground UP — anything that could touch the chest has already
+	##     stopped the legs — and buying the height instead would take radius
+	##     0.37: a 0.74 m thick log around a 0.325 m animal. Same call the
+	##     viper's row makes about its S-curve: the shape hugs the body, not the
+	##     pose.
+	## The mesh's own midpoint is x = +0.013, so the capsule is left centred on
+	## the origin; 13 mm is inside the noise of a 1.43 m animal, where the viper's
+	## head-first 0.495 m was not.
+	"timber_wolf": {
+		## The first non-solo arm. `_behave_pack()` is all it selects, and all
+		## that does is bend the chase TARGET onto this wolf's ring slot — chase
+		## acquisition, the jump hatch, the bite, the flee and the LOD sleep are
+		## untouched. A wolf is a crocodile that arrives from a different angle.
+		"behavior": "pack",
+
+		# ----- Speed and detection -----
+		## THE LATTICE IS THE LATTICE: 5.0 (WALK_SPEED) < 6.8 <= 8.5
+		## (MAX_CHASE_SPEED) < 9.0 (the slowest character's run). The wolf is the
+		## fastest cruiser in the table (3.0 against 2.5 and 2.0 — it covers
+		## ground even when it is not hunting) and the fastest pursuer, and it
+		## still cannot break the promise: 6.8 x 1.25 x 1.6 = 13.6, and
+		## MAX_CHASE_SPEED cuts it to 8.5. Running escapes a wolf pack exactly as
+		## it escapes everything else.
+		##
+		## 6.8 IS NOT A BUFF, IT IS THE FARE FOR THE ANGLE, and the arithmetic is
+		## worth stating because it is the whole design of this species. A
+		## flanking wolf does not spend its speed on the straight line to you: it
+		## holds a 37° lead angle (see PACK_FLANK_TAPER), so only cos(37°) = 0.80
+		## of it closes the gap — 6.8 x 0.80 = 5.44 m/s, which is the crocodile's
+		## 5.5 to within a rounding. A wolf therefore runs a walking player down
+		## at the same rate a crocodile does, having spent the difference on
+		## arriving from the side. That is what "dangerous by cutting angles, not
+		## by exceeding the ceiling" costs when you write it down.
+		"move_speed": 3.0,
+		"chase_speed": 6.8,
+
+		## ±25% / ±15% — the TIGHTEST spreads in the table, and that is a pack
+		## requirement rather than a taste. The crocodile's ±50% exists to string
+		## a crowd out into stragglers and hunters; do that to wolves and the slow
+		## half never arrives, the ring never closes, and the surround this
+		## species is built around simply never appears on screen. A pack has to
+		## travel at one pace to read as a pack.
+		"speed_random_factor": 0.25,
+		"size_random_factor": 0.15,
+
+		## The longest "smell" of any regular predator (crocodile 15, viper 12).
+		## A pack has to commit early, because a flanking approach is a LONGER
+		## path than a straight one — a wolf that only acquires you at 12 m has
+		## no room left to swing wide before it is already on top of you.
+		## INVARIANT, unchanged and not negotiable: far below the LOD manager's
+		## SIM_RADIUS (45.0), so anything that can detect the player is awake.
+		"detection_radius": 18.0,
+
+		# ----- Organic wandering -----
+		## Restless where the viper basks: the shortest interval and the shortest
+		## pause in the table. An idle wolf is a trotting wolf.
+		"direction_change_interval": 3.0,
+		"pause_duration": 0.35,
+
+		## The most agile steering in the table, and `turn_smoothness` in
+		## particular is load-bearing rather than flavour: a flanking wolf chases
+		## a target point that slides sideways as it closes, so a body that turns
+		## at the crocodile's 5.0 lags its own ring slot and cuts the very corner
+		## it was supposed to swing around.
+		"wander_turn_rate": 1.5,
+		"turn_smoothness": 7.0,
+
+		## Ebbs shallower than either row above (0.45 / 0.35) and varies faster:
+		## a wolf slows down to sniff, it does not stop to bask.
+		"min_wander_speed_factor": 0.55,
+		"speed_variation_freq": 1.0,
+		"sniff_pause_chance": 0.35,
+
+		# ----- Obstacle avoidance -----
+		## Look-ahead is ~2x the mesh length, a longer ratio than the crocodile's
+		## because this animal closes faster and needs the extra metre to commit
+		## a turn. Narrow feelers and a mild slowdown are the same idea from the
+		## other side: a wolf keeps its pace THROUGH a gap rather than easing
+		## around the outside of it.
+		"avoid_look_ahead": 3.0,
+		"avoid_feeler_angle": PI / 5.0,  # 36°
+		## Chest height on a 0.74 m animal, so the probes sample a block's side
+		## wall well above the ground plane. The crocodile's 0.3 would fire under
+		## this animal's belly (0.40) and read the empty air between its legs.
+		"avoid_feeler_height": 0.45,
+		"avoid_speed_factor": 0.65,
+
+		# ----- Procedural body animation -----
+		## Same nose-along-+X model contract as every predator mesh.
+		"model_facing_offset": -PI / 2.0,
+
+		## THE LOPE. The crocodile waddles (9° roll, 0.025 bob) because it is a
+		## long body dragged between splayed legs; the wolf is the opposite
+		## machine — a light frame on the longest legs of the five generated
+		## predators — so the roll drops to 4° and the BOB doubles the
+		## crocodile's. Vertical travel is what a bounding gait looks like, and
+		## 0.05 m is a fourteenth of this animal's own height, where the same
+		## number on the 0.21 m viper would read as hopping.
+		"stride_frequency": 10.0,
+		"waddle_roll": 4.0 * PI / 180.0,
+		"bob_amount": 0.05,
+		"sway_yaw": 6.0 * PI / 180.0,
+
+		## Head down, shoulders forward once it commits. Slightly past the
+		## crocodile's 10°, because the ruff over the chest (see
+		## generate_wolf.py) is what the lean shows off.
+		"chase_pitch": 12.0 * PI / 180.0,
+
+		"breathe_speed": 2.4,
+		"breathe_amount": 0.02,
+
+		# ----- River submersion (VISUAL ONLY) -----
+		## 0.25 m — and unlike the two rows above, this one is not hiding. A wolf
+		## does not submerge, it WADES: sink 0.25 and the legs (0 .. 0.40) go
+		## under while the belly line sits 0.15 m proud and the whole torso,
+		## saddle and head stay in plain view. That is the read this species
+		## wants — a crocodile in a river is a threat you cannot see, a wolf in a
+		## river is one you can, slowed to the same wade you are.
+		##
+		## Same hard constraint as every row: VISUAL ONLY. The CharacterBody3D,
+		## its CollisionShape3D and global_position never move, so a wading wolf
+		## is exactly as dangerous as a dry one.
+		"river_sink_depth": 0.25,
+		## Same ~0.2 s ease as the crocodile, the viper and the player, written
+		## as depth/time so the derivation survives a retune of the depth.
+		"river_sink_ease_speed": 0.25 / 0.2,
+
+		# ----- Bite -----
+		## Between the crocodile's chew (0.5 s) and the viper's strike (0.3 s):
+		## a wolf snaps and drives THROUGH, so the lunge is long and the pitch is
+		## a head dropping to the throat.
+		"bite_duration": 0.35,
+		"bite_pitch": 30.0 * PI / 180.0,
+		"bite_lunge": 0.45,
+
+		# ----- Pack steering (the "pack" behaviour reads these two) -----
+		## The only keys in this table no other row has, and the only two the
+		## surround needs. They live HERE rather than as file-level consts for
+		## the same reason every other number in this row does: the next
+		## behaviour bead adds ITS keys to ITS row, and a key a species does not
+		## use is a key it does not carry. (enemy_spawn_selfcheck derives its
+		## required key set from the CROCODILE row, so behaviour-local keys are
+		## allowed — what it forbids is a row MISSING something the crocodile
+		## has.)
+		##
+		## How many slots the ring is divided into: five compass points, 72°
+		## apart. Deliberately ABOVE the number of wolves usually in earshot at
+		## once (a forest chunk holds a handful, and only the near ones are
+		## inside the 18 m detection radius), because slots are claimed by
+		## `id % pack_size` with nobody arbitrating — a smaller ring would collide
+		## slots often, and two wolves sharing a bearing is the single thing that
+		## reads as "they are NOT surrounding me". Five is also odd, so no two
+		## slots are exact opposites and a two-wolf pack never reads as a line.
+		"pack_size": 5,
+
+		## How far off the quarry the ring sits, in metres, at full spread. Four
+		## metres is a little over half of the wolf's 6.8 m/s chase — roughly the
+		## distance one covers in the time it takes to turn — so the swing is
+		## wide enough to see from inside it and short enough that the pack still
+		## arrives together. It is a MAXIMUM, not a standoff distance: the ring
+		## tapers to nothing as the wolf closes (see pack_steer_point), so this
+		## number shapes the APPROACH and never becomes an orbit the player can
+		## stand safely in the middle of.
+		"pack_flank_radius": 4.0,
+	},
+
+	## ------------------------------------------------------------------------
+	## FROST BEAR — the SNOW band's predator, and the table's heavy.
+	## ------------------------------------------------------------------------
+	## Every other row in this table is an animal that STEERS. The bear is the one
+	## that does not: once it locks on it commits to a bearing and drives, and the
+	## counterplay is not outrunning it (though you can — the lattice is the
+	## lattice) but STEPPING OUT OF THE WAY. That is one extra number at the
+	## bottom of this row (`charge_commit`) and one arm of the `match` in
+	## _update_chase_state; see `charge_steer_point()` for the geometry.
+	##
+	## WHY THE SNOW GETS IT. endless_terrain's SNOW block calls the tundra the
+	## HOSTILE band: nothing is thinned, croc density is the full distance-scaled
+	## figure, and the only shelter is ice you can climb onto. It is also the most
+	## OPEN ground in the world — a handful of dead trees per chunk and a lot of
+	## nothing between them. Open ground is the one place a straight-line charger
+	## is readable from far enough away to dodge, and where a dodge has somewhere
+	## to go. Put this animal in the forest and it would spend its life bouncing
+	## off trunks; put the wolf out here and its flanking ring would have nothing
+	## to hide behind.
+	##
+	## Geometry measured off assets/models/characters/bear.glb (built by
+	## scripts/generate_bear.py): 1.2154 m nose to tail (x -0.460 .. +0.7554),
+	## 0.434 m across (z ±0.217) and 0.820 m TALL. Read those three against the
+	## wolf's (1.4265 / 0.325 / 0.740): the bear is SHORTER and yet a third wider
+	## and taller — the only predator in the set that is bulkier than it is long,
+	## which is exactly the silhouette generate_bear.py is after (shoulder hump,
+	## head slung low, short thick legs). It is why this row could not have reused
+	## the crocodile's capsule, and why its waddle is the heaviest in the table.
+	##
+	## THE CAPSULE IN frost_bear.tscn COMES OFF THE SAME THREE FIGURES, recorded
+	## here because a .tscn cannot hold a comment an editor resave will not eat.
+	## `radius = 0.217, height = 1.25`, laid down on the travel axis with the
+	## crocodile's basis, at `(0, 0.217, 0.148)`:
+	##   * 0.217 is EXACTLY the mesh's half-width, the same fit rule the wolf's
+	##     0.1625 follows. The crocodile's 0.16 would leave 5.7 cm of bear hanging
+	##     out of each flank — on the widest animal in the set, which is precisely
+	##     the one that cannot afford it, because a charger that clips a block it
+	##     is not touching stops dead mid-charge.
+	##   * 1.25 covers the 1.2154 m length with the caps included. Like the wolf,
+	##     the shape lies DOWN along the travel axis rather than standing up: a
+	##     column would leave the muzzle and the rump free to slide into stone.
+	##   * radius == centre y puts the capsule's bottom on y = 0, so gravity
+	##     settles the mesh's own paws onto the ground plane. Same identity as all
+	##     three rows above.
+	##   * z = +0.148 is the mesh's own midpoint, and this row needs it for the
+	##     reason the viper's -0.495 does and the wolf's +0.013 does not.
+	##     generate_bear.py hangs the head and snout off the front of a body
+	##     centred near the origin, so the mesh runs -0.460 .. +0.7554: centre the
+	##     capsule on the origin and 0.13 m of muzzle pokes out of the front of it.
+	##     On a charger, the muzzle is the end that arrives first.
+	##   * WHAT IT DELIBERATELY DOES NOT COVER, same call as the wolf's row: the
+	##     bear above 0.434 m. The torso sits at 0.34 .. 0.72 and the hump above
+	##     that; buying the height would take radius 0.41, a 0.82 m thick log
+	##     around a 0.43 m animal. In a world whose blocks are solid from the
+	##     ground UP, anything that could touch the chest has already stopped the
+	##     legs.
+	"frost_bear": {
+		## The second non-solo arm. `_behave_charge()` is all it selects, and all
+		## that does is bend the chase TARGET onto the bearing this bear committed
+		## to — chase acquisition, the jump hatch, the bite, the flee and the LOD
+		## sleep are untouched. A bear is a crocodile that will not turn.
+		"behavior": "charge",
+
+		# ----- Speed and detection -----
+		## THE LATTICE IS THE LATTICE: 5.0 (WALK_SPEED) < 6.0 <= 8.5
+		## (MAX_CHASE_SPEED) < 9.0 (the slowest character's run). 6.0 x 1.2 x 1.6
+		## = 11.5 and MAX_CHASE_SPEED cuts it to 8.5, so running escapes a bear
+		## exactly as it escapes everything else.
+		##
+		## 6.0 IS THE SLOWEST CHASE OF THE THREE NEW SPECIES ON PURPOSE, and the
+		## row is dangerous anyway, which is the point of the whole bead: the bear
+		## does not need to be fast because it is not trying to follow you. It
+		## needs to be faster than a WALK (it is, by a full metre per second) so
+		## that ignoring a charge is fatal, and it needs to be slow enough that
+		## the ~0.7 s of committed straight line below is a window you can see and
+		## use. A faster bear would cross its own commitment before you could
+		## react to it, and the behaviour would read as an unfair instant hit
+		## rather than as a dodge you missed.
+		##
+		## move_speed 1.6 is the slowest cruiser in the table (crocodile 2.5, wolf
+		## 3.0): the "slower base wander" half of the spec. An idle bear plods.
+		"move_speed": 1.6,
+		"chase_speed": 6.0,
+
+		## ±20% / ±15%. Speed is tight for the same reason the viper's is: the
+		## charge is a timing puzzle, and a bear rolling 4.2 m/s would be one the
+		## player strolls away from with no dodge needed, while the top roll is
+		## capped by the lattice regardless. Size is the wolf's ±15% — the mass is
+		## this animal's whole read, and a small one stops being a bear.
+		"speed_random_factor": 0.2,
+		"size_random_factor": 0.15,
+
+		## 14.0 — between the crocodile's 15 and the wolf's 18, and well above the
+		## viper's 5. A charger needs to acquire you EARLY, because the behaviour
+		## is a long straight line and a bear that only notices you at bite range
+		## has no line to run. INVARIANT, unchanged and not negotiable: far below
+		## the LOD manager's SIM_RADIUS (45.0), so anything that can detect the
+		## player is awake.
+		"detection_radius": 14.0,
+
+		# ----- Organic wandering -----
+		## The longest interval and the longest pause in the table: a bear ambles,
+		## stops, considers, ambles on.
+		"direction_change_interval": 6.0,
+		"pause_duration": 1.2,
+
+		## THE MOMENTUM, and `turn_smoothness` is the load-bearing one. 0.5 is the
+		## laziest drift in the table (the "slower base turn rate" half of the
+		## spec), but 3.0 against the crocodile's 5.0 and the wolf's 7.0 is what
+		## makes a bear that has committed hard to redirect: velocity is driven
+		## from the body's FACING, never from the raw movement direction (see
+		## _physics_process), so a slow lerp_angle is literally momentum.
+		##
+		## 3.0 AND NOT LOWER, DELIBERATELY. The commitment this species is built
+		## around comes from `charge_commit` below, not from here, and the two are
+		## not interchangeable: crank turn_smoothness down far enough and the bear
+		## also fails to leave its own charge, fails to round a block (the avoid
+		## path doubles this rate, and doubling something tiny is still tiny) and
+		## fails to acquire a quarry standing behind it. 3.0 keeps every one of
+		## those working while still reading as weight. enemy_spawn_selfcheck
+		## measures the dodge against a bear with the charge arm SWITCHED OFF, so
+		## if the commitment ever quietly migrated from the arm into this number
+		## the negative control is what says so.
+		"wander_turn_rate": 0.5,
+		"turn_smoothness": 3.0,
+
+		## Ebbs deep and slow — a plod that varies, not a trot that pauses.
+		"min_wander_speed_factor": 0.5,
+		"speed_variation_freq": 0.5,
+		"sniff_pause_chance": 0.3,
+
+		# ----- Obstacle avoidance -----
+		## Look-ahead is ~3x the mesh length, the longest ratio in the table, and
+		## it is the fare for `turn_smoothness` 3.0: this animal needs the extra
+		## metre because it commits a turn slowly. The FEELERS are the widest too
+		## (45° against everyone else's 36°), because they are the one place the
+		## bear's bulk has to be paid for — a probe at the wolf's 36° sweeps a
+		## corridor narrower than this body actually is, so it clears a gap the
+		## flanks then catch on.
+		"avoid_look_ahead": 3.6,
+		"avoid_feeler_angle": PI / 4.0,  # 45°
+		## Chest height on a 0.82 m animal whose belly line is at 0.34, so the
+		## probes sample a block's side wall rather than the air under it.
+		"avoid_feeler_height": 0.5,
+		## The heaviest slowdown in the table, tied with the crocodile's: mass
+		## does not corner at speed.
+		"avoid_speed_factor": 0.5,
+
+		# ----- Procedural body animation -----
+		## Same nose-along-+X model contract as every predator mesh.
+		"model_facing_offset": -PI / 2.0,
+
+		## THE LUMBER. The slowest stride in the table over the biggest roll:
+		## generate_bear.py's own note says the low mass is what makes the
+		## existing waddle read as weight rather than as a stumble, and 11° is
+		## what cashes that in. The bob follows the roll up (0.035, between the
+		## crocodile's 0.025 and the wolf's 0.05) while the yaw sway drops to 4° —
+		## a bear swings side to side, it does not snake.
+		"stride_frequency": 7.0,
+		"waddle_roll": 11.0 * PI / 180.0,
+		"bob_amount": 0.035,
+		"sway_yaw": 4.0 * PI / 180.0,
+
+		## The deepest lean in the table. Shoulders down into the charge is the
+		## whole pose, and the hump generate_bear.py puts over the FRONT legs is
+		## the part of the silhouette the lean shows off.
+		"chase_pitch": 14.0 * PI / 180.0,
+
+		## Slow, deep idle breathing to match the mass.
+		"breathe_speed": 1.6,
+		"breathe_amount": 0.025,
+
+		# ----- River submersion (VISUAL ONLY) -----
+		## 0.30 m — the wolf's read on a bigger animal. The legs (0 .. 0.34) go
+		## under, the belly line sits 0.04 m proud and the whole torso, hump and
+		## head stay in plain view. A bear in a river is a threat you can see,
+		## slowed to the same wade you are; hiding this animal would waste the one
+		## silhouette in the set you are supposed to spot from a long way off.
+		##
+		## Same hard constraint as every row: VISUAL ONLY. The CharacterBody3D,
+		## its CollisionShape3D and global_position never move, so a wading bear is
+		## exactly as dangerous as a dry one.
+		"river_sink_depth": 0.30,
+		## Same ~0.2 s ease as every other row and as the player, written as
+		## depth/time so the derivation survives a retune of the depth.
+		"river_sink_ease_speed": 0.30 / 0.2,
+
+		# ----- Bite -----
+		## The slowest, heaviest maul in the table (crocodile 0.5, wolf 0.35, viper
+		## 0.3). A bear does not snap — it swats, and the pitch is shallow because
+		## the head is already slung low.
+		"bite_duration": 0.55,
+		"bite_pitch": 24.0 * PI / 180.0,
+		"bite_lunge": 0.4,
+
+		# ----- The charge (the "charge" behaviour reads this one) -------------
+		## HOW FAR THE BEAR RUNS BLIND, in metres, before it looks up and re-aims.
+		## The only key in this table no other row has besides the wolf's two and
+		## the viper's two, and the same rule applies: a key a species does not use
+		## is a key it does not carry.
+		##
+		## THIS NUMBER IS THE COUNTERPLAY, stated as a distance rather than a
+		## timer, and the distance form is not a style choice — _update_chase_state
+		## has no `delta` (see the note on the dispatch), so a timer would have
+		## needed one plumbed through every arm. A distance needs only the two
+		## things the bear already knows: where it locked on, and where it is now.
+		## It also happens to be the more honest quantity: what the player dodges
+		## is a body travelling through space, not a clock.
+		##
+		## 4.0 m is ~0.7 s at this row's chase speed, which is comfortably longer
+		## than a sidestep (a walking player covers 3.3 m in that time and the bear
+		## is 0.43 m wide) and comfortably shorter than the 14 m acquisition, so a
+		## charge is three or four committed runs rather than one unmissable
+		## freight train. Shorter and it degenerates into ordinary tracking with a
+		## slow turn; much longer and the bear stops being able to hit a player who
+		## is merely walking in a straight line, which is not a difficulty knob but
+		## a broken predator.
+		"charge_commit": 4.0,
+	},
+
+	## ------------------------------------------------------------------------
+	## MOUNTAIN COUGAR — the MOUNTAIN band's predator, and the only animal in
+	## this game that is allowed to break MAX_CHASE_SPEED.
+	## ------------------------------------------------------------------------
+	## READ THE `burst_*` KEYS AT THE BOTTOM OF THIS ROW BEFORE ANYTHING ELSE, and
+	## read them together with the alley hound's, because the two rows share one
+	## `match` arm and one static function and mean very different animals with it.
+	##
+	## THE POUNCE IS THE ONE PLACE THE SPEED LATTICE BENDS, AND IT BENDS EXACTLY
+	## ONCE. Every other row in this table honours the ceiling as an instantaneous
+	## bound: `chase_speed x roll x distance` is clamped to MAX_CHASE_SPEED (8.5)
+	## in _ready() and that is the fastest the animal ever moves. This one is
+	## clamped identically — and then `burst_factor` multiplies the clamped value
+	## for the length of a pounce, so a cougar at the top of the gradient touches
+	## 8.5 x 1.3 = 11.05 m/s, above the ceiling AND above the slowest character's
+	## run (9.0). That is deliberate, it is what the bead asked for (">8.5 m/s"),
+	## and it is safe for exactly one reason:
+	##
+	##   THE CONTRACT IS THE CYCLE, NOT THE INSTANT. "Running always escapes" is a
+	##   statement about whether the gap closes, and a gap is closed over TIME.
+	##   The pounce is followed by a mandatory recovery leg at `recover_factor`,
+	##   and the CYCLE average is what a fleeing player actually races:
+	##
+	##       avg = V x (Db + Dr) / (Db / Fb + Dr / Fr)
+	##           = V x 7.0 / (4.0 / 1.3 + 3.0 / 0.55) = V x 0.8205
+	##
+	##   At the worst case the game can produce (V clamped to 8.5) that is
+	##   6.97 m/s against a 9.0 m/s run: the runner gains 2.03 m every second and
+	##   the gap grows without bound. Inside one cycle it dips — the pounce takes
+	##   0.74 m back over its 0.36 s — and then the recovery hands 2.78 m of it
+	##   straight back. A runner more than about a metre clear is never caught, and
+	##   enemy_spawn_selfcheck's check 8 MEASURES that over repeated cycles rather
+	##   than trusting this arithmetic, with the recovery switched off as its
+	##   negative control (that control catches the runner, which is the proof the
+	##   recovery is what saves them).
+	##
+	##   THE OTHER END OF THE LATTICE SURVIVES TOO, and it is the end a burst is
+	##   likelier to break: 0.8205 x 7.8 = 6.40 m/s average, comfortably above
+	##   WALK_SPEED (5.0), so walking is still caught. A recovery deep enough to
+	##   make the cycle average dip UNDER 5.0 would not be a nerf, it would be a
+	##   predator a player strolls away from. Check 8 measures that end as well.
+	##
+	## ON "PERCHES ON MOUNTAIN ROCKS / HIGH LEDGES", HONESTLY. It is not here, and
+	## the reason is CLAUDE.md's flat-world invariant rather than an oversight: the
+	## ground is one plane at y = 0 and a mountain is an IMPASSABLE BLOCK MASSIF
+	## you route around, not raised terrain you climb. The only "high ground" in
+	## this world is the `top` of a climbable footprint in the chunk's `obstacles`
+	## list — which is how a coin perches, and which no predator can reach, because
+	## nothing in this AI climbs. A cougar dropped onto a ledge at spawn would walk
+	## off it on its first frame and never get back up; a one-frame pose is a worse
+	## lie than no perch at all. What the pounce keeps from the idea is the part
+	## that survives a flat world: a predator that closes the last few metres far
+	## faster than it travels, and then has to stop.
+	##
+	## WHY THE MOUNTAIN GETS IT. A massif band is a maze of solid walls with long
+	## sight-lines down the corridors between them, so a cougar is a thing that
+	## appears at the end of an alley of rock and covers it in one go — and the
+	## walls give the recovery leg somewhere to break line of sight. It also gets
+	## the pounce's one free safety valve: `_avoid_obstacles` multiplies
+	## `avoid_speed_factor` onto the burst AFTER it, so a cougar pouncing into a
+	## rock face eases off on its own with no code in this row (see the note there).
+	##
+	## Geometry measured off assets/models/characters/cougar.glb (built by
+	## scripts/generate_cougar.py): 1.6314 m nose to tail-tip (x -0.9815 .. +0.6499),
+	## 0.2470 m across (z ±0.1235) and 0.6438 m TALL. Read those against the wolf's
+	## (1.4265 / 0.325 / 0.740): the cougar is LONGER and yet a quarter narrower and
+	## shorter — the leanest silhouette in the set, and 0.55 m of that length is
+	## tail. Long, low and thin is exactly the coiled-cat read generate_cougar.py is
+	## after, and it is why this row could not have reused the wolf's capsule.
+	##
+	## THE CAPSULE IN mountain_cougar.tscn COMES OFF THE SAME THREE FIGURES,
+	## recorded here because a .tscn cannot hold a comment an editor resave will not
+	## eat. `radius = 0.1235, height = 1.65`, laid down on the travel axis with the
+	## crocodile's basis, at `(0, 0.1235, -0.166)`:
+	##   * 0.1235 is EXACTLY the mesh's half-width, the same fit rule the wolf's
+	##     0.1625 and the bear's 0.217 follow. It is the narrowest shape in the set,
+	##     which is what lets this animal take the gaps between massifs that the
+	##     bear's 0.217 would catch on.
+	##   * 1.65 covers the 1.6314 m length with the caps included — tail INCLUDED,
+	##     like the wolf's. A tail that passes through stone is the same bug as a
+	##     muzzle that does, one body part further back.
+	##   * radius == centre y puts the capsule's bottom on y = 0, so gravity settles
+	##     the mesh's own paws onto the ground plane. Same identity as every row
+	##     above.
+	##   * z = -0.166 is the mesh's own midpoint, and it is NEGATIVE where the
+	##     bear's is positive because the imbalance is at the other end: this animal
+	##     is mostly tail behind the origin, where the bear is mostly muzzle in
+	##     front of it. Centre the capsule on the origin and 0.17 m of tail hangs
+	##     out of the back of it.
+	##   * WHAT IT DELIBERATELY DOES NOT COVER, the same call every row above makes:
+	##     the cougar above 0.247 m. The torso sits at 0.36 .. 0.58; buying the
+	##     height would take radius 0.32, a 0.64 m log around a 0.25 m animal, and
+	##     in a world whose blocks are solid from the ground UP, anything that could
+	##     touch the chest has already stopped the legs.
+	"mountain_cougar": {
+		## The third non-solo arm, and the FIRST ONE SHARED BY TWO SPECIES —
+		## `_behave_burst()` runs for this row and for the alley hound's. That is
+		## the table's own thesis, not a shortcut: a pounce and an alley sprint are
+		## the same mechanic (a bounded burst with a mandatory recovery leg) at
+		## different numbers, and the whole point of SPECIES is that a difference
+		## which can be a number should be a number.
+		"behavior": "burst",
+
+		# ----- Speed and detection -----
+		## THE LATTICE, AND THE ONE EXCEPTION TO IT: 5.0 (WALK_SPEED) < 7.8 <= 8.5
+		## (MAX_CHASE_SPEED) < 9.0 (the slowest character's run). The SUSTAINED
+		## speed obeys the ceiling exactly like every other row — 7.8 x 1.15 x 1.6
+		## = 14.4, cut to 8.5 — and only the pounce goes above it, for the metres
+		## `burst_distance` allows. See the block at the top of this row for why
+		## that is safe and where it is measured.
+		##
+		## 7.8 IS THE FASTEST SUSTAINED CHASE IN THE TABLE and it has to be, because
+		## the cycle average is what this animal actually travels at: 0.8205 x 7.8
+		## = 6.40 m/s, which lands it between the bear (6.0) and the wolf (6.8) as a
+		## PURSUER while making it much the fastest thing on screen for a third of a
+		## second at a time. Reading 7.8 as "the fastest predator" is reading the
+		## wrong number; the burst is what you feel and the average is what catches
+		## you.
+		##
+		## move_speed 2.2 is the second-slowest cruiser in the table (only the bear
+		## plods harder). A stalking cat is slow, and the contrast with the pounce
+		## is the whole silhouette.
+		"move_speed": 2.2,
+		"chase_speed": 7.8,
+
+		## ±15% / ±15% — tied with the wolf and the bear for the tightest speed
+		## spread, and it is the burst that requires it rather than taste. This
+		## row's promise is two-sided (a pounce ABOVE 8.5, a cycle average BELOW the
+		## run and above the walk), and both ends move with the roll: at the bottom
+		## roll the pounce is 8.62 m/s, which still clears 8.5, and the average is
+		## 5.44 m/s, which still clears the walk. Widen the spread and one of those
+		## two goes — a cougar whose "pounce" is 7.9 is a cougar with no mechanic.
+		"speed_random_factor": 0.15,
+		"size_random_factor": 0.15,
+
+		## 16.0 — between the crocodile's 15 and the wolf's 18. A burst predator
+		## needs enough runway to complete two or three full cycles before it is on
+		## you (at the cycle average that is ~2.5 s), because one cycle in isolation
+		## is just a fast crocodile. INVARIANT, unchanged and not negotiable: far
+		## below the LOD manager's SIM_RADIUS (45.0), so anything that can detect
+		## the player is awake.
+		"detection_radius": 16.0,
+
+		# ----- Organic wandering -----
+		## A cat's rhythm: long stretches of nothing, then a long stop to watch.
+		## Between the bear's amble (6.0 / 1.2) and the crocodile's (4.0 / 0.5).
+		"direction_change_interval": 5.0,
+		"pause_duration": 1.0,
+
+		## Lazy drift over a snappy body. `turn_smoothness` 6.0 is deliberately
+		## high — the burst arm bends no heading at all (it is a SPEED, not a
+		## steer), so unlike the bear this animal must be able to follow a target
+		## that jinks, or the pounce would miss for the wrong reason.
+		"wander_turn_rate": 1.0,
+		"turn_smoothness": 6.0,
+
+		## Ebbs the deepest of any moving row (0.4) and varies slowly: a stalk is
+		## mostly standing still with the occasional few metres of ground covered.
+		## The highest sniff chance in the table for the same reason.
+		"min_wander_speed_factor": 0.4,
+		"speed_variation_freq": 0.7,
+		"sniff_pause_chance": 0.4,
+
+		# ----- Obstacle avoidance -----
+		## Look-ahead is ~2x the mesh length, the wolf's ratio, and it earns its
+		## keep twice here: once for the ordinary turn, and once as the pounce's
+		## only brake. `_avoid_obstacles` applies `avoid_speed_factor` to
+		## `current_speed` AFTER the burst multiplier, so a cougar that starts a
+		## pounce at a rock face is already halving it by the time it arrives, with
+		## no branch anywhere and no key in this row. Narrow feelers (36°) on the
+		## narrowest body in the set: this animal is meant to take the gaps.
+		"avoid_look_ahead": 3.2,
+		"avoid_feeler_angle": PI / 5.0,  # 36°
+		## Mid-torso on a 0.64 m animal whose belly line is at 0.36, so the probes
+		## sample a block's side wall rather than the air under it.
+		"avoid_feeler_height": 0.45,
+		"avoid_speed_factor": 0.6,
+
+		# ----- Procedural body animation -----
+		## Same nose-along-+X model contract as every predator mesh.
+		"model_facing_offset": -PI / 2.0,
+
+		## THE PROWL. Quick feet over almost no roll — a cat's spine stays level
+		## where the bear's swings (11°) and the crocodile's waddles (9°). The
+		## motion that IS big is `sway_yaw` at 8°, second only to the viper's
+		## slither, and it is there to swing the 0.55 m tail: generate_cougar.py's
+		## header says the tail is the one part still moving while the cat is
+		## otherwise crouched and still, and this is the number that cashes that in.
+		"stride_frequency": 11.0,
+		"waddle_roll": 5.0 * PI / 180.0,
+		"bob_amount": 0.04,
+		"sway_yaw": 8.0 * PI / 180.0,
+
+		## Shoulders down, head level — a cat closing is nearly horizontal.
+		"chase_pitch": 13.0 * PI / 180.0,
+
+		"breathe_speed": 2.2,
+		"breathe_amount": 0.015,
+
+		# ----- River submersion (VISUAL ONLY) -----
+		## 0.22 m — the wolf's wade read on a shorter animal. The legs (0 .. 0.36)
+		## go most of the way under, the belly line sits 0.14 m proud, and the whole
+		## torso, head and the arch of the tail stay in plain view. A cat crossing
+		## water is a thing you can see; hiding the one predator that can break the
+		## speed ceiling is the last thing this band needs, and the palette note in
+		## generate_cougar.py is about the same mistake made with colour.
+		##
+		## Same hard constraint as every row: VISUAL ONLY. The CharacterBody3D, its
+		## CollisionShape3D and global_position never move, so a wading cougar is
+		## exactly as dangerous as a dry one.
+		"river_sink_depth": 0.22,
+		## Same ~0.2 s ease as every other row and as the player, written as
+		## depth/time so the derivation survives a retune of the depth.
+		"river_sink_ease_speed": 0.22 / 0.2,
+
+		# ----- Bite -----
+		## The fastest bite in the table (viper 0.3, wolf 0.35, crocodile 0.5, bear
+		## 0.55) over the second-longest lunge. A cat's killing bite is one motion
+		## arriving at the end of a leap, and it should land on the same frame the
+		## pounce does rather than a beat behind it.
+		"bite_duration": 0.28,
+		"bite_pitch": 32.0 * PI / 180.0,
+		"bite_lunge": 0.5,
+
+		# ----- The pounce (the "burst" behaviour reads these four) -------------
+		## THE ONLY FOUR KEYS THAT MAKE THIS ANIMAL, and the same rule as the wolf's
+		## two, the viper's two and the bear's one applies: a key a species does not
+		## use is a key it does not carry. (enemy_spawn_selfcheck derives its
+		## required key set from the CROCODILE row, so behaviour-local keys are
+		## allowed — what it forbids is a row MISSING something the crocodile has.)
+		##
+		## THE CYCLE IS MEASURED IN METRES, NOT SECONDS, for the bear's reason and
+		## with the bear's payoff: `_update_chase_state` has no `delta` (see the
+		## note on the dispatch), so a timer would have had to be plumbed through
+		## every arm — and a distance is LOD-SAFE for free. A slept cougar does not
+		## move, so its leg does not drain, and it wakes mid-pounce exactly as it
+		## slept. A timer would have run out in its sleep and handed the player a
+		## predator that arrives already exhausted.
+		##
+		## 4.0 m OF POUNCE is ~0.36 s at the clamped speed — roughly the crocodile's
+		## whole bite animation, and about two and a half of this animal's own body
+		## lengths. Shorter and the burst is a flicker the player cannot read as a
+		## pounce; longer and the cycle average climbs toward the run and the escape
+		## hatch starts closing (at 6.0 m of pounce against 3.0 of recovery the
+		## average is 7.5 m/s, and a 9.0 runner only gains 1.5 m/s).
+		"burst_distance": 4.0,
+
+		## 3.0 m OF RECOVERY, and this is the number that keeps the promise. It is
+		## deliberately SHORTER in metres than the pounce and far LONGER in time
+		## (0.64 s against 0.36 s at the clamp), because it is walked at
+		## `recover_factor`. That asymmetry is the exhaustion: the cat spends more
+		## of every cycle catching its breath than it does pouncing.
+		"recover_distance": 3.0,
+
+		## THE POUNCE ITSELF: 1.3 x the clamped chase speed. At the top of the
+		## distance gradient that is 11.05 m/s — above MAX_CHASE_SPEED (8.5) and
+		## above the slowest run (9.0), which is precisely what the bead asked for
+		## and precisely what nothing else in this game is allowed to do.
+		"burst_factor": 1.3,
+
+		## THE EXHAUSTION: 0.55 x, so 4.68 m/s at the clamp — BELOW WALK_SPEED. A
+		## recovering cougar is briefly slower than a strolling player, which is the
+		## whole counterplay made visible: the moment to move is the moment after it
+		## lands. Raise this and the cycle average climbs into the run; drop it much
+		## further and the average falls under the walk and the animal stops being
+		## able to catch anybody. Both ends are measured in check 8.
+		"recover_factor": 0.55,
+	},
+
+	## ------------------------------------------------------------------------
+	## CITY ALLEY HOUND — the CITY band's predator, and the table's proof that a
+	## behaviour can be shared without the two animals feeling alike.
+	## ------------------------------------------------------------------------
+	## It runs the SAME arm as the cougar above (`behavior: "burst"`) and reads the
+	## same four keys, and it is not the same animal in any way a player would
+	## notice. The cougar is one enormous lunge every second; the hound is a dog
+	## that will not settle to a pace, surging and easing every 0.6 s. Same
+	## function, different numbers — which is the SPECIES table's entire argument,
+	## finally exercised rather than asserted.
+	##
+	## WHAT "URBAN PATROL, HIGH TURN RATE, TIGHT CORNERING" IS, MECHANICALLY: it is
+	## six numbers in this row and not one line of code. `turn_smoothness` 9.0 and
+	## `wander_turn_rate` 1.8 are both the highest in the table (the turn rate);
+	## `avoid_look_ahead` 1.8 is the shortest (it commits to a corner late instead
+	## of swinging wide around it) and `avoid_feeler_angle` PI/6 the narrowest (it
+	## looks for the GAP, not the way round); `avoid_speed_factor` 0.85 is by far
+	## the highest, which is the cornering itself — every other predator sheds half
+	## its speed to get round a block and this one barely slows. And
+	## `direction_change_interval` 2.2 with `pause_duration` 0.3 is the shortest
+	## rhythm in the table: a patrolling dog turns down another street.
+	##
+	## WHY THE CITY GETS IT, and how it reads against CITY_CROC_DIVISOR. The city is
+	## the SAFE band by design — endless_terrain divides its predator target by 2.5
+	## (an owner call: a city is not croc-free, it is QUIETER) and roofs are the
+	## real shelter. So the few animals that ARE there each have to carry the whole
+	## band's threat, and the way to do that without raising the count or the
+	## ceiling is to make one hound harder to shake in a straight alley than a
+	## crocodile is in the open. The burst does that: the sprint is 9.18 m/s at
+	## nominal, faster than the slowest character's run, for the two and a half
+	## metres an alley mouth is wide. It cannot sustain it (see below), so the band
+	## stays escapable — it just stops being a stroll.
+	##
+	## Geometry measured off assets/models/characters/hound.glb (built by
+	## scripts/generate_hound.py): 1.1843 m nose to tail (x -0.5700 .. +0.6143),
+	## 0.2382 m across (z ±0.1191) and 0.6060 m TALL. It is the SMALLEST predator in
+	## the set on every axis — shorter than the bear (1.2154), narrower than the
+	## cougar (0.2470), lower than the wolf (0.740) — and generate_hound.py's header
+	## says that is the point: it shares the wolf's build, so the two only stay apart
+	## on screen by size, floppy ears, an upright tail and the rust coat.
+	##
+	## THE CAPSULE IN alley_hound.tscn COMES OFF THE SAME THREE FIGURES, recorded
+	## here because a .tscn cannot hold a comment an editor resave will not eat.
+	## `radius = 0.1191, height = 1.20`, laid down on the travel axis with the
+	## crocodile's basis, at `(0, 0.1191, 0.022)`:
+	##   * 0.1191 is EXACTLY the mesh's half-width, the same fit rule every row
+	##     above follows, and the smallest shape in the set. On the animal whose
+	##     whole read is threading alleys, a capsule any wider than the dog would
+	##     stop it in gaps a dog fits through.
+	##   * 1.20 covers the 1.1843 m length with the caps included.
+	##   * radius == centre y puts the capsule's bottom on y = 0, so gravity settles
+	##     the mesh's own paws onto the ground plane.
+	##   * z = +0.022 is the mesh's own midpoint. The wolf's row drops its +0.013 as
+	##     noise; this one keeps its 22 mm because the hound is the SHORTEST animal
+	##     in the set, so the same absolute offset is twice the fraction of the body
+	##     — and it costs nothing to be exact.
+	"alley_hound": {
+		## The same arm as the cougar, and the whole reason it is called "burst"
+		## rather than "pounce": a behaviour name describes the MECHANIC, so a
+		## second animal can mean something else by it. See _behave_burst().
+		"behavior": "burst",
+
+		# ----- Speed and detection -----
+		## THE LATTICE, WITH THE SAME ONE EXCEPTION THE COUGAR TAKES: 5.0
+		## (WALK_SPEED) < 6.8 <= 8.5 (MAX_CHASE_SPEED) < 9.0 (the slowest run). The
+		## sustained speed is clamped exactly like every other row (6.8 x 1.15 x 1.6
+		## = 12.5, cut to 8.5) and only the sprint goes above it.
+		##
+		## THE CYCLE AVERAGE IS WHAT ESCAPES, and it is measured in check 8 the same
+		## way as the cougar's:
+		##
+		##     avg = V x 4.5 / (2.5 / 1.35 + 2.0 / 0.6) = V x 0.8679
+		##
+		## At the worst case (V clamped to 8.5) that is 7.38 m/s against a 9.0 run —
+		## the runner gains 1.62 m/s, a tighter margin than the cougar's 2.03 and
+		## the tightest in the game, which is what makes this the band's real threat
+		## despite the thinned count. At the other end 0.8679 x 6.8 = 5.90 m/s,
+		## comfortably over WALK_SPEED, so walking is still caught.
+		##
+		## move_speed 3.2 is the FASTEST cruiser in the table (wolf 3.0, crocodile
+		## 2.5, cougar 2.2, bear 1.6) and that is the "patroller" half of the spec
+		## stated as a number: this animal covers ground when it is not hunting
+		## anything at all.
+		"move_speed": 3.2,
+		"chase_speed": 6.8,
+
+		## ±15% / ±15%, the cougar's spreads for the cougar's reason: both ends of
+		## this row's promise move with the roll. At the bottom roll (V = 5.78) the
+		## cycle average is 5.02 m/s — still, just, above the walk.
+		"speed_random_factor": 0.15,
+		"size_random_factor": 0.15,
+
+		## 13.0 — the shortest of any non-ambusher (crocodile 15, cougar 16, wolf
+		## 18), and short ON PURPOSE rather than as a nerf. A city chunk is walls;
+		## an animal that acquired you at the wolf's 18 m would mostly be acquiring
+		## you through a building, and the band's whole read is that the danger
+		## starts at the corner. INVARIANT, unchanged and not negotiable: far below
+		## the LOD manager's SIM_RADIUS (45.0), so anything that can detect the
+		## player is awake.
+		"detection_radius": 13.0,
+
+		# ----- Organic wandering -----
+		## The shortest rhythm in the table by some way (the wolf's 3.0 / 0.35 was
+		## the previous record). A patrolling dog turns down another street every
+		## couple of seconds and barely stops when it does.
+		"direction_change_interval": 2.2,
+		"pause_duration": 0.3,
+
+		## THE TURN RATE, and both numbers are the table's highest. `turn_smoothness`
+		## 9.0 against the wolf's 7.0 and the bear's 3.0 is the load-bearing one:
+		## velocity is driven from the body's FACING (see _physics_process), so this
+		## is literally how fast the animal can change where it is going. It is the
+		## exact opposite end of the same dial the bear's 3.0 sits on — that row
+		## calls a slow lerp_angle "momentum", and this one is what having none
+		## looks like.
+		"wander_turn_rate": 1.8,
+		"turn_smoothness": 9.0,
+
+		## Ebbs the shallowest in the table and varies the fastest: this animal is
+		## never really standing still.
+		"min_wander_speed_factor": 0.6,
+		"speed_variation_freq": 1.2,
+		"sniff_pause_chance": 0.3,
+
+		# ----- Obstacle avoidance -----
+		## TIGHT CORNERING, and all three numbers are it. `avoid_look_ahead` 1.8 is
+		## ~1.5x the mesh length and the SHORTEST ratio in the table (the bear's is
+		## ~3x): this animal commits to a corner late rather than swinging wide
+		## around it, which is only survivable because it can turn. The feelers are
+		## the narrowest at 30°, so they sweep a corridor about as wide as the dog
+		## actually is and it aims for gaps instead of detours. And 0.85 is the
+		## highest `avoid_speed_factor` by a distance — everything else in the table
+		## sheds 35-50% of its speed to get around a block and this one sheds 15%.
+		##
+		## THAT LAST NUMBER ALSO MEETS THE SPRINT, and the interaction is the good
+		## kind: `_avoid_obstacles` multiplies it onto `current_speed` AFTER the
+		## burst factor, so a cougar pouncing into a wall loses 40% of a huge number
+		## and a hound cornering mid-sprint loses 15% of a smaller one. Same two
+		## lines of shared code, two completely different animals come out.
+		"avoid_look_ahead": 1.8,
+		"avoid_feeler_angle": PI / 6.0,  # 30°
+		## Mid-torso on a 0.61 m animal whose belly line is at 0.34, so the probes
+		## sample a block's side wall rather than the air under it. The wolf's 0.45
+		## would fire over this smaller dog's back.
+		"avoid_feeler_height": 0.42,
+		"avoid_speed_factor": 0.85,
+
+		# ----- Procedural body animation -----
+		## Same nose-along-+X model contract as every predator mesh.
+		"model_facing_offset": -PI / 2.0,
+
+		## THE SCURRY. The fastest stride in the table (viper 12, wolf 10) over
+		## almost no roll — short legs turning over quickly under a body that stays
+		## level. The bob is nearly the wolf's on an animal five-sixths its height,
+		## which is what a small dog's bouncing trot looks like.
+		"stride_frequency": 13.0,
+		"waddle_roll": 3.0 * PI / 180.0,
+		"bob_amount": 0.045,
+		"sway_yaw": 7.0 * PI / 180.0,
+
+		## The shallowest chase lean of the four new species: this dog runs with its
+		## head up, which is also what keeps the cream chest blaze
+		## (generate_hound.py) pointed at the player.
+		"chase_pitch": 11.0 * PI / 180.0,
+
+		"breathe_speed": 2.8,
+		"breathe_amount": 0.018,
+
+		# ----- River submersion (VISUAL ONLY) -----
+		## 0.20 m — the wolf's and cougar's wade read on the smallest body in the
+		## set. Legs (0 .. 0.34) mostly under, belly line 0.14 m proud, torso and
+		## head in plain view. Rivers barely cross the city band anyway; what this
+		## number buys is that a hound chasing you into one does not vanish.
+		##
+		## Same hard constraint as every row: VISUAL ONLY. The CharacterBody3D, its
+		## CollisionShape3D and global_position never move.
+		"river_sink_depth": 0.20,
+		## Same ~0.2 s ease as every other row and as the player, written as
+		## depth/time so the derivation survives a retune of the depth.
+		"river_sink_ease_speed": 0.20 / 0.2,
+
+		# ----- Bite -----
+		## A snap, between the viper's strike (0.3) and the wolf's (0.35), over the
+		## crocodile's lunge. A small dog bites and lets go.
+		"bite_duration": 0.3,
+		"bite_pitch": 28.0 * PI / 180.0,
+		"bite_lunge": 0.4,
+
+		# ----- The sprint (the "burst" behaviour reads these four) -------------
+		## THE SAME FOUR KEYS AS THE COUGAR, MEANING A DIFFERENT ANIMAL. Read the
+		## two sets side by side — 4.0/3.0/1.3/0.55 against 2.5/2.0/1.35/0.6 — and
+		## the difference is almost entirely the CYCLE LENGTH: the cougar's is
+		## 1.00 s at the clamp and this one's is 0.61 s. One pounce a second reads
+		## as a cat committing; nearly two surges a second reads as a dog that
+		## cannot hold a pace, which is what "rapid short-burst" asks for.
+		##
+		## 2.5 m OF SPRINT is about an alley's width and about two of this dog's
+		## body lengths — deliberately short enough that the sprint fits BETWEEN
+		## two corners rather than through one, which is what makes the cornering
+		## numbers above matter instead of being decoration.
+		"burst_distance": 2.5,
+
+		## 2.0 m OF RECOVERY, the shortest leg in either row, and the same
+		## metres-not-seconds and LOD-safety arguments as the cougar's (see there).
+		## Its ratio to the sprint is deliberately TIGHTER than the cougar's
+		## (2.0/2.5 against 3.0/4.0), which is where the hound's higher cycle
+		## average — and its tighter escape margin — comes from.
+		"recover_distance": 2.0,
+
+		## THE SPRINT: 1.35 x the clamped chase speed, a hair above the cougar's
+		## 1.3, so the peak is 11.48 m/s at the top of the distance gradient and
+		## 9.18 m/s at nominal. Above MAX_CHASE_SPEED either way, and at nominal
+		## just above the slowest character's run — for 0.22 s at a time.
+		"burst_factor": 1.35,
+
+		## THE BLOWN LUNG: 0.6 x, so 5.1 m/s at the clamp. Shallower than the
+		## cougar's 0.55 because a dog that has run 2.5 m is winded, not spent —
+		## and because this row's whole margin is tighter on purpose. It is still
+		## below the clamped chase speed at every roll, which is what makes the
+		## recovery a real window rather than a slight ease.
+		"recover_factor": 0.6,
+	},
+}
+
+# ============================================================================
+# CONSTANTS (game-wide — NOT per species)
 # ============================================================================
 
 ## Movement speed in meters per second (wandering)
@@ -21,45 +1417,63 @@ var move_speed_instance: float = 0.0
 ## Chase speed when pursuing player (faster)
 var chase_speed_instance: float = 0.0
 
-## Base speeds for randomization. Chase speed is deliberately ABOVE the player's
-## WALK_SPEED (5.0), so a merely-walking player WILL get caught — escaping a chase
-## takes running, jumping (crocodiles lose the scent when you leave the ground), or
-## a special ability. This is the game's core fail pressure.
-const BASE_MOVE_SPEED: float = 2.5
-const BASE_CHASE_SPEED: float = 5.5
-
 ## Difficulty gradient: crocodiles chase faster the farther from origin they spawn.
 ## The multiplier is 1.0 + clamp(|x| / DENOM, 0, MAX) — +60% at 3 km and capped there,
 ## so late-run walking is lethal but running/abilities still escape.
 const DISTANCE_SPEED_SCALE_DENOM: float = 3000.0
 const DISTANCE_SPEED_SCALE_MAX: float = 0.6
 
-## Hard ceiling on the final chase speed. The per-croc ±50% roll and the distance
-## factor MULTIPLY (worst case 5.5 × 1.5 × 1.6 = 13.2), which would outrun even a
-## RUNNING player (RUN_SPEED 10.0 — 9.0 for the slowest character) and silently
-## break the "running still escapes" promise above. Capping just under the slowest
-## run speed keeps that escape hatch true; the gradient still bites walkers hard.
+## Hard ceiling on the final chase speed, applied to EVERY species. The
+## per-instance ±50% roll and the distance factor MULTIPLY (worst case
+## 5.5 × 1.5 × 1.6 = 13.2), which would outrun even a RUNNING player (RUN_SPEED
+## 10.0 — 9.0 for the slowest character) and silently break the "running still
+## escapes" promise above. Capping just under the slowest run speed keeps that
+## escape hatch true; the gradient still bites walkers hard. This is the top of
+## the speed lattice and lives OUTSIDE the species table on purpose — no entry in
+## SPECIES may raise it.
 const MAX_CHASE_SPEED: float = 8.5
 
-## Per-crocodile speed spread: each crocodile rolls ONE multiplier in
-## [1-FACTOR, 1+FACTOR] and applies it to BOTH its wander and chase speed, so some
-## crocodiles are clearly faster and some slower — yet a given crocodile's chase
-## always still outpaces its own stroll (the two speeds never drift apart). ±50%.
-const SPEED_RANDOM_FACTOR: float = 0.5
-
-## Per-crocodile size spread: each crocodile rolls a uniform scale in
-## [1-FACTOR, 1+FACTOR] applied to the whole body (visual model + physics capsule
-## together), so the pack is a mix of smaller and larger crocodiles. ±25%.
-const SIZE_RANDOM_FACTOR: float = 0.25
-
-## Detection radius - distance at which crocodile can "smell" the player
-const DETECTION_RADIUS: float = 15.0
+# ----- Pack steering (behavior == "pack") -----
+## How much of the remaining distance to the quarry the flank offset is allowed
+## to be. It is the ONE number that decides whether a ring is a flank or an
+## orbit, and it is a property of the algorithm rather than of any animal, which
+## is why it sits here and not in a SPECIES row.
+##
+## WHAT IT ACTUALLY CONTROLS IS A LEAD ANGLE. pack_steer_point() aims at a point
+## `ring` metres to one side of the quarry, where ring = min(flank_radius,
+## d * TAPER); once d is inside the flank ceiling, that is a target sitting at a
+## CONSTANT angle atan(TAPER) = 37° off the straight line in. A pursuer holding a
+## constant lead angle walks a logarithmic spiral, and the arc it sweeps closing
+## from d0 to d1 is exactly tan(TAPER's angle) * ln(d0 / d1) — 0.75 * ln(16/3) =
+## 68° each way for a wolf committing at 16 m, which is the ~136° of surround
+## enemy_spawn_selfcheck measures out of a pack that all started on one bearing.
+## Turning this up widens the spiral; the two things that stop it are below.
+##
+## IT MUST STAY STRICTLY BELOW 1.0, and 1.0 is not a rounding but a singularity.
+## A wolf already ON its slot bearing at distance d is handed the target
+## quarry + d * TAPER * u, which at TAPER = 1.0 is the point it is standing on:
+## every point of its own slot ray becomes a fixed point and the pack freezes in
+## a ring around a player who can then stroll away. Below 1.0 the same wolf is
+## handed a point d * (1 - TAPER) in front of it and always has somewhere to
+## walk; its radial closing rate is v / sqrt(1 + TAPER^2), positive for any
+## finite value.
+##
+## AND THAT RATE IS THE REAL CEILING, because it is the walk-catch contract in
+## disguise. At 0.75 a wolf spends cos(37°) = 0.80 of its speed actually closing:
+## 6.8 * 0.80 = 5.44 m/s toward you, which is the crocodile's 5.5 almost exactly.
+## THAT is the number the wolf's chase_speed was chosen to land on — the extra
+## 1.3 m/s over a crocodile is the fare for the angle, not a faster catch. Push
+## TAPER to 0.85 and the same wolf closes at 5.18, a hair over WALK_SPEED (5.0),
+## and the species quietly stops being able to catch a walking player at all.
+const PACK_FLANK_TAPER: float = 0.75
 
 # ----- Boss crocodiles -----
 ## Bosses are the rare, huge road-guardian crocodiles the terrain places
 ## deterministically along the coin road (see endless_terrain.gd). They reuse
 ## this exact AI wholesale — a boss differs only in a handful of flags set via
-## setup_as_boss() below, never in behaviour code.
+## setup_as_boss() below, never in behaviour code. A boss is a MODIFIER on a
+## species, not a species of its own: it overrides the two numbers below and
+## inherits everything else from its `spec`.
 ##
 ## Boss chase speed: above WALK_SPEED (5.0) so a walking player is run down,
 ## but the MAX_CHASE_SPEED cap (8.5) keeps it under the slowest RUN (9.0), so
@@ -83,130 +1497,8 @@ const VISUAL_CULL_DISTANCE: float = 60.0
 ## Fade margin for the cull boundary (Godot hysteresis band, avoids flicker).
 const VISUAL_CULL_MARGIN: float = 8.0
 
-## Time between direction changes (in seconds)
-const DIRECTION_CHANGE_INTERVAL: float = 4.0
-
-## Pause duration when changing direction (in seconds)
-const PAUSE_DURATION: float = 0.5
-
 ## Gravity acceleration (matches project default)
 const GRAVITY: float = 9.8
-
-# ----- Organic wandering -----
-## How sharply the heading drifts while wandering (radians/sec of random steer).
-## Small continuous nudges produce smooth, curved meandering instead of
-## straight lines with hard turns.
-const WANDER_TURN_RATE: float = 1.2
-
-## How smoothly the body turns to face its heading (higher = snappier)
-const TURN_SMOOTHNESS: float = 5.0
-
-## Slowest wander speed as a fraction of the instance's base speed
-const MIN_WANDER_SPEED_FACTOR: float = 0.45
-
-## How quickly wander speed ebbs and flows (radians/sec)
-const SPEED_VARIATION_FREQ: float = 0.8
-
-## Chance (per direction-change interval) of pausing to "sniff" around
-const SNIFF_PAUSE_CHANCE: float = 0.3
-
-# ----- Obstacle avoidance -----
-## How far ahead (metres) the crocodile senses blocks. This is deliberately
-## longer than the visual model so the crocodile turns away *before* its snout
-## can reach a block — the snout poking into blocks is exactly what this fixes
-## (the physics capsule is much shorter than the model, so move_and_slide alone
-## stops the body but lets the longer nose overlap the block).
-const AVOID_LOOK_AHEAD: float = 3.0
-
-## Angle of the left/right "feeler" probes used to find a clear way around (rad).
-const AVOID_FEELER_ANGLE: float = PI / 5.0  # 36°
-
-## Height above the body origin to cast the feelers from, so they sample the
-## block's side walls rather than the flat ground.
-const AVOID_FEELER_HEIGHT: float = 0.3
-
-## Speed multiplier while steering around a block, so the crocodile eases off and
-## curves around instead of ramming the block nose-first.
-const AVOID_SPEED_FACTOR: float = 0.5
-
-# ----- Procedural body animation -----
-## Yaw applied to the model so its snout points along the travel direction.
-## The mesh is authored facing +X but the body travels +Z, so we rotate -90°.
-## If the snout ends up pointing the wrong way in-editor, flip this sign.
-const MODEL_FACING_OFFSET: float = -PI / 2.0
-
-## Stride frequency at full speed (radians/sec) — drives the waddle/bob
-const STRIDE_FREQUENCY: float = 9.0
-
-## Side-to-side waddle roll amplitude (radians) — uses PI math so it stays a
-## constant expression (deg_to_rad() can't be used in a const)
-const WADDLE_ROLL: float = 9.0 * PI / 180.0
-
-## Vertical bob amplitude (metres)
-const BOB_AMOUNT: float = 0.025
-
-## Slow body "snaking" yaw amplitude (radians)
-const SWAY_YAW: float = 5.0 * PI / 180.0
-
-## Forward lean while hunting the player (radians)
-const CHASE_PITCH: float = 10.0 * PI / 180.0
-
-## Idle breathing speed/amount when standing still
-const BREATHE_SPEED: float = 2.0
-const BREATHE_AMOUNT: float = 0.012
-
-# ----- River submersion (VISUAL ONLY) -----
-## How far the MODEL drops, in model-local metres, while the crocodile is
-## standing in a river. The player's own wading sink (WADE_SINK_DEPTH 0.35) is
-## the pattern; the DEPTH is not, and could not be — measured off the GLB, this
-## crocodile is 1.40 m long and only 0.276 m TALL (local y −0.036 .. +0.240), so
-## the player's 0.35 would bury it, mud and all, with nothing to see.
-##
-## 0.18 leaves the top 0.060 m proud — a quarter of the 0.240 m that stands above
-## the ground plane — and shrinks the visible silhouette from the full 1.40 m
-## down to the 0.75 m of it that reaches above y = 0.18. Half the crocodile's
-## outline, at a tenth of its height: hard to pick out of a river, exactly the
-## point. There is no water MESH (a river is a tint on the flat y = 0 ground
-## plane), so what hides the rest is the opaque ground itself.
-##
-## HONEST NOTE ON "just the snout": this mesh has no raised eye/nostril bump. Its
-## back is a flat plateau at y ≈ 0.239 running from the shoulders (x = −0.2) to
-## the skull (x = +0.5), and the snout TIP is the LOW point of the head at
-## y = 0.120. So no depth exists that shows the nose while hiding the back — sink
-## past 0.12 and the nose tip goes under before the spine does. What 0.18 gives
-## is the "log in the water" read: a thin dark ridge of back-and-skull. Wanting a
-## literal periscope snout is a MODEL change (raise the nostrils above the back),
-## not a constant change here.
-##
-## VISUAL ONLY, AND THAT IS A HARD CONSTRAINT — same rule as the player's sink:
-## this never touches the CharacterBody3D, its CollisionShape3D, or global_position.
-## Bite range, chase mechanics and the flat-world y = 0 invariant are byte-identical
-## wet or dry. A submerged crocodile is exactly as dangerous as a dry one; it is
-## only harder to SEE, and the danger vignette + heartbeat still telegraph it the
-## moment it starts chasing (crocodile_lod_manager publishes that from the same
-## scan, and it reads `is_chasing`, which this does not touch).
-##
-## BOSSES NEED NO SPECIAL CASE. _ready() sets `scale = Vector3.ONE * boss_scale`
-## on the BODY, and the model is its child, so this local offset is scaled by the
-## engine: a 6x boss sinks 6 × 0.18 = 1.08 m in world space and shows 6 × 0.060 =
-## 0.36 m of ridge. The submerged FRACTION is identical at every scale, which is
-## what "a proportional snout" actually means. Same free ride for the ±25%
-## SIZE_RANDOM_FACTOR roll on regular crocodiles.
-const RIVER_SINK_DEPTH: float = 0.18
-
-## Ease rate (m/s), sized so the full sink takes ~0.2 s — the player's ease time,
-## so a crocodile and the hero wading beside it settle at the same visual pace.
-const RIVER_SINK_EASE_SPEED: float = RIVER_SINK_DEPTH / 0.2
-
-# ----- Bite -----
-## How long the chomp animation plays when the crocodile catches the player (s).
-const BITE_DURATION: float = 0.5
-
-## How far the head snaps down/up during the chomp (radians).
-const BITE_PITCH: float = 26.0 * PI / 180.0
-
-## How far the body lunges forward during the bite (metres).
-const BITE_LUNGE: float = 0.35
 
 ## ---------------------------------------------------------------------------
 ## MULTIPLAYER SYNC (phase 5) — see set_remote_state() for the whole scheme
@@ -251,6 +1543,23 @@ const CRUSH_SHAKE_RADIUS: float = 6.0
 # STATE VARIABLES
 # ============================================================================
 
+## Which entry of SPECIES this predator is. CALL-ORDER CONTRACT, exactly like
+## setup_as_boss() and setup_roll_seed(): a spawner assigns it on the fresh
+## instance BEFORE add_child(), because _ready() is where it is resolved into
+## `spec` and where the speed/size rolls that read `spec` happen. It is a plain
+## public field rather than a setup_*() call because there is a single value to
+## set and nothing to derive — _ready() does the validation and the fallback.
+## Left alone — piglet_crocodile.tscn run standalone, or any spawner that does
+## not know about the contract — it stays "crocodile" and the node behaves
+## exactly as it always did.
+var species: String = "crocodile"
+
+## This instance's row of the SPECIES table, resolved ONCE in _ready() and then
+## read directly by the per-frame paths (_wander, _avoid_obstacles,
+## _animate_body, _tick_river_sink, _animate_bite). Initialised here as well so
+## the dictionary is never empty for the window before _ready() runs.
+var spec: Dictionary = SPECIES["crocodile"]
+
 ## Current movement direction (normalized Vector3)
 var movement_direction: Vector3 = Vector3.ZERO
 
@@ -265,6 +1574,57 @@ var pause_time_remaining: float = 0.0
 
 ## Is the crocodile currently chasing the player?
 var is_chasing: bool = false
+
+## THE AMBUSH ARM'S ONE OUTPUT (`_behave_ambush`): true while this predator is
+## lying buried and waiting. Read by `_tick_river_sink`, which owns the model's
+## rest height, and by nothing else — the burrow is VISUAL, so no other system
+## has any business knowing about it.
+##
+## TWO WRITERS, and the second is why this is a stored flag rather than a
+## derivation: the arm on a simulating machine, and `set_remote_state` from the
+## master's flag byte on every other peer in a room (MpManager.CROC_FLAG_BURROWED
+## carries the note on why the byte has to say it out loud). Locally it is only
+## ever raised on a row that has an `ambush_burrow_depth`; over the wire it is
+## peer input like everything else, so the reader checks the key.
+var is_burrowed: bool = false
+
+## THE CHARGE ARM'S ONE PIECE OF MEMORY (`_behave_charge`): the bearing this bear
+## committed to and the point it committed from, as { "dir": Vector3, "origin":
+## Vector3 }. Empty means "not committed". It is a Dictionary rather than two
+## floats so `charge_steer_point()` can be a STATIC function that both the arm
+## and enemy_spawn_selfcheck's dodge probe drive — the check measures the shipped
+## steering instead of a restatement of it, exactly as it does for the wolf's
+## `pack_steer_point()`. Behaviour-local: nothing outside the charge reads it.
+var _charge_lock: Dictionary = {}
+
+## THE BURST ARM'S ONE PIECE OF MEMORY (`_behave_burst`): which leg of the
+## pounce/sprint cycle this animal is on, how much of that leg it has spent, and
+## where it stood last frame, as { "bursting": bool, "travelled": float,
+## "last": Vector3 }. Empty means "not committed". The leg is spent in PATH
+## LENGTH rather than displacement from a fixed origin — see burst_cycle_factor,
+## where that is the difference between a bounded pounce and a cougar that
+## circles you at 11 m/s forever. It is a
+## Dictionary rather than a bool and a Vector3 so `burst_cycle_factor()` can be a
+## STATIC function that both the arm and enemy_spawn_selfcheck's escape probe
+## drive — the check measures the shipped cycle instead of a restatement of it,
+## exactly as it does for the wolf's `pack_steer_point()` and the bear's
+## `charge_steer_point()`. Behaviour-local: nothing outside the burst reads it.
+var _burst_lock: Dictionary = {}
+
+## THE BURST ARM'S ONE OUTPUT: the multiplier applied to `chase_speed_instance`
+## for this frame. 1.0 for every species that is not on the "burst" arm, and 1.0
+## is a hard requirement rather than a tidy default — it is what makes the one
+## line in `_physics_process` that reads this a no-op for the crocodile, the
+## viper, the wolf and the bear, so their movement stays byte-for-byte what it was.
+##
+## THIS IS THE ONLY THING IN THE GAME THAT CAN PUT A BODY ABOVE MAX_CHASE_SPEED,
+## and the SPECIES rows that set it carry the argument for why that is safe (the
+## contract is the CYCLE average, not the instant). Two things bound it in code
+## regardless: it is applied ONLY while `is_chasing` — a fleeing predator never
+## runs the arm, so a stale burst can never leak into a Stink Wave flight — and
+## `_avoid_obstacles` multiplies `avoid_speed_factor` on top of it, so a burst
+## into a block eases off on its own.
+var burst_factor: float = 1.0
 
 ## Flee state. When Phoboman unleashes his Stink Wave, every crocodile turns tail
 ## and runs from the player for a while. Fleeing OVERRIDES both chase and wander,
@@ -304,8 +1664,10 @@ var has_roll_seed: bool = false
 ## chaser's distance by ITS OWN radius: a boss acquires the player at 25 m, so a
 ## telegraph hardcoded to the regular 15 m would stay dark and silent for the
 ## first 10 m of the game's biggest threat closing on you). Resolved in _ready()
-## because `setup_as_boss()` is contracted to run before the node enters the tree.
-var detection_radius: float = DETECTION_RADIUS
+## because `setup_as_boss()` is contracted to run before the node enters the tree,
+## and so is `setup_species()` — the non-boss value is this instance's
+## `spec.detection_radius`.
+var detection_radius: float = SPECIES["crocodile"]["detection_radius"]
 
 ## Reference to the player node
 var player_node: Node3D = null
@@ -315,10 +1677,17 @@ var player_node: Node3D = null
 ## Null in any scene without it, which is what keeps solo play untouched.
 var mp_node: Node = null
 
-## Where this crocodile is currently heading when chasing — the local player, or
-## in a room the nearest MEMBER of it. Refreshed by _update_chase_state() every
-## frame it runs, read by _chase_player(). See _update_chase_state for why the
-## local player alone is not enough.
+## Where this crocodile is currently STEERING when chasing. It starts each frame
+## as the quarry — the local player, or in a room the nearest MEMBER of it — and
+## the behaviour dispatch at the end of _update_chase_state() may then bend it
+## somewhere else (a wolf aims at its own slot on a ring around the quarry, so
+## the pack arrives from every side at once). Refreshed by _update_chase_state()
+## every frame it runs, read by _chase_player(). See _update_chase_state for why
+## the local player alone is not enough to find the quarry with.
+##
+## The DETECTION decision above the dispatch is made against the quarry itself,
+## never against this, so bending it can only change the route a predator takes —
+## never whether it smelled you, and never how far it can smell.
 var chase_target: Vector3 = Vector3.ZERO
 
 ## Random number generator for movement
@@ -342,7 +1711,7 @@ var model: Node3D = null
 var model_base_scale: Vector3 = Vector3.ONE
 ## The height the animation composes its bob/lunge ON TOP OF — i.e. the model's
 ## CURRENT rest height, which the river sink eases up and down (see
-## RIVER_SINK_DEPTH). _animate_body / _animate_bite only ever READ this; the sink
+## `spec.river_sink_depth`). _animate_body / _animate_bite only ever READ this; the sink
 ## is the sole writer after _ready(), which is what keeps the two from fighting.
 ## They own `model.position` outright, so the sink deliberately does not touch it.
 var model_base_y: float = 0.0
@@ -434,6 +1803,16 @@ const CONFINE_MARGIN: float = 0.9
 
 func _ready() -> void:
 	"""Initialize the crocodile NPC."""
+	# Resolve this instance's row of the SPECIES table FIRST — the rolls, the
+	# detection radius and every per-frame path below read it. An unknown name
+	# (a typo, or a save/scene from a build that had a species this one doesn't)
+	# falls back to the crocodile row rather than crashing the spawner: a wrong
+	# predator is a bug, a missing one is a dead chunk.
+	if not SPECIES.has(species):
+		push_warning("piglet_crocodile_ai: unknown species '%s', using 'crocodile'" % species)
+		species = "crocodile"
+	spec = SPECIES[species]
+
 	# Seed the RNG. The terrain hands every crocodile it spawns a deterministic
 	# seed (setup_roll_seed, called before add_child), so the size/speed rolls
 	# below — and every other draw this instance ever takes — are a pure function
@@ -459,7 +1838,7 @@ func _ready() -> void:
 		# terrain's deterministic schedule (boss_scale) and their speeds are fixed,
 		# so a boss regenerates byte-identically when its chunk is revisited.
 		detection_radius = BOSS_DETECTION_RADIUS
-		move_speed_instance = BASE_MOVE_SPEED
+		move_speed_instance = spec["move_speed"]
 		# The MAX_CHASE_SPEED cap keeps the running-escape hatch true at any distance.
 		chase_speed_instance = minf(BOSS_CHASE_SPEED * distance_factor, MAX_CHASE_SPEED)
 		scale = Vector3.ONE * boss_scale
@@ -467,18 +1846,25 @@ func _ready() -> void:
 		# Set instance-specific speeds. One shared multiplier drives both speeds, so a
 		# "fast" crocodile is fast at everything (and its chase always still outpaces its
 		# own wander) instead of the two speeds drifting apart independently.
-		var speed_factor := rng.randf_range(1.0 - SPEED_RANDOM_FACTOR, 1.0 + SPEED_RANDOM_FACTOR)
-		move_speed_instance = BASE_MOVE_SPEED * speed_factor
+		var speed_factor := rng.randf_range(
+				1.0 - spec["speed_random_factor"], 1.0 + spec["speed_random_factor"]
+		)
+		detection_radius = spec["detection_radius"]
+		move_speed_instance = spec["move_speed"] * speed_factor
 		# The min() keeps a top-rolled far croc from outrunning a RUNNING player — see
 		# MAX_CHASE_SPEED above.
-		chase_speed_instance = minf(BASE_CHASE_SPEED * speed_factor * distance_factor, MAX_CHASE_SPEED)
+		chase_speed_instance = minf(
+				spec["chase_speed"] * speed_factor * distance_factor, MAX_CHASE_SPEED
+		)
 
 		# Give this crocodile a randomized overall size. We scale the whole body
 		# uniformly so the visual model and the physics capsule grow/shrink together;
 		# gravity then settles it onto the ground regardless of size. The model's OWN
 		# local scale stays 1, so model_base_scale cached below is unaffected and the
 		# procedural body animation composes correctly on top of this body scale.
-		var size_scale := rng.randf_range(1.0 - SIZE_RANDOM_FACTOR, 1.0 + SIZE_RANDOM_FACTOR)
+		var size_scale := rng.randf_range(
+				1.0 - spec["size_random_factor"], 1.0 + spec["size_random_factor"]
+		)
 		scale = Vector3.ONE * size_scale
 
 	# Set initial random direction
@@ -503,7 +1889,7 @@ func _ready() -> void:
 		return
 
 	# Start with a random offset to avoid all crocodiles changing direction at once
-	time_since_direction_change = randf() * DIRECTION_CHANGE_INTERVAL
+	time_since_direction_change = randf() * spec["direction_change_interval"]
 
 	# Per-instance phase offsets so a pack of crocodiles doesn't move in lockstep
 	instance_phase = rng.randf_range(0.0, TAU)
@@ -653,13 +2039,21 @@ func _physics_process(delta: float) -> void:
 		if movement_direction.length() > 0.1:
 			var target_rotation := atan2(movement_direction.x, movement_direction.z)
 			# Turn harder while avoiding so we actually clear the block in time.
-			var turn_rate := TURN_SMOOTHNESS * (2.0 if avoiding else 1.0)
+			var turn_rate: float = spec["turn_smoothness"] * (2.0 if avoiding else 1.0)
 			rotation.y = lerp_angle(rotation.y, target_rotation, delta * turn_rate)
 
 			# Flee and chase both move at the faster "chase" speed.
 			var current_speed := chase_speed_instance if (is_chasing or is_fleeing) else _wander_speed(delta)
+			# The burst arm's one output (see `burst_factor`). It is 1.0 for every
+			# species but the mountain cougar and the city alley hound, so this is
+			# a no-op multiply for all four older rows. Gated on `is_chasing` and
+			# NOT on `is_fleeing`: the flee branch above sits over
+			# _update_chase_state, so a fleeing predator never runs the arm and
+			# would otherwise carry whatever factor it held when the wave hit.
+			if is_chasing:
+				current_speed *= burst_factor
 			if avoiding:
-				current_speed *= AVOID_SPEED_FACTOR
+				current_speed *= spec["avoid_speed_factor"]
 			velocity.x = sin(rotation.y) * current_speed
 			velocity.z = cos(rotation.y) * current_speed
 		else:
@@ -757,19 +2151,406 @@ func _update_chase_state() -> void:
 		if not is_chasing:
 			# Just started chasing
 			is_chasing = true
-			# Bosses announce themselves with a growl on the not-chasing →
-			# chasing transition (null-safe group lookup, like every SFX hook —
-			# a scene run without Main just stays silent).
+			# ANNOUNCE THE ACQUISITION. Bosses growl; an ambusher hisses. Both
+			# fire HERE and only here, on the not-chasing → chasing edge, which
+			# is what makes it one cue per engagement rather than one per frame —
+			# the boss growl has always worked this way and the hiss is its exact
+			# sibling. Null-safe group lookup like every SFX hook, so a scene run
+			# without Main just stays silent, and both route through the
+			# sound_manager's _unlocked browser-gesture gate.
+			#
+			# The ambusher is the species that most needs it: it is buried and
+			# smells only 5 m, so with no sound the first signal the player gets
+			# is the strike already landing. Keyed on the BEHAVIOUR, not the
+			# species name, because "you cannot see me coming" is the trait that
+			# owes the player a warning.
+			var sm := get_tree().get_first_node_in_group("sound_manager")
 			if is_boss:
-				var sm := get_tree().get_first_node_in_group("sound_manager")
 				if sm and sm.has_method("play_boss_growl"):
 					sm.play_boss_growl()
+			elif spec["behavior"] == "ambush":
+				if sm and sm.has_method("play_viper_hiss"):
+					sm.play_viper_hiss()
 	else:
 		if is_chasing:
 			# Lost the player (too far OR player jumped)
 			is_chasing = false
 			# Choose new random direction
 			_choose_new_direction()
+
+	# ------------------------------------------------------------------------
+	# BEHAVIOUR DISPATCH — the whole of it, and it is deliberately this small
+	# ------------------------------------------------------------------------
+	# Everything above this line is what EVERY predator does: find the quarry,
+	# decide whether it can be smelled, and set `is_chasing` / `chase_target`.
+	# Everything a SPECIES does differently hangs off the one `match` below, and
+	# the shape of it is a contract for the beads that follow this one:
+	#
+	#   ONE ARM, ONE CALL, NOTHING ELSE. An arm is a species' behaviour name and
+	#   a call to its own `_behave_*()`. No logic in the arm, no state shared
+	#   between arms, no `if` before the match. Pack, ambush, charge and burst are
+	#   each two lines here plus one function of their own, and none of them has
+	#   to read, or risk breaking, any of the others.
+	#
+	# AN ARM IS A MECHANIC, NOT AN ANIMAL, and "burst" is where that stopped
+	# being a stylistic claim: the mountain cougar's pounce and the city alley
+	# hound's alley sprint are ONE arm read with two sets of numbers. Six species,
+	# four arms. If a new predator's difference can be a number in its SPECIES
+	# row, it must be — a fifth arm is for a mechanic none of these four is.
+	#
+	# "solo" has NO ARM on purpose — it is the code above, unmodified, which is
+	# also why an unknown or misspelled behaviour string degrades to solo instead
+	# of crashing. The same degrade-don't-crash rule as the unknown-species
+	# fallback in _ready().
+	#
+	# WHY IT LIVES AT THE END OF THIS FUNCTION rather than in _chase_player():
+	# a behaviour may want to act when the predator is NOT chasing (an ambusher
+	# has to burrow and wait), and this is the last point in the frame where both
+	# `is_chasing` and `chase_target` are settled. Each arm decides for itself
+	# whether it cares; `_behave_pack` returns immediately when idle.
+	match spec["behavior"]:
+		"pack":
+			_behave_pack()
+		"ambush":
+			_behave_ambush()
+		"charge":
+			_behave_charge()
+		"burst":
+			_behave_burst()
+
+
+func _behave_pack() -> void:
+	"""
+	The wolf arm: aim at MY slot on a ring around the quarry, not at the quarry.
+
+	Three lines of work and no lines of coordination — see pack_steer_point() for
+	the geometry and for the three invariants (no coordinator, LOD-safe,
+	multiplayer-safe) that fall out of it being a pure function of this animal's
+	own id and its own position.
+	"""
+	if not is_chasing:
+		return
+	chase_target = pack_steer_point(
+			chase_target, global_position, croc_id(),
+			int(spec["pack_size"]), float(spec["pack_flank_radius"])
+	)
+
+
+func _behave_ambush() -> void:
+	"""
+	The viper arm: raise a flag, and let four numbers be the animal.
+
+	THIS IS THE SHORTEST ARM IN THE FILE AND THAT IS THE FINDING, not an
+	omission, so it is worth being able to check rather than take on faith. Walk
+	the ambush back to its parts:
+
+	  * "wander speed 0"      -> `move_speed` 0.0. `_wander_speed` multiplies it,
+	                             so the wander velocity is identically zero.
+	  * "reduced detection"   -> `detection_radius` 5.0, and because the trigger
+	                             has no hysteresis the same number ENDS the lunge:
+	                             that is the "short" in "short lunge", with no
+	                             timer and no second state anywhere.
+	  * "the strike"          -> `chase_speed` 5.5 (see the row: it is the
+	                             crocodile's speed on purpose — an ambusher is
+	                             paid in surprise, not in a foot race) plus
+	                             `bite_lunge`, which is a MODEL offset and moves
+	                             no body, so nothing here outruns the row.
+	  * "surfaces rapidly"    -> `ambush_surface_ease_speed`, four times the sink.
+
+	Which leaves exactly one thing that is NOT a number: whether the model is
+	underground right now. That is this line. `_tick_river_sink` consumes it —
+	it already owns `model_base_y`, and one owner of the rest height is the rule
+	the burrow had to fit into rather than break.
+
+	WHY NOT-CHASING IS THE RIGHT TEST, including the two edges: a SLEPT viper
+	stops running this and freezes mid-ease, which is the same answer the river
+	sink gives and needs no reconciliation (the target is recomputed from scratch
+	every frame). A FLEEING viper never reaches here at all — the flee branch
+	sits above _update_chase_state — so it keeps whatever it had, which for an
+	animal that was by definition not chasing means it dives away under the sand.
+	That is the read a snake fleeing a stink wave should have anyway.
+	"""
+	is_burrowed = not is_chasing
+
+
+func _behave_charge() -> void:
+	"""
+	The bear arm: aim where I COMMITTED to go, not at where the quarry is now.
+
+	Two lines of work and one Dictionary of memory — see charge_steer_point() for
+	the geometry and for why the commitment is measured in metres rather than
+	seconds. Clearing the lock the moment the chase drops is what makes a bear
+	that reacquires you start a FRESH charge rather than resume a stale bearing.
+	"""
+	if not is_chasing:
+		_charge_lock.clear()
+		return
+	chase_target = charge_steer_point(
+			chase_target, global_position, _charge_lock, float(spec["charge_commit"])
+	)
+
+
+func _behave_burst() -> void:
+	"""
+	The cougar/hound arm: run in surges, and pay for every one of them.
+
+	Two lines of work and one Dictionary of memory, the same shape as the bear's.
+	It is the FIRST arm shared by two species — the mountain cougar's pounce and
+	the city alley hound's alley sprint are the same mechanic at different numbers
+	— which is what the SPECIES table has been claiming since the crocodile row
+	and had not yet had to prove.
+
+	IT IS ALSO THE ONLY ARM THAT TOUCHES SPEED, and that is worth stating loudly
+	because the other three go out of their way not to. `_behave_pack` and
+	`_behave_charge` both return a POINT and their docstrings say, in as many
+	words, that nothing there touches `chase_speed_instance` because a flanking or
+	charging predator must not be able to outrun a running player. This one sets a
+	MULTIPLIER on that clamped speed, so for the length of a pounce the body moves
+	above MAX_CHASE_SPEED. The two SPECIES rows carry the full argument; the short
+	version is that "running always escapes" is a claim about whether a GAP
+	CLOSES, the gap is closed over time, and the mandatory recovery leg makes the
+	cycle average fall well under the slowest character's run at every roll. It is
+	measured in enemy_spawn_selfcheck's check 8, over repeated cycles, against a
+	control with the recovery removed — which catches the runner, and is therefore
+	the proof that the recovery is what saves them.
+
+	Clearing the lock the moment the chase drops is what makes a cougar that
+	reacquires you start a FRESH pounce rather than resume a half-spent one, and
+	it is also what resets `burst_factor` to 1.0 so an idle animal wanders at its
+	ordinary speed.
+	"""
+	if not is_chasing:
+		_burst_lock.clear()
+		burst_factor = 1.0
+		return
+	burst_factor = burst_cycle_factor(global_position, _burst_lock, spec)
+
+
+static func burst_cycle_factor(from: Vector3, lock: Dictionary, row: Dictionary) -> float:
+	"""
+	Which leg of the burst cycle this animal is on, as a speed multiplier.
+
+	    each frame  travelled += |from - lock.last|   (PATH LENGTH, see below)
+	    flip when   travelled >= (burst_distance if bursting else recover_distance)
+	    on flip     bursting := not bursting, travelled := 0
+	    factor      burst_factor while bursting, recover_factor while recovering
+
+	THE CYCLE IS MEASURED IN METRES, NOT SECONDS, and that is the same call
+	`charge_steer_point` makes for the same two reasons. `_update_chase_state` has
+	no `delta` (see the note on the dispatch), so a timer would have had to be
+	plumbed through every arm to serve one of them — and a distance is LOD-SAFE
+	for free: a slept predator does not move, so its leg does not drain, and it
+	wakes on the leg it slept on. A seconds-based cycle would have run down during
+	the sleep and handed the player a cougar that arrives already exhausted, or
+	one whose pounce was spent 40 m away where nobody could see it.
+
+	THE METRES ARE PATH LENGTH, NOT DISPLACEMENT FROM WHERE THE LEG STARTED, and
+	that distinction is the whole correctness of this function rather than a
+	refinement of it. The bear's `charge_steer_point` measures displacement from
+	its lock origin, which is right for a bear: what it is asking is "how far have
+	I got from where I took aim". Ask a BURST the same question and a predator
+	that never gets far from its starting point never finishes its pounce — a
+	cougar steered around a massif, or one following a player who circles it
+	inside a four-metre radius, stays inside `burst_distance` of its origin
+	forever and therefore runs at 11 m/s indefinitely, which is precisely the
+	promise this whole species was built to keep. Path length has no such hole:
+	every metre the animal actually covers is a metre of pounce spent, whatever
+	shape it covered it in. It also gives the pinned-against-a-block case the
+	physically honest answer for free — a body that is not moving is not spending
+	its burst, and it resumes with the metres it had left.
+
+	Three properties follow from it being a pure function of the lock, and each
+	one was a requirement rather than a happy accident:
+
+	  * LOD-SAFE, as above, with no timer to have drained.
+	  * MULTIPLAYER-SAFE. It reads only this body's own position and its own lock,
+	    and returns a scalar. A remote-driven predator never runs the arm at all —
+	    it renders the master's samples, and CROC_REMOTE_MAX_SPEED (40.0) is
+	    comfortably above any burst — so there is no second simulation to
+	    disagree and no new byte on the wire.
+	  * LATTICE-SAFE OVER THE CYCLE, WHICH IS THE ONLY SENSE THAT MATTERS. The
+	    factor multiplies `chase_speed_instance`, which _ready() already clamped to
+	    MAX_CHASE_SPEED, so the burst is an explicit, auditable multiple of the
+	    ceiling rather than an unbounded speed. `burst_factor` is above 1.0 and
+	    `recover_factor` below it, and the two legs together average out under the
+	    slowest run and over the walk — measured, not asserted, in check 8.
+
+	@param from: this animal's own position
+	@param lock: its cycle state, MUTATED here — { "bursting", "origin" }
+	@param row: its SPECIES row, for the four burst_* keys
+	@return the multiplier to apply to chase_speed_instance this frame
+
+	A row missing either distance answers 1.0 — an ordinary chase — so a
+	half-finished species degrades to a crocodile instead of dividing by zero.
+	That is the same degrade-don't-crash rule as the unknown-species fallback in
+	_ready() and the unknown-behaviour fallback in the dispatch.
+
+	ponytail: a predator pinned against a block covers no path, so it does not
+	advance its leg and resumes with the metres it had left. That is the right
+	answer rather than a shortcut — a pounce is metres of ground covered, and a
+	cat shouldering into stone has covered none of them. The one visible
+	consequence is that it comes round the corner still on the leg it arrived on,
+	which reads as a cat coiled at the corner. The upgrade path, if it ever
+	matters, is the bear's: flip the leg on a blocked feeler.
+	"""
+	var burst_distance: float = float(row.get("burst_distance", 0.0))
+	var recover_distance: float = float(row.get("recover_distance", 0.0))
+	if burst_distance <= 0.0 or recover_distance <= 0.0:
+		return 1.0
+
+	if not lock.has("last"):
+		lock["last"] = from
+		lock["travelled"] = 0.0
+		lock["bursting"] = true
+	# Path length, one frame at a time — see the docstring for why this is not
+	# `from.distance_to(origin)`. The step is the ground this body actually
+	# covered since the last frame it was chasing, so a curve spends its pounce
+	# at the same rate a straight line does.
+	var travelled: float = float(lock["travelled"]) + from.distance_to(lock["last"])
+	lock["last"] = from
+	var bursting: bool = bool(lock["bursting"])
+	var leg: float = burst_distance if bursting else recover_distance
+	if travelled >= leg:
+		bursting = not bursting
+		lock["bursting"] = bursting
+		travelled = 0.0
+	lock["travelled"] = travelled
+	return float(row["burst_factor"]) if bursting else float(row["recover_factor"])
+
+
+static func charge_steer_point(quarry: Vector3, from: Vector3, lock: Dictionary,
+		commit: float) -> Vector3:
+	"""
+	Where one heavy charger steers, given its own position and its own lock.
+
+	    re-lock when   dir is unset OR |from - lock.origin| >= commit
+	    on re-lock     dir := bearing to the quarry, origin := here
+	    point          from + dir        (one metre along the committed bearing)
+
+	THE BEHAVIOUR IS THE STALENESS. Every other predator in this game recomputes
+	its heading from the quarry's CURRENT position every frame, so it curves onto
+	you and a sidestep only ever buys the width of the curve. This one takes that
+	reading once and then spends `commit` metres refusing to take another, so a
+	sidestep during those metres is not a curve to be out-turned — the bear is
+	aiming at a place you are simply not standing any more. That is the entire
+	counterplay, and it is why the dodge works at a WALK against an animal faster
+	than a walk. enemy_spawn_selfcheck measures it against the same bear with this
+	function switched off, because "the player dodged" is also true of a bear that
+	merely turns slowly.
+
+	IT RETURNS A POINT ONE METRE AHEAD, not a distant aim point, and the metre is
+	arbitrary in the only way that matters: `_chase_player` normalizes
+	`chase_target - global_position`, so any positive multiple of `dir` produces
+	the identical heading. One metre keeps the value readable in a debugger as
+	"just in front of its nose", which is exactly what a charging bear is looking
+	at.
+
+	Three properties follow from it being a pure function of the lock, and each
+	one was a requirement rather than a happy accident:
+
+	  * LOD-SAFE. A slept bear does not move, so `|from - origin|` does not grow
+	    and it wakes still committed to the bearing it slept on — with no timer to
+	    have drained meanwhile, which is precisely the bug a seconds-based commit
+	    would have had (see the note on `charge_commit` in the SPECIES row).
+	  * MULTIPLAYER-SAFE. `quarry` is whatever _update_chase_state resolved, which
+	    in a room is the nearest ROOM MEMBER. This only bends that point; it can
+	    neither widen who is hunted nor reach past the detection radius. A
+	    remote-driven bear never runs the arm at all — it renders the master's
+	    samples — so there is no second simulation to disagree.
+	  * SPEED-LATTICE-SAFE. It returns a POINT. Nothing here touches
+	    chase_speed_instance, which _ready() already clamped to MAX_CHASE_SPEED.
+	    A charging bear is dangerous because it does not need to slow down to
+	    turn, never because it is fast; running still escapes it.
+
+	@param quarry: where the chase currently wants to go
+	@param from: this bear's own position
+	@param lock: its committed bearing, MUTATED here — { "dir", "origin" }
+	@param commit: metres of straight line before it looks up again
+	@return the point to steer at this frame
+
+	ponytail: the lock is cleared by the arm on losing the chase and never
+	otherwise, so a bear that is knocked off course by a block finishes its
+	committed metres against the wall before re-aiming. That reads as a bear
+	shouldering into stone, which is the right animation for the wrong reason;
+	the upgrade path, if it ever matters, is to re-lock on a blocked feeler.
+	"""
+	var dir: Vector3 = lock.get("dir", Vector3.ZERO)
+	if dir == Vector3.ZERO or from.distance_to(lock["origin"]) >= commit:
+		var aim := quarry - from
+		aim.y = 0.0
+		if aim.length() < 0.01:
+			# Standing on top of the quarry: there is no bearing to commit to, so
+			# leave the lock alone and let the plain chase have this frame.
+			return quarry
+		dir = aim.normalized()
+		lock["dir"] = dir
+		lock["origin"] = from
+	return from + dir
+
+
+static func pack_steer_point(quarry: Vector3, from: Vector3, id: int,
+		pack_size: int, flank_radius: float) -> Vector3:
+	"""
+	Where one pack hunter steers, given only ITS OWN id and ITS OWN position.
+
+	    slot  = id modulo pack_size          -> this animal's compass point
+	    ring  = min(flank_radius, d * TAPER) -> how wide the swing still is
+	    point = quarry + ring * (sin, 0, cos) of TAU * slot / pack_size
+
+	THE SURROUND IS EMERGENT, AND "EMERGENT" HERE HAS A PRECISE MEANING: nothing
+	in this function can see another wolf. There is no coordinator, no leader, no
+	registry, no group scan and not one byte of inter-agent communication — six
+	wolves each running this arrive on six different bearings for the same reason
+	six people each told to stand at a different hour of a clock face end up in a
+	circle. What they share is the CLOCK (this function), never a message.
+
+	Three properties follow from it being PURE, and each one is a requirement
+	this bead had to meet rather than a happy accident:
+
+	  * LOD-SAFE. The LOD manager sleeps distant crocodiles by zeroing velocity
+	    and switching off _physics_process. A slept wolf therefore stops steering
+	    — and cannot corrupt the pack's shape, because no other wolf was ever
+	    reading it. A waking one recomputes this from where it is standing NOW,
+	    with no integrator, no accumulated phase and no remembered target to
+	    catch up to, so it rejoins its slot with no lurch: the first frame back
+	    produces exactly the point it would have produced had it never slept.
+	  * MULTIPLAYER-SAFE. `quarry` is whatever _update_chase_state resolved,
+	    which in a room is the nearest ROOM MEMBER (a RemoteAvatar is in no
+	    group, so it is found through presence, never through group "player").
+	    This function only bends that point; it cannot widen who is hunted or
+	    reach past the detection radius, and every peer computing it gets the
+	    same answer from the same id.
+	  * SPEED-LATTICE-SAFE. It returns a POINT. Nothing here touches
+	    chase_speed_instance, which _ready() already clamped to MAX_CHASE_SPEED.
+	    A flanking wolf covers more ground than a charging one at the SAME speed,
+	    which is the entire trick: the pack is dangerous because it cuts angles,
+	    and running still escapes it.
+
+	The ring is anchored to WORLD compass bearings rather than to the quarry's
+	facing, deliberately. A ring that rotated with the player would swing every
+	wolf sideways the instant the player turned around — a pack that pirouettes
+	on camera input. World-anchored, a wolf holds its bearing and the player is
+	the one who has to keep turning to face it.
+
+	ponytail: slots are claimed by `id % pack_size` with nobody arbitrating, so
+	two wolves CAN draw the same bearing (see pack_size for why the ring is wider
+	than the pack). They are solid to one another (collision_mask 3) and simply
+	jostle, which reads as two wolves fighting over an angle. The upgrade path,
+	if it ever matters, is the one thing this bead was told not to build: a
+	claim, which needs a coordinator.
+	"""
+	if pack_size <= 0 or flank_radius <= 0.0:
+		return quarry
+
+	var to_quarry := quarry - from
+	to_quarry.y = 0.0
+	# The taper is what turns a ring into a spiral — see PACK_FLANK_TAPER for the
+	# proof that it converges. Note it uses the wolf's CURRENT distance, so the
+	# offset shrinks continuously rather than switching off at a threshold; there
+	# is no radius at which a wolf visibly changes its mind.
+	var ring := minf(flank_radius, to_quarry.length() * PACK_FLANK_TAPER)
+	var angle := TAU * float(posmod(id, pack_size)) / float(pack_size)
+	return quarry + Vector3(sin(angle), 0.0, cos(angle)) * ring
 
 
 func _chase_player() -> void:
@@ -861,16 +2642,16 @@ func _wander(delta: float) -> void:
 	so often we apply a bigger course correction and occasionally pause to sniff.
 	"""
 	# Continuous gentle steering — this is what curves the path.
-	wander_heading += rng.randf_range(-1.0, 1.0) * WANDER_TURN_RATE * delta
+	wander_heading += rng.randf_range(-1.0, 1.0) * spec["wander_turn_rate"] * delta
 
 	# Periodic bigger nudges / occasional pauses to look around.
 	time_since_direction_change += delta
-	if time_since_direction_change >= DIRECTION_CHANGE_INTERVAL:
+	if time_since_direction_change >= spec["direction_change_interval"]:
 		time_since_direction_change = 0.0
 		wander_heading += rng.randf_range(-PI / 2.0, PI / 2.0)
-		if rng.randf() < SNIFF_PAUSE_CHANCE:
+		if rng.randf() < spec["sniff_pause_chance"]:
 			is_paused = true
-			pause_time_remaining = PAUSE_DURATION
+			pause_time_remaining = spec["pause_duration"]
 
 	# Convert heading to a direction vector on the XZ plane.
 	movement_direction = Vector3(sin(wander_heading), 0.0, cos(wander_heading))
@@ -881,9 +2662,9 @@ func _wander_speed(delta: float) -> float:
 	A gently varying wander speed so crocodiles ease between strolling and a
 	brisker walk instead of gliding at one constant velocity.
 	"""
-	speed_phase += delta * SPEED_VARIATION_FREQ
+	speed_phase += delta * spec["speed_variation_freq"]
 	var t := 0.5 * (sin(speed_phase + instance_phase) + 1.0)  # 0..1
-	return move_speed_instance * lerp(MIN_WANDER_SPEED_FACTOR, 1.0, t)
+	return move_speed_instance * lerpf(spec["min_wander_speed_factor"], 1.0, t)
 
 
 func _avoid_obstacles() -> bool:
@@ -915,8 +2696,8 @@ func _avoid_obstacles() -> bool:
 	# wider and needs MORE clearance. The height likewise has to rise, or a big boss
 	# samples the ground at its own feet instead of a block's side wall.
 	var probe_scale := maxf(scale.x, scale.z)
-	var origin := global_position + Vector3(0.0, AVOID_FEELER_HEIGHT * scale.y, 0.0)
-	var reach := AVOID_LOOK_AHEAD * probe_scale
+	var origin := global_position + Vector3(0.0, spec["avoid_feeler_height"] * scale.y, 0.0)
+	var reach: float = spec["avoid_look_ahead"] * probe_scale
 	var forward := movement_direction.normalized()
 
 	# Nothing straight ahead? Then there's nothing to steer around.
@@ -924,8 +2705,8 @@ func _avoid_obstacles() -> bool:
 		return false
 
 	# Probe both sides and pick a clear way around.
-	var left_dir := forward.rotated(Vector3.UP, AVOID_FEELER_ANGLE)
-	var right_dir := forward.rotated(Vector3.UP, -AVOID_FEELER_ANGLE)
+	var left_dir := forward.rotated(Vector3.UP, spec["avoid_feeler_angle"])
+	var right_dir := forward.rotated(Vector3.UP, -spec["avoid_feeler_angle"])
 	var left_blocked := _feeler_blocked(space, origin, left_dir, reach)
 	var right_blocked := _feeler_blocked(space, origin, right_dir, reach)
 
@@ -956,7 +2737,7 @@ func _feeler_blocked(space: PhysicsDirectSpaceState3D, origin: Vector3, dir: Vec
 	@param space: The physics space to query
 	@param origin: Ray start, already lifted to feeler height
 	@param dir: Direction to probe (need not be normalized)
-	@param reach: Ray length — AVOID_LOOK_AHEAD scaled by the body (see _avoid_obstacles)
+	@param reach: Ray length — `spec.avoid_look_ahead` scaled by the body (see _avoid_obstacles)
 	@return true if the ray hits something we should steer around
 	"""
 	# OUR OWN MASK, not `create()`'s default of all 32 layers. Fauna roots are
@@ -1130,6 +2911,11 @@ func set_remote_state(pos: Vector3, yaw: float, flags: int) -> void:
 	is_chasing = (flags & MpManager.CROC_FLAG_CHASING) != 0
 	is_fleeing = (flags & MpManager.CROC_FLAG_FLEEING) != 0
 	is_paused = (flags & MpManager.CROC_FLAG_PAUSED) != 0
+	# The burrow rides the byte rather than being re-derived here, and the reason
+	# is in CROC_FLAG_BURROWED's own note: it is the one part of the pose the
+	# other bits do not imply, because the behaviour dispatch that decides it is
+	# skipped for the whole of a pause or a flee.
+	is_burrowed = (flags & MpManager.CROC_FLAG_BURROWED) != 0
 	if (flags & MpManager.CROC_FLAG_BITING) != 0:
 		_start_bite()
 
@@ -1390,7 +3176,7 @@ func _choose_new_direction() -> void:
 func _pause_and_change_direction() -> void:
 	"""Pause briefly, then choose a new direction."""
 	is_paused = true
-	pause_time_remaining = PAUSE_DURATION
+	pause_time_remaining = spec["pause_duration"]
 	_choose_new_direction()
 
 
@@ -1423,29 +3209,36 @@ func _animate_body(delta: float) -> void:
 
 	# How fast are we actually moving along the ground? (0 = standing still)
 	var horizontal_speed := Vector2(velocity.x, velocity.z).length()
-	var move_factor := clampf(horizontal_speed / BASE_MOVE_SPEED, 0.0, 1.6)
+	# The divisor is the species' resting pace, and the AMBUSHER's is 0.0 — a
+	# buried viper does not stroll, so its row says so with a zero (see
+	# SPECIES.sand_viper.move_speed). Floored, because 0.0 / 0.0 is NAN and a NAN
+	# stride phase bakes a NAN basis into the model for the rest of its life. The
+	# floor only ever bites on that one row, and there it is exactly right: for an
+	# animal whose resting pace is zero, ANY motion at all is full effort, which
+	# is what a strike should look like.
+	var move_factor := clampf(horizontal_speed / maxf(spec["move_speed"], 0.01), 0.0, 1.6)
 
 	# Advance the stride phase faster the quicker we move.
-	stride_phase += delta * STRIDE_FREQUENCY * move_factor
+	stride_phase += delta * spec["stride_frequency"] * move_factor
 
 	# Waddle (roll about the forward axis) + vertical bob (twice the stride rate).
-	var roll := sin(stride_phase) * WADDLE_ROLL * move_factor
-	var bob := sin(stride_phase * 2.0) * BOB_AMOUNT * move_factor
+	var roll: float = sin(stride_phase) * spec["waddle_roll"] * move_factor
+	var bob: float = sin(stride_phase * 2.0) * spec["bob_amount"] * move_factor
 
 	# Slow body "snaking" — a lazy yaw sway, offset per-instance.
-	var yaw_sway := sin(stride_phase * 0.5 + instance_phase) * SWAY_YAW * move_factor
+	var yaw_sway: float = sin(stride_phase * 0.5 + instance_phase) * spec["sway_yaw"] * move_factor
 
 	# Lean forward while hunting; ease back to level otherwise.
-	var target_pitch := CHASE_PITCH if is_chasing else 0.0
+	var target_pitch: float = spec["chase_pitch"] if is_chasing else 0.0
 	current_pitch = lerp(current_pitch, target_pitch, delta * 6.0)
 
 	# When basically still, replace the bob with a subtle breathing motion.
 	if move_factor < 0.05:
-		bob = sin(animation_time * BREATHE_SPEED) * BREATHE_AMOUNT
+		bob = sin(animation_time * spec["breathe_speed"]) * spec["breathe_amount"]
 
 	# Compose the transform: first align the snout to the travel direction, then
 	# layer the oscillations on top (re-applying the model's rest scale).
-	var facing := Basis(Vector3.UP, MODEL_FACING_OFFSET)
+	var facing := Basis(Vector3.UP, spec["model_facing_offset"])
 	var oscillation := Basis.from_euler(Vector3(current_pitch, yaw_sway, roll))
 	model.transform.basis = (oscillation * facing).scaled(model_base_scale)
 	model.position.y = model_base_y + bob
@@ -1474,10 +3267,31 @@ func _tick_river_sink(delta: float) -> void:
 	"""
 	var target_y: float = model_rest_y
 	if terrain and is_on_floor() and terrain.is_river_at(global_position):
-		target_y = model_rest_y - RIVER_SINK_DEPTH
+		target_y = model_rest_y - spec["river_sink_depth"]
+	# THE AMBUSHER'S BURROW COMPOSES HERE rather than in a second easing of its
+	# own, and "whichever target is DEEPER" is the whole composition: a viper that
+	# is burrowed AND standing in a river is simply burrowed. That keeps this
+	# function the single writer of `model_base_y` — the property the docstring
+	# above promises the animation does not fight over — instead of two easings
+	# racing for it.
+	# `spec.has` rather than a bare `is_burrowed`, because on a remote-driven body
+	# the flag is UNVALIDATED PEER INPUT (see set_remote_state): a hostile or
+	# simply older master can set the bit on any species, and a row with no burrow
+	# has no depth to read. Locally the arm only ever raises it on the ambusher,
+	# so this costs one hash lookup on the frames the height is actually moving.
+	if is_burrowed and spec.has("ambush_burrow_depth"):
+		target_y = minf(target_y, model_rest_y - float(spec["ambush_burrow_depth"]))
 	if is_equal_approx(model_base_y, target_y):
 		return
-	model_base_y = move_toward(model_base_y, target_y, RIVER_SINK_EASE_SPEED * delta)
+	# RISING IS THE STRIKE. An ambusher surfaces four times faster than anything
+	# sinks (see ambush_surface_ease_speed), and the asymmetry is the animation:
+	# the strike erupts, the re-burial slides. Every other species, and this one
+	# going back under, takes the ordinary sink ease. The lookup sits BELOW the
+	# early-return, so it costs a settled crocodile nothing at all.
+	var ease: float = spec["river_sink_ease_speed"]
+	if target_y > model_base_y and spec.has("ambush_surface_ease_speed"):
+		ease = spec["ambush_surface_ease_speed"]
+	model_base_y = move_toward(model_base_y, target_y, ease * delta)
 
 
 func _animate_bite(delta: float) -> void:
@@ -1498,14 +3312,14 @@ func _animate_bite(delta: float) -> void:
 		return
 
 	# Progress through the bite: 0 at the start, 1 at the end.
-	var p := 1.0 - clampf(bite_timer / BITE_DURATION, 0.0, 1.0)
+	var p := 1.0 - clampf(bite_timer / spec["bite_duration"], 0.0, 1.0)
 	# Two fast chomps (sin over two cycles) and a single forward lunge (sin over
 	# half a cycle, so it pushes out then pulls back to zero).
 	var chomp := sin(p * TAU * 2.0)
-	var lunge := sin(p * PI) * BITE_LUNGE
+	var lunge: float = sin(p * PI) * spec["bite_lunge"]
 
-	var facing := Basis(Vector3.UP, MODEL_FACING_OFFSET)
-	var snap := Basis.from_euler(Vector3(chomp * BITE_PITCH, 0.0, 0.0))
+	var facing := Basis(Vector3.UP, spec["model_facing_offset"])
+	var snap := Basis.from_euler(Vector3(chomp * spec["bite_pitch"], 0.0, 0.0))
 	model.transform.basis = (snap * facing).scaled(model_base_scale)
 	# Lunge along the body's forward axis (+Z) and lift a touch on each snap.
 	model.position = Vector3(0.0, model_base_y + absf(chomp) * 0.04, lunge)
@@ -1544,7 +3358,7 @@ func _start_bite() -> void:
 	if is_biting:
 		return
 	is_biting = true
-	bite_timer = BITE_DURATION
+	bite_timer = spec["bite_duration"]
 
 
 func _on_player_collision(player: Node) -> void:

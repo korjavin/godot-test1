@@ -335,6 +335,43 @@ func _spend_or_fail(progression: Progression, hero: String, skill_id: String) ->
 				% [hero, skill_id, progression.unspent_points(), progression.rank_of(hero, skill_id)])
 
 
+func _settle_on_floor(player: Node) -> void:
+	"""
+	Drop the player onto the probe floor and wait until the body actually reports
+	standing on it. `is_on_floor()` is written by `move_and_slide()`, so it only
+	turns true after real physics frames have run — hence the wait rather than an
+	assignment. Bounded, so a probe that can never land fails on the caller's
+	precondition check instead of hanging the selfcheck.
+
+	The bound is deliberately far above what the drop costs today (~18 ticks at
+	60 Hz: 0.5 m at this gravity, plus the frame or two `physics_frame` leads
+	`_physics_process` by). A bound sized to the measurement turns a raised
+	`physics_ticks_per_second` into a spurious failure in a check that has
+	nothing to do with tick rate — it only has to be small enough to fail fast.
+	"""
+	player.global_position = Vector3(0.0, 0.5, 0.0)
+	player.velocity = Vector3.ZERO
+	for _i in 240:
+		await physics_frame
+		if player.is_on_floor():
+			return
+
+
+func _lift_into_the_air(player: Node) -> void:
+	"""
+	Put the player high above the probe floor and wait out the coyote window, so
+	he is airborne by BOTH halves of the grounding gate — off the floor and past
+	the ledge grace. Same bounded shape, and the same generous bound, as
+	`_settle_on_floor`.
+	"""
+	player.global_position = Vector3(0.0, 20.0, 0.0)
+	player.velocity = Vector3.ZERO
+	for _i in 240:
+		await physics_frame
+		if not player.is_on_floor() and player.coyote_timer <= 0.0:
+			return
+
+
 func _check_tree_data() -> void:
 	"""
 	The trees are hand-written data, and every way they go wrong is silent: a
@@ -690,12 +727,13 @@ func _check_skill_effects_on_player() -> void:
 					% [hero, base_walk[hero], want_walk])
 
 	# --- Now with a progression node and every speed node bought ---------
-	# Comfortably more points than this function spends (8 movement + 4 cooldown +
-	# 3 Air Rush = 15). A budget that runs out mid-way makes every later purchase
-	# a silent no-op and the measurement it feeds a silent pass, so `_spend_or_fail`
-	# below says so instead.
+	# Comfortably more points than this function spends (8 movement + 4 teibi
+	# cooldown + 3 Air Rush + 7 finishing Windman off for the grounding-gate probe
+	# = 22). A budget that runs out mid-way makes every later purchase a silent
+	# no-op and the measurement it feeds a silent pass, so `_spend_or_fail` below
+	# says so instead.
 	var progression := _make_progression()
-	_grant_points(progression, 24)
+	_grant_points(progression, 32)
 	for hero: String in Progression.SKILL_TREES:
 		_spend_or_fail(progression, hero, "fleet")
 		_spend_or_fail(progression, hero, "fleet")
@@ -832,6 +870,116 @@ func _check_skill_effects_on_player() -> void:
 		if not is_equal_approx(boosted, player.WINDMAN_BOOST_DURATION * 1.30):
 			_fail("Long Gale x2 lasted %.3f s, wanted %.3f"
 					% [boosted, player.WINDMAN_BOOST_DURATION * 1.30])
+
+		# --- THE GROUNDING GATE: one Air Rush per landing --------------------
+		# The exploit this closes is arithmetic, and the arithmetic is STILL TRUE
+		# below — nothing was retuned. Max the Focus branch and the cooldown
+		# (8.0 x 0.60 = 4.80 s) comes back 0.4 s BEFORE the maxed flight
+		# (4.0 x 1.30 = 5.20 s) has even finished, so with Updraft and Feather
+		# Fall holding him up, the only thing between a fully-skilled Windman and
+		# endless flight is the ground check in `try_activate_ability()`.
+		#
+		# Driven through `try_activate_ability()` rather than `_ability_windman()`
+		# on purpose: the gate lives there, and that function is the single funnel
+		# BOTH the F key and the touch "Special" button fire through — so proving
+		# it here proves it on mobile too, with no second code path to test.
+		#
+		# Airborne and grounded are REAL physics states here, not a poked
+		# variable: a floor is added under the player and he is moved on and off
+		# it, with the precondition asserted each time. A probe that faked
+		# `is_on_floor()` would still pass against a gate wired to the wrong thing.
+		for _i in 3:
+			_spend_or_fail(progression, "windman", "cd1")
+		_spend_or_fail(progression, "windman", "cd2")
+		_spend_or_fail(progression, "windman", "updraft")
+		_spend_or_fail(progression, "windman", "soar")
+		_spend_or_fail(progression, "windman", "soar")
+
+		var cd_max: float = float(player._skilled_ability_cooldown())
+		var fly_max: float = player.WINDMAN_BOOST_DURATION \
+				* progression.skill_mult("windman", "windman_boost")
+		if cd_max >= fly_max:
+			# Not a gate failure — a shout that the numbers moved underneath this
+			# probe, which would then be proving something easier than it was
+			# written for (the cooldown alone would already break the chain).
+			print("NOTE: windman cooldown %.2f s >= flight %.2f s; the grounding gate "
+					% [cd_max, fly_max] + "is now belt-and-braces rather than the only guard")
+
+		var floor_body := StaticBody3D.new()
+		var floor_shape := CollisionShape3D.new()
+		var floor_box := BoxShape3D.new()
+		floor_box.size = Vector3(40.0, 2.0, 40.0)
+		floor_shape.shape = floor_box
+		floor_body.add_child(floor_shape)
+		root.add_child(floor_body)
+		floor_body.global_position = Vector3(0.0, -1.0, 0.0)  # top face at y = 0
+
+		# 1. GROUNDED — the designed flight is untouched. This is the half that
+		#    fails if the gate ever turns into a nerf of legitimate play.
+		await _settle_on_floor(player)
+		if not player.is_on_floor():
+			_fail("the grounded case never landed — the gate probe below proves nothing")
+		player.windman_boost_timer = 0.0
+		player.ability_cooldowns[windman_index] = 0.0
+		player.try_activate_ability()
+		if not is_equal_approx(float(player.windman_boost_timer), fly_max):
+			_fail("a grounded fully-skilled Air Rush lasted %.3f s, wanted the full %.3f"
+					% [player.windman_boost_timer, fly_max])
+		if not is_equal_approx(float(player.ability_cooldowns[windman_index]), cd_max):
+			_fail("a grounded Air Rush charged %.3f s of cooldown, wanted %.3f"
+					% [player.ability_cooldowns[windman_index], cd_max])
+
+		# 2. AIRBORNE with the cooldown already back — the exploit's exact moment:
+		#    0.4 s of flight still to run and the power ready again. Refuse it.
+		await _lift_into_the_air(player)
+		if player.is_on_floor() or player.coyote_timer > 0.0:
+			_fail("the airborne case never left the ground (floor=%s coyote=%.3f)"
+					% [player.is_on_floor(), player.coyote_timer])
+		player.windman_boost_timer = 0.4
+		player.ability_cooldowns[windman_index] = 0.0
+		var falling: float = float(player.velocity.y)
+		player.try_activate_ability()
+		if not is_equal_approx(float(player.windman_boost_timer), 0.4):
+			_fail("a mid-air Air Rush re-fired (boost jumped to %.3f s) — endless flight is still open"
+					% player.windman_boost_timer)
+		if player.velocity.y > falling:
+			_fail("a refused Air Rush still launched him: %.3f m/s, was falling at %.3f"
+					% [player.velocity.y, falling])
+		# ...and refusing is FREE, exactly like the rain gate: pressing F in the
+		# air is a no-op, not a punishment that eats the next landing's rush.
+		if not is_zero_approx(float(player.ability_cooldowns[windman_index])):
+			_fail("a refused mid-air press still charged %.3f s of cooldown"
+					% player.ability_cooldowns[windman_index])
+
+		# 3. LANDING RE-ARMS IT. The gate is a pure read of live state and stores
+		#    nothing, so it has nothing to latch on: feet down, next press flies.
+		#    (Same reason a respawn or a hero switch cannot strand him — neither
+		#    has any gate state to clear.)
+		player.windman_boost_timer = 0.0
+		await _settle_on_floor(player)
+		if not player.is_on_floor():
+			_fail("the landing case never touched down — the latch check below "
+					+ "would blame the gate for a probe that never landed")
+		player.ability_cooldowns[windman_index] = 0.0
+		player.try_activate_ability()
+		if is_zero_approx(float(player.windman_boost_timer)):
+			_fail("Windman was still refused after landing — the grounding gate latched")
+
+		# 4. It is WINDMAN's gate, not a blanket airborne ban: a mid-air Teibi
+		#    still transforms. (Switching heroes is blocked mid-boost in the real
+		#    game, so clear the boost first, as expiry would.)
+		if teibi_index >= 0:
+			player.windman_boost_timer = 0.0
+			player.set_active_character(teibi_index)
+			await _lift_into_the_air(player)
+			player.ability_cooldowns[teibi_index] = 0.0
+			player.try_activate_ability()
+			if is_zero_approx(float(player.ability_cooldowns[teibi_index])):
+				_fail("the grounding gate refused a mid-air teibi — it must gate windman alone")
+			player._revert_teibi_to_normal()
+			player.set_active_character(windman_index)
+
+		floor_body.queue_free()
 		player.windman_boost_timer = 0.0
 		player.velocity = Vector3.ZERO
 

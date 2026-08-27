@@ -407,8 +407,11 @@ const STRUCTURE_THEMES: Dictionary = {
 ## Without it the FIRST run of a session gets no spawn protection at all: the
 ## player's own clear_nearby_crocodiles() sweep only runs on respawn/restart, so a
 ## fresh boot drops the player into a chunk holding ~10 crocodiles with nothing
-## keeping them off (0,0) — several sit inside DETECTION_RADIUS (15) and start
-## chasing on frame one, and BASE_CHASE_SPEED (5.5) beats WALK_SPEED (5.0).
+## keeping them off (0,0) — several sit inside their own `detection_radius` (15
+## for a crocodile) and start chasing on frame one, and every species' chase_speed
+## beats WALK_SPEED (5.0) by construction. Both used to be the consts
+## DETECTION_RADIUS / BASE_CHASE_SPEED; they are SPECIES rows now, which is why
+## this bubble is stated as a radius and not as "bigger than the one number".
 ## Enforced here, in world generation, rather than as another sweep: it is a pure
 ## function of position, so it holds identically for new_run() and needs no
 ## ordering dance with the player's _ready(), which runs before any chunk exists.
@@ -432,7 +435,7 @@ const PLATFORM_SPAWN_HEIGHT: float = 0.6
 
 ## How far in from a platform's edge the guard's spawn point is drawn, so it
 ## lands cleanly on the surface rather than half off it. Read by
-## croc_spawn_selfcheck.gd, which walks the same inset ellipse at every angle.
+## enemy_spawn_selfcheck.gd, which walks the same inset ellipse at every angle.
 const PLATFORM_SPAWN_EDGE_INSET: float = 1.0
 
 ## Enable/disable collectible coin spawning on terrain
@@ -1140,11 +1143,40 @@ const TREASURE_CHEST_SCRIPT := preload("res://scripts/treasure_chest.gd")
 ## than argued, and it is the property that makes appending kinds free forever.
 ##
 ## The rate that harness reports is 11.0% survival, 1 per 48.6 — inside the
-## intended 1-per-40-60 band, so LANDMARK_CHANCE stays at 0.19. It is NOT
+## intended 1-per-40-60 band, so LANDMARK_CHANCE stayed at 0.19 there. It is NOT
 ## comparable to the three rows above (different harness: coins, chests and
 ## crocodiles disabled, and its own seed set), which is precisely why the digest
 ## is the measurement that decided this and the rate is only the sanity check.
-const LANDMARK_CHANCE: float = 0.19
+##
+## WAVE 5 RETUNE, 0.19 -> 0.21 (38 -> 48 kinds, the epic's target reached). The
+## digest was re-run FIRST, because no rate means anything until the append-is-free
+## property is confirmed at the new kind count: same 17x17 field x 60 seeds (17340
+## chunks), run twice against the same code, once with all 48 registry entries and
+## once with landmark_builders.gd checked back out at 38:
+##   48 kinds: 3286 rolled, 359 built, digest 403935944
+##   38 kinds: 3286 rolled, 359 built, digest 403935944
+## BIT-IDENTICAL again — the same chunks, in the same places, to the millimetre.
+##
+## THEN THE RATE, swept on that same harness across three chances. Survival is flat
+## across all three, as it has to be: the candidate loop judges a spot against the
+## chunk's geometry and knows nothing about how often it is asked.
+##   0.19: 3286 rolled, 359 built — 10.9% survival, 1 per 48.3
+##   0.21: 3646 rolled, 391 built — 10.7% survival, 1 per 44.3
+##   0.23: 3958 rolled, 424 built — 10.7% survival, 1 per 40.9
+## The 0.19 row is what forced the change, and NOT because the kind count moved —
+## it cannot, and that is now measured twice. It is that this harness puts 0.19 at
+## 1 per 48.3, the SPARSE END of the band, while the wave-3 retune that chose 0.19
+## believed on its own cruder harness that it was setting 1 per 43 — "the middle of
+## the band", in that paragraph's own words. 0.21 is the smallest step that makes
+## the constant match the intent already written beside it: 1 per 44.3 measured,
+## mid-band, and still 1.9x rarer than the artifacts' 1-in-23, which is the
+## "destinations, not scenery" margin every one of these retunes has protected.
+##
+## 0.23 WAS MEASURED AND NOT TAKEN. It hits the epic's "1-per-40-ish" phrasing
+## exactly, but taking it would move the design target from mid-band to the dense
+## end — a judgement the sweep does not force. The sweep only shows where 0.19
+## actually landed, so the retune goes only as far as that.
+const LANDMARK_CHANCE: float = 0.21
 
 ## Fixed salt XORed into run_seed for the landmark hash stream, in the
 ## ARTIFACT_SALT / CAMP_SALT / CHEST_SALT / BIOME_SALT / BOSS_SEED family: an
@@ -1607,6 +1639,93 @@ const CITY_SIGNAL_CHANCE: float = 0.55    # else a lamp post
 ## stream, in the same positions, with the tail simply not spawned.
 const CITY_CROC_DIVISOR: float = 2.5
 
+# ============================================================================
+# WHICH PREDATOR A BIOME GETS
+# ============================================================================
+## The whole species dispatch, and it is a TABLE LOOKUP ON A PURE FUNCTION —
+## `biome_at(chunk_centre)` — with ZERO RNG draws behind it. Read that as the
+## hard constraint it is, not as a style preference:
+##
+##   The chunk's crocodile RNG is ONE shared stream. Every position in the chunk
+##   is the sequence of draws that came before it, so a single extra draw here
+##   would slide every crocodile in every chunk to a different spot — a whole new
+##   world, for free, on a change that was only ever supposed to swap a mesh.
+##   That is why species is DISPATCH and not a roll: variety comes from the biome
+##   field, which the world already has, and costs the stream nothing.
+##
+## It is the same trick, for the same reason, as CITY_CROC_DIVISOR right above
+## and DESERT_BLOCK_KEEP_EVERY: derive from the biome, never draw for it.
+##
+## A biome with no entry gets the crocodile — which is why PLAINS is absent
+## rather than spelled out as "crocodile". Absent is the statement: nothing about
+## its spawning changed, and with the epic complete PLAINS is the one band that
+## still keeps the original animal.
+##
+## ADDING A SPECIES (asc.3/.5/.6/.9 each added exactly one) is three things and
+## no more: a row in `SPECIES` in piglet_crocodile_ai.gd, a .tscn beside
+## sand_viper.tscn, and one line here. No new script, no subclass, no branch in
+## the spawner — and, as the mountain cougar and the city alley hound below
+## demonstrate, not even necessarily a new `match` arm: those two SHARE one
+## ("burst"), because a pounce and an alley sprint differ only in numbers.
+##
+## The name must match a key of that SPECIES table. A typo does not crash: the
+## AI's _ready() warns and falls back to the crocodile row, and _species_scene()
+## below falls back to the crocodile scene, so a mistake here is a visibly wrong
+## animal rather than a dead chunk.
+const BIOME_SPECIES: Dictionary = {
+	Biome.DESERT: {
+		"species": "sand_viper",
+		"scene": "res://scenes/characters/sand_viper.tscn",
+	},
+	## The forest is the one band that already crowds the player's SIGHT — it is
+	## the densest tree cover in the world — so it is the right one to put an
+	## enemy in that crowds their SPACE. The wolf's pack steering (see
+	## piglet_crocodile_ai.pack_steer_point) has each animal swing to its own slot
+	## on a ring, and trunks are what make that read: the wolf you lost behind one
+	## is the wolf arriving from the side.
+	Biome.FOREST: {
+		"species": "timber_wolf",
+		"scene": "res://scenes/characters/timber_wolf.tscn",
+	},
+	## The tundra is the band this file's SNOW section calls the HOSTILE one —
+	## nothing thinned, the full distance-scaled croc density, and the only shelter
+	## the ice you can climb onto. It is also the most OPEN ground in the world (a
+	## handful of dead trees per chunk and a lot of nothing between them), which is
+	## the one place a straight-line charger belongs: the frost bear's committed
+	## charge (see piglet_crocodile_ai.charge_steer_point) is only fair if you can
+	## see it coming and have somewhere to step, and both of those are what open
+	## ground is. The forest is the exact inverse — put this animal among trunks
+	## and it would spend its life shouldering into them.
+	Biome.SNOW: {
+		"species": "frost_bear",
+		"scene": "res://scenes/characters/frost_bear.tscn",
+	},
+	## A massif band is a MAZE — impassable block walls with long straight
+	## corridors between them (see the MOUNTAIN section: mountains are things you
+	## route around, never terrain you climb). That is the one place a burst
+	## predator belongs. The cougar's pounce (see piglet_crocodile_ai's
+	## burst_cycle_factor) is the only thing in this game that goes above
+	## MAX_CHASE_SPEED, and it is only fair where a corridor gives you the sight
+	## line to see it start and the walls give its recovery leg somewhere to break
+	## line of sight. Put it on the open tundra and it would be a 11 m/s animal
+	## visible from 40 m; put the bear in here and it would shoulder into rock.
+	Biome.MOUNTAIN: {
+		"species": "mountain_cougar",
+		"scene": "res://scenes/characters/mountain_cougar.tscn",
+	},
+	## The city is the SAFE band — CITY_CROC_DIVISOR above divides its predator
+	## target by 2.5 and the roofs are the real shelter — and that is exactly why
+	## its animal is the one with the tightest escape margin in the game. Density
+	## and danger are separate dials: this band turns the first one down, so the
+	## few hounds that are here are individually harder to shake (the alley sprint
+	## runs the same burst arm as the cougar at half the cycle length). The band
+	## stays safe because you meet one, not six.
+	Biome.CITY: {
+		"species": "alley_hound",
+		"scene": "res://scenes/characters/alley_hound.tscn",
+	},
+}
+
 # ----------------------------------------------------------------------------
 # SNOW — frozen dead trees and mammoth skeletons on an open tundra
 # ----------------------------------------------------------------------------
@@ -1735,8 +1854,17 @@ const DUNE_COLOR_B := Color(0.60, 0.50, 0.35)  # darker sandy
 # SECTION 2: INTERNAL STATE
 # ============================================================================
 
-## Preloaded crocodile scene for spawning
+## Preloaded crocodile scene for spawning. Still the DEFAULT species' scene and
+## still the seam the kill switch and every self-check harness assign by hand, so
+## the non-crocodile species are cached separately below rather than folding this
+## one into a dictionary and quietly demoting it.
 var crocodile_scene: PackedScene
+
+## Scenes for the NON-crocodile species, keyed by Biome (see BIOME_SPECIES).
+## Loaded on first use rather than in _ready() because a run may never walk into a
+## desert; the dictionary exists so a desert chunk does not re-`load()` per chunk
+## once nothing else is holding the scene alive.
+var _species_scenes: Dictionary = {}
 
 ## Preloaded coin scene for spawning
 var coin_scene: PackedScene
@@ -4753,8 +4881,38 @@ func spawn_crocodiles_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D
 	#
 	# This is a DESIGN number (the difficulty gradient's sibling), not a perf trim,
 	# so the "entity counts are never reduced as an optimization" convention holds.
-	if biome_at(chunk_world_pos.x, chunk_world_pos.z) == Biome.CITY:
+	var chunk_biome: Biome = biome_at(chunk_world_pos.x, chunk_world_pos.z)
+	if chunk_biome == Biome.CITY:
 		chunk_croc_target = maxi(1, int(roundf(float(chunk_croc_target) / CITY_CROC_DIVISOR)))
+
+	# WHICH PREDATOR THIS CHUNK GETS — one table lookup on the biome already
+	# resolved above, and NOT ONE RNG DRAW (see BIOME_SPECIES for why that is a
+	# constraint rather than a preference). The whole chunk gets one species,
+	# because the biome field is what varies and it varies at the ~8-chunk scale
+	# of BIOME_CELL_SIZE; picking per crocodile would need a draw, and a draw is
+	# exactly what is not allowed here.
+	#
+	# `rng` is untouched by any of this, so a PLAINS chunk generates the identical
+	# crocodiles it always did, down to the last float.
+	#
+	# The crocodile stays the default, and a biome with no BIOME_SPECIES entry
+	# never even reaches the load: PLAINS takes the `crocodile_scene` it always
+	# took. A species whose scene fails to load also falls back rather than
+	# spawning nothing — same degrade-don't-crash rule as the AI's own unknown-
+	# species warning, and a visibly wrong animal beats an invisibly empty chunk.
+	var chunk_species: String = "crocodile"
+	var species_scene: PackedScene = crocodile_scene
+	if BIOME_SPECIES.has(chunk_biome):
+		var row: Dictionary = BIOME_SPECIES[chunk_biome]
+		if not _species_scenes.has(chunk_biome):
+			_species_scenes[chunk_biome] = load(row["scene"])
+			if not _species_scenes[chunk_biome]:
+				push_warning("endless_terrain: failed to load %s, using the crocodile"
+						% row["scene"])
+		var scene: PackedScene = _species_scenes[chunk_biome]
+		if scene:
+			chunk_species = row["species"]
+			species_scene = scene
 
 	# Try to spawn crocodiles with proper spacing
 	var attempts := 0
@@ -4812,8 +4970,14 @@ func spawn_crocodiles_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D
 		if not valid_position:
 			continue
 
-		# Instantiate the crocodile
-		var crocodile_instance = crocodile_scene.instantiate()
+		# Instantiate this chunk's predator (crocodile everywhere but the desert)
+		var crocodile_instance = species_scene.instantiate()
+		# NAMED "Crocodile_…" WHATEVER THE SPECIES, deliberately. The name is this
+		# spawn SLOT's identity, not a label: piglet_crocodile_ai.croc_id_for()
+		# hashes it into the room-wide id multiplayer syncs on, and
+		# enemy_spawn_selfcheck classifies ground spawns by the prefix. Species is
+		# a pure function of position, so every peer already agrees on it — a
+		# per-species prefix would only churn every id for nothing.
 		crocodile_instance.name = "Crocodile_%d_%d_%d" % [chunk_pos.x, chunk_pos.y, spawned_positions.size()]
 
 		# Position relative to chunk
@@ -4827,6 +4991,11 @@ func spawn_crocodiles_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D
 		# seeds its own rng from it instead of randomize()ing. Non-negative index =
 		# the ground crocodile stream (see _croc_roll_seed).
 		crocodile_instance.setup_roll_seed(_croc_roll_seed(chunk_pos, spawned_positions.size()))
+		# SAME CALL-ORDER CONTRACT, and it is the reason `species` is a plain
+		# public field: _ready() is where it is resolved into `spec` and where the
+		# size/speed rolls that READ that spec happen, so assigning it after
+		# add_child() would roll a crocodile's numbers onto a viper's body.
+		crocodile_instance.species = chunk_species
 
 		# Add to chunk (so it gets removed when chunk is removed)
 		parent_chunk.add_child(crocodile_instance)
@@ -6808,7 +6977,7 @@ func _spawn_mountain_content(chunk_center: Vector3, rng: RandomNumberGenerator, 
 	# burying the guard in rock the platform descriptor knows nothing about. It went
 	# unfired through 4 x 289 chunks — and then fired the moment the snow band's
 	# threshold retune reshuffled the field, at 1.14 m deep, caught by
-	# croc_spawn_selfcheck.gd's check 1 exactly as that note predicted it would be.
+	# enemy_spawn_selfcheck.gd's check 1 exactly as that note predicted it would be.
 	# The mound needs no marking: its footprint radius is base_size * 0.71 >= 5.68,
 	# so the first clause has always covered it.
 	var avoid: Array = []

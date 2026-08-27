@@ -79,3 +79,6 @@ addons/
 .beads-credential-key
 .beads/proxieddb/
 *.gate.lock*
+
+# Python bytecode from the model generator scripts
+__pycache__/

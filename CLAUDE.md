@@ -39,7 +39,8 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #   help_selfcheck           keymap card vs the real input map
 #   landmark_selfcheck       every builder fits its declared radius
 #   prop_selfcheck           prop/structure footprints, budgets, palettes
-#   croc_spawn_selfcheck     no crocodile spawns inside stone
+#   enemy_spawn_selfcheck    every species: no spawn in stone, deterministic
+#                            placement, biome dispatch, behaviour, MP identity
 #   perf_selfcheck           frame-spike telemetry (thresholds, correlation, reset)
 #   chunk_stream_selfcheck   ground-first chunk streaming (floor, debt, determinism)
 
@@ -55,6 +56,11 @@ The lobby in `server/` is a separate Go service with its own `go test` suite.
 `trimesh` + `numpy`), output to `assets/models/characters/`. The live Windman is the
 separate parts in `windman_parts/`, assembled by `scenes/characters/windman_updated.tscn`
 — not the monolithic `windman.glb`.
+
+The five biome-predator models share one toolkit, `scripts/predator_parts.py`, which
+carries the orientation / feet-at-y=0 / one-vertex-coloured-mesh contract an enemy model
+must honour and asserts it on every build. Running it directly rebuilds and checks all
+five: `python3 scripts/predator_parts.py` -> `SELFCHECK OK`.
 
 Each `.gd` has a sibling `.gd.uid` managed by Godot; don't hand-edit them.
 
@@ -154,19 +160,60 @@ crushes crocodiles and cannot jump); phoboman → Stink Wave (crocodiles flee).
 
 ### Crocodiles
 `scripts/piglet_crocodile_ai.gd` + `scenes/characters/piglet_crocodile.tscn` is the enemy
-the terrain spawns. It wanders, chases within `DETECTION_RADIUS`, and calls
+the terrain spawns. It wanders, chases within its detection radius, and calls
 `player.hit_by_crocodile()`. Crocodiles are solid to one another (`collision_mask = 3`);
 the player stays mask 1 and passes through, so damage is decided entirely by the
 crocodile's own collision handling.
+
+**Species are data, not subclasses.** Every trait that makes one predator feel different —
+speeds, detection, wander rhythm, obstacle feelers, waddle/bite geometry, river sink — is a
+row of the `SPECIES` const dict of plain dicts at the top of `piglet_crocodile_ai.gd`, the
+same shape as `Progression.SKILL_TREES`. An instance's `species` field is a plain public
+var assigned **before `add_child`** (same call-order contract as `setup_as_boss()`), and
+`_ready()` resolves it once into `spec`, which the per-frame paths read. A new predator is
+a new entry there plus at most one new arm in a `match` — never a new script and never a
+subclass. Game-wide contracts stay top-level consts and no species may opt out of them.
+
+**Which species a chunk spawns is PURE DISPATCH on `biome_at(chunk_centre)`** —
+`BIOME_SPECIES` in `endless_terrain.gd`, a biome with no entry getting the crocodile.
+It must never cost an RNG draw: the chunk's crocodile RNG is one shared stream, so a
+single extra draw slides every crocodile in the world to a new spot. Same rule, same
+reason, as `CITY_CROC_DIVISOR` and `DESERT_BLOCK_KEEP_EVERY`. Adding a predator is a
+`SPECIES` row, a `.tscn` beside `sand_viper.tscn`, and one line in that map;
+`enemy_spawn_selfcheck` fails if the row is incomplete, breaks the speed lattice, is
+assigned after `add_child`, is reachable from no biome, or carries a `behavior` string
+no probe in that file measures. **It iterates `SPECIES`, `BIOME_SPECIES` and the `Biome`
+enum, never a list of its own** — so a new predator is covered the day its row lands, and
+a new behaviour arm has to bring a probe with it. Keep it that way.
+
+**Behaviour is one `match` on `spec["behavior"]` at the end of `_update_chase_state()`,
+and every arm is one call to its own `_behave_*()`** — no logic in the arm, no state
+shared between arms, `"solo"` deliberately having no arm at all (it is the code above it,
+so an unknown behaviour string degrades to solo). An arm may bend `chase_target`, which is
+where a predator *steers*, never how far it can smell — the detection decision is made
+above the dispatch. The timber wolf is the first: each one steers to its own slot on a
+ring around the quarry, derived from its own deterministic id, so the pack surrounds with
+no coordinator, no registry and no group scan — which is also what makes it LOD-safe (a
+slept wolf corrupts nothing, a waking one recomputes with no lurch).
 
 Per-instance speed and size rolls are **not** deterministic (they use a `randomize()`d
 RNG); only *positions* are. Bosses skip both rolls — `setup_as_boss()` must be called
 **before** `add_child`, because `_ready()` is where the rolls happen.
 
-`BASE_CHASE_SPEED` (5.5) is deliberately above `WALK_SPEED` (5.0) so walking gets you
-caught, and `MAX_CHASE_SPEED` (8.5) is deliberately below the slowest character's run, so
+The species `chase_speed` (5.5 for the crocodile) is deliberately above `WALK_SPEED` (5.0)
+so walking gets you caught, and `MAX_CHASE_SPEED` (8.5) — a top-level const clamping every
+species' **sustained** speed — is deliberately below the slowest character's run, so
 **running always escapes**. Keep that chain intact when retuning anything in it — the
 river wade factor is floored for the same reason.
+
+**The `"burst"` arm is the one exception, and the only way anything in this game goes above
+8.5.** The mountain cougar and city alley hound multiply that already-clamped speed by a
+`burst_factor` for a bounded pounce (11.05 and 11.48 m/s — over the ceiling *and* over the
+9.0 run), then pay it back in a mandatory recovery leg. So the promise is not "nothing is
+ever faster than 8.5" but **running escapes across the whole pounce-and-recovery cycle** —
+a claim about a gap over time, and measured at both ends (a walking player must still be
+caught) by `enemy_spawn_selfcheck` check 8, which probes *every* row carrying the
+behaviour — a second burst species needs no edit there.
 
 The spawn point is a crocodile-free bubble enforced in generation
 (`SPAWN_SAFE_RADIUS`, mirrored in `player_controller`; keep the two in step).
@@ -176,7 +223,9 @@ The spawn point is a crocodile-free bubble enforced in generation
 `set_lod_active(false)` (which zeroes velocity and stops `_physics_process`), and freezes
 coin animation beyond its own radius. Two invariants:
 
-- **`SIM_RADIUS` (45) must stay well above `DETECTION_RADIUS` (15).** Anything that could
+- **`SIM_RADIUS` (45) must stay well above every species' `detection_radius` (5–18 across
+  the table — the ambushing viper's 5 is the floor, the wolf's 18 the ceiling; 25 for a
+  boss).** Anything that could
   chase or touch the player is always fully awake, so near-player behaviour is unchanged.
 - **Crocodiles are slept, never removed.** Entity counts stay the same.
 

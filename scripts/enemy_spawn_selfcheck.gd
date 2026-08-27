@@ -1,0 +1,2080 @@
+extends SceneTree
+## Headless self-check for EVERY ENEMY THE TERRAIN SPAWNS, in every biome. Three
+## subjects, one sweep:
+##
+##   OBSTACLE AVOIDANCE — no enemy of any species may spawn inside solid stone.
+##   DETERMINISTIC PLACEMENT — where and what a chunk spawns is a pure function
+##     of (chunk coords, run_seed), to the last bit, in any generation order.
+##   MULTIPLAYER IDENTITY — every species shares one deterministic node name and
+##     one state byte, which is the whole of how a peer recognises a predator.
+##
+## They live together rather than in three files because they are the same
+## measurement on the same field: the spawner that must not put a body in stone
+## is the spawner that decides what that body IS and what it is CALLED, and all
+## three failures have the same shape — nothing errors, nothing logs, you just
+## get the wrong animal, in the wrong place, that the room cannot agree on.
+##
+## THE COVERAGE IS DRIVEN BY THE TABLES, NOT BY A LIST IN THIS FILE. Adding a
+## predator to this game is a `SPECIES` row, a `.tscn` and one `BIOME_SPECIES`
+## line (see CLAUDE.md); so every loop below iterates those two tables and the
+## `Biome` enum, and nothing here names a species. The consequences are the
+## point: an unreachable row fails, an unvisited biome fails, a species the sweep
+## never spawned fails, and a `behavior` string with no probe in this file fails
+## by name. The SEVENTH predator is covered the day its row lands.
+##
+##   godot --headless --path . --script res://scripts/enemy_spawn_selfcheck.gd
+##
+## Prints "SELFCHECK OK" and exits 0, or prints what failed and exits 1 — the
+## same shape as prop_selfcheck.gd / landmark_selfcheck.gd, and it exists for the
+## same reason those do: every way of breaking this looks like ordinary scenery
+## from the outside. A crocodile wedged in a block is not an error anywhere — it
+## is a body the physics server shoves out sideways, or one that stands in a wall
+## biting a player who cannot reach it, in a world where nothing logs anything.
+##
+## THE THREE SPAWNERS AND WHAT EACH RELIES ON, because they are not alike:
+##
+##   * spawn_crocodiles_in_chunk (ground) rejects candidates within
+##     `ob.radius + min_object_clearance` of every footprint in `obstacles`.
+##   * spawn_bosses_in_chunk walks BOSS_PLACE_TRIES candidates against the same
+##     list with a per-scale clearance, because a 6x boss needs ~4.2 m.
+##   * spawn_platform_crocodiles gets NO obstacles at all. It is handed walkable
+##     tops and trusts their declared geometry — which is exactly where this
+##     check earns its keep, and where the bug it was written for lived: a wall
+##     ridge declared its surface at the SINGLE-block height while 30% of its
+##     sections are DOUBLED, so a guard dropped in at surface + spawn height
+##     landed inside a hump whenever the random angle picked one.
+##
+## HOUSE RULE, followed throughout: every check is an EFFECT measurement against
+## the chunk's REAL collision shapes — the CollisionShape3D children of its
+## BlockCollision body — never a read-back of the declared footprints, because
+## the declared footprints are precisely what a bug here gets wrong. Every check
+## has a negative control beside it, since "no crocodile was in stone" is also
+## true of a sweep that generated no crocodiles, no stone, or no doubled wall.
+##
+## Cost: ~1.2 s for 2 seeds x 289 chunks plus a 49-chunk determinism field — the
+## same order as the single-species version it grew out of, because the added
+## coverage is per SPECIES (six probes) and not per body. Don't grow it into a
+## suite; if a fourth spawner appears it belongs in the sweep, not in a new file,
+## and a seventh species should cost it nothing at all.
+##
+## THE ONE THING IT PRINTS THAT IS NOT ITS OWN: a handful of "RID allocations …
+## were leaked at exit" / "resources still in use at exit" lines AFTER the
+## verdict. Those are the engine reporting the STATIC shared caches this project
+## deliberately keeps — endless_terrain's shared unit box and ground meshes, the
+## artifact glow and camp ember materials, ToonShading's styled-material cache,
+## and the two PackedScenes loaded below — none of which is owned by, or
+## releasable from, a check. They are the same lines any harness that loads the
+## crocodile scene prints, they appear after the exit code is decided, and they
+## are NOT a failure. Everything else must stay silent: a run that prints a
+## SCRIPT ERROR beside SELFCHECK OK is measuring a world it did not build (see
+## _make_chunk_parent and _boot for the two traps that caused exactly that).
+
+const TERRAIN_SCRIPT: String = "res://scripts/endless_terrain.gd"
+const CROC_AI_SCRIPT: String = "res://scripts/piglet_crocodile_ai.gd"
+const PLAYER_SCRIPT: String = "res://scripts/player_controller.gd"
+const MP_SCRIPT: String = "res://scripts/mp_manager.gd"
+const CROC_SCENE: String = "res://scenes/characters/piglet_crocodile.tscn"
+const COIN_SCENE: String = "res://scenes/collectibles/coin.tscn"
+
+## Every `behavior` string this file has a probe for. THE COVERAGE GATE: a
+## SPECIES row carrying a behaviour that is not in here fails the run by name,
+## because the alternative is the failure this whole epic's checks were written
+## against — a new arm that ships, reads correctly, does nothing, and is measured
+## by nobody. "solo" is in the list and has no probe of its own on purpose: it is
+## the code ABOVE the dispatch (see the behaviour `match` in _update_chase_state),
+## which the ambush trip-wire's crocodile control drives on every run.
+const PROBED_BEHAVIORS: Array[String] = ["solo", "pack", "ambush", "charge", "burst"]
+
+## Field side in chunks. 17 x 17 = 289, the size every measurement in CLAUDE.md's
+## terrain sections is quoted at, so a number printed here is comparable to them.
+const FIELD: int = 17
+
+## Two run seeds, not one. The biome offset is derived from run_seed, so a single
+## seed can land most of a field in desert (few structures) and miss the walls
+## entirely — check 3 is the control that says so out loud if it happens.
+const RUN_SEEDS: Array[int] = [12345, 20260826]
+
+## Angles walked around each platform's spawn ellipse in check 2. The spawner
+## draws ONE angle per platform, so the live sweep in check 1 samples a single
+## point per structure; 16 covers the arc a different run_seed would have picked.
+const PLATFORM_ANGLE_SAMPLES: int = 16
+
+## Float slack. A body resting exactly on a face is correct, not a failure.
+const EPSILON: float = 0.001
+
+## Side of the field the determinism check regenerates, in chunks. Small on
+## purpose — determinism is a property of one chunk's hash stream, so 49 chunks
+## across four generations say everything 289 would, at a sixth of the cost.
+const DETERMINISM_FIELD: int = 7
+
+## The seed check 9's negative control regenerates the field under. ITS OWN
+## CONSTANT, not RUN_SEEDS[1], because shortening RUN_SEEDS is a legitimate thing
+## to do while bisecting a failure and an index off the end of it would take the
+## whole run down — silently, since a script error before _report() means quit()
+## is never reached and the process exits 0 with no verdict at all. That is the
+## exact green lie this file's header is written against.
+const DETERMINISM_CONTROL_SEED: int = 777
+
+## HOW TWO GENERATIONS OF THE SAME CHUNK ARE COMPARED: `var_to_bytes` of the
+## signature array, i.e. bit for bit, with no formatting step in the middle to
+## round anything away. That is the right instrument and a tolerance is not: two
+## peers sharing a run_seed do not average their worlds, they either agree or
+## they do not, and a placement that drifts in the last ulp is one that will
+## eventually round to a visibly different metre. (GDScript's `%` has no `%g`, so
+## a 17-digit text form is not available anyway — the bytes are both exact and
+## cheaper.)
+
+var _failures: Array[String] = []
+
+## endless_terrain.gd's `Biome` enum, read out of the script's constant map in
+## _run(). Read rather than restated so the biome COVERAGE gate below counts the
+## bands the world actually has: a seventh biome makes this check demand a
+## seventh band in the field, instead of silently never testing it.
+var _biomes: Dictionary = {}
+
+## Union across every run seed of the species the sweep actually spawned, and of
+## the biomes its chunks actually landed in. The coverage verdict is taken over
+## the UNION and not per seed, because a single 289-chunk field legitimately
+## misses a band (seed 12345 contains no snow at all) — what may not happen is
+## the whole run missing one.
+var _species_seen_all: Dictionary = {}
+var _biomes_seen_all: Dictionary = {}
+
+## Species whose multiplayer contract (check 10) has already been probed. One
+## probe per ROW, not per body: the contract is a property of the script and the
+## scene, and 2800 crocodiles a seed would pay for the same answer 2800 times.
+var _mp_probed: Dictionary = {}
+
+## mp_manager.gd's CROC_FLAG_* constants, read through get_script_constant_map()
+## for the same reason SPECIES is (a `const` is not a property, and MpManager
+## has no instance here). Named through CROC_STATE_BITS rather than restated, so
+## a bit that is renamed there fails check 10 by name instead of silently
+## comparing against a zero.
+var _mp_consts: Dictionary = {}
+
+## piglet_crocodile_ai.gd's SPECIES table and endless_terrain.gd's BIOME_SPECIES
+## map, read once in _run() through get_script_constant_map() — see the note there
+## on why a `const` cannot be read as a property.
+var _species_table: Dictionary = {}
+var _biome_species: Dictionary = {}
+
+## The two ends of the speed lattice, read off player_controller.gd and
+## piglet_crocodile_ai.gd rather than restated — see the note in _run().
+var _walk_speed: float = 0.0
+var _max_chase_speed: float = 0.0
+
+## The SLOWEST character's run — RUN_SPEED x the smallest CHARACTER_SPEED, both
+## read off player_controller.gd in _run(). This is the number MAX_CHASE_SPEED is
+## held under so that "running always escapes" is true, and check 8 races a burst
+## predator's whole pounce/recovery cycle against it. Derived rather than written
+## down as 9.0 because a new character with a lower speed stat would move it, and
+## a check asserting a stale 9.0 would pass while the promise quietly broke.
+var _slowest_run_speed: float = 0.0
+
+
+func _initialize() -> void:
+	_boot()
+
+
+func _boot() -> void:
+	"""
+	Wait ONE frame before generating anything.
+
+	A node added to `root` from inside _initialize() is not `is_inside_tree()`
+	until the first frame — the same trap best_run_e2e.gd is written around (there
+	it makes HTTPRequest.request() answer ERR_UNCONFIGURED). Here it would make
+	every chunk parent _make_chunk_parent() creates a detached node in disguise,
+	so `treasure_chest.setup()` would still get a null tree and a zero global
+	transform, and the check would go on printing engine errors beside its own OK.
+	"""
+	await process_frame
+	_run()
+
+
+func _run() -> void:
+	var terrain_script: GDScript = load(TERRAIN_SCRIPT)
+	# get_script_constant_map() is how a `const` is read from outside: constants
+	# are not properties, so terrain.get("PLATFORM_SPAWN_HEIGHT") answers null and
+	# a check written that way would measure against 0.0 and pass vacuously.
+	var consts: Dictionary = terrain_script.get_script_constant_map()
+	if not consts.has("PLATFORM_SPAWN_HEIGHT") or not consts.has("PLATFORM_SPAWN_EDGE_INSET"):
+		_fail("endless_terrain.gd has no PLATFORM_SPAWN_HEIGHT / PLATFORM_SPAWN_EDGE_INSET —"
+				+ " the patrol drop-in constants this check measures against are gone")
+		_report()
+		return
+
+	var spawn_height: float = float(consts["PLATFORM_SPAWN_HEIGHT"])
+	var edge_inset: float = float(consts["PLATFORM_SPAWN_EDGE_INSET"])
+
+	# The lattice's two ends are READ, never restated here: WALK_SPEED off the
+	# player and MAX_CHASE_SPEED off the AI, so retuning either moves this check
+	# with it instead of leaving it asserting a number nothing uses any more.
+	var croc_ai: GDScript = load(CROC_AI_SCRIPT)
+	var croc_consts: Dictionary = croc_ai.get_script_constant_map()
+	_species_table = croc_consts.get("SPECIES", {})
+	_max_chase_speed = float(croc_consts.get("MAX_CHASE_SPEED", 0.0))
+	var player_consts: Dictionary = load(PLAYER_SCRIPT).get_script_constant_map()
+	_walk_speed = float(player_consts.get("WALK_SPEED", 0.0))
+	# The slowest run, derived the way player_controller derives it (see
+	# _slowest_run_speed). An empty table would leave this 0.0, which check 8
+	# reports as a failure rather than passing vacuously against a zero ceiling.
+	var character_speed: Dictionary = player_consts.get("CHARACTER_SPEED", {})
+	var slowest_scale: float = INF
+	for name_v: Variant in character_speed:
+		slowest_scale = minf(slowest_scale, float(character_speed[name_v]))
+	if slowest_scale < INF:
+		_slowest_run_speed = float(player_consts.get("RUN_SPEED", 0.0)) * slowest_scale
+	_mp_consts = load(MP_SCRIPT).get_script_constant_map()
+	_biome_species = consts.get("BIOME_SPECIES", {})
+	# The enum itself, so the coverage gate counts the bands the world HAS.
+	_biomes = consts.get("Biome", {})
+	if _biomes.is_empty():
+		_fail("endless_terrain.gd exposes no `Biome` enum — the biome coverage gate"
+				+ " has no list of bands to demand, so a band with no predator in it"
+				+ " would go untested rather than reported")
+	_check_species_table()
+	# One call per BEHAVIOUR, and each one probes EVERY species carrying it — see
+	# _species_with(). Nothing here names an animal; a second charger or a third
+	# burst row is measured the moment its row lands.
+	_check_pack_surround(croc_ai)
+	_check_ambush_trip_wire()
+	_check_charge_dodge(croc_ai)
+	_check_burst_escape(croc_ai)
+	_check_determinism(terrain_script)
+
+	for run_seed: int in RUN_SEEDS:
+		_sweep(terrain_script, run_seed, spawn_height, edge_inset)
+
+	_check_coverage()
+	_report()
+
+
+func _species_with(behavior: String) -> Array[String]:
+	"""
+	Every SPECIES row carrying this `behavior`, in table order.
+
+	@param behavior: the value of the row's "behavior" key
+	@return the species names, possibly empty
+
+	The reason the behaviour probes below take a LIST rather than the first match:
+	two rows already share the burst arm (the cougar and the alley hound, same
+	code and different numbers), which is the shape the epic settled on — so
+	"find the pack species" is a question with no stable answer, and a probe
+	written that way silently stops measuring the second wolf the day it ships.
+	"""
+	var found: Array[String] = []
+	for name_v: Variant in _species_table:
+		if String(_species_table[name_v].get("behavior", "")) == behavior:
+			found.append(String(name_v))
+	return found
+
+
+# ============================================================================
+# CHECK 4 (table half) — every SPECIES row is complete, legal and reachable
+# ============================================================================
+
+func _check_species_table() -> void:
+	"""
+	Read the two tables and prove a NEW ROW cannot ship broken.
+
+	This is the cheap half of check 4 — no world, no chunks, pure data — and it
+	exists because the biome-predator epic adds one species per bead, each of
+	them a hand-copied dictionary of ~30 keys. The three ways that goes wrong are
+	all silent from the outside, which is this file's whole subject:
+
+	  * A MISSING KEY is a crash in a per-frame path (`spec["sway_yaw"]` in
+	    _animate_body), on the first frame the first one of them is visible, and
+	    only in the biome that species lives in.
+	  * A chase_speed OVER the lattice quietly breaks the promise the whole game
+	    is balanced on — walking is caught, RUNNING ESCAPES. MAX_CHASE_SPEED
+	    clamps it at runtime so nothing ever looks wrong; the row is just a lie.
+	  * A dispatch entry naming a species that isn't in the table, or pointing at
+	    a scene that doesn't load, degrades to a crocodile — which reads as "the
+	    new predator isn't finished yet" rather than as a bug.
+
+	The key set is taken from the crocodile row rather than hardcoded here, so it
+	tracks the AI: add a key to the table and every row must grow it, delete one
+	and this stops demanding it. That is deliberately stricter than the engine —
+	an unused key on one row is not a crash — and it is the point: 'the crocodile
+	has it and you don't' is exactly the state that crashes later.
+	"""
+	if _species_table.is_empty():
+		_fail("piglet_crocodile_ai.gd exposes no SPECIES table — the species dispatch"
+				+ " this check measures has nothing to dispatch over")
+		return
+	if not _species_table.has("crocodile"):
+		_fail("SPECIES has no 'crocodile' row — it is the fallback every unknown"
+				+ " species name and every scene-less biome resolves to")
+		return
+
+	var required: Array = _species_table["crocodile"].keys()
+	for name_v: Variant in _species_table:
+		var species_name: String = String(name_v)
+		var row: Dictionary = _species_table[species_name]
+		for key_v: Variant in required:
+			if not row.has(key_v):
+				_fail("SPECIES['%s'] is missing '%s', which the crocodile row has —"
+						% [species_name, key_v]
+						+ " a per-frame path reads it and will crash on the first"
+						+ " frame one of these is on screen")
+		# The lattice, stated in CLAUDE.md and in the SPECIES doc block: walking
+		# (5.0) must be caught, and the slowest run (9.0) must escape. Every row
+		# owes both ends; MAX_CHASE_SPEED is the ceiling and no row may raise it.
+		if row.has("chase_speed"):
+			var chase: float = float(row["chase_speed"])
+			if chase <= _walk_speed:
+				_fail("SPECIES['%s'].chase_speed %.2f is at or below %.2f —"
+						% [species_name, chase, _walk_speed]
+						+ " a player could stroll away from it")
+			if chase > _max_chase_speed:
+				_fail("SPECIES['%s'].chase_speed %.2f exceeds %.2f —"
+						% [species_name, chase, _max_chase_speed]
+						+ " the clamp hides it at runtime, so the row is simply wrong")
+
+	# ---- EVERY BEHAVIOUR IN THE TABLE MUST HAVE A PROBE IN THIS FILE --------
+	# The gate that makes this check cover the SEVENTH predator without anyone
+	# extending a list. Behaviour is the one field that is not data — it selects a
+	# `match` arm of real code — so a new value here is new logic, and new logic
+	# with no probe is exactly what every bead in this epic had to add one for. A
+	# row is free to reuse an existing arm (two do); it is not free to invent an
+	# arm nobody measures.
+	for name_v: Variant in _species_table:
+		var behavior: String = String(_species_table[name_v].get("behavior", ""))
+		if behavior == "":
+			_fail("SPECIES['%s'] declares no 'behavior' — the dispatch at the end of"
+					% name_v + " _update_chase_state has no arm to send it to, so it"
+					+ " degrades to solo and its own code is dead")
+		elif not PROBED_BEHAVIORS.has(behavior):
+			_fail("SPECIES['%s'] has behavior '%s', which no probe in this file"
+					% [name_v, behavior] + " measures — add one beside the pack /"
+					+ " ambush / charge / burst probes and list it in"
+					+ " PROBED_BEHAVIORS, or the arm ships unmeasured")
+
+	# ---- EVERY ROW MUST BE REACHABLE ---------------------------------------
+	# A species is only ever instantiated through BIOME_SPECIES (the crocodile
+	# being the fallback every entry-less biome takes). A row nothing dispatches
+	# to is a predator that exists in the source, passes every check above, and
+	# has never once been in the world — which is a half-landed bead, not a
+	# feature, and the one failure mode a table-driven check can see and a
+	# hand-written list cannot.
+	var dispatched := { "crocodile": true }
+	for biome_v: Variant in _biome_species:
+		dispatched[String(_biome_species[biome_v].get("species", ""))] = true
+	for name_v: Variant in _species_table:
+		if not dispatched.has(String(name_v)):
+			_fail("SPECIES['%s'] is in the table but in no BIOME_SPECIES entry —"
+					% name_v + " nothing in the world can ever spawn it")
+
+	# The dispatch map: biomes must exist, names must resolve, scenes must load.
+	for biome_v: Variant in _biome_species:
+		var entry: Dictionary = _biome_species[biome_v]
+		if not _biomes.values().has(int(biome_v)):
+			_fail("BIOME_SPECIES has an entry for %s, which is not a value of the"
+					% biome_v + " Biome enum %s — biome_at() can never answer it,"
+					% _biomes.values() + " so that entry is dead")
+		var species_name: String = String(entry.get("species", ""))
+		if not _species_table.has(species_name):
+			_fail("BIOME_SPECIES[%s] dispatches to '%s', which is not a SPECIES row —"
+					% [biome_v, species_name]
+					+ " every crocodile in that biome would silently fall back")
+		var scene_path: String = String(entry.get("scene", ""))
+		if not ResourceLoader.exists(scene_path) or load(scene_path) == null:
+			_fail("BIOME_SPECIES[%s] points at '%s', which does not load"
+					% [biome_v, scene_path])
+
+	# The negative control for this half: a table with one row and an empty
+	# dispatch map passes every loop above without measuring anything.
+	if _species_table.size() < 2 or _biome_species.is_empty():
+		_fail("only %d SPECIES row(s) and %d dispatch entries — checks over the"
+				% [_species_table.size(), _biome_species.size()]
+				+ " species table ran against a world with one predator in it")
+
+
+# ============================================================================
+# CHECK 5 — a pack ACTUALLY surrounds, and a solo predator actually doesn't
+# ============================================================================
+
+## How many wolves stand in for one chunk's pack, and over how many chunks the
+## measurement is repeated. The ids come from the REAL node-name scheme, so this
+## is not a sample of a random variable — every number below is a constant of the
+## shipped name hash and re-measuring gives the same answer forever.
+const PACK_PROBE_WOLVES: int = 6
+const PACK_PROBE_CHUNKS: int = 24
+
+## The pack starts clustered on ONE bearing at this range — the hardest possible
+## start for a surround, and the one a straight-line chaser handles perfectly.
+const PACK_PROBE_START: float = 16.0
+## Where a wolf counts as having ARRIVED, and where its attack bearing is read.
+## Well outside the ring (4 m) so the reading is not taken from the noise of the
+## final metre, and well inside the 18 m detection radius.
+const PACK_PROBE_ARRIVE: float = 3.0
+## Integration step and budget. 12 s is nearly double the ~6.5 s a 6.8 m/s wolf
+## needs to walk 16 m plus a half-circle, so failing to arrive means STALLED.
+const PACK_PROBE_DT: float = 1.0 / 30.0
+const PACK_PROBE_SECONDS: float = 12.0
+
+## The verdict. A pack's mean spread of attack bearings must clear 100°, and the
+## same wolves with the flank switched off must stay under 5° — see the note in
+## _check_pack_surround on why both numbers are stated and neither is tight.
+## Today's steering measures ~136° against ~0°.
+const PACK_SPREAD_MIN_DEG: float = 100.0
+const PACK_CONTROL_MAX_DEG: float = 5.0
+
+
+func _check_pack_surround(croc_ai: GDScript) -> void:
+	"""
+	MEASURE the surround. Do not assert it.
+
+	`pack_steer_point()` is easy to write in a way that reads correctly and does
+	not work: a ring that never tapers leaves the pack orbiting a player who can
+	stand still in the middle of it, a taper that closes too early collapses the
+	pack into the single-file queue it was built to replace, and an id-to-slot
+	mapping that degenerates (every wolf in a chunk drawing the same bearing)
+	looks fine in the source and produces a conga line on screen. None of those
+	is an error anywhere — which is this file's entire subject.
+
+	So this simulates. Six wolves, ids taken from the REAL deterministic node
+	names spawn_crocodiles_in_chunk gives them, all starting CLUSTERED ON ONE
+	BEARING 16 m out and all facing the quarry — the worst case for a surround
+	and the case a straight-line chaser handles perfectly. Each step re-runs the
+	shipped steering and the shipped two lines of movement (lerp_angle toward the
+	heading at the species' own turn_smoothness, then travel along the facing at
+	its own chase_speed), so what is being measured is the code that ships, not a
+	restatement of it. The bearing each wolf holds when it first closes to 3 m is
+	the angle it ATTACKED from, and the spread of those bearings is the surround.
+
+	THE NEGATIVE CONTROL IS THE OTHER HALF, following this file's house rule: the
+	identical run with the flank offset switched off must collapse to a single
+	bearing. Without it, "the wolves attacked from many angles" is also true of a
+	check that spread them out in its own setup.
+
+	WHAT THE MODEL LEAVES OUT, honestly: obstacle feelers, wolf-on-wolf collision
+	and gravity. All three perturb the PATH; none can change where the ring slots
+	are, because a slot is a pure function of an id. They would widen the arcs,
+	not narrow them.
+
+	The thresholds are deliberately loose — 100° against a measured ~136°, 5°
+	against a measured 0° — because this is a guard against the behaviour being
+	GONE or DEGENERATE, not a pin on today's exact tuning. Retuning
+	pack_flank_radius should not have to come here; PACK_FLANK_TAPER, which the
+	arc is directly proportional to, has a hard bound of its own checked below.
+	"""
+	var names: Array[String] = _species_with("pack")
+	if names.is_empty():
+		_fail("no SPECIES row has behavior 'pack' — the pack steering this check"
+				+ " measures is not reachable from any species")
+		return
+	for wolf_species: String in names:
+		_probe_pack(croc_ai, wolf_species)
+
+
+func _probe_pack(croc_ai: GDScript, wolf_species: String) -> void:
+	"""
+	Run the whole surround measurement against ONE pack species.
+
+	@param croc_ai: the AI script, for its static pack_steer_point
+	@param wolf_species: the SPECIES key to probe
+
+	Split out of _check_pack_surround — which holds the argument for all of this
+	— so that every row carrying the behaviour is measured, not the first one the
+	table happens to hand back.
+	"""
+	var row: Dictionary = _species_table[wolf_species]
+	for key: String in ["pack_size", "pack_flank_radius"]:
+		if not row.has(key):
+			_fail("SPECIES['%s'] has behavior 'pack' but no '%s' —" % [wolf_species, key]
+					+ " _behave_pack reads it every frame it chases")
+			return
+	var pack_size: int = int(row["pack_size"])
+	var flank: float = float(row["pack_flank_radius"])
+	var speed: float = float(row["chase_speed"])
+	var turn: float = float(row["turn_smoothness"])
+	if pack_size < 2:
+		_fail("SPECIES['%s'].pack_size is %d — a ring with fewer than two slots"
+				% [wolf_species, pack_size] + " is a single-file queue")
+		return
+
+	# ---- the anti-orbit invariant, stated directly on the function ----------
+	# A wolf standing ON its own slot bearing at distance d is offered the point
+	# d * TAPER along that same bearing. At TAPER >= 1.0 that point is the wolf's
+	# own position (or further out) — every point of its slot ray is a fixed
+	# point, and the pack freezes in a ring around a player who then strolls
+	# away. This is the singularity PACK_FLANK_TAPER's doc block is about, and it
+	# is checked here rather than trusted because the failure is a pack that
+	# looks perfectly composed while being completely harmless.
+	#
+	# AND IT IS CHECKED AS ARITHMETIC RATHER THAN LEFT TO THE SIMULATION BELOW
+	# BECAUSE THE SIMULATION DOES NOT CATCH IT. Measured: with TAPER set to
+	# exactly 1.0 the probe still reports a healthy 152° of surround and every
+	# wolf still arrives, because a wolf approaching at an angle never lands
+	# exactly on its own slot ray and so never meets the fixed point. The freeze
+	# is a measure-zero set the integrator steps straight over, and a live wolf
+	# tracking a player who happens to walk along its bearing finds it. Two
+	# halves, then: the bound is proved, the shape is measured.
+	var taper: float = float(load(CROC_AI_SCRIPT).get_script_constant_map()
+			.get("PACK_FLANK_TAPER", 1.0))
+	if taper >= 1.0 or taper <= 0.0:
+		_fail("PACK_FLANK_TAPER is %.2f — outside (0, 1) the flank ring either" % taper
+				+ " vanishes or becomes an orbit no wolf can ever leave")
+	var quarry := Vector3(11.0, 0.0, -7.0)   # nothing special, just not the origin
+	for slot in range(pack_size):
+		for d: float in [0.5, 1.0, 4.0, 9.0, 18.0, 40.0]:
+			var from := quarry + Vector3(d, 0.0, 0.0)
+			var point: Vector3 = croc_ai.pack_steer_point(quarry, from, slot, pack_size, flank)
+			var ring: float = (point - quarry).length()
+			# Both ceilings the function promises: the taper (which is what
+			# guarantees a wolf always has somewhere left to walk) and the row's
+			# own flank radius.
+			if ring > d * taper + EPSILON:
+				_fail(("SPECIES['%s'] slot %d at %.1f m steers %.2f m off the quarry —"
+						% [wolf_species, slot, d, ring])
+						+ " past the %.2f taper, so a wolf on its own slot bearing" % taper
+						+ " has nowhere left to walk")
+			if ring > flank + EPSILON:
+				_fail("SPECIES['%s'] slot %d steers %.2f m off the quarry, past its own"
+						% [wolf_species, slot, ring]
+						+ " pack_flank_radius %.2f" % flank)
+
+	# ---- the emergence measurement -----------------------------------------
+	var pack_spread := 0.0
+	var control_spread := 0.0
+	var stalled := 0
+	var worst_stall := ""
+	var slots_seen_total := 0
+
+	for c in range(PACK_PROBE_CHUNKS):
+		# Real chunk coordinates, spread over the field so this is not one
+		# lucky corner of the hash. The name scheme is the spawner's own.
+		var chunk := Vector2i(c % 6 - 3, c / 6 - 2)
+		var ids: Array[int] = []
+		var slots := {}
+		for i in range(PACK_PROBE_WOLVES):
+			var id: int = croc_ai.croc_id_for("Crocodile_%d_%d_%d" % [chunk.x, chunk.y, i])
+			ids.append(id)
+			slots[posmod(id, pack_size)] = true
+		slots_seen_total += slots.size()
+
+		for flanking in [true, false]:
+			var bearings: Array[float] = []
+			for i in range(ids.size()):
+				# All six on the SAME spot 16 m out (+X), all facing the quarry.
+				# Identical starts are what make the negative control absolute:
+				# with the flank off, six wolves that begin at one point and run
+				# the same steering must arrive on ONE bearing, spread 0°. Any
+				# separation this probe could have handed them for free is a
+				# separation the flank did not have to earn.
+				var pos := quarry + Vector3(PACK_PROBE_START, 0.0, 0.0)
+				var yaw := atan2(quarry.x - pos.x, quarry.z - pos.z)
+				var arrived := false
+				var steps := int(PACK_PROBE_SECONDS / PACK_PROBE_DT)
+				for _step in range(steps):
+					var target: Vector3 = quarry
+					if flanking:
+						target = croc_ai.pack_steer_point(
+								quarry, pos, ids[i], pack_size, flank)
+					var to_target := target - pos
+					to_target.y = 0.0
+					# The two lines _physics_process actually runs, verbatim in
+					# shape: turn toward the heading, then travel along the
+					# facing (never along the raw direction).
+					if to_target.length() > 0.1:
+						yaw = lerp_angle(yaw, atan2(to_target.x, to_target.z),
+								PACK_PROBE_DT * turn)
+					pos += Vector3(sin(yaw), 0.0, cos(yaw)) * speed * PACK_PROBE_DT
+					if pos.distance_to(quarry) <= PACK_PROBE_ARRIVE:
+						arrived = true
+						# The bearing FROM the quarry: which side it came in on.
+						bearings.append(atan2(pos.x - quarry.x, pos.z - quarry.z))
+						break
+				if not arrived:
+					stalled += 1
+					if worst_stall == "":
+						worst_stall = "%s wolf %d of chunk %v stopped %.1f m out" % [
+								"flanking" if flanking else "control", i, chunk,
+								pos.distance_to(quarry)]
+			var spread := _bearing_spread_deg(bearings)
+			if flanking:
+				pack_spread += spread
+			else:
+				control_spread += spread
+
+	pack_spread /= float(PACK_PROBE_CHUNKS)
+	control_spread /= float(PACK_PROBE_CHUNKS)
+	var mean_slots := float(slots_seen_total) / float(PACK_PROBE_CHUNKS)
+	print("pack surround: %d wolves x %d chunks reach %.1f m on bearings spanning"
+			% [PACK_PROBE_WOLVES, PACK_PROBE_CHUNKS, PACK_PROBE_ARRIVE]
+			+ " %.0f° (same wolves, flank off: %.0f°); %.1f of %d ring slots claimed"
+			% [pack_spread, control_spread, mean_slots, pack_size])
+
+	if stalled > 0:
+		_fail("%d of %d pack probes never reached the quarry (first: %s) —" % [
+				stalled, PACK_PROBE_WOLVES * PACK_PROBE_CHUNKS * 2, worst_stall]
+				+ " the flank ring became an orbit")
+	if pack_spread < PACK_SPREAD_MIN_DEG:
+		_fail("a pack starting on one bearing attacks from only %.0f° of arc"
+				% pack_spread + " (want >= %.0f°) — the surround is gone"
+				% PACK_SPREAD_MIN_DEG)
+	if control_spread > PACK_CONTROL_MAX_DEG:
+		_fail("the NEGATIVE CONTROL spread %.0f° with the flank switched off"
+				% control_spread + " — the %.0f° measured with it on is coming from"
+				% pack_spread + " the probe's own setup, not from the steering")
+	# The pack must actually be USING its ring. Six ids collapsing onto one or two
+	# slots is a conga line the spread test above could still pass by luck.
+	if mean_slots < 3.0:
+		_fail("six wolves claim only %.1f of %d ring slots on average —" % [
+				mean_slots, pack_size]
+				+ " `id %% pack_size` has degenerated and they share bearings")
+
+
+# ============================================================================
+# CHECK 6 — an ambusher really does LIE THERE, and really does strike
+# ============================================================================
+
+## The two lanes a quarry is walked past the ambusher on, in metres of lateral
+## offset. OUTSIDE is beyond the viper's 5 m trigger and comfortably inside the
+## crocodile's 15 m one, which is what makes the same lane serve as this check's
+## negative control. INSIDE is a third of the trigger: unmistakably stepped on.
+const AMBUSH_LANE_OUTSIDE: float = 8.0
+const AMBUSH_LANE_INSIDE: float = 1.5
+
+## How far up and down the lane the quarry walks, and at what resolution. 12 m
+## either side of the predator is well past every detection radius in the table,
+## so every probe starts and ends with nothing smelled.
+const AMBUSH_WALK_HALF: float = 12.0
+const AMBUSH_PROBE_DT: float = 1.0 / 60.0
+
+## Where the strike counts as LANDED. The viper's node origin is its head (see
+## the capsule note in the SPECIES row) and the player is not a point, so a metre
+## between origins is contact with room to spare.
+const AMBUSH_STRUCK: float = 1.0
+
+## How far a predator may drift while a quarry walks past outside its trigger.
+## This is a real zero, not a tolerance: `move_speed` 0.0 makes the wander
+## velocity identically zero at every point of the sin cycle.
+const AMBUSH_DRIFT_MAX: float = EPSILON
+
+
+func _check_ambush_trip_wire() -> void:
+	"""
+	MEASURE the ambush. Do not assert it.
+
+	An ambusher is defined by two behaviours that are the opposite of each other,
+	and both of them are invisible from the outside — which is this file's whole
+	subject. It must NOT close on a player who walks past outside its trigger (a
+	viper that creeps is not buried, it is just a slow crocodile), and it MUST
+	strike a player who walks through it (a viper that does not is a rock). Every
+	way of losing either is silent: raise `move_speed` off zero and the ambusher
+	wanders out of the patch it was hiding in; drop `chase_speed` under WALK_SPEED
+	or let `sniff_pause_chance` back above zero and the strike simply never
+	arrives, with nothing logged anywhere.
+
+	So this walks a quarry past a stationary predator at WALK_SPEED, twice, and
+	runs the shipped movement shape each step: the detection test out of
+	_update_chase_state (distance against the row's own radius), then the two
+	lines out of _physics_process (lerp_angle toward the heading at the row's own
+	turn_smoothness, then travel along the FACING — never along the raw
+	direction — at the row's own speed).
+
+	THE NEGATIVE CONTROL IS THE SAME TWO WALKS RUN AGAINST THE CROCODILE ROW, and
+	the outside lane is chosen so it lands inside the crocodile's 15 m detection
+	and outside the viper's 5 m one. Without it, "the predator did not move" is
+	also true of a probe that never moves anything and "it never got closer" is
+	also true of a probe that measures the wrong distance.
+
+	WHAT THE MODEL LEAVES OUT, honestly: obstacle feelers, gravity, the per-frame
+	wander steer (the probe holds a fixed idle heading, so the drift it reports is
+	a floor on the real one, never a ceiling) and the per-instance speed roll. The
+	roll is covered separately and arithmetically — the row's spread is checked
+	against WALK_SPEED in _check_species_table — and it cannot rescue a zero:
+	anything times `move_speed` 0.0 is 0.0.
+	"""
+	var names: Array[String] = _species_with("ambush")
+	if names.is_empty():
+		_fail("no SPECIES row has behavior 'ambush' — the burrow-and-strike this"
+				+ " check measures is not reachable from any species")
+		return
+	for ambush_species: String in names:
+		_probe_ambush(ambush_species)
+
+
+func _probe_ambush(ambush_species: String) -> void:
+	"""
+	Run the whole trip-wire measurement against ONE ambush species.
+
+	@param ambush_species: the SPECIES key to probe
+
+	Split out of _check_ambush_trip_wire — which holds the argument for all of
+	this — so every ambusher is measured rather than the first one found.
+	"""
+	var row: Dictionary = _species_table[ambush_species]
+	for key: String in ["ambush_burrow_depth", "ambush_surface_ease_speed"]:
+		if not row.has(key):
+			_fail("SPECIES['%s'] has behavior 'ambush' but no '%s' —" % [ambush_species, key]
+					+ " _tick_river_sink reads it on every frame it is buried")
+			return
+
+	# ---- the burrow actually buries, measured off the MESH --------------------
+	# The house rule again: the depth is checked against the model's real AABB,
+	# not against the figure quoted in the row's comment, because a regenerated
+	# GLB is exactly the kind of change that leaves a comment true and a number
+	# wrong — and the failure is a snake-shaped ridge lying in the sand, which no
+	# system anywhere considers an error.
+	var scene_path := ""
+	for biome_v: Variant in _biome_species:
+		if String(_biome_species[biome_v].get("species", "")) == ambush_species:
+			scene_path = String(_biome_species[biome_v].get("scene", ""))
+			break
+	var mesh_top: float = _model_top(scene_path)
+	var burrow: float = float(row["ambush_burrow_depth"])
+	# The bob is the highest the animation ever lifts the model off its rest
+	# height (breathing is shallower), so mesh top + bob is the tallest this
+	# animal ever stands and the depth has to clear it.
+	var needed: float = mesh_top + float(row["bob_amount"])
+	if mesh_top <= 0.0:
+		_fail("could not measure a model AABB for '%s' from '%s' —" % [ambush_species, scene_path]
+				+ " the burrow depth check has nothing to measure against")
+	elif burrow < needed:
+		_fail("SPECIES['%s'].ambush_burrow_depth %.3f does not clear its own mesh"
+				% [ambush_species, burrow]
+				+ " (%.4f tall + %.3f of bob) — it waits in ambush with its back out"
+				% [mesh_top, float(row["bob_amount"])])
+	# Surfacing must be FASTER than sinking, which is the whole "surfaces rapidly"
+	# half of the spec: at or below the sink ease the strike is a slow reveal.
+	if float(row["ambush_surface_ease_speed"]) <= float(row["river_sink_ease_speed"]):
+		_fail("SPECIES['%s'] surfaces at %.2f m/s but sinks at %.2f —" % [ambush_species,
+				float(row["ambush_surface_ease_speed"]), float(row["river_sink_ease_speed"])]
+				+ " an ambusher that rises no faster than it settles has no strike")
+
+	# ---- AN AMBUSHER IS NOT A SPRINTER (bead godot-test1-lyk) ---------------
+	# It shipped as the FASTEST chase_speed in the table, and the lattice never
+	# noticed because MAX_CHASE_SPEED clamped the product — the row was legal and
+	# unplayable at the same time, which is precisely the state _check_species_table
+	# says a bad row hides in. The design rule that came out of it: a predator you
+	# cannot see coming is paid in SURPRISE, so it does not also get to be the
+	# quickest thing in the world. Stated against the table rather than a literal,
+	# so retuning any other row keeps this honest.
+	#
+	# Stated as ">= the fastest OTHER row" rather than "is the max", because a TIE
+	# at the top is the same animal: a viper matching the cougar's 7.8 is jointly
+	# the fastest thing in the world and still invisible. Written the other way —
+	# scanning for the maximum and comparing names — a tie resolves to whichever
+	# row Dictionary iteration reached first, so the check would pass or fail on
+	# key order. A tie at the BOTTOM is fine and deliberate: 5.5 alongside the
+	# crocodile is exactly what this bead asked for.
+	var fastest_other := -INF
+	var fastest_other_name := ""
+	for name_v: Variant in _species_table:
+		if String(name_v) == ambush_species:
+			continue
+		var speed: float = float(_species_table[name_v].get("chase_speed", 0.0))
+		if speed > fastest_other:
+			fastest_other = speed
+			fastest_other_name = String(name_v)
+	var ambush_speed: float = float(row.get("chase_speed", 0.0))
+	if fastest_other_name == "":
+		_fail("SPECIES has no non-ambush row to compare '%s' against —" % ambush_species
+				+ " the ambusher-is-not-a-sprinter check has nothing to measure")
+	elif ambush_speed >= fastest_other:
+		_fail("'%s' chase_speed %.2f is at or above the fastest other row ('%s' %.2f) —"
+				% [ambush_species, ambush_speed, fastest_other_name, fastest_other]
+				+ " it is buried, unseen and the quickest animal in the game at once;"
+				+ " the clamp hides it, and the player only finds out on the strike")
+
+	# ---- the trip-wire measurement ------------------------------------------
+	var results := {}
+	for probe_species: String in [ambush_species, "crocodile"]:
+		for lane: float in [AMBUSH_LANE_OUTSIDE, AMBUSH_LANE_INSIDE]:
+			results["%s@%.1f" % [probe_species, lane]] = _walk_past(
+					_species_table[probe_species], lane)
+
+	var out_amb: Dictionary = results["%s@%.1f" % [ambush_species, AMBUSH_LANE_OUTSIDE]]
+	var in_amb: Dictionary = results["%s@%.1f" % [ambush_species, AMBUSH_LANE_INSIDE]]
+	var out_croc: Dictionary = results["crocodile@%.1f" % AMBUSH_LANE_OUTSIDE]
+	var in_croc: Dictionary = results["crocodile@%.1f" % AMBUSH_LANE_INSIDE]
+
+	print("ambush trip-wire: a %.1f m/s quarry passing at %.1f m leaves the %s"
+			% [_walk_speed, AMBUSH_LANE_OUTSIDE, ambush_species]
+			+ " %.3f m from where it started (closest %.2f m) and the crocodile"
+			% [out_amb["travelled"], out_amb["closest"]]
+			+ " %.2f m (closest %.2f m); at %.1f m they close to %.2f m and %.2f m"
+			% [out_croc["travelled"], out_croc["closest"], AMBUSH_LANE_INSIDE,
+					in_amb["closest"], in_croc["closest"]])
+
+	if out_amb["travelled"] > AMBUSH_DRIFT_MAX:
+		_fail("'%s' moved %.3f m while a quarry walked past %.1f m away —" % [
+				ambush_species, out_amb["travelled"], AMBUSH_LANE_OUTSIDE]
+				+ " a buried ambusher does not close distance on anything")
+	if out_amb["closest"] < AMBUSH_LANE_OUTSIDE - EPSILON:
+		_fail("'%s' let the quarry get %.2f m away on a lane %.1f m wide —" % [
+				ambush_species, out_amb["closest"], AMBUSH_LANE_OUTSIDE]
+				+ " it followed rather than waited")
+	if in_amb["closest"] > AMBUSH_STRUCK:
+		_fail("'%s' only reached %.2f m of a quarry that walked straight through"
+				% [ambush_species, in_amb["closest"]]
+				+ " its %.1f m trigger (want <= %.1f m) — the strike is gone"
+				% [float(row["detection_radius"]), AMBUSH_STRUCK])
+	# The controls: the same two walks against a species that hunts.
+	if out_croc["travelled"] <= AMBUSH_DRIFT_MAX or out_croc["closest"] >= AMBUSH_LANE_OUTSIDE:
+		_fail("the NEGATIVE CONTROL: a crocodile moved %.3f m and closed to %.2f m"
+				% [out_croc["travelled"], out_croc["closest"]]
+				+ " on the same %.1f m lane — the probe cannot see a predator move,"
+				% AMBUSH_LANE_OUTSIDE + " so the ambusher's stillness measures nothing")
+	if in_croc["closest"] > AMBUSH_STRUCK:
+		_fail("the NEGATIVE CONTROL: a crocodile failed to reach a quarry walking"
+				+ " %.1f m past it (closest %.2f m) — the probe cannot see a strike"
+				% [AMBUSH_LANE_INSIDE, in_croc["closest"]])
+
+
+func _walk_past(row: Dictionary, lane: float) -> Dictionary:
+	"""
+	Walk a quarry in a straight line past a predator sitting at the origin, and
+	report how far the predator travelled and how close it ever got.
+
+	The predator starts facing +Z, which is across the quarry's +X path: it has a
+	quarter turn to make before it can strike, exactly as a real one would from
+	whatever heading `_choose_new_direction` left it on.
+
+	@param row: the SPECIES row to simulate
+	@param lane: the quarry's lateral offset in metres
+	@return { travelled: float, closest: float }
+	"""
+	var pos := Vector3.ZERO
+	var yaw := 0.0
+	var detect: float = float(row["detection_radius"])
+	var chase: float = float(row["chase_speed"])
+	var turn: float = float(row["turn_smoothness"])
+	# The fastest this row can ever wander: the top of the sin cycle, before the
+	# per-instance roll. The probe holds one idle heading rather than drifting, so
+	# the drift it reports is a floor on the real one — see the docstring.
+	var idle: float = float(row["move_speed"])
+	var closest := INF
+	var steps := int(2.0 * AMBUSH_WALK_HALF / (_walk_speed * AMBUSH_PROBE_DT))
+	for step in range(steps):
+		var quarry := Vector3(-AMBUSH_WALK_HALF + _walk_speed * float(step) * AMBUSH_PROBE_DT,
+				0.0, lane)
+		var distance := pos.distance_to(quarry)
+		closest = minf(closest, distance)
+		var speed := idle
+		if distance <= detect:
+			speed = chase
+			var to_quarry := quarry - pos
+			to_quarry.y = 0.0
+			if to_quarry.length() > 0.1:
+				yaw = lerp_angle(yaw, atan2(to_quarry.x, to_quarry.z),
+						AMBUSH_PROBE_DT * turn)
+		pos += Vector3(sin(yaw), 0.0, cos(yaw)) * speed * AMBUSH_PROBE_DT
+	return { "travelled": pos.length(), "closest": closest }
+
+
+func _model_top(scene_path: String) -> float:
+	"""
+	How tall the `Model` subtree of a predator scene stands, in model-local
+	metres, measured off the real mesh AABBs.
+
+	Instantiated but never added to the tree, so no _ready() runs and no physics
+	body is registered — the same detached-instance trick prop_selfcheck.gd uses,
+	and the reason this costs a few milliseconds rather than a frame.
+	"""
+	if scene_path == "" or not ResourceLoader.exists(scene_path):
+		return -1.0
+	var packed: PackedScene = load(scene_path)
+	if packed == null:
+		return -1.0
+	var instance: Node = packed.instantiate()
+	var model: Node = instance.get_node_or_null("Model")
+	var top := -1.0
+	if model != null:
+		top = _aabb_top(model, Transform3D.IDENTITY)
+	instance.free()
+	return top
+
+
+func _aabb_top(node: Node, xform: Transform3D) -> float:
+	"""The highest point of every VisualInstance3D under `node`, in `xform`'s frame."""
+	var here := xform
+	if node is Node3D:
+		here = xform * (node as Node3D).transform
+	var top := -1.0
+	if node is VisualInstance3D:
+		var box: AABB = here * (node as VisualInstance3D).get_aabb()
+		top = box.position.y + box.size.y
+	for child in node.get_children():
+		top = maxf(top, _aabb_top(child, here))
+	return top
+
+
+# ============================================================================
+# CHECK 7 — a committed charge can be SIDESTEPPED, and a tracking one cannot
+# ============================================================================
+
+## Where the quarry starts, straight in front of the charger. Inside the bear's
+## 14 m detection, so it is locked on from the first step and the charge is
+## already committed when the dodge happens.
+const CHARGE_PROBE_START: float = 12.0
+
+## The distances at which the quarry starts its sidestep. The lock refreshes
+## every `charge_commit` metres of TRAVEL, so a single trigger distance would
+## measure one arbitrary phase of that cycle — five of them, averaged, measure
+## the behaviour instead. All are inside the commitment and outside contact.
+const CHARGE_DODGE_AT: Array[float] = [3.0, 4.0, 5.0, 6.0, 7.0]
+
+const CHARGE_PROBE_DT: float = 1.0 / 60.0
+const CHARGE_PROBE_SECONDS: float = 6.0
+
+## The verdict, and both halves are deliberately loose — a guard against the
+## commitment being GONE, not a pin on today's tuning. A committed charge must
+## miss a WALKING sidestep by several times the bear's own 0.43 m width; the same
+## bear with the commitment switched off must stay inside a metre of the quarry,
+## which on a 0.43 m animal beside a player is on top of them. Today's numbers are
+## 3.02 m against 0.78 m — a four-fold difference, which is the statement, not the
+## two absolute figures.
+const CHARGE_DODGE_MIN: float = 1.5
+const CHARGE_TRACK_MAX: float = 1.0
+
+
+func _check_charge_dodge(croc_ai: GDScript) -> void:
+	"""
+	MEASURE the dodge. Do not assert it.
+
+	"High momentum" is the easiest thing in this epic to write in a way that reads
+	correctly and does nothing. A charge that re-aims every frame is an ordinary
+	chase with a heavy comment; a commitment shorter than a sidestep is invisible;
+	a commitment that never expires is a bear running off the edge of the world.
+	None of the three is an error anywhere — you get a predator that feels like
+	all the others, which is the one outcome this bead exists to prevent.
+
+	So this simulates the dodge and reports the miss. A quarry stands directly in
+	the bear's path at 12 m, lets it commit, and at `CHARGE_DODGE_AT` metres steps
+	sideways at WALK_SPEED — a walk, not a run, because the point of the behaviour
+	is that footwork beats a predator you cannot outrun. Each step runs the
+	SHIPPED steering (`charge_steer_point`, the same static function the arm
+	calls) and the shipped two lines of movement.
+
+	THE NEGATIVE CONTROL IS THE SAME BEAR WITH THE COMMITMENT SWITCHED OFF —
+	identical row, identical turn_smoothness, aiming at the quarry's live position
+	every frame. It must still catch the sidestep. That is what separates "the
+	charge commits" from "the bear turns slowly": if the momentum ever quietly
+	migrated out of `charge_steer_point` and into `turn_smoothness`, the control
+	would start missing too and this check says so.
+
+	WHAT THE MODEL LEAVES OUT, honestly: obstacle feelers, gravity, the bite's own
+	lunge and the per-instance speed roll. The first two perturb the path without
+	touching where the lock points; the roll is bounded by the lattice at one end
+	and by ±20% at the other, and a slower bear misses by MORE.
+	"""
+	var names: Array[String] = _species_with("charge")
+	if names.is_empty():
+		_fail("no SPECIES row has behavior 'charge' — the committed charge this"
+				+ " check measures is not reachable from any species")
+		return
+	for charge_species: String in names:
+		_probe_charge(croc_ai, charge_species)
+
+
+func _probe_charge(croc_ai: GDScript, charge_species: String) -> void:
+	"""
+	Run the whole dodge measurement against ONE charging species.
+
+	@param croc_ai: the AI script, for its static charge_steer_point
+	@param charge_species: the SPECIES key to probe
+
+	Split out of _check_charge_dodge — which holds the argument for all of this —
+	so every charger is measured rather than the first one found.
+	"""
+	var row: Dictionary = _species_table[charge_species]
+	if not row.has("charge_commit"):
+		_fail("SPECIES['%s'] has behavior 'charge' but no 'charge_commit' —" % charge_species
+				+ " _behave_charge reads it every frame it chases")
+		return
+	var commit: float = float(row["charge_commit"])
+	if commit <= 0.0:
+		_fail("SPECIES['%s'].charge_commit is %.2f — a charge that re-aims every"
+				% [charge_species, commit] + " frame is an ordinary chase")
+		return
+
+	var committed := 0.0
+	var tracking := 0.0
+	for dodge_at: float in CHARGE_DODGE_AT:
+		committed += _charge_miss(croc_ai, row, dodge_at, true)
+		tracking += _charge_miss(croc_ai, row, dodge_at, false)
+	committed /= float(CHARGE_DODGE_AT.size())
+	tracking /= float(CHARGE_DODGE_AT.size())
+
+	print("charge dodge: a %.1f m/s sidestep at %s m beats a committed %s by"
+			% [_walk_speed, str(CHARGE_DODGE_AT), charge_species]
+			+ " %.2f m on average (same bear, commitment off: %.2f m)"
+			% [committed, tracking])
+
+	if committed < CHARGE_DODGE_MIN:
+		_fail("a walking sidestep only beats a committed charge by %.2f m" % committed
+				+ " (want >= %.2f m) — the commitment is gone and the bear is"
+				% CHARGE_DODGE_MIN + " just another chaser")
+	if tracking > CHARGE_TRACK_MAX:
+		_fail("the NEGATIVE CONTROL missed by %.2f m with the commitment SWITCHED"
+				% tracking + " OFF — the %.2f m measured with it on is coming from"
+				% committed + " turn_smoothness, not from charge_steer_point")
+
+
+func _charge_miss(croc_ai: GDScript, row: Dictionary, dodge_at: float,
+		committed: bool) -> float:
+	"""
+	Run one charge against one sidestep and report the closest the bear ever got.
+
+	@param croc_ai: the AI script, for its static charge_steer_point
+	@param row: the SPECIES row to simulate
+	@param dodge_at: how close the bear is when the quarry starts moving
+	@param committed: true to run the shipped steering, false for the control
+	@return closest approach in metres
+
+	THE RUN ENDS WHEN THE CHARGE IS SPENT — the first frame after the dodge began
+	on which the bear stops closing — and that window is the measurement, not a
+	convenience. Left running, every probe converges to zero and says nothing:
+	the quarry walks a straight line forever at 5 m/s and the bear does 6, so it
+	re-acquires from behind and eventually arrives no matter what happened at the
+	dodge. That is CORRECT (walking is caught, running escapes, and a dodge buys
+	the separation you then run with) and it is a different measurement from this
+	one, which asks only whether the sidestep beat the charge that was in flight.
+	The control does not trip the rule at all — a tracking bear never stops
+	closing — so it runs the full budget and reports the contact it makes.
+	"""
+	var quarry := Vector3(0.0, 0.0, CHARGE_PROBE_START)
+	var pos := Vector3.ZERO
+	var yaw := 0.0                      # already facing the quarry, along +Z
+	var chase: float = float(row["chase_speed"])
+	var turn: float = float(row["turn_smoothness"])
+	var commit: float = float(row["charge_commit"])
+	var lock := {}
+	var dodging := false
+	var closest := INF
+	var previous := INF
+	var steps := int(CHARGE_PROBE_SECONDS / CHARGE_PROBE_DT)
+	for _step in range(steps):
+		var distance := pos.distance_to(quarry)
+		if dodging and distance > previous + EPSILON:
+			break                       # the charge is spent — see the docstring
+		previous = distance
+		closest = minf(closest, distance)
+		if distance <= dodge_at:
+			dodging = true
+		if dodging:
+			# Straight across the bear's original line, at a WALK.
+			quarry.x += _walk_speed * CHARGE_PROBE_DT
+		var target := quarry
+		if committed:
+			target = croc_ai.charge_steer_point(quarry, pos, lock, commit)
+		var to_target := target - pos
+		to_target.y = 0.0
+		if to_target.length() > 0.1:
+			yaw = lerp_angle(yaw, atan2(to_target.x, to_target.z), CHARGE_PROBE_DT * turn)
+		pos += Vector3(sin(yaw), 0.0, cos(yaw)) * chase * CHARGE_PROBE_DT
+	return closest
+
+
+# ============================================================================
+# CHECK 8 — a burst predator cannot outrun a RUNNING player, and CAN catch a
+#           walking one, measured over the WHOLE pounce/recovery cycle
+# ============================================================================
+
+## How long each straight-line race runs. Long enough for many complete cycles at
+## either species' cadence (the cougar's is ~1.0 s at the clamp, the hound's
+## ~0.61 s), because one cycle in isolation says nothing: the burst is supposed to
+## take ground back, and the recovery is supposed to hand more of it over.
+const BURST_RACE_SECONDS: float = 20.0
+const BURST_RACE_DT: float = 1.0 / 60.0
+
+## Where the quarry starts. Comfortably outside contact and inside every burst
+## row's detection radius, so the predator is locked on for the whole race.
+const BURST_RACE_GAP: float = 12.0
+
+## THE VERDICT AGAINST A RUNNER, and it is deliberately loose. A running player
+## must END the race further away than they started — the gap must GROW, not
+## merely fail to reach zero — by at least this much. It is a guard against the
+## recovery window being gone, not a pin on today's tuning: today's figures are
+## +39.8 m (cougar) and +30.4 m (hound) at the worst speed the game can produce.
+const BURST_RUNNER_GAIN_MIN: float = 5.0
+
+## THE VERDICT AGAINST A WALKER, the other end of the same lattice and the end a
+## burst is likelier to break. A recovery deep enough to drag the CYCLE AVERAGE
+## under WALK_SPEED would not be a nerf, it would be a predator you stroll away
+## from — so a nominal-speed animal must close the whole 12 m gap and make
+## contact inside the race.
+const BURST_WALKER_MUST_CATCH: bool = true
+
+## THE CIRCLING PROBE. Radius of the tight circle the fourth race walks, in
+## metres — deliberately SMALLER than either species' burst_distance (2.5 and
+## 4.0), so a predator that measured its leg as DISPLACEMENT FROM WHERE THE LEG
+## STARTED would never travel far enough from that point to finish a pounce and
+## would burst forever. That is not a hypothetical: it is what this function did
+## before review, and it is the one way a bounded burst silently becomes an
+## unbounded one. Path length has no such hole, so the fraction of frames spent
+## bursting on a circle must match the straight-line cycle.
+const BURST_CIRCLE_RADIUS: float = 1.5
+
+## Ceiling on the share of frames a circling predator may spend on the burst leg.
+## The honest figure is the cycle's own duty ratio — (Db/Fb) / (Db/Fb + Dr/Fr) —
+## which is 0.36 for the cougar and 0.36 for the hound; the displacement bug puts
+## it at 1.00. 0.60 sits far from both, so this fails on the bug and not on a
+## retune.
+const BURST_CIRCLE_DUTY_MAX: float = 0.60
+
+
+func _check_burst_escape(croc_ai: GDScript) -> void:
+	"""
+	MEASURE the escape. Do not assert it.
+
+	THIS IS THE ONE CHECK IN THIS FILE GUARDING A DELIBERATE BREAK OF THE GAME'S
+	TIGHTEST CONTRACT. Every other species is clamped to MAX_CHASE_SPEED and that
+	is the end of it; the two `behavior: "burst"` rows multiply that clamped speed
+	by `burst_factor` for the length of a pounce, so a cougar at the top of the
+	distance gradient touches 11.05 m/s — above the ceiling AND above the slowest
+	character's run. The bead authorised that (">8.5 m/s"); what it authorised it
+	ON is that a running player still gets away across the FULL pounce-plus-
+	recovery cycle. That is a claim about a gap over time, so it is simulated
+	here rather than argued in a comment.
+
+	Three races per species, all straight lines, all driving the SHIPPED
+	`burst_cycle_factor` — the same static function the arm calls — so this
+	measures the cycle that ships and not a restatement of it:
+
+	  * A RUNNER at the slowest character's run, against the predator at the
+	    WORST speed the game can produce (chase clamped to MAX_CHASE_SPEED by the
+	    distance gradient). The gap must GROW.
+	  * A WALKER at WALK_SPEED, against the predator at its nominal chase speed.
+	    Contact must be made. Without this half, "the runner escapes" is also true
+	    of a species whose recovery made it slower than walking, which is not a
+	    predator.
+	  * THE NEGATIVE CONTROL: the same predator at the same clamped speed with the
+	    RECOVERY REMOVED (recover_factor pinned to the burst factor, i.e. a
+	    sustained burst). It MUST catch the runner. That is what separates "the
+	    recovery window is what saves the player" from "the numbers happened to
+	    work out": if the burst ever quietly stopped being applied at all — a
+	    typo'd key, a factor of 1.0, an arm that never fires — the control would
+	    stop catching and this check says so.
+
+	WHAT THE MODEL LEAVES OUT, honestly: turning, obstacle feelers, gravity, the
+	bite's own lunge and the per-instance size roll. All of them are straight-line
+	races down a corridor, which is both the simplest case and the WORST case for
+	the player — every one of those effects slows the predator relative to a
+	quarry running in a straight line, so a predator that cannot catch a runner
+	here cannot catch one anywhere.
+	"""
+	if _slowest_run_speed <= 0.0:
+		_fail("could not derive the slowest character's run from player_controller.gd"
+				+ " (RUN_SPEED x the smallest CHARACTER_SPEED) — check 8 would have"
+				+ " raced the burst against a ceiling of zero and passed vacuously")
+		return
+
+	var burst_species: Array[String] = []
+	for name_v: Variant in _species_table:
+		if String(_species_table[name_v].get("behavior", "")) == "burst":
+			burst_species.append(String(name_v))
+	if burst_species.is_empty():
+		_fail("no SPECIES row has behavior 'burst' — the bounded burst this check"
+				+ " measures is not reachable from any species")
+		return
+
+	for species_name: String in burst_species:
+		var row: Dictionary = _species_table[species_name]
+		var missing: Array[String] = []
+		for key: String in ["burst_distance", "recover_distance", "burst_factor",
+				"recover_factor"]:
+			if not row.has(key):
+				missing.append(key)
+		if not missing.is_empty():
+			_fail("SPECIES['%s'] has behavior 'burst' but no %s —" % [species_name, missing]
+					+ " burst_cycle_factor reads them every frame it chases, and"
+					+ " answers 1.0 (an ordinary chase) when they are gone")
+			continue
+
+		var chase: float = float(row["chase_speed"])
+		var burst_peak: float = _max_chase_speed * float(row["burst_factor"])
+
+		# THE BURST MUST ACTUALLY BE A BURST. A `burst_factor` at or under 1.0 is
+		# the silent failure this whole check exists for: everything below still
+		# runs, the runner still escapes, and the species is a slow crocodile with
+		# a long comment. The bead's own bar is the ceiling it is allowed to break.
+		if burst_peak <= _max_chase_speed:
+			_fail("SPECIES['%s'].burst_factor %.2f puts the peak at %.2f m/s, not"
+					% [species_name, float(row["burst_factor"]), burst_peak]
+					+ " above MAX_CHASE_SPEED (%.2f) — there is no burst" % _max_chase_speed)
+		if float(row["recover_factor"]) >= 1.0:
+			_fail("SPECIES['%s'].recover_factor %.2f is at or above 1.0 — the"
+					% [species_name, float(row["recover_factor"])]
+					+ " 'recovery' costs the animal nothing and the burst is a"
+					+ " permanent speed-up over the whole cycle")
+
+		# 1. The runner, against the fastest this species can ever be.
+		var runner := _burst_race(croc_ai, row, _max_chase_speed, _slowest_run_speed, false)
+		# 2. The walker, against the nominal animal.
+		var walker := _burst_race(croc_ai, row, chase, _walk_speed, false)
+		# 3. The control: same worst-case animal, recovery removed.
+		var control := _burst_race(croc_ai, row, _max_chase_speed, _slowest_run_speed, true)
+		# 4. The circling probe — see BURST_CIRCLE_RADIUS.
+		var duty := _burst_circle_duty(croc_ai, row, _max_chase_speed)
+
+		print("burst escape (%s): peak %.2f m/s vs the %.2f ceiling; a %.1f m/s run"
+				% [species_name, burst_peak, _max_chase_speed, _slowest_run_speed]
+				+ " opens the %.1f m gap to %.1f m over %.0f s, a %.1f m/s walk closes"
+				% [BURST_RACE_GAP, runner, BURST_RACE_SECONDS, _walk_speed]
+				+ " it to %.1f m (same animal, recovery OFF: %.1f m);"
+				% [walker, control]
+				+ " circling inside %.1f m it bursts %.0f%% of frames"
+				% [BURST_CIRCLE_RADIUS, duty * 100.0])
+
+		if runner - BURST_RACE_GAP < BURST_RUNNER_GAIN_MIN:
+			_fail("a running player only gained %.2f m on a %s over %.0f s"
+					% [runner - BURST_RACE_GAP, species_name, BURST_RACE_SECONDS]
+					+ " (want >= %.2f m) — the pounce is above MAX_CHASE_SPEED and"
+					% BURST_RUNNER_GAIN_MIN
+					+ " the recovery is no longer paying for it, so running has"
+					+ " stopped escaping and that is the promise the game is"
+					+ " balanced on")
+		if BURST_WALKER_MUST_CATCH and walker > 0.0:
+			_fail("a %s never caught a WALKING player — it stayed %.2f m short over"
+					% [species_name, walker] + " %.0f s. The cycle average has"
+					% BURST_RACE_SECONDS + " fallen under WALK_SPEED (%.2f), which"
+					% _walk_speed + " is not a difficulty knob but a broken predator")
+		if control > 0.0:
+			_fail("the NEGATIVE CONTROL for %s did NOT catch the runner with the"
+					% species_name + " RECOVERY SWITCHED OFF — it stayed %.2f m"
+					% control + " short. The escape measured with it on is therefore"
+					+ " not coming from the recovery window, so this check is not"
+					+ " measuring the burst at all")
+		if duty > BURST_CIRCLE_DUTY_MAX:
+			_fail("a %s circling inside %.1f m spent %.0f%% of its frames on the"
+					% [species_name, BURST_CIRCLE_RADIUS, duty * 100.0]
+					+ " BURST leg (want <= %.0f%%) — the leg is being measured as"
+					% (BURST_CIRCLE_DUTY_MAX * 100.0)
+					+ " displacement from where it started rather than as path"
+					+ " length, so a predator that never gets far from one spot"
+					+ " never finishes a pounce and holds a speed above"
+					+ " MAX_CHASE_SPEED indefinitely")
+
+
+func _burst_circle_duty(croc_ai: GDScript, row: Dictionary, chase: float) -> float:
+	"""
+	Walk a burst predator round a tight circle and report how much it spends bursting.
+
+	@param croc_ai: the AI script, for its static burst_cycle_factor
+	@param row: the SPECIES row to simulate
+	@param chase: the predator's clamped chase speed
+	@return the fraction of frames the cycle spent on the burst leg
+
+	The path is a circle of BURST_CIRCLE_RADIUS — smaller than the burst leg, so
+	the body never gets `burst_distance` away from any point on it while covering
+	unlimited GROUND. That is the real chase geometry this models: a player who
+	circles, or a predator steered round a massif by the obstacle feelers. Arc
+	length per frame is `chase * factor * dt`, so a bursting animal walks the
+	circle faster, exactly as it would in the world.
+	"""
+	var lock := {}
+	var angle := 0.0
+	var bursts := 0
+	var steps := int(BURST_RACE_SECONDS / BURST_RACE_DT)
+	var burst_factor: float = float(row["burst_factor"])
+	for _step in range(steps):
+		var pos := Vector3(cos(angle), 0.0, sin(angle)) * BURST_CIRCLE_RADIUS
+		var factor: float = croc_ai.burst_cycle_factor(pos, lock, row)
+		if is_equal_approx(factor, burst_factor):
+			bursts += 1
+		angle += (chase * factor * BURST_RACE_DT) / BURST_CIRCLE_RADIUS
+	return float(bursts) / float(steps)
+
+
+func _burst_race(croc_ai: GDScript, row: Dictionary, chase: float, quarry_speed: float,
+		no_recovery: bool) -> float:
+	"""
+	Race one burst predator against one quarry down a straight line.
+
+	@param croc_ai: the AI script, for its static burst_cycle_factor
+	@param row: the SPECIES row to simulate
+	@param chase: the predator's clamped chase speed (what _ready() resolved)
+	@param quarry_speed: the quarry's constant speed
+	@param no_recovery: the negative control — pin the recovery leg to the burst
+	                    factor, so the animal never pays for a pounce
+	@return the gap in metres at the end, or 0.0 if contact was made
+
+	The predator drives the SHIPPED `burst_cycle_factor` with the SHIPPED row, so
+	the leg lengths, the flip rule and both factors are the ones that ship. Only
+	the control mutates anything, and it mutates a COPY.
+	"""
+	var probe_row: Dictionary = row
+	if no_recovery:
+		probe_row = row.duplicate()
+		probe_row["recover_factor"] = row["burst_factor"]
+
+	var pos := Vector3.ZERO
+	var quarry := Vector3(0.0, 0.0, BURST_RACE_GAP)
+	var lock := {}
+	var steps := int(BURST_RACE_SECONDS / BURST_RACE_DT)
+	for _step in range(steps):
+		var factor: float = croc_ai.burst_cycle_factor(pos, lock, probe_row)
+		pos.z += chase * factor * BURST_RACE_DT
+		quarry.z += quarry_speed * BURST_RACE_DT
+		if quarry.z - pos.z <= 0.0:
+			return 0.0
+	return quarry.z - pos.z
+
+
+# ============================================================================
+# CHECK 9 — PLACEMENT IS A PURE FUNCTION of (chunk coords, run_seed)
+# ============================================================================
+
+func _check_determinism(terrain_script: GDScript) -> void:
+	"""
+	Generate the same field THREE times and prove the world is reproducible.
+
+	This is the invariant CLAUDE.md's terrain section opens with, and the one the
+	whole multiplayer mesh is built on top of: two peers exchange a run_seed and
+	nothing else, and from that alone they must put the same predator, of the same
+	species, under the same name, at the same coordinates. Nothing checks it at
+	runtime — a peer whose vipers stand half a metre off is a peer whose crocodile
+	sync lands on bodies that are not quite where the master thinks, and the only
+	symptom is enemies that jitter for some players and not others.
+
+	Three generations, and the third is the negative control:
+
+	  * FORWARD — chunks generated in raster order, the order the streamer uses.
+	  * REVERSE — the SAME chunks, generated back to front. Byte-identical, or the
+	    generation is carrying state between chunks, which is the failure the
+	    "one shared hash stream" rule in CLAUDE.md exists to prevent: a revisited
+	    chunk (the streamer rebuilds one every time you cross a boundary) would
+	    then come back different from how you left it.
+	  * DETERMINISM_CONTROL_SEED — must DIFFER. Without it, "the two fields matched" is also
+	    true of a comparison of two empty fields, or of a signature that captured
+	    nothing that varies.
+
+	COMPARED AT 17 SIGNIFICANT DIGITS, i.e. bit for bit (see EXACT). A tolerance
+	would be the wrong instrument entirely: two peers do not average their
+	positions, they either agree or they do not.
+	"""
+	var forward: Dictionary = _generate_field(terrain_script, RUN_SEEDS[0], false)
+	var reverse: Dictionary = _generate_field(terrain_script, RUN_SEEDS[0], true)
+	var other: Dictionary = _generate_field(terrain_script, DETERMINISM_CONTROL_SEED, false)
+
+	var bodies := 0
+	var mismatches := 0
+	var first := ""
+	for key_v: Variant in forward:
+		bodies += (forward[key_v] as Array).size()
+		if var_to_bytes(forward[key_v]) != var_to_bytes(reverse.get(key_v, [])):
+			mismatches += 1
+			if first == "":
+				first = _first_difference(key_v, forward[key_v], reverse.get(key_v, []))
+
+	var differing := 0
+	for key_v: Variant in forward:
+		if var_to_bytes(forward[key_v]) != var_to_bytes(other.get(key_v, [])):
+			differing += 1
+
+	print("determinism: %d chunks / %d bodies regenerate identically back-to-front;"
+			% [forward.size(), bodies]
+			+ " %d of them differ under a second run seed" % differing)
+
+	if mismatches > 0:
+		_fail("%d of %d chunks generated DIFFERENTLY when the field was built back"
+				% [mismatches, forward.size()]
+				+ " to front — placement is not a pure function of (chunk coords,"
+				+ " run_seed), so a revisited chunk changes under you and two peers"
+				+ " sharing a seed do not share a world. First: %s" % first)
+	if bodies < 1:
+		_fail("the determinism field generated no enemies at all — the comparison"
+				+ " above matched two empty signatures and measured nothing")
+	if differing < forward.size() / 2:
+		_fail("only %d of %d chunks changed when run_seed changed —" % [
+				differing, forward.size()]
+				+ " the signature is not capturing what run_seed varies, so the"
+				+ " forward/reverse match above proves nothing")
+
+
+func _first_difference(chunk_pos: Variant, a: Array, b: Array) -> String:
+	"""
+	The first entry two generations of one chunk disagree on, as one line.
+
+	@param chunk_pos: the chunk, for the message
+	@param a: the forward generation's signature entries
+	@param b: the reverse generation's
+	@return a one-line description of the first difference
+
+	The first ENTRY rather than the whole chunk: a chunk holds a dozen bodies and
+	printing both signatures in full buries the one number that moved under two
+	kilobytes of the ones that did not.
+	"""
+	for i in range(maxi(a.size(), b.size())):
+		var one: Variant = a[i] if i < a.size() else null
+		var two: Variant = b[i] if i < b.size() else null
+		if var_to_bytes(one) != var_to_bytes(two):
+			return "chunk %s entry %d: forward %s, reverse %s" % [
+					chunk_pos, i, var_to_str(one), var_to_str(two)]
+	return "chunk %s (%d vs %d entries)" % [chunk_pos, a.size(), b.size()]
+
+
+func _generate_field(terrain_script: GDScript, run_seed: int, backwards: bool) -> Dictionary:
+	"""
+	Build a DETERMINISM_FIELD-square field and return each chunk's exact signature.
+
+	@param terrain_script: endless_terrain.gd
+	@param run_seed: the seed to force through the public set_run_seed() seam
+	@param backwards: generate the chunks in reverse raster order
+	@return Vector2i -> one signature entry per enemy the chunk spawned
+
+	A FRESH terrain node every call, so the second generation cannot be reading
+	anything the first one cached. The chunk order is the only difference between
+	the forward and reverse runs — same node type, same seed, same call sequence,
+	which is what makes a difference in the answer mean exactly one thing.
+	"""
+	var terrain := Node3D.new()
+	terrain.set_script(terrain_script)
+	terrain.set_run_seed(run_seed)
+	terrain.crocodile_scene = load(CROC_SCENE)
+	terrain.coin_scene = load(COIN_SCENE)
+
+	var order: Array[Vector2i] = []
+	var half := DETERMINISM_FIELD / 2
+	for cx in range(-half, half + 1):
+		for cz in range(-half, half + 1):
+			order.append(Vector2i(cx, cz))
+	if backwards:
+		order.reverse()
+
+	var signatures := {}
+	for chunk_pos: Vector2i in order:
+		signatures[chunk_pos] = _chunk_signature(terrain, chunk_pos)
+	return signatures
+
+
+func _chunk_signature(terrain: Node, chunk_pos: Vector2i) -> Array:
+	"""
+	Everything one chunk spawns, as raw comparable values.
+
+	@param terrain: a terrain node with its run seed already forced
+	@param chunk_pos: the chunk to generate
+	@return one [name, species, position, yaw] entry per enemy, unrounded
+
+	The call sequence is create_chunk's, for the reason the sweep's is: the later
+	spawners judge their candidates against footprints the earlier ones appended,
+	so a signature taken from the crocodile spawner alone would be blind to a
+	non-deterministic BLOCK — and a block that moves moves the crocodiles that
+	were placed around it.
+	"""
+	var parent := _make_chunk_parent(terrain.chunk_to_world(chunk_pos))
+	var platforms: Array = []
+	var batch: Array = []
+	var body := StaticBody3D.new()
+	var obstacles: Array = terrain.spawn_objects_in_chunk(chunk_pos, platforms, batch, body)
+	terrain.spawn_artifact_in_chunk(chunk_pos, parent, obstacles, batch, body)
+	terrain.spawn_biome_content_in_chunk(chunk_pos, obstacles, batch, body)
+	terrain.spawn_camp_in_chunk(chunk_pos, parent, obstacles, batch, body)
+	terrain.spawn_landmark_in_chunk(chunk_pos, parent, obstacles, batch, body)
+	terrain.spawn_chest_in_chunk(chunk_pos, parent, obstacles, batch, body)
+	terrain.spawn_crocodiles_in_chunk(chunk_pos, parent, obstacles)
+	terrain.spawn_platform_crocodiles(chunk_pos, parent, platforms)
+	terrain.spawn_bosses_in_chunk(chunk_pos, parent, obstacles)
+
+	var parts: Array = []
+	for child in parent.get_children():
+		if not child.is_in_group("crocodile"):
+			continue
+		var node := child as Node3D
+		parts.append([String(child.name), String(child.get("species")),
+				node.position, node.rotation.y])
+	parent.free()
+	body.free()
+	return parts
+
+
+# ============================================================================
+# CHECK 10 — one identity scheme and one state byte, SHARED BY EVERY SPECIES
+# ============================================================================
+
+## Which member of the AI carries each bit of the sync byte, named against
+## MpManager's own constants — the encoder's and the decoder's single source — so
+## a bit renamed on one side and not the other fails here rather than desyncing a
+## room.
+##
+## BITING is deliberately exempt from the "clears again" half below: it decodes
+## through _start_bite(), which is a one-way "the chomp STARTED" edge cleared by
+## the local animation timer, never by a zero in a later byte. That asymmetry is
+## the documented design (see set_remote_state), so the check states it rather
+## than measuring the opposite and failing on correct code.
+const CROC_STATE_BITS: Dictionary = {
+	"is_chasing": "CROC_FLAG_CHASING",
+	"is_fleeing": "CROC_FLAG_FLEEING",
+	"is_paused": "CROC_FLAG_PAUSED",
+	"is_biting": "CROC_FLAG_BITING",
+	"is_burrowed": "CROC_FLAG_BURROWED",
+}
+
+
+func _check_mp_contract(croc: Node, species_name: String, chunk_pos: Vector2i) -> void:
+	"""
+	Prove ONE live body of one species can be recognised and driven by a peer.
+
+	@param croc: a crocodile the sweep just spawned — a real body, _ready() run
+	@param species_name: the species it resolved to
+	@param chunk_pos: the chunk it was spawned in
+
+	CALLED ONCE PER SPECIES, on the first body of it the sweep produces, so the
+	cost is one probe per row rather than one per animal — and no species is
+	silently skipped either, because the coverage gate demands the sweep produce
+	one of each.
+
+	TWO HALVES, both of which the epic deliberately made species-blind:
+
+	  * IDENTITY. Every predator is named `Crocodile_<cx>_<cy>_<i>` whatever it
+	    is (see the note over that line in spawn_crocodiles_in_chunk), because the
+	    name IS the room-wide id — croc_id_for() hashes it, and species is a pure
+	    function of position, so a per-species prefix would churn every id in the
+	    room to say something both peers already knew. A viper that named itself
+	    is a viper no peer can address, which shows up as one animal syncing and
+	    another standing still.
+	  * THE STATE BYTE. Every bit MpManager encodes must decode back onto the
+	    same member of the same body, for every species — a row is data, and the
+	    sync layer is not allowed to grow a special case per animal.
+
+	AND THE BURROW IS THE POINTED CASE. It rides a bit precisely because it is
+	NOT derivable from the others (see CROC_FLAG_BURROWED): a peer recomputing
+	`is_burrowed = not is_chasing` for itself is a bug this epic already shipped
+	once and had to fix, and it looks like nothing at all — a viper standing on
+	the sand on one screen and buried on another. So the two decodes below are
+	chosen to be exactly the ones a re-derivation would get wrong: burrowed WHILE
+	chasing, and surfaced while NOT chasing.
+	"""
+	# ---- identity -----------------------------------------------------------
+	var node_name: String = String(croc.name)
+	var expected_prefix := "Crocodile_%d_%d_" % [chunk_pos.x, chunk_pos.y]
+	if not node_name.begins_with(expected_prefix):
+		_fail("a '%s' spawned in chunk %s is named '%s', not '%s<index>' —" % [
+				species_name, chunk_pos, node_name, expected_prefix]
+				+ " the node name IS the room-wide id, so a species that renames"
+				+ " itself is one no peer can address")
+	if croc.croc_id() != croc.croc_id_for(node_name):
+		_fail("'%s' latched croc_id %d, but its name '%s' hashes to %d — the id"
+				% [species_name, croc.croc_id(), node_name, croc.croc_id_for(node_name)]
+				+ " a peer derives from the name is not the id this body answers to")
+
+	# ---- the state byte, encode then decode ---------------------------------
+	for member_v: Variant in CROC_STATE_BITS:
+		var member: String = String(member_v)
+		var flag_name: String = String(CROC_STATE_BITS[member])
+		if not _mp_consts.has(flag_name):
+			_fail("mp_manager.gd has no %s — the bit '%s' rides is gone, so nothing"
+					% [flag_name, member] + " the master says about it reaches a peer")
+			continue
+		var bit: int = int(_mp_consts[flag_name])
+		for value: bool in [true, false]:
+			croc.set(member, value)
+			var carried: bool = (MpManager._croc_flags(croc) & bit) != 0
+			if carried != value:
+				_fail("'%s': MpManager._croc_flags() wrote %s for %s = %s —" % [
+						species_name, "1" if carried else "0", member, value]
+						+ " the master's byte does not describe this species, so"
+						+ " every peer draws it in a pose it is not in")
+		croc.set(member, false)
+
+	var here: Vector3 = (croc as Node3D).global_position
+	var all_bits: int = 0
+	for member_v: Variant in CROC_STATE_BITS:
+		all_bits |= int(_mp_consts.get(String(CROC_STATE_BITS[member_v]), 0))
+	croc.set_remote_state(here, 0.0, all_bits)
+	for member_v: Variant in CROC_STATE_BITS:
+		if not bool(croc.get(String(member_v))):
+			_fail("'%s': set_remote_state() ignored the %s bit — the master sends"
+					% [species_name, member_v] + " it and this species never reads it")
+	# And it clears again. BITING is exempt by design — see CROC_STATE_BITS.
+	croc.set_remote_state(here, 0.0, 0)
+	for member_v: Variant in CROC_STATE_BITS:
+		if String(member_v) == "is_biting":
+			continue
+		if bool(croc.get(String(member_v))):
+			_fail("'%s': %s stayed set through an all-clear state byte — it latches"
+					% [species_name, member_v] + " on a peer and never comes back")
+
+	# ---- the burrow is SENT, not re-derived ---------------------------------
+	croc.set_remote_state(here, 0.0,
+			int(_mp_consts.get("CROC_FLAG_CHASING", 0))
+			| int(_mp_consts.get("CROC_FLAG_BURROWED", 0)))
+	if not bool(croc.get("is_burrowed")):
+		_fail("'%s': a byte saying CHASING and BURROWED at once surfaced the body —"
+				% species_name + " the burrow is being re-derived from the chase"
+				+ " flag on the receiving peer instead of read from the byte")
+	croc.set_remote_state(here, 0.0, 0)
+	if bool(croc.get("is_burrowed")):
+		_fail("'%s': a byte with no BURROWED bit still left the body buried —"
+				% species_name + " the burrow is being re-derived from `not"
+				+ " is_chasing` on the receiving peer instead of read from the byte")
+
+
+# ============================================================================
+# THE COVERAGE VERDICT — every biome visited, every species actually spawned
+# ============================================================================
+
+func _check_coverage() -> void:
+	"""
+	The gate that makes this file's title true: ALL SIX BIOMES, ALL SIX SPECIES.
+
+	Everything above measures whatever the sweep happened to produce. This is what
+	says the sweep produced all of it — and it is stated against the `Biome` enum
+	and the `BIOME_SPECIES` map rather than a list here, so the seventh predator
+	is demanded of the field the day its row lands, and a band nobody put a
+	predator in is reported instead of quietly skipped.
+
+	Taken over the UNION of the run seeds, not per seed: one 289-chunk field
+	legitimately misses a band (seed 12345 contains no snow at all, which is a
+	fact about the biome noise, not a bug). What may not happen is the WHOLE run
+	missing one — the fix for that is another entry in RUN_SEEDS, and the failure
+	message says so.
+	"""
+	var missing_biomes: Array[String] = []
+	for name_v: Variant in _biomes:
+		if not _biomes_seen_all.has(int(_biomes[name_v])):
+			missing_biomes.append(String(name_v))
+	if not missing_biomes.is_empty():
+		_fail("no chunk of any run seed landed in %s — obstacle avoidance and"
+				% str(missing_biomes) + " species dispatch were never measured in"
+				+ " those bands. Add a run seed to RUN_SEEDS until they appear")
+
+	var want := { "crocodile": true }
+	for biome_v: Variant in _biome_species:
+		want[String(_biome_species[biome_v].get("species", ""))] = true
+	var missing_species: Array[String] = []
+	for name_v: Variant in want:
+		if not _species_seen_all.has(String(name_v)):
+			missing_species.append(String(name_v))
+	if not missing_species.is_empty():
+		_fail("%s is dispatched by BIOME_SPECIES but never spawned in any field —"
+				% str(missing_species) + " every measurement in this file skipped"
+				+ " it, so it ships unmeasured. Add a run seed to RUN_SEEDS")
+
+	# Check 10 is driven off the sweep, one probe on the first body of each
+	# species — so "every dispatched species spawned" and "every dispatched
+	# species had its multiplayer contract measured" are the same statement only
+	# as long as the probe is actually wired into the loop. Stated separately
+	# because that wiring is one `if` and this is what notices it going away.
+	var unprobed: Array[String] = []
+	for name_v: Variant in want:
+		if not _mp_probed.has(String(name_v)):
+			unprobed.append(String(name_v))
+	if not unprobed.is_empty():
+		_fail("%s never reached the multiplayer contract probe (check 10) —"
+				% str(unprobed) + " their node names and state bytes are unmeasured,"
+				+ " so a peer may not be able to address or pose them at all")
+
+	print("coverage: %d biomes visited, %d species multiplayer-probed, ground"
+			% [_biomes_seen_all.size(), _mp_probed.size()]
+			+ " predators by species over all seeds %s" % _species_seen_all)
+
+
+func _bearing_spread_deg(bearings: Array[float]) -> float:
+	"""
+	The arc a set of compass bearings covers, in degrees.
+
+	Sort them, find the widest EMPTY gap on the circle, and the answer is 360°
+	minus that gap. This is the standard circular-range measure and it is the
+	right one here for a reason a naive max-minus-min would get wrong: bearings
+	wrap, so four wolves at 10°, 100°, 190° and 350° span 340°, not 340° in one
+	direction and a spurious 0 in the other.
+	"""
+	if bearings.size() < 2:
+		return 0.0
+	var sorted: Array[float] = bearings.duplicate()
+	sorted.sort()
+	var widest_gap: float = TAU - (sorted[-1] - sorted[0])   # the wrap-around gap
+	for i in range(1, sorted.size()):
+		widest_gap = maxf(widest_gap, sorted[i] - sorted[i - 1])
+	return rad_to_deg(TAU - widest_gap)
+
+
+func _fail(message: String) -> void:
+	_failures.append(message)
+
+
+func _report() -> void:
+	if _failures.is_empty():
+		print("SELFCHECK OK")
+		quit(0)
+		return
+	for failure: String in _failures:
+		printerr("FAIL: ", failure)
+	quit(1)
+
+
+# ============================================================================
+# THE SWEEP — one whole field, generated exactly the way create_chunk does
+# ============================================================================
+
+func _sweep(terrain_script: GDScript, run_seed: int, spawn_height: float, edge_inset: float) -> void:
+	"""
+	Generate a FIELD x FIELD chunk field and measure every crocodile against the
+	solid geometry around it.
+
+	The terrain node is DETACHED (never added to the tree), the same way
+	prop_selfcheck.gd and landmark_selfcheck.gd drive it: _ready() rolls a random
+	run seed, awaits a frame and starts streaming chunks around the player, none
+	of which this check wants. set_run_seed() is the public seam that makes the
+	field reproducible (it is also what new_run() and the multiplayer forced seed
+	go through, so it cannot rot), and the two scenes are assigned by hand because
+	_ready() is what normally loads them.
+
+	TWO PASSES, and the split is load-bearing: a block near a chunk edge reaches
+	into the NEIGHBOURING chunk, while `obstacles` only ever describes the chunk
+	being generated. So every chunk's geometry is built first and each crocodile
+	is then measured against its own chunk AND its eight neighbours, in world
+	space. A single-pass version passes while a crocodile stands in the corner of
+	the wall next door.
+	"""
+	var terrain := Node3D.new()
+	terrain.set_script(terrain_script)
+	terrain.set_run_seed(run_seed)
+	terrain.crocodile_scene = load(CROC_SCENE)
+	terrain.coin_scene = load(COIN_SCENE)
+
+	var chunk_solids := {}      # Vector2i -> Array of { inv, half } in WORLD space
+	var chunk_obstacles := {}   # Vector2i -> the chunk's footprint list
+	var chunk_platforms := {}   # Vector2i -> the chunk's walkable tops
+	var solid_count := 0
+	var half_field := FIELD / 2
+
+	# ---- pass 1: build the geometry -----------------------------------------
+	for cx in range(-half_field, half_field + 1):
+		for cz in range(-half_field, half_field + 1):
+			var chunk_pos := Vector2i(cx, cz)
+			var origin: Vector3 = terrain.chunk_to_world(chunk_pos)
+			var parent := _make_chunk_parent(origin)
+			var obstacles: Array = []
+			var platforms: Array = []
+			var batch: Array = []
+			var body := StaticBody3D.new()
+
+			# Same call ORDER as create_chunk, because the later spawners judge
+			# their candidates against the footprints the earlier ones appended.
+			obstacles = terrain.spawn_objects_in_chunk(chunk_pos, platforms, batch, body)
+			terrain.spawn_artifact_in_chunk(chunk_pos, parent, obstacles, batch, body)
+			terrain.spawn_biome_content_in_chunk(chunk_pos, obstacles, batch, body)
+			terrain.spawn_camp_in_chunk(chunk_pos, parent, obstacles, batch, body)
+			terrain.spawn_landmark_in_chunk(chunk_pos, parent, obstacles, batch, body)
+			terrain.spawn_chest_in_chunk(chunk_pos, parent, obstacles, batch, body)
+
+			var solids: Array = []
+			for child in body.get_children():
+				var shape_node := child as CollisionShape3D
+				var box := shape_node.shape as BoxShape3D
+				# The shape carries the block's chunk-local transform (create_box
+				# assigns it whole); lift it to world so neighbours are comparable.
+				var world := Transform3D(shape_node.transform.basis,
+						shape_node.transform.origin + origin)
+				solids.append({ "inv": world.affine_inverse(), "half": box.size * 0.5 })
+			solid_count += solids.size()
+
+			chunk_solids[chunk_pos] = solids
+			chunk_obstacles[chunk_pos] = obstacles
+			chunk_platforms[chunk_pos] = platforms
+			parent.free()
+			body.free()
+
+	# ---- pass 2: spawn the crocodiles and measure ---------------------------
+	var counts := { "ground": 0, "platform": 0, "boss": 0 }
+	var worst_depth := 0.0
+	var worst_desc := ""
+	var in_stone := 0
+	# Broken down by SPECIES, because "N crocodiles in stone" over a six-predator
+	# world does not say whether the clearance rule broke everywhere or one
+	# animal's footprint outgrew it — and those are different bugs.
+	var in_stone_by_species := {}
+	# Check 4's live half — see the block inside the loop below.
+	var species_mismatches := 0
+	var species_worst := ""
+	var species_seen := {}
+
+	for cx in range(-half_field, half_field + 1):
+		for cz in range(-half_field, half_field + 1):
+			var chunk_pos := Vector2i(cx, cz)
+			var origin: Vector3 = terrain.chunk_to_world(chunk_pos)
+			var parent := _make_chunk_parent(origin)
+			var obstacles: Array = chunk_obstacles[chunk_pos]
+			# Which bands this field actually contains — the raw material of the
+			# coverage verdict, and the reason it is taken over the union of the
+			# seeds rather than per seed (see _check_coverage).
+			_biomes_seen_all[int(terrain.biome_at(origin.x, origin.z))] = true
+
+			terrain.spawn_crocodiles_in_chunk(chunk_pos, parent, obstacles)
+			terrain.spawn_platform_crocodiles(chunk_pos, parent, chunk_platforms[chunk_pos])
+			terrain.spawn_bosses_in_chunk(chunk_pos, parent, obstacles)
+
+			for child in parent.get_children():
+				var node_name := String(child.name)
+				var kind := ""
+				if node_name.begins_with("Crocodile_"):
+					kind = "ground"
+				elif node_name.begins_with("PatrolCrocodile_"):
+					kind = "platform"
+				elif node_name.begins_with("BossCrocodile_"):
+					kind = "boss"
+				else:
+					# THE THREE PREFIXES ARE THE WHOLE NAMING SCHEME, and every
+					# species shares them (see _check_mp_contract). Anything in
+					# group "crocodile" wearing another name is a body this file
+					# would silently stop measuring AND a body no peer can
+					# address — one bug with two faces, so it is caught by the
+					# classifier rather than by a count that quietly went down.
+					if child.is_in_group("crocodile"):
+						_fail("seed %d: chunk %s spawned '%s', which is in group"
+								% [run_seed, chunk_pos, node_name]
+								+ " \"crocodile\" but carries none of the three"
+								+ " deterministic name prefixes — croc_id_for()"
+								+ " cannot address it and this sweep cannot see it")
+					continue
+				counts[kind] = int(counts[kind]) + 1
+				# Set by the ground branch below; drives the once-per-species
+				# multiplayer probe at the end of this loop body.
+				var resolved_species := ""
+
+				# CHECK 4 (live half): the biome dispatch actually reached the
+				# body. The table itself is checked once, off-world, in
+				# _check_species_table; what can only be seen HERE is whether
+				# spawn_crocodiles_in_chunk assigned `species` at all, whether it
+				# assigned it BEFORE add_child (an assignment after it leaves
+				# `spec` resolved to the crocodile row, so the field and the row
+				# disagree), and whether it picked the entry the chunk's biome
+				# calls for. A boss or a platform guard is deliberately exempt —
+				# neither is dispatched on a chunk centre.
+				if kind == "ground":
+					var want: String = _expected_species(terrain, origin)
+					# A dispatch entry naming a row that is not in SPECIES is
+					# already reported once, by name, in _check_species_table.
+					# Guarded again HERE only so the sweep does not index a
+					# missing row and die mid-field: a script error before
+					# _report() means quit() is never reached and the process
+					# exits 0 with no verdict — the green lie this file exists
+					# to avoid, arrived at by way of a correct failure.
+					if not _species_table.has(want):
+						continue
+					var got: String = String(child.get("species"))
+					# `spec` is what the per-frame paths actually read, and it is
+					# resolved in _ready(). Comparing ONE number off it against
+					# the table is what catches the call-order break: assign
+					# `species` after add_child() and the field says "sand_viper"
+					# while every speed, feeler and animation stays a crocodile's.
+					var spec: Variant = child.get("spec")
+					var want_speed: float = float(_species_table[want]["chase_speed"])
+					var got_speed: float = (float(spec["chase_speed"])
+							if spec is Dictionary and spec.has("chase_speed") else NAN)
+					if got != want:
+						species_mismatches += 1
+						if species_worst == "":
+							species_worst = "%s (%s biome) is species '%s', expected '%s'" % [
+									node_name, _biome_name(origin, terrain), got, want]
+					elif not is_equal_approx(got_speed, want_speed):
+						species_mismatches += 1
+						if species_worst == "":
+							species_worst = ("%s says species '%s' but resolved a spec with"
+									+ " chase_speed %s, not the table's %s — `species` was"
+									+ " assigned AFTER add_child()") % [
+									node_name, got, got_speed, want_speed]
+					species_seen[want] = int(species_seen.get(want, 0)) + 1
+					_species_seen_all[got] = int(_species_seen_all.get(got, 0)) + 1
+					resolved_species = got
+
+				var world_pos: Vector3 = (child as Node3D).global_position
+				var depth := _depth_in_stone(chunk_solids, chunk_pos, world_pos)
+				if depth > EPSILON:
+					in_stone += 1
+					var label: String = resolved_species if resolved_species != "" else kind
+					in_stone_by_species[label] = int(in_stone_by_species.get(label, 0)) + 1
+					if depth > worst_depth:
+						worst_depth = depth
+						worst_desc = "%s %s %s at %v" % [kind, resolved_species, node_name, world_pos]
+
+				# CHECK 10, once per species and LAST in this loop body — it
+				# drives set_remote_state(), which moves the body, so it has to
+				# run after every measurement taken off this one's position.
+				if resolved_species != "" and not _mp_probed.has(resolved_species):
+					_mp_probed[resolved_species] = true
+					_check_mp_contract(child, resolved_species, chunk_pos)
+
+			parent.free()
+
+	if in_stone > 0:
+		_fail("seed %d: %d of %d enemies spawned INSIDE solid stone, by species %s"
+				% [run_seed, in_stone, counts["ground"] + counts["platform"] + counts["boss"],
+				   in_stone_by_species]
+				+ " (worst %.2f m deep: %s)" % [worst_depth, worst_desc])
+
+	if species_mismatches > 0:
+		_fail("seed %d: %d of %d ground predators are not the species their chunk's biome"
+				% [run_seed, species_mismatches, counts["ground"]]
+				+ " dispatches to (first: %s)" % species_worst)
+	# The negative control for the live half: a field that is all one biome, or a
+	# dispatch that never fired, agrees with itself perfectly and proves nothing.
+	if species_seen.size() < 2:
+		_fail("seed %d: every ground predator in the field was the same species (%s) —"
+				% [run_seed, species_seen.keys()]
+				+ " the biome dispatch was never actually exercised")
+
+	# ---- CHECK 2: every angle of every platform, not just the drawn one ------
+	# A guard's angle is one RNG draw, so check 1 samples ONE point per structure
+	# and a producer that under-declares its `top` over half its length passes on
+	# most seeds by luck. This walks the whole spawn ellipse.
+	var platforms_seen := 0
+	var humped_platforms := 0
+	var bad_angles := 0
+	var worst_angle_depth := 0.0
+	var worst_angle_desc := ""
+
+	for chunk_pos_v: Variant in chunk_platforms:
+		var chunk_pos: Vector2i = chunk_pos_v
+		var origin: Vector3 = terrain.chunk_to_world(chunk_pos)
+		for platform_v: Variant in chunk_platforms[chunk_pos]:
+			var platform: Dictionary = platform_v
+			if not platform.has("top"):
+				_fail("seed %d: a platform in chunk %s declares no `top` — spawn_platform_crocodiles"
+						% [run_seed, chunk_pos]
+						+ " drops its guard in from that field, so a producer without one"
+						+ " cannot say where its tallest stone is")
+				continue
+			platforms_seen += 1
+			var center: Vector3 = platform.center
+			var half: Vector2 = platform.half
+			var top: float = float(platform.top)
+			# The control for the bug this file was written for: a wall whose
+			# ridge carries a doubled hump declares a `top` ABOVE the surface it
+			# paces. If no platform in the whole field does, checks 1 and 2 never
+			# exercised the case at all (see check 3).
+			if top > center.y + EPSILON:
+				humped_platforms += 1
+
+			for i in PLATFORM_ANGLE_SAMPLES:
+				var ang := TAU * float(i) / float(PLATFORM_ANGLE_SAMPLES)
+				var probe := origin + Vector3(
+						center.x + maxf(0.0, half.x - edge_inset) * cos(ang),
+						top + spawn_height,
+						center.z + maxf(0.0, half.y - edge_inset) * sin(ang))
+				var depth := _depth_in_stone(chunk_solids, chunk_pos, probe)
+				if depth > EPSILON:
+					bad_angles += 1
+					if depth > worst_angle_depth:
+						worst_angle_depth = depth
+						worst_angle_desc = "chunk %s, angle %.2f rad, probe %v" % [chunk_pos, ang, probe]
+
+	if bad_angles > 0:
+		_fail("seed %d: %d platform spawn points (over %d platforms) fall inside solid stone"
+				% [run_seed, bad_angles, platforms_seen]
+				+ " (worst %.2f m deep: %s) — a platform's `top` is not a true bound"
+				% [worst_angle_depth, worst_angle_desc]
+				+ " on the stone standing in its own footprint")
+
+	# ---- CHECK 3: the negative controls -------------------------------------
+	# Everything above is trivially true of a sweep that produced nothing. Each of
+	# these is a thing that must have EXISTED for the measurements to mean anything.
+	if counts["ground"] < 1:
+		_fail("seed %d: the sweep spawned no ground crocodiles at all — checks 1-2 measured nothing" % run_seed)
+	if counts["platform"] < 1:
+		_fail("seed %d: the sweep spawned no platform guards — the one spawner with no obstacle"
+				% run_seed + " test is exactly what this file exists to measure")
+	if solid_count < 1:
+		_fail("seed %d: the sweep built no collision shapes — there was no stone to be inside of" % run_seed)
+	if humped_platforms < 1:
+		_fail("seed %d: no platform in the field declared a `top` above its paced surface, so the"
+				% run_seed + " doubled-wall-hump case this check was written for was never exercised")
+
+	# Counts only — the verdict is SELFCHECK OK / the FAIL lines, and a summary
+	# that asserted "all clear" here would print it beside its own failures.
+	print("seed %d: measured %d ground / %d platform / %d boss crocodiles against %d collision shapes, plus %d angle probes over %d platforms (%d humped)"
+			% [run_seed, counts["ground"], counts["platform"], counts["boss"], solid_count,
+			   platforms_seen * PLATFORM_ANGLE_SAMPLES, platforms_seen, humped_platforms])
+	print("seed %d: ground predators by species %s" % [run_seed, species_seen])
+
+
+func _expected_species(terrain: Node, chunk_centre: Vector3) -> String:
+	"""
+	What BIOME_SPECIES says a chunk should spawn — recomputed from the PUBLIC
+	biome API, not read back off the spawner.
+
+	@param terrain: The detached terrain node driving this sweep.
+	@param chunk_centre: chunk_to_world(chunk_pos) — the exact point the spawner
+	                     dispatches on, which is the whole reason this is a
+	                     one-liner and not a reimplementation.
+	@return: A key of SPECIES; "crocodile" for any biome with no entry.
+	"""
+	var biome: int = terrain.biome_at(chunk_centre.x, chunk_centre.z)
+	if _biome_species.has(biome):
+		return String(_biome_species[biome]["species"])
+	return "crocodile"
+
+
+func _biome_name(chunk_centre: Vector3, terrain: Node) -> String:
+	"""
+	The chunk's biome as a readable name, for failure messages only.
+
+	Reverse-looked-up out of the real `Biome` enum rather than a list here — a
+	seventh band would otherwise print as a bare integer in exactly the message
+	someone reads while trying to work out which band broke.
+	"""
+	var biome: int = terrain.biome_at(chunk_centre.x, chunk_centre.z)
+	for name_v: Variant in _biomes:
+		if int(_biomes[name_v]) == biome:
+			return String(name_v)
+	return str(biome)
+
+
+func _make_chunk_parent(origin: Vector3) -> MeshInstance3D:
+	"""
+	A stand-in for the chunk MeshInstance3D, IN THE TREE at its world origin.
+
+	@param origin: The chunk's world position (chunk_to_world).
+	@return The parent node the spawners are handed. Freed with queue_free().
+
+	IT HAS TO BE IN THE TREE, unlike prop_selfcheck.gd's terrain node, and the
+	difference is which functions are being driven. A prop builder reaches only
+	create_box; the chunk spawners reach node code that asks the tree about
+	itself — `treasure_chest.setup()` calls `get_global_transform()` and
+	`get_tree().get_first_node_in_group(...)`, and `spawn_platform_crocodiles`
+	hands `set_confinement` a `parent_chunk.global_position`. Detached, all three
+	answer with an engine error and a zero: a run printed 195 error lines and
+	still exited 0 with SELFCHECK OK, which is the exact "green lie" this
+	project's checks exist to avoid (its two siblings print none). In the tree at
+	the real origin they are all simply correct, and `global_position` can then be
+	read straight off a crocodile rather than reconstructed.
+
+	The terrain node itself stays DETACHED — its _ready() would roll a random run
+	seed over the one this sweep set and start streaming chunks of its own.
+	"""
+	var parent := MeshInstance3D.new()
+	parent.position = origin
+	root.add_child(parent)
+	return parent
+
+
+func _depth_in_stone(chunk_solids: Dictionary, chunk_pos: Vector2i, world_pos: Vector3) -> float:
+	"""
+	How deep `world_pos` sits inside the nearest solid box of the 3x3 chunk block
+	around `chunk_pos`. 0.0 when it is outside every one of them.
+
+	@param chunk_solids: Vector2i -> Array of { inv: Transform3D, half: Vector3 }
+	@param chunk_pos: The chunk to search around (its 8 neighbours included)
+	@param world_pos: The point to test, in world space
+	@return Penetration depth in metres; 0.0 means clear.
+
+	The neighbours are what make this honest — see the two-pass note in _sweep.
+	The point is transformed into each box's own frame rather than compared
+	against an axis-aligned bound, because create_box gives a block a yaw (and an
+	artifact stone a tilt as well), so a bounding box would report a corner region
+	as solid and fail on crocodiles standing in clear air beside a rotated block.
+	"""
+	var deepest := 0.0
+	for dx in [-1, 0, 1]:
+		for dz in [-1, 0, 1]:
+			var neighbour := chunk_pos + Vector2i(dx, dz)
+			if not chunk_solids.has(neighbour):
+				continue
+			for solid_v: Variant in chunk_solids[neighbour]:
+				var solid: Dictionary = solid_v
+				var local: Vector3 = solid.inv * world_pos
+				var half: Vector3 = solid.half
+				# Distance to the nearest face, from the inside. Any axis already
+				# outside the box means the point is outside it entirely.
+				var gap := minf(half.x - absf(local.x),
+						minf(half.y - absf(local.y), half.z - absf(local.z)))
+				if gap > deepest:
+					deepest = gap
+	return deepest

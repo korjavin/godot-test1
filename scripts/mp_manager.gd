@@ -102,6 +102,15 @@ const CROC_FLAG_CHASING: int = 1
 const CROC_FLAG_FLEEING: int = 2
 const CROC_FLAG_PAUSED: int = 4
 const CROC_FLAG_BITING: int = 8
+## The ambusher's burrow (asc.4). It is the one piece of a crocodile's pose that
+## is NOT derivable from the bits above: the sand viper buries itself whenever it
+## is not chasing, but that decision is made by the behaviour dispatch, which a
+## paused or fleeing crocodile never reaches — so through either state the flag
+## FREEZES at whatever the strike left it, and a peer recomputing `not chasing`
+## for itself surfaces a viper the master left buried (or buries one it left
+## striking) for as long as that state lasts. Sending the answer costs a bit that
+## was spare; deriving it costs a desync with no bound on how long it shows.
+const CROC_FLAG_BURROWED: int = 16
 
 ## Most crocodile entries one sync packet may carry — see `decode_croc_sync()`.
 ## Generous by design: the master only ever sends the crocs awake around one
@@ -3700,6 +3709,8 @@ static func _croc_flags(croc: Node) -> int:
 		flags |= CROC_FLAG_PAUSED
 	if "is_biting" in croc and croc.is_biting:
 		flags |= CROC_FLAG_BITING
+	if "is_burrowed" in croc and croc.is_burrowed:
+		flags |= CROC_FLAG_BURROWED
 	return flags
 
 
