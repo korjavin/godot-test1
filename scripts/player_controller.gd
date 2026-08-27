@@ -2894,6 +2894,31 @@ func try_activate_ability() -> void:
 		_flash_blocked_feedback()
 		return
 
+	# AIR RUSH IS A TAKE-OFF, NOT A MID-AIR JET: Windman must have his feet on the
+	# ground (or be inside the coyote window) to launch. Without this the ability
+	# chains into infinite flight, because the cooldown ticks from ACTIVATION and
+	# a fully-skilled hero's cooldown is SHORTER than his own flight:
+	#
+	#     cooldown 8.0 s × 0.60 (cd1×3 + cd2) = 4.80 s
+	#     duration 4.0 s × 1.30 (gale ×2)     = 5.20 s
+	#
+	# so the power came back 0.4 s before the previous rush expired, and with
+	# Updraft + Soar he never fell far enough to land in between. Gating on the
+	# ground rather than retuning either number is deliberate: retuning the base
+	# cooldown would punish an UNSKILLED Windman, who was never the problem, and
+	# charging the cooldown at the END of the boost would make every duration
+	# upgrade a net nerf and break the dial's cooldown-ratio division. The state
+	# invariant — one rush per landing — is what was actually missing, and it
+	# bounds his altitude to the designed single-arc ~26 m.
+	#
+	# Coyote time is included on purpose: stepping off a ledge gets the same brief
+	# grace here that it gets for a jump. Refusal is FREE (no cooldown charged),
+	# exactly like the rain gate, and the test is a pure read of live state — it
+	# stores nothing, so there is no way for it to latch Windman off permanently.
+	if char_name == "windman" and not (is_on_floor() or coyote_timer > 0.0):
+		_flash_blocked_feedback()
+		return
+
 	var used := false
 	match char_name:
 		"windman":
