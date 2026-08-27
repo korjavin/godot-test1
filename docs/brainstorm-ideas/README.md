@@ -221,6 +221,7 @@ what stays true across all of them — the constraints, and the map from lore to
 | [session-01-recall-anchors.md](session-01-recall-anchors.md) | Recall Anchors and the story spine. **§3 superseded** — simultaneity is dead; kept as the record of how the design got here |
 | [session-02-the-hunt.md](session-02-the-hunt.md) | Hunter robots, Primm's abduction, the capture trigger, and hunter mercy |
 | [session-03-the-loop.md](session-03-the-loop.md) | The field farms, the tower demands — rank gates, no lives, and the save model |
+| [session-04-the-tower.md](session-04-the-tower.md) | The tower as a place: site, streamer exclusion, interior-only verticality, gate graph, and the captivity audit |
 
 ### A note on vocabulary: there are no "anchors"
 
