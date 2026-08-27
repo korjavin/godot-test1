@@ -342,10 +342,16 @@ func _settle_on_floor(player: Node) -> void:
 	turns true after real physics frames have run — hence the wait rather than an
 	assignment. Bounded, so a probe that can never land fails on the caller's
 	precondition check instead of hanging the selfcheck.
+
+	The bound is deliberately far above what the drop costs today (~18 ticks at
+	60 Hz: 0.5 m at this gravity, plus the frame or two `physics_frame` leads
+	`_physics_process` by). A bound sized to the measurement turns a raised
+	`physics_ticks_per_second` into a spurious failure in a check that has
+	nothing to do with tick rate — it only has to be small enough to fail fast.
 	"""
 	player.global_position = Vector3(0.0, 0.5, 0.0)
 	player.velocity = Vector3.ZERO
-	for _i in 30:
+	for _i in 240:
 		await physics_frame
 		if player.is_on_floor():
 			return
@@ -355,11 +361,12 @@ func _lift_into_the_air(player: Node) -> void:
 	"""
 	Put the player high above the probe floor and wait out the coyote window, so
 	he is airborne by BOTH halves of the grounding gate — off the floor and past
-	the ledge grace. Same bounded shape as `_settle_on_floor`.
+	the ledge grace. Same bounded shape, and the same generous bound, as
+	`_settle_on_floor`.
 	"""
 	player.global_position = Vector3(0.0, 20.0, 0.0)
 	player.velocity = Vector3.ZERO
-	for _i in 30:
+	for _i in 240:
 		await physics_frame
 		if not player.is_on_floor() and player.coyote_timer <= 0.0:
 			return
@@ -950,6 +957,9 @@ func _check_skill_effects_on_player() -> void:
 		#    has any gate state to clear.)
 		player.windman_boost_timer = 0.0
 		await _settle_on_floor(player)
+		if not player.is_on_floor():
+			_fail("the landing case never touched down — the latch check below "
+					+ "would blame the gate for a probe that never landed")
 		player.ability_cooldowns[windman_index] = 0.0
 		player.try_activate_ability()
 		if is_zero_approx(float(player.windman_boost_timer)):
