@@ -1143,11 +1143,40 @@ const TREASURE_CHEST_SCRIPT := preload("res://scripts/treasure_chest.gd")
 ## than argued, and it is the property that makes appending kinds free forever.
 ##
 ## The rate that harness reports is 11.0% survival, 1 per 48.6 — inside the
-## intended 1-per-40-60 band, so LANDMARK_CHANCE stays at 0.19. It is NOT
+## intended 1-per-40-60 band, so LANDMARK_CHANCE stayed at 0.19 there. It is NOT
 ## comparable to the three rows above (different harness: coins, chests and
 ## crocodiles disabled, and its own seed set), which is precisely why the digest
 ## is the measurement that decided this and the rate is only the sanity check.
-const LANDMARK_CHANCE: float = 0.19
+##
+## WAVE 5 RETUNE, 0.19 -> 0.21 (38 -> 48 kinds, the epic's target reached). The
+## digest was re-run FIRST, because no rate means anything until the append-is-free
+## property is confirmed at the new kind count: same 17x17 field x 60 seeds (17340
+## chunks), run twice against the same code, once with all 48 registry entries and
+## once with landmark_builders.gd checked back out at 38:
+##   48 kinds: 3286 rolled, 359 built, digest 403935944
+##   38 kinds: 3286 rolled, 359 built, digest 403935944
+## BIT-IDENTICAL again — the same chunks, in the same places, to the millimetre.
+##
+## THEN THE RATE, swept on that same harness across three chances. Survival is flat
+## across all three, as it has to be: the candidate loop judges a spot against the
+## chunk's geometry and knows nothing about how often it is asked.
+##   0.19: 3286 rolled, 359 built — 10.9% survival, 1 per 48.3
+##   0.21: 3646 rolled, 391 built — 10.7% survival, 1 per 44.3
+##   0.23: 3958 rolled, 424 built — 10.7% survival, 1 per 40.9
+## The 0.19 row is what forced the change, and NOT because the kind count moved —
+## it cannot, and that is now measured twice. It is that this harness puts 0.19 at
+## 1 per 48.3, the SPARSE END of the band, while the wave-3 retune that chose 0.19
+## believed on its own cruder harness that it was setting 1 per 43 — "the middle of
+## the band", in that paragraph's own words. 0.21 is the smallest step that makes
+## the constant match the intent already written beside it: 1 per 44.3 measured,
+## mid-band, and still 1.9x rarer than the artifacts' 1-in-23, which is the
+## "destinations, not scenery" margin every one of these retunes has protected.
+##
+## 0.23 WAS MEASURED AND NOT TAKEN. It hits the epic's "1-per-40-ish" phrasing
+## exactly, but taking it would move the design target from mid-band to the dense
+## end — a judgement the sweep does not force. The sweep only shows where 0.19
+## actually landed, so the retune goes only as far as that.
+const LANDMARK_CHANCE: float = 0.21
 
 ## Fixed salt XORed into run_seed for the landmark hash stream, in the
 ## ARTIFACT_SALT / CAMP_SALT / CHEST_SALT / BIOME_SALT / BOSS_SEED family: an
