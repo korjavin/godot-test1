@@ -68,17 +68,24 @@ deterministically (say, 25 m steps along −X, then lateral) until the footprint
 `is_river_at`. Pure function of `run_seed` (the river field is), no RNG draw, memoized once,
 same answer on every client. This is the entire concession to proceduralism the tower makes.
 
-### Minimap yes, horizon impostor no — ruled
+### Minimap and impostor — both ruled in
 
 - **Minimap:** the geo-landmark plumbing already draws off-disc markers *"clamped to the rim"*
   precisely because *"at the default zoom most loaded landmarks are past the disc"*
   (`minimap_hud.gd:22-25`). The tower marker rides the same pattern with a unique glyph.
   Cheap, and now **required**: the owner's site ruling includes "visible on the minimap".
-- **Horizon impostor: cut, not deferred.** Owner: *"not needed."* The fog facts stand — web
-  render distance is 3 chunks = 150 m (`endless_terrain.gd:44`), fog density 0.005
-  (`endless_terrain.gd:71`), so at 400 m the tower is inside the fog and simply is not a
-  horizon object on web. The minimap marker and Windman's towerward scar (session 02) carry
-  all wayfinding. No fog-piercing silhouette will be built.
+- **Horizon impostor: in, as wayfinding, not polish.** The fog facts made this necessary —
+  web render distance is 3 chunks = 150 m (`endless_terrain.gd:44`), fog density 0.005
+  (`endless_terrain.gd:71`), so at 400 m the real shell simply does not render on web. An
+  always-loaded fog-exempt silhouette (a billboard or a few boxes, parented to main,
+  hidden when the real shell loads) is what makes the 400 m commute feel like approaching
+  something rather than walking to a map pin. The minimap gives the bearing; the impostor
+  gives the destination. It ships **with the shell phase**, not in the polish tail.
+
+  *Recorded as a restored decision, not a reversal:* the owner's earlier "not needed"
+  answered the unexplained word "impostor"; once told it is the stand-in that makes the
+  tower visible at all under web fog, he ruled *"да, теперь вижу что импостор нужен"* —
+  yes, it is needed. A communication failure on our side, not a change of mind on his.
 
 ## 2. How an authored building coexists with the chunk streamer
 
@@ -334,36 +341,99 @@ first prominent non-monotone world field** — captures add, liberations remove 
 never ride the union/max merge. It lives in the plain world snapshot (session 03's point 3),
 which is single-writer per install today, so a plain overwrite is correct.
 
-### The softlock audit, generalized — and why 15 subsets collapse to 4
+### The softlock answer is redundancy — owner ruling
 
-Any subset of the roster can be captive at once, so the rescue route must be traversable by
-**every possible surviving subset** — 15 of them. The catastrophe to design against: the
-only way to the cells is a scanner field only Pho-boman passes, and Pho-boman is in the
-cell — the run is dead with three heroes free and no game-over fired.
+Any subset of the roster can be captive at once, so the route to the cells must work for
+**every possible surviving subset**. The catastrophe to design against: the only way to the
+cells is a scanner field only Pho-boman passes, and Pho-boman is in the cell — the run is
+dead with three heroes free and no game-over fired.
 
-Two facts shrink the problem to something a selfcheck can hold:
+I proposed stripping the prison route of gates entirely. **The owner ruled the other way:**
 
-1. **Gate passability is monotone in the roster.** Every gate keys on the *presence* of an
-   identity (even Pho-boman's "key is an absence" is *his* presence at the scanner); adding
-   a hero to the party never closes a route. This must be promoted to a design law — **no
-   gate may ever key on a hero's absence** — and then reachability for all 15 subsets
-   follows from the **4 singletons**: if each hero *alone* can reach the cells and perform
-   a liberation, every surviving subset can. `tower_selfcheck` runs four times, not fifteen.
-2. **The rescue corridor carries no gates at all.** Of the two options the coordinator
-   posed — a gate-free path to the prison, or per-identity alternatives on every gate —
-   the alternatives option is priced and rejected: it multiplies authoring by four per
-   gate, stays combinatorially fragile every time a floor is added, and *still* needs the
-   four-singleton verification. The gate-free corridor is one authoring rule plus one
-   selfcheck assertion. And note it must exclude **hero-specific demand gates too**: a
-   `primm_blink` demand is a Primm-absence trap wearing a different silhouette. So the law
-   is: **door → cell block is challenge-space only** — its difficulty is guards and
-   hazards, never gates. The fiction supports it for free: the prison block is the most
-   standardized, most-trafficked wing of the facility; its security is personnel, not
-   exotic locks.
+> должно быть много путей, hq должен быть масштабен
+> *(there should be many paths; the HQ should be large-scale)*
 
-Corollary worth saying out loud: with the corridor gate-free, **a lone last hero can always
-attempt the rescue** — game over is genuinely "the hunters won four times," never "the
-level design won."
+Not removal — **redundancy**. And it is the better answer: a gate-free corridor would have
+made the most important route in the game the blandest one, and identity gates stay
+meaningful everywhere, prison routes included. Formalized, the rule the building must obey:
+
+> **For every non-empty subset S of free heroes, at least one route to the cells is
+> traversable by S alone** — where the captives are precisely the heroes *not* in S, and a
+> hero in a cell cannot open a gate on the way to his own cell.
+
+Two things make this checkable instead of a prayer:
+
+1. **A route's traversability-by-S must count every gate class.** An identity gate on a
+   route is passable by S iff its hero is in S — and a **hero-specific demand gate is the
+   same trap in a different silhouette**: a `primm_blink` receptacle is impassable without
+   Primm at any rank. The graph rows already carry both fields, so the check reads what the
+   rooms are built from.
+2. **Gate passability is monotone in the roster** — every gate keys on the *presence* of an
+   identity (even Pho-boman's "key is an absence" is *his* presence at the scanner), so
+   adding a hero never closes a route. Promote that to a design law: **no gate may ever key
+   on a hero's absence.** Under it, the 15 subsets collapse to the 4 singletons — if each
+   hero alone has a route, every surviving subset does. `tower_selfcheck` should
+   **enumerate all 15 anyway**: fifteen graph walks cost nothing, and the exhaustive check
+   stays correct even if some future mechanic quietly breaks the monotonicity lemma. The
+   lemma is the design insight; the enumeration is the guard.
+
+The liberation action at a cell must itself be performable by any hero, obviously — assert
+it in the same check. Corollary worth saying out loud: under this rule **a lone last hero
+always has a route to attempt the rescue** — game over is genuinely "the hunters won four
+times," never "the level design won."
+
+With a large graph this audit is not something a human can eyeball, which is the real
+change of status: **`tower_selfcheck` goes from nice-to-have to load-bearing.** Every new
+wing ships against it or does not ship.
+
+### "Large-scale, many paths" — the price, stated honestly
+
+This ruling is the single biggest content commitment in these four sessions, and it
+collides with three standing facts: every quest must be **solo-completable in any order**;
+every subset must reach the cells (above); and this project has **no level-design
+pipeline** — no hand-authored traversed geometry exists anywhere, no autoloads, and the
+perf target is web `gl_compatibility`. Pretending a large authored interior is a normal
+feature would be the quiet failure mode. So, plainly:
+
+- **Build rooms from the graph, by code.** The house discipline is code-built geometry with
+  a data row driving it — landmarks are *"blocky code-built sculpture in the house style"*
+  built by `landmark_builders.gd`, species are `SPECIES` rows. The scalable version of a
+  big HQ is the same shape: `TOWER_GRAPH` rows drive a floor/wing builder; hand-craft only
+  the gate-mechanism set pieces. That keeps the graph as the single source of truth (what
+  the selfcheck walks IS what the player walks), keeps content velocity at
+  "a new wing = new rows", and avoids inventing a Godot-editor authoring pipeline this
+  CI-driven project has never had. This is the one architectural bet that makes
+  "масштабен" affordable; it is also reversible room-by-room (any single room can be a
+  hand-authored `.tscn` dropped in where the builder is not enough).
+- **The scale arrives in stages, and each stage is audit-green.** The minimum viable
+  version that still *reads* as big: the entrance atrium with long sightlines up the
+  building, the lift panel showing floors that exist but are not yet reachable, locked
+  routes you can see through, plus **two genuinely parallel routes to the cell block** on
+  day one — scale is felt through sightlines and denied doors, not through built volume.
+  Do not build fifteen routes up front; build the graph idiom that makes the sixteenth
+  cheap.
+- **Per-wing/per-floor visibility gating is mandatory from the first storey**, and each
+  wing declares a draw-call budget the selfcheck asserts (the `landmark_selfcheck`
+  discipline). A large interior that renders all at once does not survive the web target.
+
+**Floors, wings, or depth?** Asked directly, answered directly:
+
+- **Wings (XZ spread) are where "many paths" lives.** Parallel routes want parallel
+  corridors; the streamer exclusion is 2D on `Vector2i` chunks, so a wider footprint is
+  just a larger excluded disc — no new machinery. Wings also read as "large-scale" from
+  outside.
+- **Floors (Y) are where the tower's identity and the lift live.** Vertical extent is
+  invisible to the streamer (chunk keying is XZ-only, `endless_terrain.gd:2596-2597`) and
+  costs nothing but its own geometry.
+- **Depth (sub-levels below y = 0) is the expensive axis: skip it.** The ground is a
+  per-chunk `MeshInstance3D` sharing one `PlaneMesh` resource plus a per-chunk ground
+  `StaticBody3D` (`endless_terrain.gd:2141-2151` and the ground-collision block around
+  `:2721`), so a basement means chunk-granularity holes — footprint chunks must skip both
+  ground mesh and ground collision and the builder must author replacement ground. Possible,
+  but it buys nothing wings and floors don't already provide. If the fiction ever demands a
+  vault level, it is one authored floor whose *elevator says* B2 — nobody can tell.
+
+So: **wings for routes, floors for scale, no digging.**
 
 ### The authored Primm beat survives — capture is taught, then armed
 

@@ -466,11 +466,38 @@ solo-completable in any order, every subset able to reach the cells, and a proje
 level-design pipeline and a web `gl_compatibility` performance target. It is the biggest
 content commitment proposed in any of these sessions.
 
-*Open, with the architect: whether the authored Primm beat survives as the scripted
-introduction to a mechanic that is systemic thereafter (my instinct: yes — it teaches the
-rule instead of springing it), what a captive player does in multiplayer when several are
-taken at once, and whether game over is a hard restart or something softer given "the game is
-the world".*
+### Multiplayer: reassign first, imprison last — settled
+
+**Owner ruling:**
+
+> Если игроку в мультиплеере не осталось героев, то он может только ходить своим героем
+> внутри небольшой тюрьмы в замке. Если же остались — например, игрока два, а героев три —
+> то достаётся свободный.
+
+1. A player's active hero is captured.
+2. **If any free hero is unclaimed, that player is given one** and keeps playing normally.
+   Two players and three free heroes: nobody is benched.
+3. **Only with no free hero left** does that player play as their captive, **inside the
+   prison** — the bounded role: a small area, marking patrols and working two or three
+   systems from the inside for the team outside. No phasing, no combat, no solo escape.
+
+**This reuses machinery that already exists.** The lobby is already the source of truth for
+hero assignment, and `mp_manager.my_character_indices()` already returns *an array* of allowed
+indices, with a docstring that explicitly anticipates the set form. So capture → reassign is a
+**lobby reassignment**, not a new subsystem.
+
+**And solo falls out of the same rule** rather than needing its own: one player holds every
+hero, so a capture simply removes one from the hand, and the prison role applies exactly when
+the hand is empty — which is also the game-over condition.
+
+Worth saying out loud: this makes the capture penalty **scale with party size in the player's
+favour.** A full room of four almost never benches anyone; a solo player feels every capture
+immediately. Probably the right direction, but better named now than discovered in testing.
+
+*Still open with the architect: whether the authored Primm beat survives as the scripted
+introduction to a mechanic that is systemic thereafter (my instinct: yes — it teaches the rule
+instead of springing it), and whether game over is a hard restart or something softer given
+"the game is the world".*
 
 ## What triggers the abduction — the owner named this as the hard part
 
