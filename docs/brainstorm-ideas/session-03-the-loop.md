@@ -207,6 +207,16 @@ into upkeep*, which is the one way to make this loop feel like a job.
 So death is replaced by **setback**: a predator catches you, knocks you back, takes part of
 what you have — and **you continue.** The menu offers **Continue** and **New game**.
 
+> **⚠ Amended 2026-08-27 — there is a lose condition after all, and it is the roster.**
+>
+> A **hunter** that catches you takes **whichever hero was active** and imprisons him in the
+> HQ until you go and free him. **All four captured = game over.**
+>
+> So "no lives" is true of **predators** and false of **hunters**. Heroes have become the
+> lives — four of them — except that each one is **recoverable**, which is exactly what makes
+> this different from the system we deleted. See [session 02](session-02-the-hunt.md),
+> "Capture is systemic".
+
 ### Where the game is saved today (he asked)
 
 Not cookies. Three layers, all owned by `best_run_store.gd`:

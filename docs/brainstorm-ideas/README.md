@@ -150,11 +150,18 @@ that running the field will fix it. Hard and legible is content; hard and ambigu
 Nothing you *solved* is ever taken back — opened routes and met gates stay open — but the
 guards come back, so no cleared room becomes an empty corridor.
 
-### Nobody dies. The game does not end.
+### Nobody dies — but you can still lose everyone
 
-There are **no lives and no game over.** A predator catches you, knocks you back, takes
-**7% of your coins** — and you carry on. **Levels and skills are never touched**, so a bad
-moment costs you money, never your progress.
+A predator catches you, knocks you back, takes **7% of your coins** — and you carry on.
+**Levels and skills are never touched**, so a bad moment costs you money, never your progress.
+
+**A hunter is a different matter.** When one catches you it takes **whichever hero you were
+playing**, and locks him in the HQ until you go in and get him out. **Lose all four and the
+game is over.**
+
+So the heroes *are* the lives — four of them — except that unlike a life, **every one of them
+can be won back.** And that is what makes the tower unavoidable: you do not go there because
+the story asks you to, you go there because your team is inside it.
 
 The menu offers **Continue** and **New Game**, and there is nothing else behind them, because
 **the game *is* the world**: one save is one world is one game. There is no account, no
@@ -164,9 +171,8 @@ skills and zero coins.**
 ### Two things that carry the tension
 
 - **Predators cost coins.** An interruption, not a catastrophe.
-- **Hunters cost nothing — until they cost everything.** They frighten constantly and take
-  almost never, and the one time they succeed is authored. The dread differs; the arithmetic
-  usually does not.
+- **Hunters cost a hero.** They frighten constantly and succeed rarely — and *because* each
+  success is expensive, that rarity is load-bearing rather than decorative.
 
 That leniency is tuned *before contact* — escape routes, approach angles, how many can chase
 at once — never by a hunter visibly pulling its punch. Once one honestly earns a grab, it

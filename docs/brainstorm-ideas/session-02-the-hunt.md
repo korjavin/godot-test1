@@ -184,9 +184,13 @@ hunter failure removes heroes, the roster collapses over a long session; and if 
 ever happen once, it cannot carry the field for the rest of the game either.
 
 So hunters are **escalating pressure** — they cut off routes, force detours, threaten a larger
-loss — and the **actual abduction stays reserved for the floor-plus-beat encounter.** Losing
-to a hunter in ordinary play costs what losing to a predator costs; what differs is the dread,
-not the arithmetic.
+loss.
+
+> **⚠ Superseded in part, 2026-08-27.** The owner has since made capture **systemic**: a
+> hunter that catches you takes **whichever hero was active**, and takes him for real. So
+> hunters do *not* cost what predators cost — see "Capture is systemic" below. What survives
+> from this section is that hunters must **catch rarely**, which is now more important than
+> ever, because each catch is expensive.
 
 **The owner's ruling makes this explicit, and adds a lever:**
 
@@ -387,6 +391,63 @@ punishment.
   always present**, but the *direction* pulses or distorts at meaningful junctions and near
   Primm-related systems. **Inescapable as a feeling, not as a GPS** — information only when
   it creates a choice.
+
+## Capture is systemic — heroes are the lives
+
+**Owner ruling, 2026-08-27, and it is the largest single change to the failure system:**
+
+> This type of character that was active on moment of hunter bot caught you now considered
+> caught and prisoned in the hq, and player should play without it until liberated in hq.
+> **If all caught — game over.**
+
+So:
+
+- **Any hero can be captured, repeatedly** — whoever was *active* at the moment of the catch.
+  Not only Primm, and not only once.
+- The captured hero is **imprisoned in the HQ** and unavailable until you go and free him.
+- **All four captured = game over.** Game over is back, in a new shape.
+
+### What this actually does
+
+**Heroes are now the lives.** We removed lives; they have returned as *the roster itself* —
+four heroes, four lives. Except that unlike a life, each one is **recoverable**, and the
+tower is where you recover it.
+
+That fuses the failure system with the campaign. The tower stops being optional in a way no
+coin penalty could ever have achieved: you do not go there because the story asks, you go
+there because your team is in it.
+
+It also finally gives the two enemy classes genuinely different stakes, which is what we had
+been reaching for and never quite had:
+
+| | Predator | Hunter |
+| --- | --- | --- |
+| Costs | **7% of coins**, a knockback | **the active hero** |
+| Recoverable? | the coins are gone | yes — by going in after him |
+
+And it makes "hunters catch rarely" *more* important, not less. When a catch was worth 7%,
+leniency was flavour. Now every catch is expensive, so the encounter-director tuning above is
+load-bearing.
+
+### The failure mode this creates — and it is severe
+
+**The softlock risk multiplies.** The existing rule was "no mandatory Primm gate may remain
+while Primm is captive." That is now nowhere near sufficient, because **any subset of the
+roster can be captive at once** — fifteen non-empty subsets for four heroes.
+
+The catastrophe is easy to state: the only route to the cells passes a scanner field that
+**only Pho-boman** can cross, and Pho-boman is the one in the cell. Three heroes still free,
+no game-over triggered, and the run is dead.
+
+So the path to the prison must either contain **no identity gates at all**, or **every gate
+on it must have a per-identity alternative.** This is now the sharpest constraint in the whole
+design, and it is being priced in [session 04](session-04-the-tower.md).
+
+*Open, with the architect: whether the authored Primm beat survives as the scripted
+introduction to a mechanic that is systemic thereafter (my instinct: yes — it teaches the
+rule instead of springing it), what a captive player does in multiplayer when several are
+taken at once, and whether game over is a hard restart or something softer given "the game is
+the world".*
 
 ## What triggers the abduction — the owner named this as the hard part
 
