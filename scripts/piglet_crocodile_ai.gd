@@ -1486,6 +1486,41 @@ const BOSS_CHASE_SPEED: float = 7.0
 ## player must always be awake, so near-player behaviour never changes.
 const BOSS_DETECTION_RADIUS: float = 25.0
 
+## Boss territory radius: the LEASH, and the whole of this bead. A boss hunts
+## you normally anywhere inside `home_position` + this, and never steps outside
+## it — walking out of the circle is the only counterplay, because there is no
+## way to kill a boss. Everything that asks the question goes through
+## `in_territory()`; nothing compares a radius by hand.
+##
+## THE INEQUALITY CHAIN, and both links are load-bearing:
+##
+##     BOSS_DETECTION_RADIUS (25) <= BOSS_TERRITORY_RADIUS (32) < SIM_RADIUS (45)
+##
+## LEFT LINK — the territory is at least as wide as the smell. Below it a boss
+## could acquire a quarry it is then forbidden to walk to: it would growl once
+## and stand there. At or above it, "smelled" implies "reachable", so a boss
+## inside its own zone hunts with the ordinary chase code and nothing else.
+##
+## RIGHT LINK — the whole territory fits well inside the LOD manager's SIM_RADIUS
+## (crocodile_lod_manager.SIM_RADIUS, 45). That is the same invariant
+## BOSS_DETECTION_RADIUS states, widened from the smell to the ZONE: an engaged
+## boss is at most 25 m from its quarry so it is always fully awake, and even a
+## disengaged one is never more than 32 m from a player standing at its home, so
+## you cannot watch a boss from inside its own territory and see a frozen
+## sleeper. Push this to 45+ and both of those stop being true, silently.
+##
+## NOT part of the speed lattice, deliberately: a leash makes escape strictly
+## EASIER, which is the point, so BOSS_CHASE_SPEED / MAX_CHASE_SPEED are
+## untouched by it.
+const BOSS_TERRITORY_RADIUS: float = 32.0
+
+## How far inside the boundary a boss starts refusing to steer outward. Exactly
+## the job CONFINE_MARGIN does for a platform patrol, one shape over: with no
+## band the body would only ever meet the fence through the hard clamp below,
+## which zeroes velocity — so a boss would stutter against an invisible wall
+## instead of turning away from it.
+const BOSS_TERRITORY_MARGIN: float = 3.0
+
 ## Visual draw cull: past this distance the crocodile's MESHES stop being drawn
 ## (visibility_range_end on every GeometryInstance3D in the model subtree). This
 ## is a pure RENDERING cull — the crocodile entity itself stays alive and counted;
@@ -1646,6 +1681,18 @@ var flee_tracks_player: bool = true
 var is_boss: bool = false
 ## Uniform body scale for a boss (from the terrain's size schedule; 1.0 = unused).
 var boss_scale: float = 1.0
+
+## THE CENTRE OF A BOSS'S TERRITORY — its spawn spot, captured in _ready()'s
+## is_boss branch. `global_position` is already the true spawn spot there because
+## the terrain parents the boss into its chunk BEFORE _ready runs; that is the
+## same guarantee the distance_factor line just above it relies on.
+##
+## This plus `territory_radius()` is THE queryable seam for the zone, and it is
+## meant to be one: the owner intends the area to grow gameplay of its own later
+## ("later we will invent some game mechanics there"), so every check asks
+## `in_territory()` rather than open-coding a radius comparison. Meaningless (and
+## never read) on a non-boss — every caller is behind an `is_boss` gate.
+var home_position: Vector3 = Vector3.ZERO
 
 ## Deterministic seed for this crocodile's per-instance speed/size rolls, handed
 ## over by the terrain via setup_roll_seed() BEFORE this node enters the tree —
@@ -1838,6 +1885,9 @@ func _ready() -> void:
 		# terrain's deterministic schedule (boss_scale) and their speeds are fixed,
 		# so a boss regenerates byte-identically when its chunk is revisited.
 		detection_radius = BOSS_DETECTION_RADIUS
+		# The centre of the territory this boss will never leave. See
+		# home_position for why global_position is already the real spawn spot.
+		home_position = global_position
 		move_speed_instance = spec["move_speed"]
 		# The MAX_CHASE_SPEED cap keeps the running-escape hatch true at any distance.
 		chase_speed_instance = minf(BOSS_CHASE_SPEED * distance_factor, MAX_CHASE_SPEED)
@@ -2033,6 +2083,13 @@ func _physics_process(delta: float) -> void:
 		if is_confined:
 			_steer_within_platform()
 
+		# A boss is leashed to the area it spawned in. Same job as the platform
+		# steer above, one shape over (a circle around home_position), and it sits
+		# here for the same reason: it has to override the chase / wander / avoid
+		# heading that was just chosen.
+		if is_boss:
+			_steer_within_territory()
+
 		# Rotate smoothly toward the desired heading and move that way.
 		# Driving velocity from facing (not the raw direction) prevents sliding
 		# sideways and makes turns curve naturally.
@@ -2070,6 +2127,17 @@ func _physics_process(delta: float) -> void:
 	# slip off the edge, even if a collision or the bite-lunge nudged it.
 	if is_confined:
 		_clamp_to_platform()
+
+	# Hard backstop for the boss leash: the steer above is smooth and can be
+	# out-voted (turn lag, a bite lunge, a shove from another body), this cannot.
+	# After this line a boss's distance from home is <= BOSS_TERRITORY_RADIUS,
+	# every frame, with no epsilon. Note _tick_remote returned long before here:
+	# on a peer a boss is replayed from the master's samples, which are already
+	# leashed — so there is no leash logic on the remote path and no protocol
+	# change, which is also why a slept boss stays contained for free (its
+	# position simply never changes).
+	if is_boss:
+		_clamp_to_territory()
 
 	# Animate the body to match how fast we're actually moving.
 	_animate_body(delta)
@@ -2142,6 +2210,28 @@ func _update_chase_state() -> void:
 			if remote_distance < distance_to_player:
 				distance_to_player = remote_distance
 				chase_target = remote as Vector3
+
+	# TERRITORIAL LEASH (bosses only — and every boss KIND inherits it, because
+	# boss is a MODIFIER on a species, so this one gate already covers the titan
+	# and the dragon that come after the crocodile). A boss hunts NORMALLY while
+	# the quarry is inside its territory and cannot engage one outside it at all:
+	# walking out of the circle is the only counterplay, since a boss can't be
+	# killed.
+	#
+	# Applied to the CHOSEN `chase_target`, never to the local player, because in
+	# a room the quarry may be the remote member resolved just above — testing the
+	# local player instead would leash the boss against a body it isn't hunting.
+	#
+	# Sits above the behaviour dispatch on purpose: this is a DETECTION decision
+	# (may I engage this quarry at all), not a steering one, and CLAUDE.md's rule
+	# is that detection is settled before the dispatch and an arm only bends the
+	# route. Written as INF rather than as a second condition so it folds into the
+	# single test below exactly like the grounded rule does — and so losing the
+	# quarry runs the ordinary "lost the player" branch, which drops is_chasing
+	# and picks a fresh wander heading. That is the whole of "they walk inside
+	# some area".
+	if is_boss and not in_territory(chase_target):
+		distance_to_player = INF
 
 	# Update chase state based on detection radius. `distance_to_player` is INF
 	# when nothing is smellable, so the grounded rule is folded into this one test.
@@ -3158,6 +3248,92 @@ func _clamp_to_platform() -> void:
 
 
 # ============================================================================
+# BOSS TERRITORY (the leash)
+# ============================================================================
+#
+# THE SEAM. `home_position` + `territory_radius()` + `in_territory()` is the one
+# place the zone is described, and every question about it — the chase gate, the
+# steer, the hard clamp, the selfcheck — asks through here rather than comparing
+# a radius for itself. That is deliberate, and it is the extensibility the owner
+# asked for: the area is meant to grow gameplay of its own later ("later we will
+# invent some game mechanics there"), and when it does it hangs off these two
+# functions instead of chasing scattered copies of `distance_to(home) < R`.
+# No zone mechanics exist yet, and none should be added here speculatively.
+
+func territory_radius() -> float:
+	"""
+	How far from `home_position` this boss may roam. A plain accessor today — it
+	is the seam a per-boss or per-species radius would arrive through, which is
+	why the three callers below never read the const directly.
+	"""
+	return BOSS_TERRITORY_RADIUS
+
+
+func in_territory(pos: Vector3) -> bool:
+	"""
+	Is `pos` inside this boss's territory?
+
+	Measured on XZ only, because the world is flat at y = 0 by invariant and the
+	quarry's y is the one axis that moves (a jump). Folding height into the radius
+	would quietly shrink the leash for an airborne player, which is a rule nobody
+	asked for. Meaningless on a non-boss (home_position is never captured there);
+	every caller is behind an `is_boss` gate.
+	"""
+	var off := Vector2(pos.x - home_position.x, pos.z - home_position.z)
+	return off.length() <= territory_radius()
+
+
+func _steer_within_territory() -> void:
+	"""
+	Keep a boss inside its circle by REMOVING the outward part of the heading it
+	just chose, rather than by turning it toward home.
+
+	The difference is the difference between a leash and a cage. Turning
+	dead-inward at the boundary means a quarry standing in the outer few metres of
+	the territory can never be reached: the boss veers home, re-acquires, veers
+	out, and oscillates in the margin band forever. Cancelling only the outward
+	component lets it slide ALONG the boundary and keep whatever inward or
+	tangential intent the chase gave it — it still hunts you at the fence, it just
+	cannot follow you through it.
+	"""
+	var off := Vector2(global_position.x - home_position.x, global_position.z - home_position.z)
+	if off.length() <= territory_radius() - BOSS_TERRITORY_MARGIN:
+		return  # Deep inside, which is most of the time; the leash is invisible here.
+
+	var outward := off.normalized()
+	var dir := Vector2(movement_direction.x, movement_direction.z)
+	var outward_part := dir.dot(outward)
+	if outward_part <= 0.0:
+		return  # Already heading back in — leave the chase/wander heading alone.
+
+	dir -= outward * outward_part
+	if dir.length() < 0.01:
+		# Aimed dead at the fence, so there is no tangent left to slide along.
+		dir = -outward
+	dir = dir.normalized()
+	movement_direction = Vector3(dir.x, 0.0, dir.y)
+	wander_heading = atan2(movement_direction.x, movement_direction.z)
+
+
+func _clamp_to_territory() -> void:
+	"""
+	Hard backstop: pull a boss back onto its territory boundary and kill the
+	outward velocity. Runs AFTER move_and_slide, so the position anything else can
+	observe is always inside the circle — the boundary is hard, with no epsilon.
+	"""
+	var off := Vector2(global_position.x - home_position.x, global_position.z - home_position.z)
+	var radius := territory_radius()
+	if off.length() <= radius:
+		return
+
+	off = off.normalized() * radius
+	global_position.x = home_position.x + off.x
+	global_position.z = home_position.z + off.y
+	velocity.x = 0.0
+	velocity.z = 0.0
+
+
+# ============================================================================
 # AI BEHAVIOR METHODS
 # ============================================================================
 
@@ -3371,6 +3547,16 @@ func _on_player_collision(player: Node) -> void:
 	# A BOSS is bigger than even giant-form Teibi (2.5x+ vs the giant scale), so
 	# giant form gets bitten like anyone else — bosses are never crushable. This
 	# early check sits ABOVE the crush block so that block stays untouched.
+	#
+	# THE ORDERING IS THE FEATURE, AND IT IS PROVISIONAL. Immunity is a property
+	# of BOSS-NESS, not of any one boss, which is the owner's rule verbatim: "yes,
+	# for now all bosses immune. we will think about it later on." So every boss
+	# kind added after the crocodile inherits it for free — and the day one of them
+	# is meant to be killable, that is a change HERE, not a new subclass. Reorder
+	# these two blocks and giant Teibi silently one-shots the game's biggest
+	# threat, with no error anywhere, so boss_selfcheck pins the ordering — with a
+	# non-boss negative control, because "the boss survived" is also true of a stub
+	# that never crushed anything.
 	# ponytail: the few bite lines below are duplicated from the normal path on
 	# purpose — a shared helper would tangle this with the crush block another
 	# change owns; fold them together once that settles.
