@@ -41,8 +41,11 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #   prop_selfcheck           prop/structure footprints, budgets, palettes
 #   enemy_spawn_selfcheck    every species: no spawn in stone, deterministic
 #                            placement, biome dispatch, behaviour, MP identity
-#   boss_selfcheck           the boss territory leash (hunts inside, never
-#                            leaves) + crush immunity is an ORDERING
+#   boss_selfcheck           EVERY BIOME_BOSS kind: the territory leash (hunts
+#                            inside, never leaves), crush immunity is an
+#                            ORDERING, the row's boss speed is the one resolved,
+#                            and a ranged boss really fires — only in its band,
+#                            on its cooldown, inside its area, while chasing
 #   projectile_selfcheck     boss projectiles: the per-style FAIRNESS contract
 #                            (a walking player always clears it; nothing outruns
 #                            a fleeing one), straight + lob flight, both dodge
@@ -243,10 +246,20 @@ never a bare radius comparison. `boss_selfcheck` pins both.
 **Which boss kind a road station gets is its own dispatch, `BIOME_BOSS`** — same shape and
 same no-RNG-draw rule as `BIOME_SPECIES`, but keyed on the **owning station's centre**
 (`is_river_at` first, the owner's "river → crocodile"), because a boss is station-indexed
-and has no chunk centre. It ships **empty**, so every boss is a crocodile; the row is
-resolved *above* the candidate walk so the kind stays a pure function of the boss index.
-Adding a boss is a `SPECIES` row, a `.tscn`, and one line there — `enemy_spawn_selfcheck`
-check 11 walks the road and asks the rule at every station.
+and has no chunk centre. Its one row today is **SNOW → the titan**; every other band, and
+every river station, still gets the crocodile. The row is resolved *above* the candidate
+walk so the kind stays a pure function of the boss index. Adding a boss is a `SPECIES`
+row, a `.tscn`, and one line there — `enemy_spawn_selfcheck` check 11 walks the road,
+asks the rule at every station, and fails a row it never actually placed.
+
+**A boss-only row may go BELOW `WALK_SPEED`, and the titan does.** The lattice's lower
+bound ("walking is caught") is asked of ordinary predators; a boss ignores its row's chase
+speed entirely and takes `BOSS_CHASE_SPEED` unless the row opts out with
+`boss_chase_speed`, which exists for the one species whose threat is its **shot** and not
+its feet. The exemption is paid for, not free: `enemy_spawn_selfcheck`'s ranged probe
+*asserts* every `"ranged"` row's speeds are sub-walk, and `boss_selfcheck` — which runs
+every check over every `BIOME_BOSS` kind, not just the crocodile — asserts the body really
+resolved the speed its row asked for.
 
 The species `chase_speed` (5.5 for the crocodile) is deliberately above `WALK_SPEED` (5.0)
 so walking gets you caught, and `MAX_CHASE_SPEED` (8.5) — a top-level const clamping every
