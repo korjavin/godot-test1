@@ -148,6 +148,156 @@ jobs:
           retention-days: 7
 
   # ============================================================================
+  # Self-checks — the project's ONLY correctness gate
+  #
+  # This game has no test suite and no linter. What it has is the headless
+  # self-checks in scripts/*_selfcheck.gd, each of which prints "SELFCHECK OK"
+  # and exits 0. Until this job existed they were run by hand and reported in a
+  # PR description, so "CI green" only ever meant "the web export builds" — a
+  # change breaking determinism, the biome CPU/GPU parity contract, the speed
+  # lattice or German fit merged green.
+  #
+  # A SEPARATE JOB, not a step in `build`, deliberately: it runs in parallel so
+  # it adds no wall-clock, and a failing check reports as its own red check
+  # rather than hiding behind a build failure. Both deploy jobs `needs:` it, so
+  # nothing publishes on a red self-check.
+  #
+  # The suite is DISCOVERED BY GLOB, never listed here. A list in a workflow file
+  # is a list nobody updates — five of these checks were added in a single day.
+  # Globbing means a new scripts/*_selfcheck.gd is gated the moment it lands.
+  # ============================================================================
+  selfchecks:
+    name: 🩺 Self-checks
+    runs-on: ubuntu-latest
+    # The whole suite is well under a minute of actual work; this is only here so
+    # a check whose SceneTree never calls quit() is a red build rather than a job
+    # the runner kills six hours later.
+    timeout-minutes: 20
+    container:
+      image: barichello/godot-ci:4.5
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      # locale_selfcheck MEASURES text — it renders every German string in the
+      # real font at the real size and compares against the control's real pixel
+      # budget. The godot-ci image ships neither fontconfig nor a single font
+      # file, so Godot logs "libfontconfig.so.1: cannot open shared object file"
+      # and any glyph outside its embedded font (the ⚙ on the tune button,
+      # U+2699) falls back to something else entirely — measured that way the gear
+      # button came out 103 px against its 98 px budget, a failure that reproduces
+      # on no developer machine. A text-metric check in a font-less container is
+      # measuring a fiction, so give the container the fonts a real machine has.
+      - name: 🔤 Install fonts (locale_selfcheck measures real glyph widths)
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends libfontconfig1 fonts-dejavu-core
+
+      # NOT optional, and not merely a speed-up. A cold checkout has no .godot
+      # cache and both `*.import` and `*.translation` are gitignored, so without
+      # this: locale_selfcheck measures a stale/absent translation table, and a
+      # global `class_name` (IntroVideo) resolves to nothing at all, which makes
+      # intro_selfcheck fail to PARSE — see the exit-code note in the run step
+      # for why that would otherwise have been silently green.
+      # Same command CLAUDE.md tells a human to run in a fresh clone.
+      - name: 🌍 Import assets (generates the translation resources)
+        run: |
+          godot --headless --path . --import
+          for locale in en de; do
+            test -f "assets/translations/ui.${locale}.translation" \
+              || { echo "::error::assets/translations/ui.${locale}.translation was not generated — locale_selfcheck would measure a table that is not there"; exit 1; }
+          done
+
+      # THE EXIT CODE ALONE IS NOT A VERDICT. Measured on 4.5: a script that
+      # fails to parse prints "Failed to load script ... Parse error" and
+      # `godot --headless --script` still exits 0 — the check never ran and the
+      # job would go green. So a pass requires BOTH exit 0 AND the literal
+      # "SELFCHECK OK" line the script only prints after its last assertion.
+      # That is also what catches a crash, a missing binary and an empty glob.
+      #
+      # NOT fail-fast: every check runs, every failure is named, and the verdict
+      # comes at the end. One broken check must not hide the state of the other
+      # fifteen — the whole point of running them is knowing which contracts hold.
+      #
+      # PLAIN POSIX sh, deliberately — no arrays, no `shopt`, no `<<<`. The
+      # godot-ci image ships no bash, so Actions falls back to `sh -e {0}` and a
+      # bashism is an exit 127 before the first check runs (it was, once). Every
+      # other step in this workflow is POSIX for the same reason. A hung check is
+      # caught by the job's `timeout-minutes`, not a per-check `timeout(1)` —
+      # one less binary to assume the image has.
+      - name: 🩺 Run every self-check
+        run: |
+          command -v godot >/dev/null || { echo "::error::godot is not on PATH — no self-check would have run"; exit 1; }
+          total=0
+          failed=""
+          for check in scripts/*_selfcheck.gd; do
+            [ -e "$check" ] || { echo "::error::scripts/*_selfcheck.gd matched nothing — the suite would have silently passed"; exit 1; }
+            total=$((total + 1))
+            name=$(basename "$check" .gd)
+            echo "::group::${name}"
+            if out=$(godot --headless --path . --script "res://${check}" 2>&1) \
+              && printf '%s\n' "$out" | grep -qx "SELFCHECK OK"; then
+              printf '%s\n' "$out"
+              echo "::endgroup::"
+              echo "OK   ${name}"
+            else
+              printf '%s\n' "$out"
+              echo "::endgroup::"
+              echo "::error::${name} FAILED — no 'SELFCHECK OK' (see the ${name} log group above)"
+              failed="${failed} ${name}"
+            fi
+          done
+          echo "-- ${total} self-checks run --"
+          [ -z "$failed" ] || { echo "::error::self-checks failed:${failed}"; exit 1; }
+          echo "all ${total} self-checks passed"
+
+  # ============================================================================
+  # Enemy-model contract
+  #
+  # scripts/predator_parts.py is the toolkit every biome-predator generator is
+  # built on, and it asserts that toolkit's contract (orientation, feet at y=0,
+  # one vertex-coloured mesh) on every build. Running it rebuilds all six models
+  # plus the wing primitive and prints the same "SELFCHECK OK". Nothing else
+  # checks any of that — the .glb files are committed, so a toolkit change that
+  # breaks a model is invisible until someone regenerates by hand.
+  #
+  # Its own job on a plain runner rather than a step in `selfchecks`: it needs
+  # python3 + trimesh + numpy, which the godot-ci container does not carry, and
+  # a pip install there would be a second toolchain bolted into an image we do
+  # not own. The rebuilt .glb files are thrown away with the runner — this job
+  # verifies, it does not publish.
+  # ============================================================================
+  model-selfcheck:
+    name: 🐺 Enemy-model self-check
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 📦 Install the generator's dependencies
+        run: pip install trimesh numpy
+
+      # Same two-part verdict as the GDScript suite, for the same reason: a
+      # generator that printed nothing and exited 0 would be indistinguishable
+      # from a pass.
+      - name: 🐺 Rebuild and verify every predator model
+        run: |
+          out=$(python3 scripts/predator_parts.py 2>&1) && printf '%s\n' "$out" | grep -qx "SELFCHECK OK" || {
+            printf '%s\n' "$out"
+            echo "::error::scripts/predator_parts.py did not print SELFCHECK OK — the enemy-model contract is broken"
+            exit 1
+          }
+          printf '%s\n' "$out"
+
+  # ============================================================================
   # Publish the godot-mp stack (only from master branch)
   #
   # THIS JOB IS THE SINGLE OWNER OF THE `deploy` BRANCH. Portainer reads
@@ -182,7 +332,9 @@ jobs:
 
   deploy-stack:
     name: 🚀 Publish images and redeploy stack
-    needs: [ build, lobby-checks ]
+    # Self-checks gate the publish too: the images are production, and a build
+    # that exports cleanly while a correctness contract is broken must not ship.
+    needs: [ build, selfchecks, model-selfcheck, lobby-checks ]
     # Master pushes only — a PR must not build or push any image.
     if: github.ref == 'refs/heads/master' && github.event_name == 'push'
     runs-on: ubuntu-latest
@@ -264,7 +416,9 @@ jobs:
   # ============================================================================
   deploy:
     name: 🚀 Deploy to GitHub Pages
-    needs: build
+    # Same gate as deploy-stack: Pages is production too, so a build that
+    # exports cleanly while a self-check is red must not reach players.
+    needs: [ build, selfchecks, model-selfcheck ]
     runs-on: ubuntu-latest
     # Only deploy on push to master branch
     if: github.ref == 'refs/heads/master' && github.event_name == 'push'

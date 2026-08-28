@@ -440,8 +440,12 @@ The web (WebGL) build is the performance-sensitive target.
 
 ## CI/CD
 
-`.github/workflows/build.yml` builds the web export on every push. **Deploy happens only on
-push to `master`** — merging is what publishes.
+`.github/workflows/build.yml` builds the web export on every push, and runs the two
+self-check jobs beside it: `selfchecks` globs **every** `scripts/*_selfcheck.gd` (so a new
+one is gated the day it lands) and `model-selfcheck` runs `scripts/predator_parts.py`.
+A check counts as passed only if it exits 0 **and** printed `SELFCHECK OK` — a GDScript
+parse error exits 0, so the exit code alone is not a verdict. Both deploy jobs `needs:`
+them. **Deploy happens only on push to `master`** — merging is what publishes.
 
 The same master push runs `deploy-stack`, the **single owner of the `deploy` branch** that
 Portainer reads: it builds both production images, pins them by commit SHA (**never

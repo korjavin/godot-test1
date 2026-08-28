@@ -160,7 +160,7 @@ const ROWS: Array = [
 	# "Skills" is the opener button's own CSV key, so this legend reads in German
 	# exactly like the button does. A phone has no K.
 	["Skills", "Open the skill tree and spend skill points.", Mode.TOUCH],
-	["⚙ Tune", "Tune step and steering feel, or read how to play again.", Mode.TOUCH],
+	["Tune", "Tune step and steering feel, or read how to play again.", Mode.TOUCH],
 
 	["MP", "Multiplayer: host or join a room for up to 4 players.", Mode.BOTH],
 
