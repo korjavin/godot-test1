@@ -124,6 +124,15 @@ extends Node3D
 ## 1.5 m over the player's feet — so in the open the camera floats about 3.5 m up.
 ## Nothing may write `camera.position` (CLAUDE.md), which means the ONLY way to
 ## make a room comfortable is to build it tall enough. 4.2 m of headroom under the
+## ponytail: THE COURTYARD IS 8 m WIDE AND THE ARM IS 8.25 m LONG, so facing east
+## anywhere near its west wall — the foot of the ramp above all — collapses the arm
+## into a shot of the back of the hero's head. That is not a bug this file can fix:
+## it is what the arm does against every wall in the game, and the two things that
+## would change it are a shorter arm indoors (a player_controller decision, and one
+## that changes the whole game's feel) or a wider courtyard (which costs shell
+## footprint against phase 1's exclusion disc). Left alone deliberately; if the
+## owner wants it, the smallest lever is an indoor `spring_length`.
+##
 ## slab clears that 3.5 m with room for the arm's 0.25 m margin, so the arm never
 ## slams in on flat ground; the courtyard and the upper floor are open to the sky
 ## and have no ceiling at all. That is why the entry hall is the only enclosed room
