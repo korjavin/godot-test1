@@ -155,6 +155,12 @@ def wings(shoulder, span: float, color, *, segments: int = 3, fold: float = 0.0,
     """
     if segments < 1:
         raise ValueError(f"wings: segments must be >= 1, got {segments}")
+    if not 0.0 <= taper < 1.0:
+        # 1.0 looks like the natural "taper it all away" value and is in fact a
+        # tip segment with zero extents in both directions: degenerate faces that
+        # weld into the mesh, survive `verify`, and cost the wing its last
+        # segment wherever the importer drops them.
+        raise ValueError(f"wings: taper must be in [0, 1), got {taper}")
     sx, sy, sz = shoulder
     chord = chord or span * 0.5
     thickness = thickness or span * 0.07
@@ -431,13 +437,13 @@ def _selfcheck_wings() -> None:
     assert extent["folded"][1] > extent["part-spread"][1], "fold does not shorten the sweep"
 
     # Guards, both of which are cheaper to hit here than in a boss model.
-    for bad, why in (
-        (dict(shoulder=(0.0, 0.05, 0.1), span=0.6, segments=3, fold=0.0), "buried tip"),
-        (dict(shoulder=(0.0, 1.0, 0.1), span=0.6, segments=0, fold=0.0), "no segments"),
+    for shoulder, kw, why in (
+        ((0.0, 0.05, 0.10), dict(segments=3), "a buried tip"),
+        ((0.0, 1.00, 0.10), dict(segments=0), "no segments"),
+        ((0.0, 1.00, 0.10), dict(taper=1.0), "a tip tapered away to nothing"),
     ):
         try:
-            wings(bad["shoulder"], bad["span"], membrane,
-                  segments=bad["segments"], fold=bad["fold"])
+            wings(shoulder, 0.6, membrane, fold=0.0, **kw)
         except ValueError:
             continue
         raise AssertionError(f"wings: {why} was accepted")
