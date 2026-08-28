@@ -739,6 +739,7 @@ func _check_gate_lifecycle() -> void:
 	var interior := shell.get_node_or_null("TowerInterior") as TowerInterior
 	if interior == null:
 		_fail("the tower has no TowerInterior child — the interior is not being assembled")
+		await _clear(null, shell)
 		return
 
 	# (a) the starting state
@@ -764,6 +765,7 @@ func _check_gate_lifecycle() -> void:
 	var pad_area := interior.get_node_or_null("Floor1/IdentityTrigger") as Area3D
 	if pad_area == null:
 		_fail("there is no IdentityTrigger Area3D on the upper storey")
+		await _clear(hero, shell)
 		return
 	hero.global_position = pad_area.global_position
 	await _settle_physics()
@@ -792,6 +794,7 @@ func _check_gate_lifecycle() -> void:
 	var demand_area := interior.get_node_or_null("Floor0/DemandTrigger") as Area3D
 	if demand_area == null:
 		_fail("there is no DemandTrigger Area3D")
+		await _clear(hero, shell)
 		return
 	hero.hero = "primm"
 	hero.reach = TowerInterior.DEMAND_TARGET * 0.6
@@ -842,6 +845,7 @@ func _check_gate_lifecycle() -> void:
 	var check_area := interior.get_node_or_null("Floor1/CheckpointTrigger") as Area3D
 	if check_area == null:
 		_fail("there is no CheckpointTrigger Area3D")
+		await _clear(hero, shell)
 		return
 	hero.global_position = check_area.global_position
 	await _settle_physics()
@@ -1091,6 +1095,24 @@ func _overlaps(a_pos: Vector3, a_size: Vector3, b_pos: Vector3, b_size: Vector3)
 	return absf(a_pos.x - b_pos.x) < a.x + b.x - TOUCH \
 			and absf(a_pos.y - b_pos.y) < a.y + b.y - TOUCH \
 			and absf(a_pos.z - b_pos.z) < a.z + b.z - TOUCH
+
+
+func _clear(hero: Node, shell: Node) -> void:
+	"""
+	Free a check's probe player and tower before bailing out.
+
+	NOT TIDINESS. A check that `return`s on a failure and leaves its probe in the
+	tree leaves a second node in group "player", and the next check's
+	`get_first_node_in_group("player")` picks one of them at random — so one real
+	failure grows a train of invented ones in checks that are fine. (Happened while
+	this file was being written: a missing `IdentityTrigger` reported itself as "the
+	interior still draws with the player 240 m away".)
+	"""
+	if hero != null:
+		hero.queue_free()
+	if shell != null:
+		shell.queue_free()
+	await process_frame
 
 
 func _settle_physics() -> void:
