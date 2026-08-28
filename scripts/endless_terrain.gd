@@ -518,6 +518,26 @@ const TOWER_NUDGE_RINGS: int = 8
 ## the field is shallow, and arbitrarily narrow where it is steep.
 const TOWER_SAMPLE_STEP: float = 2.0
 
+## How near the player must come to tower_site() before the shell is INSTANCED
+## (metres). Phase 2's lazy-load radius.
+##
+## Generous on purpose, and the generosity is the whole design. The shell is one
+## scene of nine boxes — a rounding error next to a chunk — so the cost of building
+## it early is nothing, while the cost of building it LATE is a building popping
+## into existence in front of the player. 320 m clears the desktop render distance
+## (250 m) and both fog ranges by a wide margin, and it is checked only when the
+## player crosses a CHUNK boundary (50 m), so the worst case still instances the
+## tower ~270 m out — far past anything that can be seen.
+##
+## Below this radius the horizon impostor is what the player is looking at (see
+## TowerShell.build_impostor), so the swap happens where neither is visible.
+const TOWER_LOAD_RADIUS: float = 320.0
+
+## The tower's authored scene. Instanced ONCE per run, parented to this manager and
+## never to a chunk — the fauna precedent (CLAUDE.md): chunk unloading must not be
+## able to free a building the player is standing in.
+const TOWER_SHELL_SCENE: PackedScene = preload("res://scenes/tower/tower_shell.tscn")
+
 ## Chance (0..1) that a given walkable structure top (mound summit / wall ridge)
 ## gets a rare crocodile patrolling it. Kept moderate so they're an occasional
 ## surprise, not on every structure.
@@ -554,6 +574,16 @@ const COIN_BLOCK_OFFSET: float = 0.6
 ## than clipping into the side. Shared by _point_over_block and the perch loop so the
 ## overlap rule has exactly one definition (see _block_overlaps).
 const COIN_BLOCK_OVERLAP_MARGIN: float = 1.0
+
+## Clearance (metres) added to every face of a tower box when deciding whether a
+## road coin is inside the building (see tower_blocks_coin).
+##
+## A coin is a 0.35 m disc and a GEM is that times GEM_SCALE (1.6), i.e. 0.56 m at
+## its widest — so a point test alone would leave a gem half-sunk into a wall face
+## and still call it clear. 0.7 covers the widest pickup with margin, and errs the
+## only direction that is safe: it drops a coin that was merely grazing the stone
+## rather than leaving one embedded in it.
+const COIN_TOWER_CLEARANCE: float = 0.7
 
 # ----------------------------------------------------------------------------
 # COIN ROAD CONFIGURATION (the meandering parametric trail that carries coins)
@@ -2313,6 +2343,18 @@ var _tower_site_cache: Vector3 = Vector3.ZERO
 var _tower_site_seed: int = 0
 var _tower_site_dist: float = -1.0
 
+## The tower's two bodies, both parented to THIS manager (never to a chunk) and
+## both a pure function of the run seed, so multiplayer needs no packet for either.
+##
+##   * `_tower_shell` is the real building. Null until the player first comes within
+##     TOWER_LOAD_RADIUS, then never freed for the rest of the run — a bounded,
+##     known cost, and freeing it would only trade nine boxes for a pop-in.
+##   * `_tower_impostor` is the fog-exempt horizon silhouette, built at _ready() and
+##     alive for the whole session; it is HIDDEN, not freed, once the shell exists,
+##     because new_run() needs it back.
+var _tower_shell: Node3D = null
+var _tower_impostor: Node3D = null
+
 # ----------------------------------------------------------------------------
 # SHARED RESOURCES FOR MULTIMESH BLOCK RENDERING (created once, reused forever)
 # ----------------------------------------------------------------------------
@@ -2534,6 +2576,11 @@ func set_run_seed(value: int) -> void:
 	# here, a measurable spike if it landed mid-stream. Must come AFTER
 	# _roll_biome_offset(): the site is read off the river field that call rolls.
 	tower_site()
+	# And move the tower's two bodies to wherever that just put the site. THIS is
+	# why the reset hangs off the seed write rather than off new_run(): every path
+	# that can move the site — _ready's roll, a restart, a multiplayer peer being
+	# handed the room's seed — goes through here, so none of them can forget.
+	_tower_reset()
 
 
 func _roll_biome_offset() -> void:
@@ -2759,6 +2806,10 @@ func _process(_delta: float) -> void:
 		focus_dirty = false
 		update_chunks(player_chunk)
 		last_player_chunk = player_chunk
+		# THE TOWER'S ONLY PER-FRAME COST, which is to say none: it rides the
+		# boundary crossing the chunk streamer already pays for, so walking a
+		# whole run nowhere near the site costs one distance test per 50 m.
+		_tower_stream(player.global_position)
 
 	# TIME-SLICED FILL: build exactly ONE queued chunk per frame (see the
 	# pending_chunks comment in SECTION 2). The queue is sorted nearest-first,
@@ -8100,6 +8151,152 @@ func tower_excludes(world_x: float, world_z: float, radius: float = 0.0) -> bool
 	return Vector2(world_x - site.x, world_z - site.z).length() < keep_out
 
 
+func tower_blocks_coin(world_x: float, world_y: float, world_z: float) -> bool:
+	"""
+	Would a coin at this world point be buried inside the tower's stonework?
+
+	@param world_x, world_y, world_z: The settled coin position, WORLD space.
+	@return: true when the coin must be skipped.
+
+	WHY THIS EXISTS AT ALL. Phase 1 deliberately left the COIN ROAD out of
+	`tower_excludes()` — it is one parametric line through the whole world and
+	cutting a hole in it would break "follow the coins" — and explicitly left the
+	question of what the road does at the tower door to this phase. This is that
+	answer, and it is the smallest one: a coin the walls would swallow is dropped,
+	and every other coin on the road is untouched, so the trail still runs past the
+	door and into the yard. (Run seed 56 lays a road coin 9.15 m out and 5.36 m
+	across from the site centre, i.e. inside the -Z door jamb — found by codex
+	review, 2026-08-28.)
+
+	THE SAME RULE `_settle_coin_y` ALREADY APPLIES to a non-climbable block top, for
+	the same reason: a coin you can see and cannot reach is worse than no coin. It
+	is a separate function only because the tower is authored geometry and therefore
+	in no chunk's `obstacles` list — there is nothing for `_settle_coin_y` to read.
+
+	POST-DRAW ONLY, like every other rejection in this file: the caller `continue`s
+	AFTER the draws that produced the candidate, so the road's stream still advances
+	and the rest of the world is unmoved. Pure and allocation-free on the common
+	path — the disc test rejects before the box table is ever asked for.
+	"""
+	var site := tower_site()
+	var dx := world_x - site.x
+	var dz := world_z - site.z
+	# Cheap disc reject first: every coin in the world that is not at the tower pays
+	# one length() and nothing else.
+	if Vector2(dx, dz).length() > TOWER_RADIUS:
+		return false
+	for box: Dictionary in TowerShell.boxes():
+		# Only the SOLID boxes. The yard slab is 3 cm of paint and the beacon is a
+		# light 24 m up; a coin is welcome to sit on either.
+		if not box["collide"]:
+			continue
+		var pos: Vector3 = box["pos"]
+		var half: Vector3 = box["size"] * 0.5
+		if absf(dx - pos.x) < half.x + COIN_TOWER_CLEARANCE \
+				and absf(world_y - pos.y) < half.y + COIN_TOWER_CLEARANCE \
+				and absf(dz - pos.z) < half.z + COIN_TOWER_CLEARANCE:
+			return true
+	return false
+
+
+func tower_shell() -> Node3D:
+	"""
+	The instanced tower, or null while the player has never been near it.
+
+	@return: The live `TowerShell` node, or null.
+
+	The public seam for phase 3 (the interior) and for the self-check. Everything
+	else about the tower is reachable through the "tower" group the shell joins;
+	this exists because "is it built yet" is a question the group answers with an
+	empty array either way.
+	"""
+	return _tower_shell if is_instance_valid(_tower_shell) else null
+
+
+func _tower_stream(player_pos: Vector3) -> void:
+	"""
+	Instance the tower shell the first time the player comes near its site, and
+	retire the horizon impostor when it does.
+
+	@param player_pos: The local player's world position.
+
+	CALLED ONLY ON A CHUNK BOUNDARY CROSSING (see _process), never per frame — the
+	bead's "no polling storm": at cruising speed that is one distance test every few
+	seconds, and once the shell exists it is one validity test and a return.
+
+	The shell is parented to THIS NODE, deliberately. A chunk-parented building
+	would be freed the moment the player walked far enough for its chunk to unload,
+	which for a 400 m destination is most of the time — the same reason
+	fauna_manager parents its herds to itself (CLAUDE.md).
+	"""
+	if is_instance_valid(_tower_shell):
+		return
+	var site := tower_site()
+	if not _tower_in_load_range(player_pos, site):
+		# ...and the MULTIPLAYER FOCUS SET, which is the same question asked about
+		# somebody else's player. `set_focus_points` pins the chunks around every
+		# teammate precisely because the master SIMULATES what is in them, and
+		# crocodiles are master-simulated (CLAUDE.md) — so a master still 400 m out
+		# while a teammate walks into the tower would be running that teammate's
+		# crocodiles against a world with no tower in it, walking them straight
+		# through walls the teammate's own shell then refuses (codex review,
+		# 2026-08-28). The shell has to exist wherever it is being simulated, not
+		# only wherever it is being looked at.
+		#
+		# Bounded by MAX_FOCUS_CHUNKS (27) and reached only on a boundary crossing
+		# or a focus change, so it is at most 27 length() calls a few times a second
+		# — and never once solo, where `focus_chunks` is empty by construction.
+		var reached := false
+		for chunk_pos: Vector2i in focus_chunks:
+			if _tower_in_load_range(chunk_to_world(chunk_pos), site):
+				reached = true
+				break
+		if not reached:
+			return
+	_tower_shell = TOWER_SHELL_SCENE.instantiate() as Node3D
+	add_child(_tower_shell)
+	# LOCAL position with a WORLD coordinate, exactly as create_chunk parks a chunk
+	# (`mesh_instance.position = chunk_to_world(...)`): this node is the world-space
+	# frame everything under it is placed in. It is also the only form that is safe
+	# on a terrain that is not in the tree yet — `set_run_seed()` is reachable there
+	# and `global_position` is rejected outright (codex review, 2026-08-28).
+	_tower_shell.position = site
+	# The silhouette has done its job — the real thing is now standing in the same
+	# place, and two towers in one spot z-fight.
+	if is_instance_valid(_tower_impostor):
+		_tower_impostor.visible = false
+
+
+func _tower_in_load_range(from: Vector3, site: Vector3) -> bool:
+	"""Is this world point near enough the site to want the shell built? XZ only —
+	the world is flat and the tower is not going anywhere vertically."""
+	return Vector2(from.x - site.x, from.z - site.z).length() <= TOWER_LOAD_RADIUS
+
+
+func _tower_reset() -> void:
+	"""
+	Put the tower back to "not built yet, and visible on the horizon" — at the
+	CURRENT site, which a new run has just moved.
+
+	Called from new_run() after the seed is set and before any chunk is rebuilt.
+	The shell is the one thing in this file that survives a chunk wipe, so it is
+	also the one thing a new run has to free by hand; the impostor is repositioned
+	rather than rebuilt, because its geometry does not depend on the seed.
+	"""
+	if is_instance_valid(_tower_shell):
+		_tower_shell.queue_free()
+	_tower_shell = null
+	if not is_instance_valid(_tower_impostor):
+		_tower_impostor = TowerShell.build_impostor()
+		add_child(_tower_impostor)
+	# LOCAL, for the reason _tower_stream gives — and it matters most HERE, because
+	# set_run_seed() (this function's only caller) is routinely called on a terrain
+	# that is not in the tree: mp_selfcheck, prop_selfcheck and enemy_spawn_selfcheck
+	# all build one that way.
+	_tower_impostor.position = tower_site()
+	_tower_impostor.visible = true
+
+
 # ============================================================================
 # COIN ROAD MATH (deterministic, pure-in-k parametric centerline + coin placement)
 # ============================================================================
@@ -8550,6 +8747,14 @@ func spawn_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obs
 			if is_inf(local.y):
 				continue
 
+			# ...and against THE TOWER, which is authored geometry and therefore in
+			# no chunk's `obstacles` list for _settle_coin_y to have seen. Same
+			# post-draw `continue`, same rule (a coin inside stone is dropped, not
+			# moved) — see tower_blocks_coin for why the road is filtered here
+			# rather than excluded wholesale.
+			if tower_blocks_coin(cw_pos.x, local.y, cw_pos.z):
+				continue
+
 			# Spawn the coin (position is local to the chunk, like blocks/crocodiles).
 			# A gem entry is upgraded BEFORE entering the tree (make_gem recolours a
 			# duplicated material and scales the whole pickup — see coin.gd).
@@ -8723,6 +8928,20 @@ func new_run(forced_seed = null, around: Vector2i = Vector2i.ZERO) -> void:
 	# player teleported into that chunk has ground under them this frame.
 	update_chunks(around)
 	last_player_chunk = around
+	# The seed write above already reset the tower (set_run_seed -> _tower_reset),
+	# but `last_player_chunk` was just pinned, so _process will not cross a boundary
+	# and re-stream on its own — the player would arrive at the site to find no
+	# building, no collision and no doorway until they walked a whole chunk away and
+	# back.
+	#
+	# TESTED AGAINST `around`, NOT AGAINST THE PLAYER, and that distinction is the
+	# whole point (codex review, 2026-08-28). `around` is where the player is ABOUT
+	# to be: on a restart it is the spawn chunk they are teleported to a moment
+	# later, and on a mid-run multiplayer join it is the anchor chunk they are
+	# placed in — in both cases the teleport happens AFTER this call, so reading
+	# `player.global_position` here measures where they used to be. Same reasoning as
+	# the synchronous ring in step 4, which floors `around` for exactly that reason.
+	_tower_stream(chunk_to_world(around))
 
 	print("New run started (run_seed = %d)" % run_seed)
 

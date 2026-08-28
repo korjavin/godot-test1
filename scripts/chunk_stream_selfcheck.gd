@@ -214,11 +214,33 @@ func _check_drain_paid_the_debt(terrain: Node3D) -> void:
 	# a second _ensure_chunk_ground does not stack two floors inside one chunk, it
 	# builds a WHOLE SECOND CHUNK NODE and overwrites the dictionary entry, so the
 	# first one is left parented to the terrain, invisible to every lookup and
-	# freed by nothing. Every child of the terrain is a chunk, so the count is the
-	# whole statement.
-	if terrain.get_child_count() != terrain.active_chunks.size():
-		_fail("terrain holds %d chunk nodes for %d active chunks — _ensure_chunk_ground is not idempotent and orphaned the difference" % [
-			terrain.get_child_count(), terrain.active_chunks.size()])
+	# freed by nothing.
+	#
+	# STATED BY IDENTITY, not by counting children, because chunks are no longer the
+	# terrain's only children: the tower's shell and its horizon impostor are
+	# parented to the MANAGER on purpose (epic godot-test1-3iy — a chunk-parented
+	# building would be freed the moment the player walked far enough), exactly as
+	# fauna_manager parents its herds to itself.
+	#
+	# AND NOT BY NAME EITHER, which is the trap here: an orphan is a SECOND node with
+	# the chunk's name, and Godot resolves the collision by renaming — to
+	# "@MeshInstance3D@7", not to "Chunk_0_02". A name-prefix count therefore sees
+	# one chunk where there are two and passes the exact bug it was written for
+	# (measured, 2026-08-28). Membership in `active_chunks` is what "a lookup can
+	# reach it" actually means, so that is what is asked.
+	var reachable := {}
+	for chunk: Node in terrain.active_chunks.values():
+		reachable[chunk.get_instance_id()] = true
+	for owned: Node in [terrain._tower_shell, terrain._tower_impostor]:
+		if is_instance_valid(owned):
+			reachable[owned.get_instance_id()] = true
+	var strays: Array[String] = []
+	for child: Node in terrain.get_children():
+		if not reachable.has(child.get_instance_id()):
+			strays.append("%s (%s)" % [child.name, child.get_class()])
+	if not strays.is_empty():
+		_fail("terrain holds %d nodes no lookup can reach — %s — _ensure_chunk_ground is not idempotent and orphaned them" % [
+			strays.size(), ", ".join(strays)])
 
 	for chunk_pos: Vector2i in _ring():
 		var chunk: Node = terrain.active_chunks.get(chunk_pos)

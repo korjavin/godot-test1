@@ -51,6 +51,10 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #   tower_site_selfcheck     the tower's site: deterministic, dry, and clear of
 #                            every spawner (plus the A/B that the rest of the world
 #                            is byte-identical with the exclusion on and off)
+#   tower_shell_selfcheck    the tower's building: box budget, fit inside
+#                            TOWER_RADIUS, shared materials, the doorway is a hole,
+#                            the door fires for a player only, lazy manager-parented
+#                            instancing, the fog-exempt impostor, the minimap mark
 
 bash scripts/mp_e2e.sh    # two-instance multiplayer e2e; needs go + godot on PATH
 ```
@@ -123,6 +127,15 @@ Load-bearing rules:
 Features built this way: the coin road (a parametric station-indexed path whose X strictly
 increases, so distance = `global_position.x`), boss crocodiles on road stations, lost-
 civilization artifacts, nomad camps, geo landmarks, biome content, themed props.
+
+**The tower (GastroDefense HQ) is the one exception and must stay one.** It is ONE
+authored building at ONE site — `tower_site()` (pure in `run_seed`, memoized, zero RNG
+draws) — that every spawner keeps clear of via `tower_excludes()`. Its geometry is
+`scripts/tower_shell.gd`'s box table, **not** `create_box()`/`block_batch`, and both it
+and its fog-exempt horizon impostor are parented to the terrain **manager** (the fauna
+precedent) so chunk unloading can never free the building you are standing in. The
+shell is instanced lazily on a chunk-boundary crossing and **shares `TOWER_RADIUS`**
+rather than restating any distance of its own. `tower_shell_selfcheck` pins all of it.
 
 ### Biomes are decoration over a flat world — do not break the flat-world invariant
 The ground stays flat at y = 0. Coin heights, road placement, crocodile gravity settle,

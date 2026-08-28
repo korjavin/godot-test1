@@ -29,6 +29,11 @@ extends Control
 ##     GEO LANDMARKS banner) as small violet X marks, clamped to the rim and
 ##     dimmed when they are off the map. They are destinations, so a rim hint is
 ##     the point: at the default zoom most loaded landmarks are past the disc.
+##   * THE TOWER (GastroDefense HQ) as a mint UPRIGHT CROSS at `tower_site()`, also
+##     rim-clamped and dimmed off-disc. Unlike every other layer it is not read off
+##     a group — the terrain is asked where the tower is, not where its geometry
+##     currently stands — so the bearing to it is on the map from the first frame
+##     of a run, 400 m before there is anything out there to see.
 ##   * Multiplayer teammates as dots in their own stable per-peer colour, clamped
 ##     to the rim (as a radial tick, not a blob) when they are off the map. Solo,
 ##     there is no teammate layer at all and nothing is drawn or scanned.
@@ -58,7 +63,8 @@ extends Control
 ##     X on screen rather than a polygon each, one two-line string rather than
 ##     two, ONE multiline of run-length bars for the entire terrain field rather
 ##     than a rect per cell. Total cost of the map: +10 draw calls, +1 more while
-##     any landmark is loaded (0 when none is), no measurable CPU change.
+##     any landmark is loaded (0 when none is), +1 for the tower cross (which is
+##     one marker and therefore always exactly one call), no measurable CPU change.
 ##   * The terrain field is the one layer with a real CPU cost: TERRAIN_GRID^2
 ##     `biome_at()` samples per TICK, measured at ~0.24 ms on desktop and ~1 ms in
 ##     the browser — once every 200 ms, against a 33 ms spike threshold. It is
@@ -179,7 +185,30 @@ const MAX_LANDMARK_DOTS: int = 12
 ## Alpha a rim-clamped (off-map) landmark X is drawn at, relative to one on the
 ## map — the teammate tick's rule, for the teammate tick's reason: off the map is
 ## less certain information and must not out-shout a landmark you can walk to.
+## Shared by the tower mark below, which is the same rule about the same thing (a
+## fixed destination you can be far from) and does not want a second number.
 const LANDMARK_EDGE_ALPHA: float = 0.7
+
+## THE TOWER MARK — GastroDefense HQ (epic godot-test1-3iy, phase 2): half-length
+## of each arm and the stroke width, in the landmark X's units.
+##
+## AN UPRIGHT CROSS, NOT AN X, and that is the whole design. There is exactly ONE
+## tower in a world and the map has to say "that one, over there" at a glance while
+## a handful of violet X marks may be on the disc at the same time — so it is
+## distinguished by SHAPE first (a + reads differently from an × even at four
+## pixels, where two colours a hue apart do not) and by colour second. Bigger than
+## the landmark X for the same reason: the tower is the destination, the landmarks
+## are scenery you pass.
+const TOWER_MARK_RADIUS: float = 4.4
+const TOWER_MARK_WIDTH: float = 1.8
+
+## How far the tower mark reaches from its own centre, i.e. the rim inset — the
+## LANDMARK_MARK_REACH rule ("inset by the mark's reach or a clamped mark pokes
+## past the ring"), with the arithmetic the cross's axis-aligned arms make easier:
+## the true worst point is a corner at (width/2, arm), so arm + width/2 is a
+## deliberate slight OVER-estimate, which insets by ~0.8 px more than strictly
+## needed and can only ever keep the mark further inside the ring.
+const TOWER_MARK_REACH: float = TOWER_MARK_RADIUS + TOWER_MARK_WIDTH * 0.5
 
 ## Length in pixels of the radial tick an OFF-MAP teammate is drawn as. A dot
 ## clamped to the rim would read as a teammate standing exactly at the map's edge;
@@ -251,6 +280,13 @@ const COLOR_PLAYER := Color(0.4, 0.95, 1.0, 1.0)     # cyan, nothing else on the
 ## Violet, deliberately away from every other hue on the disc — the road's gold,
 ## the crocodiles' red, the player's cyan — and legible on all four biome tints.
 const COLOR_LANDMARK := Color(0.85, 0.55, 1.0, 0.95)
+## The tower's mint green. Every other hue on the disc is taken — the road's gold,
+## the crocodiles' red, the landmarks' violet, the player's cyan — and the biome
+## tints are all dark and desaturated, so a saturated mint sits on top of any of
+## them. It is closest to the player's cyan and that is fine: the player is a large
+## triangle permanently at the exact centre of the disc, so nothing at the rim is
+## ever mistaken for it.
+const COLOR_TOWER := Color(0.35, 1.0, 0.6, 0.98)
 const COLOR_TEXT := Color(1, 1, 1, 0.95)
 const COLOR_RIVER_TEXT := Color(0.45, 0.75, 1.0, 0.95)
 
@@ -381,6 +417,18 @@ var _landmark_points: PackedVector2Array = PackedVector2Array()
 var _landmark_colors: PackedColorArray = PackedColorArray()
 var _landmark_count: int = 0
 
+## The tower's cross, in the landmark buffers' exact form — TWO segments, so FOUR
+## points and TWO colours, drawn by one `draw_multiline_colors()`.
+##
+## THE FIXED BUFFER IS ONE MARKER WIDE because there is exactly one tower in a
+## world (`endless_terrain.tower_site()` is a function, not a list). `_tower_count`
+## is therefore 0 or 1 and does the same job MAX_LANDMARK_DOTS does for the group
+## scan: it is what parks the unused tail off-control when there is nothing to draw,
+## which is the whole reason the layer never allocates on the tick.
+var _tower_points: PackedVector2Array = PackedVector2Array()
+var _tower_colors: PackedColorArray = PackedColorArray()
+var _tower_count: int = 0
+
 
 func _ready() -> void:
 	# Never let the map eat clicks meant for the game or the touch UI.
@@ -399,6 +447,9 @@ func _ready() -> void:
 	# And for the landmarks — FOUR points and TWO colours per X (two segments).
 	_landmark_points.resize(MAX_LANDMARK_DOTS * 4)
 	_landmark_colors.resize(MAX_LANDMARK_DOTS * 2)
+	# And for the ONE tower — same shape, one marker's worth (see _tower_points).
+	_tower_points.resize(4)
+	_tower_colors.resize(2)
 	# The terrain field: worst case is every cell its own run, i.e. one bar per
 	# cell — two points and one colour each. Sized once here for that worst case so
 	# the tick never allocates and no run is ever dropped (see _gather_terrain).
@@ -532,6 +583,7 @@ func _tick() -> void:
 	_gather_road()
 	_gather_crocodiles()
 	_gather_landmarks()
+	_gather_tower()
 	_gather_peers()
 
 	_have_data = true
@@ -846,6 +898,68 @@ func _gather_landmarks() -> void:
 		_landmark_colors[i] = Color(0, 0, 0, 0)
 
 
+func _gather_tower() -> void:
+	"""The tower — GastroDefense HQ — as a mint cross, on the same ~5 Hz tick.
+
+	THE ONE MARKER THAT IS NOT READ OFF A GROUP, and deliberately so. Every other
+	layer here draws things that exist as nodes: a landmark is on the map because
+	its chunk is loaded, a crocodile because it is spawned. The tower is 400 m away
+	and its shell does not exist until you are nearly there — a group scan would
+	show it only once you no longer needed the map to find it. So this layer asks
+	the terrain where the tower IS (`tower_site()`, a pure memoized function of the
+	run seed) rather than where its geometry currently is, and the mark is on the
+	disc from the first frame of the run.
+
+	That is one method call per tick with no allocation and no node walk — the
+	memo behind `tower_site()` makes it two scalar compares — and the usual
+	has_method() guard means a scene with an older terrain (or no terrain at all)
+	simply has no tower layer instead of erroring.
+
+	RIM-CLAMPED AND DIMMED when off the disc, by the landmark X's rule and for a
+	sharper version of the landmark X's reason: the site is 400 m out and the map
+	reaches 30-130 m, so for almost the whole journey the clamped mark IS the
+	feature — it is the compass bearing that says "keep walking that way"."""
+	_tower_count = 0
+	if _terrain == null or not _terrain.has_method("tower_site"):
+		# Park the empty buffer and leave: `draw_multiline_colors()` consumes the
+		# whole array, so an unparked tail from a previous tick would keep drawing.
+		_park_tower()
+		return
+	var site: Vector3 = _terrain.tower_site()
+	# Same north-up mapping as every other layer, off the SAME shared scale.
+	var offset := Vector2(site.x - _player_pos.x, site.z - _player_pos.z) * _map_scale()
+	var color := COLOR_TOWER
+	var center: Vector2
+	var dist := offset.length()
+	if dist > MAP_RADIUS:
+		# OFF THE MAP — classified against the DISC EDGE, never against the inset
+		# the mark is drawn at (see `_gather_landmarks` for what testing against the
+		# inset costs). The division is safe: this branch needs dist > MAP_RADIUS > 0.
+		center = MAP_CENTER + (offset / dist) * (MAP_RADIUS - TOWER_MARK_REACH)
+		color.a *= LANDMARK_EDGE_ALPHA
+	else:
+		center = MAP_CENTER + offset.limit_length(MAP_RADIUS - TOWER_MARK_REACH)
+	var arm := TOWER_MARK_RADIUS
+	# An upright cross: one horizontal segment, one vertical (see TOWER_MARK_RADIUS
+	# for why the shape and not the colour is what tells it from a landmark X).
+	_tower_points[0] = center + Vector2(-arm, 0.0)
+	_tower_points[1] = center + Vector2(arm, 0.0)
+	_tower_points[2] = center + Vector2(0.0, -arm)
+	_tower_points[3] = center + Vector2(0.0, arm)
+	_tower_colors[0] = color
+	_tower_colors[1] = color
+	_tower_count = 1
+
+
+func _park_tower() -> void:
+	"""Push the tower buffer off-control and transparent, exactly as every other
+	layer parks its unused tail."""
+	for i in _tower_points.size():
+		_tower_points[i] = PARKED_SEGMENT
+	for i in _tower_colors.size():
+		_tower_colors[i] = Color(0, 0, 0, 0)
+
+
 func _gather_peers() -> void:
 	"""Multiplayer teammates, on the same ~5 Hz tick.
 
@@ -951,6 +1065,13 @@ func _draw() -> void:
 	#     purpose: a destination must never hide a threat.
 	if _landmark_count > 0:
 		draw_multiline_colors(_landmark_points, _landmark_colors, LANDMARK_MARK_WIDTH)
+
+	# 2c. The tower — ONE draw call, and OVER the landmarks: there is one of it in
+	#     the world and it is where the player is going, so it is the one
+	#     destination allowed to sit on top of another. Still under the crocodiles,
+	#     for the landmark layer's reason: a destination must never hide a threat.
+	if _tower_count > 0:
+		draw_multiline_colors(_tower_points, _tower_colors, TOWER_MARK_WIDTH)
 
 	# 3. Crocodiles — one draw call for the whole pack (see _gather_crocodiles).
 	if _croc_count > 0:
