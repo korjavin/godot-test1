@@ -170,6 +170,38 @@ const BUZZ_VOLUME_DB: float = -10.0
 const CRUNCH_DURATION: float = 0.2
 const CRUNCH_VOLUME_DB: float = -8.0
 
+# --- Boss projectile launch cues: ONE per projectile style. ---
+## The muzzle telegraph for scripts/boss_projectile.gd. These sounds are the
+## moment the fairness contract is measured FROM: the flight times there are only
+## fair if the player is TOLD the shot happened, so a style with no cue is a
+## style that kills people from off-screen.
+##
+## Keyed by the projectile style name, so a new ranged boss is (still) row data:
+## an unknown style falls back to the entry below, the same forgiving shape as
+## ABILITY_PITCH — a boss whose cue is generic is a tuning bug, a boss that
+## crashes the audio thread is not.
+##
+## ponytail: both cues REPLAY an existing buffer at a new pitch rather than
+## baking a third and fourth synth function — the exact precedent play_splash
+## (the footstep, brightened) and play_level_up (the coin, twice) already set in
+## this file, and the "no audio asset files" invariant is untouched either way.
+## Add a real _synth_thunder() only if the pitched crunch reads as a stomp.
+##   - thunder_bolt: the CRUNCH buffer (unfiltered noise, fast decay) dropped far
+##     below its normal pitch. Pitching noise down moves its whole spectrum down,
+##     which is the difference between a snapping twig and a thunderclap.
+##   - ice_cream: the WHOOSH buffer (a low-passed noise swell) pitched up, which
+##     shortens it into the light "fwip" of something small being thrown.
+const PROJECTILE_SOUNDS: Dictionary = {
+	"thunder_bolt": {"stream": "crunch", "db": -7.0, "pitch": 0.45},
+	"ice_cream": {"stream": "whoosh", "db": -12.0, "pitch": 1.7},
+}
+## What an unrecognised style gets. Deliberately the quieter of the two: an
+## unnamed cue should be audible enough to warn and quiet enough to notice as
+## wrong.
+const PROJECTILE_SOUND_FALLBACK: Dictionary = {
+	"stream": "whoosh", "db": -12.0, "pitch": 1.7,
+}
+
 # --- Danger heartbeat: ONE looping "lub-dub" cycle, driven externally. ---
 ## The danger vignette fetches this via get_loop_player("heartbeat") and owns
 ## play/stop/pitch/volume itself — we only bake the stream and park the player.
@@ -407,6 +439,17 @@ func play_buzz() -> void:
 func play_crunch() -> void:
 	## Giant Teibi flattening a crocodile.
 	_play_oneshot("crunch", CRUNCH_VOLUME_DB)
+
+
+func play_projectile(style: String) -> void:
+	## A boss launching a ranged attack — fired from BossProjectile.fire(), once
+	## per shot, at the muzzle. See PROJECTILE_SOUNDS for the per-style recipe and
+	## for why an unknown style still makes a noise instead of nothing.
+	##
+	## Routing through _play_oneshot is what keeps the browser-gesture gate
+	## honoured: there is no path here that bypasses _unlocked.
+	var cue: Dictionary = PROJECTILE_SOUNDS.get(style, PROJECTILE_SOUND_FALLBACK)
+	_play_oneshot(cue["stream"], cue["db"], cue["pitch"])
 
 
 # ============================================================================
