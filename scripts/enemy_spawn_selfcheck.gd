@@ -99,7 +99,8 @@ const DETECTION_SIM_MARGIN: float = 15.0
 ## by nobody. "solo" is in the list and has no probe of its own on purpose: it is
 ## the code ABOVE the dispatch (see the behaviour `match` in _update_chase_state),
 ## which the ambush trip-wire's crocodile control drives on every run.
-const PROBED_BEHAVIORS: Array[String] = ["solo", "pack", "ambush", "charge", "burst", "ranged"]
+const PROBED_BEHAVIORS: Array[String] = ["solo", "pack", "ambush", "charge", "burst",
+		"ranged", "hunt"]
 
 ## Field side in chunks. 17 x 17 = 289, the size every measurement in CLAUDE.md's
 ## terrain sections is quoted at, so a number printed here is comparable to them.
@@ -340,6 +341,7 @@ func _run() -> void:
 	_check_charge_dodge(croc_ai)
 	_check_burst_escape(croc_ai)
 	_check_ranged_cadence(croc_ai)
+	_check_hunt_pacing(croc_ai)
 	_check_determinism(terrain_script)
 	_check_hunter_stream_independence(terrain_script)
 	_check_boss_dispatch(terrain_script)
@@ -1721,6 +1723,451 @@ func _ranged_shots(croc_ai: GDScript, ranged: Dictionary, distance: float) -> Ar
 		if croc_ai.ranged_shot_due(distance, RANGED_PROBE_DT, lock, ranged):
 			shots.append(step)
 	return shots
+
+
+# ============================================================================
+# CHECK 8c — a HUNTER holds its ring before it commits, and after a grab it
+#            BACKS OFF instead of re-chomping
+# ============================================================================
+
+## The walk resolution and budget for the three geometry probes. 12 s is several
+## times what a 6.5 m/s unit needs to cross the 20 m today's hunter starts at, so
+## a probe that fails to settle fails on the steering rather than on a short
+## budget.
+const HUNT_PROBE_DT: float = 1.0 / 60.0
+const HUNT_PROBE_SECONDS: float = 12.0
+
+## Where the shadow and close walks start, as a MULTIPLE of the row's own ring,
+## clamped to its own detection radius. Derived rather than written down as the
+## 20 m it works out to for today's hunter, because both ends have to hold for
+## every future row: outside the ring (or the "shadow" walk would be measuring a
+## withdrawal) and inside detection (or the walk begins from a place the unit
+## could not have acquired you from). Doubling the ring satisfies the first with
+## room, and the clamp satisfies the second by construction.
+const HUNT_PROBE_START_FACTOR: float = 2.0
+
+## Where the WITHDRAW walk starts: on top of the quarry, which is exactly where a
+## grab leaves the unit standing. Not zero — a hunter sitting on the quarry's
+## origin has no bearing to hold a ring on and the geometry says so (it answers
+## the quarry) — so this is contact distance, the state the collision path is
+## actually entered from.
+const HUNT_WITHDRAW_START: float = 0.5
+
+## How close to its declared ring a settled shadow must sit, in metres. This is a
+## SETTLING tolerance, not a slop allowance: the walk runs the same yaw-lerp
+## movement model the charge probe does, so a unit converging on the ring
+## overshoots by a fraction of one 6.5 m/s frame. A tenth of a metre would fail on
+## the integrator; a metre would pass a hunter whose ring had quietly halved.
+const HUNT_RING_TOLERANCE: float = 0.35
+
+## Where a grab counts as reachable, in metres between origins. The same idea as
+## AMBUSH_STRUCK and the same number: the bodies are not points, so a metre
+## between origins is contact with room to spare. A SHADOWING hunter must never
+## get this close — that is this check's negative control.
+const HUNT_CONTACT: float = 1.0
+
+
+func _check_hunt_pacing(croc_ai: GDScript) -> void:
+	"""
+	MEASURE the pacing. Do not assert it.
+
+	A hunter that chases like a crocodile is a reskinned crocodile, and every way
+	of ending up with one is silent. Drop the telegraph and the unit walks
+	straight in with a warning nobody got; let the ring collapse and "shadowing"
+	is an ordinary chase with a comment on it; forget the disengage and the
+	machine stands on the respawn point taking a life every 0.3 s. None of the
+	three errors anywhere — you get a fast crocodile in a hazard livery, which is
+	the one outcome this bead exists to prevent.
+
+	So this measures the shipped behaviour at BOTH levels, and it needs both:
+
+	  * THE GEOMETRY, through `hunt_steer_point` — the same static function the
+	    arm calls, for the same reason `pack_steer_point` and `charge_steer_point`
+	    are static. Three walks: one shadowing (must settle ON the ring and never
+	    reach contact), one closing (must close monotonically and make contact),
+	    one withdrawing from contact (must back OUT to the ring). The shadow walk
+	    is the negative control for the closing one — identical row, identical
+	    movement model, one boolean apart — so "it closed" cannot be satisfied by
+	    a probe that simply walks everything into the quarry.
+	  * THE DISPATCH AND THE CLOCK, through a LIVE body running the shipped
+	    `_update_chase_state`. The geometry probes cannot see whether the `match`
+	    ever reaches `_behave_hunt`, whether the telegraph window is honoured, or
+	    whether a landed grab starts a disengage — delete the arm from the dispatch
+	    and all three static walks still pass. This half drives the real function
+	    on a real node and reads `chase_target` back, which is the only thing the
+	    arm is allowed to bend.
+
+	WHAT THE MODEL LEAVES OUT, honestly: obstacle feelers, gravity, the bite lunge
+	and the per-instance speed roll. The first two perturb the path without
+	touching where the geometry points; the roll is bounded by the lattice at one
+	end and by the row's own spread at the other, and neither end can turn a ring
+	into a chase.
+	"""
+	var names: Array[String] = _species_with("hunt")
+	if names.is_empty():
+		_fail("no SPECIES row has behavior 'hunt' — the telegraph, ring and"
+				+ " disengage this check measures are not reachable from any species")
+		return
+	for hunt_species: String in names:
+		_probe_hunt_geometry(croc_ai, hunt_species)
+		_probe_hunt_dispatch(hunt_species)
+
+
+func _probe_hunt_geometry(croc_ai: GDScript, hunt_species: String) -> void:
+	"""
+	Walk one hunt species in, out and around its ring, through the SHIPPED steering.
+
+	@param croc_ai: the AI script, for its static hunt_steer_point
+	@param hunt_species: the SPECIES key to probe
+
+	Split out of _check_hunt_pacing — which holds the argument for all of this —
+	so every retrieval unit is measured rather than the first one found.
+	"""
+	var row: Dictionary = _species_table[hunt_species]
+	for key: String in ["hunt_telegraph_time", "hunt_standoff", "hunt_disengage_time"]:
+		if not row.has(key):
+			_fail("SPECIES['%s'] has behavior 'hunt' but no '%s' —" % [hunt_species, key]
+					+ " _behave_hunt reads it every frame it chases")
+			return
+	var standoff: float = float(row["hunt_standoff"])
+	var telegraph: float = float(row["hunt_telegraph_time"])
+	var disengage: float = float(row["hunt_disengage_time"])
+	if telegraph <= 0.0:
+		_fail("SPECIES['%s'].hunt_telegraph_time is %.2f s — a hunter that may"
+				% [hunt_species, telegraph] + " close on the acquisition frame gave"
+				+ " the player no warning at all, which is the one thing the"
+				+ " telegraph exists to be")
+		return
+	if standoff <= HUNT_CONTACT:
+		_fail("SPECIES['%s'].hunt_standoff is %.2f m — a ring inside contact"
+				% [hunt_species, standoff] + " range (%.2f m) is not a standoff,"
+				% HUNT_CONTACT + " it is a chase")
+		return
+	if disengage <= 0.0:
+		_fail("SPECIES['%s'].hunt_disengage_time is %.2f s — a hunter that"
+				% [hunt_species, disengage] + " re-commits on the frame after a grab"
+				+ " stands on the respawn point taking a life a second")
+		return
+	# The ring has to fit INSIDE what the unit can smell, with room. A hunter
+	# shadowing at or past its own detection radius drops the chase the moment it
+	# arrives, clears the lock, re-acquires and starts the telegraph over — the
+	# same boundary flicker DETECTION_SIM_MARGIN prevents one level up, and it
+	# would read in play as a machine that cannot make up its mind.
+	var detection: float = float(row["detection_radius"])
+	if standoff >= detection:
+		_fail("SPECIES['%s'] shadows at %.1f m but only smells %.1f m —"
+				% [hunt_species, standoff, detection] + " a unit that loses the chase"
+				+ " the moment it reaches its own ring re-telegraphs forever")
+		return
+
+	var start: float = minf(standoff * HUNT_PROBE_START_FACTOR, detection)
+	var shadow: Dictionary = _hunt_walk(croc_ai, row, start, false)
+	var close: Dictionary = _hunt_walk(croc_ai, row, start, true)
+	var withdraw: Dictionary = _hunt_walk(croc_ai, row, HUNT_WITHDRAW_START, false)
+
+	print("hunt pacing: %s shadows from %.0f m to %.2f m (closest %.2f m, ring"
+			% [hunt_species, start, float(shadow["final"]),
+			float(shadow["closest"])]
+			+ " %.1f m), closes to %.2f m, withdraws from %.1f m back out to %.2f m"
+			% [standoff, float(close["final"]), HUNT_WITHDRAW_START,
+			float(withdraw["final"])])
+
+	if absf(float(shadow["final"]) - standoff) > HUNT_RING_TOLERANCE:
+		_fail("a shadowing %s settled %.2f m from its quarry, not on its %.1f m"
+				% [hunt_species, float(shadow["final"]), standoff] + " ring — it is"
+				+ " not holding a standoff, it is doing something else")
+	if float(shadow["closest"]) <= HUNT_CONTACT:
+		_fail("a SHADOWING %s got within %.2f m of the quarry (contact is %.2f m)"
+				% [hunt_species, float(shadow["closest"]), HUNT_CONTACT] + " — the"
+				+ " pre-commit half of the behaviour reaches the player anyway, so"
+				+ " the telegraph buys nothing")
+	if float(close["final"]) > HUNT_CONTACT:
+		_fail("a CLOSING %s never got closer than %.2f m (contact is %.2f m) —"
+				% [hunt_species, float(close["final"]), HUNT_CONTACT] + " the"
+				+ " commitment does not commit, and the shadow walk beside it is"
+				+ " therefore measuring nothing")
+	if not bool(close["monotone"]):
+		_fail("a CLOSING %s stopped closing mid-walk — hunt_steer_point is bending"
+				% hunt_species + " the aim point while it commits, which is the"
+				+ " shadow's job and not the close's")
+	if float(withdraw["final"]) <= HUNT_WITHDRAW_START:
+		_fail("a %s standing %.2f m from its quarry after a grab ended the walk at"
+				% [hunt_species, HUNT_WITHDRAW_START] + " %.2f m — it never backed"
+				% float(withdraw["final"]) + " off, so the disengage has no geometry")
+	if absf(float(withdraw["final"]) - standoff) > HUNT_RING_TOLERANCE:
+		_fail("a withdrawing %s settled %.2f m out, not on its %.1f m ring —"
+				% [hunt_species, float(withdraw["final"]), standoff] + " the same"
+				+ " expression serves both halves of shadowing, so one of them is"
+				+ " no longer running it")
+
+
+func _hunt_walk(croc_ai: GDScript, row: Dictionary, start: float,
+		closing: bool) -> Dictionary:
+	"""
+	Walk one hunter at a stationary quarry and report where it ended up.
+
+	@param croc_ai: the AI script, for its static hunt_steer_point
+	@param row: the SPECIES row to simulate
+	@param start: the unit's opening distance from the quarry, metres
+	@param closing: the one boolean the geometry takes — false shadows, true commits
+	@return { "final", "closest", "monotone" }
+
+	The movement model is the charge probe's, line for line: aim through the
+	SHIPPED steering, lerp the yaw toward it at the row's own turn_smoothness,
+	then travel along the FACING at the row's own chase speed. The quarry stands
+	still, because what is under test is the ring the unit holds around it and not
+	its ability to follow one — a moving quarry would let a shadow that simply
+	trails behind pass the settling test.
+
+	"monotone" is the closing walk's verdict and is measured on every walk because
+	it costs a comparison: true when the distance never grew by more than EPSILON
+	between consecutive frames. A shadowing unit is EXPECTED to break it (it stops
+	on the ring, and a withdrawing one runs backwards), which is why only the
+	closing walk asserts it.
+	"""
+	var quarry := Vector3.ZERO
+	var pos := Vector3(0.0, 0.0, start)
+	var yaw := PI                       # facing the quarry, the state a chase starts in
+	var chase: float = float(row["chase_speed"])
+	var turn: float = float(row["turn_smoothness"])
+	var standoff: float = float(row["hunt_standoff"])
+	var closest := INF
+	var previous := start
+	var monotone := true
+	var steps: int = int(HUNT_PROBE_SECONDS / HUNT_PROBE_DT)
+	for _step in range(steps):
+		var distance := pos.distance_to(quarry)
+		closest = minf(closest, distance)
+		if distance > previous + EPSILON:
+			monotone = false
+		previous = distance
+		var target: Vector3 = croc_ai.hunt_steer_point(quarry, pos, closing, standoff)
+		var to_target := target - pos
+		to_target.y = 0.0
+		if to_target.length() > 0.1:
+			yaw = lerp_angle(yaw, atan2(to_target.x, to_target.z), HUNT_PROBE_DT * turn)
+			pos += Vector3(sin(yaw), 0.0, cos(yaw)) * chase * HUNT_PROBE_DT
+	return {
+		"final": pos.distance_to(quarry),
+		"closest": closest,
+		"monotone": monotone,
+	}
+
+
+## The stub the dispatch probe hands the AI as its quarry. It is a real Node3D in
+## group "player" with the two methods `_update_chase_state` and
+## `_on_player_collision` actually call on one — `is_on_floor()`, because a quarry
+## that cannot answer it is smelled unconditionally and the grounded rule would go
+## untested, and `hit_by_crocodile()`, because the collision path's fallback for a
+## player without it TELEPORTS the body to (0, 2, 0), which would move the quarry
+## out from under the probe mid-measurement. Counting the calls is also how the
+## check states the acceptance criterion out loud: a landed grab costs EXACTLY one
+## predator hit, the same one a crocodile's bite costs.
+const HUNT_STUB_SOURCE: String = """
+extends Node3D
+var hits: int = 0
+func is_on_floor() -> bool:
+	return true
+func hit_by_crocodile() -> void:
+	hits += 1
+"""
+
+
+func _probe_hunt_dispatch(hunt_species: String) -> void:
+	"""
+	Drive the SHIPPED `_update_chase_state` on a live body and read the arm back.
+
+	@param hunt_species: the SPECIES key to probe
+
+	This is the half that cannot be faked. Everything the geometry probe measures
+	is still true of a build where the `match` in _update_chase_state has no
+	"hunt" arm at all — `hunt_steer_point` would be a correct function nothing
+	calls, which is the exact failure this file's header is written against. So
+	this instantiates one body, points it at a stub quarry INSIDE its own ring,
+	and asks the shipped function what it steers at:
+
+	  frame 1              the hunt lock is non-empty (the arm RAN — nothing else
+	                       populates it) and chase_target has been pushed OUT to
+	                       the ring. Two gates rather than one because the code
+	                       above the dispatch sets chase_target to the quarry, so
+	                       "steering at the quarry" is what BOTH a missing arm and
+	                       a missing telegraph look like, and they must not be
+	                       reported as each other.
+	  just before the      still on the ring — this is what makes it a WINDOW and
+	  telegraph expires    not merely a flag that was set once.
+	  just after           chase_target is the quarry itself: it committed.
+	  after a grab         exactly one hit_by_crocodile, and the next frame is
+	                       back on the ring for the whole disengage window.
+
+	The body is the CROCODILE scene rather than the hunter's own, deliberately:
+	`species` is a plain var read in _ready(), the behaviour lives entirely in the
+	shared script, and every other live-body probe in this file uses that scene.
+	What differs between the two .tscn files is the model, which no line of this
+	measurement touches.
+
+	The one line of noise in this file's output is the grab's own "bites the
+	player" print, which is the shipped collision path talking. It is left alone:
+	silencing it for a check would be the check changing the thing it measures.
+
+	ponytail: the arm is driven by calling _update_chase_state() in a loop rather
+	than by awaiting real physics frames — the same trade every other probe here
+	makes. The ceiling is that nothing in _physics_process runs, so this measures
+	the decision and not the travel; the geometry probe above owns the travel.
+	"""
+	var row: Dictionary = _species_table[hunt_species]
+	if not row.has("hunt_standoff") or not row.has("hunt_telegraph_time"):
+		return                          # already reported by the geometry probe
+	var standoff: float = float(row["hunt_standoff"])
+	var telegraph: float = float(row["hunt_telegraph_time"])
+	var disengage: float = float(row["hunt_disengage_time"])
+
+	var stub_script := GDScript.new()
+	stub_script.source_code = HUNT_STUB_SOURCE
+	stub_script.reload()
+	var stub := Node3D.new()
+	stub.set_script(stub_script)
+	stub.add_to_group("player")
+	root.add_child(stub)
+	# INSIDE the ring on purpose: the ring point is then BEHIND the hunter, which
+	# no reading of the code above the dispatch can produce by accident.
+	stub.global_position = Vector3(0.0, 0.0, standoff * 0.5)
+
+	var croc: Node = load(CROC_SCENE).instantiate()
+	croc.species = hunt_species         # before add_child, the row's own contract
+	root.add_child(croc)
+	croc.global_position = Vector3.ZERO
+	# _ready() defers the quarry lookup to the end of the frame ("defer to allow
+	# scene to fully load") and this probe never yields, so run the SHIPPED
+	# lookup by hand rather than assigning `player_node` — a probe that set the
+	# reference itself would also be free to set one the game could never resolve.
+	croc._find_player()
+
+	# The clock the arm counts its windows down against, read off the live node
+	# rather than assumed: _behave_hunt takes it from get_physics_process_delta_time().
+	var dt: float = croc.get_physics_process_delta_time()
+	if dt <= 0.0:
+		_fail("the live hunter reports a physics delta of %.4f s — the telegraph"
+				% dt + " and disengage windows cannot drain, so this probe would"
+				+ " measure a hunter frozen on its ring forever")
+		_free_hunt_probe(croc, stub)
+		return
+
+	var quarry: Vector3 = stub.global_position
+	croc._update_chase_state()
+	if not croc.is_chasing:
+		_fail("a %s %.1f m from a grounded quarry it smells %.1f m away did not"
+				% [hunt_species, quarry.length(), float(row["detection_radius"])]
+				+ " start chasing — the probe never reached the dispatch at all")
+		_free_hunt_probe(croc, stub)
+		return
+	# TWO DIFFERENT FAILURES LOOK IDENTICAL FROM `chase_target` ALONE on this
+	# frame — an arm that never ran, and an arm that ran and committed instantly —
+	# so they are separated before either is reported. The lock is empty exactly
+	# when _behave_hunt has not executed, which is the only thing the dispatch
+	# decides; everything after this line is about what the arm then DID.
+	if croc._hunt_lock.is_empty():
+		_fail("a chasing %s left its hunt lock empty — the `match` in" % hunt_species
+				+ " _update_chase_state is not reaching _behave_hunt, so the arm"
+				+ " ships unrun and every static probe above it measures a function"
+				+ " nothing calls")
+		_free_hunt_probe(croc, stub)
+		return
+	# TWO CAUSES REMAIN ONCE THE ARM IS KNOWN TO HAVE RUN, and the message names
+	# both rather than picking one: either the telegraph is not holding the unit
+	# (it commits on the frame it smells you) or `hunt_steer_point` is no longer
+	# producing a ring for it to hold. The geometry probe above pins down which —
+	# it fails on the second and passes on the first.
+	var acquired: float = croc.chase_target.distance_to(quarry)
+	if absf(acquired - standoff) > EPSILON:
+		_fail("on the acquisition frame a %s steered %.2f m from its quarry, not"
+				% [hunt_species, acquired] + " at its %.1f m ring — either the"
+				% standoff + " telegraph is not holding it (a hunter that commits on"
+				+ " the frame it smells you owes the player a warning it never"
+				+ " gave) or hunt_steer_point has stopped producing the ring")
+		_free_hunt_probe(croc, stub)
+		return
+
+	# ---- the telegraph is a WINDOW ------------------------------------------
+	# One frame short of the declared window it must still be shadowing; a few
+	# frames past it, committed. Both ends, because "it eventually closed" is also
+	# true of a hunter with no telegraph and "it shadowed once" of one that never
+	# closes.
+	var frames: int = int(telegraph / dt)
+	for _i in range(maxi(frames - 2, 0)):
+		croc._update_chase_state()
+	var late: float = croc.chase_target.distance_to(quarry)
+	if absf(late - standoff) > EPSILON:
+		_fail("a %s had already committed %.2f s into its %.2f s telegraph"
+				% [hunt_species, float(maxi(frames - 2, 0)) * dt, telegraph]
+				+ " (steering %.2f m from the quarry) — the window is shorter than"
+				% late + " the row declares, or is not a window at all")
+	for _i in range(4):
+		croc._update_chase_state()
+	var committed: float = croc.chase_target.distance_to(quarry)
+	if committed > EPSILON:
+		_fail("a %s was still steering %.2f m off its quarry %.2f s after its"
+				% [hunt_species, committed, telegraph] + " telegraph expired — it"
+				+ " shadows and never closes, which is a predator that cannot"
+				+ " reach you")
+
+	# ---- the grab lands at full cost, THEN the unit disengages ---------------
+	croc._on_player_collision(stub)
+	if stub.hits != 1:
+		_fail("one grab by a %s cost the player %d predator hits, not exactly 1 —"
+				% [hunt_species, stub.hits] + " the disengage is meant to be pacing"
+				+ " around a hit that lands at full parity, never a pulled punch"
+				+ " and never a double charge")
+	croc._update_chase_state()
+	var after_grab: float = croc.chase_target.distance_to(quarry)
+	if absf(after_grab - standoff) > EPSILON:
+		_fail("the frame after a %s landed its grab it was still steering %.2f m"
+				% [hunt_species, after_grab] + " from the quarry, not back out to"
+				+ " its %.1f m ring — it re-chomps instead of withdrawing" % standoff)
+	# …and it stays disengaged for the whole declared window, then re-commits.
+	# Without the second half, "it backed off" is also true of a unit that never
+	# comes back, which is a hunter the player can ignore.
+	var hold: int = int(disengage / dt) - 4
+	for _i in range(maxi(hold, 0)):
+		croc._update_chase_state()
+	var holding: float = croc.chase_target.distance_to(quarry)
+	if absf(holding - standoff) > EPSILON:
+		_fail("a %s re-committed %.2f s into its %.2f s disengage (steering %.2f m"
+				% [hunt_species, float(maxi(hold, 0)) * dt, disengage, holding]
+				+ " from the quarry) — the withdrawal is shorter than the row"
+				+ " declares")
+	for _i in range(8):
+		croc._update_chase_state()
+	var recommitted: float = croc.chase_target.distance_to(quarry)
+	if recommitted > EPSILON:
+		_fail("a %s never re-committed after its %.2f s disengage expired"
+				% [hunt_species, disengage] + " (still %.2f m off the quarry) —"
+				% recommitted + " one grab retired it from the encounter")
+
+	print("hunt dispatch: %s holds its ring at %.2f m through a %.2f s telegraph,"
+			% [hunt_species, late, telegraph] + " then steers %.2f m off the quarry;"
+			% committed + " one grab costs %d hit and puts it back out at %.2f m for"
+			% [stub.hits, after_grab] + " %.1f s (%.2f m at the end of it, %.2f m"
+			% [disengage, holding, recommitted] + " after)")
+
+	_free_hunt_probe(croc, stub)
+
+
+func _free_hunt_probe(croc: Node, stub: Node) -> void:
+	"""
+	Tear the live pair down IMMEDIATELY, not at the end of the frame.
+
+	@param croc: the probe's hunter body
+	@param stub: the probe's quarry
+
+	`free()` rather than `queue_free()` because the stub sits in group "player"
+	and the 289-chunk sweep runs after this check: a quarry still standing in the
+	tree is one every crocodile the sweep spawns would resolve through
+	`_find_player`, which is a probe perturbing the measurement that follows it.
+	Safe here for the same reason it is safe in _model_top — this runs from
+	_run(), never from inside a physics or signal callback.
+	"""
+	croc.free()
+	stub.free()
 
 
 # ============================================================================

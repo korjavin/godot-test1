@@ -1646,13 +1646,11 @@ const SPECIES: Dictionary = {
 	##     the hunter is built forward of its origin, so a capsule centred on the
 	##     origin would leave solid body hanging off the back.
 	"hunter_robot": {
-		## "solo" TODAY, DELIBERATELY. The hunt arm (telegraph, shadow-then-close,
-		## grab-and-disengage) is godot-test1-9rm.3; until it exists this row takes
-		## the dispatch's degrade path, which is the code ABOVE the `match` and
-		## therefore no arm at all. A hunter that wanders and closes like a
-		## crocodile is a complete, shippable predator — it is just not yet the
-		## one the epic is after. Flip this string when the arm lands.
-		"behavior": "solo",
+		## THE SIXTH ARM, and the first one whose subject is PACING rather than
+		## geometry or speed. `_behave_hunt()` is all it selects, and all it
+		## selects is that: telegraph, shadow, close, disengage. Everything else
+		## in this row is the same numbers every other row carries.
+		"behavior": "hunt",
 
 		# ----- Speed and detection -----
 		## THE LATTICE IS THE LATTICE: 5.0 (WALK_SPEED) < 6.5 <= 8.5
@@ -1792,6 +1790,48 @@ const SPECIES: Dictionary = {
 		"bite_duration": 0.35,
 		"bite_pitch": 12.0 * PI / 180.0,
 		"bite_lunge": 0.30,
+
+		# ----- The hunt (behavior == "hunt") -----
+		## THE THREE NUMBERS THAT MAKE A RETRIEVAL UNIT OUT OF A FAST CROCODILE.
+		## Read them as one shape: it tells you it has you, it walks a ring while
+		## you decide what to do about it, it commits, and once it has what it
+		## came for it stops. See `_behave_hunt()` for the state machine and
+		## `hunt_steer_point()` for the geometry.
+
+		## WARNING TIME, in seconds, and the first mercy-before-contact lever in
+		## the game that costs no director. On the not-chasing → chasing edge the
+		## unit holds the standoff ring for this long before it may close, so a
+		## hunter that acquires you at the 25 m detection edge spends 1.8 s
+		## visibly pacing rather than immediately walking in. At the 6.5 m/s
+		## chase speed that is ~11.7 m of approach the player gets for free, which
+		## is most of the way back out of detection at a run.
+		##
+		## 1.8 is at the long end of the 1.5-2.0 band the design asked for,
+		## because the announcement it pairs with is not built yet (see the
+		## sound hook in `_behave_hunt`): until there is a ping, the SILHOUETTE
+		## holding the ring is the whole warning, and it needs long enough to read
+		## as deliberate rather than as a hitch in the pathing.
+		"hunt_telegraph_time": 1.8,
+
+		## THE RING, in metres. Wide enough that a shadowing hunter is scenery you
+		## can watch and walk away from — well outside the ~1 m contact radius and
+		## outside any ability's reach — and inside the 25 m detection radius by
+		## enough (15 m) that holding the ring never drops the chase and starts
+		## the telegraph over. A ring at or past detection would make a hunter
+		## that shadows you flicker in and out of acquisition, which is the same
+		## boundary-flicker failure DETECTION_SIM_MARGIN exists to prevent one
+		## level up.
+		"hunt_standoff": 10.0,
+
+		## POST-GRAB DISENGAGE, in seconds. The grab itself lands at FULL
+		## predator-parity cost through the ordinary `hit_by_crocodile` path —
+		## nothing here is a pulled punch — and then the unit backs off to the
+		## ring for this long instead of standing on the respawn point chewing.
+		## 8 s is long enough to read as "retrieval attempt logged, withdrawing"
+		## and to hand the player the whole invulnerability blink plus a running
+		## start; a second grab needs a fresh telegraph anyway, so the honest
+		## cost of two hits from one hunter is 8 + 1.8 seconds of daylight.
+		"hunt_disengage_time": 8.0,
 	},
 }
 
@@ -2045,6 +2085,28 @@ var _burst_lock: Dictionary = {}
 ## shipped firing rule instead of a restatement of it. Behaviour-local: nothing
 ## outside the ranged arm reads it.
 var _ranged_lock: Dictionary = {}
+
+## THE HUNT ARM'S ONE PIECE OF MEMORY (`_behave_hunt`): the whole retrieval state
+## machine, as { "telegraph": float, "disengage": float, "closing": bool }.
+## Empty means "has not acquired anything", which is what makes the first frame
+## of a chase the frame the telegraph starts and the lock-on cue fires.
+##
+## THE TIMERS ARE SECONDS COUNTED DOWN BY THE ARM, NOT WALL-CLOCK DEADLINES, and
+## that is the LOD contract in one sentence: a slept hunter runs no
+## `_physics_process`, so neither timer drains while it is asleep and it wakes
+## owing exactly the telegraph (or the disengage) it owed when it went under. No
+## catch-up, no lurch, nothing to reconcile — the same answer `burst_cycle_factor`
+## gets by measuring metres and `charge_steer_point` gets by measuring
+## displacement, and the opposite of what a `Time.get_ticks_msec()` deadline
+## would have done (expire mid-sleep and hand back a hunter that wakes already
+## committed, or one whose telegraph was spent 50 m away where nobody could see
+## it). A paused tree gets the same treatment for free.
+##
+## A Dictionary rather than three bare fields for the same reason `_burst_lock`
+## is one: it keeps the arm's whole state clearable in a single `clear()` on the
+## edge where the chase drops. Behaviour-local: nothing outside the hunt arm
+## reads it, and `_on_player_collision` only WRITES the disengage into it.
+var _hunt_lock: Dictionary = {}
 
 ## THE BURST ARM'S ONE OUTPUT: the multiplier applied to `chase_speed_instance`
 ## for this frame. 1.0 for every species that is not on the "burst" arm, and 1.0
@@ -2689,17 +2751,20 @@ func _update_chase_state() -> void:
 	#
 	#   ONE ARM, ONE CALL, NOTHING ELSE. An arm is a species' behaviour name and
 	#   a call to its own `_behave_*()`. No logic in the arm, no state shared
-	#   between arms, no `if` before the match. Pack, ambush, charge, burst and
-	#   ranged are each two lines here plus one function of their own, and none
-	#   of them has to read, or risk breaking, any of the others.
+	#   between arms, no `if` before the match. Pack, ambush, charge, burst,
+	#   ranged and hunt are each two lines here plus one function of their own,
+	#   and none of them has to read, or risk breaking, any of the others.
 	#
 	# AN ARM IS A MECHANIC, NOT AN ANIMAL, and "burst" is where that stopped
 	# being a stylistic claim: the mountain cougar's pounce and the city alley
-	# hound's alley sprint are ONE arm read with two sets of numbers. Seven
-	# species, five arms. If a new predator's difference can be a number in its
-	# SPECIES row, it must be — a sixth arm is for a mechanic none of these five
+	# hound's alley sprint are ONE arm read with two sets of numbers. Eight
+	# species, six arms. If a new predator's difference can be a number in its
+	# SPECIES row, it must be — a seventh arm is for a mechanic none of these six
 	# is. "ranged" earned its own because it is the first arm that does not steer
 	# at all: it SPAWNS something (a bolt), which is a verb none of the others has.
+	# "hunt" earned its own because it is the first whose subject is TIME: it does
+	# not change where a predator can go or how fast, it changes WHEN a predator
+	# that has already smelled you is allowed to walk in, and afterwards.
 	#
 	# "solo" has NO ARM on purpose — it is the code above, unmodified, which is
 	# also why an unknown or misspelled behaviour string degrades to solo instead
@@ -2722,6 +2787,8 @@ func _update_chase_state() -> void:
 			_behave_burst()
 		"ranged":
 			_behave_ranged()
+		"hunt":
+			_behave_hunt()
 
 
 func _behave_pack() -> void:
@@ -2890,6 +2957,176 @@ func _behave_ranged() -> void:
 	BossProjectile.fire(
 			global_position + Vector3.UP * float(row["muzzle_height"]) * scale.y,
 			chase_target, get_parent(), row, self)
+
+
+func _behave_hunt() -> void:
+	"""
+	The hunter arm: announce, PACE, commit, and stop once the job is done.
+
+	THE SIXTH ARM, and the first whose subject is TIME rather than geometry or
+	speed. Pack bends the aim point, charge makes the aim point stale, burst bends
+	the speed, ranged spawns a bolt; this one decides WHEN a predator that has
+	already smelled you is allowed to walk in. Everything it does is either
+	pre-contact pacing or post-contact resolution, and it can do neither by
+	widening what the unit can smell: the detection decision is settled above the
+	dispatch and this function never touches `detection_radius`, `is_chasing` or
+	any speed. It bends `chase_target` and nothing else.
+
+	    on acquisition   telegraph := hunt_telegraph_time, cue the lock-on
+	    each frame       telegraph -= dt, disengage -= dt (floored at 0)
+	    may close when   both are spent AND the director grants it
+	    steer            hunt_steer_point(..., closing, hunt_standoff)
+
+	THE THREE STATES ARE ONE BOOLEAN, on purpose. "Shadowing" is not a state with
+	its own code — it is `closing == false`, which is the only thing the geometry
+	takes — so the telegraph and the disengage are two reasons for the same
+	answer rather than two branches that can disagree. There is nothing here for a
+	fourth reason to have to be added to except one more `and`.
+
+	LOD SAFETY, stated the way the wolf's `pack_steer_point` states it, because
+	this is the first arm whose memory is measured in SECONDS: both timers are
+	counted down by THIS function, which the LOD manager stops calling when it
+	sleeps a distant body. A slept hunter therefore drains neither, and wakes
+	owing exactly what it owed — it does not wake already committed, and it does
+	not lurch, because there is no accumulated phase and no deadline in wall-clock
+	time to have passed meanwhile. Losing the chase clears the whole lock, so a
+	re-acquisition is a fresh engagement with a fresh telegraph; that errs
+	MERCIFUL, which is the direction this class is allowed to err in.
+
+	MULTIPLAYER-SAFE for the same reason the other steering arms are: `chase_target`
+	is whatever `_update_chase_state` resolved (in a room, the nearest ROOM MEMBER),
+	this only bends that point, and a remote-driven hunter never runs the arm at
+	all — it renders the master's samples.
+	"""
+	if not is_chasing:
+		# Everything: the telegraph owed, the disengage owed, and the commitment.
+		# A hunter that loses you and finds you again starts the whole ritual over.
+		_hunt_lock.clear()
+		return
+
+	if not _hunt_lock.has("telegraph"):
+		# THE ACQUISITION EDGE, and the only place the cue fires — one per
+		# engagement, exactly like the boss growl and the viper hiss above the
+		# dispatch. Those two are keyed there because they belong to every
+		# instance of a species; this one belongs to the ARM (a hunter that is
+		# not on the hunt arm has no lock-on to announce), so it lives here.
+		#
+		# `has_method`-guarded against a sound manager that does not implement it
+		# YET: the synthesized ping is its own polish bead, and this guard is what
+		# lets the behaviour ship silent instead of waiting on audio work. Same
+		# null-safe group lookup as every other SFX hook, so a scene run without
+		# Main simply stays quiet.
+		_hunt_lock["telegraph"] = float(spec.get("hunt_telegraph_time", 0.0))
+		var sm := get_tree().get_first_node_in_group("sound_manager")
+		if sm and sm.has_method("play_hunter_lock_on"):
+			sm.play_hunter_lock_on()
+
+	# `_update_chase_state` has no `delta` of its own (see the note on the
+	# dispatch), and this is the same seam `_behave_ranged` uses to get one.
+	var delta: float = get_physics_process_delta_time()
+	_hunt_lock["telegraph"] = maxf(float(_hunt_lock["telegraph"]) - delta, 0.0)
+	_hunt_lock["disengage"] = maxf(float(_hunt_lock.get("disengage", 0.0)) - delta, 0.0)
+
+	var closing: bool = bool(_hunt_lock.get("closing", false))
+	var ready: bool = (float(_hunt_lock["telegraph"]) <= 0.0
+			and float(_hunt_lock["disengage"]) <= 0.0)
+	if not ready:
+		# A grab that landed this frame put seconds on the disengage clock, which
+		# drops an already-closing unit straight back to the ring. That is the
+		# whole of "grab and disengage" — the hit itself was resolved at full cost
+		# by the ordinary collision path before we ever got here.
+		closing = false
+	elif not closing:
+		closing = _hunt_close_granted()
+	_hunt_lock["closing"] = closing
+
+	chase_target = hunt_steer_point(chase_target, global_position, closing,
+			float(spec.get("hunt_standoff", 0.0)))
+
+
+func _hunt_close_granted() -> bool:
+	"""
+	May this unit escalate from shadowing to closing? ABSENT DIRECTOR = GRANTED.
+
+	The seam the encounter director (bead godot-test1-9rm.4) hangs off: it will
+	join group "hunt_director" and answer `request_hunt_close()` with the pursuer
+	caps, the shared cooldown and the escape-sector rule. None of that exists yet
+	and this bead does not wait for it — a missing director, a director that does
+	not implement the method, and a scene with no director at all (the standalone
+	`hunter_robot.tscn`, every self-check, every headless harness) all take the
+	same path and answer true, so the behaviour above is complete and shippable
+	with nothing else in the world. The same degrade-don't-crash rule as the
+	unknown-behaviour fallback in the dispatch and the unknown-species fallback in
+	_ready(): the absence of an optional system is a GRANT, never an error and
+	never a hang.
+
+	@return true when this hunter may close on its quarry
+
+	ponytail: asked once per escalation edge and then latched in the lock, not
+	polled every frame — one group lookup per engagement rather than one per
+	hunter per tick. The ceiling is that a director cannot REVOKE a commitment
+	already in flight, only withhold the next one; if .4 needs revocation, the
+	upgrade path is to drop the latch and ask every frame while closing.
+	"""
+	var director := get_tree().get_first_node_in_group("hunt_director")
+	if director and director.has_method("request_hunt_close"):
+		return bool(director.request_hunt_close(self))
+	return true
+
+
+static func hunt_steer_point(quarry: Vector3, from: Vector3, closing: bool,
+		standoff: float) -> Vector3:
+	"""
+	Where one hunter steers: at the quarry when closing, at the RING when not.
+
+	    closing    -> quarry                       (walk in and take it)
+	    shadowing  -> quarry + standoff * away     (hold the ring, either way)
+
+	`away` is the flat unit vector FROM the quarry TO this unit, so the one
+	expression covers both halves of shadowing with no branch: a hunter outside
+	the ring walks in to it, and one inside the ring — the state a grab leaves it
+	in, standing on top of the player — walks OUT to it. That is what makes
+	"withdraw after the grab" and "pace before the grab" the same line of code,
+	and it is why the disengage needs no geometry of its own.
+
+	STATIC AND PURE for the same reason `pack_steer_point`, `charge_steer_point`
+	and `burst_cycle_factor` are: enemy_spawn_selfcheck's shadow/close probe
+	drives THIS function, so the ring it measures is the ring the game ships
+	rather than a restatement of it that can drift apart from it.
+
+	Three properties follow from that, each a requirement rather than an accident:
+
+	  * LOD-SAFE. It has no memory at all — no lock, no integrator, no phase. A
+	    waking hunter recomputes the identical point from where it is standing
+	    now, so the first frame back is the frame it would have produced had it
+	    never slept. (The arm's two timers are the part with memory, and the note
+	    on `_hunt_lock` covers those.)
+	  * MULTIPLAYER-SAFE. `quarry` is whatever _update_chase_state resolved, which
+	    in a room is the nearest ROOM MEMBER. This only bends that point; it can
+	    neither widen who is hunted nor reach past the detection radius.
+	  * SPEED-LATTICE-SAFE. It returns a POINT. Nothing here touches
+	    `chase_speed_instance`, which _ready() already clamped to MAX_CHASE_SPEED.
+	    A hunter is frightening because it commits and does not stop, never
+	    because it is fast; running escapes it in every phase.
+
+	@param quarry: where the chase currently wants to go
+	@param from: this hunter's own position
+	@param closing: true once the telegraph is spent and the director has granted
+	@param standoff: metres of ring to hold while shadowing (the row's hunt_standoff)
+	@return the point to steer at this frame
+
+	A standoff of zero or less answers `quarry` — a hunter with no ring is an
+	ordinary chaser rather than a body dividing by zero — as does standing exactly
+	on the quarry, where there is no bearing to hold a ring on. Same
+	degrade-don't-crash rule as everywhere else in this file.
+	"""
+	if closing or standoff <= 0.0:
+		return quarry
+	var away := from - quarry
+	away.y = 0.0
+	if away.length() < 0.01:
+		return quarry
+	return quarry + away.normalized() * standoff
 
 
 static func ranged_shot_due(distance: float, delta: float, lock: Dictionary,
@@ -4125,6 +4362,31 @@ func _on_player_collision(player: Node) -> void:
 		# Fallback: move player up and away
 		if player is Node3D:
 			player.global_position = Vector3(0, 2, 0)
+
+	# RETRIEVAL ATTEMPT LOGGED — the hunt arm's post-contact half, and it fires
+	# AFTER the hit above has already been paid in full. Nothing on this path is
+	# a pulled punch: a hunter's grab costs exactly what a crocodile's bite costs,
+	# through the same `hit_by_crocodile` call. What the disengage buys is PACING
+	# — the unit backs off to its standoff ring for `hunt_disengage_time` instead
+	# of standing on the respawn point re-chomping, and a second grab has to earn
+	# a fresh telegraph first.
+	#
+	# Keyed on the BEHAVIOUR, not on the species name, exactly like the viper's
+	# hiss above the dispatch: "I stop once I have what I came for" is a trait of
+	# the mechanic, so a second retrieval unit inherits it with its row. This is
+	# the only place outside `_behave_hunt` that touches `_hunt_lock`, and it only
+	# WRITES the clock the arm reads.
+	#
+	# ponytail: in a room this line fires on whichever screen the contact happened
+	# on, and on a PEER that body is remote-driven — it renders the master's
+	# samples and never runs the arm — so the lock it writes there is inert and the
+	# master's own hunter keeps closing. That is exactly the shape
+	# `_pause_and_change_direction()` below already has for every species, so the
+	# ceiling is the crocodile's ceiling and not a new one; the upgrade path, if a
+	# room ever needs the withdrawal to be shared, is a relayed verb, which this
+	# bead was told not to add.
+	if spec["behavior"] == "hunt":
+		_hunt_lock["disengage"] = float(spec.get("hunt_disengage_time", 0.0))
 
 	# Pause/turn away so we don't immediately re-trigger on the same overlap.
 	_pause_and_change_direction()
