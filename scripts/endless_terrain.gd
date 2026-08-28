@@ -8232,8 +8232,27 @@ func _tower_stream(player_pos: Vector3) -> void:
 	if is_instance_valid(_tower_shell):
 		return
 	var site := tower_site()
-	if Vector2(player_pos.x - site.x, player_pos.z - site.z).length() > TOWER_LOAD_RADIUS:
-		return
+	if not _tower_in_load_range(player_pos, site):
+		# ...and the MULTIPLAYER FOCUS SET, which is the same question asked about
+		# somebody else's player. `set_focus_points` pins the chunks around every
+		# teammate precisely because the master SIMULATES what is in them, and
+		# crocodiles are master-simulated (CLAUDE.md) — so a master still 400 m out
+		# while a teammate walks into the tower would be running that teammate's
+		# crocodiles against a world with no tower in it, walking them straight
+		# through walls the teammate's own shell then refuses (codex review,
+		# 2026-08-28). The shell has to exist wherever it is being simulated, not
+		# only wherever it is being looked at.
+		#
+		# Bounded by MAX_FOCUS_CHUNKS (27) and reached only on a boundary crossing
+		# or a focus change, so it is at most 27 length() calls a few times a second
+		# — and never once solo, where `focus_chunks` is empty by construction.
+		var reached := false
+		for chunk_pos: Vector2i in focus_chunks:
+			if _tower_in_load_range(chunk_to_world(chunk_pos), site):
+				reached = true
+				break
+		if not reached:
+			return
 	_tower_shell = TOWER_SHELL_SCENE.instantiate() as Node3D
 	add_child(_tower_shell)
 	# LOCAL position with a WORLD coordinate, exactly as create_chunk parks a chunk
@@ -8246,6 +8265,12 @@ func _tower_stream(player_pos: Vector3) -> void:
 	# place, and two towers in one spot z-fight.
 	if is_instance_valid(_tower_impostor):
 		_tower_impostor.visible = false
+
+
+func _tower_in_load_range(from: Vector3, site: Vector3) -> bool:
+	"""Is this world point near enough the site to want the shell built? XZ only —
+	the world is flat and the tower is not going anywhere vertically."""
+	return Vector2(from.x - site.x, from.z - site.z).length() <= TOWER_LOAD_RADIUS
 
 
 func _tower_reset() -> void:

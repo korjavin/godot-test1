@@ -106,6 +106,7 @@ func _run() -> void:
 	_check_doorway_is_a_hole()
 	await _check_door_fires_for_the_player_only()
 	await _check_shell_is_lazy_and_manager_parented()
+	await _check_a_teammate_at_the_tower_builds_it_for_the_master()
 	await _check_new_run_resites_the_tower()
 	await _check_join_streams_the_tower_at_the_anchor()
 	_check_a_detached_terrain_still_sites_the_tower()
@@ -460,6 +461,49 @@ func _check_shell_is_lazy_and_manager_parented() -> void:
 			towers += 1
 	if towers != 1:
 		_fail("%d tower shells stand on the site after a second boundary crossing" % towers)
+
+	probe.free()
+	terrain.free()
+	await process_frame
+
+
+func _check_a_teammate_at_the_tower_builds_it_for_the_master() -> void:
+	"""
+	Check 7b. A teammate standing at the tower makes the MASTER build it, even
+	though the master is 4 km away.
+
+	NOT A RENDERING QUESTION (codex review, 2026-08-28). `set_focus_points()` pins
+	the chunks around every room member because the master SIMULATES what is in
+	them, and crocodiles are master-simulated (CLAUDE.md). A master whose own player
+	is out of load range would therefore be running a teammate's crocodiles against
+	a world with no tower in it — walking them clean through walls that exist on the
+	teammate's machine, and broadcasting transforms the teammate's own shell then
+	refuses. The building has to exist wherever it is being SIMULATED, not only
+	wherever it is being looked at.
+
+	The control is the first half: with the same distant player and NO focus set,
+	nothing may be built — otherwise this measures nothing but check 7 again.
+	"""
+	var terrain := _make_terrain(SEED_A)
+	terrain.render_distance = 0
+	var probe := Node3D.new()
+	probe.add_to_group("player")
+	root.add_child(probe)
+	terrain.player = probe
+	var site: Vector3 = terrain.tower_site()
+
+	# The master is nowhere near the tower, and solo (an empty focus set).
+	probe.global_position = site + Vector3(4000.0, 0.0, 0.0)
+	terrain._process(0.0)
+	if terrain.tower_shell() != null:
+		_fail("control failed: a shell was built with the player 4 km out and no focus set")
+
+	# A teammate walks in. This is exactly the presence path — MpManager publishes
+	# peer positions and crocodile_lod_manager forwards them here.
+	terrain.set_focus_points([site])
+	terrain._process(0.0)
+	if terrain.tower_shell() == null:
+		_fail("a teammate reached the tower and the master built no shell — it would simulate that teammate's crocodiles through the walls")
 
 	probe.free()
 	terrain.free()
