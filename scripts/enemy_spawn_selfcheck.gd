@@ -1739,6 +1739,12 @@ func _check_boss_dispatch(terrain_script: GDScript) -> void:
 	invisible from the field alone, which is why one number off the resolved row
 	is compared instead.
 	"""
+	if _boss_interval < 1:
+		# Already reported by name in _run(). Returning rather than walking
+		# anyway, because station 0 of an unseeded cache is a script error, and a
+		# script error before _report() exits 0 with no verdict at all.
+		return
+
 	var measured := 0
 	var rivers := 0
 	var bands := {}
@@ -1764,7 +1770,7 @@ func _check_boss_dispatch(terrain_script: GDScript) -> void:
 		# guess is a lower bound and the loop grows it until the cache really
 		# covers the last station, rather than assuming a straight road.
 		var last_k: int = BOSS_DISPATCH_COUNT * _boss_interval
-		var reach: float = float(last_k) * float(terrain.road_coin_spacing)
+		var reach: float = float(last_k) * maxf(float(terrain.road_coin_spacing), 1.0)
 		while terrain.road_k_max < last_k:
 			terrain._road_extend_to_x(0.0, reach)
 			reach *= 1.5
