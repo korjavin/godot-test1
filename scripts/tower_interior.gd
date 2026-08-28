@@ -371,10 +371,16 @@ const GLOW_COLORS: Array[Color] = [
 #
 # Stable, lowercase, prefixed by the tower. They are persisted verbatim by phase 5,
 # so RENAMING ONE IS A SAVE MIGRATION. Add, never rename.
+#
+# TAKEN FROM `tower_graph.gd`, NOT RESTATED. That file is the tower's topology as
+# data and the thing `tower_selfcheck.gd` walks to prove the campaign cannot
+# softlock; an audit of a graph whose gate ids had drifted from the building's
+# would certify the wrong tower. One arrow, one direction — the graph is pure data
+# and knows nothing about this file.
 
-const GATE_DEMAND: String = "tower_vault"
-const GATE_IDENTITY: String = "tower_secure_door"
-const GATE_CHECKPOINT: String = "tower_checkpoint"
+const GATE_DEMAND: String = TowerGraph.GATE_DEMAND
+const GATE_IDENTITY: String = TowerGraph.GATE_IDENTITY
+const GATE_CHECKPOINT: String = TowerGraph.GATE_CHECKPOINT
 
 # ============================================================================
 # THE BATCH — why most of this building is two meshes
@@ -924,7 +930,10 @@ func _tick_pads() -> void:
 	"""
 	if _player == null:
 		return
-	if _on_identity_pad and _hero_name() == "teibi" and not _is_open(GATE_IDENTITY):
+	# WHICH hero the mass answers to is the graph's to say, not this file's — see
+	# the GATE IDS block. The name is written down once, in `tower_graph.gd`.
+	if (_on_identity_pad and _hero_name() == TowerGraph.identity_of(GATE_IDENTITY)
+			and not _is_open(GATE_IDENTITY)):
 		_open(GATE_IDENTITY)
 		_say(tr("The mass lifts. The way through stays open."))
 		_sfx("play_level_up")

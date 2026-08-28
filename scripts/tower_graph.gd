@@ -1,0 +1,436 @@
+class_name TowerGraph
+extends RefCounted
+## THE TOWER AS A GRAPH — rooms, passages and what each passage asks of you.
+##
+## Epic godot-test1-3iy, phase 4. This file is DATA. It holds no logic, runs no
+## world, and is read by exactly two things:
+##
+##   * `tower_interior.gd`, which takes the gate ids and the identity gate's hero
+##     from here rather than restating them (so the building and the graph cannot
+##     disagree about what a gate IS);
+##   * `tower_selfcheck.gd`, which walks it headlessly and proves the campaign
+##     cannot softlock (so the building and the graph cannot disagree about what a
+##     gate DOES).
+##
+## ============================================================================
+## THE RULE THIS GRAPH EXISTS TO MAKE CHECKABLE
+## ============================================================================
+##
+## For EVERY non-empty subset of free heroes, from EVERY legal HQ entry, and in
+## every persistent tower state reachable at that point, at least one route to a
+## CELL must be traversable using only the free heroes' guaranteed capabilities and
+## no item held by a captive.
+##
+## Four heroes means fifteen subsets, several entries and a growing pile of
+## permanent world-state changes. Nobody can eyeball that, and the failure mode is
+## the worst one a campaign has: a save that is still playable, still fun, and can
+## never be finished. So it is a headless check, and the check is only as good as
+## this graph's honesty about the building.
+##
+## ============================================================================
+## THE THREE DESIGN LAWS — why fifteen graph walks are enough
+## ============================================================================
+##
+## The rule quantifies over every reachable tower state, which is a set that grows
+## combinatorially with every gate. Three authored laws collapse it to the base
+## graph, and `tower_selfcheck.gd` asserts each law STRUCTURALLY over this file
+## rather than trusting it:
+##
+## 1. SPINES AT FLOOR RANK. Four per-hero rescue spines with shared neutral
+##    segments (`spines` below). Each is passable by its own hero ALONE, using base
+##    capability plus whatever ranks `readiness_floor` guarantees. Any larger free
+##    set contains a singleton, so its reachability is a superset of that
+##    singleton's — the four spines imply all fifteen subsets by monotonicity. The
+##    check enumerates all fifteen anyway, because fifteen walks of a fourteen-room
+##    graph cost nothing and survive somebody rewriting this paragraph.
+##
+## 2. NO ITEM CUSTODY. Keys and quest items are PARTY-LEVEL world state — they join
+##    the same monotone opened set that gates do (`tower_shell.opened`), and are
+##    never a hero's inventory. That is what lets the check skip a custody model
+##    entirely: nothing can be locked in a captive's pocket. `items` below records
+##    the scope of every one, and the check refuses any row that names a carrier.
+##    **If per-hero carry is ever authored, this check must grow a custody model
+##    the same day** — the whole collapse above depends on it.
+##
+## 3. EDGE-ADDITIVE MUTATIONS. A permanent route transformation may only OPEN
+##    passages, never close or consume one (`mutations` below carry `adds` and the
+##    check forbids any removal key). Reachability is then monotone in tower state,
+##    so the BASE graph — nothing yet opened — is the worst case, and "every
+##    reachable state" collapses to one walk per story-flag state.
+##
+##    ONE SANCTIONED EXCEPTION, owner-ruled: the full-custody protocol SCAR may
+##    close passages. Scar states are authored, enumerated and few (`scars` below),
+##    the whole property re-runs inside each one, and a scar that would sever the
+##    last singleton spine fails THE BUILD, not the player.
+##
+## ============================================================================
+## WHAT IS BUILT AND WHAT IS AUTHORED
+## ============================================================================
+##
+## `built: true` means the geometry exists TODAY in `tower_interior.gd`, and the
+## self-check binds it to that file's own boxes — by the colours of the legibility
+## language, so a new gate cannot appear in the building without appearing here.
+##
+## `built: false` is a CONTRACT for a later phase, not a wish. The cell block and
+## its four hero segments are phase 8's to build; they are authored now because the
+## audit that constrains them has to exist before them, which is the whole reason
+## this bead blocks that one. The check asserts an unbuilt row claims no geometry —
+## a graph that quietly credits itself with rooms nobody built would certify a
+## softlock as safe, which is worse than having no graph at all.
+##
+## ============================================================================
+## THE SHAPE — one const dict of plain dicts (`SPECIES` / `SKILL_TREES` idiom)
+## ============================================================================
+##
+## No class hierarchy, no custom `Resource`, no logic inside the dict. Everything
+## below is a literal a human can read top to bottom and a walker can index. The
+## few functions at the end are pure lookups over it and nothing else.
+
+# ============================================================================
+# GATE IDS — the strings that go in the tower's monotone opened set
+# ============================================================================
+#
+# Stable, lowercase, tower-prefixed, and PERSISTED VERBATIM by phase 5, so
+# renaming one is a save migration. Add, never rename. `tower_interior.gd` takes
+# its own `GATE_*` constants from these three, which is what stops the building
+# and the graph from drifting apart on the only strings both of them touch.
+
+const GATE_DEMAND: String = "tower_vault"
+const GATE_IDENTITY: String = "tower_secure_door"
+const GATE_CHECKPOINT: String = "tower_checkpoint"
+
+## The four playable heroes, in `PlayerController.CHARACTERS` order. Restated here
+## rather than imported because this file must stay pure data with no dependency on
+## a scene-bearing script; `tower_selfcheck.gd` asserts the two lists are equal.
+const HEROES: Array[String] = ["windman", "primm", "teibi", "phoboman"]
+
+## Gate classes, and what each one asks of the party. These are the three verbs of
+## the epic's legibility language (see `tower_interior.gd`'s header) and the check
+## has exactly one traversability rule per class:
+##
+##   "challenge" — a hazard beaten with the BASE KIT. Passable by any hero, always.
+##                 A challenge that needs a rank is a demand gate wearing the wrong
+##                 colour, and the legibility law forbids it.
+##   "identity"  — passable only while its named hero is FREE. Can never be
+##                 out-levelled, and is therefore the one thing that can strand a
+##                 subset. Every one is a suspect in the softlock audit.
+##   "demand"    — passable when some free hero's reading of `effect` reaches
+##                 `scale`. A hero-specific effect (`primm_blink` is one) makes the
+##                 gate require THAT hero, exactly like an identity gate, and the
+##                 check treats it that way.
+const CLASS_CHALLENGE: String = "challenge"
+const CLASS_IDENTITY: String = "identity"
+const CLASS_DEMAND: String = "demand"
+
+## Which ability constant a demand gate's `effect` scales. One entry per effect any
+## demand gate uses — the check asserts each is a real `SKILL_TREES` effect id AND
+## that the base value matches the live constant it names, so retuning the ability
+## breaks the build instead of silently moving the gate.
+const EFFECT_BASE: Dictionary = {
+	"primm_blink": {"base": 6.0, "source": "PlayerController.PRIMM_BLINK_DISTANCE"},
+}
+
+const TOWER_GRAPH: Dictionary = {
+
+	# ------------------------------------------------------------------------
+	# ROOMS. `quest` names the quest completed here (""), `cell` names the hero
+	# whose cell this is (""). `parts` are the `TowerInterior.boxes()` entries that
+	# ARE this room's marker — only the checkpoint has one today.
+	# ------------------------------------------------------------------------
+	"rooms": {
+		# --- built, phase 3 ---
+		"entry_hall": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "Under the slab, behind the shell doorway. Every route starts here.",
+		},
+		"vault": {
+			"built": true, "quest": "vault_gem", "cell": "", "parts": [],
+			"note": "Behind the demand gate, off the hall's south end. Optional by design.",
+		},
+		"courtyard": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "Open to the sky, west of the rotor doorway. The ramp starts here.",
+		},
+		"upper_landing": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "Top of the ramp, west of the secure door.",
+		},
+		"checkpoint_room": {
+			"built": true, "quest": "checkpoint", "cell": "",
+			"parts": ["CheckpointPlate", "CheckpointPost"],
+			"note": "East of the identity gate. The run's respawn anchor.",
+		},
+		# --- authored for phase 8 ---
+		"service_stair": {
+			"built": false, "quest": "", "cell": "", "parts": [],
+			"note": "The shared neutral segment all four spines pass through.",
+		},
+		"cell_gallery": {
+			"built": false, "quest": "", "cell": "", "parts": [],
+			"note": "The junction the four cells open off. Reaching it IS the rescue.",
+		},
+		"cell_windman": {"built": false, "quest": "", "cell": "windman", "parts": []},
+		"cell_primm": {"built": false, "quest": "", "cell": "primm", "parts": []},
+		"cell_teibi": {"built": false, "quest": "", "cell": "teibi", "parts": []},
+		"cell_phoboman": {"built": false, "quest": "", "cell": "phoboman", "parts": []},
+	},
+
+	# ------------------------------------------------------------------------
+	# EDGES. Undirected passages: `{id, a, b, gate}`, gate "" for an open way
+	# through. An edge id in some mutation's `adds` is NOT part of the base graph —
+	# see `mutations`.
+	# ------------------------------------------------------------------------
+	"edges": [
+		{"id": "hall_courtyard", "a": "entry_hall", "b": "courtyard",
+			"gate": "rotor_gate", "built": true},
+		{"id": "hall_vault", "a": "entry_hall", "b": "vault",
+			"gate": GATE_DEMAND, "built": true},
+		# The ramp. Not a gate: it is the only way up and it asks nothing.
+		{"id": "courtyard_landing", "a": "courtyard", "b": "upper_landing",
+			"gate": "", "built": true},
+		{"id": "landing_checkpoint", "a": "upper_landing", "b": "checkpoint_room",
+			"gate": GATE_IDENTITY, "built": true},
+
+		# --- phase 8: the neutral approach, two ways round ---
+		{"id": "courtyard_stair", "a": "courtyard", "b": "service_stair",
+			"gate": "", "built": false},
+		# THE REDUNDANT WAY IN, and it is not decoration: it is what lets the
+		# authored scar close the courtyard stair without stranding anybody.
+		{"id": "hall_stair", "a": "entry_hall", "b": "service_stair",
+			"gate": "maintenance_crawl", "built": false},
+
+		# --- phase 8: where the four spines diverge, one segment per hero ---
+		{"id": "stair_gallery_windman", "a": "service_stair", "b": "cell_gallery",
+			"gate": "updraft_shaft", "built": false},
+		{"id": "stair_gallery_primm", "a": "service_stair", "b": "cell_gallery",
+			"gate": "phase_grate", "built": false},
+		{"id": "stair_gallery_teibi", "a": "service_stair", "b": "cell_gallery",
+			"gate": "collapsed_slab", "built": false},
+		{"id": "stair_gallery_phoboman", "a": "service_stair", "b": "cell_gallery",
+			"gate": "hound_den", "built": false},
+
+		# --- phase 8: the cells themselves. UNIFORM and ungated: whoever reaches
+		# the gallery can open any door, which is what "uniform cells" means. ---
+		{"id": "gallery_cell_windman", "a": "cell_gallery", "b": "cell_windman",
+			"gate": "", "built": false},
+		{"id": "gallery_cell_primm", "a": "cell_gallery", "b": "cell_primm",
+			"gate": "", "built": false},
+		{"id": "gallery_cell_teibi", "a": "cell_gallery", "b": "cell_teibi",
+			"gate": "", "built": false},
+		{"id": "gallery_cell_phoboman", "a": "cell_gallery", "b": "cell_phoboman",
+			"gate": "", "built": false},
+
+		# --- phase 7: the lift shaft. Exists only once `lift_activated` fires. ---
+		{"id": "lift_shaft", "a": "entry_hall", "b": "upper_landing",
+			"gate": "", "built": false},
+	],
+
+	# ------------------------------------------------------------------------
+	# GATES. `needed_during_captivity` is a CLAIM the check verifies rather than
+	# trusts: it recomputes, for every story/scar/entry/subset case, whether the
+	# gate lies on EVERY route to a cell, and fails on any disagreement. So the
+	# flag is documentation that cannot rot.
+	#
+	# `parts` are the `TowerInterior.boxes()` names that build this gate. Every box
+	# the interior paints in a gate colour must be claimed by exactly one of these
+	# lists, which is how a gate added to the building but not to the graph is
+	# caught. An unbuilt gate claims nothing.
+	# ------------------------------------------------------------------------
+	"gates": {
+		"rotor_gate": {
+			"class": CLASS_CHALLENGE, "identity": "", "effect": "", "scale": 0.0,
+			"needed_during_captivity": false, "built": true, "quest": "",
+			"parts": ["RotorPost", "RotorBarLow", "RotorBarHigh"],
+			"note": "Two counter-rotating bars. Base kit, so no subset can be stopped by it.",
+		},
+		GATE_DEMAND: {
+			"class": CLASS_DEMAND, "identity": "", "effect": "primm_blink",
+			# Kept equal to `TowerInterior.DEMAND_TARGET` by the self-check — the
+			# reasoning for the number lives at that constant, not here.
+			"scale": 7.2,
+			"needed_during_captivity": false, "built": true, "quest": "vault_gem",
+			"parts": ["DemandShutter", "Receptacle"],
+			"note": "Optional vault. One rank of Long Step — forecastable, never on a rescue route.",
+		},
+		GATE_IDENTITY: {
+			"class": CLASS_IDENTITY, "identity": "teibi", "effect": "", "scale": 0.0,
+			"needed_during_captivity": false, "built": true, "quest": "checkpoint",
+			"parts": ["IdentityMass", "IdentityPad"],
+			"note": "The mass only Teibi lifts. Behind it is a checkpoint, never a cell.",
+		},
+
+		# --- phase 8 ---
+		"maintenance_crawl": {
+			"class": CLASS_CHALLENGE, "identity": "", "effect": "", "scale": 0.0,
+			"needed_during_captivity": true, "built": false, "quest": "", "parts": [],
+			"note": "Base-kit crawl from the hall. The scar's survival route.",
+		},
+		"updraft_shaft": {
+			"class": CLASS_IDENTITY, "identity": "windman", "effect": "", "scale": 0.0,
+			"needed_during_captivity": true, "built": false, "quest": "", "parts": [],
+			"note": "A shaft with no floor. Air Rush, base kit — no rank in the budget.",
+		},
+		"phase_grate": {
+			"class": CLASS_IDENTITY, "identity": "primm", "effect": "", "scale": 0.0,
+			"needed_during_captivity": true, "built": false, "quest": "", "parts": [],
+			"note": "A grate with a body-width of wall behind it. Base Phase Step reaches it.",
+		},
+		"collapsed_slab": {
+			"class": CLASS_IDENTITY, "identity": "teibi", "effect": "", "scale": 0.0,
+			"needed_during_captivity": true, "built": false, "quest": "", "parts": [],
+			"note": "Dead weight across the way. Giant Teibi shifts it.",
+		},
+		"hound_den": {
+			"class": CLASS_IDENTITY, "identity": "phoboman", "effect": "", "scale": 0.0,
+			"needed_during_captivity": true, "built": false, "quest": "", "parts": [],
+			"note": "A kennelled run. Stink Wave empties it.",
+		},
+	},
+
+	# ------------------------------------------------------------------------
+	# ENTRIES. Every LEGAL way into the tower. The rule quantifies over all of
+	# them, so a new entry is a new fifteen-subset audit, automatically.
+	# ------------------------------------------------------------------------
+	"entries": [
+		{"id": "front_door", "room": "entry_hall", "built": true,
+			"note": "The shell doorway. Always open, always legal."},
+		{"id": "lift_stop_upper", "room": "upper_landing", "built": false,
+			"note": "Phase 7's unlockable lift stop, granted by `lift_activated`."},
+	],
+
+	# ------------------------------------------------------------------------
+	# MUTATIONS — permanent route transformations. ADDITIVE ONLY (design law 3):
+	# a row may add edges and entries and NOTHING ELSE. The self-check whitelists
+	# these keys, so a row that grew a `removes` fails the build.
+	#
+	# The audit deliberately walks the BASE graph (no mutation fired) while still
+	# starting from every entry any mutation can grant. That is strictly harsher
+	# than reality — you cannot reach the lift stop without the lift edge — and
+	# harsher is the only direction a softlock audit may err in.
+	# ------------------------------------------------------------------------
+	"mutations": [
+		{
+			"id": "lift_activated",
+			"trigger": "checkpoint",
+			"adds": ["lift_shaft"],
+			"adds_entries": ["lift_stop_upper"],
+			"note": "Lighting the checkpoint powers the lift. Opens a shaft, closes nothing.",
+		},
+	],
+
+	# ------------------------------------------------------------------------
+	# SCARS — the ONE sanctioned exception to law 3 (owner-ruled), phase 11's
+	# full-custody protocol. A scar may CLOSE passages. Enumerated and few, and the
+	# whole property re-runs inside each one; a scar that severs the last singleton
+	# spine fails the build, not the player.
+	# ------------------------------------------------------------------------
+	"scars": [
+		{
+			"id": "none", "removes": [],
+			"note": "The unscarred tower. Always audited first.",
+		},
+		{
+			"id": "custody_stair_collapse", "removes": ["courtyard_stair"],
+			"note": "The protocol drops the courtyard stair. `hall_stair` is why "
+				+ "that is survivable — and why it exists.",
+		},
+	],
+
+	# ------------------------------------------------------------------------
+	# STORY STATES — the flag overlays the property is re-run under. `captivity`
+	# is what matters: before the beat nobody is captive and the cell clause is
+	# void; after it, the full fifteen-subset audit has teeth. Overlays are
+	# additive for the same reason mutations are, and checked the same way.
+	# ------------------------------------------------------------------------
+	"story_states": [
+		{"id": "pre_beat", "captivity": false, "adds": [],
+			"note": "Systemic capture not yet armed. Quest reachability still holds."},
+		{"id": "post_beat", "captivity": true, "adds": [],
+			"note": "Capture armed. Every subset must still reach a cell."},
+	],
+
+	# ------------------------------------------------------------------------
+	# SPINES — the four base-kit rescue routes, as ordered edge ids from an entry
+	# to the cell gallery. The first two segments are SHARED and neutral; only the
+	# last is the hero's own. Each must be passable by its hero ALONE at the
+	# readiness floor, which check 3 walks edge by edge.
+	# ------------------------------------------------------------------------
+	"spines": {
+		"windman": {"entry": "front_door",
+			"edges": ["hall_courtyard", "courtyard_stair", "stair_gallery_windman"]},
+		"primm": {"entry": "front_door",
+			"edges": ["hall_courtyard", "courtyard_stair", "stair_gallery_primm"]},
+		"teibi": {"entry": "front_door",
+			"edges": ["hall_courtyard", "courtyard_stair", "stair_gallery_teibi"]},
+		"phoboman": {"entry": "front_door",
+			"edges": ["hall_courtyard", "courtyard_stair", "stair_gallery_phoboman"]},
+	},
+
+	# ------------------------------------------------------------------------
+	# THE READINESS FLOOR — `{hero: {skill_id: rank}}`, the ranks the authored beat
+	# GUARANTEES a hero has before systemic capture arms. Capture arms only after
+	# the beat, so the beat's floor IS the spine rank budget and the check reads
+	# one from the other rather than restating a number.
+	#
+	# IT IS EMPTY TODAY, AND EMPTY IS THE STRICTEST CASE: every spine is passable
+	# on base capability alone, so no beat has to promise anything and no save can
+	# arrive under-ranked. Author a rank here only when the beat truly grants it —
+	# every entry weakens the guarantee by exactly that much.
+	# ------------------------------------------------------------------------
+	"readiness_floor": {
+		"windman": {}, "primm": {}, "teibi": {}, "phoboman": {},
+	},
+
+	# ------------------------------------------------------------------------
+	# ITEMS — design law 2. `scope` must be "party" for every one: an item is world
+	# state joining the tower's monotone opened set, never a hero's inventory. The
+	# check rejects any row naming a carrier, because a key in a captive's pocket
+	# is precisely the softlock this graph cannot model.
+	# ------------------------------------------------------------------------
+	"items": [
+		{"id": "vault_gem", "scope": "party", "room": "vault",
+			"note": "The existing collectible. Score is party-level; nobody carries it."},
+	],
+
+	# ------------------------------------------------------------------------
+	# QUESTS — an OPEN SET. Each is solo-completable at some capability level and
+	# none requires another (`requires_quest` must be "" for every row): a quest
+	# chain is a second way to strand a player, one the subset audit cannot see.
+	# ------------------------------------------------------------------------
+	"quests": [
+		{"id": "vault_gem", "room": "vault", "requires_quest": "",
+			"note": "Solo for Primm at one rank of Long Step."},
+		{"id": "checkpoint", "room": "checkpoint_room", "requires_quest": "",
+			"note": "Solo for Teibi on base capability."},
+	],
+}
+
+
+static func gate(id: String) -> Dictionary:
+	"""The gate row for `id`, or an empty dict when there is no such gate."""
+	return TOWER_GRAPH["gates"].get(id, {})
+
+
+static func identity_of(id: String) -> String:
+	"""
+	Which hero an identity gate asks for, "" when it asks for nobody.
+
+	`tower_interior.gd` reads its identity gate's hero through here, so the name
+	"teibi" is written once in this repository and the building cannot ask for a
+	hero the audit thinks it does not.
+	"""
+	return String(gate(id).get("identity", ""))
+
+
+static func room(id: String) -> Dictionary:
+	"""The room row for `id`, or an empty dict."""
+	return TOWER_GRAPH["rooms"].get(id, {})
+
+
+static func cells() -> Array[String]:
+	"""Every cell room id, in `rooms` order."""
+	var out: Array[String] = []
+	for id: String in TOWER_GRAPH["rooms"]:
+		if String(TOWER_GRAPH["rooms"][id].get("cell", "")) != "":
+			out.append(id)
+	return out
