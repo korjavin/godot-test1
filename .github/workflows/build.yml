@@ -392,7 +392,9 @@ jobs:
   # ============================================================================
   deploy:
     name: 🚀 Deploy to GitHub Pages
-    needs: build
+    # Same gate as deploy-stack: Pages is production too, so a build that
+    # exports cleanly while a self-check is red must not reach players.
+    needs: [ build, selfchecks, model-selfcheck ]
     runs-on: ubuntu-latest
     # Only deploy on push to master branch
     if: github.ref == 'refs/heads/master' && github.event_name == 'push'
