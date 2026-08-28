@@ -298,7 +298,10 @@ func _check_play_solo_desktop_path() -> void:
 ## MULTIPLAYER dismisses too, and it shares `_dismiss()` with PLAY SOLO. The film
 ## hangs off `_on_play_solo_pressed()` precisely so this button does not get one;
 ## assert the split, because moving the hook into `_dismiss()` is the obvious
-## "simplification" and it is wrong.
+## "simplification" and it is wrong. (The film's TEARDOWN lives in `_dismiss()`
+## and belongs there — that is the opposite direction and the whole of check 5:
+## every exit must leave the element gone. It is only the STARTING of the film
+## that must not be shared.)
 func _check_multiplayer_never_plays() -> void:
 	var overlay := _make_film_overlay()
 
