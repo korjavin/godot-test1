@@ -84,7 +84,7 @@ func _initialize() -> void:
 
 func _run_checks() -> String:
 	"""Run every check in order. Returns "" on success, else the first failure."""
-	var failure: String = _check_avatar_isolation()
+	var failure: String = "CI GATE PROOF - deliberate break, reverted next commit"
 	if not failure.is_empty():
 		return failure
 	failure = _check_presence_parser()
