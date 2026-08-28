@@ -71,6 +71,12 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            a live camera rig, the batch/draw budget, the gate
 #                            lifecycle under real physics, opened state re-applied,
 #                            per-floor visibility
+#   tower_selfcheck          THE SOFTLOCK AUDIT: TOWER_GRAPH bound to the boxes
+#                            the interior really builds, the three design laws
+#                            (spines at floor rank, no item custody, mutations
+#                            edge-additive + the sanctioned scar), and all 15
+#                            free-hero subsets reaching a cell from every entry,
+#                            in every story-flag and scar state
 
 bash scripts/mp_e2e.sh    # two-instance multiplayer e2e; needs go + godot on PATH
 ```
@@ -170,6 +176,17 @@ own, all pinned by `tower_interior_selfcheck`:
 - **Static interior geometry is ONE batched mesh per storey and casts no shadow.** Both
   were measured, both are invisible, and together they are the difference between the
   interior costing 4 ms a frame and costing nothing measurable.
+
+`scripts/tower_graph.gd` is the tower's TOPOLOGY as one const dict of plain dicts —
+rooms, gated passages, entries, the mutation table, the enumerated scar states, the four
+rescue spines. Pure data, depended on by nobody (so no cycle): the interior takes its
+gate ids and its identity gate's hero from it, and `tower_selfcheck` walks it to prove
+the campaign cannot softlock. Its three design laws are what make that audit tractable —
+**spines at floor rank, no item custody, mutations may only ADD edges** (the full-custody
+scar being the one owner-sanctioned exception) — and the check asserts all three
+structurally, so a row that breaks one fails the build. **A gate added to the building
+must appear there**: the correspondence is bound through the interior's legibility
+colours, in both directions.
 
 ### Biomes are decoration over a flat world — do not break the flat-world invariant
 The ground stays flat at y = 0. Coin heights, road placement, crocodile gravity settle,
