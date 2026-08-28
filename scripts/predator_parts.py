@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """
 Shared faceted-box toolkit for the biome-predator model generators
-(generate_wolf / cougar / bear / hound / snake).
+(generate_wolf / cougar / bear / hound / snake / hunter).
 
-Why this module exists at all: the five predators are the same animal with
+Why this module exists at all: the five animal predators are the same animal with
 different numbers. Copy-pasting a 200-line trimesh quadruped five times is how
 the tail ends up drooping the wrong way in exactly one of them, so the shape
 code lives here once and each generate_*.py is a short table of proportions and
-colours. The older per-character generators (generate_crocodile_model.py,
+colours. The hunter robot is the one customer that skips `quadruped()` and stacks
+its own boxes — it still owes the three contracts below, it just isn't an animal.
+The older per-character generators (generate_crocodile_model.py,
 generate_*_separate.py) predate this and are left alone.
 
 THE THREE CONTRACTS A PREDATOR MODEL MUST HONOUR
@@ -284,10 +286,10 @@ def save(parts, name: str, scale: float = 1.0, symmetric: bool = True) -> trimes
 
 if __name__ == "__main__":
     # Running the toolkit runs every generator that uses it, so `verify` fires on
-    # all five species. Same shape as the project's GDScript self-checks.
+    # every species. Same shape as the project's GDScript self-checks.
     import runpy
 
     here = pathlib.Path(__file__).resolve().parent
-    for species in ("wolf", "cougar", "bear", "hound", "snake"):
+    for species in ("wolf", "cougar", "bear", "hound", "snake", "hunter"):
         runpy.run_path(str(here / f"generate_{species}.py"), run_name="__main__")
     print("SELFCHECK OK")
