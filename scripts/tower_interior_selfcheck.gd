@@ -24,7 +24,13 @@ extends SceneTree
 ##      JUMP_VELOCITY and gravity, never restated, because the whole point is that
 ##      the day somebody retunes the jump this check fails instead of the level
 ##      quietly becoming a shortcut. Check 2.
-##   3. THE RAMP IS THE STAIR, AND IT IS FLUSH. Godot's CharacterBody3D has no
+##   3. **THE DEMAND IS ACTUALLY REACHABLE.** Check 3a derives one rank of Long
+##      Step from `Progression.SKILL_TREES` and `PRIMM_BLINK_DISTANCE` and asserts
+##      the gate opens for it, because it once did not: 6.0 x 1.20 is
+##      7.199999999999999 and a bare `>=` against 7.2 refused the exact rank the
+##      gate advertises, while printing "needs 7.2 m, reads 7.2 m". Nothing
+##      structural noticed; playing the game did.
+##   3b. THE RAMP IS THE STAIR, AND IT IS FLUSH. Godot's CharacterBody3D has no
 ##      step-up: a lip of ANY height at either end of the ramp is a wall you must
 ##      jump, i.e. exactly the thing rule 2 forbids, and 12 cm of lip is invisible
 ##      in every screenshot. Check 3 reconstructs the deck's two ends from the box's
@@ -119,6 +125,7 @@ func _boot() -> void:
 func _run() -> void:
 	_check_plan_fits_the_shell()
 	_check_no_jump_gated_climb()
+	_check_the_demand_is_actually_reachable()
 	_check_ramp_is_the_stair()
 	await _check_headroom_clears_the_camera()
 	await _check_node_shape()
@@ -375,6 +382,51 @@ func _ramp_underside_at(x: float, z: float) -> float:
 # ============================================================================
 # CHECK 3 — the ramp
 # ============================================================================
+
+func _check_the_demand_is_actually_reachable() -> void:
+	"""
+	Check 3a. The reading the demand gate's own comment promises — one rank of Long
+	Step — really does open it, computed the way the game computes it.
+
+	THIS CHECK EXISTS BECAUSE THE GATE ONCE REFUSED IT. `PRIMM_BLINK_DISTANCE` times
+	one rank's 1.20 is 7.199999999999999, `DEMAND_TARGET` is 7.2, and a bare `>=`
+	turned "a skill point away" into "unreachable" while the label read
+	"needs 7.2 m, reads 7.2 m" — a lie no structural assertion in this file noticed
+	and only playing the game found. So the number is now DERIVED from
+	`Progression.SKILL_TREES` and `player_controller` rather than restated: retune
+	Long Step, or the blink, or the demand, and this says whether the gate is still
+	a rank away or has quietly become a wall.
+	"""
+	var per_rank := 0.0
+	var max_ranks := 0
+	for node: Dictionary in Progression.SKILL_TREES.get("primm", []):
+		if String(node.get("effect", "")) == "primm_blink":
+			per_rank = float(node.get("per_rank", 0.0))
+			max_ranks = int(node.get("max_ranks", 0))
+	if per_rank <= 0.0:
+		_fail("primm has no primm_blink skill node — the demand gate is calibrated against nothing")
+		return
+	var base: float = float(load(PLAYER_SCRIPT).get_script_constant_map().get("PRIMM_BLINK_DISTANCE", 0.0))
+	var one_rank := base * (1.0 + per_rank)
+	var maxed := base * (1.0 + per_rank * float(max_ranks))
+	print("phase reach: base %.4f, one rank %.4f, maxed %.4f; demand %.2f" % [
+		base, one_rank, maxed, TowerInterior.DEMAND_TARGET])
+
+	if TowerInterior.demand_met(base):
+		_fail("an UNSKILLED Primm already meets the demand (%.4f >= %.2f) — the gate demands nothing" % [
+			base, TowerInterior.DEMAND_TARGET])
+	if not TowerInterior.demand_met(one_rank):
+		_fail("one rank of Long Step reads %.15f and the gate wants %.2f — it refuses the very rank it advertises" % [
+			one_rank, TowerInterior.DEMAND_TARGET])
+	if not TowerInterior.demand_met(maxed):
+		_fail("a MAXED Primm cannot open the demand gate — it is a wall, not a demand")
+	# And the ladder must agree with the door: a passing reading fills it.
+	if TowerInterior.demand_ratio(one_rank) < 1.0:
+		_fail("the calibration ladder is short of full (%.4f) on a reading that opens the gate" % [
+			TowerInterior.demand_ratio(one_rank)])
+	if TowerInterior.demand_ratio(base) >= 1.0:
+		_fail("the ladder reads full for an unskilled Primm")
+
 
 func _check_ramp_is_the_stair() -> void:
 	"""

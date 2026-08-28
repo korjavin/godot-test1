@@ -258,6 +258,22 @@ const RECEPTACLE_Z: float = -4.3
 ## blinks with — so the gate can never demand a distance the ability does not have.
 const DEMAND_TARGET: float = 7.2
 
+## Slack on the calibration comparison, in metres. NOT A FUDGE — a bug fix with a
+## constant attached, and the reason it exists is worth the paragraph:
+##
+##   PRIMM_BLINK_DISTANCE * (1.0 + 0.20) == 7.199999999999999
+##
+## in IEEE 754, so a gate calibrated to "exactly one rank of Long Step" refused
+## exactly one rank of Long Step, while printing "needs 7.2 m, reads 7.2 m" at
+## `%.1f` — the single most confusing failure this feature could have. Caught by
+## eye in the real game (2026-08-28), not by any structural assertion, which is why
+## `tower_interior_selfcheck` now derives the one-rank reading from
+## `Progression.SKILL_TREES` and asserts the gate opens for it.
+##
+## 1 cm is far below any rank step (each is 1.2 m) so it can never let a genuinely
+## short reading through; it only makes the comparison mean what the number says.
+const DEMAND_TOLERANCE: float = 0.01
+
 ## The upper floor's secure door: a partition across the whole slab with one gap,
 ## filled by the identity mass. Height is chosen against the jump rule above.
 const UPPER_WALL_X: float = 4.0
@@ -667,6 +683,29 @@ static func _ramp_box() -> Dictionary:
 	}
 
 
+static func demand_met(reach: float) -> bool:
+	"""
+	Does this reading satisfy the demand gate? The ONE comparison — see
+	`DEMAND_TOLERANCE` for why it is not a bare `>=`.
+
+	@param reach: The standing hero's Phase Step reach, in metres.
+	"""
+	return reach + DEMAND_TOLERANCE >= DEMAND_TARGET
+
+
+static func demand_ratio(reach: float) -> float:
+	"""
+	How far along the calibration ladder this reading gets, 0 .. 1.
+
+	@param reach: The standing hero's Phase Step reach, in metres.
+
+	Carries the SAME tolerance the comparison does, so the ladder fills exactly when
+	the gate opens. Without that the top band stays dark on the reading that passes,
+	which reads as "you are one short" beside a door that just opened.
+	"""
+	return clampf((reach + DEMAND_TOLERANCE) / DEMAND_TARGET, 0.0, 1.0)
+
+
 static func headroom() -> float:
 	"""Clear height of the enclosed entry hall, floor to slab underside."""
 	return SLAB_Y - SLAB_THICK
@@ -892,7 +931,7 @@ func _tick_pads() -> void:
 	if not _on_demand_pad:
 		return
 	_update_bands()
-	if not _is_open(GATE_DEMAND) and _phase_reach() >= DEMAND_TARGET:
+	if not _is_open(GATE_DEMAND) and demand_met(_phase_reach()):
 		_open(GATE_DEMAND)
 		_say(tr("Calibration met. The vault opens."))
 		_sfx("play_level_up")
@@ -914,9 +953,9 @@ func _attempt_demand() -> void:
 	ranks fix it. Diagnosable, then forecastable.
 	"""
 	var reach := _phase_reach()
-	_nudge_ratio = clampf(reach / DEMAND_TARGET, 0.0, 1.0)
+	_nudge_ratio = demand_ratio(reach)
 	_update_bands()
-	if _is_open(GATE_DEMAND) or reach >= DEMAND_TARGET:
+	if _is_open(GATE_DEMAND) or demand_met(reach):
 		return
 	_nudge = 1.0
 	_sfx("play_buzz")
@@ -942,7 +981,7 @@ func _update_bands() -> void:
 	re-reads the ladder live — which is how a player discovers the category belongs
 	to one hero without being told.
 	"""
-	var ratio := clampf(_phase_reach() / DEMAND_TARGET, 0.0, 1.0)
+	var ratio := demand_ratio(_phase_reach())
 	var lit := DEMAND_BANDS if _is_open(GATE_DEMAND) else int(floor(ratio * float(DEMAND_BANDS)))
 	# Called every frame the player stands on the plate, so it earns a latch: four
 	# `material_override` writes a frame is churn for a reading that changes only
