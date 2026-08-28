@@ -493,8 +493,11 @@ const HUNTER_HASH_PRIME_Y: int = 104395301
 const HUNTER_PLACE_TRIES: int = 6
 
 ## Keep candidate spots this far inside the chunk, so a 1.35 m chassis never
-## straddles a seam. The crocodile spawner's own margin is 3.0; this is a little
-## more because the hunter is the longest body the terrain spawns.
+## straddles a seam. A metre more than the crocodile spawner's 3.0, and the reason
+## is the retry budget rather than the body: a crocodile chunk makes up to five
+## attempts PER crocodile and simply finds another spot, while a hunter gets
+## HUNTER_PLACE_TRIES for its single unit and a rejection near a seam costs it one
+## of six. Buying the margin up front is cheaper than spending tries on it.
 const HUNTER_EDGE_MARGIN: float = 4.0
 
 ## Spawn height above the flat y = 0 ground, like the crocodile's. The capsule's
@@ -5401,6 +5404,14 @@ func spawn_hunters_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, o
 	_chest_at / _landmark_at; enemy_spawn_selfcheck check 12 is the A/B that
 	measures it.
 
+	IT JOINS GROUP "crocodile", VIA ITS SCENE, AND THAT IS DELIBERATE — it is what
+	gets it the LOD manager's sleep, the danger vignette, the multiplayer crocodile
+	sync and the inherited `_on_player_collision` -> `player.hit_by_crocodile()` for
+	free. The visible consequence: the F3 perf overlay's "active/total crocs"
+	counters include hunters. That is correct rather than a mislabel — those
+	counters measure the simulation load the LOD manager is managing, and a hunter
+	is exactly one more body in it.
+
 	AND EVERY REJECTION IS A POST-DRAW SKIP. Both position draws AND the facing
 	draw are spent BEFORE the first test, so a candidate costs this stream exactly
 	three draws whether it is accepted or thrown away. That is stricter than the
@@ -5475,7 +5486,10 @@ func spawn_hunters_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, o
 		# this one does NOT reuse the "Crocodile_" prefix: the two index sequences
 		# are independent, so "Crocodile_3_4_0" would be claimed twice in a chunk
 		# that has both.
-		hunter.name = "Hunter_%d_%d_%d" % [chunk_pos.x, chunk_pos.y, 0]
+		# The trailing 0 is this chunk's hunter INDEX, kept in the name even though
+		# a chunk gets at most one today: the three-part shape is what makes the
+		# name a spawn SLOT rather than a label, the way the crocodile spawner's is.
+		hunter.name = "Hunter_%d_%d_0" % [chunk_pos.x, chunk_pos.y]
 		hunter.position = local
 		hunter.rotation.y = facing
 		# CALL-ORDER CONTRACT (the setup_as_boss / spawn_crocodiles_in_chunk shape):

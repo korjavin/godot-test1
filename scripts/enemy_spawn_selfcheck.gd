@@ -225,10 +225,6 @@ var _sim_radius: float = 0.0
 var _hunter_species: String = ""
 var _hunter_scene: PackedScene = null
 
-## How many hunters the sweep actually put in the world, summed over every seed.
-## Check 3's negative control for this species: every hunter measurement above is
-## trivially true of a spawner that produced nothing.
-var _hunters_seen_all: int = 0
 
 ## endless_terrain.gd's SPAWN_SAFE_RADIUS — the predator-free bubble around the
 ## world origin, read rather than restated so a retune moves this check with it.
@@ -2364,7 +2360,6 @@ func _sweep(terrain_script: GDScript, run_seed: int, spawn_height: float, edge_i
 				# "hunter_robot" while every speed, feeler and animation stays a
 				# crocodile's, which is invisible from the outside.
 				elif kind == "hunter":
-					_hunters_seen_all += 1
 					var got_h: String = String(child.get("species"))
 					var spec_h: Variant = child.get("spec")
 					if got_h != _hunter_species:
