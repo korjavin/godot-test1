@@ -47,6 +47,10 @@ const CSV_PATH: String = "res://assets/translations/ui.csv"
 ## the real functions rather than a copy of them. Static, so no scene is needed.
 const StartOverlay := preload("res://scripts/start_overlay.gd")
 
+## The throwaway config the round trip is driven against, instead of the player's
+## own `user://locale.cfg` — see `_check_locale_config`.
+const LOCALE_STORE_PATH: String = "user://locale_selfcheck.cfg"
+
 ## Widths a German label must fit into, as
 ## `[csv key, font size, usable width px, what it is]`.
 ##
@@ -315,15 +319,16 @@ func _check_live_switch() -> void:
 
 
 ## The saved-language round trip, driven through `start_overlay.gd`'s own static
-## functions. The player's real saved choice is snapshotted and put back, so
-## running this check never changes the language of the developer's own build.
+## functions — against a THROWAWAY config file, never the player's real
+## `user://locale.cfg`. It used to snapshot the real file and put it back at the
+## end, which left a developer's build stuck in German whenever the check died in
+## between; redirecting the path is both shorter and safe however this run ends.
+## Every assertion below is about state these lines arranged, so the machine's own
+## saved choice cannot change the verdict either.
 func _check_locale_config() -> void:
 	var restore_locale: String = TranslationServer.get_locale()
-	var previous: Variant = null
-	var config := ConfigFile.new()
-	if config.load(StartOverlay.LOCALE_CONFIG_PATH) == OK:
-		previous = config.get_value(
-			StartOverlay.LOCALE_CONFIG_SECTION, StartOverlay.LOCALE_CONFIG_KEY, null)
+	StartOverlay.locale_config_path = LOCALE_STORE_PATH
+	DirAccess.remove_absolute(LOCALE_STORE_PATH)
 
 	StartOverlay.save_locale("de")
 	if TranslationServer.get_locale() != "de":
@@ -339,15 +344,7 @@ func _check_locale_config() -> void:
 	if TranslationServer.get_locale() != "de":
 		_fail("save_locale() accepted an unknown locale")
 
-	# Put the developer's own choice back.
-	var restore_config := ConfigFile.new()
-	if previous == null:
-		DirAccess.remove_absolute(ProjectSettings.globalize_path(
-			StartOverlay.LOCALE_CONFIG_PATH))
-	else:
-		restore_config.set_value(
-			StartOverlay.LOCALE_CONFIG_SECTION, StartOverlay.LOCALE_CONFIG_KEY, previous)
-		restore_config.save(StartOverlay.LOCALE_CONFIG_PATH)
+	DirAccess.remove_absolute(LOCALE_STORE_PATH)
 	TranslationServer.set_locale(restore_locale)
 
 
