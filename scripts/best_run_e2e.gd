@@ -29,16 +29,22 @@ extends SceneTree
 ##      which `submit()` has just written. So the local record is cleared between
 ##      the write and the read, and only a server answer can raise it again.
 ##
-## It leaves the machine's `user://best_run.cfg` exactly as it found it — see
-## `_restore_local`. `--lobby=` is read by `LobbyClient.resolve_lobby_url()`,
+## IT NEVER OPENS THE MACHINE'S `user://best_run.cfg`. `BestRunStore.config_path`
+## is pointed at `LOCAL_STORE_PATH` before the first store is built, so this runs
+## against a throwaway profile with a throwaway player id. It used to back the
+## real file up and put it back, and that was wrong twice over: every local write
+## is a monotone read-modify-write merge, so a developer's real record leaked into
+## what this measured and got POSTed to the lobby under their real id; and a run
+## that died between the backup and the restore left the real record zeroed by
+## `_clear_local_records()`. `--lobby=` is read by `LobbyClient.resolve_lobby_url()`,
 ## which `BestRunStore` goes through, so this needs no argument of its own.
 
 const TIMEOUT_SEC: float = 20.0
 const POLL_SEC: float = 0.5
 
-## The pre-run contents of the local config, restored on the way out. `null` when
-## there was no file (the fresh-machine case), which `_restore_local` deletes for.
-var _saved_cfg: Variant = null
+## The throwaway profile this run uses instead of the real one. Removed on the
+## way in as well as out, so a killed run leaves nothing behind to be inherited.
+const LOCAL_STORE_PATH: String = "user://best_run_e2e.cfg"
 
 
 func _initialize() -> void:
@@ -46,35 +52,25 @@ func _initialize() -> void:
 
 
 func _finish(code: int, message: String) -> void:
-	_restore_local()
+	DirAccess.remove_absolute(LOCAL_STORE_PATH)
 	print(message)
 	quit(code)
 
 
-func _backup_local() -> void:
-	if FileAccess.file_exists(BestRunStore.CONFIG_PATH):
-		_saved_cfg = FileAccess.get_file_as_bytes(BestRunStore.CONFIG_PATH)
-
-
-func _restore_local() -> void:
-	if _saved_cfg == null:
-		DirAccess.remove_absolute(BestRunStore.CONFIG_PATH)
-		return
-	var f := FileAccess.open(BestRunStore.CONFIG_PATH, FileAccess.WRITE)
-	if f:
-		f.store_buffer(_saved_cfg as PackedByteArray)
-		f.close()
+func _isolate_local_store() -> void:
+	BestRunStore.config_path = LOCAL_STORE_PATH
+	DirAccess.remove_absolute(LOCAL_STORE_PATH)
 
 
 func _clear_local_records() -> void:
 	"""Zero the stored records, keeping the player id — that is the whole point."""
 	var cfg := ConfigFile.new()
-	cfg.load(BestRunStore.CONFIG_PATH)
+	cfg.load(BestRunStore.config_path)
 	cfg.set_value(BestRunStore.CONFIG_SECTION, "distance", 0)
 	cfg.set_value(BestRunStore.CONFIG_SECTION, "coins", 0)
 	cfg.set_value(BestRunStore.CONFIG_PROGRESSION_SECTION, "lifetime_coins", 0)
 	cfg.set_value(BestRunStore.CONFIG_PROGRESSION_SECTION, "spent_points", 0)
-	cfg.save(BestRunStore.CONFIG_PATH)
+	cfg.save(BestRunStore.config_path)
 
 
 func _make_store() -> BestRunStore:
@@ -93,7 +89,7 @@ func _run() -> void:
 		_finish(1, "BEST_RUN FAILED: http_url() produced %s — the ws→http rewrite is broken" % lobby)
 		return
 
-	_backup_local()
+	_isolate_local_store()
 
 	var store := _make_store()
 
@@ -152,9 +148,9 @@ func _run() -> void:
 	# pre-existing record the way the old build would have left it.
 	var catch_up := target_distance + 1000
 	var cfg := ConfigFile.new()
-	cfg.load(BestRunStore.CONFIG_PATH)
+	cfg.load(BestRunStore.config_path)
 	cfg.set_value(BestRunStore.CONFIG_SECTION, "distance", catch_up)
-	cfg.save(BestRunStore.CONFIG_PATH)
+	cfg.save(BestRunStore.config_path)
 
 	var upgrader := _make_store()
 	upgrader.fetch()
