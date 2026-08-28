@@ -462,6 +462,29 @@ const SPAWN_SAFE_RADIUS: float = 25.0
 ## a 6× crocodile wedged in the doorway is a different problem from a coin.
 const TOWER_RADIUS: float = 30.0
 
+## Extra clearance (metres) every tower rejection adds on top of the candidate's
+## own declared radius.
+##
+## WHY A DECLARED RADIUS IS NOT THE WHOLE THING. The `radius` a spawner hands to
+## _biome_spot_ok is an OVERLAP footprint — how much ground the thing claims — and
+## for several builders it is deliberately smaller than the silhouette, because
+## overhanging decoration is allowed to overlap its neighbours (that is what makes
+## a forest read as a forest). A tree declares its TRUNK (0.75 * 0.71 + 0.3 =
+## 0.83 m) and then spreads a canopy TREE_CANOPY_WIDTH_MAX (3.4) wide — up to
+## 2.4 m from the trunk once yawed, so ~1.6 m past what it declared. A frozen
+## tree's bare branch (FROZEN_TREE_BRANCH_LEN 1.5) does the same, smaller.
+##
+## Threading a second "visual extent" argument through every biome caller to
+## recover 1.6 m would be a lot of machinery for a leaf; one constant, added once
+## inside tower_excludes, keeps the whole disc clear of overhang instead — and it
+## costs nothing but a slightly wider reservation.
+##
+## 2.5 m clears both known cases with room to spare. Anything built later that
+## overhangs its declared footprint by MORE than this belongs on this line.
+## (Found by codex review, 2026-08-28: run seed 1 grew a canopy 32.03 m out whose
+## leaves reached 29.81 m, i.e. 0.19 m inside the disc.)
+const TOWER_DECOR_OVERHANG: float = 2.5
+
 ## THE DRY-SITE NUDGE — step of the candidate lattice, and how many rings of it.
 ##
 ## is_river_at() ignores Y by contract (the world is flat and a river is a tint),
@@ -7944,7 +7967,9 @@ func tower_excludes(world_x: float, world_z: float, radius: float = 0.0) -> bool
 	                         world-space test in this file does).
 	@param radius: The candidate's own footprint radius, so a thing is rejected
 	               before it can REACH into the disc rather than only when its
-	               centre is in it. Callers with no meaningful radius pass none.
+	               centre is in it. Callers with no meaningful radius pass none —
+	               TOWER_DECOR_OVERHANG is added on top either way, because a
+	               declared footprint is an overlap claim and not a silhouette.
 	@return: true when the spot must not be built on.
 
 	THE SINGLE HOME of the tower-clearance rule, in the same spirit as
@@ -7956,7 +7981,8 @@ func tower_excludes(world_x: float, world_z: float, radius: float = 0.0) -> bool
 	stream must still advance or the whole world downstream of it shifts.
 	"""
 	var site := tower_site()
-	return Vector2(world_x - site.x, world_z - site.z).length() < TOWER_RADIUS + radius
+	var keep_out := TOWER_RADIUS + radius + TOWER_DECOR_OVERHANG
+	return Vector2(world_x - site.x, world_z - site.z).length() < keep_out
 
 
 # ============================================================================
