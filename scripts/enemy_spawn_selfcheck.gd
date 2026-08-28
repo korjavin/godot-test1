@@ -1714,14 +1714,16 @@ func _check_boss_dispatch(terrain_script: GDScript) -> void:
 	exactly ONE boss, so it can never ask the rule more than one question. This
 	walk asks it forty, spread over roughly twelve kilometres of road.
 
-	WHAT IT WOULD CATCH. The expectation is recomputed here from the PUBLIC biome
-	API at the station centre — never read back off the spawner — so a dispatch
-	keyed on the placed candidate instead of the station fails the moment those
-	two fall in different bands, which is exactly the case the bead's root insight
-	is about: the candidate is chosen out of BOSS_PLACE_TRIES lateral offsets by
-	testing them against the claiming chunk's obstacle layout, so it is neither
-	pure in `i` nor guaranteed to be in the same band. Dispatching on the claiming
-	CHUNK's centre fails the same way.
+	WHAT IT CATCHES, AND WHAT IT DOES NOT. The expectation is recomputed here from
+	the PUBLIC biome API at the station centre — never read back off the spawner —
+	so a dispatch keyed on the wrong point fails as soon as that point and the
+	station fall in different bands. For the CLAIMING CHUNK's centre (the
+	BIOME_SPECIES mistake, made one feature over) that is most of the time. For the
+	PLACED CANDIDATE it is measured and honest to say: almost never, because the
+	candidate sits within a few metres of its station and a band is hundreds
+	across — a mutant dispatching on it survives all eighty stations of this walk.
+	That one is held by SHAPE rather than by sampling: spawn_bosses_in_chunk
+	resolves the row above the candidate walk, before `local_pos` exists at all.
 
 	WITH BIOME_BOSS EMPTY the rule answers "crocodile" at every station, so today
 	this asserts the seam's whole acceptance: the table landed empty and no boss

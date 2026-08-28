@@ -5478,6 +5478,17 @@ func spawn_bosses_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, ob
 		if station_centre.x > x1 + pad:
 			break
 
+		# WHICH BOSS THIS STATION GETS, decided HERE — above the candidate walk,
+		# and that position in the function is the point. Dispatching on the
+		# station centre is what makes the boss KIND a pure function of `cur_i`;
+		# the walk below only decides WHERE the animal stands (or whether it fits
+		# at all), by testing BOSS_PLACE_TRIES offsets against this chunk's
+		# geometry. Compute the kind before `local_pos` exists and keying on the
+		# placed candidate — which is neither pure in `cur_i` nor guaranteed to be
+		# in the same biome band — is not a mistake that can be made by accident.
+		# Pure function calls, no RNG draw, so the stream below is untouched.
+		var boss_row: Dictionary = _boss_row_at(station_centre)
+
 		var boss: Dictionary = _boss_at(cur_i)
 		var boss_scale: float = boss.scale
 		# Clearance this boss needs, SCALED BY ITS SIZE — a 6x boss reaches ~4.2 m
@@ -5516,12 +5527,6 @@ func spawn_bosses_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, ob
 		if not placed:
 			continue
 
-		# WHICH BOSS THIS STATION GETS — dispatched on the STATION CENTRE, not on
-		# the candidate just chosen: that walk judged BOSS_PLACE_TRIES offsets
-		# against this chunk's geometry, so it is neither pure in `cur_i` nor
-		# guaranteed to be in the same band. Pure function calls, no RNG draw, so
-		# the stream above is untouched (see BIOME_BOSS).
-		var boss_row: Dictionary = _boss_row_at(station_centre)
 		var croc = boss_row["scene"].instantiate()
 		# THE NAME IS "BossCrocodile_%d" FOR EVERY SPECIES, deliberately. croc_id
 		# derives from the deterministic node name, so it is this body's
@@ -5533,14 +5538,14 @@ func spawn_bosses_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, ob
 		# chunk-parented node. Default rotation — the wander AI turns it within a
 		# second anyway, and drawing a rotation would add an RNG draw for nothing.
 		croc.position = local_pos
-		# CALL-ORDER CONTRACT: setup_as_boss BEFORE add_child, so the croc's
-		# _ready (which runs on add_child, terrain-parented) sees the boss flags
-		# and skips its random speed/size rolls in favor of the schedule.
-		# The same CALL-ORDER CONTRACT the ground spawner has, extended by one
-		# line: `species` BEFORE setup_as_boss BEFORE add_child. _ready() runs on
-		# add_child and resolves `spec` from `species` exactly once, so assigning
-		# it afterwards leaves every speed, feeler and animation a crocodile's
-		# while the field claims otherwise.
+		# CALL-ORDER CONTRACT, one line longer than it used to be: `species`
+		# BEFORE setup_as_boss BEFORE add_child. _ready() runs on add_child
+		# (terrain-parented) and it is where BOTH halves are read — it resolves
+		# `spec` from `species` exactly once, and it sees the boss flags and skips
+		# the random speed/size rolls in favour of the schedule. Assign either one
+		# after add_child and the body keeps a crocodile's spec, or takes rolls a
+		# boss must not have, with no error anywhere. This is the same contract
+		# the ground spawner's `species` assignment has, for the same reason.
 		croc.species = boss_row["species"]
 		croc.setup_as_boss(boss.scale)
 		parent_chunk.add_child(croc)
