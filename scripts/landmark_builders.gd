@@ -85,6 +85,15 @@ const LM_SLATE_BLUE := Color(0.30, 0.34, 0.45)   # Neuschwanstein's blue-grey sp
 ## <= LANDMARK_RADIUS, and it must be a true bound on the stone the builder
 ## actually emits; landmark_selfcheck.gd measures both.
 ##
+## `region` is one of exactly five words — europe / asia / africa / americas /
+## oceania — and it exists for ONE consumer: quiz_options() below, which prefers
+## distractors from the same region. It is deliberately a coarse continent word
+## and not a country, because the only question it has to answer is "would these
+## three names make a real quiz", and coarse is what makes that true. A new row
+## MUST carry one from that set; landmark_selfcheck.gd's check 6 fails a row that
+## invents a sixth word or forgets the field, because a missing region silently
+## degrades that place's quiz to whole-table distractors rather than erroring.
+##
 ## ORDER IS LOAD-BEARING ONLY IN THAT IT IS THE KIND ROLL — _landmark_at draws
 ## randi_range(0, LANDMARKS.size() - 1) into this array, so appending is safe and
 ## reordering re-rolls every landmark in every existing world (harmless: worlds
@@ -95,48 +104,56 @@ const LANDMARKS: Array = [
 		"name": "Stonehenge",
 		"fact": "A Neolithic stone circle on Salisbury Plain, England, raised around 2500 BC.",
 		"radius": 7.6,
+		"region": "europe",
 	},
 	{
 		"builder": "_landmark_moai",
 		"name": "Moai of Easter Island",
 		"fact": "Nearly 900 stone figures carved by the Rapa Nui on Easter Island, Chile, between 1250 and 1500.",
 		"radius": 6.6,
+		"region": "oceania",
 	},
 	{
 		"builder": "_landmark_giza",
 		"name": "Pyramids of Giza",
 		"fact": "Three royal tombs near Cairo, Egypt, built around 2560 BC — the last surviving Wonder of the Ancient World.",
 		"radius": 9.4,
+		"region": "africa",
 	},
 	{
 		"builder": "_landmark_golden_gate",
 		"name": "Golden Gate Bridge",
 		"fact": "A 2.7 km suspension bridge over San Francisco Bay, USA, opened in 1937 and painted International Orange.",
 		"radius": 9.4,
+		"region": "americas",
 	},
 	{
 		"builder": "_landmark_liberty",
 		"name": "Statue of Liberty",
 		"fact": "A 93 m copper statue in New York Harbor, USA — a gift from France, dedicated in 1886.",
 		"radius": 5.4,
+		"region": "americas",
 	},
 	{
 		"builder": "_landmark_plaza_mayor",
 		"name": "Plaza Mayor",
 		"fact": "The arcaded central square of Madrid, Spain, completed in 1619 and ringed by 237 balconies.",
 		"radius": 8.6,
+		"region": "europe",
 	},
 	{
 		"builder": "_landmark_eiffel",
 		"name": "Eiffel Tower",
 		"fact": "A 330 m iron tower in Paris, France, built for the 1889 World's Fair and meant to stand only 20 years.",
 		"radius": 6.2,
+		"region": "europe",
 	},
 	{
 		"builder": "_landmark_taj",
 		"name": "Taj Mahal",
 		"fact": "A white marble mausoleum in Agra, India, built by Shah Jahan for his wife Mumtaz Mahal in 1653.",
 		"radius": 8.6,
+		"region": "asia",
 	},
 	# --- WAVE 2 (appended, never inserted — see the ORDER note above). Ten more
 	# places chosen for one property only: whether a person names them from the
@@ -150,60 +167,70 @@ const LANDMARKS: Array = [
 		"name": "Colosseum",
 		"fact": "A Roman amphitheatre completed in AD 80 that seated over 50,000 spectators in the heart of Rome, Italy.",
 		"radius": 8.6,
+		"region": "europe",
 	},
 	{
 		"builder": "_landmark_big_ben",
 		"name": "Big Ben",
 		"fact": "The 96 m clock tower of the Palace of Westminster in London, England — Big Ben is properly the bell inside it.",
 		"radius": 4.4,
+		"region": "europe",
 	},
 	{
 		"builder": "_landmark_pisa",
 		"name": "Leaning Tower of Pisa",
 		"fact": "A 12th-century bell tower in Pisa, Italy that began tilting during construction because of the soft ground beneath it.",
 		"radius": 4.4,
+		"region": "europe",
 	},
 	{
 		"builder": "_landmark_sphinx",
 		"name": "Great Sphinx of Giza",
 		"fact": "A 73 m limestone lion with a human head, carved from the bedrock at Giza, Egypt around 2500 BC.",
 		"radius": 7.6,
+		"region": "africa",
 	},
 	{
 		"builder": "_landmark_redeemer",
 		"name": "Christ the Redeemer",
 		"fact": "A 30 m soapstone statue that has stood on Corcovado mountain above Rio de Janeiro, Brazil since 1931.",
 		"radius": 4.8,
+		"region": "americas",
 	},
 	{
 		"builder": "_landmark_torii",
 		"name": "Itsukushima Torii",
 		"fact": "The vermilion gate of Itsukushima Shrine in Japan, which stands in the sea and appears to float at high tide.",
 		"radius": 5.6,
+		"region": "asia",
 	},
 	{
 		"builder": "_landmark_great_wall",
 		"name": "Great Wall of China",
 		"fact": "A chain of walls and watchtowers across northern China, over 20,000 km long and built over some 2,000 years.",
 		"radius": 9.4,
+		"region": "asia",
 	},
 	{
 		"builder": "_landmark_brandenburg",
 		"name": "Brandenburg Gate",
 		"fact": "A sandstone gate in Berlin, Germany, finished in 1791 and crowned by the Quadriga — a chariot drawn by four horses.",
 		"radius": 8.4,
+		"region": "europe",
 	},
 	{
 		"builder": "_landmark_neuschwanstein",
 		"name": "Neuschwanstein Castle",
 		"fact": "A hillside castle in Bavaria, Germany, begun in 1869 for King Ludwig II and never finished in his lifetime.",
 		"radius": 8.0,
+		"region": "europe",
 	},
 	{
 		"builder": "_landmark_cologne",
 		"name": "Cologne Cathedral",
 		"fact": "A Gothic cathedral in Cologne, Germany — begun in 1248, halted for 300 years and completed only in 1880.",
 		"radius": 8.6,
+		"region": "europe",
 	},
 	# --- WAVE 3 (appended, never inserted — see the ORDER note above). Ten more,
 	# picked on the same single property: whether a person names the place from the
@@ -231,60 +258,70 @@ const LANDMARKS: Array = [
 		"name": "St Basil's Cathedral",
 		"fact": "A cathedral of nine coloured onion domes on Red Square in Moscow, Russia, completed in 1561 for Ivan the Terrible.",
 		"radius": 6.4,
+		"region": "europe",
 	},
 	{
 		"builder": "_landmark_sydney_opera",
 		"name": "Sydney Opera House",
 		"fact": "A performing-arts centre on Sydney Harbour, Australia, opened in 1973 and roofed with over a million tiles.",
 		"radius": 8.2,
+		"region": "oceania",
 	},
 	{
 		"builder": "_landmark_chichen_itza",
 		"name": "Chichén Itzá",
 		"fact": "El Castillo, a Maya step pyramid in Chichén Itzá, Mexico, whose four stairways total 365 steps — one for every day.",
 		"radius": 8.4,
+		"region": "americas",
 	},
 	{
 		"builder": "_landmark_petra",
 		"name": "Petra",
 		"fact": "Al-Khazneh, a temple facade carved into a rose-red sandstone cliff at Petra, Jordan, around the 1st century AD.",
 		"radius": 8.0,
+		"region": "asia",
 	},
 	{
 		"builder": "_landmark_rushmore",
 		"name": "Mount Rushmore",
 		"fact": "Four 18 m presidential heads carved into a granite cliff in South Dakota, USA, between 1927 and 1941.",
 		"radius": 8.6,
+		"region": "americas",
 	},
 	{
 		"builder": "_landmark_angkor_wat",
 		"name": "Angkor Wat",
 		"fact": "The largest religious monument on Earth, raised in Cambodia around 1150 and still flown on the national flag.",
 		"radius": 9.0,
+		"region": "asia",
 	},
 	{
 		"builder": "_landmark_machu_picchu",
 		"name": "Machu Picchu",
 		"fact": "An Inca city on a 2,430 m ridge in Peru, built around 1450 and unknown to the outside world until 1911.",
 		"radius": 9.0,
+		"region": "americas",
 	},
 	{
 		"builder": "_landmark_pont_du_gard",
 		"name": "Pont du Gard",
 		"fact": "A three-tier Roman aqueduct bridge over the Gardon in France, built around AD 50 to carry water 50 km to Nîmes.",
 		"radius": 8.8,
+		"region": "europe",
 	},
 	{
 		"builder": "_landmark_kinderdijk",
 		"name": "Kinderdijk Windmills",
 		"fact": "Nineteen windmills built around 1740 to drain the polders of Kinderdijk, the Netherlands — a UNESCO World Heritage site.",
 		"radius": 8.2,
+		"region": "europe",
 	},
 	{
 		"builder": "_landmark_pharos",
 		"name": "Lighthouse of Alexandria",
 		"fact": "A 100 m lighthouse on the island of Pharos at Alexandria, Egypt — a Wonder of the Ancient World, toppled by earthquakes.",
 		"radius": 6.6,
+		"region": "africa",
 	},
 	# --- WAVE 4, THE GERMAN PACK (appended, never inserted — see the ORDER note
 	# above). Ten places from one country, which no earlier wave did and which is
@@ -322,60 +359,70 @@ const LANDMARKS: Array = [
 		"name": "Reichstag Building",
 		"fact": "The seat of the German parliament in Berlin, opened in 1894 and crowned in 1999 with a glass dome the public may climb.",
 		"radius": 8.4,
+		"region": "europe",
 	},
 	{
 		"builder": "_landmark_fernsehturm",
 		"name": "Berlin TV Tower",
 		"fact": "At 368 m the tallest structure in Germany, raised in East Berlin in 1969 — sunlight on its sphere draws a cross the state could never remove.",
 		"radius": 6.4,
+		"region": "europe",
 	},
 	{
 		"builder": "_landmark_porta_nigra",
 		"name": "Porta Nigra",
 		"fact": "A Roman city gate in Trier from around AD 170, built of sandstone blocks set without mortar — the largest still standing north of the Alps.",
 		"radius": 8.2,
+		"region": "europe",
 	},
 	{
 		"builder": "_landmark_holstentor",
 		"name": "Holsten Gate",
 		"fact": "The western gate of Lübeck, finished in 1478 in northern brick Gothic — its two round towers lean because the marshy ground gave way.",
 		"radius": 7.8,
+		"region": "europe",
 	},
 	{
 		"builder": "_landmark_frauenkirche",
 		"name": "Dresden Frauenkirche",
 		"fact": "A Baroque church of 1743 whose great stone dome fell in the firestorm of 1945 — rebuilt from its own rubble and reconsecrated in 2005.",
 		"radius": 7.2,
+		"region": "europe",
 	},
 	{
 		"builder": "_landmark_elbphilharmonie",
 		"name": "Elbphilharmonie",
 		"fact": "A concert hall opened in Hamburg in 2017 — a wave of glass set on top of a brick harbour warehouse from 1963.",
 		"radius": 7.4,
+		"region": "europe",
 	},
 	{
 		"builder": "_landmark_zugspitze",
 		"name": "Zugspitze Summit Cross",
 		"fact": "A gilded cross on Germany's highest peak, 2,962 m up in the Alps — first raised in 1851 after being carried up in pieces.",
 		"radius": 6.0,
+		"region": "europe",
 	},
 	{
 		"builder": "_landmark_wartburg",
 		"name": "Wartburg Castle",
 		"fact": "A castle above Eisenach founded in 1067, where Martin Luther hid as 'Junker Jörg' and translated the New Testament in eleven weeks.",
 		"radius": 7.2,
+		"region": "europe",
 	},
 	{
 		"builder": "_landmark_ulm_minster",
 		"name": "Ulm Minster",
 		"fact": "The tallest church steeple in the world at 161.5 m, begun in Ulm in 1377 and finished only in 1890 — 768 steps to the viewing gallery.",
 		"radius": 8.0,
+		"region": "europe",
 	},
 	{
 		"builder": "_landmark_bremen_musicians",
 		"name": "Bremen Town Musicians",
 		"fact": "A donkey, dog, cat and rooster from the Grimm tale of 1819, cast in bronze at Bremen in 1953 — grasp the donkey's forelegs for luck.",
 		"radius": 4.2,
+		"region": "europe",
 	},
 	# --- WAVE 5 (appended, never inserted — see the ORDER note above). This is bead
 	# asd.4, the wave the epic's ~48 target was counted for; the code's wave numbers
@@ -410,62 +457,140 @@ const LANDMARKS: Array = [
 		"name": "Parthenon",
 		"fact": "A marble temple to Athena on the Acropolis of Athens, Greece, finished in 438 BC — its columns swell slightly so that they look straight.",
 		"radius": 8.8,
+		"region": "europe",
 	},
 	{
 		"builder": "_landmark_sagrada",
 		"name": "Sagrada Família",
 		"fact": "A basilica in Barcelona, Spain, begun by Antoni Gaudí in 1882 and still unfinished — its eighteen planned towers rise only as fast as the donations come in.",
 		"radius": 7.6,
+		"region": "europe",
 	},
 	{
 		"builder": "_landmark_tower_bridge",
 		"name": "Tower Bridge",
 		"fact": "A bascule bridge over the Thames in London, England, opened in 1894 — its two road halves still lift about 800 times a year.",
 		"radius": 8.8,
+		"region": "europe",
 	},
 	{
 		"builder": "_landmark_arc_de_triomphe",
 		"name": "Arc de Triomphe",
 		"fact": "A 50 m triumphal arch in Paris, France, ordered by Napoleon in 1806 — twelve avenues radiate from the circle around it.",
 		"radius": 7.2,
+		"region": "europe",
 	},
 	{
 		"builder": "_landmark_atomium",
 		"name": "Atomium",
 		"fact": "Nine steel spheres in Brussels, Belgium — one cell of an iron crystal magnified 165 billion times, built for the 1958 World's Fair.",
 		"radius": 6.6,
+		"region": "europe",
 	},
 	{
 		"builder": "_landmark_hollywood",
 		"name": "Hollywood Sign",
 		"fact": "Nine 14 m letters above Los Angeles, USA, put up in 1923 to advertise a housing estate — they read HOLLYWOODLAND until 1949.",
 		"radius": 8.8,
+		"region": "americas",
 	},
 	{
 		"builder": "_landmark_space_needle",
 		"name": "Space Needle",
 		"fact": "A 184 m observation tower raised for the 1962 World's Fair in Seattle, USA — its saucer was first sketched on a coffee-house napkin.",
 		"radius": 6.2,
+		"region": "americas",
 	},
 	{
 		"builder": "_landmark_osaka_castle",
 		"name": "Osaka Castle",
 		"fact": "A Japanese castle first raised in 1583 on a base of a hundred thousand stone blocks — the golden fish on its roofs are there to ward off fire.",
 		"radius": 8.8,
+		"region": "asia",
 	},
 	{
 		"builder": "_landmark_stave_church",
 		"name": "Borgund Stave Church",
 		"fact": "A church of tarred pine raised in Norway around 1180 — the dragon heads on its gables guard a Christian roof in Viking style.",
 		"radius": 6.4,
+		"region": "europe",
 	},
 	{
 		"builder": "_landmark_trevi",
 		"name": "Trevi Fountain",
 		"fact": "A Baroque fountain finished in Rome, Italy in 1762 and fed by an aqueduct of 19 BC — some 3,000 euros in coins are thrown into it every day.",
 		"radius": 8.6,
+		"region": "europe",
 	},
 ]
+
+# ----------------------------------------------------------------------------
+# THE QUIZ PICKER — "which landmark is this?", decided without asking anyone
+# ----------------------------------------------------------------------------
+
+## Fixed salt for the quiz's hash stream, in the TREASURE_SALT / ARTIFACT_SALT /
+## CAMP_SALT family: an arbitrary fixed constant that gives the option roll ITS
+## OWN hash stream so it can never correlate with or perturb another site. In
+## particular it draws NOTHING from the chunk RNG that placed the landmark — one
+## extra draw there slides every landmark in the world (CLAUDE.md, determinism).
+const QUIZ_SALT: int = 0x9012
+
+
+static func quiz_options(kind: int, landmark_id: int, run_seed: int) -> Array[int]:
+	"""
+	The three registry indices a "which landmark is this?" card offers, with
+	`kind` (the right answer) among them, in the order they are shown.
+
+	PURE, so every peer in a room sees the same three options for the same
+	landmark with no packet: run_seed is already shared, landmark_id is already a
+	pure function of where the marker stands (coin.gd's id_at), and the whole roll
+	is one private RandomNumberGenerator seeded from the two. That is a free
+	multiplayer feature and the reason this is a static function and not toast
+	state — it lives here because this is where the registry lives, the same way
+	the toast preloads coin.gd purely for its static id_at.
+
+	DISTRACTORS PREFER THE SAME REGION. "Brandenburg Gate / Plaza Mayor /
+	Colosseum" is a quiz; "Brandenburg Gate / Moai / Sydney Opera House" is a
+	giveaway — a player who cannot name the gate can still name the only European
+	thing in the list. A region with fewer than two other rows (oceania, today)
+	falls back to the whole table, because three DISTINCT options matter more than
+	the flavour of the two wrong ones.
+	"""
+	var options: Array[int] = []
+	if LANDMARKS.size() < 3:
+		return options
+	# The kind arrives from a marker meta, i.e. from outside this file; a garbage
+	# index would otherwise index the registry out of bounds below.
+	kind = clampi(kind, 0, LANDMARKS.size() - 1)
+
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(Vector3i(landmark_id, QUIZ_SALT, run_seed))
+
+	var answer: Dictionary = LANDMARKS[kind]
+	var region: String = String(answer.get("region", ""))
+	var pool: Array[int] = []
+	for i: int in LANDMARKS.size():
+		var row: Dictionary = LANDMARKS[i]
+		if i != kind and String(row.get("region", "")) == region:
+			pool.append(i)
+	if pool.size() < 2:
+		pool.clear()
+		for i: int in LANDMARKS.size():
+			if i != kind:
+				pool.append(i)
+
+	# Drawn WITHOUT replacement (pop_at, not a re-roll loop) so two distractors can
+	# never collide and the number of draws is fixed — a reject-and-retry loop
+	# would consume a seed-dependent number of draws, which is the kind of thing
+	# that makes a "deterministic" stream stop being reproducible after a retune.
+	for _n: int in 2:
+		options.append(pool.pop_at(rng.randi_range(0, pool.size() - 1)))
+	# The correct answer's SLOT, from the same stream AFTER the distractors, so
+	# adding a region row cannot change where the answer sits for an unrelated
+	# place. Without this the answer would always be shown third.
+	options.insert(rng.randi_range(0, 2), kind)
+	return options
+
 
 # ----------------------------------------------------------------------------
 # THE BUILDERS (one per registry entry, in registry order)
