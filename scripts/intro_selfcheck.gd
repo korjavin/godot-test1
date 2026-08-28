@@ -47,9 +47,42 @@ extends SceneTree
 ##     emits a broken stylesheet — in the browser, on the web build, where nobody
 ##     is looking. Cheap to assert, so it is asserted.
 ##
+##  5. **THE WORLD NEVER RUNS BEHIND THE FILM.** The web branch of
+##     `start_overlay._process()` — the one that holds the pause while the film
+##     plays — was asserted by nothing at all, and it shipped godot-test1-4x4: the
+##     player watched 47 s of film with a live world and a live crocodile behind
+##     it, and lost a life to it. Off-web `IntroVideo.is_finished()` is a constant
+##     `true`, so that branch cannot be driven for a single frame without a seam;
+##     `start_overlay` therefore routes its two browser calls through
+##     `_film_finished()` / `_film_teardown()` and `FilmOverlay` below overrides
+##     them. What is asserted is the invariant itself, in both directions: while
+##     the film is up the tree STAYS paused, and the step that finally unpauses it
+##     is the same step that tears the element down — teardown first.
+##
 ## Deliberately NOT localized (a debug surface, per CLAUDE.md).
 
 const StartOverlay := preload("res://scripts/start_overlay.gd")
+
+
+## The real start overlay with the film's two browser calls stubbed, so check 5
+## can hold the film "playing" for as many frames as it likes on a headless build
+## that has no DOM. Nothing else is overridden — the pause, the dismissal and the
+## ordering under test are all the shipping code's.
+class FilmOverlay extends StartOverlay:
+	## What `_film_finished()` answers. The check flips it to end the film.
+	var film_over: bool = false
+
+	## How many times the element was torn down, and whether the tree was still
+	## paused when it happened — which is the ordering the invariant is made of.
+	var teardowns: int = 0
+	var teardown_saw_paused: bool = false
+
+	func _film_finished() -> bool:
+		return film_over
+
+	func _film_teardown() -> void:
+		teardowns += 1
+		teardown_saw_paused = get_tree().paused
 
 var _failures: Array[String] = []
 
@@ -69,6 +102,7 @@ func _run() -> void:
 	_check_generated_js()
 	_check_play_solo_desktop_path()
 	_check_multiplayer_never_plays()
+	_check_world_stays_paused_behind_the_film()
 	_finish()
 
 
@@ -124,6 +158,14 @@ func _check_web_gate() -> void:
 		_fail("STALL_TIMEOUT_SEC (%f) must exceed SKIP_HOLD_SEC (%f) — the hang " \
 			% [IntroVideo.STALL_TIMEOUT_SEC, IntroVideo.SKIP_HOLD_SEC] \
 			+ "backstop firing before a deliberate skip can complete is a bug")
+	# The cold fetch of a 21.7 MB film from a standing start is not the same
+	# measurement as a gap between two frames of a film already playing, and giving
+	# them the same budget is what tore the film down mid-fetch (godot-test1-4x4).
+	if IntroVideo.START_TIMEOUT_SEC <= IntroVideo.STALL_TIMEOUT_SEC:
+		_fail("START_TIMEOUT_SEC (%f) must exceed STALL_TIMEOUT_SEC (%f) — a slow " \
+			% [IntroVideo.START_TIMEOUT_SEC, IntroVideo.STALL_TIMEOUT_SEC] \
+			+ "first buffer would be treated as a dead stream and the film killed " \
+			+ "before its first frame")
 
 	# `discard()` is the MULTIPLAYER path's teardown. Off-web it must be as inert
 	# as the rest — it is called unconditionally from `_on_multiplayer_pressed()`.
@@ -157,9 +199,12 @@ func _check_generated_js() -> void:
 	if not start_js.contains("s.video.muted = true"):
 		_fail("_start_js() lost its muted retry — a browser that refuses audible " \
 			+ "autoplay would leave the player on a silent black rectangle")
-	if not start_js.contains("s.armWatchdog()"):
-		_fail("_start_js() no longer arms the stall watchdog — a stream that never " \
-			+ "plays would hang the start menu forever")
+	# Armed WITH THE FIRST-FRAME BUDGET, not bare: a bare call takes the rolling
+	# default, which is the mid-film gap and far too short for a cold fetch.
+	if not start_js.contains("s.armWatchdog(%d)" % int(IntroVideo.START_TIMEOUT_SEC * 1000.0)):
+		_fail("_start_js() no longer arms the stall watchdog with START_TIMEOUT_SEC " \
+			+ "— a stream that never plays would hang the start menu forever, and a " \
+			+ "slow one would be killed before its first frame")
 
 	# The watchdog has to ROLL. A start-only timeout looks identical in a passing
 	# build and hangs the game on any mid-film stall, which fires no `ended`, no
@@ -255,9 +300,7 @@ func _check_play_solo_desktop_path() -> void:
 ## assert the split, because moving the hook into `_dismiss()` is the obvious
 ## "simplification" and it is wrong.
 func _check_multiplayer_never_plays() -> void:
-	var overlay: Control = _make_overlay()
-	if overlay == null:
-		return
+	var overlay := _make_film_overlay()
 
 	overlay._on_multiplayer_pressed()
 
@@ -266,6 +309,82 @@ func _check_multiplayer_never_plays() -> void:
 			+ "game and must never play it")
 	if not overlay._dismissed:
 		_fail("MULTIPLAYER no longer dismisses the start overlay")
+	# It must also THROW THE PRELOADED FILM AWAY: this press opens a panel, so the
+	# film is never coming and a still-buffering 20 MB source has no business
+	# outliving the press.
+	if overlay.teardowns != 1:
+		_fail("MULTIPLAYER left the preloaded film's element alive (%d teardowns) " \
+			% overlay.teardowns + "— a 20 MB source buffers on into the session")
+
+	overlay.queue_free()
+	paused = false
+
+
+# ============================================================================
+# 5. THE WORLD NEVER RUNS BEHIND THE FILM
+# ============================================================================
+
+## The bead this check exists for: on desktop web the player watched the intro
+## with the game live behind it and was eaten during it. Every candidate cause
+## reduces to the same shape — something decided the film was over while its
+## element was still on screen, and `_dismiss()` handed back the pause and the
+## mouse under a video nobody had taken down.
+##
+## So the assertion is the invariant, not the cause: while `_intro_playing` is
+## latched the tree stays PAUSED however many frames pass, and the one step that
+## releases the pause is the same step that dismisses the overlay and tears the
+## element down — in that order. A fix that only patched the stall watchdog would
+## pass every other check in this file and fail this one.
+func _check_world_stays_paused_behind_the_film() -> void:
+	var overlay := _make_film_overlay()
+
+	# Enter the web branch by hand. `IntroVideo.start()` cannot be made to answer
+	# true off-web (check 1 asserts it must not), and this is exactly the state it
+	# would have left behind: film up, card hidden, node still processing.
+	overlay._intro_playing = true
+
+	# NEGATIVE CONTROL, as in check 2: without it "still paused during the film"
+	# is also true of an overlay that never paused anything.
+	if not paused:
+		_fail("the start overlay did not pause the tree in _ready() — every " \
+			+ "'still paused during the film' assertion below would pass vacuously")
+
+	for frame: int in 3:
+		overlay._process(1.0 / 60.0)
+		if not paused:
+			_fail("the tree unpaused on frame %d with the film still on screen — " \
+				% frame + "the world runs, and the crocodile behind the video is " \
+				+ "chasing a player who cannot see it (godot-test1-4x4)")
+			break
+		if overlay._dismissed:
+			_fail("the start overlay dismissed itself on frame %d while the film " \
+				% frame + "was still playing — it hands back the mouse and the pause")
+			break
+		if overlay.teardowns != 0:
+			_fail("the film's element was torn down on frame %d while it was still " \
+				% frame + "playing")
+			break
+
+	# The film ends (naturally, by a skip, or by any of the fail-open answers —
+	# from here they are indistinguishable, which is the point).
+	overlay.film_over = true
+	overlay._process(1.0 / 60.0)
+
+	if overlay._intro_playing:
+		_fail("the film reported finished and _intro_playing stayed latched — the " \
+			+ "overlay would hold the pause forever and the game never starts")
+	if not overlay._dismissed:
+		_fail("the film finished without dismissing the start overlay")
+	if paused:
+		_fail("the film finished and the tree is still paused — the game never " \
+			+ "starts, which is the one thing the film may never cause")
+	if overlay.teardowns != 1:
+		_fail("the film finished and its element was torn down %d times — exactly " \
+			% overlay.teardowns + "one teardown must happen in the step that unpauses")
+	elif not overlay.teardown_saw_paused:
+		_fail("the film's element was torn down AFTER the pause was released — for " \
+			+ "that window the world was running behind a video still covering the " \
+			+ "canvas, which is the bug itself")
 
 	overlay.queue_free()
 	paused = false
@@ -288,4 +407,14 @@ func _make_overlay() -> Control:
 			+ "passes vacuously")
 		overlay.queue_free()
 		return null
+	return overlay
+
+
+## The same overlay with the film's browser calls stubbed — see `FilmOverlay`.
+## It needs no attach guard: this is a typed instance of a class that `extends`
+## the preloaded script, so if `start_overlay.gd` failed to load (the cold-clone
+## trap above) this whole file fails to parse instead of passing vacuously.
+func _make_film_overlay() -> FilmOverlay:
+	var overlay := FilmOverlay.new()
+	root.add_child(overlay)
 	return overlay

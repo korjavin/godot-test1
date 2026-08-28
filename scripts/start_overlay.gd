@@ -160,7 +160,7 @@ var _paused_by_us: bool = false
 
 ## True while the web intro film is on screen. This is NOT dismissal: the node
 ## still holds the pause and the free cursor, and the card is merely hidden behind
-## the video — `_process` polls `IntroVideo.is_finished()` and runs the ordinary
+## the video — `_process` polls `_film_finished()` and runs the ordinary
 ## `_dismiss()` when the film ends or is skipped, so mouse capture and the audio
 ## unlock still happen exactly once and exactly where they always did. Never true
 ## off-web: `IntroVideo.start()` answers false there without touching
@@ -222,8 +222,12 @@ func _process(_delta: float) -> void:
 	# off-web `is_finished()` is a constant true.
 	if _intro_playing:
 		_apply_pause(true)
-		if IntroVideo.is_finished():
+		if _film_finished():
 			_intro_playing = false
+			# `_dismiss()` tears the film's element down before it releases the
+			# pause — see the invariant note there. This branch therefore does not
+			# have to trust the ANSWER: right or wrong, the element is gone in the
+			# same step the world starts running.
 			_dismiss()
 		return
 
@@ -248,6 +252,23 @@ func _process(_delta: float) -> void:
 	# overlay in particular can never be the blocker here — it is gated on
 	# `mobile_input.paused_by_driver`, which is false while WE own the pause.
 	_apply_pause(true)
+
+
+## The film's two browser calls, each behind a one-line wrapper.
+##
+## They exist so `intro_selfcheck.gd` can drive the WEB branch of `_process()`
+## above, which is the branch that shipped a bug nothing asserted: a headless
+## Godot is off-web, where `IntroVideo.is_finished()` is a constant `true`, so
+## without a seam the film cannot be held "still playing" for even one frame and
+## "the world stays paused while the film is up" is untestable. The check's
+## subclass overrides these two and nothing else does — every caller in this file
+## goes through them.
+func _film_finished() -> bool:
+	return IntroVideo.is_finished()
+
+
+func _film_teardown() -> void:
+	IntroVideo.discard()
 
 
 ## True while `touch_controls.gd` has one of its own full-rect overlays up.
@@ -497,10 +518,12 @@ func _on_play_solo_pressed() -> void:
 
 
 func _on_multiplayer_pressed() -> void:
-	# Throw the preloaded intro film away: this press opens a panel rather than
-	# starting a game, so the film is never coming and a still-buffering 20 MB
-	# source has no business surviving into the multiplayer session.
-	IntroVideo.discard()
+	# The preloaded film is thrown away by `_dismiss()` below — this press opens a
+	# panel rather than starting a game, so the film is never coming and a
+	# still-buffering 20 MB source has no business surviving into the multiplayer
+	# session. That teardown used to be an explicit call right here; it now lives
+	# in `_dismiss()`, where EVERY exit from this screen passes it.
+	#
 	# NOT capturing the mouse: the panel is about to open and wants the cursor.
 	# On web `Input.set_mouse_mode(CAPTURED)` only REQUESTS pointer lock — the
 	# browser grants it on a later task — so `mp_ui._apply_pause()`'s
@@ -529,6 +552,25 @@ func _dismiss(capture_mouse: bool = true) -> void:
 	visible = false
 	set_process(false)
 	set_process_unhandled_input(false)
+
+	# THE INVARIANT: the world must never run while the film's element is on
+	# screen. This is the single place the pause is handed back, so it is the
+	# single place the film has to be taken down, and the two must happen in this
+	# order and in the same step. Every ending routes through here — the film
+	# ending or being skipped, MULTIPLAYER's "never coming", and above all a
+	# `_film_finished()` that answered true for a reason the browser could not
+	# report.
+	#
+	# `IntroVideo.is_finished()` is deliberately FAIL-OPEN (its header: "the only
+	# thing worse than losing the intro is not being able to start the game"), and
+	# that is right — a dead CDN must never block play. But before this line the
+	# generosity cost a life instead of a film: a bogus "finished" released the
+	# pause and captured the mouse while the <video> still covered the canvas, so
+	# the player watched 47 s of film with a live world and a live crocodile behind
+	# it. Tearing down here rather than trusting the answer is what makes fail-open
+	# safe DURING playback too — a wrong answer can now only ever cost the film.
+	# Idempotent and a no-op off-web, so the desktop path is unchanged.
+	_film_teardown()
 	_apply_pause(false)
 
 	# A button press is a real user gesture, which is exactly what browsers
