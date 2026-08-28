@@ -19,14 +19,23 @@ extends Control
 ##     answer can matter at all. A wrong answer still reveals the name and the
 ##     fact — the education is not the prize, it is the point — it just does not
 ##     pay.
-##   * WHY IT RUNS LIVE AND PAUSES NOTHING: this is a HUD toast, not a panel.
-##     Stopping the world at every landmark would break the runner's flow and, in
-##     a room, stall the local peer while everyone else keeps moving. The landmark
-##     footprint is already a crocodile-free pocket by construction, and 1/2/3
-##     collide with no movement key, so you answer while walking. The price is the
-##     one guard in `_unhandled_input`: while the tree IS paused (skill tree,
-##     pause, MP panel) the digits must do nothing, or a player closing a panel
-##     with the number row would answer blind.
+##   * WHY IT PAUSES THE WORLD WHILE THE QUESTION IS UP — and why it used not to.
+##     OWNER RULING, 2026-08-28, verbatim: "when quizz shown, game should be
+##     paused, as player need time to read/answer, after this game unpauses
+##     automatically." This card was built to run live and the argument for that
+##     was real: it is a HUD toast, not a panel; the landmark footprint is already
+##     a crocodile-free pocket by construction, and 1/2/3 collide with no movement
+##     key, so you CAN answer while walking. What the ruling settles is that being
+##     ABLE to answer while running is not the same as having time to read three
+##     place names — a question you guess at is the opposite of the point of
+##     having one. So a pending question now takes `get_tree().paused` and its
+##     resolution (a digit, a tap, or QUIZ_TIMEOUT) gives it straight back.
+##     The two things the old argument was right about survive the reversal
+##     intact, and both live in the PAUSE banner below `_answer`: the MULTIPLAYER
+##     one — `get_tree().paused` is local and the simulation is not, so in a room
+##     the pause is skipped outright rather than inflicted on three other people —
+##     and the INPUT one, now sharper than before: the digits must answer under
+##     OUR pause and stay dead under anyone else's.
 ##   * WHY "ONCE PER RUN" IS FREE: `_visited` is marked at ARRIVAL, exactly as the
 ##     treasure always marked it, so walking away from an unanswered question and
 ##     coming back shows the plain card. There is no second latch and no way to
@@ -41,9 +50,12 @@ extends Control
 ##     the raw registry name, never one composed "1. Stonehenge" string — see the
 ##     localization rule below, which is the whole reason for the split.
 ##
-## ponytail: a player who walks away from a pending question burns the remaining
+## ponytail: IN A ROOM, where the pause is deliberately skipped, a player who
+## walks away from a pending question burns the remaining
 ## QUIZ_TIMEOUT seconds of card before the toast is free to announce anything
-## else — up to 12 s of screen spent on a question nobody is reading. Cancelling
+## else — up to 12 s of screen spent on a question nobody is reading. Solo, the
+## pause makes walking away impossible, so this is now a multiplayer-only
+## ceiling rather than the general case it was written for. Cancelling
 ## on departure was the alternative and is worse (a free refusal), and a shorter
 ## timeout punishes the player who is genuinely thinking. Upgrade path, if it ever
 ## reads as dead card: resolve as timeout the moment the player passes radius +
@@ -241,6 +253,17 @@ const COIN_SCRIPT := preload("res://scripts/coin.gd")
 ## above TOAST_DURATION on purpose: the plain card is a thing you read, this one
 ## is a thing you answer, and 12 s is long enough to read three names while still
 ## running from something.
+##
+## IT IS NOW ALSO THE SOFTLOCK BACKSTOP, and that is the more important of its two
+## jobs. With the world paused for the card, "the player walked out of range" is no
+## longer even a way for a question to end (solo, the player cannot walk anywhere),
+## so this is the ONLY thing that guarantees the pause lifts for someone who never
+## presses a key — AFK, or a controller the number row is not reaching. It is
+## deliberately NOT lengthened for the paused reader: 12 s frozen in front of three
+## names, with nothing chasing you and nothing to react to, is already more
+## generous than the running case it was sized for. Whatever else is retuned here
+## it must stay finite, and `_update_quiz` must stay wired into `_process` — see
+## the PAUSE banner for why this node keeps processing while the tree does not.
 const QUIZ_TIMEOUT: float = 12.0
 
 ## How many options a card offers. Not a tunable — `LandmarkBuilders.quiz_options`
@@ -355,6 +378,19 @@ var _quiz_id: int = 0
 var _quiz_name: String = ""
 var _quiz_fact: String = ""
 var _quiz_timer: float = 0.0
+
+## Whether the tree's pause is OURS — the shared guard every pauser in this
+## project carries (pause_controller.gd, mp_ui.gd, skill_tree_ui.gd,
+## start_overlay.gd, mobile_input.gd), for the shared reason: only ever release a
+## pause you took. It is read in two places, and the second is the one that is
+## easy to miss — `_unhandled_input`, where it is what tells OUR pause (digits
+## must work: being frozen to answer is the whole point) from anybody else's
+## (digits must not, or closing a panel with the number row answers blind).
+var _paused_by_us: bool = false
+
+## Whether the app has lost focus (tab switched, phone backgrounded) since it last
+## had it. Only ever read by `_update_quiz`; see `_notification` for why it exists.
+var _unfocused: bool = false
 
 ## Burst state, the treasure_chest.gd shape: how many single-coin awards are
 ## still owed, the gap between them, and the countdown to the next one.
@@ -683,6 +719,10 @@ func _start_quiz(marker: Node3D) -> void:
 	_quiz_pending = true
 	_hold = TOAST_DURATION
 	visible = true
+	# LAST, and deliberately after `_quiz_pending` is set: `_take_pause` flips this
+	# node to PROCESS_MODE_ALWAYS, and everything that then keeps running while the
+	# rest of the world is frozen reads that flag first.
+	_take_pause()
 
 
 func _answer(slot: int) -> void:
@@ -707,6 +747,12 @@ func _answer(slot: int) -> void:
 	if not _quiz_pending:
 		return
 	_quiz_pending = false
+	# THE WORLD STARTS AGAIN HERE. All three resolutions — a digit, a tap on an
+	# option Button, and the QUIZ_TIMEOUT expiry — arrive at this one function, so
+	# this one line is the whole "and after this game unpauses automatically" half
+	# of the ruling. The reveal that follows fades on the ordinary live schedule,
+	# exactly like the plain card: what was paused was the QUESTION, not the toast.
+	_release_pause()
 	_hide_options()
 
 	name_label.text = _quiz_name
@@ -742,6 +788,145 @@ func _answer(slot: int) -> void:
 	visible = true
 
 
+# ----------------------------------------------------------------------------
+# THE PAUSE — taken by a pending question, given back by its resolution
+# ----------------------------------------------------------------------------
+#
+# WHY is the owner ruling at the top of the file. This is the HOW, and it is four
+# decisions.
+#
+# 1. `_paused_by_us` IS THE SHARED GUARD, not a local convenience.
+#    pause_controller.gd, mp_ui.gd, skill_tree_ui.gd, start_overlay.gd and
+#    mobile_input.gd all take `get_tree().paused` and all carry this same flag for
+#    the same reason: a pauser may only ever release a pause IT took. A card that
+#    resolved while the skill tree was open and unpaused unconditionally would
+#    hand the player a running world behind a panel they are still reading.
+#
+# 2. THE NODE PROCESSES WHILE — AND ONLY WHILE — THE PAUSE IS OURS, and this is
+#    the trap the whole change turns on. The quiz clock is `_update_quiz`, driven
+#    from `_process`, so under this HUD's default (pausable) process_mode the
+#    timeout would freeze along with the tree it had just frozen: QUIZ_TIMEOUT
+#    never fires, nothing else can lift the pause, and the run is over. Hence
+#    PROCESS_MODE_ALWAYS — set HERE rather than in `_ready` or scenes/main.tscn so
+#    it lasts exactly as long as our pause and not one frame longer. That
+#    narrowness is what keeps every OTHER pause byte-identical to before this
+#    change: under the skill tree, the pause screen or the MP panel this node is
+#    pausable again, so it does not scan, does not pay a burst and is not offered
+#    input — precisely as it behaved when it paused nothing at all.
+#
+# 3. IN A ROOM WE DO NOT PAUSE AT ALL. `get_tree().paused` is LOCAL and the
+#    simulation is not: crocodiles are master-simulated, so a paused master
+#    freezes the world for every peer in the room, and a paused non-master still
+#    strands a teammate the others can see standing still. Twelve seconds of that
+#    inflicted on three other people, so that one of them can read at leisure, is
+#    a worse outcome than the problem being solved — so in a room the card stays
+#    exactly what it was before this change (live, answerable while running, and
+#    the pocket round a landmark is crocodile-free anyway), and the ruling applies
+#    to solo play, where it costs nobody anything. `is_busy()` and not
+#    `is_online()`, the same test build_version.gd makes for the same reason: a
+#    join spends seconds in CONNECTING before it is IN_ROOM, and a freeze landing
+#    in that window is just as visible to the peers already there.
+#
+# 4. THE MOUSE IS NOT HANDED BACK. pause_controller and mp_ui release a captured
+#    cursor when they pause, because their buttons have to be clickable; this card
+#    does not, because 1/2/3 answer it and a capture/release round trip at every
+#    landmark would yank the camera twice for a card most players answer with a
+#    digit. On a touchscreen nothing is captured and the option Buttons are
+#    tappable as they stand.
+#
+# ponytail: THE CEILING THAT LEAVES, stated plainly — this project's pause
+# discipline is FIRST-TAKER-OWNS, not a refcount, so an overlay that opens OVER an
+# existing pause takes no ownership of it and is left behind when the owner
+# releases. `help_overlay.gd` is PROCESS_MODE_ALWAYS and deliberately opens over a
+# paused game (reading the keymap while paused is the point of it), so `?` pressed
+# during a question, followed by our timeout firing, leaves the world running
+# behind the open help card. That is not new and not ours: the identical thing
+# already happens on master by opening help over the P pause and then pressing P
+# again — what IS new is that our release can arrive on a timer, with the player
+# doing nothing. The unattended half of that is closed below (the clock does not
+# run while the app is unfocused, which is the case where nobody is watching);
+# the `?` half is left, because the honest fix is a shared pause REFCOUNT across
+# pause_controller / mp_ui / skill_tree_ui / start_overlay / mobile_input /
+# help_overlay and this file, which is a change to six other scripts' contracts
+# and belongs to none of them alone. Upgrade path: exactly that refcount, with
+# `_paused_by_us` becoming "we hold a claim" instead of "we hold THE claim".
+
+
+func _notification(what: int) -> void:
+	# WHY THE QUIZ CLOCK STOPS WITH THE WINDOW. `mobile_input.pause_game()` is
+	# idempotent by early-returning on an already-paused tree, so a focus loss
+	# during a question sees OUR pause, takes no ownership, and never raises the
+	# "tap to resume" overlay. Left alone, QUIZ_TIMEOUT would then fire in a
+	# backgrounded tab, unpause, and hand the player back a running world with a
+	# crocodile in it — the one variant of the ceiling above where nobody is
+	# watching it happen. Freezing the clock instead means a backgrounded question
+	# is simply still there, still frozen, when the player comes back. The hold is
+	# gated on `_paused_by_us` in `_update_quiz`, so it protects a frozen world and
+	# never a room, where nothing was frozen in the first place.
+	#
+	# Deliberately NOT resumed on FOCUS_IN alone: this mirrors the resume the
+	# player would have got, and there is nothing to recalibrate, so the flag just
+	# flips back and the countdown continues where it stopped.
+	if what == NOTIFICATION_APPLICATION_FOCUS_OUT:
+		_unfocused = true
+	elif what == NOTIFICATION_APPLICATION_FOCUS_IN:
+		_unfocused = false
+
+func _take_pause() -> void:
+	"""
+	Freeze the world for a question that has just been asked, or decline for one of
+	the three reasons above it would be wrong to.
+	"""
+	var tree := get_tree()
+	# Somebody else's pause is already up. There is nothing to take, and nothing we
+	# would be allowed to give back — leave it alone entirely. (Unreachable while
+	# this node is pausable, since `_scan` could not have run; it is here because
+	# that is a property of decision 2 above, not of this function.)
+	if tree.paused:
+		return
+	# A ROOM: the pause is local and the simulation is not — see decision 3.
+	var mp: Node = tree.get_first_node_in_group("mp")
+	if mp != null and mp.has_method("is_busy") and bool(mp.is_busy()):
+		return
+	# Never over the game-over screen: the same rule, and the same reason, that
+	# pause_controller._toggle_pause, mp_ui._apply_pause and mobile_input all
+	# carry — GameOverUI is PAUSABLE, so a pause there kills its Play Again button
+	# and its ui_accept handler. The card still asks; it just freezes nothing.
+	# `"x" in node`, not `node.get("x")`: get() answers null for a property that
+	# does not exist and bool(null) is a hard error, so the property test is what
+	# lets a scene whose player is a stand-in (a standalone scene, a headless
+	# check) degrade instead of throwing. Same shape as the `"run_seed" in terrain`
+	# read in _sync_run.
+	var player: Node = tree.get_first_node_in_group("player")
+	if player != null and "is_game_over" in player and bool(player.is_game_over):
+		return
+	tree.paused = true
+	_paused_by_us = true
+	process_mode = Node.PROCESS_MODE_ALWAYS
+
+
+func _release_pause() -> void:
+	"""
+	Give back the pause this card took, and ONLY that one.
+
+	Called from all three exits from `_quiz_pending` — `_answer` (digit, tap and
+	timeout all land there) and `_cancel_quiz` — plus `_exit_tree`, so there is no
+	path on which a pending question can hold the world frozen forever.
+	"""
+	if not _paused_by_us:
+		return
+	_paused_by_us = false
+	process_mode = Node.PROCESS_MODE_INHERIT
+	get_tree().paused = false
+
+
+func _exit_tree() -> void:
+	# A toast freed with a question still up — a scene change, or a headless check
+	# tearing its fixture down — would otherwise leave the tree paused with nothing
+	# alive that is allowed to unpause it.
+	_release_pause()
+
+
 func _update_quiz(delta: float) -> void:
 	"""
 	Run the pending question's clock. Two things end a question that nobody
@@ -754,6 +939,18 @@ func _update_quiz(delta: float) -> void:
 	    were copied at ask time precisely so this case has everything it needs.
 	"""
 	if not _quiz_pending:
+		return
+	# The window is gone (tab switched, phone backgrounded) AND the world is frozen
+	# because of us: hold the question and its pause exactly where they are — see
+	# _notification.
+	#
+	# `and _paused_by_us` is load-bearing, not defensive. In a room we take no
+	# pause, so the world keeps running while the window is away — crocodiles
+	# included — and a clock stopped there would hand an alt-tabbing player an
+	# indefinite question the timeout can no longer end, which is exactly the free
+	# refusal QUIZ_TIMEOUT exists to prevent. The hold protects a FROZEN world, and
+	# only a frozen one.
+	if _unfocused and _paused_by_us:
 		return
 	# A new run cancels a pending question the same way it cancels a shower in
 	# flight, and for the same reason — see _sync_run. One group lookup per frame,
@@ -777,17 +974,24 @@ func _unhandled_input(event: InputEvent) -> void:
 	UNHANDLED, not `_input`: a digit typed into a focused text field or consumed
 	by anything above this card must not also answer a quiz.
 
-	THE PAUSE GUARD IS EXPLICIT AND MUST STAY. The HUD's process_mode is the
-	default (pausable) today, so the engine would already withhold input while the
-	skill tree, the pause screen or the MP panel is open — but that is a property
-	of scenes/main.tscn, not of this script, and one PROCESS_MODE_ALWAYS on the
-	HUD layer (for a panel that must keep drawing while paused) would silently
-	turn the number row into a blind answer. One line removes the dependency, and
-	landmark_selfcheck.gd drives it directly.
+	THE PAUSE GUARD IS EXPLICIT AND MUST STAY — and since the card now takes a
+	pause of its own it can no longer be a plain `if get_tree().paused`. The digits
+	have to WORK under our pause (being frozen so you can answer is the entire
+	point of it) and stay DEAD under anybody else's, or a player closing the skill
+	tree with the number row answers blind. Getting it wrong in either direction is
+	a bug, and `_paused_by_us` is the one bit that separates them — the same
+	one-line test skill_tree_ui.gd uses to decide whether a pause it can see is its
+	own.
+
+	It does NOT lean on process_mode. While somebody else's pause is up this node
+	is pausable and the engine withholds the event anyway, but that is a property
+	of `_take_pause` (decision 2 in the PAUSE banner), not of this function, and
+	this guard is what survives the next person changing it. landmark_selfcheck.gd
+	drives both directions directly.
 	"""
 	if not _quiz_pending:
 		return
-	if get_tree().paused:
+	if get_tree().paused and not _paused_by_us:
 		return
 	var key := event as InputEventKey
 	if key == null or not key.pressed or key.echo:
@@ -820,6 +1024,9 @@ func _cancel_quiz() -> void:
 	if not _quiz_pending:
 		return
 	_quiz_pending = false
+	# The third and last exit from `_quiz_pending`, and the one with no card left
+	# on screen to explain a pause it forgot to give back.
+	_release_pause()
 	_quiz_marker = null
 	_hide_options()
 	_hold = 0.0

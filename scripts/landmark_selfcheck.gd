@@ -83,12 +83,34 @@ extends SceneTree
 ##      all of it fails quietly. A card that revealed the fact beside the question
 ##      is a quiz that answers itself. One that paid the burst on arrival is the
 ##      old behaviour with three buttons drawn over it. One whose keys still fire
-##      while the tree is paused hands the player a blind answer every time they
-##      close the skill tree with the number row. One that re-asks on a re-visit is
-##      a coin farm you pace back and forth over. Every step is measured through
-##      the toast's own methods, with `_unhandled_input` fed a real InputEventKey
-##      and the option Button's own `pressed` signal emitted, so a tap and a digit
-##      are proved to be the same event rather than assumed to be.
+##      under ANOTHER overlay's pause hands the player a blind answer every time
+##      they close the skill tree with the number row. One that re-asks on a
+##      re-visit is a coin farm you pace back and forth over. Every step is
+##      measured through the toast's own methods, with `_unhandled_input` fed a
+##      real InputEventKey and the option Button's own `pressed` signal emitted, so
+##      a tap and a digit are proved to be the same event rather than assumed to be.
+##
+##      STEPS (h)-(m) ARE THE PAUSE LIFECYCLE, added when the owner reversed the
+##      card's "pauses nothing" design (see landmark_toast.gd's header). The card
+##      now freezes the world while a question is up, and every way that goes wrong
+##      is silent-to-catastrophic rather than merely wrong-looking: a pause never
+##      given back is a dead run, a pause released that belonged to the skill tree
+##      is a world running behind an open panel, and a digit that answers under
+##      somebody else's pause is the blind answer the old guard existed to stop —
+##      which is now the OPPOSITE bug from a digit that does NOT answer under the
+##      card's own pause, since being frozen so you can answer is the whole point.
+##      So both directions are driven, and the ownership flag that separates them
+##      is read at every step. Step (m) is the one that costs a real frame: every
+##      other step calls `_process` by hand and therefore passes against a toast
+##      the ENGINE would never call while paused — the exact softlock — so (m)
+##      hands the frame back and measures the quiz clock moving on its own.
+##      Step (l) drives the multiplayer ruling: in a room the pause is skipped
+##      outright, because `get_tree().paused` is local and crocodiles are
+##      master-simulated, so a paused master would stall the world for everybody.
+##      Step (n) covers the one overlap this project's first-taker-owns pause
+##      discipline cannot survive unattended: a focus loss over our pause claims
+##      nothing, so without the clock stopping too, a backgrounded tab would time
+##      the question out and resume the world with nobody looking at it.
 ##
 ## HOUSE RULE, followed throughout: every check is an EFFECT measurement with a
 ## negative control, never a getter read-back. Check 1 measures emitted geometry
@@ -207,6 +229,47 @@ extends SceneTree
 ##   (dd) the option Buttons' `pressed` signal left unconnected  ->  FAIL: tapping
 ##       the right option paid 0 coins — check 7(g). The digits still work, which
 ##       is the whole point of driving both.
+##   (ee) landmark_toast._take_pause's `process_mode = PROCESS_MODE_ALWAYS` removed
+##       (the node freezes with the world it just froze)  ->  FAIL: the question's
+##       own clock did not move over four frames with the tree paused for it
+##       (12.000 s -> 12.000 s) — QUIZ_TIMEOUT can never fire and the pause never
+##       lifts. THE SOFTLOCK, and check 7(m) is the only step that sees it: every
+##       other step drives `_process` by hand and passes under this mutation.
+##   (ff) `_unhandled_input`'s guard reverted to the pre-ruling
+##       `if get_tree().paused: return`  ->  FAIL: the digit did not answer under
+##       the card's OWN pause — the world is frozen and the key that lifts it is
+##       refused (7(i)), and a cascade behind it. Note 7(h) still passes: the
+##       plain guard is right about somebody else's pause and wrong about ours.
+##   (gg) the `if not _paused_by_us: return` dropped from `_release_pause`  ->
+##       FAIL: resolving the card released a pause it never took — the skill tree,
+##       the pause screen or the MP panel would come back to a running world
+##       (7(h)). Everything else passes: the card's own lifecycle is unaffected.
+##   (hh) the `is_busy()` room test dropped from `_take_pause`  ->  FAIL: the card
+##       paused the tree while in a room — a paused master stalls the simulation
+##       for every other peer (7(l)).
+##   (ii) `_release_pause` dropped from `_cancel_quiz`  ->  FAIL: a new run
+##       cancelled the question but kept its pause — a fresh run frozen with no
+##       card on screen to explain it (7(k)).
+##   (jj) `_release_pause` dropped from `_answer`  ->  FAIL: answering the question
+##       left the tree paused — the game never starts again (7(i)), plus the
+##       timeout twin (7(j)) and the whole of 7(h) behind it.
+##   (kk) `_take_pause` dropped from `_start_quiz`  ->  FAIL: the question was
+##       asked without pausing the tree (7(i)); (j), (k) and (m) each report that
+##       they cannot measure their release, which is the point of stating the
+##       precondition in every one of them.
+##   (nn) the `and _paused_by_us` dropped from `_update_quiz`'s focus hold  ->
+##       FAIL: an unfocused window stopped the clock of a LIVE card in a room —
+##       the world kept running and the question can no longer time out (7(n)).
+##   (mm) the `if _unfocused and _paused_by_us: return` dropped from `_update_quiz`  ->  FAIL: the
+##       question timed out while the app was unfocused — the world unpauses in a
+##       backgrounded tab with nobody watching (7(n)). Dropping the FOCUS_IN arm
+##       of `_notification` instead is the mirror: FAIL: the question never
+##       resolved after the app regained focus — the clock was stopped, not held.
+##   (ll) `_exit_tree` dropped from landmark_toast  ->  FAIL: the tree was already
+##       paused when check 7 started. Check 5 frees its toast with a question still
+##       pending, so the release on teardown is load-bearing for this file as well
+##       as for a scene change; without the entry assertion the same mutation
+##       reports "pressing the digit did not resolve the question" and four more.
 ##
 ## Don't grow this into a suite.
 
@@ -589,6 +652,15 @@ class StubPlayer extends Node3D:
 ## any signal to subscribe to.
 class StubTerrain extends Node:
 	var run_seed: int = 0
+
+
+## The stub multiplayer manager, for check 7(l). The toast asks it exactly one
+## question — `is_busy()` — which is the test build_version.gd makes, and for the
+## same reason: a peer is "in a room" from the moment it starts connecting, not
+## only once it is IN_ROOM.
+class StubMp extends Node:
+	func is_busy() -> bool:
+		return true
 
 
 func _check_toast(registry: Array) -> void:
@@ -1202,6 +1274,15 @@ func _check_quiz_toast(registry: Array) -> void:
 	is a claim about two code paths and asserting it against one of them proves
 	nothing.
 	"""
+	# Steps (h)-(m) read `paused` as an assertion about THIS card, so a stale pause
+	# left behind by an earlier check would fail a dozen of them in confusing
+	# places. Measured: check 5 frees its toast with a question still pending, so
+	# without landmark_toast's `_exit_tree` release the tree arrives here frozen
+	# and step (b) reports "pressing the digit did not resolve the question".
+	if paused:
+		_fail("quiz: the tree was already paused when check 7 started — an earlier check left a pause behind, and a toast freed with a question up must release it")
+		paused = false
+
 	var toast_script: GDScript = load(TOAST_SCRIPT)
 	var toast_consts: Dictionary = toast_script.get_script_constant_map()
 	var approach_pad: float = float(toast_consts["APPROACH_PAD"])
@@ -1383,32 +1464,201 @@ func _check_quiz_toast(registry: Array) -> void:
 		_fail("quiz: tapping the correct option paid %d coins, outside %d..%d — the option Buttons answer nothing"
 				% [paid_tap, treasure_min, treasure_max])
 
-	# --- (h) THE PAUSE GUARD, and the numpad row, in one approach. While the tree
-	# is paused (skill tree, pause screen, MP panel) a digit must do nothing: the
-	# HUD layer is pausable today so the engine would withhold the event anyway,
-	# but that is a property of scenes/main.tscn and the guard in the toast is what
-	# survives somebody setting PROCESS_MODE_ALWAYS on that layer. Unpausing and
-	# pressing the NUMPAD digit is the positive control — it proves the paused
-	# press was refused for being paused, not for being the wrong key.
+	# --- (h) ANOTHER OVERLAY'S PAUSE. Two claims in one approach, and they are the
+	# two halves of the reworked input guard's negative side: a digit pressed under
+	# a pause the card does NOT own must not answer, and the resolution that
+	# eventually comes must not release a pause the card never took.
+	#
+	# The tree is paused BEFORE the approach, which is how this state is reached
+	# for real: in a room the card takes no pause of its own (step (l)), so a
+	# player who opens the skill tree over a pending question is paused by somebody
+	# else entirely. Under the pre-ruling guard (`if get_tree().paused: return`)
+	# this step passes and step (i) fails; under no guard at all this one fails.
 	terrain.run_seed = 515055
+	paused = true
 	_walk_in(toast, player, near, far)
+	if not bool(toast.get("_quiz_pending")):
+		_fail("quiz: step (h) cannot measure anything — no question was asked under the foreign pause")
+	if bool(toast.get("_paused_by_us")):
+		_fail("quiz: the card claimed ownership of a pause that was already somebody else's")
 	var before_paused: int = player.coins_paid
 	var paused_slot: int = int(toast.get("_quiz_correct_slot"))
-	paused = true
 	_press_key(toast, int((answer_keycodes[paused_slot] as Array)[0]))
-	paused = false
 	if not bool(toast.get("_quiz_pending")):
-		_fail("quiz: a digit answered the question while the tree was paused — a player closing a panel with the number row answers blind")
+		_fail("quiz: a digit answered the question under another overlay's pause — a player closing a panel with the number row answers blind")
 	toast.call("_update_burst", 100.0)
 	if player.coins_paid != before_paused:
-		_fail("quiz: %d coins were paid by a digit pressed while the tree was paused"
+		_fail("quiz: %d coins were paid by a digit pressed under another overlay's pause"
 				% (player.coins_paid - before_paused))
-	_press_key(toast, int((answer_keycodes[paused_slot] as Array)[1]))
+	# THE RESOLUTION MUST NOT RELEASE A PAUSE THE CARD NEVER TOOK — the
+	# `_paused_by_us` half of the shared guard, and the exact bug an unconditional
+	# `get_tree().paused = false` here would be: the skill tree comes back to a
+	# world that is running behind it. The timeout is the only resolution reachable
+	# in this state, the digits being correctly dead.
+	toast.call("_process", quiz_timeout + 1.0)
+	if bool(toast.get("_quiz_pending")):
+		_fail("quiz: the timeout did not resolve a question left pending under another overlay's pause")
+	if not paused:
+		_fail("quiz: resolving the card released a pause it never took — the skill tree, the pause screen or the MP panel would come back to a running world")
+	paused = false
+
+	# --- (i) THE CARD TAKES THE PAUSE, AND THE ANSWER GIVES IT BACK. The owner
+	# ruling in two assertions: the world stops while the question is up, and it
+	# starts again the moment the question is answered. The digit that answers is
+	# also the POSITIVE control for the reworked input guard — under the old
+	# `if get_tree().paused: return` the card would freeze the world and then
+	# refuse the only key that unfreezes it.
+	terrain.run_seed = 515057
+	_walk_in(toast, player, near, far)
+	if not paused:
+		_fail("quiz: the question was asked without pausing the tree — the player is still reading three names while running")
+	if not bool(toast.get("_paused_by_us")):
+		_fail("quiz: the tree is paused for the question but the card does not record the pause as its own — it can never release it")
+	var answer_slot: int = int(toast.get("_quiz_correct_slot"))
+	var before_answer: int = player.coins_paid
+	_press_key(toast, int((answer_keycodes[answer_slot] as Array)[0]))
+	if bool(toast.get("_quiz_pending")):
+		_fail("quiz: the digit did not answer under the card's OWN pause — the world is frozen and the key that lifts it is refused")
+	if paused or bool(toast.get("_paused_by_us")):
+		_fail("quiz: answering the question left the tree paused — the game never starts again")
 	toast.call("_update_burst", 100.0)
-	var paid_numpad: int = player.coins_paid - before_paused
-	if paid_numpad < treasure_min or paid_numpad > treasure_max:
-		_fail("quiz: the numpad digit for slot %d paid %d coins, outside %d..%d — either the numpad row does not answer or the pause guard never lifts"
-				% [paused_slot, paid_numpad, treasure_min, treasure_max])
+	if player.coins_paid - before_answer < treasure_min:
+		_fail("quiz: the digit pressed under the card's own pause paid %d coins — it resolved without answering"
+				% (player.coins_paid - before_answer))
+
+	# --- (j) THE TIMEOUT RELEASES IT TOO, and this is the path that matters most:
+	# a player who presses nothing at all has no other way out of a frozen world,
+	# which is exactly why QUIZ_TIMEOUT survived the ruling that removed its
+	# original job (you cannot walk away from a paused card).
+	terrain.run_seed = 515058
+	_walk_in(toast, player, near, far)
+	if not paused:
+		_fail("quiz: step (j) cannot measure the timeout release — the ask did not pause")
+	toast.call("_process", quiz_timeout + 1.0)
+	if bool(toast.get("_quiz_pending")):
+		_fail("quiz: the question outlived QUIZ_TIMEOUT (%.1f s) while the world was paused for it" % quiz_timeout)
+	if paused or bool(toast.get("_paused_by_us")):
+		_fail("quiz: a timed-out question held on to its pause — nothing else can lift it and the run is over")
+
+	# --- (k) A RUN CHANGE UNDER A PENDING QUESTION. `_cancel_quiz` drops the card
+	# without resolving it (the world it belonged to is gone) and is the third and
+	# last exit from `_quiz_pending` — the one that leaves no card on screen to
+	# explain a pause it forgot to give back.
+	terrain.run_seed = 515059
+	_walk_in(toast, player, near, far)
+	if not paused:
+		_fail("quiz: step (k) cannot measure the cancel release — the ask did not pause")
+	terrain.run_seed = 515060
+	toast.call("_sync_run")
+	if bool(toast.get("_quiz_pending")):
+		_fail("quiz: a new run did not cancel the pending question")
+	if paused or bool(toast.get("_paused_by_us")):
+		_fail("quiz: a new run cancelled the question but kept its pause — a fresh run frozen with no card on screen to explain it")
+
+	# --- (l) IN A ROOM, NO PAUSE AT ALL. `get_tree().paused` is local and
+	# crocodiles are master-simulated, so pausing here freezes the world for every
+	# other peer. The card must still ASK — the question was never the part in
+	# dispute — and must still answer to a digit, i.e. in a room it is byte-for-byte
+	# the card that shipped before the ruling.
+	#
+	# THE NUMPAD ROW rides along here, as it always has somewhere in this check:
+	# ANSWER_KEYCODES offers two keycodes per slot and a card that only ever heard
+	# the top row would pass every other step. It sits on the one approach with no
+	# pause of anybody's in play, so a failure here is unambiguously about the key.
+	var mp := StubMp.new()
+	mp.add_to_group("mp")
+	root.add_child(mp)
+	terrain.run_seed = 515061
+	_walk_in(toast, player, near, far)
+	if not bool(toast.get("_quiz_pending")):
+		_fail("quiz: no question was asked in a room — the pause is what a room withholds, not the card")
+	if paused or bool(toast.get("_paused_by_us")):
+		_fail("quiz: the card paused the tree while in a room — a paused master stalls the simulation for every other peer")
+	var room_slot: int = int(toast.get("_quiz_correct_slot"))
+	var before_room: int = player.coins_paid
+	_press_key(toast, int((answer_keycodes[room_slot] as Array)[1]))
+	if bool(toast.get("_quiz_pending")):
+		_fail("quiz: the numpad digit for slot %d did not answer the live card in a room" % room_slot)
+	toast.call("_update_burst", 100.0)
+	var paid_room: int = player.coins_paid - before_room
+	if paid_room < treasure_min or paid_room > treasure_max:
+		_fail("quiz: the numpad digit for slot %d paid %d coins, outside %d..%d — the numpad row does not answer"
+				% [room_slot, paid_room, treasure_min, treasure_max])
+	mp.queue_free()
+	# Freed nodes leave their groups on the NEXT frame, so step (m) would still see
+	# this room and take no pause.
+	await process_frame
+
+	# --- (m) THE CLOCK REALLY RUNS WHILE THE WORLD IS FROZEN. Every step above
+	# drives `_process` BY HAND, so every one of them passes against a toast the
+	# ENGINE would never call while paused — and that is precisely the softlock
+	# this change risks: the card freezes the world, its own timeout freezes with
+	# it, and nothing is left alive to lift the pause. So this step hands the frame
+	# back to the engine and measures the quiz clock moving on its own, which is
+	# only possible if the node took PROCESS_MODE_ALWAYS along with the pause.
+	# Asserting `process_mode` directly would be a getter read-back; the timer
+	# moving is the effect that actually keeps the game playable.
+	toast.set_process(true)
+	terrain.run_seed = 515062
+	_walk_in(toast, player, near, far)
+	if not paused:
+		_fail("quiz: step (m) cannot measure the frozen clock — the ask did not pause")
+	var timer_at_ask: float = float(toast.get("_quiz_timer"))
+	for _frame: int in 4:
+		await process_frame
+	var timer_after: float = float(toast.get("_quiz_timer"))
+	if timer_after >= timer_at_ask:
+		_fail("quiz: the question's own clock did not move over four frames with the tree paused for it (%.3f s -> %.3f s) — QUIZ_TIMEOUT can never fire and the pause never lifts"
+				% [timer_at_ask, timer_after])
+	toast.set_process(false)
+	_answer_correct(toast)
+	toast.call("_update_burst", 100.0)
+	if paused:
+		_fail("quiz: step (m) left the tree paused")
+
+	# --- (n) A BACKGROUNDED TAB DOES NOT RESOLVE THE QUESTION BEHIND THE PLAYER.
+	# `mobile_input.pause_game()` early-returns on an already-paused tree, so a
+	# focus loss during a question takes no ownership of our pause and never raises
+	# the "tap to resume" overlay — leaving QUIZ_TIMEOUT free to fire in a
+	# backgrounded tab, unpause, and hand back a running world with a crocodile in
+	# it. The FOCUS_IN half is the control: it proves the clock was held rather
+	# than broken.
+	terrain.run_seed = 515063
+	_walk_in(toast, player, near, far)
+	if not paused:
+		_fail("quiz: step (n) cannot measure the focus hold — the ask did not pause")
+	toast.notification(NOTIFICATION_APPLICATION_FOCUS_OUT)
+	toast.call("_process", quiz_timeout + 1.0)
+	if not bool(toast.get("_quiz_pending")):
+		_fail("quiz: the question timed out while the app was unfocused — the world unpauses in a backgrounded tab with nobody watching")
+	if not paused:
+		_fail("quiz: the pause was released while the app was unfocused")
+	toast.notification(NOTIFICATION_APPLICATION_FOCUS_IN)
+	toast.call("_process", quiz_timeout + 1.0)
+	if bool(toast.get("_quiz_pending")):
+		_fail("quiz: the question never resolved after the app regained focus — the clock was stopped, not held")
+	if paused:
+		_fail("quiz: the pause survived the question that regained focus and timed out")
+
+	# THE HOLD IS ABOUT A FROZEN WORLD, NOT ABOUT FOCUS. In a room nothing is
+	# paused, so the world — crocodiles included — keeps running while the window
+	# is away, and a clock stopped there would hand an alt-tabbing player a
+	# question the timeout can no longer end: the free refusal QUIZ_TIMEOUT exists
+	# to prevent. Same fixture as step (l), re-added because that step freed it.
+	var mp_focus := StubMp.new()
+	mp_focus.add_to_group("mp")
+	root.add_child(mp_focus)
+	terrain.run_seed = 515064
+	_walk_in(toast, player, near, far)
+	if paused:
+		_fail("quiz: step (n)'s room control cannot measure anything — the card paused in a room")
+	toast.notification(NOTIFICATION_APPLICATION_FOCUS_OUT)
+	toast.call("_process", quiz_timeout + 1.0)
+	if bool(toast.get("_quiz_pending")):
+		_fail("quiz: an unfocused window stopped the clock of a LIVE card in a room — the world kept running and the question can no longer time out")
+	toast.notification(NOTIFICATION_APPLICATION_FOCUS_IN)
+	mp_focus.queue_free()
+	await process_frame
 
 	toast.queue_free()
 	marker.queue_free()
