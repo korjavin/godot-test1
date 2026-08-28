@@ -75,7 +75,7 @@ const WIDTH_BUDGETS: Array = [
 	# mobile_settings_panel.gd — GEAR_WIDTH 110 x 60, font 26, default theme
 	# Button stylebox (measured: 8 px of horizontal padding), leaving 102 px; the
 	# budget keeps 4 px of that as slack.
-	["⚙ Tune", 26, 98.0, "⚙ tune gear button"],
+	["Tune", 26, 98.0, "tune gear button"],
 	# mobile_settings_panel.gd — panel vbox is PANEL_WIDTH - 24 = 356, font 22
 	# for the action buttons and 20 for the stepper name labels.
 	["How to play", 22, 340.0, "⚙ panel action button"],

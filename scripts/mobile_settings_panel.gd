@@ -247,7 +247,11 @@ func _build_ui() -> void:
 	# keyboard-free (a touchscreen laptop has both, and F7 force-shows the gear
 	# on any desktop).
 	_gear_button.focus_mode = Control.FOCUS_NONE
-	_gear_button.text = "⚙ Tune"  # ⚙ gear glyph + label
+	# Plain word, no ⚙ glyph: nothing in this project embeds a font, so U+2699
+	# resolved only through SYSTEM font fallback — a different width on every OS
+	# (16 px on macOS, ~23 px on Linux, which overflowed this button in German)
+	# and, on the web export, no system fonts at all to fall back to.
+	_gear_button.text = "Tune"
 	_gear_button.add_theme_font_size_override("font_size", 26)
 	_gear_button.custom_minimum_size = Vector2(GEAR_WIDTH, GEAR_HEIGHT)
 	_gear_button.anchor_left = 0.0
