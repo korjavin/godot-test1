@@ -2887,36 +2887,12 @@ func try_activate_ability() -> void:
 		_flash_blocked_feedback()
 		return
 
-	# Windman can't take off in the rain: pressing F inside a storm cloud's rain
-	# zone fails EXACTLY like a cooling-down press (same dial flash, same denial
-	# buzz) — and crucially costs no cooldown, so the player can try again the
-	# moment they walk out from under the storm.
-	if char_name == "windman" and _weather_is_raining_here():
-		_flash_blocked_feedback()
-		return
-
-	# AIR RUSH IS A TAKE-OFF, NOT A MID-AIR JET: Windman must have his feet on the
-	# ground (or be inside the coyote window) to launch. Without this the ability
-	# chains into infinite flight, because the cooldown ticks from ACTIVATION and
-	# a fully-skilled hero's cooldown is SHORTER than his own flight:
-	#
-	#     cooldown 8.0 s × 0.60 (cd1×3 + cd2) = 4.80 s
-	#     duration 4.0 s × 1.30 (gale ×2)     = 5.20 s
-	#
-	# so the power came back 0.4 s before the previous rush expired, and with
-	# Updraft + Soar he never fell far enough to land in between. Gating on the
-	# ground rather than retuning either number is deliberate: retuning the base
-	# cooldown would punish an UNSKILLED Windman, who was never the problem, and
-	# charging the cooldown at the END of the boost would make every duration
-	# upgrade a net nerf and break the dial's cooldown-ratio division. The state
-	# invariant — one rush per landing — is what was actually missing, and it
-	# bounds his altitude to the designed single-arc ~26 m.
-	#
-	# Coyote time is included on purpose: stepping off a ledge gets the same brief
-	# grace here that it gets for a jump. Refusal is FREE (no cooldown charged),
-	# exactly like the rain gate, and the test is a pure read of live state — it
-	# stores nothing, so there is no way for it to latch Windman off permanently.
-	if char_name == "windman" and not (is_on_floor() or coyote_timer > 0.0):
+	# Charged, but is anything else in the way? The gates live in ONE function so
+	# the HUD can ask the same question the key press asks — see
+	# `get_ability_block_reason()`. A gated press refuses exactly like a cooling
+	# one (same dial flash, same denial buzz) and costs no cooldown, so the player
+	# can try again the instant the gate lifts.
+	if get_ability_block_reason() != "":
 		_flash_blocked_feedback()
 		return
 
@@ -3327,9 +3303,71 @@ func get_ability_remaining() -> float:
 	return maxf(0.0, ability_cooldowns[current_character_index])
 
 
+func get_ability_block_reason() -> String:
+	"""
+	Why an F press would be refused RIGHT NOW even though the cooldown is spent,
+	as a short label for the dial — or "" when nothing but the cooldown stands in
+	the way. Keys into `assets/translations/ui.csv`; the HUD `tr()`s it.
+
+	THIS IS THE ONE HOME OF THE GATES. `try_activate_ability()` asks it before
+	firing and `is_ability_ready()` asks it before saying "ready", so the dial and
+	the key press can never disagree about whether the power is available — which
+	is exactly the bug that shipped when the gates lived inline up there
+	(godot-test1-tw6: an airborne Windman saw a green READY dial and every press
+	bounced). A new gate goes here and the HUD learns about it for free.
+
+	It is a PURE READ of live state and stores nothing, so no gate can latch a
+	hero off permanently, and refusing costs no cooldown — the two properties both
+	gates have always had.
+
+	  "RAIN" — Windman can't take off inside a storm cloud's rain zone.
+	  "LAND" — AIR RUSH IS A TAKE-OFF, NOT A MID-AIR JET: Windman must have his
+	           feet on the ground (or be inside the coyote window) to launch.
+	           Without this the ability chains into infinite flight, because the
+	           cooldown ticks from ACTIVATION and a fully-skilled hero's cooldown
+	           is SHORTER than his own flight:
+
+	               cooldown 8.0 s × 0.60 (cd1×3 + cd2) = 4.80 s
+	               duration 4.0 s × 1.30 (gale ×2)     = 5.20 s
+
+	           so the power came back 0.4 s before the previous rush expired, and
+	           with Updraft + Soar he never fell far enough to land in between.
+	           Gating on the ground rather than retuning either number is
+	           deliberate: retuning the base cooldown would punish an UNSKILLED
+	           Windman, who was never the problem, and charging the cooldown at
+	           the END of the boost would make every duration upgrade a net nerf
+	           and break the dial's cooldown-ratio division. The state invariant
+	           — one rush per landing — is what was actually missing, and it
+	           bounds his altitude to the designed single-arc ~26 m. Coyote time
+	           is included on purpose: stepping off a ledge gets the same brief
+	           grace here that it gets for a jump.
+	"""
+	var char_name: String = CHARACTERS[current_character_index]["name"]
+	if char_name != "windman":
+		return ""
+	if _weather_is_raining_here():
+		return "RAIN"
+	if not (is_on_floor() or coyote_timer > 0.0):
+		return "LAND"
+	return ""
+
+
 func is_ability_ready() -> bool:
-	"""True when the current character can fire its ability right now."""
-	return ability_cooldowns[current_character_index] <= 0.0
+	"""
+	True when the current character can fire its ability right now — ACTUAL
+	availability, cooldown AND gates, not just the cooldown.
+
+	The dial reads this together with `get_ability_cooldown_ratio()`, and the two
+	measure different things on purpose: the ratio is the COOLDOWN's own progress
+	(what its name says, and all it can say), this is whether the press will land.
+	So the HUD gets three states out of two honest inputs — cooling (ratio > 0),
+	gated-but-charged (ratio == 0, not ready) and ready — rather than one input
+	quietly overloaded. The gated state renders as its own colour and names the
+	gate, because a player with a full charge and a refused press has nothing to
+	wait for and needs to know the fix is to land, not to be patient.
+	"""
+	return ability_cooldowns[current_character_index] <= 0.0 \
+			and get_ability_block_reason() == ""
 
 
 func crushes_crocodiles() -> bool:

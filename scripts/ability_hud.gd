@@ -3,15 +3,31 @@ extends Control
 ##
 ## Shows the current character's special ability (the F key) as a radial dial that
 ## empties as the ability cools down, plus the ability's name and the seconds left.
-## When the power is ready, the ring turns bright green.
+##
+## THREE STATES, NOT TWO — and this is the point of the contract below:
+##   COOLING (amber arc, seconds)  the charge is still filling; wait.
+##   GATED   (blue ring, a word)   charged, but something refuses the press right
+##                                 now — Windman airborne ("LAND") or in the rain
+##                                 ("RAIN"). There is nothing to wait for, so it
+##                                 must NOT render as still cooling: the dial
+##                                 names the fix instead of counting down at a
+##                                 player who has already paid.
+##   READY   (green ring)          press it.
+## Before godot-test1-tw6 the gates were invisible here and a gated-but-charged
+## ability painted a green READY ring while every press bounced.
 ##
 ## Like the rest of the HUD it uses GROUP-BASED discovery — it finds the player via
 ## the "player" group rather than a hard reference — so it keeps working across
-## respawns and character switches. It reads four small methods on the player:
-##   get_ability_cooldown_ratio()  1.0 just-used → 0.0 ready (drives the dial)
+## respawns and character switches. It reads five small methods on the player:
+##   get_ability_cooldown_ratio()  1.0 just-used → 0.0 ready (drives the arc)
 ##   get_ability_remaining()       seconds left (shown inside the dial)
 ##   get_ability_name()            label under the dial
-##   is_ability_ready()            ready vs cooling colour
+##   is_ability_ready()            ACTUAL availability — cooldown AND gates
+##   get_ability_block_reason()    "" or the gate's short label ("LAND"/"RAIN")
+## The first and the fourth deliberately measure different things (see
+## `is_ability_ready()` in player_controller.gd), which is what lets three states
+## come out of two inputs that can never contradict each other: "cooling" is read
+## off the ratio, never off `not is_ability_ready()`.
 ##
 ## It draws everything in _draw() (no texture assets needed), so it scales cleanly
 ## and stays asset-free, matching the project's lightweight web-build priorities.
@@ -28,14 +44,15 @@ var _ratio: float = 0.0
 var _ability_ready: bool = false
 var _ability_name: String = ""
 var _secs: float = 0.0
+## "" when only the cooldown gates the ability, else the gate's label (see above).
+var _block_reason: String = ""
 ## Quantized copies of ratio/secs used for the redraw change-check (see _process).
 var _last_arc: int = -1
 var _last_tenths: int = -1
 
 ## Seconds left of the "blocked press" red flash (0 = not flashing). Set by
-## flash_blocked() when the player hits F while the ability is still cooling;
-## while it runs the arc and the F hint render in COLOR_BLOCKED so the press
-## visibly registers instead of feeling dead.
+## flash_blocked() on any refused F press; while it runs the ring and the F hint
+## render in COLOR_BLOCKED, overriding all three states above.
 var _blocked_timer: float = 0.0
 
 # --- Layout / colours (tweak here) ------------------------------------------
@@ -46,6 +63,9 @@ const DIAL_CENTER_Y: float = 56.0
 const COLOR_TRACK := Color(1, 1, 1, 0.16)         # faint full ring behind the arc
 const COLOR_COOLING := Color(1.0, 0.62, 0.12, 0.95)  # amber arc while on cooldown
 const COLOR_READY := Color(0.35, 1.0, 0.45, 0.95)    # bright green when ready
+## Charged but gated: a cool blue full ring — deliberately NOT the amber cooling
+## arc (nothing is filling) and NOT the ready green (the press would bounce).
+const COLOR_GATED := Color(0.42, 0.72, 1.0, 0.95)
 const COLOR_BACKDROP := Color(0.0, 0.0, 0.0, 0.45)   # dark disc for contrast
 const COLOR_BLOCKED := Color(1.0, 0.25, 0.2)          # red flash on a blocked press
 const BLOCKED_FLASH_DURATION: float = 0.15
@@ -60,8 +80,9 @@ func _ready() -> void:
 
 
 func flash_blocked() -> void:
-	"""Called (via the "ability_hud" group) when F is pressed while the ability
-	is still on cooldown — briefly renders the dial in red as a clear 'not yet'."""
+	"""Called (via the "ability_hud" group) when an F press is REFUSED — still
+	cooling, or charged but gated — briefly renders the dial in red so the press
+	visibly registers as 'not now' instead of feeling dead."""
 	_blocked_timer = BLOCKED_FLASH_DURATION
 	queue_redraw()
 
@@ -86,6 +107,7 @@ func _process(_delta: float) -> void:
 	var ready: bool = player.is_ability_ready()
 	var ability_name: String = player.get_ability_name()
 	var secs: float = player.get_ability_remaining()
+	var reason: String = player.get_ability_block_reason()
 	# Redraw ONLY when what we would draw actually changed: ready flag, name,
 	# the ratio quantized to arc-visible steps (1/128th of the ring — finer
 	# changes don't move a pixel), and the seconds text at its displayed 0.1 s
@@ -94,13 +116,14 @@ func _process(_delta: float) -> void:
 	var arc := roundi(ratio * 128.0)
 	var tenths := roundi(secs * 10.0)
 	if _have_data and ready == _ability_ready and ability_name == _ability_name \
-			and arc == _last_arc and tenths == _last_tenths:
+			and arc == _last_arc and tenths == _last_tenths and reason == _block_reason:
 		return
 	_have_data = true
 	_ratio = ratio
 	_ability_ready = ready
 	_ability_name = ability_name
 	_secs = secs
+	_block_reason = reason
 	_last_arc = arc
 	_last_tenths = tenths
 	queue_redraw()
@@ -125,22 +148,30 @@ func _draw() -> void:
 	# Faint full ring (the "track" the cooldown arc rides on).
 	draw_arc(center, DIAL_RADIUS, 0.0, TAU, 48, COLOR_TRACK, RING_WIDTH, true)
 
-	if ready:
-		# Ready: a full, bright green ring.
-		draw_arc(center, DIAL_RADIUS, 0.0, TAU, 48, COLOR_READY, RING_WIDTH, true)
-	else:
-		# Cooling: an amber arc that empties clockwise from the top as time passes
-		# (red for a beat when the player pressed F too early).
+	# COOLING is read off the ratio, not off `not ready` — `ready` now also
+	# answers for the gates, and conflating the two is what painted a charged,
+	# gated ability as still counting down.
+	var cooling := ratio > 0.0
+	var ring_col := COLOR_READY
+	if blocked:
+		ring_col = COLOR_BLOCKED   # the refused-press flash outranks everything
+	elif cooling:
+		ring_col = COLOR_COOLING
+	elif not ready:
+		ring_col = COLOR_GATED     # charged, but a gate says no
+
+	if cooling:
+		# An arc that empties clockwise from the top as the charge fills.
 		var start := -PI / 2.0
-		var end := start + TAU * ratio
-		var arc_col := COLOR_BLOCKED if blocked else COLOR_COOLING
-		draw_arc(center, DIAL_RADIUS, start, end, 48, arc_col, RING_WIDTH, true)
+		draw_arc(center, DIAL_RADIUS, start, start + TAU * ratio, 48, ring_col,
+			RING_WIDTH, true)
+	else:
+		# Full ring: the charge IS full, whether or not a gate lets it out.
+		draw_arc(center, DIAL_RADIUS, 0.0, TAU, 48, ring_col, RING_WIDTH, true)
 
 	# Big "F" key hint in the centre of the dial.
 	var key_size := 30
-	var key_col := COLOR_READY if ready else Color(1, 1, 1, 0.95)
-	if blocked:
-		key_col = COLOR_BLOCKED
+	var key_col := Color(1, 1, 1, 0.95) if cooling and not blocked else ring_col
 	_draw_centered(font, "F", center + Vector2(0.0, key_size * 0.36), key_size, key_col)
 
 	# Ability name below the dial.
@@ -148,10 +179,16 @@ func _draw() -> void:
 	_draw_centered(font, ability_name, Vector2(center.x, center.y + DIAL_RADIUS + 24.0),
 		name_size, Color(1, 1, 1, 0.97))
 
-	# Seconds remaining inside the dial while cooling down.
-	if not ready:
+	# Inside the dial: the seconds left while cooling, otherwise the gate that is
+	# holding a full charge back — "LAND", "RAIN" — so the player is told what to
+	# DO rather than watching a countdown that already finished. tr() explicitly,
+	# per CLAUDE.md rule 2: a drawn string is not an auto-translated Control.text.
+	if cooling:
 		_draw_centered(font, "%.1f" % _secs, Vector2(center.x, center.y + 22.0),
 			14, Color(1, 0.85, 0.6, 0.95))
+	elif _block_reason != "":
+		_draw_centered(font, tr(_block_reason), Vector2(center.x, center.y + 22.0),
+			14, COLOR_GATED)
 
 
 func _draw_centered(font: Font, text: String, baseline_center: Vector2, font_size: int, color: Color) -> void:
