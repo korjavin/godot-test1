@@ -8,9 +8,49 @@ extends Control
 ## landmark (the coin ring round the base is a garnish — see the REWARD DECISION
 ## in endless_terrain.gd's GEO LANDMARKS constant banner).
 ##
-## THE FIRST APPROACH TO EACH LANDMARK IN A RUN ALSO PAYS A COIN BURST — see the
-## TREASURE section below. The ring round the base is the lure you can see from
-## across the field; the burst is the payoff for actually walking over.
+## THE FIRST APPROACH TO EACH LANDMARK IN A RUN ASKS YOU TO NAME IT, and the
+## coin burst is what a right answer pays — see the QUIZ and TREASURE sections
+## below. The ring round the base is the lure you can see from across the field;
+## the burst is the payoff for actually walking over AND knowing the place.
+##
+## THE QUIZ, in one paragraph.
+##   * WHY IT GATES THE TREASURE rather than sitting beside it: the burst is the
+##     only thing this card pays, so hanging the question on it is the only way an
+##     answer can matter at all. A wrong answer still reveals the name and the
+##     fact — the education is not the prize, it is the point — it just does not
+##     pay.
+##   * WHY IT RUNS LIVE AND PAUSES NOTHING: this is a HUD toast, not a panel.
+##     Stopping the world at every landmark would break the runner's flow and, in
+##     a room, stall the local peer while everyone else keeps moving. The landmark
+##     footprint is already a crocodile-free pocket by construction, and 1/2/3
+##     collide with no movement key, so you answer while walking. The price is the
+##     one guard in `_unhandled_input`: while the tree IS paused (skill tree,
+##     pause, MP panel) the digits must do nothing, or a player closing a panel
+##     with the number row would answer blind.
+##   * WHY "ONCE PER RUN" IS FREE: `_visited` is marked at ARRIVAL, exactly as the
+##     treasure always marked it, so walking away from an unanswered question and
+##     coming back shows the plain card. There is no second latch and no way to
+##     re-roll a question you got wrong.
+##   * THE TIMEOUT (QUIZ_TIMEOUT) resolves the card as wrong with its own verdict.
+##     It exists because leaving range does NOT cancel a pending quiz: the card
+##     has to end somehow, and a card that ended when you walked out would be a
+##     quiz you could refuse for free. A marker freed under a pending question
+##     (its chunk streamed out) resolves the same way immediately — which is why
+##     the name and fact are COPIED at ask time, not read back off the node.
+##   * THE OPTION ROWS ARE TWO CONTROLS EACH, a digit badge and a button holding
+##     the raw registry name, never one composed "1. Stonehenge" string — see the
+##     localization rule below, which is the whole reason for the split.
+##
+## ponytail: a player who walks away from a pending question burns the remaining
+## QUIZ_TIMEOUT seconds of card before the toast is free to announce anything
+## else — up to 12 s of screen spent on a question nobody is reading. Cancelling
+## on departure was the alternative and is worse (a free refusal), and a shorter
+## timeout punishes the player who is genuinely thinking. Upgrade path, if it ever
+## reads as dead card: resolve as timeout the moment the player passes radius +
+## LEAVE_PAD *and* the question has been up for more than a second or two. The
+## natural sequel — a SECOND fact revealed only on a right answer — is parked for
+## the same kind of reason: 38 more en+de CSV rows for marginal value, so the
+## existing fact is the reveal for both outcomes.
 ##
 ## Built entirely in code in _ready(), like touch_controls.gd and
 ## mobile_settings_panel.gd, so scenes/main.tscn needs exactly ONE node and one
@@ -192,6 +232,52 @@ const TREASURE_SALT: int = 0x7EA5
 ## Reusing it is also why nothing had to be threaded out of endless_terrain.gd.
 const COIN_SCRIPT := preload("res://scripts/coin.gd")
 
+
+# ============================================================================
+# QUIZ CONFIGURATION — the question that gates the treasure
+# ============================================================================
+
+## Seconds a question stays askable before it resolves itself as wrong. Sized
+## above TOAST_DURATION on purpose: the plain card is a thing you read, this one
+## is a thing you answer, and 12 s is long enough to read three names while still
+## running from something.
+const QUIZ_TIMEOUT: float = 12.0
+
+## How many options a card offers. Not a tunable — `LandmarkBuilders.quiz_options`
+## returns exactly three and ANSWER_KEYCODES has exactly three rows; the constant
+## exists so the places that loop over them say the same thing.
+const OPTION_COUNT: int = 3
+
+## THE CARD'S FOUR STRINGS, held as constants because two files read them: this
+## one writes them, and landmark_selfcheck.gd asserts every one has a German row
+## (they are CSV KEYS — see the localization rule at the top of the file). Held
+## here rather than duplicated there so the pair cannot drift.
+##
+## QUIZ_CORRECT is the only COMPOSED one, hence the only tr() in this file:
+## Localization RULE 2, tr() on the FORMAT string, never on the result. The other
+## three go straight onto Label.text under RULE 1 and translate themselves.
+const QUIZ_PROMPT: String = "Which landmark is this?"
+const QUIZ_CORRECT: String = "Correct! +%d coins"
+const QUIZ_WRONG: String = "Not quite!"
+const QUIZ_TIMEOUT_VERDICT: String = "Time's up!"
+
+## Keys that answer slot 0, 1 and 2. RAW KEYCODES, outside project.godot's input
+## map, for exactly the reason minimap_hud.gd's M and +/- are raw: a named action
+## is for rebindable GAMEPLAY input, and a key that only answers a HUD card has
+## nothing to rebind against. Both the number row and the numpad are accepted,
+## the same pair minimap_hud.gd accepts for its zoom.
+##
+## help_selfcheck.gd reads this array to prove the help card's "1 2 3" row still
+## names the keys that actually answer.
+const ANSWER_KEYCODES: Array = [
+	[KEY_1, KEY_KP_1],
+	[KEY_2, KEY_KP_2],
+	[KEY_3, KEY_KP_3],
+]
+
+const OPTION_FONT_SIZE: int = 20
+const BADGE_COLOR := Color(1.0, 0.85, 0.35, 1.0)
+
 # ============================================================================
 # STATE
 # ============================================================================
@@ -215,10 +301,9 @@ var treasure_label: Label = null
 ## and back and the card shows again, because the card IS the reward for the
 ## detour and suppressing it would punish returning to a landmark you liked. It
 ## also means a landmark whose chunk streamed out and back re-announces itself,
-## which is the same behaviour and costs nothing to allow. Upgrade path, if the
-## repeat ever reads as noise: a seen-set keyed on the registry index (the marker
-## would need to carry it as a fourth meta), which survives chunk unload because
-## it is keyed on the PLACE and not on the node.
+## which is the same behaviour and costs nothing to allow. What does NOT re-arm is
+## the QUESTION: `_visited` below is keyed on the PLACE, so a re-approach shows
+## the plain card — no second ask, and nothing to farm.
 var _active: Node3D = null
 
 ## Seconds of full visibility left before the fade-out starts. > 0 means "fade
@@ -247,6 +332,29 @@ var _visited: Dictionary = {}
 ## landmarks in it are the ones you already emptied). Upgrade path if that ever
 ## matters: a monotonically increasing run counter on the terrain.
 var _visited_run_seed: int = 0
+
+## The three option rows and the buttons inside them, built once in _ready() and
+## hidden whenever no question is pending. Held as members for the same reason the
+## labels are: the ask and the reveal write them, nothing outside does.
+var _option_rows: Array[HBoxContainer] = []
+var _option_buttons: Array[Button] = []
+
+## QUIZ STATE. `_quiz_pending` is the whole state machine: true between the ask
+## and the resolution, and the one thing `_scan`, `_update_fade` and
+## `_unhandled_input` all gate on.
+##
+## The name, the fact and the landmark id are COPIED at ask time rather than read
+## back off `_quiz_marker`, because the marker frees with its chunk and a player
+## who runs off mid-question must still get a reveal that names the place (and,
+## on a right answer, the amount that place was always going to pay). That is also
+## why `_quiz_marker` is kept at all: only to notice it went away.
+var _quiz_pending: bool = false
+var _quiz_marker: Node3D = null
+var _quiz_correct_slot: int = -1
+var _quiz_id: int = 0
+var _quiz_name: String = ""
+var _quiz_fact: String = ""
+var _quiz_timer: float = 0.0
 
 ## Burst state, the treasure_chest.gd shape: how many single-coin awards are
 ## still owed, the gap between them, and the countdown to the next one.
@@ -311,6 +419,58 @@ func _ready() -> void:
 	# Localization RULE 2: tr() on the FORMAT STRING, never on the result. See
 	# _show(). It autowraps inside the same growing container as the fact line, so
 	# it needs no locale_selfcheck.gd WIDTH_BUDGETS row either.
+	# THE THREE OPTION ROWS, built once and hidden until a question is asked.
+	#
+	# A row is a digit badge Label plus a Button carrying the NAME, and the split
+	# is load-bearing: the name is a raw registry string that Godot translates by
+	# itself (RULE 1 at the top of the file), so composing "1. Stonehenge" into
+	# one control would hand the TranslationServer a key that is in no table and
+	# silently lose German for every landmark name. The Button is the tap target
+	# (tap == hotkey, on desktop too); the badge is decoration.
+	#
+	# FOCUS_NONE matters more than it looks: a focused Button eats Space, and
+	# Space is the jump key.
+	#
+	# The names are short and the card is 640 px wide, so like the fact line these
+	# need no locale_selfcheck.gd WIDTH_BUDGETS row — the row grows with its
+	# container and nothing here has a fixed width to overflow.
+	for slot: int in OPTION_COUNT:
+		var row := HBoxContainer.new()
+		row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row.add_theme_constant_override("separation", 10)
+		row.visible = false
+		box.add_child(row)
+
+		var badge := Label.new()
+		badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		badge.text = str(slot + 1)
+		badge.add_theme_color_override("font_color", BADGE_COLOR)
+		badge.add_theme_color_override("font_outline_color", Color(0, 0, 0, 1))
+		badge.add_theme_constant_override("outline_size", 5)
+		badge.add_theme_font_size_override("font_size", OPTION_FONT_SIZE)
+		row.add_child(badge)
+
+		var option := Button.new()
+		# IGNORE until a question is pending — see _hide_options. The MP panel,
+		# the touch buttons and the start overlay share this CanvasLayer.
+		option.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		option.focus_mode = Control.FOCUS_NONE
+		option.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		# `flat` so the default theme's grey button panel does not sit on the dark
+		# card: the option reads as a line of the card that happens to be tappable,
+		# and hover/pressed still draw, so a mouse still gets feedback.
+		option.flat = true
+		option.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		option.add_theme_color_override("font_color", FACT_COLOR)
+		option.add_theme_color_override("font_outline_color", Color(0, 0, 0, 1))
+		option.add_theme_constant_override("outline_size", 5)
+		option.add_theme_font_size_override("font_size", OPTION_FONT_SIZE)
+		option.pressed.connect(_answer.bind(slot))
+		row.add_child(option)
+
+		_option_rows.append(row)
+		_option_buttons.append(option)
+
 	treasure_label = Label.new()
 	treasure_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	treasure_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -325,6 +485,7 @@ func _ready() -> void:
 
 func _process(delta: float) -> void:
 	_update_burst(delta)
+	_update_quiz(delta)
 	_update_fade(delta)
 
 	_tick_timer += delta
@@ -399,11 +560,20 @@ func _scan() -> void:
 	# marker's range test; it cannot protect a comparison BETWEEN two markers.
 	# Latching the first arrival is both the correct reading of "once per approach"
 	# and the simpler rule.
-	if _active == null and nearest != null:
+	# `not _quiz_pending` is the third term because a pending question owns the
+	# card until it resolves: the re-arm block above legitimately clears `_active`
+	# when the player walks out of range mid-question (leaving does not cancel a
+	# quiz, the timeout does), and without this term the very next landmark would
+	# overwrite the question with its own card.
+	if _active == null and nearest != null and not _quiz_pending:
 		_active = nearest
-		# Claim FIRST, show second: the card renders the amount the claim paid, and
-		# a re-visit (which claims nothing) must render without the treasure line.
-		_show(nearest, _claim_treasure(nearest))
+		# The visited latch is marked on ARRIVAL, not on the answer: that is what
+		# makes "one question per landmark per run, whatever you answered" free —
+		# and it is the same mark the treasure has always made here.
+		if _first_visit(nearest):
+			_start_quiz(nearest)
+		else:
+			_show_plain(nearest)
 
 
 func _marker_radius(marker: Node3D) -> float:
@@ -424,22 +594,18 @@ func _xz_distance(a: Vector3, b: Vector3) -> float:
 # DISPLAY
 # ============================================================================
 
-func _show(marker: Node3D, treasure: int) -> void:
+func _show_plain(marker: Node3D) -> void:
 	"""
-	Put this landmark's name and fact on the card and start the hold timer.
+	The re-visit card: this landmark's name and fact, no question and no coins.
 
 	The two strings go STRAIGHT onto Label.text with no tr() — see the
 	localization note at the top of the file before changing that.
-
-	@param treasure: coins this approach paid out, or 0 on a re-visit. The one
-	                 line on this card that IS composed at runtime, hence the
-	                 tr() on the format string (Localization RULE 2).
 	"""
 	name_label.text = str(marker.get_meta("name_key", ""))
 	fact_label.text = str(marker.get_meta("fact_key", ""))
-	treasure_label.visible = treasure > 0
-	if treasure > 0:
-		treasure_label.text = tr("+%d coins") % treasure
+	fact_label.visible = true
+	treasure_label.visible = false
+	_hide_options()
 	_hold = TOAST_DURATION
 	visible = true
 
@@ -454,6 +620,12 @@ func _update_fade(delta: float) -> void:
 	if not visible:
 		return
 	var step := delta / FADE_DURATION
+	# A pending question never fades: it ends when it is answered or when
+	# QUIZ_TIMEOUT runs out, and a card fading out from under a player still
+	# reading three names would be a question they could not answer.
+	if _quiz_pending:
+		modulate.a = minf(modulate.a + step, 1.0)
+		return
 	if _hold > 0.0:
 		_hold -= delta
 		modulate.a = minf(modulate.a + step, 1.0)
@@ -464,32 +636,242 @@ func _update_fade(delta: float) -> void:
 
 
 # ============================================================================
+# QUIZ — the question that gates the treasure (see the QUIZ CONFIGURATION banner)
+# ============================================================================
+
+func _start_quiz(marker: Node3D) -> void:
+	"""
+	Ask "which landmark is this?" for a landmark being visited for the first time
+	this run: the prompt on the name line, three option rows, and a countdown.
+
+	THE THREE OPTIONS ARE A PURE FUNCTION of (which place, where it stands,
+	run_seed) — `LandmarkBuilders.quiz_options` — which is what makes every peer
+	in a room see the same card with no packet, and what keeps this method free of
+	any RandomNumberGenerator of its own.
+	"""
+	var run_seed: int = _sync_run()
+	var id: int = COIN_SCRIPT.id_at(marker.global_position)
+	# Clamped exactly as quiz_options clamps it, so the `find` below cannot miss:
+	# `kind` arrives from a marker meta, i.e. from outside this file.
+	var kind: int = clampi(int(marker.get_meta("kind", 0)), 0, LandmarkBuilders.LANDMARKS.size() - 1)
+	var options: Array[int] = LandmarkBuilders.quiz_options(kind, id, run_seed)
+	if options.size() < OPTION_COUNT:
+		# The picker declines on a registry too small to ask a question — 38 rows
+		# today, so unreachable, but three names is its contract and not ours.
+		# Show the plain card and pay nothing; a landmark you cannot be asked
+		# about cannot be answered right.
+		_show_plain(marker)
+		return
+
+	_quiz_marker = marker
+	_quiz_id = id
+	_quiz_name = str(marker.get_meta("name_key", ""))
+	_quiz_fact = str(marker.get_meta("fact_key", ""))
+	_quiz_correct_slot = options.find(kind)
+	for slot: int in OPTION_COUNT:
+		# RULE 1: the RAW registry name onto the button, never a composed string.
+		_option_buttons[slot].text = String(LandmarkBuilders.LANDMARKS[options[slot]]["name"])
+		_option_buttons[slot].mouse_filter = Control.MOUSE_FILTER_STOP
+		_option_rows[slot].visible = true
+
+	name_label.text = QUIZ_PROMPT
+	# The fact is the REVEAL — showing it beside the question would answer it.
+	fact_label.text = ""
+	fact_label.visible = false
+	treasure_label.visible = false
+	_quiz_timer = QUIZ_TIMEOUT
+	_quiz_pending = true
+	_hold = TOAST_DURATION
+	visible = true
+
+
+func _answer(slot: int) -> void:
+	"""
+	Resolve the pending question and turn the card into the reveal: the name, the
+	fact, and a verdict line. `slot` is the option chosen, or -1 for the timeout.
+
+	Right answer -> the landmark's own treasure burst, exactly the amount and
+	exactly the hash stream the first visit always paid. Wrong or out of time ->
+	no coins, but the same reveal: the education is the point, the coins are the
+	prize.
+
+	Bound to the option Buttons' `pressed` signal AND called from
+	`_unhandled_input`, so a tap and a digit are the same event by construction.
+	"""
+	if not _quiz_pending:
+		return
+	# A new run between the ask and the answer cancels the card outright (the
+	# world it belonged to is gone), so read the run FIRST and let _sync_run say
+	# so before anything is paid into it.
+	var run_seed: int = _sync_run()
+	if not _quiz_pending:
+		return
+	_quiz_pending = false
+	_hide_options()
+
+	name_label.text = _quiz_name
+	fact_label.text = _quiz_fact
+	fact_label.visible = true
+	treasure_label.visible = true
+	# `slot >= 0` and not just the equality: -1 is the timeout, and a card that
+	# somehow had no correct slot would otherwise pay the timeout as a win.
+	var correct: bool = slot >= 0 and slot == _quiz_correct_slot
+	if correct:
+		var amount: int = _treasure_amount(_quiz_id, run_seed)
+		_arm_burst(amount)
+		# The one composed line on this card, hence the one tr() in this file:
+		# Localization RULE 2, on the FORMAT string.
+		treasure_label.text = tr(QUIZ_CORRECT) % amount
+	elif slot < 0:
+		treasure_label.text = QUIZ_TIMEOUT_VERDICT
+	else:
+		treasure_label.text = QUIZ_WRONG
+
+	# The project's standard null-safe group + has_method shape, so a scene with
+	# no SoundManager resolves silently instead of erroring.
+	var sm := get_tree().get_first_node_in_group("sound_manager")
+	if sm != null:
+		if correct and sm.has_method("play_level_up"):
+			sm.play_level_up()
+		elif not correct and sm.has_method("play_buzz"):
+			sm.play_buzz()
+
+	_quiz_marker = null
+	# The reveal then fades on the ordinary schedule, from now.
+	_hold = TOAST_DURATION
+	visible = true
+
+
+func _update_quiz(delta: float) -> void:
+	"""
+	Run the pending question's clock. Two things end a question that nobody
+	answered, and both resolve as a timeout:
+
+	  * QUIZ_TIMEOUT running out — the card cannot hang forever, and walking away
+	    deliberately does NOT cancel it (that would be a free refusal);
+	  * the marker being freed under it, i.e. its chunk streamed out because the
+	    player ran off. The reveal still renders: the name, the fact and the id
+	    were copied at ask time precisely so this case has everything it needs.
+	"""
+	if not _quiz_pending:
+		return
+	# A new run cancels a pending question the same way it cancels a shower in
+	# flight, and for the same reason — see _sync_run.
+	_sync_run()
+	if not _quiz_pending:
+		return
+	if not is_instance_valid(_quiz_marker):
+		_answer(-1)
+		return
+	_quiz_timer -= delta
+	if _quiz_timer <= 0.0:
+		_answer(-1)
+
+
+func _unhandled_input(event: InputEvent) -> void:
+	"""
+	1/2/3 (number row or numpad) answer the pending question.
+
+	UNHANDLED, not `_input`: a digit typed into a focused text field or consumed
+	by anything above this card must not also answer a quiz.
+
+	THE PAUSE GUARD IS EXPLICIT AND MUST STAY. The HUD's process_mode is the
+	default (pausable) today, so the engine would already withhold input while the
+	skill tree, the pause screen or the MP panel is open — but that is a property
+	of scenes/main.tscn, not of this script, and one PROCESS_MODE_ALWAYS on the
+	HUD layer (for a panel that must keep drawing while paused) would silently
+	turn the number row into a blind answer. One line removes the dependency, and
+	landmark_selfcheck.gd drives it directly.
+	"""
+	if not _quiz_pending:
+		return
+	if get_tree().paused:
+		return
+	var key := event as InputEventKey
+	if key == null or not key.pressed or key.echo:
+		return
+	for slot: int in OPTION_COUNT:
+		if (ANSWER_KEYCODES[slot] as Array).has(key.keycode):
+			_answer(slot)
+			accept_event()
+			return
+
+
+func _hide_options() -> void:
+	"""
+	Put the option rows away. Hidden AND back to MOUSE_FILTER_IGNORE: the card
+	shares its CanvasLayer with the MP panel, the touch buttons and the start
+	overlay, and a stray click-eating rectangle over any of them is invisible and
+	maddening (the whole reason this Control is IGNORE in the first place).
+	"""
+	for slot: int in OPTION_COUNT:
+		_option_rows[slot].visible = false
+		_option_buttons[slot].mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+
+func _cancel_quiz() -> void:
+	"""
+	Drop a pending question and its card without resolving it — the run it belongs
+	to no longer exists. Called only from _sync_run's run-change branch, beside
+	the burst cancel it mirrors.
+	"""
+	if not _quiz_pending:
+		return
+	_quiz_pending = false
+	_quiz_marker = null
+	_hide_options()
+	_hold = 0.0
+	modulate.a = 0.0
+	visible = false
+	# Re-arm the approach latch too, or the first landmark of the NEW run would be
+	# blocked by a marker from the old one.
+	_active = null
+
+
+# ============================================================================
 # TREASURE — the first-visit coin burst (see the TREASURE CONFIGURATION banner)
 # ============================================================================
 
-func _claim_treasure(marker: Node3D) -> int:
+func _first_visit(marker: Node3D) -> bool:
 	"""
-	If this is the run's FIRST approach to this landmark, arm the coin burst and
-	answer how many coins it will pay; otherwise answer 0 and arm nothing.
-
-	THE AMOUNT IS A PURE FUNCTION OF (landmark position, run_seed) and is drawn
-	from a private RandomNumberGenerator seeded from its own hash stream, so it
-	consumes no draw from anything else in the project. That purity is what makes
-	the multiplayer promise honest: every peer in a room shares run_seed and
-	generates the landmark in the same place, so the same landmark pays the same
-	amount to everyone — with no packet, no arbitration and no server involved.
+	Answer whether this is the run's FIRST arrival at this landmark, MARKING it
+	visited if so. Marking here — at arrival, before any question is asked — is
+	what makes "one question per landmark per run, whatever you answered" free:
+	walking away from an unanswered card and coming back finds it already marked.
 	"""
-	var run_seed: int = _sync_run()
-
+	_sync_run()
 	var id: int = COIN_SCRIPT.id_at(marker.global_position)
 	if _visited.has(id):
-		return 0
+		return false
 	_visited[id] = true
+	return true
 
+
+func _treasure_amount(id: int, run_seed: int) -> int:
+	"""
+	How many coins this landmark pays, drawn from a private RandomNumberGenerator
+	seeded from its own hash stream, so it consumes no draw from anything else in
+	the project.
+
+	A PURE FUNCTION OF (landmark id, run_seed), and that purity is what makes the
+	multiplayer promise honest: every peer in a room shares run_seed and generates
+	the landmark in the same place, so the same landmark pays the same amount to
+	everyone — with no packet, no arbitration and no server involved.
+
+	It takes the ID rather than the marker deliberately: it is called at ANSWER
+	time, by which point the marker may have streamed out with its chunk, and the
+	id was copied when the question was asked.
+	"""
 	var rng := RandomNumberGenerator.new()
 	rng.seed = hash(Vector3i(id, TREASURE_SALT, run_seed))
-	var amount: int = rng.randi_range(TREASURE_COINS_MIN, TREASURE_COINS_MAX)
+	return rng.randi_range(TREASURE_COINS_MIN, TREASURE_COINS_MAX)
 
+
+func _arm_burst(amount: int) -> void:
+	"""
+	Owe `amount` more single coins and (re)spread the whole debt over
+	TREASURE_BURST_DURATION.
+	"""
 	# ADD to whatever is still owed, never REPLACE it. Trigger zones genuinely
 	# overlap (see the selection-rule note in _scan: two landmarks in adjacent
 	# chunks can be ~26 m apart against 15.4 m trigger radii), and 1.2 s of Air
@@ -503,7 +885,6 @@ func _claim_treasure(marker: Node3D) -> int:
 	_burst_timer = _burst_interval
 	# First coin on arrival, treasure_chest.gd's rule; the rest follow.
 	_award_one()
-	return amount
 
 
 func _sync_run() -> int:
@@ -517,8 +898,8 @@ func _sync_run() -> int:
 	— re-rolls `endless_terrain.run_seed`, and this notices. A RESPAWN re-rolls
 	nothing, so a death costs you no landmark you had already emptied.
 
-	A RUNNING BURST IS CANCELLED WITH THE VISITED SET, not left to drain into the
-	new run. new_run() can land in the middle of the 1.2 s shower (Play Again, or
+	A RUNNING BURST — AND A PENDING QUESTION — IS CANCELLED WITH THE VISITED SET,
+	not left to drain into the new run. new_run() can land in the middle of the 1.2 s shower (Play Again, or
 	a room seed arriving), and restart_game() wipes the run's coins immediately
 	before it — so coins from a world that no longer exists would trickle into the
 	fresh run's counter for a second afterwards. That is also why this is called
@@ -534,6 +915,9 @@ func _sync_run() -> int:
 		_visited_run_seed = run_seed
 		_visited.clear()
 		_burst_remaining = 0
+		# A question asked about the old world cannot be answered into the new
+		# one — same event, same reason, as the shower cancel above it.
+		_cancel_quiz()
 	return run_seed
 
 

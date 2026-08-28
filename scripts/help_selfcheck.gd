@@ -33,9 +33,9 @@ extends SceneTree
 ##     drifted to the point of naming the wrong key for switching character. So
 ##     the key legends are read back against the REAL sources: `project.godot`'s
 ##     input map for the gameplay keys, and the raw-keycode constants in
-##     `minimap_hud` / `pause_controller` / `perf_overlay` / `motion_debug` for
-##     the HUD and debug keys. Rebind anything without touching `ROWS` and this
-##     fails.
+##     `minimap_hud` / `pause_controller` / `perf_overlay` / `motion_debug` /
+##     `landmark_toast` for the HUD and debug keys. Rebind anything without
+##     touching `ROWS` and this fails.
 ##
 ##  4. **An untranslated row.** A row added without its `ui.csv` entry renders in
 ##     English inside a German game, silently (that is exactly what `tr()` does on
@@ -66,6 +66,7 @@ const MobileInput := preload("res://scripts/mobile_input.gd")
 const TouchControls := preload("res://scripts/touch_controls.gd")
 const MobileSettingsPanel := preload("res://scripts/mobile_settings_panel.gd")
 const SkillTreeUi := preload("res://scripts/skill_tree_ui.gd")
+const LandmarkToast := preload("res://scripts/landmark_toast.gd")
 const PlayerController := preload("res://scripts/player_controller.gd")
 
 ## `[input-map action, the key legend its row must carry]`. The legend may list
@@ -178,6 +179,22 @@ func _check_table() -> String:
 		var actual: String = OS.get_keycode_string(int(entry[0]))
 		if actual != legend:
 			return "%s is now %s, but the help row still says \"%s\"" % [entry[2], actual, legend]
+
+	# --- The landmark quiz answer keys --------------------------------------
+	# THREE keycodes behind ONE legend, which is why they cannot ride the `raw`
+	# table above: every row there is one keycode compared to one legend. Each row
+	# of ANSWER_KEYCODES is the main-row/numpad pair for one option slot, and the
+	# MAIN-ROW key's name is the digit the help card prints — so the whole legend
+	# is rebuilt from the constant and compared. That makes this a real check and
+	# not the presence-only exemption "+ / -" gets: rebind the quiz to F1-F3 and
+	# the rebuilt legend stops matching the row.
+	var quiz_keys := PackedStringArray()
+	for pair: Array in LandmarkToast.ANSWER_KEYCODES:
+		quiz_keys.append(OS.get_keycode_string(int(pair[0])))
+	var quiz_legend: String = " ".join(quiz_keys)
+	if not legends.has(quiz_legend):
+		return ("no help row carries the legend \"%s\" — landmark_toast.ANSWER_KEYCODES " \
+			+ "answers the quiz with keys the help card does not name") % quiz_legend
 
 	# --- The per-hero ability one-liner -------------------------------------
 	var ability_row := _row_text("F")

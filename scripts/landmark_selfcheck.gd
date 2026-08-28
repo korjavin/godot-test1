@@ -49,7 +49,10 @@ extends SceneTree
 ##      covers the case ONE marker cannot: two landmarks whose trigger zones
 ##      overlap (reachable — see the step's comment), where a `nearest != _active`
 ##      selection rule raises a fresh card 4 times a second without the player ever
-##      leaving either one.
+##      leaving either one. Every FIRST approach now asks a question before it
+##      pays, so this check answers each one right (`_answer_correct`) and goes on
+##      measuring exactly what it always measured: the card latch and the treasure.
+##      Check 7 owns the question itself.
 ##   5. THE TRIGGER DISTANCE IS DERIVED FROM THE MARKER'S RADIUS. Its own check,
 ##      because check 4 drives ONE marker at ONE radius and therefore passes in
 ##      full against a toast whose range tests are hardcoded metre counts —
@@ -73,6 +76,19 @@ extends SceneTree
 ##      half that earns its keep is the SPREAD over the sweep. Also the only place
 ##      the five-word region vocabulary is enforced, because a missing region is
 ##      by design a silent fall-through to whole-table distractors.
+##   7. THE QUIZ CARD IS ANSWERABLE, PAYS ONLY ON A RIGHT ANSWER, AND ASKS ONCE.
+##      Check 6 proves the three names are a fair question; this one drives the
+##      real toast through the whole state machine that shows them — ask, digit,
+##      tap, timeout, re-visit — because none of it is visible from the picker and
+##      all of it fails quietly. A card that revealed the fact beside the question
+##      is a quiz that answers itself. One that paid the burst on arrival is the
+##      old behaviour with three buttons drawn over it. One whose keys still fire
+##      while the tree is paused hands the player a blind answer every time they
+##      close the skill tree with the number row. One that re-asks on a re-visit is
+##      a coin farm you pace back and forth over. Every step is measured through
+##      the toast's own methods, with `_unhandled_input` fed a real InputEventKey
+##      and the option Button's own `pressed` signal emitted, so a tap and a digit
+##      are proved to be the same event rather than assumed to be.
 ##
 ## HOUSE RULE, followed throughout: every check is an EFFECT measurement with a
 ## negative control, never a getter read-back. Check 1 measures emitted geometry
@@ -168,6 +184,29 @@ extends SceneTree
 ##       ->  FAIL: Moai of Easter Island: region "polynesia" is not one of
 ##       ["europe", "asia", "africa", "americas", "oceania"]. Deleting the field
 ##       outright reports the same row as `missing`.
+##   (y) landmark_toast._scan marks `_visited` at the ANSWER instead of at the
+##       arrival (the `_first_visit` call moved into `_answer`)  ->  FAIL: coming
+##       back to a landmark asked about it a second time in the same run — check
+##       7(e). Every other step passes: within one visit the two orders are
+##       indistinguishable.
+##   (z) landmark_toast._answer pays the burst whatever the slot (`correct` forced
+##       true)  ->  FAIL: a wrong answer paid 21 coins — check 7(c). And the
+##       mirror, `_start_quiz` arming the burst itself: FAIL: 18 coins were paid
+##       before the question was answered — check 7(a).
+##   (aa) landmark_toast._start_quiz leaves `fact_label.visible = true` (the fact
+##       shown beside the question)  ->  FAIL: the fact is on screen beside the
+##       question — it is the answer. Nothing else notices; the card looks fine.
+##   (bb) the `if get_tree().paused: return` guard removed from
+##       `_unhandled_input`  ->  FAIL: a digit answered the question while the
+##       tree was paused. This one is worth its line: the guard is redundant
+##       TODAY (the HUD layer is pausable, so the engine withholds the event) and
+##       a reader deleting it would be right about the engine and wrong about the
+##       next person who sets PROCESS_MODE_ALWAYS on that layer.
+##   (cc) `_update_quiz` dropped from `_process` (the clock never runs)  ->  FAIL:
+##       the question was still pending 13.0 s after it was asked — check 7(d).
+##   (dd) the option Buttons' `pressed` signal left unconnected  ->  FAIL: tapping
+##       the right option paid 0 coins — check 7(g). The digits still work, which
+##       is the whole point of driving both.
 ##
 ## Don't grow this into a suite.
 
@@ -241,9 +280,10 @@ func _run() -> void:
 		await _check_toast(registry)
 		await _check_toast_radius_derived(registry)
 		_check_quiz_options(builders_script, registry)
+		await _check_quiz_toast(registry)
 
 	if _failures.is_empty():
-		print("landmarks: %d builders × %d seeds measured, toast once-per-approach + radius-derived trigger + first-visit treasure OK, quiz options over %d × %d seeds × %d ids OK"
+		print("landmarks: %d builders × %d seeds measured, toast once-per-approach + radius-derived trigger + first-visit treasure OK, quiz options over %d × %d seeds × %d ids OK, quiz card ask/answer/tap/timeout/re-visit OK"
 				% [registry.size(), SEEDS_PER_BUILDER, registry.size(), QUIZ_SEEDS.size(), QUIZ_IDS.size()])
 		print("SELFCHECK OK")
 		quit(0)
@@ -478,16 +518,18 @@ func _check_facts(registry: Array) -> void:
 	# from a German one) and this fails. It does NOT yet see a toast reworded away
 	# from these keys — that direction closes when the toast lands the wording as
 	# a const.
-	# ponytail: when landmark_toast.gd holds the four literals as a const, swap
-	# this array for `load(TOAST_SCRIPT).get_script_constant_map()` — the file
-	# already reads APPROACH_PAD that way — and the drift closes both ways.
-	const QUIZ_STRINGS: Array = [
-		"Which landmark is this?",
-		"Correct! +%d coins",
-		"Not quite!",
-		"Time's up!",
+	# READ OFF THE TOAST, not re-typed here: landmark_toast.gd owns the four as
+	# constants, so a renamed string fails as a missing CSV row (which it is)
+	# instead of passing against a stale copy in this file. The same
+	# get_script_constant_map() the checks above use for APPROACH_PAD.
+	var toast_consts: Dictionary = load(TOAST_SCRIPT).get_script_constant_map()
+	var quiz_strings: Array = [
+		String(toast_consts["QUIZ_PROMPT"]),
+		String(toast_consts["QUIZ_CORRECT"]),
+		String(toast_consts["QUIZ_WRONG"]),
+		String(toast_consts["QUIZ_TIMEOUT_VERDICT"]),
 	]
-	for quiz_string: String in QUIZ_STRINGS:
+	for quiz_string: String in quiz_strings:
 		var german: String = tr(quiz_string)
 		if german == quiz_string:
 			_fail("quiz string %s is not translated in de — its ui.csv row is missing"
@@ -573,8 +615,8 @@ func _check_toast(registry: Array) -> void:
 	# one marker, a card that always showed registry entry 0 would pass. The
 	# player is parked by the SECOND one, so the card has to have read the marker
 	# it was actually near.
-	var decoy := _make_marker(registry[0], Vector3(400.0, 0.0, 0.0))
-	var marker := _make_marker(registry[registry.size() - 1], Vector3.ZERO)
+	var decoy := _make_marker(registry, 0, Vector3(400.0, 0.0, 0.0))
+	var marker := _make_marker(registry, registry.size() - 1, Vector3.ZERO)
 	root.add_child(decoy)
 	root.add_child(marker)
 
@@ -612,6 +654,11 @@ func _check_toast(registry: Array) -> void:
 	toast.call("_scan")
 	if not toast.visible:
 		_fail("toast: the card did not show inside the approach radius")
+	# THE FIRST APPROACH OF A RUN ASKS BEFORE IT ANNOUNCES, so the name, the fact
+	# and the treasure all arrive through the answer. Check 7 measures the
+	# question; from here this check is the same card-latch and treasure check it
+	# always was, one call longer.
+	_answer_correct(toast)
 	var shown_name: String = toast.get("name_label").text
 	var shown_fact: String = toast.get("fact_label").text
 	if shown_name != String(entry["name"]) or shown_fact != String(entry["fact"]):
@@ -745,7 +792,7 @@ func _check_toast(registry: Array) -> void:
 	# Driven with the flush deliberately WITHHELD between the two arrivals: that
 	# is the whole scenario, and flushing first would make the two claims
 	# sequential and the assertion vacuous.
-	var far_marker := _make_marker(registry[0], Vector3(0.0, 0.0, 200.0))
+	var far_marker := _make_marker(registry, 0, Vector3(0.0, 0.0, 200.0))
 	root.add_child(far_marker)
 	terrain.run_seed = 909090
 	var before_overlap: int = player.coins_paid
@@ -754,10 +801,12 @@ func _check_toast(registry: Array) -> void:
 	toast.call("_scan")
 	player.global_position = Vector3(0.0, 0.0, radius + approach_pad - 1.0)
 	toast.call("_scan")
+	_answer_correct(toast)
 	var owed_first: int = int(toast.get("_burst_remaining"))
 	# Arrive at the second, still mid-shower.
 	player.global_position = Vector3(0.0, 0.0, 200.0)
 	toast.call("_scan")
+	_answer_correct(toast)
 	var owed_both: int = int(toast.get("_burst_remaining"))
 	toast.call("_update_burst", 100.0)
 	var paid_overlap: int = player.coins_paid - before_overlap
@@ -781,6 +830,7 @@ func _check_toast(registry: Array) -> void:
 	toast.call("_scan")
 	player.global_position = Vector3(0.0, 0.0, radius + approach_pad - 1.0)
 	toast.call("_scan")
+	_answer_correct(toast)
 	if int(toast.get("_burst_remaining")) <= 0:
 		_fail("treasure: nothing was owed after a fresh approach — step 5f cannot measure the cancel")
 	# The world changes underneath the shower.
@@ -807,11 +857,15 @@ func _check_toast(registry: Array) -> void:
 	# tick and a fresh card is raised 4 times a second, alternating. Every other
 	# step in this check passes with that bug present, because they all use one
 	# marker.
-	var second := _make_marker(registry[0], Vector3(0.0, 0.0, -2.0))
+	var second := _make_marker(registry, 0, Vector3(0.0, 0.0, -2.0))
 	root.add_child(second)
 	# Stand between them: inside both approach radii, nearer the second.
 	player.global_position = Vector3(0.0, 0.0, -1.5)
 	toast.call("_scan")
+	# Resolve whatever that arrival asked, or the `not _quiz_pending` term in the
+	# raise guard would be what blocks the second card and this step would pass
+	# for the wrong reason — the `_active` latch is the thing under test.
+	_answer_correct(toast)
 	_clear_labels(toast)
 	# Drift back toward the first without leaving either — `nearest` changes, the
 	# approach does not.
@@ -833,16 +887,44 @@ func _check_toast(registry: Array) -> void:
 
 func _approach_again(toast: Control, player: Node3D, near: float, far: float) -> void:
 	"""
-	Walk the player genuinely out of range and back in, then flush whatever burst
-	the arrival armed. Leaving first is what re-arms the CARD latch (`_active`),
-	which is the only way to reach `_show` — and therefore the only way to reach
-	the treasure claim — a second time.
+	Walk the player genuinely out of range and back in, ANSWER whatever the
+	arrival asked, and flush the burst a right answer armed. Leaving first is what
+	re-arms the CARD latch (`_active`), which is the only way to raise a card —
+	and therefore the only way to reach the treasure — a second time.
 	"""
+	_walk_in(toast, player, near, far)
+	_answer_correct(toast)
+	toast.call("_update_burst", 100.0)
+
+
+func _walk_in(toast: Control, player: Node3D, near: float, far: float) -> void:
+	"""Out of range and back in, leaving whatever card that raised untouched."""
 	player.global_position = Vector3(0.0, 0.0, far)
 	toast.call("_scan")
 	player.global_position = Vector3(0.0, 0.0, near)
 	toast.call("_scan")
-	toast.call("_update_burst", 100.0)
+
+
+func _answer_correct(toast: Control) -> void:
+	"""
+	Answer a pending question right, straight through the toast's own resolver.
+
+	Check 4 measures the TREASURE, which is now what a right answer pays, so every
+	one of its approaches routes through here. It deliberately calls `_answer`
+	rather than feeding a key: which key answers which slot is check 7's business,
+	and check 4 should not fail twice for one bug.
+	"""
+	if not bool(toast.get("_quiz_pending")):
+		return
+	toast.call("_answer", int(toast.get("_quiz_correct_slot")))
+
+
+func _press_key(toast: Control, keycode: int) -> void:
+	"""One real key-down event, through the toast's real `_unhandled_input`."""
+	var event := InputEventKey.new()
+	event.keycode = keycode
+	event.pressed = true
+	toast.call("_unhandled_input", event)
 
 
 # ============================================================================
@@ -872,14 +954,16 @@ func _check_toast_radius_derived(registry: Array) -> void:
 	var approach_pad: float = float(toast_script.get_script_constant_map()["APPROACH_PAD"])
 
 	# Widest and narrowest entries in the registry, whatever they happen to be.
-	var small: Dictionary = registry[0]
-	var big: Dictionary = registry[0]
-	for entry_variant: Variant in registry:
-		var entry: Dictionary = entry_variant
-		if float(entry["radius"]) < float(small["radius"]):
-			small = entry
-		if float(entry["radius"]) > float(big["radius"]):
-			big = entry
+	# Tracked by INDEX because that index is the marker's `kind` meta.
+	var small_kind: int = 0
+	var big_kind: int = 0
+	for i: int in registry.size():
+		if float((registry[i] as Dictionary)["radius"]) < float((registry[small_kind] as Dictionary)["radius"]):
+			small_kind = i
+		if float((registry[i] as Dictionary)["radius"]) > float((registry[big_kind] as Dictionary)["radius"]):
+			big_kind = i
+	var small: Dictionary = registry[small_kind]
+	var big: Dictionary = registry[big_kind]
 	var r_small: float = float(small["radius"])
 	var r_big: float = float(big["radius"])
 	if r_big - r_small < 1.0:
@@ -892,14 +976,15 @@ func _check_toast_radius_derived(registry: Array) -> void:
 	# of the big one's.
 	var probe: float = (r_small + approach_pad + r_big + approach_pad) * 0.5
 
-	for case: Array in [[small, false], [big, true]]:
-		var entry: Dictionary = case[0]
+	for case: Array in [[small_kind, false], [big_kind, true]]:
+		var kind: int = case[0]
+		var entry: Dictionary = registry[kind]
 		var expect_card: bool = case[1]
 
 		var player := StubPlayer.new()
 		player.add_to_group("player")
 		root.add_child(player)
-		var marker := _make_marker(entry, Vector3.ZERO)
+		var marker := _make_marker(registry, kind, Vector3.ZERO)
 		root.add_child(marker)
 
 		var toast := Control.new()
@@ -926,18 +1011,25 @@ func _check_toast_radius_derived(registry: Array) -> void:
 		await process_frame
 
 
-func _make_marker(entry: Dictionary, at: Vector3) -> Node3D:
+func _make_marker(registry: Array, kind: int, at: Vector3) -> Node3D:
 	"""
 	A stand-in for the bare Node3D spawn_landmark_in_chunk parents to the chunk:
-	group "landmark" plus the name/fact/radius metas the toast reads today (the
-	`kind` meta the world also sets is the quiz card's, and is phase 2's to drive).
+	group "landmark" plus all four metas the world sets — name, fact, radius and
+	the registry index `kind`, which is what the quiz card asks about.
+
+	It takes the INDEX rather than the row because `kind` is the index: handing it
+	a row would mean looking the index back up, and a stub whose kind disagreed
+	with its name/fact would make check 7's "the right answer is among the three
+	offered" assertion meaningless.
 	"""
+	var entry: Dictionary = registry[kind]
 	var marker := Node3D.new()
 	marker.add_to_group("landmark")
 	marker.position = at
 	marker.set_meta("name_key", entry["name"])
 	marker.set_meta("fact_key", entry["fact"])
 	marker.set_meta("radius", entry["radius"])
+	marker.set_meta("kind", kind)
 	return marker
 
 
@@ -1087,6 +1179,242 @@ func _check_quiz_options(builders_script: GDScript, registry: Array) -> void:
 		_fail("no landmark's options changed across %d landmark ids — the id is not in the quiz hash" % QUIZ_IDS.size())
 	if not fallback_widened and _has_underpopulated_region(per_region):
 		_fail("a region with fewer than 3 rows never produced an outside distractor — the whole-table fallback is dead code")
+
+
+# ============================================================================
+# CHECK 7 — the quiz card: asks, pays only on a right answer, and asks once
+# ============================================================================
+
+func _check_quiz_toast(registry: Array) -> void:
+	"""
+	Drive the real landmark_toast.gd through the whole question, with the real
+	stubs check 4 uses. Check 6 proved the three NAMES are a fair question; this
+	proves the CARD that shows them behaves.
+
+	Every step is an effect measurement with a control beside it, the same house
+	rule the rest of this file follows: (a) refuses to pass unless the card is
+	asking and nothing has been paid, so every "it paid" below means something;
+	(f) presses a digit with no question pending and requires nothing to move,
+	which is the control for every step that presses one.
+
+	The keys go in as real InputEventKey objects through `_unhandled_input`, and
+	the tap goes in as the Button's own `pressed` signal, because "tap == hotkey"
+	is a claim about two code paths and asserting it against one of them proves
+	nothing.
+	"""
+	var toast_script: GDScript = load(TOAST_SCRIPT)
+	var toast_consts: Dictionary = toast_script.get_script_constant_map()
+	var approach_pad: float = float(toast_consts["APPROACH_PAD"])
+	var leave_pad: float = float(toast_consts["LEAVE_PAD"])
+	var quiz_timeout: float = float(toast_consts["QUIZ_TIMEOUT"])
+	var option_count: int = int(toast_consts["OPTION_COUNT"])
+	var answer_keycodes: Array = toast_consts["ANSWER_KEYCODES"]
+	var treasure_min: int = int(toast_consts["TREASURE_COINS_MIN"])
+	var treasure_max: int = int(toast_consts["TREASURE_COINS_MAX"])
+	var prompt: String = String(toast_consts["QUIZ_PROMPT"])
+
+	var player := StubPlayer.new()
+	player.add_to_group("player")
+	root.add_child(player)
+	var terrain := StubTerrain.new()
+	terrain.run_seed = 515051
+	terrain.add_to_group("terrain")
+	root.add_child(terrain)
+
+	# The LAST registry row, so a toast that always asked about entry 0 could not
+	# pass (b)'s "the right answer reveals THIS landmark" assertion.
+	var kind: int = registry.size() - 1
+	var entry: Dictionary = registry[kind]
+	var radius: float = float(entry["radius"])
+	var marker := _make_marker(registry, kind, Vector3.ZERO)
+	root.add_child(marker)
+
+	var toast := Control.new()
+	toast.set_script(toast_script)
+	root.add_child(toast)
+	await process_frame
+	toast.set_process(false)
+
+	var near: float = radius + approach_pad - 1.0
+	var far: float = radius + leave_pad + 5.0
+	var name_label: Label = toast.get("name_label")
+	var fact_label: Label = toast.get("fact_label")
+	var treasure_label: Label = toast.get("treasure_label")
+	var buttons: Array = toast.get("_option_buttons")
+
+	# --- (a) The first approach ASKS, and pays nothing yet.
+	_walk_in(toast, player, near, far)
+	if not toast.visible:
+		_fail("quiz: no card at all on the first approach of the run")
+	if not bool(toast.get("_quiz_pending")):
+		_fail("quiz: the first approach of the run asked nothing — the card went straight to the answer")
+	if name_label.text != prompt:
+		_fail("quiz: the card's headline reads %s, expected the prompt %s"
+				% [name_label.text.c_escape(), prompt.c_escape()])
+	# THE FACT IS THE REVEAL. Shown beside the question it names the answer, and
+	# nothing else in this file would notice — the card looks entirely normal.
+	if fact_label.visible:
+		_fail("quiz: the fact is on screen beside the question — it is the answer")
+	var offered: Array[String] = []
+	for slot: int in option_count:
+		var button: Button = buttons[slot]
+		if not (button.get_parent() as Control).visible:
+			_fail("quiz: option row %d is hidden while a question is pending" % slot)
+		offered.append(button.text)
+	for slot: int in option_count:
+		for other: int in range(slot + 1, option_count):
+			if offered[slot] == offered[other]:
+				_fail("quiz: options %d and %d both read %s — the card offers the same name twice"
+						% [slot, other, offered[slot].c_escape()])
+	if not offered.has(String(entry["name"])):
+		_fail("quiz: the three options %s do not include %s, the landmark being asked about"
+				% [str(offered), String(entry["name"]).c_escape()])
+	# THE CONTROL FOR EVERY "IT PAID" BELOW: a card that armed the burst on
+	# arrival (i.e. the pre-quiz behaviour with three buttons drawn over it) pays
+	# here, before anyone answered anything.
+	toast.call("_update_burst", 100.0)
+	if player.coins_paid != 0:
+		_fail("quiz: %d coins were paid before the question was answered" % player.coins_paid)
+
+	# --- (b) The right digit pays the burst and reveals the name and the fact.
+	var correct_slot: int = int(toast.get("_quiz_correct_slot"))
+	if correct_slot < 0 or correct_slot >= option_count:
+		_fail("quiz: the correct answer is slot %d, which is not one of the %d offered — the card is unanswerable"
+				% [correct_slot, option_count])
+		correct_slot = 0
+	_press_key(toast, int((answer_keycodes[correct_slot] as Array)[0]))
+	if bool(toast.get("_quiz_pending")):
+		_fail("quiz: pressing the digit for slot %d did not resolve the question" % correct_slot)
+	toast.call("_update_burst", 100.0)
+	var paid_right: int = player.coins_paid
+	if paid_right < treasure_min or paid_right > treasure_max:
+		_fail("quiz: a right answer paid %d coins, outside TREASURE_COINS_MIN..MAX (%d..%d)"
+				% [paid_right, treasure_min, treasure_max])
+	if name_label.text != String(entry["name"]) or fact_label.text != String(entry["fact"]) or not fact_label.visible:
+		_fail("quiz: after a right answer the card reads %s / %s (fact %s), expected the landmark's own name and fact revealed"
+				% [name_label.text.c_escape(), fact_label.text.c_escape(),
+				   "shown" if fact_label.visible else "hidden"])
+	if not treasure_label.visible or not treasure_label.text.begins_with("Correct"):
+		_fail("quiz: the verdict after a right answer reads %s, expected the \"Correct! +N coins\" line"
+				% treasure_label.text.c_escape())
+	for slot: int in option_count:
+		if (buttons[slot].get_parent() as Control).visible:
+			_fail("quiz: option row %d is still on screen after the question was answered" % slot)
+
+	# --- (c) A wrong digit reveals the same answer and pays NOTHING.
+	terrain.run_seed = 515052
+	_walk_in(toast, player, near, far)
+	var before_wrong: int = player.coins_paid
+	var wrong_slot: int = (int(toast.get("_quiz_correct_slot")) + 1) % option_count
+	_press_key(toast, int((answer_keycodes[wrong_slot] as Array)[0]))
+	toast.call("_update_burst", 100.0)
+	if player.coins_paid != before_wrong:
+		_fail("quiz: a wrong answer paid %d coins — the burst is not gated on the answer"
+				% (player.coins_paid - before_wrong))
+	if name_label.text != String(entry["name"]) or fact_label.text != String(entry["fact"]) or not fact_label.visible:
+		_fail("quiz: a wrong answer did not reveal the correct name and its fact — it reads %s / %s"
+				% [name_label.text.c_escape(), fact_label.text.c_escape()])
+	if treasure_label.text != String(toast_consts["QUIZ_WRONG"]):
+		_fail("quiz: the verdict after a wrong answer reads %s, expected %s"
+				% [treasure_label.text.c_escape(), String(toast_consts["QUIZ_WRONG"]).c_escape()])
+
+	# --- (d) No answer at all: QUIZ_TIMEOUT resolves it as wrong, with its own
+	# verdict. Driven through `_process` rather than `_update_quiz` on purpose —
+	# a clock that is never called from the frame is not a timeout.
+	terrain.run_seed = 515053
+	_walk_in(toast, player, near, far)
+	var before_timeout: int = player.coins_paid
+	toast.call("_process", quiz_timeout + 1.0)
+	if bool(toast.get("_quiz_pending")):
+		_fail("quiz: the question was still pending %.1f s after it was asked — QUIZ_TIMEOUT (%.1f s) never fires"
+				% [quiz_timeout + 1.0, quiz_timeout])
+	toast.call("_update_burst", 100.0)
+	if player.coins_paid != before_timeout:
+		_fail("quiz: a timed-out question paid %d coins" % (player.coins_paid - before_timeout))
+	if treasure_label.text != String(toast_consts["QUIZ_TIMEOUT_VERDICT"]):
+		_fail("quiz: the verdict after a timeout reads %s, expected %s"
+				% [treasure_label.text.c_escape(), String(toast_consts["QUIZ_TIMEOUT_VERDICT"]).c_escape()])
+	if name_label.text != String(entry["name"]) or not fact_label.visible:
+		_fail("quiz: a timeout did not reveal the answer — the card reads %s" % name_label.text.c_escape())
+
+	# --- (e) NO RE-ASK. Leave past LEAVE_PAD and come back in the SAME run: the
+	# plain card, no options, no coins. This is the step that fails if `_visited`
+	# is marked at the answer instead of at the arrival — within one visit the two
+	# orders are indistinguishable, which is why the walk out and back is the only
+	# way to see it.
+	var before_return: int = player.coins_paid
+	_walk_in(toast, player, near, far)
+	if bool(toast.get("_quiz_pending")):
+		_fail("quiz: coming back to a landmark asked about it a second time in the same run")
+	if name_label.text != String(entry["name"]) or not fact_label.visible:
+		_fail("quiz: the return visit did not show the plain name-and-fact card — it reads %s"
+				% name_label.text.c_escape())
+	for slot: int in option_count:
+		if (buttons[slot].get_parent() as Control).visible:
+			_fail("quiz: option row %d is on screen on a re-visit" % slot)
+	toast.call("_update_burst", 100.0)
+	if player.coins_paid != before_return:
+		_fail("quiz: a re-visit paid %d coins — the landmark can be farmed"
+				% (player.coins_paid - before_return))
+
+	# --- (f) NEGATIVE CONTROL for every key press above: a digit with no question
+	# pending must change nothing at all.
+	var before_stray: int = player.coins_paid
+	var stray_name: String = name_label.text
+	var stray_verdict: String = treasure_label.text
+	_press_key(toast, int((answer_keycodes[0] as Array)[0]))
+	if player.coins_paid != before_stray:
+		_fail("quiz: a digit pressed with no question pending paid %d coins"
+				% (player.coins_paid - before_stray))
+	if name_label.text != stray_name or treasure_label.text != stray_verdict:
+		_fail("quiz: a digit pressed with no question pending rewrote the card")
+
+	# --- (g) TAP == HOTKEY. The option Button's own `pressed` signal, which is the
+	# path a touchscreen (and a mouse click) takes. A card whose buttons were never
+	# connected still answers every digit, so nothing above notices.
+	terrain.run_seed = 515054
+	_walk_in(toast, player, near, far)
+	var before_tap: int = player.coins_paid
+	var tap_slot: int = int(toast.get("_quiz_correct_slot"))
+	(buttons[tap_slot] as Button).emit_signal("pressed")
+	toast.call("_update_burst", 100.0)
+	var paid_tap: int = player.coins_paid - before_tap
+	if paid_tap < treasure_min or paid_tap > treasure_max:
+		_fail("quiz: tapping the correct option paid %d coins, outside %d..%d — the option Buttons answer nothing"
+				% [paid_tap, treasure_min, treasure_max])
+
+	# --- (h) THE PAUSE GUARD, and the numpad row, in one approach. While the tree
+	# is paused (skill tree, pause screen, MP panel) a digit must do nothing: the
+	# HUD layer is pausable today so the engine would withhold the event anyway,
+	# but that is a property of scenes/main.tscn and the guard in the toast is what
+	# survives somebody setting PROCESS_MODE_ALWAYS on that layer. Unpausing and
+	# pressing the NUMPAD digit is the positive control — it proves the paused
+	# press was refused for being paused, not for being the wrong key.
+	terrain.run_seed = 515055
+	_walk_in(toast, player, near, far)
+	var before_paused: int = player.coins_paid
+	var paused_slot: int = int(toast.get("_quiz_correct_slot"))
+	paused = true
+	_press_key(toast, int((answer_keycodes[paused_slot] as Array)[0]))
+	paused = false
+	if not bool(toast.get("_quiz_pending")):
+		_fail("quiz: a digit answered the question while the tree was paused — a player closing a panel with the number row answers blind")
+	toast.call("_update_burst", 100.0)
+	if player.coins_paid != before_paused:
+		_fail("quiz: %d coins were paid by a digit pressed while the tree was paused"
+				% (player.coins_paid - before_paused))
+	_press_key(toast, int((answer_keycodes[paused_slot] as Array)[1]))
+	toast.call("_update_burst", 100.0)
+	var paid_numpad: int = player.coins_paid - before_paused
+	if paid_numpad < treasure_min or paid_numpad > treasure_max:
+		_fail("quiz: the numpad digit for slot %d paid %d coins, outside %d..%d — either the numpad row does not answer or the pause guard never lifts"
+				% [paused_slot, paid_numpad, treasure_min, treasure_max])
+
+	toast.queue_free()
+	marker.queue_free()
+	player.queue_free()
+	terrain.queue_free()
+	await process_frame
 
 
 func _distinct_values(by_input: Dictionary) -> int:
