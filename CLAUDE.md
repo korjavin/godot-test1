@@ -43,6 +43,11 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            placement, biome dispatch, behaviour, MP identity
 #   boss_selfcheck           the boss territory leash (hunts inside, never
 #                            leaves) + crush immunity is an ORDERING
+#   projectile_selfcheck     boss projectiles: the per-style FAIRNESS contract
+#                            (a walking player always clears it; nothing outruns
+#                            a fleeing one), straight + lob flight, both dodge
+#                            sims with their stationary controls, the per-shooter
+#                            cap and its chunk-unload release
 #   perf_selfcheck           frame-spike telemetry (thresholds, correlation, reset)
 #   chunk_stream_selfcheck   ground-first chunk streaming (floor, debt, determinism)
 #   intro_selfcheck          intro film: web gate, desktop PLAY SOLO path, JS shape
@@ -257,6 +262,19 @@ ever faster than 8.5" but **running escapes across the whole pounce-and-recovery
 a claim about a gap over time, and measured at both ends (a walking player must still be
 caught) by `enemy_spawn_selfcheck` check 8, which probes *every* row carrying the
 behaviour — a second burst species needs no edit there.
+
+**Ranged attacks are `scripts/boss_projectile.gd`, and it is a CAPABILITY, not a boss.**
+One static `BossProjectile.fire(from, at, parent, params, shooter)` taking a params dict
+that lives in the firing row's `"ranged"` key, so a new ranged boss is row data plus one
+line in its behaviour arm. That file owns flight, visuals, lethality and lifetime only —
+cooldown/when/at-whom stays in the arm. Two trajectories exist (`"straight"`, `"lob"`) and
+**both freeze their aim at fire time: no homing, ever** — side-stepping is the whole
+counterplay against a boss that cannot be killed. Projectiles are transient combat effects
+and sit **outside the world-determinism contract** (no RNG, no hash stream, no footprint),
+like weather and fauna. The **fairness contract** is the load-bearing part and is measured
+per style by `projectile_selfcheck`: from its `min_fire_range` the flight must last long
+enough for a merely *walking* player to clear 3x the hit radius, and its horizontal speed
+must stay under `RUN_SPEED`. "Make the bolt snappier" is the retune that breaks the game.
 
 The spawn point is a crocodile-free bubble enforced in generation
 (`SPAWN_SAFE_RADIUS`, mirrored in `player_controller`; keep the two in step).
