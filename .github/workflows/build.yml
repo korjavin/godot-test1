@@ -79,10 +79,43 @@ jobs:
               || { echo "::error::assets/translations/ui.${locale}.translation was not generated — the en/de UI would ship untranslated"; exit 1; }
           done
 
+      # BEFORE the export, and that ordering is the whole feature. `BUILD_SHA` has
+      # to travel INSIDE the pack, because a client must never learn its own
+      # version by fetching it — a player served a stale shell would fetch the
+      # current marker, agree with it, and never reload. Baked-in versus fetched
+      # is the entire mechanism (see `scripts/build_version.gd`'s header).
+      #
+      # `sed` anchored on the start of the line, then a grep to prove it landed:
+      # a silently no-op rewrite would ship a build that thinks it is "dev" and
+      # never reloads anybody, which looks exactly like a working build.
+      #
+      # The grep is on the SOURCE, deliberately, and it is the only proof
+      # available: a `.pck` stores its own directory and every exported GDScript
+      # compressed (format v3 writes them through `FileAccessCompressed`), so the
+      # SHA is not findable in the export by any grep or encoding. Don't add a
+      # post-export check here expecting one — it can only ever fail.
+      - name: 🔖 Bake the commit SHA into the export pack
+        env:
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          sed -i "s|^const BUILD_SHA: String = \".*\"$|const BUILD_SHA: String = \"${COMMIT_SHA}\"|" scripts/build_version.gd
+          grep -qx "const BUILD_SHA: String = \"${COMMIT_SHA}\"" scripts/build_version.gd \
+            || { echo "::error::failed to bake BUILD_SHA into scripts/build_version.gd — the export would ship the 'dev' placeholder and no player would ever be pulled onto a new build"; exit 1; }
+
       - name: 🔨 Build for Web
         run: |
           mkdir -v -p build/web
           godot --headless --verbose --export-release "Web" build/web/index.html
+
+      # AFTER the export, into the same `build/web` both deploy targets are cut
+      # from — so the Pages artifact and the nginx image each carry a marker naming
+      # the build they were cut from. This is the "what the server currently
+      # offers" half; the baked const above is the "what this tab is running" half,
+      # and the client compares the two.
+      - name: 🔖 Publish the version marker beside the export
+        env:
+          COMMIT_SHA: ${{ github.sha }}
+        run: printf '{"sha":"%s"}\n' "${COMMIT_SHA}" > build/web/version.json
 
       # `progressive_web_app/enabled=false` stops NEW exports shipping Godot's
       # cache-first service worker, but it cannot reach a worker already

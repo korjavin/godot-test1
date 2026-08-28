@@ -188,6 +188,10 @@ func _ready() -> void:
 	# HUD piece (`mp_ui.gd`, `mobile_settings_panel.gd`, `MpManager`).
 	process_mode = Node.PROCESS_MODE_ALWAYS
 
+	# Discoverable, so `build_version.gd` can ask whether this card is still up —
+	# "no run has started yet" is one of its two safe points for an auto-reload.
+	add_to_group("start_overlay")
+
 	# The root spans the screen but is never a hit-test target itself; `_body`
 	# below is the modal that actually swallows input.
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -269,6 +273,16 @@ func _film_finished() -> bool:
 
 func _film_teardown() -> void:
 	IntroVideo.discard()
+
+
+## True while this card (or the intro film behind it) still owns the screen — i.e.
+## no run has begun. Read through the `start_overlay` group by `build_version.gd`,
+## for which that is a safe moment to reload the tab: there is nothing in memory
+## yet for a reload to destroy. `_dismissed` rather than `visible`, because the
+## node stays visible-but-transparent while a touch modal is up and while the film
+## plays, and it is one-way — this screen never comes back.
+func is_showing() -> bool:
+	return not _dismissed
 
 
 ## True while `touch_controls.gd` has one of its own full-rect overlays up.
