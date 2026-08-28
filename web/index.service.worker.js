@@ -39,7 +39,15 @@ self.addEventListener('install', (event) => {
 // window between activation and the reload nothing is served from a cache.
 self.addEventListener('activate', (event) => {
 	event.waitUntil((async () => {
-		const names = await caches.keys();
+		// Only Godot's own caches. `caches` is scoped to the ORIGIN, not to this
+		// worker's path, and the GitHub Pages mirror lives on the shared
+		// korjavin.github.io — a blanket `caches.delete` there would wipe the
+		// offline storage of every other project on that domain. Godot names
+		// its cache `<project name>-sw-cache-<version>` (measured: the export
+		// with the PWA setting on produces `CrimeKickers-sw-cache-…`); matching
+		// the fixed `-sw-cache-` half rather than the project name means a
+		// rename, or a build from an older Godot, still gets collected.
+		const names = (await caches.keys()).filter((name) => name.includes('-sw-cache-'));
 		await Promise.all(names.map((name) => caches.delete(name)));
 		await self.registration.unregister();
 		// includeUncontrolled: after skipWaiting the old worker's clients are
