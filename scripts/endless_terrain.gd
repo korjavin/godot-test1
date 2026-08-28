@@ -575,6 +575,16 @@ const COIN_BLOCK_OFFSET: float = 0.6
 ## overlap rule has exactly one definition (see _block_overlaps).
 const COIN_BLOCK_OVERLAP_MARGIN: float = 1.0
 
+## Clearance (metres) added to every face of a tower box when deciding whether a
+## road coin is inside the building (see tower_blocks_coin).
+##
+## A coin is a 0.35 m disc and a GEM is that times GEM_SCALE (1.6), i.e. 0.56 m at
+## its widest — so a point test alone would leave a gem half-sunk into a wall face
+## and still call it clear. 0.7 covers the widest pickup with margin, and errs the
+## only direction that is safe: it drops a coin that was merely grazing the stone
+## rather than leaving one embedded in it.
+const COIN_TOWER_CLEARANCE: float = 0.7
+
 # ----------------------------------------------------------------------------
 # COIN ROAD CONFIGURATION (the meandering parametric trail that carries coins)
 # ----------------------------------------------------------------------------
@@ -8141,6 +8151,54 @@ func tower_excludes(world_x: float, world_z: float, radius: float = 0.0) -> bool
 	return Vector2(world_x - site.x, world_z - site.z).length() < keep_out
 
 
+func tower_blocks_coin(world_x: float, world_y: float, world_z: float) -> bool:
+	"""
+	Would a coin at this world point be buried inside the tower's stonework?
+
+	@param world_x, world_y, world_z: The settled coin position, WORLD space.
+	@return: true when the coin must be skipped.
+
+	WHY THIS EXISTS AT ALL. Phase 1 deliberately left the COIN ROAD out of
+	`tower_excludes()` — it is one parametric line through the whole world and
+	cutting a hole in it would break "follow the coins" — and explicitly left the
+	question of what the road does at the tower door to this phase. This is that
+	answer, and it is the smallest one: a coin the walls would swallow is dropped,
+	and every other coin on the road is untouched, so the trail still runs past the
+	door and into the yard. (Run seed 56 lays a road coin 9.15 m out and 5.36 m
+	across from the site centre, i.e. inside the -Z door jamb — found by codex
+	review, 2026-08-28.)
+
+	THE SAME RULE `_settle_coin_y` ALREADY APPLIES to a non-climbable block top, for
+	the same reason: a coin you can see and cannot reach is worse than no coin. It
+	is a separate function only because the tower is authored geometry and therefore
+	in no chunk's `obstacles` list — there is nothing for `_settle_coin_y` to read.
+
+	POST-DRAW ONLY, like every other rejection in this file: the caller `continue`s
+	AFTER the draws that produced the candidate, so the road's stream still advances
+	and the rest of the world is unmoved. Pure and allocation-free on the common
+	path — the disc test rejects before the box table is ever asked for.
+	"""
+	var site := tower_site()
+	var dx := world_x - site.x
+	var dz := world_z - site.z
+	# Cheap disc reject first: every coin in the world that is not at the tower pays
+	# one length() and nothing else.
+	if Vector2(dx, dz).length() > TOWER_RADIUS:
+		return false
+	for box: Dictionary in TowerShell.boxes():
+		# Only the SOLID boxes. The yard slab is 3 cm of paint and the beacon is a
+		# light 24 m up; a coin is welcome to sit on either.
+		if not box["collide"]:
+			continue
+		var pos: Vector3 = box["pos"]
+		var half: Vector3 = box["size"] * 0.5
+		if absf(dx - pos.x) < half.x + COIN_TOWER_CLEARANCE \
+				and absf(world_y - pos.y) < half.y + COIN_TOWER_CLEARANCE \
+				and absf(dz - pos.z) < half.z + COIN_TOWER_CLEARANCE:
+			return true
+	return false
+
+
 func tower_shell() -> Node3D:
 	"""
 	The instanced tower, or null while the player has never been near it.
@@ -8178,7 +8236,12 @@ func _tower_stream(player_pos: Vector3) -> void:
 		return
 	_tower_shell = TOWER_SHELL_SCENE.instantiate() as Node3D
 	add_child(_tower_shell)
-	_tower_shell.global_position = site
+	# LOCAL position with a WORLD coordinate, exactly as create_chunk parks a chunk
+	# (`mesh_instance.position = chunk_to_world(...)`): this node is the world-space
+	# frame everything under it is placed in. It is also the only form that is safe
+	# on a terrain that is not in the tree yet — `set_run_seed()` is reachable there
+	# and `global_position` is rejected outright (codex review, 2026-08-28).
+	_tower_shell.position = site
 	# The silhouette has done its job — the real thing is now standing in the same
 	# place, and two towers in one spot z-fight.
 	if is_instance_valid(_tower_impostor):
@@ -8201,7 +8264,11 @@ func _tower_reset() -> void:
 	if not is_instance_valid(_tower_impostor):
 		_tower_impostor = TowerShell.build_impostor()
 		add_child(_tower_impostor)
-	_tower_impostor.global_position = tower_site()
+	# LOCAL, for the reason _tower_stream gives — and it matters most HERE, because
+	# set_run_seed() (this function's only caller) is routinely called on a terrain
+	# that is not in the tree: mp_selfcheck, prop_selfcheck and enemy_spawn_selfcheck
+	# all build one that way.
+	_tower_impostor.position = tower_site()
 	_tower_impostor.visible = true
 
 
@@ -8653,6 +8720,14 @@ func spawn_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obs
 			# spawners can never drift apart); INF means "skip this coin".
 			local.y = _settle_coin_y(local.x, local.z, local.y, obstacles)
 			if is_inf(local.y):
+				continue
+
+			# ...and against THE TOWER, which is authored geometry and therefore in
+			# no chunk's `obstacles` list for _settle_coin_y to have seen. Same
+			# post-draw `continue`, same rule (a coin inside stone is dropped, not
+			# moved) — see tower_blocks_coin for why the road is filtered here
+			# rather than excluded wholesale.
+			if tower_blocks_coin(cw_pos.x, local.y, cw_pos.z):
 				continue
 
 			# Spawn the coin (position is local to the chunk, like blocks/crocodiles).

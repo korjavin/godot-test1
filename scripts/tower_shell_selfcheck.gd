@@ -67,6 +67,14 @@ const SHELL_SCENE: String = "res://scenes/tower/tower_shell.tscn"
 const SEED_A: int = 20260828
 const SEED_B: int = 4242
 
+## Seeds for the coin-road check. REGRESSION SEEDS, not a sample: 56 is the one
+## codex review found (2026-08-28) whose deterministic road lays a coin inside the
+## -Z door jamb. The others are here so the check keeps saying something if the road
+## generator is ever retuned and seed 56 stops crossing the building; each prints
+## how many candidates it rejected, so a seed that has gone inert is visible rather
+## than silently passing. Keep 56.
+const ROAD_SEEDS: Array[int] = [56, 20260828, 4242]
+
 var _failures: Array[String] = []
 
 
@@ -92,6 +100,8 @@ func _run() -> void:
 	await _check_shell_is_lazy_and_manager_parented()
 	await _check_new_run_resites_the_tower()
 	await _check_join_streams_the_tower_at_the_anchor()
+	_check_a_detached_terrain_still_sites_the_tower()
+	_check_no_road_coin_is_buried_in_the_walls()
 	_check_impostor()
 	_check_minimap_marks_the_tower()
 	_report()
@@ -536,6 +546,156 @@ func _check_join_streams_the_tower_at_the_anchor() -> void:
 	probe.free()
 	terrain.free()
 	await process_frame
+
+
+func _check_a_detached_terrain_still_sites_the_tower() -> void:
+	"""
+	Check 8c. A terrain built OUTSIDE the scene tree can still take a seed.
+
+	NOT A HYPOTHETICAL. `mp_selfcheck`, `prop_selfcheck` and `enemy_spawn_selfcheck`
+	all construct a terrain and call `set_run_seed()` on it without ever adding it to
+	the tree — that is their whole idiom, because those checks want the pure
+	functions and not the streaming. `set_run_seed()` resets the tower, and writing
+	`global_position` on a detached node is REJECTED by the engine: it logs
+	`Condition "!is_inside_tree()" is true`, leaves the impostor at the origin, and
+	the three unrelated checks fill their output with errors while still passing
+	(codex review, 2026-08-28).
+
+	TWO LEGS, because the first one alone has no teeth: a detached global write is
+	degraded by the engine to "parent transform = identity", so it lands on the same
+	number the local write does and only the error log differs. The second leg is
+	what distinguishes them — a terrain under a MOVED parent, where the two answers
+	part company — and it also pins the frame the whole file already works in:
+	`create_chunk` parks a chunk with `position = chunk_to_world(...)`, i.e. the
+	terrain node IS world space to everything under it. The tower obeys that same
+	contract, so its LOCAL position must be the site whatever the parent does.
+	"""
+	# Leg 1: never in the tree at all. Catches the placement being dropped outright.
+	var loose := Node3D.new()
+	loose.set_script(load(TERRAIN_SCRIPT))
+	loose.set_run_seed(SEED_A)
+	var site: Vector3 = loose.tower_site()
+	var impostor: Node3D = loose._tower_impostor
+	if impostor == null:
+		_fail("a detached terrain built no horizon impostor")
+	elif not impostor.position.is_equal_approx(site):
+		_fail("a detached terrain left the impostor at %s instead of the site %s" % [
+			impostor.position, site])
+	loose.free()
+
+	# Leg 2: in the tree, under a parent that is nowhere near the origin.
+	var moved := Node3D.new()
+	moved.position = Vector3(1000.0, 7.0, -250.0)
+	root.add_child(moved)
+	var terrain := Node3D.new()
+	terrain.set_script(load(TERRAIN_SCRIPT))
+	moved.add_child(terrain)
+	terrain.set_run_seed(SEED_A)
+	var chunk_frame: Vector3 = terrain.chunk_to_world(Vector2i(3, -2))
+	var placed: Node3D = terrain._tower_impostor
+	if placed == null or not placed.position.is_equal_approx(terrain.tower_site()):
+		_fail("under a moved parent the impostor's local position is %s, not the site %s — it was placed in world space while every chunk is placed in the terrain's own frame (chunk (3,-2) goes to local %s)" % [
+			placed.position if placed != null else Vector3.ZERO,
+			terrain.tower_site(), chunk_frame])
+
+	# ...and the SHELL is placed in that same frame. Streamed directly rather than
+	# through _process, because the point here is the frame the node lands in and
+	# not the trigger that built it (check 7 owns the trigger).
+	terrain._tower_stream(terrain.tower_site())
+	var shell: Node3D = terrain.tower_shell()
+	if shell == null:
+		_fail("streaming at the site built no shell")
+	elif not shell.position.is_equal_approx(terrain.tower_site()):
+		_fail("under a moved parent the shell's local position is %s, not the site %s — it was placed in world space while every chunk is placed in the terrain's own frame" % [
+			shell.position, terrain.tower_site()])
+	moved.free()
+
+
+func _check_no_road_coin_is_buried_in_the_walls() -> void:
+	"""
+	Check 8d. Generate the chunks the tower stands in and assert no coin came out
+	inside its stonework.
+
+	THE COIN ROAD IS NOT EXCLUDED FROM THE SITE, on purpose (phase 1's ruling: a hole
+	in the coin trail breaks "follow the coins", and what the road does at the tower
+	door is this phase's problem). It therefore runs THROUGH the building on the
+	seeds where it passes that way, and the coins it lays were placed by a spawner
+	that has never heard of the tower — `_settle_coin_y` reads the chunk's
+	`obstacles` list and authored geometry is in no such list. The result is a
+	visible gold coin sitting inside a wall, on a specific set of seeds, with nothing
+	anywhere logging a word.
+
+	END TO END: real chunks, real spawner, real coin nodes, measured against the
+	shell's own box table. And with a NEGATIVE CONTROL that this seed is actually a
+	test — a seed whose road misses the tower passes this trivially, so the check
+	also counts the candidates the filter had to reject and says so.
+	"""
+	for seed_value: int in ROAD_SEEDS:
+		var terrain := _make_terrain(seed_value)
+		var site: Vector3 = terrain.tower_site()
+		var home: Vector2i = terrain.world_to_chunk(site)
+		# The disc is 60 m across and a chunk is 50, so 3x3 covers it whole.
+		for dx in range(-1, 2):
+			for dz in range(-1, 2):
+				terrain.create_chunk(home + Vector2i(dx, dz))
+
+		var buried: Array[String] = []
+		var coins := 0
+		for chunk: Node in terrain.active_chunks.values():
+			for node: Node in chunk.get_children():
+				# BY GROUP, never by name. Godot renames a second node sharing a
+				# name to "@Coin@7", so a `begins_with("Coin")` scan silently sees
+				# ONE coin per chunk and the check passes its own mutant (measured,
+				# 2026-08-28). coin.tscn declares groups=["coin"] in the scene file,
+				# so membership is true from the moment it is instantiated.
+				if not node.is_in_group("coin"):
+					continue
+				coins += 1
+				var at: Vector3 = (node as Node3D).global_position
+				var inside := _tower_box_at(at - site)
+				if inside != "":
+					buried.append("%s at %s" % [inside, at - site])
+		if not buried.is_empty():
+			_fail("seed %d: %d road coins are inside the tower's walls (%s)" % [
+				seed_value, buried.size(), ", ".join(buried)])
+
+		# The control: how many coins the road WOULD have laid in the stone. Zero
+		# means this seed's road misses the building and proves nothing — which is
+		# information, not a failure, so it is printed rather than asserted.
+		var rejected := _road_coins_in_the_stone(terrain, site)
+		print("seed %d: %d coins near the tower, %d road candidates rejected by the walls" % [
+			seed_value, coins, rejected])
+		terrain.free()
+
+
+func _road_coins_in_the_stone(terrain: Node3D, site: Vector3) -> int:
+	## How many of the road's OWN candidates land inside a solid tower box, asked of
+	## the road directly rather than of the spawned result — the negative control for
+	## the check above (see there).
+	terrain._road_extend_to_x(site.x - 60.0, site.x + 60.0)
+	var hits := 0
+	for k in range(terrain.road_k_min, terrain.road_k_max + 1):
+		for entry: Variant in terrain._road_coins_at(k):
+			var pos: Vector3 = (entry as Dictionary)["pos"]
+			if _tower_box_at(pos - site) != "":
+				hits += 1
+	return hits
+
+
+func _tower_box_at(local: Vector3) -> String:
+	## Which SOLID box of the shell contains this tower-local point, or "" for none.
+	## Deliberately a bare point test with no clearance: the terrain's own filter
+	## adds COIN_TOWER_CLEARANCE, so this measures the thing that actually matters
+	## (is the coin in the stone) instead of re-stating the filter's own margin.
+	for box: Dictionary in TowerShell.boxes():
+		if not box["collide"]:
+			continue
+		var pos: Vector3 = box["pos"]
+		var half: Vector3 = box["size"] * 0.5
+		if absf(local.x - pos.x) < half.x and absf(local.y - pos.y) < half.y \
+				and absf(local.z - pos.z) < half.z:
+			return box["name"]
+	return ""
 
 
 func _check_impostor() -> void:
