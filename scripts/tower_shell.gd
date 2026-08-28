@@ -58,10 +58,16 @@ signal player_entered(body: Node3D)
 ## other horizontal number below derives from this one.
 const OUTER_HALF: float = 10.0
 
-## Wall thickness and height. 7 m is two storeys of the interior phase 3 will put
-## inside, and thick enough that the doorway reads as a passage rather than a slot.
+## Wall thickness and height.
+##
+## RAISED FROM 7 TO 11 BY PHASE 3, and the interior is the reason. A storey has to
+## be at least 4.6 m (see `tower_interior.SLAB_Y`: the jump apex is 3.6125 m and a
+## floor you can jump onto is not a floor), so two of them is 9.2 m before there is
+## any parapet at all. At 7 m the upper storey was a balcony with a knee-high edge
+## and the enclosed hall below it fought the camera's spring arm. The doorway, the
+## lintel and the impostor all derive from this number, so raising it is one edit.
 const WALL_THICK: float = 1.2
-const WALL_HEIGHT: float = 7.0
+const WALL_HEIGHT: float = 11.0
 
 ## THE DOORWAY, and the only place its size is written down. The two front jambs
 ## are what is LEFT of the front wall once this hole is taken out of it, and the
@@ -138,6 +144,30 @@ const IMPOSTOR_BEACON_COLOR := Color(1.0, 0.78, 0.32)
 ## presence flag: phase 3 wants "has this player found the way in", and a bool that
 ## flickers as somebody paces the threshold answers a different question.
 var entered: bool = false
+
+## Every gate, stop and stage inside this tower that has been opened this run, as a
+## SET of string ids (`{id: true}` — GDScript has no Set, and a Dictionary's key
+## lookup is the whole reason this is not an Array).
+##
+## THE STATE LIVES HERE AND NOWHERE ELSE, and that placement is the design:
+##
+##   * IT IS WORLD STATE, NOT PLAYER STATE. The interior's identity gate asks who
+##     is standing on the pad and then writes the answer HERE — so what changed is
+##     the building, not a permission the local player carries around. That is what
+##     the epic's multiplayer landmine asks for: syncing it later is one broadcast
+##     of `opened_ids()`, with no per-player bookkeeping to unpick, because there
+##     never was any.
+##   * IT SURVIVES THE WHOLE RUN. The tower is manager-parented and freed only by
+##     `new_run()`, so "walk out of the tower and back in, gates still open" is a
+##     property of where this variable lives rather than of anything remembering to
+##     save it.
+##   * IT IS MONOTONE. Ids are only ever added — never removed, never re-closed —
+##     which is exactly the shape phase 5 needs to merge two saves with a union and
+##     no conflict rule.
+##
+## Ids are declared as consts on `TowerInterior` (`GATE_*`). They are persisted
+## verbatim by phase 5, so adding one is free and renaming one is a migration.
+var opened: Dictionary = {}
 
 ## Albedo colour -> the one material of that colour, for the whole process.
 ##
@@ -345,6 +375,41 @@ func _ready() -> void:
 	door.position = trigger["pos"]
 	door.body_entered.connect(_on_door_body_entered)
 	add_child(door)
+
+
+func mark_opened(id: String) -> void:
+	"""
+	Record a gate as open. Idempotent, and the only writer of `opened`.
+
+	@param id: One of `TowerInterior`'s `GATE_*` constants.
+	"""
+	opened[id] = true
+
+
+func is_opened(id: String) -> bool:
+	"""
+	Has this gate been opened this run?
+
+	@param id: One of `TowerInterior`'s `GATE_*` constants.
+	@return: true once `mark_opened` has been called for it.
+	"""
+	return opened.has(id)
+
+
+func opened_ids() -> Array:
+	"""
+	Every opened id, sorted.
+
+	@return: A fresh sorted Array of String — the caller may keep or mutate it.
+
+	SORTED SO IT IS COMPARABLE. Dictionary key order is insertion order, which
+	means two players who opened the same three gates in different orders would
+	produce two different arrays; phase 5 merges these and a self-check compares
+	them, and both want the set rather than the history.
+	"""
+	var out: Array = opened.keys()
+	out.sort()
+	return out
 
 
 func _on_door_body_entered(body: Node3D) -> void:

@@ -538,6 +538,17 @@ const TOWER_LOAD_RADIUS: float = 320.0
 ## able to free a building the player is standing in.
 const TOWER_SHELL_SCENE: PackedScene = preload("res://scenes/tower/tower_shell.tscn")
 
+## The tower's INTERIOR, added as a child of the shell the moment the shell is
+## instanced (phase 3).
+##
+## IT IS ASSEMBLED HERE RATHER THAN INSIDE `tower_shell.tscn` FOR ONE REASON: the
+## interior reads the shell's constants (`OUTER_HALF`, `WALL_THICK`) so its floor
+## plan can never drift from the walls it is inside, and a shell that also referred
+## to the interior would be a cyclic `class_name` dependency Godot refuses to load.
+## One arrow, one direction — and this manager, which already owns the shell's
+## lifetime, is the natural place to put the two together.
+const TOWER_INTERIOR_SCENE: PackedScene = preload("res://scenes/tower/tower_interior.tscn")
+
 ## Chance (0..1) that a given walkable structure top (mound summit / wall ridge)
 ## gets a rare crocodile patrolling it. Kept moderate so they're an occasional
 ## surprise, not on every structure.
@@ -8185,7 +8196,10 @@ func tower_blocks_coin(world_x: float, world_y: float, world_z: float) -> bool:
 	# one length() and nothing else.
 	if Vector2(dx, dz).length() > TOWER_RADIUS:
 		return false
-	for box: Dictionary in TowerShell.boxes():
+	# BOTH TABLES — the shell's stonework AND the interior's, because a coin walled
+	# into the vault or standing inside the upper slab is exactly as unreachable as
+	# one inside a jamb, and the road runs straight through the building.
+	for box: Dictionary in TowerShell.boxes() + TowerInterior.boxes():
 		# Only the SOLID boxes. The yard slab is 3 cm of paint and the beacon is a
 		# light 24 m up; a coin is welcome to sit on either.
 		if not box["collide"]:
@@ -8254,6 +8268,10 @@ func _tower_stream(player_pos: Vector3) -> void:
 		if not reached:
 			return
 	_tower_shell = TOWER_SHELL_SCENE.instantiate() as Node3D
+	# The interior goes in BEFORE the shell enters the tree, so the whole building
+	# arrives in one frame and `TowerInterior._ready()` can already see the shell as
+	# its parent (which is where the opened-gate set lives).
+	_tower_shell.add_child(TOWER_INTERIOR_SCENE.instantiate())
 	add_child(_tower_shell)
 	# LOCAL position with a WORLD coordinate, exactly as create_chunk parks a chunk
 	# (`mesh_instance.position = chunk_to_world(...)`): this node is the world-space
