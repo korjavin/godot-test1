@@ -1292,8 +1292,9 @@ func _check_room_lives_ordering() -> String:
 ## A stand-in for `player_controller.bank_awarded()`, so the manager's half of the
 ## payout can be measured without booting the player scene (which mints a profile
 ## id into `user://best_run.cfg` — `scripts/progression_selfcheck.gd` owns the
-## end-to-end version of this check for exactly that reason, and backs the file
-## up). Built from source at runtime rather than kept as a file: it is four lines
+## end-to-end version of this check for exactly that reason, and redirects
+## `BestRunStore.config_path` at a throwaway file so it never opens the real
+## profile). Built from source at runtime rather than kept as a file: it is four lines
 ## and a file would be a scene-tree fixture nobody maintains.
 const BANK_STUB_SOURCE := """extends Node
 var banked: int = -1
