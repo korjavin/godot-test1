@@ -1512,6 +1512,16 @@ const SPECIES: Dictionary = {
 		## model (see scenes/characters/titan.tscn) and those are authored facing
 		## -Z, where every predator mesh is authored nose-along-+X. The body still
 		## travels +Z, so the model needs a half turn instead of a quarter.
+		##
+		## THE CAPSULE IN titan.tscn IS RECORDED HERE for the reason the viper's
+		## is: a .tscn cannot hold a comment an editor resave will not eat.
+		## `radius = 0.32, height = 1.8` at `(0, 0.9, 0)`, UPRIGHT — no lay-down
+		## rotation, the one thing this scene does that the quadrupeds' do not.
+		## The mesh is a 1.8 m biped, so the capsule is its full standing height,
+		## and centre 0.9 = height/2 puts its bottom exactly on y = 0 (the same
+		## identity the crocodile's 0.16/0.16 and the viper's 0.11/0.11 use). The
+		## body scale from the boss schedule multiplies all of it, so a 6x titan
+		## is a 10.8 m capsule around a 10.8 m model.
 		"model_facing_offset": PI,
 
 		## A slow, heavy tread with almost no waddle — the read is a colossus
