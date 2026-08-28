@@ -90,7 +90,6 @@ var _overlay: Control = null
 
 
 func _initialize() -> void:
-	var _ci_gate_proof = ThisIdentifierDoesNotExist.nope  # CI GATE PROOF - parse error, exits 0
 	_run()
 
 
