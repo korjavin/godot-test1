@@ -45,9 +45,10 @@ extends Control
 ## ----------------------------------------------------------------------------
 ## It pauses the tree, with the shared guard
 ## ----------------------------------------------------------------------------
-## `start_overlay.gd`, `pause_controller.gd`, `mp_ui.gd` and `mobile_input.gd` all
-## take `get_tree().paused` and all carry the same `_paused_by_us` guard: only
-## ever release a pause WE took. This node carries it too.
+## Every pauser in this project routes through `PauseHub` (scripts/pause_hub.gd),
+## which refcounts holders, and each carries its own `_paused_by_us` claim bit:
+## only ever release a pause WE took, and the world starts again only when the
+## LAST holder lets go. This node carries it too.
 ##
 ## Pausing rather than merely freezing the player is not a preference:
 ## `player_controller` reads gameplay through the GLOBAL polled `Input` state and
@@ -406,8 +407,13 @@ func _apply_pause(open: bool) -> void:
 	var player := tree.get_first_node_in_group("player")
 	var game_over: bool = player != null and bool(player.get("is_game_over"))
 	if open and not game_over:
-		if not tree.paused:
-			tree.paused = true
+		# `not _paused_by_us`, where this used to read `not tree.paused`: under the
+		# refcount the question is whether WE already hold a claim, not whether
+		# anybody does. In practice this node cannot open under a foreign pause at
+		# all (`_set_panel_open` refuses), so the two only differ in that the
+		# re-assert from `_process` now costs nothing instead of racing.
+		if not _paused_by_us:
+			PauseHub.take(self)
 			_paused_by_us = true
 			# Free a captured mouse so the nodes can be clicked, and remember that
 			# we were the one who did it — `pause_controller` and `mp_ui` may have
@@ -418,7 +424,7 @@ func _apply_pause(open: bool) -> void:
 				_recapture_mouse = true
 	elif _paused_by_us:
 		_paused_by_us = false
-		tree.paused = false
+		PauseHub.release(self)
 		if _recapture_mouse:
 			_recapture_mouse = false
 			# Not on a touch session, for the same reason every other capture site

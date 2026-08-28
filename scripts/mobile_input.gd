@@ -449,9 +449,10 @@ func disable() -> void:
 	_reset_steer_state()
 
 
-## True only while the tree pause was created by `pause_game()` (focus loss or the
-## portrait guard). The touch UI's full-screen "tap to resume" overlay is gated on
-## this, because a tree pause is no longer ours alone — the multiplayer panel pauses
+## True only while THIS driver holds a `PauseHub` claim (focus loss or the portrait
+## guard). It is this node's `_paused_by_us` — the same claim bit every pauser in
+## the project carries. The touch UI's full-screen "tap to resume" overlay is gated
+## on it, because a tree pause is not ours alone — the multiplayer panel pauses
 ## too, and an overlay claiming the screen for somebody else's pause both hides that
 ## panel and unpauses the game out from under it on the next tap.
 var paused_by_driver: bool = false
@@ -459,14 +460,28 @@ var paused_by_driver: bool = false
 
 ## Freeze the tree, remembering whether motion was running so `resume_from_pause()`
 ## can restore it. Called on focus loss (above) and by the touch UI when the phone
-## rotates to portrait. IDEMPOTENT — the early return when already paused matters:
-## a second focus loss while paused (double app-switch without a resume tap) would
-## otherwise overwrite `_was_active_before_pause` with the now-false `active`,
-## leaving motion permanently dead after the resume tap (the UI has no other
-## re-enable path).
+## rotates to portrait. IDEMPOTENT — the early return matters: a second focus loss
+## while already held (double app-switch without a resume tap) would otherwise
+## overwrite `_was_active_before_pause` with the now-false `active`, leaving motion
+## permanently dead after the resume tap (the UI has no other re-enable path).
+##
+## THE GUARD IS `paused_by_driver`, NOT `tree.paused`, and the difference is the
+## whole reason the pause is refcounted. Under the old test a focus loss arriving
+## over somebody else's pause returned here having claimed NOTHING: the tree was
+## then held only by that other overlay, so closing it started the world in a
+## backgrounded tab with the phone in the player's pocket. Guarding on our own
+## claim keeps the double-app-switch protection byte-for-byte (we early-return
+## exactly when we already hold) and turns the missing claim into a real one.
+##
+## Neither of the two real callers can currently reach this over a foreign pause —
+## `touch_controls`' portrait guard is gated on `not get_tree().paused`, and its
+## motion-retry overlay is raised from `_update_motion_watch`, which the same file
+## only ticks while unpaused — so this is a correctness repair, not a live
+## behaviour change. `NOTIFICATION_APPLICATION_FOCUS_OUT` is the one caller with
+## no such gate, and it is exactly the case that was broken.
 func pause_game() -> void:
 	var tree := get_tree()
-	if tree.paused:
+	if paused_by_driver:
 		return
 	# Never pause over the Game Over screen — same rule as pause_controller's
 	# _toggle_pause(). The resume overlay lives inside TouchControls, which sits
@@ -481,7 +496,7 @@ func pause_game() -> void:
 	# through the pause) and freeze the whole tree.
 	_was_active_before_pause = active
 	disable()
-	tree.paused = true
+	PauseHub.take(self)
 	paused_by_driver = true
 
 
@@ -491,8 +506,12 @@ func pause_game() -> void:
 ## neutral, which is exactly right after a pause: the player is re-settling into
 ## however they're NOW holding the phone.
 func resume_from_pause() -> void:
-	get_tree().paused = false
+	# Drop only OUR claim: a resume tap must not start the world under the MP panel
+	# or a help card that is also holding one. `touch_controls` already refuses to
+	# even SHOW the resume overlay unless `paused_by_driver` is true, so this
+	# release is only ever reached for a pause we took.
 	paused_by_driver = false
+	PauseHub.release(self)
 	if _was_active_before_pause:
 		enable()
 	_was_active_before_pause = false

@@ -431,20 +431,37 @@ func _check_pause_is_shared() -> String:
 	— a game running behind a card that says PAUSED. It doubles as the positive
 	control for the stuck-pause assertions above: here the tree is *supposed* to
 	still be paused afterwards, which is only distinguishable from a bug because
-	the flag says who owns it."""
-	paused = true  # stand in for pause_controller's P
+	the hub still has the other holder in it.
+
+	THE FOREIGN PAUSE IS A REAL `PauseHub` CLAIM, not a bare `paused = true`. It
+	used to be the bare write, and back then this check asserted the OPPOSITE of
+	what it does now — that the help claimed nothing over an existing pause. That
+	was the bug (godot-test1-42y): whichever owner released first started the world
+	under every overlay still on screen. The help now always claims, so the thing
+	worth asserting is that the OTHER holder's claim outlives ours. The overlapping
+	lifecycle itself, and the P/?/P repro this describes, live in
+	`scripts/pause_selfcheck.gd`."""
+	var other := Node.new()
+	root.add_child(other)
+	PauseHub.take(other)  # stand in for pause_controller's P
+	if not paused:
+		return "the stand-in holder did not pause the tree — this check would be vacuous"
 	await _press_help_key()
 	if not _overlay._open:
 		return "the help overlay would not open under a foreign pause"
-	if _overlay._paused_by_us:
-		return "the help overlay claimed a pause it did not take"
+	if not _overlay._paused_by_us:
+		return ("the help overlay opened over a foreign pause without claiming one — " \
+			+ "the other holder's release would strand it over a running game")
 	await _press_help_key()
 	if _overlay._open:
 		return "the help overlay would not close under a foreign pause"
 	if not paused:
 		return ("the help overlay released a pause it did not take — a foreign " \
 			+ "overlay is now up over a running game")
-	paused = false
+	PauseHub.release(other)
+	if paused:
+		return "STUCK PAUSE — the last holder released and the tree is still paused"
+	other.free()
 	return ""
 
 

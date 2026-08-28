@@ -972,8 +972,13 @@ func _apply_pause(open: bool) -> void:
 	var player := tree.get_first_node_in_group("player")
 	var game_over: bool = player != null and bool(player.get("is_game_over"))
 	if open and not game_over:
-		if not tree.paused:
-			tree.paused = true
+		# `not _paused_by_us`, where this used to read `not tree.paused`: the pause
+		# is refcounted now (scripts/pause_hub.gd), so the question at a call site
+		# is only ever "do WE already hold a claim". Opening this panel over the
+		# help card or a P-pause therefore adds a second holder instead of riding
+		# somebody else's — and neither one can start the world under the other.
+		if not _paused_by_us:
+			PauseHub.take(self)
 			_paused_by_us = true
 			# Free a captured mouse so the buttons can be clicked. This lives HERE
 			# and not in `_set_panel_open` because the pause is taken lazily: open
@@ -987,10 +992,11 @@ func _apply_pause(open: bool) -> void:
 				Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 				_recapture_mouse = true
 	elif _paused_by_us:
-		# Only ever release OUR pause — `pause_controller` and `mobile_input`
-		# carry the mirror-image guard so neither can cancel the other's.
+		# Only ever release OUR claim — `pause_controller` and `mobile_input`
+		# carry the mirror-image guard, and `PauseHub` starts the world again only
+		# once the last of them has let go.
 		_paused_by_us = false
-		tree.paused = false
+		PauseHub.release(self)
 
 
 ## Re-render everything that depends on the manager's state: which actions are

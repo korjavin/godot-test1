@@ -48,6 +48,8 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #   intro_selfcheck          intro film: web gate, desktop PLAY SOLO path, JS shape
 #   build_version_selfcheck  auto-reload onto a new build: the CI bake contract,
 #                            the web gate, and never mid-run / never in a room
+#   pause_selfcheck          the pause refcount: overlapping holders, the
+#                            P / ? / P repro, and nothing writing tree.paused
 #   tower_site_selfcheck     the tower's site: deterministic, dry, and clear of
 #                            every spawner (plus the A/B that the rest of the world
 #                            is byte-identical with the exclusion on and off)
@@ -307,9 +309,26 @@ above is the tightest margin in the game.
 
 Panels open on raw keycodes outside the input map (K, M, P, +/−, F3–F7): named actions are
 for rebindable *gameplay* input, and a key that only opens a panel has nothing to rebind
-against. Every overlay pauses the tree using the shared `_paused_by_us` guard, because the
-player reads gameplay through global polled `Input`, which a focused `Control` does not
-suppress.
+against. Every overlay pauses the tree, because the player reads gameplay through global
+polled `Input`, which a focused `Control` does not suppress.
+
+### The pause is refcounted — `scripts/pause_hub.gd` is the only writer
+Seven scripts freeze the world (`pause_controller`, `help_overlay`, `skill_tree_ui`,
+`mp_ui`, `start_overlay`, `mobile_input`, `landmark_toast`). They used to own it
+first-taker-wins, and the bug was **emergent**: an overlay opening over an already-paused
+tree claimed nothing, so whichever owner released first started the world under every
+overlay still on screen (P, `?`, P — help card over live crocodiles).
+
+`PauseHub.take(who)` / `PauseHub.release(who)` refcount holders **by identity**; the tree
+is paused while the set is non-empty. **No other script may assign `.paused`** —
+`pause_selfcheck` scans `scripts/*.gd` and fails if one does. A new pauser is a
+take/release pair plus its own "did I claim" bit; it needs no edit anywhere else.
+
+What stays with the feature and NOT in the hub: the refusals (`pause_controller` and
+`mobile_input` won't pause over game-over, `landmark_toast` won't in a room,
+`skill_tree_ui` won't open under a foreign pause), and reads of `get_tree().paused` as a
+**condition** — "is the world stopped" — which several places want and which are
+deliberately not routed through the refcount.
 
 ### Persistence
 `scripts/best_run_store.gd` owns best distance/coins plus lifetime coins, spent points and
