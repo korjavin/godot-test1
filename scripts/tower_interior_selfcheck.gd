@@ -766,14 +766,15 @@ func _check_gate_lifecycle() -> void:
 	if shutter.position.y < shutter_rest - TowerInterior.SHUTTER_TRAVEL * TowerInterior.NUDGE_FRACTION - EPS:
 		_fail("the shutter's partway reaction went further than NUDGE_FRACTION allows")
 
-	# Step off, come back with the reach the gate asked for.
-	hero.global_position = demand_area.global_position + Vector3(0.0, 0.0, 30.0)
-	await _settle_physics()
+	# Grow the reading WITHOUT stepping off the plate — the demand gate's half of
+	# "keys on who is standing there". The bands relight live as you cycle heroes,
+	# so a full ladder on a shut door is the bug this asserts against.
 	hero.reach = TowerInterior.DEMAND_TARGET
-	hero.global_position = demand_area.global_position
-	await _settle_physics()
+	interior._process(0.1)
 	if not shell.is_opened(TowerInterior.GATE_DEMAND):
-		_fail("a reading that meets the calibration did not open the vault")
+		_fail("the reading grew to meet the calibration while the player stood on the plate and the vault stayed shut")
+	if _lit_bands(interior) != TowerInterior.DEMAND_BANDS:
+		_fail("the calibration ladder did not relight when the reading changed under a standing player")
 	for _i in 30:
 		interior._process(0.1)
 	var shutter_shape := body.get_node_or_null("DemandShutterShape") as CollisionShape3D

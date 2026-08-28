@@ -82,7 +82,10 @@ extends Node3D
 ## `tower_interior_selfcheck.gd` can measure the plan without instancing anything,
 ## and the jump-height and headroom rules below are ASSERTED rather than eyeballed.
 ##
-## It is a child of the shell, built by `TowerShell._ready()`, so it exists exactly
+## It is a child of the shell, assembled onto it by `endless_terrain._tower_stream`
+## (one arrow, one direction: this file reads the shell's constants, so a shell that
+## also knew about the interior would be a cyclic `class_name` Godot refuses to
+## load). So it exists exactly
 ## when and where the shell does — including on a multiplayer master simulating a
 ## teammate at the tower. It is never chunk-parented and never freed except by
 ## `new_run()` freeing the whole shell.
@@ -430,6 +433,10 @@ var _nudge_ratio: float = 0.0
 ## explanation is what turns a refusal into a diagnosis, and a line that reappears
 ## every time you walk past stops being read.
 var _explained: bool = false
+
+## How many calibration bands are currently lit. -1 means "not decided yet", so the
+## first `_update_bands()` always writes even when the answer is zero.
+var _lit_bands: int = -1
 
 ## Which pads currently have the local player standing on them. Tracked by
 ## `Area3D` signals rather than polled overlaps, and re-read every frame against
@@ -867,37 +874,49 @@ func _tick_pads() -> void:
 	ability state is cleared on a switch (player_controller's existing rule), so the
 	only honest question is "who is standing here NOW". Nothing is buffered, nothing
 	is held, nothing counts down.
+
+	THE DEMAND GATE GETS THE SAME TREATMENT, and for a reason that is legibility
+	rather than symmetry: its calibration ladder relights live as you cycle heroes on
+	the plate, so a player who rotates to Primm and watches the bands fill would
+	otherwise be looking at a full ladder on a shut door until they stepped off and
+	back on. This is also the ONLY place the vault opens — `_attempt_demand` refuses
+	and never opens — so there is one answer to "is the reading good enough" and one
+	place that gives it.
 	"""
 	if _player == null:
 		return
-	var hero := _hero_name()
-	if _on_identity_pad and hero == "teibi" and not _is_open(GATE_IDENTITY):
+	if _on_identity_pad and _hero_name() == "teibi" and not _is_open(GATE_IDENTITY):
 		_open(GATE_IDENTITY)
 		_say(tr("The mass lifts. The way through stays open."))
 		_sfx("play_level_up")
-	if _on_demand_pad:
-		_update_bands()
+	if not _on_demand_pad:
+		return
+	_update_bands()
+	if not _is_open(GATE_DEMAND) and _phase_reach() >= DEMAND_TARGET:
+		_open(GATE_DEMAND)
+		_say(tr("Calibration met. The vault opens."))
+		_sfx("play_level_up")
 
 
 func _attempt_demand() -> void:
 	"""
 	The player stepped onto the receptacle's plate — a deliberate attempt.
 
-	Either the reading meets the calibration and the vault opens for good, or it
-	does not and the gate answers with the two things the epic's legibility rules
-	require: a PARTWAY REACTION (the shutter moves as far as you are strong) and,
-	the first time only, an EXPLANATION that names the capability, the number, and
-	the fact that ranks fix it. Diagnosable, then forecastable.
+	THIS FUNCTION ONLY REFUSES. Opening lives in `_tick_pads`'s poll and nowhere
+	else, so there is exactly one place the vault can come open and it is the same
+	place that answers "who is standing here now"; a good reading returns from here
+	untouched and is opened on the same frame. Splitting it the other way — open
+	here, poll there — is how you get a gate that buzzes at you and then opens.
+
+	What is left is the two things the epic's legibility rules ask of a refusal: a
+	PARTWAY REACTION (the shutter moves as far as you are strong) and, the first
+	time only, an EXPLANATION naming the capability, the number, and the fact that
+	ranks fix it. Diagnosable, then forecastable.
 	"""
-	if _is_open(GATE_DEMAND):
-		return
 	var reach := _phase_reach()
 	_nudge_ratio = clampf(reach / DEMAND_TARGET, 0.0, 1.0)
 	_update_bands()
-	if reach >= DEMAND_TARGET:
-		_open(GATE_DEMAND)
-		_say(tr("Calibration met. The vault opens."))
-		_sfx("play_level_up")
+	if _is_open(GATE_DEMAND) or reach >= DEMAND_TARGET:
 		return
 	_nudge = 1.0
 	_sfx("play_buzz")
@@ -925,6 +944,12 @@ func _update_bands() -> void:
 	"""
 	var ratio := clampf(_phase_reach() / DEMAND_TARGET, 0.0, 1.0)
 	var lit := DEMAND_BANDS if _is_open(GATE_DEMAND) else int(floor(ratio * float(DEMAND_BANDS)))
+	# Called every frame the player stands on the plate, so it earns a latch: four
+	# `material_override` writes a frame is churn for a reading that changes only
+	# when somebody presses E.
+	if lit == _lit_bands:
+		return
+	_lit_bands = lit
 	for i in _band_meshes.size():
 		_band_meshes[i].material_override = _material(
 			COLOR_BAND_LIT if i < lit else COLOR_BAND_DARK)
