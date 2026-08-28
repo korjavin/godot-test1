@@ -133,7 +133,9 @@ extends Node3D
 ## COST
 ## ============================================================================
 ##
-## 26 `MeshInstance3D`s, ONE `StaticBody3D`, five `Area3D`s (three pads and two
+## TEN `MeshInstance3D`s for the parts that move plus TWO batched ones for
+## everything that does not (see THE BATCH below), ONE `StaticBody3D`, five
+## `Area3D`s (three pads and two
 ## rotor hazards), two rotor pivots, one `Label3D` and one gem — built once, for
 ## the life of a run. Per-floor visibility
 ## gating (`_update_visibility`) is what keeps that off the web frame budget when
@@ -298,6 +300,16 @@ const FLOOR_HYSTERESIS: float = 0.8
 ## new ruling and bites the moment somebody starts furnishing.
 const BOX_BUDGET: int = 32
 
+## Hard cap on how many `MeshInstance3D`s the interior may actually BUILD — which,
+## unlike the box budget, is the number the renderer charges for.
+##
+## THE TWO BUDGETS ARE NOT THE SAME NUMBER AND MUST NOT BE. Boxes are free once
+## they are in a batch (see THE BATCH above): the plan may grow to 32 of them and
+## still cost twelve draws. What this cap stops is boxes leaving the batch — every
+## name added to `MOVING_PARTS` spends one, and thirty-two unbatched boxes is the
+## 190-spike walk that made the batch necessary in the first place.
+const DRAW_BUDGET: int = 14
+
 # ============================================================================
 # PALETTE — one material per colour, shared process-wide (see `_material`)
 # ============================================================================
@@ -335,6 +347,42 @@ const GLOW_COLORS: Array[Color] = [
 const GATE_DEMAND: String = "tower_vault"
 const GATE_IDENTITY: String = "tower_secure_door"
 const GATE_CHECKPOINT: String = "tower_checkpoint"
+
+# ============================================================================
+# THE BATCH — why most of this building is two meshes
+# ============================================================================
+#
+# MEASURED, and it is the whole reason this section exists. Built as one
+# `MeshInstance3D` per box, the interior added 67 draw calls over the bare shell
+# and took a walk through the entry hall from 26 frame-spikes per 600 to 190
+# (perf_overlay's own SPIKE log, desktop, 1280x720, 2026-08-28). Draw calls are
+# what the web `gl_compatibility` target counts, so that is a regression the bead's
+# acceptance forbids — and it is the same lesson `create_box()` learned for chunk
+# content, arriving one building later.
+#
+# So the STATIC geometry of each storey is merged into ONE `ArrayMesh` carrying at
+# most two surfaces: the matte one and the emissive one. Colour rides in the
+# VERTEX COLOURS (`vertex_color_use_as_albedo`), which is what lets a dozen boxes
+# of a dozen different colours share a surface at all. It is the same trick
+# `predator_parts.py` uses for the enemy models and the same trick a chunk's
+# MultiMesh uses, minus the MultiMesh — this is authored geometry and must not go
+# near `block_batch` (CLAUDE.md).
+#
+# WHAT IS DELIBERATELY NOT BATCHED, because a merged mesh cannot move or recolour
+# one of its own boxes without being rebuilt:
+#
+#   * the two gates, which travel;
+#   * the four calibration bands, which relight as often as a hero switches;
+#   * the checkpoint's plate and post, which relight once;
+#   * the two rotor bars, which hang off spinning pivots of their own.
+#
+# Ten nodes, and every one of them earns it. Anything you add that just SITS there
+# belongs in the batch — leave it out of this set and it is batched for free.
+const MOVING_PARTS: Array[String] = [
+	"DemandShutter", "IdentityMass",
+	"Band1", "Band2", "Band3", "Band4",
+	"CheckpointPlate", "CheckpointPost",
+]
 
 # ============================================================================
 # STATE
@@ -625,11 +673,20 @@ func _ready() -> void:
 		add_child(floor_node)
 		_floors.append(floor_node)
 
+	# THE STATIC GEOMETRY IS ONE MESH PER STOREY, batched below. Only the parts that
+	# move or change colour get a node of their own.
+	var batched: Array[Array] = [[], []]
+
 	for box: Dictionary in boxes():
 		var parent: Node3D = _floors[int(box["floor"])]
 		var spin: float = float(box.get("spin", 0.0))
 		if not is_zero_approx(spin):
 			parent = _make_rotor(box, parent)
+		elif not MOVING_PARTS.has(String(box["name"])):
+			batched[int(box["floor"])].append(box)
+			if box["collide"]:
+				_add_shape(body, box)
+			continue
 		var mesh := MeshInstance3D.new()
 		mesh.name = box["name"]
 		mesh.mesh = _box_mesh(box["size"])
@@ -639,6 +696,7 @@ func _ready() -> void:
 		if box.has("rot"):
 			mesh.rotation = box["rot"]
 		mesh.material_override = _material(box["color"])
+		_no_shadow(mesh)
 		parent.add_child(mesh)
 		_remember(box["name"], mesh)
 		if not box["collide"]:
@@ -656,6 +714,13 @@ func _ready() -> void:
 			_shutter_shape = shape
 		elif box["name"] == "IdentityMass":
 			_mass_shape = shape
+
+	for i in _floors.size():
+		var batch := MeshInstance3D.new()
+		batch.name = "Floor%dBatch" % i
+		batch.mesh = merged_mesh(batched[i])
+		_no_shadow(batch)
+		_floors[i].add_child(batch)
 
 	_build_pads()
 	_build_label()
@@ -945,7 +1010,8 @@ func _build_label() -> void:
 	_label.pixel_size = 0.004
 	_label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	_label.modulate = COLOR_BAND_LIT
-	_label.position = Vector3(RECEPTACLE_X, 3.2, RECEPTACLE_Z)
+	_label.position = Vector3(RECEPTACLE_X, 3.2, RECEPTACLE_Z + 0.9)
+	_no_shadow(_label)
 	_floors[0].add_child(_label)
 
 
@@ -1109,6 +1175,121 @@ func _sfx(method: String) -> void:
 	var sound := get_tree().get_first_node_in_group("sound_manager")
 	if sound != null and sound.has_method(method):
 		sound.call(method)
+
+
+static func merged_mesh(group: Array) -> ArrayMesh:
+	"""
+	Every box in `group`, welded into one `ArrayMesh` of at most two surfaces.
+
+	@param group: `boxes()` entries, all of one storey.
+	@return: A fresh ArrayMesh — matte surface first, emissive second, either
+	        omitted when that storey has none of that kind.
+
+	TWO SURFACES AND NOT ONE, because emissive is a material property and not a
+	vertex one: a light panel and a stone wall cannot share a surface however
+	similar their vertices are. Two is also the floor — every other difference
+	between these boxes (colour, size, the ramp's tilt) is baked into the vertices,
+	so a storey costs two draw calls whether it is four boxes or forty.
+	"""
+	var out := ArrayMesh.new()
+	for glow: bool in [false, true]:
+		var tool := SurfaceTool.new()
+		tool.begin(Mesh.PRIMITIVE_TRIANGLES)
+		var any := false
+		for box: Dictionary in group:
+			if GLOW_COLORS.has(box["color"]) != glow:
+				continue
+			any = true
+			_emit_box(tool, box)
+		if not any:
+			continue
+		tool.commit(out)
+		out.surface_set_material(out.get_surface_count() - 1, _batch_material(glow))
+	return out
+
+
+static func _emit_box(tool: SurfaceTool, box: Dictionary) -> void:
+	"""
+	Append one box's triangles to a surface, in interior space and carrying its own
+	colour.
+
+	The vertices come from a real `BoxMesh` rather than from a hand-written cube, so
+	the winding, the normals and the UVs are the engine's and cannot be subtly wrong
+	in a way that only shows up under one light angle. Walking the INDEX array and
+	emitting unindexed vertices is what lets `SurfaceTool` weld boxes that have no
+	vertices in common.
+	"""
+	var arrays: Array = _box_mesh(box["size"]).get_mesh_arrays()
+	var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+	var normals: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL]
+	var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+	var basis := Basis.from_euler(box["rot"]) if box.has("rot") else Basis.IDENTITY
+	var placed := Transform3D(basis, box["pos"])
+	var color: Color = box["color"]
+	for i: int in indices:
+		tool.set_color(color)
+		tool.set_normal(basis * normals[i])
+		tool.add_vertex(placed * verts[i])
+
+
+static func _batch_material(glow: bool) -> StandardMaterial3D:
+	"""
+	The batch's two materials, cached beside the per-box ones.
+
+	Keyed by a colour that is not in the palette above (so the two caches cannot
+	collide) — the material's own albedo is white and unused, because
+	`vertex_color_use_as_albedo` is what actually colours these surfaces.
+	"""
+	var key := Color(0.0, 0.0, 1.0) if glow else Color(0.0, 0.0, 0.0)
+	var hit: StandardMaterial3D = _materials.get(key)
+	if hit != null:
+		return hit
+	var mat := StandardMaterial3D.new()
+	mat.vertex_color_use_as_albedo = true
+	mat.diffuse_mode = BaseMaterial3D.DIFFUSE_TOON
+	mat.rim_enabled = true
+	mat.rim = 0.4
+	mat.rim_tint = 0.25
+	if glow:
+		# The emissive half cannot take its emission from vertex colour, so it is
+		# UNSHADED instead: the albedo IS what you see, at any hour and any angle,
+		# which is what a light panel wants anyway.
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_materials[key] = mat
+	return mat
+
+
+static func _no_shadow(node: GeometryInstance3D) -> void:
+	"""
+	Take one interior mesh out of the directional shadow pass.
+
+	MEASURED, and the single biggest thing this file does for the frame budget: a
+	walk through the entry hall costs 33.7 ms a frame with the interior casting
+	shadows and 31.4 ms without, on a 29.7 ms bare-shell baseline (perf_overlay,
+	desktop, 1280x720, 2026-08-28) — i.e. shadow casting was more than half of the
+	interior's entire cost. It is 28 extra draws in the shadow pass for a building
+	whose every room is already in shadow: the enclosed hall has the upper slab over
+	it, and the two open storeys sit at the bottom of an 11 m parapet. THE SHELL
+	STILL CASTS, so the tower's own shadow on the field is unchanged; what is gone
+	is furniture shadowing furniture inside a dark room.
+
+	A purely invisible optimization, so it is global rather than web-gated
+	(CLAUDE.md's performance conventions).
+	"""
+	node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+
+
+static func _add_shape(body: StaticBody3D, box: Dictionary) -> void:
+	"""One collision shape for a batched box — the mesh merged, the collider did not."""
+	var shape := CollisionShape3D.new()
+	var box_shape := BoxShape3D.new()
+	box_shape.size = box["size"]
+	shape.shape = box_shape
+	shape.position = box["pos"]
+	if box.has("rot"):
+		shape.rotation = box["rot"]
+	shape.name = "%sShape" % box["name"]
+	body.add_child(shape)
 
 
 static func _box_mesh(size: Vector3) -> BoxMesh:

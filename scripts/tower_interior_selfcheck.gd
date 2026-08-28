@@ -489,24 +489,48 @@ func _check_headroom_clears_the_camera() -> void:
 
 func _check_node_shape() -> void:
 	"""
-	Check 5. One mesh per box, in the right place, with ONE physics body and one
-	collision shape per solid box.
+	Check 5. Every box got built — the ones that move as their own node, the rest
+	welded into their storey's batch — with ONE physics body and one collision shape
+	per solid box however it was drawn.
 
-	The counts are the assertion, the shell's rule one storey up. The positions are
-	the other half: a rotor bar's table entry names its PIVOT, not its own local
-	spot, so a builder that ignored the distinction would still count right and put
-	two bars in the same place.
+	THE DRAW BUDGET IS THE POINT OF THE COUNT. Built one node per box, the interior
+	cost 67 draw calls over the bare shell and took a walk through the hall from 26
+	frame-spikes to 190; the batch is what fixed that, and `DRAW_BUDGET` is what
+	stops it being undone one `MOVING_PARTS` entry at a time.
+
+	A BATCHED BOX IS CHECKED BY ITS CORNERS, which is the only honest way to ask
+	"did this box make it in" of a mesh that is no longer a box: every one of its
+	eight corners, in its own rotation, must be a vertex of its storey's batch. A
+	builder that dropped a box, or placed it by its centre when the table meant its
+	corner, or forgot the ramp's tilt, fails here — and none of those would move any
+	count at all.
 	"""
 	var interior := await _make_interior()
 	var boxes := TowerInterior.boxes()
 	var meshes := _all_meshes(interior)
-	if meshes.size() != boxes.size():
-		_fail("the interior built %d meshes for %d boxes" % [meshes.size(), boxes.size()])
+	if meshes.size() > TowerInterior.DRAW_BUDGET:
+		_fail("the interior builds %d meshes, over its declared DRAW_BUDGET of %d" % [
+			meshes.size(), TowerInterior.DRAW_BUDGET])
+	print("tower interior: %d meshes drawn (budget %d) for %d boxes" % [
+		meshes.size(), TowerInterior.DRAW_BUDGET, boxes.size()])
+
+	# The batched vertices of each storey, once, so the corner test below is a set
+	# lookup rather than a re-walk of the mesh per box.
+	var batch_verts: Array[Dictionary] = [_batch_vertices(interior, 0), _batch_vertices(interior, 1)]
 
 	var want_shapes := 0
 	for box: Dictionary in boxes:
 		if box["collide"]:
 			want_shapes += 1
+		var moving: bool = TowerInterior.MOVING_PARTS.has(String(box["name"])) \
+				or not is_zero_approx(float(box.get("spin", 0.0)))
+		if not moving:
+			for corner: Vector3 in _corners(box):
+				if not batch_verts[int(box["floor"])].has(_key(corner)):
+					_fail("%s's corner %s is in no vertex of storey %d's batch — the box was dropped or misplaced" % [
+						box["name"], corner, box["floor"]])
+					break
+			continue
 		var mesh := interior.find_child(String(box["name"]), true, false) as MeshInstance3D
 		if mesh == null:
 			_fail("no mesh called %s was built" % box["name"])
@@ -573,30 +597,66 @@ func _check_materials_are_shared_and_already_toon() -> void:
 	var mesh_b := _all_meshes(b)
 	var distinct := {}
 	for i in mini(mesh_a.size(), mesh_b.size()):
-		var mat_a := mesh_a[i].material_override
+		var mat_a := _material_of(mesh_a[i])
 		if mat_a == null:
 			_fail("mesh %s has no material" % mesh_a[i].name)
 			continue
-		if mat_a != mesh_b[i].material_override:
+		if mat_a != _material_of(mesh_b[i]):
 			_fail("mesh %s got a private material per instance — the static cache is not being used" % mesh_a[i].name)
-		distinct[mat_a.get_instance_id()] = true
+		for surface: Material in _materials_of(mesh_a[i]):
+			distinct[surface.get_instance_id()] = true
 
+	# One material per colour a MOVING part wears, plus the batch's own two — and no
+	# more. A batched box costs no material at all, which is the other half of what
+	# the batch bought.
 	var colors := {}
 	for box: Dictionary in TowerInterior.boxes():
-		colors[box["color"]] = true
-	if distinct.size() != colors.size():
-		_fail("the interior uses %d materials for %d distinct colours" % [distinct.size(), colors.size()])
+		if TowerInterior.MOVING_PARTS.has(String(box["name"])) \
+				or not is_zero_approx(float(box.get("spin", 0.0))):
+			colors[box["color"]] = true
+	# The checkpoint and the bands each own a second, LIT colour they swap to; those
+	# materials exist from the moment anything asks for them.
+	var want := colors.size() + 2 + 2
+	if distinct.size() > want:
+		_fail("the interior holds %d materials, expected at most %d (%d moving colours + 2 lit + 2 batch)" % [
+			distinct.size(), want, colors.size()])
 
 	for mesh: MeshInstance3D in mesh_a:
-		var before := mesh.material_override
+		var before := _material_of(mesh)
 		ToonShading.apply_to_mesh(mesh)
 		if mesh.get_surface_override_material(0) != null:
 			_fail("ToonShading duplicated the material of %s — it is not already DIFFUSE_TOON" % mesh.name)
-		if mesh.material_override != before:
+		if _material_of(mesh) != before:
 			_fail("ToonShading replaced the material of %s" % mesh.name)
 	a.queue_free()
 	b.queue_free()
 	await process_frame
+
+
+func _material_of(mesh: MeshInstance3D) -> Material:
+	## A mesh's material — its override, or its first surface's for a batch.
+	if mesh.material_override != null:
+		return mesh.material_override
+	var array_mesh := mesh.mesh as ArrayMesh
+	if array_mesh == null or array_mesh.get_surface_count() == 0:
+		return null
+	return array_mesh.surface_get_material(0)
+
+
+func _materials_of(mesh: MeshInstance3D) -> Array[Material]:
+	## Every material a mesh actually renders with.
+	var out: Array[Material] = []
+	if mesh.material_override != null:
+		out.append(mesh.material_override)
+		return out
+	var array_mesh := mesh.mesh as ArrayMesh
+	if array_mesh == null:
+		return out
+	for surface in array_mesh.get_surface_count():
+		var mat := array_mesh.surface_get_material(surface)
+		if mat != null:
+			out.append(mat)
+	return out
 
 
 # ============================================================================
@@ -897,6 +957,40 @@ func _make_tower() -> Node3D:
 	root.add_child(shell)
 	await process_frame
 	return shell
+
+
+func _batch_vertices(interior: Node3D, floor_index: int) -> Dictionary:
+	## Every vertex of one storey's batch, as a set of quantized keys.
+	var out := {}
+	var batch := interior.get_node_or_null("Floor%d/Floor%dBatch" % [floor_index, floor_index]) as MeshInstance3D
+	if batch == null or batch.mesh == null:
+		_fail("storey %d has no batched mesh" % floor_index)
+		return out
+	var mesh: ArrayMesh = batch.mesh
+	for surface in mesh.get_surface_count():
+		if mesh.surface_get_material(surface) == null:
+			_fail("storey %d's batch surface %d has no material" % [floor_index, surface])
+		for vertex: Vector3 in mesh.surface_get_arrays(surface)[Mesh.ARRAY_VERTEX]:
+			out[_key(vertex)] = true
+	return out
+
+
+func _corners(box: Dictionary) -> Array[Vector3]:
+	## A box's eight corners in interior space, tilt included.
+	var half: Vector3 = box["size"] * 0.5
+	var basis := Basis.from_euler(box["rot"]) if box.has("rot") else Basis.IDENTITY
+	var placed := Transform3D(basis, box["pos"])
+	var out: Array[Vector3] = []
+	for sx in [-1.0, 1.0]:
+		for sy in [-1.0, 1.0]:
+			for sz in [-1.0, 1.0]:
+				out.append(placed * Vector3(half.x * sx, half.y * sy, half.z * sz))
+	return out
+
+
+func _key(v: Vector3) -> String:
+	## A vertex's identity, rounded so float noise from a rotation cannot miss.
+	return "%.3f|%.3f|%.3f" % [v.x, v.y, v.z]
 
 
 func _all_meshes(node: Node) -> Array[MeshInstance3D]:
