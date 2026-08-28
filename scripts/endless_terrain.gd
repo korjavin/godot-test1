@@ -419,6 +419,73 @@ const STRUCTURE_THEMES: Dictionary = {
 ## are the same rule enforced from the two ends; keep them in step if either moves.
 const SPAWN_SAFE_RADIUS: float = 25.0
 
+# ----------------------------------------------------------------------------
+# THE TOWER SITE — GastroDefense HQ (epic godot-test1-3iy, phase 1)
+# ----------------------------------------------------------------------------
+##
+## The tower is ONE authored building at ONE place in the world, and this phase is
+## only two things: everybody agrees WHERE that place is (tower_site()), and
+## nothing procedural is allowed to stand there (tower_excludes()). No tower
+## geometry ships here — the shell is phase 2, and it must sit on the disc these
+## constants describe rather than restate a number of its own.
+
+## Distance from the world origin, along -X, to the tower's NOMINAL site (metres).
+##
+## Owner-ruled at 400 m (2026-08-27): far enough to be a journey, near enough to
+## walk to. It is well outside SPAWN_SAFE_RADIUS (25), so the spawn bubble and this
+## disc can never touch, and outside the initial render ring (render_distance 5 ×
+## chunk_size 50 = 250 m), so the site is not generated on frame 0.
+##
+## An @export rather than a const because it is the one knob the site has — a
+## designer may move the tower, and tower_site_selfcheck.gd drives it far out of
+## the sampled field to prove the A/B (with the exclusion effectively off, every
+## chunk comes out byte-identical). tower_site() re-derives itself when it changes.
+@export var tower_site_distance: float = 400.0
+
+## Radius (metres) of the tower's EXCLUSION DISC, centred on tower_site().
+##
+## Two jobs in one number: it is the area world generation keeps clear, and it is
+## the budget phase 2's shell has to fit inside (share the constant, never restate
+## the number). 30 m is a little over half a chunk — a large-HQ footprint plus its
+## yard — and it costs the field ~1.1 chunks of content, once, in a whole world.
+##
+## HOW CLEAR IS CLEAR: spawners routed through _biome_spot_ok are handed the
+## candidate's own radius, so their whole FOOTPRINT stays outside the disc. The
+## scattered props, the four feature structures, the crocodiles and the bosses are
+## judged on their CENTRE plus a conservative extent — the same currency the
+## `obstacles` list uses everywhere else in this file, and the same shape as their
+## own river tests, which are centre tests for the same reason.
+##
+## What is deliberately NOT excluded is the COIN ROAD. It is a parametric line
+## through the whole world and cutting a hole in it would break "follow the coins";
+## phase 2 owns whatever the road does at the tower door. Bosses ARE excluded —
+## a 6× crocodile wedged in the doorway is a different problem from a coin.
+const TOWER_RADIUS: float = 30.0
+
+## THE DRY-SITE NUDGE — step of the candidate lattice, and how many rings of it.
+##
+## is_river_at() ignores Y by contract (the world is flat and a river is a tint),
+## and the player's wading test is XZ-only, so a tower standing on a river band
+## would wade on every floor. The site therefore scans a FIXED lattice — candidates
+## TOWER_NUDGE_STEP apart, ring by ring outward from the nominal site, out to
+## TOWER_NUDGE_RINGS rings (200 m of reach) — and takes the first whose whole
+## footprint disc is dry.
+##
+## FIXED, NEVER RANDOM: the scan consumes no RNG draw of any kind. The river field
+## is already a pure function of run_seed, so the answer is one too. And it is
+## TOTAL: a seed whose rivers soak the entire corridor still terminates, on the
+## DRIEST candidate the lattice found. If that ever stops being good enough, widen
+## the lattice — never reach for a random retry.
+const TOWER_NUDGE_STEP: float = 25.0
+const TOWER_NUDGE_RINGS: int = 8
+
+## Spacing (metres) of the river samples laid over a candidate footprint disc.
+## A river band is ~8 m wide on the ground (measured — see _biome_spot_ok's note),
+## so a 5 m grid cannot step over one. That is ~113 samples per candidate and at
+## most 289 candidates, paid ONCE per run and then memoized: nothing at all in the
+## common case, where the nominal site is already dry and one candidate settles it.
+const TOWER_SAMPLE_STEP: float = 5.0
+
 ## Chance (0..1) that a given walkable structure top (mound summit / wall ridge)
 ## gets a rare crocodile patrolling it. Kept moderate so they're an occasional
 ## surprise, not on every structure.
@@ -2142,6 +2209,16 @@ var _landmark_builders: GDScript = preload("res://scripts/landmark_builders.gd")
 ## one uniform. Rolled by _roll_biome_offset() from its own RNG stream.
 var biome_offset: Vector2 = Vector2.ZERO
 
+## MEMO for tower_site(). The site is a pure function of (run_seed via the biome
+## field, tower_site_distance), but finding it costs a few hundred noise
+## evaluations and _biome_spot_ok asks for it at every candidate spot in the
+## world — so it is found once and re-derived only when one of those two inputs
+## changes. Two scalar compares per call, no allocation. `_tower_site_dist` starts
+## negative, a distance no caller can supply, so the first call always computes.
+var _tower_site_cache: Vector3 = Vector3.ZERO
+var _tower_site_seed: int = 0
+var _tower_site_dist: float = -1.0
+
 # ----------------------------------------------------------------------------
 # SHARED RESOURCES FOR MULTIMESH BLOCK RENDERING (created once, reused forever)
 # ----------------------------------------------------------------------------
@@ -2357,6 +2434,12 @@ func set_run_seed(value: int) -> void:
 	"""
 	run_seed = value
 	_roll_biome_offset()
+	# Find the tower's site NOW, on the frame that already pays for a whole new
+	# world, rather than lazily on whatever frame the first chunk near it asks.
+	# The scan is a few hundred noise evaluations in the worst case — invisible
+	# here, a measurable spike if it landed mid-stream. Must come AFTER
+	# _roll_biome_offset(): the site is read off the river field that call rolls.
+	tower_site()
 
 
 func _roll_biome_offset() -> void:
@@ -3129,6 +3212,15 @@ func spawn_objects_in_chunk(chunk_pos: Vector2i, platforms: Array, block_batch: 
 		if valid_position and is_river_at(chunk_center + object_pos):
 			valid_position = false
 
+		# ...and not on the tower's site. Same post-draw rule as the river test
+		# directly above, for the same reason. object_size_max * PROP_RADIUS_FACTOR
+		# is the widest a prop can ever be (prop_selfcheck measures that bound), so
+		# passing it keeps the prop's BOXES out of the disc and not just its centre.
+		if valid_position and tower_excludes(
+				chunk_center.x + object_pos.x, chunk_center.z + object_pos.z,
+				object_size_max * PROP_RADIUS_FACTOR):
+			valid_position = false
+
 		if not valid_position:
 			continue
 
@@ -3312,7 +3404,11 @@ func spawn_terraced_mound(rng: RandomNumberGenerator, half_chunk: float, chunk_c
 	var cz := rng.randf_range(-limit, limit)
 
 	# No mounds in the water (centre test, taken right after the centre draws).
-	if is_river_at(chunk_center + Vector3(cx, 0.0, cz)):
+	# ...and none on the tower's site, judged with `half_chunk` as the extent: a
+	# structure never leaves its own chunk by construction (see the `limit`
+	# above), so half a chunk is a conservative bound on how far its blocks reach.
+	if is_river_at(chunk_center + Vector3(cx, 0.0, cz)) \
+			or tower_excludes(chunk_center.x + cx, chunk_center.z + cz, half_chunk):
 		return
 
 	var y := 0.0
@@ -3462,7 +3558,11 @@ func spawn_gate(rng: RandomNumberGenerator, half_chunk: float, chunk_center: Vec
 	var cz := rng.randf_range(-limit, limit)
 
 	# No gates in the water (centre test, taken right after the centre draws).
-	if is_river_at(chunk_center + Vector3(cx, 0.0, cz)):
+	# ...and none on the tower's site, judged with `half_chunk` as the extent: a
+	# structure never leaves its own chunk by construction (see the `limit`
+	# above), so half a chunk is a conservative bound on how far its blocks reach.
+	if is_river_at(chunk_center + Vector3(cx, 0.0, cz)) \
+			or tower_excludes(chunk_center.x + cx, chunk_center.z + cz, half_chunk):
 		return
 
 	# Distance from the gate centre to each pillar's centre.
@@ -3586,7 +3686,11 @@ func spawn_corridor(rng: RandomNumberGenerator, half_chunk: float, chunk_center:
 	# after the draws that fixed both).
 	var mid_along := start + span * 0.5
 	var corridor_center: Vector3 = Vector3(mid_along, 0.0, center_perp) if along_x else Vector3(center_perp, 0.0, mid_along)
-	if is_river_at(chunk_center + corridor_center):
+	# ...and none on the tower's site, judged with `half_chunk` as the extent: a
+	# structure never leaves its own chunk by construction (see the `limit`
+	# above), so half a chunk is a conservative bound on how far its blocks reach.
+	if is_river_at(chunk_center + corridor_center) \
+			or tower_excludes(chunk_center.x + corridor_center.x, chunk_center.z + corridor_center.z, half_chunk):
 		return
 
 	var spaced: bool = theme["lane_spaced"]
@@ -3701,7 +3805,11 @@ func spawn_wall(rng: RandomNumberGenerator, half_chunk: float, chunk_center: Vec
 	# No walls in the water (centre test, taken right after the draws that placed
 	# the wall).
 	var wall_center: Vector3 = Vector3(mid_along, 0.0, fixed) if along_x else Vector3(fixed, 0.0, mid_along)
-	if is_river_at(chunk_center + wall_center):
+	# ...and none on the tower's site, judged with `half_chunk` as the extent: a
+	# structure never leaves its own chunk by construction (see the `limit`
+	# above), so half a chunk is a conservative bound on how far its blocks reach.
+	if is_river_at(chunk_center + wall_center) \
+			or tower_excludes(chunk_center.x + wall_center.x, chunk_center.z + wall_center.z, half_chunk):
 		return
 
 	var gap_chance: float = theme["gap_chance"]
@@ -4978,6 +5086,13 @@ func spawn_crocodiles_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D
 		if valid_position and Vector2(croc_world.x, croc_world.z).length() < SPAWN_SAFE_RADIUS:
 			valid_position = false
 
+		# Keep the tower's site clear too — the same rule as the spawn bubble above
+		# (a fixed disc nothing procedural may stand in), enforced with the same
+		# post-draw `continue`. min_object_clearance is the margin the block test
+		# already uses for "a crocodile is not a point".
+		if valid_position and tower_excludes(croc_world.x, croc_world.z, min_object_clearance):
+			valid_position = false
+
 		if not valid_position:
 			continue
 
@@ -5244,6 +5359,12 @@ func spawn_bosses_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, ob
 				if horizontal < ob.radius + footprint:
 					clear = false
 					break
+			# The tower's site is one more thing a boss may not stand in — its own
+			# scaled footprint again, so a 6x boss cannot lean into the doorway.
+			# Post-draw by construction: _boss_at already computed this whole
+			# candidate list on its own hash stream, so skipping one costs nothing.
+			if clear and tower_excludes(candidate.x, candidate.z, footprint):
+				clear = false
 			if clear:
 				local_pos = local
 				placed = true
@@ -6579,8 +6700,9 @@ func _biome_spot_ok(chunk_center: Vector3, local_x: float, local_z: float, radiu
 	@param road_clearance: Minimum distance to the coin-road centerline (metres).
 	@param obstacles: Footprints already placed in this chunk (scattered blocks,
 	                  feature structures, artifacts, and earlier biome geometry).
-	@return: true when the spot is NOT in a river, is at least `road_clearance`
-	         from the road centerline, and overlaps nothing already placed.
+	@return: true when the spot is NOT in a river, NOT on the tower's site, is at
+	         least `road_clearance` from the road centerline, and overlaps nothing
+	         already placed.
 
 	WHY THE TESTS LIVE TOGETHER: they answer one question — "would putting
 	something solid here spoil what is already there?". Rivers must stay wadeable
@@ -6616,6 +6738,12 @@ func _biome_spot_ok(chunk_center: Vector3, local_x: float, local_z: float, radiu
 	var world_x := chunk_center.x + local_x
 	var world_z := chunk_center.z + local_z
 	if is_river_at(Vector3(world_x, 0.0, world_z)):
+		return false
+	# The tower's site is kept clear of everything procedural (see TOWER_RADIUS).
+	# Judged with the candidate's OWN radius — the same "widest this could be"
+	# number the overlap test below uses — so the thing's whole footprint stays
+	# outside the disc, not merely its centre.
+	if tower_excludes(world_x, world_z, radius):
 		return false
 	if _road_lateral_distance(world_x, world_z, road_clearance) < road_clearance:
 		return false
@@ -7675,6 +7803,118 @@ func is_river_at(world_pos: Vector3) -> bool:
 	colours read, just asked a different question.
 	"""
 	return absf(_biome_noise(world_pos.x, world_pos.z) - RIVER_LEVEL) < RIVER_HALF_WIDTH
+
+
+func tower_site() -> Vector3:
+	"""
+	Where the tower stands this run — the ONE position the whole tower epic
+	parents to (shell, impostor, minimap marker, door, interior).
+
+	@return: Ground-level world position (y = 0) of the tower's centre.
+
+	PURE, ZERO RNG DRAWS, MEMOIZED. It reads nothing but tower_site_distance and
+	the biome field (which is itself a pure function of run_seed), so the same run
+	answers the same thing forever, every peer in a multiplayer room agrees for
+	free, and no spawner's stream is disturbed by asking. Never call an RNG from
+	anywhere under here: a single draw from the shared chunk stream slides every
+	crocodile in the world (see the determinism section of CLAUDE.md).
+	"""
+	if _tower_site_dist == tower_site_distance and _tower_site_seed == run_seed:
+		return _tower_site_cache
+	_tower_site_cache = _tower_scan_dry_site()
+	_tower_site_seed = run_seed
+	_tower_site_dist = tower_site_distance
+	return _tower_site_cache
+
+
+func _tower_scan_dry_site() -> Vector3:
+	"""
+	The dry-site nudge: walk the fixed candidate lattice out from the nominal site
+	and return the first candidate whose whole footprint disc is out of the water.
+
+	@return: The chosen site, y = 0.
+
+	TOTAL BY CONSTRUCTION. The lattice is bounded (TOWER_NUDGE_RINGS rings of
+	TOWER_NUDGE_STEP), so the scan always ends; and if a seed's rivers soak every
+	candidate, it ends on the DRIEST one rather than failing or randomizing. The
+	ring-by-ring order is what makes "nudge" honest — the site moves as little as
+	the water allows, and ring 0 (the nominal site) is tried first.
+	"""
+	var base_x := -tower_site_distance
+	var driest := Vector2(base_x, 0.0)
+	var driest_wet := 0x7FFFFFFF
+
+	for ring in TOWER_NUDGE_RINGS + 1:
+		for dx in range(-ring, ring + 1):
+			for dz in range(-ring, ring + 1):
+				# Ring by ring outward: only the SHELL of each square is new, the
+				# interior was covered by a smaller ring already.
+				if maxi(absi(dx), absi(dz)) != ring:
+					continue
+				var cx := base_x + float(dx) * TOWER_NUDGE_STEP
+				var cz := float(dz) * TOWER_NUDGE_STEP
+				var wet := _tower_wet_samples(cx, cz)
+				if wet == 0:
+					return Vector3(cx, 0.0, cz)
+				if wet < driest_wet:
+					driest_wet = wet
+					driest = Vector2(cx, cz)
+
+	# Every candidate had water in it. Deterministic, documented, and still a
+	# site — see the TOWER_NUDGE_STEP block on why this beats retrying at random.
+	push_warning("endless_terrain: no fully dry tower site within %d rings; using the driest (%d wet samples)"
+			% [TOWER_NUDGE_RINGS, driest_wet])
+	return Vector3(driest.x, 0.0, driest.y)
+
+
+func _tower_wet_samples(center_x: float, center_z: float) -> int:
+	"""
+	How many of a candidate footprint's river samples land in the water.
+
+	@param center_x, center_z: Candidate site centre, world space.
+	@return: Count of wet samples — 0 means the whole disc is dry.
+
+	A GRID, NOT A RIM: a river winds, so a ring of samples around the rim would let
+	a band slip across the middle of the disc unseen. The grid is TOWER_SAMPLE_STEP
+	apart, which is under the measured band width, so no band can hide between two
+	samples. The count (rather than a bool) is what lets the scan above fall back
+	to the driest candidate instead of to nothing.
+	"""
+	var wet := 0
+	var steps := int(ceilf(TOWER_RADIUS / TOWER_SAMPLE_STEP))
+	for ix in range(-steps, steps + 1):
+		for iz in range(-steps, steps + 1):
+			var ox := float(ix) * TOWER_SAMPLE_STEP
+			var oz := float(iz) * TOWER_SAMPLE_STEP
+			if Vector2(ox, oz).length() > TOWER_RADIUS:
+				continue
+			if is_river_at(Vector3(center_x + ox, 0.0, center_z + oz)):
+				wet += 1
+	return wet
+
+
+func tower_excludes(world_x: float, world_z: float, radius: float = 0.0) -> bool:
+	"""
+	Is this spot inside the tower's exclusion disc?
+
+	@param world_x, world_z: The candidate spot, WORLD space (the `obstacles` list
+	                         is chunk-local; convert before calling, as every other
+	                         world-space test in this file does).
+	@param radius: The candidate's own footprint radius, so a thing is rejected
+	               before it can REACH into the disc rather than only when its
+	               centre is in it. Callers with no meaningful radius pass none.
+	@return: true when the spot must not be built on.
+
+	THE SINGLE HOME of the tower-clearance rule, in the same spirit as
+	_biome_spot_ok is for placement legality and SPAWN_SAFE_RADIUS is for the spawn
+	bubble. Pure and allocation-free, safe to call from any spawner in any order.
+
+	POST-DRAW ONLY. Every call site rejects AFTER the draws that produced the
+	candidate, exactly like the river and spawn-bubble rejections beside it: the
+	stream must still advance or the whole world downstream of it shifts.
+	"""
+	var site := tower_site()
+	return Vector2(world_x - site.x, world_z - site.z).length() < TOWER_RADIUS + radius
 
 
 # ============================================================================
