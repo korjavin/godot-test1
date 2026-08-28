@@ -181,6 +181,20 @@ jobs:
         with:
           lfs: true
 
+      # locale_selfcheck MEASURES text — it renders every German string in the
+      # real font at the real size and compares against the control's real pixel
+      # budget. The godot-ci image ships neither fontconfig nor a single font
+      # file, so Godot logs "libfontconfig.so.1: cannot open shared object file"
+      # and any glyph outside its embedded font (the ⚙ on the tune button,
+      # U+2699) falls back to something else entirely — measured that way the gear
+      # button came out 103 px against its 98 px budget, a failure that reproduces
+      # on no developer machine. A text-metric check in a font-less container is
+      # measuring a fiction, so give the container the fonts a real machine has.
+      - name: 🔤 Install fonts (locale_selfcheck measures real glyph widths)
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends libfontconfig1 fonts-dejavu-core
+
       # NOT optional, and not merely a speed-up. A cold checkout has no .godot
       # cache and both `*.import` and `*.translation` are gitignored, so without
       # this: locale_selfcheck measures a stale/absent translation table, and a
