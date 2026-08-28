@@ -1731,15 +1731,20 @@ func _ranged_shots(croc_ai: GDScript, ranged: Dictionary, distance: float) -> Ar
 # ============================================================================
 
 ## The walk resolution and budget for the three geometry probes. 12 s is several
-## times what a 6.5 m/s unit needs to cross the 20 m it starts at, so a probe
-## that fails to settle fails on the steering rather than on a short budget.
+## times what a 6.5 m/s unit needs to cross the 20 m today's hunter starts at, so
+## a probe that fails to settle fails on the steering rather than on a short
+## budget.
 const HUNT_PROBE_DT: float = 1.0 / 60.0
 const HUNT_PROBE_SECONDS: float = 12.0
 
-## Where the shadow and close walks start, in metres from the quarry. Inside
-## every hunt row's detection radius (the hunter's is 25) and well outside every
-## plausible standoff ring, so both walks begin with real ground to cover.
-const HUNT_PROBE_START: float = 20.0
+## Where the shadow and close walks start, as a MULTIPLE of the row's own ring,
+## clamped to its own detection radius. Derived rather than written down as the
+## 20 m it works out to for today's hunter, because both ends have to hold for
+## every future row: outside the ring (or the "shadow" walk would be measuring a
+## withdrawal) and inside detection (or the walk begins from a place the unit
+## could not have acquired you from). Doubling the ring satisfies the first with
+## room, and the clamp satisfies the second by construction.
+const HUNT_PROBE_START_FACTOR: float = 2.0
 
 ## Where the WITHDRAW walk starts: on top of the quarry, which is exactly where a
 ## grab leaves the unit standing. Not zero — a hunter sitting on the quarry's
@@ -1855,12 +1860,13 @@ func _probe_hunt_geometry(croc_ai: GDScript, hunt_species: String) -> void:
 				+ " the moment it reaches its own ring re-telegraphs forever")
 		return
 
-	var shadow: Dictionary = _hunt_walk(croc_ai, row, HUNT_PROBE_START, false)
-	var close: Dictionary = _hunt_walk(croc_ai, row, HUNT_PROBE_START, true)
+	var start: float = minf(standoff * HUNT_PROBE_START_FACTOR, detection)
+	var shadow: Dictionary = _hunt_walk(croc_ai, row, start, false)
+	var close: Dictionary = _hunt_walk(croc_ai, row, start, true)
 	var withdraw: Dictionary = _hunt_walk(croc_ai, row, HUNT_WITHDRAW_START, false)
 
 	print("hunt pacing: %s shadows from %.0f m to %.2f m (closest %.2f m, ring"
-			% [hunt_species, HUNT_PROBE_START, float(shadow["final"]),
+			% [hunt_species, start, float(shadow["final"]),
 			float(shadow["closest"])]
 			+ " %.1f m), closes to %.2f m, withdraws from %.1f m back out to %.2f m"
 			% [standoff, float(close["final"]), HUNT_WITHDRAW_START,
