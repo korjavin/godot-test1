@@ -120,6 +120,93 @@ def tapered_chain(start, seg_len, count, thick_from, thick_to, color,
     return parts
 
 
+def wings(shoulder, span: float, color, *, segments: int = 3, fold: float = 0.0,
+          chord: float = 0.0, thickness: float = 0.0, taper: float = 0.55,
+          edge=None):
+    """
+    A mirrored pair of stylized wings, returned as parts like every other helper.
+
+    There is no wing anywhere else in the toolkit — the animals are quadrupeds and
+    the hunter is a machine — so this is the one place the shape is decided, and
+    both winged bosses spend it rather than growing their own geometry.
+
+    `shoulder` is the ROOT CENTRE of the LEFT wing, (x, y, z) with z the positive
+    half-width of the attachment; the right wing is its exact mirror. `span` is
+    the reach of ONE wing from that root to the tip, `chord` its fore-aft depth at
+    the root (0 = derive from the span), and `taper` the fraction of both lost by
+    the tip — the same "shrinking blocks" language as `tapered_chain`, only the
+    cross-section is a flat plate instead of a square.
+
+    `fold` is the whole personality, in radians: 0 lays the wing back along the
+    flank as a vertical fin (folded at rest — which is how these bosses spend
+    almost all of their time, since they hop and never fly), pi/2 holds it
+    straight out sideways as a horizontal plane, and anything between is
+    part-spread. The membrane rolls with it: the chord stands UP when tucked and
+    lies FLAT when spread, which is what a folding wing actually does and what
+    keeps the tucked pose from reading as a shelf bolted to the ribs.
+
+    `edge` is an optional second colour for a spar down the leading edge — the
+    bone in a membrane, the wrist line in a feathered wing. It is the same
+    two-tone trick as the dark paw and the dorsal diamond, and without it a wing
+    this size reads as a painted plank.
+
+    Nothing here implies a movement mode: the wings are silhouette, and the models
+    that wear them hop.
+    """
+    if segments < 1:
+        raise ValueError(f"wings: segments must be >= 1, got {segments}")
+    sx, sy, sz = shoulder
+    chord = chord or span * 0.5
+    thickness = thickness or span * 0.07
+    step = span / segments
+
+    # The plate is built in a local frame — span along +Z, chord along X, thin in
+    # Y — and then swung into place by one yaw per side. Building local means the
+    # leading-edge spar is a plain offset instead of trigonometry at every
+    # segment, and it keeps `box()` untouched (it has no yaw, and does not need
+    # one: only a wing sweeps in the XZ plane).
+    #
+    # `pitch` rolls the plate about its own span axis: pi/2 when folded (chord
+    # vertical), 0 when spread (chord fore-aft). Both sides take the SAME pitch —
+    # a rotation about Z survives the z-mirror unchanged — which is half of why
+    # the pair comes out mirror-exact rather than mirror-ish.
+    pitch = np.pi / 2 - fold
+
+    parts = []
+    for side in (1.0, -1.0):
+        swing = trimesh.transformations.rotation_matrix(side * (fold - np.pi / 2), [0, 1, 0])
+        swing[:3, 3] = (sx, sy, side * sz)   # rotate about the origin, then sit on the shoulder
+        for i in range(segments):
+            t = (i / max(segments - 1, 1))
+            shrink = 1.0 - taper * t
+            c, th = chord * shrink, thickness * shrink
+            z = side * step * (i + 0.5)
+            # Overlong by 12% so the joints never open a gap, exactly as the
+            # snake's body blocks overlap around its S-curve.
+            plate = box((c, th, step * 1.12), (0.0, 0.0, z), color, pitch=pitch)
+            plate.apply_transform(swing)
+            parts.append(plate)
+            if edge is not None:
+                # The spar rides the front of the chord, so it has to be pitched
+                # around with it — hence the cos/sin on the offset rather than a
+                # flat +X.
+                lead = box((c * 0.2, th * 1.7, step * 1.12),
+                           (np.cos(pitch) * c * 0.42, np.sin(pitch) * c * 0.42, z),
+                           edge, pitch=pitch)
+                lead.apply_transform(swing)
+                parts.append(lead)
+
+    # Contract 2 is the caller's to keep, but a wing is the one part that can
+    # break it without anyone noticing: a tucked wing hangs half a chord below its
+    # root, so a shoulder set too low quietly buries the tip and `build()` then
+    # lifts the whole animal off the ground to compensate.
+    low = min(p.bounds[0][1] for p in parts)
+    if low < -1e-9:
+        raise ValueError(
+            f"wings: dips to y={low:.4f}; raise the shoulder or shorten the chord")
+    return parts
+
+
 def quadruped(
     *,
     body_len: float, body_h: float, body_w: float,
@@ -284,6 +371,80 @@ def save(parts, name: str, scale: float = 1.0, symmetric: bool = True) -> trimes
     return mesh
 
 
+def _selfcheck_wings() -> None:
+    """
+    Exercise the wing primitive on the poses a consumer will actually ask for.
+
+    There is no generate_wing.py to run — a wing is half a model, so `verify` (a
+    whole animal, nose to tail) cannot judge one. This is its stand-in, and it
+    asserts the three things a wing can silently get wrong: it drops below the
+    ground, the two sides drift apart, or `fold` stops meaning what it says.
+    """
+    membrane, bone = rgba("#6a5a3a"), rgba("#241d18")
+    # label, shoulder, span, segments, fold, spar — the first two share a shoulder
+    # and a span on purpose, so the folded/spread pair can be compared directly.
+    cases = [
+        ("folded",      (0.10, 0.70, 0.16), 0.55, 3, 0.0,       True),
+        ("part-spread", (0.10, 0.70, 0.16), 0.55, 3, 0.9,       True),
+        ("spread",      (0.00, 1.20, 0.22), 1.40, 5, np.pi / 2, False),
+        ("stub",        (0.00, 0.40, 0.10), 0.25, 1, 0.45,      True),
+    ]
+    extent = {}
+    for label, shoulder, span, segs, fold, spar in cases:
+        parts = wings(shoulder, span, membrane, segments=segs, fold=fold,
+                      edge=bone if spar else None)
+        assert len(parts) == segs * 2 * (2 if spar else 1), f"wings/{label}: part count"
+
+        # Contract 3: the parts weld into ONE vertex-coloured mesh, no wing nodes.
+        mesh = trimesh.util.concatenate(parts)
+        assert len(mesh.faces) == len(parts) * 12, f"wings/{label}: not plain boxes"
+        assert len(mesh.visual.vertex_colors) == len(mesh.vertices), \
+            f"wings/{label}: vertex colours lost in the weld"
+
+        lo, hi = mesh.bounds
+        # Contract 2: nothing below the ground plane, at any fold.
+        assert lo[1] >= -1e-9, f"wings/{label}: dips to y={lo[1]:.4f}"
+
+        # Mirror-exact, not merely balanced: the vertex set must be invariant
+        # under a z-flip. A bounds check alone would pass a wing whose right side
+        # is a different shape of the same width.
+        v = mesh.vertices
+        flipped = v * (1.0, 1.0, -1.0)
+        left = v[np.lexsort(v.T[::-1])]
+        right = flipped[np.lexsort(flipped.T[::-1])]
+        assert np.allclose(left, right, atol=1e-12), f"wings/{label}: sides not mirrored"
+
+        # Sane bounds: no vertex reaches further from its own shoulder than the
+        # last segment plus its chord can possibly put it.
+        sx, sy, sz = shoulder
+        roots = np.array([[sx, sy, sz], [sx, sy, -sz]])
+        reach = np.linalg.norm(v[:, None, :] - roots[None, :, :], axis=2).min(axis=1)
+        assert reach.max() <= span + span * 0.5, f"wings/{label}: reaches {reach.max():.3f} m"
+        # ...and the span lands where `fold` says it should, within a chord.
+        assert abs((hi[2] - sz) - span * np.sin(fold)) <= span * 0.2, \
+            f"wings/{label}: z reach {hi[2] - sz:.3f} m disagrees with fold {fold:.2f}"
+        extent[label] = (hi[2] - lo[2], hi[0] - lo[0])
+
+    # What `fold` MEANS, stated as a comparison rather than as numbers: opening a
+    # wing trades length along the flank for width off the shoulder.
+    assert extent["folded"][0] < extent["part-spread"][0], "fold does not widen the pair"
+    assert extent["folded"][1] > extent["part-spread"][1], "fold does not shorten the sweep"
+
+    # Guards, both of which are cheaper to hit here than in a boss model.
+    for bad, why in (
+        (dict(shoulder=(0.0, 0.05, 0.1), span=0.6, segments=3, fold=0.0), "buried tip"),
+        (dict(shoulder=(0.0, 1.0, 0.1), span=0.6, segments=0, fold=0.0), "no segments"),
+    ):
+        try:
+            wings(bad["shoulder"], bad["span"], membrane,
+                  segments=bad["segments"], fold=bad["fold"])
+        except ValueError:
+            continue
+        raise AssertionError(f"wings: {why} was accepted")
+
+    print(f"\u2713 wings: {len(cases)} poses, mirror-exact, clear of the ground")
+
+
 if __name__ == "__main__":
     # Running the toolkit runs every generator that uses it, so `verify` fires on
     # every species. Same shape as the project's GDScript self-checks.
@@ -292,4 +453,7 @@ if __name__ == "__main__":
     here = pathlib.Path(__file__).resolve().parent
     for species in ("wolf", "cougar", "bear", "hound", "snake", "hunter"):
         runpy.run_path(str(here / f"generate_{species}.py"), run_name="__main__")
+    # The wing primitive has no generator of its own — no model wears it yet — so
+    # it is checked here directly, on the poses its consumers will ask for.
+    _selfcheck_wings()
     print("SELFCHECK OK")
