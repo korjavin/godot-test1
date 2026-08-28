@@ -126,9 +126,12 @@ The client image is `ghcr.io/korjavin/godot-test1-web`, built from the same web
 export that goes to GitHub Pages (so the game is served from both). Both it and the
 lobby image are SHA-pinned on the `deploy` branch — see *Deploying* below.
 
-Both containers need `Cross-Origin-Opener-Policy: same-origin` and
-`Cross-Origin-Embedder-Policy: require-corp` on the game's HTML — Godot's export
-needs `SharedArrayBuffer` — which is the whole of `web/coop-coep.conf`.
+**The game is deliberately NOT served cross-origin-isolated.** This export is
+single-threaded (`variant/thread_support=false`), so it needs no
+`SharedArrayBuffer` and no COOP/COEP headers — and sending them broke the intro
+and Game Over films, because `require-corp` blocks any cross-origin `<video>`
+whose host sends no CORP/CORS headers. `web/nginx.conf` carries the reasoning
+and the conditions under which the headers would have to come back.
 
 ## Deploying
 
