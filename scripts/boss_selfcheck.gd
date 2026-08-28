@@ -643,11 +643,21 @@ func _check_ranged(boss: CharacterBody3D, player: StubPlayer, home: Vector3) -> 
 	await _frames(2)
 	boss.is_chasing = false
 	boss._ranged_lock.clear()
+	# The target is re-stated HERE, and it is the whole check. The boss's own
+	# _physics_process ran during the frames above and left `chase_target` on the
+	# player, who is parked 300 m away — out of the firing band, so an arm with
+	# its not-chasing guard DELETED would still refuse this shot and the phase
+	# would pass having measured the band gate a second time. Setting the target
+	# back to the same in-band, in-territory point the control above fired at
+	# leaves `is_chasing` as the only difference between the two calls.
+	# (Measured, 2026-08-29: without this line the mutant passes.)
+	boss.chase_target = Vector3(boss.global_position.x - band_mid, 0.0, home.z)
 	before = _live_projectiles()
 	boss._behave_ranged()
 	if _live_projectiles() > before:
-		_fail("ranged: fired while not chasing — a titan that has not smelled "
-				+ "anybody must not shell the horizon")
+		_fail("ranged: fired while not chasing, at the same quarry the control "
+				+ "above fired at — a titan that has not smelled anybody must not "
+				+ "shell the horizon")
 
 	_clear_projectiles()
 	await _frames(2)

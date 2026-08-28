@@ -1992,6 +1992,11 @@ func _check_boss_dispatch(terrain_script: GDScript) -> void:
 	var measured := 0
 	var rivers := 0
 	var bands := {}
+	## Which boss KINDS the walk actually put in the world, counted so the
+	## coverage gate below can tell "the dispatch answered titan and a titan
+	## spawned" from "no station in this walk ever stood in snow". Without it a
+	## table-driven check happily verifies a rule it never once exercised.
+	var kinds := {}
 	var mismatches := 0
 	var worst := ""
 
@@ -2047,6 +2052,7 @@ func _check_boss_dispatch(terrain_script: GDScript) -> void:
 					continue
 				measured += 1
 				bands[biome] = int(bands.get(biome, 0)) + 1
+				kinds[want] = int(kinds.get(want, 0)) + 1
 				if in_river:
 					rivers += 1
 				var got: String = String(child.get("species"))
@@ -2075,7 +2081,7 @@ func _check_boss_dispatch(terrain_script: GDScript) -> void:
 			% [measured, BOSS_DISPATCH_COUNT * RUN_SEEDS.size(), bands.size()]
 			+ " band(s); %d of their stations stand in a river; BIOME_BOSS has %d"
 					% [rivers, _biome_boss.size()]
-			+ " row(s)")
+			+ " row(s); kinds spawned %s" % kinds)
 
 	if mismatches > 0:
 		_fail("%d of %d road bosses are not the species the dispatch names for"
@@ -2101,6 +2107,20 @@ func _check_boss_dispatch(terrain_script: GDScript) -> void:
 		_fail("not one of the %d bosses measured owns a station in a river —" % measured
 				+ " the river arm of the dispatch was never asked, so nothing here"
 				+ " covers the rule that water stays the crocodile's")
+	# EVERY BIOME_BOSS ROW MUST ACTUALLY REACH THE WORLD, the same gate the
+	# species sweep applies to BIOME_SPECIES. The loop above verifies the rule
+	# wherever it is asked, which is silently vacuous for a band no station in
+	# this walk happens to stand in: the row would be a boss kind that exists in
+	# the source, loads, passes every table check, and has never once been on a
+	# road. If this fires the fix is a longer walk (BOSS_DISPATCH_COUNT) or
+	# another seed, not a weaker assertion.
+	for biome_v: Variant in _biome_boss:
+		var kind: String = String(_biome_boss[biome_v].get("species", ""))
+		if not kinds.has(kind):
+			_fail("BIOME_BOSS[%s] dispatches to '%s', but not one of the %d bosses"
+					% [biome_v, kind, measured] + " this walk placed was one — the"
+					+ " row was never exercised, so its whole dispatch is untested"
+					+ " (lengthen the walk or change a run seed)")
 
 
 # ============================================================================
