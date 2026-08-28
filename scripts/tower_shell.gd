@@ -34,7 +34,7 @@ extends Node3D
 ## and every peer is handed the seed, so every peer builds the same tower in the
 ## same place from local information only. No spawn packet, no claim, no authority.
 ##
-## COST: 9 `MeshInstance3D`s, ONE `StaticBody3D` holding 8 box shapes, one `Area3D`,
+## COST: 10 `MeshInstance3D`s, ONE `StaticBody3D` holding 8 box shapes, one `Area3D`,
 ## and 4 materials shared process-wide by the static cache below. That is the whole
 ## bill, once, for the life of a run.
 
@@ -68,13 +68,12 @@ const WALL_HEIGHT: float = 7.0
 ## door trigger spans exactly the hole — so a doorway that drifts shut is a
 ## contradiction rather than a bug you have to notice. 6 m wide and 4 m tall clears
 ## a giant Teibi (the character with the largest silhouette) with room to spare.
+##
+## THE HOLE IS IN THE +X WALL, i.e. it faces back toward the world origin. The tower
+## sits on -X (phase 1's ruling) and the player spawns at the origin, so a player who
+## walks to the tower walks straight at the doorway instead of round the back.
 const DOOR_HALF_WIDTH: float = 3.0
 const DOOR_HEIGHT: float = 4.0
-
-## Which way the door faces: +X, i.e. back toward the world origin. The tower sits
-## on -X (phase 1's ruling) and the player spawns at the origin, so a player who
-## walks to the tower walks straight at the doorway instead of round the back.
-const DOOR_FACING := Vector3(1.0, 0.0, 0.0)
 
 ## How far the door trigger reaches on either side of the wall plane. It only has
 ## to be thicker than the furthest a player travels in one physics tick — the
@@ -146,7 +145,7 @@ static var _materials: Dictionary = {}
 
 static func boxes() -> Array[Dictionary]:
 	"""
-	The whole building, as boxes: `{pos, size, color, collide}` in local metres.
+	The whole building, as boxes: `{name, pos, size, color, collide}` in local metres.
 
 	@return: One entry per `MeshInstance3D` the shell builds, in build order.
 
@@ -175,37 +174,37 @@ static func boxes() -> Array[Dictionary]:
 
 	var out: Array[Dictionary] = []
 	# 1. The yard, first so everything else draws over it. No collision — see YARD_LIFT.
-	out.append({"pos": Vector3(0.0, YARD_LIFT * 0.5, 0.0),
+	out.append({"name": "Yard", "pos": Vector3(0.0, YARD_LIFT * 0.5, 0.0),
 		"size": Vector3(2.0 * YARD_HALF, YARD_LIFT, 2.0 * YARD_HALF),
 		"color": COLOR_YARD, "collide": false})
 	# 2. The three solid walls. -X is the back (the door faces +X).
-	out.append({"pos": Vector3(-wall_mid, WALL_HEIGHT * 0.5, 0.0),
+	out.append({"name": "WallBack", "pos": Vector3(-wall_mid, WALL_HEIGHT * 0.5, 0.0),
 		"size": Vector3(WALL_THICK, WALL_HEIGHT, 2.0 * OUTER_HALF),
 		"color": COLOR_WALL, "collide": true})
-	out.append({"pos": Vector3(0.0, WALL_HEIGHT * 0.5, -wall_mid),
+	out.append({"name": "WallSideNegZ", "pos": Vector3(0.0, WALL_HEIGHT * 0.5, -wall_mid),
 		"size": Vector3(side_len, WALL_HEIGHT, WALL_THICK),
 		"color": COLOR_WALL, "collide": true})
-	out.append({"pos": Vector3(0.0, WALL_HEIGHT * 0.5, wall_mid),
+	out.append({"name": "WallSidePosZ", "pos": Vector3(0.0, WALL_HEIGHT * 0.5, wall_mid),
 		"size": Vector3(side_len, WALL_HEIGHT, WALL_THICK),
 		"color": COLOR_WALL, "collide": true})
 	# 3. The front wall, as two jambs and a lintel — i.e. a wall with a hole in it.
-	out.append({"pos": Vector3(wall_mid, WALL_HEIGHT * 0.5, -jamb_mid),
+	out.append({"name": "DoorJambNegZ", "pos": Vector3(wall_mid, WALL_HEIGHT * 0.5, -jamb_mid),
 		"size": Vector3(WALL_THICK, WALL_HEIGHT, jamb_len),
 		"color": COLOR_WALL, "collide": true})
-	out.append({"pos": Vector3(wall_mid, WALL_HEIGHT * 0.5, jamb_mid),
+	out.append({"name": "DoorJambPosZ", "pos": Vector3(wall_mid, WALL_HEIGHT * 0.5, jamb_mid),
 		"size": Vector3(WALL_THICK, WALL_HEIGHT, jamb_len),
 		"color": COLOR_WALL, "collide": true})
-	out.append({"pos": Vector3(wall_mid, DOOR_HEIGHT + lintel_height * 0.5, 0.0),
+	out.append({"name": "DoorLintel", "pos": Vector3(wall_mid, DOOR_HEIGHT + lintel_height * 0.5, 0.0),
 		"size": Vector3(WALL_THICK, lintel_height, 2.0 * DOOR_HALF_WIDTH),
 		"color": COLOR_WALL, "collide": true})
 	# 4. The spire, its cap, and the beacon on top.
-	out.append({"pos": Vector3(spire_mid, SPIRE_HEIGHT * 0.5, spire_mid),
+	out.append({"name": "Spire", "pos": Vector3(spire_mid, SPIRE_HEIGHT * 0.5, spire_mid),
 		"size": Vector3(SPIRE_SIDE, SPIRE_HEIGHT, SPIRE_SIDE),
 		"color": COLOR_WALL, "collide": true})
-	out.append({"pos": Vector3(spire_mid, SPIRE_HEIGHT + SPIRE_CAP_HEIGHT * 0.5, spire_mid),
+	out.append({"name": "SpireCap", "pos": Vector3(spire_mid, SPIRE_HEIGHT + SPIRE_CAP_HEIGHT * 0.5, spire_mid),
 		"size": Vector3(cap_side, SPIRE_CAP_HEIGHT, cap_side),
 		"color": COLOR_ROOF, "collide": true})
-	out.append({"pos": Vector3(spire_mid,
+	out.append({"name": "Beacon", "pos": Vector3(spire_mid,
 			SPIRE_HEIGHT + SPIRE_CAP_HEIGHT + BEACON_SIDE * 0.5, spire_mid),
 		"size": Vector3(BEACON_SIDE, BEACON_SIDE, BEACON_SIDE),
 		"color": COLOR_BEACON, "collide": false})
@@ -282,6 +281,7 @@ static func build_impostor() -> Node3D:
 	root.name = "TowerImpostor"
 	for box: Dictionary in boxes():
 		var mesh := MeshInstance3D.new()
+		mesh.name = box["name"]
 		mesh.mesh = _box_mesh(box["size"])
 		mesh.position = box["pos"]
 		var beacon: bool = box["color"] == COLOR_BEACON
@@ -308,6 +308,7 @@ func _ready() -> void:
 
 	for box: Dictionary in boxes():
 		var mesh := MeshInstance3D.new()
+		mesh.name = box["name"]
 		mesh.mesh = _box_mesh(box["size"])
 		mesh.position = box["pos"]
 		mesh.material_override = _material(box["color"])
@@ -319,6 +320,7 @@ func _ready() -> void:
 		box_shape.size = box["size"]
 		shape.shape = box_shape
 		shape.position = box["pos"]
+		shape.name = "%sShape" % box["name"]
 		body.add_child(shape)
 
 	# The door trigger — an Area3D on the coin's idiom (coin.gd extends Area3D and
