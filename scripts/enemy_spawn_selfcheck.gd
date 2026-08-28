@@ -115,6 +115,30 @@ const DETERMINISM_FIELD: int = 7
 ## exact green lie this file's header is written against.
 const DETERMINISM_CONTROL_SEED: int = 777
 
+## How many consecutive road-station BOSSES check 11 walks, starting at boss 1.
+## Forty is chosen for REACH, not for sample size: a boss owns every
+## BOSS_INTERVAL_STATIONS-th station, so forty of them stretch roughly twelve
+## kilometres of centerline and drag the dispatch across most of the biome bands
+## and a river or two. The sweep's 289-chunk fields contain ONE boss each, which
+## is why this check exists as its own walk rather than as a branch in there — one
+## body cannot show that a rule keyed on a coordinate answers different questions
+## at different coordinates.
+const BOSS_DISPATCH_COUNT: int = 40
+
+## Fewest of those bosses — over every seed in RUN_SEEDS together — that must
+## actually reach the world before check 11's verdict means anything. It is well
+## under the walk's length on purpose: a boss whose first candidate is buried in
+## geometry is skipped by design (see spawn_bosses_in_chunk's claim rule), so a
+## proportion of misses is correct. What this number rejects is the check silently
+## measuring nothing at all.
+const BOSS_DISPATCH_MIN_MEASURED: int = 40
+
+## Fewest distinct biome bands those stations must land in. The dispatch is a
+## FUNCTION of the band; asked the same question forty times it could be a
+## constant and still pass, which is exactly the vacuous green this file is
+## written against.
+const BOSS_DISPATCH_MIN_BANDS: int = 3
+
 ## HOW TWO GENERATIONS OF THE SAME CHUNK ARE COMPARED: `var_to_bytes` of the
 ## signature array, i.e. bit for bit, with no formatting step in the middle to
 ## round anything away. That is the right instrument and a tolerance is not: two
@@ -157,6 +181,14 @@ var _mp_consts: Dictionary = {}
 ## on why a `const` cannot be read as a property.
 var _species_table: Dictionary = {}
 var _biome_species: Dictionary = {}
+
+## endless_terrain.gd's BIOME_BOSS map and BOSS_INTERVAL_STATIONS, read the same
+## way. BIOME_BOSS ships EMPTY (see its doc block over there): the boss dispatch
+## is a seam that lands with every boss still a crocodile, so check 11 below
+## measures "the rule answers crocodile everywhere" today and becomes a real
+## dispatch test the day the snow titan's row lands, with no edit here.
+var _biome_boss: Dictionary = {}
+var _boss_interval: int = 0
 
 ## The two ends of the speed lattice, read off player_controller.gd and
 ## piglet_crocodile_ai.gd rather than restated — see the note in _run().
@@ -226,6 +258,12 @@ func _run() -> void:
 		_slowest_run_speed = float(player_consts.get("RUN_SPEED", 0.0)) * slowest_scale
 	_mp_consts = load(MP_SCRIPT).get_script_constant_map()
 	_biome_species = consts.get("BIOME_SPECIES", {})
+	_biome_boss = consts.get("BIOME_BOSS", {})
+	_boss_interval = int(consts.get("BOSS_INTERVAL_STATIONS", 0))
+	if _boss_interval < 1:
+		_fail("endless_terrain.gd has no BOSS_INTERVAL_STATIONS — check 11 cannot"
+				+ " work out which station a boss owns, so it cannot recompute the"
+				+ " point the dispatch keys on")
 	# The enum itself, so the coverage gate counts the bands the world HAS.
 	_biomes = consts.get("Biome", {})
 	if _biomes.is_empty():
@@ -241,6 +279,7 @@ func _run() -> void:
 	_check_charge_dodge(croc_ai)
 	_check_burst_escape(croc_ai)
 	_check_determinism(terrain_script)
+	_check_boss_dispatch(terrain_script)
 
 	for run_seed: int in RUN_SEEDS:
 		_sweep(terrain_script, run_seed, spawn_height, edge_inset)
@@ -351,36 +390,36 @@ func _check_species_table() -> void:
 					+ " PROBED_BEHAVIORS, or the arm ships unmeasured")
 
 	# ---- EVERY ROW MUST BE REACHABLE ---------------------------------------
-	# A species is only ever instantiated through BIOME_SPECIES (the crocodile
-	# being the fallback every entry-less biome takes). A row nothing dispatches
-	# to is a predator that exists in the source, passes every check above, and
-	# has never once been in the world — which is a half-landed bead, not a
-	# feature, and the one failure mode a table-driven check can see and a
-	# hand-written list cannot.
+	# A species is only ever instantiated through one of the two dispatch maps —
+	# BIOME_SPECIES for a chunk's ordinary predators, BIOME_BOSS for a road
+	# station's guardian — with the crocodile as the fallback every entry-less
+	# biome takes in either. A row nothing dispatches to is a predator that exists
+	# in the source, passes every check above, and has never once been in the
+	# world — which is a half-landed bead, not a feature, and the one failure mode
+	# a table-driven check can see and a hand-written list cannot.
+	#
+	# BOTH MAPS ARE UNIONED, and the boss half is not decoration: a boss-only row
+	# (the snow titan, the forest dragon) is reachable from BIOME_BOSS and from
+	# nowhere else, so a union over BIOME_SPECIES alone would report the first one
+	# of them as unreachable on the very day it lands.
 	var dispatched := { "crocodile": true }
 	for biome_v: Variant in _biome_species:
 		dispatched[String(_biome_species[biome_v].get("species", ""))] = true
+	for biome_v: Variant in _biome_boss:
+		dispatched[String(_biome_boss[biome_v].get("species", ""))] = true
 	for name_v: Variant in _species_table:
 		if not dispatched.has(String(name_v)):
-			_fail("SPECIES['%s'] is in the table but in no BIOME_SPECIES entry —"
-					% name_v + " nothing in the world can ever spawn it")
+			_fail("SPECIES['%s'] is in the table but in no BIOME_SPECIES or"
+					% name_v + " BIOME_BOSS entry — nothing in the world can ever"
+					+ " spawn it")
 
-	# The dispatch map: biomes must exist, names must resolve, scenes must load.
-	for biome_v: Variant in _biome_species:
-		var entry: Dictionary = _biome_species[biome_v]
-		if not _biomes.values().has(int(biome_v)):
-			_fail("BIOME_SPECIES has an entry for %s, which is not a value of the"
-					% biome_v + " Biome enum %s — biome_at() can never answer it,"
-					% _biomes.values() + " so that entry is dead")
-		var species_name: String = String(entry.get("species", ""))
-		if not _species_table.has(species_name):
-			_fail("BIOME_SPECIES[%s] dispatches to '%s', which is not a SPECIES row —"
-					% [biome_v, species_name]
-					+ " every crocodile in that biome would silently fall back")
-		var scene_path: String = String(entry.get("scene", ""))
-		if not ResourceLoader.exists(scene_path) or load(scene_path) == null:
-			_fail("BIOME_SPECIES[%s] points at '%s', which does not load"
-					% [biome_v, scene_path])
+	# Both dispatch maps, by the same rules: biomes must exist, names must
+	# resolve, scenes must load. BIOME_BOSS is BIOME_SPECIES one feature over
+	# (same {species, scene} shape, same crocodile fallback, keyed on a road
+	# station's centre instead of a chunk's), so it earns the same validation
+	# rather than a second copy of it.
+	_check_dispatch_map("BIOME_SPECIES", _biome_species)
+	_check_dispatch_map("BIOME_BOSS", _biome_boss)
 
 	# The negative control for this half: a table with one row and an empty
 	# dispatch map passes every loop above without measuring anything.
@@ -388,6 +427,41 @@ func _check_species_table() -> void:
 		_fail("only %d SPECIES row(s) and %d dispatch entries — checks over the"
 				% [_species_table.size(), _biome_species.size()]
 				+ " species table ran against a world with one predator in it")
+
+
+func _check_dispatch_map(label: String, map: Dictionary) -> void:
+	"""
+	One dispatch map's entries: real biome, real species row, loadable scene.
+
+	@param label: the map's name in endless_terrain.gd, for the failure messages
+	@param map: BIOME_SPECIES or BIOME_BOSS — Biome -> { species, scene }
+
+	Every way one of these entries goes wrong is silent from the outside, because
+	all three degrade to a crocodile: a dead key (a biome value that biome_at()
+	can never return) never fires, a name that is not a SPECIES row is warned
+	about once by the AI's _ready() and then behaves as a crocodile, and a scene
+	path that does not load falls back to the crocodile scene. All three read to a
+	player as "the new predator isn't in the game yet".
+
+	An EMPTY map passes this vacuously, and for BIOME_BOSS that is correct rather
+	than a hole: it ships empty on purpose (the seam lands with zero behaviour
+	change) and the row that fills it is checked here the day it arrives.
+	"""
+	for biome_v: Variant in map:
+		var entry: Dictionary = map[biome_v]
+		if not _biomes.values().has(int(biome_v)):
+			_fail("%s has an entry for %s, which is not a value of the"
+					% [label, biome_v] + " Biome enum %s — biome_at() can never"
+					% _biomes.values() + " answer it, so that entry is dead")
+		var species_name: String = String(entry.get("species", ""))
+		if not _species_table.has(species_name):
+			_fail("%s[%s] dispatches to '%s', which is not a SPECIES row —"
+					% [label, biome_v, species_name]
+					+ " everything it spawns would silently fall back")
+		var scene_path: String = String(entry.get("scene", ""))
+		if not ResourceLoader.exists(scene_path) or load(scene_path) == null:
+			_fail("%s[%s] points at '%s', which does not load"
+					% [label, biome_v, scene_path])
 
 
 # ============================================================================
@@ -1457,6 +1531,33 @@ func _chunk_signature(terrain: Node, chunk_pos: Vector2i) -> Array:
 	non-deterministic BLOCK — and a block that moves moves the crocodiles that
 	were placed around it.
 	"""
+	var parent := _generate_chunk(terrain, chunk_pos)
+	var parts: Array = []
+	for child in parent.get_children():
+		if not child.is_in_group("crocodile"):
+			continue
+		var node := child as Node3D
+		parts.append([String(child.name), String(child.get("species")),
+				node.position, node.rotation.y])
+	parent.free()
+	return parts
+
+
+func _generate_chunk(terrain: Node, chunk_pos: Vector2i) -> MeshInstance3D:
+	"""
+	Run create_chunk's spawner sequence over one chunk. THE CALLER FREES the parent.
+
+	@param terrain: a terrain node with its run seed already forced
+	@param chunk_pos: the chunk to generate
+	@return the chunk parent, in the tree at the chunk's world origin, holding
+	        every body the chunk spawned
+
+	THE CALL SEQUENCE IS create_chunk'S, and the order is the point: the later
+	spawners judge their candidates against the footprints the earlier ones
+	appended to `obstacles`, so a boss placed against a half-built obstacle list
+	stands somewhere the real game would never put it — and a check measuring that
+	boss is measuring a world nobody plays.
+	"""
 	var parent := _make_chunk_parent(terrain.chunk_to_world(chunk_pos))
 	var platforms: Array = []
 	var batch: Array = []
@@ -1470,17 +1571,8 @@ func _chunk_signature(terrain: Node, chunk_pos: Vector2i) -> Array:
 	terrain.spawn_crocodiles_in_chunk(chunk_pos, parent, obstacles)
 	terrain.spawn_platform_crocodiles(chunk_pos, parent, platforms)
 	terrain.spawn_bosses_in_chunk(chunk_pos, parent, obstacles)
-
-	var parts: Array = []
-	for child in parent.get_children():
-		if not child.is_in_group("crocodile"):
-			continue
-		var node := child as Node3D
-		parts.append([String(child.name), String(child.get("species")),
-				node.position, node.rotation.y])
-	parent.free()
 	body.free()
-	return parts
+	return parent
 
 
 # ============================================================================
@@ -1603,6 +1695,160 @@ func _check_mp_contract(croc: Node, species_name: String, chunk_pos: Vector2i) -
 		_fail("'%s': a byte with no BURROWED bit still left the body buried —"
 				% species_name + " the burrow is being re-derived from `not"
 				+ " is_chasing` on the receiving peer instead of read from the byte")
+
+
+# ============================================================================
+# CHECK 11 — a BOSS is dispatched on ITS STATION'S CENTRE, and rivers stay croc
+# ============================================================================
+
+func _check_boss_dispatch(terrain_script: GDScript) -> void:
+	"""
+	Walk BOSS_DISPATCH_COUNT road bosses and prove each one is the animal the rule
+	names for its OWNING STATION's centre.
+
+	WHY THIS IS ITS OWN CHECK AND NOT A BRANCH IN THE SWEEP: a boss is not
+	chunk-keyed. BIOME_SPECIES answers for a chunk's ordinary predators because a
+	chunk HAS a centre; a boss belongs to station i * BOSS_INTERVAL_STATIONS on
+	the coin road, and its station's centre is the only coordinate it has that is
+	pure in `i` + run_seed. The sweep's 289-chunk field around the origin contains
+	exactly ONE boss, so it can never ask the rule more than one question. This
+	walk asks it forty, spread over roughly twelve kilometres of road.
+
+	WHAT IT WOULD CATCH. The expectation is recomputed here from the PUBLIC biome
+	API at the station centre — never read back off the spawner — so a dispatch
+	keyed on the placed candidate instead of the station fails the moment those
+	two fall in different bands, which is exactly the case the bead's root insight
+	is about: the candidate is chosen out of BOSS_PLACE_TRIES lateral offsets by
+	testing them against the claiming chunk's obstacle layout, so it is neither
+	pure in `i` nor guaranteed to be in the same band. Dispatching on the claiming
+	CHUNK's centre fails the same way.
+
+	WITH BIOME_BOSS EMPTY the rule answers "crocodile" at every station, so today
+	this asserts the seam's whole acceptance: the table landed empty and no boss
+	in the world changed. It becomes a real per-band dispatch test the day the
+	snow titan's row lands, with no edit here — same contract as the rest of this
+	file, which iterates the tables and never a list of its own.
+
+	The `spec` half is the call-order contract (the landmine setup_as_boss has
+	always carried, now with one more line in front of it): `species` is assigned
+	BEFORE setup_as_boss BEFORE add_child, because _ready() resolves `spec` from
+	`species` exactly once, on add_child. Assign it afterwards and the field says
+	"snow_titan" while every speed, feeler and animation stays a crocodile's —
+	invisible from the field alone, which is why one number off the resolved row
+	is compared instead.
+	"""
+	var measured := 0
+	var rivers := 0
+	var bands := {}
+	var mismatches := 0
+	var worst := ""
+
+	# EVERY seed in RUN_SEEDS, not just one, and the reason is the river arm: a
+	# river is a thin contour, so whether the first forty stations of one
+	# particular road happen to cross one is luck (seed 12345's first river boss
+	# is number 150). Walking the whole seed list is what makes the arm the owner
+	# named actually get asked, and the gate below says so out loud instead of
+	# leaving it to chance.
+	for run_seed: int in RUN_SEEDS:
+		var terrain := Node3D.new()
+		terrain.set_script(terrain_script)
+		terrain.set_run_seed(run_seed)
+		terrain.crocodile_scene = load(CROC_SCENE)
+		terrain.coin_scene = load(COIN_SCENE)
+
+		# The station cache has to span every station this walk asks about, and it
+		# is extended by WORLD X, not by station index: a station advances X by at
+		# most the spacing, less wherever the centerline is turning. So the first
+		# guess is a lower bound and the loop grows it until the cache really
+		# covers the last station, rather than assuming a straight road.
+		var last_k: int = BOSS_DISPATCH_COUNT * _boss_interval
+		var reach: float = float(last_k) * float(terrain.road_coin_spacing)
+		while terrain.road_k_max < last_k:
+			terrain._road_extend_to_x(0.0, reach)
+			reach *= 1.5
+
+		for i in range(1, BOSS_DISPATCH_COUNT + 1):
+			var centre: Vector2 = terrain._road_station(i * _boss_interval).center
+			var in_river: bool = terrain.is_river_at(Vector3(centre.x, 0.0, centre.y))
+			var biome: int = terrain.biome_at(centre.x, centre.y)
+			# The rule, restated from the two pure public functions and the table —
+			# the river arm first, because that is the arm the owner named ("river
+			# - crocodile") and it overrides whatever band the station stands in.
+			var want := "crocodile"
+			if not in_river and _biome_boss.has(biome):
+				want = String(_biome_boss[biome].get("species", ""))
+			if not _species_table.has(want):
+				# Already reported by name in _check_dispatch_map; guarded again so
+				# this loop cannot index a missing row and die mid-walk, which
+				# would skip _report() and exit 0 with no verdict at all.
+				continue
+
+			# THE ONE CHUNK THAT CAN SPAWN THIS BOSS is the one holding its first
+			# candidate — that is the claim rule in spawn_bosses_in_chunk, and it
+			# is what makes generating a single chunk here equivalent to walking
+			# the whole field. A boss whose candidates are all buried simply does
+			# not appear, which is a designed outcome, not a failure.
+			var boss: Dictionary = terrain._boss_at(i)
+			var parent := _generate_chunk(terrain, terrain.world_to_chunk(boss["positions"][0]))
+			for child in parent.get_children():
+				if String(child.name) != "BossCrocodile_%d" % i:
+					continue
+				measured += 1
+				bands[biome] = int(bands.get(biome, 0)) + 1
+				if in_river:
+					rivers += 1
+				var got: String = String(child.get("species"))
+				var spec: Variant = child.get("spec")
+				var want_speed: float = float(_species_table[want]["chase_speed"])
+				var got_speed: float = (float(spec["chase_speed"])
+						if spec is Dictionary and spec.has("chase_speed") else NAN)
+				if got != want:
+					mismatches += 1
+					if worst == "":
+						worst = ("seed %d boss %d (station %d, %s biome%s) is"
+								+ " species '%s', expected '%s'") % [run_seed, i,
+								i * _boss_interval,
+								_biome_name(Vector3(centre.x, 0.0, centre.y), terrain),
+								", in a river" if in_river else "", got, want]
+				elif not is_equal_approx(got_speed, want_speed):
+					mismatches += 1
+					if worst == "":
+						worst = ("seed %d boss %d says species '%s' but resolved a"
+								+ " spec with chase_speed %s, not the table's %s —"
+								+ " `species` was assigned AFTER add_child()") % [
+								run_seed, i, got, got_speed, want_speed]
+			parent.free()
+
+	print("boss dispatch: %d of %d road bosses reached the world across %d biome"
+			% [measured, BOSS_DISPATCH_COUNT * RUN_SEEDS.size(), bands.size()]
+			+ " band(s); %d of their stations stand in a river; BIOME_BOSS has %d"
+					% [rivers, _biome_boss.size()]
+			+ " row(s)")
+
+	if mismatches > 0:
+		_fail("%d of %d road bosses are not the species the dispatch names for"
+				% [mismatches, measured]
+				+ " their OWN STATION's centre — the boss kind is no longer a pure"
+				+ " function of the boss index, so two peers sharing a run_seed put"
+				+ " different animals on the same road. First: %s" % worst)
+	if measured < BOSS_DISPATCH_MIN_MEASURED:
+		_fail("only %d of %d road bosses actually spawned — the dispatch verdict"
+				% [measured, BOSS_DISPATCH_COUNT * RUN_SEEDS.size()]
+				+ " above was taken over almost nothing")
+	if bands.size() < BOSS_DISPATCH_MIN_BANDS:
+		_fail("the %d bosses measured stand in only %d biome band(s) %s — the"
+				% [measured, bands.size(), bands.keys()]
+				+ " dispatch was asked the same question every time, so a rule that"
+				+ " ignored the band entirely would have passed")
+	# The river arm is the one the owner stated in words ("river - crocodile") and
+	# the one the band lookup can never reach, since it overrides the band. If no
+	# station in the whole walk stands in water, that arm shipped unmeasured —
+	# which is a coverage failure of THIS check, not of the code it measures, and
+	# the fix is a longer walk or a different seed in RUN_SEEDS.
+	if rivers < 1:
+		_fail("not one of the %d bosses measured owns a station in a river —" % measured
+				+ " the river arm of the dispatch was never asked, so nothing here"
+				+ " covers the rule that water stays the crocodile's")
 
 
 # ============================================================================
