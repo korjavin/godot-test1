@@ -39,21 +39,29 @@ self.addEventListener('install', (event) => {
 // window between activation and the reload nothing is served from a cache.
 self.addEventListener('activate', (event) => {
 	event.waitUntil((async () => {
-		// Only Godot's own caches. `caches` is scoped to the ORIGIN, not to this
-		// worker's path, and the GitHub Pages mirror lives on the shared
-		// korjavin.github.io — a blanket `caches.delete` there would wipe the
-		// offline storage of every other project on that domain. Godot names
-		// its cache `<project name>-sw-cache-<version>` (measured: the export
-		// with the PWA setting on produces `CrimeKickers-sw-cache-…`); matching
-		// the fixed `-sw-cache-` half rather than the project name means a
-		// rename, or a build from an older Godot, still gets collected.
-		const names = (await caches.keys()).filter((name) => name.includes('-sw-cache-'));
-		await Promise.all(names.map((name) => caches.delete(name)));
+		// OUR caches only, matched by exact prefix. `caches` is scoped to the
+		// ORIGIN, not to this worker's path, and the GitHub Pages mirror lives
+		// on a korjavin.github.io shared with every other project of the
+		// owner's — a blanket `caches.delete()` there wipes their offline
+		// storage too, and `-sw-cache-` alone would still catch any other Godot
+		// PWA on the domain. This prefix is measured, not guessed: exporting
+		// with `progressive_web_app/enabled=true` emits a worker whose
+		// `CACHE_PREFIX` is `<project name>-sw-cache-`.
+		//
+		// A rename would leave the old cache behind, and that is fine — it is
+		// `unregister()` below that actually ends the staleness. An orphaned
+		// cache with no worker to read it is unreachable garbage the browser
+		// evicts on its own; deleting it here is hygiene, not the fix.
+		const stale = (await caches.keys()).filter((name) => name.startsWith('CrimeKickers-sw-cache-'));
+		await Promise.all(stale.map((name) => caches.delete(name)));
 		await self.registration.unregister();
-		// includeUncontrolled: after skipWaiting the old worker's clients are
-		// already ours, but the flag costs nothing and covers the ordering
-		// either way.
-		const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+		// Controlled clients only — no `includeUncontrolled`. skipWaiting()
+		// above handed us every tab the old worker held, which is exactly the
+		// set that needs reloading; `includeUncontrolled: true` would widen this
+		// to every same-origin window, scope or not, and blow away an unrelated
+		// project's tab state on the shared Pages origin. A window that was not
+		// controlled was never served from the stale cache, so it needs nothing.
+		const clients = await self.clients.matchAll({ type: 'window' });
 		for (const client of clients) {
 			client.navigate(client.url);
 		}
