@@ -1906,8 +1906,9 @@ const BIOME_SPECIES: Dictionary = {
 ## crocodile". A station standing in the water is guarded by the animal that
 ## belongs in water, whatever band the noise field puts it in.
 ##
-## THIS TABLE SHIPS EMPTY, AND THAT IS THE POINT. Every boss is still a crocodile
-## and the generated world is byte-identical to the one before this seam existed:
+## THIS TABLE SHIPPED EMPTY, AND THAT WAS THE POINT — the seam landed with every
+## boss still a crocodile and a byte-identical world, and the snow titan below is
+## the first row to change an answer. Adding it changed no PLACEMENT anywhere:
 ## the dispatch is pure function calls (biome_at / is_river_at — the
 ## allocation-free public API, no RNG anywhere under either) inserted at a spot
 ## where no draw is made, so the BOSS_SEED stream consumes the same draws in the
