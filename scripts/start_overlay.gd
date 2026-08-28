@@ -126,7 +126,13 @@ const HINT_FONT_SIZE: int = 16
 
 ## Where an explicit language choice is remembered, in the same shape as
 ## `best_run.cfg` and `mobile_tuning.cfg`.
-const LOCALE_CONFIG_PATH: String = "user://locale.cfg"
+##
+## STATIC AND WRITABLE PURELY AS A TEST SEAM, exactly as `BestRunStore.config_path`
+## is and for the same reason; nothing in the game ever assigns it.
+## `locale_selfcheck.gd` drives the whole save/apply round trip, and doing that on
+## the real file left a developer's game speaking German whenever the check died
+## before it got to put the file back.
+static var locale_config_path: String = "user://locale.cfg"
 const LOCALE_CONFIG_SECTION: String = "locale"
 const LOCALE_CONFIG_KEY: String = "code"
 
@@ -442,7 +448,7 @@ func _refresh_locale_buttons() -> void:
 ## which is the better default and the reason this is only a nice-to-have.
 static func apply_saved_locale() -> void:
 	var config := ConfigFile.new()
-	if config.load(LOCALE_CONFIG_PATH) != OK:
+	if config.load(locale_config_path) != OK:
 		return
 	var code: String = String(config.get_value(LOCALE_CONFIG_SECTION, LOCALE_CONFIG_KEY, ""))
 	if code.is_empty() or not _is_known_locale(code):
@@ -459,7 +465,7 @@ static func save_locale(code: String) -> void:
 	TranslationServer.set_locale(code)
 	var config := ConfigFile.new()
 	config.set_value(LOCALE_CONFIG_SECTION, LOCALE_CONFIG_KEY, code)
-	config.save(LOCALE_CONFIG_PATH)
+	config.save(locale_config_path)
 
 
 ## Guard on the way IN as well as out, so a corrupt or hand-edited config file

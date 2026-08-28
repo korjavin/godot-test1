@@ -89,7 +89,19 @@ class_name BestRunStore
 
 ## Desktop persistence. Kept at the path (and section) `player_controller.gd`
 ## already used, so an existing desktop record survives this change.
-const CONFIG_PATH: String = "user://best_run.cfg"
+##
+## STATIC AND WRITABLE PURELY AS A TEST SEAM, and nothing in the game ever
+## assigns it — the running game always uses the default. A self-check cannot
+## assert against this file: every write here is a monotone read-modify-write
+## merge (see `_write_local`), so a check that stores 1234 into a developer's
+## real profile reads back whatever larger number that profile already held.
+## Backing the file up and putting it back does not fix that — the merge happens
+## while the check is running — and it puts a real record one crashed assertion
+## away from being lost. So a check points this at a throwaway path for its
+## duration instead; `progression_selfcheck.gd` and `best_run_e2e.gd` both do.
+## Static rather than per-instance so ONE assignment covers every store the run
+## builds, including the one `player_controller._ready()` makes for itself.
+static var config_path: String = "user://best_run.cfg"
 const CONFIG_SECTION: String = "best"
 const CONFIG_PLAYER_SECTION: String = "player"
 
@@ -261,7 +273,7 @@ func _read_local() -> void:
 	var cfg := ConfigFile.new()
 	# A missing file (first ever run) is NOT an error — the zero defaults stand.
 	# That is also the bead's "delete the file, get a clean level-0 profile" case.
-	if cfg.load(CONFIG_PATH) != OK:
+	if cfg.load(config_path) != OK:
 		return
 	distance = maxi(distance, maxi(0, int(cfg.get_value(CONFIG_SECTION, "distance", 0))))
 	coins = maxi(coins, maxi(0, int(cfg.get_value(CONFIG_SECTION, "coins", 0))))
@@ -305,13 +317,13 @@ func _write_local() -> void:
 		_ls_set(LS_RANKS, JSON.stringify(skill_ranks))
 		return
 	var cfg := ConfigFile.new()
-	cfg.load(CONFIG_PATH)  # keep any other section (the player id) intact
+	cfg.load(config_path)  # keep any other section (the player id) intact
 	cfg.set_value(CONFIG_SECTION, "distance", distance)
 	cfg.set_value(CONFIG_SECTION, "coins", coins)
 	cfg.set_value(CONFIG_PROGRESSION_SECTION, "lifetime_coins", lifetime_coins)
 	cfg.set_value(CONFIG_PROGRESSION_SECTION, "spent_points", spent_points)
 	cfg.set_value(CONFIG_PROGRESSION_SECTION, "skill_ranks", JSON.stringify(skill_ranks))
-	cfg.save(CONFIG_PATH)
+	cfg.save(config_path)
 
 
 # =============================================================================
@@ -369,7 +381,7 @@ func _load_or_make_player_id() -> String:
 		# Also the web migration path: an id already in the ConfigFile is reused
 		# rather than replaced, so a player who has one keeps their server record.
 		var cfg := ConfigFile.new()
-		if cfg.load(CONFIG_PATH) == OK:
+		if cfg.load(config_path) == OK:
 			stored = str(cfg.get_value(CONFIG_PLAYER_SECTION, "id", ""))
 	# Re-mint anything the lobby would refuse, so a corrupted store self-heals
 	# instead of 400ing every request for the rest of this install's life.
@@ -386,9 +398,9 @@ func _load_or_make_player_id() -> String:
 		_ls_set(LS_PLAYER_ID, fresh)
 	else:
 		var cfg := ConfigFile.new()
-		cfg.load(CONFIG_PATH)
+		cfg.load(config_path)
 		cfg.set_value(CONFIG_PLAYER_SECTION, "id", fresh)
-		cfg.save(CONFIG_PATH)
+		cfg.save(config_path)
 	return fresh
 
 

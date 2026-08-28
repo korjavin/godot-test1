@@ -28,14 +28,28 @@ extends SceneTree
 ## to end by `scripts/best_run_e2e.gd` against the local lobby `scripts/mp_e2e.sh`
 ## already starts.
 ##
-## THE ONE THING THAT STILL TOUCHES `user://best_run.cfg` IS THE PLAYER SCENE, and
-## it is backed up and restored around the run. `player_controller._ready()`
-## unconditionally builds its own `BestRunStore` and calls `fetch()`, which on a
-## machine with no profile MINTS AND WRITES a player id — so booting the real
-## player (which the streak check has to, since measuring the real
-## `collect_coin()` is its whole point) leaves a file behind unless something puts
-## it back. `_backup_local` / `_restore_local` are `best_run_e2e.gd`'s, verbatim,
-## for the same reason.
+## THE LOCAL STORE THIS RUN USES IS A THROWAWAY FILE, not the machine's profile.
+## Two things here reach `BestRunStore`'s local layer: the relaunch check writes
+## and re-reads it deliberately, and the player scene mints a profile id into it
+## as a side effect (`player_controller._ready()` unconditionally builds a store
+## and calls `fetch()`, and the streak check has to boot the real player, since
+## measuring the real `collect_coin()` is its whole point).
+##
+## THIS USED TO BACK THE REAL FILE UP AND PUT IT BACK, AND THAT WAS NOT ENOUGH —
+## it is the bug this file was rewritten to fix. `_write_local()` is a monotone
+## read-modify-write merge by design (see `best_run_store.gd`), so the relaunch
+## check storing 1234 lifetime coins into a developer's real profile read back
+## whatever larger number that profile already held, and the check FAILED for a
+## reason that had nothing to do with the code it covers. It passed in CI only
+## because a fresh container has no profile: a gate green for the wrong reason.
+## Restoring afterwards cannot help — the merge happens while the check runs —
+## and it left a real record one crashed assertion away from being clobbered.
+##
+## So `BestRunStore.config_path` is pointed at `LOCAL_STORE_PATH` for the whole
+## run, before anything can build a store. Every assertion here is then made
+## against state this file arranged; the developer's `user://best_run.cfg` is
+## never opened, read, written or deleted, whatever it happens to hold and
+## however this run ends.
 ##
 ## Deliberately NOT localized (a debug surface, per CLAUDE.md).
 
@@ -45,27 +59,17 @@ const PLAYER_SCENE: String = "res://scenes/player.tscn"
 ## `scripts/mp_selfcheck.gd` carries, for the same reason.
 const Coin: GDScript = preload("res://scripts/coin.gd")
 
+## The throwaway profile this run reads and writes instead of the real one (see
+## the header). Deleted on the way in as well as out, so a run killed halfway
+## leaves nothing for the next one to inherit and read as its own arranged state.
+const LOCAL_STORE_PATH: String = "user://progression_selfcheck_best_run.cfg"
+
 var _failures: Array[String] = []
 
-## The pre-run contents of `user://best_run.cfg`, restored on the way out. `null`
-## when there was no file (the fresh-machine case), which `_restore_local`
-## deletes for.
-var _saved_cfg: Variant = null
 
-
-func _backup_local() -> void:
-	if FileAccess.file_exists(BestRunStore.CONFIG_PATH):
-		_saved_cfg = FileAccess.get_file_as_bytes(BestRunStore.CONFIG_PATH)
-
-
-func _restore_local() -> void:
-	if _saved_cfg == null:
-		DirAccess.remove_absolute(BestRunStore.CONFIG_PATH)
-		return
-	var f := FileAccess.open(BestRunStore.CONFIG_PATH, FileAccess.WRITE)
-	if f:
-		f.store_buffer(_saved_cfg as PackedByteArray)
-		f.close()
+func _isolate_local_store() -> void:
+	BestRunStore.config_path = LOCAL_STORE_PATH
+	DirAccess.remove_absolute(LOCAL_STORE_PATH)
 
 
 func _initialize() -> void:
@@ -80,7 +84,7 @@ func _fail(message: String) -> void:
 
 
 func _report() -> void:
-	_restore_local()
+	DirAccess.remove_absolute(LOCAL_STORE_PATH)
 	if _failures.is_empty():
 		print("SELFCHECK OK")
 		quit(0)
@@ -1036,8 +1040,9 @@ func _check_ranks_survive_a_relaunch() -> void:
 
 	Driven against the LOCAL layer only — a second `BestRunStore` reading what the
 	first wrote IS what "relaunch" means here — so it makes no network request and
-	POSTs nothing. `user://best_run.cfg` is already backed up and restored around
-	this whole file (see the header), which is what makes writing to it safe.
+	POSTs nothing. That local layer is `LOCAL_STORE_PATH`, not the machine's
+	profile (see the header): the write below is a monotone merge, so against a
+	real profile this would read back that profile's numbers instead of its own.
 	"""
 	var ranks: Dictionary = {"windman": {"cd1": 2, "gale": 1}, "teibi": {"fleet": 2}}
 
@@ -1636,8 +1641,9 @@ func _run() -> void:
 	# built before the first frame has run its own setup yet. One frame here makes
 	# every later `add_child()` ready synchronously.
 	await process_frame
-	# Before anything can boot the player scene and mint a profile id into it.
-	_backup_local()
+	# Before anything can build a BestRunStore — the relaunch check below, and the
+	# player scene, which mints a profile id into whatever path is set here.
+	_isolate_local_store()
 	_check_curve()
 	_check_points_and_levelling()
 	_check_store_load_is_monotone()
