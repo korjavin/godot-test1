@@ -2986,7 +2986,7 @@ func _ability_primm() -> bool:
 	# own (a blink that lands past 40 m simply never happens).
 	var target := global_position
 	var found := false
-	var d := PRIMM_BLINK_DISTANCE * _skill_mult("primm_blink")
+	var d := phase_reach()
 	while d <= PRIMM_BLINK_MAX_DISTANCE:
 		var candidate := global_position + forward * d
 		if not _is_body_blocked_at(candidate):
@@ -3269,6 +3269,38 @@ func _revert_teibi_to_normal() -> void:
 
 
 # --- Ability HUD contract (read by ability_hud.gd) ---------------------------
+
+func hero_name() -> String:
+	"""
+	Which character is being played RIGHT NOW.
+
+	@return: One of the `CHARACTERS` names — "windman", "primm", "teibi", "phoboman".
+
+	THE ANSWER TO "WHO IS STANDING HERE", and the tower's identity gates ask it
+	every frame rather than latching it: E switches character wherever you are
+	standing, so a gate that remembered who walked in would be answering a question
+	nobody asked.
+	"""
+	return String(CHARACTERS[current_character_index]["name"])
+
+
+func phase_reach() -> float:
+	"""
+	How far the current hero's Phase Step reaches, in metres — 0 for anyone but
+	Primm, who is the only one who has one.
+
+	@return: `PRIMM_BLINK_DISTANCE` after Long Step ranks, or 0.0.
+
+	THE ONE EXPRESSION, read by two callers. `_ability_primm()` blinks with it and
+	the tower's demand gate is calibrated against it, so a gate can never ask for a
+	distance the ability does not have and retuning Long Step moves both together.
+	Returning 0 rather than refusing is what lets the gate's calibration ladder show
+	a Windman an honest, empty reading instead of an error.
+	"""
+	if hero_name() != "primm":
+		return 0.0
+	return PRIMM_BLINK_DISTANCE * _skill_mult("primm_blink")
+
 
 func get_ability_name() -> String:
 	"""Friendly name of the current character's ability (for the HUD)."""

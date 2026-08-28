@@ -65,6 +65,12 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            TOWER_RADIUS, shared materials, the doorway is a hole,
 #                            the door fires for a player only, lazy manager-parented
 #                            instancing, the fog-exempt impostor, the minimap mark
+#   tower_interior_selfcheck the tower's interior: the plan fits the shell, NO
+#                            jump-gated climb (apex read from player_controller),
+#                            the ramp deck is flush at both ends, the hall clears
+#                            a live camera rig, the batch/draw budget, the gate
+#                            lifecycle under real physics, opened state re-applied,
+#                            per-floor visibility
 
 bash scripts/mp_e2e.sh    # two-instance multiplayer e2e; needs go + godot on PATH
 ```
@@ -146,6 +152,24 @@ and its fog-exempt horizon impostor are parented to the terrain **manager** (the
 precedent) so chunk unloading can never free the building you are standing in. The
 shell is instanced lazily on a chunk-boundary crossing and **shares `TOWER_RADIUS`**
 rather than restating any distance of its own. `tower_shell_selfcheck` pins all of it.
+
+`scripts/tower_interior.gd` is the same idea one floor in: a second box table for two
+storeys, a ramp, a challenge space and two gates, assembled onto the shell by
+`endless_terrain` (one direction only — the interior reads the shell's constants, so a
+shell that knew about the interior would be a cyclic `class_name`). Three rules of its
+own, all pinned by `tower_interior_selfcheck`:
+
+- **No interior traversal may demand a jump-height.** The base apex (3.6125 m) is what
+  mountain impassability rests on, so a storey you can jump onto is a bug the day
+  somebody retunes the jump. Vertical movement is ramps and gates — never steps, which
+  `CharacterBody3D` cannot climb at all.
+- **Opened gates are a monotone SET on the shell node** (`mark_opened` / `is_opened` /
+  `opened_ids`), not per-player state, because the transformation is world state every
+  peer would see. `_apply_opened()` is the one place state becomes geometry, and the
+  seam phase 5 will load a save through.
+- **Static interior geometry is ONE batched mesh per storey and casts no shadow.** Both
+  were measured, both are invisible, and together they are the difference between the
+  interior costing 4 ms a frame and costing nothing measurable.
 
 ### Biomes are decoration over a flat world — do not break the flat-world invariant
 The ground stays flat at y = 0. Coin heights, road placement, crocodile gravity settle,
