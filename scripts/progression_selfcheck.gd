@@ -791,9 +791,16 @@ func _check_skill_effects_on_player() -> void:
 		var base_cooldown: float = float(player.ABILITY_COOLDOWN["teibi"])
 
 		player.ability_cooldowns[teibi_index] = 0.0
+		# The dial's READY and GATED states, on the hero that has no gates at all:
+		# charged reads ready, and the reason stays empty either way (the gates are
+		# Windman's — see the grounding-gate probe for those).
+		_check_dial_contract(player, true, "", "a charged teibi")
 		player.try_activate_ability()
 		var unskilled: float = float(player.ability_cooldowns[teibi_index])
 		var unskilled_ratio: float = float(player.get_ability_cooldown_ratio())
+		# ...and the COOLING state: a spent charge is not ready, with no gate to
+		# blame — the arm the dial draws as an emptying amber arc.
+		_check_dial_contract(player, false, "", "a just-fired teibi")
 		player._revert_teibi_to_normal()
 		if not is_equal_approx(unskilled, base_cooldown):
 			_fail("an unranked teibi charged %.3f s of cooldown, wanted %.3f"
@@ -938,6 +945,11 @@ func _check_skill_effects_on_player() -> void:
 		player.windman_boost_timer = 0.4
 		player.ability_cooldowns[windman_index] = 0.0
 		var falling: float = float(player.velocity.y)
+		# THE MISLEADING DIAL (godot-test1-tw6): this is the exact state that used
+		# to paint a green READY ring — cooldown spent, every press refused. The
+		# HUD must see the gate, and must see it as its OWN state rather than as a
+		# cooldown that has not finished.
+		_check_dial_contract(player, false, "LAND", "an airborne charged windman")
 		player.try_activate_ability()
 		if not is_equal_approx(float(player.windman_boost_timer), 0.4):
 			_fail("a mid-air Air Rush re-fired (boost jumped to %.3f s) — endless flight is still open"
@@ -961,9 +973,33 @@ func _check_skill_effects_on_player() -> void:
 			_fail("the landing case never touched down — the latch check below "
 					+ "would blame the gate for a probe that never landed")
 		player.ability_cooldowns[windman_index] = 0.0
+		# The dial clears the moment the gate does: landing is the fix it named.
+		_check_dial_contract(player, true, "", "a landed charged windman")
 		player.try_activate_ability()
 		if is_zero_approx(float(player.windman_boost_timer)):
 			_fail("Windman was still refused after landing — the grounding gate latched")
+
+		# 3b. THE RAIN GATE, the other half of the same contract: grounded, charged
+		#     and refused, with its own label so the dial can tell the player which
+		#     fix applies (walk out of the storm, not land). Also proves the two
+		#     gates are separate reads rather than one flag wearing two names.
+		var weather := StubWeather.new()
+		root.add_child(weather)
+		weather.add_to_group("weather")
+		player.windman_boost_timer = 0.0
+		await _settle_on_floor(player)
+		player.ability_cooldowns[windman_index] = 0.0
+		_check_dial_contract(player, false, "RAIN", "a grounded windman in the rain")
+		player.try_activate_ability()
+		if not is_zero_approx(float(player.windman_boost_timer)):
+			_fail("Windman took off inside a rain zone (boost %.3f s)"
+					% player.windman_boost_timer)
+		if not is_zero_approx(float(player.ability_cooldowns[windman_index])):
+			_fail("a refused rainy press still charged %.3f s of cooldown"
+					% player.ability_cooldowns[windman_index])
+		weather.queue_free()
+		await physics_frame
+		_check_dial_contract(player, true, "", "windman once the storm passed")
 
 		# 4. It is WINDMAN's gate, not a blanket airborne ban: a mid-air Teibi
 		#    still transforms. (Switching heroes is blocked mid-boost in the real
@@ -1184,6 +1220,17 @@ func _check_panel_spends_and_releases_its_pause() -> void:
 # ACTIVE / EXOTIC SKILLS (bead godot-test1-20z.4)
 # =============================================================================
 
+class StubWeather extends Node:
+	## The smallest thing `player_controller._weather_is_raining_here()` will talk
+	## to: a node in the "weather" group carrying `is_raining_at`. The real
+	## `weather_manager` would need a player, a camera and its own randomized
+	## cloud field to decide, and could then answer either way.
+	var raining: bool = true
+
+	func is_raining_at(_pos: Vector3) -> bool:
+		return raining
+
+
 class StubCroc extends Node3D:
 	## The smallest thing `player_controller._scare_crocodiles()` will talk to: a
 	## Node3D in the "crocodile" group carrying `flee_from`. A REAL crocodile is
@@ -1196,6 +1243,34 @@ class StubCroc extends Node3D:
 	func flee_from(_origin: Vector3, duration: float, _tracks_player: bool = true) -> void:
 		flee_calls += 1
 		last_duration = duration
+
+
+func _check_dial_contract(player: Node, expect_ready: bool, expect_reason: String,
+		where: String) -> void:
+	"""
+	THE ABILITY DIAL'S CONTRACT (bead godot-test1-tw6), asserted as a PAIR.
+
+	`ability_hud.gd` paints three states — cooling, gated-but-charged, ready — out
+	of two inputs that measure different things: `get_ability_cooldown_ratio()` is
+	the cooldown alone, `is_ability_ready()` is ACTUAL availability, cooldown AND
+	gates. That only works while the two cannot contradict each other, so this
+	asserts the whole triple at once rather than any one number: ready must be
+	EXACTLY "charge full and no gate". Either half alone passes on the bug this
+	replaced — a green READY ring painted over a press that bounces, because
+	`is_ability_ready()` only ever looked at the cooldown.
+	"""
+	var ready: bool = bool(player.is_ability_ready())
+	var reason: String = String(player.get_ability_block_reason())
+	var ratio: float = float(player.get_ability_cooldown_ratio())
+	if reason != expect_reason:
+		_fail("%s: the dial names the gate %s, wanted %s"
+				% [where, reason.c_escape(), expect_reason.c_escape()])
+	if ready != expect_ready:
+		_fail("%s: is_ability_ready() = %s, wanted %s" % [where, ready, expect_ready])
+	if ready != (ratio <= 0.0 and reason == ""):
+		_fail("%s: is_ability_ready() = %s but ratio %.3f / gate %s say otherwise — "
+				% [where, ready, ratio, reason.c_escape()]
+				+ "the dial's two inputs disagree about availability")
 
 
 func _spawn_stub_croc(at: Vector3) -> StubCroc:
