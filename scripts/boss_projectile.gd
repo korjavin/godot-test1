@@ -53,6 +53,11 @@ class_name BossProjectile
 ##   color          Color   — albedo + emission of the shared per-style material
 ##   mesh_scale     Vector3 — scale applied to the one shared unit sphere
 ##
+## Optional:
+##   orient         bool    — default true: point the node's -Z along its flight
+##                            direction, which is what makes a stretched
+##                            mesh_scale read as a bolt. A sphere does not care.
+##
 ## `speed` means the same thing in both trajectories on purpose: it is the
 ## HORIZONTAL component. A lob's vertical launch velocity is not a tunable, it is
 ## SOLVED so the arc passes through the aim point (see `_launch_velocity`) — so a
@@ -204,6 +209,14 @@ const STYLES: Dictionary = {
 ## what makes `max_live` a cap PER BOSS rather than per chunk or per world: two
 ## titans on two road stations each get their own two bolts. Entries are erased
 ## as they fall to zero, so this never grows.
+##
+## ponytail: an instance id, not a reference, so a boss unloaded mid-flight is
+## still freed. Godot can reuse an id once its object is gone, so a brand-new
+## node could in principle inherit a dead boss's slot count — bounded by
+## max_live (2-3), self-healing the moment those projectiles land, and the
+## alternative (a weak reference per shot, swept every frame) buys nothing a
+## player could ever perceive. Revisit only if a boss is ever seen refusing to
+## fire with nothing in the air.
 static var _live_per_shooter: Dictionary = {}
 
 ## The one unit sphere every projectile of every style shares — same lazy static
@@ -263,11 +276,16 @@ static func fire(from: Vector3, at: Vector3, parent: Node, params: Dictionary,
 
 	var p := BossProjectile.new()
 	p._configure(from, at, params, shooter_id)
-	parent.add_child(p)
-	# top_level AFTER add_child and BEFORE the first placement: the projectile
-	# must not inherit the chunk's (or, if anyone ever reparents it, a boss's)
-	# transform — a 6x boss would otherwise fire a 6x bolt travelling 6x too far.
+	# top_level BEFORE add_child, and the ORDER IS THE WHOLE POINT. Enabling it
+	# on a node already inside the tree does not just detach the node from its
+	# parent's transform — it first BAKES that transform into the local one, so
+	# world placement is preserved across the flip. Set here, with the node still
+	# outside the tree, there is no global transform to bake and the projectile
+	# keeps exactly the scale its style asked for. Set one line later and a 6x
+	# boss fires a 6x bolt out of a chunk whose own transform it also inherited:
+	# the precise bug this flag exists to prevent, arrived at by using the flag.
 	p.top_level = true
+	parent.add_child(p)
 	p.global_position = from
 	if p._velocity.length_squared() > 0.0 and bool(params.get("orient", true)):
 		p._face_velocity()
@@ -394,7 +412,12 @@ func _face_velocity() -> void:
 	# the CURRENT global transform, which on a top_level node placed this same
 	# frame is exactly the thing we are still in the middle of setting.
 	var oriented := Basis.looking_at(dir, up)
-	global_transform = Transform3D(oriented.scaled(scale), global_position)
+	# scaled_LOCAL, not scaled(): Basis.scaled() is a GLOBAL scale (it multiplies
+	# the rows, i.e. the output axes), so a non-uniform mesh_scale like the
+	# bolt's 0.18/0.18/0.95 would stretch it along the WORLD z axis whatever
+	# direction it was fired in — long sideways for a shot down +X. scaled_local
+	# post-multiplies, which is what `Node3D.scale` means everywhere else.
+	global_transform = Transform3D(oriented.scaled_local(scale), global_position)
 
 
 func _telegraph(parent: Node, from: Vector3, params: Dictionary) -> void:
@@ -402,12 +425,20 @@ func _telegraph(parent: Node, from: Vector3, params: Dictionary) -> void:
 	## second expanding-sphere implementation — it is already the project's
 	## self-freeing flash, and the projectile's own colour makes it style-specific
 	## for free.
+	##
+	## COST: one extra MeshInstance3D for 0.25 s, sharing ability_effect's own
+	## static unit sphere but taking a per-flash material (its alpha fades, so it
+	## cannot be shared — the same trade the coin-pickup sparkle already makes, at
+	## a far lower rate than coins). Nothing here is alive while the boss is idle,
+	## so a stationary draw-call count does not move.
 	if not parent.is_inside_tree():
 		return
 	var flash := MeshInstance3D.new()
 	flash.set_script(ABILITY_EFFECT)
-	parent.add_child(flash)
+	# top_level before add_child, for the same reason as the projectile's above:
+	# flipping it afterwards would bake the chunk's transform into the flash.
 	flash.top_level = true
+	parent.add_child(flash)
 	flash.global_position = from
 	var tint: Color = _param(params, "color", Color.WHITE)
 	flash.setup(Color(tint.r, tint.g, tint.b, 0.55), _hit_radius * 1.6, 0.25)

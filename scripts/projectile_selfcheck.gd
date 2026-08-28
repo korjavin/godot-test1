@@ -358,6 +358,25 @@ func _check_straight_flight() -> void:
 
 	var speed: float = float(params["speed"])
 	var dir: Vector3 = (aim - from).normalized()
+
+	# THE BOLT IS A STRETCHED SPHERE, so it only reads as a bolt if it is
+	# stretched along the direction it is FLYING. Two ways to get that silently
+	# wrong, both invisible headless and easy to miss on screen: forget to orient
+	# it at all, or scale the oriented basis GLOBALLY (Basis.scaled() multiplies
+	# rows, so a 0.18/0.18/0.95 mesh_scale stretches along the world z axis and a
+	# bolt fired down +X comes out long SIDEWAYS). The local scale surviving the
+	# orientation is exactly what distinguishes the two.
+	var mesh_scale: Vector3 = params["mesh_scale"]
+	if not p.scale.is_equal_approx(mesh_scale):
+		_fail("straight: after orienting, the projectile's local scale is %v, not "
+				% p.scale + "the %v its style asked for — the mesh_scale is being "
+				% mesh_scale + "applied in world space instead of along the "
+				+ "flight axis (Basis.scaled vs scaled_local)")
+	if (-p.global_transform.basis.z).normalized().dot(dir) < 0.999:
+		_fail("straight: the projectile's nose (-Z) points %v, not along its "
+				% (-p.global_transform.basis.z).normalized() + "flight direction "
+				+ "%v — a stretched bolt would fly sideways" % dir)
+
 	var result: Array = await _fly(p)
 	var path: Array = result[0]
 	var ages: Array = result[1]
