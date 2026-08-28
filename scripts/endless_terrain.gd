@@ -1843,6 +1843,44 @@ const BIOME_SPECIES: Dictionary = {
 	},
 }
 
+## WHICH BOSS GUARDS A ROAD STATION — the BIOME_SPECIES rule, one feature over.
+##
+## Same shape ({species, scene}), same fallback (an entry-less biome gets the
+## crocodile), same hard NO-RNG-DRAW constraint. What differs is the POINT it is
+## keyed on, and that difference is the whole reason this table is separate.
+##
+## A BOSS IS NOT CHUNK-KEYED. Boss `i` owns station k = i * BOSS_INTERVAL_STATIONS
+## (see the BOSS CROCODILES section), and that station's CENTRE is the one
+## coordinate it has that is pure in `i` + run_seed. So the dispatch keys on the
+## station centre — never on the candidate the boss ends up standing on, which
+## spawn_bosses_in_chunk picks out of BOSS_PLACE_TRIES lateral offsets by testing
+## them against THIS chunk's obstacle layout: that point varies with geometry and
+## can sit the far side of a biome boundary, and the boss KIND has to be a pure
+## function of `i` alone or two peers sharing a run_seed put a different animal on
+## the same road. (It is not keyed on the claiming chunk's centre either, for the
+## same reason BIOME_SPECIES is: a chunk centre is what a CHUNK's predators are
+## dispatched on, and a boss is a station's, not a chunk's.)
+##
+## THE RIVER RULE COMES FIRST and it is the owner's, verbatim: "river -
+## crocodile". A station standing in the water is guarded by the animal that
+## belongs in water, whatever band the noise field puts it in.
+##
+## THIS TABLE SHIPS EMPTY, AND THAT IS THE POINT. Every boss is still a crocodile
+## and the generated world is byte-identical to the one before this seam existed:
+## the dispatch is pure function calls (biome_at / is_river_at — the
+## allocation-free public API, no RNG anywhere under either) inserted at a spot
+## where no draw is made, so the BOSS_SEED stream consumes the same draws in the
+## same order it always did. A single extra draw would slide every boss in the
+## world, which is the same rule CLAUDE.md states for BIOME_SPECIES and
+## CITY_CROC_DIVISOR. The snow titan and the forest dragon each land as ONE ROW
+## here, exactly as a predator lands as one row in BIOME_SPECIES.
+##
+## Degrade rules are BIOME_SPECIES': a name that is not a SPECIES row warns from
+## the AI's _ready() and behaves as a crocodile, and a scene that fails to load
+## falls back to the crocodile scene — a visibly wrong animal, never a boss-less
+## station.
+const BIOME_BOSS: Dictionary = {}
+
 # ----------------------------------------------------------------------------
 # SNOW — frozen dead trees and mammoth skeletons on an open tundra
 # ----------------------------------------------------------------------------
@@ -1982,6 +2020,12 @@ var crocodile_scene: PackedScene
 ## desert; the dictionary exists so a desert chunk does not re-`load()` per chunk
 ## once nothing else is holding the scene alive.
 var _species_scenes: Dictionary = {}
+
+## Scenes for the NON-crocodile BOSS species, keyed by Biome (see BIOME_BOSS).
+## Its own cache and not _species_scenes': both are keyed by Biome, but a band's
+## boss and its ordinary predator are different animals, so one dictionary would
+## have them overwrite each other's entry.
+var _boss_scenes: Dictionary = {}
 
 ## Preloaded coin scene for spawning
 var coin_scene: PackedScene
@@ -5317,6 +5361,51 @@ func _boss_at(i: int) -> Dictionary:
 	var body_scale := minf(BOSS_BASE_SCALE * (1.0 + float(i - 1) * BOSS_GROWTH), BOSS_MAX_SCALE)
 	return { "positions": positions, "scale": body_scale }
 
+func _boss_row_at(station_centre: Vector2) -> Dictionary:
+	"""
+	Which animal guards the boss station whose centreline point is `station_centre`.
+
+	@param station_centre: The OWNING STATION's centre in world coordinates,
+	                       packed the way the road cache packs it (Vector2.x is
+	                       world X, Vector2.y is world Z). Pure in the boss index
+	                       + run_seed, which is what makes this answer pure in the
+	                       boss index too — see BIOME_BOSS for why it must be.
+	@return: { "species": String, "scene": PackedScene }. Never empty: the
+	         crocodile is the fallback for a river station, for a band with no
+	         BIOME_BOSS row, and for a row whose scene fails to load.
+
+	NOT ONE RNG DRAW, and that is a constraint rather than a preference (CLAUDE.md's
+	determinism section; the same rule BIOME_SPECIES and CITY_CROC_DIVISOR are held
+	to). biome_at() and is_river_at() are the pure, allocation-free public API — one
+	noise evaluation each, no shared stream touched — so inserting this call left
+	_boss_at's BOSS_SEED stream consuming byte-identical draws in the same order.
+
+	With BIOME_BOSS empty every path here returns the crocodile, which is the seam
+	landing with zero behaviour change.
+	"""
+	var fallback := { "species": "crocodile", "scene": crocodile_scene }
+	# Rivers first, and unconditionally: the owner's rule is that water is the
+	# crocodile's, whichever band the noise field says the station stands in.
+	if is_river_at(Vector3(station_centre.x, 0.0, station_centre.y)):
+		return fallback
+	var biome: Biome = biome_at(station_centre.x, station_centre.y)
+	if not BIOME_BOSS.has(biome):
+		return fallback
+	var row: Dictionary = BIOME_BOSS[biome]
+	# Lazily loaded and cached per band, exactly like _species_scenes: a run may
+	# never walk far enough to meet a snow boss, and the one that does should not
+	# re-load() the scene at every station.
+	if not _boss_scenes.has(biome):
+		_boss_scenes[biome] = load(row["scene"])
+		if not _boss_scenes[biome]:
+			push_warning("endless_terrain: boss scene %s failed to load, using the crocodile"
+					% row["scene"])
+	var scene: PackedScene = _boss_scenes[biome]
+	if not scene:
+		return fallback
+	return { "species": String(row["species"]), "scene": scene }
+
+
 func spawn_bosses_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array = []) -> void:
 	"""
 	Spawn this chunk's boss crocodiles — the rare road-guarding giants placed every
@@ -5382,8 +5471,23 @@ func spawn_bosses_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, ob
 		# centerline X is strictly increasing in k), so we're done either way.
 		if k > road_k_max:
 			break
-		if _road_station(k).center.x > x1 + pad:
+		# The station's centreline point, read ONCE: it bounds the window scan
+		# below AND it is what this boss's species is dispatched on (see
+		# _boss_row_at) — the only coordinate a boss has that is pure in `cur_i`.
+		var station_centre: Vector2 = _road_station(k).center
+		if station_centre.x > x1 + pad:
 			break
+
+		# WHICH BOSS THIS STATION GETS, decided HERE — above the candidate walk,
+		# and that position in the function is the point. Dispatching on the
+		# station centre is what makes the boss KIND a pure function of `cur_i`;
+		# the walk below only decides WHERE the animal stands (or whether it fits
+		# at all), by testing BOSS_PLACE_TRIES offsets against this chunk's
+		# geometry. Compute the kind before `local_pos` exists and keying on the
+		# placed candidate — which is neither pure in `cur_i` nor guaranteed to be
+		# in the same biome band — is not a mistake that can be made by accident.
+		# Pure function calls, no RNG draw, so the stream below is untouched.
+		var boss_row: Dictionary = _boss_row_at(station_centre)
 
 		var boss: Dictionary = _boss_at(cur_i)
 		var boss_scale: float = boss.scale
@@ -5423,15 +5527,26 @@ func spawn_bosses_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, ob
 		if not placed:
 			continue
 
-		var croc = crocodile_scene.instantiate()
+		var croc = boss_row["scene"].instantiate()
+		# THE NAME IS "BossCrocodile_%d" FOR EVERY SPECIES, deliberately. croc_id
+		# derives from the deterministic node name, so it is this body's
+		# multiplayer identity, and enemy_spawn_selfcheck's sweep classifies
+		# bodies by exactly these three prefixes. A per-species name would buy
+		# nothing and churn both.
 		croc.name = "BossCrocodile_%d" % cur_i
 		# Chunk-LOCAL position (relative to the chunk center), like every other
 		# chunk-parented node. Default rotation — the wander AI turns it within a
 		# second anyway, and drawing a rotation would add an RNG draw for nothing.
 		croc.position = local_pos
-		# CALL-ORDER CONTRACT: setup_as_boss BEFORE add_child, so the croc's
-		# _ready (which runs on add_child, terrain-parented) sees the boss flags
-		# and skips its random speed/size rolls in favor of the schedule.
+		# CALL-ORDER CONTRACT, one line longer than it used to be: `species`
+		# BEFORE setup_as_boss BEFORE add_child. _ready() runs on add_child
+		# (terrain-parented) and it is where BOTH halves are read — it resolves
+		# `spec` from `species` exactly once, and it sees the boss flags and skips
+		# the random speed/size rolls in favour of the schedule. Assign either one
+		# after add_child and the body keeps a crocodile's spec, or takes rolls a
+		# boss must not have, with no error anywhere. This is the same contract
+		# the ground spawner's `species` assignment has, for the same reason.
+		croc.species = boss_row["species"]
 		croc.setup_as_boss(boss.scale)
 		parent_chunk.add_child(croc)
 

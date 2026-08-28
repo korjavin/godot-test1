@@ -220,6 +220,14 @@ is deliberately ONE queryable seam — `home_position` + `territory_radius()` +
 `in_territory()` — because the owner intends the zone to grow gameplay later; `is_boss` is
 never a bare radius comparison. `boss_selfcheck` pins both.
 
+**Which boss kind a road station gets is its own dispatch, `BIOME_BOSS`** — same shape and
+same no-RNG-draw rule as `BIOME_SPECIES`, but keyed on the **owning station's centre**
+(`is_river_at` first, the owner's "river → crocodile"), because a boss is station-indexed
+and has no chunk centre. It ships **empty**, so every boss is a crocodile; the row is
+resolved *above* the candidate walk so the kind stays a pure function of the boss index.
+Adding a boss is a `SPECIES` row, a `.tscn`, and one line there — `enemy_spawn_selfcheck`
+check 11 walks the road and asks the rule at every station.
+
 The species `chase_speed` (5.5 for the crocodile) is deliberately above `WALK_SPEED` (5.0)
 so walking gets you caught, and `MAX_CHASE_SPEED` (8.5) — a top-level const clamping every
 species' **sustained** speed — is deliberately below the slowest character's run, so
