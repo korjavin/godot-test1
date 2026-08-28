@@ -1014,9 +1014,16 @@ func _build_label() -> void:
 	_label = Label3D.new()
 	_label.name = "DemandLabel"
 	_label.text = tr("PHASE RECEPTACLE")
-	_label.font_size = 48
-	_label.outline_size = 14
-	_label.pixel_size = 0.004
+	_label.font_size = 40
+	_label.outline_size = 12
+	_label.pixel_size = 0.0035
+	# WRAPPED, AND NARROW ON PURPOSE. A `Label3D` is geometry: an unwrapped
+	# explanation is a 5.7 m banner that runs straight into the walls either side of
+	# the alcove and gets depth-culled mid-sentence, which is how the first build
+	# shipped a gate that said "...farm coins for the point". 700 px at this pixel
+	# size is 2.45 m — narrower than the niche it stands in, from both sides.
+	_label.width = 700.0
+	_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	_label.modulate = COLOR_BAND_LIT
 	_label.position = Vector3(RECEPTACLE_X, 3.2, RECEPTACLE_Z + 0.9)
@@ -1236,7 +1243,13 @@ static func _emit_box(tool: SurfaceTool, box: Dictionary) -> void:
 	var placed := Transform3D(basis, box["pos"])
 	var color: Color = box["color"]
 	for i: int in indices:
-		tool.set_color(color)
+		# CONVERTED, and it is not a nicety. `albedo_color` is authored in sRGB and
+		# the engine converts it; a VERTEX colour is taken as linear and is not. Feed
+		# the palette straight in and a batched box comes out visibly paler than the
+		# same colour on an unbatched one — the hazard orange washed out to a custard
+		# yellow, which is the sort of drift that makes a colour language stop
+		# meaning anything.
+		tool.set_color(color.srgb_to_linear())
 		tool.set_normal(basis * normals[i])
 		tool.add_vertex(placed * verts[i])
 
