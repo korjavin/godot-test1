@@ -850,8 +850,13 @@ func _take_pause() -> void:
 	# pause_controller._toggle_pause, mp_ui._apply_pause and mobile_input all
 	# carry — GameOverUI is PAUSABLE, so a pause there kills its Play Again button
 	# and its ui_accept handler. The card still asks; it just freezes nothing.
+	# `"x" in node`, not `node.get("x")`: get() answers null for a property that
+	# does not exist and bool(null) is a hard error, so the property test is what
+	# lets a scene whose player is a stand-in (a standalone scene, a headless
+	# check) degrade instead of throwing. Same shape as the `"run_seed" in terrain`
+	# read in _sync_run.
 	var player: Node = tree.get_first_node_in_group("player")
-	if player != null and bool(player.get("is_game_over")):
+	if player != null and "is_game_over" in player and bool(player.is_game_over):
 		return
 	tree.paused = true
 	_paused_by_us = true
