@@ -383,6 +383,34 @@ func _check_spines_at_the_readiness_floor() -> void:
 	for entry: Dictionary in _graph["entries"]:
 		entries[String(entry["id"])] = entry
 
+	# The floor is the budget every spine below is walked at, so it is validated
+	# before it is spent: a typo'd skill id grants nothing silently, which is the
+	# safe direction but still an authoring bug, and a rank over the node's own
+	# `max_ranks` is a promise the tree cannot keep.
+	for hero: String in _graph["readiness_floor"]:
+		if not TowerGraph.HEROES.has(hero):
+			_fail("the readiness floor budgets ranks for '%s', who is not a hero" % hero)
+			continue
+		var caps: Dictionary = {}
+		for node: Dictionary in Progression.SKILL_TREES.get(hero, []):
+			caps[String(node["id"])] = int(node.get("max_ranks", 0))
+		for skill_id: String in _graph["readiness_floor"][hero]:
+			if not caps.has(skill_id):
+				_fail("the readiness floor grants %s rank in '%s', which is not a node in his "
+					% [hero, skill_id] + "skill tree — the beat would guarantee nothing")
+			elif int(_graph["readiness_floor"][hero][skill_id]) > caps[skill_id]:
+				_fail("the readiness floor grants %s %d ranks of '%s', which caps at %d" % [
+					hero, int(_graph["readiness_floor"][hero][skill_id]), skill_id,
+					caps[skill_id]])
+	for hero2: String in TowerGraph.HEROES:
+		if not _graph["readiness_floor"].has(hero2):
+			_fail("the readiness floor says nothing about %s — write {} to mean base kit, "
+				% hero2 + "so the silence is deliberate rather than forgotten")
+
+	for spine_hero: String in _graph["spines"]:
+		if not TowerGraph.HEROES.has(spine_hero):
+			_fail("a rescue spine is authored for '%s', who is not a hero" % spine_hero)
+
 	for hero: String in TowerGraph.HEROES:
 		if not _graph["spines"].has(hero):
 			_fail("no rescue spine is authored for %s — one of the four is missing" % hero)
@@ -472,8 +500,13 @@ func _check_demands_are_forecastable() -> void:
 		if reachable_by.is_empty():
 			_fail("demand gate '%s' asks for %.4f but the best any hero reaches at MAX ranks is "
 				% [gid, scale] + "%.4f — it is a wall, not a demand" % best)
-		if _meets(_reading(owners[0], effect, FLOOR), scale) and owners.size() == TowerGraph.HEROES.size():
-			_fail("demand gate '%s' is met by everyone at the readiness floor — it demands nothing"
+		# ...and the other end of the same promise: a gate the whole roster already
+		# satisfies at the floor is a door with a number painted on it.
+		var everyone := owners.size() == TowerGraph.HEROES.size()
+		for hero2: String in owners:
+			everyone = everyone and _meets(_reading(hero2, effect, FLOOR), scale)
+		if everyone:
+			_fail("demand gate '%s' is met by every hero at the readiness floor — it demands nothing"
 				% gid)
 
 
