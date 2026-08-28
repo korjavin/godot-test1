@@ -420,6 +420,100 @@ const STRUCTURE_THEMES: Dictionary = {
 const SPAWN_SAFE_RADIUS: float = 25.0
 
 # ----------------------------------------------------------------------------
+# HUNTER ROBOTS (epic godot-test1-9rm — the corporation's retrieval units)
+# ----------------------------------------------------------------------------
+##
+## THE ONE PREDATOR THAT IS NOT DISPATCHED ON A BIOME. Every other species in
+## piglet_crocodile_ai.SPECIES reaches the world through BIOME_SPECIES: the band
+## picks the animal, and that lookup is deliberately draw-free because the chunk's
+## crocodile RNG is one shared stream. A hunter is not a band's animal — the
+## corporation hunts EVERYWHERE — so it gets its own spawner instead, and being
+## biome-blind is what makes that spawner free of any dispatch at all.
+##
+## THE HARD RULE THIS SECTION EXISTS TO HONOUR (CLAUDE.md, determinism): the
+## hunter takes its OWN hash stream, with its own salt and its own coordinate
+## primes, and the crocodile stream is left BYTE-IDENTICAL. One extra draw from
+## the chunk RNG would slide every crocodile in the world to a new spot — the same
+## reason BIOME_SPECIES, CITY_CROC_DIVISOR and DESERT_BLOCK_KEEP_EVERY are all
+## branch-on-a-pure-function rather than a roll. enemy_spawn_selfcheck's check 12
+## is the A/B that proves it rather than asserting it: the same field generated
+## with hunters on and off, crocodile positions digested from both.
+##
+## Structurally this is the artifact / camp / chest / landmark recipe, one feature
+## over: an independent-stream rarity roll, then a candidate loop judged against
+## the finished `obstacles` list, with every rejection a POST-DRAW skip.
+
+## Enable/disable hunter spawning. Its own flag rather than a branch inside
+## `spawn_crocodiles`, because it is also the A/B switch check 12 flips: with it
+## false the hunter stream is never touched at all and every crocodile must come
+## out where it already was.
+@export var spawn_hunters: bool = true
+
+## The SPECIES row these bodies resolve to, and the scene they wear. Named consts
+## rather than literals at the spawn site because enemy_spawn_selfcheck reads them:
+## the reachability gate in check 4 unions BIOME_SPECIES and BIOME_BOSS, and this
+## is the third door into the world — a row reachable only from here would
+## otherwise be reported as one nothing can spawn.
+const HUNTER_SPECIES: String = "hunter_robot"
+const HUNTER_SCENE := preload("res://scenes/characters/hunter_robot.tscn")
+
+## Chance that a chunk gets a hunter at all — ~1 in 3.3 chunks, dropping to ~1 in
+## 3.5 once the placement loop's rejections are counted.
+##
+## PROVISIONAL, AND DELIBERATELY SO (owner ruling on this bead): the real number
+## is the predator-density epic's call, made across all the species at once rather
+## than one row at a time. It is a declared const here precisely so that epic can
+## move it in one line. Ship it, do not tune it, do not block on it.
+##
+## The shape of the number: a hunter is not scenery you pass, it is an encounter,
+## and at 1-in-3 you meet one every few chunks of walking without the world ever
+## reading as patrolled. Compare the reward family two sections down (chest ~1 in
+## 13, artifact ~1 in 23, landmark ~1 in 40) — a hunter is an order of magnitude
+## commoner than any of those because it is a THREAT, and a threat you meet once
+## an hour teaches nothing.
+const HUNTER_CHANCE: float = 0.30
+
+## Salt for the hunter's independent hash stream, in the ARTIFACT_SALT /
+## CAMP_SALT / CHEST_SALT / LANDMARK_SALT / BIOME_SALT / BOSS_SEED family: an
+## arbitrary fixed constant XORed into run_seed so this stream can never collide
+## with (or perturb) any other deterministic site.
+const HUNTER_SALT: int = 0x40_7E5  # "HUNTER"-ish; arbitrary fixed constant
+
+## Coordinate multiplier primes for the hunter stream, deliberately DIFFERENT from
+## every other stream in this file — object/artifact (73856093 / 19349663), camp
+## (40960001 / 26463089), biome (83492791 / 15485863), croc-roll (179424673 /
+## 32452843), chest (86028121 / 50331653) — so no two streams can correlate on a
+## shared lattice. (These two are the 7,000,000th and 6,000,000th primes.)
+const HUNTER_HASH_PRIME_X: int = 122949829
+const HUNTER_HASH_PRIME_Y: int = 104395301
+
+## Candidate spots tried before giving up on this chunk's hunter. Every try
+## failing means NO hunter — a unit fused into a mountain massif is worse than an
+## empty chunk, and the chance above already absorbs the loss.
+const HUNTER_PLACE_TRIES: int = 6
+
+## Keep candidate spots this far inside the chunk, so a 1.35 m chassis never
+## straddles a seam. A metre more than the crocodile spawner's 3.0, and the reason
+## is the retry budget rather than the body: a crocodile chunk makes up to five
+## attempts PER crocodile and simply finds another spot, while a hunter gets
+## HUNTER_PLACE_TRIES for its single unit and a rejection near a seam costs it one
+## of six. Buying the margin up front is cheaper than spending tries on it.
+const HUNTER_EDGE_MARGIN: float = 4.0
+
+## Spawn height above the flat y = 0 ground, like the crocodile's. The capsule's
+## bottom sits on the body origin (radius == centre y in hunter_robot.tscn), so
+## gravity settles the chassis onto the plane from here.
+const HUNTER_SPAWN_HEIGHT: float = 0.5
+
+## Which slice of _croc_roll_seed's index space a hunter takes. Ground crocodiles
+## use 0, 1, 2, …; platform guards use -1, -2, …; a hunter is the only one of its
+## kind in a chunk and takes this single far-away index, so no two bodies in the
+## same chunk can ever be handed the same size/speed roll seed. (The seed mixes
+## `chunk_pos.x * 179424673 + index`, and 179424673 dwarfs this, so it cannot
+## alias into a neighbouring chunk's slice either.)
+const HUNTER_ROLL_INDEX: int = 100000
+
+# ----------------------------------------------------------------------------
 # THE TOWER SITE — GastroDefense HQ (epic godot-test1-3iy, phase 1)
 # ----------------------------------------------------------------------------
 ##
@@ -3252,6 +3346,14 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 		# inside a wall/mound/tree/mountain right on the player's path.
 		spawn_bosses_in_chunk(chunk_pos, mesh_instance, obstacles)
 
+	# GD-SURVEY hunter robots — the corporation's retrieval units, gated on their
+	# OWN flag rather than `spawn_crocodiles` because that flag is also check 12's
+	# A/B switch. Its own independent HUNTER_SALT hash stream, so it consumes no
+	# draw from the crocodile spawner above and every crocodile in the world stands
+	# exactly where it stood before hunters existed. Gets `obstacles` like its
+	# siblings so a 1.35 m chassis is never wedged inside a wall or a massif.
+	spawn_hunters_in_chunk(chunk_pos, mesh_instance, obstacles)
+
 	# Lay this chunk's slice of the coin road (deterministic station-indexed trail;
 	# coins sit at ground height, perching on a climbable block where the road
 	# crosses one — see spawn_coins_in_chunk).
@@ -5292,6 +5394,123 @@ func spawn_crocodiles_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D
 		# Add to chunk (so it gets removed when chunk is removed)
 		parent_chunk.add_child(crocodile_instance)
 		spawned_positions.append(crocodile_pos)
+
+func spawn_hunters_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array = []) -> void:
+	"""
+	Place this chunk's GD-SURVEY hunter robot, if it gets one.
+
+	@param chunk_pos: Chunk coordinates — the only spatial input, so placement is a
+	                  pure function of (chunk, run_seed)
+	@param parent_chunk: The chunk mesh the unit parents to, so it is freed when the
+	                     chunk unloads (the per-chunk parenting rule everything follows)
+	@param obstacles: Block footprints already built in this chunk, so a hunter is
+	                  never wedged inside one (see spawn_objects_in_chunk)
+
+	ITS OWN HASH STREAM, AND THAT IS THE WHOLE POINT OF THIS FUNCTION EXISTING
+	SEPARATELY. HUNTER_SALT plus HUNTER_HASH_PRIME_X/Y give a private RNG that
+	touches no other stream, so spawn_crocodiles_in_chunk's sequence — and
+	therefore every crocodile POSITION in the world — is byte-for-byte what it was
+	before hunters existed. The same discipline as _artifact_at / _camp_at /
+	_chest_at / _landmark_at; enemy_spawn_selfcheck check 12 is the A/B that
+	measures it.
+
+	IT JOINS GROUP "crocodile", VIA ITS SCENE, AND THAT IS DELIBERATE — it is what
+	gets it the LOD manager's sleep, the danger vignette, the multiplayer crocodile
+	sync and the inherited `_on_player_collision` -> `player.hit_by_crocodile()` for
+	free. The visible consequence: the F3 perf overlay's "active/total crocs"
+	counters include hunters. That is correct rather than a mislabel — those
+	counters measure the simulation load the LOD manager is managing, and a hunter
+	is exactly one more body in it.
+
+	AND EVERY REJECTION IS A POST-DRAW SKIP. Both position draws AND the facing
+	draw are spent BEFORE the first test, so a candidate costs this stream exactly
+	three draws whether it is accepted or thrown away. That is stricter than the
+	crocodile spawner (which draws its rotation only on success, so a rejection
+	there shifts the rest of its own chunk) and it is worth the one extra line: it
+	makes "hunter 4 of 6 was rejected" cost the same as "hunter 1 of 6 was taken",
+	so nothing about a chunk's river, blocks or distance from the origin can slide
+	a LATER candidate to a different place than it would otherwise have had.
+	"""
+	if not spawn_hunters:
+		return
+
+	# Chunk coords + run_seed ^ HUNTER_SALT, with this stream's own primes.
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(Vector3i(
+		chunk_pos.x * HUNTER_HASH_PRIME_X,
+		chunk_pos.y * HUNTER_HASH_PRIME_Y,
+		run_seed ^ HUNTER_SALT
+	))
+
+	# The rarity roll, first draw of the stream and taken before anything else so
+	# it can never be perturbed by geometry — the _chest_at / _landmark_at shape.
+	# NO BIOME LOOKUP: the corporation hunts every band (see HUNTER_SPECIES).
+	if rng.randf() > HUNTER_CHANCE:
+		return
+
+	var chunk_world_pos := chunk_to_world(chunk_pos)
+	var half_span := chunk_size / 2.0 - HUNTER_EDGE_MARGIN
+
+	for _try in HUNTER_PLACE_TRIES:
+		# THE THREE DRAWS. All of them, unconditionally, before any test below.
+		var local := Vector3(
+			rng.randf_range(-half_span, half_span),
+			HUNTER_SPAWN_HEIGHT,
+			rng.randf_range(-half_span, half_span))
+		var facing := rng.randf_range(0.0, TAU)
+		var world := chunk_world_pos + local
+
+		# Not inside a block. Horizontal distance against the footprint radius plus
+		# the same clearance margin the crocodile spawner uses — a hunter is not a
+		# point, and min_object_clearance (1.5) is the project's answer to that.
+		var blocked := false
+		for ob in obstacles:
+			if Vector2(local.x - ob.pos.x, local.z - ob.pos.z).length() < ob.radius + min_object_clearance:
+				blocked = true
+				break
+		if blocked:
+			continue
+
+		# Not standing in a river. Same reading as the crocodile's: the water is the
+		# player's, and a crossing should read as safer ground.
+		if is_river_at(world):
+			continue
+
+		# Not in the spawn bubble (SPAWN_SAFE_RADIUS) — a hunter's detection radius
+		# is 25 m, the widest in the table, so one placed at the edge of the bubble
+		# would be chasing on frame one of a fresh boot.
+		if Vector2(world.x, world.z).length() < SPAWN_SAFE_RADIUS:
+			continue
+
+		# Not on the tower's site — the same fixed disc nothing procedural may stand
+		# in that the crocodile spawner already respects.
+		if tower_excludes(world.x, world.z, min_object_clearance):
+			continue
+
+		var hunter := HUNTER_SCENE.instantiate()
+		# "Hunter_<cx>_<cy>_<i>", its own namespace beside "Crocodile_" /
+		# "PatrolCrocodile_" / "BossCrocodile_". The name IS the room-wide id
+		# (piglet_crocodile_ai.croc_id_for hashes it), so it has to be derivable by
+		# every peer — which it is, being a pure function of the chunk — and it has
+		# to be collision-free with the other spawners' names, which is exactly why
+		# this one does NOT reuse the "Crocodile_" prefix: the two index sequences
+		# are independent, so "Crocodile_3_4_0" would be claimed twice in a chunk
+		# that has both.
+		# The trailing 0 is this chunk's hunter INDEX, kept in the name even though
+		# a chunk gets at most one today: the three-part shape is what makes the
+		# name a spawn SLOT rather than a label, the way the crocodile spawner's is.
+		hunter.name = "Hunter_%d_%d_0" % [chunk_pos.x, chunk_pos.y]
+		hunter.position = local
+		hunter.rotation.y = facing
+		# CALL-ORDER CONTRACT (the setup_as_boss / spawn_crocodiles_in_chunk shape):
+		# BOTH of these go in BEFORE add_child, because _ready() is where `species`
+		# is resolved into `spec` and where the size/speed rolls that READ that spec
+		# happen. Assigned after, a hunter would roll a crocodile's numbers onto its
+		# body and every per-frame path would read the wrong row.
+		hunter.setup_roll_seed(_croc_roll_seed(chunk_pos, HUNTER_ROLL_INDEX))
+		hunter.species = HUNTER_SPECIES
+		parent_chunk.add_child(hunter)
+		return
 
 func spawn_platform_crocodiles(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, platforms: Array) -> void:
 	"""

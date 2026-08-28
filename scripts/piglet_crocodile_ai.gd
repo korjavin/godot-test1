@@ -1615,6 +1615,184 @@ const SPECIES: Dictionary = {
 			"muzzle_height": 1.5,
 		},
 	},
+
+	## ------------------------------------------------------------------------
+	## GD-SURVEY HUNTER ROBOT — the corporation's retrieval unit.
+	## ------------------------------------------------------------------------
+	## THE ONE ROW THAT IS NOT AN ANIMAL, and it is a row anyway. That is the
+	## point of this table: a machine differs from a crocodile in ~30 numbers, not
+	## in a class. Nothing below is new code — the SAME `_animate_body`,
+	## `_update_chase_state` and feeler math drive it, and what makes it read as a
+	## servo instead of a lumbering reptile is entirely the animation block.
+	##
+	## AND IT IS THE ONE ROW BIOME_SPECIES DOES NOT DISPATCH. Every other predator
+	## belongs to a band; the corporation hunts EVERYWHERE, so hunters come from
+	## their own spawner on their own hash stream in endless_terrain.gd
+	## (spawn_hunters_in_chunk / HUNTER_SALT) rather than from the biome map. That
+	## is dispatch-free and costs the chunk RNG zero draws — see that function.
+	##
+	## MEASURED OFF assets/models/characters/hunter.glb (built by
+	## scripts/generate_hunter.py), recorded here for the same reason the viper's
+	## are: a .tscn cannot hold a comment an editor resave will not eat.
+	##   * 1.350 m long, 1.000 m TALL, 0.375 m wide — the only predator in the
+	##     table that is TALLER than it is wide by a factor of nearly three, and
+	##     the only one whose height is comparable to a player's. A crocodile is
+	##     1.40 x 0.28 x 0.276; this thing stands up.
+	##   * The capsule in hunter_robot.tscn is `radius = 0.1875, height = 1.35`,
+	##     laid on the travel axis with the crocodile's basis, at
+	##     `(0, 0.1875, -0.065)`. radius == centre y, the crocodile/viper identity,
+	##     so the capsule's bottom sits exactly on y = 0 and the chassis rests on
+	##     the ground plane. z = -0.065 is the mesh's own midpoint: like the viper,
+	##     the hunter is built forward of its origin, so a capsule centred on the
+	##     origin would leave solid body hanging off the back.
+	"hunter_robot": {
+		## "solo" TODAY, DELIBERATELY. The hunt arm (telegraph, shadow-then-close,
+		## grab-and-disengage) is godot-test1-9rm.3; until it exists this row takes
+		## the dispatch's degrade path, which is the code ABOVE the `match` and
+		## therefore no arm at all. A hunter that wanders and closes like a
+		## crocodile is a complete, shippable predator — it is just not yet the
+		## one the epic is after. Flip this string when the arm lands.
+		"behavior": "solo",
+
+		# ----- Speed and detection -----
+		## THE LATTICE IS THE LATTICE: 5.0 (WALK_SPEED) < 6.5 <= 8.5
+		## (MAX_CHASE_SPEED) < 9.0 (the slowest character's run). Read against a
+		## running player: top roll 6.5 x 1.1 = 7.15, margin 1.85 m/s; median 6.5,
+		## margin 2.5. A hunter is FASTER than a crocodile (5.5) and slower than
+		## anything with a burst — it closes ground you gave away by walking, and
+		## it never wins a footrace. RUNNING ALWAYS ESCAPES A HUNTER, and that
+		## promise is what the whole fear class is allowed to be built on: the
+		## machine is frightening because it commits and does not stop, not
+		## because it is unsurvivable.
+		##
+		## move_speed 2.8 is a PATROL, a shade above the crocodile's 2.5 — read
+		## with min_wander_speed_factor and speed_variation_freq below, which take
+		## nearly all the wobble out of it, this is a unit walking a beat rather
+		## than an animal browsing.
+		"move_speed": 2.8,
+		"chase_speed": 6.5,
+
+		## MACHINES DO NOT VARY, and that is the whole corporate read: a pack of
+		## hunters must look ISSUED, not born. ±10% on speed and ±5% on size are
+		## the tightest spreads in the table (the crocodile's are ±50% / ±25%),
+		## deliberately left non-zero so two units on screen are not literally the
+		## same body — a fleet has service wear, it does not have a runt.
+		"speed_random_factor": 0.1,
+		"size_random_factor": 0.05,
+
+		## 25.0 — THE BOSS PRECEDENT (BOSS_DETECTION_RADIUS), and the widest any
+		## row is allowed to be. A hunter commits early: it sees you across open
+		## ground and starts walking, which is the fear the class is built on. The
+		## ceiling is not aesthetic — crocodile_lod_manager's SIM_RADIUS (45) has
+		## to stay WELL above every row's detection, or a body that can already
+		## smell the player could still be asleep. 25 leaves the same 20 m of
+		## margin a boss has, and enemy_spawn_selfcheck check 4 now measures it.
+		"detection_radius": 25.0,
+
+		# ----- Organic wandering (deliberately INORGANIC here) -----
+		## A LONG STRAIGHT LEG AND A SHORT SCAN HALT. 6.0 s between heading
+		## changes is the longest in the table (the crocodile's is 4.0, the
+		## hound's 2.2), and the 0.25 s pause is the shortest — a patrol walks a
+		## line, stops, sweeps, walks the next line. Nothing here is a sniff.
+		"direction_change_interval": 6.0,
+		"pause_duration": 0.25,
+
+		## 0.3 rad/s is a QUARTER of the crocodile's 1.2: the continuous random
+		## steer that makes an animal meander is exactly what a machine must not
+		## do. What is left reads as course correction, not wandering.
+		"wander_turn_rate": 0.3,
+
+		## …but the turn ITSELF is crisp. 8.0 (croc 5.0) is a servo yawing to a
+		## commanded heading: it arrives, it does not swing.
+		"turn_smoothness": 8.0,
+
+		## ONE CADENCE. 0.92 floor and a 0.25 rad/s variation frequency leave the
+		## patrol speed essentially flat — the sine is still there (a dead-constant
+		## speed reads as a slide), it is just under the threshold of notice.
+		"min_wander_speed_factor": 0.92,
+		"speed_variation_freq": 0.25,
+
+		## Half the crocodile's chance, and it is a sensor sweep rather than a
+		## sniff — see pause_duration.
+		"sniff_pause_chance": 0.15,
+
+		# ----- Obstacle avoidance -----
+		## 2.4 m of feeler for a 1.35 m chassis — proportionally the crocodile's
+		## 3.0-for-1.40, because the failure it prevents is the same one (the model
+		## reaching into a block the shorter capsule stopped clear of).
+		"avoid_look_ahead": 2.4,
+		"avoid_feeler_angle": PI / 5.0,  # 36°
+
+		## Cast at 0.5, not the crocodile's 0.3: this animal's mass is its HULL,
+		## which sits at 0.36-0.62 m off the ground on the piston legs. A feeler at
+		## croc height would sample the air between the legs and under the chassis.
+		"avoid_feeler_height": 0.5,
+
+		## 0.7 — it eases off less than a crocodile (0.5) rounding a block. A
+		## machine reroutes; it does not shy.
+		"avoid_speed_factor": 0.7,
+
+		# ----- Procedural body animation (THE SERVO GAIT) -----
+		## The mesh is authored facing +X and the body travels +Z, like every other
+		## model in predator_parts — same -90°.
+		"model_facing_offset": -PI / 2.0,
+
+		## THIS BLOCK IS WHERE THE MACHINE ACTUALLY LIVES. Every number in it is
+		## near the table's floor, and they have to be read together: the four
+		## amplitudes below are what turn a walk cycle into a lumber, and a hunter
+		## must not lumber. What is left is stride frequency — a fast, even, high
+		## step rate with almost no body motion hung off it, which is exactly what
+		## a servo gait looks like.
+		"stride_frequency": 12.0,
+
+		## 0.5° of roll — effectively zero (the crocodile waddles 9°). A chassis on
+		## four vertical pistons has nothing to roll about, and any visible roll at
+		## all instantly reads as an animal.
+		"waddle_roll": 0.5 * PI / 180.0,
+
+		## Half the crocodile's bob. A piston stack absorbs the step; it does not
+		## heave the body.
+		"bob_amount": 0.012,
+
+		## 1° of sway against the crocodile's 5°: the slow body "snaking" yaw is a
+		## spine, and this thing has a frame.
+		"sway_yaw": 1.0 * PI / 180.0,
+
+		## 4° of forward lean when it commits (croc 10°). Just enough that a
+		## closing hunter is legible in silhouette from the side.
+		"chase_pitch": 4.0 * PI / 180.0,
+
+		## A MACHINE IDLES STILL. This is the smallest breathe in the table by an
+		## order of magnitude and it is deliberately NOT zero: at 0.002 m the hull
+		## has a faint servo-hold tremor, which reads as powered-and-waiting where
+		## a perfectly frozen model reads as a bug.
+		"breathe_speed": 1.0,
+		"breathe_amount": 0.002,
+
+		# ----- River wading (VISUAL ONLY — same hard rule as every row) -----
+		## 0.22 m off a model that stands 1.000 m tall and rides 0.36 m clear on
+		## its pistons: the legs go under, the hull does not. That is the read
+		## being bought — the corporation's unit FORDS the river, chest-high and
+		## unbothered, where a crocodile hides in it. Deeper would swallow the
+		## hazard livery, which is the whole recognition cue at distance.
+		##
+		## VISUAL ONLY: never touches the CharacterBody3D, its CollisionShape3D or
+		## global_position. A wading hunter is exactly as dangerous as a dry one.
+		"river_sink_depth": 0.22,
+
+		## Sized so the full sink takes ~0.2 s, the player's own ease time — the
+		## depth/time form so the derivation survives a retune of the depth.
+		"river_sink_ease_speed": 0.22 / 0.2,
+
+		# ----- The clamp (this row's "bite") -----
+		## The rear pack's two retrieval prongs, not a jaw. Faster than a
+		## crocodile's chomp (0.35 vs 0.5) and much shallower in pitch (12° vs 26°)
+		## because a clamp closes, it does not gape; the lunge is nearly the
+		## crocodile's, since the unit does step into the grab.
+		"bite_duration": 0.35,
+		"bite_pitch": 12.0 * PI / 180.0,
+		"bite_lunge": 0.30,
+	},
 }
 
 # ============================================================================
