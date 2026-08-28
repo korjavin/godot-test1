@@ -2678,6 +2678,14 @@ func _behave_ranged() -> void:
 	shooter is at its cap, and this arm may call it as often as it likes.
 	"""
 	if not is_chasing:
+		# The lock is left ALONE here, where the pack, charge and burst arms all
+		# clear theirs on the same edge. Those three hold a COMMITMENT that must
+		# not be resumed stale (a half-spent pounce, a dead bearing); this one
+		# holds a RELOAD, and a reload that reset every time the quarry stepped
+		# out of range for a moment would make ducking behind a rock a way to get
+		# an instant shot on every re-acquisition. It does not tick while idle
+		# either — this return is above the countdown — so a titan that has been
+		# alone for a minute comes back with exactly the cooldown it had left.
 		return
 	if is_boss and not in_territory(chase_target):
 		return

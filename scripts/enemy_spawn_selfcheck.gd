@@ -200,6 +200,14 @@ var _max_chase_speed: float = 0.0
 ## the number a BOSS-ONLY archer's firing band has to fit inside.
 var _boss_detection_radius: float = 0.0
 
+## Species dispatched from BIOME_BOSS and from nowhere in BIOME_SPECIES, filled
+## in by _check_species_table (which runs before every probe). Two checks need
+## the same answer — the lattice's lower bound is waived for these rows, and the
+## ranged probe measures a boss-only archer's firing band against the BOSS
+## detection radius rather than the row's — so it is derived once, from the
+## dispatch maps, and never listed.
+var _boss_only: Dictionary = {}
+
 ## The SLOWEST character's run — RUN_SPEED x the smallest CHARACTER_SPEED, both
 ## read off player_controller.gd in _run(). This is the number MAX_CHASE_SPEED is
 ## held under so that "running always escapes" is true, and check 8 races a burst
@@ -361,11 +369,11 @@ func _check_species_table() -> void:
 	var ordinary_species: Dictionary = {}
 	for biome_v: Variant in _biome_species:
 		ordinary_species[String(_biome_species[biome_v].get("species", ""))] = true
-	var boss_only: Dictionary = {}
+	_boss_only.clear()
 	for biome_v: Variant in _biome_boss:
 		var boss_species: String = String(_biome_boss[biome_v].get("species", ""))
 		if not ordinary_species.has(boss_species):
-			boss_only[boss_species] = true
+			_boss_only[boss_species] = true
 
 	var required: Array = _species_table["crocodile"].keys()
 	for name_v: Variant in _species_table:
@@ -395,7 +403,7 @@ func _check_species_table() -> void:
 		# projectile's own fairness contract is measured in projectile_selfcheck.
 		if row.has("chase_speed"):
 			var chase: float = float(row["chase_speed"])
-			if chase <= _walk_speed and not boss_only.has(species_name):
+			if chase <= _walk_speed and not _boss_only.has(species_name):
 				_fail("SPECIES['%s'].chase_speed %.2f is at or below %.2f —"
 						% [species_name, chase, _walk_speed]
 						+ " a player could stroll away from it")
@@ -1554,9 +1562,10 @@ func _probe_ranged(croc_ai: GDScript, species_name: String) -> void:
 	# runs while chasing: a ceiling outside detection is a number that can never
 	# be reached, which reads as a longer reach than the boss actually has.
 	var smell: float = float(row["detection_radius"])
-	if _boss_detection_radius > 0.0 and row.has("boss_chase_speed"):
-		# A boss overrides the row's detection radius with the game-wide one, so
-		# for a boss-only archer THAT is the number the band has to fit inside.
+	if _boss_only.has(species_name):
+		# A boss overrides its row's detection radius with the game-wide one, so
+		# for a BOSS-ONLY archer that is the number the band has to fit inside —
+		# and only for one: an ordinary ranged predator would never resolve it.
 		smell = maxf(smell, _boss_detection_radius)
 	if max_range > smell:
 		_fail("SPECIES['%s'].ranged max_fire_range %.1f exceeds the %.1f m it can"

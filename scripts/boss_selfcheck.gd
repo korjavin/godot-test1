@@ -84,6 +84,11 @@ const CONTAIN_EPS: float = 0.05
 ## How much closer the boss must get to a quarry inside its territory for
 ## "it HUNTS" to be proven rather than merely "it did not run away". At 7 m/s
 ## over 4 s it should close ~15 m; 3 m is far outside any drift or turn lag.
+##
+## IT IS ALSO WELL UNDER WHAT THE SLOWEST BOSS KIND MANAGES, which matters now
+## that every BIOME_BOSS kind is driven through here: the snow titan chases at
+## 3 m/s (an archer, deliberately under a walking player) and still closes ~12 m
+## in the window. A kind slow enough to fail this is not a boss that hunts.
 const HUNT_CLOSE_MIN: float = 3.0
 
 ## How far the boss must travel after disengaging for "it still wanders" to be
