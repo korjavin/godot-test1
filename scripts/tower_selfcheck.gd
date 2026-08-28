@@ -664,10 +664,13 @@ func _check_quests_and_liberation() -> void:
 			_fail("quest '%s' happens in '%s', which is not a room" % [String(quest["id"]), room])
 			continue
 		var solo := false
-		for hero: String in TowerGraph.HEROES:
-			if _reach(base_edges, "entry_hall", [hero], MAX, "").has(room):
-				solo = true
-				break
+		for entry: Dictionary in _all_entries():
+			if not bool(entry["built"]):
+				continue  # a quest may not depend on an entry nobody can use yet.
+			for hero: String in TowerGraph.HEROES:
+				if _reach(base_edges, String(entry["room"]), [hero], MAX, "").has(room):
+					solo = true
+					break
 		if not solo:
 			_fail("quest '%s' is completable by no hero alone at any rank — it needs a party, "
 				% String(quest["id"]) + "which a captive roster may not have")
