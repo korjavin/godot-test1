@@ -239,7 +239,12 @@ const TOWER_GRAPH: Dictionary = {
 	"gates": {
 		"rotor_gate": {
 			"class": CLASS_CHALLENGE, "identity": "", "effect": "", "scale": 0.0,
-			"needed_during_captivity": false, "built": true, "quest": "",
+			# TRUE, and not for the obvious reason: from the lift stop, with the
+			# custody scar having dropped the courtyard stair, this doorway is the
+			# only way back down to the maintenance crawl. The audit computes that
+			# — this flag is its answer written down, and it is checked, not
+			# trusted.
+			"needed_during_captivity": true, "built": true, "quest": "",
 			"parts": ["RotorPost", "RotorBarLow", "RotorBarHigh"],
 			"note": "Two counter-rotating bars. Base kit, so no subset can be stopped by it.",
 		},
