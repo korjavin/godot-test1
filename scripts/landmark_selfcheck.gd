@@ -55,6 +55,20 @@ extends SceneTree
 ##      distance, two markers of different radius: in range for the wider, out of
 ##      range for the narrower. Same failure class, and same answer, as
 ##      minimap_selfcheck.gd's two-zoom crocodile probe.
+##   6. THE QUIZ OFFERS AN ANSWERABLE, IDENTICAL-FOR-EVERYONE CARD. Pure logic,
+##      no toast and no scene: LandmarkBuilders.quiz_options() is swept over every
+##      registry row × 6 run_seeds × 3 landmark ids. Every way this breaks returns
+##      three perfectly plausible names — a picker that ignores run_seed (every
+##      run the same card, and in a room fine, so nothing looks wrong), one that
+##      ignores the id (every landmark the same wrong answers), one that always
+##      puts the answer in the same slot (the quiz is free), one whose distractors
+##      come from four continents (also free — see the "giveaway" note on
+##      quiz_options), and one that is not deterministic at all (in a room, each
+##      peer answers a different card). So the per-call assertions (three distinct
+##      in-range indices with the correct one among them) are the cheap half; the
+##      half that earns its keep is the SPREAD over the sweep. Also the only place
+##      the five-word region vocabulary is enforced, because a missing region is
+##      by design a silent fall-through to whole-table distractors.
 ##
 ## HOUSE RULE, followed throughout: every check is an EFFECT measurement with a
 ## negative control, never a getter read-back. Check 1 measures emitted geometry
@@ -124,6 +138,29 @@ extends SceneTree
 ##   (p) _update_burst's `_sync_run()` call removed, leaving the run gate lazy on
 ##       the next CLAIM only  ->  same failure as (o), which is the point: the
 ##       gate has to be where coins are paid, not only where they are armed.
+##   (q) LandmarkBuilders.quiz_options' `rng.seed = hash(...)` -> `rng.randomize()`
+##       ->  FAIL: quiz_options is not deterministic — [33, 0, 37] then
+##       [0, 16, 39]. (In a room that mutation gives every peer a different card.)
+##   (r) run_seed dropped from the quiz hash  ->  FAIL: no landmark's options
+##       changed across 6 run_seeds, plus "only 34 distinct distractor pairs over
+##       48 landmarks × 6 seeds × 3 ids". NOTE every per-call assertion passes
+##       under it — three plausible names is exactly what it still returns.
+##   (s) landmark_id dropped from the quiz hash  ->  FAIL: no landmark's options
+##       changed across 3 landmark ids.
+##   (t) quiz_options' same-region preference removed (`if pool.size() < 2` ->
+##       always fall back to the whole table)  ->  FAIL: Stonehenge (europe, 29
+##       rows in region): 1 distractor(s) from another region — i.e. the giveaway
+##       card the region field exists to prevent.
+##   (u) that same fallback threshold off by one (`< 2` -> `< 1`, so a 2-row region
+##       cannot fill its second slot)  ->  FAIL: Moai of Easter Island returned 2
+##       options, expected 3. The oceania rows are what make this reachable.
+##   (v) `options.insert(rng.randi_range(0, 2), kind)` -> `options.append(kind)`
+##       (the answer always last)  ->  FAIL: the correct answer landed in slot [2]
+##       on every one of the 48 × 6 × 3 draws.
+##   (w) LANDMARKS[1].region "oceania" -> "polynesia" (a sixth continent word)
+##       ->  FAIL: Moai of Easter Island: region "polynesia" is not one of
+##       ["europe", "asia", "africa", "americas", "oceania"]. Deleting the field
+##       outright reports the same row as `missing`.
 ##
 ## Don't grow this into a suite.
 
@@ -159,6 +196,16 @@ const UNIT_CORNERS: Array[Vector3] = [
 	Vector3(0.5, 0.5, -0.5), Vector3(0.5, 0.5, 0.5),
 ]
 
+## Check 6's fixed vocabulary and sweep. The five words are hardcoded HERE rather
+## than read off the registry on purpose: read from the data, the check would
+## happily bless a row that invented a sixth continent. The seeds and ids are
+## arbitrary but include 0, a negative and a large value, because the quiz hash
+## feeds them into a Vector3i (int32 components) and a picker that only works for
+## small positive numbers is a picker that breaks on a real run_seed.
+const QUIZ_REGIONS: Array[String] = ["europe", "asia", "africa", "americas", "oceania"]
+const QUIZ_SEEDS: Array[int] = [0, 1, 7, 1234567, -99, 2147483]
+const QUIZ_IDS: Array[int] = [11, 4242, -7]
+
 var _failures: Array[String] = []
 
 
@@ -186,10 +233,11 @@ func _run() -> void:
 		_check_facts(registry)
 		await _check_toast(registry)
 		await _check_toast_radius_derived(registry)
+		_check_quiz_options(builders_script, registry)
 
 	if _failures.is_empty():
-		print("landmarks: %d builders × %d seeds measured, toast once-per-approach + radius-derived trigger + first-visit treasure OK"
-				% [registry.size(), SEEDS_PER_BUILDER])
+		print("landmarks: %d builders × %d seeds measured, toast once-per-approach + radius-derived trigger + first-visit treasure OK, quiz options over %d × %d seeds × %d ids OK"
+				% [registry.size(), SEEDS_PER_BUILDER, registry.size(), QUIZ_SEEDS.size(), QUIZ_IDS.size()])
 		print("SELFCHECK OK")
 		quit(0)
 		return
@@ -843,8 +891,8 @@ func _check_toast_radius_derived(registry: Array) -> void:
 func _make_marker(entry: Dictionary, at: Vector3) -> Node3D:
 	"""
 	A stand-in for the bare Node3D spawn_landmark_in_chunk parents to the chunk:
-	group "landmark" plus the same three metas, which are the whole contract
-	between the world generator and the toast.
+	group "landmark" plus the name/fact/radius metas the toast reads today (the
+	`kind` meta the world also sets is the quiz card's, and is phase 2's to drive).
 	"""
 	var marker := Node3D.new()
 	marker.add_to_group("landmark")
@@ -862,3 +910,156 @@ func _clear_labels(toast: Control) -> void:
 
 func _labels_clear(toast: Control) -> bool:
 	return toast.get("name_label").text.is_empty() and toast.get("fact_label").text.is_empty()
+
+
+# ============================================================================
+# CHECK 6 — the quiz option picker is pure, deterministic and region-aware
+# ============================================================================
+
+func _check_quiz_options(builders_script: GDScript, registry: Array) -> void:
+	"""
+	LandmarkBuilders.quiz_options() decides, with no packet and no state, which
+	three names a "which landmark is this?" card offers. Everything about it fails
+	silently: a picker that ignores run_seed still returns three plausible names,
+	so do a picker that offers the same wrong answers everywhere, one that leaks the
+	answer by always putting it in the same slot, and one whose distractors come
+	from four different continents. None of those errors, none of them looks wrong
+	from inside the script, and in a room a picker that is not PURE quietly shows
+	each peer a different card for the same landmark.
+
+	Pure logic only — no toast, no scene, no marker. The one thing this check
+	cannot see is that the toast asks with the right `kind`; that is check 4's
+	territory and phase 2's problem.
+	"""
+	# (a) THE VOCABULARY. A row with no region is not an error at run time — it
+	# just falls through to whole-table distractors — so the registry is the
+	# source of truth here, exactly as it is for the facts in check 3.
+	var per_region: Dictionary = {}
+	for entry_variant: Variant in registry:
+		var entry: Dictionary = entry_variant
+		var region: String = String(entry.get("region", ""))
+		if not QUIZ_REGIONS.has(region):
+			_fail("%s: region %s is not one of %s — the quiz picker cannot group it"
+					% [String(entry["name"]), ("missing" if region.is_empty() else "\"%s\"" % region), str(QUIZ_REGIONS)])
+			continue
+		per_region[region] = int(per_region.get(region, 0)) + 1
+
+	# Negative-control accumulators for (d): a picker that ignores an input still
+	# passes every per-call assertion, and is only visible in the SPREAD over the
+	# sweep. Kept as sets of stringified results because Dictionary keys are the
+	# cheapest set GDScript has.
+	var slots_seen: Dictionary = {}
+	var distractor_sets_seen: Dictionary = {}
+	var seed_varies := false
+	var id_varies := false
+	var fallback_widened := false
+
+	for kind: int in registry.size():
+		var entry: Dictionary = registry[kind]
+		var place: String = String(entry["name"])
+		var region: String = String(entry.get("region", ""))
+		var same_region_rows: int = int(per_region.get(region, 0))
+		var by_seed: Dictionary = {}
+		var by_id: Dictionary = {}
+
+		for run_seed: int in QUIZ_SEEDS:
+			for landmark_id: int in QUIZ_IDS:
+				var options: Array = builders_script.quiz_options(kind, landmark_id, run_seed)
+
+				# (b) THE SHAPE. Three distinct in-range indices with the right
+				# answer among them — everything a card needs to be answerable.
+				if options.size() != 3:
+					_fail("%s (id %d, seed %d): quiz_options returned %d options, expected 3"
+							% [place, landmark_id, run_seed, options.size()])
+					continue
+				var distinct: Dictionary = {}
+				var out_of_range := false
+				for index_variant: Variant in options:
+					var index: int = int(index_variant)
+					distinct[index] = true
+					if index < 0 or index >= registry.size():
+						out_of_range = true
+				if out_of_range:
+					_fail("%s (id %d, seed %d): option index outside the registry: %s"
+							% [place, landmark_id, run_seed, str(options)])
+					continue
+				if distinct.size() != 3:
+					_fail("%s (id %d, seed %d): options are not distinct: %s — one row would appear twice on the card"
+							% [place, landmark_id, run_seed, str(options)])
+					continue
+				if not options.has(kind):
+					_fail("%s (id %d, seed %d): the correct answer %d is not among the options %s — the card is unanswerable"
+							% [place, landmark_id, run_seed, kind, str(options)])
+					continue
+
+				# (c) DETERMINISM. Same question twice, byte-identical answer —
+				# which is what makes every peer in a room see one card, and what
+				# a rng.randomize() slip breaks.
+				var again: Array = builders_script.quiz_options(kind, landmark_id, run_seed)
+				if again != options:
+					_fail("%s (id %d, seed %d): quiz_options is not deterministic — %s then %s"
+							% [place, landmark_id, run_seed, str(options), str(again)])
+					continue
+
+				slots_seen[options.find(kind)] = true
+				var distractors: Array = options.duplicate()
+				distractors.erase(kind)
+				distractors.sort()
+				distractor_sets_seen[str(distractors)] = true
+				by_seed[run_seed] = str(options)
+				by_id[landmark_id] = str(options)
+
+				# (e) REGION PREFERENCE, and its fallback. With two other rows to
+				# spare, both wrong answers must be from the same continent — that
+				# is the whole difference between a quiz and a giveaway. Where the
+				# region cannot supply two (oceania, today), the fallback must
+				# genuinely widen, which is observable as a distractor from
+				# somewhere else.
+				var foreign := 0
+				for index_variant: Variant in distractors:
+					var row: Dictionary = registry[int(index_variant)]
+					if String(row.get("region", "")) != region:
+						foreign += 1
+				if same_region_rows >= 3:
+					if foreign > 0:
+						_fail("%s (%s, %d rows in region; id %d, seed %d): %d distractor(s) from another region: %s"
+								% [place, region, same_region_rows, landmark_id, run_seed, foreign, str(options)])
+				elif foreign > 0:
+					fallback_widened = true
+
+		# (d) per kind: the same landmark on different run_seeds / different ids
+		# must not always give the same card. Asked as "at least one kind varies"
+		# rather than "every kind varies" so the check can never flake on a lucky
+		# collision while still failing flat for a picker that drops an input.
+		if _distinct_values(by_seed) > 1:
+			seed_varies = true
+		if _distinct_values(by_id) > 1:
+			id_varies = true
+
+	# (d) the sweep-wide negative controls.
+	if slots_seen.size() < 2:
+		_fail("the correct answer landed in slot %s on every one of the %d × %d × %d draws — the answer's position is not rolled"
+				% [str(slots_seen.keys()), registry.size(), QUIZ_SEEDS.size(), QUIZ_IDS.size()])
+	if distractor_sets_seen.size() <= registry.size():
+		_fail("only %d distinct distractor pairs over %d landmarks × %d seeds × %d ids — the wrong answers are fixed per landmark"
+				% [distractor_sets_seen.size(), registry.size(), QUIZ_SEEDS.size(), QUIZ_IDS.size()])
+	if not seed_varies:
+		_fail("no landmark's options changed across %d run_seeds — run_seed is not in the quiz hash" % QUIZ_SEEDS.size())
+	if not id_varies:
+		_fail("no landmark's options changed across %d landmark ids — the id is not in the quiz hash" % QUIZ_IDS.size())
+	if not fallback_widened and _has_underpopulated_region(per_region):
+		_fail("a region with fewer than 3 rows never produced an outside distractor — the whole-table fallback is dead code")
+
+
+func _distinct_values(by_input: Dictionary) -> int:
+	var seen: Dictionary = {}
+	for value: Variant in by_input.values():
+		seen[value] = true
+	return seen.size()
+
+
+func _has_underpopulated_region(per_region: Dictionary) -> bool:
+	for region: Variant in per_region:
+		if int(per_region[region]) < 3:
+			return true
+	return false

@@ -6425,11 +6425,15 @@ func spawn_landmark_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, 
 	# in step, nothing to leak, and a landmark that streams back in re-registers
 	# itself for free.
 	#
-	# The three metas are the whole contract with the toast: the English name and
-	# fact (which ARE the translation keys — CLAUDE.md Localization RULE 1) and the
+	# The four metas are the whole contract with the toast: the English name and
+	# fact (which ARE the translation keys — CLAUDE.md Localization RULE 1), the
 	# shape's real radius, so the toast can measure "within ~15 m of the STONE"
 	# rather than "within 15 m of a point" and a small statue and a wide plaza both
-	# trigger where they look like they should.
+	# trigger where they look like they should, and the REGISTRY INDEX — which is
+	# what lets the toast ask LandmarkBuilders.quiz_options() for two plausible
+	# wrong answers. The index is carried rather than re-derived because the name
+	# is a translation key, not an identity: looking the row up by name would break
+	# the moment two places shared one.
 	var marker := Node3D.new()
 	marker.name = "LandmarkMarker"
 	marker.position = center
@@ -6437,6 +6441,7 @@ func spawn_landmark_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, 
 	marker.set_meta("name_key", entry.name)
 	marker.set_meta("fact_key", entry.fact)
 	marker.set_meta("radius", footprint.radius)
+	marker.set_meta("kind", lm.kind)
 	parent_chunk.add_child(marker)
 
 	# --- ONE round footprint, and it is NON-CLIMBABLE, unlike a chest's. These are
