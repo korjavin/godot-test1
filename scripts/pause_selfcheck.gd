@@ -170,9 +170,29 @@ func _check_hub_lifecycle() -> String:
 			+ "(holders=%d) — nothing alive can ever start the world again") \
 			% PauseHub.holder_count()
 
+	# --- The SOLE holder freed, with nothing left to call the hub afterwards ---
+	# The case above is the easy one: `release(a)` is itself a hub call, so a hub
+	# that only prunes when touched still recovers. This is the one that bites —
+	# a scene changed with the start menu, the P-pause or the MP panel still
+	# holding the ONLY claim. Nothing calls take or release again, so pruning can
+	# never run, and the same SceneTree is left frozen with every holder dead.
+	# `take()`'s `tree_exiting` hook is what makes this recoverable.
+	var lone := Node.new()
+	root.add_child(lone)
+	PauseHub.take(lone)
+	if not paused:
+		return "the sole-holder case cannot be measured — the holder did not pause the tree"
+	lone.free()
+	if paused:
+		return ("the ONLY holder was freed without releasing and the tree is still " \
+			+ "paused — a scene change with any overlay up freezes the game forever, " \
+			+ "with nothing alive that is allowed to unpause it")
+	if PauseHub.holder_count() != 0:
+		return "the freed sole holder is still counted (%d holders)" % PauseHub.holder_count()
+
 	a.free()
 	c.free()
-	print("hub: overlapping claims counted by identity; freed holders pruned")
+	print("hub: overlapping claims counted by identity; a dying holder releases itself")
 	return ""
 
 
@@ -198,6 +218,16 @@ func _check_master_repro() -> String:
 			+ "or class_name types fail to resolve and this check passes vacuously"
 	if not paused:
 		return "the StartOverlay is up but the tree is not paused — the world runs behind the menu"
+	# NOT just "the tree is paused" — that was equally true before the refactor,
+	# when the menu owned the pause outright and registered with nothing. The
+	# assertion with teeth is that the menu is a HOLDER: it is the one pauser that
+	# keeps its claim across the whole intro film and hands it to `_dismiss()`, so
+	# an overlay opening over the film has to become a second holder rather than
+	# ride a claim nobody owns.
+	if PauseHub.holder_count() != 1:
+		return ("the StartOverlay paused the tree but the hub has %d holders — the menu " \
+			+ "is not registered, so anything opening over the film would strand it") \
+			% PauseHub.holder_count()
 	start._dismiss()
 	if paused:
 		return "the tree is still paused after dismissing StartOverlay — its claim was never released"

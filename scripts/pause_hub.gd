@@ -69,6 +69,11 @@ extends Object
 ## a dangling reference — see `_prune()`.
 static var _holders: Dictionary = {}
 
+## Node metadata key marking a holder whose `tree_exiting` we have already hooked
+## — see `take()`. Metadata rather than a second dictionary so it cannot outlive
+## the node it describes.
+const HOOK_META: StringName = &"_pause_hub_hooked"
+
 
 static func take(who: Node) -> void:
 	"""
@@ -79,6 +84,18 @@ static func take(who: Node) -> void:
 	"""
 	if who == null:
 		return
+	# A HOLDER THAT DIES RELEASES ITSELF. Without this, freeing the LAST holder —
+	# a scene change with the start menu still up, a self-check tearing its fixture
+	# down — leaves the same SceneTree paused with nothing alive that could ever
+	# unpause it, and `_prune()` cannot help because nothing would call it. Hooked
+	# once per node for its whole life (the meta flag is the "already hooked" bit,
+	# so a holder that takes and releases a hundred times still has one
+	# connection), and never disconnected, because the connection dies with the
+	# node. `tree_exiting` and not `tree_exited`: `get_tree()` is still valid
+	# there, so the release can actually apply.
+	if not who.has_meta(HOOK_META):
+		who.set_meta(HOOK_META, true)
+		who.tree_exiting.connect(func() -> void: release(who))
 	_holders[who.get_instance_id()] = true
 	_apply(who.get_tree())
 
@@ -115,16 +132,11 @@ static func _apply(tree: SceneTree) -> void:
 
 static func _prune() -> void:
 	"""
-	Forget holders that no longer exist. Without this a holder freed mid-claim
-	would pin the tree paused forever with nothing alive that could release it —
-	the softlock this whole mechanism is supposed to make impossible.
-
-	ponytail: pruning happens on take/release/holder_count and nowhere else,
-	because this class has no tick of its own. So the last holder being FREED
-	rather than releasing leaves the tree paused until somebody next touches the
-	hub — exactly as bad as the pre-refcount behaviour was, and no worse. The
-	upgrade path if that ever bites is an `_exit_tree` release in the holder (the
-	shape `landmark_toast` already uses), not a timer in here.
+	Forget holders that no longer exist. The `tree_exiting` hook in `take()` is
+	what normally releases a dying holder; this is the belt for the paths that hook
+	cannot see — a node freed while already out of the tree, and any id left over
+	from one. Pruning alone never unpauses (it has no tree to write to), which is
+	exactly why the hook exists and this does not replace it.
 	"""
 	for id: int in _holders.keys():
 		if not is_instance_id_valid(id):
