@@ -756,7 +756,9 @@ func _update_quiz(delta: float) -> void:
 	if not _quiz_pending:
 		return
 	# A new run cancels a pending question the same way it cancels a shower in
-	# flight, and for the same reason — see _sync_run.
+	# flight, and for the same reason — see _sync_run. One group lookup per frame,
+	# but ONLY while a question is up: at most QUIZ_TIMEOUT per landmark visited,
+	# against a run measured in minutes, exactly the trade _update_burst makes.
 	_sync_run()
 	if not _quiz_pending:
 		return
