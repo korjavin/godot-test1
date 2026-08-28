@@ -272,6 +272,14 @@ resolved *above* the candidate walk so the kind stays a pure function of the bos
 Adding a boss is a `SPECIES` row, a `.tscn`, and one line there — `enemy_spawn_selfcheck`
 check 11 walks the road and asks the rule at every station.
 
+**The GD-SURVEY hunter robot is the one predator that is dispatched on nothing.** The
+corporation hunts every band, so it reaches the world through its own
+`spawn_hunters_in_chunk` on its own `HUNTER_SALT` hash stream (own salt, own coordinate
+primes, own `spawn_hunters` flag) instead of through `BIOME_SPECIES` — which is
+dispatch-free and costs the chunk RNG zero draws. That is a **third door** into the
+world and check 4's reachability gate reads `HUNTER_SPECIES` to know about it; check 12
+is the A/B that *proves* the crocodile stream is untouched rather than asserting it.
+
 The species `chase_speed` (5.5 for the crocodile) is deliberately above `WALK_SPEED` (5.0)
 so walking gets you caught, and `MAX_CHASE_SPEED` (8.5) — a top-level const clamping every
 species' **sustained** speed — is deliberately below the slowest character's run, so

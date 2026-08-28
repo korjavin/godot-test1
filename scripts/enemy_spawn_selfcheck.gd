@@ -2429,9 +2429,10 @@ func _sweep(terrain_script: GDScript, run_seed: int, spawn_height: float, edge_i
 				+ " (worst %.2f m deep: %s)" % [worst_depth, worst_desc])
 
 	if species_mismatches > 0:
-		_fail("seed %d: %d of %d ground predators are not the species their chunk's biome"
-				% [run_seed, species_mismatches, counts["ground"]]
-				+ " dispatches to (first: %s)" % species_worst)
+		_fail("seed %d: %d of %d dispatched predators did not resolve the species they owe"
+				% [run_seed, species_mismatches, counts["ground"] + counts["hunter"]]
+				+ " (a ground body owes its chunk's biome, a hunter owes HUNTER_SPECIES)"
+				+ " — first: %s" % species_worst)
 	# The negative control for the live half: a field that is all one biome, or a
 	# dispatch that never fired, agrees with itself perfectly and proves nothing.
 	if species_seen.size() < 2:
