@@ -8830,11 +8830,18 @@ func new_run(forced_seed = null, around: Vector2i = Vector2i.ZERO) -> void:
 	last_player_chunk = around
 	# The seed write above already reset the tower (set_run_seed -> _tower_reset),
 	# but `last_player_chunk` was just pinned, so _process will not cross a boundary
-	# and re-stream on its own. Matters for the mid-run multiplayer join, which is
-	# the one path that rebuilds the world around a player who may already be
-	# standing next to the site.
-	if player:
-		_tower_stream(player.global_position)
+	# and re-stream on its own — the player would arrive at the site to find no
+	# building, no collision and no doorway until they walked a whole chunk away and
+	# back.
+	#
+	# TESTED AGAINST `around`, NOT AGAINST THE PLAYER, and that distinction is the
+	# whole point (codex review, 2026-08-28). `around` is where the player is ABOUT
+	# to be: on a restart it is the spawn chunk they are teleported to a moment
+	# later, and on a mid-run multiplayer join it is the anchor chunk they are
+	# placed in — in both cases the teleport happens AFTER this call, so reading
+	# `player.global_position` here measures where they used to be. Same reasoning as
+	# the synchronous ring in step 4, which floors `around` for exactly that reason.
+	_tower_stream(chunk_to_world(around))
 
 	print("New run started (run_seed = %d)" % run_seed)
 

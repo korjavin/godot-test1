@@ -91,6 +91,7 @@ func _run() -> void:
 	await _check_door_fires_for_the_player_only()
 	await _check_shell_is_lazy_and_manager_parented()
 	await _check_new_run_resites_the_tower()
+	await _check_join_streams_the_tower_at_the_anchor()
 	_check_impostor()
 	_check_minimap_marks_the_tower()
 	_report()
@@ -491,6 +492,47 @@ func _check_new_run_resites_the_tower() -> void:
 	elif not terrain._tower_impostor.global_position.is_equal_approx(new_site):
 		_fail("after new_run() the impostor is at %s but the site moved to %s" % [
 			terrain._tower_impostor.global_position, new_site])
+	probe.free()
+	terrain.free()
+	await process_frame
+
+
+func _check_join_streams_the_tower_at_the_anchor() -> void:
+	"""
+	Check 8b. A world rebuilt AROUND the tower's chunk has a tower standing in it —
+	even though the player is still somewhere else when the rebuild happens.
+
+	THE MID-RUN MULTIPLAYER JOIN (codex review, 2026-08-28). `new_run(seed, around)`
+	rebuilds the world centred on the chunk the joiner is ABOUT to be placed in, and
+	the teleport lands a moment later; `last_player_chunk` is pinned to `around`, so
+	_process will not cross a boundary and re-stream on its own. Test the stream
+	against `player.global_position` there and it measures where the joiner USED to
+	be — they arrive at the site to find no building, no collision and no doorway
+	until they walk a chunk away and back.
+
+	Driven with the player deliberately parked far from the anchor, because that gap
+	between "where the player is" and "where the world is being built" is the entire
+	bug: any implementation that reads the player's position instead of `around`
+	passes every other check in this file and fails only this one.
+	"""
+	var terrain := _make_terrain(SEED_A)
+	terrain.render_distance = 0
+	var probe := Node3D.new()
+	probe.add_to_group("player")
+	root.add_child(probe)
+	terrain.player = probe
+	var site: Vector3 = terrain.tower_site()
+
+	# The joiner has not been teleported yet — they are still wherever they were.
+	probe.global_position = site + Vector3(4000.0, 0.0, 0.0)
+	terrain.new_run(SEED_A, terrain.world_to_chunk(site))
+	await process_frame
+	var shell: Node3D = terrain.tower_shell()
+	if shell == null:
+		_fail("new_run() rebuilt the world around the tower's own chunk and built no tower — a joiner placed there lands in an empty site")
+	elif not shell.global_position.is_equal_approx(terrain.tower_site()):
+		_fail("the join-time tower stands at %s, not at the site %s" % [
+			shell.global_position, terrain.tower_site()])
 	probe.free()
 	terrain.free()
 	await process_frame
