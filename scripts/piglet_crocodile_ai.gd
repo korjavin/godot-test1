@@ -1419,6 +1419,204 @@ const SPECIES: Dictionary = {
 	},
 
 	## ------------------------------------------------------------------------
+	## SNOW TITAN — the SNOW band's BOSS, and the game's first RANGED enemy.
+	## ------------------------------------------------------------------------
+	## Owner, verbatim: "titans is like titans from might and magic 3", "titan
+	## should be slow, they are archers", "titan not trying to bite you, they
+	## throw a electric arrow like thunderstorm, likely it slow, so we can move
+	## and dodge it".
+	##
+	## THIS ROW IS BOSS-ONLY. Nothing in BIOME_SPECIES points at it — it is
+	## reached exclusively through endless_terrain's BIOME_BOSS[SNOW], so every
+	## titan in the world arrives through setup_as_boss(): giant, territorial,
+	## crush-immune, one-shot lethal on contact, and unkillable. That is why the
+	## numbers below read strangely against the other six rows, and why they are
+	## not a lattice violation:
+	##
+	##   IT IS SLOWER THAN A WALKING PLAYER, ON PURPOSE. `chase_speed` 3.0 is
+	##   well under WALK_SPEED (5.0), so a titan cannot catch anybody who keeps
+	##   moving. The lattice exists to guarantee ESCAPE ("walking is caught,
+	##   running escapes") and a boss you can stroll away from sits at the easy
+	##   end of that promise, not outside it. Its threat is not its feet, it is
+	##   the bolt — and the bolt's fairness is a MEASURED contract
+	##   (projectile_selfcheck reads the "ranged" dict below and proves a WALKING
+	##   player clears it by 3x the hit radius). enemy_spawn_selfcheck ASSERTS
+	##   the sub-walk speeds rather than merely tolerating them, so "slow archer"
+	##   cannot quietly be retuned into "fast melee giant holding a bow".
+	"titan": {
+		## The fifth arm, and the only one that SPAWNS anything: `_behave_ranged`
+		## is one cooldown and one BossProjectile.fire() call. Everything about
+		## the bolt itself — flight, visuals, lethality, lifetime, the per-shooter
+		## cap — lives in scripts/boss_projectile.gd and is shared with every
+		## ranged enemy that follows this one.
+		"behavior": "ranged",
+
+		# ----- Speed and detection -----
+		## A giant archer's stroll, and its barely-a-pursuit. Both are BELOW
+		## WALK_SPEED (5.0) — see the block above for why that is the design and
+		## not a hole in the lattice.
+		"move_speed": 2.2,
+		"chase_speed": 3.0,
+
+		## THE BOSS SPEED OVERRIDE, OPTED OUT OF. A boss normally throws its row's
+		## chase speed away and takes the game-wide BOSS_CHASE_SPEED (7.0) — a
+		## boss is a MODIFIER on a species. The titan is the one row where that
+		## modifier would contradict the animal: at 7 m/s it would run down a
+		## walking player, i.e. be exactly the melee giant the owner said it is
+		## not. So the row states its own boss speed, `_ready()` reads it through
+		## `spec.get("boss_chase_speed", BOSS_CHASE_SPEED)`, and every other row
+		## (present and future) is untouched by this key existing.
+		##
+		## It is the same number as `chase_speed` deliberately: a titan has ONE
+		## speed, and the two slots exist only because a boss and a plain predator
+		## read different ones. Both are asserted sub-walk by the selfcheck, so
+		## neither is dead data free to drift.
+		"boss_chase_speed": 3.0,
+
+		## Bosses take no per-instance rolls at all (see _ready), so these are
+		## zero rather than a spread that would never be drawn: a titan's size is
+		## the terrain's deterministic boss schedule and its speed is the row.
+		"speed_random_factor": 0.0,
+		"size_random_factor": 0.0,
+
+		## A boss overrides this with BOSS_DETECTION_RADIUS (25.0), so what this
+		## number says is the intent: 22 is also `ranged.max_fire_range`, i.e. the
+		## titan starts shooting the moment it acquires you rather than spending
+		## the first metres of an engagement walking. Keep the two in step.
+		"detection_radius": 22.0,
+
+		# ----- Organic wandering -----
+		## A giant is slow to change its mind and stands a long time when it does:
+		## twice the crocodile's interval and pause.
+		"direction_change_interval": 8.0,
+		"pause_duration": 1.2,
+		"wander_turn_rate": 0.5,
+		## The heaviest turn in the table (the crocodile's is 5.0, the hound's
+		## 7.0). Mass reads as turn lag more than as anything else.
+		"turn_smoothness": 2.5,
+		"min_wander_speed_factor": 0.5,
+		"speed_variation_freq": 0.4,
+		"sniff_pause_chance": 0.25,
+
+		# ----- Obstacle avoidance -----
+		## Longer feelers than any quadruped's, cast from higher up: this body is
+		## a 1.8 m humanoid BEFORE the 2.5x-6x boss scale, so a probe at the
+		## crocodile's 0.3 m would sample the snow under its knees.
+		"avoid_look_ahead": 4.0,
+		"avoid_feeler_angle": PI / 5.0,  # 36°
+		"avoid_feeler_height": 1.0,
+		"avoid_speed_factor": 0.6,
+
+		# ----- Procedural body animation -----
+		## PI, not the quadrupeds' -PI/2: this is a re-skinned humanoid CHARACTER
+		## model (see scenes/characters/titan.tscn) and those are authored facing
+		## -Z, where every predator mesh is authored nose-along-+X. The body still
+		## travels +Z, so the model needs a half turn instead of a quarter.
+		##
+		## THE CAPSULE IN titan.tscn IS RECORDED HERE for the reason the viper's
+		## is: a .tscn cannot hold a comment an editor resave will not eat.
+		## `radius = 0.32, height = 1.8` at `(0, 0.9, 0)`, UPRIGHT — no lay-down
+		## rotation, the one thing this scene does that the quadrupeds' do not.
+		## The mesh is a 1.8 m biped, so the capsule is its full standing height,
+		## and centre 0.9 = height/2 puts its bottom exactly on y = 0 (the same
+		## identity the crocodile's 0.16/0.16 and the viper's 0.11/0.11 use). The
+		## body scale from the boss schedule multiplies all of it, so a 6x titan
+		## is a 10.8 m capsule around a 10.8 m model.
+		"model_facing_offset": PI,
+
+		## A slow, heavy tread with almost no waddle — the read is a colossus
+		## planting its feet, not an animal scurrying.
+		"stride_frequency": 3.5,
+		"waddle_roll": 3.0 * PI / 180.0,
+		"bob_amount": 0.06,
+		"sway_yaw": 2.0 * PI / 180.0,
+		## Barely any chase lean: an archer draws upright.
+		"chase_pitch": 3.0 * PI / 180.0,
+		"breathe_speed": 1.1,
+		"breathe_amount": 0.03,
+
+		# ----- River submersion (VISUAL ONLY) -----
+		## 0.55 m on a 1.8 m biped is mid-thigh — the same fraction of the body
+		## the quadruped rows put under, measured off a mesh that STANDS instead
+		## of lying down. Scales with boss_scale for free (the model is a child of
+		## the scaled body), exactly like every other row.
+		##
+		## Same hard constraint as every row: VISUAL ONLY. The CharacterBody3D,
+		## its CollisionShape3D and global_position never move.
+		"river_sink_depth": 0.55,
+		"river_sink_ease_speed": 0.55 / 0.2,
+
+		# ----- Bite -----
+		## A titan you let walk into you still kills you — contact is one-shot
+		## lethal for every boss, there is no health pool. It is a slow overhead
+		## STOMP rather than a chomp, so the animation is long, shallow and barely
+		## lunges. Being hit by this is a choice; the bolt is the real threat.
+		"bite_duration": 0.7,
+		"bite_pitch": 10.0 * PI / 180.0,
+		"bite_lunge": 0.5,
+
+		# ----- The thunder bolt (the "ranged" behaviour reads this) -----------
+		## A COPY of BossProjectile.STYLES["thunder_bolt"] plus the three keys
+		## that are the AI's business rather than the projectile's. Copied and not
+		## referenced because those three have to live somewhere, and adding them
+		## to the shared STYLES dict would hand them to every future shooter. The
+		## two sets are measured INDEPENDENTLY by projectile_selfcheck (it scans
+		## STYLES *and* every "ranged" row), so a drift between them fails the
+		## fairness contract on whichever side broke rather than hiding.
+		##
+		## The flight numbers and their argument belong to boss_projectile.gd —
+		## read its STYLES entry, not this copy, for why 7 m/s and 0.9 m are the
+		## numbers. In one line: from its 10 m minimum the bolt is 1.43 s in the
+		## air, in which a WALKING player covers 7.1 m against a 0.9 m hit radius.
+		"ranged": {
+			"style": "thunder_bolt",
+			"trajectory": "straight",
+			"speed": 7.0,
+			"gravity": 0.0,
+			"hit_radius": 0.9,
+			"min_fire_range": 10.0,
+			"max_range": 32.0,
+			"lifetime": 6.0,
+			"max_live": 2,
+			"color": Color(0.65, 0.85, 1.0),
+			"mesh_scale": Vector3(0.18, 0.18, 0.95),
+
+			## ---- Read by _behave_ranged(), never by the projectile ----------
+			## SECONDS BETWEEN SHOTS, and the whole difficulty dial of this boss.
+			## Deliberately long: a bolt from the far end of the firing band is
+			## ~3.1 s in the air, so at this cadence there is at most one or two
+			## in flight and the player always gets a gap between the dodge and
+			## the next telegraph. `max_live` 2 above is the backstop if this is
+			## ever shortened.
+			"fire_cooldown": 3.0,
+
+			## THE FIRING BAND, together with `min_fire_range` above.
+			##
+			## The FLOOR (10 m) is the projectile's own: closer than that the bolt
+			## arrives faster than a walking player can clear the hit radius, so
+			## the ARM refuses to fire rather than the style being retuned. Get
+			## close to a titan and it stops shooting and has to try to STOMP you,
+			## which it is far too slow to manage — that is the counterplay the
+			## shape of this boss offers, and it costs no code beyond this number.
+			##
+			## The CEILING (22 m) sits inside BOSS_DETECTION_RADIUS (25), so the
+			## band is fully contained in what a titan can smell — the arm only
+			## runs while chasing, so a wider ceiling would simply never fire —
+			## and well inside BOSS_TERRITORY_RADIUS (32), which is also the
+			## bolt's own max_range: a titan cannot snipe you out of a territory
+			## you have already walked out of.
+			"max_fire_range": 22.0,
+
+			## Height of the drawn bow above the body origin, in MODEL-LOCAL
+			## metres — _behave_ranged multiplies it by the body's scale, so a 6x
+			## titan fires from 9 m up and a 2.5x one from 3.75 m, which keeps the
+			## muzzle at the shoulder of whatever size the schedule handed out.
+			## 1.5 is shoulder height on the 1.8 m humanoid mesh.
+			"muzzle_height": 1.5,
+		},
+	},
+
+	## ------------------------------------------------------------------------
 	## GD-SURVEY HUNTER ROBOT — the corporation's retrieval unit.
 	## ------------------------------------------------------------------------
 	## THE ONE ROW THAT IS NOT AN ANIMAL, and it is a row anyway. That is the
@@ -1836,6 +2034,18 @@ var _charge_lock: Dictionary = {}
 ## `charge_steer_point()`. Behaviour-local: nothing outside the burst reads it.
 var _burst_lock: Dictionary = {}
 
+## THE RANGED ARM'S ONE PIECE OF MEMORY (`_behave_ranged`): how many seconds are
+## left before this archer may release its next shot, as { "cooldown": float }.
+## Empty means "ready now", which is what makes a titan that has just acquired
+## you shoot on the acquisition frame rather than after a silent pause.
+##
+## A Dictionary rather than a bare float for the same reason `_burst_lock` is
+## one: it lets `ranged_shot_due()` be a STATIC pure function that both the arm
+## and enemy_spawn_selfcheck's cadence probe drive, so the check measures the
+## shipped firing rule instead of a restatement of it. Behaviour-local: nothing
+## outside the ranged arm reads it.
+var _ranged_lock: Dictionary = {}
+
 ## THE BURST ARM'S ONE OUTPUT: the multiplier applied to `chase_speed_instance`
 ## for this frame. 1.0 for every species that is not on the "burst" arm, and 1.0
 ## is a hard requirement rather than a tidy default — it is what makes the one
@@ -2080,7 +2290,18 @@ func _ready() -> void:
 		home_position = global_position
 		move_speed_instance = spec["move_speed"]
 		# The MAX_CHASE_SPEED cap keeps the running-escape hatch true at any distance.
-		chase_speed_instance = minf(BOSS_CHASE_SPEED * distance_factor, MAX_CHASE_SPEED)
+		#
+		# BOSS_CHASE_SPEED is the boss MODIFIER's speed and applies to every kind
+		# by default — a boss overrides its row here rather than inheriting it.
+		# `boss_chase_speed` is the one opt-out, and it exists for a species whose
+		# whole design is NOT reaching you: the snow titan is an archer that must
+		# stay under a walking player, and inheriting 7 m/s would silently turn it
+		# into a melee giant. Absent from every other row, so this `get` answers
+		# the const for all of them (see SPECIES["titan"] for the full argument).
+		chase_speed_instance = minf(
+				float(spec.get("boss_chase_speed", BOSS_CHASE_SPEED)) * distance_factor,
+				MAX_CHASE_SPEED
+		)
 		scale = Vector3.ONE * boss_scale
 	else:
 		# Set instance-specific speeds. One shared multiplier drives both speeds, so a
@@ -2468,15 +2689,17 @@ func _update_chase_state() -> void:
 	#
 	#   ONE ARM, ONE CALL, NOTHING ELSE. An arm is a species' behaviour name and
 	#   a call to its own `_behave_*()`. No logic in the arm, no state shared
-	#   between arms, no `if` before the match. Pack, ambush, charge and burst are
-	#   each two lines here plus one function of their own, and none of them has
-	#   to read, or risk breaking, any of the others.
+	#   between arms, no `if` before the match. Pack, ambush, charge, burst and
+	#   ranged are each two lines here plus one function of their own, and none
+	#   of them has to read, or risk breaking, any of the others.
 	#
 	# AN ARM IS A MECHANIC, NOT AN ANIMAL, and "burst" is where that stopped
 	# being a stylistic claim: the mountain cougar's pounce and the city alley
-	# hound's alley sprint are ONE arm read with two sets of numbers. Six species,
-	# four arms. If a new predator's difference can be a number in its SPECIES
-	# row, it must be — a fifth arm is for a mechanic none of these four is.
+	# hound's alley sprint are ONE arm read with two sets of numbers. Seven
+	# species, five arms. If a new predator's difference can be a number in its
+	# SPECIES row, it must be — a sixth arm is for a mechanic none of these five
+	# is. "ranged" earned its own because it is the first arm that does not steer
+	# at all: it SPAWNS something (a bolt), which is a verb none of the others has.
 	#
 	# "solo" has NO ARM on purpose — it is the code above, unmodified, which is
 	# also why an unknown or misspelled behaviour string degrades to solo instead
@@ -2497,6 +2720,8 @@ func _update_chase_state() -> void:
 			_behave_charge()
 		"burst":
 			_behave_burst()
+		"ranged":
+			_behave_ranged()
 
 
 func _behave_pack() -> void:
@@ -2604,6 +2829,105 @@ func _behave_burst() -> void:
 		burst_factor = 1.0
 		return
 	burst_factor = burst_cycle_factor(global_position, _burst_lock, spec)
+
+
+func _behave_ranged() -> void:
+	"""
+	The titan arm: stand off and throw a bolt at what you already decided to hunt.
+
+	THE FIRST ARM THAT DOES NOT STEER. Pack and charge bend `chase_target`, burst
+	bends the speed; this one leaves both exactly as the code above set them and
+	instead SPAWNS something. Everything about that something — how it flies,
+	what it looks like, what it kills, when it frees itself, how many of them one
+	shooter may have in the air — belongs to scripts/boss_projectile.gd and is
+	shared with every ranged enemy that follows. What is left here is the firing
+	LOGIC that file's header explicitly refuses to own: when, at whom, how often.
+
+	FOUR GATES, IN THIS ORDER, and each one is a rule rather than a tweak:
+
+	  1. NOT CHASING, NO SHOT. A titan that has not smelled you does not fire into
+	     the fog. This is also what makes the arm inert for a wandering boss, and
+	     it needs no state of its own to be — `is_chasing` is settled above the
+	     dispatch, for every species, before we get here.
+	  2. INSIDE THE TERRITORY. Asked through the `in_territory()` seam, never as a
+	     hand-rolled radius: the leash bounds where a boss may GO, and a boss that
+	     could shell you from inside a circle you have already left would give
+	     back the one counterplay the design has ("only skedaddle"). The detection
+	     gate above already refuses a quarry outside the circle, so today this can
+	     only fire if that gate is ever loosened — which is exactly the regression
+	     worth a line, and boss_selfcheck drives this branch directly rather than
+	     trusting it.
+	  3. INSIDE THE FIRING BAND, and 4. OFF COOLDOWN — both of them
+	     `ranged_shot_due()`, which is static and pure so the selfcheck measures
+	     the shipped rule instead of a copy of it. See the "ranged" dict in
+	     SPECIES["titan"] for why the band has a FLOOR as well as a ceiling.
+
+	A refused shot is not an error anywhere: `fire()` itself answers null when the
+	shooter is at its cap, and this arm may call it as often as it likes.
+	"""
+	if not is_chasing:
+		# The lock is left ALONE here, where the pack, charge and burst arms all
+		# clear theirs on the same edge. Those three hold a COMMITMENT that must
+		# not be resumed stale (a half-spent pounce, a dead bearing); this one
+		# holds a RELOAD, and a reload that reset every time the quarry stepped
+		# out of range for a moment would make ducking behind a rock a way to get
+		# an instant shot on every re-acquisition. It does not tick while idle
+		# either — this return is above the countdown — so a titan that has been
+		# alone for a minute comes back with exactly the cooldown it had left.
+		return
+	if is_boss and not in_territory(chase_target):
+		return
+	var row: Dictionary = spec["ranged"]
+	# Flat distance: the world is flat at y = 0 by invariant, and the muzzle sits
+	# metres above the body, so a 3D distance would report a longer shot than the
+	# one the fairness contract is measured on.
+	var flat := Vector2(chase_target.x - global_position.x, chase_target.z - global_position.z)
+	if not ranged_shot_due(flat.length(), get_physics_process_delta_time(), _ranged_lock, row):
+		return
+	# The muzzle rides the body's scale, so the bolt leaves a 6x titan's shoulder
+	# rather than its ankle (see `muzzle_height`). The parent is our CHUNK, which
+	# is what makes an unloaded chunk free any bolt still in the air.
+	BossProjectile.fire(
+			global_position + Vector3.UP * float(row["muzzle_height"]) * scale.y,
+			chase_target, get_parent(), row, self)
+
+
+static func ranged_shot_due(distance: float, delta: float, lock: Dictionary,
+		row: Dictionary) -> bool:
+	"""
+	May a ranged predator release a shot this frame? Advances its cooldown.
+
+	    each frame  cooldown -= delta            (always, even out of band)
+	    fire when   cooldown <= 0 AND min_fire_range <= distance <= max_fire_range
+	    on firing   cooldown := fire_cooldown
+
+	@param distance: flat distance from the shooter to its quarry, metres
+	@param delta: seconds since the last call (the physics tick)
+	@param lock: this shooter's `_ranged_lock`, MUTATED here. Empty = ready now.
+	@param row: the species row's "ranged" dict
+	@return true exactly on the frames a shot should be launched
+
+	STATIC AND PURE for the same reason `burst_cycle_factor` and
+	`pack_steer_point` are: enemy_spawn_selfcheck's cadence probe drives THIS
+	function, so the measured cadence is the shipped cadence and not a
+	restatement of it that can drift.
+
+	THE COOLDOWN TICKS EVEN WHILE OUT OF BAND, which is a decision and not an
+	accident: an archer that had to stand still for its full cooldown after you
+	stepped out of range and back in would reward yo-yoing across the 10 m floor,
+	and the floor exists to make closing the distance the counterplay rather than
+	a way to disarm the boss for three seconds. It never accumulates CREDIT —
+	the clamp at zero means the longest wait is one full cooldown and the reward
+	for a long walk between engagements is one immediate shot, not five.
+	"""
+	var left: float = float(lock.get("cooldown", 0.0)) - delta
+	lock["cooldown"] = maxf(left, 0.0)
+	if distance < float(row["min_fire_range"]) or distance > float(row["max_fire_range"]):
+		return false
+	if left > 0.0:
+		return false
+	lock["cooldown"] = float(row["fire_cooldown"])
+	return true
 
 
 static func burst_cycle_factor(from: Vector3, lock: Dictionary, row: Dictionary) -> float:

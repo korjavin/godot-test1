@@ -2000,8 +2000,9 @@ const BIOME_SPECIES: Dictionary = {
 ## crocodile". A station standing in the water is guarded by the animal that
 ## belongs in water, whatever band the noise field puts it in.
 ##
-## THIS TABLE SHIPS EMPTY, AND THAT IS THE POINT. Every boss is still a crocodile
-## and the generated world is byte-identical to the one before this seam existed:
+## THIS TABLE SHIPPED EMPTY, AND THAT WAS THE POINT — the seam landed with every
+## boss still a crocodile and a byte-identical world, and the snow titan below is
+## the first row to change an answer. Adding it changed no PLACEMENT anywhere:
 ## the dispatch is pure function calls (biome_at / is_river_at — the
 ## allocation-free public API, no RNG anywhere under either) inserted at a spot
 ## where no draw is made, so the BOSS_SEED stream consumes the same draws in the
@@ -2014,7 +2015,16 @@ const BIOME_SPECIES: Dictionary = {
 ## the AI's _ready() and behaves as a crocodile, and a scene that fails to load
 ## falls back to the crocodile scene — a visibly wrong animal, never a boss-less
 ## station.
-const BIOME_BOSS: Dictionary = {}
+const BIOME_BOSS: Dictionary = {
+	## The snow band's guardian: the TITAN, a slow HMM3-style giant archer that
+	## barely pursues and instead throws a dodgeable thunder bolt. The first row
+	## this table has ever had — everything above about the shape of it (station
+	## centre, no RNG draw, river-first) was written for exactly this line.
+	Biome.SNOW: {
+		"species": "titan",
+		"scene": "res://scenes/characters/titan.tscn",
+	},
+}
 
 # ----------------------------------------------------------------------------
 # SNOW — frozen dead trees and mammoth skeletons on an open tundra

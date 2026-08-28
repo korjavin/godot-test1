@@ -99,7 +99,7 @@ const DETECTION_SIM_MARGIN: float = 15.0
 ## by nobody. "solo" is in the list and has no probe of its own on purpose: it is
 ## the code ABOVE the dispatch (see the behaviour `match` in _update_chase_state),
 ## which the ambush trip-wire's crocodile control drives on every run.
-const PROBED_BEHAVIORS: Array[String] = ["solo", "pack", "ambush", "charge", "burst"]
+const PROBED_BEHAVIORS: Array[String] = ["solo", "pack", "ambush", "charge", "burst", "ranged"]
 
 ## Field side in chunks. 17 x 17 = 289, the size every measurement in CLAUDE.md's
 ## terrain sections is quoted at, so a number printed here is comparable to them.
@@ -211,6 +211,19 @@ var _boss_interval: int = 0
 var _walk_speed: float = 0.0
 var _max_chase_speed: float = 0.0
 
+## BOSS_DETECTION_RADIUS off piglet_crocodile_ai.gd. The ranged probe needs it
+## because a boss overrides its row's detection radius with this one, so it is
+## the number a BOSS-ONLY archer's firing band has to fit inside.
+var _boss_detection_radius: float = 0.0
+
+## Species dispatched from BIOME_BOSS and from nowhere in BIOME_SPECIES, filled
+## in by _check_species_table (which runs before every probe). Two checks need
+## the same answer — the lattice's lower bound is waived for these rows, and the
+## ranged probe measures a boss-only archer's firing band against the BOSS
+## detection radius rather than the row's — so it is derived once, from the
+## dispatch maps, and never listed.
+var _boss_only: Dictionary = {}
+
 ## crocodile_lod_manager.gd's SIM_RADIUS, read the same way. The ceiling every
 ## row's `detection_radius` sits under — see DETECTION_SIM_MARGIN.
 var _sim_radius: float = 0.0
@@ -280,6 +293,7 @@ func _run() -> void:
 	var croc_consts: Dictionary = croc_ai.get_script_constant_map()
 	_species_table = croc_consts.get("SPECIES", {})
 	_max_chase_speed = float(croc_consts.get("MAX_CHASE_SPEED", 0.0))
+	_boss_detection_radius = float(croc_consts.get("BOSS_DETECTION_RADIUS", 0.0))
 	var player_consts: Dictionary = load(PLAYER_SCRIPT).get_script_constant_map()
 	_walk_speed = float(player_consts.get("WALK_SPEED", 0.0))
 	# The slowest run, derived the way player_controller derives it (see
@@ -325,6 +339,7 @@ func _run() -> void:
 	_check_ambush_trip_wire()
 	_check_charge_dodge(croc_ai)
 	_check_burst_escape(croc_ai)
+	_check_ranged_cadence(croc_ai)
 	_check_determinism(terrain_script)
 	_check_hunter_stream_independence(terrain_script)
 	_check_boss_dispatch(terrain_script)
@@ -394,6 +409,20 @@ func _check_species_table() -> void:
 				+ " species name and every scene-less biome resolves to")
 		return
 
+	# WHICH ROWS ARE BOSS-ONLY: dispatched from BIOME_BOSS and from nowhere in
+	# BIOME_SPECIES. They are the ONE legitimate exception to the lower end of the
+	# lattice below, and the set is DERIVED from the two dispatch maps rather than
+	# listed here — give a boss row an ordinary BIOME_SPECIES entry and it stops
+	# being exempt on the same commit, with no edit in this file.
+	var ordinary_species: Dictionary = {}
+	for biome_v: Variant in _biome_species:
+		ordinary_species[String(_biome_species[biome_v].get("species", ""))] = true
+	_boss_only.clear()
+	for biome_v: Variant in _biome_boss:
+		var boss_species: String = String(_biome_boss[biome_v].get("species", ""))
+		if not ordinary_species.has(boss_species):
+			_boss_only[boss_species] = true
+
 	var required: Array = _species_table["crocodile"].keys()
 	for name_v: Variant in _species_table:
 		var species_name: String = String(name_v)
@@ -407,9 +436,22 @@ func _check_species_table() -> void:
 		# The lattice, stated in CLAUDE.md and in the SPECIES doc block: walking
 		# (5.0) must be caught, and the slowest run (9.0) must escape. Every row
 		# owes both ends; MAX_CHASE_SPEED is the ceiling and no row may raise it.
+		#
+		# THE LOWER BOUND IS ASKED OF ORDINARY PREDATORS ONLY, and the exception is
+		# narrow on purpose. "Walking is caught" is the FAIL PRESSURE half of the
+		# lattice; the promise the game is balanced on is the other half, "running
+		# escapes", and a row slower than a walk keeps that one trivially. A
+		# BOSS-ONLY row is allowed to be under it because a boss does not inherit
+		# its row's chase speed at all by default (BOSS_CHASE_SPEED, 7.0, which is
+		# comfortably over a walk) and because the one row that deliberately opts
+		# out of that — the snow titan, an archer whose threat is its bolt and not
+		# its feet — must be strollable-away-from or it is not an archer. That is
+		# not a hole: the ranged probe below ASSERTS the sub-walk speeds for every
+		# "ranged" row, so the exemption is paid for with a stricter check, and the
+		# projectile's own fairness contract is measured in projectile_selfcheck.
 		if row.has("chase_speed"):
 			var chase: float = float(row["chase_speed"])
-			if chase <= _walk_speed:
+			if chase <= _walk_speed and not _boss_only.has(species_name):
 				_fail("SPECIES['%s'].chase_speed %.2f is at or below %.2f —"
 						% [species_name, chase, _walk_speed]
 						+ " a player could stroll away from it")
@@ -417,6 +459,15 @@ func _check_species_table() -> void:
 				_fail("SPECIES['%s'].chase_speed %.2f exceeds %.2f —"
 						% [species_name, chase, _max_chase_speed]
 						+ " the clamp hides it at runtime, so the row is simply wrong")
+		# The boss speed opt-out is a SPEED like any other and owes the ceiling:
+		# _ready() clamps it, so a row over the top would be a lie the clamp hides
+		# — the same failure the chase_speed ceiling above is written against.
+		if row.has("boss_chase_speed"):
+			var boss_chase: float = float(row["boss_chase_speed"])
+			if boss_chase > _max_chase_speed:
+				_fail("SPECIES['%s'].boss_chase_speed %.2f exceeds %.2f —"
+						% [species_name, boss_chase, _max_chase_speed]
+						+ " _ready() clamps it, so the row is simply wrong")
 		# THE OTHER GAME-WIDE CEILING, and the one with no runtime clamp behind it
 		# to hide a breach: CLAUDE.md's LOD invariant. A body only simulates inside
 		# crocodile_lod_manager's SIM_RADIUS, so a row that can smell the player
@@ -1471,6 +1522,208 @@ func _burst_race(croc_ai: GDScript, row: Dictionary, chase: float, quarry_speed:
 
 
 # ============================================================================
+# CHECK 8b — a RANGED predator is an archer: sub-walk speed, a firing BAND with
+#            a floor as well as a ceiling, and a cadence it cannot cheat
+# ============================================================================
+
+## How long each cadence race runs, and at what tick. 30 s is ten of the titan's
+## 3 s cooldowns, so an off-by-one at either end of the window moves the expected
+## count by 10% and not by 100% — the count means the cadence, not the boundary.
+const RANGED_PROBE_SECONDS: float = 30.0
+const RANGED_PROBE_DT: float = 1.0 / 60.0
+
+## How far outside the firing band the two refusal races stand, in metres. Half a
+## metre: the check is that the band has EDGES, so it is measured just past them
+## rather than at some comfortable distance a broken gate would also refuse.
+const RANGED_BAND_MARGIN: float = 0.5
+
+
+func _check_ranged_cadence(croc_ai: GDScript) -> void:
+	"""
+	THE FIFTH ARM'S PROBE. Drive the shipped firing rule and count the shots.
+
+	`ranged_shot_due()` is static and pure for exactly this reason (the shape
+	`burst_cycle_factor` and `pack_steer_point` established): what is measured
+	here is the function `_behave_ranged` calls, not a restatement of it that can
+	drift. What this file CANNOT reach — that the arm actually calls
+	BossProjectile.fire(), that it refuses outside the boss territory, and that a
+	titan resolves the slow boss speed its row asks for — is measured live in
+	boss_selfcheck.gd, which has a physics world and a real boss in it.
+
+	Three things are asserted, and the first is the one that makes the species
+	legible at all:
+
+	  1. THE ARCHER CONTRACT. Every speed a "ranged" row can resolve to — its
+	     wander, its chase, and the boss speed it opts into — is BELOW WALK_SPEED.
+	     This is the assertion that PAYS FOR the lattice exemption a boss-only row
+	     gets in check 4: the titan is allowed under the walk line because being
+	     under it is the design, so a retune back over it must fail here rather
+	     than pass quietly as an ordinary predator would.
+	  2. THE BAND HAS A FLOOR. Out-of-band races at both edges must fire NOTHING.
+	     The ceiling is the ordinary "don't shoot what you can't see"; the FLOOR
+	     is the counterplay — walk INTO a titan and it cannot shoot you, because
+	     inside `min_fire_range` the bolt arrives faster than a walking player can
+	     clear its hit radius (the contract projectile_selfcheck measures).
+	  3. THE CADENCE IS THE ROW'S. In-band, the shot count over a long window
+	     matches `fire_cooldown` to the frame. A cooldown that is not re-armed
+	     fires every tick — 1800 shots instead of 11 — which in play reads as a
+	     wall of lightning nobody could dodge and, in a check that only asserted
+	     "it fires", as a pass.
+	"""
+	var shooters: Array[String] = _species_with("ranged")
+	if shooters.is_empty():
+		# The negative control for this whole check: with no ranged row, every
+		# loop below iterates zero times and the file would report OK having
+		# measured nothing. The arm exists in the AI, so a table with no row
+		# carrying it is a half-landed bead.
+		_fail("no SPECIES row has behavior 'ranged' — the firing rule this check"
+				+ " drives is in the AI (_behave_ranged / ranged_shot_due) with"
+				+ " nothing dispatching to it")
+		return
+	for species_name: String in shooters:
+		_probe_ranged(croc_ai, species_name)
+
+
+func _probe_ranged(croc_ai: GDScript, species_name: String) -> void:
+	"""
+	One ranged species: its speeds, its band, and its cadence.
+
+	@param croc_ai: piglet_crocodile_ai.gd, for the shipped ranged_shot_due()
+	@param species_name: the SPECIES key to probe
+	"""
+	var row: Dictionary = _species_table[species_name]
+	if not row.has("ranged"):
+		_fail("SPECIES['%s'] has behavior 'ranged' but no 'ranged' dict —"
+				% species_name + " _behave_ranged reads spec[\"ranged\"] on the"
+				+ " frame it first smells a player and would crash there")
+		return
+	var ranged: Dictionary = row["ranged"]
+	for key: String in ["min_fire_range", "max_fire_range", "fire_cooldown", "muzzle_height"]:
+		if not ranged.has(key):
+			_fail("SPECIES['%s'].ranged has no '%s' — the arm reads it every"
+					% [species_name, key] + " frame it is engaged")
+			return
+
+	# ---- 1. THE ARCHER CONTRACT --------------------------------------------
+	# EVERY speed slot the row fills, because a boss and a plain predator read
+	# different ones and a retune of either alone is exactly how "slow archer"
+	# becomes a melee giant. `boss_chase_speed` is checked only when the row
+	# declares it: a ranged row that does not is not a boss-only row, so what it
+	# would resolve to is the ordinary chase speed one line up.
+	var speed_slots: Array = [
+		["move_speed", float(row["move_speed"])],
+		["chase_speed", float(row["chase_speed"])],
+	]
+	if row.has("boss_chase_speed"):
+		speed_slots.append(["boss_chase_speed", float(row["boss_chase_speed"])])
+	for pair: Array in speed_slots:
+		if float(pair[1]) >= _walk_speed:
+			_fail("SPECIES['%s'].%s is %.2f, at or above WALK_SPEED %.2f — a"
+					% [species_name, pair[0], float(pair[1]), _walk_speed]
+					+ " ranged predator's threat is its shot, and one that can run"
+					+ " a walking player down is a melee predator holding a bow."
+					+ " (A boss-only row is exempt from the lattice's lower bound"
+					+ " precisely because THIS is asserted instead.)")
+
+	var min_range: float = float(ranged["min_fire_range"])
+	var max_range: float = float(ranged["max_fire_range"])
+	var cooldown: float = float(ranged["fire_cooldown"])
+	if min_range <= 0.0 or max_range <= min_range:
+		_fail("SPECIES['%s'].ranged band is [%.1f, %.1f] — the ceiling must be"
+				% [species_name, min_range, max_range] + " above a positive floor"
+				+ " or the arm can never fire")
+		return
+	if cooldown <= 0.0:
+		_fail("SPECIES['%s'].ranged fire_cooldown is %.2f — a cooldown at or"
+				% [species_name, cooldown] + " below zero is a shot every physics"
+				+ " frame")
+		return
+	# The band must fit inside what this predator can SMELL, because the arm only
+	# runs while chasing: a ceiling outside detection is a number that can never
+	# be reached, which reads as a longer reach than the boss actually has.
+	var smell: float = float(row["detection_radius"])
+	if _boss_only.has(species_name):
+		# A boss overrides its row's detection radius with the game-wide one, so
+		# for a BOSS-ONLY archer that is the number the band has to fit inside —
+		# and only for one: an ordinary ranged predator would never resolve it.
+		smell = maxf(smell, _boss_detection_radius)
+	if max_range > smell:
+		_fail("SPECIES['%s'].ranged max_fire_range %.1f exceeds the %.1f m it can"
+				% [species_name, max_range, smell] + " smell — the arm only runs"
+				+ " while chasing, so those metres of reach do not exist")
+
+	# ---- 2. THE BAND HAS EDGES ---------------------------------------------
+	var too_close: Array[int] = _ranged_shots(croc_ai, ranged, min_range - RANGED_BAND_MARGIN)
+	if not too_close.is_empty():
+		_fail("SPECIES['%s']: %d shot(s) fired from %.2f m, inside its own %.1f m"
+				% [species_name, too_close.size(), min_range - RANGED_BAND_MARGIN, min_range]
+				+ " minimum — a bolt from there arrives before a walking player"
+				+ " can clear its hit radius, which is the one thing the fairness"
+				+ " contract cannot fix from inside the projectile")
+	var too_far: Array[int] = _ranged_shots(croc_ai, ranged, max_range + RANGED_BAND_MARGIN)
+	if not too_far.is_empty():
+		_fail("SPECIES['%s']: %d shot(s) fired from %.2f m, past its own %.1f m"
+				% [species_name, too_far.size(), max_range + RANGED_BAND_MARGIN, max_range]
+				+ " ceiling")
+
+	# ---- 3. THE CADENCE IS THE ROW'S ---------------------------------------
+	# Mid-band, so neither edge is in play, and measured as the GAPS BETWEEN
+	# SHOTS rather than as a count against a formula: a count has to reason about
+	# whether the last shot fell inside the window, which is an off-by-one waiting
+	# to be "fixed" by loosening the assertion. Gaps have no such edge, and they
+	# are the thing the cooldown actually is.
+	var mid: float = (min_range + max_range) * 0.5
+	var fired: Array[int] = _ranged_shots(croc_ai, ranged, mid)
+	var gap_frames: int = int(round(cooldown / RANGED_PROBE_DT))
+	var expected_shots: int = int(RANGED_PROBE_SECONDS / cooldown)
+	if fired.size() < expected_shots - 1 or fired.size() > expected_shots + 1:
+		_fail("SPECIES['%s']: %d shot(s) in %.0f s at %.1f m, expected about %d at"
+				% [species_name, fired.size(), RANGED_PROBE_SECONDS, mid, expected_shots]
+				+ " a %.2f s cooldown — a cooldown that is never re-armed fires"
+				% cooldown + " every physics frame, which no player can dodge")
+		return
+	if fired.is_empty() or fired[0] != 0:
+		_fail("SPECIES['%s']: the first shot came on frame %s, not the first —"
+				% [species_name, "never" if fired.is_empty() else str(fired[0])]
+				+ " an empty lock means READY, so an archer that has just acquired"
+				+ " a quarry shoots rather than standing through a silent cooldown")
+		return
+	for i in range(1, fired.size()):
+		var gap: int = fired[i] - fired[i - 1]
+		# One frame of slack, and one only: the countdown is float and the tick is
+		# 1/60, so a boundary can land either side of a frame. Two frames of slack
+		# would start hiding a cooldown that is a tick short of the row's.
+		if absi(gap - gap_frames) > 1:
+			_fail("SPECIES['%s']: shots %d and %d are %d frames apart, expected %d"
+					% [species_name, i - 1, i, gap, gap_frames] + " (%.2f s at"
+					% cooldown + " %.4f s/frame) — the cadence is not the row's"
+					% RANGED_PROBE_DT)
+			return
+
+
+func _ranged_shots(croc_ai: GDScript, ranged: Dictionary, distance: float) -> Array[int]:
+	"""
+	Every frame on which the SHIPPED firing rule releases a shot, at a fixed range.
+
+	@param croc_ai: piglet_crocodile_ai.gd
+	@param ranged: the row's "ranged" dict, passed through untouched
+	@param distance: the quarry's flat distance, held constant for the window
+	@return the frame indices where ranged_shot_due() answered true
+
+	Nothing is mutated and nothing is restated: the lock is the same plain
+	Dictionary the arm hands it, so the cooldown bookkeeping under test is the
+	shipped one.
+	"""
+	var lock: Dictionary = {}
+	var shots: Array[int] = []
+	var steps: int = int(RANGED_PROBE_SECONDS / RANGED_PROBE_DT)
+	for step in range(steps):
+		if croc_ai.ranged_shot_due(distance, RANGED_PROBE_DT, lock, ranged):
+			shots.append(step)
+	return shots
+
+
+# ============================================================================
 # CHECK 9 — PLACEMENT IS A PURE FUNCTION of (chunk coords, run_seed)
 # ============================================================================
 
@@ -1955,6 +2208,11 @@ func _check_boss_dispatch(terrain_script: GDScript) -> void:
 	var measured := 0
 	var rivers := 0
 	var bands := {}
+	## Which boss KINDS the walk actually put in the world, counted so the
+	## coverage gate below can tell "the dispatch answered titan and a titan
+	## spawned" from "no station in this walk ever stood in snow". Without it a
+	## table-driven check happily verifies a rule it never once exercised.
+	var kinds := {}
 	var mismatches := 0
 	var worst := ""
 
@@ -2010,6 +2268,7 @@ func _check_boss_dispatch(terrain_script: GDScript) -> void:
 					continue
 				measured += 1
 				bands[biome] = int(bands.get(biome, 0)) + 1
+				kinds[want] = int(kinds.get(want, 0)) + 1
 				if in_river:
 					rivers += 1
 				var got: String = String(child.get("species"))
@@ -2038,7 +2297,7 @@ func _check_boss_dispatch(terrain_script: GDScript) -> void:
 			% [measured, BOSS_DISPATCH_COUNT * RUN_SEEDS.size(), bands.size()]
 			+ " band(s); %d of their stations stand in a river; BIOME_BOSS has %d"
 					% [rivers, _biome_boss.size()]
-			+ " row(s)")
+			+ " row(s); kinds spawned %s" % kinds)
 
 	if mismatches > 0:
 		_fail("%d of %d road bosses are not the species the dispatch names for"
@@ -2064,6 +2323,20 @@ func _check_boss_dispatch(terrain_script: GDScript) -> void:
 		_fail("not one of the %d bosses measured owns a station in a river —" % measured
 				+ " the river arm of the dispatch was never asked, so nothing here"
 				+ " covers the rule that water stays the crocodile's")
+	# EVERY BIOME_BOSS ROW MUST ACTUALLY REACH THE WORLD, the same gate the
+	# species sweep applies to BIOME_SPECIES. The loop above verifies the rule
+	# wherever it is asked, which is silently vacuous for a band no station in
+	# this walk happens to stand in: the row would be a boss kind that exists in
+	# the source, loads, passes every table check, and has never once been on a
+	# road. If this fires the fix is a longer walk (BOSS_DISPATCH_COUNT) or
+	# another seed, not a weaker assertion.
+	for biome_v: Variant in _biome_boss:
+		var kind: String = String(_biome_boss[biome_v].get("species", ""))
+		if not kinds.has(kind):
+			_fail("BIOME_BOSS[%s] dispatches to '%s', but not one of the %d bosses"
+					% [biome_v, kind, measured] + " this walk placed was one — the"
+					+ " row was never exercised, so its whole dispatch is untested"
+					+ " (lengthen the walk or change a run seed)")
 
 
 # ============================================================================
