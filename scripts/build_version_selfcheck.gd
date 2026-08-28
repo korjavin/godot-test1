@@ -41,12 +41,25 @@ extends SceneTree
 ##     which is strictly worse than one more session on an old build — so this is
 ##     the assertion the whole feature is worth having.
 ##
-##  5. **BUT IT MUST ACTUALLY FIRE**, at both safe points, exactly once — with a
+##  5. **THE SAFE POINT HAS TO HOLD, NOT MERELY OCCUR.** The game-over screen
+##     appears in the physics step and `_process` runs in the idle step of the same
+##     engine iteration, so a visibility-only test reloads the page on the frame
+##     the player dies: no distance, no coin tally, no "NEW BEST!", and the `/best`
+##     POST fired microseconds earlier torn out mid-flight. `SAFE_DWELL_SEC` is
+##     what fixes that, and one frame at a safe point must NOT be enough.
+##
+##  6. **BUT IT MUST ACTUALLY FIRE**, at both safe points, exactly once — with a
 ##     negative control, because "no reload mid-run" is also true of a node that
 ##     can never reload at all.
 ##
-##  6. **A room outranks both safe points.** Reloading drops this peer out of the
-##     mesh mid-session, so an open room is unsafe even on the start card.
+##  7. **A room outranks both safe points**, and the test is `is_busy()`, not
+##     `is_online()`: a join sits in CONNECTING for seconds before a room exists,
+##     and joining from the game-over screen is a supported flow, so the narrower
+##     test left exactly that press open to a reload that abandons it.
+##
+##  8. **An empty world is not a safe world.** With no `mp`, no `start_overlay` and
+##     no `game_over_ui` in their groups — a scene run standalone — every lookup
+##     degrades to "not safe", never to "reload now".
 ##
 ## `location.reload()` is unreachable headlessly, so `Watch` below overrides the
 ## one-line `_reload_now()` seam and counts calls — the same trick
@@ -57,6 +70,11 @@ extends SceneTree
 const BuildVersion := preload("res://scripts/build_version.gd")
 const SCRIPT_PATH: String = "res://scripts/build_version.gd"
 
+## Comfortably past `SAFE_DWELL_SEC`, so "drove it long enough" is never the
+## reason a check fails.
+const LONG_ENOUGH: float = BuildVersion.SAFE_DWELL_SEC + 1.0
+
+
 ## The real watch with its single browser call stubbed out, so every decision
 ## above it can be driven on a build that has no DOM.
 class Watch extends BuildVersion:
@@ -66,12 +84,18 @@ class Watch extends BuildVersion:
 		reloads += 1
 
 
-## Stand-in for `mp_manager.gd`, in the `mp` group. Only `is_online()` is reached.
+## Stand-in for `mp_manager.gd`, in the `mp` group. Only `is_busy()` is reached —
+## and `is_online()` is here too, deliberately, so a watch that regressed to the
+## narrower test would still find a method and still pass its other checks while
+## failing the CONNECTING one.
 class FakeMp extends Node:
-	var online: bool = false
+	var state: String = "offline"
 
 	func is_online() -> bool:
-		return online
+		return state == "in_room"
+
+	func is_busy() -> bool:
+		return state != "offline"
 
 
 ## Stand-in for `start_overlay.gd`, in the `start_overlay` group. Only
@@ -106,9 +130,11 @@ func _run() -> void:
 	_check_web_gate()
 	_check_latch()
 	_check_never_mid_run()
+	_check_the_safe_point_has_to_hold()
 	_check_fires_at_the_start_card()
 	_check_fires_at_game_over()
 	_check_room_outranks_the_safe_points()
+	_check_an_empty_world_is_not_safe()
 	_finish()
 
 
@@ -154,12 +180,14 @@ func _check_bake_contract() -> void:
 			+ "%s — the CI bake step's sed would silently match nothing and " % SCRIPT_PATH \
 			+ "the exported build would carry the placeholder forever")
 
-	# Silence is part of the contract and cannot be asserted from the outside:
-	# `JSON.parse_string()` pushes an engine ERROR of its own on malformed input,
-	# so a proxy serving an HTML error page would print one to the player's console
-	# every single poll. The instance parser returns the failure instead.
-	if source.contains("JSON.parse_string"):
-		_fail("build_version.gd parses with JSON.parse_string — it pushes an engine " \
+	# Silence is part of the contract and cannot be asserted from the outside: the
+	# static one-shot JSON helper pushes an engine ERROR of its own on malformed
+	# input, so a proxy serving an HTML error page would print one to the player's
+	# console every single poll. The instance parser returns the failure instead.
+	# Matched WITH its opening paren so that describing the rule in a comment — as
+	# this file and that one both do — is not itself a violation.
+	if source.contains("JSON.parse_string("):
+		_fail("build_version.gd calls the static JSON parser — it pushes an engine " \
 			+ "ERROR on every unparseable body, so one broken proxy spams the " \
 			+ "console for as long as the tab is open. Use JSON.new().parse().")
 
@@ -187,6 +215,9 @@ func _check_web_gate() -> void:
 			+ "outside the browser")
 	if watch._http != null:
 		_fail("the watch built an HTTPRequest off-web")
+	if not watch._base_url.is_empty():
+		_fail("the watch resolved a base url off-web (%s) — that can only have " \
+			% watch._base_url + "come from JavaScriptBridge")
 	for child: Node in watch.get_children():
 		_fail("the watch parented a %s off-web — nothing may be built there" \
 			% child.get_class())
@@ -201,7 +232,7 @@ func _check_web_gate() -> void:
 	# exactly the state a desktop build leaves it in.
 	watch._poll()
 
-	watch.queue_free()
+	watch.free()
 
 
 # ============================================================================
@@ -276,13 +307,12 @@ func _check_never_mid_run() -> void:
 	_game_over.visible = false
 	watch._pending = true
 
-	for frame: int in 5:
-		watch._process(1.0 / 60.0)
-		if watch.reloads != 0:
-			_fail("the tab reloaded on frame %d in the middle of a run — the " \
-				% frame + "player's distance, coins and lives are gone, which is " \
-				+ "worse than running an old build")
-			break
+	_drive(watch, LONG_ENOUGH * 3.0)
+
+	if watch.reloads != 0:
+		_fail("the tab reloaded in the middle of a run (%d times) — the player's " \
+			% watch.reloads + "distance, coins and lives are gone, which is worse " \
+			+ "than running an old build")
 	if not watch._pending:
 		_fail("the pending update was dropped mid-run instead of being held — the " \
 			+ "player would stay on the old build until they reload by hand")
@@ -290,7 +320,44 @@ func _check_never_mid_run() -> void:
 
 
 # ============================================================================
-# 5. IT MUST ACTUALLY FIRE
+# 5. THE SAFE POINT HAS TO HOLD
+# ============================================================================
+
+## The game-over screen becomes visible in the physics step and `_process` runs in
+## the idle step of the SAME engine iteration. Without a dwell the player dies and
+## the page reloads before a single frame of their final score is drawn — and the
+## `/best` POST `best_run_store` fires on that same death never completes.
+func _check_the_safe_point_has_to_hold() -> void:
+	for screen: String in ["the start card", "the game-over screen"]:
+		var watch := _fresh_watch()
+		_start.showing = screen == "the start card"
+		_game_over.visible = screen != "the start card"
+		watch._pending = true
+
+		# One frame — the frame the screen appeared on.
+		watch._process(1.0 / 60.0)
+		if watch.reloads != 0:
+			_fail("the tab reloaded on the FIRST frame of %s — the player never " \
+				% screen + "sees the screen, and anything still settling behind it " \
+				+ "(the /best POST) is torn out mid-flight")
+
+		# Most of the dwell, but not all of it.
+		_drive(watch, BuildVersion.SAFE_DWELL_SEC * 0.5)
+		if watch.reloads != 0:
+			_fail("the tab reloaded on %s before SAFE_DWELL_SEC had elapsed" % screen)
+
+		# The moment must also be spendable — otherwise this check passes for a
+		# dwell so long nothing ever reloads. (Check 6 asserts the count; this is
+		# only the ordering.)
+		_drive(watch, LONG_ENOUGH)
+		if watch.reloads == 0:
+			_fail("the dwell on %s never expired — the reload is owed forever and " \
+				% screen + "the feature does nothing")
+		_teardown()
+
+
+# ============================================================================
+# 6. IT MUST ACTUALLY FIRE
 # ============================================================================
 
 ## Pre-run safe point: the start card still owns the screen, so there is nothing
@@ -302,13 +369,13 @@ func _check_fires_at_the_start_card() -> void:
 
 	# NEGATIVE CONTROL. Without it, "no reload mid-run" above is equally true of a
 	# node whose reload path is broken outright.
-	watch._process(1.0 / 60.0)
+	_drive(watch, LONG_ENOUGH)
 	if watch.reloads != 0:
 		_fail("the tab reloaded on the start card with NO update pending — the " \
 			+ "latch is not gating anything")
 
 	watch._pending = true
-	watch._process(1.0 / 60.0)
+	_drive(watch, LONG_ENOUGH)
 	if watch.reloads != 1:
 		_fail("a pending update at the start card produced %d reloads, expected 1" \
 			% watch.reloads)
@@ -317,8 +384,7 @@ func _check_fires_at_the_start_card() -> void:
 			+ "and several more frames run, so each of them would fire again")
 
 	# Those following frames, for real.
-	for _frame: int in 3:
-		watch._process(1.0 / 60.0)
+	_drive(watch, LONG_ENOUGH * 2.0)
 	if watch.reloads != 1:
 		_fail("the watch fired %d times over the frames after the reload — a " \
 			% watch.reloads + "reload storm, not a reload")
@@ -332,7 +398,7 @@ func _check_fires_at_game_over() -> void:
 	_game_over.visible = true
 	watch._pending = true
 
-	watch._process(1.0 / 60.0)
+	_drive(watch, LONG_ENOUGH)
 	if watch.reloads != 1:
 		_fail("a pending update at the game-over screen produced %d reloads, " \
 			% watch.reloads + "expected 1 — the post-run safe point does not work")
@@ -340,40 +406,78 @@ func _check_fires_at_game_over() -> void:
 
 
 # ============================================================================
-# 6. A ROOM OUTRANKS BOTH SAFE POINTS
+# 7. A ROOM OUTRANKS BOTH SAFE POINTS
 # ============================================================================
 
 ## Reloading drops this peer out of the mesh mid-session, which costs the other
 ## players their teammate. So an open room is unsafe even on the two screens that
-## are otherwise the safest moments there are.
+## are otherwise the safest moments there are — and so is a join still CONNECTING,
+## which `is_online()` alone does not see.
 func _check_room_outranks_the_safe_points() -> void:
 	for screen: String in ["the start card", "the game-over screen"]:
-		var watch := _fresh_watch()
-		_mp.online = true
-		_start.showing = screen == "the start card"
-		_game_over.visible = screen != "the start card"
-		watch._pending = true
+		for state: String in ["connecting", "in_room"]:
+			var watch := _fresh_watch()
+			_mp.state = state
+			_start.showing = screen == "the start card"
+			_game_over.visible = screen != "the start card"
+			watch._pending = true
 
-		for _frame: int in 3:
-			watch._process(1.0 / 60.0)
-		if watch.reloads != 0:
-			_fail("the tab reloaded on %s while a multiplayer room was open — " \
-				% screen + "the peer drops out of the mesh and its teammates lose it")
-		if not watch._pending:
-			_fail("the pending update was dropped instead of held while in a room")
+			_drive(watch, LONG_ENOUGH * 2.0)
+			if watch.reloads != 0:
+				_fail("the tab reloaded on %s while multiplayer was %s — " \
+					% [screen, state] \
+					+ ("the peer drops out of the mesh and its teammates lose it" \
+						if state == "in_room" \
+						else "the join is abandoned in flight and the button just " \
+							+ "appears to do nothing (is_online() does not see " \
+							+ "CONNECTING; is_busy() does)"))
+			if not watch._pending:
+				_fail("the pending update was dropped instead of held while %s" % state)
 
-		# Leaving the room is what makes it safe, and it must then fire.
-		_mp.online = false
-		watch._process(1.0 / 60.0)
-		if watch.reloads != 1:
-			_fail("leaving the room on %s did not release the held reload (%d)" \
-				% [screen, watch.reloads])
-		_teardown()
+			# Leaving is what makes it safe, and it must then fire.
+			_mp.state = "offline"
+			_drive(watch, LONG_ENOUGH)
+			if watch.reloads != 1:
+				_fail("leaving the room on %s (from %s) did not release the held " \
+					% [screen, state] + "reload (%d)" % watch.reloads)
+			_teardown()
+
+
+# ============================================================================
+# 8. AN EMPTY WORLD IS NOT A SAFE WORLD
+# ============================================================================
+
+## The documented degrade: with none of the three nodes present — a scene run
+## standalone, or this node dropped into a bare tree — every lookup must fall
+## through to "not safe". Falling through to "safe" would reload a live game.
+func _check_an_empty_world_is_not_safe() -> void:
+	_teardown()
+	var watch := Watch.new()
+	root.add_child(watch)
+	watch._pending = true
+
+	_drive(watch, LONG_ENOUGH * 2.0)
+
+	if watch.reloads != 0:
+		_fail("the tab reloaded with no mp / start_overlay / game_over_ui in the " \
+			+ "tree — a missing node must read as `not safe`, never as `reload now`")
+	watch.free()
 
 
 # ============================================================================
 # THE FAKE WORLD
 # ============================================================================
+
+## Run `_process` for `seconds` of game time, in 60 Hz steps. The watch is
+## `set_process(false)` off-web (check 2 asserts it), so every scenario drives it
+## by hand — the same way `intro_selfcheck.gd` drives the start overlay.
+func _drive(watch: Watch, seconds: float) -> void:
+	var step: float = 1.0 / 60.0
+	var elapsed: float = 0.0
+	while elapsed < seconds:
+		watch._process(step)
+		elapsed += step
+
 
 ## A live watch plus the three group-discovered nodes it reads, all under the tree
 ## root so `_ready()` really runs. Fakes rather than the real scripts: the watch's

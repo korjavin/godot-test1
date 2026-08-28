@@ -1,4 +1,4 @@
-[gd_scene load_steps=29 format=3 uid="uid://clqb4rcmjrpgs"]
+[gd_scene load_steps=32 format=3 uid="uid://clqb4rcmjrpgs"]
 
 [ext_resource type="PackedScene" uid="uid://bqtq2xtxqnvvr" path="res://scenes/player.tscn" id="1_main"]
 [ext_resource type="Script" uid="uid://b07rwceo0eo4o" path="res://scripts/endless_terrain.gd" id="2_terrain"]

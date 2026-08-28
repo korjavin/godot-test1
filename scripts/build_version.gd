@@ -34,9 +34,11 @@ extends Node
 ## a worse outcome than one more session on an old build. So the poll never
 ## reloads: it only LATCHES `_pending`, and `_process` spends that latch at the
 ## next safe moment — the start card (nothing to lose yet) or the game-over screen
-## (nothing left to lose). An active multiplayer room is unsafe too whatever else
-## is on screen: a reload drops the peer out of the mesh mid-session, so we wait
-## until they have left the room.
+## (nothing left to lose) — and only once that moment has HELD for
+## `SAFE_DWELL_SEC`, because both of them are reached on a frame where something
+## else is still settling. Multiplayer is unsafe too whatever else is on screen,
+## from the join press onward and not merely once a room exists: a reload drops the
+## peer out of the mesh mid-session, or abandons the join in flight.
 ##
 ## ----------------------------------------------------------------------------
 ## FAILURE IS ALWAYS SILENCE
@@ -90,6 +92,20 @@ const POLL_INTERVAL_SEC: float = 300.0
 ## `lobby_client.gd` both document. Short, because nothing waits on this.
 const REQUEST_TIMEOUT_SEC: float = 10.0
 
+## How long a safe point has to HOLD before the latch is spent on it.
+##
+## Without this the game-over case is a zero-frame safe point: the player dies in
+## the physics step, `game_over_ui` becomes visible, and the very next idle step
+## reloads the page — so the distance, the coin tally and the "NEW BEST!" flash
+## are on screen for no frames at all, which reads as a crash. It also gives the
+## `/best` POST `best_run_store` fires on the same death (5 s timeout) room to
+## finish, instead of having its page torn out from under it.
+##
+## It is deliberately one timer covering BOTH safe points rather than a rule per
+## screen: a moment that has only just become safe is exactly the moment something
+## else is still settling.
+const SAFE_DWELL_SEC: float = 6.0
+
 # ============================================================================
 # STATE
 # ============================================================================
@@ -106,8 +122,14 @@ var _http: HTTPRequest = null
 
 ## The page's own directory URL (".../" including the trailing slash), read once
 ## from the browser because `HTTPRequest` needs an absolute URL and the export is
-## served from a sub-path on one of its two homes. Empty off-web.
+## served from a sub-path on one of its two homes. Empty off-web, and empty if the
+## bridge answers anything but a string — with which every poll fails to start,
+## which is the intended nothing-happens.
 var _base_url: String = ""
+
+## How long the current safe point has held, in seconds. Reset the moment it stops
+## being safe, so a run that starts, or a room that opens, spends the credit.
+var _safe_for: float = 0.0
 
 
 func _ready() -> void:
@@ -130,8 +152,16 @@ func _ready() -> void:
 	# just the path, so dropping its final segment is exactly "the directory
 	# index.html was served from" — which is the origin root on the nginx image and
 	# a sub-path on the Pages mirror.
-	_base_url = str(JavaScriptBridge.eval(
-		"location.origin + location.pathname.replace(/[^/]*$/, '')", true))
+	#
+	# Typed rather than `str()`-ed: a bridge that answers null (eval blocked by a
+	# CSP, an engine build without it) would otherwise stringify to the literal
+	# "<null>" and every poll would ask for "<null>version.json" forever. An empty
+	# base makes `request()` refuse the url instead, which is the nothing-happens
+	# this file promises everywhere else.
+	var href: Variant = JavaScriptBridge.eval(
+		"location.origin + location.pathname.replace(/[^/]*$/, '')", true)
+	if typeof(href) == TYPE_STRING:
+		_base_url = href as String
 
 	_http = HTTPRequest.new()
 	_http.timeout = REQUEST_TIMEOUT_SEC
@@ -152,12 +182,19 @@ func _watch_enabled() -> bool:
 	return OS.has_feature("web") and BUILD_SHA != UNVERSIONED_SHA
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	# One bool test per frame in the overwhelmingly common case. The group lookups
 	# below only ever run once an update is actually waiting.
 	if not _pending:
 		return
 	if not _safe_to_reload():
+		# It stopped being safe — a run started, or a room opened. Whatever credit
+		# had built up belongs to a moment that is over.
+		_safe_for = 0.0
+		return
+	# The safe point has to HOLD, not merely occur — see SAFE_DWELL_SEC.
+	_safe_for += delta
+	if _safe_for < SAFE_DWELL_SEC:
 		return
 	# Spend the latch BEFORE the reload. `location.reload()` returns immediately
 	# and the browser tears the page down whenever it gets round to it, so several
@@ -184,12 +221,16 @@ func _safe_to_reload() -> bool:
 	# A room is unsafe whatever is on screen. Reloading drops this peer out of the
 	# mesh mid-session, which costs the OTHER players their teammate — so a room
 	# outranks both safe points and we simply wait until they have left it.
+	#
+	# `is_busy()`, not `is_online()`: online is only IN_ROOM, and a join spends
+	# seconds in CONNECTING (websocket, then ICE) before it gets there. Joining a
+	# room FROM the game-over screen is a supported flow, so the narrower test left
+	# exactly that press open to a reload that abandons the join in flight.
 	var mp: Node = get_tree().get_first_node_in_group("mp")
-	if mp != null and mp.has_method("is_online") and bool(mp.is_online()):
+	if mp != null and mp.has_method("is_busy") and bool(mp.is_busy()):
 		return false
 
-	# Pre-run: the start card (or the intro film behind it) still owns the screen
-	# and no run has begun.
+	# Pre-run: the start card still owns the screen and no run has begun.
 	var start: Node = get_tree().get_first_node_in_group("start_overlay")
 	if start != null and start.has_method("is_showing") and bool(start.is_showing()):
 		return true
@@ -220,7 +261,7 @@ func _reload_now() -> void:
 # ============================================================================
 
 func _poll() -> void:
-	if _http == null:
+	if _http == null or _base_url.is_empty():
 		return
 	# Already known to be superseded — the answer cannot change, so stop asking.
 	if _pending:

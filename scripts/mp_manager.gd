@@ -847,6 +847,21 @@ func is_online() -> bool:
 	return _state == State.IN_ROOM
 
 
+func is_busy() -> bool:
+	"""
+	True from the moment `join()` is called until `leave()` — the WIDER window,
+	covering the seconds a join spends CONNECTING (socket, then ICE) before
+	`welcome` makes it a room.
+
+	`is_online()` answers "is there a room", which is what every gameplay path
+	wants. This answers "is this peer engaged with the lobby at all", which is what
+	anything about to disrupt the session — `build_version.gd`'s auto-reload — has
+	to ask instead: a reload during CONNECTING abandons the join in flight, and the
+	player just sees the button do nothing.
+	"""
+	return _state != State.OFFLINE
+
+
 func room_seed() -> Variant:
 	"""
 	The world seed everyone in this room shares, or `null` when there is no room
