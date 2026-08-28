@@ -29,14 +29,21 @@ extends Control
 ## ----------------------------------------------------------------------------
 ## The pause is the shared one, not a new one
 ## ----------------------------------------------------------------------------
-## `start_overlay.gd`, `pause_controller.gd`, `mp_ui.gd` and `mobile_input.gd`
-## all take `get_tree().paused` and all carry the same `_paused_by_us` guard:
-## **only ever release a pause WE took.** This node carries it too, which is what
-## makes the interactions between them boring — open the help over a P-pause and
-## closing it leaves the P-pause standing; open the MP panel's pause under ours
-## and neither cancels the other. `process_mode = ALWAYS` is what lets this node
-## still hear the key that closes it (the same argument `pause_controller.gd`'s
-## header makes at length).
+## Every pauser in this project routes through `PauseHub` (scripts/pause_hub.gd),
+## which refcounts holders: **only ever release a pause WE took, and the world
+## only starts again when the LAST holder lets go.** This node carries its own
+## `_paused_by_us` claim bit, which is what makes the interactions between them
+## boring — open the help over a P-pause and closing it leaves the P-pause
+## standing; press P again with the help still up and the world stays frozen
+## behind it. `process_mode = ALWAYS` is what lets this node still hear the key
+## that closes it (the same argument `pause_controller.gd`'s header makes at
+## length).
+##
+## THIS NODE IS WHY THE HUB EXISTS. Opening over an already-paused game is the
+## point of a keymap card, so under the old first-taker-owns discipline it was
+## the overlay that claimed nothing and got stranded over a running world the
+## moment the P-pause behind it was released. It now takes a claim of its own
+## every time it opens, paused tree or not.
 ##
 ## The mouse follows `pause_controller`'s rule exactly: release a CAPTURED cursor
 ## on open, and re-capture on close **only if we were the one who released it**.
@@ -299,11 +306,16 @@ func _may_open() -> bool:
 ## Take or release the pause, and hand the mouse across with it. The
 ## `_paused_by_us` guard is the one every pauser in this project carries: releasing
 ## a pause somebody else took would strand their overlay over a running game.
+##
+## THE CLAIM IS UNCONDITIONAL, and that is the fix. The old `if not tree.paused`
+## around it meant a help card opened over the P-pause held nothing, so the next P
+## started the world underneath it. `PauseHub.take()` is idempotent, so claiming
+## over an existing pause simply makes us the second holder and the world stays
+## frozen until BOTH let go.
 func _apply_pause(open: bool) -> void:
-	var tree := get_tree()
 	if open:
-		if not tree.paused:
-			tree.paused = true
+		if not _paused_by_us:
+			PauseHub.take(self)
 			_paused_by_us = true
 		# Free the cursor so Close is clickable — and remember that we did, so a
 		# player who had already freed it themselves gets it left alone.
@@ -313,7 +325,7 @@ func _apply_pause(open: bool) -> void:
 		return
 	if _paused_by_us:
 		_paused_by_us = false
-		tree.paused = false
+		PauseHub.release(self)
 	if _recapture_mouse:
 		_recapture_mouse = false
 		# The keypress/click that closed the list IS the user gesture browsers

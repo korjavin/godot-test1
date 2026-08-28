@@ -46,9 +46,12 @@ extends Control
 ##
 ## `process_mode` gates `_input` and `_physics_process` together, so pausing is
 ## the one-line fix for both — exactly the argument `mp_ui._set_panel_open()`
-## makes for the MP panel, and the `_paused_by_us` guard here is the same guard
+## makes for the MP panel, and the `_paused_by_us` claim bit here is the same one
 ## `pause_controller.gd`, `mobile_input.gd` and `mp_ui.gd` carry on each other:
-## only ever release a pause WE took.
+## only ever release a pause WE took. The pause itself is refcounted by
+## `PauseHub` (scripts/pause_hub.gd), so this node's claim survives — and keeps
+## the world frozen — for as long as the menu and the film are up, whatever else
+## opens or closes over the top of them.
 ##
 ## **Mouse capture is handed over rather than suppressed.** `player_controller`
 ## captures the mouse in its own `_ready()`, which runs *before* this node's
@@ -622,10 +625,14 @@ func _dismiss(capture_mouse: bool = true) -> void:
 func _apply_pause(active: bool) -> void:
 	if not active and not _paused_by_us:
 		return
-	var tree := get_tree()
 	if active:
-		if not tree.paused:
-			tree.paused = true
+		# Taken once and HELD — through the menu, through the whole intro film,
+		# and handed to `_dismiss()`. `_apply_pause(true)` is re-asserted every
+		# frame from `_process` (see the callers), so the claim guard is what keeps
+		# that to one dictionary write; `PauseHub.take()` would be idempotent
+		# anyway.
+		if not _paused_by_us:
+			PauseHub.take(self)
 			_paused_by_us = true
 		# Free the cursor so the buttons are clickable. Unconditional — unlike
 		# `mp_ui`, this node has no handover to remember: `_dismiss()` always
@@ -634,4 +641,4 @@ func _apply_pause(active: bool) -> void:
 			Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 	else:
 		_paused_by_us = false
-		tree.paused = false
+		PauseHub.release(self)

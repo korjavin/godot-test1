@@ -889,6 +889,12 @@ func _on_resume_overlay_pressed() -> void:
 	if driver != null:
 		driver.resume_from_pause()
 	else:
+		# The one raw pause write left outside `PauseHub` (scripts/pause_hub.gd),
+		# and deliberately so: it is the unreachable anti-softlock belt above, not
+		# a claim being released, and it has no holder identity to release with.
+		# `PauseHub` recomputes the tree state from its holder set on the next
+		# take/release, so this cannot desync anything for longer than that. Do not
+		# copy this line — every real pauser goes through the hub.
 		get_tree().paused = false
 
 

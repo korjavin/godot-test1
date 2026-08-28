@@ -21,6 +21,11 @@ extends Node
 ## mobile_input.gd is a SEPARATE system with its own tap-to-resume overlay,
 ## and the `_paused_by_us` guard below keeps the two from unpausing each
 ## other's state.
+##
+## THE PAUSE ITSELF GOES THROUGH `PauseHub` — see scripts/pause_hub.gd. The
+## refcount is what makes "P again" safe while the help card is still up over
+## our pause: we drop OUR claim, the help keeps ITS one, and the world stays
+## frozen until the last overlay closes.
 
 ## The key that toggles pause. A constant (not an input-map action) on purpose:
 ## debug/meta keys in this project live outside the input map so they can never
@@ -34,10 +39,9 @@ const PAUSE_TEXT: String = "PAUSED\n\nPress P to resume"
 ## The overlay UI this node builds for itself in _ready().
 var _overlay: CanvasLayer = null
 
-## True only while the CURRENT pause was started by this node. The mobile
-## focus-loss pause (mobile_input.gd) also sets get_tree().paused — P must
-## never silently cancel THAT pause, or the "tap to resume" overlay would be
-## left up over a running game.
+## True while THIS node holds a `PauseHub` claim. The mobile focus-loss pause
+## (mobile_input.gd) also freezes the tree — P must never silently cancel THAT
+## pause, or the "tap to resume" overlay would be left up over a running game.
 var _paused_by_us: bool = false
 
 ## Whether we released a captured mouse when pausing, and so should recapture
@@ -61,27 +65,36 @@ func _input(event: InputEvent) -> void:
 
 func _toggle_pause() -> void:
 	var tree := get_tree()
-	if not tree.paused:
-		# Don't pause over the game-over screen — its buttons should stay live,
-		# and "paused behind game over" is a state nobody can read.
-		var player := tree.get_first_node_in_group("player")
-		if player != null and bool(player.get("is_game_over")):
-			return
-		tree.paused = true
-		_paused_by_us = true
-		_overlay.visible = true
-		# Free the mouse so a paused player can reach their browser/OS.
-		if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
-			Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
-			_recapture_mouse = true
-	elif _paused_by_us:
-		# Only unpause a pause WE created (see _paused_by_us above).
-		tree.paused = false
+	if _paused_by_us:
+		# Drop only OUR claim (see _paused_by_us above). If the help card or the
+		# MP panel is also holding one, the world stays frozen and only our dim
+		# goes away — which is precisely the bug the refcount fixes.
 		_paused_by_us = false
+		PauseHub.release(self)
 		_overlay.visible = false
 		if _recapture_mouse:
 			_recapture_mouse = false
 			Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+		return
+	# P IS INERT UNDER SOMEBODY ELSE'S PAUSE, unchanged by the refcount. This is a
+	# CONDITION read — "is the world already stopped" — not an ownership question:
+	# adding a second claim here would park a "PAUSED / press P to resume" card
+	# over the MP panel or the phone's resume overlay, which is a worse screen than
+	# doing nothing.
+	if tree.paused:
+		return
+	# Don't pause over the game-over screen — its buttons should stay live,
+	# and "paused behind game over" is a state nobody can read.
+	var player := tree.get_first_node_in_group("player")
+	if player != null and bool(player.get("is_game_over")):
+		return
+	PauseHub.take(self)
+	_paused_by_us = true
+	_overlay.visible = true
+	# Free the mouse so a paused player can reach their browser/OS.
+	if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
+		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+		_recapture_mouse = true
 
 
 func _build_overlay() -> void:

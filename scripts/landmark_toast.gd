@@ -795,12 +795,16 @@ func _answer(slot: int) -> void:
 # WHY is the owner ruling at the top of the file. This is the HOW, and it is four
 # decisions.
 #
-# 1. `_paused_by_us` IS THE SHARED GUARD, not a local convenience.
-#    pause_controller.gd, mp_ui.gd, skill_tree_ui.gd, start_overlay.gd and
-#    mobile_input.gd all take `get_tree().paused` and all carry this same flag for
-#    the same reason: a pauser may only ever release a pause IT took. A card that
-#    resolved while the skill tree was open and unpaused unconditionally would
-#    hand the player a running world behind a panel they are still reading.
+# 1. `_paused_by_us` IS THE SHARED CLAIM BIT, not a local convenience.
+#    pause_controller.gd, mp_ui.gd, skill_tree_ui.gd, start_overlay.gd,
+#    help_overlay.gd and mobile_input.gd all take the pause through
+#    `PauseHub` (scripts/pause_hub.gd) and all carry this same flag for the same
+#    reason: a pauser may only ever release a claim IT made. A card that resolved
+#    while the skill tree was open and unpaused unconditionally would hand the
+#    player a running world behind a panel they are still reading — and now, with
+#    the hub refcounting holders, the world also stays frozen when our timeout
+#    fires under a help card that opened over our question. That last one is the
+#    ceiling this banner used to record; it is closed (godot-test1-42y).
 #
 # 2. THE NODE PROCESSES WHILE — AND ONLY WHILE — THE PAUSE IS OURS, and this is
 #    the trap the whole change turns on. The quiz clock is `_update_quiz`, driven
@@ -834,22 +838,15 @@ func _answer(slot: int) -> void:
 #    digit. On a touchscreen nothing is captured and the option Buttons are
 #    tappable as they stand.
 #
-# ponytail: THE CEILING THAT LEAVES, stated plainly — this project's pause
-# discipline is FIRST-TAKER-OWNS, not a refcount, so an overlay that opens OVER an
-# existing pause takes no ownership of it and is left behind when the owner
-# releases. `help_overlay.gd` is PROCESS_MODE_ALWAYS and deliberately opens over a
-# paused game (reading the keymap while paused is the point of it), so `?` pressed
-# during a question, followed by our timeout firing, leaves the world running
-# behind the open help card. That is not new and not ours: the identical thing
-# already happens on master by opening help over the P pause and then pressing P
-# again — what IS new is that our release can arrive on a timer, with the player
-# doing nothing. The unattended half of that is closed below (the clock does not
-# run while the app is unfocused, which is the case where nobody is watching);
-# the `?` half is left, because the honest fix is a shared pause REFCOUNT across
-# pause_controller / mp_ui / skill_tree_ui / start_overlay / mobile_input /
-# help_overlay and this file, which is a change to six other scripts' contracts
-# and belongs to none of them alone. Upgrade path: exactly that refcount, with
-# `_paused_by_us` becoming "we hold a claim" instead of "we hold THE claim".
+# 5. THE CEILING THIS BANNER USED TO RECORD IS GONE. It read: the project's pause
+#    discipline is FIRST-TAKER-OWNS, so an overlay opening OVER an existing pause
+#    takes no ownership and is stranded when the owner releases — `?` pressed
+#    during a question, followed by our timeout, left the world running behind an
+#    open help card. `scripts/pause_hub.gd` is the refcount that upgrade path
+#    named, and `_paused_by_us` now means "we hold A claim" rather than "we hold
+#    THE claim", exactly as predicted. The unattended focus hold below stays: it
+#    is a separate and still-correct rule about a question whose clock nobody is
+#    watching, not a workaround for the ceiling.
 
 
 func _notification(what: int) -> void:
@@ -878,10 +875,15 @@ func _take_pause() -> void:
 	the three reasons above it would be wrong to.
 	"""
 	var tree := get_tree()
-	# Somebody else's pause is already up. There is nothing to take, and nothing we
-	# would be allowed to give back — leave it alone entirely. (Unreachable while
-	# this node is pausable, since `_scan` could not have run; it is here because
-	# that is a property of decision 2 above, not of this function.)
+	# Somebody else's pause is already up — leave it alone entirely. This is a
+	# CONDITION read ("is the world already stopped"), NOT the old first-taker
+	# ownership test, and it deliberately survived the move to `PauseHub`: adding a
+	# claim here would make `_paused_by_us` true under the skill tree's pause, and
+	# `_unhandled_input` reads exactly that bit to decide whether a digit is ours
+	# to answer — a player closing a panel with the number row would answer blind.
+	# (Unreachable while this node is pausable, since `_scan` could not have run;
+	# it is here because that is a property of decision 2 above, not of this
+	# function.)
 	if tree.paused:
 		return
 	# A ROOM: the pause is local and the simulation is not — see decision 3.
@@ -900,7 +902,7 @@ func _take_pause() -> void:
 	var player: Node = tree.get_first_node_in_group("player")
 	if player != null and "is_game_over" in player and bool(player.is_game_over):
 		return
-	tree.paused = true
+	PauseHub.take(self)
 	_paused_by_us = true
 	process_mode = Node.PROCESS_MODE_ALWAYS
 
@@ -916,8 +918,12 @@ func _release_pause() -> void:
 	if not _paused_by_us:
 		return
 	_paused_by_us = false
+	# PROCESS_MODE goes back WITH the claim, not before or after it: the pairing is
+	# what stops a softlock either way round. `PauseHub` may well leave the tree
+	# paused here — a help card opened over the question still holds — and that is
+	# the point: this card gives back its own claim and nothing else.
 	process_mode = Node.PROCESS_MODE_INHERIT
-	get_tree().paused = false
+	PauseHub.release(self)
 
 
 func _exit_tree() -> void:
