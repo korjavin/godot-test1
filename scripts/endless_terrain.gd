@@ -1909,7 +1909,16 @@ const BIOME_SPECIES: Dictionary = {
 ## the AI's _ready() and behaves as a crocodile, and a scene that fails to load
 ## falls back to the crocodile scene — a visibly wrong animal, never a boss-less
 ## station.
-const BIOME_BOSS: Dictionary = {}
+const BIOME_BOSS: Dictionary = {
+	## The snow band's guardian: the TITAN, a slow HMM3-style giant archer that
+	## barely pursues and instead throws a dodgeable thunder bolt. The first row
+	## this table has ever had — everything above about the shape of it (station
+	## centre, no RNG draw, river-first) was written for exactly this line.
+	Biome.SNOW: {
+		"species": "titan",
+		"scene": "res://scenes/characters/titan.tscn",
+	},
+}
 
 # ----------------------------------------------------------------------------
 # SNOW — frozen dead trees and mammoth skeletons on an open tundra
