@@ -182,7 +182,7 @@ const ROTOR_POST_X: float = SLAB_X0 - 0.2
 ## must clear the ramp's underside where they cross (3.91 m), and — the rule that
 ## actually matters — it must stay under a plain jump apex (3.6125 m) from the
 ## courtyard floor, so the low stretch is a wall and not a step onto the roof.
-const RAMP_UNDER_Z: float = 5.0
+const RAMP_UNDER_Z: float = RAMP_Z - RAMP_WIDTH * 0.5
 const RAMP_UNDER_TOP: float = 3.4
 
 ## The two bars: height off the floor, and angular velocity (rad/s). OPPOSITE
@@ -205,9 +205,16 @@ const ROTOR_HIGH_SPEED: float = -0.77
 ## `CharacterBody3D` has no step-up: a stair tread of ANY height is a wall you have
 ## to jump, which is precisely the jump-gated traversal this bead forbids. A ramp
 ## is the only stair this engine has.
+##
+## IT HUGS THE NORTH WALL, and that is load-bearing rather than tidy: the low
+## stretch of wall it flies over (`RAMP_UNDER_Z`) is derived from the ramp's own
+## strip, so the two are the same span by construction. Move the ramp inboard and
+## you leave a length of 3.4 m wall standing under the open sky beside it — which
+## is a step onto the upper floor and a way past the challenge space. The
+## self-check found exactly that.
 const RAMP_X0: float = -8.5
-const RAMP_Z: float = 6.6
 const RAMP_WIDTH: float = 2.8
+const RAMP_Z: float = INNER_HALF - RAMP_WIDTH * 0.5
 const RAMP_THICK: float = 0.4
 
 ## The demand gate's vault, off the hall's south end. The shutter fills the gap
@@ -890,11 +897,14 @@ func _make_rotor(box: Dictionary, parent: Node3D) -> Node3D:
 
 func _build_pads() -> void:
 	"""The three trigger volumes: demand plate, identity plate, checkpoint."""
-	_add_area("DemandPad", Vector3(RECEPTACLE_X, 1.0, RECEPTACLE_Z + 1.3),
+	# NAMED `*Trigger`, NOT `*Pad`: the visible plates are meshes already carrying
+	# those names, and two siblings with one name is a rename by the engine — which
+	# turns every `get_node("Floor1/IdentityPad")` into a null.
+	_add_area("DemandTrigger", Vector3(RECEPTACLE_X, 1.0, RECEPTACLE_Z + 1.3),
 		Vector3(2.6, 2.0, 2.0), _on_demand_enter, _on_demand_exit, 0)
-	_add_area("IdentityPad", Vector3(UPPER_WALL_X - 1.8, SLAB_Y + 1.0, 0.0),
+	_add_area("IdentityTrigger", Vector3(UPPER_WALL_X - 1.8, SLAB_Y + 1.0, 0.0),
 		Vector3(2.6, 2.0, 3.0), _on_identity_enter, _on_identity_exit, 1)
-	_add_area("CheckpointZone", Vector3(6.8, SLAB_Y + 1.0, 0.0),
+	_add_area("CheckpointTrigger", Vector3(6.8, SLAB_Y + 1.0, 0.0),
 		Vector3(3.0, 2.0, 3.0), _on_checkpoint_enter, Callable(), 1)
 
 
