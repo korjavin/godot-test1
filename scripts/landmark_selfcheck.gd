@@ -107,6 +107,10 @@ extends SceneTree
 ##      Step (l) drives the multiplayer ruling: in a room the pause is skipped
 ##      outright, because `get_tree().paused` is local and crocodiles are
 ##      master-simulated, so a paused master would stall the world for everybody.
+##      Step (n) covers the one overlap this project's first-taker-owns pause
+##      discipline cannot survive unattended: a focus loss over our pause claims
+##      nothing, so without the clock stopping too, a backgrounded tab would time
+##      the question out and resume the world with nobody looking at it.
 ##
 ## HOUSE RULE, followed throughout: every check is an EFFECT measurement with a
 ## negative control, never a getter read-back. Check 1 measures emitted geometry
@@ -253,6 +257,11 @@ extends SceneTree
 ##       asked without pausing the tree (7(i)); (j), (k) and (m) each report that
 ##       they cannot measure their release, which is the point of stating the
 ##       precondition in every one of them.
+##   (mm) the `if _unfocused: return` dropped from `_update_quiz`  ->  FAIL: the
+##       question timed out while the app was unfocused — the world unpauses in a
+##       backgrounded tab with nobody watching (7(n)). Dropping the FOCUS_IN arm
+##       of `_notification` instead is the mirror: FAIL: the question never
+##       resolved after the app regained focus — the clock was stopped, not held.
 ##   (ll) `_exit_tree` dropped from landmark_toast  ->  FAIL: the tree was already
 ##       paused when check 7 started. Check 5 frees its toast with a question still
 ##       pending, so the release on teardown is load-bearing for this file as well
@@ -1603,6 +1612,30 @@ func _check_quiz_toast(registry: Array) -> void:
 	toast.call("_update_burst", 100.0)
 	if paused:
 		_fail("quiz: step (m) left the tree paused")
+
+	# --- (n) A BACKGROUNDED TAB DOES NOT RESOLVE THE QUESTION BEHIND THE PLAYER.
+	# `mobile_input.pause_game()` early-returns on an already-paused tree, so a
+	# focus loss during a question takes no ownership of our pause and never raises
+	# the "tap to resume" overlay — leaving QUIZ_TIMEOUT free to fire in a
+	# backgrounded tab, unpause, and hand back a running world with a crocodile in
+	# it. The FOCUS_IN half is the control: it proves the clock was held rather
+	# than broken.
+	terrain.run_seed = 515063
+	_walk_in(toast, player, near, far)
+	if not paused:
+		_fail("quiz: step (n) cannot measure the focus hold — the ask did not pause")
+	toast.notification(NOTIFICATION_APPLICATION_FOCUS_OUT)
+	toast.call("_process", quiz_timeout + 1.0)
+	if not bool(toast.get("_quiz_pending")):
+		_fail("quiz: the question timed out while the app was unfocused — the world unpauses in a backgrounded tab with nobody watching")
+	if not paused:
+		_fail("quiz: the pause was released while the app was unfocused")
+	toast.notification(NOTIFICATION_APPLICATION_FOCUS_IN)
+	toast.call("_process", quiz_timeout + 1.0)
+	if bool(toast.get("_quiz_pending")):
+		_fail("quiz: the question never resolved after the app regained focus — the clock was stopped, not held")
+	if paused:
+		_fail("quiz: the pause survived the question that regained focus and timed out")
 
 	toast.queue_free()
 	marker.queue_free()

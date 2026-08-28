@@ -388,6 +388,10 @@ var _quiz_timer: float = 0.0
 ## (digits must not, or closing a panel with the number row answers blind).
 var _paused_by_us: bool = false
 
+## Whether the app has lost focus (tab switched, phone backgrounded) since it last
+## had it. Only ever read by `_update_quiz`; see `_notification` for why it exists.
+var _unfocused: bool = false
+
 ## Burst state, the treasure_chest.gd shape: how many single-coin awards are
 ## still owed, the gap between them, and the countdown to the next one.
 var _burst_remaining: int = 0
@@ -829,6 +833,42 @@ func _answer(slot: int) -> void:
 #    landmark would yank the camera twice for a card most players answer with a
 #    digit. On a touchscreen nothing is captured and the option Buttons are
 #    tappable as they stand.
+#
+# ponytail: THE CEILING THAT LEAVES, stated plainly — this project's pause
+# discipline is FIRST-TAKER-OWNS, not a refcount, so an overlay that opens OVER an
+# existing pause takes no ownership of it and is left behind when the owner
+# releases. `help_overlay.gd` is PROCESS_MODE_ALWAYS and deliberately opens over a
+# paused game (reading the keymap while paused is the point of it), so `?` pressed
+# during a question, followed by our timeout firing, leaves the world running
+# behind the open help card. That is not new and not ours: the identical thing
+# already happens on master by opening help over the P pause and then pressing P
+# again — what IS new is that our release can arrive on a timer, with the player
+# doing nothing. The unattended half of that is closed below (the clock does not
+# run while the app is unfocused, which is the case where nobody is watching);
+# the `?` half is left, because the honest fix is a shared pause REFCOUNT across
+# pause_controller / mp_ui / skill_tree_ui / start_overlay / mobile_input /
+# help_overlay and this file, which is a change to six other scripts' contracts
+# and belongs to none of them alone. Upgrade path: exactly that refcount, with
+# `_paused_by_us` becoming "we hold a claim" instead of "we hold THE claim".
+
+
+func _notification(what: int) -> void:
+	# WHY THE QUIZ CLOCK STOPS WITH THE WINDOW. `mobile_input.pause_game()` is
+	# idempotent by early-returning on an already-paused tree, so a focus loss
+	# during a question sees OUR pause, takes no ownership, and never raises the
+	# "tap to resume" overlay. Left alone, QUIZ_TIMEOUT would then fire in a
+	# backgrounded tab, unpause, and hand the player back a running world with a
+	# crocodile in it — the one variant of the ceiling above where nobody is
+	# watching it happen. Freezing the clock instead means a backgrounded question
+	# is simply still there, still frozen, when the player comes back.
+	#
+	# Deliberately NOT resumed on FOCUS_IN alone: this mirrors the resume the
+	# player would have got, and there is nothing to recalibrate, so the flag just
+	# flips back and the countdown continues where it stopped.
+	if what == NOTIFICATION_APPLICATION_FOCUS_OUT:
+		_unfocused = true
+	elif what == NOTIFICATION_APPLICATION_FOCUS_IN:
+		_unfocused = false
 
 func _take_pause() -> void:
 	"""
@@ -897,6 +937,10 @@ func _update_quiz(delta: float) -> void:
 	    were copied at ask time precisely so this case has everything it needs.
 	"""
 	if not _quiz_pending:
+		return
+	# The window is gone (tab switched, phone backgrounded). Hold the question and
+	# its pause exactly where they are — see _notification.
+	if _unfocused:
 		return
 	# A new run cancels a pending question the same way it cancels a shower in
 	# flight, and for the same reason — see _sync_run. One group lookup per frame,
