@@ -113,9 +113,15 @@ const YARD_LIFT: float = 0.03
 const BOX_BUDGET: int = 12
 
 ## Palette. Four colours, four materials, shared process-wide (see `_material`).
-const COLOR_WALL := Color(0.62, 0.60, 0.56)      # weathered pale stone
-const COLOR_ROOF := Color(0.34, 0.30, 0.35)      # dark slate cap, reads as a roof
-const COLOR_YARD := Color(0.47, 0.45, 0.41)      # packed earth, a shade off the wall
+##
+## DARKER THAN THEY LOOK ON PAPER, and deliberately. `main.tscn` grades the scene
+## with a bright key light, glow and a BCS pass, and the ground and sky at the
+## tower's latitudes are pale — a "weathered pale stone" wall at 0.6 albedo comes
+## out of that pipeline as a white monolith with no readable edges (measured in the
+## editor, 2026-08-28). Judge these against a screenshot, never against the swatch.
+const COLOR_WALL := Color(0.44, 0.42, 0.40)      # weathered grey stone
+const COLOR_ROOF := Color(0.26, 0.22, 0.28)      # dark slate cap, reads as a roof
+const COLOR_YARD := Color(0.33, 0.31, 0.29)      # packed earth, a shade under the wall
 const COLOR_BEACON := Color(1.0, 0.72, 0.18)     # the amber light on the spire
 
 ## Silhouette colour of the horizon impostor, and of its beacon. Deliberately DARK
