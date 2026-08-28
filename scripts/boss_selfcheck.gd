@@ -28,6 +28,17 @@ extends SceneTree
 ##      Check 7 pins the order — with a NON-boss negative control, because "the
 ##      boss survived" is also true of a stub that never crushed anything.
 ##
+##   3. ROW IMMUNITY IS THE SAME TWO GUARDS, ONE STEP OUT. `stink_immune` and
+##      `crush_immune` let a row opt out of Phoboman's wave and giant Teibi's
+##      squash, and they fail exactly as silently: a dropped guard is an armoured
+##      machine that pops underfoot, a stray key is an ordinary crocodile nobody
+##      can kill. Check 8 drives EVERY row in SPECIES through both real code
+##      paths and asserts the outcome the row asked for — so the animals are the
+##      negative control, for free, and a future immune species is covered the
+##      day its row lands. It lives in THIS file because these two guards sit
+##      beside the is_boss guards check 7 already owns; enemy_spawn_selfcheck
+##      owns spawning, not collision.
+##
 ## The const chain (check 1) is a cross-file inequality nothing else guards:
 ## BOSS_DETECTION_RADIUS <= BOSS_TERRITORY_RADIUS < crocodile_lod_manager's
 ## SIM_RADIUS. Break the left link and a boss growls at a quarry it is forbidden
@@ -105,6 +116,18 @@ const RANGED_FRAMES: int = 300
 ## Float slack on the resolved chase speed, in m/s. The comparison is against a
 ## number the row states, so this is pure representation noise.
 const SPEED_EPS: float = 0.01
+
+
+## The baseline predator, named on purpose. Everything in check 8 is read off
+## the row under test, which means a row that turned immune BY MISTAKE would be
+## measured as correct — so the game's ordinary enemy is anchored by name: it
+## must carry neither key, and any edit that gives it one fails here rather than
+## quietly shipping a crocodile nobody can kill.
+const BASELINE_SPECIES: String = "crocodile"
+
+## The two row keys check 8 drives. Iterated rather than spelled out twice
+## because both are the same claim about the same table.
+const IMMUNITY_KEYS: PackedStringArray = ["stink_immune", "crush_immune"]
 
 var _failures: Array[String] = []
 
@@ -241,6 +264,8 @@ func _run() -> void:
 			continue
 		await _run_subject(packed, String(subject["species"]), player)
 	_subject = ""
+
+	await _check_row_immunities(player)
 
 	player.queue_free()
 	await _frames(2)
@@ -737,3 +762,153 @@ func _check_crush_immunity(packed: PackedScene, species_name: String,
 	boss.queue_free()
 	victim.queue_free()
 	await _frames(2)
+
+
+
+func _check_row_immunities(giant: StubPlayer) -> void:
+	"""
+	CHECK 8 — `stink_immune` / `crush_immune` are ROW DATA, and both guards work.
+
+	Owner ruling, from the hunter epic: a GD-SURVEY unit is a sealed machine, so
+	a smell weapon does nothing to it, and it is armoured, so giant Teibi does
+	not pop it. Both landed as `spec.get(key, false)` reads beside the existing
+	is_boss guards — one in `flee_from()`, one on the crush block in
+	`_on_player_collision()` — rather than as a name test, because species are
+	data and not subclasses (CLAUDE.md).
+
+	SO THIS CHECK IS TABLE-DRIVEN AND NAMES NOTHING. It walks every key of
+	SPECIES, reads what that row asked for, and drives both real code paths. Two
+	things fall out of that shape:
+	  * the seven ANIMAL rows are the negative control — they carry neither key,
+	    so they must still flee and must still be squashed. Delete either guard
+	    and the machine row fails; widen either guard to everything and all seven
+	    animal rows fail.
+	  * a future armoured predator is covered the day its row lands, with no edit
+	    here — the same treatment enemy_spawn_selfcheck gives the dispatch maps.
+
+	EVERY ROW IS INSTANTIATED FROM THE CROCODILE'S SCENE, deliberately. `spec` is
+	resolved from the `species` string in _ready() and both guards read only
+	`spec`, so the mesh is irrelevant to what is being measured — and going
+	through a scene MAP would mean this check silently skipped any row whose
+	.tscn had not been written yet, which is exactly the row most likely to have
+	got its immunity wrong.
+
+	VACUITY IS ASSERTED TOO. If nothing in the table carries a key, the loop
+	above proves only that the guard is never TAKEN, so the tail requires at
+	least one row per key — that is what makes "drop the row key and the guard is
+	dead code" a failure instead of a silent pass.
+
+	@param giant: the shared quarry stub, flipped to giant for the crush half
+	              only. Reused for the same reason check 7 reuses it — two nodes
+	              in group "player" would make _find_player() an ordering
+	              accident.
+	"""
+	var packed: PackedScene = load(CROC_SCENE)
+	if packed == null:
+		_fail("immunity: could not load %s" % CROC_SCENE)
+		return
+	# How many rows actually exercised each guard, for the vacuity check below.
+	var opted_in: Dictionary = {}
+	for key: String in IMMUNITY_KEYS:
+		opted_in[key] = 0
+
+	for species_name: String in CROC_SCRIPT.SPECIES.keys():
+		_subject = species_name
+		var row: Dictionary = CROC_SCRIPT.SPECIES[species_name]
+		var stink_immune: bool = bool(row.get("stink_immune", false))
+		var crush_immune: bool = bool(row.get("crush_immune", false))
+		if stink_immune:
+			opted_in["stink_immune"] += 1
+		if crush_immune:
+			opted_in["crush_immune"] += 1
+
+		# Same call-order contract as everywhere else: species BEFORE add_child,
+		# because _ready() resolves `spec` from it exactly once.
+		var body: CharacterBody3D = packed.instantiate()
+		body.species = species_name
+		body.position = Vector3(0.0, 1.0, 0.0)
+		root.add_child(body)
+		await _frames(SETTLE_FRAMES)
+		if String(body.species) != species_name:
+			_fail("immunity: species is '%s' after _ready() — an unknown name "
+					% body.species + "falls back to the crocodile row, so this "
+					+ "row would be measured as one")
+			body.queue_free()
+			await _frames(2)
+			continue
+
+		# ---- A. THE STINK WAVE ------------------------------------------------
+		# flee_from() is the whole ability as far as a predator is concerned:
+		# Phoboman's dispatch walks group "crocodile" and calls exactly this (see
+		# player_controller.trigger_stink_wave), so calling it directly measures
+		# the guard and not the group scan.
+		body.flee_from(body.global_position + Vector3(3.0, 0.0, 0.0), 3.0)
+		if body.is_fleeing == stink_immune:
+			if stink_immune:
+				_fail("stink: row says stink_immune, but flee_from() set the body "
+						+ "fleeing — a sealed machine has no nose, and the guard "
+						+ "in flee_from() is what says so")
+			else:
+				_fail("stink: this row asks for no immunity, but flee_from() left "
+						+ "it not fleeing — Phoboman's wave must still work on "
+						+ "every ordinary predator")
+
+		# The flee flag is cleared BEFORE the crush half, and it has to be: a
+		# fleeing body early-returns out of the bite path at the bottom of
+		# _on_player_collision, which would make an immune row look like it took
+		# no path at all. Fleeing is what part A just proved; here it is setup.
+		body.is_fleeing = false
+		body.flee_time_remaining = 0.0
+
+		# ---- B. GIANT TEIBI'S CRUSH -------------------------------------------
+		# Driven straight into _on_player_collision for check 7's reason: what is
+		# under test is which block runs, and a staged physics contact only adds
+		# ways to flake.
+		giant.giant = true
+		giant.global_position = body.global_position
+		var before: int = giant.bitten
+		body._on_player_collision(giant)
+		var survived: bool = body.is_in_group("crocodile")
+		giant.giant = false
+		if survived != crush_immune:
+			if crush_immune:
+				_fail("crush: row says crush_immune, but giant Teibi squashed it "
+						+ "— an armoured chassis must fall through the crush "
+						+ "block to the ordinary bite path")
+			else:
+				_fail("crush: this row asks for no immunity, but giant Teibi "
+						+ "failed to squash it — the crush block must still work "
+						+ "on every ordinary predator")
+		# The bite count is the OTHER half, and without it "it survived" is also
+		# true of a body that did nothing at all: an immune row must have taken
+		# the bite path, a crushable one must not have.
+		var expected_bites: int = 1 if crush_immune else 0
+		if giant.bitten - before != expected_bites:
+			_fail("crush: contact called hit_by_crocodile %d times, expected %d "
+					% [giant.bitten - before, expected_bites]
+					+ "— an immune body bites the giant, a crushable one dies "
+					+ "without biting")
+
+		body.queue_free()
+		await _frames(2)
+	_subject = ""
+
+	# ---- C. THE TABLE ACTUALLY EXERCISES BOTH GUARDS ------------------------
+	for key: String in IMMUNITY_KEYS:
+		if int(opted_in[key]) <= 0:
+			_fail("immunity: no row in SPECIES carries '%s', so the loop above "
+					% key + "never took that guard and proves nothing about it — "
+					+ "delete the guard or restore the row key")
+
+	# ---- D. THE ANCHOR ------------------------------------------------------
+	# Part A/B read the row, so a row that turned immune by mistake would be
+	# measured as correct. The baseline predator is pinned by name instead.
+	var baseline: Dictionary = CROC_SCRIPT.SPECIES.get(BASELINE_SPECIES, {})
+	if baseline.is_empty():
+		_fail("immunity: SPECIES has no '%s' row to anchor against" % BASELINE_SPECIES)
+	for key: String in IMMUNITY_KEYS:
+		if bool(baseline.get(key, false)):
+			_fail("immunity: the '%s' row carries '%s' — the game's ordinary "
+					% [BASELINE_SPECIES, key] + "enemy is flesh and has a nose, "
+					+ "and making it immune would quietly break the whole "
+					+ "Phoboman/giant-Teibi half of the toolbox")
