@@ -84,6 +84,23 @@ jobs:
           mkdir -v -p build/web
           godot --headless --verbose --export-release "Web" build/web/index.html
 
+      # `progressive_web_app/enabled=false` stops NEW exports shipping Godot's
+      # cache-first service worker, but it cannot reach a worker already
+      # registered in a player's browser — that registration is only ever
+      # replaced by a byte-different script at the SAME url. So `web/` carries a
+      # tombstone worker (read its header) and it is copied in here, into the
+      # one directory both deploy targets are cut from: this is the Pages
+      # artifact AND the `web-build` artifact that `deploy-stack` downloads as
+      # web/site for the nginx image. One copy, both origins.
+      #
+      # The `cp` overwrites rather than merely adds, so re-enabling the PWA
+      # setting by accident cannot quietly put the caching worker back.
+      - name: 🪦 Install the service-worker tombstone
+        run: |
+          cp -v web/index.service.worker.js build/web/index.service.worker.js
+          grep -q "registration.unregister()" build/web/index.service.worker.js \
+            || { echo "::error::build/web/index.service.worker.js is not the tombstone — a caching worker would ship and updates would stop reaching players"; exit 1; }
+
       - name: 📤 Upload artifact for GitHub Pages
         uses: actions/upload-pages-artifact@v3
         if: github.ref == 'refs/heads/master' && github.event_name == 'push'
