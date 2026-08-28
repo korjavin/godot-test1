@@ -40,7 +40,15 @@ extends SceneTree
 ##   6. A NEW RUN MOVES IT. The site is a function of run_seed and the shell is the
 ##      one thing in the terrain that survives a chunk wipe, so a restart that
 ##      forgets it leaves a building standing in the previous world's field.
-##      Check 8.
+##      Check 8 — plus three neighbours that all came out of review:
+##        8b, the MID-RUN MULTIPLAYER JOIN, where the world is rebuilt around a
+##            chunk the player has not been teleported into yet;
+##        8c, the FRAME the two bodies are placed in — local, like every chunk,
+##            because `set_run_seed()` is reachable on a terrain that is not in the
+##            tree at all (three other self-checks build one that way);
+##        8d, the COIN ROAD, which phase 1 deliberately did not exclude from the
+##            site and which therefore lays gold coins inside the walls on some
+##            seeds unless the spawner is told about the building.
 ##   7. THE HORIZON IMPOSTOR. It is the entire answer to "the tower is 400 m away
 ##      and the web build draws nothing past 150 m of fog", and every way it breaks
 ##      is invisible on a desktop editor run: fog re-enabled (erased at range),
