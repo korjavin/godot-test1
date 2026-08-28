@@ -480,11 +480,20 @@ const TOWER_NUDGE_STEP: float = 25.0
 const TOWER_NUDGE_RINGS: int = 8
 
 ## Spacing (metres) of the river samples laid over a candidate footprint disc.
-## A river band is ~8 m wide on the ground (measured — see _biome_spot_ok's note),
-## so a 5 m grid cannot step over one. That is ~113 samples per candidate and at
-## most 289 candidates, paid ONCE per run and then memoized: nothing at all in the
-## common case, where the nominal site is already dry and one candidate settles it.
-const TOWER_SAMPLE_STEP: float = 5.0
+##
+## The sampling is CONSERVATIVE, not merely fine: each sample stands for its whole
+## cell, so the test is widened by BIOME_NOISE_MAX_SLOPE over half that cell's
+## diagonal (see _tower_wet_samples). That makes the step a cost/tightness knob
+## rather than a correctness one — a coarser grid is still safe, it just refuses
+## more dry-ish sites. 2 m widens the band by ~1.4x, which is tight enough that the
+## nominal site is usually still accepted, at ~830 samples per candidate: paid ONCE
+## per run and then memoized, and in the common case for exactly one candidate.
+##
+## 5 m WAS TRIED AND IS WRONG WITHOUT THE MARGIN. A plain boolean grid at 5 m
+## reported a dry site for run seeds 750, 99 and 106 that a 2 m sweep found 24, 1
+## and 3 wet points in (codex review, 2026-08-28) — a river is only ~8 m wide where
+## the field is shallow, and arbitrarily narrow where it is steep.
+const TOWER_SAMPLE_STEP: float = 2.0
 
 ## Chance (0..1) that a given walkable structure top (mound summit / wall ridge)
 ## gets a rare crocodile patrolling it. Kept moderate so they're an occasional
@@ -1462,6 +1471,24 @@ const BIOME_MOUNTAIN_MAX: float = 0.83
 ## a minimum |∇n| or drive the contour from a second, higher-frequency octave.
 const RIVER_LEVEL: float = 0.5
 const RIVER_HALF_WIDTH: float = 0.007
+
+## Upper bound on how fast the biome field can change, in NOISE UNITS PER METRE.
+##
+## _biome_value_noise is one octave of smoothstep-weighted value noise over
+## BIOME_CELL_SIZE cells whose corner values live in 0..1. The smoothstep weight
+## f*f*(3-2f) has derivative 6f(1-f), which peaks at 1.5, so along either axis the
+## field can move at most 1.5 per unit of noise space, and the gradient MAGNITUDE
+## at most sqrt(1.5^2 + 1.5^2) = 2.1213. Divide by the cell size and that is
+## metres. (_biome_noise's 0..1 clamp only ever flattens the field, so the bound
+## survives it.)
+##
+## WHAT IT IS FOR: turning a SAMPLED river test into a PROVEN one. A grid of
+## is_river_at() calls can step clean over a band that happens to be narrow where
+## it crosses — a river's width on the ground is set by the local gradient, and
+## nothing bounds it from below. Widen the test by this slope times the furthest a
+## point can sit from the nearest sample, and "no sample was wet" stops being an
+## inference. _tower_wet_samples is the first user.
+const BIOME_NOISE_MAX_SLOPE: float = 2.1213 / BIOME_CELL_SIZE
 
 ## Noise-space half-width of the soft colour transition between biomes, used as
 ## a smoothstep radius in the ground shader. Purely cosmetic: gameplay reads the
@@ -7875,20 +7902,35 @@ func _tower_wet_samples(center_x: float, center_z: float) -> int:
 	@return: Count of wet samples — 0 means the whole disc is dry.
 
 	A GRID, NOT A RIM: a river winds, so a ring of samples around the rim would let
-	a band slip across the middle of the disc unseen. The grid is TOWER_SAMPLE_STEP
-	apart, which is under the measured band width, so no band can hide between two
-	samples. The count (rather than a bool) is what lets the scan above fall back
-	to the driest candidate instead of to nothing.
+	a band slip across the middle of the disc unseen.
+
+	AND A WIDENED GRID, NOT A PLAIN ONE. Each sample stands for the whole cell
+	around it, so the band it is tested against is widened by the most the field can
+	move from the sample to the furthest point of that cell — BIOME_NOISE_MAX_SLOPE
+	over half the cell diagonal. Zero wet samples is then a PROOF that no point of
+	the disc is in the water, rather than the hope that no band was narrow enough to
+	hide between two samples. It is stated on the noise value directly because
+	is_river_at() bakes in the un-widened RIVER_HALF_WIDTH; the two agree exactly
+	when the margin is zero.
+
+	The count (rather than a bool) is what lets the scan above fall back to the
+	driest candidate instead of to nothing.
 	"""
+	# Furthest any point can sit from the nearest sample is half the cell diagonal.
+	var margin := TOWER_SAMPLE_STEP * 0.5 * sqrt(2.0) * BIOME_NOISE_MAX_SLOPE
+	var half_width := RIVER_HALF_WIDTH + margin
+	# One step of slack on the rim too, so the samples cover the whole disc and not
+	# just every disc point that happens to have a sample inside it.
+	var reach := TOWER_RADIUS + TOWER_SAMPLE_STEP
 	var wet := 0
-	var steps := int(ceilf(TOWER_RADIUS / TOWER_SAMPLE_STEP))
+	var steps := int(ceilf(reach / TOWER_SAMPLE_STEP))
 	for ix in range(-steps, steps + 1):
 		for iz in range(-steps, steps + 1):
 			var ox := float(ix) * TOWER_SAMPLE_STEP
 			var oz := float(iz) * TOWER_SAMPLE_STEP
-			if Vector2(ox, oz).length() > TOWER_RADIUS:
+			if Vector2(ox, oz).length() > reach:
 				continue
-			if is_river_at(Vector3(center_x + ox, 0.0, center_z + oz)):
+			if absf(_biome_noise(center_x + ox, center_z + oz) - RIVER_LEVEL) < half_width:
 				wet += 1
 	return wet
 

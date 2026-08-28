@@ -42,12 +42,15 @@ extends SceneTree
 
 const TERRAIN_SCRIPT: String = "res://scripts/endless_terrain.gd"
 
-## Seed sample. Small on purpose: every check here is about a fixed disc in a
-## world whose only per-seed input is the river field, so seeds buy VARIETY OF
-## RIVER, not statistical power — five different river fields is plenty to catch a
-## nudge that does not nudge, and the field generation each one costs is the
-## expensive part of this file.
-const SEEDS: Array[int] = [20260827, 1, 424242, 999983, -775511]
+## Seed sample. Small on purpose: every check here is about a fixed disc in a world
+## whose only per-seed input is the river field, so seeds buy VARIETY OF RIVER, not
+## statistical power — a handful of different river fields is plenty to catch a
+## nudge that does not nudge.
+##
+## The last three are REGRESSION SEEDS, not sampling: they are the ones an earlier
+## plain-boolean 5 m sampling grid stepped clean over a river with (codex review,
+## 2026-08-28), and check 3's independent sweep is what caught them. Keep them.
+const SEEDS: Array[int] = [20260827, 1, 424242, 999983, -775511, 750, 99, 106]
 
 ## The seed the two expensive whole-field checks (4, 5, 6) run on. One is enough:
 ## they are about the GENERATOR, not about a particular world.
@@ -169,10 +172,15 @@ func _check_footprint_is_dry() -> void:
 		if terrain._tower_wet_samples(site.x, site.z) != 0:
 			_fail("seed %d: the site the scan chose is wet by its own sampler" % seed_value)
 
-		# Independent, finer sweep — 2 m, well under the ~8 m band width.
+		# INDEPENDENT SWEEP, and the check that actually bites: half a metre, plain
+		# is_river_at(), no widening. The terrain's own sampler is a coarse grid with
+		# a conservative margin — a margin computed wrongly (or dropped as "surely 2 m
+		# is fine") reads dry to itself and drowns the tower, which is exactly what
+		# seeds 750/99/106 above did before the margin existed. This one cannot be
+		# fooled the same way, because it is not the same test.
 		var wet := 0
 		var r: float = terrain.TOWER_RADIUS
-		var step := 2.0
+		var step := 0.5
 		var i := -r
 		while i <= r + 0.001:
 			var j := -r
@@ -326,16 +334,27 @@ func _signature(chunk: Node3D) -> PackedStringArray:
 
 
 func _world_points(chunk: Node3D) -> Array:
-	## [[world position, label], ...] for everything in a chunk EXCEPT coins — every
-	## descendant node, plus every instance transform inside the chunk's block
-	## MultiMesh, which is where all decorative geometry lives (blocks are not
-	## nodes, so a node walk alone would see none of the world's stone).
+	## [[world position, label], ...] for everything in a chunk EXCEPT coins.
+	##
+	## WHERE THE BLOCKS COME FROM: every descendant node — which INCLUDES one
+	## CollisionShape3D per block, hanging off the chunk's single BlockCollision
+	## body (CLAUDE.md: one MultiMesh and one collision body per chunk). Those
+	## shapes are the world's stone, at real positions, and they are what makes a
+	## node walk enough to see a wall or a massif.
+	##
+	## NOT the MultiMesh, deliberately: MultiMesh instance data lives on the
+	## rendering server, and headless every get_instance_transform() reads back as
+	## the identity — a walk over it silently reports every block in the world as
+	## standing at its chunk's origin, which is worse than not looking at all. The
+	## only geometry it would add over the shapes is create_box(collide = false)
+	## decoration (rubble, capstones, a chest's brass band, a hut's doorway), and
+	## every piece of that is attached to a feature whose solid half IS measured.
 	var out: Array = []
-	_collect(chunk, chunk.global_position, out)
+	_collect(chunk, out)
 	return out
 
 
-func _collect(node: Node, chunk_origin: Vector3, out: Array) -> void:
+func _collect(node: Node, out: Array) -> void:
 	for child: Node in node.get_children():
 		var label := _label(child)
 		# COINS are excluded by design (see the header), and so is the chunk's GROUND
@@ -348,19 +367,14 @@ func _collect(node: Node, chunk_origin: Vector3, out: Array) -> void:
 			continue
 		if child is Node3D and not _is_container(child):
 			out.append([(child as Node3D).global_position, label])
-		if child is MultiMeshInstance3D:
-			var mm: MultiMesh = (child as MultiMeshInstance3D).multimesh
-			if mm != null:
-				for i in mm.instance_count:
-					out.append([chunk_origin + mm.get_instance_transform(i).origin, "block"])
-		_collect(child, chunk_origin, out)
+		_collect(child, out)
 
 
 func _is_container(node: Node3D) -> bool:
 	## The two per-chunk batch containers (see CLAUDE.md: one MultiMesh and one
 	## collision body per chunk). Both sit at the chunk origin whatever they hold, so
-	## their own position says nothing about where anything is — we walk INTO them
-	## for the blocks and shapes that do.
+	## their own position says nothing about where anything is — we walk INTO the
+	## collision body for the per-block shapes that do.
 	return node is MultiMeshInstance3D or node.name == "BlockCollision"
 
 
