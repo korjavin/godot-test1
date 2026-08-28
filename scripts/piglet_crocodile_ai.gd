@@ -1832,6 +1832,33 @@ const SPECIES: Dictionary = {
 		## start; a second grab needs a fresh telegraph anyway, so the honest
 		## cost of two hits from one hunter is 8 + 1.8 seconds of daylight.
 		"hunt_disengage_time": 8.0,
+
+		# ----- Immunities (the two keys that say "this row is a machine") -----
+		## THE ONLY TWO PLAYER ABILITIES THAT DO NOT APPLY TO A CHASSIS, and they
+		## are keys rather than a species check in the two guards for the reason
+		## the whole table exists: the next armoured or airtight predator turns
+		## them on by editing its row, and neither guard changes.
+		##
+		## Both DEFAULT TO FALSE and are absent from every other row on purpose —
+		## absent is the statement, exactly as PLAINS is absent from
+		## BIOME_SPECIES. Adding either to an animal's row would quietly make the
+		## ordinary enemy unkillable, so boss_selfcheck check 8 asserts the
+		## crocodile carries neither, by name.
+		##
+		## STINK: phoboman's wave reaches every body in group "crocodile" and
+		## `flee_from()` early-returns on this. A GD-SURVEY unit is sealed; there
+		## is nothing on it a smell weapon acts on, so the wave passes over it and
+		## it keeps closing. That is a real hole in the player's kit and it is the
+		## point — the corporation is the one thing the toolbox does not answer.
+		"stink_immune": true,
+
+		## CRUSH: giant-form teibi squashes predators on contact
+		## (`_on_player_collision`); this row falls through that block to the
+		## ordinary bite path instead, so a giant who steps on a hunter GETS
+		## GRABBED rather than popping it. Same sentence as the boss immunity one
+		## block up, for a different reason: a boss is too big to squash, this
+		## thing is too hard.
+		"crush_immune": true,
 	},
 }
 
@@ -3453,6 +3480,18 @@ func flee_from(source: Vector3, duration: float, tracks_player: bool = true) -> 
 	# group tricks (so LOD sleep and every other group consumer stays intact).
 	if is_boss:
 		return
+	# A SEALED MACHINE HAS NO NOSE. Same placement and same reason as the boss
+	# return above — immunity lives HERE, not in group tricks, so the wave still
+	# finds the body and every other group consumer (LOD sleep, the MP relay)
+	# stays intact.
+	#
+	# IT IS A ROW KEY AND NOT A NAME TEST, deliberately. `spec.get(..., false)`
+	# means every animal in the table is untouched by this line and a future
+	# machine-like predator opts in by editing its row — species are data, not
+	# subclasses (CLAUDE.md). Testing `species == "hunter_robot"` here would be
+	# the subclass-by-string the SPECIES table exists to avoid.
+	if spec.get("stink_immune", false):
+		return
 	# A SLEPT croc ignores the stink too, and that is a correctness rule, not a
 	# nicety: set_lod_active(false) turns physics dispatch off, so its
 	# flee_time_remaining can never tick down. It would hold is_fleeing until it
@@ -4325,7 +4364,17 @@ func _on_player_collision(player: Node) -> void:
 	# Instead of vanishing in one frame, the croc visibly dies: physics stops,
 	# a dust puff pops, a crunch plays, the player's camera gets a tiny kick,
 	# and the body squashes flat before freeing itself.
-	if player.has_method("crushes_crocodiles") and player.crushes_crocodiles():
+	#
+	# `crush_immune` is the ARMOURED half of the same idea the is_boss block
+	# above states: a chassis is not flesh, so stepping on it does not pop it. It
+	# is a CONDITION on this block rather than a third early return, precisely so
+	# the block ORDER the comment above calls the feature is left alone — an
+	# immune body simply falls through to the ordinary bite path below and grabs
+	# the giant like any other quarry. Row data, defaulting to false, for the
+	# same reason as `stink_immune` in flee_from(): a future armoured predator
+	# opts in with a row edit and no code change.
+	if player.has_method("crushes_crocodiles") and player.crushes_crocodiles() \
+			and not spec.get("crush_immune", false):
 		# In a ROOM the kill belongs to the master, not to whichever screen it
 		# happened on: it has to free the SAME crocodile on every peer. The manager
 		# answers true when it is in a room and has relayed the request, and we then
