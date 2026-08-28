@@ -1980,9 +1980,13 @@ func _probe_hunt_dispatch(hunt_species: String) -> void:
 	this instantiates one body, points it at a stub quarry INSIDE its own ring,
 	and asks the shipped function what it steers at:
 
-	  frame 1              chase_target must be pushed OUT to the ring. The code
-	                       above the dispatch sets it to the quarry's position, so
-	                       a ring point is proof the arm ran.
+	  frame 1              the hunt lock is non-empty (the arm RAN — nothing else
+	                       populates it) and chase_target has been pushed OUT to
+	                       the ring. Two gates rather than one because the code
+	                       above the dispatch sets chase_target to the quarry, so
+	                       "steering at the quarry" is what BOTH a missing arm and
+	                       a missing telegraph look like, and they must not be
+	                       reported as each other.
 	  just before the      still on the ring — this is what makes it a WINDOW and
 	  telegraph expires    not merely a flag that was set once.
 	  just after           chase_target is the quarry itself: it committed.
@@ -1994,6 +1998,10 @@ func _probe_hunt_dispatch(hunt_species: String) -> void:
 	shared script, and every other live-body probe in this file uses that scene.
 	What differs between the two .tscn files is the model, which no line of this
 	measurement touches.
+
+	The one line of noise in this file's output is the grab's own "bites the
+	player" print, which is the shipped collision path talking. It is left alone:
+	silencing it for a check would be the check changing the thing it measures.
 
 	ponytail: the arm is driven by calling _update_chase_state() in a loop rather
 	than by awaiting real physics frames — the same trade every other probe here
@@ -2022,6 +2030,11 @@ func _probe_hunt_dispatch(hunt_species: String) -> void:
 	croc.species = hunt_species         # before add_child, the row's own contract
 	root.add_child(croc)
 	croc.global_position = Vector3.ZERO
+	# _ready() defers the quarry lookup to the end of the frame ("defer to allow
+	# scene to fully load") and this probe never yields, so run the SHIPPED
+	# lookup by hand rather than assigning `player_node` — a probe that set the
+	# reference itself would also be free to set one the game could never resolve.
+	croc._find_player()
 
 	# The clock the arm counts its windows down against, read off the live node
 	# rather than assumed: _behave_hunt takes it from get_physics_process_delta_time().
@@ -2043,12 +2056,31 @@ func _probe_hunt_dispatch(hunt_species: String) -> void:
 		croc.queue_free()
 		stub.queue_free()
 		return
+	# TWO DIFFERENT FAILURES LOOK IDENTICAL FROM `chase_target` ALONE on this
+	# frame — an arm that never ran, and an arm that ran and committed instantly —
+	# so they are separated before either is reported. The lock is empty exactly
+	# when _behave_hunt has not executed, which is the only thing the dispatch
+	# decides; everything after this line is about what the arm then DID.
+	if croc._hunt_lock.is_empty():
+		_fail("a chasing %s left its hunt lock empty — the `match` in" % hunt_species
+				+ " _update_chase_state is not reaching _behave_hunt, so the arm"
+				+ " ships unrun and every static probe above it measures a function"
+				+ " nothing calls")
+		croc.queue_free()
+		stub.queue_free()
+		return
+	# TWO CAUSES REMAIN ONCE THE ARM IS KNOWN TO HAVE RUN, and the message names
+	# both rather than picking one: either the telegraph is not holding the unit
+	# (it commits on the frame it smells you) or `hunt_steer_point` is no longer
+	# producing a ring for it to hold. The geometry probe above pins down which —
+	# it fails on the second and passes on the first.
 	var acquired: float = croc.chase_target.distance_to(quarry)
 	if absf(acquired - standoff) > EPSILON:
 		_fail("on the acquisition frame a %s steered %.2f m from its quarry, not"
-				% [hunt_species, acquired] + " at its %.1f m ring — the `match` in"
-				% standoff + " _update_chase_state is not reaching _behave_hunt, so"
-				+ " the arm ships unrun")
+				% [hunt_species, acquired] + " at its %.1f m ring — either the"
+				% standoff + " telegraph is not holding it (a hunter that commits on"
+				+ " the frame it smells you owes the player a warning it never"
+				+ " gave) or hunt_steer_point has stopped producing the ring")
 		croc.queue_free()
 		stub.queue_free()
 		return
@@ -2109,9 +2141,11 @@ func _probe_hunt_dispatch(hunt_species: String) -> void:
 				% [hunt_species, disengage] + " (still %.2f m off the quarry) —"
 				% recommitted + " one grab retired it from the encounter")
 
-	print("hunt dispatch: %s telegraphs %.2f s on the ring, commits, and after a"
-			% [hunt_species, telegraph] + " grab (%d hit) withdraws for %.1f s"
-			% [stub.hits, disengage] + " before re-committing")
+	print("hunt dispatch: %s holds its ring at %.2f m through a %.2f s telegraph,"
+			% [hunt_species, late, telegraph] + " then steers %.2f m off the quarry;"
+			% committed + " one grab costs %d hit and puts it back out at %.2f m for"
+			% [stub.hits, after_grab] + " %.1f s (%.2f m at the end of it, %.2f m"
+			% [disengage, holding, recommitted] + " after)")
 
 	croc.queue_free()
 	stub.queue_free()
