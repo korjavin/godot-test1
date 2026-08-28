@@ -25,7 +25,7 @@ extends SceneTree
 ##   2. CRUSH IMMUNITY IS AN ORDERING. `_on_player_collision` early-returns for
 ##      is_boss ABOVE the giant-Teibi crush block; swap those two blocks and
 ##      giant Teibi one-shots the game's biggest threat with no error anywhere.
-##      Check 5 pins the order — with a NON-boss negative control, because "the
+##      Check 7 pins the order — with a NON-boss negative control, because "the
 ##      boss survived" is also true of a stub that never crushed anything.
 ##
 ## The const chain (check 1) is a cross-file inequality nothing else guards:
@@ -53,6 +53,11 @@ const SIM_RADIUS: float = LOD_SCRIPT.SIM_RADIUS
 ## Body scale for the test boss. The terrain's schedule hands out 2.5x–6x; a
 ## middling one keeps the capsule from dominating the distances measured here.
 const BOSS_SCALE: float = 3.0
+
+## Any fixed seed: it makes the WANDER stream deterministic (a boss takes no
+## size/speed roll, so that is all it does here), which is what keeps check 6's
+## fence walk from being a coin flip on rng.randomize().
+const BOSS_ROLL_SEED: int = 20260828
 
 ## Frames to let a freshly added body fall onto the slab and run its deferred
 ## _ready()/_find_player(). Same number, same reason, as wade_selfcheck.
@@ -85,10 +90,10 @@ var _failures: Array[String] = []
 ## that never ran move_and_slide answers false, i.e. "jumped", i.e. unsmellable —
 ## every chase check below would then pass vacuously. This answers the one
 ## question the AI asks, and carries the two methods `_on_player_collision`
-## dispatches on so check 5 can drive the crush ordering directly.
+## dispatches on so check 7 can drive the crush ordering directly.
 class StubPlayer:
 	extends Node3D
-	## Flipped by check 5 only; the chase checks want an ordinary player.
+	## Flipped by check 7 only; the chase checks want an ordinary player.
 	var giant: bool = false
 	var bitten: int = 0
 
@@ -181,6 +186,11 @@ func _run() -> void:
 	# the fixed boss speeds, and (this bead) captures home_position. Called after,
 	# this whole file would be measuring an ordinary crocodile.
 	boss.setup_as_boss(BOSS_SCALE)
+	# Same call-order contract. A boss takes no size/speed roll, so the seed goes
+	# unused there (setup_roll_seed says so explicitly) — what it buys HERE is a
+	# deterministic wander stream, which is what stops check 6's fence walk from
+	# being a coin flip. Without it a boss falls back to rng.randomize().
+	boss.setup_roll_seed(BOSS_ROLL_SEED)
 	boss.position = Vector3(0.0, 1.0, 0.0)
 	root.add_child(boss)
 	await _frames(SETTLE_FRAMES)
@@ -198,6 +208,7 @@ func _run() -> void:
 	var home: Vector3 = boss.home_position
 	_check_home(boss, home)
 	await _check_hunts_inside(boss, player, home)
+	await _check_hunts_at_fence(boss, player, home)
 	await _check_leashed(boss, player, home)
 	await _check_wanders_contained(boss, player, home)
 
@@ -283,15 +294,53 @@ func _check_hunts_inside(boss: CharacterBody3D, player: StubPlayer, home: Vector
 	_assert_contained(boss, home, "hunt")
 
 
+func _check_hunts_at_fence(boss: CharacterBody3D, player: StubPlayer, home: Vector3) -> void:
+	"""
+	CHECK 4 — a quarry hugging the INSIDE of the fence is hunted, and the boss
+	still does not cross.
+
+	This is the containment stressor, and it is deliberately a CHASE rather than a
+	wander: a chase heading is recomputed toward the target every frame, so unlike
+	the wander in check 6 there is no random drift to bleed the outward energy
+	away. The boss is aimed at BOSS_CHASE_SPEED (7 m/s) straight at a point half a
+	metre inside its own boundary, for four seconds. Delete the steer and the
+	clamp and it walks out and keeps going (measured: past 39 m); with them it
+	slides along the fence.
+
+	It is also the check for the half of _steer_within_territory's docstring that
+	is a GAMEPLAY claim rather than a containment one — a boss must still hunt you
+	at the fence. A leash that turned dead-inward at the boundary would send the
+	boss home instead, so `is_chasing` is asserted at the end: the quarry is
+	legitimately inside the territory and inside detection, and nothing about
+	being near the edge may drop it.
+	"""
+	player.global_position = home + Vector3(TERRITORY_RADIUS - 0.5, 0.0, 0.0)
+	var worst := 0.0
+	for _i in PHASE_FRAMES:
+		await physics_frame
+		worst = maxf(worst, _flat_distance(boss.global_position, home))
+
+	if worst > TERRITORY_RADIUS + CONTAIN_EPS:
+		_fail("fence: boss reached %.2f m from home chasing a quarry %.1f m out, "
+				% [worst, TERRITORY_RADIUS - 0.5]
+				+ "territory is %.1f m — the quarry was inside, the boss must not be "
+				% TERRITORY_RADIUS + "outside")
+	if not boss.is_chasing:
+		_fail("fence: boss dropped a quarry that is %.1f m from home, i.e. INSIDE "
+				% (TERRITORY_RADIUS - 0.5)
+				+ "its %.1f m territory — the leash must bound where a boss can go, "
+				% TERRITORY_RADIUS + "never how far it can smell")
+
+
 func _check_leashed(boss: CharacterBody3D, player: StubPlayer, home: Vector3) -> void:
 	"""
-	CHECK 4 — THE LEASH. Quarry parked outside the circle: the boss disengages and
+	CHECK 5 — THE LEASH. Quarry parked outside the circle: the boss disengages and
 	its own body never crosses the boundary.
 
-	The placement is the check. 40 m from home is outside the territory (32) but
-	the boss arrives here from check 3 sitting ~20 m out, i.e. well INSIDE its
-	detection radius of the quarry — it can smell you perfectly and must refuse
-	anyway. Without the leash the ordinary chase code sails straight past the
+	The placement is the check. 40 m from home is outside the territory (32), but
+	the boss arrives here from check 4 parked against its own fence, i.e. ~8 m
+	from the quarry and so well INSIDE its 25 m detection radius of it — it can
+	smell you perfectly and must refuse anyway. Without the leash the ordinary chase code sails straight past the
 	boundary, which is exactly today's shipped bug.
 
 	Containment is sampled EVERY frame, not just at the end: a boss that overshot
@@ -315,14 +364,33 @@ func _check_leashed(boss: CharacterBody3D, player: StubPlayer, home: Vector3) ->
 
 func _check_wanders_contained(boss: CharacterBody3D, player: StubPlayer, home: Vector3) -> void:
 	"""
-	CHECK 5 — after disengaging the boss keeps MOVING ("they walk inside some
-	area") and stays inside it.
+	CHECK 6 — after disengaging the boss keeps MOVING ("they walk inside some
+	area"), and the PHYSICAL containment holds while it does.
 
-	The negative control for check 4: a boss frozen solid at the boundary also
-	never leaves its territory, and would pass the leash check while being a
-	statue. The quarry is teleported far away first so nothing here is a chase.
+	Two jobs, and the setup is what makes both of them real:
+
+	  * The negative control for check 5. A boss frozen solid at the boundary also
+	    never leaves its territory, and would pass the leash check while being a
+	    statue.
+	  * The only check that exercises _steer_within_territory and
+	    _clamp_to_territory AT ALL. Measured (mutation test, 2026-08-28): with the
+	    chase gate alone doing the work, deleting BOTH the steer and the clamp
+	    still passed every other check in this file — a disengaged boss simply
+	    never wandered far enough to meet its own fence inside the window. So the
+	    boss is PLANTED one metre inside the boundary and AIMED STRAIGHT OUT
+	    (wander_heading and rotation.y both, so there is no turn lag to bleed the
+	    energy away) before the window starts. Unleashed it walks clean out to
+	    ~39 m; leashed it must slide along the fence and stay in.
+
+	The quarry is teleported far away first so nothing here is a chase — this is
+	the boss's own wandering meeting the boundary, with no help from the gate.
 	"""
 	player.global_position = home + Vector3(300.0, 0.0, 0.0)
+	boss.global_position = Vector3(
+			home.x + TERRITORY_RADIUS - 1.0, boss.global_position.y, home.z)
+	# heading 0 is +Z (see _choose_new_direction), so +X — dead outward — is PI/2.
+	boss.wander_heading = PI / 2.0
+	boss.rotation.y = PI / 2.0
 	var start := boss.global_position
 	var travelled := 0.0
 	var worst := 0.0
@@ -345,7 +413,7 @@ func _check_wanders_contained(boss: CharacterBody3D, player: StubPlayer, home: V
 
 func _check_crush_immunity(packed: PackedScene) -> void:
 	"""
-	CHECK 6 — ALL bosses are crush-immune, and it is the block ORDER that does it.
+	CHECK 7 — ALL bosses are crush-immune, and it is the block ORDER that does it.
 
 	Owner, verbatim: "yes, for now all bosses immune. we will think about it later
 	on." Immunity is a property of boss-ness, so it is asserted on the is_boss
