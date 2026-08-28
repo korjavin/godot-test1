@@ -37,8 +37,16 @@ class_name IntroVideo
 ## produces a frame — **all of them report "finished"**, and the overlay then runs
 ## its ordinary dismiss. There is no path where the player is left looking at a
 ## black rectangle, and no path where `is_finished()` can answer `false` forever:
-## `START_TIMEOUT_SEC` is the backstop for the one case the DOM raises no event
-## for (a `play()` promise that neither resolves nor rejects).
+## the two watchdog budgets below (`START_TIMEOUT_SEC` until the first frame,
+## `STALL_TIMEOUT_SEC` between frames after that) are the backstop for the one
+## case the DOM raises no event for — a stream that simply goes quiet, including a
+## `play()` promise that neither resolves nor rejects.
+##
+## What "finished" must NOT mean is "the world may run now": the caller releases
+## the pause on this answer, so a wrong one used to be worth a life. That is fixed
+## on the caller's side — `start_overlay._dismiss()` tears this element down
+## before it unpauses, whatever made it decide the film was over — which is why
+## failing open here is still the right trade.
 ##
 ## ----------------------------------------------------------------------------
 ## Autoplay WITH SOUND, and why the fallback exists
@@ -80,8 +88,9 @@ const SKIP_HOLD_SEC: float = 1.0
 ## The "never hang" backstop: how long playback may make NO progress before the
 ## film gives up and the game starts.
 ##
-## It is a **rolling** watchdog — armed at `start()` and re-armed by every
-## `timeupdate` — rather than a start-only one, because "the stream never began"
+## It is a **rolling** watchdog — armed at `start()` (with `START_TIMEOUT_SEC`,
+## the cold-fetch budget) and re-armed with THIS value by every `timeupdate` —
+## rather than a start-only one, because "the stream never began"
 ## and "the stream stopped halfway" are the same bug to the player and the DOM
 ## fires no event that reliably covers the second. `ended` and `error` are not
 ## guaranteed for a connection that simply goes quiet, `stalled`/`waiting` are
@@ -91,6 +100,18 @@ const SKIP_HOLD_SEC: float = 1.0
 ## for any of them. Generous, because a slow phone on a slow network is not a
 ## failure — but finite, because a paused world behind a frozen film is.
 const STALL_TIMEOUT_SEC: float = 8.0
+
+## The FIRST-FRAME budget: how long the browser gets between the press and the
+## first `timeupdate` before the film gives up. Deliberately far longer than the
+## rolling value above, because the two measure different things. Once the film is
+## playing the connection is warm and the buffer is full, so eight quiet seconds
+## really do mean it died; but the first `timeupdate` has to wait on a cold DNS
+## lookup, a TLS handshake, a CDN cache miss and the first frames of a 21.7 MB
+## file, and none of that is a failure — it is a slow link doing exactly what it
+## should. Arming the rolling value at `start()` made those two indistinguishable
+## and tore the film down mid-fetch (godot-test1-4x4). Still finite, because the
+## film may never hang the game.
+const START_TIMEOUT_SEC: float = 30.0
 
 ## The JS scratchpad key, in the same `window`-property style `mobile_sensors.gd`
 ## uses for its retained callbacks.
@@ -153,7 +174,10 @@ static func _start_js() -> String:
 				try { s.video.currentTime = 0; } catch (e) {}
 				window.addEventListener('keydown', s.onKeyDown, true);
 				window.addEventListener('keyup', s.onKeyUp, true);
-				s.armWatchdog();
+				/* Armed with the FIRST-FRAME budget, not the rolling one: nothing
+				   has been fetched yet. Every later arming comes from `timeupdate`
+				   and takes the (much shorter) default. */
+				s.armWatchdog(%d);
 				var p = s.video.play();
 				if (p && p.catch) {
 					p.catch(function(){
@@ -172,6 +196,7 @@ static func _start_js() -> String:
 		JS_STATE,
 		JSON.stringify(String(TranslationServer.translate("Hold SPACE to skip"))),
 		JSON.stringify(String(TranslationServer.translate("Unmute"))),
+		int(START_TIMEOUT_SEC * 1000.0),
 	]
 
 
@@ -268,14 +293,17 @@ static func _create_js() -> String:
 
 				/* The rolling no-progress watchdog. Re-armed from scratch every time
 				   `currentTime` moves, so it can only ever fire on a film that has
-				   genuinely stopped. See STALL_TIMEOUT_SEC. */
-				s.armWatchdog = function(){
+				   genuinely stopped. `ms` is the budget for THIS arming: `start()`
+				   passes the generous first-frame one (nothing is fetched yet), and
+				   `timeupdate` omits it for the tight rolling default. See
+				   START_TIMEOUT_SEC / STALL_TIMEOUT_SEC. */
+				s.armWatchdog = function(ms){
 					/* Nothing to watch until the film is actually on screen — a
 					   `timeupdate` during preload must not arm a timer that would
 					   tear the buffered element down behind the menu. */
 					if (!s.started) { return; }
 					if (s.stallTimer) { clearTimeout(s.stallTimer); }
-					s.stallTimer = setTimeout(s.finish, %d);
+					s.stallTimer = setTimeout(s.finish, ms || %d);
 				};
 
 				/* THE SINGLE EXIT. Every ending — natural end, skip, decode error,
