@@ -169,6 +169,10 @@ jobs:
   selfchecks:
     name: 🩺 Self-checks
     runs-on: ubuntu-latest
+    # The whole suite is well under a minute of actual work; this is only here so
+    # a check whose SceneTree never calls quit() is a red build rather than a job
+    # the runner kills six hours later.
+    timeout-minutes: 20
     container:
       image: barichello/godot-ci:4.5
     steps:
@@ -202,32 +206,38 @@ jobs:
       # NOT fail-fast: every check runs, every failure is named, and the verdict
       # comes at the end. One broken check must not hide the state of the other
       # fifteen — the whole point of running them is knowing which contracts hold.
+      #
+      # PLAIN POSIX sh, deliberately — no arrays, no `shopt`, no `<<<`. The
+      # godot-ci image ships no bash, so Actions falls back to `sh -e {0}` and a
+      # bashism is an exit 127 before the first check runs (it was, once). Every
+      # other step in this workflow is POSIX for the same reason. A hung check is
+      # caught by the job's `timeout-minutes`, not a per-check `timeout(1)` —
+      # one less binary to assume the image has.
       - name: 🩺 Run every self-check
         run: |
           command -v godot >/dev/null || { echo "::error::godot is not on PATH — no self-check would have run"; exit 1; }
-          shopt -s nullglob
-          checks=(scripts/*_selfcheck.gd)
-          [ ${#checks[@]} -gt 0 ] || { echo "::error::scripts/*_selfcheck.gd matched nothing — the suite would have silently passed"; exit 1; }
-          failed=()
-          for check in "${checks[@]}"; do
+          total=0
+          failed=""
+          for check in scripts/*_selfcheck.gd; do
+            [ -e "$check" ] || { echo "::error::scripts/*_selfcheck.gd matched nothing — the suite would have silently passed"; exit 1; }
+            total=$((total + 1))
             name=$(basename "$check" .gd)
             echo "::group::${name}"
-            # `timeout` so a check that hangs (a SceneTree that never quits) is a
-            # red build in 5 minutes, not a 6-hour job the runner kills.
-            if out=$(timeout 300 godot --headless --path . --script "res://${check}" 2>&1) \
-              && grep -qx "SELFCHECK OK" <<<"$out"; then
-              echo "$out"
+            if out=$(godot --headless --path . --script "res://${check}" 2>&1) \
+              && printf '%s\n' "$out" | grep -qx "SELFCHECK OK"; then
+              printf '%s\n' "$out"
               echo "::endgroup::"
-              echo "✅ ${name}"
+              echo "OK   ${name}"
             else
-              echo "$out"
+              printf '%s\n' "$out"
               echo "::endgroup::"
               echo "::error::${name} FAILED — no 'SELFCHECK OK' (see the ${name} log group above)"
-              failed+=("$name")
+              failed="${failed} ${name}"
             fi
           done
-          echo "── ${#checks[@]} self-checks run, ${#failed[@]} failed ──"
-          [ ${#failed[@]} -eq 0 ] || { echo "::error::self-checks failed: ${failed[*]}"; exit 1; }
+          echo "-- ${total} self-checks run --"
+          [ -z "$failed" ] || { echo "::error::self-checks failed:${failed}"; exit 1; }
+          echo "all ${total} self-checks passed"
 
   # ============================================================================
   # Enemy-model contract
@@ -266,12 +276,12 @@ jobs:
       # from a pass.
       - name: 🐺 Rebuild and verify every predator model
         run: |
-          out=$(python3 scripts/predator_parts.py 2>&1) && grep -qx "SELFCHECK OK" <<<"$out" || {
-            echo "$out"
+          out=$(python3 scripts/predator_parts.py 2>&1) && printf '%s\n' "$out" | grep -qx "SELFCHECK OK" || {
+            printf '%s\n' "$out"
             echo "::error::scripts/predator_parts.py did not print SELFCHECK OK — the enemy-model contract is broken"
             exit 1
           }
-          echo "$out"
+          printf '%s\n' "$out"
 
   # ============================================================================
   # Publish the godot-mp stack (only from master branch)
