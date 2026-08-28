@@ -1,4 +1,4 @@
-[gd_scene load_steps=29 format=3 uid="uid://clqb4rcmjrpgs"]
+[gd_scene load_steps=32 format=3 uid="uid://clqb4rcmjrpgs"]
 
 [ext_resource type="PackedScene" uid="uid://bqtq2xtxqnvvr" path="res://scenes/player.tscn" id="1_main"]
 [ext_resource type="Script" uid="uid://b07rwceo0eo4o" path="res://scripts/endless_terrain.gd" id="2_terrain"]
@@ -27,6 +27,7 @@
 [ext_resource type="Script" path="res://scripts/skill_tree_ui.gd" id="24_skilltree"]
 [ext_resource type="Script" path="res://scripts/help_overlay.gd" id="25_help"]
 [ext_resource type="Script" path="res://scripts/landmark_toast.gd" id="26_landmark"]
+[ext_resource type="Script" path="res://scripts/build_version.gd" id="27_version"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_1"]
 sky_top_color = Color(0.25, 0.45, 0.75, 1)
@@ -80,6 +81,9 @@ script = ExtResource("19_mp")
 
 [node name="Progression" type="Node" parent="." groups=["progression"]]
 script = ExtResource("23_progression")
+
+[node name="BuildVersion" type="Node" parent="."]
+script = ExtResource("27_version")
 
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
 transform = Transform3D(-0.573576, 0.469846, -0.67101, 0, 0.819152, 0.573576, 0.819152, 0.32899, -0.469846, 0, 10, 0)

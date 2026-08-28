@@ -44,6 +44,8 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #   perf_selfcheck           frame-spike telemetry (thresholds, correlation, reset)
 #   chunk_stream_selfcheck   ground-first chunk streaming (floor, debt, determinism)
 #   intro_selfcheck          intro film: web gate, desktop PLAY SOLO path, JS shape
+#   build_version_selfcheck  auto-reload onto a new build: the CI bake contract,
+#                            the web gate, and never mid-run / never in a room
 #   tower_site_selfcheck     the tower's site: deterministic, dry, and clear of
 #                            every spawner (plus the A/B that the rest of the world
 #                            is byte-identical with the exclusion on and off)
