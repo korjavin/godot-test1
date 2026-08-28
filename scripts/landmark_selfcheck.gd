@@ -37,6 +37,10 @@ extends SceneTree
 ##      forgotten row is a failure. Deliberately NOT asserted for `name`: four of
 ##      the eight names are the same word in German and therefore correctly have
 ##      NO CSV ROW AT ALL (locale_selfcheck.gd fails a de column identical to en).
+##      The quiz card's four literals ride along on the same rule, and for the
+##      same reason: they are CSV keys. What that pins is the CSV side — the rows
+##      cannot be deleted, and a German format string cannot lose its %d; see the
+##      note at the check for the direction it does not yet cover.
 ##   4. THE TOAST FIRES ONCE PER APPROACH AND RE-ARMS ON LEAVING. Driven against
 ##      the real landmark_toast.gd with stub player and marker nodes, because
 ##      every way this breaks — a card that never shows, one that re-pops every
@@ -138,26 +142,29 @@ extends SceneTree
 ##   (p) _update_burst's `_sync_run()` call removed, leaving the run gate lazy on
 ##       the next CLAIM only  ->  same failure as (o), which is the point: the
 ##       gate has to be where coins are paid, not only where they are armed.
-##   (q) LandmarkBuilders.quiz_options' `rng.seed = hash(...)` -> `rng.randomize()`
+##   (q) the "Not quite!" row deleted from ui.csv (+ --import), the same shape as
+##       (c)  ->  FAIL: quiz string Not quite! is not translated in de — its
+##       ui.csv row is missing.
+##   (r) LandmarkBuilders.quiz_options' `rng.seed = hash(...)` -> `rng.randomize()`
 ##       ->  FAIL: quiz_options is not deterministic — [33, 0, 37] then
 ##       [0, 16, 39]. (In a room that mutation gives every peer a different card.)
-##   (r) run_seed dropped from the quiz hash  ->  FAIL: no landmark's options
+##   (s) run_seed dropped from the quiz hash  ->  FAIL: no landmark's options
 ##       changed across 6 run_seeds, plus "only 34 distinct distractor pairs over
 ##       48 landmarks × 6 seeds × 3 ids". NOTE every per-call assertion passes
 ##       under it — three plausible names is exactly what it still returns.
-##   (s) landmark_id dropped from the quiz hash  ->  FAIL: no landmark's options
+##   (t) landmark_id dropped from the quiz hash  ->  FAIL: no landmark's options
 ##       changed across 3 landmark ids.
-##   (t) quiz_options' same-region preference removed (`if pool.size() < 2` ->
+##   (u) quiz_options' same-region preference removed (`if pool.size() < 2` ->
 ##       always fall back to the whole table)  ->  FAIL: Stonehenge (europe, 29
 ##       rows in region): 1 distractor(s) from another region — i.e. the giveaway
 ##       card the region field exists to prevent.
-##   (u) that same fallback threshold off by one (`< 2` -> `< 1`, so a 2-row region
+##   (v) that same fallback threshold off by one (`< 2` -> `< 1`, so a 2-row region
 ##       cannot fill its second slot)  ->  FAIL: Moai of Easter Island returned 2
 ##       options, expected 3. The oceania rows are what make this reachable.
-##   (v) `options.insert(rng.randi_range(0, 2), kind)` -> `options.append(kind)`
+##   (w) `options.insert(rng.randi_range(0, 2), kind)` -> `options.append(kind)`
 ##       (the answer always last)  ->  FAIL: the correct answer landed in slot [2]
 ##       on every one of the 48 × 6 × 3 draws.
-##   (w) LANDMARKS[1].region "oceania" -> "polynesia" (a sixth continent word)
+##   (x) LANDMARKS[1].region "oceania" -> "polynesia" (a sixth continent word)
 ##       ->  FAIL: Moai of Easter Island: region "polynesia" is not one of
 ##       ["europe", "asia", "africa", "americas", "oceania"]. Deleting the field
 ##       outright reports the same row as `missing`.
@@ -459,6 +466,37 @@ func _check_facts(registry: Array) -> void:
 		if tr(fact) == fact:
 			_fail("fact for %s is not translated in de — its ui.csv row is missing (the educational payload is the feature)"
 					% String(entry["name"]))
+
+	# The quiz card's four literals, held to the same rule as the facts: they ARE
+	# the CSV keys (RULE 1), so a missing row shows an English prompt over a
+	# German fact and nothing errors.
+	#
+	# WHAT THIS DOES AND DOES NOT CATCH. The list is the epic's fixed wording, not
+	# a read of landmark_toast.gd — that file does not own these strings yet, and
+	# the toast is a *scene-driven* Control whose labels are assigned in code, so
+	# there is nothing to read. So it pins the CSV: delete a row (or drop the %d
+	# from a German one) and this fails. It does NOT yet see a toast reworded away
+	# from these keys — that direction closes when the toast lands the wording as
+	# a const.
+	# ponytail: when landmark_toast.gd holds the four literals as a const, swap
+	# this array for `load(TOAST_SCRIPT).get_script_constant_map()` — the file
+	# already reads APPROACH_PAD that way — and the drift closes both ways.
+	const QUIZ_STRINGS: Array = [
+		"Which landmark is this?",
+		"Correct! +%d coins",
+		"Not quite!",
+		"Time's up!",
+	]
+	for quiz_string: String in QUIZ_STRINGS:
+		var german: String = tr(quiz_string)
+		if german == quiz_string:
+			_fail("quiz string %s is not translated in de — its ui.csv row is missing"
+					% quiz_string.c_escape())
+		# RULE 2 strings are `tr()`d as FORMAT strings, so a German row that lost
+		# its placeholder is not a cosmetic bug: `%` would fail on it at runtime.
+		elif quiz_string.contains("%d") and not german.contains("%d"):
+			_fail("the de row for %s dropped its %%d placeholder — it is a format string"
+					% quiz_string.c_escape())
 
 	# THE CONTROL HAS TO BE A POSITIVE ONE, and the obvious negative one is worse
 	# than useless here. The failure to rule out is "no table loaded at all", which
