@@ -28,6 +28,18 @@ extends CharacterBody3D
 ## gravity, the visual cull, the multiplayer sync constants. A species may not
 ## opt out of the lattice: walking is caught, running escapes, at every entry.
 ##
+## RANGED ATTACKS ARE A ROW KEY TOO. A species that throws something carries a
+## `"ranged"` sub-dictionary here — the projectile's speed, hit radius,
+## trajectory, minimum firing range, cap and colour — and its behaviour arm's
+## whole job is one `BossProjectile.fire(muzzle, quarry_pos, get_parent(),
+## spec["ranged"], self)` behind its own cooldown. The flight, the visuals, the
+## lethality and the lifetime all live in `scripts/boss_projectile.gd` and are
+## the same code for every shooter; what makes a bolt different from a thrown ice
+## cream is entirely the numbers in this table. See that file's header for the
+## required keys and for the FAIRNESS CONTRACT every set of them must satisfy —
+## `scripts/projectile_selfcheck.gd` measures it over every `"ranged"` dict it
+## finds in here, so a new ranged row is covered the day it lands.
+##
 ## READ THE LATTICE AS A STATEMENT ABOUT THE TABLE, NOT ABOUT EACH ANIMAL. It
 ## constrains the ROW (`chase_speed` above WALK_SPEED) and the CEILING
 ## (MAX_CHASE_SPEED clamps the product), and it deliberately says nothing about
