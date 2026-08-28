@@ -135,6 +135,11 @@ const ROWS: Array = [
 	# action, and its `raw` table names a constant per legend that only the toast
 	# will own. Until then this row is held by the legend/description checks
 	# alone, the same way "+ / -" is only asserted to EXIST.
+	# The row lands with the German strings and ahead of the toast that reads
+	# these keys — deliberately, so the localization half of the quiz can merge on
+	# its own (the four card literals are fixed wording, not UI). Between the two
+	# merges the help card names three keys that do nothing yet; the alternative
+	# is a second pass over this file for one row.
 	["1 2 3", "Answer a landmark quiz — coins for the right answer.", Mode.DESKTOP],
 	["K", "Open the skill tree — also the Skills button, top right.", Mode.DESKTOP],
 	["M", "Show or hide the minimap.", Mode.DESKTOP],
