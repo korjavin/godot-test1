@@ -41,6 +41,8 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #   prop_selfcheck           prop/structure footprints, budgets, palettes
 #   enemy_spawn_selfcheck    every species: no spawn in stone, deterministic
 #                            placement, biome dispatch, behaviour, MP identity
+#   boss_selfcheck           the boss territory leash (hunts inside, never
+#                            leaves) + crush immunity is an ORDERING
 #   perf_selfcheck           frame-spike telemetry (thresholds, correlation, reset)
 #   chunk_stream_selfcheck   ground-first chunk streaming (floor, debt, determinism)
 #   intro_selfcheck          intro film: web gate, desktop PLAY SOLO path, JS shape
@@ -207,6 +209,17 @@ Per-instance speed and size rolls are **not** deterministic (they use a `randomi
 RNG); only *positions* are. Bosses skip both rolls — `setup_as_boss()` must be called
 **before** `add_child`, because `_ready()` is where the rolls happen.
 
+**A boss is a MODIFIER on a species, so anything true of "boss" is written once in the
+`is_boss` layer and every boss kind inherits it.** Two rules live there today and neither
+may be reimplemented per-kind: the **territory leash** — a boss hunts normally inside
+`home_position` + `territory_radius()` and can never leave it, which is the only
+counterplay because bosses cannot be killed — and **crush immunity**, which is an
+ORDERING (the `is_boss` early return in `_on_player_collision` sits above the giant-Teibi
+crush block; swap them and Teibi one-shots the boss with no error anywhere). The territory
+is deliberately ONE queryable seam — `home_position` + `territory_radius()` +
+`in_territory()` — because the owner intends the zone to grow gameplay later; `is_boss` is
+never a bare radius comparison. `boss_selfcheck` pins both.
+
 The species `chase_speed` (5.5 for the crocodile) is deliberately above `WALK_SPEED` (5.0)
 so walking gets you caught, and `MAX_CHASE_SPEED` (8.5) — a top-level const clamping every
 species' **sustained** speed — is deliberately below the slowest character's run, so
@@ -234,6 +247,9 @@ coin animation beyond its own radius. Two invariants:
   the table — the ambushing viper's 5 is the floor, the wolf's 18 the ceiling; 25 for a
   boss).** Anything that could
   chase or touch the player is always fully awake, so near-player behaviour is unchanged.
+  A boss widens that chain by one link — `BOSS_DETECTION_RADIUS` (25) <=
+  `BOSS_TERRITORY_RADIUS` (32) < `SIM_RADIUS` (45) — because it is leashed to the area it
+  spawned in and the whole ZONE, not just the smell, has to fit inside the sleep radius.
 - **Crocodiles are slept, never removed.** Entity counts stay the same.
 
 The same scan publishes the nearest chaser's distance to the danger vignette, which drives
