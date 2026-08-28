@@ -130,6 +130,12 @@ const ROWS: Array = [
 	["R", "Switch hero: Windman, Primm, Teibi, Phoboman.", Mode.DESKTOP],
 	["F", "Special ability: Air Rush, Phase Step, Resize or Stink Wave.", Mode.DESKTOP],
 	["C", "Cycle the view: over the shoulder, eyes, front.", Mode.DESKTOP],
+	# The landmark quiz answer keys. Raw keycodes outside the input map, like K
+	# and M beneath — so `help_selfcheck.gd` cannot compare them against a bound
+	# action, and its `raw` table names a constant per legend that only the toast
+	# will own. Until then this row is held by the legend/description checks
+	# alone, the same way "+ / -" is only asserted to EXIST.
+	["1 2 3", "Answer a landmark quiz — coins for the right answer.", Mode.DESKTOP],
 	["K", "Open the skill tree — also the Skills button, top right.", Mode.DESKTOP],
 	["M", "Show or hide the minimap.", Mode.DESKTOP],
 	["+ / -", "Zoom the minimap in and out.", Mode.DESKTOP],

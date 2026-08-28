@@ -37,6 +37,9 @@ extends SceneTree
 ##      forgotten row is a failure. Deliberately NOT asserted for `name`: four of
 ##      the eight names are the same word in German and therefore correctly have
 ##      NO CSV ROW AT ALL (locale_selfcheck.gd fails a de column identical to en).
+##      The quiz card's four literals ride along on the same rule, and for the
+##      same reason: they are CSV keys, so rewording one in the toast without
+##      adding its row falls silently through to English.
 ##   4. THE TOAST FIRES ONCE PER APPROACH AND RE-ARMS ON LEAVING. Driven against
 ##      the real landmark_toast.gd with stub player and marker nodes, because
 ##      every way this breaks — a card that never shows, one that re-pops every
@@ -124,6 +127,9 @@ extends SceneTree
 ##   (p) _update_burst's `_sync_run()` call removed, leaving the run gate lazy on
 ##       the next CLAIM only  ->  same failure as (o), which is the point: the
 ##       gate has to be where coins are paid, not only where they are armed.
+##   (q) the quiz literal "Not quite!" reworded to "Not quite, mate!" (i.e. the
+##       toast edited without the CSV)  ->  FAIL: quiz string Not quite, mate! is
+##       not translated in de — its ui.csv row is missing.
 ##
 ## Don't grow this into a suite.
 
@@ -411,6 +417,28 @@ func _check_facts(registry: Array) -> void:
 		if tr(fact) == fact:
 			_fail("fact for %s is not translated in de — its ui.csv row is missing (the educational payload is the feature)"
 					% String(entry["name"]))
+
+	# The quiz card's own four literals, held to the same rule as the facts. They
+	# live here rather than being read off landmark_toast.gd because they ARE the
+	# CSV keys (RULE 1): the day someone rewords one in the toast without adding
+	# the row, tr() returns the new English and nothing else in the game notices.
+	# A German game would show a German fact under an English prompt.
+	const QUIZ_STRINGS: Array = [
+		"Which landmark is this?",
+		"Correct! +%d coins",
+		"Not quite!",
+		"Time's up!",
+	]
+	for quiz_string: String in QUIZ_STRINGS:
+		var german: String = tr(quiz_string)
+		if german == quiz_string:
+			_fail("quiz string %s is not translated in de — its ui.csv row is missing"
+					% quiz_string.c_escape())
+		# RULE 2 strings are `tr()`d as FORMAT strings, so a German row that lost
+		# its placeholder is not a cosmetic bug: `%` would fail on it at runtime.
+		elif quiz_string.contains("%d") and not german.contains("%d"):
+			_fail("the de row for %s dropped its %%d placeholder — it is a format string"
+					% quiz_string.c_escape())
 
 	# THE CONTROL HAS TO BE A POSITIVE ONE, and the obvious negative one is worse
 	# than useless here. The failure to rule out is "no table loaded at all", which
