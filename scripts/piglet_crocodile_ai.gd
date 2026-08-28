@@ -4376,6 +4376,15 @@ func _on_player_collision(player: Node) -> void:
 	# the mechanic, so a second retrieval unit inherits it with its row. This is
 	# the only place outside `_behave_hunt` that touches `_hunt_lock`, and it only
 	# WRITES the clock the arm reads.
+	#
+	# ponytail: in a room this line fires on whichever screen the contact happened
+	# on, and on a PEER that body is remote-driven — it renders the master's
+	# samples and never runs the arm — so the lock it writes there is inert and the
+	# master's own hunter keeps closing. That is exactly the shape
+	# `_pause_and_change_direction()` below already has for every species, so the
+	# ceiling is the crocodile's ceiling and not a new one; the upgrade path, if a
+	# room ever needs the withdrawal to be shared, is a relayed verb, which this
+	# bead was told not to add.
 	if spec["behavior"] == "hunt":
 		_hunt_lock["disengage"] = float(spec.get("hunt_disengage_time", 0.0))
 

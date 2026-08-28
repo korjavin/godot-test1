@@ -2043,8 +2043,7 @@ func _probe_hunt_dispatch(hunt_species: String) -> void:
 		_fail("the live hunter reports a physics delta of %.4f s — the telegraph"
 				% dt + " and disengage windows cannot drain, so this probe would"
 				+ " measure a hunter frozen on its ring forever")
-		croc.queue_free()
-		stub.queue_free()
+		_free_hunt_probe(croc, stub)
 		return
 
 	var quarry: Vector3 = stub.global_position
@@ -2053,8 +2052,7 @@ func _probe_hunt_dispatch(hunt_species: String) -> void:
 		_fail("a %s %.1f m from a grounded quarry it smells %.1f m away did not"
 				% [hunt_species, quarry.length(), float(row["detection_radius"])]
 				+ " start chasing — the probe never reached the dispatch at all")
-		croc.queue_free()
-		stub.queue_free()
+		_free_hunt_probe(croc, stub)
 		return
 	# TWO DIFFERENT FAILURES LOOK IDENTICAL FROM `chase_target` ALONE on this
 	# frame — an arm that never ran, and an arm that ran and committed instantly —
@@ -2066,8 +2064,7 @@ func _probe_hunt_dispatch(hunt_species: String) -> void:
 				+ " _update_chase_state is not reaching _behave_hunt, so the arm"
 				+ " ships unrun and every static probe above it measures a function"
 				+ " nothing calls")
-		croc.queue_free()
-		stub.queue_free()
+		_free_hunt_probe(croc, stub)
 		return
 	# TWO CAUSES REMAIN ONCE THE ARM IS KNOWN TO HAVE RUN, and the message names
 	# both rather than picking one: either the telegraph is not holding the unit
@@ -2081,8 +2078,7 @@ func _probe_hunt_dispatch(hunt_species: String) -> void:
 				% standoff + " telegraph is not holding it (a hunter that commits on"
 				+ " the frame it smells you owes the player a warning it never"
 				+ " gave) or hunt_steer_point has stopped producing the ring")
-		croc.queue_free()
-		stub.queue_free()
+		_free_hunt_probe(croc, stub)
 		return
 
 	# ---- the telegraph is a WINDOW ------------------------------------------
@@ -2147,8 +2143,25 @@ func _probe_hunt_dispatch(hunt_species: String) -> void:
 			% [stub.hits, after_grab] + " %.1f s (%.2f m at the end of it, %.2f m"
 			% [disengage, holding, recommitted] + " after)")
 
-	croc.queue_free()
-	stub.queue_free()
+	_free_hunt_probe(croc, stub)
+
+
+func _free_hunt_probe(croc: Node, stub: Node) -> void:
+	"""
+	Tear the live pair down IMMEDIATELY, not at the end of the frame.
+
+	@param croc: the probe's hunter body
+	@param stub: the probe's quarry
+
+	`free()` rather than `queue_free()` because the stub sits in group "player"
+	and the 289-chunk sweep runs after this check: a quarry still standing in the
+	tree is one every crocodile the sweep spawns would resolve through
+	`_find_player`, which is a probe perturbing the measurement that follows it.
+	Safe here for the same reason it is safe in _model_top — this runs from
+	_run(), never from inside a physics or signal callback.
+	"""
+	croc.free()
+	stub.free()
 
 
 # ============================================================================
