@@ -257,7 +257,10 @@ extends SceneTree
 ##       asked without pausing the tree (7(i)); (j), (k) and (m) each report that
 ##       they cannot measure their release, which is the point of stating the
 ##       precondition in every one of them.
-##   (mm) the `if _unfocused: return` dropped from `_update_quiz`  ->  FAIL: the
+##   (nn) the `and _paused_by_us` dropped from `_update_quiz`'s focus hold  ->
+##       FAIL: an unfocused window stopped the clock of a LIVE card in a room —
+##       the world kept running and the question can no longer time out (7(n)).
+##   (mm) the `if _unfocused and _paused_by_us: return` dropped from `_update_quiz`  ->  FAIL: the
 ##       question timed out while the app was unfocused — the world unpauses in a
 ##       backgrounded tab with nobody watching (7(n)). Dropping the FOCUS_IN arm
 ##       of `_notification` instead is the mirror: FAIL: the question never
@@ -1636,6 +1639,26 @@ func _check_quiz_toast(registry: Array) -> void:
 		_fail("quiz: the question never resolved after the app regained focus — the clock was stopped, not held")
 	if paused:
 		_fail("quiz: the pause survived the question that regained focus and timed out")
+
+	# THE HOLD IS ABOUT A FROZEN WORLD, NOT ABOUT FOCUS. In a room nothing is
+	# paused, so the world — crocodiles included — keeps running while the window
+	# is away, and a clock stopped there would hand an alt-tabbing player a
+	# question the timeout can no longer end: the free refusal QUIZ_TIMEOUT exists
+	# to prevent. Same fixture as step (l), re-added because that step freed it.
+	var mp_focus := StubMp.new()
+	mp_focus.add_to_group("mp")
+	root.add_child(mp_focus)
+	terrain.run_seed = 515064
+	_walk_in(toast, player, near, far)
+	if paused:
+		_fail("quiz: step (n)'s room control cannot measure anything — the card paused in a room")
+	toast.notification(NOTIFICATION_APPLICATION_FOCUS_OUT)
+	toast.call("_process", quiz_timeout + 1.0)
+	if bool(toast.get("_quiz_pending")):
+		_fail("quiz: an unfocused window stopped the clock of a LIVE card in a room — the world kept running and the question can no longer time out")
+	toast.notification(NOTIFICATION_APPLICATION_FOCUS_IN)
+	mp_focus.queue_free()
+	await process_frame
 
 	toast.queue_free()
 	marker.queue_free()

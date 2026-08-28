@@ -860,7 +860,9 @@ func _notification(what: int) -> void:
 	# backgrounded tab, unpause, and hand the player back a running world with a
 	# crocodile in it — the one variant of the ceiling above where nobody is
 	# watching it happen. Freezing the clock instead means a backgrounded question
-	# is simply still there, still frozen, when the player comes back.
+	# is simply still there, still frozen, when the player comes back. The hold is
+	# gated on `_paused_by_us` in `_update_quiz`, so it protects a frozen world and
+	# never a room, where nothing was frozen in the first place.
 	#
 	# Deliberately NOT resumed on FOCUS_IN alone: this mirrors the resume the
 	# player would have got, and there is nothing to recalibrate, so the flag just
@@ -938,9 +940,17 @@ func _update_quiz(delta: float) -> void:
 	"""
 	if not _quiz_pending:
 		return
-	# The window is gone (tab switched, phone backgrounded). Hold the question and
-	# its pause exactly where they are — see _notification.
-	if _unfocused:
+	# The window is gone (tab switched, phone backgrounded) AND the world is frozen
+	# because of us: hold the question and its pause exactly where they are — see
+	# _notification.
+	#
+	# `and _paused_by_us` is load-bearing, not defensive. In a room we take no
+	# pause, so the world keeps running while the window is away — crocodiles
+	# included — and a clock stopped there would hand an alt-tabbing player an
+	# indefinite question the timeout can no longer end, which is exactly the free
+	# refusal QUIZ_TIMEOUT exists to prevent. The hold protects a FROZEN world, and
+	# only a frozen one.
+	if _unfocused and _paused_by_us:
 		return
 	# A new run cancels a pending question the same way it cancels a shower in
 	# flight, and for the same reason — see _sync_run. One group lookup per frame,
