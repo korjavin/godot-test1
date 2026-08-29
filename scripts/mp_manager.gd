@@ -1514,6 +1514,15 @@ func _publish_captive(hero: String, held: bool) -> void:
 	payload and the rule are IDENTICAL on both sides - `decode_captive()` and
 	`_apply_captive()`, once - so the two transports cannot drift.
 	"""
+	# ponytail: TWO TRANSPORTS, NO RESYNC. One window survives both: a capture that
+	# lands in the gap between the master sending a joiner its snapshot and US
+	# learning that joiner exists reaches neither — the snapshot was already stale
+	# and the loop below has nobody to send to. That joiner's picture of the cells is
+	# then wrong for the room's life. The ceiling is one hero, and only for a capture
+	# inside a sub-second window of a join; the upgrade path is the MASTER
+	# re-publishing its whole set to peers still negotiating, which needs a
+	# master-only set verb (the per-hero one here is authorized by `_last_holder` and
+	# a master cannot re-assert somebody else's capture under that rule).
 	var packet: Dictionary = {"t": "cap", "h": hero, "c": held}
 	_broadcast_reliable(var_to_bytes(packet))
 	if _lobby == null:
@@ -1864,6 +1873,15 @@ func _on_lobby_heroes(heroes: Dictionary, pool: Array) -> void:
 	if _state != State.IN_ROOM:
 		return
 
+	# ponytail: `_auto_claim_hero()` below runs on the `welcome` frame, when
+	# `_captives` is still empty — so a joiner can claim a hero the room has in a
+	# cell and play him for as long as the master's snapshot takes to arrive. It
+	# self-corrects rather than sticking: `player_controller._tick_prison()` asks
+	# twice a second whether the hero we hold is captive and asks the lobby for
+	# another, so the ceiling is a fraction of a second of the wrong body. The
+	# upgrade path is gating the auto-claim on `_join_settled()`, which changes the
+	# hero-assignment flow every other peer depends on and wants its own bead.
+	#
 	# The lobby is our own server, but this is still parsed JSON: keep both sides
 	# of the mapping strings so `hero_holder()` can never hand back a float.
 	_heroes = {}

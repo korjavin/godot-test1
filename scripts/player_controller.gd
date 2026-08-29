@@ -545,6 +545,15 @@ var custody_timer: float = 0.0
 ## THE RECALL CLOCK, in seconds. Long enough to read a door's refusal, cycle E to
 ## the hero it names, walk through and step into a cell — measured by walking it,
 ## not reasoned. Short enough that standing still loses.
+##
+## ponytail: PER CLIENT, AND IN A ROOM THAT IS A DEADLINE PER PLAYER. Each peer
+## starts its own 35 s when its own `cap` packets say the roster is empty, so a
+## liberation landing within a packet's flight of the deadline can be a survival on
+## one screen and an archived world on another. Solo this cannot happen and it is
+## the shipped behaviour of bead godot-test1-3iy.11; making it room-wide is what
+## bead godot-test1-3iy.10 exposed. The upgrade path is the shape the room's HEARTS
+## already use — the master owns the number and publishes it, and the master
+## decides the outcome — and it wants its own bead rather than an invention here.
 const CUSTODY_RECALL_SECONDS: float = 35.0
 
 # ---------------------------------------------------------------------------
