@@ -1,0 +1,11 @@
+# The model generators' toolchain, PINNED — see .github/workflows/build.yml's
+# model-selfcheck job, which rebuilds every .glb and then fails if the result
+# differs from the committed bytes. That check compares FLOAT ARRAYS a
+# trimesh release is free to shift by an ulp, so an unpinned install would turn
+# a green gate into a coin flip on somebody else's release day. Pinned, the
+# comparison means what it says: the committed artifact is stale.
+#
+# Bump these deliberately, rebuild the models in the same commit, and expect a
+# .glb diff to come with the bump.
+trimesh==5.0.0
+numpy==2.5.2
