@@ -425,6 +425,36 @@ const PAD_TRIGGER_DEPTH: float = 1.0
 ## `TowerGraph`'s `gallery_cell_*` edges are ungated, so whoever reached the gallery
 ## can free whoever is inside, whatever hero they happen to be holding.
 const CELL_Z0: float = 6.6
+
+## THE VENT PURGE - the cell block's operable system, and the prison role's one
+## outward-facing verb (bead godot-test1-3iy.10). A benched player stands on this
+## pad and the pack around every TEAMMATE scatters: an immediate opening for the
+## team outside, bought by somebody who cannot use it themselves.
+##
+## IT RIDES THE SHIPPED `flee` VERB AND ADDS NO PROTOCOL. `MpManager.request_croc_flee()`
+## already relays to the master, the master already simulates the crocodiles around
+## every member (its terrain keeps focus chunks there), and `is_fleeing` is already
+## a bit in the crocodile sync's flag byte - so the effect reaches the teammate's
+## screen through machinery that exists, one sync packet later. A new verb here
+## would have been a fifth trust boundary for a thing four already do.
+##
+## IN THE GALLERY, at its +X end: the prisoner has to leave their own cell to reach
+## it, which is the small act that makes operating it a decision.
+const PURGE_PAD_X: float = INNER_HALF - 1.0
+const PURGE_PAD_Z: float = (SPINE_Z + CELL_Z0) * 0.5
+
+## How long the scattered pack stays scattered, and how far from each teammate the
+## purge reaches. The duration is under Phoboman's own PHOBOMAN_FLEE_DURATION (10 s)
+## because this is an assist and not an ability; the radius is the crocodile sync's
+## own CROC_SYNC_RADIUS class, so it cannot ask the master to scare a crocodile the
+## master would not be sending that peer anyway.
+const PURGE_FLEE_SECONDS: float = 6.0
+const PURGE_FLEE_RADIUS: float = 40.0
+
+## Seconds between purges. Long enough that the system is a lever and not a
+## hold-to-win button, and comfortably inside `MpManager`'s 4-per-second `flee`
+## budget even with three teammates taking one packet each.
+const PURGE_COOLDOWN: float = 20.0
 const CELL_DIVIDER: float = 0.3
 
 # ============================================================================
@@ -798,6 +828,11 @@ var _press_clock: float = 0.0
 
 ## The four containment frames, keyed by HERO, plus the authored staging unit.
 var _cell_frames: Dictionary = {}
+
+## Is the local player standing on the vent-purge pad, and how long until it can
+## fire again. Polled exactly like the spine pads - see `_tick_spine_pads()`.
+var _on_purge_pad: bool = false
+var _purge_cooldown: float = 0.0
 var _containment: MeshInstance3D = null
 
 ## The scar's rubble and its collision shape. Hidden and non-solid until the world
@@ -1227,6 +1262,15 @@ static func _wing_boxes() -> Array[Dictionary]:
 	# height it stood in front of the containment frame and hid it, so Primm's cell
 	# read exactly like the three empty ones — the staging swallowed the one thing
 	# this wing has to say from across the gallery.
+	# The vent-purge pad. Same violet-pad shape as the four spine pads, in the
+	# gallery rather than the corridor - it is operated from the wrong side of the
+	# doors, by somebody the doors are keeping in.
+	out.append({
+		"name": "PurgePad",
+		"pos": Vector3(PURGE_PAD_X, 0.05, PURGE_PAD_Z),
+		"size": Vector3(1.1, 0.1, 1.1),
+		"color": COLOR_IDENTITY_PAD, "collide": false, "floor": 0,
+	})
 	out.append({
 		"name": "PrimmContainment",
 		"pos": Vector3(_cell_x(TowerGraph.HEROES.find(AUTHORED_CAPTIVE)), 0.6, CELL_Z0 + 0.5),
@@ -1269,6 +1313,47 @@ static func _spine_door_x(index: int) -> float:
 static func _spine_pier_x(index: int) -> float:
 	"""Centre of the `index`th pier — between doors `index` and `index + 1`."""
 	return _spine_door_x(index) + (SPINE_DOOR_W + SPINE_PIER_W) * 0.5
+
+
+static func cell_stand(hero: String) -> Vector3:
+	"""
+	Where the prison role stands a benched player up, in interior-local metres.
+
+	@param hero: the captive - one of `TowerGraph.HEROES`. An unknown name lands in
+	    the gallery, which is inside the block and therefore still legal.
+
+	ONE PLAYER PER CELL comes free from the geometry: the cells are indexed by hero
+	and a peer is benched holding exactly one, so two benched peers are two
+	different recesses with no allocator, no registry and nothing to keep in step.
+
+	`y` is the same 0.2 m lift `CUSTODY_STAND` uses - a body dropped exactly on the
+	floor plane can start the frame a hair inside it.
+	"""
+	var index: int = TowerGraph.HEROES.find(hero)
+	if index < 0:
+		return Vector3(PURGE_PAD_X, 0.2, PURGE_PAD_Z)
+	return Vector3(_cell_x(index), 0.2, (CELL_Z0 + INNER_HALF) * 0.5)
+
+
+static func block_min() -> Vector3:
+	"""
+	The prison role's confinement box, low corner, in interior-local metres.
+
+	THE GALLERY AND ITS FOUR CELLS AND NOTHING ELSE - everything north of the spine
+	wall. The south face is `SPINE_Z`, which is where the four identity doors stand:
+	a prisoner may walk the gallery and every cell (that is what makes freeing a
+	CELLMATE possible, and it is the block's second system) but may never step
+	through a spine door, which is the whole of "no solo escape". The 0.4 m inset
+	keeps the clamp off the wall faces so a body pushed into the box is not pushed
+	into geometry; `tower_interior_selfcheck` re-derives both corners rather than
+	trusting these numbers.
+	"""
+	return Vector3(SLAB_X0 + 0.4, 0.0, SPINE_Z + 0.4)
+
+
+static func block_max() -> Vector3:
+	"""The confinement box's high corner - see `block_min()`."""
+	return Vector3(INNER_HALF - 0.4, 0.0, INNER_HALF - 0.4)
 
 
 static func _cell_width() -> float:
@@ -1453,6 +1538,7 @@ func _process(delta: float) -> void:
 	_tick_press(delta)
 	_tick_gates(delta)
 	_tick_pads()
+	_tick_purge(delta)
 
 
 # ============================================================================
@@ -1869,6 +1955,10 @@ func _build_wing() -> void:
 			Vector3(_spine_door_x(i), 1.0, PAD_Z),
 			Vector3(SPINE_DOOR_W, 2.0, PAD_TRIGGER_DEPTH),
 			_on_spine_enter.bind(gid), _on_spine_exit.bind(gid), 0)
+	_add_area("PurgeTrigger",
+		Vector3(PURGE_PAD_X, 1.0, PURGE_PAD_Z),
+		Vector3(1.1, 2.0, 1.1),
+		_on_purge_enter, _on_purge_exit, 0)
 	var cell_mid := (CELL_Z0 + INNER_HALF) * 0.5
 	for i in TowerGraph.HEROES.size():
 		var hero := String(TowerGraph.HEROES[i])
@@ -2225,9 +2315,65 @@ func _on_cell_enter(body: Node3D, hero: String) -> void:
 	No pad, no prompt and no hero test: reaching the cell IS the action, which is
 	the only shape `tower_selfcheck`'s liberation clause admits — a cell hangs off
 	its gallery on an ungated edge precisely so that whoever got there can do this.
+
+	...WITH ONE EXCEPTION, AND IT IS "NO SOLO ESCAPE" (bead godot-test1-3iy.10). A
+	benched multiplayer player plays as their OWN captive inside this block, so
+	walking back into their own recess would be a rescue performed on themselves —
+	the one liberation the owner's ruling forbids. Narrow on purpose: it asks the
+	body whether it is serving the prison role AND whether this is its own cell, so
+	a prisoner still frees every CELLMATE (that is the block's second system) and no
+	ordinary rescue anywhere in the game changes by a frame.
 	"""
+	if not body.is_in_group("player"):
+		return
+	if bool(body.get("prisoner_active")) and _hero_name() == hero:
+		return
+	_liberate(hero)
+
+
+func _on_purge_enter(body: Node3D) -> void:
 	if body.is_in_group("player"):
-		_liberate(hero)
+		_on_purge_pad = true
+
+
+func _on_purge_exit(body: Node3D) -> void:
+	if body.is_in_group("player"):
+		_on_purge_pad = false
+
+
+func _tick_purge(delta: float) -> void:
+	"""
+	The vent purge: scatter the pack around every teammate. See `PURGE_PAD_X`.
+
+	Polled like every other pad in this building, and it fires the moment the
+	cooldown allows rather than on a press — the wing has no new input, which is the
+	same rule the break-out scene is built on.
+
+	NULL-SAFE AND ROOM-ONLY. Solo, `peer_positions()` answers `null` and this is one
+	dictionary lookup and a return: there is no team outside to open anything for,
+	and firing it on the player's own pack would turn a cell into a panic button.
+	"""
+	_purge_cooldown = maxf(0.0, _purge_cooldown - delta)
+	if not _on_purge_pad or _purge_cooldown > 0.0:
+		return
+	var mp := get_tree().get_first_node_in_group("mp")
+	if mp == null or not mp.has_method("peer_positions") or not mp.has_method("request_croc_flee"):
+		return
+	var positions: Variant = mp.call("peer_positions")
+	if positions == null or typeof(positions) != TYPE_DICTIONARY:
+		return
+	var fired: int = 0
+	for id: Variant in (positions as Dictionary):
+		var where: Variant = (positions as Dictionary)[id]
+		if typeof(where) != TYPE_VECTOR3:
+			continue
+		if bool(mp.call("request_croc_flee", where as Vector3, PURGE_FLEE_SECONDS, PURGE_FLEE_RADIUS)):
+			fired += 1
+	if fired == 0:
+		return
+	_purge_cooldown = PURGE_COOLDOWN
+	_say_cells(tr("VENT PURGE — THE PACK SCATTERS."))
+	_sfx("play_level_up")
 
 
 func _on_checkpoint_enter(body: Node3D) -> void:

@@ -1490,8 +1490,42 @@ func hero_freed(hero: String) -> void:
 	what makes the tower's mirror safe to re-drive: freeing somebody who is not
 	held is a no-op, and so is freeing the authored captive, who was never in this
 	set (he is the tower's staging, not a hero the field took off you).
+
+	IN A ROOM IT IS ALSO A BROADCAST. The captive set is room-wide there (bead
+	godot-test1-3iy.10), so a liberation has to reach the peer who lost that hero -
+	it is what ends their prison role - and it reaches them the same way the
+	capture did. A no-op offline, and idempotent on both sides.
 	"""
 	captive_heroes.erase(hero)
+	var mp := _mp()
+	if mp != null and mp.has_method("report_hero_freed"):
+		mp.call("report_hero_freed", hero)
+
+
+func set_hero_captive(hero: String, held: bool) -> void:
+	"""
+	THE ROOM'S MIRROR: a teammate's capture or liberation, applied to our copy.
+
+	@param hero: one of the `CHARACTERS` names, already whitelisted against the
+	    lobby's pool by `MpManager._apply_captive()`.
+	@param held: true when the room says he is in a cell.
+
+	The only thing `MpManager` calls on the player for the captive set, and it
+	writes exactly what a local capture writes MINUS the local consequences - no
+	auto-switch, no reassignment, no sting. Those belong to the peer who lost the
+	hero; this is the other three peers learning about it, and for them a captured
+	teammate is a name that leaves the roster and a cell frame that lights up.
+	"""
+	if held:
+		captive_heroes[hero] = true
+	else:
+		captive_heroes.erase(hero)
+	# Same null-safe seam a local capture uses, for the same reason: the tower is a
+	# streamed landmark and is usually not in the tree when a grab lands anywhere in
+	# the room, so `TowerInterior` re-seeds its mirror from this set on build.
+	var interior := get_tree().get_first_node_in_group("tower_interior")
+	if interior != null and interior.has_method("set_captive"):
+		interior.call("set_captive", hero, held)
 
 
 func _capture_active_hero() -> void:
@@ -1527,6 +1561,29 @@ func _capture_active_hero() -> void:
 	var interior := get_tree().get_first_node_in_group("tower_interior")
 	if interior and interior.has_method("set_captive"):
 		interior.set_captive(hero, true)
+
+	# TELL THE ROOM, BEFORE ANYTHING IS DECIDED ABOUT IT. In a room the captive set
+	# is room-wide (bead godot-test1-3iy.10) - nobody may pick a hero who is in a
+	# cell, and the run ends when the ROOM has none left - so the assertion goes out
+	# first and the reassignment below is decided against a truth every peer now
+	# shares. A no-op offline.
+	var mp := _mp()
+	if mp != null and mp.has_method("report_hero_captured"):
+		mp.call("report_hero_captured", hero)
+
+	# REASSIGN FIRST, IMPRISON LAST - the owner's rule, and in a room the step into
+	# a new body is the LOBBY'S to make, not ours. `server/room.go`'s `SetHero`
+	# releases our claim on the hero just taken and claims the free one under the
+	# process-wide room lock, so two peers benched in the same frame serialize:
+	# first wins, second gets `errHeroTaken` plus fresh truth and asks again on the
+	# next `_tick_prison()`. Nothing moves locally until the `heroes` broadcast
+	# confirms it, which is `claim_hero()`'s standing contract and the only reason
+	# two peers cannot end up in one body.
+	#
+	# IMPRISONMENT IS NOT DECIDED HERE. `_tick_prison()` owns it, because it is the
+	# one place that can see the answer to the claim this line just sent.
+	if mp != null and mp.has_method("request_reassignment") and mp.call("request_reassignment"):
+		return
 
 	# ...and step into the next AVAILABLE hero on the spot, while the unit
 	# withdraws. Available, not merely free: in a room the lobby owns who plays
@@ -2438,7 +2495,20 @@ func _on_caught_finished() -> void:
 			_end_custody_protocol(false)
 		else:
 			_trigger_game_over()
-	elif not captive_heroes.is_empty() and available_character_indices().is_empty():
+	elif free_hero_count() == 0 and not captive_heroes.is_empty():
+		# GAME OVER IS WORLD-LEVEL (bead godot-test1-3iy.10, an ADOPTED READING of
+		# the owner's phrasing): the corporation has to hold EVERY hero, not merely
+		# every hero this peer may play. Solo that is the same sentence it has
+		# always been - `available_character_indices()` is exactly `free` there, so
+		# an empty hand and an empty free set are one condition - but in a room they
+		# part company, and the peer benched while a teammate is still running must
+		# be imprisoned (`_tick_prison`), not handed an ending. `captive_heroes` is
+		# mirrored room-wide, so this reads the ROOM's roster with no branch of its
+		# own.
+		#
+		# The `not captive_heroes.is_empty()` guard survives for its original
+		# reason: a build with no CHARACTERS at all would otherwise read 0 free and
+		# end every run at the first bite.
 		_begin_custody_protocol()
 	else:
 		_respawn_in_place()
