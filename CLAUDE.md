@@ -296,8 +296,12 @@ never a bare radius comparison. `boss_selfcheck` pins both.
 **Which boss kind a road station gets is its own dispatch, `BIOME_BOSS`** — same shape and
 same no-RNG-draw rule as `BIOME_SPECIES`, but keyed on the **owning station's centre**
 (`is_river_at` first, the owner's "river → crocodile"), because a boss is station-indexed
-and has no chunk centre. Two rows today — **SNOW → the titan** and **FOREST → the green
-dragon** — and every other band, plus every river station, still gets the crocodile. The
+and has no chunk centre. It is now **TOTAL over the `Biome` enum** — SNOW → titan,
+FOREST → green dragon, PLAINS → hydra, DESERT → naga, MOUNTAIN → roc, CITY → ice cream
+clown — which leaves the crocodile as a boss on exactly two paths: a station standing in
+a **river**, and the degrade path for a row that fails to resolve. Both stay measured
+(`enemy_spawn_selfcheck` fails if its road walk never crosses water; `boss_selfcheck`
+drives the crocodile as a subject beside every `BIOME_BOSS` kind). The
 row is resolved *above* the candidate walk so the kind stays a pure function of the boss
 index. Adding a boss is a `SPECIES` row, a `.tscn`, and one line there —
 `enemy_spawn_selfcheck` check 11 walks the road, asks the rule at every station, fails a
@@ -308,14 +312,19 @@ otherwise hide a `species`-after-`add_child` violation.
 The dragon is what the seam is supposed to cost: `behavior: "solo"` (no arm — that string
 deliberately has no `match` case), no `boss_chase_speed` opt-out, so it takes the default
 `BOSS_CHASE_SPEED` (7.0) and is thirty numbers, one `.tscn` and one dispatch line with no
-new logic anywhere. Its model is a re-skinned, stretched crocodile per the epic's
-placeholder-first art convention; the real winged mesh is its own art bead.
+new logic anywhere. The hydra, naga and roc are the same row three more times; the clown
+adds only a `"ranged"` dict and reuses the titan's arm unchanged. Every one of their
+models is a re-skinned, rescaled existing mesh per the epic's placeholder-first art
+convention — the real ones are their own art beads — and a placeholder's collision
+capsule may not reach past `BOSS_FOOTPRINT_RADIUS_PER_SCALE` (0.7 m at body scale 1),
+which is why several of them are squashed horizontally as well as stretched up.
 
 **A boss-only row may go BELOW `WALK_SPEED`, and the titan does.** The lattice's lower
 bound ("walking is caught") is asked of ordinary predators; a boss ignores its row's chase
 speed entirely and takes `BOSS_CHASE_SPEED` unless the row opts out with
-`boss_chase_speed`, which exists for the one species whose threat is its **shot** and not
-its feet. The exemption is paid for, not free: `enemy_spawn_selfcheck`'s ranged probe
+`boss_chase_speed`, which exists for a species whose threat is its **shot** and not its
+feet — the titan and the ice cream clown, both of them archers a walking player must be
+able to stroll away from. The exemption is paid for, not free: `enemy_spawn_selfcheck`'s ranged probe
 *asserts* every `"ranged"` row's speeds are sub-walk, and `boss_selfcheck` — which runs
 every check over every `BIOME_BOSS` kind, not just the crocodile — asserts the body really
 resolved the speed its row asked for.

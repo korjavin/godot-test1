@@ -2001,15 +2001,19 @@ const BIOME_SPECIES: Dictionary = {
 ## belongs in water, whatever band the noise field puts it in.
 ##
 ## THIS TABLE SHIPPED EMPTY, AND THAT WAS THE POINT — the seam landed with every
-## boss still a crocodile and a byte-identical world, and the snow titan below is
-## the first row to change an answer. Adding it changed no PLACEMENT anywhere:
+## boss still a crocodile and a byte-identical world, and the snow titan below was
+## the first row to change an answer. It is now TOTAL over the `Biome` enum (a
+## gate enemy_spawn_selfcheck asserts against the enum, so a seventh band would
+## have to bring its own boss), which leaves the crocodile fallback reachable on
+## exactly two paths: a station standing in a RIVER, and the degrade path for a
+## row that fails to resolve. Adding a row changed no PLACEMENT anywhere:
 ## the dispatch is pure function calls (biome_at / is_river_at — the
 ## allocation-free public API, no RNG anywhere under either) inserted at a spot
 ## where no draw is made, so the BOSS_SEED stream consumes the same draws in the
 ## same order it always did. A single extra draw would slide every boss in the
 ## world, which is the same rule CLAUDE.md states for BIOME_SPECIES and
-## CITY_CROC_DIVISOR. The snow titan and the forest dragon each land as ONE ROW
-## here, exactly as a predator lands as one row in BIOME_SPECIES.
+## CITY_CROC_DIVISOR. All six kinds land as ONE ROW here each, exactly as a
+## predator lands as one row in BIOME_SPECIES.
 ##
 ## Degrade rules are BIOME_SPECIES': a name that is not a SPECIES row warns from
 ## the AI's _ready() and behaves as a crocodile, and a scene that fails to load

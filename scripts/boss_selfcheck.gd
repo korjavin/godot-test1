@@ -550,8 +550,10 @@ func _check_model_rigid(boss: CharacterBody3D) -> void:
 	one factor), and a shear is precisely the loss of that. So this passes for a
 	uniform model, passes for a correctly-stretched one, and fails for a sheared
 	one — no reference pose to restate and nothing to retune when the numbers
-	move. It is asked of every BIOME_BOSS kind, so the six uniform rows are its
-	negative control.
+	move. It is asked of every BIOME_BOSS kind, so the uniformly
+	scaled ones (the crocodile fallback, the titan) are its negative control and
+	the stretched placeholders (the dragon, and the hydra / naga / roc / clown)
+	are the cases that can actually fail it.
 	"""
 	var model: Node3D = boss.get_node_or_null("Model")
 	if model == null:
