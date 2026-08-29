@@ -309,6 +309,11 @@ const FLOOR_Y: Array[float] = [
 	TowerShell.KEEP_HEIGHT,
 	TowerShell.KEEP_HEIGHT + TowerShell.STOREY_HEIGHT,
 	TowerShell.KEEP_HEIGHT + 2.0 * TowerShell.STOREY_HEIGHT,
+	TowerShell.KEEP_HEIGHT + 3.0 * TowerShell.STOREY_HEIGHT,
+	TowerShell.KEEP_HEIGHT + 4.0 * TowerShell.STOREY_HEIGHT,
+	TowerShell.KEEP_HEIGHT + 5.0 * TowerShell.STOREY_HEIGHT,
+	TowerShell.KEEP_HEIGHT + 6.0 * TowerShell.STOREY_HEIGHT,
+	TowerShell.KEEP_HEIGHT + 7.0 * TowerShell.STOREY_HEIGHT,
 ]
 
 ## Which storeys physically TOUCH each one. THE VISIBILITY WINDOW'S ADJACENCY, and
@@ -335,7 +340,13 @@ const FLOOR_NEIGHBOURS: Array[Array] = [
 	[0, 2],     # 1 the keep's upper landing — the hall below, that same slab above
 	[0, 1, 3],  # 2 storey 3 — its slab caps the annulus AND the keep
 	[2, 4],     # 3 storey 4
-	[3],        # 4 storey 5 — open to the shell's roof, nothing above it yet
+	[3, 5],     # 4 storey 5 — storey 6's slab is its ceiling since phase 16; it was
+	            #   [3] only while it was the top of the building
+	[4, 6],     # 5 storey 6, operations
+	[5, 7],     # 6 storey 7, security
+	[6, 8],     # 7 storey 8 — the labyrinth's lower half
+	[7, 9],     # 8 storey 9 — its upper half
+	[8],        # 9 storey 10, the cell block, under the sealed roof
 ]
 
 ## How much clear air a plan ramp keeps under the slab it climbs towards.
@@ -358,6 +369,32 @@ const PLAN_PAD_THICK: float = 0.1
 ## ceiling with it, instead of leaving the plans certified against a ramp that no
 ## longer exists. `tower_selfcheck` and `tower_interior_selfcheck` both assert it.
 const PLAN_RAMP_MAX_SLOPE: float = SLAB_Y / (SLAB_X0 - RAMP_X0)
+
+
+## A STOREY'S WALLS ARE AS TALL AS ITS CLEAR HEIGHT, AND THAT IS NOT ALWAYS
+## `STOREY_HEIGHT - SLAB_THICK`.
+##
+## Phase 16 fills the shell to its sealed roof, and the top storey has no slab over
+## it — its ceiling is `TowerShell.WALL_HEIGHT`. Build that floor to the ordinary
+## 4.6 m and its walls, its gate masses and its light panels all end up THROUGH the
+## roof, which check 1 refuses; leave the roof-height number written down anywhere
+## but here and it stops agreeing with `FLOOR_Y` the day a storey is added.
+##
+## So it is one function, read by `_merge_walls`, by the gate masses and by
+## `tower_interior_selfcheck` — which HAD a private copy and no longer does, because
+## the builder and the check disagreeing about a storey's ceiling is precisely the
+## failure this is here to make impossible.
+static func plan_clear_height(floor_index: int) -> float:
+	"""
+	The clear air over one planned storey's walking surface.
+
+	@param floor_index: An index into `FLOOR_Y`.
+	@return: Floor to the underside of whatever is above — the next storey's slab,
+	        or the shell's roof for the top one.
+	"""
+	if not TowerPlans.storey(floor_index + 1).is_empty():
+		return FLOOR_Y[floor_index + 1] - SLAB_THICK - FLOOR_Y[floor_index]
+	return TowerShell.WALL_HEIGHT - FLOOR_Y[floor_index]
 
 ## Hard cap on the boxes ONE plan storey may emit, asserted per storey by
 ## `tower_interior_selfcheck` — `BOX_BUDGET`'s discipline, applied to the machine
@@ -415,8 +452,16 @@ const RIDDLE_NOTCH: float = 1.2
 ## demand gate's `_nudge_ratio` reaction, in the one direction a mass can move.
 const RIDDLE_RATTLE: float = 0.22
 
-## How far it travels once solved: its own height, so the doorway is fully clear.
-const RIDDLE_TRAVEL: float = TowerShell.STOREY_HEIGHT - SLAB_THICK
+## How far it travels once solved: ITS OWN HEIGHT, so the doorway is fully clear.
+##
+## Read off the mass rather than declared, because since phase 16 a mass is as tall
+## as the storey it stands on (`plan_clear_height`) and a storey is not always 4.6 m.
+## A travel written down separately would leave a lock on a taller floor three
+## quarters open — solved, and still a wall.
+static func riddle_travel(mass: MeshInstance3D) -> float:
+	"""How far one riddle's mass lifts when solved: the height of the mass itself."""
+	var box := mass.mesh as BoxMesh
+	return 0.0 if box == null else box.size.y
 
 ## The demand gate's vault, off the hall's south end. The shutter fills the gap
 ## between the two jambs and sinks its own full height to open.
@@ -700,7 +745,11 @@ const BOX_BUDGET: int = 60
 ## lock, would have been four more nodes per riddle for the same four bits.
 ## ONE DRAW PER RIDDLE is the claim, and it is what makes a floor of them
 ## affordable.
-const DRAW_BUDGET: int = 28
+##
+## 30 SINCE PHASE 16's FIRST TASK, and the two are storeys 6 and 7: one
+## `Floor%dBatch` apiece and nothing else, exactly the phase-14 arithmetic. Neither
+## floor puts a box in `MOVING_PARTS`, so the whole 6000 m2 of each is one draw.
+const DRAW_BUDGET: int = 30
 
 # ============================================================================
 # PALETTE — one material per colour, shared process-wide (see `_material`)
@@ -1671,7 +1720,9 @@ static func _merge_walls(plan: Dictionary) -> Array[Dictionary]:
 	"""
 	var floor_index := int(plan["floor"])
 	var bottom: float = FLOOR_Y[floor_index]
-	var height := TowerShell.STOREY_HEIGHT - SLAB_THICK
+	# ...as tall as THIS storey's clear height, not as tall as a storey: the floor
+	# under the sealed roof has no slab over it (see `plan_clear_height`).
+	var height := plan_clear_height(floor_index)
 	var rows: Array = plan["rows"]
 	# Pass 1 and 2 at once: each row's maximal runs, extending the run directly
 	# above when its extent is identical.
@@ -1819,6 +1870,9 @@ static func _plan_riddles(plan: Dictionary) -> Array[Dictionary]:
 	var top: float = FLOOR_Y[floor_index]
 	var slots := riddle_slots(plan)
 
+	# Slab to ceiling, so the mass can be neither jumped nor crawled — and the
+	# ceiling is this storey's, which is not every storey's (`plan_clear_height`).
+	var mass_h := plan_clear_height(floor_index)
 	var masses: Dictionary = slots["masses"]
 	for gid: String in masses:
 		var span: Rect2i = masses[gid]
@@ -1828,8 +1882,8 @@ static func _plan_riddles(plan: Dictionary) -> Array[Dictionary]:
 		var z1 := _grid_z(float(span.end.y))
 		out.append({
 			"name": "%sRiddleMass_%s" % [prefix, gid],
-			"pos": Vector3((x0 + x1) * 0.5, top + RIDDLE_TRAVEL * 0.5, (z0 + z1) * 0.5),
-			"size": Vector3(x1 - x0, RIDDLE_TRAVEL, z1 - z0),
+			"pos": Vector3((x0 + x1) * 0.5, top + mass_h * 0.5, (z0 + z1) * 0.5),
+			"size": Vector3(x1 - x0, mass_h, z1 - z0),
 			"color": COLOR_RIDDLE, "collide": true, "floor": floor_index,
 			"dynamic": true,
 		})
@@ -2286,6 +2340,12 @@ func _ready() -> void:
 				_spine_shapes[spine] = shape
 
 	for i in _floors.size():
+		# A floor index with nothing static on it — `FLOOR_Y` names all ten storeys
+		# from phase 16's first task, and the upper ones are authored task by task —
+		# gets its container and no mesh. An empty batch is a node and a
+		# `DRAW_BUDGET` slot for zero triangles.
+		if batched[i].is_empty():
+			continue
 		var batch := MeshInstance3D.new()
 		batch.name = "Floor%dBatch" % i
 		batch.mesh = merged_mesh(batched[i])
@@ -2637,7 +2697,7 @@ func _place_riddle(gate_id: String) -> void:
 	var answer: Array = TowerGraph.gate(gate_id).get("answer", [])
 	var opened := float(_riddle_open.get(gate_id, 0.0))
 	var steps := maxi(answer.size(), 1)
-	var lift := RIDDLE_TRAVEL * opened
+	var lift := riddle_travel(mesh) * opened
 	if opened < 1.0:
 		lift += RIDDLE_NOTCH * float(int(_riddle_step.get(gate_id, 0))) / float(steps)
 		var clunk := float(_riddle_nudge.get(gate_id, 0.0))

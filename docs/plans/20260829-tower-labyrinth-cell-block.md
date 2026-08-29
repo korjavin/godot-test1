@@ -443,10 +443,10 @@ godot --headless --path . --script res://scripts/<name>.gd
 **Scope:** `tower_interior.gd`, `tower_plans.gd`, `tower_graph.gd`,
 `tower_interior_selfcheck.gd`. **Not** the maze, **not** the cell block.
 
-1. `FLOOR_Y` and `FLOOR_NEIGHBOURS` per **D1**, including the change to index 4.
-2. `plan_clear_height()` per **D2**, used by `_merge_walls` and the gate masses;
+- [x] `FLOOR_Y` and `FLOOR_NEIGHBOURS` per **D1**, including the change to index 4.
+- [x] `plan_clear_height()` per **D2**, used by `_merge_walls` and the gate masses;
    delete `tower_interior_selfcheck`'s private copy and read the new one.
-3. Author **storey 6 (floor 5)** and **storey 7 (floor 6)** as `STOREYS` rows in the
+- [x] Author **storey 6 (floor 5)** and **storey 7 (floor 6)** as `STOREYS` rows in the
    phase-14 idiom. They are office floors: a ring-and-cross skeleton like storey 3's,
    but a *different plan* — do not ship storey 3 with the letters changed. Storey 7 is
    "security": its rooms are where the maze's fiction starts (a control room, a
@@ -458,14 +458,14 @@ godot --headless --path . --script res://scripts/<name>.gd
    not `S`); and every lettered cell reachable by 4-connected flood fill from the
    landing.
    **Walk the two ramps apart** — do not stack every stairwell in one shaft.
-4. `TOWER_GRAPH` rooms and edges for both storeys, all ungated, in the phase-14 style
+- [x] `TOWER_GRAPH` rooms and edges for both storeys, all ungated, in the phase-14 style
    (`s6_landing` + its rooms, `s7_landing` + its rooms, `s5_s6`, `s6_s7`, and one
    `s<n>_landing_<room>` edge per room).
-5. Apply **D3**: `riddle_stair` moves to the boardroom doorway on storey 5. Edit
+- [x] Apply **D3**: `riddle_stair` moves to the boardroom doorway on storey 5. Edit
    storey 5's `rows` and `gates`, and the two `tower_graph.gd` edges. Write the
    derivation from D3 into the comment above the gate row — a future author WILL try
    to put a riddle back across the stair.
-6. Raise `PLAN_BOX_BUDGET` / `DRAW_BUDGET` only as far as the measured counts require.
+- [x] Raise `PLAN_BOX_BUDGET` / `DRAW_BUDGET` only as far as the measured counts require.
 
 **Verify:** `tower_selfcheck`, `tower_interior_selfcheck`, `tower_shell_selfcheck`.
 
@@ -475,26 +475,26 @@ godot --headless --path . --script res://scripts/<name>.gd
 
 **Scope:** `tower_plans.gd`, `tower_graph.gd`, and budget constants.
 
-1. Author **storey 8 (floor 7)** and **storey 9 (floor 8)** as `STOREYS` rows: a
+- [ ] Author **storey 8 (floor 7)** and **storey 9 (floor 8)** as `STOREYS` rows: a
    hand-drawn maze of **one-cell (1.94 m) corridors** with `#` walls, per **D4** and
    **D10**.
-2. **Route A**, ungated, from the storey-8 landing to the storey-9 ramp and on to the
+- [ ] **Route A**, ungated, from the storey-8 landing to the storey-9 ramp and on to the
    storey-10 ramp. **Route B**, shorter, through `riddle_maze_lower` (storey 8) and
    `riddle_maze_upper` (storey 9) in series. Both reach the storey-10 stair.
-3. **Dead ends with clue chambers.** Each maze riddle's clue room is a dead-end chamber
+- [ ] **Dead ends with clue chambers.** Each maze riddle's clue room is a dead-end chamber
    **at least 4 cells wide in one row**, off route A on storey 8, reachable from the
    landing with either riddle shut. Author several *decoy* dead ends too — a maze with
    no wrong turns is a corridor.
-4. The two riddle gate rows in `TOWER_GRAPH`: `class: CLASS_RIDDLE`, `identity: ""`,
+- [ ] The two riddle gate rows in `TOWER_GRAPH`: `class: CLASS_RIDDLE`, `identity: ""`,
    `clue_room` naming its chamber, `answer` a 4-step **permutation** of `1234`,
    `needed_during_captivity: false`, `parts` naming the generated mass box.
    `1`–`4` pad cells in front of each mass, bound through the storey's `gates` dict.
-5. Graph rooms and edges for both storeys, wired so route A is ungated and route B
+- [ ] Graph rooms and edges for both storeys, wired so route A is ungated and route B
    carries the riddles. Wire `s7_s8` and `s8_s9`.
-6. **Solid slabs.** Nothing about the maze may let storey 10 be seen from storey 9 —
+- [ ] **Solid slabs.** Nothing about the maze may let storey 10 be seen from storey 9 —
    the slab is the full footprint minus the derived stairwell hole, which is already
    how `_plan_slab` works. Do not add a hole.
-7. Re-measure the budgets; `PLAN_BOX_BUDGET` is expected to move most here.
+- [ ] Re-measure the budgets; `PLAN_BOX_BUDGET` is expected to move most here.
 
 **Verify:** `tower_selfcheck` (the flood fill is what proves the maze is connected),
 `tower_interior_selfcheck`, `tower_shell_selfcheck`.
@@ -505,31 +505,31 @@ godot --headless --path . --script res://scripts/<name>.gd
 
 The big one. **Scope:** everything in the file list.
 
-1. `_plan_riddles` → `_plan_gates` with the three class arms and the derived identity
+- [ ] `_plan_riddles` → `_plan_gates` with the three class arms and the derived identity
    pad, per **D5**. Unify the box names; update the two riddle `parts` rows.
-2. Author **storey 10 (floor 9)**: the landing, the two ways into the corridor
+- [ ] Author **storey 10 (floor 9)**: the landing, the two ways into the corridor
    (`D` run for `maintenance_crawl`, an open doorway for the main door), the corridor
    (`service_stair`), four `D` runs for `updraft_shaft` / `phase_grate` /
    `collapsed_slab` / `hound_den` in one wall with a pier between each, the gallery
    (`cell_gallery`), and four uniform open-fronted recesses lettered to
    `cell_windman` / `cell_primm` / `cell_teibi` / `cell_phoboman`.
    **The room ids are the phase-8 ids, verbatim.**
-3. `_wing_boxes()` → `_block_boxes(plan)`, appended by `plan_boxes()` for the storey
+- [ ] `_wing_boxes()` → `_block_boxes(plan)`, appended by `plan_boxes()` for the storey
    that draws `cell_gallery`. Every position from `plan_room_rect` / `plan_gate_rect`.
    Delete the placement constants and helpers listed in **D5**.
-4. **D6:** the ground floor loses the wing; the strip is absorbed into the entry hall,
+- [ ] **D6:** the ground floor loses the wing; the strip is absorbed into the entry hall,
    one light panel kept. Update the file header's route narrative.
-5. **D7:** rename the two edges, re-point the scar's `removes` and the box's `severs`,
+- [ ] **D7:** rename the two edges, re-point the scar's `removes` and the box's `severs`,
    and change check 8 to `all_boxes()`.
-6. **D8:** the four spines.
-7. Re-derive `custody_stand()`, `cell_stand()`, `block_min()`, `block_max()`; update
+- [ ] **D8:** the four spines.
+- [ ] Re-derive `custody_stand()`, `cell_stand()`, `block_min()`, `block_max()`; update
    `player_controller.gd`'s one call site.
-8. Re-point every `tower_interior_selfcheck` assertion that named the wing: the
+- [ ] Re-point every `tower_interior_selfcheck` assertion that named the wing: the
    `"Floor0/CellTrigger%s"` node path becomes `Floor9/…` (derive the index from the
    storey that draws the block, do not hardcode 9 twice), the spine-door spacing
    checks become plan-rect checks, and checks 16/17 (the full-custody protocol scene)
    follow the stand to storey 10.
-9. Budgets: `BOX_BUDGET` falls, `DRAW_BUDGET` recounted per the arithmetic in
+- [ ] Budgets: `BOX_BUDGET` falls, `DRAW_BUDGET` recounted per the arithmetic in
    **Budgets**.
 
 **Verify:** `tower_selfcheck`, `tower_interior_selfcheck`, `capture_selfcheck`,
@@ -539,17 +539,17 @@ The big one. **Scope:** everything in the file list.
 
 ### Task 4: the lift stop, the visibility and budget assertions, the docs
 
-1. **D9:** the entry, edge, quest and mutation rows, plus the `LiftStopTrigger`
+- [ ] **D9:** the entry, edge, quest and mutation rows, plus the `LiftStopTrigger`
    `Area3D` and its `_open("lift_stop_maze")`. No menu.
-2. Extend `tower_interior_selfcheck` check 9 per **Budgets → Visibility**: for every
+- [ ] Extend `tower_interior_selfcheck` check 9 per **Budgets → Visibility**: for every
    floor index, at most three storey batches visible, and floor 9's batch hidden from
    every floor below 8.
-3. Print the collision-shape total in check 5 and assert a stated ceiling.
-4. `CLAUDE.md`: the tower subsection gains the storey table, the "walls are as tall as
+- [ ] Print the collision-shape total in check 5 and assert a stated ceiling.
+- [ ] `CLAUDE.md`: the tower subsection gains the storey table, the "walls are as tall as
    their clear height" rule, the two-route maze rule and the "the plan text is the
    design record, there is no seed" line. **Keep it a map, not the territory** — the
    reasoning belongs beside the code.
-5. Run **every** self-check and record the numbers in the shape of the baseline block
+- [ ] Run **every** self-check and record the numbers in the shape of the baseline block
    above: `tower_selfcheck`, `tower_interior_selfcheck`, `capture_selfcheck`,
    `tower_shell_selfcheck`, `chunk_stream_selfcheck`, `perf_selfcheck`.
 

@@ -262,7 +262,7 @@ func _check_plan_fits_the_shell() -> void:
 				[floor_index, int(TowerPlans.storey(floor_index)["from"])], seen)
 		print("  storey %d: %d boxes (budget %d), floor at %.2f m, %.2f m clear" % [
 			floor_index, plan.size(), TowerInterior.PLAN_BOX_BUDGET,
-			TowerInterior.FLOOR_Y[floor_index], _plan_clear_height(floor_index)])
+			TowerInterior.FLOOR_Y[floor_index], TowerInterior.plan_clear_height(floor_index)])
 
 	# The rotor's two dimensions have to agree with the doorway they guard.
 	if TowerInterior.ROTOR_ARM >= TowerInterior.ROTOR_DOOR_HALF:
@@ -270,26 +270,6 @@ func _check_plan_fits_the_shell() -> void:
 			TowerInterior.ROTOR_ARM, TowerInterior.ROTOR_DOOR_HALF])
 	if TowerInterior.ROTOR_ARM <= TowerInterior.ROTOR_DOOR_HALF * 0.5:
 		_fail("the rotor bars are too short to cover half the doorway — nothing to time")
-
-
-func _plan_clear_height(floor_index: int) -> float:
-	"""
-	How much clear air a hand-planned storey has over its walking surface.
-
-	A storey with another storey above it is the slab-to-slab distance less the
-	slab: `STOREY_HEIGHT - SLAB_THICK`, the height `_merge_walls` builds its walls
-	to. The TOP storey has no slab over it and is open all the way to the shell's
-	sealed roof.
-
-	# ponytail: the top storey really is open to the roof 29 m up, and that is the
-	# honest state of a building whose storeys 6-10 are phases 16+. It costs
-	# nothing — a 4.6 m wall top is a metre over the jump apex, so nothing up there
-	# is climbable — and the day a storey is authored above it, this answers the
-	# ordinary number with no edit.
-	"""
-	if not TowerPlans.storey(floor_index + 1).is_empty():
-		return TowerShell.STOREY_HEIGHT - TowerInterior.SLAB_THICK
-	return TowerShell.WALL_HEIGHT - TowerInterior.FLOOR_Y[floor_index]
 
 
 func _fit_boxes(boxes: Array[Dictionary], bound: float, floors: Array[int],
@@ -448,8 +428,8 @@ func _check_no_jump_gated_climb() -> void:
 	# grow a third kind of solid without coming here — which is the point.
 	for floor_index: int in TowerPlans.floors():
 		var surface: float = TowerInterior.FLOOR_Y[floor_index]
-		var clear := _plan_clear_height(floor_index)
-		var wall_top := surface + TowerShell.STOREY_HEIGHT - TowerInterior.SLAB_THICK
+		var clear := TowerInterior.plan_clear_height(floor_index)
+		var wall_top := surface + clear
 		for box: Dictionary in TowerInterior.plan_boxes(floor_index):
 			if not box["collide"] or box.has("rot"):
 				continue  # the ramp is MEANT to reach the next storey.
@@ -463,9 +443,6 @@ func _check_no_jump_gated_climb() -> void:
 					box["name"], bottom, top, surface])
 		# ...and a wall you cannot see over. A walled-off room whose wall an unaided
 		# jump clears is a room with a second entrance nobody drew.
-		if TowerShell.STOREY_HEIGHT - TowerInterior.SLAB_THICK <= apex:
-			_fail("storey %d's walls are %.2f m on a %.4f m jump — every planned room can be entered over the top" % [
-				floor_index, TowerShell.STOREY_HEIGHT - TowerInterior.SLAB_THICK, apex])
 		if clear <= apex:
 			_fail("storey %d has %.2f m of clear air on a %.4f m jump" % [
 				floor_index, clear, apex])
@@ -830,7 +807,7 @@ func _check_headroom_clears_the_camera() -> void:
 	# somebody retunes `STOREY_HEIGHT` for the shell's sake, and a storey the
 	# camera does not fit in is 6000 m2 of the-back-of-a-head.
 	for floor_index: int in TowerPlans.floors():
-		var clear := _plan_clear_height(floor_index)
+		var clear := TowerInterior.plan_clear_height(floor_index)
 		print("  storey %d: %.2f m clear, camera needs %.2f m" % [floor_index, clear, need])
 		if clear < need:
 			_fail("storey %d is %.2f m and the camera needs %.2f m — the spring arm collapses up there" % [
@@ -1325,9 +1302,10 @@ func _check_gate_lifecycle() -> void:
 			_fail("riddle '%s' did not open on its own answer %s" % [gid, str(answer)])
 		for _i in 40:
 			interior._process(0.1)
-		if absf(lock.position.y - (shut + TowerInterior.RIDDLE_TRAVEL)) > 0.01:
+		var travel := TowerInterior.riddle_travel(lock)
+		if absf(lock.position.y - (shut + travel)) > 0.01:
 			_fail("riddle '%s' stopped at %.2f m, expected %.2f m" % [
-				gid, lock.position.y, shut + TowerInterior.RIDDLE_TRAVEL])
+				gid, lock.position.y, shut + travel])
 		var lock_shape := body.get_node_or_null("%sShape" % lock.name) as CollisionShape3D
 		if lock_shape == null or absf(lock_shape.position.y - lock.position.y) > EPS:
 			_fail("riddle '%s' opened only visually — its collision shape is still in the way"
@@ -1447,9 +1425,10 @@ func _check_opened_state_is_reapplied() -> void:
 		if mesh == null:
 			_fail("riddle '%s' built no mass at all" % gid2)
 			continue
-		if absf(mesh.position.y - (rest + TowerInterior.RIDDLE_TRAVEL)) > EPS:
+		var travel2 := TowerInterior.riddle_travel(mesh)
+		if absf(mesh.position.y - (rest + travel2)) > EPS:
 			_fail("a pre-opened tower rebuilt riddle '%s' shut (y = %.2f, wanted %.2f)" % [
-				gid2, mesh.position.y, rest + TowerInterior.RIDDLE_TRAVEL])
+				gid2, mesh.position.y, rest + travel2])
 		var riddle_shape := body.get_node_or_null("%sShape" % mesh.name) as CollisionShape3D
 		if riddle_shape == null or absf(riddle_shape.position.y - mesh.position.y) > EPS:
 			_fail("a pre-opened tower left riddle '%s' with its collision shape in the doorway"
@@ -1626,7 +1605,10 @@ func _batch_vertices(interior: Node3D, floor_index: int) -> Dictionary:
 	var out := {}
 	var batch := interior.get_node_or_null("Floor%d/Floor%dBatch" % [floor_index, floor_index]) as MeshInstance3D
 	if batch == null or batch.mesh == null:
-		_fail("storey %d has no batched mesh" % floor_index)
+		# A floor index carrying no static geometry builds no batch at all (see
+		# `_ready`) — an empty mesh is a node and a `DRAW_BUDGET` slot for nothing.
+		# That is not a failure here: any box that SHOULD have been batched onto this
+		# storey fails the corner test below, by name, which is the better report.
 		return out
 	var mesh: ArrayMesh = batch.mesh
 	for surface in mesh.get_surface_count():

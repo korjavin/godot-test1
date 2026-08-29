@@ -322,10 +322,27 @@ const STOREYS: Array[Dictionary] = [
 	# Its ramp rises out of storey 4's SOUTH CROSS corridor, so the three stairs
 	# walk the building rather than stacking in one shaft.
 	#
-	# ponytail: this storey has NO CEILING. It is open to the sealed roof 29 m
-	# above, which is the honest state of a building whose storeys 6-10 are phase 16.
-	# It costs nothing today: a 4.6 m wall top is a metre above the jump apex, so
-	# there is nothing up there to climb onto. Storeys 6+ are what closes it.
+	# PHASE 16 PUT A CEILING ON IT. Storey 6's slab is now 4.6 m over this floor,
+	# which is why `FLOOR_NEIGHBOURS[4]` grew from `[3]` to `[3, 5]` — the ceiling a
+	# player on this floor is looking at belongs to the storey above, and index
+	# arithmetic would have hidden it.
+	#
+	# ITS RIDDLE MOVED, AND THE MOVE WAS FORCED. `riddle_stair` used to fill the east
+	# end of the stairhead pocket, i.e. it sat across the ONLY passage on the main
+	# vertical spine between the ramp and the floor. Phase 16 makes the storey-8
+	# landing an unlockable lift stop, and `tower_selfcheck` check 10 requires that
+	# from EVERY legal entry the full roster can reach a riddle's clue room with that
+	# riddle treated as a wall. This riddle's clue is on storey 3, three floors BELOW
+	# the new stop: enter at storey 8 and the descent to the clue crosses the gate the
+	# clue explains. That is not a check being pedantic — a player lifted to storey 8
+	# on a fresh profile really would be locked out of the clue.
+	#
+	# So any riddle across the main spine below the lift stop is unauditable, and this
+	# one became optional side content in `riddle_strongroom`'s mould: its mass fills
+	# the BOARDROOM's doorway and its four pads stand in the west ring corridor in
+	# front of it, the same "the thing you are opening is in your eye line" rule. The
+	# stairhead pocket is now just the head of the ramp. DO NOT PUT A RIDDLE BACK
+	# ACROSS THE STAIR.
 	# ------------------------------------------------------------------------
 	{
 		"floor": 4,
@@ -341,16 +358,13 @@ const STOREYS: Array[Dictionary] = [
 			"I": "s5_lounge",
 			"J": "s5_press_room",
 		},
-		# The stair riddle. Its four pads stand on the landing pocket at the head of
-		# the ramp and its mass fills the pocket's east end, which is the pocket's
-		# ONLY way onto the floor — walled north and south, the ramp behind. So the
-		# lock cannot be walked round, and it cannot be JUMPED round either: the
-		# ramp is climbable from the rooms beside it, but every climb still arrives
-		# in front of this mass.
+		# The stair riddle, on the boardroom's doorway since phase 16 (see above for
+		# why it is no longer on the stair). The mass is the two-cell doorway; the
+		# four pads are the block of ring corridor directly in front of it.
 		"gates": {
-			"31,19": "riddle_stair", "32,19": "riddle_stair",
-			"31,20": "riddle_stair", "32,20": "riddle_stair",
-			"33,19": "riddle_stair", "33,20": "riddle_stair",
+			"3,6": "riddle_stair", "3,7": "riddle_stair",
+			"1,6": "riddle_stair", "2,6": "riddle_stair",
+			"1,7": "riddle_stair", "2,7": "riddle_stair",
 		},
 		"rows": [
 			"########################################",
@@ -359,8 +373,8 @@ const STOREYS: Array[Dictionary] = [
 			"#..################..################..#",
 			"#..#AAAAAAAAAAAAAA#..#CCCCCCCCCCCCCC#..#",
 			"#..#AAAAAAAAAAAAAA#..#CCCCCCCCCCCCCC#..#",
-			"#..AAAAAPAAAAAAAAA#..#CCCCCCCCCCCCCCC..#",
-			"#..AAAAAAAAAAAAAAA#..#CCCCCCCCCCCCCCC..#",
+			"#12DAAAAPAAAAAAAAA#..#CCCCCCCCCCCCCCC..#",
+			"#34DAAAAAAAAAAAAAA#..#CCCCCCCCCCCCCCC..#",
 			"#..#AAAAAAAAAAAAAA#..#CCCCCCCCCCCCCC#..#",
 			"#..#AAAAAAAAAAAAAA#..#CCCCCCCCCCCCCC#..#",
 			"#..################..################..#",
@@ -372,8 +386,8 @@ const STOREYS: Array[Dictionary] = [
 			"#..#BBBBBBBBBBBBBB#..#EEEEEEEEEEEEEE#..#",
 			"#..#BBBBBBBBBBBBBB#..#EEEEEEEEEEEEEE#..#",
 			"#..################..################..#",
-			"#........................SSSSSs12D.....#",
-			"#........................SSSSSs34D.....#",
+			"#........................SSSSSs........#",
+			"#........................SSSSSs........#",
 			"#..################..################..#",
 			"#..#FFFFFFFFFFFFFF#..#IIIIIIIIIIIIII#..#",
 			"#..#FFFFFFFFFFFFFF#..#IIIIIIIIIIIIII#..#",
@@ -395,8 +409,151 @@ const STOREYS: Array[Dictionary] = [
 			"########################################",
 		],
 		"note": "Storey 5, the executive floor: eight deep suites opening onto the "
-			+ "ring corridor, reached through the stair riddle's sequence lock. "
-			+ "Open to the shell roof until storey 6 lands.",
+			+ "ring corridor. The stair riddle's sequence lock now seals the "
+			+ "boardroom rather than the floor, and storey 6 is its ceiling.",
+	},
+	# ------------------------------------------------------------------------
+	# STOREY 6 (floor 5) — OPERATIONS. A SPINE, not a cross: one east-west corridor
+	# straight across the middle of the floor, with three wide bands of room hung off
+	# each side of it and a two-cell ring corridor round the outside. Storeys 3 and 4
+	# are a ring AND a cross with stacks in the quadrants; this floor has no
+	# north-south corridor at all, so crossing it is one long walk and the plan reads
+	# as a different building rather than as storey 3 with the letters changed.
+	#
+	# The north and south bands are split on DIFFERENT columns (14/25 against 13/24),
+	# so no room faces its opposite number across the spine.
+	#
+	# Its ramp rises out of storey 5's SOUTH ring corridor: five cells of X (9.70 m)
+	# for the 5.0 m storey, slope 0.5155 against the proven 0.575. Storey 5's own ramp
+	# is in its middle corridor, so the two stairwells do not stack — the same "walk
+	# the ramps apart" rule storeys 3-5 follow.
+	# ------------------------------------------------------------------------
+	{
+		"floor": 5,
+		"from": 4,
+		"landing": "s6_landing",
+		"rooms": {
+			"A": "s6_dispatch_hall",
+			"B": "s6_control_centre",
+			"C": "s6_comms",
+			"E": "s6_fleet_bay",
+			"F": "s6_logistics",
+			"H": "s6_crew_room",
+		},
+		"gates": {},
+		"rows": [
+			"########################################",
+			"#......................................#",
+			"#......................................#",
+			"#..##################################..#",
+			"#..#AAAAAAAAAAA#BBBBBBBBBB#CCCCCCCCC#..#",
+			"#..#AAAAAAAAAAA#BBBBBBBBBB#CCCCCCCCC#..#",
+			"#..#AAAAAAAAAAA#BBBBBBBBBB#CCCCCCCCC#..#",
+			"#..#AAAAAAAAAAA#BBBBBBBBBB#CCCCCCCCC#..#",
+			"#..#AAAAAAAAAAA#BBBBBBBBBB#CCCCCCCCC#..#",
+			"#..#AAAAAAAAAAA#BBBBBBBBBB#CCCCCCCCC#..#",
+			"#..#AAAAPAAAAAA#BBBBBBBBBB#CCCCCCCCC#..#",
+			"#..#AAAAAAAAAAA#BBBBBBBBBB#CCCCCCCCC#..#",
+			"#..#AAAAAAAAAAA#BBBBBBBBBB#CCCCCCCCC#..#",
+			"#..#AAAAAAAAAAA#BBBBBBBBBB#CCCCCCCCC#..#",
+			"#..#AAAAAAAAAAA#BBBBBBBBBB#CCCCCCCCC#..#",
+			"#..#AAAAAAAAAAA#BBBBBBBBBB#CCCCCCCCC#..#",
+			"#..#AAAAAAAAAAA#BBBBBBBBBB#CCCCCCCCC#..#",
+			"#..#AAAAAAAAAAA#BBBBBBBBBB#CCCCCCCCC#..#",
+			"#..#####AA##########BB########CC#####..#",
+			"#......................................#",
+			"#......................................#",
+			"#..####EE#########FF#########HH######..#",
+			"#..#EEEEEEEEE#FFFFFFFFFF#HHHHHHHHHHH#..#",
+			"#..#EEEEEEEEE#FFFFFFFFFF#HHHHHHHHHHH#..#",
+			"#..#EEEEEEEEE#FFFFFFFFFF#HHHHHHHHHHH#..#",
+			"#..#EEEEEEEEE#FFFFFFFFFF#HHHHHHHHHHH#..#",
+			"#..#EEEEEEEEE#FFFFFFFFFF#HHHHHHHHHHH#..#",
+			"#..#EEEEEEEEE#FFFFFFFFFF#HHHHHHHHHHH#..#",
+			"#..#EEEEEEEEE#FFFFFFFFFF#HHHHHHHHHHH#..#",
+			"#..#EEEEEEEEE#FFFFFFFFFF#HHHHHHHHHHH#..#",
+			"#..#EEEEEEEEE#FFFFFFFFFF#HHHHHPHHHHH#..#",
+			"#..#EEEEEEEEE#FFFFFFFFFF#HHHHHHHHHHH#..#",
+			"#..#EEEEEEEEE#FFFFFFFFFF#HHHHHHHHHHH#..#",
+			"#..#EEEEEEEEE#FFFFFFFFFF#HHHHHHHHHHH#..#",
+			"#..#EEEEEEEEE#FFFFFFFFFF#HHHHHHHHHHH#..#",
+			"#..#EEEEEEEEE#FFFFFFFFFF#HHHHHHHHHHH#..#",
+			"#..##################################..#",
+			"#...................SSSSSs.............#",
+			"#...................SSSSSs.............#",
+			"########################################",
+		],
+		"note": "Storey 6, operations: one east-west spine corridor with three wide "
+			+ "bands of room to the north and three more to the south, and a ring "
+			+ "corridor round the outside. Where the fleet is dispatched from.",
+	},
+	# ------------------------------------------------------------------------
+	# STOREY 7 (floor 6) — SECURITY, and where the labyrinth's fiction starts. The
+	# spine turns NORTH-SOUTH here and the four quarters it serves are split
+	# off-centre — the control room is deep and the vault beside it is shallow, and
+	# the same offset the other way to the south — so the floor pinwheels rather than
+	# mirroring. Nothing on it is gated: the maze above is what security actually
+	# relies on, which is the joke.
+	#
+	# Its ramp rises out of storey 6's NORTH ring corridor, at the far end of the
+	# building from storey 6's own ramp in the south.
+	# ------------------------------------------------------------------------
+	{
+		"floor": 6,
+		"from": 5,
+		"landing": "s7_landing",
+		"rooms": {
+			"I": "s7_control_room",
+			"J": "s7_records_vault",
+			"K": "s7_briefing_room",
+			"L": "s7_muster_hall",
+		},
+		"gates": {},
+		"rows": [
+			"########################################",
+			"#.......SSSSSs.........................#",
+			"#.......SSSSSs.........................#",
+			"#..################..################..#",
+			"#..#IIIIIIIIIIIIII#..#JJJJJJJJJJJJJJ#..#",
+			"#..#IIIIIIIIIIIIII#..#JJJJJJJJJJJJJJ#..#",
+			"#..#IIIIIIIIIIIIII#..#JJJJJJJJJJJJJJ#..#",
+			"#..#IIIIIIIIIIIIII#..#JJJJJJJJJJJJJJ#..#",
+			"#..#IIIIIIIIIIIIII#..JJJJJJJJJJJJJJJ#..#",
+			"#..#IIIIIIIIIIIIII#..JJJJJJJJJJJJJJJ#..#",
+			"#..#IIIIIIIIIIIIIII..#JJJJJJJJJJJJJJ#..#",
+			"#..#IIIIPIIIIIIIIII..#JJJJJJJJJJJJJJ#..#",
+			"#..#IIIIIIIIIIIIII#..#JJJJJJJJJJJJJJ#..#",
+			"#..#IIIIIIIIIIIIII#..#JJJJJJJJJJJJJJ#..#",
+			"#..#IIIIIIIIIIIIII#..#JJJJJJJJJJJJJJ#..#",
+			"#..#IIIIIIIIIIIIII#..#JJJJJJJJJJJJJJ#..#",
+			"#..#IIIIIIIIIIIIII#..################..#",
+			"#..#IIIIIIIIIIIIII#..#LLLLLLLLLLLLLL#..#",
+			"#..#IIIIIIIIIIIIII#..#LLLLLLLLLLLLLL#..#",
+			"#..#IIIIIIIIIIIIII#..#LLLLLLLLLLLLLL#..#",
+			"#..################..#LLLLLLLLLLLLLL#..#",
+			"#..#KKKKKKKKKKKKKK#..#LLLLLLLLLLLLLL#..#",
+			"#..#KKKKKKKKKKKKKK#..#LLLLLLLLLLLLLL#..#",
+			"#..#KKKKKKKKKKKKKK#..#LLLLLLLLLLLLLL#..#",
+			"#..#KKKKKKKKKKKKKK#..#LLLLLLLLLLLLLL#..#",
+			"#..#KKKKKKKKKKKKKK#..LLLLLLLLLLLLLLL#..#",
+			"#..#KKKKKKKKKKKKKK#..LLLLLLLLLLLLLLL#..#",
+			"#..#KKKKKKKKKKKKKKK..#LLLLLLLLLLLLLL#..#",
+			"#..#KKKKKKKKKKKKKKK..#LLLLLLLLLLLLLL#..#",
+			"#..#KKKKKKKKKKKKKK#..#LLLLLLLLLLLLLL#..#",
+			"#..#KKKKKKKKKKKKKK#..#LLLLLLLLPLLLLL#..#",
+			"#..#KKKKKKKKKKKKKK#..#LLLLLLLLLLLLLL#..#",
+			"#..#KKKKKKKKKKKKKK#..#LLLLLLLLLLLLLL#..#",
+			"#..#KKKKKKKKKKKKKK#..#LLLLLLLLLLLLLL#..#",
+			"#..#KKKKKKKKKKKKKK#..#LLLLLLLLLLLLLL#..#",
+			"#..#KKKKKKKKKKKKKK#..#LLLLLLLLLLLLLL#..#",
+			"#..################..################..#",
+			"#......................................#",
+			"#......................................#",
+			"########################################",
+		],
+		"note": "Storey 7, security: a north-south spine between four off-centre "
+			+ "quarters — the control room, the records vault the maze's plans are "
+			+ "filed in, the briefing room and the muster hall.",
 	},
 ]
 

@@ -342,18 +342,21 @@ const TOWER_GRAPH: Dictionary = {
 		# audit walks the gate the player meets.
 		"s5_stairhead": {
 			"built": true, "quest": "", "cell": "", "parts": [],
-			"note": "The landing at the head of the storey-5 ramp, with the sequence "
-				+ "lock's four pads on it and the riddle's mass across its east end.",
+			"note": "The landing at the head of the storey-5 ramp. Phase 15 sealed its "
+				+ "east end with the stair riddle; phase 16 moved that lock onto the "
+				+ "boardroom's doorway, so this is now just the head of the ramp.",
 		},
 		"s5_landing": {
 			"built": true, "quest": "", "cell": "", "parts": [],
-			"note": "Storey 5's ring and cross corridors, behind the riddle gate. "
-				+ "The top of the building until phase 16 opens storeys 6-10.",
+			"note": "Storey 5's ring and cross corridors, open off the stairhead. The "
+				+ "boardroom behind the sequence lock is the one room it does not "
+				+ "simply lead into.",
 		},
 		"s5_boardroom": {
 			"built": true, "quest": "", "cell": "", "parts": [],
-			"note": "The boardroom. Deep suite on the north-west, opening onto the "
-				+ "west ring corridor. Carries one of the floor's two pads.",
+			"note": "The boardroom, sealed by the stair riddle since phase 16. Deep "
+				+ "suite on the north-west; the lock's four pads stand in the west "
+				+ "ring corridor in front of its doorway. Carries one of the two pads.",
 		},
 		"s5_secretariat": {
 			"built": true, "quest": "", "cell": "", "parts": [],
@@ -382,6 +385,61 @@ const TOWER_GRAPH: Dictionary = {
 		"s5_press_room": {
 			"built": true, "quest": "", "cell": "", "parts": [],
 			"note": "The press room, the south-east corner suite.",
+		},
+		"s6_landing": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "Storey 6's ring and spine corridors, off the head of the ramp "
+				+ "out of storey 5's south side. Every room on the floor hangs off it.",
+		},
+		"s6_dispatch_hall": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "Dispatch, the wide north-west band. Carries one of the floor's "
+				+ "two pads.",
+		},
+		"s6_control_centre": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "The operations control centre, north of the spine and centre.",
+		},
+		"s6_comms": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "Communications, the north-east band.",
+		},
+		"s6_fleet_bay": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "The fleet bay, south-west — where the vans are signed out.",
+		},
+		"s6_logistics": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "Logistics, south of the spine and centre.",
+		},
+		"s6_crew_room": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "The crew room, the wide south-east band. Carries the floor's "
+				+ "second pad.",
+		},
+		"s7_landing": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "Storey 7's ring corridor and its north-south spine, off the head "
+				+ "of the ramp out of storey 6's north side.",
+		},
+		"s7_control_room": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "Security control, the deep west quarter. The cameras that watch "
+				+ "the labyrinth two floors up. Carries one of the floor's two pads.",
+		},
+		"s7_records_vault": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "The records vault, north-east and shallow — where the maze's own "
+				+ "plans are filed, which is why nobody upstairs has one.",
+		},
+		"s7_briefing_room": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "The briefing room, south-west.",
+		},
+		"s7_muster_hall": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "The muster hall, the deep south-east quarter. Carries the floor's "
+				+ "second pad.",
 		},
 	},
 
@@ -489,17 +547,18 @@ const TOWER_GRAPH: Dictionary = {
 			"gate": "", "built": true},
 		{"id": "s4_landing_dispatch_c", "a": "s4_landing", "b": "s4_dispatch_c",
 			"gate": "", "built": true},
-		# THE STAIR 4 -> 5, IN TWO HALVES. Climbing it asks nothing; the storey at
-		# the top is what the riddle holds shut. Splitting the passage rather than
-		# gating the ramp itself is what makes the gate honest: a ramp is a deck you
-		# can step onto from the rooms beside it, and a lock the player can jump
-		# over is a lock the audit is lying about.
+		# THE STAIR 4 -> 5, IN TWO HALVES: the ramp, then the pocket at its head.
+		# Both are open. `riddle_stair` USED to sit on the second of them, and phase
+		# 16 moved it onto the boardroom's doorway instead — see `tower_plans.gd`'s
+		# storey-5 comment for the derivation, which is short: a riddle across the
+		# main vertical spine BELOW a lift stop cannot be audited, because the walk
+		# down to its clue crosses the gate the clue explains.
 		{"id": "s4_s5", "a": "s4_landing", "b": "s5_stairhead",
 			"gate": "", "built": true},
 		{"id": "s5_stairhead_landing", "a": "s5_stairhead", "b": "s5_landing",
-			"gate": "riddle_stair", "built": true},
-		{"id": "s5_landing_boardroom", "a": "s5_landing", "b": "s5_boardroom",
 			"gate": "", "built": true},
+		{"id": "s5_landing_boardroom", "a": "s5_landing", "b": "s5_boardroom",
+			"gate": "riddle_stair", "built": true},
 		{"id": "s5_landing_secretariat", "a": "s5_landing", "b": "s5_secretariat",
 			"gate": "", "built": true},
 		{"id": "s5_landing_directors_north", "a": "s5_landing", "b": "s5_directors_north",
@@ -513,6 +572,33 @@ const TOWER_GRAPH: Dictionary = {
 		{"id": "s5_landing_lounge", "a": "s5_landing", "b": "s5_lounge",
 			"gate": "", "built": true},
 		{"id": "s5_landing_press_room", "a": "s5_landing", "b": "s5_press_room",
+			"gate": "", "built": true},
+		# ...and on up. Storeys 6 and 7 are ungated office floors: they add rooms to
+		# the fifteen-subset audit and no route obligation at all, which is what makes
+		# them cheap to add and cheap to walk past.
+		{"id": "s5_s6", "a": "s5_landing", "b": "s6_landing",
+			"gate": "", "built": true},
+		{"id": "s6_landing_dispatch_hall", "a": "s6_landing", "b": "s6_dispatch_hall",
+			"gate": "", "built": true},
+		{"id": "s6_landing_control_centre", "a": "s6_landing", "b": "s6_control_centre",
+			"gate": "", "built": true},
+		{"id": "s6_landing_comms", "a": "s6_landing", "b": "s6_comms",
+			"gate": "", "built": true},
+		{"id": "s6_landing_fleet_bay", "a": "s6_landing", "b": "s6_fleet_bay",
+			"gate": "", "built": true},
+		{"id": "s6_landing_logistics", "a": "s6_landing", "b": "s6_logistics",
+			"gate": "", "built": true},
+		{"id": "s6_landing_crew_room", "a": "s6_landing", "b": "s6_crew_room",
+			"gate": "", "built": true},
+		{"id": "s6_s7", "a": "s6_landing", "b": "s7_landing",
+			"gate": "", "built": true},
+		{"id": "s7_landing_control_room", "a": "s7_landing", "b": "s7_control_room",
+			"gate": "", "built": true},
+		{"id": "s7_landing_records_vault", "a": "s7_landing", "b": "s7_records_vault",
+			"gate": "", "built": true},
+		{"id": "s7_landing_briefing_room", "a": "s7_landing", "b": "s7_briefing_room",
+			"gate": "", "built": true},
+		{"id": "s7_landing_muster_hall", "a": "s7_landing", "b": "s7_muster_hall",
 			"gate": "", "built": true},
 
 		# --- phase 7: the lift shaft. Exists only once `lift_activated` fires. ---
@@ -618,9 +704,11 @@ const TOWER_GRAPH: Dictionary = {
 			"clue_room": "s3_records_east", "answer": [3, 1, 4, 2],
 			"needed_during_captivity": false, "built": true, "quest": "",
 			"parts": ["S4PlanRiddleMass_riddle_stair"],
-			"note": "The sequence lock at the head of the storey-5 ramp. Its four "
-				+ "colours are painted on the east records stack's floor, three "
-				+ "storeys of walking away and free to anybody who goes.",
+			"note": "The sequence lock on the boardroom's doorway. Its four colours "
+				+ "are painted on the east records stack's floor, two storeys of "
+				+ "walking away and free to anybody who goes. Optional side content "
+				+ "in the strongroom's mould since phase 16 — nothing but the "
+				+ "boardroom is behind it.",
 		},
 		"riddle_strongroom": {
 			"class": CLASS_RIDDLE, "identity": "", "effect": "", "scale": 0.0,
