@@ -554,6 +554,28 @@ func _check_species_table() -> void:
 	_check_dispatch_map("BIOME_SPECIES", _biome_species)
 	_check_dispatch_map("BIOME_BOSS", _biome_boss)
 
+	# ---- BIOME_BOSS IS TOTAL OVER THE Biome ENUM ---------------------------
+	# The one place the two dispatch maps DIFFER in what is demanded of them, and
+	# it is a difference of design rather than of validation. BIOME_SPECIES is
+	# deliberately partial — PLAINS has no ordinary predator of its own and takes
+	# the crocodile, which is a band decision — but the boss family is finished:
+	# every band's road stations have a named guardian, and the crocodile survives
+	# as a boss ONLY on the two paths that are not a band lookup at all (a station
+	# standing in a river, and the degrade path for a row that fails to resolve).
+	#
+	# So a band with no boss row is now a HOLE rather than a choice: it would put
+	# a plain piglet crocodile on a road station at 6x scale and read as the boss
+	# family having been forgotten one biome over. Stated against the enum, never
+	# against a list here, so a SEVENTH biome demands its boss on the commit that
+	# adds the band rather than shipping quietly boss-less.
+	for biome_v: Variant in _biomes.values():
+		if not _biome_boss.has(int(biome_v)):
+			_fail("BIOME_BOSS has no row for Biome %d — every band owes its road"
+					% int(biome_v) + " stations a named boss (the crocodile is the"
+					+ " fallback for RIVER stations and for a row that fails to"
+					+ " load, not for a whole band), so that band's bosses are"
+					+ " 6x piglet crocodiles")
+
 	# The negative control for this half: a table with one row and an empty
 	# dispatch map passes every loop above without measuring anything.
 	if _species_table.size() < 2 or _biome_species.is_empty():

@@ -1,0 +1,20 @@
+[gd_scene load_steps=4 format=3 uid="uid://desertnaga01"]
+
+[ext_resource type="Script" path="res://scripts/piglet_crocodile_ai.gd" id="1_naga"]
+[ext_resource type="PackedScene" path="res://scenes/characters/primm.tscn" id="2_model"]
+
+[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_1"]
+radius = 0.3
+height = 1.6
+
+[node name="Naga" type="CharacterBody3D" groups=["crocodile", "enemy"]]
+collision_layer = 2
+collision_mask = 3
+script = ExtResource("1_naga")
+
+[node name="Model" parent="." instance=ExtResource("2_model")]
+transform = Transform3D(1.2, 0, 0, 0, 0.9, 0, 0, 0, 1.2, 0, 0, 0)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.8, 0)
+shape = SubResource("CapsuleShape3D_1")
