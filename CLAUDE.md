@@ -51,6 +51,12 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            a fleeing one), straight + lob flight, both dodge
 #                            sims with their stationary controls, the per-shooter
 #                            cap and its chunk-unload release
+#   hunt_director_selfcheck  the hunter encounter director: the pursuer cap, the
+#                            post-grab / hard-chase lull and the escape-sector
+#                            guarantee (driven on the shipped pure functions,
+#                            against an independent oracle), per-quarry
+#                            bucketing, and the absent-director degrade measured
+#                            through the arm's real seam
 #   perf_selfcheck           frame-spike telemetry (thresholds, correlation, reset)
 #   chunk_stream_selfcheck   ground-first chunk streaming (floor, debt, determinism)
 #   intro_selfcheck          intro film: web gate, desktop PLAY SOLO path, JS shape
@@ -292,6 +298,20 @@ primes, own `spawn_hunters` flag) instead of through `BIOME_SPECIES` — which i
 dispatch-free and costs the chunk RNG zero draws. That is a **third door** into the
 world and check 4's reachability gate reads `HUNTER_SPECIES` to know about it; check 12
 is the A/B that *proves* the crocodile stream is untouched rather than asserting it.
+
+**Hunter mercy is tuned BEFORE contact and never by a hunter pulling its punch.**
+`scripts/hunt_director.gd` (one node in `main.tscn`, group `"hunt_director"`, modelled on
+the LOD manager: group discovery, a 2 Hz tick, a pure decision core) answers the hunt arm's
+`_hunt_close_granted()` seam with three pre-contact rules — a pursuer cap, a post-grab /
+hard-chase lull, and a guaranteed open escape sector. Its entire output is that bool: it
+touches no grab range, collision, speed or detection, and a denied hunter keeps SHADOWING
+visibly. Rules are bucketed **per quarry by proximity**, never globally — group `"player"`
+is the local player, so a global cap would starve a room. **Absent director = granted**,
+which is what keeps the standalone `hunter_robot.tscn` and every headless harness working;
+that degrade is debug-only, because hunters are Stink-Wave-exempt and uncrushable and the
+open sector is their whole fairness budget. `grant_engagement` / `escape_sector_open` are
+static and pure so `hunt_director_selfcheck` drives the shipped geometry. Its numbers (cap
+2, 20 s chase, 15 s lull, 90°) are **provisional, held for the predator-density epic**.
 
 The species `chase_speed` (5.5 for the crocodile) is deliberately above `WALK_SPEED` (5.0)
 so walking gets you caught, and `MAX_CHASE_SPEED` (8.5) — a top-level const clamping every
