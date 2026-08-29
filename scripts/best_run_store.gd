@@ -446,8 +446,18 @@ static func tower_opened_ids() -> Array[String]:
 	var cfg := ConfigFile.new()
 	if cfg.load(config_path) != OK:
 		return []
-	return _sanitize_tower_ids(
-		JSON.parse_string(String(cfg.get_value(CONFIG_TOWER_SECTION, CONFIG_TOWER_KEY, ""))))
+	var raw := String(cfg.get_value(CONFIG_TOWER_SECTION, CONFIG_TOWER_KEY, ""))
+	if raw.is_empty():
+		return []
+	# `JSON.new().parse()` rather than the `JSON.parse_string()` helper the ranks
+	# use, for one reason: the helper PRINTS an engine error on malformed input,
+	# and a truncated or hand-edited record is an expected state on this path, not
+	# an incident. The check that exercises it should not have to print an ERROR
+	# line in order to pass.
+	var json := JSON.new()
+	if json.parse(raw) != OK:
+		return []
+	return _sanitize_tower_ids(json.data)
 
 
 static func merge_tower_opened_ids(ids: Array) -> void:
