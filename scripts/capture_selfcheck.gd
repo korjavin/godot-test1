@@ -99,6 +99,22 @@ class AttackerStub extends Node:
 	var spec: Dictionary = {}
 
 
+## A stand-in for the multiplayer manager, in group "mp", answering exactly the
+## one method the roster reads.
+##
+## `my_character_indices()` returns `null` for "all of them" — offline, no room, or
+## holding no hero yet — and never an empty array, which is the real manager's
+## contract verbatim (`mp_manager.gd`: "locking E against an empty set would be a
+## worse answer than solo behaviour"). Reproducing that here is the point: check 9
+## exists to prove the capture path respects a HAND, and a stub that could answer
+## `[]` would be testing a state the lobby never produces.
+class RoomStub extends Node:
+	var hand: Array[int] = []
+
+	func my_character_indices() -> Variant:
+		return null if hand.is_empty() else hand
+
+
 func _initialize() -> void:
 	BestRunStore.config_path = LOCAL_STORE_PATH
 	_fresh_store()
@@ -117,6 +133,7 @@ func _run() -> void:
 	await _check_the_last_free_hero_ends_the_run()
 	await _check_the_set_stays_out_of_the_monotone_store()
 	await _check_a_tower_streamed_in_later_holds_him()
+	await _check_capture_respects_the_rooms_hand()
 	_report()
 
 
@@ -474,6 +491,76 @@ func _check_a_tower_streamed_in_later_holds_him() -> void:
 			% [second, str(interior.captives())])
 	shell.queue_free()
 	_clear(player)
+	await process_frame
+
+
+# ============================================================================
+# 9. THE ROOM'S HAND
+# ============================================================================
+
+func _check_capture_respects_the_rooms_hand() -> void:
+	"""
+	In a room, capture is bounded by the heroes the LOBBY assigned this peer.
+
+	MP capture proper is its own bead; what is measured here is that this bead does
+	not BREAK the assignment that already ships. Two ways it could, and they are
+	the same mistake at two sites:
+
+	  * the auto-switch reaching past the hand and stepping this peer into a
+	    teammate's hero — the lobby is the source of truth for hero assignment and
+	    nothing may be decided locally;
+	  * the end-of-run test asking whether any hero anywhere is free, so a peer
+	    whose only assigned hero has just been taken respawns as somebody else's.
+
+	Both are why `available_character_indices()` exists rather than three copies of
+	one intersection. The negative control — a two-hero hand — proves the switch
+	still moves when there IS somewhere to go, so "it did not step out of the hand"
+	cannot be satisfied by a switch that never happens.
+	"""
+	_beat_done()
+
+	# (a) a one-hero hand, and that hero is taken.
+	var room := RoomStub.new()
+	room.add_to_group("mp")
+	root.add_child(room)
+	var player := await _make_player()
+	var mine: int = TowerGraph.HEROES.find("primm")
+	room.hand = [mine] as Array[int]
+	player.set_active_character(mine)
+	var taken: String = player.hero_name()
+	player.hit_by_crocodile(_hunter())
+	if player.hero_name() != taken:
+		_fail(("the capture stepped this peer from %s into %s, which the lobby assigned to "
+			+ "somebody else — the auto-switch must stay inside the hand")
+			% [taken, player.hero_name()])
+	if not player.available_character_indices().is_empty():
+		_fail("a peer whose only assigned hero was taken still reports %s available"
+			% str(player.available_character_indices()))
+	if player.free_character_indices().size() != TowerGraph.HEROES.size() - 1:
+		_fail("free_character_indices() should still list the three heroes the room gave away")
+	player.is_caught = false
+	player.call("_on_caught_finished")
+	if player.lives <= 0:
+		_fail("the room case ran out of hearts, so it proves nothing")
+	if not player.is_game_over:
+		_fail("this peer's hand was emptied by a capture and the run did not end")
+	_clear(player)
+
+	# (b) the negative control: two heroes in hand, and the switch moves.
+	player = await _make_player()
+	var other: int = TowerGraph.HEROES.find("teibi")
+	room.hand = [mine, other] as Array[int]
+	player.set_active_character(mine)
+	player.hit_by_crocodile(_hunter())
+	if player.current_character_index != other:
+		_fail("with a two-hero hand the capture landed on %s, expected %s"
+			% [player.hero_name(), TowerGraph.HEROES[other]])
+	player.is_caught = false
+	player.call("_on_caught_finished")
+	if player.is_game_over:
+		_fail("the run ended with %s still in hand" % TowerGraph.HEROES[other])
+	_clear(player)
+	room.queue_free()
 	await process_frame
 
 

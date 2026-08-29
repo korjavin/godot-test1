@@ -1289,52 +1289,28 @@ func switch_to_next_character() -> void:
 	if windman_boost_timer > 0.0 or teibi_size_state != 0:
 		return
 
-	# Which characters may we step to? `null` — offline, no room, or holding no
-	# hero yet — means "all of them", i.e. exactly today's behaviour behind one
-	# == null test. An array restricts the cycle to those indices.
-	var allowed: Variant = null
-	var mp := _mp()
-	if mp and mp.has_method("my_character_indices"):
-		allowed = mp.my_character_indices()
+	# Which characters may we step to? `available_character_indices()` — the lobby's
+	# hand INTERSECT the heroes nobody is holding captive. Solo, with nobody taken,
+	# it answers all four and the cycle below is arithmetically the plain
+	# `(i + 1) % size` it has always been, which is why the old `== null` branch is
+	# gone rather than kept beside it: two spellings of one increment is how the
+	# captive filter would end up applied to one of them and not the other.
+	var indices := available_character_indices()
 
-	# THE CAPTIVE FILTER — availability is `hand INTERSECT free`, and this is the
-	# one site where both halves meet. Solo `allowed` is null and the free set IS
-	# the answer; in a room it narrows the lobby's hand instead of replacing it, so
-	# a captured hero is unreachable by the same code path either way.
-	#
-	# GUARDED ON `is_empty()` so that a run with nobody captive — which is every
-	# run before the authored beat, and most of one after it — takes the identical
-	# `allowed == null` branch it always has, with no array built and no
-	# intersection walked on a keypress.
-	if not captive_heroes.is_empty():
-		var free := free_character_indices()
-		if allowed == null:
-			allowed = free
-		else:
-			var narrowed: Array = []
-			for index: Variant in (allowed as Array):
-				if free.has(int(index)):
-					narrowed.append(int(index))
-			allowed = narrowed
-
-	if allowed == null:
-		# Increment the character index
-		current_character_index = (current_character_index + 1) % CHARACTERS.size()
-	else:
-		var indices: Array = allowed
-		# The lobby holds at most one hero per member, so this is normally a
-		# singleton and the press is a refusal. Give it the SAME dial flash and
-		# denial buzz a refused F press gets, so the player reads "this hero is
-		# locked" rather than "E is broken". (A body outside the allowed set is
-		# momentary — the manager applies the confirmed hero itself through
-		# set_active_character — so there is nothing to correct here.)
-		if indices.size() <= 1:
-			_flash_blocked_feedback()
-			return
-		var slot: int = indices.find(current_character_index)
-		# find() returning -1 wraps to the first allowed entry, which is the
-		# right answer when we are not currently in any of them.
-		current_character_index = int(indices[(slot + 1) % indices.size()])
+	# The lobby holds at most one hero per member, so in a room this is normally a
+	# singleton and the press is a refusal — and so is a press by a player down to
+	# his last free hero. Give both the SAME dial flash and denial buzz a refused F
+	# press gets, so the player reads "this hero is locked" rather than "E is
+	# broken". (A body outside the allowed set is momentary — the manager applies
+	# the confirmed hero itself through set_active_character — so there is nothing
+	# to correct here.)
+	if indices.size() <= 1:
+		_flash_blocked_feedback()
+		return
+	var slot: int = indices.find(current_character_index)
+	# find() returning -1 wraps to the first allowed entry, which is the right
+	# answer when we are not currently in any of them.
+	current_character_index = int(indices[(slot + 1) % indices.size()])
 
 	# Show the newly selected character
 	set_active_character(current_character_index)
@@ -1346,6 +1322,38 @@ func switch_to_next_character() -> void:
 # ---------------------------------------------------------------------------
 # THE CAPTIVE SET — capture, liberation, and what is left to play
 # ---------------------------------------------------------------------------
+
+func available_character_indices() -> Array:
+	"""
+	Who this player may actually BE right now: the lobby's hand INTERSECT free.
+
+	@return: A fresh Array of int, in `CHARACTERS` order — possibly empty.
+
+	THE ONE SITE WHERE THE TWO RESTRICTIONS MEET, and everything that asks "which
+	heroes are left" asks it here: the E-cycle, the capture-time auto-switch and
+	the end-of-run test. Splitting them is how the auto-switch ends up stepping a
+	peer into a teammate's hero, or how a room ends a run this player could still
+	have played.
+
+	`my_character_indices()` answers `null` — offline, no room, or holding no hero
+	yet — meaning "all of them", so solo this is exactly `free_character_indices()`
+	and with nobody captive it is all four in order.
+	"""
+	var free := free_character_indices()
+	var mp := _mp()
+	var allowed: Variant = null
+	if mp and mp.has_method("my_character_indices"):
+		allowed = mp.my_character_indices()
+	if allowed == null:
+		return free
+	var out: Array = []
+	# Walked in `free` order rather than the lobby's, so the cycle E steps through
+	# is stable however the room happened to hand the heroes out.
+	for index: int in free:
+		if (allowed as Array).has(index):
+			out.append(index)
+	return out
+
 
 func free_character_indices() -> Array:
 	"""
@@ -1438,13 +1446,16 @@ func _capture_active_hero() -> void:
 	if interior and interior.has_method("set_captive"):
 		interior.set_captive(hero, true)
 
-	# ...and step into the next free hero on the spot, while the unit withdraws.
-	# An empty free set is game over, decided in `_on_caught_finished()` where
-	# every other end-of-run branch is decided — not here.
-	var free := free_character_indices()
+	# ...and step into the next AVAILABLE hero on the spot, while the unit
+	# withdraws. Available, not merely free: in a room the lobby owns who plays
+	# whom, and a capture that stepped this peer into a teammate's hero would break
+	# that assignment far more loudly than the capture itself. Nothing to step to
+	# is game over, decided in `_on_caught_finished()` where every other
+	# end-of-run branch is decided — not here.
+	var available := available_character_indices()
 	for offset: int in CHARACTERS.size():
 		var index: int = (current_character_index + 1 + offset) % CHARACTERS.size()
-		if free.has(index):
+		if available.has(index):
 			set_active_character(index)
 			return
 
@@ -2200,7 +2211,12 @@ func _on_caught_finished() -> void:
 	# out of hearts does; the handoff into the full-custody protocol scene (bead
 	# godot-test1-3iy.11) replaces the `_trigger_game_over()` call below and
 	# nothing else on this path.
-	if lives <= 0 or free_character_indices().is_empty():
+	# GUARDED ON THERE BEING A CAPTIVE AT ALL, so the clause can only ever fire for
+	# the reason it exists. An empty hand has one other cause — a room that has not
+	# confirmed this peer's hero — and ending a run on that would be a bug with no
+	# visible cause at all.
+	if lives <= 0 or (not captive_heroes.is_empty()
+			and available_character_indices().is_empty()):
 		lives = maxi(lives, 0)
 		_trigger_game_over()
 	else:
