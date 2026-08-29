@@ -1861,13 +1861,16 @@ const SPECIES: Dictionary = {
 	## scene fails to load — both still measured, by enemy_spawn_selfcheck check
 	## 11's river gate and by boss_selfcheck's crocodile subject respectively.
 	##
-	## EVERY MODEL BELOW IS A PLACEHOLDER AND SAYS SO, the same art-decoupling
+	## EACH MODEL BELOW SAYS WHETHER IT IS A PLACEHOLDER, the same art-decoupling
 	## convention the titan (a re-skinned Teibi) and the dragon (a stretched
-	## piglet crocodile) already ship under. The purpose-built meshes are their own
-	## art beads — lce.6 (serpentine builders: naga + hydra), lce.7 (winged pair:
-	## roc + dragon), lce.8 (humanoids: titan + clown) — and when they land only
-	## the .tscn and the measured geometry in these comments change, never a line
-	## of behaviour. Looks are explicitly not this bead's acceptance.
+	## piglet crocodile) still ship under. The purpose-built meshes are their own
+	## art beads — lce.6 (serpentine builders: naga + hydra, LANDED), lce.7 (winged
+	## pair: roc + dragon), lce.8 (humanoids: titan + clown) — and when they land
+	## only the .tscn and the measured geometry in these comments change, never a
+	## line of behaviour. lce.6 is the one counter-example and it proves the rule:
+	## naga.glb is authored nose-along-+X where the humanoid placeholder faced -Z,
+	## so its `model_facing_offset` moved with the mesh. A row's facing offset is a
+	## property of the MESH, not of the animal.
 	##
 	## THE ONE HARD PLACEMENT CONSTRAINT ON A PLACEHOLDER, restated from the
 	## dragon's row because it is the rule that bites: endless_terrain's
@@ -1887,24 +1890,23 @@ const SPECIES: Dictionary = {
 	## schedule already govern how near one can appear, and a gentler first boss
 	## is a retune the owner makes on a whole family, not a hidden exception here.
 	##
-	## PLACEHOLDER, MEASURED. scenes/characters/hydra.tscn instances snake.glb —
-	## the only serpentine mesh in the asset set — at (0.5, 2.5, 0.5): squashed to
-	## half its length and reared to two and a half times its height, so it reads
-	## as a thick coiled mass of necks rather than as the sand viper the desert is
-	## already full of. The source mesh is 1.7345 long (x -1.3625 .. +0.372),
-	## 0.2065 tall and 0.4111 across; at that scale it is 0.867 long
-	## (x -0.681 .. +0.186), 0.516 tall and 0.206 across. The capsule in hydra.tscn
-	## is `radius = 0.26, height = 0.87`, laid on the travel axis with the
-	## crocodile's basis, at `(0, 0.26, -0.248)`:
-	##   * 0.26 makes a 0.52 m tube around the 0.516 m reared height — the viper's
-	##     tightest-fit rule applied to the axis that grew.
-	##   * 0.87 covers the 0.867 m length, caps included, so the horizontal reach
-	##     is 0.435 — comfortably inside the spawner's 0.7 bound.
-	##   * radius == centre y, the crocodile/viper/dragon identity, so the
-	##     capsule's bottom sits exactly on y = 0.
-	##   * z = -0.248 is the mesh's own x-midpoint after the squash, like the
-	##     viper's -0.495: snake.glb is built well behind its origin, so a capsule
-	##     centred on the origin would leave body hanging off the back.
+	## PURPOSE-BUILT, MEASURED (bead lce.6 — the placeholder was a squashed, reared
+	## snake.glb). scenes/characters/hydra.tscn instances hydra.glb at IDENTITY: a
+	## heavy low body on stubby legs carrying THREE necks and heads off one branch
+	## point, built by scripts/generate_hydra.py on the toolkit's `necks` primitive.
+	## Read that file for the palette and the fan geometry. The mesh is 1.3197 long
+	## (x -0.550 .. +0.770, midpoint +0.110), 0.662 tall and 0.524 across. The
+	## capsule in hydra.tscn is `radius = 0.331, height = 1.32`, laid on the travel
+	## axis with the crocodile's basis, at `(0, 0.331, 0.11)`:
+	##   * 1.32 covers the 1.3197 m length, caps included, so the horizontal reach
+	##     is 0.66 — inside the spawner's 0.7 bound, which is why the model's own
+	##     length is capped there (see the generator's header).
+	##   * 0.331 makes a 0.662 m tube around the 0.662 m height — the viper's
+	##     tightest-fit rule, and radius == centre y (the crocodile/viper identity)
+	##     puts the capsule's bottom exactly on y = 0.
+	##   * z = 0.11 is the mesh's own x-midpoint: the necks reach further forward
+	##     than the short tail reaches back, so a capsule centred on the origin
+	##     would leave the heads hanging off the front.
 	"hydra": {
 		## No arm. Same reasoning as the green dragon's, one band over: a melee
 		## territorial boss is exactly what the code above the `match` already is,
@@ -1994,19 +1996,25 @@ const SPECIES: Dictionary = {
 	## that buries itself, the naga is a 1.6 m torso over a coiled base that never
 	## hides. Same band, opposite silhouettes.
 	##
-	## PLACEHOLDER, MEASURED. scenes/characters/naga.tscn instances primm.tscn —
-	## a bipedal character mesh, re-skinned the way the titan re-skins Teibi — at
-	## (1.2, 0.9, 1.2): broadened and lowered, so it reads as a torso sitting on
-	## something wide rather than as a person out for a walk. Primm's mesh is
-	## 0.488 x 0.331 x 1.793 (x, z, y); at that scale it spans x ±0.293,
-	## z -0.227 .. +0.170 and stands 1.600 m. The capsule in naga.tscn is
-	## `radius = 0.30, height = 1.60` at `(0, 0.80, 0)`, UPRIGHT — no lay-down
-	## rotation, the same thing titan.tscn does and the quadruped scenes do not:
+	## PURPOSE-BUILT, MEASURED (bead lce.6 — the placeholder was a re-skinned
+	## primm.tscn). scenes/characters/naga.tscn instances naga.glb at IDENTITY: an
+	## armoured four-armed torso on a coiled serpent base, built by
+	## scripts/generate_naga.py. The mesh is 1.1320 long (x -0.722 .. +0.410),
+	## 1.600 tall and 0.580 across — the same standing height the placeholder had,
+	## so every number below it still reads true. The capsule in naga.tscn is
+	## unchanged at `radius = 0.30, height = 1.60`, `(0, 0.80, 0)`, UPRIGHT — no
+	## lay-down rotation, the same thing titan.tscn does and the quadruped scenes
+	## do not:
 	##   * 1.60 is the full standing height and 0.80 = height/2 puts the capsule's
 	##     bottom exactly on y = 0.
-	##   * 0.30 covers the 0.293 m half-width, and it is also the horizontal reach
+	##   * 0.30 covers the 0.290 m half-width, and it is also the horizontal reach
 	##     — an upright capsule's reach is its RADIUS, not half its height — so the
 	##     spawner's 0.7 bound has 0.4 m of slack.
+	##   * The trailing tail tip and the arm blades sit OUTSIDE it, deliberately.
+	##     A capsule wraps a model's LONG axis and stays narrow across it — the
+	##     crocodile's own flanks are outside its 0.16 m capsule for the same
+	##     reason — and on a boss whose contact is one-shot lethal, a hit volume
+	##     smaller than the art is the only direction that is fair.
 	"naga": {
 		## No arm, for the hydra's reason. HMM3's naga is a melee unit; the ranged
 		## opt-in in this family belongs to the clown alone.
@@ -2043,10 +2051,12 @@ const SPECIES: Dictionary = {
 		"avoid_speed_factor": 0.55,
 
 		# ----- Procedural body animation -----
-		## PI, not the quadrupeds' -PI/2: this is a humanoid CHARACTER mesh and
-		## those are authored facing -Z, where every predator mesh is authored
-		## nose-along-+X. The body still travels +Z, so it needs a half turn.
-		"model_facing_offset": PI,
+		## -PI/2, the quadruped/serpent default. It was PI while this row wore a
+		## humanoid CHARACTER mesh (those are authored facing -Z); naga.glb is
+		## authored nose-along-+X like every other predator model, which is the
+		## toolkit's first contract, so the half turn came off with the
+		## placeholder. Get this wrong and the boss glides sideways.
+		"model_facing_offset": -PI / 2.0,
 
 		## A GLIDE, and it is defined by what is missing: almost no roll and the
 		## smallest bob of the four (there is no gait to bob), carried instead by a
