@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Shared faceted-box toolkit for the biome-predator model generators
-(generate_wolf / cougar / bear / hound / snake / hunter).
+(generate_wolf / cougar / bear / hound / snake / hunter / naga / hydra).
 
 Why this module exists at all: the five animal predators are the same animal with
 different numbers. Copy-pasting a 200-line trimesh quadruped five times is how
@@ -210,6 +210,122 @@ def wings(shoulder, span: float, color, *, segments: int = 3, fold: float = 0.0,
     if low < -1e-9:
         raise ValueError(
             f"wings: dips to y={low:.4f}; raise the shoulder or shorten the chord")
+    return parts
+
+
+def necks(root, count: int, length: float, color, *, segments: int = 3,
+          spread: float = 0.5, rise: float = 0.9, thick: float = 0.13,
+          taper: float = 0.4, head: float = 1.6, eye=None):
+    """
+    A fan of necks, each ending in a head, all branching from ONE point.
+
+    The toolkit's animals have exactly one head on exactly one neck, welded in by
+    `quadruped`. A hydra does not, and "many necks off one body" is the shape that
+    cannot be faked by stacking boxes at the call site without re-deriving the
+    same arc trigonometry per neck and getting the mirror wrong on one of them —
+    so, like `wings`, it is decided once here and spent by the models.
+
+    `root` is the BRANCH POINT: the spot on the spine every neck leaves from,
+    (x, y, z) with z = 0, because a fan hinged off the spine is the only one that
+    can come out mirror-exact. `count` necks are spaced evenly across the fan, the
+    outermost pair at +-`spread` radians of yaw; an odd count puts one neck dead
+    ahead on the spine (it is its own mirror), an even count leaves the middle
+    empty. `length` is the run from the branch point to the jaw of ONE neck.
+
+    `rise` is the pitch at the base, in radians, eased down to a quarter of it by
+    the last segment: the neck leaves the body steeply and levels off looking
+    forward, which is the S a serpent's neck actually makes and what stops the
+    heads reading as antennae. `thick` is the cross-section at the root and
+    `taper` the fraction of it lost by the jaw — the same shrinking-blocks
+    language as `tapered_chain`.
+
+    `head` sizes the head block as a multiple of the neck's tip thickness, and
+    `eye` is an optional second colour: without it a head at this scale is a
+    slightly fatter neck segment, with it the fan reads as faces.
+
+    Nothing here animates. There is no rig and no per-head motion — the whole
+    `Model` node sways as one, which is exactly why the heads have to be far
+    enough apart to read as several from a standing start.
+    """
+    if count < 1:
+        raise ValueError(f"necks: count must be >= 1, got {count}")
+    if segments < 1:
+        raise ValueError(f"necks: segments must be >= 1, got {segments}")
+    if not 0.0 <= taper < 1.0:
+        # 1.0 tapers the jaw away to zero extents: degenerate faces that weld in,
+        # survive `verify` and vanish in whichever importer prunes them. Same
+        # trap, same guard, as `wings`.
+        raise ValueError(f"necks: taper must be in [0, 1), got {taper}")
+    if count > 1 and spread <= 0.0:
+        # THE DEGENERATE BRANCH POINT. Every neck at the same yaw is `count`
+        # copies of one neck occupying one space: it welds, it verifies, it has
+        # the face count of a hydra and the silhouette of a snake. The whole
+        # capability is that the heads are APART, so a fan of zero width is an
+        # error and not a pose.
+        raise ValueError(f"necks: {count} necks need spread > 0, got {spread}")
+    if abs(root[2]) > 1e-9:
+        # Off the spine the fan is still a fan, but it is no longer mirrored, and
+        # `verify(symmetric=True)` would then fail on the finished animal with a
+        # z-bias whose source is three functions away.
+        raise ValueError(f"necks: root must sit on the spine (z=0), got z={root[2]}")
+
+    rx, ry, _ = root
+    step = length / segments
+    tip_thick = thick * (1.0 - taper)
+    head_len, head_h, head_w = tip_thick * head * 1.15, tip_thick * head * 0.8, tip_thick * head
+
+    parts = []
+    for i in range(count):
+        # Yaw measured from the CENTRE of the fan, so the i-th neck and its
+        # opposite number get exactly-negated angles: (i - half) / half is an
+        # exact negation pair in binary, while i / (count - 1) * 2 - 1 is not for
+        # count = 4 and the mirror check then fails by one ulp per vertex.
+        half = (count - 1) / 2.0
+        yaw = spread * ((i - half) / half) if count > 1 else 0.0
+        swing = trimesh.transformations.rotation_matrix(yaw, [0, 1, 0])
+        swing[:3, 3] = (rx, ry, 0.0)   # rotate about the branch point, then sit on it
+
+        local = []
+        x = y = 0.0
+        pitch = rise
+        for s in range(segments):
+            t = s / max(segments - 1, 1)
+            pitch = rise * (1.0 - 0.75 * t)
+            th = thick * (1.0 - taper * t)
+            dx, dy = np.cos(pitch) * step, np.sin(pitch) * step
+            # Overlong by 15% so the elbows of the arc never open a gap, the same
+            # trick the snake's body blocks and the wing's plates use.
+            local.append(box((step * 1.15, th, th), (x + dx / 2, y + dy / 2, 0.0),
+                             color, pitch=pitch))
+            x, y = x + dx, y + dy
+
+        # Head, carried at the last segment's pitch so the jaw points where the
+        # neck was going, plus a blunt snout in front of it.
+        hx, hy = x + np.cos(pitch) * head_len / 2, y + np.sin(pitch) * head_len / 2
+        local.append(box((head_len, head_h, head_w), (hx, hy, 0.0), color, pitch=pitch))
+        sx = hx + np.cos(pitch) * head_len * 0.6
+        sy = hy + np.sin(pitch) * head_len * 0.6
+        local.append(box((head_len * 0.45, head_h * 0.5, head_w * 0.55),
+                         (sx, sy, 0.0), color, pitch=pitch))
+        if eye is not None:
+            for side in (1.0, -1.0):
+                # Straddling the side of the skull, never inside it — an eye tucked
+                # in by a centimetre is swallowed by the head block (see quadruped).
+                local.append(box((head_len * 0.3, head_h * 0.3, head_w * 0.16),
+                                 (hx + np.cos(pitch) * head_len * 0.2,
+                                  hy + np.sin(pitch) * head_len * 0.2 + head_h * 0.25,
+                                  side * head_w * 0.5), eye, pitch=pitch))
+
+        for p in local:
+            p.apply_transform(swing)
+        parts += local
+
+    # Contract 2 again: `rise` is a free parameter and a negative one aims the
+    # whole fan at the floor, where `build()` would then lift the animal off the
+    # ground to compensate rather than fail.
+    low = min(p.bounds[0][1] for p in parts)
+    if low < -1e-9:
+        raise ValueError(f"necks: dips to y={low:.4f}; raise the root or the rise")
     return parts
 
 
@@ -451,15 +567,159 @@ def _selfcheck_wings() -> None:
     print(f"\u2713 wings: {len(cases)} poses, mirror-exact, clear of the ground")
 
 
+def _selfcheck_necks() -> None:
+    """
+    Exercise the multi-head branch point on the fans a consumer will ask for.
+
+    A fan of necks is half a model, so `verify` (a whole animal, nose to tail)
+    cannot judge one — same reason `wings` has a stand-in here. The four things a
+    branch point can silently get wrong are all asserted below: the heads end up
+    in the SAME PLACE (the capability quietly not happening), the necks stop
+    meeting at the root (a fan of floating snakes), the two sides drift apart, or
+    the whole thing sinks through the floor.
+    """
+    scale, eye = rgba("#080409"), rgba("#7a8a1a")
+
+    def head_centres(parts, count, per, segs):
+        """Centroid of each neck's HEAD block — the part right after its segments."""
+        return np.array([parts[i * per + segs].centroid for i in range(count)])
+
+    # label, count, segments, spread, length, eyes — "three" and "wide" share
+    # everything but the spread on purpose, so the fan's meaning can be compared.
+    cases = [
+        ("three", 3, 3, 0.45, 0.55, True),
+        ("wide",  3, 3, 0.95, 0.55, True),
+        ("pair",  2, 4, 0.40, 0.60, False),
+        # count = 4 earns its place: it is the smallest fan whose yaw offsets are
+        # NOT exact negations under the obvious `i / (count - 1) * 2 - 1`, so it
+        # is the only case in this list that fails the mirror check if the angle
+        # is ever computed that way instead of from the fan's centre.
+        ("four",  4, 3, 0.55, 0.50, False),
+        ("one",   1, 2, 0.00, 0.40, True),
+        ("many",  5, 3, 1.00, 0.50, True),
+    ]
+    root = (0.25, 0.35, 0.0)
+    shape = {}
+    for label, count, segs, spread, length, eyes in cases:
+        parts = necks(root, count, length, scale, segments=segs, spread=spread,
+                      eye=eye if eyes else None)
+        per = segs + 2 + (2 if eyes else 0)
+        assert len(parts) == count * per, f"necks/{label}: part count"
+
+        # Contract 3: the parts weld into ONE vertex-coloured mesh, no head nodes.
+        mesh = trimesh.util.concatenate(parts)
+        assert len(mesh.faces) == len(parts) * 12, f"necks/{label}: not plain boxes"
+        assert len(mesh.visual.vertex_colors) == len(mesh.vertices), \
+            f"necks/{label}: vertex colours lost in the weld"
+
+        v = mesh.vertices
+        lo, hi = mesh.bounds
+        # Contract 2: nothing below the ground plane, at any fan.
+        assert lo[1] >= -1e-9, f"necks/{label}: dips to y={lo[1]:.4f}"
+
+        # Mirror-exact, not merely balanced: the vertex set is invariant under a
+        # z-flip. A bounds check alone passes a fan whose right half is a
+        # different shape of the same width.
+        flipped = v * (1.0, 1.0, -1.0)
+        left = v[np.lexsort(v.T[::-1])]
+        right = flipped[np.lexsort(flipped.T[::-1])]
+        assert np.allclose(left, right, atol=1e-12), f"necks/{label}: sides not mirrored"
+
+        # THEY ALL LEAVE THE SAME POINT. Every neck's nearest vertex to the root
+        # is within its own cross-section of it, which is what makes this a branch
+        # and not `count` animals standing in a row.
+        r = np.array(root)
+        for i in range(count):
+            group = trimesh.util.concatenate(parts[i * per:(i + 1) * per])
+            near = np.linalg.norm(group.vertices - r, axis=1).min()
+            assert near <= 0.13, f"necks/{label}: neck {i} starts {near:.3f} m off the root"
+
+        # AND THEY END UP APART. A degenerate branch point welds, verifies, and
+        # has the face count of a hydra with the silhouette of a snake, so the
+        # heads are measured against each other rather than assumed.
+        heads = head_centres(parts, count, per, segs)
+        if count > 1:
+            gaps = np.linalg.norm(heads[:, None, :] - heads[None, :, :], axis=2)
+            gaps += np.eye(count) * 1e9
+            assert gaps.min() >= length * 0.15, \
+                f"necks/{label}: closest heads {gaps.min():.3f} m apart on a {length} m neck"
+            # ...and apart ACROSS the spine, not merely at different heights: the
+            # fan is a yaw, so the read at distance is the z spread.
+            assert np.ptp(heads[:, 2]) >= length * 0.3, \
+                f"necks/{label}: heads span only {np.ptp(heads[:, 2]):.3f} m of z"
+
+        # NO GAPS AT THE ELBOWS. Each block spans at least its own stride, which
+        # is what the deliberate overlength is for: the arc turns between
+        # segments, so a block merely as long as the step opens a wedge on the
+        # outside of every bend and the neck reads as a string of beads.
+        stride = length / segs
+        for i in range(count):
+            for s_i in range(segs):
+                span = parts[i * per + s_i].extents.max()
+                assert span >= stride, \
+                    f"necks/{label}: segment {s_i} spans {span:.4f} of a {stride:.4f} stride"
+
+        # A HEAD IS A BLOCK, not a wafer. Every head is measured against the
+        # jaw-end segment it sits on: the thinnest thing about the head may not
+        # be thinner than the thinnest thing about the neck. Measured on extents
+        # rather than eyeballed proportions, because a collapsed dimension is
+        # exactly what a proportion typo produces — one that welds, mirrors and
+        # verifies perfectly, and ships a fan of headless stalks.
+        for i in range(count):
+            head_ext = parts[i * per + segs].extents.min()
+            jaw_ext = parts[i * per + segs - 1].extents.min()
+            assert head_ext >= jaw_ext, \
+                f"necks/{label}: head {i} is {head_ext:.4f} thin on a {jaw_ext:.4f} neck"
+
+        # Nothing reaches further than the neck plus its head can put it.
+        reach = np.linalg.norm(v - r, axis=1).max()
+        assert reach <= length * 1.6, f"necks/{label}: reaches {reach:.3f} m on {length}"
+        # Width across the fan, and how far FORWARD the average head ended up.
+        # The forward number has to be the mean and not the bound: an odd count
+        # keeps one neck dead ahead at every spread, so the mesh's own max x
+        # never moves and would compare equal however wide the fan opened.
+        shape[label] = (hi[2] - lo[2], heads[:, 0].mean() - r[0])
+
+    # What `spread` MEANS, as a comparison rather than as numbers: opening the fan
+    # trades forward reach for width, exactly as `fold` does for a wing.
+    assert shape["wide"][0] > shape["three"][0], "spread does not widen the fan"
+    assert shape["wide"][1] < shape["three"][1], "spread does not shorten the reach"
+    # A single neck is a plain neck: no fan, no width beyond its own head.
+    assert shape["one"][0] < 0.2, "a lone neck should be no wider than its head"
+
+    # Guards. Each is cheaper to hit here than in a boss model.
+    for args, kw, why in (
+        ((root, 0, 0.5), {}, "no necks"),
+        ((root, 3, 0.5), dict(segments=0), "no segments"),
+        ((root, 3, 0.5), dict(taper=1.0), "a jaw tapered away to nothing"),
+        ((root, 3, 0.5), dict(spread=0.0), "a degenerate branch point"),
+        ((root, 3, 0.5), dict(spread=-0.4), "a fan folded inside out"),
+        (((0.2, 0.3, 0.05), 3, 0.5), {}, "a root off the spine"),
+        (((0.2, 0.1, 0.0), 3, 0.9), dict(rise=-0.8), "a fan aimed at the floor"),
+    ):
+        try:
+            necks(*args, scale, **kw)
+        except ValueError:
+            continue
+        raise AssertionError(f"necks: {why} was accepted")
+
+    print(f"✓ necks: {len(cases)} fans, mirror-exact, branching and apart")
+
+
 if __name__ == "__main__":
     # Running the toolkit runs every generator that uses it, so `verify` fires on
     # every species. Same shape as the project's GDScript self-checks.
     import runpy
 
     here = pathlib.Path(__file__).resolve().parent
-    for species in ("wolf", "cougar", "bear", "hound", "snake", "hunter"):
+    for species in ("wolf", "cougar", "bear", "hound", "snake", "hunter",
+                    "naga", "hydra"):
         runpy.run_path(str(here / f"generate_{species}.py"), run_name="__main__")
     # The wing primitive has no generator of its own — no model wears it yet — so
     # it is checked here directly, on the poses its consumers will ask for.
     _selfcheck_wings()
+    # The neck fan HAS a consumer (the hydra, above), but `verify` only ever sees
+    # the finished animal — one welded mesh in which the branch point is no longer
+    # a separable thing. So it is checked here too, on its own.
+    _selfcheck_necks()
     print("SELFCHECK OK")

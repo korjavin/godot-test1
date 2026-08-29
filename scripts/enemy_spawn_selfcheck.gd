@@ -101,7 +101,7 @@ const DETECTION_SIM_MARGIN: float = 15.0
 ## the code ABOVE the dispatch (see the behaviour `match` in _update_chase_state),
 ## which the ambush trip-wire's crocodile control drives on every run.
 const PROBED_BEHAVIORS: Array[String] = ["solo", "pack", "ambush", "charge", "burst",
-		"ranged", "hunt"]
+		"ranged", "hunt", "leap"]
 
 ## Field side in chunks. 17 x 17 = 289, the size every measurement in CLAUDE.md's
 ## terrain sections is quoted at, so a number printed here is comparable to them.
@@ -217,6 +217,14 @@ var _max_chase_speed: float = 0.0
 ## the number a BOSS-ONLY archer's firing band has to fit inside.
 var _boss_detection_radius: float = 0.0
 
+## BOSS_CHASE_SPEED and BOSS_TERRITORY_RADIUS, read the same way and for the same
+## reason. The leap probe needs both: a BOSS-ONLY leaper's row states a
+## `chase_speed` that a boss OVERRIDES (see the is_boss branch in _ready()), so
+## racing its stated 5.5 would measure an animal the game never builds — and the
+## reach of a hop is judged against the territory it must land inside.
+var _boss_chase_speed: float = 0.0
+var _boss_territory_radius: float = 0.0
+
 ## Species dispatched from BIOME_BOSS and from nowhere in BIOME_SPECIES, filled
 ## in by _check_species_table (which runs before every probe). Two checks need
 ## the same answer — the lattice's lower bound is waived for these rows, and the
@@ -306,6 +314,8 @@ func _run() -> void:
 	_species_table = croc_consts.get("SPECIES", {})
 	_max_chase_speed = float(croc_consts.get("MAX_CHASE_SPEED", 0.0))
 	_boss_detection_radius = float(croc_consts.get("BOSS_DETECTION_RADIUS", 0.0))
+	_boss_chase_speed = float(croc_consts.get("BOSS_CHASE_SPEED", 0.0))
+	_boss_territory_radius = float(croc_consts.get("BOSS_TERRITORY_RADIUS", 0.0))
 	var player_consts: Dictionary = load(PLAYER_SCRIPT).get_script_constant_map()
 	_walk_speed = float(player_consts.get("WALK_SPEED", 0.0))
 	# The slowest run, derived the way player_controller derives it (see
@@ -367,6 +377,7 @@ func _run() -> void:
 	_check_burst_escape(croc_ai)
 	_check_ranged_cadence(croc_ai)
 	_check_hunt_pacing(croc_ai)
+	_check_leap_cycle(croc_ai)
 	_check_determinism(terrain_script)
 	_check_hunter_stream_independence(terrain_script)
 	_check_boss_dispatch(terrain_script)
@@ -2235,6 +2246,287 @@ func _free_hunt_probe(croc: Node, stub: Node) -> void:
 	"""
 	croc.free()
 	stub.free()
+
+
+# ============================================================================
+# CHECK 8d — a LEAPING boss hops on a clock, lands inside its leash, and still
+#            loses a foot race it must lose
+# ============================================================================
+
+## The smallest apex, in metres, a "leap" row may claim and still be called a hop.
+## A metre clears the tallest thing this world puts on flat ground short of a
+## block, and it is far above anything `bob_amount` or the waddle can produce —
+## so a row whose arc constants make a 4 cm bounce fails here instead of shipping
+## an arm that runs perfectly and is invisible.
+const LEAP_APEX_MIN: float = 1.0
+
+## Slack on the hop COUNT over a race, in hops. The race window is not a whole
+## number of cycles and the first hop fires on frame 1, so the count is expected
+## to land within one of `seconds / (airtime + cooldown)`; anything further out
+## is a cadence that is not the row's.
+const LEAP_HOP_COUNT_SLACK: float = 1.0
+
+
+func _check_leap_cycle(croc_ai: GDScript) -> void:
+	"""
+	THE SEVENTH ARM'S PROBE. Drive the shipped hop rule and race what it produces.
+
+	Owner, verbatim: "let those Rock and Dragons be able to make a decent jumps
+	like windman does with F key." A hop is the cougar's bounded burst with a
+	vertical component — a leg above the sustained ceiling paid for by a mandatory
+	recovery leg below it — so this check is check 8's, in seconds instead of
+	metres, and it asserts the same four things for the same four reasons. Read
+	_check_burst_escape first; everything it says about why an escape is SIMULATED
+	rather than argued in a comment applies here unchanged.
+
+	What this file measures is the PURE half — `leap_due()`, `leap_airtime()` and
+	`leap_reach()`, the three static functions `_behave_leap` itself calls, so the
+	cadence and the cycle average measured here are the shipped ones. What it
+	cannot reach — that the body actually leaves the ground, that the arc brings it
+	back to y = 0, that the `match` in _update_chase_state reaches the arm at all,
+	and that the territory gate refuses a hop over the fence in a live world — is
+	measured in boss_selfcheck.gd, which has a physics world and a real boss in it.
+	Neither half is sufficient alone and both ship.
+
+	FIVE THINGS, and each is a way the arm can be wrong while reading correctly:
+
+	  1. THE ARC IS AN ARC. Both constants positive (a zero `leap_gravity` is a
+	     boss that never comes down) and an apex over LEAP_APEX_MIN — because "the
+	     arm ran" is also true of a hop 4 cm tall, which is the one failure that
+	     survives every other assertion here and is invisible in play as anything
+	     but a boss that still reads as a heavy quadruped.
+	  2. THE HOP IS A BURST AND THE RECOVERY COSTS SOMETHING. `leap_speed_factor`
+	     over 1.0 and `leap_recover_factor` under it, check 8's two guards
+	     verbatim: at 1.0 the "hop" is an ordinary chase with a comment, and a
+	     recovery at or above 1.0 is a permanent speed-up over the whole cycle.
+	  3. THE REACH FITS THE LEASH. `_behave_leap` refuses to launch when the
+	     projected landing falls outside the territory, so a row whose reach
+	     approaches BOSS_TERRITORY_RADIUS is a boss that may only ever hop from a
+	     shrinking disc around its own home — legal, silent, and not what anyone
+	     tuned. The legal launch disc is `radius - reach`, and this reports it.
+	  4. THE CADENCE IS THE ROW'S. Hops counted over a long window must match
+	     `airtime + leap_cooldown`. A cooldown that is never re-armed launches
+	     every grounded frame, which is a boss that never touches the ground —
+	     and, to a check that only asserted "it hopped", a pass.
+	  5. THE ESCAPE, over repeated cycles, in three races with a control:
+	     a runner at the slowest character's run against the WORST animal the game
+	     can build (a boss's speed is clamped to MAX_CHASE_SPEED) must GAIN; a
+	     walker must be caught, or the "predator" is slower than walking; and the
+	     same worst animal with the RECOVERY REMOVED must catch the runner, which
+	     is what proves the recovery window is what saves them rather than the
+	     numbers happening to work out.
+
+	The races reuse check 8's BURST_RACE_* constants deliberately: it is the same
+	corridor, the same gap and the same window, so the two arms' escapes are
+	directly comparable numbers rather than two similar-looking ones.
+	"""
+	if _slowest_run_speed <= 0.0:
+		_fail("could not derive the slowest character's run from player_controller.gd"
+				+ " (RUN_SPEED x the smallest CHARACTER_SPEED) — the leap check would"
+				+ " have raced the hop against a ceiling of zero and passed vacuously")
+		return
+
+	var leapers: Array[String] = _species_with("leap")
+	if leapers.is_empty():
+		# The negative control for the whole check, the ranged probe's verbatim:
+		# with no leaping row every loop below iterates zero times and this file
+		# reports OK having measured nothing. The arm exists in the AI, so a table
+		# with no row carrying it is a half-landed bead.
+		_fail("no SPECIES row has behavior 'leap' — the hop rule this check drives"
+				+ " is in the AI (_behave_leap / leap_due) with nothing dispatching"
+				+ " to it")
+		return
+	for species_name: String in leapers:
+		_probe_leap(croc_ai, species_name)
+
+
+func _probe_leap(croc_ai: GDScript, species_name: String) -> void:
+	"""
+	One leaping species: its arc, its reach, its cadence and its escape.
+
+	@param croc_ai: piglet_crocodile_ai.gd, for the shipped leap_* statics
+	@param species_name: the SPECIES key to probe
+	"""
+	var row: Dictionary = _species_table[species_name]
+	var missing: Array[String] = []
+	for key: String in ["leap_launch_speed", "leap_gravity", "leap_speed_factor",
+			"leap_cooldown", "leap_recover_factor"]:
+		if not row.has(key):
+			missing.append(key)
+	if not missing.is_empty():
+		_fail("SPECIES['%s'] has behavior 'leap' but no %s — leap_due() and"
+				% [species_name, missing] + " leap_airtime() read them every frame"
+				+ " it chases, and answer 'no hop' when they are gone, so the boss"
+				+ " ships as an ordinary ground chaser with a long comment")
+		return
+
+	# ---- 1. THE ARC IS AN ARC ----------------------------------------------
+	var airtime: float = croc_ai.leap_airtime(row)
+	if airtime <= 0.0:
+		_fail("SPECIES['%s'] leap_launch_speed %.2f / leap_gravity %.2f give an"
+				% [species_name, float(row["leap_launch_speed"]), float(row["leap_gravity"])]
+				+ " airtime of %.3f s — leap_due() refuses every hop, so the arm"
+				% airtime + " runs and does nothing")
+		return
+	var apex: float = float(row["leap_launch_speed"]) * airtime * 0.25
+	if apex < LEAP_APEX_MIN:
+		_fail("SPECIES['%s'] hops %.2f m high (want >= %.1f m) — the arm runs,"
+				% [species_name, apex, LEAP_APEX_MIN] + " the body technically"
+				+ " leaves the ground, and the winged boss this bead exists for"
+				+ " still reads as a heavy quadruped")
+
+	# ---- 2. IT IS A BURST, AND THE RECOVERY IS PAID ------------------------
+	var speed_factor: float = float(row["leap_speed_factor"])
+	var recover_factor: float = float(row["leap_recover_factor"])
+	if speed_factor <= 1.0:
+		_fail("SPECIES['%s'].leap_speed_factor %.2f is at or under 1.0 — the hop"
+				% [species_name, speed_factor] + " carries the body no faster than"
+				+ " a walk-in would, so the arc is decoration on an ordinary chase")
+	if recover_factor >= 1.0:
+		_fail("SPECIES['%s'].leap_recover_factor %.2f is at or above 1.0 — the"
+				% [species_name, recover_factor] + " 'recovery' costs the animal"
+				+ " nothing and the hop is a permanent speed-up over the cycle")
+
+	# The two speeds the game can actually resolve for this row. A BOSS-ONLY row's
+	# stated chase_speed is overridden at spawn, so racing it would measure an
+	# animal that is never built (see _boss_chase_speed).
+	var nominal: float = float(row["chase_speed"])
+	if _boss_only.has(species_name):
+		nominal = minf(float(row.get("boss_chase_speed", _boss_chase_speed)),
+				_max_chase_speed)
+	var peak: float = _max_chase_speed * speed_factor
+
+	# ---- 3. THE REACH FITS THE LEASH ---------------------------------------
+	var reach: float = croc_ai.leap_reach(_max_chase_speed, row)
+	if _boss_only.has(species_name) and reach >= _boss_territory_radius:
+		_fail("SPECIES['%s'] hops %.1f m, which is not inside its own %.1f m"
+				% [species_name, reach, _boss_territory_radius] + " territory —"
+				+ " _behave_leap projects the landing point and refuses a hop that"
+				+ " would cross the fence, so at this reach the legal launch disc"
+				+ " has closed to nothing and the boss can never leave the ground")
+
+	# ---- 4 and 5. THE CADENCE AND THE ESCAPE, over repeated cycles ---------
+	var runner: Dictionary = _leap_race(croc_ai, row, _max_chase_speed,
+			_slowest_run_speed, false)
+	var walker: Dictionary = _leap_race(croc_ai, row, nominal, _walk_speed, false)
+	var control: Dictionary = _leap_race(croc_ai, row, _max_chase_speed,
+			_slowest_run_speed, true)
+
+	print("leap cycle (%s): %.2f m apex over %.2f s, reach %.1f m inside a %.1f m"
+			% [species_name, apex, airtime, reach, _boss_territory_radius]
+			+ " territory; peak %.2f m/s vs the %.2f ceiling; a %.1f m/s run opens"
+			% [peak, _max_chase_speed, _slowest_run_speed]
+			+ " the %.1f m gap to %.1f m over %.0f s in %d hops, a %.1f m/s walk"
+			% [BURST_RACE_GAP, float(runner["gap"]), BURST_RACE_SECONDS,
+					int(runner["hops"]), _walk_speed]
+			+ " closes it to %.1f m (same animal, recovery OFF: %.1f m)"
+			% [float(walker["gap"]), float(control["gap"])])
+
+	var expected_hops: float = BURST_RACE_SECONDS / (airtime + float(row["leap_cooldown"]))
+	if absf(float(runner["hops"]) - expected_hops) > LEAP_HOP_COUNT_SLACK:
+		_fail("a %s hopped %d times in %.0f s; its %.2f s arc and %.2f s cooldown"
+				% [species_name, int(runner["hops"]), BURST_RACE_SECONDS, airtime,
+						float(row["leap_cooldown"])]
+				+ " allow %.1f — the recovery clock is not the one the row states,"
+				% expected_hops + " and a clock that is never re-armed launches on"
+				+ " every grounded frame")
+
+	if float(runner["gap"]) - BURST_RACE_GAP < BURST_RUNNER_GAIN_MIN:
+		_fail("a running player only gained %.2f m on a %s over %.0f s"
+				% [float(runner["gap"]) - BURST_RACE_GAP, species_name, BURST_RACE_SECONDS]
+				+ " (want >= %.2f m) — the hop is above MAX_CHASE_SPEED and the"
+				% BURST_RUNNER_GAIN_MIN + " recovery window is no longer paying for"
+				+ " it, so running has stopped escaping and that is the promise the"
+				+ " game is balanced on")
+	if BURST_WALKER_MUST_CATCH and float(walker["gap"]) > 0.0:
+		_fail("a %s never caught a WALKING player — it stayed %.2f m short over"
+				% [species_name, float(walker["gap"])] + " %.0f s at its resolved"
+				% BURST_RACE_SECONDS + " %.2f m/s. The cycle average has fallen"
+				% nominal + " under WALK_SPEED (%.2f), which is not a difficulty"
+				% _walk_speed + " knob but a broken predator")
+	if float(control["gap"]) > 0.0:
+		_fail("the NEGATIVE CONTROL for %s did NOT catch the runner with the"
+				% species_name + " RECOVERY SWITCHED OFF — it stayed %.2f m short."
+				% float(control["gap"]) + " The escape measured with it on is"
+				+ " therefore not coming from the recovery window, so this check is"
+				+ " not measuring the hop cycle at all")
+
+	# ---- THE LEASH GATE, isolated ------------------------------------------
+	# `leap_due` takes the territory verdict as a parameter precisely so it can be
+	# driven from both sides here. Refused for a whole window it must never fire —
+	# and the positive control at the same clock must, or the refusal proves
+	# nothing about the gate and everything about a broken cooldown.
+	var refused: Dictionary = _leap_race(croc_ai, row, nominal, _walk_speed, false, false)
+	if int(refused["hops"]) > 0:
+		_fail("a %s launched %d time(s) with the projected landing REFUSED —"
+				% [species_name, int(refused["hops"])] + " leap_due() is ignoring"
+				+ " the territory verdict _behave_leap hands it, so a boss can hop"
+				+ " over its own fence and the leash is only a ground rule")
+	if int(walker["hops"]) <= 0:
+		_fail("a %s launched nothing over %.0f s with the landing ALLOWED — the"
+				% [species_name, BURST_RACE_SECONDS] + " refusal above therefore"
+				+ " proves nothing about the leash gate, only that this row never"
+				+ " hops at all")
+
+
+func _leap_race(croc_ai: GDScript, row: Dictionary, chase: float, quarry_speed: float,
+		no_recovery: bool, landing_ok: bool = true) -> Dictionary:
+	"""
+	Race one leaping predator against one quarry down a straight line.
+
+	@param croc_ai: the AI script, for its static leap_due / leap_airtime
+	@param row: the SPECIES row to simulate
+	@param chase: the predator's resolved chase speed (what _ready() left it at)
+	@param quarry_speed: the quarry's constant speed
+	@param no_recovery: the negative control — pin the recovery leg to the hop's
+	                    own factor, so the animal never pays for a bound
+	@param landing_ok: the territory verdict `_behave_leap` computes and hands to
+	                   leap_due(); false drives the refusal path
+	@return { "gap": metres at the end (0.0 on contact), "hops": launches counted }
+
+	THE LOOP IS `_behave_leap`'s, ONE STATEMENT PER BRANCH, and it drives the
+	SHIPPED `leap_due()` every frame with the real grounded flag — including the
+	airborne frames, where the function's early return is what stops the recovery
+	clock draining in the air. A probe that only called it while grounded would
+	pass on a build where that early return had been deleted, which is exactly the
+	cadence bug worth catching.
+
+	WHAT THE MODEL LEAVES OUT, honestly, is check 8's list unchanged: turning,
+	obstacle feelers, the bite's lunge, and the vertical axis itself — the arc's
+	HEIGHT does not enter a ground race, only its duration does. All of them slow
+	the predator relative to a quarry running in a straight line, so a predator
+	that cannot catch a runner here cannot catch one anywhere.
+	"""
+	var probe_row: Dictionary = row
+	if no_recovery:
+		probe_row = row.duplicate()
+		probe_row["leap_recover_factor"] = row["leap_speed_factor"]
+
+	var speed_factor: float = float(probe_row["leap_speed_factor"])
+	var recover_factor: float = float(probe_row["leap_recover_factor"])
+	var airtime: float = croc_ai.leap_airtime(probe_row)
+
+	var pos := Vector3.ZERO
+	var quarry := Vector3(0.0, 0.0, BURST_RACE_GAP)
+	var lock: Dictionary = {}
+	var airborne_left: float = 0.0
+	var hops: int = 0
+	var steps := int(BURST_RACE_SECONDS / BURST_RACE_DT)
+	for _step in range(steps):
+		var grounded: bool = airborne_left <= 0.0
+		var launched: bool = croc_ai.leap_due(grounded, landing_ok, BURST_RACE_DT,
+				lock, probe_row)
+		if launched:
+			airborne_left = airtime
+			hops += 1
+		var factor: float = recover_factor if (grounded and not launched) else speed_factor
+		if airborne_left > 0.0:
+			airborne_left -= BURST_RACE_DT
+		pos.z += chase * factor * BURST_RACE_DT
+		quarry.z += quarry_speed * BURST_RACE_DT
+		if quarry.z - pos.z <= 0.0:
+			return { "gap": 0.0, "hops": hops }
+	return { "gap": quarry.z - pos.z, "hops": hops }
 
 
 # ============================================================================

@@ -28,6 +28,18 @@ extends SceneTree
 ##      Check 7 pins the order — with a NON-boss negative control, because "the
 ##      boss survived" is also true of a stub that never crushed anything.
 ##
+##   2b. A HOP IS A NEGATIVE TOO, TWICE OVER. "The winged bosses leave the
+##      ground" fails as a body that reads exactly like the heavy quadruped it was
+##      — no error, no log, the arm running perfectly and setting a velocity
+##      nothing ever gets to use — and "a hop does not clear the fence" fails the
+##      way the leash does, three chunks later. Check 9 drives both against a real
+##      boss on a real slab, because the arm is the one in this file that depends
+##      on `is_on_floor()` and `velocity`: no amount of pure probing in
+##      enemy_spawn_selfcheck can tell a launch that happens from one that is
+##      computed. It also drives the pre-launch territory gate DIRECTLY, with a
+##      positive control at the same geometry, the way check 8 drives the ranged
+##      one.
+##
 ##   3. ROW IMMUNITY IS THE SAME TWO GUARDS, ONE STEP OUT. `stink_immune` and
 ##      `crush_immune` let a row opt out of Phoboman's wave and giant Teibi's
 ##      squash, and they fail exactly as silently: a dropped guard is an armoured
@@ -116,6 +128,38 @@ const RANGED_FRAMES: int = 300
 ## Float slack on the resolved chase speed, in m/s. The comparison is against a
 ## number the row states, so this is pure representation noise.
 const SPEED_EPS: float = 0.01
+
+## How long the leap phase runs, in physics frames. 600 @ 60 Hz = 10 s, which is
+## two full hop cycles for either winged boss (4.8 s for the dragon, 5.8 s for the
+## roc) — long enough that a cadence bug shows up as hundreds of launches rather
+## than as an off-by-one, and short enough that the whole file stays quick.
+const LEAP_FRAMES: int = 600
+
+## The share of its own declared apex a hop must actually reach for the launch to
+## count as one. Half, deliberately loosely: the arc is measured through a real
+## physics tick against a real collision capsule, and a boss that lands its bite
+## mid-air takes a `_pause_and_change_direction` window during which the arm does
+## not run at all and the body falls under the file's own GRAVITY (measured: a
+## dragon reaches 3.10 m of its declared 3.56). So this is a guard against a hop
+## that DOES NOT HAPPEN, or one a row tuned to a 4 cm bounce — the ARC itself is
+## pinned by the airtime tolerance below, which the bite window does not blur.
+const LEAP_APEX_FRACTION: float = 0.5
+
+## How far the longest COMPLETE arc's measured airtime may sit from the one the
+## row's two constants imply (2 x launch / gravity). The measurement is clean —
+## a dragon's 1.78 s against a declared 1.778, a roc's 2.27 s against 2.25 — so
+## 15% is far outside anything the physics tick or the bite window produces, and
+## comfortably inside the 18% error an arc falling under the file's GRAVITY
+## instead of the row's would show. It is the tightest thing this phase asserts,
+## and deliberately: the airtime is the ONLY output of `leap_gravity` that
+## `leap_reach` (and therefore the leash gate) is computed from.
+const LEAP_AIRTIME_TOLERANCE: float = 0.15
+
+## Slack, in launches, on the hop count a phase may show above the cadence its row
+## allows. Two: the window is not a whole number of cycles and the first hop fires
+## on the acquisition frame. A clock that is never re-armed launches on every
+## grounded frame, so the failure this bounds is three orders of magnitude out.
+const LEAP_HOP_SLACK: int = 2
 
 
 ## The baseline predator, named on purpose. Everything in check 8 is read off
@@ -323,6 +367,7 @@ func _run_subject(packed: PackedScene, species_name: String, player: StubPlayer)
 	await _check_leashed(boss, player, home)
 	await _check_wanders_contained(boss, player, home)
 	await _check_ranged(boss, player, home)
+	await _check_leap(boss, player, home)
 
 	boss.queue_free()
 	await _frames(2)
@@ -612,6 +657,254 @@ func _live_projectiles() -> int:
 		if child is BossProjectile:
 			live += 1
 	return live
+
+
+func _check_leap(boss: CharacterBody3D, player: StubPlayer, home: Vector3) -> void:
+	"""
+	CHECK 9 — a LEAPING boss really leaves the ground, comes back to it, hops on
+	its own clock, and cannot bound over its own fence. Skipped entirely for a kind
+	whose row is not `behavior: "leap"`.
+
+	Owner, verbatim: "let those Rock and Dragons be able to make a decent jumps
+	like windman does with F key."
+
+	enemy_spawn_selfcheck's leap probe already drives the pure rules — `leap_due`,
+	`leap_airtime`, `leap_reach` — over the cadence and the whole escape race. What
+	only a live world can show is the four things the ARM adds around them, and
+	this arm needs a live world more than any other in the file: it is the only one
+	whose inputs are `is_on_floor()` and whose output is `velocity`, and neither
+	exists outside a physics tick. A pure probe cannot tell a launch that HAPPENS
+	from a launch that is merely computed.
+
+	  A. THE BODY ACTUALLY LEAVES THE GROUND, AND COMES BACK. A real boss, a real
+	     quarry inside its own territory, and a rise measured against the body's
+	     own resting height — so the assertion survives whatever y a kind's capsule
+	     puts its origin at. An arm that sets `velocity.y` on a body whose gravity
+	     block then overwrites it, or a `match` with no "leap" case at all, both
+	     leave this flat and both are silent everywhere else. The landing half is
+	     the flat-world invariant restated as a measurement: a hop is a transient
+	     arc, so the feet must be back on y = 0 by the end of it, by the arc and
+	     not by anything writing a position.
+	  B. IT HOPS ON A CLOCK. Launches over the window, bounded above by what the
+	     row's airtime and cooldown allow. A recovery that is never re-armed
+	     launches on every grounded frame — a boss that never touches down, which
+	     to a check that only asserted "it left the ground" is a pass.
+	  C. CONTAINMENT, WITH HOPPING, ON THE WAY OUT. The quarry is parked at the far
+	     edge of what the boss can SMELL and the boss starts at home, so it bounds
+	     outward hop after hop and its last legal arc lands as close to the fence as
+	     the gate below will ever allow one to. Two geometries are wrong here and
+	     both pass vacuously: a quarry outside the territory is refused by the
+	     detection gate (no chase, no hop), and a quarry outside the detection
+	     radius is not smelled at all — so the phase asserts that a launch actually
+	     happened, and every frame of the window is contained, mid-arc frames
+	     included.
+	  D. THE PRE-LAUNCH TERRITORY GATE, driven directly, the way check 8 drives the
+	     ranged one. The boss is parked inside its fence with a quarry bearing
+	     outward: `_behave_leap` must refuse. The control is the SAME boss at the
+	     SAME spot with the quarry bearing inward, which must launch — without it,
+	     "it refused" is also true of a broken cooldown, a missing key, or an arm
+	     that never fires at all.
+	"""
+	var row: Dictionary = CROC_SCRIPT.SPECIES.get(_subject, {})
+	if String(row.get("behavior", "")) != "leap":
+		return
+	var airtime: float = CROC_SCRIPT.leap_airtime(row)
+	if airtime <= 0.0:
+		_fail("leap: behaviour is 'leap' but the row's arc constants give no"
+				+ " airtime — already reported in enemy_spawn_selfcheck")
+		return
+	var apex: float = float(row["leap_launch_speed"]) * airtime * 0.25
+	var cycle: float = airtime + float(row["leap_cooldown"])
+
+	# ---- A and B. IT LEAVES THE GROUND, LANDS, AND HOPS ON A CLOCK ---------
+	boss.global_position = Vector3(home.x, boss.global_position.y, home.z)
+	boss.velocity = Vector3.ZERO
+	# Inside BOSS_DETECTION_RADIUS and inside the territory, so the boss engages
+	# through the ordinary detection path rather than through anything set here.
+	player.global_position = home + Vector3(DETECTION_RADIUS * 0.5, 0.0, 0.0)
+	# SETTLE FIRST, THEN ARM THE CLOCK. An empty lock means "ready now", so a boss
+	# left to settle after clearing it spends its first hop in the settle frames —
+	# outside the window, where nothing counts it. This ordering is the difference
+	# between measuring the mechanic and measuring the frames after it.
+	await _frames(4)
+	var rest_y: float = boss.global_position.y
+	boss._leap_lock.clear()
+	var highest: float = 0.0
+	var launches: int = 0
+	var landings: int = 0
+	var ground_drift: float = 0.0
+	var air_frames: int = 0
+	var longest_air: int = 0
+	var grounded: bool = boss.is_on_floor()
+	for _i in LEAP_FRAMES:
+		await physics_frame
+		highest = maxf(highest, boss.global_position.y - rest_y)
+		var now_grounded: bool = boss.is_on_floor()
+		if not now_grounded:
+			air_frames += 1
+		if grounded and not now_grounded:
+			launches += 1
+			air_frames = 1
+		elif now_grounded and not grounded:
+			landings += 1
+			longest_air = maxi(longest_air, air_frames)
+		if now_grounded:
+			# THE FLAT-WORLD INVARIANT, ASSERTED WHERE IT LIVES. Every frame the
+			# feet are down they must be down at the SAME height they started at —
+			# a hop is a transient arc, not terrain. Measured on grounded frames
+			# rather than on the last frame of the window, which can legitimately
+			# land mid-arc.
+			ground_drift = maxf(ground_drift, absf(boss.global_position.y - rest_y))
+		grounded = now_grounded
+		_assert_contained(boss, home, "leap/hop")
+	if highest < apex * LEAP_APEX_FRACTION:
+		_fail("leap: the boss rose %.2f m over %d frames chasing a quarry %.1f m"
+				% [highest, LEAP_FRAMES, DETECTION_RADIUS * 0.5] + " away inside its"
+				+ " own territory; its row claims a %.2f m apex. The arm computed a"
+				% apex + " launch nothing applied, or the `match` in"
+				+ " _update_chase_state has no \"leap\" case and the whole mechanic"
+				+ " is unreachable in the real game")
+	if launches <= 0:
+		_fail("leap: no ground-to-air transition in %d frames — see the rise"
+				% LEAP_FRAMES + " above; nothing in this phase measured a hop")
+	elif landings <= 0:
+		_fail("leap: %d launch(es) and not one landing in %d frames — the arc never"
+				% [launches, LEAP_FRAMES] + " brings the body back down, which on a"
+				+ " world that is flat at y = 0 is not a hop but flight")
+	print("leap (%s): apex %.2f m (row says %.2f), airtime %.2f s (row says %.2f),"
+			% [_subject, highest, apex, float(longest_air) / 60.0, airtime]
+			+ " %d launches / %d landings in %.1f s"
+			% [launches, landings, float(LEAP_FRAMES) / 60.0])
+	if landings > 0 and absf(float(longest_air) / 60.0 - airtime) > airtime * LEAP_AIRTIME_TOLERANCE:
+		_fail("leap: the longest complete arc lasted %.2f s; the row's %.2f m/s"
+				% [float(longest_air) / 60.0, float(row["leap_launch_speed"])]
+				+ " launch under its own %.2f m/s^2 arc gravity implies %.2f s."
+				% [float(row["leap_gravity"]), airtime] + " The body is not falling"
+				+ " at the gravity its row states, so leap_reach() — and the leash"
+				+ " gate that projects a landing with it — is computed from an arc"
+				+ " that is not the one being flown")
+	if ground_drift > apex * LEAP_APEX_FRACTION:
+		_fail("leap: the boss stood %.2f m off its own resting height on a GROUNDED"
+				% ground_drift + " frame — a hop is a transient arc, so every"
+				+ " landing is back on the one ground plane this world has."
+				+ " Something is writing y outside the arc")
+	var ceiling: int = LEAP_HOP_SLACK + int(float(LEAP_FRAMES) / 60.0 / cycle)
+	if launches > ceiling:
+		_fail("leap: %d launches in %.1f s at a %.2f s arc plus a %.2f s recovery"
+				% [launches, float(LEAP_FRAMES) / 60.0, airtime,
+						float(row["leap_cooldown"])] + " (at most %d fit) — the"
+				% ceiling + " grounded recovery clock is not being spent, so the"
+				+ " boss hops on every frame its feet touch down")
+
+	# ---- C. CONTAINMENT, HOPPING, AT THE FENCE -----------------------------
+	# AT THE EDGE OF WHAT IT CAN SMELL, not at the edge of the territory. Outside
+	# BOSS_DETECTION_RADIUS the quarry is not smelled at all and the boss wanders;
+	# outside BOSS_TERRITORY_RADIUS the detection gate above the dispatch refuses
+	# it and the boss disengages. Either way `_behave_leap` returns on its
+	# not-chasing branch and the containment asserted below is a walking boss's.
+	# From home, a quarry here is the farthest thing the boss will bound at, so its
+	# last legal arc lands as close to the fence as the pre-launch gate allows.
+	var lure: float = DETECTION_RADIUS - 1.0
+	player.global_position = home + Vector3(lure, 0.0, 0.0)
+	boss.global_position = Vector3(home.x, boss.global_position.y, home.z)
+	boss.velocity = Vector3.ZERO
+	await _frames(4)
+	boss._leap_lock.clear()          # armed AFTER the settle — see phase A
+	var fence_launches: int = 0
+	grounded = boss.is_on_floor()
+	for _i in LEAP_FRAMES:
+		await physics_frame
+		var now_grounded: bool = boss.is_on_floor()
+		if grounded and not now_grounded:
+			fence_launches += 1
+		grounded = now_grounded
+		_assert_contained(boss, home, "leap/fence")
+	if fence_launches <= 0:
+		_fail("leap: hop-chasing a quarry %.1f m from home for %.1f s produced no"
+				% [lure, float(LEAP_FRAMES) / 60.0] + " launch at"
+				+ " all, so the containment asserted through that window is the"
+				+ " containment of a boss that walked — it says nothing about hops")
+
+	# ---- D. THE PRE-LAUNCH TERRITORY GATE ----------------------------------
+	# Driven directly, the way check 8 drives the ranged gate and check 7 drives
+	# the crush ordering: what is under test is one decision inside one function,
+	# and both halves are taken at the SAME position with the SAME spent clock, so
+	# only the BEARING differs and the control isolates the guard.
+	player.global_position = home + Vector3(300.0, 0.0, 0.0)
+	var reach: float = CROC_SCRIPT.leap_reach(boss.chase_speed_instance, row)
+	# TWO METRES INSIDE THE FENCE, the same spot check 8 parks a ranged boss at.
+	# It is the geometry where the two bearings differ in the only way that
+	# matters: outward the projected landing clears the circle, inward it does not.
+	var gate_at: float = TERRITORY_RADIUS - 2.0
+	if gate_at + reach <= TERRITORY_RADIUS:
+		# THE PHASE'S OWN NEGATIVE CONTROL. A reach short enough to land inside the
+		# circle from two metres off the fence has no illegal landing for the gate
+		# to refuse, so "it refused" below would be a hop the cooldown declined.
+		_fail("leap: a %.1f m hop from %.1f m out lands inside the %.1f m"
+				% [reach, gate_at, TERRITORY_RADIUS] + " territory, so this phase"
+				+ " has no illegal landing to refuse and the gate goes untested")
+		return
+	# PUT IT DOWN FIRST. Phase C ends wherever the window ended, which is as often
+	# as not mid-arc, and both halves below drive the arm's GROUNDED branch — a
+	# boss still falling would take the airborne early return and refuse the
+	# control shot for a reason that has nothing to do with the leash.
+	boss.global_position = Vector3(home.x + gate_at, rest_y + 0.5, home.z)
+	boss.velocity = Vector3.ZERO
+	for _i in SETTLE_FRAMES:
+		await physics_frame
+		if boss.is_on_floor():
+			break
+	if not boss.is_on_floor():
+		_fail("leap: the boss is not on the floor at the start of the gate phase,"
+				+ " so _behave_leap's grounded branch is unreachable and neither"
+				+ " half below means anything")
+		return
+	boss.is_chasing = true
+
+	boss._leap_lock.clear()
+	boss.velocity.y = 0.0
+	# Outward: a quarry it may legally hunt, and a landing it may not reach.
+	boss.chase_target = Vector3(boss.global_position.x + 1.0, 0.0, home.z)
+	boss._behave_leap()
+	if boss.velocity.y > 0.0:
+		_fail("leap: launched outward from %.1f m out with a %.1f m reach — the"
+				% [gate_at, reach] + " projected landing is %.1f m from home and"
+				% (gate_at + reach) + " the territory is %.1f m, so the leash no"
+				% TERRITORY_RADIUS + " longer bounds the jump and the one rule this"
+				+ " boss family is built on is broken by the very ability that"
+				+ " makes it interesting")
+
+	boss._leap_lock.clear()
+	boss.velocity.y = 0.0
+	# The control: same spot, same spent clock, bearing INWARD — a legal landing.
+	boss.chase_target = Vector3(boss.global_position.x - 1.0, 0.0, home.z)
+	boss._behave_leap()
+	if boss.velocity.y <= 0.0:
+		_fail("leap: the control hop — same spot, same clock, bearing INWARD and so"
+				+ " landing %.1f m from home, well inside the %.1f m territory —"
+				% [absf(gate_at - reach), TERRITORY_RADIUS]
+				+ " did not launch either, so the refusal above proves nothing about"
+				+ " the territory gate")
+	# THE DEGENERATE BEARING, which is the one geometry the projection can lose. A
+	# boss standing ON its quarry has no bearing to the target at all, and the
+	# tempting reading — no bearing, so land where you are — is an UNGUARDED LAUNCH:
+	# the body still travels for the whole airtime, along its own FACING. So face it
+	# at the fence, put the target under its feet, and demand the same refusal.
+	boss._leap_lock.clear()
+	boss.velocity.y = 0.0
+	boss.rotation.y = PI * 0.5          # (sin, cos) = (1, 0): pointing +X, outward
+	boss.chase_target = boss.global_position
+	boss._behave_leap()
+	if boss.velocity.y > 0.0:
+		_fail("leap: launched from %.1f m out with its quarry UNDER ITS FEET and its"
+				% gate_at + " nose at the fence — with no bearing to project, the arm"
+				+ " fell back on 'land where you are' and let a %.1f m hop go"
+				% reach + " unjudged. A hop travels whether or not there is anywhere"
+				+ " to travel to")
+
+	boss.velocity.y = 0.0
+	boss.is_chasing = false
+	boss._leap_lock.clear()
 
 
 func _clear_projectiles() -> void:

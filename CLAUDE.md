@@ -119,11 +119,16 @@ The lobby in `server/` is a separate Go service with its own `go test` suite.
 separate parts in `windman_parts/`, assembled by `scenes/characters/windman_updated.tscn`
 — not the monolithic `windman.glb`.
 
-The biome-predator models — five animals plus the GD-SURVEY hunter robot — share one
+The biome-predator models — five animals, the GD-SURVEY hunter robot and the naga and
+hydra bosses — share one
 toolkit, `scripts/predator_parts.py`, which carries the orientation / feet-at-y=0 /
 one-vertex-coloured-mesh contract an enemy model must honour and asserts it on every
-build. Running it directly rebuilds and checks all six:
-`python3 scripts/predator_parts.py` -> `SELFCHECK OK`.
+build. Running it directly rebuilds and checks all eight:
+`python3 scripts/predator_parts.py` -> `SELFCHECK OK`. Two of its primitives are
+reusable and have no generator of their own — `wings()` and `necks()` (a fan of necks
+and heads off ONE point on the spine, the multi-head capability the hydra spends) — so
+each carries a `_selfcheck_*` stand-in beside the model loop; `verify()` only ever sees
+the finished welded animal.
 
 Each `.gd` has a sibling `.gd.uid` managed by Godot; don't hand-edit them.
 
