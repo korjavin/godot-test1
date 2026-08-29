@@ -2001,15 +2001,19 @@ const BIOME_SPECIES: Dictionary = {
 ## belongs in water, whatever band the noise field puts it in.
 ##
 ## THIS TABLE SHIPPED EMPTY, AND THAT WAS THE POINT — the seam landed with every
-## boss still a crocodile and a byte-identical world, and the snow titan below is
-## the first row to change an answer. Adding it changed no PLACEMENT anywhere:
+## boss still a crocodile and a byte-identical world, and the snow titan below was
+## the first row to change an answer. It is now TOTAL over the `Biome` enum (a
+## gate enemy_spawn_selfcheck asserts against the enum, so a seventh band would
+## have to bring its own boss), which leaves the crocodile fallback reachable on
+## exactly two paths: a station standing in a RIVER, and the degrade path for a
+## row that fails to resolve. Adding a row changed no PLACEMENT anywhere:
 ## the dispatch is pure function calls (biome_at / is_river_at — the
 ## allocation-free public API, no RNG anywhere under either) inserted at a spot
 ## where no draw is made, so the BOSS_SEED stream consumes the same draws in the
 ## same order it always did. A single extra draw would slide every boss in the
 ## world, which is the same rule CLAUDE.md states for BIOME_SPECIES and
-## CITY_CROC_DIVISOR. The snow titan and the forest dragon each land as ONE ROW
-## here, exactly as a predator lands as one row in BIOME_SPECIES.
+## CITY_CROC_DIVISOR. All six kinds land as ONE ROW here each, exactly as a
+## predator lands as one row in BIOME_SPECIES.
 ##
 ## Degrade rules are BIOME_SPECIES': a name that is not a SPECIES row warns from
 ## the AI's _ready() and behaves as a crocodile, and a scene that fails to load
@@ -2035,6 +2039,45 @@ const BIOME_BOSS: Dictionary = {
 	Biome.FOREST: {
 		"species": "green_dragon",
 		"scene": "res://scenes/characters/green_dragon.tscn",
+	},
+	## The four that make this map TOTAL over the Biome enum. From here the
+	## crocodile is still the boss of a road station, but only on the two paths
+	## that are not a band lookup at all: a station standing in a RIVER (the
+	## is_river_at overlay above the table, the owner's "river - crocodile", which
+	## overrides whatever band the noise field puts it in) and the DEGRADE path
+	## for a row whose species name or scene fails to resolve. Both are still
+	## measured — enemy_spawn_selfcheck check 11 fails if no station in its
+	## eighty-boss walk stands in water, and boss_selfcheck drives the crocodile
+	## as a subject in its own right beside every BIOME_BOSS kind — so the
+	## fallback does not rot now that no biome reaches it.
+	##
+	## They cost what the dragon cost: one line each here, one SPECIES row each,
+	## one .tscn each, and no new code anywhere. Adding them consumes no RNG draw
+	## (this dispatch is pure biome_at / is_river_at calls at a point where no
+	## draw is made), so every boss in the world stands exactly where it stood.
+	##
+	## The plains hydra, the desert naga and the mountain roc are melee and take
+	## the default BOSS_CHASE_SPEED; the city clown opts into the titan's ranged
+	## capability with its own ice cream. See their SPECIES rows for all of it.
+	Biome.PLAINS: {
+		"species": "hydra",
+		"scene": "res://scenes/characters/hydra.tscn",
+	},
+	Biome.DESERT: {
+		"species": "naga",
+		"scene": "res://scenes/characters/naga.tscn",
+	},
+	## MOUNTAIN is the band of impassable massifs, so more of its stations than
+	## any other's will find no clear candidate and place no boss — the designed
+	## outcome of spawn_bosses_in_chunk's per-scale clearance walk, not a reason
+	## to loosen it.
+	Biome.MOUNTAIN: {
+		"species": "roc",
+		"scene": "res://scenes/characters/roc.tscn",
+	},
+	Biome.CITY: {
+		"species": "clown",
+		"scene": "res://scenes/characters/clown.tscn",
 	},
 }
 

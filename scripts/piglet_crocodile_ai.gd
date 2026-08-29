@@ -1788,6 +1788,512 @@ const SPECIES: Dictionary = {
 	},
 
 	## ------------------------------------------------------------------------
+	## THE FOUR THAT COMPLETE THE FAMILY — hydra, naga, roc, clown.
+	## ------------------------------------------------------------------------
+	## Owner, verbatim: PLAINS "Hydras, like in Bog castle in hmm3"; DESERT "Nags
+	## inspired by hmm3"; MOUNTAIN "let it be huge rock birds, like in barbarian
+	## castle in hmm3"; CITY "let it be clown like in 'It' of King (inspired)" +
+	## "let's clown thrown ice cream or like that also". FIVE HMM3 CREATURES AND
+	## ONE STEPHEN KING REFERENCE IS THE DESIGN, not a slip: the city is the band
+	## where uncanny-and-out-of-place is the read. Do not "correct" the clown.
+	##
+	## THEY COST WHAT THE DRAGON COST, WHICH IS THE WHOLE POINT OF THE SEAM. Three
+	## of them are `behavior: "solo"` — the code above the dispatch `match`, which
+	## has no arm at all on purpose — and the fourth reuses the titan's `"ranged"`
+	## arm UNCHANGED, differing from it only in the numbers of its "ranged" dict.
+	## Not one character of new logic lands with these four rows; everything that
+	## makes them bosses (territorial, unkillable, crush- and stink-immune,
+	## one-shot lethal on contact, giant) is inherited from boss-ness and stated
+	## nowhere below. With these four, BIOME_BOSS is TOTAL over the Biome enum and
+	## the crocodile survives as a boss only on RIVER stations (the is_river_at
+	## overlay, which overrides the band) and as the degrade path for a row whose
+	## scene fails to load — both still measured, by enemy_spawn_selfcheck check
+	## 11's river gate and by boss_selfcheck's crocodile subject respectively.
+	##
+	## EVERY MODEL BELOW IS A PLACEHOLDER AND SAYS SO, the same art-decoupling
+	## convention the titan (a re-skinned Teibi) and the dragon (a stretched
+	## piglet crocodile) already ship under. The purpose-built meshes are their own
+	## art beads — lce.6 (serpentine builders: naga + hydra), lce.7 (winged pair:
+	## roc + dragon), lce.8 (humanoids: titan + clown) — and when they land only
+	## the .tscn and the measured geometry in these comments change, never a line
+	## of behaviour. Looks are explicitly not this bead's acceptance.
+	##
+	## THE ONE HARD PLACEMENT CONSTRAINT ON A PLACEHOLDER, restated from the
+	## dragon's row because it is the rule that bites: endless_terrain's
+	## BOSS_FOOTPRINT_RADIUS_PER_SCALE (0.7) is the clearance every boss candidate
+	## is judged against, so no scene here may have a collision capsule reaching
+	## further than 0.7 m horizontally at body scale 1. That is what the horizontal
+	## DOWN-scales below are for (0.5 on the hydra's snake, 0.9 on the roc's bear,
+	## 0.75 on the clown's phoboman): they are placement arithmetic, not art
+	## choices. Growing a placeholder UP is free; growing it out is not.
+
+	## ------------------------------------------------------------------------
+	## HYDRA — the PLAINS band's boss, and the one players meet first.
+	## ------------------------------------------------------------------------
+	## Plains is the most common biome and reaches close to spawn, so this is the
+	## family member most runs meet and the one they meet most often. It gets NO
+	## special-casing for that: the spawn-safe bubble and the boss station
+	## schedule already govern how near one can appear, and a gentler first boss
+	## is a retune the owner makes on a whole family, not a hidden exception here.
+	##
+	## PLACEHOLDER, MEASURED. scenes/characters/hydra.tscn instances snake.glb —
+	## the only serpentine mesh in the asset set — at (0.5, 2.5, 0.5): squashed to
+	## half its length and reared to two and a half times its height, so it reads
+	## as a thick coiled mass of necks rather than as the sand viper the desert is
+	## already full of. The source mesh is 1.7345 long (x -1.3625 .. +0.372),
+	## 0.2065 tall and 0.4111 across; at that scale it is 0.867 long
+	## (x -0.681 .. +0.186), 0.516 tall and 0.206 across. The capsule in hydra.tscn
+	## is `radius = 0.26, height = 0.87`, laid on the travel axis with the
+	## crocodile's basis, at `(0, 0.26, -0.248)`:
+	##   * 0.26 makes a 0.52 m tube around the 0.516 m reared height — the viper's
+	##     tightest-fit rule applied to the axis that grew.
+	##   * 0.87 covers the 0.867 m length, caps included, so the horizontal reach
+	##     is 0.435 — comfortably inside the spawner's 0.7 bound.
+	##   * radius == centre y, the crocodile/viper/dragon identity, so the
+	##     capsule's bottom sits exactly on y = 0.
+	##   * z = -0.248 is the mesh's own x-midpoint after the squash, like the
+	##     viper's -0.495: snake.glb is built well behind its origin, so a capsule
+	##     centred on the origin would leave body hanging off the back.
+	"hydra": {
+		## No arm. Same reasoning as the green dragon's, one band over: a melee
+		## territorial boss is exactly what the code above the `match` already is,
+		## and "solo" is deliberately the string with no case.
+		"behavior": "solo",
+
+		# ----- Speed and detection -----
+		## A boss overrides the chase speed (BOSS_CHASE_SPEED, 7.0 — this row
+		## states no `boss_chase_speed`, which is the melee default the lattice was
+		## written for) and the detection radius (BOSS_DETECTION_RADIUS, 25), so
+		## what these two buy is LATTICE HYGIENE: 5.5 sits in (WALK_SPEED 5.0,
+		## MAX_CHASE_SPEED 8.5] and 15 sits well under the LOD SIM_RADIUS (45), so
+		## if a later bead ever gives the hydra a BIOME_SPECIES entry it is already
+		## a legal ordinary predator. `move_speed` is the exception: a boss reads
+		## it STRAIGHT THROUGH, so 2.0 is live — the slowest patrol in the family,
+		## a heavy swamp thing dragging itself round its own pool.
+		"move_speed": 2.0,
+		"chase_speed": 5.5,
+
+		## Zero, not a spread: a boss takes no per-instance rolls at all (see the
+		## is_boss branch in _ready), so a factor here would never be drawn.
+		"speed_random_factor": 0.0,
+		"size_random_factor": 0.0,
+		"detection_radius": 15.0,
+
+		# ----- Organic wandering -----
+		## Slow to decide and slow to turn — it owns this ground and the leash
+		## keeps it here regardless, so it has nowhere to be.
+		"direction_change_interval": 5.0,
+		"pause_duration": 0.7,
+		"wander_turn_rate": 0.8,
+		"turn_smoothness": 3.5,
+		"min_wander_speed_factor": 0.40,
+		"speed_variation_freq": 0.6,
+		"sniff_pause_chance": 0.30,
+
+		# ----- Obstacle avoidance -----
+		## Feelers from 0.4 m: the reared placeholder stands 0.516 m before the
+		## boss scale, so a probe at the crocodile's 0.3 would sample the coils
+		## rather than the ground ahead of them.
+		"avoid_look_ahead": 3.5,
+		"avoid_feeler_angle": PI / 5.0,  # 36°
+		"avoid_feeler_height": 0.4,
+		"avoid_speed_factor": 0.5,
+
+		# ----- Procedural body animation -----
+		## -PI/2, the quadruped/serpent default: snake.glb is authored
+		## nose-along-+X and the body travels +Z.
+		"model_facing_offset": -PI / 2.0,
+
+		## THE SWAY IS THE HEADS. A hydra has nothing else to animate until lce.6
+		## lands the real multi-head mesh, so the read is carried by the widest
+		## `sway_yaw` in the table (8°, against the crocodile's 3°) over a slow
+		## stride: a mass of necks weaving over a body that barely moves.
+		"stride_frequency": 4.5,
+		"waddle_roll": 5.0 * PI / 180.0,
+		"bob_amount": 0.04,
+		"sway_yaw": 8.0 * PI / 180.0,
+		"chase_pitch": 12.0 * PI / 180.0,
+		"breathe_speed": 1.2,
+		"breathe_amount": 0.03,
+
+		# ----- River submersion (VISUAL ONLY) -----
+		## The viper's 0.10 carried through the 2.5x rear: 0.25. The sink is
+		## written in MODEL-LOCAL metres and applied to `model.position.y`, which
+		## is in the BODY's frame, so the Model node's own scale does not touch it
+		## — leave it at the viper's number and a hydra two and a half times taller
+		## would wade proportionally shallower. VISUAL ONLY, like every row: the
+		## CharacterBody3D, its CollisionShape3D and global_position never move.
+		"river_sink_depth": 0.25,
+		"river_sink_ease_speed": 0.25 / 0.2,
+
+		# ----- Bite -----
+		## Fast and shallow, because it is MANY heads: the animation is one head
+		## darting in, not a single jaw committing. Contact is one-shot lethal for
+		## every boss regardless — this is the only warning you get.
+		"bite_duration": 0.35,
+		"bite_pitch": 26.0 * PI / 180.0,
+		"bite_lunge": 0.45,
+	},
+
+	## ------------------------------------------------------------------------
+	## NAGA — the DESERT band's boss.
+	## ------------------------------------------------------------------------
+	## The desert already has the sand viper as its ordinary predator, and that is
+	## a deliberate pairing rather than a repeat: the viper is a 0.2 m ambusher
+	## that buries itself, the naga is a 1.6 m torso over a coiled base that never
+	## hides. Same band, opposite silhouettes.
+	##
+	## PLACEHOLDER, MEASURED. scenes/characters/naga.tscn instances primm.tscn —
+	## a bipedal character mesh, re-skinned the way the titan re-skins Teibi — at
+	## (1.2, 0.9, 1.2): broadened and lowered, so it reads as a torso sitting on
+	## something wide rather than as a person out for a walk. Primm's mesh is
+	## 0.488 x 0.331 x 1.793 (x, z, y); at that scale it spans x ±0.293,
+	## z -0.227 .. +0.170 and stands 1.600 m. The capsule in naga.tscn is
+	## `radius = 0.30, height = 1.60` at `(0, 0.80, 0)`, UPRIGHT — no lay-down
+	## rotation, the same thing titan.tscn does and the quadruped scenes do not:
+	##   * 1.60 is the full standing height and 0.80 = height/2 puts the capsule's
+	##     bottom exactly on y = 0.
+	##   * 0.30 covers the 0.293 m half-width, and it is also the horizontal reach
+	##     — an upright capsule's reach is its RADIUS, not half its height — so the
+	##     spawner's 0.7 bound has 0.4 m of slack.
+	"naga": {
+		## No arm, for the hydra's reason. HMM3's naga is a melee unit; the ranged
+		## opt-in in this family belongs to the clown alone.
+		"behavior": "solo",
+
+		# ----- Speed and detection -----
+		## Hygiene numbers, overridden at spawn — see the hydra's block for the
+		## full argument. `move_speed` is the live one: 3.0 is the QUICKEST patrol
+		## of the four, a glide over sand rather than a walk over it.
+		"move_speed": 3.0,
+		"chase_speed": 5.5,
+		"speed_random_factor": 0.0,
+		"size_random_factor": 0.0,
+		"detection_radius": 15.0,
+
+		# ----- Organic wandering -----
+		## Quicker to change its mind than the hydra and much snappier to turn: a
+		## serpent pivots on its own coils.
+		"direction_change_interval": 4.5,
+		"pause_duration": 0.5,
+		"wander_turn_rate": 1.0,
+		"turn_smoothness": 4.5,
+		"min_wander_speed_factor": 0.50,
+		"speed_variation_freq": 0.8,
+		"sniff_pause_chance": 0.20,
+
+		# ----- Obstacle avoidance -----
+		## Cast from 0.8 m — chest height on the 1.6 m placeholder, the titan's
+		## reasoning at a smaller size. A probe down at the quadrupeds' 0.3 would
+		## sample sand under the coils.
+		"avoid_look_ahead": 3.5,
+		"avoid_feeler_angle": PI / 5.0,  # 36°
+		"avoid_feeler_height": 0.8,
+		"avoid_speed_factor": 0.55,
+
+		# ----- Procedural body animation -----
+		## PI, not the quadrupeds' -PI/2: this is a humanoid CHARACTER mesh and
+		## those are authored facing -Z, where every predator mesh is authored
+		## nose-along-+X. The body still travels +Z, so it needs a half turn.
+		"model_facing_offset": PI,
+
+		## A GLIDE, and it is defined by what is missing: almost no roll and the
+		## smallest bob of the four (there is no gait to bob), carried instead by a
+		## wide yaw sway — the tail's weave swinging the torso over it.
+		"stride_frequency": 4.0,
+		"waddle_roll": 2.0 * PI / 180.0,
+		"bob_amount": 0.03,
+		"sway_yaw": 7.0 * PI / 180.0,
+		"chase_pitch": 10.0 * PI / 180.0,
+		"breathe_speed": 1.3,
+		"breathe_amount": 0.025,
+
+		# ----- River submersion (VISUAL ONLY) -----
+		## The titan's 0.55 on a 1.8 m biped, rescaled to this 1.6 m one: 0.49,
+		## i.e. the same mid-thigh fraction measured off a mesh that STANDS.
+		## VISUAL ONLY — body, capsule and global_position never move.
+		"river_sink_depth": 0.49,
+		"river_sink_ease_speed": 0.49 / 0.2,
+
+		# ----- Bite -----
+		## The viper's strike shape on a much bigger body: short, sharp and far
+		## through. One-shot lethal, like every boss's contact.
+		"bite_duration": 0.35,
+		"bite_pitch": 32.0 * PI / 180.0,
+		"bite_lunge": 0.55,
+	},
+
+	## ------------------------------------------------------------------------
+	## ROC — the MOUNTAIN band's boss.
+	## ------------------------------------------------------------------------
+	## IT WALKS. Mountains in this game are impassable block massifs you route
+	## AROUND — the flat-world invariant means nothing flies and nothing climbs —
+	## so the rock bird launches ground-bound like every other boss, and its wings
+	## are silhouette. The owner-approved bounded LEAP (a Windman-Air-Rush-shaped
+	## hop, with the cougar's pounce as prior art) for the roc and the dragon is
+	## its own follow-up bead, godot-test1-lce.9; there is deliberately no jump
+	## code here and this row carries no key for one.
+	##
+	## A massif band is also the one where a boss station most often finds NO
+	## clear candidate: spawn_bosses_in_chunk walks obstacle footprints with
+	## per-scale clearance, and a 6x roc is a wide body. Some mountain stations
+	## will legitimately place no boss at all — that is the designed outcome of
+	## that walk, not a reason to loosen the clearance.
+	##
+	## PLACEHOLDER, MEASURED. scenes/characters/roc.tscn instances bear.glb — the
+	## bulkiest quadruped in the asset set — at (0.9, 1.6, 0.9): pulled in
+	## horizontally and reared, so a heavy body ends up standing on legs rather
+	## than lying along them. The source mesh is 1.2154 long (x -0.46 .. +0.755),
+	## 0.82 tall and 0.434 across; at that scale it is 1.094 long
+	## (x -0.414 .. +0.680, midpoint +0.133), 1.312 tall and 0.391 across. The
+	## capsule in roc.tscn is `radius = 0.55, height = 1.312` at
+	## `(0, 0.656, 0.133)`, UPRIGHT like the titan's and the naga's — this body is
+	## now taller than it is long, so a laid-down capsule could not cover it:
+	##   * 1.312 is the standing height and 0.656 = height/2 puts the bottom on
+	##     y = 0.
+	##   * 0.55 covers the 0.547 m half-length, and being an upright capsule that
+	##     radius IS the horizontal reach — inside the spawner's 0.7 bound, which
+	##     is exactly what the 0.9 horizontal squash was for.
+	##   * z = +0.133 is the mesh's own x-midpoint (model +X becomes body +Z under
+	##     the -PI/2 facing offset), like the viper's and the hunter's negative
+	##     ones: bear.glb is built forward of its origin.
+	"roc": {
+		## No arm — a melee territorial boss, the dragon's row one band over.
+		"behavior": "solo",
+
+		# ----- Speed and detection -----
+		## Hygiene numbers, overridden at spawn (see the hydra). The live one is
+		## `move_speed` 2.4: a big bird's stalking walk between the massifs.
+		"move_speed": 2.4,
+		"chase_speed": 5.5,
+		"speed_random_factor": 0.0,
+		"size_random_factor": 0.0,
+		"detection_radius": 15.0,
+
+		# ----- Organic wandering -----
+		## Long stands and hard, deliberate turns — a bird holding still and then
+		## snapping its whole body round.
+		"direction_change_interval": 6.0,
+		"pause_duration": 1.0,
+		"wander_turn_rate": 0.7,
+		"turn_smoothness": 5.5,
+		"min_wander_speed_factor": 0.45,
+		"speed_variation_freq": 0.5,
+		"sniff_pause_chance": 0.30,
+
+		# ----- Obstacle avoidance -----
+		## The longest reach in the family and the highest probe: MOUNTAIN is the
+		## band made of walls, and a 1.3 m body before the boss scale needs to
+		## sample rock at chest height rather than scree at its feet.
+		"avoid_look_ahead": 4.0,
+		"avoid_feeler_angle": PI / 5.0,  # 36°
+		"avoid_feeler_height": 0.7,
+		"avoid_speed_factor": 0.5,
+
+		# ----- Procedural body animation -----
+		## -PI/2, the quadruped default: bear.glb is authored nose-along-+X.
+		"model_facing_offset": -PI / 2.0,
+
+		## A STRUT. Two legs carrying a heavy body read as a slow stride with a
+		## deep bob and a big roll — the largest `bob_amount` of the four — and
+		## almost no forward lean, because a bird's mass sits over its feet.
+		"stride_frequency": 3.8,
+		"waddle_roll": 8.0 * PI / 180.0,
+		"bob_amount": 0.10,
+		"sway_yaw": 5.0 * PI / 180.0,
+		"chase_pitch": 8.0 * PI / 180.0,
+		"breathe_speed": 1.0,
+		"breathe_amount": 0.035,
+
+		# ----- River submersion (VISUAL ONLY) -----
+		## The bear's 0.30 carried through the 1.6x rear: 0.48. Long legs, so it
+		## wades where a quadruped of the same mesh would be swimming. VISUAL ONLY.
+		"river_sink_depth": 0.48,
+		"river_sink_ease_speed": 0.48 / 0.2,
+
+		# ----- Bite -----
+		## A beak, so: the longest wind-up and the deepest pitch of the four, and
+		## the furthest lunge — one committed stoop rather than a chew.
+		"bite_duration": 0.55,
+		"bite_pitch": 36.0 * PI / 180.0,
+		"bite_lunge": 0.6,
+	},
+
+	## ------------------------------------------------------------------------
+	## ICE CREAM CLOWN — the CITY band's boss, and the family's second archer.
+	## ------------------------------------------------------------------------
+	## Owner, verbatim: "let it be clown like in 'It' of King (inspired)" and
+	## "let's clown thrown ice cream or like that also". THE TONAL BREAK IS THE
+	## DESIGN. Five HMM3 creatures and one Stephen King reference is not a slip:
+	## the city is the band where uncanny-and-out-of-place is the whole read, and
+	## the same file already calls it the SAFE band (CITY_CROC_DIVISOR thins its
+	## predators, roofs are real shelter). A safe band whose guardian is a clown
+	## throwing ice cream is a deliberate joke with teeth.
+	##
+	## AND IT IS THE PROOF THE RANGED CAPABILITY IS A CAPABILITY. It reuses
+	## `_behave_ranged` — the titan's arm — UNCHANGED and un-branched: not one
+	## `if species ==` anywhere, no second arm, no edit to boss_projectile.gd.
+	## Everything that makes an ice cream different from a thunder bolt is the
+	## numbers in the "ranged" dict below, and the fairness contract over those
+	## numbers is measured by projectile_selfcheck's sweep, which scans every
+	## "ranged" dict in this table and so picked this row up the day it landed.
+	##
+	## PLACEHOLDER, MEASURED. scenes/characters/clown.tscn instances
+	## phoboman.tscn — the lumpiest, least human of the character meshes, which is
+	## the right shape for something wearing a person's outline badly — at
+	## (0.75, 1.0, 0.75). Phoboman's mesh is 1.566 x 1.069 x 1.634 (x, z, y), the
+	## widest in the set because of its arms; at that scale it spans x ±0.587,
+	## z -0.428 .. +0.374 and stands 1.609 m. The capsule in clown.tscn is
+	## `radius = 0.59, height = 1.61` at `(0, 0.805, 0)`, UPRIGHT like the titan's:
+	##   * 1.61 is the standing height, 0.805 = height/2 puts the bottom on y = 0.
+	##   * 0.59 covers the 0.587 m half-span of the arms, and as an upright capsule
+	##     that radius IS the horizontal reach — under the spawner's 0.7 bound,
+	##     which is what the 0.75 horizontal squash bought. This is the widest
+	##     footprint in the family and the one with the least slack; a placeholder
+	##     swap that widens it needs re-measuring against that constant.
+	"clown": {
+		## THE TITAN'S ARM, REUSED. `_behave_ranged` is one cooldown and one
+		## BossProjectile.fire() call, and everything it does is read out of the
+		## "ranged" dict below — so this string is the entire opt-in.
+		"behavior": "ranged",
+
+		# ----- Speed and detection -----
+		## BOTH SPEEDS ARE UNDER WALK_SPEED (5.0), and for a ranged row that is not
+		## a hole in the lattice but the contract: enemy_spawn_selfcheck's ranged
+		## probe ASSERTS every speed slot a "ranged" row fills is sub-walk,
+		## precisely because a boss-only row is exempt from the lattice's lower
+		## bound. A thrower you cannot stroll away from is a melee boss holding a
+		## cone.
+		"move_speed": 2.0,
+		"chase_speed": 3.5,
+
+		## THE BOSS SPEED OPT-OUT, taken for the titan's reason exactly: without it
+		## this row would inherit BOSS_CHASE_SPEED (7.0) and run down a walking
+		## player, i.e. stop being an archer. Same number as `chase_speed` because
+		## a clown has one gait; the two slots exist only because a boss and a
+		## plain predator read different ones, and both are asserted sub-walk.
+		"boss_chase_speed": 3.5,
+
+		"speed_random_factor": 0.0,
+		"size_random_factor": 0.0,
+		## A boss overrides this with BOSS_DETECTION_RADIUS (25.0). What the number
+		## states is intent, and it is the `ranged.max_fire_range` below plus a
+		## metre: the clown starts throwing as soon as it acquires you rather than
+		## walking the first stretch of an engagement. Keep the two in step.
+		"detection_radius": 15.0,
+
+		# ----- Organic wandering -----
+		## THE TWITCHIEST RHYTHM IN THE TABLE: the shortest interval, the longest
+		## pause, the fastest turn rate. Capering — a thing that changes its mind
+		## constantly and then stands far too still.
+		"direction_change_interval": 3.5,
+		"pause_duration": 0.9,
+		"wander_turn_rate": 1.4,
+		"turn_smoothness": 4.0,
+		"min_wander_speed_factor": 0.35,
+		"speed_variation_freq": 1.1,
+		"sniff_pause_chance": 0.35,
+
+		# ----- Obstacle avoidance -----
+		## The titan's reach and near its probe height — this is a 1.6 m humanoid
+		## before the boss scale, in the band with the most walls per square metre.
+		"avoid_look_ahead": 4.0,
+		"avoid_feeler_angle": PI / 5.0,  # 36°
+		"avoid_feeler_height": 0.9,
+		"avoid_speed_factor": 0.6,
+
+		# ----- Procedural body animation -----
+		## PI, the humanoid facing (see the naga): character meshes are authored
+		## facing -Z and the body travels +Z.
+		"model_facing_offset": PI,
+
+		## A CAPER. The biggest waddle roll and the biggest bob of any row here,
+		## over a quick stride, with almost no chase lean — the read is a thing
+		## bouncing along on its toes, not a predator committing. It is deliberately
+		## the opposite of the titan's near-still tread.
+		"stride_frequency": 5.0,
+		"waddle_roll": 9.0 * PI / 180.0,
+		"bob_amount": 0.09,
+		"sway_yaw": 7.0 * PI / 180.0,
+		"chase_pitch": 6.0 * PI / 180.0,
+		"breathe_speed": 1.6,
+		"breathe_amount": 0.04,
+
+		# ----- River submersion (VISUAL ONLY) -----
+		## The naga's 0.49, the same mid-thigh fraction on the same 1.6 m standing
+		## height. VISUAL ONLY: body, capsule and global_position never move.
+		"river_sink_depth": 0.49,
+		"river_sink_ease_speed": 0.49 / 0.2,
+
+		# ----- Bite -----
+		## Slow, shallow and short. Letting a clown walk into you still kills you —
+		## contact is one-shot lethal for every boss — but this animation is a
+		## lunge you can see coming from a body far too slow to land it. The cone
+		## is the threat.
+		"bite_duration": 0.5,
+		"bite_pitch": 18.0 * PI / 180.0,
+		"bite_lunge": 0.4,
+
+		# ----- The ice cream (the "ranged" behaviour reads this) ---------------
+		## A COPY of BossProjectile.STYLES["ice_cream"] plus the three keys that
+		## are the AI's business rather than the projectile's, exactly as the
+		## titan's row copies "thunder_bolt". Copied and not referenced because
+		## those three have to live somewhere and adding them to the shared STYLES
+		## dict would hand them to every future shooter; the two sets are measured
+		## INDEPENDENTLY by projectile_selfcheck (it scans STYLES *and* every
+		## "ranged" row), so a drift between them fails on whichever side broke.
+		##
+		## The flight numbers and their argument belong to boss_projectile.gd —
+		## read its STYLES entry, not this copy. In one line: from its 8 m minimum
+		## the lob is 1.33 s in the air, in which a WALKING player covers 6.7 m
+		## against a 1.1 m splat radius, 6.1x a required 3x.
+		"ranged": {
+			"style": "ice_cream",
+			"trajectory": "lob",
+			"speed": 6.0,
+			"gravity": 12.0,
+			"hit_radius": 1.1,
+			"min_fire_range": 8.0,
+			"max_range": 16.0,
+			"lifetime": 5.0,
+			"max_live": 3,
+			"color": Color(1.0, 0.55, 0.75),
+			"mesh_scale": Vector3(0.32, 0.32, 0.32),
+
+			## ---- Read by _behave_ranged(), never by the projectile ----------
+			## SECONDS BETWEEN SHOTS. Faster than the titan's 3.0 and that is the
+			## whole difference in how the two archers feel: an ice cream is half
+			## the flight time of a bolt over half the band, so a longer cadence
+			## would leave a clown standing silent most of an engagement.
+			## `max_live` 3 above is the backstop if this is ever shortened.
+			"fire_cooldown": 2.0,
+
+			## THE FIRING BAND's ceiling, with `min_fire_range` 8.0 as its floor.
+			##
+			## The FLOOR is the projectile's own: closer than 8 m the lob arrives
+			## faster than a walking player can clear the splat, so the ARM refuses
+			## to fire rather than the style being retuned. Walk INTO a clown and it
+			## stops throwing and has to try to grab you, which at 3.5 m/s it
+			## cannot — the same counterplay the titan offers, for free.
+			##
+			## The CEILING (14 m) sits under three things at once: the projectile's
+			## own `max_range` (16), so no shot is fired that would evaporate short
+			## of its aim point; BOSS_DETECTION_RADIUS (25), so the whole band is
+			## inside what a clown can smell (the arm only runs while chasing, so a
+			## wider ceiling would simply never fire); and BOSS_TERRITORY_RADIUS
+			## (32), so it cannot shell you out of a zone you have already left.
+			"max_fire_range": 14.0,
+
+			## Height of the throwing hand above the body origin, in MODEL-LOCAL
+			## metres — _behave_ranged multiplies it by the body's scale, so a 6x
+			## clown throws from 7.8 m up and a 2.5x one from 3.25 m, keeping the
+			## muzzle at the raised arm of whatever size the schedule handed out.
+			## 1.3 is shoulder-and-a-bit on the 1.61 m placeholder.
+			"muzzle_height": 1.3,
+		},
+	},
+
+	## ------------------------------------------------------------------------
 	## GD-SURVEY HUNTER ROBOT — the corporation's retrieval unit.
 	## ------------------------------------------------------------------------
 	## THE ONE ROW THAT IS NOT AN ANIMAL, and it is a row anyway. That is the

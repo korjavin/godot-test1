@@ -200,10 +200,9 @@ var _species_table: Dictionary = {}
 var _biome_species: Dictionary = {}
 
 ## endless_terrain.gd's BIOME_BOSS map and BOSS_INTERVAL_STATIONS, read the same
-## way. BIOME_BOSS ships EMPTY (see its doc block over there): the boss dispatch
-## is a seam that lands with every boss still a crocodile, so check 11 below
-## measures "the rule answers crocodile everywhere" today and becomes a real
-## dispatch test the day the snow titan's row lands, with no edit here.
+## way. That map is now TOTAL over the Biome enum (check 4 asserts it against the
+## enum), so check 11 below is a real per-band dispatch test in every band, and
+## the crocodile it still measures comes from the RIVER arm alone.
 var _biome_boss: Dictionary = {}
 var _boss_interval: int = 0
 
@@ -554,6 +553,28 @@ func _check_species_table() -> void:
 	_check_dispatch_map("BIOME_SPECIES", _biome_species)
 	_check_dispatch_map("BIOME_BOSS", _biome_boss)
 
+	# ---- BIOME_BOSS IS TOTAL OVER THE Biome ENUM ---------------------------
+	# The one place the two dispatch maps DIFFER in what is demanded of them, and
+	# it is a difference of design rather than of validation. BIOME_SPECIES is
+	# deliberately partial — PLAINS has no ordinary predator of its own and takes
+	# the crocodile, which is a band decision — but the boss family is finished:
+	# every band's road stations have a named guardian, and the crocodile survives
+	# as a boss ONLY on the two paths that are not a band lookup at all (a station
+	# standing in a river, and the degrade path for a row that fails to resolve).
+	#
+	# So a band with no boss row is now a HOLE rather than a choice: it would put
+	# a plain piglet crocodile on a road station at 6x scale and read as the boss
+	# family having been forgotten one biome over. Stated against the enum, never
+	# against a list here, so a SEVENTH biome demands its boss on the commit that
+	# adds the band rather than shipping quietly boss-less.
+	for biome_v: Variant in _biomes.values():
+		if not _biome_boss.has(int(biome_v)):
+			_fail("BIOME_BOSS has no row for Biome %d — every band owes its road"
+					% int(biome_v) + " stations a named boss (the crocodile is the"
+					+ " fallback for RIVER stations and for a row that fails to"
+					+ " load, not for a whole band), so that band's bosses are"
+					+ " 6x piglet crocodiles")
+
 	# The negative control for this half: a table with one row and an empty
 	# dispatch map passes every loop above without measuring anything.
 	if _species_table.size() < 2 or _biome_species.is_empty():
@@ -576,9 +597,9 @@ func _check_dispatch_map(label: String, map: Dictionary) -> void:
 	path that does not load falls back to the crocodile scene. All three read to a
 	player as "the new predator isn't in the game yet".
 
-	An EMPTY map passes this vacuously, and for BIOME_BOSS that is correct rather
-	than a hole: it ships empty on purpose (the seam lands with zero behaviour
-	change) and the row that fills it is checked here the day it arrives.
+	An EMPTY map passes this vacuously, which is why BIOME_BOSS gets a totality
+	gate beside the call to this one: entry-by-entry validation cannot see a band
+	that has no entry at all.
 	"""
 	for biome_v: Variant in map:
 		var entry: Dictionary = map[biome_v]
@@ -2632,11 +2653,11 @@ func _check_boss_dispatch(terrain_script: GDScript) -> void:
 	That one is held by SHAPE rather than by sampling: spawn_bosses_in_chunk
 	resolves the row above the candidate walk, before `local_pos` exists at all.
 
-	WITH BIOME_BOSS EMPTY the rule answers "crocodile" at every station, so today
-	this asserts the seam's whole acceptance: the table landed empty and no boss
-	in the world changed. It becomes a real per-band dispatch test the day the
-	snow titan's row lands, with no edit here — same contract as the rest of this
-	file, which iterates the tables and never a list of its own.
+	BIOME_BOSS IS NOW TOTAL over the Biome enum, so this is a real per-band
+	dispatch test everywhere and the only "crocodile" answers left in the walk are
+	the RIVER ones — which is exactly why the `rivers < 1` gate below is the one
+	that stops the fallback rotting. None of that needed an edit here when the
+	rows landed: this file iterates the tables and never a list of its own.
 
 	The `spec` half is the call-order contract (the landmine setup_as_boss has
 	always carried, now with one more line in front of it): `species` is assigned
