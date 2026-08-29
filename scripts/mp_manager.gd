@@ -560,6 +560,11 @@ const RELEASE_GRACE_MSEC: int = 3000
 ## Seconds accumulated toward the master's next room publish.
 var _room_accum: float = 0.0
 
+## The last captive-set-and-verdict the master RELAYED, as a string to compare
+## against. The relay leg fires only when this changes - see `_send_room_state()`,
+## where the reason is the lobby's own stall rule and not tidiness.
+var _room_relay_digest: String = ""
+
 ## ONE SNAPSHOT PER SENDER, EVER — the set of peers whose `state` frame we have
 ## already folded in. The protocol sends exactly one per (incumbent, joiner) pair,
 ## but a relayed payload is unvalidated peer input: without this latch a member
@@ -901,6 +906,7 @@ func leave() -> void:
 	_released_msec = {}
 	_captured_msec = {}
 	_room_accum = 0.0
+	_room_relay_digest = ""
 	_state_received = {}
 	_first_member = true
 	_join_applied = false
@@ -1597,8 +1603,23 @@ func _send_room_state() -> void:
 	correct it. This does, within half a second, because the master's set is the
 	room's and the master hears every `cap`.
 
-	Sent over the mesh AND the relay, the second reaching exactly the peers that
-	have the gap.
+	Sent over the mesh every tick, AND over the relay ONLY WHEN THE SET OR THE
+	VERDICT CHANGES.
+
+	THE RELAY LEG IS EVENT-DRIVEN AND THAT IS NOT AN OPTIMISATION — it is the
+	lobby's own stall rule. `server/room.go` refuses to act on a quorum of stall
+	votes while the lobby has heard anything from the master inside
+	`stallMasterSilence` (3 s), so a master relaying this twice a second looks ALIVE
+	TO THE LOBBY however dead its heartbeat is, and a genuinely throttled tab can
+	never be deposed. `scripts/mp_e2e.sh`'s stall phase is what caught that, and it
+	is the reason this leg is not simply "send it every time".
+
+	THE CLOCK IS DELIBERATELY OUTSIDE THE COMPARISON. It changes every tick, so
+	including it would defeat the whole rule; and a peer whose mesh never came up
+	does not need a smooth countdown, it needs the SET and the VERDICT — the two
+	facts that decide the outcome — which is exactly what the change test carries.
+	Its displayed clock drifts on its own until the verdict lands, and the verdict
+	IS a change.
 	"""
 	if _state != State.IN_ROOM or _master != _you:
 		return
@@ -1614,6 +1635,10 @@ func _send_room_state() -> void:
 		"t": "room", "cap": captive_heroes(), "cd": seconds, "co": verdict,
 	}
 	_broadcast_reliable(var_to_bytes(payload))
+	var digest: String = "%s|%d" % [str(payload["cap"]), verdict]
+	if digest == _room_relay_digest:
+		return
+	_room_relay_digest = digest
 	var relayed: Dictionary = payload.duplicate()
 	relayed.erase("t")
 	relayed["mp"] = "room"

@@ -2286,6 +2286,16 @@ func _check_captive_set() -> String:
 # 22. THE MASTER'S ROOM PUBLISH (bead godot-test1-3iy.10)
 # =============================================================================
 
+func _relayed_rooms(mp: Node) -> int:
+	"""How many `room` publishes the stub lobby has been handed. See claim 7b."""
+	var count: int = 0
+	for entry: Variant in (mp._lobby.relayed as Array):
+		var payload: Dictionary = (entry as Array)[1] as Dictionary
+		if String(payload.get("mp", "")) == "room":
+			count += 1
+	return count
+
+
 func _check_room_publish() -> String:
 	"""
 	The one verb that carries the two values a room may never disagree about.
@@ -2425,13 +2435,38 @@ func _check_room_publish() -> String:
 	if mp._verb_rate_ok("themaster", "room"):
 		return "the relayed room publish spent none of the verb budget"
 
-	# --- 7b. it goes out on the tick, not only when something calls it by hand.
+	# --- 7b. it goes out ON THE TICK, and the relay leg goes out ONLY ON A CHANGE.
+	#
+	# THE SECOND HALF IS THE LOBBY'S STALL RULE, not tidiness. `server/room.go` will
+	# not act on a quorum of stall votes while the lobby has heard anything from the
+	# master inside `stallMasterSilence` — so a master relaying this twice a second
+	# looks alive to the LOBBY however dead its heartbeat is, and a throttled tab can
+	# never be deposed. `mp_e2e.sh`'s stall phase found that; this is the same claim
+	# in one process.
 	host._lobby.relayed.clear()
 	host._room_accum = 0.0
+	host._receive_captive("bob", {"t": "cap", "h": "primm", "c": false})
 	host._process(1.0 / MPManager.ROOM_SYNC_HZ + 0.01)
-	if host._lobby.relayed.is_empty():
+	if _relayed_rooms(host) == 0:
 		return "the master published nothing on its own tick — the repair channel only "\
 			+ "exists if something drives it"
+	host._lobby.relayed.clear()
+	for tick: int in 4:
+		# THE CLOCK MOVES WHILE THE SET DOES NOT, which is the whole shape of a
+		# running break-out — and the case a change test that included the clock
+		# would relay on every single tick, putting the master back in front of the
+		# lobby's stall rule with nothing to say.
+		player.wire = [30.0 - float(tick), 0]
+		host._room_accum = 0.0
+		host._process(1.0 / MPManager.ROOM_SYNC_HZ + 0.01)
+	player.wire = [0.0, 0]
+	# COUNTED BY VERB, because the heartbeat rides this same socket and is SUPPOSED
+	# to: it is the one frame a stalled tab stops sending, which is what makes the
+	# vote possible at all. What must go quiet is this publish.
+	if _relayed_rooms(host) != 0:
+		return "an unchanged room state kept relaying over the LOBBY (%d frames) — the "\
+			% _relayed_rooms(host) + "lobby then hears from the master constantly and a "\
+			+ "stalled host can never be voted out"
 
 	# --- 8. the auto-claim waits for the join to settle.
 	var joiner: Node = _room_manager("me")
