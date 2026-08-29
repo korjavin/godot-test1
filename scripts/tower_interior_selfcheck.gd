@@ -1137,16 +1137,26 @@ func _all_meshes(node: Node) -> Array[MeshInstance3D]:
 
 
 func _descendants(node: Node) -> Array[Node]:
-	## Everything under `node`, EXCEPT the vault's gem.
+	## Everything under `node`, EXCEPT the vault's gem and the guards.
 	##
 	## The gem is `coin.tscn` — a foreign scene with its own Area3D and its own
 	## MeshInstance3D, deliberately reused rather than reinvented. Counting its parts
 	## as the interior's would make every count in checks 5 and 6 off by one and,
 	## worse, hand its material to the ToonShading assertion, which is a claim about
 	## the tower's palette and not about the collectible's.
+	##
+	## `Guards` is the same exclusion for the same reason, one bead later:
+	## `tower_guard.tscn` is a foreign scene too — the shared predator script, a
+	## `.glb` chassis and its own collision body — and its meshes are styled by the
+	## AI's own `_style_model_meshes` at run time, exactly like every other predator
+	## in the world. Counting them would put the building over a DRAW_BUDGET that is
+	## a claim about STATIC GEOMETRY (see check 5's docstring: the batch, the 67
+	## draw calls, the frame spikes), and would hand a `.glb`'s materials to a
+	## palette assertion they were never part of. The guards are not unmeasured for
+	## it — check 12 counts and places them, and check 13 resets them.
 	var out: Array[Node] = []
 	for child: Node in node.get_children():
-		if String(child.name) == "VaultGem":
+		if String(child.name) == "VaultGem" or String(child.name) == "Guards":
 			continue
 		out.append(child)
 		out.append_array(_descendants(child))

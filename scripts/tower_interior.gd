@@ -613,6 +613,92 @@ const MOVING_PARTS: Array[String] = [
 ]
 
 # ============================================================================
+# THE GUARDS — the population half of "structure persists, population resets"
+# ============================================================================
+#
+# THREE KINDS OF TOWER STATE, THREE HOMES, AND THIS IS THE THIRD:
+#
+#   OPENED GATES (phase 5, `TowerShell.opened`)   — monotone union set, written
+#     through to `BestRunStore` on the opening. A gate you opened stays open
+#     across a relaunch, because opening it was earned.
+#   THE CAPTIVE SET (phase 9, `player_controller.captive_heroes`)  — deliberately
+#     NOT in that set, because it is non-monotone: heroes are taken and freed over
+#     and over inside one run, so a union merge would be a lie. Per-run world
+#     state, mirrored into `_captives` here.
+#   THE GUARDS (this phase)  — NO HOME AT ALL. They are never written anywhere,
+#     by anybody, and the whole "population resets on re-entry" ruling is
+#     implemented by that absence plus `reset_guards()` below. There is no guard
+#     field to forget to clear, no id to leak into the opened set, and nothing for
+#     a save to disagree with: cross the doorway and every guard is a fresh body
+#     standing on its authored post.
+#
+# WHY THEY ARE PARENTED HERE AND NOT CHUNK-SPAWNED: a storey is flat within
+# itself, so the gravity settle a SPECIES row expects holds locally on the slab
+# exactly as it does on the ground floor — but only if the guard belongs to the
+# building rather than to a chunk that unloads out from under it. Same reason the
+# shell is parented to the terrain manager and a herd to the fauna manager.
+
+## The guard scene and the SPECIES row it must resolve to. Read by
+## `enemy_spawn_selfcheck` as the FOURTH door into the world (after BIOME_SPECIES,
+## BIOME_BOSS and endless_terrain's hunter spawner) — a guard belongs to no biome
+## and no road station, so a reachability check over the dispatch maps alone would
+## report a shipped, working predator as one nothing can spawn.
+const GUARD_SCENE: PackedScene = preload("res://scenes/characters/tower_guard.tscn")
+const GUARD_SPECIES: String = "tower_guard"
+
+## How far above its post a guard is dropped in. Small on purpose: every storey is
+## flat, so there is nothing to clear — this is only enough that the body starts
+## the frame above the floor and settles onto it rather than starting inside it.
+const GUARD_SPAWN_LIFT: float = 0.4
+
+## THE POSTS. Three of them, which is the top of the owner's "few guards" band,
+## and each one is a beat the route already had:
+##
+##   HALL      — you are barely inside and something is already walking. Placed
+##               deep enough (6.8 m from the doorway, against a 6.5 m detection
+##               radius) that stepping through the door does not itself trip it.
+##   COURTYARD — the open middle, between the rotor gate and the foot of the ramp.
+##   UPPER     — the approach to the identity gate, WEST of the secure partition.
+##
+## `patrol_center` / `patrol_half` is the box `set_confinement()` pins the guard
+## inside — the leash that has existed since the elevated-platform guards and that
+## is the whole of "patrols, spots and chases WITHIN ITS FLOOR". The upper guard's
+## box stops at x = 3.5, short of the partition at x = 3.8, which is why the
+## checkpoint beyond the identity gate is a safe haven BY CONSTRUCTION rather than
+## by hoping: a guard that has seen you standing on it still cannot follow you in,
+## and the knockback below therefore cannot drop you into a re-bite loop.
+const GUARD_POSTS: Array[Dictionary] = [
+	{
+		"name": "Hall",
+		"post": Vector3(2.8, 0.0, -3.2),
+		"patrol_center": Vector3(4.0, 0.0, -2.0),
+		"patrol_half": Vector2(3.6, 2.4),
+	},
+	{
+		"name": "Courtyard",
+		"post": Vector3(-5.0, 0.0, 1.5),
+		"patrol_center": Vector3(-5.0, 0.0, 1.5),
+		"patrol_half": Vector2(3.5, 4.0),
+	},
+	{
+		"name": "Upper",
+		"post": Vector3(1.6, SLAB_Y, 2.2),
+		"patrol_center": Vector3(1.6, SLAB_Y, 0.0),
+		"patrol_half": Vector2(1.9, 4.0),
+	},
+]
+
+## WHERE A GUARD'S SETBACK PUTS YOU — the two ends of `setback_point()`.
+##
+## The checkpoint stand is inside `CheckpointTrigger`'s volume and clear of
+## `CheckpointPost`, which stands on the plate: "the checkpoint" is the space
+## beside the post, not the post's own footprint. The entry stand is the fallback
+## for a run that has not lit the checkpoint yet — just inside the doorway, so a
+## setback before the checkpoint costs you the whole building rather than nothing.
+const CHECKPOINT_STAND: Vector3 = Vector3(5.8, SLAB_Y + 0.2, 0.0)
+const ENTRY_STAND: Vector3 = Vector3(7.6, 0.2, 0.0)
+
+# ============================================================================
 # STATE
 # ============================================================================
 
@@ -699,6 +785,14 @@ var _on_identity_pad: bool = false
 ## Cached local player. Revalidated every frame — a respawn does not free it, but a
 ## self-check running without one must not crash.
 var _player: Node3D = null
+
+## The container every guard is parented to. One node, so "reset the population"
+## is one `queue_free()` and one fresh `Node3D` — there is no per-guard
+## bookkeeping to keep in step and nothing to leak if a reset lands mid-chase.
+## Held rather than looked up by name because a queued-free node keeps its name
+## until the frame ends, and a rebuild in the same frame would otherwise collide
+## with the corpse and be silently renamed by the engine.
+var _guards: Node3D = null
 
 ## Albedo colour -> the one material of that colour, process-wide. Same contract
 ## and same reason as `TowerShell._materials`: never a material per instance.
@@ -1235,6 +1329,26 @@ func _ready() -> void:
 	# property of the code rather than of nothing ever being freed.
 	_apply_opened()
 	_update_bands()
+
+	# THE POPULATION. Deferred, and the deferral is load-bearing rather than
+	# tidiness: `endless_terrain._tower_stream()` parks the shell on the tower site
+	# on the line AFTER `add_child()`, so at this point in `_ready()` the whole
+	# building is still standing at the terrain's origin and our `global_position`
+	# is a lie. Guards are placed in LOCAL space (which is correct either way), but
+	# `set_confinement()` takes WORLD coordinates — computed here it would leash
+	# every guard to a box 400 m away and `_clamp_to_platform` would fire on the
+	# first frame. One idle frame later the shell is where it belongs.
+	reset_guards.call_deferred()
+
+	# ...and re-place them whenever the local player crosses the doorway. The shell
+	# owns the door trigger and already emits on it; connecting here rather than
+	# there keeps the arrow pointing one way (this file reads the shell, never the
+	# reverse — see the header). Guarded, so an interior built standalone by a
+	# self-check simply never gets the signal and keeps its build-time population.
+	var tower := _tower()
+	if tower != null and tower.has_signal("player_entered") \
+			and not tower.is_connected("player_entered", _on_tower_doorway):
+		tower.connect("player_entered", _on_tower_doorway)
 
 
 func _process(delta: float) -> void:
@@ -1904,6 +2018,119 @@ func _on_checkpoint_enter(body: Node3D) -> void:
 	_light_checkpoint()
 	_say(tr("CHECKPOINT"))
 	_sfx("play_level_up")
+
+
+# ============================================================================
+# GUARDS
+# ============================================================================
+
+func _on_tower_doorway(_body: Node3D) -> void:
+	"""
+	The local player crossed the doorway. Put the population back.
+
+	@param _body: the entering body, already filtered to group "player" by the
+	              shell — a crocodile in the doorway must not reset anything.
+
+	FIRES IN BOTH DIRECTIONS, because an `Area3D` cannot tell walking in from
+	walking out and does not need to: "leave and come back and the guards are at
+	their posts" is the acceptance, and re-placing them on the way out costs one
+	free-and-rebuild of three bodies at the one moment nothing is looking at them.
+	"""
+	reset_guards()
+
+
+func reset_guards() -> void:
+	"""
+	Free every guard and stand a fresh one on each authored post.
+
+	THE WHOLE PERSISTENCE CONTRACT FOR THE POPULATION, and it is implemented by
+	what is NOT here: nothing reads a save, nothing writes one, and no guard state
+	survives this call. "Structure persists; population resets" is one monotone
+	union set (the opened gates, on the shell) plus this function.
+
+	IDEMPOTENT AND SAFE MID-CHASE. A guard that is chasing, biting, paused, slept
+	by the LOD manager or being remote-driven is simply freed with everything it
+	was holding; the replacement is a new body with a new `_ready()`, so there is
+	no state to reconcile and no half-reset to get wrong.
+
+	Public because `_ready()` defers it (see the note there) and because the
+	self-check drives it directly rather than waiting on an idle frame.
+	"""
+	if is_instance_valid(_guards):
+		_guards.queue_free()
+	_guards = Node3D.new()
+	_guards.name = "Guards"
+	add_child(_guards)
+
+	if GUARD_SCENE == null:
+		return
+	for i in GUARD_POSTS.size():
+		var authored: Dictionary = GUARD_POSTS[i]
+		var guard := GUARD_SCENE.instantiate() as Node3D
+		# Deterministic, and stable across a reset: `croc_id_for()` hashes the node
+		# name, so the same post is the same id every time the population is rebuilt
+		# — which is what a multiplayer relay needs from a body it did not spawn.
+		guard.name = "TowerGuard%s" % String(authored["name"])
+		var post: Vector3 = authored["post"]
+		guard.position = post + Vector3(0.0, GUARD_SPAWN_LIFT, 0.0)
+		# THE CALL-ORDER CONTRACT (`setup_as_boss` / the hunter spawner / the
+		# platform spawner, all the same shape): `species` goes in BEFORE
+		# `add_child`, because `_ready()` is where it is resolved into `spec` and
+		# where the size/speed rolls that READ that spec happen. Assigned after, a
+		# guard would roll a crocodile's numbers onto its body and every per-frame
+		# path would read the wrong row.
+		guard.set("species", GUARD_SPECIES)
+		_guards.add_child(guard)
+		# ...and the leash AFTER, exactly as `spawn_platform_crocodiles` does:
+		# `set_confinement` is a plain setter no per-frame path reads until the
+		# body's first physics tick, and it wants WORLD coordinates, which only
+		# exist once the node is in the tree.
+		if guard.has_method("set_confinement"):
+			var centre: Vector3 = authored["patrol_center"]
+			guard.call("set_confinement", global_position + centre,
+					authored["patrol_half"])
+
+
+func guard_posts() -> Array:
+	"""
+	Every live guard's authored post name and current global position.
+
+	@return: a fresh Array of { "name": String, "position": Vector3 }.
+
+	The seam the self-check measures the population through, so it counts BODIES
+	IN THE TREE rather than rows in `GUARD_POSTS` — a spawner that silently
+	stopped instancing would otherwise be reported as three guards.
+	"""
+	var out: Array = []
+	if not is_instance_valid(_guards):
+		return out
+	for child in _guards.get_children():
+		if child is Node3D:
+			out.append({
+				"name": String(child.name),
+				"position": (child as Node3D).global_position,
+			})
+	return out
+
+
+func setback_point() -> Vector3:
+	"""
+	Where a guard's setback drops the player: the last checkpoint they activated
+	inside this tower, or the doorway if they have not activated one yet.
+
+	@return: a WORLD position, standable, on the storey the checkpoint is on.
+
+	"THE LAST ACTIVATED CHECKPOINT" IS THE OPENED SET, not a second field. There is
+	one checkpoint in the v1 interior and it is `GATE_CHECKPOINT` in the same
+	monotone union set the two gates live in, so this asks the set the same way
+	`_apply_opened()` does — and phase 7's extra stops become extra entries there
+	plus one more branch here, with nothing new to persist.
+
+	Called by `player_controller` through a null-safe group lookup, so a run with
+	no tower in the tree at all never reaches this.
+	"""
+	return global_position + (CHECKPOINT_STAND if _is_open(GATE_CHECKPOINT)
+			else ENTRY_STAND)
 
 
 # ============================================================================

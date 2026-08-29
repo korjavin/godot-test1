@@ -2537,6 +2537,135 @@ const SPECIES: Dictionary = {
 		## thing is too hard.
 		"crush_immune": true,
 	},
+	"tower_guard": {
+		## THE NINTH ROW, AND THE FIRST THAT IS FURNITURE RATHER THAN WILDLIFE.
+		## A GD-SURVEY sentry standing a post inside GastroDefense HQ (the tower
+		## epic, godot-test1-3iy). Everything that makes it a guard rather than a
+		## hunter is in this table plus WHERE IT IS PUT — and that second half is
+		## the finding worth stating out loud, because it is why there is NO NEW
+		## BEHAVIOUR ARM here:
+		##
+		##   "patrols its floor and never leaves it" is `set_confinement()`, which
+		##   has existed since the elevated-platform guards and whose own docstring
+		##   already says "so it patrols but never walks off". `TowerInterior` hands
+		##   each guard its storey's box the same way `spawn_platform_crocodiles`
+		##   hands a mound-top guard its summit. A "patrol" arm would have been a
+		##   second copy of a leash the file already owns, measured by a second
+		##   probe, for identical behaviour — the arm dispatch is for a MECHANIC
+		##   none of the six covers, not for an animal that is new.
+		##
+		## So this row is "solo", the arm-less path, and the patrol is geometry.
+		"behavior": "solo",
+
+		# ----- Speed and detection -----
+		## SLOW ON PATROL, ORDINARY IN PURSUIT. 1.4 is a walked beat rather than an
+		## animal's amble — a sentry covering ground it has covered a thousand times
+		## — and it is the read that makes a guard something you can watch, time and
+		## walk around, which is the sneak-and-solve tempo the epic was ruled to.
+		##
+		## THE CHASE SPEED IS THE LATTICE AND NOTHING MORE: 5.6 is just over
+		## WALK_SPEED (5.0), so strolling past a guard that has seen you WILL be
+		## caught, and far under MAX_CHASE_SPEED (8.5) and the slowest run (9.0), so
+		## backing out of the room always works. A guard is a tax on carelessness,
+		## not a threat — it cannot take a life and cannot take a hero (see
+		## `coin_setback` below), so it has no business also being fast.
+		"move_speed": 1.4,
+		"chase_speed": 5.6,
+
+		## Barely any spread. Two or three guards stand in one small building and a
+		## visibly mismatched pair reads as a bug rather than as variety; the
+		## corporation issues one chassis. Same argument as the hunter's row, one
+		## notch tighter because these are seen side by side.
+		"speed_random_factor": 0.05,
+		"size_random_factor": 0.03,
+
+		## THE SMALLEST DETECTION RADIUS OF ANY NON-AMBUSH ROW, and deliberately so:
+		## the owner ruling for the interior is "few guards, mostly puzzles". 6.5 m
+		## is about one room, so a guard owns the space it is standing in and
+		## nothing beyond the doorway — you can look at it from the next room and
+		## decide. Well under the LOD SIM_RADIUS with its margin (6.5 + 15 << 45),
+		## which the species table check measures.
+		"detection_radius": 6.5,
+
+		# ----- Organic wandering (a beat, not a meander) -----
+		## Long legs between turns and a LONG pause at the end of each: the pause is
+		## the sentry's whole tell, the moment it is standing still and looking
+		## somewhere. `sniff_pause_chance` is the highest in the table for the same
+		## reason — a guard stops much more than it walks.
+		"direction_change_interval": 5.0,
+		"pause_duration": 1.2,
+		"wander_turn_rate": 0.5,
+		"turn_smoothness": 6.0,
+		"min_wander_speed_factor": 0.8,
+		"speed_variation_freq": 0.3,
+		"sniff_pause_chance": 0.45,
+
+		# ----- Obstacle avoidance (indoors, so short) -----
+		## 1.8 m of feeler rather than the crocodile's 3.0: the building is jambs,
+		## piers and a rotor post, and a long probe indoors turns the guard away
+		## from a doorway it is two metres from walking through.
+		"avoid_look_ahead": 1.8,
+		"avoid_feeler_angle": PI / 4.0,  # 45°, wider than the field rows: corners
+		"avoid_feeler_height": 0.5,
+		"avoid_speed_factor": 0.7,
+
+		# ----- Model orientation and gait (the hunter chassis, reused) -----
+		## SAME MODEL AS THE HUNTER (`assets/models/characters/hunter.glb`), which
+		## is the point rather than a saving: a guard and a retrieval unit ARE the
+		## same corporate machine on two duties, and they are never in frame
+		## together (the hunter belongs to no band and works the field, the guard
+		## stands inside one building). So the facing offset and the gait numbers
+		## are the hunter's, slowed to the walked beat above.
+		"model_facing_offset": -PI / 2.0,
+		"stride_frequency": 9.0,
+		"waddle_roll": 0.5 * PI / 180.0,
+		"bob_amount": 0.012,
+		"sway_yaw": 1.0 * PI / 180.0,
+		"chase_pitch": 4.0 * PI / 180.0,
+		"breathe_speed": 1.0,
+		"breathe_amount": 0.002,
+
+		## Never wades — it stands on a floor 400 m from the nearest river band —
+		## but the keys are the crocodile's and every row owes them, so they carry
+		## the hunter's numbers rather than a zero that would read as a claim.
+		"river_sink_depth": 0.22,
+		"river_sink_ease_speed": 0.22 / 0.2,
+
+		## The clamp, the hunter's, with a shorter step into it: indoors there is
+		## usually a wall behind the quarry.
+		"bite_duration": 0.35,
+		"bite_pitch": 12.0 * PI / 180.0,
+		"bite_lunge": 0.20,
+
+		# ----- THE STAKE (the one key that is new with this row) ---------------
+		## WHAT LOSING TO A GUARD COSTS: this fraction of your coins, plus a
+		## knockback to the last checkpoint you activated inside the tower. No
+		## life, no game over, and — because this is not the `hunt` arm — no
+		## capture. Owner-ruled 2026-08-27: the building must never be able to end
+		## a run in the middle of a rescue, so the third stake is the only one it
+		## charges.
+		##
+		## IT IS THE FRACTION AND NOT A BOOLEAN, so the arithmetic is HERE and
+		## `player_controller` holds exactly one deduction site reading it — the
+		## same shape `stink_immune` / `crush_immune` established for "this is a
+		## property of the row, not of a species name". Absent from every other row,
+		## and absent is the statement: a body with no `coin_setback` charges the
+		## ordinary predator cost (a life), which is every other row in this table.
+		"coin_setback": 0.07,
+
+		# ----- Immunities: it is the hunter's chassis, so it is sealed and hard --
+		## Verbatim the hunter row's two keys and verbatim its argument (read it
+		## there). Stated as a DESIGN CHOICE rather than inherited by accident,
+		## because the bead asked for the decision out loud: a phoboman must not be
+		## able to clear a floor of the tower with a smell weapon, and a giant teibi
+		## must not be able to walk through it — the corporation is the one thing
+		## the toolbox does not answer, indoors as well as out. Guards stay in group
+		## "crocodile" (the scene declares it, `_ready` re-adds it) so the LOD
+		## manager still sleeps a distant one and the MP relay still sees it;
+		## immunity lives in these keys, never in group tricks.
+		"stink_immune": true,
+		"crush_immune": true,
+	},
 }
 
 # ============================================================================
