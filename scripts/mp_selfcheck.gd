@@ -1978,7 +1978,9 @@ func _check_captive_set() -> String:
 	 10. THE JOIN SNAPSHOT is the MASTER's whole set and nobody else's — a replay
 	     cannot be authorized by claim 1, because the peer who lost that hero has
 	     usually been reassigned and holds something else by then.
-	 11. ENTERING A ROOM RESETS the local mirror: a room's roster is the room's.
+	 11. A LIBERATION THAT OVERTOOK ITS CAPTURE still wins — the two verbs come from
+	     different senders and nothing orders them.
+	 12. ENTERING A ROOM RESETS the local mirror: a room's roster is the room's.
 	"""
 	var player: Node = _captive_player()
 	var mp: Node = _room_manager("me")
@@ -2054,6 +2056,13 @@ func _check_captive_set() -> String:
 		return "the cap budget of %d let a peer spend %d in one second" % [budget, budget + 1]
 	if MPManager.packet_kind({"t": "cap", "h": "primm", "c": true}) != "cap":
 		return "a cap packet does not identify itself as a verb — it would decode as presence"
+	# THE RELEASE TOMBSTONE IS CLEARED BETWEEN THESE SUB-CLAIMS, deliberately and
+	# with its own claim (11) to itself. It refuses a capture that arrives within
+	# RELEASE_GRACE_MSEC of a liberation of the same hero — which every re-capture
+	# below is, because a check runs in microseconds and the honest gap is a lobby
+	# round trip plus a whole hunter beat. Leaving it armed would make claims 7 and
+	# 10 measure the clock instead of the rule they are about.
+	mp._released_msec.clear()
 	mp._receive_mesh_verb("carl", "cap", {"t": "cap", "h": "primm", "c": true})
 	if mp.is_hero_captive("primm"):
 		return "the dispatch skipped the holder rule — carl has never held primm"
@@ -2065,6 +2074,7 @@ func _check_captive_set() -> String:
 	# writes only to peers whose data channel is open and ICE takes seconds. Same
 	# parser, same rule, same function — only the wire differs.
 	mp._receive_captive("bob", {"t": "cap", "h": "primm", "c": false})
+	mp._released_msec.clear()  # ...see above.
 	mp._on_lobby_relay("bob", {"mp": "cap", "h": "primm", "c": true})
 	if not mp.is_hero_captive("primm"):
 		return "a cap relayed over the LOBBY was dropped — a peer still negotiating ICE "\
@@ -2173,13 +2183,34 @@ func _check_captive_set() -> String:
 		return "the master's join snapshot was ignored — a joiner walks into a room whose "\
 			+ "cells it cannot see"
 
-	# --- 11. entering a room resets the local mirror to the ROOM's.
+	# --- 11. a liberation that OVERTOOK its capture still wins.
+	#
+	# The two verbs come from different senders — the peer who lost the hero, and
+	# whoever walked into his cell — and reliable delivery orders one sender's
+	# packets, not two. A third peer that saw the rescue first used to drop it (that
+	# hero was not in its set yet) and then accept the capture behind it, locking a
+	# hero up on one screen for the rest of the run with nobody able to free him a
+	# second time. Driven in exactly that order.
+	fresh._on_lobby_heroes({"primm": "bob"}, ["windman", "primm", "teibi", "phoboman"])
+	fresh._receive_captive("carl", {"t": "cap", "h": "primm", "c": false})
+	fresh._receive_captive("bob", {"t": "cap", "h": "primm", "c": true})
+	if fresh.is_hero_captive("primm"):
+		return "a liberation that arrived BEFORE the capture it undoes was dropped, and the "\
+			+ "stale capture behind it stuck — primm is now in a cell nobody can open"
+
+	# --- 12. entering a room resets the local mirror to the ROOM's.
 	#
 	# `join()` unwinds through `leave()`, which deliberately leaves the player's own
 	# captive set alone (a leave is not a liberation), so without this a host walks
 	# into a shared world holding a solo run's captures that its manager knows
 	# nothing about. Driven through the real `welcome` callback.
 	player.told.clear()
+	# `lobby_only` BEFORE the callback: `welcome` normally ends in `_setup_mesh()`,
+	# which asks the lobby socket for /ice — and this manager has no socket. The
+	# real relay-only mode stops exactly there, so this is the shipped path and not
+	# a hole poked for the check. (Without it the run still printed SELFCHECK OK
+	# while throwing on a null `_lobby` — a runtime error nothing reads.)
+	fresh.lobby_only = true
 	fresh._on_lobby_joined("me", "ROOM01", "me", [{"id": "me", "name": "me"}])
 	var cleared: Dictionary = {}
 	for entry: Variant in player.told:

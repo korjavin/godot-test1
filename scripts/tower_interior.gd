@@ -846,9 +846,14 @@ var _press_clock: float = 0.0
 ## The four containment frames, keyed by HERO, plus the authored staging unit.
 var _cell_frames: Dictionary = {}
 
-## Is the local player standing on the vent-purge pad, and how long until it can
-## fire again. Polled exactly like the spine pads - see `_tick_spine_pads()`.
-var _on_purge_pad: bool = false
+## THE BODY STANDING ON THE VENT-PURGE PAD, and how long until it can fire again.
+##
+## The BODY and not a boolean, because eligibility has to be re-asked every frame:
+## the prison role ends where the player is standing (a teammate frees your hero, a
+## lobby grant lands), and a latch taken on entry would leave a now-free player
+## working the prisoners' system until they happened to step off. Polled like the
+## spine pads - see `_tick_spine_pads()`.
+var _purge_body: Node3D = null
 var _purge_cooldown: float = 0.0
 var _containment: MeshInstance3D = null
 
@@ -2359,21 +2364,15 @@ func _on_cell_enter(body: Node3D, hero: String) -> void:
 
 
 func _on_purge_enter(body: Node3D) -> void:
-	# THE PAD IS THE PRISONER'S, and this is where that is enforced. A rescuer
-	# reaches this gallery on every ordinary liberation, and the purge is the bench's
-	# compensation for having no field play at all — a party that could stand on it
-	# on the way past would be handed the same opening for free. Latched from the
-	# ENTERING body rather than re-asked per frame: `prisoner_active` cannot change
-	# while the body stands here (the role is left by a lobby grant or a liberation,
-	# and both teleport nothing), and asking the body is what keeps this off
-	# `_player`, which is only written once `_process` has run.
-	if body.is_in_group("player") and "prisoner_active" in body and bool(body.prisoner_active):
-		_on_purge_pad = true
+	# PLAIN OVERLAP, like every other pad in this building. WHO may work it is
+	# `_tick_purge()`'s question — see `_purge_body`.
+	if body.is_in_group("player"):
+		_purge_body = body
 
 
 func _on_purge_exit(body: Node3D) -> void:
-	if body.is_in_group("player"):
-		_on_purge_pad = false
+	if body == _purge_body:
+		_purge_body = null
 
 
 func _tick_purge(delta: float) -> void:
@@ -2396,7 +2395,14 @@ func _tick_purge(delta: float) -> void:
 	is documented for HUD tick rates; this asks it once per PURGE_COOLDOWN.
 	"""
 	_purge_cooldown = maxf(0.0, _purge_cooldown - delta)
-	if not _on_purge_pad or _purge_cooldown > 0.0:
+	if _purge_body == null or not is_instance_valid(_purge_body) or _purge_cooldown > 0.0:
+		return
+	# THE PAD IS THE PRISONER'S. A rescuer crosses this gallery on every ordinary
+	# liberation in the game, and the purge is the bench's compensation for having no
+	# field play at all — a party that could stand on it in passing would be handed
+	# the same opening for free. Asked of the standing body every frame, so leaving
+	# the role while standing here stops the pad on the spot.
+	if not ("prisoner_active" in _purge_body) or not bool(_purge_body.prisoner_active):
 		return
 	var mp := get_tree().get_first_node_in_group("mp")
 	if mp == null or not mp.has_method("peer_markers") or not mp.has_method("request_croc_flee"):
@@ -2411,7 +2417,13 @@ func _tick_purge(delta: float) -> void:
 		var where: Variant = (entry as Dictionary).get("pos", null)
 		if typeof(where) != TYPE_VECTOR3:
 			continue
-		if bool(mp.call("request_croc_flee", where as Vector3, PURGE_FLEE_SECONDS, PURGE_FLEE_RADIUS)):
+		# `tracks_player` FALSE: the position named is a TEAMMATE's, not this body's.
+		# Left true, a purge fired by a prisoner who happens to be the room master
+		# would apply locally with the caster set to the player in the cell — the
+		# pack would run from the tower, which is roughly towards the teammate it was
+		# bought to help.
+		if bool(mp.call("request_croc_flee", where as Vector3, PURGE_FLEE_SECONDS,
+				PURGE_FLEE_RADIUS, false)):
 			fired += 1
 	if fired == 0:
 		return

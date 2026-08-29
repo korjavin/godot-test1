@@ -2546,7 +2546,7 @@ func _on_caught_finished() -> void:
 			_end_custody_protocol(false)
 		else:
 			_trigger_game_over()
-	elif free_hero_count() == 0 and not captive_heroes.is_empty():
+	elif not custody_protocol_active and free_hero_count() == 0 and not captive_heroes.is_empty():
 		# GAME OVER IS WORLD-LEVEL (bead godot-test1-3iy.10, an ADOPTED READING of
 		# the owner's phrasing): the corporation has to hold EVERY hero, not merely
 		# every hero this peer may play. Solo that is the same sentence it has
@@ -2560,6 +2560,14 @@ func _on_caught_finished() -> void:
 		# The `not captive_heroes.is_empty()` guard survives for its original
 		# reason: a build with no CHARACTERS at all would otherwise read 0 free and
 		# end every run at the first bite.
+		#
+		# AND THE PROTOCOL GUARD IS NOT DECORATION. Inside the break-out the free
+		# count is deliberately pinned at 0 (that is how the scene's outcome test
+		# knows nobody has been let out yet), so every SURVIVABLE bite in the cell
+		# block would land here - `_begin_custody_protocol()` would return on its own
+		# latch and `_respawn_in_place()` would be skipped, costing the player the
+		# grace window, the ability reset and the crocodile sweep, and handing the
+		# guard that just hit them a free second hit.
 		_begin_custody_protocol()
 	else:
 		_respawn_in_place()

@@ -179,8 +179,13 @@ class RoomStub extends Node:
 	func peer_markers() -> Variant:
 		return null if team.is_empty() else team
 
-	func request_croc_flee(origin: Vector3, duration: float, radius: float = 0.0) -> bool:
-		flees.append([origin, duration, radius])
+	## FOUR PARAMETERS, matching the real manager exactly. `tracks_player` is the
+	## one the purge has to pass false for — the position it names is a TEAMMATE's,
+	## not the caster's — and a stub one argument short does not raise a type error,
+	## it makes the call fail and the pad do nothing.
+	func request_croc_flee(origin: Vector3, duration: float, radius: float = 0.0,
+			tracks_player: bool = true) -> bool:
+		flees.append([origin, duration, radius, tracks_player])
 		return true
 
 
@@ -1507,6 +1512,10 @@ func _check_reassign_first_imprison_last() -> void:
 		if float(fired[1]) != TowerInterior.PURGE_FLEE_SECONDS \
 				or float(fired[2]) != TowerInterior.PURGE_FLEE_RADIUS:
 			_fail("the purge relayed %.1f s / %.1f m, not its own constants" % [fired[1], fired[2]])
+		if bool(fired[3]):
+			_fail("the purge asked the pack to run from the CASTER — on a prisoner who is "
+				+ "also the room master that is the tower, i.e. roughly towards the teammate "
+				+ "the purge was bought to help")
 	interior._process(0.1)
 	if room.flees.size() != 1:
 		_fail("the purge fired again inside its cooldown (%d requests) — held down, it is a "
@@ -1590,6 +1599,30 @@ func _check_reassign_first_imprison_last() -> void:
 			+ "`_on_caught_finished()` never got to spend it")
 	if not player.in_custody_protocol():
 		_fail("the room's last hero was taken and the protocol did not open")
+
+	# ...AND A SURVIVABLE BITE INSIDE THE SCENE STAYS ON THE RESPAWN PATH. The
+	# break-out pins the free-hero count at 0 for its whole length — that is how its
+	# outcome test knows nobody has been let out yet — so the world-level roster
+	# clause is true on EVERY hit in the cell block. Unguarded, each one re-enters a
+	# protocol that is already running, `_begin_custody_protocol()` returns on its
+	# own latch, and the player is left with no grace window, no ability reset and no
+	# crocodile sweep, standing next to the guard that just hit them.
+	if player.lives <= 1:
+		_fail("the in-scene bite has no heart to spend, so it proves nothing")
+	var inside: int = player.lives
+	player.is_respawning = false
+	player.respawn_blink_timer = 0.0
+	player.hit_by_crocodile(_hunter())
+	player.is_caught = false
+	player.call("_on_caught_finished")
+	if player.lives != inside - 1:
+		_fail("a survivable bite inside the break-out cost %d hearts, expected one"
+			% (inside - player.lives))
+	if not player.is_respawning:
+		_fail("a survivable bite inside the break-out opened no grace window — the guard "
+			+ "that just hit you gets a free second hit, every hit, for the whole scene")
+	if not player.in_custody_protocol():
+		_fail("a survivable bite inside the break-out ended the scene")
 	player.custody_protocol_active = false
 	_clear(player)
 	await process_frame

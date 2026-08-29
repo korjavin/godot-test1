@@ -509,6 +509,30 @@ var _captives: Dictionary = {}
 ## last put it in - which is exactly the reach the game gives it.
 var _last_holder: Dictionary = {}
 
+## RELEASES THAT ARRIVED BEFORE THE CAPTURE THEY UNDO - `{hero name: msec}`.
+##
+## A capture is broadcast by the peer that lost the hero; the release is broadcast
+## by whoever WALKED INTO THE CELL, which is somebody else. Reliable delivery
+## orders a single sender's packets and says nothing about two, so a third peer can
+## see the liberation first, drop it (that hero is not in its set yet) and then
+## accept the capture - leaving a hero locked up on one screen for the rest of the
+## run, with nobody able to free him a second time.
+##
+## The real order is never in doubt: a liberation is CAUSED by the capture it
+## undoes. So a release for a hero we have not heard about yet is remembered, and
+## the capture that turns up behind it is dropped as the stale packet it is.
+##
+## ponytail: a time window rather than a per-hero version counter. The window only
+## has to cover transport reordering (milliseconds) while the shortest honest
+## re-capture is a lobby round trip plus a whole hunter telegraph-shadow-close beat
+## (tens of seconds), so RELEASE_GRACE_MSEC sits three orders of magnitude inside
+## the gap. The upgrade path is a sequence number per hero carried in the packet,
+## which costs an agreement this protocol otherwise never needs.
+var _released_msec: Dictionary = {}
+
+## How long a release outruns a capture for the same hero. See `_released_msec`.
+const RELEASE_GRACE_MSEC: int = 3000
+
 ## ONE SNAPSHOT PER SENDER, EVER — the set of peers whose `state` frame we have
 ## already folded in. The protocol sends exactly one per (incumbent, joiner) pair,
 ## but a relayed payload is unvalidated peer input: without this latch a member
@@ -847,6 +871,7 @@ func leave() -> void:
 	# is not a liberation.
 	_captives = {}
 	_last_holder = {}
+	_released_msec = {}
 	_state_received = {}
 	_first_member = true
 	_join_applied = false
@@ -1556,6 +1581,11 @@ func _apply_captive(from_id: String, hero: String, held: bool) -> bool:
 	if held:
 		if _captives.has(hero):
 			return false  # Already held: an assertion cannot be re-made.
+		# A LIBERATION WE HEARD FIRST WINS - see `_released_msec`. The two verbs
+		# come from different senders, so nothing orders them for us.
+		if Time.get_ticks_msec() - int(_released_msec.get(hero, -RELEASE_GRACE_MSEC)) \
+				< RELEASE_GRACE_MSEC:
+			return false
 		# THE AUTHORIZATION, and the only one this verb has: a capture is a fact
 		# about the hero the sender was WALKING AS. A member naming a hero the
 		# lobby never put it in is naming a body it cannot have lost.
@@ -1568,6 +1598,9 @@ func _apply_captive(from_id: String, hero: String, held: bool) -> bool:
 			return false
 		_captives[hero] = true
 	else:
+		# REMEMBERED WHETHER OR NOT WE HAD HIM, which is the whole point: the
+		# release we drop here is exactly the one that overtook its capture.
+		_released_msec[hero] = Time.get_ticks_msec()
 		if not _captives.has(hero):
 			return false
 		_captives.erase(hero)
@@ -4317,7 +4350,8 @@ func _release_synced_crocs() -> void:
 # broadcast only because it FREES a node, which no amount of transform sync can
 # express.
 
-func request_croc_flee(origin: Vector3, duration: float, radius: float = 0.0) -> bool:
+func request_croc_flee(origin: Vector3, duration: float, radius: float = 0.0,
+		tracks_player: bool = true) -> bool:
 	"""
 	Phoboman's Stink Wave, made room-wide: scare the crocodiles this peer can see
 	AND ask the master to scare the ones it is the authority for, so a wave set
@@ -4330,6 +4364,11 @@ func request_croc_flee(origin: Vector3, duration: float, radius: float = 0.0) ->
 	has loaded, so a peer more than a render distance away from the master gets
 	nothing back at all — the same coverage ceiling the croc sync documents — and
 	a respawning player would have had no spawn protection whatsoever.
+
+	`tracks_player` is false when the CASTER is not the local player, so the flight
+	runs from the fixed `origin` - the same distinction `_receive_flee()` makes for a
+	relayed wave, exposed here because the vent purge is a local caller naming a
+	remote position.
 
 	`radius` bounds the wave to `radius` metres of `origin`; 0.0 means unbounded
 	(Phoboman's wave, which is global by design). WITHOUT IT the bounded sweep
@@ -4348,7 +4387,12 @@ func request_croc_flee(origin: Vector3, duration: float, radius: float = 0.0) ->
 	# Whatever we can reach ourselves, scare now. Harmless on remote-driven
 	# crocodiles (the next sample overwrites the flag 100 ms later) and on the
 	# master this IS the authoritative application.
-	_apply_flee(origin, duration, radius)
+	# `tracks_player` FALSE for a caster who is not the local player - the cell
+	# block's vent purge, which names a TEAMMATE's position. Default true, so
+	# Phoboman's wave and `clear_nearby_crocodiles()` are byte-for-byte unchanged;
+	# without it a purge fired on the master would send the pack running from the
+	# prisoner in the tower, i.e. straight at the teammate it was meant to help.
+	_apply_flee(origin, duration, radius, tracks_player)
 	if _master == _you:
 		return true
 	_send_reliable_to_master(var_to_bytes({
