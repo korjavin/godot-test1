@@ -4090,7 +4090,18 @@ func _behave_leap() -> void:
 
 	MULTIPLAYER: a hop is MOTION. `_tick_remote()` returns long before the
 	dispatch, so a peer never runs this arm and simply replays the master's position
-	samples, y included — no flag, no new byte, no protocol change.
+	samples, y included (it assigns the whole interpolation Vector3 to `velocity`) —
+	no flag, no new byte, no protocol change.
+
+	TWO PLACES ALREADY STOP THIS ARM, and neither needed teaching about y. A PAUSED
+	body (`_pause_and_change_direction`, which every landed bite opens) skips the
+	whole dispatch, so a boss that bites you mid-arc finishes the arc under the
+	file's own GRAVITY — it drops out of the sky onto what it just bit, which is the
+	right read and is why boss_selfcheck measures the arc's AIRTIME rather than its
+	apex. A SLEPT body (`set_lod_active(false)`) runs no `_physics_process` at all
+	and freezes wherever it was; SIM_RADIUS (45) is far outside
+	BOSS_DETECTION_RADIUS (25), so a boss close enough to be mid-arc for a reason is
+	always awake, and one slept mid-air resumes its fall on the frame it wakes.
 	"""
 	if not is_chasing:
 		# The commitment and the clock both go, the burst arm's edge verbatim: a
