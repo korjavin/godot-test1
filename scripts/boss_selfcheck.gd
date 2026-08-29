@@ -137,11 +137,23 @@ const LEAP_FRAMES: int = 600
 
 ## The share of its own declared apex a hop must actually reach for the launch to
 ## count as one. Half, deliberately loosely: the arc is measured through a real
-## physics tick against a real collision capsule and the phase's first frames may
-## be spent turning, so this is a guard against a hop that DOES NOT HAPPEN (or one
-## the row tuned to a 4 cm bounce), not a re-derivation of the ballistics.
-## enemy_spawn_selfcheck's leap probe owns the exact apex, off the row constants.
+## physics tick against a real collision capsule, and a boss that lands its bite
+## mid-air takes a `_pause_and_change_direction` window during which the arm does
+## not run at all and the body falls under the file's own GRAVITY (measured: a
+## dragon reaches 3.10 m of its declared 3.56). So this is a guard against a hop
+## that DOES NOT HAPPEN, or one a row tuned to a 4 cm bounce — the ARC itself is
+## pinned by the airtime tolerance below, which the bite window does not blur.
 const LEAP_APEX_FRACTION: float = 0.5
+
+## How far the longest COMPLETE arc's measured airtime may sit from the one the
+## row's two constants imply (2 x launch / gravity). The measurement is clean —
+## a dragon's 1.78 s against a declared 1.778, a roc's 2.27 s against 2.25 — so
+## 15% is far outside anything the physics tick or the bite window produces, and
+## comfortably inside the 18% error an arc falling under the file's GRAVITY
+## instead of the row's would show. It is the tightest thing this phase asserts,
+## and deliberately: the airtime is the ONLY output of `leap_gravity` that
+## `leap_reach` (and therefore the leash gate) is computed from.
+const LEAP_AIRTIME_TOLERANCE: float = 0.15
 
 ## Slack, in launches, on the hop count a phase may show above the cadence its row
 ## allows. Two: the window is not a whole number of cycles and the first hop fires
@@ -721,15 +733,21 @@ func _check_leap(boss: CharacterBody3D, player: StubPlayer, home: Vector3) -> vo
 	var launches: int = 0
 	var landings: int = 0
 	var ground_drift: float = 0.0
+	var air_frames: int = 0
+	var longest_air: int = 0
 	var grounded: bool = boss.is_on_floor()
 	for _i in LEAP_FRAMES:
 		await physics_frame
 		highest = maxf(highest, boss.global_position.y - rest_y)
 		var now_grounded: bool = boss.is_on_floor()
+		if not now_grounded:
+			air_frames += 1
 		if grounded and not now_grounded:
 			launches += 1
+			air_frames = 1
 		elif now_grounded and not grounded:
 			landings += 1
+			longest_air = maxi(longest_air, air_frames)
 		if now_grounded:
 			# THE FLAT-WORLD INVARIANT, ASSERTED WHERE IT LIVES. Every frame the
 			# feet are down they must be down at the SAME height they started at —
@@ -753,6 +771,18 @@ func _check_leap(boss: CharacterBody3D, player: StubPlayer, home: Vector3) -> vo
 		_fail("leap: %d launch(es) and not one landing in %d frames — the arc never"
 				% [launches, LEAP_FRAMES] + " brings the body back down, which on a"
 				+ " world that is flat at y = 0 is not a hop but flight")
+	print("leap (%s): apex %.2f m (row says %.2f), airtime %.2f s (row says %.2f),"
+			% [_subject, highest, apex, float(longest_air) / 60.0, airtime]
+			+ " %d launches / %d landings in %.1f s"
+			% [launches, landings, float(LEAP_FRAMES) / 60.0])
+	if landings > 0 and absf(float(longest_air) / 60.0 - airtime) > airtime * LEAP_AIRTIME_TOLERANCE:
+		_fail("leap: the longest complete arc lasted %.2f s; the row's %.2f m/s"
+				% [float(longest_air) / 60.0, float(row["leap_launch_speed"])]
+				+ " launch under its own %.2f m/s^2 arc gravity implies %.2f s."
+				% [float(row["leap_gravity"]), airtime] + " The body is not falling"
+				+ " at the gravity its row states, so leap_reach() — and the leash"
+				+ " gate that projects a landing with it — is computed from an arc"
+				+ " that is not the one being flown")
 	if ground_drift > apex * LEAP_APEX_FRACTION:
 		_fail("leap: the boss stood %.2f m off its own resting height on a GROUNDED"
 				% ground_drift + " frame — a hop is a transient arc, so every"
