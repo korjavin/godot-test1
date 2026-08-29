@@ -535,6 +535,24 @@ const CHARACTERS: Array[Dictionary] = [
 	}
 ]
 
+## The 1-4 hotkeys, one row per `CHARACTERS` index: press 2 and you ARE Primm.
+##
+## RAW KEYCODES, outside project.godot's input map, for the same reason
+## landmark_toast.gd's answer keys and minimap_hud.gd's M are raw: a named action
+## is for rebindable GAMEPLAY input, and a key that only picks one specific hero
+## has nothing to rebind against — rebinding "hero 2" to another key is a roster
+## question, not a keymap one. Both the number row and the numpad are accepted,
+## the same pair those two accept.
+##
+## The digits are the ones hero_hud.gd draws on its portrait tiles, and
+## help_selfcheck.gd rebuilds the help card's "1 2 3 4" legend from this array.
+const HERO_KEYCODES: Array = [
+	[KEY_1, KEY_KP_1],
+	[KEY_2, KEY_KP_2],
+	[KEY_3, KEY_KP_3],
+	[KEY_4, KEY_KP_4],
+]
+
 ## Current character index (starts with windman at index 0)
 var current_character_index: int = 0
 
@@ -865,6 +883,43 @@ func _input(event: InputEvent) -> void:
 	# binding), so typing one would otherwise swap the frozen player's model.
 	if event.is_action_pressed("switch_character") and not is_game_over:
 		switch_to_next_character()
+
+
+func _unhandled_input(event: InputEvent) -> void:
+	"""
+	1-4 (number row or numpad) jump STRAIGHT to that hero — the digits hero_hud.gd
+	draws on its portrait tiles. R still cycles; this is the same switch by another
+	road, through the same `switch_to_character()` primitive and the same filter.
+
+	UNHANDLED, not `_input`, and that is the whole quiz story: landmark_toast.gd
+	reads 1/2/3 in `_unhandled_input` too and `accept_event()`s them, so while a
+	question is up the card answers and the hero must not also change. THE GUARD
+	BELOW IS EXPLICIT AND MUST STAY — leaning on which node the engine reaches
+	first would make the rule an accident of tree order, and the toast lives in the
+	HUD CanvasLayer, not under the player. With the guard, 1/2/3 answer the quiz
+	and 4 is simply inert while the card is up.
+
+	It also stays out of the way of every overlay: the tree is paused by all of
+	them (the skill tree, the pause screen, this card), so a digit typed to close
+	one never swaps a hero. `is_game_over` is refused for the reason the R press
+	above is — the MP panel's invite codes are typed with the cursor free.
+	"""
+	if is_game_over or get_tree().paused:
+		return
+	var key := event as InputEventKey
+	if key == null or not key.pressed or key.echo:
+		return
+	var toast := get_tree().get_first_node_in_group("landmark_toast")
+	if toast and toast.has_method("is_quiz_pending") and toast.is_quiz_pending():
+		return
+	for index: int in HERO_KEYCODES.size():
+		if (HERO_KEYCODES[index] as Array).has(key.keycode):
+			switch_to_character(index)
+			# `accept_event()` is a Control method and this is a CharacterBody3D, so
+			# the consume is spelled the long way — same effect: nothing below us
+			# sees the digit.
+			get_viewport().set_input_as_handled()
+			return
 
 # ============================================================================
 # CAMERA VIEW CYCLE (third-person / first-person / front)
@@ -1566,10 +1621,6 @@ func switch_to_next_character() -> void:
 	IN A MULTIPLAYER ROOM the lobby owns who plays which hero, so the cycle is
 	restricted to the characters this peer was assigned (see below).
 	"""
-	# Block switching while a prolonged ability (flying/resize) is active
-	if windman_boost_timer > 0.0 or teibi_size_state != 0:
-		return
-
 	# Which characters may we step to? `available_character_indices()` — the lobby's
 	# hand INTERSECT the heroes nobody is holding captive. Solo, with nobody taken,
 	# it answers all four and the cycle below is arithmetically the plain
@@ -1578,26 +1629,54 @@ func switch_to_next_character() -> void:
 	# captive filter would end up applied to one of them and not the other.
 	var indices := available_character_indices()
 
-	# The lobby holds at most one hero per member, so in a room this is normally a
-	# singleton and the press is a refusal — and so is a press by a player down to
-	# his last free hero. Give both the SAME dial flash and denial buzz a refused F
-	# press gets, so the player reads "this hero is locked" rather than "E is
-	# broken". (A body outside the allowed set is momentary — the manager applies
-	# the confirmed hero itself through set_active_character — so there is nothing
-	# to correct here.)
-	if indices.size() <= 1:
+	# THIS FUNCTION ONLY PICKS AN INDEX — every guard, and the refusal feedback,
+	# live in switch_to_character(). A hand of 0 or 1 has no "next" hero, so the
+	# next hero is the one we already are, which that function refuses with the
+	# flash: the singleton-hand refusal (a room member, or a player down to his
+	# last free hero) is unchanged, it just no longer has its own spelling here.
+	var next_index: int = current_character_index
+	if indices.size() > 1:
+		# find() returning -1 wraps to the first allowed entry, which is the right
+		# answer when we are not currently in any of them.
+		var slot: int = indices.find(current_character_index)
+		next_index = int(indices[(slot + 1) % indices.size()])
+	switch_to_character(next_index)
+
+
+func switch_to_character(index: int) -> bool:
+	"""
+	BECOME this hero, if we are allowed to. The ONE switch primitive the player's
+	own input goes through: R computes the next index and calls it, and the 1-4
+	hotkeys pass their index straight in (bead godot-test1-hpv). Both therefore
+	obey the same two ability guards and the same availability filter, and neither
+	can grow a second, laxer spelling of the rules.
+
+	NOT the lowest layer: `set_active_character()` is, and the lobby still calls
+	THAT directly (mp_manager._apply_my_hero) because a confirmed hero assignment
+	is not asking permission. This function is the layer that asks.
+
+	@param index: index into CHARACTERS
+	@return: true if we actually switched
+	"""
+	# Block switching while a prolonged ability (flying/resize) is active. Silent,
+	# not a flash: the press is not "denied", it is "not yet".
+	if windman_boost_timer > 0.0 or teibi_size_state != 0:
+		return false
+
+	# Give a refused press the SAME dial flash and denial buzz a refused F press
+	# gets, so the player reads "this hero is locked" rather than "the key is
+	# broken". Pressing the hero you already are lands here too — nothing happens
+	# either way, and the flash is what says so.
+	if index == current_character_index or not available_character_indices().has(index):
 		_flash_blocked_feedback()
-		return
-	var slot: int = indices.find(current_character_index)
-	# find() returning -1 wraps to the first allowed entry, which is the right
-	# answer when we are not currently in any of them.
-	current_character_index = int(indices[(slot + 1) % indices.size()])
+		return false
 
 	# Show the newly selected character
-	set_active_character(current_character_index)
+	set_active_character(index)
 
 	# Print confirmation
-	print("Switched to character: %s" % CHARACTERS[current_character_index]["name"])
+	print("Switched to character: %s" % CHARACTERS[index]["name"])
+	return true
 
 
 # ---------------------------------------------------------------------------

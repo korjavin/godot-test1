@@ -407,6 +407,11 @@ func _ready() -> void:
 	visible = false
 	modulate.a = 0.0
 
+	# So the player controller can ASK whether a question is on screen before it
+	# reads 1/2/3 for a hero switch. Group lookup, no hard reference, like every
+	# other cross-system hookup in this project.
+	add_to_group("landmark_toast")
+
 	# Backing panel. A PanelContainer + StyleBoxFlat is the cheapest rounded,
 	# translucent card Godot has that needs no texture.
 	var panel := PanelContainer.new()
@@ -1007,6 +1012,15 @@ func _unhandled_input(event: InputEvent) -> void:
 			_answer(slot)
 			accept_event()
 			return
+
+
+func is_quiz_pending() -> bool:
+	"""
+	Is a question on screen waiting for a digit? The one bit anything outside this
+	file needs: player_controller.gd asks it before letting 1/2/3 switch a hero, so
+	the quiz wins its keys while its card is up (bead godot-test1-hpv).
+	"""
+	return _quiz_pending
 
 
 func _hide_options() -> void:

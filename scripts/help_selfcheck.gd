@@ -34,7 +34,8 @@ extends SceneTree
 ##     the key legends are read back against the REAL sources: `project.godot`'s
 ##     input map for the gameplay keys, and the raw-keycode constants in
 ##     `minimap_hud` / `pause_controller` / `perf_overlay` / `motion_debug` /
-##     `landmark_toast` for the HUD and debug keys. Rebind anything without
+##     `landmark_toast` / `player_controller` for the HUD, hero and debug keys.
+##     Rebind anything without
 ##     touching `ROWS` and this fails.
 ##
 ##  4. **An untranslated row.** A row added without its `ui.csv` entry renders in
@@ -195,6 +196,23 @@ func _check_table() -> String:
 	if not legends.has(quiz_legend):
 		return ("no help row carries the legend \"%s\" — landmark_toast.ANSWER_KEYCODES " \
 			+ "answers the quiz with keys the help card does not name") % quiz_legend
+
+	# --- The hero hotkeys ---------------------------------------------------
+	# Same shape, and the same reasoning, as the quiz block above: one legend over
+	# four main-row/numpad pairs, rebuilt from the constant so a rebind cannot
+	# leave the card naming keys that no longer pick a hero. It is a DIFFERENT
+	# legend from the quiz's ("1 2 3 4" vs "1 2 3") on purpose — the two rows read
+	# the same digits and the card has to say which does what.
+	var hero_keys := PackedStringArray()
+	for pair: Array in PlayerController.HERO_KEYCODES:
+		hero_keys.append(OS.get_keycode_string(int(pair[0])))
+	var hero_legend: String = " ".join(hero_keys)
+	if not legends.has(hero_legend):
+		return ("no help row carries the legend \"%s\" — player_controller.HERO_KEYCODES " \
+			+ "switches hero with keys the help card does not name") % hero_legend
+	if hero_legend == quiz_legend:
+		return ("the hero hotkey row and the quiz row would share the legend \"%s\" — " \
+			+ "two different actions on one legend is exactly the drift this checks for") % hero_legend
 
 	# --- The per-hero ability one-liner -------------------------------------
 	var ability_row := _row_text("F")
