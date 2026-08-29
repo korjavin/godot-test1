@@ -951,9 +951,7 @@ func _check_node_shape() -> void:
 	for box: Dictionary in boxes:
 		if box["collide"]:
 			want_shapes += 1
-		var moving: bool = TowerInterior.MOVING_PARTS.has(String(box["name"])) \
-				or not is_zero_approx(float(box.get("spin", 0.0)))
-		if not moving:
+		if not TowerInterior.is_own_node(box):
 			for corner: Vector3 in _corners(box):
 				if not batch_verts[int(box["floor"])].has(_key(corner)):
 					_fail("%s's corner %s is in no vertex of storey %d's batch — the box was dropped or misplaced" % [
@@ -1011,15 +1009,20 @@ func _check_node_shape() -> void:
 	# COUNTED AND NOT CAPPED — an Area3D nobody meant to build is a trigger that
 	# fires, and every one of these fifteen is named in this file.
 	#
-	# THE HAND-PLANNED STOREYS ADD NONE, and that is why this number did not move
-	# in phase 14: a `P` cell draws a cyan plate and nothing else, because there
-	# are no guards up there yet to purge (phase 17 owns population). The first pad
-	# that does something has to come and edit this line, which is the point of
-	# counting rather than capping.
+	# A `P` cell still adds NONE — it draws a cyan plate and nothing else, because
+	# there are no guards up there yet to purge (phase 17 owns population). What
+	# phase 15 added is one trigger per RIDDLE LOCK PAD, and that count is derived
+	# from the plans themselves rather than written down, so a riddle authored later
+	# is measured the day its cells land and a pad that lost its trigger fails here.
 	var want_areas := 5 + TowerInterior.SPINE_DOORS.size() + TowerGraph.HEROES.size() + 2
+	var lock_pads := 0
+	for plan: Dictionary in TowerPlans.STOREYS:
+		lock_pads += (TowerInterior.riddle_slots(plan)["pads"] as Array).size()
+	want_areas += lock_pads
 	if areas != want_areas:
-		_fail("the interior has %d Area3D, expected %d (3 pads + 2 rotor hazards + %d spine pads + %d cells + 1 press + 1 purge)" % [
-			areas, want_areas, TowerInterior.SPINE_DOORS.size(), TowerGraph.HEROES.size()])
+		_fail("the interior has %d Area3D, expected %d (3 pads + 2 rotor hazards + %d spine pads + %d cells + 1 press + 1 purge + %d riddle lock pads)" % [
+			areas, want_areas, TowerInterior.SPINE_DOORS.size(), TowerGraph.HEROES.size(),
+			lock_pads])
 
 	var body := interior.get_node_or_null("InteriorCollision") as StaticBody3D
 	if body == null:
@@ -1074,10 +1077,13 @@ func _check_materials_are_shared_and_already_toon() -> void:
 	# One material per colour a MOVING part wears, plus the batch's own two — and no
 	# more. A batched box costs no material at all, which is the other half of what
 	# the batch bought.
+	# `all_boxes()` and `is_own_node()`, which is the SAME question `_ready()` asks
+	# when it decides what leaves the batch — a plan storey's riddle mass wears a
+	# material exactly as the keep's gates do, and counting only the keep would have
+	# left this cap silently unable to see one.
 	var colors := {}
-	for box: Dictionary in TowerInterior.boxes():
-		if TowerInterior.MOVING_PARTS.has(String(box["name"])) \
-				or not is_zero_approx(float(box.get("spin", 0.0))):
+	for box: Dictionary in TowerInterior.all_boxes():
+		if TowerInterior.is_own_node(box):
 			colors[box["color"]] = true
 	# The checkpoint, the bands and the cell frames each own a second colour they
 	# swap to (lit, lit, and DARK for a cell that has been emptied); those materials
@@ -1279,6 +1285,67 @@ func _check_gate_lifecycle() -> void:
 	if shell.opened_ids() != want:
 		_fail("the tower's opened set is %s, expected %s" % [shell.opened_ids(), want])
 
+	# (g) THE RIDDLE, phase 15: a wrong step resets and clunks, the right sequence
+	# opens for good. Driven pad by pad through the real trigger volumes, because
+	# the ORDER is the whole mechanism and a lock that latched on "all four pressed"
+	# would pass every other assertion in this file.
+	for gid: String in TowerInterior.riddle_ids():
+		var answer: Array = TowerGraph.gate(gid)["answer"]
+		var lock: MeshInstance3D = interior.find_child("*RiddleMass_%s" % gid, true, false)
+		if lock == null or answer.size() < 2:
+			_fail("riddle '%s' has no mass or no sequence to enter" % gid)
+			continue
+		var shut := lock.position.y
+		# A deliberately wrong first step: something that is not answer[0].
+		var wrong := int(answer[1])
+		await _press_pad(hero, interior, gid, wrong)
+		if shell.is_opened(gid):
+			_fail("riddle '%s' opened on a single wrong pad" % gid)
+		if float(interior._riddle_nudge.get(gid, 0.0)) <= 0.0 and int(answer[0]) != wrong:
+			_fail("riddle '%s' gave no reaction to a wrong step — the failure is invisible" % gid)
+		# THE ORDER IS THE PUZZLE, so the control is the same four pads BACKWARDS.
+		# A lock that counted presses rather than reading a sequence passes every
+		# other line here and fails this one.
+		var backwards := answer.duplicate()
+		backwards.reverse()
+		for step in backwards:
+			await _press_pad(hero, interior, gid, int(step))
+		if shell.is_opened(gid):
+			_fail(("riddle '%s' opened on its own answer BACKWARDS — the lock is counting "
+				+ "presses, not reading an order") % gid)
+		# Step off, so the first digit of the real answer reads as a fresh press
+		# rather than as the pad the player was already standing on.
+		hero.global_position = lock.global_position
+		await _settle_physics()
+		interior._process(0.05)
+		# ...then the sequence, in order, from the top.
+		for step in answer:
+			await _press_pad(hero, interior, gid, int(step))
+		if not shell.is_opened(gid):
+			_fail("riddle '%s' did not open on its own answer %s" % [gid, str(answer)])
+		for _i in 40:
+			interior._process(0.1)
+		if absf(lock.position.y - (shut + TowerInterior.RIDDLE_TRAVEL)) > 0.01:
+			_fail("riddle '%s' stopped at %.2f m, expected %.2f m" % [
+				gid, lock.position.y, shut + TowerInterior.RIDDLE_TRAVEL])
+		var lock_shape := body.get_node_or_null("%sShape" % lock.name) as CollisionShape3D
+		if lock_shape == null or absf(lock_shape.position.y - lock.position.y) > EPS:
+			_fail("riddle '%s' opened only visually — its collision shape is still in the way"
+				% gid)
+		# ...and a sequence COMPLETED BUT NEVER RECORDED starts again from the top
+		# instead of indexing past its own answer. That is not hypothetical: the
+		# open state lives on the shell, so an interior built with no tower over it
+		# — which is what `_make_interior()` does twice in this file — finishes the
+		# answer, records nothing and steps on the next pad. Driven directly,
+		# because the assertion is about the index and the walk above already
+		# covers the trigger path.
+		interior._riddle_step[gid] = answer.size()
+		interior._press_riddle(gid, int(answer[0]))
+		if int(interior._riddle_step[gid]) != 1:
+			_fail(("riddle '%s' did not restart a completed-but-unrecorded sequence — it read "
+				+ "step %d of a %d-step answer") % [
+					gid, int(interior._riddle_step[gid]), answer.size()])
+
 	# And a rotor bar still costs a life, which is the challenge space's whole stake.
 	var hazard := interior.find_child("RotorBarLowHazard", true, false) as Area3D
 	if hazard == null:
@@ -1296,6 +1363,21 @@ func _check_gate_lifecycle() -> void:
 	await process_frame
 
 
+func _press_pad(hero: Node3D, interior: TowerInterior, gate_id: String, digit: int) -> void:
+	## Stand the probe on one riddle lock pad and let the interior read it.
+	##
+	## Through the REAL trigger volume and the real poll, not by calling
+	## `_press_riddle` — the thing worth asserting is that standing somewhere enters
+	## a step, which is the half a direct call would skip straight past.
+	var area := interior.find_child("RiddleTrigger_%s_%d" % [gate_id, digit], true, false) as Area3D
+	if area == null:
+		_fail("riddle '%s' has no trigger volume for pad %d" % [gate_id, digit])
+		return
+	hero.global_position = area.global_position
+	await _settle_physics()
+	interior._process(0.05)
+
+
 func _check_opened_state_is_reapplied() -> void:
 	"""
 	Check 8. A tower that already knows its gates are open comes up open, before the
@@ -1310,11 +1392,18 @@ func _check_opened_state_is_reapplied() -> void:
 	"""
 	_fresh_store()  # the set below is meant to be the WHOLE set — see check 7's note
 	var shell := load(SHELL_SCENE).instantiate() as Node3D
+	var riddles := TowerInterior.riddle_ids()
 	shell.opened = {
 		TowerInterior.GATE_DEMAND: true,
 		TowerInterior.GATE_IDENTITY: true,
 		TowerInterior.GATE_CHECKPOINT: true,
 	}
+	# ...and every riddle, because a solved riddle is in the same monotone set and
+	# has to come back solved for the same reason — the sequence is entered once,
+	# ever, and a tower that asked for it again after a reload would be re-locking
+	# a gate somebody earned.
+	for gid: String in riddles:
+		shell.opened[gid] = true
 	shell.add_child(load(INTERIOR_SCENE).instantiate())
 	root.add_child(shell)
 	await process_frame
@@ -1349,9 +1438,26 @@ func _check_opened_state_is_reapplied() -> void:
 	if shutter_shape == null or absf(shutter_shape.position.y - shutter.position.y) > EPS:
 		_fail("a pre-opened tower left the shutter's collision shape sealing the vault")
 
+	for gid2: String in riddles:
+		var rest := 0.0
+		var mesh := interior.find_child("*RiddleMass_%s" % gid2, true, false) as MeshInstance3D
+		for box: Dictionary in TowerInterior.all_boxes():
+			if String(box["name"]).ends_with("RiddleMass_%s" % gid2):
+				rest = box["pos"].y
+		if mesh == null:
+			_fail("riddle '%s' built no mass at all" % gid2)
+			continue
+		if absf(mesh.position.y - (rest + TowerInterior.RIDDLE_TRAVEL)) > EPS:
+			_fail("a pre-opened tower rebuilt riddle '%s' shut (y = %.2f, wanted %.2f)" % [
+				gid2, mesh.position.y, rest + TowerInterior.RIDDLE_TRAVEL])
+		var riddle_shape := body.get_node_or_null("%sShape" % mesh.name) as CollisionShape3D
+		if riddle_shape == null or absf(riddle_shape.position.y - mesh.position.y) > EPS:
+			_fail("a pre-opened tower left riddle '%s' with its collision shape in the doorway"
+				% gid2)
+
 	# The set itself is monotone and idempotent — phase 5 merges these with a union.
 	shell.mark_opened(TowerInterior.GATE_DEMAND)
-	if shell.opened_ids().size() != 3:
+	if shell.opened_ids().size() != 3 + riddles.size():
 		_fail("marking an already-open gate changed the set size to %d" % shell.opened_ids().size())
 	if not shell.is_opened(TowerInterior.GATE_DEMAND) or shell.is_opened("tower_nonexistent"):
 		_fail("is_opened() does not answer the set")
