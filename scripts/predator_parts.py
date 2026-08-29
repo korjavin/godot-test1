@@ -648,6 +648,29 @@ def _selfcheck_necks() -> None:
             assert np.ptp(heads[:, 2]) >= length * 0.3, \
                 f"necks/{label}: heads span only {np.ptp(heads[:, 2]):.3f} m of z"
 
+        # NO GAPS AT THE ELBOWS. Each block spans at least its own stride, which
+        # is what the deliberate overlength is for: the arc turns between
+        # segments, so a block merely as long as the step opens a wedge on the
+        # outside of every bend and the neck reads as a string of beads.
+        stride = length / segs
+        for i in range(count):
+            for s_i in range(segs):
+                span = parts[i * per + s_i].extents.max()
+                assert span >= stride, \
+                    f"necks/{label}: segment {s_i} spans {span:.4f} of a {stride:.4f} stride"
+
+        # A HEAD IS A BLOCK, not a wafer. Every head is measured against the
+        # jaw-end segment it sits on: the thinnest thing about the head may not
+        # be thinner than the thinnest thing about the neck. Measured on extents
+        # rather than eyeballed proportions, because a collapsed dimension is
+        # exactly what a proportion typo produces — one that welds, mirrors and
+        # verifies perfectly, and ships a fan of headless stalks.
+        for i in range(count):
+            head_ext = parts[i * per + segs].extents.min()
+            jaw_ext = parts[i * per + segs - 1].extents.min()
+            assert head_ext >= jaw_ext, \
+                f"necks/{label}: head {i} is {head_ext:.4f} thin on a {jaw_ext:.4f} neck"
+
         # Nothing reaches further than the neck plus its head can put it.
         reach = np.linalg.norm(v - r, axis=1).max()
         assert reach <= length * 1.6, f"necks/{label}: reaches {reach:.3f} m on {length}"
