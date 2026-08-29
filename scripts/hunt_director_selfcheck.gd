@@ -137,6 +137,7 @@ func _run() -> void:
 	_check_lull_pure()
 	_check_escape_sector()
 	_check_live_pacing()
+	_check_reaped_grab()
 	_check_two_quarries()
 	await _check_absent_director()
 	_report()
@@ -445,6 +446,70 @@ func _check_live_pacing() -> void:
 				% DIRECTOR.ENGAGE_LULL + "run")
 
 	_teardown([director, a, b, c])
+
+
+# ============================================================================
+# CHECK 4b — the route a grab ACTUALLY takes to this director
+# ============================================================================
+
+func _check_reaped_grab() -> void:
+	## Nothing in `piglet_crocodile_ai.gd` calls `report_grab`. The bite path
+	## writes `hunt_disengage_time` into the arm's own `_hunt_lock` and the
+	## director's tick READS it — so a unit that has dropped out of `closing` with
+	## time left on that clock is the only signal in the game that a retrieval
+	## landed, and reaping it is the only live route rule 2 has.
+	##
+	## THIS CHECK EXISTS BECAUSE MUTATION TESTING FOUND ITS ABSENCE. Check 4 calls
+	## the public verb directly, so deleting the reap's grab detection entirely
+	## left the whole suite green while the shipped game lost its post-grab lull.
+	##
+	## The NEGATIVE CONTROL is the substance of it: a hunter that merely LOST its
+	## quarry drops out through the same code with an empty disengage clock, and
+	## must buy the player nothing. Without that half, "every disengagement starts
+	## a lull" passes — and that reads in play as hunters that go quiet whenever
+	## you break line of sight, which is a tell, which is the one thing this class
+	## is not allowed to give the player.
+
+	# ---- it took you: the tick must find the withdrawal and start the lull ----
+	var took: Node = _make_director()
+	var a: Node3D = _make_stub(Vector3.ZERO, Vector3(6.0, 0.0, 0.0))
+	var b: Node3D = _make_stub(Vector3.ZERO, Vector3(-6.0, 0.0, 0.0))
+	if not took.request_hunt_close(a):
+		_fail("reaped grab: the harness could not seat the hunter that is about "
+				+ "to grab, so neither half of this check would mean anything")
+		_teardown([took, a, b])
+		return
+	# Exactly what the bite path leaves behind: no longer closing, seconds owed on
+	# the disengage clock. Nobody calls report_grab — the director must notice.
+	a._hunt_lock["closing"] = false
+	a._hunt_lock["disengage"] = 8.0
+	_age(took, 1.0)
+	if took.request_hunt_close(b):
+		_fail("reaped grab: a hunter withdrew with time still on its disengage "
+				+ "clock — the signature of a landed grab, and the ONLY signal "
+				+ "the game gives this director — and no lull started. Nothing "
+				+ "calls report_grab in the shipped code, so rule 2 is inert in "
+				+ "play however well it passes when driven by hand.")
+	_teardown([took, a, b])
+
+	# ---- it lost you: the same drop must buy the player nothing --------------
+	var lost: Node = _make_director()
+	var c: Node3D = _make_stub(Vector3.ZERO, Vector3(6.0, 0.0, 0.0))
+	var d: Node3D = _make_stub(Vector3.ZERO, Vector3(-6.0, 0.0, 0.0))
+	if not lost.request_hunt_close(c):
+		_fail("reaped grab: the harness could not seat the hunter that is about "
+				+ "to lose its quarry, so the negative control is untested")
+		_teardown([lost, c, d])
+		return
+	c._hunt_lock["closing"] = false
+	c._hunt_lock["disengage"] = 0.0
+	_age(lost, 1.0)
+	if not lost.request_hunt_close(d):
+		_fail("reaped grab: a hunter that merely LOST its quarry — nothing taken, "
+				+ "an empty disengage clock — still put that quarry into a lull. "
+				+ "Every broken line of sight now pauses the class, which the "
+				+ "player reads as a tell.")
+	_teardown([lost, c, d])
 
 
 # ============================================================================
