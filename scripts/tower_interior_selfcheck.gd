@@ -612,10 +612,19 @@ func _check_headroom_clears_the_camera() -> void:
 	var courtyard := TowerInterior.SLAB_X0 + TowerInterior.INNER_HALF
 	var outdoor_reach := _camera_reach(player, camera)
 	player.call("set_indoor_camera", true)
+	# A FEW FRAMES IN, the boom must be ON ITS WAY AND NOT THERE. The tower's
+	# doorway is a 6 x 4 m hole the boom trails straight through, so a snap would
+	# cut the camera 4.3 m forward on every entry; `_tick_arm_length` eases it
+	# instead, and this sample is what fails if somebody puts the snap back.
 	await _settle_physics()
+	var mid_reach := _camera_reach(player, camera)
+	await _ease_arm()
 	var indoor_reach := _camera_reach(player, camera)
 	print("camera reach: %.2f m outdoors, %.2f m indoors (+ %.2f margin); courtyard %.2f m wide" % [
 		outdoor_reach, indoor_reach, arm.margin, courtyard])
+	if mid_reach >= outdoor_reach or mid_reach <= indoor_reach:
+		_fail("the boom jumped to %.2f m instead of easing between %.2f and %.2f — a doorway is a cut again" % [
+			mid_reach, outdoor_reach, indoor_reach])
 	if indoor_reach + arm.margin > courtyard * 0.5:
 		_fail("the indoor boom reaches %.2f m (+ %.2f margin) into a %.2f m courtyard — it still collapses on its centre line" % [
 			indoor_reach, arm.margin, courtyard])
@@ -628,7 +637,7 @@ func _check_headroom_clears_the_camera() -> void:
 	# world state; a player who walks out and never gets the outdoor camera back is
 	# the mutant this line kills.
 	player.call("set_indoor_camera", false)
-	await _settle_physics()
+	await _ease_arm()
 	if not is_equal_approx(_camera_reach(player, camera), outdoor_reach):
 		_fail("walking out of the room left the camera at %.2f m instead of the shipped %.2f m" % [
 			_camera_reach(player, camera), outdoor_reach])
@@ -642,6 +651,14 @@ func _check_headroom_clears_the_camera() -> void:
 	# later check two candidates for "the local player" and a coin-flip for which.
 	player.queue_free()
 	await process_frame
+
+
+func _ease_arm() -> void:
+	## Long enough for `_tick_arm_length` to finish its walk: the whole trip is
+	## 4.4 m at ARM_EASE_SPEED, about 15 physics frames, and this is comfortably
+	## over that with no dependence on the exact rate.
+	for _i in 40:
+		await physics_frame
 
 
 func _camera_reach(player: Node3D, camera: Camera3D) -> float:
@@ -1153,8 +1170,20 @@ func _check_visibility_gating() -> void:
 	if TowerInterior.inside_walls(Vector3(0.0, TowerShell.WALL_HEIGHT + 5.0, 0.0)):
 		_fail("a point %.0f m over the wall top reads as inside the building" % (TowerShell.WALL_HEIGHT + 5.0))
 
+	# THE BUILDING FREED OUT FROM UNDER A PLAYER STANDING IN IT. Joining a
+	# multiplayer room mid-run does exactly this — `new_run()` resets the shell and
+	# then teleports, with no respawn to clean up after it — and the room is the
+	# only thing that ever clears the indoor boom, so without `_exit_tree` the short
+	# arm would stay on for the rest of the session, outdoors.
+	hero.global_position = shell.global_position + Vector3(4.0, 0.0, 0.0)
+	interior._process(0.05)
+	if hero.indoor != true:
+		_fail("the probe is not indoors, so the teardown case below would pass vacuously")
+	shell.free()
+	if hero.indoor != false:
+		_fail("freeing the building left the player holding the indoor camera")
+
 	hero.queue_free()
-	shell.queue_free()
 	await process_frame
 
 

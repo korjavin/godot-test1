@@ -1544,6 +1544,25 @@ func _ready() -> void:
 		tower.connect("player_entered", _on_tower_doorway)
 
 
+func _exit_tree() -> void:
+	"""
+	Hand the outdoor camera back on the way out.
+
+	THE ROOM IS THE ONLY THING THAT CLEARS THE INDOOR BOOM, so a room that is FREED
+	while the player stands in it would leave the short arm on forever. That is not
+	hypothetical: joining a multiplayer room mid-run calls `new_run()`, which
+	`_tower_reset()`s the shell out from under this node before teleporting the
+	player to the group — no respawn, no `reset_position()`, nobody left to ask.
+
+	Here rather than at that call site because it covers every way the building can
+	go away, present and future, with one guard. Cheap and null-safe: on shutdown
+	the player may be gone or going, which reads as "nothing to hand back".
+	"""
+	var player := get_tree().get_first_node_in_group("player") if is_inside_tree() else null
+	if player != null and player.has_method("set_indoor_camera"):
+		player.call("set_indoor_camera", false)
+
+
 func _process(delta: float) -> void:
 	"""
 	Everything that moves, plus the visibility gating.

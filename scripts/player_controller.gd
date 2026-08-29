@@ -483,11 +483,18 @@ var third_person_camera_rotation: Vector3 = Vector3.ZERO
 ## `tower_interior_selfcheck` check 4.
 const INDOOR_ARM_LENGTH: float = 3.85
 
+## How fast the boom travels between the two lengths, in metres per second. The
+## whole trip is 8.25 - 3.85 = 4.4 m, so 18 puts a doorway at about a quarter of a
+## second: fast enough to be over before you have looked around the room, slow
+## enough to read as a dolly instead of a cut. See `_tick_arm_length()`.
+const ARM_EASE_SPEED: float = 18.0
+
 ## Is a room currently holding the indoor boom? Written ONLY by
-## `set_indoor_camera()`; read only by `_apply_view_mode()`, which is the single
-## place third-person `spring_length` is written. Transient world state, not a
-## preference: whoever set it clears it, and `reset_position()` clears it too
-## because a hard reset teleports out of every room at once.
+## `set_indoor_camera()`; read only through `_third_person_arm_target()`, which
+## both the snap path and the ease path go through. Transient world state, not a
+## preference: whoever set it clears it (including when the room is FREED — see
+## `TowerInterior._exit_tree`), and `reset_position()` clears it too because a
+## hard reset teleports out of every room at once.
 var _indoor_camera: bool = false
 
 ## Character's visual mesh (for ducking animation)
@@ -897,12 +904,13 @@ func _apply_view_mode() -> void:
 		var flip := Basis(Vector3.UP, PI) if view_mode == ViewMode.FRONT else Basis.IDENTITY
 		camera_arm.transform = Transform3D(
 				flip * third_person_arm_transform.basis, third_person_arm_transform.origin)
-		# ...at the indoor length while a room holds us, the scene length otherwise.
-		# This is the ONLY third-person write of `spring_length`, which is why
-		# `set_indoor_camera()` can just re-run this function and why a view cycle,
-		# a character switch or a Teibi resize cannot lose the indoor boom.
-		camera_arm.spring_length = \
-				INDOOR_ARM_LENGTH if _indoor_camera else third_person_arm_length
+		# ...at whichever boom the world currently asks for. SNAPS, because every
+		# path into this branch is a deliberate CUT (pressing C, switching hero,
+		# a Teibi resize, a respawn) and a cut should land on the right framing
+		# immediately. The other way the target changes — walking through a door —
+		# is eased instead, by `_tick_arm_length()`; both read
+		# `_third_person_arm_target()` so they cannot disagree about the value.
+		camera_arm.spring_length = _third_person_arm_target()
 		camera.rotation = third_person_camera_rotation
 		if character_container:
 			character_container.visible = true
@@ -921,17 +929,41 @@ func set_indoor_camera(indoor: bool) -> void:
 	it — leaving the room is a call too). Never writes `camera.position`: the knob
 	is the SpringArm3D's own `spring_length`, applied through `_apply_view_mode()`.
 
-	SNAPS RATHER THAN EASES, deliberately. On foot the boundary is a wall, crossed
-	through a doorway, and in a doorway the arm is already collision-clamped shorter
-	than either target — so the change of TARGET length is invisible on the frame it
-	happens, and an ease would be code paying for a pop nobody sees. `ponytail:` the
-	one place it can pop is Windman flying out over the wall TOP, where nothing
-	clamps; if that ever reads badly, `move_toward` in `_physics_process` is the fix.
+	IT ONLY MOVES THE TARGET; `_tick_arm_length()` walks the arm there. The tower's
+	doorway is a 6 m x 4 m hole and the boom floats 3.5 m up, so it trails straight
+	THROUGH the opening with nothing to clamp it — crossing the wall line would
+	otherwise cut the camera 4.3 m forward in a single frame, on every entry and
+	every exit. (Measured: 8.00 m of horizontal reach a step outside the wall,
+	3.74 m a step inside.) That is the one place this is not free.
 	"""
-	if indoor == _indoor_camera:
-		return
 	_indoor_camera = indoor
-	_apply_view_mode()
+
+
+func _third_person_arm_target() -> float:
+	"""
+	The boom the world is currently asking for: the indoor one while a room holds
+	us, the cached scene length otherwise. ONE definition, read by both the snap
+	path (`_apply_view_mode`) and the ease path (`_tick_arm_length`).
+	"""
+	return INDOOR_ARM_LENGTH if _indoor_camera else third_person_arm_length
+
+
+func _tick_arm_length(delta: float) -> void:
+	"""
+	Walk the third-person boom toward its target at a fixed metres-per-second rate,
+	so a doorway is a short dolly rather than a cut. `move_toward`, not a lerp, for
+	the reason the horizontal velocity uses it (SECTION 2): a fixed rate arrives, and
+	arrives in a predictable time — 4.4 m at ARM_EASE_SPEED is about a quarter second.
+
+	FIRST PERSON IS SKIPPED ENTIRELY. There the arm is commandeered — zero length,
+	identity basis, no collision cast (see `_apply_view_mode`) — and easing it would
+	push the camera out of the hero's head. Leaving FP re-snaps through
+	`_apply_view_mode`, so nothing to restore here either.
+	"""
+	if camera_arm == null or view_mode == ViewMode.FIRST_PERSON:
+		return
+	camera_arm.spring_length = move_toward(
+			camera_arm.spring_length, _third_person_arm_target(), ARM_EASE_SPEED * delta)
 
 
 func _first_person_eye_position() -> Vector3:
@@ -1162,6 +1194,8 @@ func _physics_process(delta: float) -> void:
 	is_wading = is_on_floor() and _terrain_is_river_here()
 	# Ease the model's submersion offset (visual only — see WADE_SINK_DEPTH).
 	_tick_wade_sink(delta)
+	# ...and ease the boom between the outdoor and indoor lengths (visual only).
+	_tick_arm_length(delta)
 
 	# STEP 2: Handle Jumping (with coyote time + jump buffer — see SECTION 2)
 	# Refresh the coyote window while grounded; tick it down while airborne.
