@@ -119,7 +119,7 @@ func _run() -> void:
 	await _check_door_fires_for_the_player_only()
 	await _check_shell_is_lazy_and_manager_parented()
 	await _check_a_teammate_at_the_tower_builds_it_for_the_master()
-	await _check_new_run_resites_the_tower()
+	await _check_new_run_keeps_the_site()
 	await _check_join_streams_the_tower_at_the_anchor()
 	_check_a_detached_terrain_still_sites_the_tower()
 	_check_no_road_coin_is_buried_in_the_walls()
@@ -522,15 +522,20 @@ func _check_a_teammate_at_the_tower_builds_it_for_the_master() -> void:
 	await process_frame
 
 
-func _check_new_run_resites_the_tower() -> void:
+func _check_new_run_keeps_the_site() -> void:
 	"""
-	Check 8. A new run moves the site, and the tower goes with it.
+	Check 8. A new run does NOT move the site — and the shell is still rebuilt.
 
-	The shell is the ONE thing under the terrain that a chunk wipe does not free (it
-	is parented to the manager, which is the point of check 7), so new_run() has to
-	free it by hand. Forgetting that leaves the previous world's building standing
-	in the new world's field, 400 m from where the map now says the tower is — and
-	nothing errors.
+	INVERTED BY PHASE 12 (owner ruling 2026-08-29: the HQ is planned once and
+	forever). What this used to assert — that a new seed re-sites the tower — is now
+	the bug: the site is a constant, so a second run must find the building at the
+	same address as the first.
+
+	The other half is unchanged and is why the check still exists at all. The shell
+	is the ONE thing under the terrain that a chunk wipe does not free (it is
+	parented to the manager, which is the point of check 7), so new_run() has to
+	free it by hand. Forgetting that leaves the PREVIOUS world's building — with the
+	previous world's opened gates and captives on it — standing in the new world.
 	"""
 	var terrain := _make_terrain(SEED_A)
 	terrain.render_distance = 0
@@ -547,20 +552,24 @@ func _check_new_run_resites_the_tower() -> void:
 		return
 
 	var old_site: Vector3 = terrain.tower_site()
+	var old_shell: Node3D = terrain.tower_shell()
 	terrain.new_run(SEED_B)
 	await process_frame  # queue_free lands at the end of the frame
 	var new_site: Vector3 = terrain.tower_site()
-	if new_site == old_site:
-		print("NOTE: seeds %d and %d sited the tower identically — new_run's move is untested this run"
-			% [SEED_A, SEED_B])
+	if new_site != old_site:
+		_fail("a new run moved the tower from %s to %s — the site is hand-planned and fixed" % [
+			old_site, new_site])
+	# The player is still standing ON the site, so a shell is the correct answer —
+	# but it must be a NEW one. Identity is the whole assertion here: the old node
+	# carries the old world's opened gates, captives and guards.
+	if is_instance_valid(old_shell) and terrain.tower_shell() == old_shell:
+		_fail("new_run() kept the previous world's tower shell — its opened gates and captives came along")
 	var live := 0
 	for child: Node in terrain.get_children():
 		if child.is_in_group("tower"):
 			live += 1
-	# The player is left standing at the OLD site, which after the re-site is far
-	# from the new one — so the correct answer is "no shell, impostor showing".
-	if new_site.distance_to(old_site) > terrain.TOWER_LOAD_RADIUS and live != 0:
-		_fail("new_run() left %d old-world tower shells standing" % live)
+	if live > 1:
+		_fail("new_run() left %d tower shells standing" % live)
 	if not is_instance_valid(terrain._tower_impostor):
 		_fail("new_run() lost the horizon impostor")
 	elif not terrain._tower_impostor.global_position.is_equal_approx(new_site):

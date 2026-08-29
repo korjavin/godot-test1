@@ -583,38 +583,25 @@ const TOWER_RADIUS: float = 30.0
 ## leaves reached 29.81 m, i.e. 0.19 m inside the disc.)
 const TOWER_DECOR_OVERHANG: float = 2.5
 
-## THE DRY-SITE NUDGE — step of the candidate lattice, and how many rings of it.
+## THE DRY DISC — rivers do not run under the tower.
 ##
-## is_river_at() ignores Y by contract (the world is flat and a river is a tint),
-## and the player's wading test is XZ-only, so a tower standing on a river band
-## would wade on every floor. The site therefore scans a FIXED lattice — candidates
-## TOWER_NUDGE_STEP apart, ring by ring outward from the nominal site, out to
-## TOWER_NUDGE_RINGS rings (200 m of reach) — and takes the first whose whole
-## footprint disc is dry.
+## The site is a CONSTANT (owner ruling 2026-08-29: "Gastro HQ shouldn't be seed
+## randomized, we can plan it once and forever"), so the building can no longer be
+## nudged out of the water — the water has to get out of its way instead.
+## is_river_at() therefore answers false everywhere inside TOWER_RADIUS of the
+## site, and the ground shader masks the blue band over the same disc.
 ##
-## FIXED, NEVER RANDOM: the scan consumes no RNG draw of any kind. The river field
-## is already a pure function of run_seed, so the answer is one too. And it is
-## TOTAL: a seed whose rivers soak the entire corridor still terminates, on the
-## DRIEST candidate the lattice found. If that ever stops being good enough, widen
-## the lattice — never reach for a random retry.
-const TOWER_NUDGE_STEP: float = 25.0
-const TOWER_NUDGE_RINGS: int = 8
-
-## Spacing (metres) of the river samples laid over a candidate footprint disc.
+## WHY MASK RATHER THAN MOVE: is_river_at() ignores Y by contract (the world is
+## flat and a river is a tint), and the player's wade test is XZ-only, so a tower
+## standing on a river band wades on every floor. One boolean disc costs a length()
+## per call and buys a fixed, hand-plannable address.
 ##
-## The sampling is CONSERVATIVE, not merely fine: each sample stands for its whole
-## cell, so the test is widened by BIOME_NOISE_MAX_SLOPE over half that cell's
-## diagonal (see _tower_wet_samples). That makes the step a cost/tightness knob
-## rather than a correctness one — a coarser grid is still safe, it just refuses
-## more dry-ish sites. 2 m widens the band by ~1.4x, which is tight enough that the
-## nominal site is usually still accepted, at ~830 samples per candidate: paid ONCE
-## per run and then memoized, and in the common case for exactly one candidate.
-##
-## 5 m WAS TRIED AND IS WRONG WITHOUT THE MARGIN. A plain boolean grid at 5 m
-## reported a dry site for run seeds 750, 99 and 106 that a 2 m sweep found 24, 1
-## and 3 wet points in (codex review, 2026-08-28) — a river is only ~8 m wide where
-## the field is shallow, and arbitrarily narrow where it is steep.
-const TOWER_SAMPLE_STEP: float = 2.0
+## CPU/GPU PARITY (CLAUDE.md): the mask is ONE extra step in both languages —
+## is_river_at() below and ground.gdshader's fragment(), fed the same centre and
+## radius by _apply_biome_shader_params. Edit the two together, and keep the CPU
+## side's distance going through Vector2 (fp32) like the rest of the noise port.
+## The seam at the rim is a hard circle in both, which is what makes them agree;
+## it sits under the shell and its yard, where nothing looks at the ground.
 
 ## How near the player must come to tower_site() before the shell is INSTANCED
 ## (metres). Phase 2's lazy-load radius.
@@ -1639,24 +1626,6 @@ const BIOME_MOUNTAIN_MAX: float = 0.83
 const RIVER_LEVEL: float = 0.5
 const RIVER_HALF_WIDTH: float = 0.007
 
-## Upper bound on how fast the biome field can change, in NOISE UNITS PER METRE.
-##
-## _biome_value_noise is one octave of smoothstep-weighted value noise over
-## BIOME_CELL_SIZE cells whose corner values live in 0..1. The smoothstep weight
-## f*f*(3-2f) has derivative 6f(1-f), which peaks at 1.5, so along either axis the
-## field can move at most 1.5 per unit of noise space, and the gradient MAGNITUDE
-## at most sqrt(1.5^2 + 1.5^2) = 2.1213. Divide by the cell size and that is
-## metres. (_biome_noise's 0..1 clamp only ever flattens the field, so the bound
-## survives it.)
-##
-## WHAT IT IS FOR: turning a SAMPLED river test into a PROVEN one. A grid of
-## is_river_at() calls can step clean over a band that happens to be narrow where
-## it crosses — a river's width on the ground is set by the local gradient, and
-## nothing bounds it from below. Widen the test by this slope times the furthest a
-## point can sit from the nearest sample, and "no sample was wet" stops being an
-## inference. _tower_wet_samples is the first user.
-const BIOME_NOISE_MAX_SLOPE: float = 2.1213 / BIOME_CELL_SIZE
-
 ## Noise-space half-width of the soft colour transition between biomes, used as
 ## a smoothstep radius in the ground shader. Purely cosmetic: gameplay reads the
 ## hard thresholds above, the eye reads this blend.
@@ -2512,14 +2481,13 @@ var _landmark_builders: GDScript = preload("res://scripts/landmark_builders.gd")
 ## one uniform. Rolled by _roll_biome_offset() from its own RNG stream.
 var biome_offset: Vector2 = Vector2.ZERO
 
-## MEMO for tower_site(). The site is a pure function of (run_seed via the biome
-## field, tower_site_distance), but finding it costs a few hundred noise
-## evaluations and _biome_spot_ok asks for it at every candidate spot in the
-## world — so it is found once and re-derived only when one of those two inputs
-## changes. Two scalar compares per call, no allocation. `_tower_site_dist` starts
-## negative, a distance no caller can supply, so the first call always computes.
+## MEMO for tower_site(). The site is a pure function of tower_site_distance ALONE
+## (the seed left the key with the dry-site nudge — see THE DRY DISC), and
+## _biome_spot_ok asks for it at every candidate spot in the world, so it is
+## derived once and re-derived only when a designer moves that knob. One scalar
+## compare per call, no allocation. `_tower_site_dist` starts negative, a distance
+## no caller can supply, so the first call always computes.
 var _tower_site_cache: Vector3 = Vector3.ZERO
-var _tower_site_seed: int = 0
 var _tower_site_dist: float = -1.0
 
 ## The tower's two bodies, both parented to THIS manager (never to a chunk) and
@@ -2749,16 +2717,13 @@ func set_run_seed(value: int) -> void:
 	"""
 	run_seed = value
 	_roll_biome_offset()
-	# Find the tower's site NOW, on the frame that already pays for a whole new
-	# world, rather than lazily on whatever frame the first chunk near it asks.
-	# The scan is a few hundred noise evaluations in the worst case — invisible
-	# here, a measurable spike if it landed mid-stream. Must come AFTER
-	# _roll_biome_offset(): the site is read off the river field that call rolls.
-	tower_site()
-	# And move the tower's two bodies to wherever that just put the site. THIS is
-	# why the reset hangs off the seed write rather than off new_run(): every path
-	# that can move the site — _ready's roll, a restart, a multiplayer peer being
-	# handed the room's seed — goes through here, so none of them can forget.
+	# Put the tower's two bodies back to a not-built-yet state. The site itself no
+	# longer moves (it is a constant — see tower_site()), but the SHELL is the one
+	# thing under this manager a chunk wipe does not free, so a new world still has
+	# to drop the old world's building. THIS is why the reset hangs off the seed
+	# write rather than off new_run(): every path that starts a world — _ready's
+	# roll, a restart, a multiplayer peer being handed the room's seed — goes
+	# through here, so none of them can forget.
 	_tower_reset()
 
 
@@ -2829,6 +2794,14 @@ func _apply_biome_shader_params() -> void:
 	mat.set_shader_parameter("river_level", RIVER_LEVEL)
 	mat.set_shader_parameter("river_half_width", RIVER_HALF_WIDTH)
 	mat.set_shader_parameter("biome_blend", BIOME_BLEND)
+	# THE DRY DISC, the GPU half of it: is_river_at() refuses to call the tower's
+	# footprint water, so the shader must refuse to paint it blue. Parity-critical
+	# in the strongest sense — this pair IS the disagreement it prevents. The
+	# shader's own defaults leave the mask off (radius -1), so a material that
+	# never met this function draws exactly the world it always drew.
+	var site := tower_site()
+	mat.set_shader_parameter("tower_dry_center", Vector2(site.x, site.z))
+	mat.set_shader_parameter("tower_dry_radius", TOWER_RADIUS)
 
 
 func _ready() -> void:
@@ -8324,7 +8297,19 @@ func is_river_at(world_pos: Vector3) -> bool:
 	contour lines are long, thin and winding — exactly a river. So a river costs no
 	extra field, no path integration and no state: it is the same number the biome
 	colours read, just asked a different question.
+
+	...with ONE exception, and it is the whole of THE DRY DISC: the tower stands at
+	a fixed address now, so the river gets out of ITS way. Inside TOWER_RADIUS of
+	tower_site() this answers false whatever the raw field says, and
+	ground.gdshader masks the blue band over exactly the same disc — the CPU/GPU
+	parity contract applies to the mask as much as to the noise. First, because it
+	is the cheaper test (no noise evaluation) and tower_site() is a memo read.
 	"""
+	var site := tower_site()
+	# Vector2, not scalar math: fp32, the same fp32 the shader's distance() runs
+	# in, for the same reason the noise port routes everything through Vector2.
+	if Vector2(world_pos.x - site.x, world_pos.z - site.z).length() <= TOWER_RADIUS:
+		return false
 	return absf(_biome_noise(world_pos.x, world_pos.z) - RIVER_LEVEL) < RIVER_HALF_WIDTH
 
 
@@ -8335,100 +8320,22 @@ func tower_site() -> Vector3:
 
 	@return: Ground-level world position (y = 0) of the tower's centre.
 
-	PURE, ZERO RNG DRAWS, MEMOIZED. It reads nothing but tower_site_distance and
-	the biome field (which is itself a pure function of run_seed), so the same run
-	answers the same thing forever, every peer in a multiplayer room agrees for
-	free, and no spawner's stream is disturbed by asking. Never call an RNG from
+	FIXED, FOR EVERY RUN THAT WILL EVER BE PLAYED. Owner ruling 2026-08-29: the HQ
+	is hand-planned once, so the site is (-tower_site_distance, 0, 0) and nothing
+	else — not the seed, not the river field, not an RNG draw. Every peer in a
+	multiplayer room agrees for free, a returning player finds it where they left
+	it, and no spawner's stream is disturbed by asking. Never call an RNG from
 	anywhere under here: a single draw from the shared chunk stream slides every
 	crocodile in the world (see the determinism section of CLAUDE.md).
+
+	The rivers that used to push the building around are masked under it instead —
+	see THE DRY DISC and is_river_at().
 	"""
-	if _tower_site_dist == tower_site_distance and _tower_site_seed == run_seed:
+	if _tower_site_dist == tower_site_distance:
 		return _tower_site_cache
-	_tower_site_cache = _tower_scan_dry_site()
-	_tower_site_seed = run_seed
+	_tower_site_cache = Vector3(-tower_site_distance, 0.0, 0.0)
 	_tower_site_dist = tower_site_distance
 	return _tower_site_cache
-
-
-func _tower_scan_dry_site() -> Vector3:
-	"""
-	The dry-site nudge: walk the fixed candidate lattice out from the nominal site
-	and return the first candidate whose whole footprint disc is out of the water.
-
-	@return: The chosen site, y = 0.
-
-	TOTAL BY CONSTRUCTION. The lattice is bounded (TOWER_NUDGE_RINGS rings of
-	TOWER_NUDGE_STEP), so the scan always ends; and if a seed's rivers soak every
-	candidate, it ends on the DRIEST one rather than failing or randomizing. The
-	ring-by-ring order is what makes "nudge" honest — the site moves as little as
-	the water allows, and ring 0 (the nominal site) is tried first.
-	"""
-	var base_x := -tower_site_distance
-	var driest := Vector2(base_x, 0.0)
-	var driest_wet := 0x7FFFFFFF
-
-	for ring in TOWER_NUDGE_RINGS + 1:
-		for dx in range(-ring, ring + 1):
-			for dz in range(-ring, ring + 1):
-				# Ring by ring outward: only the SHELL of each square is new, the
-				# interior was covered by a smaller ring already.
-				if maxi(absi(dx), absi(dz)) != ring:
-					continue
-				var cx := base_x + float(dx) * TOWER_NUDGE_STEP
-				var cz := float(dz) * TOWER_NUDGE_STEP
-				var wet := _tower_wet_samples(cx, cz)
-				if wet == 0:
-					return Vector3(cx, 0.0, cz)
-				if wet < driest_wet:
-					driest_wet = wet
-					driest = Vector2(cx, cz)
-
-	# Every candidate had water in it. Deterministic, documented, and still a
-	# site — see the TOWER_NUDGE_STEP block on why this beats retrying at random.
-	push_warning("endless_terrain: no fully dry tower site within %d rings; using the driest (%d wet samples)"
-			% [TOWER_NUDGE_RINGS, driest_wet])
-	return Vector3(driest.x, 0.0, driest.y)
-
-
-func _tower_wet_samples(center_x: float, center_z: float) -> int:
-	"""
-	How many of a candidate footprint's river samples land in the water.
-
-	@param center_x, center_z: Candidate site centre, world space.
-	@return: Count of wet samples — 0 means the whole disc is dry.
-
-	A GRID, NOT A RIM: a river winds, so a ring of samples around the rim would let
-	a band slip across the middle of the disc unseen.
-
-	AND A WIDENED GRID, NOT A PLAIN ONE. Each sample stands for the whole cell
-	around it, so the band it is tested against is widened by the most the field can
-	move from the sample to the furthest point of that cell — BIOME_NOISE_MAX_SLOPE
-	over half the cell diagonal. Zero wet samples is then a PROOF that no point of
-	the disc is in the water, rather than the hope that no band was narrow enough to
-	hide between two samples. It is stated on the noise value directly because
-	is_river_at() bakes in the un-widened RIVER_HALF_WIDTH; the two agree exactly
-	when the margin is zero.
-
-	The count (rather than a bool) is what lets the scan above fall back to the
-	driest candidate instead of to nothing.
-	"""
-	# Furthest any point can sit from the nearest sample is half the cell diagonal.
-	var margin := TOWER_SAMPLE_STEP * 0.5 * sqrt(2.0) * BIOME_NOISE_MAX_SLOPE
-	var half_width := RIVER_HALF_WIDTH + margin
-	# One step of slack on the rim too, so the samples cover the whole disc and not
-	# just every disc point that happens to have a sample inside it.
-	var reach := TOWER_RADIUS + TOWER_SAMPLE_STEP
-	var wet := 0
-	var steps := int(ceilf(reach / TOWER_SAMPLE_STEP))
-	for ix in range(-steps, steps + 1):
-		for iz in range(-steps, steps + 1):
-			var ox := float(ix) * TOWER_SAMPLE_STEP
-			var oz := float(iz) * TOWER_SAMPLE_STEP
-			if Vector2(ox, oz).length() > reach:
-				continue
-			if absf(_biome_noise(center_x + ox, center_z + oz) - RIVER_LEVEL) < half_width:
-				wet += 1
-	return wet
 
 
 func tower_excludes(world_x: float, world_z: float, radius: float = 0.0) -> bool:
@@ -8589,8 +8496,11 @@ func _tower_in_load_range(from: Vector3, site: Vector3) -> bool:
 
 func _tower_reset() -> void:
 	"""
-	Put the tower back to "not built yet, and visible on the horizon" — at the
-	CURRENT site, which a new run has just moved.
+	Put the tower back to "not built yet, and visible on the horizon".
+
+	The SITE does not move any more (it is a constant — see tower_site()), so this
+	is about the BUILDING: a shell carries the old world's opened gates, captives
+	and guards, and a new run must not inherit them.
 
 	Called from new_run() after the seed is set and before any chunk is rebuilt.
 	The shell is the one thing in this file that survives a chunk wipe, so it is

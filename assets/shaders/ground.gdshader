@@ -60,6 +60,14 @@ uniform float biome_mountain_max = 0.83;      // n < this  -> mountain, else sno
 uniform float river_level = 0.5;              // the contour rivers follow
 uniform float river_half_width = 0.007;       // half-thickness of that contour
 uniform float biome_blend = 0.05;             // smoothstep radius at each threshold
+// THE TOWER'S DRY DISC — the GPU half of the mask in is_river_at(). The tower
+// stands at a fixed, hand-planned address (endless_terrain.gd tower_site()), so
+// rather than nudging the building out of the water we take the water out from
+// under the building: no river band is painted inside this disc, and the CPU
+// wade test refuses inside exactly the same one. Pushed together with the biome
+// constants above; the -1 default leaves the mask OFF for a material nobody fed.
+uniform vec2 tower_dry_center = vec2(0.0);
+uniform float tower_dry_radius = -1.0;
 
 // --- Biome colours — pure art, never read by GDScript -----------------------
 uniform vec3 desert_color: source_color = vec3(0.78, 0.68, 0.44);   // ochre sand
@@ -203,6 +211,14 @@ void fragment() {
 	// is a subtract, an abs and a smoothstep — no noise, no texture fetch.
 	float v_river = 1.0 - smoothstep(river_half_width * (1.0 - RIVER_EDGE_SOFT),
 			river_half_width * (1.0 + RIVER_EDGE_SOFT), abs(v_biome - river_level));
+
+	// ...except under the tower. ONE extra step, the twin of the one is_river_at()
+	// takes on the CPU (same centre, same radius, same <=), so the blue you SEE and
+	// the wading you FEEL still part company nowhere. A hard rim is what makes the
+	// two agree exactly; it is hidden under the shell and its yard.
+	if (distance(v_world_xz, tower_dry_center) <= tower_dry_radius) {
+		v_river = 0.0;
+	}
 
 	// River last, on top of whatever biome it cuts through — rivers are an
 	// overlay, not a biome (same rule as is_river_at() on the CPU side).

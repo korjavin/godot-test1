@@ -192,8 +192,12 @@ increases, so distance = `global_position.x`), boss crocodiles on road stations,
 civilization artifacts, nomad camps, geo landmarks, biome content, themed props.
 
 **The tower (GastroDefense HQ) is the one exception and must stay one.** It is ONE
-authored building at ONE site — `tower_site()` (pure in `run_seed`, memoized, zero RNG
-draws) — that every spawner keeps clear of via `tower_excludes()`. Its geometry is
+authored building at ONE site — `tower_site()`, a CONSTANT at `(-400, 0, 0)` (owner
+ruling: the HQ is hand-planned once and forever, so no seed and no RNG draw moves
+it) — that every spawner keeps clear of via `tower_excludes()`. The rivers that
+used to nudge it are **masked under it instead**: `is_river_at()` answers false
+inside `TOWER_RADIUS` and `ground.gdshader` paints no band over the same disc —
+one more clause of the CPU/GPU parity contract, edited in both languages together. Its geometry is
 `scripts/tower_shell.gd`'s box table, **not** `create_box()`/`block_batch`, and both it
 and its fog-exempt horizon impostor are parented to the terrain **manager** (the fauna
 precedent) so chunk unloading can never free the building you are standing in. The
