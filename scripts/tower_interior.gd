@@ -669,7 +669,11 @@ var _containment: MeshInstance3D = null
 ## written. The single fact that DOES survive a relaunch is `RESCUE_DONE` — the
 ## authored first rescue happened — and it is what seeds this set on build.
 ##
-## Phase 9 drives it through `set_captive()`; nothing else writes it.
+## A MIRROR, NOT THE RECORD (phase 9). Systemic capture happens out in the field,
+## where this building is usually not streamed in at all, so the PLAYER owns the
+## set and this node tracks it from both ends: `set_captive()` when a grab lands
+## while the tower is loaded, and `_apply_opened()`'s re-seed when a tower is built
+## after one. Those two plus `_liberate()` are the only writers.
 var _captives: Dictionary = {}
 
 ## The partway reaction's clock, counting 0 -> 1 over NUDGE_TIME. Zero when idle.
@@ -1310,6 +1314,19 @@ func _apply_opened() -> void:
 	_captives.clear()
 	if not _is_open(RESCUE_DONE):
 		_captives[AUTHORED_CAPTIVE] = true
+	# ...and then from the FIELD. Systemic capture (bead godot-test1-3iy.9) happens
+	# out on the map, where this building is a streamed landmark that is usually not
+	# in the tree at all — so the player owns the set and this node mirrors it. The
+	# capture pushes through `set_captive()` when the tower happens to be loaded,
+	# and a tower streamed in afterwards catches up HERE, which is the half that
+	# makes the cell real: `_liberate()` early-returns on a hero it has no record
+	# of, so without this line a hero taken in the field would have a red frame and
+	# no way out of it.
+	var owner_of_the_set := get_tree().get_first_node_in_group("player")
+	if owner_of_the_set != null and owner_of_the_set.has_method("is_hero_captive"):
+		for hero: String in TowerGraph.HEROES:
+			if bool(owner_of_the_set.call("is_hero_captive", hero)):
+				_captives[hero] = true
 	_refresh_cells()
 
 
