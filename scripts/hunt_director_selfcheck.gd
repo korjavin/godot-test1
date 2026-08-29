@@ -150,6 +150,8 @@ func _check_cap() -> void:
 	## Drives the shipped `grant_engagement` at every count from 0 to N+1 with the
 	## other two rules held OPEN (no lull, no bearings), so the only thing that
 	## can deny is the cap and a denial here is unambiguous.
+	if not _rules_isolated():
+		return
 	var cap: int = DIRECTOR.MAX_PURSUERS
 	for closing: int in range(cap + 2):
 		var granted: bool = DIRECTOR.grant_engagement(
@@ -178,6 +180,8 @@ func _check_lull_pure() -> void:
 	## The lull, driven directly with the cap and the sector held open. Both
 	## directions: any time left denies, no time left grants. A one-sided check
 	## passes for a director that denies everything forever.
+	if not _rules_isolated():
+		return
 	if not DIRECTOR.grant_engagement(PackedFloat32Array(), 0, 0.0, 0.0):
 		_fail("lull: with zero seconds of lull left, an unopposed hunter on an "
 				+ "empty quarry was still refused — every engagement in the game "
@@ -573,6 +577,26 @@ func _check_absent_director() -> void:
 # ============================================================================
 # HARNESS
 # ============================================================================
+
+func _rules_isolated() -> bool:
+	## Checks 1 and 2 isolate their own rule by holding the other two OPEN — no
+	## lull, no cap pressure, and an EMPTY bearing set. That last part is only an
+	## isolation if rule 3 actually grants a lone hunter, so it is confirmed here
+	## rather than assumed.
+	##
+	## THIS EXISTS BECAUSE OF A REAL MISDIAGNOSIS. With the wrap term dropped from
+	## `escape_sector_open`, rule 3 refuses everything — including the empty set —
+	## and checks 1 and 2 then reported "the cap is starving the class" and "every
+	## engagement in the game is denied", naming two rules that were both fine. A
+	## check that fails is worth little if it fails pointing at the wrong file.
+	if DIRECTOR.escape_sector_open(PackedFloat32Array(), 0.0):
+		return true
+	_fail("isolation: rule 3 refuses even a LONE hunter with no other bearings, "
+			+ "so the cap and lull probes cannot hold it open and would report "
+			+ "their own rules as broken. Fix the escape-sector failure first — "
+			+ "checks 1 and 2 were skipped, not passed.")
+	return false
+
 
 func _make_director() -> Node:
 	## A live director node in the tree (its _ready joins the group) with engine
