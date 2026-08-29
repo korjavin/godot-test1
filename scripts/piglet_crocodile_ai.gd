@@ -1648,32 +1648,45 @@ const SPECIES: Dictionary = {
 	## THE MODEL IS A PLACEHOLDER AND SAYS SO. Per the epic's art-decoupling
 	## convention (the titan is a re-skinned Teibi), scenes/characters/
 	## green_dragon.tscn instances piglet_crocodile.glb — the only green scaly
-	## reptile in the asset set — stretched to (1.15, 1.6, 1.15) so it reads as a
+	## reptile in the asset set — stretched to (1, 1.6, 1) so it reads as a
 	## leggier, taller-standing beast rather than as the 6x piglet crocodile that
 	## already guards every band this table has no row for. The real winged model
 	## is its own art bead (godot-test1-lce.7, wings as SILHOUETTE only — this
 	## world is flat and nothing flies); when it lands, only the .tscn and the
 	## measured geometry below change, and nothing in this row's behaviour does.
 	##
+	## THE STRETCH IS VERTICAL ONLY, AND THAT IS A PLACEMENT CONSTRAINT, not an
+	## art choice. endless_terrain's BOSS_FOOTPRINT_RADIUS_PER_SCALE (0.7) is the
+	## clearance every boss candidate is judged against, and 0.7 is exactly the
+	## crocodile capsule's half-LENGTH — the widest horizontal reach of a 1.4 m
+	## capsule laid on its side. Stretch this body along x or z and its footprint
+	## quietly exceeds the number the spawner is still using, so at the 6x cap it
+	## can be placed overlapping a tree and wedge there. Growing UP costs the
+	## footprint nothing. (The alternative — raising that constant, or deriving it
+	## per species — would move every boss in the world, which is a bead of its
+	## own and not a side effect of an art placeholder.)
+	##
 	## MEASURED OFF THAT STRETCH, because the geometry keys are model numbers and
 	## a .tscn cannot hold a comment an editor resave will not eat. The source
 	## mesh is 1.400 x 0.280 x 0.276 (the crocodile's, see the row at the top of
-	## this table); at (1.15, 1.6, 1.15) the dragon is 1.610 long, 0.322 wide and
-	## 0.442 TALL — two thirds again the crocodile's height, which is the whole
-	## silhouette difference. The capsule in green_dragon.tscn is
-	## `radius = 0.22, height = 1.61`, laid on the travel axis with the
+	## this table); at (1, 1.6, 1) the dragon is the same 1.400 long and 0.280
+	## wide, and 0.442 TALL — two thirds again the crocodile's height, which is
+	## the whole silhouette difference. The capsule in green_dragon.tscn is
+	## `radius = 0.22, height = 1.4`, laid on the travel axis with the
 	## crocodile's basis, at `(0, 0.22, 0)`:
-	##   * 0.22 makes a 0.44 m tube around a 0.442 m body — the viper's
-	##     tightest-fit rule, applied to the stretched height.
-	##   * 1.61 is the stretched length, caps included.
+	##   * 0.22 makes a 0.44 m tube around the 0.442 m standing height — the
+	##     viper's tightest-fit rule, applied to the axis that actually grew. It
+	##     over-covers the unchanged 0.280 m width by 0.08 m, the same trade the
+	##     crocodile's own 0.16 makes on its 0.28.
+	##   * 1.4 is the unstretched length, caps included, so the horizontal reach
+	##     stays 0.7 — the spawner's bound, exactly.
 	##   * radius == centre y, the crocodile/viper/hunter identity, so the
 	##     capsule's bottom sits exactly on y = 0 and the body rests on the flat
 	##     world's ground plane.
-	##   * z = 0, unlike the viper's and the hunter's: the crocodile mesh is
-	##     centred on its own origin, and stretching it about that origin leaves
-	##     it centred.
+	##   * z = 0, like the crocodile's and unlike the viper's and the hunter's:
+	##     this mesh is centred on its own origin.
 	## The boss schedule's `scale = ONE * boss_scale` multiplies all of it, so a
-	## 6x dragon is a 9.7 m capsule around a 9.7 m model.
+	## 6x dragon is an 8.4 m capsule around a 2.65 m tall model.
 	"green_dragon": {
 		## No arm. "solo" is the shared code above the behaviour `match` — wander
 		## alone, chase what you smell, flee a stink wave (which a boss ignores
@@ -1721,10 +1734,11 @@ const SPECIES: Dictionary = {
 		"sniff_pause_chance": 0.25,
 
 		# ----- Obstacle avoidance -----
-		## Longer feelers cast from higher up than the crocodile's, because this
-		## body is longer (1.61 m) and 1.6x taller before the boss scale, and
-		## FOREST is the densest tree cover in the world — a probe at the
-		## crocodile's 0.3 m would sample bark below the dragon's own knee.
+		## Feelers cast from higher up than the crocodile's, because this body is
+		## 1.6x taller before the boss scale and FOREST is the densest tree cover
+		## in the world — a probe at the crocodile's 0.3 m would sample bark below
+		## the dragon's own knee. Reach is a little longer too, so a heavy animal
+		## with a slower turn (see turn_smoothness) starts its curve sooner.
 		"avoid_look_ahead": 3.5,
 		"avoid_feeler_angle": PI / 5.0,  # 36°
 		"avoid_feeler_height": 0.5,
