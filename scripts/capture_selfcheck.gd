@@ -950,6 +950,26 @@ func _check_the_protocol_opens_and_can_be_played() -> void:
 	"""
 	_fresh_store()
 	_beat_done()
+
+	# THE NEGATIVE CONTROL COMES FIRST, and it is not ceremony. Everything below
+	# measures a scene that opened; nothing below would notice a scene that opens by
+	# ITSELF. `_tick_custody()` runs on every physics frame of every ordinary run and
+	# is one missing guard away from closing a break-out nobody entered — scarring
+	# the tower, on the first frame, in a run where nobody was ever captured.
+	var idle := await _make_player()
+	var idle_store := BestRunStore.tower_opened_ids()
+	for _i in 4:
+		await physics_frame
+	if idle.in_custody_protocol():
+		_fail("an ordinary run with nobody captive opened the full-custody protocol")
+	if BestRunStore.tower_opened_ids() != idle_store:
+		_fail("an ordinary run scarred the tower by standing still: %s -> %s"
+			% [str(idle_store), str(BestRunStore.tower_opened_ids())])
+	if idle.custody_timer != 0.0:
+		_fail("an ordinary run is running a recall clock (%.2f s left)" % idle.custody_timer)
+	_clear(idle)
+	await process_frame
+
 	var player := await _make_player()
 	var last_one: String = player.hero_name()
 	for hero: String in TowerGraph.HEROES:
@@ -1108,6 +1128,37 @@ func _check_the_recall_archives_the_world() -> void:
 	if continued.is_game_over:
 		_fail("Play Again left the ending screen up")
 	_clear(continued)
+
+	# ...and the OTHER way to lose it: the last heart, spent inside the block. It is
+	# the same outcome and must be recorded exactly once — two sites deciding one
+	# ending is two stings and an archive written behind a screen that went up for a
+	# different reason.
+	_fresh_store()
+	_beat_done()
+	var bled := await _make_player()
+	await _drive_into_custody(bled)
+	if not bled.in_custody_protocol():
+		_fail("archive: no protocol to bleed out in")
+		_clear(bled)
+		_fresh_store()
+		return
+	bled.lives = 1
+	bled.hit_by_crocodile(_hunter())
+	bled.is_caught = false
+	bled.call("_on_caught_finished")
+	if bled.in_custody_protocol():
+		_fail("the last heart went inside the block and the scene ran on")
+	if not bled.is_game_over:
+		_fail("the last heart went inside the block and the campaign did not end")
+	if not BestRunStore.world_archived():
+		_fail("the last heart went inside the block and the world was not archived")
+	# ...and the clock must not then decide it a second time.
+	var timer_after: float = bled.custody_timer
+	await physics_frame
+	await physics_frame
+	if bled.custody_timer != timer_after:
+		_fail("the recall clock kept running after the scene ended")
+	_clear(bled)
 	_fresh_store()
 
 

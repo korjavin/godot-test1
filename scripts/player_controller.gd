@@ -2429,7 +2429,15 @@ func _on_caught_finished() -> void:
 	# heart INSIDE the scene is failure, decided in `_tick_custody()`.
 	if lives <= 0:
 		lives = 0
-		_trigger_game_over()
+		# LOSING YOUR LAST HEART INSIDE THE SCENE IS THE SCENE'S OUTCOME, not a
+		# second one. Routed here rather than tested again in `_tick_custody()`
+		# because two sites deciding one thing is two game-over stings, two panels
+		# and — worse — an archive written a frame after a screen that already went
+		# up for a different reason.
+		if custody_protocol_active:
+			_end_custody_protocol(false)
+		else:
+			_trigger_game_over()
 	elif not captive_heroes.is_empty() and available_character_indices().is_empty():
 		_begin_custody_protocol()
 	else:
@@ -2616,8 +2624,11 @@ func _tick_custody(delta: float) -> void:
 	if free_hero_count() > 0:
 		_end_custody_protocol(true)
 		return
-	# ...and failure is the recall completing, or the last heart going in the block.
-	if custody_timer <= 0.0 or lives <= 0:
+	# ...and failure is THE RECALL COMPLETING, which is the only outcome this clock
+	# owns. Losing the last heart in the block is failure too, but it is decided
+	# where every other heart is decided — `_on_caught_finished()` — so that the
+	# ending screen goes up once and the archive is written once.
+	if custody_timer <= 0.0:
 		_end_custody_protocol(false)
 
 
