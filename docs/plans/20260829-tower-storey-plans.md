@@ -505,7 +505,7 @@ exists and is not walled off by a typo.
 
 ### Task 6: Generalize `tower_interior_selfcheck` over storeys
 
-- [ ] **Check 1** `_check_plan_fits_the_shell`:
+- [x] **Check 1** `_check_plan_fits_the_shell`:
       - keep boxes (`boxes()`): bounded by `INNER_HALF`, `floor` in `{0, 1}`, budget
         `BOX_BUDGET` — **unchanged assertions**;
       - plan boxes (`plan_boxes(i)`): bounded by `TowerPlans.PLAN_HALF`, `floor` equal
@@ -514,7 +514,7 @@ exists and is not walled off by a typo.
         over `all_boxes()`;
       - the `y <= TowerShell.WALL_HEIGHT` test over `all_boxes()`;
       - print one line per storey: boxes, budget, clear height.
-- [ ] **Check 2** `_check_no_jump_gated_climb`: keep the existing keep sweep untouched,
+- [x] **Check 2** `_check_no_jump_gated_climb`: keep the existing keep sweep untouched,
       then add the plan half. The plan half is **one assertion, not a sweep**, because
       the builder makes it structural: **every plan wall box runs from its storey's
       floor to its storey's ceiling** (`STOREY_HEIGHT - SLAB_THICK` tall, bottom at
@@ -522,28 +522,28 @@ exists and is not walled off by a typo.
       *i* is a step onto storey *i+1*. Assert exactly that, and assert the wall height
       exceeds the recomputed jump apex, so a walled-off room can never be entered over
       the top. Write down *why* the structural assertion is stronger than a sweep.
-- [ ] **Check 3** `_check_ramp_is_the_stair`: loop over **every** box in `all_boxes()`
+- [x] **Check 3** `_check_ramp_is_the_stair`: loop over **every** box in `all_boxes()`
       carrying `rot`. For each, rebuild the deck's two end points from `pos`/`rot`/`size`
       exactly as today and assert foot and head land on their two `FLOOR_Y` values and
       at their expected X, that the angle is `< 40°`, and that the slope is
       `<= PLAN_RAMP_MAX_SLOPE`. The existing keep-ramp assertions must survive verbatim
       as the `from 0 -> 1` case. Print one line per ramp.
-- [ ] **Check 4** `_check_headroom_clears_the_camera`: leave the live-rig measurement
+- [x] **Check 4** `_check_headroom_clears_the_camera`: leave the live-rig measurement
       alone; add — using the number it already measured — an assertion that **every
       plan storey's clear height** clears `camera_y + arm.margin + CAMERA_CLEARANCE`.
       Storey 5's "clear height" is the distance to the shell's roof; say so in the
       comment and in a `ponytail:` note (D1).
-- [ ] **Check 5** `_check_node_shape`: `want_shapes` and the batch-corner test over
+- [x] **Check 5** `_check_node_shape`: `want_shapes` and the batch-corner test over
       `all_boxes()` and `FLOOR_Y.size()` storeys; `DRAW_BUDGET` against the new 26;
       the `Area3D` count **unchanged** (plan pads add none — state it in the comment,
       because a future pad that does add one has to come and edit this number).
-- [ ] **Check 9** `_check_visibility_gating`: the `for i in 2` live-rig loop becomes
+- [x] **Check 9** `_check_visibility_gating`: the `for i in 2` live-rig loop becomes
       `FLOOR_Y.size()`, and the "storey N is visible from the ground floor" assertion
       becomes the **policy's** answer (`_floor_visible(i, 0)`) rather than "all
       visible" — with five storeys the ±1 window finally bites, and a live test that
       still asserted "everything is visible" would now be asserting the bug. Add
       `current_floor` assertions at each `FLOOR_Y` value and just below each.
-- [ ] `_clearance_at` / `_ramp_underside_at`: today `_ramp_underside_at` hard-codes
+- [x] `_clearance_at` / `_ramp_underside_at`: today `_ramp_underside_at` hard-codes
       `TowerInterior._ramp_box()`. Generalize to take the ramp box as a parameter and
       have `_clearance_at` call it for **each** rotated box it meets. Without this,
       three new rotated slabs are invisible to check 2's headroom reasoning.
