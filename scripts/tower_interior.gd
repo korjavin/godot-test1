@@ -2057,7 +2057,14 @@ func reset_guards() -> void:
 	self-check drives it directly rather than waiting on an idle frame.
 	"""
 	if is_instance_valid(_guards):
-		_guards.queue_free()
+		# `remove_child` BEFORE `queue_free`, and it is not tidiness: a queued node
+		# keeps its name until the frame ends, so adding the replacement first would
+		# hit a duplicate "Guards" and the engine would silently rename the NEW
+		# container. Every `get_node("Guards")` in the building — and in the check —
+		# would then keep answering with the corpse.
+		var retired := _guards
+		remove_child(retired)
+		retired.queue_free()
 	_guards = Node3D.new()
 	_guards.name = "Guards"
 	add_child(_guards)
