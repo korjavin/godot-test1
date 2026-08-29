@@ -2191,12 +2191,17 @@ func _check_captive_set() -> String:
 	# hero was not in its set yet) and then accept the capture behind it, locking a
 	# hero up on one screen for the rest of the run with nobody able to free him a
 	# second time. Driven in exactly that order.
-	fresh._on_lobby_heroes({"primm": "bob"}, ["windman", "primm", "teibi", "phoboman"])
-	fresh._receive_captive("carl", {"t": "cap", "h": "primm", "c": false})
-	fresh._receive_captive("bob", {"t": "cap", "h": "primm", "c": true})
-	if fresh.is_hero_captive("primm"):
+	# TEIBI, WHOM THIS PEER HAS NEVER HEARD OF, and that is the whole case: the
+	# release arrives for a hero that is not in our set, so the branch that has to
+	# remember it is the one that is about to return "nothing changed". Run against
+	# a hero we already hold captive, the release lands the ordinary way and proves
+	# nothing about the ordering at all.
+	fresh._on_lobby_heroes({"teibi": "bob"}, ["windman", "primm", "teibi", "phoboman"])
+	fresh._receive_captive("carl", {"t": "cap", "h": "teibi", "c": false})
+	fresh._receive_captive("bob", {"t": "cap", "h": "teibi", "c": true})
+	if fresh.is_hero_captive("teibi"):
 		return "a liberation that arrived BEFORE the capture it undoes was dropped, and the "\
-			+ "stale capture behind it stuck — primm is now in a cell nobody can open"
+			+ "stale capture behind it stuck — teibi is now in a cell nobody can open"
 
 	# --- 12. entering a room resets the local mirror to the ROOM's.
 	#
