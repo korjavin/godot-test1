@@ -88,6 +88,21 @@ extends Node3D
 ##     There is exactly one today: the cell block's VENT PURGE, which a benched
 ##     multiplayer player operates for the team outside (bead godot-test1-3iy.10).
 ##
+##   RIDDLE GATE — a lock that asks where you have been (phase 15).
+##     Silhouette: a MASS in a doorway, with FOUR COLOURED PLATES on the floor in
+##                 front of it. Four plates is the tell — every other pad in this
+##                 building is one plate, alone.
+##     Material:   COLOR_RIDDLE, a cold indigo in neither gate family, plus the four
+##                 pad colours, which are the alphabet its clue is written in.
+##     Light:      none. The mass is the readout: it RISES ONE NOTCH per correct
+##                 step and clunks back down on a wrong one.
+##     Motion:     it rises, and stays risen forever.
+##     Reads as:   "the answer is painted somewhere else in this building".
+##     Rule for later riddles: a riddle NEVER carries a hero colour and never asks
+##     for a rank. Knowledge is party-level, so anybody who has walked to the clue
+##     room can open it — which is exactly why it can be on a rescue route and an
+##     identity gate has to be justified.
+##
 ##   IDENTITY GATE — a lock that asks who you are, and can never be out-levelled.
 ##     Silhouette: a MASS. Tall, heavy, filling its doorway, one solid piece.
 ##     Material:   COLOR_IDENTITY, the hero's violet, plus a floor pad in the same
@@ -175,11 +190,12 @@ extends Node3D
 ## COST
 ## ============================================================================
 ##
-## TWENTY `MeshInstance3D`s for the parts that move (plus the two batches) plus TWO batched ones for
-## everything that does not (see THE BATCH below), ONE `StaticBody3D`, fourteen
-## `Area3D`s (three pads, two rotor hazards and, from phase 8, one press hazard,
-## four spine pads and four cell volumes), two rotor pivots, three `Label3D`s and
-## one gem — built once, for the life of a run. Per-floor visibility
+## TWENTY-ODD `MeshInstance3D`s for the parts that move (plus one batch per storey)
+## and everything else welded into those batches (see THE BATCH below), ONE
+## `StaticBody3D`, twenty-three `Area3D`s (three pads, two rotor hazards, from
+## phase 8 one press hazard, four spine pads and four cell volumes, and from phase
+## 15 one per riddle lock pad), two rotor pivots, seven `Label3D`s and one gem —
+## built once, for the life of a run. Per-floor visibility
 ## gating (`_update_visibility`) is what keeps that off the web frame budget when
 ## the player is anywhere else in the world.
 
@@ -361,6 +377,46 @@ const PLAN_RAMP_MAX_SLOPE: float = SLAB_Y / (SLAB_X0 - RAMP_X0)
 ## it, while a plan whose walls stopped merging blows through it on the first row
 ## (an unmerged 40-cell wall is 40 boxes on its own).
 const PLAN_BOX_BUDGET: int = 90
+
+# ============================================================================
+# THE RIDDLE LOCK (phase 15) — the fourth gate verb
+# ============================================================================
+#
+# A riddle is a COMBINATION LOCK: four coloured pads in front of a sealed mass,
+# pressed in an order painted on a floor somewhere else in the building. It asks
+# nothing of who you are and nothing of your ranks — only that you have been to the
+# clue room — which is why `tower_graph.gd` calls knowledge party-level and why the
+# audit's rule for it is a reachability question and not a capability one.
+#
+#   Silhouette: a MASS in a doorway, exactly like an identity gate's, with four
+#               floor plates in front of it instead of one.
+#   Material:   COLOR_RIDDLE, a cold indigo in neither gate family, plus the four
+#               pad colours — which are the alphabet the clue is written in.
+#   Motion:     it RISES, and one NOTCH per correct step on the way. Up = "the
+#               world changed", the identity gate's own sentence.
+#   Reads as:   "the answer is somewhere else in this building".
+
+## How far the mass lifts per correct step, at four steps to a lock — the progress
+## display, and the demand gate's calibration ladder laid on its side.
+##
+## THE NUMBER IS CAPPED BY THE PLAYER'S CAPSULE AND NOT CHOSEN FOR LOOKS. A gap a
+## `CharacterBody3D` fits through is an open gate, so the whole partial rise has to
+## stay well under the 2.0 m capsule; 1.2 m is that with a wide margin, and the
+## three-quarters of it a player can actually be looking at is 0.9 m.
+##
+## ponytail: the mass IS the ladder. A separate stack of four lit bands beside each
+## lock would be four more unbatched meshes per riddle for the same four bits, and
+## the pads are drawn in front of the mass precisely so the thing you are opening is
+## in your eye line. If a later riddle puts its lock out of sight of its gate, that
+## is when the bands earn their nodes.
+const RIDDLE_NOTCH: float = 1.2
+
+## How hard the mass clunks on a wrong step, scaled by how far in you were — the
+## demand gate's `_nudge_ratio` reaction, in the one direction a mass can move.
+const RIDDLE_RATTLE: float = 0.22
+
+## How far it travels once solved: its own height, so the doorway is fully clear.
+const RIDDLE_TRAVEL: float = TowerShell.STOREY_HEIGHT - SLAB_THICK
 
 ## The demand gate's vault, off the hall's south end. The shutter fills the gap
 ## between the two jambs and sinks its own full height to open.
@@ -635,7 +691,16 @@ const BOX_BUDGET: int = 60
 ## painted a `GLOW_COLORS` colour, so a plan storey commits ONE surface and not two.
 ## THREE STOREYS OF 80 x 80 m COST THREE DRAWS: that is the claim this number is,
 ## and `_check_node_shape` is what stops the next author quietly spending it.
-const DRAW_BUDGET: int = 26
+##
+## 28 SINCE PHASE 15, and the two are the two riddle masses — the only riddle boxes
+## that leave the batch, because they are the only ones that move. A lock's four
+## coloured pads and its clue's four coloured marks are static plates and cost
+## nothing at all, which is the whole reason the mass doubles as the progress
+## display (see `RIDDLE_NOTCH`): the alternative, a lit band ladder beside every
+## lock, would have been four more nodes per riddle for the same four bits.
+## ONE DRAW PER RIDDLE is the claim, and it is what makes a floor of them
+## affordable.
+const DRAW_BUDGET: int = 28
 
 # ============================================================================
 # PALETTE — one material per colour, shared process-wide (see `_material`)
@@ -679,6 +744,21 @@ const COLOR_CELL_FREED := Color(0.19, 0.21, 0.23)   # ...and the same field, shu
 ## ago and not as a wall that was always here. Deliberately not one of the three
 ## verb colours: a collapse is not a gate, asks nothing and can never be opened.
 const COLOR_SCAR := Color(0.34, 0.30, 0.28)
+
+## The riddle gate's mass, and the four colours its lock is spelled in. The mass is
+## a cold indigo in NEITHER gate family on purpose — a player who has met the steel
+## demand gate and the violet identity gate must not read this as either.
+##
+## The pad colours are the clue's alphabet: the same four, in the same order, are
+## painted on the clue room's floor. They are deliberately outside `GLOW_COLORS`,
+## like every other plan box, so a storey batch stays one surface.
+const COLOR_RIDDLE := Color(0.16, 0.20, 0.44)
+const COLOR_RIDDLE_PADS: Array[Color] = [
+	Color(0.98, 0.72, 0.16),   # 1 — amber
+	Color(0.24, 0.46, 0.92),   # 2 — blue
+	Color(0.86, 0.24, 0.62),   # 3 — magenta
+	Color(0.56, 0.82, 0.20),   # 4 — lime
+]
 
 ## Which colours are EMISSIVE AND UNSHADED. There are no `Light3D`s anywhere in
 ## this building: a real light under the slab would cost a shadow pass on a
@@ -950,6 +1030,20 @@ var _on_spine_pad: Dictionary = {}
 
 ## The crawl press and its clock. The clock is the animation's only state — the
 ## press has no open/shut, it just runs, which is what makes it a challenge.
+## The riddles, keyed by gate id (phase 15). `_riddle_step` is how far into the
+## sequence the player is and is the ONLY per-lock state that is not derived; it is
+## deliberately not persisted, because a half-entered combination is not a thing the
+## building remembers about you — the SOLVE is, and that rides the opened set.
+var _riddle_meshes: Dictionary = {}
+var _riddle_shapes: Dictionary = {}
+var _riddle_open: Dictionary = {}     # gate id -> 0..1 tween of the full travel
+var _riddle_step: Dictionary = {}     # gate id -> steps entered correctly
+var _riddle_on_pad: Dictionary = {}   # gate id -> the digit under the player, 0 none
+var _riddle_last: Dictionary = {}     # gate id -> the digit already acted on
+var _riddle_nudge: Dictionary = {}    # gate id -> 1..0 clunk, on a wrong step
+var _riddle_ratio: Dictionary = {}    # gate id -> how far in that wrong step was
+var _riddle_rest: Dictionary = {}     # gate id -> the mass's y with nothing entered
+
 var _press: MeshInstance3D = null
 var _press_clock: float = 0.0
 
@@ -1358,6 +1452,7 @@ static func plan_boxes(floor_index: int) -> Array[Dictionary]:
 	if not ramp.is_empty():
 		out.append(ramp)
 	out.append_array(_plan_pads(plan))
+	out.append_array(_plan_riddles(plan))
 	_plan_cache[floor_index] = out
 	return out
 
@@ -1648,6 +1743,176 @@ static func _plan_pads(plan: Dictionary) -> Array[Dictionary]:
 	return out
 
 
+static func riddle_ids() -> Array[String]:
+	"""
+	Every riddle gate in the graph, in `gates` order.
+
+	Read out of `TowerGraph` rather than listed here, exactly as the identity gate's
+	hero is: the building must not be able to hold a riddle the audit has never
+	heard of, or miss one it has.
+	"""
+	var out: Array[String] = []
+	for gid: String in TowerGraph.TOWER_GRAPH["gates"]:
+		if String(TowerGraph.gate(gid).get("class", "")) == TowerGraph.CLASS_RIDDLE:
+			out.append(gid)
+	return out
+
+
+static func riddle_slots(plan: Dictionary) -> Dictionary:
+	"""
+	One storey's riddle cells, resolved against the grid it is drawn on.
+
+	@return: `{"masses": {gate id: Rect2i in cells}, "pads": [{gate, digit, c, r}]}`
+
+	The storey's `gates` dict is the ONE binding, for both characters: a `"c,r"` key
+	whose cell is a `D` is part of that gate's mass, and one whose cell is a lock
+	digit is one of its pads. That is what lets a lock and the mass it lifts sit on
+	different floors — and `tower_selfcheck` walks the same dict from both ends, so
+	neither a cell nobody named nor a name nobody drew can survive a build.
+	"""
+	var masses: Dictionary = {}
+	var pads: Array[Dictionary] = []
+	var rows: Array = plan["rows"]
+	var slots: Dictionary = plan["gates"]
+	for key: String in slots:
+		var parts := key.split(",")
+		if parts.size() != 2:
+			continue
+		var c := int(parts[0])
+		var r := int(parts[1])
+		if r < 0 or r >= rows.size():
+			continue
+		var line := String(rows[r])
+		if c < 0 or c >= line.length():
+			continue
+		var gid := String(slots[key])
+		var ch := line[c]
+		if ch == TowerPlans.GATE_CHAR:
+			var span: Rect2i = masses.get(gid, Rect2i(c, r, 1, 1))
+			masses[gid] = span.merge(Rect2i(c, r, 1, 1))
+		elif TowerPlans.pad_digit(ch) > 0:
+			pads.append({"gate": gid, "digit": TowerPlans.pad_digit(ch), "c": c, "r": r})
+	return {"masses": masses, "pads": pads}
+
+
+static func _plan_riddles(plan: Dictionary) -> Array[Dictionary]:
+	"""
+	One storey's riddle geometry: gate masses, lock pads and clue strips.
+
+	@return: `boxes()`-shaped entries. Empty for a storey that draws no riddle cell
+	        and holds no riddle's clue room.
+
+	THREE KINDS OF BOX, and only the first is its own node:
+
+	  * the MASS, one per gate, filling the run of `D` cells it owns, slab to
+	    ceiling so it can be neither jumped nor crawled. It travels, so it carries
+	    `dynamic` and stays out of the batch.
+	  * the PADS, one plate per lock digit, coloured from `COLOR_RIDDLE_PADS`.
+	  * the CLUE, four plates in a row on the clue room's floor, in the answer's
+	    order and the answer's colours. DERIVED FROM THE ANSWER ARRAY, so the clue
+	    cannot drift from the lock it explains — the failure a hand-painted clue
+	    would eventually have, and one no self-check could see.
+	"""
+	var out: Array[Dictionary] = []
+	var floor_index := int(plan["floor"])
+	var prefix := _plan_prefix(floor_index)
+	var top: float = FLOOR_Y[floor_index]
+	var slots := riddle_slots(plan)
+
+	var masses: Dictionary = slots["masses"]
+	for gid: String in masses:
+		var span: Rect2i = masses[gid]
+		var x0 := _grid_x(float(span.position.x))
+		var x1 := _grid_x(float(span.end.x))
+		var z0 := _grid_z(float(span.position.y))
+		var z1 := _grid_z(float(span.end.y))
+		out.append({
+			"name": "%sRiddleMass_%s" % [prefix, gid],
+			"pos": Vector3((x0 + x1) * 0.5, top + RIDDLE_TRAVEL * 0.5, (z0 + z1) * 0.5),
+			"size": Vector3(x1 - x0, RIDDLE_TRAVEL, z1 - z0),
+			"color": COLOR_RIDDLE, "collide": true, "floor": floor_index,
+			"dynamic": true,
+		})
+
+	for pad: Dictionary in slots["pads"]:
+		out.append(_riddle_plate("%sRiddlePad_%s_%d" % [prefix, String(pad["gate"]),
+				int(pad["digit"])], int(pad["c"]), int(pad["r"]), int(pad["digit"]),
+				floor_index, TowerPlans.PLAN_CELL))
+
+	# ...and any clue this storey happens to carry. A riddle's clue room is named in
+	# the GRAPH, so the storey that draws that room paints the strip whether or not
+	# it draws any of the riddle's own cells — which is the whole point of a clue.
+	for gid2: String in riddle_ids():
+		var strip := clue_strip(gid2)
+		if strip.is_empty() or int(strip["floor"]) != floor_index:
+			continue
+		var answer: Array = TowerGraph.gate(gid2)["answer"]
+		for i: int in answer.size():
+			out.append(_riddle_plate("%sRiddleClue_%s_%d" % [prefix, gid2, i],
+					int(strip["c"]) + i, int(strip["r"]), int(answer[i]), floor_index,
+					TowerPlans.PLAN_CELL * 0.7))
+	return out
+
+
+static func _riddle_plate(plate_name: String, c: int, r: int, digit: int,
+		floor_index: int, side: float) -> Dictionary:
+	"""One coloured plate on a storey's floor — a lock pad or a clue mark."""
+	return {
+		"name": plate_name,
+		"pos": Vector3(_grid_x(float(c) + 0.5), FLOOR_Y[floor_index] + PLAN_PAD_THICK * 0.5,
+				_grid_z(float(r) + 0.5)),
+		"size": Vector3(side, PLAN_PAD_THICK, side),
+		"color": COLOR_RIDDLE_PADS[clampi(digit - 1, 0, COLOR_RIDDLE_PADS.size() - 1)],
+		"collide": false, "floor": floor_index,
+	}
+
+
+static func clue_strip(gate_id: String) -> Dictionary:
+	"""
+	Where one riddle's clue is painted: `{floor, c, r}`, the WEST end of the strip.
+
+	@return: `{}` when the gate is not a riddle, or when no storey draws its clue
+	        room — which `tower_selfcheck` fails on rather than shrugging at.
+
+	DERIVED FROM THE CLUE ROOM'S OWN CELLS, centred on their bounding box, because
+	an authored xz would be a third place the plan has to agree with itself. The
+	self-check asserts every plate lands on a plain cell of that room, so a strip
+	that ran into a wall or over a system pad fails the build.
+	"""
+	var room_id := String(TowerGraph.gate(gate_id).get("clue_room", ""))
+	var answer: Array = TowerGraph.gate(gate_id).get("answer", [])
+	if room_id == "" or answer.is_empty():
+		return {}
+	for floor_index: int in TowerPlans.floors():
+		var plan := TowerPlans.storey(floor_index)
+		var letter := ""
+		for key: String in plan["rooms"]:
+			if String(plan["rooms"][key]) == room_id:
+				letter = key
+				break
+		if letter == "":
+			continue
+		var span := Rect2i()
+		var first := true
+		for r: int in plan["rows"].size():
+			var line := String(plan["rows"][r])
+			for c: int in line.length():
+				if line[c] != letter:
+					continue
+				var cell := Rect2i(c, r, 1, 1)
+				span = cell if first else span.merge(cell)
+				first = false
+		if first:
+			continue
+		var start := span.position.x + int(floorf(float(span.size.x - answer.size()) * 0.5))
+		return {
+			"floor": floor_index,
+			"c": start,
+			"r": span.position.y + span.size.y / 2,
+		}
+	return {}
+
+
 static func _plan_prefix(floor_index: int) -> String:
 	"""
 	The name every box of one planned storey carries.
@@ -1927,6 +2192,23 @@ static func headroom() -> float:
 	return SLAB_Y - SLAB_THICK
 
 
+static func is_own_node(box: Dictionary) -> bool:
+	"""
+	Does this box need a `MeshInstance3D` of its own, rather than the batch?
+
+	THE ONE ANSWER, asked by `_ready()` when it builds and by
+	`tower_interior_selfcheck` when it counts the draws and the materials — the two
+	must not be able to disagree about which boxes left the batch.
+
+	Three ways in: the hand-authored keep's `MOVING_PARTS` list, a rotor's `spin`,
+	and a plan box that declared itself `dynamic` (phase 15's riddle masses, which
+	are named by a builder and so cannot be in a const list).
+	"""
+	return MOVING_PARTS.has(String(box["name"])) \
+		or not is_zero_approx(float(box.get("spin", 0.0))) \
+		or bool(box.get("dynamic", false))
+
+
 func _ready() -> void:
 	"""Build the interior, its one collision body, its pads and its label."""
 	add_to_group("tower_interior")
@@ -1957,7 +2239,7 @@ func _ready() -> void:
 		var spin: float = float(box.get("spin", 0.0))
 		if not is_zero_approx(spin):
 			parent = _make_rotor(box, parent)
-		elif not MOVING_PARTS.has(String(box["name"])):
+		elif not is_own_node(box):
 			batched[int(box["floor"])].append(box)
 			if box["collide"]:
 				_add_shape(body, box)
@@ -1996,6 +2278,8 @@ func _ready() -> void:
 			_mass_shape = shape
 		elif box["name"] == SCAR_BOX:
 			_scar_shape = shape
+		elif _riddle_of(String(box["name"])) != "":
+			_riddle_shapes[_riddle_of(String(box["name"]))] = shape
 		else:
 			var spine := _spine_gate_of(String(box["name"]))
 			if spine != "":
@@ -2010,6 +2294,7 @@ func _ready() -> void:
 
 	_build_pads()
 	_build_wing()
+	_build_riddles()
 	_build_label()
 	_build_vault_prize()
 	# Whatever the tower already knows is open, apply it NOW — before the first
@@ -2130,6 +2415,14 @@ func _apply_opened() -> void:
 		var gid := String(door["gate"])
 		_spine_open[gid] = 1.0 if _is_open(gid) else 0.0
 		_place_spine(gid)
+	# A solved riddle is a solved riddle for good — it is in the same monotone set,
+	# so a tower rebuilt (or a save reloaded) comes back with the mass already up
+	# and the sequence never asked for again.
+	for gid2: String in _riddle_meshes:
+		_riddle_open[gid2] = 1.0 if _is_open(gid2) else 0.0
+		_riddle_step[gid2] = 0
+		_riddle_nudge[gid2] = 0.0
+		_place_riddle(gid2)
 	_place_shutter()
 	_place_mass()
 	# The captive set is seeded from the same snapshot, so a tower rebuilt after the
@@ -2189,6 +2482,18 @@ func _tick_gates(delta: float) -> void:
 	if _nudge > 0.0:
 		_nudge = maxf(0.0, _nudge - delta / NUDGE_TIME)
 		_place_shutter()
+	# The riddles: the same open tween, plus the clunk decaying on the same clock as
+	# the demand gate's nudge — one reaction, two gates, one constant.
+	for gid: String in _riddle_meshes:
+		var moved := false
+		if _is_open(gid) and float(_riddle_open.get(gid, 0.0)) < 1.0:
+			_riddle_open[gid] = minf(1.0, float(_riddle_open.get(gid, 0.0)) + step)
+			moved = true
+		if float(_riddle_nudge.get(gid, 0.0)) > 0.0:
+			_riddle_nudge[gid] = maxf(0.0, float(_riddle_nudge[gid]) - delta / NUDGE_TIME)
+			moved = true
+		if moved:
+			_place_riddle(gid)
 
 
 func _place_shutter() -> void:
@@ -2248,6 +2553,7 @@ func _tick_pads() -> void:
 		_say(tr("The mass lifts. The way through stays open."))
 		_sfx("play_level_up")
 	_tick_spine_pads()
+	_tick_riddle_pads()
 	if not _on_demand_pad:
 		return
 	_update_bands()
@@ -2255,6 +2561,86 @@ func _tick_pads() -> void:
 		_open(GATE_DEMAND)
 		_say(tr("Calibration met. The vault opens."))
 		_sfx("play_level_up")
+
+
+func _tick_riddle_pads() -> void:
+	"""
+	Read every riddle lock against the pad the player is standing on RIGHT NOW.
+
+	POLLED, and for a reason `body_entered` cannot cover: the pads of one lock touch
+	each other, so walking from pad 2 onto pad 3 fires an enter and an exit in an
+	order Godot does not promise. Holding "which pad is under the player" and acting
+	on the CHANGE makes the step depend on where you are and not on which signal won
+	the frame — the same reasoning that made the identity gate a poll, one gate verb
+	later. Standing still presses nothing, which is what makes a four-step sequence
+	enterable at a walk.
+	"""
+	for gid: String in _riddle_meshes:
+		var now := int(_riddle_on_pad.get(gid, 0))
+		if now == int(_riddle_last.get(gid, 0)):
+			continue
+		_riddle_last[gid] = now
+		if now > 0 and not _is_open(gid):
+			_press_riddle(gid, now)
+
+
+func _press_riddle(gate_id: String, digit: int) -> void:
+	"""
+	One step of a combination.
+
+	Right: the mass lifts a notch and the sequence advances. Wrong: it drops back and
+	CLUNKS — the demand gate's partway reaction, scaled by how far in you were, so a
+	miss on the last step is louder than a miss on the first. No penalty, no lockout,
+	no cooldown: a riddle costs time and attention and nothing else.
+
+	A wrong step that HAPPENS TO BE the first digit restarts the sequence at one
+	rather than at zero, because a lock that made you step off and back on to try
+	again would be a puzzle about its own interface.
+	"""
+	var answer: Array = TowerGraph.gate(gate_id).get("answer", [])
+	if answer.is_empty():
+		return
+	var step := int(_riddle_step.get(gate_id, 0))
+	if digit == int(answer[step]):
+		step += 1
+	else:
+		_riddle_ratio[gate_id] = float(step) / float(answer.size())
+		_riddle_nudge[gate_id] = 1.0
+		_sfx("play_buzz")
+		step = 1 if digit == int(answer[0]) else 0
+	_riddle_step[gate_id] = step
+	_place_riddle(gate_id)
+	if step < answer.size():
+		return
+	_open(gate_id)
+	_sfx("play_level_up")
+
+
+func _place_riddle(gate_id: String) -> void:
+	"""
+	Put one riddle's mass where its progress, its tween and its clunk say.
+
+	Three terms, and the partial one is bounded by `RIDDLE_NOTCH` for a reason that
+	is not cosmetic: the gap under a part-risen mass must stay under the player's
+	capsule, or a lock three quarters entered is a lock you walk under.
+	"""
+	var mesh: MeshInstance3D = _riddle_meshes.get(gate_id)
+	if mesh == null:
+		return
+	var answer: Array = TowerGraph.gate(gate_id).get("answer", [])
+	var opened := float(_riddle_open.get(gate_id, 0.0))
+	var steps := maxi(answer.size(), 1)
+	var lift := RIDDLE_TRAVEL * opened
+	if opened < 1.0:
+		lift += RIDDLE_NOTCH * float(int(_riddle_step.get(gate_id, 0))) / float(steps)
+		var clunk := float(_riddle_nudge.get(gate_id, 0.0))
+		if clunk > 0.0:
+			lift += RIDDLE_RATTLE * maxf(float(_riddle_ratio.get(gate_id, 0.0)), 0.25) \
+				* sin(PI * (1.0 - clunk))
+	mesh.position.y = float(_riddle_rest.get(gate_id, 0.0)) + lift
+	var shape: CollisionShape3D = _riddle_shapes.get(gate_id)
+	if shape != null:
+		shape.position.y = mesh.position.y
 
 
 func _attempt_demand() -> void:
@@ -2384,7 +2770,55 @@ func _add_area(area_name: String, pos: Vector3, size: Vector3,
 	_floors[floor_index].add_child(area)
 
 
-func _make_label(label_name: String, pos: Vector3, text: String) -> Label3D:
+func _build_riddles() -> void:
+	"""
+	Every riddle's lock: one trigger volume per pad, and two signs.
+
+	THE PADS ARE BATCHED PLATES WITH NO NODE OF THEIR OWN — the plate you see is
+	part of the storey's merged mesh, and what makes it a lock is this `Area3D`
+	standing on it. Only the mass leaves the batch, because only the mass moves.
+
+	The two signs are the whole of this feature's TEXT, and they are two words: the
+	sequence itself is spelled in colour, at both ends, so the puzzle needs no
+	sentence to state and no sentence to translate.
+	"""
+	for floor_index: int in TowerPlans.floors():
+		var plan := TowerPlans.storey(floor_index)
+		var slots := riddle_slots(plan)
+		var lock_sum: Dictionary = {}
+		var lock_n: Dictionary = {}
+		for pad: Dictionary in slots["pads"]:
+			var gid := String(pad["gate"])
+			var digit := int(pad["digit"])
+			var here := Vector3(_grid_x(float(int(pad["c"])) + 0.5),
+					FLOOR_Y[floor_index] + 1.0, _grid_z(float(int(pad["r"])) + 0.5))
+			_add_area("RiddleTrigger_%s_%d" % [gid, digit], here,
+					Vector3(TowerPlans.PLAN_CELL * 0.9, 2.0, TowerPlans.PLAN_CELL * 0.9),
+					_on_riddle_enter.bind(gid, digit), _on_riddle_exit.bind(gid, digit),
+					floor_index)
+			# The sign hangs over the middle of the pad block, which is the mean of
+			# the pads themselves — so a lock of any shape signs itself.
+			lock_sum[gid] = (lock_sum.get(gid, Vector3.ZERO) as Vector3) + here
+			lock_n[gid] = int(lock_n.get(gid, 0)) + 1
+		for gid2: String in lock_sum:
+			var centre: Vector3 = (lock_sum[gid2] as Vector3) / float(int(lock_n[gid2]))
+			_make_label("RiddleLockLabel_%s" % gid2,
+					centre + Vector3(0.0, 1.6, 0.0), tr("SEQUENCE LOCK"), floor_index)
+
+	for gid3: String in riddle_ids():
+		var strip := clue_strip(gid3)
+		if strip.is_empty():
+			continue
+		var answer: Array = TowerGraph.gate(gid3)["answer"]
+		var mid := float(int(strip["c"])) + float(answer.size()) * 0.5
+		_make_label("RiddleClueLabel_%s" % gid3,
+				Vector3(_grid_x(mid), FLOOR_Y[int(strip["floor"])] + 2.0,
+					_grid_z(float(int(strip["r"])) + 0.5)),
+				tr("SEQUENCE"), int(strip["floor"]))
+
+
+func _make_label(label_name: String, pos: Vector3, text: String,
+		floor_index: int = 0) -> Label3D:
 	"""
 	One world label: billboarded, wrapped narrow, shadow-free, parented to storey 0.
 
@@ -2471,9 +2905,28 @@ func _remember(box_name: String, mesh: MeshInstance3D) -> void:
 				# reads the name straight back.
 				_cell_frames[box_name.trim_prefix("CellFrame").to_lower()] = mesh
 				return
+			var riddle := _riddle_of(box_name)
+			if riddle != "":
+				_riddle_meshes[riddle] = mesh
+				# The rest height, taken off the mesh the table just placed rather
+				# than recomputed — one number, one source, no chance of a mass that
+				# animates from a y its own box never had.
+				_riddle_rest[riddle] = mesh.position.y
+				return
 			var spine := _spine_gate_of(box_name)
 			if spine != "":
 				_spine_meshes[spine] = mesh
+
+
+static func _riddle_of(box_name: String) -> String:
+	"""
+	Which riddle a box belongs to, "" for a box that is no riddle's mass.
+
+	Derived from the name the plan builder gave it — `S<floor>PlanRiddleMass_<id>`
+	— rather than from a second table, exactly as `CellFrame<Hero>` is read back.
+	"""
+	var cut := box_name.find("RiddleMass_")
+	return "" if cut < 0 else box_name.substr(cut + "RiddleMass_".length())
 
 
 # ============================================================================
@@ -2835,6 +3288,18 @@ func _on_identity_enter(body: Node3D) -> void:
 func _on_identity_exit(body: Node3D) -> void:
 	if body.is_in_group("player"):
 		_on_identity_pad = false
+
+
+func _on_riddle_enter(body: Node3D, gate_id: String, digit: int) -> void:
+	"""Remember which lock pad the player is on; `_tick_pads` decides what it means."""
+	if body.is_in_group("player"):
+		_riddle_on_pad[gate_id] = digit
+
+
+func _on_riddle_exit(body: Node3D, gate_id: String, digit: int) -> void:
+	"""...and forget it, unless another pad has already claimed the player."""
+	if body.is_in_group("player") and int(_riddle_on_pad.get(gate_id, 0)) == digit:
+		_riddle_on_pad[gate_id] = 0
 
 
 func _on_spine_enter(body: Node3D, gate_id: String) -> void:

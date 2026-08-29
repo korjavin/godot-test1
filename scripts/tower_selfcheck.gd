@@ -110,6 +110,11 @@ var _gate_colors: Array[Color] = [
 	TowerInterior.COLOR_MECHANISM,
 	TowerInterior.COLOR_IDENTITY,
 	TowerInterior.COLOR_IDENTITY_PAD,
+	# ...and phase 15's indigo, which is the mass of a riddle and nothing else. The
+	# lock's four pad colours are deliberately NOT here: a pad is bound to its gate
+	# by the plan's own `gates` dict, in both directions, which is a tighter binding
+	# than a colour and the only one that can span two storeys.
+	TowerInterior.COLOR_RIDDLE,
 ]
 
 ## ...and the colours that mean "this box marks a room". A room's `parts` claim
@@ -125,9 +130,12 @@ var _room_colors: Array[Color] = [
 ## Keys a gate row may carry. A WHITELIST, because the law that matters here is a
 ## negative one — no gate may key on a hero's ABSENCE — and the only mechanical
 ## form of "no such key exists" is "these are the keys that do".
+## `clue_room` and `answer` are on the list because a RIDDLE carries them; check 2
+## then refuses either on a gate of any other class, so the whitelist stays what it
+## is for — the only mechanical form of "no such key exists".
 const GATE_KEYS: Array[String] = [
 	"class", "identity", "effect", "scale", "needed_during_captivity",
-	"built", "quest", "parts", "note",
+	"built", "quest", "parts", "note", "clue_room", "answer",
 ]
 
 ## Keys a mutation row may carry. Design law 3 lives in this list: there is no
@@ -176,6 +184,7 @@ func _initialize() -> void:
 	_check_quests_and_liberation()
 	_check_scars_are_built()
 	_check_plans_are_walkable()
+	_check_riddles_are_answerable()
 	_report()
 
 
@@ -384,7 +393,7 @@ func _check_plans_bind_to_the_graph() -> void:
 			var row := String(plan["rows"][r])
 			for c: int in row.length():
 				var ch := row[c]
-				if ch == TowerPlans.GATE_CHAR:
+				if ch == TowerPlans.GATE_CHAR or TowerPlans.pad_digit(ch) > 0:
 					drawn_slots["%d,%d" % [c, r]] = true
 				elif ch >= "A" and ch <= "Z" and ch != TowerPlans.STAIR_UP_CHAR \
 						and ch != TowerPlans.PAD_CHAR and ch != TowerPlans.POST_CHAR:
@@ -401,13 +410,13 @@ func _check_plans_bind_to_the_graph() -> void:
 					% [label, letter2, String(plan_rooms[letter2])] + "— a row about nothing")
 		for slot2: String in drawn_slots:
 			if not plan_gates.has(slot2):
-				_fail("%s draws a '%s' at cell %s that its gates dict does not name — a gate "
+				_fail("%s draws a gate cell ('%s' or a lock pad) at %s that its gates dict does "
 					% [label, TowerPlans.GATE_CHAR, slot2]
-					+ "drawn and forgotten is a passage the audit cannot see")
+					+ "not name — a gate drawn and forgotten is a passage the audit cannot see")
 		for slot3: String in plan_gates:
 			if not drawn_slots.has(slot3):
-				_fail("%s names a gate at cell %s, where the plan draws no '%s'" % [
-					label, slot3, TowerPlans.GATE_CHAR])
+				_fail("%s names a gate at cell %s, where the plan draws neither a '%s' nor a "
+					% [label, slot3, TowerPlans.GATE_CHAR] + "lock pad")
 
 		# --- the graph agrees the floor hangs together -----------------------
 		var landing := String(plan["landing"])
@@ -438,14 +447,30 @@ func _check_design_laws() -> void:
 		_whitelist("gate '%s'" % gid, g, GATE_KEYS)
 		var cls := String(g.get("class", ""))
 		if cls not in [TowerGraph.CLASS_CHALLENGE, TowerGraph.CLASS_IDENTITY,
-				TowerGraph.CLASS_DEMAND]:
-			_fail("gate '%s' has class '%s', which is none of the three verbs" % [gid, cls])
+				TowerGraph.CLASS_DEMAND, TowerGraph.CLASS_RIDDLE]:
+			_fail("gate '%s' has class '%s', which is none of the four verbs" % [gid, cls])
 		var who := String(g.get("identity", ""))
 		if cls == TowerGraph.CLASS_IDENTITY:
 			if who not in TowerGraph.HEROES:
 				_fail("identity gate '%s' asks for '%s', who is not a hero" % [gid, who])
 		elif who != "":
+			# THE RIDDLE'S OWN LAW LANDS HERE. A riddle that named a hero would be an
+			# identity gate wearing the wrong colour — and one the fixpoint walk would
+			# then treat as free for everybody, which is the audit lying rather than
+			# merely a design smell.
 			_fail("gate '%s' is a %s gate but names a hero ('%s')" % [gid, cls, who])
+		# ...and the two riddle-only keys are riddle-only in both directions.
+		var riddle := cls == TowerGraph.CLASS_RIDDLE
+		for key: String in ["clue_room", "answer"]:
+			var carried: bool = g.has(key) and not (
+				(g[key] is String and String(g[key]) == "")
+				or (g[key] is Array and (g[key] as Array).is_empty()))
+			if riddle and not carried:
+				_fail("riddle gate '%s' carries no '%s' — the whole class is that key" % [
+					gid, key])
+			elif carried and not riddle:
+				_fail("gate '%s' is a %s gate but carries '%s', which only a riddle may" % [
+					gid, cls, key])
 
 	# --- law: mutations are edge-ADDITIVE ----------------------------------
 	var edge_ids: Dictionary = {}
@@ -934,14 +959,53 @@ func _all_entries() -> Array:
 func _reach(index: Dictionary, start: String, free: Array[String], mode: String,
 		skip_gate: String) -> Dictionary:
 	"""
-	Breadth-first over the passages this free set can actually get through.
+	Everywhere this free set can get to — walked to a FIXPOINT over the riddles.
 
-	@param index: `_index_for(story, scar)` — room id -> the edges touching it. A
-	              room with no edges is simply absent, which reads as "nowhere to
-	              go from here", exactly as the old full scan did.
+	@param index: `_index_for(story, scar)` — room id -> the edges touching it.
 	@param skip_gate: a gate id to treat as impassable, for check 6's necessity
 	                  probe. "" for an ordinary walk.
 	@return: room id -> true, for every room reached.
+
+	WHY A FIXPOINT AND NOT ONE WALK (phase 15). Every other gate class is a pure
+	function of the free set, so one breadth-first pass answers the question. A
+	RIDDLE is passable if this same walk reaches its clue room — a gate whose
+	openness depends on the very reachability being computed. So: walk with the
+	riddles shut, open the ones whose clue rooms turned up, walk again, and repeat
+	until no new riddle opens.
+
+	IT TERMINATES AND IT IS THE LEAST FIXPOINT. Each round either opens at least one
+	riddle or stops, so there are at most (riddles + 1) rounds; and reachability is
+	monotone in the solved set, so starting from nothing solved and only ever adding
+	lands on the SMALLEST set of rooms consistent with the rules — the worst case,
+	which is the only direction a softlock audit may err in. A riddle whose clue is
+	shut behind itself is exactly the case that never opens here, which is how the
+	landmine is caught rather than assumed away.
+	"""
+	var solved: Dictionary = {}
+	while true:
+		var seen := _walk(index, start, free, mode, skip_gate, solved)
+		var grew := false
+		for gid: String in _graph["gates"]:
+			if solved.has(gid) or gid == skip_gate:
+				continue
+			var g: Dictionary = _graph["gates"][gid]
+			if String(g.get("class", "")) != TowerGraph.CLASS_RIDDLE:
+				continue
+			if seen.has(String(g.get("clue_room", ""))):
+				solved[gid] = true
+				grew = true
+		if not grew:
+			return seen
+	return {}
+
+
+func _walk(index: Dictionary, start: String, free: Array[String], mode: String,
+		skip_gate: String, solved: Dictionary) -> Dictionary:
+	"""
+	One breadth-first pass, with `solved` naming the riddles already worked out.
+
+	A room with no edges is simply absent from `index`, which reads as "nowhere to
+	go from here", exactly as the old full scan did.
 	"""
 	var seen: Dictionary = {start: true}
 	var queue: Array[String] = [start]
@@ -952,7 +1016,7 @@ func _reach(index: Dictionary, start: String, free: Array[String], mode: String,
 			if far == "" or seen.has(far):
 				continue
 			var gid := String(edge["gate"])
-			if gid != "" and (gid == skip_gate or not _passable(gid, free, mode)):
+			if gid != "" and (gid == skip_gate or not _passable(gid, free, mode, solved)):
 				continue
 			seen[far] = true
 			queue.append(far)
@@ -978,11 +1042,17 @@ func _across(edge: Dictionary, here: String) -> String:
 	return ""
 
 
-func _passable(gate_id: String, free: Array[String], mode: String) -> bool:
+func _passable(gate_id: String, free: Array[String], mode: String,
+		solved: Dictionary = {}) -> bool:
 	"""
 	Can this free set get through this gate, with nothing assumed opened?
 
-	ONE RULE PER GATE CLASS, and they are the epic's three verbs:
+	@param solved: the riddles this walk has already worked out — see `_reach`. It
+	               defaults to none, which is the honest answer for a caller asking
+	               about one gate in isolation (check 5's blocker naming): a riddle
+	               that is closed there is one the walk really did stop at.
+
+	ONE RULE PER GATE CLASS, and they are the epic's four verbs:
 
 	  * challenge — the base kit beats it, so anybody does. (A challenge that needed
 	    a rank would be a demand gate painted the wrong colour; check 2 refuses one.)
@@ -992,6 +1062,10 @@ func _passable(gate_id: String, free: Array[String], mode: String) -> bool:
 	    SKILL_TREES carry that effect can read it at all, so a hero-specific demand
 	    (`primm_blink`) requires that hero exactly as an identity gate would. That
 	    equivalence is derived from the trees, never authored twice.
+	  * riddle    — passable once this walk has reached its clue room. NOTHING about
+	    the free set enters into it: knowledge is party-level, so a riddle can never
+	    be the gate that strands a subset, and the only way it can hurt anybody is by
+	    having its clue shut behind itself. That is what the fixpoint is for.
 	"""
 	if gate_id == "":
 		return true
@@ -1009,6 +1083,8 @@ func _passable(gate_id: String, free: Array[String], mode: String) -> bool:
 				if free.has(hero) and _meets(_reading(hero, effect, mode), float(g["scale"])):
 					return true
 			return false
+		TowerGraph.CLASS_RIDDLE:
+			return solved.has(gate_id)
 	return false
 
 
@@ -1099,6 +1175,8 @@ func _gate_words(gate_id: String) -> String:
 			return "identity gate, needs %s" % String(g["identity"])
 		TowerGraph.CLASS_DEMAND:
 			return "demand gate, needs %s >= %.2f" % [String(g["effect"]), float(g["scale"])]
+		TowerGraph.CLASS_RIDDLE:
+			return "riddle gate, its clue is in '%s'" % String(g.get("clue_room", "?"))
 	return "challenge gate, base kit"
 
 
@@ -1239,6 +1317,125 @@ func _check_plans_are_walkable() -> void:
 		TowerPlans.STOREYS.size(), rooms_drawn, walkable, ", ".join(angles)]
 
 	_check_the_flood_fill_can_fail()
+
+
+# ============================================================================
+# CHECK 10 — the riddles: a clue you can get to, a lock you can enter
+# ============================================================================
+
+func _check_riddles_are_answerable() -> void:
+	"""
+	Check 10. Every riddle has a clue somebody can read and a lock somebody can
+	press, and neither is shut behind the riddle it belongs to.
+
+	THE SOFTLOCK CLAUSE IS THE LAST ONE, and it is the reason this check exists.
+	A riddle is passable exactly when its clue room is reachable (`_passable`), so a
+	clue room reachable ONLY through the riddle it explains is a door whose key is
+	behind the door — a state the fixpoint walk in `_reach` correctly refuses to
+	open, which means checks 5 and 7 would report it as "room unreachable" and name
+	the room rather than the mistake. So it is asked directly here: with this riddle
+	treated as a wall, the full roster at max ranks must still reach its clue, from
+	every legal entry and in every story and scar state. The message names the
+	riddle, because that is the file the author has to open.
+
+	Everything above it is the cheap structural half — the answer is a permutation
+	of the pads actually drawn, the mass is actually drawn, and the clue strip lands
+	on plain floor of the clue room rather than in a wall or over a system pad.
+	"""
+	var rooms: Dictionary = _graph["rooms"]
+	# The lock cells, gathered off the storeys once: gate id -> digit -> cells.
+	var pads: Dictionary = {}
+	var masses: Dictionary = {}
+	for plan: Dictionary in TowerPlans.STOREYS:
+		var slots := TowerInterior.riddle_slots(plan)
+		for gid: String in slots["masses"]:
+			masses[gid] = true
+		for pad: Dictionary in slots["pads"]:
+			var of: Dictionary = pads.get(String(pad["gate"]), {})
+			of[int(pad["digit"])] = int(of.get(int(pad["digit"]), 0)) + 1
+			pads[String(pad["gate"])] = of
+
+	var riddles := 0
+	for gid2: String in _graph["gates"]:
+		var g: Dictionary = _graph["gates"][gid2]
+		if String(g.get("class", "")) != TowerGraph.CLASS_RIDDLE:
+			continue
+		riddles += 1
+		# --- the clue room is a room, and one that exists ---------------------
+		var clue := String(g.get("clue_room", ""))
+		if not rooms.has(clue):
+			_fail("riddle '%s' points at clue room '%s', which is not a room" % [gid2, clue])
+			continue
+		if not bool(rooms[clue]["built"]):
+			_fail("riddle '%s' points at clue room '%s', which nobody has built" % [gid2, clue])
+
+		# --- the answer is a permutation of the pads that are actually drawn ---
+		var answer: Array = g.get("answer", [])
+		var of_gate: Dictionary = pads.get(gid2, {})
+		if answer.size() < 3 or answer.size() > TowerPlans.PAD_DIGITS.length():
+			_fail("riddle '%s' has a %d-step answer — a sequence is 3 to %d steps" % [
+				gid2, answer.size(), TowerPlans.PAD_DIGITS.length()])
+		var used: Dictionary = {}
+		for step in answer:
+			var digit := int(step)
+			if digit < 1 or digit > TowerPlans.PAD_DIGITS.length():
+				_fail("riddle '%s' asks for pad %d, which is not one of '%s'" % [
+					gid2, digit, TowerPlans.PAD_DIGITS])
+			elif used.has(digit):
+				_fail(("riddle '%s' presses pad %d twice — an answer is a PERMUTATION of its "
+					+ "pads, which is what makes the mass's notch count honest") % [gid2, digit])
+			used[digit] = true
+			if int(of_gate.get(digit, 0)) != 1:
+				_fail("riddle '%s' asks for pad %d, which %d cells on the plans carry" % [
+					gid2, digit, int(of_gate.get(digit, 0))])
+		for drawn: int in of_gate:
+			if not used.has(drawn):
+				_fail(("riddle '%s' has a pad %d drawn on a plan that its answer never presses "
+					+ "— a lock button that does nothing") % [gid2, drawn])
+		if not masses.has(gid2):
+			_fail("riddle '%s' has no '%s' cell on any storey — a lock with nothing to open" % [
+				gid2, TowerPlans.GATE_CHAR])
+
+		# --- the clue is painted on floor the clue room really has ------------
+		var strip := TowerInterior.clue_strip(gid2)
+		if strip.is_empty():
+			_fail("riddle '%s': no storey draws its clue room '%s', so the clue is painted "
+				% [gid2, clue] + "nowhere")
+		else:
+			var plan2 := TowerPlans.storey(int(strip["floor"]))
+			var letter := ""
+			for key: String in plan2["rooms"]:
+				if String(plan2["rooms"][key]) == clue:
+					letter = key
+			for i: int in answer.size():
+				var c := int(strip["c"]) + i
+				var r := int(strip["r"])
+				var line := String(plan2["rows"][r])
+				if c < 0 or c >= line.length() or line[c] != letter:
+					_fail(("riddle '%s': its clue strip runs off '%s' at cell (%d, %d), which "
+						+ "is '%s' — the room is too narrow for a %d-mark clue, or the strip "
+						+ "lands on something else drawn in it")
+						% [gid2, clue, c, r,
+							"off the grid" if c < 0 or c >= line.length() else line[c],
+							answer.size()])
+					break
+
+		# --- and the clue is not shut behind the riddle it explains -----------
+		for story: Dictionary in _graph["story_states"]:
+			for scar: Dictionary in _graph["scars"]:
+				var index := _index_for(story, scar)
+				for entry: Dictionary in _all_entries():
+					var full: Array[String] = TowerGraph.HEROES.duplicate()
+					if _reach(index, String(entry["room"]), full, MAX, gid2).has(clue):
+						continue
+					_fail(("SOFTLOCK: riddle '%s' is the only way to its own clue room '%s' "
+						+ "from entry '%s' (story '%s', scar '%s') — the answer is locked "
+						+ "behind the door it opens")
+						% [gid2, clue, String(entry["id"]), String(story["id"]),
+							String(scar["id"])])
+	if riddles > 0:
+		print("tower riddles: %d, each with a %d-pad lock and a clue reachable with it shut" % [
+			riddles, TowerPlans.PAD_DIGITS.length()])
 
 
 func _check_the_flood_fill_can_fail() -> void:
@@ -1495,7 +1692,8 @@ func _is_legal_plan_char(ch: String) -> bool:
 	return ch == TowerPlans.WALL_CHAR or ch == TowerPlans.FLOOR_CHAR \
 		or ch == TowerPlans.LANDING_CHAR or ch == TowerPlans.STAIR_UP_CHAR \
 		or ch == TowerPlans.PAD_CHAR or ch == TowerPlans.POST_CHAR \
-		or ch == TowerPlans.GATE_CHAR or _is_room_letter(ch)
+		or ch == TowerPlans.GATE_CHAR or TowerPlans.pad_digit(ch) > 0 \
+		or _is_room_letter(ch)
 
 
 func _cell_x(c: int) -> float:

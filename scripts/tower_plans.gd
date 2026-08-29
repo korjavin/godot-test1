@@ -78,6 +78,12 @@ extends RefCounted
 ##   letter   a room's cells. The letter maps to a `TOWER_GRAPH` room id through
 ##            the storey's `rooms` dict, and the binding is checked BOTH ways.
 ##            `A`-`Z` EXCEPT `S`, `P`, `G` and `D`, which are taken below.
+##   1-4      one pad of a riddle's COMBINATION LOCK, and the digit IS which pad it
+##            is: the gate row's `answer` is a sequence of these digits, and the
+##            clue painted in its clue room is the same four colours in the same
+##            order. Bound to its gate through the storey's `gates` dict exactly as
+##            a `D` is, so a lock and the mass it opens may sit on different floors
+##            and neither can be drawn and forgotten.
 ##   S        the up-ramp's lane, arriving on this storey from the floor named by
 ##            `from`. It IS the ramp: one solid rectangle, long axis on X, two
 ##            cells deep. Emits the ramp box and derives the stairwell hole.
@@ -89,8 +95,9 @@ extends RefCounted
 ##   G        a guard post. Parsed and validated, spawns nothing — population is
 ##            phase 17's, and a post drawn here is the phase-17 author's map.
 ##   D        a gate slot. The cell key `"<c>,<r>"` must appear in the storey's
-##            `gates` dict and name a real `TOWER_GRAPH` gate row. No storey
-##            authored in this phase has one; phase 15 brings the riddles.
+##            `gates` dict and name a real `TOWER_GRAPH` gate row. Emits the gate's
+##            mass: one box filling the run, floor slab to ceiling, which rises out
+##            of the way when the gate opens and never comes back.
 ##
 ## ============================================================================
 ## A STOREY ROW
@@ -101,7 +108,9 @@ extends RefCounted
 ##   from     int    the floor index this storey's ramp climbs FROM.
 ##   landing  String the `TOWER_GRAPH` room id the `s` cells are.
 ##   rooms    Dict   room letter -> `TOWER_GRAPH` room id.
-##   gates    Dict   "<c>,<r>" -> `TOWER_GRAPH` gate id, for every `D` cell.
+##   gates    Dict   "<c>,<r>" -> `TOWER_GRAPH` gate id, for every `D` cell AND
+##                   every lock-pad digit. One dict for both, so a pad on floor 3
+##                   and the mass it lifts on floor 4 name the same gate.
 ##   rows     Array  exactly `PLAN_GRID` strings of exactly `PLAN_GRID` characters.
 ##   note     String what this floor IS. The notes are the design record.
 
@@ -124,13 +133,23 @@ const FLOOR_CHAR: String = "."
 const STAIR_UP_CHAR: String = "S"
 const LANDING_CHAR: String = "s"
 const PAD_CHAR: String = "P"
-# ponytail: `G` and `D` are PARSED AND VALIDATED and build nothing. A post spawns no
-# guard (population is phase 17's) and a slot opens no gate (the riddles are phase
-# 15's), but both are bound to real rows by check 1 today, which is what stops one
-# being drawn on a plan and forgotten. Wiring is one arm each in `plan_boxes()` /
-# `_ready()` when those phases land; the format does not change to get there.
+# ponytail: `G` is still PARSED AND VALIDATED and builds nothing — a post spawns no
+# guard, because population is phase 17's, and it is bound to a real row by check 1
+# today, which is what stops one being drawn on a plan and forgotten. Wiring is one
+# arm in `plan_boxes()` / `_ready()` when that phase lands; the format did not
+# change to wire `D`, which is the evidence that it will not have to.
 const POST_CHAR: String = "G"
 const GATE_CHAR: String = "D"
+
+## The riddle lock's pads, in digit order. FOUR, and the count is not free: a gate's
+## `answer` is a permutation of them, and the mass rises one notch per correct step,
+## so four pads and four notches are the same number said once.
+const PAD_DIGITS: String = "1234"
+
+
+static func pad_digit(ch: String) -> int:
+	"""Which lock pad this character is (1..4), or 0 when it is not one."""
+	return PAD_DIGITS.find(ch) + 1
 
 
 const STOREYS: Array[Dictionary] = [
@@ -163,7 +182,14 @@ const STOREYS: Array[Dictionary] = [
 			"I": "s3_evidence_west",
 			"J": "s3_evidence_east",
 		},
-		"gates": {},
+		# The strongroom's mass fills the west permits doorway; its four lock pads
+		# are the two-by-two block in the corridor directly in front of it, so the
+		# thing you are opening is in your eye line while you enter the sequence.
+		"gates": {
+			"24,18": "riddle_strongroom", "25,18": "riddle_strongroom",
+			"24,19": "riddle_strongroom", "25,19": "riddle_strongroom",
+			"24,20": "riddle_strongroom", "25,20": "riddle_strongroom",
+		},
 		"rows": [
 			"########################################",
 			"#....SSSSSSSSSSs.......................#",
@@ -183,9 +209,9 @@ const STOREYS: Array[Dictionary] = [
 			"#..#AAAAAA##BBBBBB#..#CCCCCC##EEEEEE#..#",
 			"#..#AAAAAA##BBBBBB#..#CCCCCC##EEEEEE#..#",
 			"#..#AAAAAA##BBBBBB#..#CCCCCC##EEEEEE#..#",
-			"#..###AA######BB###..###CC######EE###..#",
-			"#......................................#",
-			"#......................................#",
+			"#..###AA######BB###..###DD######EE###..#",
+			"#.......................12.............#",
+			"#.......................34.............#",
 			"#..###FF######HH###..###II######JJ###..#",
 			"#..#FFFFFF##HHHHHH#..#IIIIII##JJJJJJ#..#",
 			"#..#FFFFFF##HHHHHH#..#IIIIII##JJJJJJ#..#",
@@ -208,7 +234,8 @@ const STOREYS: Array[Dictionary] = [
 		],
 		"note": "Storey 3, the records floor: the grand ramp off the annulus, a "
 			+ "ring and cross corridor, and eight long record stacks two to a "
-			+ "quadrant.",
+			+ "quadrant. Two of them carry the clues both riddles are about; the "
+			+ "west permits stack is the strongroom one of them opens.",
 	},
 	# ------------------------------------------------------------------------
 	# STOREY 4 (floor 3) — THE ACCOUNTS FLOOR. Same skeleton, finer grain: twelve
@@ -303,7 +330,7 @@ const STOREYS: Array[Dictionary] = [
 	{
 		"floor": 4,
 		"from": 3,
-		"landing": "s5_landing",
+		"landing": "s5_stairhead",
 		"rooms": {
 			"A": "s5_boardroom",
 			"B": "s5_secretariat",
@@ -314,7 +341,17 @@ const STOREYS: Array[Dictionary] = [
 			"I": "s5_lounge",
 			"J": "s5_press_room",
 		},
-		"gates": {},
+		# The stair riddle. Its four pads stand on the landing pocket at the head of
+		# the ramp and its mass fills the pocket's east end, which is the pocket's
+		# ONLY way onto the floor — walled north and south, the ramp behind. So the
+		# lock cannot be walked round, and it cannot be JUMPED round either: the
+		# ramp is climbable from the rooms beside it, but every climb still arrives
+		# in front of this mass.
+		"gates": {
+			"31,19": "riddle_stair", "32,19": "riddle_stair",
+			"31,20": "riddle_stair", "32,20": "riddle_stair",
+			"33,19": "riddle_stair", "33,20": "riddle_stair",
+		},
 		"rows": [
 			"########################################",
 			"#......................................#",
@@ -335,8 +372,8 @@ const STOREYS: Array[Dictionary] = [
 			"#..#BBBBBBBBBBBBBB#..#EEEEEEEEEEEEEE#..#",
 			"#..#BBBBBBBBBBBBBB#..#EEEEEEEEEEEEEE#..#",
 			"#..################..################..#",
-			"#........................SSSSSs........#",
-			"#........................SSSSSs........#",
+			"#........................SSSSSs12D.....#",
+			"#........................SSSSSs34D.....#",
 			"#..################..################..#",
 			"#..#FFFFFFFFFFFFFF#..#IIIIIIIIIIIIII#..#",
 			"#..#FFFFFFFFFFFFFF#..#IIIIIIIIIIIIII#..#",
@@ -358,7 +395,8 @@ const STOREYS: Array[Dictionary] = [
 			"########################################",
 		],
 		"note": "Storey 5, the executive floor: eight deep suites opening onto the "
-			+ "ring corridor. Open to the shell roof until storey 6 lands.",
+			+ "ring corridor, reached through the stair riddle's sequence lock. "
+			+ "Open to the shell roof until storey 6 lands.",
 	},
 ]
 

@@ -152,9 +152,16 @@ const HEROES: Array[String] = ["windman", "primm", "teibi", "phoboman"]
 ##                 `scale`. A hero-specific effect (`primm_blink` is one) makes the
 ##                 gate require THAT hero, exactly like an identity gate, and the
 ##                 check treats it that way.
+##   "riddle"    — passable by any free set THAT CAN REACH `clue_room`. Knowledge is
+##                 PARTY-LEVEL, exactly like an item (design law 2): once the clue
+##                 has been seen it is known, and the gate joins the monotone opened
+##                 set on the solve (law 3). So a riddle asks nothing of WHO you
+##                 are — it asks where you have been — and the audit refuses a
+##                 riddle row that names a hero.
 const CLASS_CHALLENGE: String = "challenge"
 const CLASS_IDENTITY: String = "identity"
 const CLASS_DEMAND: String = "demand"
+const CLASS_RIDDLE: String = "riddle"
 
 ## Which ability constant a demand gate's `effect` scales. One entry per effect any
 ## demand gate uses — the check asserts each is a real `SKILL_TREES` effect id AND
@@ -326,9 +333,21 @@ const TOWER_GRAPH: Dictionary = {
 			"built": true, "quest": "", "cell": "", "parts": [],
 			"note": "Dispatch, third office. Carries the floor's second pad.",
 		},
+		# THE POCKET AT THE HEAD OF THE STOREY-5 RAMP, and it is a room of its own
+		# for one reason: phase 15's riddle stands across its far end. The ramp is
+		# ungated (you may always climb it), the FLOOR beyond is what the sequence
+		# lock opens — so the passage the gate sits on needs two ends, and the near
+		# one is this. Walled north and south, the ramp behind, the mass in front:
+		# there is no way onto the floor round it, which is what makes the gate the
+		# audit walks the gate the player meets.
+		"s5_stairhead": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "The landing at the head of the storey-5 ramp, with the sequence "
+				+ "lock's four pads on it and the riddle's mass across its east end.",
+		},
 		"s5_landing": {
 			"built": true, "quest": "", "cell": "", "parts": [],
-			"note": "Head of the storey-5 ramp, in storey 4's south cross corridor. "
+			"note": "Storey 5's ring and cross corridors, behind the riddle gate. "
 				+ "The top of the building until phase 16 opens storeys 6-10.",
 		},
 		"s5_boardroom": {
@@ -427,8 +446,11 @@ const TOWER_GRAPH: Dictionary = {
 			"gate": "", "built": true},
 		{"id": "s3_landing_records_east", "a": "s3_landing", "b": "s3_records_east",
 			"gate": "", "built": true},
+		# ...one of which phase 15 sealed: the west permits stack is the strongroom,
+		# and its doorway is the optional riddle. Optional exactly like the vault —
+		# no cell lies behind it, so no subset can be stranded by it.
 		{"id": "s3_landing_permits_west", "a": "s3_landing", "b": "s3_permits_west",
-			"gate": "", "built": true},
+			"gate": "riddle_strongroom", "built": true},
 		{"id": "s3_landing_permits_east", "a": "s3_landing", "b": "s3_permits_east",
 			"gate": "", "built": true},
 		{"id": "s3_landing_archive_west", "a": "s3_landing", "b": "s3_archive_west",
@@ -467,8 +489,15 @@ const TOWER_GRAPH: Dictionary = {
 			"gate": "", "built": true},
 		{"id": "s4_landing_dispatch_c", "a": "s4_landing", "b": "s4_dispatch_c",
 			"gate": "", "built": true},
-		{"id": "s4_s5", "a": "s4_landing", "b": "s5_landing",
+		# THE STAIR 4 -> 5, IN TWO HALVES. Climbing it asks nothing; the storey at
+		# the top is what the riddle holds shut. Splitting the passage rather than
+		# gating the ramp itself is what makes the gate honest: a ramp is a deck you
+		# can step onto from the rooms beside it, and a lock the player can jump
+		# over is a lock the audit is lying about.
+		{"id": "s4_s5", "a": "s4_landing", "b": "s5_stairhead",
 			"gate": "", "built": true},
+		{"id": "s5_stairhead_landing", "a": "s5_stairhead", "b": "s5_landing",
+			"gate": "riddle_stair", "built": true},
 		{"id": "s5_landing_boardroom", "a": "s5_landing", "b": "s5_boardroom",
 			"gate": "", "built": true},
 		{"id": "s5_landing_secretariat", "a": "s5_landing", "b": "s5_secretariat",
@@ -562,6 +591,44 @@ const TOWER_GRAPH: Dictionary = {
 			"needed_during_captivity": true, "built": true, "quest": "",
 			"parts": ["DenMass", "DenPad"],
 			"note": "A kennelled run. Stink Wave empties it.",
+		},
+
+		# --- phase 15: the riddles ------------------------------------------
+		#
+		# TWO EXTRA KEYS, AND ONLY A RIDDLE MAY CARRY THEM (check 2 refuses either
+		# on any other class):
+		#
+		#   clue_room  the room whose wall carries the answer. THE WHOLE
+		#              TRAVERSABILITY RULE: the gate is passable by any free set
+		#              that can reach this room, at any rank, with no ability — so a
+		#              riddle can never strand a subset the way an identity gate can,
+		#              and the audit's job is to prove the clue is not shut behind
+		#              the riddle it explains.
+		#   answer     the pad sequence, as the digits drawn on the plan. A
+		#              PERMUTATION of the storey's four lock pads, so every pad is
+		#              pressed exactly once and the mass's four-notch rise is a
+		#              faithful count of how far in you are.
+		#
+		# `identity` stays "" and the audit refuses it otherwise: a riddle is a
+		# base-kit knowledge gate, and one that asked for a hero would be an
+		# identity gate wearing the wrong colour — the same law the legibility
+		# language puts on a challenge.
+		"riddle_stair": {
+			"class": CLASS_RIDDLE, "identity": "", "effect": "", "scale": 0.0,
+			"clue_room": "s3_records_east", "answer": [3, 1, 4, 2],
+			"needed_during_captivity": false, "built": true, "quest": "",
+			"parts": ["S4PlanRiddleMass_riddle_stair"],
+			"note": "The sequence lock at the head of the storey-5 ramp. Its four "
+				+ "colours are painted on the east records stack's floor, three "
+				+ "storeys of walking away and free to anybody who goes.",
+		},
+		"riddle_strongroom": {
+			"class": CLASS_RIDDLE, "identity": "", "effect": "", "scale": 0.0,
+			"clue_room": "s3_archive_west", "answer": [2, 4, 1, 3],
+			"needed_during_captivity": false, "built": true, "quest": "",
+			"parts": ["S2PlanRiddleMass_riddle_strongroom"],
+			"note": "The west permits stack, sealed. Optional side room in the "
+				+ "vault's mould; its clue is one floor away in the west archive.",
 		},
 	},
 
