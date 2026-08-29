@@ -71,7 +71,7 @@ const REQUIRED_KEYS: Array[String] = [
 const HIT_STUB_SOURCE: String = """
 extends Node3D
 var hits: Array = []
-func hit_by_crocodile() -> void:
+func hit_by_crocodile(_attacker: Node = null) -> void:
 	if hits.size() > 0:
 		hits[0] += 1
 """

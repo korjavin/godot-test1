@@ -5090,7 +5090,7 @@ func _on_player_collision(player: Node) -> void:
 		print("💀 BOSS crocodile bites the player!")
 		_start_bite()
 		if player.has_method("hit_by_crocodile"):
-			player.hit_by_crocodile()
+			player.hit_by_crocodile(self)
 		elif player.has_method("reset_position"):
 			player.reset_position()
 		_pause_and_change_direction()
@@ -5136,11 +5136,24 @@ func _on_player_collision(player: Node) -> void:
 	# Snap at the player so the hit reads clearly.
 	_start_bite()
 
-	# Tell the player it was bitten. hit_by_crocodile() plays the red flash /
-	# camera shake / brief freeze and then respawns; older saves without it fall
-	# back to a plain reset.
+	# Tell the player it was bitten, AND WHO BIT IT. hit_by_crocodile() plays the
+	# red flash / camera shake / brief freeze and then respawns; older saves
+	# without it fall back to a plain reset.
+	#
+	# `self` rather than nothing, at BOTH bite sites in this function, because the
+	# damage verb is one verb and the argument is how it learns what kind of
+	# contact this was: `_is_hunter_grab()` in player_controller reads the
+	# attacker's `spec["behavior"]`, so a hunter's grab takes the active HERO and
+	# an animal's bite takes the ordinary predator arithmetic. Passed
+	# unconditionally rather than only from the hunt branch below, so the fact
+	# "the player knows who hit it" is a property of this function rather than of
+	# one species — a boss, a crocodile and a viper all answer `false` to that
+	# test exactly as `null` did, which capture_selfcheck check 2 pins.
+	#
+	# Without it `attacker` is null, `_is_hunter_grab` answers false, and the
+	# whole systemic-capture mechanic (PR #120) is unreachable code.
 	if player.has_method("hit_by_crocodile"):
-		player.hit_by_crocodile()
+		player.hit_by_crocodile(self)
 	elif player.has_method("reset_position"):
 		player.reset_position()
 	else:
