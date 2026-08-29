@@ -552,24 +552,39 @@ func _check_new_run_keeps_the_site() -> void:
 		return
 
 	var old_site: Vector3 = terrain.tower_site()
-	var old_shell: Node3D = terrain.tower_shell()
+	# The IDENTITY of the old building, taken while it is still alive. Comparing the
+	# node reference is not enough — new_run() frees it, so `is_instance_valid` goes
+	# false and a reference comparison silently stops asserting anything (codex
+	# review, 2026-08-29). An instance id is never reused, so it still distinguishes
+	# "rebuilt" from "kept" after the free.
+	var old_id: int = terrain.tower_shell().get_instance_id()
 	terrain.new_run(SEED_B)
 	await process_frame  # queue_free lands at the end of the frame
 	var new_site: Vector3 = terrain.tower_site()
 	if new_site != old_site:
 		_fail("a new run moved the tower from %s to %s — the site is hand-planned and fixed" % [
 			old_site, new_site])
-	# The player is still standing ON the site, so a shell is the correct answer —
-	# but it must be a NEW one. Identity is the whole assertion here: the old node
-	# carries the old world's opened gates, captives and guards.
-	if is_instance_valid(old_shell) and terrain.tower_shell() == old_shell:
-		_fail("new_run() kept the previous world's tower shell — its opened gates and captives came along")
-	var live := 0
+
+	# EXACTLY ONE BUILDING, AND IT IS A NEW ONE. The player never left the site (it
+	# cannot move any more), so the awaited frame crosses a chunk boundary — the
+	# rebuild was anchored on spawn — and streams a fresh shell straight back. What
+	# must NOT survive is the old node: it carries the old world's opened gates,
+	# captives and guards.
+	#
+	# Counted over the children rather than off `_tower_shell`, deliberately: a reset
+	# that nulls the reference without freeing the node leaves the building in the
+	# tree with the accessor answering null. Nodes already queued for deletion are
+	# retired and do not count.
+	var live: Array[Node] = []
 	for child: Node in terrain.get_children():
-		if child.is_in_group("tower"):
-			live += 1
-	if live > 1:
-		_fail("new_run() left %d tower shells standing" % live)
+		if child.is_in_group("tower") and not child.is_queued_for_deletion():
+			live.append(child)
+	if live.size() != 1:
+		_fail("after new_run() the terrain owns %d live tower shells, expected exactly 1" % live.size())
+	elif live[0].get_instance_id() == old_id:
+		_fail("new_run() kept the previous world's tower shell — its opened gates and captives came along")
+	if terrain.tower_shell() == null:
+		_fail("new_run() left no tower shell for a player standing on the site")
 	if not is_instance_valid(terrain._tower_impostor):
 		_fail("new_run() lost the horizon impostor")
 	elif not terrain._tower_impostor.global_position.is_equal_approx(new_site):

@@ -212,17 +212,17 @@ void fragment() {
 	float v_river = 1.0 - smoothstep(river_half_width * (1.0 - RIVER_EDGE_SOFT),
 			river_half_width * (1.0 + RIVER_EDGE_SOFT), abs(v_biome - river_level));
 
-	// ...except under the tower. ONE extra step, the twin of the one is_river_at()
-	// takes on the CPU (same centre, same radius, same <=), so the blue you SEE and
-	// the wading you FEEL still part company nowhere. A hard rim is what makes the
-	// two agree exactly; it is hidden under the shell and its yard.
-	if (distance(v_world_xz, tower_dry_center) <= tower_dry_radius) {
-		v_river = 0.0;
-	}
-
 	// River last, on top of whatever biome it cuts through — rivers are an
 	// overlay, not a biome (same rule as is_river_at() on the CPU side).
-	if (v_river > 0.0) {
+	//
+	// ...except under the tower. THE DRY DISC is the twin of the extra step
+	// is_river_at() takes on the CPU — same centre, same radius, same <= — so the
+	// blue you SEE and the wading you FEEL still part company nowhere, and the
+	// hard rim is exactly what lets the two agree (it is hidden under the shell
+	// and its yard). Folded INTO this branch rather than standing above it: only a
+	// river pixel can be masked, so only a river pixel pays for the distance, which
+	// is the rule this `if` exists to enforce on a fill-rate-bound web target.
+	if (v_river > 0.0 && distance(v_world_xz, tower_dry_center) > tower_dry_radius) {
 		// Cheap crossed-sine shimmer: two sines drifting in opposite senses so
 		// the interference pattern never reads as a repeating grid. World-space
 		// input keeps it continuous across chunk seams, TIME makes it flow.
