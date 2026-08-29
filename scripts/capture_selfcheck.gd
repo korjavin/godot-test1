@@ -130,8 +130,96 @@ class AttackerStub extends Node:
 class RoomStub extends Node:
 	var hand: Array[int] = []
 
+	## The rest of the manager surface `_tick_prison()` reads (bead
+	## godot-test1-3iy.10), modelled rather than faked: `held` is what the LOBBY
+	## says this peer holds, and `request_reassignment()` moves it the way
+	## `server/room.go`'s `SetHero` plus the `heroes` broadcast that follows it do —
+	## atomically, and only when there is something to move to. `claimable` empty is
+	## a room with nothing to give, which is the only thing that may bench anybody.
+	var online: bool = true
+	## Who the lobby says the master is, and who we are — the pair
+	## `player_controller._custody_authority()` compares. Defaulting BOTH to "me"
+	## keeps every other check in this file on the solo-shaped path it has always
+	## taken; only check 18 makes them differ.
+	var master: String = "me"
+	var me: String = "me"
+	var held: String = ""
+	var claimable: String = ""
+	var reassignments: int = 0
+	var reported: Array = []
+
 	func my_character_indices() -> Variant:
 		return null if hand.is_empty() else hand
+
+	func is_online() -> bool:
+		return online
+
+	func get_master() -> String:
+		return master
+
+	func my_id() -> String:
+		return me
+
+	func my_hero() -> String:
+		return held
+
+	func report_hero_captured(hero: String) -> void:
+		reported.append([hero, true])
+
+	func report_hero_freed(hero: String) -> void:
+		reported.append([hero, false])
+
+	func request_reassignment() -> bool:
+		if claimable.is_empty():
+			return false
+		reassignments += 1
+		held = claimable
+		claimable = ""
+		return true
+
+	## ...and the two the cell block's VENT PURGE reads.
+	##
+	## `peer_markers()` REPRODUCES THE REAL SHAPE EXACTLY — an Array of
+	## `{"pos": Vector3, "color": Color}`, `null` when there is no room — because
+	## the shape is the thing under test. The purge was first written against
+	## `peer_positions()`, which looks like the same query and is MASTER-ONLY and
+	## returns a bare `Array[Vector3]`: with a stub that answered a Dictionary the
+	## check passed while the pad did nothing for three prisoners out of four.
+	var team: Array = []
+	var flees: Array = []
+
+	func peer_markers() -> Variant:
+		return null if team.is_empty() else team
+
+	## FOUR PARAMETERS, matching the real manager exactly. `tracks_player` is the
+	## one the purge has to pass false for — the position it names is a TEAMMATE's,
+	## not the caster's — and a stub one argument short does not raise a type error,
+	## it makes the call fail and the pad do nothing.
+	func request_croc_flee(origin: Vector3, duration: float, radius: float = 0.0,
+			tracks_player: bool = true) -> bool:
+		flees.append([origin, duration, radius, tracks_player])
+		return true
+
+	## The one shared-total query `_check_shared_game_over()` gates on. `null` is
+	## the real manager's "no room" answer and is the default here, so every check
+	## that does not set it keeps solo semantics — deliberately NOT `shared_bank`,
+	## which would put `_refresh_shared_totals()` in charge of `lives` and overwrite
+	## the very number these checks set by hand.
+	var shared_spent: Variant = null
+
+	func shared_lives_spent(_own: int) -> Variant:
+		return shared_spent
+
+
+## A terrain that answers exactly one question: where the building stands. The
+## prison role marches the benched player there through the same `"terrain"` group
+## lookup the full-custody protocol uses, so a stub in that group is on the real
+## code path.
+class TerrainStub extends Node:
+	const SITE := Vector3(512.0, 0.0, -96.0)
+
+	func tower_site() -> Vector3:
+		return SITE
 
 
 func _initialize() -> void:
@@ -158,6 +246,8 @@ func _run() -> void:
 	await _check_the_sweep_spares_a_guard()
 	await _check_the_protocol_opens_and_can_be_played()
 	await _check_the_break_out_scars_the_world()
+	await _check_reassign_first_imprison_last()
+	await _check_two_clients_cannot_disagree()
 	await _check_the_recall_archives_the_world()
 	await _check_the_scene_does_not_leak()
 	_report()
@@ -534,20 +624,22 @@ func _check_capture_respects_the_rooms_hand() -> void:
 	"""
 	In a room, capture is bounded by the heroes the LOBBY assigned this peer.
 
-	MP capture proper is its own bead; what is measured here is that this bead does
-	not BREAK the assignment that already ships. Two ways it could, and they are
-	the same mistake at two sites:
+	What is measured here is that capture does not BREAK the assignment that already
+	ships: the auto-switch must never reach past the hand and step this peer into a
+	teammate's hero — the lobby is the source of truth for hero assignment and
+	nothing may be decided locally. That is why `available_character_indices()`
+	exists rather than two copies of one intersection. The negative control — a
+	two-hero hand — proves the switch still moves when there IS somewhere to go, so
+	"it did not step out of the hand" cannot be satisfied by a switch that never
+	happens.
 
-	  * the auto-switch reaching past the hand and stepping this peer into a
-	    teammate's hero — the lobby is the source of truth for hero assignment and
-	    nothing may be decided locally;
-	  * the end-of-run test asking whether any hero anywhere is free, so a peer
-	    whose only assigned hero has just been taken respawns as somebody else's.
-
-	Both are why `available_character_indices()` exists rather than three copies of
-	one intersection. The negative control — a two-hero hand — proves the switch
-	still moves when there IS somewhere to go, so "it did not step out of the hand"
-	cannot be satisfied by a switch that never happens.
+	...AND THAT THE ENDING IS NOT RAISED HERE (bead godot-test1-3iy.10). An emptied
+	HAND used to end this peer's run; under the owner's world-level reading it must
+	not, because three heroes are still free somewhere in the room and the answer is
+	a reassignment or the prison role, both of which `_tick_prison()` owns. The
+	positive control is right underneath: mark the other three captive too and the
+	SAME code path does open the protocol, so "it did not end the run" cannot be
+	satisfied by an ending that never fires.
 	"""
 	_beat_done()
 
@@ -574,8 +666,29 @@ func _check_capture_respects_the_rooms_hand() -> void:
 	player.call("_on_caught_finished")
 	if player.lives <= 0:
 		_fail("the room case ran out of hearts, so it proves nothing")
+	if player.in_custody_protocol():
+		_fail(("an emptied HAND opened the full-custody protocol while %d heroes are still "
+			+ "free in the room — game over is world-level (bead godot-test1-3iy.10)")
+			% player.free_hero_count())
+	if not player.is_respawning:
+		_fail("a benched peer with free heroes left in the room neither respawned nor was benched")
+
+	# The positive control, on the same player and the same call: take the other
+	# three and the world really is out of heroes.
+	player.is_respawning = false
+	for hero: Variant in TowerGraph.HEROES:
+		player.captive_heroes[String(hero)] = true
+	if player.free_hero_count() != 0:
+		_fail("the positive control did not empty the roster, so it proves nothing")
+	player.is_caught = false
+	player.call("_on_caught_finished")
+	if player.lives <= 0:
+		_fail("the positive control ran out of hearts, so it proves nothing")
 	if not player.in_custody_protocol():
-		_fail("this peer's hand was emptied by a capture and field play went on")
+		_fail("the room ran out of heroes entirely and field play went on")
+	# The scene is left running and the player is freed under it. Deliberately NOT
+	# closed through `_end_custody_protocol(false)`: that writes the world archive,
+	# which every later check would then come up inside.
 	_clear(player)
 
 	# (b) the negative control: two heroes in hand, and the switch moves.
@@ -1175,6 +1288,14 @@ func _check_the_scene_does_not_leak() -> void:
 	AND THE BUILDING IS PUT BACK TOO, on the failing outcome as well as the winning
 	one — raised containment is scene state with no home, and a Play Again keeps the
 	same profile and the same tower.
+
+	SINCE bead godot-test1-3iy.10 THE OVER-MARKING IS STRUCTURALLY A NO-OP, and that
+	is worth saying rather than deleting the check. Game over is world-level now, so
+	the protocol only ever opens when EVERY hero is already captive — the scene's
+	"mark all four" loop can no longer add anybody, and the entry set is simply what
+	was true. What is measured below is therefore the surviving half of the same
+	invariant: the exit restores exactly the set it entered with (not the raw
+	all-four the scene painted), through the same `entry INTERSECT still-held` line.
 	"""
 	_fresh_store()
 	_beat_done()
@@ -1188,11 +1309,14 @@ func _check_the_scene_does_not_leak() -> void:
 	var mine: int = TowerGraph.HEROES.find("primm")
 	room.hand = [mine] as Array[int]
 	player.set_active_character(mine)
-	player.hit_by_crocodile(_hunter())
-	player.is_caught = false
-	player.call("_on_caught_finished")
+	# THE ROOM IS OUT OF HEROES, which is the only thing that opens the scene now:
+	# the three heroes this peer never held are in teammates' cells, and the grab
+	# below takes the last one. Driven through the real entry so a build whose
+	# roster clause stopped firing fails here instead of measuring a scene this
+	# check opened itself.
+	await _drive_into_custody(player)
 	if not player.in_custody_protocol():
-		_fail("leak: a room peer whose only hero was taken did not enter the protocol")
+		_fail("leak: the room ran out of heroes and no peer entered the protocol")
 		_clear(player)
 		room.queue_free()
 		shell.queue_free()
@@ -1211,12 +1335,11 @@ func _check_the_scene_does_not_leak() -> void:
 	await physics_frame
 
 	for hero: String in TowerGraph.HEROES:
-		var was_mine := hero == String(TowerGraph.HEROES[mine])
-		if player.is_hero_captive(hero) != was_mine:
-			_fail(("the scene left %s %s after it ended; this peer only ever held %s — the "
-				+ "roster override leaked into the captive filter")
-				% [hero, "captive" if player.is_hero_captive(hero) else "free",
-					String(TowerGraph.HEROES[mine])])
+		if not player.is_hero_captive(hero):
+			_fail(("the scene left %s free after it ended, and nobody was liberated in it — "
+				+ "the exit set must be `entry INTERSECT still-held`, not a wipe") % hero)
+	if player.free_hero_count() != 0:
+		_fail("a failed protocol handed the room %d heroes back" % player.free_hero_count())
 	for door: Dictionary in TowerInterior.SPINE_DOORS:
 		if bool(interior.call("is_locked_down", String(door["gate"]))):
 			_fail("the protocol ended and '%s' is still under lockdown — containment "
@@ -1226,6 +1349,553 @@ func _check_the_scene_does_not_leak() -> void:
 	shell.queue_free()
 	await process_frame
 	_fresh_store()
+
+
+# ============================================================================
+# 17. REASSIGN FIRST, IMPRISON LAST (bead godot-test1-3iy.10)
+# ============================================================================
+
+func _check_reassign_first_imprison_last() -> void:
+	"""
+	Check 17. The multiplayer capture consequence, driven through real physics.
+
+	THE MECHANIC HAS TO BE REACHABLE FROM THE GAME, which is the only reason this
+	is a live check and not arithmetic: every decision below is made inside
+	`_tick_prison()`, which nothing calls but `_physics_process`, on a half-second
+	cadence. So the player here is a real `player.tscn`, the room is in group `"mp"`,
+	the tower's site comes through the `"terrain"` group, and the only thing this
+	file does is bite the player and wait. A build where the tick was never wired up
+	fails every part of this.
+
+	Four claims, in the order the owner's rule states them:
+
+	  (a) REASSIGN FIRST, AND NOT IN THE SAME FRAME AS THE CAPTURE. The grab
+	      reports the capture to the room and asks the lobby for NOTHING yet; the
+	      claim goes out on the next `_tick_prison()`, and nobody is benched. The
+	      delay is load-bearing rather than incidental: `SetHero` releases the claim
+	      on the hero just taken, so a claim sent from the grab races the `cap`
+	      packet on every other peer and the room's captive sets diverge. The
+	      reassignment must also go through the ROOM — a local index write would put
+	      two peers in one body — so what is measured is the call, not the result.
+	  (b) IMPRISON LAST. The same capture with NOTHING free stands the player up in
+	      their own cell inside the block, and confines them there: shoved out, they
+	      are back inside on the next physics frame. That is "no phasing, no solo
+	      escape" as a measurement rather than a promise.
+	  (c) THE BLOCK'S SYSTEMS ARE REACHABLE FROM INSIDE IT, AND THE ROLE HAS NO
+	      OTHERS. The cell stand and the vent-purge pad are both inside the
+	      confinement box — a role confined to a box that excluded its own systems
+	      would be a cell with nothing in it, and nothing else in this file would
+	      notice — and every character ability is refused while the role runs, which
+	      is "no phasing, no combat loop" measured at the one gate the HUD reads.
+	  (d) THE WAY OUT, THREE WAYS. A hero freed elsewhere in the room ends the role
+	      and the liberation is told to the room; a hero that becomes claimable
+	      LATER ends it through the tick's own retry, which is the half of
+	      "reassign first" that only exists after the bench; and a prisoner may free
+	      a CELLMATE but never themselves.
+	  (f) THE ROOM'S HEARTS OUTRANK A RUNNING BREAK-OUT. The grab that empties the
+	      roster can also spend the room's last shared heart: the peer that was
+	      bitten ends on the hearts clause, while every other peer hears only the
+	      `cap` packet and opens the scene. So the shared game over has to be able
+	      to CLOSE a running protocol — and to close it without archiving the world
+	      or taking a scar, because the scene was overtaken and not lost.
+	  (e) THE ENDING, from both sides. The grab that takes the room's LAST hero
+	      still costs its heart and gets its full freeze — the bench tick polls at
+	      0.5 s and the freeze runs 0.55 s, so a tick that did not stand aside for
+	      it would open the protocol first, clear `is_caught` under
+	      `_on_caught_finished()` and make the final grab free. And a peer that was
+	      never bitten at all still ends its run when the ROOM runs out, which is
+	      the world-level reading and the only part of it no other check can see.
+	"""
+	_fresh_store()
+	_beat_done()
+	var room := RoomStub.new()
+	room.add_to_group("mp")
+	root.add_child(room)
+	var terrain := TerrainStub.new()
+	terrain.add_to_group("terrain")
+	root.add_child(terrain)
+
+	# ---- (a) reassign first ------------------------------------------------
+	var player := await _make_player()
+	var mine: int = TowerGraph.HEROES.find("primm")
+	room.hand = [mine] as Array[int]
+	room.held = "primm"
+	room.claimable = "teibi"
+	player.set_active_character(mine)
+	player.hit_by_crocodile(_hunter())
+	if room.reported != [["primm", true]]:
+		_fail("the capture did not reach the room (%s) — every other peer's picker, "
+			% str(room.reported) + "roster and ending would still be offering a hero in a cell")
+	if room.reassignments != 0:
+		_fail("the grab itself sent %d SetHero calls — the claim releases the captured "
+			% room.reassignments + "hero's lobby entry, so a peer that has not yet heard "
+			+ "the `cap` packet will refuse it and the room's captive sets diverge")
+	await _tick(POST_BITE_FRAMES)
+	if room.reassignments != 1:
+		_fail("a capture with a free hero in the room made %d SetHero calls, expected 1"
+			% room.reassignments)
+	if player.prisoner_active:
+		_fail("a peer that was handed a free hero was benched anyway — reassign FIRST")
+	_clear(player)
+	await process_frame
+
+	# ---- (b) imprison last -------------------------------------------------
+	room.reported.clear()
+	room.reassignments = 0
+	room.held = "primm"
+	room.claimable = ""
+	player = await _make_player()
+	player.set_active_character(mine)
+	player.hit_by_crocodile(_hunter())
+	await _tick(POST_BITE_FRAMES)
+	if not player.prisoner_active:
+		_fail("the room had no free hero and nobody was benched — the prison role is "
+			+ "unreachable from the game")
+		_clear(player)
+		room.queue_free()
+		terrain.queue_free()
+		await process_frame
+		return
+	if player.free_hero_count() != TowerGraph.HEROES.size() - 1:
+		_fail("the bench fired with %d heroes free — it must only ever fire when the ROOM "
+			% player.free_hero_count() + "has nothing to give, never as a stand-in for game over")
+	var lo: Vector3 = TerrainStub.SITE + TowerInterior.block_min()
+	var hi: Vector3 = TerrainStub.SITE + TowerInterior.block_max()
+	if not _inside(player.global_position, lo, hi):
+		_fail("the benched player stood up at %s, outside the cell block (%s .. %s)"
+			% [player.global_position, lo, hi])
+	# CONFINEMENT, measured by breaking it: shoved through the spine wall and out of
+	# the building entirely, one physics frame must put the body back.
+	player.global_position = TerrainStub.SITE + Vector3(0.0, 0.0, -40.0)
+	await _tick(2)
+	if not _inside(player.global_position, lo, hi):
+		_fail("a prisoner shoved to %s stayed out of the block — the confinement is a "
+			% player.global_position + "suggestion, and the role has a solo escape")
+
+	# ---- (c) the systems are inside the box --------------------------------
+	for hero: Variant in TowerGraph.HEROES:
+		var stand: Vector3 = TerrainStub.SITE + TowerInterior.cell_stand(String(hero))
+		if not _inside(stand, lo, hi):
+			_fail("%s's cell stand is outside the confinement box — a prisoner would be "
+				% String(hero) + "clamped out of their own cell on the first frame")
+	var pad := TerrainStub.SITE + Vector3(TowerInterior.PURGE_PAD_X, 0.0, TowerInterior.PURGE_PAD_Z)
+	if not _inside(pad, lo, hi):
+		_fail("the vent-purge pad at %s is outside the confinement box — the block's system "
+			% pad + "cannot be operated by the only player who is ever locked in with it")
+	# ...and no ability at all. Asked of `get_ability_block_reason()`, which is the
+	# ONE home of the gates — the F press and the HUD dial both read it, so a gate
+	# that lived only at the press would show a green READY dial over a dead key.
+	if player.get_ability_block_reason() != "CELL":
+		_fail("the prison role's ability gate answers '%s' — the role is defined as no "
+			% player.get_ability_block_reason() + "phasing and no combat loop, and every one "
+			+ "of the four powers is one or the other")
+	if player.is_ability_ready():
+		_fail("the HUD would show the ability READY inside the cell block")
+
+	# ---- (d1) a cellmate, never yourself -----------------------------------
+	#
+	# The prisoner plays as their own captive, so their own recess is the one
+	# liberation the owner's ruling forbids — walk into it and nothing happens. The
+	# cell beside it is the block's second system and must still work, which is the
+	# negative control that stops "no solo escape" being implemented as "no
+	# liberation at all".
+	var shell := await _make_tower()
+	shell.global_position = TerrainStub.SITE
+	var interior: Node = shell.get_child(0)
+	# ONE TICK FIRST, so the interior has bound `_player`. `_liberate()` reaches the
+	# player through that reference and it is written in `_process` — without this,
+	# every liberation below quietly tells nobody and the claims about what the room
+	# is (and is not) told would pass against any code at all.
+	interior._process(0.1)
+	if interior._player != player:
+		_fail("the interior did not bind the player, so nothing below can measure the seam")
+	interior.set_captive("primm", true)
+	interior.call("_on_cell_enter", player, "primm")
+	if not interior.is_captive("primm"):
+		_fail("a prisoner walked into their OWN cell and freed themselves — the role has a "
+			+ "solo escape, which is the one thing the owner's ruling forbids it")
+	room.reported.clear()
+	interior.set_captive("teibi", true)
+	interior.call("_on_cell_enter", player, "teibi")
+	if interior.is_captive("teibi"):
+		_fail("a prisoner could not free a CELLMATE — the refusal above is refusing every "
+			+ "liberation, and the block's second system does nothing")
+	# ...AND A LIBERATION OF SOMEBODY THE ROOM NEVER HELD IS NOT REPORTED. The tower
+	# calls `hero_freed()` for its AUTHORED staging too, which no player ever had
+	# taken off them. Telling the room leaves a release tombstone on a hero nobody
+	# captured, and the very next thing that rescue enables is hunter captures — so
+	# a real grab of that hero seconds later is dropped as a stale packet and the
+	# room never hears about it.
+	if not room.reported.is_empty():
+		_fail("freeing a hero the room does not hold was reported as a release (%s) — the "
+			% str(room.reported) + "tombstone that leaves swallows the next real capture of him")
+	# ---- (d1b) the block's system, operated from inside it -----------------
+	#
+	# THE PURGE IS THE ROLE'S ONE OUTWARD VERB, and "each operated system gives the
+	# outside team an immediate opening" is the requirement it answers. Driven
+	# through the interior's real `_process`, so a pad that was built and never
+	# ticked fails here rather than reading fine.
+	# Cleared first: `clear_nearby_crocodiles()` relays its own bounded wave through
+	# the same manager verb on every placement and respawn, so the log already holds
+	# the bench's own.
+	room.flees.clear()
+	interior.call("_on_purge_enter", player)
+	interior._process(0.1)
+	if not room.flees.is_empty():
+		_fail("the vent purge fired with no room — solo it would be a panic button over the "
+			+ "player's own pack, and there is no team outside to open anything for")
+	var mate := TerrainStub.SITE + Vector3(300.0, 0.0, 0.0)
+	room.team = [{"pos": mate, "color": Color.WHITE}]
+	interior._process(0.1)
+	if room.flees.size() != 1:
+		_fail("standing on the purge pad relayed %d flee requests, expected one per teammate"
+			% room.flees.size())
+	else:
+		var fired: Array = room.flees[0]
+		if (fired[0] as Vector3).distance_to(mate) > SETBACK_EPS:
+			_fail("the purge scattered the pack at %s, not around the teammate at %s — it "
+				% [fired[0], mate] + "opens nothing for anybody standing there")
+		if float(fired[1]) != TowerInterior.PURGE_FLEE_SECONDS \
+				or float(fired[2]) != TowerInterior.PURGE_FLEE_RADIUS:
+			_fail("the purge relayed %.1f s / %.1f m, not its own constants" % [fired[1], fired[2]])
+		if bool(fired[3]):
+			_fail("the purge asked the pack to run from the CASTER — on a prisoner who is "
+				+ "also the room master that is the tower, i.e. roughly towards the teammate "
+				+ "the purge was bought to help")
+	interior._process(0.1)
+	if room.flees.size() != 1:
+		_fail("the purge fired again inside its cooldown (%d requests) — held down, it is a "
+			% room.flees.size() + "flee packet per frame and the room's rate budget drops the rest")
+	interior._process(TowerInterior.PURGE_COOLDOWN + 0.1)
+	if room.flees.size() != 2:
+		_fail("the purge never came back after its cooldown (%d requests)" % room.flees.size())
+	interior.call("_on_purge_exit", player)
+	interior._process(TowerInterior.PURGE_COOLDOWN + 0.1)
+	if room.flees.size() != 2:
+		_fail("the purge kept firing after the player stepped off the pad")
+	# THE NEGATIVE CONTROL, and it is the one that keeps the pad the prisoner's: a
+	# rescuer crosses this gallery on every ordinary liberation in the game, and a
+	# party that could stand on it in passing would be handed the bench's whole
+	# compensation for free.
+	player.prisoner_active = false
+	interior.call("_on_purge_enter", player)
+	interior._process(TowerInterior.PURGE_COOLDOWN + 0.1)
+	if room.flees.size() != 2:
+		_fail("an ordinary rescuer standing on the purge pad fired it (%d requests) — it is "
+			% room.flees.size() + "the prison role's system, not the party's")
+	interior.call("_on_purge_exit", player)
+	player.prisoner_active = true
+	room.team = []
+
+	shell.queue_free()
+	await process_frame
+
+	# ---- (d2) a hero that becomes claimable later --------------------------
+	#
+	# THE TICK'S OWN RETRY, and nothing else reaches it: the claim in
+	# `_capture_active_hero()` already failed once (that is what benched us), so the
+	# only thing that can ever put this peer back in the field through a lobby grant
+	# is `_tick_prison()` asking again against fresher truth.
+	if not player.prisoner_active:
+		_fail("the prisoner left the role before the retry could be measured")
+	room.claimable = "teibi"
+	# TWO decisions' worth, and that is the shape of the rule rather than slack: the
+	# tick that sends the claim RETURNS on it, because nothing has moved yet; the
+	# next one reads the answer off `my_hero()` and lifts the role.
+	await _tick(90)
+	if room.reassignments != 1:
+		_fail("a teammate freed a hero and the benched peer made %d SetHero calls, expected 1 "
+			% room.reassignments + "— reassignment must be retried from the bench, not only at "
+			+ "the moment of capture")
+	if player.prisoner_active:
+		_fail("the lobby granted a free hero and the player stayed in the cell block")
+
+	# ---- (d3) a liberation, and the room hearing about it ------------------
+	room.reported.clear()
+	room.held = "primm"
+	await _tick(45)
+	if not player.prisoner_active:
+		_fail("the peer was put back on its captive hero and was not benched again")
+	player.hero_freed("primm")
+	if room.reported != [["primm", false]]:
+		_fail("a liberation did not reach the room (%s) — the peer who lost that hero "
+			% str(room.reported) + "would stay in a cell the room no longer believes in")
+	await _tick(45)
+	if player.prisoner_active:
+		_fail("the hero was freed and the player is still serving the prison role")
+	_clear(player)
+	await process_frame
+
+	# ---- (e1) the last grab still costs a heart ----------------------------
+	room.held = "phoboman"
+	var last_index: int = TowerGraph.HEROES.find("phoboman")
+	room.hand = [last_index] as Array[int]
+	room.claimable = ""
+	player = await _make_player()
+	player.set_active_character(last_index)
+	for hero: Variant in TowerGraph.HEROES:
+		if String(hero) != "phoboman":
+			player.set_hero_captive(String(hero), true)
+	var hearts: int = player.lives
+	player.hit_by_crocodile(_hunter())
+	await _tick(POST_BITE_FRAMES)
+	if player.lives != hearts - 1:
+		_fail("the grab that took the room's last hero cost %d hearts, expected one — the "
+			% (hearts - player.lives) + "bench tick outran the caught freeze and "
+			+ "`_on_caught_finished()` never got to spend it")
+	if not player.in_custody_protocol():
+		_fail("the room's last hero was taken and the protocol did not open")
+
+	# ...AND A SURVIVABLE BITE INSIDE THE SCENE STAYS ON THE RESPAWN PATH. The
+	# break-out pins the free-hero count at 0 for its whole length — that is how its
+	# outcome test knows nobody has been let out yet — so the world-level roster
+	# clause is true on EVERY hit in the cell block. Unguarded, each one re-enters a
+	# protocol that is already running, `_begin_custody_protocol()` returns on its
+	# own latch, and the player is left with no grace window, no ability reset and no
+	# crocodile sweep, standing next to the guard that just hit them.
+	if player.lives <= 1:
+		_fail("the in-scene bite has no heart to spend, so it proves nothing")
+	var inside: int = player.lives
+	player.is_respawning = false
+	player.respawn_blink_timer = 0.0
+	player.hit_by_crocodile(_hunter())
+	player.is_caught = false
+	player.call("_on_caught_finished")
+	if player.lives != inside - 1:
+		_fail("a survivable bite inside the break-out cost %d hearts, expected one"
+			% (inside - player.lives))
+	if not player.is_respawning:
+		_fail("a survivable bite inside the break-out opened no grace window — the guard "
+			+ "that just hit you gets a free second hit, every hit, for the whole scene")
+	if not player.in_custody_protocol():
+		_fail("a survivable bite inside the break-out ended the scene")
+	player.custody_protocol_active = false
+	_clear(player)
+	await process_frame
+
+	# ---- (f) the room's hearts outrank a running break-out -----------------
+	_fresh_store()
+	_beat_done()
+	room.held = "phoboman"
+	room.hand = [last_index] as Array[int]
+	player = await _make_player()
+	player.set_active_character(last_index)
+	await _drive_into_custody(player)
+	if not player.in_custody_protocol():
+		_fail("the overtake case could not open a protocol, so it proves nothing")
+	# The room's hearts are gone — the same state the peer who was actually bitten
+	# reached — and this peer was not the one bitten. `shared_spent` non-null is
+	# what makes this a ROOM rather than solo play, which is the gate the function
+	# under test uses.
+	room.shared_spent = 3
+	player.lives = 0
+	player.is_caught = false
+	player.call("_check_shared_game_over")
+	if player.in_custody_protocol():
+		_fail("the room ran out of hearts and this peer stayed in the break-out — the room "
+			+ "is now split between an ending screen and a scene, permanently")
+	if not player.is_game_over:
+		_fail("the room ran out of hearts under the break-out and no ending was raised")
+	if BestRunStore.world_archived():
+		_fail("a heart the room spent somewhere else archived this world — the scene was "
+			+ "overtaken, not lost, and only losing it ends the campaign")
+	# ...AND IT SAYS SO ON THE WIRE. Published as an ordinary FAILED, every peer that
+	# has not yet seen the shared heart total would archive its own world while this
+	# one did not — the same split, one hop further out.
+	var overtaken: Array = player.call("custody_wire_state") as Array
+	if overtaken.size() != 2 or int(overtaken[1]) != 3:
+		_fail("an overtaken scene publishes %s, not the OVERTAKEN verdict — a peer reading "
+			% str(overtaken) + "it as a plain failure archives a world the master kept")
+	room.shared_spent = null
+	_clear(player)
+	await process_frame
+	_fresh_store()
+
+	# ---- (e2) the world-level ending, on a peer nothing ever bit -----------
+	room.held = "windman"
+	room.hand = [TowerGraph.HEROES.find("windman")] as Array[int]
+	room.claimable = ""
+	player = await _make_player()
+	for hero: Variant in TowerGraph.HEROES:
+		player.set_hero_captive(String(hero), true)
+	await _tick(45)
+	if not player.in_custody_protocol():
+		_fail("the room ran out of heroes and a peer that was never bitten kept playing — "
+			+ "game over is world-level, and this is the only peer that can prove it")
+	player.custody_protocol_active = false
+	_clear(player)
+	room.queue_free()
+	terrain.queue_free()
+	await process_frame
+	_fresh_store()
+
+
+# ============================================================================
+# 18. TWO CLIENTS CANNOT DISAGREE ABOUT THE BREAK-OUT (bead godot-test1-3iy.10)
+# ============================================================================
+
+func _check_two_clients_cannot_disagree() -> void:
+	"""
+	Check 18. The recall clock is the MASTER'S, and so is the outcome it decides.
+
+	THE BUG THIS EXISTS FOR is not a crash, it is two screens telling two players
+	different things about the same event. A room-wide protocol with a per-client
+	clock gives every peer its own 35 s off its own packets, so a liberation landing
+	within a packet's flight of the deadline is a survival on one machine and an
+	ARCHIVED WORLD — the campaign over, permanently — on another. Nothing in the
+	game would report that; the two players would simply be in different worlds.
+
+	So the assertion is the disagreement itself, staged rather than hoped for: a
+	non-master whose OWN clock has run out, handed the master's verdict of SURVIVED.
+	The two answers are as far apart as they can be, and the master's has to win.
+
+	  (a) A NON-MASTER DOES NOT DECIDE. Its clock reaches zero and the scene runs
+	      on, unarchived — the peer is showing a countdown, not adjudicating one.
+	  (b) THE VERDICT IS WHAT ENDS IT, and a SURVIVED verdict over a spent local
+	      clock ends the scene as a survival: a scar, and no archive.
+	  (c) THE NEGATIVE CONTROL — the same spent clock ON THE MASTER really does
+	      decide, and really does archive. Without it, (a) would pass just as
+	      happily against a build where the recall clock does nothing at all.
+	  (d) THE MASTER PUBLISHES WHAT IT DECIDED, so there is something for (b) to
+	      deliver: `custody_wire_state()` carries the verdict after the scene ends.
+	"""
+	_fresh_store()
+	_beat_done()
+	var room := RoomStub.new()
+	room.add_to_group("mp")
+	root.add_child(room)
+	room.held = "primm"
+	room.hand = [TowerGraph.HEROES.find("primm")] as Array[int]
+
+	# ---- (a) a non-master's spent clock decides nothing ---------------------
+	room.master = "somebody_else"
+	var player := await _make_player()
+	player.set_active_character(TowerGraph.HEROES.find("primm"))
+	await _drive_into_custody(player)
+	if not player.in_custody_protocol():
+		_fail("check 18 could not open a protocol, so it proves nothing")
+		_clear(player)
+		room.queue_free()
+		await process_frame
+		_fresh_store()
+		return
+	player.custody_timer = 0.0
+	await _tick(4)
+	if not player.in_custody_protocol():
+		_fail("a NON-MASTER ended the break-out on its own clock — every peer runs its own "
+			+ "35 s, so a rescue near the wire is a survival on one screen and an archived "
+			+ "world on another")
+	if BestRunStore.world_archived():
+		_fail("a non-master archived the world off its own clock — the campaign is over on "
+			+ "one machine and running on the others")
+
+	# ...and it is SHOWING the master's number, not its own. A peer that ignored the
+	# published clock would count down from wherever its own scene started and reach
+	# zero at a different instant, which is the disagreement one step earlier.
+	player.call("apply_room_custody", 9.0, 0)
+	if absf(player.custody_timer - 9.0) > 0.05:
+		_fail("the master published 9.0 s and this peer is showing %.2f — it is running its "
+			% player.custody_timer + "own clock, and two clocks reach zero at two moments")
+
+	# ---- (b) the master's verdict is what ends it --------------------------
+	player.call("apply_room_custody", 0.0, 1)
+	if player.in_custody_protocol():
+		_fail("the master said the room survived and this peer stayed in the scene")
+	if BestRunStore.world_archived():
+		_fail("the master said SURVIVED and this peer archived the world anyway — the two "
+			+ "clients disagree about the outcome, which is the whole thing this owns")
+	if not BestRunStore.tower_opened_ids().has(TowerGraph.SCAR_CUSTODY):
+		_fail("the master's SURVIVED verdict did not take the scar, so this peer's tower "
+			+ "disagrees with the room's for the rest of the campaign")
+
+	# ...and the OVERTAKEN verdict ends a scene and writes nothing.
+	_fresh_store()
+	_beat_done()
+	_clear(player)
+	await process_frame
+	player = await _make_player()
+	player.set_active_character(TowerGraph.HEROES.find("primm"))
+	await _drive_into_custody(player)
+	if not player.in_custody_protocol():
+		_fail("the overtaken-verdict case could not open a protocol")
+	player.call("apply_room_custody", 0.0, 3)
+	if player.in_custody_protocol():
+		_fail("the master said the scene was OVERTAKEN and this peer stayed in it")
+	if BestRunStore.world_archived():
+		_fail("an OVERTAKEN verdict archived this peer's world — the room's own ending is "
+			+ "on its way and is the one that decides")
+
+	# ...and a verdict never speaks for the NEXT round. The roster is full again and
+	# this peer's own scene has not opened yet (the bench polls at 2 Hz), so what it
+	# publishes in that window would otherwise be the LAST round's answer beside a
+	# full-custody set — read by a peer already inside the new scene as an instant
+	# success, containment down and all.
+	# Staged exactly: the LAST round survived, the corporation has everybody again,
+	# and the run is still going. That is the only state in which a latched verdict
+	# is somebody else's answer.
+	player.custody_verdict = 1
+	if player.is_game_over or player.free_hero_count() != 0 or player.in_custody_protocol():
+		_fail("the stale-verdict window was not staged, so it proves nothing")
+	var window: Array = player.call("custody_wire_state") as Array
+	if window.size() != 2 or int(window[1]) != 0:
+		_fail("with the roster full and no scene open this peer publishes verdict %s — the "
+			% str(window) + "last round's answer, beside this round's set")
+	_clear(player)
+	await process_frame
+	_fresh_store()
+
+	# ---- (c) the negative control: the MASTER's clock does decide ----------
+	# Re-armed: `_fresh_store()` above wiped the profile, and capture is gated on the
+	# authored rescue being in it. Without this the control opens no protocol and
+	# reports the failure as if the clock were broken.
+	_beat_done()
+	room.master = "me"
+	room.held = "primm"
+	player = await _make_player()
+	player.set_active_character(TowerGraph.HEROES.find("primm"))
+	await _drive_into_custody(player)
+	if not player.in_custody_protocol():
+		_fail("the negative control could not open a protocol")
+	player.custody_timer = 0.0
+	await _tick(4)
+	if player.in_custody_protocol():
+		_fail("the MASTER's clock ran out and the scene ran on — claim (a) would pass "
+			+ "against a build whose recall clock does nothing at all")
+	if not BestRunStore.world_archived():
+		_fail("the master's recall completed and the world was not archived")
+
+	# ---- (d) ...and it publishes what it decided ---------------------------
+	var wire: Array = player.call("custody_wire_state") as Array
+	if wire.size() != 2 or int(wire[1]) != 2:
+		_fail("the master decided FAILED and publishes %s — with no verdict on the wire "
+			% str(wire) + "there is nothing for the other peers to agree with")
+	_clear(player)
+	room.queue_free()
+	await process_frame
+	_fresh_store()
+
+
+func _inside(point: Vector3, lo: Vector3, hi: Vector3) -> bool:
+	"""Is this point inside the confinement box on the two axes it clamps?"""
+	return point.x >= lo.x - SETBACK_EPS and point.x <= hi.x + SETBACK_EPS \
+		and point.z >= lo.z - SETBACK_EPS and point.z <= hi.z + SETBACK_EPS
+
+
+## Physics frames to run after a BITE before the prison role can have decided
+## anything. The two clocks are sequential and neither is short-circuited here:
+## `_tick_prison()` refuses to run at all while `is_caught` (so the life a grab
+## costs is always spent first), which is CAUGHT_DURATION, and only then does its
+## own PRISON_TICK cadence start. 75 frames at 60 Hz is 1.25 s against 1.05 s of
+## clock, so the margin is a quarter of a second rather than a guess.
+const POST_BITE_FRAMES: int = 75
+
+
+func _tick(frames: int) -> void:
+	"""Run real physics. The prison role decides on a 0.5 s cadence, so 45 frames
+	(0.75 s at 60 Hz) is one decision plus slack when no bite is in the way — see
+	`POST_BITE_FRAMES` for when one is."""
+	for _i: int in frames:
+		await physics_frame
 
 
 func _drive_into_custody(player: Node) -> void:

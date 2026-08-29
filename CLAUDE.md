@@ -519,6 +519,21 @@ inside the scene as well as outside it.
 `free_hero_count()` is the hunt director's roster seam — death-spiral mitigation belongs
 there, before contact, never in the capture path.
 
+**IN A ROOM THE CAPTIVE SET IS ROOM-WIDE, and the rule is REASSIGN FIRST, IMPRISON
+LAST.** A capture broadcasts the `cap` verb; every peer mirrors it into its own
+`captive_heroes`, so the picker, the E-cycle and the ending all become world-level with
+no second roster. The reassignment is the LOBBY's `SetHero` and needs no server change —
+two peers benched in one frame serialize on the room lock, first wins, second retries on
+the next `_tick_prison()`, which is the ONE site that sends it. Only a room with nothing
+free benches anybody, and a benched peer plays as their captive inside the cell block:
+confined to the gallery and its cells (`TowerInterior.block_min/max`), with **no ability**
+(`get_ability_block_reason()` answers `"CELL"`), able to free a CELLMATE but never
+themselves, and able to operate the VENT PURGE — theirs alone, and it scatters the pack
+around every teammate through the shipped `flee` verb. `_tick_prison()` stands aside
+while `is_caught`, so the grab that empties the roster still pays its heart in
+`_on_caught_finished()`. **Game over is world-level** — the room's free set empty, not
+this peer's hand — which is an adopted reading of the owner's phrasing.
+
 ### Death, lives, respawn
 Three lives (up to five from coins), drawn by `scripts/lives_hud.gd`, which reads the pip
 total from the player rather than keeping its own constant. `hit_by_crocodile()` →
@@ -696,6 +711,29 @@ The sharpest rules, in rough order of how badly they bite:
 - Shared bank/lives/distance are a sum of per-peer absolute broadcasts — no authority, no
   round trips.
 - The join snapshot is a trust boundary and carries absolute values, never deltas.
+- **The captive set is GAME state, so it rides the mesh and not the lobby.** One verb
+  (`cap`), and a capture is authorized by **`_last_holder`, not `_heroes`** — the lobby's
+  last named holder of that hero, a map that only ever learns. `SetHero` releases the
+  captured hero as it grants the replacement, so the live map stops naming the captor at
+  an unpredictable moment relative to the packet, and the two travel different transports.
+  Release is open to any member, because liberation is performed by whoever walked into
+  the cell. **It goes over the mesh AND the lobby relay** — the relay reaching exactly the
+  peers whose ICE is not finished, the seed's own reasoning one verb along. The join
+  snapshot carries the whole set and is honoured **from the master alone**, like `dead`.
+  Entering a room resets the local mirror: a room's roster is the room's.
+- **The master publishes the two values a room may never disagree about** — the captive
+  set and the break-out's clock and verdict — on one verb (`room`, 2 Hz, mesh + relay,
+  master-only, applied wholesale). It is a REPAIR channel, not the source: it closes the
+  join gap the per-hero verb cannot reach (a capture landing between the master
+  snapshotting a joiner and the captor learning that joiner exists), and it converges in
+  BOTH directions while leaving any assertion younger than `RELEASE_GRACE_MSEC` alone —
+  without that the master's older picture undoes a fresh local capture and puts it back
+  next tick, a flap at the publish rate. **A non-master runs the recall clock for
+  presentation and decides nothing**; the master's verdict is what ends the scene, and it
+  survives re-election because the clock is published as SECONDS LEFT, so the new master
+  carries on from the number it was already showing. `_auto_claim_hero()` waits for
+  `_join_settled()` — on the `welcome` frame the captive set is still empty, and claiming
+  there means claiming a hero who is in a cell.
 - The stall heartbeat rides the lobby relay, not the mesh, because a throttled tab stops
   polling both.
 

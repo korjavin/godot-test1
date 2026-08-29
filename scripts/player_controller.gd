@@ -545,7 +545,69 @@ var custody_timer: float = 0.0
 ## THE RECALL CLOCK, in seconds. Long enough to read a door's refusal, cycle E to
 ## the hero it names, walk through and step into a cell — measured by walking it,
 ## not reasoned. Short enough that standing still loses.
+##
+## IN A ROOM THE MASTER OWNS THIS CLOCK AND THE OUTCOME IT DECIDES, and only the
+## DURATION and the presentation below it are still tuning. A room-wide protocol
+## cannot have a per-client clock: each peer would start its own 35 s off its own
+## packets, and a liberation landing within a packet's flight of the deadline would
+## be a survival on one screen and an archived world on another. So the master
+## publishes both (`MpManager` verb `room`) and every other peer runs the scene for
+## presentation only — the same shape the room's HEARTS, the crocodile simulation
+## and the join snapshot already use.
+##
+## THE 35 AND HOW THE COUNTDOWN READS ARE THE OWNER'S to revisit; who owns the
+## number is not.
 const CUSTODY_RECALL_SECONDS: float = 35.0
+
+# ---------------------------------------------------------------------------
+# THE PRISON ROLE (bead godot-test1-3iy.10) — multiplayer only
+# ---------------------------------------------------------------------------
+#
+# The owner's rule is REASSIGN FIRST, IMPRISON LAST. A peer whose hero is taken
+# is given a free unclaimed hero through the lobby's own `SetHero` and keeps
+# playing in the field; only when the room has nothing to give does that peer
+# play as their captive INSIDE the cell block, in a bounded role — no phasing, no
+# combat loop, no solo escape.
+#
+# WHY IT IS A POLLED STATE AND NOT AN EVENT. The reassignment is a lobby round
+# trip: `claim_hero()` changes nothing locally and the answer arrives one `heroes`
+# broadcast later, possibly as `errHeroTaken` with fresher truth. So "am I benched"
+# cannot be decided at the moment of capture — it is decided by asking, twice a
+# second, the one question that has a local answer: does the lobby say I hold a
+# hero, and is that hero in a cell? Everything else follows from that, including
+# the exit (somebody freed him, or a claim finally landed), with no latch to leak.
+
+## Is the local player serving the prison role right now?
+##
+## PUBLIC, because `TowerInterior._on_cell_enter()` reads it off the body to refuse
+## a self-rescue. Solo it is false for the whole run and every line below is dead.
+var prisoner_active: bool = false
+
+## Seconds accumulated toward the next prison-role decision, and the interval.
+##
+## TWICE A SECOND, not per frame. The decision reads the lobby's last truth and
+## may send a claim, and a claim per frame would be the storm `_auto_claim_hero()`
+## documents; half a second is far under the caught freeze the player is watching
+## anyway, so the bench never feels polled.
+var _prison_accum: float = 0.0
+const PRISON_TICK: float = 0.5
+
+## The tower's world position, latched when the prison role began, so the
+## confinement clamp costs no group lookup per frame. Vector3.INF-free: the flag
+## below is what says whether it means anything, because a headless harness has no
+## terrain and a prisoner there is simply not confined.
+var _prison_origin: Vector3 = Vector3.ZERO
+var _prison_confined: bool = false
+
+## THE ROOM'S VERDICT ON THE BREAK-OUT: 0 while it runs (or when none has run),
+## 1 survived, 2 failed. Latched by whoever DECIDED the scene, and published by the
+## master so every other peer applies the same one.
+##
+## STICKY RATHER THAN TIMED. The master ends its own scene the instant it decides,
+## so `custody_protocol_active` is false a frame later and there would be nothing
+## left to publish; the latch holds until the next protocol opens. Applying it twice
+## is a no-op — `_end_custody_protocol()` returns on a scene that is not running.
+var custody_verdict: int = 0
 
 ## The captive set as it stood when the scene began, so it can be put back.
 ##
@@ -896,6 +958,22 @@ func _physics_process(delta: float) -> void:
 	# the cell block must not stop the convoy. A no-op (one boolean read) on every
 	# frame of every ordinary run.
 	_tick_custody(delta)
+
+	# STEP 0-BENCH: reassign-first / imprison-last, and the room-wide ending. Above
+	# the freeze branches for the same reason the recall clock is — the decision is
+	# made a beat after a capture, and a capture leaves the body in `is_caught` for
+	# the whole CAUGHT_DURATION. A no-op solo (one group lookup and a return).
+	_tick_prison(delta)
+
+	# ...and keep a benched player inside the cell block. ABOVE THE FREEZE BRANCHES,
+	# which is the whole reason it is here and not beside `move_and_slide()`: the
+	# body spends the caught freeze, the respawn grace and the game-over screen
+	# below those early returns, and a clamp under them would stop holding at
+	# exactly the moments something else is moving the body (a guard's knockback, a
+	# respawn placement). The cost is that an excursion is corrected on the NEXT
+	# frame rather than the same one — at most one frame of travel, and the
+	# correction is absolute, so no amount of speed accumulates a way out.
+	_confine_to_block()
 
 	# STEP 0a: Game over — out of lives. Stand frozen (the Game Over screen is up
 	# and the cursor is free) until the player hits "Play Again", which calls
@@ -1490,8 +1568,50 @@ func hero_freed(hero: String) -> void:
 	what makes the tower's mirror safe to re-drive: freeing somebody who is not
 	held is a no-op, and so is freeing the authored captive, who was never in this
 	set (he is the tower's staging, not a hero the field took off you).
+
+	IN A ROOM IT IS ALSO A BROADCAST. The captive set is room-wide there (bead
+	godot-test1-3iy.10), so a liberation has to reach the peer who lost that hero -
+	it is what ends their prison role - and it reaches them the same way the
+	capture did. A no-op offline, and idempotent on both sides.
 	"""
-	captive_heroes.erase(hero)
+	# ONLY A REAL RELEASE IS REPORTED, and `erase()`'s own answer is the test. The
+	# tower calls this for the AUTHORED captive too — staging this player never had
+	# taken off them — and telling the room about that would leave a release
+	# tombstone on a hero nobody had captured. The very next thing that rescue
+	# enables is hunter captures, so a genuine grab of that hero inside
+	# RELEASE_GRACE_MSEC would then be dropped as the stale packet it is not, and
+	# the room would never hear about it at all.
+	if not captive_heroes.erase(hero):
+		return
+	var mp := _mp()
+	if mp != null and mp.has_method("report_hero_freed"):
+		mp.call("report_hero_freed", hero)
+
+
+func set_hero_captive(hero: String, held: bool) -> void:
+	"""
+	THE ROOM'S MIRROR: a teammate's capture or liberation, applied to our copy.
+
+	@param hero: one of the `CHARACTERS` names, already whitelisted against the
+	    lobby's pool by `MpManager._apply_captive()`.
+	@param held: true when the room says he is in a cell.
+
+	The only thing `MpManager` calls on the player for the captive set, and it
+	writes exactly what a local capture writes MINUS the local consequences - no
+	auto-switch, no reassignment, no sting. Those belong to the peer who lost the
+	hero; this is the other three peers learning about it, and for them a captured
+	teammate is a name that leaves the roster and a cell frame that lights up.
+	"""
+	if held:
+		captive_heroes[hero] = true
+	else:
+		captive_heroes.erase(hero)
+	# Same null-safe seam a local capture uses, for the same reason: the tower is a
+	# streamed landmark and is usually not in the tree when a grab lands anywhere in
+	# the room, so `TowerInterior` re-seeds its mirror from this set on build.
+	var interior := get_tree().get_first_node_in_group("tower_interior")
+	if interior != null and interior.has_method("set_captive"):
+		interior.call("set_captive", hero, held)
 
 
 func _capture_active_hero() -> void:
@@ -1527,6 +1647,24 @@ func _capture_active_hero() -> void:
 	var interior := get_tree().get_first_node_in_group("tower_interior")
 	if interior and interior.has_method("set_captive"):
 		interior.set_captive(hero, true)
+
+	# TELL THE ROOM, BEFORE ANYTHING IS DECIDED ABOUT IT. In a room the captive set
+	# is room-wide (bead godot-test1-3iy.10) - nobody may pick a hero who is in a
+	# cell, and the run ends when the ROOM has none left - so the assertion goes out
+	# first and the reassignment below is decided against a truth every peer now
+	# shares. A no-op offline.
+	var mp := _mp()
+	if mp != null and mp.has_method("report_hero_captured"):
+		mp.call("report_hero_captured", hero)
+
+	# NEITHER THE REASSIGNMENT NOR THE BENCH IS DECIDED HERE, and that is a
+	# correctness rule rather than tidiness. `SetHero` releases our claim on the
+	# hero just taken, so a claim sent from this line races the `cap` packet on
+	# every other peer: whoever sees the lobby's `heroes` broadcast first no longer
+	# has us down as that hero's holder and drops the capture, and the room's
+	# captive sets diverge for the rest of the run. `_tick_prison()` sends it half a
+	# second later - inside the caught freeze, so nothing is visibly slower - by
+	# which time every peer has the capture.
 
 	# ...and step into the next AVAILABLE hero on the spot, while the unit
 	# withdraws. Available, not merely free: in a room the lobby owns who plays
@@ -2438,7 +2576,28 @@ func _on_caught_finished() -> void:
 			_end_custody_protocol(false)
 		else:
 			_trigger_game_over()
-	elif not captive_heroes.is_empty() and available_character_indices().is_empty():
+	elif not custody_protocol_active and free_hero_count() == 0 and not captive_heroes.is_empty():
+		# GAME OVER IS WORLD-LEVEL (bead godot-test1-3iy.10, an ADOPTED READING of
+		# the owner's phrasing): the corporation has to hold EVERY hero, not merely
+		# every hero this peer may play. Solo that is the same sentence it has
+		# always been - `available_character_indices()` is exactly `free` there, so
+		# an empty hand and an empty free set are one condition - but in a room they
+		# part company, and the peer benched while a teammate is still running must
+		# be imprisoned (`_tick_prison`), not handed an ending. `captive_heroes` is
+		# mirrored room-wide, so this reads the ROOM's roster with no branch of its
+		# own.
+		#
+		# The `not captive_heroes.is_empty()` guard survives for its original
+		# reason: a build with no CHARACTERS at all would otherwise read 0 free and
+		# end every run at the first bite.
+		#
+		# AND THE PROTOCOL GUARD IS NOT DECORATION. Inside the break-out the free
+		# count is deliberately pinned at 0 (that is how the scene's outcome test
+		# knows nobody has been let out yet), so every SURVIVABLE bite in the cell
+		# block would land here - `_begin_custody_protocol()` would return on its own
+		# latch and `_respawn_in_place()` would be skipped, costing the player the
+		# grace window, the ability reset and the crocodile sweep, and handing the
+		# guard that just hit them a free second hit.
 		_begin_custody_protocol()
 	else:
 		_respawn_in_place()
@@ -2486,7 +2645,12 @@ func _respawn_in_place() -> void:
 	then also needs its `await get_tree().physics_frame`.
 	"""
 	_reset_ability_states()
-	var anchor: Variant = _room_group_anchor()
+	# A PRISONER RESPAWNS WHERE HE FELL, and that is the one exception to "in a room,
+	# in place means back with the group". A guard's bite inside the cell block must
+	# not fire the group relocation, which would throw the body kilometres out to the
+	# team and hand it straight back to `_confine_to_block()` — the yank the clamp is
+	# there to make impossible, arriving via the one path that outruns it.
+	var anchor: Variant = null if prisoner_active else _room_group_anchor()
 	if anchor != null:
 		var from_xz := Vector2(global_position.x, global_position.z)
 		_place_near(anchor as Vector3)
@@ -2544,6 +2708,9 @@ func _begin_custody_protocol() -> void:
 		return
 	custody_protocol_active = true
 	custody_timer = CUSTODY_RECALL_SECONDS
+	# A fresh scene has no verdict yet, and the sticky latch from the last one must
+	# not be published over this one.
+	custody_verdict = 0
 	# What was true before the scene, so the exit can put it back — see the field.
 	_custody_entry_captives = captive_heroes.duplicate()
 	# ...and now every hero is a prisoner, which is the fiction AND the geometry:
@@ -2615,8 +2782,18 @@ func _tick_custody(delta: float) -> void:
 	"""
 	if not custody_protocol_active:
 		return
+	# THE CLOCK STILL TICKS ON EVERY PEER, and on a non-master that is PRESENTATION
+	# ONLY: the master publishes the authoritative number a few times a second and
+	# `apply_room_custody()` snaps this back to it, exactly the way a synced
+	# crocodile eases between the master's samples. Ticking locally in between is
+	# what stops the countdown reading as a stutter at the publish rate.
 	custody_timer = maxf(0.0, custody_timer - delta)
 	_show_custody_countdown()
+	# ...BUT ONLY THE AUTHORITY DECIDES. In a room that is the master, for the reason
+	# in `CUSTODY_RECALL_SECONDS`: two peers must not be able to disagree about the
+	# outcome, and the only way to guarantee that is for one of them to own it.
+	if not _custody_authority():
+		return
 	# SUCCESS IS ONE LIBERATION, asked of the RAW free set. `free_hero_count()` reads
 	# `free_character_indices()`, which the scene's roster grant deliberately does
 	# NOT touch (see `available_character_indices`) — so it stays 0 for every frame
@@ -2632,11 +2809,83 @@ func _tick_custody(delta: float) -> void:
 		_end_custody_protocol(false)
 
 
-func _end_custody_protocol(survived: bool) -> void:
+func _custody_authority() -> bool:
 	"""
-	Close the scene on its outcome. The one exit, both ways.
+	Do WE decide this scene's outcome? Solo yes; in a room, only the master.
+
+	One null-safe hop into the `"mp"` group, the same shape as every other
+	multiplayer read here — so the player scene run standalone, and every solo run,
+	answers true and the scene is decided exactly where it always was.
+
+	MASTER MIGRATION NEEDS NO CODE. The lobby re-elects the oldest surviving member
+	in about a second, and the peer that inherits the title has been adopting the
+	old master's `custody_timer` all along (see `apply_room_custody()`) — so it
+	simply starts deciding from the number it was already showing. That is the same
+	property the crocodile sync relies on for the same event, and it is why the
+	clock is published as SECONDS LEFT rather than as a wall-clock deadline: a
+	deadline would need the two machines to agree what time it is.
+	"""
+	var mp := _mp()
+	if mp == null or not mp.has_method("is_online") or not bool(mp.call("is_online")):
+		return true
+	return String(mp.call("get_master")) == String(mp.call("my_id"))
+
+
+func custody_wire_state() -> Array:
+	"""
+	What the master publishes about the break-out: `[seconds left, verdict]`.
+
+	`MpManager._send_room_state()` is the only caller. Kept as a plain query with no
+	side effects, so publishing can never perturb the scene it is describing — the
+	same rule the perf overlay's counters are written to.
+	"""
+	# THE VERDICT BELONGS TO THE ROUND THAT PRODUCED IT, and this is the one window
+	# where it could be read as the next one's: the roster has filled again — so the
+	# set we publish beside it says "full custody" — but our own scene has not
+	# opened yet, because `_tick_prison()` polls. A peer already inside the new scene
+	# would read the last round's SURVIVED and tear its containment down.
+	# `is_game_over` is what separates the stale verdict from the fresh one, and both
+	# have a full roster. A FAILED or OVERTAKEN round leaves the run finished, so its
+	# verdict is still the answer to the only round there will be; a SURVIVED one
+	# leaves the run going, and once the corporation has everybody AGAIN that answer
+	# belongs to a round that is over.
+	if not custody_protocol_active and not is_game_over and free_hero_count() == 0:
+		return [0.0, 0]
+	return [custody_timer if custody_protocol_active else 0.0, custody_verdict]
+
+
+func apply_room_custody(seconds: float, verdict: int) -> void:
+	"""
+	The master's word on the break-out. `MpManager._receive_room()` is the caller.
+
+	@param seconds: the authoritative time left on the recall.
+	@param verdict: 0 running, 1 survived, 2 failed.
+
+	THE VERDICT OUTRANKS THE CLOCK, and is applied even to a peer whose own scene is
+	already over — where it is a no-op, because `_end_custody_protocol()` returns on
+	a scene that is not running. That is what makes a repeated publish safe and what
+	lets the latch be sticky instead of timed.
+	"""
+	if not custody_protocol_active:
+		return
+	if verdict != 0:
+		# 3 is OVERTAKEN: end the scene, write nothing. The room's own ending is on
+		# its way to this peer through the shared totals and will raise itself.
+		_end_custody_protocol(verdict == 1, verdict != 3)
+		return
+	custody_timer = maxf(0.0, seconds)
+
+
+func _end_custody_protocol(survived: bool, record: bool = true) -> void:
+	"""
+	Close the scene on its outcome. The one exit, every way.
 
 	@param survived: true when a hero was freed before the recall completed.
+	@param record: false when the scene did not END so much as get OVERTAKEN —
+	    today only by the room running out of hearts under it (bead
+	    godot-test1-3iy.10). Nothing is written and no ending is raised: the caller
+	    owns both, because the outcome was decided somewhere else. Every other
+	    caller takes the default and behaves exactly as it always has.
 
 	THE OUTCOME IS WRITTEN FIRST, before a single line of scene teardown, and it is
 	the ONLY thing written: a survived protocol records the scar and nothing else, a
@@ -2646,10 +2895,21 @@ func _end_custody_protocol(survived: bool) -> void:
 	a scarless success. The bead's landmine, closed by having ONE record instead of
 	by coordinating two.
 	"""
-	if survived:
-		_apply_custody_scar()
-	else:
-		BestRunStore.archive_world()
+	# THE VERDICT, LATCHED BEFORE ANYTHING ELSE. On the master this is what the room
+	# is told; on everybody else it is simply a record. Written even when `record` is
+	# false — the scene really did end, whoever decided it.
+	# 1 SURVIVED, 2 FAILED, 3 OVERTAKEN — and the third is not a nicety. A scene
+	# closed with `record` false was ended by something ELSE (the room's hearts), so
+	# it archives nothing; publishing it as an ordinary failure would have every peer
+	# that had not yet seen the shared total archive its world while the master did
+	# not. The verdict has to carry the difference because the outcome does.
+	custody_verdict = (1 if survived else 2) if record else 3
+
+	if record:
+		if survived:
+			_apply_custody_scar()
+		else:
+			BestRunStore.archive_world()
 
 	custody_protocol_active = false
 	custody_timer = 0.0
@@ -2677,6 +2937,10 @@ func _end_custody_protocol(survived: bool) -> void:
 			interior.call("set_captive", hero, captive_heroes.has(hero))
 
 	if not survived:
+		if not record:
+			# Overtaken, not lost: the building has been put back and the roster
+			# restored above, and the ending is the CALLER's to raise.
+			return
 		print("The recall completed. The world is archived.")
 		_trigger_game_over()
 		return
@@ -2690,6 +2954,152 @@ func _end_custody_protocol(survived: bool) -> void:
 		set_active_character(int(available[0]))
 	_sfx("play_level_up")
 	print("Broke out. %d hero(es) free; the tower is scarred." % free_hero_count())
+
+
+# ---------------------------------------------------------------------------
+# THE PRISON ROLE — the bench, the block, and the way out of it
+# ---------------------------------------------------------------------------
+
+func _tick_prison(delta: float) -> void:
+	"""
+	Decide the bench, twice a second. The one owner of `prisoner_active`.
+
+	THE ORDER OF THE THREE TESTS IS THE OWNER'S RULE, top to bottom:
+
+	  1. THE ROOM IS OUT OF HEROES -> the full-custody protocol, for EVERY peer and
+	     not only for whoever was bitten last. This is the world-level reading of
+	     game over (see the roster clause in `_on_caught_finished()`); the peer who
+	     took the last hero reaches it there, and this is how the other three learn.
+	  2. MY HERO IS FREE -> nothing to do, and if we were benched we are not any
+	     more: somebody walked into our cell, or a claim finally landed.
+	  3. MY HERO IS IN A CELL -> REASSIGN FIRST. Ask the lobby for a free hero and
+	     wait for the answer; only when the room has none is the prison role the
+	     answer, which is what "imprison last" means in code.
+
+	NOTHING HERE RUNS SOLO. `is_online()` is the gate, and it is the same one-test
+	shape every other multiplayer read in this file uses.
+	"""
+	if is_game_over:
+		return
+	# ...AND NOT WHILE A BITE IS STILL BEING PAID FOR. The caught freeze runs 0.55 s
+	# and this tick is 0.5 s, so on the grab that takes the room's last hero this
+	# would reach `_begin_custody_protocol()` BEFORE `_on_caught_finished()` -
+	# clearing `is_caught` under it, so the freeze is truncated and the life that
+	# grab costs is never spent. Every ending stays where it is decided.
+	if is_caught:
+		return
+	# The break-out scene owns the roster and the body while it runs — its grant is
+	# what lets a prisoner walk at all — so the bench has nothing to decide inside
+	# it. Same guard, same reason, as `_check_shared_game_over()`'s.
+	if custody_protocol_active:
+		return
+	_prison_accum += delta
+	if _prison_accum < PRISON_TICK:
+		return
+	_prison_accum = 0.0
+
+	var mp := _mp()
+	if mp == null or not mp.has_method("is_online") or not bool(mp.call("is_online")):
+		# The room ended under us (a leave, a dropped socket). The block is not a
+		# place to leave somebody standing in solo play.
+		if prisoner_active:
+			_exit_prison()
+		return
+
+	# 1. The room is out of heroes.
+	if free_hero_count() == 0 and not captive_heroes.is_empty():
+		if prisoner_active:
+			_exit_prison()
+		_begin_custody_protocol()
+		return
+
+	# 2/3. What does the lobby say we are holding, and is he in a cell?
+	var hero: String = String(mp.call("my_hero")) if mp.has_method("my_hero") else ""
+	if hero.is_empty() or not captive_heroes.has(hero):
+		if prisoner_active:
+			_exit_prison()
+		return
+
+	# REASSIGN FIRST. A claim that is sent changes nothing yet — we come back here
+	# in half a second and read the answer off `my_hero()`, whether it was a grant
+	# or an `errHeroTaken` that left us exactly where we were.
+	if mp.has_method("request_reassignment") and bool(mp.call("request_reassignment")):
+		return
+
+	# IMPRISON LAST.
+	if not prisoner_active:
+		_enter_prison(hero)
+
+
+func in_prison_role() -> bool:
+	"""Is this player benched inside the cell block? The tower's window in."""
+	return prisoner_active
+
+
+func _enter_prison(hero: String) -> void:
+	"""
+	Take up the prison role: play as your captive, inside his cell block.
+
+	@param hero: the captive we hold — his cell is where we stand up.
+
+	A PLACEMENT AND NOT A RESPAWN, exactly like `_begin_custody_protocol()`'s march
+	to the tower: no life is spent, no score, streak or record is touched, and the
+	distance origin is shifted by the jump so the walk to the tower is not banked as
+	a personal best nobody ran.
+	"""
+	prisoner_active = true
+	velocity = Vector3.ZERO
+	ability_cooldowns.fill(0.0)
+	_reset_ability_states()
+	_apply_view_mode()
+
+	# Null-safe: a player with no terrain under it (every headless harness) serves
+	# the role where it stands, unconfined. That is the right degrade — the role's
+	# decisions are all roster arithmetic and none of them touches geometry.
+	var terrain := get_tree().get_first_node_in_group("terrain")
+	if terrain != null and terrain.has_method("tower_site"):
+		_prison_origin = terrain.call("tower_site") as Vector3
+		_prison_confined = true
+		var from_xz := Vector2(global_position.x, global_position.z)
+		global_position = _prison_origin + TowerInterior.cell_stand(hero)
+		own_distance_origin += Vector2(global_position.x, global_position.z) - from_xz
+	rotation.y = SPAWN_FACING_Y
+	camera_pitch = 0.0
+	clear_nearby_crocodiles(global_position)
+	_sfx("play_hunter_lock_on")
+	print("Benched: the room has no free hero. %s plays from the cell block." % hero)
+
+
+func _exit_prison() -> void:
+	"""
+	Leave the prison role. The body stays where it is standing — in the block, with
+	the way out in front of it, which is exactly where a survived break-out leaves
+	you and for the same reason: walking out is the beat.
+	"""
+	if not prisoner_active:
+		return
+	prisoner_active = false
+	_prison_confined = false
+	_reset_ability_states()
+	print("Back on the roster — out of the cell block.")
+
+
+func _confine_to_block() -> void:
+	"""
+	Keep a prisoner inside the cell block. Movement confined, nothing else changed.
+
+	A CLAMP AND NOT A WALL, deliberately: a wall is geometry every other body in the
+	game would collide with too (a rescuer, a guard, a teammate's avatar), and the
+	confinement is a property of THIS PLAYER'S ROLE, not of the building. Two
+	clamps, x and z — y is left alone so gravity, the floor and the ramp all still
+	behave, and there is no vertical way out of a roofed wing anyway.
+	"""
+	if not prisoner_active or not _prison_confined:
+		return
+	var lo := _prison_origin + TowerInterior.block_min()
+	var hi := _prison_origin + TowerInterior.block_max()
+	global_position.x = clampf(global_position.x, lo.x, hi.x)
+	global_position.z = clampf(global_position.z, lo.z, hi.z)
 
 
 func _apply_custody_scar() -> void:
@@ -2850,8 +3260,14 @@ func restart_game() -> void:
 	# not survive the button. The break-out scene's own state goes with it — it is
 	# per-run for the same reason and stored in exactly as many places (none).
 	captive_heroes.clear()
+	# The bench goes with the run for the same reason: it is a fact about a room's
+	# roster, and Play Again inside a room leaves the room first.
+	prisoner_active = false
+	_prison_confined = false
+	_prison_accum = 0.0
 	custody_protocol_active = false
 	custody_timer = 0.0
+	custody_verdict = 0
 	_custody_entry_captives.clear()
 	# Ability cooldowns are NOT part of reset_position()'s wipe list, and
 	# _update_ability_timers() sits below the is_game_over early return in
@@ -3439,18 +3855,31 @@ func _check_shared_game_over() -> void:
 	re-tested anyway, cheaply, because "the caller is past the guards" is exactly
 	the kind of invariant a later edit breaks silently.
 	"""
-	# ...and never over the full-custody break-out. Inside that scene the SCENE owns
-	# the outcome — losing the last heart there is a failure it decides itself, in
-	# `_tick_custody()`, and archives the world for. A room-wide game over raised
-	# from here would leave a protocol still running behind the ending screen and
-	# archive the world a moment later on the recall clock instead.
-	if lives > 0 or is_game_over or is_caught or custody_protocol_active:
+	if lives > 0 or is_game_over or is_caught:
 		return
 	var mp := _mp()
 	if mp == null or not mp.has_method("shared_lives_spent"):
 		return
 	if mp.shared_lives_spent(own_lives_spent) == null:
 		return  # Manager present but no room: solo semantics, untouched.
+	# THE ROOM'S HEARTS OUTRANK A RUNNING BREAK-OUT, which is the same order
+	# `_on_caught_finished()` tests them in ("the protocol is not a way to dodge an
+	# ordinary game over") and it has to hold across the ROOM as well as inside one
+	# peer. The grab that takes the last hero can also take the last hero-body: the
+	# captor reaches game over through the hearts clause, while every other peer
+	# hears only the `cap` packet and opens the break-out — and a flag that merely
+	# suppressed this function would leave the room split between an ending screen
+	# and a scene, permanently.
+	#
+	# CLOSED WITHOUT AN OUTCOME (`record` false). The scene was overtaken rather
+	# than lost: the world is not archived by a heart the room spent somewhere else,
+	# no scar is earned, and the ending raised below is the same ordinary game over
+	# the bitten peer took. The teardown still runs, so containment comes down and
+	# the captive filter is restored — which is what bead godot-test1-3iy.11's guard
+	# was really protecting, and it is protected better by ending the scene than by
+	# leaving it running behind a screen.
+	if custody_protocol_active:
+		_end_custody_protocol(false, false)
 	print("💀 The room is out of hearts — the run is over for everyone.")
 	_trigger_game_over()
 
@@ -4068,6 +4497,9 @@ func get_ability_block_reason() -> String:
 	hero off permanently, and refusing costs no cooldown — the two properties both
 	gates have always had.
 
+	  "CELL" — the prison role has no ability at all: every one of the four is a
+	           phase, a flight, a combat verb or a wave, and the role is defined as
+	           having none of them.
 	  "RAIN" — Windman can't take off inside a storm cloud's rain zone.
 	  "LAND" — AIR RUSH IS A TAKE-OFF, NOT A MID-AIR JET: Windman must have his
 	           feet on the ground (or be inside the coyote window) to launch.
@@ -4090,6 +4522,16 @@ func get_ability_block_reason() -> String:
 	           is included on purpose: stepping off a ledge gets the same brief
 	           grace here that it gets for a jump.
 	"""
+	# "CELL" — THE PRISON ROLE HAS NO ABILITY (bead godot-test1-3iy.10). The role is
+	# "no phasing, no combat loop, no solo escape", and every one of the four powers
+	# is one of those: Phase Step steps THROUGH geometry, Air Rush leaves the block
+	# over its walls, giant Teibi is a combat verb and the Stink Wave is the field's
+	# own version of the vent purge. Placed here rather than at the F press so the
+	# HUD dial says so too — this function's whole reason for existing.
+	#
+	# Character-independent, which is why it sits ABOVE the windman test.
+	if prisoner_active:
+		return "CELL"
 	var char_name: String = CHARACTERS[current_character_index]["name"]
 	if char_name != "windman":
 		return ""
