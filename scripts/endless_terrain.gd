@@ -544,8 +544,17 @@ const HUNTER_ROLL_INDEX: int = 100000
 ##
 ## Two jobs in one number: it is the area world generation keeps clear, and it is
 ## the budget phase 2's shell has to fit inside (share the constant, never restate
-## the number). 30 m is a little over half a chunk — a large-HQ footprint plus its
-## yard — and it costs the field ~1.1 chunks of content, once, in a whole world.
+## the number).
+##
+## 30 -> 65 IN PHASE 13, because the HQ became the ten-storey building the owner
+## asked for: `TowerShell.OUTER_HALF` is 40, so the keep's own corners reach
+## 40 * sqrt2 = 56.6 m, and the yard slab around it reaches 63.6 m. 65 is that plus
+## a metre of margin — it is ~2.6 chunks across and costs the field ~5.3 chunks of
+## content, once, in a whole world.
+##
+## IT IS ALSO THE DRY DISC AND THE SHADER'S RIVER MASK (see below and
+## `_apply_biome_shader_params`), so growing it grows the tinted band that gets
+## suppressed under the compound. That is wanted: the yard grew with the building.
 ##
 ## HOW CLEAR IS CLEAR: spawners routed through _biome_spot_ok are handed the
 ## candidate's own radius, so their whole FOOTPRINT stays outside the disc. The
@@ -558,7 +567,7 @@ const HUNTER_ROLL_INDEX: int = 100000
 ## through the whole world and cutting a hole in it would break "follow the coins";
 ## phase 2 owns whatever the road does at the tower door. Bosses ARE excluded —
 ## a 6× crocodile wedged in the doorway is a different problem from a coin.
-const TOWER_RADIUS: float = 30.0
+const TOWER_RADIUS: float = 65.0
 
 ## Extra clearance (metres) every tower rejection adds on top of the candidate's
 ## own declared radius.

@@ -187,14 +187,28 @@ extends Node3D
 # GEOMETRY — metres, LOCAL to the shell's origin, feet at y = 0
 # ============================================================================
 #
-# The shell's inner faces are at +/- INNER_HALF on both axes, and the corner spire
-# is a solid 7 m cube of stone at the -X/-Z corner (x <= -3, z <= -3) — which is
-# why nothing below reaches into that corner and why the upper slab starts where
-# it does.
+# This plan is authored inside a +/- INNER_HALF square. It used to BE the shell's
+# inner faces, with a solid spire in the -X/-Z corner; shell phase 13 removed the
+# spire and grew the keep to 80 m, so the plan now stands inside a much larger hall
+# (see INNER_HALF).
 
-## Half the CLEAR interior span: the shell's outer half minus one wall thickness.
-## Derived, never restated, so a thicker wall shrinks the interior automatically.
-const INNER_HALF: float = TowerShell.OUTER_HALF - TowerShell.WALL_THICK
+## Half the CLEAR span this floor plan is authored in.
+##
+## AN AUTHORED NUMBER SINCE SHELL PHASE 13, and it was a derivation
+## (`TowerShell.OUTER_HALF - TowerShell.WALL_THICK`) before that. The derivation was
+## right while the keep was 20 m square and this plan filled it wall to wall. Phase
+## 13 grew the shell to 80 m, and deriving would have STRETCHED every room in here
+## by 4.4x — which does not scale, because the rooms are made of authored widths:
+## the cell block's four identity doors plus three piers span 9.3 m however wide the
+## wing gets, so a stretched wing has a 30 m hole beside the gates and you walk round
+## every one of them. `tower_interior_selfcheck`'s spine-line sampler found exactly
+## that, which is the check doing its job.
+##
+## So it is frozen at the phase-3 footprint (OUTER_HALF 10 - WALL_THICK 1.2) and the
+## plan stays the building that was play-tested. Phase 14 replans the storeys against
+## the real 80 m envelope; that is where this becomes a floor plan again rather than
+## a structure standing in the middle of a hall.
+const INNER_HALF: float = 8.8
 
 ## The upper storey. `SLAB_Y` is its WALKING SURFACE; the slab hangs below it, so
 ## the hall's headroom is `SLAB_Y - SLAB_THICK`.

@@ -55,7 +55,15 @@ extends SceneTree
 ##      geometry drifted from the shell (you walk toward one building and arrive at
 ##      another), still visible after the shell loads (z-fighting), or carrying
 ##      collision (an invisible wall in the middle of the field). Check 9.
-##   8. THE MINIMAP MARK. It is the only marker on the map that is NOT read off a
+##   8. THE ROOF AND THE FACADE (phase 13). The owner's ruling is a building
+##      Windman cannot fly into, and the answer is a lid rather than a height: a
+##      solid slab rayed at every metre of its span (check 11) and a facade with no
+##      horizontal top below it wide enough to land on and re-launch from (check
+##      12), whose height budget is INTEGRATED from player_controller's own Air Rush
+##      constants and Progression's max ranks. Check 12's docstring records what
+##      neither check can promise — a maxed Windman can chain launches upward
+##      without bound — and why the seal is therefore the actual guarantee.
+##   9. THE MINIMAP MARK. It is the only marker on the map that is NOT read off a
 ##      group — it asks the terrain where the tower IS — so the usual has_method()
 ##      guard makes a rename fail silently, with the map still drawing and the
 ##      tower simply not on it. Check 10 is the alarm for that, plus the rim clamp,
@@ -68,6 +76,29 @@ extends SceneTree
 const TERRAIN_SCRIPT: String = "res://scripts/endless_terrain.gd"
 const MINIMAP_SCRIPT: String = "res://scripts/minimap_hud.gd"
 const SHELL_SCENE: String = "res://scenes/tower/tower_shell.tscn"
+const PLAYER_SCRIPT: String = "res://scripts/player_controller.gd"
+
+## Spacing (metres) of the grid check 11 rays the roof on, and the height it fires
+## from. 1 m is finer than any hole a `CharacterBody3D` could pass through and
+## coarse enough that the whole 80 m span is ~6k rays in one frame; 60 m is above
+## the roof and below nothing.
+const ROOF_PROBE_STEP: float = 1.0
+const ROOF_PROBE_Y: float = 60.0
+
+## The widest horizontal top a `collide: true` box may expose BELOW the roof.
+##
+## THE FACADE RULE, and the whole reason the tower stays enterable only by its door:
+## a Windman who lands re-launches, so a ledge 22 m up is a staircase with two
+## steps. 0.3 m is under the radius of the player's own capsule — nothing to stand
+## on. Deny the landing, not the height.
+const LEDGE_MAX_WIDTH: float = 0.3
+
+## Metres the roof must clear a fully-skilled Air Rush launched off the tallest
+## thing in the world by. Slack for a retune, not a design allowance.
+const ROOF_CLEARANCE_MARGIN: float = 5.0
+
+## Geometry tolerance, in metres.
+const EPS: float = 0.001
 
 ## Throwaway save file this check points `BestRunStore.config_path` at, so the
 ## machine's real `user://best_run.cfg` is never opened. See `_boot()`.
@@ -113,6 +144,8 @@ func _boot() -> void:
 func _run() -> void:
 	_check_box_budget()
 	_check_footprint_fits_the_exclusion_disc()
+	await _check_the_roof_is_sealed()
+	_check_roof_is_above_windmans_reach()
 	_check_node_shape()
 	_check_materials_are_shared_and_already_toon()
 	_check_doorway_is_a_hole()
@@ -196,6 +229,178 @@ func _check_footprint_fits_the_exclusion_disc() -> void:
 	if declared > limit:
 		_fail("TowerShell.footprint_radius() is %.2f m, past TOWER_RADIUS %.1f m" % [declared, limit])
 	terrain.free()
+
+
+func _check_the_roof_is_sealed() -> void:
+	"""
+	Check 11. THERE IS A LID, and it has no holes in it.
+
+	Fires a downward ray from above the building at every metre of the span inside
+	the walls and asserts each one stops at the roof. THROUGH THE REAL PHYSICS
+	SERVER, not over the box table, because "sealed" is a claim about
+	`CollisionShape3D`s: a roof mesh whose box was appended with `collide: false`,
+	or a slab that misses a corner of the footprint, reads as a perfectly good roof
+	in `boxes()` and is a hole you fly through in the game.
+
+	WHY THIS IS THE GUARANTEE AND THE HEIGHT IS NOT — see check 12: a Windman can
+	be made to reach any altitude at all, so the building is not defended by being
+	tall. It is defended by having nowhere to come down.
+	"""
+	var shell := _make_shell()
+	# Shapes only enter the space on the physics frame after they are added.
+	await physics_frame
+	var space := shell.get_world_3d().direct_space_state
+	var inner: float = TowerShell.OUTER_HALF - TowerShell.WALL_THICK
+	var roof_bottom: float = TowerShell.WALL_HEIGHT
+	var holes := 0
+	var worst := Vector2.ZERO
+	var x := -inner
+	while x <= inner + EPS:
+		var z := -inner
+		while z <= inner + EPS:
+			var query := PhysicsRayQueryParameters3D.create(
+				shell.global_position + Vector3(x, ROOF_PROBE_Y, z),
+				shell.global_position + Vector3(x, -1.0, z))
+			var hit := space.intersect_ray(query)
+			# A ray that hits nothing, or first hits something below the roof slab,
+			# is a way in from the sky.
+			if hit.is_empty() or float(hit["position"].y) < roof_bottom - EPS:
+				holes += 1
+				worst = Vector2(x, z)
+			z += ROOF_PROBE_STEP
+		x += ROOF_PROBE_STEP
+	if holes > 0:
+		_fail("the roof has %d open grid points — e.g. (%.1f, %.1f), where a ray from %.0f m falls straight through" % [
+			holes, worst.x, worst.y, ROOF_PROBE_Y])
+	else:
+		print("roof sealed: every %.0f m grid point inside +/-%.1f m stops at the slab" % [
+			ROOF_PROBE_STEP, inner])
+	shell.free()
+
+
+func _check_roof_is_above_windmans_reach() -> void:
+	"""
+	Check 12. The roof is out of reach of ONE fully-skilled Air Rush launched off
+	the tallest ground in the world, and no ledge below it offers a second one.
+
+	THE NUMBERS ARE MEASURED, NEVER RESTATED. The arc is integrated from
+	`player_controller`'s own `gravity`, `WINDMAN_LIFT`, `WINDMAN_BOOST_DURATION`
+	and `WINDMAN_GRAVITY_FACTOR`, with the three Air Rush skills at the max ranks
+	`Progression.SKILL_TREES` declares and the caps `skill_mult()` enforces — so a
+	balance pass that buys Windman another ten metres fails HERE, in the one place
+	that would otherwise silently stop being true. The summit he launches from is
+	`endless_terrain.MOUNTAIN_HEIGHT_MAX`, read off a live terrain the way check 2
+	reads TOWER_RADIUS.
+
+	THE CEILING OF THIS CHECK, stated so nobody mistakes it for a proof: the
+	cooldown floor (8.0 s x COOLDOWN_MULT_MIN = 4.8 s) is SHORTER than a maxed
+	boost (5.2 s), and `try_activate_ability` has no on-floor gate — so a maxed
+	Windman can re-launch in mid-air and climb without bound, roughly 25 m a cycle.
+	No roof height defeats that, which is exactly why phase 13 ships a SEALED roof
+	(check 11) and a facade with nothing to land on (below): the guarantee is that
+	there is no way IN, not that there is no way UP. Gating the re-launch is a
+	design decision for the epic, not something this file may quietly assume.
+	"""
+	var peak := _air_rush_peak()
+	if peak <= 0.0:
+		_fail("could not integrate Air Rush out of player_controller/Progression — check 12 would pass vacuously")
+		return
+	var terrain := _make_terrain(SEED_A)
+	var summit: float = terrain.MOUNTAIN_HEIGHT_MAX
+	terrain.free()
+
+	var boxes := TowerShell.boxes()
+	var roof := _topmost_solid(boxes)
+	if roof.is_empty():
+		_fail("the shell has no collide:true box on top — there is no roof")
+		return
+	var roof_pos: Vector3 = roof["pos"]
+	var roof_half: Vector3 = roof["size"] * 0.5
+	var roof_top := roof_pos.y + roof_half.y
+	var roof_bottom := roof_pos.y - roof_half.y
+	var need := peak + summit + ROOF_CLEARANCE_MARGIN
+	print("Air Rush peak %.2f m (maxed) + massif %.1f m + %.1f m margin = %.2f m; roof top %.2f m" % [
+		peak, summit, ROOF_CLEARANCE_MARGIN, need, roof_top])
+	if roof_top <= need:
+		_fail("the roof tops out at %.2f m, inside a maxed Air Rush (%.2f m) off a %.1f m massif plus %.1f m of margin" % [
+			roof_top, peak, summit, ROOF_CLEARANCE_MARGIN])
+
+	# ...and nothing below it is a place to land and go again.
+	for box: Dictionary in boxes:
+		if box["name"] == roof["name"] or not box["collide"]:
+			continue
+		var pos: Vector3 = box["pos"]
+		var size: Vector3 = box["size"]
+		var half: Vector3 = size * 0.5
+		var top := pos.y + half.y
+		# "Covered" is the roof standing ON it: its top meets the slab's underside
+		# and it is inside the slab's footprint, so there is no top face left.
+		var covered := top >= roof_bottom - EPS \
+				and absf(pos.x) + half.x <= absf(roof_pos.x) + roof_half.x + EPS \
+				and absf(pos.z) + half.z <= absf(roof_pos.z) + roof_half.z + EPS
+		if covered or minf(size.x, size.z) <= LEDGE_MAX_WIDTH:
+			continue
+		_fail("%s exposes a %.1f x %.1f m top at %.2f m, under the roof — a Windman lands there and launches again" % [
+			box["name"], size.x, size.z, top])
+
+
+func _topmost_solid(boxes: Array[Dictionary]) -> Dictionary:
+	"""The solid box with the highest top — the roof, found by geometry and not by
+	name, so renaming it cannot make check 12 measure something else."""
+	var best: Dictionary = {}
+	var best_top := -INF
+	for box: Dictionary in boxes:
+		if not box["collide"]:
+			continue
+		var top: float = box["pos"].y + box["size"].y * 0.5
+		if top > best_top:
+			best_top = top
+			best = box
+	return best
+
+
+func _air_rush_peak() -> float:
+	"""
+	How high ONE Air Rush carries a fully-skilled Windman above his launch point.
+
+	Integrated in closed form off the shipped constants: he rises under the softened
+	boost gravity until the boost runs out and — because a maxed glide never reaches
+	its own apex before the wings cut (see `Progression.WINDMAN_GRAVITY_MULT_MIN`'s
+	arc note) — coasts the rest of the way up under ORDINARY gravity. Missing that
+	second leg under-reports the peak, which is the sort of margin this check exists
+	to keep honest.
+
+	The probe instance is the trick `tower_interior_selfcheck._jump_apex()` uses:
+	`gravity` is a plain var, so one bare, never-readied instance is how you read its
+	default without loading a character model.
+	"""
+	var script: GDScript = load(PLAYER_SCRIPT)
+	var probe: Object = script.new()
+	var g: float = float(probe.get("gravity"))
+	if probe is Node:
+		(probe as Node).free()
+	var consts := script.get_script_constant_map()
+
+	# Every Air Rush node at the rank the TREE declares, resolved through the getter
+	# that owns the balance caps — never a hand-summed bonus.
+	var maxed := {}
+	for node: Dictionary in Progression.SKILL_TREES.get("windman", []):
+		maxed[node["id"]] = int(node["max_ranks"])
+	var prog := Progression.new()
+	prog.skill_ranks = {"windman": maxed}
+	var lift := float(consts.get("WINDMAN_LIFT", 0.0)) * prog.skill_mult("windman", "windman_lift")
+	var boost := float(consts.get("WINDMAN_BOOST_DURATION", 0.0)) * prog.skill_mult("windman", "windman_boost")
+	var g_boost := g * float(consts.get("WINDMAN_GRAVITY_FACTOR", 1.0)) \
+			* prog.skill_mult("windman", "windman_gravity")
+	prog.free()
+
+	if g <= 0.0 or g_boost <= 0.0 or lift <= 0.0 or boost <= 0.0:
+		return 0.0
+	if lift / g_boost <= boost:
+		# He tops out while still gliding.
+		return lift * lift / (2.0 * g_boost)
+	var v_end := lift - g_boost * boost
+	return lift * boost - 0.5 * g_boost * boost * boost + v_end * v_end / (2.0 * g)
 
 
 func _check_node_shape() -> void:

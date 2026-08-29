@@ -4,8 +4,10 @@ extends Node3D
 ##
 ## Phase 1 decided WHERE the tower stands (`endless_terrain.tower_site()`) and kept
 ## that disc clear (`tower_excludes()`, radius `TOWER_RADIUS`). This file is what
-## stands there: a walled keep with a corner spire, a yard slab, a doorway you can
-## walk through, and the door trigger phase 3's interior will hang off.
+## stands there: a sealed 80 x 80 x 52 m keep, a yard slab, a doorway you can walk
+## through, and the door trigger phase 3's interior hangs off. Phase 13 grew it
+## from a 20 m walled enclosure to the ten-storey HQ and, more importantly, put a
+## LID on it — see `ROOF_THICK`.
 ##
 ## SELF-BUILDING, LIKE `ability_effect.gd`. The scene file
 ## `scenes/tower/tower_shell.tscn` is a bare Node3D carrying this script — every
@@ -35,7 +37,7 @@ extends Node3D
 ## from local information only — it does not even need the seed. No spawn packet,
 ## no claim, no authority.
 ##
-## COST: 10 `MeshInstance3D`s, ONE `StaticBody3D` holding 8 box shapes, one `Area3D`,
+## COST: 9 `MeshInstance3D`s, ONE `StaticBody3D` holding 7 box shapes, one `Area3D`,
 ## and 4 materials shared process-wide by the static cache below. That is the whole
 ## bill, once, for the life of a run.
 
@@ -57,18 +59,42 @@ signal player_entered(body: Node3D)
 
 ## Half the keep's OUTER footprint. The walls are a 2 * OUTER_HALF square; every
 ## other horizontal number below derives from this one.
-const OUTER_HALF: float = 10.0
-
-## Wall thickness and height.
 ##
-## RAISED FROM 7 TO 11 BY PHASE 3, and the interior is the reason. A storey has to
-## be at least 4.6 m (see `tower_interior.SLAB_Y`: the jump apex is 3.6125 m and a
-## floor you can jump onto is not a floor), so two of them is 9.2 m before there is
-## any parapet at all. At 7 m the upper storey was a balcony with a knee-high edge
-## and the enclosed hall below it fought the camera's spring arm. The doorway, the
-## lintel and the impostor all derive from this number, so raising it is one edit.
+## 10 -> 40 IN PHASE 13 (80 x 80 m). The owner's "100x size" ruling is read as
+## usable FLOOR AREA (epic note, 2026-08-29): 16x the footprint times 5x the
+## storeys is the 100x, and 80 m square is what ~100-150 hand-planned rooms per
+## the epic's phase 14 need. It is ~1.6 chunks across, which is why
+## `endless_terrain.TOWER_RADIUS` had to grow with it.
+const OUTER_HALF: float = 40.0
+
+## Wall thickness, and the storey grid the height is made of.
+##
+## PHASE 13 REPLACED A NUMBER WITH A PRODUCT. The height used to be an authored
+## 11 m (phase 3 raised it from 7 for two interior storeys); it is now ten storeys
+## of 5.0 m, because the owner asked for "a 10-storey building" and the storey
+## count is the thing being asked for. 5.0 m clears `tower_interior.SLAB_Y`'s
+## floor-to-floor minimum (a storey has to be at least 4.6 m: the jump apex is
+## 3.6125 m and a floor you can jump onto is not a floor) with room for a slab.
 const WALL_THICK: float = 1.2
-const WALL_HEIGHT: float = 11.0
+const STOREY_HEIGHT: float = 5.0
+const STOREYS: int = 10
+const WALL_HEIGHT: float = STOREY_HEIGHT * STOREYS
+
+## THE ROOF, which is the whole point of this phase.
+##
+## The building is sealed: a solid `collide: true` slab over the entire footprint,
+## with NO door, NO hatch and no way through it, ever. Windman's Air Rush is the
+## only thing in the game that gains real altitude, and the epic's ruling is that
+## the tower is entered through the door or not at all — so the answer is not a
+## height nobody can reach (see the chain-launch note in
+## `tower_shell_selfcheck._check_roof_is_above_windmans_reach`) but a lid.
+##
+## THICK ENOUGH TO BE THE PARAPET TOO. The slab spans WALL_HEIGHT -> 52 m, so the
+## roof surface a flier could stand on is at 52 m — above one fully-skilled Air
+## Rush launched from a 20 m massif summit (26.25 + 20 = 46.25 m) with margin, and
+## it is one box instead of a slab plus four parapet walls whose tops would each
+## be another ledge to reason about.
+const ROOF_THICK: float = 2.0
 
 ## THE DOORWAY, and the only place its size is written down. The two front jambs
 ## are what is LEFT of the front wall once this hole is taken out of it, and the
@@ -89,14 +115,16 @@ const DOOR_HEIGHT: float = 4.0
 ## wall does not count as being inside.
 const DOOR_TRIGGER_DEPTH: float = 1.0
 
-## The corner spire: the part of the building that is actually visible from far
-## away (see the impostor block). Square in plan, sat on the -X/-Z corner of the
-## keep so it never blocks the doorway, with a wider cap and a beacon cube on top.
-const SPIRE_SIDE: float = 7.0
-const SPIRE_HEIGHT: float = 22.0
-const SPIRE_CAP_OVERHANG: float = 0.8
-const SPIRE_CAP_HEIGHT: float = 1.8
-const BEACON_SIDE: float = 1.8
+## THE BEACON: the amber light that says "that shape on the horizon is the one you
+## are walking to". It sits on the -X/-Z corner OF THE ROOF.
+##
+## PHASE 13 DELETED THE SPIRE IT USED TO STAND ON. A 22 m corner tower with an
+## overhanging cap was the silhouette when the keep was 11 m tall; against a 52 m
+## slab it is a bump, and — fatally for this phase — its cap was a 8.6 m wide
+## horizontal top 22 m up, i.e. a landing pad from which a Windman re-launches.
+## Identity comes from mass now (the epic's ruling), and the facade below the roof
+## carries nothing wide enough to stand on.
+const BEACON_SIDE: float = 4.0
 
 ## The yard: a flat visual slab under the whole compound. VISUAL ONLY and 3 cm
 ## proud of the ground — no collision shape, no lip to step over. The flat-world
@@ -104,7 +132,13 @@ const BEACON_SIDE: float = 1.8
 ## a slab you could stand on would be the first raised terrain in the game and
 ## would fight coin settling, crocodile gravity and the wade test. It is a change
 ## of colour, nothing more.
-const YARD_HALF: float = 18.0
+##
+## 45 AND NOT 48, and the three metres are arithmetic rather than taste: the yard
+## is a SQUARE and `TOWER_RADIUS` is a CIRCLE, so its corners reach 45 * sqrt2 =
+## 63.6 m of the 65 m disc. At 48 they would reach 67.9 m and stand in scenery the
+## site was never promised to be clear of — which check 2 of the self-check would
+## (correctly) refuse.
+const YARD_HALF: float = 45.0
 const YARD_LIFT: float = 0.03
 
 ## Hard cap on how many boxes the shell may be made of, asserted headlessly by
@@ -117,7 +151,14 @@ const YARD_LIFT: float = 0.03
 ## bites immediately if somebody starts modelling crenellations. The check also
 ## measures the FOOTPRINT against endless_terrain's `TOWER_RADIUS`, which is the
 ## other half of the budget and is deliberately NOT restated here.
-const BOX_BUDGET: int = 12
+##
+## 12 -> 10 IN PHASE 13, and it went DOWN while the building got twenty times
+## bigger: the table is yard + 3 walls + 2 jambs + lintel + roof + beacon = 9,
+## because the spire, its cap and its overhang all went away (see BEACON_SIDE) and
+## the roof cost one box. The one spare slot is the same courtesy phase 3 was left.
+## A tenth storey is not ten more boxes — the storeys are INTERIOR (phase 14), and
+## the shell stays an extrusion whichever way the plans grow.
+const BOX_BUDGET: int = 10
 
 ## Palette. Four colours, four materials, shared process-wide (see `_material`).
 ##
@@ -129,7 +170,7 @@ const BOX_BUDGET: int = 12
 const COLOR_WALL := Color(0.44, 0.42, 0.40)      # weathered grey stone
 const COLOR_ROOF := Color(0.26, 0.22, 0.28)      # dark slate cap, reads as a roof
 const COLOR_YARD := Color(0.33, 0.31, 0.29)      # packed earth, a shade under the wall
-const COLOR_BEACON := Color(1.0, 0.72, 0.18)     # the amber light on the spire
+const COLOR_BEACON := Color(1.0, 0.72, 0.18)     # the amber light on the roof
 
 ## Silhouette colour of the horizon impostor, and of its beacon. Deliberately DARK
 ## and unshaded: at 400 m the tower is a shape against a bright sky, and a shape is
@@ -212,9 +253,8 @@ static func boxes() -> Array[Dictionary]:
 	var jamb_mid := (OUTER_HALF + DOOR_HALF_WIDTH) * 0.5
 	# The lintel bridges the hole, from the top of the doorway to the wall top.
 	var lintel_height := WALL_HEIGHT - DOOR_HEIGHT
-	# The spire stands on a corner: its outer faces flush with the keep's.
-	var spire_mid := -(OUTER_HALF - SPIRE_SIDE * 0.5)
-	var cap_side := SPIRE_SIDE + 2.0 * SPIRE_CAP_OVERHANG
+	# The beacon sits on the roof, over the -X/-Z corner.
+	var beacon_mid := -(OUTER_HALF - BEACON_SIDE)
 
 	var out: Array[Dictionary] = []
 	# 1. The yard, first so everything else draws over it. No collision — see YARD_LIFT.
@@ -241,15 +281,18 @@ static func boxes() -> Array[Dictionary]:
 	out.append({"name": "DoorLintel", "pos": Vector3(wall_mid, DOOR_HEIGHT + lintel_height * 0.5, 0.0),
 		"size": Vector3(WALL_THICK, lintel_height, 2.0 * DOOR_HALF_WIDTH),
 		"color": COLOR_WALL, "collide": true})
-	# 4. The spire, its cap, and the beacon on top.
-	out.append({"name": "Spire", "pos": Vector3(spire_mid, SPIRE_HEIGHT * 0.5, spire_mid),
-		"size": Vector3(SPIRE_SIDE, SPIRE_HEIGHT, SPIRE_SIDE),
-		"color": COLOR_WALL, "collide": true})
-	out.append({"name": "SpireCap", "pos": Vector3(spire_mid, SPIRE_HEIGHT + SPIRE_CAP_HEIGHT * 0.5, spire_mid),
-		"size": Vector3(cap_side, SPIRE_CAP_HEIGHT, cap_side),
+	# 4. THE LID. One slab over the whole footprint, so every wall top underneath it
+	#    is covered rather than exposed — that is what makes the facade smooth: the
+	#    only horizontal surface a flier can put his feet on is the top of this box.
+	#    It spans the full 2 * OUTER_HALF square, not the inner hole, so it also is
+	#    its own parapet (see ROOF_THICK).
+	out.append({"name": "Roof", "pos": Vector3(0.0, WALL_HEIGHT + ROOF_THICK * 0.5, 0.0),
+		"size": Vector3(2.0 * OUTER_HALF, ROOF_THICK, 2.0 * OUTER_HALF),
 		"color": COLOR_ROOF, "collide": true})
-	out.append({"name": "Beacon", "pos": Vector3(spire_mid,
-			SPIRE_HEIGHT + SPIRE_CAP_HEIGHT + BEACON_SIDE * 0.5, spire_mid),
+	# 5. The beacon, standing on the roof. No collision: it is a light, and a
+	#    1-box plinth is not a place to stand.
+	out.append({"name": "Beacon", "pos": Vector3(beacon_mid,
+			WALL_HEIGHT + ROOF_THICK + BEACON_SIDE * 0.5, beacon_mid),
 		"size": Vector3(BEACON_SIDE, BEACON_SIDE, BEACON_SIDE),
 		"color": COLOR_BEACON, "collide": false})
 	return out
