@@ -695,12 +695,13 @@ func _check_node_shape() -> void:
 	if bodies != 1:
 		_fail("the interior has %d StaticBody3D, expected exactly one" % bodies)
 	# Three pads (demand, identity, checkpoint), one hazard per rotor bar, and the
-	# wing's own: four spine pads, four cell volumes and the crawl press's hazard.
+	# wing's own: four spine pads, four cell volumes, the crawl press's hazard and
+	# the gallery's vent-purge pad.
 	# COUNTED AND NOT CAPPED — an Area3D nobody meant to build is a trigger that
-	# fires, and every one of these fourteen is named in this file.
-	var want_areas := 5 + TowerInterior.SPINE_DOORS.size() + TowerGraph.HEROES.size() + 1
+	# fires, and every one of these fifteen is named in this file.
+	var want_areas := 5 + TowerInterior.SPINE_DOORS.size() + TowerGraph.HEROES.size() + 2
 	if areas != want_areas:
-		_fail("the interior has %d Area3D, expected %d (3 pads + 2 rotor hazards + %d spine pads + %d cells + 1 press)" % [
+		_fail("the interior has %d Area3D, expected %d (3 pads + 2 rotor hazards + %d spine pads + %d cells + 1 press + 1 purge)" % [
 			areas, want_areas, TowerInterior.SPINE_DOORS.size(), TowerGraph.HEROES.size()])
 
 	var body := interior.get_node_or_null("InteriorCollision") as StaticBody3D

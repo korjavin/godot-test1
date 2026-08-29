@@ -79,6 +79,15 @@ extends Node3D
 ##     Motion:     it SINKS into the floor. Down = "the building let you in".
 ##     Reads as:   "come back stronger".
 ##
+##   BLOCK SYSTEM — a thing you OPERATE, whose effect happens somewhere else.
+##     Silhouette: a pad, flush with the floor, exactly like an identity pad.
+##     Material:   COLOR_SYSTEM, cold cyan — in neither gate family on purpose.
+##     Light:      the pad glows; there is no mass beside it, and that absence is
+##                 the tell. A gate always has something in the doorway.
+##     Reads as:   "stand here and something opens, elsewhere".
+##     There is exactly one today: the cell block's VENT PURGE, which a benched
+##     multiplayer player operates for the team outside (bead godot-test1-3iy.10).
+##
 ##   IDENTITY GATE — a lock that asks who you are, and can never be out-levelled.
 ##     Silhouette: a MASS. Tall, heavy, filling its doorway, one solid piece.
 ##     Material:   COLOR_IDENTITY, the hero's violet, plus a floor pad in the same
@@ -536,6 +545,14 @@ const COLOR_IDENTITY_PAD := Color(0.72, 0.36, 1.00) # ...and the pad you stand o
 const COLOR_CHECKPOINT := Color(0.16, 0.38, 0.30)   # checkpoint, not yet reached
 const COLOR_CHECKPOINT_LIT := Color(0.32, 1.00, 0.58)
 const COLOR_PANEL := Color(1.00, 0.95, 0.86)        # ceiling light panels
+## A SYSTEM YOU OPERATE — the fifth thing in the legibility language, and the only
+## one whose effect is somewhere ELSE. Cold cyan, deliberately in neither family:
+## it is not violet (a gate reads "bring the right hero" and this asks nobody's
+## name) and it is not steel (a demand gate reads "come back stronger" and this
+## measures nothing). `tower_selfcheck` is what enforces the distinction — a box
+## painted a GATE colour must be claimed by a `TOWER_GRAPH` row, and a system that
+## borrowed one would quietly enter the softlock audit as a passage.
+const COLOR_SYSTEM := Color(0.20, 0.72, 0.78)       # an operable block system
 ## THE FIFTH WORD IN THE LANGUAGE, and it is a ROOM MARKER and not a gate: a cell's
 ## containment field, held red while somebody is in there and dead grey once they
 ## are not. Red is free — nothing else in this building is warm except the hazard
@@ -1269,7 +1286,7 @@ static func _wing_boxes() -> Array[Dictionary]:
 		"name": "PurgePad",
 		"pos": Vector3(PURGE_PAD_X, 0.05, PURGE_PAD_Z),
 		"size": Vector3(1.1, 0.1, 1.1),
-		"color": COLOR_IDENTITY_PAD, "collide": false, "floor": 0,
+		"color": COLOR_SYSTEM, "collide": false, "floor": 0,
 	})
 	out.append({
 		"name": "PrimmContainment",
@@ -2326,7 +2343,11 @@ func _on_cell_enter(body: Node3D, hero: String) -> void:
 	"""
 	if not body.is_in_group("player"):
 		return
-	if bool(body.get("prisoner_active")) and _hero_name() == hero:
+	# `"x" in body`, never `bool(body.get("x"))`: `get()` answers null for a body that
+	# has no such property (every probe player in the self-checks, and the real one
+	# before this bead), and `bool(null)` is not a constructor GDScript has - it
+	# throws, and a throw inside an `Area3D` callback swallows the liberation.
+	if "prisoner_active" in body and bool(body.prisoner_active) and _hero_name() == hero:
 		return
 	_liberate(hero)
 

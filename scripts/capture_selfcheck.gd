@@ -534,20 +534,22 @@ func _check_capture_respects_the_rooms_hand() -> void:
 	"""
 	In a room, capture is bounded by the heroes the LOBBY assigned this peer.
 
-	MP capture proper is its own bead; what is measured here is that this bead does
-	not BREAK the assignment that already ships. Two ways it could, and they are
-	the same mistake at two sites:
+	What is measured here is that capture does not BREAK the assignment that already
+	ships: the auto-switch must never reach past the hand and step this peer into a
+	teammate's hero — the lobby is the source of truth for hero assignment and
+	nothing may be decided locally. That is why `available_character_indices()`
+	exists rather than two copies of one intersection. The negative control — a
+	two-hero hand — proves the switch still moves when there IS somewhere to go, so
+	"it did not step out of the hand" cannot be satisfied by a switch that never
+	happens.
 
-	  * the auto-switch reaching past the hand and stepping this peer into a
-	    teammate's hero — the lobby is the source of truth for hero assignment and
-	    nothing may be decided locally;
-	  * the end-of-run test asking whether any hero anywhere is free, so a peer
-	    whose only assigned hero has just been taken respawns as somebody else's.
-
-	Both are why `available_character_indices()` exists rather than three copies of
-	one intersection. The negative control — a two-hero hand — proves the switch
-	still moves when there IS somewhere to go, so "it did not step out of the hand"
-	cannot be satisfied by a switch that never happens.
+	...AND THAT THE ENDING IS NOT RAISED HERE (bead godot-test1-3iy.10). An emptied
+	HAND used to end this peer's run; under the owner's world-level reading it must
+	not, because three heroes are still free somewhere in the room and the answer is
+	a reassignment or the prison role, both of which `_tick_prison()` owns. The
+	positive control is right underneath: mark the other three captive too and the
+	SAME code path does open the protocol, so "it did not end the run" cannot be
+	satisfied by an ending that never fires.
 	"""
 	_beat_done()
 
@@ -574,8 +576,29 @@ func _check_capture_respects_the_rooms_hand() -> void:
 	player.call("_on_caught_finished")
 	if player.lives <= 0:
 		_fail("the room case ran out of hearts, so it proves nothing")
+	if player.in_custody_protocol():
+		_fail(("an emptied HAND opened the full-custody protocol while %d heroes are still "
+			+ "free in the room — game over is world-level (bead godot-test1-3iy.10)")
+			% player.free_hero_count())
+	if not player.is_respawning:
+		_fail("a benched peer with free heroes left in the room neither respawned nor was benched")
+
+	# The positive control, on the same player and the same call: take the other
+	# three and the world really is out of heroes.
+	player.is_respawning = false
+	for hero: Variant in TowerGraph.HEROES:
+		player.captive_heroes[String(hero)] = true
+	if player.free_hero_count() != 0:
+		_fail("the positive control did not empty the roster, so it proves nothing")
+	player.is_caught = false
+	player.call("_on_caught_finished")
+	if player.lives <= 0:
+		_fail("the positive control ran out of hearts, so it proves nothing")
 	if not player.in_custody_protocol():
-		_fail("this peer's hand was emptied by a capture and field play went on")
+		_fail("the room ran out of heroes entirely and field play went on")
+	# The scene is left running and the player is freed under it. Deliberately NOT
+	# closed through `_end_custody_protocol(false)`: that writes the world archive,
+	# which every later check would then come up inside.
 	_clear(player)
 
 	# (b) the negative control: two heroes in hand, and the switch moves.
@@ -1175,6 +1198,14 @@ func _check_the_scene_does_not_leak() -> void:
 	AND THE BUILDING IS PUT BACK TOO, on the failing outcome as well as the winning
 	one — raised containment is scene state with no home, and a Play Again keeps the
 	same profile and the same tower.
+
+	SINCE bead godot-test1-3iy.10 THE OVER-MARKING IS STRUCTURALLY A NO-OP, and that
+	is worth saying rather than deleting the check. Game over is world-level now, so
+	the protocol only ever opens when EVERY hero is already captive — the scene's
+	"mark all four" loop can no longer add anybody, and the entry set is simply what
+	was true. What is measured below is therefore the surviving half of the same
+	invariant: the exit restores exactly the set it entered with (not the raw
+	all-four the scene painted), through the same `entry INTERSECT still-held` line.
 	"""
 	_fresh_store()
 	_beat_done()
@@ -1188,11 +1219,14 @@ func _check_the_scene_does_not_leak() -> void:
 	var mine: int = TowerGraph.HEROES.find("primm")
 	room.hand = [mine] as Array[int]
 	player.set_active_character(mine)
-	player.hit_by_crocodile(_hunter())
-	player.is_caught = false
-	player.call("_on_caught_finished")
+	# THE ROOM IS OUT OF HEROES, which is the only thing that opens the scene now:
+	# the three heroes this peer never held are in teammates' cells, and the grab
+	# below takes the last one. Driven through the real entry so a build whose
+	# roster clause stopped firing fails here instead of measuring a scene this
+	# check opened itself.
+	await _drive_into_custody(player)
 	if not player.in_custody_protocol():
-		_fail("leak: a room peer whose only hero was taken did not enter the protocol")
+		_fail("leak: the room ran out of heroes and no peer entered the protocol")
 		_clear(player)
 		room.queue_free()
 		shell.queue_free()
@@ -1211,12 +1245,11 @@ func _check_the_scene_does_not_leak() -> void:
 	await physics_frame
 
 	for hero: String in TowerGraph.HEROES:
-		var was_mine := hero == String(TowerGraph.HEROES[mine])
-		if player.is_hero_captive(hero) != was_mine:
-			_fail(("the scene left %s %s after it ended; this peer only ever held %s — the "
-				+ "roster override leaked into the captive filter")
-				% [hero, "captive" if player.is_hero_captive(hero) else "free",
-					String(TowerGraph.HEROES[mine])])
+		if not player.is_hero_captive(hero):
+			_fail(("the scene left %s free after it ended, and nobody was liberated in it — "
+				+ "the exit set must be `entry INTERSECT still-held`, not a wipe") % hero)
+	if player.free_hero_count() != 0:
+		_fail("a failed protocol handed the room %d heroes back" % player.free_hero_count())
 	for door: Dictionary in TowerInterior.SPINE_DOORS:
 		if bool(interior.call("is_locked_down", String(door["gate"]))):
 			_fail("the protocol ended and '%s' is still under lockdown — containment "
