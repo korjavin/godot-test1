@@ -563,10 +563,10 @@ tower_selfcheck             0.5 s   "66 rooms, 73 edges, 12 gates, 3 entries, 2 
                                      ramps 29.6, 27.3 x6, 23.2 deg"
                                     "4 riddles, each with a 4-pad lock and a clue reachable with it shut"
 tower_interior_selfcheck   13.9 s   "27 keep boxes (budget 32)"
-                                    "storeys 2..9: 52 / 43 / 52 / 29 / 29 / 81 / 62 / 46
+                                    "storeys 2..9: 52 / 43 / 52 / 29 / 29 / 81 / 61 / 46
                                      boxes (PLAN_BOX_BUDGET 120)"
-                                    "35 meshes drawn (budget 35) for 421 boxes"
-                                    "348 collision shapes on one body (ceiling 420)"
+                                    "35 meshes drawn (budget 35) for 420 boxes"
+                                    "347 collision shapes on one body (ceiling 420)"
                                     "camera needs 3.95 m; storey 10 is the tightest at 4.00 m clear"
 capture_selfcheck           9.0 s
 tower_shell_selfcheck       0.7 s

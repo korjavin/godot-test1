@@ -153,6 +153,14 @@ const SCAR_KEYS: Array[String] = ["id", "removes", "note"]
 ## Keys an item row may carry. Design law 2: no `carrier`, no `hero`, no `held_by`.
 const ITEM_KEYS: Array[String] = ["id", "scope", "room", "note"]
 
+## The rooms the KEEP draws from its own box table (floors 0 and 1), which is the
+## complete list of built rooms no ASCII plan letters. Check 1 requires every OTHER
+## built room to be drawn by exactly one storey: a room nothing draws is a room the
+## grid checks cannot see, so every edge it carries is silently skipped by check 14
+## — which is what `s5_stairhead` cost before phase 16 merged it away.
+const KEEP_ROOMS: Array[String] = ["entry_hall", "outer_hall", "courtyard",
+		"upper_landing", "vault", "checkpoint_room"]
+
 ## Rank budgets a walk can be run at. FLOOR is what the beat guarantees and the only
 ## honest budget for a rescue route; MAX is what a completionist eventually has and
 ## the right budget for optional quest content.
@@ -341,7 +349,9 @@ func _check_plans_bind_to_the_graph() -> void:
 
 	  * every id a plan names (its `rooms` values and its `landing`) is a BUILT
 	    room row, and every id is claimed by exactly ONE storey — a room is on one
-	    floor;
+	    floor. The other way too: every built room is drawn by SOME storey, bar the
+	    keep's own `KEEP_ROOMS`, because a room nothing draws is a room check 14
+	    skips every edge of;
 	  * every letter drawn on the grid is in that storey's `rooms` dict, and every
 	    `rooms` entry is drawn somewhere on the grid;
 	  * every `D` cell's `"<c>,<r>"` key is in `gates` and names a real gate row,
@@ -449,6 +459,25 @@ func _check_plans_bind_to_the_graph() -> void:
 				if not seen.has(rid2):
 					_fail("%s: no route joins '%s' to the landing '%s' — the floor is drawn "
 						% [label, rid2, landing] + "but the graph does not connect it")
+
+	# --- graph -> plan: a built room NO floor draws -----------------------------
+	# The direction the four bindings above were missing, and it is the one that
+	# bites silently. A room with no cells on any grid still walks perfectly in the
+	# graph, so checks 1 and 3 stay green — while `_gates_shut_problems` skips every
+	# edge it carries, because it looks the room up on the drawing and does not find
+	# it. One vestigial row cost storey 5 all ten of its edges, `riddle_stair`'s
+	# among them.
+	for keep: String in KEEP_ROOMS:
+		if not rooms.has(keep):
+			_fail("KEEP_ROOMS names '%s', which is not a TOWER_GRAPH room — the exemption "
+				% keep + "list has rotted, and it is the only thing allowed to be undrawn")
+	for rid3: String in rooms:
+		if not bool(rooms[rid3]["built"]) or KEEP_ROOMS.has(rid3) or claimed_by.has(rid3):
+			continue
+		_fail(("room '%s' is built but no storey plan draws it — the grid checks cannot see "
+			+ "a room with no cells, so every gates-shut binding it carries is skipped. "
+			+ "Letter it on its floor, merge it into the room it is half of, or add it to "
+			+ "KEEP_ROOMS if the keep's box table builds it") % rid3)
 
 
 # ============================================================================
@@ -1508,6 +1537,16 @@ func _check_the_flood_fill_can_fail() -> void:
 	in_keep["rows"][21] = lane_row
 	in_keep["rows"][22] = lane_row
 	_control("a grand ramp drawn through the keep", in_keep, "inside the keep")
+	# THE FLOOR ENTERED ONLY BY STEPPING OFF THE RAMP. Wall the two cells east of
+	# storey 3's landing and the drawing is still perfectly connected on paper — but
+	# the only way off the landing is west onto the lane, and the only way off the
+	# lane is a sideways step onto a floor up to a storey below its deck. Every
+	# room on the floor is then unreachable, and before `_off_the_lane` the fill
+	# walked that step and said nothing.
+	var only_off_the_lane := _cell_at(base, 16, 1, TowerPlans.WALL_CHAR)
+	only_off_the_lane = _cell_at(only_off_the_lane, 16, 2, TowerPlans.WALL_CHAR)
+	_control("a floor entered only by stepping off the ramp", only_off_the_lane,
+			"cannot be walked to")
 	# A pad moved out into the corridor, beside nothing.
 	var stray := _cell_at(base, 6, 10, "A")
 	stray = _cell_at(stray, 20, 20, TowerPlans.PAD_CHAR)
@@ -1653,6 +1692,8 @@ func _plan_problems(plan: Dictionary) -> Array[String]:
 				continue
 			if seen.has(n2) or String(rows[n2.y])[n2.x] == TowerPlans.WALL_CHAR:
 				continue
+			if _off_the_lane(String(rows[here.y])[here.x], String(rows[n2.y])[n2.x]):
+				continue
 			seen[n2] = true
 			queue.append(n2)
 	for r2: int in rows.size():
@@ -1783,6 +1824,29 @@ func _plan_slope(plan: Dictionary) -> float:
 	return 0.0 if run <= 0.0 else rise / run
 
 
+func _off_the_lane(from_ch: String, to_ch: String) -> bool:
+	"""
+	Is a step between these two cells a walk off the SIDE of a ramp lane?
+
+	THE ONE PIECE OF HEIGHT IN A FLAT GRID. `S` cells are the ramp's deck and it
+	DESCENDS a whole storey along the lane, so stepping sideways off one is a step
+	of up to a storey — not a doorway. Only the `s` landing at the lane's high end
+	is flush with this floor, which is why the lane is walked onto there and
+	nowhere else.
+
+	Storey 8's own plan comment warns about exactly this ("a 5 m step up at
+	(19, 38)") and left it to a future author to remember. Without this rule both
+	fills below step off the lane's foot onto the floor, so a maze that sealed its
+	circuit the far side of the landing would be certified green — reachable in the
+	model, a hard softlock in the building.
+	"""
+	var a_lane := from_ch == TowerPlans.STAIR_UP_CHAR
+	var b_lane := to_ch == TowerPlans.STAIR_UP_CHAR
+	if a_lane == b_lane:
+		return false   # lane to lane, or floor to floor: an ordinary step
+	return (to_ch if a_lane else from_ch) != TowerPlans.LANDING_CHAR
+
+
 func _gates_shut_problems(plan: Dictionary, rows: Array) -> Array[String]:
 	"""
 	One storey walked with every gate cell treated as stone, against the graph rows
@@ -1814,6 +1878,8 @@ func _gates_shut_problems(plan: Dictionary, rows: Array) -> Array[String]:
 						continue
 					var ch := String(rows[n.y])[n.x]
 					if ch == TowerPlans.WALL_CHAR or ch == TowerPlans.GATE_CHAR:
+						continue
+					if _off_the_lane(String(rows[here.y])[here.x], ch):
 						continue
 					comp[n] = next_id
 					queue.append(n)

@@ -332,9 +332,14 @@ The building is full to its sealed roof — ten floor indices, `FLOOR_Y[0..9]`:
   grid says the doorway between them was drawn, so one `.` typed as a `#` passes check 1
   and all 15 subset walks while the floor is two sealed halves. Its **grid flood-fill**
   (4-connected from the `s` landing, must reach every room cell, pad, post and gate slot)
-  is that half; it in turn does not know a `D` is passable, which is the graph's half. The
+  is that half; it in turn does not know a `D` is passable, which is the graph's half. Both
+  fills refuse to step **sideways off an `S` lane**, which is the one piece of height in a
+  flat grid — the deck descends a whole storey along the lane, so only the `s` landing at
+  its head is flush with the floor. The
   plan ↔ graph binding is checked **both ways** — every letter is a built room row, every
-  room id is claimed by exactly one storey — and every assertion has a negative control
+  room id is claimed by exactly one storey, and every built room is drawn by SOME storey
+  bar the keep's own (a room no plan draws has no cells, so the gates-shut pass silently
+  skips every edge it carries) — and every assertion has a negative control
   driven on a deliberately broken *copy* of a shipped storey.
   **The floor is then filled a SECOND time with every gate cell treated as stone**, which
   is the only thing that binds a `gate: ""` row to the drawing: an ungated edge between two

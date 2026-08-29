@@ -341,13 +341,15 @@ const STOREYS: Array[Dictionary] = [
 	# one became optional side content in `riddle_strongroom`'s mould: its mass fills
 	# the BOARDROOM's doorway and its four pads stand in the west ring corridor in
 	# front of it, the same "the thing you are opening is in your eye line" rule. The
-	# stairhead pocket is now just the head of the ramp. DO NOT PUT A RIDDLE BACK
+	# stairhead pocket is now just the head of the ramp, so `s5_stairhead` is GONE
+	# and this floor names its corridor as its landing like every other storey —
+	# a room no plan draws is a room check 14 cannot see. DO NOT PUT A RIDDLE BACK
 	# ACROSS THE STAIR.
 	# ------------------------------------------------------------------------
 	{
 		"floor": 4,
 		"from": 3,
-		"landing": "s5_stairhead",
+		"landing": "s5_landing",
 		"rooms": {
 			"A": "s5_boardroom",
 			"B": "s5_secretariat",

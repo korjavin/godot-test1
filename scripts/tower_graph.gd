@@ -346,24 +346,21 @@ const TOWER_GRAPH: Dictionary = {
 			"built": true, "quest": "", "cell": "", "parts": [],
 			"note": "Dispatch, third office. Carries the floor's second pad.",
 		},
-		# THE POCKET AT THE HEAD OF THE STOREY-5 RAMP, and it is a room of its own
-		# for one reason: phase 15's riddle stands across its far end. The ramp is
-		# ungated (you may always climb it), the FLOOR beyond is what the sequence
-		# lock opens — so the passage the gate sits on needs two ends, and the near
-		# one is this. Walled north and south, the ramp behind, the mass in front:
-		# there is no way onto the floor round it, which is what makes the gate the
-		# audit walks the gate the player meets.
-		"s5_stairhead": {
-			"built": true, "quest": "", "cell": "", "parts": [],
-			"note": "The landing at the head of the storey-5 ramp. Phase 15 sealed its "
-				+ "east end with the stair riddle; phase 16 moved that lock onto the "
-				+ "boardroom's doorway, so this is now just the head of the ramp.",
-		},
+		# THE POCKET AT THE HEAD OF THE STOREY-5 RAMP WAS A ROOM OF ITS OWN
+		# (`s5_stairhead`) for one reason: phase 15's riddle stood across its far
+		# end, and a gate's passage needs two ends. Phase 16 moved that lock onto
+		# the boardroom's doorway, which left an ungated edge between two halves of
+		# one corridor — and a room the plan drew nowhere, since the storey letters
+		# its corridor not at all and named only ONE of the two as its `landing`.
+		# A room no floor draws is invisible to check 14, which skips any edge whose
+		# rooms it cannot find on the grid: every storey-5 edge, `riddle_stair`'s
+		# included, was being silently passed over. Merged back into the corridor it
+		# always was.
 		"s5_landing": {
 			"built": true, "quest": "", "cell": "", "parts": [],
-			"note": "Storey 5's ring and cross corridors, open off the stairhead. The "
-				+ "boardroom behind the sequence lock is the one room it does not "
-				+ "simply lead into.",
+			"note": "Storey 5's ring and cross corridors, and the head of its ramp. "
+				+ "The boardroom behind the sequence lock is the one room it does "
+				+ "not simply lead into.",
 		},
 		"s5_boardroom": {
 			"built": true, "quest": "", "cell": "", "parts": [],
@@ -623,9 +620,7 @@ const TOWER_GRAPH: Dictionary = {
 		# storey-5 comment for the derivation, which is short: a riddle across the
 		# main vertical spine BELOW a lift stop cannot be audited, because the walk
 		# down to its clue crosses the gate the clue explains.
-		{"id": "s4_s5", "a": "s4_landing", "b": "s5_stairhead",
-			"gate": "", "built": true},
-		{"id": "s5_stairhead_landing", "a": "s5_stairhead", "b": "s5_landing",
+		{"id": "s4_s5", "a": "s4_landing", "b": "s5_landing",
 			"gate": "", "built": true},
 		{"id": "s5_landing_boardroom", "a": "s5_landing", "b": "s5_boardroom",
 			"gate": "riddle_stair", "built": true},
@@ -960,23 +955,19 @@ const TOWER_GRAPH: Dictionary = {
 	# through `hall_outer` into the annulus and never enters the courtyard.
 	"spines": {
 		"windman": {"entry": "front_door", "edges": [
-			"hall_outer", "outer_s3", "s3_s4", "s4_s5", "s5_stairhead_landing",
-			"s5_s6", "s6_s7", "s7_s8", "s8_outer_circuit", "s8_s9",
+			"hall_outer", "outer_s3", "s3_s4", "s4_s5", "s5_s6", "s6_s7", "s7_s8", "s8_outer_circuit", "s8_s9",
 			"s9_outer_circuit", "s9_s10", "block_main_door",
 			"stair_gallery_windman"]},
 		"primm": {"entry": "front_door", "edges": [
-			"hall_outer", "outer_s3", "s3_s4", "s4_s5", "s5_stairhead_landing",
-			"s5_s6", "s6_s7", "s7_s8", "s8_outer_circuit", "s8_s9",
+			"hall_outer", "outer_s3", "s3_s4", "s4_s5", "s5_s6", "s6_s7", "s7_s8", "s8_outer_circuit", "s8_s9",
 			"s9_outer_circuit", "s9_s10", "block_main_door",
 			"stair_gallery_primm"]},
 		"teibi": {"entry": "front_door", "edges": [
-			"hall_outer", "outer_s3", "s3_s4", "s4_s5", "s5_stairhead_landing",
-			"s5_s6", "s6_s7", "s7_s8", "s8_outer_circuit", "s8_s9",
+			"hall_outer", "outer_s3", "s3_s4", "s4_s5", "s5_s6", "s6_s7", "s7_s8", "s8_outer_circuit", "s8_s9",
 			"s9_outer_circuit", "s9_s10", "block_main_door",
 			"stair_gallery_teibi"]},
 		"phoboman": {"entry": "front_door", "edges": [
-			"hall_outer", "outer_s3", "s3_s4", "s4_s5", "s5_stairhead_landing",
-			"s5_s6", "s6_s7", "s7_s8", "s8_outer_circuit", "s8_s9",
+			"hall_outer", "outer_s3", "s3_s4", "s4_s5", "s5_s6", "s6_s7", "s7_s8", "s8_outer_circuit", "s8_s9",
 			"s9_outer_circuit", "s9_s10", "block_main_door",
 			"stair_gallery_phoboman"]},
 	},

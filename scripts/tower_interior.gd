@@ -428,7 +428,7 @@ static func plan_clear_height(floor_index: int) -> float:
 ## storeys emit 29 to 52 boxes for around a thousand walkable cells apiece — one
 ## box per 20-odd cells, which is what a merge that is working looks like on a
 ## floor made of rooms. THE LABYRINTH IS THE HONEST WORST CASE: storey 8 emits 81
-## and storey 9 emits 62, for 450 and 431 walkable cells, because a one-cell maze
+## and storey 9 emits 61, for 450 and 431 walkable cells, because a one-cell maze
 ## legitimately chops the solid stone it is cut into up into many rectangles. That
 ## is the maze and not a merging bug — and it is still one box per five or six
 ## cells, an order off the chequerboard this number exists to catch.
@@ -3619,7 +3619,7 @@ func apply_scar(scar_id: String) -> bool:
 		return false
 	_open(scar_id)
 	_refresh_scar()
-	_say_spine(tr("THE STAIR IS GONE."))
+	_say_spine(tr("THE DOORWAY IS GONE."))
 	return true
 
 
