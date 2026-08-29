@@ -156,6 +156,11 @@ func _ready() -> void:
 	# Group-based discovery, as everywhere else. `_hunt_close_granted()` finds us
 	# through exactly this group and through nothing else.
 	add_to_group("hunt_director")
+	# A FULL interval before the first tick, where the LOD manager deliberately
+	# scans immediately. There is nothing to do at startup (no engagements exist
+	# yet), and starting the countdown at zero would make the very first tick
+	# charge a whole interval it had not actually waited — see `_process`.
+	_time_until_tick = TICK_INTERVAL
 
 
 func _process(delta: float) -> void:
@@ -311,6 +316,11 @@ func request_hunt_close(hunter: Node) -> bool:
 		denials_total += 1
 		return false
 
+	# A quarry that moved more than QUARRY_BUCKET_RADIUS since this unit was last
+	# granted puts it in a NEW bucket, and without this it would hold a cap slot
+	# in both until the next tick reaped the old one. Giving the old slot back
+	# first costs one sweep of a handful of arrays and keeps the cap exact.
+	report_disengage(body)
 	closers.append(body)
 	grants_total += 1
 	return true

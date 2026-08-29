@@ -414,7 +414,7 @@ func _check_live_pacing() -> void:
 
 	# The rest of it, with margin. It must grant again: a lull that never lifts is
 	# a hunter class that retires after its first success.
-	aged += _age(director, DIRECTOR.ENGAGE_LULL)
+	aged += _age(director, DIRECTOR.ENGAGE_LULL + 1.0)
 	if not director.request_hunt_close(b):
 		_fail("live pacing: after %.1f s — well past the %.1f s lull — the quarry "
 				% [aged, DIRECTOR.ENGAGE_LULL] + "still refuses every engagement. "
@@ -438,7 +438,7 @@ func _check_live_pacing() -> void:
 
 	# And that lull expires like any other: the control proving the line above
 	# measured a TIMER rather than a permanently poisoned bucket.
-	_age(director, DIRECTOR.ENGAGE_LULL)
+	_age(director, DIRECTOR.ENGAGE_LULL + 1.0)
 	if not director.request_hunt_close(c):
 		_fail("hard chase: the lull a long pursuit bought never expired — after "
 				+ "%.1f s that quarry refuses every hunter for the rest of the "
@@ -494,6 +494,28 @@ func _check_two_quarries() -> void:
 				+ "than per quarry, so in a room two hunters anywhere starve every "
 				+ "other member's encounter — and group \"player\" being the LOCAL "
 				+ "player means nothing here would ever notice.")
+	far._hunt_lock["closing"] = true
+
+	# ---- a quarry that MOVES must not leave one unit holding two slots ------
+	# In a room a hunter re-targets when a nearer member appears, which lands it
+	# in a different bucket. If the old slot is not handed back at that moment it
+	# stays occupied until the next tick reaps it, and for that half second the
+	# abandoned quarry is capped by a robot that is not chasing it any more.
+	var mover: Node3D = filled[0]
+	mover.chase_target = there
+	mover.global_position = there + Vector3(0.0, 0.0, 6.0)
+	if not director.request_hunt_close(mover):
+		_fail("moved quarry: a hunter that re-targeted to a second quarry with a "
+				+ "free cap slot there was refused, so the slot-handback assertion "
+				+ "below would have proved nothing")
+	var replacement: Node3D = _make_stub(here,
+			here + Vector3(cos(0.2), 0.0, sin(0.2)) * 6.0)
+	if not director.request_hunt_close(replacement):
+		_fail("moved quarry: after a hunter re-targeted away from quarry A, that "
+				+ "quarry still refused a replacement — the unit is holding a cap "
+				+ "slot on a quarry it is no longer chasing AND one on the quarry "
+				+ "it moved to, so it counts twice against a cap of %d."
+				% cap)
 
 	# The lull is bucketed the same way: a grab landing over there must not calm
 	# the hunters standing on this player. The cap slots on A are handed back
@@ -510,7 +532,7 @@ func _check_two_quarries() -> void:
 				+ "back. The cooldown is global rather than per quarry, so one "
 				+ "teammate being caught pauses the hunters chasing everybody.")
 
-	_teardown([director, extra, far, here_again] + filled)
+	_teardown([director, extra, far, replacement, here_again] + filled)
 
 
 # ============================================================================
@@ -612,13 +634,13 @@ func _make_director() -> Node:
 
 func _age(director: Node, seconds: float) -> float:
 	## Push the director's throttled tick forward, and return how much time it
-	## actually aged. One `_process` call with a large delta fires exactly one
-	## tick, and that tick charges the interval PLUS the overshoot — which is the
-	## shipped behaviour (a 15 s lull stays 15 s at any frame rate), so the amount
-	## aged is `seconds + TICK_INTERVAL` and the caller is told rather than left
-	## to assume.
+	## actually aged. One `_process` call with a delta past the interval fires
+	## exactly one tick, and that tick charges the interval PLUS the overshoot —
+	## which is the shipped behaviour, and is why a 15 s lull stays 15 s long at
+	## any frame rate. The countdown starts at a full interval, so what a tick
+	## charges is exactly the time handed to it.
 	director._process(seconds)
-	return seconds + DIRECTOR.TICK_INTERVAL
+	return seconds
 
 
 func _make_stub(quarry: Vector3, at: Vector3) -> Node3D:
