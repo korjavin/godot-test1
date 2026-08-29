@@ -37,6 +37,11 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #   wade_selfcheck           river wading (player, croc, boss)
 #   minimap_selfcheck        the map actually read the world
 #   help_selfcheck           keymap card vs the real input map
+#   hero_hud_selfcheck       the portrait row: one colour row and one loadable
+#                            portrait per CHARACTERS hero at the single asset
+#                            path, the four tile states (captive OUTRANKS
+#                            active), the no-player degrade, and the row's
+#                            fit in main.tscn against the hearts and F3
 #   landmark_selfcheck       every builder fits its declared radius
 #   prop_selfcheck           prop/structure footprints, budgets, palettes
 #   enemy_spawn_selfcheck    every species: no spawn in stone, deterministic
