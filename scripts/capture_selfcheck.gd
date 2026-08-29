@@ -382,17 +382,30 @@ func _check_the_set_stays_out_of_the_monotone_store() -> void:
 	removal, and the hero would come back held on every relaunch, forever. So the
 	set lives in plain world state, and the store must be untouched across a grab.
 	"""
+	# FROM A KNOWN STORE, and that is not tidiness. A union only ever GROWS, so a
+	# before/after diff taken over a store some earlier check already dirtied would
+	# be blind to a second write of an id that is already in it — which is exactly
+	# what a per-hero capture id would be on the second grab of the same hero. So
+	# the profile is emptied, re-armed, and the whole stored set is compared to the
+	# one id the beat is allowed to have put there.
+	_fresh_store()
 	_beat_done()
-	var before := BestRunStore.tower_opened_ids()
 	var player := await _make_player()
+	var before := BestRunStore.tower_opened_ids()
+	if before != ([TowerInterior.RESCUE_DONE] as Array[String]):
+		_fail("store baseline is %s — expected the beat's id and nothing else" % str(before))
 	var taken: String = player.hero_name()
 	player.hit_by_crocodile(_hunter())
 	if not player.is_hero_captive(taken):
 		_fail("store: nobody was captured, so nothing was measured")
+	# Both directions of the non-monotone verb, because a union has no removal and
+	# the liberation is the half that would need one.
+	player.hero_freed(taken)
 	var after := BestRunStore.tower_opened_ids()
 	if after != before:
-		_fail(("a capture changed the monotone tower set from %s to %s — the captive set is "
-			+ "non-monotone and must never ride a union merge") % [str(before), str(after)])
+		_fail(("a capture/liberation changed the monotone tower set from %s to %s — the "
+			+ "captive set is non-monotone and must never ride a union merge")
+			% [str(before), str(after)])
 	_clear(player)
 
 
@@ -441,6 +454,24 @@ func _check_a_tower_streamed_in_later_holds_him() -> void:
 		_fail("walking into %s's cell did not put him back in the player's cycle" % taken)
 	if interior.is_captive(taken):
 		_fail("the cell still reads occupied after the liberation")
+
+	# THE OTHER DIRECTION, on the same standing tower: a grab that lands while the
+	# building IS streamed in has to push into it, because the re-seed above only
+	# runs at build time and there will be no second build. Getting caught on the
+	# HQ grounds is the likeliest place in the world to be caught at all, so this
+	# is the common case and not the exotic one.
+	# The caught freeze from the first grab is still on: end it the way
+	# `_physics_process` does, or the second grab is correctly ignored as a bite
+	# during invulnerability (which check 3 is the one that measures).
+	player.is_caught = false
+	var second: String = player.hero_name()
+	player.hit_by_crocodile(_hunter())
+	if not player.is_hero_captive(second):
+		_fail("mirror: the second grab took nobody")
+	elif not interior.is_captive(second):
+		_fail(("a grab with the tower ALREADY standing left %s out of the cell block (it "
+			+ "holds %s) — the capture must push through set_captive()")
+			% [second, str(interior.captives())])
 	shell.queue_free()
 	_clear(player)
 	await process_frame
