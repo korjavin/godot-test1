@@ -615,7 +615,24 @@ func _check_node_shape() -> void:
 		var placed: Vector3 = mesh.position
 		if mesh.get_parent() != null and String(mesh.get_parent().name).ends_with("Pivot"):
 			placed += (mesh.get_parent() as Node3D).position
-		if not placed.is_equal_approx(box["pos"]):
+		if box.has("sweep"):
+			# A SWEPT PART IS MOVING ON THE FRAME THIS CHECK READS IT, so its table
+			# position is the top of its stroke and not where it is now — asserting
+			# equality would fail on correct geometry the first time the clock ticked.
+			# The two axes it never moves on are still exact, and the one it does move
+			# on is held to the stroke `press_y` is allowed to produce. That is a
+			# STRICTER statement than the equality it replaces: a press mis-built a
+			# metre off, or animated past its own lintel, fails here.
+			if not is_equal_approx(placed.x, box["pos"].x) \
+					or not is_equal_approx(placed.z, box["pos"].z):
+				_fail("swept mesh %s stands at %s but its box says %s (x/z must not move)" % [
+					box["name"], placed, box["pos"]])
+			var top := TowerInterior.PRESS_TOP
+			var bottom := TowerInterior.PRESS_BOTTOM
+			if placed.y < bottom - EPS or placed.y > top + EPS:
+				_fail("swept mesh %s is at y = %.4f, outside its %.2f .. %.2f stroke" % [
+					box["name"], placed.y, bottom, top])
+		elif not placed.is_equal_approx(box["pos"]):
 			_fail("mesh %s stands at %s but its box says %s" % [box["name"], placed, box["pos"]])
 		var box_mesh := mesh.mesh as BoxMesh
 		if box_mesh == null or not box_mesh.size.is_equal_approx(box["size"]):
@@ -635,9 +652,14 @@ func _check_node_shape() -> void:
 		_fail("the interior holds %d MultiMeshInstance3D — it is authored geometry, not chunk content" % multimeshes)
 	if bodies != 1:
 		_fail("the interior has %d StaticBody3D, expected exactly one" % bodies)
-	# Three pads (demand, identity, checkpoint) and one hazard per rotor bar.
-	if areas != 5:
-		_fail("the interior has %d Area3D, expected 5 (3 pads + 2 rotor hazards)" % areas)
+	# Three pads (demand, identity, checkpoint), one hazard per rotor bar, and the
+	# wing's own: four spine pads, four cell volumes and the crawl press's hazard.
+	# COUNTED AND NOT CAPPED — an Area3D nobody meant to build is a trigger that
+	# fires, and every one of these fourteen is named in this file.
+	var want_areas := 5 + TowerInterior.SPINE_DOORS.size() + TowerGraph.HEROES.size() + 1
+	if areas != want_areas:
+		_fail("the interior has %d Area3D, expected %d (3 pads + 2 rotor hazards + %d spine pads + %d cells + 1 press)" % [
+			areas, want_areas, TowerInterior.SPINE_DOORS.size(), TowerGraph.HEROES.size()])
 
 	var body := interior.get_node_or_null("InteriorCollision") as StaticBody3D
 	if body == null:
@@ -690,12 +712,14 @@ func _check_materials_are_shared_and_already_toon() -> void:
 		if TowerInterior.MOVING_PARTS.has(String(box["name"])) \
 				or not is_zero_approx(float(box.get("spin", 0.0))):
 			colors[box["color"]] = true
-	# The checkpoint and the bands each own a second, LIT colour they swap to; those
-	# materials exist from the moment anything asks for them.
-	var want := colors.size() + 2 + 2
+	# The checkpoint, the bands and the cell frames each own a second colour they
+	# swap to (lit, lit, and DARK for a cell that has been emptied); those materials
+	# exist from the moment anything asks for them.
+	const SWAPPED: int = 3
+	var want := colors.size() + SWAPPED + 2
 	if distinct.size() > want:
-		_fail("the interior holds %d materials, expected at most %d (%d moving colours + 2 lit + 2 batch)" % [
-			distinct.size(), want, colors.size()])
+		_fail("the interior holds %d materials, expected at most %d (%d moving colours + %d swapped + 2 batch)" % [
+			distinct.size(), want, colors.size(), SWAPPED])
 
 	for mesh: MeshInstance3D in mesh_a:
 		var before := _material_of(mesh)
