@@ -1620,13 +1620,15 @@ const SPECIES: Dictionary = {
 	## ------------------------------------------------------------------------
 	## Owner, verbatim: "green dragons for forest".
 	##
-	## THE POINT OF THIS ROW IS THAT IT IS BORING. The titan above needed a new
-	## behaviour arm, a projectile capability and a speed opt-out; the dragon
-	## needs NONE of them. It is `behavior: "solo"` — the code ABOVE the dispatch
-	## `match`, which has no arm at all on purpose — so this entry is thirty
-	## numbers, one .tscn and one BIOME_BOSS line, and not a character of new
-	## logic anywhere. That is the family seam working: the second boss kind costs
-	## what a boss kind is supposed to cost.
+	## THIS ROW SHIPPED BORING AND STAYED MOSTLY BORING. When it landed it was
+	## `behavior: "solo"` — thirty numbers, one .tscn and one BIOME_BOSS line, and
+	## not a character of new logic anywhere — which was the family seam working.
+	## What changed it is the owner, verbatim: "let those Rock and Dragons be able
+	## to make a decent jumps like windman does with F key." It is now
+	## `behavior: "leap"` and carries five more numbers at the bottom of the row;
+	## everything ELSE about it is still inherited boss behaviour, and between hops
+	## it hunts on the ground exactly as it did before. See `_behave_leap()` — one
+	## arm, shared with the roc, and nothing here branches on the animal.
 	##
 	## BOSS-ONLY, like the titan: nothing in BIOME_SPECIES points here, so every
 	## green dragon in the world arrives through BIOME_BOSS[FOREST] and therefore
@@ -1688,11 +1690,14 @@ const SPECIES: Dictionary = {
 	## The boss schedule's `scale = ONE * boss_scale` multiplies all of it, so a
 	## 6x dragon is an 8.4 m capsule around a 2.65 m tall model.
 	"green_dragon": {
-		## No arm. "solo" is the shared code above the behaviour `match` — wander
-		## alone, chase what you smell, flee a stink wave (which a boss ignores
-		## anyway) — and it is deliberately the string with no `match` case, so an
-		## unknown behaviour degrades to it. A melee boss wants precisely that.
-		"behavior": "solo",
+		## THE SEVENTH ARM, shared with the roc: a bounded hop with an arc and a
+		## grounded recovery window (`_behave_leap`). Everything the row does NOT
+		## say is still "solo" — the shared code above the behaviour `match` —
+		## because an arm only adds; between hops this is the same melee
+		## territorial boss it was, wandering its circle and chasing what it
+		## smells. The five `leap_*` keys at the bottom of the row are the whole
+		## of the difference.
+		"behavior": "leap",
 
 		# ----- Speed and detection -----
 		## The crocodile's numbers, unchanged and on purpose. A boss overrides
@@ -1785,6 +1790,52 @@ const SPECIES: Dictionary = {
 		"bite_duration": 0.6,
 		"bite_pitch": 30.0 * PI / 180.0,
 		"bite_lunge": 0.5,
+
+		# ----- The hop (the "leap" behaviour reads these five) -----------------
+		## Owner, verbatim: "a decent jump like windman does with F key". The
+		## reference is real and it is measured: Windman's F leaves the ground at
+		## JUMP_VELOCITY (10.2) under a gravity he softens to 1.62, and an ordinary
+		## jump in this game apexes at 10.2^2 / (2 * 14.4) = 3.61 m. THIS ARC IS
+		## PITCHED AT THAT SAME APEX so a dragon's bound reads as tall as the one
+		## the player already has a feel for: 8.0^2 / (2 * 9.0) = 3.56 m, over an
+		## airtime of 2 * 8.0 / 9.0 = 1.78 s. The numbers are the row's own rather
+		## than borrowed from GRAVITY (9.8) because gravity in this project is
+		## per-script and deliberately unphysical — see `_behave_leap`, which adds
+		## the difference back on top of the file's constant every airborne frame.
+		"leap_launch_speed": 8.0,
+		"leap_gravity": 9.0,
+
+		## THE BURST'S ARGUMENT, IN SECONDS INSTEAD OF METRES, and it is the same
+		## deliberate break of the game's tightest contract the cougar's row spells
+		## out at length. A boss's chase speed resolves to BOSS_CHASE_SPEED (7.0)
+		## scaled by the distance gradient and clamped to MAX_CHASE_SPEED (8.5), so
+		## at the worst the game can produce this hop touches 8.5 x 1.25 = 10.63
+		## m/s — above the ceiling AND above the slowest character's run (9.0). It
+		## is bounded by physics rather than by a rule: the hop lasts exactly the
+		## 1.78 s of its own arc and cannot be extended, re-triggered or steered.
+		##
+		## AND IT IS PAID FOR TWICE. The 3.0 s of grounded recovery below is spent
+		## at 0.85 of the ordinary chase speed, so the CYCLE average is
+		##   (1.25 x 1.78 + 0.85 x 3.0) / (1.78 + 3.0) = 0.999 x chase
+		## — a hair UNDER an ordinary chase. That is the whole design intent: the
+		## leap changes how a dragon READS, not how hard it is. Running still
+		## escapes across the full hop-and-recovery cycle (8.49 m/s against a 9.0
+		## run) and walking still gets you caught (6.99 m/s against a 5.0 walk),
+		## both measured over repeated cycles — against a negative control with the
+		## recovery removed, which catches the runner — by enemy_spawn_selfcheck's
+		## leap probe. Retune any of the five and that probe re-derives the
+		## inequality; do not hand-check it here.
+		"leap_speed_factor": 1.25,
+		"leap_cooldown": 3.0,
+		"leap_recover_factor": 0.85,
+
+		## REACH, because it is what the leash actually judges: 1.78 s x 8.5 x 1.25
+		## = 18.9 m at the worst case, 15.6 m at the nominal 7.0. Both are well
+		## inside BOSS_TERRITORY_RADIUS (32), so a dragon standing anywhere near its
+		## home can always find a legal landing; near its fence the projected
+		## landing falls outside and `_behave_leap` simply does not launch. That
+		## refusal is the mechanism — read its docstring before retuning the arc,
+		## because a reach past 32 would be a boss that can only hop from home.
 	},
 
 	## ------------------------------------------------------------------------
@@ -2058,8 +2109,12 @@ const SPECIES: Dictionary = {
 	##     the -PI/2 facing offset), like the viper's and the hunter's negative
 	##     ones: bear.glb is built forward of its origin.
 	"roc": {
-		## No arm — a melee territorial boss, the dragon's row one band over.
-		"behavior": "solo",
+		## The dragon's row one band over, arm included: `_behave_leap`, one
+		## function shared by both winged bosses with not one `if species ==`
+		## anywhere. The numbers at the bottom are the only difference — a bird
+		## goes higher and hangs longer than a dragon does, and that is a value in
+		## a table rather than a second behaviour.
+		"behavior": "leap",
 
 		# ----- Speed and detection -----
 		## Hygiene numbers, overridden at spawn (see the hydra). The live one is
@@ -2117,6 +2172,38 @@ const SPECIES: Dictionary = {
 		"bite_duration": 0.55,
 		"bite_pitch": 36.0 * PI / 180.0,
 		"bite_lunge": 0.6,
+
+		# ----- The hop (the "leap" behaviour reads these five) -----------------
+		## A BIRD'S HOP, WHICH MEANS HIGHER AND FLOATIER THAN THE DRAGON'S, and
+		## that is the entire authored difference between the two leaping bosses.
+		## 9.0^2 / (2 * 8.0) = 5.06 m of apex over 2 * 9.0 / 8.0 = 2.25 s of
+		## airtime, against the dragon's 3.56 m over 1.78 s: half again the height
+		## and a quarter longer in the air, which is what separates a beat of wings
+		## from a bound. See SPECIES["green_dragon"] for the arc arithmetic and for
+		## why these are the row's own numbers rather than the file's GRAVITY.
+		"leap_launch_speed": 9.0,
+		"leap_gravity": 8.0,
+
+		## The dragon's inequality with the roc's numbers, and it comes out with a
+		## little more room because the longer airtime is bought back by a longer
+		## recovery: peak 8.5 x 1.20 = 10.20 m/s (above MAX_CHASE_SPEED and above
+		## the 9.0 run), cycle average
+		##   (1.20 x 2.25 + 0.85 x 3.5) / (2.25 + 3.5) = 0.987 x chase
+		## — 8.39 m/s at the worst case against a 9.0 run, 6.91 m/s against a 5.0
+		## walk. Measured, not argued, by enemy_spawn_selfcheck's leap probe over
+		## repeated cycles and against a recovery-removed control.
+		"leap_speed_factor": 1.20,
+		"leap_cooldown": 3.5,
+		"leap_recover_factor": 0.85,
+
+		## Reach 2.25 s x 8.5 x 1.20 = 22.9 m at the worst case (18.9 m nominal) —
+		## the longest hop in the game and still inside BOSS_TERRITORY_RADIUS (32),
+		## which is the bound that matters: past it a roc could only ever launch
+		## from the exact centre of its territory. MOUNTAIN is also the band made
+		## of walls, and a hop carries no obstacle feelers with it — the arc is
+		## ballistic by design — so `avoid_look_ahead` above only steers the
+		## GROUNDED legs. A roc that bounds into a massif slides off it exactly as
+		## it would have walked into it, at a fifth of the frames.
 	},
 
 	## ------------------------------------------------------------------------
@@ -2941,8 +3028,35 @@ var _ranged_lock: Dictionary = {}
 ## reads it, and `_on_player_collision` only WRITES the disengage into it.
 var _hunt_lock: Dictionary = {}
 
-## THE BURST ARM'S ONE OUTPUT: the multiplier applied to `chase_speed_instance`
-## for this frame. 1.0 for every species that is not on the "burst" arm, and 1.0
+## THE LEAP ARM'S ONE PIECE OF MEMORY (`_behave_leap`): how many seconds of
+## GROUNDED recovery this boss still owes before it may hop again, as
+## { "cooldown": float }. Empty means "ready now", so a dragon that has just
+## smelled you bounds on the acquisition frame rather than after a silent pause —
+## the same edge, and the same reason, as `_ranged_lock`.
+##
+## THE CLOCK ONLY TICKS ON THE GROUND, which is what makes "recovery window" mean
+## something: `leap_due()` returns early while airborne, so the hop's own airtime
+## is not spent paying for itself and the cooldown is entirely a landed animal
+## catching its breath. It is also the whole LOD contract, the hunt arm's verbatim:
+## a slept boss runs no `_physics_process`, drains nothing, and wakes owing exactly
+## what it owed. (SIM_RADIUS (45) is far outside BOSS_DETECTION_RADIUS (25), so a
+## boss that is chasing — and therefore possibly mid-arc — is always awake anyway.)
+##
+## A Dictionary rather than a bare float for the same reason `_ranged_lock` is
+## one: it lets `leap_due()` be a STATIC pure function that both the arm and
+## enemy_spawn_selfcheck's leap probe drive, so the check measures the shipped
+## cadence instead of a restatement of it. Behaviour-local: nothing outside the
+## leap arm reads it.
+var _leap_lock: Dictionary = {}
+
+## THE SPEED-MULTIPLIER SEAM: the multiplier applied to `chase_speed_instance`
+## for this frame. Two arms write it — "burst" (the cougar's pounce and the
+## hound's sprint) and "leap" (the winged bosses' hop, faster through the air and
+## slower during the landed recovery) — and they can never collide, because a row
+## carries exactly one `behavior` string and therefore runs exactly one arm. It is
+## named for the burst because that arm had it first.
+##
+## 1.0 for every species on neither arm, and 1.0
 ## is a hard requirement rather than a tidy default — it is what makes the one
 ## line in `_physics_process` that reads this a no-op for the crocodile, the
 ## viper, the wolf and the bear, so their movement stays byte-for-byte what it was.
@@ -2951,7 +3065,7 @@ var _hunt_lock: Dictionary = {}
 ## and the SPECIES rows that set it carry the argument for why that is safe (the
 ## contract is the CYCLE average, not the instant). Two things bound it in code
 ## regardless: it is applied ONLY while `is_chasing` — a fleeing predator never
-## runs the arm, so a stale burst can never leak into a Stink Wave flight — and
+## runs either arm, so a stale burst can never leak into a Stink Wave flight — and
 ## `_avoid_obstacles` multiplies `avoid_speed_factor` on top of it, so a burst
 ## into a block eases off on its own.
 var burst_factor: float = 1.0
@@ -3566,8 +3680,8 @@ func _update_chase_state() -> void:
 	#   ONE ARM, ONE CALL, NOTHING ELSE. An arm is a species' behaviour name and
 	#   a call to its own `_behave_*()`. No logic in the arm, no state shared
 	#   between arms, no `if` before the match. Pack, ambush, charge, burst,
-	#   ranged and hunt are each two lines here plus one function of their own,
-	#   and none of them has to read, or risk breaking, any of the others.
+	#   ranged, hunt and leap are each two lines here plus one function of their
+	#   own, and none of them has to read, or risk breaking, any of the others.
 	#
 	# AN ARM IS A MECHANIC, NOT AN ANIMAL, and "burst" is where that stopped
 	# being a stylistic claim: the mountain cougar's pounce and the city alley
@@ -3579,6 +3693,9 @@ func _update_chase_state() -> void:
 	# "hunt" earned its own because it is the first whose subject is TIME: it does
 	# not change where a predator can go or how fast, it changes WHEN a predator
 	# that has already smelled you is allowed to walk in, and afterwards.
+	# "leap" earned its own because it is the first that touches the Y AXIS: every
+	# other arm leaves the body on the flat world's ground plane, and a winged boss
+	# that never leaves it is a heavy quadruped with a wing-shaped silhouette.
 	#
 	# "solo" has NO ARM on purpose — it is the code above, unmodified, which is
 	# also why an unknown or misspelled behaviour string degrades to solo instead
@@ -3603,6 +3720,8 @@ func _update_chase_state() -> void:
 			_behave_ranged()
 		"hunt":
 			_behave_hunt()
+		"leap":
+			_behave_leap()
 
 
 func _announce_acquisition() -> void:
@@ -3902,6 +4021,128 @@ func _behave_hunt() -> void:
 			float(spec.get("hunt_standoff", 0.0)))
 
 
+func _behave_leap() -> void:
+	"""
+	The winged-boss arm: hop, and let the leash decide where you may land.
+
+	Owner, verbatim: "let those Rock and Dragons be able to make a decent jumps
+	like windman does with F key." THE SEVENTH ARM, and the first that touches the
+	Y AXIS — pack and charge and hunt bend the aim point, burst bends the speed,
+	ranged spawns a bolt, and every one of them leaves the body on the ground. A
+	roc and a green dragon have wings and must not read as heavy quadrupeds, and
+	this world is flat at y = 0 by invariant, so the answer is neither terrain nor
+	flight: a BOUNDED LEAP. The body launches, arcs under its own softened gravity,
+	and lands back on the same flat ground it left. Nothing about the world's
+	flatness changes; the only thing that leaves y = 0 is a boss, transiently, on
+	its own arc.
+
+	    grounded, clock spent, landing legal   ->  velocity.y := leap_launch_speed
+	    airborne                               ->  hold the arc, burst_factor := leap_speed_factor
+	    grounded, clock running                ->  burst_factor := leap_recover_factor
+
+	IT IS THE BURST'S SHAPE WITH A VERTICAL COMPONENT, and deliberately so: a leg
+	above the sustained ceiling, paid for by a mandatory recovery leg below it. The
+	only difference is the unit — the cougar spends its pounce in METRES (see
+	`burst_cycle_factor` for why that is right for a ground sprint), a hop is a
+	single indivisible commitment whose length physics already fixes, so the cycle
+	here is measured in SECONDS by `leap_due()`. The promise is the burst's,
+	verbatim: not "nothing is ever faster than 8.5" but "running escapes across the
+	whole hop-and-recovery cycle" — a claim about a gap over time, measured over
+	repeated cycles by enemy_spawn_selfcheck's leap probe against a negative
+	control with the recovery removed (which catches the runner, and is therefore
+	the proof that the recovery is what saves them).
+
+	THE ARC RIDES ON TOP OF `_physics_process`'s GRAVITY RATHER THAN REPLACING IT.
+	That block runs before the dispatch and has already subtracted `GRAVITY * delta`
+	this frame, so one line adds the difference back and the body falls at
+	`leap_gravity` instead. Windman's Air Rush does exactly this (it multiplies
+	`frame_gravity` by WINDMAN_GRAVITY_FACTOR to glide), and it is why the arc
+	constants live in the SPECIES row rather than borrowing GRAVITY: this project's
+	gravity is per-script and deliberately arcade-y, so a hop tunes its own arc.
+	Nothing else in the file writes `velocity.y`, and nothing here writes
+	`global_position` — the feet come back to y = 0 by the arc, not by a settle.
+
+	THE LEASH BOUNDS THE JUMP, AND IT DOES SO IN THREE PLACES — which is worth
+	being precise about, because only the VERTICAL half of a hop is ballistic. The
+	horizontal half is not: `_physics_process` re-drives `velocity.x/z` from the
+	body's facing every frame, airborne included, so a hop is steered by exactly
+	the same chase / avoid / leash chain a walk is. What a launch commits to is the
+	airtime, not the destination. So:
+
+	  1. BEFORE THE LAUNCH, here. The landing point is PROJECTED — `leap_reach()`
+	     along the bearing to the quarry, i.e. where the hop goes if nothing bends
+	     it, which is the OUTERMOST landing the steer can produce — and asked the
+	     keystone's own `in_territory()` seam, never a hand-rolled radius. Illegal
+	     landing, no hop: the boss keeps hunting on the ground (the inherited boss
+	     behaviour it has whenever it is not mid-arc anyway) and bounds again the
+	     moment a legal landing exists. The clock is NOT spent on a refusal — a
+	     dragon pinned at its fence is not also being made to wait.
+	  2. DURING, by `_steer_within_territory()`, which runs below the dispatch and
+	     cancels the outward part of the heading for an airborne body exactly as it
+	     does for a walking one. Nothing here had to teach it about y.
+	  3. AFTER, by `_clamp_to_territory()`, still the hard backstop and still
+	     needing no y-awareness to be one: it is measured on XZ, so it contains a
+	     body mid-arc exactly as it contains one on the ground, and it zeroes only
+	     the horizontal velocity — a clamped hop still falls and still lands.
+
+	The pre-launch gate is what makes 2 and 3 rare rather than load-bearing: a boss
+	that never launches at its own fence is not one that keeps being caught at it.
+
+	MULTIPLAYER: a hop is MOTION. `_tick_remote()` returns long before the
+	dispatch, so a peer never runs this arm and simply replays the master's position
+	samples, y included (it assigns the whole interpolation Vector3 to `velocity`) —
+	no flag, no new byte, no protocol change.
+
+	TWO PLACES ALREADY STOP THIS ARM, and neither needed teaching about y. A PAUSED
+	body (`_pause_and_change_direction`, which every landed bite opens) skips the
+	whole dispatch, so a boss that bites you mid-arc finishes the arc under the
+	file's own GRAVITY — it drops out of the sky onto what it just bit, which is the
+	right read and is why boss_selfcheck measures the arc's AIRTIME rather than its
+	apex. A SLEPT body (`set_lod_active(false)`) runs no `_physics_process` at all
+	and freezes wherever it was; SIM_RADIUS (45) is far outside
+	BOSS_DETECTION_RADIUS (25), so a boss close enough to be mid-arc for a reason is
+	always awake, and one slept mid-air resumes its fall on the frame it wakes.
+	"""
+	if not is_chasing:
+		# The commitment and the clock both go, the burst arm's edge verbatim: a
+		# boss that loses you and finds you again bounds on the re-acquisition
+		# frame rather than resuming someone else's recovery, and the multiplier
+		# goes back to 1.0 so an idle animal wanders at its ordinary speed.
+		_leap_lock.clear()
+		burst_factor = 1.0
+		return
+
+	var grounded := is_on_floor()
+	if not grounded:
+		# Mid-arc. Hold the softened gravity and carry the hop's speed; no steering
+		# decision is taken here, which is what "the arc stays honest" means.
+		velocity.y += (GRAVITY - float(spec.get("leap_gravity", GRAVITY))) \
+				* get_physics_process_delta_time()
+		burst_factor = float(spec.get("leap_speed_factor", 1.0))
+		return
+
+	# On the ground: recovering, and possibly about to go again.
+	burst_factor = float(spec.get("leap_recover_factor", 1.0))
+	var bearing := Vector3(chase_target.x - global_position.x, 0.0,
+			chase_target.z - global_position.z)
+	if bearing.length() <= 0.01:
+		# STANDING ON THE QUARRY. There is no bearing to project along, and the
+		# tempting answer — project nothing, land where you are — is an UNGUARDED
+		# LAUNCH: the body still travels for the whole airtime, along its own
+		# facing, which three metres inside the fence is a hop straight through it.
+		# So project the facing, which is the direction the hop actually takes.
+		bearing = Vector3(sin(rotation.y), 0.0, cos(rotation.y))
+	var landing: Vector3 = global_position \
+			+ bearing.normalized() * leap_reach(chase_speed_instance, spec)
+	# `in_territory()` is meaningless on a non-boss (home_position is never
+	# captured there), so a hypothetical ordinary leaper is simply unleashed —
+	# the same shape as every other `is_boss` gate in this file.
+	var landing_ok := (not is_boss) or in_territory(landing)
+	if leap_due(true, landing_ok, get_physics_process_delta_time(), _leap_lock, spec):
+		velocity.y = float(spec["leap_launch_speed"])
+		burst_factor = float(spec.get("leap_speed_factor", 1.0))
+
+
 func _hunt_close_granted() -> bool:
 	"""
 	May this unit escalate from shadowing to closing? ABSENT DIRECTOR = GRANTED.
@@ -4022,6 +4263,104 @@ static func ranged_shot_due(distance: float, delta: float, lock: Dictionary,
 	if left > 0.0:
 		return false
 	lock["cooldown"] = float(row["fire_cooldown"])
+	return true
+
+
+static func leap_airtime(row: Dictionary) -> float:
+	"""
+	How long one hop keeps a body off the ground, in seconds.
+
+	    t = 2 * leap_launch_speed / leap_gravity
+
+	The whole of a symmetric ballistic arc: up at `leap_launch_speed`, down under
+	`leap_gravity` (the row's own, not the file's GRAVITY — see `_behave_leap`),
+	back to the flat world's y = 0. The apex it implies is
+	`leap_launch_speed^2 / (2 * leap_gravity)`, which is the number to tune a
+	silhouette against.
+
+	@param row: the species row, for the two arc keys
+	@return the airtime in seconds, or 0.0 for a row that cannot hop
+
+	A row missing either key answers 0.0 — which makes `leap_reach()` zero and
+	`leap_due()` refuse — so a half-finished species degrades to an ordinary
+	ground chase instead of dividing by zero. The same degrade-don't-crash rule as
+	`burst_cycle_factor`'s missing-distance answer and the unknown-behaviour
+	fallback in the dispatch.
+	"""
+	var launch: float = float(row.get("leap_launch_speed", 0.0))
+	var arc_gravity: float = float(row.get("leap_gravity", 0.0))
+	if launch <= 0.0 or arc_gravity <= 0.0:
+		return 0.0
+	return 2.0 * launch / arc_gravity
+
+
+static func leap_reach(chase_speed: float, row: Dictionary) -> float:
+	"""
+	How far one hop carries a body across the ground, in metres.
+
+	    reach = leap_airtime(row) * chase_speed * leap_speed_factor
+
+	@param chase_speed: the body's RESOLVED chase speed (already clamped to
+	                    MAX_CHASE_SPEED by _ready(); a boss's is BOSS_CHASE_SPEED
+	                    scaled by the distance gradient and clamped)
+	@param row: the species row
+	@return the ground distance the arc covers
+
+	STATIC AND PURE for the reason every helper in this block is: the arm projects
+	its landing point with this, and enemy_spawn_selfcheck's leap probe measures
+	the cycle with it, so the reach the leash is asked about is the reach that
+	ships. It is the horizontal leg of the same arc `leap_airtime` describes,
+	assuming the body holds its heading for the hop — which is the OUTERMOST
+	landing the leash's steer can produce and therefore the conservative one to
+	test a fence against.
+	"""
+	return leap_airtime(row) * chase_speed * float(row.get("leap_speed_factor", 1.0))
+
+
+static func leap_due(grounded: bool, landing_ok: bool, delta: float, lock: Dictionary,
+		row: Dictionary) -> bool:
+	"""
+	May a leaping predator launch this frame? Advances its GROUNDED recovery clock.
+
+	    airborne     never (and the clock does not tick — the arc is not recovery)
+	    each grounded frame  cooldown -= delta
+	    hop when     cooldown <= 0 AND the projected landing is legal
+	    on hopping   cooldown := leap_cooldown
+
+	@param grounded: is_on_floor() — the arc runs itself, this only starts one
+	@param landing_ok: has the caller's `in_territory()` accepted the landing point
+	@param delta: seconds since the last call (the physics tick)
+	@param lock: this body's `_leap_lock`, MUTATED here. Empty = ready now.
+	@param row: its SPECIES row, for the arc and cooldown keys
+	@return true exactly on the frames a launch should happen
+
+	STATIC AND PURE for the same reason `ranged_shot_due` and `burst_cycle_factor`
+	are: enemy_spawn_selfcheck's leap probe drives THIS function, so the measured
+	cadence and the measured cycle average are the shipped ones and not a
+	restatement that can drift.
+
+	THE CLOCK DOES NOT TICK IN THE AIR, unlike the archer's, and that is the
+	opposite decision made for the opposite reason. An archer's cooldown ticks even
+	out of band so that stepping in and out of range cannot disarm it; a hop's
+	recovery is the PRICE of the hop, so letting the airtime pay part of it would
+	shorten the recovery leg the escape guarantee is balanced on. `leap_cooldown`
+	therefore means exactly "seconds on the ground between one landing and the next
+	launch", which is what the probe's cycle arithmetic assumes.
+
+	A REFUSED LANDING COSTS NOTHING. The clock still drains (a boss pinned at its
+	fence is not also made to wait) but it is not re-armed, so the hop happens on
+	the first frame the leash allows one. It never accumulates credit either — the
+	clamp at zero means the longest wait is one full cooldown.
+	"""
+	if leap_airtime(row) <= 0.0:
+		return false
+	if not grounded:
+		return false
+	var left: float = float(lock.get("cooldown", 0.0)) - delta
+	lock["cooldown"] = maxf(left, 0.0)
+	if left > 0.0 or not landing_ok:
+		return false
+	lock["cooldown"] = float(row["leap_cooldown"])
 	return true
 
 
