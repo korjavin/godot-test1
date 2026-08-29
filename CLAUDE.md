@@ -426,8 +426,16 @@ coin animation beyond its own radius. Two invariants:
   spawned in and the whole ZONE, not just the smell, has to fit inside the sleep radius.
 - **Crocodiles are slept, never removed.** Entity counts stay the same.
 
-The same scan publishes the nearest chaser's distance to the danger vignette, which drives
-the red screen edge and the heartbeat loop.
+The same scan publishes the nearest chaser's distance to the danger vignette — **two
+channels off one scan**, split on the chaser's `behavior`: animals drive the red edge glow
+and the heartbeat loop, a GD-SURVEY hunter drives its own cold scanning rim (and no
+heartbeat — its audio channel is the lock-on ping). Both are normalised by the chaser's
+OWN `detection_radius`, both are published every scan, and the vignette's shader ADDS them
+in different radial bands so neither can suppress the other. A second retrieval unit joins
+the machine channel with its `SPECIES` row and no edit anywhere.
+
+Hunters are in group `"crocodile"`, so **the F3 overlay's "Crocs (active/total)" counter
+means predators + hunters** — which is exactly what the LOD manager manages.
 
 ### Systemic capture — a hunter takes the HERO
 A post-beat grab by a predator on the `"hunt"` arm puts the ACTIVE hero in `player_controller`'s
@@ -520,6 +528,13 @@ named ambient beds come from `get_loop_player(name)`.
 **Browsers block audio until a user gesture**, so every `play_*` early-returns until
 `unlock_audio()` fires. Don't add a path that bypasses that gate; a `get_loop_player` voice
 must check `is_unlocked()` itself.
+
+**An acquisition cue belongs on the `is_chasing` edge, and that edge exists TWICE.**
+`_announce_acquisition()` in `piglet_crocodile_ai.gd` is the one home of the boss growl,
+the viper hiss and the hunter's lock-on ping, and it is called from `_update_chase_state()`
+AND from `set_remote_state()`, which re-detects the same edge off `CROC_FLAG_CHASING`. A
+cue fired from a behaviour arm — or from anywhere else below `_tick_remote()`'s early
+return — is **silent for every player in the room but the one simulating that body**.
 
 ### Weather and fauna — ambience, deliberately outside the determinism contract
 `scripts/weather_manager.gd` (clouds, storm rain zones, birds) and

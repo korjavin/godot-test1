@@ -263,7 +263,23 @@ func _scan_crocodiles() -> void:
 	# while a regular croc only smells at 15 m — a single hardcoded range on the
 	# vignette side would leave the game's biggest threat un-telegraphed for the
 	# first 10 m of its approach. Published to the vignette after the loop.
+	#
+	# TWO CHANNELS, ONE SCAN (owner ruling, bead godot-test1-9rm.6). A GD-SURVEY
+	# hunter is a different KIND of threat from an animal — it retrieves rather
+	# than eats, it cannot be crushed or stunk away, and it announces itself with
+	# a machine's ping — so it gets its own dread channel instead of reddening
+	# the same screen edge. What it does NOT get is a scan of its own: it is the
+	# same loop, the same per-chaser normalisation, one more `maxf` into a second
+	# accumulator. Both are published together below, and the vignette composes
+	# them (see there) rather than letting either overwrite the other.
+	#
+	# Split on the BEHAVIOUR, not the species name — the same rule as the
+	# acquisition cue in piglet_crocodile_ai — so a second retrieval unit joins
+	# the machine channel with its SPECIES row and no edit here. The `in` guard
+	# is the file's usual defensive style: a group member with no `spec` is an
+	# animal as far as this is concerned.
 	var danger_level: float = 0.0
+	var hunter_level: float = 0.0
 
 	for croc in get_tree().get_nodes_in_group("crocodile"):
 		# Skip anything that isn't a live Node3D (e.g. queued for deletion).
@@ -299,7 +315,11 @@ func _scan_crocodiles() -> void:
 			# 25 boss) — never a constant duplicated here, so retuning either radius
 			# moves the telegraph with it. maxf guards a hand-zeroed radius.
 			var radius: float = maxf(croc.detection_radius, 0.001)
-			danger_level = maxf(danger_level, 1.0 - sqrt(dist_sq_local) / radius)
+			var level: float = 1.0 - sqrt(dist_sq_local) / radius
+			if "spec" in croc and String(croc.spec.get("behavior", "")) == "hunt":
+				hunter_level = maxf(hunter_level, level)
+			else:
+				danger_level = maxf(danger_level, level)
 
 		# A remote-driven crocodile (one the room master is simulating for us) is
 		# owned by the sync layer: `set_remote_state()` forces that croc's
@@ -355,13 +375,15 @@ func _scan_crocodiles() -> void:
 	# guard as the is_chasing read above.
 	if "is_game_over" in _player and _player.is_game_over:
 		danger_level = 0.0
+		hunter_level = 0.0
 
 	# Publish the danger level (0..1; 0 = nobody chasing). Group-based and
 	# null-safe like every other cross-system hook: no vignette in the scene
 	# (e.g. a character scene run in isolation) means we simply skip it.
 	var vignette := get_tree().get_first_node_in_group("danger_vignette")
 	if vignette != null and vignette.has_method("set_danger_level"):
-		vignette.set_danger_level(clampf(danger_level, 0.0, 1.0))
+		vignette.set_danger_level(clampf(danger_level, 0.0, 1.0),
+				clampf(hunter_level, 0.0, 1.0))
 
 
 func _scan_coins() -> void:

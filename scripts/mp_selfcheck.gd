@@ -138,7 +138,10 @@ func _run_checks() -> String:
 	failure = _check_terrain_focus_points()
 	if not failure.is_empty():
 		return failure
-	return _check_hunter_sync()
+	failure = _check_hunter_sync()
+	if not failure.is_empty():
+		return failure
+	return _check_acquisition_cue()
 
 
 # =============================================================================
@@ -1700,6 +1703,149 @@ func _check_hunter_sync() -> String:
 	receiver.free()
 	virgin.free()
 	mp.free()
+	return ""
+
+
+# =============================================================================
+# 20. THE ACQUISITION CUE FIRES ON EVERY SCREEN, NOT JUST THE MASTER'S
+# =============================================================================
+
+## A sound manager that only counts. Group "sound_manager" is how every SFX hook
+## in this project finds the real one, so a counter in that group is on the exact
+## code path the game uses — no signal, no injection, no hard reference.
+const SOUND_STUB_SOURCE := """extends Node
+var pings: int = 0
+var hisses: int = 0
+var growls: int = 0
+func play_hunter_lock_on() -> void: pings += 1
+func play_viper_hiss() -> void: hisses += 1
+func play_boss_growl() -> void: growls += 1
+"""
+
+
+func _check_acquisition_cue() -> String:
+	"""
+	The lock-on ping fires ONCE PER ENGAGEMENT on BOTH paths — the local one and
+	the remote one — and only for the species that owe a warning.
+
+	WHY THIS IS AN MP CHECK AT ALL. The cue is audio, but the bug it guards is a
+	multiplayer one and it is invisible in single player: a remote-driven body
+	returns from `_tick_remote()` at the top of `_physics_process`, so it never
+	reaches `_update_chase_state()`, never reaches the behaviour dispatch, and
+	announced nothing. The master heard its hunters lock on; the other one to
+	three players in the room heard silence and got no warning at all. Nobody
+	reproduces that without two browsers, which is the same reason
+	`_check_hunter_sync` above exists.
+
+	Four claims, each with the control that stops it passing vacuously:
+
+	  1. LOCAL PATH. A hunter that acquires a quarry through the ordinary chase
+	     logic pings exactly once, and does NOT ping again on the following ticks
+	     of the same chase — a per-frame cue would be a klaxon at 60 Hz.
+	  2. RE-ENGAGEMENT. Losing the quarry and finding it again is a NEW
+	     engagement and pings again. Without this, an implementation that latches
+	     "announced" forever and never clears it passes claim 1.
+	  3. REMOTE PATH. `set_remote_state()` re-detects the same edge off
+	     CROC_FLAG_CHASING — one ping on the false->true sample, none on the
+	     repeats that follow at 10 Hz, and another when the flag drops and
+	     returns. This is the half the bug was in.
+	  4. IT IS KEYED ON THE BEHAVIOUR. A plain crocodile driven through BOTH
+	     paths stays silent on all three cues. Without this control, a hook that
+	     pings unconditionally on every chase edge in the game passes 1-3.
+	"""
+	var stub_script := GDScript.new()
+	stub_script.source_code = SOUND_STUB_SOURCE
+	if stub_script.reload() != OK:
+		return "the sound-manager stub did not compile"
+	var sound: Node = Node.new()
+	sound.set_script(stub_script)
+	sound.add_to_group("sound_manager")
+	root.add_child(sound)
+
+	# The quarry, in group "player" and in the tree BEFORE either body is spawned:
+	# `player_node` is cached once in _ready(), so a quarry added afterwards would
+	# leave `_update_chase_state` returning early and claims 1-2 vacuous.
+	var quarry := Node3D.new()
+	quarry.add_to_group("player")
+	root.add_child(quarry)
+	quarry.global_position = Vector3.ZERO
+
+	# --- 1 & 2. The local path: acquire, hold, lose, re-acquire.
+	var hunter: Node = _spawn_hunter("Hunter_9_9_0")
+	# `_ready` defers the quarry lookup to the next idle frame and this check is
+	# synchronous, so run the same function by hand rather than await (making one
+	# check a coroutine would make `_run_checks` one too, all nineteen of them).
+	hunter._find_player()
+	if hunter.player_node != quarry:
+		return ("the hunter cached a quarry that is not this check's (%s) — an earlier check leaked "
+				+ "a node into group \"player\" and claims 1-2 would measure the wrong body") % str(hunter.player_node)
+	if float(hunter.detection_radius) < 10.0:
+		return "the hunter's detection radius (%f) is under the 5 m probe distance below" % hunter.detection_radius
+	hunter.global_position = Vector3(5.0, 0.0, 0.0)   # inside 25 m: smellable
+	hunter._update_chase_state()
+	if not hunter.is_chasing:
+		return "the hunter did not acquire a quarry 5 m away — claims 1 and 2 would be vacuous"
+	if sound.pings != 1:
+		return "a hunter acquiring its quarry locally rang %d lock-on pings, expected exactly 1" % sound.pings
+	hunter._update_chase_state()
+	hunter._update_chase_state()
+	if sound.pings != 1:
+		return "the lock-on ping fires per FRAME, not per engagement (%d pings over 3 chase ticks)" % sound.pings
+
+	hunter.global_position = Vector3(400.0, 0.0, 0.0)  # far outside detection
+	hunter._update_chase_state()
+	if hunter.is_chasing:
+		return "the hunter did not lose a quarry 400 m away — the re-engagement claim would be vacuous"
+	hunter.global_position = Vector3(5.0, 0.0, 0.0)
+	hunter._update_chase_state()
+	if sound.pings != 2:
+		return "re-acquiring is a new engagement and must ping again (%d pings, expected 2)" % sound.pings
+
+	# --- 3. The remote path: the same edge, read off the wire instead.
+	var remote: Node = _spawn_hunter("Hunter_9_9_1")
+	var here := Vector3(3.0, 0.0, 0.0)
+	sound.pings = 0
+	remote.set_remote_state(here, 0.0, MPManager.CROC_FLAG_CHASING)
+	if sound.pings != 1:
+		return ("a remote-driven hunter whose first sample says CHASING rang %d pings, expected 1 — "
+				+ "the peer is deaf to the master's lock-on") % sound.pings
+	remote.set_remote_state(here, 0.0, MPManager.CROC_FLAG_CHASING)
+	remote.set_remote_state(here, 0.0, MPManager.CROC_FLAG_CHASING)
+	if sound.pings != 1:
+		return "the remote ping fires per SAMPLE, not per engagement (%d pings over 3 chasing samples)" % sound.pings
+	remote.set_remote_state(here, 0.0, 0)
+	if sound.pings != 1:
+		return "a sample that drops CHASING rang a ping (%d) — only the false->true edge may" % sound.pings
+	remote.set_remote_state(here, 0.0, MPManager.CROC_FLAG_CHASING)
+	if sound.pings != 2:
+		return "a remote hunter re-acquiring did not ping again (%d pings, expected 2)" % sound.pings
+
+	# --- 4. The control: a plain crocodile is silent down both paths.
+	var croc: Node = load("res://scenes/characters/piglet_crocodile.tscn").instantiate()
+	croc.name = "Crocodile_9_9_0"
+	root.add_child(croc)
+	croc._find_player()
+	if String(croc.spec.get("behavior", "")) == "hunt":
+		return "the control crocodile resolved the hunt row — claim 4 cannot fail"
+	sound.pings = 0
+	sound.hisses = 0
+	sound.growls = 0
+	croc.global_position = Vector3(3.0, 0.0, 0.0)
+	croc._update_chase_state()
+	if not croc.is_chasing:
+		return "the control crocodile did not acquire the quarry — claim 4 would be vacuous"
+	croc.set_remote_state(here, 0.0, 0)
+	croc.set_remote_state(here, 0.0, MPManager.CROC_FLAG_CHASING)
+	if sound.pings != 0:
+		return "a plain crocodile rang the hunter's lock-on ping %d times — the cue is not keyed on the behaviour" % sound.pings
+	if sound.hisses != 0 or sound.growls != 0:
+		return "a plain crocodile rang the ambusher's hiss (%d) or the boss growl (%d)" % [sound.hisses, sound.growls]
+
+	hunter.free()
+	remote.free()
+	croc.free()
+	quarry.free()
+	sound.free()
 	return ""
 
 

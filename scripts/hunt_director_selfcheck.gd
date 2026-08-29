@@ -62,6 +62,12 @@ const HUNTER_SCENE: String = "res://scenes/characters/hunter_robot.tscn"
 ## hunter and not a crocodile wearing a robot mesh.
 const HUNT_SPECIES: String = "hunter_robot"
 
+## Check 8 drives the real telegraph end to end rather than restating it — see
+## there for why a stub would not notice the interesting breakages.
+const LOD_SCRIPT: String = "res://scripts/crocodile_lod_manager.gd"
+const VIGNETTE_SCRIPT: String = "res://scripts/danger_vignette.gd"
+const CROC_SCENE: String = "res://scenes/characters/piglet_crocodile.tscn"
+
 ## A stand-in for a hunter, exposing exactly the four members the director reads
 ## off one and nothing else. A stub rather than the real scene because what is
 ## under test in checks 4 and 5 is the DIRECTOR's bookkeeping: instantiating a
@@ -140,6 +146,7 @@ func _run() -> void:
 	_check_reaped_grab()
 	_check_two_quarries()
 	await _check_absent_director()
+	await _check_dread_channels()
 	_report()
 
 
@@ -658,6 +665,140 @@ func _check_absent_director() -> void:
 
 	_teardown([director, stub])
 	hunter.queue_free()
+	await process_frame
+
+
+# ============================================================================
+# CHECK 8 — the hunter's own dread channel
+# ============================================================================
+
+func _check_dread_channels() -> void:
+	"""
+	A CLOSING HUNTER LIGHTS THE MACHINE CHANNEL, A CROCODILE LIGHTS THE RED ONE,
+	AND NEITHER SUPPRESSES THE OTHER.
+
+	The owner's ruling for this class (bead godot-test1-9rm.6) is that a hunter is
+	a different KIND of threat and must read as one, driven off the LOD manager's
+	existing ~9 Hz scan rather than a second scan of its own. Three ways that
+	breaks, all of them silent in a headless build and none of them an error:
+
+	  • THE SPLIT NEVER HAPPENS and a hunter reddens the predator vignette like
+	    any crocodile. Nothing errors; the feature is simply not there, and it
+	    looks exactly like a hunter that is telegraphed correctly.
+	  • THE SPLIT INVERTS — the behaviour test is negated, or reads the species
+	    name that the row does not carry — and now every animal in the game
+	    telegraphs as a machine. Also silent, also plausible on a screenshot.
+	  • ONE CHANNEL OVERWRITES THE OTHER when a predator and a hunter close
+	    together. This is the case the ruling explicitly asks to be decided rather
+	    than left to whichever writes last, so it is measured with BOTH in range
+	    at once and both levels asserted non-zero.
+
+	Driven through the SHIPPED path end to end: a real CrocodileLODManager, a real
+	DangerVignette in its real group, real bodies of both kinds. A restatement of
+	the normalisation here would not notice the manager changing which method it
+	calls, or the vignette changing its signature back.
+
+	The NORMALISATION is the fourth claim and it is the one the bead asks to be
+	verified rather than rebuilt: a hunter smells at 25 m and an animal at 15, so
+	the published level must come from each chaser's OWN detection_radius. A
+	hunter and a crocodile placed at the SAME distance must therefore publish
+	DIFFERENT levels, and the hunter's must be HIGHER: the published number is
+	`1 - dist/radius`, so a chaser with a longer reach is already further into its
+	approach at the same metres — which is exactly why the boss's 25 m needed the
+	normalisation in the first place. A hardcoded radius on either side collapses
+	that to equality.
+	"""
+	var player := Node3D.new()
+	player.add_to_group("player")
+	root.add_child(player)
+	player.global_position = Vector3.ZERO
+
+	var vignette := Control.new()
+	vignette.set_script(load(VIGNETTE_SCRIPT))
+	root.add_child(vignette)
+
+	var lod := Node.new()
+	lod.set_script(load(LOD_SCRIPT))
+	root.add_child(lod)
+	await process_frame  # _ready() + the deferred player lookup
+
+	# THE SHADER IS BUILT FROM A STRING AT RUNTIME, so a typo in it is not a parse
+	# error anywhere — it is one `SHADER ERROR:` line in a console nobody reads,
+	# after which the whole telegraph draws NOTHING and every level assertion
+	# below still passes. Godot reports the failure by handing back an empty
+	# uniform list, which is checkable, so it is checked. Both names, because a
+	# shader that compiles but lost the second uniform is the exact half-landed
+	# state this bead introduces.
+	var uniforms: Array = []
+	for u: Dictionary in (vignette._rect.material as ShaderMaterial).shader.get_shader_uniform_list():
+		uniforms.append(String(u["name"]))
+	for required: String in ["vignette_alpha", "hunter_alpha"]:
+		if required not in uniforms:
+			_fail("dread channels: the vignette shader exposes no '%s' uniform (it has %s) — it did not compile, and the telegraph draws nothing at all. Scroll up for the SHADER ERROR line."
+					% [required, str(uniforms)])
+
+	# Both bodies at the SAME distance, both chasing, both inside SIM_RADIUS.
+	var hunter: Node = load(HUNTER_SCENE).instantiate()
+	hunter.species = HUNT_SPECIES
+	root.add_child(hunter)
+	var croc: Node = load(CROC_SCENE).instantiate()
+	root.add_child(croc)
+	await process_frame
+	var probe_distance: float = 10.0
+	hunter.global_position = Vector3(probe_distance, 0.0, 0.0)
+	croc.global_position = Vector3(-probe_distance, 0.0, 0.0)
+	hunter.is_chasing = true
+	croc.is_chasing = true
+
+	if hunter.spec.get("behavior", "") != "hunt":
+		_fail("dread channels: the probe hunter is not on the hunt arm — every claim below is vacuous")
+	if croc.spec.get("behavior", "") == "hunt":
+		_fail("dread channels: the control crocodile IS on the hunt arm — it cannot be the control")
+	if float(hunter.detection_radius) <= float(croc.detection_radius):
+		_fail("dread channels: the hunter's detection radius (%.1f) is not longer than the crocodile's (%.1f) — the per-chaser normalisation claim cannot fail"
+				% [hunter.detection_radius, croc.detection_radius])
+
+	lod._scan_crocodiles()
+
+	var red: float = float(vignette._danger_level)
+	var machine: float = float(vignette._hunter_level)
+	if machine <= 0.0:
+		_fail("dread channels: a hunter chasing at %.0f m published NOTHING on the machine channel (%.3f) — the hunter has no telegraph of its own"
+				% [probe_distance, machine])
+	if red <= 0.0:
+		_fail("dread channels: a crocodile chasing at %.0f m published NOTHING on the predator channel (%.3f) — the split swallowed the animal"
+				% [probe_distance, red])
+	if absf(red - machine) < EPS:
+		_fail("dread channels: a hunter and a crocodile at the same %.0f m published the SAME level (%.3f) — one of the two sides is normalising by a hardcoded radius instead of the chaser's own"
+				% [probe_distance, red])
+	if machine <= red:
+		_fail("dread channels: the hunter (reach %.1f m) published %.3f, not MORE than the crocodile's %.3f (reach %.1f m) at equal distance — the longer reach is not reaching the level, so some radius is hardcoded"
+				% [hunter.detection_radius, machine, red, croc.detection_radius])
+
+	# The control that makes the split a split: with the hunter alone, the
+	# predator channel must go dark. Without this, a manager that published the
+	# same number into both accumulators passes everything above.
+	croc.is_chasing = false
+	lod._scan_crocodiles()
+	if float(vignette._danger_level) > 0.0:
+		_fail("dread channels: with only a hunter chasing, the PREDATOR channel still read %.3f — a hunter is reddening the animal vignette as well as its own"
+				% vignette._danger_level)
+	if float(vignette._hunter_level) <= 0.0:
+		_fail("dread channels: a lone hunter lit nothing at all")
+
+	# And the mirror: a lone crocodile must leave the machine channel dark.
+	hunter.is_chasing = false
+	croc.is_chasing = true
+	lod._scan_crocodiles()
+	if float(vignette._hunter_level) > 0.0:
+		_fail("dread channels: with only a crocodile chasing, the MACHINE channel read %.3f — every animal in the game telegraphs as a robot"
+				% vignette._hunter_level)
+
+	hunter.queue_free()
+	croc.queue_free()
+	lod.queue_free()
+	vignette.queue_free()
+	player.queue_free()
 	await process_frame
 
 

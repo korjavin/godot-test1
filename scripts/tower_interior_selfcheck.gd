@@ -146,7 +146,7 @@ class ProbePlayer extends CharacterBody3D:
 	func phase_reach() -> float:
 		return reach
 
-	func hit_by_crocodile() -> void:
+	func hit_by_crocodile(_attacker: Node = null) -> void:
 		hits += 1
 
 	func hero_freed(who: String) -> void:

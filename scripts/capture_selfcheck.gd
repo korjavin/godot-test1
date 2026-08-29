@@ -76,6 +76,9 @@ const PLAYER_SCENE: String = "res://scenes/player.tscn"
 const SHELL_SCENE: String = "res://scenes/tower/tower_shell.tscn"
 const INTERIOR_SCENE: String = "res://scenes/tower/tower_interior.tscn"
 const CROC_SCRIPT: String = "res://scripts/piglet_crocodile_ai.gd"
+## Check 10 needs REAL bodies, not the row stubs the checks above use — see there.
+const HUNTER_SCENE: String = "res://scenes/characters/hunter_robot.tscn"
+const CROC_SCENE: String = "res://scenes/characters/piglet_crocodile.tscn"
 
 ## This check's own profile. Never the real one — see the landmine above.
 const LOCAL_STORE_PATH: String = "user://capture_selfcheck_best_run.cfg"
@@ -134,6 +137,7 @@ func _run() -> void:
 	await _check_the_set_stays_out_of_the_monotone_store()
 	await _check_a_tower_streamed_in_later_holds_him()
 	await _check_capture_respects_the_rooms_hand()
+	await _check_the_ai_says_who_bit()
 	_report()
 
 
@@ -572,6 +576,66 @@ func _check_capture_respects_the_rooms_hand() -> void:
 	_clear(player)
 	room.queue_free()
 	await process_frame
+
+
+# ============================================================================
+# HARNESS
+# ============================================================================
+
+# ============================================================================
+# 10. THE AI ACTUALLY SAYS WHO BIT
+# ============================================================================
+
+func _check_the_ai_says_who_bit() -> void:
+	"""
+	THE WHOLE MECHANIC IS ONE ARGUMENT, AND NOTHING ABOVE THIS CHECKS IT.
+
+	Every check above hands `hit_by_crocodile()` an attacker itself, so they all
+	pass with perfect indifference to whether anything in the game ever does. It
+	shipped that way: `_on_player_collision` in piglet_crocodile_ai.gd called
+	`player.hit_by_crocodile()` with no argument at both bite sites, so `attacker`
+	was null, `_is_hunter_grab` answered false, and systemic capture was
+	unreachable code in a build whose nine checks were green.
+
+	That is the exact shape of failure this file exists for — silent, invisible in
+	a screenshot, and indistinguishable from "capture is armed but nobody has been
+	grabbed yet". So this check drives the SHIPPED collision handler on REAL bodies
+	instead of calling the damage verb itself. It is the only check here that can
+	fail when the AI stops passing `self`, and it is deliberately the last one: if
+	it ever passes while check 2 fails, the argument is being passed but the
+	arithmetic is wrong, which is a different bug.
+
+	The crocodile is the control, and it is not decoration: `_on_player_collision`
+	now passes `self` from BOTH bite sites unconditionally, so "an animal reaches
+	the same line" is a live possibility rather than a hypothetical, and only the
+	row's `behavior` separates them.
+	"""
+	_beat_done()
+	for label: String in ["hunter_robot", "crocodile"]:
+		var player := await _make_player()
+		var body: Node = load(HUNTER_SCENE if label == "hunter_robot" else CROC_SCENE).instantiate()
+		# `species` BEFORE add_child: _ready() is where the row resolves into `spec`.
+		body.species = label
+		root.add_child(body)
+		await process_frame
+		if String(body.spec.get("behavior", "")) != ("hunt" if label == "hunter_robot" else "solo"):
+			_fail("the '%s' probe resolved behaviour '%s' — this check would measure the wrong thing"
+					% [label, str(body.spec.get("behavior", ""))])
+
+		# The shipped handler, called the way a real overlap calls it.
+		body._on_player_collision(player)
+
+		var took: bool = player.captive_heroes.size() > 0
+		if label == "hunter_robot" and not took:
+			_fail("a LIVE hunter's collision took no hero — _on_player_collision is not telling "
+					+ "hit_by_crocodile who bit, so systemic capture is unreachable in the game "
+					+ "even though every check above passes")
+		if label == "crocodile" and took:
+			_fail("a LIVE crocodile's collision took %s — an animal is reaching the capture path"
+					% str(player.captive_heroes.keys()))
+		body.queue_free()
+		_clear(player)
+		await process_frame
 
 
 # ============================================================================

@@ -155,7 +155,7 @@ class StubPlayer:
 	func crushes_crocodiles() -> bool:
 		return giant
 
-	func hit_by_crocodile() -> void:
+	func hit_by_crocodile(_attacker: Node = null) -> void:
 		bitten += 1
 
 

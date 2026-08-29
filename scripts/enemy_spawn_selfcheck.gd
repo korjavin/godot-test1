@@ -1989,7 +1989,7 @@ extends Node3D
 var hits: int = 0
 func is_on_floor() -> bool:
 	return true
-func hit_by_crocodile() -> void:
+func hit_by_crocodile(_attacker: Node = null) -> void:
 	hits += 1
 """
 
