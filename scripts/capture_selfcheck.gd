@@ -165,13 +165,18 @@ class RoomStub extends Node:
 		claimable = ""
 		return true
 
-	## ...and the two the cell block's VENT PURGE reads. `team` empty is the solo /
-	## no-room answer the real manager gives (`null`, never an empty dictionary),
-	## which is the case the purge must do nothing at all in.
-	var team: Dictionary = {}
+	## ...and the two the cell block's VENT PURGE reads.
+	##
+	## `peer_markers()` REPRODUCES THE REAL SHAPE EXACTLY — an Array of
+	## `{"pos": Vector3, "color": Color}`, `null` when there is no room — because
+	## the shape is the thing under test. The purge was first written against
+	## `peer_positions()`, which looks like the same query and is MASTER-ONLY and
+	## returns a bare `Array[Vector3]`: with a stub that answered a Dictionary the
+	## check passed while the pad did nothing for three prisoners out of four.
+	var team: Array = []
 	var flees: Array = []
 
-	func peer_positions() -> Variant:
+	func peer_markers() -> Variant:
 		return null if team.is_empty() else team
 
 	func request_croc_flee(origin: Vector3, duration: float, radius: float = 0.0) -> bool:
@@ -1336,10 +1341,14 @@ func _check_reassign_first_imprison_last() -> void:
 
 	Four claims, in the order the owner's rule states them:
 
-	  (a) REASSIGN FIRST. A capture with a free hero in the room reports the
-	      capture, asks the LOBBY for the free hero, and benches nobody. The
-	      reassignment must go through the room — a local index write would put two
-	      peers in one body — so what is measured is the call, not the result.
+	  (a) REASSIGN FIRST, AND NOT IN THE SAME FRAME AS THE CAPTURE. The grab
+	      reports the capture to the room and asks the lobby for NOTHING yet; the
+	      claim goes out on the next `_tick_prison()`, and nobody is benched. The
+	      delay is load-bearing rather than incidental: `SetHero` releases the claim
+	      on the hero just taken, so a claim sent from the grab races the `cap`
+	      packet on every other peer and the room's captive sets diverge. The
+	      reassignment must also go through the ROOM — a local index write would put
+	      two peers in one body — so what is measured is the call, not the result.
 	  (b) IMPRISON LAST. The same capture with NOTHING free stands the player up in
 	      their own cell inside the block, and confines them there: shoved out, they
 	      are back inside on the next physics frame. That is "no phasing, no solo
@@ -1353,9 +1362,13 @@ func _check_reassign_first_imprison_last() -> void:
 	      LATER ends it through the tick's own retry, which is the half of
 	      "reassign first" that only exists after the bench; and a prisoner may free
 	      a CELLMATE but never themselves.
-	  (e) ...and a peer that was never bitten at all still ends its run when the
-	      ROOM runs out of heroes, which is the world-level reading and the only
-	      part of it no other check can see.
+	  (e) THE ENDING, from both sides. The grab that takes the room's LAST hero
+	      still costs its heart and gets its full freeze — the bench tick polls at
+	      0.5 s and the freeze runs 0.55 s, so a tick that did not stand aside for
+	      it would open the protocol first, clear `is_caught` under
+	      `_on_caught_finished()` and make the final grab free. And a peer that was
+	      never bitten at all still ends its run when the ROOM runs out, which is
+	      the world-level reading and the only part of it no other check can see.
 	"""
 	_fresh_store()
 	_beat_done()
@@ -1377,10 +1390,14 @@ func _check_reassign_first_imprison_last() -> void:
 	if room.reported != [["primm", true]]:
 		_fail("the capture did not reach the room (%s) — every other peer's picker, "
 			% str(room.reported) + "roster and ending would still be offering a hero in a cell")
+	if room.reassignments != 0:
+		_fail("the grab itself sent %d SetHero calls — the claim releases the captured "
+			% room.reassignments + "hero's lobby entry, so a peer that has not yet heard "
+			+ "the `cap` packet will refuse it and the room's captive sets diverge")
+	await _tick(POST_BITE_FRAMES)
 	if room.reassignments != 1:
 		_fail("a capture with a free hero in the room made %d SetHero calls, expected 1"
 			% room.reassignments)
-	await _tick(45)
 	if player.prisoner_active:
 		_fail("a peer that was handed a free hero was benched anyway — reassign FIRST")
 	_clear(player)
@@ -1394,7 +1411,7 @@ func _check_reassign_first_imprison_last() -> void:
 	player = await _make_player()
 	player.set_active_character(mine)
 	player.hit_by_crocodile(_hunter())
-	await _tick(45)
+	await _tick(POST_BITE_FRAMES)
 	if not player.prisoner_active:
 		_fail("the room had no free hero and nobody was benched — the prison role is "
 			+ "unreachable from the game")
@@ -1466,7 +1483,7 @@ func _check_reassign_first_imprison_last() -> void:
 		_fail("the vent purge fired with no room — solo it would be a panic button over the "
 			+ "player's own pack, and there is no team outside to open anything for")
 	var mate := TerrainStub.SITE + Vector3(300.0, 0.0, 0.0)
-	room.team = {"bob": mate}
+	room.team = [{"pos": mate, "color": Color.WHITE}]
 	interior._process(0.1)
 	if room.flees.size() != 1:
 		_fail("standing on the purge pad relayed %d flee requests, expected one per teammate"
@@ -1490,7 +1507,7 @@ func _check_reassign_first_imprison_last() -> void:
 	interior._process(TowerInterior.PURGE_COOLDOWN + 0.1)
 	if room.flees.size() != 2:
 		_fail("the purge kept firing after the player stepped off the pad")
-	room.team = {}
+	room.team = []
 
 	shell.queue_free()
 	await process_frame
@@ -1531,7 +1548,30 @@ func _check_reassign_first_imprison_last() -> void:
 	_clear(player)
 	await process_frame
 
-	# ...and the world-level ending, on a peer nothing ever bit.
+	# ---- (e1) the last grab still costs a heart ----------------------------
+	room.held = "phoboman"
+	var last_index: int = TowerGraph.HEROES.find("phoboman")
+	room.hand = [last_index] as Array[int]
+	room.claimable = ""
+	player = await _make_player()
+	player.set_active_character(last_index)
+	for hero: Variant in TowerGraph.HEROES:
+		if String(hero) != "phoboman":
+			player.set_hero_captive(String(hero), true)
+	var hearts: int = player.lives
+	player.hit_by_crocodile(_hunter())
+	await _tick(POST_BITE_FRAMES)
+	if player.lives != hearts - 1:
+		_fail("the grab that took the room's last hero cost %d hearts, expected one — the "
+			% (hearts - player.lives) + "bench tick outran the caught freeze and "
+			+ "`_on_caught_finished()` never got to spend it")
+	if not player.in_custody_protocol():
+		_fail("the room's last hero was taken and the protocol did not open")
+	player.custody_protocol_active = false
+	_clear(player)
+	await process_frame
+
+	# ---- (e2) the world-level ending, on a peer nothing ever bit -----------
 	room.held = "windman"
 	room.hand = [TowerGraph.HEROES.find("windman")] as Array[int]
 	room.claimable = ""
@@ -1556,10 +1596,19 @@ func _inside(point: Vector3, lo: Vector3, hi: Vector3) -> bool:
 		and point.z >= lo.z - SETBACK_EPS and point.z <= hi.z + SETBACK_EPS
 
 
+## Physics frames to run after a BITE before the prison role can have decided
+## anything. The two clocks are sequential and neither is short-circuited here:
+## `_tick_prison()` refuses to run at all while `is_caught` (so the life a grab
+## costs is always spent first), which is CAUGHT_DURATION, and only then does its
+## own PRISON_TICK cadence start. 75 frames at 60 Hz is 1.25 s against 1.05 s of
+## clock, so the margin is a quarter of a second rather than a guess.
+const POST_BITE_FRAMES: int = 75
+
+
 func _tick(frames: int) -> void:
 	"""Run real physics. The prison role decides on a 0.5 s cadence, so 45 frames
-	(0.75 s at 60 Hz) is one decision plus slack, and the caught freeze fits inside
-	it — nothing here short-circuits either clock."""
+	(0.75 s at 60 Hz) is one decision plus slack when no bite is in the way — see
+	`POST_BITE_FRAMES` for when one is."""
 	for _i: int in frames:
 		await physics_frame
 

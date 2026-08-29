@@ -2376,22 +2376,31 @@ func _tick_purge(delta: float) -> void:
 	cooldown allows rather than on a press — the wing has no new input, which is the
 	same rule the break-out scene is built on.
 
-	NULL-SAFE AND ROOM-ONLY. Solo, `peer_positions()` answers `null` and this is one
-	dictionary lookup and a return: there is no team outside to open anything for,
-	and firing it on the player's own pack would turn a cell into a panic button.
+	NULL-SAFE AND ROOM-ONLY. Solo, `peer_markers()` answers `null` and this is one
+	group lookup and a return: there is no team outside to open anything for, and
+	firing it on the player's own pack would turn a cell into a panic button.
+
+	IT ASKS `peer_markers()` AND NOT `peer_positions()`, which looks like the same
+	query and is not: that one is deliberately MASTER-ONLY and answers `null` to
+	everybody else, so a purge built on it would have been dead for three prisoners
+	out of four - the silent kind of dead, with a pad that lights up and does
+	nothing. `peer_markers()` answers for every member of the room. It allocates and
+	is documented for HUD tick rates; this asks it once per PURGE_COOLDOWN.
 	"""
 	_purge_cooldown = maxf(0.0, _purge_cooldown - delta)
 	if not _on_purge_pad or _purge_cooldown > 0.0:
 		return
 	var mp := get_tree().get_first_node_in_group("mp")
-	if mp == null or not mp.has_method("peer_positions") or not mp.has_method("request_croc_flee"):
+	if mp == null or not mp.has_method("peer_markers") or not mp.has_method("request_croc_flee"):
 		return
-	var positions: Variant = mp.call("peer_positions")
-	if positions == null or typeof(positions) != TYPE_DICTIONARY:
+	var markers: Variant = mp.call("peer_markers")
+	if markers == null or not (markers is Array):
 		return
 	var fired: int = 0
-	for id: Variant in (positions as Dictionary):
-		var where: Variant = (positions as Dictionary)[id]
+	for entry: Variant in (markers as Array):
+		if typeof(entry) != TYPE_DICTIONARY:
+			continue
+		var where: Variant = (entry as Dictionary).get("pos", null)
 		if typeof(where) != TYPE_VECTOR3:
 			continue
 		if bool(mp.call("request_croc_flee", where as Vector3, PURGE_FLEE_SECONDS, PURGE_FLEE_RADIUS)):

@@ -483,18 +483,10 @@ var _pool: Array[String] = []
 var _collected_ids: Dictionary = {}
 var _peer_state: Dictionary = {}
 
-## THE ROOM'S CAPTIVE SET (bead godot-test1-3iy.10) - `{hero name: asserting peer
-## id}`. GAME state, not LOBBY state: the lobby does signalling, membership and
-## master naming and deliberately no game logic, so this rides the mesh (verb
+## THE ROOM'S CAPTIVE SET (bead godot-test1-3iy.10) - a Dictionary used as a SET of
+## hero names. GAME state, not LOBBY state: the lobby does signalling, membership
+## and master naming and deliberately no game logic, so this rides the mesh (verb
 ## `cap`) and the join snapshot rather than `server/room.go`.
-##
-## THE VALUE IS THE ATTRIBUTION, AND IT IS THE WHOLE TRUST STORY. A peer may have
-## AT MOST ONE hero attributed to it (see `_receive_captive`), which is exactly the
-## power the game already hands it - it holds one hero and can walk that hero into
-## a hunter. So the worst a hostile member can do through this verb is bench
-## itself early, which is indistinguishable from playing badly. Without the
-## attribution the same verb would let any member mark all four heroes captive and
-## end everyone's run with one packet.
 ##
 ## Room-scoped: `leave()` empties it, the `report_*` verbs refuse to record while
 ## offline, and a solo session never allocates an entry.
@@ -1123,7 +1115,6 @@ func _on_lobby_peer_left(id: String) -> void:
 		_gone_coins += int(gone.get("coins", 0))
 		_gone_spent += int(gone.get("spent", 0))
 		_peer_state.erase(id)
-	_release_captives_of(id)
 	if _avatars.has(id):
 		(_avatars[id] as RemoteAvatar).queue_free()
 		_avatars.erase(id)
@@ -1335,25 +1326,39 @@ func claim_hero(hero: String) -> void:
 #
 #     cap    anyone -> everyone   {"t":"cap","h":String,"c":bool}
 #
-# and the same fact as ABSOLUTE VALUES in the join snapshot's `cap` field, which
+# and the whole set as ABSOLUTE VALUES in the join snapshot's `cap` field, which
 # is the trust boundary a joiner has exactly one chance to hear.
 #
 # WHO MAY ASSERT WHAT - the asymmetry is deliberate and it is the whole security
 # argument:
 #
 #   CAPTURE (`c` true) is the harmful direction (it removes a hero from the room
-#     and, four times over, ends every run), so it is bounded: the hero must be in
-#     the lobby's own `_pool`, it must not already be captive (attribution cannot
-#     be stolen), and the sender must have no OTHER hero attributed to it. One
-#     peer, one captive - which is exactly the reach the game already gives it.
+#     and, four times over, ends every run), so THE SENDER MUST BE THE HERO'S
+#     HOLDER, asked of the lobby's own `_heroes` map. A capture is a fact about
+#     the hero you were WALKING AS, so "the lobby says you are playing him" is
+#     exactly the authorization the event has, and a member naming somebody else's
+#     hero is refused. It must also be in `_pool` and not already captive, so an
+#     assertion is idempotent and cannot be re-made.
+#
+#     THIS IS WHY THE REASSIGNMENT WAITS FOR `_tick_prison()` AND IS NOT SENT FROM
+#     THE CAPTURE ITSELF. `SetHero` releases our claim on the hero just taken, so a
+#     claim sent in the same frame as the `cap` packet races the lobby's `heroes`
+#     broadcast on every OTHER peer: whoever processes the broadcast first no
+#     longer sees us as the holder and drops the capture, and the room's sets
+#     diverge for the rest of the run. Half a second later there is no race - and
+#     it is spent inside the caught freeze, so nothing is visibly slower.
 #
 #   RELEASE (`c` false) is the benign direction and is open to any member,
 #     because liberation is performed by whoever walks into the cell and that is
 #     deliberately NOT the captive's holder ("uniform cells": liberation asks
-#     nobody's name). A hostile release makes the room believe a hero is free who
-#     is not - and that hero is still CLAIMED in the lobby by the peer who lost
-#     him, so nobody can take him. The cost is a delayed world game over, never a
-#     stolen body.
+#     nobody's name). A hostile release only makes the room believe a hero is free
+#     who is not - and `available_heroes()` is the only thing that would offer
+#     him, one press, refused by the lobby if somebody still holds him. The cost is
+#     a delayed world game over, never a stolen body.
+#
+#   A LEAVER KEEPS HIS CAPTIVE, deliberately. The way out of a cell is somebody
+#     walking into it, and that verb asks nobody's name - so a hero whose captor
+#     quit is not a phantom, he is a rescue anybody in the room can still perform.
 
 func is_hero_captive(hero: String) -> bool:
 	"""Is this hero in a cell anywhere in the room? False offline."""
@@ -1417,12 +1422,16 @@ func report_hero_captured(hero: String) -> void:
 	"""
 	The local player just lost `hero` to a retrieval unit. Tell the room.
 
-	A no-op offline (solo the player's own set is the whole truth) and a no-op for
-	a hero the room already holds, so it is idempotent and safe to re-drive.
+	ROUTED THROUGH `_apply_captive` WITH OUR OWN ID, so the sender is held to the
+	same holder rule every receiver holds it to - and so the two can never drift.
+	At this instant the lobby still has us down as `hero`'s holder, which is what
+	makes it pass; the reassignment that releases that claim is `_tick_prison()`'s,
+	half a second later, for exactly this reason.
+
+	A no-op offline (solo the player's own set is the whole truth) and idempotent.
 	"""
-	if _state != State.IN_ROOM or not _pool.has(hero) or _captives.has(hero):
+	if _state != State.IN_ROOM or not _apply_captive(_you, hero, true):
 		return
-	_captives[hero] = _you
 	_broadcast_reliable(var_to_bytes({"t": "cap", "h": hero, "c": true}))
 
 
@@ -1433,9 +1442,8 @@ func report_hero_freed(hero: String) -> void:
 	Idempotent for the same reason `player_controller.hero_freed()` is: the tower
 	re-drives its mirror, and freeing somebody who is not held is a no-op.
 	"""
-	if _state != State.IN_ROOM or not _captives.has(hero):
+	if _state != State.IN_ROOM or not _apply_captive(_you, hero, false):
 		return
-	_captives.erase(hero)
 	_broadcast_reliable(var_to_bytes({"t": "cap", "h": hero, "c": false}))
 
 
@@ -1481,7 +1489,8 @@ func _receive_captive(from_id: String, packet: Dictionary) -> void:
 func _apply_captive(from_id: String, hero: String, held: bool) -> bool:
 	"""
 	Apply one captive assertion from `from_id`, under the rules in the section
-	header. Shared by the `cap` verb and the join snapshot so the two cannot drift.
+	header. The ONE gate, shared by the `cap` verb and by our own capture, so the
+	sender and every receiver cannot drift.
 
 	@return: whether the room's set actually changed.
 	"""
@@ -1489,35 +1498,34 @@ func _apply_captive(from_id: String, hero: String, held: bool) -> bool:
 		return false  # Not a hero this room deals in.
 	if held:
 		if _captives.has(hero):
-			return false  # Already held: attribution cannot be stolen or re-asserted.
-		# ONE CAPTIVE PER PEER. The bound that makes this verb safe to broadcast.
-		for other: String in _captives:
-			if String(_captives[other]) == from_id:
-				return false
-		_captives[hero] = from_id
+			return false  # Already held: an assertion cannot be re-made.
+		# THE AUTHORIZATION, and the only one this verb has: a capture is a fact
+		# about the hero the sender was WALKING AS. A member naming a hero the
+		# lobby says somebody else holds is naming a body it cannot have lost.
+		if hero_holder(hero) != from_id:
+			return false
+		_captives[hero] = true
 	else:
 		if not _captives.has(hero):
 			return false
 		_captives.erase(hero)
-	_push_captive_to_player(hero, held)
+	_captive_changed(hero, held)
 	return true
 
 
-func _release_captives_of(id: String) -> void:
+func _captive_changed(hero: String, held: bool) -> void:
 	"""
-	A member left: hand back whatever it was holding captive.
+	One entry moved: mirror it into the player and repaint the hero picker.
 
-	THE LEAVER'S HERO GOES BACK TO THE ROOM, which is the same ruling the lobby
-	already makes about the CLAIM (`server/room.go` releases a leaver's hero
-	itself). Keeping it captive would leave a hero nobody can play and nobody can
-	free - a phantom whose only effect is to bring the world game over closer - and
-	it would be unrepresentable in a join snapshot, since every assertion is made
-	by the peer it is about.
+	THE PICKER REFRESH IS NOT OPTIONAL. `mp_ui` relabels its buttons on
+	`heroes_changed` and on nothing else, and a capture or a liberation changes
+	what may be pressed WITHOUT changing the lobby's assignment map - so a
+	liberated hero would sit disabled and labelled "in a cell" until some unrelated
+	claim happened to provoke the next `heroes` broadcast. Re-emitting the
+	unchanged truth is the whole fix: the UI is a pure function of it plus this set.
 	"""
-	for hero: String in _captives.keys():
-		if String(_captives[hero]) == id:
-			_captives.erase(hero)
-			_push_captive_to_player(hero, false)
+	_push_captive_to_player(hero, held)
+	heroes_changed.emit(_heroes, _pool)
 
 
 func _push_captive_to_player(hero: String, held: bool) -> void:
@@ -1531,24 +1539,6 @@ func _push_captive_to_player(hero: String, held: bool) -> void:
 	var player: Node = get_tree().get_first_node_in_group("player")
 	if player != null and player.has_method("set_hero_captive"):
 		player.call("set_hero_captive", hero, held)
-
-
-func _my_captive_heroes() -> Array:
-	"""
-	The heroes attributed to US - the join snapshot's `cap` field.
-
-	AT MOST ONE ENTRY by construction, and deliberately not the whole room's set: a
-	joiner assembles that from every incumbent's snapshot, and each incumbent
-	asserting only its own capture is what keeps the snapshot under exactly the
-	same one-per-peer bound the live verb is under. An incumbent cannot enlarge the
-	joiner's picture of the world beyond what it could have done to everybody
-	else's already.
-	"""
-	var out: Array = []
-	for hero: String in _captives:
-		if String(_captives[hero]) == _you:
-			out.append(hero)
-	return out
 
 
 func peer_positions() -> Variant:
@@ -2420,10 +2410,12 @@ func _send_state_to(id: String) -> void:
 		# a pack containing animals nobody else can see. Bounded like `ids`.
 		"dead": _recent_dead_ids(),
 		# THE CAPTIVE SET, absolute and never a delta - a joiner hears this once.
-		# Only OUR OWN capture, because that is the only one we are entitled to
-		# assert (see `_my_captive_heroes()`); the joiner unions the incumbents'
-		# answers and lands on the room's set.
-		"cap": _my_captive_heroes(),
+		# The WHOLE room's set, which only the master's copy is honoured (see
+		# `_receive_state`): a live `cap` is authorized by the lobby saying the
+		# sender holds that hero, and a capture whose loser has since been
+		# reassigned has no such holder left to prove it, so a replay cannot be
+		# authorized the same way.
+		"cap": captive_heroes(),
 	})
 
 
@@ -2513,14 +2505,20 @@ func _receive_state(from: String, snapshot: Dictionary) -> void:
 	# joiner over it.
 	if from == _master:
 		_absorb_dead(snapshot["dead"])
-	# THE CAPTIVE SET IS TAKEN FROM EVERY INCUMBENT, not from the master alone, and
-	# that asymmetry with `dead` right above it is deliberate: a kill is ARBITRATED
-	# by the master so nobody else has anything to add, while a capture is a fact
-	# about the SENDER'S OWN hero that only the sender knows. `_apply_captive`
-	# applies the identical one-per-peer rule the live verb goes through, so a
-	# snapshot buys a sender no reach its `cap` packets did not already have.
-	for hero: Variant in snapshot.get("cap", []):
-		_apply_captive(from, String(hero), true)
+	# THE CAPTIVE SET IS TAKEN FROM THE MASTER ALONE, the same rule as the kill list
+	# right above it and for a related reason. A LIVE capture authorizes itself:
+	# the lobby says the sender holds that hero. A REPLAY cannot - by then the loser
+	# has usually been reassigned and holds something else, so there is no holder
+	# left to check against - which leaves the room's own authority as the only
+	# honest source. Same degradation as `dead`, too: a wedged or older-build master
+	# leaves the joiner without the set, and every later `cap` still lands.
+	if from == _master:
+		for hero: Variant in snapshot.get("cap", []):
+			var name: String = String(hero)
+			if not _pool.has(name) or _captives.has(name):
+				continue
+			_captives[name] = true
+			_captive_changed(name, true)
 	# The snapshot may be the last thing the placement was waiting on (the seed
 	# can equally well be). Both call in; the latch inside decides.
 	_apply_join_placement()

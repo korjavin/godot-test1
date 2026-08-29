@@ -57,11 +57,12 @@ extends SceneTree
 ##      UNFORGEABLE: derived from the winner's own pending claim rather than from
 ##      the confirm, so a hostile master cannot mint persisted progression.
 ##  21. THE ROOM'S CAPTIVE SET — the fifth trust boundary and the rules that make
-##      one broadcast verb safe: the `cap` parser against hostile packets, ONE
-##      CAPTIVE PER PEER, the pool whitelist, un-stealable attribution, the open
-##      release direction, a leaver's captive handed back, the rate budget, the
-##      dispatch arm, the picker refusing a captive hero, the reassignment
-##      candidate, and the same rules again through the JOIN SNAPSHOT.
+##      one broadcast verb safe: the `cap` parser against hostile packets, THE
+##      HOLDER RULE (only the hero's own holder may report him taken) with the
+##      reassigned-and-taken-again case that a lifetime cap would have broken, the
+##      pool whitelist, the open release direction, the rate budget, the dispatch
+##      arm, the picker refusing a captive hero AND being told to repaint, the
+##      reassignment candidate, and the MASTER-ONLY join snapshot.
 ##  18. Terrain FOCUS POINTS — the chunks that stay loaded around a far teammate,
 ##      so the master has crocodiles there to simulate at all. Measured in metres
 ##      against SIM_RADIUS, with the memory cap and the release both pinned.
@@ -1950,71 +1951,88 @@ func _check_captive_set() -> String:
 	difference between "a hostile member can bench itself" and "a hostile member
 	can end everyone's run with one packet":
 
-	  1. ONE CAPTIVE PER PEER. A second capture from the same peer is refused.
-	  2. THE POOL IS THE WHITELIST. A hero this room does not deal in is refused.
-	  3. ATTRIBUTION CANNOT BE STOLEN. A capture of an already-held hero is
-	     refused, so peer B cannot take over peer A's entry and then spend its own.
-	  4. RELEASE IS OPEN, and deliberately so: liberation is performed by whoever
-	     walked into the cell, which is never the captive's holder.
-	  5. A LEAVER'S CAPTIVE GOES BACK, because nobody could free him and nobody
-	     could assert him to a joiner.
-	  6. THE MIRROR REACHES THE PLAYER, which is the half that makes the set mean
+	  1. THE HOLDER RULE. A capture is a fact about the hero the sender was WALKING
+	     AS, so the lobby's own `_heroes` map is the authorization: a member naming
+	     somebody else's hero is naming a body it cannot have lost, and is refused.
+	  2. ...AND IT IS NOT A LIFETIME CAP. A peer that was reassigned after losing
+	     one hero may lose the NEXT one too — the ordinary path in a two- or
+	     three-player room — and every peer must record it, or the room's sets
+	     diverge and full custody never arrives for anybody.
+	  3. THE POOL IS THE WHITELIST, and an assertion cannot be re-made.
+	  4. RELEASE IS OPEN, deliberately: liberation is performed by whoever walked
+	     into the cell, which is never the captive's holder.
+	  5. THE MIRROR REACHES THE PLAYER, which is the half that makes the set mean
 	     anything: the roster, the picker and the world-level game over all read
 	     the player's copy.
+	  6. THE PICKER IS TOLD. `mp_ui` repaints on `heroes_changed` and on nothing
+	     else, and captivity changes what may be pressed without changing the
+	     lobby's assignment map.
 	  7. THE VERB IS DISPATCHED AND METERED. A decoder nothing routes to is dead
 	     code, and a state-mutating verb with no budget is an amplifier.
 	  8. THE PICKER NEVER OFFERS A CAPTIVE HERO, our own included.
 	  9. `claimable_hero()` skips captives, which is what "reassign first" asks.
-	 10. THE JOIN SNAPSHOT carries the same fact under the same rules.
+	 10. THE JOIN SNAPSHOT is the MASTER's whole set and nobody else's — a replay
+	     cannot be authorized by claim 1, because the peer who lost that hero has
+	     usually been reassigned and holds something else by then.
 	"""
 	var player: Node = _captive_player()
 	var mp: Node = _room_manager("me")
+	var repaints: Array[int] = [0]
+	mp.heroes_changed.connect(func(_h: Dictionary, _p: Array) -> void: repaints[0] += 1)
 
-	# --- 1/6. bob benches primm, and the player is told.
+	# --- 1/5/6. bob holds primm and reports him taken.
 	mp._receive_captive("bob", {"t": "cap", "h": "primm", "c": true})
 	if not mp.is_hero_captive("primm"):
-		return "an honest capture from primm's holder was not recorded"
+		return "an honest capture from primm's own holder was not recorded"
 	if player.told != [["primm", true]]:
 		return "the room's capture did not reach the player's own set (%s)" % str(player.told)
-	mp._receive_captive("bob", {"t": "cap", "h": "teibi", "c": true})
-	if mp.is_hero_captive("teibi"):
-		return "one peer benched TWO heroes — the attribution bound is gone, and with it the "			+ "whole reason this verb can be broadcast"
+	if repaints[0] != 1:
+		return "a capture emitted no heroes_changed — the picker repaints on that signal and "\
+			+ "on nothing else, so it would keep offering a hero who is in a cell"
 
-	# --- 2. the pool is the whitelist.
+	# --- 1 (the refusal). carl holds nothing, and may not name teibi.
+	mp._receive_captive("carl", {"t": "cap", "h": "teibi", "c": true})
+	if mp.is_hero_captive("teibi"):
+		return "a member who does not hold teibi reported him taken and was believed — one "\
+			+ "packet then benches any teammate, or four end every run in the room"
+
+	# --- 3. the pool is the whitelist, and an assertion cannot be re-made.
+	mp._heroes["nobody_by_that_name"] = "carl"
 	mp._receive_captive("carl", {"t": "cap", "h": "nobody_by_that_name", "c": true})
 	if mp.is_hero_captive("nobody_by_that_name"):
 		return "a hero outside the lobby's pool was written into the captive set"
+	mp._heroes.erase("nobody_by_that_name")
 
-	# --- a different peer may still bench its own (the negative control for 1).
-	mp._receive_captive("carl", {"t": "cap", "h": "teibi", "c": true})
+	# --- 2. bob was reassigned to teibi, and loses that one too.
+	#
+	# THE CASE A ONE-PER-PEER BOUND GETS WRONG, and it is the ordinary path rather
+	# than an exotic one: `SetHero` moved bob off primm and onto teibi — ATOMICALLY,
+	# releasing the old claim as it takes the new one, which is why both lines are
+	# here — so the lobby now names bob as teibi's holder and the next grab is his
+	# to report.
+	mp._heroes.erase("primm")
+	mp._heroes["teibi"] = "bob"
+	mp._receive_captive("bob", {"t": "cap", "h": "teibi", "c": true})
 	if not mp.is_hero_captive("teibi"):
-		return "a SECOND peer's first capture was refused — claim 1 is refusing everybody"
-
-	# --- 3. attribution cannot be stolen.
-	mp._receive_captive("dave", {"t": "cap", "h": "primm", "c": true})
-	if String(mp._captives.get("primm", "")) != "bob":
-		return "dave took over bob's captive (%s) — with the entry stolen, dave may still "			% str(mp._captives.get("primm", "")) + "spend an attribution of its own"
+		return "a peer that was reassigned after one capture could not report losing the "\
+			+ "hero it was reassigned TO — the room's sets diverge from that grab onward"
 
 	# --- 4. release is open to anybody, because liberation is.
 	player.told.clear()
-	mp._receive_captive("carl", {"t": "cap", "h": "primm", "c": false})
+	mp._receive_captive("dave", {"t": "cap", "h": "primm", "c": false})
 	if mp.is_hero_captive("primm"):
-		return "a liberation by somebody other than the captive's holder was refused — no "			+ "hero could ever be freed, since a cell is walked into by a rescuer"
+		return "a liberation by somebody other than the captive's holder was refused — no "\
+			+ "hero could ever be freed, since a cell is walked into by a rescuer"
 	if player.told != [["primm", false]]:
 		return "the liberation did not reach the player's own set (%s)" % str(player.told)
-
-	# --- 5. a leaver hands his captive back.
-	#
-	# DRIVEN THROUGH `_on_lobby_peer_left`, the lobby signal the game actually
-	# raises, and not through the helper: the helper could be perfect and never
-	# called, which is the shape this whole rule fails in.
-	mp._on_lobby_peer_left("carl")
-	if mp.is_hero_captive("teibi"):
-		return "a departed member's captive stayed in a cell — nobody can free him and "			+ "nobody can assert him to a joiner"
 
 	# --- 7. the dispatch arm, and the budget.
 	if MPManager.packet_kind({"t": "cap", "h": "primm", "c": true}) != "cap":
 		return "a cap packet does not identify itself as a verb — it would decode as presence"
+	mp._receive_mesh_verb("bob", "cap", {"t": "cap", "h": "primm", "c": true})
+	if mp.is_hero_captive("primm"):
+		return "the dispatch skipped the holder rule — bob was moved off primm two claims ago"
+	mp._heroes["primm"] = "bob"
 	mp._receive_mesh_verb("bob", "cap", {"t": "cap", "h": "primm", "c": true})
 	if not mp.is_hero_captive("primm"):
 		return "the cap verb is decoded but `_receive_mesh_verb` routes it nowhere"
@@ -2035,31 +2053,32 @@ func _check_captive_set() -> String:
 	# still offer the body that was just taken off us.
 	mp._receive_captive("me", {"t": "cap", "h": "windman", "c": true})
 	if not mp.is_hero_captive("windman"):
-		return "we could not assert our own capture"
+		return "we could not report our own hero taken"
 	if mp.available_heroes().has("windman"):
 		return "the picker offered windman, who is in a cell and is the hero we hold"
-	if not mp.available_heroes().has("teibi"):
+	if not mp.available_heroes().has("phoboman"):
 		return "the picker offers nothing at all — claim 8 would pass with the roster empty"
 
 	# --- 9. the reassignment candidate.
 	#
-	# `teibi` and `phoboman` are both unclaimed and free, and pool order picks the
-	# first: two peers racing therefore ask the lobby for the SAME hero, which is
-	# what makes `server/room.go`'s room lock the thing that decides between them.
-	if mp.claimable_hero() != "teibi":
-		return "claimable_hero() answered '%s', expected the first free unclaimed hero" 			% mp.claimable_hero()
-	mp._receive_captive("frank", {"t": "cap", "h": "teibi", "c": true})
+	# Only phoboman is left unclaimed and free, so that is what a bench asks for;
+	# two peers racing therefore ask the lobby for the SAME hero, which is what
+	# makes `server/room.go`'s room lock the thing that decides between them.
 	if mp.claimable_hero() != "phoboman":
-		return "claimable_hero() answered '%s' with teibi in a cell — a captive hero was "			% mp.claimable_hero() + "offered as a reassignment, which is a body nobody can play"
-	mp._heroes["phoboman"] = "dave"
+		return "claimable_hero() answered '%s', expected the one free unclaimed hero" \
+			% mp.claimable_hero()
+	mp._heroes["phoboman"] = "frank"
+	mp._receive_captive("frank", {"t": "cap", "h": "phoboman", "c": true})
 	if mp.claimable_hero() != "":
-		return "claimable_hero() answered '%s' with nothing free — the prison role would "			% mp.claimable_hero() + "never be reached"
+		return "claimable_hero() answered '%s' with every hero held or in a cell — the "\
+			% mp.claimable_hero() + "prison role would never be reached"
 	if mp.request_reassignment():
 		return "request_reassignment() claimed a hero out of an empty room"
 
-	# --- 10. the join snapshot: absolute values, same rules, hostile input.
-	if mp._my_captive_heroes() != ["windman"]:
-		return "the snapshot asserts %s, expected only our own captive" 			% str(mp._my_captive_heroes())
+	# --- 10. the join snapshot: absolute values, master only, hostile input.
+	if mp.captive_heroes() != ["windman", "primm", "teibi", "phoboman"]:
+		return "the snapshot asserts %s, expected the room's whole set in pool order" \
+			% str(mp.captive_heroes())
 	var base: Dictionary = {
 		"cc": 0.0, "ls": 0.0, "dd": 0.0, "px": 0.0, "py": 0.0, "pz": 0.0, "ids": [],
 	}
@@ -2087,17 +2106,22 @@ func _check_captive_set() -> String:
 		if not MPManager.decode_state(hostile).is_empty():
 			return "decode_state accepted the hostile captive list %s" % str(cap)
 
-	# ...and a snapshot buys its sender no reach a `cap` packet did not already
-	# have: frank already holds teibi, so its snapshot cannot bench a second hero.
-	# DRIVEN THROUGH `_receive_state`, the real merge, for the same reason claim 5
-	# is driven through the real lobby signal — a snapshot path that wrote the set
-	# directly would satisfy a check that called `_apply_captive` itself.
-	var snapshot: Dictionary = base.duplicate()
-	snapshot["cap"] = ["phoboman"]
-	mp._receive_state("frank", MPManager.decode_state(snapshot))
-	if mp.is_hero_captive("phoboman"):
-		return "a join snapshot benched a second hero for one peer — the snapshot path does "			+ "not go through the same rule the live verb does"
+	# ...and the replay is the MASTER's alone. Driven through `_receive_state`, the
+	# real merge, so a path that wrote the set straight into `_captives` would not
+	# satisfy this by accident.
+	var fresh: Node = _room_manager("me")
+	fresh._master = "themaster"
+	var snapshot: Dictionary = MPManager.decode_state(honest)
+	fresh._receive_state("stranger", snapshot)
+	if fresh.is_hero_captive("primm"):
+		return "a non-master's join snapshot wrote the room's captive set — every member "\
+			+ "could then bench the whole roster for a joiner"
+	fresh._receive_state("themaster", snapshot)
+	if not fresh.is_hero_captive("primm"):
+		return "the master's join snapshot was ignored — a joiner walks into a room whose "\
+			+ "cells it cannot see"
 
+	fresh.free()
 	player.free()
 	mp.free()
 	return ""

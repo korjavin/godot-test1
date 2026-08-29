@@ -1627,19 +1627,14 @@ func _capture_active_hero() -> void:
 	if mp != null and mp.has_method("report_hero_captured"):
 		mp.call("report_hero_captured", hero)
 
-	# REASSIGN FIRST, IMPRISON LAST - the owner's rule, and in a room the step into
-	# a new body is the LOBBY'S to make, not ours. `server/room.go`'s `SetHero`
-	# releases our claim on the hero just taken and claims the free one under the
-	# process-wide room lock, so two peers benched in the same frame serialize:
-	# first wins, second gets `errHeroTaken` plus fresh truth and asks again on the
-	# next `_tick_prison()`. Nothing moves locally until the `heroes` broadcast
-	# confirms it, which is `claim_hero()`'s standing contract and the only reason
-	# two peers cannot end up in one body.
-	#
-	# IMPRISONMENT IS NOT DECIDED HERE. `_tick_prison()` owns it, because it is the
-	# one place that can see the answer to the claim this line just sent.
-	if mp != null and mp.has_method("request_reassignment") and mp.call("request_reassignment"):
-		return
+	# NEITHER THE REASSIGNMENT NOR THE BENCH IS DECIDED HERE, and that is a
+	# correctness rule rather than tidiness. `SetHero` releases our claim on the
+	# hero just taken, so a claim sent from this line races the `cap` packet on
+	# every other peer: whoever sees the lobby's `heroes` broadcast first no longer
+	# has us down as that hero's holder and drops the capture, and the room's
+	# captive sets diverge for the rest of the run. `_tick_prison()` sends it half a
+	# second later - inside the caught freeze, so nothing is visibly slower - by
+	# which time every peer has the capture.
 
 	# ...and step into the next AVAILABLE hero on the spot, while the unit
 	# withdraws. Available, not merely free: in a room the lobby owns who plays
@@ -2847,6 +2842,13 @@ func _tick_prison(delta: float) -> void:
 	shape every other multiplayer read in this file uses.
 	"""
 	if is_game_over:
+		return
+	# ...AND NOT WHILE A BITE IS STILL BEING PAID FOR. The caught freeze runs 0.55 s
+	# and this tick is 0.5 s, so on the grab that takes the room's last hero this
+	# would reach `_begin_custody_protocol()` BEFORE `_on_caught_finished()` -
+	# clearing `is_caught` under it, so the freeze is truncated and the life that
+	# grab costs is never spent. Every ending stays where it is decided.
+	if is_caught:
 		return
 	# The break-out scene owns the roster and the body while it runs — its grant is
 	# what lets a prisoner walk at all — so the bench has nothing to decide inside
