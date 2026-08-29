@@ -490,7 +490,8 @@ var current_character_index: int = 0
 ## THE CAPTIVE SET (bead godot-test1-3iy.9). Availability is `hand INTERSECT free`:
 ## the E-cycle already restricts itself to an allowed-index array (the lobby's, in a
 ## room), and captivity is ONE MORE INTERSECTION at that same site rather than a
-## second roster system. `free_character_indices()` is the whole of it.
+## second roster system. `available_character_indices()` is where the two meet, and
+## it is the only question anything asks about the roster.
 ##
 ## NON-MONOTONE, AND THAT IS WHY IT LIVES HERE. A capture adds and a liberation
 ## removes, so this set can go BACKWARDS — which disqualifies it from the union/max
@@ -1361,10 +1362,10 @@ func free_character_indices() -> Array:
 
 	@return: A fresh Array of int — the caller may keep or mutate it.
 
-	The whole captive system as one query, and the ONLY thing that reads
-	`captive_heroes` outside the two verbs that write it. The E-cycle intersects
-	the lobby's hand with this, `_on_caught_finished()` ends the run when it comes
-	back empty, and `free_hero_count()` publishes its size to the hunt director.
+	Half of `available_character_indices()`, and the ONLY thing that reads
+	`captive_heroes` outside the two verbs that write it. Everything in gameplay
+	goes through the intersection instead — the raw free set answers "who is not in
+	a cell", which is not the same question as "who may I play".
 	"""
 	var out: Array = []
 	for index: int in CHARACTERS.size():
