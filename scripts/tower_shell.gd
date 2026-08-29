@@ -542,6 +542,40 @@ func opened_ids() -> Array:
 	return out
 
 
+func sheltered(pos: Vector3) -> bool:
+	"""
+	Is this world point under the roof?
+
+	@param pos: A world-space position.
+	@return: true anywhere inside the roofed footprint, below the roof slab.
+
+	THE BUILDING OWNS THIS QUESTION, because the building owns the numbers. Phase
+	13 put a lid on the shell (`ROOF_THICK`) and the weather did not notice: a
+	storm cloud drifting over the HQ drew rain through the slab and grounded
+	Windman indoors (bug godot-test1-li2). `TowerInterior.inside_walls()` is the
+	wrong boundary to ask — it is the 20 m phase-3 keep, not the 80 m footprint the
+	roof actually covers — and restating OUTER_HALF anywhere else is how the two
+	drift apart the next time the envelope grows.
+
+	`to_local` rather than subtracting `global_position`: the shell is parked
+	unrotated today (`endless_terrain._tower_build_shell`), and this stays correct
+	on the day somebody turns it.
+
+	Half-open at the top: the roof's UNDERSIDE is the ceiling, so a player standing
+	ON the roof (y >= WALL_HEIGHT) is outdoors and gets rained on, which is the
+	answer that makes the gate read as a roof rather than as a column of immunity
+	reaching to the sky. Below y = 0 is the yard slab's underside — nothing stands
+	there, but answering true costs nothing and keeps the test a simple range.
+
+	Cheap enough for the per-tick weather query that consumes it: one transform
+	multiply and three compares, no allocation.
+	"""
+	var local: Vector3 = to_local(pos)
+	if local.y < 0.0 or local.y >= WALL_HEIGHT:
+		return false
+	return absf(local.x) <= OUTER_HALF and absf(local.z) <= OUTER_HALF
+
+
 func _on_door_body_entered(body: Node3D) -> void:
 	"""
 	Somebody touched the doorway volume. Only the LOCAL player counts.

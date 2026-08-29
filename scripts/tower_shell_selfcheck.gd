@@ -63,7 +63,14 @@ extends SceneTree
 ##      constants and Progression's max ranks. Check 12's docstring records what
 ##      neither check can promise — a maxed Windman can chain launches upward
 ##      without bound — and why the seal is therefore the actual guarantee.
-##   9. THE MINIMAP MARK. It is the only marker on the map that is NOT read off a
+##   9. THE ROOF KEEPS THE WEATHER OUT (bug godot-test1-li2). Sealing the shell in
+##      phase 13 did not tell the sky about it: a storm drifting over the HQ drew
+##      rain through the slab and grounded Windman indoors, because
+##      `weather_manager.is_raining_at()` is an XZ circle and knows nothing about
+##      roofs. Check 13 asserts the shell's own `sheltered()` over its footprint and
+##      outside it, and then that a REAL weather manager parked under a REAL storm
+##      answers "dry" indoors and "raining" one step out of the door.
+##  10. THE MINIMAP MARK. It is the only marker on the map that is NOT read off a
 ##      group — it asks the terrain where the tower IS — so the usual has_method()
 ##      guard makes a rename fail silently, with the map still drawing and the
 ##      tower simply not on it. Check 10 is the alarm for that, plus the rim clamp,
@@ -96,6 +103,13 @@ const LEDGE_MAX_WIDTH: float = 0.3
 ## Metres the roof must clear a fully-skilled Air Rush launched off the tallest
 ## thing in the world by. Slack for a retune, not a design allowance.
 const ROOF_CLEARANCE_MARGIN: float = 5.0
+
+## The weather manager check 13 drives, and the ground radius it gives the one
+## storm cloud it plants: big enough to cover the whole 80 m footprint AND the
+## point outside the door, so the only thing that can separate those two answers
+## is the roof.
+const WEATHER_SCRIPT: String = "res://scripts/weather_manager.gd"
+const STORM_RADIUS: float = 200.0
 
 ## Geometry tolerance, in metres.
 const EPS: float = 0.001
@@ -158,6 +172,7 @@ func _run() -> void:
 	_check_no_road_coin_is_buried_in_the_walls()
 	_check_impostor()
 	_check_minimap_marks_the_tower()
+	await _check_the_roof_keeps_the_rain_out()
 	_report()
 
 
@@ -1152,6 +1167,101 @@ class StubTerrain extends Node:
 
 	func is_river_at(_pos: Vector3) -> bool:
 		return false
+
+
+func _check_the_roof_keeps_the_rain_out() -> void:
+	"""
+	Check 13. It does not rain indoors, and it still rains outdoors.
+
+	THE BUG THIS IS THE ALARM FOR (godot-test1-li2): phase 13 put a lid on the
+	shell and the weather never heard about it. `is_raining_at()` is a flat XZ
+	circle around a storm cloud, and the emitter spawns its streaks ~14 m ABOVE the
+	player — so a storm over the HQ rained inside the building and, through
+	`player_controller._weather_is_raining_here()`, refused Windman's Air Rush in a
+	room with a ceiling.
+
+	TWO HALVES, AND BOTH ARE LOAD-BEARING:
+
+	  * The GEOMETRY half asks the shell directly. `sheltered()` has to answer for
+	    the whole 80 m roofed footprint — not `TowerInterior.inside_walls()`, which
+	    is the 20 m phase-3 keep and would leave five-sixths of the building wet —
+	    and it has to STOP at the roof's underside, or the tower becomes a column of
+	    weather immunity reaching into the sky.
+	  * The WIRING half asks a real `WeatherManager` under a real storm cloud. That
+	    is the half that fails if the group name drifts, if the guard is spelled
+	    with the wrong method name, or if somebody puts the shelter test in one
+	    consumer instead of in the shared query — because the single point measured
+	    here, `is_raining_at()`, is exactly what the emitter, the rain bed and the
+	    ability gate all read.
+
+	The shell is parked at a site far from the origin on purpose: a `sheltered()`
+	written against local coordinates and handed a world point passes at (0,0,0)
+	and nowhere else in the game.
+	"""
+	var site := Vector3(400.0, 0.0, -120.0)
+	var shell := _make_shell()
+	shell.position = site
+	await process_frame  # global transforms are only real once a frame has run
+
+	# The group wiring the weather query depends on. If this resolves to anything
+	# but the shell we just built, everything below is measuring the wrong tower.
+	if root.get_tree().get_first_node_in_group("tower") != shell:
+		_fail("check 13: group \"tower\" did not resolve to the shell — the weather query cannot find it")
+
+	var half: float = TowerShell.OUTER_HALF
+	var top: float = TowerShell.WALL_HEIGHT
+	# Inside: the four corners and the middle, at head height and just under the
+	# top storey's ceiling. All of it is roofed, so all of it is dry.
+	for x: float in [-half + 1.0, 0.0, half - 1.0]:
+		for z: float in [-half + 1.0, 0.0, half - 1.0]:
+			for y: float in [1.0, top - 1.0]:
+				if not shell.sheltered(site + Vector3(x, y, z)):
+					_fail("check 13: sheltered() said no at (%.1f, %.1f, %.1f) inside the footprint" % [x, y, z])
+
+	# Outside: one step past each face, and one step onto the roof.
+	var exposed: Dictionary = {
+		"past the door (+X)": Vector3(half + 1.0, 1.0, 0.0),
+		"past the back wall (-X)": Vector3(-half - 1.0, 1.0, 0.0),
+		"past the +Z wall": Vector3(0.0, 1.0, half + 1.0),
+		"past the -Z wall": Vector3(0.0, 1.0, -half - 1.0),
+		"standing ON the roof": Vector3(0.0, top + 1.0, 0.0),
+		"out in the field": Vector3(half * 4.0, 1.0, 0.0),
+	}
+	for where: String in exposed:
+		if shell.sheltered(site + (exposed[where] as Vector3)):
+			_fail("check 13: sheltered() said yes %s — the roof does not extend there" % where)
+
+	# ---- the wiring half: a real manager, a real storm, over the real building.
+	var weather := Node3D.new()
+	weather.set_script(load(WEATHER_SCRIPT))
+	root.add_child(weather)
+	# One hand-planted storm cloud, big enough to soak the tower and its doorstep.
+	# Planted rather than waited for: the cloud field is randomize()d ambience (it
+	# is deliberately outside the determinism contract), so a check that waited for
+	# a storm to drift over the HQ would be a check that sometimes ran.
+	weather._clouds = [{
+		"center": site + Vector3(0.0, 120.0, 0.0),
+		"boxes": [],
+		"is_storm": true,
+		"radius": STORM_RADIUS,
+		"speed": 0.0,
+		"bob_phase": 0.0,
+	}]
+
+	# Indoors, in the middle of that storm: no rain. This is the one call the
+	# emitter, the rain bed and the Air Rush gate all make.
+	if weather.is_raining_at(site + Vector3(0.0, 1.0, 0.0)):
+		_fail("check 13: is_raining_at() still rains inside the sealed HQ")
+	# One step out of the door, same storm: rain again. Without this the "fix"
+	# could be a weather manager that never rains anywhere.
+	if not weather.is_raining_at(site + Vector3(half + 2.0, 1.0, 0.0)):
+		_fail("check 13: is_raining_at() said dry OUTSIDE the tower under a storm — the shelter test is too wide")
+	# And the roof is not an umbrella for the whole column above it.
+	if not weather.is_raining_at(site + Vector3(0.0, top + 1.0, 0.0)):
+		_fail("check 13: is_raining_at() said dry on top of the roof")
+
+	weather.free()
+	shell.free()
 
 
 func _make_terrain(seed_value: int) -> Node3D:
