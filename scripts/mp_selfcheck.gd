@@ -1642,6 +1642,24 @@ func _check_hunter_sync() -> String:
 	var fields: Array[String] = [
 		"is_chasing", "is_fleeing", "is_paused", "is_biting", "is_burrowed"
 	]
+
+	# THE SWEEP IS ONLY AS COMPLETE AS THIS LIST, so the list is checked against
+	# the protocol rather than trusted. Every CROC_FLAG_* the manager declares is
+	# a bit the encoder can put on the wire; if the five fields above cannot
+	# between them light all of them, a sixth flag has been added and this sweep
+	# would round-trip a byte that never contains it — passing while the exact
+	# drift it exists to catch ships. Read off the const map so a new bit needs no
+	# edit here to be NOTICED, only to be covered.
+	var declared: int = 0
+	for key: String in MPManager.get_script_constant_map().keys():
+		if key.begins_with("CROC_FLAG_"):
+			declared |= int(MPManager.get_script_constant_map()[key])
+	for bit: int in range(fields.size()):
+		sender.set(fields[bit], true)
+	var full: int = MPManager._croc_flags(sender)
+	if full != declared:
+		return ("the flag sweep drives %d of the declared CROC_FLAG_* mask %d — a bit was added to "
+				+ "mp_manager without a field here, so the round-trip below cannot see it") % [full, declared]
 	for combo: int in range(1 << fields.size()):
 		for bit: int in range(fields.size()):
 			sender.set(fields[bit], (combo & (1 << bit)) != 0)
@@ -1659,18 +1677,28 @@ func _check_hunter_sync() -> String:
 				sent, back
 			]
 
-	# The first sample SNAPS, and a hunter must be no exception: a body that never
+	# The FIRST sample snaps, and a hunter must be no exception: a body that never
 	# takes the master's transform renders a pose the room does not share, which
-	# is the whole failure the byte sweep above cannot see.
-	if not receiver.remote_driven:
+	# is a failure the byte sweep above cannot see.
+	#
+	# A VIRGIN BODY AND A SHORT HOP, both load-bearing. `set_remote_state` snaps on
+	# two conditions OR'd together — no sample yet, or a jump past
+	# CROC_TELEPORT_DISTANCE — so reusing the swept receiver (already sampled) or
+	# aiming further than 8 m would let the teleport branch answer for the
+	# first-sample branch and the check would pass with that branch deleted.
+	var virgin: Node = _spawn_hunter("Hunter_7_7_2")
+	var landing := Vector3(2.0, 0.0, -1.0)
+	virgin.set_remote_state(landing, 1.25, 0)
+	if not virgin.remote_driven:
 		return "a hunter given a sample is not remote_driven — it would keep running its own hunt arm"
-	if receiver.global_position.distance_to(Vector3(12.0, 0.0, -3.0)) > 0.01:
-		return "a hunter's first remote sample did not snap it to the master's position (%s)" % receiver.global_position
+	if virgin.global_position.distance_to(landing) > 0.01:
+		return "a hunter's first remote sample did not snap it to the master's position (%s)" % virgin.global_position
 
 	hunter.free()
 	croc.free()
 	sender.free()
 	receiver.free()
+	virgin.free()
 	mp.free()
 	return ""
 
