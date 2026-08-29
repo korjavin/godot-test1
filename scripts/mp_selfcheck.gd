@@ -2051,9 +2051,22 @@ func _check_captive_set() -> String:
 	# lists the hero we already hold unconditionally ("re-picking what you have is a
 	# no-op"), so a captive filter that only looked at the unclaimed heroes would
 	# still offer the body that was just taken off us.
-	mp._receive_captive("me", {"t": "cap", "h": "windman", "c": true})
+	# DRIVEN THROUGH `report_hero_captured()`, the local entry point, so the SENDER
+	# is held to the same gate every receiver is: same whitelist, same holder rule,
+	# same mirror, same repaint. A local path that wrote `_captives` directly would
+	# be a second copy of the rules, and the copy is where they drift.
+	player.told.clear()
+	var before: int = repaints[0]
+	mp.report_hero_captured("windman")
 	if not mp.is_hero_captive("windman"):
 		return "we could not report our own hero taken"
+	if player.told != [["windman", true]] or repaints[0] == before:
+		return "our own capture skipped the shared gate — it reached the player as %s and "\
+			% str(player.told) + "repainted the picker %d times" % (repaints[0] - before)
+	mp.report_hero_captured("phoboman")
+	if mp.is_hero_captive("phoboman"):
+		return "we reported a hero we do not hold as taken and believed ourselves — the "\
+			+ "sender must go through the same holder rule the receivers do"
 	if mp.available_heroes().has("windman"):
 		return "the picker offered windman, who is in a cell and is the hero we hold"
 	if not mp.available_heroes().has("phoboman"):
@@ -2061,9 +2074,15 @@ func _check_captive_set() -> String:
 
 	# --- 9. the reassignment candidate.
 	#
-	# Only phoboman is left unclaimed and free, so that is what a bench asks for;
-	# two peers racing therefore ask the lobby for the SAME hero, which is what
-	# makes `server/room.go`'s room lock the thing that decides between them.
+	# THE STATE A REASSIGNMENT LEAVES BEHIND, and the only one in which the captive
+	# filter here matters at all: `SetHero` released bob's claim on primm when it
+	# moved him to teibi, so primm is now IN A CELL AND UNCLAIMED — the one shape
+	# that looks free to a filter that only asks the lobby. Pool order would offer
+	# him before phoboman.
+	mp._heroes.erase("primm")
+	# Only phoboman is genuinely free, so that is what a bench asks for; two peers
+	# racing therefore ask the lobby for the SAME hero, which is what makes
+	# `server/room.go`'s room lock the thing that decides between them.
 	if mp.claimable_hero() != "phoboman":
 		return "claimable_hero() answered '%s', expected the one free unclaimed hero" \
 			% mp.claimable_hero()
