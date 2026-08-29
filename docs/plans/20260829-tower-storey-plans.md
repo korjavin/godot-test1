@@ -550,12 +550,27 @@ exists and is not walled off by a typo.
 
 ### Task 7: Wire it up and prove it builds
 
-- [ ] `godot --headless --path . --import`, then run **every** self-check in the
+- [x] `godot --headless --path . --import`, then run **every** self-check in the
       Testing Strategy list. All `SELFCHECK OK`, exit 0.
-- [ ] `godot --headless --path . scenes/main.tscn --quit-after 120` — no errors or
-      warnings from any edited script.
-- [ ] Record `tower_selfcheck`'s wall-clock time (acceptance: **< 30 s**) and its new
-      counts line.
+      (2026-08-29: `tower_selfcheck`, `tower_interior_selfcheck`, `tower_shell_selfcheck`,
+      `tower_site_selfcheck`, `capture_selfcheck`, `chunk_stream_selfcheck`,
+      `perf_selfcheck` — 7/7 `SELFCHECK OK`, exit 0.)
+- [x] `godot --headless --path . scenes/main.tscn --quit-after 120` — no errors or
+      warnings from any edited script. (Clean: exit 0, no `ERROR`/`WARNING`/`SCRIPT ERR`
+      line in the boot log.)
+- [x] Record `tower_selfcheck`'s wall-clock time (acceptance: **< 30 s**) and its new
+      counts line. **0.39 s** — two orders of magnitude under the budget, which is the
+      adjacency index of task 3 doing its job on a graph that has not grown yet. Counts,
+      on the task-1 placeholder storey:
+
+      ```
+      tower scars: 1 authored, 1 built into the interior
+      tower plans: 1 storeys, 2 rooms, 1384 cells walkable, ramps 29.6 deg
+      tower graph: 15 rooms, 19 edges, 8 gates, 2 entries, 2 scars — 15 subset walks clean
+      ```
+
+      Re-measure after task 8 replaces the placeholder with the three real storeys —
+      that is where the 30 s acceptance actually gets tested.
 
 ### Task 8: Author storeys 3, 4 and 5
 
