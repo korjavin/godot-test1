@@ -415,6 +415,10 @@ const TOWER_GRAPH: Dictionary = {
 		# of these is UNGATED: the new floors are optional space, the four rescue
 		# spines still run through the phase-8 wing, and every subset's verdict is
 		# unchanged. Phase 15 is what starts hanging riddles up here. ---
+		# ponytail: UNGATED is the deferral, and its ceiling is that these 30-odd
+		# rows grow the 15-subset audit's SIZE without adding a route obligation —
+		# the walk gets longer, its verdict cannot change. Phase 15 hanging one
+		# riddle up here is what makes the audit start earning its keep again.
 		{"id": "hall_outer", "a": "entry_hall", "b": "outer_hall",
 			"gate": "", "built": true},
 		{"id": "outer_s3", "a": "outer_hall", "b": "s3_landing",

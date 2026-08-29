@@ -633,7 +633,7 @@ Only now, with the machinery green on the placeholder, write the real content.
 
 ### Task 9: Documentation and acceptance
 
-- [ ] `CLAUDE.md`: a new **`Hand-planned storeys`** subsection inside the existing
+- [x] `CLAUDE.md`: a new **`Hand-planned storeys`** subsection inside the existing
       tower block (after the `tower_interior.gd` paragraph at `:207`), in the same
       density and voice, carrying:
       - ASCII plans are the level editor; a designer edits `rows` and **nothing is
@@ -648,9 +648,19 @@ Only now, with the machinery green on the placeholder, write the real content.
         only and why;
       - `FLOOR_Y` and the ±1 visibility window finally biting at five storeys;
       - the `ponytail:` deferrals, honestly.
-- [ ] Update the `tower_selfcheck` and `tower_interior_selfcheck` lines in the Commands
+      (Done: `#### Hand-planned storeys — the ASCII plans are the level editor`,
+      inserted after the interior's bullet list and before the `tower_graph.gd`
+      paragraph — putting it *inside* the interior paragraph would have split that
+      paragraph from its own four bullets. All eight points are carried, with the
+      measured numbers.)
+- [x] Update the `tower_selfcheck` and `tower_interior_selfcheck` lines in the Commands
       block (`:70-105`) to mention the flood-fill and the per-storey loops.
-- [ ] Verify the bead's acceptance, item by item, and write the evidence into the PR body:
+      (Done. `tower_selfcheck` now names "the two things the graph walk CANNOT see" —
+      the per-storey grid flood-fill and the both-ways plan-room / gate-slot binding,
+      each with a negative control; `tower_interior_selfcheck` now says every geometry
+      check LOOPS OVER STOREYS off `FLOOR_Y` and `TowerPlans.floors()`, so a new plan
+      row is covered the day it lands.)
+- [x] Verify the bead's acceptance, item by item, and write the evidence into the PR body:
       - storeys 3–5 walkable from the existing upper landing by ramp — state the route
         (upper landing → phase-3 ramp → courtyard → rotor doorway → entry hall → keep
         doorway → annulus → grand ramp → storey 3 → storey 4 → storey 5), and that
@@ -666,7 +676,60 @@ Only now, with the machinery green on the placeholder, write the real content.
       - "a designer can add a storey with no builder edit" — demonstrate it: add a
         fourth throwaway storey row locally, watch the checks pass, then delete it and
         confirm `git status` is clean.
-- [ ] Every deliberate simplification carries a `ponytail:` comment with its ceiling and
+
+      **EVIDENCE, measured on this branch (2026-08-29):**
+
+      - **The route, every leg a ramp or an ungated doorway.** upper landing →
+        phase-3 ramp → courtyard → rotor doorway → entry hall → `hall_outer` →
+        annulus (`outer_hall`) → `outer_s3` grand ramp → storey 3 (`s3_landing`) →
+        `s3_s4` → storey 4 → `s4_s5` → storey 5. Every phase-14 edge carries
+        `"gate": ""`, so no leg asks for a hero, an item or a story flag.
+      - **`tower_selfcheck`** — `SELFCHECK OK`, exit 0, **0.386 s** wall clock
+        against the 30 s acceptance (the task-3 adjacency index is why a graph that
+        nearly tripled did not move the number). Counts:
+
+        ```
+        tower scars: 1 authored, 1 built into the interior
+        tower plans: 3 storeys, 28 rooms, 3220 cells walkable, ramps 29.6, 27.3, 27.3 deg
+        tower graph: 43 rooms, 47 edges, 8 gates, 2 entries, 2 scars — 15 subset walks clean
+        ```
+
+      - **`tower_interior_selfcheck` and `tower_shell_selfcheck`** — both
+        `SELFCHECK OK`. In fact **all 24 `scripts/*_selfcheck.gd` pass** (exit 0 AND
+        printed `SELFCHECK OK`, which is CI's real verdict), and
+        `godot --headless --path . scenes/main.tscn --quit-after 120` boots with no
+        error or warning.
+      - **Budgets, declared vs measured.** Per storey 39 / 43 / 47 boxes against
+        `PLAN_BOX_BUDGET` 90 (about one box per 24 walkable cells — a merge that is
+        working); `tower interior: 26 meshes drawn (budget 26) for 185 boxes`, i.e.
+        `DRAW_BUDGET` is EXACT, one `FloorNBatch` per plan storey and no second
+        surface. Keep boxes 56 (budget 60) and shell boxes 15 (budget 16) are
+        untouched by this phase.
+      - ⚠️ **Web spike measurement — NOT asserted, and stated honestly.**
+        `get_spike_summary()` needs a real frame loop and a real renderer; a headless
+        CI box has neither, so no frame-time claim is made here. What WAS asserted
+        instead, all statically: the exact draw count per storey (one mesh each), the
+        ±1 visibility window meaning **at most three** storey meshes render at once,
+        that no plan box casts a shadow, and that the whole interior is still ONE
+        `StaticBody3D`. **The F3 walk-through on a web build is an owner-side check**
+        and is not claimed as done.
+      - **"No builder edit" — demonstrated, and the demonstration corrected the
+        claim.** A throwaway sixth storey (one `STOREYS` row of 40 x 40 ASCII, one
+        landing + eight room rows and nine ungated edges in `TOWER_GRAPH`) was built
+        locally. `tower_selfcheck` went straight to `SELFCHECK OK` on
+        `4 storeys, 36 rooms, 4328 cells walkable, ramps 29.6, 27.3, 27.3, 14.5 deg`
+        and `52 rooms, 56 edges — 15 subset walks clean`, with **zero lines of
+        builder logic touched**. It cost exactly two DECLARED NUMBERS: one more
+        `FLOOR_Y` element (the new walking surface — data, and it has to be said once
+        somewhere) and `DRAW_BUDGET` 26 → 27, which
+        `tower_interior_selfcheck` **named itself** (`FAIL: the interior builds 27
+        meshes, over its declared DRAW_BUDGET of 26`) rather than leaving it to be
+        noticed. The throwaway was then removed and `git diff scripts/` is clean of
+        it. ➕ The header promise in `tower_plans.gd` and the CLAUDE.md bullet were
+        both amended from "NO BUILDER EDIT, EVER" to **"NO BUILDER LOGIC EDIT"**,
+        carrying those two measured numbers — the honest shape of the promise is
+        better documentation than the absolute one.
+- [x] Every deliberate simplification carries a `ponytail:` comment with its ceiling and
       upgrade path. The known ones:
       - storey 5 has no ceiling (open to the shell roof) until phase 16's storeys land;
       - `P` pads are geometry only until phase 17 brings the guards they would scare;
@@ -676,3 +739,11 @@ Only now, with the machinery green on the placeholder, write the real content.
         corner would need a second rect — X-axis-only ramps are what buys that;
       - the new storeys hang off ungated edges, so they add rooms to the 15-subset
         audit but no new route obligation; phase 15 is where that changes.
+      (All six are in. Three were already written by tasks 1-8 — storey 5's missing
+      ceiling at `tower_plans.gd:292`, the `P` pads at `tower_interior.gd:1600`, the
+      single-rectangle stairwell hole at `tower_interior.gd:1453`. This task added the
+      remaining three: `G` / `D` parsed-and-validated-but-inert on their character
+      consts in `tower_plans.gd`, and UNGATED as a named deferral on the phase-14 edge
+      block in `tower_graph.gd`, whose ceiling is that these rows grow the 15-subset
+      audit's SIZE without adding a route obligation — the walk gets longer, its
+      verdict cannot change.)

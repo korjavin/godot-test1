@@ -85,7 +85,11 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            acceptance walk for a spine door plus liberation, and
 #                            the custody scene DRIVEN (containment re-shuts earned
 #                            doors and stays shut, the right hero's pad releases it,
-#                            the scar's rubble is drawn AND solid AND permanent)
+#                            the scar's rubble is drawn AND solid AND permanent).
+#                            Every geometry check LOOPS OVER STOREYS off FLOOR_Y
+#                            and TowerPlans.floors(), so a new plan row is
+#                            covered the day it lands: per-storey box budget,
+#                            headroom, and the ramp flush at both ends
 #   capture_selfcheck        SYSTEMIC CAPTURE and the tower guard's setback: the
 #                            arming gate (pre/post the
 #                            authored beat), attribution (only a "hunt" row takes
@@ -103,8 +107,13 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            (spines at floor rank, no item custody, mutations
 #                            edge-additive + the sanctioned scar), all 15
 #                            free-hero subsets reaching a cell from every entry,
-#                            in every story-flag and scar state, and that every
-#                            authored scar is one the BUILDING can inflict
+#                            in every story-flag and scar state, that every
+#                            authored scar is one the BUILDING can inflict, and
+#                            — phase 14 — the two things the graph walk CANNOT
+#                            see: the per-storey GRID FLOOD-FILL (a doorway
+#                            typed as a wall passes every subset walk) and the
+#                            plan-room / gate-slot binding to TOWER_GRAPH rows,
+#                            both ways, each with a negative control
 
 bash scripts/mp_e2e.sh    # two-instance multiplayer e2e; needs go + godot on PATH
 ```
@@ -267,6 +276,63 @@ own, all pinned by `tower_interior_selfcheck`:
   scene's own clock, grant and entry set are stored **nowhere**, like the guards.
   Every scar is authored in `TowerGraph.scars` and picked by `next_scar()`; nothing
   computes a scar id, and `tower_selfcheck` fails a scar row no box implements.
+
+#### Hand-planned storeys — the ASCII plans are the level editor
+`scripts/tower_plans.gd` is a third const dict of plain dicts, and it is what a
+DESIGNER edits: one character per cell, `rows[r][c]` reading north to south the way you
+read a floor plan. **Nothing about a storey is generated, seeded or hashed** — the
+owner's "plan it once and forever" applies to the inside of the building as much as to
+its site, and a tower that moved between runs would mean the softlock audit certified a
+layout no player ever sees. Grep the file for `run_seed` / `randf` / `hash(` and there is
+nothing to find; keep it that way.
+
+- **The grid is 40 x 40 and `PLAN_CELL` is DERIVED** — `2 * PLAN_HALF / PLAN_GRID`, 1.94 m
+  — because 40 cells have to span exactly the shell's clear inner width. Round it to a
+  nice 2.0 and the plan's outer ring stops meeting the wall it is drawn against and every
+  storey grows a 0.8 m ledge nobody planned, on all four sides, forever. A corridor is two
+  cells (3.88 m); a small office is 4 x 5.
+- **THE EXTENSION RULE, which is what this phase is measured on: a new storey is one
+  `STOREYS` row plus its `TOWER_GRAPH` rows, and NO BUILDER LOGIC.** `tower_interior.gd`
+  walks whatever is in `STOREYS` — it knows about storeys, not about storey 3. The day
+  adding a floor needs a line of *code* in the builder, the format has failed and the
+  format is what should change. Measured on a throwaway sixth storey: those two rows plus
+  exactly two declared numbers moving — one more `FLOOR_Y` element and `DRAW_BUDGET`
+  26 → 27, one more storey mesh — and the self-check named the budget rather than leaving
+  it to be noticed.
+- **TWO audits, because neither can see what the other does.** `tower_selfcheck`'s graph
+  walk does not know a corridor exists — the graph says two rooms are joined, and only the
+  grid says the doorway between them was drawn, so one `.` typed as a `#` passes check 1
+  and all 15 subset walks while the floor is two sealed halves. Its **grid flood-fill**
+  (4-connected from the `s` landing, must reach every room cell, pad, post and gate slot)
+  is that half; it in turn does not know a `D` is passable, which is the graph's half. The
+  plan ↔ graph binding is checked **both ways** — every letter is a built room row, every
+  room id is claimed by exactly one storey — and every assertion has a negative control
+  driven on a deliberately broken *copy* of a shipped storey.
+- **Walls are 2-D run-length merged**, so a 40-cell wall is one box and not forty — which
+  matters because each box is also a `CollisionShape3D`, and the collision body is the one
+  thing in this building that is not batched. Measured: the three floors emit **39 / 43 /
+  47** boxes for 1108 / 1004 / 1108 walkable cells, one box per ~24 cells, against
+  `PLAN_BOX_BUDGET` 90. Draws are **26 (budget 26) for 185 boxes** — one `FloorNBatch` per
+  storey and no second surface anywhere. A plan whose walls stopped merging blows the box
+  budget on its first row.
+- **The ramp is derived, never authored.** `S` cells ARE the ramp (one solid rectangle,
+  long axis on X, `s` landing against one short end — which end is how the builder knows
+  which way it rises), and the stairwell hole in the slab above is computed from
+  `SLAB_THICK + PLAN_HEADROOM`, so "adjacent storeys' stair cells coincide" is true by
+  construction rather than by review. `PLAN_RAMP_MAX_SLOPE` is the phase-3 ramp's own
+  slope, so retuning the one ramp anyone has actually walked retunes the ceiling with it.
+  **X-axis only**: a ramp that turned a corner would need a second rectangle, and the
+  single rect is what buys the simple slab.
+- **`FLOOR_Y` is the one storey table**, and the upper entries are `KEEP_HEIGHT` plus a
+  count of the shell's `STOREY_HEIGHT` — a storey is never a number written down twice.
+  `_update_visibility`'s **±1 window finally bites at five storeys**: it hid nothing with
+  two and was written anyway, and neither it nor `_floor_visible` changed to get there.
+- **What is deliberately not here yet, all carrying `ponytail:` comments**: storey 5 has no
+  ceiling (open to the sealed roof, and a 4.6 m wall top is a metre over the jump apex, so
+  there is nothing to climb onto until storeys 6+ land); `P` pads are geometry with no
+  guards to scare; `G` posts and `D` gate slots are parsed and *validated* but spawn and
+  open nothing; and every new room hangs off an **ungated** edge, so this phase grows the
+  15-subset audit without adding a route obligation. Phases 15–17 are where each changes.
 
 `scripts/tower_graph.gd` is the tower's TOPOLOGY as one const dict of plain dicts —
 rooms, gated passages, entries, the mutation table, the enumerated scar states, the four

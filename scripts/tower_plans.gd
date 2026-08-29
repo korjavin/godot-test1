@@ -28,17 +28,23 @@ extends RefCounted
 ## THE EXTENSION RULE — what a new storey costs
 ## ============================================================================
 ##
-## TWO edits, and no third:
+## TWO authored edits, and no third:
 ##
 ##   1. one `STOREYS` row here (the ASCII plus its `rooms` / `gates` maps);
 ##   2. its `TOWER_GRAPH` room and edge rows, so the graph audit knows the space
 ##      exists and how it is entered.
 ##
-## **NO BUILDER EDIT, EVER.** `tower_interior.gd` walks whatever is in `STOREYS`;
-## it knows about storeys, not about storey 3. If adding a floor ever requires a
-## line in the builder, the format has failed and the format is what should change.
-## This paragraph is where that promise lives; `tower_interior_selfcheck` and
-## `tower_selfcheck` are what keep it honest.
+## **NO BUILDER LOGIC EDIT, EVER.** `tower_interior.gd` walks whatever is in
+## `STOREYS`; it knows about storeys, not about storey 3. If adding a floor ever
+## requires a line of CODE in the builder, the format has failed and the format is
+## what should change.
+##
+## MEASURED, not asserted: a throwaway sixth storey was built during phase 14 and
+## cost the two rows above plus exactly two DECLARED NUMBERS moving — one more
+## `FLOOR_Y` element (the new walking surface, which is data and has to be said
+## once somewhere) and `DRAW_BUDGET` 26 -> 27 (one more storey mesh). Zero lines of
+## builder logic, and the self-check named the budget itself rather than leaving it
+## to be noticed. That is the honest shape of the promise; both audits keep it.
 ##
 ## ============================================================================
 ## THE GRID
@@ -118,6 +124,11 @@ const FLOOR_CHAR: String = "."
 const STAIR_UP_CHAR: String = "S"
 const LANDING_CHAR: String = "s"
 const PAD_CHAR: String = "P"
+# ponytail: `G` and `D` are PARSED AND VALIDATED and build nothing. A post spawns no
+# guard (population is phase 17's) and a slot opens no gate (the riddles are phase
+# 15's), but both are bound to real rows by check 1 today, which is what stops one
+# being drawn on a plan and forgotten. Wiring is one arm each in `plan_boxes()` /
+# `_ready()` when those phases land; the format does not change to get there.
 const POST_CHAR: String = "G"
 const GATE_CHAR: String = "D"
 
