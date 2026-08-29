@@ -116,9 +116,14 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            authored scar is one the BUILDING can inflict, and
 #                            — phase 14 — the two things the graph walk CANNOT
 #                            see: the per-storey GRID FLOOD-FILL (a doorway
-#                            typed as a wall passes every subset walk) and the
+#                            typed as a wall passes every subset walk) — run
+#                            TWICE, the second time with every gate cell
+#                            treated as stone, which is the only thing that
+#                            binds an ungated graph row to the drawing — the
 #                            plan-room / gate-slot binding to TOWER_GRAPH rows,
-#                            both ways, each with a negative control
+#                            both ways, and that a RISING gate is drawn under a
+#                            wall and not over somebody's floor; each with a
+#                            negative control
 
 bash scripts/mp_e2e.sh    # two-instance multiplayer e2e; needs go + godot on PATH
 ```
@@ -331,19 +336,35 @@ The building is full to its sealed roof — ten floor indices, `FLOOR_Y[0..9]`:
   plan ↔ graph binding is checked **both ways** — every letter is a built room row, every
   room id is claimed by exactly one storey — and every assertion has a negative control
   driven on a deliberately broken *copy* of a shipped storey.
+  **The floor is then filled a SECOND time with every gate cell treated as stone**, which
+  is the only thing that binds a `gate: ""` row to the drawing: an ungated edge between two
+  of a storey's rooms must land them in one component (the labyrinth's route A, and what
+  makes "the spines walk the ungated circuit" a measurement rather than a claim), and a
+  GATED edge whose rooms are in one component anyway must be joined by an ungated path in
+  the graph, or the drawing offers a way *round* a door the audit models — which is what a
+  hole in the cell block's outer wall is, and neither of check 11's two sampled lines
+  crosses that wall since the block became an island in the muster floor.
 - **A storey's walls are as tall as ITS OWN clear height** (`plan_clear_height()`), not a
   constant: the top storey is short because the sealed roof is where it is, and a wall
   built to somebody else's height would either poke through that roof or leave a gap you
   can see the next floor through. The gate masses read the same function, so a mass on a
   short storey is a short mass.
+- **A gate mass has to have somewhere to GO, and the storey next door is not it.** A mass
+  fills its doorway floor to ceiling — that is what makes it a gate and not a hurdle — so
+  it leaves its own room the moment it moves. `_retire()` covers the OPEN end of the
+  travel; what it cannot cover is a riddle's per-step notch, which is only 0.9 m but
+  **stays** (nothing resets `_riddle_step` when you walk away) and the slab is 0.4 m. So a
+  RISING gate is drawn under a wall on the storey above, checked by `tower_selfcheck`
+  rather than left to luck — three of the four riddles satisfied it by accident and the
+  fourth stood in the middle of Teibi's cell.
 - **Walls are 2-D run-length merged**, so a 40-cell wall is one box and not forty — which
   matters because each box is also a `CollisionShape3D`, and the collision body is the one
   thing in this building that is not batched. Measured over the eight planned storeys:
-  **52 / 43 / 52 / 29 / 29 / 81 / 62 / 46** boxes against `PLAN_BOX_BUDGET` 120 (the two
-  maze floors are the 81 and the 62 — a one-cell maze legitimately produces many rects,
-  which is what that budget now guards). Mesh NODES are **35 (`DRAW_BUDGET` 35) for 421
+  **52 / 43 / 52 / 29 / 29 / 81 / 61 / 46** boxes against `PLAN_BOX_BUDGET` 120 (the two
+  maze floors are the 81 and the 61 — a one-cell maze legitimately produces many rects,
+  which is what that budget now guards). Mesh NODES are **35 (`DRAW_BUDGET` 35) for 420
   boxes** — one `FloorNBatch` per storey plus the parts that move — and the whole interior
-  is **348 collision shapes on one `StaticBody3D`** (ceiling 420, printed by check 5). A
+  is **347 collision shapes on one `StaticBody3D`** (ceiling 420, printed by check 5). A
   plan whose walls stopped merging blows the box budget on its first row. **`DRAW_BUDGET`
   counts nodes, not draws**: emissive is a material property, so a storey carrying a
   `GLOW_COLORS` box commits a second SURFACE in the same `ArrayMesh` and the engine

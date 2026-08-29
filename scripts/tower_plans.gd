@@ -685,10 +685,19 @@ const STOREYS: Array[Dictionary] = [
 	#
 	#   ROUTE B — behind `riddle_maze_upper`. South out of the landing into the
 	#   arrival pocket, past the pads at (21..22, 3..4) and through the mass at
-	#   (22, 5); south down column 22 to row 14; into the CORE at (22, 15) and out of
-	#   its south face at (22, 20); south down column 22 to row 27; east along row 27
-	#   to column 32; south down column 32 to row 33; and into the upper hall at
-	#   (32, 34). About 43 cells.
+	#   (20, 5); south down column 20 to row 8; east along row 8 to column 22; south
+	#   down column 22 to row 14; into the CORE at (22, 15) and out of its south face
+	#   at (22, 20); south down column 22 to row 27; east along row 27 to column 32;
+	#   south down column 32 to row 33; and into the upper hall at (32, 34). About 45
+	#   cells.
+	#
+	#   THE MASS IS AT COLUMN 20 AND NOT AT 22 BECAUSE OF THE FLOOR ABOVE IT. A
+	#   riddle's mass is floor to ceiling and lifts a notch per correct step, and a
+	#   part-entered lock stays lifted — so anything past the 0.4 m slab stands proud
+	#   of storey 10's walking surface. Column 22 at row 5 is the middle of Teibi's
+	#   cell; column 20 is the pier between two of them. `tower_selfcheck` check 9
+	#   now refuses a riddle drawn under a room, so this is a rule and not a
+	#   coincidence — the other three locks happened to satisfy it.
 	#
 	# NEITHER RIDDLE'S CLUE IS ON THIS FLOOR — both chambers are downstairs on storey
 	# 8, off its ungated circuit, so a player who took the long way up can still read
@@ -709,7 +718,7 @@ const STOREYS: Array[Dictionary] = [
 			"C": "s9_dead_gallery",
 		},
 		"gates": {
-			"22,5": "riddle_maze_upper",
+			"20,5": "riddle_maze_upper",
 			"21,3": "riddle_maze_upper", "22,3": "riddle_maze_upper",
 			"21,4": "riddle_maze_upper", "22,4": "riddle_maze_upper",
 		},
@@ -719,9 +728,9 @@ const STOREYS: Array[Dictionary] = [
 			"#.#############SSSSSs....#########.###.#",
 			"#.##################.12..#########.###.#",
 			"#.##################.34..#########.###.#",
-			"#.####################D###########.###.#",
-			"#.####################.###########.###.#",
-			"#.####################.###############.#",
+			"#.##################D#############.###.#",
+			"#.##################.#############.###.#",
+			"#.##################.#################.#",
 			"#......#####.................#CCCCCC##.#",
 			"#.####.#####.#########.#######CCCCCC##.#",
 			"#.####.#####.#########.#######CCCCCC...#",

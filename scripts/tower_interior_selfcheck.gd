@@ -1367,6 +1367,14 @@ func _check_gate_lifecycle() -> void:
 		if lock_shape == null or absf(lock_shape.position.y - lock.position.y) > EPS:
 			_fail("riddle '%s' opened only visually — its collision shape is still in the way"
 				% gid)
+		# ...and it is RETIRED at the end of the travel. A mass is as tall as its room,
+		# so a fully risen one is a floor-to-ceiling block standing in the storey above
+		# — see `_retire`. The spine doors' half of that is asserted at check 12; this
+		# is the riddles' half, and `_place_riddle` is the other caller.
+		if lock.visible or (lock_shape != null and not lock_shape.disabled):
+			_fail(("riddle '%s' finished its travel still drawn and solid — it is now a "
+				+ "%.1f m block standing in the storey above") % [
+					gid, TowerInterior.riddle_travel(lock)])
 		# ...and a sequence COMPLETED BUT NEVER RECORDED starts again from the top
 		# instead of indexing past its own answer. That is not hypothetical: the
 		# open state lives on the shell, so an interior built with no tower over it
@@ -1380,6 +1388,28 @@ func _check_gate_lifecycle() -> void:
 			_fail(("riddle '%s' did not restart a completed-but-unrecorded sequence — it read "
 				+ "step %d of a %d-step answer") % [
 					gid, int(interior._riddle_step[gid]), answer.size()])
+
+	# (h) THE LIFT STOP, phase 16. Everything else about it is structural — one
+	# `Area3D`, on the right storey, at the right height — and a trigger wired to
+	# the wrong id, or to nothing, is all of those things. So stand on it: the
+	# entry the graph names has to end up in the opened set, and a body that is not
+	# the local player must not put it there (the shell filters the doorway; this
+	# volume filters itself, and the two are different code).
+	var stop_area := interior.find_child("LiftStopTrigger", true, false) as Area3D
+	if TowerInterior.lift_stop_floor() >= 0:
+		if stop_area == null:
+			_fail("a storey carries the lift stop's landing but no LiftStopTrigger to stand on")
+		else:
+			var passer := Node3D.new()
+			interior._on_lift_stop_enter(passer)
+			passer.free()
+			if shell.is_opened(TowerGraph.ENTRY_LIFT_MAZE):
+				_fail("the lift stop armed for a body that is not in group \"player\"")
+			hero.global_position = stop_area.global_position
+			await _settle_physics()
+			if not shell.is_opened(TowerGraph.ENTRY_LIFT_MAZE):
+				_fail(("standing on the lift stop did not record '%s' — the trigger is wired "
+					+ "to nothing the graph names") % TowerGraph.ENTRY_LIFT_MAZE)
 
 	# And a rotor bar still costs a life, which is the challenge space's whole stake.
 	var hazard := interior.find_child("RotorBarLowHazard", true, false) as Area3D
@@ -1490,6 +1520,12 @@ func _check_opened_state_is_reapplied() -> void:
 		if riddle_shape == null or absf(riddle_shape.position.y - mesh.position.y) > EPS:
 			_fail("a pre-opened tower left riddle '%s' with its collision shape in the doorway"
 				% gid2)
+		# `_apply_opened()` snaps a loaded save straight to 1.0, which is the case
+		# `_retire` says matters: on this path the mass is never drawn travelling, so
+		# a miss here is a solid block in the room above from the moment you walk in.
+		if mesh.visible or (riddle_shape != null and not riddle_shape.disabled):
+			_fail(("a pre-opened tower left riddle '%s' drawn and solid a storey up — "
+				+ "the load path never retired it") % gid2)
 
 	# The set itself is monotone and idempotent — phase 5 merges these with a union.
 	shell.mark_opened(TowerInterior.GATE_DEMAND)
