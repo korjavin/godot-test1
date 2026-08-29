@@ -1400,6 +1400,18 @@ func _check_the_wing_has_no_way_round_it() -> void:
 	if press.is_empty():
 		_fail("the maintenance crawl has no press — the challenge gate is decorative")
 		return
+	# WHERE it is, before HOW it moves. Check 5 only asserts the mesh agrees with
+	# its own table row, so a row nudged sideways builds a press in the middle of a
+	# wall and satisfies every assertion about itself.
+	var press_half: Vector3 = press["size"] * 0.5
+	if press["pos"].x - press_half.x < TowerInterior.CRAWL_X0 - EPS \
+			or press["pos"].x + press_half.x > TowerInterior.CRAWL_X1 + EPS:
+		_fail("the press spans x = %.2f .. %.2f but the crawl doorway is %.2f .. %.2f — it stamps a wall" % [
+			press["pos"].x - press_half.x, press["pos"].x + press_half.x,
+			TowerInterior.CRAWL_X0, TowerInterior.CRAWL_X1])
+	if not is_equal_approx(press["pos"].z, TowerInterior.WING_Z):
+		_fail("the press stands at z = %.2f, not on the wing wall at z = %.2f" % [
+			press["pos"].z, TowerInterior.WING_Z])
 	var half_h: float = press["size"].y * 0.5
 	if TowerInterior.PRESS_BOTTOM - half_h > EPS:
 		_fail("the press bottoms out %.2f m off the floor — you can walk under it and the crawl asks nothing" % (
@@ -1571,6 +1583,7 @@ func _check_spines_and_liberation() -> void:
 
 	# (e) an empty cell writes nothing
 	var before: Array = shell.opened_ids()
+	var freed_before: Array = hero_body.freed.duplicate()
 	var other := "teibi" if TowerInterior.AUTHORED_CAPTIVE != "teibi" else "phoboman"
 	var empty_area := interior.get_node_or_null("Floor0/CellTrigger%s" % other.capitalize()) as Area3D
 	hero_body.global_position = cell_area.global_position + Vector3(0.0, 0.0, -30.0)
@@ -1580,8 +1593,9 @@ func _check_spines_and_liberation() -> void:
 	if shell.opened_ids() != before:
 		_fail("walking into an empty cell changed the tower's opened set: %s -> %s" % [
 			before, shell.opened_ids()])
-	if hero_body.freed.size() != 1:
-		_fail("walking into an empty cell freed somebody: %s" % [hero_body.freed])
+	if hero_body.freed != freed_before:
+		_fail("walking into an empty cell freed somebody: %s became %s" % [
+			freed_before, hero_body.freed])
 
 	# (g) phase 9's seam, on this same tower: put somebody back in and free him.
 	interior.set_captive(other, true)
