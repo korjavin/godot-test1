@@ -438,7 +438,7 @@ godot --headless --path . --script res://scripts/<name>.gd
 
 ---
 
-### Task 1 — the floor table, the clear-height rule, and storeys 6 and 7
+### Task 1: the floor table, the clear-height rule, and storeys 6 and 7
 
 **Scope:** `tower_interior.gd`, `tower_plans.gd`, `tower_graph.gd`,
 `tower_interior_selfcheck.gd`. **Not** the maze, **not** the cell block.
@@ -471,7 +471,7 @@ godot --headless --path . --script res://scripts/<name>.gd
 
 ---
 
-### Task 2 — the labyrinth, storeys 8 and 9
+### Task 2: the labyrinth, storeys 8 and 9
 
 **Scope:** `tower_plans.gd`, `tower_graph.gd`, and budget constants.
 
@@ -501,7 +501,7 @@ godot --headless --path . --script res://scripts/<name>.gd
 
 ---
 
-### Task 3 — the cell block moves to storey 10
+### Task 3: the cell block moves to storey 10
 
 The big one. **Scope:** everything in the file list.
 
@@ -537,7 +537,7 @@ The big one. **Scope:** everything in the file list.
 
 ---
 
-### Task 4 — the lift stop, the visibility and budget assertions, the docs
+### Task 4: the lift stop, the visibility and budget assertions, the docs
 
 1. **D9:** the entry, edge, quest and mutation rows, plus the `LiftStopTrigger`
    `Area3D` and its `_open("lift_stop_maze")`. No menu.
