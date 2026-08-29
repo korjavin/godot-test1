@@ -116,9 +116,14 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            authored scar is one the BUILDING can inflict, and
 #                            — phase 14 — the two things the graph walk CANNOT
 #                            see: the per-storey GRID FLOOD-FILL (a doorway
-#                            typed as a wall passes every subset walk) and the
+#                            typed as a wall passes every subset walk) — run
+#                            TWICE, the second time with every gate cell
+#                            treated as stone, which is the only thing that
+#                            binds an ungated graph row to the drawing — the
 #                            plan-room / gate-slot binding to TOWER_GRAPH rows,
-#                            both ways, each with a negative control
+#                            both ways, and that a RISING gate is drawn under a
+#                            wall and not over somebody's floor; each with a
+#                            negative control
 
 bash scripts/mp_e2e.sh    # two-instance multiplayer e2e; needs go + godot on PATH
 ```
@@ -218,8 +223,9 @@ precedent) so chunk unloading can never free the building you are standing in. T
 shell is instanced lazily on a chunk-boundary crossing and **shares `TOWER_RADIUS`**
 rather than restating any distance of its own. `tower_shell_selfcheck` pins all of it.
 
-`scripts/tower_interior.gd` is the same idea one floor in: a second box table for two
-storeys, a ramp, a challenge space, two gates and the CELL BLOCK WING, assembled onto the
+`scripts/tower_interior.gd` is the same idea one floor in: a second box table for the
+two-storey keep, plus eight hand-planned storeys over it (see below) rising to the CELL
+BLOCK under the sealed roof, assembled onto the
 shell by
 `endless_terrain` (one direction only — the interior reads the shell's constants, so a
 shell that knew about the interior would be a cyclic `class_name`). Four rules of its
@@ -236,16 +242,20 @@ own, all pinned by `tower_interior_selfcheck`:
 - **Static interior geometry is ONE batched mesh per storey and casts no shadow.** Both
   were measured, both are invisible, and together they are the difference between the
   interior costing 4 ms a frame and costing nothing measurable.
-- **The cell block wing is the tower's destination**: a service corridor with two ways in
-  (an ungated door to the courtyard, a press-guarded crawl from the hall), FOUR identity
+- **The cell block is the tower's destination, and since phase 16 it is on STOREY 10** —
+  drawn on the plan grid like every other storey, not on a box table of its own, with
+  only its hand-built parts (the press, the frames, the scar's rubble) placed from
+  `plan_room_rect()`. A service corridor with two ways in (an ungated door off the muster
+  floor, a press-guarded crawl), FOUR identity
   doors in one wall — one rescue spine per hero, the hero read from `TowerGraph` and never
   restated — and four UNIFORM cells off a gallery. Liberation is walking into an occupied
   cell and asks nobody's name; the captive set lives on the interior and is per-run, while
   the single authored first rescue joins the persisted opened set (so the staging in
   Primm's cell is gone for good and nothing else is). `set_captive()` is the seam
-  systemic capture drives. **A room under the 4.2 m slab has nowhere for a mass to
-  rise**, so these four sink — the one axis of the gate language the geometry took away,
-  argued at `WING_Z`.
+  systemic capture drives. **A room under a slab has nowhere for a mass to rise**, so
+  these four sink — the one axis of the gate language the geometry took away. **Its graph
+  room ids and every gate and scar id are phase 8's, spelled exactly as phase 8 spelled
+  them** — moving geometry is not a save migration, renaming an id is.
 - **THREE KINDS OF TOWER STATE, THREE HOMES — and the guards' home is nowhere.** Opened
   gates are a monotone union set on the shell; the captive set is per-run and
   deliberately outside it (non-monotone); the GUARDS are never persisted by anybody, and
@@ -289,7 +299,20 @@ read a floor plan. **Nothing about a storey is generated, seeded or hashed** —
 owner's "plan it once and forever" applies to the inside of the building as much as to
 its site, and a tower that moved between runs would mean the softlock audit certified a
 layout no player ever sees. Grep the file for `run_seed` / `randf` / `hash(` and there is
-nothing to find; keep it that way.
+nothing to find; keep it that way. **The plan text IS the design record** — each storey's
+comment block and `note` carry what the floor is and, for the labyrinth, the solution
+path written out cell by cell. A future author edits the text, because there is no seed
+to reroll.
+
+The building is full to its sealed roof — ten floor indices, `FLOOR_Y[0..9]`:
+
+| floor | storey | what it is |
+|---|---|---|
+| 0–1 | keep | entry hall + courtyard + the 80 m annulus; the mezzanine landing |
+| 2–4 | 3–5 | the phase-14 office storeys (records, accounts, executive) |
+| 5–6 | 6–7 | operations and security |
+| 7–8 | 8–9 | **the labyrinth** |
+| 9 | 10 | **the cell block**, under the sealed roof |
 
 - **The grid is 40 x 40 and `PLAN_CELL` is DERIVED** — `2 * PLAN_HALF / PLAN_GRID`, 1.94 m
   — because 40 cells have to span exactly the shell's clear inner width. Round it to a
@@ -309,17 +332,57 @@ nothing to find; keep it that way.
   grid says the doorway between them was drawn, so one `.` typed as a `#` passes check 1
   and all 15 subset walks while the floor is two sealed halves. Its **grid flood-fill**
   (4-connected from the `s` landing, must reach every room cell, pad, post and gate slot)
-  is that half; it in turn does not know a `D` is passable, which is the graph's half. The
+  is that half; it in turn does not know a `D` is passable, which is the graph's half. Both
+  fills refuse to step **sideways off an `S` lane**, which is the one piece of height in a
+  flat grid — the deck descends a whole storey along the lane, so only the `s` landing at
+  its head is flush with the floor. The
   plan ↔ graph binding is checked **both ways** — every letter is a built room row, every
-  room id is claimed by exactly one storey — and every assertion has a negative control
+  room id is claimed by exactly one storey, and every built room is drawn by SOME storey
+  bar the keep's own (a room no plan draws has no cells, so the gates-shut pass silently
+  skips every edge it carries) — and every assertion has a negative control
   driven on a deliberately broken *copy* of a shipped storey.
+  **The floor is then filled a SECOND time with every gate cell treated as stone**, which
+  is the only thing that binds a `gate: ""` row to the drawing: an ungated edge between two
+  of a storey's rooms must land them in one component (the labyrinth's route A, and what
+  makes "the spines walk the ungated circuit" a measurement rather than a claim), and a
+  GATED edge whose rooms are in one component anyway must be joined by an ungated path in
+  the graph, or the drawing offers a way *round* a door the audit models — which is what a
+  hole in the cell block's outer wall is, and neither of check 11's two sampled lines
+  crosses that wall since the block became an island in the muster floor.
+- **A storey's walls are as tall as ITS OWN clear height** (`plan_clear_height()`), not a
+  constant: the top storey is short because the sealed roof is where it is, and a wall
+  built to somebody else's height would either poke through that roof or leave a gap you
+  can see the next floor through. The gate masses read the same function, so a mass on a
+  short storey is a short mass.
+- **A gate mass has to have somewhere to GO, and the storey next door is not it.** A mass
+  fills its doorway floor to ceiling — that is what makes it a gate and not a hurdle — so
+  it leaves its own room the moment it moves. `_retire()` covers the OPEN end of the
+  travel; what it cannot cover is a riddle's per-step notch, which is only 0.9 m but
+  **stays** (nothing resets `_riddle_step` when you walk away) and the slab is 0.4 m. So a
+  RISING gate is drawn under a wall on the storey above, checked by `tower_selfcheck`
+  rather than left to luck — three of the four riddles satisfied it by accident and the
+  fourth stood in the middle of Teibi's cell.
 - **Walls are 2-D run-length merged**, so a 40-cell wall is one box and not forty — which
   matters because each box is also a `CollisionShape3D`, and the collision body is the one
-  thing in this building that is not batched. Measured: the three floors emit **39 / 43 /
-  47** boxes for 1108 / 1004 / 1108 walkable cells, one box per ~24 cells, against
-  `PLAN_BOX_BUDGET` 90. Draws are **26 (budget 26) for 185 boxes** — one `FloorNBatch` per
-  storey and no second surface anywhere. A plan whose walls stopped merging blows the box
-  budget on its first row.
+  thing in this building that is not batched. Measured over the eight planned storeys:
+  **52 / 43 / 52 / 29 / 29 / 81 / 61 / 46** boxes against `PLAN_BOX_BUDGET` 120 (the two
+  maze floors are the 81 and the 61 — a one-cell maze legitimately produces many rects,
+  which is what that budget now guards). Mesh NODES are **35 (`DRAW_BUDGET` 35) for 420
+  boxes** — one `FloorNBatch` per storey plus the parts that move — and the whole interior
+  is **347 collision shapes on one `StaticBody3D`** (ceiling 420, printed by check 5). A
+  plan whose walls stopped merging blows the box budget on its first row. **`DRAW_BUDGET`
+  counts nodes, not draws**: emissive is a material property, so a storey carrying a
+  `GLOW_COLORS` box commits a second SURFACE in the same `ArrayMesh` and the engine
+  submits one draw per surface. Floors 0, 1 and 9 glow (the keep and the cell block),
+  so the interior is 13 batch
+  surfaces + 25 own-node meshes = **38 real draws**. Read the number as "nothing left the
+  batch", not as a draw count.
+- **The labyrinth's rule is TWO ROUTES, and the spines walk the ungated one.** Each maze
+  storey has an outer circuit that asks nothing of anybody (route A) and a short way
+  through the core behind a riddle gate (route B). Check 3 walks every spine with an EMPTY
+  solved set, so a riddle on a spine fails the build — that is what forces the second
+  route to exist, and why both riddles' clue chambers are dead ends off storey 8's
+  circuit.
 - **The ramp is derived, never authored.** `S` cells ARE the ramp (one solid rectangle,
   long axis on X, `s` landing against one short end — which end is how the builder knows
   which way it rises), and the stairwell hole in the slab above is computed from
@@ -336,14 +399,17 @@ nothing to find; keep it that way.
   runs straight past it to floor 2's slab, which is its ceiling two indices away. Index
   distance hid that ceiling while it was solid, and hid the grand ramp from the head of
   the grand ramp. Adjacency is now the table, `_floor_visible` reads it, and the check
-  asserts the relation's properties (symmetric, reflexive, ≤ 4 storeys drawn) plus this
-  building's own touching/not-touching pairs — never the table read back to itself.
-- **What is deliberately not here yet, all carrying `ponytail:` comments**: storey 5 has no
-  ceiling (open to the sealed roof, and a 4.6 m wall top is a metre over the jump apex, so
-  there is nothing to climb onto until storeys 6+ land); `P` pads are geometry with no
-  guards to scare; `G` posts and `D` gate slots are parsed and *validated* but spawn and
-  open nothing; and every new room hangs off an **ungated** edge, so this phase grows the
-  15-subset audit without adding a route obligation. Phases 15–17 are where each changes.
+  asserts the relation's properties (symmetric, reflexive, at most three storeys drawn —
+  floor 2, whose slab caps both the annulus and the keep, is the one four) plus this
+  building's own touching/not-touching pairs — never the table read back to itself. **The
+  cell block is hidden from every storey more than one below it**, and walking up the
+  building rebuilds nothing: the window is one boolean write per floor, driven storey by
+  storey in check 9.
+- **What is deliberately not here yet, all carrying `ponytail:` comments**: `P` pads are
+  geometry with no guards to scare (phase 17 owns population); `G` posts spawn nothing;
+  and the storey-8 **lift stop** ships its trigger and its graph rows but no menu to
+  choose it from — that is bead `godot-test1-3iy.7`. The entry is audited from anyway, so
+  the 15-subset property already holds starting at the labyrinth's foot.
 
 `scripts/tower_graph.gd` is the tower's TOPOLOGY as one const dict of plain dicts —
 rooms, gated passages, entries, the mutation table, the enumerated scar states, the four

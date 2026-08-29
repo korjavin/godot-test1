@@ -83,11 +83,15 @@ const WALL_HEIGHT: float = STOREY_HEIGHT * STOREYS
 ## THE INNER KEEP: the phase-3 building, preserved inside the phase-13 envelope.
 ##
 ## IT IS HERE BECAUSE A FLOOR PLAN IS MADE OF WALLS, AND HALF OF THIS ONE'S WERE
-## THE SHELL'S. `TowerInterior`'s rotor posts, vault, spine wall and cell
-## partitions all run to the shell's inner faces and are closed by them; move those
-## faces 30 m out and the plan stops being a plan — you stroll round the end of the
-## spine wall and into a cell from behind, past every identity gate in the wing.
-## (Found by codex review, 2026-08-29, on the first cut of this phase.)
+## THE SHELL'S. `TowerInterior`'s rotor posts and vault run to the shell's inner
+## faces and are closed by them; move those faces 30 m out and the plan stops being
+## a plan — the hall's furniture stands in the middle of an 80 m room with nothing
+## round it. (Found by codex review, 2026-08-29, on the first cut of this phase:
+## the cell block was in here then, and a stretched keep let you stroll round the
+## end of its spine wall. Phase 16 REDREW that block on the plan grid, where the
+## walls are cells and no width is authored at all, so the failure it found can no
+## longer be spelled — but the keep's own rooms are still authored against these
+## faces, and that is why they stay.)
 ##
 ## So the 20 m keep those rooms were authored against stays exactly where it was,
 ## now as a structure standing inside a much larger hall, and the interior derives
