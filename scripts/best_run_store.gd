@@ -128,12 +128,19 @@ const CONFIG_PROGRESSION_SECTION: String = "progression"
 ## the progression one has one: it is legible in the file, and deleting it by
 ## hand resets the tower without touching a best run or a level.
 ##
-## `ponytail:` THE PER-WORLD SAVE MODEL IS A SEPARATE, LARGER EPIC (the tower
-## epic godot-test1-3iy's session-03 identified it; New Game behaviour is
-## explicitly out of scope here). It slots in AROUND this record without touching
-## the set semantics: a save id becomes a second key in this section, or a
-## section suffix, and each save gets its own union-merged set. Nothing below
-## needs to know that happened.
+## `ponytail:` THE PER-WORLD SAVE MODEL IS A SEPARATE, LARGER EPIC — session-03
+## of the tower epic (godot-test1-3iy) identified it, and NEW GAME BEHAVIOUR IS
+## EXPLICITLY OUT OF SCOPE HERE. So today there is exactly one record and
+## `endless_terrain.new_run()` does not clear it: a new run moves the tower's
+## SITE and rebuilds the shell, and the rebuilt shell hydrates the same earned
+## set — deliberately, and on the same footing as the meta-progression counters
+## above, which are run-independent for the same reason.
+##
+## The epic slots in AROUND this record without touching the set semantics: a
+## save id becomes a second key in this section, or a section suffix, and each
+## save gets its own union-merged set. Nothing below needs to know that happened
+## — which is the point of putting the whole thing in one section behind two
+## functions.
 const CONFIG_TOWER_SECTION: String = "tower"
 const CONFIG_TOWER_KEY: String = "opened_ids"
 
