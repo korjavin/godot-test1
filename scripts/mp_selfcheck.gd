@@ -2203,6 +2203,17 @@ func _check_captive_set() -> String:
 		return "a liberation that arrived BEFORE the capture it undoes was dropped, and the "\
 			+ "stale capture behind it stuck — teibi is now in a cell nobody can open"
 
+	# ...and the SNAPSHOT honours the same guard. A joiner can hear the rescuer's
+	# release before the master's picture of the room reaches it, and importing over
+	# that would resurrect a capture every incumbent has already forgotten — on the
+	# one peer with no way to notice.
+	var stale: Dictionary = base.duplicate()
+	stale["cap"] = ["teibi"]
+	fresh._receive_state("themaster", MPManager.decode_state(stale))
+	if fresh.is_hero_captive("teibi"):
+		return "the master's snapshot resurrected a hero the room had already freed — the "\
+			+ "replay path skips the release guard the live verb goes through"
+
 	# --- 12. entering a room resets the local mirror to the ROOM's.
 	#
 	# `join()` unwinds through `leave()`, which deliberately leaves the player's own

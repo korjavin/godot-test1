@@ -2766,11 +2766,16 @@ func _tick_custody(delta: float) -> void:
 		_end_custody_protocol(false)
 
 
-func _end_custody_protocol(survived: bool) -> void:
+func _end_custody_protocol(survived: bool, record: bool = true) -> void:
 	"""
-	Close the scene on its outcome. The one exit, both ways.
+	Close the scene on its outcome. The one exit, every way.
 
 	@param survived: true when a hero was freed before the recall completed.
+	@param record: false when the scene did not END so much as get OVERTAKEN —
+	    today only by the room running out of hearts under it (bead
+	    godot-test1-3iy.10). Nothing is written and no ending is raised: the caller
+	    owns both, because the outcome was decided somewhere else. Every other
+	    caller takes the default and behaves exactly as it always has.
 
 	THE OUTCOME IS WRITTEN FIRST, before a single line of scene teardown, and it is
 	the ONLY thing written: a survived protocol records the scar and nothing else, a
@@ -2780,10 +2785,11 @@ func _end_custody_protocol(survived: bool) -> void:
 	a scarless success. The bead's landmine, closed by having ONE record instead of
 	by coordinating two.
 	"""
-	if survived:
-		_apply_custody_scar()
-	else:
-		BestRunStore.archive_world()
+	if record:
+		if survived:
+			_apply_custody_scar()
+		else:
+			BestRunStore.archive_world()
 
 	custody_protocol_active = false
 	custody_timer = 0.0
@@ -2811,6 +2817,10 @@ func _end_custody_protocol(survived: bool) -> void:
 			interior.call("set_captive", hero, captive_heroes.has(hero))
 
 	if not survived:
+		if not record:
+			# Overtaken, not lost: the building has been put back and the roster
+			# restored above, and the ending is the CALLER's to raise.
+			return
 		print("The recall completed. The world is archived.")
 		_trigger_game_over()
 		return
@@ -3724,18 +3734,31 @@ func _check_shared_game_over() -> void:
 	re-tested anyway, cheaply, because "the caller is past the guards" is exactly
 	the kind of invariant a later edit breaks silently.
 	"""
-	# ...and never over the full-custody break-out. Inside that scene the SCENE owns
-	# the outcome — losing the last heart there is a failure it decides itself, in
-	# `_tick_custody()`, and archives the world for. A room-wide game over raised
-	# from here would leave a protocol still running behind the ending screen and
-	# archive the world a moment later on the recall clock instead.
-	if lives > 0 or is_game_over or is_caught or custody_protocol_active:
+	if lives > 0 or is_game_over or is_caught:
 		return
 	var mp := _mp()
 	if mp == null or not mp.has_method("shared_lives_spent"):
 		return
 	if mp.shared_lives_spent(own_lives_spent) == null:
 		return  # Manager present but no room: solo semantics, untouched.
+	# THE ROOM'S HEARTS OUTRANK A RUNNING BREAK-OUT, which is the same order
+	# `_on_caught_finished()` tests them in ("the protocol is not a way to dodge an
+	# ordinary game over") and it has to hold across the ROOM as well as inside one
+	# peer. The grab that takes the last hero can also take the last hero-body: the
+	# captor reaches game over through the hearts clause, while every other peer
+	# hears only the `cap` packet and opens the break-out — and a flag that merely
+	# suppressed this function would leave the room split between an ending screen
+	# and a scene, permanently.
+	#
+	# CLOSED WITHOUT AN OUTCOME (`record` false). The scene was overtaken rather
+	# than lost: the world is not archived by a heart the room spent somewhere else,
+	# no scar is earned, and the ending raised below is the same ordinary game over
+	# the bitten peer took. The teardown still runs, so containment comes down and
+	# the captive filter is restored — which is what bead godot-test1-3iy.11's guard
+	# was really protecting, and it is protected better by ending the scene than by
+	# leaving it running behind a screen.
+	if custody_protocol_active:
+		_end_custody_protocol(false, false)
 	print("💀 The room is out of hearts — the run is over for everyone.")
 	_trigger_game_over()
 

@@ -188,6 +188,16 @@ class RoomStub extends Node:
 		flees.append([origin, duration, radius, tracks_player])
 		return true
 
+	## The one shared-total query `_check_shared_game_over()` gates on. `null` is
+	## the real manager's "no room" answer and is the default here, so every check
+	## that does not set it keeps solo semantics — deliberately NOT `shared_bank`,
+	## which would put `_refresh_shared_totals()` in charge of `lives` and overwrite
+	## the very number these checks set by hand.
+	var shared_spent: Variant = null
+
+	func shared_lives_spent(_own: int) -> Variant:
+		return shared_spent
+
 
 ## A terrain that answers exactly one question: where the building stands. The
 ## prison role marches the benched player there through the same `"terrain"` group
@@ -1369,6 +1379,12 @@ func _check_reassign_first_imprison_last() -> void:
 	      LATER ends it through the tick's own retry, which is the half of
 	      "reassign first" that only exists after the bench; and a prisoner may free
 	      a CELLMATE but never themselves.
+	  (f) THE ROOM'S HEARTS OUTRANK A RUNNING BREAK-OUT. The grab that empties the
+	      roster can also spend the room's last shared heart: the peer that was
+	      bitten ends on the hearts clause, while every other peer hears only the
+	      `cap` packet and opens the scene. So the shared game over has to be able
+	      to CLOSE a running protocol — and to close it without archiving the world
+	      or taking a scar, because the scene was overtaken and not lost.
 	  (e) THE ENDING, from both sides. The grab that takes the room's LAST hero
 	      still costs its heart and gets its full freeze — the bench tick polls at
 	      0.5 s and the freeze runs 0.55 s, so a tick that did not stand aside for
@@ -1626,6 +1642,37 @@ func _check_reassign_first_imprison_last() -> void:
 	player.custody_protocol_active = false
 	_clear(player)
 	await process_frame
+
+	# ---- (f) the room's hearts outrank a running break-out -----------------
+	_fresh_store()
+	_beat_done()
+	room.held = "phoboman"
+	room.hand = [last_index] as Array[int]
+	player = await _make_player()
+	player.set_active_character(last_index)
+	await _drive_into_custody(player)
+	if not player.in_custody_protocol():
+		_fail("the overtake case could not open a protocol, so it proves nothing")
+	# The room's hearts are gone — the same state the peer who was actually bitten
+	# reached — and this peer was not the one bitten. `shared_spent` non-null is
+	# what makes this a ROOM rather than solo play, which is the gate the function
+	# under test uses.
+	room.shared_spent = 3
+	player.lives = 0
+	player.is_caught = false
+	player.call("_check_shared_game_over")
+	if player.in_custody_protocol():
+		_fail("the room ran out of hearts and this peer stayed in the break-out — the room "
+			+ "is now split between an ending screen and a scene, permanently")
+	if not player.is_game_over:
+		_fail("the room ran out of hearts under the break-out and no ending was raised")
+	if BestRunStore.world_archived():
+		_fail("a heart the room spent somewhere else archived this world — the scene was "
+			+ "overtaken, not lost, and only losing it ends the campaign")
+	room.shared_spent = null
+	_clear(player)
+	await process_frame
+	_fresh_store()
 
 	# ---- (e2) the world-level ending, on a peer nothing ever bit -----------
 	room.held = "windman"

@@ -2649,6 +2649,14 @@ func _receive_state(from: String, snapshot: Dictionary) -> void:
 			var name: String = String(hero)
 			if not _pool.has(name) or _captives.has(name):
 				continue
+			# THE SAME RELEASE GUARD THE LIVE VERB USES, and for the same reason one
+			# step further out: a snapshot is a picture of the master's set when the
+			# joiner arrived, and the rescuer's `cap` release can reach the joiner
+			# first. Importing over it would resurrect a capture the whole room has
+			# already forgotten, on the one peer that cannot tell.
+			if Time.get_ticks_msec() - int(_released_msec.get(name, -RELEASE_GRACE_MSEC)) \
+					< RELEASE_GRACE_MSEC:
+				continue
 			_captives[name] = true
 			_captive_changed(name, true)
 	# The snapshot may be the last thing the placement was waiting on (the seed
