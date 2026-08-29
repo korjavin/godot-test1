@@ -1543,6 +1543,18 @@ func _pay_guard_setback(fraction: float) -> void:
 	displayed figure so the HUD moves on the frame the hit lands rather than on the
 	next shared recompute.
 
+	ponytail: IN A ROOM the shared heart count is derived from the shared bank
+	(`shared_lives(own_coins, own_lives_spent)`), so a setback that docks this peer
+	across an EXTRA_LIFE_COINS boundary costs the ROOM a heart — which is the one
+	way the "no life" half of the ruling can be bent, and only in a room, only at
+	the tower, only on a threshold. Left as it is deliberately: the tower's
+	multiplayer half is bead godot-test1-3iy.10, the fix belongs with the rest of
+	that arbitration, and the alternatives available inside this bead are worse
+	(docking only the displayed figure makes the setback invisible in a room, since
+	the next shared recompute overwrites it; capping the loss at the threshold makes
+	the arithmetic two arithmetics). Solo, `lives` is only ever incremented at a
+	threshold and never recomputed from the bank, so nothing here can touch it.
+
 	`next_extra_life_at` IS DELIBERATELY LEFT WHERE IT IS. It only ever advances,
 	so re-earning coins you were docked cannot re-award a heart you already have —
 	the threshold you already crossed is behind you. What it does mean is that a

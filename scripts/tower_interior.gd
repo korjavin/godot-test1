@@ -654,11 +654,20 @@ const GUARD_SPAWN_LIFT: float = 0.4
 ## THE POSTS. Three of them, which is the top of the owner's "few guards" band,
 ## and each one is a beat the route already had:
 ##
-##   HALL      — you are barely inside and something is already walking. Placed
-##               deep enough (6.8 m from the doorway, against a 6.5 m detection
-##               radius) that stepping through the door does not itself trip it.
+##   HALL      — you are barely inside and something is already walking. The POST
+##               is 6.8 m from the doorway, against a 6.5 m detection radius, so
+##               the guard is not looking at you the instant you step through; its
+##               patrol box does bring it closer, which is the intended tension
+##               rather than an oversight — a hall guard you can never meet at the
+##               door is scenery.
 ##   COURTYARD — the open middle, between the rotor gate and the foot of the ramp.
 ##   UPPER     — the approach to the identity gate, WEST of the secure partition.
+##
+## NONE OF THEM CAN BLOCK A ROUTE, which is what keeps the softlock audit
+## (`tower_selfcheck`) true with guards in the building: the player is collision
+## mask 1 and walks THROUGH a predator (CLAUDE.md), so a guard standing in a
+## doorway is a threat and never a wall. That is also why a guard needs no entry in
+## `TowerGraph` — it gates nothing.
 ##
 ## `patrol_center` / `patrol_half` is the box `set_confinement()` pins the guard
 ## inside — the leash that has existed since the elevated-platform guards and that
@@ -2056,6 +2065,13 @@ func reset_guards() -> void:
 	Public because `_ready()` defers it (see the note there) and because the
 	self-check drives it directly rather than waiting on an idle frame.
 	"""
+	# WORLD SPACE IS THE POINT OF BEING IN THE TREE: `set_confinement()` below takes
+	# a world centre, so a detached interior would leash every guard to a box around
+	# the origin. Nothing in the shipped game can reach here detached (the deferral
+	# in `_ready()` and the door signal both run in-tree); this is the standalone
+	# degrade the project asks for rather than an error nobody can act on.
+	if not is_inside_tree():
+		return
 	if is_instance_valid(_guards):
 		# `remove_child` BEFORE `queue_free`, and it is not tidiness: a queued node
 		# keeps its name until the frame ends, so adding the replacement first would
