@@ -114,6 +114,14 @@ const GATE_DEMAND: String = "tower_vault"
 const GATE_IDENTITY: String = "tower_secure_door"
 const GATE_CHECKPOINT: String = "tower_checkpoint"
 
+## Phase 16's unlockable lift stop, and it is an ENTRY id rather than a gate id —
+## but it rides the SAME monotone opened set for the same reason a checkpoint does:
+## "you have stood here" is a thing the building remembers about you, it is earned,
+## and no verb takes it back. So it is persisted verbatim too, and it is spelled
+## once: the `entries` row below, the mutation that grants it, and
+## `TowerInterior`'s `LiftStopTrigger` all read this constant.
+const ENTRY_LIFT_MAZE: String = "lift_stop_maze"
+
 # ============================================================================
 # SCAR IDS — the same strings, in the same persisted set
 # ============================================================================
@@ -447,10 +455,12 @@ const TOWER_GRAPH: Dictionary = {
 				+ "second pad.",
 		},
 		"s8_landing": {
-			"built": true, "quest": "", "cell": "", "parts": [],
+			"built": true, "quest": "maze_landing", "cell": "", "parts": [],
 			"note": "Storey 8's landing and the labyrinth's OUTER CIRCUIT — the "
 				+ "one-cell ring corridor just inside the shell, which is route A "
-				+ "and the only way through this floor that asks nothing of anybody.",
+				+ "and the only way through this floor that asks nothing of anybody. "
+				+ "Also the SECOND LIFT STOP: standing on its ramp head completes "
+				+ "`maze_landing`, which unlocks `lift_stop_maze` for good.",
 		},
 		"s8_clue_chamber_west": {
 			"built": true, "quest": "", "cell": "", "parts": [],
@@ -699,6 +709,13 @@ const TOWER_GRAPH: Dictionary = {
 		# --- phase 7: the lift shaft. Exists only once `lift_activated` fires. ---
 		{"id": "lift_shaft", "a": "entry_hall", "b": "upper_landing",
 			"gate": "", "built": false},
+
+		# --- phase 16: the SECOND stop on that same shaft, at the labyrinth's foot.
+		# Granted by `lift_stop_maze_unlocked` once somebody has walked up to storey
+		# 8 the long way. Never a shortcut past the maze — it lands you BELOW it, on
+		# the floor the two riddles start from, and both routes up are still walked.
+		{"id": "lift_shaft_maze", "a": "entry_hall", "b": "s8_landing",
+			"gate": "", "built": false},
 	],
 
 	# ------------------------------------------------------------------------
@@ -853,6 +870,14 @@ const TOWER_GRAPH: Dictionary = {
 			"note": "The shell doorway. Always open, always legal."},
 		{"id": "lift_stop_upper", "room": "upper_landing", "built": false,
 			"note": "Phase 7's unlockable lift stop, granted by `lift_activated`."},
+		{"id": ENTRY_LIFT_MAZE, "room": "s8_landing", "built": false,
+			"note": "Phase 16's lift stop at the labyrinth's foot, granted by "
+				+ "`lift_stop_maze_unlocked`. The TRIGGER that earns it ships now "
+				+ "(`LiftStopTrigger`); `built` stays false until the menu that "
+				+ "offers the ride lands (bead godot-test1-3iy.7). The audit walks "
+				+ "from it either way, which is what makes the fifteen-subset "
+				+ "property hold starting at storey 8 — and is where D3 and D4 come "
+				+ "from and why the maze has an ungated route at all."},
 	],
 
 	# ------------------------------------------------------------------------
@@ -872,6 +897,15 @@ const TOWER_GRAPH: Dictionary = {
 			"adds": ["lift_shaft"],
 			"adds_entries": ["lift_stop_upper"],
 			"note": "Lighting the checkpoint powers the lift. Opens a shaft, closes nothing.",
+		},
+		{
+			"id": "lift_stop_maze_unlocked",
+			"trigger": "maze_landing",
+			"adds": ["lift_shaft_maze"],
+			"adds_entries": [ENTRY_LIFT_MAZE],
+			"note": "Reaching the labyrinth's foot on foot calls the lift to it. "
+				+ "Additive like every other row here — the seven ramps below it "
+				+ "stay exactly as walkable as they were.",
 		},
 	],
 
@@ -982,6 +1016,10 @@ const TOWER_GRAPH: Dictionary = {
 			"note": "Solo for Primm at one rank of Long Step."},
 		{"id": "checkpoint", "room": "checkpoint_room", "requires_quest": "",
 			"note": "Solo for Teibi on base capability."},
+		{"id": "maze_landing", "room": "s8_landing", "requires_quest": "",
+			"note": "Standing on the labyrinth's landing. Solo for anybody on base "
+				+ "capability — every edge from the front door to it is ungated, "
+				+ "which check 3 already walks for all four spines."},
 	],
 }
 
@@ -989,6 +1027,21 @@ const TOWER_GRAPH: Dictionary = {
 static func gate(id: String) -> Dictionary:
 	"""The gate row for `id`, or an empty dict when there is no such gate."""
 	return TOWER_GRAPH["gates"].get(id, {})
+
+
+static func entry(id: String) -> Dictionary:
+	"""
+	The entry row for `id`, or an empty dict when there is no such entry.
+
+	`entries` is a LIST and not a dict because its order is the order the audit
+	walks in; this is the lookup the building does when it needs to know which room
+	an entry lands in, so no builder has to restate a room name this file already
+	holds.
+	"""
+	for row: Dictionary in TOWER_GRAPH["entries"]:
+		if String(row["id"]) == id:
+			return row
+	return {}
 
 
 static func identity_of(id: String) -> String:

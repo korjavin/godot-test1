@@ -130,6 +130,17 @@ const CAMERA_CLEARANCE: float = 0.2
 ## Floating-point slack for geometry that is supposed to be EXACTLY flush.
 const EPS: float = 1e-4
 
+## THE CEILING ON THE ONE INTERIOR COST THE DRAW BUDGET CANNOT SEE: static box
+## shapes on the single `InteriorCollision` body, one per solid box.
+##
+## Measured, not chosen: the ten shipped storeys emit 348 of them, and 420 is that
+## with a fifth of headroom for the rooms phases 17+ hang off floors that already
+## exist. It is a SECOND yardstick rather than a duplicate of `PLAN_BOX_BUDGET`:
+## that one is per storey and catches a floor whose walls stopped merging, this one
+## is the whole building and catches a builder that started emitting a shape per
+## CELL on floors that each merge fine.
+const SHAPE_CEILING: int = 420
+
 var _failures: Array[String] = []
 
 
@@ -1003,15 +1014,37 @@ func _check_node_shape() -> void:
 	# phase 15 added is one trigger per RIDDLE LOCK PAD, and that count is derived
 	# from the plans themselves rather than written down, so a riddle authored later
 	# is measured the day its cells land and a pad that lost its trigger fails here.
-	var want_areas := 5 + TowerInterior.SPINE_DOORS.size() + TowerGraph.HEROES.size() + 2
+	#
+	# Phase 16 adds exactly ONE more: the labyrinth's `LiftStopTrigger`. It is
+	# counted off `lift_stop_floor()` rather than written down, so a graph with no
+	# such entry — or a plan that stopped carrying its landing — is a build with no
+	# trigger and this count follows it down instead of failing on a stale number.
+	var lift_stops := 1 if TowerInterior.lift_stop_floor() >= 0 else 0
+	var want_areas := 5 + TowerInterior.SPINE_DOORS.size() + TowerGraph.HEROES.size() \
+			+ 2 + lift_stops
 	var lock_pads := 0
 	for plan: Dictionary in TowerPlans.STOREYS:
 		lock_pads += (TowerInterior.gate_slots(plan)["pads"] as Array).size()
 	want_areas += lock_pads
 	if areas != want_areas:
-		_fail("the interior has %d Area3D, expected %d (3 pads + 2 rotor hazards + %d spine pads + %d cells + 1 press + 1 purge + %d riddle lock pads)" % [
+		_fail("the interior has %d Area3D, expected %d (3 pads + 2 rotor hazards + %d spine pads + %d cells + 1 press + 1 purge + %d riddle lock pads + %d lift stop)" % [
 			areas, want_areas, TowerInterior.SPINE_DOORS.size(), TowerGraph.HEROES.size(),
-			lock_pads])
+			lock_pads, lift_stops])
+	# ...and the stop stands where the graph says it does. A trigger built on the
+	# wrong storey would still be one `Area3D` and pass the count above.
+	if lift_stops == 1:
+		var stop := interior.find_child("LiftStopTrigger", true, false) as Area3D
+		if stop == null:
+			_fail("the interior builds no LiftStopTrigger, but a storey carries the stop's landing")
+		else:
+			var want_floor := TowerInterior.lift_stop_floor()
+			if String(stop.get_parent().name) != "Floor%d" % want_floor:
+				_fail("LiftStopTrigger hangs off %s, not the Floor%d container it must hide with" % [
+					stop.get_parent().name, want_floor])
+			var surface: float = TowerInterior.FLOOR_Y[want_floor]
+			if absf(stop.position.y - (surface + 1.0)) > EPS:
+				_fail("LiftStopTrigger is at y = %.2f, not one metre over storey %d's %.2f m surface" % [
+					stop.position.y, want_floor, surface])
 
 	var body := interior.get_node_or_null("InteriorCollision") as StaticBody3D
 	if body == null:
@@ -1023,6 +1056,18 @@ func _check_node_shape() -> void:
 				shapes += 1
 		if shapes != want_shapes:
 			_fail("the interior body holds %d collision shapes for %d solid boxes" % [shapes, want_shapes])
+		# THE NUMBER THE BATCH DOES NOT HIDE. Every solid box is one static
+		# `BoxShape3D` on this one body — the cheapest thing Godot's broadphase
+		# holds, and the one interior cost the draw-call budget says nothing about.
+		# Two maze storeys added a few hundred of them, so the total is PRINTED
+		# rather than discovered, and capped: a plan whose walls stopped merging
+		# blows `PLAN_BOX_BUDGET` first, but a builder that started emitting a shape
+		# per CELL would sail past both without this line.
+		print("tower interior: %d collision shapes on one body (ceiling %d)" % [
+			shapes, SHAPE_CEILING])
+		if shapes > SHAPE_CEILING:
+			_fail("the interior body holds %d collision shapes, over the stated ceiling of %d" % [
+				shapes, SHAPE_CEILING])
 	if not interior.is_in_group("tower_interior"):
 		_fail("the interior did not join the \"tower_interior\" group")
 	if interior.get_child_count() < 3:
@@ -1470,6 +1515,14 @@ func _check_visibility_gating() -> void:
 	only ever assert "everything is visible" — which passes whatever the policy says.
 	Phase 8's cell block is what makes the window bite, and it should inherit a gate
 	that was already correct rather than discover it needs one.
+
+	PHASE 16 IS WHERE IT PAYS FOR ITSELF. Ten storeys, and the two heaviest are the
+	labyrinth's — so this now asserts three things a five-storey building could not
+	be asked: at most three storeys drawn from anywhere (floor 2, whose slab caps
+	both the annulus and the keep, is the one four), the cell block hidden from
+	every storey more than one below it, and — driven live, standing on each floor
+	in turn — that walking up the building REBUILDS NOTHING and only toggles
+	`visible`.
 	"""
 	# PHASE 14 REPLACED THE ARITHMETIC WITH A TABLE, so this asserts the PROPERTIES a
 	# visibility relation has to have plus the geometric facts THIS building has —
@@ -1488,15 +1541,24 @@ func _check_visibility_gating() -> void:
 			if TowerInterior._floor_visible(index, current):
 				seen += 1
 		# The budget half: the window exists to stop the whole building drawing.
-		if seen > 4:
-			_fail("standing on floor %d draws %d storeys — the window has stopped gating" % [
-				current, seen])
+		# THREE IS THE RULE AND FLOOR 2 IS THE ONE EXCEPTION — its slab is the
+		# ceiling of the annulus AND of the keep's landing, so it touches three
+		# storeys and draws four. Everywhere else in a ten-storey building it is
+		# yourself plus the storey under you plus the storey over you, which is
+		# what "standing on storey 9 draws 8, 9 and 10 and nothing else" means.
+		var allowed := 4 if current == 2 else 3
+		if seen > allowed:
+			_fail("standing on floor %d draws %d storeys, over its allowance of %d — the window has stopped gating" % [
+				current, seen, allowed])
 	# ...and the building's own geometry, spelled out so a reader can check it
 	# against the plan. A slab is the ceiling of everything under it, and floor 2's
-	# roofs BOTH the annulus and the keep's landing; storeys 3-5 are an ordinary
-	# stack; nothing else touches.
-	var touching: Array[Array] = [[0, 1], [0, 2], [1, 2], [2, 3], [3, 4]]
-	var apart: Array[Array] = [[0, 3], [0, 4], [1, 3], [1, 4], [2, 4]]
+	# roofs BOTH the annulus and the keep's landing; floors 3 to 9 are an ordinary
+	# stack all the way to the cell block under the sealed roof; nothing else
+	# touches.
+	var touching: Array[Array] = [[0, 1], [0, 2], [1, 2], [2, 3], [3, 4],
+			[4, 5], [5, 6], [6, 7], [7, 8], [8, 9]]
+	var apart: Array[Array] = [[0, 3], [0, 4], [1, 3], [1, 4], [2, 4],
+			[2, 5], [4, 6], [6, 9], [7, 9], [0, 9]]
 	for pair: Array in touching:
 		if not TowerInterior._floor_visible(pair[0], pair[1]):
 			_fail("floor %d is hidden from floor %d, which it physically touches — "
@@ -1505,6 +1567,19 @@ func _check_visibility_gating() -> void:
 		if TowerInterior._floor_visible(pair2[0], pair2[1]):
 			_fail("floor %d draws from floor %d, which it does not touch" % [
 				pair2[0], pair2[1]])
+	# THE CELL BLOCK IS NOT VISIBLE FROM THE MAZE, and that is a design claim and
+	# not a budget one: the labyrinth is the obstacle, and a player who can see the
+	# gallery through the floor while standing in the maze has been told which way
+	# to go. Asked of the storey that actually draws the block rather than of "9",
+	# so re-planning it onto another floor re-asks the same question there.
+	var block := TowerInterior.block_floor()
+	if block < 0:
+		_fail("no storey draws the cell block — this assertion would pass vacuously")
+	else:
+		for below in block - 1:
+			if TowerInterior._floor_visible(block, below):
+				_fail("the cell block (floor %d) draws from floor %d, two storeys or more "
+					% [block, below] + "below it — the maze must not show its own exit")
 	# EVERY WALKING SURFACE, AND THE AIR JUST UNDER IT. `current_floor` is a walk of
 	# `FLOOR_Y` and runs every `_process`, so the assertion is over the whole table
 	# rather than over the two storeys this check was written with: standing on a
@@ -1558,6 +1633,35 @@ func _check_visibility_gating() -> void:
 				"visible" if want_visible else "hidden"])
 	if hero.indoor != true:
 		_fail("the building did not put the indoor camera on a player standing in its entry hall (got %s)" % hero.indoor)
+
+	# WALKING UP THE BUILDING REBUILDS NOTHING. `_update_visibility` is one boolean
+	# write per storey and that is the whole claim — the maze's storeys are the
+	# heaviest in the building, so a policy that freed and rebuilt a batch on the
+	# 8 -> 9 step would be a hitch on exactly the floor the player is being chased
+	# across. Driven over EVERY storey, comparing the container instance ids and
+	# their child counts before and after: a rebuild changes one or the other.
+	var before_ids: Array[int] = []
+	var before_children: Array[int] = []
+	for i in TowerInterior.FLOOR_Y.size():
+		var node := interior.get_node_or_null("Floor%d" % i) as Node3D
+		before_ids.append(0 if node == null else node.get_instance_id())
+		before_children.append(0 if node == null else node.get_child_count())
+	for standing in TowerInterior.FLOOR_Y.size():
+		hero.global_position = interior.global_position \
+				+ Vector3(4.0, TowerInterior.FLOOR_Y[standing] + 0.1, 0.0)
+		interior._process(0.05)
+		for i in TowerInterior.FLOOR_Y.size():
+			var node2 := interior.get_node_or_null("Floor%d" % i) as Node3D
+			if node2 == null or node2.get_instance_id() != before_ids[i] \
+					or node2.get_child_count() != before_children[i]:
+				_fail("standing on storey %d rebuilt storey %d's container — the window "
+					% [standing, i] + "toggles `visible` and does nothing else")
+				continue
+			var want := TowerInterior._floor_visible(i, standing)
+			if node2.visible != want:
+				_fail("standing on storey %d, storey %d is %s; the policy says %s" % [
+					standing, i, "visible" if node2.visible else "hidden",
+					"visible" if want else "hidden"])
 
 	# THE THIRD POSITION IS THE ONE THAT MATTERS: near enough to draw, but OUTSIDE
 	# the walls. "Near" and "indoors" are different questions and a gate that

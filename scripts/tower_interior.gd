@@ -197,9 +197,11 @@ extends Node3D
 ##
 ## TWENTY-ODD `MeshInstance3D`s for the parts that move (plus one batch per storey)
 ## and everything else welded into those batches (see THE BATCH below), ONE
-## `StaticBody3D`, twenty-three `Area3D`s (three pads, two rotor hazards, from
-## phase 8 one press hazard, four spine pads and four cell volumes, and from phase
-## 15 one per riddle lock pad), two rotor pivots, seven `Label3D`s and one gem —
+## `StaticBody3D`, twenty-odd `Area3D`s (three pads, two rotor hazards, from
+## phase 8 one press hazard, four spine pads and four cell volumes, from phase
+## 15 one per riddle lock pad and from phase 16 the labyrinth's lift stop —
+## check 5 counts them and is the number that is actually true), two rotor pivots,
+## seven `Label3D`s and one gem —
 ## built once, for the life of a run. Per-floor visibility
 ## gating (`_update_visibility`) is what keeps that off the web frame budget when
 ## the player is anywhere else in the world.
@@ -2538,6 +2540,7 @@ func _ready() -> void:
 		_floors[i].add_child(batch)
 
 	_build_pads()
+	_build_lift_stop()
 	_build_block()
 	_build_riddles()
 	_build_label()
@@ -3003,6 +3006,70 @@ func _build_pads() -> void:
 		Vector3(2.6, 2.0, 3.0), _on_identity_enter, _on_identity_exit, 1)
 	_add_area("CheckpointTrigger", Vector3(6.8, SLAB_Y + 1.0, 0.0),
 		Vector3(3.0, 2.0, 3.0), _on_checkpoint_enter, Callable(), 1)
+
+
+func _build_lift_stop() -> void:
+	"""
+	The labyrinth's lift stop: one `Area3D` over the storey-8 ramp head.
+
+	NO GEOMETRY AND NO SECOND PATTERN. This is `CheckpointTrigger` one storey
+	vocabulary along — walk in, an id joins the monotone opened set, nothing moves —
+	because "a stop the tower remembers you reached" is exactly what both are. The
+	only difference is which set member the id names: the checkpoint is a gate id,
+	this is `TowerGraph.ENTRY_LIFT_MAZE`, the graph entry the lift will offer.
+
+	# ponytail: the trigger and no menu. Choosing a stop is bead godot-test1-3iy.7,
+	# and the entry's `built` flag in the graph says so; earning it has to ship
+	# first or that bead has nothing to offer.
+	"""
+	var floor_index := lift_stop_floor()
+	if floor_index < 0:
+		return  # no storey carries the stop's landing — nothing to trigger on.
+	var rect := landing_rect(floor_index)
+	if rect.size == Vector2i.ZERO:
+		return
+	var span := _cell_span(floor_index, rect)
+	_add_area("LiftStopTrigger",
+		Vector3((span["x0"] + span["x1"]) * 0.5, FLOOR_Y[floor_index] + 1.0,
+				(span["z0"] + span["z1"]) * 0.5),
+		Vector3(span["x1"] - span["x0"], 2.0, span["z1"] - span["z0"]),
+		_on_lift_stop_enter, Callable(), floor_index)
+
+
+static func lift_stop_floor() -> int:
+	"""
+	Which `FLOOR_Y` index carries the maze lift stop, -1 when no storey does.
+
+	DERIVED FROM THE GRAPH AND THE PLANS, never written down: the entry row names
+	its room, and the storey whose `landing` key is that room is the storey whose
+	`s` cells you arrive on. Re-plan the labyrinth onto a different floor and the
+	trigger follows it, the way `block_floor()` follows the cell block.
+	"""
+	var room := String(TowerGraph.entry(TowerGraph.ENTRY_LIFT_MAZE).get("room", ""))
+	if room == "":
+		return -1
+	for floor_index: int in TowerPlans.floors():
+		if String(TowerPlans.storey(floor_index).get("landing", "")) == room:
+			return floor_index
+	return -1
+
+
+static func landing_rect(floor_index: int) -> Rect2i:
+	"""The `s` landing cells of one storey as a cell rect, `Rect2i()` if it has none."""
+	var plan := TowerPlans.storey(floor_index)
+	if plan.is_empty():
+		return Rect2i()
+	var span := Rect2i()
+	var first := true
+	for r: int in plan["rows"].size():
+		var line := String(plan["rows"][r])
+		for c: int in line.length():
+			if line[c] != TowerPlans.LANDING_CHAR:
+				continue
+			var cell := Rect2i(c, r, 1, 1)
+			span = cell if first else span.merge(cell)
+			first = false
+	return Rect2i() if first else span
 
 
 func _add_area(area_name: String, pos: Vector3, size: Vector3,
@@ -3757,6 +3824,22 @@ func _on_checkpoint_enter(body: Node3D) -> void:
 	_open(GATE_CHECKPOINT)
 	_light_checkpoint()
 	_say(tr("CHECKPOINT"))
+	_sfx("play_level_up")
+
+
+func _on_lift_stop_enter(body: Node3D) -> void:
+	"""
+	The labyrinth's lift stop is earned by standing on it. Idempotent, local player.
+
+	A CUE AND NO TEXT. Every label in this building belongs to a room that has one
+	(the receptacle's, the corridor's, the gallery's) and the maze has none — a line
+	written to the ground floor's label 32 m below is a line nobody reads, and a
+	Label3D on a landing is a draw call plus a translation row for a message the
+	phase-7 menu will state properly anyway.
+	"""
+	if not body.is_in_group("player") or _is_open(TowerGraph.ENTRY_LIFT_MAZE):
+		return
+	_open(TowerGraph.ENTRY_LIFT_MAZE)
 	_sfx("play_level_up")
 
 

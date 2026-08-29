@@ -539,21 +539,40 @@ The big one. **Scope:** everything in the file list.
 
 ### Task 4: the lift stop, the visibility and budget assertions, the docs
 
-- [ ] **D9:** the entry, edge, quest and mutation rows, plus the `LiftStopTrigger`
+- [x] **D9:** the entry, edge, quest and mutation rows, plus the `LiftStopTrigger`
    `Area3D` and its `_open("lift_stop_maze")`. No menu.
-- [ ] Extend `tower_interior_selfcheck` check 9 per **Budgets → Visibility**: for every
+- [x] Extend `tower_interior_selfcheck` check 9 per **Budgets → Visibility**: for every
    floor index, at most three storey batches visible, and floor 9's batch hidden from
    every floor below 8.
-- [ ] Print the collision-shape total in check 5 and assert a stated ceiling.
-- [ ] `CLAUDE.md`: the tower subsection gains the storey table, the "walls are as tall as
+- [x] Print the collision-shape total in check 5 and assert a stated ceiling.
+- [x] `CLAUDE.md`: the tower subsection gains the storey table, the "walls are as tall as
    their clear height" rule, the two-route maze rule and the "the plan text is the
    design record, there is no seed" line. **Keep it a map, not the territory** — the
    reasoning belongs beside the code.
-- [ ] Run **every** self-check and record the numbers in the shape of the baseline block
+- [x] Run **every** self-check and record the numbers in the shape of the baseline block
    above: `tower_selfcheck`, `tower_interior_selfcheck`, `capture_selfcheck`,
    `tower_shell_selfcheck`, `chunk_stream_selfcheck`, `perf_selfcheck`.
 
 **Verify:** all six.
+
+#### Measured at the end of phase 16 (2026-08-29)
+
+```
+tower_selfcheck             0.5 s   "66 rooms, 73 edges, 12 gates, 3 entries, 2 scars — 15 subset walks clean"
+                                    "8 storeys, 51 rooms, 7897 cells walkable,
+                                     ramps 29.6, 27.3 x6, 23.2 deg"
+                                    "4 riddles, each with a 4-pad lock and a clue reachable with it shut"
+tower_interior_selfcheck   13.9 s   "27 keep boxes (budget 32)"
+                                    "storeys 2..9: 52 / 43 / 52 / 29 / 29 / 81 / 62 / 46
+                                     boxes (PLAN_BOX_BUDGET 120)"
+                                    "35 meshes drawn (budget 35) for 421 boxes"
+                                    "348 collision shapes on one body (ceiling 420)"
+                                    "camera needs 3.95 m; storey 10 is the tightest at 4.00 m clear"
+capture_selfcheck           9.0 s
+tower_shell_selfcheck       0.7 s
+chunk_stream_selfcheck      0.5 s
+perf_selfcheck              0.2 s
+```
 
 ## Definition of done
 
