@@ -885,6 +885,23 @@ func _check_leap(boss: CharacterBody3D, player: StubPlayer, home: Vector3) -> vo
 				% [absf(gate_at - reach), TERRITORY_RADIUS]
 				+ " did not launch either, so the refusal above proves nothing about"
 				+ " the territory gate")
+	# THE DEGENERATE BEARING, which is the one geometry the projection can lose. A
+	# boss standing ON its quarry has no bearing to the target at all, and the
+	# tempting reading — no bearing, so land where you are — is an UNGUARDED LAUNCH:
+	# the body still travels for the whole airtime, along its own FACING. So face it
+	# at the fence, put the target under its feet, and demand the same refusal.
+	boss._leap_lock.clear()
+	boss.velocity.y = 0.0
+	boss.rotation.y = PI * 0.5          # (sin, cos) = (1, 0): pointing +X, outward
+	boss.chase_target = boss.global_position
+	boss._behave_leap()
+	if boss.velocity.y > 0.0:
+		_fail("leap: launched from %.1f m out with its quarry UNDER ITS FEET and its"
+				% gate_at + " nose at the fence — with no bearing to project, the arm"
+				+ " fell back on 'land where you are' and let a %.1f m hop go"
+				% reach + " unjudged. A hop travels whether or not there is anywhere"
+				+ " to travel to")
+
 	boss.velocity.y = 0.0
 	boss.is_chasing = false
 	boss._leap_lock.clear()
