@@ -135,7 +135,10 @@ func _run_checks() -> String:
 	failure = _check_claim_base_value()
 	if not failure.is_empty():
 		return failure
-	return _check_terrain_focus_points()
+	failure = _check_terrain_focus_points()
+	if not failure.is_empty():
+		return failure
+	return _check_hunter_sync()
 
 
 # =============================================================================
@@ -1554,3 +1557,159 @@ func _terrain_holds(terrain, chunk: Vector2i) -> bool:
 	now", and a focus chunk is never inside the synchronous safety ring.
 	"""
 	return terrain.active_chunks.has(chunk) or terrain.pending_chunks.has(chunk)
+
+
+# =============================================================================
+# 19. HUNTER SYNC INHERITANCE (bead godot-test1-9rm.5)
+# =============================================================================
+
+func _check_hunter_sync() -> String:
+	"""
+	The hunter robot rides the crocodile sync WITH NO PROTOCOL OF ITS OWN, and
+	this is the check that makes that a fact rather than a hope.
+
+	It is the first species whose deterministic node name does not begin with
+	"Crocodile_" (`Hunter_<cx>_<cy>_<i>`, its own index namespace), and the whole
+	identity scheme is a hash of that name — so every place the sync could have
+	grown a quiet prefix assumption is a place the hunter silently stops syncing,
+	on the deliberately SILENT "not my chunk" path. Nobody sees that headless and
+	nobody reproduces it without two browsers.
+
+	Three claims, each with the negative control that keeps it from passing
+	vacuously:
+
+	  1. IDENTITY. The two namespaces do not collide, and a hunter name survives
+	     the packet's PackedInt32Array — the sign-extension trap that once ate
+	     43% of the crocodile pack is a property of the hash's RANGE, so a new
+	     name scheme re-rolls the dice and has to be swept, not spot-checked.
+	  2. LOOKUP. The manager's live id cache resolves a real hunter node to the
+	     hunter and a real crocodile to the crocodile. This is the prefix
+	     question answered on the actual code path instead of by reading it.
+	  3. THE FLAG BYTE. Every combination the encoder can produce round-trips
+	     through a real hunter body byte-identically. That is the executable form
+	     of this bead's ruling that the hunt states owe no new bit (see
+	     CROC_FLAG_BURROWED's note in mp_manager.gd): today five bits, five
+	     restored, and the day someone adds a sixth for a pose motion cannot
+	     show, this fails until `set_remote_state` learns it too.
+	"""
+	# --- 1. Identity. Distinct namespaces, and wire-safe over the real scheme.
+	var hunter_name: String = "Hunter_3_-4_0"
+	var hunter_id: int = CrocAI.croc_id_for(hunter_name)
+	if hunter_id == CrocAI.croc_id_for("Crocodile_3_-4_0"):
+		return "croc_id_for collided across the Hunter_/Crocodile_ namespaces"
+	if hunter_id == CrocAI.croc_id_for("Hunter_3_-4_1"):
+		return "croc_id_for collided across the hunter spawn index"
+	var wire: PackedInt32Array = PackedInt32Array()
+	for cx: int in range(-6, 7):
+		for cy: int in range(-6, 7):
+			var probe: String = "Hunter_%d_%d_0" % [cx, cy]
+			var probe_id: int = CrocAI.croc_id_for(probe)
+			wire.clear()
+			wire.append(probe_id)
+			if wire[0] != probe_id:
+				return "croc_id_for(%s) == %d does not survive PackedInt32Array (%d)" % [
+					probe, probe_id, wire[0]
+				]
+
+	# --- 2. Lookup. Two live bodies, one of each prefix, through the real cache.
+	var mp: Node = MPManager.new()
+	mp.add_to_group("mp")
+	root.add_child(mp)
+
+	var hunter: Node = _spawn_hunter(hunter_name)
+	var croc: Node = load("res://scenes/characters/piglet_crocodile.tscn").instantiate()
+	croc.name = "Crocodile_3_-4_0"
+	root.add_child(croc)
+
+	if not hunter.is_in_group("crocodile"):
+		return "the hunter is not in the \"crocodile\" group — it inherits no sync at all"
+	if hunter.croc_id() != hunter_id:
+		return "a live hunter's croc_id() (%d) does not match croc_id_for(%s) (%d)" % [
+			hunter.croc_id(), hunter_name, hunter_id
+		]
+	if String(hunter.spec.get("behavior", "")) != "hunt":
+		return "the spawned hunter did not resolve the hunt row — check 3 would be vacuous"
+
+	mp._rebuild_croc_cache()
+	if mp._croc_by_id(hunter_id) != hunter:
+		return "the sync id cache does not resolve a Hunter_ node — the sync assumes a prefix"
+	if mp._croc_by_id(croc.croc_id()) != croc:
+		return "the sync id cache does not resolve a Crocodile_ node beside a hunter"
+
+	# --- 3. The flag byte. Sweep every combination the encoder can produce.
+	var sender: Node = _spawn_hunter("Hunter_7_7_0")
+	var receiver: Node = _spawn_hunter("Hunter_7_7_1")
+	var fields: Array[String] = [
+		"is_chasing", "is_fleeing", "is_paused", "is_biting", "is_burrowed"
+	]
+
+	# THE SWEEP IS ONLY AS COMPLETE AS THIS LIST, so the list is checked against
+	# the protocol rather than trusted. Every CROC_FLAG_* the manager declares is
+	# a bit the encoder can put on the wire; if the five fields above cannot
+	# between them light all of them, a sixth flag has been added and this sweep
+	# would round-trip a byte that never contains it — passing while the exact
+	# drift it exists to catch ships. Read off the const map so a new bit needs no
+	# edit here to be NOTICED, only to be covered.
+	var declared: int = 0
+	for key: String in MPManager.get_script_constant_map().keys():
+		if key.begins_with("CROC_FLAG_"):
+			declared |= int(MPManager.get_script_constant_map()[key])
+	for bit: int in range(fields.size()):
+		sender.set(fields[bit], true)
+	var full: int = MPManager._croc_flags(sender)
+	if full != declared:
+		return ("the flag sweep drives %d of the declared CROC_FLAG_* mask %d — a bit was added to "
+				+ "mp_manager without a field here, so the round-trip below cannot see it") % [full, declared]
+	for combo: int in range(1 << fields.size()):
+		for bit: int in range(fields.size()):
+			sender.set(fields[bit], (combo & (1 << bit)) != 0)
+			# The receiver is reset rather than left as the last iteration left it,
+			# because BITING is a LATCH by design: the decoder calls _start_bite()
+			# when the bit is set and never clears it when it is not (the local
+			# animation does that). Carrying it over would fail the sweep for a
+			# decoder that is behaving exactly as specified.
+			receiver.set(fields[bit], false)
+		var sent: int = MPManager._croc_flags(sender)
+		receiver.set_remote_state(Vector3(12.0, 0.0, -3.0), 1.25, sent)
+		var back: int = MPManager._croc_flags(receiver)
+		if back != sent:
+			return "hunter state byte %d round-tripped as %d — set_remote_state drops a bit the encoder sends" % [
+				sent, back
+			]
+
+	# The FIRST sample snaps, and a hunter must be no exception: a body that never
+	# takes the master's transform renders a pose the room does not share, which
+	# is a failure the byte sweep above cannot see.
+	#
+	# A VIRGIN BODY AND A SHORT HOP, both load-bearing. `set_remote_state` snaps on
+	# two conditions OR'd together — no sample yet, or a jump past
+	# CROC_TELEPORT_DISTANCE — so reusing the swept receiver (already sampled) or
+	# aiming further than 8 m would let the teleport branch answer for the
+	# first-sample branch and the check would pass with that branch deleted.
+	var virgin: Node = _spawn_hunter("Hunter_7_7_2")
+	var landing := Vector3(2.0, 0.0, -1.0)
+	virgin.set_remote_state(landing, 1.25, 0)
+	if not virgin.remote_driven:
+		return "a hunter given a sample is not remote_driven — it would keep running its own hunt arm"
+	if virgin.global_position.distance_to(landing) > 0.01:
+		return "a hunter's first remote sample did not snap it to the master's position (%s)" % virgin.global_position
+
+	hunter.free()
+	croc.free()
+	sender.free()
+	receiver.free()
+	virgin.free()
+	mp.free()
+	return ""
+
+
+func _spawn_hunter(node_name: String) -> Node:
+	## One hunter, built the way `endless_terrain.spawn_hunters_in_chunk` builds
+	## one — name and `species` BOTH set before add_child, because _ready() is
+	## where the name is latched into the id and where `species` resolves into
+	## `spec`. A hunter added first would be a crocodile wearing a robot mesh.
+	var hunter: Node = load("res://scenes/characters/hunter_robot.tscn").instantiate()
+	hunter.name = node_name
+	hunter.species = "hunter_robot"
+	root.add_child(hunter)
+	return hunter
