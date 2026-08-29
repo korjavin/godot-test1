@@ -97,10 +97,18 @@ extends RefCounted
 # GATE IDS — the strings that go in the tower's monotone opened set
 # ============================================================================
 #
-# Stable, lowercase, tower-prefixed, and PERSISTED VERBATIM by phase 5, so
-# renaming one is a save migration. Add, never rename. `tower_interior.gd` takes
-# its own `GATE_*` constants from these three, which is what stops the building
-# and the graph from drifting apart on the only strings both of them touch.
+# Stable, lowercase, and PERSISTED VERBATIM by phase 5, so renaming one is a save
+# migration. Add, never rename. `tower_interior.gd` takes its own `GATE_*`
+# constants from these three, which is what stops the building and the graph from
+# drifting apart on the only strings both of them touch.
+#
+# EVERY KEY IN `gates` BELOW IS ALSO ONE OF THESE STRINGS. The three constants are
+# named here because they predate the graph and the building spells them out; the
+# phase-8 doors are opened by a loop over `TowerInterior.SPINE_DOORS`, which reads
+# the key straight out of this file. So the dictionary key IS the persisted id, and
+# renaming a gate row is a save migration exactly as renaming a constant is. (The
+# three below carry a `tower_` prefix and the phase-8 keys do not — a cosmetic
+# split, kept because these three are already on disk in players' profiles.)
 
 const GATE_DEMAND: String = "tower_vault"
 const GATE_IDENTITY: String = "tower_secure_door"

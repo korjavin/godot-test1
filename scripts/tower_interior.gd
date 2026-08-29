@@ -1533,9 +1533,16 @@ func _make_label(label_name: String, pos: Vector3, text: String) -> Label3D:
 	"""
 	One world label: billboarded, wrapped narrow, shadow-free, parented to storey 0.
 
-	Shared by all three because they are the same object with a different position —
-	see `_build_label()` for why the width is 700 px and why these are world labels
-	rather than HUD toasts.
+	Shared by all three because they are the same object at a different position —
+	see `_build_label()` for why these are world labels and not HUD toasts.
+
+	WRAPPED, AND NARROW ON PURPOSE. A `Label3D` is geometry: an unwrapped
+	explanation is a 5.7 m banner that runs straight into the walls either side of
+	the receptacle's alcove and gets depth-culled mid-sentence, which is how the
+	first build shipped a gate that said "...farm coins for the point". 700 px at
+	this pixel size is 2.45 m — narrower than the niche it stands in, from both
+	sides. (The wing's two signs then shrink themselves further; the corridor they
+	hang in is narrower still, and `_build_wing()` says why.)
 	"""
 	var label := Label3D.new()
 	label.name = label_name
@@ -1564,24 +1571,8 @@ func _build_label() -> void:
 	holding the receptacle's own name, which is what makes the mechanism
 	self-identifying from across the hall.
 	"""
-	_label = Label3D.new()
-	_label.name = "DemandLabel"
-	_label.text = tr("PHASE RECEPTACLE")
-	_label.font_size = 40
-	_label.outline_size = 12
-	_label.pixel_size = 0.0035
-	# WRAPPED, AND NARROW ON PURPOSE. A `Label3D` is geometry: an unwrapped
-	# explanation is a 5.7 m banner that runs straight into the walls either side of
-	# the alcove and gets depth-culled mid-sentence, which is how the first build
-	# shipped a gate that said "...farm coins for the point". 700 px at this pixel
-	# size is 2.45 m — narrower than the niche it stands in, from both sides.
-	_label.width = 700.0
-	_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-	_label.modulate = COLOR_BAND_LIT
-	_label.position = Vector3(RECEPTACLE_X, 3.2, RECEPTACLE_Z + 0.9)
-	_no_shadow(_label)
-	_floors[0].add_child(_label)
+	_label = _make_label("DemandLabel",
+		Vector3(RECEPTACLE_X, 3.2, RECEPTACLE_Z + 0.9), tr("PHASE RECEPTACLE"))
 
 
 func _build_vault_prize() -> void:
