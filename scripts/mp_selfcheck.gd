@@ -1776,6 +1776,9 @@ func _check_acquisition_cue() -> String:
 	# synchronous, so run the same function by hand rather than await (making one
 	# check a coroutine would make `_run_checks` one too, all nineteen of them).
 	hunter._find_player()
+	if hunter.player_node != quarry:
+		return ("the hunter cached a quarry that is not this check's (%s) — an earlier check leaked "
+				+ "a node into group \"player\" and claims 1-2 would measure the wrong body") % str(hunter.player_node)
 	if float(hunter.detection_radius) < 10.0:
 		return "the hunter's detection radius (%f) is under the 5 m probe distance below" % hunter.detection_radius
 	hunter.global_position = Vector3(5.0, 0.0, 0.0)   # inside 25 m: smellable

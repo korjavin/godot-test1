@@ -722,6 +722,21 @@ func _check_dread_channels() -> void:
 	root.add_child(lod)
 	await process_frame  # _ready() + the deferred player lookup
 
+	# THE SHADER IS BUILT FROM A STRING AT RUNTIME, so a typo in it is not a parse
+	# error anywhere — it is one `SHADER ERROR:` line in a console nobody reads,
+	# after which the whole telegraph draws NOTHING and every level assertion
+	# below still passes. Godot reports the failure by handing back an empty
+	# uniform list, which is checkable, so it is checked. Both names, because a
+	# shader that compiles but lost the second uniform is the exact half-landed
+	# state this bead introduces.
+	var uniforms: Array = []
+	for u: Dictionary in (vignette._rect.material as ShaderMaterial).shader.get_shader_uniform_list():
+		uniforms.append(String(u["name"]))
+	for required: String in ["vignette_alpha", "hunter_alpha"]:
+		if required not in uniforms:
+			_fail("dread channels: the vignette shader exposes no '%s' uniform (it has %s) — it did not compile, and the telegraph draws nothing at all. Scroll up for the SHADER ERROR line."
+					% [required, str(uniforms)])
+
 	# Both bodies at the SAME distance, both chasing, both inside SIM_RADIUS.
 	var hunter: Node = load(HUNTER_SCENE).instantiate()
 	hunter.species = HUNT_SPECIES

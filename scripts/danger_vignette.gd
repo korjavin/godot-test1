@@ -108,20 +108,28 @@ void fragment() {
 	// Only the outer band contributes: fully clear inside 0.35, ramping up
 	// smoothly toward the corners, so gameplay in the middle stays unobscured.
 	float edge = smoothstep(0.35, 0.72, dist);
-	vec4 predator = vec4(0.8, 0.05, 0.05, edge * vignette_alpha);
+	float predator_a = edge * vignette_alpha;
 
 	// The machine channel: a tighter rim, further out, swept by a travelling
 	// band. 0.75 + 0.25 * sin keeps the sweep a modulation rather than a
 	// flicker — the rim never blinks fully out, it pulses.
 	float rim = smoothstep(0.62, 0.80, dist);
 	float sweep = 0.75 + 0.25 * sin(UV.y * 34.0 - TIME * 3.0);
-	vec4 machine = vec4(0.25, 0.85, 0.95, rim * sweep * hunter_alpha);
+	float machine_a = rim * sweep * hunter_alpha;
 
-	// Additive, so neither channel can suppress the other (see the header).
-	COLOR = vec4(
-		predator.rgb * predator.a + machine.rgb * machine.a,
-		min(predator.a + machine.a, 1.0)
-	);
+	// Additive in COVERAGE, weighted-average in COLOUR — so neither channel can
+	// suppress the other, and NEITHER IS DARKENED BY THE PRESENCE OF THE SECOND
+	// UNIFORM. The naive form (multiply each rgb by its own alpha, then sum both
+	// alphas) looks like premultiplied compositing, but this canvas_item is drawn
+	// with ordinary alpha blending, so it would apply the alpha TWICE: the red
+	// glow would render at a*a and the channel that has shipped for months would
+	// quietly go dark. Dividing the weighted sum back out by the total gives
+	// exactly the colour the single-channel shader produced whenever the other
+	// channel is silent. The max() only guards the divide.
+	float total = predator_a + machine_a;
+	vec3 tint = (vec3(0.8, 0.05, 0.05) * predator_a
+			+ vec3(0.25, 0.85, 0.95) * machine_a) / max(total, 0.0001);
+	COLOR = vec4(tint, min(total, 1.0));
 }
 """
 
