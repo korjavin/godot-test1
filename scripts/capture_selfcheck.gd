@@ -56,6 +56,11 @@ extends SceneTree
 ##      building is not loaded, so the interior re-seeds its mirror from the player
 ##      on build — and walking into the cell frees him all the way back into the
 ##      E-cycle.
+##  13-16. **THE FULL-CUSTODY PROTOCOL** (bead godot-test1-3iy.11), which is what
+##      the empty-roster branch now opens instead of a screen: the scene opens and
+##      is playable, surviving it takes exactly one AUTHORED scar, losing it
+##      archives the world (and Continue/New Game mean what they say), and the
+##      scene-scoped roster override does not leak. See the block above check 13.
 ##
 ## ============================================================================
 ## LANDMINES
@@ -151,6 +156,10 @@ func _run() -> void:
 	await _check_the_ai_says_who_bit()
 	await _check_a_guard_takes_coins_and_ground_not_a_heart()
 	await _check_the_sweep_spares_a_guard()
+	await _check_the_protocol_opens_and_can_be_played()
+	await _check_the_break_out_scars_the_world()
+	await _check_the_recall_archives_the_world()
+	await _check_the_scene_does_not_leak()
 	_report()
 
 
@@ -361,15 +370,21 @@ func _check_liberation_restores_the_index() -> void:
 
 func _check_the_last_free_hero_ends_the_run() -> void:
 	"""
-	An empty free-hero set ends the run WITH HEARTS STILL IN HAND.
+	An empty free-hero set ENDS FIELD PLAY with hearts still in hand.
 
 	The hearts are the point. Game over on lives already existed, so a check that
 	drained the roster and the hearts together would pass on a build with no
-	capture trigger at all; here the player keeps most of its hearts and the run
-	ends anyway, which only the free-set clause can do.
+	capture trigger at all; here the player keeps most of its hearts and field play
+	stops anyway, which only the free-set clause can do.
+
+	SINCE BEAD godot-test1-3iy.11 THAT CLAUSE OPENS THE FULL-CUSTODY PROTOCOL rather
+	than the Game Over screen — the one line this check had to move with. What is
+	measured here is still the CLAUSE (it fired, on hearts it did not need); what
+	the scene then does is checks 13-16.
 
 	And the negative control on the same path — three of four heroes held, hearts
-	in hand — must NOT end the run, or "ends the run" would only mean "ends".
+	in hand — must leave the run alone entirely, or "the clause fired" would only
+	mean "something happened".
 	"""
 	_beat_done()
 	var player := await _make_player()
@@ -382,8 +397,8 @@ func _check_the_last_free_hero_ends_the_run() -> void:
 	player.call("_on_caught_finished")
 	if player.lives <= 0:
 		_fail("the roster ran out but so did the hearts — this check would prove nothing")
-	if not player.is_game_over:
-		_fail("the last free hero was captured with %d hearts left and the run did not end"
+	if not player.in_custody_protocol():
+		_fail("the last free hero was captured with %d hearts left and field play went on"
 			% player.lives)
 	_clear(player)
 
@@ -395,7 +410,7 @@ func _check_the_last_free_hero_ends_the_run() -> void:
 			player.captive_heroes[hero] = true
 	player.is_caught = false
 	player.call("_on_caught_finished")
-	if player.is_game_over:
+	if player.is_game_over or player.in_custody_protocol():
 		_fail("the run ended with %s still free and %d hearts left"
 			% [free_one, player.lives])
 	_clear(player)
@@ -559,8 +574,8 @@ func _check_capture_respects_the_rooms_hand() -> void:
 	player.call("_on_caught_finished")
 	if player.lives <= 0:
 		_fail("the room case ran out of hearts, so it proves nothing")
-	if not player.is_game_over:
-		_fail("this peer's hand was emptied by a capture and the run did not end")
+	if not player.in_custody_protocol():
+		_fail("this peer's hand was emptied by a capture and field play went on")
 	_clear(player)
 
 	# (b) the negative control: two heroes in hand, and the switch moves.
@@ -584,7 +599,7 @@ func _check_capture_respects_the_rooms_hand() -> void:
 			% [player.hero_name(), TowerGraph.HEROES[other]])
 	player.is_caught = false
 	player.call("_on_caught_finished")
-	if player.is_game_over:
+	if player.is_game_over or player.in_custody_protocol():
 		_fail("the run ended with %s still in hand" % TowerGraph.HEROES[other])
 	_clear(player)
 	room.queue_free()
@@ -894,6 +909,290 @@ func _check_the_sweep_spares_a_guard() -> void:
 		croc.queue_free()
 	_clear(player)
 	await process_frame
+
+
+# ============================================================================
+# 13-16. THE FULL-CUSTODY PROTOCOL (bead godot-test1-3iy.11)
+# ============================================================================
+#
+# WHY THESE FOUR EXIST. The protocol is the end of the capture arc and every one
+# of its failure modes is silent — it replaces a screen with a scene, so a build
+# where the trigger is wrong looks exactly like a build where it is right until
+# somebody plays for twenty minutes and loses their last hero:
+#
+#   * it never OPENS, and the roster clause quietly shows the Game Over screen the
+#     way it did before this bead;
+#   * it opens but is UNPLAYABLE, because the roster grant is missing and there is
+#     nobody to be — the availability set is empty by definition inside the scene;
+#   * it is survived and the world is NOT SCARRED, so the one sanctioned exception
+#     to the graph's edge-additive law ships inert past a green build;
+#   * it is lost and the world is NOT ARCHIVED, so "the campaign ends" ends nothing
+#     and the next launch hands out another run;
+#   * it LEAKS — the scene marks every hero captive, and an exit that does not put
+#     the entry set back leaves a peer in a room holding heroes that belong to
+#     teammates.
+#
+# EVERY ONE OF THEM IS DRIVEN THROUGH THE REAL ENTRY, `hit_by_crocodile()` plus
+# `_on_caught_finished()`, and the outcomes are decided by REAL PHYSICS FRAMES
+# rather than by calling `_end_custody_protocol()` — which is the whole point. A
+# check that opened the scene by hand would pass on a build where the roster clause
+# still calls `_trigger_game_over()` and the scene is unreachable in the game.
+# Only the CLOCK is fast-forwarded (it is 35 s of real state, and a check may set
+# state); the decision that reads it is the shipped one.
+
+func _check_the_protocol_opens_and_can_be_played() -> void:
+	"""
+	Check 13. Losing the last hero opens the break-out, and the break-out is playable.
+
+	The two halves are one check because either alone is a lie: a scene nobody can
+	enter and an entrance into a scene with no roster are the same shipped-inert bug
+	at two sites.
+	"""
+	_fresh_store()
+	_beat_done()
+	var player := await _make_player()
+	var last_one: String = player.hero_name()
+	for hero: String in TowerGraph.HEROES:
+		if hero != last_one:
+			player.captive_heroes[hero] = true
+	player.hit_by_crocodile(_hunter())
+	player.is_caught = false
+	player.call("_on_caught_finished")
+
+	if player.lives <= 0:
+		_fail("the roster ran out but so did the hearts — this check would prove nothing")
+	if player.is_game_over:
+		_fail("the last free hero was taken with %d hearts left and the run ENDED — the "
+			% player.lives + "roster clause must open the full-custody protocol, not a screen")
+	if not player.in_custody_protocol():
+		_fail("the last free hero was taken and no protocol opened")
+		_clear(player)
+		return
+	if player.custody_timer <= 0.0:
+		_fail("the protocol opened with no recall clock running")
+
+	# EVERY HERO IS A PRISONER, which is both the fiction and the cell block's paint.
+	if player.free_hero_count() != 0:
+		_fail("the protocol opened with %d hero(es) still free — full custody means all four"
+			% player.free_hero_count())
+	# ...and the scene grants a confined all-four set anyway, or there is nobody to be.
+	var granted: Array = player.available_character_indices()
+	if granted.size() != TowerGraph.HEROES.size():
+		_fail("inside the protocol the roster grant offers %s — the scene must grant all four"
+			% str(granted))
+	# Driven through the REAL cycle, not the array: E is what a player presses, and
+	# `switch_to_next_character()` refuses outright on a hand of one.
+	var walked := {}
+	for press: int in TowerGraph.HEROES.size():
+		walked[player.hero_name()] = true
+		player.switch_to_next_character()
+	if walked.size() != TowerGraph.HEROES.size():
+		_fail("E reached only %d of the four heroes inside the protocol: %s"
+			% [walked.size(), str(walked.keys())])
+	_clear(player)
+
+
+func _check_the_break_out_scars_the_world() -> void:
+	"""
+	Check 14. A liberation ends the scene, resumes play and takes exactly one scar.
+
+	THE SCAR IS THE OUTCOME RECORD, so this is also the check that stops the one
+	sanctioned exception to design law 3 from shipping inert. Three separate
+	assertions, because a scar can fail in three ways: not written at all, written
+	as an id nobody authored, or written twice.
+
+	The liberation is `hero_freed()` — the cell block's own seam, and what
+	`TowerInterior._liberate()` calls when the player walks into an occupied cell
+	(check 8 drives that whole loop). The DECISION is left to a real physics frame.
+	"""
+	_fresh_store()
+	_beat_done()
+	var before := BestRunStore.tower_opened_ids()
+	var player := await _make_player()
+	await _drive_into_custody(player)
+	if not player.in_custody_protocol():
+		_fail("scar: no protocol to survive")
+		_clear(player)
+		return
+
+	# Walk into a cell. One hero out is the whole success condition.
+	var freed: String = String(TowerGraph.HEROES[0])
+	player.hero_freed(freed)
+	await physics_frame
+	await physics_frame
+
+	if player.in_custody_protocol():
+		_fail("a hero was freed and the protocol did not close")
+	if player.is_game_over:
+		_fail("the break-out was survived and the run ended anyway")
+	if player.free_hero_count() < 1:
+		_fail("systemic play resumed with nobody free to play")
+	if not player.available_character_indices().has(player.current_character_index):
+		_fail("the protocol handed play back as %s, who is still in a cell" % player.hero_name())
+
+	var after := BestRunStore.tower_opened_ids()
+	var fresh: Array[String] = []
+	for id: String in after:
+		if not before.has(id):
+			fresh.append(id)
+	if fresh.size() != 1:
+		_fail("a survived protocol wrote %s to the tower's set — exactly one scar was due"
+			% str(fresh))
+	elif not TowerGraph.scar_ids().has(fresh[0]):
+		_fail("the protocol wrote '%s', which is not an AUTHORED scar (%s) — a scar must be "
+			% [fresh[0], str(TowerGraph.scar_ids())]
+			+ "enumerated in TOWER_GRAPH or the softlock audit never saw it")
+	_clear(player)
+
+	# ...and the scar is PERMANENT, so a second protocol in the same world takes no
+	# second one. The budget is the authored list, not a counter.
+	var scarred := BestRunStore.tower_opened_ids()
+	player = await _make_player()
+	await _drive_into_custody(player)
+	player.hero_freed(String(TowerGraph.HEROES[1]))
+	await physics_frame
+	await physics_frame
+	if BestRunStore.tower_opened_ids() != scarred:
+		_fail("a second break-out changed the tower's set from %s to %s — there is one more "
+			% [str(scarred), str(BestRunStore.tower_opened_ids())]
+			+ "authored scar than the graph declares")
+	_clear(player)
+
+
+func _check_the_recall_archives_the_world() -> void:
+	"""
+	Check 15. The recall completing ends the campaign and archives the world.
+
+	AND WHAT ARCHIVED MEANS, which is the half a "did we write the flag" check would
+	miss entirely: a FRESH player built against the same profile comes up on the
+	ending screen instead of a run (Continue), and Play Again clears it (New Game).
+	Both are driven through the shipped entry points — `_ready()` and
+	`restart_game()` — because the flag is worth nothing if nothing reads it.
+	"""
+	_fresh_store()
+	_beat_done()
+	var player := await _make_player()
+	await _drive_into_custody(player)
+	if not player.in_custody_protocol():
+		_fail("archive: no protocol to lose")
+		_clear(player)
+		return
+	if BestRunStore.world_archived():
+		_fail("the world was archived the moment the protocol opened, before it was lost")
+
+	# Fast-forward the CLOCK, not the decision: the branch that reads it is shipped.
+	player.custody_timer = 0.001
+	await physics_frame
+	await physics_frame
+
+	if player.in_custody_protocol():
+		_fail("the recall completed and the protocol did not close")
+	if not player.is_game_over:
+		_fail("the recall completed and the campaign did not end")
+	if not BestRunStore.world_archived():
+		_fail("the recall completed and the world was not archived — Continue would hand "
+			+ "out another run in a campaign that is over")
+	_clear(player)
+	await process_frame
+
+	# CONTINUE: a fresh boot against the archived profile reopens the ending.
+	var continued := await _make_player()
+	await process_frame
+	if not continued.is_game_over:
+		_fail("a player booted into an archived world came up playable — Continue must "
+			+ "reopen the ending screen")
+	# NEW GAME: Play Again mints a fresh world and the latch is gone.
+	continued.restart_game()
+	if BestRunStore.world_archived():
+		_fail("Play Again left the world archived — there is no way out of the ending")
+	if continued.is_game_over:
+		_fail("Play Again left the ending screen up")
+	_clear(continued)
+	_fresh_store()
+
+
+func _check_the_scene_does_not_leak() -> void:
+	"""
+	Check 16. The bead's landmine: the scene-scoped roster override must not leak.
+
+	The scene marks EVERY hero captive — that is the fiction and it is what paints
+	four red cells — so the exit has to restore what was true before, minus whoever
+	was freed. Solo that is a no-op and proves nothing, so this is driven IN A ROOM
+	with a one-hero hand: three of the four heroes belong to teammates and were
+	never this peer's to hold.
+
+	AND THE BUILDING IS PUT BACK TOO, on the failing outcome as well as the winning
+	one — raised containment is scene state with no home, and a Play Again keeps the
+	same profile and the same tower.
+	"""
+	_fresh_store()
+	_beat_done()
+	var room := RoomStub.new()
+	room.add_to_group("mp")
+	root.add_child(room)
+	var shell := await _make_tower()
+	var interior: Node = shell.get_child(0)
+
+	var player := await _make_player()
+	var mine: int = TowerGraph.HEROES.find("primm")
+	room.hand = [mine] as Array[int]
+	player.set_active_character(mine)
+	player.hit_by_crocodile(_hunter())
+	player.is_caught = false
+	player.call("_on_caught_finished")
+	if not player.in_custody_protocol():
+		_fail("leak: a room peer whose only hero was taken did not enter the protocol")
+		_clear(player)
+		room.queue_free()
+		shell.queue_free()
+		await process_frame
+		return
+
+	# The building raised containment, whatever a hundred earlier rescues opened.
+	for door: Dictionary in TowerInterior.SPINE_DOORS:
+		if not bool(interior.call("is_locked_down", String(door["gate"]))):
+			_fail("the protocol opened and spine door '%s' was left standing open — the "
+				% String(door["gate"]) + "break-out is three metres of walking")
+
+	# Lose it, which is the harsher half: a failed scene still has to tidy up.
+	player.custody_timer = 0.001
+	await physics_frame
+	await physics_frame
+
+	for hero: String in TowerGraph.HEROES:
+		var was_mine := hero == String(TowerGraph.HEROES[mine])
+		if player.is_hero_captive(hero) != was_mine:
+			_fail(("the scene left %s %s after it ended; this peer only ever held %s — the "
+				+ "roster override leaked into the captive filter")
+				% [hero, "captive" if player.is_hero_captive(hero) else "free",
+					String(TowerGraph.HEROES[mine])])
+	for door: Dictionary in TowerInterior.SPINE_DOORS:
+		if bool(interior.call("is_locked_down", String(door["gate"]))):
+			_fail("the protocol ended and '%s' is still under lockdown — containment "
+				% String(door["gate"]) + "outlived the scene that raised it")
+	_clear(player)
+	room.queue_free()
+	shell.queue_free()
+	await process_frame
+	_fresh_store()
+
+
+func _drive_into_custody(player: Node) -> void:
+	"""
+	Take a player's whole roster the way the game does, and let the scene open.
+
+	The last grab goes through `hit_by_crocodile` + `_on_caught_finished` — the real
+	entry — so a build whose roster clause still ends the run fails every check that
+	calls this instead of quietly measuring a scene it opened itself.
+	"""
+	var last_one: String = player.hero_name()
+	for hero: String in TowerGraph.HEROES:
+		if hero != last_one:
+			player.captive_heroes[hero] = true
+	player.hit_by_crocodile(_hunter())
+	player.is_caught = false
+	player.call("_on_caught_finished")
+	await physics_frame
 
 
 # ============================================================================

@@ -480,7 +480,13 @@ const BOX_BUDGET: int = 60
 ## its own node has to justify itself against this comment rather than fit under a
 ## rounding. (12 of it is the pre-phase-8 building, two of THOSE being the per-storey
 ## batches.)
-const DRAW_BUDGET: int = 22
+##
+## 23 SINCE PHASE 11, and here is that justification. The scar's rubble (`SCAR_BOX`)
+## is invisible and non-solid in every world that has not survived the full-custody
+## protocol and stone in every world that has, so it is the one box in the plan
+## whose DRAW STATE is decided per save — which a merged batch cannot express
+## without being rebuilt. One node, once, for the life of a run.
+const DRAW_BUDGET: int = 23
 
 # ============================================================================
 # PALETTE — one material per colour, shared process-wide (see `_material`)

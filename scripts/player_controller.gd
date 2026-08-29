@@ -891,7 +891,7 @@ func _physics_process(delta: float) -> void:
 		view_mode = (view_mode + 1) % ViewMode.size()
 		_apply_view_mode()
 
-	# STEP 0: THE RECALL CLOCK, if the full-custody break-out is running. Above
+	# STEP 0-RECALL: the recall clock, if the full-custody break-out is running. Above
 	# every freeze branch below on purpose — a guard knocking the party down inside
 	# the cell block must not stop the convoy. A no-op (one boolean read) on every
 	# frame of every ordinary run.
