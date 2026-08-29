@@ -155,14 +155,16 @@ extends Node3D
 ## 1.5 m over the player's feet — so in the open the camera floats about 3.5 m up.
 ## Nothing may write `camera.position` (CLAUDE.md), which means the ONLY way to
 ## make a room comfortable is to build it tall enough. 4.2 m of headroom under the
-## ponytail: THE COURTYARD IS 8 m WIDE AND THE ARM IS 8.25 m LONG, so facing east
-## anywhere near its west wall — the foot of the ramp above all — collapses the arm
-## into a shot of the back of the hero's head. That is not a bug this file can fix:
-## it is what the arm does against every wall in the game, and the two things that
-## would change it are a shorter arm indoors (a player_controller decision, and one
-## that changes the whole game's feel) or a wider courtyard (which costs shell
-## footprint against phase 1's exclusion disc). Left alone deliberately; if the
-## owner wants it, the smallest lever is an indoor `spring_length`.
+## THE COURTYARD IS 8 m WIDE AND THE OUTDOOR ARM IS 8.25 m LONG, so facing east
+## anywhere near its west wall — the foot of the ramp above all — used to collapse
+## the arm into a shot of the back of the hero's head, and the same arm sweeping
+## nearby static collision was ~9 ms of a ~46 ms frame in the cell gallery. RESOLVED
+## (bd godot-test1-0nu) by an INDOOR BOOM: `_update_visibility` below asks
+## `inside_walls()` and hands the answer to `PlayerController.set_indoor_camera()`,
+## which swaps the arm to `INDOOR_ARM_LENGTH` (3.85 — sized against half this
+## courtyard; the derivation lives on that constant). This file does not touch the
+## camera and could not: nothing may write `camera.position`, and the arm belongs to
+## the player. It only answers "are you inside my walls?".
 ##
 ## slab clears that 3.5 m with room for the arm's 0.25 m margin, so the arm never
 ## slams in on flat ground; the courtyard and the upper floor are open to the sky
@@ -1542,6 +1544,25 @@ func _ready() -> void:
 		tower.connect("player_entered", _on_tower_doorway)
 
 
+func _exit_tree() -> void:
+	"""
+	Hand the outdoor camera back on the way out.
+
+	THE ROOM IS THE ONLY THING THAT CLEARS THE INDOOR BOOM, so a room that is FREED
+	while the player stands in it would leave the short arm on forever. That is not
+	hypothetical: joining a multiplayer room mid-run calls `new_run()`, which
+	`_tower_reset()`s the shell out from under this node before teleporting the
+	player to the group — no respawn, no `reset_position()`, nobody left to ask.
+
+	Here rather than at that call site because it covers every way the building can
+	go away, present and future, with one guard. Cheap and null-safe: on shutdown
+	the player may be gone or going, which reads as "nothing to hand back".
+	"""
+	var player := get_tree().get_first_node_in_group("player") if is_inside_tree() else null
+	if player != null and player.has_method("set_indoor_camera"):
+		player.call("set_indoor_camera", false)
+
+
 func _process(delta: float) -> void:
 	"""
 	Everything that moves, plus the visibility gating.
@@ -2603,14 +2624,39 @@ func _update_visibility() -> bool:
 		return visible
 	var here := global_position
 	var there := _player.global_position
-	var near := Vector2(there.x - here.x, there.z - here.z).length() <= DRAW_RADIUS
+	var local := there - here
+	var near := Vector2(local.x, local.z).length() <= DRAW_RADIUS
 	visible = near
+	# THE INDOOR CAMERA, off the offset this function already had in hand. The
+	# player owns the knob (`spring_length` — nothing may write `camera.position`);
+	# the building only answers "are you inside my walls?", which is the one
+	# question it is qualified to answer. Null-safe like every other seam here, and
+	# idempotent on the player's side, so driving it unconditionally is free.
+	if _player.has_method("set_indoor_camera"):
+		_player.call("set_indoor_camera", near and inside_walls(local))
 	if not near:
 		return false
-	var current := current_floor(there.y - here.y)
+	var current := current_floor(local.y)
 	for i in _floors.size():
 		_floors[i].visible = _floor_visible(i, current)
 	return true
+
+
+static func inside_walls(local: Vector3) -> bool:
+	"""
+	Is this interior-local point within the keep's walls — i.e. in a ROOM?
+
+	The footprint is the shell's inner faces (`INNER_HALF` on both axes) and the
+	ceiling is the top of its wall: everything the interior builds, the cell-block
+	wing included, lives inside that box, so there is nothing to enumerate and a
+	new room joins for free. The height term is what keeps Windman's Air Rush from
+	reporting "indoors" while he is sightseeing over the parapet.
+
+	Pure, allocation-free and three compares — `biome_at()`'s idiom, and safe to
+	call every tick.
+	"""
+	return absf(local.x) <= INNER_HALF and absf(local.z) <= INNER_HALF \
+			and local.y <= TowerShell.WALL_HEIGHT
 
 
 static func current_floor(local_y: float) -> int:

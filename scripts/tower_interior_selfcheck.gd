@@ -136,11 +136,11 @@ var _failures: Array[String] = []
 ## A stand-in for the player: a real CharacterBody3D on the default collision layer
 ## and in the "player" group, whose hero and phase reach the check sets directly.
 ##
-## IT IMPLEMENTS THE CONTRACT AND NOTHING ELSE — `hero_name()`, `phase_reach()` and
-## `hit_by_crocodile()` are the three methods the interior asks of a player, so a
-## rename on either side fails here instead of degrading into a gate that never
-## opens. Instancing the real `player.tscn` would drag in four character models and
-## a camera rig to test three method calls.
+## IT IMPLEMENTS THE CONTRACT AND NOTHING ELSE — `hero_name()`, `phase_reach()`,
+## `hit_by_crocodile()` and `set_indoor_camera()` are the methods the interior asks
+## of a player, so a rename on either side fails here instead of degrading into a
+## gate that never opens. Instancing the real `player.tscn` would drag in four
+## character models and a camera rig to test four method calls.
 class ProbePlayer extends CharacterBody3D:
 	var hero: String = "windman"
 	var reach: float = 0.0
@@ -151,6 +151,11 @@ class ProbePlayer extends CharacterBody3D:
 	## and check 12 asserts the call HAPPENS, which is the half a null-safe seam
 	## normally cannot prove.
 	var freed: Array[String] = []
+	## The last thing the building said about the indoor camera. Starts null so
+	## "never told at all" is distinguishable from "told false" — check 9 needs the
+	## difference, because a seam that is simply never called would otherwise read
+	## as a correct answer everywhere the answer happens to be false.
+	var indoor: Variant = null
 
 	func hero_name() -> String:
 		return hero
@@ -163,6 +168,9 @@ class ProbePlayer extends CharacterBody3D:
 
 	func hero_freed(who: String) -> void:
 		freed.append(who)
+
+	func set_indoor_camera(is_indoor: bool) -> void:
+		indoor = is_indoor
 
 
 func _initialize() -> void:
@@ -590,6 +598,50 @@ func _check_headroom_clears_the_camera() -> void:
 	if TowerInterior.headroom() < need:
 		_fail("the hall is %.2f m and the camera needs %.2f m — the spring arm will collapse on flat ground" % [
 			TowerInterior.headroom(), need])
+	# ------------------------------------------------------------------
+	# THE INDOOR BOOM (bd godot-test1-0nu). Same "measure the live rig" rule as
+	# above, for the same reason: the number that matters is the arm's HORIZONTAL
+	# reach, which is the length foreshortened by the arm's 14-degree pitch, and
+	# reading that off the scene file is how you get a confidently wrong answer.
+	#
+	# The claim being asserted is the one that picked 3.85: a player standing on
+	# the courtyard's CENTRE LINE keeps the whole boom whichever way they face. So
+	# the reach, plus the arm's own margin, must fit in half the courtyard's clear
+	# width — the span from the upper slab's west edge to the shell's west inner
+	# face, derived here rather than restated so a moved wall fails this check.
+	var courtyard := TowerInterior.SLAB_X0 + TowerInterior.INNER_HALF
+	var outdoor_reach := _camera_reach(player, camera)
+	player.call("set_indoor_camera", true)
+	# A FEW FRAMES IN, the boom must be ON ITS WAY AND NOT THERE. The tower's
+	# doorway is a 6 x 4 m hole the boom trails straight through, so a snap would
+	# cut the camera 4.3 m forward on every entry; `_tick_arm_length` eases it
+	# instead, and this sample is what fails if somebody puts the snap back.
+	await _settle_physics()
+	var mid_reach := _camera_reach(player, camera)
+	await _ease_arm()
+	var indoor_reach := _camera_reach(player, camera)
+	print("camera reach: %.2f m outdoors, %.2f m indoors (+ %.2f margin); courtyard %.2f m wide" % [
+		outdoor_reach, indoor_reach, arm.margin, courtyard])
+	if mid_reach >= outdoor_reach or mid_reach <= indoor_reach:
+		_fail("the boom jumped to %.2f m instead of easing between %.2f and %.2f — a doorway is a cut again" % [
+			mid_reach, outdoor_reach, indoor_reach])
+	if indoor_reach + arm.margin > courtyard * 0.5:
+		_fail("the indoor boom reaches %.2f m (+ %.2f margin) into a %.2f m courtyard — it still collapses on its centre line" % [
+			indoor_reach, arm.margin, courtyard])
+	# ...and the cost half of the same number. A boom that did not actually shorten
+	# would pass the line above on a narrow enough courtyard and buy no frame time.
+	if indoor_reach >= outdoor_reach * 0.75:
+		_fail("the indoor boom is %.2f m against %.2f m outdoors — that is not a shorter arm" % [
+			indoor_reach, outdoor_reach])
+	# Leaving the room restores the shipped framing exactly. The flag is transient
+	# world state; a player who walks out and never gets the outdoor camera back is
+	# the mutant this line kills.
+	player.call("set_indoor_camera", false)
+	await _ease_arm()
+	if not is_equal_approx(_camera_reach(player, camera), outdoor_reach):
+		_fail("walking out of the room left the camera at %.2f m instead of the shipped %.2f m" % [
+			_camera_reach(player, camera), outdoor_reach])
+
 	# The upper storey has no ceiling at all, but it does have a parapet; make sure
 	# the shell still has wall left over it, or the "room" is a plinth.
 	if TowerShell.WALL_HEIGHT - TowerInterior.SLAB_Y < 2.0:
@@ -599,6 +651,24 @@ func _check_headroom_clears_the_camera() -> void:
 	# later check two candidates for "the local player" and a coin-flip for which.
 	player.queue_free()
 	await process_frame
+
+
+func _ease_arm() -> void:
+	## Long enough for `_tick_arm_length` to finish its walk: the whole trip is
+	## 4.4 m at ARM_EASE_SPEED, about 15 physics frames, and this is comfortably
+	## over that with no dependence on the exact rate.
+	for _i in 40:
+		await physics_frame
+
+
+func _camera_reach(player: Node3D, camera: Camera3D) -> float:
+	"""
+	How far BEHIND the hero the settled camera sits, on the horizontal plane —
+	the number a wall actually has to make room for. Measured off the live rig,
+	never computed from `spring_length` (see check 4's docstring).
+	"""
+	var offset := camera.global_position - player.global_position
+	return Vector2(offset.x, offset.z).length()
 
 
 # ============================================================================
@@ -1073,6 +1143,9 @@ func _check_visibility_gating() -> void:
 	interior._process(0.05)
 	if interior.visible:
 		_fail("the interior still draws with the player %.0f m away" % (TowerInterior.DRAW_RADIUS * 4.0))
+	if hero.indoor != false:
+		_fail("the building told a player %.0f m away that they were indoors (got %s)" % [
+			TowerInterior.DRAW_RADIUS * 4.0, hero.indoor])
 
 	hero.global_position = shell.global_position + Vector3(4.0, 0.0, 0.0)
 	interior._process(0.05)
@@ -1082,9 +1155,35 @@ func _check_visibility_gating() -> void:
 		var floor_node := interior.get_node_or_null("Floor%d" % i) as Node3D
 		if floor_node == null or not floor_node.visible:
 			_fail("storey %d is hidden from a player standing on the ground floor of a two-storey building" % i)
+	if hero.indoor != true:
+		_fail("the building did not put the indoor camera on a player standing in its entry hall (got %s)" % hero.indoor)
+
+	# THE THIRD POSITION IS THE ONE THAT MATTERS: near enough to draw, but OUTSIDE
+	# the walls. "Near" and "indoors" are different questions and a gate that
+	# answered the first one twice would pass both lines above.
+	hero.global_position = shell.global_position \
+			+ Vector3(TowerShell.OUTER_HALF + 5.0, 0.0, 0.0)
+	interior._process(0.05)
+	if hero.indoor != false:
+		_fail("the building claimed a player standing 5 m outside its front wall was indoors")
+	# ...and the same for a Windman sightseeing over the parapet.
+	if TowerInterior.inside_walls(Vector3(0.0, TowerShell.WALL_HEIGHT + 5.0, 0.0)):
+		_fail("a point %.0f m over the wall top reads as inside the building" % (TowerShell.WALL_HEIGHT + 5.0))
+
+	# THE BUILDING FREED OUT FROM UNDER A PLAYER STANDING IN IT. Joining a
+	# multiplayer room mid-run does exactly this — `new_run()` resets the shell and
+	# then teleports, with no respawn to clean up after it — and the room is the
+	# only thing that ever clears the indoor boom, so without `_exit_tree` the short
+	# arm would stay on for the rest of the session, outdoors.
+	hero.global_position = shell.global_position + Vector3(4.0, 0.0, 0.0)
+	interior._process(0.05)
+	if hero.indoor != true:
+		_fail("the probe is not indoors, so the teardown case below would pass vacuously")
+	shell.free()
+	if hero.indoor != false:
+		_fail("freeing the building left the player holding the indoor camera")
 
 	hero.queue_free()
-	shell.queue_free()
 	await process_frame
 
 

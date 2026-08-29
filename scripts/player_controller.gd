@@ -454,6 +454,49 @@ var third_person_arm_transform: Transform3D = Transform3D.IDENTITY
 var third_person_arm_length: float = 0.0
 var third_person_camera_rotation: Vector3 = Vector3.ZERO
 
+## THE INDOOR BOOM — the third-person arm length used while a room says we are in
+## it, instead of the scene's 8.25. Two problems, one number (bd godot-test1-0nu):
+##
+##   THE COLLAPSE. The arm is pitched 14 degrees up, so what a wall has to make
+##   room for is not the length but its HORIZONTAL reach, length * cos(14 deg),
+##   plus the arm's 0.25 m margin. At 8.25 that is 8.25 m of clearance — and the
+##   tower's courtyard is 8.3 m wide, so facing across it put a wall inside the
+##   boom and the view became the back of the hero's head. 3.85 asks for
+##   3.85 * cos(14 deg) + 0.25 = 3.98 m, which fits inside HALF that courtyard
+##   (4.15 m): a player on its centre line keeps the whole boom whichever way they
+##   turn, and the collapse only starts once they are genuinely against a wall —
+##   which is what a third-person camera is supposed to do.
+##
+##   THE COST, and be careful with this half. A shorter arm sweeps less static
+##   collision, and it MEASURES: a 300-frame A/B on the shipped legs put the
+##   PHYSICS STEP down 0.3-0.8 ms in every tight room (cell gallery 3.83 -> 3.18,
+##   vault 3.98 -> 3.23) against a ±0.3 ms noise floor. But that step is only
+##   ~3.5 ms of a 30-45 ms tower frame, so the FRAME TIME did not move — bd
+##   godot-test1-0nu's earlier bisection, which put the arm at ~9 ms of a ~46 ms
+##   frame, does not reproduce on the current build. So this number is chosen for
+##   the framing above and takes the physics saving as a bonus; the tower's real
+##   frame cost is still unaccounted for and is somebody's next bead.
+##
+## It also lowers the camera to 1.5 + 3.85 * sin(14 deg) = 2.43 m over the feet,
+## under the maintenance crawl's 2.8 m lintel — so the indoor view stops scraping
+## indoor ceilings as well. Asserted against the courtyard in
+## `tower_interior_selfcheck` check 4.
+const INDOOR_ARM_LENGTH: float = 3.85
+
+## How fast the boom travels between the two lengths, in metres per second. The
+## whole trip is 8.25 - 3.85 = 4.4 m, so 18 puts a doorway at about a quarter of a
+## second: fast enough to be over before you have looked around the room, slow
+## enough to read as a dolly instead of a cut. See `_tick_arm_length()`.
+const ARM_EASE_SPEED: float = 18.0
+
+## Is a room currently holding the indoor boom? Written ONLY by
+## `set_indoor_camera()`; read only through `_third_person_arm_target()`, which
+## both the snap path and the ease path go through. Transient world state, not a
+## preference: whoever set it clears it (including when the room is FREED — see
+## `TowerInterior._exit_tree`), and `_refresh_indoor_camera()` re-derives it from
+## scratch on every teleport, so a hard reset needs no line of its own.
+var _indoor_camera: bool = false
+
 ## Character's visual mesh (for ducking animation)
 @onready var mesh_instance: Node3D = $MeshInstance3D
 
@@ -832,9 +875,17 @@ func _apply_view_mode() -> void:
 	Moves the EXISTING camera (no second Camera3D!) to match the current view
 	mode. Deliberately idempotent — safe to re-run any time (e.g. after a Teibi
 	resize or a character switch) without tracking what the previous state was.
+
+	IT SNAPS, so it first makes sure it is snapping to the truth. Several callers
+	are TELEPORTS — `join_at()` into a room's group, the full-custody march into
+	the cell block — and `_indoor_camera` is polled by the building, so on the
+	frame of a teleport it still describes where we WERE. Re-deriving it here from
+	where we ARE turns those into clean cuts instead of a quarter-second ease
+	starting from the wrong boom, and does it for every future teleport too.
 	"""
 	if not camera or not camera_arm:
 		return
+	_refresh_indoor_camera()
 	if view_mode == ViewMode.FIRST_PERSON:
 		# First-person commandeers the ARM, not the camera (the arm owns the
 		# camera's local position — see the rig note in SECTION 3). Identity
@@ -861,12 +912,87 @@ func _apply_view_mode() -> void:
 		var flip := Basis(Vector3.UP, PI) if view_mode == ViewMode.FRONT else Basis.IDENTITY
 		camera_arm.transform = Transform3D(
 				flip * third_person_arm_transform.basis, third_person_arm_transform.origin)
-		camera_arm.spring_length = third_person_arm_length
+		# ...at whichever boom the world currently asks for. SNAPS, because every
+		# path into this branch is a deliberate CUT (pressing C, switching hero,
+		# a Teibi resize, a respawn) and a cut should land on the right framing
+		# immediately. The other way the target changes — walking through a door —
+		# is eased instead, by `_tick_arm_length()`; both read
+		# `_third_person_arm_target()` so they cannot disagree about the value.
+		camera_arm.spring_length = _third_person_arm_target()
 		camera.rotation = third_person_camera_rotation
 		if character_container:
 			character_container.visible = true
 	# No shake bookkeeping needed here: the bite shake lives on the camera's
 	# h_offset/v_offset, which are view-space and identical in every view.
+
+
+func set_indoor_camera(indoor: bool) -> void:
+	"""
+	Tell the camera it is in (or out of) a room. Called by whoever owns the room —
+	today only `TowerInterior._update_visibility()`, which already tests the local
+	player's position every frame and so pays nothing extra for this.
+
+	IDEMPOTENT AND CHEAP: a no-op when the answer has not changed, so a caller can
+	drive it unconditionally from `_process` (and must, since nothing else clears
+	it — leaving the room is a call too). Never writes `camera.position`: the knob
+	is the SpringArm3D's own `spring_length`, applied through `_apply_view_mode()`.
+
+	IT ONLY MOVES THE TARGET; `_tick_arm_length()` walks the arm there. The tower's
+	doorway is a 6 m x 4 m hole and the boom floats 3.5 m up, so it trails straight
+	THROUGH the opening with nothing to clamp it — crossing the wall line would
+	otherwise cut the camera 4.3 m forward in a single frame, on every entry and
+	every exit. (Measured: 8.00 m of horizontal reach a step outside the wall,
+	3.74 m a step inside.) That is the one place this is not free.
+	"""
+	_indoor_camera = indoor
+
+
+func _refresh_indoor_camera() -> void:
+	"""
+	Ask the building, right now, whether we are in it — for the callers that
+	TELEPORT and cannot wait a frame for its poll to catch up.
+
+	NOT A SECOND OPINION: it calls the same pure `TowerInterior.inside_walls()` the
+	building itself calls, on the same offset, so the two can never disagree. That
+	is what the static function is for. Null-safe through the usual group seam, so
+	a scene with no tower in it (every self-check, and most of a run) simply reads
+	"outdoors" — which is the right answer when there is no room to be in.
+
+	Event-rate only: `_apply_view_mode()` is called on presses and teleports, never
+	per frame, so the group lookup is not on any budget.
+	"""
+	if not is_inside_tree():
+		return
+	var room := get_tree().get_first_node_in_group("tower_interior") as Node3D
+	set_indoor_camera(room != null
+			and TowerInterior.inside_walls(global_position - room.global_position))
+
+
+func _third_person_arm_target() -> float:
+	"""
+	The boom the world is currently asking for: the indoor one while a room holds
+	us, the cached scene length otherwise. ONE definition, read by both the snap
+	path (`_apply_view_mode`) and the ease path (`_tick_arm_length`).
+	"""
+	return INDOOR_ARM_LENGTH if _indoor_camera else third_person_arm_length
+
+
+func _tick_arm_length(delta: float) -> void:
+	"""
+	Walk the third-person boom toward its target at a fixed metres-per-second rate,
+	so a doorway is a short dolly rather than a cut. `move_toward`, not a lerp, for
+	the reason the horizontal velocity uses it (SECTION 2): a fixed rate arrives, and
+	arrives in a predictable time — 4.4 m at ARM_EASE_SPEED is about a quarter second.
+
+	FIRST PERSON IS SKIPPED ENTIRELY. There the arm is commandeered — zero length,
+	identity basis, no collision cast (see `_apply_view_mode`) — and easing it would
+	push the camera out of the hero's head. Leaving FP re-snaps through
+	`_apply_view_mode`, so nothing to restore here either.
+	"""
+	if camera_arm == null or view_mode == ViewMode.FIRST_PERSON:
+		return
+	camera_arm.spring_length = move_toward(
+			camera_arm.spring_length, _third_person_arm_target(), ARM_EASE_SPEED * delta)
 
 
 func _first_person_eye_position() -> Vector3:
@@ -952,6 +1078,16 @@ func _physics_process(delta: float) -> void:
 	if Input.is_action_just_pressed("toggle_camera") and not is_game_over:
 		view_mode = (view_mode + 1) % ViewMode.size()
 		_apply_view_mode()
+
+	# STEP 0-BOOM: walk the camera arm toward the length the world is asking for.
+	# ABOVE THE FREEZE BRANCHES, and deliberately NOT beside `_tick_wade_sink()`
+	# down at STEP 1.5 even though the two are the same kind of visual ease. The
+	# difference is who moves the target: the wade sink's target is OUR OWN
+	# position, which cannot change while we are frozen, so a tick there would be a
+	# no-op. This one's target is set by the ROOM, which keeps polling through a
+	# caught freeze and its 1.5 s of respawn grace — a player caught in the doorway
+	# would otherwise sit at the wrong boom, clamped against a wall, for both.
+	_tick_arm_length(delta)
 
 	# STEP 0-RECALL: the recall clock, if the full-custody break-out is running. Above
 	# every freeze branch below on purpose — a guard knocking the party down inside
@@ -3390,7 +3526,10 @@ func reset_position() -> void:
 	is_running = false
 
 	# Drop any mid-blink i-frames and restore model visibility for the current
-	# view (idempotent — see _apply_view_mode).
+	# view (idempotent — see _apply_view_mode). The indoor boom goes with them,
+	# and needs no line of its own: this runs AFTER the teleport above, and
+	# `_apply_view_mode()` re-derives the room from where we now are — the spawn
+	# point, 400 m from the tower.
 	respawn_blink_timer = 0.0
 	_apply_view_mode()
 
