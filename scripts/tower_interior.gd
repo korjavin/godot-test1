@@ -880,6 +880,14 @@ const GLOW_COLORS: Array[Color] = [
 ## back to reading black. 0.45 sits a sunlit off-white wall just under the bloom
 ## knee and a roofed one at a flat, even mid-bright — measured against nothing but
 ## the arithmetic, because a headless `gl_compatibility` process cannot screenshot.
+##
+## THE FOG IS NOT PART OF THE PROBLEM AND WAS CHECKED BEFORE ANY OF THIS WAS WRITTEN.
+## `endless_terrain`'s fog is exponential at 0.005 (web) toward `FOG_COLOR`, a PALE
+## warm grey — so the far end of an 80 m storey blends about a quarter of the way
+## toward something brighter than the wall, not darker. It lightens the long
+## corridors it reaches and there is nothing here to gate it out of. Nor does the
+## per-floor draw gate (`_update_visibility`) darken anything: it hides whole
+## storeys you are not on, and a hidden storey is not a dark one.
 const INTERIOR_EMISSION: float = 0.45
 
 ## The wainscot band's height off the walking surface, and the carpet layer's

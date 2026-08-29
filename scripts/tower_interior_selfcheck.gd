@@ -207,6 +207,7 @@ func _run() -> void:
 	await _check_headroom_clears_the_camera()
 	await _check_node_shape()
 	await _check_materials_are_shared_and_already_toon()
+	await _check_the_interior_is_lit_and_off_white()
 	await _check_gate_lifecycle()
 	await _check_opened_state_is_reapplied()
 	await _check_visibility_gating()
@@ -1138,6 +1139,135 @@ func _check_materials_are_shared_and_already_toon() -> void:
 	a.queue_free()
 	b.queue_free()
 	await process_frame
+
+
+## The luminance every surface the player can see inside this building must clear.
+## The acceptance is "no black regions"; this is the mechanical form of it.
+##
+## IT IS SET BY THE DARKEST THING THE LEGIBILITY LANGUAGE DELIBERATELY PAINTS, which
+## is the demand gate's cold steel at 0.27 — a MACHINE, and machines are allowed to
+## be machine-coloured; the check is here to stop a ROOM going dark. So the bar sits
+## just under the steel and well over black, and the walls carry their own, far
+## higher bar below.
+const INTERIOR_MIN_LUMINANCE: float = 0.25
+
+## ...and what the WALLS specifically have to clear. A separate, much higher bar,
+## because "off-white" is the look and a merely-not-black wall is not it.
+const WALL_MIN_LUMINANCE: float = 0.75
+
+
+func _check_the_interior_is_lit_and_off_white() -> void:
+	"""
+	Check 6b (bead 99j). The interior reads as a bright, evenly lit corporate floor
+	rather than as the black box a sealed roof made of it.
+
+	THIS IS AN EYE TEST ASSERTED HEADLESSLY, and the split is deliberate. A headless
+	`gl_compatibility` process cannot render, let alone screenshot, so what a
+	self-check CAN pin is the two things a screenshot would have been evidence OF:
+
+	  a. THE MATERIALS LIGHT THEMSELVES. There is no `Light3D` in this building and
+	     the shell's roof keeps the key light out, so every matte interior material
+	     must carry emission, and it must be `EMISSION_OP_MULTIPLY` — additive
+	     emission washes the whole palette toward one white and the legibility
+	     language at the top of `tower_interior.gd` stops meaning anything. The
+	     EMISSIVE material must NOT have picked the same treatment up: it is
+	     unshaded, its albedo already is what you see, and multiplying its emission
+	     by its own colour is how a light panel silently goes dim.
+	  b. THE COLOURS ARE THE ONES THE LOOK NEEDS, on the geometry that really got
+	     built. Walls and ceilings off-white, floors mint, a wainscot band on the
+	     planned walls — read out of a storey's BATCH VERTEX COLOURS, which is the
+	     only place `top_color` and the wainscot split can be observed at all
+	     (neither is a box, on purpose: see `_emit_box`). A `top_color` that stopped
+	     being wired, or a wall that stopped splitting, fails here by name.
+
+	And the acceptance itself: no surface in the batch is dark. Every vertex colour
+	on every storey clears `INTERIOR_MIN_LUMINANCE`, which is what "no black regions"
+	means when you cannot take the screenshot.
+	"""
+	# (a) — the two cached batch materials, asked directly.
+	var matte := TowerInterior._batch_material(false)
+	var glow := TowerInterior._batch_material(true)
+	if not matte.emission_enabled:
+		_fail("the interior's matte batch material has no emission — under the sealed roof it renders black")
+	if matte.emission_operator != BaseMaterial3D.EMISSION_OP_MULTIPLY:
+		_fail("the matte batch material's emission is not MULTIPLY — additive emission flattens the palette to one white")
+	if not is_equal_approx(matte.emission_energy_multiplier, TowerInterior.INTERIOR_EMISSION):
+		_fail("the matte batch material self-lights at %.2f, not INTERIOR_EMISSION (%.2f)" % [
+			matte.emission_energy_multiplier, TowerInterior.INTERIOR_EMISSION])
+	if glow.shading_mode != BaseMaterial3D.SHADING_MODE_UNSHADED:
+		_fail("the emissive batch material stopped being UNSHADED")
+	if glow.emission_operator == BaseMaterial3D.EMISSION_OP_MULTIPLY:
+		_fail("the emissive batch material took the matte one's MULTIPLY emission — its panels render squared and dim")
+	# ...and the per-colour materials the ten moving parts wear, which are lit the
+	# same way and by the same helper.
+	var steel := TowerInterior._material(TowerInterior.COLOR_MECHANISM)
+	if not steel.emission_enabled or steel.emission_operator != BaseMaterial3D.EMISSION_OP_MULTIPLY:
+		_fail("a matte per-colour interior material does not self-light — the moving parts go black while the walls do not")
+	var panel := TowerInterior._material(TowerInterior.COLOR_PANEL)
+	if panel.emission_operator == BaseMaterial3D.EMISSION_OP_MULTIPLY:
+		_fail("a GLOW_COLORS material took the MULTIPLY treatment — its emission is now its colour squared")
+
+	# (b) — the palette, on the geometry.
+	if TowerInterior.COLOR_STONE.get_luminance() < WALL_MIN_LUMINANCE:
+		_fail("the walls and ceilings are %.2f luminance, under the %.2f an off-white floor needs" % [
+			TowerInterior.COLOR_STONE.get_luminance(), WALL_MIN_LUMINANCE])
+	var carpet := TowerInterior.COLOR_CARPET
+	if carpet.g <= carpet.r or carpet.g <= carpet.b:
+		_fail("COLOR_CARPET is not green-dominant — the floor is supposed to read as mint")
+	if carpet.get_luminance() < INTERIOR_MIN_LUMINANCE:
+		_fail("COLOR_CARPET is too dark (%.2f) to read as carpet under flat light" % carpet.get_luminance())
+
+	var interior := load(INTERIOR_SCENE).instantiate() as Node3D
+	root.add_child(interior)
+	await process_frame
+	var darkest := 1.0
+	var darkest_where := ""
+	for floor_index: int in TowerInterior.FLOOR_Y.size():
+		var batch := interior.get_node_or_null(
+				"Floor%d/Floor%dBatch" % [floor_index, floor_index]) as MeshInstance3D
+		if batch == null or batch.mesh == null:
+			continue
+		var mesh: ArrayMesh = batch.mesh
+		var seen := {}
+		for surface: int in mesh.get_surface_count():
+			var colors: PackedColorArray = mesh.surface_get_arrays(surface)[Mesh.ARRAY_COLOR]
+			for c: Color in colors:
+				# Vertex colours are written LINEAR (`_emit_box` converts, and the
+				# comment there says why), so they come back to sRGB to be measured
+				# against the sRGB palette the designer typed.
+				var srgb := c.linear_to_srgb()
+				var key := _color_key(srgb)
+				var lum := srgb.get_luminance()
+				if lum < darkest:
+					darkest = lum
+					darkest_where = "storey %d" % floor_index
+				# Once per DISTINCT colour, not once per vertex: a repainted wall is
+				# thousands of vertices and one mistake.
+				if lum < INTERIOR_MIN_LUMINANCE and not seen.has(key):
+					_fail("storey %d paints a surface %s at %.2f luminance — the interior is supposed to have no dark corners" % [
+						floor_index, key, lum])
+				seen[key] = true
+		# Only the PLANNED storeys are drawn on the grid, and only they carry the
+		# carpet-and-wainscot treatment; the keep's two floors are hand-authored
+		# furniture and its carpet is one box of its own.
+		if not TowerPlans.storey(floor_index).is_empty():
+			for want: Array in [
+				[TowerInterior.COLOR_STONE, "off-white walls"],
+				[TowerInterior.COLOR_CARPET, "a mint floor"],
+				[TowerInterior.COLOR_WAINSCOT, "a wainscot band"],
+			]:
+				if not seen.has(_color_key(want[0])):
+					_fail("storey %d's batch has no %s in it — that half of the look is not wired to the geometry" % [
+						floor_index, want[1]])
+	print("tower interior: batch palette clears %.2f luminance (darkest %.2f, %s)" % [
+		INTERIOR_MIN_LUMINANCE, darkest, darkest_where])
+	interior.queue_free()
+	await process_frame
+
+
+func _color_key(c: Color) -> String:
+	## A colour's identity, rounded past the sRGB/linear round trip's float noise.
+	return "%.2f|%.2f|%.2f" % [c.r, c.g, c.b]
 
 
 func _material_of(mesh: MeshInstance3D) -> Material:
