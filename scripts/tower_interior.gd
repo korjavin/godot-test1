@@ -378,8 +378,13 @@ const WING_JOG_Z: float = 3.4
 ## anything keyed on a name or a number is not.
 const CRAWL_X0: float = 4.3
 const CRAWL_X1: float = 5.7
-const CRAWL_LINTEL_Y: float = 2.6
-const PRESS_TOP: float = 2.25
+## The lintel and the stroke are one pair of numbers, not two: the press's box is
+## 0.7 m deep, so its top at rest is exactly the lintel's underside and its bottom
+## at the end of the stroke is exactly the floor. Between them the gap has to clear
+## a 2 m capsule or the crawl is impassable at every phase of its cycle — which is
+## a challenge gate that is really a wall, and check 11 measures it.
+const CRAWL_LINTEL_Y: float = 2.8
+const PRESS_TOP: float = 2.45
 const PRESS_BOTTOM: float = 0.35
 ## Long enough to walk under without sprinting, short enough that waiting is dull.
 const PRESS_PERIOD: float = 2.6
