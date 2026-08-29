@@ -3428,7 +3428,12 @@ func _check_shared_game_over() -> void:
 	re-tested anyway, cheaply, because "the caller is past the guards" is exactly
 	the kind of invariant a later edit breaks silently.
 	"""
-	if lives > 0 or is_game_over or is_caught:
+	# ...and never over the full-custody break-out. Inside that scene the SCENE owns
+	# the outcome — losing the last heart there is a failure it decides itself, in
+	# `_tick_custody()`, and archives the world for. A room-wide game over raised
+	# from here would leave a protocol still running behind the ending screen and
+	# archive the world a moment later on the recall clock instead.
+	if lives > 0 or is_game_over or is_caught or custody_protocol_active:
 		return
 	var mp := _mp()
 	if mp == null or not mp.has_method("shared_lives_spent"):
