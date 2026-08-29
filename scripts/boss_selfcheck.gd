@@ -585,20 +585,24 @@ func _check_model_rigid(boss: CharacterBody3D) -> void:
 	axes (`Basis.scaled`) instead of the model's own (`Basis.scaled_local`) is
 	identical for a UNIFORM scale — a uniform scale commutes with rotation — and
 	is a SHEAR for any other, so the whole class of bug is invisible until the
-	first species ships a stretched model. The green dragon is that species: its
-	placeholder is a crocodile mesh at (1, 1.6, 1), and under the parent-frame
-	composition a dragon leaning into a chase would grow taller in world y
-	instead of along its own spine.
+	first species ships a stretched model. The green dragon was that species when
+	this check landed — a crocodile mesh at (1, 1.6, 1) that, under the
+	parent-frame composition, would have grown taller in world y instead of along
+	its own spine every time it leaned into a chase. The art beads have since
+	replaced those placeholders with purpose-built meshes worn at IDENTITY, and
+	the clown's phoboman at (0.75, 1, 0.75) is what still carries the case.
 
 	Orthogonality is the exact test rather than a proxy: a rotation scaled along
 	its OWN axes keeps mutually perpendicular columns (each is a unit column times
 	one factor), and a shear is precisely the loss of that. So this passes for a
 	uniform model, passes for a correctly-stretched one, and fails for a sheared
 	one — no reference pose to restate and nothing to retune when the numbers
-	move. It is asked of every BIOME_BOSS kind, so the uniformly
-	scaled ones (the crocodile fallback, the titan) are its negative control and
-	the stretched placeholders (the dragon, and the hydra / naga / roc / clown)
-	are the cases that can actually fail it.
+	move. It is asked of every BIOME_BOSS kind, so the uniformly scaled ones (the
+	crocodile fallback, the titan, and every purpose-built boss mesh) are its
+	negative control and any NON-uniformly scaled scene — the clown today, and
+	whatever a future art bead reaches for — is the case that can actually fail
+	it. THE COVERAGE IS THE ITERATION, NOT THE LIST: this asks every kind, so it
+	keeps its teeth as scenes come and go.
 	"""
 	var model: Node3D = boss.get_node_or_null("Model")
 	if model == null:
