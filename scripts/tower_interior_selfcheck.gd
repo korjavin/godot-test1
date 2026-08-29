@@ -56,7 +56,15 @@ extends SceneTree
 ##      asserts a freshly built interior comes up already open, with no frame and no
 ##      animation. That is the seam phase 5 loads a save through, and it is what
 ##      makes "walk out, walk back in, still open" a property of the code.
-##   8. VISIBILITY GATING. Check 9 drives the policy directly at storey counts this
+##   8. **EARNED STATE SURVIVES THE PROCESS.** Check 10 is phase 5's acceptance,
+##      driven headlessly: open a gate, throw the tower away, build a new one, and
+##      the gate is open — geometry and all. Then a second writer stores an id
+##      this tower never heard of and the tower opens another, and BOTH survive,
+##      because the merge is a union and not an overwrite. The stale-copy case is
+##      the one a naive check misses: a store that simply overwrote would pass
+##      every round-trip assertion above it and still silently re-lock a gate
+##      somebody earned.
+##   9. VISIBILITY GATING. Check 9 drives the policy directly at storey counts this
 ##      building does not have (so phase 8 inherits a correct gate rather than
 ##      discovering it needs one) and then confirms the live rig hides the whole
 ##      interior from across the field and shows it from inside.
@@ -69,6 +77,18 @@ const SHELL_SCENE: String = "res://scenes/tower/tower_shell.tscn"
 const INTERIOR_SCENE: String = "res://scenes/tower/tower_interior.tscn"
 const PLAYER_SCENE: String = "res://scenes/player.tscn"
 const PLAYER_SCRIPT: String = "res://scripts/player_controller.gd"
+
+## Throwaway save file this check points `BestRunStore.config_path` at for its
+## whole run. NOTHING HERE MAY OPEN THE MACHINE'S `user://best_run.cfg`: a shell
+## hydrates from the store on entering the tree and WRITES THROUGH on every gate
+## it opens, so without the redirect checks 7, 8 and 10 would each store tower
+## ids into a developer's real profile — the trap `progression_selfcheck.gd`
+## documents at length, one step worse because this one writes.
+const LOCAL_STORE_PATH: String = "user://tower_interior_selfcheck_best_run.cfg"
+
+## An id no gate in this game has. Check 10 uses it as "what a second writer
+## already put on disk", which is the stale copy the union has to survive.
+const FOREIGN_ID: String = "tower_selfcheck_foreign_stop"
 
 ## How tall the player's capsule is, for the "could anybody actually stand here"
 ## test in check 2. `player.tscn`'s CollisionShape3D is a default CapsuleShape3D
@@ -115,6 +135,9 @@ func _initialize() -> void:
 
 
 func _boot() -> void:
+	# THE STORE SEAM FIRST, before any shell can exist — see LOCAL_STORE_PATH.
+	BestRunStore.config_path = LOCAL_STORE_PATH
+	_fresh_store()
 	# ONE FRAME BEFORE ANYTHING — a node added to `root` from inside _initialize()
 	# is not `is_inside_tree()` until the first frame, so anything reading a global
 	# transform measures a detached world (tower_shell_selfcheck's note).
@@ -133,6 +156,7 @@ func _run() -> void:
 	await _check_gate_lifecycle()
 	await _check_opened_state_is_reapplied()
 	await _check_visibility_gating()
+	await _check_earned_state_survives_a_relaunch()
 	_report()
 
 
@@ -735,6 +759,10 @@ func _check_gate_lifecycle() -> void:
 	     it for good.
 	  f. The checkpoint records itself, and all three ids are in the tower's set.
 	"""
+	# This check asserts "a fresh tower has nothing open", so it starts from a
+	# profile that has nothing in it — an earlier check's write-through would
+	# otherwise hydrate straight into the assertion.
+	_fresh_store()
 	var shell := await _make_tower()
 	var interior := shell.get_node_or_null("TowerInterior") as TowerInterior
 	if interior == null:
@@ -889,6 +917,7 @@ func _check_opened_state_is_reapplied() -> void:
 	nothing in play does: it pre-loads the set on the shell and asserts the geometry
 	that comes out.
 	"""
+	_fresh_store()  # the set below is meant to be the WHOLE set — see check 7's note
 	var shell := load(SHELL_SCENE).instantiate() as Node3D
 	shell.opened = {
 		TowerInterior.GATE_DEMAND: true,
@@ -1121,6 +1150,112 @@ func _settle_physics() -> void:
 	## two reads as "nothing fired" and passes every mutant.
 	for _i in 4:
 		await physics_frame
+
+
+# ============================================================================
+# CHECK 10 — the earned state survives the process (bead godot-test1-3iy.5)
+# ============================================================================
+
+func _check_earned_state_survives_a_relaunch() -> void:
+	"""
+	Check 10. Open a gate, quit, relaunch: the gate is still open. Then merge with
+	a stale copy and lose nothing.
+
+	THE ACCEPTANCE, DRIVEN HEADLESSLY. Check 8 proves the tower comes up open when
+	the set is HANDED to it; this proves the set gets there on its own, across a
+	tower that no longer exists. The two halves are separate on purpose — check 8
+	still passes with no save layer at all.
+
+	(c) IS THE HALF A NAIVE CHECK MISSES, and it is the one the landmine is about.
+	A store that wrote the tower's own set over the file instead of merging into it
+	passes every round-trip assertion above — the gate you just opened is in the
+	set you just wrote — while silently dropping anything a second writer stored in
+	between. Since the set is monotone, dropping an id IS re-locking a gate
+	somebody earned, which is exactly what must never happen. So the check puts a
+	foreign id on disk behind this tower's back and demands both survive.
+	"""
+	_fresh_store()
+
+	# --- (a) a fresh profile builds a shut tower, and opening a gate reaches disk ---
+	var first := await _make_tower()
+	if not first.opened_ids().is_empty():
+		_fail("a tower built against an empty save came up with %s already open" % [
+			first.opened_ids()])
+	first.mark_opened(TowerInterior.GATE_IDENTITY)
+	var written := BestRunStore.tower_opened_ids()
+	if written.size() != 1 or written[0] != TowerInterior.GATE_IDENTITY:
+		_fail("opening a gate never reached the save — the store holds %s" % [written])
+	# "Quit." Nothing of this run's tower survives into the next one: the shell IS
+	# the in-memory set, so freeing it is the strongest form of the quit.
+	first.queue_free()
+	await process_frame
+
+	# --- (b) "relaunch": a brand-new tower, open, geometry and all ---
+	var second := await _make_tower()
+	if not second.is_opened(TowerInterior.GATE_IDENTITY):
+		_fail("a gate opened before the quit came back shut after the relaunch")
+	var interior := second.get_node_or_null("TowerInterior") as TowerInterior
+	var mass := interior.find_child("IdentityMass", true, false) as MeshInstance3D
+	var mass_rest := 0.0
+	for box: Dictionary in TowerInterior.boxes():
+		if box["name"] == "IdentityMass":
+			mass_rest = box["pos"].y
+	if absf(mass.position.y - (mass_rest + TowerInterior.MASS_TRAVEL)) > EPS:
+		_fail("the relaunched tower knew the gate was open and rebuilt the mass shut (y = %.2f, wanted %.2f)" % [
+			mass.position.y, mass_rest + TowerInterior.MASS_TRAVEL])
+
+	# --- (c) the stale copy: a second writer stores an id this tower never saw ---
+	BestRunStore.merge_tower_opened_ids([FOREIGN_ID])
+	second.mark_opened(TowerInterior.GATE_DEMAND)
+	var merged := BestRunStore.tower_opened_ids()
+	for want: String in [TowerInterior.GATE_IDENTITY, TowerInterior.GATE_DEMAND, FOREIGN_ID]:
+		if not merged.has(want):
+			_fail("the merge dropped %s — it overwrote instead of unioning, so the store holds %s" % [
+				want, merged])
+	second.queue_free()
+	await process_frame
+
+	# --- (d) the bound, at both ends ---
+	# MAX + 8 candidates on top of the three real ids, so an unbounded store would
+	# come back well past the cap and a bounded one lands exactly on it.
+	var bulk: Array[String] = []
+	for i in BestRunStore.MAX_TOWER_IDS + 8:
+		bulk.append("tower_selfcheck_bulk_%d" % i)
+	BestRunStore.merge_tower_opened_ids(bulk)
+	var bounded := BestRunStore.tower_opened_ids()
+	if bounded.size() != BestRunStore.MAX_TOWER_IDS:
+		_fail("the stored tower set is %d ids, not the %d bound" % [
+			bounded.size(), BestRunStore.MAX_TOWER_IDS])
+
+	# --- (e) a corrupt or hand-edited record reads as "nothing earned" ---
+	_fresh_store()
+	var cfg := ConfigFile.new()
+	cfg.set_value(BestRunStore.CONFIG_TOWER_SECTION, BestRunStore.CONFIG_TOWER_KEY,
+		"{not json at all")
+	cfg.save(LOCAL_STORE_PATH)
+	if not BestRunStore.tower_opened_ids().is_empty():
+		_fail("a corrupt tower record read as opened gates: %s" % [
+			BestRunStore.tower_opened_ids()])
+	# A well-formed array with junk in it keeps the good entries and drops the rest,
+	# including the duplicate — this is a SET.
+	cfg.set_value(BestRunStore.CONFIG_TOWER_SECTION, BestRunStore.CONFIG_TOWER_KEY,
+		JSON.stringify(["tower_ok", 5, "", "tower_ok", {"a": 1}]))
+	cfg.save(LOCAL_STORE_PATH)
+	var salvaged := BestRunStore.tower_opened_ids()
+	if salvaged.size() != 1 or salvaged[0] != "tower_ok":
+		_fail("a half-junk tower record did not salvage to exactly its one real id: %s" % [
+			salvaged])
+	_fresh_store()
+
+
+func _fresh_store() -> void:
+	"""
+	Delete the throwaway save, so the next assertion starts from a clean profile.
+
+	Never the real one: `LOCAL_STORE_PATH` is this file's own file and
+	`BestRunStore.config_path` is pointed at it before any shell exists.
+	"""
+	DirAccess.remove_absolute(LOCAL_STORE_PATH)
 
 
 func _fail(message: String) -> void:

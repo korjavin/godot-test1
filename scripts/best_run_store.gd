@@ -123,6 +123,28 @@ const LS_RANKS: String = "ck_skill_ranks"
 ## hand (the bead's "clean profile" case) does not touch their best run.
 const CONFIG_PROGRESSION_SECTION: String = "progression"
 
+## Desktop section for THE TOWER'S EARNED STATE — one monotone set of ids (see
+## the tower block further down). A section of its own for the same two reasons
+## the progression one has one: it is legible in the file, and deleting it by
+## hand resets the tower without touching a best run or a level.
+##
+## `ponytail:` THE PER-WORLD SAVE MODEL IS A SEPARATE, LARGER EPIC (the tower
+## epic godot-test1-3iy's session-03 identified it; New Game behaviour is
+## explicitly out of scope here). It slots in AROUND this record without touching
+## the set semantics: a save id becomes a second key in this section, or a
+## section suffix, and each save gets its own union-merged set. Nothing below
+## needs to know that happened.
+const CONFIG_TOWER_SECTION: String = "tower"
+const CONFIG_TOWER_KEY: String = "opened_ids"
+
+## Hard bound on the stored tower set, at BOTH ends — what is written and what is
+## accepted back. The same discipline (and the same reason) as
+## `mp_manager.MAX_STATE_IDS`: this exists to keep a corrupt or hand-edited file
+## from being walked without limit, not to police how much of the tower a player
+## may open. The whole authored building is a dozen ids (`tower_graph.gd`), so
+## 256 is two orders of headroom and still a bound.
+const MAX_TOWER_IDS: int = 256
+
 ## The player id is 128 random bits as 32 hex characters — inside the lobby's
 ## `^[A-Za-z0-9_-]{8,64}$` guard, and wide enough that guessing somebody else's
 ## is the only attack and it does not work.
@@ -370,6 +392,113 @@ static func _parse_ranks(raw: String) -> Dictionary:
 		return {}
 	var parsed: Variant = JSON.parse_string(raw)
 	return parsed as Dictionary if typeof(parsed) == TYPE_DICTIONARY else {}
+
+
+# =============================================================================
+# THE TOWER'S EARNED STATE — a monotone set, merged by union
+# =============================================================================
+#
+# WHY IT IS HERE AND NOT IN A STORE OF ITS OWN: exactly the reuse argument the
+# header makes for the progression counters. It wants the same local file, the
+# same read-modify-write merge and the same silent-failure rule, so a second
+# store would have been this file again for one array.
+#
+# WHY IT IS STATIC AND INSTANCE-FREE: `tower_shell.gd` is a building, not a node
+# that owns a player's records. It needs two calls — "what did I open before" and
+# "remember I just opened this" — and neither wants an `HTTPRequest` pair, a
+# player id or a `fetch()`. Both functions are complete round trips to the file.
+#
+# WHY THE UNION IS THE WHOLE MERGE RULE: a gate only ever OPENS, a stop only ever
+# UNLOCKS, a stage only ever COMPLETES. The set can only grow, so the newer of
+# two copies is the superset and `stored | ours` is always the right answer —
+# which makes a stale copy harmless, a re-save idempotent and an interleaved
+# write from a second instance a no-op rather than a rollback. It is the scalars'
+# `maxi` one dimension up, and `merge_ranks`'s per-entry `maxi` one across.
+#
+# **A MET DEMAND GATE NEVER RE-LOCKS.** Earned progression must not become
+# upkeep, so a demand gate's opened state is in this same set as an identity
+# gate's, and nothing here can ever take an id back out.
+#
+# WHAT IS NEVER WRITTEN: anything that resets. Guards, alarms, loose objects and
+# unfinished in-room puzzle configuration go nowhere near this — if it can go
+# backwards it does not belong in a monotone set, and the tower rebuilds it from
+# scratch every time it is streamed in.
+#
+# V1 IS THE LOCAL LAYER ONLY. No `/best` POST: the lobby record is a scalar
+# schema whose monotone merge lives in Go (`server/best.go`), and putting a set
+# on that wire needs a merge rule on the server side, which is its own bead.
+# `user://` is a working store on web too (the header measured it), so the one
+# ceiling is the IndexedDB flush lag — a tab closed within a frame of opening a
+# gate loses that gate, and re-opening it costs one walk.
+
+static func tower_opened_ids() -> Array[String]:
+	"""
+	The tower ids this profile has already earned.
+
+	@return: A fresh sorted Array of String — the caller may keep or mutate it.
+
+	A missing file, a missing key, a truncated value or a hand-edited mess all
+	read as "nothing opened yet", which is the correct answer for every one of
+	them: the tower simply comes up shut and can be opened again. Every entry is
+	type-checked and the count is bounded, because this is a file a player can
+	edit.
+	"""
+	var cfg := ConfigFile.new()
+	if cfg.load(config_path) != OK:
+		return []
+	return _sanitize_tower_ids(
+		JSON.parse_string(String(cfg.get_value(CONFIG_TOWER_SECTION, CONFIG_TOWER_KEY, ""))))
+
+
+static func merge_tower_opened_ids(ids: Array) -> void:
+	"""
+	Fold `ids` into the stored set and save it. The only writer.
+
+	@param ids: The ids to add. Already-stored ones cost nothing.
+
+	READ-MODIFY-WRITE, like every other write in this file — and here it is not
+	only about the other sections: it is what makes the merge a UNION rather than
+	an overwrite. Without the re-read, a shell hydrated from a stale copy (or one
+	built before a second instance saved) would write its own smaller set over the
+	larger one on disk, and a gate the player had earned would re-lock. That is
+	the bug this whole shape exists to make impossible.
+
+	Called on a gate OPENING and nowhere else — rare and precious, so it writes
+	immediately rather than batching to some later flush that a crash eats.
+	Failures are ignored, for the reason `_write_local` gives.
+	"""
+	var merged := tower_opened_ids()
+	for id: Variant in ids:
+		if merged.size() >= MAX_TOWER_IDS:
+			break
+		if typeof(id) == TYPE_STRING and not String(id).is_empty() and not merged.has(id):
+			merged.append(String(id))
+	merged.sort()
+	var cfg := ConfigFile.new()
+	cfg.load(config_path)  # keep the records, the counters and the player id intact
+	cfg.set_value(CONFIG_TOWER_SECTION, CONFIG_TOWER_KEY, JSON.stringify(merged))
+	cfg.save(config_path)
+
+
+static func _sanitize_tower_ids(parsed: Variant) -> Array[String]:
+	"""
+	Turn whatever came out of the store into a sorted, bounded Array of String.
+
+	Anything that is not a JSON array is nothing; a non-string or empty entry is
+	skipped rather than rejecting the whole set, for the same reason a malformed
+	rank is skipped in `merge_ranks` — the rest of what a player earned is worth
+	keeping. Duplicates collapse, because this is a SET.
+	"""
+	var out: Array[String] = []
+	if typeof(parsed) != TYPE_ARRAY:
+		return out
+	for id: Variant in parsed as Array:
+		if out.size() >= MAX_TOWER_IDS:
+			break
+		if typeof(id) == TYPE_STRING and not String(id).is_empty() and not out.has(id):
+			out.append(String(id))
+	out.sort()
+	return out
 
 
 func _load_or_make_player_id() -> String:
