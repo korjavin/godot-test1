@@ -4331,9 +4331,41 @@ static func _emit_box(tool: SurfaceTool, box: Dictionary) -> void:
 		# same colour on an unbatched one — the hazard orange washed out to a custard
 		# yellow, which is the sort of drift that makes a colour language stop
 		# meaning anything.
-		tool.set_color((top_color if normals[i].y > 0.5 else color).srgb_to_linear())
-		tool.set_normal(basis * normals[i])
+		var n := normals[i]
+		var face: Color = top_color if n.y > 0.5 else color
+		var shade := _face_shade(n)
+		tool.set_color(Color(face.r * shade, face.g * shade,
+				face.b * shade).srgb_to_linear())
+		tool.set_normal(basis * n)
 		tool.add_vertex(placed * verts[i])
+
+
+static func _face_shade(normal: Vector3) -> float:
+	"""
+	How bright one face of a box is, baked into its vertices.
+
+	@param normal: The box-local face normal — axis-aligned, because the only tilted
+	        thing in this building is the ramp and a ramp's deck is its top either way.
+	@return: A multiplier for the face's colour.
+
+	THE BATCH IS UNSHADED (see `_batch_material`), so without this every box would be
+	one flat silhouette of its own colour and a white corridor would have no corners
+	in it at all. Baking one tone per face into the vertex colours is how a cel-shaded
+	model gets its form and it is what the interior does now: an even, shadowless,
+	always-identical light that owes nothing to where the sun is or whether there is a
+	roof overhead. It is also free — the vertices were being written anyway.
+
+	SHALLOW ON PURPOSE. These are the gentlest ratios that still separate two white
+	walls meeting at a corner; a dramatic ramp would put the dark corners back, which
+	is the exact thing bead 99j exists to remove. `INTERIOR_MIN_LUMINANCE` in the
+	self-check is the palette's darkest colour times the darkest factor here, so
+	deepening these is a change that file will notice.
+	"""
+	if normal.y > 0.5:
+		return 1.0
+	if normal.y < -0.5:
+		return 0.78
+	return 0.90 if absf(normal.x) > 0.5 else 0.84
 
 
 static func _batch_material(glow: bool) -> StandardMaterial3D:
@@ -4354,16 +4386,23 @@ static func _batch_material(glow: bool) -> StandardMaterial3D:
 	mat.rim_enabled = true
 	mat.rim = 0.4
 	mat.rim_tint = 0.25
-	if glow:
-		# The emissive half cannot take its emission from vertex colour, so it is
-		# UNSHADED instead: the albedo IS what you see, at any hour and any angle,
-		# which is what a light panel wants anyway.
-		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	else:
-		# ...and the matte half lights itself instead, which is bead 99j's fix. The
-		# emissive half needs nothing: it is UNSHADED, so its albedo already IS what
-		# you see and there is no darkness to lift.
-		_self_light(mat, Color.WHITE)
+	# BOTH HALVES ARE UNSHADED, and since bead 99j that is the interior's whole
+	# lighting model rather than a light-panel special case.
+	#
+	# The emissive half never had a choice: emission is a material property and cannot
+	# come from a vertex colour, so the albedo has to BE what you see. The matte half
+	# joined it because nothing else can light a vertex-coloured surface in its own
+	# colour — additive emission is one constant for the whole surface and washes the
+	# off-white, the mint and the wainscot toward the same white, and multiplicative
+	# emission multiplies by the emission TEXTURE (black when unset), not the albedo.
+	#
+	# So the batch is lit the way a cel-shaded model is: the shading is BAKED INTO THE
+	# VERTEX COLOURS, one flat tone per face (`_emit_box`). That is the Severance floor
+	# exactly — even, shadowless, no dark corners, the same at every hour and under
+	# every roof — and it costs no light, no shadow pass, no second surface and no draw
+	# call. `diffuse_mode` and the rim stay set so `ToonShading` still declines to
+	# duplicate this material; an unshaded material ignores both.
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	_materials[key] = mat
 	return mat
 
@@ -4431,32 +4470,28 @@ static func _box_mesh(size: Vector3) -> BoxMesh:
 
 static func _self_light(mat: StandardMaterial3D, tint: Color) -> void:
 	"""
-	Make one interior material light itself, so no room in this building is dark.
+	Make one PER-COLOUR interior material light itself, so nothing here is dark.
 
-	@param mat: The material to tint.
-	@param tint: `Color.WHITE` for a vertex-coloured batch surface (the multiply
-	        operator picks the per-vertex albedo up for us), the box's own colour
-	        for a per-colour material.
+	@param mat: The material to light.
+	@param tint: The colour it is painted, which is also the colour it glows.
 
-	BEAD 99j, AND IT IS THE WHOLE FIX. The shell was sealed in phase 13, which took
-	the key light and the sky out of every room; what was left was ambient, and the
-	interior read as black. The bead's own direction was "no per-room OmniLights" —
-	a real light under the slab is a shadow pass on `gl_compatibility`, which is the
-	renderer this building already gates its geometry for — so the surfaces light
-	THEMSELVES instead.
+	BEAD 99j. The shell was sealed in phase 13, which took the key light and the sky
+	out of every room; what was left was ambient, and the interior read as black. The
+	bead's direction was "no per-room OmniLights" — a real light under the slab is a
+	shadow pass on `gl_compatibility`, which is the renderer this building already
+	gates its geometry for — so the surfaces light THEMSELVES instead.
 
-	`EMISSION_OP_MULTIPLY` is what makes that one line instead of a palette of
-	emission colours: the operator multiplies the emission by the material's ALBEDO,
-	and on the batch surface the albedo is the VERTEX colour. So one flag on one
-	shared material gives every batched box a self-lit term in its own colour — the
-	off-white walls glow off-white, the carpet glows mint — with no per-colour
-	material, no new surface, and therefore no new draw call. Additive emission
-	would instead wash every surface toward the same white and flatten the palette
-	the legibility language at the top of this file depends on.
+	A material that knows its own colour can do that with plain ADDITIVE emission in
+	that colour: it keeps its diffuse shading and gains a floor under it, so a gate
+	mass still reads as a shaped solid and never as a silhouette. `EMISSION_OP_MULTIPLY`
+	is NOT the way to spend a vertex colour here and was the first thing tried:
+	`emission_operator` combines the emission colour with the emission TEXTURE, not
+	with the albedo, and an unset emission texture samples BLACK — so a multiply
+	material emits nothing at all. The batch's vertex-coloured surface therefore takes
+	a different route entirely; see `_batch_material`.
 	"""
 	mat.emission_enabled = true
 	mat.emission = tint
-	mat.emission_operator = BaseMaterial3D.EMISSION_OP_MULTIPLY
 	mat.emission_energy_multiplier = INTERIOR_EMISSION
 
 
