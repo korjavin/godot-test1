@@ -137,6 +137,12 @@ class RoomStub extends Node:
 	## atomically, and only when there is something to move to. `claimable` empty is
 	## a room with nothing to give, which is the only thing that may bench anybody.
 	var online: bool = true
+	## Who the lobby says the master is, and who we are — the pair
+	## `player_controller._custody_authority()` compares. Defaulting BOTH to "me"
+	## keeps every other check in this file on the solo-shaped path it has always
+	## taken; only check 18 makes them differ.
+	var master: String = "me"
+	var me: String = "me"
 	var held: String = ""
 	var claimable: String = ""
 	var reassignments: int = 0
@@ -147,6 +153,12 @@ class RoomStub extends Node:
 
 	func is_online() -> bool:
 		return online
+
+	func get_master() -> String:
+		return master
+
+	func my_id() -> String:
+		return me
 
 	func my_hero() -> String:
 		return held
@@ -235,6 +247,7 @@ func _run() -> void:
 	await _check_the_protocol_opens_and_can_be_played()
 	await _check_the_break_out_scars_the_world()
 	await _check_reassign_first_imprison_last()
+	await _check_two_clients_cannot_disagree()
 	await _check_the_recall_archives_the_world()
 	await _check_the_scene_does_not_leak()
 	_report()
@@ -1689,6 +1702,118 @@ func _check_reassign_first_imprison_last() -> void:
 	_clear(player)
 	room.queue_free()
 	terrain.queue_free()
+	await process_frame
+	_fresh_store()
+
+
+# ============================================================================
+# 18. TWO CLIENTS CANNOT DISAGREE ABOUT THE BREAK-OUT (bead godot-test1-3iy.10)
+# ============================================================================
+
+func _check_two_clients_cannot_disagree() -> void:
+	"""
+	Check 18. The recall clock is the MASTER'S, and so is the outcome it decides.
+
+	THE BUG THIS EXISTS FOR is not a crash, it is two screens telling two players
+	different things about the same event. A room-wide protocol with a per-client
+	clock gives every peer its own 35 s off its own packets, so a liberation landing
+	within a packet's flight of the deadline is a survival on one machine and an
+	ARCHIVED WORLD — the campaign over, permanently — on another. Nothing in the
+	game would report that; the two players would simply be in different worlds.
+
+	So the assertion is the disagreement itself, staged rather than hoped for: a
+	non-master whose OWN clock has run out, handed the master's verdict of SURVIVED.
+	The two answers are as far apart as they can be, and the master's has to win.
+
+	  (a) A NON-MASTER DOES NOT DECIDE. Its clock reaches zero and the scene runs
+	      on, unarchived — the peer is showing a countdown, not adjudicating one.
+	  (b) THE VERDICT IS WHAT ENDS IT, and a SURVIVED verdict over a spent local
+	      clock ends the scene as a survival: a scar, and no archive.
+	  (c) THE NEGATIVE CONTROL — the same spent clock ON THE MASTER really does
+	      decide, and really does archive. Without it, (a) would pass just as
+	      happily against a build where the recall clock does nothing at all.
+	  (d) THE MASTER PUBLISHES WHAT IT DECIDED, so there is something for (b) to
+	      deliver: `custody_wire_state()` carries the verdict after the scene ends.
+	"""
+	_fresh_store()
+	_beat_done()
+	var room := RoomStub.new()
+	room.add_to_group("mp")
+	root.add_child(room)
+	room.held = "primm"
+	room.hand = [TowerGraph.HEROES.find("primm")] as Array[int]
+
+	# ---- (a) a non-master's spent clock decides nothing ---------------------
+	room.master = "somebody_else"
+	var player := await _make_player()
+	player.set_active_character(TowerGraph.HEROES.find("primm"))
+	await _drive_into_custody(player)
+	if not player.in_custody_protocol():
+		_fail("check 18 could not open a protocol, so it proves nothing")
+		_clear(player)
+		room.queue_free()
+		await process_frame
+		_fresh_store()
+		return
+	player.custody_timer = 0.0
+	await _tick(4)
+	if not player.in_custody_protocol():
+		_fail("a NON-MASTER ended the break-out on its own clock — every peer runs its own "
+			+ "35 s, so a rescue near the wire is a survival on one screen and an archived "
+			+ "world on another")
+	if BestRunStore.world_archived():
+		_fail("a non-master archived the world off its own clock — the campaign is over on "
+			+ "one machine and running on the others")
+
+	# ...and it is SHOWING the master's number, not its own. A peer that ignored the
+	# published clock would count down from wherever its own scene started and reach
+	# zero at a different instant, which is the disagreement one step earlier.
+	player.call("apply_room_custody", 9.0, 0)
+	if absf(player.custody_timer - 9.0) > 0.05:
+		_fail("the master published 9.0 s and this peer is showing %.2f — it is running its "
+			% player.custody_timer + "own clock, and two clocks reach zero at two moments")
+
+	# ---- (b) the master's verdict is what ends it --------------------------
+	player.call("apply_room_custody", 0.0, 1)
+	if player.in_custody_protocol():
+		_fail("the master said the room survived and this peer stayed in the scene")
+	if BestRunStore.world_archived():
+		_fail("the master said SURVIVED and this peer archived the world anyway — the two "
+			+ "clients disagree about the outcome, which is the whole thing this owns")
+	if not BestRunStore.tower_opened_ids().has(TowerGraph.SCAR_CUSTODY):
+		_fail("the master's SURVIVED verdict did not take the scar, so this peer's tower "
+			+ "disagrees with the room's for the rest of the campaign")
+	_clear(player)
+	await process_frame
+	_fresh_store()
+
+	# ---- (c) the negative control: the MASTER's clock does decide ----------
+	# Re-armed: `_fresh_store()` above wiped the profile, and capture is gated on the
+	# authored rescue being in it. Without this the control opens no protocol and
+	# reports the failure as if the clock were broken.
+	_beat_done()
+	room.master = "me"
+	room.held = "primm"
+	player = await _make_player()
+	player.set_active_character(TowerGraph.HEROES.find("primm"))
+	await _drive_into_custody(player)
+	if not player.in_custody_protocol():
+		_fail("the negative control could not open a protocol")
+	player.custody_timer = 0.0
+	await _tick(4)
+	if player.in_custody_protocol():
+		_fail("the MASTER's clock ran out and the scene ran on — claim (a) would pass "
+			+ "against a build whose recall clock does nothing at all")
+	if not BestRunStore.world_archived():
+		_fail("the master's recall completed and the world was not archived")
+
+	# ---- (d) ...and it publishes what it decided ---------------------------
+	var wire: Array = player.call("custody_wire_state") as Array
+	if wire.size() != 2 or int(wire[1]) != 2:
+		_fail("the master decided FAILED and publishes %s — with no verdict on the wire "
+			% str(wire) + "there is nothing for the other peers to agree with")
+	_clear(player)
+	room.queue_free()
 	await process_frame
 	_fresh_store()
 

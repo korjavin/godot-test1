@@ -721,6 +721,19 @@ The sharpest rules, in rough order of how badly they bite:
   peers whose ICE is not finished, the seed's own reasoning one verb along. The join
   snapshot carries the whole set and is honoured **from the master alone**, like `dead`.
   Entering a room resets the local mirror: a room's roster is the room's.
+- **The master publishes the two values a room may never disagree about** — the captive
+  set and the break-out's clock and verdict — on one verb (`room`, 2 Hz, mesh + relay,
+  master-only, applied wholesale). It is a REPAIR channel, not the source: it closes the
+  join gap the per-hero verb cannot reach (a capture landing between the master
+  snapshotting a joiner and the captor learning that joiner exists), and it converges in
+  BOTH directions while leaving any assertion younger than `RELEASE_GRACE_MSEC` alone —
+  without that the master's older picture undoes a fresh local capture and puts it back
+  next tick, a flap at the publish rate. **A non-master runs the recall clock for
+  presentation and decides nothing**; the master's verdict is what ends the scene, and it
+  survives re-election because the clock is published as SECONDS LEFT, so the new master
+  carries on from the number it was already showing. `_auto_claim_hero()` waits for
+  `_join_settled()` — on the `welcome` frame the captive set is still empty, and claiming
+  there means claiming a hero who is in a cell.
 - The stall heartbeat rides the lobby relay, not the mesh, because a throttled tab stops
   polling both.
 

@@ -546,14 +546,17 @@ var custody_timer: float = 0.0
 ## the hero it names, walk through and step into a cell — measured by walking it,
 ## not reasoned. Short enough that standing still loses.
 ##
-## ponytail: PER CLIENT, AND IN A ROOM THAT IS A DEADLINE PER PLAYER. Each peer
-## starts its own 35 s when its own `cap` packets say the roster is empty, so a
-## liberation landing within a packet's flight of the deadline can be a survival on
-## one screen and an archived world on another. Solo this cannot happen and it is
-## the shipped behaviour of bead godot-test1-3iy.11; making it room-wide is what
-## bead godot-test1-3iy.10 exposed. The upgrade path is the shape the room's HEARTS
-## already use — the master owns the number and publishes it, and the master
-## decides the outcome — and it wants its own bead rather than an invention here.
+## IN A ROOM THE MASTER OWNS THIS CLOCK AND THE OUTCOME IT DECIDES, and only the
+## DURATION and the presentation below it are still tuning. A room-wide protocol
+## cannot have a per-client clock: each peer would start its own 35 s off its own
+## packets, and a liberation landing within a packet's flight of the deadline would
+## be a survival on one screen and an archived world on another. So the master
+## publishes both (`MpManager` verb `room`) and every other peer runs the scene for
+## presentation only — the same shape the room's HEARTS, the crocodile simulation
+## and the join snapshot already use.
+##
+## THE 35 AND HOW THE COUNTDOWN READS ARE THE OWNER'S to revisit; who owns the
+## number is not.
 const CUSTODY_RECALL_SECONDS: float = 35.0
 
 # ---------------------------------------------------------------------------
@@ -595,6 +598,16 @@ const PRISON_TICK: float = 0.5
 ## terrain and a prisoner there is simply not confined.
 var _prison_origin: Vector3 = Vector3.ZERO
 var _prison_confined: bool = false
+
+## THE ROOM'S VERDICT ON THE BREAK-OUT: 0 while it runs (or when none has run),
+## 1 survived, 2 failed. Latched by whoever DECIDED the scene, and published by the
+## master so every other peer applies the same one.
+##
+## STICKY RATHER THAN TIMED. The master ends its own scene the instant it decides,
+## so `custody_protocol_active` is false a frame later and there would be nothing
+## left to publish; the latch holds until the next protocol opens. Applying it twice
+## is a no-op — `_end_custody_protocol()` returns on a scene that is not running.
+var custody_verdict: int = 0
 
 ## The captive set as it stood when the scene began, so it can be put back.
 ##
@@ -2687,6 +2700,9 @@ func _begin_custody_protocol() -> void:
 		return
 	custody_protocol_active = true
 	custody_timer = CUSTODY_RECALL_SECONDS
+	# A fresh scene has no verdict yet, and the sticky latch from the last one must
+	# not be published over this one.
+	custody_verdict = 0
 	# What was true before the scene, so the exit can put it back — see the field.
 	_custody_entry_captives = captive_heroes.duplicate()
 	# ...and now every hero is a prisoner, which is the fiction AND the geometry:
@@ -2758,8 +2774,18 @@ func _tick_custody(delta: float) -> void:
 	"""
 	if not custody_protocol_active:
 		return
+	# THE CLOCK STILL TICKS ON EVERY PEER, and on a non-master that is PRESENTATION
+	# ONLY: the master publishes the authoritative number a few times a second and
+	# `apply_room_custody()` snaps this back to it, exactly the way a synced
+	# crocodile eases between the master's samples. Ticking locally in between is
+	# what stops the countdown reading as a stutter at the publish rate.
 	custody_timer = maxf(0.0, custody_timer - delta)
 	_show_custody_countdown()
+	# ...BUT ONLY THE AUTHORITY DECIDES. In a room that is the master, for the reason
+	# in `CUSTODY_RECALL_SECONDS`: two peers must not be able to disagree about the
+	# outcome, and the only way to guarantee that is for one of them to own it.
+	if not _custody_authority():
+		return
 	# SUCCESS IS ONE LIBERATION, asked of the RAW free set. `free_hero_count()` reads
 	# `free_character_indices()`, which the scene's roster grant deliberately does
 	# NOT touch (see `available_character_indices`) — so it stays 0 for every frame
@@ -2773,6 +2799,59 @@ func _tick_custody(delta: float) -> void:
 	# ending screen goes up once and the archive is written once.
 	if custody_timer <= 0.0:
 		_end_custody_protocol(false)
+
+
+func _custody_authority() -> bool:
+	"""
+	Do WE decide this scene's outcome? Solo yes; in a room, only the master.
+
+	One null-safe hop into the `"mp"` group, the same shape as every other
+	multiplayer read here — so the player scene run standalone, and every solo run,
+	answers true and the scene is decided exactly where it always was.
+
+	MASTER MIGRATION NEEDS NO CODE. The lobby re-elects the oldest surviving member
+	in about a second, and the peer that inherits the title has been adopting the
+	old master's `custody_timer` all along (see `apply_room_custody()`) — so it
+	simply starts deciding from the number it was already showing. That is the same
+	property the crocodile sync relies on for the same event, and it is why the
+	clock is published as SECONDS LEFT rather than as a wall-clock deadline: a
+	deadline would need the two machines to agree what time it is.
+	"""
+	var mp := _mp()
+	if mp == null or not mp.has_method("is_online") or not bool(mp.call("is_online")):
+		return true
+	return String(mp.call("get_master")) == String(mp.call("my_id"))
+
+
+func custody_wire_state() -> Array:
+	"""
+	What the master publishes about the break-out: `[seconds left, verdict]`.
+
+	`MpManager._send_room_state()` is the only caller. Kept as a plain query with no
+	side effects, so publishing can never perturb the scene it is describing — the
+	same rule the perf overlay's counters are written to.
+	"""
+	return [custody_timer if custody_protocol_active else 0.0, custody_verdict]
+
+
+func apply_room_custody(seconds: float, verdict: int) -> void:
+	"""
+	The master's word on the break-out. `MpManager._receive_room()` is the caller.
+
+	@param seconds: the authoritative time left on the recall.
+	@param verdict: 0 running, 1 survived, 2 failed.
+
+	THE VERDICT OUTRANKS THE CLOCK, and is applied even to a peer whose own scene is
+	already over — where it is a no-op, because `_end_custody_protocol()` returns on
+	a scene that is not running. That is what makes a repeated publish safe and what
+	lets the latch be sticky instead of timed.
+	"""
+	if not custody_protocol_active:
+		return
+	if verdict != 0:
+		_end_custody_protocol(verdict == 1)
+		return
+	custody_timer = maxf(0.0, seconds)
 
 
 func _end_custody_protocol(survived: bool, record: bool = true) -> void:
@@ -2794,6 +2873,11 @@ func _end_custody_protocol(survived: bool, record: bool = true) -> void:
 	a scarless success. The bead's landmine, closed by having ONE record instead of
 	by coordinating two.
 	"""
+	# THE VERDICT, LATCHED BEFORE ANYTHING ELSE. On the master this is what the room
+	# is told; on everybody else it is simply a record. Written even when `record` is
+	# false — the scene really did end, whoever decided it.
+	custody_verdict = 1 if survived else 2
+
 	if record:
 		if survived:
 			_apply_custody_scar()
@@ -3156,6 +3240,7 @@ func restart_game() -> void:
 	_prison_accum = 0.0
 	custody_protocol_active = false
 	custody_timer = 0.0
+	custody_verdict = 0
 	_custody_entry_captives.clear()
 	# Ability cooldowns are NOT part of reset_position()'s wipe list, and
 	# _update_ability_timers() sits below the is_game_over early return in

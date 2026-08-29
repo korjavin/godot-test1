@@ -240,10 +240,28 @@ const MAX_FLEE_DURATION: float = 60.0
 ##         beat first, which is seconds; the SET is bounded independently by the
 ##         one-captive-per-peer rule in `_receive_captive`, so this budget is only
 ##         about the cost of the packet, not about the damage a flood could do.
+##   room  is the MASTER'S PERIODIC TRUTH about the captive set and the break-out
+##         clock. Master-only and applied wholesale, so it is the `dead` class of
+##         verb: budgeted a few times its own ROOM_SYNC_HZ so a burst after a hitch
+##         still drains while a flood cannot.
 const VERB_BUDGET_PER_SEC: Dictionary = {
 	"clm": 30, "kill": 10, "flee": 4, "croc": 40, "cnf": 150, "dead": 60,
-	"cap": 8,
+	"cap": 8, "room": 12,
 }
+
+## How often the master publishes the room's captive set and recall clock, in hertz.
+##
+## SLOW ON PURPOSE. It is a repair channel and a countdown, not motion: the live
+## `cap` verb carries every change the instant it happens, and this exists for the
+## windows that verb cannot reach (a peer whose mesh was still negotiating) plus the
+## one number two peers must never disagree about. Twice a second is well inside the
+## 35 s recall and costs a handful of bytes.
+const ROOM_SYNC_HZ: float = 2.0
+
+## Trust-boundary bound on a published recall clock. `player_controller`'s own
+## CUSTODY_RECALL_SECONDS is 35; this is generous because it exists to reject
+## hostile garbage before a cast, not to police the scene's length.
+const MAX_CUSTODY_SECONDS: float = 3600.0
 
 ## Longest hero name a `cap` packet or a join snapshot may carry. The names are
 ## `player_controller.CHARACTERS` entries ("phoboman" is the longest at 8), and the
@@ -530,8 +548,17 @@ var _last_holder: Dictionary = {}
 ## which costs an agreement this protocol otherwise never needs.
 var _released_msec: Dictionary = {}
 
-## How long a release outruns a capture for the same hero. See `_released_msec`.
+## ...and its mirror: when we last accepted a CAPTURE for each hero, so the
+## master's periodic set cannot undo one it has not heard about yet. Same window,
+## same reason, opposite direction - see `_adopt_room_captives()`.
+var _captured_msec: Dictionary = {}
+
+## How long a release outruns a capture for the same hero, and a capture outruns
+## the master's periodic set. See `_released_msec` and `_captured_msec`.
 const RELEASE_GRACE_MSEC: int = 3000
+
+## Seconds accumulated toward the master's next room publish.
+var _room_accum: float = 0.0
 
 ## ONE SNAPSHOT PER SENDER, EVER — the set of peers whose `state` frame we have
 ## already folded in. The protocol sends exactly one per (incumbent, joiner) pair,
@@ -872,6 +899,8 @@ func leave() -> void:
 	_captives = {}
 	_last_holder = {}
 	_released_msec = {}
+	_captured_msec = {}
+	_room_accum = 0.0
 	_state_received = {}
 	_first_member = true
 	_join_applied = false
@@ -1525,6 +1554,20 @@ func _publish_captive(hero: String, held: bool) -> void:
 	# a master cannot re-assert somebody else's capture under that rule).
 	var packet: Dictionary = {"t": "cap", "h": hero, "c": held}
 	_broadcast_reliable(var_to_bytes(packet))
+	_relay_to_negotiating({"mp": "cap", "h": hero, "c": held})
+
+
+func _relay_to_negotiating(payload: Dictionary) -> void:
+	"""
+	Send one payload over the LOBBY RELAY to every member whose mesh is not up yet.
+
+	`_broadcast_reliable()` writes only to peers whose data channel is open and ICE
+	takes seconds, so this is how a peer mid-negotiation hears anything at all. The
+	relay is open from `welcome`, which is the seed's own reasoning.
+
+	Bounded by the room (at most three sends) and only ever called on events or at
+	ROOM_SYNC_HZ, so it cannot become traffic.
+	"""
 	if _lobby == null:
 		return
 	for member: Variant in _members:
@@ -1535,7 +1578,142 @@ func _publish_captive(hero: String, held: bool) -> void:
 			continue
 		if _is_mesh_peer_connected(peer_int_id(id)):
 			continue  # Already had it over the mesh; a second copy is a no-op anyway.
-		_lobby.send_signal_to(id, {"mp": "cap", "h": hero, "c": held})
+		_lobby.send_signal_to(id, payload)
+
+
+func _send_room_state() -> void:
+	"""
+	MASTER ONLY: publish the room's captive set and the break-out clock.
+
+	ONE VERB FOR TWO FACTS, because they are the same kind of fact — the value the
+	room must not disagree about — and they are read together (the scene's outcome
+	is "is anybody free yet" plus "is the clock spent"). Splitting them would be two
+	channels that can arrive out of step with each other.
+
+	WHAT IT REPAIRS, and why the live `cap` verb is not enough on its own: a capture
+	that lands in the gap between the master snapshotting a joiner and the CAPTOR
+	learning that joiner exists reaches neither — the snapshot was already stale and
+	the captor has nobody to relay to. Nothing else in the protocol would ever
+	correct it. This does, within half a second, because the master's set is the
+	room's and the master hears every `cap`.
+
+	Sent over the mesh AND the relay, the second reaching exactly the peers that
+	have the gap.
+	"""
+	if _state != State.IN_ROOM or _master != _you:
+		return
+	var seconds: float = 0.0
+	var verdict: int = 0
+	var player: Node = get_tree().get_first_node_in_group("player")
+	if player != null and player.has_method("custody_wire_state"):
+		var wire: Array = player.call("custody_wire_state") as Array
+		if wire.size() == 2:
+			seconds = float(wire[0])
+			verdict = int(wire[1])
+	var payload: Dictionary = {
+		"t": "room", "cap": captive_heroes(), "cd": seconds, "co": verdict,
+	}
+	_broadcast_reliable(var_to_bytes(payload))
+	var relayed: Dictionary = payload.duplicate()
+	relayed.erase("t")
+	relayed["mp"] = "room"
+	_relay_to_negotiating(relayed)
+
+
+static func decode_room(packet: Dictionary) -> Dictionary:
+	"""
+	The `room` parser — the SIXTH trust boundary in this file.
+
+	@return: `{"cap": Array[String], "cd": float, "co": int}`, or an EMPTY
+	    DICTIONARY. Trusted whole or dropped whole, static and `_rtc`-free, exactly
+	    like the four parsers above it.
+
+	`cap` is bounded and every entry length-gated here, then whitelisted against
+	`_pool` in `_receive_room`; `cd` is the recall clock, which drives a COUNTDOWN
+	the player watches, so it is finiteness-checked before any cast (`int(NAN)` is
+	undefined and on wasm the trunc can trap the module); `co` is the verdict and is
+	an enum, so anything outside it is a peer this build cannot read.
+	"""
+	if typeof(packet.get("cap", null)) != TYPE_ARRAY:
+		return {}
+	var raw: Array = packet["cap"] as Array
+	if raw.size() > MAX_STATE_CAPTIVES:
+		return {}
+	var names: Array[String] = []
+	for entry: Variant in raw:
+		if typeof(entry) != TYPE_STRING:
+			return {}
+		var hero: String = String(entry)
+		if hero.is_empty() or hero.length() > MAX_HERO_NAME:
+			return {}
+		names.append(hero)
+	if not _is_number(packet.get("cd", null)):
+		return {}
+	var seconds: float = float(packet["cd"])
+	if not is_finite(seconds) or seconds < 0.0 or seconds > MAX_CUSTODY_SECONDS:
+		return {}
+	if not _is_number(packet.get("co", null)):
+		return {}
+	var verdict: float = float(packet["co"])
+	if not is_finite(verdict) or verdict < 0.0 or verdict > 2.0:
+		return {}
+	return {"cap": names, "cd": seconds, "co": int(verdict)}
+
+
+func _receive_room(from_id: String, packet: Dictionary) -> void:
+	"""
+	The master's periodic truth. MASTER ONLY — the same authority rule the seed,
+	`cnf`, `dead` and the croc sync all enforce, and for the same reason: this is
+	applied WHOLESALE, so honouring a stranger's copy would let any member rewrite
+	the room's cells and end its break-out.
+	"""
+	if from_id != _master:
+		return
+	var msg: Dictionary = decode_room(packet)
+	if msg.is_empty():
+		return
+	_adopt_room_captives(msg["cap"])
+	var player: Node = get_tree().get_first_node_in_group("player")
+	if player != null and player.has_method("apply_room_custody"):
+		player.call("apply_room_custody", float(msg["cd"]), int(msg["co"]))
+
+
+func _adopt_room_captives(names: Array) -> void:
+	"""
+	Converge our captive set on the master's, in both directions.
+
+	A REPAIR, NOT AN OVERWRITE, and the two grace windows are what make it one. The
+	master's picture is up to ROOM_SYNC_HZ old, so a capture or a liberation we
+	applied a moment ago may not be in it yet — adopting it flat would undo our own
+	fresh assertion, and the master would put it back on its next publish: a visible
+	flap at the publish rate. So a hero we captured or released inside
+	RELEASE_GRACE_MSEC is left alone, and everything else is made to agree.
+
+	Both directions are needed. The missing-capture case is the join gap this verb
+	exists for; the missing-release case is the same gap with the packets the other
+	way round, and leaving it out would strand a freed hero in a cell on one screen.
+	"""
+	var now: int = Time.get_ticks_msec()
+	var wanted: Dictionary = {}
+	for entry: Variant in names:
+		var hero: String = String(entry)
+		if not _pool.has(hero):
+			continue  # Not a hero this room deals in.
+		wanted[hero] = true
+		if _captives.has(hero):
+			continue
+		if now - int(_released_msec.get(hero, -RELEASE_GRACE_MSEC)) < RELEASE_GRACE_MSEC:
+			continue  # We freed him just now; the master has not heard yet.
+		_captives[hero] = true
+		_captured_msec[hero] = now
+		_captive_changed(hero, true)
+	for hero: String in _captives.keys():
+		if wanted.has(hero):
+			continue
+		if now - int(_captured_msec.get(hero, -RELEASE_GRACE_MSEC)) < RELEASE_GRACE_MSEC:
+			continue  # We took him just now; the master has not heard yet.
+		_captives.erase(hero)
+		_captive_changed(hero, false)
 
 
 static func decode_captive(packet: Dictionary) -> Dictionary:
@@ -1606,6 +1784,7 @@ func _apply_captive(from_id: String, hero: String, held: bool) -> bool:
 		if String(_last_holder.get(hero, "")) != from_id:
 			return false
 		_captives[hero] = true
+		_captured_msec[hero] = Time.get_ticks_msec()
 	else:
 		# REMEMBERED WHETHER OR NOT WE HAD HIM, which is the whole point: the
 		# release we drop here is exactly the one that overtook its capture.
@@ -1873,15 +2052,6 @@ func _on_lobby_heroes(heroes: Dictionary, pool: Array) -> void:
 	if _state != State.IN_ROOM:
 		return
 
-	# ponytail: `_auto_claim_hero()` below runs on the `welcome` frame, when
-	# `_captives` is still empty — so a joiner can claim a hero the room has in a
-	# cell and play him for as long as the master's snapshot takes to arrive. It
-	# self-corrects rather than sticking: `player_controller._tick_prison()` asks
-	# twice a second whether the hero we hold is captive and asks the lobby for
-	# another, so the ceiling is a fraction of a second of the wrong body. The
-	# upgrade path is gating the auto-claim on `_join_settled()`, which changes the
-	# hero-assignment flow every other peer depends on and wants its own bead.
-	#
 	# The lobby is our own server, but this is still parsed JSON: keep both sides
 	# of the mapping strings so `hero_holder()` can never hand back a float.
 	_heroes = {}
@@ -1937,8 +2107,18 @@ func _auto_claim_hero() -> void:
 	claim with another `heroes` broadcast, so retrying in place would be a claim
 	storm. Losing the race just means the next broadcast lands us on the next free
 	hero.
+
+	IT WAITS FOR THE JOIN TO SETTLE, which is the whole of "a client never offers a
+	captive hero" applied to the one claim nobody presses. `welcome` arrives before
+	any snapshot, so `_captives` is empty on that frame and a joiner would happily
+	take a hero the room has in a cell — briefly playing, in the field, a body every
+	other screen shows locked up. `_join_settled()` is the condition the room's
+	totals already wait on and it has a deadline of its own (`JOIN_SNAPSHOT_WAIT`),
+	so a room whose snapshot never comes still gets a hero rather than none.
+	Re-driven from `_receive_state()` and from that deadline, and idempotent, so
+	whichever settles it also claims.
 	"""
-	if not my_hero().is_empty():
+	if not my_hero().is_empty() or not _join_settled():
 		return
 	var free: Array[String] = available_heroes()
 	if free.is_empty():
@@ -2131,6 +2311,13 @@ func _on_lobby_relay(from: String, payload: Dictionary) -> void:
 			if not _verb_rate_ok(from, "cap"):
 				return
 			_receive_captive(from, payload)
+		"room":
+			# The master's periodic truth, for a peer whose mesh is not up yet —
+			# which is the whole reason this verb exists (see `_send_room_state`).
+			# Same parser, same authority check, same function as the mesh arm.
+			if not _verb_rate_ok(from, "room"):
+				return
+			_receive_room(from, payload)
 		"state":
 			# A join snapshot from an incumbent. THE THIRD TRUST BOUNDARY in
 			# this file: `decode_state()` validates it whole, and anything that
@@ -2680,6 +2867,10 @@ func _receive_state(from: String, snapshot: Dictionary) -> void:
 	# The snapshot may be the last thing the placement was waiting on (the seed
 	# can equally well be). Both call in; the latch inside decides.
 	_apply_join_placement()
+	# ...and the last thing the AUTO-CLAIM was waiting on, for the reason in
+	# `_auto_claim_hero()`: this snapshot is where a joiner learns which heroes are
+	# in a cell, and claiming before it lands is claiming one of them.
+	_auto_claim_hero()
 
 
 func _absorb_collected(ids: Array) -> void:
@@ -3238,6 +3429,18 @@ func _process(delta: float) -> void:
 	# comparison per frame.
 	_tick_room_lives()
 
+	# The room's captive set and recall clock, slower still — and ABOVE THE `_rtc`
+	# GUARD for the same reason `_tick_room_lives()` is, plus one of its own: half
+	# the point of this publish is the LOBBY RELAY leg, which reaches peers whose
+	# mesh has not come up (and every peer of a `--lobby-only` master, whose mesh
+	# never will). Below the guard it would be silent in exactly the case it exists
+	# for. Master-only inside, so a non-master pays one float add and a comparison.
+	_room_accum += delta
+	var room_interval: float = 1.0 / ROOM_SYNC_HZ
+	if _room_accum >= room_interval:
+		_room_accum = fmod(_room_accum, room_interval)
+		_send_room_state()
+
 	if _rtc == null:
 		return
 
@@ -3265,6 +3468,7 @@ func _process(delta: float) -> void:
 			_tick_croc_timeout()
 
 
+
 func _tick_join_wait(delta: float) -> void:
 	"""
 	Run the join-placement deadline.
@@ -3283,6 +3487,9 @@ func _tick_join_wait(delta: float) -> void:
 	_join_wait += delta
 	if _join_wait >= JOIN_SNAPSHOT_WAIT:
 		_apply_join_placement()
+		# The same deadline releases the auto-claim: a room whose snapshots never
+		# arrive must still hand this player a hero. See `_auto_claim_hero()`.
+		_auto_claim_hero()
 
 
 func _tick_seed_request(delta: float) -> void:
@@ -3691,6 +3898,8 @@ func _receive_mesh_verb(from_id: String, verb: String, packet: Dictionary) -> vo
 			_receive_dead(from_id, packet)
 		"cap":
 			_receive_captive(from_id, packet)
+		"room":
+			_receive_room(from_id, packet)
 		_:
 			# Forward compatibility. Not a warning — see the docstring.
 			pass

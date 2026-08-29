@@ -63,6 +63,11 @@ extends SceneTree
 ##      pool whitelist, the open release direction, the rate budget, the dispatch
 ##      arm, the picker refusing a captive hero AND being told to repaint, the
 ##      reassignment candidate, and the MASTER-ONLY join snapshot.
+##  22. THE MASTER'S ROOM PUBLISH — one verb for the two values a room may never
+##      disagree about: the captive set (repairing the join gap the per-hero verb
+##      cannot reach) and the break-out clock and verdict. Master-only, parsed at a
+##      trust boundary, converging in BOTH directions without undoing a fresh local
+##      assertion, and relayed to peers whose mesh is still negotiating.
 ##  18. Terrain FOCUS POINTS — the chunks that stay loaded around a far teammate,
 ##      so the master has crocodiles there to simulate at all. Measured in metres
 ##      against SIM_RADIUS, with the memory cap and the release both pinned.
@@ -154,7 +159,10 @@ func _run_checks() -> String:
 	failure = _check_captive_parser()
 	if not failure.is_empty():
 		return failure
-	return _check_captive_set()
+	failure = _check_captive_set()
+	if not failure.is_empty():
+		return failure
+	return _check_room_publish()
 
 
 # =============================================================================
@@ -1872,9 +1880,37 @@ func _check_acquisition_cue() -> String:
 ## signal, no injection and no hard reference.
 const CAPTIVE_PLAYER_SOURCE := """extends Node
 var told: Array = []
+var custody: Array = []
+var wire: Array = [0.0, 0]
 func set_hero_captive(hero: String, held: bool) -> void:
 	told.append([hero, held])
+func apply_room_custody(seconds: float, verdict: int) -> void:
+	custody.append([seconds, verdict])
+func custody_wire_state() -> Array:
+	return wire
 """
+
+## A lobby that records instead of sending. It SUBCLASSES the real `LobbyClient`
+## rather than standing in for it, because `MpManager._lobby` is typed — so this is
+## the shipped class with two methods overridden, and a rename on either side is a
+## parse error here instead of a silently skipped send.
+const LOBBY_STUB_SOURCE := """extends LobbyClient
+var relayed: Array = []
+var heroes_sent: Array = []
+func send_signal_to(to: String, payload: Dictionary) -> void:
+	relayed.append([to, payload])
+func send_hero(hero: String) -> void:
+	heroes_sent.append(hero)
+"""
+
+
+func _lobby_stub() -> Node:
+	var script := GDScript.new()
+	script.source_code = LOBBY_STUB_SOURCE
+	script.reload()
+	var node: Node = script.new()
+	root.add_child(node)
+	return node
 
 
 func _captive_player() -> Node:
@@ -1907,6 +1943,7 @@ func _room_manager(you: String) -> Node:
 	# capture is authorized against is written THERE and nowhere else, so a check
 	# that posed the room by hand would be testing a state the lobby cannot produce
 	# — and would authorize nothing.
+	mp._lobby = _lobby_stub()
 	mp._on_lobby_heroes({"windman": you, "primm": "bob"},
 		["windman", "primm", "teibi", "phoboman"])
 	return mp
@@ -2240,6 +2277,200 @@ func _check_captive_set() -> String:
 			+ "manager knows nothing about"
 
 	fresh.free()
+	player.free()
+	mp.free()
+	return ""
+
+
+# =============================================================================
+# 22. THE MASTER'S ROOM PUBLISH (bead godot-test1-3iy.10)
+# =============================================================================
+
+func _check_room_publish() -> String:
+	"""
+	The one verb that carries the two values a room may never disagree about.
+
+	  1. THE PARSER, against hostile packets — the sixth trust boundary, and the
+	     first one whose payload drives a COUNTDOWN the player is watching.
+	  2. MASTER ONLY. It is applied WHOLESALE, so a stranger's copy would let any
+	     member rewrite the room's cells and end its break-out.
+	  3. CONVERGENCE BOTH WAYS. A capture the master has and we do not is the join
+	     gap this verb exists for; a release the master has and we do not is the
+	     same gap with the packets the other way round.
+	  4. ...WITHOUT UNDOING A FRESH LOCAL ASSERTION. The master's picture is up to
+	     ROOM_SYNC_HZ old, so adopting it flat would erase a capture we applied a
+	     moment ago and the master would put it back on its next publish — a flap
+	     at the publish rate.
+	  5. THE JOIN GAP ITSELF, measured: a member whose mesh is not up is sent the
+	     set over the LOBBY RELAY. That is the hole the per-hero verb cannot reach,
+	     because the captor does not know that member exists yet.
+	  6. THE CLOCK AND THE VERDICT reach the player.
+	  7. Dispatched, metered, and published on the tick.
+	"""
+	# --- 1. the parser.
+	var honest: Dictionary = {"t": "room", "cap": ["primm"], "cd": 12.5, "co": 0}
+	var parsed: Dictionary = MPManager.decode_room(honest)
+	if parsed.get("cap", []) != ["primm"] or absf(float(parsed.get("cd", -1.0)) - 12.5) > 0.001 \
+			or int(parsed.get("co", -1)) != 0:
+		return "decode_room dropped an honest publish (%s)" % str(parsed)
+	var over_long: Array[String] = []
+	for i: int in MPManager.MAX_STATE_CAPTIVES + 1:
+		over_long.append("primm")
+	var hostile: Array[Dictionary] = [
+		{"t": "room", "cd": 1.0, "co": 0},                                  # no set
+		{"t": "room", "cap": "primm", "cd": 1.0, "co": 0},                  # set is a string
+		{"t": "room", "cap": [7], "cd": 1.0, "co": 0},                      # entry is a number
+		{"t": "room", "cap": [""], "cd": 1.0, "co": 0},                     # empty name
+		{"t": "room", "cap": ["x".repeat(MPManager.MAX_HERO_NAME + 1)], "cd": 1.0, "co": 0},
+		{"t": "room", "cap": over_long, "cd": 1.0, "co": 0},
+		{"t": "room", "cap": [], "co": 0},                                  # no clock
+		{"t": "room", "cap": [], "cd": "soon", "co": 0},                    # clock is a string
+		{"t": "room", "cap": [], "cd": NAN, "co": 0},
+		{"t": "room", "cap": [], "cd": INF, "co": 0},
+		{"t": "room", "cap": [], "cd": -1.0, "co": 0},
+		{"t": "room", "cap": [], "cd": MPManager.MAX_CUSTODY_SECONDS + 1.0, "co": 0},
+		{"t": "room", "cap": [], "cd": 1.0},                                # no verdict
+		{"t": "room", "cap": [], "cd": 1.0, "co": 3},                       # not an outcome
+		{"t": "room", "cap": [], "cd": 1.0, "co": -1},
+		{"t": "room", "cap": [], "cd": 1.0, "co": NAN},
+	]
+	for packet: Dictionary in hostile:
+		if not MPManager.decode_room(packet).is_empty():
+			return "decode_room accepted the hostile publish %s" % str(packet)
+
+	var player: Node = _captive_player()
+	var mp: Node = _room_manager("me")
+	mp._master = "themaster"
+
+	# --- 2. master only.
+	mp._receive_mesh_verb("stranger", "room", {"t": "room", "cap": ["teibi"], "cd": 5.0, "co": 0})
+	if mp.is_hero_captive("teibi"):
+		return "a non-master's room publish rewrote the captive set — any member could then "\
+			+ "put the whole roster in cells, or end the room's break-out"
+
+	# --- 3. convergence, forwards.
+	mp._receive_mesh_verb("themaster", "room", {"t": "room", "cap": ["teibi"], "cd": 5.0, "co": 0})
+	if not mp.is_hero_captive("teibi"):
+		return "the master's publish did not repair a capture we never heard — that is the "\
+			+ "join gap this verb exists for, and nothing else in the protocol closes it"
+	if player.told.is_empty() or player.told[-1] != ["teibi", true]:
+		return "the repaired capture did not reach the player's own set (%s)" % str(player.told)
+
+	# --- 3b. ...and backwards, once the local capture is no longer fresh.
+	mp._captured_msec["teibi"] = Time.get_ticks_msec() - MPManager.RELEASE_GRACE_MSEC - 1
+	mp._receive_mesh_verb("themaster", "room", {"t": "room", "cap": [], "cd": 5.0, "co": 0})
+	if mp.is_hero_captive("teibi"):
+		return "the master's publish did not repair a liberation we never heard — a freed "\
+			+ "hero stays in a cell on this screen for the room's life"
+
+	# --- 4. a FRESH local assertion survives a stale publish, both directions.
+	mp._on_lobby_heroes({"windman": "me", "phoboman": "carl"},
+		["windman", "primm", "teibi", "phoboman"])
+	mp._receive_captive("carl", {"t": "cap", "h": "phoboman", "c": true})
+	if not mp.is_hero_captive("phoboman"):
+		return "the fresh-capture setup failed, so claim 4 proves nothing"
+	mp._receive_mesh_verb("themaster", "room", {"t": "room", "cap": [], "cd": 5.0, "co": 0})
+	if not mp.is_hero_captive("phoboman"):
+		return "a publish older than our own capture undid it — the master puts it back on "\
+			+ "its next publish, so the cell frame flaps at the publish rate"
+	mp._receive_captive("carl", {"t": "cap", "h": "phoboman", "c": false})
+	mp._receive_mesh_verb("themaster", "room",
+		{"t": "room", "cap": ["phoboman"], "cd": 5.0, "co": 0})
+	if mp.is_hero_captive("phoboman"):
+		return "a publish older than our own liberation resurrected it — the same flap, the "\
+			+ "other way round"
+
+	# --- 5. THE JOIN GAP. A master, a member whose mesh is not up, and the relay.
+	var host: Node = _room_manager("me")
+	host._master = "me"
+	host._members = [{"id": "me", "name": "me"}, {"id": "joiner", "name": "joiner"}]
+	host._receive_captive("bob", {"t": "cap", "h": "primm", "c": true})
+	var lobby: Node = host._lobby
+	lobby.relayed.clear()
+	host._send_room_state()
+	var reached: bool = false
+	for entry: Variant in lobby.relayed:
+		var pair: Array = entry as Array
+		var payload: Dictionary = pair[1] as Dictionary
+		if String(pair[0]) == "joiner" and String(payload.get("mp", "")) == "room" \
+				and (payload.get("cap", []) as Array).has("primm"):
+			reached = true
+	if not reached:
+		return "the master's publish never reached a peer whose mesh is still negotiating — "\
+			+ "a capture landing in the join gap reaches neither the snapshot nor the `cap` "\
+			+ "packet, and nothing else would ever correct it"
+
+	# --- 6. the clock and the verdict reach the player.
+	player.custody.clear()
+	mp._receive_mesh_verb("themaster", "room", {"t": "room", "cap": [], "cd": 7.25, "co": 2})
+	if player.custody.size() != 1 or absf(float((player.custody[0] as Array)[0]) - 7.25) > 0.001 \
+			or int((player.custody[0] as Array)[1]) != 2:
+		return "the master's clock and verdict did not reach the player (%s) — every peer "\
+			% str(player.custody) + "then runs its own 35 s and they can disagree about the outcome"
+
+	# --- 7. dispatched on both transports, metered, and actually published.
+	if MPManager.packet_kind({"t": "room", "cap": [], "cd": 1.0, "co": 0}) != "room":
+		return "a room packet does not identify itself as a verb"
+	if not MPManager.VERB_BUDGET_PER_SEC.has("room"):
+		return "the room verb has no rate budget — it is applied wholesale, which is the "\
+			+ "most amplified verb in the file"
+	player.custody.clear()
+	mp._on_lobby_relay("themaster", {"mp": "room", "cap": [], "cd": 3.5, "co": 0})
+	if player.custody.size() != 1:
+		return "a room publish relayed over the LOBBY was dropped — that is the only wire "\
+			+ "that reaches a peer whose mesh is still negotiating"
+	var budget: int = int(MPManager.VERB_BUDGET_PER_SEC["room"])
+	for spend: int in budget:
+		mp._on_lobby_relay("themaster", {"mp": "room", "cap": [], "cd": 3.5, "co": 0})
+	if mp._verb_rate_ok("themaster", "room"):
+		return "the relayed room publish spent none of the verb budget"
+
+	# --- 7b. it goes out on the tick, not only when something calls it by hand.
+	host._lobby.relayed.clear()
+	host._room_accum = 0.0
+	host._process(1.0 / MPManager.ROOM_SYNC_HZ + 0.01)
+	if host._lobby.relayed.is_empty():
+		return "the master published nothing on its own tick — the repair channel only "\
+			+ "exists if something drives it"
+
+	# --- 8. the auto-claim waits for the join to settle.
+	var joiner: Node = _room_manager("me")
+	joiner._first_member = false
+	joiner._join_applied = false
+	joiner._expected_snapshots = 1
+	joiner._join_wait = 0.0
+	joiner._heroes = {}
+	joiner._lobby.heroes_sent.clear()
+	joiner._auto_claim_hero()
+	if not joiner._lobby.heroes_sent.is_empty():
+		return "a joiner claimed '%s' before any snapshot arrived — `_captives` is empty on "\
+			% str(joiner._lobby.heroes_sent) + "the `welcome` frame, so that can be a hero the "\
+			+ "room has in a cell, played in the field on one screen and locked up on the rest"
+	# ...and the snapshot's ARRIVAL is what releases it. Driven through
+	# `_on_lobby_relay`, the real wire, because the re-drive is the half that can be
+	# missing: the gate above is worthless if nothing calls the claim afterwards.
+	joiner._on_lobby_relay("bob", {
+		"mp": "state", "cc": 0.0, "ls": 0.0, "dd": 0.0,
+		"px": 0.0, "py": 0.0, "pz": 0.0, "ids": [],
+	})
+	if joiner._lobby.heroes_sent.is_empty():
+		return "the snapshot landed and the auto-claim was never re-driven — the joiner "\
+			+ "waits for a settle nothing acts on and ends up with no hero at all"
+	# ...and so is the deadline, for a room whose snapshots never come.
+	var stranded: Node = _room_manager("me")
+	stranded._first_member = false
+	stranded._expected_snapshots = 1
+	stranded._join_wait = 0.0
+	stranded._heroes = {}
+	stranded._lobby.heroes_sent.clear()
+	stranded._tick_join_wait(MPManager.JOIN_SNAPSHOT_WAIT + 0.1)
+	if stranded._lobby.heroes_sent.is_empty():
+		return "the join deadline passed and the auto-claim never fired — a room whose "\
+			+ "snapshots never arrive must still hand this player a hero"
+	stranded.free()
+
+	joiner.free()
+	host.free()
 	player.free()
 	mp.free()
 	return ""
