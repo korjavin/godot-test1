@@ -75,6 +75,12 @@ extends SceneTree
 ##      prove a scar is safe; only this one asks whether it HAPPENS. A `removes`
 ##      row no box implements is a passage the audit believes is gone and the
 ##      player finds standing open — the sanctioned exception, shipped inert.
+##   9. **THE GRID FLOOD-FILL** (phase 14). Checks 1-8 walk a graph, and a graph
+##      cannot see a corridor that was never drawn: one `.` typed as a `#` in a
+##      doorway leaves every one of them green and the floor in two sealed halves.
+##      So every storey in `tower_plans.gd` is flood-filled 4-connected from its
+##      landing, its ramp lane is checked against the storey it stands on, and its
+##      slope against the phase-3 ramp — with a negative control per assertion.
 ##
 ## ============================================================================
 ## LANDMINES
@@ -155,6 +161,9 @@ var _graph: Dictionary = TowerGraph.TOWER_GRAPH
 var _edges_cache: Dictionary = {}
 var _index_cache: Dictionary = {}
 
+## Check 9's one line, held until `_report` so the summary reads in one block.
+var _plan_summary: String = ""
+
 
 func _initialize() -> void:
 	# No `await process_frame`: nothing here touches the tree. See LANDMINES.
@@ -166,6 +175,7 @@ func _initialize() -> void:
 	_check_captivity_flags_are_honest()
 	_check_quests_and_liberation()
 	_check_scars_are_built()
+	_check_plans_are_walkable()
 	_report()
 
 
@@ -1170,6 +1180,347 @@ func _check_scars_are_built() -> void:
 		authored.size(), built.size()])
 
 
+# ============================================================================
+# CHECK 9 — the flood fill: every drawn floor is actually walkable
+# ============================================================================
+
+func _check_plans_are_walkable() -> void:
+	"""
+	Check 9. Every hand-planned storey is one connected walking surface, reached
+	by a ramp no steeper than the one the game has always had.
+
+	WHAT THE GRAPH AUDIT CANNOT SEE. Checks 1-8 reason about `TOWER_GRAPH`, whose
+	rooms are nodes and whose edges are "there is a way through". That is exactly
+	the right abstraction for the softlock property and it is blind to the thing a
+	designer editing 1600 characters of ASCII will actually get wrong: the graph
+	says two rooms are joined, and only the GRID says the corridor between them was
+	drawn. One `.` typed as a `#` in a doorway and check 1 still passes, the
+	fifteen subset walks still pass, and the floor is two sealed halves.
+
+	So this check walks the same storey the builder builds, in cells:
+
+	  * well-formedness first, because every assertion below assumes a rectangular
+	    grid of legal characters — 40 rows of 40, one solid `S` lane with its long
+	    axis on X, its `s` landing against one short end, exactly two pads, each
+	    beside a room;
+	  * a 4-connected FLOOD FILL from the landing over every non-`#` cell, which
+	    must reach every room cell, every pad, every post and every gate slot. The
+	    first cell it cannot reach is reported as `(c, r)` AND as world XZ, because
+	    a designer fixing it is looking at a text file and a screenshot;
+	  * the stair COINCIDES with the floor below — its lane stands on walkable
+	    cells of the storey it climbs from, or, for the grand ramp off the annulus,
+	    clear of the keep and of the door corridor that runs east from it;
+	  * and the ramp is no steeper than the phase-3 ramp, which is the only slope
+	    in this building anyone has ever walked.
+
+	NEGATIVE CONTROLS AT THE BOTTOM. A flood fill that passes on a broken plan is
+	worse than no flood fill, so each assertion is re-asked against a deliberately
+	broken COPY of the shipped storey and must come back with that assertion's own
+	complaint. The copies are built here; nothing edits `tower_plans.gd`.
+	"""
+	var walkable := 0
+	var rooms_drawn := 0
+	var angles: PackedStringArray = []
+	for plan: Dictionary in TowerPlans.STOREYS:
+		for problem: String in _plan_problems(plan):
+			_fail("plan storey %d: %s" % [int(plan["floor"]), problem])
+		var letters: Dictionary = {}
+		for r: int in plan["rows"].size():
+			var line := String(plan["rows"][r])
+			for c: int in line.length():
+				var ch := line[c]
+				if ch != TowerPlans.WALL_CHAR:
+					walkable += 1
+				if _is_room_letter(ch):
+					letters[ch] = true
+		rooms_drawn += letters.size()
+		angles.append("%.1f" % rad_to_deg(atan(_plan_slope(plan))))
+	_plan_summary = "tower plans: %d storeys, %d rooms, %d cells walkable, ramps %s deg" % [
+		TowerPlans.STOREYS.size(), rooms_drawn, walkable, ", ".join(angles)]
+
+	_check_the_flood_fill_can_fail()
+
+
+func _check_the_flood_fill_can_fail() -> void:
+	"""
+	The negative controls: one deliberately broken copy of the first shipped
+	storey per assertion above, each of which must produce that assertion's own
+	complaint. `_control` matches on a phrase from the message, not merely on
+	"something failed" — a control that trips a different rule proves nothing.
+	"""
+	var base: Dictionary = TowerPlans.STOREYS[0]
+	# A row one character short — the assertion every other one stands on.
+	_control("a short row", _row_at(base, 1, String(base["rows"][1]).substr(1)),
+			"characters wide")
+	# A character nobody taught the builder.
+	_control("an illegal character", _cell_at(base, 2, 2, "@"), "not a legal plan character")
+	# The doorway into office A, walled up: check 1 still binds the room, and only
+	# the fill can tell that nobody can get in.
+	_control("a walled-off room",
+			_cell_at(_cell_at(base, 8, 12, TowerPlans.WALL_CHAR), 9, 12, TowerPlans.WALL_CHAR),
+			"cannot be walked to")
+	# The landing moved off the lane's end, into the middle of the floor.
+	var moved := _cell_at(base, 20, 6, TowerPlans.FLOOR_CHAR)
+	moved = _cell_at(moved, 20, 7, TowerPlans.FLOOR_CHAR)
+	moved = _cell_at(moved, 20, 20, TowerPlans.LANDING_CHAR)
+	_control("a landing off the lane's end", moved, "short end")
+	# The lane one cell shorter: 9 cells of run for 11 m of rise is 0.63, over the
+	# phase-3 ramp's proven 0.575.
+	var short_lane := _cell_at(base, 10, 6, TowerPlans.FLOOR_CHAR)
+	short_lane = _cell_at(short_lane, 10, 7, TowerPlans.FLOOR_CHAR)
+	_control("a lane one cell short", short_lane, "steeper than")
+	# The grand ramp redrawn across the middle of the annulus, where the keep is.
+	var in_keep: Dictionary = base.duplicate(true)
+	var clear_row := TowerPlans.WALL_CHAR + TowerPlans.FLOOR_CHAR.repeat(TowerPlans.PLAN_GRID - 2) \
+			+ TowerPlans.WALL_CHAR
+	var lane_row := TowerPlans.WALL_CHAR + TowerPlans.FLOOR_CHAR.repeat(15) \
+			+ TowerPlans.STAIR_UP_CHAR.repeat(10) + TowerPlans.LANDING_CHAR \
+			+ TowerPlans.FLOOR_CHAR.repeat(12) + TowerPlans.WALL_CHAR
+	in_keep["rows"][6] = clear_row
+	in_keep["rows"][7] = clear_row
+	in_keep["rows"][21] = lane_row
+	in_keep["rows"][22] = lane_row
+	_control("a grand ramp drawn through the keep", in_keep, "inside the keep")
+	# A pad moved out into the corridor, beside nothing.
+	var stray := _cell_at(base, 8, 15, "A")
+	stray = _cell_at(stray, 20, 20, TowerPlans.PAD_CHAR)
+	_control("a pad beside no room", stray, "not beside a room")
+
+
+func _control(what: String, broken: Dictionary, needle: String) -> void:
+	"""One negative control: `broken` must be refused, and refused for `needle`."""
+	var problems := _plan_problems(broken)
+	for problem: String in problems:
+		if problem.contains(needle):
+			return
+	_fail(("the plan flood-fill ACCEPTS %s — it reported %s, none of which mentions '%s', "
+		+ "so the assertion it is meant to enforce is decorative") % [what, str(problems), needle])
+
+
+func _plan_problems(plan: Dictionary) -> Array[String]:
+	"""
+	Everything wrong with one storey's grid, as messages. Empty means the floor is
+	well-formed, fully connected from its landing, standing on the storey below and
+	climbed by a legal ramp.
+
+	Deliberately returns rather than calling `_fail`, because the negative controls
+	above drive this same function on plans that are SUPPOSED to be refused.
+	"""
+	var out: Array[String] = []
+	var rows: Array = plan["rows"]
+
+	# --- well-formedness: everything below assumes a rectangle of legal chars ---
+	if rows.size() != TowerPlans.PLAN_GRID:
+		out.append("%d rows, not %d — the grid is not the grid" % [
+			rows.size(), TowerPlans.PLAN_GRID])
+		return out
+	for r: int in rows.size():
+		var line := String(rows[r])
+		if line.length() != TowerPlans.PLAN_GRID:
+			out.append("row %d is %d characters wide, not %d" % [
+				r, line.length(), TowerPlans.PLAN_GRID])
+			return out
+		for c: int in line.length():
+			if not _is_legal_plan_char(line[c]):
+				out.append("cell (%d, %d) is '%s', which is not a legal plan character" % [
+					c, r, line[c]])
+
+	# --- the ramp lane: one solid rectangle, long axis on X --------------------
+	var lane_cells := _plan_cells(plan, TowerPlans.STAIR_UP_CHAR)
+	var landing_cells := _plan_cells(plan, TowerPlans.LANDING_CHAR)
+	if lane_cells.is_empty():
+		out.append("no '%s' cells — every storey above the keep is reached by a ramp"
+			% TowerPlans.STAIR_UP_CHAR)
+		return out
+	if landing_cells.is_empty():
+		out.append("no '%s' landing — the ramp's head is what says which way it rises"
+			% TowerPlans.LANDING_CHAR)
+		return out
+	var c0 := TowerPlans.PLAN_GRID
+	var c1 := -1
+	var r0 := TowerPlans.PLAN_GRID
+	var r1 := -1
+	for cell: Vector2i in lane_cells:
+		c0 = mini(c0, cell.x)
+		c1 = maxi(c1, cell.x)
+		r0 = mini(r0, cell.y)
+		r1 = maxi(r1, cell.y)
+	var lane_w := c1 - c0 + 1
+	var lane_d := r1 - r0 + 1
+	if lane_cells.size() != lane_w * lane_d:
+		out.append(("the '%s' cells are not one solid rectangle (%d cells in a %d x %d box) "
+			+ "— the deck is one box and cannot follow a scattered lane")
+			% [TowerPlans.STAIR_UP_CHAR, lane_cells.size(), lane_w, lane_d])
+	if lane_w <= lane_d:
+		out.append(("the ramp lane is %d x %d — its long axis must be X, because every ramp "
+			+ "in this building is X-running and check 3 and the underside test both reason "
+			+ "in the XY plane") % [lane_w, lane_d])
+	# ...with its landing against ONE short end, which is how the rise is derived.
+	var east := 0
+	var west := 0
+	for cell: Vector2i in landing_cells:
+		if cell.y < r0 or cell.y > r1:
+			out.append(("the landing at (%d, %d) is not across a short end of the lane "
+				+ "(rows %d..%d)") % [cell.x, cell.y, r0, r1])
+		elif cell.x == c1 + 1:
+			east += 1
+		elif cell.x == c0 - 1:
+			west += 1
+		else:
+			out.append(("the landing at (%d, %d) does not sit against a short end of the "
+				+ "lane (columns %d and %d)") % [cell.x, cell.y, c0 - 1, c1 + 1])
+	if east > 0 and west > 0:
+		out.append("landing cells sit against BOTH short ends — the ramp rises two ways")
+
+	# --- the pads --------------------------------------------------------------
+	var pads := _plan_cells(plan, TowerPlans.PAD_CHAR)
+	if pads.size() != 2:
+		out.append("%d '%s' cells — a storey carries exactly two pads" % [
+			pads.size(), TowerPlans.PAD_CHAR])
+	for pad: Vector2i in pads:
+		var beside := false
+		for step: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			var n := pad + step
+			if n.x < 0 or n.y < 0 or n.x >= TowerPlans.PLAN_GRID or n.y >= TowerPlans.PLAN_GRID:
+				continue
+			if _is_room_letter(String(rows[n.y])[n.x]):
+				beside = true
+		if not beside:
+			out.append(("the pad at (%d, %d) is not beside a room — a plate in open floor "
+				+ "belongs to nothing and opens nothing") % [pad.x, pad.y])
+
+	# --- the flood fill --------------------------------------------------------
+	var seen: Dictionary = {}
+	var queue: Array[Vector2i] = landing_cells.duplicate()
+	for cell: Vector2i in queue:
+		seen[cell] = true
+	while not queue.is_empty():
+		var here: Vector2i = queue.pop_back()
+		for step2: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			var n2: Vector2i = here + step2
+			if n2.x < 0 or n2.y < 0 or n2.x >= TowerPlans.PLAN_GRID or n2.y >= TowerPlans.PLAN_GRID:
+				continue
+			if seen.has(n2) or String(rows[n2.y])[n2.x] == TowerPlans.WALL_CHAR:
+				continue
+			seen[n2] = true
+			queue.append(n2)
+	for r2: int in rows.size():
+		var line2 := String(rows[r2])
+		for c2: int in line2.length():
+			var ch := line2[c2]
+			if ch == TowerPlans.WALL_CHAR or ch == TowerPlans.FLOOR_CHAR:
+				continue
+			if seen.has(Vector2i(c2, r2)):
+				continue
+			out.append(("cell (%d, %d) — '%s' at world x %.2f, z %.2f — cannot be walked to "
+				+ "from the landing. The floor is drawn in two pieces")
+				% [c2, r2, ch, _cell_x(c2), _cell_x(r2)])
+			break   # one report per row: a sealed wing is hundreds of cells
+
+	# --- the stair stands on the storey below ----------------------------------
+	var below := TowerPlans.storey(int(plan["from"]))
+	for cell2: Vector2i in lane_cells:
+		if not below.is_empty():
+			var under := String(below["rows"][cell2.y])[cell2.x]
+			if under == TowerPlans.WALL_CHAR or under == TowerPlans.STAIR_UP_CHAR:
+				out.append(("the lane cell (%d, %d) stands over '%s' on floor %d — a ramp's "
+					+ "foot has to land on floor somebody can walk on")
+					% [cell2.x, cell2.y, under, int(plan["from"])])
+			continue
+		# No plan below means floor 0: the annulus, where the keep stands and the
+		# door corridor runs east from its doorway to the outer one.
+		var x_lo := _cell_edge(cell2.x)
+		var x_hi := _cell_edge(cell2.x + 1)
+		var z_lo := _cell_edge(cell2.y)
+		var z_hi := _cell_edge(cell2.y + 1)
+		var clear_keep: float = TowerShell.KEEP_HALF + 1.0
+		if not (x_lo > clear_keep or x_hi < -clear_keep or z_lo > clear_keep or z_hi < -clear_keep):
+			out.append(("the lane cell (%d, %d) is inside the keep (x %.2f..%.2f, z %.2f..%.2f "
+				+ "against a %.1f m clearance) — the grand ramp climbs the annulus, and the "
+				+ "keep is a building standing in it")
+				% [cell2.x, cell2.y, x_lo, x_hi, z_lo, z_hi, clear_keep])
+		var corridor: float = TowerShell.DOOR_HALF_WIDTH + 1.0
+		if x_hi > TowerShell.KEEP_HALF and z_hi > -corridor and z_lo < corridor:
+			out.append(("the lane cell (%d, %d) blocks the door corridor (|z| <= %.1f east of "
+				+ "the keep) — that is the walk from the outer door to the keep door")
+				% [cell2.x, cell2.y, corridor])
+
+	# --- and it is no steeper than the ramp this game has always had -----------
+	var slope := _plan_slope(plan)
+	if slope > TowerInterior.PLAN_RAMP_MAX_SLOPE + 0.0001:
+		out.append(("the ramp's slope is %.4f (%.1f deg) over %d cells, steeper than the "
+			+ "phase-3 ramp's proven %.4f — a stair nobody has walked")
+			% [slope, rad_to_deg(atan(slope)), lane_w, TowerInterior.PLAN_RAMP_MAX_SLOPE])
+	if rad_to_deg(atan(slope)) >= 40.0:
+		out.append("the ramp's slope is %.1f deg, at or past the 40 deg hard ceiling"
+			% rad_to_deg(atan(slope)))
+	return out
+
+
+func _plan_slope(plan: Dictionary) -> float:
+	"""The storey's ramp slope: its rise over its lane's length. 0.0 if it has no lane."""
+	var lane := _plan_cells(plan, TowerPlans.STAIR_UP_CHAR)
+	if lane.is_empty():
+		return 0.0
+	var c0 := TowerPlans.PLAN_GRID
+	var c1 := -1
+	for cell: Vector2i in lane:
+		c0 = mini(c0, cell.x)
+		c1 = maxi(c1, cell.x)
+	var run := float(c1 - c0 + 1) * TowerPlans.PLAN_CELL
+	var rise: float = TowerInterior.FLOOR_Y[int(plan["floor"])] \
+			- TowerInterior.FLOOR_Y[int(plan["from"])]
+	return 0.0 if run <= 0.0 else rise / run
+
+
+func _plan_cells(plan: Dictionary, want: String) -> Array[Vector2i]:
+	"""Every cell of a storey carrying one character, in reading order."""
+	var out: Array[Vector2i] = []
+	for r: int in plan["rows"].size():
+		var line := String(plan["rows"][r])
+		for c: int in line.length():
+			if line[c] == want:
+				out.append(Vector2i(c, r))
+	return out
+
+
+func _is_room_letter(ch: String) -> bool:
+	"""A-Z, less the four characters the format has already spent."""
+	return ch >= "A" and ch <= "Z" and ch != TowerPlans.STAIR_UP_CHAR \
+		and ch != TowerPlans.PAD_CHAR and ch != TowerPlans.POST_CHAR \
+		and ch != TowerPlans.GATE_CHAR
+
+
+func _is_legal_plan_char(ch: String) -> bool:
+	return ch == TowerPlans.WALL_CHAR or ch == TowerPlans.FLOOR_CHAR \
+		or ch == TowerPlans.LANDING_CHAR or ch == TowerPlans.STAIR_UP_CHAR \
+		or ch == TowerPlans.PAD_CHAR or ch == TowerPlans.POST_CHAR \
+		or ch == TowerPlans.GATE_CHAR or _is_room_letter(ch)
+
+
+func _cell_x(c: int) -> float:
+	"""The CENTRE of column (or row) `c`, in interior metres. The grid is square."""
+	return -TowerPlans.PLAN_HALF + (float(c) + 0.5) * TowerPlans.PLAN_CELL
+
+
+func _cell_edge(c: int) -> float:
+	"""The west (or north) EDGE of column (or row) `c`, in interior metres."""
+	return -TowerPlans.PLAN_HALF + float(c) * TowerPlans.PLAN_CELL
+
+
+func _row_at(plan: Dictionary, r: int, line: String) -> Dictionary:
+	"""A deep copy of a storey with one row replaced — for the negative controls."""
+	var out: Dictionary = plan.duplicate(true)
+	out["rows"][r] = line
+	return out
+
+
+func _cell_at(plan: Dictionary, c: int, r: int, ch: String) -> Dictionary:
+	"""A deep copy of a storey with one cell replaced — for the negative controls."""
+	var line := String(plan["rows"][r])
+	return _row_at(plan, r, line.substr(0, c) + ch + line.substr(c + 1))
+
+
 func _scar_row(id: String) -> Dictionary:
 	"""The scar row for `id`, or an empty dict. Local — nothing else wants it."""
 	for scar: Dictionary in _graph["scars"]:
@@ -1184,6 +1535,8 @@ func _fail(message: String) -> void:
 
 func _report() -> void:
 	if _failures.is_empty():
+		if not _plan_summary.is_empty():
+			print(_plan_summary)
 		print("tower graph: %d rooms, %d edges, %d gates, %d entries, %d scars — %d subset walks clean"
 			% [_graph["rooms"].size(), _graph["edges"].size(), _graph["gates"].size(),
 				_all_entries().size(), _graph["scars"].size(), _subsets().size()])

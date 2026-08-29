@@ -480,27 +480,27 @@ others, with a header block explaining **what the graph audit cannot see**: the 
 says two rooms are joined; only the grid says the corridor between them actually
 exists and is not walled off by a typo.
 
-- [ ] **Well-formedness first**, per storey: exactly `PLAN_GRID` rows, each exactly
+- [x] **Well-formedness first**, per storey: exactly `PLAN_GRID` rows, each exactly
       `PLAN_GRID` characters, every character in the legal set (D3), exactly one solid
       rectangular `S` region with its long axis on X, `s` cells against one short end
       of it, exactly two `P` cells, every `P` 4-adjacent to a room-letter cell.
-- [ ] **Flood fill** 4-connected over every non-`#` cell from the `s` landing. Assert
+- [x] **Flood fill** 4-connected over every non-`#` cell from the `s` landing. Assert
       every room-letter cell, every `S` cell, every `P`, `G` and `D` cell is reached.
       Report the first unreachable cell as `(c, r)` **and** its world XZ, so a designer
       can find it.
-- [ ] **The stair coincides with the storey below** (D5): for a storey whose `from` has
+- [x] **The stair coincides with the storey below** (D5): for a storey whose `from` has
       a plan, every `S` cell must be a walkable cell on that plan. For storey 3
       (`from: 0`, no plan), every `S` cell must be outside the keep by 1 m and clear of
       the door corridor.
-- [ ] **The ramp is not steeper than the proven one**: derive slope from the `S`
+- [x] **The ramp is not steeper than the proven one**: derive slope from the `S`
       rectangle's length and the two `FLOOR_Y` values, assert `<= PLAN_RAMP_MAX_SLOPE`
       and `< 40°`. Print the angle per storey.
-- [ ] **A negative control per assertion.** House style: mutate a copy of a plan (wall
+- [x] **A negative control per assertion.** House style: mutate a copy of a plan (wall
       off a room, move the landing, shorten the ramp lane by a cell, drop a `rooms`
       entry) and assert the check *fails* — a flood-fill that passes on a broken plan
       is worse than no flood-fill. Do this by building the mutated dict in the check
       and calling the same helper, never by editing `tower_plans.gd`.
-- [ ] Print the summary line in the file's voice, e.g.
+- [x] Print the summary line in the file's voice, e.g.
       `tower plans: 3 storeys, N rooms, M cells walkable, ramps 29.6/27.3/27.3 deg`.
 
 ### Task 6: Generalize `tower_interior_selfcheck` over storeys
