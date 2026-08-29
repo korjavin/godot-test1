@@ -135,6 +135,7 @@ const ROWS: Array = [
 	["Shift", "Run. Running always outruns a crocodile.", Mode.DESKTOP],
 	["Ctrl", "Duck and move slowly.", Mode.DESKTOP],
 	["R", "Switch hero: Windman, Primm, Teibi, Phoboman.", Mode.DESKTOP],
+	["1 2 3 4", "Jump straight to one hero — the numbers on the portraits.", Mode.DESKTOP],
 	["F", "Special ability: Air Rush, Phase Step, Resize or Stink Wave.", Mode.DESKTOP],
 	["C", "Cycle the view: over the shoulder, eyes, front.", Mode.DESKTOP],
 	# The landmark quiz answer keys. Raw keycodes outside the input map, like K
