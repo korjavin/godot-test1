@@ -111,6 +111,33 @@ const CROC_FLAG_BITING: int = 8
 ## striking) for as long as that state lasts. Sending the answer costs a bit that
 ## was spare; deriving it costs a desync with no bound on how long it shows.
 const CROC_FLAG_BURROWED: int = 16
+##
+## THE HUNTER OWES NO BIT, AND THAT IS A RULING, NOT A DEFERRAL (bead
+## godot-test1-9rm.5). The hunt arm has three states — telegraphing, shadowing at
+## its standoff ring, closing — and none of them earns a flag, because the
+## BURROW'S TEST is the test, and the hunt fails it in the opposite direction: the
+## viper's burrow changes the POSE while the body stands still, so a peer that
+## cannot see the bit cannot see the viper. Shadow-vs-close changes only where the
+## unit WALKS (`hunt_steer_point` bends `chase_target` and touches nothing else —
+## no mesh, no scale, no visibility, no animation input), and where it walks is
+## the position this packet already carries at full fidelity, 10 Hz eased. A peer
+## therefore renders a pacing hunter pacing and a closing hunter closing without
+## being told which it is, and there is no state that FREEZES the way the burrow
+## does: the arm is skipped wholesale on a remote-driven body, so nothing stale
+## can accumulate there to disagree with.
+##
+## The acquisition cue is the same answer from the other end: it belongs on the
+## not-chasing -> chasing edge, which already rides CROC_FLAG_CHASING and is
+## already restored by `set_remote_state`, so a peer has the edge a cue needs
+## without a sixth bit. (Today the arm fires it, which is silent on a peer — see
+## the ping note in bead godot-test1-9rm.6.)
+##
+## Three bits are spare; the reason not to spend one is that a bit nothing reads
+## is a bit the encoder and the decoder can drift apart on. If a hunter ever grows
+## a pose that motion cannot show — a lock-on beam, a carry animation — it takes
+## bit 32 and extends BOTH sides, which `mp_selfcheck._check_hunter_sync()` sweeps
+## for: it round-trips every combination the encoder can produce and fails if the
+## decoder has not learned one.
 
 ## Most crocodile entries one sync packet may carry — see `decode_croc_sync()`.
 ## Generous by design: the master only ever sends the crocs awake around one
