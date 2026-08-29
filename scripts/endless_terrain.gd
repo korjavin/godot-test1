@@ -629,8 +629,13 @@ const TOWER_DECOR_OVERHANG: float = 2.5
 ## case put the new facade at 230 m: inside render distance, i.e. the impostor
 ## swapping for the lit shell in plain view. (Found by codex review, 2026-08-29.)
 ##
-## Below this radius the horizon impostor is what the player is looking at (see
-## TowerShell.build_impostor), so the swap happens where neither is visible.
+## AND IT IS THE OUTER EDGE OF THE CROSS-FADE. There is no swap any more (bead
+## godot-test1-rgt): the horizon impostor dissolves across
+## TowerShell.IMPOSTOR_FADE_FAR -> _NEAR, and that band has to sit INSIDE the worst
+## case above, or a player crosses into it with a half-faded silhouette and no
+## building behind it yet. 360 - chunk_size(50) = 310 m against a fade that starts
+## at 300 — ten metres of slack, asserted by tower_shell_selfcheck check 9 off both
+## live constants, so shrinking either one fails the build instead of the view.
 const TOWER_LOAD_RADIUS: float = 360.0
 
 ## The tower's authored scene. Instanced ONCE per run, parented to this manager and
@@ -8511,10 +8516,17 @@ func _tower_stream(player_pos: Vector3) -> void:
 	# on a terrain that is not in the tree yet — `set_run_seed()` is reachable there
 	# and `global_position` is rejected outright (codex review, 2026-08-28).
 	_tower_shell.position = site
-	# The silhouette has done its job — the real thing is now standing in the same
-	# place, and two towers in one spot z-fight.
-	if is_instance_valid(_tower_impostor):
-		_tower_impostor.visible = false
+	# THE SILHOUETTE IS NOT HIDDEN HERE, and that is the point of bead
+	# godot-test1-rgt. Switching it off the frame the shell arrives is a hard swap
+	# between a fog-exempt cut-out and a building that is still 50-80% blended into
+	# the fog at this range — the owner's "black, then it pops to white". The
+	# impostor now dissolves across `TowerShell.IMPOSTOR_FADE_FAR -> _NEAR` (a
+	# material property) and stops being submitted just below that (a mesh
+	# property), so the handover costs this streamer nothing and has no frame in it.
+	# It is transparent while it fades, so it writes no depth and cannot z-fight
+	# with the shell standing inside it. TOWER_LOAD_RADIUS is what guarantees the
+	# shell is here BEFORE the fade starts; tower_shell_selfcheck asserts that
+	# inequality against chunk_size rather than trusting this comment.
 
 
 func _tower_in_load_range(from: Vector3, site: Vector3) -> bool:

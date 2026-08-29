@@ -37,9 +37,11 @@ extends Node3D
 ## from local information only — it does not even need the seed. No spawn packet,
 ## no claim, no authority.
 ##
-## COST: 15 `MeshInstance3D`s, ONE `StaticBody3D` holding 13 box shapes, one `Area3D`,
-## and 4 materials shared process-wide by the static cache below. That is the whole
-## bill, once, for the life of a run.
+## COST: 26 `MeshInstance3D`s, ONE `StaticBody3D` holding 13 box shapes, one `Area3D`,
+## and 5 materials shared process-wide by the static cache below. That is the whole
+## bill, once, for the life of a run. Eleven of those meshes are the castle the
+## silhouette bead added (godot-test1-rgt) — all of it above the sealed roof, none of
+## it solid, and the 44 merlons of its parapet welded into ONE of the eleven.
 
 # ============================================================================
 # SIGNALS
@@ -150,7 +152,76 @@ const DOOR_TRIGGER_DEPTH: float = 1.0
 ## horizontal top 22 m up, i.e. a landing pad from which a Windman re-launches.
 ## Identity comes from mass now (the epic's ruling), and the facade below the roof
 ## carries nothing wide enough to stand on.
-const BEACON_SIDE: float = 4.0
+##
+## THE CASTLE PASS (bead godot-test1-rgt) MOVED IT TO THE SPIRE TIP, which is where
+## a beacon belongs and — more usefully — is the highest point of the silhouette, so
+## the thing that says "over here" is the thing you can see furthest. It shrank with
+## the move: a 4 m cube read as a shed on the roof corner, a 3 m one reads as a
+## finial on a 98 m point.
+const BEACON_SIDE: float = 3.0
+
+# ----------------------------------------------------------------------------
+# THE CASTLE, i.e. EVERYTHING ABOVE THE SEAL (bead godot-test1-rgt)
+# ----------------------------------------------------------------------------
+##
+## THE ONE RULE THIS WHOLE SECTION OBEYS: nothing here is `collide: true`, and
+## nothing here reaches below the roof slab. That is not decoration policy, it is
+## the phase-13 seal restated — and both halves are load-bearing:
+##
+##   * NOT SOLID, so `tower_shell_selfcheck`'s check 12 skips it (it only judges
+##     `collide: true` boxes) and `_topmost_solid()` still finds the Roof. A solid
+##     turret above the slab would BECOME "the roof" as far as that check is
+##     concerned, and the real roof would then fail its own coverage test.
+##   * ABOVE THE SLAB, so check 11's ray grid — fired from 60 m straight down onto
+##     collision shapes — is untouched, and so that no part of the facade a Windman
+##     flies past below 52 m grows a ledge. The facade under the seal stays the
+##     smooth 80 m box phase 13 made it; every scrap of castle is stacked on top.
+##
+## WHAT YOU GIVE UP: a maxed Windman who chain-launches onto the roof (check 12's
+## documented ceiling) walks through the turrets. That is the correct trade — the
+## guarantee being defended is "there is no way IN", and a ghost turret on a roof
+## nobody is meant to reach costs nothing, while a solid one costs the seal.
+
+## The crenellated parapet ring standing on the roof edge: merlon size, and the
+## pitch it repeats at around the 80 m perimeter.
+##
+## ONE MESH, ONE DRAW CALL. 44 merlons as 44 `MeshInstance3D`s would quadruple this
+## building's draw cost for a detail you read as a texture; they are welded into a
+## single mesh by `_crenellation_mesh()` and appear in `boxes()` as ONE entry whose
+## `size` is the ring's bounding box. That keeps the table the single source of the
+## shape (the self-check measures the ring's footprint like any other box) without
+## paying per-merlon.
+##
+## The pitch is chosen so the run closes exactly on both corners: the merlon centres
+## walk from -MERLON_INSET to +MERLON_INSET in whole steps (11 gaps of 7 m = 77 m =
+## 2 * 38.5), so there is no half-merlon at the end and no number to hand-tune.
+const MERLON_SIZE: float = 3.0
+const MERLON_HEIGHT: float = 2.5
+const MERLON_PITCH: float = 7.0
+## Distance from the centre to a merlon's own centre, so its OUTER face is flush
+## with the roof edge at OUTER_HALF. Derived, never authored.
+const MERLON_INSET: float = OUTER_HALF - MERLON_SIZE * 0.5
+
+## The four corner turrets: a round shaft with a conical cap, standing on the roof.
+##
+## PLACED INSIDE THE ROOF'S FOOTPRINT (33 + 5.5 = 38.5 m of the 40 m half-span) for
+## the same reason the parapet is: everything up here stands ON the slab, so the
+## slab has to be under all of it. They still read as CORNER turrets because they
+## push through the parapet ring at the corners, which is what a corner turret does.
+const TURRET_OFFSET: float = 33.0
+const TURRET_DIAMETER: float = 11.0
+const TURRET_HEIGHT: float = 18.0
+const TURRET_CAP_DIAMETER: float = 13.0
+const TURRET_CAP_HEIGHT: float = 14.0
+
+## The keep — the "taller than the body" mass the acceptance asks for, and the
+## thing that makes the silhouette read as a castle rather than as a warehouse with
+## four hats on it. A square Bergfried on the centre of the roof, under a steep
+## spire that carries the beacon.
+const KEEP_TOWER_WIDTH: float = 22.0
+const KEEP_TOWER_HEIGHT: float = 26.0
+const KEEP_SPIRE_DIAMETER: float = 26.0
+const KEEP_SPIRE_HEIGHT: float = 20.0
 
 ## The yard: a flat visual slab under the whole compound. VISUAL ONLY and 3 cm
 ## proud of the ground — no collision shape, no lip to step over. The flat-world
@@ -185,7 +256,14 @@ const YARD_LIFT: float = 0.03
 ## the growth is the inner ring and nothing else. A tenth STOREY is not ten more
 ## boxes: storeys are interior (phase 14) and the shell stays an extrusion however
 ## the plans grow. Phase 14 is also what deletes the inner ring again.
-const BOX_BUDGET: int = 16
+##
+## 16 -> 28 IN THE CASTLE PASS (bead godot-test1-rgt), and the eleven new entries
+## are the WHOLE castle: a parapet, a keep, its spire, and four turrets with four
+## caps. That it is only eleven is the point — the 44 merlons are one welded mesh
+## (see MERLON_SIZE) rather than 44 entries, because the budget is a DRAW CALL
+## budget and a merlon is not worth one. 26 of 28 used, two spare, the same
+## courtesy every previous phase was left.
+const BOX_BUDGET: int = 28
 
 ## Palette. Four colours, four materials, shared process-wide (see `_material`).
 ##
@@ -194,16 +272,75 @@ const BOX_BUDGET: int = 16
 ## tower's latitudes are pale — a "weathered pale stone" wall at 0.6 albedo comes
 ## out of that pipeline as a white monolith with no readable edges (measured in the
 ## editor, 2026-08-28). Judge these against a screenshot, never against the swatch.
-const COLOR_WALL := Color(0.44, 0.42, 0.40)      # weathered grey stone
-const COLOR_ROOF := Color(0.26, 0.22, 0.28)      # dark slate cap, reads as a roof
+##
+## THE CASTLE PASS RETUNED TWO OF THEM (bead godot-test1-rgt). The direction is
+## "pale limestone walls, steep dark-blue slate roofs", and what sells that is the
+## CONTRAST between the two, not the absolute lightness of either — so the wall
+## moved a hair up (still well under the 0.6 that blows out) and the roof moved
+## decisively into the blue, away from the near-neutral plum it was. A pale wall
+## against a plum roof reads as one grey building; a pale wall against slate blue
+## reads as a roof.
+const COLOR_WALL := Color(0.48, 0.47, 0.44)      # pale weathered limestone
+const COLOR_ROOF := Color(0.16, 0.18, 0.29)      # steep dark slate blue
 const COLOR_YARD := Color(0.33, 0.31, 0.29)      # packed earth, a shade under the wall
-const COLOR_BEACON := Color(1.0, 0.72, 0.18)     # the amber light on the roof
+const COLOR_BEACON := Color(1.0, 0.72, 0.18)     # the amber light on the spire
 
-## Silhouette colour of the horizon impostor, and of its beacon. Deliberately DARK
-## and unshaded: at 400 m the tower is a shape against a bright sky, and a shape is
-## what has to read.
-const IMPOSTOR_COLOR := Color(0.17, 0.19, 0.25)
-const IMPOSTOR_BEACON_COLOR := Color(1.0, 0.78, 0.32)
+## The spires and turret caps: the same slate as the roof, but LIT FROM WITHIN.
+##
+## THE ONE "MAGICAL" IN "MAGICAL HUGE GERMAN CASTLE" (owner playtest, 2026-08-29).
+## A faint cool emission costs no box and no draw call — it is a flag on a material
+## that already exists — and it is what makes the spire tips hold a colour at dusk
+## and through the pale fog instead of dissolving into it. Kept low on purpose: this
+## is a glow you notice, not a lamp. The BEACON is still the bright thing.
+const COLOR_SPIRE := Color(0.19, 0.23, 0.38)
+const SPIRE_GLOW := Color(0.30, 0.52, 0.95)
+const SPIRE_GLOW_ENERGY: float = 0.35
+
+## HOW THE IMPOSTOR MATCHES THE SHELL: it does not carry a palette of its own.
+##
+## THE BLACK-THEN-WHITE BUG (owner playtest, 2026-08-29) WAS THIS CONSTANT. The
+## impostor used to be one authored colour — 0.17/0.19/0.25, an almost-black
+## blue-grey — for every box, unshaded, so at 400 m it rendered as EXACTLY that:
+## a flat near-black slab against a 0.85 sky. Meanwhile the real shell is lit by
+## `main.tscn`'s bright key through a glow and a BCS grade, and at handover range
+## it is additionally 50-80% blended into FOG_COLOR (0.85, 0.86, 0.80). Black
+## impostor, near-white fogged shell, one hard swap: the pop was authored.
+##
+## The fix is to stop authoring a second palette at all. The impostor takes the
+## SHELL's colour for every box and lifts it toward white by this one gain, which
+## is the cheapest possible stand-in for "what the key light does to that albedo".
+## Judge it against a screenshot at 380 m, never against the swatch — and if the
+## grade in `main.tscn` changes, this is the one number that moves.
+const IMPOSTOR_LIT_GAIN: float = 1.35
+
+## THE CROSS-FADE BAND, in metres from the camera: the impostor is fully opaque
+## beyond FAR, invisible within NEAR, and linearly blended between.
+##
+## WHY A BAND AND NOT A SWAP. The impostor is `disable_fog` and the shell is not,
+## so at any single distance the two are differently hazed BY CONSTRUCTION — no
+## choice of albedo can make a hard swap invisible. Fading one out across the range
+## where the other emerges from the fog is the only handover that has no frame in
+## it where something changed.
+##
+## FAR (300) SITS INSIDE THE WORST-CASE LOAD DISTANCE. `_tower_stream` is evaluated
+## only on a chunk-boundary crossing, so a shell promised at TOWER_LOAD_RADIUS (360)
+## can arrive as late as 360 - chunk_size (50) = 310 m. The fade must not start
+## before then or there is a window with a half-faded impostor and no building
+## behind it; `tower_shell_selfcheck` asserts that inequality against both live
+## constants rather than trusting this comment.
+##
+## NEAR (200) is where the fade completes, and the meshes are culled outright just
+## below it (`visibility_range_begin`) so a fully transparent impostor is not still
+## being rasterised while you stand in the doorway. It is also roughly where the web
+## fog stops hiding the real shell — an unfogged crisp castle standing over a fogged
+## field would be its own artefact.
+##
+## DEGRADES SAFELY. If `distance_fade` is ever unsupported on a target, the fade
+## flattens to the hard cull at NEAR — i.e. back to a swap, but now a swap between
+## two things that share a palette and a silhouette, which is the bead's other
+## accepted answer rather than a regression.
+const IMPOSTOR_FADE_FAR: float = 300.0
+const IMPOSTOR_FADE_NEAR: float = 200.0
 
 # ============================================================================
 # STATE
@@ -254,10 +391,24 @@ var opened: Dictionary = {}
 ## renderer can batch what shares a material.
 static var _materials: Dictionary = {}
 
+## The same, for the impostor's flat fog-exempt variants — a SEPARATE dictionary,
+## because since this bead the impostor's colours are derived from the shell's and
+## a shared key space would let one builder serve the other's material. See
+## `_impostor_material`.
+static var _impostor_materials: Dictionary = {}
+
 
 static func boxes() -> Array[Dictionary]:
 	"""
-	The whole building, as boxes: `{name, pos, size, color, collide}` in local metres.
+	The whole building, as boxes: `{name, pos, size, color, collide}` in local metres,
+	plus an optional `mesh` naming a shape other than a box ("cylinder", "cone",
+	"crenellation" — see `_shape_mesh`).
+
+	`mesh` IS A SHAPE, NEVER A SECOND SIZE. Whatever it names, the mesh it builds
+	fits exactly inside `size`, so every measurement below — the footprint sweep,
+	the budget, the self-check's ledge rules — keeps working on `pos ± size/2` and
+	does not have to learn about cones. A round tower is still a box as far as the
+	book-keeping is concerned; it just draws with its corners taken off.
 
 	@return: One entry per `MeshInstance3D` the shell builds, in build order.
 
@@ -280,9 +431,6 @@ static func boxes() -> Array[Dictionary]:
 	var jamb_mid := (OUTER_HALF + DOOR_HALF_WIDTH) * 0.5
 	# The lintel bridges the hole, from the top of the doorway to the wall top.
 	var lintel_height := WALL_HEIGHT - DOOR_HEIGHT
-	# The beacon sits on the roof, over the -X/-Z corner.
-	var beacon_mid := -(OUTER_HALF - BEACON_SIDE)
-
 	var out: Array[Dictionary] = []
 	# 1. The yard, first so everything else draws over it. No collision — see YARD_LIFT.
 	out.append({"name": "Yard", "pos": Vector3(0.0, YARD_LIFT * 0.5, 0.0),
@@ -342,10 +490,47 @@ static func boxes() -> Array[Dictionary]:
 	out.append({"name": "Roof", "pos": Vector3(0.0, WALL_HEIGHT + ROOF_THICK * 0.5, 0.0),
 		"size": Vector3(2.0 * OUTER_HALF, ROOF_THICK, 2.0 * OUTER_HALF),
 		"color": COLOR_ROOF, "collide": true})
-	# 6. The beacon, standing on the roof. No collision: it is a light, and a
-	#    1-box plinth is not a place to stand.
-	out.append({"name": "Beacon", "pos": Vector3(beacon_mid,
-			WALL_HEIGHT + ROOF_THICK + BEACON_SIDE * 0.5, beacon_mid),
+	# 6. THE CASTLE, all of it standing ON the slab and none of it solid — see the
+	#    "EVERYTHING ABOVE THE SEAL" section for why those two facts are the seal
+	#    restated rather than a style choice.
+	var roof_top := WALL_HEIGHT + ROOF_THICK
+	# 6a. The crenellated parapet, welded into one mesh (see MERLON_SIZE). Its
+	#     declared size is the ring's bounding box, so the footprint sweep and the
+	#     budget check read it exactly like any other box.
+	out.append({"name": "Crenellations",
+		"pos": Vector3(0.0, roof_top + MERLON_HEIGHT * 0.5, 0.0),
+		"size": Vector3(2.0 * OUTER_HALF, MERLON_HEIGHT, 2.0 * OUTER_HALF),
+		"color": COLOR_ROOF, "collide": false, "mesh": "crenellation"})
+	# 6b. The four corner turrets: a round shaft under a conical cap, one pair per
+	#     corner, generated rather than written out four times so a retune of the
+	#     offset cannot move three of them.
+	for sx: float in [-1.0, 1.0]:
+		for sz: float in [-1.0, 1.0]:
+			var tag := "%s%s" % ["Neg" if sx < 0.0 else "Pos", "NegZ" if sz < 0.0 else "PosZ"]
+			var at := Vector2(sx * TURRET_OFFSET, sz * TURRET_OFFSET)
+			out.append({"name": "Turret" + tag,
+				"pos": Vector3(at.x, roof_top + TURRET_HEIGHT * 0.5, at.y),
+				"size": Vector3(TURRET_DIAMETER, TURRET_HEIGHT, TURRET_DIAMETER),
+				"color": COLOR_WALL, "collide": false, "mesh": "cylinder"})
+			out.append({"name": "TurretCap" + tag,
+				"pos": Vector3(at.x, roof_top + TURRET_HEIGHT + TURRET_CAP_HEIGHT * 0.5, at.y),
+				"size": Vector3(TURRET_CAP_DIAMETER, TURRET_CAP_HEIGHT, TURRET_CAP_DIAMETER),
+				"color": COLOR_SPIRE, "collide": false, "mesh": "cone"})
+	# 6c. The keep: the mass that makes the silhouette taller than the body, and the
+	#     spire on top of it, which is the highest point of the building.
+	out.append({"name": "KeepTower",
+		"pos": Vector3(0.0, roof_top + KEEP_TOWER_HEIGHT * 0.5, 0.0),
+		"size": Vector3(KEEP_TOWER_WIDTH, KEEP_TOWER_HEIGHT, KEEP_TOWER_WIDTH),
+		"color": COLOR_WALL, "collide": false})
+	var spire_base := roof_top + KEEP_TOWER_HEIGHT
+	out.append({"name": "KeepSpire",
+		"pos": Vector3(0.0, spire_base + KEEP_SPIRE_HEIGHT * 0.5, 0.0),
+		"size": Vector3(KEEP_SPIRE_DIAMETER, KEEP_SPIRE_HEIGHT, KEEP_SPIRE_DIAMETER),
+		"color": COLOR_SPIRE, "collide": false, "mesh": "cone"})
+	# 6d. The beacon, now the finial on the spire's point (see BEACON_SIDE). No
+	#     collision: it is a light, and a 1-box finial is not a place to stand.
+	out.append({"name": "Beacon",
+		"pos": Vector3(0.0, spire_base + KEEP_SPIRE_HEIGHT, 0.0),
 		"size": Vector3(BEACON_SIDE, BEACON_SIDE, BEACON_SIDE),
 		"color": COLOR_BEACON, "collide": false})
 	return out
@@ -413,24 +598,37 @@ static func build_impostor() -> Node3D:
 	material out of the depth fog that would otherwise erase it, and unshaded means
 	its colour does not wash out with the light angle. It is the same boxes as the
 	real shell at the same true scale — NOT scaled up — so walking toward it makes
-	it grow the way a building does, and the swap to the real shell (which happens
-	well outside fog range) changes nothing you can see.
+	it grow the way a building does.
 
-	NO COLLISION, NO GROUP, NO SCRIPT: it is a picture, and the only thing that can
-	ever be done to it is `visible = false`.
+	AND IT NO LONGER SWAPS — IT DISSOLVES (bead godot-test1-rgt). The two things
+	that made the old handover a visible pop were both here: an authored near-black
+	palette (see `IMPOSTOR_LIT_GAIN` for the full post-mortem) and a hard
+	`visible = false` the frame the shell arrived. Now every box takes the SHELL's
+	own colour lifted by one gain, and the material fades itself out across
+	`IMPOSTOR_FADE_FAR` -> `IMPOSTOR_FADE_NEAR` while the real building emerges from
+	the fog underneath it. The impostor is transparent while it fades, so it does
+	not write depth and cannot z-fight with the shell it is standing in.
+
+	NO COLLISION, NO GROUP, NO SCRIPT: it is a picture, and nothing is ever done to
+	it at all — the fade is a material property and the cull is a mesh property, so
+	`_tower_stream` has no per-frame work and nothing to get wrong.
 	"""
 	var root := Node3D.new()
 	root.name = "TowerImpostor"
 	for box: Dictionary in boxes():
 		var mesh := MeshInstance3D.new()
 		mesh.name = box["name"]
-		mesh.mesh = _box_mesh(box["size"])
+		mesh.mesh = _shape_mesh(box)
 		mesh.position = box["pos"]
-		var beacon: bool = box["color"] == COLOR_BEACON
-		mesh.material_override = _impostor_material(
-			IMPOSTOR_BEACON_COLOR if beacon else IMPOSTOR_COLOR)
+		mesh.material_override = _impostor_material(_impostor_color(box["color"]))
 		# The silhouette must never be the reason something else does not draw.
 		mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		# THE OTHER HALF OF THE CROSS-FADE. The material fades the pixels out over
+		# the band; this stops SUBMITTING the mesh once those pixels are all zero,
+		# so a fully transparent 26-box building is not being rasterised over the
+		# real one while the player stands in the doorway. Just below NEAR, so the
+		# cull can never eat a pixel the fade would still have drawn.
+		mesh.visibility_range_begin = IMPOSTOR_FADE_NEAR - 10.0
 		root.add_child(mesh)
 	return root
 
@@ -451,7 +649,7 @@ func _ready() -> void:
 	for box: Dictionary in boxes():
 		var mesh := MeshInstance3D.new()
 		mesh.name = box["name"]
-		mesh.mesh = _box_mesh(box["size"])
+		mesh.mesh = _shape_mesh(box)
 		mesh.position = box["pos"]
 		mesh.material_override = _material(box["color"])
 		add_child(mesh)
@@ -599,14 +797,89 @@ func _on_door_body_entered(body: Node3D) -> void:
 	player_entered.emit(body)
 
 
-static func _box_mesh(size: Vector3) -> BoxMesh:
-	"""A BoxMesh of exactly this size. One per box — nine meshes for the building,
-	which is not worth a cache the way the materials are (a `BoxMesh` carries its
-	size, so sharing one would mean scaling nine `MeshInstance3D`s instead, and
-	scaled instances are the thing that breaks batching)."""
+static func _shape_mesh(box: Dictionary) -> Mesh:
+	"""
+	The mesh for one table entry, whatever shape it declared.
+
+	@param box: One entry of `boxes()`.
+	@return: A fresh mesh whose AABB is exactly `box["size"]`, centred on the origin.
+
+	One per box — not worth a cache the way the materials are (a `BoxMesh` carries
+	its size, so sharing one would mean SCALING the `MeshInstance3D`s instead, and
+	scaled instances are the thing that breaks batching).
+
+	THE AABB CONTRACT is what lets the rest of the file — and every check in
+	`tower_shell_selfcheck` — go on treating the table as boxes: a cone declares the
+	box it fits in, and the self-check asserts that rather than trusting it.
+	"""
+	var size: Vector3 = box["size"]
+	match box.get("mesh", "box"):
+		"cylinder":
+			var cyl := CylinderMesh.new()
+			cyl.top_radius = size.x * 0.5
+			cyl.bottom_radius = size.x * 0.5
+			cyl.height = size.y
+			# 12 sides reads as round at any distance this building is seen from and
+			# costs a third of the default 64. Rings stay at 1: the shaft is
+			# untextured and unlit-by-vertex, so subdividing its height buys nothing.
+			cyl.radial_segments = 12
+			cyl.rings = 1
+			return cyl
+		"cone":
+			# A cone IS a cylinder with no top — Godot has no ConeMesh and does not
+			# need one.
+			var cone := CylinderMesh.new()
+			cone.top_radius = 0.0
+			cone.bottom_radius = size.x * 0.5
+			cone.height = size.y
+			cone.radial_segments = 12
+			cone.rings = 1
+			return cone
+		"crenellation":
+			return _crenellation_mesh(size)
 	var mesh := BoxMesh.new()
 	mesh.size = size
 	return mesh
+
+
+static func _crenellation_mesh(size: Vector3) -> ArrayMesh:
+	"""
+	The parapet ring: every merlon around the roof edge, welded into ONE mesh.
+
+	@param size: The ring's declared bounding box — its own footprint, so the
+	            merlons are laid out to fill exactly that and the AABB contract in
+	            `_shape_mesh` holds.
+	@return: A single-surface `ArrayMesh` centred on the origin.
+
+	WHY IT IS WELDED AND NOT 44 NODES: the budget this building is held to is a
+	DRAW CALL budget (see `BOX_BUDGET`), and a merlon is a 3 m cube you read as
+	texture. `SurfaceTool.append_from` stamps one `BoxMesh` at 44 transforms into a
+	single surface, which is one draw call for the whole parapet and no new concept
+	— the chunk streamer solves the same problem with a MultiMesh, which this
+	building deliberately does not use (check 3: "authored geometry, not chunk
+	content").
+
+	The layout closes on both corners by construction: centres walk from -inset to
+	+inset in whole `MERLON_PITCH` steps, and the two runs along Z skip the corner
+	slots the runs along X already filled, so no merlon is stamped twice.
+	"""
+	var inset: float = size.x * 0.5 - MERLON_SIZE * 0.5
+	var steps := int(round(2.0 * inset / MERLON_PITCH))
+	var merlon := BoxMesh.new()
+	merlon.size = Vector3(MERLON_SIZE, size.y, MERLON_SIZE)
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for i in steps + 1:
+		var t := -inset + MERLON_PITCH * i
+		# The two runs along X, corners included.
+		st.append_from(merlon, 0, Transform3D(Basis(), Vector3(t, 0.0, -inset)))
+		st.append_from(merlon, 0, Transform3D(Basis(), Vector3(t, 0.0, inset)))
+		# ...and the two along Z, corners excluded — they are already standing.
+		if i == 0 or i == steps:
+			continue
+		st.append_from(merlon, 0, Transform3D(Basis(), Vector3(-inset, 0.0, t)))
+		st.append_from(merlon, 0, Transform3D(Basis(), Vector3(inset, 0.0, t)))
+	return st.commit()
 
 
 static func _material(color: Color) -> StandardMaterial3D:
@@ -636,22 +909,51 @@ static func _material(color: Color) -> StandardMaterial3D:
 		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 		mat.emission_enabled = true
 		mat.emission = color
+	elif color == COLOR_SPIRE:
+		# The spires stay LIT — they are slate, and their shading is what gives the
+		# cones a readable form — but carry a low cool emission under it, which is
+		# the whole "magical" budget (see COLOR_SPIRE). Emission adds on top of the
+		# toon diffuse, so the sunlit face is still the bright one.
+		mat.emission_enabled = true
+		mat.emission = SPIRE_GLOW
+		mat.emission_energy_multiplier = SPIRE_GLOW_ENERGY
 	_materials[color] = mat
 	return mat
 
 
+static func _impostor_color(color: Color) -> Color:
+	"""
+	The impostor's stand-in for what the key light does to one of the shell's
+	albedos. See `IMPOSTOR_LIT_GAIN` for why the impostor has no palette of its own.
+	"""
+	return Color(minf(color.r * IMPOSTOR_LIT_GAIN, 1.0),
+		minf(color.g * IMPOSTOR_LIT_GAIN, 1.0),
+		minf(color.b * IMPOSTOR_LIT_GAIN, 1.0))
+
+
 static func _impostor_material(color: Color) -> StandardMaterial3D:
 	"""
-	The impostor's flat, fog-exempt material — keyed into the SAME static cache as
-	the shell's, so the whole tower feature owns a fixed handful of materials no
-	matter how many times anything is built.
+	The impostor's flat, fog-exempt, self-fading material.
+
+	ITS OWN CACHE, AND THAT IS A BUG FIX. It used to key into `_materials` beside
+	the shell's — safe only because the two palettes could not collide, which is
+	exactly the property this bead deletes: the impostor now derives its colours
+	FROM the shell's, so one shared dictionary would hand whichever builder ran
+	second the other one's material. A lit, fogged "impostor" is invisible at 400 m
+	and an unshaded, fog-exempt "shell" is a flat cut-out you walk into; both fail
+	silently. Two dictionaries, no shared key space, no ordering to reason about.
 
 	`disable_fog` is the load-bearing flag: without it the silhouette is erased by
 	the same depth fog that erases the real building, and the impostor answers
 	nothing. Unshaded keeps it a flat colour at 400 m, where a lit surface would
 	just be a slightly different grey than the sky.
+
+	`distance_fade` is the handover (see `IMPOSTOR_FADE_FAR`): opaque beyond FAR,
+	gone by NEAR, linear between. PIXEL_ALPHA rather than the dither modes because
+	the two buildings are COINCIDENT — a dithered impostor would punch holes in the
+	shell behind it, while an alpha-blended one does not write depth at all.
 	"""
-	var hit: StandardMaterial3D = _materials.get(color)
+	var hit: StandardMaterial3D = _impostor_materials.get(color)
 	if hit != null:
 		return hit
 	var mat := StandardMaterial3D.new()
@@ -659,5 +961,8 @@ static func _impostor_material(color: Color) -> StandardMaterial3D:
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	mat.disable_fog = true
 	mat.diffuse_mode = BaseMaterial3D.DIFFUSE_TOON  # so ToonShading never duplicates it
-	_materials[color] = mat
+	mat.distance_fade_mode = BaseMaterial3D.DISTANCE_FADE_PIXEL_ALPHA
+	mat.distance_fade_min_distance = IMPOSTOR_FADE_NEAR
+	mat.distance_fade_max_distance = IMPOSTOR_FADE_FAR
+	_impostor_materials[color] = mat
 	return mat

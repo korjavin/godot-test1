@@ -343,7 +343,18 @@ func _check_roof_is_above_windmans_reach() -> void:
 
 	# ...and nothing below it is a place to land and go again.
 	for box: Dictionary in boxes:
-		if box["name"] == roof["name"] or not box["collide"]:
+		if box["name"] == roof["name"]:
+			continue
+		# THE CASTLE RULE (bead godot-test1-rgt), stated where it can be read rather
+		# than left to emerge as a confusing failure somewhere else. Everything the
+		# silhouette pass added stands ON the slab, and none of it is solid — a
+		# solid turret above the roof would silently BECOME "the roof" as far as
+		# `_topmost_solid` is concerned, and the real slab would then fail its own
+		# coverage test with a message about the wrong box.
+		if box["collide"] and box["pos"].y + box["size"].y * 0.5 > roof_top + EPS:
+			_fail("%s is solid and reaches %.2f m, above the roof at %.2f m — decoration above the seal must be collide:false, or it becomes the roof" % [
+				box["name"], box["pos"].y + box["size"].y * 0.5, roof_top])
+		if not box["collide"]:
 			continue
 		var pos: Vector3 = box["pos"]
 		var size: Vector3 = box["size"]
@@ -469,9 +480,7 @@ func _check_node_shape() -> void:
 		if meshes[i].position != box["pos"]:
 			_fail("mesh %s stands at %s but its box says %s" % [
 				box["name"], meshes[i].position, box["pos"]])
-		var mesh := meshes[i].mesh as BoxMesh
-		if mesh == null or mesh.size != box["size"]:
-			_fail("mesh %s is not a BoxMesh of size %s" % [box["name"], box["size"]])
+		_check_mesh_fills_its_box(meshes[i], box)
 
 	# One collision shape per COLLIDABLE box — the yard slab and the beacon are
 	# deliberately not solid (a 3 cm lip you have to step over, and a light 24 m up).
@@ -492,6 +501,39 @@ func _check_node_shape() -> void:
 	if not shell.is_in_group("tower"):
 		_fail("the tower shell did not join the \"tower\" group — nothing can find it")
 	shell.free()
+
+
+func _check_mesh_fills_its_box(instance: MeshInstance3D, box: Dictionary) -> void:
+	"""
+	One built mesh really is the shape and the size its table entry declared.
+
+	THE AABB IS THE ASSERTION, because since the castle pass (bead godot-test1-rgt)
+	the table can name a cone or a welded parapet ring as well as a box, and the ONE
+	property every other measurement in this file leans on is that whatever is built
+	fits exactly inside `pos ± size/2`. A cone that quietly kept `CylinderMesh`'s
+	default 1 m radius would still be a cone, still be positioned right, and would
+	make the footprint sweep and the ledge rules measure a building that is not
+	there. A plain box is still asserted exactly — a `BoxMesh` of the declared size,
+	nothing else — so the loosening applies only to the shapes that need it.
+	"""
+	var mesh: Mesh = instance.mesh
+	if mesh == null:
+		_fail("mesh %s was not built at all" % box["name"])
+		return
+	var kind: String = box.get("mesh", "box")
+	if kind == "box":
+		var as_box := mesh as BoxMesh
+		if as_box == null or as_box.size != box["size"]:
+			_fail("mesh %s is not a BoxMesh of size %s" % [box["name"], box["size"]])
+		return
+	var aabb := mesh.get_aabb()
+	var size: Vector3 = box["size"]
+	if not aabb.size.is_equal_approx(size):
+		_fail("mesh %s is declared %s but its %s geometry measures %s" % [
+			box["name"], size, kind, aabb.size])
+	if not (aabb.position + aabb.size * 0.5).is_equal_approx(Vector3.ZERO):
+		_fail("mesh %s is not centred on its own origin — it sits at %s" % [
+			box["name"], aabb.position + aabb.size * 0.5])
 
 
 func _check_materials_are_shared_and_already_toon() -> void:
@@ -706,8 +748,15 @@ func _check_shell_is_lazy_and_manager_parented() -> void:
 		# walking away frees the building.
 		if shell.get_parent() != terrain:
 			_fail("the tower shell is parented to %s, not to the terrain manager" % shell.get_parent())
-		if is_instance_valid(terrain._tower_impostor) and terrain._tower_impostor.visible:
-			_fail("the horizon impostor is still visible with the real shell standing in the same place")
+		# THE IMPOSTOR IS DELIBERATELY STILL VISIBLE HERE (bead godot-test1-rgt).
+		# Hiding it the frame the shell arrives is the hard swap the owner saw as
+		# "black, then it pops to white"; the handover is now a material fade over
+		# a band that starts INSIDE this radius, so at the load distance both are
+		# on screen on purpose and the impostor is the one that is fully opaque.
+		# What used to be defended here — no double image, no z-fight — is defended
+		# in check 9 instead, on the fade band and the cull that follows it.
+		if is_instance_valid(terrain._tower_impostor) and not terrain._tower_impostor.visible:
+			_fail("the horizon impostor was switched off when the shell loaded — that hard swap is the pop this bead removed")
 
 	# ...and crossing another boundary must not build a second one.
 	probe.global_position = site + Vector3(20.0, 0.0, 0.0)
@@ -1045,6 +1094,23 @@ func _check_impostor() -> void:
 	SILHOUETTE PARITY is the second half: the impostor exists so the player walks
 	toward it, and arriving at a different shape than the one they steered by is the
 	failure the shared box table exists to prevent.
+
+	PALETTE PARITY AND THE CROSS-FADE are the third, added by bead godot-test1-rgt
+	after the owner reported the tower reading black at range and popping to white
+	on arrival. Both halves of that were authored: a near-black impostor palette
+	that shared nothing with the shell, and a hard `visible = false` at the load
+	radius. So this check now also asserts
+
+	  * that no impostor colour is a palette of its own — each is the SHELL's colour
+	    for that box put through `_impostor_color`, which is the only form of the
+	    assertion that a second authored palette cannot pass;
+	  * that the fade band is really configured on the material, and that the meshes
+	    are culled once it has finished, so a transparent building is not still
+	    being drawn over the real one; and
+	  * that the band sits inside the WORST-CASE load distance — TOWER_LOAD_RADIUS
+	    minus a whole chunk, because `_tower_stream` only runs on a boundary
+	    crossing. Outside that, a player walks into a half-faded silhouette with no
+	    building behind it, which is a worse artefact than the one being fixed.
 	"""
 	var impostor := TowerShell.build_impostor()
 	var boxes := TowerShell.boxes()
@@ -1057,6 +1123,9 @@ func _check_impostor() -> void:
 		if meshes[i].position != box["pos"]:
 			_fail("impostor box %d stands at %s, the shell's at %s" % [
 				i, meshes[i].position, box["pos"]])
+		# Same shape as the shell's box, not merely the same count and place — the
+		# castle's cones and its welded parapet ring all have to arrive out here too.
+		_check_mesh_fills_its_box(meshes[i], box)
 		var mat := meshes[i].material_override as StandardMaterial3D
 		if mat == null:
 			_fail("impostor box %d has no material" % i)
@@ -1065,6 +1134,40 @@ func _check_impostor() -> void:
 			_fail("impostor box %d is fogged — at 400 m under the web build's fog it draws nothing" % i)
 		if mat.shading_mode != BaseMaterial3D.SHADING_MODE_UNSHADED:
 			_fail("impostor box %d is lit, not a flat silhouette" % i)
+		# THE PARITY ITSELF. Derived from the shell's colour, never authored beside it.
+		var want: Color = TowerShell._impostor_color(box["color"])
+		if not mat.albedo_color.is_equal_approx(want):
+			_fail("impostor box %s is %s but the shell's colour lifts to %s — the impostor has a palette of its own again" % [
+				box["name"], mat.albedo_color, want])
+		if mat.distance_fade_mode == BaseMaterial3D.DISTANCE_FADE_DISABLED:
+			_fail("impostor box %s does not cross-fade — the handover is a hard swap again" % box["name"])
+		if not is_equal_approx(mat.distance_fade_min_distance, TowerShell.IMPOSTOR_FADE_NEAR) \
+				or not is_equal_approx(mat.distance_fade_max_distance, TowerShell.IMPOSTOR_FADE_FAR):
+			_fail("impostor box %s fades over %.0f-%.0f m, not the declared %.0f-%.0f m" % [
+				box["name"], mat.distance_fade_min_distance, mat.distance_fade_max_distance,
+				TowerShell.IMPOSTOR_FADE_NEAR, TowerShell.IMPOSTOR_FADE_FAR])
+		# ...and it stops being submitted once it is fully transparent, but never
+		# while the fade would still have drawn a pixel.
+		var cull: float = meshes[i].visibility_range_begin
+		if cull <= 0.0 or cull > TowerShell.IMPOSTOR_FADE_NEAR:
+			_fail("impostor box %s is culled at %.0f m, outside (0, %.0f] — a fully transparent building is still being rasterised, or a visible one is being cut" % [
+				box["name"], cull, TowerShell.IMPOSTOR_FADE_NEAR])
+
+	if TowerShell.IMPOSTOR_FADE_NEAR >= TowerShell.IMPOSTOR_FADE_FAR:
+		_fail("the impostor's fade band is inverted: NEAR %.0f m is not inside FAR %.0f m" % [
+			TowerShell.IMPOSTOR_FADE_NEAR, TowerShell.IMPOSTOR_FADE_FAR])
+
+	# THE BAND FITS INSIDE THE WORST-CASE LOAD. Read off a live terrain, both
+	# numbers, so retuning either one fails here rather than in the view.
+	var terrain := _make_terrain(SEED_A)
+	var worst_case: float = terrain.TOWER_LOAD_RADIUS - float(terrain.chunk_size)
+	terrain.free()
+	if TowerShell.IMPOSTOR_FADE_FAR > worst_case:
+		_fail("the impostor starts fading at %.0f m but the shell is only guaranteed by %.0f m (TOWER_LOAD_RADIUS minus one chunk) — there is a window with a half-faded silhouette and no building" % [
+			TowerShell.IMPOSTOR_FADE_FAR, worst_case])
+	else:
+		print("impostor cross-fade: opaque beyond %.0f m, gone by %.0f m, shell guaranteed by %.0f m" % [
+			TowerShell.IMPOSTOR_FADE_FAR, TowerShell.IMPOSTOR_FADE_NEAR, worst_case])
 
 	# A picture and nothing else: no collision anywhere under it, or the field 400 m
 	# out grows an invisible wall.
