@@ -360,16 +360,16 @@ Budgets:
 
 ### Task 2: The builder in `tower_interior.gd`
 
-- [ ] Add the floor table `FLOOR_Y` (D1) with its comment, and
+- [x] Add the floor table `FLOOR_Y` (D1) with its comment, and
       `static func floor_y(index: int) -> float`. Replace the two hard-coded `2`s in
       `_ready()` (the container loop and `batched`) with `FLOOR_Y.size()`.
-- [ ] Generalize `current_floor(local_y: float) -> int`: the **highest** index whose
+- [x] Generalize `current_floor(local_y: float) -> int`: the **highest** index whose
       `FLOOR_Y[i] - FLOOR_HYSTERESIS <= local_y`. It must still answer 0 at y = 0 and
       1 at `SLAB_Y` (check 9 asserts both, unchanged). Keep it pure and
       allocation-free — it runs every `_process`.
       Leave `_floor_visible` **exactly as it is**: `absi(index - current) <= 1` was
       written to be correct at any storey count and this is the phase that proves it.
-- [ ] `static func _plan_ramp(plan: Dictionary) -> Dictionary` — the ramp box for one
+- [x] `static func _plan_ramp(plan: Dictionary) -> Dictionary` — the ramp box for one
       storey, derived per D5 from the `S` rectangle and the `s` landing. Its `floor`
       is the **lower** of the two storeys it joins (the existing convention: a box you
       stand on belongs to the floor it carries, which is why the phase-3 ramp is floor
@@ -379,11 +379,11 @@ Budgets:
       floor_index: int) -> Dictionary` and have BOTH `_ramp_box()` and `_plan_ramp()`
       call it. One copy of "place the box by its top face along the deck's normal".
       Confirm `_ramp_box()`'s output is byte-identical afterwards (check 3 will say so).
-- [ ] `static func _plan_slab(plan: Dictionary) -> Array[Dictionary]` — the storey's
+- [x] `static func _plan_slab(plan: Dictionary) -> Array[Dictionary]` — the storey's
       floor slab as **the inner footprint minus the derived stairwell hole**, at most
       four boxes (skip any that comes out zero-width). `SLAB_THICK` thick, top at
       `FLOOR_Y[floor]`, `collide: true`, `COLOR_STONE`.
-- [ ] `static func _merge_walls(plan: Dictionary) -> Array[Dictionary]` — the 2-D
+- [x] `static func _merge_walls(plan: Dictionary) -> Array[Dictionary]` — the 2-D
       run-length merge, and the whole reason a 40 x 40 grid is affordable:
       1. per row, maximal horizontal runs of `#`;
       2. then merge runs in adjacent rows that have **identical `[c0, c1]`** into one
@@ -393,19 +393,30 @@ Budgets:
       (`STOREY_HEIGHT - SLAB_THICK` tall), `collide: true`, `COLOR_STONE`.
       Comment the *why*: run-length on rows alone leaves a 40-cell vertical wall as 40
       boxes, and 40 boxes is 40 collision shapes and a budget nobody can hold.
-- [ ] `static func _plan_pads(plan: Dictionary) -> Array[Dictionary]` — one 0.1 m plate
+- [x] `static func _plan_pads(plan: Dictionary) -> Array[Dictionary]` — one 0.1 m plate
       per `P` cell, `COLOR_SYSTEM`, `collide: false`.
       `# ponytail: geometry only. A purge pad with no guards to scare is a dead Area3D;
       the trigger and the flee wiring land in phase 17 with the guards they act on.`
-- [ ] `static func plan_boxes(floor_index: int) -> Array[Dictionary]` — slab + walls +
+- [x] `static func plan_boxes(floor_index: int) -> Array[Dictionary]` — slab + walls +
       ramp + pads, names prefixed `S%dPlan...` and **globally unique** (check 1
       asserts). Cache it in a `static var` dictionary; `boxes()` is called many times
       per self-check run and a 40 x 40 walk per call is waste.
-- [ ] `static func all_boxes() -> Array[Dictionary]` — `boxes()` then every
+- [x] `static func all_boxes() -> Array[Dictionary]` — `boxes()` then every
       `TowerPlans.floors()` storey in order. **`boxes()` itself is not touched.**
-- [ ] `_ready()`: iterate `all_boxes()`. One word. Verify nothing else needed a branch.
-- [ ] `PLAN_BOX_BUDGET` and `DRAW_BUDGET 23 -> 26` per D7, both with comments carrying
+- [x] `_ready()`: iterate `all_boxes()`. One word. Verify nothing else needed a branch.
+- [x] `PLAN_BOX_BUDGET` and `DRAW_BUDGET 23 -> 26` per D7, both with comments carrying
       the measured numbers (fill them in after Task 8 measures for real).
+
+
+> Measured on the placeholder storey: keep 56 boxes, plan storey 21
+> (4 slab + 14 merged walls + 2 pads + 1 ramp), ramp 29.55 deg / slope 0.5670
+> against the proven 0.5750. `_ramp_box()` output is unchanged
+> (`pos=(-4.400306, 2.126619, 7.4)`, `rot.z=0.521834`). `PLAN_BOX_BUDGET` is
+> **provisional at 120** and gets its real number in Task 8, as planned.
+> ⚠️ `tower_interior_selfcheck` is red until Task 6 generalizes it (shape count
+> over `boxes()` not `all_boxes()`; empty `Floor3Batch`/`Floor4Batch` until Task 8
+> authors those storeys). `tower_selfcheck`, `tower_shell_selfcheck` and
+> `capture_selfcheck` are `SELFCHECK OK`.
 
 ### Task 3: The adjacency index in `tower_selfcheck._reach`
 

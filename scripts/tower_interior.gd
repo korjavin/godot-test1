@@ -270,6 +270,68 @@ const RAMP_WIDTH: float = 2.8
 const RAMP_Z: float = INNER_HALF - RAMP_WIDTH * 0.5
 const RAMP_THICK: float = 0.4
 
+# ============================================================================
+# THE HAND-PLANNED STOREYS (phase 14) — where they sit and what they may be
+# ============================================================================
+#
+# The plan itself is TEXT and lives in `tower_plans.gd`; everything here is the
+# arithmetic that turns a storey row into boxes. Read that file's header first —
+# it carries the grid, the character table and the extension rule ("a new storey
+# is one STOREYS row plus its TOWER_GRAPH rows, and NO builder edit").
+
+## The walking surface of every storey, in interior-local metres. The index is the
+## `floor` a box declares and the container `_update_visibility` toggles.
+##
+## The first two are the phase-3 keep, unchanged: the courtyard/hall at 0 and the
+## upper landing on the slab. The rest sit ON the keep's open top (`KEEP_HEIGHT`)
+## and rise on the SHELL's own storey grid, so a storey is never a number written
+## down twice here — it is `STOREY_HEIGHT` counted off the keep. Retune either
+## shell constant and these move with it.
+const FLOOR_Y: Array[float] = [
+	0.0,
+	SLAB_Y,
+	TowerShell.KEEP_HEIGHT,
+	TowerShell.KEEP_HEIGHT + TowerShell.STOREY_HEIGHT,
+	TowerShell.KEEP_HEIGHT + 2.0 * TowerShell.STOREY_HEIGHT,
+]
+
+## How much clear air a plan ramp keeps under the slab it climbs towards.
+##
+## The player's capsule is 2.0 m; 2.2 is that plus a margin. It is what sizes the
+## STAIRWELL HOLE: the slab is cut from the point on the deck where the ceiling
+## would be `SLAB_THICK + PLAN_HEADROOM` overhead, so walking up a ramp never ends
+## with your head in the floor you are about to stand on.
+const PLAN_HEADROOM: float = 2.2
+
+## How proud of the floor a plan pad's plate stands. Low enough that walking onto
+## one is not a step (`CharacterBody3D` has no step-up, so anything you can trip on
+## is a wall), high enough to read as a plate and not as paint.
+const PLAN_PAD_THICK: float = 0.1
+
+## THE STEEPEST A PLAN RAMP MAY BE, and it is not a fresh number — it is the
+## phase-3 ramp's own slope (4.6 m of rise over 8.0 m of run, 29.9 degrees), which
+## has been walked since phase 3 and is known to be climbable without sliding.
+## Deriving it rather than writing 0.575 means retuning the proven ramp retunes the
+## ceiling with it, instead of leaving the plans certified against a ramp that no
+## longer exists. `tower_selfcheck` and `tower_interior_selfcheck` both assert it.
+const PLAN_RAMP_MAX_SLOPE: float = SLAB_Y / (SLAB_X0 - RAMP_X0)
+
+## Hard cap on the boxes ONE plan storey may emit, asserted per storey by
+## `tower_interior_selfcheck` — `BOX_BUDGET`'s discipline, applied to the machine
+## rather than to the hand-placed keep.
+##
+## A 40 x 40 grid is 1600 cells and could in principle be 1600 boxes; the whole
+## reason `_merge_walls` exists is that it is not. What this number stops is a plan
+## whose walls stopped merging — a chequerboard, a wall drawn one cell out of
+## line with the one beside it, a partition every other cell — because each of
+## those is a collision shape as well as a box, and the collision body is the one
+## thing in this building that is not batched.
+##
+## MEASURED, not guessed: see the per-storey line `tower_interior_selfcheck`
+## prints. The number is set from the authored floors with room for a designer to
+## add rooms, and biting well before a merge failure could go unnoticed.
+const PLAN_BOX_BUDGET: int = 120
+
 ## The demand gate's vault, off the hall's south end. The shutter fills the gap
 ## between the two jambs and sinks its own full height to open.
 const VAULT_Z: float = -5.0
@@ -536,7 +598,14 @@ const BOX_BUDGET: int = 60
 ## protocol and stone in every world that has, so it is the one box in the plan
 ## whose DRAW STATE is decided per save — which a merged batch cannot express
 ## without being rebuilt. One node, once, for the life of a run.
-const DRAW_BUDGET: int = 23
+##
+## 26 SINCE PHASE 14, and the three are the whole cost of the hand-planned storeys:
+## one `Floor%dBatch` `MeshInstance3D` each, and nothing else. Not one plan box is
+## in `MOVING_PARTS`, not one carries `spin`, and — deliberately — not one is
+## painted a `GLOW_COLORS` colour, so a plan storey commits ONE surface and not two.
+## THREE STOREYS OF 80 x 80 m COST THREE DRAWS: that is the claim this number is,
+## and `_check_node_shape` is what stops the next author quietly spending it.
+const DRAW_BUDGET: int = 26
 
 # ============================================================================
 # PALETTE — one material per colour, shared process-wide (see `_material`)
@@ -935,6 +1004,12 @@ var _guards: Node3D = null
 ## and same reason as `TowerShell._materials`: never a material per instance.
 static var _materials: Dictionary = {}
 
+## Floor index -> that storey's built boxes. `plan_boxes()` walks 1600 cells and is
+## called many times per self-check run (`all_boxes()` is the plan's single source
+## the way `boxes()` is, so every check asks for it); the plan is a `const` and can
+## never change at runtime, so building it once is free correctness.
+static var _plan_cache: Dictionary = {}
+
 
 static func boxes() -> Array[Dictionary]:
 	"""
@@ -1160,21 +1235,399 @@ static func _ramp_box() -> Dictionary:
 	thickness along the deck's NORMAL, not straight down, which is the mistake that
 	puts a 12 cm step at the top.
 	"""
-	var run := SLAB_X0 - RAMP_X0
-	var rise := SLAB_Y
+	return _deck_box("Ramp", Vector2(RAMP_X0, 0.0), Vector2(SLAB_X0, SLAB_Y),
+			RAMP_Z, RAMP_WIDTH, 0)
+
+
+static func _deck_box(deck_name: String, foot: Vector2, head: Vector2, z: float,
+		width: float, floor_index: int) -> Dictionary:
+	"""
+	A ramp deck as a rotated box whose TOP FACE passes exactly through both of its
+	two end points.
+
+	@param foot: The low end, in the XY plane (x metres, y metres).
+	@param head: The high end, same plane.
+	@param z: The lane's centre line.
+	@param width: The lane's width.
+	@param floor_index: The storey the deck belongs to for visibility gating.
+	@return: One `boxes()` entry, carrying a `rot`.
+
+	ONE COPY OF THE ARITHMETIC, shared by the phase-3 keep ramp and every
+	hand-planned storey's ramp, because the flushness is the whole point and a
+	second copy is a second chance to get it wrong: the box is placed by its top
+	face and its centre derived — offset half a thickness along the deck's own
+	NORMAL, not straight down, which is the mistake that leaves a 12 cm step at the
+	top. A step of ANY height is a wall in this engine.
+
+	EVERY RAMP IN THIS BUILDING RUNS ALONG X, and the endpoints are ordered so that
+	the run is positive. That is not tidiness: `rot.z` beyond a quarter turn puts
+	the box's local +Y (the face we just placed) pointing DOWNWARDS, and the offset
+	silently lands the walkable surface a thickness too high. Everything that
+	reasons about these decks — `_ramp_underside_at`, check 1 and check 3 — reasons
+	in the XY plane about `rot.z` for the same reason.
+	"""
+	var low := foot
+	var high := head
+	if high.x < low.x:
+		var swap := low
+		low = high
+		high = swap
+	var run := high.x - low.x
+	var rise := high.y - low.y
 	var length := Vector2(run, rise).length()
 	var theta := atan2(rise, run)
 	# Midpoint of the deck, and the deck's own normal.
-	var deck_mid := Vector2((RAMP_X0 + SLAB_X0) * 0.5, rise * 0.5)
+	var deck_mid := (low + high) * 0.5
 	var normal := Vector2(-sin(theta), cos(theta))
 	var centre := deck_mid - normal * (RAMP_THICK * 0.5)
 	return {
-		"name": "Ramp",
-		"pos": Vector3(centre.x, centre.y, RAMP_Z),
-		"size": Vector3(length, RAMP_THICK, RAMP_WIDTH),
+		"name": deck_name,
+		"pos": Vector3(centre.x, centre.y, z),
+		"size": Vector3(length, RAMP_THICK, width),
 		"rot": Vector3(0.0, 0.0, theta),
-		"color": COLOR_STONE, "collide": true, "floor": 0,
+		"color": COLOR_STONE, "collide": true, "floor": floor_index,
 	}
+
+
+# ============================================================================
+# THE PLAN BUILDER — text into boxes
+# ============================================================================
+#
+# Everything below reads `TowerPlans.STOREYS` and knows about STOREYS, never about
+# storey 3. That is the bead's acceptance criterion and it is a property of these
+# functions: none of them names a floor, a room or a letter.
+
+static func floor_y(index: int) -> float:
+	"""The walking surface of a storey, in interior-local metres."""
+	return FLOOR_Y[index]
+
+
+static func plan_boxes(floor_index: int) -> Array[Dictionary]:
+	"""
+	One hand-planned storey, as boxes: its slab, its merged walls, its ramp and its
+	pads.
+
+	@param floor_index: An index into `FLOOR_Y`.
+	@return: `boxes()`-shaped entries, or `[]` for a floor with no plan.
+
+	`boxes()` is untouched by all of this and stays the hand-authored keep; this is
+	its sibling, and `all_boxes()` is what everything downstream actually iterates.
+	Names are prefixed `S<floor>Plan`, which is what makes them unique across
+	storeys without any of the four builders below knowing the others exist.
+	"""
+	if _plan_cache.has(floor_index):
+		return _plan_cache[floor_index]
+	var out: Array[Dictionary] = []
+	var plan := TowerPlans.storey(floor_index)
+	if plan.is_empty():
+		_plan_cache[floor_index] = out
+		return out
+	out.append_array(_plan_slab(plan))
+	out.append_array(_merge_walls(plan))
+	var ramp := _plan_ramp(plan)
+	if not ramp.is_empty():
+		out.append(ramp)
+	out.append_array(_plan_pads(plan))
+	_plan_cache[floor_index] = out
+	return out
+
+
+static func all_boxes() -> Array[Dictionary]:
+	"""
+	The WHOLE building's static plan: the authored keep plus every planned storey.
+
+	@return: `boxes()` first, then each `TowerPlans.floors()` storey in plan order.
+
+	This is what `_ready()` builds from and what the self-checks measure. Plan boxes
+	are never in `MOVING_PARTS` and never carry `spin`, so they take the existing
+	batch path and the existing single-body collision path with no new branch
+	anywhere — which is why `_ready()` changed by one word.
+	"""
+	var out: Array[Dictionary] = boxes()
+	for floor_index: int in TowerPlans.floors():
+		out.append_array(plan_boxes(floor_index))
+	return out
+
+
+static func _grid_x(edge: float) -> float:
+	"""Column EDGE coordinate (0 is the west face of column 0) -> interior x."""
+	return -TowerPlans.PLAN_HALF + edge * TowerPlans.PLAN_CELL
+
+
+static func _grid_z(edge: float) -> float:
+	"""Row EDGE coordinate (0 is the north face of row 0) -> interior z."""
+	return -TowerPlans.PLAN_HALF + edge * TowerPlans.PLAN_CELL
+
+
+static func _plan_stair(plan: Dictionary) -> Dictionary:
+	"""
+	Where the `S` lane and its `s` landing are, in cells.
+
+	@return: `{c0, c1, r0, r1, rises_east}`, or `{}` when the storey has no `S`
+	        cells at all.
+
+	The lane is one solid rectangle with its long axis on X (`tower_selfcheck`'s
+	flood-fill is what asserts that; here it is simply the bounding box of the `S`
+	cells). WHICH WAY THE RAMP RISES IS DERIVED and never authored: the landing sits
+	against one short end, so the end it is on IS the head. That is the whole reason
+	`s` is a character rather than a `rise: "east"` key nobody would keep in step
+	with the drawing.
+	"""
+	var rows: Array = plan["rows"]
+	var c0 := TowerPlans.PLAN_GRID
+	var c1 := -1
+	var r0 := TowerPlans.PLAN_GRID
+	var r1 := -1
+	var landing_c_sum := 0.0
+	var landing_n := 0
+	for r: int in rows.size():
+		var line: String = rows[r]
+		for c: int in line.length():
+			var ch := line[c]
+			if ch == TowerPlans.STAIR_UP_CHAR:
+				c0 = mini(c0, c)
+				c1 = maxi(c1, c)
+				r0 = mini(r0, r)
+				r1 = maxi(r1, r)
+			elif ch == TowerPlans.LANDING_CHAR:
+				landing_c_sum += float(c)
+				landing_n += 1
+	if c1 < 0 or landing_n == 0:
+		return {}
+	return {
+		"c0": c0, "c1": c1, "r0": r0, "r1": r1,
+		"rises_east": landing_c_sum / float(landing_n) > float(c1),
+	}
+
+
+static func _plan_ramp(plan: Dictionary) -> Dictionary:
+	"""
+	The up-ramp arriving on this storey, as one rotated deck.
+
+	@return: A `boxes()` entry carrying `rot`, or `{}` when the storey has no `S`.
+
+	Its `floor` is the LOWER of the two storeys it joins, which is the existing
+	convention and not a new one: a box you stand on belongs to the floor it
+	carries, which is why the phase-3 ramp is floor 0 and not floor 1.
+	"""
+	var stair := _plan_stair(plan)
+	if stair.is_empty():
+		return {}
+	var floor_index := int(plan["floor"])
+	var from_index := int(plan["from"])
+	var y_foot: float = FLOOR_Y[from_index]
+	var y_head: float = FLOOR_Y[floor_index]
+	# The lane's two short ends, as metres. The deck's foot is at the FAR edge of
+	# the far `S` cell and its head at the near edge of the `s` cell — i.e. the
+	# lane's full length, so the deck meets both floors flush with no lip.
+	var x_west := _grid_x(float(stair["c0"]))
+	var x_east := _grid_x(float(int(stair["c1"]) + 1))
+	var foot := Vector2(x_west, y_foot)
+	var head := Vector2(x_east, y_head)
+	if not bool(stair["rises_east"]):
+		foot = Vector2(x_east, y_foot)
+		head = Vector2(x_west, y_head)
+	var z := _grid_z((float(int(stair["r0"]) + int(stair["r1"])) + 1.0) * 0.5)
+	var width := float(int(stair["r1"]) - int(stair["r0"]) + 1) * TowerPlans.PLAN_CELL
+	return _deck_box("%sRamp" % _plan_prefix(floor_index), foot, head, z, width,
+			mini(floor_index, from_index))
+
+
+static func _plan_hole(plan: Dictionary) -> Dictionary:
+	"""
+	The stairwell hole in this storey's slab, in cells.
+
+	@return: `{c0, c1, r0, r1}`, or `{}` when the storey has no ramp to clear.
+
+	DERIVED, NEVER AUTHORED, and that is what makes "adjacent storeys' stair cells
+	coincide" true by construction rather than by review. The hole starts at the
+	point on the deck where this storey's slab would be `SLAB_THICK +
+	PLAN_HEADROOM` overhead and runs to the head; anything shorter and a player
+	walking up meets the floor they are about to stand on with their face. It is
+	rounded OUTWARD to whole cells, because a slab edge halfway through a cell is a
+	lip in a grid where every other edge is on a cell line.
+
+	# ponytail: one axis-aligned rectangle. A ramp that turned a corner would need a
+	# second rect and a slab that is up to 8 boxes rather than 4; X-axis-only ramps
+	# (see `_deck_box`) are exactly what buys the simple version.
+	"""
+	var stair := _plan_stair(plan)
+	if stair.is_empty():
+		return {}
+	var floor_index := int(plan["floor"])
+	var from_index := int(plan["from"])
+	var y_foot: float = FLOOR_Y[from_index]
+	var y_head: float = FLOOR_Y[floor_index]
+	var rise := y_head - y_foot
+	# How far along the deck the ceiling stops being high enough, as a fraction.
+	var span := SLAB_THICK + PLAN_HEADROOM
+	var along := 1.0 if rise <= 0.0 else clampf((rise - span) / rise, 0.0, 1.0)
+	var c0 := int(stair["c0"])
+	var c1 := int(stair["c1"])
+	var cells := float(c1 - c0 + 1)
+	if bool(stair["rises_east"]):
+		# Rounded outward: the cell CONTAINING the threshold is part of the hole.
+		var first := c0 + int(floorf(along * cells))
+		return {"c0": mini(first, c1), "c1": c1, "r0": stair["r0"], "r1": stair["r1"]}
+	var last := c1 - int(floorf(along * cells))
+	return {"c0": c0, "c1": maxi(last, c0), "r0": stair["r0"], "r1": stair["r1"]}
+
+
+static func _plan_slab(plan: Dictionary) -> Array[Dictionary]:
+	"""
+	The storey's floor: the whole inner footprint MINUS the stairwell hole.
+
+	@return: At most four boxes — the bands north and south of the hole, then the
+	        strips east and west of it. Any that comes out zero-wide is skipped.
+
+	Four boxes for 6000 m2 of floor, and the alternative is 1600 cell-sized ones.
+	The slab hangs BELOW the walking surface (`SLAB_THICK` under `FLOOR_Y`), the
+	same construction as the keep's, so `FLOOR_Y` is the number you stand on and
+	not the number you have to subtract from.
+	"""
+	var out: Array[Dictionary] = []
+	var floor_index := int(plan["floor"])
+	var top: float = FLOOR_Y[floor_index]
+	var last := TowerPlans.PLAN_GRID - 1
+	var hole := _plan_hole(plan)
+	var bands: Array[Array] = []
+	if hole.is_empty():
+		bands.append([0, last, 0, last])
+	else:
+		var hc0 := int(hole["c0"])
+		var hc1 := int(hole["c1"])
+		var hr0 := int(hole["r0"])
+		var hr1 := int(hole["r1"])
+		if hr0 > 0:
+			bands.append([0, last, 0, hr0 - 1])
+		if hr1 < last:
+			bands.append([0, last, hr1 + 1, last])
+		if hc0 > 0:
+			bands.append([0, hc0 - 1, hr0, hr1])
+		if hc1 < last:
+			bands.append([hc1 + 1, last, hr0, hr1])
+	for i: int in bands.size():
+		var band: Array = bands[i]
+		var x0 := _grid_x(float(band[0]))
+		var x1 := _grid_x(float(int(band[1]) + 1))
+		var z0 := _grid_z(float(band[2]))
+		var z1 := _grid_z(float(int(band[3]) + 1))
+		out.append({
+			"name": "%sSlab%d" % [_plan_prefix(floor_index), i],
+			"pos": Vector3((x0 + x1) * 0.5, top - SLAB_THICK * 0.5, (z0 + z1) * 0.5),
+			"size": Vector3(x1 - x0, SLAB_THICK, z1 - z0),
+			"color": COLOR_STONE, "collide": true, "floor": floor_index,
+		})
+	return out
+
+
+static func _merge_walls(plan: Dictionary) -> Array[Dictionary]:
+	"""
+	Every `#` cell on this storey, run-length merged in TWO dimensions.
+
+	@return: One box per maximal rectangle of wall, floor slab to ceiling.
+
+	THIS FUNCTION IS THE WHOLE REASON A 40 x 40 GRID IS AFFORDABLE. A corridor wall
+	across a floor is 40 cells; emitted one box per cell that is 40 boxes, 40
+	collision shapes and a budget nobody can hold — and the collision body is the
+	one part of this building that is not batched, so those 40 shapes are real cost
+	on every physics tick.
+
+	Rows alone are not enough, and that is the second pass: horizontal run-length
+	leaves a VERTICAL 40-cell wall as 40 one-wide runs, i.e. exactly the case it was
+	supposed to fix. Merging adjacent rows whose runs have IDENTICAL extents makes a
+	vertical wall one box for the same reason a horizontal one is. Runs that merely
+	overlap are deliberately not merged: that is a rectangle-cover problem, and the
+	greedy answer to it is worse than the boxes it saves.
+
+	Walls run from the slab's top face to the storey's ceiling, so a wall top is
+	never a ledge — which is what lets `tower_interior_selfcheck`'s check 2 assert
+	the no-jump-gated-climb rule structurally instead of sweeping the whole floor.
+	"""
+	var floor_index := int(plan["floor"])
+	var bottom: float = FLOOR_Y[floor_index]
+	var height := TowerShell.STOREY_HEIGHT - SLAB_THICK
+	var rows: Array = plan["rows"]
+	# Pass 1 and 2 at once: each row's maximal runs, extending the run directly
+	# above when its extent is identical.
+	var rects: Array[Dictionary] = []
+	var above: Dictionary = {}
+	for r: int in rows.size():
+		var line: String = rows[r]
+		var here: Dictionary = {}
+		var c := 0
+		while c < line.length():
+			if line[c] != TowerPlans.WALL_CHAR:
+				c += 1
+				continue
+			var start := c
+			while c < line.length() and line[c] == TowerPlans.WALL_CHAR:
+				c += 1
+			var key := "%d,%d" % [start, c - 1]
+			if above.has(key):
+				var grown: Dictionary = rects[above[key]]
+				grown["r1"] = r
+				here[key] = above[key]
+			else:
+				rects.append({"c0": start, "c1": c - 1, "r0": r, "r1": r})
+				here[key] = rects.size() - 1
+		above = here
+	var out: Array[Dictionary] = []
+	for i: int in rects.size():
+		var rect: Dictionary = rects[i]
+		var x0 := _grid_x(float(rect["c0"]))
+		var x1 := _grid_x(float(int(rect["c1"]) + 1))
+		var z0 := _grid_z(float(rect["r0"]))
+		var z1 := _grid_z(float(int(rect["r1"]) + 1))
+		out.append({
+			"name": "%sWall%d" % [_plan_prefix(floor_index), i],
+			"pos": Vector3((x0 + x1) * 0.5, bottom + height * 0.5, (z0 + z1) * 0.5),
+			"size": Vector3(x1 - x0, height, z1 - z0),
+			"color": COLOR_STONE, "collide": true, "floor": floor_index,
+		})
+	return out
+
+
+static func _plan_pads(plan: Dictionary) -> Array[Dictionary]:
+	"""
+	One plate per `P` cell, in the operable-system cyan.
+
+	@return: A `COLOR_SYSTEM` plate per pad, non-solid (you stand ON the slab).
+
+	# ponytail: geometry only. A purge pad with no guards to scare is a dead Area3D;
+	# the trigger and the flee wiring land in phase 17 with the guards they act on,
+	# and the plate drawn now is the phase-17 author's map of where they go.
+	"""
+	var out: Array[Dictionary] = []
+	var floor_index := int(plan["floor"])
+	var top: float = FLOOR_Y[floor_index]
+	var rows: Array = plan["rows"]
+	for r: int in rows.size():
+		var line: String = rows[r]
+		for c: int in line.length():
+			if line[c] != TowerPlans.PAD_CHAR:
+				continue
+			out.append({
+				"name": "%sPad%d_%d" % [_plan_prefix(floor_index), c, r],
+				"pos": Vector3(_grid_x(float(c) + 0.5), top + PLAN_PAD_THICK * 0.5,
+						_grid_z(float(r) + 0.5)),
+				"size": Vector3(TowerPlans.PLAN_CELL, PLAN_PAD_THICK,
+						TowerPlans.PLAN_CELL),
+				"color": COLOR_SYSTEM, "collide": false, "floor": floor_index,
+			})
+	return out
+
+
+static func _plan_prefix(floor_index: int) -> String:
+	"""
+	The name every box of one planned storey carries.
+
+	The number is the FLOOR INDEX and not the storey's colloquial name — floor 2 is
+	"storey 3" in the design notes and `S2Plan...` here, because the index is what
+	`FLOOR_Y`, the `floor` key and the `Floor%d` container all agree on, and a name
+	that meant a third thing would be one more mapping to keep in step.
+	"""
+	return "S%dPlan" % floor_index
 
 
 static func _wing_boxes() -> Array[Dictionary]:
@@ -1453,9 +1906,11 @@ func _ready() -> void:
 	body.name = "InteriorCollision"
 	add_child(body)
 
-	# Two floor containers. Visibility is toggled on THESE, never on individual
-	# meshes, so `_update_visibility` is two boolean writes however big a floor gets.
-	for i in 2:
+	# One container per storey. Visibility is toggled on THESE, never on individual
+	# meshes, so `_update_visibility` is one boolean write per floor however big a
+	# floor gets — and the count comes off `FLOOR_Y`, so a storey added to
+	# `TowerPlans` gets its container with no edit here.
+	for i in FLOOR_Y.size():
 		var floor_node := Node3D.new()
 		floor_node.name = "Floor%d" % i
 		add_child(floor_node)
@@ -1463,9 +1918,11 @@ func _ready() -> void:
 
 	# THE STATIC GEOMETRY IS ONE MESH PER STOREY, batched below. Only the parts that
 	# move or change colour get a node of their own.
-	var batched: Array[Array] = [[], []]
+	var batched: Array[Array] = []
+	for i in FLOOR_Y.size():
+		batched.append([])
 
-	for box: Dictionary in boxes():
+	for box: Dictionary in all_boxes():
 		var parent: Node3D = _floors[int(box["floor"])]
 		var spin: float = float(box.get("spin", 0.0))
 		if not is_zero_approx(spin):
@@ -2624,10 +3081,11 @@ func _update_visibility() -> bool:
 
 	@return: true when the interior is being drawn (and therefore worth animating).
 
-	WITH TWO STOREYS THE +/-1 WINDOW HIDES NOTHING, and that is fine — the policy is
-	the deliverable, not this run of it. `_floor_visible` is a pure function of two
-	integers so a check can drive it at any storey count, and phase 8's cell block
-	inherits a gate that is already correct instead of discovering it needs one.
+	THE +/-1 WINDOW FINALLY BITES SINCE PHASE 14. With two storeys it hid nothing and
+	was written anyway, because `_floor_visible` is a pure function of two integers
+	and a check can drive it at any storey count; with five it is the difference
+	between three storey meshes on screen and five. Neither the policy nor this
+	function changed to get there — the storeys did.
 	"""
 	if _player == null:
 		return visible
@@ -2669,8 +3127,22 @@ static func inside_walls(local: Vector3) -> bool:
 
 
 static func current_floor(local_y: float) -> int:
-	"""Which storey a height belongs to, in interior-local metres."""
-	return 1 if local_y >= SLAB_Y - FLOOR_HYSTERESIS else 0
+	"""
+	Which storey a height belongs to, in interior-local metres.
+
+	The HIGHEST `FLOOR_Y` whose walking surface, less the hysteresis, is at or below
+	this height — so standing on a slab answers that slab's storey, and standing on
+	the ramp just under its lip answers the storey below rather than flickering
+	between the two. Floor 0 is the floor of last resort, so a height below the
+	ground (a player falling past the building) still names a real container.
+
+	Pure, allocation-free and a walk of five compares: it runs every `_process`.
+	"""
+	var out := 0
+	for i: int in FLOOR_Y.size():
+		if local_y >= FLOOR_Y[i] - FLOOR_HYSTERESIS:
+			out = i
+	return out
 
 
 static func _floor_visible(index: int, current: int) -> bool:
