@@ -2720,7 +2720,30 @@ func _check_boss_dispatch(terrain_script: GDScript) -> void:
 					rivers += 1
 				var got: String = String(child.get("species"))
 				var spec: Variant = child.get("spec")
-				var want_speed: float = float(_species_table[want]["chase_speed"])
+				# THE CALL-ORDER DETECTOR, AND IT COMPARES THE WHOLE ROW.
+				#
+				# `species` is a plain public field, so a body whose species was
+				# assigned AFTER add_child still REPORTS the right name — what is
+				# wrong is `spec`, which _ready() resolved from whatever the field
+				# held at the time (nothing, i.e. the crocodile). So the name half
+				# above cannot see the violation at all; only the resolved row can.
+				#
+				# It used to compare `chase_speed` alone, and that was blind for any
+				# boss row that happens to share the crocodile's 5.5 — which is
+				# EXACTLY what a boss row is likely to do, since a boss overrides its
+				# row's chase speed with BOSS_CHASE_SPEED and the row's own number is
+				# hygiene rather than gameplay (see SPECIES["green_dragon"]). Measured
+				# on 2026-08-29: with the assignment moved below add_child, the
+				# one-key version killed the 5 titans (3.0 != 5.5) and let all 5 green
+				# dragons through. Hashing the whole dictionary makes the check exact
+				# for every row present and future, including one that is a crocodile
+				# in every number but its behaviour string.
+				var want_row: Dictionary = _species_table[want]
+				var row_matches: bool = (spec is Dictionary
+						and (spec as Dictionary).hash() == want_row.hash())
+				# Still reported as a speed, because that is the readable half of the
+				# difference and the one a human can act on.
+				var want_speed: float = float(want_row["chase_speed"])
 				var got_speed: float = (float(spec["chase_speed"])
 						if spec is Dictionary and spec.has("chase_speed") else NAN)
 				if got != want:
@@ -2731,13 +2754,13 @@ func _check_boss_dispatch(terrain_script: GDScript) -> void:
 								i * _boss_interval,
 								_biome_name(Vector3(centre.x, 0.0, centre.y), terrain),
 								", in a river" if in_river else "", got, want]
-				elif not is_equal_approx(got_speed, want_speed):
+				elif not row_matches:
 					mismatches += 1
 					if worst == "":
 						worst = ("seed %d boss %d says species '%s' but resolved a"
-								+ " spec with chase_speed %s, not the table's %s —"
-								+ " `species` was assigned AFTER add_child()") % [
-								run_seed, i, got, got_speed, want_speed]
+								+ " DIFFERENT row (its chase_speed is %s, the table's"
+								+ " is %s) — `species` was assigned AFTER add_child()"
+								) % [run_seed, i, got, got_speed, want_speed]
 			parent.free()
 
 	print("boss dispatch: %d of %d road bosses reached the world across %d biome"
