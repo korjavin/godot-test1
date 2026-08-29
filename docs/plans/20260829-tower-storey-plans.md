@@ -333,7 +333,7 @@ Budgets:
 
 ### Task 1: `scripts/tower_plans.gd` — the format, with one throwaway storey
 
-- [ ] Create `scripts/tower_plans.gd`: `class_name TowerPlans extends RefCounted`.
+- [x] Create `scripts/tower_plans.gd`: `class_name TowerPlans extends RefCounted`.
       Header block in `tower_graph.gd`'s voice, carrying:
       - **what this file is**: the hand-planned layout the owner ruled for
         ("plan it once and forever"), in the only level-editor a repo with no level
@@ -346,17 +346,17 @@ Budgets:
       - **the two things a new storey costs**: one `STOREYS` row plus its
         `TOWER_GRAPH` room and edge rows. **No builder edit, ever** — that is the
         bead's acceptance criterion and this comment is where it is promised.
-- [ ] Constants: `PLAN_GRID`, `PLAN_HALF`, `PLAN_CELL` (D2) — put them **here**, and
+- [x] Constants: `PLAN_GRID`, `PLAN_HALF`, `PLAN_CELL` (D2) — put them **here**, and
       have `tower_interior.gd` read them from here, so the grid has one home.
       `WALL_CHAR`, `FLOOR_CHAR`, `STAIR_UP_CHAR`, `LANDING_CHAR`, `PAD_CHAR`,
       `POST_CHAR`, `GATE_CHAR` as named consts — the self-check reads them rather
       than restating the characters.
-- [ ] `const STOREYS: Array[Dictionary]` with **one placeholder storey** for now
+- [x] `const STOREYS: Array[Dictionary]` with **one placeholder storey** for now
       (floor 2, a bare box with a ramp, a landing and two rooms) so Tasks 2–7 have
       something to build and check. The real content lands in Task 8.
-- [ ] `static func storey(floor_index: int) -> Dictionary` and
+- [x] `static func storey(floor_index: int) -> Dictionary` and
       `static func floors() -> Array[int]`. Nothing else. **No logic in this file.**
-- [ ] Sanity: `grep -n 'run_seed\|randf\|randi\|hash(' scripts/tower_plans.gd` is empty.
+- [x] Sanity: `grep -n 'run_seed\|randf\|randi\|hash(' scripts/tower_plans.gd` is empty.
 
 ### Task 2: The builder in `tower_interior.gd`
 
