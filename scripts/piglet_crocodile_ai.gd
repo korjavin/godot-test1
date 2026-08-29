@@ -1945,9 +1945,9 @@ const SPECIES: Dictionary = {
 		"sniff_pause_chance": 0.30,
 
 		# ----- Obstacle avoidance -----
-		## Feelers from 0.4 m: the reared placeholder stands 0.516 m before the
-		## boss scale, so a probe at the crocodile's 0.3 would sample the coils
-		## rather than the ground ahead of them.
+		## Feelers from 0.4 m: the body slab's back is 0.41 m up and the mesh
+		## stands 0.662 before the boss scale, so a probe at the crocodile's 0.3
+		## would sample the body rather than the ground ahead of it.
 		"avoid_look_ahead": 3.5,
 		"avoid_feeler_angle": PI / 5.0,  # 36°
 		"avoid_feeler_height": 0.4,
@@ -1958,10 +1958,12 @@ const SPECIES: Dictionary = {
 		## nose-along-+X and the body travels +Z.
 		"model_facing_offset": -PI / 2.0,
 
-		## THE SWAY IS THE HEADS. A hydra has nothing else to animate until lce.6
-		## lands the real multi-head mesh, so the read is carried by the widest
-		## `sway_yaw` in the table (8°, against the crocodile's 3°) over a slow
-		## stride: a mass of necks weaving over a body that barely moves.
+		## THE SWAY IS THE HEADS, and it still is now that the heads are real.
+		## There is no rig and no per-head motion — the whole `Model` node sways as
+		## one — so the read is carried by the widest `sway_yaw` in the table (8°,
+		## against the crocodile's 3°) over a slow stride: a fan of necks weaving
+		## over a body that barely moves. What makes three heads legible from a
+		## distance is their STATIC spacing in the mesh, not animation.
 		"stride_frequency": 4.5,
 		"waddle_roll": 5.0 * PI / 180.0,
 		"bob_amount": 0.04,
