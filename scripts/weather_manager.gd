@@ -698,6 +698,20 @@ func is_raining_at(world_pos: Vector3) -> bool:
 	## ~1 in 7 of the 26 clouds is a storm, so this is a few
 	## distance_squared_to calls: cheap enough to call per-frame from the
 	## player (the Windman hooks do exactly that).
+	##
+	## A ROOF IS PART OF THE ANSWER, and it is part of it HERE rather than in each
+	## caller. Everything downstream of this function — the emitter and the rain
+	## bed on the tick above, and `player_controller._weather_is_raining_here()`,
+	## which is what refuses Windman's Air Rush — asks exactly this question, so
+	## one guard here is the whole fix for "it rains inside the sealed HQ"
+	## (godot-test1-li2) and there is no second caller left to forget. The ability
+	## gate keeps its meaning unchanged: Air Rush is refused in rain, and under the
+	## roof there is no rain.
+	##
+	## SHELTER IS TESTED LAST, and only once a cloud has already claimed this
+	## point. Storm cover is rare and the tower is one building in an endless
+	## field, so the common answer (no storm here) still costs nothing but the
+	## cloud loop — the group lookup happens only on the few ticks it can matter.
 	for cloud in _clouds:
 		if not cloud["is_storm"]:
 			continue
@@ -705,7 +719,19 @@ func is_raining_at(world_pos: Vector3) -> bool:
 		var radius: float = cloud["radius"]
 		if Vector2(world_pos.x - center.x, world_pos.z - center.z).length_squared() \
 				<= radius * radius:
-			return true
+			return not _sheltered_at(world_pos)
+	return false
+
+
+func _sheltered_at(world_pos: Vector3) -> bool:
+	## Is this point under a roof? Asked of the tower through the "tower" group
+	## behind a has_method guard — the same null-safe shape as
+	## player_controller._sfx(), so a scene with no tower in it (every headless
+	## harness, and every metre of the field the shell is not streamed into)
+	## simply answers "no shelter" instead of erroring.
+	var tower := get_tree().get_first_node_in_group("tower")
+	if tower != null and tower.has_method("sheltered"):
+		return tower.call("sheltered", world_pos)
 	return false
 
 
