@@ -83,6 +83,13 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            the spine line SAMPLED for holes (a gap there makes
 #                            every identity gate in the wing decorative), and the
 #                            acceptance walk for a spine door plus liberation
+#   capture_selfcheck        SYSTEMIC CAPTURE: the arming gate (pre/post the
+#                            authored beat), attribution (only a "hunt" row takes
+#                            a hero), invulnerability covering the hero too, the
+#                            clean auto-switch, liberation, the empty-roster game
+#                            over with hearts in hand, that the set never touches
+#                            the monotone store, and the cell-block mirror in both
+#                            directions
 #   tower_selfcheck          THE SOFTLOCK AUDIT: TOWER_GRAPH bound to the boxes
 #                            the interior really builds, the three design laws
 #                            (spines at floor rank, no item custody, mutations
@@ -195,8 +202,8 @@ own, all pinned by `tower_interior_selfcheck`:
   restated — and four UNIFORM cells off a gallery. Liberation is walking into an occupied
   cell and asks nobody's name; the captive set lives on the interior and is per-run, while
   the single authored first rescue joins the persisted opened set (so the staging in
-  Primm's cell is gone for good and nothing else is). `set_captive()` is the whole seam
-  systemic capture will drive. **A room under the 4.2 m slab has nowhere for a mass to
+  Primm's cell is gone for good and nothing else is). `set_captive()` is the seam
+  systemic capture drives. **A room under the 4.2 m slab has nowhere for a mass to
   rise**, so these four sink — the one axis of the gate language the geometry took away,
   argued at `WING_Z`.
 
@@ -429,6 +436,27 @@ the machine channel with its `SPECIES` row and no edit anywhere.
 
 Hunters are in group `"crocodile"`, so **the F3 overlay's "Crocs (active/total)" counter
 means predators + hunters** — which is exactly what the LOD manager manages.
+
+### Systemic capture — a hunter takes the HERO
+A post-beat grab by a predator on the `"hunt"` arm puts the ACTIVE hero in `player_controller`'s
+`captive_heroes` and steps into the next free one. Four rules:
+
+- **Availability is `hand INTERSECT free`, at ONE site.** `switch_to_next_character()` already
+  cycles inside an allowed-index array (the lobby's, in a room); captivity is one more
+  intersection there. There is no second roster system, and there may not be one.
+- **The auto-switch goes through `set_active_character()`**, never the E-cycle: that is where
+  `_reset_ability_states()` lives, and the cycle refuses a press mid-Air-Rush anyway.
+- **It arms only after the authored Primm rescue** (`TowerInterior.RESCUE_DONE` in the stored
+  tower set) — the beat is where the rule is taught. Before it, a grab is an ordinary bite.
+- **The set is NON-MONOTONE** (captures add, liberations remove), so it stays out of
+  `best_run_store`'s union/max merge, which the tower's opened-gate ids *do* ride. A captive
+  folded into a union could never be freed.
+
+The player owns the set; `TowerInterior` mirrors it (pushed on a grab, re-seeded on build)
+because the tower is usually not streamed in when a field grab lands. An empty free set is
+game over, decided beside the out-of-hearts branch in `_on_caught_finished()`.
+`free_hero_count()` is the hunt director's roster seam — death-spiral mitigation belongs
+there, before contact, never in the capture path.
 
 ### Death, lives, respawn
 Three lives (up to five from coins), drawn by `scripts/lives_hud.gd`, which reads the pip

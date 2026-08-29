@@ -485,6 +485,25 @@ const CHARACTERS: Array[Dictionary] = [
 ## Current character index (starts with windman at index 0)
 var current_character_index: int = 0
 
+## WHO THE CORPORATION IS HOLDING RIGHT NOW, as a set of `CHARACTERS` names.
+##
+## THE CAPTIVE SET (bead godot-test1-3iy.9). Availability is `hand INTERSECT free`:
+## the E-cycle already restricts itself to an allowed-index array (the lobby's, in a
+## room), and captivity is ONE MORE INTERSECTION at that same site rather than a
+## second roster system. `available_character_indices()` is where the two meet, and
+## it is the only question anything asks about the roster.
+##
+## NON-MONOTONE, AND THAT IS WHY IT LIVES HERE. A capture adds and a liberation
+## removes, so this set can go BACKWARDS — which disqualifies it from the union/max
+## merge in `best_run_store.gd`, where every field is monotone precisely so a late
+## reply or a retry can never lower a record. The tower's opened-gate ids are the
+## opposite kind of fact (earned, never lost) and ride that union; this one is plain
+## world state and stays out of it. `best_run_store.gd`'s own header states the
+## rule: "if it can go backwards it does not belong in a monotone set".
+##
+## Per-run: `restart_game()` empties it, so Play Again always hands back four heroes.
+var captive_heroes: Dictionary = {}
+
 ## Reference to the character model container
 @onready var character_container: Node3D = $CharacterModel
 
@@ -1271,38 +1290,215 @@ func switch_to_next_character() -> void:
 	if windman_boost_timer > 0.0 or teibi_size_state != 0:
 		return
 
-	# Which characters may we step to? `null` — offline, no room, or holding no
-	# hero yet — means "all of them", i.e. exactly today's behaviour behind one
-	# == null test. An array restricts the cycle to those indices.
-	var allowed: Variant = null
-	var mp := _mp()
-	if mp and mp.has_method("my_character_indices"):
-		allowed = mp.my_character_indices()
+	# Which characters may we step to? `available_character_indices()` — the lobby's
+	# hand INTERSECT the heroes nobody is holding captive. Solo, with nobody taken,
+	# it answers all four and the cycle below is arithmetically the plain
+	# `(i + 1) % size` it has always been, which is why the old `== null` branch is
+	# gone rather than kept beside it: two spellings of one increment is how the
+	# captive filter would end up applied to one of them and not the other.
+	var indices := available_character_indices()
 
-	if allowed == null:
-		# Increment the character index
-		current_character_index = (current_character_index + 1) % CHARACTERS.size()
-	else:
-		var indices: Array = allowed
-		# The lobby holds at most one hero per member, so this is normally a
-		# singleton and the press is a refusal. Give it the SAME dial flash and
-		# denial buzz a refused F press gets, so the player reads "this hero is
-		# locked" rather than "E is broken". (A body outside the allowed set is
-		# momentary — the manager applies the confirmed hero itself through
-		# set_active_character — so there is nothing to correct here.)
-		if indices.size() <= 1:
-			_flash_blocked_feedback()
-			return
-		var slot: int = indices.find(current_character_index)
-		# find() returning -1 wraps to the first allowed entry, which is the
-		# right answer when we are not currently in any of them.
-		current_character_index = int(indices[(slot + 1) % indices.size()])
+	# The lobby holds at most one hero per member, so in a room this is normally a
+	# singleton and the press is a refusal — and so is a press by a player down to
+	# his last free hero. Give both the SAME dial flash and denial buzz a refused F
+	# press gets, so the player reads "this hero is locked" rather than "E is
+	# broken". (A body outside the allowed set is momentary — the manager applies
+	# the confirmed hero itself through set_active_character — so there is nothing
+	# to correct here.)
+	if indices.size() <= 1:
+		_flash_blocked_feedback()
+		return
+	var slot: int = indices.find(current_character_index)
+	# find() returning -1 wraps to the first allowed entry, which is the right
+	# answer when we are not currently in any of them.
+	current_character_index = int(indices[(slot + 1) % indices.size()])
 
 	# Show the newly selected character
 	set_active_character(current_character_index)
 
 	# Print confirmation
 	print("Switched to character: %s" % CHARACTERS[current_character_index]["name"])
+
+
+# ---------------------------------------------------------------------------
+# THE CAPTIVE SET — capture, liberation, and what is left to play
+# ---------------------------------------------------------------------------
+
+func available_character_indices() -> Array:
+	"""
+	Who this player may actually BE right now: the lobby's hand INTERSECT free.
+
+	@return: A fresh Array of int, in `CHARACTERS` order — possibly empty.
+
+	THE ONE SITE WHERE THE TWO RESTRICTIONS MEET, and everything that asks "which
+	heroes are left" asks it here: the E-cycle, the capture-time auto-switch and
+	the end-of-run test. Splitting them is how the auto-switch ends up stepping a
+	peer into a teammate's hero, or how a room ends a run this player could still
+	have played.
+
+	`my_character_indices()` answers `null` — offline, no room, or holding no hero
+	yet — meaning "all of them", so solo this is exactly `free_character_indices()`
+	and with nobody captive it is all four in order.
+	"""
+	var free := free_character_indices()
+	var mp := _mp()
+	var allowed: Variant = null
+	if mp and mp.has_method("my_character_indices"):
+		allowed = mp.my_character_indices()
+	if allowed == null:
+		return free
+	var out: Array = []
+	# Walked in `free` order rather than the lobby's, so the cycle E steps through
+	# is stable however the room happened to hand the heroes out.
+	for index: int in free:
+		if (allowed as Array).has(index):
+			out.append(index)
+	return out
+
+
+func free_character_indices() -> Array:
+	"""
+	Every `CHARACTERS` index whose hero is not in a cell, in cycle order.
+
+	@return: A fresh Array of int — the caller may keep or mutate it.
+
+	Half of `available_character_indices()`, and the ONLY thing that reads
+	`captive_heroes` outside the two verbs that write it. Everything in gameplay
+	goes through the intersection instead — the raw free set answers "who is not in
+	a cell", which is not the same question as "who may I play".
+	"""
+	var out: Array = []
+	for index: int in CHARACTERS.size():
+		if not captive_heroes.has(String(CHARACTERS[index]["name"])):
+			out.append(index)
+	return out
+
+
+func free_hero_count() -> int:
+	"""
+	How many heroes are still playable. THE HUNT DIRECTOR'S ROSTER SEAM.
+
+	@return: 0 .. CHARACTERS.size().
+
+	Death-spiral mitigation belongs in the hunt encounter director
+	(`hunt_director.gd`, bead godot-test1-9rm.4) and NOT in the capture path —
+	bead godot-test1-3iy.9's landmine, and session-02 doctrine underneath it: a
+	player down to one hero should meet FEWER commitments, because mercy BEFORE
+	contact is invisible and mercy DURING contact is a pulled punch the player can
+	feel. So this path publishes the number and does nothing with it; the director
+	reads it through the same null-safe group lookup it uses for everything else,
+	and scales `ENGAGE_LULL` off it when that tuning lands. Deliberately a count
+	and not the set: a mercy dial has no business knowing WHO is missing.
+	"""
+	return free_character_indices().size()
+
+
+func is_hero_captive(hero: String) -> bool:
+	"""Is this hero in a cell right now? @param hero: a `CHARACTERS` name."""
+	return captive_heroes.has(hero)
+
+
+func hero_freed(hero: String) -> void:
+	"""
+	The cell block freed somebody. Put him back in the E-cycle.
+
+	@param hero: One of the `CHARACTERS` names.
+
+	`TowerInterior._liberate()` calls this — null-safe, so the seam predates this
+	bead — the moment ANY hero walks into an occupied cell. Idempotent, which is
+	what makes the tower's mirror safe to re-drive: freeing somebody who is not
+	held is a no-op, and so is freeing the authored captive, who was never in this
+	set (he is the tower's staging, not a hero the field took off you).
+	"""
+	captive_heroes.erase(hero)
+
+
+func _capture_active_hero() -> void:
+	"""
+	A hunter earned its grab: the corporation keeps whoever was walking.
+
+	TWO STAKES, NEVER BOTH. A predator's stake is your coins; a hunter's is the
+	hero, and it takes NO coins on top — so there is deliberately nothing here that
+	touches `coins_collected`, `coin_streak` or the bank. The life and the freeze
+	are the ordinary contact cost every body in this game charges (a hunter's grab
+	is not a pulled punch); what makes it a CAPTURE is this set.
+
+	AUTO-SWITCH GOES THROUGH `set_active_character()`, NEVER THROUGH
+	`switch_to_next_character()`, for two independent reasons and either one alone
+	would be enough. First, the cycle REFUSES a press while a prolonged ability is
+	running (Air Rush, giant Teibi) — a hunter that grabs a flying Windman must not
+	be denied its catch. Second, and this is the landmine: `set_active_character()`
+	is where `_reset_ability_states()` lives, so the body that walks away from the
+	grab has clean transient state and no power bleeds across a capture. It is the
+	same path the lobby's hero split uses for the same reason.
+	"""
+	var hero := hero_name()
+	if captive_heroes.has(hero):
+		return
+	captive_heroes[hero] = true
+	print("Captured by a hunter: %s" % hero)
+
+	# THE CELL BLOCK IS THE WAY BACK, so it has to know who it is holding — its
+	# `_liberate()` early-returns on a hero it has no record of, and a captive with
+	# no cell can never be freed. Null-safe group lookup: the tower is a streamed
+	# landmark and is usually not in the tree at all when a field grab lands, which
+	# is exactly why `TowerInterior` re-seeds its mirror from this set on build.
+	var interior := get_tree().get_first_node_in_group("tower_interior")
+	if interior and interior.has_method("set_captive"):
+		interior.set_captive(hero, true)
+
+	# ...and step into the next AVAILABLE hero on the spot, while the unit
+	# withdraws. Available, not merely free: in a room the lobby owns who plays
+	# whom, and a capture that stepped this peer into a teammate's hero would break
+	# that assignment far more loudly than the capture itself. Nothing to step to
+	# is game over, decided in `_on_caught_finished()` where every other
+	# end-of-run branch is decided — not here.
+	var available := available_character_indices()
+	for offset: int in CHARACTERS.size():
+		var index: int = (current_character_index + 1 + offset) % CHARACTERS.size()
+		if available.has(index):
+			set_active_character(index)
+			return
+
+
+func _is_hunter_grab(attacker: Node) -> bool:
+	"""
+	Was this contact a retrieval unit's grab rather than an animal's bite?
+
+	@param attacker: whoever called `hit_by_crocodile`, or null when nobody said.
+	@return: true only for a predator on the hunt arm.
+
+	KEYED ON THE BEHAVIOUR, NOT ON THE SPECIES NAME, exactly as the disengage
+	clock in `piglet_crocodile_ai.gd` is: "I take the hero, not the coins" is a
+	trait of the mechanic, so a second retrieval unit inherits it with its row and
+	nothing here changes. Read off the row through `Node.get()`, which answers null
+	for a body that has no `spec` at all (a boss projectile, the tower's rotor
+	bar), so every other damage source falls through to the predator arithmetic.
+	"""
+	if attacker == null:
+		return false
+	var row: Variant = attacker.get("spec")
+	return row is Dictionary and String((row as Dictionary).get("behavior", "")) == "hunt"
+
+
+func _capture_is_armed() -> bool:
+	"""
+	May a hunter take a hero yet? Only after the authored Primm rescue.
+
+	@return: true once `TowerInterior.RESCUE_DONE` is in the stored tower set.
+
+	OWNER-RULED SEQUENCING: the authored beat is where the rule is TAUGHT, so
+	before it a grab costs the ordinary predator arithmetic and nothing else — a
+	systemic mechanic that fires before the scene that explains it reads as a bug.
+
+	Read from the store rather than from the tower, because the tower is a streamed
+	landmark and a grab in the field is nowhere near it, while `TowerShell.mark_opened()`
+	writes through to disk on the opening itself. One `ConfigFile` read per grab.
+	ponytail: cache it if capture ever stops being a once-in-a-run event — the
+	answer only changes at the beat, which happens inside the building.
+	"""
+	return BestRunStore.tower_opened_ids().has(TowerInterior.RESCUE_DONE)
+
 
 func preload_all_characters() -> void:
 	"""
@@ -1930,9 +2126,16 @@ func get_streak_multiplier() -> int:
 	return 1 + mini(STREAK_MAX_BONUS, coin_streak / STREAK_COINS_PER_STEP)
 
 
-func hit_by_crocodile() -> void:
+func hit_by_crocodile(attacker: Node = null) -> void:
 	"""
 	Called by a crocodile when it bites the player (see piglet_crocodile_ai.gd).
+
+	@param attacker: the body that made contact, when it says so. THE ONE DAMAGE
+	VERB STAYS ONE VERB: a hunter's grab is not a second entry point with a second
+	copy of the invulnerability rule, it is this one told who is biting. The
+	parameter is OPTIONAL and defaults to null, so every existing caller — the
+	ordinary bite, the boss bite, a boss projectile, the tower's rotor bar — keeps
+	working byte for byte and takes the predator arithmetic it always has.
 
 	Rather than teleporting away instantly, we play a clear "caught" signal: a red
 	screen flash, a camera shake, and a brief freeze (handled in _physics_process).
@@ -1949,6 +2152,15 @@ func hit_by_crocodile() -> void:
 	# early-return above, so an ignored bite (grace window etc.) costs nothing.
 	coin_streak = 0
 	streak_timer = 0.0
+
+	# SYSTEMIC CAPTURE. Deliberately BELOW the invulnerability early-return, for
+	# the same reason the streak reset is: a bite that costs nothing must not cost
+	# a hero either, and the blink window after a capture would otherwise strip the
+	# roster one frame at a time. Both gates are cheap and both are `false` for
+	# every contact in the game that is not a post-beat hunter.
+	if _is_hunter_grab(attacker) and _capture_is_armed():
+		_capture_active_hero()
+
 	is_caught = true
 	caught_timer = CAUGHT_DURATION
 	# Drop the jump-forgiveness timers as we enter the freeze. Every frozen branch of
@@ -1992,8 +2204,21 @@ func _on_caught_finished() -> void:
 	# (it is simply never read there), so there is no branch to get wrong.
 	own_lives_spent += 1
 	print("Caught! Lives remaining: %d" % lives)
-	if lives <= 0:
-		lives = 0
+	# TWO WAYS A RUN ENDS, ONE PLACE THAT DECIDES. An empty free-hero set is game
+	# over on its own terms — there is nobody left to respawn AS, so respawning
+	# would put a captive back on his feet in the field. Checked here rather than
+	# in `_capture_active_hero()` so the capture still gets the full caught freeze,
+	# the red flash and the sting before the screen comes up, exactly like running
+	# out of hearts does; the handoff into the full-custody protocol scene (bead
+	# godot-test1-3iy.11) replaces the `_trigger_game_over()` call below and
+	# nothing else on this path.
+	# GUARDED ON THERE BEING A CAPTIVE AT ALL, so the clause can only ever fire for
+	# the reason it exists. An empty hand has one other cause — a room that has not
+	# confirmed this peer's hero — and ending a run on that would be a bug with no
+	# visible cause at all.
+	if lives <= 0 or (not captive_heroes.is_empty()
+			and available_character_indices().is_empty()):
+		lives = maxi(lives, 0)
 		_trigger_game_over()
 	else:
 		_respawn_in_place()
@@ -2155,6 +2380,10 @@ func restart_game() -> void:
 	is_game_over = false
 	is_caught = false
 	is_respawning = false
+	# Play Again hands back all four heroes. The captive set is per-run world state
+	# and nothing about it is earned, so unlike the tower's opened gates it does
+	# not survive the button.
+	captive_heroes.clear()
 	# Ability cooldowns are NOT part of reset_position()'s wipe list, and
 	# _update_ability_timers() sits below the is_game_over early return in
 	# _physics_process — so they freeze the moment the run ends and would carry
