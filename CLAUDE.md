@@ -45,7 +45,10 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            inside, never leaves), crush immunity is an
 #                            ORDERING, the row's boss speed is the one resolved,
 #                            and a ranged boss really fires — only in its band,
-#                            on its cooldown, inside its area, while chasing
+#                            on its cooldown, inside its area, while chasing.
+#                            Plus check 8: EVERY SPECIES row through the
+#                            stink_immune / crush_immune guards, animals as the
+#                            negative control
 #   projectile_selfcheck     boss projectiles: the per-style FAIRNESS contract
 #                            (a walking player always clears it; nothing outruns
 #                            a fleeing one), straight + lob flight, both dodge
@@ -292,6 +295,15 @@ primes, own `spawn_hunters` flag) instead of through `BIOME_SPECIES` — which i
 dispatch-free and costs the chunk RNG zero draws. That is a **third door** into the
 world and check 4's reachability gate reads `HUNTER_SPECIES` to know about it; check 12
 is the A/B that *proves* the crocodile stream is untouched rather than asserting it.
+
+**It is also the row that proved player abilities can be opted out of as DATA.** A
+machine has no nose and is not flesh, so its row carries `stink_immune` (`flee_from()`
+early-returns) and `crush_immune` (giant Teibi's squash block is skipped and the body
+takes the ordinary bite path). Both are `spec.get(key, false)` reads placed beside the
+existing `is_boss` guards — never a species-name test — so the next armoured or airtight
+predator opts in with a row edit and no code change. `boss_selfcheck` check 8 drives
+**every** row through both real paths, which makes the seven animal rows the negative
+control and anchors the crocodile by name against a stray key.
 
 The species `chase_speed` (5.5 for the crocodile) is deliberately above `WALK_SPEED` (5.0)
 so walking gets you caught, and `MAX_CHASE_SPEED` (8.5) — a top-level const clamping every
