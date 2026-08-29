@@ -475,26 +475,26 @@ godot --headless --path . --script res://scripts/<name>.gd
 
 **Scope:** `tower_plans.gd`, `tower_graph.gd`, and budget constants.
 
-- [ ] Author **storey 8 (floor 7)** and **storey 9 (floor 8)** as `STOREYS` rows: a
+- [x] Author **storey 8 (floor 7)** and **storey 9 (floor 8)** as `STOREYS` rows: a
    hand-drawn maze of **one-cell (1.94 m) corridors** with `#` walls, per **D4** and
    **D10**.
-- [ ] **Route A**, ungated, from the storey-8 landing to the storey-9 ramp and on to the
+- [x] **Route A**, ungated, from the storey-8 landing to the storey-9 ramp and on to the
    storey-10 ramp. **Route B**, shorter, through `riddle_maze_lower` (storey 8) and
    `riddle_maze_upper` (storey 9) in series. Both reach the storey-10 stair.
-- [ ] **Dead ends with clue chambers.** Each maze riddle's clue room is a dead-end chamber
+- [x] **Dead ends with clue chambers.** Each maze riddle's clue room is a dead-end chamber
    **at least 4 cells wide in one row**, off route A on storey 8, reachable from the
    landing with either riddle shut. Author several *decoy* dead ends too — a maze with
    no wrong turns is a corridor.
-- [ ] The two riddle gate rows in `TOWER_GRAPH`: `class: CLASS_RIDDLE`, `identity: ""`,
+- [x] The two riddle gate rows in `TOWER_GRAPH`: `class: CLASS_RIDDLE`, `identity: ""`,
    `clue_room` naming its chamber, `answer` a 4-step **permutation** of `1234`,
    `needed_during_captivity: false`, `parts` naming the generated mass box.
    `1`–`4` pad cells in front of each mass, bound through the storey's `gates` dict.
-- [ ] Graph rooms and edges for both storeys, wired so route A is ungated and route B
+- [x] Graph rooms and edges for both storeys, wired so route A is ungated and route B
    carries the riddles. Wire `s7_s8` and `s8_s9`.
-- [ ] **Solid slabs.** Nothing about the maze may let storey 10 be seen from storey 9 —
+- [x] **Solid slabs.** Nothing about the maze may let storey 10 be seen from storey 9 —
    the slab is the full footprint minus the derived stairwell hole, which is already
    how `_plan_slab` works. Do not add a hole.
-- [ ] Re-measure the budgets; `PLAN_BOX_BUDGET` is expected to move most here.
+- [x] Re-measure the budgets; `PLAN_BOX_BUDGET` is expected to move most here.
 
 **Verify:** `tower_selfcheck` (the flood fill is what proves the maze is connected),
 `tower_interior_selfcheck`, `tower_shell_selfcheck`.

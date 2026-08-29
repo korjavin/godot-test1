@@ -407,13 +407,20 @@ static func plan_clear_height(floor_index: int) -> float:
 ## those is a collision shape as well as a box, and the collision body is the one
 ## thing in this building that is not batched.
 ##
-## MEASURED, not guessed: the three authored floors emit 39, 43 and 47 boxes for
-## 1108, 1004 and 1108 walkable cells apiece — an average of one box per 24 cells,
-## which is what a merge that is working looks like. 90 is a shade under twice the
-## worst of them: a designer can double storey 4's twelve offices and stay inside
-## it, while a plan whose walls stopped merging blows through it on the first row
-## (an unmerged 40-cell wall is 40 boxes on its own).
-const PLAN_BOX_BUDGET: int = 90
+## MEASURED, not guessed, AND THE YARDSTICK IS NOW A MAZE FLOOR. The office
+## storeys emit 29 to 52 boxes for around a thousand walkable cells apiece — one
+## box per 20-odd cells, which is what a merge that is working looks like on a
+## floor made of rooms. THE LABYRINTH IS THE HONEST WORST CASE: storey 8 emits 81
+## and storey 9 emits 62, for 450 and 431 walkable cells, because a one-cell maze
+## legitimately chops the solid stone it is cut into up into many rectangles. That
+## is the maze and not a merging bug — and it is still one box per five or six
+## cells, an order off the chequerboard this number exists to catch.
+##
+## 120 IS THE WORST FLOOR PLUS A HALF, and what it still stops is unchanged: a
+## plan whose walls stopped merging blows through it on the first row (an unmerged
+## 40-cell wall is 40 boxes on its own), because each box is a collision shape as
+## well, and the collision body is the one thing here that is not batched.
+const PLAN_BOX_BUDGET: int = 120
 
 # ============================================================================
 # THE RIDDLE LOCK (phase 15) — the fourth gate verb
@@ -749,7 +756,13 @@ const BOX_BUDGET: int = 60
 ## 30 SINCE PHASE 16's FIRST TASK, and the two are storeys 6 and 7: one
 ## `Floor%dBatch` apiece and nothing else, exactly the phase-14 arithmetic. Neither
 ## floor puts a box in `MOVING_PARTS`, so the whole 6000 m2 of each is one draw.
-const DRAW_BUDGET: int = 30
+##
+## 34 SINCE THE LABYRINTH, and the four are exactly what the two maze storeys
+## cost: one `Floor%dBatch` apiece, plus one mass per maze riddle — the same
+## ONE DRAW PER RIDDLE the phase-15 arithmetic above claims, asked of a floor
+## whose walls are a maze. The 450 and 431 walkable cells of those two storeys,
+## and every wrong turn in them, are in the two batches and cost nothing more.
+const DRAW_BUDGET: int = 34
 
 # ============================================================================
 # PALETTE — one material per colour, shared process-wide (see `_material`)

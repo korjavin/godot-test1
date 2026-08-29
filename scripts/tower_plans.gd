@@ -555,6 +555,202 @@ const STOREYS: Array[Dictionary] = [
 			+ "quarters — the control room, the records vault the maze's plans are "
 			+ "filed in, the briefing room and the muster hall.",
 	},
+	# ------------------------------------------------------------------------
+	# STOREY 8 (floor 7) — THE LABYRINTH, LOWER HALF. The first floor of the maze
+	# the bead asked for, and nothing about it is generated: it is drawn here, cell
+	# by cell, and a future author edits the text. There is no seed and there may
+	# never be one.
+	#
+	# TWO ROUTES from the ramp out of storey 7 to the ramp up to storey 9, both
+	# base kit, exactly as the phase-16 plan rules:
+	#
+	#   ROUTE A — THE LONG WAY, UNGATED END TO END, and the one the four rescue
+	#   spines walk. It is the OUTER CIRCUIT, the one-cell ring corridor just inside
+	#   the shell: from the landing at (25, 38) west along the south ring to (1, 38),
+	#   north up the west ring to (1, 1), east along the north ring to (15, 1) — the
+	#   foot of storey 9's ramp. 75 cells of walking, and not one of them asks a
+	#   question.
+	#
+	#   ROUTE B — THE SHORT WAY, behind `riddle_maze_lower`. From the same landing
+	#   north into the arrival pocket, past the four lock pads at (26..27, 35..36)
+	#   and through the mass at (27, 34); north up column 27 to row 27; west along
+	#   row 27 to column 20; north up column 20 into the CORE at (20, 21); out of its
+	#   north face at (20, 16); north up column 20 to row 9; west along row 8 to
+	#   column 12; north up column 12 to row 3; east along row 3 to column 18; and
+	#   north into the stair hall at (18, 2). About 55 cells — a third off the
+	#   circuit, which is the whole of what the riddle buys.
+	#
+	# THE CLUE CHAMBERS ARE DEAD ENDS OFF ROUTE A, one per riddle and both on this
+	# floor: the WEST chamber (rows 8-12, through the doorway at (2, 10)) carries
+	# this floor's riddle, the EAST one (rows 27-31, through (37, 29)) carries the
+	# riddle on storey 9. Off the ungated circuit is not decoration — `tower_selfcheck`
+	# check 10 asks, from every legal entry and with the riddle treated as a wall,
+	# whether the full roster can still read the clue, and a chamber behind its own
+	# riddle fails that.
+	#
+	# Everything else that is not the two routes is a WRONG TURN: nine dead-end spurs
+	# off the circuit and eight more off route B's legs. A maze with no wrong turns is
+	# a corridor.
+	#
+	# Its ramp rises out of storey 7's SOUTH ring corridor (five cells of X for the
+	# 5.0 m storey, slope 0.5155), and the stair hall at (14..21, 2) is where storey
+	# 9's ramp comes down — both feet stand on floor somebody can walk on, asserted
+	# cell by cell against the floor below.
+	# ------------------------------------------------------------------------
+	{
+		"floor": 7,
+		"from": 6,
+		"landing": "s8_landing",
+		"rooms": {
+			"A": "s8_clue_chamber_west",
+			"B": "s8_clue_chamber_east",
+			"C": "s8_maze_core",
+			"E": "s8_north_hall",
+		},
+		# The lower riddle: its mass is the single-cell doorway out of the arrival
+		# pocket, and its four pads are the two-by-two block in the pocket directly
+		# in front of it — the same "the thing you are opening is in your eye line"
+		# rule the strongroom and the boardroom follow.
+		"gates": {
+			"27,34": "riddle_maze_lower",
+			"26,35": "riddle_maze_lower", "27,35": "riddle_maze_lower",
+			"26,36": "riddle_maze_lower", "27,36": "riddle_maze_lower",
+		},
+		"rows": [
+			"########################################",
+			"#......................................#",
+			"#.############EEEEEEEE.#######.###.###.#",
+			"#.##########.......###.#######.###.###.#",
+			"#.##########.##.######.#######.###.###.#",
+			"#.###........##.######.#######.###.###.#",
+			"#.##########.##.######.#######.###.###.#",
+			"#.##########.#########.#######.###.###.#",
+			"#.#APAAAA###.........#############.###.#",
+			"#.#AAAAAA#####.#####.#################.#",
+			"#..AAAAAA#####.##....#################.#",
+			"#.#AAAAAA#####.#####.#################.#",
+			"#.#AAAAAA#####.#####........####.......#",
+			"#.##################.#################.#",
+			"#.##################.........#########.#",
+			"#.##################.#################.#",
+			"#........###########.#################.#",
+			"#.##############CCCCCCCC##############.#",
+			"#.##############CCCCCCCC##############.#",
+			"#.##############CCCCCCCC##############.#",
+			"#......#########CCCCCCCC########.......#",
+			"#.##############CCCCCCCC########.#####.#",
+			"#.##################.......#####.#####.#",
+			"#.##################.###.#######.#####.#",
+			"#.###########........###.#######.#####.#",
+			"#.##################.###.#######.#####.#",
+			"#.##################.###.#############.#",
+			"#.##################........###BBBBBB#.#",
+			"#.#########################.###BBBBBB#.#",
+			"#.#########################...#BBBBBB..#",
+			"#.####.####################.###BBBBBB#.#",
+			"#.####.##############.......###BBBPBB#.#",
+			"#.####.####################.##########.#",
+			"#.####.###.################.......####.#",
+			"#.####.###.################D##########.#",
+			"#.####.###.##############.12..########.#",
+			"#.####.###.##############.34..########.#",
+			"#.####.###.#########SSSSSs....########.#",
+			"#...................SSSSSs.............#",
+			"########################################",
+		],
+		"note": "Storey 8, the labyrinth's lower half: a one-cell maze cut into the "
+			+ "slab. The outer circuit is the ungated long way round; the sequence "
+			+ "lock on the arrival pocket opens the short way through the core. Both "
+			+ "riddles' clue chambers are dead ends off the circuit.",
+	},
+	# ------------------------------------------------------------------------
+	# STOREY 9 (floor 8) — THE LABYRINTH, UPPER HALF. The same two-route rule one
+	# floor on, mirrored: the ramp arrives at the NORTH and the way out is at the
+	# SOUTH-EAST, so the maze is walked corner to corner rather than round the same
+	# side twice.
+	#
+	#   ROUTE A — THE OUTER CIRCUIT, ungated, and the spines' way through: from the
+	#   landing at (20, 1) east along the north ring to (38, 1), south down the east
+	#   ring to (38, 38), west along the south ring to (31, 38) and north through the
+	#   doorway at (31, 37) into the UPPER HALL. About 64 cells.
+	#
+	#   ROUTE B — behind `riddle_maze_upper`. South out of the landing into the
+	#   arrival pocket, past the pads at (21..22, 3..4) and through the mass at
+	#   (22, 5); south down column 22 to row 14; into the CORE at (22, 15) and out of
+	#   its south face at (22, 20); south down column 22 to row 27; east along row 27
+	#   to column 32; south down column 32 to row 33; and into the upper hall at
+	#   (32, 34). About 43 cells.
+	#
+	# NEITHER RIDDLE'S CLUE IS ON THIS FLOOR — both chambers are downstairs on storey
+	# 8, off its ungated circuit, so a player who took the long way up can still read
+	# the answer to the door they are standing at.
+	#
+	# THE UPPER HALL (rows 34-36, columns 28-35) IS WHERE STOREY 10's RAMP STANDS.
+	# It is a room and not a corridor for exactly that reason: a ramp's foot has to
+	# land on walkable floor of the storey below, and eight by three cells of hall is
+	# what the cell block's stair is drawn onto in the next task.
+	# ------------------------------------------------------------------------
+	{
+		"floor": 8,
+		"from": 7,
+		"landing": "s9_landing",
+		"rooms": {
+			"A": "s9_maze_core",
+			"B": "s9_upper_hall",
+			"C": "s9_dead_gallery",
+		},
+		"gates": {
+			"22,5": "riddle_maze_upper",
+			"21,3": "riddle_maze_upper", "22,3": "riddle_maze_upper",
+			"21,4": "riddle_maze_upper", "22,4": "riddle_maze_upper",
+		},
+		"rows": [
+			"########################################",
+			"#..............SSSSSs..................#",
+			"#.#############SSSSSs....#########.###.#",
+			"#.##################.12..#########.###.#",
+			"#.##################.34..#########.###.#",
+			"#.####################D###########.###.#",
+			"#.####################.###########.###.#",
+			"#.####################.###############.#",
+			"#......#####.................#CCCCCC##.#",
+			"#.####.#####.#########.#######CCCCCC##.#",
+			"#.####.#####.#########.#######CCCCCC...#",
+			"#.####.#####.#########.#######CCCCCC##.#",
+			"#.####.#####.#########.......#CCCCCC##.#",
+			"#.####.#####.......###.#####.#########.#",
+			"#.####.###############.#####.#########.#",
+			"#.################AAAAAAAA##.#########.#",
+			"#.################APAAAAAA##.#########.#",
+			"#.################AAAAAAAA##.#########.#",
+			"#.################AAAAAAAA############.#",
+			"#.################AAAAAAAA############.#",
+			"#.......##############.###........####.#",
+			"#.##############.......###.###########.#",
+			"#.##############.#####.###.###########.#",
+			"#.##############.#####.###.###########.#",
+			"#.##########...........###.#######.....#",
+			"#.##########.###.#####.###.#######.###.#",
+			"#.##########.###.#####.###.#######.###.#",
+			"#.##########.#########...........#.###.#",
+			"#.##########.###################.#.###.#",
+			"#.##########.###################.#.###.#",
+			"#.######.###.........###########.#.###.#",
+			"#.######.#######################.#####.#",
+			"#........#######################.#####.#",
+			"#.######.#######################.#####.#",
+			"#.######.###################BBBBBBBB##.#",
+			"#.######.###################BBBBBBPB##.#",
+			"#.######.###################BBBBBBBB##.#",
+			"#.######.######################.######.#",
+			"#......................................#",
+			"########################################",
+		],
+		"note": "Storey 9, the labyrinth's upper half: the ramp arrives at the north "
+			+ "and the way on is the upper hall at the south-east, reached either "
+			+ "round the ungated circuit or through the second sequence lock and the "
+			+ "core. Its dead gallery is the floor's one decoy chamber.",
+	},
 ]
 
 

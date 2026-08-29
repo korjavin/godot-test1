@@ -441,6 +441,53 @@ const TOWER_GRAPH: Dictionary = {
 			"note": "The muster hall, the deep south-east quarter. Carries the floor's "
 				+ "second pad.",
 		},
+		"s8_landing": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "Storey 8's landing and the labyrinth's OUTER CIRCUIT — the "
+				+ "one-cell ring corridor just inside the shell, which is route A "
+				+ "and the only way through this floor that asks nothing of anybody.",
+		},
+		"s8_clue_chamber_west": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "A dead-end chamber off the west side of the circuit. The lower "
+				+ "riddle's four colours are painted on its floor.",
+		},
+		"s8_clue_chamber_east": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "The same off the east side, carrying the UPPER riddle's clue — "
+				+ "both answers are read on this floor, one storey below the door the "
+				+ "second one opens.",
+		},
+		"s8_maze_core": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "The core of the lower maze, on route B. Carries one of the "
+				+ "floor's two pads.",
+		},
+		"s8_north_hall": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "The stair hall at the north end of the circuit, where storey 9's "
+				+ "ramp comes down. Both routes across this floor end here.",
+		},
+		"s9_landing": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "Storey 9's landing at the north, and this floor's own outer "
+				+ "circuit — route A again, walked corner to corner.",
+		},
+		"s9_maze_core": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "The core of the upper maze, on route B and behind the second "
+				+ "sequence lock. Carries one of the floor's two pads.",
+		},
+		"s9_upper_hall": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "The hall at the south-east corner where both routes rejoin, and "
+				+ "where the ramp to storey 10 stands. Carries the floor's second pad.",
+		},
+		"s9_dead_gallery": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "A dead-end gallery off the east side of the circuit — the floor's "
+				+ "one decoy chamber, and it holds nothing at all.",
+		},
 	},
 
 	# ------------------------------------------------------------------------
@@ -601,6 +648,38 @@ const TOWER_GRAPH: Dictionary = {
 		{"id": "s7_landing_muster_hall", "a": "s7_landing", "b": "s7_muster_hall",
 			"gate": "", "built": true},
 
+		# --- phase 16: THE LABYRINTH, and its two-route rule ------------------
+		#
+		# Each maze storey is TWO ways from its landing to its stair hall, and the
+		# split is what makes the maze auditable. Route A is the outer circuit and is
+		# UNGATED, which is why the four rescue spines can walk it: check 3 asks a
+		# spine's edges with an EMPTY solved set, so a riddle on a spine fails the
+		# build. Route B is the short way through the core, behind a riddle, and buys
+		# a third off the walk and nothing else — no room, no cell and no quest is
+		# behind it, so no subset can be stopped by either lock.
+		{"id": "s7_s8", "a": "s7_landing", "b": "s8_landing",
+			"gate": "", "built": true},
+		{"id": "s8_outer_circuit", "a": "s8_landing", "b": "s8_north_hall",
+			"gate": "", "built": true},
+		{"id": "s8_landing_clue_west", "a": "s8_landing", "b": "s8_clue_chamber_west",
+			"gate": "", "built": true},
+		{"id": "s8_landing_clue_east", "a": "s8_landing", "b": "s8_clue_chamber_east",
+			"gate": "", "built": true},
+		{"id": "s8_maze_run", "a": "s8_landing", "b": "s8_maze_core",
+			"gate": "riddle_maze_lower", "built": true},
+		{"id": "s8_core_north", "a": "s8_maze_core", "b": "s8_north_hall",
+			"gate": "", "built": true},
+		{"id": "s8_s9", "a": "s8_north_hall", "b": "s9_landing",
+			"gate": "", "built": true},
+		{"id": "s9_outer_circuit", "a": "s9_landing", "b": "s9_upper_hall",
+			"gate": "", "built": true},
+		{"id": "s9_landing_dead_gallery", "a": "s9_landing", "b": "s9_dead_gallery",
+			"gate": "", "built": true},
+		{"id": "s9_maze_run", "a": "s9_landing", "b": "s9_maze_core",
+			"gate": "riddle_maze_upper", "built": true},
+		{"id": "s9_core_upper", "a": "s9_maze_core", "b": "s9_upper_hall",
+			"gate": "", "built": true},
+
 		# --- phase 7: the lift shaft. Exists only once `lift_activated` fires. ---
 		{"id": "lift_shaft", "a": "entry_hall", "b": "upper_landing",
 			"gate": "", "built": false},
@@ -709,6 +788,35 @@ const TOWER_GRAPH: Dictionary = {
 				+ "walking away and free to anybody who goes. Optional side content "
 				+ "in the strongroom's mould since phase 16 — nothing but the "
 				+ "boardroom is behind it.",
+		},
+		# --- phase 16: the labyrinth's two locks ----------------------------
+		#
+		# Both are SHORTCUTS and neither is on any route to anything: route A, the
+		# ungated outer circuit, joins the same two halls on both maze floors. So
+		# `needed_during_captivity` is false for both — and that is not a promise,
+		# check 6 recomputes it over every story, scar, entry and subset.
+		#
+		# Both clue chambers are on STOREY 8, off its circuit: the lower riddle's
+		# answer is read on the floor it opens, the upper one's is read a floor
+		# before you meet the door. Check 10 is what keeps that true from every
+		# entry — including the storey-8 lift stop.
+		"riddle_maze_lower": {
+			"class": CLASS_RIDDLE, "identity": "", "effect": "", "scale": 0.0,
+			"clue_room": "s8_clue_chamber_west", "answer": [4, 1, 3, 2],
+			"needed_during_captivity": false, "built": true, "quest": "",
+			"parts": ["S7PlanRiddleMass_riddle_maze_lower"],
+			"note": "The sequence lock on the lower labyrinth's arrival pocket. Its "
+				+ "colours are painted in the dead-end chamber off the west side of "
+				+ "the same floor's circuit.",
+		},
+		"riddle_maze_upper": {
+			"class": CLASS_RIDDLE, "identity": "", "effect": "", "scale": 0.0,
+			"clue_room": "s8_clue_chamber_east", "answer": [2, 3, 1, 4],
+			"needed_during_captivity": false, "built": true, "quest": "",
+			"parts": ["S8PlanRiddleMass_riddle_maze_upper"],
+			"note": "The second lock, on storey 9's arrival pocket. Its clue is one "
+				+ "floor DOWN, in the east chamber off storey 8's circuit — read on "
+				+ "the way up or walked back down for.",
 		},
 		"riddle_strongroom": {
 			"class": CLASS_RIDDLE, "identity": "", "effect": "", "scale": 0.0,
