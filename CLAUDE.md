@@ -309,7 +309,7 @@ The building is full to its sealed roof — ten floor indices, `FLOOR_Y[0..9]`:
 | floor | storey | what it is |
 |---|---|---|
 | 0–1 | keep | entry hall + courtyard + the 80 m annulus; the mezzanine landing |
-| 2–4 | 3–5 | the phase-14 office storeys (vault, secure door, executive) |
+| 2–4 | 3–5 | the phase-14 office storeys (records, accounts, executive) |
 | 5–6 | 6–7 | operations and security |
 | 7–8 | 8–9 | **the labyrinth** |
 | 9 | 10 | **the cell block**, under the sealed roof |

@@ -670,7 +670,7 @@ const PURGE_COOLDOWN: float = 20.0
 ## Beyond this distance from the tower the whole interior stops drawing.
 ##
 ## The interior is INSTANCED once the player is within `TOWER_LOAD_RADIUS` (320 m)
-## and never freed, so without this it would be 25 permanently-submitted meshes for
+## and never freed, so without this it would be 35 permanently-submitted meshes for
 ## the entire rest of the run. Godot's frustum culling does not help when you are
 ## looking AT the tower and there is no occlusion culling on the web renderer's
 ## `gl_compatibility` path — the walls do not hide what is behind them, they just
@@ -902,7 +902,7 @@ const SPINE_DOORS: Array[Dictionary] = [
 ## doorway when `TowerGraph.SCAR_CUSTODY` is in the opened set. Named here because
 ## three places need the same string — the box table, `_remember()` and the build
 ## loop's shape capture.
-const SCAR_BOX: String = "StairCollapse"
+const SCAR_BOX: String = "BlockDoorCollapse"
 
 const RESCUE_DONE: String = "tower_rescue_primm"
 
@@ -2798,13 +2798,22 @@ func _place_shutter() -> void:
 
 
 func _place_mass() -> void:
-	"""Put the identity mass where its open fraction says. It only ever rises."""
+	"""
+	Put the identity mass where its open fraction says. It only ever rises.
+
+	AND IT RISES INTO STOREY 3. Fully open its centre is `FLOOR_Y[2]` exactly, so
+	half of it — 2.0 m — stands proud of that floor's walking surface, in the cross
+	corridor two cells west of the strongroom's lock pads. That was invisible while
+	the keep was the top of the building; phase 16 built ten storeys over it. Hence
+	`_retire`, the same call `_place_spine` makes, for the same reason.
+	"""
 	if _mass_mesh == null:
 		return
 	var lift := MASS_TRAVEL * _mass_open
 	_mass_mesh.position.y = SLAB_Y + UPPER_WALL_HEIGHT * 0.5 + lift
 	if _mass_shape != null:
 		_mass_shape.position.y = _mass_mesh.position.y
+	_retire(_mass_mesh, _mass_shape, _mass_open >= 1.0)
 
 
 func _tick_pads() -> void:
@@ -4080,7 +4089,7 @@ static func current_floor(local_y: float) -> int:
 	between the two. Floor 0 is the floor of last resort, so a height below the
 	ground (a player falling past the building) still names a real container.
 
-	Pure, allocation-free and a walk of five compares: it runs every `_process`.
+	Pure, allocation-free and a walk of ten compares: it runs every `_process`.
 	"""
 	var out := 0
 	for i: int in FLOOR_Y.size():

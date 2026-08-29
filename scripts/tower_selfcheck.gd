@@ -1248,7 +1248,7 @@ func _check_scars_are_built() -> void:
 	sanctioned exception shipping inert. Checks 2 and 5 already prove a scar is
 	SAFE — the fifteen-subset property re-runs inside every one of them, and a scar
 	that severed the last singleton spine would fail the build. Neither of them
-	asks whether the scar HAPPENS. A `removes: ["courtyard_stair"]` that no box in
+	asks whether the scar HAPPENS. A `removes: ["block_main_door"]` that no box in
 	the building implements is a doorway that stays open forever: the audit passes,
 	the protocol "succeeds", and the permanent consequence the whole bead is about
 	is a line of data nobody can see.
@@ -1558,23 +1558,47 @@ func _check_the_flood_fill_can_fail() -> void:
 	# (`s8_core_north`) — the second half of route A. Wall that one cell and the
 	# core is still perfectly reachable, so the fill above stays silent, every
 	# subset walk stays silent, and the only way through it is `riddle_maze_lower`.
-	var maze: Dictionary = TowerPlans.storey(7)
+	var maze := _control_storey("s8_maze_core", "a room left reachable only through a riddle")
 	if not maze.is_empty():
 		_control("a room left reachable only through a riddle",
 				_cell_at(maze, 20, 16, TowerPlans.WALL_CHAR), "the graph promises a walk")
 	# A HOLE IN THE CELL BLOCK'S PERIMETER. The north wall of Teibi's recess opened
 	# onto the muster floor — the four identity gates walked round, on a wall that
 	# check 11 samples neither of its two lines across.
-	var block: Dictionary = TowerPlans.storey(9)
+	var block := _control_storey(TowerInterior.BLOCK_ROOM, "a hole in the cell block's outer wall")
 	if not block.is_empty():
 		_control("a hole in the cell block's outer wall",
 				_cell_at(block, 22, 3, TowerPlans.FLOOR_CHAR), "way ROUND a door")
-		# ...and a riddle drawn over somebody's floor: the same lock one column east
-		# is the middle of Teibi's cell, which is where it stood until this review.
-		var over_cell: Dictionary = TowerPlans.storey(8).duplicate(true)
+	# ...and a riddle drawn over somebody's floor: the same lock one column east is
+	# the middle of Teibi's cell, which is where it stood until this review. It is
+	# the storey BELOW the block that carries the lock, so it is found on its own
+	# room and not nested inside the block's guard.
+	var upper := _control_storey("s9_maze_core", "a riddle drawn under a room")
+	if not upper.is_empty():
+		var over_cell: Dictionary = upper.duplicate(true)
 		over_cell = _cell_at(over_cell, 21, 5, TowerPlans.GATE_CHAR)
 		over_cell["gates"]["21,5"] = "riddle_maze_upper"
 		_control("a riddle drawn under a room", over_cell, "belongs under a wall")
+
+
+func _control_storey(room: String, what: String) -> Dictionary:
+	"""
+	The shipped storey a negative control mutates, found by the ROOM it draws.
+
+	NEVER a floor index written down here. An index would make "the labyrinth moved
+	to another floor" read as `storey(n).is_empty()` and silently skip the control,
+	leaving the assertion behind it decorative with nothing printed — which is the
+	exact failure mode these controls exist to catch elsewhere. A room that no
+	storey draws is a FAILURE, not a skip.
+	"""
+	for floor_index: int in TowerPlans.floors():
+		var plan := TowerPlans.storey(floor_index)
+		for letter: String in Dictionary(plan["rooms"]):
+			if String(plan["rooms"][letter]) == room:
+				return plan
+	_fail(("no storey draws '%s', so the negative control for %s cannot be built — the "
+		+ "assertion it stands behind is unmeasured") % [room, what])
+	return {}
 
 
 func _control(what: String, broken: Dictionary, needle: String) -> void:

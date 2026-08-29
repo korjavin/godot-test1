@@ -133,7 +133,7 @@ const EPS: float = 1e-4
 ## THE CEILING ON THE ONE INTERIOR COST THE DRAW BUDGET CANNOT SEE: static box
 ## shapes on the single `InteriorCollision` body, one per solid box.
 ##
-## Measured, not chosen: the ten shipped storeys emit 348 of them, and 420 is that
+## Measured, not chosen: the ten shipped storeys emit 347 of them, and 420 is that
 ## with a fifth of headroom for the rooms phases 17+ hang off floors that already
 ## exist. It is a SECOND yardstick rather than a duplicate of `PLAN_BOX_BUDGET`:
 ## that one is per storey and catches a floor whose walls stopped merging, this one
@@ -1248,6 +1248,11 @@ func _check_gate_lifecycle() -> void:
 			mass.position.y, mass_rest + TowerInterior.MASS_TRAVEL])
 	if mass_shape == null or absf(mass_shape.position.y - mass.position.y) > EPS:
 		_fail("the identity mass's collision shape did not travel with its mesh — the doorway still has an invisible wall in it")
+	# ...and having travelled, it is RETIRED. A mass is as tall as its room, so a
+	# fully risen one stands half out of the storey above (this one's centre lands
+	# on FLOOR_Y[2] exactly). Asserting the y alone let that ship.
+	if mass.visible or (mass_shape != null and not mass_shape.disabled):
+		_fail("the fully opened identity mass is still drawn/solid — it is standing 2 m proud of storey 3's floor")
 
 	# (e) the demand gate: short, then enough
 	var demand_area := interior.get_node_or_null("Floor0/DemandTrigger") as Area3D
@@ -2520,7 +2525,7 @@ func _check_the_custody_scene_runs() -> void:
 			+ "healed itself across a relaunch")
 	await _clear(null, relaunched)
 	_fresh_store()
-	print("custody scene: containment raised, released by %s, and the stair collapsed" % wants)
+	print("custody scene: containment raised, released by %s, and the doorway collapsed" % wants)
 
 
 # ============================================================================
