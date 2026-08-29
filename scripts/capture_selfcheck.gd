@@ -86,6 +86,10 @@ const CROC_SCENE: String = "res://scenes/characters/piglet_crocodile.tscn"
 const GUARD_SCENE: String = "res://scenes/characters/tower_guard.tscn"
 const GUARD_SPECIES: String = TowerInterior.GUARD_SPECIES
 const SETBACK_EPS: float = 1e-3
+## How far from the probe player a live predator body is stood up. Far enough that
+## it cannot overlap and bite on its own during an awaited frame (a chase covers
+## ~0.09 m in one), near enough to be nothing but a stand-off.
+const PROBE_STANDOFF: float = 3.0
 
 ## This check's own profile. Never the real one — see the landmine above.
 const LOCAL_STORE_PATH: String = "user://capture_selfcheck_best_run.cfg"
@@ -653,14 +657,41 @@ func _check_the_ai_says_who_bit() -> void:
 	# the shipped scene, its own `_on_player_collision`, and the coins have to move.
 	# A guard is not on the hunt arm, so this is also the negative control for
 	# capture that a live body can give and a stub cannot.
-	var tower := await _make_tower()
+	#
+	# NO TOWER IN THE TREE, DELIBERATELY, and it was a real green-on-my-machine /
+	# red-on-CI bug: building one stands three MORE live guards up beside the probe,
+	# any of which can bite the player in the awaited frame — and a player who is
+	# already `is_caught` takes `hit_by_crocodile`'s invulnerability early return, so
+	# the probe's own collision resolves to nothing on a machine whose frame timing
+	# happens to let a guard land first. The knockback is not what this block
+	# measures (check 11 measures it, both branches, with a real tower); the COINS
+	# are, and they move with or without a building. Anything that has to be true
+	# for the measurement to mean something is asserted below rather than assumed.
 	var mark := await _make_player()
 	mark.coins_collected = SETBACK_PROBE_COINS
 	mark.own_coins = SETBACK_PROBE_COINS
 	var sentry: Node = load(GUARD_SCENE).instantiate()
 	sentry.species = GUARD_SPECIES
 	root.add_child(sentry)
+	# STOOD OFF THE PLAYER, which is the other half of the same bug: a live body
+	# dropped ON the probe overlaps it, and its own `_physics_process` calls
+	# `_on_player_collision` during the awaited frame — so the explicit call below
+	# lands on an already-invulnerable player and measures nothing, on whichever
+	# machine wins that race. `PROBE_STANDOFF` is inside the row's detection radius
+	# but far more than one frame of chase, so the ONLY contact in this block is the
+	# one this check makes on purpose.
+	(sentry as Node3D).global_position = (mark as Node3D).global_position \
+			+ Vector3(PROBE_STANDOFF, 0.0, 0.0)
 	await process_frame
+	if float(sentry.spec.get("coin_setback", 0.0)) <= 0.0:
+		_fail("the live probe guard resolved a row with no coin_setback — it is"
+				+ " running on the crocodile fallback, so this block would be asking"
+				+ " an animal to take coins")
+	if mark.is_caught or mark.is_respawning or mark.is_game_over \
+			or mark.respawn_blink_timer > 0.0:
+		_fail("the probe player was already invulnerable before the collision —"
+				+ " something else hit it first and hit_by_crocodile will take its"
+				+ " early return, so this block would measure nothing")
 	sentry._on_player_collision(mark)
 	mark.is_caught = false
 	mark.call("_on_caught_finished")
@@ -673,7 +704,6 @@ func _check_the_ai_says_who_bit() -> void:
 			% str(mark.captive_heroes.keys()))
 	sentry.queue_free()
 	_clear(mark)
-	tower.queue_free()
 	await process_frame
 
 
