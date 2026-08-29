@@ -590,6 +590,11 @@ def _selfcheck_necks() -> None:
         ("three", 3, 3, 0.45, 0.55, True),
         ("wide",  3, 3, 0.95, 0.55, True),
         ("pair",  2, 4, 0.40, 0.60, False),
+        # count = 4 earns its place: it is the smallest fan whose yaw offsets are
+        # NOT exact negations under the obvious `i / (count - 1) * 2 - 1`, so it
+        # is the only case in this list that fails the mirror check if the angle
+        # is ever computed that way instead of from the fan's centre.
+        ("four",  4, 3, 0.55, 0.50, False),
         ("one",   1, 2, 0.00, 0.40, True),
         ("many",  5, 3, 1.00, 0.50, True),
     ]
