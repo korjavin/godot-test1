@@ -786,7 +786,15 @@ const DRAW_BUDGET: int = 35
 # the colours ARE the language, and a room that borrows the wrong one lies to the
 # player about what it is.
 
-const COLOR_STONE := Color(0.50, 0.48, 0.46)        # ordinary geometry
+## ORDINARY GEOMETRY, AND IT IS A BRIGHT OFF-WHITE ON PURPOSE (bead 99j). The
+## sealed roof (shell phase 13) put the key light and the sky outside, so an
+## interior painted the shell's grey stone rendered as black rooms — the owner's
+## playtest note was "hq inside shouldn't be that black". The target is the Lumon
+## severed floor: white walls and ceilings, evenly lit, no dark corners, uncanny
+## because it is TOO clean. Every slab's UNDERSIDE is the ceiling of the storey
+## below, so this one colour is walls AND ceilings; the floor is `COLOR_CARPET`
+## via `top_color`, and the pale-wood skirting is `COLOR_WAINSCOT`.
+const COLOR_STONE := Color(0.93, 0.93, 0.90)        # walls and ceilings
 const COLOR_HAZARD := Color(0.86, 0.36, 0.12)       # anything that moves to hurt you
 const COLOR_MECHANISM := Color(0.24, 0.27, 0.33)    # demand gate: cold steel
 const COLOR_BAND_DARK := Color(0.13, 0.14, 0.16)    # an unlit calibration band
@@ -796,6 +804,19 @@ const COLOR_IDENTITY_PAD := Color(0.72, 0.36, 1.00) # ...and the pad you stand o
 const COLOR_CHECKPOINT := Color(0.16, 0.38, 0.30)   # checkpoint, not yet reached
 const COLOR_CHECKPOINT_LIT := Color(0.32, 1.00, 0.58)
 const COLOR_PANEL := Color(1.00, 0.95, 0.86)        # ceiling light panels
+
+## THE FLOOR, and the only surface in the building that is not off-white: a
+## desaturated mint that reads as carpet against the walls. Applied through a box's
+## optional `top_color`, so a slab is ONE box whose top face is carpet and whose
+## underside is still the ceiling of the storey below — the alternative was a
+## second box per slab, i.e. more geometry and more `PLAN_BOX_BUDGET` for a colour.
+const COLOR_CARPET := Color(0.44, 0.62, 0.52)
+## The wainscot: pale wood, `WAINSCOT_HEIGHT` up every planned wall. It is what
+## keeps a corridor of white walls readable at a glance — an all-white room under
+## flat light has no horizontal line in it, so the corners disappear. Emitted by
+## splitting the wall's prism in `_emit_box`, NOT as a second box: same vertex
+## count either way, but no extra box, no extra collision shape and no budget.
+const COLOR_WAINSCOT := Color(0.80, 0.71, 0.55)
 ## A SYSTEM YOU OPERATE — the fifth thing in the legibility language, and the only
 ## one whose effect is somewhere ELSE. Cold cyan, deliberately in neither family:
 ## it is not violet (a gate reads "bring the right hero" and this asks nobody's
@@ -844,6 +865,27 @@ const GLOW_COLORS: Array[Color] = [
 	COLOR_BAND_LIT, COLOR_IDENTITY_PAD, COLOR_CHECKPOINT_LIT, COLOR_PANEL,
 	COLOR_CELL,
 ]
+
+## HOW HARD EVERY INTERIOR SURFACE SELF-LIGHTS, and the whole of bead 99j's fix.
+## The interior materials are `EMISSION_OP_MULTIPLY`, so a surface's emission is
+## its OWN albedo times this — an off-white wall glows off-white, the carpet glows
+## mint, and nothing needs a `Light3D` under a sealed roof. That is the same "a
+## glowing box is a draw call that was happening anyway" trade `GLOW_COLORS` makes,
+## applied to the matte surface as well, and it costs no draw call, no node and no
+## shadow pass: it is one flag on two cached materials.
+##
+## A CALIBRATION KNOB, and the one number to turn if the look is wrong. Too high
+## and the two open storeys blow out under the key light and bloom (the
+## Environment's `glow_hdr_threshold` is 0.85); too low and the sealed storeys go
+## back to reading black. 0.45 sits a sunlit off-white wall just under the bloom
+## knee and a roofed one at a flat, even mid-bright — measured against nothing but
+## the arithmetic, because a headless `gl_compatibility` process cannot screenshot.
+const INTERIOR_EMISSION: float = 0.45
+
+## The wainscot band's height off the walking surface, and the carpet layer's
+## thickness. Both are pure look; neither is collided with or stood on.
+const WAINSCOT_HEIGHT: float = 1.05
+const CARPET_THICK: float = 0.02
 
 # ============================================================================
 # GATE IDS — the strings that go in the opened set
@@ -1378,12 +1420,34 @@ static func boxes() -> Array[Dictionary]:
 	# see `_ramp_box()` for the arithmetic and why a lip would be a bug.
 	out.append(_ramp_box())
 
+	# ---- The hall's carpet ------------------------------------------------
+	# THE GROUND FLOOR HAS NO SLAB — it walks on the world's own ground plane, which
+	# is the biome shader and, under a sealed roof with no key light reaching it, the
+	# darkest surface in the building. So the roofed half of floor 0 gets a carpet of
+	# its own: one non-solid 2 cm layer over exactly the footprint the upper slab
+	# roofs, in the same mint as every other floor. Non-solid because you stand on the
+	# ground at y = 0 and this is 2 cm of pile over it, not a step.
+	#
+	# IT STOPS SHORT OF THE DOORWAY, by the shell's own `DOOR_TRIGGER_DEPTH`: the door
+	# volume is a hole and nothing the interior builds may stand in it (check 1 asks
+	# that of every box, and a carpet is a box). The threshold strip that leaves is the
+	# doormat line. The COURTYARD keeps its ground on purpose — a courtyard has ground,
+	# and the carpet is where there is a ceiling.
+	var carpet_x1 := INNER_HALF - TowerShell.DOOR_TRIGGER_DEPTH
+	out.append({
+		"name": "HallCarpet",
+		"pos": Vector3((SLAB_X0 + carpet_x1) * 0.5, CARPET_THICK * 0.5, 0.0),
+		"size": Vector3(carpet_x1 - SLAB_X0, CARPET_THICK, 2.0 * INNER_HALF),
+		"color": COLOR_CARPET, "collide": false, "floor": 0,
+	})
+
 	# ---- Upper floor ------------------------------------------------------
 	out.append({
 		"name": "UpperSlab",
 		"pos": Vector3((SLAB_X0 + INNER_HALF) * 0.5, SLAB_Y - SLAB_THICK * 0.5, 0.0),
 		"size": Vector3(INNER_HALF - SLAB_X0, SLAB_THICK, 2.0 * INNER_HALF),
 		"color": COLOR_STONE, "collide": true, "floor": 1,
+		"top_color": COLOR_CARPET,
 	})
 	# The secure door: a partition across the entire upper floor with one gap, so
 	# there is no walking round it and (being 4 m tall on a 4.6 m floor) no jumping
@@ -1729,6 +1793,10 @@ static func _plan_slab(plan: Dictionary) -> Array[Dictionary]:
 			"pos": Vector3((x0 + x1) * 0.5, top - SLAB_THICK * 0.5, (z0 + z1) * 0.5),
 			"size": Vector3(x1 - x0, SLAB_THICK, z1 - z0),
 			"color": COLOR_STONE, "collide": true, "floor": floor_index,
+			# The face you walk on is carpet; the underside is the ceiling of the
+			# storey below and stays off-white with the walls. One box, two colours —
+			# see `_emit_box`.
+			"top_color": COLOR_CARPET,
 		})
 	return out
 
@@ -1798,6 +1866,10 @@ static func _merge_walls(plan: Dictionary) -> Array[Dictionary]:
 			"pos": Vector3((x0 + x1) * 0.5, bottom + height * 0.5, (z0 + z1) * 0.5),
 			"size": Vector3(x1 - x0, height, z1 - z0),
 			"color": COLOR_STONE, "collide": true, "floor": floor_index,
+			# ...and a pale-wood skirting, which `_emit_box` splits off the bottom of
+			# this same prism. It is what gives a white corridor a horizontal line to
+			# read its corners against.
+			"wainscot": true,
 		})
 	return out
 
@@ -4201,14 +4273,35 @@ static func merged_mesh(group: Array) -> ArrayMesh:
 static func _emit_box(tool: SurfaceTool, box: Dictionary) -> void:
 	"""
 	Append one box's triangles to a surface, in interior space and carrying its own
-	colour.
+	colour — split into a wainscot band and the wall above it when it asks for one.
 
-	The vertices come from a real `BoxMesh` rather than from a hand-written cube, so
-	the winding, the normals and the UVs are the engine's and cannot be subtly wrong
-	in a way that only shows up under one light angle. Walking the INDEX array and
-	emitting unindexed vertices is what lets `SurfaceTool` weld boxes that have no
-	vertices in common.
+	THE SPLIT IS HERE AND NOT IN THE BOX TABLES, and that is bead 99j's whole
+	economy. A skirting board is two prisms of one wall, not two walls: emitted here
+	it costs the vertices it draws and NOTHING else — no second entry in
+	`plan_boxes()` (so `PLAN_BOX_BUDGET`, which exists to catch walls that stopped
+	merging, keeps measuring exactly that), no second `CollisionShape3D` on the
+	storey's one body, and no second name for `tower_selfcheck` to reconcile. Split
+	along the flat top of the band, so the two prisms share a face and there is
+	nothing to z-fight; a rotated or too-short box declines the split and is emitted
+	whole, because a band taller than the wall it skirts is just a repaint.
 	"""
+	if bool(box.get("wainscot", false)) and not box.has("rot") \
+			and box["size"].y > WAINSCOT_HEIGHT * 2.0:
+		var size: Vector3 = box["size"]
+		var pos: Vector3 = box["pos"]
+		var foot := pos.y - size.y * 0.5
+		var band := box.duplicate()
+		band.erase("wainscot")
+		band["size"] = Vector3(size.x, WAINSCOT_HEIGHT, size.z)
+		band["pos"] = Vector3(pos.x, foot + WAINSCOT_HEIGHT * 0.5, pos.z)
+		band["color"] = COLOR_WAINSCOT
+		_emit_box(tool, band)
+		var upper := box.duplicate()
+		upper.erase("wainscot")
+		upper["size"] = Vector3(size.x, size.y - WAINSCOT_HEIGHT, size.z)
+		upper["pos"] = Vector3(pos.x, pos.y + WAINSCOT_HEIGHT * 0.5, pos.z)
+		_emit_box(tool, upper)
+		return
 	var arrays: Array = _box_mesh(box["size"]).get_mesh_arrays()
 	var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
 	var normals: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL]
@@ -4216,6 +4309,13 @@ static func _emit_box(tool: SurfaceTool, box: Dictionary) -> void:
 	var basis := Basis.from_euler(box["rot"]) if box.has("rot") else Basis.IDENTITY
 	var placed := Transform3D(basis, box["pos"])
 	var color: Color = box["color"]
+	# THE FLOOR IS THE ONE FACE THAT DIFFERS FROM ITS BOX. A slab's underside is the
+	# ceiling of the storey below and must stay off-white, while the face you walk on
+	# is carpet — so a slab declares `top_color` and its UP-facing vertices take it.
+	# The alternative was a carpet box per slab: same colour, one more box, one more
+	# name, and a hairline of z-fight to tune. Read off the untransformed normal
+	# because a box carrying `top_color` is never tilted.
+	var top_color: Color = box.get("top_color", color)
 	for i: int in indices:
 		# CONVERTED, and it is not a nicety. `albedo_color` is authored in sRGB and
 		# the engine converts it; a VERTEX colour is taken as linear and is not. Feed
@@ -4223,7 +4323,7 @@ static func _emit_box(tool: SurfaceTool, box: Dictionary) -> void:
 		# same colour on an unbatched one — the hazard orange washed out to a custard
 		# yellow, which is the sort of drift that makes a colour language stop
 		# meaning anything.
-		tool.set_color(color.srgb_to_linear())
+		tool.set_color((top_color if normals[i].y > 0.5 else color).srgb_to_linear())
 		tool.set_normal(basis * normals[i])
 		tool.add_vertex(placed * verts[i])
 
@@ -4251,6 +4351,11 @@ static func _batch_material(glow: bool) -> StandardMaterial3D:
 		# UNSHADED instead: the albedo IS what you see, at any hour and any angle,
 		# which is what a light panel wants anyway.
 		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	else:
+		# ...and the matte half lights itself instead, which is bead 99j's fix. The
+		# emissive half needs nothing: it is UNSHADED, so its albedo already IS what
+		# you see and there is no darkness to lift.
+		_self_light(mat, Color.WHITE)
 	_materials[key] = mat
 	return mat
 
@@ -4316,6 +4421,37 @@ static func _box_mesh(size: Vector3) -> BoxMesh:
 	return mesh
 
 
+static func _self_light(mat: StandardMaterial3D, tint: Color) -> void:
+	"""
+	Make one interior material light itself, so no room in this building is dark.
+
+	@param mat: The material to tint.
+	@param tint: `Color.WHITE` for a vertex-coloured batch surface (the multiply
+	        operator picks the per-vertex albedo up for us), the box's own colour
+	        for a per-colour material.
+
+	BEAD 99j, AND IT IS THE WHOLE FIX. The shell was sealed in phase 13, which took
+	the key light and the sky out of every room; what was left was ambient, and the
+	interior read as black. The bead's own direction was "no per-room OmniLights" —
+	a real light under the slab is a shadow pass on `gl_compatibility`, which is the
+	renderer this building already gates its geometry for — so the surfaces light
+	THEMSELVES instead.
+
+	`EMISSION_OP_MULTIPLY` is what makes that one line instead of a palette of
+	emission colours: the operator multiplies the emission by the material's ALBEDO,
+	and on the batch surface the albedo is the VERTEX colour. So one flag on one
+	shared material gives every batched box a self-lit term in its own colour — the
+	off-white walls glow off-white, the carpet glows mint — with no per-colour
+	material, no new surface, and therefore no new draw call. Additive emission
+	would instead wash every surface toward the same white and flatten the palette
+	the legibility language at the top of this file depends on.
+	"""
+	mat.emission_enabled = true
+	mat.emission = tint
+	mat.emission_operator = BaseMaterial3D.EMISSION_OP_MULTIPLY
+	mat.emission_energy_multiplier = INTERIOR_EMISSION
+
+
 static func _material(color: Color) -> StandardMaterial3D:
 	"""
 	The one material of this colour, for the life of the process.
@@ -4338,5 +4474,7 @@ static func _material(color: Color) -> StandardMaterial3D:
 		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 		mat.emission_enabled = true
 		mat.emission = color
+	else:
+		_self_light(mat, color)
 	_materials[color] = mat
 	return mat
