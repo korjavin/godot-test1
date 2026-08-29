@@ -318,6 +318,7 @@ func _run_subject(packed: PackedScene, species_name: String, player: StubPlayer)
 	_check_home(boss, home)
 	_check_resolved_speed(boss)
 	await _check_hunts_inside(boss, player, home)
+	_check_model_rigid(boss)
 	await _check_hunts_at_fence(boss, player, home)
 	await _check_leashed(boss, player, home)
 	await _check_wanders_contained(boss, player, home)
@@ -517,6 +518,59 @@ func _check_wanders_contained(boss: CharacterBody3D, player: StubPlayer, home: V
 	if worst > TERRITORY_RADIUS + CONTAIN_EPS:
 		_fail("wander: boss reached %.2f m from home while wandering, territory is "
 				% worst + "%.1f m" % TERRITORY_RADIUS)
+
+
+## How far the animated model's basis may drift from square, as the largest
+## absolute dot product between its normalized columns. 1e-4 is representation
+## noise; the smallest shear this can produce is two orders of magnitude bigger
+## (a 14-degree chase lean against a 1.6x stretch gives 0.37).
+const ORTHO_EPS: float = 1e-4
+
+
+func _check_model_rigid(boss: CharacterBody3D) -> void:
+	"""
+	CHECK 6c — the animated model is a RIGID body, however its scene scaled it.
+
+	Called with the boss mid-chase (straight after the hunt phase), so its model
+	is carrying a real forward lean and a real waddle roll rather than sitting at
+	identity, which is the only state in which this can fail.
+
+	WHAT IT IS FOR. `_animate_body` and `_animate_bite` rebuild the model's basis
+	every frame as rotation-then-rest-scale. A rest scale applied in the PARENT's
+	axes (`Basis.scaled`) instead of the model's own (`Basis.scaled_local`) is
+	identical for a UNIFORM scale — a uniform scale commutes with rotation — and
+	is a SHEAR for any other, so the whole class of bug is invisible until the
+	first species ships a stretched model. The green dragon is that species: its
+	placeholder is a crocodile mesh at (1, 1.6, 1), and under the parent-frame
+	composition a dragon leaning into a chase would grow taller in world y
+	instead of along its own spine.
+
+	Orthogonality is the exact test rather than a proxy: a rotation scaled along
+	its OWN axes keeps mutually perpendicular columns (each is a unit column times
+	one factor), and a shear is precisely the loss of that. So this passes for a
+	uniform model, passes for a correctly-stretched one, and fails for a sheared
+	one — no reference pose to restate and nothing to retune when the numbers
+	move. It is asked of every BIOME_BOSS kind, so the six uniform rows are its
+	negative control.
+	"""
+	var model: Node3D = boss.get_node_or_null("Model")
+	if model == null:
+		_fail("model: no Model child — every predator scene must have one")
+		return
+	var b: Basis = model.transform.basis
+	if b.x.is_zero_approx() or b.y.is_zero_approx() or b.z.is_zero_approx():
+		_fail("model: a basis column collapsed to zero (%s) — a zero rest scale" % b)
+		return
+	var cx: Vector3 = b.x.normalized()
+	var cy: Vector3 = b.y.normalized()
+	var cz: Vector3 = b.z.normalized()
+	var worst: float = maxf(maxf(absf(cx.dot(cy)), absf(cy.dot(cz))), absf(cz.dot(cx)))
+	if worst > ORTHO_EPS:
+		_fail("model: the animated basis is SHEARED (worst column dot %.4f, scale %s)"
+				% [worst, model.scale] + " — `_animate_body` must compose the rest"
+				+ " scale with scaled_local (the model's own axes), not scaled"
+				+ " (the parent's), or a non-uniformly scaled species distorts"
+				+ " every time it leans")
 
 
 func _check_resolved_speed(boss: CharacterBody3D) -> void:

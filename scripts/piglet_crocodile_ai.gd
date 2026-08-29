@@ -4375,9 +4375,21 @@ func _animate_body(delta: float) -> void:
 
 	# Compose the transform: first align the snout to the travel direction, then
 	# layer the oscillations on top (re-applying the model's rest scale).
+	#
+	# scaled_LOCAL, not scaled(): `Basis.scaled(v)` is diag(v) * basis, i.e. the
+	# scale lands in the PARENT's axes, after the rotation. For every model whose
+	# rest scale is uniform the two are identical (a uniform scale commutes with
+	# rotation), which is why this read as `scaled()` for six species and was
+	# right. The green dragon is the first row whose model is stretched on ONE
+	# axis (1, 1.6, 1 — see its SPECIES entry), and a parent-frame stretch applied
+	# after a pitch or a roll is a SHEAR: the body leans 14 degrees into a chase
+	# and gets taller in world y instead of along its own spine. scaled_local is
+	# basis * from_scale(v), which stretches the model along the model's own axes
+	# — a rigid stretched dragon at every angle, and byte-identical for the six
+	# uniform rows. Same fix, same reason, in _animate_bite below.
 	var facing := Basis(Vector3.UP, spec["model_facing_offset"])
 	var oscillation := Basis.from_euler(Vector3(current_pitch, yaw_sway, roll))
-	model.transform.basis = (oscillation * facing).scaled(model_base_scale)
+	model.transform.basis = (oscillation * facing).scaled_local(model_base_scale)
 	model.position.y = model_base_y + bob
 
 
@@ -4457,7 +4469,10 @@ func _animate_bite(delta: float) -> void:
 
 	var facing := Basis(Vector3.UP, spec["model_facing_offset"])
 	var snap := Basis.from_euler(Vector3(chomp * spec["bite_pitch"], 0.0, 0.0))
-	model.transform.basis = (snap * facing).scaled(model_base_scale)
+	# scaled_local for the reason spelled out in _animate_body: the bite is the
+	# DEEPEST pitch in the game (30 degrees on the dragon), so a parent-frame
+	# stretch would shear hardest exactly here.
+	model.transform.basis = (snap * facing).scaled_local(model_base_scale)
 	# Lunge along the body's forward axis (+Z) and lift a touch on each snap.
 	model.position = Vector3(0.0, model_base_y + absf(chomp) * 0.04, lunge)
 
