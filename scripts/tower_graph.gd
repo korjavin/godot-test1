@@ -71,12 +71,19 @@ extends RefCounted
 ## self-check binds it to that file's own boxes — by the colours of the legibility
 ## language, so a new gate cannot appear in the building without appearing here.
 ##
-## `built: false` is a CONTRACT for a later phase, not a wish. The cell block and
-## its four hero segments are phase 8's to build; they are authored now because the
-## audit that constrains them has to exist before them, which is the whole reason
-## this bead blocks that one. The check asserts an unbuilt row claims no geometry —
-## a graph that quietly credits itself with rooms nobody built would certify a
-## softlock as safe, which is worse than having no graph at all.
+## `built: false` is a CONTRACT for a later phase, not a wish. The check asserts an
+## unbuilt row claims no geometry — a graph that quietly credits itself with rooms
+## nobody built would certify a softlock as safe, which is worse than having no
+## graph at all — and, in the other direction, that a BUILT row's `parts` are boxes
+## the interior really has and that no gate-coloured box is left unclaimed.
+##
+## The cell block, its four hero segments and the maintenance crawl were authored
+## here as contracts by phase 4 and BUILT BY PHASE 8 against them: the geometry was
+## written to satisfy this file rather than the other way round, which is the whole
+## reason the audit had to land first. What is still `false` is phase 7's lift —
+## the `lift_shaft` edge and the `lift_stop_upper` entry it grants. The audit
+## already walks FROM that entry (see `_all_entries`), so building the lift adds a
+## route and can only make the property easier to satisfy.
 ##
 ## ============================================================================
 ## THE SHAPE — one const dict of plain dicts (`SPECIES` / `SKILL_TREES` idiom)
@@ -160,19 +167,33 @@ const TOWER_GRAPH: Dictionary = {
 			"parts": ["CheckpointPlate", "CheckpointPost"],
 			"note": "East of the identity gate. The run's respawn anchor.",
 		},
-		# --- authored for phase 8 ---
+		# --- built, phase 8: the cell block wing, north of the entry hall ---
 		"service_stair": {
-			"built": false, "quest": "", "cell": "", "parts": [],
-			"note": "The shared neutral segment all four spines pass through.",
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "The shared neutral segment all four spines pass through. A corridor "
+				+ "with the courtyard at one end, the crawl at the other, and the four "
+				+ "hero doors along its north side.",
 		},
 		"cell_gallery": {
-			"built": false, "quest": "", "cell": "", "parts": [],
+			"built": true, "quest": "", "cell": "", "parts": [],
 			"note": "The junction the four cells open off. Reaching it IS the rescue.",
 		},
-		"cell_windman": {"built": false, "quest": "", "cell": "windman", "parts": []},
-		"cell_primm": {"built": false, "quest": "", "cell": "primm", "parts": []},
-		"cell_teibi": {"built": false, "quest": "", "cell": "teibi", "parts": []},
-		"cell_phoboman": {"built": false, "quest": "", "cell": "phoboman", "parts": []},
+		# UNIFORM BY CONSTRUCTION (owner-ruled): any hero can land in any cell, so a
+		# cell's only geometry is its recess and its containment frame. `parts` claims
+		# that frame — the box the interior paints in the cell marker colour — which is
+		# what stops a fifth cell appearing in the building and not here.
+		"cell_windman": {"built": true, "quest": "", "cell": "windman",
+			"parts": ["CellFrameWindman"]},
+		# ...plus the ONE piece of authored staging in the building: the steel
+		# containment unit that smothers Primm's field. Set dressing inside a STANDARD
+		# cell, present for the first rescue and gone for good after it — which is what
+		# "no distinguished hand-built Primm cell" means in geometry.
+		"cell_primm": {"built": true, "quest": "", "cell": "primm",
+			"parts": ["CellFramePrimm", "PrimmContainment"]},
+		"cell_teibi": {"built": true, "quest": "", "cell": "teibi",
+			"parts": ["CellFrameTeibi"]},
+		"cell_phoboman": {"built": true, "quest": "", "cell": "phoboman",
+			"parts": ["CellFramePhoboman"]},
 	},
 
 	# ------------------------------------------------------------------------
@@ -193,32 +214,32 @@ const TOWER_GRAPH: Dictionary = {
 
 		# --- phase 8: the neutral approach, two ways round ---
 		{"id": "courtyard_stair", "a": "courtyard", "b": "service_stair",
-			"gate": "", "built": false},
+			"gate": "", "built": true},
 		# THE REDUNDANT WAY IN, and it is not decoration: it is what lets the
 		# authored scar close the courtyard stair without stranding anybody.
 		{"id": "hall_stair", "a": "entry_hall", "b": "service_stair",
-			"gate": "maintenance_crawl", "built": false},
+			"gate": "maintenance_crawl", "built": true},
 
 		# --- phase 8: where the four spines diverge, one segment per hero ---
 		{"id": "stair_gallery_windman", "a": "service_stair", "b": "cell_gallery",
-			"gate": "updraft_shaft", "built": false},
+			"gate": "updraft_shaft", "built": true},
 		{"id": "stair_gallery_primm", "a": "service_stair", "b": "cell_gallery",
-			"gate": "phase_grate", "built": false},
+			"gate": "phase_grate", "built": true},
 		{"id": "stair_gallery_teibi", "a": "service_stair", "b": "cell_gallery",
-			"gate": "collapsed_slab", "built": false},
+			"gate": "collapsed_slab", "built": true},
 		{"id": "stair_gallery_phoboman", "a": "service_stair", "b": "cell_gallery",
-			"gate": "hound_den", "built": false},
+			"gate": "hound_den", "built": true},
 
 		# --- phase 8: the cells themselves. UNIFORM and ungated: whoever reaches
 		# the gallery can open any door, which is what "uniform cells" means. ---
 		{"id": "gallery_cell_windman", "a": "cell_gallery", "b": "cell_windman",
-			"gate": "", "built": false},
+			"gate": "", "built": true},
 		{"id": "gallery_cell_primm", "a": "cell_gallery", "b": "cell_primm",
-			"gate": "", "built": false},
+			"gate": "", "built": true},
 		{"id": "gallery_cell_teibi", "a": "cell_gallery", "b": "cell_teibi",
-			"gate": "", "built": false},
+			"gate": "", "built": true},
 		{"id": "gallery_cell_phoboman", "a": "cell_gallery", "b": "cell_phoboman",
-			"gate": "", "built": false},
+			"gate": "", "built": true},
 
 		# --- phase 7: the lift shaft. Exists only once `lift_activated` fires. ---
 		{"id": "lift_shaft", "a": "entry_hall", "b": "upper_landing",
@@ -267,27 +288,34 @@ const TOWER_GRAPH: Dictionary = {
 		# --- phase 8 ---
 		"maintenance_crawl": {
 			"class": CLASS_CHALLENGE, "identity": "", "effect": "", "scale": 0.0,
-			"needed_during_captivity": true, "built": false, "quest": "", "parts": [],
-			"note": "Base-kit crawl from the hall. The scar's survival route.",
+			"needed_during_captivity": true, "built": true, "quest": "",
+			"parts": ["CrawlPress"],
+			"note": "A duct out of the hall with a stamping press across it — base kit, "
+				+ "so no subset can be stopped by it. It is the scar's survival route, "
+				+ "which is why it may never ask for a hero or a rank.",
 		},
 		"updraft_shaft": {
 			"class": CLASS_IDENTITY, "identity": "windman", "effect": "", "scale": 0.0,
-			"needed_during_captivity": true, "built": false, "quest": "", "parts": [],
+			"needed_during_captivity": true, "built": true, "quest": "",
+			"parts": ["UpdraftMass", "UpdraftPad"],
 			"note": "A shaft with no floor. Air Rush, base kit — no rank in the budget.",
 		},
 		"phase_grate": {
 			"class": CLASS_IDENTITY, "identity": "primm", "effect": "", "scale": 0.0,
-			"needed_during_captivity": true, "built": false, "quest": "", "parts": [],
+			"needed_during_captivity": true, "built": true, "quest": "",
+			"parts": ["GrateMass", "GratePad"],
 			"note": "A grate with a body-width of wall behind it. Base Phase Step reaches it.",
 		},
 		"collapsed_slab": {
 			"class": CLASS_IDENTITY, "identity": "teibi", "effect": "", "scale": 0.0,
-			"needed_during_captivity": true, "built": false, "quest": "", "parts": [],
+			"needed_during_captivity": true, "built": true, "quest": "",
+			"parts": ["SlabMass", "SlabPad"],
 			"note": "Dead weight across the way. Giant Teibi shifts it.",
 		},
 		"hound_den": {
 			"class": CLASS_IDENTITY, "identity": "phoboman", "effect": "", "scale": 0.0,
-			"needed_during_captivity": true, "built": false, "quest": "", "parts": [],
+			"needed_during_captivity": true, "built": true, "quest": "",
+			"parts": ["DenMass", "DenPad"],
 			"note": "A kennelled run. Stink Wave empties it.",
 		},
 	},
