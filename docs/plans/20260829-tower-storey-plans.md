@@ -438,25 +438,40 @@ Budgets:
 
 In `tower_selfcheck._check_graph_matches_the_building`:
 
-- [ ] **Plan → graph.** For every `TowerPlans.STOREYS` row: every value in its `rooms`
+- [x] **Plan → graph.** For every `TowerPlans.STOREYS` row: every value in its `rooms`
       dict, plus its `landing`, must be a `TOWER_GRAPH` room row with `built: true`;
       every value in its `gates` dict must be a `TOWER_GRAPH` gate row.
-- [ ] **Graph → plan.** Every room id claimed by any plan must be claimed by **exactly
+- [x] **Graph → plan.** Every room id claimed by any plan must be claimed by **exactly
       one** plan storey (no room on two floors), and every letter used in a storey's
       `rows` must appear in that storey's `rooms` dict — and vice versa, a `rooms`
       entry whose letter appears in no row is a row about nothing.
-- [ ] **Gate slots.** Every `D` cell's `"<c>,<r>"` key must be in the storey's `gates`
+- [x] **Gate slots.** Every `D` cell's `"<c>,<r>"` key must be in the storey's `gates`
       dict, and every `gates` key must name a `D` cell. (No storey in this phase has
       one; the check is what makes phase 15 cheap and is what stops a `D` being drawn
       and forgotten.)
-- [ ] **The graph agrees the storey is walkable.** For each plan storey, one `_reach`
+- [x] **The graph agrees the storey is walkable.** For each plan storey, one `_reach`
       from its `landing` with **all four heroes free** must reach every room the storey
       claims. This is the graph half of the flood-fill's geometry half; together they
       are what "the graph the selfcheck walks IS what the player walks" means.
-- [ ] Keep the existing colour binding untouched, but feed it `TowerInterior.boxes()`
+- [x] Keep the existing colour binding untouched, but feed it `TowerInterior.boxes()`
       **and** the plan boxes — a plan box painted a gate or room colour must still be
       claimed by a row. (This phase paints none, which is the point: the check must be
       the reason that stays true.)
+
+> Done. `tower_selfcheck` is `SELFCHECK OK` in 0.3 s: **15 rooms, 19 edges**, 8
+> gates, 2 entries, 2 scars, 15 subset walks clean — the verdict is unchanged, only
+> the size, exactly as D6 predicted.
+> ➕ The placeholder storey's graph rows had to land here rather than in Task 8:
+> check 1 now REFUSES a plan whose letters name no room, so `outer_hall`,
+> `hall_outer`, `outer_s3`, `s3_landing`, `s3_office_a`/`_b` and their two ungated
+> edges are in `tower_graph.gd` now (all `built: true`, all ungated — the D6 rows
+> plus the placeholder's two offices). Task 8 authors the real storeys against them.
+> Negative controls run by hand, each failing with the sentence a designer can act
+> on: an unknown room id, a room on two floors, a `rooms` letter drawn nowhere, a
+> `D` drawn and forgotten, a `gates` key naming no `D`, and an office the graph does
+> not join to its landing.
+> The colour binding now reads `TowerInterior.all_boxes()` and also fails a
+> duplicate box name — the keep and every plan storey share one namespace.
 
 ### Task 5: New check — the grid flood-fill
 

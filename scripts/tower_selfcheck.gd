@@ -52,7 +52,11 @@ extends SceneTree
 ##      through the interior's own legibility colours: every box the building
 ##      paints in a gate colour must be claimed by exactly one gate here, and every
 ##      part a built gate claims must be a box the building really has. Nothing in
-##      the graph is invented, and nothing in the building is unmodelled.
+##      the graph is invented, and nothing in the building is unmodelled. From
+##      phase 14 the same correspondence covers the storeys drawn as ASCII in
+##      `tower_plans.gd`: every letter on a floor plan names a built room row,
+##      every room row a plan claims is drawn on exactly one floor, every `D` cell
+##      is a real gate, and the graph joins the whole storey to its landing.
 ##   2. THE DESIGN LAWS, structurally: no gate keys on a hero's ABSENCE, every
 ##      mutation and every story overlay is edge-additive, no item has a carrier,
 ##      no quest requires another quest.
@@ -225,9 +229,18 @@ func _check_graph_matches_the_building() -> void:
 			_fail("gate '%s' gates no edge — it is a row about nothing" % gid)
 
 	# --- the colour binding, both directions --------------------------------
+	# `all_boxes()` and not `boxes()`: from phase 14 the building is the authored
+	# keep PLUS every hand-planned storey, and a gate painted onto a plan storey has
+	# to be claimed by a row exactly like one built into the keep. (No storey drawn
+	# in this phase paints one — that is the point. This check is the reason it
+	# stays true when phase 15 starts drawing riddles up there.)
 	var built_boxes: Dictionary = {}
-	for box: Dictionary in TowerInterior.boxes():
-		built_boxes[String(box["name"])] = box["color"]
+	for box: Dictionary in TowerInterior.all_boxes():
+		var box_id := String(box["name"])
+		if built_boxes.has(box_id):
+			_fail("two interior boxes are both named '%s' — the keep and every plan storey "
+				% box_id + "share one namespace, and a row claiming that name claims neither")
+		built_boxes[box_id] = box["color"]
 
 	# Every part any row claims must be a box the building really has, and an
 	# UNBUILT row must claim nothing — a graph that credits itself with geometry
@@ -249,7 +262,7 @@ func _check_graph_matches_the_building() -> void:
 			continue
 		for part: String in parts:
 			if not built_boxes.has(part):
-				_fail("%s claims interior box '%s', which TowerInterior.boxes() does not build" % [
+				_fail("%s claims interior box '%s', which TowerInterior.all_boxes() does not build" % [
 					label, part])
 				continue
 			if claimed.has(part):
@@ -285,6 +298,115 @@ func _check_graph_matches_the_building() -> void:
 	if gates.has(TowerGraph.GATE_CHECKPOINT):
 		_fail("'%s' is a room marker, not a passage — it must not be a gate row" % [
 			TowerGraph.GATE_CHECKPOINT])
+
+	# --- and the same correspondence for the storeys drawn as text ----------
+	_check_plans_bind_to_the_graph()
+
+
+func _check_plans_bind_to_the_graph() -> void:
+	"""
+	Check 1, phase 14: every hand-planned storey and `TOWER_GRAPH` are the same
+	building — in both directions, and in both alphabets.
+
+	A storey above the keep is DRAWN as ASCII (`tower_plans.gd`) and WALKED as a
+	graph, and neither half can see the other's drift on its own. The graph cannot
+	see a room lettered on no floor; the ASCII cannot see a room the audit walks
+	through that nobody ever drew. Both are the same failure this check exists for —
+	an audit reasoning about a building the player is not standing in.
+
+	Four bindings, all mechanical:
+
+	  * every id a plan names (its `rooms` values and its `landing`) is a BUILT
+	    room row, and every id is claimed by exactly ONE storey — a room is on one
+	    floor;
+	  * every letter drawn on the grid is in that storey's `rooms` dict, and every
+	    `rooms` entry is drawn somewhere on the grid;
+	  * every `D` cell's `"<c>,<r>"` key is in `gates` and names a real gate row,
+	    and every `gates` key names a `D` cell. No storey authored in this phase has
+	    one; the check is what makes phase 15's riddles cheap and what stops a `D`
+	    being drawn and forgotten;
+	  * the GRAPH agrees the storey hangs together: one walk from the landing with
+	    the whole roster free reaches every room the storey claims. That is the
+	    graph half of the question; the flood-fill over the same grid is the
+	    geometry half, and together they are what "the graph the audit walks IS
+	    what the player walks" means.
+	"""
+	var rooms: Dictionary = _graph["rooms"]
+	var gates: Dictionary = _graph["gates"]
+	# The base state is the right one to ask in: story overlays and mutations only
+	# ADD edges (law 3, asserted in check 2), so a floor that hangs together here
+	# hangs together in every later state.
+	var base_index := _index_for(_graph["story_states"][0], _graph["scars"][0])
+	var full: Array[String] = TowerGraph.HEROES.duplicate()
+	var claimed_by: Dictionary = {}   # room id -> the storey that drew it
+
+	for plan: Dictionary in TowerPlans.STOREYS:
+		var label := "plan storey %d" % int(plan["floor"])
+		var plan_rooms: Dictionary = plan["rooms"]
+		var plan_gates: Dictionary = plan["gates"]
+
+		# --- plan -> graph: every id the floor names is a BUILT room row -----
+		var named: Array[String] = [String(plan["landing"])]
+		for letter: String in plan_rooms:
+			named.append(String(plan_rooms[letter]))
+		for rid: String in named:
+			if not rooms.has(rid):
+				_fail("%s names room '%s', which is not a TOWER_GRAPH room" % [label, rid])
+				continue
+			if not bool(rooms[rid]["built"]):
+				_fail("%s draws room '%s', whose graph row says built: false — the audit would "
+					% [label, rid] + "walk round a floor the player is standing on")
+			if claimed_by.has(rid):
+				_fail("room '%s' is drawn by both %s and %s — a room is on one floor" % [
+					rid, String(claimed_by[rid]), label])
+				continue
+			claimed_by[rid] = label
+		for slot: String in plan_gates:
+			var gid := String(plan_gates[slot])
+			if not gates.has(gid):
+				_fail("%s puts gate '%s' in cell %s, which is not a TOWER_GRAPH gate" % [
+					label, gid, slot])
+
+		# --- what the grid actually draws ------------------------------------
+		var drawn_letters: Dictionary = {}
+		var drawn_slots: Dictionary = {}
+		for r: int in plan["rows"].size():
+			var row := String(plan["rows"][r])
+			for c: int in row.length():
+				var ch := row[c]
+				if ch == TowerPlans.GATE_CHAR:
+					drawn_slots["%d,%d" % [c, r]] = true
+				elif ch >= "A" and ch <= "Z" and ch != TowerPlans.STAIR_UP_CHAR \
+						and ch != TowerPlans.PAD_CHAR and ch != TowerPlans.POST_CHAR:
+					drawn_letters[ch] = true
+
+		# --- ...against the two dicts, both ways -----------------------------
+		for drawn: String in drawn_letters:
+			if not plan_rooms.has(drawn):
+				_fail("%s draws cells lettered '%s', which its rooms dict maps to no "
+					% [label, drawn] + "TOWER_GRAPH room")
+		for letter2: String in plan_rooms:
+			if not drawn_letters.has(letter2):
+				_fail("%s maps '%s' to room '%s', but no cell on the floor carries that letter "
+					% [label, letter2, String(plan_rooms[letter2])] + "— a row about nothing")
+		for slot2: String in drawn_slots:
+			if not plan_gates.has(slot2):
+				_fail("%s draws a '%s' at cell %s that its gates dict does not name — a gate "
+					% [label, TowerPlans.GATE_CHAR, slot2]
+					+ "drawn and forgotten is a passage the audit cannot see")
+		for slot3: String in plan_gates:
+			if not drawn_slots.has(slot3):
+				_fail("%s names a gate at cell %s, where the plan draws no '%s'" % [
+					label, slot3, TowerPlans.GATE_CHAR])
+
+		# --- the graph agrees the floor hangs together -----------------------
+		var landing := String(plan["landing"])
+		if rooms.has(landing):
+			var seen := _reach(base_index, landing, full, MAX, "")
+			for rid2: String in named:
+				if not seen.has(rid2):
+					_fail("%s: no route joins '%s' to the landing '%s' — the floor is drawn "
+						% [label, rid2, landing] + "but the graph does not connect it")
 
 
 # ============================================================================

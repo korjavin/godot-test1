@@ -221,6 +221,32 @@ const TOWER_GRAPH: Dictionary = {
 			"parts": ["CellFrameTeibi"]},
 		"cell_phoboman": {"built": true, "quest": "", "cell": "phoboman",
 			"parts": ["CellFramePhoboman"]},
+
+		# --- built, phase 14: the annulus and the first hand-planned storey ---
+		# The annulus was never a room here: the front door's entry row lands
+		# straight in `entry_hall`, which is strictly harsher than the truth and so
+		# changed no verdict. Storey 3's grand ramp starts out here, so the space
+		# now needs a name the graph can walk through.
+		"outer_hall": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "The 80 m entrance hall the phase-13 envelope opened up. The keep "
+				+ "stands in the middle of it and the grand ramp climbs from its floor.",
+		},
+		# The storeys above are HAND-PLANNED AS TEXT — see `tower_plans.gd`. Every
+		# room a plan letters needs a row here, and `tower_selfcheck` binds the two
+		# in both directions: a letter with no row, or a row no floor draws, fails.
+		"s3_landing": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "Head of the grand ramp, and the flood-fill's start cell on storey 3.",
+		},
+		"s3_office_a": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "West office off the storey-3 landing.",
+		},
+		"s3_office_b": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "East office off the storey-3 landing.",
+		},
 	},
 
 	# ------------------------------------------------------------------------
@@ -266,6 +292,18 @@ const TOWER_GRAPH: Dictionary = {
 		{"id": "gallery_cell_teibi", "a": "cell_gallery", "b": "cell_teibi",
 			"gate": "", "built": true},
 		{"id": "gallery_cell_phoboman", "a": "cell_gallery", "b": "cell_phoboman",
+			"gate": "", "built": true},
+
+		# --- phase 14: out into the annulus and up the grand ramp. All UNGATED:
+		# the new storeys are optional space, the four rescue spines still run
+		# through the phase-8 wing, and every subset's verdict is unchanged. ---
+		{"id": "hall_outer", "a": "entry_hall", "b": "outer_hall",
+			"gate": "", "built": true},
+		{"id": "outer_s3", "a": "outer_hall", "b": "s3_landing",
+			"gate": "", "built": true},
+		{"id": "s3_landing_office_a", "a": "s3_landing", "b": "s3_office_a",
+			"gate": "", "built": true},
+		{"id": "s3_landing_office_b", "a": "s3_landing", "b": "s3_office_b",
 			"gate": "", "built": true},
 
 		# --- phase 7: the lift shaft. Exists only once `lift_activated` fires. ---
