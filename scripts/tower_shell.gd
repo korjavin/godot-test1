@@ -564,8 +564,8 @@ func sheltered(pos: Vector3) -> bool:
 	Half-open at the top: the roof's UNDERSIDE is the ceiling, so a player standing
 	ON the roof (y >= WALL_HEIGHT) is outdoors and gets rained on, which is the
 	answer that makes the gate read as a roof rather than as a column of immunity
-	reaching to the sky. Below y = 0 is the yard slab's underside — nothing stands
-	there, but answering true costs nothing and keeps the test a simple range.
+	reaching to the sky. Bounded below at y = 0 for the mirror-image reason: the
+	building's floor is not a lid for whatever is under it.
 
 	Cheap enough for the per-tick weather query that consumes it: one transform
 	multiply and three compares, no allocation.
