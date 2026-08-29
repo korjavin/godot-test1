@@ -493,8 +493,8 @@ const ARM_EASE_SPEED: float = 18.0
 ## `set_indoor_camera()`; read only through `_third_person_arm_target()`, which
 ## both the snap path and the ease path go through. Transient world state, not a
 ## preference: whoever set it clears it (including when the room is FREED — see
-## `TowerInterior._exit_tree`), and `reset_position()` clears it too because a
-## hard reset teleports out of every room at once.
+## `TowerInterior._exit_tree`), and `_refresh_indoor_camera()` re-derives it from
+## scratch on every teleport, so a hard reset needs no line of its own.
 var _indoor_camera: bool = false
 
 ## Character's visual mesh (for ducking animation)
@@ -875,9 +875,17 @@ func _apply_view_mode() -> void:
 	Moves the EXISTING camera (no second Camera3D!) to match the current view
 	mode. Deliberately idempotent — safe to re-run any time (e.g. after a Teibi
 	resize or a character switch) without tracking what the previous state was.
+
+	IT SNAPS, so it first makes sure it is snapping to the truth. Several callers
+	are TELEPORTS — `join_at()` into a room's group, the full-custody march into
+	the cell block — and `_indoor_camera` is polled by the building, so on the
+	frame of a teleport it still describes where we WERE. Re-deriving it here from
+	where we ARE turns those into clean cuts instead of a quarter-second ease
+	starting from the wrong boom, and does it for every future teleport too.
 	"""
 	if not camera or not camera_arm:
 		return
+	_refresh_indoor_camera()
 	if view_mode == ViewMode.FIRST_PERSON:
 		# First-person commandeers the ARM, not the camera (the arm owns the
 		# camera's local position — see the rig note in SECTION 3). Identity
@@ -937,6 +945,27 @@ func set_indoor_camera(indoor: bool) -> void:
 	3.74 m a step inside.) That is the one place this is not free.
 	"""
 	_indoor_camera = indoor
+
+
+func _refresh_indoor_camera() -> void:
+	"""
+	Ask the building, right now, whether we are in it — for the callers that
+	TELEPORT and cannot wait a frame for its poll to catch up.
+
+	NOT A SECOND OPINION: it calls the same pure `TowerInterior.inside_walls()` the
+	building itself calls, on the same offset, so the two can never disagree. That
+	is what the static function is for. Null-safe through the usual group seam, so
+	a scene with no tower in it (every self-check, and most of a run) simply reads
+	"outdoors" — which is the right answer when there is no room to be in.
+
+	Event-rate only: `_apply_view_mode()` is called on presses and teleports, never
+	per frame, so the group lookup is not on any budget.
+	"""
+	if not is_inside_tree():
+		return
+	var room := get_tree().get_first_node_in_group("tower_interior") as Node3D
+	set_indoor_camera(room != null
+			and TowerInterior.inside_walls(global_position - room.global_position))
 
 
 func _third_person_arm_target() -> float:
@@ -1049,6 +1078,16 @@ func _physics_process(delta: float) -> void:
 	if Input.is_action_just_pressed("toggle_camera") and not is_game_over:
 		view_mode = (view_mode + 1) % ViewMode.size()
 		_apply_view_mode()
+
+	# STEP 0-BOOM: walk the camera arm toward the length the world is asking for.
+	# ABOVE THE FREEZE BRANCHES, and deliberately NOT beside `_tick_wade_sink()`
+	# down at STEP 1.5 even though the two are the same kind of visual ease. The
+	# difference is who moves the target: the wade sink's target is OUR OWN
+	# position, which cannot change while we are frozen, so a tick there would be a
+	# no-op. This one's target is set by the ROOM, which keeps polling through a
+	# caught freeze and its 1.5 s of respawn grace — a player caught in the doorway
+	# would otherwise sit at the wrong boom, clamped against a wall, for both.
+	_tick_arm_length(delta)
 
 	# STEP 0-RECALL: the recall clock, if the full-custody break-out is running. Above
 	# every freeze branch below on purpose — a guard knocking the party down inside
@@ -1194,8 +1233,6 @@ func _physics_process(delta: float) -> void:
 	is_wading = is_on_floor() and _terrain_is_river_here()
 	# Ease the model's submersion offset (visual only — see WADE_SINK_DEPTH).
 	_tick_wade_sink(delta)
-	# ...and ease the boom between the outdoor and indoor lengths (visual only).
-	_tick_arm_length(delta)
 
 	# STEP 2: Handle Jumping (with coyote time + jump buffer — see SECTION 2)
 	# Refresh the coyote window while grounded; tick it down while airborne.
@@ -3489,12 +3526,11 @@ func reset_position() -> void:
 	is_running = false
 
 	# Drop any mid-blink i-frames and restore model visibility for the current
-	# view (idempotent — see _apply_view_mode). The indoor boom goes with them:
-	# this teleport leaves every room at once, and clearing it HERE rather than
-	# waiting for the room to notice means the boom is right on the first frame
-	# after the reset, whatever order the two _process calls happen to run in.
+	# view (idempotent — see _apply_view_mode). The indoor boom goes with them,
+	# and needs no line of its own: this runs AFTER the teleport above, and
+	# `_apply_view_mode()` re-derives the room from where we now are — the spawn
+	# point, 400 m from the tower.
 	respawn_blink_timer = 0.0
-	_indoor_camera = false
 	_apply_view_mode()
 
 	# Lift the model back out of the water. This is a hard teleport to the dry
