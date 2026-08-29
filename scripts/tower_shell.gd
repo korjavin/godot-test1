@@ -30,9 +30,10 @@ extends Node3D
 ## the terrain MANAGER, never to a chunk — the fauna precedent — so chunk unloading
 ## can never free it out from under a player standing in the doorway.
 ##
-## MULTIPLAYER: nothing to sync. `tower_site()` is a pure function of the run seed
-## and every peer is handed the seed, so every peer builds the same tower in the
-## same place from local information only. No spawn packet, no claim, no authority.
+## MULTIPLAYER: nothing to sync. `tower_site()` is a CONSTANT (the HQ is hand-
+## planned once and forever), so every peer builds the same tower in the same place
+## from local information only — it does not even need the seed. No spawn packet,
+## no claim, no authority.
 ##
 ## COST: 10 `MeshInstance3D`s, ONE `StaticBody3D` holding 8 box shapes, one `Area3D`,
 ## and 4 materials shared process-wide by the static cache below. That is the whole

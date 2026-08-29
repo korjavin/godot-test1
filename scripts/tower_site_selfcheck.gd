@@ -12,15 +12,18 @@ extends SceneTree
 ## epic parents to one position — shell, horizon impostor, minimap marker, door,
 ## interior — and phase 1 is only the two promises that position makes:
 ##
-##   1. IT IS THE SAME POSITION EVERY TIME. tower_site() is pure in (run_seed,
-##      tower_site_distance) and consumes no RNG draw. If it ever drifted, two
-##      multiplayer peers walking the same seed would walk to two different towers,
-##      and a revisited site would move under a building already standing on it.
-##      Checks 1 and 2.
+##   1. IT IS THE SAME POSITION EVERY TIME — and since phase 12 (owner ruling
+##      2026-08-29: "we can plan it once and forever") the same position in every
+##      RUN too. tower_site() is pure in tower_site_distance alone and consumes no
+##      RNG draw. If it drifted, two multiplayer peers walking the same seed would
+##      walk to two different towers, and a hand-planned building would have no
+##      address. Checks 1 and 2.
 ##   2. THE SITE IS DRY, AND IT IS EMPTY. is_river_at() ignores Y by contract and
 ##      the player's wade test is XZ-only, so a tower over a river band would wade
 ##      on every floor; and a mountain massif, a nomad camp or a 6x boss standing
 ##      in the lobby is the same bug with a different silhouette. Checks 3 and 4.
+##      Since phase 12 the site no longer RUNS from the water — the water is masked
+##      under it — so check 3 asserts the mask, from both sides of its rim.
 ##
 ## And the invariant the exclusion is not allowed to cost:
 ##
@@ -47,9 +50,10 @@ const TERRAIN_SCRIPT: String = "res://scripts/endless_terrain.gd"
 ## statistical power — a handful of different river fields is plenty to catch a
 ## nudge that does not nudge.
 ##
-## The last three are REGRESSION SEEDS, not sampling: they are the ones an earlier
-## plain-boolean 5 m sampling grid stepped clean over a river with (codex review,
-## 2026-08-28), and check 3's independent sweep is what caught them. Keep them.
+## The last three are REGRESSION SEEDS, not sampling: they are the ones whose rivers
+## soak the nominal site (found by codex review, 2026-08-28, when a 5 m sampling
+## grid stepped clean over them). Since phase 12 they are check 3's TEETH — they are
+## the seeds the mask actually has work to do on. Keep them.
 const SEEDS: Array[int] = [20260827, 1, 424242, 999983, -775511, 750, 99, 106]
 
 ## The seed the two expensive whole-field checks (4, 5, 6) run on. One is enough:
@@ -112,18 +116,13 @@ func _check_site_is_stable_and_pure() -> void:
 			_fail("seed %d: tower_site() re-derived to %s but the memo held %s — the cache is stale" % [
 				seed_value, recomputed, first])
 
-		if not is_zero_approx(first.y):
-			_fail("seed %d: tower site is off the ground at y=%f — the world is flat" % [seed_value, first.y])
-		if first.x > 0.0:
-			_fail("seed %d: tower site landed at x=%f — the ruling puts it on -X" % [seed_value, first.x])
-
-		# The nudge may move the site, but only within the lattice it is allowed to
-		# scan. Anything further means the scan is not bounded the way it claims.
-		var reach: float = terrain.TOWER_NUDGE_STEP * float(terrain.TOWER_NUDGE_RINGS)
+		# THE RULING (owner, 2026-08-29): one fixed, hand-planned address. Not "near
+		# the nominal site", not "wherever the water allowed" — exactly it, on every
+		# seed. Equality also carries the flat-world y and the -X sign for free.
 		var nominal := Vector3(-terrain.tower_site_distance, 0.0, 0.0)
-		if absf(first.x - nominal.x) > reach + 0.001 or absf(first.z) > reach + 0.001:
-			_fail("seed %d: tower site %s is outside the %.0f m nudge lattice around %s" % [
-				seed_value, first, reach, nominal])
+		if first != nominal:
+			_fail("seed %d: tower site is %s, not the fixed %s — something is still moving it" % [
+				seed_value, first, nominal])
 
 		# The two fixed discs in the world may never touch (see SPAWN_SAFE_RADIUS).
 		var from_origin := Vector2(first.x, first.z).length()
@@ -148,51 +147,98 @@ func _check_site_is_the_same_in_a_second_terrain() -> void:
 		a.free()
 		b.free()
 
-	# ...and different seeds must be allowed to differ, or the nudge is inert.
+	# ...and NO seed may differ. This is the inverted half of the old nudge check:
+	# what used to be "different seeds are allowed to move the tower" is now the
+	# bug. A designer plans the HQ once; a seed that re-sites it is a regression.
 	var sites := {}
 	for seed_value: int in SEEDS:
 		var t := _make_terrain(seed_value)
 		sites[t.tower_site()] = true
 		t.free()
-	if sites.size() == 1:
-		print("NOTE: every sampled seed sited the tower identically — the nominal site was dry in all %d" % SEEDS.size())
+	if sites.size() != 1:
+		_fail("the sampled seeds put the tower in %d different places (%s) — the site is not fixed" % [
+			sites.size(), sites.keys()])
 
 
 func _check_footprint_is_dry() -> void:
 	"""
-	Check 3. THE WHOLE footprint disc is out of the water, not just its centre.
+	Check 3. THE WHOLE footprint disc is out of the water — and it is out of the
+	water because the MASK put it there, not because the site ran away from a river.
 
-	Re-measured here with the terrain's own sampler, then again independently on a
-	finer grid: a bug that made the sampler blind (too coarse a step, a rim-only
-	scan) would satisfy the terrain's own test and still put the tower in a river.
+	This is the inverted phase-12 half of the old dry-site check. The site is a
+	constant now, so the guarantee it makes is different: is_river_at() answers
+	false everywhere inside TOWER_RADIUS of the site, on every seed, INCLUDING the
+	seeds whose raw biome field runs a river straight through the disc.
+
+	THREE TEETH, because "never wet" is also what a broken is_river_at() looks like:
+
+	  a) inside the disc, is_river_at() is false everywhere (0.5 m grid);
+	  b) at least two sampled seeds are RAW-wet inside the disc, i.e. the mask is
+	     actually suppressing something rather than being handed dry ground (seeds
+	     750/99/106 are here for exactly this — they are the ones whose rivers used
+	     to force the nudge);
+	  c) just OUTSIDE the disc, is_river_at() agrees with the raw field point for
+	     point — a mask that swallowed the whole world would pass (a) and (b).
+
+	The raw field is read straight off _biome_noise with the same threshold
+	is_river_at() applies, which is the only way to see what the mask hid.
 	"""
+	var raw_wet_seeds := 0
 	for seed_value: int in SEEDS:
 		var terrain := _make_terrain(seed_value)
 		var site: Vector3 = terrain.tower_site()
-		if terrain._tower_wet_samples(site.x, site.z) != 0:
-			_fail("seed %d: the site the scan chose is wet by its own sampler" % seed_value)
-
-		# INDEPENDENT SWEEP, and the check that actually bites: half a metre, plain
-		# is_river_at(), no widening. The terrain's own sampler is a coarse grid with
-		# a conservative margin — a margin computed wrongly (or dropped as "surely 2 m
-		# is fine") reads dry to itself and drowns the tower, which is exactly what
-		# seeds 750/99/106 above did before the margin existed. This one cannot be
-		# fooled the same way, because it is not the same test.
-		var wet := 0
 		var r: float = terrain.TOWER_RADIUS
 		var step := 0.5
-		var i := -r
-		while i <= r + 0.001:
-			var j := -r
-			while j <= r + 0.001:
-				if Vector2(i, j).length() <= r and terrain.is_river_at(Vector3(site.x + i, 0.0, site.z + j)):
-					wet += 1
+
+		var masked := 0   # (a) is_river_at() inside the disc — must stay 0
+		var raw := 0      # (b) the un-masked field inside the disc
+		var leaks := 0    # (c) points outside the disc where the two disagree
+		var i := -r - 2.0
+		while i <= r + 2.001:
+			var j := -r - 2.0
+			while j <= r + 2.001:
+				var d := Vector2(i, j).length()
+				var here := Vector3(site.x + i, 0.0, site.z + j)
+				var wet_raw := _raw_river(terrain, here)
+				var wet: bool = terrain.is_river_at(here)
+				if d <= r:
+					if wet:
+						masked += 1
+					if wet_raw:
+						raw += 1
+				elif wet != wet_raw:
+					leaks += 1
 				j += step
 			i += step
-		if wet > 0:
-			_fail("seed %d: tower footprint at %s has %d wet points on a 2 m grid — the tower would wade" % [
-				seed_value, site, wet])
+
+		if masked > 0:
+			_fail("seed %d: %d points inside the tower disc still read as river — the tower would wade" % [
+				seed_value, masked])
+		if leaks > 0:
+			_fail("seed %d: %d points OUTSIDE the disc disagree with the raw field — the mask leaks past its rim" % [
+				seed_value, leaks])
+		if raw > 0:
+			raw_wet_seeds += 1
 		terrain.free()
+
+	# (b): the negative control. A mask that is never asked to hide anything is
+	# indistinguishable from no mask at all.
+	if raw_wet_seeds < 2:
+		_fail("only %d sampled seed(s) run a river through the tower disc — the mask is untested; add wetter seeds to SEEDS" % raw_wet_seeds)
+	else:
+		print("tower dry disc: %d of %d sampled seeds have a raw river crossing the site, all masked" % [
+			raw_wet_seeds, SEEDS.size()])
+
+
+func _raw_river(terrain: Node3D, world_pos: Vector3) -> bool:
+	## is_river_at() WITHOUT the tower mask — the same contour test on the raw biome
+	## field. Deliberately restated here rather than exposed as a helper on the
+	## terrain: the mask is the public answer, and only this file has any business
+	## asking what was underneath it.
+	var n: float = terrain._biome_noise(world_pos.x, world_pos.z)
+	var level: float = terrain.RIVER_LEVEL
+	var half: float = terrain.RIVER_HALF_WIDTH
+	return absf(n - level) < half
 
 
 func _check_nothing_stands_on_the_site() -> void:

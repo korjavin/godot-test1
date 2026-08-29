@@ -60,6 +60,14 @@ uniform float biome_mountain_max = 0.83;      // n < this  -> mountain, else sno
 uniform float river_level = 0.5;              // the contour rivers follow
 uniform float river_half_width = 0.007;       // half-thickness of that contour
 uniform float biome_blend = 0.05;             // smoothstep radius at each threshold
+// THE TOWER'S DRY DISC — the GPU half of the mask in is_river_at(). The tower
+// stands at a fixed, hand-planned address (endless_terrain.gd tower_site()), so
+// rather than nudging the building out of the water we take the water out from
+// under the building: no river band is painted inside this disc, and the CPU
+// wade test refuses inside exactly the same one. Pushed together with the biome
+// constants above; the -1 default leaves the mask OFF for a material nobody fed.
+uniform vec2 tower_dry_center = vec2(0.0);
+uniform float tower_dry_radius = -1.0;
 
 // --- Biome colours — pure art, never read by GDScript -----------------------
 uniform vec3 desert_color: source_color = vec3(0.78, 0.68, 0.44);   // ochre sand
@@ -206,7 +214,15 @@ void fragment() {
 
 	// River last, on top of whatever biome it cuts through — rivers are an
 	// overlay, not a biome (same rule as is_river_at() on the CPU side).
-	if (v_river > 0.0) {
+	//
+	// ...except under the tower. THE DRY DISC is the twin of the extra step
+	// is_river_at() takes on the CPU — same centre, same radius, same <= — so the
+	// blue you SEE and the wading you FEEL still part company nowhere, and the
+	// hard rim is exactly what lets the two agree (it is hidden under the shell
+	// and its yard). Folded INTO this branch rather than standing above it: only a
+	// river pixel can be masked, so only a river pixel pays for the distance, which
+	// is the rule this `if` exists to enforce on a fill-rate-bound web target.
+	if (v_river > 0.0 && distance(v_world_xz, tower_dry_center) > tower_dry_radius) {
 		// Cheap crossed-sine shimmer: two sines drifting in opposite senses so
 		// the interference pattern never reads as a repeating grid. World-space
 		// input keeps it continuous across chunk seams, TIME makes it flow.
