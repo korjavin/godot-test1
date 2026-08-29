@@ -2323,6 +2323,14 @@ func _check_room_publish() -> String:
 	if parsed.get("cap", []) != ["primm"] or absf(float(parsed.get("cd", -1.0)) - 12.5) > 0.001 \
 			or int(parsed.get("co", -1)) != 0:
 		return "decode_room dropped an honest publish (%s)" % str(parsed)
+	# EVERY VERDICT THE ENCODER CAN PRODUCE, swept rather than spot-checked — 3 is
+	# OVERTAKEN and is the one a parser written against the first two would drop,
+	# leaving the peers that need it most (a scene ended by the room's hearts) with
+	# no word at all.
+	for outcome: int in 4:
+		var probe: Dictionary = {"t": "room", "cap": [], "cd": 1.0, "co": outcome}
+		if int(MPManager.decode_room(probe).get("co", -1)) != outcome:
+			return "decode_room dropped the verdict %d, which the encoder can send" % outcome
 	var over_long: Array[String] = []
 	for i: int in MPManager.MAX_STATE_CAPTIVES + 1:
 		over_long.append("primm")
@@ -2340,7 +2348,7 @@ func _check_room_publish() -> String:
 		{"t": "room", "cap": [], "cd": -1.0, "co": 0},
 		{"t": "room", "cap": [], "cd": MPManager.MAX_CUSTODY_SECONDS + 1.0, "co": 0},
 		{"t": "room", "cap": [], "cd": 1.0},                                # no verdict
-		{"t": "room", "cap": [], "cd": 1.0, "co": 3},                       # not an outcome
+		{"t": "room", "cap": [], "cd": 1.0, "co": 4},                       # not an outcome
 		{"t": "room", "cap": [], "cd": 1.0, "co": -1},
 		{"t": "room", "cap": [], "cd": 1.0, "co": NAN},
 	]
@@ -2467,6 +2475,20 @@ func _check_room_publish() -> String:
 		return "an unchanged room state kept relaying over the LOBBY (%d frames) — the "\
 			% _relayed_rooms(host) + "lobby then hears from the master constantly and a "\
 			+ "stalled host can never be voted out"
+
+	# --- 7c. A NEW MEMBER RE-OPENS THE RELAY, even with nothing changed.
+	#
+	# The digest is one string for the whole room, so a peer that joins after the
+	# last change is skipped by every unchanged publish afterwards — and its join
+	# snapshot carries the SET but not a running scene's clock or an
+	# already-decided verdict. It would sit in a break-out nobody else is in.
+	host._lobby.relayed.clear()
+	host._on_lobby_peer_joined("latecomer", "latecomer")
+	host._room_accum = 0.0
+	host._process(1.0 / MPManager.ROOM_SYNC_HZ + 0.01)
+	if _relayed_rooms(host) == 0:
+		return "a peer that joined after the last change was never sent the room state — "\
+			+ "the digest is global, so every later publish skips it too"
 
 	# --- 8. the auto-claim waits for the join to settle.
 	var joiner: Node = _room_manager("me")

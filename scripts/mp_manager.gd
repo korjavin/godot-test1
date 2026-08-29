@@ -1163,6 +1163,14 @@ func _on_lobby_peer_joined(id: String, peer_name: String) -> void:
 	"""A peer arrived after us. Same setup as a welcome-list member."""
 	if _state != State.IN_ROOM or id.is_empty() or id == _you:
 		return
+	# THE NEW MEMBER HAS HEARD NONE OF IT. The relay digest is global — one string
+	# for "what the room was last told" — so without this, a peer that joins after
+	# the last change is skipped by every subsequent unchanged publish and never
+	# learns the current set or verdict over the relay at all. Its snapshot carries
+	# the set, but not a running scene's clock or an already-decided verdict, so it
+	# could sit in a break-out nobody else is in. One extra relay per join, which is
+	# nowhere near the lobby's stall window.
+	_room_relay_digest = ""
 	# Append only if this id is not already listed. `_members.size()` is
 	# load-bearing — `_tick_stall_watch` uses it as the "is there anybody to elect"
 	# guard — so a duplicate `peer_join` (a reconnect race, a malformed frame)
@@ -1204,6 +1212,10 @@ func _on_lobby_peer_left(id: String) -> void:
 		(_avatars[id] as RemoteAvatar).queue_free()
 		_avatars.erase(id)
 	_pending_signals.erase(id)
+	# A LEAVING MEMBER IS ALSO A CHANGE OF AUDIENCE. The relay digest is one string
+	# for the whole room rather than one per recipient, so it is invalidated on any
+	# membership change and the next publish goes out to whoever is there now.
+	_room_relay_digest = ""
 	if _connections.has(id):
 		(_connections[id] as WebRTCPeerConnection).close()
 		_connections.erase(id)
@@ -1656,8 +1668,9 @@ static func decode_room(packet: Dictionary) -> Dictionary:
 	`cap` is bounded and every entry length-gated here, then whitelisted against
 	`_pool` in `_receive_room`; `cd` is the recall clock, which drives a COUNTDOWN
 	the player watches, so it is finiteness-checked before any cast (`int(NAN)` is
-	undefined and on wasm the trunc can trap the module); `co` is the verdict and is
-	an enum, so anything outside it is a peer this build cannot read.
+	undefined and on wasm the trunc can trap the module); `co` is the verdict (0 running,
+	1 survived, 2 failed, 3 overtaken) and is an enum, so anything outside it is a
+	peer this build cannot read.
 	"""
 	if typeof(packet.get("cap", null)) != TYPE_ARRAY:
 		return {}
@@ -1680,7 +1693,7 @@ static func decode_room(packet: Dictionary) -> Dictionary:
 	if not _is_number(packet.get("co", null)):
 		return {}
 	var verdict: float = float(packet["co"])
-	if not is_finite(verdict) or verdict < 0.0 or verdict > 2.0:
+	if not is_finite(verdict) or verdict < 0.0 or verdict > 3.0:
 		return {}
 	return {"cap": names, "cd": seconds, "co": int(verdict)}
 

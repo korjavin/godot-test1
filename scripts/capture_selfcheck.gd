@@ -1502,16 +1502,33 @@ func _check_reassign_first_imprison_last() -> void:
 	var shell := await _make_tower()
 	shell.global_position = TerrainStub.SITE
 	var interior: Node = shell.get_child(0)
+	# ONE TICK FIRST, so the interior has bound `_player`. `_liberate()` reaches the
+	# player through that reference and it is written in `_process` — without this,
+	# every liberation below quietly tells nobody and the claims about what the room
+	# is (and is not) told would pass against any code at all.
+	interior._process(0.1)
+	if interior._player != player:
+		_fail("the interior did not bind the player, so nothing below can measure the seam")
 	interior.set_captive("primm", true)
 	interior.call("_on_cell_enter", player, "primm")
 	if not interior.is_captive("primm"):
 		_fail("a prisoner walked into their OWN cell and freed themselves — the role has a "
 			+ "solo escape, which is the one thing the owner's ruling forbids it")
+	room.reported.clear()
 	interior.set_captive("teibi", true)
 	interior.call("_on_cell_enter", player, "teibi")
 	if interior.is_captive("teibi"):
 		_fail("a prisoner could not free a CELLMATE — the refusal above is refusing every "
 			+ "liberation, and the block's second system does nothing")
+	# ...AND A LIBERATION OF SOMEBODY THE ROOM NEVER HELD IS NOT REPORTED. The tower
+	# calls `hero_freed()` for its AUTHORED staging too, which no player ever had
+	# taken off them. Telling the room leaves a release tombstone on a hero nobody
+	# captured, and the very next thing that rescue enables is hunter captures — so
+	# a real grab of that hero seconds later is dropped as a stale packet and the
+	# room never hears about it.
+	if not room.reported.is_empty():
+		_fail("freeing a hero the room does not hold was reported as a release (%s) — the "
+			% str(room.reported) + "tombstone that leaves swallows the next real capture of him")
 	# ---- (d1b) the block's system, operated from inside it -----------------
 	#
 	# THE PURGE IS THE ROLE'S ONE OUTWARD VERB, and "each operated system gives the
@@ -1682,6 +1699,13 @@ func _check_reassign_first_imprison_last() -> void:
 	if BestRunStore.world_archived():
 		_fail("a heart the room spent somewhere else archived this world — the scene was "
 			+ "overtaken, not lost, and only losing it ends the campaign")
+	# ...AND IT SAYS SO ON THE WIRE. Published as an ordinary FAILED, every peer that
+	# has not yet seen the shared heart total would archive its own world while this
+	# one did not — the same split, one hop further out.
+	var overtaken: Array = player.call("custody_wire_state") as Array
+	if overtaken.size() != 2 or int(overtaken[1]) != 3:
+		_fail("an overtaken scene publishes %s, not the OVERTAKEN verdict — a peer reading "
+			% str(overtaken) + "it as a plain failure archives a world the master kept")
 	room.shared_spent = null
 	_clear(player)
 	await process_frame
@@ -1783,6 +1807,39 @@ func _check_two_clients_cannot_disagree() -> void:
 	if not BestRunStore.tower_opened_ids().has(TowerGraph.SCAR_CUSTODY):
 		_fail("the master's SURVIVED verdict did not take the scar, so this peer's tower "
 			+ "disagrees with the room's for the rest of the campaign")
+
+	# ...and the OVERTAKEN verdict ends a scene and writes nothing.
+	_fresh_store()
+	_beat_done()
+	_clear(player)
+	await process_frame
+	player = await _make_player()
+	player.set_active_character(TowerGraph.HEROES.find("primm"))
+	await _drive_into_custody(player)
+	if not player.in_custody_protocol():
+		_fail("the overtaken-verdict case could not open a protocol")
+	player.call("apply_room_custody", 0.0, 3)
+	if player.in_custody_protocol():
+		_fail("the master said the scene was OVERTAKEN and this peer stayed in it")
+	if BestRunStore.world_archived():
+		_fail("an OVERTAKEN verdict archived this peer's world — the room's own ending is "
+			+ "on its way and is the one that decides")
+
+	# ...and a verdict never speaks for the NEXT round. The roster is full again and
+	# this peer's own scene has not opened yet (the bench polls at 2 Hz), so what it
+	# publishes in that window would otherwise be the LAST round's answer beside a
+	# full-custody set — read by a peer already inside the new scene as an instant
+	# success, containment down and all.
+	# Staged exactly: the LAST round survived, the corporation has everybody again,
+	# and the run is still going. That is the only state in which a latched verdict
+	# is somebody else's answer.
+	player.custody_verdict = 1
+	if player.is_game_over or player.free_hero_count() != 0 or player.in_custody_protocol():
+		_fail("the stale-verdict window was not staged, so it proves nothing")
+	var window: Array = player.call("custody_wire_state") as Array
+	if window.size() != 2 or int(window[1]) != 0:
+		_fail("with the roster full and no scene open this peer publishes verdict %s — the "
+			% str(window) + "last round's answer, beside this round's set")
 	_clear(player)
 	await process_frame
 	_fresh_store()

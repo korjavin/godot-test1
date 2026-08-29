@@ -1574,7 +1574,15 @@ func hero_freed(hero: String) -> void:
 	it is what ends their prison role - and it reaches them the same way the
 	capture did. A no-op offline, and idempotent on both sides.
 	"""
-	captive_heroes.erase(hero)
+	# ONLY A REAL RELEASE IS REPORTED, and `erase()`'s own answer is the test. The
+	# tower calls this for the AUTHORED captive too — staging this player never had
+	# taken off them — and telling the room about that would leave a release
+	# tombstone on a hero nobody had captured. The very next thing that rescue
+	# enables is hunter captures, so a genuine grab of that hero inside
+	# RELEASE_GRACE_MSEC would then be dropped as the stale packet it is not, and
+	# the room would never hear about it at all.
+	if not captive_heroes.erase(hero):
+		return
 	var mp := _mp()
 	if mp != null and mp.has_method("report_hero_freed"):
 		mp.call("report_hero_freed", hero)
@@ -2831,6 +2839,18 @@ func custody_wire_state() -> Array:
 	side effects, so publishing can never perturb the scene it is describing — the
 	same rule the perf overlay's counters are written to.
 	"""
+	# THE VERDICT BELONGS TO THE ROUND THAT PRODUCED IT, and this is the one window
+	# where it could be read as the next one's: the roster has filled again — so the
+	# set we publish beside it says "full custody" — but our own scene has not
+	# opened yet, because `_tick_prison()` polls. A peer already inside the new scene
+	# would read the last round's SURVIVED and tear its containment down.
+	# `is_game_over` is what separates the stale verdict from the fresh one, and both
+	# have a full roster. A FAILED or OVERTAKEN round leaves the run finished, so its
+	# verdict is still the answer to the only round there will be; a SURVIVED one
+	# leaves the run going, and once the corporation has everybody AGAIN that answer
+	# belongs to a round that is over.
+	if not custody_protocol_active and not is_game_over and free_hero_count() == 0:
+		return [0.0, 0]
 	return [custody_timer if custody_protocol_active else 0.0, custody_verdict]
 
 
@@ -2849,7 +2869,9 @@ func apply_room_custody(seconds: float, verdict: int) -> void:
 	if not custody_protocol_active:
 		return
 	if verdict != 0:
-		_end_custody_protocol(verdict == 1)
+		# 3 is OVERTAKEN: end the scene, write nothing. The room's own ending is on
+		# its way to this peer through the shared totals and will raise itself.
+		_end_custody_protocol(verdict == 1, verdict != 3)
 		return
 	custody_timer = maxf(0.0, seconds)
 
@@ -2876,7 +2898,12 @@ func _end_custody_protocol(survived: bool, record: bool = true) -> void:
 	# THE VERDICT, LATCHED BEFORE ANYTHING ELSE. On the master this is what the room
 	# is told; on everybody else it is simply a record. Written even when `record` is
 	# false — the scene really did end, whoever decided it.
-	custody_verdict = 1 if survived else 2
+	# 1 SURVIVED, 2 FAILED, 3 OVERTAKEN — and the third is not a nicety. A scene
+	# closed with `record` false was ended by something ELSE (the room's hearts), so
+	# it archives nothing; publishing it as an ordinary failure would have every peer
+	# that had not yet seen the shared total archive its world while the master did
+	# not. The verdict has to carry the difference because the outcome does.
+	custody_verdict = (1 if survived else 2) if record else 3
 
 	if record:
 		if survived:
