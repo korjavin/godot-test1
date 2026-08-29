@@ -799,6 +799,13 @@ const STOREYS: Array[Dictionary] = [
 	# NOT drawn: the builder derives each one from the plain-floor side of its own
 	# doorway (see `_plan_gates`), which is why row 12 is `.` and not corridor.
 	#
+	# BOTH `P` PADS STAND IN THE CORRIDOR AND NEITHER IS IN THE GALLERY, which is
+	# not a layout preference: the gallery already carries the VENT PURGE, a LIVE
+	# `COLOR_SYSTEM` plate, and a plan pad is the same colour and inert until phase
+	# 17 gives it something to do. Two identical cyan plates a metre apart, one of
+	# which works, is the legibility language lying — a system pad promises "stand
+	# here and something opens, elsewhere". Keep them out of this room.
+	#
 	# ITS CEILING IS THE SEALED ROOF, not a slab: 46.0 m of floor under 50.0 m of
 	# wall is 4.0 m of clear air, the tightest number in this phase and 5 cm over
 	# what the indoor camera boom needs. `plan_clear_height()` is what knows that,
@@ -839,12 +846,12 @@ const STOREYS: Array[Dictionary] = [
 			"#.........#CCCC#EEEE#FFFF#HHHH#........#",
 			"#.........#CCCC#EEEE#FFFF#HHHH#........#",
 			"#.........#BBBBBBBBBBBBBBBBBBB#........#",
-			"#.........#BBPBBBBBBBBBBBBBBBB#........#",
+			"#.........#BBBBBBBBBBBBBBBBBBB#........#",
 			"#.........#BBBBBBBBBBBBBBBBBBB#........#",
 			"#.........##D####D####D####D###........#",
 			"#.........#...................#........#",
 			"#.........#AAAAAAAAAAAAAAAAAAA#........#",
-			"#.........#AAPAAAAAAAAAAAAAAAA#........#",
+			"#.........#AAPAAAAAAAAAAAAPAAA#........#",
 			"#.........###..############D###........#",
 			"#......................................#",
 			"#......................................#",
