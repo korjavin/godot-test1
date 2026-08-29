@@ -81,22 +81,30 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            lifecycle under real physics, opened state re-applied,
 #                            per-floor visibility, and — phase 8 — the CELL BLOCK:
 #                            the spine line SAMPLED for holes (a gap there makes
-#                            every identity gate in the wing decorative), and the
-#                            acceptance walk for a spine door plus liberation
+#                            every identity gate in the wing decorative), the
+#                            acceptance walk for a spine door plus liberation, and
+#                            the custody scene DRIVEN (containment re-shuts earned
+#                            doors and stays shut, the right hero's pad releases it,
+#                            the scar's rubble is drawn AND solid AND permanent)
 #   capture_selfcheck        SYSTEMIC CAPTURE and the tower guard's setback: the
 #                            arming gate (pre/post the
 #                            authored beat), attribution (only a "hunt" row takes
 #                            a hero), invulnerability covering the hero too, the
 #                            clean auto-switch, liberation, the empty-roster game
 #                            over with hearts in hand, that the set never touches
-#                            the monotone store, and the cell-block mirror in both
-#                            directions
+#                            the monotone store, the cell-block mirror in both
+#                            directions, and THE FULL-CUSTODY PROTOCOL: the scene
+#                            opens instead of a screen and is playable, surviving
+#                            it takes exactly one AUTHORED scar, losing it archives
+#                            the world (Continue reopens the ending, New Game
+#                            clears it), and the roster override does not leak
 #   tower_selfcheck          THE SOFTLOCK AUDIT: TOWER_GRAPH bound to the boxes
 #                            the interior really builds, the three design laws
 #                            (spines at floor rank, no item custody, mutations
-#                            edge-additive + the sanctioned scar), and all 15
+#                            edge-additive + the sanctioned scar), all 15
 #                            free-hero subsets reaching a cell from every entry,
-#                            in every story-flag and scar state
+#                            in every story-flag and scar state, and that every
+#                            authored scar is one the BUILDING can inflict
 
 bash scripts/mp_e2e.sh    # two-instance multiplayer e2e; needs go + godot on PATH
 ```
@@ -222,6 +230,26 @@ own, all pinned by `tower_interior_selfcheck`:
   and the giant's crush through `stink_immune` / `crush_immune`, never through group
   tricks; `clear_nearby_crocodiles()` exempts them the way it exempts a boss, or any
   death inside the building would clear the floor.
+- **THE FULL-CUSTODY PROTOCOL is what an empty roster opens instead of a screen.**
+  When the corporation holds every hero, `player_controller` marches the party to
+  the cell block's service corridor, RAISES CONTAINMENT (`begin_lockdown()`
+  re-shuts every spine door a hundred earlier rescues opened) and runs a recall
+  clock. One liberation is success; the clock, or the last heart, is failure. The
+  scene's verbs are the game's — switch, move, stand on a pad — and its
+  scene-scoped roster grant lives at `available_character_indices()` and nowhere
+  else, so it composes with the lobby's hand and `free_hero_count()` stays honest
+  (0 until somebody is actually freed, which is how the outcome is decided).
+  **The exit set is `entry INTERSECT still-held`** — the scene marks all four
+  captive, so anything less leaks a teammate's hero into this peer's filter.
+- **A FOURTH HOME, and it is a fourth for one reason.** The SCAR rides the monotone
+  opened set like a gate (earned, permanent, no verb heals it — it is only design
+  law 3's exception in what the *building* does with the id, never in how it is
+  stored). The WORLD ARCHIVE cannot: New Game has to clear it and a union has no
+  removal verb, so it is its own `[world] archived` latch in `best_run_store.gd`,
+  read at boot (Continue reopens the ending) and cleared by `restart_game()`. The
+  scene's own clock, grant and entry set are stored **nowhere**, like the guards.
+  Every scar is authored in `TowerGraph.scars` and picked by `next_scar()`; nothing
+  computes a scar id, and `tower_selfcheck` fails a scar row no box implements.
 
 `scripts/tower_graph.gd` is the tower's TOPOLOGY as one const dict of plain dicts —
 rooms, gated passages, entries, the mutation table, the enumerated scar states, the four
@@ -479,8 +507,10 @@ A post-beat grab by a predator on the `"hunt"` arm puts the ACTIVE hero in `play
   folded into a union could never be freed.
 
 The player owns the set; `TowerInterior` mirrors it (pushed on a grab, re-seeded on build)
-because the tower is usually not streamed in when a field grab lands. An empty free set is
-game over, decided beside the out-of-hearts branch in `_on_caught_finished()`.
+because the tower is usually not streamed in when a field grab lands. An empty free set
+opens the FULL-CUSTODY PROTOCOL (see the tower section), decided beside the out-of-hearts
+branch in `_on_caught_finished()` — which stays the one place a heart-death is decided,
+inside the scene as well as outside it.
 `free_hero_count()` is the hunt director's roster seam — death-spiral mitigation belongs
 there, before contact, never in the capture path.
 
