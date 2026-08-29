@@ -1374,12 +1374,40 @@ func _check_visibility_gating() -> void:
 	Phase 8's cell block is what makes the window bite, and it should inherit a gate
 	that was already correct rather than discover it needs one.
 	"""
-	for current in 5:
-		for index in 5:
-			var want := absi(index - current) <= 1
-			if TowerInterior._floor_visible(index, current) != want:
-				_fail("floor %d should be %s while standing on floor %d" % [
-					index, "visible" if want else "hidden", current])
+	# PHASE 14 REPLACED THE ARITHMETIC WITH A TABLE, so this asserts the PROPERTIES a
+	# visibility relation has to have plus the geometric facts THIS building has —
+	# never `FLOOR_NEIGHBOURS` read back to itself, which would check nothing.
+	var floors: int = TowerInterior.FLOOR_Y.size()
+	for current in floors:
+		if not TowerInterior._floor_visible(current, current):
+			_fail("floor %d hides itself" % current)
+		var seen := 0
+		for index in floors:
+			# Symmetric: "A touches B" and "B touches A" are the same claim, and a
+			# half-written row is exactly how a ceiling ends up solid and invisible.
+			if TowerInterior._floor_visible(index, current) \
+					!= TowerInterior._floor_visible(current, index):
+				_fail("floors %d and %d disagree about whether they touch" % [index, current])
+			if TowerInterior._floor_visible(index, current):
+				seen += 1
+		# The budget half: the window exists to stop the whole building drawing.
+		if seen > 4:
+			_fail("standing on floor %d draws %d storeys — the window has stopped gating" % [
+				current, seen])
+	# ...and the building's own geometry, spelled out so a reader can check it
+	# against the plan. A slab is the ceiling of everything under it, and floor 2's
+	# roofs BOTH the annulus and the keep's landing; storeys 3-5 are an ordinary
+	# stack; nothing else touches.
+	var touching: Array[Array] = [[0, 1], [0, 2], [1, 2], [2, 3], [3, 4]]
+	var apart: Array[Array] = [[0, 3], [0, 4], [1, 3], [1, 4], [2, 4]]
+	for pair: Array in touching:
+		if not TowerInterior._floor_visible(pair[0], pair[1]):
+			_fail("floor %d is hidden from floor %d, which it physically touches — "
+				% [pair[0], pair[1]] + "that is solid stone nobody can see")
+	for pair2: Array in apart:
+		if TowerInterior._floor_visible(pair2[0], pair2[1]):
+			_fail("floor %d draws from floor %d, which it does not touch" % [
+				pair2[0], pair2[1]])
 	# EVERY WALKING SURFACE, AND THE AIR JUST UNDER IT. `current_floor` is a walk of
 	# `FLOOR_Y` and runs every `_process`, so the assertion is over the whole table
 	# rather than over the two storeys this check was written with: standing on a

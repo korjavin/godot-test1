@@ -553,9 +553,11 @@ func sheltered(pos: Vector3) -> bool:
 	13 put a lid on the shell (`ROOF_THICK`) and the weather did not notice: a
 	storm cloud drifting over the HQ drew rain through the slab and grounded
 	Windman indoors (bug godot-test1-li2). `TowerInterior.inside_walls()` is the
-	wrong boundary to ask — it is the 20 m phase-3 keep, not the 80 m footprint the
-	roof actually covers — and restating OUTER_HALF anywhere else is how the two
-	drift apart the next time the envelope grows.
+	wrong boundary to ask — it answers "am I in a ROOM", i.e. the inner faces, and a
+	roof covers the walls too — and restating OUTER_HALF anywhere else is how the two
+	drift apart the next time the envelope grows. (When this was written that
+	predicate was also still the 20 m phase-3 keep; phase 14 widened it to the
+	envelope, which narrows the gap to one wall thickness without closing it.)
 
 	`to_local` rather than subtracting `global_position`: the shell is parked
 	unrotated today (`endless_terrain._tower_build_shell`), and this stays correct

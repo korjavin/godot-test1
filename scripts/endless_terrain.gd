@@ -8417,16 +8417,30 @@ func tower_blocks_coin(world_x: float, world_y: float, world_z: float) -> bool:
 	# BOTH TABLES — the shell's stonework AND the interior's, because a coin walled
 	# into the vault or standing inside the upper slab is exactly as unreachable as
 	# one inside a jamb, and the road runs straight through the building.
-	for box: Dictionary in TowerShell.boxes() + TowerInterior.boxes():
+	#
+	# `all_boxes()` AND NOT `boxes()`: since phase 14 the interior's plan is the keep
+	# PLUS three hand-planned 80 m storeys, and the keep table alone no longer
+	# describes the stone the road passes through. Run seed 309 lays a coin inside
+	# the grand ramp at tower-local (-26.54, 0.9, -33.36) that `boxes()` cannot see.
+	# (codex review, 2026-08-29.)
+	var query := Vector3(dx, world_y, dz)
+	for box: Dictionary in TowerShell.boxes() + TowerInterior.all_boxes():
 		# Only the SOLID boxes. The yard slab is 3 cm of paint and the beacon is a
 		# light 24 m up; a coin is welcome to sit on either.
 		if not box["collide"]:
 			continue
 		var pos: Vector3 = box["pos"]
 		var half: Vector3 = box["size"] * 0.5
-		if absf(dx - pos.x) < half.x + COIN_TOWER_CLEARANCE \
-				and absf(world_y - pos.y) < half.y + COIN_TOWER_CLEARANCE \
-				and absf(dz - pos.z) < half.z + COIN_TOWER_CLEARANCE:
+		# A RAMP IS A TILTED SLAB and its axis-aligned box is not its stone: measured
+		# untilted it claims a whole storey's height of air, which would swallow every
+		# coin beside the ramp and none of the coins actually inside it. So the query
+		# point moves into the box's own frame and the same three compares decide it.
+		var here := query - pos
+		if box.has("rot"):
+			here = Basis.from_euler(box["rot"] as Vector3).inverse() * here
+		if absf(here.x) < half.x + COIN_TOWER_CLEARANCE \
+				and absf(here.y) < half.y + COIN_TOWER_CLEARANCE \
+				and absf(here.z) < half.z + COIN_TOWER_CLEARANCE:
 			return true
 	return false
 

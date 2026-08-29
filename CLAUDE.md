@@ -325,8 +325,14 @@ nothing to find; keep it that way.
   single rect is what buys the simple slab.
 - **`FLOOR_Y` is the one storey table**, and the upper entries are `KEEP_HEIGHT` plus a
   count of the shell's `STOREY_HEIGHT` — a storey is never a number written down twice.
-  `_update_visibility`'s **±1 window finally bites at five storeys**: it hid nothing with
-  two and was written anyway, and neither it nor `_floor_visible` changed to get there.
+  `_update_visibility`'s window finally bites at five storeys — it hid nothing with two —
+  but **the ±1 arithmetic did not survive contact with them and `FLOOR_NEIGHBOURS`
+  replaced it**: floor 1 is a MEZZANINE over the 20 m core, so the 80 m annulus at floor 0
+  runs straight past it to floor 2's slab, which is its ceiling two indices away. Index
+  distance hid that ceiling while it was solid, and hid the grand ramp from the head of
+  the grand ramp. Adjacency is now the table, `_floor_visible` reads it, and the check
+  asserts the relation's properties (symmetric, reflexive, ≤ 4 storeys drawn) plus this
+  building's own touching/not-touching pairs — never the table read back to itself.
 - **What is deliberately not here yet, all carrying `ponytail:` comments**: storey 5 has no
   ceiling (open to the sealed roof, and a 4.6 m wall top is a metre over the jump apex, so
   there is nothing to climb onto until storeys 6+ land); `P` pads are geometry with no

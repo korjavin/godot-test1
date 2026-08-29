@@ -295,6 +295,33 @@ const FLOOR_Y: Array[float] = [
 	TowerShell.KEEP_HEIGHT + 2.0 * TowerShell.STOREY_HEIGHT,
 ]
 
+## Which storeys physically TOUCH each one. THE VISIBILITY WINDOW'S ADJACENCY, and
+## it is NOT `absi(index - current) <= 1`.
+##
+## THE KEEP'S UPPER LANDING IS A MEZZANINE, NOT A STOREY. Floor 1 covers the 20 m
+## core and nothing else, so the 80 m annulus at floor 0 runs straight past it to
+## floor 2's slab — which is the annulus's CEILING, two indices away. Under index
+## arithmetic that ceiling was hidden while solid from every square metre of the
+## ground floor, and the grand ramp (floor 0, because it starts there) vanished
+## from under the feet of anybody standing at its head on floor 2. Invisible
+## collision, on exactly the walk the phase is judged on. (codex review, 2026-08-29.)
+##
+## Floor 2's slab roofs BOTH floor 0 and floor 1, which is why this is an adjacency
+## RELATION and not a parent table: a storey can have two rooms under it.
+##
+## Symmetric by construction and asserted symmetric by `tower_interior_selfcheck`
+## check 9, so a half-written row fails the build rather than the frame. A new plan
+## storey appends `[previous, next]` here — the same one-line edit `FLOOR_Y` takes,
+## in the same file, and the check names this table if you forget.
+const FLOOR_NEIGHBOURS: Array[Array] = [
+	[1, 2],     # 0 entry hall + courtyard + THE ANNULUS — the mezzanine over the
+	            #   keep, and storey 3's slab over everything else
+	[0, 2],     # 1 the keep's upper landing — the hall below, that same slab above
+	[0, 1, 3],  # 2 storey 3 — its slab caps the annulus AND the keep
+	[2, 4],     # 3 storey 4
+	[3],        # 4 storey 5 — open to the shell's roof, nothing above it yet
+]
+
 ## How much clear air a plan ramp keeps under the slab it climbs towards.
 ##
 ## The player's capsule is 2.0 m; 2.2 is that plus a margin. It is what sizes the
@@ -3114,18 +3141,26 @@ func _update_visibility() -> bool:
 
 static func inside_walls(local: Vector3) -> bool:
 	"""
-	Is this interior-local point within the keep's walls — i.e. in a ROOM?
+	Is this interior-local point within the building's walls — i.e. in a ROOM?
 
-	The footprint is the shell's inner faces (`INNER_HALF` on both axes) and the
-	ceiling is the top of its wall: everything the interior builds, the cell-block
-	wing included, lives inside that box, so there is nothing to enumerate and a
-	new room joins for free. The height term is what keeps Windman's Air Rush from
-	reporting "indoors" while he is sightseeing over the parapet.
+	The footprint is the ENVELOPE's inner faces (`TowerPlans.PLAN_HALF` on both
+	axes) and the ceiling is the top of its wall: everything the interior builds —
+	the cell-block wing, and since phase 14 three 80 m storeys and the annulus they
+	roofed — lives inside that box, so there is nothing to enumerate and a new room
+	joins for free. The height term is what keeps Windman's Air Rush from reporting
+	"indoors" while he is sightseeing over the parapet.
+
+	IT WAS THE 20 m KEEP UNTIL PHASE 14, and left that way it would have answered
+	"outdoors" in every one of the twenty-eight new offices: the indoor boom never
+	shortens, and the spring arm collapses into the back of a head in a 4.6 m room.
+	(codex review, 2026-08-29.) The KEEP is still the narrowest indoor space in the
+	building, so it is still what check 4 sizes the boom against — widening the
+	predicate does not widen the room the boom has to fit in.
 
 	Pure, allocation-free and three compares — `biome_at()`'s idiom, and safe to
 	call every tick.
 	"""
-	return absf(local.x) <= INNER_HALF and absf(local.z) <= INNER_HALF \
+	return absf(local.x) <= TowerPlans.PLAN_HALF and absf(local.z) <= TowerPlans.PLAN_HALF \
 			and local.y <= TowerShell.WALL_HEIGHT
 
 
@@ -3149,8 +3184,22 @@ static func current_floor(local_y: float) -> int:
 
 
 static func _floor_visible(index: int, current: int) -> bool:
-	"""The gating policy itself: the current storey and its two neighbours."""
-	return absi(index - current) <= 1
+	"""
+	The gating policy itself: the current storey and every storey it TOUCHES.
+
+	Adjacency is read out of `FLOOR_NEIGHBOURS` rather than computed as
+	`absi(index - current) <= 1`, because this building is not a stack of equal
+	slabs — read that table for the mezzanine that broke the arithmetic.
+
+	At most FOUR storey meshes are drawn (from storey 3, which has the annulus, the
+	keep's landing and storey 4 against it); everywhere else it is three or two.
+	`DRAW_BUDGET` counts meshes BUILT, not drawn, so that number is unaffected —
+	what it costs is one more batched draw call on the one floor that touches three
+	others, which is the price of not shipping invisible stone.
+	"""
+	if index == current:
+		return true
+	return FLOOR_NEIGHBOURS[current].has(index)
 
 
 # ============================================================================
