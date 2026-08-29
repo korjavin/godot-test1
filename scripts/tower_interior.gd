@@ -643,8 +643,29 @@ const MOVING_PARTS: Array[String] = [
 ## BIOME_BOSS and endless_terrain's hunter spawner) — a guard belongs to no biome
 ## and no road station, so a reachability check over the dispatch maps alone would
 ## report a shipped, working predator as one nothing can spawn.
-const GUARD_SCENE: PackedScene = preload("res://scenes/characters/tower_guard.tscn")
+##
+## A PATH AND A LAZY `load()`, NOT A `preload()` CONST, and that is a cold-cache
+## bug rather than a preference. `endless_terrain.gd` preloads BOTH the crocodile
+## scene and `tower_interior.tscn`, so a `preload` here closes a diamond onto
+## `piglet_crocodile_ai.gd`: on a cold `.godot/` the AI script is still mid-load
+## when this scene's `[ext_resource]` is resolved, and the engine answers
+## "referenced non-existent resource" — a parse error that leaves every guard scene
+## in the process unloadable while a warm cache passes. It cost CI run 33231844780
+## to find, which is exactly the kind of thing a warm working copy cannot show you.
+## Resolved once per process by `guard_scene()` below; `ResourceLoader` caches the
+## rest.
+const GUARD_SCENE_PATH: String = "res://scenes/characters/tower_guard.tscn"
 const GUARD_SPECIES: String = "tower_guard"
+
+## The resolved scene, once per process. `static` rather than per-instance for the
+## same reason `_materials` is: there is one tower, but a self-check builds a dozen.
+static var _guard_scene: PackedScene = null
+
+static func guard_scene() -> PackedScene:
+	"""The guard scene, loaded on first use. Null only if the file is missing."""
+	if _guard_scene == null:
+		_guard_scene = load(GUARD_SCENE_PATH) as PackedScene
+	return _guard_scene
 
 ## How far above its post a guard is dropped in. Small on purpose: every storey is
 ## flat, so there is nothing to clear — this is only enough that the body starts
@@ -2085,11 +2106,12 @@ func reset_guards() -> void:
 	_guards.name = "Guards"
 	add_child(_guards)
 
-	if GUARD_SCENE == null:
+	var scene := guard_scene()
+	if scene == null:
 		return
 	for i in GUARD_POSTS.size():
 		var authored: Dictionary = GUARD_POSTS[i]
-		var guard := GUARD_SCENE.instantiate() as Node3D
+		var guard := scene.instantiate() as Node3D
 		# Deterministic, and stable across a reset: `croc_id_for()` hashes the node
 		# name, so the same post is the same id every time the population is rebuilt
 		# — which is what a multiplayer relay needs from a body it did not spawn.

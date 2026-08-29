@@ -246,6 +246,7 @@ var _hunter_scene: PackedScene = null
 ## spawner alone would report it as a species nothing can spawn. Read, never
 ## restated, exactly like the hunter's pair.
 var _guard_species: String = ""
+var _guard_scene_path: String = ""
 var _guard_scene: PackedScene = null
 var _guard_posts: Array = []
 
@@ -336,7 +337,12 @@ func _run() -> void:
 	# back to being unreachable and check 4 says so by name.
 	var tower_consts: Dictionary = load(TOWER_INTERIOR_SCRIPT).get_script_constant_map()
 	_guard_species = String(tower_consts.get("GUARD_SPECIES", ""))
-	_guard_scene = tower_consts.get("GUARD_SCENE", null) as PackedScene
+	# The PATH, then the load — TowerInterior deliberately does not `preload` the
+	# guard scene (a cold-cache load-order diamond through the crocodile AI; see the
+	# note on GUARD_SCENE_PATH), so this check resolves it the same way the tower
+	# does rather than reaching for a const that is not allowed to exist.
+	_guard_scene_path = String(tower_consts.get("GUARD_SCENE_PATH", ""))
+	_guard_scene = (load(_guard_scene_path) as PackedScene) if _guard_scene_path != "" else null
 	_guard_posts = tower_consts.get("GUARD_POSTS", [])
 	_biome_species = consts.get("BIOME_SPECIES", {})
 	_biome_boss = consts.get("BIOME_BOSS", {})
@@ -572,8 +578,9 @@ func _check_species_table() -> void:
 					% _guard_species + " — every guard the tower stands up would"
 					+ " silently fall back to a crocodile's numbers")
 		if _guard_scene == null:
-			_fail("TowerInterior.GUARD_SCENE did not resolve to a PackedScene —"
-					+ " the tower has nothing to instantiate its guards from")
+			_fail("TowerInterior.GUARD_SCENE_PATH ('%s') did not resolve to a"
+					% _guard_scene_path + " PackedScene — the tower has nothing to"
+					+ " instantiate its guards from")
 		if _guard_posts.is_empty():
 			_fail("TowerInterior.GUARD_POSTS is empty — the row is in the table and"
 					+ " the scene loads, but no guard is ever stood up, so the"
