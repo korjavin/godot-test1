@@ -1254,20 +1254,20 @@ func _check_the_flood_fill_can_fail() -> void:
 			"characters wide")
 	# A character nobody taught the builder.
 	_control("an illegal character", _cell_at(base, 2, 2, "@"), "not a legal plan character")
-	# The doorway into office A, walled up: check 1 still binds the room, and only
-	# the fill can tell that nobody can get in.
+	# The two-cell doorway into the north-west record stack, walled up: check 1
+	# still binds the room, and only the fill can tell that nobody can get in.
 	_control("a walled-off room",
-			_cell_at(_cell_at(base, 8, 12, TowerPlans.WALL_CHAR), 9, 12, TowerPlans.WALL_CHAR),
+			_cell_at(_cell_at(base, 6, 18, TowerPlans.WALL_CHAR), 7, 18, TowerPlans.WALL_CHAR),
 			"cannot be walked to")
 	# The landing moved off the lane's end, into the middle of the floor.
-	var moved := _cell_at(base, 20, 6, TowerPlans.FLOOR_CHAR)
-	moved = _cell_at(moved, 20, 7, TowerPlans.FLOOR_CHAR)
+	var moved := _cell_at(base, 15, 1, TowerPlans.FLOOR_CHAR)
+	moved = _cell_at(moved, 15, 2, TowerPlans.FLOOR_CHAR)
 	moved = _cell_at(moved, 20, 20, TowerPlans.LANDING_CHAR)
 	_control("a landing off the lane's end", moved, "short end")
 	# The lane one cell shorter: 9 cells of run for 11 m of rise is 0.63, over the
 	# phase-3 ramp's proven 0.575.
-	var short_lane := _cell_at(base, 10, 6, TowerPlans.FLOOR_CHAR)
-	short_lane = _cell_at(short_lane, 10, 7, TowerPlans.FLOOR_CHAR)
+	var short_lane := _cell_at(base, 14, 1, TowerPlans.FLOOR_CHAR)
+	short_lane = _cell_at(short_lane, 14, 2, TowerPlans.FLOOR_CHAR)
 	_control("a lane one cell short", short_lane, "steeper than")
 	# The grand ramp redrawn across the middle of the annulus, where the keep is.
 	var in_keep: Dictionary = base.duplicate(true)
@@ -1276,13 +1276,13 @@ func _check_the_flood_fill_can_fail() -> void:
 	var lane_row := TowerPlans.WALL_CHAR + TowerPlans.FLOOR_CHAR.repeat(15) \
 			+ TowerPlans.STAIR_UP_CHAR.repeat(10) + TowerPlans.LANDING_CHAR \
 			+ TowerPlans.FLOOR_CHAR.repeat(12) + TowerPlans.WALL_CHAR
-	in_keep["rows"][6] = clear_row
-	in_keep["rows"][7] = clear_row
+	in_keep["rows"][1] = clear_row
+	in_keep["rows"][2] = clear_row
 	in_keep["rows"][21] = lane_row
 	in_keep["rows"][22] = lane_row
 	_control("a grand ramp drawn through the keep", in_keep, "inside the keep")
 	# A pad moved out into the corridor, beside nothing.
-	var stray := _cell_at(base, 8, 15, "A")
+	var stray := _cell_at(base, 6, 10, "A")
 	stray = _cell_at(stray, 20, 20, TowerPlans.PAD_CHAR)
 	_control("a pad beside no room", stray, "not beside a room")
 

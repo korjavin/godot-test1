@@ -327,10 +327,13 @@ const PLAN_RAMP_MAX_SLOPE: float = SLAB_Y / (SLAB_X0 - RAMP_X0)
 ## those is a collision shape as well as a box, and the collision body is the one
 ## thing in this building that is not batched.
 ##
-## MEASURED, not guessed: see the per-storey line `tower_interior_selfcheck`
-## prints. The number is set from the authored floors with room for a designer to
-## add rooms, and biting well before a merge failure could go unnoticed.
-const PLAN_BOX_BUDGET: int = 120
+## MEASURED, not guessed: the three authored floors emit 39, 43 and 47 boxes for
+## 1108, 1004 and 1108 walkable cells apiece — an average of one box per 24 cells,
+## which is what a merge that is working looks like. 90 is a shade under twice the
+## worst of them: a designer can double storey 4's twelve offices and stay inside
+## it, while a plan whose walls stopped merging blows through it on the first row
+## (an unmerged 40-cell wall is 40 boxes on its own).
+const PLAN_BOX_BUDGET: int = 90
 
 ## The demand gate's vault, off the hall's south end. The shutter fills the gap
 ## between the two jambs and sinks its own full height to open.

@@ -124,66 +124,230 @@ const GATE_CHAR: String = "D"
 
 const STOREYS: Array[Dictionary] = [
 	# ------------------------------------------------------------------------
-	# PLACEHOLDER (phase 14, task 1). A bare box with the grand ramp, its
-	# landing and two offices — just enough shape for the builder and the two
-	# audits to have something real to chew on while they are written. The
-	# authored office floors replace it in task 8.
+	# STOREY 3 (floor 2) — THE RECORDS FLOOR, and the first floor above the keep.
 	#
-	# The ramp lane is ten cells of X (19.40 m) for the 11.0 m rise off the
-	# annulus floor: slope 0.567, a shade under the phase-3 ramp's proven 0.575.
-	# It sits at |z| > 23 m, so it is well clear of both the keep (10 m) and the
-	# door corridor that runs east from it.
+	# The grand ramp climbs the ANNULUS from the courtyard floor: ten cells of X
+	# (19.40 m) for an 11.0 m rise, slope 0.567 against the phase-3 ramp's proven
+	# 0.575. Its lane runs along the north ring corridor at z about -35 m, which is
+	# 25 m clear of the keep and nowhere near the door corridor that runs east from
+	# the keep's doorway — both asserted, because getting either wrong walls the
+	# player out of the building they just walked into.
+	#
+	# The floor is a two-cell RING CORRIDOR round the outside and a two-cell CROSS
+	# down each axis, so every room has two ways back to the landing and no dead end
+	# is longer than one room. Eight long stacks hang off it, two per quadrant, each
+	# entered through a two-cell hole in the wall it shares with the cross corridor.
 	# ------------------------------------------------------------------------
 	{
 		"floor": 2,
 		"from": 0,
 		"landing": "s3_landing",
-		"rooms": {"A": "s3_office_a", "B": "s3_office_b"},
+		"rooms": {
+			"A": "s3_records_west",
+			"B": "s3_records_east",
+			"C": "s3_permits_west",
+			"E": "s3_permits_east",
+			"F": "s3_archive_west",
+			"H": "s3_archive_east",
+			"I": "s3_evidence_west",
+			"J": "s3_evidence_east",
+		},
+		"gates": {},
+		"rows": [
+			"########################################",
+			"#....SSSSSSSSSSs.......................#",
+			"#....SSSSSSSSSSs.......................#",
+			"#..################..################..#",
+			"#..#AAAAAA##BBBBBB#..#CCCCCC##EEEEEE#..#",
+			"#..#AAAAAA##BBBBBB#..#CCCCCC##EEEEEE#..#",
+			"#..#AAAAAA##BBBBBB#..#CCCCCC##EEEEEE#..#",
+			"#..#AAAAAA##BBBBBB#..#CCCCCC##EEEEEE#..#",
+			"#..#AAAAAA##BBBBBB#..#CCCCCC##EEEEEE#..#",
+			"#..#AAAAAA##BBBBBB#..#CCCCCC##EEEEEE#..#",
+			"#..#AAPAAA##BBBBBB#..#CCCCCC##EEEEEE#..#",
+			"#..#AAAAAA##BBBBBB#..#CCCCCC##EEEEEE#..#",
+			"#..#AAAAAA##BBBBBB#..#CCCCCC##EEEEEE#..#",
+			"#..#AAAAAA##BBBBBB#..#CCCCCC##EEEEEE#..#",
+			"#..#AAAAAA##BBBBBB#..#CCCCCC##EEEEEE#..#",
+			"#..#AAAAAA##BBBBBB#..#CCCCCC##EEEEEE#..#",
+			"#..#AAAAAA##BBBBBB#..#CCCCCC##EEEEEE#..#",
+			"#..#AAAAAA##BBBBBB#..#CCCCCC##EEEEEE#..#",
+			"#..###AA######BB###..###CC######EE###..#",
+			"#......................................#",
+			"#......................................#",
+			"#..###FF######HH###..###II######JJ###..#",
+			"#..#FFFFFF##HHHHHH#..#IIIIII##JJJJJJ#..#",
+			"#..#FFFFFF##HHHHHH#..#IIIIII##JJJJJJ#..#",
+			"#..#FFFFFF##HHHHHH#..#IIIIII##JJJJJJ#..#",
+			"#..#FFFFFF##HHHHHH#..#IIIIII##JJJJJJ#..#",
+			"#..#FFFFFF##HHHHHH#..#IIIIII##JJJJJJ#..#",
+			"#..#FFFFFF##HHHHHH#..#IIIIII##JJJJJJ#..#",
+			"#..#FFFFFF##HHHHHH#..#IIIIII##JJPJJJ#..#",
+			"#..#FFFFFF##HHHHHH#..#IIIIII##JJJJJJ#..#",
+			"#..#FFFFFF##HHHHHH#..#IIIIII##JJJJJJ#..#",
+			"#..#FFFFFF##HHHHHH#..#IIIIII##JJJJJJ#..#",
+			"#..#FFFFFF##HHHHHH#..#IIIIII##JJJJJJ#..#",
+			"#..#FFFFFF##HHHHHH#..#IIIIII##JJJJJJ#..#",
+			"#..#FFFFFF##HHHHHH#..#IIIIII##JJJJJJ#..#",
+			"#..#FFFFFF##HHHHHH#..#IIIIII##JJJJJJ#..#",
+			"#..################..################..#",
+			"#......................................#",
+			"#......................................#",
+			"########################################",
+		],
+		"note": "Storey 3, the records floor: the grand ramp off the annulus, a "
+			+ "ring and cross corridor, and eight long record stacks two to a "
+			+ "quadrant.",
+	},
+	# ------------------------------------------------------------------------
+	# STOREY 4 (floor 3) — THE ACCOUNTS FLOOR. Same skeleton, finer grain: twelve
+	# small offices, three to a quadrant, which is what an admin floor of an 80 m
+	# building looks like and what stresses `_merge_walls` hardest (every partition
+	# is a separate run).
+	#
+	# Its ramp rises off storey 3's north ring corridor — five cells for the 5.0 m
+	# storey (slope 0.516) — so the two stairwells are one above the other in the
+	# same corridor and the lane below is floor somebody can stand on. That is
+	# asserted, not eyeballed: `tower_selfcheck` reads the cell under every lane cell
+	# out of the storey below's own grid.
+	# ------------------------------------------------------------------------
+	{
+		"floor": 3,
+		"from": 2,
+		"landing": "s4_landing",
+		"rooms": {
+			"A": "s4_accounts_a",
+			"B": "s4_accounts_b",
+			"C": "s4_accounts_c",
+			"E": "s4_payroll_a",
+			"F": "s4_payroll_b",
+			"H": "s4_payroll_c",
+			"I": "s4_supply_a",
+			"J": "s4_supply_b",
+			"K": "s4_supply_c",
+			"L": "s4_dispatch_a",
+			"M": "s4_dispatch_b",
+			"N": "s4_dispatch_c",
+		},
+		"gates": {},
+		"rows": [
+			"########################################",
+			"#........................SSSSSs........#",
+			"#........................SSSSSs........#",
+			"#..################..################..#",
+			"#..#AAA##BBB##CCCC#..#EEE##FFF##HHHH#..#",
+			"#..#AAA##BBB##CCCC#..#EEE##FFF##HHHH#..#",
+			"#..#AAA##BBB##CCCC#..#EEE##FFF##HHHH#..#",
+			"#..#AAA##BBB##CCCC#..#EEE##FFF##HHHH#..#",
+			"#..#AAA##BBB##CCCC#..#EEE##FFF##HHHH#..#",
+			"#..#AAA##BBB##CCCC#..#EEE##FFF##HHHH#..#",
+			"#..#APA##BBB##CCCC#..#EEE##FFF##HHHH#..#",
+			"#..#AAA##BBB##CCCC#..#EEE##FFF##HHHH#..#",
+			"#..#AAA##BBB##CCCC#..#EEE##FFF##HHHH#..#",
+			"#..#AAA##BBB##CCCC#..#EEE##FFF##HHHH#..#",
+			"#..#AAA##BBB##CCCC#..#EEE##FFF##HHHH#..#",
+			"#..#AAA##BBB##CCCC#..#EEE##FFF##HHHH#..#",
+			"#..#AAA##BBB##CCCC#..#EEE##FFF##HHHH#..#",
+			"#..#AAA##BBB##CCCC#..#EEE##FFF##HHHH#..#",
+			"#..#AA###BB###CC###..#EE###FF###HH###..#",
+			"#......................................#",
+			"#......................................#",
+			"#..#II###JJ###KK###..#LL###MM###NN###..#",
+			"#..#III##JJJ##KKKK#..#LLL##MMM##NNNN#..#",
+			"#..#III##JJJ##KKKK#..#LLL##MMM##NNNN#..#",
+			"#..#III##JJJ##KKKK#..#LLL##MMM##NNNN#..#",
+			"#..#III##JJJ##KKKK#..#LLL##MMM##NNNN#..#",
+			"#..#III##JJJ##KKKK#..#LLL##MMM##NNNN#..#",
+			"#..#III##JJJ##KKKK#..#LLL##MMM##NNNN#..#",
+			"#..#III##JJJ##KKKK#..#LLL##MMM##NPNN#..#",
+			"#..#III##JJJ##KKKK#..#LLL##MMM##NNNN#..#",
+			"#..#III##JJJ##KKKK#..#LLL##MMM##NNNN#..#",
+			"#..#III##JJJ##KKKK#..#LLL##MMM##NNNN#..#",
+			"#..#III##JJJ##KKKK#..#LLL##MMM##NNNN#..#",
+			"#..#III##JJJ##KKKK#..#LLL##MMM##NNNN#..#",
+			"#..#III##JJJ##KKKK#..#LLL##MMM##NNNN#..#",
+			"#..#III##JJJ##KKKK#..#LLL##MMM##NNNN#..#",
+			"#..################..################..#",
+			"#......................................#",
+			"#......................................#",
+			"########################################",
+		],
+		"note": "Storey 4, the accounts floor: twelve small offices, three to a "
+			+ "quadrant, off the same ring-and-cross skeleton.",
+	},
+	# ------------------------------------------------------------------------
+	# STOREY 5 (floor 4) — THE EXECUTIVE FLOOR, and the top of the building for now.
+	# Eight deep suites split the other way (on Z, two to a quadrant) and open onto
+	# the ring corridor rather than the cross, so the floor reads as a different
+	# plan and not as storey 3 with the letters changed.
+	#
+	# Its ramp rises out of storey 4's SOUTH CROSS corridor, so the three stairs
+	# walk the building rather than stacking in one shaft.
+	#
+	# ponytail: this storey has NO CEILING. It is open to the sealed roof 29 m
+	# above, which is the honest state of a building whose storeys 6-10 are phase 16.
+	# It costs nothing today: a 4.6 m wall top is a metre above the jump apex, so
+	# there is nothing up there to climb onto. Storeys 6+ are what closes it.
+	# ------------------------------------------------------------------------
+	{
+		"floor": 4,
+		"from": 3,
+		"landing": "s5_landing",
+		"rooms": {
+			"A": "s5_boardroom",
+			"B": "s5_secretariat",
+			"C": "s5_directors_north",
+			"E": "s5_directors_south",
+			"F": "s5_legal",
+			"H": "s5_audit",
+			"I": "s5_lounge",
+			"J": "s5_press_room",
+		},
 		"gates": {},
 		"rows": [
 			"########################################",
 			"#......................................#",
 			"#......................................#",
-			"#......................................#",
-			"#......................................#",
-			"#......................................#",
-			"#.........SSSSSSSSSSs..................#",
-			"#.........SSSSSSSSSSs..................#",
-			"#......................................#",
-			"#......................................#",
-			"#......................................#",
-			"#......................................#",
-			"#...####..####............####..####...#",
-			"#...#AAAAAAAA#............#BBBBBBBB#...#",
-			"#...#AAAAAAAA#............#BBBBBBBB#...#",
-			"#...#AAAPAAAA#............#BBBPBBBB#...#",
-			"#...#AAAAAAAA#............#BBBBBBBB#...#",
-			"#...#AAAAAAAA#............#BBBBBBBB#...#",
-			"#...#AAAAAAAA#............#BBBBBBBB#...#",
-			"#...##########............##########...#",
-			"#......................................#",
-			"#......................................#",
-			"#......................................#",
-			"#......................................#",
-			"#......................................#",
-			"#......................................#",
-			"#......................................#",
-			"#......................................#",
-			"#......................................#",
-			"#......................................#",
-			"#......................................#",
-			"#......................................#",
-			"#......................................#",
-			"#......................................#",
-			"#......................................#",
-			"#......................................#",
-			"#......................................#",
+			"#..################..################..#",
+			"#..#AAAAAAAAAAAAAA#..#CCCCCCCCCCCCCC#..#",
+			"#..#AAAAAAAAAAAAAA#..#CCCCCCCCCCCCCC#..#",
+			"#..AAAAAPAAAAAAAAA#..#CCCCCCCCCCCCCCC..#",
+			"#..AAAAAAAAAAAAAAA#..#CCCCCCCCCCCCCCC..#",
+			"#..#AAAAAAAAAAAAAA#..#CCCCCCCCCCCCCC#..#",
+			"#..#AAAAAAAAAAAAAA#..#CCCCCCCCCCCCCC#..#",
+			"#..################..################..#",
+			"#..################..################..#",
+			"#..#BBBBBBBBBBBBBB#..#EEEEEEEEEEEEEE#..#",
+			"#..#BBBBBBBBBBBBBB#..#EEEEEEEEEEEEEE#..#",
+			"#..BBBBBBBBBBBBBBB#..#EEEEEEEEEEEEEEE..#",
+			"#..BBBBBBBBBBBBBBB#..#EEEEEEEEEEEEEEE..#",
+			"#..#BBBBBBBBBBBBBB#..#EEEEEEEEEEEEEE#..#",
+			"#..#BBBBBBBBBBBBBB#..#EEEEEEEEEEEEEE#..#",
+			"#..################..################..#",
+			"#........................SSSSSs........#",
+			"#........................SSSSSs........#",
+			"#..################..################..#",
+			"#..#FFFFFFFFFFFFFF#..#IIIIIIIIIIIIII#..#",
+			"#..#FFFFFFFFFFFFFF#..#IIIIIIIIIIIIII#..#",
+			"#..FFFFFFFFFFFFFFF#..#IIIIIIIIIIIIIII..#",
+			"#..FFFFFFFFFFFFFFF#..#IIIIIIIIIIIIIII..#",
+			"#..#FFFFFFFFFFFFFF#..#IIIIIIIIIIIIII#..#",
+			"#..#FFFFFFFFFFFFFF#..#IIIIIIIIIIIIII#..#",
+			"#..################..################..#",
+			"#..################..################..#",
+			"#..#HHHHHHHHHHHHHH#..#JJJJJJJJJJJJJJ#..#",
+			"#..#HHHHHHHHHHHHHH#..#JJJJJJJJJJJJJJ#..#",
+			"#..HHHHHHHHHHHHHHH#..#JJJJJJJJJJJJJJJ..#",
+			"#..HHHHHHHHHHHHHHH#..#JJJJJJJJJPJJJJJ..#",
+			"#..#HHHHHHHHHHHHHH#..#JJJJJJJJJJJJJJ#..#",
+			"#..#HHHHHHHHHHHHHH#..#JJJJJJJJJJJJJJ#..#",
+			"#..################..################..#",
 			"#......................................#",
 			"#......................................#",
 			"########################################",
 		],
-		"note": "Placeholder storey 3: the grand ramp off the annulus, its landing "
-			+ "and two offices. Replaced by the authored office floors in task 8.",
+		"note": "Storey 5, the executive floor: eight deep suites opening onto the "
+			+ "ring corridor. Open to the shell roof until storey 6 lands.",
 	},
 ]
 

@@ -222,7 +222,7 @@ const TOWER_GRAPH: Dictionary = {
 		"cell_phoboman": {"built": true, "quest": "", "cell": "phoboman",
 			"parts": ["CellFramePhoboman"]},
 
-		# --- built, phase 14: the annulus and the first hand-planned storey ---
+		# --- built, phase 14: the annulus and the three hand-planned storeys ---
 		# The annulus was never a room here: the front door's entry row lands
 		# straight in `entry_hall`, which is strictly harsher than the truth and so
 		# changed no verdict. Storey 3's grand ramp starts out here, so the space
@@ -237,15 +237,132 @@ const TOWER_GRAPH: Dictionary = {
 		# in both directions: a letter with no row, or a row no floor draws, fails.
 		"s3_landing": {
 			"built": true, "quest": "", "cell": "", "parts": [],
-			"note": "Head of the grand ramp, and the flood-fill's start cell on storey 3.",
+			"note": "Head of the grand ramp on storey 3, where the ring corridor "
+				+ "and both cross corridors meet. Every room on the floor hangs "
+				+ "off it.",
 		},
-		"s3_office_a": {
+		"s3_records_west": {
 			"built": true, "quest": "", "cell": "", "parts": [],
-			"note": "West office off the storey-3 landing.",
+			"note": "Records, west stack. Long room off the north cross corridor.",
 		},
-		"s3_office_b": {
+		"s3_records_east": {
 			"built": true, "quest": "", "cell": "", "parts": [],
-			"note": "East office off the storey-3 landing.",
+			"note": "Records, east stack. Its twin across the partition.",
+		},
+		"s3_permits_west": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "Permits, west stack — the paperwork a gastro licence needs.",
+		},
+		"s3_permits_east": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "Permits, east stack. Carries one of the floor's two pads.",
+		},
+		"s3_archive_west": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "Archive, west stack, off the south cross corridor.",
+		},
+		"s3_archive_east": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "Archive, east stack.",
+		},
+		"s3_evidence_west": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "Evidence store, west stack — what the corporation keeps on people.",
+		},
+		"s3_evidence_east": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "Evidence store, east stack. Carries the floor's second pad.",
+		},
+		"s4_landing": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "Head of the storey-4 ramp, in the north ring corridor directly "
+				+ "over storey 3's own stairwell.",
+		},
+		"s4_accounts_a": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "Accounts, first of three offices in the north-west block.",
+		},
+		"s4_accounts_b": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "Accounts, second office. Carries one of the floor's two pads.",
+		},
+		"s4_accounts_c": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "Accounts, third and widest office of the block.",
+		},
+		"s4_payroll_a": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "Payroll, first office of the north-east block.",
+		},
+		"s4_payroll_b": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "Payroll, second office.",
+		},
+		"s4_payroll_c": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "Payroll, third office.",
+		},
+		"s4_supply_a": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "Supply, first office of the south-west block.",
+		},
+		"s4_supply_b": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "Supply, second office.",
+		},
+		"s4_supply_c": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "Supply, third office.",
+		},
+		"s4_dispatch_a": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "Dispatch, first office of the south-east block.",
+		},
+		"s4_dispatch_b": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "Dispatch, second office.",
+		},
+		"s4_dispatch_c": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "Dispatch, third office. Carries the floor's second pad.",
+		},
+		"s5_landing": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "Head of the storey-5 ramp, in storey 4's south cross corridor. "
+				+ "The top of the building until phase 16 opens storeys 6-10.",
+		},
+		"s5_boardroom": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "The boardroom. Deep suite on the north-west, opening onto the "
+				+ "west ring corridor. Carries one of the floor's two pads.",
+		},
+		"s5_secretariat": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "The secretariat, south of the boardroom and sharing its wall.",
+		},
+		"s5_directors_north": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "Directors' suite, north half of the east side.",
+		},
+		"s5_directors_south": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "Directors' suite, south half.",
+		},
+		"s5_legal": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "Legal, on the south-west, off the west ring corridor.",
+		},
+		"s5_audit": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "Audit, the south-west corner suite. Carries the floor's second pad.",
+		},
+		"s5_lounge": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "The executive lounge, south-east.",
+		},
+		"s5_press_room": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "The press room, the south-east corner suite.",
 		},
 	},
 
@@ -294,16 +411,75 @@ const TOWER_GRAPH: Dictionary = {
 		{"id": "gallery_cell_phoboman", "a": "cell_gallery", "b": "cell_phoboman",
 			"gate": "", "built": true},
 
-		# --- phase 14: out into the annulus and up the grand ramp. All UNGATED:
-		# the new storeys are optional space, the four rescue spines still run
-		# through the phase-8 wing, and every subset's verdict is unchanged. ---
+		# --- phase 14: out into the annulus and up the three storeys. Every one
+		# of these is UNGATED: the new floors are optional space, the four rescue
+		# spines still run through the phase-8 wing, and every subset's verdict is
+		# unchanged. Phase 15 is what starts hanging riddles up here. ---
 		{"id": "hall_outer", "a": "entry_hall", "b": "outer_hall",
 			"gate": "", "built": true},
 		{"id": "outer_s3", "a": "outer_hall", "b": "s3_landing",
 			"gate": "", "built": true},
-		{"id": "s3_landing_office_a", "a": "s3_landing", "b": "s3_office_a",
+		{"id": "s3_landing_records_west", "a": "s3_landing", "b": "s3_records_west",
 			"gate": "", "built": true},
-		{"id": "s3_landing_office_b", "a": "s3_landing", "b": "s3_office_b",
+		{"id": "s3_landing_records_east", "a": "s3_landing", "b": "s3_records_east",
+			"gate": "", "built": true},
+		{"id": "s3_landing_permits_west", "a": "s3_landing", "b": "s3_permits_west",
+			"gate": "", "built": true},
+		{"id": "s3_landing_permits_east", "a": "s3_landing", "b": "s3_permits_east",
+			"gate": "", "built": true},
+		{"id": "s3_landing_archive_west", "a": "s3_landing", "b": "s3_archive_west",
+			"gate": "", "built": true},
+		{"id": "s3_landing_archive_east", "a": "s3_landing", "b": "s3_archive_east",
+			"gate": "", "built": true},
+		{"id": "s3_landing_evidence_west", "a": "s3_landing", "b": "s3_evidence_west",
+			"gate": "", "built": true},
+		{"id": "s3_landing_evidence_east", "a": "s3_landing", "b": "s3_evidence_east",
+			"gate": "", "built": true},
+		# ...and up again, one ramp per storey. Both feet stand in the corridor
+		# of the floor below — asserted cell by cell against that floor's own grid.
+		{"id": "s3_s4", "a": "s3_landing", "b": "s4_landing",
+			"gate": "", "built": true},
+		{"id": "s4_landing_accounts_a", "a": "s4_landing", "b": "s4_accounts_a",
+			"gate": "", "built": true},
+		{"id": "s4_landing_accounts_b", "a": "s4_landing", "b": "s4_accounts_b",
+			"gate": "", "built": true},
+		{"id": "s4_landing_accounts_c", "a": "s4_landing", "b": "s4_accounts_c",
+			"gate": "", "built": true},
+		{"id": "s4_landing_payroll_a", "a": "s4_landing", "b": "s4_payroll_a",
+			"gate": "", "built": true},
+		{"id": "s4_landing_payroll_b", "a": "s4_landing", "b": "s4_payroll_b",
+			"gate": "", "built": true},
+		{"id": "s4_landing_payroll_c", "a": "s4_landing", "b": "s4_payroll_c",
+			"gate": "", "built": true},
+		{"id": "s4_landing_supply_a", "a": "s4_landing", "b": "s4_supply_a",
+			"gate": "", "built": true},
+		{"id": "s4_landing_supply_b", "a": "s4_landing", "b": "s4_supply_b",
+			"gate": "", "built": true},
+		{"id": "s4_landing_supply_c", "a": "s4_landing", "b": "s4_supply_c",
+			"gate": "", "built": true},
+		{"id": "s4_landing_dispatch_a", "a": "s4_landing", "b": "s4_dispatch_a",
+			"gate": "", "built": true},
+		{"id": "s4_landing_dispatch_b", "a": "s4_landing", "b": "s4_dispatch_b",
+			"gate": "", "built": true},
+		{"id": "s4_landing_dispatch_c", "a": "s4_landing", "b": "s4_dispatch_c",
+			"gate": "", "built": true},
+		{"id": "s4_s5", "a": "s4_landing", "b": "s5_landing",
+			"gate": "", "built": true},
+		{"id": "s5_landing_boardroom", "a": "s5_landing", "b": "s5_boardroom",
+			"gate": "", "built": true},
+		{"id": "s5_landing_secretariat", "a": "s5_landing", "b": "s5_secretariat",
+			"gate": "", "built": true},
+		{"id": "s5_landing_directors_north", "a": "s5_landing", "b": "s5_directors_north",
+			"gate": "", "built": true},
+		{"id": "s5_landing_directors_south", "a": "s5_landing", "b": "s5_directors_south",
+			"gate": "", "built": true},
+		{"id": "s5_landing_legal", "a": "s5_landing", "b": "s5_legal",
+			"gate": "", "built": true},
+		{"id": "s5_landing_audit", "a": "s5_landing", "b": "s5_audit",
+			"gate": "", "built": true},
+		{"id": "s5_landing_lounge", "a": "s5_landing", "b": "s5_lounge",
+			"gate": "", "built": true},
+		{"id": "s5_landing_press_room", "a": "s5_landing", "b": "s5_press_room",
 			"gate": "", "built": true},
 
 		# --- phase 7: the lift shaft. Exists only once `lift_activated` fires. ---

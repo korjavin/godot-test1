@@ -570,13 +570,14 @@ exists and is not walled off by a typo.
       ```
 
       Re-measure after task 8 replaces the placeholder with the three real storeys —
-      that is where the 30 s acceptance actually gets tested.
+      that is where the 30 s acceptance actually gets tested. (Task 8: **0.39 s**
+      unchanged, on 43 rooms and 47 edges.)
 
 ### Task 8: Author storeys 3, 4 and 5
 
 Only now, with the machinery green on the placeholder, write the real content.
 
-- [ ] Replace the placeholder `STOREYS` row with three real ones. Per the bead:
+- [x] Replace the placeholder `STOREYS` row with three real ones. Per the bead:
       **office floors — corridors, 8–12 rooms each, one stair per storey, two neutral
       rooms with a pad, NO gates.** Concretely, per storey:
       - a perimeter of `#` on the outermost ring (the plan's own wall, standing just
@@ -590,19 +591,45 @@ Only now, with the machinery green on the placeholder, write the real content.
       - exactly two `P` cells, in two different rooms.
       **Storey 3 additionally must leave the door corridor clear** (D5) and should read
       as the lobby floor that wraps the keep.
-- [ ] Add the `TOWER_GRAPH` rows: `outer_hall`, `hall_outer`, `outer_s3` (D6), then one
+      (Done. All three share one skeleton — a two-cell ring corridor and a two-cell
+      cross on each axis, so every room has two ways back — and differ in grain:
+      storey 3 is eight long record stacks split on X, storey 4 twelve small offices
+      three to a quadrant, storey 5 eight deep suites split on Z and opening onto the
+      ring instead of the cross. Storey 3's lane is ten cells along the north ring
+      corridor at z about -35 m: 25 m clear of the keep and 30 m clear of the door
+      corridor. Storeys 4 and 5 take five cells each, off storey 3's north ring
+      corridor and storey 4's south cross corridor respectively. Two pads per storey,
+      each inside a room; no `D` cells, per the phase's intent.)
+- [x] Add the `TOWER_GRAPH` rows: `outer_hall`, `hall_outer`, `outer_s3` (D6), then one
       room row per plan letter per storey and the ungated edges joining each to its
       storey's landing (directly or through a corridor room, as the plan actually
       reads). Every new row: `"built": true, "quest": "", "cell": "", "parts": []`, and
       a `note` that says what the room IS — the notes are the design record.
       Naming convention: `s3_*`, `s4_*`, `s5_*`, landings `s3_landing` etc.
-- [ ] Re-run the full self-check list. **Iterate on the ASCII until the flood-fill and
+      (Done: `outer_hall` / `hall_outer` / `outer_s3` were already in from task 1;
+      this task added 3 landings + 28 room rows, 28 ungated landing-to-room edges and
+      the two storey-to-storey ramp edges `s3_s4` and `s4_s5`. The placeholder's
+      `s3_office_a` / `s3_office_b` and their edges are gone. Graph is now 43 rooms and
+      47 edges. `tower_selfcheck`'s negative controls were re-anchored onto the new
+      storey 3's cells — the doorway at (6,18)/(7,18), the landing at (15,1)/(15,2),
+      the lane's last cell at (14,1)/(14,2) and the pad at (6,10).)
+- [x] Re-run the full self-check list. **Iterate on the ASCII until the flood-fill and
       the 15-subset audit are both green** — that loop is the point of this phase.
-- [ ] Measure and set `PLAN_BOX_BUDGET` from the real merged counts, with the numbers
+      (All 24 `scripts/*_selfcheck.gd` print `SELFCHECK OK`, exit 0. `tower_selfcheck`:
+      `3 storeys, 28 rooms, 3220 cells walkable, ramps 29.6, 27.3, 27.3 deg` and
+      `43 rooms, 47 edges, 8 gates, 2 entries, 2 scars — 15 subset walks clean`, 0.39 s.
+      `godot --headless --path . scenes/main.tscn --quit-after 120` boots clean.)
+- [x] Measure and set `PLAN_BOX_BUDGET` from the real merged counts, with the numbers
       and the reasoning in its comment (the shell's and the interior's budget comments
       are the models: say what the number *stops*).
-- [ ] Confirm `DRAW_BUDGET` 26 is exact — `_check_node_shape` prints the real mesh
+      (Measured 39 / 43 / 47 boxes for 1108 / 1004 / 1108 walkable cells — about one box
+      per 24 cells. `PLAN_BOX_BUDGET` 120 -> **90**, a shade under twice the worst
+      storey: room to double storey 4's twelve offices, and blown through on the first
+      row by a plan whose walls stopped merging.)
+- [x] Confirm `DRAW_BUDGET` 26 is exact — `_check_node_shape` prints the real mesh
       count; if a plan storey emitted two surfaces, find the glow colour and remove it.
+      (Exact: `tower interior: 26 meshes drawn (budget 26) for 185 boxes` — one
+      `Floor%dBatch` per plan storey and no second surface anywhere.)
 
 ### Task 9: Documentation and acceptance
 
