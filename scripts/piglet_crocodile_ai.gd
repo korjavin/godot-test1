@@ -4062,23 +4062,31 @@ func _behave_leap() -> void:
 	Nothing else in the file writes `velocity.y`, and nothing here writes
 	`global_position` — the feet come back to y = 0 by the arc, not by a settle.
 
-	THE LEASH BOUNDS THE JUMP, AND IT DOES SO BEFORE THE LAUNCH. A hop is
-	ballistic: once committed there is no steering left, so a boss that launched
-	toward a landing outside its own circle would either sail over its fence or be
-	yanked out of the air by `_clamp_to_territory()` — and "the boss never leaves
-	its area" is the one rule this whole family is built on. So the landing point
-	is PROJECTED (`leap_reach()` along the bearing to the quarry — the direction
-	`_chase_player` is about to take, and the outermost one the leash's steer will
-	allow) and asked the keystone's own `in_territory()` seam, never a hand-rolled
-	radius. Illegal landing, no hop: the boss keeps hunting on the ground, which is
-	the inherited boss behaviour it has when it is not mid-arc anyway, and it hops
-	again the moment a legal landing exists. The clock is NOT spent on a refusal —
-	a dragon pinned at its fence is not also being made to wait.
+	THE LEASH BOUNDS THE JUMP, AND IT DOES SO IN THREE PLACES — which is worth
+	being precise about, because only the VERTICAL half of a hop is ballistic. The
+	horizontal half is not: `_physics_process` re-drives `velocity.x/z` from the
+	body's facing every frame, airborne included, so a hop is steered by exactly
+	the same chase / avoid / leash chain a walk is. What a launch commits to is the
+	airtime, not the destination. So:
 
-	The hard `_clamp_to_territory()` after `move_and_slide` is untouched and still
-	the backstop, and it needs no y-awareness to be: it is measured on XZ, so it
-	contains a body mid-arc exactly as it contains one on the ground, and it zeroes
-	only the horizontal velocity — a clamped hop still falls and still lands.
+	  1. BEFORE THE LAUNCH, here. The landing point is PROJECTED — `leap_reach()`
+	     along the bearing to the quarry, i.e. where the hop goes if nothing bends
+	     it, which is the OUTERMOST landing the steer can produce — and asked the
+	     keystone's own `in_territory()` seam, never a hand-rolled radius. Illegal
+	     landing, no hop: the boss keeps hunting on the ground (the inherited boss
+	     behaviour it has whenever it is not mid-arc anyway) and bounds again the
+	     moment a legal landing exists. The clock is NOT spent on a refusal — a
+	     dragon pinned at its fence is not also being made to wait.
+	  2. DURING, by `_steer_within_territory()`, which runs below the dispatch and
+	     cancels the outward part of the heading for an airborne body exactly as it
+	     does for a walking one. Nothing here had to teach it about y.
+	  3. AFTER, by `_clamp_to_territory()`, still the hard backstop and still
+	     needing no y-awareness to be one: it is measured on XZ, so it contains a
+	     body mid-arc exactly as it contains one on the ground, and it zeroes only
+	     the horizontal velocity — a clamped hop still falls and still lands.
+
+	The pre-launch gate is what makes 2 and 3 rare rather than load-bearing: a boss
+	that never launches at its own fence is not one that keeps being caught at it.
 
 	MULTIPLAYER: a hop is MOTION. `_tick_remote()` returns long before the
 	dispatch, so a peer never runs this arm and simply replays the master's position
@@ -4106,9 +4114,15 @@ func _behave_leap() -> void:
 	burst_factor = float(spec.get("leap_recover_factor", 1.0))
 	var bearing := Vector3(chase_target.x - global_position.x, 0.0,
 			chase_target.z - global_position.z)
-	var landing := global_position
-	if bearing.length() > 0.01:
-		landing += bearing.normalized() * leap_reach(chase_speed_instance, spec)
+	if bearing.length() <= 0.01:
+		# STANDING ON THE QUARRY. There is no bearing to project along, and the
+		# tempting answer — project nothing, land where you are — is an UNGUARDED
+		# LAUNCH: the body still travels for the whole airtime, along its own
+		# facing, which three metres inside the fence is a hop straight through it.
+		# So project the facing, which is the direction the hop actually takes.
+		bearing = Vector3(sin(rotation.y), 0.0, cos(rotation.y))
+	var landing: Vector3 = global_position \
+			+ bearing.normalized() * leap_reach(chase_speed_instance, spec)
 	# `in_territory()` is meaningless on a non-boss (home_position is never
 	# captured there), so a hypothetical ordinary leaper is simply unleashed —
 	# the same shape as every other `is_boss` gate in this file.
