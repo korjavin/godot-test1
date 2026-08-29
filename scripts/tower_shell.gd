@@ -161,12 +161,19 @@ var entered: bool = false
 ##     `new_run()`, so "walk out of the tower and back in, gates still open" is a
 ##     property of where this variable lives rather than of anything remembering to
 ##     save it.
+##   * IT SURVIVES THE PROCESS. `_enter_tree()` hydrates it from
+##     `BestRunStore.tower_opened_ids()` and `mark_opened()` writes straight
+##     through, so "quit, relaunch, the gate is still open" needs nobody to
+##     remember to save either. That is phase 5, and it is four lines because the
+##     set was already the right shape.
 ##   * IT IS MONOTONE. Ids are only ever added — never removed, never re-closed —
-##     which is exactly the shape phase 5 needs to merge two saves with a union and
-##     no conflict rule.
+##     which is what lets two copies merge with a union and no conflict rule (see
+##     `BestRunStore.merge_tower_opened_ids`), and what stops a met demand gate
+##     from ever re-locking: earned progression must never become upkeep.
 ##
-## Ids are declared as consts on `TowerInterior` (`GATE_*`). They are persisted
-## verbatim by phase 5, so adding one is free and renaming one is a migration.
+## Ids are declared as consts on `TowerGraph` (`GATE_*`) and re-exported by
+## `TowerInterior`. THEY ARE PERSISTED VERBATIM, so adding one is free and
+## renaming one is a save migration.
 var opened: Dictionary = {}
 
 ## Albedo colour -> the one material of that colour, for the whole process.
@@ -377,13 +384,41 @@ func _ready() -> void:
 	add_child(door)
 
 
+func _enter_tree() -> void:
+	"""
+	Hydrate the opened set from the local save before anything can read it.
+
+	`_enter_tree` and not `_ready`, and that is the whole subtlety: ready
+	propagates CHILDREN FIRST, so `TowerInterior._ready()` — which calls
+	`_apply_opened()` to snap the gates to the set with no animation — runs before
+	this node's own `_ready()` would. `_enter_tree` propagates parent first, so the
+	set is loaded before the interior is built from it and a restored gate comes up
+	open on its first frame, exactly as check 8 of `tower_interior_selfcheck.gd`
+	asserts for a hand-seeded set.
+
+	The merge is a union into whatever is already here, so re-entering the tree
+	cannot lose an id opened while detached.
+	"""
+	for id: String in BestRunStore.tower_opened_ids():
+		opened[id] = true
+
+
 func mark_opened(id: String) -> void:
 	"""
 	Record a gate as open. Idempotent, and the only writer of `opened`.
 
-	@param id: One of `TowerInterior`'s `GATE_*` constants.
+	@param id: One of `TowerGraph`'s `GATE_*` constants.
+
+	WRITES THROUGH IMMEDIATELY, on the opening only. A gate opening is rare and
+	precious — a handful of times in a whole campaign — so there is nothing to
+	batch and everything to lose by deferring it to a flush a crash can eat. The
+	early return is what keeps it off any repeated path: re-marking an open gate,
+	including every id this shell just hydrated, touches no disk at all.
 	"""
+	if opened.has(id):
+		return
 	opened[id] = true
+	BestRunStore.merge_tower_opened_ids([id])
 
 
 func is_opened(id: String) -> bool:
