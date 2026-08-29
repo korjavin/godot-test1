@@ -68,7 +68,11 @@ extends SceneTree
 ##      teleports the party to is inside the service corridor, clear of every box
 ##      by a body radius, south of the spine wall, and leaves the spring arm room;
 ##      and the scar's rubble fills a doorway that is genuinely OPEN in the
-##      unscarred plan and genuinely stone once taken.
+##      unscarred plan and genuinely stone once taken. Check 17 then DRIVES the
+##      scene on a real building: containment re-shuts doors earlier rescues
+##      opened and stays shut, the right hero's pad releases it and the wrong
+##      hero's does not, the scene gives every earned door back on the way out,
+##      and the scar's rubble is drawn AND solid AND still there after a relaunch.
 ##   9. VISIBILITY GATING. Check 9 drives the policy directly at storey counts this
 ##      building does not have (so phase 8 inherits a correct gate rather than
 ##      discovering it needs one) and then confirms the live rig hides the whole
@@ -190,6 +194,7 @@ func _run() -> void:
 	await _check_earned_state_survives_a_relaunch()
 	_check_the_wing_has_no_way_round_it()
 	_check_the_custody_stand_and_the_scar()
+	await _check_the_custody_scene_runs()
 	await _check_spines_and_liberation()
 	await _check_guards_stand_their_posts()
 	await _check_guards_reset_on_re_entry()
@@ -1613,6 +1618,166 @@ func _spring_length() -> float:
 	var length := arm.spring_length if arm != null else 0.0
 	player.free()
 	return length
+
+
+# ============================================================================
+# CHECK 17 — the custody scene, driven (bead godot-test1-3iy.11)
+# ============================================================================
+
+func _check_the_custody_scene_runs() -> void:
+	"""
+	Check 17. Raised containment and the scar, on a real building under real frames.
+
+	CHECK 16 IS THE PLAN; THIS IS THE BUILDING. Every failure it catches is one
+	where the feature is shipped, green and INERT — the exact shape of bug that
+	survives a check which hands itself the input the game never supplies:
+
+	  a. containment that never comes down on doors a hundred rescues opened, so the
+	     break-out is walking three metres to a cell and there is no scene;
+	  b. containment that comes down and then TWEENS STRAIGHT BACK OPEN, because
+	     `_tick_gates` still believes the opened set — same outcome, one frame later;
+	  c. a pad that never RELEASES it, which is worse: the scene is unwinnable and
+	     every player loses their campaign to a bug;
+	  d. a pad that releases it for the WRONG HERO, which is (a) with extra steps;
+	  e. rubble that is recorded and never drawn, or drawn and never solid — the
+	     permanent consequence the whole bead is about, walked straight through.
+
+	All five are driven through the shipped verbs (`begin_lockdown`, the real pad
+	tick, `apply_scar`) on a tower assembled the way `endless_terrain` assembles it.
+	"""
+	_fresh_store()
+	var shell := await _make_tower()
+	var interior := shell.get_node_or_null("TowerInterior") as TowerInterior
+	if interior == null:
+		_fail("custody: the tower has no TowerInterior child")
+		await _clear(null, shell)
+		return
+
+	# A probe standing in the building, because `_process` gates everything on the
+	# player being near enough to draw — without one, every tick below is a no-op
+	# and every assertion after it would pass on any build at all.
+	var hero_body := ProbePlayer.new()
+	var shape := CollisionShape3D.new()
+	var box := BoxShape3D.new()
+	box.size = Vector3(0.8, 1.8, 0.8)
+	shape.shape = box
+	hero_body.add_child(shape)
+	hero_body.add_to_group("player")
+	root.add_child(hero_body)
+	hero_body.global_position = shell.global_position + TowerInterior.CUSTODY_STAND
+	await _settle_physics()
+
+	var door: Dictionary = TowerInterior.SPINE_DOORS[0]
+	var gate_id := String(door["gate"])
+	var wants := TowerGraph.identity_of(gate_id)
+	var wrong := "teibi" if wants != "teibi" else "windman"
+	var mass := interior.find_child(String(door["mass"]), true, false) as MeshInstance3D
+	var body := interior.get_node_or_null("InteriorCollision") as StaticBody3D
+	var mass_shape := body.get_node_or_null("%sShape" % String(door["mass"])) as CollisionShape3D
+	if mass == null or mass_shape == null:
+		_fail("custody: spine door '%s' has no mass or no collision shape" % gate_id)
+		await _clear(hero_body, shell)
+		return
+	var shut_y: float = mass.position.y
+	var open_y: float = shut_y - TowerInterior.SPINE_TRAVEL
+
+	# An EARLIER RESCUE opened this door for good, which is the only starting state
+	# in which raised containment means anything at all.
+	shell.mark_opened(gate_id)
+	for _i in 40:
+		interior._process(0.1)
+	if absf(mass.position.y - open_y) > 0.01:
+		_fail("custody: the earned door never opened, so nothing below is measured")
+
+	# (a) the protocol arrives and shuts it again.
+	interior.begin_lockdown()
+	if absf(mass.position.y - shut_y) > 0.01:
+		_fail("custody: containment was raised and '%s' stayed at %.2f m (open is %.2f) — "
+			% [gate_id, mass.position.y, open_y] + "the break-out has nothing to do")
+	if absf(mass_shape.position.y - mass.position.y) > EPS:
+		_fail("custody: '%s' shut visually and left its doorway walkable" % gate_id)
+
+	# (b) ...and it STAYS shut. The opened set still says this door is open, so a
+	#     `_tick_gates` that does not consult the lockdown re-opens it here.
+	for _i in 40:
+		interior._process(0.1)
+	if absf(mass.position.y - shut_y) > 0.01:
+		_fail("custody: '%s' tweened back open under lockdown — the opened set beat the "
+			% gate_id + "scene and the break-out is three metres of walking")
+
+	# (d) the wrong hero on the pad releases nothing.
+	var pad_area := interior.get_node_or_null("Floor0/SpineTrigger1") as Area3D
+	if pad_area == null:
+		_fail("custody: there is no SpineTrigger1 — the first spine door has no pad")
+		await _clear(hero_body, shell)
+		return
+	hero_body.hero = wrong
+	hero_body.global_position = pad_area.global_position
+	await _settle_physics()
+	interior._process(0.1)
+	if not interior.is_locked_down(gate_id):
+		_fail("custody: %s released containment on '%s', which answers to %s"
+			% [wrong, gate_id, wants])
+
+	# (c) the right hero, standing on the SAME pad without moving, does — and the
+	#     door really sinks afterwards.
+	hero_body.hero = wants
+	interior._process(0.1)
+	if interior.is_locked_down(gate_id):
+		_fail("custody: %s stood on '%s's pad and containment held — the scene is unwinnable"
+			% [wants, gate_id])
+	for _i in 40:
+		interior._process(0.1)
+	if absf(mass.position.y - open_y) > 0.01:
+		_fail("custody: containment lifted on '%s' and the mass stayed at %.2f m"
+			% [gate_id, mass.position.y])
+
+	# ...and ending the scene puts every other door back the way the save says.
+	interior.begin_lockdown()
+	interior.end_lockdown()
+	for _i in 40:
+		interior._process(0.1)
+	if absf(mass.position.y - open_y) > 0.01:
+		_fail("custody: the scene ended and '%s' was left shut — a door the player earned "
+			% gate_id + "was taken away by a scene that only borrowed it")
+
+	# (e) THE SCAR. Hidden and non-solid until taken, stone the moment it is.
+	var rubble := interior.find_child(TowerInterior.SCAR_BOX, true, false) as MeshInstance3D
+	var rubble_shape := body.get_node_or_null(
+		"%sShape" % TowerInterior.SCAR_BOX) as CollisionShape3D
+	if rubble == null or rubble_shape == null:
+		_fail("custody: the interior builds no '%s' mesh + shape" % TowerInterior.SCAR_BOX)
+		await _clear(hero_body, shell)
+		return
+	if rubble.visible or not rubble_shape.disabled:
+		_fail("custody: an unscarred tower already shows the collapse (visible %s, solid %s)"
+			% [rubble.visible, not rubble_shape.disabled])
+	if not interior.apply_scar(TowerGraph.SCAR_CUSTODY):
+		_fail("custody: the interior refused its own authored scar '%s'"
+			% TowerGraph.SCAR_CUSTODY)
+	if not rubble.visible:
+		_fail("custody: the world took the scar and the collapse is invisible")
+	if rubble_shape.disabled:
+		_fail("custody: the collapse is drawn and walkable — the shortcut is not closed")
+	if not shell.is_opened(TowerGraph.SCAR_CUSTODY):
+		_fail("custody: the scar is geometry only; it never reached the tower's opened set")
+	# An id nobody authored must be refused outright, or "exactly one enumerated
+	# scar" is whatever the caller felt like.
+	if interior.apply_scar("custody_made_up_scar"):
+		_fail("custody: the interior accepted an unauthored scar id")
+	await _clear(hero_body, shell)
+
+	# ...and a tower REBUILT from the store comes up scarred, which is the whole
+	# meaning of permanent. Same union merge, same lesson as check 10.
+	var relaunched := await _make_tower()
+	var reborn := relaunched.get_node_or_null("TowerInterior") as TowerInterior
+	var reborn_rubble := reborn.find_child(TowerInterior.SCAR_BOX, true, false) as MeshInstance3D
+	if reborn_rubble == null or not reborn_rubble.visible:
+		_fail("custody: a tower rebuilt from the store came up unscarred — the collapse "
+			+ "healed itself across a relaunch")
+	await _clear(null, relaunched)
+	_fresh_store()
+	print("custody scene: containment raised, released by %s, and the stair collapsed" % wants)
 
 
 # ============================================================================
