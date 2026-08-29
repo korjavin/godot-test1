@@ -834,7 +834,18 @@ func _refresh_hero_buttons(heroes: Dictionary) -> void:
 		# rest of the row stuck on stale text and a stale `disabled`.
 		var raw_holder: Variant = heroes.get(hero, "")
 		var holder: String = (raw_holder as String) if typeof(raw_holder) == TYPE_STRING else ""
-		if hero == mine:
+		# A HERO IN A CELL IS OFFERED TO NOBODY (bead godot-test1-3iy.10), and this
+		# clause is FIRST for the same reason the captive test comes before the
+		# `mine` clause in `MpManager.available_heroes()`: the one press this rule
+		# has to refuse is the benched player re-picking the body that was just
+		# taken off them, which every clause below would have shown as pressable.
+		# `has_method`-guarded like every other manager read here.
+		var captive: bool = manager != null and manager.has_method("is_hero_captive") \
+				and bool(manager.is_hero_captive(hero))
+		if captive:
+			button.text = tr("%s — in a cell") % hero.capitalize()
+			button.disabled = true
+		elif hero == mine:
 			button.text = tr("%s  ✓ you") % hero.capitalize()
 			button.disabled = false
 		elif holder.is_empty():
