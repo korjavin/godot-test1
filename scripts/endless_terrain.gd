@@ -392,7 +392,14 @@ const STRUCTURE_THEMES: Dictionary = {
 
 ## Number of crocodiles to spawn per chunk
 ## Higher values = more dangerous terrain!
-@export var crocodiles_per_chunk: int = 10
+##
+## 10 -> 4 (owner pacing ruling, 2026-08-29: "you can't stay even for a moment").
+## This is a DESIGN change, not an optimization — the one sanctioned way croc
+## counts move. The arithmetic behind the 4: a chunk is 50 m square and the
+## crocodile's detection radius is 15 m, so ten bodies tiled the 2500 m^2 with
+## overlapping detection discs and left nowhere to stand. Four leaves gaps you
+## can rest in while a chunk you cross still holds a threat.
+@export var crocodiles_per_chunk: int = 4
 
 ## Minimum distance between crocodiles (in meters)
 @export var min_crocodile_spacing: float = 3.0
@@ -457,21 +464,18 @@ const SPAWN_SAFE_RADIUS: float = 25.0
 const HUNTER_SPECIES: String = "hunter_robot"
 const HUNTER_SCENE := preload("res://scenes/characters/hunter_robot.tscn")
 
-## Chance that a chunk gets a hunter at all — ~1 in 3.3 chunks, dropping to ~1 in
-## 3.5 once the placement loop's rejections are counted.
+## Chance that a chunk gets a hunter at all — ~1 in 6.7 chunks, dropping to ~1 in
+## 7 once the placement loop's rejections are counted.
 ##
-## PROVISIONAL, AND DELIBERATELY SO (owner ruling on this bead): the real number
-## is the predator-density epic's call, made across all the species at once rather
-## than one row at a time. It is a declared const here precisely so that epic can
-## move it in one line. Ship it, do not tune it, do not block on it.
-##
-## The shape of the number: a hunter is not scenery you pass, it is an encounter,
-## and at 1-in-3 you meet one every few chunks of walking without the world ever
-## reading as patrolled. Compare the reward family two sections down (chest ~1 in
-## 13, artifact ~1 in 23, landmark ~1 in 40) — a hunter is an order of magnitude
-## commoner than any of those because it is a THREAT, and a threat you meet once
-## an hour teaches nothing.
-const HUNTER_CHANCE: float = 0.30
+## 0.30 -> 0.15: the predator-density call this const was left provisional for
+## (owner pacing ruling, 2026-08-29), made across the species at once. The hunter
+## carries the widest detection radius in the table (25 m), so at 1-in-3 its discs
+## did more to erase standable ground than its body count suggested. Halved with
+## the ground density, it stays an order of magnitude commoner than the reward
+## family two sections down (chest ~1 in 13, artifact ~1 in 23, landmark ~1 in 40)
+## — it is a THREAT, and a threat you meet once an hour teaches nothing — while
+## leaving whole stretches of walking with no encounter in them.
+const HUNTER_CHANCE: float = 0.15
 
 ## Salt for the hunter's independent hash stream, in the ARTIFACT_SALT /
 ## CAMP_SALT / CHEST_SALT / LANDMARK_SALT / BIOME_SALT / BOSS_SEED family: an
@@ -646,7 +650,12 @@ const TOWER_INTERIOR_SCENE: PackedScene = preload("res://scenes/tower/tower_inte
 ## Chance (0..1) that a given walkable structure top (mound summit / wall ridge)
 ## gets a rare crocodile patrolling it. Kept moderate so they're an occasional
 ## surprise, not on every structure.
-@export var platform_crocodile_chance: float = 0.4
+##
+## 0.4 -> 0.2 with the ground density (owner pacing ruling, 2026-08-29): a
+## climbable top is where you go to get OFF the ground, so a guard on two in five
+## of them made the rest spots themselves populated. One in five still means the
+## high ground has to be read before it is trusted.
+@export var platform_crocodile_chance: float = 0.2
 
 ## How far ABOVE a platform's `top` (its tallest stone, NOT the surface it paces)
 ## a patrol guard is dropped in, so gravity settles it onto the structure.
@@ -5306,11 +5315,14 @@ func spawn_crocodiles_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D
 	var spawned_positions: Array[Vector3] = []
 
 	# Difficulty gradient: chunks farther from origin (along the road's +X axis) hold
-	# MORE crocodiles — +1 per 6 chunks of |x| distance, capped at +8 over the base.
+	# MORE crocodiles — +1 per 10 chunks of |x| distance, capped at +4 over the base,
+	# so the far field runs 4..8 rather than the old 10..18. Rescaled with the base
+	# count (owner pacing ruling, 2026-08-29): the gradient must stay a slope you
+	# feel, not one that restores the wall-to-wall density further out.
 	# A pure function of chunk coords, so within-run determinism is untouched (the
 	# same chunk always regenerates the same count). The LOD manager keeps the extra
 	# distant crocodiles cheap: they are slept (frozen, monitoring off), never removed.
-	var chunk_croc_target := crocodiles_per_chunk + mini(8, absi(chunk_pos.x) / 6)
+	var chunk_croc_target := crocodiles_per_chunk + mini(4, absi(chunk_pos.x) / 10)
 
 	# CITY — the one band whose croc target is divided (owner call, 2026-08-26: a
 	# city is not croc-free, it is QUIETER; the roofs are the real safety).
