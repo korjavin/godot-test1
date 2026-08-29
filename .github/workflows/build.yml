@@ -258,10 +258,14 @@ jobs:
   #
   # scripts/predator_parts.py is the toolkit every biome-predator generator is
   # built on, and it asserts that toolkit's contract (orientation, feet at y=0,
-  # one vertex-coloured mesh) on every build. Running it rebuilds all six models
-  # plus the wing primitive and prints the same "SELFCHECK OK". Nothing else
-  # checks any of that — the .glb files are committed, so a toolkit change that
-  # breaks a model is invisible until someone regenerates by hand.
+  # one vertex-coloured mesh) on every build. Running it rebuilds all ten models
+  # plus the wing and neck primitives and prints the same "SELFCHECK OK". Nothing
+  # else checks any of that — the .glb files are committed, so a toolkit change
+  # that breaks a model is invisible until someone regenerates by hand.
+  #
+  # And because it rebuilds before it asserts, it can only ever judge the CODE.
+  # The second step is what judges the ARTIFACT — read its comment; the two
+  # together are the gate, and neither half catches what the other does.
   #
   # Its own job on a plain runner rather than a step in `selfchecks`: it needs
   # python3 + trimesh + numpy, which the godot-ci container does not carry, and
@@ -282,8 +286,11 @@ jobs:
         with:
           python-version: '3.12'
 
+      # PINNED, in scripts/requirements.txt — read its header. The staleness gate
+      # below compares float arrays byte-for-byte, so an unpinned install would
+      # make it red on somebody else's release day rather than on a real defect.
       - name: 📦 Install the generator's dependencies
-        run: pip install trimesh numpy
+        run: pip install -r scripts/requirements.txt
 
       # Same two-part verdict as the GDScript suite, for the same reason: a
       # generator that printed nothing and exited 0 would be indistinguishable
@@ -296,6 +303,37 @@ jobs:
             exit 1
           }
           printf '%s\n' "$out"
+
+      # THE STEP ABOVE GRADES ITS OWN HOMEWORK. It rebuilds all ten models and
+      # then asserts the toolkit's contract on what it just built — never on the
+      # bytes the repo ships. So a committed .glb that no generator produces
+      # passes forever, which is exactly how the hydra shipped for a day with
+      # 18 mm neck stubs and 80 mm holes at its elbows: the artifact had been
+      # committed from a working tree the code never caught up with, and every
+      # contract the toolkit asserts held on the rebuild.
+      #
+      # The rebuild writes in place, so the whole gate is "did that dirty the
+      # tree?" — no comparison script, and it covers every model rather than the
+      # one that broke. `--porcelain` catches an untracked file too, so a NEW
+      # generator whose output was never committed is a failure and not a
+      # silence.
+      #
+      # This is a byte comparison of float arrays and it is deliberate: with the
+      # toolchain pinned (scripts/requirements.txt) the generators are
+      # reproducible, and anything weaker — a rounded vertex hash — buys
+      # tolerance for a drift that should not exist. If a toolchain bump ever
+      # makes this genuinely unpinnable across platforms, the fallback is a
+      # tolerance-based geometry compare, not deleting the gate.
+      - name: 🔍 The committed models must match what the generators build
+        run: |
+          dirty=$(git status --porcelain -- assets/models/characters)
+          [ -z "$dirty" ] || {
+            printf '%s\n' "$dirty"
+            git diff --stat -- assets/models/characters
+            echo "::error::rebuilding dirtied the models listed above — the committed .glb is not what its generator produces. Run 'pip install -r scripts/requirements.txt && python3 scripts/predator_parts.py' and commit the result."
+            exit 1
+          }
+          echo "every committed model matches its generator"
 
   # ============================================================================
   # Publish the godot-mp stack (only from master branch)
