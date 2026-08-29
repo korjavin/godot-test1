@@ -883,7 +883,7 @@ func _check_widget_rect() -> String:
 			% [map.size.y, caption_bottom]
 	var rect := map.get_global_rect()
 	var viewport_width := map.get_viewport_rect().size.x
-	for neighbour_name in ["LivesHUD", "PerfOverlay", "MotionDebug", "TouchControls"]:
+	for neighbour_name in ["LivesHUD", "HeroHUD", "PerfOverlay", "MotionDebug", "TouchControls"]:
 		var other: Control = root.get_node_or_null("Main/HUD/%s" % neighbour_name) as Control
 		# Skip the full-screen overlays: they legitimately cover everything.
 		if other == null or other.size.x >= viewport_width - 1.0:

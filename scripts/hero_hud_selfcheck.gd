@@ -37,9 +37,15 @@ extends SceneTree
 ##      "a teammate has him" reading as HELD rather than as free.
 ##   4. **THE STANDALONE DEGRADE**: no player in the group -> an empty row.
 ##   5. **THE ROW FITS ITS CONTROL AND CLEARS ITS NEIGHBOURS** in `main.tscn` —
-##      four tiles need 210 px, and the hearts above and the F3 overlay below have
-##      to stay out of the band. The overlay's offset moving is part of this bead,
-##      so a later edit that moves it back gets caught here.
+##      four tiles need 210 px, and the hearts and the F3 overlay have to stay out
+##      of the band. The overlay moving is part of this bead, so an edit that puts
+##      it back on top of the row gets caught here.
+##
+##      IT MOVED SIDEWAYS AND NOT DOWN, which is worth knowing before you "fix" it:
+##      `PerfOverlay` is a Label whose real height is its TEXT's minimum size (316
+##      px, not the 276 its offsets declare), so pushing its top down 48 px pushes
+##      its bottom into the centre-left minimap — which `minimap_selfcheck`'s own
+##      left-edge-column check catches. Moving it right of the row clears both.
 
 const HUD_SCRIPT := preload("res://scripts/hero_hud.gd")
 const PLAYER_SCRIPT := preload("res://scripts/player_controller.gd")
@@ -250,7 +256,8 @@ func _check_the_row_fits_and_clears_its_neighbours() -> void:
 	_check(not (hero_rect as Rect2).intersects(lives_rect as Rect2),
 		"the portrait row overlaps the hearts")
 	_check(not (hero_rect as Rect2).intersects(perf_rect as Rect2),
-		"the portrait row overlaps the F3 perf overlay — move the overlay down")
+		"the portrait row overlaps the F3 perf overlay — move the overlay clear of it "
+		+ "(sideways: pushing it DOWN walks its text into the minimap)")
 
 
 func _node_rect(text: String, node_name: String) -> Variant:
