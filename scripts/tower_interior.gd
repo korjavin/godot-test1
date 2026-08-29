@@ -1043,10 +1043,14 @@ static func _wing_boxes() -> Array[Dictionary]:
 	# from what is IN the cell, never from the cell, because any hero can land in
 	# any of them. Non-solid — it smothers a field, it is not a door — and gone for
 	# good the moment `RESCUE_DONE` is in the opened set.
+	# WAIST HIGH, and that was found by walking it rather than reasoned: built full
+	# height it stood in front of the containment frame and hid it, so Primm's cell
+	# read exactly like the three empty ones — the staging swallowed the one thing
+	# this wing has to say from across the gallery.
 	out.append({
 		"name": "PrimmContainment",
-		"pos": Vector3(_cell_x(TowerGraph.HEROES.find(AUTHORED_CAPTIVE)), 1.35, CELL_Z0 + 0.5),
-		"size": Vector3(_cell_width() - 0.2, 2.7, 0.3),
+		"pos": Vector3(_cell_x(TowerGraph.HEROES.find(AUTHORED_CAPTIVE)), 0.6, CELL_Z0 + 0.5),
+		"size": Vector3(_cell_width() - 0.2, 1.2, 0.5),
 		"color": COLOR_MECHANISM, "collide": false, "floor": 0,
 	})
 
@@ -1654,12 +1658,25 @@ func _build_wing() -> void:
 	# in and a `Label3D` is geometry: the corridor's line would be depth-culled from
 	# the gallery and vice versa. Same construction as the receptacle's — see
 	# `_build_label()` for why this is a world label and not a HUD toast.
+	#
+	# SMALLER AND HIGHER THAN THE RECEPTACLE'S, and that was found by looking rather
+	# than reasoned: the receptacle stands at the end of a deep alcove you approach
+	# from across the hall, so its 2.45 m banner is read at four metres. These two
+	# live in a two-metre corridor where the spring arm puts the camera a metre from
+	# them, and at the receptacle's size the first walkthrough was a screen full of
+	# the word "open". Up near the ceiling and half the scale, they read as signage
+	# on a wall instead of as a wall.
 	_spine_label = _make_label("SpineLabel",
-		Vector3(_spine_door_x(1) + (SPINE_DOOR_W + SPINE_PIER_W) * 0.5, 3.4, PAD_Z - 0.4),
+		Vector3(_spine_door_x(1) + (SPINE_DOOR_W + SPINE_PIER_W) * 0.5, 3.8, SPINE_Z - 0.4),
 		tr("THE FOUR SPINES — one door each"))
 	_cell_label = _make_label("CellLabel",
-		Vector3(_cell_x(1) + (_cell_width() + CELL_DIVIDER) * 0.5, 3.4, CELL_Z0 - 0.7),
+		Vector3(_cell_x(1) + (_cell_width() + CELL_DIVIDER) * 0.5, 3.8, CELL_Z0 - 0.35),
 		tr("CELL BLOCK"))
+	for sign: Label3D in [_spine_label, _cell_label]:
+		sign.font_size = 30
+		sign.outline_size = 9
+		sign.pixel_size = 0.0022
+		sign.width = 520.0
 
 
 func _tick_press(delta: float) -> void:
