@@ -2600,7 +2600,14 @@ func _press_riddle(gate_id: String, digit: int) -> void:
 	var answer: Array = TowerGraph.gate(gate_id).get("answer", [])
 	if answer.is_empty():
 		return
+	# A COMPLETED SEQUENCE THAT NEVER GOT RECORDED starts again from the top rather
+	# than indexing past the end. `_tick_riddle_pads` skips an OPEN gate, and the
+	# open state lives on the shell (`_open` / `_is_open`) — so an interior built
+	# with no tower above it, which is exactly what a self-check does, finishes the
+	# answer, records nothing, and comes back here with `step` at `answer.size()`.
 	var step := int(_riddle_step.get(gate_id, 0))
+	if step >= answer.size():
+		step = 0
 	if digit == int(answer[step]):
 		step += 1
 	else:

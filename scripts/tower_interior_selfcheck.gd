@@ -1332,6 +1332,19 @@ func _check_gate_lifecycle() -> void:
 		if lock_shape == null or absf(lock_shape.position.y - lock.position.y) > EPS:
 			_fail("riddle '%s' opened only visually — its collision shape is still in the way"
 				% gid)
+		# ...and a sequence COMPLETED BUT NEVER RECORDED starts again from the top
+		# instead of indexing past its own answer. That is not hypothetical: the
+		# open state lives on the shell, so an interior built with no tower over it
+		# — which is what `_make_interior()` does twice in this file — finishes the
+		# answer, records nothing and steps on the next pad. Driven directly,
+		# because the assertion is about the index and the walk above already
+		# covers the trigger path.
+		interior._riddle_step[gid] = answer.size()
+		interior._press_riddle(gid, int(answer[0]))
+		if int(interior._riddle_step[gid]) != 1:
+			_fail(("riddle '%s' did not restart a completed-but-unrecorded sequence — it read "
+				+ "step %d of a %d-step answer") % [
+					gid, int(interior._riddle_step[gid]), answer.size()])
 
 	# And a rotor bar still costs a life, which is the challenge space's whole stake.
 	var hazard := interior.find_child("RotorBarLowHazard", true, false) as Area3D
