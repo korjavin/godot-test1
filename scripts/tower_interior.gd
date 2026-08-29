@@ -2359,7 +2359,15 @@ func _on_cell_enter(body: Node3D, hero: String) -> void:
 
 
 func _on_purge_enter(body: Node3D) -> void:
-	if body.is_in_group("player"):
+	# THE PAD IS THE PRISONER'S, and this is where that is enforced. A rescuer
+	# reaches this gallery on every ordinary liberation, and the purge is the bench's
+	# compensation for having no field play at all — a party that could stand on it
+	# on the way past would be handed the same opening for free. Latched from the
+	# ENTERING body rather than re-asked per frame: `prisoner_active` cannot change
+	# while the body stands here (the role is left by a lobby grant or a liberation,
+	# and both teleport nothing), and asking the body is what keeps this off
+	# `_player`, which is only written once `_process` has run.
+	if body.is_in_group("player") and "prisoner_active" in body and bool(body.prisoner_active):
 		_on_purge_pad = true
 
 

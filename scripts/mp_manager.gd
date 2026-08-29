@@ -492,6 +492,23 @@ var _peer_state: Dictionary = {}
 ## offline, and a solo session never allocates an entry.
 var _captives: Dictionary = {}
 
+## THE LAST LOBBY HOLDER OF EACH HERO - `{hero name: peer id}`, and the whole of
+## what authorizes a capture (see `_apply_captive`).
+##
+## IT IS NOT `_heroes`, AND THE DIFFERENCE IS THE RACE. `SetHero` releases the
+## claim on the hero just taken as it grants the new one, so by the time a `cap`
+## packet is processed the lobby may already have said "nobody holds primm" - and
+## the two facts travel different transports (the mesh, and the lobby's `heroes`
+## frame), so no delay on this side can order them. This map only ever LEARNS a
+## holder and never forgets one, so "bob was the last member the lobby named as
+## primm's holder" stays true across the reassignment that made him ask, and the
+## capture is authorized whichever frame arrives first.
+##
+## It is not a weaker check than `_heroes` would be: a hero is only ever re-holderd
+## by an actual lobby claim, so a member can still only assert the hero the lobby
+## last put it in - which is exactly the reach the game gives it.
+var _last_holder: Dictionary = {}
+
 ## ONE SNAPSHOT PER SENDER, EVER — the set of peers whose `state` frame we have
 ## already folded in. The protocol sends exactly one per (incumbent, joiner) pair,
 ## but a relayed payload is unvalidated peer input: without this latch a member
@@ -829,6 +846,7 @@ func leave() -> void:
 	# what happens to that. Nothing is pushed into the player from here - a leave
 	# is not a liberation.
 	_captives = {}
+	_last_holder = {}
 	_state_received = {}
 	_first_member = true
 	_join_applied = false
@@ -984,6 +1002,13 @@ func _on_lobby_joined(you: String, room: String, master: String, members: Array)
 	_stall_accum = 0.0
 	_stall_reported = false
 	_state = State.IN_ROOM
+	# A ROOM'S CAPTIVE SET IS THE ROOM'S. `join()` unwinds through `leave()`, which
+	# deliberately leaves the local player's own `captive_heroes` alone (a leave is
+	# not a liberation) - so without this a host would walk into a shared world
+	# still holding a solo run's captures while its manager exported an empty set,
+	# and a joiner would carry the previous room's names past the master's snapshot.
+	# Cleared to the room's truth, which the master's snapshot then fills in.
+	_reset_player_captives()
 	status.emit("In room %s (%d/4)" % [room, members.size()])
 	room_changed.emit(room, members)
 
@@ -1432,7 +1457,7 @@ func report_hero_captured(hero: String) -> void:
 	"""
 	if _state != State.IN_ROOM or not _apply_captive(_you, hero, true):
 		return
-	_broadcast_reliable(var_to_bytes({"t": "cap", "h": hero, "c": true}))
+	_publish_captive(hero, true)
 
 
 func report_hero_freed(hero: String) -> void:
@@ -1444,7 +1469,39 @@ func report_hero_freed(hero: String) -> void:
 	"""
 	if _state != State.IN_ROOM or not _apply_captive(_you, hero, false):
 		return
-	_broadcast_reliable(var_to_bytes({"t": "cap", "h": hero, "c": false}))
+	_publish_captive(hero, false)
+
+
+func _publish_captive(hero: String, held: bool) -> void:
+	"""
+	Tell the room about one captive-set change, over BOTH transports.
+
+	THE MESH FOR EVERYBODY IT CAN REACH, AND THE LOBBY RELAY FOR EVERYBODY IT
+	CANNOT. `_broadcast_reliable()` writes only to peers whose data channel is
+	already open, and ICE takes seconds - so a capture that lands while somebody is
+	still negotiating would be missed by that peer for the room's life, and the
+	join snapshot cannot cover it either (it was sent the moment they arrived,
+	before this happened). The joiner would then offer a hero who is in a cell,
+	claim him, and play a body every other screen shows locked up.
+
+	This is the seed's own reasoning one verb along: the relay is open from
+	`welcome`, so it is what reaches a peer the mesh has not finished building. The
+	payload and the rule are IDENTICAL on both sides - `decode_captive()` and
+	`_apply_captive()`, once - so the two transports cannot drift.
+	"""
+	var packet: Dictionary = {"t": "cap", "h": hero, "c": held}
+	_broadcast_reliable(var_to_bytes(packet))
+	if _lobby == null:
+		return
+	for member: Variant in _members:
+		if typeof(member) != TYPE_DICTIONARY:
+			continue
+		var id: String = str((member as Dictionary).get("id", ""))
+		if id.is_empty() or id == _you:
+			continue
+		if _is_mesh_peer_connected(peer_int_id(id)):
+			continue  # Already had it over the mesh; a second copy is a no-op anyway.
+		_lobby.send_signal_to(id, {"mp": "cap", "h": hero, "c": held})
 
 
 static func decode_captive(packet: Dictionary) -> Dictionary:
@@ -1501,8 +1558,13 @@ func _apply_captive(from_id: String, hero: String, held: bool) -> bool:
 			return false  # Already held: an assertion cannot be re-made.
 		# THE AUTHORIZATION, and the only one this verb has: a capture is a fact
 		# about the hero the sender was WALKING AS. A member naming a hero the
-		# lobby says somebody else holds is naming a body it cannot have lost.
-		if hero_holder(hero) != from_id:
+		# lobby never put it in is naming a body it cannot have lost.
+		#
+		# ASKED OF `_last_holder` AND NOT `hero_holder()` - see that field. The
+		# reassignment this capture provokes releases the lobby claim, so the live
+		# map stops naming the captor at an unpredictable moment relative to the
+		# packet; the last-holder map never stops.
+		if String(_last_holder.get(hero, "")) != from_id:
 			return false
 		_captives[hero] = true
 	else:
@@ -1526,6 +1588,22 @@ func _captive_changed(hero: String, held: bool) -> void:
 	"""
 	_push_captive_to_player(hero, held)
 	heroes_changed.emit(_heroes, _pool)
+
+
+func _reset_player_captives() -> void:
+	"""
+	Clear the local player's captive mirror, hero by hero through the same seam a
+	liberation uses - so the tower's cell frames are repainted with it.
+
+	Walks the PLAYER's own roster rather than `_pool`, because the pool is not
+	known yet when this runs (the `heroes` frame follows `welcome`) and because it
+	is the player's set that has to end up empty.
+	"""
+	var player: Node = get_tree().get_first_node_in_group("player")
+	if player == null or not player.has_method("set_hero_captive"):
+		return
+	for entry: Variant in PLAYER_SCRIPT.CHARACTERS:
+		player.call("set_hero_captive", String((entry as Dictionary).get("name", "")), false)
 
 
 func _push_captive_to_player(hero: String, held: bool) -> void:
@@ -1758,6 +1836,13 @@ func _on_lobby_heroes(heroes: Dictionary, pool: Array) -> void:
 	_heroes = {}
 	for hero: Variant in heroes:
 		_heroes[str(hero)] = str(heroes[hero])
+	# ...and REMEMBER every holder the lobby has ever named, which is what a capture
+	# is authorized against. Written here and cleared only by `leave()`: a release
+	# must not erase it, or the reassignment a capture provokes would revoke that
+	# capture's own authorization mid-flight. An empty holder is not a holder.
+	for hero: String in _heroes:
+		if not String(_heroes[hero]).is_empty():
+			_last_holder[hero] = String(_heroes[hero])
 	_pool = []
 	for hero: Variant in pool:
 		_pool.append(str(hero))
@@ -1981,6 +2066,20 @@ func _on_lobby_relay(from: String, payload: Dictionary) -> void:
 			# vote fire early, before a full STALL_REPORT_INTERVAL of silence.
 			_stall_accum = 0.0
 			_stall_reported = false
+		"cap":
+			# A captive-set change from a peer whose mesh we have not finished
+			# building — see `_publish_captive()` for why the relay carries this
+			# one at all. SAME PARSER, SAME RULE, SAME FUNCTION as the mesh verb:
+			# the transport changes and nothing else does, which is the only way
+			# two transports for one fact stay honest. Rate-limited on the same
+			# budget, because a relayed packet is peer input like any other.
+			#
+			# `c` arrives as a JSON bool here rather than a `var_to_bytes` one, and
+			# `decode_captive()` demands TYPE_BOOL either way — JSON's `true` parses
+			# to a real bool, so the same gate holds without a second spelling.
+			if not _verb_rate_ok(from, "cap"):
+				return
+			_receive_captive(from, payload)
 		"state":
 			# A join snapshot from an incumbent. THE THIRD TRUST BOUNDARY in
 			# this file: `decode_state()` validates it whole, and anything that

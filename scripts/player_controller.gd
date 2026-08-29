@@ -2893,6 +2893,11 @@ func _tick_prison(delta: float) -> void:
 		_enter_prison(hero)
 
 
+func in_prison_role() -> bool:
+	"""Is this player benched inside the cell block? The tower's window in."""
+	return prisoner_active
+
+
 func _enter_prison(hero: String) -> void:
 	"""
 	Take up the prison role: play as your captive, inside his cell block.
@@ -4340,6 +4345,9 @@ func get_ability_block_reason() -> String:
 	hero off permanently, and refusing costs no cooldown — the two properties both
 	gates have always had.
 
+	  "CELL" — the prison role has no ability at all: every one of the four is a
+	           phase, a flight, a combat verb or a wave, and the role is defined as
+	           having none of them.
 	  "RAIN" — Windman can't take off inside a storm cloud's rain zone.
 	  "LAND" — AIR RUSH IS A TAKE-OFF, NOT A MID-AIR JET: Windman must have his
 	           feet on the ground (or be inside the coyote window) to launch.
@@ -4362,6 +4370,16 @@ func get_ability_block_reason() -> String:
 	           is included on purpose: stepping off a ledge gets the same brief
 	           grace here that it gets for a jump.
 	"""
+	# "CELL" — THE PRISON ROLE HAS NO ABILITY (bead godot-test1-3iy.10). The role is
+	# "no phasing, no combat loop, no solo escape", and every one of the four powers
+	# is one of those: Phase Step steps THROUGH geometry, Air Rush leaves the block
+	# over its walls, giant Teibi is a combat verb and the Stink Wave is the field's
+	# own version of the vent purge. Placed here rather than at the F press so the
+	# HUD dial says so too — this function's whole reason for existing.
+	#
+	# Character-independent, which is why it sits ABOVE the windman test.
+	if prisoner_active:
+		return "CELL"
 	var char_name: String = CHARACTERS[current_character_index]["name"]
 	if char_name != "windman":
 		return ""

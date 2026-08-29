@@ -1903,8 +1903,12 @@ func _room_manager(you: String) -> Node:
 	root.add_child(mp)
 	mp._state = MPManager.State.IN_ROOM
 	mp._you = you
-	mp._pool = ["windman", "primm", "teibi", "phoboman"] as Array[String]
-	mp._heroes = {"windman": you, "primm": "bob"}
+	# THROUGH THE LOBBY CALLBACK, not by writing `_heroes`: the last-holder map a
+	# capture is authorized against is written THERE and nowhere else, so a check
+	# that posed the room by hand would be testing a state the lobby cannot produce
+	# — and would authorize nothing.
+	mp._on_lobby_heroes({"windman": you, "primm": "bob"},
+		["windman", "primm", "teibi", "phoboman"])
 	return mp
 
 
@@ -1974,19 +1978,32 @@ func _check_captive_set() -> String:
 	 10. THE JOIN SNAPSHOT is the MASTER's whole set and nobody else's — a replay
 	     cannot be authorized by claim 1, because the peer who lost that hero has
 	     usually been reassigned and holds something else by then.
+	 11. ENTERING A ROOM RESETS the local mirror: a room's roster is the room's.
 	"""
 	var player: Node = _captive_player()
 	var mp: Node = _room_manager("me")
 	var repaints: Array[int] = [0]
 	mp.heroes_changed.connect(func(_h: Dictionary, _p: Array) -> void: repaints[0] += 1)
 
-	# --- 1/5/6. bob holds primm and reports him taken.
+	# --- 1/5/6. bob holds primm and reports him taken - AND THE LOBBY HAS ALREADY
+	# TAKEN PRIMM OFF HIM. That is the ordering the two transports make possible:
+	# `SetHero` releases the captured hero as it grants the replacement, and the
+	# `heroes` frame carrying that can beat the `cap` packet to any peer. Authorized
+	# against the LAST holder, this is still bob's capture to report; authorized
+	# against the live map it is dropped, and that peer's captive set is wrong for
+	# the rest of the run.
+	mp._on_lobby_heroes({"windman": "me", "teibi": "bob"},
+		["windman", "primm", "teibi", "phoboman"])
+	# Counted from HERE, because a `heroes` frame legitimately repaints too — what
+	# is measured is that the CAPTURE adds one of its own.
+	var before_first: int = repaints[0]
 	mp._receive_captive("bob", {"t": "cap", "h": "primm", "c": true})
 	if not mp.is_hero_captive("primm"):
-		return "an honest capture from primm's own holder was not recorded"
+		return "a capture whose reassignment broadcast arrived FIRST was dropped — the two "\
+			+ "transports cannot be ordered, so this peer's set is now permanently wrong"
 	if player.told != [["primm", true]]:
 		return "the room's capture did not reach the player's own set (%s)" % str(player.told)
-	if repaints[0] != 1:
+	if repaints[0] != before_first + 1:
 		return "a capture emitted no heroes_changed — the picker repaints on that signal and "\
 			+ "on nothing else, so it would keep offering a hero who is in a cell"
 
@@ -2006,12 +2023,8 @@ func _check_captive_set() -> String:
 	# --- 2. bob was reassigned to teibi, and loses that one too.
 	#
 	# THE CASE A ONE-PER-PEER BOUND GETS WRONG, and it is the ordinary path rather
-	# than an exotic one: `SetHero` moved bob off primm and onto teibi — ATOMICALLY,
-	# releasing the old claim as it takes the new one, which is why both lines are
-	# here — so the lobby now names bob as teibi's holder and the next grab is his
-	# to report.
-	mp._heroes.erase("primm")
-	mp._heroes["teibi"] = "bob"
+	# than an exotic one: bob was reassigned to teibi above, and losing THAT hero
+	# too is what a two- or three-player room does all evening.
 	mp._receive_captive("bob", {"t": "cap", "h": "teibi", "c": true})
 	if not mp.is_hero_captive("teibi"):
 		return "a peer that was reassigned after one capture could not report losing the "\
@@ -2029,13 +2042,21 @@ func _check_captive_set() -> String:
 	# --- 7. the dispatch arm, and the budget.
 	if MPManager.packet_kind({"t": "cap", "h": "primm", "c": true}) != "cap":
 		return "a cap packet does not identify itself as a verb — it would decode as presence"
-	mp._receive_mesh_verb("bob", "cap", {"t": "cap", "h": "primm", "c": true})
+	mp._receive_mesh_verb("carl", "cap", {"t": "cap", "h": "primm", "c": true})
 	if mp.is_hero_captive("primm"):
-		return "the dispatch skipped the holder rule — bob was moved off primm two claims ago"
-	mp._heroes["primm"] = "bob"
+		return "the dispatch skipped the holder rule — carl has never held primm"
 	mp._receive_mesh_verb("bob", "cap", {"t": "cap", "h": "primm", "c": true})
 	if not mp.is_hero_captive("primm"):
 		return "the cap verb is decoded but `_receive_mesh_verb` routes it nowhere"
+
+	# ...and the SECOND TRANSPORT, which exists because `_broadcast_reliable()`
+	# writes only to peers whose data channel is open and ICE takes seconds. Same
+	# parser, same rule, same function — only the wire differs.
+	mp._receive_captive("bob", {"t": "cap", "h": "primm", "c": false})
+	mp._on_lobby_relay("bob", {"mp": "cap", "h": "primm", "c": true})
+	if not mp.is_hero_captive("primm"):
+		return "a cap relayed over the LOBBY was dropped — a peer still negotiating ICE "\
+			+ "when a hero is taken never learns it, and offers a body that is in a cell"
 	if not MPManager.VERB_BUDGET_PER_SEC.has("cap"):
 		return "the cap verb has no rate budget — a state-mutating verb with none is an amplifier"
 	var budget: int = int(MPManager.VERB_BUDGET_PER_SEC["cap"])
@@ -2074,19 +2095,20 @@ func _check_captive_set() -> String:
 
 	# --- 9. the reassignment candidate.
 	#
-	# THE STATE A REASSIGNMENT LEAVES BEHIND, and the only one in which the captive
-	# filter here matters at all: `SetHero` released bob's claim on primm when it
-	# moved him to teibi, so primm is now IN A CELL AND UNCLAIMED — the one shape
-	# that looks free to a filter that only asks the lobby. Pool order would offer
-	# him before phoboman.
-	mp._heroes.erase("primm")
+	# THE STATE A REASSIGNMENT LEAVES BEHIND is already in place and it is the only
+	# one in which the captive filter here matters at all: `SetHero` released bob's
+	# claim on primm when it moved him to teibi, so primm is IN A CELL AND UNCLAIMED
+	# — the one shape that looks free to a filter that only asks the lobby, and pool
+	# order would offer him before phoboman.
+	#
 	# Only phoboman is genuinely free, so that is what a bench asks for; two peers
 	# racing therefore ask the lobby for the SAME hero, which is what makes
 	# `server/room.go`'s room lock the thing that decides between them.
 	if mp.claimable_hero() != "phoboman":
 		return "claimable_hero() answered '%s', expected the one free unclaimed hero" \
 			% mp.claimable_hero()
-	mp._heroes["phoboman"] = "frank"
+	mp._on_lobby_heroes({"windman": "me", "teibi": "bob", "phoboman": "frank"},
+		["windman", "primm", "teibi", "phoboman"])
 	mp._receive_captive("frank", {"t": "cap", "h": "phoboman", "c": true})
 	if mp.claimable_hero() != "":
 		return "claimable_hero() answered '%s' with every hero held or in a cell — the "\
@@ -2139,6 +2161,25 @@ func _check_captive_set() -> String:
 	if not fresh.is_hero_captive("primm"):
 		return "the master's join snapshot was ignored — a joiner walks into a room whose "\
 			+ "cells it cannot see"
+
+	# --- 11. entering a room resets the local mirror to the ROOM's.
+	#
+	# `join()` unwinds through `leave()`, which deliberately leaves the player's own
+	# captive set alone (a leave is not a liberation), so without this a host walks
+	# into a shared world holding a solo run's captures that its manager knows
+	# nothing about. Driven through the real `welcome` callback.
+	player.told.clear()
+	fresh._on_lobby_joined("me", "ROOM01", "me", [{"id": "me", "name": "me"}])
+	var cleared: Dictionary = {}
+	for entry: Variant in player.told:
+		var pair: Array = entry as Array
+		if bool(pair[1]):
+			return "entering a room MARKED %s captive" % str(pair[0])
+		cleared[String(pair[0])] = true
+	if cleared.size() != Player.CHARACTERS.size():
+		return "entering a room cleared %d of the player's %d heroes — a solo run's captures "\
+			% [cleared.size(), Player.CHARACTERS.size()] + "follow the player into a room the "\
+			+ "manager knows nothing about"
 
 	fresh.free()
 	player.free()

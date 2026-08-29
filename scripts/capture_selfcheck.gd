@@ -1353,10 +1353,12 @@ func _check_reassign_first_imprison_last() -> void:
 	      their own cell inside the block, and confines them there: shoved out, they
 	      are back inside on the next physics frame. That is "no phasing, no solo
 	      escape" as a measurement rather than a promise.
-	  (c) THE BLOCK'S SYSTEMS ARE REACHABLE FROM INSIDE IT. The cell stand and the
-	      vent-purge pad are both inside the confinement box — a role confined to a
-	      box that excluded its own systems would be a cell with nothing in it, and
-	      nothing else in this file would notice.
+	  (c) THE BLOCK'S SYSTEMS ARE REACHABLE FROM INSIDE IT, AND THE ROLE HAS NO
+	      OTHERS. The cell stand and the vent-purge pad are both inside the
+	      confinement box — a role confined to a box that excluded its own systems
+	      would be a cell with nothing in it, and nothing else in this file would
+	      notice — and every character ability is refused while the role runs, which
+	      is "no phasing, no combat loop" measured at the one gate the HUD reads.
 	  (d) THE WAY OUT, THREE WAYS. A hero freed elsewhere in the room ends the role
 	      and the liberation is told to the room; a hero that becomes claimable
 	      LATER ends it through the tick's own retry, which is the half of
@@ -1446,6 +1448,15 @@ func _check_reassign_first_imprison_last() -> void:
 	if not _inside(pad, lo, hi):
 		_fail("the vent-purge pad at %s is outside the confinement box — the block's system "
 			% pad + "cannot be operated by the only player who is ever locked in with it")
+	# ...and no ability at all. Asked of `get_ability_block_reason()`, which is the
+	# ONE home of the gates — the F press and the HUD dial both read it, so a gate
+	# that lived only at the press would show a green READY dial over a dead key.
+	if player.get_ability_block_reason() != "CELL":
+		_fail("the prison role's ability gate answers '%s' — the role is defined as no "
+			% player.get_ability_block_reason() + "phasing and no combat loop, and every one "
+			+ "of the four powers is one or the other")
+	if player.is_ability_ready():
+		_fail("the HUD would show the ability READY inside the cell block")
 
 	# ---- (d1) a cellmate, never yourself -----------------------------------
 	#
@@ -1507,6 +1518,18 @@ func _check_reassign_first_imprison_last() -> void:
 	interior._process(TowerInterior.PURGE_COOLDOWN + 0.1)
 	if room.flees.size() != 2:
 		_fail("the purge kept firing after the player stepped off the pad")
+	# THE NEGATIVE CONTROL, and it is the one that keeps the pad the prisoner's: a
+	# rescuer crosses this gallery on every ordinary liberation in the game, and a
+	# party that could stand on it in passing would be handed the bench's whole
+	# compensation for free.
+	player.prisoner_active = false
+	interior.call("_on_purge_enter", player)
+	interior._process(TowerInterior.PURGE_COOLDOWN + 0.1)
+	if room.flees.size() != 2:
+		_fail("an ordinary rescuer standing on the purge pad fired it (%d requests) — it is "
+			% room.flees.size() + "the prison role's system, not the party's")
+	interior.call("_on_purge_exit", player)
+	player.prisoner_active = true
 	room.team = []
 
 	shell.queue_free()
