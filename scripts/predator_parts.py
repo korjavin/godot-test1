@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 Shared faceted-box toolkit for the biome-predator model generators
-(generate_wolf / cougar / bear / hound / snake / hunter / naga / hydra).
+(generate_wolf / cougar / bear / hound / snake / hunter / naga / hydra /
+green_dragon / roc).
 
 Why this module exists at all: the five animal predators are the same animal with
 different numbers. Copy-pasting a 200-line trimesh quadruped five times is how
@@ -713,13 +714,14 @@ if __name__ == "__main__":
 
     here = pathlib.Path(__file__).resolve().parent
     for species in ("wolf", "cougar", "bear", "hound", "snake", "hunter",
-                    "naga", "hydra"):
+                    "naga", "hydra", "green_dragon", "roc"):
         runpy.run_path(str(here / f"generate_{species}.py"), run_name="__main__")
-    # The wing primitive has no generator of its own — no model wears it yet — so
-    # it is checked here directly, on the poses its consumers will ask for.
+    # `wings` HAS consumers now (the dragon and the roc, both above), but `verify`
+    # only ever sees the finished animal — one welded mesh in which the pair is no
+    # longer a separable thing, and in which a wing that stopped mirroring would
+    # only show up as an off-centre z bias. So it is checked here too, on its own,
+    # on the poses its consumers ask for.
     _selfcheck_wings()
-    # The neck fan HAS a consumer (the hydra, above), but `verify` only ever sees
-    # the finished animal — one welded mesh in which the branch point is no longer
-    # a separable thing. So it is checked here too, on its own.
+    # Same for the neck fan and its one consumer, the hydra above.
     _selfcheck_necks()
     print("SELFCHECK OK")

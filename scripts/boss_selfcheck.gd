@@ -363,6 +363,7 @@ func _run_subject(packed: PackedScene, species_name: String, player: StubPlayer)
 	_check_resolved_speed(boss)
 	await _check_hunts_inside(boss, player, home)
 	_check_model_rigid(boss)
+	_check_footprint(boss)
 	await _check_hunts_at_fence(boss, player, home)
 	await _check_leashed(boss, player, home)
 	await _check_wanders_contained(boss, player, home)
@@ -585,20 +586,24 @@ func _check_model_rigid(boss: CharacterBody3D) -> void:
 	axes (`Basis.scaled`) instead of the model's own (`Basis.scaled_local`) is
 	identical for a UNIFORM scale — a uniform scale commutes with rotation — and
 	is a SHEAR for any other, so the whole class of bug is invisible until the
-	first species ships a stretched model. The green dragon is that species: its
-	placeholder is a crocodile mesh at (1, 1.6, 1), and under the parent-frame
-	composition a dragon leaning into a chase would grow taller in world y
-	instead of along its own spine.
+	first species ships a stretched model. The green dragon was that species when
+	this check landed — a crocodile mesh at (1, 1.6, 1) that, under the
+	parent-frame composition, would have grown taller in world y instead of along
+	its own spine every time it leaned into a chase. The art beads have since
+	replaced those placeholders with purpose-built meshes worn at IDENTITY, and
+	the clown's phoboman at (0.75, 1, 0.75) is what still carries the case.
 
 	Orthogonality is the exact test rather than a proxy: a rotation scaled along
 	its OWN axes keeps mutually perpendicular columns (each is a unit column times
 	one factor), and a shear is precisely the loss of that. So this passes for a
 	uniform model, passes for a correctly-stretched one, and fails for a sheared
 	one — no reference pose to restate and nothing to retune when the numbers
-	move. It is asked of every BIOME_BOSS kind, so the uniformly
-	scaled ones (the crocodile fallback, the titan) are its negative control and
-	the stretched placeholders (the dragon, and the hydra / naga / roc / clown)
-	are the cases that can actually fail it.
+	move. It is asked of every BIOME_BOSS kind, so the uniformly scaled ones (the
+	crocodile fallback, the titan, and every purpose-built boss mesh) are its
+	negative control and any NON-uniformly scaled scene — the clown today, and
+	whatever a future art bead reaches for — is the case that can actually fail
+	it. THE COVERAGE IS THE ITERATION, NOT THE LIST: this asks every kind, so it
+	keeps its teeth as scenes come and go.
 	"""
 	var model: Node3D = boss.get_node_or_null("Model")
 	if model == null:
@@ -618,6 +623,74 @@ func _check_model_rigid(boss: CharacterBody3D) -> void:
 				+ " scale with scaled_local (the model's own axes), not scaled"
 				+ " (the parent's), or a non-uniformly scaled species distorts"
 				+ " every time it leans")
+
+
+func _check_footprint(boss: CharacterBody3D) -> void:
+	"""
+	CHECK 7 — a boss's collision capsule fits inside the clearance the SPAWNER
+	reserved for it.
+
+	endless_terrain.spawn_bosses_in_chunk walks obstacle footprints with
+	BOSS_FOOTPRINT_RADIUS_PER_SCALE * boss_scale of clearance and places the boss
+	only where that circle is clear. The constant is a flat number, not a per-kind
+	measurement, so it is a PROMISE EVERY SCENE MAKES and nothing until now made
+	the scene keep it: a capsule reaching further than 0.7 m at body scale 1 gets
+	placed overlapping a tree or a rock and, at the 6x cap, wedges there.
+
+	THE TRAP IS THE OFFSET, and it has already been hit once (the hydra, PR #125):
+	the reach of a LAID capsule is not its radius and not its half-length, it is
+	the distance from the BODY's origin to the far cap — the collider's own offset
+	PLUS its extent. A mesh whose mass sits forward of its origin spends the 0.7
+	twice while every number in its .tscn still looks small. So this measures the
+	real thing: a capsule is a segment swept by a sphere, so its two segment
+	endpoints are pushed into the body's frame by the collider's own transform and
+	the radius is added to whichever is further out horizontally.
+
+	Body scale is deliberately divided out rather than avoided: the boss under test
+	is already scaled by setup_as_boss, but a CollisionShape3D's own `transform` and
+	its shape are in the SCENE's frame and the terrain's clearance is likewise per
+	unit scale, so both sides of the comparison are at scale 1 with nothing to undo.
+
+	It is asked of every kind `_subjects()` yields, so a boss added to BIOME_BOSS is
+	measured on the commit that adds it and an art bead that swaps in a bigger mesh
+	cannot quietly outgrow its station.
+	"""
+	var collider: CollisionShape3D = null
+	for child: Node in boss.get_children():
+		if child is CollisionShape3D:
+			collider = child
+			break
+	if collider == null:
+		_fail("footprint: no CollisionShape3D on this scene — a boss with no body "
+				+ "is neither solid nor placeable")
+		return
+	var capsule := collider.shape as CapsuleShape3D
+	if capsule == null:
+		_fail("footprint: collision shape is %s, not a CapsuleShape3D — this check "
+				% collider.shape + "measures a swept segment and cannot judge it")
+		return
+
+	# The capsule's segment: half its cylinder, along the collider's own +Y, from
+	# the collider's own origin. Both endpoints are taken because a rotated
+	# collider aims that axis anywhere, and `maxf(0.0, ...)` because a capsule
+	# whose height is at most two radii is a sphere with a degenerate segment.
+	var half_axis: float = maxf(0.0, capsule.height * 0.5 - capsule.radius)
+	var axis: Vector3 = collider.transform.basis.y.normalized() * half_axis
+	var here: Vector3 = collider.transform.origin
+	var reach: float = 0.0
+	for end_point: Vector3 in [here + axis, here - axis]:
+		reach = maxf(reach, Vector2(end_point.x, end_point.z).length())
+	reach += capsule.radius
+
+	var budget: float = TERRAIN_SCRIPT.BOSS_FOOTPRINT_RADIUS_PER_SCALE
+	if reach > budget:
+		_fail("footprint: capsule reaches %.3f m horizontally at body scale 1, "
+				% reach + "over BOSS_FOOTPRINT_RADIUS_PER_SCALE (%.2f) — the "
+				% budget + "spawner clears only %.2f m per unit scale, so this "
+				% budget + "kind gets placed overlapping a prop and wedges in it "
+				+ "at the 6x cap. Shorten the mesh, or centre it on its own "
+				+ "origin: the reach is the collider's offset PLUS its extent, so "
+				+ "an off-centre body spends the budget twice.")
 
 
 func _check_resolved_speed(boss: CharacterBody3D) -> void:

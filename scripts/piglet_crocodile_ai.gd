@@ -1647,48 +1647,40 @@ const SPECIES: Dictionary = {
 	## that lattice matters most, which is why it takes the default rather than
 	## a number of its own.
 	##
-	## THE MODEL IS A PLACEHOLDER AND SAYS SO. Per the epic's art-decoupling
-	## convention (the titan is a re-skinned Teibi), scenes/characters/
-	## green_dragon.tscn instances piglet_crocodile.glb — the only green scaly
-	## reptile in the asset set — stretched to (1, 1.6, 1) so it reads as a
-	## leggier, taller-standing beast rather than as the 6x piglet crocodile that
-	## already guards every band this table has no row for. The real winged model
-	## is its own art bead (godot-test1-lce.7, wings as SILHOUETTE only — this
-	## world is flat and nothing flies); when it lands, only the .tscn and the
-	## measured geometry below change, and nothing in this row's behaviour does.
+	## PURPOSE-BUILT, MEASURED (bead lce.7 — the placeholder was piglet_crocodile.glb
+	## stretched to (1, 1.6, 1)). scenes/characters/green_dragon.tscn instances
+	## green_dragon.glb at IDENTITY: a quadruped on `predator_parts.quadruped` with
+	## WINGS off the toolkit's `wings` primitive, swept horns and a bone ridge down
+	## the spine, built by scripts/generate_green_dragon.py. Read that file for the
+	## palette (measured against the forest floor) and the wing geometry. THE WINGS
+	## ARE SILHOUETTE, NOT FLIGHT — this world is flat, nothing flies, and the hop
+	## at the bottom of this row is the whole of the animal's verticality.
 	##
-	## THE STRETCH IS VERTICAL ONLY, AND THAT IS A PLACEMENT CONSTRAINT, not an
-	## art choice. endless_terrain's BOSS_FOOTPRINT_RADIUS_PER_SCALE (0.7) is the
-	## clearance every boss candidate is judged against, and 0.7 is exactly the
-	## crocodile capsule's half-LENGTH — the widest horizontal reach of a 1.4 m
-	## capsule laid on its side. Stretch this body along x or z and its footprint
-	## quietly exceeds the number the spawner is still using, so at the 6x cap it
-	## can be placed overlapping a tree and wedge there. Growing UP costs the
-	## footprint nothing. (The alternative — raising that constant, or deriving it
-	## per species — would move every boss in the world, which is a bead of its
-	## own and not a side effect of an art placeholder.)
-	##
-	## MEASURED OFF THAT STRETCH, because the geometry keys are model numbers and
-	## a .tscn cannot hold a comment an editor resave will not eat. The source
-	## mesh is 1.400 x 0.280 x 0.276 (the crocodile's, see the row at the top of
-	## this table); at (1, 1.6, 1) the dragon is the same 1.400 long and 0.280
-	## wide, and 0.442 TALL — two thirds again the crocodile's height, which is
-	## the whole silhouette difference. The capsule in green_dragon.tscn is
-	## `radius = 0.22, height = 1.4`, laid on the travel axis with the
-	## crocodile's basis, at `(0, 0.22, 0)`:
-	##   * 0.22 makes a 0.44 m tube around the 0.442 m standing height — the
-	##     viper's tightest-fit rule, applied to the axis that actually grew. It
-	##     over-covers the unchanged 0.280 m width by 0.08 m, the same trade the
-	##     crocodile's own 0.16 makes on its 0.28.
-	##   * 1.4 is the unstretched length, caps included, so the horizontal reach
-	##     stays 0.7 — the spawner's bound, exactly.
+	## THE MESH IS 1.3065 LONG (x -0.653 .. +0.653), 0.7408 TALL and 0.8100 ACROSS,
+	## recorded here because the geometry keys are model numbers and a .tscn cannot
+	## hold a comment an editor resave will not eat. The capsule in
+	## green_dragon.tscn is `radius = 0.371, height = 1.306`, laid on the travel
+	## axis with the crocodile's basis, at `(0, 0.371, 0)`:
+	##   * 0.371 makes a 0.742 m tube around the 0.7408 m standing height — the
+	##     viper's tightest-fit rule, applied to the tallest axis.
+	##   * 1.306 is the nose-to-tail length, caps included, so the horizontal reach
+	##     is 0.653 — inside endless_terrain's BOSS_FOOTPRINT_RADIUS_PER_SCALE
+	##     (0.7), which is the clearance every boss candidate is judged against.
+	##     The reach of a LAID capsule is its offset PLUS its half-length, which is
+	##     why generate_green_dragon.py shifts the finished animal onto its own
+	##     x-midpoint: an off-centre mesh spends that 0.7 twice and at the 6x cap
+	##     lands the dragon inside the tree it was placed clear of.
 	##   * radius == centre y, the crocodile/viper/hunter identity, so the
 	##     capsule's bottom sits exactly on y = 0 and the body rests on the flat
 	##     world's ground plane.
-	##   * z = 0, like the crocodile's and unlike the viper's and the hunter's:
-	##     this mesh is centred on its own origin.
+	##   * z = 0: the mesh is centred on its own origin.
+	## THE WINGS REACH PAST THE CAPSULE (0.405 either side against a 0.371 radius)
+	## AND THAT IS DELIBERATE. Collision is the body; a wing you can walk through
+	## is the same deal every other model's tail already makes, and pricing the
+	## wingspan into the capsule would cost the mountain and forest bands boss
+	## stations for a surface nothing can stand on.
 	## The boss schedule's `scale = ONE * boss_scale` multiplies all of it, so a
-	## 6x dragon is an 8.4 m capsule around a 2.65 m tall model.
+	## 6x dragon is a 7.8 m capsule around a 4.4 m tall model.
 	"green_dragon": {
 		## THE SEVENTH ARM, shared with the roc: a bounded hop with an arc and a
 		## grounded recovery window (`_behave_leap`). Everything the row does NOT
@@ -1750,14 +1742,19 @@ const SPECIES: Dictionary = {
 		"avoid_speed_factor": 0.5,
 
 		# ----- Procedural body animation -----
-		## -PI/2, the quadruped default: this is the crocodile mesh, authored
-		## nose-along-+X, and the body travels +Z.
+		## -PI/2, the quadruped default and UNCHANGED by the lce.7 model swap:
+		## green_dragon.glb is a predator_parts build, so it is authored
+		## nose-along-+X exactly as the crocodile placeholder was, and the body
+		## travels +Z. (The naga is the counter-example that makes this worth
+		## restating — its placeholder was a humanoid facing -Z, so its offset had
+		## to move with the mesh. A row's facing offset is a property of the MESH.)
 		"model_facing_offset": -PI / 2.0,
 
 		## A heavy, deliberate gait. Everything here is the crocodile's read
 		## slowed and deepened — a big animal covering the same ground in fewer,
-		## longer strides, which is the only thing separating a dragon from a
-		## piglet crocodile until lce.7 lands the real mesh.
+		## longer strides. Authored against the placeholder and kept through the
+		## lce.7 model swap on purpose: the new mesh is the same kind of animal
+		## (a quadruped, nose-along-+X, feet at y = 0) and a gait is not art.
 		"stride_frequency": 5.5,
 		"waddle_roll": 6.0 * PI / 180.0,
 		"bob_amount": 0.05,
@@ -1768,13 +1765,16 @@ const SPECIES: Dictionary = {
 		"breathe_amount": 0.02,
 
 		# ----- River submersion (VISUAL ONLY) -----
-		## The crocodile's 0.18 carried through the 1.6x vertical stretch: 0.288,
-		## rounded. Scaling it is the whole point — the sink is written in
+		## 0.29, unchanged across the lce.7 model swap and re-derived rather than
+		## re-typed: it was the crocodile's 0.18 carried through the placeholder's
+		## 1.6x stretch, and on the purpose-built mesh it is the LEG LENGTH
+		## (generate_green_dragon.py's `leg_len` 0.30). Both readings put the water
+		## line at the belly, so the number stands. The sink is written in
 		## MODEL-LOCAL metres and applied to `model.position.y`, which is in the
-		## BODY's frame, so the Model node's own scale does not touch it. Leave it
-		## at 0.18 and a dragon two thirds taller than a crocodile would wade
-		## proportionally shallower, which is the one way this key can silently
-		## go wrong.
+		## BODY's frame, so a Model node's own scale never touches it — which is
+		## exactly how this key goes silently wrong when a mesh is replaced with
+		## one of a different height and the depth is left as an inherited constant
+		## nobody re-measured.
 		##
 		## Same hard constraint as every row: VISUAL ONLY. The CharacterBody3D,
 		## its CollisionShape3D and global_position never move, so a wading dragon
@@ -1862,24 +1862,30 @@ const SPECIES: Dictionary = {
 	## 11's river gate and by boss_selfcheck's crocodile subject respectively.
 	##
 	## EACH MODEL BELOW SAYS WHETHER IT IS A PLACEHOLDER, the same art-decoupling
-	## convention the titan (a re-skinned Teibi) and the dragon (a stretched
-	## piglet crocodile) still ship under. The purpose-built meshes are their own
-	## art beads — lce.6 (serpentine builders: naga + hydra, LANDED), lce.7 (winged
-	## pair: roc + dragon), lce.8 (humanoids: titan + clown) — and when they land
+	## convention the titan (a re-skinned Teibi) and the clown (a re-skinned
+	## Phoboman) still ship under. The purpose-built meshes are their own art beads
+	## — lce.6 (serpentine builders: naga + hydra, LANDED), lce.7 (winged pair: roc
+	## + dragon, LANDED), lce.8 (humanoids: titan + clown) — and when they land
 	## only the .tscn and the measured geometry in these comments change, never a
 	## line of behaviour. lce.6 is the one counter-example and it proves the rule:
 	## naga.glb is authored nose-along-+X where the humanoid placeholder faced -Z,
 	## so its `model_facing_offset` moved with the mesh. A row's facing offset is a
-	## property of the MESH, not of the animal.
+	## property of the MESH, not of the animal — and the corollary held for lce.7,
+	## where both winged rows keep -PI/2 because a predator_parts build faces the
+	## same way the toolkit placeholders they replaced did.
 	##
-	## THE ONE HARD PLACEMENT CONSTRAINT ON A PLACEHOLDER, restated from the
+	## THE ONE HARD PLACEMENT CONSTRAINT ON EVERY SCENE HERE, restated from the
 	## dragon's row because it is the rule that bites: endless_terrain's
 	## BOSS_FOOTPRINT_RADIUS_PER_SCALE (0.7) is the clearance every boss candidate
 	## is judged against, so no scene here may have a collision capsule reaching
-	## further than 0.7 m horizontally at body scale 1. That is what the horizontal
-	## DOWN-scales below are for (0.5 on the hydra's snake, 0.9 on the roc's bear,
-	## 0.75 on the clown's phoboman): they are placement arithmetic, not art
-	## choices. Growing a placeholder UP is free; growing it out is not.
+	## further than 0.7 m horizontally at body scale 1. On a placeholder that is
+	## what the horizontal DOWN-scale is for (0.75 on the clown's phoboman): it is
+	## placement arithmetic, not an art choice. On a purpose-built mesh it is the
+	## generator's job instead — every one of them holds its own nose-to-tail
+	## length under the bound AND shifts the finished animal onto its own
+	## x-midpoint, because the reach of a capsule is its offset PLUS its extent and
+	## an off-centre mesh spends the 0.7 twice. Growing a boss UP is free; growing
+	## it out, or off-centre, is not.
 
 	## ------------------------------------------------------------------------
 	## HYDRA — the PLAINS band's boss, and the one players meet first.
@@ -2104,23 +2110,28 @@ const SPECIES: Dictionary = {
 	## will legitimately place no boss at all — that is the designed outcome of
 	## that walk, not a reason to loosen the clearance.
 	##
-	## PLACEHOLDER, MEASURED. scenes/characters/roc.tscn instances bear.glb — the
-	## bulkiest quadruped in the asset set — at (0.9, 1.6, 0.9): pulled in
-	## horizontally and reared, so a heavy body ends up standing on legs rather
-	## than lying along them. The source mesh is 1.2154 long (x -0.46 .. +0.755),
-	## 0.82 tall and 0.434 across; at that scale it is 1.094 long
-	## (x -0.414 .. +0.680, midpoint +0.133), 1.312 tall and 0.391 across. The
-	## capsule in roc.tscn is `radius = 0.55, height = 1.312` at
-	## `(0, 0.656, 0.133)`, UPRIGHT like the titan's and the naga's — this body is
-	## now taller than it is long, so a laid-down capsule could not cover it:
-	##   * 1.312 is the standing height and 0.656 = height/2 puts the bottom on
+	## PURPOSE-BUILT, MEASURED (bead lce.7 — the placeholder was bear.glb reared and
+	## squashed to (0.9, 1.6, 0.9)). scenes/characters/roc.tscn instances roc.glb at
+	## IDENTITY: the toolkit's FIRST AVIAN — two heavy legs, a slab of a body
+	## carried over them, a hooked beak, and big wings worn nearly SHUT off
+	## `predator_parts.wings` — built by scripts/generate_roc.py. Read that file for
+	## the palette (measured against the mountain scree) and for why a bird's legs
+	## are written inline rather than lifted into a `biped()` nobody else calls.
+	##
+	## THE MESH IS 1.1488 LONG (x -0.574 .. +0.574), 1.3340 TALL and 0.7932 ACROSS.
+	## The capsule in roc.tscn is `radius = 0.575, height = 1.334` at
+	## `(0, 0.667, 0)`, UPRIGHT like the titan's and the naga's — this body is
+	## taller than it is long, so a laid-down capsule could not cover it:
+	##   * 1.334 is the standing height and 0.667 = height/2 puts the bottom on
 	##     y = 0.
-	##   * 0.55 covers the 0.547 m half-length, and being an upright capsule that
-	##     radius IS the horizontal reach — inside the spawner's 0.7 bound, which
-	##     is exactly what the 0.9 horizontal squash was for.
-	##   * z = +0.133 is the mesh's own x-midpoint (model +X becomes body +Z under
-	##     the -PI/2 facing offset), like the viper's and the hunter's negative
-	##     ones: bear.glb is built forward of its origin.
+	##   * 0.575 covers the 0.574 m half-length, and being an upright capsule that
+	##     radius IS the horizontal reach — inside the spawner's 0.7 bound.
+	##   * z = 0, where the placeholder needed +0.133: generate_roc.py shifts the
+	##     finished bird onto its own x-midpoint, so there is no offset left to add
+	##     to the radius. (Model +X becomes body +Z under the -PI/2 facing offset,
+	##     which is why an x-midpoint shows up as a z offset here at all.)
+	## The wings reach 0.397 either side, inside the 0.575 radius, so this bird is
+	## the one boss whose whole silhouette really does fit its own capsule.
 	"roc": {
 		## The dragon's row one band over, arm included: `_behave_leap`, one
 		## function shared by both winged bosses with not one `if species ==`
@@ -2159,7 +2170,10 @@ const SPECIES: Dictionary = {
 		"avoid_speed_factor": 0.5,
 
 		# ----- Procedural body animation -----
-		## -PI/2, the quadruped default: bear.glb is authored nose-along-+X.
+		## -PI/2, the quadruped default and UNCHANGED by the lce.7 model swap:
+		## roc.glb is a predator_parts build, authored nose-along-+X exactly as the
+		## bear placeholder was. See the preamble above for why that is worth
+		## saying out loud.
 		"model_facing_offset": -PI / 2.0,
 
 		## A STRUT. Two legs carrying a heavy body read as a slow stride with a
@@ -2174,8 +2188,12 @@ const SPECIES: Dictionary = {
 		"breathe_amount": 0.035,
 
 		# ----- River submersion (VISUAL ONLY) -----
-		## The bear's 0.30 carried through the 1.6x rear: 0.48. Long legs, so it
-		## wades where a quadruped of the same mesh would be swimming. VISUAL ONLY.
+		## 0.48, unchanged across the lce.7 model swap and re-derived rather than
+		## re-typed: it was the bear's 0.30 carried through the placeholder's 1.6x
+		## rear, and on the purpose-built mesh it is just under the hip
+		## (generate_roc.py's HIP_Y is 0.494). Both readings put the water line at
+		## the top of the legs — long legs, so it wades where a quadruped of the
+		## same bulk would be swimming. VISUAL ONLY.
 		"river_sink_depth": 0.48,
 		"river_sink_ease_speed": 0.48 / 0.2,
 
