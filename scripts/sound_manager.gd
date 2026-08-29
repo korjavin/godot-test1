@@ -202,6 +202,48 @@ const PROJECTILE_SOUND_FALLBACK: Dictionary = {
 	"stream": "whoosh", "db": -12.0, "pitch": 1.7,
 }
 
+# --- Hunter lock-on: the retrieval unit's two-tone servo ping. ---
+## THE ONE SOUND IN THIS FILE THAT IS NOT AN ANIMAL, and that is the whole point.
+## Every other threat cue here is breath or flesh — a growl, a hiss, a chomp — so
+## the hunter robot announcing itself has to read as ISSUED rather than born. Two
+## short square-wave tones, no noise, no sweep inside a tone: a machine deciding.
+##
+## It is also the class's mercy lever made audible. `hunt_telegraph_time` (1.8 s
+## in the hunter's SPECIES row) is only warning time if the player is TOLD the
+## clock started, so this cue is load-bearing gameplay, not decoration.
+##
+## DELIBERATELY NOT A REPLAYED BUFFER, unlike play_splash / play_level_up /
+## play_projectile. The nearest candidate was the coin blip (two short tones,
+## already), and a lock-on warning that reads as "you picked something up" is
+## worse than no warning at all — the pickup blip is the most-heard sound in the
+## game. So this one gets its own eleven-line synth function.
+##
+## DESCENDING, where the coin ascends: a rising pair reads as reward in every
+## game anyone has played, and the interval is the cheapest way to keep the two
+## unconfusable even through a phone speaker. Square, and high, so it cuts
+## through the wind bed and a chasing pack without being loud.
+const HUNTER_PING_FREQS: Array[float] = [2200.0, 1650.0]  # a descending fourth
+const HUNTER_PING_NOTE_DURATION: float = 0.055  # each tone: a blip, not a beep
+const HUNTER_PING_GAP: float = 0.035    # silence between them — two events, not one
+const HUNTER_PING_DECAY: float = 22.0   # per-tone exponential; fast, but it rings
+const HUNTER_PING_VOLUME_DB: float = -12.0  # under the growl (-8) and hiss (-11):
+                                            # a warning at range, not a jumpscare
+
+# --- Hunter grab: the servo clamp landing. ---
+## Fired when a hunter's contact is resolved (piglet_crocodile_ai's hunt branch in
+## `_on_player_collision`), so it lands on top of the ordinary bite feedback and
+## has to be distinguishable from it: the bite is a downward NOISE sweep, this is
+## a low square thunk with no sweep at all — actuator, not jaw.
+##
+## ponytail: it REPLAYS the "buzz" buffer (a 90 Hz square with a fast decay) far
+## below its own pitch rather than baking a twelfth synth function — the exact
+## precedent play_splash, play_level_up and play_projectile already set in this
+## file. Pitching a square down moves the whole harmonic stack down and stretches
+## the decay, which is the difference between a UI "nope" and a clamp closing.
+## Add a real _synth_clamp() only if it reads as the blocked-ability buzzer.
+const HUNTER_GRAB_PITCH: float = 0.5   # 90 Hz -> 45 Hz, 0.15 s -> 0.3 s
+const HUNTER_GRAB_VOLUME_DB: float = -7.0  # a hit, so around the bite's -6
+
 # --- Danger heartbeat: ONE looping "lub-dub" cycle, driven externally. ---
 ## The danger vignette fetches this via get_loop_player("heartbeat") and owns
 ## play/stop/pitch/volume itself — we only bake the stream and park the player.
@@ -268,6 +310,7 @@ func _ready() -> void:
 	_streams["footstep"] = _build_wav(_synth_footstep())
 	_streams["buzz"] = _build_wav(_synth_buzz())
 	_streams["crunch"] = _build_wav(_synth_crunch())
+	_streams["hunter_ping"] = _build_wav(_synth_hunter_ping())
 
 	# The wind is the one LOOPING stream: mark the whole buffer as the loop
 	# region so it plays forever once started.
@@ -439,6 +482,24 @@ func play_buzz() -> void:
 func play_crunch() -> void:
 	## Giant Teibi flattening a crocodile.
 	_play_oneshot("crunch", CRUNCH_VOLUME_DB)
+
+
+func play_hunter_lock_on() -> void:
+	## A hunter robot acquiring its quarry — fired by piglet_crocodile_ai.gd on the
+	## not-chasing -> chasing edge, from the SAME branch as the boss growl and the
+	## viper hiss and under the same rule: one cue per engagement, never per frame.
+	##
+	## The name is the hook the hunt arm already reached for through `has_method`
+	## while this did not exist (bead godot-test1-9rm.3), so the guard there now
+	## simply finds it. Routing through _play_oneshot is what keeps the
+	## browser-gesture gate honoured: there is no path here that bypasses _unlocked.
+	_play_oneshot("hunter_ping", HUNTER_PING_VOLUME_DB)
+
+
+func play_hunter_grab() -> void:
+	## A hunter's retrieval attempt landing. See HUNTER_GRAB_PITCH for why this is
+	## the buzz buffer dropped an octave rather than a stream of its own.
+	_play_oneshot("buzz", HUNTER_GRAB_VOLUME_DB, HUNTER_GRAB_PITCH)
 
 
 func play_projectile(style: String) -> void:
@@ -622,6 +683,35 @@ func _synth_hiss() -> PackedFloat32Array:
 			var t: float = float(i - attack_frames) / MIX_RATE
 			envelope = exp(-t * HISS_DECAY) * (1.0 - progress)
 		samples.append(filtered * envelope)
+	return samples
+
+
+func _synth_hunter_ping() -> PackedFloat32Array:
+	## Two square-wave tones with a beat of silence between them — see the
+	## HUNTER_PING_* consts for why this one is not a replayed buffer.
+	##
+	## `signf(sin(...))` is the same square generator the bite and the buzz use.
+	## Square rather than sine because a pure sine reads as a musical note (the
+	## coin, the level-up chime, the game-over triad are all sines); the odd
+	## harmonics of a square are what make this read as a device.
+	##
+	## The trailing `(1 - progress)` on the envelope is the footgun _synth_hiss
+	## already documents: exp(-t * 22) is still well above zero when a 55 ms tone
+	## ends, and a buffer that stops mid-amplitude ends in an audible click. Here
+	## it would click TWICE, once into the gap and once at the end.
+	var samples := PackedFloat32Array()
+	var note_frames: int = int(HUNTER_PING_NOTE_DURATION * MIX_RATE)
+	var gap_frames: int = int(HUNTER_PING_GAP * MIX_RATE)
+	for note in range(HUNTER_PING_FREQS.size()):
+		if note > 0:
+			for _i in range(gap_frames):
+				samples.append(0.0)
+		var freq: float = HUNTER_PING_FREQS[note]
+		for i in range(note_frames):
+			var t: float = float(i) / MIX_RATE
+			var progress: float = float(i) / note_frames
+			var envelope: float = exp(-t * HUNTER_PING_DECAY) * (1.0 - progress)
+			samples.append(signf(sin(TAU * freq * t)) * envelope * 0.6)
 	return samples
 
 

@@ -3418,26 +3418,7 @@ func _update_chase_state() -> void:
 		if not is_chasing:
 			# Just started chasing
 			is_chasing = true
-			# ANNOUNCE THE ACQUISITION. Bosses growl; an ambusher hisses. Both
-			# fire HERE and only here, on the not-chasing → chasing edge, which
-			# is what makes it one cue per engagement rather than one per frame —
-			# the boss growl has always worked this way and the hiss is its exact
-			# sibling. Null-safe group lookup like every SFX hook, so a scene run
-			# without Main just stays silent, and both route through the
-			# sound_manager's _unlocked browser-gesture gate.
-			#
-			# The ambusher is the species that most needs it: it is buried and
-			# smells only 5 m, so with no sound the first signal the player gets
-			# is the strike already landing. Keyed on the BEHAVIOUR, not the
-			# species name, because "you cannot see me coming" is the trait that
-			# owes the player a warning.
-			var sm := get_tree().get_first_node_in_group("sound_manager")
-			if is_boss:
-				if sm and sm.has_method("play_boss_growl"):
-					sm.play_boss_growl()
-			elif spec["behavior"] == "ambush":
-				if sm and sm.has_method("play_viper_hiss"):
-					sm.play_viper_hiss()
+			_announce_acquisition()
 	else:
 		if is_chasing:
 			# Lost the player (too far OR player jumped)
@@ -3493,6 +3474,55 @@ func _update_chase_state() -> void:
 			_behave_ranged()
 		"hunt":
 			_behave_hunt()
+
+
+func _announce_acquisition() -> void:
+	"""
+	ONE CUE, on the not-chasing -> chasing edge. Bosses growl, ambushers hiss,
+	hunters ping; every other species acquires you in silence.
+
+	WHY THIS IS A FUNCTION AND NOT THREE LINES IN THE EDGE ABOVE — it has TWO
+	callers, and the second one is the whole point. The edge in
+	`_update_chase_state` is only reached on the machine SIMULATING this body:
+	`_tick_remote()` sits at the top of `_physics_process` and returns, so a
+	remote-driven crocodile never reaches the chase logic, never reaches the
+	behaviour dispatch, and never announces anything. Every peer but the master
+	therefore heard nothing at all. `set_remote_state()` re-detects the same edge
+	off `CROC_FLAG_CHASING` — which the packet has always carried — and calls
+	this, so the cue fires once per engagement on EVERY screen in the room, with
+	no new flag bit and no protocol change (see CROC_FLAG_BURROWED's note in
+	mp_manager.gd, which rules exactly this).
+
+	KEYED ON THE BEHAVIOUR, not the species name, for the hunt and the ambush
+	alike: "you cannot see me coming" (the buried viper, smelling 5 m) and "I have
+	started a clock you cannot see" (the hunter's 1.8 s telegraph) are properties
+	of a MECHANIC, so a second ambusher or a second retrieval unit inherits its
+	warning with its SPECIES row and no edit here. Boss-ness is the one exception,
+	because it is a modifier rather than a behaviour.
+
+	The hunter's ping used to live inside `_behave_hunt()`, at the point the
+	telegraph clock is armed. That read naturally and was silent for three players
+	out of four for the reason above; the clock stays there, the cue moved here.
+
+	Null-safe group lookup and `has_method` like every SFX hook in this project, so
+	a scene run without Main — every self-check, the standalone character scenes —
+	simply stays quiet, and every cue routes through the sound manager's
+	`_unlocked` browser-gesture gate rather than around it.
+	"""
+	var sm := get_tree().get_first_node_in_group("sound_manager")
+	if sm == null:
+		return
+	if is_boss:
+		if sm.has_method("play_boss_growl"):
+			sm.play_boss_growl()
+		return
+	match spec["behavior"]:
+		"ambush":
+			if sm.has_method("play_viper_hiss"):
+				sm.play_viper_hiss()
+		"hunt":
+			if sm.has_method("play_hunter_lock_on"):
+				sm.play_hunter_lock_on()
 
 
 func _behave_pack() -> void:
@@ -3709,21 +3739,16 @@ func _behave_hunt() -> void:
 		return
 
 	if not _hunt_lock.has("telegraph"):
-		# THE ACQUISITION EDGE, and the only place the cue fires — one per
-		# engagement, exactly like the boss growl and the viper hiss above the
-		# dispatch. Those two are keyed there because they belong to every
-		# instance of a species; this one belongs to the ARM (a hunter that is
-		# not on the hunt arm has no lock-on to announce), so it lives here.
-		#
-		# `has_method`-guarded against a sound manager that does not implement it
-		# YET: the synthesized ping is its own polish bead, and this guard is what
-		# lets the behaviour ship silent instead of waiting on audio work. Same
-		# null-safe group lookup as every other SFX hook, so a scene run without
-		# Main simply stays quiet.
+		# THE ACQUISITION EDGE — where the telegraph clock is armed, and nothing
+		# else. The lock-on PING used to fire from right here, which read naturally
+		# and was wrong: this arm runs only on the machine simulating the body, so
+		# on a peer (which returns from `_tick_remote()` long before the dispatch)
+		# the warning was silent — for three players out of four in a four-player
+		# room. The cue now lives in `_announce_acquisition()`, called from the
+		# `is_chasing` edge in `_update_chase_state()` AND from the same edge
+		# re-detected in `set_remote_state()`. Read that function for the whole of
+		# it. The clock stays here because a clock is behaviour, not feedback.
 		_hunt_lock["telegraph"] = float(spec.get("hunt_telegraph_time", 0.0))
-		var sm := get_tree().get_first_node_in_group("sound_manager")
-		if sm and sm.has_method("play_hunter_lock_on"):
-			sm.play_hunter_lock_on()
 
 	# `_update_chase_state` has no `delta` of its own (see the note on the
 	# dispatch), and this is the same seam `_behave_ranged` uses to get one.
@@ -4465,7 +4490,26 @@ func set_remote_state(pos: Vector3, yaw: float, flags: int) -> void:
 	_remote_pos = pos
 	_remote_yaw = fposmod(yaw, TAU)
 
+	# THE ACQUISITION EDGE, RE-DETECTED FROM THE WIRE. Read before the write, so a
+	# false -> true transition in the master's own `is_chasing` announces itself
+	# here exactly as it announced itself there. Without this the boss growl, the
+	# viper hiss and the hunter's lock-on ping are audible ONLY to whoever is
+	# simulating the body: this method is reached from `_tick_remote()`, which sits
+	# at the top of `_physics_process` and returns before the chase logic that owns
+	# the local edge, so on every other screen those cues simply never fired.
+	#
+	# It costs no protocol. CROC_FLAG_CHASING has been on the wire and restored
+	# below since the sync shipped — the edge was always there to be read, and this
+	# is the "the acquisition cue is the same answer from the other end" that
+	# CROC_FLAG_BURROWED's note in mp_manager.gd rules out a sixth bit for.
+	#
+	# Fires only on the transition, so a peer receiving 10 samples a second of a
+	# crocodile that is still chasing hears one cue per engagement, not ten a
+	# second — the identical guarantee the local edge gives.
+	var was_chasing: bool = is_chasing
 	is_chasing = (flags & MpManager.CROC_FLAG_CHASING) != 0
+	if is_chasing and not was_chasing:
+		_announce_acquisition()
 	is_fleeing = (flags & MpManager.CROC_FLAG_FLEEING) != 0
 	is_paused = (flags & MpManager.CROC_FLAG_PAUSED) != 0
 	# The burrow rides the byte rather than being re-derived here, and the reason
@@ -5128,6 +5172,16 @@ func _on_player_collision(player: Node) -> void:
 	# bead was told not to add.
 	if spec["behavior"] == "hunt":
 		_hunt_lock["disengage"] = float(spec.get("hunt_disengage_time", 0.0))
+		# And the clamp closing, on top of the ordinary bite feedback the hit
+		# above already paid for — a servo sting rather than a second chomp, so a
+		# grab is legible as a DIFFERENT kind of hit without being a cheaper one.
+		# This runs on the machine where the contact was detected, which by the
+		# sync layer's design is the machine of the player who was grabbed: the
+		# one screen that must hear it. Same null-safe / has_method / _unlocked
+		# routing as every other cue.
+		var sm := get_tree().get_first_node_in_group("sound_manager")
+		if sm and sm.has_method("play_hunter_grab"):
+			sm.play_hunter_grab()
 
 	# Pause/turn away so we don't immediately re-trigger on the same overlap.
 	_pause_and_change_direction()
