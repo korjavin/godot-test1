@@ -420,7 +420,7 @@ Budgets:
 
 ### Task 3: The adjacency index in `tower_selfcheck._reach`
 
-- [ ] `_reach` currently re-scans **every** edge for every popped room. Replace the
+- [x] `_reach` currently re-scans **every** edge for every popped room. Replace the
       `edges: Array` parameter with an **index**: `Dictionary` of
       `room_id -> Array[Dictionary]` (the edges touching that room), built **once per
       (story, scar)** and memoized beside `_edges_for`'s result.
@@ -428,10 +428,10 @@ Budgets:
       - New `_index_for(story, scar) -> Dictionary`, memoized the same way.
       - `_reach(index, start, free, mode, skip_gate)`; `_reaches_any` and every other
         caller updated.
-- [ ] Comment the *why* with the numbers: today's walk is O(rooms x edges) per pop; at
+- [x] Comment the *why* with the numbers: today's walk is O(rooms x edges) per pop; at
       the epic's 150 rooms / 200 edges that is 30 000 edge tests per pop and the file
       stops finishing. The index makes it O(degree).
-- [ ] Verify the audit's **verdict is unchanged**: `tower_selfcheck` still prints
+- [x] Verify the audit's **verdict is unchanged**: `tower_selfcheck` still prints
       `SELFCHECK OK` with the same room/edge/gate counts before Task 5 adds any rows.
 
 ### Task 4: Extend check 1 — plan rooms and gates bound to graph rows, both ways

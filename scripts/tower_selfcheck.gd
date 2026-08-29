@@ -144,6 +144,13 @@ const MAX: String = "max"
 var _failures: Array[String] = []
 var _graph: Dictionary = TowerGraph.TOWER_GRAPH
 
+## The walker's two memos, both keyed "<story id>|<scar id>" — see `_edges_for` and
+## `_index_for`. The state pair is the outer loop of every walking check, so the
+## edge set and its adjacency index are each built once per state and then reused
+## across every entry and all fifteen subsets.
+var _edges_cache: Dictionary = {}
+var _index_cache: Dictionary = {}
+
 
 func _initialize() -> void:
 	# No `await process_frame`: nothing here touches the tree. See LANDMINES.
@@ -547,22 +554,21 @@ func _check_every_subset_reaches_a_cell() -> void:
 		if not bool(story["captivity"]):
 			continue
 		for scar: Dictionary in _graph["scars"]:
-			var edges := _edges_for(story, scar)
 			for entry: Dictionary in _all_entries():
 				for free: Array in _subsets():
 					var typed: Array[String] = []
 					for h: String in free:
 						typed.append(h)
-					_audit_one(story, scar, entry, typed, edges)
+					_audit_one(story, scar, entry, typed)
 
 
 func _audit_one(story: Dictionary, scar: Dictionary, entry: Dictionary,
-		free: Array[String], edges: Array) -> void:
+		free: Array[String]) -> void:
 	"""One walk. Fails naming the case, the subset and what stopped it."""
 	var targets := _captive_cells(free)
 	if targets.is_empty():
 		return  # nobody is captive: no rescue to make.
-	var seen := _reach(edges, String(entry["room"]), free, FLOOR, "")
+	var seen := _reach(_index_for(story, scar), String(entry["room"]), free, FLOOR, "")
 	for cell: String in targets:
 		if seen.has(cell):
 			return
@@ -570,7 +576,7 @@ func _audit_one(story: Dictionary, scar: Dictionary, entry: Dictionary,
 	# doors this subset stood in front of and could not open, which is the sentence
 	# a designer can act on.
 	var blockers: Dictionary = {}
-	for edge: Dictionary in edges:
+	for edge: Dictionary in _edges_for(story, scar):
 		var a := String(edge["a"])
 		var b := String(edge["b"])
 		if seen.has(a) == seen.has(b):
@@ -610,7 +616,7 @@ func _check_captivity_flags_are_honest() -> void:
 		if not bool(story["captivity"]):
 			continue
 		for scar: Dictionary in _graph["scars"]:
-			var edges := _edges_for(story, scar)
+			var index := _index_for(story, scar)
 			for entry: Dictionary in _all_entries():
 				for free_any: Array in _subsets():
 					var free: Array[String] = []
@@ -619,12 +625,12 @@ func _check_captivity_flags_are_honest() -> void:
 					var targets := _captive_cells(free)
 					if targets.is_empty():
 						continue
-					if not _reaches_any(edges, entry, free, targets, ""):
+					if not _reaches_any(index, entry, free, targets, ""):
 						continue  # already failed in check 5; do not double-report
 					for gid: String in _graph["gates"]:
 						if necessary.has(gid):
 							continue
-						if not _reaches_any(edges, entry, free, targets, gid):
+						if not _reaches_any(index, entry, free, targets, gid):
 							necessary[gid] = "%s from '%s' under scar '%s'" % [
 								str(free), String(entry["id"]), String(scar["id"])]
 
@@ -657,9 +663,9 @@ func _check_quests_and_liberation() -> void:
 	var all_rooms: Dictionary = _graph["rooms"]
 	for story: Dictionary in _graph["story_states"]:
 		for scar: Dictionary in _graph["scars"]:
-			var edges := _edges_for(story, scar)
+			var index := _index_for(story, scar)
 			for entry: Dictionary in _all_entries():
-				var seen := _reach(edges, String(entry["room"]), full, MAX, "")
+				var seen := _reach(index, String(entry["room"]), full, MAX, "")
 				for rid: String in all_rooms:
 					if seen.has(rid):
 						continue
@@ -668,7 +674,7 @@ func _check_quests_and_liberation() -> void:
 						+ "(story '%s', scar '%s')" % [String(story["id"]), String(scar["id"])])
 
 	# Each quest solo-completable by at least one hero, somewhere in the tree.
-	var base_edges := _edges_for(_graph["story_states"][0], _graph["scars"][0])
+	var base_index := _index_for(_graph["story_states"][0], _graph["scars"][0])
 	for quest: Dictionary in _graph["quests"]:
 		var room := String(quest["room"])
 		if not all_rooms.has(room):
@@ -679,7 +685,7 @@ func _check_quests_and_liberation() -> void:
 			if not bool(entry["built"]):
 				continue  # a quest may not depend on an entry nobody can use yet.
 			for hero: String in TowerGraph.HEROES:
-				if _reach(base_edges, String(entry["room"]), [hero], MAX, "").has(room):
+				if _reach(base_index, String(entry["room"]), [hero], MAX, "").has(room):
 					solo = true
 					break
 		if not solo:
@@ -719,7 +725,14 @@ func _edges_for(story: Dictionary, scar: Dictionary) -> Array:
 	Mutation-added edges are deliberately LEFT OUT: mutations are additive (law 3,
 	asserted in check 2), so the un-mutated graph is the worst case and walking it
 	is strictly harsher than the game.
+
+	Memoized on (story, scar): the state space is the OUTER pair of loops in checks
+	5, 6 and 7, so the same set is rebuilt once per entry x subset otherwise.
 	"""
+	var key := String(story["id"]) + "|" + String(scar["id"])
+	if _edges_cache.has(key):
+		return _edges_cache[key]
+
 	var added: Dictionary = {}
 	for mut: Dictionary in _graph["mutations"]:
 		for eid: String in mut.get("adds", []):
@@ -739,7 +752,34 @@ func _edges_for(story: Dictionary, scar: Dictionary) -> Array:
 		if added.has(eid4) and not overlay.has(eid4):
 			continue
 		out.append(edge)
+	_edges_cache[key] = out
 	return out
+
+
+func _index_for(story: Dictionary, scar: Dictionary) -> Dictionary:
+	"""
+	The ADJACENCY INDEX of that edge set: room id -> the edges touching it.
+
+	`_reach` used to re-scan every edge for every popped room, which is
+	O(rooms x edges) per walk. Fourteen rooms and fifteen edges made that free; the
+	epic's target is ~150 rooms and ~200 edges, where one walk is 30 000 edge tests
+	and this file stops finishing inside its 30 s acceptance. The index makes a pop
+	cost O(degree) instead, and it is built once per (story, scar) — the same
+	memoization key as the edge set it is derived from, because it changes exactly
+	when that does.
+	"""
+	var key := String(story["id"]) + "|" + String(scar["id"])
+	if _index_cache.has(key):
+		return _index_cache[key]
+
+	var index: Dictionary = {}
+	for edge: Dictionary in _edges_for(story, scar):
+		for end_: String in [String(edge["a"]), String(edge["b"])]:
+			if not index.has(end_):
+				index[end_] = []
+			index[end_].append(edge)
+	_index_cache[key] = index
+	return index
 
 
 func _all_entries() -> Array:
@@ -759,11 +799,14 @@ func _all_entries() -> Array:
 	return out
 
 
-func _reach(edges: Array, start: String, free: Array[String], mode: String,
+func _reach(index: Dictionary, start: String, free: Array[String], mode: String,
 		skip_gate: String) -> Dictionary:
 	"""
 	Breadth-first over the passages this free set can actually get through.
 
+	@param index: `_index_for(story, scar)` — room id -> the edges touching it. A
+	              room with no edges is simply absent, which reads as "nowhere to
+	              go from here", exactly as the old full scan did.
 	@param skip_gate: a gate id to treat as impassable, for check 6's necessity
 	                  probe. "" for an ordinary walk.
 	@return: room id -> true, for every room reached.
@@ -772,7 +815,7 @@ func _reach(edges: Array, start: String, free: Array[String], mode: String,
 	var queue: Array[String] = [start]
 	while not queue.is_empty():
 		var here: String = queue.pop_back()
-		for edge: Dictionary in edges:
+		for edge: Dictionary in index.get(here, []):
 			var far := _across(edge, here)
 			if far == "" or seen.has(far):
 				continue
@@ -784,10 +827,10 @@ func _reach(edges: Array, start: String, free: Array[String], mode: String,
 	return seen
 
 
-func _reaches_any(edges: Array, entry: Dictionary, free: Array[String],
+func _reaches_any(index: Dictionary, entry: Dictionary, free: Array[String],
 		targets: Array[String], skip_gate: String) -> bool:
 	"""True when at least one target room is reachable from `entry` at floor rank."""
-	var seen := _reach(edges, String(entry["room"]), free, FLOOR, skip_gate)
+	var seen := _reach(index, String(entry["room"]), free, FLOOR, skip_gate)
 	for room: String in targets:
 		if seen.has(room):
 			return true
