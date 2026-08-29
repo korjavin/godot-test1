@@ -551,6 +551,16 @@ func _check_capture_respects_the_rooms_hand() -> void:
 	var other: int = TowerGraph.HEROES.find("teibi")
 	room.hand = [mine, other] as Array[int]
 	player.set_active_character(mine)
+	# E FIRST, before anybody is captive: the hand alone must already bound the
+	# cycle. This is pre-existing behaviour that nothing else measures, and the
+	# captive filter rewrote the block that implements it — four presses is more
+	# than a lap of a two-hero hand, so a cycle that could leave it would.
+	for press: int in 4:
+		player.switch_to_next_character()
+		if player.current_character_index != mine and player.current_character_index != other:
+			_fail("E left the room's hand and landed on %s" % player.hero_name())
+			break
+	player.set_active_character(mine)
 	player.hit_by_crocodile(_hunter())
 	if player.current_character_index != other:
 		_fail("with a two-hero hand the capture landed on %s, expected %s"
