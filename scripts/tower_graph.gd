@@ -201,12 +201,17 @@ const TOWER_GRAPH: Dictionary = {
 			"parts": ["CheckpointPlate", "CheckpointPost"],
 			"note": "East of the identity gate. The run's respawn anchor.",
 		},
-		# --- built, phase 8: the cell block wing, north of the entry hall ---
+		# --- the cell block. AUTHORED IN PHASE 8, MOVED TO STOREY 10 BY PHASE 16 ---
+		# The ids below are phase 8's, spelled exactly as phase 8 spelled them. The
+		# geometry left the ground floor and is now drawn on `TowerPlans`' storey-10
+		# grid, 46 m up under the sealed roof; moving geometry is not a save
+		# migration and renaming an id is, so nothing here changed but the notes.
 		"service_stair": {
 			"built": true, "quest": "", "cell": "", "parts": [],
 			"note": "The shared neutral segment all four spines pass through. A corridor "
-				+ "with the courtyard at one end, the crawl at the other, and the four "
-				+ "hero doors along its north side.",
+				+ "on storey 10 with the muster floor's wide doorway at one end, the "
+				+ "maintenance crawl at the other, and the four hero doors along its "
+				+ "north side.",
 		},
 		"cell_gallery": {
 			"built": true, "quest": "", "cell": "", "parts": [],
@@ -488,6 +493,12 @@ const TOWER_GRAPH: Dictionary = {
 			"note": "A dead-end gallery off the east side of the circuit — the floor's "
 				+ "one decoy chamber, and it holds nothing at all.",
 		},
+		"s10_landing": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "The MUSTER FLOOR: storey 10's open approach, with the ramp out of "
+				+ "the labyrinth at its south-east corner and the cell block standing "
+				+ "in the middle of it. Both ways into the block open off it.",
+		},
 	},
 
 	# ------------------------------------------------------------------------
@@ -506,12 +517,16 @@ const TOWER_GRAPH: Dictionary = {
 		{"id": "landing_checkpoint", "a": "upper_landing", "b": "checkpoint_room",
 			"gate": GATE_IDENTITY, "built": true},
 
-		# --- phase 8: the neutral approach, two ways round ---
-		{"id": "courtyard_stair", "a": "courtyard", "b": "service_stair",
+		# --- the neutral approach, two ways round. PHASE 8's REDUNDANCY, ON
+		# PHASE 16's GEOMETRY: both edges used to join the ground-floor wing to the
+		# courtyard and the hall; they now join storey 10's muster floor to the same
+		# corridor. Edge ids are NOT persisted (only `gates` keys are), so these two
+		# were renamed to say where they are; `service_stair` was not. ---
+		{"id": "block_main_door", "a": "s10_landing", "b": "service_stair",
 			"gate": "", "built": true},
 		# THE REDUNDANT WAY IN, and it is not decoration: it is what lets the
-		# authored scar close the courtyard stair without stranding anybody.
-		{"id": "hall_stair", "a": "entry_hall", "b": "service_stair",
+		# authored scar drop the wide doorway without stranding anybody.
+		{"id": "block_crawl", "a": "s10_landing", "b": "service_stair",
 			"gate": "maintenance_crawl", "built": true},
 
 		# --- phase 8: where the four spines diverge, one segment per hero ---
@@ -535,14 +550,11 @@ const TOWER_GRAPH: Dictionary = {
 		{"id": "gallery_cell_phoboman", "a": "cell_gallery", "b": "cell_phoboman",
 			"gate": "", "built": true},
 
-		# --- phase 14: out into the annulus and up the three storeys. Every one
-		# of these is UNGATED: the new floors are optional space, the four rescue
-		# spines still run through the phase-8 wing, and every subset's verdict is
-		# unchanged. Phase 15 is what starts hanging riddles up here. ---
-		# ponytail: UNGATED is the deferral, and its ceiling is that these 30-odd
-		# rows grow the 15-subset audit's SIZE without adding a route obligation —
-		# the walk gets longer, its verdict cannot change. Phase 15 hanging one
-		# riddle up here is what makes the audit start earning its keep again.
+		# --- phase 14: out into the annulus and up the storeys. Every one of these
+		# is UNGATED, and since phase 16 that is load-bearing rather than a
+		# deferral: the cell block is at the TOP of this climb, so these rows ARE
+		# the four rescue spines' shared segment, and check 3 walks them with an
+		# empty solved set. A riddle dropped onto any of them fails the build. ---
 		{"id": "hall_outer", "a": "entry_hall", "b": "outer_hall",
 			"gate": "", "built": true},
 		{"id": "outer_s3", "a": "outer_hall", "b": "s3_landing",
@@ -679,6 +691,10 @@ const TOWER_GRAPH: Dictionary = {
 			"gate": "riddle_maze_upper", "built": true},
 		{"id": "s9_core_upper", "a": "s9_maze_core", "b": "s9_upper_hall",
 			"gate": "", "built": true},
+		# ...and out of the labyrinth onto the top floor. Ungated, like every ramp
+		# in this building: the maze is the obstacle, and it has already been walked.
+		{"id": "s9_s10", "a": "s9_upper_hall", "b": "s10_landing",
+			"gate": "", "built": true},
 
 		# --- phase 7: the lift shaft. Exists only once `lift_activated` fires. ---
 		{"id": "lift_shaft", "a": "entry_hall", "b": "upper_landing",
@@ -736,25 +752,25 @@ const TOWER_GRAPH: Dictionary = {
 		"updraft_shaft": {
 			"class": CLASS_IDENTITY, "identity": "windman", "effect": "", "scale": 0.0,
 			"needed_during_captivity": true, "built": true, "quest": "",
-			"parts": ["UpdraftMass", "UpdraftPad"],
+			"parts": ["S9PlanGateMass_updraft_shaft", "S9PlanGatePad_updraft_shaft"],
 			"note": "A shaft with no floor. Air Rush, base kit — no rank in the budget.",
 		},
 		"phase_grate": {
 			"class": CLASS_IDENTITY, "identity": "primm", "effect": "", "scale": 0.0,
 			"needed_during_captivity": true, "built": true, "quest": "",
-			"parts": ["GrateMass", "GratePad"],
+			"parts": ["S9PlanGateMass_phase_grate", "S9PlanGatePad_phase_grate"],
 			"note": "A grate with a body-width of wall behind it. Base Phase Step reaches it.",
 		},
 		"collapsed_slab": {
 			"class": CLASS_IDENTITY, "identity": "teibi", "effect": "", "scale": 0.0,
 			"needed_during_captivity": true, "built": true, "quest": "",
-			"parts": ["SlabMass", "SlabPad"],
+			"parts": ["S9PlanGateMass_collapsed_slab", "S9PlanGatePad_collapsed_slab"],
 			"note": "Dead weight across the way. Giant Teibi shifts it.",
 		},
 		"hound_den": {
 			"class": CLASS_IDENTITY, "identity": "phoboman", "effect": "", "scale": 0.0,
 			"needed_during_captivity": true, "built": true, "quest": "",
-			"parts": ["DenMass", "DenPad"],
+			"parts": ["S9PlanGateMass_hound_den", "S9PlanGatePad_hound_den"],
 			"note": "A kennelled run. Stink Wave empties it.",
 		},
 
@@ -782,7 +798,7 @@ const TOWER_GRAPH: Dictionary = {
 			"class": CLASS_RIDDLE, "identity": "", "effect": "", "scale": 0.0,
 			"clue_room": "s3_records_east", "answer": [3, 1, 4, 2],
 			"needed_during_captivity": false, "built": true, "quest": "",
-			"parts": ["S4PlanRiddleMass_riddle_stair"],
+			"parts": ["S4PlanGateMass_riddle_stair"],
 			"note": "The sequence lock on the boardroom's doorway. Its four colours "
 				+ "are painted on the east records stack's floor, two storeys of "
 				+ "walking away and free to anybody who goes. Optional side content "
@@ -804,7 +820,7 @@ const TOWER_GRAPH: Dictionary = {
 			"class": CLASS_RIDDLE, "identity": "", "effect": "", "scale": 0.0,
 			"clue_room": "s8_clue_chamber_west", "answer": [4, 1, 3, 2],
 			"needed_during_captivity": false, "built": true, "quest": "",
-			"parts": ["S7PlanRiddleMass_riddle_maze_lower"],
+			"parts": ["S7PlanGateMass_riddle_maze_lower"],
 			"note": "The sequence lock on the lower labyrinth's arrival pocket. Its "
 				+ "colours are painted in the dead-end chamber off the west side of "
 				+ "the same floor's circuit.",
@@ -813,7 +829,7 @@ const TOWER_GRAPH: Dictionary = {
 			"class": CLASS_RIDDLE, "identity": "", "effect": "", "scale": 0.0,
 			"clue_room": "s8_clue_chamber_east", "answer": [2, 3, 1, 4],
 			"needed_during_captivity": false, "built": true, "quest": "",
-			"parts": ["S8PlanRiddleMass_riddle_maze_upper"],
+			"parts": ["S8PlanGateMass_riddle_maze_upper"],
 			"note": "The second lock, on storey 9's arrival pocket. Its clue is one "
 				+ "floor DOWN, in the east chamber off storey 8's circuit — read on "
 				+ "the way up or walked back down for.",
@@ -822,7 +838,7 @@ const TOWER_GRAPH: Dictionary = {
 			"class": CLASS_RIDDLE, "identity": "", "effect": "", "scale": 0.0,
 			"clue_room": "s3_archive_west", "answer": [2, 4, 1, 3],
 			"needed_during_captivity": false, "built": true, "quest": "",
-			"parts": ["S2PlanRiddleMass_riddle_strongroom"],
+			"parts": ["S2PlanGateMass_riddle_strongroom"],
 			"note": "The west permits stack, sealed. Optional side room in the "
 				+ "vault's mould; its clue is one floor away in the west archive.",
 		},
@@ -871,9 +887,11 @@ const TOWER_GRAPH: Dictionary = {
 			"note": "The unscarred tower. Always audited first.",
 		},
 		{
-			"id": SCAR_CUSTODY, "removes": ["courtyard_stair"],
-			"note": "The protocol drops the courtyard stair. `hall_stair` is why "
-				+ "that is survivable — and why it exists.",
+			"id": SCAR_CUSTODY, "removes": ["block_main_door"],
+			"note": "The protocol brings the cell block's wide doorway down. "
+				+ "`block_crawl` is why that is survivable — and why it exists. The "
+				+ "scar ID IS PERSISTED and did not change when the block moved to "
+				+ "storey 10; only the edge it names did.",
 		},
 	],
 
@@ -896,15 +914,36 @@ const TOWER_GRAPH: Dictionary = {
 	# last is the hero's own. Each must be passable by its hero ALONE at the
 	# readiness floor, which check 3 walks edge by edge.
 	# ------------------------------------------------------------------------
+	# THE SHARED SEGMENT IS NOW THE WHOLE BUILDING, and every edge on it is
+	# UNGATED — front door, annulus, seven ramps, ROUTE A of both labyrinth floors
+	# (the outer circuits, never the riddles), the last ramp, and the cell block's
+	# wide doorway. Check 3 walks these with an EMPTY solved set, so a riddle on a
+	# spine fails the build; that is exactly why the maze has two routes and why
+	# these lists name the circuits.
+	#
+	# `rotor_gate` IS NO LONGER ON ANY SPINE: the route leaves the entry hall
+	# through `hall_outer` into the annulus and never enters the courtyard.
 	"spines": {
-		"windman": {"entry": "front_door",
-			"edges": ["hall_courtyard", "courtyard_stair", "stair_gallery_windman"]},
-		"primm": {"entry": "front_door",
-			"edges": ["hall_courtyard", "courtyard_stair", "stair_gallery_primm"]},
-		"teibi": {"entry": "front_door",
-			"edges": ["hall_courtyard", "courtyard_stair", "stair_gallery_teibi"]},
-		"phoboman": {"entry": "front_door",
-			"edges": ["hall_courtyard", "courtyard_stair", "stair_gallery_phoboman"]},
+		"windman": {"entry": "front_door", "edges": [
+			"hall_outer", "outer_s3", "s3_s4", "s4_s5", "s5_stairhead_landing",
+			"s5_s6", "s6_s7", "s7_s8", "s8_outer_circuit", "s8_s9",
+			"s9_outer_circuit", "s9_s10", "block_main_door",
+			"stair_gallery_windman"]},
+		"primm": {"entry": "front_door", "edges": [
+			"hall_outer", "outer_s3", "s3_s4", "s4_s5", "s5_stairhead_landing",
+			"s5_s6", "s6_s7", "s7_s8", "s8_outer_circuit", "s8_s9",
+			"s9_outer_circuit", "s9_s10", "block_main_door",
+			"stair_gallery_primm"]},
+		"teibi": {"entry": "front_door", "edges": [
+			"hall_outer", "outer_s3", "s3_s4", "s4_s5", "s5_stairhead_landing",
+			"s5_s6", "s6_s7", "s7_s8", "s8_outer_circuit", "s8_s9",
+			"s9_outer_circuit", "s9_s10", "block_main_door",
+			"stair_gallery_teibi"]},
+		"phoboman": {"entry": "front_door", "edges": [
+			"hall_outer", "outer_s3", "s3_s4", "s4_s5", "s5_stairhead_landing",
+			"s5_s6", "s6_s7", "s7_s8", "s8_outer_circuit", "s8_s9",
+			"s9_outer_circuit", "s9_s10", "block_main_door",
+			"stair_gallery_phoboman"]},
 	},
 
 	# ------------------------------------------------------------------------

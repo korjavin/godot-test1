@@ -751,6 +751,111 @@ const STOREYS: Array[Dictionary] = [
 			+ "round the ungated circuit or through the second sequence lock and the "
 			+ "core. Its dead gallery is the floor's one decoy chamber.",
 	},
+	# ------------------------------------------------------------------------
+	# STOREY 10 (floor 9) — THE CELL BLOCK, under the sealed roof, and the top of
+	# the building. The phase-8 wing's LAYOUT, re-drawn on the plan grid: one
+	# service corridor, FOUR IDENTITY DOORWAYS IN ONE WALL, a gallery behind them
+	# and four uniform open-fronted recesses off that. Nothing about the shape
+	# changed and NONE of the graph's room ids changed — `service_stair`,
+	# `cell_gallery` and the four `cell_<hero>` rows are spelled exactly as phase 8
+	# spelled them, because moving geometry is not a save migration and renaming an
+	# id is.
+	#
+	# THE ROUTE IS STILL A STRAIGHT LINE WITH ONE FORK, which is the whole of "the
+	# wing is the tutorial for itself": in off the muster floor, along the corridor,
+	# through the door that says your name, into the gallery, and the cell you want
+	# is the nth recess from the end. Nothing branches and nothing doubles back.
+	#
+	# TWO WAYS IN, on purpose and for the phase-8 reason: the WIDE DOORWAY at
+	# (13..14, 15) is `block_main_door` and asks nothing, and the DUCT at (27, 15)
+	# is `maintenance_crawl` with its stamping press — a challenge, so anybody gets
+	# through it. The custody scar drops the first; the second is what makes that
+	# survivable, and `tower_selfcheck` check 6 recomputes that rather than trusting
+	# this comment.
+	#
+	# THE FOUR DOORWAYS ARE ONE CELL EACH (1.94 m, comfortably over the 1.5 m that
+	# clears a giant Teibi) and each stands under its own recess, so the door you
+	# want and the cell behind it are the same column of the plan. Their pads are
+	# NOT drawn: the builder derives each one from the plain-floor side of its own
+	# doorway (see `_plan_gates`), which is why row 12 is `.` and not corridor.
+	#
+	# ITS CEILING IS THE SEALED ROOF, not a slab: 46.0 m of floor under 50.0 m of
+	# wall is 4.0 m of clear air, the tightest number in this phase and 5 cm over
+	# what the indoor camera boom needs. `plan_clear_height()` is what knows that,
+	# and raising `SLAB_THICK` or dropping the roof is what would break it.
+	#
+	# Its ramp rises out of storey 9's UPPER HALL at the south-east — six cells of X
+	# (11.64 m) for the 5.0 m storey, slope 0.4296, the shallowest in the building.
+	# ------------------------------------------------------------------------
+	{
+		"floor": 9,
+		"from": 8,
+		"landing": "s10_landing",
+		"rooms": {
+			"A": "service_stair",
+			"B": "cell_gallery",
+			"C": "cell_windman",
+			"E": "cell_primm",
+			"F": "cell_teibi",
+			"H": "cell_phoboman",
+		},
+		# The four rescue spines, west to east, in `TowerInterior.SPINE_DOORS`
+		# order — and the hero each one answers to is read from `TowerGraph`, never
+		# from this file. Plus the maintenance crawl's duct in the south wall.
+		"gates": {
+			"12,11": "updraft_shaft",
+			"17,11": "phase_grate",
+			"22,11": "collapsed_slab",
+			"27,11": "hound_den",
+			"27,15": "maintenance_crawl",
+		},
+		"rows": [
+			"########################################",
+			"#......................................#",
+			"#......................................#",
+			"#.........#####################........#",
+			"#.........#CCCC#EEEE#FFFF#HHHH#........#",
+			"#.........#CCCC#EEEE#FFFF#HHHH#........#",
+			"#.........#CCCC#EEEE#FFFF#HHHH#........#",
+			"#.........#CCCC#EEEE#FFFF#HHHH#........#",
+			"#.........#BBBBBBBBBBBBBBBBBBB#........#",
+			"#.........#BBPBBBBBBBBBBBBBBBB#........#",
+			"#.........#BBBBBBBBBBBBBBBBBBB#........#",
+			"#.........##D####D####D####D###........#",
+			"#.........#...................#........#",
+			"#.........#AAAAAAAAAAAAAAAAAAA#........#",
+			"#.........#AAPAAAAAAAAAAAAAAAA#........#",
+			"#.........###..############D###........#",
+			"#......................................#",
+			"#......................................#",
+			"#......................................#",
+			"#......................................#",
+			"#......................................#",
+			"#......................................#",
+			"#......................................#",
+			"#......................................#",
+			"#......................................#",
+			"#......................................#",
+			"#......................................#",
+			"#......................................#",
+			"#......................................#",
+			"#......................................#",
+			"#......................................#",
+			"#......................................#",
+			"#......................................#",
+			"#......................................#",
+			"#...........................SSSSSSs....#",
+			"#...........................SSSSSSs....#",
+			"#......................................#",
+			"#......................................#",
+			"#......................................#",
+			"########################################",
+		],
+		"note": "Storey 10, the cell block: the service corridor, the four identity "
+			+ "doorways in its north wall, the gallery behind them and four uniform "
+			+ "recesses off that. The muster floor around it is the landing the "
+			+ "ramp from storey 9 arrives on.",
+	},
 ]
 
 

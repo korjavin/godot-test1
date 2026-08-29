@@ -24,11 +24,13 @@ extends Node3D
 ##   and, off the hall to the south, the DEMAND GATE sealing a vault. Optional,
 ##   skippable, and the whole point of it is that you can SEE what it wants.
 ##
-## ...and, off the hall to the NORTH (phase 8), THE CELL BLOCK WING:
+## ...and, from the hall, out into the annulus and up the building (phases 14-16):
+## seven hand-planned storeys of offices, the two-floor LABYRINTH, and at the top
+## of them, on storey 10 under the sealed roof, THE CELL BLOCK:
 ##
-##   entry hall  →  THE MAINTENANCE CRAWL: a low duct with a stamping press
-##                  across it. A challenge, so anybody gets through it.
-##   courtyard   →  the same corridor by its other door, which asks nothing.
+##   muster floor →  THE MAINTENANCE CRAWL: a low duct with a stamping press
+##                   across it. A challenge, so anybody gets through it.
+##               →  the same corridor by its WIDE DOORWAY, which asks nothing.
 ##                  Two ways in, on purpose: the custody scar drops one.
 ##               →  THE SERVICE CORRIDOR, with FOUR DOORS along its north side
 ##                  and a violet pad in front of each. One door per hero, and
@@ -37,11 +39,14 @@ extends Node3D
 ##                  reached the gallery can open any of them: liberation asks
 ##                  nobody's name, which is what "uniform cells" means.
 ##
-## THE WING IS THE TUTORIAL FOR ITSELF. Ordinary rescues walk it over and over,
+## THE BLOCK IS THE TUTORIAL FOR ITSELF. Ordinary rescues walk it over and over,
 ## and the one scene where it matters most is the last one — so the geography is
 ## deliberately a straight line with a single fork: corridor, four doors, one
 ## gallery, four cells in a row. Nothing branches, nothing doubles back, and the
-## cell you want is always the nth recess from the end.
+## cell you want is always the nth recess from the end. PHASE 16 MOVED IT AND
+## CHANGED NONE OF THAT: the layout is now drawn on `TowerPlans`' storey-10 grid
+## instead of hand-placed north of the entry hall, and every graph room id it
+## carries is spelled exactly as phase 8 spelled it.
 ##
 ## ============================================================================
 ## THE LEGIBILITY LANGUAGE — READ THIS BEFORE ADDING A ROOM
@@ -214,11 +219,13 @@ extends Node3D
 ## IT READS `KEEP_HALF` AND NOT `OUTER_HALF` SINCE SHELL PHASE 13. The keep used to
 ## be the whole building; phase 13 wrapped an 80 m envelope round it and kept the
 ## 20 m ring, precisely because this plan is authored against those faces — deriving
-## from the envelope instead would stretch every room in here by 4.4x, and the rooms
-## are made of AUTHORED widths (the cell block's four identity doors plus three piers
-## span 9.3 m however wide the wing gets, so a stretched wing has a 30 m hole beside
-## the gates and you walk round every one of them). Phase 14 replans the storeys
-## against the real envelope; that is when the inner ring goes.
+## from the envelope instead would stretch every room in here by 4.4x, and the keep's
+## rooms are made of AUTHORED widths — the vault's jambs, the rotor doorway, the
+## secure partition — so a stretched keep leaves each of them standing in the middle
+## of an 80 m hall with a walk round the side. The storeys ABOVE the keep are drawn
+## on `TowerPlans`' grid against the envelope's own faces and have no authored width
+## at all, which is what phase 14 bought and why the cell block could move up there
+## in phase 16 without a single number following it.
 const INNER_HALF: float = TowerShell.KEEP_HALF - TowerShell.WALL_THICK
 
 ## The upper storey. `SLAB_Y` is its WALKING SURFACE; the slab hangs below it, so
@@ -539,21 +546,20 @@ const NUDGE_FRACTION: float = 0.3
 const NUDGE_TIME: float = 1.4
 
 # ============================================================================
-# THE CELL BLOCK WING — phase 8, north of the entry hall and under the same slab
+# THE CELL BLOCK — phase 8's rooms, phase 16's storey
 # ============================================================================
 #
-# THE WING IS ROOFED, AND THAT IS THE CONSTRAINT EVERYTHING BELOW BENDS TO. The
-# slab spans the whole of x >= SLAB_X0, so the only unbuilt ground left inside this
-# keep is the hall's north end: the courtyard is the ramp's, the south is the
-# vault's, and the -X/-Z corner is seven metres of solid spire. A wing under a
-# 4.2 m ceiling gets two things for free and pays for one:
+# THE BLOCK IS ROOFED, AND THAT IS THE CONSTRAINT EVERYTHING BELOW BENDS TO. It
+# used to sit north of the entry hall under the keep's 4.2 m slab; it now sits on
+# storey 10 under the shell's SEALED ROOF, with 4.0 m of clear air over it. The
+# ceiling got 20 cm lower and the argument did not change at all:
 #
-#   FREE: the jump rule stops applying (`_roofed` — a jump under the slab ends at
-#         the slab), so walls here are sized for sightlines instead of for an apex.
+#   FREE: the jump rule stops applying (a jump under a ceiling ends at the
+#         ceiling), so walls here are sized for sightlines instead of for an apex.
 #   FREE: it is dark, so the two light panels below are the whole art direction.
-#   PAID: A 4.2 m MASS CANNOT RISE UNDER A 4.2 m CEILING. The secure door's
-#         counterweight rises and stays risen because it stands under open sky;
-#         these four have nowhere to go but DOWN, so they sink and stay sunk.
+#   PAID: A ROOM-HEIGHT MASS CANNOT RISE IN A ROOM ITS OWN HEIGHT. The secure
+#         door's counterweight rises and stays risen because it stands under open
+#         sky; these four have nowhere to go but DOWN, so they sink and stay sunk.
 #
 # That is a real, deliberate weakening of the legibility language's "identity gates
 # rise, demand gates sink" opposition, taken with eyes open because the geometry
@@ -561,90 +567,61 @@ const NUDGE_TIME: float = 1.4
 # untouched and they are the ones a player reads FIRST: violet against steel, a
 # blank mass against a banded pillar, a pad you stand on against a receptacle you
 # walk up to. Motion is the axis you only see once you have already been told the
-# answer. If the tower ever grows a storey with sky over this wing, put the rise
-# back.
+# answer. The roof is sealed, so there will never be sky over this room.
+#
+# WHERE ITS GEOMETRY COMES FROM, and this is the phase-16 change: the walls, the
+# four gate masses, their four pads and the crawl's lintel are all DRAWN, on
+# `TowerPlans`' storey-10 grid, and built by the ordinary plan builder. What is
+# left here is the handful of parts the plan format cannot express — a press that
+# sweeps, four containment fields that recolour, one piece of authored staging, an
+# operable pad and the scar's rubble — and every one of them takes its position
+# from a plan lookup (`plan_room_rect` / `plan_gate_rect` / `plan_doorway_rect`)
+# rather than from a constant of its own. `_spine_door_x`, `_cell_x` and the dozen
+# hand-tuned spacings they were built from are GONE: the grid answers all of them.
 #
 # THE CAMERA, honestly: `CameraArm` is an 8.25 m `SpringArm3D` and nothing may
 # write `camera.position`, so a room narrower than the arm collapses it — the
-# courtyard's documented 8 m deferral, one storey down. This wing is laid out to
-# lose as little as it can: the corridor and the gallery both run the building's
-# LONG axis (9.3 m), the cells are open-fronted recesses rather than rooms with
-# doors, and the ceiling is the hall's full 4.2 m. Facing along either run the arm
-# nearly extends; facing into a cell it does not, and that is the same deferral,
-# not a new one.
+# courtyard's documented 8 m deferral. The move to the plan grid quietly fixed
+# most of it: the corridor is 19 cells (36.9 m) long and the gallery the same, so
+# the arm extends fully along either run. Facing into a 4-cell recess it still
+# does not, and that is the same deferral, not a new one.
 
-## The wing's south wall: the line that divides the entry hall from the service
-## corridor. 2.2 m clears the rotor bars' 1.7 m sweep with 0.3 m to spare, which is
-## what stops a bar chopping through the wall the moment the doorway moves.
-const WING_Z: float = 2.2
-
-## ...except at the east end, where it JOGS NORTH around the shell's doorway. The
-## front door's trigger volume reaches x >= 7.8 and z <= 3.0 and must stay empty
-## (`tower_shell.door_trigger_box`, asserted by check 1), so the straight run stops
-## short of it and the last 1.4 m of boundary is 1.2 m further north. That jog is
-## what buys the wing its depth: a straight wall clear of the doorway would start
-## at z = 3.4 and leave 5.4 m for a corridor, a gallery AND four cells.
-const WING_JOG_X: float = 7.4
-const WING_JOG_Z: float = 3.4
-
-## The maintenance crawl's doorway, and the press that sweeps it. The press is an
+## The crawl press's lintel height, its stroke and its rhythm. The press is an
 ## `Area3D` hazard on a mesh that never becomes solid — a solid block driven by
 ## script shoves a `CharacterBody3D` through whatever is behind it, which is the
 ## same reason the rotor bars are hazards (see `_make_rotor`).
 ##
 ## IT IS A CHALLENGE AND MUST STAY ONE. `maintenance_crawl` is the route the
-## custody scar leaves standing when it drops the courtyard stair, so the softlock
-## audit needs it passable by every hero with no rank at all. A press you time is;
-## anything keyed on a name or a number is not.
-const CRAWL_X0: float = 4.3
-const CRAWL_X1: float = 5.7
+## custody scar leaves standing when it drops the block's wide doorway, so the
+## softlock audit needs it passable by every hero with no rank at all. A press you
+## time is; anything keyed on a name or a number is not.
+##
+## WHERE the duct is is no longer written here — it is the `D` run the plan draws
+## for `maintenance_crawl`, and both the lintel over it and the press under it are
+## derived from that run. The numbers below are the STROKE, which is behaviour.
+##
 ## The lintel and the stroke are one pair of numbers, not two: the press's box is
 ## 0.7 m deep, so its top at rest is exactly the lintel's underside and its bottom
 ## at the end of the stroke is exactly the floor. Between them the gap has to clear
 ## a 2 m capsule or the crawl is impassable at every phase of its cycle — which is
-## a challenge gate that is really a wall, and check 11 measures it.
+## a challenge gate that is really a wall, and check 11 measures it. All three are
+## measured from the storey's own walking surface, never from y = 0.
 const CRAWL_LINTEL_Y: float = 2.8
 const PRESS_TOP: float = 2.45
 const PRESS_BOTTOM: float = 0.35
 ## Long enough to walk under without sprinting, short enough that waiting is dull.
 const PRESS_PERIOD: float = 2.6
 
-## The corridor's other door: a gap cut in the slab-edge wall, straight out to the
-## courtyard and asking nothing (`courtyard_stair`). Two ways into one corridor is
-## not redundancy for its own sake — it is the entire reason the custody scar is
-## survivable, and `tower_selfcheck` check 6 recomputes that rather than trusting
-## this comment.
-const SERVICE_DOOR_Z0: float = 2.6
-const SERVICE_DOOR_Z1: float = 4.0
-
-## The spine wall: four doorways in one 9.3 m run, one per hero, each filled by its
-## own mass. Four doors need a long wall, which is why the wing splits north/south
-## and not east/west — 1.5 m of door and 1.1 m of pier is what fits, and a 1.5 m
-## opening clears a giant Teibi.
-const SPINE_Z: float = 4.4
-const SPINE_DOOR_W: float = 1.5
-const SPINE_PIER_W: float = 1.1
 ## How far a spine mass sinks: its own height and a little more, so its top ends up
-## under the yard slab and there is no lip left in the doorway. A lip of ANY height
-## is a wall in this engine, so "nearly flush" is not a finish, it is a bug.
+## under the floor and there is no lip left in the doorway. A lip of ANY height is a
+## wall in this engine, so "nearly flush" is not a finish, it is a bug.
 const SPINE_TRAVEL: float = 4.6
-## Where a spine pad sits: in the corridor, hard against its own door.
-##
-## PRESSED UP AGAINST THE SPINE WALL, and that is the doorway's fault rather than a
-## style choice: the easternmost pad reaches x = 8.8, and at the other end of the
-## corridor the wing wall's jog runs to z = 3.6, so a deeper pad would either sit
-## inside that wall or inside the shell's door trigger volume (check 1 caught both).
-## The TRIGGER is deeper than the plate — you step onto a pad from the corridor, so
-## the volume may reach back past the paint.
-const PAD_Z: float = 3.9
-const PAD_DEPTH: float = 0.6
-const PAD_TRIGGER_DEPTH: float = 1.0
 
-## The cells: four uniform recesses off the gallery's north side, divided by piers
-## and open-fronted. THEY HAVE NO DOORS, and that is the rule rather than a saving —
-## `TowerGraph`'s `gallery_cell_*` edges are ungated, so whoever reached the gallery
-## can free whoever is inside, whatever hero they happen to be holding.
-const CELL_Z0: float = 6.6
+## How deep a spine pad's TRIGGER is, in metres. The plate itself is one plan cell
+## (1.94 m); the volume you step into is deeper than the paint, because you walk
+## onto a pad from the corridor and the step that matters happens before your feet
+## are centred on it.
+const PAD_TRIGGER_DEPTH: float = 2.4
 
 ## THE VENT PURGE - the cell block's operable system, and the prison role's one
 ## outward-facing verb (bead godot-test1-3iy.10). A benched player stands on this
@@ -659,9 +636,9 @@ const CELL_Z0: float = 6.6
 ## would have been a fifth trust boundary for a thing four already do.
 ##
 ## IN THE GALLERY, at its +X end: the prisoner has to leave their own cell to reach
-## it, which is the small act that makes operating it a decision.
-const PURGE_PAD_X: float = INNER_HALF - 1.0
-const PURGE_PAD_Z: float = (SPINE_Z + CELL_Z0) * 0.5
+## it, which is the small act that makes operating it a decision. WHERE that is is
+## read off the gallery's own plan cells (`purge_pad()`), never written down.
+const PURGE_PAD_SIDE: float = 1.1
 
 ## How long the scattered pack stays scattered, and how far from each teammate the
 ## purge reaches. The duration is under Phoboman's own PHOBOMAN_FLEE_DURATION (10 s)
@@ -675,7 +652,6 @@ const PURGE_FLEE_RADIUS: float = 40.0
 ## hold-to-win button, and comfortably inside `MpManager`'s 4-per-second `flee`
 ## budget even with three teammates taking one packet each.
 const PURGE_COOLDOWN: float = 20.0
-const CELL_DIVIDER: float = 0.3
 
 # ============================================================================
 # VISIBILITY GATING — the web frame budget's half of this bead
@@ -704,12 +680,17 @@ const FLOOR_HYSTERESIS: float = 0.8
 ## own (larger) number because these meshes are only ever drawn from inside the
 ## building.
 ##
-## RAISED FROM 32 TO 60 BY PHASE 8: the cell block wing is 28 boxes (four walls, a
-## lintel, a press, a jamb, three piers, four masses, four pads, three dividers,
-## four cell frames, the staging unit and two light panels) and 26 of them are
-## batched, i.e. free. What this number still stops is furnishing — it leaves six
-## spare and bites the moment somebody starts modelling bunks.
-const BOX_BUDGET: int = 60
+## RAISED FROM 32 TO 60 BY PHASE 8 for the cell block wing, AND BACK DOWN TO 32 BY
+## PHASE 16, WHICH DEMOLISHED IT. The block is drawn on `TowerPlans`' storey-10
+## grid now and budgeted by `PLAN_BOX_BUDGET` with the rest of that floor; what is
+## left in here is the phase-3 keep and nothing else — 27 boxes, measured, which is
+## one fewer than the pre-phase-8 building had (the wing took its service jamb and
+## the scar's rubble with it, and left one light panel behind over the strip it
+## used to occupy).
+##
+## 32 is that plus a small margin, and what it still stops is furnishing: it leaves
+## five spare and bites the moment somebody starts modelling the hall.
+const BOX_BUDGET: int = 32
 
 ## Hard cap on how many `MeshInstance3D`s the interior may actually BUILD — which,
 ## unlike the box budget, is the number the renderer charges for.
@@ -762,7 +743,22 @@ const BOX_BUDGET: int = 60
 ## ONE DRAW PER RIDDLE the phase-15 arithmetic above claims, asked of a floor
 ## whose walls are a maze. The 450 and 431 walkable cells of those two storeys,
 ## and every wrong turn in them, are in the two batches and cost nothing more.
-const DRAW_BUDGET: int = 34
+##
+## 35 SINCE THE CELL BLOCK MOVED (phase 16), AND THE ONE IS THE STOREY, not the
+## block. Every unbatched part of the block — four masses, the press, four
+## containment fields, the staging unit and the scar's rubble — was already
+## spending a slot on the ground floor and simply changed parent; what is new is
+## `Floor9Batch`, storey 10's own merged mesh, holding its walls, its four gate
+## pads, its lintel and its two light panels. Moving eleven nodes 46 m upwards
+## costs nothing, which is the whole claim this number is making.
+##
+## Storey 10's batch is the FIRST plan storey to carry two surfaces rather than
+## one: its gate pads and its light panels are `GLOW_COLORS`, so the matte and the
+## emissive halves are both there. That is a second SURFACE and not a second draw
+## — `merged_mesh` puts both in one `ArrayMesh` on one `MeshInstance3D` — and the
+## phase-14 claim above ("a plan storey commits ONE surface") is the one line of
+## it that the cell block changed.
+const DRAW_BUDGET: int = 35
 
 # ============================================================================
 # PALETTE — one material per colour, shared process-wide (see `_material`)
@@ -856,11 +852,22 @@ const GATE_CHECKPOINT: String = TowerGraph.GATE_CHECKPOINT
 ## door cannot ask for a hero the softlock audit thinks it asks for somebody else.
 ## The gate id doubles as the string that goes in the opened set, exactly as the
 ## three constants above do.
+##
+## THE BOX NAMES ARE THE PLAN BUILDER'S SINCE PHASE 16 — `S<floor>PlanGateMass_<id>`
+## and `...GatePad_<id>`, the same names every other gate in the building carries,
+## because the four doors are `D` runs on storey 10's grid now and not hand-placed
+## boxes. Box names are NOT persisted (only gate ids are), so the rename was free;
+## the floor number in them is, and `tower_selfcheck` binds every one of these
+## strings back to a box `all_boxes()` really builds.
 const SPINE_DOORS: Array[Dictionary] = [
-	{"gate": "updraft_shaft", "mass": "UpdraftMass", "pad": "UpdraftPad"},
-	{"gate": "phase_grate", "mass": "GrateMass", "pad": "GratePad"},
-	{"gate": "collapsed_slab", "mass": "SlabMass", "pad": "SlabPad"},
-	{"gate": "hound_den", "mass": "DenMass", "pad": "DenPad"},
+	{"gate": "updraft_shaft", "mass": "S9PlanGateMass_updraft_shaft",
+		"pad": "S9PlanGatePad_updraft_shaft"},
+	{"gate": "phase_grate", "mass": "S9PlanGateMass_phase_grate",
+		"pad": "S9PlanGatePad_phase_grate"},
+	{"gate": "collapsed_slab", "mass": "S9PlanGateMass_collapsed_slab",
+		"pad": "S9PlanGatePad_collapsed_slab"},
+	{"gate": "hound_den", "mass": "S9PlanGateMass_hound_den",
+		"pad": "S9PlanGatePad_hound_den"},
 ]
 
 ## What the AUTHORED FIRST RESCUE writes into the tower's opened set once it has
@@ -920,17 +927,13 @@ const MOVING_PARTS: Array[String] = [
 	"DemandShutter", "IdentityMass",
 	"Band1", "Band2", "Band3", "Band4",
 	"CheckpointPlate", "CheckpointPost",
-	# --- phase 8: the wing. Four masses that travel, one press that sweeps, four
-	# cell frames that relight the moment a captive walks out, and the staging unit
-	# that is never seen again after the first rescue. Everything else in the wing
-	# — every wall, pier, divider, pad and panel — sits still and is batched.
-	"UpdraftMass", "GrateMass", "SlabMass", "DenMass",
-	"CrawlPress",
-	"CellFrameWindman", "CellFramePrimm", "CellFrameTeibi", "CellFramePhoboman",
-	"PrimmContainment",
-	# ...and phase 11's scar, which appears and turns solid the day the protocol is
-	# survived. A batched box cannot do either.
-	SCAR_BOX,
+	# THE CELL BLOCK IS NOT IN THIS LIST, and that is phase 16's doing rather than an
+	# omission: every part of it is a PLAN box now, and a plan box declares itself
+	# with `dynamic` because it is named by a builder and cannot be in a const list.
+	# The count is unchanged — four masses that travel, one press that sweeps, four
+	# cell frames that relight the moment a captive walks out, the staging unit that
+	# is never seen again after the first rescue, and phase 11's scar — they simply
+	# say so themselves. `is_own_node()` is the one place the two spellings meet.
 ]
 
 # ============================================================================
@@ -1080,7 +1083,7 @@ var _floors: Array[Node3D] = []
 var _shutter_open: float = 0.0
 var _mass_open: float = 0.0
 
-## The wing's four spine doors, keyed by gate id: the mass, its collision shape,
+## The block's four spine doors, keyed by gate id: the mass, its collision shape,
 ## how far it has sunk (0 = shut, 1 = fully open) and whether the local player is
 ## standing on its pad. FOUR PARALLEL DICTIONARIES AND NOT FOUR FIELDS EACH,
 ## because every one of them is read in a loop over `SPINE_DOORS` and never by
@@ -1104,10 +1107,12 @@ var _riddle_on_pad: Dictionary = {}   # gate id -> the digit under the player, 0
 var _riddle_last: Dictionary = {}     # gate id -> the digit already acted on
 var _riddle_nudge: Dictionary = {}    # gate id -> 1..0 clunk, on a wrong step
 var _riddle_ratio: Dictionary = {}    # gate id -> how far in that wrong step was
-var _riddle_rest: Dictionary = {}     # gate id -> the mass's y with nothing entered
+var _gate_rest: Dictionary = {}       # gate id -> its mass's y with nothing entered
 
 var _press: MeshInstance3D = null
 var _press_clock: float = 0.0
+## The storey the press stands on, so `press_y()` stays a stroke and not a height.
+var _press_base: float = 0.0
 
 ## The four containment frames, keyed by HERO, plus the authored staging unit.
 var _cell_frames: Dictionary = {}
@@ -1134,7 +1139,7 @@ var _scar_shape: CollisionShape3D = null
 ##
 ## A SET AND NOT A BOOLEAN, because the scene is won one door at a time: standing
 ## on a pad as the right hero erases that id and the ordinary tween takes over, so
-## the break-out is exactly the wing's own lesson replayed under a clock. Empty
+## the break-out is exactly the block's own lesson replayed under a clock. Empty
 ## whenever the protocol is not running, and NEVER PERSISTED — the guards' home
 ## (see the block above `GUARD_SCENE_PATH`): raised containment is population, not
 ## structure, and "it lifts when the scene ends" is implemented by not saving it.
@@ -1224,34 +1229,17 @@ static func boxes() -> Array[Dictionary]:
 		"size": Vector3(0.4, SLAB_Y, INNER_HALF - ROTOR_DOOR_HALF),
 		"color": COLOR_STONE, "collide": true, "floor": 0,
 	})
-	# The +Z jamb is now in TWO pieces with the service doorway between them: the
-	# courtyard's own way into the cell block wing (`courtyard_stair`), which asks
-	# nothing of anybody. The short stub is the pier between the rotor doorway and
-	# that one, so the two openings read as two doors and not one wide gap.
+	# ...and the +Z jamb, one solid run again since PHASE 16 DEMOLISHED THE WING.
+	# It was in two pieces with a service doorway between them while the cell block
+	# stood north of this hall; the block is on storey 10 now, the strip north of
+	# the old wing wall is simply more entry hall (same slab over it, same 4.2 m of
+	# headroom, one light panel below so it is not a dark void), and the courtyard
+	# has exactly one land entrance again.
 	out.append({
 		"name": "RotorJambPosZ",
-		"pos": Vector3(ROTOR_POST_X, SLAB_Y * 0.5, (SERVICE_DOOR_Z0 + ROTOR_DOOR_HALF) * 0.5),
-		"size": Vector3(0.4, SLAB_Y, SERVICE_DOOR_Z0 - ROTOR_DOOR_HALF),
+		"pos": Vector3(ROTOR_POST_X, SLAB_Y * 0.5, (RAMP_UNDER_Z + ROTOR_DOOR_HALF) * 0.5),
+		"size": Vector3(0.4, SLAB_Y, RAMP_UNDER_Z - ROTOR_DOOR_HALF),
 		"color": COLOR_STONE, "collide": true, "floor": 0,
-	})
-	out.append({
-		"name": "ServiceJamb",
-		"pos": Vector3(ROTOR_POST_X, SLAB_Y * 0.5, (RAMP_UNDER_Z + SERVICE_DOOR_Z1) * 0.5),
-		"size": Vector3(0.4, SLAB_Y, RAMP_UNDER_Z - SERVICE_DOOR_Z1),
-		"color": COLOR_STONE, "collide": true, "floor": 0,
-	})
-	# THE SCAR (phase 11). The service doorway, filled with rubble — built ALWAYS,
-	# drawn and made solid only once `TowerGraph.SCAR_CUSTODY` is in the opened set
-	# (`_refresh_scar`). In the table so it is budgeted, footprint-checked and fits
-	# the shell like every other box; `scar` is what keeps it out of the BASE plan
-	# the self-checks sample, and `severs` names the graph edge it takes away, so
-	# `tower_selfcheck` can bind the two rather than trust this comment.
-	out.append({
-		"name": SCAR_BOX,
-		"pos": Vector3(ROTOR_POST_X, SLAB_Y * 0.5, (SERVICE_DOOR_Z0 + SERVICE_DOOR_Z1) * 0.5),
-		"size": Vector3(0.4, SLAB_Y, SERVICE_DOOR_Z1 - SERVICE_DOOR_Z0),
-		"color": COLOR_SCAR, "collide": true, "floor": 0,
-		"scar": TowerGraph.SCAR_CUSTODY, "severs": "courtyard_stair",
 	})
 	# The stretch the ramp flies over on its way to the slab — see RAMP_UNDER_TOP.
 	out.append({
@@ -1330,12 +1318,18 @@ static func boxes() -> Array[Dictionary]:
 
 	# Ceiling panels. The hall is the one enclosed room in the building and the
 	# directional light does not reach under a slab; without these it is a cave.
-	# Moved south by phase 8: z = 3.4 is now inside the service corridor, and the
-	# hall's own north end is the stretch between the doorway and the wing wall.
 	out.append({
 		"name": "PanelHallNorth",
 		"pos": Vector3(5.4, hall_clear - 0.05, 0.4),
 		"size": Vector3(4.0, 0.1, 3.2),
+		"color": COLOR_PANEL, "collide": false, "floor": 0,
+	})
+	# THE ONE PANEL THE WING LEFT BEHIND (phase 16, D6). Its floor area is entry
+	# hall now, and an unlit 6 m strip under a slab is a cave nobody walks into.
+	out.append({
+		"name": "PanelHallFar",
+		"pos": Vector3(4.1, hall_clear - 0.05, 5.0),
+		"size": Vector3(7.5, 0.1, 4.0),
 		"color": COLOR_PANEL, "collide": false, "floor": 0,
 	})
 	out.append({
@@ -1350,9 +1344,6 @@ static func boxes() -> Array[Dictionary]:
 		"size": Vector3(2.6, 0.1, 2.6),
 		"color": COLOR_PANEL, "collide": false, "floor": 0,
 	})
-
-	# ---- The cell block wing, north of the hall (phase 8) ------------------
-	out.append_array(_wing_boxes())
 
 	# The ramp. Derived entirely from the storey height and the run, so the deck
 	# lands EXACTLY on the slab's lip at one end and on the ground at the other —
@@ -1514,7 +1505,13 @@ static func plan_boxes(floor_index: int) -> Array[Dictionary]:
 	if not ramp.is_empty():
 		out.append(ramp)
 	out.append_array(_plan_pads(plan))
-	out.append_array(_plan_riddles(plan))
+	out.append_array(_plan_gates(plan))
+	# ...and, on the ONE storey that draws a cell gallery, the handful of cell block
+	# parts the plan format cannot express. Keyed on the room and never on the
+	# literal 9: the block is wherever it is drawn, and this file does not know
+	# which floor that is.
+	if not plan_room_rect(floor_index, BLOCK_ROOM).size == Vector2i.ZERO:
+		out.append_array(_block_boxes(plan))
 	_plan_cache[floor_index] = out
 	return out
 
@@ -1822,17 +1819,22 @@ static func riddle_ids() -> Array[String]:
 	return out
 
 
-static func riddle_slots(plan: Dictionary) -> Dictionary:
+static func gate_slots(plan: Dictionary) -> Dictionary:
 	"""
-	One storey's riddle cells, resolved against the grid it is drawn on.
+	One storey's gate cells, resolved against the grid it is drawn on.
 
 	@return: `{"masses": {gate id: Rect2i in cells}, "pads": [{gate, digit, c, r}]}`
 
 	The storey's `gates` dict is the ONE binding, for both characters: a `"c,r"` key
-	whose cell is a `D` is part of that gate's mass, and one whose cell is a lock
+	whose cell is a `D` is part of that gate's run, and one whose cell is a lock
 	digit is one of its pads. That is what lets a lock and the mass it lifts sit on
 	different floors — and `tower_selfcheck` walks the same dict from both ends, so
 	neither a cell nobody named nor a name nobody drew can survive a build.
+
+	`"masses"` is EVERY class's `D` run, not just a riddle's: phase 16 gave the
+	identity gates and the maintenance crawl `D` cells too, and `_plan_gates` is
+	what decides what each run becomes. `"pads"` is only ever a riddle's lock,
+	because an identity pad is DERIVED from its own doorway and never drawn.
 	"""
 	var masses: Dictionary = {}
 	var pads: Array[Dictionary] = []
@@ -1859,33 +1861,43 @@ static func riddle_slots(plan: Dictionary) -> Dictionary:
 	return {"masses": masses, "pads": pads}
 
 
-static func _plan_riddles(plan: Dictionary) -> Array[Dictionary]:
+static func _plan_gates(plan: Dictionary) -> Array[Dictionary]:
 	"""
-	One storey's riddle geometry: gate masses, lock pads and clue strips.
+	One storey's gate geometry: what each `D` run becomes, its pads, and any clue
+	strip this floor happens to carry.
 
-	@return: `boxes()`-shaped entries. Empty for a storey that draws no riddle cell
+	@return: `boxes()`-shaped entries. Empty for a storey that draws no gate cell
 	        and holds no riddle's clue room.
 
-	THREE KINDS OF BOX, and only the first is its own node:
+	ONE ARM PER GATE CLASS, dispatched on `TowerGraph.gate(id)["class"]` — the same
+	binding `tower_interior` uses for every other thing it takes from the graph, so
+	a gate cannot be drawn in a colour its own row disagrees with:
 
-	  * the MASS, one per gate, filling the run of `D` cells it owns, slab to
-	    ceiling so it can be neither jumped nor crawled. It travels, so it carries
-	    `dynamic` and stays out of the batch.
-	  * the PADS, one plate per lock digit, coloured from `COLOR_RIDDLE_PADS`.
-	  * the CLUE, four plates in a row on the clue room's floor, in the answer's
-	    order and the answer's colours. DERIVED FROM THE ANSWER ARRAY, so the clue
-	    cannot drift from the lock it explains — the failure a hand-painted clue
-	    would eventually have, and one no self-check could see.
+	  RIDDLE    the MASS, indigo, floor slab to ceiling so it can be neither jumped
+	            nor crawled. It travels, so it carries `dynamic` and stays out of
+	            the batch. Its four lock pads are DRAWN (`1`-`4` cells) and coloured
+	            from `COLOR_RIDDLE_PADS`.
+	  IDENTITY  the same mass in the hero's violet, plus ONE pad, which is not drawn
+	            at all — see `gate_pad_cell()` for why it is derived.
+	  CHALLENGE a LINTEL: a partial-height wall over the run, in ordinary stone and
+	            batched, so the opening reads as a duct. The hazard that sweeps
+	            under it is hand-built from the same run (`_block_boxes`), because a
+	            thing that moves is not a plan character.
+
+	The CLUE is four plates in a row on the clue room's floor, in the answer's order
+	and the answer's colours. DERIVED FROM THE ANSWER ARRAY, so the clue cannot
+	drift from the lock it explains — the failure a hand-painted clue would
+	eventually have, and one no self-check could see.
 	"""
 	var out: Array[Dictionary] = []
 	var floor_index := int(plan["floor"])
 	var prefix := _plan_prefix(floor_index)
 	var top: float = FLOOR_Y[floor_index]
-	var slots := riddle_slots(plan)
+	var slots := gate_slots(plan)
 
-	# Slab to ceiling, so the mass can be neither jumped nor crawled — and the
-	# ceiling is this storey's, which is not every storey's (`plan_clear_height`).
-	var mass_h := plan_clear_height(floor_index)
+	# Slab to ceiling, so a mass can be neither jumped nor crawled — and the ceiling
+	# is this storey's, which is not every storey's (`plan_clear_height`).
+	var clear := plan_clear_height(floor_index)
 	var masses: Dictionary = slots["masses"]
 	for gid: String in masses:
 		var span: Rect2i = masses[gid]
@@ -1893,12 +1905,42 @@ static func _plan_riddles(plan: Dictionary) -> Array[Dictionary]:
 		var x1 := _grid_x(float(span.end.x))
 		var z0 := _grid_z(float(span.position.y))
 		var z1 := _grid_z(float(span.end.y))
+		var cls := String(TowerGraph.gate(gid).get("class", ""))
+		if cls == TowerGraph.CLASS_CHALLENGE:
+			var lintel_h := clear - CRAWL_LINTEL_Y
+			out.append({
+				"name": "%sGateLintel_%s" % [prefix, gid],
+				"pos": Vector3((x0 + x1) * 0.5, top + CRAWL_LINTEL_Y + lintel_h * 0.5,
+						(z0 + z1) * 0.5),
+				"size": Vector3(x1 - x0, lintel_h, z1 - z0),
+				"color": COLOR_STONE, "collide": true, "floor": floor_index,
+			})
+			continue
+		var identity := cls == TowerGraph.CLASS_IDENTITY
 		out.append({
-			"name": "%sRiddleMass_%s" % [prefix, gid],
-			"pos": Vector3((x0 + x1) * 0.5, top + mass_h * 0.5, (z0 + z1) * 0.5),
-			"size": Vector3(x1 - x0, mass_h, z1 - z0),
-			"color": COLOR_RIDDLE, "collide": true, "floor": floor_index,
+			"name": "%sGateMass_%s" % [prefix, gid],
+			"pos": Vector3((x0 + x1) * 0.5, top + clear * 0.5, (z0 + z1) * 0.5),
+			"size": Vector3(x1 - x0, clear, z1 - z0),
+			"color": COLOR_IDENTITY if identity else COLOR_RIDDLE,
+			"collide": true, "floor": floor_index,
 			"dynamic": true,
+		})
+		if not identity:
+			continue
+		# ...and the one pad you stand on, on the side of the doorway you approach
+		# it from. An unresolvable side is an AUTHORING ERROR and is left unbuilt
+		# rather than guessed at: `tower_selfcheck` fails a gate with no pad, which
+		# is the report the author needs. A pad on the wrong side of a door would be
+		# a gate you open from inside the room it guards.
+		var cell := gate_pad_cell(plan, span)
+		if cell.x < 0:
+			continue
+		out.append({
+			"name": "%sGatePad_%s" % [prefix, gid],
+			"pos": Vector3(_grid_x(float(cell.x) + 0.5), top + PLAN_PAD_THICK * 0.5,
+					_grid_z(float(cell.y) + 0.5)),
+			"size": Vector3(TowerPlans.PLAN_CELL, PLAN_PAD_THICK, TowerPlans.PLAN_CELL),
+			"color": COLOR_IDENTITY_PAD, "collide": false, "floor": floor_index,
 		})
 
 	for pad: Dictionary in slots["pads"]:
@@ -1919,6 +1961,38 @@ static func _plan_riddles(plan: Dictionary) -> Array[Dictionary]:
 					int(strip["c"]) + i, int(strip["r"]), int(answer[i]), floor_index,
 					TowerPlans.PLAN_CELL * 0.7))
 	return out
+
+
+static func gate_pad_cell(plan: Dictionary, span: Rect2i) -> Vector2i:
+	"""
+	Which cell an identity gate's pad stands on, `Vector2i(-1, -1)` when the plan
+	cannot say.
+
+	@param span: The gate's `D` run, in cells.
+
+	DERIVED, NEVER AUTHORED. Of the four cells 4-adjacent to the run's midpoint,
+	exactly ONE must be plain floor, and that is the corridor side — the side you
+	walk up to the door from. The run's own cells are `D`, the wall it is cut into
+	is `#` and the room it guards is a lettered room, so in a well-drawn plan
+	exactly one neighbour is ever `.`; the two-sided and no-sided cases are
+	authoring errors, and `tower_selfcheck` names them rather than this file
+	guessing. A pad on the wrong side of a door is a gate you open from inside the
+	room it guards.
+	"""
+	var rows: Array = plan["rows"]
+	var mid := span.position + span.size / 2
+	var found := Vector2i(-1, -1)
+	var seen := 0
+	for step: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+		var cell := mid + step
+		if cell.x < 0 or cell.y < 0 or cell.y >= rows.size():
+			continue
+		var line := String(rows[cell.y])
+		if cell.x >= line.length() or line[cell.x] != TowerPlans.FLOOR_CHAR:
+			continue
+		found = cell
+		seen += 1
+	return found if seen == 1 else Vector2i(-1, -1)
 
 
 static func _riddle_plate(plate_name: String, c: int, r: int, digit: int,
@@ -1992,115 +2066,166 @@ static func _plan_prefix(floor_index: int) -> String:
 	return "S%dPlan" % floor_index
 
 
-static func _wing_boxes() -> Array[Dictionary]:
+static func plan_room_rect(floor_index: int, room_id: String) -> Rect2i:
 	"""
-	The cell block wing: the service corridor, the four spine doors and the four
-	cells, as `boxes()` entries.
+	The cell bounding box of one graph room on one storey, `Rect2i()` if absent.
 
-	@return: Every box north of `WING_Z`, in build order (walls, crawl, spine,
-	        cells, light).
+	@param room_id: A `TOWER_GRAPH` room id, as it appears in a storey's `rooms`.
 
-	Its own function rather than another 150 lines inside `boxes()` for the reason
-	`_ramp_box()` is: the arithmetic here is a run of derived spacings — four doors
-	and three piers across one span, four cells and three dividers across the same
-	span — and a derived spacing written inline next to hand-placed furniture is how
-	a doorway ends up 4 cm off its pad. Every x below comes out of `_spine_door_x`,
-	`_spine_pier_x` or `_cell_x`, which the self-check drives directly.
+	THE LOOKUP EVERY HAND-BUILT PART OF THE CELL BLOCK IS PLACED FROM. The plan
+	already says where the gallery is and how wide a cell is; a second copy of those
+	numbers as constants is exactly how a containment frame ends up 40 cm outside
+	the recess it belongs to (which is what `_spine_door_x` and `_cell_x` were, and
+	why they are gone).
+	"""
+	var plan := TowerPlans.storey(floor_index)
+	if plan.is_empty():
+		return Rect2i()
+	var letter := ""
+	for key: String in plan["rooms"]:
+		if String(plan["rooms"][key]) == room_id:
+			letter = key
+			break
+	if letter == "":
+		return Rect2i()
+	var span := Rect2i()
+	var first := true
+	for r: int in plan["rows"].size():
+		var line := String(plan["rows"][r])
+		for c: int in line.length():
+			if line[c] != letter:
+				continue
+			var cell := Rect2i(c, r, 1, 1)
+			span = cell if first else span.merge(cell)
+			first = false
+	return Rect2i() if first else span
+
+
+static func plan_gate_rect(floor_index: int, gate_id: String) -> Rect2i:
+	"""
+	The cell bounding box of one gate's `D` run on one storey, `Rect2i()` if absent.
+
+	`gate_slots()` already walks the storey's `gates` dict from both ends; this is
+	that walk looked up by id, and deliberately not a second walker.
+	"""
+	var plan := TowerPlans.storey(floor_index)
+	if plan.is_empty():
+		return Rect2i()
+	return gate_slots(plan)["masses"].get(gate_id, Rect2i())
+
+
+static func plan_doorway_rect(floor_index: int, room_id: String) -> Rect2i:
+	"""
+	The plain-floor gap in the wall row on the +Z side of one room's cells.
+
+	@return: The doorway's cells, or `Rect2i()` when that row has no gap.
+
+	THE ONE DOORWAY IN THIS BUILDING WITH NOTHING DRAWN IN IT. `block_main_door` is
+	ungated, so it has no `D` and no `gates` entry to look up — and the custody
+	scar's rubble has to stand exactly in it. Rather than write its cells down a
+	second time, this reads the wall the corridor's south side is closed by and
+	returns the run somebody can walk through. A wall with two gaps in it would be
+	two doorways and is not what this answers; the run it returns is the first.
+	"""
+	var rect := plan_room_rect(floor_index, room_id)
+	if rect.size == Vector2i.ZERO:
+		return Rect2i()
+	var plan := TowerPlans.storey(floor_index)
+	var r := rect.end.y
+	if r >= plan["rows"].size():
+		return Rect2i()
+	var line := String(plan["rows"][r])
+	var span := Rect2i()
+	var first := true
+	for c: int in range(rect.position.x, mini(rect.end.x, line.length())):
+		if line[c] != TowerPlans.FLOOR_CHAR:
+			if not first:
+				break
+			continue
+		var cell := Rect2i(c, r, 1, 1)
+		span = cell if first else span.merge(cell)
+		first = false
+	return Rect2i() if first else span
+
+
+## The room whose presence says "this storey draws the cell block". Keyed on a
+## graph room and never on a floor number, so the block is wherever it is drawn.
+const BLOCK_ROOM: String = "cell_gallery"
+
+
+static func block_floor() -> int:
+	"""Which `FLOOR_Y` index the cell block is drawn on, -1 when no storey draws it."""
+	for floor_index: int in TowerPlans.floors():
+		if plan_room_rect(floor_index, BLOCK_ROOM).size != Vector2i.ZERO:
+			return floor_index
+	return -1
+
+
+static func _cell_span(floor_index: int, rect: Rect2i) -> Dictionary:
+	"""One plan rect as metres: `{x0, x1, z0, z1}` on the interior's own axes."""
+	return {
+		"x0": _grid_x(float(rect.position.x)), "x1": _grid_x(float(rect.end.x)),
+		"z0": _grid_z(float(rect.position.y)), "z1": _grid_z(float(rect.end.y)),
+	}
+
+
+static func _block_boxes(plan: Dictionary) -> Array[Dictionary]:
+	"""
+	The cell block's hand-built parts, as `boxes()` entries on the storey that draws
+	the block.
+
+	@return: The press, four containment frames, the authored staging, the purge
+	        pad, two light panels and the custody scar's rubble — in build order.
+
+	EVERYTHING THE PLAN CAN DRAW IS DRAWN: the corridor's walls, the gallery's, the
+	four recesses' dividers, the four gate masses, their pads and the crawl's lintel
+	are all `#` / `D` cells built by `_merge_walls` and `_plan_gates`. What is left
+	here is the six things a grid of characters cannot say — a press that sweeps,
+	four fields that recolour on liberation, one piece of staging that disappears,
+	an operable pad, the light, and rubble that appears the day the protocol is
+	survived — and every one of them is POSITIONED FROM A PLAN LOOKUP, so the day
+	somebody moves a wall in the ASCII these move with it.
+
+	They go in `plan_boxes()` and not in `boxes()` because check 1 measures the two
+	populations against different bounds: the keep's own boxes must fit inside
+	`INNER_HALF` (8.8 m) and a plan storey's inside `PLAN_HALF` (38.8 m). The block
+	spans the wide grid now, so it belongs to the plan population.
 	"""
 	var out: Array[Dictionary] = []
-	var clear := headroom()
-	var mid_y := clear * 0.5
+	var floor_index := int(plan["floor"])
+	var top: float = FLOOR_Y[floor_index]
+	var clear := plan_clear_height(floor_index)
 
-	# ---- The wing wall: the hall's north boundary, with the crawl in it ----
-	out.append({
-		"name": "WingWallWest",
-		"pos": Vector3((SLAB_X0 + CRAWL_X0) * 0.5, mid_y, WING_Z),
-		"size": Vector3(CRAWL_X0 - SLAB_X0, clear, 0.4),
-		"color": COLOR_STONE, "collide": true, "floor": 0,
-	})
-	out.append({
-		"name": "WingWallEast",
-		"pos": Vector3((CRAWL_X1 + WING_JOG_X) * 0.5, mid_y, WING_Z),
-		"size": Vector3(WING_JOG_X - CRAWL_X1, clear, 0.4),
-		"color": COLOR_STONE, "collide": true, "floor": 0,
-	})
-	# The jog around the shell's doorway, and the short return that closes it.
-	out.append({
-		"name": "WingWallJog",
-		"pos": Vector3(WING_JOG_X, mid_y, (WING_Z + WING_JOG_Z) * 0.5),
-		"size": Vector3(0.4, clear, WING_JOG_Z - WING_Z + 0.4),
-		"color": COLOR_STONE, "collide": true, "floor": 0,
-	})
-	out.append({
-		"name": "WingWallNorthEast",
-		"pos": Vector3((WING_JOG_X + INNER_HALF) * 0.5, mid_y, WING_JOG_Z),
-		"size": Vector3(INNER_HALF - WING_JOG_X, clear, 0.4),
-		"color": COLOR_STONE, "collide": true, "floor": 0,
-	})
-
-	# ---- The maintenance crawl: a lintel low enough to read as a duct, and a
-	# press sweeping the gap under it. -----------------------------------------
-	out.append({
-		"name": "CrawlLintel",
-		"pos": Vector3((CRAWL_X0 + CRAWL_X1) * 0.5, (CRAWL_LINTEL_Y + clear) * 0.5, WING_Z),
-		"size": Vector3(CRAWL_X1 - CRAWL_X0, clear - CRAWL_LINTEL_Y, 0.4),
-		"color": COLOR_STONE, "collide": true, "floor": 0,
-	})
+	# ---- The maintenance crawl's press, in the duct the plan drew for it ----
 	# `sweep` marks a part that is MOVING on any frame you look at it, the way
-	# `spin` marks a rotor bar. Its position here is the TOP of the stroke, which is
-	# where `press_y(0)` puts it — see that function.
-	out.append({
-		"name": "CrawlPress",
-		"pos": Vector3((CRAWL_X0 + CRAWL_X1) * 0.5, PRESS_TOP, WING_Z),
-		"size": Vector3(CRAWL_X1 - CRAWL_X0 - 0.1, 0.7, 0.6),
-		"color": COLOR_HAZARD, "collide": false, "floor": 0,
-		"sweep": true,
-	})
-
-	# ---- The spine wall: three piers, four doorways, four masses, four pads ----
-	for i in 3:
+	# `spin` marks a rotor bar. Its y here is the TOP of the stroke, which is where
+	# `press_y(0)` puts it — see that function.
+	var crawl := plan_gate_rect(floor_index, "maintenance_crawl")
+	if crawl.size != Vector2i.ZERO:
+		var duct := _cell_span(floor_index, crawl)
 		out.append({
-			"name": "SpinePier%d" % (i + 1),
-			"pos": Vector3(_spine_pier_x(i), mid_y, SPINE_Z),
-			"size": Vector3(SPINE_PIER_W, clear, 0.4),
-			"color": COLOR_STONE, "collide": true, "floor": 0,
-		})
-	for i in SPINE_DOORS.size():
-		var door: Dictionary = SPINE_DOORS[i]
-		# The mass fills its doorway to the ceiling, so there is nothing to jump
-		# over and nothing to walk round — the two ways a gate stops being one.
-		out.append({
-			"name": String(door["mass"]),
-			"pos": Vector3(_spine_door_x(i), mid_y, SPINE_Z),
-			"size": Vector3(SPINE_DOOR_W, clear, 0.6),
-			"color": COLOR_IDENTITY, "collide": true, "floor": 0,
-		})
-		# ...and the pad in front of it, 10 cm proud and non-solid: a change of
-		# colour under your feet, never a lip to trip on.
-		out.append({
-			"name": String(door["pad"]),
-			"pos": Vector3(_spine_door_x(i), 0.05, PAD_Z),
-			"size": Vector3(SPINE_DOOR_W, 0.1, PAD_DEPTH),
-			"color": COLOR_IDENTITY_PAD, "collide": false, "floor": 0,
+			"name": "CrawlPress",
+			"pos": Vector3((duct["x0"] + duct["x1"]) * 0.5, top + PRESS_TOP,
+					(duct["z0"] + duct["z1"]) * 0.5),
+			"size": Vector3(duct["x1"] - duct["x0"] - 0.1, 0.7, 0.6),
+			"color": COLOR_HAZARD, "collide": false, "floor": floor_index,
+			"sweep": true, "dynamic": true,
 		})
 
-	# ---- The cells: three dividers and four containment frames ----------------
-	var cell_mid := (CELL_Z0 + INNER_HALF) * 0.5
-	var cell_depth := INNER_HALF - CELL_Z0
-	for i in 3:
+	# ---- The four containment fields, across the back of each recess -------
+	for hero: String in TowerGraph.HEROES:
+		var cell := plan_room_rect(floor_index, "cell_%s" % hero)
+		if cell.size == Vector2i.ZERO:
+			continue
+		var box := _cell_span(floor_index, cell)
 		out.append({
-			"name": "CellDivider%d" % (i + 1),
-			"pos": Vector3(_cell_x(i) + (_cell_width() + CELL_DIVIDER) * 0.5, mid_y, cell_mid),
-			"size": Vector3(CELL_DIVIDER, clear, cell_depth),
-			"color": COLOR_STONE, "collide": true, "floor": 0,
+			"name": "CellFrame%s" % hero.capitalize(),
+			"pos": Vector3((box["x0"] + box["x1"]) * 0.5, top + 1.25, box["z0"] + 0.3),
+			"size": Vector3(box["x1"] - box["x0"] - 0.6, 2.5, 0.12),
+			"color": COLOR_CELL, "collide": false, "floor": floor_index,
+			"dynamic": true,
 		})
-	for i in TowerGraph.HEROES.size():
-		out.append({
-			"name": "CellFrame%s" % String(TowerGraph.HEROES[i]).capitalize(),
-			"pos": Vector3(_cell_x(i), 1.25, INNER_HALF - 0.3),
-			"size": Vector3(_cell_width() - 0.6, 2.5, 0.12),
-			"color": COLOR_CELL, "collide": false, "floor": 0,
-		})
+
 	# THE ONE PIECE OF AUTHORED STAGING IN THE BUILDING. A standard cell plus a
 	# steel containment screen across its mouth: the first rescue's identity comes
 	# from what is IN the cell, never from the cell, because any hero can land in
@@ -2109,58 +2234,77 @@ static func _wing_boxes() -> Array[Dictionary]:
 	# WAIST HIGH, and that was found by walking it rather than reasoned: built full
 	# height it stood in front of the containment frame and hid it, so Primm's cell
 	# read exactly like the three empty ones — the staging swallowed the one thing
-	# this wing has to say from across the gallery.
-	# The vent-purge pad. Same violet-pad shape as the four spine pads, in the
-	# gallery rather than the corridor - it is operated from the wrong side of the
-	# doors, by somebody the doors are keeping in.
+	# this block has to say from across the gallery.
+	var staged := plan_room_rect(floor_index, "cell_%s" % AUTHORED_CAPTIVE)
+	if staged.size != Vector2i.ZERO:
+		var stage := _cell_span(floor_index, staged)
+		out.append({
+			"name": "PrimmContainment",
+			"pos": Vector3((stage["x0"] + stage["x1"]) * 0.5, top + 0.6, stage["z1"] - 0.5),
+			"size": Vector3(stage["x1"] - stage["x0"] - 0.2, 1.2, 0.5),
+			"color": COLOR_MECHANISM, "collide": false, "floor": floor_index,
+			"dynamic": true,
+		})
+
+	# The vent-purge pad. Same plate shape as the four gate pads, in the gallery
+	# rather than the corridor - it is operated from the wrong side of the doors, by
+	# somebody the doors are keeping in.
+	var pad := purge_pad()
 	out.append({
 		"name": "PurgePad",
-		"pos": Vector3(PURGE_PAD_X, 0.05, PURGE_PAD_Z),
-		"size": Vector3(1.1, 0.1, 1.1),
-		"color": COLOR_SYSTEM, "collide": false, "floor": 0,
-	})
-	out.append({
-		"name": "PrimmContainment",
-		"pos": Vector3(_cell_x(TowerGraph.HEROES.find(AUTHORED_CAPTIVE)), 0.6, CELL_Z0 + 0.5),
-		"size": Vector3(_cell_width() - 0.2, 1.2, 0.5),
-		"color": COLOR_MECHANISM, "collide": false, "floor": 0,
+		"pos": Vector3(pad.x, top + 0.05, pad.z),
+		"size": Vector3(PURGE_PAD_SIDE, 0.1, PURGE_PAD_SIDE),
+		"color": COLOR_SYSTEM, "collide": false, "floor": floor_index,
 	})
 
-	# ---- Light. The wing is under the slab and the sun does not reach it. ----
-	out.append({
-		"name": "PanelStair",
-		"pos": Vector3(4.0, clear - 0.05, (WING_Z + SPINE_Z) * 0.5),
-		"size": Vector3(7.5, 0.1, 1.6),
-		"color": COLOR_PANEL, "collide": false, "floor": 0,
-	})
-	out.append({
-		"name": "PanelGallery",
-		"pos": Vector3(4.15, clear - 0.05, (SPINE_Z + CELL_Z0) * 0.5 + 0.5),
-		"size": Vector3(8.0, 0.1, 1.8),
-		"color": COLOR_PANEL, "collide": false, "floor": 0,
-	})
+	# ---- Light. The block is under the sealed roof and the sun never reaches it.
+	for pair: Array in [["PanelCorridor", "service_stair"], ["PanelGallery", BLOCK_ROOM]]:
+		var room := plan_room_rect(floor_index, String(pair[1]))
+		if room.size == Vector2i.ZERO:
+			continue
+		var lit := _cell_span(floor_index, room)
+		out.append({
+			"name": String(pair[0]),
+			"pos": Vector3((lit["x0"] + lit["x1"]) * 0.5, top + clear - 0.05,
+					(lit["z0"] + lit["z1"]) * 0.5),
+			"size": Vector3(lit["x1"] - lit["x0"] - 2.0, 0.1, lit["z1"] - lit["z0"] - 1.0),
+			"color": COLOR_PANEL, "collide": false, "floor": floor_index,
+		})
+
+	# ---- THE SCAR (phase 11), in the doorway phase 16 moved it to -----------
+	# The block's wide doorway, filled with rubble — built ALWAYS, drawn and made
+	# solid only once `TowerGraph.SCAR_CUSTODY` is in the opened set
+	# (`_refresh_scar`). In the table so it is budgeted, footprint-checked and fits
+	# the shell like every other box; `scar` is what keeps it out of the BASE plan
+	# the self-checks sample, and `severs` names the graph edge it takes away, so
+	# `tower_selfcheck` can bind the two rather than trust this comment.
+	var gap := plan_doorway_rect(floor_index, "service_stair")
+	if gap.size != Vector2i.ZERO:
+		var rubble := _cell_span(floor_index, gap)
+		out.append({
+			"name": SCAR_BOX,
+			"pos": Vector3((rubble["x0"] + rubble["x1"]) * 0.5, top + clear * 0.5,
+					(rubble["z0"] + rubble["z1"]) * 0.5),
+			"size": Vector3(rubble["x1"] - rubble["x0"], clear,
+					rubble["z1"] - rubble["z0"]),
+			"color": COLOR_SCAR, "collide": true, "floor": floor_index,
+			"scar": TowerGraph.SCAR_CUSTODY, "severs": "block_main_door",
+			"dynamic": true,
+		})
 	return out
 
 
-static func wing_span() -> float:
-	"""The wing's full east-west run: the slab's west edge to the shell's inner face."""
-	return INNER_HALF - SLAB_X0
-
-
-static func _spine_door_x(index: int) -> float:
+static func purge_pad() -> Vector3:
 	"""
-	Centre of the `index`th spine doorway, west to east.
+	The vent-purge pad's centre, in interior-local metres — the gallery's +X end.
 
-	Four doors and three piers laid end to end across `wing_span()`, so the run is
-	exact by construction: `4 * SPINE_DOOR_W + 3 * SPINE_PIER_W` must equal the
-	span, which `tower_interior_selfcheck` asserts rather than trusts.
+	`y` is the storey's walking surface; the plate itself stands `0.05` over it.
 	"""
-	return SLAB_X0 + SPINE_DOOR_W * 0.5 + float(index) * (SPINE_DOOR_W + SPINE_PIER_W)
-
-
-static func _spine_pier_x(index: int) -> float:
-	"""Centre of the `index`th pier — between doors `index` and `index + 1`."""
-	return _spine_door_x(index) + (SPINE_DOOR_W + SPINE_PIER_W) * 0.5
+	var floor_index := block_floor()
+	if floor_index < 0:
+		return Vector3.ZERO
+	var box := _cell_span(floor_index, plan_room_rect(floor_index, BLOCK_ROOM))
+	return Vector3(box["x1"] - 1.5, FLOOR_Y[floor_index], (box["z0"] + box["z1"]) * 0.5)
 
 
 static func cell_stand(hero: String) -> Vector3:
@@ -2174,44 +2318,68 @@ static func cell_stand(hero: String) -> Vector3:
 	and a peer is benched holding exactly one, so two benched peers are two
 	different recesses with no allocator, no registry and nothing to keep in step.
 
-	`y` is the same 0.2 m lift `CUSTODY_STAND` uses - a body dropped exactly on the
-	floor plane can start the frame a hair inside it.
+	`y` is the same 0.2 m lift `custody_stand()` uses - a body dropped exactly on
+	the floor plane can start the frame a hair inside it.
 	"""
-	var index: int = TowerGraph.HEROES.find(hero)
-	if index < 0:
-		return Vector3(PURGE_PAD_X, 0.2, PURGE_PAD_Z)
-	return Vector3(_cell_x(index), 0.2, (CELL_Z0 + INNER_HALF) * 0.5)
+	var floor_index := block_floor()
+	if floor_index < 0:
+		return Vector3.ZERO
+	var cell := plan_room_rect(floor_index, "cell_%s" % hero)
+	if cell.size == Vector2i.ZERO:
+		return purge_pad() + Vector3(0.0, 0.2, 0.0)
+	var box := _cell_span(floor_index, cell)
+	return Vector3((box["x0"] + box["x1"]) * 0.5, FLOOR_Y[floor_index] + 0.2,
+			(box["z0"] + box["z1"]) * 0.5)
+
+
+static func _block_bounds() -> Dictionary:
+	"""
+	The gallery and its four cells as one rect in metres, `{}` when unbuilt.
+
+	EVERYTHING ON THE GALLERY SIDE OF THE SPINE WALL AND NOTHING ELSE — the union
+	of the rooms a prisoner may walk, read off the plan rather than written down.
+	"""
+	var floor_index := block_floor()
+	if floor_index < 0:
+		return {}
+	var span := plan_room_rect(floor_index, BLOCK_ROOM)
+	for hero: String in TowerGraph.HEROES:
+		var cell := plan_room_rect(floor_index, "cell_%s" % hero)
+		if cell.size != Vector2i.ZERO:
+			span = span.merge(cell)
+	return _cell_span(floor_index, span)
+
+
+## How far inside the block's own walls the prisoner's clamp stops. Keeps it off
+## the wall faces, so a body pushed into the box is not pushed into geometry.
+const BLOCK_INSET: float = 0.4
 
 
 static func block_min() -> Vector3:
 	"""
 	The prison role's confinement box, low corner, in interior-local metres.
 
-	THE GALLERY AND ITS FOUR CELLS AND NOTHING ELSE - everything north of the spine
-	wall. The south face is `SPINE_Z`, which is where the four identity doors stand:
-	a prisoner may walk the gallery and every cell (that is what makes freeing a
-	CELLMATE possible, and it is the block's second system) but may never step
-	through a spine door, which is the whole of "no solo escape". The 0.4 m inset
-	keeps the clamp off the wall faces so a body pushed into the box is not pushed
-	into geometry; `tower_interior_selfcheck` re-derives both corners rather than
-	trusting these numbers.
+	THE GALLERY AND ITS FOUR CELLS AND NOTHING ELSE - everything on the far side of
+	the spine wall, which is where the four identity doors stand: a prisoner may
+	walk the gallery and every cell (that is what makes freeing a CELLMATE possible,
+	and it is the block's second system) but may never step through a spine door,
+	which is the whole of "no solo escape". `tower_interior_selfcheck` re-derives
+	both corners rather than trusting them.
 	"""
-	return Vector3(SLAB_X0 + 0.4, 0.0, SPINE_Z + 0.4)
+	var box := _block_bounds()
+	if box.is_empty():
+		return Vector3.ZERO
+	return Vector3(float(box["x0"]) + BLOCK_INSET, FLOOR_Y[block_floor()],
+			float(box["z0"]) + BLOCK_INSET)
 
 
 static func block_max() -> Vector3:
 	"""The confinement box's high corner - see `block_min()`."""
-	return Vector3(INNER_HALF - 0.4, 0.0, INNER_HALF - 0.4)
-
-
-static func _cell_width() -> float:
-	"""How wide one cell is: the span less three dividers, split four ways."""
-	return (wing_span() - 3.0 * CELL_DIVIDER) * 0.25
-
-
-static func _cell_x(index: int) -> float:
-	"""Centre of the `index`th cell, west to east — the same run, differently cut."""
-	return SLAB_X0 + _cell_width() * 0.5 + float(index) * (_cell_width() + CELL_DIVIDER)
+	var box := _block_bounds()
+	if box.is_empty():
+		return Vector3.ZERO
+	return Vector3(float(box["x1"]) - BLOCK_INSET, FLOOR_Y[block_floor()],
+			float(box["z1"]) - BLOCK_INSET)
 
 
 static func press_y(clock: float) -> float:
@@ -2224,8 +2392,12 @@ static func press_y(clock: float) -> float:
 	A raised cosine, so it DWELLS at both ends: the gap under it is open long
 	enough to walk through at a walk, which is the difference between a challenge
 	and a coin flip. `press_y(0)` is the top of the stroke, which is where
-	`_wing_boxes()` puts the box — so the table and the animation agree at t = 0
+	`_block_boxes()` puts the box — so the table and the animation agree at t = 0
 	and the self-check can assert the stroke's bounds from these two constants.
+
+	IT IS A STROKE AND NOT A HEIGHT: the block stands on storey 10, so the caller
+	adds the storey's walking surface. Keeping this relative is what lets the three
+	constants above stay the same three numbers they were on the ground floor.
 	"""
 	var phase := TAU * clock / PRESS_PERIOD
 	return PRESS_BOTTOM + (PRESS_TOP - PRESS_BOTTOM) * (0.5 + 0.5 * cos(phase))
@@ -2345,12 +2517,12 @@ func _ready() -> void:
 			_mass_shape = shape
 		elif box["name"] == SCAR_BOX:
 			_scar_shape = shape
-		elif _riddle_of(String(box["name"])) != "":
-			_riddle_shapes[_riddle_of(String(box["name"]))] = shape
-		else:
-			var spine := _spine_gate_of(String(box["name"]))
-			if spine != "":
-				_spine_shapes[spine] = shape
+		elif gate_of(String(box["name"])) != "":
+			var gid := gate_of(String(box["name"]))
+			if String(TowerGraph.gate(gid).get("class", "")) == TowerGraph.CLASS_IDENTITY:
+				_spine_shapes[gid] = shape
+			else:
+				_riddle_shapes[gid] = shape
 
 	for i in _floors.size():
 		# A floor index with nothing static on it — `FLOOR_Y` names all ten storeys
@@ -2366,7 +2538,7 @@ func _ready() -> void:
 		_floors[i].add_child(batch)
 
 	_build_pads()
-	_build_wing()
+	_build_block()
 	_build_riddles()
 	_build_label()
 	_build_vault_prize()
@@ -2717,10 +2889,11 @@ func _place_riddle(gate_id: String) -> void:
 		if clunk > 0.0:
 			lift += RIDDLE_RATTLE * maxf(float(_riddle_ratio.get(gate_id, 0.0)), 0.25) \
 				* sin(PI * (1.0 - clunk))
-	mesh.position.y = float(_riddle_rest.get(gate_id, 0.0)) + lift
+	mesh.position.y = float(_gate_rest.get(gate_id, 0.0)) + lift
 	var shape: CollisionShape3D = _riddle_shapes.get(gate_id)
 	if shape != null:
 		shape.position.y = mesh.position.y
+	_retire(mesh, shape, opened >= 1.0)
 
 
 func _attempt_demand() -> void:
@@ -2864,7 +3037,7 @@ func _build_riddles() -> void:
 	"""
 	for floor_index: int in TowerPlans.floors():
 		var plan := TowerPlans.storey(floor_index)
-		var slots := riddle_slots(plan)
+		var slots := gate_slots(plan)
 		var lock_sum: Dictionary = {}
 		var lock_n: Dictionary = {}
 		for pad: Dictionary in slots["pads"]:
@@ -2910,8 +3083,8 @@ func _make_label(label_name: String, pos: Vector3, text: String,
 	the receptacle's alcove and gets depth-culled mid-sentence, which is how the
 	first build shipped a gate that said "...farm coins for the point". 700 px at
 	this pixel size is 2.45 m — narrower than the niche it stands in, from both
-	sides. (The wing's two signs then shrink themselves further; the corridor they
-	hang in is narrower still, and `_build_wing()` says why.)
+	sides. (The block's two signs then shrink themselves further; the corridor they
+	hang in is narrower still, and `_build_block()` says why.)
 	"""
 	var label := Label3D.new()
 	label.name = label_name
@@ -2925,7 +3098,10 @@ func _make_label(label_name: String, pos: Vector3, text: String,
 	label.modulate = COLOR_BAND_LIT
 	label.position = pos
 	_no_shadow(label)
-	_floors[0].add_child(label)
+	# ITS OWN STOREY, not floor 0: a label is geometry and hides with the container
+	# it hangs in, so a sign parented to the ground floor would be drawn whenever
+	# the ground floor is — from 46 m up, through five slabs.
+	_floors[clampi(floor_index, 0, _floors.size() - 1)].add_child(label)
 	return label
 
 
@@ -2971,6 +3147,9 @@ func _remember(box_name: String, mesh: MeshInstance3D) -> void:
 			_checkpoint_meshes.append(mesh)
 		"CrawlPress":
 			_press = mesh
+			# The stroke is relative to the storey the duct is drawn on — read off
+			# the mesh the table just placed, never a second copy of `FLOOR_Y[9]`.
+			_press_base = mesh.position.y - PRESS_TOP
 		"PrimmContainment":
 			_containment = mesh
 		SCAR_BOX:
@@ -2985,59 +3164,79 @@ func _remember(box_name: String, mesh: MeshInstance3D) -> void:
 				# reads the name straight back.
 				_cell_frames[box_name.trim_prefix("CellFrame").to_lower()] = mesh
 				return
-			var riddle := _riddle_of(box_name)
-			if riddle != "":
-				_riddle_meshes[riddle] = mesh
-				# The rest height, taken off the mesh the table just placed rather
-				# than recomputed — one number, one source, no chance of a mass that
-				# animates from a y its own box never had.
-				_riddle_rest[riddle] = mesh.position.y
+			var gid := gate_of(box_name)
+			if gid == "":
 				return
-			var spine := _spine_gate_of(box_name)
-			if spine != "":
-				_spine_meshes[spine] = mesh
+			# The rest height, taken off the mesh the table just placed rather than
+			# recomputed — one number, one source, no chance of a mass that animates
+			# from a y its own box never had. Both gate families want it now that
+			# the spine doors stand on a storey and not on y = 0.
+			_gate_rest[gid] = mesh.position.y
+			if String(TowerGraph.gate(gid).get("class", "")) == TowerGraph.CLASS_IDENTITY:
+				_spine_meshes[gid] = mesh
+			else:
+				_riddle_meshes[gid] = mesh
 
 
-static func _riddle_of(box_name: String) -> String:
+static func gate_of(box_name: String) -> String:
 	"""
-	Which riddle a box belongs to, "" for a box that is no riddle's mass.
+	Which gate a box is the mass of, "" for a box that is no gate's mass.
 
-	Derived from the name the plan builder gave it — `S<floor>PlanRiddleMass_<id>`
-	— rather than from a second table, exactly as `CellFrame<Hero>` is read back.
+	Derived from the name the plan builder gave it — `S<floor>PlanGateMass_<id>` —
+	rather than from a second table, exactly as `CellFrame<Hero>` is read back. The
+	CLASS then says which family the mass belongs to, which is why one name serves
+	the riddles and the four rescue spines alike.
 	"""
-	var cut := box_name.find("RiddleMass_")
-	return "" if cut < 0 else box_name.substr(cut + "RiddleMass_".length())
+	var cut := box_name.find("GateMass_")
+	return "" if cut < 0 else box_name.substr(cut + "GateMass_".length())
 
 
 # ============================================================================
-# THE CELL BLOCK WING — phase 8
+# THE CELL BLOCK — phase 8's rooms, on phase 16's storey
 # ============================================================================
 
-func _build_wing() -> void:
+func _build_block() -> void:
 	"""
-	The wing's trigger volumes and its two labels.
+	The cell block's trigger volumes and its two labels.
 
 	Four spine pads (polled, like every identity pad in this building) and four cell
 	volumes (one-shot, because liberation is a thing you do and not a thing you
-	stand in). Both are parented to storey 0, so they hide with it.
+	stand in). Every position is read off the plan, and all of them are parented to
+	the storey that draws the block, so they hide with it.
 	"""
+	var floor_index := block_floor()
+	if floor_index < 0:
+		return
+	var plan := TowerPlans.storey(floor_index)
+	var top: float = FLOOR_Y[floor_index]
+	var slots := gate_slots(plan)
 	for i in SPINE_DOORS.size():
 		var gid := String(SPINE_DOORS[i]["gate"])
+		var span: Rect2i = slots["masses"].get(gid, Rect2i())
+		if span.size == Vector2i.ZERO:
+			continue
+		var cell := gate_pad_cell(plan, span)
+		if cell.x < 0:
+			continue
 		_add_area("SpineTrigger%d" % (i + 1),
-			Vector3(_spine_door_x(i), 1.0, PAD_Z),
-			Vector3(SPINE_DOOR_W, 2.0, PAD_TRIGGER_DEPTH),
-			_on_spine_enter.bind(gid), _on_spine_exit.bind(gid), 0)
+			Vector3(_grid_x(float(cell.x) + 0.5), top + 1.0, _grid_z(float(cell.y) + 0.5)),
+			Vector3(TowerPlans.PLAN_CELL, 2.0, PAD_TRIGGER_DEPTH),
+			_on_spine_enter.bind(gid), _on_spine_exit.bind(gid), floor_index)
+	var pad := purge_pad()
 	_add_area("PurgeTrigger",
-		Vector3(PURGE_PAD_X, 1.0, PURGE_PAD_Z),
-		Vector3(1.1, 2.0, 1.1),
-		_on_purge_enter, _on_purge_exit, 0)
-	var cell_mid := (CELL_Z0 + INNER_HALF) * 0.5
-	for i in TowerGraph.HEROES.size():
-		var hero := String(TowerGraph.HEROES[i])
+		Vector3(pad.x, top + 1.0, pad.z),
+		Vector3(PURGE_PAD_SIDE, 2.0, PURGE_PAD_SIDE),
+		_on_purge_enter, _on_purge_exit, floor_index)
+	for hero: String in TowerGraph.HEROES:
+		var rect := plan_room_rect(floor_index, "cell_%s" % hero)
+		if rect.size == Vector2i.ZERO:
+			continue
+		var box := _cell_span(floor_index, rect)
 		_add_area("CellTrigger%s" % hero.capitalize(),
-			Vector3(_cell_x(i), 1.0, cell_mid),
-			Vector3(_cell_width() - 0.4, 2.0, INNER_HALF - CELL_Z0 - 0.4),
-			_on_cell_enter.bind(hero), Callable(), 0)
+			Vector3((box["x0"] + box["x1"]) * 0.5, top + 1.0,
+				(box["z0"] + box["z1"]) * 0.5),
+			Vector3(box["x1"] - box["x0"] - 0.4, 2.0, box["z1"] - box["z0"] - 0.4),
+			_on_cell_enter.bind(hero), Callable(), floor_index)
 
 	# TWO LABELS AND NOT ONE, because a wall stands between the two rooms they speak
 	# in and a `Label3D` is geometry: the corridor's line would be depth-culled from
@@ -3047,16 +3246,20 @@ func _build_wing() -> void:
 	# SMALLER AND HIGHER THAN THE RECEPTACLE'S, and that was found by looking rather
 	# than reasoned: the receptacle stands at the end of a deep alcove you approach
 	# from across the hall, so its 2.45 m banner is read at four metres. These two
-	# live in a two-metre corridor where the spring arm puts the camera a metre from
-	# them, and at the receptacle's size the first walkthrough was a screen full of
-	# the word "open". Up near the ceiling and half the scale, they read as signage
-	# on a wall instead of as a wall.
+	# live in a corridor where the spring arm puts the camera a metre from them, and
+	# at the receptacle's size the first walkthrough was a screen full of the word
+	# "open". Up near the ceiling and half the scale, they read as signage on a wall
+	# instead of as a wall.
+	var corridor := _cell_span(floor_index, plan_room_rect(floor_index, "service_stair"))
+	var gallery := _cell_span(floor_index, plan_room_rect(floor_index, BLOCK_ROOM))
 	_spine_label = _make_label("SpineLabel",
-		Vector3(_spine_door_x(1) + (SPINE_DOOR_W + SPINE_PIER_W) * 0.5, 3.8, SPINE_Z - 0.4),
-		tr("THE FOUR SPINES — one door each"))
+		Vector3((corridor["x0"] + corridor["x1"]) * 0.5, top + 3.6,
+			float(corridor["z0"]) + 0.4),
+		tr("THE FOUR SPINES — one door each"), floor_index)
 	_cell_label = _make_label("CellLabel",
-		Vector3(_cell_x(1) + (_cell_width() + CELL_DIVIDER) * 0.5, 3.8, CELL_Z0 - 0.35),
-		tr("CELL BLOCK"))
+		Vector3((gallery["x0"] + gallery["x1"]) * 0.5, top + 3.6,
+			float(gallery["z1"]) - 0.4),
+		tr("CELL BLOCK"), floor_index)
 	for sign: Label3D in [_spine_label, _cell_label]:
 		sign.font_size = 30
 		sign.outline_size = 9
@@ -3069,7 +3272,7 @@ func _tick_press(delta: float) -> void:
 	if _press == null:
 		return
 	_press_clock = wrapf(_press_clock + delta, 0.0, PRESS_PERIOD)
-	_press.position.y = press_y(_press_clock)
+	_press.position.y = _press_base + press_y(_press_clock)
 
 
 func _tick_spine_pads() -> void:
@@ -3117,17 +3320,51 @@ func _place_spine(gate_id: String) -> void:
 	"""
 	Put one spine mass where its open fraction says. It only ever SINKS.
 
-	Down, and not up, purely because this wing is roofed — see the block comment at
-	`WING_Z`. Mesh and collision shape move together: a gate that opened only
-	visually is the worst bug this file can have.
+	Down, and not up, purely because the block is roofed — see THE CELL BLOCK above.
+	Mesh and collision shape move together: a gate that opened only visually is the
+	worst bug this file can have.
+
+	Its shut height is `_gate_rest`, taken off the mesh the plan builder placed, so
+	the mass animates from the y its own box actually had — on whatever storey the
+	block is drawn on.
 	"""
 	var mesh: MeshInstance3D = _spine_meshes.get(gate_id)
 	if mesh == null:
 		return
-	mesh.position.y = headroom() * 0.5 - SPINE_TRAVEL * float(_spine_open.get(gate_id, 0.0))
+	var open := float(_spine_open.get(gate_id, 0.0))
+	mesh.position.y = float(_gate_rest.get(gate_id, 0.0)) - SPINE_TRAVEL * open
 	var shape: CollisionShape3D = _spine_shapes.get(gate_id)
 	if shape != null:
 		shape.position.y = mesh.position.y
+	_retire(mesh, shape, open >= 1.0)
+
+
+func _retire(mesh: MeshInstance3D, shape: CollisionShape3D, done: bool) -> void:
+	"""
+	Hide and de-solidify a gate mass that has finished travelling.
+
+	A MASS IS AS TALL AS ITS ROOM, so it has nowhere to go that is not somebody
+	else's room. It fills its doorway floor to ceiling — that is what makes it a
+	gate and not a hurdle — and the slab between two storeys is 0.4 m, so a fully
+	sunk one ends up a four-metre block standing in the storey BELOW and a fully
+	risen one a block standing in the storey ABOVE. That was invisible while the
+	only gates that moved stood on the ground floor and under the open sky; phase 16
+	filled the building to its roof, and every gate in it now has a room on the
+	other side of the floor it disappears into.
+
+	Nothing is lost by not drawing it: an opened gate's mass has already left the
+	room it was in (its bottom is the ceiling, or its top is the floor), so from
+	anywhere a player can stand it is gone either way. What this removes is only
+	the leak into the neighbouring storey — and the collision that came with it.
+
+	It is applied at the END of the travel and not at the start, because the tween
+	IS the sentence the legibility language is making ("up = the world changed"),
+	and `_apply_opened()` snaps a loaded save straight to 1.0, which is the case
+	that matters.
+	"""
+	mesh.visible = not done
+	if shape != null:
+		shape.disabled = done
 
 
 func _refresh_cells() -> void:
@@ -3182,12 +3419,13 @@ func _liberate(hero: String) -> void:
 #
 #   * RAISED CONTAINMENT while the scene runs (`begin_lockdown` / `end_lockdown`).
 #     Every spine door is shut again, whatever a hundred earlier rescues opened, so
-#     the break-out is the wing's own lesson under a clock: read the door, switch to
+#     the break-out is the block's own lesson under a clock: read the door, switch to
 #     the hero it names, stand on the pad. That is deliberately the game's verbs and
 #     not a minigame — there is no new input and no new rule, only the old ones with
 #     nothing already unlocked.
 #   * THE SCAR (`apply_scar`), which is the one sanctioned exception to the graph's
-#     edge-additive law: a survived protocol takes the courtyard stair away for good.
+#     edge-additive law: a survived protocol brings the block's wide doorway down
+#     for good.
 #
 # WHERE THE STAND IS AND WHY IT IS NOT A CELL. The party wakes in the SERVICE
 # CORRIDOR, on the wrong side of the spine wall — because a cell hangs off the
@@ -3195,19 +3433,32 @@ func _liberate(hero: String) -> void:
 # that started in one would be three metres of walking and no scene at all. From the
 # corridor the only way to a cell is through a door that asks for a name.
 
-## Where the protocol stands the party up, in interior-local metres.
-##
-## THE MIDDLE OF THE CORRIDOR, and that is the camera's doing rather than the
-## drama's. The run is 9.3 m and the spring arm is 8.25 m, so standing at either
-## end and facing along it collapses the arm into the back of the hero's head (the
-## wing's documented deferral, one room over from the courtyard's). From the middle,
-## facing +X, the arm has ~4.8 m of corridor behind it and the shot reads.
-##
-## Clearances, all of them re-derived and ASSERTED by `tower_interior_selfcheck`
-## rather than trusted here — a stand inside a wall is a body shoved through it on
-## the first frame: south of the pad line (`PAD_Z` 3.9), north of the wing wall's
-## inner face (`WING_Z` 2.2 + half of 0.4), and clear of the four spine doorways.
-const CUSTODY_STAND: Vector3 = Vector3(4.15, 0.2, 2.95)
+static func custody_stand() -> Vector3:
+	"""
+	Where the protocol stands the party up, in interior-local metres.
+
+	THE MIDDLE OF THE SERVICE CORRIDOR, and it is DERIVED and no longer a literal:
+	it was a bare `Vector3` in a file full of derived spacings, which is exactly the
+	shape of constant that ends up 40 cm inside a wall the day a doorway moves — and
+	phase 16 moved every doorway in this room 46 m upwards.
+
+	The middle is the camera's doing rather than the drama's: facing +X
+	(`SPAWN_FACING_Y`) the spring arm needs corridor behind it, and from either end
+	it collapses into the back of the hero's head. The middle is also the furthest
+	any point in the room can be from the four gate pads, so the scene does not open
+	on a door's refusal line.
+
+	Every clearance is re-derived and ASSERTED by `tower_interior_selfcheck` rather
+	than trusted here — a stand inside a wall is a body shoved through it on the
+	first frame. `y` is the storey's walking surface plus the same 0.2 m lift
+	`cell_stand()` uses.
+	"""
+	var floor_index := block_floor()
+	if floor_index < 0:
+		return Vector3.ZERO
+	var box := _cell_span(floor_index, plan_room_rect(floor_index, "service_stair"))
+	return Vector3((box["x0"] + box["x1"]) * 0.5, FLOOR_Y[floor_index] + 0.2,
+			(box["z0"] + box["z1"]) * 0.5)
 
 
 func begin_lockdown() -> void:
@@ -3324,14 +3575,6 @@ func captives() -> Array:
 	return out
 
 
-static func _spine_gate_of(box_name: String) -> String:
-	"""Which spine gate a mass or pad belongs to, "" for a box that is neither."""
-	for door: Dictionary in SPINE_DOORS:
-		if box_name == String(door["mass"]) or box_name == String(door["pad"]):
-			return String(door["gate"])
-	return ""
-
-
 # ============================================================================
 # SIGNAL HANDLERS — every one of them guards on the "player" group
 # ============================================================================
@@ -3439,10 +3682,10 @@ func _on_purge_exit(body: Node3D) -> void:
 
 func _tick_purge(delta: float) -> void:
 	"""
-	The vent purge: scatter the pack around every teammate. See `PURGE_PAD_X`.
+	The vent purge: scatter the pack around every teammate. See `purge_pad()`.
 
 	Polled like every other pad in this building, and it fires the moment the
-	cooldown allows rather than on a press — the wing has no new input, which is the
+	cooldown allows rather than on a press — the block has no new input, which is the
 	same rule the break-out scene is built on.
 
 	NULL-SAFE AND ROOM-ONLY. Solo, `peer_markers()` answers `null` and this is one
@@ -3690,7 +3933,7 @@ static func inside_walls(local: Vector3) -> bool:
 
 	The footprint is the ENVELOPE's inner faces (`TowerPlans.PLAN_HALF` on both
 	axes) and the ceiling is the top of its wall: everything the interior builds —
-	the cell-block wing, and since phase 14 three 80 m storeys and the annulus they
+	the keep, and since phase 14 the hand-planned storeys and the annulus they
 	roofed — lives inside that box, so there is nothing to enumerate and a new room
 	joins for free. The height term is what keeps Windman's Air Rush from reporting
 	"indoors" while he is sightseeing over the parapet.

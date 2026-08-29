@@ -971,7 +971,7 @@ func _check_the_sweep_spares_a_guard() -> void:
 	`clear_nearby_crocodiles()` FREES bodies, and a guard must not be one of them.
 
 	THIS IS NOT ABOUT A GUARD'S OWN BITE. Every other way to lose inside the tower
-	routes through the ordinary respawn — the rotor bar, the wing's press, a
+	routes through the ordinary respawn — the rotor bar, the block's press, a
 	crocodile that followed you in through the doorway — and that path sweeps a
 	25 m radius, which from anywhere in a 17.6 m building is the WHOLE floor. Left
 	unexempted, dying to the rotor is the cheapest way to clear a guarded room, and
@@ -1478,7 +1478,7 @@ func _check_reassign_first_imprison_last() -> void:
 		if not _inside(stand, lo, hi):
 			_fail("%s's cell stand is outside the confinement box — a prisoner would be "
 				% String(hero) + "clamped out of their own cell on the first frame")
-	var pad := TerrainStub.SITE + Vector3(TowerInterior.PURGE_PAD_X, 0.0, TowerInterior.PURGE_PAD_Z)
+	var pad := TerrainStub.SITE + TowerInterior.purge_pad()
 	if not _inside(pad, lo, hi):
 		_fail("the vent-purge pad at %s is outside the confinement box — the block's system "
 			% pad + "cannot be operated by the only player who is ever locked in with it")

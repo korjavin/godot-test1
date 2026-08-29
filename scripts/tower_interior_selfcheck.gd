@@ -81,11 +81,11 @@ extends SceneTree
 ##      half, and it exists because a gap in the spine wall would not look like a
 ##      bug — it would look like a corridor. The four rescue spines are the ONLY
 ##      thing `tower_selfcheck`'s softlock audit has to work with; a 12 cm slot
-##      beside a pier makes every identity gate in the wing decorative and turns
+##      beside a pier makes every identity gate in the block decorative and turns
 ##      that audit's SELFCHECK OK into a statement about a building nobody built.
 ##      So the spine line and the cell row are SAMPLED for solidity rather than
 ##      derived from the same arithmetic that placed them.
-##  11. **THE WING'S ACCEPTANCE WALK.** Check 12: a spine door refuses the wrong
+##  11. **THE BLOCK'S ACCEPTANCE WALK.** Check 12: a spine door refuses the wrong
 ##      hero and opens for the right one standing still; its mass and its shape
 ##      sink together; ANY hero walking into an occupied cell frees the captive,
 ##      the frame goes dark, the authored staging disappears — and stays gone
@@ -200,7 +200,7 @@ func _run() -> void:
 	await _check_opened_state_is_reapplied()
 	await _check_visibility_gating()
 	await _check_earned_state_survives_a_relaunch()
-	_check_the_wing_has_no_way_round_it()
+	_check_the_block_has_no_way_round_it()
 	_check_the_custody_stand_and_the_scar()
 	await _check_the_custody_scene_runs()
 	await _check_spines_and_liberation()
@@ -417,9 +417,17 @@ func _check_no_jump_gated_climb() -> void:
 	# makes the answer STRUCTURAL instead: `_merge_walls` gives every wall a bottom
 	# on its storey's walking surface and a top at its storey's ceiling, and
 	# `_plan_slab` hangs every slab UNDER its walking surface. So a plan storey has
-	# exactly two kinds of solid — floor and full-height wall — and neither can be a
-	# ledge at all: a wall top is the ceiling, and a slab top is the floor you are
-	# standing on.
+	# exactly two kinds of solid — floor and stone that reaches the ceiling — and
+	# neither can be a ledge at all: you cannot stand on a slab top (it is the floor
+	# you are already standing on) and there is nothing over a box whose top IS the
+	# ceiling.
+	#
+	# "REACHES THE CEILING" AND NOT "IS FULL HEIGHT", since phase 16: the challenge
+	# arm of `_plan_gates` hangs a LINTEL over the maintenance crawl's duct, which
+	# starts 2.8 m up and runs to the ceiling. Its top is still the ceiling, so it
+	# still cannot be a ledge, and the assertion below is the weaker-sounding claim
+	# that is actually the true one. What it still refuses is the dangerous shape —
+	# a box whose top stops SHORT of the ceiling, which is a step by definition.
 	#
 	# That is a STRONGER statement than the sweep, not a weaker one. A sweep says
 	# "no box in today's plan is a step"; this says "no box any plan can emit is a
@@ -437,10 +445,10 @@ func _check_no_jump_gated_climb() -> void:
 			var bottom: float = box["pos"].y - box["size"].y * 0.5
 			var is_slab := absf(top - surface) <= EPS \
 					and absf(bottom - (surface - TowerInterior.SLAB_THICK)) <= EPS
-			var is_wall := absf(bottom - surface) <= EPS and absf(top - wall_top) <= EPS
-			if not (is_slab or is_wall):
-				_fail("%s spans %.2f .. %.2f m on a storey at %.2f m — it is neither this floor's slab nor a full-height wall, so its top is a ledge" % [
-					box["name"], bottom, top, surface])
+			var to_ceiling := bottom >= surface - EPS and absf(top - wall_top) <= EPS
+			if not (is_slab or to_ceiling):
+				_fail("%s spans %.2f .. %.2f m on a storey at %.2f m (ceiling %.2f) — it is neither this floor's slab nor stone reaching its ceiling, so its top is a ledge" % [
+					box["name"], bottom, top, surface, wall_top])
 		# ...and a wall you cannot see over. A walled-off room whose wall an unaided
 		# jump clears is a room with a second entrance nobody drew.
 		if clear <= apex:
@@ -955,8 +963,12 @@ func _check_node_shape() -> void:
 					or not is_equal_approx(placed.z, box["pos"].z):
 				_fail("swept mesh %s stands at %s but its box says %s (x/z must not move)" % [
 					box["name"], placed, box["pos"]])
-			var top := TowerInterior.PRESS_TOP
-			var bottom := TowerInterior.PRESS_BOTTOM
+			# The stroke is measured from the storey's own walking surface: the
+			# press moved 46 m up with the cell block and its three constants did
+			# not change, which is the whole point of `press_y` being a stroke.
+			var base: float = TowerInterior.FLOOR_Y[int(box["floor"])]
+			var top := base + TowerInterior.PRESS_TOP
+			var bottom := base + TowerInterior.PRESS_BOTTOM
 			if placed.y < bottom - EPS or placed.y > top + EPS:
 				_fail("swept mesh %s is at y = %.4f, outside its %.2f .. %.2f stroke" % [
 					box["name"], placed.y, bottom, top])
@@ -981,7 +993,7 @@ func _check_node_shape() -> void:
 	if bodies != 1:
 		_fail("the interior has %d StaticBody3D, expected exactly one" % bodies)
 	# Three pads (demand, identity, checkpoint), one hazard per rotor bar, and the
-	# wing's own: four spine pads, four cell volumes, the crawl press's hazard and
+	# block's own: four spine pads, four cell volumes, the crawl press's hazard and
 	# the gallery's vent-purge pad.
 	# COUNTED AND NOT CAPPED — an Area3D nobody meant to build is a trigger that
 	# fires, and every one of these fifteen is named in this file.
@@ -994,7 +1006,7 @@ func _check_node_shape() -> void:
 	var want_areas := 5 + TowerInterior.SPINE_DOORS.size() + TowerGraph.HEROES.size() + 2
 	var lock_pads := 0
 	for plan: Dictionary in TowerPlans.STOREYS:
-		lock_pads += (TowerInterior.riddle_slots(plan)["pads"] as Array).size()
+		lock_pads += (TowerInterior.gate_slots(plan)["pads"] as Array).size()
 	want_areas += lock_pads
 	if areas != want_areas:
 		_fail("the interior has %d Area3D, expected %d (3 pads + 2 rotor hazards + %d spine pads + %d cells + 1 press + 1 purge + %d riddle lock pads)" % [
@@ -1268,7 +1280,7 @@ func _check_gate_lifecycle() -> void:
 	# would pass every other assertion in this file.
 	for gid: String in TowerInterior.riddle_ids():
 		var answer: Array = TowerGraph.gate(gid)["answer"]
-		var lock: MeshInstance3D = interior.find_child("*RiddleMass_%s" % gid, true, false)
+		var lock: MeshInstance3D = interior.find_child("*GateMass_%s" % gid, true, false)
 		if lock == null or answer.size() < 2:
 			_fail("riddle '%s' has no mass or no sequence to enter" % gid)
 			continue
@@ -1418,9 +1430,9 @@ func _check_opened_state_is_reapplied() -> void:
 
 	for gid2: String in riddles:
 		var rest := 0.0
-		var mesh := interior.find_child("*RiddleMass_%s" % gid2, true, false) as MeshInstance3D
+		var mesh := interior.find_child("*GateMass_%s" % gid2, true, false) as MeshInstance3D
 		for box: Dictionary in TowerInterior.all_boxes():
-			if String(box["name"]).ends_with("RiddleMass_%s" % gid2):
+			if String(box["name"]).ends_with("GateMass_%s" % gid2):
 				rest = box["pos"].y
 		if mesh == null:
 			_fail("riddle '%s' built no mass at all" % gid2)
@@ -1820,63 +1832,82 @@ func _check_earned_state_survives_a_relaunch() -> void:
 # CHECK 11 — the cell block has no way round it (bead godot-test1-3iy.8)
 # ============================================================================
 
-func _check_the_wing_has_no_way_round_it() -> void:
+func _check_the_block_has_no_way_round_it() -> void:
 	"""
-	Check 11. The wing's two runs tile exactly, every spine mass really fills its
-	doorway, and the press is a challenge rather than a formality.
+	Check 11. The block's two runs are sealed end to end, every spine mass really
+	fills its doorway, and the press is a challenge rather than a formality.
 
-	WHY SAMPLING AND NOT ARITHMETIC. `_spine_door_x` and `_spine_pier_x` are derived
-	from the same two widths, so asserting they add up would be asking the formula
-	whether it agrees with itself. What matters is the WORLD: walk the spine line in
-	5 cm steps and ask the box table whether there is stone or a shut mass at head
-	height. A pier one width short, a mass narrower than its doorway, a fifth door
-	authored into a four-door span — all of them are a hole, and a hole in that wall
-	is a route the softlock audit does not model and cannot see.
+	WHY SAMPLING AND NOT ARITHMETIC. The doors, the piers and the recess dividers
+	are all `#` and `D` cells on one grid now, so asserting that four doorways and
+	three piers add up would be asking the plan whether it agrees with itself. What
+	matters is the WORLD: walk the spine line in 5 cm steps and ask the box table
+	whether there is stone or a shut mass at head height. A pier that stopped one
+	cell short, a mass narrower than its doorway, a fifth `D` run typed into the
+	wall — all of them are a hole, and a hole in that wall is a route the softlock
+	audit does not model and cannot see.
 	"""
-	var span := TowerInterior.wing_span()
-	var doors := TowerInterior.SPINE_DOORS.size()
-	var laid := float(doors) * TowerInterior.SPINE_DOOR_W \
-			+ float(doors - 1) * TowerInterior.SPINE_PIER_W
-	if absf(laid - span) > EPS:
-		_fail("%d spine doors and %d piers lay out %.3f m across a %.3f m wing" % [
-			doors, doors - 1, laid, span])
-	var cells := TowerGraph.HEROES.size()
-	var cells_laid := float(cells) * TowerInterior._cell_width() \
-			+ float(cells - 1) * TowerInterior.CELL_DIVIDER
-	if absf(cells_laid - span) > EPS:
-		_fail("%d cells and %d dividers lay out %.3f m across a %.3f m wing" % [
-			cells, cells - 1, cells_laid, span])
+	var floor_index := TowerInterior.block_floor()
+	if floor_index < 0:
+		_fail("no storey draws a '%s' — the cell block is not in the building at all"
+			% TowerInterior.BLOCK_ROOM)
+		return
+	var plan := TowerPlans.storey(floor_index)
+	var surface: float = TowerInterior.FLOOR_Y[floor_index]
+	var clear := TowerInterior.plan_clear_height(floor_index)
+	var head := surface + clear * 0.5
+	var by_name := {}
+	for box: Dictionary in TowerInterior.all_boxes():
+		by_name[String(box["name"])] = box
 
 	# (a) The spine line is solid from end to end while every gate is shut. Head
-	#     height, because that is where a gap would be walked through.
-	var head := TowerInterior.headroom() * 0.5
-	var x := TowerInterior.SLAB_X0 + 0.02
-	while x < TowerInterior.INNER_HALF:
-		if not _solid_at(x, TowerInterior.SPINE_Z, head):
+	#     height, because that is where a gap would be walked through. The line is
+	#     the row the four `D` runs are drawn in, and its extent is the corridor's.
+	var doors := TowerInterior.SPINE_DOORS.size()
+	var first_run: Rect2i = TowerInterior.plan_gate_rect(
+		floor_index, String(TowerInterior.SPINE_DOORS[0]["gate"]))
+	if first_run.size == Vector2i.ZERO:
+		_fail("no '%s' run on storey %d for the first spine door" % [
+			TowerPlans.GATE_CHAR, floor_index])
+		return
+	var corridor := TowerInterior.plan_room_rect(floor_index, "service_stair")
+	var gallery := TowerInterior.plan_room_rect(floor_index, TowerInterior.BLOCK_ROOM)
+	var spine_z := _grid_centre(first_run.position.y)
+	var x := _grid_edge(mini(corridor.position.x, gallery.position.x)) + 0.02
+	var x_end := _grid_edge(maxi(corridor.end.x, gallery.end.x))
+	while x < x_end:
+		if not _solid_at(x, spine_z, head):
 			_fail("the spine wall has a hole at x = %.2f — the four identity gates can be walked round" % x)
 			break
 		x += 0.05
 	# ...and the cell row, so a captive's recess is a recess and not a through-way.
-	x = TowerInterior.SLAB_X0 + 0.02
+	var widest_cell := 0.0
+	for hero: String in TowerGraph.HEROES:
+		var rect := TowerInterior.plan_room_rect(floor_index, "cell_%s" % hero)
+		if rect.size == Vector2i.ZERO:
+			_fail("no recess is drawn for %s — his cell cannot be entered" % hero)
+			continue
+		widest_cell = maxf(widest_cell,
+			_grid_edge(rect.end.x) - _grid_edge(rect.position.x))
+	var back_z := _grid_centre(TowerInterior.plan_room_rect(
+		floor_index, "cell_%s" % String(TowerGraph.HEROES[0])).position.y)
+	x = _grid_edge(mini(corridor.position.x, gallery.position.x)) + 0.02
 	var open_run := 0.0
 	var widest := 0.0
-	while x < TowerInterior.INNER_HALF:
-		if _solid_at(x, TowerInterior.INNER_HALF - 0.5, head):
+	while x < x_end:
+		if _solid_at(x, back_z, head):
 			open_run = 0.0
 		else:
 			open_run += 0.05
 			widest = maxf(widest, open_run)
 		x += 0.05
-	# The widest unbroken opening across the cells' back line must be one cell, not
-	# two: a missing divider reads as a cell block with a corridor behind it.
-	if widest > TowerInterior._cell_width() + 0.1:
-		_fail("the cell row has a %.2f m unbroken opening but a cell is %.2f m — a divider is missing" % [
-			widest, TowerInterior._cell_width()])
+	# The widest unbroken opening across the cells' back line must be one recess,
+	# not two: a missing divider reads as a cell block with a corridor behind it.
+	if widest > widest_cell + 0.1:
+		_fail("the cell row has a %.2f m unbroken opening but the widest recess is %.2f m — a divider is missing" % [
+			widest, widest_cell])
 
-	# (b) Every mass fills its doorway to the ceiling and stands in the spine line.
-	var by_name := {}
-	for box: Dictionary in TowerInterior.boxes():
-		by_name[String(box["name"])] = box
+	# (b) Every mass fills its doorway to the ceiling and stands in the spine line,
+	#     and every one has a pad on the side you approach it from.
 	var wanted: Array[String] = []
 	for i in doors:
 		var door: Dictionary = TowerInterior.SPINE_DOORS[i]
@@ -1889,28 +1920,45 @@ func _check_the_wing_has_no_way_round_it() -> void:
 		if wanted.has(who):
 			_fail("two spine doors both open for %s — one hero has two spines and another has none" % who)
 		wanted.append(who)
+		var run := TowerInterior.plan_gate_rect(floor_index, gid)
+		if run.size == Vector2i.ZERO:
+			_fail("spine door '%s' has no '%s' run on storey %d" % [
+				gid, TowerPlans.GATE_CHAR, floor_index])
+			continue
+		var door_w := _grid_edge(run.end.x) - _grid_edge(run.position.x)
 		var mass: Dictionary = by_name.get(String(door["mass"]), {})
 		if mass.is_empty():
 			_fail("spine door '%s' names a mass '%s' the interior does not build" % [
 				gid, String(door["mass"])])
 			continue
-		if not is_equal_approx(mass["size"].x, TowerInterior.SPINE_DOOR_W):
+		if not is_equal_approx(mass["size"].x, door_w):
 			_fail("%s is %.2f m wide in a %.2f m doorway — you can walk past it" % [
-				String(door["mass"]), mass["size"].x, TowerInterior.SPINE_DOOR_W])
-		if not is_equal_approx(mass["size"].y, TowerInterior.headroom()):
+				String(door["mass"]), mass["size"].x, door_w])
+		if not is_equal_approx(mass["size"].y, clear):
 			_fail("%s is %.2f m tall under a %.2f m ceiling — you can get over it" % [
-				String(door["mass"]), mass["size"].y, TowerInterior.headroom()])
-		if not is_equal_approx(mass["pos"].x, TowerInterior._spine_door_x(i)):
-			_fail("%s stands at x = %.3f, not in doorway %d at x = %.3f" % [
-				String(door["mass"]), mass["pos"].x, i, TowerInterior._spine_door_x(i)])
-	for hero: String in TowerGraph.HEROES:
-		if not wanted.has(hero):
-			_fail("no spine door in the building opens for %s — his rescue spine is not built" % hero)
+				String(door["mass"]), mass["size"].y, clear])
+		if not is_equal_approx(mass["pos"].x, _grid_centre_span(run.position.x, run.end.x)):
+			_fail("%s stands at x = %.3f, not in its own doorway at x = %.3f" % [
+				String(door["mass"]), mass["pos"].x,
+				_grid_centre_span(run.position.x, run.end.x)])
+		# THE PAD IS ON THE SIDE YOU WALK UP FROM, which is the corridor and never
+		# the gallery — a pad on the far side is a gate you open from inside the
+		# room it guards, and nothing else in this file would notice.
+		var pad: Dictionary = by_name.get(String(door["pad"]), {})
+		if pad.is_empty():
+			_fail("spine door '%s' has no pad — its doorway resolved no side to stand on" % gid)
+			continue
+		var pad_cell := TowerInterior.gate_pad_cell(plan, run)
+		if signi(pad_cell.y - run.position.y) \
+				!= signi(corridor.position.y - run.position.y):
+			_fail("spine door '%s's pad is on the far side of its own doorway — it opens from inside the room it guards" % gid)
+	for hero2: String in TowerGraph.HEROES:
+		if not wanted.has(hero2):
+			_fail("no spine door in the building opens for %s — his rescue spine is not built" % hero2)
 
 	# (c) A sunk mass leaves NOTHING in its doorway. A lip of any height is a wall
 	#     in this engine, so "nearly flush" is the same bug as "shut".
-	var open_top := TowerInterior.headroom() * 0.5 - TowerInterior.SPINE_TRAVEL \
-			+ TowerInterior.headroom() * 0.5
+	var open_top := clear - TowerInterior.SPINE_TRAVEL
 	if open_top > 0.0:
 		_fail("a fully sunk spine mass still stands %.3f m proud of the floor — that is a step, and this engine has no step-up" % open_top)
 
@@ -1922,15 +1970,27 @@ func _check_the_wing_has_no_way_round_it() -> void:
 	# WHERE it is, before HOW it moves. Check 5 only asserts the mesh agrees with
 	# its own table row, so a row nudged sideways builds a press in the middle of a
 	# wall and satisfies every assertion about itself.
+	var duct := TowerInterior.plan_gate_rect(floor_index, "maintenance_crawl")
+	if duct.size == Vector2i.ZERO:
+		_fail("the maintenance crawl has no '%s' run on storey %d" % [
+			TowerPlans.GATE_CHAR, floor_index])
+		return
+	var duct_x0 := _grid_edge(duct.position.x)
+	var duct_x1 := _grid_edge(duct.end.x)
 	var press_half: Vector3 = press["size"] * 0.5
-	if press["pos"].x - press_half.x < TowerInterior.CRAWL_X0 - EPS \
-			or press["pos"].x + press_half.x > TowerInterior.CRAWL_X1 + EPS:
+	if press["pos"].x - press_half.x < duct_x0 - EPS \
+			or press["pos"].x + press_half.x > duct_x1 + EPS:
 		_fail("the press spans x = %.2f .. %.2f but the crawl doorway is %.2f .. %.2f — it stamps a wall" % [
 			press["pos"].x - press_half.x, press["pos"].x + press_half.x,
-			TowerInterior.CRAWL_X0, TowerInterior.CRAWL_X1])
-	if not is_equal_approx(press["pos"].z, TowerInterior.WING_Z):
-		_fail("the press stands at z = %.2f, not on the wing wall at z = %.2f" % [
-			press["pos"].z, TowerInterior.WING_Z])
+			duct_x0, duct_x1])
+	if not is_equal_approx(press["pos"].z, _grid_centre_span(duct.position.y, duct.end.y)):
+		_fail("the press stands at z = %.2f, not in its duct at z = %.2f" % [
+			press["pos"].z, _grid_centre_span(duct.position.y, duct.end.y)])
+	if int(press["floor"]) != floor_index:
+		_fail("the press claims storey %d and its duct is drawn on storey %d" % [
+			int(press["floor"]), floor_index])
+	# ...and every height below is measured from the STOREY, because that is what
+	# `press_y` produces and what `_tick_press` adds the surface to.
 	var half_h: float = press["size"].y * 0.5
 	if TowerInterior.PRESS_BOTTOM - half_h > EPS:
 		_fail("the press bottoms out %.2f m off the floor — you can walk under it and the crawl asks nothing" % (
@@ -1942,6 +2002,17 @@ func _check_the_wing_has_no_way_round_it() -> void:
 	if TowerInterior.PRESS_TOP + half_h > TowerInterior.CRAWL_LINTEL_Y + EPS:
 		_fail("the press rises to %.2f m through a lintel at %.2f m" % [
 			TowerInterior.PRESS_TOP + half_h, TowerInterior.CRAWL_LINTEL_Y])
+	# ...and the lintel the challenge arm hung over the same run really is there and
+	# really is stone: without it the duct is a doorway with a bar swinging in it.
+	var lintel: Dictionary = by_name.get(
+		"%sGateLintel_maintenance_crawl" % ("S%dPlan" % floor_index), {})
+	if lintel.is_empty():
+		_fail("the crawl's duct has no lintel — nothing tells the player it is a duct")
+	elif not is_equal_approx(lintel["pos"].y - lintel["size"].y * 0.5,
+			surface + TowerInterior.CRAWL_LINTEL_Y):
+		_fail("the crawl lintel's underside is at %.2f m, not the declared %.2f m" % [
+			lintel["pos"].y - lintel["size"].y * 0.5,
+			surface + TowerInterior.CRAWL_LINTEL_Y])
 	# The stroke reaches both ends and never leaves them.
 	var lowest := TowerInterior.PRESS_TOP
 	var highest := TowerInterior.PRESS_BOTTOM
@@ -1955,9 +2026,24 @@ func _check_the_wing_has_no_way_round_it() -> void:
 	if absf(lowest - TowerInterior.PRESS_BOTTOM) > 0.01 or absf(highest - TowerInterior.PRESS_TOP) > 0.01:
 		_fail("press_y only sweeps %.3f .. %.3f of its %.2f .. %.2f stroke — the crawl is never really shut or never really open" % [
 			lowest, highest, TowerInterior.PRESS_BOTTOM, TowerInterior.PRESS_TOP])
-	print("cell block: %d spine doors of %.2f m, %d cells of %.2f m across %.2f m; press %.2f .. %.2f m" % [
-		doors, TowerInterior.SPINE_DOOR_W, cells, TowerInterior._cell_width(), span,
-		TowerInterior.PRESS_BOTTOM, TowerInterior.PRESS_TOP])
+	print("cell block: storey %d, %d spine doors, %d recesses up to %.2f m wide; press %.2f .. %.2f m over a %.2f m floor" % [
+		floor_index, doors, TowerGraph.HEROES.size(), widest_cell,
+		TowerInterior.PRESS_BOTTOM, TowerInterior.PRESS_TOP, surface])
+
+
+func _grid_edge(cell: int) -> float:
+	"""A plan cell EDGE, in interior metres. The grid is square, so one function."""
+	return -TowerPlans.PLAN_HALF + float(cell) * TowerPlans.PLAN_CELL
+
+
+func _grid_centre(cell: int) -> float:
+	"""One plan cell's centre, in interior metres."""
+	return _grid_edge(cell) + TowerPlans.PLAN_CELL * 0.5
+
+
+func _grid_centre_span(lo: int, hi: int) -> float:
+	"""The centre of a run from cell `lo` to cell edge `hi` (a `Rect2i.end`)."""
+	return (_grid_edge(lo) + _grid_edge(hi)) * 0.5
 
 
 func _solid_at(x: float, z: float, y: float) -> bool:
@@ -1966,10 +2052,12 @@ func _solid_at(x: float, z: float, y: float) -> bool:
 
 	@return: true when some collidable, untilted box in `boxes()` contains it.
 
-	`boxes()` is the plan in its closed state, which is exactly the state check 11
-	wants: the question is whether a route exists BEFORE anybody opens anything.
-	The ramp is skipped for the same reason check 2 skips it — a tilted slab's AABB
-	claims stone it does not have.
+	`all_boxes()` is the WHOLE building in its closed state, which is exactly the
+	state check 11 wants: the question is whether a route exists BEFORE anybody
+	opens anything. It reads the plan storeys too since phase 16, because the cell
+	block's walls and its four masses are drawn there now. The ramp is skipped for
+	the same reason check 2 skips it — a tilted slab's AABB claims stone it does not
+	have.
 
 	AND SO ARE SCAR BOXES (bead godot-test1-3iy.11): "closed state" means every gate
 	shut, not every scar taken. A scar is the one thing in this building that
@@ -1977,7 +2065,7 @@ func _solid_at(x: float, z: float, y: float) -> bool:
 	the softlock audit never walks — and would hide the very drift check 16 exists
 	to catch. Check 16 samples them deliberately, and is the only thing that does.
 	"""
-	for box: Dictionary in TowerInterior.boxes():
+	for box: Dictionary in TowerInterior.all_boxes():
 		if not box["collide"] or box.has("rot") or String(box.get("scar", "")) != "":
 			continue
 		var pos: Vector3 = box["pos"]
@@ -2006,13 +2094,15 @@ func _check_the_custody_stand_and_the_scar() -> void:
 	TWO THINGS, ONE CHECK, because they are the two ends of the same scene and both
 	are invisible in a screenshot until somebody plays twenty minutes to reach it.
 
-	(a) THE STAND. `TowerInterior.CUSTODY_STAND` is where the protocol teleports the
-	    party, and it is a bare `Vector3` in a file full of derived spacings — the
-	    exact shape of constant that ends up 40 cm inside a wall the day a doorway
-	    moves. It has to be inside the service corridor, clear of every solid box by
-	    a body radius, SOUTH of the spine wall (a stand in the gallery would put the
-	    party three metres from a cell and there would be no scene at all), and it
-	    has to leave the spring arm something to extend into.
+	(a) THE STAND. `TowerInterior.custody_stand()` is where the protocol teleports
+	    the party. It has to be inside the service corridor, clear of every solid
+	    box by a body radius, on the CORRIDOR side of the spine wall (a stand in the
+	    gallery would put the party three metres from a cell and there would be no
+	    scene at all), and it has to leave the spring arm something to extend into.
+	    It is derived from the corridor's own plan cells since phase 16 — it used to
+	    be a bare `Vector3`, which is the exact shape of constant that ends up 40 cm
+	    inside a wall the day a doorway moves, and phase 16 moved every doorway in
+	    this room 46 m upwards.
 
 	(b) THE SCAR. `boxes()` is the UNSCARRED plan — `_solid_at` skips scar boxes for
 	    exactly that reason — so the doorway the scar fills must be walkable in it
@@ -2022,17 +2112,26 @@ func _check_the_custody_stand_and_the_scar() -> void:
 	    scenery" (a scar the audit removes and the player walks straight through).
 	"""
 	# --- (a) the stand -------------------------------------------------------
-	var stand: Vector3 = TowerInterior.CUSTODY_STAND
-	if stand.z >= TowerInterior.SPINE_Z:
-		_fail(("the custody stand is at z = %.2f, on or past the spine wall at %.2f — the "
-			+ "break-out would start on the gallery side and be three metres of walking")
-			% [stand.z, TowerInterior.SPINE_Z])
-	if stand.z <= TowerInterior.WING_Z:
-		_fail("the custody stand is at z = %.2f, south of the wing wall at %.2f — that is "
-			% [stand.z, TowerInterior.WING_Z] + "the entry hall, not the cell block")
-	if stand.y < 0.0 or stand.y + PLAYER_HEIGHT > TowerInterior.headroom():
-		_fail("the custody stand puts a %.1f m body at y = %.2f under a %.2f m ceiling" % [
-			PLAYER_HEIGHT, stand.y, TowerInterior.headroom()])
+	var floor_index := TowerInterior.block_floor()
+	if floor_index < 0:
+		_fail("no storey draws the cell block — the custody scene has nowhere to open")
+		return
+	var surface: float = TowerInterior.FLOOR_Y[floor_index]
+	var clear := TowerInterior.plan_clear_height(floor_index)
+	var corridor := TowerInterior.plan_room_rect(floor_index, "service_stair")
+	var stand: Vector3 = TowerInterior.custody_stand()
+	var corridor_z0 := _grid_edge(corridor.position.y)
+	var corridor_z1 := _grid_edge(corridor.end.y)
+	if stand.z <= corridor_z0 or stand.z >= corridor_z1:
+		_fail(("the custody stand is at z = %.2f, outside the service corridor's own cells "
+			+ "(%.2f .. %.2f) — the break-out would start in the wrong room")
+			% [stand.z, corridor_z0, corridor_z1])
+	if stand.x <= _grid_edge(corridor.position.x) or stand.x >= _grid_edge(corridor.end.x):
+		_fail("the custody stand is at x = %.2f, off the end of the corridor (%.2f .. %.2f)"
+			% [stand.x, _grid_edge(corridor.position.x), _grid_edge(corridor.end.x)])
+	if stand.y < surface or stand.y + PLAYER_HEIGHT > surface + clear:
+		_fail("the custody stand puts a %.1f m body at y = %.2f on a %.2f m floor with %.2f m clear" % [
+			PLAYER_HEIGHT, stand.y, surface, clear])
 
 	# Clear of every solid box, sampled around the capsule at knee, waist and head:
 	# one point would miss a lintel, and a wall the body's RADIUS reaches into is a
@@ -2050,22 +2149,28 @@ func _check_the_custody_stand_and_the_scar() -> void:
 
 	# ...and it is not standing on a spine pad's trigger, which would fire a door's
 	# refusal line on the frame the scene opens, before the player has read anything.
+	var plan := TowerPlans.storey(floor_index)
 	for i in TowerInterior.SPINE_DOORS.size():
-		var pad_x: float = TowerInterior._spine_door_x(i)
-		var dx: float = absf(stand.x - pad_x) - TowerInterior.SPINE_DOOR_W * 0.5
-		var dz: float = absf(stand.z - TowerInterior.PAD_Z) \
+		var run := TowerInterior.plan_gate_rect(
+			floor_index, String(TowerInterior.SPINE_DOORS[i]["gate"]))
+		if run.size == Vector2i.ZERO:
+			continue
+		var cell := TowerInterior.gate_pad_cell(plan, run)
+		if cell.x < 0:
+			continue
+		var dx: float = absf(stand.x - _grid_centre(cell.x)) - TowerPlans.PLAN_CELL * 0.5
+		var dz: float = absf(stand.z - _grid_centre(cell.y)) \
 				- TowerInterior.PAD_TRIGGER_DEPTH * 0.5
 		if dx < PLAYER_RADIUS and dz < PLAYER_RADIUS:
 			_fail("the custody stand overlaps spine pad %d's trigger" % i)
 
-	# THE CAMERA, honestly. The arm is 8.25 m and the corridor is 9.3 m, so no
-	# facing in this room extends it fully — the wing's documented deferral. What is
-	# asserted is the weaker, true claim the constant's comment makes: facing the
-	# way the protocol turns the body (+X, `SPAWN_FACING_Y`), there is more than
-	# HALF an arm of corridor behind it, which is the difference between a shot and
-	# the back of a head.
+	# THE CAMERA. Facing the way the protocol turns the body (+X, `SPAWN_FACING_Y`),
+	# there has to be more than HALF an arm of corridor behind it, which is the
+	# difference between a shot and the back of a head. The plan-grid corridor is
+	# long enough that the arm extends fully; the assertion stays the weaker one the
+	# constant's comment made, because the claim it protects has not changed.
 	var arm: float = _spring_length()
-	var behind: float = stand.x - (TowerInterior.ROTOR_POST_X + 0.2)
+	var behind: float = stand.x - _grid_edge(corridor.position.x)
 	if behind < arm * 0.5:
 		_fail(("the custody stand leaves the %.2f m spring arm only %.2f m of corridor to "
 			+ "back into — the scene opens on the back of the hero's head")
@@ -2073,7 +2178,7 @@ func _check_the_custody_stand_and_the_scar() -> void:
 
 	# --- (b) the scar --------------------------------------------------------
 	var scar_boxes: Array[Dictionary] = []
-	for box: Dictionary in TowerInterior.boxes():
+	for box: Dictionary in TowerInterior.all_boxes():
 		if String(box.get("scar", "")) != "":
 			scar_boxes.append(box)
 	if scar_boxes.is_empty():
@@ -2086,13 +2191,16 @@ func _check_the_custody_stand_and_the_scar() -> void:
 			_fail(("scar box '%s' fills a doorway that is already stone in the unscarred "
 				+ "plan — it takes nothing away") % String(box["name"]))
 		# ...and stone AFTER, at head height across its whole span, so a scar cannot
-		# be a waist-high pile you walk over.
+		# be a waist-high pile you walk over. Measured from ITS OWN STOREY's walking
+		# surface: the rubble moved 46 m up with the cell block.
 		var half: Vector3 = box["size"] * 0.5
-		var head := TowerInterior.headroom() * 0.5
-		if pos.y - half.y > EPS or pos.y + half.y < head:
-			_fail(("scar box '%s' spans y = %.2f .. %.2f; a closed passage has to reach "
-				+ "from the floor past head height (%.2f)")
-				% [String(box["name"]), pos.y - half.y, pos.y + half.y, head])
+		var base: float = TowerInterior.FLOOR_Y[int(box["floor"])]
+		var head := base + TowerInterior.plan_clear_height(int(box["floor"])) * 0.5 \
+				if int(box["floor"]) >= 2 else base + TowerInterior.headroom() * 0.5
+		if pos.y - half.y > base + EPS or pos.y + half.y < head:
+			_fail(("scar box '%s' spans y = %.2f .. %.2f on a floor at %.2f; a closed "
+				+ "passage has to reach from the floor past head height (%.2f)")
+				% [String(box["name"]), pos.y - half.y, pos.y + half.y, base, head])
 
 	print("custody scene: stand (%.2f, %.2f, %.2f), %.2f m behind the camera; %d scar box(es)"
 		% [stand.x, stand.y, stand.z, behind, scar_boxes.size()])
@@ -2156,7 +2264,7 @@ func _check_the_custody_scene_runs() -> void:
 	hero_body.add_child(shape)
 	hero_body.add_to_group("player")
 	root.add_child(hero_body)
-	hero_body.global_position = shell.global_position + TowerInterior.CUSTODY_STAND
+	hero_body.global_position = shell.global_position + TowerInterior.custody_stand()
 	await _settle_physics()
 
 	var door: Dictionary = TowerInterior.SPINE_DOORS[0]
@@ -2198,7 +2306,10 @@ func _check_the_custody_scene_runs() -> void:
 			% gate_id + "scene and the break-out is three metres of walking")
 
 	# (d) the wrong hero on the pad releases nothing.
-	var pad_area := interior.get_node_or_null("Floor0/SpineTrigger1") as Area3D
+	# THE STOREY IS ASKED, NEVER SPELLED: the block is wherever `TowerPlans` draws a
+	# cell gallery, and this path is the one place a literal 9 would rot.
+	var block := "Floor%d" % TowerInterior.block_floor()
+	var pad_area := interior.get_node_or_null("%s/SpineTrigger1" % block) as Area3D
 	if pad_area == null:
 		_fail("custody: there is no SpineTrigger1 — the first spine door has no pad")
 		await _clear(hero_body, shell)
@@ -2273,7 +2384,7 @@ func _check_the_custody_scene_runs() -> void:
 
 
 # ============================================================================
-# CHECK 12 — the wing's acceptance walk (bead godot-test1-3iy.8)
+# CHECK 12 — the cell block's acceptance walk (bead godot-test1-3iy.8)
 # ============================================================================
 
 func _check_spines_and_liberation() -> void:
@@ -2338,7 +2449,8 @@ func _check_spines_and_liberation() -> void:
 	var gate_id := String(door["gate"])
 	var wants := TowerGraph.identity_of(gate_id)
 	var wrong := "teibi" if wants != "teibi" else "windman"
-	var pad_area := interior.get_node_or_null("Floor0/SpineTrigger1") as Area3D
+	var block := "Floor%d" % TowerInterior.block_floor()
+	var pad_area := interior.get_node_or_null("%s/SpineTrigger1" % block) as Area3D
 	if pad_area == null:
 		_fail("there is no SpineTrigger1 Area3D — the first spine door has no pad")
 		await _clear(hero_body, shell)
@@ -2369,10 +2481,19 @@ func _check_spines_and_liberation() -> void:
 	if mass_shape == null or absf(mass_shape.position.y - mass.position.y) > EPS:
 		_fail("%s's collision shape did not sink with its mesh — the doorway is still walled" % [
 			String(door["mass"])])
+	# ...and a mass that has finished travelling is RETIRED: hidden and non-solid.
+	# It is as tall as its room, so a sunk one that stayed drawn and solid would be a
+	# four-metre block standing in the middle of the storey below — see `_retire`.
+	if mass.visible:
+		_fail("%s is still drawn after sinking its full travel — it is standing in the storey below" % [
+			String(door["mass"])])
+	if mass_shape != null and not mass_shape.disabled:
+		_fail("%s is still SOLID after sinking — it is a block in the storey below's floor plan" % [
+			String(door["mass"])])
 
 	# (d) liberation, performed by SOMEBODY ELSE
 	var cell_area := interior.get_node_or_null(
-		"Floor0/CellTrigger%s" % TowerInterior.AUTHORED_CAPTIVE.capitalize()) as Area3D
+		"%s/CellTrigger%s" % [block, TowerInterior.AUTHORED_CAPTIVE.capitalize()]) as Area3D
 	if cell_area == null:
 		_fail("there is no cell volume for %s — his cell cannot be entered" % TowerInterior.AUTHORED_CAPTIVE)
 		await _clear(hero_body, shell)
@@ -2395,7 +2516,8 @@ func _check_spines_and_liberation() -> void:
 	var before: Array = shell.opened_ids()
 	var freed_before: Array = hero_body.freed.duplicate()
 	var other := "teibi" if TowerInterior.AUTHORED_CAPTIVE != "teibi" else "phoboman"
-	var empty_area := interior.get_node_or_null("Floor0/CellTrigger%s" % other.capitalize()) as Area3D
+	var empty_area := interior.get_node_or_null(
+		"%s/CellTrigger%s" % [block, other.capitalize()]) as Area3D
 	hero_body.global_position = cell_area.global_position + Vector3(0.0, 0.0, -30.0)
 	await _settle_physics()
 	hero_body.global_position = empty_area.global_position

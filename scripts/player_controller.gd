@@ -2877,14 +2877,14 @@ func _begin_custody_protocol() -> void:
 	if terrain != null and terrain.has_method("tower_site"):
 		var from_xz := Vector2(global_position.x, global_position.z)
 		global_position = (terrain.call("tower_site") as Vector3) \
-				+ TowerInterior.CUSTODY_STAND
+				+ TowerInterior.custody_stand()
 		# A TELEPORT IS NOT DISTANCE RUN. Shifting the origin by exactly the jump is
 		# what `_respawn_in_place()` does and for the same reason: without it, the
 		# 400 m to the tower would be banked into `user://best_run.cfg` as a
 		# personal best nobody ran.
 		own_distance_origin += Vector2(global_position.x, global_position.z) - from_xz
 	# Facing down the corridor's long axis, which is also the only facing in this
-	# room that gives the spring arm anything to extend into — see `CUSTODY_STAND`.
+	# room that gives the spring arm anything to extend into — see `custody_stand()`.
 	rotation.y = SPAWN_FACING_Y
 	camera_pitch = 0.0
 	clear_nearby_crocodiles(global_position)
@@ -3228,7 +3228,7 @@ func _confine_to_block() -> void:
 	game would collide with too (a rescuer, a guard, a teammate's avatar), and the
 	confinement is a property of THIS PLAYER'S ROLE, not of the building. Two
 	clamps, x and z — y is left alone so gravity, the floor and the ramp all still
-	behave, and there is no vertical way out of a roofed wing anyway.
+	behave, and there is no vertical way out of a roofed block anyway.
 	"""
 	if not prisoner_active or not _prison_confined:
 		return

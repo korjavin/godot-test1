@@ -505,31 +505,31 @@ godot --headless --path . --script res://scripts/<name>.gd
 
 The big one. **Scope:** everything in the file list.
 
-- [ ] `_plan_riddles` → `_plan_gates` with the three class arms and the derived identity
+- [x] `_plan_riddles` → `_plan_gates` with the three class arms and the derived identity
    pad, per **D5**. Unify the box names; update the two riddle `parts` rows.
-- [ ] Author **storey 10 (floor 9)**: the landing, the two ways into the corridor
+- [x] Author **storey 10 (floor 9)**: the landing, the two ways into the corridor
    (`D` run for `maintenance_crawl`, an open doorway for the main door), the corridor
    (`service_stair`), four `D` runs for `updraft_shaft` / `phase_grate` /
    `collapsed_slab` / `hound_den` in one wall with a pier between each, the gallery
    (`cell_gallery`), and four uniform open-fronted recesses lettered to
    `cell_windman` / `cell_primm` / `cell_teibi` / `cell_phoboman`.
    **The room ids are the phase-8 ids, verbatim.**
-- [ ] `_wing_boxes()` → `_block_boxes(plan)`, appended by `plan_boxes()` for the storey
+- [x] `_wing_boxes()` → `_block_boxes(plan)`, appended by `plan_boxes()` for the storey
    that draws `cell_gallery`. Every position from `plan_room_rect` / `plan_gate_rect`.
    Delete the placement constants and helpers listed in **D5**.
-- [ ] **D6:** the ground floor loses the wing; the strip is absorbed into the entry hall,
+- [x] **D6:** the ground floor loses the wing; the strip is absorbed into the entry hall,
    one light panel kept. Update the file header's route narrative.
-- [ ] **D7:** rename the two edges, re-point the scar's `removes` and the box's `severs`,
+- [x] **D7:** rename the two edges, re-point the scar's `removes` and the box's `severs`,
    and change check 8 to `all_boxes()`.
-- [ ] **D8:** the four spines.
-- [ ] Re-derive `custody_stand()`, `cell_stand()`, `block_min()`, `block_max()`; update
+- [x] **D8:** the four spines.
+- [x] Re-derive `custody_stand()`, `cell_stand()`, `block_min()`, `block_max()`; update
    `player_controller.gd`'s one call site.
-- [ ] Re-point every `tower_interior_selfcheck` assertion that named the wing: the
+- [x] Re-point every `tower_interior_selfcheck` assertion that named the wing: the
    `"Floor0/CellTrigger%s"` node path becomes `Floor9/…` (derive the index from the
    storey that draws the block, do not hardcode 9 twice), the spine-door spacing
    checks become plan-rect checks, and checks 16/17 (the full-custody protocol scene)
    follow the stand to storey 10.
-- [ ] Budgets: `BOX_BUDGET` falls, `DRAW_BUDGET` recounted per the arithmetic in
+- [x] Budgets: `BOX_BUDGET` falls, `DRAW_BUDGET` recounted per the arithmetic in
    **Budgets**.
 
 **Verify:** `tower_selfcheck`, `tower_interior_selfcheck`, `capture_selfcheck`,

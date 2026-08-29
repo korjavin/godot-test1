@@ -418,6 +418,25 @@ func _check_plans_bind_to_the_graph() -> void:
 				_fail("%s names a gate at cell %s, where the plan draws neither a '%s' nor a "
 					% [label, slot3, TowerPlans.GATE_CHAR] + "lock pad")
 
+		# --- ...and every identity doorway can say which side you open it from ---
+		# An identity pad is DERIVED from the plain-floor side of its own `D` run
+		# (`TowerInterior.gate_pad_cell`) and never drawn, so the failure it can
+		# have is a doorway with floor on both sides or on neither — one builds no
+		# pad at all, the other would be a coin toss between "you open this from the
+		# corridor" and "you open it from inside the room it guards". Named here
+		# because the fix is a character in this file.
+		for slot4: String in plan_gates:
+			var gid4 := String(plan_gates[slot4])
+			if String(gates.get(gid4, {}).get("class", "")) != TowerGraph.CLASS_IDENTITY:
+				continue
+			var run: Rect2i = TowerInterior.gate_slots(plan)["masses"].get(gid4, Rect2i())
+			if run.size == Vector2i.ZERO:
+				continue
+			if TowerInterior.gate_pad_cell(plan, run).x < 0:
+				_fail(("%s: identity gate '%s' has no side to stand on — exactly one cell "
+					+ "4-adjacent to its doorway must be plain floor, and the plan gives it "
+					+ "two or none") % [label, gid4])
+
 		# --- the graph agrees the floor hangs together -----------------------
 		var landing := String(plan["landing"])
 		if rooms.has(landing):
@@ -1210,6 +1229,13 @@ func _check_scars_are_built() -> void:
 	    removes (`"severs"`), so a box cannot claim to close something the graph
 	    thinks is still open.
 
+	`all_boxes()` AND NOT `boxes()`, and that is the landmine phase 16 walked into:
+	the scar's rubble moved out of the hand-authored keep and onto storey 10's plan,
+	so a check reading only the keep would have found no scar box at all — and its
+	own "nothing implements this scar" branch would then have been the thing that
+	caught it. Reading the whole building is what makes that branch about the DATA
+	rather than about which population the box happens to live in.
+
 	`ponytail:` WHAT IT STILL CANNOT PROVE is that the box stands physically ON the
 	route the edge represents — the graph has rooms and edges, not coordinates, so
 	there is nothing to compare a position against. `tower_interior_selfcheck`'s own
@@ -1218,7 +1244,7 @@ func _check_scars_are_built() -> void:
 	walkthrough. The upgrade path is per-edge geometry in `TOWER_GRAPH`, which is a
 	much bigger file for one scar.
 	"""
-	var boxes: Array[Dictionary] = TowerInterior.boxes()
+	var boxes: Array[Dictionary] = TowerInterior.all_boxes()
 	var authored: Array[String] = TowerGraph.scar_ids()
 	var built: Dictionary = {}
 
@@ -1347,7 +1373,7 @@ func _check_riddles_are_answerable() -> void:
 	var pads: Dictionary = {}
 	var masses: Dictionary = {}
 	for plan: Dictionary in TowerPlans.STOREYS:
-		var slots := TowerInterior.riddle_slots(plan)
+		var slots := TowerInterior.gate_slots(plan)
 		for gid: String in slots["masses"]:
 			masses[gid] = true
 		for pad: Dictionary in slots["pads"]:
