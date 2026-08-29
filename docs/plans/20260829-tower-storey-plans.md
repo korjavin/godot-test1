@@ -202,7 +202,7 @@ Plus two tiny accessors and nothing else — `tower_plans.gd` is **data**, the w
 `tower_graph.gd` is:
 
 ```gdscript
-static func storey(floor_index: int) -> Dictionary   # or {} 
+static func storey(floor_index: int) -> Dictionary   # or {}
 static func floors() -> Array[int]                   # [2, 3, 4], in STOREYS order
 ```
 
