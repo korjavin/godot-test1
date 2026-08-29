@@ -52,7 +52,11 @@ extends SceneTree
 ##      through the interior's own legibility colours: every box the building
 ##      paints in a gate colour must be claimed by exactly one gate here, and every
 ##      part a built gate claims must be a box the building really has. Nothing in
-##      the graph is invented, and nothing in the building is unmodelled.
+##      the graph is invented, and nothing in the building is unmodelled. From
+##      phase 14 the same correspondence covers the storeys drawn as ASCII in
+##      `tower_plans.gd`: every letter on a floor plan names a built room row,
+##      every room row a plan claims is drawn on exactly one floor, every `D` cell
+##      is a real gate, and the graph joins the whole storey to its landing.
 ##   2. THE DESIGN LAWS, structurally: no gate keys on a hero's ABSENCE, every
 ##      mutation and every story overlay is edge-additive, no item has a carrier,
 ##      no quest requires another quest.
@@ -71,6 +75,12 @@ extends SceneTree
 ##      prove a scar is safe; only this one asks whether it HAPPENS. A `removes`
 ##      row no box implements is a passage the audit believes is gone and the
 ##      player finds standing open — the sanctioned exception, shipped inert.
+##   9. **THE GRID FLOOD-FILL** (phase 14). Checks 1-8 walk a graph, and a graph
+##      cannot see a corridor that was never drawn: one `.` typed as a `#` in a
+##      doorway leaves every one of them green and the floor in two sealed halves.
+##      So every storey in `tower_plans.gd` is flood-filled 4-connected from its
+##      landing, its ramp lane is checked against the storey it stands on, and its
+##      slope against the phase-3 ramp — with a negative control per assertion.
 ##
 ## ============================================================================
 ## LANDMINES
@@ -144,6 +154,16 @@ const MAX: String = "max"
 var _failures: Array[String] = []
 var _graph: Dictionary = TowerGraph.TOWER_GRAPH
 
+## The walker's two memos, both keyed "<story id>|<scar id>" — see `_edges_for` and
+## `_index_for`. The state pair is the outer loop of every walking check, so the
+## edge set and its adjacency index are each built once per state and then reused
+## across every entry and all fifteen subsets.
+var _edges_cache: Dictionary = {}
+var _index_cache: Dictionary = {}
+
+## Check 9's one line, held until `_report` so the summary reads in one block.
+var _plan_summary: String = ""
+
 
 func _initialize() -> void:
 	# No `await process_frame`: nothing here touches the tree. See LANDMINES.
@@ -155,6 +175,7 @@ func _initialize() -> void:
 	_check_captivity_flags_are_honest()
 	_check_quests_and_liberation()
 	_check_scars_are_built()
+	_check_plans_are_walkable()
 	_report()
 
 
@@ -218,9 +239,18 @@ func _check_graph_matches_the_building() -> void:
 			_fail("gate '%s' gates no edge — it is a row about nothing" % gid)
 
 	# --- the colour binding, both directions --------------------------------
+	# `all_boxes()` and not `boxes()`: from phase 14 the building is the authored
+	# keep PLUS every hand-planned storey, and a gate painted onto a plan storey has
+	# to be claimed by a row exactly like one built into the keep. (No storey drawn
+	# in this phase paints one — that is the point. This check is the reason it
+	# stays true when phase 15 starts drawing riddles up there.)
 	var built_boxes: Dictionary = {}
-	for box: Dictionary in TowerInterior.boxes():
-		built_boxes[String(box["name"])] = box["color"]
+	for box: Dictionary in TowerInterior.all_boxes():
+		var box_id := String(box["name"])
+		if built_boxes.has(box_id):
+			_fail("two interior boxes are both named '%s' — the keep and every plan storey "
+				% box_id + "share one namespace, and a row claiming that name claims neither")
+		built_boxes[box_id] = box["color"]
 
 	# Every part any row claims must be a box the building really has, and an
 	# UNBUILT row must claim nothing — a graph that credits itself with geometry
@@ -242,7 +272,7 @@ func _check_graph_matches_the_building() -> void:
 			continue
 		for part: String in parts:
 			if not built_boxes.has(part):
-				_fail("%s claims interior box '%s', which TowerInterior.boxes() does not build" % [
+				_fail("%s claims interior box '%s', which TowerInterior.all_boxes() does not build" % [
 					label, part])
 				continue
 			if claimed.has(part):
@@ -278,6 +308,115 @@ func _check_graph_matches_the_building() -> void:
 	if gates.has(TowerGraph.GATE_CHECKPOINT):
 		_fail("'%s' is a room marker, not a passage — it must not be a gate row" % [
 			TowerGraph.GATE_CHECKPOINT])
+
+	# --- and the same correspondence for the storeys drawn as text ----------
+	_check_plans_bind_to_the_graph()
+
+
+func _check_plans_bind_to_the_graph() -> void:
+	"""
+	Check 1, phase 14: every hand-planned storey and `TOWER_GRAPH` are the same
+	building — in both directions, and in both alphabets.
+
+	A storey above the keep is DRAWN as ASCII (`tower_plans.gd`) and WALKED as a
+	graph, and neither half can see the other's drift on its own. The graph cannot
+	see a room lettered on no floor; the ASCII cannot see a room the audit walks
+	through that nobody ever drew. Both are the same failure this check exists for —
+	an audit reasoning about a building the player is not standing in.
+
+	Four bindings, all mechanical:
+
+	  * every id a plan names (its `rooms` values and its `landing`) is a BUILT
+	    room row, and every id is claimed by exactly ONE storey — a room is on one
+	    floor;
+	  * every letter drawn on the grid is in that storey's `rooms` dict, and every
+	    `rooms` entry is drawn somewhere on the grid;
+	  * every `D` cell's `"<c>,<r>"` key is in `gates` and names a real gate row,
+	    and every `gates` key names a `D` cell. No storey authored in this phase has
+	    one; the check is what makes phase 15's riddles cheap and what stops a `D`
+	    being drawn and forgotten;
+	  * the GRAPH agrees the storey hangs together: one walk from the landing with
+	    the whole roster free reaches every room the storey claims. That is the
+	    graph half of the question; the flood-fill over the same grid is the
+	    geometry half, and together they are what "the graph the audit walks IS
+	    what the player walks" means.
+	"""
+	var rooms: Dictionary = _graph["rooms"]
+	var gates: Dictionary = _graph["gates"]
+	# The base state is the right one to ask in: story overlays and mutations only
+	# ADD edges (law 3, asserted in check 2), so a floor that hangs together here
+	# hangs together in every later state.
+	var base_index := _index_for(_graph["story_states"][0], _graph["scars"][0])
+	var full: Array[String] = TowerGraph.HEROES.duplicate()
+	var claimed_by: Dictionary = {}   # room id -> the storey that drew it
+
+	for plan: Dictionary in TowerPlans.STOREYS:
+		var label := "plan storey %d" % int(plan["floor"])
+		var plan_rooms: Dictionary = plan["rooms"]
+		var plan_gates: Dictionary = plan["gates"]
+
+		# --- plan -> graph: every id the floor names is a BUILT room row -----
+		var named: Array[String] = [String(plan["landing"])]
+		for letter: String in plan_rooms:
+			named.append(String(plan_rooms[letter]))
+		for rid: String in named:
+			if not rooms.has(rid):
+				_fail("%s names room '%s', which is not a TOWER_GRAPH room" % [label, rid])
+				continue
+			if not bool(rooms[rid]["built"]):
+				_fail("%s draws room '%s', whose graph row says built: false — the audit would "
+					% [label, rid] + "walk round a floor the player is standing on")
+			if claimed_by.has(rid):
+				_fail("room '%s' is drawn by both %s and %s — a room is on one floor" % [
+					rid, String(claimed_by[rid]), label])
+				continue
+			claimed_by[rid] = label
+		for slot: String in plan_gates:
+			var gid := String(plan_gates[slot])
+			if not gates.has(gid):
+				_fail("%s puts gate '%s' in cell %s, which is not a TOWER_GRAPH gate" % [
+					label, gid, slot])
+
+		# --- what the grid actually draws ------------------------------------
+		var drawn_letters: Dictionary = {}
+		var drawn_slots: Dictionary = {}
+		for r: int in plan["rows"].size():
+			var row := String(plan["rows"][r])
+			for c: int in row.length():
+				var ch := row[c]
+				if ch == TowerPlans.GATE_CHAR:
+					drawn_slots["%d,%d" % [c, r]] = true
+				elif ch >= "A" and ch <= "Z" and ch != TowerPlans.STAIR_UP_CHAR \
+						and ch != TowerPlans.PAD_CHAR and ch != TowerPlans.POST_CHAR:
+					drawn_letters[ch] = true
+
+		# --- ...against the two dicts, both ways -----------------------------
+		for drawn: String in drawn_letters:
+			if not plan_rooms.has(drawn):
+				_fail("%s draws cells lettered '%s', which its rooms dict maps to no "
+					% [label, drawn] + "TOWER_GRAPH room")
+		for letter2: String in plan_rooms:
+			if not drawn_letters.has(letter2):
+				_fail("%s maps '%s' to room '%s', but no cell on the floor carries that letter "
+					% [label, letter2, String(plan_rooms[letter2])] + "— a row about nothing")
+		for slot2: String in drawn_slots:
+			if not plan_gates.has(slot2):
+				_fail("%s draws a '%s' at cell %s that its gates dict does not name — a gate "
+					% [label, TowerPlans.GATE_CHAR, slot2]
+					+ "drawn and forgotten is a passage the audit cannot see")
+		for slot3: String in plan_gates:
+			if not drawn_slots.has(slot3):
+				_fail("%s names a gate at cell %s, where the plan draws no '%s'" % [
+					label, slot3, TowerPlans.GATE_CHAR])
+
+		# --- the graph agrees the floor hangs together -----------------------
+		var landing := String(plan["landing"])
+		if rooms.has(landing):
+			var seen := _reach(base_index, landing, full, MAX, "")
+			for rid2: String in named:
+				if not seen.has(rid2):
+					_fail("%s: no route joins '%s' to the landing '%s' — the floor is drawn "
+						% [label, rid2, landing] + "but the graph does not connect it")
 
 
 # ============================================================================
@@ -547,22 +686,21 @@ func _check_every_subset_reaches_a_cell() -> void:
 		if not bool(story["captivity"]):
 			continue
 		for scar: Dictionary in _graph["scars"]:
-			var edges := _edges_for(story, scar)
 			for entry: Dictionary in _all_entries():
 				for free: Array in _subsets():
 					var typed: Array[String] = []
 					for h: String in free:
 						typed.append(h)
-					_audit_one(story, scar, entry, typed, edges)
+					_audit_one(story, scar, entry, typed)
 
 
 func _audit_one(story: Dictionary, scar: Dictionary, entry: Dictionary,
-		free: Array[String], edges: Array) -> void:
+		free: Array[String]) -> void:
 	"""One walk. Fails naming the case, the subset and what stopped it."""
 	var targets := _captive_cells(free)
 	if targets.is_empty():
 		return  # nobody is captive: no rescue to make.
-	var seen := _reach(edges, String(entry["room"]), free, FLOOR, "")
+	var seen := _reach(_index_for(story, scar), String(entry["room"]), free, FLOOR, "")
 	for cell: String in targets:
 		if seen.has(cell):
 			return
@@ -570,7 +708,7 @@ func _audit_one(story: Dictionary, scar: Dictionary, entry: Dictionary,
 	# doors this subset stood in front of and could not open, which is the sentence
 	# a designer can act on.
 	var blockers: Dictionary = {}
-	for edge: Dictionary in edges:
+	for edge: Dictionary in _edges_for(story, scar):
 		var a := String(edge["a"])
 		var b := String(edge["b"])
 		if seen.has(a) == seen.has(b):
@@ -610,7 +748,7 @@ func _check_captivity_flags_are_honest() -> void:
 		if not bool(story["captivity"]):
 			continue
 		for scar: Dictionary in _graph["scars"]:
-			var edges := _edges_for(story, scar)
+			var index := _index_for(story, scar)
 			for entry: Dictionary in _all_entries():
 				for free_any: Array in _subsets():
 					var free: Array[String] = []
@@ -619,12 +757,12 @@ func _check_captivity_flags_are_honest() -> void:
 					var targets := _captive_cells(free)
 					if targets.is_empty():
 						continue
-					if not _reaches_any(edges, entry, free, targets, ""):
+					if not _reaches_any(index, entry, free, targets, ""):
 						continue  # already failed in check 5; do not double-report
 					for gid: String in _graph["gates"]:
 						if necessary.has(gid):
 							continue
-						if not _reaches_any(edges, entry, free, targets, gid):
+						if not _reaches_any(index, entry, free, targets, gid):
 							necessary[gid] = "%s from '%s' under scar '%s'" % [
 								str(free), String(entry["id"]), String(scar["id"])]
 
@@ -657,9 +795,9 @@ func _check_quests_and_liberation() -> void:
 	var all_rooms: Dictionary = _graph["rooms"]
 	for story: Dictionary in _graph["story_states"]:
 		for scar: Dictionary in _graph["scars"]:
-			var edges := _edges_for(story, scar)
+			var index := _index_for(story, scar)
 			for entry: Dictionary in _all_entries():
-				var seen := _reach(edges, String(entry["room"]), full, MAX, "")
+				var seen := _reach(index, String(entry["room"]), full, MAX, "")
 				for rid: String in all_rooms:
 					if seen.has(rid):
 						continue
@@ -668,7 +806,7 @@ func _check_quests_and_liberation() -> void:
 						+ "(story '%s', scar '%s')" % [String(story["id"]), String(scar["id"])])
 
 	# Each quest solo-completable by at least one hero, somewhere in the tree.
-	var base_edges := _edges_for(_graph["story_states"][0], _graph["scars"][0])
+	var base_index := _index_for(_graph["story_states"][0], _graph["scars"][0])
 	for quest: Dictionary in _graph["quests"]:
 		var room := String(quest["room"])
 		if not all_rooms.has(room):
@@ -679,7 +817,7 @@ func _check_quests_and_liberation() -> void:
 			if not bool(entry["built"]):
 				continue  # a quest may not depend on an entry nobody can use yet.
 			for hero: String in TowerGraph.HEROES:
-				if _reach(base_edges, String(entry["room"]), [hero], MAX, "").has(room):
+				if _reach(base_index, String(entry["room"]), [hero], MAX, "").has(room):
 					solo = true
 					break
 		if not solo:
@@ -719,7 +857,14 @@ func _edges_for(story: Dictionary, scar: Dictionary) -> Array:
 	Mutation-added edges are deliberately LEFT OUT: mutations are additive (law 3,
 	asserted in check 2), so the un-mutated graph is the worst case and walking it
 	is strictly harsher than the game.
+
+	Memoized on (story, scar): the state space is the OUTER pair of loops in checks
+	5, 6 and 7, so the same set is rebuilt once per entry x subset otherwise.
 	"""
+	var key := String(story["id"]) + "|" + String(scar["id"])
+	if _edges_cache.has(key):
+		return _edges_cache[key]
+
 	var added: Dictionary = {}
 	for mut: Dictionary in _graph["mutations"]:
 		for eid: String in mut.get("adds", []):
@@ -739,7 +884,34 @@ func _edges_for(story: Dictionary, scar: Dictionary) -> Array:
 		if added.has(eid4) and not overlay.has(eid4):
 			continue
 		out.append(edge)
+	_edges_cache[key] = out
 	return out
+
+
+func _index_for(story: Dictionary, scar: Dictionary) -> Dictionary:
+	"""
+	The ADJACENCY INDEX of that edge set: room id -> the edges touching it.
+
+	`_reach` used to re-scan every edge for every popped room, which is
+	O(rooms x edges) per walk. Fourteen rooms and fifteen edges made that free; the
+	epic's target is ~150 rooms and ~200 edges, where one walk is 30 000 edge tests
+	and this file stops finishing inside its 30 s acceptance. The index makes a pop
+	cost O(degree) instead, and it is built once per (story, scar) — the same
+	memoization key as the edge set it is derived from, because it changes exactly
+	when that does.
+	"""
+	var key := String(story["id"]) + "|" + String(scar["id"])
+	if _index_cache.has(key):
+		return _index_cache[key]
+
+	var index: Dictionary = {}
+	for edge: Dictionary in _edges_for(story, scar):
+		for end_: String in [String(edge["a"]), String(edge["b"])]:
+			if not index.has(end_):
+				index[end_] = []
+			index[end_].append(edge)
+	_index_cache[key] = index
+	return index
 
 
 func _all_entries() -> Array:
@@ -759,11 +931,14 @@ func _all_entries() -> Array:
 	return out
 
 
-func _reach(edges: Array, start: String, free: Array[String], mode: String,
+func _reach(index: Dictionary, start: String, free: Array[String], mode: String,
 		skip_gate: String) -> Dictionary:
 	"""
 	Breadth-first over the passages this free set can actually get through.
 
+	@param index: `_index_for(story, scar)` — room id -> the edges touching it. A
+	              room with no edges is simply absent, which reads as "nowhere to
+	              go from here", exactly as the old full scan did.
 	@param skip_gate: a gate id to treat as impassable, for check 6's necessity
 	                  probe. "" for an ordinary walk.
 	@return: room id -> true, for every room reached.
@@ -772,7 +947,7 @@ func _reach(edges: Array, start: String, free: Array[String], mode: String,
 	var queue: Array[String] = [start]
 	while not queue.is_empty():
 		var here: String = queue.pop_back()
-		for edge: Dictionary in edges:
+		for edge: Dictionary in index.get(here, []):
 			var far := _across(edge, here)
 			if far == "" or seen.has(far):
 				continue
@@ -784,10 +959,10 @@ func _reach(edges: Array, start: String, free: Array[String], mode: String,
 	return seen
 
 
-func _reaches_any(edges: Array, entry: Dictionary, free: Array[String],
+func _reaches_any(index: Dictionary, entry: Dictionary, free: Array[String],
 		targets: Array[String], skip_gate: String) -> bool:
 	"""True when at least one target room is reachable from `entry` at floor rank."""
-	var seen := _reach(edges, String(entry["room"]), free, FLOOR, skip_gate)
+	var seen := _reach(index, String(entry["room"]), free, FLOOR, skip_gate)
 	for room: String in targets:
 		if seen.has(room):
 			return true
@@ -1005,6 +1180,347 @@ func _check_scars_are_built() -> void:
 		authored.size(), built.size()])
 
 
+# ============================================================================
+# CHECK 9 — the flood fill: every drawn floor is actually walkable
+# ============================================================================
+
+func _check_plans_are_walkable() -> void:
+	"""
+	Check 9. Every hand-planned storey is one connected walking surface, reached
+	by a ramp no steeper than the one the game has always had.
+
+	WHAT THE GRAPH AUDIT CANNOT SEE. Checks 1-8 reason about `TOWER_GRAPH`, whose
+	rooms are nodes and whose edges are "there is a way through". That is exactly
+	the right abstraction for the softlock property and it is blind to the thing a
+	designer editing 1600 characters of ASCII will actually get wrong: the graph
+	says two rooms are joined, and only the GRID says the corridor between them was
+	drawn. One `.` typed as a `#` in a doorway and check 1 still passes, the
+	fifteen subset walks still pass, and the floor is two sealed halves.
+
+	So this check walks the same storey the builder builds, in cells:
+
+	  * well-formedness first, because every assertion below assumes a rectangular
+	    grid of legal characters — 40 rows of 40, one solid `S` lane with its long
+	    axis on X, its `s` landing against one short end, exactly two pads, each
+	    beside a room;
+	  * a 4-connected FLOOD FILL from the landing over every non-`#` cell, which
+	    must reach every room cell, every pad, every post and every gate slot. The
+	    first cell it cannot reach is reported as `(c, r)` AND as world XZ, because
+	    a designer fixing it is looking at a text file and a screenshot;
+	  * the stair COINCIDES with the floor below — its lane stands on walkable
+	    cells of the storey it climbs from, or, for the grand ramp off the annulus,
+	    clear of the keep and of the door corridor that runs east from it;
+	  * and the ramp is no steeper than the phase-3 ramp, which is the only slope
+	    in this building anyone has ever walked.
+
+	NEGATIVE CONTROLS AT THE BOTTOM. A flood fill that passes on a broken plan is
+	worse than no flood fill, so each assertion is re-asked against a deliberately
+	broken COPY of the shipped storey and must come back with that assertion's own
+	complaint. The copies are built here; nothing edits `tower_plans.gd`.
+	"""
+	var walkable := 0
+	var rooms_drawn := 0
+	var angles: PackedStringArray = []
+	for plan: Dictionary in TowerPlans.STOREYS:
+		for problem: String in _plan_problems(plan):
+			_fail("plan storey %d: %s" % [int(plan["floor"]), problem])
+		var letters: Dictionary = {}
+		for r: int in plan["rows"].size():
+			var line := String(plan["rows"][r])
+			for c: int in line.length():
+				var ch := line[c]
+				if ch != TowerPlans.WALL_CHAR:
+					walkable += 1
+				if _is_room_letter(ch):
+					letters[ch] = true
+		rooms_drawn += letters.size()
+		angles.append("%.1f" % rad_to_deg(atan(_plan_slope(plan))))
+	_plan_summary = "tower plans: %d storeys, %d rooms, %d cells walkable, ramps %s deg" % [
+		TowerPlans.STOREYS.size(), rooms_drawn, walkable, ", ".join(angles)]
+
+	_check_the_flood_fill_can_fail()
+
+
+func _check_the_flood_fill_can_fail() -> void:
+	"""
+	The negative controls: one deliberately broken copy of the first shipped
+	storey per assertion above, each of which must produce that assertion's own
+	complaint. `_control` matches on a phrase from the message, not merely on
+	"something failed" — a control that trips a different rule proves nothing.
+	"""
+	var base: Dictionary = TowerPlans.STOREYS[0]
+	# A row one character short — the assertion every other one stands on.
+	_control("a short row", _row_at(base, 1, String(base["rows"][1]).substr(1)),
+			"characters wide")
+	# A character nobody taught the builder.
+	_control("an illegal character", _cell_at(base, 2, 2, "@"), "not a legal plan character")
+	# The two-cell doorway into the north-west record stack, walled up: check 1
+	# still binds the room, and only the fill can tell that nobody can get in.
+	_control("a walled-off room",
+			_cell_at(_cell_at(base, 6, 18, TowerPlans.WALL_CHAR), 7, 18, TowerPlans.WALL_CHAR),
+			"cannot be walked to")
+	# The landing moved off the lane's end, into the middle of the floor.
+	var moved := _cell_at(base, 15, 1, TowerPlans.FLOOR_CHAR)
+	moved = _cell_at(moved, 15, 2, TowerPlans.FLOOR_CHAR)
+	moved = _cell_at(moved, 20, 20, TowerPlans.LANDING_CHAR)
+	_control("a landing off the lane's end", moved, "short end")
+	# The lane one cell shorter: 9 cells of run for 11 m of rise is 0.63, over the
+	# phase-3 ramp's proven 0.575.
+	var short_lane := _cell_at(base, 14, 1, TowerPlans.FLOOR_CHAR)
+	short_lane = _cell_at(short_lane, 14, 2, TowerPlans.FLOOR_CHAR)
+	_control("a lane one cell short", short_lane, "steeper than")
+	# The grand ramp redrawn across the middle of the annulus, where the keep is.
+	var in_keep: Dictionary = base.duplicate(true)
+	var clear_row := TowerPlans.WALL_CHAR + TowerPlans.FLOOR_CHAR.repeat(TowerPlans.PLAN_GRID - 2) \
+			+ TowerPlans.WALL_CHAR
+	var lane_row := TowerPlans.WALL_CHAR + TowerPlans.FLOOR_CHAR.repeat(15) \
+			+ TowerPlans.STAIR_UP_CHAR.repeat(10) + TowerPlans.LANDING_CHAR \
+			+ TowerPlans.FLOOR_CHAR.repeat(12) + TowerPlans.WALL_CHAR
+	in_keep["rows"][1] = clear_row
+	in_keep["rows"][2] = clear_row
+	in_keep["rows"][21] = lane_row
+	in_keep["rows"][22] = lane_row
+	_control("a grand ramp drawn through the keep", in_keep, "inside the keep")
+	# A pad moved out into the corridor, beside nothing.
+	var stray := _cell_at(base, 6, 10, "A")
+	stray = _cell_at(stray, 20, 20, TowerPlans.PAD_CHAR)
+	_control("a pad beside no room", stray, "not beside a room")
+
+
+func _control(what: String, broken: Dictionary, needle: String) -> void:
+	"""One negative control: `broken` must be refused, and refused for `needle`."""
+	var problems := _plan_problems(broken)
+	for problem: String in problems:
+		if problem.contains(needle):
+			return
+	_fail(("the plan flood-fill ACCEPTS %s — it reported %s, none of which mentions '%s', "
+		+ "so the assertion it is meant to enforce is decorative") % [what, str(problems), needle])
+
+
+func _plan_problems(plan: Dictionary) -> Array[String]:
+	"""
+	Everything wrong with one storey's grid, as messages. Empty means the floor is
+	well-formed, fully connected from its landing, standing on the storey below and
+	climbed by a legal ramp.
+
+	Deliberately returns rather than calling `_fail`, because the negative controls
+	above drive this same function on plans that are SUPPOSED to be refused.
+	"""
+	var out: Array[String] = []
+	var rows: Array = plan["rows"]
+
+	# --- well-formedness: everything below assumes a rectangle of legal chars ---
+	if rows.size() != TowerPlans.PLAN_GRID:
+		out.append("%d rows, not %d — the grid is not the grid" % [
+			rows.size(), TowerPlans.PLAN_GRID])
+		return out
+	for r: int in rows.size():
+		var line := String(rows[r])
+		if line.length() != TowerPlans.PLAN_GRID:
+			out.append("row %d is %d characters wide, not %d" % [
+				r, line.length(), TowerPlans.PLAN_GRID])
+			return out
+		for c: int in line.length():
+			if not _is_legal_plan_char(line[c]):
+				out.append("cell (%d, %d) is '%s', which is not a legal plan character" % [
+					c, r, line[c]])
+
+	# --- the ramp lane: one solid rectangle, long axis on X --------------------
+	var lane_cells := _plan_cells(plan, TowerPlans.STAIR_UP_CHAR)
+	var landing_cells := _plan_cells(plan, TowerPlans.LANDING_CHAR)
+	if lane_cells.is_empty():
+		out.append("no '%s' cells — every storey above the keep is reached by a ramp"
+			% TowerPlans.STAIR_UP_CHAR)
+		return out
+	if landing_cells.is_empty():
+		out.append("no '%s' landing — the ramp's head is what says which way it rises"
+			% TowerPlans.LANDING_CHAR)
+		return out
+	var c0 := TowerPlans.PLAN_GRID
+	var c1 := -1
+	var r0 := TowerPlans.PLAN_GRID
+	var r1 := -1
+	for cell: Vector2i in lane_cells:
+		c0 = mini(c0, cell.x)
+		c1 = maxi(c1, cell.x)
+		r0 = mini(r0, cell.y)
+		r1 = maxi(r1, cell.y)
+	var lane_w := c1 - c0 + 1
+	var lane_d := r1 - r0 + 1
+	if lane_cells.size() != lane_w * lane_d:
+		out.append(("the '%s' cells are not one solid rectangle (%d cells in a %d x %d box) "
+			+ "— the deck is one box and cannot follow a scattered lane")
+			% [TowerPlans.STAIR_UP_CHAR, lane_cells.size(), lane_w, lane_d])
+	if lane_w <= lane_d:
+		out.append(("the ramp lane is %d x %d — its long axis must be X, because every ramp "
+			+ "in this building is X-running and check 3 and the underside test both reason "
+			+ "in the XY plane") % [lane_w, lane_d])
+	# ...with its landing against ONE short end, which is how the rise is derived.
+	var east := 0
+	var west := 0
+	for cell: Vector2i in landing_cells:
+		if cell.y < r0 or cell.y > r1:
+			out.append(("the landing at (%d, %d) is not across a short end of the lane "
+				+ "(rows %d..%d)") % [cell.x, cell.y, r0, r1])
+		elif cell.x == c1 + 1:
+			east += 1
+		elif cell.x == c0 - 1:
+			west += 1
+		else:
+			out.append(("the landing at (%d, %d) does not sit against a short end of the "
+				+ "lane (columns %d and %d)") % [cell.x, cell.y, c0 - 1, c1 + 1])
+	if east > 0 and west > 0:
+		out.append("landing cells sit against BOTH short ends — the ramp rises two ways")
+
+	# --- the pads --------------------------------------------------------------
+	var pads := _plan_cells(plan, TowerPlans.PAD_CHAR)
+	if pads.size() != 2:
+		out.append("%d '%s' cells — a storey carries exactly two pads" % [
+			pads.size(), TowerPlans.PAD_CHAR])
+	for pad: Vector2i in pads:
+		var beside := false
+		for step: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			var n := pad + step
+			if n.x < 0 or n.y < 0 or n.x >= TowerPlans.PLAN_GRID or n.y >= TowerPlans.PLAN_GRID:
+				continue
+			if _is_room_letter(String(rows[n.y])[n.x]):
+				beside = true
+		if not beside:
+			out.append(("the pad at (%d, %d) is not beside a room — a plate in open floor "
+				+ "belongs to nothing and opens nothing") % [pad.x, pad.y])
+
+	# --- the flood fill --------------------------------------------------------
+	var seen: Dictionary = {}
+	var queue: Array[Vector2i] = landing_cells.duplicate()
+	for cell: Vector2i in queue:
+		seen[cell] = true
+	while not queue.is_empty():
+		var here: Vector2i = queue.pop_back()
+		for step2: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			var n2: Vector2i = here + step2
+			if n2.x < 0 or n2.y < 0 or n2.x >= TowerPlans.PLAN_GRID or n2.y >= TowerPlans.PLAN_GRID:
+				continue
+			if seen.has(n2) or String(rows[n2.y])[n2.x] == TowerPlans.WALL_CHAR:
+				continue
+			seen[n2] = true
+			queue.append(n2)
+	for r2: int in rows.size():
+		var line2 := String(rows[r2])
+		for c2: int in line2.length():
+			var ch := line2[c2]
+			if ch == TowerPlans.WALL_CHAR or ch == TowerPlans.FLOOR_CHAR:
+				continue
+			if seen.has(Vector2i(c2, r2)):
+				continue
+			out.append(("cell (%d, %d) — '%s' at world x %.2f, z %.2f — cannot be walked to "
+				+ "from the landing. The floor is drawn in two pieces")
+				% [c2, r2, ch, _cell_x(c2), _cell_x(r2)])
+			break   # one report per row: a sealed wing is hundreds of cells
+
+	# --- the stair stands on the storey below ----------------------------------
+	var below := TowerPlans.storey(int(plan["from"]))
+	for cell2: Vector2i in lane_cells:
+		if not below.is_empty():
+			var under := String(below["rows"][cell2.y])[cell2.x]
+			if under == TowerPlans.WALL_CHAR or under == TowerPlans.STAIR_UP_CHAR:
+				out.append(("the lane cell (%d, %d) stands over '%s' on floor %d — a ramp's "
+					+ "foot has to land on floor somebody can walk on")
+					% [cell2.x, cell2.y, under, int(plan["from"])])
+			continue
+		# No plan below means floor 0: the annulus, where the keep stands and the
+		# door corridor runs east from its doorway to the outer one.
+		var x_lo := _cell_edge(cell2.x)
+		var x_hi := _cell_edge(cell2.x + 1)
+		var z_lo := _cell_edge(cell2.y)
+		var z_hi := _cell_edge(cell2.y + 1)
+		var clear_keep: float = TowerShell.KEEP_HALF + 1.0
+		if not (x_lo > clear_keep or x_hi < -clear_keep or z_lo > clear_keep or z_hi < -clear_keep):
+			out.append(("the lane cell (%d, %d) is inside the keep (x %.2f..%.2f, z %.2f..%.2f "
+				+ "against a %.1f m clearance) — the grand ramp climbs the annulus, and the "
+				+ "keep is a building standing in it")
+				% [cell2.x, cell2.y, x_lo, x_hi, z_lo, z_hi, clear_keep])
+		var corridor: float = TowerShell.DOOR_HALF_WIDTH + 1.0
+		if x_hi > TowerShell.KEEP_HALF and z_hi > -corridor and z_lo < corridor:
+			out.append(("the lane cell (%d, %d) blocks the door corridor (|z| <= %.1f east of "
+				+ "the keep) — that is the walk from the outer door to the keep door")
+				% [cell2.x, cell2.y, corridor])
+
+	# --- and it is no steeper than the ramp this game has always had -----------
+	var slope := _plan_slope(plan)
+	if slope > TowerInterior.PLAN_RAMP_MAX_SLOPE + 0.0001:
+		out.append(("the ramp's slope is %.4f (%.1f deg) over %d cells, steeper than the "
+			+ "phase-3 ramp's proven %.4f — a stair nobody has walked")
+			% [slope, rad_to_deg(atan(slope)), lane_w, TowerInterior.PLAN_RAMP_MAX_SLOPE])
+	if rad_to_deg(atan(slope)) >= 40.0:
+		out.append("the ramp's slope is %.1f deg, at or past the 40 deg hard ceiling"
+			% rad_to_deg(atan(slope)))
+	return out
+
+
+func _plan_slope(plan: Dictionary) -> float:
+	"""The storey's ramp slope: its rise over its lane's length. 0.0 if it has no lane."""
+	var lane := _plan_cells(plan, TowerPlans.STAIR_UP_CHAR)
+	if lane.is_empty():
+		return 0.0
+	var c0 := TowerPlans.PLAN_GRID
+	var c1 := -1
+	for cell: Vector2i in lane:
+		c0 = mini(c0, cell.x)
+		c1 = maxi(c1, cell.x)
+	var run := float(c1 - c0 + 1) * TowerPlans.PLAN_CELL
+	var rise: float = TowerInterior.FLOOR_Y[int(plan["floor"])] \
+			- TowerInterior.FLOOR_Y[int(plan["from"])]
+	return 0.0 if run <= 0.0 else rise / run
+
+
+func _plan_cells(plan: Dictionary, want: String) -> Array[Vector2i]:
+	"""Every cell of a storey carrying one character, in reading order."""
+	var out: Array[Vector2i] = []
+	for r: int in plan["rows"].size():
+		var line := String(plan["rows"][r])
+		for c: int in line.length():
+			if line[c] == want:
+				out.append(Vector2i(c, r))
+	return out
+
+
+func _is_room_letter(ch: String) -> bool:
+	"""A-Z, less the four characters the format has already spent."""
+	return ch >= "A" and ch <= "Z" and ch != TowerPlans.STAIR_UP_CHAR \
+		and ch != TowerPlans.PAD_CHAR and ch != TowerPlans.POST_CHAR \
+		and ch != TowerPlans.GATE_CHAR
+
+
+func _is_legal_plan_char(ch: String) -> bool:
+	return ch == TowerPlans.WALL_CHAR or ch == TowerPlans.FLOOR_CHAR \
+		or ch == TowerPlans.LANDING_CHAR or ch == TowerPlans.STAIR_UP_CHAR \
+		or ch == TowerPlans.PAD_CHAR or ch == TowerPlans.POST_CHAR \
+		or ch == TowerPlans.GATE_CHAR or _is_room_letter(ch)
+
+
+func _cell_x(c: int) -> float:
+	"""The CENTRE of column (or row) `c`, in interior metres. The grid is square."""
+	return -TowerPlans.PLAN_HALF + (float(c) + 0.5) * TowerPlans.PLAN_CELL
+
+
+func _cell_edge(c: int) -> float:
+	"""The west (or north) EDGE of column (or row) `c`, in interior metres."""
+	return -TowerPlans.PLAN_HALF + float(c) * TowerPlans.PLAN_CELL
+
+
+func _row_at(plan: Dictionary, r: int, line: String) -> Dictionary:
+	"""A deep copy of a storey with one row replaced — for the negative controls."""
+	var out: Dictionary = plan.duplicate(true)
+	out["rows"][r] = line
+	return out
+
+
+func _cell_at(plan: Dictionary, c: int, r: int, ch: String) -> Dictionary:
+	"""A deep copy of a storey with one cell replaced — for the negative controls."""
+	var line := String(plan["rows"][r])
+	return _row_at(plan, r, line.substr(0, c) + ch + line.substr(c + 1))
+
+
 func _scar_row(id: String) -> Dictionary:
 	"""The scar row for `id`, or an empty dict. Local — nothing else wants it."""
 	for scar: Dictionary in _graph["scars"]:
@@ -1019,6 +1535,8 @@ func _fail(message: String) -> void:
 
 func _report() -> void:
 	if _failures.is_empty():
+		if not _plan_summary.is_empty():
+			print(_plan_summary)
 		print("tower graph: %d rooms, %d edges, %d gates, %d entries, %d scars — %d subset walks clean"
 			% [_graph["rooms"].size(), _graph["edges"].size(), _graph["gates"].size(),
 				_all_entries().size(), _graph["scars"].size(), _subsets().size()])
