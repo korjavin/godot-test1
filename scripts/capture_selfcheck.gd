@@ -130,8 +130,64 @@ class AttackerStub extends Node:
 class RoomStub extends Node:
 	var hand: Array[int] = []
 
+	## The rest of the manager surface `_tick_prison()` reads (bead
+	## godot-test1-3iy.10), modelled rather than faked: `held` is what the LOBBY
+	## says this peer holds, and `request_reassignment()` moves it the way
+	## `server/room.go`'s `SetHero` plus the `heroes` broadcast that follows it do —
+	## atomically, and only when there is something to move to. `claimable` empty is
+	## a room with nothing to give, which is the only thing that may bench anybody.
+	var online: bool = true
+	var held: String = ""
+	var claimable: String = ""
+	var reassignments: int = 0
+	var reported: Array = []
+
 	func my_character_indices() -> Variant:
 		return null if hand.is_empty() else hand
+
+	func is_online() -> bool:
+		return online
+
+	func my_hero() -> String:
+		return held
+
+	func report_hero_captured(hero: String) -> void:
+		reported.append([hero, true])
+
+	func report_hero_freed(hero: String) -> void:
+		reported.append([hero, false])
+
+	func request_reassignment() -> bool:
+		if claimable.is_empty():
+			return false
+		reassignments += 1
+		held = claimable
+		claimable = ""
+		return true
+
+	## ...and the two the cell block's VENT PURGE reads. `team` empty is the solo /
+	## no-room answer the real manager gives (`null`, never an empty dictionary),
+	## which is the case the purge must do nothing at all in.
+	var team: Dictionary = {}
+	var flees: Array = []
+
+	func peer_positions() -> Variant:
+		return null if team.is_empty() else team
+
+	func request_croc_flee(origin: Vector3, duration: float, radius: float = 0.0) -> bool:
+		flees.append([origin, duration, radius])
+		return true
+
+
+## A terrain that answers exactly one question: where the building stands. The
+## prison role marches the benched player there through the same `"terrain"` group
+## lookup the full-custody protocol uses, so a stub in that group is on the real
+## code path.
+class TerrainStub extends Node:
+	const SITE := Vector3(512.0, 0.0, -96.0)
+
+	func tower_site() -> Vector3:
+		return SITE
 
 
 func _initialize() -> void:
@@ -158,6 +214,7 @@ func _run() -> void:
 	await _check_the_sweep_spares_a_guard()
 	await _check_the_protocol_opens_and_can_be_played()
 	await _check_the_break_out_scars_the_world()
+	await _check_reassign_first_imprison_last()
 	await _check_the_recall_archives_the_world()
 	await _check_the_scene_does_not_leak()
 	_report()
@@ -1259,6 +1316,252 @@ func _check_the_scene_does_not_leak() -> void:
 	shell.queue_free()
 	await process_frame
 	_fresh_store()
+
+
+# ============================================================================
+# 17. REASSIGN FIRST, IMPRISON LAST (bead godot-test1-3iy.10)
+# ============================================================================
+
+func _check_reassign_first_imprison_last() -> void:
+	"""
+	Check 17. The multiplayer capture consequence, driven through real physics.
+
+	THE MECHANIC HAS TO BE REACHABLE FROM THE GAME, which is the only reason this
+	is a live check and not arithmetic: every decision below is made inside
+	`_tick_prison()`, which nothing calls but `_physics_process`, on a half-second
+	cadence. So the player here is a real `player.tscn`, the room is in group `"mp"`,
+	the tower's site comes through the `"terrain"` group, and the only thing this
+	file does is bite the player and wait. A build where the tick was never wired up
+	fails every part of this.
+
+	Four claims, in the order the owner's rule states them:
+
+	  (a) REASSIGN FIRST. A capture with a free hero in the room reports the
+	      capture, asks the LOBBY for the free hero, and benches nobody. The
+	      reassignment must go through the room — a local index write would put two
+	      peers in one body — so what is measured is the call, not the result.
+	  (b) IMPRISON LAST. The same capture with NOTHING free stands the player up in
+	      their own cell inside the block, and confines them there: shoved out, they
+	      are back inside on the next physics frame. That is "no phasing, no solo
+	      escape" as a measurement rather than a promise.
+	  (c) THE BLOCK'S SYSTEMS ARE REACHABLE FROM INSIDE IT. The cell stand and the
+	      vent-purge pad are both inside the confinement box — a role confined to a
+	      box that excluded its own systems would be a cell with nothing in it, and
+	      nothing else in this file would notice.
+	  (d) THE WAY OUT, THREE WAYS. A hero freed elsewhere in the room ends the role
+	      and the liberation is told to the room; a hero that becomes claimable
+	      LATER ends it through the tick's own retry, which is the half of
+	      "reassign first" that only exists after the bench; and a prisoner may free
+	      a CELLMATE but never themselves.
+	  (e) ...and a peer that was never bitten at all still ends its run when the
+	      ROOM runs out of heroes, which is the world-level reading and the only
+	      part of it no other check can see.
+	"""
+	_fresh_store()
+	_beat_done()
+	var room := RoomStub.new()
+	room.add_to_group("mp")
+	root.add_child(room)
+	var terrain := TerrainStub.new()
+	terrain.add_to_group("terrain")
+	root.add_child(terrain)
+
+	# ---- (a) reassign first ------------------------------------------------
+	var player := await _make_player()
+	var mine: int = TowerGraph.HEROES.find("primm")
+	room.hand = [mine] as Array[int]
+	room.held = "primm"
+	room.claimable = "teibi"
+	player.set_active_character(mine)
+	player.hit_by_crocodile(_hunter())
+	if room.reported != [["primm", true]]:
+		_fail("the capture did not reach the room (%s) — every other peer's picker, "
+			% str(room.reported) + "roster and ending would still be offering a hero in a cell")
+	if room.reassignments != 1:
+		_fail("a capture with a free hero in the room made %d SetHero calls, expected 1"
+			% room.reassignments)
+	await _tick(45)
+	if player.prisoner_active:
+		_fail("a peer that was handed a free hero was benched anyway — reassign FIRST")
+	_clear(player)
+	await process_frame
+
+	# ---- (b) imprison last -------------------------------------------------
+	room.reported.clear()
+	room.reassignments = 0
+	room.held = "primm"
+	room.claimable = ""
+	player = await _make_player()
+	player.set_active_character(mine)
+	player.hit_by_crocodile(_hunter())
+	await _tick(45)
+	if not player.prisoner_active:
+		_fail("the room had no free hero and nobody was benched — the prison role is "
+			+ "unreachable from the game")
+		_clear(player)
+		room.queue_free()
+		terrain.queue_free()
+		await process_frame
+		return
+	if player.free_hero_count() != TowerGraph.HEROES.size() - 1:
+		_fail("the bench fired with %d heroes free — it must only ever fire when the ROOM "
+			% player.free_hero_count() + "has nothing to give, never as a stand-in for game over")
+	var lo: Vector3 = TerrainStub.SITE + TowerInterior.block_min()
+	var hi: Vector3 = TerrainStub.SITE + TowerInterior.block_max()
+	if not _inside(player.global_position, lo, hi):
+		_fail("the benched player stood up at %s, outside the cell block (%s .. %s)"
+			% [player.global_position, lo, hi])
+	# CONFINEMENT, measured by breaking it: shoved through the spine wall and out of
+	# the building entirely, one physics frame must put the body back.
+	player.global_position = TerrainStub.SITE + Vector3(0.0, 0.0, -40.0)
+	await _tick(2)
+	if not _inside(player.global_position, lo, hi):
+		_fail("a prisoner shoved to %s stayed out of the block — the confinement is a "
+			% player.global_position + "suggestion, and the role has a solo escape")
+
+	# ---- (c) the systems are inside the box --------------------------------
+	for hero: Variant in TowerGraph.HEROES:
+		var stand: Vector3 = TerrainStub.SITE + TowerInterior.cell_stand(String(hero))
+		if not _inside(stand, lo, hi):
+			_fail("%s's cell stand is outside the confinement box — a prisoner would be "
+				% String(hero) + "clamped out of their own cell on the first frame")
+	var pad := TerrainStub.SITE + Vector3(TowerInterior.PURGE_PAD_X, 0.0, TowerInterior.PURGE_PAD_Z)
+	if not _inside(pad, lo, hi):
+		_fail("the vent-purge pad at %s is outside the confinement box — the block's system "
+			% pad + "cannot be operated by the only player who is ever locked in with it")
+
+	# ---- (d1) a cellmate, never yourself -----------------------------------
+	#
+	# The prisoner plays as their own captive, so their own recess is the one
+	# liberation the owner's ruling forbids — walk into it and nothing happens. The
+	# cell beside it is the block's second system and must still work, which is the
+	# negative control that stops "no solo escape" being implemented as "no
+	# liberation at all".
+	var shell := await _make_tower()
+	shell.global_position = TerrainStub.SITE
+	var interior: Node = shell.get_child(0)
+	interior.set_captive("primm", true)
+	interior.call("_on_cell_enter", player, "primm")
+	if not interior.is_captive("primm"):
+		_fail("a prisoner walked into their OWN cell and freed themselves — the role has a "
+			+ "solo escape, which is the one thing the owner's ruling forbids it")
+	interior.set_captive("teibi", true)
+	interior.call("_on_cell_enter", player, "teibi")
+	if interior.is_captive("teibi"):
+		_fail("a prisoner could not free a CELLMATE — the refusal above is refusing every "
+			+ "liberation, and the block's second system does nothing")
+	# ---- (d1b) the block's system, operated from inside it -----------------
+	#
+	# THE PURGE IS THE ROLE'S ONE OUTWARD VERB, and "each operated system gives the
+	# outside team an immediate opening" is the requirement it answers. Driven
+	# through the interior's real `_process`, so a pad that was built and never
+	# ticked fails here rather than reading fine.
+	# Cleared first: `clear_nearby_crocodiles()` relays its own bounded wave through
+	# the same manager verb on every placement and respawn, so the log already holds
+	# the bench's own.
+	room.flees.clear()
+	interior.call("_on_purge_enter", player)
+	interior._process(0.1)
+	if not room.flees.is_empty():
+		_fail("the vent purge fired with no room — solo it would be a panic button over the "
+			+ "player's own pack, and there is no team outside to open anything for")
+	var mate := TerrainStub.SITE + Vector3(300.0, 0.0, 0.0)
+	room.team = {"bob": mate}
+	interior._process(0.1)
+	if room.flees.size() != 1:
+		_fail("standing on the purge pad relayed %d flee requests, expected one per teammate"
+			% room.flees.size())
+	else:
+		var fired: Array = room.flees[0]
+		if (fired[0] as Vector3).distance_to(mate) > SETBACK_EPS:
+			_fail("the purge scattered the pack at %s, not around the teammate at %s — it "
+				% [fired[0], mate] + "opens nothing for anybody standing there")
+		if float(fired[1]) != TowerInterior.PURGE_FLEE_SECONDS \
+				or float(fired[2]) != TowerInterior.PURGE_FLEE_RADIUS:
+			_fail("the purge relayed %.1f s / %.1f m, not its own constants" % [fired[1], fired[2]])
+	interior._process(0.1)
+	if room.flees.size() != 1:
+		_fail("the purge fired again inside its cooldown (%d requests) — held down, it is a "
+			% room.flees.size() + "flee packet per frame and the room's rate budget drops the rest")
+	interior._process(TowerInterior.PURGE_COOLDOWN + 0.1)
+	if room.flees.size() != 2:
+		_fail("the purge never came back after its cooldown (%d requests)" % room.flees.size())
+	interior.call("_on_purge_exit", player)
+	interior._process(TowerInterior.PURGE_COOLDOWN + 0.1)
+	if room.flees.size() != 2:
+		_fail("the purge kept firing after the player stepped off the pad")
+	room.team = {}
+
+	shell.queue_free()
+	await process_frame
+
+	# ---- (d2) a hero that becomes claimable later --------------------------
+	#
+	# THE TICK'S OWN RETRY, and nothing else reaches it: the claim in
+	# `_capture_active_hero()` already failed once (that is what benched us), so the
+	# only thing that can ever put this peer back in the field through a lobby grant
+	# is `_tick_prison()` asking again against fresher truth.
+	if not player.prisoner_active:
+		_fail("the prisoner left the role before the retry could be measured")
+	room.claimable = "teibi"
+	# TWO decisions' worth, and that is the shape of the rule rather than slack: the
+	# tick that sends the claim RETURNS on it, because nothing has moved yet; the
+	# next one reads the answer off `my_hero()` and lifts the role.
+	await _tick(90)
+	if room.reassignments != 1:
+		_fail("a teammate freed a hero and the benched peer made %d SetHero calls, expected 1 "
+			% room.reassignments + "— reassignment must be retried from the bench, not only at "
+			+ "the moment of capture")
+	if player.prisoner_active:
+		_fail("the lobby granted a free hero and the player stayed in the cell block")
+
+	# ---- (d3) a liberation, and the room hearing about it ------------------
+	room.reported.clear()
+	room.held = "primm"
+	await _tick(45)
+	if not player.prisoner_active:
+		_fail("the peer was put back on its captive hero and was not benched again")
+	player.hero_freed("primm")
+	if room.reported != [["primm", false]]:
+		_fail("a liberation did not reach the room (%s) — the peer who lost that hero "
+			% str(room.reported) + "would stay in a cell the room no longer believes in")
+	await _tick(45)
+	if player.prisoner_active:
+		_fail("the hero was freed and the player is still serving the prison role")
+	_clear(player)
+	await process_frame
+
+	# ...and the world-level ending, on a peer nothing ever bit.
+	room.held = "windman"
+	room.hand = [TowerGraph.HEROES.find("windman")] as Array[int]
+	room.claimable = ""
+	player = await _make_player()
+	for hero: Variant in TowerGraph.HEROES:
+		player.set_hero_captive(String(hero), true)
+	await _tick(45)
+	if not player.in_custody_protocol():
+		_fail("the room ran out of heroes and a peer that was never bitten kept playing — "
+			+ "game over is world-level, and this is the only peer that can prove it")
+	player.custody_protocol_active = false
+	_clear(player)
+	room.queue_free()
+	terrain.queue_free()
+	await process_frame
+	_fresh_store()
+
+
+func _inside(point: Vector3, lo: Vector3, hi: Vector3) -> bool:
+	"""Is this point inside the confinement box on the two axes it clamps?"""
+	return point.x >= lo.x - SETBACK_EPS and point.x <= hi.x + SETBACK_EPS \
+		and point.z >= lo.z - SETBACK_EPS and point.z <= hi.z + SETBACK_EPS
+
+
+func _tick(frames: int) -> void:
+	"""Run real physics. The prison role decides on a 0.5 s cadence, so 45 frames
+	(0.75 s at 60 Hz) is one decision plus slack, and the caught freeze fits inside
+	it — nothing here short-circuits either clock."""
+	for _i: int in frames:
+		await physics_frame
 
 
 func _drive_into_custody(player: Node) -> void:

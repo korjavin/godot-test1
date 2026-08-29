@@ -943,6 +943,16 @@ func _physics_process(delta: float) -> void:
 	# the whole CAUGHT_DURATION. A no-op solo (one group lookup and a return).
 	_tick_prison(delta)
 
+	# ...and keep a benched player inside the cell block. ABOVE THE FREEZE BRANCHES,
+	# which is the whole reason it is here and not beside `move_and_slide()`: the
+	# body spends the caught freeze, the respawn grace and the game-over screen
+	# below those early returns, and a clamp under them would stop holding at
+	# exactly the moments something else is moving the body (a guard's knockback, a
+	# respawn placement). The cost is that an excursion is corrected on the NEXT
+	# frame rather than the same one — at most one frame of travel, and the
+	# correction is absolute, so no amount of speed accumulates a way out.
+	_confine_to_block()
+
 	# STEP 0a: Game over — out of lives. Stand frozen (the Game Over screen is up
 	# and the cursor is free) until the player hits "Play Again", which calls
 	# restart_game(). We still settle under gravity so we don't hang in the air.
@@ -1136,12 +1146,6 @@ func _physics_process(delta: float) -> void:
 	# STEP 9: Move the character using Godot's built-in physics
 	# This handles collisions automatically
 	move_and_slide()
-
-	# STEP 9b: ...and, if we are serving the prison role, put the body back inside
-	# the cell block. AFTER the move, because that is what makes it a wall rather
-	# than a suggestion: clamping the input would leave a run-up against the spine
-	# doors that a physics tick could still carry through.
-	_confine_to_block()
 
 	# STEP 10: Update character animations
 	update_character_animation(delta, input_dir)

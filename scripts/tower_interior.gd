@@ -2347,7 +2347,13 @@ func _on_cell_enter(body: Node3D, hero: String) -> void:
 	# has no such property (every probe player in the self-checks, and the real one
 	# before this bead), and `bool(null)` is not a constructor GDScript has - it
 	# throws, and a throw inside an `Area3D` callback swallows the liberation.
-	if "prisoner_active" in body and bool(body.prisoner_active) and _hero_name() == hero:
+	# ASKED OF THE ENTERING BODY, not of `_hero_name()`. That helper answers off the
+	# interior's cached `_player`, which is written in `_process` — so on the first
+	# frame after a build (and in every harness that drives this callback directly)
+	# it is still empty, and the refusal would silently not refuse. The body that
+	# walked in is the body whose identity this rule is about.
+	if "prisoner_active" in body and bool(body.prisoner_active) \
+			and body.has_method("hero_name") and String(body.call("hero_name")) == hero:
 		return
 	_liberate(hero)
 
