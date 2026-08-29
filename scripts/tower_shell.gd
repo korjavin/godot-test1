@@ -923,12 +923,26 @@ static func _material(color: Color) -> StandardMaterial3D:
 
 static func _impostor_color(color: Color) -> Color:
 	"""
-	The impostor's stand-in for what the key light does to one of the shell's
-	albedos. See `IMPOSTOR_LIT_GAIN` for why the impostor has no palette of its own.
+	What the shell's material of this colour actually RENDERS as, near enough for a
+	flat silhouette. See `IMPOSTOR_LIT_GAIN` for why the impostor has no palette of
+	its own.
+
+	READ OFF THE SHELL'S OWN MATERIAL rather than off the colour alone, because two
+	of the five are not plain lit stone: the beacon is unshaded, and the spires
+	carry an emission. Modelling the light with one gain and then ignoring the
+	emissive half would leave the most saturated part of the silhouette — the
+	spire tips — as the one thing that still changed across the handover, which is
+	the exact bug in miniature. So: lift by the gain only where there is a light to
+	lift (an unshaded surface already IS its albedo), then add whatever the material
+	emits.
 	"""
-	return Color(minf(color.r * IMPOSTOR_LIT_GAIN, 1.0),
-		minf(color.g * IMPOSTOR_LIT_GAIN, 1.0),
-		minf(color.b * IMPOSTOR_LIT_GAIN, 1.0))
+	var mat := _material(color)
+	var lit: Color = color
+	if mat.shading_mode != BaseMaterial3D.SHADING_MODE_UNSHADED:
+		lit = color * IMPOSTOR_LIT_GAIN
+	if mat.emission_enabled:
+		lit += mat.emission * mat.emission_energy_multiplier
+	return Color(minf(lit.r, 1.0), minf(lit.g, 1.0), minf(lit.b, 1.0))
 
 
 static func _impostor_material(color: Color) -> StandardMaterial3D:
