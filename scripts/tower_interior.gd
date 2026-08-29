@@ -187,14 +187,23 @@ extends Node3D
 # GEOMETRY — metres, LOCAL to the shell's origin, feet at y = 0
 # ============================================================================
 #
-# The shell's inner faces are at +/- INNER_HALF on both axes, and the corner spire
-# is a solid 7 m cube of stone at the -X/-Z corner (x <= -3, z <= -3) — which is
-# why nothing below reaches into that corner and why the upper slab starts where
-# it does.
+# The KEEP's inner faces are at +/- INNER_HALF on both axes. There used to be a solid
+# spire in the -X/-Z corner too; shell phase 13 removed it and wrapped the keep in an
+# 80 m envelope, so the plan now stands inside a much larger building (see
+# INNER_HALF) with the same walls around it as before.
 
-## Half the CLEAR interior span: the shell's outer half minus one wall thickness.
+## Half the CLEAR interior span: the KEEP's half minus one wall thickness.
 ## Derived, never restated, so a thicker wall shrinks the interior automatically.
-const INNER_HALF: float = TowerShell.OUTER_HALF - TowerShell.WALL_THICK
+##
+## IT READS `KEEP_HALF` AND NOT `OUTER_HALF` SINCE SHELL PHASE 13. The keep used to
+## be the whole building; phase 13 wrapped an 80 m envelope round it and kept the
+## 20 m ring, precisely because this plan is authored against those faces — deriving
+## from the envelope instead would stretch every room in here by 4.4x, and the rooms
+## are made of AUTHORED widths (the cell block's four identity doors plus three piers
+## span 9.3 m however wide the wing gets, so a stretched wing has a 30 m hole beside
+## the gates and you walk round every one of them). Phase 14 replans the storeys
+## against the real envelope; that is when the inner ring goes.
+const INNER_HALF: float = TowerShell.KEEP_HALF - TowerShell.WALL_THICK
 
 ## The upper storey. `SLAB_Y` is its WALKING SURFACE; the slab hangs below it, so
 ## the hall's headroom is `SLAB_Y - SLAB_THICK`.

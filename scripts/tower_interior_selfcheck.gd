@@ -12,9 +12,9 @@ extends SceneTree
 ## of these fails SILENTLY — a level that looks entirely correct in a screenshot and
 ## is unplayable, or playable in a way it was never meant to be:
 ##
-##   1. THE PLAN FITS AND IS AFFORDABLE. 26 boxes inside a 17.6 m square with a 7 m
-##      cube of spire in one corner; a box that drifts into the spire or out through
-##      a wall is invisible from inside and obvious from the yard. Check 1.
+##   1. THE PLAN FITS AND IS AFFORDABLE. Every box inside the shell's inner faces;
+##      a box that drifts out through a wall is invisible from inside and obvious
+##      from the yard. Check 1.
 ##   2. **NO JUMP-GATED CLIMB.** The bead's hardest rule and the one this file
 ##      exists for. The upper storey must be reachable ONLY by the ramp, which means
 ##      nothing standing under the open sky may be a step up to it — and "standing
@@ -279,11 +279,10 @@ func _check_plan_fits_the_shell() -> void:
 			_fail("%s tops out at %.2f m, over the shell's %.2f m wall" % [
 				box_name, pos.y + reach_y, TowerShell.WALL_HEIGHT])
 
-		# The spire, from the shell's own numbers rather than a copied literal.
-		var spire_edge := -(TowerShell.OUTER_HALF - TowerShell.SPIRE_SIDE)
-		if pos.x - half.x < spire_edge and pos.z - half.z < spire_edge:
-			_fail("%s reaches into the corner spire's stone (x and z both under %.2f)" % [
-				box_name, spire_edge])
+		# THE CORNER SPIRE IS GONE (shell phase 13): its cap was a landing pad for a
+		# Windman, and the identity it carried now comes from the building's mass.
+		# There is therefore no stone in the -X/-Z corner any more and nothing to
+		# keep the plan out of — the shell's inner faces above are the whole test.
 
 		# And the doorway stays a hole.
 		if _overlaps(pos, box["size"], door["pos"], door["size"]):

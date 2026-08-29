@@ -544,8 +544,17 @@ const HUNTER_ROLL_INDEX: int = 100000
 ##
 ## Two jobs in one number: it is the area world generation keeps clear, and it is
 ## the budget phase 2's shell has to fit inside (share the constant, never restate
-## the number). 30 m is a little over half a chunk — a large-HQ footprint plus its
-## yard — and it costs the field ~1.1 chunks of content, once, in a whole world.
+## the number).
+##
+## 30 -> 65 IN PHASE 13, because the HQ became the ten-storey building the owner
+## asked for: `TowerShell.OUTER_HALF` is 40, so the keep's own corners reach
+## 40 * sqrt2 = 56.6 m, and the yard slab around it reaches 63.6 m. 65 is that plus
+## a metre of margin — it is ~2.6 chunks across and costs the field ~5.3 chunks of
+## content, once, in a whole world.
+##
+## IT IS ALSO THE DRY DISC AND THE SHADER'S RIVER MASK (see below and
+## `_apply_biome_shader_params`), so growing it grows the tinted band that gets
+## suppressed under the compound. That is wanted: the yard grew with the building.
 ##
 ## HOW CLEAR IS CLEAR: spawners routed through _biome_spot_ok are handed the
 ## candidate's own radius, so their whole FOOTPRINT stays outside the disc. The
@@ -558,7 +567,7 @@ const HUNTER_ROLL_INDEX: int = 100000
 ## through the whole world and cutting a hole in it would break "follow the coins";
 ## phase 2 owns whatever the road does at the tower door. Bosses ARE excluded —
 ## a 6× crocodile wedged in the doorway is a different problem from a coin.
-const TOWER_RADIUS: float = 30.0
+const TOWER_RADIUS: float = 65.0
 
 ## Extra clearance (metres) every tower rejection adds on top of the candidate's
 ## own declared radius.
@@ -607,16 +616,22 @@ const TOWER_DECOR_OVERHANG: float = 2.5
 ## (metres). Phase 2's lazy-load radius.
 ##
 ## Generous on purpose, and the generosity is the whole design. The shell is one
-## scene of nine boxes — a rounding error next to a chunk — so the cost of building
-## it early is nothing, while the cost of building it LATE is a building popping
-## into existence in front of the player. 320 m clears the desktop render distance
-## (250 m) and both fog ranges by a wide margin, and it is checked only when the
-## player crosses a CHUNK boundary (50 m), so the worst case still instances the
-## tower ~270 m out — far past anything that can be seen.
+## scene of fifteen boxes — a rounding error next to a chunk — so the cost of
+## building it early is nothing, while the cost of building it LATE is a building
+## popping into existence in front of the player.
+##
+## 320 -> 360 IN PHASE 13, and the arithmetic is why. This is checked only when the
+## player crosses a CHUNK boundary (50 m), so the worst case instances the tower a
+## whole chunk INSIDE the radius: 360 - 50 = 310 m from its centre. The FACADE is
+## nearer than the centre by `TowerShell.OUTER_HALF`, which phase 13 took from 10 m
+## to 40 m — so the nearest stone appears 270 m out, still clear of the desktop
+## render distance (250 m) and of both fog ranges. At the old 320 that same worst
+## case put the new facade at 230 m: inside render distance, i.e. the impostor
+## swapping for the lit shell in plain view. (Found by codex review, 2026-08-29.)
 ##
 ## Below this radius the horizon impostor is what the player is looking at (see
 ## TowerShell.build_impostor), so the swap happens where neither is visible.
-const TOWER_LOAD_RADIUS: float = 320.0
+const TOWER_LOAD_RADIUS: float = 360.0
 
 ## The tower's authored scene. Instanced ONCE per run, parented to this manager and
 ## never to a chunk — the fauna precedent (CLAUDE.md): chunk unloading must not be
