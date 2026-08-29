@@ -68,6 +68,20 @@ extends SceneTree
 ##      building does not have (so phase 8 inherits a correct gate rather than
 ##      discovering it needs one) and then confirms the live rig hides the whole
 ##      interior from across the field and shows it from inside.
+##  10. **THE CELL BLOCK HAS NO WAY ROUND IT.** Check 11 is phase 8's structural
+##      half, and it exists because a gap in the spine wall would not look like a
+##      bug — it would look like a corridor. The four rescue spines are the ONLY
+##      thing `tower_selfcheck`'s softlock audit has to work with; a 12 cm slot
+##      beside a pier makes every identity gate in the wing decorative and turns
+##      that audit's SELFCHECK OK into a statement about a building nobody built.
+##      So the spine line and the cell row are SAMPLED for solidity rather than
+##      derived from the same arithmetic that placed them.
+##  11. **THE WING'S ACCEPTANCE WALK.** Check 12: a spine door refuses the wrong
+##      hero and opens for the right one standing still; its mass and its shape
+##      sink together; ANY hero walking into an occupied cell frees the captive,
+##      the frame goes dark, the authored staging disappears — and stays gone
+##      across a rebuilt tower, because that one fact is the only liberation state
+##      that persists.
 ##
 ## The "RID allocations … were leaked at exit" lines after the verdict are the
 ## engine reporting this project's deliberate static shared caches — same note as
@@ -119,6 +133,12 @@ class ProbePlayer extends CharacterBody3D:
 	var hero: String = "windman"
 	var reach: float = 0.0
 	var hits: int = 0
+	## Every hero the tower told this player it had freed, in order. The phase-9
+	## seam: `TowerInterior._liberate` calls `hero_freed` only when the player has
+	## one, so today's real player is never told and nobody is ever locked out —
+	## and check 12 asserts the call HAPPENS, which is the half a null-safe seam
+	## normally cannot prove.
+	var freed: Array[String] = []
 
 	func hero_name() -> String:
 		return hero
@@ -128,6 +148,9 @@ class ProbePlayer extends CharacterBody3D:
 
 	func hit_by_crocodile() -> void:
 		hits += 1
+
+	func hero_freed(who: String) -> void:
+		freed.append(who)
 
 
 func _initialize() -> void:
@@ -157,6 +180,8 @@ func _run() -> void:
 	await _check_opened_state_is_reapplied()
 	await _check_visibility_gating()
 	await _check_earned_state_survives_a_relaunch()
+	_check_the_wing_has_no_way_round_it()
+	await _check_spines_and_liberation()
 	_report()
 
 
@@ -615,7 +640,24 @@ func _check_node_shape() -> void:
 		var placed: Vector3 = mesh.position
 		if mesh.get_parent() != null and String(mesh.get_parent().name).ends_with("Pivot"):
 			placed += (mesh.get_parent() as Node3D).position
-		if not placed.is_equal_approx(box["pos"]):
+		if box.has("sweep"):
+			# A SWEPT PART IS MOVING ON THE FRAME THIS CHECK READS IT, so its table
+			# position is the top of its stroke and not where it is now — asserting
+			# equality would fail on correct geometry the first time the clock ticked.
+			# The two axes it never moves on are still exact, and the one it does move
+			# on is held to the stroke `press_y` is allowed to produce. That is a
+			# STRICTER statement than the equality it replaces: a press mis-built a
+			# metre off, or animated past its own lintel, fails here.
+			if not is_equal_approx(placed.x, box["pos"].x) \
+					or not is_equal_approx(placed.z, box["pos"].z):
+				_fail("swept mesh %s stands at %s but its box says %s (x/z must not move)" % [
+					box["name"], placed, box["pos"]])
+			var top := TowerInterior.PRESS_TOP
+			var bottom := TowerInterior.PRESS_BOTTOM
+			if placed.y < bottom - EPS or placed.y > top + EPS:
+				_fail("swept mesh %s is at y = %.4f, outside its %.2f .. %.2f stroke" % [
+					box["name"], placed.y, bottom, top])
+		elif not placed.is_equal_approx(box["pos"]):
 			_fail("mesh %s stands at %s but its box says %s" % [box["name"], placed, box["pos"]])
 		var box_mesh := mesh.mesh as BoxMesh
 		if box_mesh == null or not box_mesh.size.is_equal_approx(box["size"]):
@@ -635,9 +677,14 @@ func _check_node_shape() -> void:
 		_fail("the interior holds %d MultiMeshInstance3D — it is authored geometry, not chunk content" % multimeshes)
 	if bodies != 1:
 		_fail("the interior has %d StaticBody3D, expected exactly one" % bodies)
-	# Three pads (demand, identity, checkpoint) and one hazard per rotor bar.
-	if areas != 5:
-		_fail("the interior has %d Area3D, expected 5 (3 pads + 2 rotor hazards)" % areas)
+	# Three pads (demand, identity, checkpoint), one hazard per rotor bar, and the
+	# wing's own: four spine pads, four cell volumes and the crawl press's hazard.
+	# COUNTED AND NOT CAPPED — an Area3D nobody meant to build is a trigger that
+	# fires, and every one of these fourteen is named in this file.
+	var want_areas := 5 + TowerInterior.SPINE_DOORS.size() + TowerGraph.HEROES.size() + 1
+	if areas != want_areas:
+		_fail("the interior has %d Area3D, expected %d (3 pads + 2 rotor hazards + %d spine pads + %d cells + 1 press)" % [
+			areas, want_areas, TowerInterior.SPINE_DOORS.size(), TowerGraph.HEROES.size()])
 
 	var body := interior.get_node_or_null("InteriorCollision") as StaticBody3D
 	if body == null:
@@ -690,12 +737,14 @@ func _check_materials_are_shared_and_already_toon() -> void:
 		if TowerInterior.MOVING_PARTS.has(String(box["name"])) \
 				or not is_zero_approx(float(box.get("spin", 0.0))):
 			colors[box["color"]] = true
-	# The checkpoint and the bands each own a second, LIT colour they swap to; those
-	# materials exist from the moment anything asks for them.
-	var want := colors.size() + 2 + 2
+	# The checkpoint, the bands and the cell frames each own a second colour they
+	# swap to (lit, lit, and DARK for a cell that has been emptied); those materials
+	# exist from the moment anything asks for them.
+	const SWAPPED: int = 3
+	var want := colors.size() + SWAPPED + 2
 	if distinct.size() > want:
-		_fail("the interior holds %d materials, expected at most %d (%d moving colours + 2 lit + 2 batch)" % [
-			distinct.size(), want, colors.size()])
+		_fail("the interior holds %d materials, expected at most %d (%d moving colours + %d swapped + 2 batch)" % [
+			distinct.size(), want, colors.size(), SWAPPED])
 
 	for mesh: MeshInstance3D in mesh_a:
 		var before := _material_of(mesh)
@@ -1246,6 +1295,347 @@ func _check_earned_state_survives_a_relaunch() -> void:
 		_fail("a half-junk tower record did not salvage to exactly its one real id: %s" % [
 			salvaged])
 	_fresh_store()
+
+
+# ============================================================================
+# CHECK 11 — the cell block has no way round it (bead godot-test1-3iy.8)
+# ============================================================================
+
+func _check_the_wing_has_no_way_round_it() -> void:
+	"""
+	Check 11. The wing's two runs tile exactly, every spine mass really fills its
+	doorway, and the press is a challenge rather than a formality.
+
+	WHY SAMPLING AND NOT ARITHMETIC. `_spine_door_x` and `_spine_pier_x` are derived
+	from the same two widths, so asserting they add up would be asking the formula
+	whether it agrees with itself. What matters is the WORLD: walk the spine line in
+	5 cm steps and ask the box table whether there is stone or a shut mass at head
+	height. A pier one width short, a mass narrower than its doorway, a fifth door
+	authored into a four-door span — all of them are a hole, and a hole in that wall
+	is a route the softlock audit does not model and cannot see.
+	"""
+	var span := TowerInterior.wing_span()
+	var doors := TowerInterior.SPINE_DOORS.size()
+	var laid := float(doors) * TowerInterior.SPINE_DOOR_W \
+			+ float(doors - 1) * TowerInterior.SPINE_PIER_W
+	if absf(laid - span) > EPS:
+		_fail("%d spine doors and %d piers lay out %.3f m across a %.3f m wing" % [
+			doors, doors - 1, laid, span])
+	var cells := TowerGraph.HEROES.size()
+	var cells_laid := float(cells) * TowerInterior._cell_width() \
+			+ float(cells - 1) * TowerInterior.CELL_DIVIDER
+	if absf(cells_laid - span) > EPS:
+		_fail("%d cells and %d dividers lay out %.3f m across a %.3f m wing" % [
+			cells, cells - 1, cells_laid, span])
+
+	# (a) The spine line is solid from end to end while every gate is shut. Head
+	#     height, because that is where a gap would be walked through.
+	var head := TowerInterior.headroom() * 0.5
+	var x := TowerInterior.SLAB_X0 + 0.02
+	while x < TowerInterior.INNER_HALF:
+		if not _solid_at(x, TowerInterior.SPINE_Z, head):
+			_fail("the spine wall has a hole at x = %.2f — the four identity gates can be walked round" % x)
+			break
+		x += 0.05
+	# ...and the cell row, so a captive's recess is a recess and not a through-way.
+	x = TowerInterior.SLAB_X0 + 0.02
+	var open_run := 0.0
+	var widest := 0.0
+	while x < TowerInterior.INNER_HALF:
+		if _solid_at(x, TowerInterior.INNER_HALF - 0.5, head):
+			open_run = 0.0
+		else:
+			open_run += 0.05
+			widest = maxf(widest, open_run)
+		x += 0.05
+	# The widest unbroken opening across the cells' back line must be one cell, not
+	# two: a missing divider reads as a cell block with a corridor behind it.
+	if widest > TowerInterior._cell_width() + 0.1:
+		_fail("the cell row has a %.2f m unbroken opening but a cell is %.2f m — a divider is missing" % [
+			widest, TowerInterior._cell_width()])
+
+	# (b) Every mass fills its doorway to the ceiling and stands in the spine line.
+	var by_name := {}
+	for box: Dictionary in TowerInterior.boxes():
+		by_name[String(box["name"])] = box
+	var wanted: Array[String] = []
+	for i in doors:
+		var door: Dictionary = TowerInterior.SPINE_DOORS[i]
+		var gid := String(door["gate"])
+		var gate: Dictionary = TowerGraph.gate(gid)
+		if String(gate.get("class", "")) != TowerGraph.CLASS_IDENTITY:
+			_fail("the building's spine door '%s' is not an identity gate in TOWER_GRAPH" % gid)
+			continue
+		var who := String(gate["identity"])
+		if wanted.has(who):
+			_fail("two spine doors both open for %s — one hero has two spines and another has none" % who)
+		wanted.append(who)
+		var mass: Dictionary = by_name.get(String(door["mass"]), {})
+		if mass.is_empty():
+			_fail("spine door '%s' names a mass '%s' the interior does not build" % [
+				gid, String(door["mass"])])
+			continue
+		if not is_equal_approx(mass["size"].x, TowerInterior.SPINE_DOOR_W):
+			_fail("%s is %.2f m wide in a %.2f m doorway — you can walk past it" % [
+				String(door["mass"]), mass["size"].x, TowerInterior.SPINE_DOOR_W])
+		if not is_equal_approx(mass["size"].y, TowerInterior.headroom()):
+			_fail("%s is %.2f m tall under a %.2f m ceiling — you can get over it" % [
+				String(door["mass"]), mass["size"].y, TowerInterior.headroom()])
+		if not is_equal_approx(mass["pos"].x, TowerInterior._spine_door_x(i)):
+			_fail("%s stands at x = %.3f, not in doorway %d at x = %.3f" % [
+				String(door["mass"]), mass["pos"].x, i, TowerInterior._spine_door_x(i)])
+	for hero: String in TowerGraph.HEROES:
+		if not wanted.has(hero):
+			_fail("no spine door in the building opens for %s — his rescue spine is not built" % hero)
+
+	# (c) A sunk mass leaves NOTHING in its doorway. A lip of any height is a wall
+	#     in this engine, so "nearly flush" is the same bug as "shut".
+	var open_top := TowerInterior.headroom() * 0.5 - TowerInterior.SPINE_TRAVEL \
+			+ TowerInterior.headroom() * 0.5
+	if open_top > 0.0:
+		_fail("a fully sunk spine mass still stands %.3f m proud of the floor — that is a step, and this engine has no step-up" % open_top)
+
+	# (d) The press: it must actually close the crawl, and it must actually open it.
+	var press: Dictionary = by_name.get("CrawlPress", {})
+	if press.is_empty():
+		_fail("the maintenance crawl has no press — the challenge gate is decorative")
+		return
+	# WHERE it is, before HOW it moves. Check 5 only asserts the mesh agrees with
+	# its own table row, so a row nudged sideways builds a press in the middle of a
+	# wall and satisfies every assertion about itself.
+	var press_half: Vector3 = press["size"] * 0.5
+	if press["pos"].x - press_half.x < TowerInterior.CRAWL_X0 - EPS \
+			or press["pos"].x + press_half.x > TowerInterior.CRAWL_X1 + EPS:
+		_fail("the press spans x = %.2f .. %.2f but the crawl doorway is %.2f .. %.2f — it stamps a wall" % [
+			press["pos"].x - press_half.x, press["pos"].x + press_half.x,
+			TowerInterior.CRAWL_X0, TowerInterior.CRAWL_X1])
+	if not is_equal_approx(press["pos"].z, TowerInterior.WING_Z):
+		_fail("the press stands at z = %.2f, not on the wing wall at z = %.2f" % [
+			press["pos"].z, TowerInterior.WING_Z])
+	var half_h: float = press["size"].y * 0.5
+	if TowerInterior.PRESS_BOTTOM - half_h > EPS:
+		_fail("the press bottoms out %.2f m off the floor — you can walk under it and the crawl asks nothing" % (
+			TowerInterior.PRESS_BOTTOM - half_h))
+	var gap := TowerInterior.PRESS_TOP - half_h
+	if gap < PLAYER_HEIGHT:
+		_fail("the press leaves only %.2f m under it at the top of its stroke — a %.1f m player can never get through" % [
+			gap, PLAYER_HEIGHT])
+	if TowerInterior.PRESS_TOP + half_h > TowerInterior.CRAWL_LINTEL_Y + EPS:
+		_fail("the press rises to %.2f m through a lintel at %.2f m" % [
+			TowerInterior.PRESS_TOP + half_h, TowerInterior.CRAWL_LINTEL_Y])
+	# The stroke reaches both ends and never leaves them.
+	var lowest := TowerInterior.PRESS_TOP
+	var highest := TowerInterior.PRESS_BOTTOM
+	for step in 200:
+		var y := TowerInterior.press_y(TowerInterior.PRESS_PERIOD * float(step) / 200.0)
+		lowest = minf(lowest, y)
+		highest = maxf(highest, y)
+	if lowest < TowerInterior.PRESS_BOTTOM - EPS or highest > TowerInterior.PRESS_TOP + EPS:
+		_fail("press_y ranges %.3f .. %.3f, outside its declared %.2f .. %.2f stroke" % [
+			lowest, highest, TowerInterior.PRESS_BOTTOM, TowerInterior.PRESS_TOP])
+	if absf(lowest - TowerInterior.PRESS_BOTTOM) > 0.01 or absf(highest - TowerInterior.PRESS_TOP) > 0.01:
+		_fail("press_y only sweeps %.3f .. %.3f of its %.2f .. %.2f stroke — the crawl is never really shut or never really open" % [
+			lowest, highest, TowerInterior.PRESS_BOTTOM, TowerInterior.PRESS_TOP])
+	print("cell block: %d spine doors of %.2f m, %d cells of %.2f m across %.2f m; press %.2f .. %.2f m" % [
+		doors, TowerInterior.SPINE_DOOR_W, cells, TowerInterior._cell_width(), span,
+		TowerInterior.PRESS_BOTTOM, TowerInterior.PRESS_TOP])
+
+
+func _solid_at(x: float, z: float, y: float) -> bool:
+	"""
+	Is there a solid interior box at this point, with every gate SHUT?
+
+	@return: true when some collidable, untilted box in `boxes()` contains it.
+
+	`boxes()` is the plan in its closed state, which is exactly the state check 11
+	wants: the question is whether a route exists BEFORE anybody opens anything.
+	The ramp is skipped for the same reason check 2 skips it — a tilted slab's AABB
+	claims stone it does not have.
+	"""
+	for box: Dictionary in TowerInterior.boxes():
+		if not box["collide"] or box.has("rot"):
+			continue
+		var pos: Vector3 = box["pos"]
+		var half: Vector3 = box["size"] * 0.5
+		if absf(pos.x - x) <= half.x and absf(pos.z - z) <= half.z and absf(pos.y - y) <= half.y:
+			return true
+	return false
+
+
+# ============================================================================
+# CHECK 12 — the wing's acceptance walk (bead godot-test1-3iy.8)
+# ============================================================================
+
+func _check_spines_and_liberation() -> void:
+	"""
+	Check 12. The bead's acceptance, driven under real physics:
+
+	  a. A fresh tower holds exactly the authored captive, with his staging in the
+	     cell and the other three frames dark.
+	  b. A WRONG HERO on a spine pad opens nothing; the right hero standing on the
+	     SAME pad without moving opens it. Same two-step as check 7(b)/(c), and for
+	     the same reason: a `body_entered` latch passes the first and fails this.
+	  c. Mesh and collision shape both sink the full travel.
+	  d. LIBERATION IS PERFORMED BY SOMEBODY ELSE. The probe walks into Primm's cell
+	     holding WINDMAN and Primm walks out — which is the whole of "uniform cells,
+	     performable by any single hero", and the assertion a hero test would fail.
+	     The freed hero is handed to the player on the same frame.
+	  e. An empty cell does nothing at all, and writes nothing.
+	  f. A NEW TOWER, built from the store: no captive, no staging. That is the only
+	     liberation state that survives a relaunch, and check 10's stale-copy lesson
+	     is why it goes through the same union merge.
+	  g. `set_captive()` — phase 9's seam — puts somebody back in, and freeing him
+	     costs the opened set nothing, because systemic captivity is per-run.
+	"""
+	_fresh_store()
+	var shell := await _make_tower()
+	var interior := shell.get_node_or_null("TowerInterior") as TowerInterior
+	if interior == null:
+		_fail("the tower has no TowerInterior child")
+		await _clear(null, shell)
+		return
+
+	# (a) the starting state
+	if interior.captives() != [TowerInterior.AUTHORED_CAPTIVE]:
+		_fail("a fresh tower holds %s, expected only the authored captive %s" % [
+			interior.captives(), TowerInterior.AUTHORED_CAPTIVE])
+	var staging := interior.find_child("PrimmContainment", true, false) as MeshInstance3D
+	if staging == null or not staging.visible:
+		_fail("the authored staging is not in the cell on a fresh tower")
+	for hero: String in TowerGraph.HEROES:
+		var frame := interior.find_child("CellFrame%s" % hero.capitalize(), true, false) as MeshInstance3D
+		if frame == null:
+			_fail("%s has no containment frame — his cell cannot show whether it is occupied" % hero)
+			continue
+		var want_lit := hero == TowerInterior.AUTHORED_CAPTIVE
+		var lit := frame.material_override == TowerInterior._material(TowerInterior.COLOR_CELL)
+		if lit != want_lit:
+			_fail("%s's cell reads %s but he is %s" % [
+				hero, "occupied" if lit else "empty",
+				"captive" if want_lit else "free"])
+
+	var hero_body := ProbePlayer.new()
+	var shape := CollisionShape3D.new()
+	var box := BoxShape3D.new()
+	box.size = Vector3(0.8, 1.8, 0.8)
+	shape.shape = box
+	hero_body.add_child(shape)
+	hero_body.add_to_group("player")
+	root.add_child(hero_body)
+
+	# (b) one spine door: the wrong hero, then the right one, without moving.
+	var door: Dictionary = TowerInterior.SPINE_DOORS[0]
+	var gate_id := String(door["gate"])
+	var wants := TowerGraph.identity_of(gate_id)
+	var wrong := "teibi" if wants != "teibi" else "windman"
+	var pad_area := interior.get_node_or_null("Floor0/SpineTrigger1") as Area3D
+	if pad_area == null:
+		_fail("there is no SpineTrigger1 Area3D — the first spine door has no pad")
+		await _clear(hero_body, shell)
+		return
+	var mass := interior.find_child(String(door["mass"]), true, false) as MeshInstance3D
+	var mass_rest: float = mass.position.y
+	hero_body.hero = wrong
+	hero_body.global_position = pad_area.global_position
+	await _settle_physics()
+	interior._process(0.1)
+	if shell.is_opened(gate_id):
+		_fail("%s opened '%s', which answers to %s — the spine door is keyed on nobody" % [
+			wrong, gate_id, wants])
+	hero_body.hero = wants
+	interior._process(0.1)
+	if not shell.is_opened(gate_id):
+		_fail("%s standing on '%s's pad did not open it — the door latched on who walked in" % [
+			wants, gate_id])
+
+	# (c) mesh and shape sink together, the full travel
+	for _i in 30:
+		interior._process(0.1)
+	var body := interior.get_node_or_null("InteriorCollision") as StaticBody3D
+	var mass_shape := body.get_node_or_null("%sShape" % String(door["mass"])) as CollisionShape3D
+	if absf(mass.position.y - (mass_rest - TowerInterior.SPINE_TRAVEL)) > 0.01:
+		_fail("%s stopped at %.2f m, expected %.2f m" % [
+			String(door["mass"]), mass.position.y, mass_rest - TowerInterior.SPINE_TRAVEL])
+	if mass_shape == null or absf(mass_shape.position.y - mass.position.y) > EPS:
+		_fail("%s's collision shape did not sink with its mesh — the doorway is still walled" % [
+			String(door["mass"])])
+
+	# (d) liberation, performed by SOMEBODY ELSE
+	var cell_area := interior.get_node_or_null(
+		"Floor0/CellTrigger%s" % TowerInterior.AUTHORED_CAPTIVE.capitalize()) as Area3D
+	if cell_area == null:
+		_fail("there is no cell volume for %s — his cell cannot be entered" % TowerInterior.AUTHORED_CAPTIVE)
+		await _clear(hero_body, shell)
+		return
+	hero_body.hero = "windman" if TowerInterior.AUTHORED_CAPTIVE != "windman" else "teibi"
+	hero_body.global_position = cell_area.global_position
+	await _settle_physics()
+	if interior.is_captive(TowerInterior.AUTHORED_CAPTIVE):
+		_fail("%s walked into %s's cell and nothing happened — liberation is asking who you are" % [
+			hero_body.hero, TowerInterior.AUTHORED_CAPTIVE])
+	if hero_body.freed != [TowerInterior.AUTHORED_CAPTIVE]:
+		_fail("the player was told %s was freed, expected [%s] — the roster seam did not fire" % [
+			hero_body.freed, TowerInterior.AUTHORED_CAPTIVE])
+	if staging != null and staging.visible:
+		_fail("the authored staging is still in the cell after the first rescue")
+	if not shell.is_opened(TowerInterior.RESCUE_DONE):
+		_fail("the first rescue was not written into the tower's opened set")
+
+	# (e) an empty cell writes nothing
+	var before: Array = shell.opened_ids()
+	var freed_before: Array = hero_body.freed.duplicate()
+	var other := "teibi" if TowerInterior.AUTHORED_CAPTIVE != "teibi" else "phoboman"
+	var empty_area := interior.get_node_or_null("Floor0/CellTrigger%s" % other.capitalize()) as Area3D
+	hero_body.global_position = cell_area.global_position + Vector3(0.0, 0.0, -30.0)
+	await _settle_physics()
+	hero_body.global_position = empty_area.global_position
+	await _settle_physics()
+	if shell.opened_ids() != before:
+		_fail("walking into an empty cell changed the tower's opened set: %s -> %s" % [
+			before, shell.opened_ids()])
+	if hero_body.freed != freed_before:
+		_fail("walking into an empty cell freed somebody: %s became %s" % [
+			freed_before, hero_body.freed])
+
+	# (g) phase 9's seam, on this same tower: put somebody back in and free him.
+	interior.set_captive(other, true)
+	if not interior.is_captive(other):
+		_fail("set_captive() did not hold %s" % other)
+	var frame_other := interior.find_child("CellFrame%s" % other.capitalize(), true, false) as MeshInstance3D
+	if frame_other.material_override != TowerInterior._material(TowerInterior.COLOR_CELL):
+		_fail("%s's cell did not light up when he was taken" % other)
+	hero_body.global_position = cell_area.global_position + Vector3(0.0, 0.0, -30.0)
+	await _settle_physics()
+	hero_body.global_position = empty_area.global_position
+	await _settle_physics()
+	if interior.is_captive(other):
+		_fail("%s was not freed by walking into his cell" % other)
+	if shell.opened_ids() != before:
+		# The whole point of the split: only the AUTHORED rescue persists, because
+		# systemic captivity happens over and over inside one run.
+		_fail("freeing a systemically-taken hero wrote %s into the save; only the authored rescue may persist" % [
+			shell.opened_ids()])
+
+	hero_body.queue_free()
+	shell.queue_free()
+	await process_frame
+
+	# (f) a NEW tower, built from what is on disk
+	var again := await _make_tower()
+	var inside := again.get_node_or_null("TowerInterior") as TowerInterior
+	if inside == null:
+		_fail("the rebuilt tower has no interior")
+		await _clear(null, again)
+		return
+	if not inside.captives().is_empty():
+		_fail("a tower rebuilt after the first rescue still holds %s" % [inside.captives()])
+	var staging_again := inside.find_child("PrimmContainment", true, false) as MeshInstance3D
+	if staging_again != null and staging_again.visible:
+		_fail("the authored staging came back on a rebuilt tower — the first rescue did not survive the process")
+	if not again.is_opened(String(TowerInterior.SPINE_DOORS[0]["gate"])) :
+		_fail("the spine door opened in this run came back shut on a rebuilt tower")
+	again.queue_free()
+	await process_frame
 
 
 func _fresh_store() -> void:

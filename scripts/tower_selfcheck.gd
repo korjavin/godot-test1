@@ -98,9 +98,15 @@ var _gate_colors: Array[Color] = [
 	TowerInterior.COLOR_IDENTITY_PAD,
 ]
 
-## ...and the colour that means "this box marks a room". Only the checkpoint has
-## one today; a room's `parts` claim these the way a gate's claim the above.
-var _room_colors: Array[Color] = [TowerInterior.COLOR_CHECKPOINT]
+## ...and the colours that mean "this box marks a room". A room's `parts` claim
+## these the way a gate's claim the above: the checkpoint's green, and — from phase
+## 8 — a cell's containment red. That second one is what fences the cell block in
+## both directions: a fifth cell built into the wing and not authored here fails,
+## and an authored cell whose frame nobody built fails too.
+var _room_colors: Array[Color] = [
+	TowerInterior.COLOR_CHECKPOINT,
+	TowerInterior.COLOR_CELL,
+]
 
 ## Keys a gate row may carry. A WHITELIST, because the law that matters here is a
 ## negative one — no gate may key on a hero's ABSENCE — and the only mechanical

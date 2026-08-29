@@ -24,6 +24,25 @@ extends Node3D
 ##   and, off the hall to the south, the DEMAND GATE sealing a vault. Optional,
 ##   skippable, and the whole point of it is that you can SEE what it wants.
 ##
+## ...and, off the hall to the NORTH (phase 8), THE CELL BLOCK WING:
+##
+##   entry hall  →  THE MAINTENANCE CRAWL: a low duct with a stamping press
+##                  across it. A challenge, so anybody gets through it.
+##   courtyard   →  the same corridor by its other door, which asks nothing.
+##                  Two ways in, on purpose: the custody scar drops one.
+##               →  THE SERVICE CORRIDOR, with FOUR DOORS along its north side
+##                  and a violet pad in front of each. One door per hero, and
+##                  each is that hero's rescue spine (`TowerGraph.spines`).
+##               →  THE CELL GALLERY, and off it FOUR UNIFORM CELLS. Whoever
+##                  reached the gallery can open any of them: liberation asks
+##                  nobody's name, which is what "uniform cells" means.
+##
+## THE WING IS THE TUTORIAL FOR ITSELF. Ordinary rescues walk it over and over,
+## and the one scene where it matters most is the last one — so the geography is
+## deliberately a straight line with a single fork: corridor, four doors, one
+## gallery, four cells in a row. Nothing branches, nothing doubles back, and the
+## cell you want is always the nth recess from the end.
+##
 ## ============================================================================
 ## THE LEGIBILITY LANGUAGE — READ THIS BEFORE ADDING A ROOM
 ## ============================================================================
@@ -145,11 +164,11 @@ extends Node3D
 ## COST
 ## ============================================================================
 ##
-## TEN `MeshInstance3D`s for the parts that move plus TWO batched ones for
-## everything that does not (see THE BATCH below), ONE `StaticBody3D`, five
-## `Area3D`s (three pads and two
-## rotor hazards), two rotor pivots, one `Label3D` and one gem — built once, for
-## the life of a run. Per-floor visibility
+## TWENTY `MeshInstance3D`s for the parts that move (plus the two batches) plus TWO batched ones for
+## everything that does not (see THE BATCH below), ONE `StaticBody3D`, fourteen
+## `Area3D`s (three pads, two rotor hazards and, from phase 8, one press hazard,
+## four spine pads and four cell volumes), two rotor pivots, three `Label3D`s and
+## one gem — built once, for the life of a run. Per-floor visibility
 ## gating (`_update_visibility`) is what keeps that off the web frame budget when
 ## the player is anywhere else in the world.
 
@@ -300,6 +319,115 @@ const NUDGE_FRACTION: float = 0.3
 const NUDGE_TIME: float = 1.4
 
 # ============================================================================
+# THE CELL BLOCK WING — phase 8, north of the entry hall and under the same slab
+# ============================================================================
+#
+# THE WING IS ROOFED, AND THAT IS THE CONSTRAINT EVERYTHING BELOW BENDS TO. The
+# slab spans the whole of x >= SLAB_X0, so the only unbuilt ground left inside this
+# keep is the hall's north end: the courtyard is the ramp's, the south is the
+# vault's, and the -X/-Z corner is seven metres of solid spire. A wing under a
+# 4.2 m ceiling gets two things for free and pays for one:
+#
+#   FREE: the jump rule stops applying (`_roofed` — a jump under the slab ends at
+#         the slab), so walls here are sized for sightlines instead of for an apex.
+#   FREE: it is dark, so the two light panels below are the whole art direction.
+#   PAID: A 4.2 m MASS CANNOT RISE UNDER A 4.2 m CEILING. The secure door's
+#         counterweight rises and stays risen because it stands under open sky;
+#         these four have nowhere to go but DOWN, so they sink and stay sunk.
+#
+# That is a real, deliberate weakening of the legibility language's "identity gates
+# rise, demand gates sink" opposition, taken with eyes open because the geometry
+# left no other move that is not a jump-gated ledge. The other three axes are
+# untouched and they are the ones a player reads FIRST: violet against steel, a
+# blank mass against a banded pillar, a pad you stand on against a receptacle you
+# walk up to. Motion is the axis you only see once you have already been told the
+# answer. If the tower ever grows a storey with sky over this wing, put the rise
+# back.
+#
+# THE CAMERA, honestly: `CameraArm` is an 8.25 m `SpringArm3D` and nothing may
+# write `camera.position`, so a room narrower than the arm collapses it — the
+# courtyard's documented 8 m deferral, one storey down. This wing is laid out to
+# lose as little as it can: the corridor and the gallery both run the building's
+# LONG axis (9.3 m), the cells are open-fronted recesses rather than rooms with
+# doors, and the ceiling is the hall's full 4.2 m. Facing along either run the arm
+# nearly extends; facing into a cell it does not, and that is the same deferral,
+# not a new one.
+
+## The wing's south wall: the line that divides the entry hall from the service
+## corridor. 2.2 m clears the rotor bars' 1.7 m sweep with 0.3 m to spare, which is
+## what stops a bar chopping through the wall the moment the doorway moves.
+const WING_Z: float = 2.2
+
+## ...except at the east end, where it JOGS NORTH around the shell's doorway. The
+## front door's trigger volume reaches x >= 7.8 and z <= 3.0 and must stay empty
+## (`tower_shell.door_trigger_box`, asserted by check 1), so the straight run stops
+## short of it and the last 1.4 m of boundary is 1.2 m further north. That jog is
+## what buys the wing its depth: a straight wall clear of the doorway would start
+## at z = 3.4 and leave 5.4 m for a corridor, a gallery AND four cells.
+const WING_JOG_X: float = 7.4
+const WING_JOG_Z: float = 3.4
+
+## The maintenance crawl's doorway, and the press that sweeps it. The press is an
+## `Area3D` hazard on a mesh that never becomes solid — a solid block driven by
+## script shoves a `CharacterBody3D` through whatever is behind it, which is the
+## same reason the rotor bars are hazards (see `_make_rotor`).
+##
+## IT IS A CHALLENGE AND MUST STAY ONE. `maintenance_crawl` is the route the
+## custody scar leaves standing when it drops the courtyard stair, so the softlock
+## audit needs it passable by every hero with no rank at all. A press you time is;
+## anything keyed on a name or a number is not.
+const CRAWL_X0: float = 4.3
+const CRAWL_X1: float = 5.7
+## The lintel and the stroke are one pair of numbers, not two: the press's box is
+## 0.7 m deep, so its top at rest is exactly the lintel's underside and its bottom
+## at the end of the stroke is exactly the floor. Between them the gap has to clear
+## a 2 m capsule or the crawl is impassable at every phase of its cycle — which is
+## a challenge gate that is really a wall, and check 11 measures it.
+const CRAWL_LINTEL_Y: float = 2.8
+const PRESS_TOP: float = 2.45
+const PRESS_BOTTOM: float = 0.35
+## Long enough to walk under without sprinting, short enough that waiting is dull.
+const PRESS_PERIOD: float = 2.6
+
+## The corridor's other door: a gap cut in the slab-edge wall, straight out to the
+## courtyard and asking nothing (`courtyard_stair`). Two ways into one corridor is
+## not redundancy for its own sake — it is the entire reason the custody scar is
+## survivable, and `tower_selfcheck` check 6 recomputes that rather than trusting
+## this comment.
+const SERVICE_DOOR_Z0: float = 2.6
+const SERVICE_DOOR_Z1: float = 4.0
+
+## The spine wall: four doorways in one 9.3 m run, one per hero, each filled by its
+## own mass. Four doors need a long wall, which is why the wing splits north/south
+## and not east/west — 1.5 m of door and 1.1 m of pier is what fits, and a 1.5 m
+## opening clears a giant Teibi.
+const SPINE_Z: float = 4.4
+const SPINE_DOOR_W: float = 1.5
+const SPINE_PIER_W: float = 1.1
+## How far a spine mass sinks: its own height and a little more, so its top ends up
+## under the yard slab and there is no lip left in the doorway. A lip of ANY height
+## is a wall in this engine, so "nearly flush" is not a finish, it is a bug.
+const SPINE_TRAVEL: float = 4.6
+## Where a spine pad sits: in the corridor, hard against its own door.
+##
+## PRESSED UP AGAINST THE SPINE WALL, and that is the doorway's fault rather than a
+## style choice: the easternmost pad reaches x = 8.8, and at the other end of the
+## corridor the wing wall's jog runs to z = 3.6, so a deeper pad would either sit
+## inside that wall or inside the shell's door trigger volume (check 1 caught both).
+## The TRIGGER is deeper than the plate — you step onto a pad from the corridor, so
+## the volume may reach back past the paint.
+const PAD_Z: float = 3.9
+const PAD_DEPTH: float = 0.6
+const PAD_TRIGGER_DEPTH: float = 1.0
+
+## The cells: four uniform recesses off the gallery's north side, divided by piers
+## and open-fronted. THEY HAVE NO DOORS, and that is the rule rather than a saving —
+## `TowerGraph`'s `gallery_cell_*` edges are ungated, so whoever reached the gallery
+## can free whoever is inside, whatever hero they happen to be holding.
+const CELL_Z0: float = 6.6
+const CELL_DIVIDER: float = 0.3
+
+# ============================================================================
 # VISIBILITY GATING — the web frame budget's half of this bead
 # ============================================================================
 
@@ -324,19 +452,35 @@ const FLOOR_HYSTERESIS: float = 0.8
 ## Hard cap on the interior's box count, asserted headlessly by
 ## `tower_interior_selfcheck.gd` — the shell's `BOX_BUDGET` discipline, with its
 ## own (larger) number because these meshes are only ever drawn from inside the
-## building. 32 leaves room for phase 8's cell block to add a few walls without a
-## new ruling and bites the moment somebody starts furnishing.
-const BOX_BUDGET: int = 32
+## building.
+##
+## RAISED FROM 32 TO 60 BY PHASE 8: the cell block wing is 28 boxes (four walls, a
+## lintel, a press, a jamb, three piers, four masses, four pads, three dividers,
+## four cell frames, the staging unit and two light panels) and 26 of them are
+## batched, i.e. free. What this number still stops is furnishing — it leaves six
+## spare and bites the moment somebody starts modelling bunks.
+const BOX_BUDGET: int = 60
 
 ## Hard cap on how many `MeshInstance3D`s the interior may actually BUILD — which,
 ## unlike the box budget, is the number the renderer charges for.
 ##
 ## THE TWO BUDGETS ARE NOT THE SAME NUMBER AND MUST NOT BE. Boxes are free once
-## they are in a batch (see THE BATCH above): the plan may grow to 32 of them and
+## they are in a batch (see THE BATCH above): the plan may grow to 60 of them and
 ## still cost twelve draws. What this cap stops is boxes leaving the batch — every
-## name added to `MOVING_PARTS` spends one, and thirty-two unbatched boxes is the
+## name added to `MOVING_PARTS` spends one, and sixty unbatched boxes is the
 ## 190-spike walk that made the batch necessary in the first place.
-const DRAW_BUDGET: int = 14
+##
+## RAISED FROM 14 TO 22 BY PHASE 8, and every one of the ten new nodes is a box
+## that CANNOT be batched: four spine masses that travel, one press that sweeps,
+## four cell frames that relight on liberation and one staging unit that
+## disappears. The four spine pads, three piers, four dividers, five walls and two
+## light panels are batched and therefore cost nothing.
+##
+## 22 IS THE EXACT COUNT, with no slack left, on purpose: the next part that wants
+## its own node has to justify itself against this comment rather than fit under a
+## rounding. (12 of it is the pre-phase-8 building, two of THOSE being the per-storey
+## batches.)
+const DRAW_BUDGET: int = 22
 
 # ============================================================================
 # PALETTE — one material per colour, shared process-wide (see `_material`)
@@ -356,6 +500,15 @@ const COLOR_IDENTITY_PAD := Color(0.72, 0.36, 1.00) # ...and the pad you stand o
 const COLOR_CHECKPOINT := Color(0.16, 0.38, 0.30)   # checkpoint, not yet reached
 const COLOR_CHECKPOINT_LIT := Color(0.32, 1.00, 0.58)
 const COLOR_PANEL := Color(1.00, 0.95, 0.86)        # ceiling light panels
+## THE FIFTH WORD IN THE LANGUAGE, and it is a ROOM MARKER and not a gate: a cell's
+## containment field, held red while somebody is in there and dead grey once they
+## are not. Red is free — nothing else in this building is warm except the hazard
+## orange, and a hazard is a moving bar. So "there is a person in that recess" is
+## answerable from the far end of the gallery, which is the whole design of the
+## wing (see THE ROUTE). `tower_selfcheck` claims every box wearing it for exactly
+## one cell room, the way it claims the checkpoint's green.
+const COLOR_CELL := Color(0.95, 0.24, 0.30)         # an OCCUPIED cell
+const COLOR_CELL_FREED := Color(0.19, 0.21, 0.23)   # ...and the same field, shut down
 
 ## Which colours are EMISSIVE AND UNSHADED. There are no `Light3D`s anywhere in
 ## this building: a real light under the slab would cost a shadow pass on a
@@ -363,6 +516,7 @@ const COLOR_PANEL := Color(1.00, 0.95, 0.86)        # ceiling light panels
 ## above. A glowing box is a draw call that was happening anyway.
 const GLOW_COLORS: Array[Color] = [
 	COLOR_BAND_LIT, COLOR_IDENTITY_PAD, COLOR_CHECKPOINT_LIT, COLOR_PANEL,
+	COLOR_CELL,
 ]
 
 # ============================================================================
@@ -381,6 +535,38 @@ const GLOW_COLORS: Array[Color] = [
 const GATE_DEMAND: String = TowerGraph.GATE_DEMAND
 const GATE_IDENTITY: String = TowerGraph.GATE_IDENTITY
 const GATE_CHECKPOINT: String = TowerGraph.GATE_CHECKPOINT
+
+## THE FOUR RESCUE SPINES, in door order west to east — the gate id is the graph's
+## own key and the box names it claims in `parts`.
+##
+## THE HERO IS NOT HERE, deliberately: `TowerGraph.identity_of()` answers who each
+## door opens for, so the four names are written down once in this repository and a
+## door cannot ask for a hero the softlock audit thinks it asks for somebody else.
+## The gate id doubles as the string that goes in the opened set, exactly as the
+## three constants above do.
+const SPINE_DOORS: Array[Dictionary] = [
+	{"gate": "updraft_shaft", "mass": "UpdraftMass", "pad": "UpdraftPad"},
+	{"gate": "phase_grate", "mass": "GrateMass", "pad": "GratePad"},
+	{"gate": "collapsed_slab", "mass": "SlabMass", "pad": "SlabPad"},
+	{"gate": "hound_den", "mass": "DenMass", "pad": "DenPad"},
+]
+
+## What the AUTHORED FIRST RESCUE writes into the tower's opened set once it has
+## happened. Not a passage — the cell doors are ungated, which is the point — but
+## story progress, and it belongs in the same monotone set for the same reason a
+## checkpoint does: it is a thing the building remembers about you.
+##
+## IT IS THE ONLY LIBERATION STATE THAT PERSISTS, and that is a deliberate split.
+## Systemic captivity (phase 9) is per-run: heroes are taken and freed over and
+## over inside one run, and a saved "primm is free" would be a lie the moment he
+## was taken again. What survives a relaunch is the single fact the staging depends
+## on — the first rescue happened, so the containment unit is gone for good.
+const RESCUE_DONE: String = "tower_rescue_primm"
+
+## Who the authored first rescue is about. Read from the graph's cell rooms rather
+## than trusted: `AUTHORED_CAPTIVE` must be a hero with a cell, which check 1
+## already guarantees for all four.
+const AUTHORED_CAPTIVE: String = "primm"
 
 # ============================================================================
 # THE BATCH — why most of this building is two meshes
@@ -416,6 +602,14 @@ const MOVING_PARTS: Array[String] = [
 	"DemandShutter", "IdentityMass",
 	"Band1", "Band2", "Band3", "Band4",
 	"CheckpointPlate", "CheckpointPost",
+	# --- phase 8: the wing. Four masses that travel, one press that sweeps, four
+	# cell frames that relight the moment a captive walks out, and the staging unit
+	# that is never seen again after the first rescue. Everything else in the wing
+	# — every wall, pier, divider, pad and panel — sits still and is batched.
+	"UpdraftMass", "GrateMass", "SlabMass", "DenMass",
+	"CrawlPress",
+	"CellFrameWindman", "CellFramePrimm", "CellFrameTeibi", "CellFramePhoboman",
+	"PrimmContainment",
 ]
 
 # ============================================================================
@@ -433,6 +627,8 @@ var _mass_shape: CollisionShape3D = null
 var _band_meshes: Array[MeshInstance3D] = []
 var _checkpoint_meshes: Array[MeshInstance3D] = []
 var _label: Label3D = null
+var _spine_label: Label3D = null
+var _cell_label: Label3D = null
 
 ## The two rotor pivots. The bars and their hazard volumes are children, so one
 ## `rotation.y` per pivot animates both.
@@ -446,6 +642,35 @@ var _floors: Array[Node3D] = []
 ## as the boolean "is this id in the opened set"; this is the tween.
 var _shutter_open: float = 0.0
 var _mass_open: float = 0.0
+
+## The wing's four spine doors, keyed by gate id: the mass, its collision shape,
+## how far it has sunk (0 = shut, 1 = fully open) and whether the local player is
+## standing on its pad. FOUR PARALLEL DICTIONARIES AND NOT FOUR FIELDS EACH,
+## because every one of them is read in a loop over `SPINE_DOORS` and never by
+## name — a fifth spine would be a row in that table and nothing else.
+var _spine_meshes: Dictionary = {}
+var _spine_shapes: Dictionary = {}
+var _spine_open: Dictionary = {}
+var _on_spine_pad: Dictionary = {}
+
+## The crawl press and its clock. The clock is the animation's only state — the
+## press has no open/shut, it just runs, which is what makes it a challenge.
+var _press: MeshInstance3D = null
+var _press_clock: float = 0.0
+
+## The four containment frames, keyed by HERO, plus the authored staging unit.
+var _cell_frames: Dictionary = {}
+var _containment: MeshInstance3D = null
+
+## WHO IS IN THE CELLS RIGHT NOW, as a set of hero names.
+##
+## PER-RUN AND DELIBERATELY NOT PERSISTED: phase 9 takes and frees heroes over and
+## over inside one run, so a saved captive set would be stale the moment it was
+## written. The single fact that DOES survive a relaunch is `RESCUE_DONE` — the
+## authored first rescue happened — and it is what seeds this set on build.
+##
+## Phase 9 drives it through `set_captive()`; nothing else writes it.
+var _captives: Dictionary = {}
 
 ## The partway reaction's clock, counting 0 -> 1 over NUDGE_TIME. Zero when idle.
 var _nudge: float = 0.0
@@ -503,10 +728,20 @@ static func boxes() -> Array[Dictionary]:
 		"size": Vector3(0.4, SLAB_Y, INNER_HALF - ROTOR_DOOR_HALF),
 		"color": COLOR_STONE, "collide": true, "floor": 0,
 	})
+	# The +Z jamb is now in TWO pieces with the service doorway between them: the
+	# courtyard's own way into the cell block wing (`courtyard_stair`), which asks
+	# nothing of anybody. The short stub is the pier between the rotor doorway and
+	# that one, so the two openings read as two doors and not one wide gap.
 	out.append({
 		"name": "RotorJambPosZ",
-		"pos": Vector3(ROTOR_POST_X, SLAB_Y * 0.5, (RAMP_UNDER_Z + ROTOR_DOOR_HALF) * 0.5),
-		"size": Vector3(0.4, SLAB_Y, RAMP_UNDER_Z - ROTOR_DOOR_HALF),
+		"pos": Vector3(ROTOR_POST_X, SLAB_Y * 0.5, (SERVICE_DOOR_Z0 + ROTOR_DOOR_HALF) * 0.5),
+		"size": Vector3(0.4, SLAB_Y, SERVICE_DOOR_Z0 - ROTOR_DOOR_HALF),
+		"color": COLOR_STONE, "collide": true, "floor": 0,
+	})
+	out.append({
+		"name": "ServiceJamb",
+		"pos": Vector3(ROTOR_POST_X, SLAB_Y * 0.5, (RAMP_UNDER_Z + SERVICE_DOOR_Z1) * 0.5),
+		"size": Vector3(0.4, SLAB_Y, RAMP_UNDER_Z - SERVICE_DOOR_Z1),
 		"color": COLOR_STONE, "collide": true, "floor": 0,
 	})
 	# The stretch the ramp flies over on its way to the slab — see RAMP_UNDER_TOP.
@@ -586,10 +821,12 @@ static func boxes() -> Array[Dictionary]:
 
 	# Ceiling panels. The hall is the one enclosed room in the building and the
 	# directional light does not reach under a slab; without these it is a cave.
+	# Moved south by phase 8: z = 3.4 is now inside the service corridor, and the
+	# hall's own north end is the stretch between the doorway and the wing wall.
 	out.append({
 		"name": "PanelHallNorth",
-		"pos": Vector3(5.4, hall_clear - 0.05, 3.4),
-		"size": Vector3(4.0, 0.1, 4.0),
+		"pos": Vector3(5.4, hall_clear - 0.05, 0.4),
+		"size": Vector3(4.0, 0.1, 3.2),
 		"color": COLOR_PANEL, "collide": false, "floor": 0,
 	})
 	out.append({
@@ -604,6 +841,9 @@ static func boxes() -> Array[Dictionary]:
 		"size": Vector3(2.6, 0.1, 2.6),
 		"color": COLOR_PANEL, "collide": false, "floor": 0,
 	})
+
+	# ---- The cell block wing, north of the hall (phase 8) ------------------
+	out.append_array(_wing_boxes())
 
 	# The ramp. Derived entirely from the storey height and the run, so the deck
 	# lands EXACTLY on the slab's lip at one end and on the ground at the other —
@@ -689,6 +929,195 @@ static func _ramp_box() -> Dictionary:
 	}
 
 
+static func _wing_boxes() -> Array[Dictionary]:
+	"""
+	The cell block wing: the service corridor, the four spine doors and the four
+	cells, as `boxes()` entries.
+
+	@return: Every box north of `WING_Z`, in build order (walls, crawl, spine,
+	        cells, light).
+
+	Its own function rather than another 150 lines inside `boxes()` for the reason
+	`_ramp_box()` is: the arithmetic here is a run of derived spacings — four doors
+	and three piers across one span, four cells and three dividers across the same
+	span — and a derived spacing written inline next to hand-placed furniture is how
+	a doorway ends up 4 cm off its pad. Every x below comes out of `_spine_door_x`,
+	`_spine_pier_x` or `_cell_x`, which the self-check drives directly.
+	"""
+	var out: Array[Dictionary] = []
+	var clear := headroom()
+	var mid_y := clear * 0.5
+
+	# ---- The wing wall: the hall's north boundary, with the crawl in it ----
+	out.append({
+		"name": "WingWallWest",
+		"pos": Vector3((SLAB_X0 + CRAWL_X0) * 0.5, mid_y, WING_Z),
+		"size": Vector3(CRAWL_X0 - SLAB_X0, clear, 0.4),
+		"color": COLOR_STONE, "collide": true, "floor": 0,
+	})
+	out.append({
+		"name": "WingWallEast",
+		"pos": Vector3((CRAWL_X1 + WING_JOG_X) * 0.5, mid_y, WING_Z),
+		"size": Vector3(WING_JOG_X - CRAWL_X1, clear, 0.4),
+		"color": COLOR_STONE, "collide": true, "floor": 0,
+	})
+	# The jog around the shell's doorway, and the short return that closes it.
+	out.append({
+		"name": "WingWallJog",
+		"pos": Vector3(WING_JOG_X, mid_y, (WING_Z + WING_JOG_Z) * 0.5),
+		"size": Vector3(0.4, clear, WING_JOG_Z - WING_Z + 0.4),
+		"color": COLOR_STONE, "collide": true, "floor": 0,
+	})
+	out.append({
+		"name": "WingWallNorthEast",
+		"pos": Vector3((WING_JOG_X + INNER_HALF) * 0.5, mid_y, WING_JOG_Z),
+		"size": Vector3(INNER_HALF - WING_JOG_X, clear, 0.4),
+		"color": COLOR_STONE, "collide": true, "floor": 0,
+	})
+
+	# ---- The maintenance crawl: a lintel low enough to read as a duct, and a
+	# press sweeping the gap under it. -----------------------------------------
+	out.append({
+		"name": "CrawlLintel",
+		"pos": Vector3((CRAWL_X0 + CRAWL_X1) * 0.5, (CRAWL_LINTEL_Y + clear) * 0.5, WING_Z),
+		"size": Vector3(CRAWL_X1 - CRAWL_X0, clear - CRAWL_LINTEL_Y, 0.4),
+		"color": COLOR_STONE, "collide": true, "floor": 0,
+	})
+	# `sweep` marks a part that is MOVING on any frame you look at it, the way
+	# `spin` marks a rotor bar. Its position here is the TOP of the stroke, which is
+	# where `press_y(0)` puts it — see that function.
+	out.append({
+		"name": "CrawlPress",
+		"pos": Vector3((CRAWL_X0 + CRAWL_X1) * 0.5, PRESS_TOP, WING_Z),
+		"size": Vector3(CRAWL_X1 - CRAWL_X0 - 0.1, 0.7, 0.6),
+		"color": COLOR_HAZARD, "collide": false, "floor": 0,
+		"sweep": true,
+	})
+
+	# ---- The spine wall: three piers, four doorways, four masses, four pads ----
+	for i in 3:
+		out.append({
+			"name": "SpinePier%d" % (i + 1),
+			"pos": Vector3(_spine_pier_x(i), mid_y, SPINE_Z),
+			"size": Vector3(SPINE_PIER_W, clear, 0.4),
+			"color": COLOR_STONE, "collide": true, "floor": 0,
+		})
+	for i in SPINE_DOORS.size():
+		var door: Dictionary = SPINE_DOORS[i]
+		# The mass fills its doorway to the ceiling, so there is nothing to jump
+		# over and nothing to walk round — the two ways a gate stops being one.
+		out.append({
+			"name": String(door["mass"]),
+			"pos": Vector3(_spine_door_x(i), mid_y, SPINE_Z),
+			"size": Vector3(SPINE_DOOR_W, clear, 0.6),
+			"color": COLOR_IDENTITY, "collide": true, "floor": 0,
+		})
+		# ...and the pad in front of it, 10 cm proud and non-solid: a change of
+		# colour under your feet, never a lip to trip on.
+		out.append({
+			"name": String(door["pad"]),
+			"pos": Vector3(_spine_door_x(i), 0.05, PAD_Z),
+			"size": Vector3(SPINE_DOOR_W, 0.1, PAD_DEPTH),
+			"color": COLOR_IDENTITY_PAD, "collide": false, "floor": 0,
+		})
+
+	# ---- The cells: three dividers and four containment frames ----------------
+	var cell_mid := (CELL_Z0 + INNER_HALF) * 0.5
+	var cell_depth := INNER_HALF - CELL_Z0
+	for i in 3:
+		out.append({
+			"name": "CellDivider%d" % (i + 1),
+			"pos": Vector3(_cell_x(i) + (_cell_width() + CELL_DIVIDER) * 0.5, mid_y, cell_mid),
+			"size": Vector3(CELL_DIVIDER, clear, cell_depth),
+			"color": COLOR_STONE, "collide": true, "floor": 0,
+		})
+	for i in TowerGraph.HEROES.size():
+		out.append({
+			"name": "CellFrame%s" % String(TowerGraph.HEROES[i]).capitalize(),
+			"pos": Vector3(_cell_x(i), 1.25, INNER_HALF - 0.3),
+			"size": Vector3(_cell_width() - 0.6, 2.5, 0.12),
+			"color": COLOR_CELL, "collide": false, "floor": 0,
+		})
+	# THE ONE PIECE OF AUTHORED STAGING IN THE BUILDING. A standard cell plus a
+	# steel containment screen across its mouth: the first rescue's identity comes
+	# from what is IN the cell, never from the cell, because any hero can land in
+	# any of them. Non-solid — it smothers a field, it is not a door — and gone for
+	# good the moment `RESCUE_DONE` is in the opened set.
+	# WAIST HIGH, and that was found by walking it rather than reasoned: built full
+	# height it stood in front of the containment frame and hid it, so Primm's cell
+	# read exactly like the three empty ones — the staging swallowed the one thing
+	# this wing has to say from across the gallery.
+	out.append({
+		"name": "PrimmContainment",
+		"pos": Vector3(_cell_x(TowerGraph.HEROES.find(AUTHORED_CAPTIVE)), 0.6, CELL_Z0 + 0.5),
+		"size": Vector3(_cell_width() - 0.2, 1.2, 0.5),
+		"color": COLOR_MECHANISM, "collide": false, "floor": 0,
+	})
+
+	# ---- Light. The wing is under the slab and the sun does not reach it. ----
+	out.append({
+		"name": "PanelStair",
+		"pos": Vector3(4.0, clear - 0.05, (WING_Z + SPINE_Z) * 0.5),
+		"size": Vector3(7.5, 0.1, 1.6),
+		"color": COLOR_PANEL, "collide": false, "floor": 0,
+	})
+	out.append({
+		"name": "PanelGallery",
+		"pos": Vector3(4.15, clear - 0.05, (SPINE_Z + CELL_Z0) * 0.5 + 0.5),
+		"size": Vector3(8.0, 0.1, 1.8),
+		"color": COLOR_PANEL, "collide": false, "floor": 0,
+	})
+	return out
+
+
+static func wing_span() -> float:
+	"""The wing's full east-west run: the slab's west edge to the shell's inner face."""
+	return INNER_HALF - SLAB_X0
+
+
+static func _spine_door_x(index: int) -> float:
+	"""
+	Centre of the `index`th spine doorway, west to east.
+
+	Four doors and three piers laid end to end across `wing_span()`, so the run is
+	exact by construction: `4 * SPINE_DOOR_W + 3 * SPINE_PIER_W` must equal the
+	span, which `tower_interior_selfcheck` asserts rather than trusts.
+	"""
+	return SLAB_X0 + SPINE_DOOR_W * 0.5 + float(index) * (SPINE_DOOR_W + SPINE_PIER_W)
+
+
+static func _spine_pier_x(index: int) -> float:
+	"""Centre of the `index`th pier — between doors `index` and `index + 1`."""
+	return _spine_door_x(index) + (SPINE_DOOR_W + SPINE_PIER_W) * 0.5
+
+
+static func _cell_width() -> float:
+	"""How wide one cell is: the span less three dividers, split four ways."""
+	return (wing_span() - 3.0 * CELL_DIVIDER) * 0.25
+
+
+static func _cell_x(index: int) -> float:
+	"""Centre of the `index`th cell, west to east — the same run, differently cut."""
+	return SLAB_X0 + _cell_width() * 0.5 + float(index) * (_cell_width() + CELL_DIVIDER)
+
+
+static func press_y(clock: float) -> float:
+	"""
+	Where the crawl press sits at `clock` seconds into its cycle.
+
+	@param clock: 0 .. `PRESS_PERIOD`.
+	@return: The mesh's y, in interior-local metres.
+
+	A raised cosine, so it DWELLS at both ends: the gap under it is open long
+	enough to walk through at a walk, which is the difference between a challenge
+	and a coin flip. `press_y(0)` is the top of the stroke, which is where
+	`_wing_boxes()` puts the box — so the table and the animation agree at t = 0
+	and the self-check can assert the stroke's bounds from these two constants.
+	"""
+	var phase := TAU * clock / PRESS_PERIOD
+	return PRESS_BOTTOM + (PRESS_TOP - PRESS_BOTTOM) * (0.5 + 0.5 * cos(phase))
+
+
 static func demand_met(reach: float) -> bool:
 	"""
 	Does this reading satisfy the demand gate? The ONE comparison — see
@@ -759,6 +1188,11 @@ func _ready() -> void:
 		mesh.material_override = _material(box["color"])
 		_no_shadow(mesh)
 		parent.add_child(mesh)
+		# The press's hazard volume rides the mesh itself, so one `position.y` write
+		# moves what you see and what hurts you together. Never a solid body: a
+		# script-driven solid shoves a `CharacterBody3D` through the wall behind it.
+		if box.has("sweep"):
+			_add_hazard_child(mesh, box["size"])
 		_remember(box["name"], mesh)
 		if not box["collide"]:
 			continue
@@ -775,6 +1209,10 @@ func _ready() -> void:
 			_shutter_shape = shape
 		elif box["name"] == "IdentityMass":
 			_mass_shape = shape
+		else:
+			var spine := _spine_gate_of(String(box["name"]))
+			if spine != "":
+				_spine_shapes[spine] = shape
 
 	for i in _floors.size():
 		var batch := MeshInstance3D.new()
@@ -784,6 +1222,7 @@ func _ready() -> void:
 		_floors[i].add_child(batch)
 
 	_build_pads()
+	_build_wing()
 	_build_label()
 	_build_vault_prize()
 	# Whatever the tower already knows is open, apply it NOW — before the first
@@ -809,6 +1248,7 @@ func _process(delta: float) -> void:
 	for i in _rotors.size():
 		var speed: float = ROTOR_LOW_SPEED if i == 0 else ROTOR_HIGH_SPEED
 		_rotors[i].rotation.y = wrapf(_rotors[i].rotation.y + speed * delta, 0.0, TAU)
+	_tick_press(delta)
 	_tick_gates(delta)
 	_tick_pads()
 
@@ -859,8 +1299,18 @@ func _apply_opened() -> void:
 		_mass_open = 1.0
 	if _is_open(GATE_CHECKPOINT):
 		_light_checkpoint()
+	for door: Dictionary in SPINE_DOORS:
+		var gid := String(door["gate"])
+		_spine_open[gid] = 1.0 if _is_open(gid) else 0.0
+		_place_spine(gid)
 	_place_shutter()
 	_place_mass()
+	# The captive set is seeded from the same snapshot, so a tower rebuilt after the
+	# authored rescue comes up with an empty cell block and no staging in it.
+	_captives.clear()
+	if not _is_open(RESCUE_DONE):
+		_captives[AUTHORED_CAPTIVE] = true
+	_refresh_cells()
 
 
 # ============================================================================
@@ -876,6 +1326,11 @@ func _tick_gates(delta: float) -> void:
 	if _is_open(GATE_IDENTITY) and _mass_open < 1.0:
 		_mass_open = minf(1.0, _mass_open + step)
 		_place_mass()
+	for door: Dictionary in SPINE_DOORS:
+		var gid := String(door["gate"])
+		if _is_open(gid) and float(_spine_open.get(gid, 0.0)) < 1.0:
+			_spine_open[gid] = minf(1.0, float(_spine_open.get(gid, 0.0)) + step)
+			_place_spine(gid)
 	if _nudge > 0.0:
 		_nudge = maxf(0.0, _nudge - delta / NUDGE_TIME)
 		_place_shutter()
@@ -937,6 +1392,7 @@ func _tick_pads() -> void:
 		_open(GATE_IDENTITY)
 		_say(tr("The mass lifts. The way through stays open."))
 		_sfx("play_level_up")
+	_tick_spine_pads()
 	if not _on_demand_pad:
 		return
 	_update_bands()
@@ -1073,6 +1529,37 @@ func _add_area(area_name: String, pos: Vector3, size: Vector3,
 	_floors[floor_index].add_child(area)
 
 
+func _make_label(label_name: String, pos: Vector3, text: String) -> Label3D:
+	"""
+	One world label: billboarded, wrapped narrow, shadow-free, parented to storey 0.
+
+	Shared by all three because they are the same object at a different position —
+	see `_build_label()` for why these are world labels and not HUD toasts.
+
+	WRAPPED, AND NARROW ON PURPOSE. A `Label3D` is geometry: an unwrapped
+	explanation is a 5.7 m banner that runs straight into the walls either side of
+	the receptacle's alcove and gets depth-culled mid-sentence, which is how the
+	first build shipped a gate that said "...farm coins for the point". 700 px at
+	this pixel size is 2.45 m — narrower than the niche it stands in, from both
+	sides. (The wing's two signs then shrink themselves further; the corridor they
+	hang in is narrower still, and `_build_wing()` says why.)
+	"""
+	var label := Label3D.new()
+	label.name = label_name
+	label.text = text
+	label.font_size = 40
+	label.outline_size = 12
+	label.pixel_size = 0.0035
+	label.width = 700.0
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	label.modulate = COLOR_BAND_LIT
+	label.position = pos
+	_no_shadow(label)
+	_floors[0].add_child(label)
+	return label
+
+
 func _build_label() -> void:
 	"""
 	The gate's voice: one `Label3D` over the receptacle, reused by every message.
@@ -1084,24 +1571,8 @@ func _build_label() -> void:
 	holding the receptacle's own name, which is what makes the mechanism
 	self-identifying from across the hall.
 	"""
-	_label = Label3D.new()
-	_label.name = "DemandLabel"
-	_label.text = tr("PHASE RECEPTACLE")
-	_label.font_size = 40
-	_label.outline_size = 12
-	_label.pixel_size = 0.0035
-	# WRAPPED, AND NARROW ON PURPOSE. A `Label3D` is geometry: an unwrapped
-	# explanation is a 5.7 m banner that runs straight into the walls either side of
-	# the alcove and gets depth-culled mid-sentence, which is how the first build
-	# shipped a gate that said "...farm coins for the point". 700 px at this pixel
-	# size is 2.45 m — narrower than the niche it stands in, from both sides.
-	_label.width = 700.0
-	_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-	_label.modulate = COLOR_BAND_LIT
-	_label.position = Vector3(RECEPTACLE_X, 3.2, RECEPTACLE_Z + 0.9)
-	_no_shadow(_label)
-	_floors[0].add_child(_label)
+	_label = _make_label("DemandLabel",
+		Vector3(RECEPTACLE_X, 3.2, RECEPTACLE_Z + 0.9), tr("PHASE RECEPTACLE"))
 
 
 func _build_vault_prize() -> void:
@@ -1129,9 +1600,217 @@ func _remember(box_name: String, mesh: MeshInstance3D) -> void:
 			_mass_mesh = mesh
 		"CheckpointPlate", "CheckpointPost":
 			_checkpoint_meshes.append(mesh)
+		"CrawlPress":
+			_press = mesh
+		"PrimmContainment":
+			_containment = mesh
 		_:
 			if box_name.begins_with("Band"):
 				_band_meshes.append(mesh)
+				return
+			if box_name.begins_with("CellFrame"):
+				# "CellFrameWindman" -> "windman". Derived, so a fifth hero needs no
+				# second table: the box was named from `TowerGraph.HEROES` and this
+				# reads the name straight back.
+				_cell_frames[box_name.trim_prefix("CellFrame").to_lower()] = mesh
+				return
+			var spine := _spine_gate_of(box_name)
+			if spine != "":
+				_spine_meshes[spine] = mesh
+
+
+# ============================================================================
+# THE CELL BLOCK WING — phase 8
+# ============================================================================
+
+func _build_wing() -> void:
+	"""
+	The wing's trigger volumes and its two labels.
+
+	Four spine pads (polled, like every identity pad in this building) and four cell
+	volumes (one-shot, because liberation is a thing you do and not a thing you
+	stand in). Both are parented to storey 0, so they hide with it.
+	"""
+	for i in SPINE_DOORS.size():
+		var gid := String(SPINE_DOORS[i]["gate"])
+		_add_area("SpineTrigger%d" % (i + 1),
+			Vector3(_spine_door_x(i), 1.0, PAD_Z),
+			Vector3(SPINE_DOOR_W, 2.0, PAD_TRIGGER_DEPTH),
+			_on_spine_enter.bind(gid), _on_spine_exit.bind(gid), 0)
+	var cell_mid := (CELL_Z0 + INNER_HALF) * 0.5
+	for i in TowerGraph.HEROES.size():
+		var hero := String(TowerGraph.HEROES[i])
+		_add_area("CellTrigger%s" % hero.capitalize(),
+			Vector3(_cell_x(i), 1.0, cell_mid),
+			Vector3(_cell_width() - 0.4, 2.0, INNER_HALF - CELL_Z0 - 0.4),
+			_on_cell_enter.bind(hero), Callable(), 0)
+
+	# TWO LABELS AND NOT ONE, because a wall stands between the two rooms they speak
+	# in and a `Label3D` is geometry: the corridor's line would be depth-culled from
+	# the gallery and vice versa. Same construction as the receptacle's — see
+	# `_build_label()` for why this is a world label and not a HUD toast.
+	#
+	# SMALLER AND HIGHER THAN THE RECEPTACLE'S, and that was found by looking rather
+	# than reasoned: the receptacle stands at the end of a deep alcove you approach
+	# from across the hall, so its 2.45 m banner is read at four metres. These two
+	# live in a two-metre corridor where the spring arm puts the camera a metre from
+	# them, and at the receptacle's size the first walkthrough was a screen full of
+	# the word "open". Up near the ceiling and half the scale, they read as signage
+	# on a wall instead of as a wall.
+	_spine_label = _make_label("SpineLabel",
+		Vector3(_spine_door_x(1) + (SPINE_DOOR_W + SPINE_PIER_W) * 0.5, 3.8, SPINE_Z - 0.4),
+		tr("THE FOUR SPINES — one door each"))
+	_cell_label = _make_label("CellLabel",
+		Vector3(_cell_x(1) + (_cell_width() + CELL_DIVIDER) * 0.5, 3.8, CELL_Z0 - 0.35),
+		tr("CELL BLOCK"))
+	for sign: Label3D in [_spine_label, _cell_label]:
+		sign.font_size = 30
+		sign.outline_size = 9
+		sign.pixel_size = 0.0022
+		sign.width = 520.0
+
+
+func _tick_press(delta: float) -> void:
+	"""Run the crawl press. No state but its clock — it never opens and never shuts."""
+	if _press == null:
+		return
+	_press_clock = wrapf(_press_clock + delta, 0.0, PRESS_PERIOD)
+	_press.position.y = press_y(_press_clock)
+
+
+func _tick_spine_pads() -> void:
+	"""
+	Re-decide all four spine doors against the CURRENT hero, every frame.
+
+	THE SAME CONTRACT THE SECURE DOOR HOLDS and for the same reason: E switches
+	character where you stand and clears ability state, so the only honest question
+	is who is standing here NOW. Nothing is buffered and nothing counts down —
+	walking onto a pad as the wrong hero and pressing E is the intended solution.
+
+	The label is written on every frame a pad is occupied, which is what makes a
+	wrong hero DIAGNOSABLE ("this one wants Teibi") instead of merely refused.
+	"""
+	var here := _hero_name()
+	for door: Dictionary in SPINE_DOORS:
+		var gid := String(door["gate"])
+		if not bool(_on_spine_pad.get(gid, false)):
+			continue
+		var wants := TowerGraph.identity_of(gid)
+		if _is_open(gid):
+			_say_spine(tr("This way is open."))
+			continue
+		if here != wants:
+			_say_spine(tr("%s ANSWERS TO %s.") % [
+				gid.replace("_", " ").to_upper(), wants.to_upper()])
+			continue
+		_open(gid)
+		_say_spine(tr("%s clears the way. It stays clear.") % wants.capitalize())
+		_sfx("play_level_up")
+
+
+func _place_spine(gate_id: String) -> void:
+	"""
+	Put one spine mass where its open fraction says. It only ever SINKS.
+
+	Down, and not up, purely because this wing is roofed — see the block comment at
+	`WING_Z`. Mesh and collision shape move together: a gate that opened only
+	visually is the worst bug this file can have.
+	"""
+	var mesh: MeshInstance3D = _spine_meshes.get(gate_id)
+	if mesh == null:
+		return
+	mesh.position.y = headroom() * 0.5 - SPINE_TRAVEL * float(_spine_open.get(gate_id, 0.0))
+	var shape: CollisionShape3D = _spine_shapes.get(gate_id)
+	if shape != null:
+		shape.position.y = mesh.position.y
+
+
+func _refresh_cells() -> void:
+	"""
+	Repaint every containment frame from the captive set, and hide the staging unit
+	once the authored rescue is done.
+
+	THE ONE PLACE CAPTIVITY BECOMES GEOMETRY, the way `_apply_opened` is the one
+	place an opened gate does. Idempotent, so `set_captive()` can just call it.
+	"""
+	for hero: String in _cell_frames:
+		var frame: MeshInstance3D = _cell_frames[hero]
+		frame.material_override = _material(
+			COLOR_CELL if _captives.has(hero) else COLOR_CELL_FREED)
+	if _containment != null:
+		_containment.visible = not _is_open(RESCUE_DONE)
+
+
+func _liberate(hero: String) -> void:
+	"""
+	Free whoever is in this cell. Performable by ANY hero — nothing here reads
+	`hero_name()`, which is what "uniform cells" means in code.
+
+	@param hero: The captive this cell holds.
+
+	The freed hero rejoins the roster IMMEDIATELY, through one null-safe call: a
+	player that has grown a captive set (phase 9) is told; today's player has not,
+	so the call is skipped and nobody was ever locked out. That is the whole seam
+	between this bead and the next, and it is deliberately one `has_method`.
+	"""
+	if not _captives.has(hero):
+		return
+	_captives.erase(hero)
+	# The authored first rescue is the one liberation the tower remembers: the
+	# staging goes, and it goes for good, across a relaunch.
+	if hero == AUTHORED_CAPTIVE and not _is_open(RESCUE_DONE):
+		_open(RESCUE_DONE)
+	_refresh_cells()
+	_say_cells(tr("%s IS FREE.") % hero.to_upper())
+	_sfx("play_level_up")
+	if _player != null and _player.has_method("hero_freed"):
+		_player.call("hero_freed", hero)
+
+
+# ---------------------------------------------------------------------------
+# THE CAPTIVE SET — phase 9's seam, and the whole of it
+# ---------------------------------------------------------------------------
+
+func set_captive(hero: String, held: bool) -> void:
+	"""
+	Put a hero in his cell, or take him out of it.
+
+	@param hero: One of `TowerGraph.HEROES`.
+	@param held: true to hold him, false to release without the liberation beat.
+
+	The verb systemic capture will call. Liberation itself is `_liberate`, which the
+	cell volume fires — a capture puts somebody in, walking into the cell takes them
+	out, and there is exactly one of each.
+	"""
+	if not TowerGraph.HEROES.has(hero):
+		return
+	if held:
+		_captives[hero] = true
+	else:
+		_captives.erase(hero)
+	_refresh_cells()
+
+
+func is_captive(hero: String) -> bool:
+	"""Is this hero in a cell right now?"""
+	return _captives.has(hero)
+
+
+func captives() -> Array:
+	"""Every held hero, in `TowerGraph.HEROES` order — a fresh array, sorted stably."""
+	var out: Array = []
+	for hero: String in TowerGraph.HEROES:
+		if _captives.has(hero):
+			out.append(hero)
+	return out
+
+
+static func _spine_gate_of(box_name: String) -> String:
+	"""Which spine gate a mass or pad belongs to, "" for a box that is neither."""
+	for door: Dictionary in SPINE_DOORS:
+		if box_name == String(door["mass"]) or box_name == String(door["pad"]):
+			return String(door["gate"])
+	return ""
 
 
 # ============================================================================
@@ -1170,6 +1849,28 @@ func _on_identity_enter(body: Node3D) -> void:
 func _on_identity_exit(body: Node3D) -> void:
 	if body.is_in_group("player"):
 		_on_identity_pad = false
+
+
+func _on_spine_enter(body: Node3D, gate_id: String) -> void:
+	if body.is_in_group("player"):
+		_on_spine_pad[gate_id] = true
+
+
+func _on_spine_exit(body: Node3D, gate_id: String) -> void:
+	if body.is_in_group("player"):
+		_on_spine_pad[gate_id] = false
+
+
+func _on_cell_enter(body: Node3D, hero: String) -> void:
+	"""
+	Somebody walked into a cell. If it holds a captive, that is the rescue.
+
+	No pad, no prompt and no hero test: reaching the cell IS the action, which is
+	the only shape `tower_selfcheck`'s liberation clause admits — a cell hangs off
+	its gallery on an ungated edge precisely so that whoever got there can do this.
+	"""
+	if body.is_in_group("player"):
+		_liberate(hero)
 
 
 func _on_checkpoint_enter(body: Node3D) -> void:
@@ -1257,6 +1958,18 @@ func _say(text: String) -> void:
 	"""Put a line on the receptacle's label."""
 	if _label != null:
 		_label.text = text
+
+
+func _say_spine(text: String) -> void:
+	"""Put a line on the service corridor's label, over the four spine doors."""
+	if _spine_label != null and _spine_label.text != text:
+		_spine_label.text = text
+
+
+func _say_cells(text: String) -> void:
+	"""Put a line on the cell gallery's label."""
+	if _cell_label != null:
+		_cell_label.text = text
 
 
 func _sfx(method: String) -> void:
@@ -1372,6 +2085,27 @@ static func _no_shadow(node: GeometryInstance3D) -> void:
 	(CLAUDE.md's performance conventions).
 	"""
 	node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+
+
+func _add_hazard_child(mesh: MeshInstance3D, size: Vector3) -> void:
+	"""
+	Hang a swept part's hazard volume off the mesh itself, so the two move as one.
+
+	The rotor bars get theirs from `_make_rotor` (they hang off a pivot instead,
+	because a rotation has to sweep both); a linear part has no pivot to share, and
+	parenting the `Area3D` to the mesh is the smaller of the two ways to keep what
+	you see and what hurts you in the same place.
+	"""
+	var hazard := Area3D.new()
+	hazard.name = "%sHazard" % mesh.name
+	hazard.monitorable = false
+	var shape := CollisionShape3D.new()
+	var box_shape := BoxShape3D.new()
+	box_shape.size = size
+	shape.shape = box_shape
+	hazard.add_child(shape)
+	hazard.body_entered.connect(_on_hazard_touched)
+	mesh.add_child(hazard)
 
 
 static func _add_shape(body: StaticBody3D, box: Dictionary) -> void:

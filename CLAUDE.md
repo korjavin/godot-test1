@@ -79,7 +79,10 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            the ramp deck is flush at both ends, the hall clears
 #                            a live camera rig, the batch/draw budget, the gate
 #                            lifecycle under real physics, opened state re-applied,
-#                            per-floor visibility
+#                            per-floor visibility, and — phase 8 — the CELL BLOCK:
+#                            the spine line SAMPLED for holes (a gap there makes
+#                            every identity gate in the wing decorative), and the
+#                            acceptance walk for a spine door plus liberation
 #   tower_selfcheck          THE SOFTLOCK AUDIT: TOWER_GRAPH bound to the boxes
 #                            the interior really builds, the three design laws
 #                            (spines at floor rank, no item custody, mutations
@@ -169,9 +172,10 @@ shell is instanced lazily on a chunk-boundary crossing and **shares `TOWER_RADIU
 rather than restating any distance of its own. `tower_shell_selfcheck` pins all of it.
 
 `scripts/tower_interior.gd` is the same idea one floor in: a second box table for two
-storeys, a ramp, a challenge space and two gates, assembled onto the shell by
+storeys, a ramp, a challenge space, two gates and the CELL BLOCK WING, assembled onto the
+shell by
 `endless_terrain` (one direction only — the interior reads the shell's constants, so a
-shell that knew about the interior would be a cyclic `class_name`). Three rules of its
+shell that knew about the interior would be a cyclic `class_name`). Four rules of its
 own, all pinned by `tower_interior_selfcheck`:
 
 - **No interior traversal may demand a jump-height.** The base apex (3.6125 m) is what
@@ -185,6 +189,16 @@ own, all pinned by `tower_interior_selfcheck`:
 - **Static interior geometry is ONE batched mesh per storey and casts no shadow.** Both
   were measured, both are invisible, and together they are the difference between the
   interior costing 4 ms a frame and costing nothing measurable.
+- **The cell block wing is the tower's destination**: a service corridor with two ways in
+  (an ungated door to the courtyard, a press-guarded crawl from the hall), FOUR identity
+  doors in one wall — one rescue spine per hero, the hero read from `TowerGraph` and never
+  restated — and four UNIFORM cells off a gallery. Liberation is walking into an occupied
+  cell and asks nobody's name; the captive set lives on the interior and is per-run, while
+  the single authored first rescue joins the persisted opened set (so the staging in
+  Primm's cell is gone for good and nothing else is). `set_captive()` is the whole seam
+  systemic capture will drive. **A room under the 4.2 m slab has nowhere for a mass to
+  rise**, so these four sink — the one axis of the gate language the geometry took away,
+  argued at `WING_Z`.
 
 `scripts/tower_graph.gd` is the tower's TOPOLOGY as one const dict of plain dicts —
 rooms, gated passages, entries, the mutation table, the enumerated scar states, the four
