@@ -187,28 +187,23 @@ extends Node3D
 # GEOMETRY — metres, LOCAL to the shell's origin, feet at y = 0
 # ============================================================================
 #
-# This plan is authored inside a +/- INNER_HALF square. It used to BE the shell's
-# inner faces, with a solid spire in the -X/-Z corner; shell phase 13 removed the
-# spire and grew the keep to 80 m, so the plan now stands inside a much larger hall
-# (see INNER_HALF).
+# The KEEP's inner faces are at +/- INNER_HALF on both axes. There used to be a solid
+# spire in the -X/-Z corner too; shell phase 13 removed it and wrapped the keep in an
+# 80 m envelope, so the plan now stands inside a much larger building (see
+# INNER_HALF) with the same walls around it as before.
 
-## Half the CLEAR span this floor plan is authored in.
+## Half the CLEAR interior span: the KEEP's half minus one wall thickness.
+## Derived, never restated, so a thicker wall shrinks the interior automatically.
 ##
-## AN AUTHORED NUMBER SINCE SHELL PHASE 13, and it was a derivation
-## (`TowerShell.OUTER_HALF - TowerShell.WALL_THICK`) before that. The derivation was
-## right while the keep was 20 m square and this plan filled it wall to wall. Phase
-## 13 grew the shell to 80 m, and deriving would have STRETCHED every room in here
-## by 4.4x — which does not scale, because the rooms are made of authored widths:
-## the cell block's four identity doors plus three piers span 9.3 m however wide the
-## wing gets, so a stretched wing has a 30 m hole beside the gates and you walk round
-## every one of them. `tower_interior_selfcheck`'s spine-line sampler found exactly
-## that, which is the check doing its job.
-##
-## So it is frozen at the phase-3 footprint (OUTER_HALF 10 - WALL_THICK 1.2) and the
-## plan stays the building that was play-tested. Phase 14 replans the storeys against
-## the real 80 m envelope; that is where this becomes a floor plan again rather than
-## a structure standing in the middle of a hall.
-const INNER_HALF: float = 8.8
+## IT READS `KEEP_HALF` AND NOT `OUTER_HALF` SINCE SHELL PHASE 13. The keep used to
+## be the whole building; phase 13 wrapped an 80 m envelope round it and kept the
+## 20 m ring, precisely because this plan is authored against those faces — deriving
+## from the envelope instead would stretch every room in here by 4.4x, and the rooms
+## are made of AUTHORED widths (the cell block's four identity doors plus three piers
+## span 9.3 m however wide the wing gets, so a stretched wing has a 30 m hole beside
+## the gates and you walk round every one of them). Phase 14 replans the storeys
+## against the real envelope; that is when the inner ring goes.
+const INNER_HALF: float = TowerShell.KEEP_HALF - TowerShell.WALL_THICK
 
 ## The upper storey. `SLAB_Y` is its WALKING SURFACE; the slab hangs below it, so
 ## the hall's headroom is `SLAB_Y - SLAB_THICK`.

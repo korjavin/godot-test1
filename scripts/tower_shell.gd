@@ -4,10 +4,10 @@ extends Node3D
 ##
 ## Phase 1 decided WHERE the tower stands (`endless_terrain.tower_site()`) and kept
 ## that disc clear (`tower_excludes()`, radius `TOWER_RADIUS`). This file is what
-## stands there: a sealed 80 x 80 x 52 m keep, a yard slab, a doorway you can walk
-## through, and the door trigger phase 3's interior hangs off. Phase 13 grew it
-## from a 20 m walled enclosure to the ten-storey HQ and, more importantly, put a
-## LID on it — see `ROOF_THICK`.
+## stands there: a sealed 80 x 80 x 52 m block, the 20 m keep phase 3's interior is
+## authored inside (see `KEEP_HALF`), a yard slab, a door line through both, and the
+## door trigger the interior hangs off. Phase 13 grew the envelope to the ten-storey
+## HQ and, more importantly, put a LID on it — see `ROOF_THICK`.
 ##
 ## SELF-BUILDING, LIKE `ability_effect.gd`. The scene file
 ## `scenes/tower/tower_shell.tscn` is a bare Node3D carrying this script — every
@@ -37,7 +37,7 @@ extends Node3D
 ## from local information only — it does not even need the seed. No spawn packet,
 ## no claim, no authority.
 ##
-## COST: 9 `MeshInstance3D`s, ONE `StaticBody3D` holding 7 box shapes, one `Area3D`,
+## COST: 15 `MeshInstance3D`s, ONE `StaticBody3D` holding 13 box shapes, one `Area3D`,
 ## and 4 materials shared process-wide by the static cache below. That is the whole
 ## bill, once, for the life of a run.
 
@@ -80,6 +80,23 @@ const STOREY_HEIGHT: float = 5.0
 const STOREYS: int = 10
 const WALL_HEIGHT: float = STOREY_HEIGHT * STOREYS
 
+## THE INNER KEEP: the phase-3 building, preserved inside the phase-13 envelope.
+##
+## IT IS HERE BECAUSE A FLOOR PLAN IS MADE OF WALLS, AND HALF OF THIS ONE'S WERE
+## THE SHELL'S. `TowerInterior`'s rotor posts, vault, spine wall and cell
+## partitions all run to the shell's inner faces and are closed by them; move those
+## faces 30 m out and the plan stops being a plan — you stroll round the end of the
+## spine wall and into a cell from behind, past every identity gate in the wing.
+## (Found by codex review, 2026-08-29, on the first cut of this phase.)
+##
+## So the 20 m keep those rooms were authored against stays exactly where it was,
+## now as a structure standing inside a much larger hall, and the interior derives
+## its `INNER_HALF` from KEEP_HALF instead of from OUTER_HALF — one source of the
+## number, as before. The 30 m annulus around it is what PHASE 14 plans; when its
+## storeys are authored against the real envelope this ring is what they replace.
+const KEEP_HALF: float = 10.0
+const KEEP_HEIGHT: float = 11.0
+
 ## THE ROOF, which is the whole point of this phase.
 ##
 ## The building is sealed: a solid `collide: true` slab over the entire footprint,
@@ -105,6 +122,11 @@ const ROOF_THICK: float = 2.0
 ## THE HOLE IS IN THE +X WALL, i.e. it faces back toward the world origin. The tower
 ## sits on -X (phase 1's ruling) and the player spawns at the origin, so a player who
 ## walks to the tower walks straight at the doorway instead of round the back.
+##
+## BOTH RINGS ARE CUT WITH THE SAME TWO NUMBERS, so the outer envelope's hole and the
+## inner keep's hole are on one line and you walk straight through both. The door
+## TRIGGER is on the keep's, because "entered the tower" is a claim about the rooms:
+## the outer hole is a gateway into a courtyard.
 const DOOR_HALF_WIDTH: float = 3.0
 const DOOR_HEIGHT: float = 4.0
 
@@ -152,13 +174,14 @@ const YARD_LIFT: float = 0.03
 ## measures the FOOTPRINT against endless_terrain's `TOWER_RADIUS`, which is the
 ## other half of the budget and is deliberately NOT restated here.
 ##
-## 12 -> 10 IN PHASE 13, and it went DOWN while the building got twenty times
-## bigger: the table is yard + 3 walls + 2 jambs + lintel + roof + beacon = 9,
-## because the spire, its cap and its overhang all went away (see BEACON_SIDE) and
-## the roof cost one box. The one spare slot is the same courtesy phase 3 was left.
-## A tenth storey is not ten more boxes — the storeys are INTERIOR (phase 14), and
-## the shell stays an extrusion whichever way the plans grow.
-const BOX_BUDGET: int = 10
+## 12 -> 16 IN PHASE 13: yard + roof + beacon + THE SAME SIX-BOX RING TWICE (3
+## walls, 2 jambs, a lintel) — the 80 m envelope and the 20 m keep preserved inside
+## it (see KEEP_HALF) — is 15, with one spare slot, the same courtesy phase 3 was
+## left. The spire, its cap and its overhang all went away (see BEACON_SIDE), so
+## the growth is the inner ring and nothing else. A tenth STOREY is not ten more
+## boxes: storeys are interior (phase 14) and the shell stays an extrusion however
+## the plans grow. Phase 14 is also what deletes the inner ring again.
+const BOX_BUDGET: int = 16
 
 ## Palette. Four colours, four materials, shared process-wide (see `_material`).
 ##
@@ -281,7 +304,33 @@ static func boxes() -> Array[Dictionary]:
 	out.append({"name": "DoorLintel", "pos": Vector3(wall_mid, DOOR_HEIGHT + lintel_height * 0.5, 0.0),
 		"size": Vector3(WALL_THICK, lintel_height, 2.0 * DOOR_HALF_WIDTH),
 		"color": COLOR_WALL, "collide": true})
-	# 4. THE LID. One slab over the whole footprint, so every wall top underneath it
+	# 4. THE INNER KEEP: the phase-3 ring, same six boxes, same door line, still
+	#    open-topped exactly as it was — the interior is authored against these
+	#    faces (see KEEP_HALF).
+	var keep_mid := KEEP_HALF - WALL_THICK * 0.5
+	var keep_side_len := 2.0 * (KEEP_HALF - WALL_THICK)
+	var keep_jamb_len := KEEP_HALF - DOOR_HALF_WIDTH
+	var keep_jamb_mid := (KEEP_HALF + DOOR_HALF_WIDTH) * 0.5
+	out.append({"name": "KeepWallBack", "pos": Vector3(-keep_mid, KEEP_HEIGHT * 0.5, 0.0),
+		"size": Vector3(WALL_THICK, KEEP_HEIGHT, 2.0 * KEEP_HALF),
+		"color": COLOR_WALL, "collide": true})
+	out.append({"name": "KeepWallSideNegZ", "pos": Vector3(0.0, KEEP_HEIGHT * 0.5, -keep_mid),
+		"size": Vector3(keep_side_len, KEEP_HEIGHT, WALL_THICK),
+		"color": COLOR_WALL, "collide": true})
+	out.append({"name": "KeepWallSidePosZ", "pos": Vector3(0.0, KEEP_HEIGHT * 0.5, keep_mid),
+		"size": Vector3(keep_side_len, KEEP_HEIGHT, WALL_THICK),
+		"color": COLOR_WALL, "collide": true})
+	out.append({"name": "KeepJambNegZ", "pos": Vector3(keep_mid, KEEP_HEIGHT * 0.5, -keep_jamb_mid),
+		"size": Vector3(WALL_THICK, KEEP_HEIGHT, keep_jamb_len),
+		"color": COLOR_WALL, "collide": true})
+	out.append({"name": "KeepJambPosZ", "pos": Vector3(keep_mid, KEEP_HEIGHT * 0.5, keep_jamb_mid),
+		"size": Vector3(WALL_THICK, KEEP_HEIGHT, keep_jamb_len),
+		"color": COLOR_WALL, "collide": true})
+	out.append({"name": "KeepLintel", "pos": Vector3(keep_mid,
+			DOOR_HEIGHT + (KEEP_HEIGHT - DOOR_HEIGHT) * 0.5, 0.0),
+		"size": Vector3(WALL_THICK, KEEP_HEIGHT - DOOR_HEIGHT, 2.0 * DOOR_HALF_WIDTH),
+		"color": COLOR_WALL, "collide": true})
+	# 5. THE LID. One slab over the whole footprint, so every wall top underneath it
 	#    is covered rather than exposed — that is what makes the facade smooth: the
 	#    only horizontal surface a flier can put his feet on is the top of this box.
 	#    It spans the full 2 * OUTER_HALF square, not the inner hole, so it also is
@@ -289,7 +338,7 @@ static func boxes() -> Array[Dictionary]:
 	out.append({"name": "Roof", "pos": Vector3(0.0, WALL_HEIGHT + ROOF_THICK * 0.5, 0.0),
 		"size": Vector3(2.0 * OUTER_HALF, ROOF_THICK, 2.0 * OUTER_HALF),
 		"color": COLOR_ROOF, "collide": true})
-	# 5. The beacon, standing on the roof. No collision: it is a light, and a
+	# 6. The beacon, standing on the roof. No collision: it is a light, and a
 	#    1-box plinth is not a place to stand.
 	out.append({"name": "Beacon", "pos": Vector3(beacon_mid,
 			WALL_HEIGHT + ROOF_THICK + BEACON_SIDE * 0.5, beacon_mid),
@@ -306,10 +355,12 @@ static func door_trigger_box() -> Dictionary:
 
 	Derived from the SAME `DOOR_*` constants the jambs are cut around, which is the
 	whole reason it is a function and not a literal in `_ready()`: the trigger is
-	the hole, so it cannot end up somewhere the hole is not. `tower_shell_selfcheck`
+	the hole, so it cannot end up somewhere the hole is not. It is on the INNER
+	KEEP's door line — walking through the outer envelope's hole puts you in a
+	courtyard, and "entered the tower" means the rooms (see DOOR_HALF_WIDTH). `tower_shell_selfcheck`
 	asserts exactly that — no wall box may overlap this volume.
 	"""
-	var wall_mid := OUTER_HALF - WALL_THICK * 0.5
+	var wall_mid := KEEP_HALF - WALL_THICK * 0.5
 	return {
 		"pos": Vector3(wall_mid, DOOR_HEIGHT * 0.5, 0.0),
 		"size": Vector3(WALL_THICK + 2.0 * DOOR_TRIGGER_DEPTH,

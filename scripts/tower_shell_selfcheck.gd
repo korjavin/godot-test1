@@ -310,6 +310,7 @@ func _check_roof_is_above_windmans_reach() -> void:
 	terrain.free()
 
 	var boxes := TowerShell.boxes()
+	var inner: float = TowerShell.OUTER_HALF - TowerShell.WALL_THICK
 	var roof := _topmost_solid(boxes)
 	if roof.is_empty():
 		_fail("the shell has no collide:true box on top — there is no roof")
@@ -338,7 +339,14 @@ func _check_roof_is_above_windmans_reach() -> void:
 		var covered := top >= roof_bottom - EPS \
 				and absf(pos.x) + half.x <= absf(roof_pos.x) + roof_half.x + EPS \
 				and absf(pos.z) + half.z <= absf(roof_pos.z) + roof_half.z + EPS
-		if covered or minf(size.x, size.z) <= LEDGE_MAX_WIDTH:
+		# INDOORS IS NOT A FACADE. The rule is about surfaces a flier outside the
+		# building can land on; the inner keep's wall tops are under a sealed roof,
+		# inside a room with no exit, and standing on one gets you nowhere. (Windman
+		# could always fly into the open-topped keep once inside — that predates this
+		# phase and is the interior's business, not the envelope's.)
+		var indoors := absf(pos.x) + half.x <= inner + EPS \
+				and absf(pos.z) + half.z <= inner + EPS
+		if covered or indoors or minf(size.x, size.z) <= LEDGE_MAX_WIDTH:
 			continue
 		_fail("%s exposes a %.1f x %.1f m top at %.2f m, under the roof — a Windman lands there and launches again" % [
 			box["name"], size.x, size.z, top])
@@ -524,8 +532,8 @@ func _check_materials_are_shared_and_already_toon() -> void:
 
 func _check_doorway_is_a_hole() -> void:
 	"""
-	Check 5. The door trigger sits in a gap in the wall, and that gap has walls
-	either side of it.
+	Check 5. Each ring's door sits in a gap in its wall, that gap has walls either
+	side of it, and the trigger is on the keep's.
 
 	BOTH HALVES MATTER. "No solid box overlaps the trigger" alone is satisfied by a
 	trigger floating in an empty field, and "the wall is there" alone is satisfied by
@@ -533,34 +541,51 @@ func _check_doorway_is_a_hole() -> void:
 	shifted sideways by its own width is tested BLOCKED — which is what makes this a
 	measurement of a hole rather than of an absence.
 	"""
-	var trigger: Dictionary = TowerShell.door_trigger_box()
+	# BOTH RINGS, because there are two front walls to walk through now (the 80 m
+	# envelope and the keep inside it) and a hole missing from either one is a
+	# building you cannot enter. They are cut from the same DOOR_* constants, so
+	# this is one loop over the two wall planes.
+	var rings: Array[Dictionary] = [
+		{"what": "outer wall", "mid": TowerShell.OUTER_HALF - TowerShell.WALL_THICK * 0.5,
+			"top": TowerShell.WALL_HEIGHT},
+		{"what": "keep wall", "mid": TowerShell.KEEP_HALF - TowerShell.WALL_THICK * 0.5,
+			"top": TowerShell.KEEP_HEIGHT},
+	]
 	# The doorway proper: the trigger's own reach through the wall is deliberately
 	# thicker than the wall (so a fast player cannot tunnel), and testing that depth
 	# against the side walls would be a false positive. The HOLE is wall-thick.
-	var door_pos: Vector3 = trigger["pos"]
 	var door_size := Vector3(TowerShell.WALL_THICK, TowerShell.DOOR_HEIGHT,
 		2.0 * TowerShell.DOOR_HALF_WIDTH)
+	for ring: Dictionary in rings:
+		var what: String = ring["what"]
+		var door_pos := Vector3(float(ring["mid"]), TowerShell.DOOR_HEIGHT * 0.5, 0.0)
+		var blockers: Array[String] = _solid_boxes_overlapping(door_pos, door_size)
+		if not blockers.is_empty():
+			_fail("the %s's doorway is blocked by %s — you cannot walk into the tower" % [
+				what, ", ".join(blockers)])
 
-	var blockers: Array[String] = _solid_boxes_overlapping(door_pos, door_size)
-	if not blockers.is_empty():
-		_fail("the doorway is blocked by %s — you cannot walk into the tower" % ", ".join(blockers))
+		# NEGATIVE CONTROL: shift the same volume into each jamb. Both must be solid,
+		# or the "hole" is just a wall that was never built.
+		for side in [-1.0, 1.0]:
+			var offset := Vector3(0.0, 0.0, side * (TowerShell.DOOR_HALF_WIDTH
+				+ door_size.z * 0.5))
+			if _solid_boxes_overlapping(door_pos + offset, door_size).is_empty():
+				_fail("nothing solid stands %.1f m to the %s of the %s's doorway — it has no jamb"
+					% [offset.z, "-Z" if side < 0.0 else "+Z", what])
 
-	# NEGATIVE CONTROL: shift the same volume into each jamb. Both must be solid, or
-	# the "hole" is just a wall that was never built.
-	for side in [-1.0, 1.0]:
-		var offset := Vector3(0.0, 0.0, side * (TowerShell.DOOR_HALF_WIDTH
-			+ door_size.z * 0.5))
-		if _solid_boxes_overlapping(door_pos + offset, door_size).is_empty():
-			_fail("nothing solid stands %.1f m to the %s of the doorway — the front wall has no jamb"
-				% [offset.z, "-Z" if side < 0.0 else "+Z"])
+		# And the lintel: above the doorway must be solid, or the "door" is a gap that
+		# runs to the top of the wall and the ring has no front wall at all.
+		var top: float = ring["top"]
+		var above := Vector3(door_pos.x, (top + TowerShell.DOOR_HEIGHT) * 0.5, 0.0)
+		if _solid_boxes_overlapping(above, Vector3(TowerShell.WALL_THICK,
+				top - TowerShell.DOOR_HEIGHT, door_size.z)).is_empty():
+			_fail("nothing solid stands above the %s's doorway — it is missing its lintel" % what)
 
-	# And the lintel: above the doorway must be solid, or the "door" is a gap that
-	# runs to the top of the wall and the building has no front wall at all.
-	var above := door_pos + Vector3(0.0,
-		(TowerShell.WALL_HEIGHT + TowerShell.DOOR_HEIGHT) * 0.5 - door_pos.y, 0.0)
-	if _solid_boxes_overlapping(above, Vector3(TowerShell.WALL_THICK,
-			TowerShell.WALL_HEIGHT - TowerShell.DOOR_HEIGHT, door_size.z)).is_empty():
-		_fail("nothing solid stands above the doorway — the front wall is missing its lintel")
+	# The trigger itself is on the keep's door line and must sit in that hole.
+	var trigger: Dictionary = TowerShell.door_trigger_box()
+	if not is_equal_approx(float(trigger["pos"].x), float(rings[1]["mid"])):
+		_fail("the door trigger is at x = %.2f, not on the keep's wall plane (%.2f)" % [
+			trigger["pos"].x, rings[1]["mid"]])
 
 
 func _check_door_fires_for_the_player_only() -> void:
