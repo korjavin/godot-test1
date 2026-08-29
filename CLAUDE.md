@@ -45,7 +45,10 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            inside, never leaves), crush immunity is an
 #                            ORDERING, the row's boss speed is the one resolved,
 #                            and a ranged boss really fires — only in its band,
-#                            on its cooldown, inside its area, while chasing
+#                            on its cooldown, inside its area, while chasing.
+#                            Plus check 8: EVERY SPECIES row through the
+#                            stink_immune / crush_immune guards, animals as the
+#                            negative control
 #   projectile_selfcheck     boss projectiles: the per-style FAIRNESS contract
 #                            (a walking player always clears it; nothing outruns
 #                            a fleeing one), straight + lob flight, both dodge
@@ -77,6 +80,12 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            a live camera rig, the batch/draw budget, the gate
 #                            lifecycle under real physics, opened state re-applied,
 #                            per-floor visibility
+#   tower_selfcheck          THE SOFTLOCK AUDIT: TOWER_GRAPH bound to the boxes
+#                            the interior really builds, the three design laws
+#                            (spines at floor rank, no item custody, mutations
+#                            edge-additive + the sanctioned scar), and all 15
+#                            free-hero subsets reaching a cell from every entry,
+#                            in every story-flag and scar state
 
 bash scripts/mp_e2e.sh    # two-instance multiplayer e2e; needs go + godot on PATH
 ```
@@ -176,6 +185,17 @@ own, all pinned by `tower_interior_selfcheck`:
 - **Static interior geometry is ONE batched mesh per storey and casts no shadow.** Both
   were measured, both are invisible, and together they are the difference between the
   interior costing 4 ms a frame and costing nothing measurable.
+
+`scripts/tower_graph.gd` is the tower's TOPOLOGY as one const dict of plain dicts —
+rooms, gated passages, entries, the mutation table, the enumerated scar states, the four
+rescue spines. Pure data, depended on by nobody (so no cycle): the interior takes its
+gate ids and its identity gate's hero from it, and `tower_selfcheck` walks it to prove
+the campaign cannot softlock. Its three design laws are what make that audit tractable —
+**spines at floor rank, no item custody, mutations may only ADD edges** (the full-custody
+scar being the one owner-sanctioned exception) — and the check asserts all three
+structurally, so a row that breaks one fails the build. **A gate added to the building
+must appear there**: the correspondence is bound through the interior's legibility
+colours, in both directions.
 
 ### Biomes are decoration over a flat world — do not break the flat-world invariant
 The ground stays flat at y = 0. Coin heights, road placement, crocodile gravity settle,
@@ -298,6 +318,15 @@ primes, own `spawn_hunters` flag) instead of through `BIOME_SPECIES` — which i
 dispatch-free and costs the chunk RNG zero draws. That is a **third door** into the
 world and check 4's reachability gate reads `HUNTER_SPECIES` to know about it; check 12
 is the A/B that *proves* the crocodile stream is untouched rather than asserting it.
+
+**It is also the row that proved player abilities can be opted out of as DATA.** A
+machine has no nose and is not flesh, so its row carries `stink_immune` (`flee_from()`
+early-returns) and `crush_immune` (giant Teibi's squash block is skipped and the body
+takes the ordinary bite path). Both are `spec.get(key, false)` reads placed beside the
+existing `is_boss` guards — never a species-name test — so the next armoured or airtight
+predator opts in with a row edit and no code change. `boss_selfcheck` check 8 drives
+**every** row through both real paths, which makes the seven animal rows the negative
+control and anchors the crocodile by name against a stray key.
 
 **Hunter mercy is tuned BEFORE contact and never by a hunter pulling its punch.**
 `scripts/hunt_director.gd` (one node in `main.tscn`, group `"hunt_director"`, modelled on
