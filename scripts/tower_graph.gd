@@ -114,6 +114,25 @@ const GATE_DEMAND: String = "tower_vault"
 const GATE_IDENTITY: String = "tower_secure_door"
 const GATE_CHECKPOINT: String = "tower_checkpoint"
 
+# ============================================================================
+# SCAR IDS — the same strings, in the same persisted set
+# ============================================================================
+#
+# A scar rides the tower's monotone opened set exactly as a gate does (phase 11):
+# it is EARNED, it is PERMANENT and there is no verb that heals it, which is the
+# whole of what that set demands. What makes a scar different is only what the
+# building does with the id — a gate opens a way, a scar closes one — and that
+# asymmetry is design law 3's one sanctioned exception, audited in `scars` below.
+#
+# PERSISTED VERBATIM, so the same rule holds: add, never rename.
+
+## The unscarred tower. Not a stored id — nothing writes it — but the first row of
+## `scars`, so the audit always walks the clean building first.
+const SCAR_NONE: String = "none"
+
+## The full-custody protocol's scar: the courtyard stair comes down.
+const SCAR_CUSTODY: String = "custody_stair_collapse"
+
 ## The four playable heroes, in `PlayerController.CHARACTERS` order. Restated here
 ## rather than imported because this file must stay pure data with no dependency on
 ## a scene-bearing script; `tower_selfcheck.gd` asserts the two lists are equal.
@@ -367,11 +386,11 @@ const TOWER_GRAPH: Dictionary = {
 	# ------------------------------------------------------------------------
 	"scars": [
 		{
-			"id": "none", "removes": [],
+			"id": SCAR_NONE, "removes": [],
 			"note": "The unscarred tower. Always audited first.",
 		},
 		{
-			"id": "custody_stair_collapse", "removes": ["courtyard_stair"],
+			"id": SCAR_CUSTODY, "removes": ["courtyard_stair"],
 			"note": "The protocol drops the courtyard stair. `hall_stair` is why "
 				+ "that is survivable — and why it exists.",
 		},
@@ -475,3 +494,40 @@ static func cells() -> Array[String]:
 		if String(TOWER_GRAPH["rooms"][id].get("cell", "")) != "":
 			out.append(id)
 	return out
+
+
+static func scar_ids() -> Array[String]:
+	"""
+	Every AUTHORED scar id, in `scars` order, minus the unscarred row.
+
+	@return: A fresh Array of String — the caller may keep or mutate it.
+
+	The enumeration design law 3's exception rests on. Anything that applies a scar
+	picks from this list and never invents an id, which is what "authored and
+	enumerated, not computed" means in code.
+	"""
+	var out: Array[String] = []
+	for scar: Dictionary in TOWER_GRAPH["scars"]:
+		var id := String(scar.get("id", ""))
+		if id != SCAR_NONE and id != "":
+			out.append(id)
+	return out
+
+
+static func next_scar(applied: Array) -> String:
+	"""
+	The first authored scar this world has not taken yet, "" when it has taken all.
+
+	@param applied: the tower's opened set (or any array of ids already applied).
+	@return: one id out of `scar_ids()`, or "" — never a computed string.
+
+	PURE, and it takes the applied set as an argument rather than reading a store:
+	this file is data with no dependency on anything that saves. The protocol's
+	"exactly one enumerated scar" is this call plus the write, and a second
+	full-custody outcome in a world that has already collapsed its stair takes no
+	new scar rather than inventing one — the list is the budget.
+	"""
+	for id: String in scar_ids():
+		if not applied.has(id):
+			return id
+	return ""

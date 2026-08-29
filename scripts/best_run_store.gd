@@ -144,6 +144,29 @@ const CONFIG_PROGRESSION_SECTION: String = "progression"
 const CONFIG_TOWER_SECTION: String = "tower"
 const CONFIG_TOWER_KEY: String = "opened_ids"
 
+## THE WORLD ARCHIVE — the full-custody protocol's failure record (phase 11).
+##
+## `[world] archived = true` and nothing else. Its own section, and the choice of
+## home is the whole design decision, so it is written down rather than implied:
+##
+##   * NOT the tower's opened set above, even though it sits one section away. That
+##     set is a monotone UNION with no removal verb, by design — and this latch has
+##     to be CLEARED, because New Game is what un-ends a campaign. A latch that can
+##     go backwards does not belong in a union, which is the same rule that keeps
+##     the captive set out of it (`player_controller.captive_heroes`).
+##   * NOT nowhere, which is where the tower guards live: a campaign that ended
+##     must still be over after a relaunch. That is the entire feature — Continue
+##     reopens the ending screen.
+##
+## `ponytail:` THE PER-WORLD SAVE ID IS STILL THE SEPARATE, LARGER EPIC the tower
+## section above declined to entangle with, and it has not landed. So today there
+## is one world, `new_game()` clears the latch, and that IS "New Game mints a fresh
+## save id" with one slot. The epic slots in around this exactly as it does around
+## the tower set: the id becomes a second key here or a section suffix, `new_game()`
+## mints it instead of clearing, and no caller below or above changes.
+const CONFIG_WORLD_SECTION: String = "world"
+const CONFIG_WORLD_ARCHIVED: String = "archived"
+
 ## Hard bound on the stored tower set, at BOTH ends — what is written and what is
 ## accepted back. The same discipline (and the same reason) as
 ## `mp_manager.MAX_STATE_IDS`: this exists to keep a corrupt or hand-edited file
@@ -516,6 +539,64 @@ static func _sanitize_tower_ids(parsed: Variant) -> Array[String]:
 			out.append(String(id))
 	out.sort()
 	return out
+
+
+# =============================================================================
+# THE WORLD ARCHIVE — read-only-save semantics for a campaign that ended
+# =============================================================================
+#
+# Three lines of state and one rule: while the latch is set the world is finished,
+# and the only thing that clears it is starting a new one. Read at boot by
+# `player_controller`, which raises the ending screen instead of handing out a run.
+
+static func world_archived() -> bool:
+	"""
+	Has this world's campaign ended? False for a missing or unreadable file.
+
+	Every failure mode — no profile yet, a hand-edited mess, a truncated write —
+	answers "no", which is the safe direction: the worst case is a player getting a
+	run back, never a player locked out of one by a corrupt byte.
+	"""
+	var cfg := ConfigFile.new()
+	if cfg.load(config_path) != OK:
+		return false
+	return bool(cfg.get_value(CONFIG_WORLD_SECTION, CONFIG_WORLD_ARCHIVED, false))
+
+
+static func archive_world() -> void:
+	"""
+	End this world. The full-custody protocol's failure record, and its ONLY one.
+
+	READ-MODIFY-WRITE like every other write in this file, so the records, the
+	counters, the player id and the tower's opened set survive it — an archived
+	world is still the profile that earned them.
+
+	IT IS THE OUTCOME, not a note about the outcome. Nothing else is written when
+	the recall completes, so there is no second fact this one can disagree with and
+	nothing to make atomic with respect to: a crash the instant after this line has
+	an archived world, and a crash the instant before has a world still in play.
+	"""
+	var cfg := ConfigFile.new()
+	cfg.load(config_path)
+	cfg.set_value(CONFIG_WORLD_SECTION, CONFIG_WORLD_ARCHIVED, true)
+	cfg.save(config_path)
+
+
+static func new_game() -> void:
+	"""
+	Start a fresh world: clear the archive latch.
+
+	`ponytail:` one save slot, so "mint a fresh save id" is "clear the flag" — see
+	the section constant for the epic this leaves room for. The ceiling is that a
+	new game inherits the old world's earned tower set (gates AND scars), exactly as
+	it already inherits the meta-progression counters; the save-id epic is what
+	separates them, and it separates all three together or none.
+	"""
+	var cfg := ConfigFile.new()
+	if cfg.load(config_path) != OK:
+		return
+	cfg.set_value(CONFIG_WORLD_SECTION, CONFIG_WORLD_ARCHIVED, false)
+	cfg.save(config_path)
 
 
 func _load_or_make_player_id() -> String:
