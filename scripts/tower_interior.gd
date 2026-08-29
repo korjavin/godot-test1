@@ -480,7 +480,13 @@ const BOX_BUDGET: int = 60
 ## its own node has to justify itself against this comment rather than fit under a
 ## rounding. (12 of it is the pre-phase-8 building, two of THOSE being the per-storey
 ## batches.)
-const DRAW_BUDGET: int = 22
+##
+## 23 SINCE PHASE 11, and here is that justification. The scar's rubble (`SCAR_BOX`)
+## is invisible and non-solid in every world that has not survived the full-custody
+## protocol and stone in every world that has, so it is the one box in the plan
+## whose DRAW STATE is decided per save — which a merged batch cannot express
+## without being rebuilt. One node, once, for the life of a run.
+const DRAW_BUDGET: int = 23
 
 # ============================================================================
 # PALETTE — one material per colour, shared process-wide (see `_material`)
@@ -509,6 +515,13 @@ const COLOR_PANEL := Color(1.00, 0.95, 0.86)        # ceiling light panels
 ## one cell room, the way it claims the checkpoint's green.
 const COLOR_CELL := Color(0.95, 0.24, 0.30)         # an OCCUPIED cell
 const COLOR_CELL_FREED := Color(0.19, 0.21, 0.23)   # ...and the same field, shut down
+
+## A SCAR: stone that was not there yesterday. Dark, brown-grey rubble — the same
+## family as `COLOR_STONE` ("this is the building") but visibly dirtier, because a
+## scar has to read as a CHANGE to a player who walked this doorway ten minutes
+## ago and not as a wall that was always here. Deliberately not one of the three
+## verb colours: a collapse is not a gate, asks nothing and can never be opened.
+const COLOR_SCAR := Color(0.34, 0.30, 0.28)
 
 ## Which colours are EMISSIVE AND UNSHADED. There are no `Light3D`s anywhere in
 ## this building: a real light under the slab would cost a shadow pass on a
@@ -561,6 +574,12 @@ const SPINE_DOORS: Array[Dictionary] = [
 ## over inside one run, and a saved "primm is free" would be a lie the moment he
 ## was taken again. What survives a relaunch is the single fact the staging depends
 ## on — the first rescue happened, so the containment unit is gone for good.
+## The one box the full-custody scar builds: the rubble that fills the service
+## doorway when `TowerGraph.SCAR_CUSTODY` is in the opened set. Named here because
+## three places need the same string — the box table, `_remember()` and the build
+## loop's shape capture.
+const SCAR_BOX: String = "StairCollapse"
+
 const RESCUE_DONE: String = "tower_rescue_primm"
 
 ## Who the authored first rescue is about. Read from the graph's cell rooms rather
@@ -610,6 +629,9 @@ const MOVING_PARTS: Array[String] = [
 	"CrawlPress",
 	"CellFrameWindman", "CellFramePrimm", "CellFrameTeibi", "CellFramePhoboman",
 	"PrimmContainment",
+	# ...and phase 11's scar, which appears and turns solid the day the protocol is
+	# survived. A batched box cannot do either.
+	SCAR_BOX,
 ]
 
 # ============================================================================
@@ -778,6 +800,23 @@ var _press_clock: float = 0.0
 var _cell_frames: Dictionary = {}
 var _containment: MeshInstance3D = null
 
+## The scar's rubble and its collision shape. Hidden and non-solid until the world
+## has taken the scar; both move together, for the same reason a gate's mesh and
+## shape do — rubble you can see and walk through is worse than no rubble.
+var _scar_slab: MeshInstance3D = null
+var _scar_shape: CollisionShape3D = null
+
+## THE SCENE'S ONE AUTHORED CHANGE (phase 11): spine gate ids whose door has been
+## re-shut for the full-custody break-out, whatever the opened set says.
+##
+## A SET AND NOT A BOOLEAN, because the scene is won one door at a time: standing
+## on a pad as the right hero erases that id and the ordinary tween takes over, so
+## the break-out is exactly the wing's own lesson replayed under a clock. Empty
+## whenever the protocol is not running, and NEVER PERSISTED — the guards' home
+## (see the block above `GUARD_SCENE_PATH`): raised containment is population, not
+## structure, and "it lifts when the scene ends" is implemented by not saving it.
+var _lockdown: Dictionary = {}
+
 ## WHO IS IN THE CELLS RIGHT NOW, as a set of hero names.
 ##
 ## PER-RUN AND DELIBERATELY NOT PERSISTED: phase 9 takes and frees heroes over and
@@ -871,6 +910,19 @@ static func boxes() -> Array[Dictionary]:
 		"pos": Vector3(ROTOR_POST_X, SLAB_Y * 0.5, (RAMP_UNDER_Z + SERVICE_DOOR_Z1) * 0.5),
 		"size": Vector3(0.4, SLAB_Y, RAMP_UNDER_Z - SERVICE_DOOR_Z1),
 		"color": COLOR_STONE, "collide": true, "floor": 0,
+	})
+	# THE SCAR (phase 11). The service doorway, filled with rubble — built ALWAYS,
+	# drawn and made solid only once `TowerGraph.SCAR_CUSTODY` is in the opened set
+	# (`_refresh_scar`). In the table so it is budgeted, footprint-checked and fits
+	# the shell like every other box; `scar` is what keeps it out of the BASE plan
+	# the self-checks sample, and `severs` names the graph edge it takes away, so
+	# `tower_selfcheck` can bind the two rather than trust this comment.
+	out.append({
+		"name": SCAR_BOX,
+		"pos": Vector3(ROTOR_POST_X, SLAB_Y * 0.5, (SERVICE_DOOR_Z0 + SERVICE_DOOR_Z1) * 0.5),
+		"size": Vector3(0.4, SLAB_Y, SERVICE_DOOR_Z1 - SERVICE_DOOR_Z0),
+		"color": COLOR_SCAR, "collide": true, "floor": 0,
+		"scar": TowerGraph.SCAR_CUSTODY, "severs": "courtyard_stair",
 	})
 	# The stretch the ramp flies over on its way to the slab — see RAMP_UNDER_TOP.
 	out.append({
@@ -1337,6 +1389,8 @@ func _ready() -> void:
 			_shutter_shape = shape
 		elif box["name"] == "IdentityMass":
 			_mass_shape = shape
+		elif box["name"] == SCAR_BOX:
+			_scar_shape = shape
 		else:
 			var spine := _spine_gate_of(String(box["name"]))
 			if spine != "":
@@ -1472,6 +1526,17 @@ func _apply_opened() -> void:
 			if bool(owner_of_the_set.call("is_hero_captive", hero)):
 				_captives[hero] = true
 	_refresh_cells()
+	_refresh_scar()
+	# ...and the same mirror for the full-custody scene. A protocol begins out in
+	# the field and TELEPORTS the party here, so on most runs this building is
+	# streamed in a frame AFTER the scene started and the player's own
+	# `begin_lockdown()` call found no interior to make. Both ends, exactly as the
+	# captive set above: the player pushes when the tower is loaded, a tower built
+	# afterwards catches up here. Without it the doors stand open and the break-out
+	# is three metres of walking.
+	if owner_of_the_set != null and owner_of_the_set.has_method("in_custody_protocol") \
+			and bool(owner_of_the_set.call("in_custody_protocol")):
+		begin_lockdown()
 
 
 # ============================================================================
@@ -1489,7 +1554,11 @@ func _tick_gates(delta: float) -> void:
 		_place_mass()
 	for door: Dictionary in SPINE_DOORS:
 		var gid := String(door["gate"])
-		if _is_open(gid) and float(_spine_open.get(gid, 0.0)) < 1.0:
+		# `_lockdown` beats the opened set, and only while the scene runs: an id in
+		# it is a door the protocol shut again, and it re-opens on the pad press
+		# that erases it — never on its own.
+		if _is_open(gid) and not _lockdown.has(gid) \
+				and float(_spine_open.get(gid, 0.0)) < 1.0:
 			_spine_open[gid] = minf(1.0, float(_spine_open.get(gid, 0.0)) + step)
 			_place_spine(gid)
 	if _nudge > 0.0:
@@ -1765,6 +1834,8 @@ func _remember(box_name: String, mesh: MeshInstance3D) -> void:
 			_press = mesh
 		"PrimmContainment":
 			_containment = mesh
+		SCAR_BOX:
+			_scar_slab = mesh
 		_:
 			if box_name.begins_with("Band"):
 				_band_meshes.append(mesh)
@@ -1857,14 +1928,25 @@ func _tick_spine_pads() -> void:
 		if not bool(_on_spine_pad.get(gid, false)):
 			continue
 		var wants := TowerGraph.identity_of(gid)
-		if _is_open(gid):
+		# THE OPEN TEST NOW ASKS THE LOCKDOWN FIRST, and the order is the whole
+		# scene: a door the protocol re-shut must refuse a wrong hero exactly as an
+		# unopened one does, or the break-out is walked through by whoever happens
+		# to be standing there.
+		var locked := _lockdown.has(gid)
+		if _is_open(gid) and not locked:
 			_say_spine(tr("This way is open."))
 			continue
 		if here != wants:
 			_say_spine(tr("%s ANSWERS TO %s.") % [
 				gid.replace("_", " ").to_upper(), wants.to_upper()])
 			continue
-		_open(gid)
+		# The right hero is standing here: lift containment on this one door, and
+		# earn the gate itself if this is the first time through. Both are
+		# idempotent, and doing them in this order is what lets a door that was
+		# already in the opened set still cost a pad press during the protocol.
+		_lockdown.erase(gid)
+		if not _is_open(gid):
+			_open(gid)
 		_say_spine(tr("%s clears the way. It stays clear.") % wants.capitalize())
 		_sfx("play_level_up")
 
@@ -1926,6 +2008,120 @@ func _liberate(hero: String) -> void:
 	_sfx("play_level_up")
 	if _player != null and _player.has_method("hero_freed"):
 		_player.call("hero_freed", hero)
+
+
+# ---------------------------------------------------------------------------
+# THE FULL-CUSTODY PROTOCOL — phase 11's half of the scene
+# ---------------------------------------------------------------------------
+#
+# The scene itself is `player_controller`'s: it decides that the corporation has
+# everybody, marches the party here and runs the recall clock. This file owns the
+# two things the BUILDING does about it, and nothing else:
+#
+#   * RAISED CONTAINMENT while the scene runs (`begin_lockdown` / `end_lockdown`).
+#     Every spine door is shut again, whatever a hundred earlier rescues opened, so
+#     the break-out is the wing's own lesson under a clock: read the door, switch to
+#     the hero it names, stand on the pad. That is deliberately the game's verbs and
+#     not a minigame — there is no new input and no new rule, only the old ones with
+#     nothing already unlocked.
+#   * THE SCAR (`apply_scar`), which is the one sanctioned exception to the graph's
+#     edge-additive law: a survived protocol takes the courtyard stair away for good.
+#
+# WHERE THE STAND IS AND WHY IT IS NOT A CELL. The party wakes in the SERVICE
+# CORRIDOR, on the wrong side of the spine wall — because a cell hangs off the
+# gallery on an ungated edge (that is what "uniform cells" means), so a break-out
+# that started in one would be three metres of walking and no scene at all. From the
+# corridor the only way to a cell is through a door that asks for a name.
+
+## Where the protocol stands the party up, in interior-local metres.
+##
+## THE MIDDLE OF THE CORRIDOR, and that is the camera's doing rather than the
+## drama's. The run is 9.3 m and the spring arm is 8.25 m, so standing at either
+## end and facing along it collapses the arm into the back of the hero's head (the
+## wing's documented deferral, one room over from the courtyard's). From the middle,
+## facing +X, the arm has ~4.8 m of corridor behind it and the shot reads.
+##
+## Clearances, all of them re-derived and ASSERTED by `tower_interior_selfcheck`
+## rather than trusted here — a stand inside a wall is a body shoved through it on
+## the first frame: south of the pad line (`PAD_Z` 3.9), north of the wing wall's
+## inner face (`WING_Z` 2.2 + half of 0.4), and clear of the four spine doorways.
+const CUSTODY_STAND: Vector3 = Vector3(4.15, 0.2, 2.95)
+
+
+func begin_lockdown() -> void:
+	"""
+	Shut every spine door for the break-out scene. Idempotent.
+
+	Slams rather than tweens: the doors coming down IS the protocol arriving, and a
+	1.6 s close on a 35 s clock reads as the building being slow rather than as the
+	corporation being fast.
+	"""
+	for door: Dictionary in SPINE_DOORS:
+		var gid := String(door["gate"])
+		_lockdown[gid] = true
+		_spine_open[gid] = 0.0
+		_place_spine(gid)
+	_say_spine(tr("CONTAINMENT RAISED."))
+	_say_cells(tr("FULL CUSTODY."))
+
+
+func end_lockdown() -> void:
+	"""
+	Drop raised containment. The ordinary `_tick_gates` tween re-opens whatever the
+	opened set actually earned, so nothing the player owned is lost by the scene.
+
+	CALLED ON BOTH OUTCOMES, which is the landmine: a scene that ended in failure
+	still has to leave the building in the state the opened set describes, because
+	the Game Over screen's Play Again keeps the same profile.
+	"""
+	_lockdown.clear()
+	_say_spine(tr("Containment released."))
+
+
+func is_locked_down(gate_id: String) -> bool:
+	"""Is this spine door re-shut by a running protocol? The check's window in."""
+	return _lockdown.has(gate_id)
+
+
+func apply_scar(scar_id: String) -> bool:
+	"""
+	Take an authored scar, permanently. The ONE place a scar becomes world state.
+
+	@param scar_id: one of `TowerGraph.scar_ids()` — never a computed string.
+	@return: true when the id was authored and is now recorded.
+
+	IT RIDES THE MONOTONE OPENED SET, through `_open()` like every gate, and that is
+	the deliberate storage choice: a scar is EARNED and PERMANENT, there is no verb
+	that heals one, and the union's read-modify-write merge is exactly the write a
+	crash between two frames must survive. (The captive set is the opposite kind of
+	fact and stays out — see `_captives`. The guards are neither and are stored
+	nowhere at all.)
+
+	The geometry follows in the same call, so there is no window in which the world
+	has taken a scar the building is not showing.
+	"""
+	if not TowerGraph.scar_ids().has(scar_id):
+		return false
+	_open(scar_id)
+	_refresh_scar()
+	_say_spine(tr("THE STAIR IS GONE."))
+	return true
+
+
+func _refresh_scar() -> void:
+	"""
+	Show and solidify the rubble iff the world has taken the scar it belongs to.
+
+	The one place a scar becomes geometry, exactly as `_apply_opened` is for a gate
+	and `_refresh_cells` is for a captive. Idempotent, and null-safe so an interior
+	built without its scar box (there is none today) simply does nothing.
+	"""
+	if _scar_slab == null:
+		return
+	var taken := _is_open(TowerGraph.SCAR_CUSTODY)
+	_scar_slab.visible = taken
+	if _scar_shape != null:
+		_scar_shape.disabled = not taken
 
 
 # ---------------------------------------------------------------------------

@@ -67,6 +67,10 @@ extends SceneTree
 ##      claims — a comment that cannot rot.
 ##   7. Quest rooms are reachable by the full roster, quests are an open set, and
 ##      liberation at a cell needs nobody in particular.
+##   8. **EVERY AUTHORED SCAR IS ONE THE BUILDING CAN INFLICT.** Checks 2 and 5
+##      prove a scar is safe; only this one asks whether it HAPPENS. A `removes`
+##      row no box implements is a passage the audit believes is gone and the
+##      player finds standing open — the sanctioned exception, shipped inert.
 ##
 ## ============================================================================
 ## LANDMINES
@@ -150,6 +154,7 @@ func _initialize() -> void:
 	_check_every_subset_reaches_a_cell()
 	_check_captivity_flags_are_honest()
 	_check_quests_and_liberation()
+	_check_scars_are_built()
 	_report()
 
 
@@ -925,6 +930,88 @@ func _gate_words(gate_id: String) -> String:
 # ============================================================================
 # VERDICT
 # ============================================================================
+
+# ============================================================================
+# CHECK 8 — every authored scar is a scar the building can actually inflict
+# ============================================================================
+
+func _check_scars_are_built() -> void:
+	"""
+	Check 8. The `scars` table and `tower_interior.gd` describe the same event.
+
+	CHECK 1's ARGUMENT, ONE ROW TYPE LOWER, and it is the one that stops the whole
+	sanctioned exception shipping inert. Checks 2 and 5 already prove a scar is
+	SAFE — the fifteen-subset property re-runs inside every one of them, and a scar
+	that severed the last singleton spine would fail the build. Neither of them
+	asks whether the scar HAPPENS. A `removes: ["courtyard_stair"]` that no box in
+	the building implements is a doorway that stays open forever: the audit passes,
+	the protocol "succeeds", and the permanent consequence the whole bead is about
+	is a line of data nobody can see.
+
+	So the binding is mechanical and BIDIRECTIONAL, exactly as check 1's is:
+
+	  * every scar row with a non-empty `removes` must be built by at least one box
+	    that names it (`"scar": <id>`), and that box must COLLIDE — rubble you walk
+	    through is not a closed passage;
+	  * every scar box must name an authored scar and an edge that scar really
+	    removes (`"severs"`), so a box cannot claim to close something the graph
+	    thinks is still open.
+
+	`ponytail:` WHAT IT STILL CANNOT PROVE is that the box stands physically ON the
+	route the edge represents — the graph has rooms and edges, not coordinates, so
+	there is nothing to compare a position against. `tower_interior_selfcheck`'s own
+	scar check closes the next inch of that gap (the box's span is open in the
+	unscarred plan and stone in the scarred one, sampled); the last inch is a
+	walkthrough. The upgrade path is per-edge geometry in `TOWER_GRAPH`, which is a
+	much bigger file for one scar.
+	"""
+	var boxes: Array[Dictionary] = TowerInterior.boxes()
+	var authored: Array[String] = TowerGraph.scar_ids()
+	var built: Dictionary = {}
+
+	for box: Dictionary in boxes:
+		var scar := String(box.get("scar", ""))
+		if scar == "":
+			continue
+		var box_name := String(box["name"])
+		if not authored.has(scar):
+			_fail(("the interior builds '%s' for scar '%s', which TOWER_GRAPH does not "
+				+ "enumerate (%s) — an unenumerated scar is a state the audit never walks")
+				% [box_name, scar, str(authored)])
+			continue
+		if not bool(box.get("collide", false)):
+			_fail(("scar box '%s' does not collide — it draws a closed passage and leaves "
+				+ "it walkable, which is the worst of both") % box_name)
+		var severs := String(box.get("severs", ""))
+		var removes: Array = _scar_row(scar).get("removes", [])
+		if severs == "":
+			_fail("scar box '%s' names no edge it severs" % box_name)
+		elif not removes.has(severs):
+			_fail(("scar box '%s' claims to sever '%s', but scar '%s' removes %s")
+				% [box_name, severs, scar, str(removes)])
+		built[scar] = true
+
+	for scar: Dictionary in _graph["scars"]:
+		var id := String(scar["id"])
+		var removes: Array = scar.get("removes", [])
+		if removes.is_empty():
+			continue
+		if not built.has(id):
+			_fail(("scar '%s' removes %s and NOTHING IN THE BUILDING IMPLEMENTS IT — the "
+				+ "audit walks a tower where that passage is gone and the player walks one "
+				+ "where it is still open") % [id, str(removes)])
+
+	print("tower scars: %d authored, %d built into the interior" % [
+		authored.size(), built.size()])
+
+
+func _scar_row(id: String) -> Dictionary:
+	"""The scar row for `id`, or an empty dict. Local — nothing else wants it."""
+	for scar: Dictionary in _graph["scars"]:
+		if String(scar["id"]) == id:
+			return scar
+	return {}
+
 
 func _fail(message: String) -> void:
 	_failures.append(message)
