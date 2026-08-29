@@ -372,6 +372,16 @@ var is_caught: bool = false
 var caught_timer: float = 0.0
 const CAUGHT_DURATION: float = 0.55
 
+## THE THIRD STAKE, latched across the caught freeze. 0.0 for every ordinary
+## contact in the game; the fraction off the attacker's `coin_setback` row key
+## when a TOWER GUARD is what hit us. Held here rather than re-derived in
+## `_on_caught_finished()` because the attacker is gone by then (the caught freeze
+## is 33 frames long and it may have been slept, freed by a population reset, or
+## simply walked away), and re-asking would silently downgrade a guard hit to the
+## predator cost. Same shape and same reason as the capture gate two lines below
+## it in `hit_by_crocodile()`: the decision is made where the evidence is.
+var caught_setback: float = 0.0
+
 ## Lives / game-over state. The player starts each run with MAX_LIVES; every
 ## crocodile bite costs one. While lives remain we respawn *in place* (keeping all
 ## coins) after a short grace window; when they run out we show the Game Over
@@ -1481,6 +1491,108 @@ func _is_hunter_grab(attacker: Node) -> bool:
 	return row is Dictionary and String((row as Dictionary).get("behavior", "")) == "hunt"
 
 
+func _coin_setback_of(attacker: Node) -> float:
+	"""
+	What fraction of this player's coins does the thing that just hit us take?
+
+	@param attacker: whoever called `hit_by_crocodile`, or null when nobody said.
+	@return: 0.0 for every ordinary contact; the attacker's `coin_setback` for a
+	         body whose SPECIES row carries one (today: the tower guard).
+
+	KEYED ON A ROW KEY, NOT ON A SPECIES NAME — the third time this file asks the
+	attacker a question and the third time the answer is data (see
+	`_is_hunter_grab` above, and `stink_immune` / `crush_immune` in the AI). A
+	second guard-class body opts in by editing its row and nothing here changes.
+
+	AND IT IS THE FRACTION, NOT A BOOLEAN, so this file holds no percentage of its
+	own: "one arithmetic everywhere" means the number lives in exactly one place
+	(the row) and is spent in exactly one place (`_pay_guard_setback`). Read
+	through `Node.get()`, which answers null for a body with no `spec` at all — the
+	tower's rotor bar, a boss projectile — so every other damage source falls
+	through to the predator arithmetic with no test of its own.
+
+	CLAMPED TO [0, 1] AT THE READ. A hand-edited or mis-typed row cannot make a hit
+	refund coins or take more than there are, and the clamp being here rather than
+	at the spend is what keeps the spend a single subtraction.
+	"""
+	if attacker == null:
+		return 0.0
+	var row: Variant = attacker.get("spec")
+	if not (row is Dictionary):
+		return 0.0
+	return clampf(float((row as Dictionary).get("coin_setback", 0.0)), 0.0, 1.0)
+
+
+func _pay_guard_setback(fraction: float) -> void:
+	"""
+	Settle a tower guard's bill: a slice of the coins, and back to the checkpoint.
+
+	@param fraction: the attacker's `coin_setback`, already clamped to [0, 1].
+
+	NO LIFE IS SPENT AND NO RUN CAN END HERE. That is the owner ruling and it is
+	enforced structurally rather than by a flag: this function is the early return
+	at the top of `_on_caught_finished()`, so both of that function's endings — the
+	heart and the game over — are physically below it.
+
+	THE COINS COME OFF `own_coins`, WHICH IS THIS PEER'S OWN STAKE. Solo the two
+	fields are identical and this is simply "7% of your coins". In a ROOM
+	`coins_collected` is the whole room's bank (see `_refresh_shared_totals`), and
+	billing a fraction of four players' bank to one player's contribution could
+	drive `own_coins` negative and make the shared total drift. So the fraction is
+	taken of what this player actually put in, and the SAME number comes off the
+	displayed figure so the HUD moves on the frame the hit lands rather than on the
+	next shared recompute.
+
+	ponytail: IN A ROOM the shared heart count is derived from the shared bank
+	(`shared_lives(own_coins, own_lives_spent)`), so a setback that docks this peer
+	across an EXTRA_LIFE_COINS boundary costs the ROOM a heart — which is the one
+	way the "no life" half of the ruling can be bent, and only in a room, only at
+	the tower, only on a threshold. Left as it is deliberately: the tower's
+	multiplayer half is bead godot-test1-3iy.10, the fix belongs with the rest of
+	that arbitration, and the alternatives available inside this bead are worse
+	(docking only the displayed figure makes the setback invisible in a room, since
+	the next shared recompute overwrites it; capping the loss at the threshold makes
+	the arithmetic two arithmetics). Solo, `lives` is only ever incremented at a
+	threshold and never recomputed from the bank, so nothing here can touch it.
+
+	`next_extra_life_at` IS DELIBERATELY LEFT WHERE IT IS. It only ever advances,
+	so re-earning coins you were docked cannot re-award a heart you already have —
+	the threshold you already crossed is behind you. What it does mean is that a
+	player docked back below the NEXT threshold has to re-earn those coins to reach
+	it, which is the setback doing its job.
+
+	NOTHING IS SWEPT. `clear_nearby_crocodiles()` frees bodies, and a guard is
+	authored furniture rather than spawn clutter — see the exemption there. The
+	grace freeze plus the blink i-frames are what keep the landing safe, and the
+	checkpoint is safe by construction anyway: no guard's patrol box reaches it.
+	"""
+	caught_setback = 0.0
+	var lost: int = int(floor(float(own_coins) * fraction))
+	own_coins = maxi(0, own_coins - lost)
+	coins_collected = maxi(0, coins_collected - lost)
+
+	# THE KNOCKBACK. Null-safe group lookup with a `has_method` guard, the
+	# project's no-hard-references convention: a guard can only ever bite you
+	# inside the tower, but this is also the path a save-scummed scene or a
+	# self-check takes, and standing still is a better failure than a crash.
+	var interior := get_tree().get_first_node_in_group("tower_interior")
+	if interior and interior.has_method("setback_point"):
+		global_position = interior.call("setback_point")
+
+	# ...and the same landing every other respawn gets: clean ability state, a
+	# frozen grace window, then the blinking i-frames. Written out rather than
+	# routed through `_respawn_in_place()` because that function's first act is to
+	# relocate a player to the room's group anchor, which would throw the knockback
+	# we just made straight across the map.
+	_reset_ability_states()
+	velocity = Vector3.ZERO
+	is_ducking = false
+	is_running = false
+	is_respawning = true
+	respawn_timer = RESPAWN_GRACE_DURATION
+	print("Tower guard setback: -%d coins, back to the checkpoint" % lost)
+
+
 func _capture_is_armed() -> bool:
 	"""
 	May a hunter take a hero yet? Only after the authored Primm rescue.
@@ -2161,6 +2273,17 @@ func hit_by_crocodile(attacker: Node = null) -> void:
 	if _is_hunter_grab(attacker) and _capture_is_armed():
 		_capture_active_hero()
 
+	# THE THIRD STAKE, decided at the same seam and for the same reason: this is
+	# where the attacker is still in hand. A tower guard charges a fraction of your
+	# coins plus a knockback to the last checkpoint you lit inside the building —
+	# and NOT a life, so the tower can never end a run in the middle of a rescue
+	# (owner ruling, 2026-08-27). Zero for everything else in the game, which is
+	# every other row in the SPECIES table, the rotor bar, a boss projectile and a
+	# plain `null` attacker. Paid in `_on_caught_finished()`, after the same caught
+	# freeze / red flash / sting every other hit gets — a guard hit is a different
+	# BILL, not a different verb.
+	caught_setback = _coin_setback_of(attacker)
+
 	is_caught = true
 	caught_timer = CAUGHT_DURATION
 	# Drop the jump-forgiveness timers as we enter the freeze. Every frozen branch of
@@ -2187,7 +2310,17 @@ func _on_caught_finished() -> void:
 	"""
 	Called once the "caught" freeze ends. One bite costs one life; from there we
 	either respawn in place (lives left) or end the run (no lives left).
+
+	...UNLESS A TOWER GUARD IS WHAT HIT US, which is the one contact in the game
+	that does not spend a heart. It takes coins and ground instead, and it returns
+	from here BEFORE the `lives -= 1` below — which is the whole of "the building
+	can never game-over you mid-rescue", because both endings the function decides
+	between are underneath that line.
 	"""
+	if caught_setback > 0.0:
+		_pay_guard_setback(caught_setback)
+		return
+
 	# IN A ROOM, RE-READ THE ROOM'S HEARTS BEFORE SPENDING ONE. `_physics_process`
 	# early-returns for the whole `is_caught` freeze (CAUGHT_DURATION, 0.55 s), so
 	# `_refresh_shared_totals()` has not run since the bite landed and `lives` is
@@ -2379,6 +2512,11 @@ func restart_game() -> void:
 	lives = MAX_LIVES
 	is_game_over = false
 	is_caught = false
+	# An unpaid guard bill dies with the run it was charged in. Cheap and
+	# defensive: the setback path can never reach a game over, so this can only be
+	# armed here if a bite and a Play Again land in the same freeze — but a stale
+	# fraction would eat a heart's worth of the NEXT run's first bite.
+	caught_setback = 0.0
 	is_respawning = false
 	# Play Again hands back all four heroes. The captive set is per-run world state
 	# and nothing about it is earned, so unlike the tower's opened gates it does
@@ -2564,6 +2702,19 @@ func clear_nearby_crocodiles(spawn_point: Vector3) -> void:
 	for crocodile in crocodiles:
 		if crocodile is Node3D:
 			if "is_boss" in crocodile and crocodile.is_boss:
+				continue
+			# AND A TOWER GUARD IS EXEMPT FOR THE SAME REASON A BOSS IS: it is
+			# authored furniture standing on an authored post, not spawn clutter.
+			# This is NOT only about a guard's own bite — every other way to die
+			# inside the building routes here too (the rotor bar, the press, a
+			# crocodile that followed you through the door), and a 25 m sweep from
+			# anywhere in a 17.6 m building frees the WHOLE floor. That would make
+			# dying the cheapest way past a guarded room, and it would break the
+			# other half of the ruling as well: the population is supposed to come
+			# back at the doorway, not at whatever hazard you last lost to.
+			# Row key, never a species name, exactly like the two immunities in the
+			# AI — a second guard-class body inherits this with its row.
+			if _coin_setback_of(crocodile) > 0.0:
 				continue
 			var distance = spawn_point.distance_to(crocodile.global_position)
 			if distance <= SPAWN_SAFE_RADIUS:

@@ -83,7 +83,8 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            the spine line SAMPLED for holes (a gap there makes
 #                            every identity gate in the wing decorative), and the
 #                            acceptance walk for a spine door plus liberation
-#   capture_selfcheck        SYSTEMIC CAPTURE: the arming gate (pre/post the
+#   capture_selfcheck        SYSTEMIC CAPTURE and the tower guard's setback: the
+#                            arming gate (pre/post the
 #                            authored beat), attribution (only a "hunt" row takes
 #                            a hero), invulnerability covering the hero too, the
 #                            clean auto-switch, liberation, the empty-roster game
@@ -206,6 +207,21 @@ own, all pinned by `tower_interior_selfcheck`:
   systemic capture drives. **A room under the 4.2 m slab has nowhere for a mass to
   rise**, so these four sink — the one axis of the gate language the geometry took away,
   argued at `WING_Z`.
+- **THREE KINDS OF TOWER STATE, THREE HOMES — and the guards' home is nowhere.** Opened
+  gates are a monotone union set on the shell; the captive set is per-run and
+  deliberately outside it (non-monotone); the GUARDS are never persisted by anybody, and
+  that absence plus `reset_guards()` on the shell's `player_entered` signal IS the
+  owner's "structure persists; population resets". Guards are parented to the building
+  (a storey is flat within itself, so the gravity settle a `SPECIES` row expects holds),
+  never chunk-spawned. **Losing to one is the THIRD STAKE**: `coin_setback` (7%) off this
+  peer's own coins plus a knockback to `setback_point()` — the last checkpoint in the
+  opened set, or the doorway — and **no life and no game over**, so the building can
+  never end a run mid-rescue. It rides the one damage verb: `hit_by_crocodile(attacker)`
+  reads the row key, exactly as `_is_hunter_grab` reads `behavior`. Guards stay in group
+  `"crocodile"` (LOD sleep and the MP relay still want them) and refuse the Stink Wave
+  and the giant's crush through `stink_immune` / `crush_immune`, never through group
+  tricks; `clear_nearby_crocodiles()` exempts them the way it exempts a boss, or any
+  death inside the building would clear the floor.
 
 `scripts/tower_graph.gd` is the tower's TOPOLOGY as one const dict of plain dicts —
 rooms, gated passages, entries, the mutation table, the enumerated scar states, the four
@@ -350,7 +366,7 @@ able to stroll away from. The exemption is paid for, not free: `enemy_spawn_self
 every check over every `BIOME_BOSS` kind, not just the crocodile — asserts the body really
 resolved the speed its row asked for.
 
-**The GD-SURVEY hunter robot is the one predator that is dispatched on nothing.** The
+**The GD-SURVEY hunter robot is dispatched on nothing.** The
 corporation hunts every band, so it reaches the world through its own
 `spawn_hunters_in_chunk` on its own `HUNTER_SALT` hash stream (own salt, own coordinate
 primes, own `spawn_hunters` flag) instead of through `BIOME_SPECIES` — which is
@@ -366,6 +382,16 @@ existing `is_boss` guards — never a species-name test — so the next armoured
 predator opts in with a row edit and no code change. `boss_selfcheck` check 8 drives
 **every** row through both real paths, which makes the seven animal rows the negative
 control and anchors the crocodile by name against a stray key.
+
+**The tower guard is the FOURTH door, and it is not in `endless_terrain` at all.** It is
+placed on an authored post by `TowerInterior` (`GUARD_SPECIES` / `GUARD_SCENE` /
+`GUARD_POSTS`), so check 4's reachability gate reads those consts too — a union over the
+dispatch maps and the hunter spawner alone reports a shipped predator as unspawnable.
+**It adds no behaviour arm**: "patrols its floor and never leaves it" is the existing
+`set_confinement()` leash the elevated-platform guards already use, so the row is
+`behavior: "solo"` and the patrol is geometry. Its `coin_setback` key is the third
+stake, and it reuses BOTH of the hunter's immunity keys — see the tower section above
+for why that is a design decision and not an inheritance.
 
 **Hunter mercy is tuned BEFORE contact and never by a hunter pulling its punch.**
 `scripts/hunt_director.gd` (one node in `main.tscn`, group `"hunt_director"`, modelled on

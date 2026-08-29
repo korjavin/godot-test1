@@ -74,6 +74,7 @@ const CROC_AI_SCRIPT: String = "res://scripts/piglet_crocodile_ai.gd"
 const PLAYER_SCRIPT: String = "res://scripts/player_controller.gd"
 const MP_SCRIPT: String = "res://scripts/mp_manager.gd"
 const LOD_SCRIPT: String = "res://scripts/crocodile_lod_manager.gd"
+const TOWER_INTERIOR_SCRIPT: String = "res://scripts/tower_interior.gd"
 const CROC_SCENE: String = "res://scenes/characters/piglet_crocodile.tscn"
 const COIN_SCENE: String = "res://scenes/collectibles/coin.tscn"
 
@@ -238,6 +239,17 @@ var _sim_radius: float = 0.0
 var _hunter_species: String = ""
 var _hunter_scene: PackedScene = null
 
+## tower_interior.gd's GUARD_SPECIES / GUARD_SCENE / GUARD_POSTS — the FOURTH door,
+## and the first that is not in endless_terrain at all. A tower guard belongs to no
+## band and no road station: it is parented to the BUILDING and placed on an
+## authored post, so a reachability union over the dispatch maps and the hunter
+## spawner alone would report it as a species nothing can spawn. Read, never
+## restated, exactly like the hunter's pair.
+var _guard_species: String = ""
+var _guard_scene_path: String = ""
+var _guard_scene: PackedScene = null
+var _guard_posts: Array = []
+
 
 ## endless_terrain.gd's SPAWN_SAFE_RADIUS — the predator-free bubble around the
 ## world origin, read rather than restated so a retune moves this check with it.
@@ -318,6 +330,20 @@ func _run() -> void:
 				+ " nothing can be inside of")
 	_hunter_species = String(consts.get("HUNTER_SPECIES", ""))
 	_hunter_scene = consts.get("HUNTER_SCENE", null) as PackedScene
+	# THE FOURTH DOOR, and it is not in endless_terrain at all: the tower's guards
+	# are parented to the BUILDING, not to a chunk, so the const pair lives on
+	# TowerInterior. Read the same way and for the same reason as the hunter's —
+	# never restated here, so the day that spawner is deleted the row it fed goes
+	# back to being unreachable and check 4 says so by name.
+	var tower_consts: Dictionary = load(TOWER_INTERIOR_SCRIPT).get_script_constant_map()
+	_guard_species = String(tower_consts.get("GUARD_SPECIES", ""))
+	# The PATH, then the load — TowerInterior deliberately does not `preload` the
+	# guard scene (a cold-cache load-order diamond through the crocodile AI; see the
+	# note on GUARD_SCENE_PATH), so this check resolves it the same way the tower
+	# does rather than reaching for a const that is not allowed to exist.
+	_guard_scene_path = String(tower_consts.get("GUARD_SCENE_PATH", ""))
+	_guard_scene = (load(_guard_scene_path) as PackedScene) if _guard_scene_path != "" else null
+	_guard_posts = tower_consts.get("GUARD_POSTS", [])
 	_biome_species = consts.get("BIOME_SPECIES", {})
 	_biome_boss = consts.get("BIOME_BOSS", {})
 	_boss_interval = int(consts.get("BOSS_INTERVAL_STATIONS", 0))
@@ -539,6 +565,26 @@ func _check_species_table() -> void:
 		if _hunter_scene == null:
 			_fail("endless_terrain.HUNTER_SCENE did not resolve to a PackedScene —"
 					+ " the hunter spawner has nothing to instantiate")
+	# AND A FOURTH, which is not a map and not even in endless_terrain: the TOWER
+	# GUARD. It belongs to no band and no road station — it is placed on an
+	# authored post inside one building — so, exactly like the hunter above, a
+	# union over the maps alone would report a shipped, working, world-reachable
+	# species as one nothing can spawn. Counted by reading TowerInterior's own
+	# consts, so deleting that spawner puts the row back to unreachable here.
+	if _guard_species != "":
+		dispatched[_guard_species] = true
+		if not _species_table.has(_guard_species):
+			_fail("TowerInterior.GUARD_SPECIES is '%s', which is not a SPECIES row"
+					% _guard_species + " — every guard the tower stands up would"
+					+ " silently fall back to a crocodile's numbers")
+		if _guard_scene == null:
+			_fail("TowerInterior.GUARD_SCENE_PATH ('%s') did not resolve to a"
+					% _guard_scene_path + " PackedScene — the tower has nothing to"
+					+ " instantiate its guards from")
+		if _guard_posts.is_empty():
+			_fail("TowerInterior.GUARD_POSTS is empty — the row is in the table and"
+					+ " the scene loads, but no guard is ever stood up, so the"
+					+ " species is reachable only on paper")
 	for name_v: Variant in _species_table:
 		if not dispatched.has(String(name_v)):
 			_fail("SPECIES['%s'] is in the table but in no BIOME_SPECIES or"
