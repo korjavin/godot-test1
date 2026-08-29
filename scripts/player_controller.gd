@@ -547,6 +547,46 @@ var custody_timer: float = 0.0
 ## not reasoned. Short enough that standing still loses.
 const CUSTODY_RECALL_SECONDS: float = 35.0
 
+# ---------------------------------------------------------------------------
+# THE PRISON ROLE (bead godot-test1-3iy.10) — multiplayer only
+# ---------------------------------------------------------------------------
+#
+# The owner's rule is REASSIGN FIRST, IMPRISON LAST. A peer whose hero is taken
+# is given a free unclaimed hero through the lobby's own `SetHero` and keeps
+# playing in the field; only when the room has nothing to give does that peer
+# play as their captive INSIDE the cell block, in a bounded role — no phasing, no
+# combat loop, no solo escape.
+#
+# WHY IT IS A POLLED STATE AND NOT AN EVENT. The reassignment is a lobby round
+# trip: `claim_hero()` changes nothing locally and the answer arrives one `heroes`
+# broadcast later, possibly as `errHeroTaken` with fresher truth. So "am I benched"
+# cannot be decided at the moment of capture — it is decided by asking, twice a
+# second, the one question that has a local answer: does the lobby say I hold a
+# hero, and is that hero in a cell? Everything else follows from that, including
+# the exit (somebody freed him, or a claim finally landed), with no latch to leak.
+
+## Is the local player serving the prison role right now?
+##
+## PUBLIC, because `TowerInterior._on_cell_enter()` reads it off the body to refuse
+## a self-rescue. Solo it is false for the whole run and every line below is dead.
+var prisoner_active: bool = false
+
+## Seconds accumulated toward the next prison-role decision, and the interval.
+##
+## TWICE A SECOND, not per frame. The decision reads the lobby's last truth and
+## may send a claim, and a claim per frame would be the storm `_auto_claim_hero()`
+## documents; half a second is far under the caught freeze the player is watching
+## anyway, so the bench never feels polled.
+var _prison_accum: float = 0.0
+const PRISON_TICK: float = 0.5
+
+## The tower's world position, latched when the prison role began, so the
+## confinement clamp costs no group lookup per frame. Vector3.INF-free: the flag
+## below is what says whether it means anything, because a headless harness has no
+## terrain and a prisoner there is simply not confined.
+var _prison_origin: Vector3 = Vector3.ZERO
+var _prison_confined: bool = false
+
 ## The captive set as it stood when the scene began, so it can be put back.
 ##
 ## THE BEAD'S LANDMINE, and this field is the whole answer to it: the scene marks
@@ -897,6 +937,12 @@ func _physics_process(delta: float) -> void:
 	# frame of every ordinary run.
 	_tick_custody(delta)
 
+	# STEP 0-BENCH: reassign-first / imprison-last, and the room-wide ending. Above
+	# the freeze branches for the same reason the recall clock is — the decision is
+	# made a beat after a capture, and a capture leaves the body in `is_caught` for
+	# the whole CAUGHT_DURATION. A no-op solo (one group lookup and a return).
+	_tick_prison(delta)
+
 	# STEP 0a: Game over — out of lives. Stand frozen (the Game Over screen is up
 	# and the cursor is free) until the player hits "Play Again", which calls
 	# restart_game(). We still settle under gravity so we don't hang in the air.
@@ -1090,6 +1136,12 @@ func _physics_process(delta: float) -> void:
 	# STEP 9: Move the character using Godot's built-in physics
 	# This handles collisions automatically
 	move_and_slide()
+
+	# STEP 9b: ...and, if we are serving the prison role, put the body back inside
+	# the cell block. AFTER the move, because that is what makes it a wall rather
+	# than a suggestion: clamping the input would leave a run-up against the spine
+	# doors that a physics tick could still carry through.
+	_confine_to_block()
 
 	# STEP 10: Update character animations
 	update_character_animation(delta, input_dir)
@@ -2556,7 +2608,12 @@ func _respawn_in_place() -> void:
 	then also needs its `await get_tree().physics_frame`.
 	"""
 	_reset_ability_states()
-	var anchor: Variant = _room_group_anchor()
+	# A PRISONER RESPAWNS WHERE HE FELL, and that is the one exception to "in a room,
+	# in place means back with the group". A guard's bite inside the cell block must
+	# not fire the group relocation, which would throw the body kilometres out to the
+	# team and hand it straight back to `_confine_to_block()` — the yank the clamp is
+	# there to make impossible, arriving via the one path that outruns it.
+	var anchor: Variant = null if prisoner_active else _room_group_anchor()
 	if anchor != null:
 		var from_xz := Vector2(global_position.x, global_position.z)
 		_place_near(anchor as Vector3)
@@ -2762,6 +2819,140 @@ func _end_custody_protocol(survived: bool) -> void:
 	print("Broke out. %d hero(es) free; the tower is scarred." % free_hero_count())
 
 
+# ---------------------------------------------------------------------------
+# THE PRISON ROLE — the bench, the block, and the way out of it
+# ---------------------------------------------------------------------------
+
+func _tick_prison(delta: float) -> void:
+	"""
+	Decide the bench, twice a second. The one owner of `prisoner_active`.
+
+	THE ORDER OF THE THREE TESTS IS THE OWNER'S RULE, top to bottom:
+
+	  1. THE ROOM IS OUT OF HEROES -> the full-custody protocol, for EVERY peer and
+	     not only for whoever was bitten last. This is the world-level reading of
+	     game over (see the roster clause in `_on_caught_finished()`); the peer who
+	     took the last hero reaches it there, and this is how the other three learn.
+	  2. MY HERO IS FREE -> nothing to do, and if we were benched we are not any
+	     more: somebody walked into our cell, or a claim finally landed.
+	  3. MY HERO IS IN A CELL -> REASSIGN FIRST. Ask the lobby for a free hero and
+	     wait for the answer; only when the room has none is the prison role the
+	     answer, which is what "imprison last" means in code.
+
+	NOTHING HERE RUNS SOLO. `is_online()` is the gate, and it is the same one-test
+	shape every other multiplayer read in this file uses.
+	"""
+	if is_game_over:
+		return
+	# The break-out scene owns the roster and the body while it runs — its grant is
+	# what lets a prisoner walk at all — so the bench has nothing to decide inside
+	# it. Same guard, same reason, as `_check_shared_game_over()`'s.
+	if custody_protocol_active:
+		return
+	_prison_accum += delta
+	if _prison_accum < PRISON_TICK:
+		return
+	_prison_accum = 0.0
+
+	var mp := _mp()
+	if mp == null or not mp.has_method("is_online") or not bool(mp.call("is_online")):
+		# The room ended under us (a leave, a dropped socket). The block is not a
+		# place to leave somebody standing in solo play.
+		if prisoner_active:
+			_exit_prison()
+		return
+
+	# 1. The room is out of heroes.
+	if free_hero_count() == 0 and not captive_heroes.is_empty():
+		if prisoner_active:
+			_exit_prison()
+		_begin_custody_protocol()
+		return
+
+	# 2/3. What does the lobby say we are holding, and is he in a cell?
+	var hero: String = String(mp.call("my_hero")) if mp.has_method("my_hero") else ""
+	if hero.is_empty() or not captive_heroes.has(hero):
+		if prisoner_active:
+			_exit_prison()
+		return
+
+	# REASSIGN FIRST. A claim that is sent changes nothing yet — we come back here
+	# in half a second and read the answer off `my_hero()`, whether it was a grant
+	# or an `errHeroTaken` that left us exactly where we were.
+	if mp.has_method("request_reassignment") and bool(mp.call("request_reassignment")):
+		return
+
+	# IMPRISON LAST.
+	if not prisoner_active:
+		_enter_prison(hero)
+
+
+func _enter_prison(hero: String) -> void:
+	"""
+	Take up the prison role: play as your captive, inside his cell block.
+
+	@param hero: the captive we hold — his cell is where we stand up.
+
+	A PLACEMENT AND NOT A RESPAWN, exactly like `_begin_custody_protocol()`'s march
+	to the tower: no life is spent, no score, streak or record is touched, and the
+	distance origin is shifted by the jump so the walk to the tower is not banked as
+	a personal best nobody ran.
+	"""
+	prisoner_active = true
+	velocity = Vector3.ZERO
+	ability_cooldowns.fill(0.0)
+	_reset_ability_states()
+	_apply_view_mode()
+
+	# Null-safe: a player with no terrain under it (every headless harness) serves
+	# the role where it stands, unconfined. That is the right degrade — the role's
+	# decisions are all roster arithmetic and none of them touches geometry.
+	var terrain := get_tree().get_first_node_in_group("terrain")
+	if terrain != null and terrain.has_method("tower_site"):
+		_prison_origin = terrain.call("tower_site") as Vector3
+		_prison_confined = true
+		var from_xz := Vector2(global_position.x, global_position.z)
+		global_position = _prison_origin + TowerInterior.cell_stand(hero)
+		own_distance_origin += Vector2(global_position.x, global_position.z) - from_xz
+	rotation.y = SPAWN_FACING_Y
+	camera_pitch = 0.0
+	clear_nearby_crocodiles(global_position)
+	_sfx("play_hunter_lock_on")
+	print("Benched: the room has no free hero. %s plays from the cell block." % hero)
+
+
+func _exit_prison() -> void:
+	"""
+	Leave the prison role. The body stays where it is standing — in the block, with
+	the way out in front of it, which is exactly where a survived break-out leaves
+	you and for the same reason: walking out is the beat.
+	"""
+	if not prisoner_active:
+		return
+	prisoner_active = false
+	_prison_confined = false
+	_reset_ability_states()
+	print("Back on the roster — out of the cell block.")
+
+
+func _confine_to_block() -> void:
+	"""
+	Keep a prisoner inside the cell block. Movement confined, nothing else changed.
+
+	A CLAMP AND NOT A WALL, deliberately: a wall is geometry every other body in the
+	game would collide with too (a rescuer, a guard, a teammate's avatar), and the
+	confinement is a property of THIS PLAYER'S ROLE, not of the building. Two
+	clamps, x and z — y is left alone so gravity, the floor and the ramp all still
+	behave, and there is no vertical way out of a roofed wing anyway.
+	"""
+	if not prisoner_active or not _prison_confined:
+		return
+	var lo := _prison_origin + TowerInterior.block_min()
+	var hi := _prison_origin + TowerInterior.block_max()
+	global_position.x = clampf(global_position.x, lo.x, hi.x)
+	global_position.z = clampf(global_position.z, lo.z, hi.z)
+
+
 func _apply_custody_scar() -> void:
 	"""
 	Take exactly one AUTHORED, ENUMERATED scar — the survival record itself.
@@ -2920,6 +3111,11 @@ func restart_game() -> void:
 	# not survive the button. The break-out scene's own state goes with it — it is
 	# per-run for the same reason and stored in exactly as many places (none).
 	captive_heroes.clear()
+	# The bench goes with the run for the same reason: it is a fact about a room's
+	# roster, and Play Again inside a room leaves the room first.
+	prisoner_active = false
+	_prison_confined = false
+	_prison_accum = 0.0
 	custody_protocol_active = false
 	custody_timer = 0.0
 	_custody_entry_captives.clear()
