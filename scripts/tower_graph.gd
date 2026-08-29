@@ -465,18 +465,19 @@ const TOWER_GRAPH: Dictionary = {
 		"s8_clue_chamber_west": {
 			"built": true, "quest": "", "cell": "", "parts": [],
 			"note": "A dead-end chamber off the west side of the circuit. The lower "
-				+ "riddle's four colours are painted on its floor.",
+				+ "riddle's four colours are painted on its floor, and it carries one "
+				+ "of the storey's two `P` pads.",
 		},
 		"s8_clue_chamber_east": {
 			"built": true, "quest": "", "cell": "", "parts": [],
-			"note": "The same off the east side, carrying the UPPER riddle's clue — "
-				+ "both answers are read on this floor, one storey below the door the "
-				+ "second one opens.",
+			"note": "The same off the east side, carrying the UPPER riddle's clue and "
+				+ "the storey's other `P` pad — both answers are read on this floor, "
+				+ "one storey below the door the second one opens.",
 		},
 		"s8_maze_core": {
 			"built": true, "quest": "", "cell": "", "parts": [],
-			"note": "The core of the lower maze, on route B. Carries one of the "
-				+ "floor's two pads.",
+			"note": "The core of the lower maze, on route B — the room the riddle "
+				+ "buys, and the reason route B is a third shorter than the circuit.",
 		},
 		"s8_north_hall": {
 			"built": true, "quest": "", "cell": "", "parts": [],

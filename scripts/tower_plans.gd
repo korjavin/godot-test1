@@ -566,10 +566,19 @@ const STOREYS: Array[Dictionary] = [
 	#
 	#   ROUTE A — THE LONG WAY, UNGATED END TO END, and the one the four rescue
 	#   spines walk. It is the OUTER CIRCUIT, the one-cell ring corridor just inside
-	#   the shell: from the landing at (25, 38) west along the south ring to (1, 38),
-	#   north up the west ring to (1, 1), east along the north ring to (15, 1) — the
-	#   foot of storey 9's ramp. 75 cells of walking, and not one of them asks a
+	#   the shell: from the landing at (25, 38) EAST along the south ring to (38, 38),
+	#   north up the east ring to (38, 1), west along the north ring to (15, 1) — the
+	#   foot of storey 9's ramp. 73 cells of walking, and not one of them asks a
 	#   question.
+	#
+	#   EAST AND NOT WEST, and the ring is a C rather than a loop because of it. The
+	#   ramp lane occupies (20..24, 37..38) and its deck DESCENDS from 36.0 m at the
+	#   landing to 31.0 m at column 20 — storey 7's floor. Walking west off the
+	#   landing therefore walks you back DOWN the ramp and into a 5 m step up at
+	#   (19, 38); row 38's west half is reached by carrying on round column 1, not by
+	#   stepping off the landing. A future author redrawing this floor has to keep the
+	#   circuit reachable in the direction AWAY from the ramp, whichever end the `s`
+	#   lands on.
 	#
 	#   ROUTE B — THE SHORT WAY, behind `riddle_maze_lower`. From the same landing
 	#   north into the arrival pocket, past the four lock pads at (26..27, 35..36)

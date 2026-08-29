@@ -90,8 +90,14 @@ extends Node3D
 ##     Light:      the pad glows; there is no mass beside it, and that absence is
 ##                 the tell. A gate always has something in the doorway.
 ##     Reads as:   "stand here and something opens, elsewhere".
-##     There is exactly one today: the cell block's VENT PURGE, which a benched
-##     multiplayer player operates for the team outside (bead godot-test1-3iy.10).
+##     ONE IS WIRED TODAY: the cell block's VENT PURGE, which a benched multiplayer
+##     player operates for the team outside (bead godot-test1-3iy.10). The other
+##     cyan plates are the `P` cells every storey plan carries — drawn as geometry,
+##     wired to nothing until phase 17 brings the guards they scare (see
+##     `_plan_pads`). Two of them stand inside the block itself since the block
+##     moved to storey 10, so the purge pad is NOT the only cyan plate a prisoner
+##     can see; that ambiguity is phase 17's to resolve, and the resolution is
+##     wiring them, not recolouring them.
 ##
 ##   RIDDLE GATE — a lock that asks where you have been (phase 15).
 ##     Silhouette: a MASS in a doorway, with FOUR COLOURED PLATES on the floor in
@@ -201,7 +207,9 @@ extends Node3D
 ## phase 8 one press hazard, four spine pads and four cell volumes, from phase
 ## 15 one per riddle lock pad and from phase 16 the labyrinth's lift stop —
 ## check 5 counts them and is the number that is actually true), two rotor pivots,
-## seven `Label3D`s and one gem —
+## a `Label3D` per sign — three fixed (the demand gate, the spine, the cell) plus a
+## lock sign and a clue sign per riddle, so eleven at four riddles and two more per
+## riddle after that — and one gem —
 ## built once, for the life of a run. Per-floor visibility
 ## gating (`_update_visibility`) is what keeps that off the web frame budget when
 ## the player is anywhere else in the world.
@@ -756,10 +764,18 @@ const BOX_BUDGET: int = 32
 ##
 ## Storey 10's batch is the FIRST plan storey to carry two surfaces rather than
 ## one: its gate pads and its light panels are `GLOW_COLORS`, so the matte and the
-## emissive halves are both there. That is a second SURFACE and not a second draw
-## — `merged_mesh` puts both in one `ArrayMesh` on one `MeshInstance3D` — and the
-## phase-14 claim above ("a plan storey commits ONE surface") is the one line of
-## it that the cell block changed.
+## emissive halves are both there — which retires the phase-14 claim above ("a plan
+## storey commits ONE surface").
+##
+## THIS NUMBER COUNTS NODES, NOT DRAWS, and the two stopped being the same thing
+## here. `merged_mesh` puts both halves in one `ArrayMesh` on one `MeshInstance3D`,
+## so the node count is unchanged — but emissive is a MATERIAL property, so the two
+## halves are two surfaces, and the engine submits one draw per surface (that is
+## `merged_mesh`'s own "a storey costs two draw calls whether it is four boxes or
+## forty"). Floors 0, 1 and 9 carry glow, so the interior's real draw count is
+## nearer 38 than 35. The budget is still the useful guard — a storey that stopped
+## batching costs a node per box, not a surface — but do not read it as a draw
+## count, and if draws are what you want to bound, count surfaces in check 5.
 const DRAW_BUDGET: int = 35
 
 # ============================================================================
@@ -1203,6 +1219,16 @@ static var _materials: Dictionary = {}
 ## never change at runtime, so building it once is free correctness.
 static var _plan_cache: Dictionary = {}
 
+## The same trick one storey down, and here it is not an optimization but a fix:
+## `block_min()` / `block_max()` are read from `player_controller._physics_process`
+## every frame a benched player is confined, and each one used to re-scan the whole
+## 40 x 40 grid eight times over (`block_floor()`) plus five room lookups. They were
+## literals before the block moved to storey 10; deriving them from the plan is the
+## right call, recomputing them 60 times a second is not. Both are pure functions of
+## `const` data, so one lazy fill is the whole of it.
+static var _block_floor_cache: int = -2       # -2 = not asked yet; -1 = no block
+static var _block_bounds_cache: Variant = null
+
 
 static func boxes() -> Array[Dictionary]:
 	"""
@@ -1512,7 +1538,7 @@ static func plan_boxes(floor_index: int) -> Array[Dictionary]:
 	# parts the plan format cannot express. Keyed on the room and never on the
 	# literal 9: the block is wherever it is drawn, and this file does not know
 	# which floor that is.
-	if not plan_room_rect(floor_index, BLOCK_ROOM).size == Vector2i.ZERO:
+	if plan_room_rect(floor_index, BLOCK_ROOM).size != Vector2i.ZERO:
 		out.append_array(_block_boxes(plan))
 	_plan_cache[floor_index] = out
 	return out
@@ -2157,13 +2183,17 @@ const BLOCK_ROOM: String = "cell_gallery"
 
 static func block_floor() -> int:
 	"""Which `FLOOR_Y` index the cell block is drawn on, -1 when no storey draws it."""
+	if _block_floor_cache != -2:
+		return _block_floor_cache
+	_block_floor_cache = -1
 	for floor_index: int in TowerPlans.floors():
 		if plan_room_rect(floor_index, BLOCK_ROOM).size != Vector2i.ZERO:
-			return floor_index
-	return -1
+			_block_floor_cache = floor_index
+			break
+	return _block_floor_cache
 
 
-static func _cell_span(floor_index: int, rect: Rect2i) -> Dictionary:
+static func _cell_span(rect: Rect2i) -> Dictionary:
 	"""One plan rect as metres: `{x0, x1, z0, z1}` on the interior's own axes."""
 	return {
 		"x0": _grid_x(float(rect.position.x)), "x1": _grid_x(float(rect.end.x)),
@@ -2204,7 +2234,7 @@ static func _block_boxes(plan: Dictionary) -> Array[Dictionary]:
 	# `press_y(0)` puts it — see that function.
 	var crawl := plan_gate_rect(floor_index, "maintenance_crawl")
 	if crawl.size != Vector2i.ZERO:
-		var duct := _cell_span(floor_index, crawl)
+		var duct := _cell_span(crawl)
 		out.append({
 			"name": "CrawlPress",
 			"pos": Vector3((duct["x0"] + duct["x1"]) * 0.5, top + PRESS_TOP,
@@ -2219,7 +2249,7 @@ static func _block_boxes(plan: Dictionary) -> Array[Dictionary]:
 		var cell := plan_room_rect(floor_index, "cell_%s" % hero)
 		if cell.size == Vector2i.ZERO:
 			continue
-		var box := _cell_span(floor_index, cell)
+		var box := _cell_span(cell)
 		out.append({
 			"name": "CellFrame%s" % hero.capitalize(),
 			"pos": Vector3((box["x0"] + box["x1"]) * 0.5, top + 1.25, box["z0"] + 0.3),
@@ -2239,7 +2269,7 @@ static func _block_boxes(plan: Dictionary) -> Array[Dictionary]:
 	# this block has to say from across the gallery.
 	var staged := plan_room_rect(floor_index, "cell_%s" % AUTHORED_CAPTIVE)
 	if staged.size != Vector2i.ZERO:
-		var stage := _cell_span(floor_index, staged)
+		var stage := _cell_span(staged)
 		out.append({
 			"name": "PrimmContainment",
 			"pos": Vector3((stage["x0"] + stage["x1"]) * 0.5, top + 0.6, stage["z1"] - 0.5),
@@ -2264,7 +2294,7 @@ static func _block_boxes(plan: Dictionary) -> Array[Dictionary]:
 		var room := plan_room_rect(floor_index, String(pair[1]))
 		if room.size == Vector2i.ZERO:
 			continue
-		var lit := _cell_span(floor_index, room)
+		var lit := _cell_span(room)
 		out.append({
 			"name": String(pair[0]),
 			"pos": Vector3((lit["x0"] + lit["x1"]) * 0.5, top + clear - 0.05,
@@ -2282,7 +2312,7 @@ static func _block_boxes(plan: Dictionary) -> Array[Dictionary]:
 	# `tower_selfcheck` can bind the two rather than trust this comment.
 	var gap := plan_doorway_rect(floor_index, "service_stair")
 	if gap.size != Vector2i.ZERO:
-		var rubble := _cell_span(floor_index, gap)
+		var rubble := _cell_span(gap)
 		out.append({
 			"name": SCAR_BOX,
 			"pos": Vector3((rubble["x0"] + rubble["x1"]) * 0.5, top + clear * 0.5,
@@ -2305,7 +2335,7 @@ static func purge_pad() -> Vector3:
 	var floor_index := block_floor()
 	if floor_index < 0:
 		return Vector3.ZERO
-	var box := _cell_span(floor_index, plan_room_rect(floor_index, BLOCK_ROOM))
+	var box := _cell_span(plan_room_rect(floor_index, BLOCK_ROOM))
 	return Vector3(box["x1"] - 1.5, FLOOR_Y[floor_index], (box["z0"] + box["z1"]) * 0.5)
 
 
@@ -2329,7 +2359,7 @@ static func cell_stand(hero: String) -> Vector3:
 	var cell := plan_room_rect(floor_index, "cell_%s" % hero)
 	if cell.size == Vector2i.ZERO:
 		return purge_pad() + Vector3(0.0, 0.2, 0.0)
-	var box := _cell_span(floor_index, cell)
+	var box := _cell_span(cell)
 	return Vector3((box["x0"] + box["x1"]) * 0.5, FLOOR_Y[floor_index] + 0.2,
 			(box["z0"] + box["z1"]) * 0.5)
 
@@ -2341,15 +2371,19 @@ static func _block_bounds() -> Dictionary:
 	EVERYTHING ON THE GALLERY SIDE OF THE SPINE WALL AND NOTHING ELSE — the union
 	of the rooms a prisoner may walk, read off the plan rather than written down.
 	"""
+	if _block_bounds_cache != null:
+		return _block_bounds_cache
 	var floor_index := block_floor()
 	if floor_index < 0:
-		return {}
+		_block_bounds_cache = {}
+		return _block_bounds_cache
 	var span := plan_room_rect(floor_index, BLOCK_ROOM)
 	for hero: String in TowerGraph.HEROES:
 		var cell := plan_room_rect(floor_index, "cell_%s" % hero)
 		if cell.size != Vector2i.ZERO:
 			span = span.merge(cell)
-	return _cell_span(floor_index, span)
+	_block_bounds_cache = _cell_span(span)
+	return _block_bounds_cache
 
 
 ## How far inside the block's own walls the prisoner's clamp stops. Keeps it off
@@ -3028,7 +3062,7 @@ func _build_lift_stop() -> void:
 	var rect := landing_rect(floor_index)
 	if rect.size == Vector2i.ZERO:
 		return
-	var span := _cell_span(floor_index, rect)
+	var span := _cell_span(rect)
 	_add_area("LiftStopTrigger",
 		Vector3((span["x0"] + span["x1"]) * 0.5, FLOOR_Y[floor_index] + 1.0,
 				(span["z0"] + span["z1"]) * 0.5),
@@ -3142,8 +3176,9 @@ func _make_label(label_name: String, pos: Vector3, text: String,
 	"""
 	One world label: billboarded, wrapped narrow, shadow-free, parented to storey 0.
 
-	Shared by all three because they are the same object at a different position —
-	see `_build_label()` for why these are world labels and not HUD toasts.
+	Shared by every sign in the building — the demand gate's, the spine's, the cell's
+	and a lock/clue pair per riddle — because they are the same object at a different
+	position. See `_build_label()` for why these are world labels and not HUD toasts.
 
 	WRAPPED, AND NARROW ON PURPOSE. A `Label3D` is geometry: an unwrapped
 	explanation is a 5.7 m banner that runs straight into the walls either side of
@@ -3298,7 +3333,7 @@ func _build_block() -> void:
 		var rect := plan_room_rect(floor_index, "cell_%s" % hero)
 		if rect.size == Vector2i.ZERO:
 			continue
-		var box := _cell_span(floor_index, rect)
+		var box := _cell_span(rect)
 		_add_area("CellTrigger%s" % hero.capitalize(),
 			Vector3((box["x0"] + box["x1"]) * 0.5, top + 1.0,
 				(box["z0"] + box["z1"]) * 0.5),
@@ -3317,8 +3352,8 @@ func _build_block() -> void:
 	# at the receptacle's size the first walkthrough was a screen full of the word
 	# "open". Up near the ceiling and half the scale, they read as signage on a wall
 	# instead of as a wall.
-	var corridor := _cell_span(floor_index, plan_room_rect(floor_index, "service_stair"))
-	var gallery := _cell_span(floor_index, plan_room_rect(floor_index, BLOCK_ROOM))
+	var corridor := _cell_span(plan_room_rect(floor_index, "service_stair"))
+	var gallery := _cell_span(plan_room_rect(floor_index, BLOCK_ROOM))
 	_spine_label = _make_label("SpineLabel",
 		Vector3((corridor["x0"] + corridor["x1"]) * 0.5, top + 3.6,
 			float(corridor["z0"]) + 0.4),
@@ -3523,7 +3558,7 @@ static func custody_stand() -> Vector3:
 	var floor_index := block_floor()
 	if floor_index < 0:
 		return Vector3.ZERO
-	var box := _cell_span(floor_index, plan_room_rect(floor_index, "service_stair"))
+	var box := _cell_span(plan_room_rect(floor_index, "service_stair"))
 	return Vector3((box["x0"] + box["x1"]) * 0.5, FLOOR_Y[floor_index] + 0.2,
 			(box["z0"] + box["z1"]) * 0.5)
 

@@ -341,10 +341,16 @@ The building is full to its sealed roof — ten floor indices, `FLOOR_Y[0..9]`:
   thing in this building that is not batched. Measured over the eight planned storeys:
   **52 / 43 / 52 / 29 / 29 / 81 / 62 / 46** boxes against `PLAN_BOX_BUDGET` 120 (the two
   maze floors are the 81 and the 62 — a one-cell maze legitimately produces many rects,
-  which is what that budget now guards). Draws are **35 (budget 35) for 421 boxes** — one
-  `FloorNBatch` per storey and no second surface anywhere — and the whole interior is
-  **348 collision shapes on one `StaticBody3D`** (ceiling 420, printed by check 5). A plan
-  whose walls stopped merging blows the box budget on its first row.
+  which is what that budget now guards). Mesh NODES are **35 (`DRAW_BUDGET` 35) for 421
+  boxes** — one `FloorNBatch` per storey plus the parts that move — and the whole interior
+  is **348 collision shapes on one `StaticBody3D`** (ceiling 420, printed by check 5). A
+  plan whose walls stopped merging blows the box budget on its first row. **`DRAW_BUDGET`
+  counts nodes, not draws**: emissive is a material property, so a storey carrying a
+  `GLOW_COLORS` box commits a second SURFACE in the same `ArrayMesh` and the engine
+  submits one draw per surface. Floors 0, 1 and 9 glow (the keep and the cell block),
+  so the interior is 13 batch
+  surfaces + 25 own-node meshes = **38 real draws**. Read the number as "nothing left the
+  batch", not as a draw count.
 - **The labyrinth's rule is TWO ROUTES, and the spines walk the ungated one.** Each maze
   storey has an outer circuit that asks nothing of anybody (route A) and a short way
   through the core behind a riddle gate (route B). Check 3 walks every spine with an EMPTY
