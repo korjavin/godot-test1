@@ -2014,11 +2014,15 @@ func _check_captive_set() -> String:
 			+ "packet then benches any teammate, or four end every run in the room"
 
 	# --- 3. the pool is the whitelist, and an assertion cannot be re-made.
-	mp._heroes["nobody_by_that_name"] = "carl"
+	#
+	# CARL REALLY IS THE HOLDER of this name, so the holder rule does not answer for
+	# the whitelist and the two are measured separately: the lobby is trusted about
+	# WHO holds a hero, and this is the room's own list of which heroes exist.
+	mp._on_lobby_heroes({"windman": "me", "teibi": "bob", "nobody_by_that_name": "carl"},
+		["windman", "primm", "teibi", "phoboman"])
 	mp._receive_captive("carl", {"t": "cap", "h": "nobody_by_that_name", "c": true})
 	if mp.is_hero_captive("nobody_by_that_name"):
 		return "a hero outside the lobby's pool was written into the captive set"
-	mp._heroes.erase("nobody_by_that_name")
 
 	# --- 2. bob was reassigned to teibi, and loses that one too.
 	#
@@ -2039,7 +2043,15 @@ func _check_captive_set() -> String:
 	if player.told != [["primm", false]]:
 		return "the liberation did not reach the player's own set (%s)" % str(player.told)
 
-	# --- 7. the dispatch arm, and the budget.
+	# --- 7. the dispatch arm, both transports, and the budget on both.
+	if not MPManager.VERB_BUDGET_PER_SEC.has("cap"):
+		return "the cap verb has no rate budget — a state-mutating verb with none is an amplifier"
+	var budget: int = int(MPManager.VERB_BUDGET_PER_SEC["cap"])
+	for spend: int in budget:
+		if not mp._verb_rate_ok("eve", "cap"):
+			return "the cap budget refused spend %d of its own %d" % [spend, budget]
+	if mp._verb_rate_ok("eve", "cap"):
+		return "the cap budget of %d let a peer spend %d in one second" % [budget, budget + 1]
 	if MPManager.packet_kind({"t": "cap", "h": "primm", "c": true}) != "cap":
 		return "a cap packet does not identify itself as a verb — it would decode as presence"
 	mp._receive_mesh_verb("carl", "cap", {"t": "cap", "h": "primm", "c": true})
@@ -2057,15 +2069,14 @@ func _check_captive_set() -> String:
 	if not mp.is_hero_captive("primm"):
 		return "a cap relayed over the LOBBY was dropped — a peer still negotiating ICE "\
 			+ "when a hero is taken never learns it, and offers a body that is in a cell"
-	if not MPManager.VERB_BUDGET_PER_SEC.has("cap"):
-		return "the cap verb has no rate budget — a state-mutating verb with none is an amplifier"
-	var budget: int = int(MPManager.VERB_BUDGET_PER_SEC["cap"])
+	# ...and the relay is metered on the same budget, because a relayed packet is
+	# peer input like any other. Driven with a sender that holds nothing, so every
+	# one of these is refused on its merits and only the SPEND is being measured.
 	for spend: int in budget:
-		if not mp._verb_rate_ok("eve", "cap"):
-			return "the cap budget refused spend %d of its own %d" % [spend, budget]
-	if mp._verb_rate_ok("eve", "cap"):
-		return "the cap budget of %d let a peer spend %d in one second" % [budget, budget + 1]
-
+		mp._on_lobby_relay("gary", {"mp": "cap", "h": "primm", "c": true})
+	if mp._verb_rate_ok("gary", "cap"):
+		return "the relayed cap spent none of the verb budget — the second transport is an "\
+			+ "unmetered door into a state-mutating verb"
 	# --- 8. the picker never offers a captive hero, ours included.
 	#
 	# OUR OWN IS THE SHARP CASE and it is the one measured: `available_heroes()`

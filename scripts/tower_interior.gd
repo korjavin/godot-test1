@@ -2415,6 +2415,13 @@ func _tick_purge(delta: float) -> void:
 			fired += 1
 	if fired == 0:
 		return
+	# ponytail: `request_croc_flee()` answers true once the LOCAL pass has run, so a
+	# non-master whose channel to the master is still negotiating spends a cooldown
+	# on a wave that reached nobody's crocodiles. The ceiling is one wasted press
+	# per mesh hiccup and the pad re-arms in PURGE_COOLDOWN; the upgrade path is a
+	# send-status return from that function, which every existing caller would have
+	# to be re-read against (it deliberately answers "the room has taken this over",
+	# not "the packet left").
 	_purge_cooldown = PURGE_COOLDOWN
 	_say_cells(tr("VENT PURGE — THE PACK SCATTERS."))
 	_sfx("play_level_up")
