@@ -1895,18 +1895,19 @@ const SPECIES: Dictionary = {
 	## heavy low body on stubby legs carrying THREE necks and heads off one branch
 	## point, built by scripts/generate_hydra.py on the toolkit's `necks` primitive.
 	## Read that file for the palette and the fan geometry. The mesh is 1.3197 long
-	## (x -0.550 .. +0.770, midpoint +0.110), 0.662 tall and 0.524 across. The
-	## capsule in hydra.tscn is `radius = 0.331, height = 1.32`, laid on the travel
-	## axis with the crocodile's basis, at `(0, 0.331, 0.11)`:
+	## (x -0.660 .. +0.660), 0.662 tall and 0.524 across. The capsule in hydra.tscn
+	## is `radius = 0.331, height = 1.32`, laid on the travel axis with the
+	## crocodile's basis, at `(0, 0.331, 0)`:
 	##   * 1.32 covers the 1.3197 m length, caps included, so the horizontal reach
-	##     is 0.66 — inside the spawner's 0.7 bound, which is why the model's own
-	##     length is capped there (see the generator's header).
+	##     is 0.66 — inside the spawner's 0.7 bound.
 	##   * 0.331 makes a 0.662 m tube around the 0.662 m height — the viper's
 	##     tightest-fit rule, and radius == centre y (the crocodile/viper identity)
 	##     puts the capsule's bottom exactly on y = 0.
-	##   * z = 0.11 is the mesh's own x-midpoint: the necks reach further forward
-	##     than the short tail reaches back, so a capsule centred on the origin
-	##     would leave the heads hanging off the front.
+	##   * NO z offset, unlike the viper's -0.495 and the roc's +0.133, because
+	##     generate_hydra.py centres this mesh on its own origin. That is not a
+	##     detail: a laid capsule's reach is its offset PLUS its half-length, so an
+	##     off-centre boss mesh spends BOSS_FOOTPRINT_RADIUS_PER_SCALE twice and
+	##     lands scaled inside the rock the spawner placed it clear of.
 	"hydra": {
 		## No arm. Same reasoning as the green dragon's, one band over: a melee
 		## territorial boss is exactly what the code above the `match` already is,

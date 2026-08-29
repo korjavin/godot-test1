@@ -23,11 +23,15 @@ distance, since the terrain's size schedule blows this up 2.5x-6x:
   per-head animation (the whole `Model` node sways as one, `sway_yaw` 8 degrees,
   the widest in the table), so the STATIC spacing is the entire multi-head read.
 
-* IT IS NOT LONGER THAN ITS CAPSULE MAY BE. hydra.tscn's collision capsule lies
-  along the travel axis and covers the whole mesh, and endless_terrain's
-  BOSS_FOOTPRINT_RADIUS_PER_SCALE (0.7) caps a boss's horizontal reach at body
-  scale 1 — so the nose-to-tail length is held under 1.4 m on purpose. Growing a
-  boss UP is free; growing it out is not.
+* IT IS NOT LONGER THAN ITS CAPSULE MAY BE, AND IT IS CENTRED ON ITS ORIGIN.
+  hydra.tscn's collision capsule lies along the travel axis and covers the whole
+  mesh, and endless_terrain's BOSS_FOOTPRINT_RADIUS_PER_SCALE (0.7) caps a boss's
+  horizontal reach at body scale 1 — so the nose-to-tail length is held under
+  1.4 m on purpose. The centring is the other half of that budget and is easy to
+  miss: the reach of a laid capsule is its OFFSET PLUS its half-length, so a mesh
+  whose mass sits forward of the origin spends the 0.7 twice and lands a scaled
+  boss inside the rock it was placed clear of. Growing a boss UP is free; growing
+  it out, or off-centre, is not.
 
     python3 scripts/generate_hydra.py
 """
@@ -131,6 +135,15 @@ def build_hydra():
                    HEAD_COUNT, NECK_LEN, c_body,
                    segments=3, spread=NECK_SPREAD, rise=NECK_RISE,
                    thick=NECK_THICK, taper=0.40, head=1.7, eye=c_eye)
+
+    # --- Centre the animal on its own origin along x. `build()` plants the feet
+    # at y = 0 and leaves x alone (the snake is deliberately built well behind its
+    # origin), but a BOSS with a laid capsule cannot afford that: see the header.
+    # Derived rather than hand-typed so retuning the tail or the fan can never
+    # silently push the capsule back over the 0.7 bound.
+    shift = -(min(p.bounds[0][0] for p in parts) + max(p.bounds[1][0] for p in parts)) / 2
+    for part in parts:
+        part.apply_translation((shift, 0.0, 0.0))
     return parts
 
 
