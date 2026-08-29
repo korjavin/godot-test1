@@ -1615,6 +1615,177 @@ const SPECIES: Dictionary = {
 			"muzzle_height": 1.5,
 		},
 	},
+	## ------------------------------------------------------------------------
+	## GREEN DRAGON — the FOREST band's BOSS, and the cheapest row in this table.
+	## ------------------------------------------------------------------------
+	## Owner, verbatim: "green dragons for forest".
+	##
+	## THE POINT OF THIS ROW IS THAT IT IS BORING. The titan above needed a new
+	## behaviour arm, a projectile capability and a speed opt-out; the dragon
+	## needs NONE of them. It is `behavior: "solo"` — the code ABOVE the dispatch
+	## `match`, which has no arm at all on purpose — so this entry is thirty
+	## numbers, one .tscn and one BIOME_BOSS line, and not a character of new
+	## logic anywhere. That is the family seam working: the second boss kind costs
+	## what a boss kind is supposed to cost.
+	##
+	## BOSS-ONLY, like the titan: nothing in BIOME_SPECIES points here, so every
+	## green dragon in the world arrives through BIOME_BOSS[FOREST] and therefore
+	## through setup_as_boss() — giant, territorial (it hunts inside
+	## BOSS_TERRITORY_RADIUS and never leaves), crush-immune, stink-immune,
+	## unkillable, one-shot lethal on contact. All of it inherited from
+	## boss-ness; none of it stated here.
+	##
+	## IT TAKES THE DEFAULT BOSS SPEED, AND THAT IS A DECISION. `boss_chase_speed`
+	## exists (see the titan, which opts out at 3.0 because an archer that runs
+	## you down is not an archer) and this row deliberately does NOT carry it: a
+	## melee territorial dragon is exactly the animal BOSS_CHASE_SPEED (7.0) was
+	## written for — over WALK_SPEED (5.0) so strolling out of its territory gets
+	## you eaten, under MAX_CHASE_SPEED (8.5) and so under the slowest run (9.0)
+	## so sprinting for the fence always works. A melee boss is the case where
+	## that lattice matters most, which is why it takes the default rather than
+	## a number of its own.
+	##
+	## THE MODEL IS A PLACEHOLDER AND SAYS SO. Per the epic's art-decoupling
+	## convention (the titan is a re-skinned Teibi), scenes/characters/
+	## green_dragon.tscn instances piglet_crocodile.glb — the only green scaly
+	## reptile in the asset set — stretched to (1, 1.6, 1) so it reads as a
+	## leggier, taller-standing beast rather than as the 6x piglet crocodile that
+	## already guards every band this table has no row for. The real winged model
+	## is its own art bead (godot-test1-lce.7, wings as SILHOUETTE only — this
+	## world is flat and nothing flies); when it lands, only the .tscn and the
+	## measured geometry below change, and nothing in this row's behaviour does.
+	##
+	## THE STRETCH IS VERTICAL ONLY, AND THAT IS A PLACEMENT CONSTRAINT, not an
+	## art choice. endless_terrain's BOSS_FOOTPRINT_RADIUS_PER_SCALE (0.7) is the
+	## clearance every boss candidate is judged against, and 0.7 is exactly the
+	## crocodile capsule's half-LENGTH — the widest horizontal reach of a 1.4 m
+	## capsule laid on its side. Stretch this body along x or z and its footprint
+	## quietly exceeds the number the spawner is still using, so at the 6x cap it
+	## can be placed overlapping a tree and wedge there. Growing UP costs the
+	## footprint nothing. (The alternative — raising that constant, or deriving it
+	## per species — would move every boss in the world, which is a bead of its
+	## own and not a side effect of an art placeholder.)
+	##
+	## MEASURED OFF THAT STRETCH, because the geometry keys are model numbers and
+	## a .tscn cannot hold a comment an editor resave will not eat. The source
+	## mesh is 1.400 x 0.280 x 0.276 (the crocodile's, see the row at the top of
+	## this table); at (1, 1.6, 1) the dragon is the same 1.400 long and 0.280
+	## wide, and 0.442 TALL — two thirds again the crocodile's height, which is
+	## the whole silhouette difference. The capsule in green_dragon.tscn is
+	## `radius = 0.22, height = 1.4`, laid on the travel axis with the
+	## crocodile's basis, at `(0, 0.22, 0)`:
+	##   * 0.22 makes a 0.44 m tube around the 0.442 m standing height — the
+	##     viper's tightest-fit rule, applied to the axis that actually grew. It
+	##     over-covers the unchanged 0.280 m width by 0.08 m, the same trade the
+	##     crocodile's own 0.16 makes on its 0.28.
+	##   * 1.4 is the unstretched length, caps included, so the horizontal reach
+	##     stays 0.7 — the spawner's bound, exactly.
+	##   * radius == centre y, the crocodile/viper/hunter identity, so the
+	##     capsule's bottom sits exactly on y = 0 and the body rests on the flat
+	##     world's ground plane.
+	##   * z = 0, like the crocodile's and unlike the viper's and the hunter's:
+	##     this mesh is centred on its own origin.
+	## The boss schedule's `scale = ONE * boss_scale` multiplies all of it, so a
+	## 6x dragon is an 8.4 m capsule around a 2.65 m tall model.
+	"green_dragon": {
+		## No arm. "solo" is the shared code above the behaviour `match` — wander
+		## alone, chase what you smell, flee a stink wave (which a boss ignores
+		## anyway) — and it is deliberately the string with no `match` case, so an
+		## unknown behaviour degrades to it. A melee boss wants precisely that.
+		"behavior": "solo",
+
+		# ----- Speed and detection -----
+		## The crocodile's numbers, unchanged and on purpose. A boss overrides
+		## both at spawn — `move_speed` is read straight through, and the chase
+		## speed is replaced by BOSS_CHASE_SPEED because this row states no
+		## `boss_chase_speed` — so what these buy is not gameplay but LATTICE
+		## HYGIENE: 5.5 sits in (WALK_SPEED, MAX_CHASE_SPEED] like every ordinary
+		## row, so if a later bead ever gives the dragon a BIOME_SPECIES entry it
+		## is already a legal predator instead of a slow-archer exemption nobody
+		## re-examined.
+		"move_speed": 2.5,
+		"chase_speed": 5.5,
+
+		## Zero, not a spread — the titan's reasoning verbatim: a boss takes no
+		## per-instance rolls (see the is_boss branch in _ready()), so a factor
+		## here would be a number that is never drawn. Stating 0.0 says "this
+		## animal has one size and one speed" instead of leaving a spread that
+		## reads as live and is not.
+		"speed_random_factor": 0.0,
+		"size_random_factor": 0.0,
+
+		## Also overridden at spawn (BOSS_DETECTION_RADIUS, 25). The crocodile's
+		## 15 is kept for the same hygiene reason as the speeds, and it honours
+		## the game-wide LOD invariant either way: well under
+		## crocodile_lod_manager's SIM_RADIUS (45), so a dragon that can smell
+		## you is always awake.
+		"detection_radius": 15.0,
+
+		# ----- Organic wandering -----
+		## Slower and lazier than the crocodile's rhythm: a territorial animal
+		## patrolling ground it owns, not a scavenger casting about. It has
+		## nowhere to be — the leash keeps it inside its own circle regardless.
+		"direction_change_interval": 5.0,
+		"pause_duration": 0.6,
+		"wander_turn_rate": 0.9,
+		"turn_smoothness": 4.0,
+		"min_wander_speed_factor": 0.45,
+		"speed_variation_freq": 0.7,
+		"sniff_pause_chance": 0.25,
+
+		# ----- Obstacle avoidance -----
+		## Feelers cast from higher up than the crocodile's, because this body is
+		## 1.6x taller before the boss scale and FOREST is the densest tree cover
+		## in the world — a probe at the crocodile's 0.3 m would sample bark below
+		## the dragon's own knee. Reach is a little longer too, so a heavy animal
+		## with a slower turn (see turn_smoothness) starts its curve sooner.
+		"avoid_look_ahead": 3.5,
+		"avoid_feeler_angle": PI / 5.0,  # 36°
+		"avoid_feeler_height": 0.5,
+		"avoid_speed_factor": 0.5,
+
+		# ----- Procedural body animation -----
+		## -PI/2, the quadruped default: this is the crocodile mesh, authored
+		## nose-along-+X, and the body travels +Z.
+		"model_facing_offset": -PI / 2.0,
+
+		## A heavy, deliberate gait. Everything here is the crocodile's read
+		## slowed and deepened — a big animal covering the same ground in fewer,
+		## longer strides, which is the only thing separating a dragon from a
+		## piglet crocodile until lce.7 lands the real mesh.
+		"stride_frequency": 5.5,
+		"waddle_roll": 6.0 * PI / 180.0,
+		"bob_amount": 0.05,
+		"sway_yaw": 4.0 * PI / 180.0,
+		## A deep predatory lean when it commits to you.
+		"chase_pitch": 14.0 * PI / 180.0,
+		"breathe_speed": 1.4,
+		"breathe_amount": 0.02,
+
+		# ----- River submersion (VISUAL ONLY) -----
+		## The crocodile's 0.18 carried through the 1.6x vertical stretch: 0.288,
+		## rounded. Scaling it is the whole point — the sink is written in
+		## MODEL-LOCAL metres and applied to `model.position.y`, which is in the
+		## BODY's frame, so the Model node's own scale does not touch it. Leave it
+		## at 0.18 and a dragon two thirds taller than a crocodile would wade
+		## proportionally shallower, which is the one way this key can silently
+		## go wrong.
+		##
+		## Same hard constraint as every row: VISUAL ONLY. The CharacterBody3D,
+		## its CollisionShape3D and global_position never move, so a wading dragon
+		## is exactly as dangerous as a dry one.
+		"river_sink_depth": 0.29,
+		"river_sink_ease_speed": 0.29 / 0.2,
+
+		# ----- Bite -----
+		## A dragon's snap: slower to wind up than the crocodile's 0.5 s chomp,
+		## further through, and lunging harder. Contact is one-shot lethal for
+		## every boss — there is no health pool and this animation is the only
+		## warning you get.
+		"bite_duration": 0.6,
+		"bite_pitch": 30.0 * PI / 180.0,
+		"bite_lunge": 0.5,
+	},
 
 	## ------------------------------------------------------------------------
 	## GD-SURVEY HUNTER ROBOT — the corporation's retrieval unit.
@@ -4204,9 +4375,21 @@ func _animate_body(delta: float) -> void:
 
 	# Compose the transform: first align the snout to the travel direction, then
 	# layer the oscillations on top (re-applying the model's rest scale).
+	#
+	# scaled_LOCAL, not scaled(): `Basis.scaled(v)` is diag(v) * basis, i.e. the
+	# scale lands in the PARENT's axes, after the rotation. For every model whose
+	# rest scale is uniform the two are identical (a uniform scale commutes with
+	# rotation), which is why this read as `scaled()` for six species and was
+	# right. The green dragon is the first row whose model is stretched on ONE
+	# axis (1, 1.6, 1 — see its SPECIES entry), and a parent-frame stretch applied
+	# after a pitch or a roll is a SHEAR: the body leans 14 degrees into a chase
+	# and gets taller in world y instead of along its own spine. scaled_local is
+	# basis * from_scale(v), which stretches the model along the model's own axes
+	# — a rigid stretched dragon at every angle, and byte-identical for the six
+	# uniform rows. Same fix, same reason, in _animate_bite below.
 	var facing := Basis(Vector3.UP, spec["model_facing_offset"])
 	var oscillation := Basis.from_euler(Vector3(current_pitch, yaw_sway, roll))
-	model.transform.basis = (oscillation * facing).scaled(model_base_scale)
+	model.transform.basis = (oscillation * facing).scaled_local(model_base_scale)
 	model.position.y = model_base_y + bob
 
 
@@ -4286,7 +4469,10 @@ func _animate_bite(delta: float) -> void:
 
 	var facing := Basis(Vector3.UP, spec["model_facing_offset"])
 	var snap := Basis.from_euler(Vector3(chomp * spec["bite_pitch"], 0.0, 0.0))
-	model.transform.basis = (snap * facing).scaled(model_base_scale)
+	# scaled_local for the reason spelled out in _animate_body: the bite is the
+	# DEEPEST pitch in the game (30 degrees on the dragon), so a parent-frame
+	# stretch would shear hardest exactly here.
+	model.transform.basis = (snap * facing).scaled_local(model_base_scale)
 	# Lunge along the body's forward axis (+Z) and lift a touch on each snap.
 	model.position = Vector3(0.0, model_base_y + absf(chomp) * 0.04, lunge)
 

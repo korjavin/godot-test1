@@ -296,11 +296,20 @@ never a bare radius comparison. `boss_selfcheck` pins both.
 **Which boss kind a road station gets is its own dispatch, `BIOME_BOSS`** — same shape and
 same no-RNG-draw rule as `BIOME_SPECIES`, but keyed on the **owning station's centre**
 (`is_river_at` first, the owner's "river → crocodile"), because a boss is station-indexed
-and has no chunk centre. Its one row today is **SNOW → the titan**; every other band, and
-every river station, still gets the crocodile. The row is resolved *above* the candidate
-walk so the kind stays a pure function of the boss index. Adding a boss is a `SPECIES`
-row, a `.tscn`, and one line there — `enemy_spawn_selfcheck` check 11 walks the road,
-asks the rule at every station, and fails a row it never actually placed.
+and has no chunk centre. Two rows today — **SNOW → the titan** and **FOREST → the green
+dragon** — and every other band, plus every river station, still gets the crocodile. The
+row is resolved *above* the candidate walk so the kind stays a pure function of the boss
+index. Adding a boss is a `SPECIES` row, a `.tscn`, and one line there —
+`enemy_spawn_selfcheck` check 11 walks the road, asks the rule at every station, fails a
+row it never actually placed, and compares the body's **whole resolved row** (not one
+speed) against the table, because a boss row that shares the crocodile's numbers would
+otherwise hide a `species`-after-`add_child` violation.
+
+The dragon is what the seam is supposed to cost: `behavior: "solo"` (no arm — that string
+deliberately has no `match` case), no `boss_chase_speed` opt-out, so it takes the default
+`BOSS_CHASE_SPEED` (7.0) and is thirty numbers, one `.tscn` and one dispatch line with no
+new logic anywhere. Its model is a re-skinned, stretched crocodile per the epic's
+placeholder-first art convention; the real winged mesh is its own art bead.
 
 **A boss-only row may go BELOW `WALK_SPEED`, and the titan does.** The lattice's lower
 bound ("walking is caught") is asked of ordinary predators; a boss ignores its row's chase

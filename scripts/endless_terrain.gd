@@ -2024,6 +2024,18 @@ const BIOME_BOSS: Dictionary = {
 		"species": "titan",
 		"scene": "res://scenes/characters/titan.tscn",
 	},
+	## The forest band's guardian: the GREEN DRAGON, a melee territorial boss —
+	## no projectile, no behaviour arm, no speed opt-out. The second row, and the
+	## cheap one: everything it needed already existed, so it is this line, a
+	## SPECIES entry and a .tscn. (Forest is the densest tree cover in the world
+	## and a 6x dragon is a wide body, so some forest stations will legitimately
+	## find no clear candidate and place no boss at all — that is the designed
+	## outcome of spawn_bosses_in_chunk's clearance walk, not a reason to loosen
+	## it.)
+	Biome.FOREST: {
+		"species": "green_dragon",
+		"scene": "res://scenes/characters/green_dragon.tscn",
+	},
 }
 
 # ----------------------------------------------------------------------------
