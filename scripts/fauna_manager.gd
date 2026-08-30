@@ -1811,6 +1811,16 @@ func _plan_tower_detour() -> void:
 	_tower_keep_out = float(radius) + _herd_offset_max + MEANDER_AMPLITUDE \
 			+ TOWER_CLEARANCE_MARGIN
 	var to_site := _tower_site - _herd_position
+	# THE TOWER HAS TO BE AHEAD. A herd that spawns just past the building and
+	# walks away from it is already clear of everything it will ever meet: its
+	# closest approach to the site is behind it, at spawn. Without this test the
+	# lateral check below still fires for it (the spawn rejection only asks about
+	# radial distance, so `along` between -keep_out and 0 is a legal spawn), and
+	# the herd opens a full berth against a building it is receding from — a
+	# visible swerve for nothing, and one that can push it out to the despawn
+	# radius early. Found by codex review, 2026-08-30.
+	if to_site.x * _herd_heading.x + to_site.z * _herd_heading.z <= 0.0:
+		return
 	var s := to_site.x * _herd_lateral.x + to_site.z * _herd_lateral.z
 	if absf(s) >= _tower_keep_out:
 		return                           # the line already walks clear of it
