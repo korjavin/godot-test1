@@ -129,6 +129,15 @@ const CAMERA_CLEARANCE: float = 0.2
 
 ## Floating-point slack for geometry that is supposed to be EXACTLY flush.
 const EPS: float = 1e-4
+## Check 13 reads a re-built guard's position one process frame AFTER the
+## doorway signal, and one process frame is an unbounded number of physics ticks
+## on a loaded CI runner (up to 8) - gravity settles the spawn lift and the wander
+## arm drifts a few centimetres before the assertion runs. The question the check
+## asks is "was the population RESET to its posts, not left where it stood?", and
+## the displaced bodies sit 2.83 m away, so half a metre still separates the two
+## answers while admitting every tick the runner sneaks in. Master went red on
+## 2026-08-30 at 4 mm off with EPS; this is the tolerance the measurement earns.
+const POST_SETTLE_EPS: float = 0.5
 
 ## THE CEILING ON THE ONE INTERIOR COST THE DRAW BUDGET CANNOT SEE: static box
 ## shapes on the single `InteriorCollision` body, one per solid box.
@@ -3115,7 +3124,7 @@ func _check_guards_reset_on_re_entry() -> void:
 			continue
 		var want: Vector3 = interior.global_position + (authored["post"] as Vector3) \
 				+ Vector3(0.0, TowerInterior.GUARD_SPAWN_LIFT, 0.0)
-		if body.global_position.distance_to(want) > EPS:
+		if body.global_position.distance_to(want) > POST_SETTLE_EPS:
 			_fail("the '%s' guard came back at %s, not on its post %s"
 				% [authored["name"], str(body.global_position), str(want)])
 		if bool(body.get("is_chasing")):
