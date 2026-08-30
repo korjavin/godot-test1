@@ -801,6 +801,14 @@ animated by one `_process` on the manager. Feet rest at y = 0 by construction. S
 one `BoxMesh` and one material each via static lazy getters — never `duplicate()` a material
 per animal.
 
+**The HQ is the one obstacle fauna PLANS around instead of probing.** The swept-box
+lookahead is a 45 m reflex capped at a 30 m berth — right for scenery of unknown shape,
+useless against an 80 m shell on a 65 m disc, which it meets by parking against the
+facade. So `_plan_tower_detour` reads `tower_site()` / `TOWER_RADIUS` off the terrain
+group once per herd, computes the lateral offset that clears the disc, and writes it into
+the **existing** `_avoid_target` — no fourth steering term, no per-animal work, and the
+probe keeps everything else. Spawn origins inside the disc re-roll the whole line.
+
 ### Art direction
 Authored in `main.tscn` (key light, ProceduralSky, glow, BCS grade) plus
 `scripts/toon_shading.gd`, whose **static cache keyed by source material id** is the point:

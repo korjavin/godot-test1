@@ -356,6 +356,58 @@ const AVOID_EASE_SPEED: float = 2.2
 ## player would break the isolation contract just as loudly.
 const AVOID_WORLD_MASK: int = 1
 
+# ----------------------------------------------------------------------------
+# THE TOWER — the one obstacle the reflex above cannot solve, so it is PLANNED
+# ----------------------------------------------------------------------------
+# The lookahead is a LOCAL REFLEX: it sees ~45 m and it can open at most
+# AVOID_MAX_OFFSET (30 m) of berth. That is sized for what the terrain scatters
+# — trees, camp huts, a ~20 m massif. The GastroDefense HQ is none of those: it
+# is one sealed 80 m shell on a 65 m exclusion disc (endless_terrain.TOWER_RADIUS)
+# standing at a FIXED address (endless_terrain.tower_site()). A herd aimed past
+# it sees a wall filling the whole probe, swerves to the 30 m cap — which is not
+# even half the disc — finds the wall still there, and parks against the facade
+# or oscillates along it. Owner playtest, 2026-08-30: "our fauna guys like
+# elephant and others can't go through HQ."
+#
+# A reflex cannot solve it because a reflex has no map, and this is the one
+# obstacle in the game that IS a map: a known centre and a known radius, both
+# public on the terrain. So it is answered at the PLANNING level instead — once
+# per herd, at spawn, with arithmetic and no physics query at all:
+#
+#   * the spawn origin is rejected and the line re-rolled if it would stand in
+#     the disc (_spawn_herd), and
+#   * the lateral offset that clears the disc is computed once (_plan_tower_detour)
+#     and then simply handed to the EXISTING `_avoid_target`, so the ease, the
+#     facing derivative and the slew limit all work unchanged and nothing new
+#     runs per animal or per frame.
+#
+# The swept box keeps everything else. It is still the right tool for scenery of
+# unknown shape at unknown places; it was only ever the wrong tool for a building
+# whose address we already know.
+
+## How far ahead (metres, along the heading) the tower has to be before the herd
+## starts bending around it. The bend can be ~90 m and `_avoid_target` is eased
+## at AVOID_EASE_SPEED (2.2 m/s), so the full berth costs ~40 s, i.e. ~100 m of
+## walking at the mean amble — 200 m is that with room to spare. It is also a
+## GATE, not just a budget: without it a herd that will despawn long before it
+## ever reaches the building would still walk its whole crossing on a visible
+## diagonal, steering around a tower nobody can see yet.
+const TOWER_PLAN_RANGE: float = 200.0
+
+## Slack (metres) added on top of TOWER_RADIUS + this herd's own formation width
+## + MEANDER_AMPLITUDE when planning the berth. The meander rides ON the detour
+## (they share the lateral axis), so the berth has to cover the meander's full
+## swing or the herd's outward wander eats the clearance it just bought.
+const TOWER_CLEARANCE_MARGIN: float = 2.0
+
+## How many times the migration line is re-rolled while its origin would stand
+## inside the tower's keep-out disc, before the event is dropped for this cycle.
+## Fauna rolls its OWN randomize()d RNG and touches no `run_seed` (see the header),
+## so extra draws here shift nothing in the deterministic world. Dropping the
+## event is the honest failure: _physics_process re-arms the timer either way, and
+## the alternative — spawning anyway — puts elephants inside the lobby.
+const TOWER_SPAWN_TRIES: int = 6
+
 # ============================================================================
 # CONSTANTS — elephant geometry
 # ============================================================================
@@ -615,6 +667,17 @@ var _facing_yaw: float = 0.0
 
 ## Countdown to the next lookahead probe (see AVOID_PROBE_INTERVAL).
 var _probe_timer: float = 0.0
+
+## The tower plan for the LIVE herd, all three written once by _plan_tower_detour
+## at spawn and read-only afterwards (see the TOWER block in the constants).
+## `_tower_bend` is the signed lateral offset that clears the disc and is 0.0
+## whenever there is no plan at all — no terrain, no tower, or a migration line
+## that already misses the building — which is also the flag that keeps the whole
+## feature out of _update_herd's hot path. `_tower_keep_out` is the planned
+## clearance radius, reused as the "far enough past it to unwind" mark.
+var _tower_site: Vector3 = Vector3.ZERO
+var _tower_keep_out: float = 0.0
+var _tower_bend: float = 0.0
 
 ## Metres-travelled mark before which the berth is HELD rather than unwound.
 ## Set from the distance the sweep actually measured, so it scales itself to
@@ -1304,20 +1367,7 @@ func _spawn_herd() -> void:
 	if player == null:
 		return
 
-	# Heading is drawn from a cone facing back down the road (PI = straight
-	# against the player's +X run direction) — see MIGRATION_HEADING_SPREAD for
-	# why a uniform compass heading would leave most migrations unseen.
-	var angle := PI + _rng.randf_range(-MIGRATION_HEADING_SPREAD, MIGRATION_HEADING_SPREAD)
-	_herd_heading = Vector3(cos(angle), 0.0, sin(angle))
-	# Lateral = heading rotated 90° in the ground plane; with heading, it is
-	# the herd-local frame every formation offset is expressed in.
-	_herd_lateral = Vector3(-_herd_heading.z, 0.0, _herd_heading.x)
 	var player_ground := Vector3(player.global_position.x, 0.0, player.global_position.z)
-	# Offset the whole migration line sideways so the herd passes BESIDE the
-	# player instead of straight through them (see MIGRATION_MISS_MIN).
-	var miss := _rng.randf_range(MIGRATION_MISS_MIN, MIGRATION_MISS_MAX)
-	if _rng.randf() < 0.5:
-		miss = -miss
 	# The along-heading setback shrinks to keep the origin ON the spawn circle
 	# (Pythagoras), not past it — otherwise the lateral offset would push the spawn
 	# beyond DESPAWN_RADIUS and the herd would be freed on its first update frame.
@@ -1327,8 +1377,34 @@ func _spawn_herd() -> void:
 	# open sky past the web build's ~150 m of terrain — the exact failure
 	# FIELD_RADIUS exists to prevent. |miss| < spawn_radius always, so the root is real.
 	var spawn_radius := FIELD_RADIUS - FORMATION_MAX_EXTENT
-	var setback := sqrt(spawn_radius * spawn_radius - miss * miss)
-	_herd_position = player_ground - _herd_heading * setback + _herd_lateral * miss
+	# Roll the whole migration line, and re-roll it while its ORIGIN would stand
+	# inside the tower's keep-out disc — a herd built there is a herd built in the
+	# HQ's lobby, and no amount of steering afterwards gets it out (see the TOWER
+	# block in the constants, and TOWER_SPAWN_TRIES for why giving up is right).
+	# In open country the first attempt always passes, so the draw sequence — and
+	# with it every migration line the field has ever laid out — is unchanged.
+	var placed := false
+	for _attempt: int in TOWER_SPAWN_TRIES:
+		# Heading is drawn from a cone facing back down the road (PI = straight
+		# against the player's +X run direction) — see MIGRATION_HEADING_SPREAD for
+		# why a uniform compass heading would leave most migrations unseen.
+		var angle := PI + _rng.randf_range(-MIGRATION_HEADING_SPREAD, MIGRATION_HEADING_SPREAD)
+		_herd_heading = Vector3(cos(angle), 0.0, sin(angle))
+		# Lateral = heading rotated 90° in the ground plane; with heading, it is
+		# the herd-local frame every formation offset is expressed in.
+		_herd_lateral = Vector3(-_herd_heading.z, 0.0, _herd_heading.x)
+		# Offset the whole migration line sideways so the herd passes BESIDE the
+		# player instead of straight through them (see MIGRATION_MISS_MIN).
+		var miss := _rng.randf_range(MIGRATION_MISS_MIN, MIGRATION_MISS_MAX)
+		if _rng.randf() < 0.5:
+			miss = -miss
+		var setback := sqrt(spawn_radius * spawn_radius - miss * miss)
+		_herd_position = player_ground - _herd_heading * setback + _herd_lateral * miss
+		if not _tower_excludes_spawn(_herd_position):
+			placed = true
+			break
+	if not placed:
+		return
 	_herd_speed = _rng.randf_range(WALK_SPEED_MIN, WALK_SPEED_MAX)
 	_herd_travelled = 0.0
 	_herd_age = 0.0
@@ -1357,6 +1433,10 @@ func _spawn_herd() -> void:
 		_spawn_elephant_family()
 	else:
 		_spawn_giraffe_flock()
+
+	# LAST, because the plan needs `_herd_offset_max` — which is this herd's own
+	# formation width and is only known once every member has been placed.
+	_plan_tower_detour()
 
 
 func _spawn_elephant_family() -> void:
@@ -1539,6 +1619,23 @@ func _update_herd(delta: float) -> void:
 	if _probe_timer <= 0.0:
 		_probe_timer = AVOID_PROBE_INTERVAL
 		_update_avoid_target(_herd_position + _herd_lateral * (meander + _avoid_offset))
+	# THE TOWER OVERRIDES THE PROBE, and it has to be in that order: the shell is
+	# a wall filling the whole swath, so the reflex above is guaranteed to be
+	# asking for its ±AVOID_MAX_OFFSET cap — which is less than half the disc and
+	# is exactly the flailing this replaces. The plan is a straight write into the
+	# SAME `_avoid_target` rather than a fourth lateral term, so the ease below,
+	# `_avoid_velocity`, the facing derivative and the slew limit all keep working
+	# untouched and nothing new happens per animal.
+	#
+	# Gated at both ends: TOWER_PLAN_RANGE ahead (a building the herd will despawn
+	# before reaching must not bend it now), and released once the herd is a full
+	# clearance radius PAST the site, which is the point the rear of the formation
+	# has cleared the far corner — the probe and the unwind take it from there.
+	if _tower_bend != 0.0:
+		var along := (_tower_site.x - _herd_position.x) * _herd_heading.x \
+				+ (_tower_site.z - _herd_position.z) * _herd_heading.z
+		if along < TOWER_PLAN_RANGE and along > -_tower_keep_out:
+			_avoid_target = _tower_bend
 	# Ease toward the target and record the EXACT rate applied — the facing yaw
 	# below reads it, so a swerving herd turns into its swerve.
 	var avoid_before := _avoid_offset
@@ -1658,6 +1755,76 @@ func _edge_clear(space: PhysicsDirectSpaceState3D, origin: Vector3,
 	if hit.is_empty():
 		return length
 	return origin.distance_to(hit["position"])
+
+
+func _tower_excludes_spawn(spot: Vector3) -> bool:
+	## Would a herd centre here stand inside the tower's keep-out disc?
+	##
+	## `tower_excludes()` on the terrain is THE SINGLE HOME of that rule (it adds
+	## TOWER_DECOR_OVERHANG itself), so this asks it rather than re-deriving the
+	## test — the same reason every spawner in endless_terrain.gd calls it. The
+	## herd's own radius is FORMATION_MAX_EXTENT: the centre is what is being
+	## placed, but _add_animal then hangs members up to that far off it.
+	##
+	## Group lookup with a has_method guard, like every other cross-system read in
+	## this file: fauna run in a scene with no terrain (a character scene tested
+	## standalone) answers "nothing in the way" and behaves exactly as before.
+	var terrain := get_tree().get_first_node_in_group("terrain")
+	if terrain == null or not terrain.has_method("tower_excludes"):
+		return false
+	return bool(terrain.call("tower_excludes", spot.x, spot.z, FORMATION_MAX_EXTENT))
+
+
+func _plan_tower_detour() -> void:
+	## Work out, ONCE for this herd, the lateral offset that walks it around the
+	## tower — or leave the plan empty when there is nothing to walk around.
+	##
+	## The geometry is a two-liner because the herd's path is a straight line with
+	## a FIXED heading (see _add_animal: the world-space formation offsets are only
+	## valid because the heading never changes). `_herd_position` only ever advances
+	## along that heading, so the tower's LATERAL coordinate relative to the line —
+	## `s` below — is invariant for the herd's whole life and can be computed at
+	## spawn and never again. The line misses the disc exactly when |s| is at least
+	## the clearance radius, and when it does not, the offset that makes it miss is
+	## `s ± keep_out`; the near side (the one that costs less than a full keep_out
+	## of berth) is the smaller of the two, and it is also the side the herd is
+	## already on, so it is both the cheapest bend and the one that reads as the
+	## herd leaning away rather than crossing in front of the building.
+	##
+	## The clearance covers the CENTRE plus everything that rides on it: this
+	## herd's own widest member (`_herd_offset_max`) and the meander, which shares
+	## the lateral axis with the detour and would otherwise spend the berth.
+	##
+	## No physics query, no per-frame work, and nothing here that a missing terrain
+	## can trip over — the guards leave the plan empty and the swept-box reflex is
+	## then the only steering, exactly as before this existed.
+	_tower_bend = 0.0
+	_tower_keep_out = 0.0
+	_tower_site = Vector3.ZERO
+	var terrain := get_tree().get_first_node_in_group("terrain")
+	if terrain == null or not terrain.has_method("tower_site"):
+		return
+	var radius: Variant = terrain.get("TOWER_RADIUS")
+	if typeof(radius) != TYPE_FLOAT:
+		return
+	_tower_site = terrain.call("tower_site") as Vector3
+	_tower_keep_out = float(radius) + _herd_offset_max + MEANDER_AMPLITUDE \
+			+ TOWER_CLEARANCE_MARGIN
+	var to_site := _tower_site - _herd_position
+	# THE TOWER HAS TO BE AHEAD. A herd that spawns just past the building and
+	# walks away from it is already clear of everything it will ever meet: its
+	# closest approach to the site is behind it, at spawn. Without this test the
+	# lateral check below still fires for it (the spawn rejection only asks about
+	# radial distance, so `along` between -keep_out and 0 is a legal spawn), and
+	# the herd opens a full berth against a building it is receding from — a
+	# visible swerve for nothing, and one that can push it out to the despawn
+	# radius early. Found by codex review, 2026-08-30.
+	if to_site.x * _herd_heading.x + to_site.z * _herd_heading.z <= 0.0:
+		return
+	var s := to_site.x * _herd_lateral.x + to_site.z * _herd_lateral.z
+	if absf(s) >= _tower_keep_out:
+		return                           # the line already walks clear of it
+	_tower_bend = s - _tower_keep_out if s >= 0.0 else s + _tower_keep_out
 
 
 func _update_avoid_target(centre: Vector3) -> void:
@@ -1821,4 +1988,10 @@ func _despawn_herd() -> void:
 	for animal: Dictionary in _animals:
 		(animal["root"] as Node3D).queue_free()
 	_animals.clear()
+	# Forget the tower plan with the herd it was made for. `_spawn_herd` rewrites
+	# it anyway, but a stale bend left lying around is a live steering command for
+	# anything that drives the herd state directly (fauna_selfcheck's rider row
+	# does exactly that), and it would apply a berth for a building that is
+	# nowhere near the line it was handed.
+	_tower_bend = 0.0
 	_event_timer = _rng.randf_range(FAUNA_INTERVAL_MIN, FAUNA_INTERVAL_MAX)
