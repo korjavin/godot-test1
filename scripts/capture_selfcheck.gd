@@ -56,6 +56,16 @@ extends SceneTree
 ##      building is not loaded, so the interior re-seeds its mirror from the player
 ##      on build — and walking into the cell frees him all the way back into the
 ##      E-cycle.
+##   9. **RESIZE IS NOT A LIFT** (bead godot-test1-3uh). Teibi's giant form is
+##      refused wherever the grown capsule would overlap the building — measured
+##      inside the real interior against a WALL (on a storey tall enough that its
+##      ceiling cannot be the reason) and against a CEILING (on the storey whose
+##      clear height is below the giant's own height, where no spot on the floor
+##      admits him). The body's storey index must be the same before and after
+##      every press, small and giant, because a growth that depenetrates upward is
+##      a free lift past every gate `tower_selfcheck`'s softlock audit models. With
+##      its negative control: out in the annulus, where 11 m of air stands over
+##      him, the same press goes through.
 ##  13-16. **THE FULL-CUSTODY PROTOCOL** (bead godot-test1-3iy.11), which is what
 ##      the empty-roster branch now opens instead of a screen: the scene opens and
 ##      is playable, surviving it takes exactly one AUTHORED scar, losing it
@@ -250,6 +260,7 @@ func _run() -> void:
 	await _check_two_clients_cannot_disagree()
 	await _check_the_recall_archives_the_world()
 	await _check_the_scene_does_not_leak()
+	await _check_resize_is_not_a_lift()
 	_report()
 
 
@@ -1896,6 +1907,295 @@ func _tick(frames: int) -> void:
 	`POST_BITE_FRAMES` for when one is."""
 	for _i: int in frames:
 		await physics_frame
+
+
+# ============================================================================
+# 9. RESIZE IS NOT A LIFT
+# ============================================================================
+
+## How far the wall subject stands off the wall it is tested against: touching it,
+## so the NORMAL capsule is clear and the GIANT one is not. `EPS`-sized, because a
+## bigger gap would let the giant fit and a smaller one would bury the normal body.
+const RESIZE_WALL_GAP: float = 0.02
+
+## How far the ceiling subject stands off the nearest wall: enough that the giant
+## capsule cannot be touching it, so the only thing left to refuse the growth is
+## the lid. See `_check_resize_is_not_a_lift` for why the ARITHMETIC is what
+## actually isolates it.
+const RESIZE_CEILING_GAP: float = 0.3
+
+## How hard, and for how many physics frames, a subject leans on the wall it was
+## parked against after each press. See `_shove()` for why leaning is what makes
+## the storey-index assertion a measurement rather than a formality; the speed is
+## a walk, not a stunt.
+const RESIZE_SHOVE_FRAMES: int = 30
+const RESIZE_SHOVE_SPEED: float = 5.0
+
+## Where the negative control stands: out in the annulus, off the keep, under the
+## 11 m of air that storey 3's slab leaves over the ground floor. Diagonals are
+## tried in turn because the grand ramp lands in one quadrant.
+const RESIZE_OPEN_SPOTS: Array[Vector2] = [
+	Vector2(20.0, 20.0), Vector2(-20.0, 20.0),
+	Vector2(20.0, -20.0), Vector2(-20.0, -20.0),
+]
+
+
+func _check_resize_is_not_a_lift() -> void:
+	"""
+	Check 9. TEIBI'S RESIZE IS A DISGUISE AND A WEAPON, NEVER A STAIRCASE.
+
+	THE BUG (owner playtest, bead godot-test1-3uh): growing inside geometry buries
+	the grown capsule in it, and the physics server's depenetration then squirts the
+	body out along the shallowest axis — which, standing against an interior wall
+	under a storey that is barely taller than the giant, is UP. Resize became a free
+	lift onto the next floor, which does not merely skip a gate: it falsifies
+	`tower_selfcheck`'s whole 15-subset softlock audit, because the graph says a
+	route is gated and the body says it is not.
+
+	TWO ASSERTIONS, AND THEY ARE NOT THE SAME CLAIM. The one that BITES is that the
+	growth is refused: strip the gate and the six failures below name both subjects.
+	The one that matters is the STOREY INDEX — every press is followed by real
+	physics frames, leaning on the wall (see `_shove()`), and then
+	`TowerInterior.current_floor()`, the same function the interior's visibility
+	window uses to decide what floor the player is on. Stated honestly: headless,
+	with the gate removed, the growth goes through but the pop does not reproduce —
+	`move_and_slide` finds the horizontal way out of these two spots. So the storey
+	index is here as the INVARIANT the fix exists to preserve and as the guard
+	against a future "shove him somewhere he fits" fix that moves the body, not as a
+	reproduction of the owner's playtest.
+
+	THE TWO CAUSES ARE ISOLATED BY ARITHMETIC, not by hoping the placement missed
+	something. The subjects are chosen off the shipped numbers:
+
+	  * WALL — a storey whose clear height is ABOVE the giant's own height, so its
+	    ceiling provably cannot be what refuses the growth. Only the wall he is
+	    touching can be.
+	  * CEILING — the storey whose clear height is BELOW the giant's height, where
+	    NO spot on the floor admits him however far from a wall he stands. That
+	    number is the isolation; the standoff only keeps the picture honest.
+
+	And the control is the other direction: in the annulus, with 11 m of air over
+	him, the same press must go through — a gate that always refuses would pass
+	every assertion above and quietly delete the ability.
+	"""
+	var tower := await _make_tower()
+	var interior: Node3D = get_first_node_in_group("tower_interior")
+	if interior == null:
+		_fail("the tower built no interior — check 9 has nothing to stand in")
+		tower.queue_free()
+		return
+	var player := await _make_player()
+	if not _become_teibi(player):
+		_fail("player.tscn has no teibi in CHARACTERS — check 9 cannot drive Resize")
+		_clear(player)
+		tower.queue_free()
+		return
+
+	# The giant body, off the shipped capsule and the shipped scale.
+	var capsule: CapsuleShape3D = player.collision_shape.shape as CapsuleShape3D
+	var scale_big: float = player.TEIBI_SCALE_BIG
+	var giant_height: float = capsule.height * scale_big
+	var giant_radius: float = capsule.radius * scale_big
+
+	# Pick the two storeys by the arithmetic that isolates each cause.
+	var wall_floor := -1
+	var ceiling_floor := -1
+	for f: int in TowerPlans.floors():
+		var clear: float = TowerInterior.plan_clear_height(f)
+		if clear > giant_height and wall_floor < 0:
+			wall_floor = f
+		if clear < giant_height and ceiling_floor < 0:
+			ceiling_floor = f
+	print("giant capsule %.2f m tall, %.2f m radius; wall storey %d, ceiling storey %d" % [
+		giant_height, giant_radius, wall_floor, ceiling_floor])
+	if wall_floor < 0:
+		_fail("no planned storey is taller than the giant — check 9 cannot isolate a wall")
+	if ceiling_floor < 0:
+		_fail("no planned storey is shorter than the giant (%.2f m) any more — check 9 can no longer measure a ceiling; retune the form or retire this half" % giant_height)
+
+	if wall_floor >= 0:
+		await _resize_is_refused(player, interior, wall_floor,
+			giant_radius, RESIZE_WALL_GAP, "a wall")
+	if ceiling_floor >= 0:
+		await _resize_is_refused(player, interior, ceiling_floor,
+			giant_radius, giant_radius + RESIZE_CEILING_GAP, "a ceiling")
+	await _resize_is_allowed_in_the_open(player, interior)
+
+	_clear(player)
+	tower.queue_free()
+	await process_frame
+
+
+func _resize_is_refused(player: Node, interior: Node3D, floor_index: int,
+		giant_radius: float, gap: float, cause: String) -> void:
+	"""One subject: stand on `floor_index` beside a wall and press F twice."""
+	var placed := await _stand_beside_a_wall(player, interior, floor_index, gap)
+	if placed.is_empty():
+		_fail("found nowhere to stand on storey %d — check 9's %s subject is vacuous" % [
+			floor_index, cause])
+		return
+	var spot: Vector3 = placed["pos"]
+	var into: Vector3 = -(placed["out"] as Vector3)
+	print("storey %d (%.2f m clear), %s subject at (%.1f, %.1f, %.1f)" % [
+		floor_index, TowerInterior.plan_clear_height(floor_index), cause,
+		spot.x, spot.y, spot.z])
+
+	# NORMAL SIZE IS NOT GATED. The refusal is about the growth alone; a Teibi who
+	# could not even shrink here would be a different bug wearing the same message.
+	if player.get_ability_block_reason() != "":
+		_fail("standing on storey %d at normal size, Teibi is gated by %s" % [
+			floor_index, player.get_ability_block_reason()])
+
+	# Press 1: normal -> small. Always fits (small is inside the normal capsule).
+	player.try_activate_ability()
+	await _shove(player, into)
+	if player.teibi_size_state != 1:
+		_fail("F on storey %d did not make Teibi small (state %d)" % [
+			floor_index, player.teibi_size_state])
+	_storey_held(player, interior, floor_index, "small", cause)
+
+	# Press 2: small -> giant, and this is the one the building must refuse.
+	player.ability_cooldowns[player.current_character_index] = 0.0
+	if player.get_ability_block_reason() != "TIGHT":
+		_fail("beside %s on storey %d the giant form is not gated: reason %s" % [
+			cause, floor_index, player.get_ability_block_reason()])
+	player.try_activate_ability()
+	await _shove(player, into)
+	if player.teibi_size_state != 1 or player.is_giant:
+		_fail("beside %s on storey %d Teibi grew anyway (state %d, giant %s)" % [
+			cause, floor_index, player.teibi_size_state, player.is_giant])
+	# A refused press costs nothing — the player may try again the instant he steps
+	# clear, exactly like the cooling and RAIN/LAND refusals.
+	if player.ability_cooldowns[player.current_character_index] > 0.0:
+		_fail("the refused growth charged %.2f s of cooldown" % \
+			player.ability_cooldowns[player.current_character_index])
+	_storey_held(player, interior, floor_index, "giant (refused)", cause)
+	_reset_form(player)
+
+
+func _resize_is_allowed_in_the_open(player: Node, interior: Node3D) -> void:
+	"""
+	The negative control: out in the annulus the growth goes through, and the body
+	stays on the ground floor while it does.
+	"""
+	var floor_index := 0
+	var placed := false
+	for spot: Vector2 in RESIZE_OPEN_SPOTS:
+		player.global_position = interior.to_global(
+			Vector3(spot.x, TowerInterior.FLOOR_Y[floor_index], spot.y))
+		await _settle(player)
+		if TowerInterior.current_floor(interior.to_local(player.global_position).y) == floor_index \
+				and not player.call("_teibi_grow_blocked"):
+			placed = true
+			break
+	if not placed:
+		_fail("nowhere in the annulus has room for a giant — check 9's control is vacuous")
+		return
+	player.try_activate_ability()          # -> small
+	await _settle(player)
+	player.ability_cooldowns[player.current_character_index] = 0.0
+	if player.get_ability_block_reason() != "":
+		_fail("in the open annulus the growth is gated by %s" % player.get_ability_block_reason())
+	player.try_activate_ability()          # -> giant
+	await _settle(player)
+	if player.teibi_size_state != 2 or not player.is_giant:
+		_fail("in the open annulus Teibi did not grow (state %d)" % player.teibi_size_state)
+	_storey_held(player, interior, floor_index, "giant (allowed)", "open air")
+	print("control: the annulus grew a giant and he stayed on the ground floor")
+	_reset_form(player)
+
+
+func _storey_held(player: Node, interior: Node3D, floor_index: int, form: String,
+		cause: String) -> void:
+	"""The one assertion this check exists for: the body did not change storeys."""
+	var now := TowerInterior.current_floor(interior.to_local(player.global_position).y)
+	if now != floor_index:
+		_fail("%s beside %s moved the body from storey %d to storey %d — Resize is a lift" % [
+			form, cause, floor_index, now])
+
+
+func _shove(player: Node, into: Vector3) -> void:
+	"""
+	Settle, but leaning ON the wall — `into` is the horizontal direction of the face
+	the subject is standing against.
+
+	WHY THE PUSH IS PART OF THE MEASUREMENT: `CharacterBody3D` resolves an overlap
+	inside `move_and_slide`, which only has an overlap to resolve while the body is
+	being driven into something. A capsule that grew into a wall and was then left
+	alone just sits there, so a check that only waited would be watching the one
+	frame the exploit cannot happen in. Holding him against the stone is what a
+	player pressing forward does, and it is where the depenetration has to choose a
+	way out. See the check's docstring for how far that gets headless.
+	"""
+	for i in range(RESIZE_SHOVE_FRAMES):
+		player.velocity.x = into.x * RESIZE_SHOVE_SPEED
+		player.velocity.z = into.z * RESIZE_SHOVE_SPEED
+		await physics_frame
+	await _settle(player)
+
+
+func _stand_beside_a_wall(player: Node, interior: Node3D, floor_index: int,
+		gap: float) -> Dictionary:
+	"""
+	Park the player on `floor_index`'s deck, `gap` metres off the face of one of its
+	full-height walls, and return `{pos, out}` — where it ended up and the outward
+	normal of that face (empty if no candidate worked). Walls are found by geometry
+	— a box standing on this deck and running to this storey's ceiling — so the
+	check follows a replanned storey instead of naming a cell that moved.
+	"""
+	var deck: float = TowerInterior.FLOOR_Y[floor_index]
+	var clear: float = TowerInterior.plan_clear_height(floor_index)
+	var radius: float = (player.collision_shape.shape as CapsuleShape3D).radius
+	for box: Dictionary in TowerInterior.plan_boxes(floor_index):
+		if not box["collide"]:
+			continue
+		var pos: Vector3 = box["pos"]
+		var size: Vector3 = box["size"]
+		if absf(pos.y - size.y * 0.5 - deck) > SETBACK_EPS or absf(size.y - clear) > SETBACK_EPS:
+			continue  # not a wall: it does not run this storey's floor to ceiling
+		var out := Vector3(size.x * 0.5, 0.0, 0.0) if size.x < size.z \
+				else Vector3(0.0, 0.0, size.z * 0.5)
+		for way: float in [1.0, -1.0]:
+			var normal := out.normalized() * way
+			player.global_position = interior.to_global(Vector3(pos.x, deck, pos.z)
+					+ out * way + normal * (radius + gap))
+			await _settle(player)
+			var local := interior.to_local(player.global_position)
+			if TowerInterior.current_floor(local.y) != floor_index:
+				continue  # fell through, or the deck is not under this face
+			if player.call("_is_body_blocked_at", player.global_position):
+				continue  # the normal body is already in the stone here
+			return {"pos": player.global_position, "out": normal}
+	return {}
+
+
+func _settle(player: Node) -> void:
+	"""A few physics frames, then undo whatever the building landed on the body —
+	the same race `_make_player` documents, re-run because these checks teleport
+	into rooms with hazards in them."""
+	for i in range(4):
+		await physics_frame
+	player.is_caught = false
+	player.caught_timer = 0.0
+	player.is_respawning = false
+	player.respawn_timer = 0.0
+
+
+func _reset_form(player: Node) -> void:
+	"""Back to normal size and a spent-nothing cooldown, so one subject cannot
+	inherit another's form."""
+	player.call("_revert_teibi_to_normal")
+	player.ability_cooldowns[player.current_character_index] = 0.0
+
+
+func _become_teibi(player: Node) -> bool:
+	"""Switch through `set_active_character()` — the same door capture uses."""
+	var characters: Array = player.CHARACTERS
+	for i in range(characters.size()):
+		if String(characters[i]["name"]) == "teibi":
+			player.set_active_character(i)
+			return player.hero_name() == "teibi"
+	return false
 
 
 func _drive_into_custody(player: Node) -> void:

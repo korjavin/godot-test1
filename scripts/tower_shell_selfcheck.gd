@@ -84,6 +84,9 @@ const TERRAIN_SCRIPT: String = "res://scripts/endless_terrain.gd"
 const MINIMAP_SCRIPT: String = "res://scripts/minimap_hud.gd"
 const SHELL_SCENE: String = "res://scenes/tower/tower_shell.tscn"
 const PLAYER_SCRIPT: String = "res://scripts/player_controller.gd"
+## The shipped player scene — check 12 reads its collision capsule's radius so the
+## facade rule is measured against the body the game actually has. See `_bodies()`.
+const PLAYER_SCENE: String = "res://scenes/player.tscn"
 
 ## Spacing (metres) of the grid check 11 rays the roof on, and the height it fires
 ## from. 1 m is finer than any hole a `CharacterBody3D` could pass through and
@@ -98,6 +101,16 @@ const ROOF_PROBE_Y: float = 60.0
 ## a Windman who lands re-launches, so a ledge 22 m up is a staircase with two
 ## steps. 0.3 m is under the radius of the player's own capsule — nothing to stand
 ## on. Deny the landing, not the height.
+##
+## IT IS A CEILING, NOT THE ANSWER, since bead godot-test1-3uh: the sweep is run
+## once per body the game can HAVE, and the limit for each is
+## `minf(LEDGE_MAX_WIDTH, that body's capsule radius)`. Teibi's small form is
+## 0.45 scale — a 0.225 m radius — so the shipped 0.3 was a ledge HE could stand
+## on and jump from, on a facade certified against a body twice his width. The
+## jump apex is identical at every size (it is a velocity, not a length), so the
+## small form buys no height; what it buys is somewhere to put its feet, which is
+## exactly what this rule denies. Anything with a smaller capsule must be added to
+## `_bodies()` or the facade is certified against a body that no longer exists.
 const LEDGE_MAX_WIDTH: float = 0.3
 
 ## Metres the roof must clear a fully-skilled Air Rush launched off the tallest
@@ -333,7 +346,6 @@ func _check_roof_is_above_windmans_reach() -> void:
 	var roof_pos: Vector3 = roof["pos"]
 	var roof_half: Vector3 = roof["size"] * 0.5
 	var roof_top := roof_pos.y + roof_half.y
-	var roof_bottom := roof_pos.y - roof_half.y
 	var need := peak + summit + ROOF_CLEARANCE_MARGIN
 	print("Air Rush peak %.2f m (maxed) + massif %.1f m + %.1f m margin = %.2f m; roof top %.2f m" % [
 		peak, summit, ROOF_CLEARANCE_MARGIN, need, roof_top])
@@ -341,20 +353,66 @@ func _check_roof_is_above_windmans_reach() -> void:
 		_fail("the roof tops out at %.2f m, inside a maxed Air Rush (%.2f m) off a %.1f m massif plus %.1f m of margin" % [
 			roof_top, peak, summit, ROOF_CLEARANCE_MARGIN])
 
-	# ...and nothing below it is a place to land and go again.
+	# THE CASTLE RULE (bead godot-test1-rgt), stated where it can be read rather
+	# than left to emerge as a confusing failure somewhere else. Everything the
+	# silhouette pass added stands ON the slab, and none of it is solid — a
+	# solid turret above the roof would silently BECOME "the roof" as far as
+	# `_topmost_solid` is concerned, and the real slab would then fail its own
+	# coverage test with a message about the wrong box. Body-independent, so it is
+	# asked once, above the per-body sweeps.
 	for box: Dictionary in boxes:
-		if box["name"] == roof["name"]:
+		if box["name"] == roof["name"] or not box["collide"]:
 			continue
-		# THE CASTLE RULE (bead godot-test1-rgt), stated where it can be read rather
-		# than left to emerge as a confusing failure somewhere else. Everything the
-		# silhouette pass added stands ON the slab, and none of it is solid — a
-		# solid turret above the roof would silently BECOME "the roof" as far as
-		# `_topmost_solid` is concerned, and the real slab would then fail its own
-		# coverage test with a message about the wrong box.
-		if box["collide"] and box["pos"].y + box["size"].y * 0.5 > roof_top + EPS:
+		if box["pos"].y + box["size"].y * 0.5 > roof_top + EPS:
 			_fail("%s is solid and reaches %.2f m, above the roof at %.2f m — decoration above the seal must be collide:false, or it becomes the roof" % [
 				box["name"], box["pos"].y + box["size"].y * 0.5, roof_top])
-		if not box["collide"]:
+
+	# ...and nothing below it is a place to land and go again — asked once per body
+	# the game can have, smallest capsule included.
+	for body: Dictionary in _bodies():
+		_sweep_for_ledges(boxes, roof, inner, body)
+
+
+func _bodies() -> Array[Dictionary]:
+	"""
+	Every capsule the player can BE, widest first, as `{name, radius}`.
+
+	Read off the shipped `player.tscn` capsule and `player_controller`'s own resize
+	scales rather than written down here, so a retuned capsule — or a third form —
+	retunes the facade rule instead of leaving it certified against a body that was
+	replaced. Teibi's giant form is deliberately absent: it is strictly wider than
+	the normal capsule, so it can stand on nothing the normal one cannot.
+	"""
+	var packed: PackedScene = load(PLAYER_SCENE)
+	var probe: Node = packed.instantiate()
+	var shape: CollisionShape3D = probe.get_node_or_null("CollisionShape3D")
+	var radius := 0.0
+	if shape and shape.shape is CapsuleShape3D:
+		radius = (shape.shape as CapsuleShape3D).radius
+	probe.free()
+	if radius <= 0.0:
+		_fail("player.tscn has no CapsuleShape3D — the facade sweep would measure nothing")
+		return []
+	var small: float = float(load(PLAYER_SCRIPT).get_script_constant_map()
+			.get("TEIBI_SCALE_SMALL", 1.0))
+	return [
+		{"name": "the normal capsule", "radius": radius},
+		{"name": "small Teibi", "radius": radius * small},
+	]
+
+
+func _sweep_for_ledges(boxes: Array[Dictionary], roof: Dictionary, inner: float,
+		body: Dictionary) -> void:
+	"""One body's half of check 12: no `collide: true` box under the roof exposes a
+	top this capsule could stand on. See `LEDGE_MAX_WIDTH` for the limit."""
+	var roof_pos: Vector3 = roof["pos"]
+	var roof_half: Vector3 = roof["size"] * 0.5
+	var roof_bottom := roof_pos.y - roof_half.y
+	var limit: float = minf(LEDGE_MAX_WIDTH, float(body["radius"]))
+	print("no-ledge sweep for %s: nothing wider than %.3f m under the roof" % [
+		body["name"], limit])
+	for box: Dictionary in boxes:
+		if box["name"] == roof["name"] or not box["collide"]:
 			continue
 		var pos: Vector3 = box["pos"]
 		var size: Vector3 = box["size"]
@@ -372,10 +430,10 @@ func _check_roof_is_above_windmans_reach() -> void:
 		# phase and is the interior's business, not the envelope's.)
 		var indoors := absf(pos.x) + half.x <= inner + EPS \
 				and absf(pos.z) + half.z <= inner + EPS
-		if covered or indoors or minf(size.x, size.z) <= LEDGE_MAX_WIDTH:
+		if covered or indoors or minf(size.x, size.z) <= limit:
 			continue
-		_fail("%s exposes a %.1f x %.1f m top at %.2f m, under the roof — a Windman lands there and launches again" % [
-			box["name"], size.x, size.z, top])
+		_fail("%s exposes a %.2f x %.2f m top at %.2f m, under the roof — %s stands there (limit %.3f m) and goes again" % [
+			box["name"], size.x, size.z, top, body["name"], limit])
 
 
 func _topmost_solid(boxes: Array[Dictionary]) -> Dictionary:
