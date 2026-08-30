@@ -2910,6 +2910,25 @@ const VIEW_CONE_FULL: float = 360.0
 ## has. See `_update_chase_state`.
 const SPOT_TELEGRAPH_TIME: float = 0.6
 
+## HOW FAR ABOVE OR BELOW ITSELF A CONED BODY MAY ACQUIRE A QUARRY, in metres.
+##
+## A cone is a horizontal bearing test, so on its own it says nothing about
+## height — and the tower's guards stand on ten stacked storeys 4 to 5 m apart.
+## The keep's own two posts are 8.08 m apart through a SOLID SLAB, which the old
+## 6.5 m radius excluded by accident and 9.0 m does not: without this a courtyard
+## guard smells the player on the mezzanine, charges its leash boundary and stands
+## there pushing at a floor it can never leave.
+##
+## 3.0 m is over any body's standing height and under the shortest gap between two
+## walking surfaces in this building (4.0 m), so "on my floor" and "inside the
+## band" are the same statement, checked without a raycast, an occlusion test or a
+## storey field the AI would have to be told about.
+##
+## CONED ROWS ONLY, like the beat: nothing without a `view_cone_deg` reaches this,
+## so a field predator still smells a quarry stood on a block above it exactly as
+## it always did.
+const VIEW_CONE_HEIGHT_BAND: float = 3.0
+
 ## Boss territory radius: the LEASH, and the whole of this bead. A boss hunts
 ## you normally anywhere inside `home_position` + this, and never steps outside
 ## it — walking out of the circle is the only counterplay, because there is no
@@ -3622,6 +3641,22 @@ func _physics_process(delta: float) -> void:
 		if is_boss:
 			_steer_within_territory()
 
+		# THE TELEGRAPH IS A STANDSTILL, and it has to be one for the beat to mean
+		# anything. `spot_clock` is non-zero only on a CONED body that has the
+		# quarry in its arc and has not committed yet (`_update_chase_state`), and
+		# a body that kept walking through its own warning would turn as it went —
+		# rotating the quarry back out of the cone, resetting the clock, and
+		# producing a guard that notices you forever and never engages. Zeroing
+		# the heading rather than the velocity is what freezes the FACING too:
+		# the branch below leaves `rotation.y` alone when there is nowhere to go.
+		#
+		# LAST, so it out-votes the wander, the obstacle feelers and both leashes —
+		# every one of which would otherwise nudge a standing sentry. It cannot
+		# strand one: the clock is reset the moment the quarry leaves the arc, and
+		# the frame after that this is a no-op again.
+		if spot_clock > 0.0 and not is_chasing:
+			movement_direction = Vector3.ZERO
+
 		# Rotate smoothly toward the desired heading and move that way.
 		# Driving velocity from facing (not the raw direction) prevents sliding
 		# sideways and makes turns curve naturally.
@@ -3783,8 +3818,13 @@ func _update_chase_state() -> void:
 	# bends where a predator steers; none of them may widen what it can see.
 	if seen and not is_chasing and has_view_cone:
 		var to_quarry := chase_target - global_position
+		# ...and the storey. A bearing test is blind to height, and these bodies
+		# stand on stacked floors — see VIEW_CONE_HEIGHT_BAND for the slab this
+		# would otherwise see straight through.
+		if absf(to_quarry.y) > VIEW_CONE_HEIGHT_BAND:
+			seen = false
 		to_quarry.y = 0.0
-		if to_quarry.length_squared() > 0.0001:
+		if seen and to_quarry.length_squared() > 0.0001:
 			var forward := Vector3(sin(rotation.y), 0.0, cos(rotation.y))
 			seen = forward.dot(to_quarry.normalized()) >= view_cone_cos
 
@@ -3808,6 +3848,11 @@ func _update_chase_state() -> void:
 		if not is_chasing:
 			# Just started chasing
 			is_chasing = true
+			# The beat is SPENT, not merely satisfied: `spot_clock` means "a
+			# telegraph is running", and everything that reads it — the `?`, the
+			# standstill in `_physics_process` — has to stop the frame the chase
+			# starts, or a committed body stands still wearing a question mark.
+			spot_clock = 0.0
 			_announce_acquisition()
 	else:
 		if is_chasing:

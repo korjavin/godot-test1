@@ -2946,6 +2946,23 @@ func _check_guards_stand_their_posts() -> void:
 				best_gap = gap
 				best = i
 		per_storey[best] = int(per_storey.get(best, 0)) + 1
+	# ...AND THE OTHER HALF, ON THE PLANS THEMSELVES. The body count above cannot
+	# see a storey that drew TWO `G` cells: `_plan_guard_post` takes the first and
+	# stops, so an invalid plan stands up exactly one guard and reads as correct
+	# here. Counting the markers is what makes the ruling a property of the DESIGN
+	# RECORD — the grid is what an author edits — and not merely of the reader.
+	for floor_index: int in TowerPlans.floors():
+		var plan: Dictionary = TowerPlans.storey(floor_index)
+		var marks := 0
+		for row_v: Variant in plan["rows"]:
+			marks += String(row_v).count(TowerPlans.POST_CHAR)
+		if marks > TowerInterior.GUARDS_PER_STOREY_MAX:
+			_fail("storey %d's plan draws %d '%s' posts, over GUARDS_PER_STOREY_MAX"
+					% [floor_index + 1, marks, TowerPlans.POST_CHAR]
+					+ " of %d — the derived reader takes the first and silently"
+					% TowerInterior.GUARDS_PER_STOREY_MAX + " drops the rest, so the"
+					+ " body count above would report this floor as correct")
+
 	for floor_v: Variant in per_storey:
 		if int(per_storey[floor_v]) > TowerInterior.GUARDS_PER_STOREY_MAX:
 			_fail("storey %d carries %d guards, over the owner's GUARDS_PER_STOREY_MAX"
@@ -3186,6 +3203,12 @@ const LEASH_PROBE_SECONDS: float = 8.0
 ## the load off the leash halfway through the probe. 1.5 m is comfortably between.
 const LEASH_PROBE_GAP: float = 1.5
 
+## How fast a guard may still be travelling during its telegraph and be called
+## still. Not zero: `move_and_slide` resolves a settling body against the slab and
+## the reported velocity carries a little of that. Far under the row's 1.4 m/s
+## walk, which is what the assertion is actually about.
+const TELEGRAPH_STILL_SPEED: float = 0.05
+
 func _check_the_leash_holds_under_a_chase() -> void:
 	"""
 	Check 14. A guard that has seen the player and is running at it stays inside
@@ -3259,6 +3282,9 @@ func _check_the_leash_holds_under_a_chase() -> void:
 	var ticks := int(LEASH_PROBE_SECONDS / (1.0 / 60.0))
 	var chased := false
 	var worst := 0.0
+	## The fastest the body moved on any frame of its telegraph — see the beat
+	## assertion in the loop below.
+	var telegraph_speed := 0.0
 	for _i in ticks:
 		# HOLD IT LOOKING AT THE QUARRY UNTIL IT ACQUIRES. A guard's detection has
 		# been CONED since phase 17 (120 degrees, on the acquisition edge only,
@@ -3274,6 +3300,16 @@ func _check_the_leash_holds_under_a_chase() -> void:
 			body.rotation.y = atan2(hero.global_position.x - body.global_position.x,
 					hero.global_position.z - body.global_position.z)
 		await physics_frame
+		# THE BEAT IS A STANDSTILL, measured under real physics because that is the
+		# only place it exists: `_update_chase_state` decides the beat, but what
+		# freezes the body is the heading override in `_physics_process`. A guard
+		# that kept walking through its own warning would turn as it went, roll the
+		# quarry back out of its 120 degree cone and reset the clock — a sentry that
+		# notices you forever and never engages, which passes every other assertion
+		# in this file.
+		if not chased and float(body.get("spot_clock")) > 0.0:
+			telegraph_speed = maxf(telegraph_speed,
+					Vector2(body.velocity.x, body.velocity.z).length())
 		if bool(body.get("is_chasing")):
 			chased = true
 		var off := body.global_position - centre
@@ -3287,6 +3323,11 @@ func _check_the_leash_holds_under_a_chase() -> void:
 		_fail("the '%s' guard never chased the probe standing %.1f m away — check 14"
 				% [authored["name"], half.y + LEASH_PROBE_GAP] + " measured a leash"
 				+ " under no load, which every mutant passes")
+	if telegraph_speed > TELEGRAPH_STILL_SPEED:
+		_fail("the '%s' guard walked at %.2f m/s during its telegraph — the beat is"
+				% [authored["name"], telegraph_speed] + " meant to be a standstill,"
+				+ " and a body that moves through its own warning turns as it goes,"
+				+ " rolls the quarry out of its own cone and resets the clock")
 	if worst > EPS:
 		_fail("the '%s' guard reached %.3f m outside its leash box while chasing —"
 				% [authored["name"], worst] + " the confinement was declared but is"
