@@ -148,7 +148,15 @@ const POST_SETTLE_EPS: float = 0.5
 ## that one is per storey and catches a floor whose walls stopped merging, this one
 ## is the whole building and catches a builder that started emitting a shape per
 ## CELL on floors that each merge fine.
-const SHAPE_CEILING: int = 420
+##
+## 640 SINCE THE OFFICE DRESSING (bead godot-test1-0a5). The furnished building is
+## 542, and only 162 of those 727 dressing boxes are solid at all: a shape is spent
+## on a piece you would walk INTO — the desks, cabinets, shelves, meeting tables and
+## coolers — and on no chair, plant, monitor, diploma or photograph. That split is
+## the bead's waist-height rule, asserted directly by check 18; this number is what
+## would notice it being quietly abandoned, because "all of it collides" is four
+## times the shapes and lands here first.
+const SHAPE_CEILING: int = 640
 
 var _failures: Array[String] = []
 
@@ -228,6 +236,7 @@ func _run() -> void:
 	await _check_guards_stand_their_posts()
 	await _check_guards_reset_on_re_entry()
 	await _check_the_leash_holds_under_a_chase()
+	_check_the_offices_are_furnished_and_still_walkable()
 	_report()
 
 
@@ -267,9 +276,26 @@ func _check_plan_fits_the_shell() -> void:
 	var seen := {}
 	for floor_index: int in TowerPlans.floors():
 		var plan := TowerInterior.plan_boxes(floor_index)
-		if plan.size() > TowerInterior.PLAN_BOX_BUDGET:
-			_fail("storey %d emits %d boxes, over PLAN_BOX_BUDGET %d — its walls stopped merging" % [
-				floor_index, plan.size(), TowerInterior.PLAN_BOX_BUDGET])
+		# THE TWO BUDGETS ARE COUNTED APART, and that is the whole reason there are
+		# two (bead godot-test1-0a5). `PLAN_BOX_BUDGET` exists to catch a floor whose
+		# walls stopped merging — an unmerged 40-cell wall is 40 boxes, which is
+		# loud against 120 and invisible against the 300-odd a shared budget would
+		# have had to become once every room was furnished. So the STRUCTURE keeps
+		# the number it has always had, unmoved by this bead, and the furniture is
+		# held to its own.
+		var structure := 0
+		var dress := 0
+		for box: Dictionary in plan:
+			if bool(box.get("dress", false)):
+				dress += 1
+			else:
+				structure += 1
+		if structure > TowerInterior.PLAN_BOX_BUDGET:
+			_fail("storey %d emits %d structural boxes, over PLAN_BOX_BUDGET %d — its walls stopped merging" % [
+				floor_index, structure, TowerInterior.PLAN_BOX_BUDGET])
+		if dress > TowerInterior.PLAN_DRESS_BUDGET:
+			_fail("storey %d emits %d dressing boxes, over PLAN_DRESS_BUDGET %d — a dresser rule stopped excluding" % [
+				floor_index, dress, TowerInterior.PLAN_DRESS_BUDGET])
 		# Its own floor, plus the one its ramp climbs FROM: a deck belongs to the
 		# floor it is walked onto from — storey 2's deck claims floor 0 — and it is
 		# the one box of a storey that legitimately says so. On the ground storey
@@ -277,8 +303,9 @@ func _check_plan_fits_the_shell() -> void:
 		# one floor and the rule tightens rather than loosening.
 		_fit_boxes(plan, TowerPlans.PLAN_HALF,
 				[floor_index, int(TowerPlans.storey(floor_index)["from"])], seen)
-		print("  storey %d: %d boxes (budget %d), floor at %.2f m, %.2f m clear" % [
-			floor_index, plan.size(), TowerInterior.PLAN_BOX_BUDGET,
+		print("  storey %d: %d structural boxes (budget %d) + %d dressing (budget %d), floor at %.2f m, %.2f m clear" % [
+			floor_index, structure, TowerInterior.PLAN_BOX_BUDGET,
+			dress, TowerInterior.PLAN_DRESS_BUDGET,
 			TowerInterior.FLOOR_Y[floor_index], TowerInterior.plan_clear_height(floor_index)])
 
 	# The rotor's two dimensions have to agree with the doorway they guard.
@@ -489,7 +516,20 @@ func _check_no_jump_gated_climb() -> void:
 			# not reach the NEXT WALKING SURFACE. Nothing here buys a piece of
 			# furniture a pass; it only refuses to call a 2.6 m pillar under a 4.2 m
 			# ceiling a climb.
-			if String(box["name"]).begins_with(TowerInterior._plan_prefix(floor_index)):
+			#
+			# ...AND THE OFFICE DRESSING IS THAT SAME THIRD KIND (bead
+			# godot-test1-0a5), so it is discriminated the same way and NOT by its
+			# name. A desk is named `S<floor>PlanDress…` because the dresser reads
+			# the plan, but it is not something a designer can draw: no character in
+			# `TowerPlans` emits one, so holding it to "slab or stone to the ceiling"
+			# would be enforcing a rule about ASCII against geometry no ASCII
+			# produced — and the only way to satisfy it would be a desk 4.6 m tall.
+			# It declares `dress` instead, and takes the pillar's test: a jump off
+			# its top must not reach the next walking surface. That is the question
+			# that actually matters about a 0.74 m desk, and it is asked of every
+			# piece on every storey rather than assumed from the height table.
+			if not bool(box.get("dress", false)) \
+					and String(box["name"]).begins_with(TowerInterior._plan_prefix(floor_index)):
 				_fail("%s spans %.2f .. %.2f m on a storey at %.2f m (ceiling %.2f) — it is neither this floor's slab nor stone reaching its ceiling, so its top is a ledge" % [
 					box["name"], bottom, top, surface, wall_top])
 				continue
@@ -1134,10 +1174,18 @@ func _check_materials_are_shared_and_already_toon() -> void:
 	# swap to (lit, lit, and DARK for a cell that has been emptied); those materials
 	# exist from the moment anything asks for them.
 	const SWAPPED: int = 3
-	var want := colors.size() + SWAPPED + 2
+	# ...and one per HERO PORTRAIT, which are the only materials in this building
+	# that are not a colour at all: a photograph cannot be a vertex colour, so the
+	# employee-of-the-month wall carries a textured material per hero (bead
+	# godot-test1-0a5). Counted off `egg_frames()` rather than off `HEROES`, so a
+	# wall the plan no longer draws stops being allowed for as well as stops being
+	# built — and the whole of the office fit-out around them still costs ZERO
+	# materials, because every last desk and diploma went into the batch.
+	var portraits := TowerInterior.egg_frames().size()
+	var want := colors.size() + SWAPPED + 2 + portraits
 	if distinct.size() > want:
-		_fail("the interior holds %d materials, expected at most %d (%d moving colours + %d swapped + 2 batch)" % [
-			distinct.size(), want, colors.size(), SWAPPED])
+		_fail("the interior holds %d materials, expected at most %d (%d moving colours + %d swapped + 2 batch + %d portraits)" % [
+			distinct.size(), want, colors.size(), SWAPPED, portraits])
 
 	for mesh: MeshInstance3D in mesh_a:
 		var before := _material_of(mesh)
@@ -3392,6 +3440,269 @@ func _check_the_leash_holds_under_a_chase() -> void:
 	print("tower guards: the leash held a %.0f s chase, worst excursion %.4f m,"
 		% [LEASH_PROBE_SECONDS, worst] + " and re-caught a shove")
 	await _clear(hero, shell)
+
+
+# ============================================================================
+# CHECK 18 — the office dressing (bead godot-test1-0a5)
+# ============================================================================
+
+## The floor on how many pieces a room big enough to be an office actually gets.
+## `TowerInterior.DRESS_MIN_PIECES` is what the builder aims for; this is the same
+## number asked from outside, so a dresser that silently stopped placing anything
+## fails here rather than shipping ten storeys of empty rooms with green checks.
+const DRESS_FLOOR: int = TowerInterior.DRESS_MIN_PIECES
+
+
+func _check_the_offices_are_furnished_and_still_walkable() -> void:
+	"""
+	Check 18. Every office room is furnished, nothing is furnished that shouldn't
+	be, and no piece of furniture can shut a door.
+
+	THE THIRD ONE IS THE WHOLE POINT AND IT IS ASKED INDEPENDENTLY. The builder
+	runs its own flood fill before committing a solid piece (see `_still_connected`)
+	— but a check that trusted the builder's fill would be the builder agreeing with
+	itself. So this fill is written here, from the ASCII and the emitted BOXES,
+	and never from the dresser's own bookkeeping: a room's cells, minus every cell a
+	solid dressing box stands in, must still be one 4-connected component containing
+	every doorway. `tower_selfcheck`'s check 9 fills the same grid without the
+	furniture; between them the claim is "the plan is walkable AND the furniture did
+	not change that", which is exactly the pair the bead asks for.
+
+	The other four are the constraints the bead states in so many words:
+
+	  a. nothing solid is under `DRESS_WAIST` — the desks and cabinets are walls,
+	     the chairs and plants are not, and the player never snags on a chair;
+	  b. no dressing box stands in a doorway or in a gate's `D` run — a piece in
+	     either is a door that will not open or a corridor that is not one;
+	  c. no dressing box is in a set-piece room, so the stealth pacing that the
+	     block and the checkpoint are built around is untouched;
+	  d. an office room really is furnished, and the four hero portraits really do
+	     hang somewhere, on a wall, on a storey.
+	"""
+	var dressed_rooms := 0
+	var pieces := 0
+	var solids := 0
+	for floor_index: int in TowerPlans.floors():
+		var plan := TowerPlans.storey(floor_index)
+		var rows: Array = plan["rows"]
+		var surface: float = TowerInterior.FLOOR_Y[floor_index]
+		# Every gate run on this storey, and every doorway of every room, as cells
+		# nothing may stand in.
+		var forbidden := {}
+		var masses: Dictionary = TowerInterior.gate_slots(plan)["masses"]
+		for gate_id: String in masses:
+			var span: Rect2i = masses[gate_id]
+			for c: int in range(span.position.x, span.end.x + 1):
+				for r: int in range(span.position.y, span.end.y + 1):
+					forbidden[Vector2i(c, r)] = true
+		for box: Dictionary in TowerInterior.plan_boxes(floor_index):
+			if not bool(box.get("dress", false)):
+				continue
+			pieces += 1
+			var top: float = box["pos"].y + box["size"].y * 0.5
+			if box["collide"]:
+				solids += 1
+				# (a) the waist rule, as an effect on the geometry that got built.
+				if top - surface < TowerInterior.DRESS_WAIST - EPS:
+					_fail("%s is solid but only %.2f m tall — under DRESS_WAIST (%.2f), so it is a thing to snag on" % [
+						box["name"], top - surface, TowerInterior.DRESS_WAIST])
+			# (b) doorways and gate runs. Asked by FOOTPRINT and not by cell name,
+			# because a piece is placed by metres and a `D` run is drawn in cells.
+			for cell: Vector2i in forbidden:
+				if _cell_touches(cell, box):
+					_fail("%s stands in a gate run at cell %s" % [box["name"], cell])
+					break
+		# (c) and (d), per room.
+		for letter: String in plan["rooms"]:
+			var room_id := String(plan["rooms"][letter])
+			var placed := _dress_cells(floor_index, letter)
+			if TowerInterior.DRESS_SKIP_ROOMS.has(room_id):
+				if not placed.is_empty():
+					_fail("%s is a set piece and was dressed anyway (%d cells)" % [
+						room_id, placed.size()])
+				continue
+			var cells := _letter_cells(rows, letter)
+			if cells.is_empty():
+				continue
+			# ...and the doorway rule, on the room's own thresholds.
+			var doors := _threshold_cells(rows, cells, letter)
+			for cell: Vector2i in doors:
+				if placed.has(cell):
+					_fail("storey %d room %s has a dressing piece in its doorway at %s" % [
+						floor_index, letter, cell])
+			# THE FILL. Solid cells only: a chair is not a wall and must not read as
+			# one, which is also how this check would notice the waist rule being
+			# applied to the wrong half of the table.
+			var blocked := {}
+			for cell: Vector2i in placed:
+				if placed[cell]:
+					blocked[cell] = true
+			var cut := _doors_still_reach(cells, blocked, doors)
+			if cut != "":
+				_fail("storey %d room %s: %s — the furniture walled a doorway off" % [
+					floor_index, letter, cut])
+			if placed.is_empty():
+				continue
+			dressed_rooms += 1
+			if placed.size() < DRESS_FLOOR:
+				_fail("storey %d room %s got %d dressing pieces, under the %d an office owes" % [
+					floor_index, letter, placed.size(), DRESS_FLOOR])
+
+	if dressed_rooms == 0:
+		_fail("not one room in the building is furnished — the dresser is wired to nothing")
+
+	# The joke, asserted as geometry rather than taken on trust: four frames, four
+	# distinct heroes, four loadable portraits, all on one storey and all standing
+	# against stone.
+	var frames := TowerInterior.egg_frames()
+	if frames.size() != TowerGraph.HEROES.size():
+		_fail("the employee-of-the-month wall hangs %d portraits for %d heroes" % [
+			frames.size(), TowerGraph.HEROES.size()])
+	var heroes := {}
+	for frame: Dictionary in frames:
+		var hero := String(frame["hero"])
+		if heroes.has(hero):
+			_fail("%s is employee of the month twice" % hero)
+		heroes[hero] = true
+		var mat := TowerInterior.portrait_material(hero)
+		if mat == null:
+			_fail("%s has no portrait to hang — res://assets/portraits/%s.png is missing" % [
+				hero, hero])
+		# THE QUAD IS SQUARE BECAUSE THE SOURCE IS, and a `QuadMesh` stretches
+		# whatever it is given across whatever it is: a portrait shipped 3:4 would
+		# hang 30% wrong with no error anywhere. So the assumption is asserted
+		# rather than commented (codex review, 2026-08-31) — a hero whose art is not
+		# square fails here, and the fix is a per-hero quad size, not a squashed face.
+		elif mat.albedo_texture != null:
+			var size := mat.albedo_texture.get_size()
+			if not is_equal_approx(size.x, size.y):
+				_fail("%s's portrait is %d x %d — the frame's quad is square, so it would hang stretched" % [
+					hero, int(size.x), int(size.y)])
+		if TowerInterior.portrait_material(hero) != TowerInterior.portrait_material(hero):
+			_fail("%s's portrait material is rebuilt per call — the texture is being copied" % hero)
+	print("tower interior: %d rooms dressed, %d dressing boxes (%d solid), %d portraits hung" % [
+		dressed_rooms, pieces, solids, frames.size()])
+
+
+func _cell_touches(cell: Vector2i, box: Dictionary) -> bool:
+	## Does one box's footprint overlap one plan cell's?
+	var x0 := TowerInterior._grid_x(float(cell.x))
+	var x1 := TowerInterior._grid_x(float(cell.x) + 1.0)
+	var z0 := TowerInterior._grid_z(float(cell.y))
+	var z1 := TowerInterior._grid_z(float(cell.y) + 1.0)
+	var pos: Vector3 = box["pos"]
+	var half: Vector3 = box["size"] * 0.5
+	return pos.x - half.x < x1 - EPS and pos.x + half.x > x0 + EPS \
+		and pos.z - half.z < z1 - EPS and pos.z + half.z > z0 + EPS
+
+
+func _dress_cells(floor_index: int, letter: String) -> Dictionary:
+	## Which cells of one room carry dressing, and whether any of it is SOLID.
+	## Read back off the box names the builder emitted, which is the only record of
+	## the placement that exists outside the dresser's own local variables.
+	var out := {}
+	var prefix := "%sDress%s_" % [TowerInterior._plan_prefix(floor_index), letter]
+	for box: Dictionary in TowerInterior.plan_boxes(floor_index):
+		var box_name := String(box["name"])
+		if not box_name.begins_with(prefix):
+			continue
+		var parts := box_name.substr(prefix.length()).split("_")
+		if parts.size() < 2:
+			continue
+		var cell := Vector2i(int(parts[0]), int(parts[1]))
+		out[cell] = bool(out.get(cell, false)) or bool(box["collide"])
+	return out
+
+
+func _letter_cells(rows: Array, letter: String) -> Array[Vector2i]:
+	## Every cell of one room. This file's own walk of the grid, never the
+	## builder's — see check 18's docstring for why the second opinion matters.
+	var out: Array[Vector2i] = []
+	for r: int in rows.size():
+		var line := String(rows[r])
+		for c: int in line.length():
+			if line[c] == letter:
+				out.append(Vector2i(c, r))
+	return out
+
+
+func _threshold_cells(rows: Array, cells: Array[Vector2i], letter: String) -> Array[Vector2i]:
+	## The room cells you can walk into it through — a room cell with a neighbour
+	## that is neither this room nor stone.
+	var out: Array[Vector2i] = []
+	for cell: Vector2i in cells:
+		for step: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			var at: Vector2i = cell + step
+			var ch := TowerPlans.WALL_CHAR
+			if at.y >= 0 and at.y < rows.size():
+				var line := String(rows[at.y])
+				if at.x >= 0 and at.x < line.length():
+					ch = line[at.x]
+			if ch != TowerPlans.WALL_CHAR and ch != letter:
+				out.append(cell)
+				break
+	return out
+
+
+func _doors_still_reach(cells: Array[Vector2i], blocked: Dictionary,
+		doors: Array[Vector2i]) -> String:
+	"""
+	Does every doorway still reach everywhere in this room it reached empty?
+
+	@return: "" when nothing was lost, else what was.
+
+	TWO LABELLINGS OF THE SAME GRID, and the comparison between them is the whole
+	assertion: components of the room's cells with NO furniture, then components of
+	the cells the furniture left free. Two doorways in one component of the first
+	must be in one component of the second — otherwise a piece of office equipment
+	is standing where a player has to walk.
+
+	IT IS A DIFFERENCE AND NOT AN ABSOLUTE, because a `rooms` letter names a room
+	and not a REGION: `outer_hall` is four blocks of `O` on opposite sides of the
+	ground floor, joined only through corridors this fill cannot see, and asking
+	"is this room one piece" of it fails on the empty building. Asking what the
+	furniture CHANGED is the honest form, and it is the exact property the builder
+	preserves cell by cell (`_still_connected`) — arrived at from the other end, off
+	the boxes rather than off the placement, which is what makes it a second opinion.
+	"""
+	var empty_of := _components(cells, {})
+	var free_of := _components(cells, blocked)
+	for cell: Vector2i in doors:
+		if blocked.has(cell):
+			return "its doorway at %s has furniture standing in it" % cell
+	for i: int in doors.size():
+		for j: int in range(i + 1, doors.size()):
+			if empty_of[doors[i]] != empty_of[doors[j]]:
+				continue
+			if free_of[doors[i]] != free_of[doors[j]]:
+				return "doorways %s and %s reached each other in the empty room and no longer do" % [
+					doors[i], doors[j]]
+	return ""
+
+
+func _components(cells: Array[Vector2i], blocked: Dictionary) -> Dictionary:
+	## Cell -> the id of its 4-connected component, over the cells `blocked` leaves.
+	var free := {}
+	for cell: Vector2i in cells:
+		if not blocked.has(cell):
+			free[cell] = true
+	var out := {}
+	var next_id := 0
+	for cell: Vector2i in free:
+		if out.has(cell):
+			continue
+		var queue: Array[Vector2i] = [cell]
+		out[cell] = next_id
+		while not queue.is_empty():
+			var at: Vector2i = queue.pop_back()
+			for step: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+				var to: Vector2i = at + step
+				if out.has(to) or not free.has(to):
+					continue
+				out[to] = next_id
+				queue.append(to)
+		next_id += 1
+	return out
 
 
 func _fresh_store() -> void:

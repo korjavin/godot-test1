@@ -370,16 +370,31 @@ The building is full to its sealed roof — ten floor indices, `FLOOR_Y[0..9]`:
   thing in this building that is not batched. Measured over the eight planned storeys:
   **52 / 43 / 52 / 29 / 29 / 81 / 61 / 46** boxes against `PLAN_BOX_BUDGET` 120 (the two
   maze floors are the 81 and the 61 — a one-cell maze legitimately produces many rects,
-  which is what that budget now guards). Mesh NODES are **35 (`DRAW_BUDGET` 35) for 420
-  boxes** — one `FloorNBatch` per storey plus the parts that move — and the whole interior
-  is **347 collision shapes on one `StaticBody3D`** (ceiling 420, printed by check 5). A
+  which is what that budget now guards). Mesh NODES are **39 (`DRAW_BUDGET` 39) for 1181
+  boxes** — one `FloorNBatch` per storey, the parts that move, and the four hero
+  portraits — and the whole interior is **542 collision shapes on one `StaticBody3D`**
+  (ceiling 640, printed by check 5). A
   plan whose walls stopped merging blows the box budget on its first row. **`DRAW_BUDGET`
   counts nodes, not draws**: emissive is a material property, so a storey carrying a
   `GLOW_COLORS` box commits a second SURFACE in the same `ArrayMesh` and the engine
   submits one draw per surface. Floors 0, 1 and 9 glow (the keep and the cell block),
   so the interior is 13 batch
-  surfaces + 25 own-node meshes = **38 real draws**. Read the number as "nothing left the
+  surfaces + 29 own-node meshes = **42 real draws**. Read the number as "nothing left the
   batch", not as a draw count.
+- **The offices are FURNISHED, and the furniture is derived rather than drawn.** No
+  glyph was added to `TowerPlans` for it: `_plan_dressing` walks each storey's rooms
+  and puts desks, chairs, cabinets, bookshelves, meeting tables, coolers, plants and
+  framed diplomas/photos on the cells that touch a wall, off a FIXED salt (never
+  `run_seed` — the tower is authored). It is all vertex-coloured boxes in the storey's
+  existing batch, so ten furnished floors cost **zero** extra draw calls; only the four
+  hero portraits hanging in the outer hall as "employee of the month" need textures, and
+  they are the whole of `DRAW_BUDGET`'s move from 35 to 39. Furniture has its own
+  per-storey budget (`PLAN_DRESS_BUDGET` 240) so `PLAN_BOX_BUDGET` keeps measuring
+  exactly what it always did. **Three rules keep it safe and check 18 asserts all
+  three**: nothing lands on a doorway cell or beside one; a solid piece is committed only
+  if the room's connectivity is unchanged (`_still_connected`); and a cell carrying
+  anything else the storey draws — a pad, a lock plate, a set piece — or standing under
+  the storey above's stairwell hole is refused. Only waist-high-or-taller pieces collide.
 - **The labyrinth's rule is TWO ROUTES, and the spines walk the ungated one.** Each maze
   storey has an outer circuit that asks nothing of anybody (route A) and a short way
   through the core behind a riddle gate (route B). Check 3 walks every spine with an EMPTY
