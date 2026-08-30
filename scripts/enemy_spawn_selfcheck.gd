@@ -386,6 +386,7 @@ func _run() -> void:
 	_check_ranged_cadence(croc_ai)
 	_check_hunt_pacing(croc_ai)
 	_check_scent_tracking()
+	_check_wanderer_adoption(terrain_script)
 	_check_leap_cycle(croc_ai)
 	_check_view_cone(croc_ai)
 	_check_determinism(terrain_script)
@@ -2489,6 +2490,120 @@ func _probe_scent(species_name: String, walking: bool) -> void:
 				% [float(row["scent_radius"]), detection])
 
 	_free_scent_probe(croc, stub, lod)
+
+
+# ============================================================================
+# CHECK 8g — a tracker that walks off its birth chunk SURVIVES, and leaves no twin
+# ============================================================================
+# The half of scent tracking that check 8f cannot see, because its probe has no
+# terrain: everything the world spawns is parented to its chunk so that unloading
+# the chunk frees it, and a tracker WALKS. Its birth chunk falls behind the player
+# it is following and takes the unit with it — deleting the hunter precisely for
+# doing the thing the feature exists to make it do, which is a silent regression
+# to the bug this bead was filed about. `adopt_wanderer` re-parents it to the
+# ground under its feet; the cost of that is that the birth chunk can regenerate
+# while the unit lives, so the slot registry has to refuse to build the twin.
+#
+# Both halves are measured here, and the second needs the first: a registry that
+# never releases a slot is a hunter that never comes back.
+
+## How far to sweep for a chunk that actually rolls a hunter. HUNTER_CHANCE is
+## 0.15, so a few dozen candidates is overwhelming odds; a sweep that finds none
+## is reported rather than skipped.
+const ADOPT_SCAN_CHUNKS: int = 60
+
+
+func _check_wanderer_adoption(terrain_script: GDScript) -> void:
+	"""
+	Walk one real hunter off its chunk and check who owns it afterwards.
+
+	@param terrain_script: endless_terrain.gd, driven DETACHED — `adopt_wanderer`
+	                       needs only `world_to_chunk` (pure) and `active_chunks`,
+	                       while the chunk parents and the unit are really in the
+	                       tree, which is what `reparent` needs. Attaching the
+	                       terrain would start it streaming a world of its own
+	                       (see `_make_chunk_parent`).
+	"""
+	var terrain: Node = Node3D.new()
+	terrain.set_script(terrain_script)
+	terrain.set_run_seed(RUN_SEEDS[0])
+
+	# Find a chunk this seed really gives a hunter to, rather than assuming one.
+	var birth := Vector2i.ZERO
+	var birth_parent: MeshInstance3D = null
+	var hunter: Node3D = null
+	for i: int in ADOPT_SCAN_CHUNKS:
+		var cp := Vector2i(FIELD + i, FIELD)
+		var parent := _make_chunk_parent(terrain.chunk_to_world(cp))
+		terrain.spawn_hunters_in_chunk(cp, parent, [])
+		if parent.get_child_count() > 0:
+			birth = cp
+			birth_parent = parent
+			hunter = parent.get_child(0) as Node3D
+			break
+		parent.free()
+	if hunter == null:
+		_fail("no chunk in a %d-chunk sweep spawned a hunter at HUNTER_CHANCE —"
+				% ADOPT_SCAN_CHUNKS + " check 8g has no subject, so the migration"
+				+ " that keeps a tracker alive across a chunk unload is untested")
+		terrain.free()
+		return
+	var slot: String = hunter.name
+
+	# The chunk it is about to walk onto, one chunk along. Both go into
+	# `active_chunks` because that map is the terrain's answer to "what ground is
+	# loaded", and `adopt_wanderer` refuses to hand a body to ground that is not.
+	var dest := birth + Vector2i(1, 0)
+	var dest_parent := _make_chunk_parent(terrain.chunk_to_world(dest))
+	terrain.active_chunks[birth] = birth_parent
+	terrain.active_chunks[dest] = dest_parent
+
+	# Stand it in the middle of the destination chunk and hand it over.
+	var dest_centre: Vector3 = terrain.chunk_to_world(dest)
+	hunter.global_position = Vector3(dest_centre.x, hunter.global_position.y, dest_centre.z)
+	var stood_at: Vector3 = hunter.global_position
+	terrain.adopt_wanderer(hunter)
+
+	if hunter.get_parent() != dest_parent:
+		_fail("a hunter standing in chunk %s is still parented to its birth chunk"
+				% str(dest) + " %s — the chunk that unloads when the player walks"
+				% str(birth) + " away will delete a tracker that is doing exactly"
+				+ " what the scent leg asks of it")
+	var drift: float = hunter.global_position.distance_to(stood_at)
+	if drift > EPSILON:
+		_fail("adopt_wanderer moved the body it re-parented by %.2f m — the"
+				% drift + " transfer has to keep the GLOBAL transform, or every"
+				+ " migration teleports the unit by one chunk origin (50 m) and a"
+				+ " tracker crossing a boundary jumps instead of walking")
+
+	# ...and the birth chunk must now refuse to build its twin, because the name is
+	# the room-wide crocodile id and two bodies cannot share one.
+	var rebuilt := _make_chunk_parent(terrain.chunk_to_world(birth))
+	terrain.spawn_hunters_in_chunk(birth, rebuilt, [])
+	if rebuilt.get_child_count() > 0:
+		_fail("chunk %s rebuilt its hunter while the migrated one is still alive —"
+				% str(birth) + " two bodies now answer to '%s', which is one" % slot
+				+ " crocodile id shared by two transforms in every room")
+	rebuilt.free()
+
+	# ...and it must build it again once that body is gone, or a slot leaks for the
+	# life of the run and the world quietly loses a hunter every migration.
+	hunter.free()
+	var revived := _make_chunk_parent(terrain.chunk_to_world(birth))
+	terrain.spawn_hunters_in_chunk(birth, revived, [])
+	if revived.get_child_count() == 0:
+		_fail("chunk %s never rebuilt its hunter after the migrated body was"
+				% str(birth) + " freed — the slot registry holds a dead name, so"
+				+ " every tracker the world loses is lost permanently")
+	else:
+		print("wanderer adoption: '%s' moved from chunk %s to %s, the birth chunk"
+				% [slot, str(birth), str(dest)] + " refused to rebuild it, and"
+				+ " rebuilt it once the body was freed")
+	revived.free()
+
+	birth_parent.free()
+	dest_parent.free()
+	terrain.free()
 
 
 func _free_scent_probe(croc: Node, stub: Node, lod: Node) -> void:

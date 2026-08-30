@@ -535,6 +535,20 @@ func _record_trails(focus_points: Array[Vector3], elapsed: float) -> void:
 			_trails.remove_at(i)
 
 
+func reset_trails() -> void:
+	"""
+	Forget every track. Called by `endless_terrain.set_run_seed()`, which is the one
+	place a new world begins.
+
+	The trail is the only piece of world state this node holds, and a chunk wipe
+	cannot reach it — this manager is a SIBLING of the terrain, not a child of a
+	chunk. Without this, Play Again (or a peer adopting a room's seed) would leave
+	the new world's hunters walking the last world's paths for up to TRAIL_TTL.
+	"""
+	_trails.clear()
+	_trail_clock = 0.0
+
+
 func _trail_for(quarry: Vector3) -> Dictionary:
 	## The trail whose freshest crumb is nearest this quarry within
 	## TRAIL_MATCH_RADIUS, created if there is none. Proximity, never identity —

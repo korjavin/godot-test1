@@ -3173,6 +3173,18 @@ var is_tracking: bool = false
 ## that it would have produced had it never slept, exactly like `hunt_steer_point`.
 var track_target: Vector3 = Vector3.ZERO
 
+## Has this body EVER been walked by `advance_tracking`? Latched true on the first
+## slept step and never cleared — a unit that has stalked is not standing where it
+## spawned any more, and nothing puts it back.
+##
+## `mp_manager._send_croc_sync` reads exactly this rather than `is_tracking`. The
+## rule it needs is "the peers' deterministic spawn position is a lie about this
+## body", which stays true after the trail goes cold: a sleeper that stopped
+## tracking is still displaced, and dropping it from the sync then would snap it
+## into place the moment it woke — the very artefact the exception exists to
+## prevent.
+var has_stalked: bool = false
+
 ## THE LEAP ARM'S ONE PIECE OF MEMORY (`_behave_leap`): how many seconds of
 ## GROUNDED recovery this boss still owes before it may hop again, as
 ## { "cooldown": float }. Empty means "ready now", so a dragon that has just
@@ -4455,6 +4467,24 @@ func advance_tracking(delta: float) -> void:
 	var dir := to_track / reach
 	global_position += dir * minf(step, reach)
 	rotation.y = atan2(dir.x, dir.z)
+	has_stalked = true
+
+	# ...AND HAND THE BODY TO THE GROUND IT IS NOW STANDING ON. Everything the
+	# terrain spawns is parented to its chunk so that unloading the chunk frees it,
+	# which is exactly right for a body that never moves — and exactly wrong for
+	# one that walks 200 m. A tracker following a quarry away from its birth chunk
+	# would otherwise be deleted mid-stalk, by a chunk that unloaded *because the
+	# player left it*: the one case where the unit is doing precisely what it is
+	# supposed to. `adopt_wanderer` re-parents it to the chunk under its feet, so
+	# it keeps a correct streaming lifetime (it still dies when the ground it is
+	# actually on unloads) and keeps its NAME, which is its room-wide id.
+	#
+	# Group-discovered and `has_method`-guarded like every cross-system call here:
+	# a standalone scene or a headless harness has no terrain, and the unit simply
+	# stays where it was parented.
+	var terrain := get_tree().get_first_node_in_group("terrain")
+	if terrain != null and terrain.has_method("adopt_wanderer"):
+		terrain.adopt_wanderer(self)
 
 
 func _behave_leap() -> void:
