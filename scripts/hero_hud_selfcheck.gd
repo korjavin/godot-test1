@@ -67,7 +67,7 @@ class StubPlayer extends Node:
 	func is_hero_captive(hero: String) -> bool:
 		return captive.has(hero)
 
-	func available_character_indices() -> Array:
+	func reachable_character_indices() -> Array:
 		return available
 
 
