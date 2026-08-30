@@ -122,6 +122,121 @@ paste the timings and the printed summary lines into this file under
 and after**, so capture the `tower interior: N keep boxes` and `storey 0: N boxes` lines
 verbatim.
 
+### ➕ Baseline (measured)
+
+Recorded 2026-08-30 on the untouched branch (`749e61b`), Godot 4.5.stable, after
+`godot --headless --path . --import`. Every check exited 0 and printed `SELFCHECK OK`.
+
+| self-check | wall time | verdict |
+|---|---|---|
+| `tower_selfcheck` | 0 s | SELFCHECK OK |
+| `tower_interior_selfcheck` | 14 s | SELFCHECK OK |
+| `tower_shell_selfcheck` | 2 s | SELFCHECK OK |
+| `tower_site_selfcheck` | 1 s | SELFCHECK OK |
+| `capture_selfcheck` | 12 s | SELFCHECK OK |
+| `enemy_spawn_selfcheck` | 1 s | SELFCHECK OK |
+| `chunk_stream_selfcheck` | 1 s | SELFCHECK OK |
+| `minimap_selfcheck` | 3 s | SELFCHECK OK |
+| `perf_selfcheck` | 0 s | SELFCHECK OK |
+| `scenes/main.tscn --quit-after 120` | 2 s | exit 0, no errors |
+
+**`tower_selfcheck`** — the graph and plan counts the change must not quietly move:
+
+```
+tower scars: 1 authored, 1 built into the interior
+tower riddles: 4, each with a 4-pad lock and a clue reachable with it shut
+tower plans: 8 storeys, 51 rooms, 7897 cells walkable, ramps 29.6, 27.3, 27.3, 27.3, 27.3, 27.3, 27.3, 23.2 deg
+tower graph: 65 rooms, 72 edges, 12 gates, 3 entries, 2 scars — 15 subset walks clean
+```
+
+**`tower_interior_selfcheck`** — the box counts. **There is no `storey 0` or `storey 1`
+line today**: floors 0 and 1 are the hand-authored `boxes()` table, printed as the
+single "28 keep boxes" line. That absence IS the before-number the bead asks for —
+after this change the keep line is gone and `storey 0` / `storey 1` lines appear.
+
+```
+tower interior: 28 keep boxes (budget 32), hall headroom 4.20 m, storey 4.60 m
+  storey 2: 52 boxes (budget 120), floor at 11.00 m, 4.60 m clear
+  storey 3: 43 boxes (budget 120), floor at 16.00 m, 4.60 m clear
+  storey 4: 52 boxes (budget 120), floor at 21.00 m, 4.60 m clear
+  storey 5: 29 boxes (budget 120), floor at 26.00 m, 4.60 m clear
+  storey 6: 29 boxes (budget 120), floor at 31.00 m, 4.60 m clear
+  storey 7: 81 boxes (budget 120), floor at 36.00 m, 4.60 m clear
+  storey 8: 61 boxes (budget 120), floor at 41.00 m, 4.60 m clear
+  storey 9: 46 boxes (budget 120), floor at 46.00 m, 4.00 m clear
+jump apex 3.6125 m; upper storey at 4.60 m
+phase reach: base 6.0000, one rank 7.2000, maxed 8.4000; demand 7.20
+ramp: 29.9 degrees (slope 0.5750), foot (-8.50, 0.00) head (-0.50, 4.60)
+storey 2 ramp: 29.6 degrees (slope 0.5670), foot (-29.10, 0.00) head (-9.70, 11.00)
+storey 3 ramp: 27.3 degrees (slope 0.5155), foot (9.70, 11.00) head (19.40, 16.00)
+storey 4 ramp: 27.3 degrees (slope 0.5155), foot (9.70, 16.00) head (19.40, 21.00)
+storey 5 ramp: 27.3 degrees (slope 0.5155), foot (0.00, 21.00) head (9.70, 26.00)
+storey 6 ramp: 27.3 degrees (slope 0.5155), foot (-23.28, 26.00) head (-13.58, 31.00)
+storey 7 ramp: 27.3 degrees (slope 0.5155), foot (0.00, 31.00) head (9.70, 36.00)
+storey 8 ramp: 27.3 degrees (slope 0.5155), foot (-9.70, 36.00) head (0.00, 41.00)
+storey 9 ramp: 23.2 degrees (slope 0.4296), foot (15.52, 41.00) head (27.16, 46.00)
+camera floats 3.50 m over the feet (+ 0.25 margin); hall headroom 4.20 m
+camera reach: 8.00 m outdoors, 3.74 m indoors (+ 0.25 margin); courtyard 8.30 m wide
+tower interior: 35 meshes drawn (budget 35) for 421 boxes
+tower interior: 347 collision shapes on one body (ceiling 420)
+tower interior: batch palette clears 0.18 luminance (darkest 0.20, 0.18|0.21|0.25 on storey 0)
+cell block: storey 9, 4 spine doors, 4 recesses up to 7.76 m wide; press 0.35 .. 2.45 m over a 46.00 m floor
+custody scene: stand (0.97, 46.20, -11.64), 18.43 m behind the camera; 1 scar box(es)
+custody scene: containment raised, released by windman, and the doorway collapsed
+tower guards: 9 on post, leashed to their own storeys; per storey { 0: 1, 1: 1, 2: 1, 3: 1, 4: 1, 5: 1, 6: 1, 7: 1, 9: 1 }
+tower guards: re-entry rebuilt 9 fresh bodies, opened set ["tower_checkpoint", "tower_rescue_primm", "updraft_shaft"] untouched
+tower guards: the leash held a 8 s chase, worst excursion 0.0000 m, and re-caught a shove
+```
+
+Note the guard census: **nine bodies, one per storey**, floors 0 and 1 supplied by the
+two hand-authored `GUARD_POSTS` rows and floor 8 carrying none (its plan draws no `G`).
+Invariant 5 says that census must be unchanged when the two hand rows become two `G`
+characters.
+
+**`tower_shell_selfcheck`** — the numbers Task 4 may move (only the box count):
+
+```
+tower shell: 26 boxes (budget 28), footprint radius 63.64 m
+roof sealed: every 1 m grid point inside +/-38.8 m stops at the slab
+Air Rush peak 26.25 m (maxed) + massif 20.0 m + 5.0 m margin = 51.25 m; roof top 52.00 m
+no-ledge sweep for the normal capsule: nothing wider than 0.300 m under the roof
+no-ledge sweep for the smallest Teibi (x0.45): nothing wider than 0.225 m under the roof
+seed 56: 26 coins near the tower, 1 road candidates rejected by the walls
+seed 20260828: 0 coins near the tower, 0 road candidates rejected by the walls
+seed 4242: 4 coins near the tower, 0 road candidates rejected by the walls
+impostor cross-fade: opaque beyond 220 m, gone by 150 m, nearest pixel guaranteed a shell by 225.6 m
+```
+
+**`tower_site_selfcheck`**:
+
+```
+tower dry disc: 4 of 8 sampled seeds have a raw river crossing the site, all masked
+tower site (-400.0, 0.0, 0.0): nearest world content is CollisionShape3D at 68.8 m (disc is 65 m)
+coin road passes 237.9 m from the tower site (not excluded, by design)
+```
+
+**`capture_selfcheck`** — the guard-setback acceptance (D7). The two constants it
+reads today are `CHECKPOINT_STAND = (5.8, SLAB_Y + 0.2, 0.0)` and
+`ENTRY_STAND = (7.6, 0.2, 0.0)`, both authored against the keep's inner faces; the
+check lands the player on one of them per branch and prints:
+
+```
+Tower guard setback: -14 coins, back to the checkpoint     (x3, one per branch drive)
+Broke out. 1 hero(es) free; the tower is scarred.
+```
+
+**`enemy_spawn_selfcheck`** (the tower-relevant line, plus the boss census that must
+not move):
+
+```
+view cones: ["tower_guard"] probed from behind and ahead through a 0.60 s beat, crocodile (no cone) as the control
+boss dispatch: 62 of 80 road bosses reached the world across 6 biome band(s); 2 of their stations stand in a river; BIOME_BOSS has 6 row(s); kinds spawned { "naga": 17, "hydra": 20, "green_dragon": 5, "roc": 5, "clown": 8, "titan": 5, "crocodile": 2 }
+```
+
+`chunk_stream_selfcheck`, `minimap_selfcheck` and `perf_selfcheck` print nothing but
+`SELFCHECK OK`.
+
+
 ---
 
 ## The design, decided — these are rulings, do not re-derive them
@@ -409,17 +524,17 @@ Every one must print `SELFCHECK OK` and exit 0.
 
 ### Task 1: Baseline, then teach the format about the ground storey
 
-- [ ] Run every self-check listed above on the untouched branch. Record the timings and
+- [x] Run every self-check listed above on the untouched branch. Record the timings and
       the printed summaries (`tower plans: …`, `tower interior: N keep boxes …`, the
       per-storey `storey N: M boxes` lines, `tower_selfcheck`'s room/edge/gate counts)
       under a new "➕ Baseline (measured)" heading in this file. Commit and push.
-- [ ] `scripts/tower_plans.gd` header: document **the `from == floor` rule** (D2) in the
+- [x] `scripts/tower_plans.gd` header: document **the `from == floor` rule** (D2) in the
       "A STOREY ROW" section — a storey whose `from` is its own floor is entered from
       outside the building, draws no `S` lane, and its `s` cells are the doormat.
       Also update the file's opening line ("the hand-planned layout of every floor
       **above the phase-3 keep**") — there is no keep, and `STOREYS` now covers the
       whole building.
-- [ ] Nothing else in this task. No plan rows yet.
+- [x] Nothing else in this task. No plan rows yet.
 
 ### Task 2: Draw floor 1 (storey 2) and move the grand ramp onto it
 

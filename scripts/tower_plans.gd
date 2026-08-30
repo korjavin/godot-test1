@@ -1,7 +1,13 @@
 class_name TowerPlans
 extends RefCounted
 ## THE TOWER'S STOREYS, DRAWN AS TEXT — the hand-planned layout of every floor
-## above the phase-3 keep.
+## in the building, ground storey included.
+##
+## It used to say "every floor above the phase-3 keep", because floors 0 and 1
+## were hand-authored against the inner faces of a 20 m box standing in the middle
+## of the 80 m hall. Bead `godot-test1-dn8` demolished that keep; those two floors
+## are `STOREYS` rows like every other, and there is no floor of this tower that is
+## not drawn here.
 ##
 ## Epic godot-test1-3iy, phase 14. This file is DATA, the way `tower_graph.gd` is
 ## data: a `const` dict of plain dicts, no class hierarchy, no `Resource`, no
@@ -106,6 +112,19 @@ extends RefCounted
 ##   floor    int    index into `TowerInterior.FLOOR_Y` — the walking surface, and
 ##                   the `floor` every box this storey emits declares.
 ##   from     int    the floor index this storey's ramp climbs FROM.
+##
+##                   **`from == floor` means this storey is entered from OUTSIDE
+##                   the building.** It draws no `S` lane at all, and its `s` cells
+##                   are the DOORMAT rather than the head of a ramp — still the
+##                   flood fill's start, because that is where a player actually
+##                   arrives. The ground storey is the only row shaped like this
+##                   today, and it is data rather than a special case: the builder
+##                   needs no arm for it (`_plan_stair()` already answers `{}` when
+##                   there are no `S` cells, so `_plan_ramp` and `_plan_hole` emit
+##                   nothing), and only the AUDIT knows, because every S-lane rule
+##                   it enforces — one solid lane, landing against a short end, the
+##                   lane standing on the floor below, the slope ceiling — is a
+##                   claim about a lane that does not exist here.
 ##   landing  String the `TOWER_GRAPH` room id the `s` cells are.
 ##   rooms    Dict   room letter -> `TOWER_GRAPH` room id.
 ##   gates    Dict   "<c>,<r>" -> `TOWER_GRAPH` gate id, for every `D` cell AND
