@@ -40,6 +40,16 @@ extends SceneTree
 ##      worse it is — which is the whole reason this row measures every species
 ##      rather than one.
 ##
+##   5. A herd meets the GASTRODEFENSE HQ and walks AROUND it. This one is in
+##      ROWS with rows 1-3 (it is a fourth entry there, not a fourth concern),
+##      but it is listed last because it is the only row the lookahead cannot
+##      solve: the HQ is an 80 m sealed shell on a 65 m exclusion disc, i.e.
+##      wider than the probe's whole berth, so the reflex asks for its cap,
+##      finds the wall still there, and the herd parks against the facade. It
+##      is answered by a PLAN instead (fauna_manager._plan_tower_detour), and a
+##      plan is exactly what keeps passing silently after someone reorders it
+##      behind the probe that overwrites it. See the tower block below.
+##
 ## Don't grow this into a suite. Two non-obvious things in here. (a) Rows 1-3
 ## drive the manager's own _physics_process by hand, SUB-STEPPED inside a real
 ## physics frame, so the queries are legal and a 45 s crossing costs a second of
@@ -65,11 +75,70 @@ const PLAYER_Y: float = 0.5
 ##   massif — a mountain massif (a real one is ~9.7 m half-width).
 ##   block  — ONE 1.5 m scattered decorative block, the smallest solid the
 ##            terrain scatters, and the whole reason the rays became a box.
+##   tower  — the GastroDefense HQ, the row the swept box CANNOT pass: an 80 m
+##            sealed shell on a 65 m exclusion disc at a fixed address. Marked
+##            with "tower", which switches the trial to the tower geometry (the
+##            player is parked ON the site, so every migration line the field
+##            rolls crosses the disc) and to the tower metrics below.
 const ROWS: Array[Dictionary] = [
 	{"name": "massif", "half": 10.0, "height": 12.0},
 	{"name": "block", "half": 0.75, "height": 2.5},
 	{"name": "empty", "half": 0.0, "height": 0.0},
+	{"name": "tower", "half": 40.0, "height": 52.0, "tower": true},
 ]
+
+# ---------------------------------------------------------------------------
+# Row "tower" — the herd walks AROUND the HQ (godot-test1-8p7)
+# ---------------------------------------------------------------------------
+# The bug this row guards: fauna_manager's lookahead is a 45 m reflex that can
+# open at most AVOID_MAX_OFFSET (30 m) of berth. The HQ is a wall 80 m across on
+# a 65 m keep-out disc, so the reflex asks for its cap, finds the wall still
+# there, and the herd parks against the facade — visibly, and with nothing
+# logged anywhere. The fix is a PLAN (fauna_manager._plan_tower_detour), and a
+# plan is exactly the kind of thing that keeps passing after somebody reorders
+# it behind the probe that overwrites it, which is why this row exists.
+#
+# Setup is deliberately the REAL path and not a hand-seeded herd: the terrain
+# stub is in group "terrain" and the player is parked on the tower site, so
+# _spawn_herd lays its own line — and every line it can roll crosses the disc,
+# because MIGRATION_MISS caps at 60 m and the clearance the herd needs is ~90.
+
+## Where the stub tower stands, and how big its disc is. Both are the shipping
+## values (endless_terrain.tower_site() at -tower_site_distance on +X, and
+## TOWER_RADIUS); the manager reads them off the stub through the same group
+## lookup and the same const name it reads off the real terrain.
+const TOWER_SITE: Vector3 = Vector3(-400.0, 0.0, 0.0)
+const TOWER_RADIUS: float = 65.0
+## How far PAST the site (metres, along the herd's own heading) the centre must
+## get for the crossing to count as completed rather than abandoned. Bounded
+## above by DESPAWN_RADIUS: at the ~90 m berth the herd holds, a centre 65 m past
+## the site is 111 m from the player standing on it, comfortably inside the
+## 150 - _herd_offset_max despawn ring, while an oscillating or parked herd
+## never gets there at all.
+const TOWER_PASSED_MIN: float = 65.0
+## The tower row's own tick budget, because it is the only row that has to watch
+## a whole crossing rather than one encounter: the herd spawns ~110 m short of
+## the site along its heading and has to get TOWER_PASSED_MIN past it, i.e. ~175 m
+## at a 2-3 m/s amble — 60-90 s, where SIM_TICKS is 43. Left as a separate
+## constant so rows 1-3 keep the exact budget they were tuned with. Still far
+## under MAX_HERD_LIFETIME (240 s), so the crossing ends on the despawn radius
+## like a real one and not on the lifetime cap.
+const TOWER_SIM_TICKS: int = 7200
+
+
+## The terrain, reduced to the two things fauna asks it about the tower. In group
+## "terrain", so the manager finds it through the same group lookup it uses in
+## the real game, and `tower_excludes` carries the real rule (disc plus the
+## candidate's own radius) so the spawn rejection is exercised, not stubbed out.
+class TerrainStub extends Node:
+	const TOWER_RADIUS: float = 65.0
+
+	func tower_site() -> Vector3:
+		return TOWER_SITE
+
+	func tower_excludes(world_x: float, world_z: float, radius: float = 0.0) -> bool:
+		return Vector2(world_x - TOWER_SITE.x, world_z - TOWER_SITE.z).length() \
+				< TOWER_RADIUS + radius
 
 # ---------------------------------------------------------------------------
 # Row 4 — the rider carry (see the header). One species at a time, one animal
@@ -144,6 +213,7 @@ var _player: CharacterBody3D = null
 
 var _row: int = 0
 var _row_half: float = 0.0            # 0.0 == the empty-field control row
+var _row_tower: bool = false          # the tower row measures against the SITE, not the box
 var _trial: int = 0
 var _phase: int = 0
 var _wait: int = 0
@@ -154,6 +224,11 @@ var _trial_min_gap: float = 1e9
 ## detour seen in the empty-field control.
 var _worst_gap: Array[float] = []
 var _open_max_avoid: float = 0.0
+## Tower row: the closest ANY member came to the site across every trial, how far
+## the centre got past it this trial, and how many trials completed the crossing.
+var _tower_min_gap: float = 1e9
+var _tower_progress: float = -1e9
+var _tower_passed: int = 0
 var _spawned: int = 0
 var _failures: Array[String] = []
 
@@ -220,6 +295,15 @@ func _initialize() -> void:
 	_obstacle.add_child(_obstacle_shape)
 	_root.add_child(_obstacle)
 
+	# The terrain, in group "terrain", present for every row. Rows 1-3 keep the
+	# player at the origin and the tower stands 400 m away, so their herds are
+	# always more than 219 m from it — beyond TOWER_PLAN_RANGE if aimed at it and
+	# far outside the clearance disc if not — and those rows are provably
+	# untouched by the plan. Only the tower row parks the player at the site.
+	var terrain := TerrainStub.new()
+	terrain.add_to_group("terrain")
+	_root.add_child(terrain)
+
 	_worst_gap.resize(ROWS.size())
 	_worst_gap.fill(1e9)
 
@@ -278,10 +362,20 @@ func _start_trial() -> void:
 	_row = _trial / TRIALS_PER_ROW
 	var row: Dictionary = ROWS[_row]
 	_row_half = float(row["half"])
+	_row_tower = bool(row.get("tower", false))
 	if _row_half > 0.0:
 		# Resize the collider for this row BEFORE the herd is aimed at it.
 		_obstacle_box.size = Vector3(_row_half * 2.0, float(row["height"]), _row_half * 2.0)
 		_obstacle_shape.position = Vector3(0.0, float(row["height"]) * 0.5, 0.0)
+	if _row_tower:
+		# BOTH placed before the spawn, unlike every other row: _spawn_herd lays
+		# the migration line out around the LIVE player position, and this row is
+		# the owner's playtest — a player standing at the HQ. That is also what
+		# makes the row deterministic without seeding the herd by hand: the line
+		# always passes within MIGRATION_MISS (25-60 m) of the player, i.e. always
+		# well inside the ~90 m the herd needs to clear the disc.
+		_obstacle.position = TOWER_SITE
+		_player.position = TOWER_SITE + Vector3(0.0, PLAYER_Y, 0.0)
 	_manager.call("_despawn_herd")
 	_manager.call("_spawn_herd")
 	var animals: Array = _manager.get("_animals")
@@ -291,7 +385,9 @@ func _start_trial() -> void:
 	_spawned += 1
 	var herd_pos: Vector3 = _manager.get("_herd_position")
 	var heading: Vector3 = _manager.get("_herd_heading")
-	if _row_half > 0.0:
+	if _row_tower:
+		pass                             # both already placed, before the spawn
+	elif _row_half > 0.0:
 		_obstacle.position = herd_pos + heading * OBSTACLE_AHEAD
 		_player.position = Vector3(0.0, PLAYER_Y, 0.0)
 	else:
@@ -303,20 +399,38 @@ func _start_trial() -> void:
 		_player.position = herd_pos + heading * PLAYER_AHEAD + Vector3(0.0, PLAYER_Y, 0.0)
 	_ticks = 0
 	_trial_min_gap = 1e9
+	_tower_progress = -1e9
 	_wait = 0
 	_phase = 2
 
 
 func _run_slice() -> void:
+	var budget := TOWER_SIM_TICKS if _row_tower else SIM_TICKS
 	for _i: int in TICKS_PER_FRAME:
-		if _ticks >= SIM_TICKS:
+		if _ticks >= budget:
 			break
 		_ticks += 1
 		_manager.call("_physics_process", DT)
 		var animals: Array = _manager.get("_animals")
 		if animals.is_empty():
 			break                        # herd despawned — the crossing is over
-		if _row_half > 0.0:
+		if _row_tower:
+			# Measured against the SITE and the exclusion disc — the contract the
+			# rest of the game keeps around this building — not against the box,
+			# and per MEMBER rather than per centre, because "did not touch the
+			# facade" is a claim about the outermost giraffe.
+			for animal: Dictionary in animals:
+				var p: Vector3 = (animal["root"] as Node3D).global_position
+				_trial_min_gap = minf(_trial_min_gap,
+						Vector2(p.x - TOWER_SITE.x, p.z - TOWER_SITE.z).length())
+			# Progress along the herd's own heading, past the site. The lateral
+			# terms contribute nothing to it, so the line origin is the centre's
+			# along-coordinate exactly.
+			var pos: Vector3 = _manager.get("_herd_position")
+			var head: Vector3 = _manager.get("_herd_heading")
+			_tower_progress = maxf(_tower_progress,
+					(pos.x - TOWER_SITE.x) * head.x + (pos.z - TOWER_SITE.z) * head.z)
+		elif _row_half > 0.0:
 			for animal: Dictionary in animals:
 				_trial_min_gap = minf(_trial_min_gap,
 						_gap_to_obstacle((animal["root"] as Node3D).global_position))
@@ -324,7 +438,7 @@ func _run_slice() -> void:
 			_open_max_avoid = maxf(_open_max_avoid,
 					absf(float(_manager.get("_avoid_offset"))))
 	var animals_left: Array = _manager.get("_animals")
-	if _ticks >= SIM_TICKS or animals_left.is_empty():
+	if _ticks >= budget or animals_left.is_empty():
 		_finish_trial()
 
 
@@ -337,7 +451,12 @@ func _gap_to_obstacle(p: Vector3) -> float:
 
 
 func _finish_trial() -> void:
-	if _row_half > 0.0 and _trial_min_gap < 1e8:
+	if _row_tower:
+		if _trial_min_gap < 1e8:
+			_tower_min_gap = minf(_tower_min_gap, _trial_min_gap)
+		if _tower_progress >= TOWER_PASSED_MIN:
+			_tower_passed += 1
+	elif _row_half > 0.0 and _trial_min_gap < 1e8:
 		_worst_gap[_row] = minf(_worst_gap[_row], _trial_min_gap)
 	_trial += 1
 	if _trial >= ROWS.size() * TRIALS_PER_ROW:
@@ -526,8 +645,8 @@ func _report() -> void:
 	var line := ""
 	for i: int in ROWS.size():
 		var row: Dictionary = ROWS[i]
-		if float(row["half"]) <= 0.0:
-			continue
+		if float(row["half"]) <= 0.0 or bool(row.get("tower", false)):
+			continue          # the control row and the tower row have their own metrics
 		var row_name: String = row["name"]
 		if _worst_gap[i] > 1e8:
 			_failures.append("no %s trial measured a clearance" % row_name)
@@ -538,6 +657,21 @@ func _report() -> void:
 	if _open_max_avoid > 0.0:
 		_failures.append("empty field deflected the herd by %.2f m — fauna is reacting to the player or to the ground"
 				% _open_max_avoid)
+
+	# The tower: nothing may come inside the exclusion disc, and the crossing has
+	# to actually FINISH. The second half is the negative control for the first —
+	# a herd that stops dead at 120 m, or oscillates along the facade until it
+	# despawns, never touches the disc either and would pass on gap alone.
+	if _tower_min_gap > 1e8:
+		_failures.append("no tower trial measured a clearance")
+	elif _tower_min_gap <= TOWER_RADIUS:
+		_failures.append("herd came %.1f m from the tower site — inside the %.0f m exclusion disc, i.e. into the facade"
+				% [_tower_min_gap, TOWER_RADIUS])
+	if _tower_passed < TRIALS_PER_ROW:
+		_failures.append("only %d of %d tower crossings got %.0f m past the site — the rest parked against the building or oscillated along it"
+				% [_tower_passed, TRIALS_PER_ROW, TOWER_PASSED_MIN])
+	line += "tower: closest %.1f m (disc %.0f m), %d/%d crossings completed | " \
+			% [_tower_min_gap, TOWER_RADIUS, _tower_passed, TRIALS_PER_ROW]
 
 	if _failures.is_empty():
 		print(line + "empty-field detour: %.2f m" % _open_max_avoid)
