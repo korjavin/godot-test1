@@ -4,29 +4,42 @@ extends Node3D
 ## godot-test1-3iy, phase 3, the keystone).
 ##
 ## Phase 1 decided WHERE the tower stands, phase 2 built the SHELL and gave it a
-## doorway you can walk through. This is what is behind that doorway: two storeys,
-## a ramp between them, and one instance of each of the three room verbs the rest
-## of the epic will be built out of.
+## doorway you can walk through. This is what is behind that doorway: ten storeys,
+## ramps between them, and one instance of each of the room verbs the rest of the
+## epic is built out of.
+##
+## THE KEEP IS GONE. Phase 3 built the first two of those storeys as a windowless
+## 20 m box standing inside the 80 m envelope, hand-authored against its own inner
+## faces; bead `godot-test1-dn8` demolished it and redrew both floors on
+## `TowerPlans`' grid like every storey above them. The route below is phase 3's
+## route, walked through the building that replaced it — same rooms, same gates,
+## same persisted ids, four times the floor.
 ##
 ## ============================================================================
 ## THE ROUTE, which is the design (walk it in this order):
 ## ============================================================================
 ##
-##   doorway (+X wall)  →  ENTRY HALL, under the upper slab, 4.2 m of headroom
+##   doorway (+X wall)  →  ENTRY HALL, the east half of the ground plate, 4.2 m
+##                         of headroom under storey 2's slab
+##                      →  THE ANNULUS (`outer_hall`), off the hall north and
+##                         south, ungated — and the way up the building
 ##                      →  THE ROTOR GATE (the CHALLENGE SPACE): the only opening
 ##                         west, with two counter-rotating bars sweeping it
-##                      →  COURTYARD, open to the sky, 11 m of it
-##                      →  THE RAMP, up the courtyard's north side to the slab
-##                      →  UPPER FLOOR, walled across by the SECURE DOOR
+##                      →  COURTYARD, the whole west half of the plate. Storey 2
+##                         roofs it now, which the persisted room id does not mind
+##                      →  THE RAMP, up the courtyard's south-west corner
+##                      →  MUSTER FLOOR (storey 2), an 80 m plate with the
+##                         checkpoint walled off east behind the SECURE DOOR
 ##                      →  THE IDENTITY GATE: the mass only Teibi can lift
 ##                      →  THE CHECKPOINT, lit green once you stand on it
 ##
 ##   and, off the hall to the south, the DEMAND GATE sealing a vault. Optional,
 ##   skippable, and the whole point of it is that you can SEE what it wants.
 ##
-## ...and, from the hall, out into the annulus and up the building (phases 14-16):
-## seven hand-planned storeys of offices, the two-floor LABYRINTH, and at the top
-## of them, on storey 10 under the sealed roof, THE CELL BLOCK:
+## ...and, from the muster floor's north-west corner, up the GRAND RAMP and on up
+## the building (phases 14-16): seven hand-planned storeys of offices, the
+## two-floor LABYRINTH, and at the top of them, on storey 10 under the sealed
+## roof, THE CELL BLOCK:
 ##
 ##   muster floor →  THE MAINTENANCE CRAWL: a low duct with a stamping press
 ##                   across it. A challenge, so anybody gets through it.
@@ -130,11 +143,23 @@ extends Node3D
 ## WHAT THIS FILE IS, structurally
 ## ============================================================================
 ##
-## SELF-BUILDING FROM ONE TABLE, exactly like `tower_shell.gd` (and for the same
-## three reasons — see its header). `boxes()` is the whole floor plan; `_ready()`
-## is a loop over it. Nothing here is authored in a .tscn, so
-## `tower_interior_selfcheck.gd` can measure the plan without instancing anything,
-## and the jump-height and headroom rules below are ASSERTED rather than eyeballed.
+## SELF-BUILDING FROM A TABLE, exactly like `tower_shell.gd` (and for the same
+## three reasons — see its header); `_ready()` is a loop over it. Nothing here is
+## authored in a .tscn, so `tower_interior_selfcheck.gd` can measure the plan
+## without instancing anything, and the jump-height and headroom rules below are
+## ASSERTED rather than eyeballed.
+##
+## THE TABLE IS NOT IN THIS FILE ANY MORE. `boxes()` — the hand-authored box list
+## that WAS the phase-3 keep's two floors — is gone (bd `godot-test1-dn8`), and
+## EVERY storey in the building now comes from `TowerPlans.STOREYS`: `all_boxes()`
+## is the plan builder over `TowerPlans.floors()` plus the hand-built PARTS, which
+## are the things a grid of characters cannot say. A part is a thing that MOVES
+## (the rotor's bars, a gate mass), a thing that MEASURES you (the demand
+## receptacle and its calibration ladder) or a thing that LIGHTS UP (a checkpoint
+## plate, a pad), and each is placed from a plan lookup — `plan_room_rect()` /
+## `plan_gate_rect()` — never from an authored X or Z. That is why floors 0 and 1
+## could change shape without a single number following them, and it is the same
+## rule the cell block has followed since phase 16.
 ##
 ## It is a child of the shell, assembled onto it by `endless_terrain._tower_stream`
 ## (one arrow, one direction: this file reads the shell's constants, so a shell that
@@ -157,18 +182,23 @@ extends Node3D
 ## So every vertical move is a ramp or a gate, and every horizontal barrier is
 ## taller than an apex plus whatever you can stand on beneath it:
 ##
-##   slab top 4.6 m. NOTHING standing under the OPEN SKY has a top between the
-##   floor and 4.6 - 3.6125 = 0.9875 m, so the ramp is the only way up. That is
+##   THE GROUND FLOOR IS ROOFED, ALL OF IT. While the keep stood, the courtyard
+##   was open to the sky and this paragraph was a sweep: every box top between the
+##   floor and 4.6 - 3.6125 = 0.9875 m was a step onto the storey above, which is
 ##   what turned the rotor post into a full-height column instead of the waist-high
-##   hub it wants to be: a 1.6 m hub is a step, and a step under an open sky is a
-##   ladder onto the upper floor that skips the challenge space entirely. Under a
-##   CEILING the rule does not apply — the receptacle is 2.6 m tall and harmless,
-##   because a jump off it ends at the slab's underside. `tower_interior_selfcheck`
-##   is what makes this paragraph true rather than merely intended.
+##   hub it wants to be. Storey 2 is a full 80 m plate now, so there is no open sky
+##   below the roof and the sweep is gone with the table it read — a jump anywhere
+##   on floor 0 ends at that slab's underside, exactly as it always did in the
+##   entry hall. The receptacle's 2.6 m and the rotor column are harmless for the
+##   same reason.
 ##
-##   upper partition top 8.6 m vs slab 4.6 + apex = 8.21. Unjumpable.
-##   shell wall top 11.0 m vs the same 8.21. Unjumpable, so the upper floor is a
-##   room and not a balcony you can leave over the side.
+##   WHAT REPLACED IT IS STRUCTURAL, not a measurement: a plan storey has exactly
+##   two kinds of solid — a wall as tall as its own storey's ceiling, and a gate
+##   mass filling its doorway floor to ceiling — and neither can be a ledge at all.
+##   So the rule holds for ten storeys by construction, and check 2 asserts THAT
+##   rather than sweeping thousands of box pairs. The one thing a plan cannot say
+##   is the shell's own wall: top 11.0 m vs slab 4.6 + apex = 8.21. Unjumpable, so
+##   storey 2 is a room and not a balcony you can leave over the side.
 ##
 ## The shell's WALL_HEIGHT was raised from 7 to 11 for exactly this: two storeys
 ## of 4.6 m each need 9.2 m of wall before the parapet is even a parapet.
@@ -181,21 +211,23 @@ extends Node3D
 ## 1.5 m over the player's feet — so in the open the camera floats about 3.5 m up.
 ## Nothing may write `camera.position` (CLAUDE.md), which means the ONLY way to
 ## make a room comfortable is to build it tall enough. 4.2 m of headroom under the
-## THE COURTYARD IS 8 m WIDE AND THE OUTDOOR ARM IS 8.25 m LONG, so facing east
-## anywhere near its west wall — the foot of the ramp above all — used to collapse
-## the arm into a shot of the back of the hero's head, and the same arm sweeping
-## nearby static collision was ~9 ms of a ~46 ms frame in the cell gallery. RESOLVED
-## (bd godot-test1-0nu) by an INDOOR BOOM: `_update_visibility` below asks
-## `inside_walls()` and hands the answer to `PlayerController.set_indoor_camera()`,
-## which swaps the arm to `INDOOR_ARM_LENGTH` (3.85 — sized against half this
-## courtyard; the derivation lives on that constant). This file does not touch the
-## camera and could not: nothing may write `camera.position`, and the arm belongs to
-## the player. It only answers "are you inside my walls?".
+## ground floor's slab clears that 3.5 m with room for the arm's 0.25 m margin, so
+## the arm never slams in on flat ground, and every planned storey above it is
+## 4.6 m for the same reason. That is why the ground floor is 4.2 m and not 3.
+## Check 4 measures it off a LIVE rig and asks it of every storey, so the day
+## somebody retunes `STOREY_HEIGHT` this fails instead of the building quietly
+## becoming 6000 m2 of the-back-of-a-head.
 ##
-## slab clears that 3.5 m with room for the arm's 0.25 m margin, so the arm never
-## slams in on flat ground; the courtyard and the upper floor are open to the sky
-## and have no ceiling at all. That is why the entry hall is the only enclosed room
-## in the building and why it is 4.2 m and not 3.
+## HEIGHT IS ONLY HALF OF IT — THE OTHER HALF IS WIDTH, and the outdoor arm is
+## 8.25 m long. A corridor is two cells (3.88 m) and the ground floor's rooms are
+## walled off from each other, so facing a near wall used to collapse the arm into
+## a shot of the back of the hero's head. RESOLVED (bd godot-test1-0nu) by an
+## INDOOR BOOM: `_update_visibility` below asks `inside_walls()` — which reads the
+## ENVELOPE, not the demolished keep — and hands the answer to
+## `PlayerController.set_indoor_camera()`, which swaps the arm to
+## `INDOOR_ARM_LENGTH` (3.85; the derivation lives on that constant). This file
+## does not touch the camera and could not: nothing may write `camera.position`,
+## and the arm belongs to the player. It only answers "are you inside my walls?".
 ##
 ## ============================================================================
 ## COST

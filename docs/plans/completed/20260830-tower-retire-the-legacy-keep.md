@@ -236,6 +236,103 @@ boss dispatch: 62 of 80 road bosses reached the world across 6 biome band(s); 2 
 `chunk_stream_selfcheck`, `minimap_selfcheck` and `perf_selfcheck` print nothing but
 `SELFCHECK OK`.
 
+### ➕ After (measured, Task 7)
+
+Recorded 2026-08-30 on this branch after `godot --headless --path . --import`. Every
+check exited 0 and printed `SELFCHECK OK`.
+
+| self-check | before | after |
+|---|---|---|
+| `tower_selfcheck` | 0 s | 0.6 s |
+| `tower_interior_selfcheck` | 14 s | 14.2 s |
+| `tower_shell_selfcheck` | 2 s | 1.1 s |
+| `tower_site_selfcheck` | 1 s | 1.7 s |
+| `capture_selfcheck` | 12 s | 11.9 s |
+| `enemy_spawn_selfcheck` | 1 s | 1.4 s |
+| `chunk_stream_selfcheck` | 1 s | 0.6 s |
+| `minimap_selfcheck` | 3 s | 2.7 s |
+| `perf_selfcheck` | 0 s | 0.2 s |
+| `scenes/main.tscn --quit-after 120` | 2 s, exit 0 | 1.6 s, exit 0, zero errors in the log |
+
+**The box count the bead asked for.** Storey 0 had **no line at all** before — floors 0
+and 1 were the hand-authored `boxes()` table, printed as one `28 keep boxes` line. After:
+
+| storey | before | after |
+|---|---|---|
+| 0 (storey 1, ground) | — (inside the 28-box keep table) | **32 boxes** |
+| 1 (storey 2, muster) | — (inside the 28-box keep table) | **28 boxes** |
+| 2..9 | 52 / 43 / 52 / 29 / 29 / 81 / 61 / 46 | **unchanged, all eight** |
+| hand-authored `boxes()` | 28 (budget 32) | **gone** |
+
+**Nothing that measures the whole building moved into new territory.** `DRAW_BUDGET`
+stayed 35 and `PLAN_BOX_BUDGET` stayed 120 — the two arriving storeys took the meshes
+the keep gave back:
+
+```
+tower interior: 10 storeys, hall headroom 4.20 m, storey 2 at 4.60 m
+  storey 0: 32 boxes (budget 120), floor at  0.00 m, 4.20 m clear
+  storey 1: 28 boxes (budget 120), floor at  4.60 m, 6.00 m clear
+  storey 2: 52 boxes (budget 120), floor at 11.00 m, 4.60 m clear   (unchanged from here down)
+  storey 3: 43   storey 4: 52   storey 5: 29   storey 6: 29
+  storey 7: 81   storey 8: 61   storey 9: 46
+tower interior: 35 meshes drawn (budget 35) for 453 boxes      (was 35 for 421)
+tower interior: 380 collision shapes on one body (ceiling 420) (was 347)
+```
+
+**Graph and plan counts** — the two rows and the rooms they brought, and nothing else:
+
+```
+tower plans: 10 storeys, 56 rooms, 10581 cells walkable     (was 8 storeys, 51 rooms, 7897 cells)
+tower graph: 66 rooms, 73 edges, 12 gates, 3 entries, 2 scars — 15 subset walks clean
+                                                            (was 65 rooms, 72 edges; 12/3/2 UNCHANGED)
+tower scars: 1 authored, 1 built into the interior           (unchanged)
+tower riddles: 4, each with a 4-pad lock and a clue reachable with it shut (unchanged)
+```
+
+Twelve gates, three entries, two scars and fifteen clean subset walks: **invariant 1 held
+— no persisted id was renamed, added or dropped.** The five extra rooms are the four
+floor-0/1 rooms the graph already knew plus `s2_muster`; the one extra edge is its
+ungated join to the landing.
+
+**Ramps.** Two new lanes and one retuned, all under `PLAN_RAMP_MAX_SLOPE` 0.575:
+
+```
+storey 1 ramp: 21.6 deg (slope 0.3952), foot (-31.04, 0.00) head (-19.40,  4.60)  NEW
+storey 2 ramp: 18.3 deg (slope 0.3299), foot (-29.10, 4.60) head ( -9.70, 11.00)  was 29.6 deg / 0.567 from floor 0
+storey 3..9:   unchanged, 27.3 / 27.3 / 27.3 / 27.3 / 27.3 / 27.3 / 23.2 deg
+```
+
+The grand ramp got **gentler** (0.567 -> 0.330) by starting on floor 1, which is D4's
+required change, not a cosmetic one.
+
+**The guard census, which invariant 5 says may not move:**
+
+```
+tower guards: 9 on post, leashed to their own storeys;
+              per storey { 0: 1, 1: 1, 2: 1, 3: 1, 4: 1, 5: 1, 6: 1, 7: 1, 9: 1 }
+tower guards: re-entry rebuilt 9 fresh bodies, opened set untouched
+tower guards: the leash held a 8 s chase, worst excursion 0.0000 m, and re-caught a shove
+```
+
+Byte-identical to the baseline. Floors 0 and 1 are supplied by two `G` characters now
+instead of the two hand-authored `GUARD_POSTS` rows, and floor 8 still carries none.
+
+**The shell**, the only other place a number was allowed to move:
+
+```
+tower shell: 20 boxes (budget 22), footprint radius 63.64 m   (was 26 boxes, budget 28)
+```
+
+Six keep-ring boxes gone, budget 28 -> 22, footprint radius unchanged. The roof, both
+no-ledge sweeps and the impostor cross-fade are unchanged. The one seed line that moved
+is `seed 56: 27 coins near the tower, 0 road candidates rejected by the walls` (was 26
+coins, 1 rejected) — the ring is no longer there to reject a road candidate, which is
+the demolition showing up in the world exactly where it should.
+
+**Everything else printed the same numbers**: `tower_site_selfcheck` (dry disc, nearest
+content 68.8 m, road at 237.9 m), `capture_selfcheck` (`-14 coins, back to the
+checkpoint` on all three branches), `enemy_spawn_selfcheck` (the `tower_guard` cone probe
+and the whole boss census).
 
 ---
 
@@ -867,20 +964,22 @@ with the control growing a giant on storey 1.
 
 ### Task 7: Verify, measure, document
 
-- [ ] `godot --headless --path . --import`, then the **whole** Testing Strategy list.
+- [x] `godot --headless --path . --import`, then the **whole** Testing Strategy list.
       Every one `SELFCHECK OK`, exit 0.
-- [ ] Record the post-change numbers next to the baseline: self-check timings, the
+- [x] Record the post-change numbers next to the baseline: self-check timings, the
       per-storey box counts (**the bead asks for storey 0's box count before and
       after**), `tower_selfcheck`'s room/edge/gate/entry counts, and the guard body
       count per storey.
-- [ ] Headless boot of `scenes/main.tscn --quit-after 120`, clean.
-- [ ] Update `scripts/tower_interior.gd`'s file header: the route at the top still
+- [x] Headless boot of `scenes/main.tscn --quit-after 120`, clean. 1.6 s, exit 0, zero
+      errors in the log.
+- [x] Update `scripts/tower_interior.gd`'s file header: the route at the top still
       describes the keep's two storeys. Rewrite it as the route the player now walks,
       and add a line to the "WHAT THIS FILE IS, structurally" section saying the
       hand-authored table is gone and every storey comes from `TowerPlans`.
-- [ ] Update `scripts/tower_plans.gd`'s header: it is now **every** floor, not "every
+- [x] Update `scripts/tower_plans.gd`'s header: it is now **every** floor, not "every
       floor above the phase-3 keep", and the extension rule is unchanged — say that
       absorbing two more storeys cost it no format change, because that is the evidence
       the format works.
-- [ ] Move `docs/plans/20260829-tower-storey-plans.md` to `docs/plans/completed/` if it
-      is complete, and move **this** plan there when every box above is ticked.
+- [x] Move `docs/plans/20260829-tower-storey-plans.md` to `docs/plans/completed/` if it
+      is complete, and move **this** plan there when every box above is ticked. Both
+      moved; the storey-plans plan had no open boxes left.

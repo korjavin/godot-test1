@@ -52,6 +52,27 @@ extends RefCounted
 ## builder logic, and the self-check named the budget itself rather than leaving it
 ## to be noticed. That is the honest shape of the promise; both audits keep it.
 ##
+## MEASURED AGAIN, ON REAL FLOORS THIS TIME. Bead `godot-test1-dn8` demolished the
+## phase-3 keep and moved its two storeys onto this grid — the two most awkward
+## floors in the building, carrying the front door, a challenge space, both of the
+## other two gate classes, the checkpoint and every guard post the hand-authored
+## table used to own. THE FORMAT DID NOT CHANGE: no new character, no new key, no
+## new rule about what a row may say. Two `STOREYS` rows, their graph rows, one
+## `S`-lane rule already implied by `from` written down at last — and NOT ONE
+## BUDGET MOVED: `DRAW_BUDGET` stayed 35 and `PLAN_BOX_BUDGET` stayed 120, because
+## the two storeys that arrived (32 and 28 boxes) took the meshes the demolished
+## keep gave back. That is the evidence the format
+## works — a text format that can absorb the floors it was never designed for is a
+## format, and one that needs a special case per storey is a spreadsheet.
+##
+## THE ONE BUILDER EDIT IT DID COST, said plainly rather than rounded away: a
+## `CLASS_DEMAND` arm in `_plan_gates` whose whole body is a `continue`. That is a
+## GATE-CLASS edit, not a storey edit — the builder had drawn identity, challenge
+## and riddle masses and had simply never met a gate that opens DOWNWARDS, and it
+## would have cost exactly the same on any floor. A gate class is a thing the plan
+## format names and the builder must know how to draw; the extension rule is about
+## storeys, and no storey has ever needed a line of code.
+##
 ## ============================================================================
 ## THE GRID
 ## ============================================================================
