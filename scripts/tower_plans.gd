@@ -173,6 +173,105 @@ static func pad_digit(ch: String) -> int:
 
 const STOREYS: Array[Dictionary] = [
 	# ------------------------------------------------------------------------
+	# STOREY 1 (floor 0) — THE GROUND FLOOR, and the last thing bead
+	# `godot-test1-dn8` moved onto this grid. Until that bead it was the phase-3
+	# KEEP: a windowless 20 m box standing in the middle of an 80 m hall, drawn
+	# from a hand-authored table of boxes against its own inner faces. The keep is
+	# demolished; the hall it stood in is this floor.
+	#
+	# IT IS THE ONE STOREY ENTERED FROM OUTSIDE, so `from` is its own floor and it
+	# draws no `S` lane at all (see the header). Its `s` cells are the DOORMAT —
+	# the hall behind the shell's doorway, which is where a player actually
+	# arrives and therefore where both flood fills start. The four cells of `s`
+	# out at column 39 are the threshold itself: the plan's own outer ring stops
+	# there so the front door opens into a room and not into a wall.
+	#
+	# THE ROUTE IS PHASE 3'S ROUTE, REDRAWN AT FOUR TIMES THE SCALE. In through
+	# the east door into the ENTRY HALL; the annulus (`O`) opens off it north and
+	# south, ungated, and the grand climb leaves the far side of the ROTOR
+	# DOORWAY — the one gap in the wall at column 20, and the only land entrance
+	# to the COURTYARD. The courtyard's lane runs west and then south to the foot
+	# of storey 2's ramp at columns 4-9, rows 30-31, which is why those cells are
+	# plain floor and must stay that way: `tower_selfcheck` reads the cell under
+	# every lane cell out of this grid. Off the hall's south wall, behind the
+	# demand shutter, is the VAULT — optional, skippable, and the only room on the
+	# floor you can be refused.
+	#
+	# THE ROTOR DOORWAY CARRIES A `D`, AND THAT IS A CORRECTION TO THE PLAN THIS
+	# BEAD WAS WRITTEN FROM. Drawn as a plain gap the two rooms land in ONE piece
+	# of floor with every gate shut, and `_gates_shut_problems` rightly calls that
+	# "the drawing offers a way round a door the audit models" — the challenge
+	# would be decorative in the only place the audit can see. So it is a gate
+	# slot like `maintenance_crawl`'s, its lintel comes from `_plan_gates`'
+	# challenge arm, and the post and its two sweeping bars are hand-built from
+	# the same run (`TowerInterior._rotor_boxes`) because a thing that moves is
+	# not a plan character.
+	# ------------------------------------------------------------------------
+	{
+		"floor": 0,
+		"from": 0,
+		"landing": "entry_hall",
+		"rooms": {
+			"C": "courtyard",
+			"O": "outer_hall",
+			"V": "vault",
+		},
+		# Two gates, two classes, and neither draws its own mechanism: the rotor's
+		# bars and the vault's shutter, receptacle and calibration ladder are all
+		# hand-built off these runs.
+		"gates": {
+			"20,19": "rotor_gate", "20,20": "rotor_gate",
+			"29,27": "tower_vault", "30,27": "tower_vault",
+		},
+		"rows": [
+			"########################################",
+			"#CCCCCCCCCCCCCCCCCCC#OOOOOOOOOOOOOOOOOO#",
+			"#CCCCCCCCCCCCCCCCCCC#OOOOOOOOOOOOOOOOOO#",
+			"#CCCCCCCCCCCCCCCCCCC#OOOOOOOOOOOOOOOOOO#",
+			"#CCCCCCCCCCCCCCCCCCC#OOOOOOOOOOOOOOOOOO#",
+			"#CCCCCCCCCCCCCCCCCCC#OOOOOOOOOPOOOOOOOO#",
+			"#CCCCCCCCCCCCCCCCCCC#OOOOOOOOOOOOOOOOOO#",
+			"#CCCCCCCCCCCCCCCCCCC#OOOOOOOOOOOOOOOOOO#",
+			"#CCCCCCCCCCCCCCCCCCC#OOOOOOOOOOOOOOOOOO#",
+			"#CCCCCCCCCCCCCCCCCCC#OOOOOOOOOOOOOOOOOO#",
+			"#CCCCCCCCCCCCCCCCCCC#######..###########",
+			"#CCCCCCCCCCCCCCCCCCC#ssssssssssssssssss#",
+			"#CCCCCCCCCCCCCCCCCCC#ssssssssssssssssss#",
+			"#CCCCCCCCCCCCCCCCCCC#ssssssssssssssssss#",
+			"#CCCCCCCCCCCCCCCCCCC#ssssssssssssssssss#",
+			"#CCCCCCCCCCCCCCCCCCC#ssssssssssssssssss#",
+			"#CCCCCCCCCCCCCCCCCCC#ssssssssssssssssss#",
+			"#CCCCCCCCCCCCCCCCCCC#ssssssssssssssssss#",
+			"#CCCCCCCCCCCCCCCCCCC#sssssssssssssssssss",
+			"#CCCCCCCCC..........Dsssssssssssssssssss",
+			"#CCCCCCCCC..P.......Dsssssssssssssssssss",
+			"#CCCCCCCCC..CCCCCCCC#sssssssssssssssssss",
+			"#CCCCCCCCC..CCCCCCCC#ssssssssssssssssss#",
+			"#CCCCCCCCC..CCCCCCCC#ssssssssssssssssss#",
+			"#CCCCCCCCC..CCCCCCCC#ssssssssssssssssss#",
+			"#CCCCCCCCC.GCCCCCCCC#ssssssssssssssssss#",
+			"#CCCCCCCCC..CCCCCCCC#sssssssss.ssssssss#",
+			"#CCCCCCCCC..CCCCCCCC##..#####DD#########",
+			"#CCCCCCCCC..CCCCCCCC#OOOOO#VVVVVV#OOOOO#",
+			"#CCCCCCCCC..CCCCCCCC#OOOOO#VVVVVV#OOOOO#",
+			"#C..........CCCCCCCC#OOOOO#VVVVVV#OOOOO#",
+			"#C..........CCCCCCCC#OOOOO#VVVVVV#OOOOO#",
+			"#CCCCCCCCCCCCCCCCCCC#OOOOO#VVVVVV#OOOOO#",
+			"#CCCCCCCCCCCCCCCCCCC#OOOOO#VVVVVV#OOOOO#",
+			"#CCCCCCCCCCCCCCCCCCC#OOOOO########OOOOO#",
+			"#CCCCCCCCCCCCCCCCCCC#OOOOOOOOOOOOOOOOOO#",
+			"#CCCCCCCCCCCCCCCCCCC#OOOOOOOOOOOOOOOOOO#",
+			"#CCCCCCCCCCCCCCCCCCC#OOOOOOOOOOOOOOOOOO#",
+			"#CCCCCCCCCCCCCCCCCCC#OOOOOOOOOOOOOOOOOO#",
+			"########################################",
+		],
+		"note": "Storey 1, the ground floor: the 80 m hall the phase-3 keep used to "
+			+ "stand in. Front door east into the entry hall, the annulus off it "
+			+ "north and south, the vault behind the demand shutter to the south, "
+			+ "and west through the rotor doorway into the walled courtyard, where "
+			+ "the climb to storey 2 begins.",
+	},
+	# ------------------------------------------------------------------------
 	# STOREY 2 (floor 1) — THE MUSTER FLOOR, and the first of the two storeys bead
 	# `godot-test1-dn8` moved onto this grid. It used to be the keep's MEZZANINE:
 	# a 20 m square of slab over the courtyard, hand-authored against the inner

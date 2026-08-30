@@ -607,23 +607,79 @@ a ROOM it draws, never by an index), e.g. anchor `base` on `s3_records_west`.
 
 ### Task 3: Draw floor 0 (storey 1) and delete `boxes()`
 
-- [ ] Add the floor-0 `STOREYS` row per D3: `"floor": 0, "from": 0,
+- [x] Add the floor-0 `STOREYS` row per D3: `"floor": 0, "from": 0,
       "landing": "entry_hall"`, one `D` run for `tower_vault`, no `S`, exactly two `P`,
       exactly one `G` in the courtyard. Author its `note` as the design record.
-- [ ] Add the `CLASS_DEMAND` arm to `_plan_gates` — one `continue` with the comment that
+- [x] Add the `CLASS_DEMAND` arm to `_plan_gates` — one `continue` with the comment that
       says why (a shutter sinks, and a receptacle is not a plan character).
-- [ ] Write `_rotor_boxes`, `_demand_boxes`, `_checkpoint_boxes` per D6, and wire the
+- [x] Write `_rotor_boxes`, `_demand_boxes`, `_checkpoint_boxes` per D6, and wire the
       three room/gate-lookup guards into `plan_boxes()`.
-- [ ] **Delete `boxes()`** and everything in D9's list. `all_boxes()` becomes the plan
+- [x] **Delete `boxes()`** and everything in D9's list. `all_boxes()` becomes the plan
       loop alone. Fix `_place_mass()` per D5.
-- [ ] Replace `CHECKPOINT_STAND` / `ENTRY_STAND` with `checkpoint_stand()` /
+- [x] Replace `CHECKPOINT_STAND` / `ENTRY_STAND` with `checkpoint_stand()` /
       `entry_stand()` (D7); update `setback_point()`.
-- [ ] Delete `GUARD_POSTS`; `guard_posts_table()` becomes the derived loop alone, with
+- [x] Delete `GUARD_POSTS`; `guard_posts_table()` becomes the derived loop alone, with
       its comment rewritten (the keep's two hand rows are now two `G` characters).
-- [ ] `PODIUM_Y` + the `FLOOR_Y` rewrite (D1); `PLAN_RAMP_MAX_SLOPE` becomes 0.575 with
+- [x] `PODIUM_Y` + the `FLOOR_Y` rewrite (D1); `PLAN_RAMP_MAX_SLOPE` becomes 0.575 with
       its provenance (D9).
-- [ ] Update `inside_walls()`'s comment — it already reads the envelope; the paragraph
+- [x] Update `inside_walls()`'s comment — it already reads the envelope; the paragraph
       about the keep being the narrowest indoor space is now false.
+
+**➕ Correction to D5: the rotor doorway CARRIES A `D` after all.** D5 said "no `D` — a
+plain 2-cell gap", and drawn that way `entry_hall` and `courtyard` land in ONE component
+in `_gates_shut_problems`' fill, which reports (correctly) *"the drawing offers a way
+ROUND a door the softlock audit models"* — the challenge would be decorative in the only
+place the audit can see it. So the run is a gate slot exactly like `maintenance_crawl`'s:
+`_plan_gates`' existing challenge arm draws its lintel (a 2.8 m opening on a 4.2 m floor,
+which a 2.0 m capsule walks straight through), and `RotorPost` / `RotorBarLow` /
+`RotorBarHigh` are hand-built from the same run by `_rotor_boxes`, because a thing that
+moves is not a plan character. Every box name and the gate id are unchanged, so
+`TOWER_GRAPH`'s `parts` needed no edit. The 2-cell gap is 3.88 m against the bars'
+3.8 m — Task 5's assertion has something to assert.
+
+**➕ Two more derivations Task 3 had to do to stay honest**, both of the same shape as
+`CHECKPOINT_STAND`: `DemandTrigger` / `IdentityTrigger` / `CheckpointTrigger` and the
+`DemandLabel` were authored `Vector3`s beside authored masses, and the `VaultGem`'s
+position was authored inside the keep's vault. All four now read the drawing —
+`gate_stand(gate, steps)` (new, shared: the cell `gate_pad_cell()` picked, `steps` out
+from the run) and `room_floor(room)` / `plan_room_rect()`. Left as authored numbers they
+would have been triggers three metres from the plates they belong to.
+
+**➕ Measured after Task 3** (headless, this branch):
+
+| number | before | after |
+|---|---|---|
+| storey 0 boxes | 27 hand-authored `boxes()` (floors 0 **and** 1) | **32** plan boxes, floor 0 alone |
+| storey 1 boxes | — | 28 |
+| `all_boxes()` | 480 | **453** |
+| own `MeshInstance3D`s | 36 (over `DRAW_BUDGET` 35 since Task 2) | **25 own + 10 batches = 35**, back inside it |
+| interior collision shapes | 422 | 422 |
+| guard posts | 2 hand rows + 7 derived = 9 | **9, all derived** |
+| `checkpoint_stand()` | `(5.8, 4.8, 0.0)` | `(25.19, 4.8, -11.64)` |
+| `entry_stand()` | `(7.6, 0.2, 0.0)` | `(36.8, 0.2, 0.0)` |
+
+`tower_selfcheck` is **green on everything Task 3 could break** — check 1's colour and
+plan/graph bindings both ways, the three design laws, the four spines, all fifteen subset
+walks, `needed_during_captivity`, the quests, the scars, the riddles, and (the one that
+mattered) `_gates_shut_problems` on the real floor 0: `entry_hall`+`outer_hall` one
+component, `courtyard` and `vault` each their own.
+
+**➕ Expected failures carried into Tasks 5 and 6** — every one, and nothing else:
+
+| check | failure | whose task |
+|---|---|---|
+| `tower_selfcheck` | `plan storey 0: no 'S' cells` | Task 5 (the `from == floor` arm) |
+| `tower_selfcheck` | six negative controls "ACCEPT" their broken plan — they are built on `STOREYS[0]`, which is now the ground storey | Task 5 (`_control_storey`, anchor on a ROOM) |
+| `tower_interior_selfcheck` | **parse error**: `boxes()`, `BOX_BUDGET`, `INNER_HALF`, `SLAB_X0`, `RAMP_X0`, `UPPER_WALL_HEIGHT` are gone | Task 5 |
+| `capture_selfcheck` | `CHECKPOINT_STAND` / `ENTRY_STAND` are gone | Task 6 |
+| `enemy_spawn_selfcheck` | `GUARD_POSTS` is gone | Task 6 |
+
+**⚠️ For Task 5, one the plan did not anticipate:** floor 0's slab hangs in `-0.4 … 0.0`
+(D2 says so, and it is what gives the ground floor the interior's own collision), but
+`_fit_boxes` fails any box with `pos.y - reach_y < -EPS` — *"starts below the floor"*.
+The bound is right for a storey standing on a slab and wrong for the one storey whose
+slab is the world's ground plane, so check 1 needs the same "the ground storey is
+different" arm the flood fill does.
 
 ### Task 4: The shell — delete the ring, move the trigger
 

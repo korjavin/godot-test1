@@ -218,28 +218,19 @@ extends Node3D
 # GEOMETRY — metres, LOCAL to the shell's origin, feet at y = 0
 # ============================================================================
 #
-# The KEEP's inner faces are at +/- INNER_HALF on both axes. There used to be a solid
-# spire in the -X/-Z corner too; shell phase 13 removed it and wrapped the keep in an
-# 80 m envelope, so the plan now stands inside a much larger building (see
-# INNER_HALF) with the same walls around it as before.
-
-## Half the CLEAR interior span: the KEEP's half minus one wall thickness.
-## Derived, never restated, so a thicker wall shrinks the interior automatically.
-##
-## IT READS `KEEP_HALF` AND NOT `OUTER_HALF` SINCE SHELL PHASE 13. The keep used to
-## be the whole building; phase 13 wrapped an 80 m envelope round it and kept the
-## 20 m ring, precisely because this plan is authored against those faces — deriving
-## from the envelope instead would stretch every room in here by 4.4x, and the keep's
-## rooms are made of AUTHORED widths — the vault's jambs, the rotor doorway, the
-## secure partition — so a stretched keep leaves each of them standing in the middle
-## of an 80 m hall with a walk round the side. The storeys ABOVE the keep are drawn
-## on `TowerPlans`' grid against the envelope's own faces and have no authored width
-## at all, which is what phase 14 bought and why the cell block could move up there
-## in phase 16 without a single number following it.
-const INNER_HALF: float = TowerShell.KEEP_HALF - TowerShell.WALL_THICK
+# THERE ARE NO AUTHORED WIDTHS IN HERE ANY MORE. Every horizontal number this file
+# used to carry — the keep's inner faces, the slab's west edge, the vault's jambs,
+# the ramp's lane, the secure partition — described the phase-3 KEEP, a windowless
+# 20 m box standing in the middle of the 80 m hall. Bead `godot-test1-dn8`
+# demolished it and drew floors 0 and 1 on `TowerPlans`' grid like every other
+# storey, so what is left below is HEIGHTS and RHYTHMS: how tall a storey is, how
+# far a mass travels, how fast a bar sweeps. Where something stands is read out of
+# the plan (`plan_room_rect`, `plan_gate_rect`), which is the same rule the cell
+# block has followed since phase 16 and the reason it could change floors without
+# a number following it.
 
 ## The upper storey. `SLAB_Y` is its WALKING SURFACE; the slab hangs below it, so
-## the hall's headroom is `SLAB_Y - SLAB_THICK`.
+## the ground floor's headroom is `SLAB_Y - SLAB_THICK`.
 ##
 ## 4.6 is the smallest number that satisfies both rules at once: it must exceed
 ## the jump apex (3.6125) plus the tallest thing standing under it (0.7) with
@@ -248,28 +239,18 @@ const INNER_HALF: float = TowerShell.KEEP_HALF - TowerShell.WALL_THICK
 const SLAB_Y: float = 4.6
 const SLAB_THICK: float = 0.4
 
-## Where the upper slab's west edge is — i.e. the line that divides the enclosed
-## entry hall (east, under the slab) from the open courtyard (west, under the sky).
-const SLAB_X0: float = -0.5
-
-## The rotor doorway: the ONLY way west out of the entry hall, and therefore the
-## only route to the ramp. `ROTOR_ARM` must stay under `ROTOR_DOOR_HALF` so the
-## sweeping bars clear the jambs, and over `ROTOR_DOOR_HALF * 0.5` so a bar lying
-## across the doorway actually blocks a gap instead of leaving one open.
+## The rotor doorway: the one gap in the wall between the entry hall and the
+## courtyard, and therefore the only land route to the climb. `ROTOR_ARM` must stay
+## under `ROTOR_DOOR_HALF` so the sweeping bars clear the jambs, and over
+## `ROTOR_DOOR_HALF * 0.5` so a bar lying across the doorway actually blocks a gap
+## instead of leaving one open.
+##
+## WHERE the doorway is, is the PLAN's to say — the `D` run bound to `rotor_gate` on
+## whichever storey draws it. What stays here is the pair of numbers the BARS are
+## made of, and `tower_interior_selfcheck` asserts the run the plan draws is wide
+## enough to hold them.
 const ROTOR_DOOR_HALF: float = 1.9
 const ROTOR_ARM: float = 1.7
-const ROTOR_POST_X: float = SLAB_X0 - 0.2
-
-## Where the north jamb stops and the low wall under the ramp begins.
-##
-## The ramp crosses the slab's edge line on its way up, so the wall standing on
-## that line CANNOT be full height along the ramp's strip or it would be a fence
-## across the stairs. `RAMP_UNDER_TOP` is picked against two numbers at once: it
-## must clear the ramp's underside where they cross (3.91 m), and — the rule that
-## actually matters — it must stay under a plain jump apex (3.6125 m) from the
-## courtyard floor, so the low stretch is a wall and not a step onto the roof.
-const RAMP_UNDER_Z: float = RAMP_Z - RAMP_WIDTH * 0.5
-const RAMP_UNDER_TOP: float = 3.4
 
 ## The two bars: height off the floor, and angular velocity (rad/s). OPPOSITE
 ## SIGNS and INCOMMENSURATE RATES on purpose — same-signed bars would lock into a
@@ -282,25 +263,9 @@ const ROTOR_HIGH_Y: float = 1.05
 const ROTOR_LOW_SPEED: float = 1.15
 const ROTOR_HIGH_SPEED: float = -0.77
 
-## The ramp, up the courtyard's north side. Rise is `SLAB_Y`, so the only knob is
-## the run — and the run is what sets the angle. 8.0 m of run gives 29.9 degrees,
-## comfortably under `CharacterBody3D`'s default 45-degree floor limit; steepen it
-## much and the player slides.
-##
-## IT IS A RAMP AND NOT STEPS, and that is not a shortcut. Godot 4's
-## `CharacterBody3D` has no step-up: a stair tread of ANY height is a wall you have
-## to jump, which is precisely the jump-gated traversal this bead forbids. A ramp
-## is the only stair this engine has.
-##
-## IT HUGS THE NORTH WALL, and that is load-bearing rather than tidy: the low
-## stretch of wall it flies over (`RAMP_UNDER_Z`) is derived from the ramp's own
-## strip, so the two are the same span by construction. Move the ramp inboard and
-## you leave a length of 3.4 m wall standing under the open sky beside it — which
-## is a step onto the upper floor and a way past the challenge space. The
-## self-check found exactly that.
-const RAMP_X0: float = -8.5
-const RAMP_WIDTH: float = 2.8
-const RAMP_Z: float = INNER_HALF - RAMP_WIDTH * 0.5
+## How thick a ramp deck is. The only survivor of the phase-3 ramp's own constants:
+## `_deck_box()` still places every ramp in the building by its TOP face and derives
+## the centre half a thickness along the deck's normal, and this is that thickness.
 const RAMP_THICK: float = 0.4
 
 # ============================================================================
@@ -312,25 +277,38 @@ const RAMP_THICK: float = 0.4
 # it carries the grid, the character table and the extension rule ("a new storey
 # is one STOREYS row plus its TOWER_GRAPH rows, and NO builder edit").
 
+## The first office storey's walking surface, and the one number in this table that
+## is HISTORY rather than arithmetic: 11.0 m was the phase-3 keep's parapet, and the
+## seven storeys above it plus the sealed roof were sized off it. The keep is gone
+## (bd godot-test1-dn8); the height stays, because moving it would move storeys 3-10
+## and the roof, and this bead demolishes a building, not the tower.
+##
+## It lived on `TowerShell.KEEP_HEIGHT` until that bead deleted the ring it measured.
+## Here rather than there because nothing outside this file needs it any more: the
+## shell is one envelope now, and the only thing 11.0 m still means is "where the
+## podium's storeys start".
+const PODIUM_Y: float = 11.0
+
 ## The walking surface of every storey, in interior-local metres. The index is the
 ## `floor` a box declares and the container `_update_visibility` toggles.
 ##
-## The first two are the phase-3 keep, unchanged: the courtyard/hall at 0 and the
-## upper landing on the slab. The rest sit ON the keep's open top (`KEEP_HEIGHT`)
-## and rise on the SHELL's own storey grid, so a storey is never a number written
-## down twice here — it is `STOREY_HEIGHT` counted off the keep. Retune either
-## shell constant and these move with it.
+## The first two used to be the phase-3 keep — the hall at 0 and the mezzanine on
+## its slab — and every value here is unchanged by the demolition that drew them on
+## the plan grid instead. The rest sit on `PODIUM_Y` and rise on the SHELL's own
+## storey grid, so a storey is never a number written down twice here — it is
+## `STOREY_HEIGHT` counted off the podium. Retune the shell constant and these move
+## with it.
 const FLOOR_Y: Array[float] = [
 	0.0,
 	SLAB_Y,
-	TowerShell.KEEP_HEIGHT,
-	TowerShell.KEEP_HEIGHT + TowerShell.STOREY_HEIGHT,
-	TowerShell.KEEP_HEIGHT + 2.0 * TowerShell.STOREY_HEIGHT,
-	TowerShell.KEEP_HEIGHT + 3.0 * TowerShell.STOREY_HEIGHT,
-	TowerShell.KEEP_HEIGHT + 4.0 * TowerShell.STOREY_HEIGHT,
-	TowerShell.KEEP_HEIGHT + 5.0 * TowerShell.STOREY_HEIGHT,
-	TowerShell.KEEP_HEIGHT + 6.0 * TowerShell.STOREY_HEIGHT,
-	TowerShell.KEEP_HEIGHT + 7.0 * TowerShell.STOREY_HEIGHT,
+	PODIUM_Y,
+	PODIUM_Y + TowerShell.STOREY_HEIGHT,
+	PODIUM_Y + 2.0 * TowerShell.STOREY_HEIGHT,
+	PODIUM_Y + 3.0 * TowerShell.STOREY_HEIGHT,
+	PODIUM_Y + 4.0 * TowerShell.STOREY_HEIGHT,
+	PODIUM_Y + 5.0 * TowerShell.STOREY_HEIGHT,
+	PODIUM_Y + 6.0 * TowerShell.STOREY_HEIGHT,
+	PODIUM_Y + 7.0 * TowerShell.STOREY_HEIGHT,
 ]
 
 ## Which storeys physically TOUCH each one. THE VISIBILITY WINDOW'S ADJACENCY.
@@ -378,13 +356,21 @@ const PLAN_HEADROOM: float = 2.2
 ## is a wall), high enough to read as a plate and not as paint.
 const PLAN_PAD_THICK: float = 0.1
 
-## THE STEEPEST A PLAN RAMP MAY BE, and it is not a fresh number — it is the
-## phase-3 ramp's own slope (4.6 m of rise over 8.0 m of run, 29.9 degrees), which
-## has been walked since phase 3 and is known to be climbable without sliding.
-## Deriving it rather than writing 0.575 means retuning the proven ramp retunes the
-## ceiling with it, instead of leaving the plans certified against a ramp that no
-## longer exists. `tower_selfcheck` and `tower_interior_selfcheck` both assert it.
-const PLAN_RAMP_MAX_SLOPE: float = SLAB_Y / (SLAB_X0 - RAMP_X0)
+## THE STEEPEST A PLAN RAMP MAY BE, and the number carries its own provenance.
+##
+## It USED to be derived — `SLAB_Y / (SLAB_X0 - RAMP_X0)`, the phase-3 keep ramp's
+## own slope — precisely so that retuning the proven ramp retuned the ceiling with
+## it. Bead `godot-test1-dn8` deleted that ramp along with the keep it climbed, so
+## the derivation would now read off constants that no longer exist. The VALUE is
+## unchanged and it is not a fresh one: 4.6 m of rise over 8.0 m of run, 29.9
+## degrees, the ramp this game has shipped and been walked on since phase 3 without
+## anybody sliding back down it.
+##
+## It is a CEILING and not a target. Every ramp drawn since is gentler (storey 3's
+## grand ramp is 0.330 and floor 1's is 0.395); what this stops is a plan author
+## saving cells by drawing a lane nobody has ever walked. `tower_selfcheck` and
+## `tower_interior_selfcheck` both assert against it.
+const PLAN_RAMP_MAX_SLOPE: float = 0.575
 
 
 ## A STOREY'S WALLS ARE AS TALL AS ITS CLEAR HEIGHT, AND THAT IS NOT ALWAYS
@@ -413,8 +399,9 @@ static func plan_clear_height(floor_index: int) -> float:
 	return TowerShell.WALL_HEIGHT - FLOOR_Y[floor_index]
 
 ## Hard cap on the boxes ONE plan storey may emit, asserted per storey by
-## `tower_interior_selfcheck` — `BOX_BUDGET`'s discipline, applied to the machine
-## rather than to the hand-placed keep.
+## `tower_interior_selfcheck`. It is the shell's `BOX_BUDGET` discipline applied to
+## the machine; the interior's own hand-placed budget went with the keep it counted
+## (bd godot-test1-dn8), because every box in this building is a plan box now.
 ##
 ## A 40 x 40 grid is 1600 cells and could in principle be 1600 boxes; the whole
 ## reason `_merge_walls` exists is that it is not. What this number stops is a plan
@@ -486,20 +473,17 @@ static func riddle_travel(mass: MeshInstance3D) -> float:
 	var box := mass.mesh as BoxMesh
 	return 0.0 if box == null else box.size.y
 
-## The demand gate's vault, off the hall's south end. The shutter fills the gap
-## between the two jambs and sinks its own full height to open.
-const VAULT_Z: float = -5.0
-const VAULT_X0: float = 2.0
-const SHUTTER_X0: float = 4.6
-const SHUTTER_X1: float = 7.0
-
-## The receptacle pillar and its calibration ladder. `DEMAND_BANDS` is the SCALE
-## the player reads: lit bands are their current capability, the full stack is what
-## the gate wants. Four is enough to see a shortfall at a glance and few enough to
-## count without counting.
+## The receptacle pillar's calibration ladder. `DEMAND_BANDS` is the SCALE the
+## player reads: lit bands are their current capability, the full stack is what the
+## gate wants. Four is enough to see a shortfall at a glance and few enough to count
+## without counting.
+##
+## WHERE the vault, its shutter and its pillar stand is the PLAN's to say since bead
+## `godot-test1-dn8` — the `D` run bound to `GATE_DEMAND` and the plain-floor cell
+## `gate_pad_cell()` picks out in front of it. `VAULT_X0`, `VAULT_Z`, `SHUTTER_X0`,
+## `SHUTTER_X1`, `RECEPTACLE_X` and `RECEPTACLE_Z` were the keep's authored widths
+## and went with the keep; `_demand_boxes()` reads the drawing instead.
 const DEMAND_BANDS: int = 4
-const RECEPTACLE_X: float = 5.8
-const RECEPTACLE_Z: float = -4.3
 
 ## WHAT THE DEMAND GATE DEMANDS, and why this number.
 ##
@@ -528,12 +512,6 @@ const DEMAND_TARGET: float = 7.2
 ## 1 cm is far below any rank step (each is 1.2 m) so it can never let a genuinely
 ## short reading through; it only makes the comparison mean what the number says.
 const DEMAND_TOLERANCE: float = 0.01
-
-## The upper floor's secure door: a partition across the whole slab with one gap,
-## filled by the identity mass. Height is chosen against the jump rule above.
-const UPPER_WALL_X: float = 4.0
-const UPPER_WALL_HEIGHT: float = 4.0
-const UPPER_DOOR_HALF: float = 1.5
 
 ## How far the identity mass rises when it opens, and how far the demand shutter
 ## sinks. Both are a full body-height of travel so the opening is unambiguous, and
@@ -683,23 +661,6 @@ const DRAW_RADIUS: float = 60.0
 ## slab's own thickness plus a margin, so standing on the ramp near the top does
 ## not flicker between storeys.
 const FLOOR_HYSTERESIS: float = 0.8
-
-## Hard cap on the interior's box count, asserted headlessly by
-## `tower_interior_selfcheck.gd` — the shell's `BOX_BUDGET` discipline, with its
-## own (larger) number because these meshes are only ever drawn from inside the
-## building.
-##
-## RAISED FROM 32 TO 60 BY PHASE 8 for the cell block wing, AND BACK DOWN TO 32 BY
-## PHASE 16, WHICH DEMOLISHED IT. The block is drawn on `TowerPlans`' storey-10
-## grid now and budgeted by `PLAN_BOX_BUDGET` with the rest of that floor; what is
-## left in here is the phase-3 keep and nothing else — 27 boxes, measured, which is
-## one fewer than the pre-phase-8 building had (the wing took its service jamb and
-## the scar's rubble with it, and left one light panel behind over the strip it
-## used to occupy).
-##
-## 32 is that plus a small margin, and what it still stops is furnishing: it leaves
-## five spare and bites the moment somebody starts modelling the hall.
-const BOX_BUDGET: int = 32
 
 ## Hard cap on how many `MeshInstance3D`s the interior may actually BUILD — which,
 ## unlike the box budget, is the number the renderer charges for.
@@ -889,10 +850,12 @@ const GLOW_COLORS: Array[Color] = [
 ## storeys you are not on, and a hidden storey is not a dark one.
 const INTERIOR_EMISSION: float = 0.45
 
-## The wainscot band's height off the walking surface, and the carpet layer's
-## thickness. Both are pure look; neither is collided with or stood on.
+## The wainscot band's height off the walking surface. Pure look; never collided
+## with, never stood on. (`CARPET_THICK` stood beside it until bead
+## `godot-test1-dn8`: the ground floor walked on the world's own ground plane and
+## needed a 2 cm layer of its own under the keep's roofed half. It has a plan slab
+## like every other storey now, and a slab's top face is already carpet.)
 const WAINSCOT_HEIGHT: float = 1.05
-const CARPET_THICK: float = 0.02
 
 # ============================================================================
 # GATE IDS — the strings that go in the opened set
@@ -991,7 +954,7 @@ const AUTHORED_CAPTIVE: String = "primm"
 # Ten nodes, and every one of them earns it. Anything you add that just SITS there
 # belongs in the batch — leave it out of this set and it is batched for free.
 const MOVING_PARTS: Array[String] = [
-	"DemandShutter", "IdentityMass",
+	"DemandShutter",
 	"Band1", "Band2", "Band3", "Band4",
 	"CheckpointPlate", "CheckpointPost",
 	# THE CELL BLOCK IS NOT IN THIS LIST, and that is phase 16's doing rather than an
@@ -1086,17 +1049,12 @@ const GUARD_SPAWN_LIFT: float = 0.4
 ## grew a second `G`, is a bug this const cannot see and that count can.
 const GUARDS_PER_STOREY_MAX: int = 1
 
-## THE HAND-AUTHORED POSTS — the phase-3 keep's two storeys, which have no plan
-## grid to read a `G` out of. Every planned storey's post is DERIVED (see
-## `guard_posts_table()`), and these two are the same shape so that one loop in
-## `reset_guards()` stands up both kinds.
-##
-##   COURTYARD — the open middle, between the rotor gate and the foot of the ramp:
-##               the ground floor's one junction, and the storey's whole route
-##               passes through it. It replaced a second, hall post when the
-##               one-per-storey ruling landed — the hall guard was the one you
-##               could always retreat from, so it was the one worth losing.
-##   UPPER     — the approach to the identity gate, WEST of the secure partition.
+## EVERY POST IN THIS BUILDING IS A `G` ON A FLOOR PLAN, and since bead
+## `godot-test1-dn8` there is no exception. The keep's two hand-authored rows —
+## `Courtyard` and `Upper`, the ground floor's one junction and the approach to the
+## identity gate — are two characters on storeys 1 and 2 now, because those two
+## floors are `TowerPlans` rows like every other. `guard_posts_table()` is the whole
+## population.
 ##
 ## NONE OF THEM CAN BLOCK A ROUTE, which is what keeps the softlock audit
 ## (`tower_selfcheck`) true with guards in the building: the player is collision
@@ -1106,25 +1064,12 @@ const GUARDS_PER_STOREY_MAX: int = 1
 ##
 ## `patrol_center` / `patrol_half` is the box `set_confinement()` pins the guard
 ## inside — the leash that has existed since the elevated-platform guards and that
-## is the whole of "patrols, spots and chases WITHIN ITS FLOOR". The upper guard's
-## box stops at x = 3.5, short of the partition at x = 3.8, which is why the
-## checkpoint beyond the identity gate is a safe haven BY CONSTRUCTION rather than
-## by hoping: a guard that has seen you standing on it still cannot follow you in,
-## and the knockback below therefore cannot drop you into a re-bite loop.
-const GUARD_POSTS: Array[Dictionary] = [
-	{
-		"name": "Courtyard",
-		"post": Vector3(-5.0, 0.0, 1.5),
-		"patrol_center": Vector3(-5.0, 0.0, 1.5),
-		"patrol_half": Vector2(3.5, 4.0),
-	},
-	{
-		"name": "Upper",
-		"post": Vector3(1.6, SLAB_Y, 2.2),
-		"patrol_center": Vector3(1.6, SLAB_Y, 0.0),
-		"patrol_half": Vector2(1.9, 4.0),
-	},
-]
+## is the whole of "patrols, spots and chases WITHIN ITS FLOOR". The checkpoint's
+## safe haven used to be `Upper`'s hand-tuned `patrol_half` promising to stop short
+## of the partition; it is GEOMETRY now, because `_plan_guard_post` measures a beat
+## as the run of plain `.` cells and a `D` cell is not one. A guard that has seen
+## you standing on the plate still cannot follow you through the door, and the
+## knockback below therefore cannot drop you into a re-bite loop.
 
 ## How far, in whole plan cells, a derived patrol may run from its post along the
 ## corridor. Three cells is 5.82 m — a beat you can watch a guard walk out and
@@ -1139,24 +1084,25 @@ const GUARD_PATROL_MAX_CELLS: int = 3
 ## paces the corridor rather than wandering the floor.
 const GUARD_PATROL_LANE_HALF: float = TowerPlans.PLAN_CELL * 0.75
 
-## The derived table, built once per process. `TowerPlans.STOREYS` is a const and
-## the keep's rows are a const, so the answer cannot change within a run.
+## The derived table, built once per process. `TowerPlans.STOREYS` is a const, so
+## the answer cannot change within a run.
 static var _guard_table_cache: Array[Dictionary] = []
 
 
 static func guard_posts_table() -> Array[Dictionary]:
 	"""
-	Every post in the building: the keep's two hand rows, then one per planned
-	storey that draws a `G`.
+	Every post in the building: one per storey that draws a `G`, and nothing else.
 
-	@return: `GUARD_POSTS`-shaped rows — `{name, post, patrol_center, patrol_half}`.
+	@return: rows shaped `{name, post, patrol_center, patrol_half}` — what
+	        `reset_guards()` stands a body up from and what `set_confinement()`
+	        leashes it inside.
 
-	THE PLAN IS THE MAP. Phase 14 already parsed and validated `G` and built
-	nothing from it, precisely so this phase would be a reader and not a format
-	change; the population is now one line of ASCII per storey, drawn where the
-	stealth read matters, in the same file as the walls it patrols. That is also
-	what keeps the one-per-storey ruling checkable: a storey has one `G` or none,
-	and a second one is a diff you can see.
+	THE PLAN IS THE MAP, AND SINCE BEAD `godot-test1-dn8` IT IS THE WHOLE MAP.
+	Phase 14 parsed and validated `G` and built nothing from it, precisely so
+	phase 17 would be a reader and not a format change; that phase still had to
+	`append_array` two hand-authored rows in front of this loop, because the keep's
+	two storeys had no grid to read a `G` out of. They have one now, so the loop is
+	the function.
 
 	DERIVED, NEVER PERSISTED. Structure persists (the opened set); population does
 	not — `reset_guards()` rebuilds from this table on every crossing of the
@@ -1165,7 +1111,6 @@ static func guard_posts_table() -> Array[Dictionary]:
 	if not _guard_table_cache.is_empty():
 		return _guard_table_cache
 	var out: Array[Dictionary] = []
-	out.append_array(GUARD_POSTS)
 	for floor_index: int in TowerPlans.floors():
 		var derived := _plan_guard_post(floor_index)
 		if not derived.is_empty():
@@ -1234,16 +1179,6 @@ static func _floor_run(rows: Array, from: Vector2i, step: Vector2i) -> int:
 		at += step
 	return n
 
-
-## WHERE A GUARD'S SETBACK PUTS YOU — the two ends of `setback_point()`.
-##
-## The checkpoint stand is inside `CheckpointTrigger`'s volume and clear of
-## `CheckpointPost`, which stands on the plate: "the checkpoint" is the space
-## beside the post, not the post's own footprint. The entry stand is the fallback
-## for a run that has not lit the checkpoint yet — just inside the doorway, so a
-## setback before the checkpoint costs you the whole building rather than nothing.
-const CHECKPOINT_STAND: Vector3 = Vector3(5.8, SLAB_Y + 0.2, 0.0)
-const ENTRY_STAND: Vector3 = Vector3(7.6, 0.2, 0.0)
 
 # ============================================================================
 # STATE
@@ -1405,242 +1340,6 @@ static var _block_floor_cache: int = -2       # -2 = not asked yet; -1 = no bloc
 static var _block_bounds_cache: Variant = null
 
 
-static func boxes() -> Array[Dictionary]:
-	"""
-	The whole interior, as boxes: `{name, pos, size, color, collide, floor}` plus an
-	optional `rot` (Euler radians) and `spin` (rad/s, marks a rotor bar).
-
-	@return: One entry per `MeshInstance3D`, in build order.
-
-	THE SINGLE SOURCE OF THE PLAN, the same contract `TowerShell.boxes()` holds:
-	`_ready()` builds from it and `tower_interior_selfcheck.gd` measures the jump
-	rule, the headroom and the budget out of it without instancing a thing.
-
-	`floor` is the storey a box belongs to for visibility gating — 0 is the ground
-	floor, 1 the upper. A box you STAND ON belongs to the floor it carries, which is
-	why the slab is floor 1 and the ramp (which starts on the ground) is floor 0.
-	"""
-	var out: Array[Dictionary] = []
-
-	# ---- Ground floor -----------------------------------------------------
-	# The rotor doorway's two jambs: a full-height wall on the slab's west edge with
-	# one gap in it, so the courtyard has exactly one land entrance.
-	var hall_clear := SLAB_Y - SLAB_THICK
-	out.append({
-		"name": "RotorJambNegZ",
-		"pos": Vector3(ROTOR_POST_X, SLAB_Y * 0.5, -(INNER_HALF + ROTOR_DOOR_HALF) * 0.5),
-		"size": Vector3(0.4, SLAB_Y, INNER_HALF - ROTOR_DOOR_HALF),
-		"color": COLOR_STONE, "collide": true, "floor": 0,
-	})
-	# ...and the +Z jamb, one solid run again since PHASE 16 DEMOLISHED THE WING.
-	# It was in two pieces with a service doorway between them while the cell block
-	# stood north of this hall; the block is on storey 10 now, the strip north of
-	# the old wing wall is simply more entry hall (same slab over it, same 4.2 m of
-	# headroom, one light panel below so it is not a dark void), and the courtyard
-	# has exactly one land entrance again.
-	out.append({
-		"name": "RotorJambPosZ",
-		"pos": Vector3(ROTOR_POST_X, SLAB_Y * 0.5, (RAMP_UNDER_Z + ROTOR_DOOR_HALF) * 0.5),
-		"size": Vector3(0.4, SLAB_Y, RAMP_UNDER_Z - ROTOR_DOOR_HALF),
-		"color": COLOR_STONE, "collide": true, "floor": 0,
-	})
-	# The stretch the ramp flies over on its way to the slab — see RAMP_UNDER_TOP.
-	out.append({
-		"name": "RampUnderwall",
-		"pos": Vector3(ROTOR_POST_X, RAMP_UNDER_TOP * 0.5, (RAMP_UNDER_Z + INNER_HALF) * 0.5),
-		"size": Vector3(0.4, RAMP_UNDER_TOP, INNER_HALF - RAMP_UNDER_Z),
-		"color": COLOR_STONE, "collide": true, "floor": 0,
-	})
-	# The rotor itself: a post in the middle of that doorway with two bars through
-	# it. The post is SOLID (you walk round it), the bars are not (you time them) —
-	# a solid bar would shove the player through a wall.
-	out.append({
-		"name": "RotorPost",
-		"pos": Vector3(ROTOR_POST_X, SLAB_Y * 0.5, 0.0),
-		"size": Vector3(0.4, SLAB_Y, 0.4),
-		"color": COLOR_HAZARD, "collide": true, "floor": 0,
-	})
-	out.append({
-		"name": "RotorBarLow",
-		"pos": Vector3(ROTOR_POST_X, ROTOR_LOW_Y, 0.0),
-		"size": Vector3(2.0 * ROTOR_ARM, 0.3, 0.3),
-		"color": COLOR_HAZARD, "collide": false, "floor": 0,
-		"spin": ROTOR_LOW_SPEED,
-	})
-	out.append({
-		"name": "RotorBarHigh",
-		"pos": Vector3(ROTOR_POST_X, ROTOR_HIGH_Y, 0.0),
-		"size": Vector3(2.0 * ROTOR_ARM, 0.3, 0.3),
-		"color": COLOR_HAZARD, "collide": false, "floor": 0,
-		"spin": ROTOR_HIGH_SPEED,
-	})
-
-	# The vault, off the hall's south end: a west wall, two jambs and the shutter
-	# between them. Same "a wall with a hole in it" construction as the shell's
-	# doorway, so the shutter cannot drift out of its own gap.
-	out.append({
-		"name": "VaultWall",
-		"pos": Vector3(VAULT_X0, hall_clear * 0.5, (-INNER_HALF + VAULT_Z) * 0.5),
-		"size": Vector3(0.4, hall_clear, INNER_HALF + VAULT_Z),
-		"color": COLOR_STONE, "collide": true, "floor": 0,
-	})
-	out.append({
-		"name": "VaultJambWest",
-		"pos": Vector3((VAULT_X0 + SHUTTER_X0) * 0.5, hall_clear * 0.5, VAULT_Z),
-		"size": Vector3(SHUTTER_X0 - VAULT_X0, hall_clear, 0.4),
-		"color": COLOR_STONE, "collide": true, "floor": 0,
-	})
-	out.append({
-		"name": "VaultJambEast",
-		"pos": Vector3((SHUTTER_X1 + INNER_HALF) * 0.5, hall_clear * 0.5, VAULT_Z),
-		"size": Vector3(INNER_HALF - SHUTTER_X1, hall_clear, 0.4),
-		"color": COLOR_STONE, "collide": true, "floor": 0,
-	})
-	out.append({
-		"name": "DemandShutter",
-		"pos": Vector3((SHUTTER_X0 + SHUTTER_X1) * 0.5, hall_clear * 0.5, VAULT_Z),
-		"size": Vector3(SHUTTER_X1 - SHUTTER_X0, hall_clear, 0.4),
-		"color": COLOR_MECHANISM, "collide": true, "floor": 0,
-	})
-	# The receptacle: the free-standing pillar that is the demand gate's face.
-	out.append({
-		"name": "Receptacle",
-		"pos": Vector3(RECEPTACLE_X, 1.3, RECEPTACLE_Z),
-		"size": Vector3(1.0, 2.6, 0.6),
-		"color": COLOR_MECHANISM, "collide": true, "floor": 0,
-	})
-	# The calibration ladder, bottom band first — the order `_update_bands` lights
-	# them in, so the array index IS the rung.
-	for i in DEMAND_BANDS:
-		out.append({
-			"name": "Band%d" % (i + 1),
-			"pos": Vector3(RECEPTACLE_X, 0.75 + 0.45 * float(i), RECEPTACLE_Z + 0.35),
-			"size": Vector3(0.7, 0.18, 0.1),
-			"color": COLOR_BAND_DARK, "collide": false, "floor": 0,
-		})
-
-	# Ceiling panels. The hall is the one enclosed room in the building and the
-	# directional light does not reach under a slab; without these it is a cave.
-	out.append({
-		"name": "PanelHallNorth",
-		"pos": Vector3(5.4, hall_clear - 0.05, 0.4),
-		"size": Vector3(4.0, 0.1, 3.2),
-		"color": COLOR_PANEL, "collide": false, "floor": 0,
-	})
-	# THE ONE PANEL THE WING LEFT BEHIND (phase 16, D6). Its floor area is entry
-	# hall now, and an unlit 6 m strip under a slab is a cave nobody walks into.
-	out.append({
-		"name": "PanelHallFar",
-		"pos": Vector3(4.1, hall_clear - 0.05, 5.0),
-		"size": Vector3(7.5, 0.1, 4.0),
-		"color": COLOR_PANEL, "collide": false, "floor": 0,
-	})
-	out.append({
-		"name": "PanelHallSouth",
-		"pos": Vector3(4.2, hall_clear - 0.05, -2.0),
-		"size": Vector3(4.0, 0.1, 3.0),
-		"color": COLOR_PANEL, "collide": false, "floor": 0,
-	})
-	out.append({
-		"name": "PanelVault",
-		"pos": Vector3(5.4, hall_clear - 0.05, -6.9),
-		"size": Vector3(2.6, 0.1, 2.6),
-		"color": COLOR_PANEL, "collide": false, "floor": 0,
-	})
-
-	# The ramp. Derived entirely from the storey height and the run, so the deck
-	# lands EXACTLY on the slab's lip at one end and on the ground at the other —
-	# see `_ramp_box()` for the arithmetic and why a lip would be a bug.
-	out.append(_ramp_box())
-
-	# ---- The hall's carpet ------------------------------------------------
-	# THE GROUND FLOOR HAS NO SLAB — it walks on the world's own ground plane, which
-	# is the biome shader and, under a sealed roof with no key light reaching it, the
-	# darkest surface in the building. So the roofed half of floor 0 gets a carpet of
-	# its own: one non-solid 2 cm layer over exactly the footprint the upper slab
-	# roofs, in the same mint as every other floor. Non-solid because you stand on the
-	# ground at y = 0 and this is 2 cm of pile over it, not a step.
-	#
-	# IT STOPS SHORT OF THE DOORWAY, by the shell's own `DOOR_TRIGGER_DEPTH`: the door
-	# volume is a hole and nothing the interior builds may stand in it (check 1 asks
-	# that of every box, and a carpet is a box). The threshold strip that leaves is the
-	# doormat line. The COURTYARD keeps its ground on purpose — a courtyard has ground,
-	# and the carpet is where there is a ceiling.
-	var carpet_x1 := INNER_HALF - TowerShell.DOOR_TRIGGER_DEPTH
-	out.append({
-		"name": "HallCarpet",
-		"pos": Vector3((SLAB_X0 + carpet_x1) * 0.5, CARPET_THICK * 0.5, 0.0),
-		"size": Vector3(carpet_x1 - SLAB_X0, CARPET_THICK, 2.0 * INNER_HALF),
-		"color": COLOR_CARPET, "collide": false, "floor": 0,
-	})
-
-	# ---- Upper floor ------------------------------------------------------
-	out.append({
-		"name": "UpperSlab",
-		"pos": Vector3((SLAB_X0 + INNER_HALF) * 0.5, SLAB_Y - SLAB_THICK * 0.5, 0.0),
-		"size": Vector3(INNER_HALF - SLAB_X0, SLAB_THICK, 2.0 * INNER_HALF),
-		"color": COLOR_STONE, "collide": true, "floor": 1,
-		"top_color": COLOR_CARPET,
-	})
-	# The secure door: a partition across the entire upper floor with one gap, so
-	# there is no walking round it and (being 4 m tall on a 4.6 m floor) no jumping
-	# over it either.
-	var upper_len := INNER_HALF - UPPER_DOOR_HALF
-	var upper_mid := (INNER_HALF + UPPER_DOOR_HALF) * 0.5
-	for sign_z in [-1.0, 1.0]:
-		out.append({
-			"name": "SecureJamb%s" % ("NegZ" if sign_z < 0.0 else "PosZ"),
-			"pos": Vector3(UPPER_WALL_X, SLAB_Y + UPPER_WALL_HEIGHT * 0.5, sign_z * upper_mid),
-			"size": Vector3(0.4, UPPER_WALL_HEIGHT, upper_len),
-			"color": COLOR_STONE, "collide": true, "floor": 1,
-		})
-	out.append({
-		"name": "IdentityMass",
-		"pos": Vector3(UPPER_WALL_X, SLAB_Y + UPPER_WALL_HEIGHT * 0.5, 0.0),
-		"size": Vector3(1.2, UPPER_WALL_HEIGHT, 2.0 * UPPER_DOOR_HALF),
-		"color": COLOR_IDENTITY, "collide": true, "floor": 1,
-	})
-	# The pad. Non-solid and 10 cm proud, the yard slab's trick: a change of colour
-	# under your feet, never a lip to trip on.
-	out.append({
-		"name": "IdentityPad",
-		"pos": Vector3(UPPER_WALL_X - 1.8, SLAB_Y + 0.05, 0.0),
-		"size": Vector3(2.6, 0.1, 3.0),
-		"color": COLOR_IDENTITY_PAD, "collide": false, "floor": 1,
-	})
-	out.append({
-		"name": "CheckpointPlate",
-		"pos": Vector3(6.8, SLAB_Y + 0.05, 0.0),
-		"size": Vector3(3.0, 0.1, 3.0),
-		"color": COLOR_CHECKPOINT, "collide": false, "floor": 1,
-	})
-	out.append({
-		"name": "CheckpointPost",
-		"pos": Vector3(6.8, SLAB_Y + 1.3, 0.0),
-		"size": Vector3(0.7, 2.6, 0.7),
-		"color": COLOR_CHECKPOINT, "collide": true, "floor": 1,
-	})
-	return out
-
-
-static func _ramp_box() -> Dictionary:
-	"""
-	The ramp, as a rotated box whose TOP SURFACE passes exactly through the ground
-	at its foot and the slab's lip at its head.
-
-	@return: One `boxes()` entry, carrying a `rot`.
-
-	The arithmetic is here rather than inline because the flushness is the whole
-	point: a rotated slab positioned by eye leaves a lip at one end, and a lip of
-	ANY height is a wall in this engine (`CharacterBody3D` has no step-up). So the
-	box is placed by its top face and the centre is derived — offset half a
-	thickness along the deck's NORMAL, not straight down, which is the mistake that
-	puts a 12 cm step at the top.
-	"""
-	return _deck_box("Ramp", Vector2(RAMP_X0, 0.0), Vector2(SLAB_X0, SLAB_Y),
-			RAMP_Z, RAMP_WIDTH, 0)
-
-
 static func _deck_box(deck_name: String, foot: Vector2, head: Vector2, z: float,
 		width: float, floor_index: int) -> Dictionary:
 	"""
@@ -1731,10 +1430,18 @@ static func plan_boxes(floor_index: int) -> Array[Dictionary]:
 		out.append(ramp)
 	out.append_array(_plan_pads(plan))
 	out.append_array(_plan_gates(plan))
-	# ...and, on the ONE storey that draws a cell gallery, the handful of cell block
-	# parts the plan format cannot express. Keyed on the room and never on the
-	# literal 9: the block is wherever it is drawn, and this file does not know
-	# which floor that is.
+	# ...and the hand-built parts, each guarded by a ROOM OR GATE LOOKUP and never by
+	# a floor number. That is the rule the cell block has followed since phase 16 and
+	# the reason it could change storeys without a number following it; bead
+	# `godot-test1-dn8` brought the phase-3 keep's three set pieces under it when the
+	# ground floor and the mezzanine became plan rows like every other. Move the `D`
+	# run or the room's letters in the ASCII and the mechanism follows.
+	if plan_gate_rect(floor_index, "rotor_gate").size != Vector2i.ZERO:
+		out.append_array(_rotor_boxes(plan))
+	if plan_gate_rect(floor_index, GATE_DEMAND).size != Vector2i.ZERO:
+		out.append_array(_demand_boxes(plan))
+	if plan_room_rect(floor_index, CHECKPOINT_ROOM).size != Vector2i.ZERO:
+		out.append_array(_checkpoint_boxes(plan))
 	if plan_room_rect(floor_index, BLOCK_ROOM).size != Vector2i.ZERO:
 		out.append_array(_block_boxes(plan))
 	_plan_cache[floor_index] = out
@@ -1743,16 +1450,20 @@ static func plan_boxes(floor_index: int) -> Array[Dictionary]:
 
 static func all_boxes() -> Array[Dictionary]:
 	"""
-	The WHOLE building's static plan: the authored keep plus every planned storey.
+	The WHOLE building's static plan: every planned storey, in plan order.
 
-	@return: `boxes()` first, then each `TowerPlans.floors()` storey in plan order.
+	@return: `plan_boxes()` for each `TowerPlans.floors()` index, concatenated.
 
-	This is what `_ready()` builds from and what the self-checks measure. Plan boxes
-	are never in `MOVING_PARTS` and never carry `spin`, so they take the existing
-	batch path and the existing single-body collision path with no new branch
-	anywhere — which is why `_ready()` changed by one word.
+	IT IS THE PLAN LOOP AND NOTHING ELSE SINCE BEAD `godot-test1-dn8`. There used to
+	be a hand-authored `boxes()` table in front of it holding the phase-3 keep — 27
+	boxes of walls, jambs, ceiling panels, a carpet, a slab and a ramp, all placed
+	against the inner faces of a 20 m building standing in the middle of an 80 m
+	hall. The keep is demolished; floors 0 and 1 are `TowerPlans` rows like every
+	other storey, and there is no floor of this building that is not drawn as text.
+
+	This is what `_ready()` builds from and what the self-checks measure.
 	"""
-	var out: Array[Dictionary] = boxes()
+	var out: Array[Dictionary] = []
 	for floor_index: int in TowerPlans.floors():
 		out.append_array(plan_boxes(floor_index))
 	return out
@@ -2115,8 +1826,12 @@ static func _plan_gates(plan: Dictionary) -> Array[Dictionary]:
 	            at all — see `gate_pad_cell()` for why it is derived.
 	  CHALLENGE a LINTEL: a partial-height wall over the run, in ordinary stone and
 	            batched, so the opening reads as a duct. The hazard that sweeps
-	            under it is hand-built from the same run (`_block_boxes`), because a
-	            thing that moves is not a plan character.
+	            under it is hand-built from the same run (`_block_boxes` for the
+	            crawl's press, `_rotor_boxes` for the rotor doorway's bars), because
+	            a thing that moves is not a plan character.
+	  DEMAND    nothing at all. Its shutter SINKS rather than rising and its
+	            receptacle is not a character either, so `_demand_boxes` builds the
+	            whole gate off the same run — see the arm for the argument.
 
 	The CLUE is four plates in a row on the clue room's floor, in the answer's order
 	and the answer's colours. DERIVED FROM THE ANSWER ARRAY, so the clue cannot
@@ -2140,6 +1855,15 @@ static func _plan_gates(plan: Dictionary) -> Array[Dictionary]:
 		var z0 := _grid_z(float(span.position.y))
 		var z1 := _grid_z(float(span.end.y))
 		var cls := String(TowerGraph.gate(gid).get("class", ""))
+		if cls == TowerGraph.CLASS_DEMAND:
+			# NOTHING, on purpose. A demand gate's mass SINKS — it is the one gate in
+			# the building that opens downwards — so the generic mass above, which is
+			# drawn to be lifted and retired, would be the wrong body in the right
+			# hole. And a demand gate is not just a mass: its RECEPTACLE and its four
+			# calibration bands are the whole of its legibility, and a pillar standing
+			# in front of a door is not a plan character. `_demand_boxes()` reads this
+			# same run and builds all six.
+			continue
 		if cls == TowerGraph.CLASS_CHALLENGE:
 			var lintel_h := clear - CRAWL_LINTEL_Y
 			out.append({
@@ -2386,17 +2110,226 @@ static func plan_doorway_rect(floor_index: int, room_id: String) -> Rect2i:
 ## graph room and never on a floor number, so the block is wherever it is drawn.
 const BLOCK_ROOM: String = "cell_gallery"
 
+## ...and the same trick for the checkpoint, which bead `godot-test1-dn8` moved off
+## a hand-authored `Vector3` and onto storey 2's grid. The plate, the post, the
+## trigger volume and `setback_point()`'s far end are all read out of this room's
+## cells, so re-drawing the checkpoint anywhere in the building moves all four.
+const CHECKPOINT_ROOM: String = "checkpoint_room"
+
+## How far clear of `CheckpointPost` a player is set back to. The post stands on the
+## plate, in the middle of the room, and "the checkpoint" is the space BESIDE it —
+## put the player on the room's centre and they are inside the pillar.
+const CHECKPOINT_CLEAR: float = 1.0
+
+
+static func room_floor(room_id: String) -> int:
+	"""
+	Which `FLOOR_Y` index draws one graph room, -1 when no storey does.
+
+	Check 1 of `tower_selfcheck` already guarantees a room is claimed by at most one
+	storey, so the first hit is the only hit.
+	"""
+	for floor_index: int in TowerPlans.floors():
+		if plan_room_rect(floor_index, room_id).size != Vector2i.ZERO:
+			return floor_index
+	return -1
+
 
 static func block_floor() -> int:
 	"""Which `FLOOR_Y` index the cell block is drawn on, -1 when no storey draws it."""
 	if _block_floor_cache != -2:
 		return _block_floor_cache
-	_block_floor_cache = -1
-	for floor_index: int in TowerPlans.floors():
-		if plan_room_rect(floor_index, BLOCK_ROOM).size != Vector2i.ZERO:
-			_block_floor_cache = floor_index
-			break
+	_block_floor_cache = room_floor(BLOCK_ROOM)
 	return _block_floor_cache
+
+
+static func gate_stand(gate_id: String, steps: int) -> Vector3:
+	"""
+	Where a player stands to work one gate: the centre of the cell `steps` out from
+	its `D` run, on the side `gate_pad_cell()` picked.
+
+	@param steps: 1 is the pad cell itself (an identity gate's plate); 2 is one cell
+	        further back, which is where you end up when something SOLID stands on
+	        the pad — the demand gate's receptacle pillar.
+	@return: interior-local metres at the storey's walking surface, `Vector3.ZERO`
+	        when no storey draws the gate or the drawing cannot say which side.
+
+	DERIVED, LIKE THE PAD ITSELF. Every trigger volume in the phase-3 keep used to
+	be an authored `Vector3` beside an authored mass; bead `godot-test1-dn8` drew
+	both gates on the grid, and a trigger that did not follow the drawing would be
+	a plate you stand on and a volume three metres away.
+	"""
+	for floor_index: int in TowerPlans.floors():
+		var run := plan_gate_rect(floor_index, gate_id)
+		if run.size == Vector2i.ZERO:
+			continue
+		var pad := gate_pad_cell(TowerPlans.storey(floor_index), run)
+		if pad.x < 0:
+			return Vector3.ZERO
+		var cell := pad + (pad - (run.position + run.size / 2)) * (steps - 1)
+		return Vector3(_grid_x(float(cell.x) + 0.5), FLOOR_Y[floor_index],
+				_grid_z(float(cell.y) + 0.5))
+	return Vector3.ZERO
+
+
+static func checkpoint_stand() -> Vector3:
+	"""
+	Where a guard's setback drops a player who HAS lit the checkpoint.
+
+	Inside `CheckpointTrigger`'s volume and clear of `CheckpointPost` by
+	`CHECKPOINT_CLEAR` — "the checkpoint" is the space beside the post, not the
+	post's own footprint. It was a `const Vector3` authored against the keep's upper
+	floor until bead `godot-test1-dn8`; it is now the room's own cells, so moving
+	the checkpoint in the ASCII moves the respawn with it.
+	"""
+	var floor_index := room_floor(CHECKPOINT_ROOM)
+	if floor_index < 0:
+		return entry_stand()
+	var room := _cell_span(plan_room_rect(floor_index, CHECKPOINT_ROOM))
+	return Vector3((room["x0"] + room["x1"]) * 0.5 - CHECKPOINT_CLEAR,
+			FLOOR_Y[floor_index] + 0.2, (room["z0"] + room["z1"]) * 0.5)
+
+
+static func entry_stand() -> Vector3:
+	"""
+	...and where it drops a player who has not: just inside the front door.
+
+	Derived from the SHELL's own door constants and clear of the trigger volume by a
+	metre, so a setback never lands you in the doorway you are about to re-enter.
+	The x moved outward with bead `godot-test1-dn8`: the keep's own door — the one
+	this used to stand behind — no longer exists, and there is one ring now.
+	"""
+	return Vector3(TowerPlans.PLAN_HALF - TowerShell.DOOR_TRIGGER_DEPTH - 1.0, 0.2, 0.0)
+
+
+static func _rotor_boxes(plan: Dictionary) -> Array[Dictionary]:
+	"""
+	The challenge space's mechanism: the post in the rotor doorway and its two
+	counter-rotating bars.
+
+	@return: `RotorPost` (solid, full storey height) and `RotorBarLow` /
+	        `RotorBarHigh` (never solid — a script-moved solid body shoves a
+	        `CharacterBody3D` through whatever is behind it, and behind this one is
+	        the outside world).
+
+	The DOORWAY is a `D` run drawn on the plan and `_plan_gates`' challenge arm
+	builds its lintel; what cannot be a plan character is a thing that MOVES, so the
+	post and the bars are placed from the same run here. Same division of labour as
+	the maintenance crawl's press, one gate class along.
+	"""
+	var floor_index := int(plan["floor"])
+	var top: float = FLOOR_Y[floor_index]
+	var clear := plan_clear_height(floor_index)
+	var run := _cell_span(plan_gate_rect(floor_index, "rotor_gate"))
+	var at_x: float = (run["x0"] + run["x1"]) * 0.5
+	var at_z: float = (run["z0"] + run["z1"]) * 0.5
+	var out: Array[Dictionary] = [{
+		"name": "RotorPost",
+		"pos": Vector3(at_x, top + clear * 0.5, at_z),
+		"size": Vector3(0.4, clear, 0.4),
+		"color": COLOR_HAZARD, "collide": true, "floor": floor_index,
+	}]
+	for bar: Array in [["RotorBarLow", ROTOR_LOW_Y, ROTOR_LOW_SPEED],
+			["RotorBarHigh", ROTOR_HIGH_Y, ROTOR_HIGH_SPEED]]:
+		out.append({
+			"name": String(bar[0]),
+			"pos": Vector3(at_x, top + float(bar[1]), at_z),
+			"size": Vector3(2.0 * ROTOR_ARM, 0.3, 0.3),
+			"color": COLOR_HAZARD, "collide": false, "floor": floor_index,
+			"spin": float(bar[2]),
+		})
+	return out
+
+
+static func _demand_boxes(plan: Dictionary) -> Array[Dictionary]:
+	"""
+	The demand gate: the shutter that sinks, the receptacle pillar you read it from,
+	and the four calibration bands up its face.
+
+	@return: `DemandShutter`, `Receptacle`, `Band1`..`Band4`. Every name is kept
+	        exactly — they are claimed by `TOWER_GRAPH`, held in `MOVING_PARTS` and
+	        looked up by `_remember()`, and keeping them is what makes this a
+	        geometry move rather than a rename.
+
+	`_plan_gates` deliberately builds NOTHING for a demand gate (see its
+	`CLASS_DEMAND` arm): a shutter sinks where every other mass in the building
+	rises, and a receptacle is not a plan character at all. So the run is read here
+	and the pillar stands on the cell `gate_pad_cell()` picked — the side of the
+	doorway you walk up from, drawn rather than authored — with the bands on the
+	face that looks back at you. `bottom band first`, because `_update_bands()`
+	lights them by index.
+	"""
+	var floor_index := int(plan["floor"])
+	var top: float = FLOOR_Y[floor_index]
+	var clear := plan_clear_height(floor_index)
+	var slot := plan_gate_rect(floor_index, GATE_DEMAND)
+	var run := _cell_span(slot)
+	var out: Array[Dictionary] = [{
+		"name": "DemandShutter",
+		"pos": Vector3((run["x0"] + run["x1"]) * 0.5, top + clear * 0.5,
+				(run["z0"] + run["z1"]) * 0.5),
+		"size": Vector3(run["x1"] - run["x0"], clear, run["z1"] - run["z0"]),
+		"color": COLOR_MECHANISM, "collide": true, "floor": floor_index,
+		"dynamic": true,
+	}]
+	var pad := gate_pad_cell(plan, slot)
+	if pad.x < 0:
+		return out   # an authoring error `tower_selfcheck` names; never guessed at.
+	var step := pad - (slot.position + slot.size / 2)
+	var face := Vector3(float(step.x), 0.0, float(step.y))
+	var at_x := _grid_x(float(pad.x) + 0.5)
+	var at_z := _grid_z(float(pad.y) + 0.5)
+	# The pillar is THIN ACROSS THE APPROACH and wide along it, whichever axis the
+	# drawing put the doorway on, so its face is the one you are looking at.
+	var along_x := absf(face.x) > absf(face.z)
+	out.append({
+		"name": "Receptacle",
+		"pos": Vector3(at_x, top + 1.3, at_z),
+		"size": Vector3(0.6, 2.6, 1.0) if along_x else Vector3(1.0, 2.6, 0.6),
+		"color": COLOR_MECHANISM, "collide": true, "floor": floor_index,
+	})
+	for i in DEMAND_BANDS:
+		out.append({
+			"name": "Band%d" % (i + 1),
+			"pos": Vector3(at_x + face.x * 0.35, top + 0.75 + 0.45 * float(i),
+					at_z + face.z * 0.35),
+			"size": Vector3(0.1, 0.18, 0.7) if along_x else Vector3(0.7, 0.18, 0.1),
+			"color": COLOR_BAND_DARK, "collide": false, "floor": floor_index,
+		})
+	return out
+
+
+static func _checkpoint_boxes(plan: Dictionary) -> Array[Dictionary]:
+	"""
+	The checkpoint: a plate you cross and the post standing on it, both relit once.
+
+	@return: `CheckpointPlate` (0.1 m proud and never solid — a lip of any height is
+	        a wall in this engine) and `CheckpointPost`, centred in the room the plan
+	        letters `checkpoint_room`.
+
+	It is a MARKER and not a passage — `GATE_CHECKPOINT` gates no edge, and check 1
+	of `tower_selfcheck` refuses it as one — so the room's own `parts` claim these
+	two boxes rather than a gate row.
+	"""
+	var floor_index := int(plan["floor"])
+	var top: float = FLOOR_Y[floor_index]
+	var room := _cell_span(plan_room_rect(floor_index, CHECKPOINT_ROOM))
+	var at_x: float = (room["x0"] + room["x1"]) * 0.5
+	var at_z: float = (room["z0"] + room["z1"]) * 0.5
+	return [
+		{
+			"name": "CheckpointPlate",
+			"pos": Vector3(at_x, top + 0.05, at_z),
+			"size": Vector3(3.0, 0.1, 3.0),
+			"color": COLOR_CHECKPOINT, "collide": false, "floor": floor_index,
+		},
+		{
+			"name": "CheckpointPost",
+			"pos": Vector3(at_x, top + 1.3, at_z),
+			"size": Vector3(0.7, 2.6, 0.7),
+			"color": COLOR_CHECKPOINT, "collide": true, "floor": floor_index,
+		},
+	]
 
 
 static func _cell_span(rect: Rect2i) -> Dictionary:
@@ -2424,10 +2357,10 @@ static func _block_boxes(plan: Dictionary) -> Array[Dictionary]:
 	survived — and every one of them is POSITIONED FROM A PLAN LOOKUP, so the day
 	somebody moves a wall in the ASCII these move with it.
 
-	They go in `plan_boxes()` and not in `boxes()` because check 1 measures the two
-	populations against different bounds: the keep's own boxes must fit inside
-	`INNER_HALF` (8.8 m) and a plan storey's inside `PLAN_HALF` (38.8 m). The block
-	spans the wide grid now, so it belongs to the plan population.
+	They go in `plan_boxes()`, which since bead `godot-test1-dn8` is the only
+	population there is: the hand-authored `boxes()` table went with the keep, and
+	every box in this building is now measured against `PLAN_HALF` (38.8 m) on the
+	storey that drew it.
 	"""
 	var out: Array[Dictionary] = []
 	var floor_index := int(plan["floor"])
@@ -2755,13 +2688,16 @@ func _ready() -> void:
 		body.add_child(shape)
 		if box["name"] == "DemandShutter":
 			_shutter_shape = shape
-		elif box["name"] == "IdentityMass":
-			_mass_shape = shape
 		elif box["name"] == SCAR_BOX:
 			_scar_shape = shape
 		elif gate_of(String(box["name"])) != "":
 			var gid := gate_of(String(box["name"]))
-			if String(TowerGraph.gate(gid).get("class", "")) == TowerGraph.CLASS_IDENTITY:
+			# The same three-way split `_remember()` makes above, and it has to be
+			# the same one: a mesh in `_spine_meshes` whose shape landed in
+			# `_mass_shape` is a gate that opens visually and stays solid.
+			if gid == GATE_IDENTITY:
+				_mass_shape = shape
+			elif String(TowerGraph.gate(gid).get("class", "")) == TowerGraph.CLASS_IDENTITY:
 				_spine_shapes[gid] = shape
 			else:
 				_riddle_shapes[gid] = shape
@@ -2998,7 +2934,10 @@ func _place_shutter() -> void:
 	var drop := SHUTTER_TRAVEL * _shutter_open
 	if _shutter_open < 1.0 and _nudge > 0.0:
 		drop += SHUTTER_TRAVEL * NUDGE_FRACTION * _nudge_ratio * sin(PI * (1.0 - _nudge))
-	_shutter_mesh.position.y = headroom() * 0.5 - drop
+	# Rest height off the box the table placed, like every other mass in the
+	# building — the shutter fills its storey's doorway, and a storey is not always
+	# 4.6 m tall (`plan_clear_height`).
+	_shutter_mesh.position.y = float(_gate_rest.get(GATE_DEMAND, 0.0)) - drop
 	if _shutter_shape != null:
 		_shutter_shape.position.y = _shutter_mesh.position.y
 
@@ -3007,16 +2946,22 @@ func _place_mass() -> void:
 	"""
 	Put the identity mass where its open fraction says. It only ever rises.
 
-	AND IT RISES INTO STOREY 3. Fully open its centre is `FLOOR_Y[2]` exactly, so
-	half of it — 2.0 m — stands proud of that floor's walking surface, in the cross
-	corridor two cells west of the strongroom's lock pads. That was invisible while
-	the keep was the top of the building; phase 16 built ten storeys over it. Hence
-	`_retire`, the same call `_place_spine` makes, for the same reason.
+	AND IT RISES INTO STOREY 3, which is why `_retire` is here — the same call
+	`_place_spine` makes, for the same reason: fully open, half the mass stands
+	proud of the floor above, in whatever room happens to be drawn over the doorway.
+	That was invisible while the keep was the top of the building; phase 16 built
+	ten storeys over it.
+
+	THE REST HEIGHT IS READ OFF THE BOX, never recomputed. It used to be
+	`SLAB_Y + UPPER_WALL_HEIGHT * 0.5`, two authored constants that went with the
+	keep (bd godot-test1-dn8); the mass is a plan `D` run now and as tall as its own
+	storey, so `_gate_rest` — filled by `_remember()` from the mesh the table placed
+	— is the one source, exactly as it already was for the spines and the riddles.
 	"""
 	if _mass_mesh == null:
 		return
 	var lift := MASS_TRAVEL * _mass_open
-	_mass_mesh.position.y = SLAB_Y + UPPER_WALL_HEIGHT * 0.5 + lift
+	_mass_mesh.position.y = float(_gate_rest.get(GATE_IDENTITY, 0.0)) + lift
 	if _mass_shape != null:
 		_mass_shape.position.y = _mass_mesh.position.y
 	_retire(_mass_mesh, _mass_shape, _mass_open >= 1.0)
@@ -3245,16 +3190,35 @@ func _make_rotor(box: Dictionary, parent: Node3D) -> Node3D:
 
 
 func _build_pads() -> void:
-	"""The three trigger volumes: demand plate, identity plate, checkpoint."""
+	"""
+	The three trigger volumes: demand plate, identity plate, checkpoint.
+
+	ALL THREE ARE READ OFF THE DRAWING since bead `godot-test1-dn8`. They were
+	authored `Vector3`s beside authored masses while floors 0 and 1 were the keep's
+	box table; both gates are `D` runs on the plan grid now, so each volume is the
+	cell `gate_pad_cell()` picked (the demand gate one further back, because its
+	receptacle pillar is standing ON its pad cell) and the checkpoint is its room's
+	own centre. A trigger that did not follow the drawing would be a plate you stand
+	on and a volume three metres away.
+	"""
 	# NAMED `*Trigger`, NOT `*Pad`: the visible plates are meshes already carrying
 	# those names, and two siblings with one name is a rename by the engine — which
 	# turns every `get_node("Floor1/IdentityPad")` into a null.
-	_add_area("DemandTrigger", Vector3(RECEPTACLE_X, 1.0, RECEPTACLE_Z + 1.3),
-		Vector3(2.6, 2.0, 2.0), _on_demand_enter, _on_demand_exit, 0)
-	_add_area("IdentityTrigger", Vector3(UPPER_WALL_X - 1.8, SLAB_Y + 1.0, 0.0),
-		Vector3(2.6, 2.0, 3.0), _on_identity_enter, _on_identity_exit, 1)
-	_add_area("CheckpointTrigger", Vector3(6.8, SLAB_Y + 1.0, 0.0),
-		Vector3(3.0, 2.0, 3.0), _on_checkpoint_enter, Callable(), 1)
+	var cell := Vector3(TowerPlans.PLAN_CELL, 2.0, TowerPlans.PLAN_CELL)
+	var demand := gate_stand(GATE_DEMAND, 2)
+	var demand_floor := room_floor("vault")
+	if demand_floor >= 0:
+		_add_area("DemandTrigger", demand + Vector3(0.0, 1.0, 0.0), cell,
+			_on_demand_enter, _on_demand_exit, demand_floor)
+	var identity := gate_stand(GATE_IDENTITY, 1)
+	var identity_floor := room_floor(CHECKPOINT_ROOM)
+	if identity_floor >= 0:
+		_add_area("IdentityTrigger", identity + Vector3(0.0, 1.0, 0.0), cell,
+			_on_identity_enter, _on_identity_exit, identity_floor)
+		var plate := checkpoint_stand()
+		_add_area("CheckpointTrigger",
+			Vector3(plate.x + CHECKPOINT_CLEAR, FLOOR_Y[identity_floor] + 1.0, plate.z),
+			Vector3(3.0, 2.0, 3.0), _on_checkpoint_enter, Callable(), identity_floor)
 
 
 func _build_lift_stop() -> void:
@@ -3433,8 +3397,11 @@ func _build_label() -> void:
 	holding the receptacle's own name, which is what makes the mechanism
 	self-identifying from across the hall.
 	"""
-	_label = _make_label("DemandLabel",
-		Vector3(RECEPTACLE_X, 3.2, RECEPTACLE_Z + 0.9), tr("PHASE RECEPTACLE"))
+	# Over the pillar, on the side you read it from — one cell back and 3.2 m up, off
+	# the same derived stand the trigger volume uses.
+	var at := gate_stand(GATE_DEMAND, 2)
+	_label = _make_label("DemandLabel", at + Vector3(0.0, 3.2, 0.0),
+		tr("PHASE RECEPTACLE"))
 
 
 func _build_vault_prize() -> void:
@@ -3445,10 +3412,18 @@ func _build_vault_prize() -> void:
 	tower-specific reward: the pickup, the sound, the streak and the level maths all
 	already work. An empty vault would make the gate a puzzle about nothing.
 	"""
+	var floor_index := room_floor("vault")
+	if floor_index < 0:
+		return   # no storey draws the vault — nothing to put a prize in.
+	var room := _cell_span(plan_room_rect(floor_index, "vault"))
 	var gem := load("res://scenes/collectibles/coin.tscn").instantiate() as Node3D
 	gem.name = "VaultGem"
-	gem.position = Vector3(5.4, 1.1, -6.9)
-	_floors[0].add_child(gem)
+	# Centred in the room the plan draws, at pickup height. It was an authored
+	# `Vector3` inside the keep's vault until bead `godot-test1-dn8`; the room is a
+	# `V` on a floor plan now, so the prize follows the walls.
+	gem.position = Vector3((room["x0"] + room["x1"]) * 0.5,
+			FLOOR_Y[floor_index] + 1.1, (room["z0"] + room["z1"]) * 0.5)
+	_floors[floor_index].add_child(gem)
 	if gem.has_method("make_gem"):
 		gem.call("make_gem")
 
@@ -3458,8 +3433,9 @@ func _remember(box_name: String, mesh: MeshInstance3D) -> void:
 	match box_name:
 		"DemandShutter":
 			_shutter_mesh = mesh
-		"IdentityMass":
-			_mass_mesh = mesh
+			# Its own rest height, off the box the table just placed — the same one
+			# source `_gate_rest` is for every other mass. It sinks from here.
+			_gate_rest[GATE_DEMAND] = mesh.position.y
 		"CheckpointPlate", "CheckpointPost":
 			_checkpoint_meshes.append(mesh)
 		"CrawlPress":
@@ -3489,7 +3465,15 @@ func _remember(box_name: String, mesh: MeshInstance3D) -> void:
 			# from a y its own box never had. Both gate families want it now that
 			# the spine doors stand on a storey and not on y = 0.
 			_gate_rest[gid] = mesh.position.y
-			if String(TowerGraph.gate(gid).get("class", "")) == TowerGraph.CLASS_IDENTITY:
+			if gid == GATE_IDENTITY:
+				# THE ONE IDENTITY GATE THAT IS NOT A RESCUE SPINE. It is drawn by
+				# the same builder and carries the same name shape since bead
+				# `godot-test1-dn8` (`S1PlanGateMass_tower_secure_door`), but it is
+				# the phase-3 secure door with its own tween, its own trigger and its
+				# own opened-set id — so it is held where phase 3 held it and the
+				# spine dictionaries never hear about it.
+				_mass_mesh = mesh
+			elif String(TowerGraph.gate(gid).get("class", "")) == TowerGraph.CLASS_IDENTITY:
 				_spine_meshes[gid] = mesh
 			else:
 				_riddle_meshes[gid] = mesh
@@ -4218,8 +4202,8 @@ func setback_point() -> Vector3:
 	Called by `player_controller` through a null-safe group lookup, so a run with
 	no tower in the tree at all never reaches this.
 	"""
-	return global_position + (CHECKPOINT_STAND if _is_open(GATE_CHECKPOINT)
-			else ENTRY_STAND)
+	return global_position + (checkpoint_stand() if _is_open(GATE_CHECKPOINT)
+			else entry_stand())
 
 
 # ============================================================================
@@ -4275,9 +4259,10 @@ static func inside_walls(local: Vector3) -> bool:
 	IT WAS THE 20 m KEEP UNTIL PHASE 14, and left that way it would have answered
 	"outdoors" in every one of the twenty-eight new offices: the indoor boom never
 	shortens, and the spring arm collapses into the back of a head in a 4.6 m room.
-	(codex review, 2026-08-29.) The KEEP is still the narrowest indoor space in the
-	building, so it is still what check 4 sizes the boom against — widening the
-	predicate does not widen the room the boom has to fit in.
+	(codex review, 2026-08-29.) There is no keep to be the narrowest indoor space
+	any more (bd godot-test1-dn8) — the tightest room in the building is whichever
+	planned storey draws it, which is why check 4 sizes the boom against the PLANS
+	and not against a constant.
 
 	Pure, allocation-free and three compares — `biome_at()`'s idiom, and safe to
 	call every tick.
