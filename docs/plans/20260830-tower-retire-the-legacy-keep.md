@@ -730,26 +730,83 @@ real problems, just not that one). Retire or re-aim it with the other five when
 
 ### Task 5: The audits — teach them the two new storeys
 
-- [ ] `tower_selfcheck._plan_problems`: add the `from == floor` arm (skip every `S`-lane
+- [x] `tower_selfcheck._plan_problems`: add the `from == floor` arm (skip every `S`-lane
       assertion — one solid lane, landing against a short end, lane stands on the floor
       below, slope — for a storey that draws no lane), and **delete the "No plan below
-      means floor 0" branch** entirely (D9).
-- [ ] Add a negative control for the new arm at the bottom of
+      means floor 0" branch** entirely (D9). The four lane rules moved into
+      `_lane_problems(plan, lane, landing)`, called only when `from != floor`: "skip the
+      lane rules" reads better as one call the caller declines than as four guards buried
+      among rules every storey obeys. The `from == floor` test is asked BOTH WAYS — a
+      storey entered from outside that draws a lane has a ramp rising out of its own
+      floor, which is a broken `from`.
+- [x] Add a negative control for the new arm at the bottom of
       `_check_the_flood_fill_can_fail`, in the shape of the ones already there: a broken
-      copy of the ground storey must still be caught.
-- [ ] `tower_interior_selfcheck` check 1 `_check_plan_fits_the_shell`: drop the `keep`
+      copy of the ground storey must still be caught. **Two**, one per direction: the
+      vault's doorway walled up must still report "cannot be walked to" (the arm skips
+      the lane rules, not the floor), and an `S` drawn on the ground storey must report
+      "stands on its own storey".
+- [x] `tower_interior_selfcheck` check 1 `_check_plan_fits_the_shell`: drop the `keep`
       population, the `_fit_boxes(keep, INNER_HALF, [0,1], seen)` call and the
       `BOX_BUDGET` print; keep the per-storey `PLAN_BOX_BUDGET` loop and the name
       uniqueness `seen` dict. Add the rotor-doorway assertion: `2 * ROTOR_DOOR_HALF`
-      must fit the gap the plan actually draws.
-- [ ] Check 3 `_check_ramp_is_the_stair` and check 4 `_check_headroom_clears_the_camera`:
+      must fit the gap the plan actually draws. **Measured: 3.88 m of plan for 3.80 m
+      of bar sweep.**
+- [x] Check 3 `_check_ramp_is_the_stair` and check 4 `_check_headroom_clears_the_camera`:
       re-point anything that measured the phase-3 ramp or sized the indoor boom against
       the keep at the plans instead. Keep the *intent* of each check — say in the
-      docstring what it used to measure and what it measures now.
-- [ ] Check 2 (jump rule) and check 9 (visibility gating) should need no logic change;
-      if they do, the change is in the comment as well as the code.
-- [ ] Move any budget that must move (`DRAW_BUDGET`, `PLAN_BOX_BUDGET`) **in the const,
+      docstring what it used to measure and what it measures now. Check 3's `Ramp` row
+      is gone and every rotated body is a plan's; it gained the `from == floor` arm too
+      (the ground storey must build NO deck and draw no lane). Check 4's courtyard is
+      `plan_room_rect(0, "courtyard")`'s narrower side — **36.86 m**, against the
+      3.74 m indoor boom.
+- [x] Check 2 (jump rule) and check 9 (visibility gating) should need no logic change;
+      if they do, the change is in the comment as well as the code. **Both needed one.**
+      Check 2's (a)/(b)/(c) swept `boxes()` and measured `UPPER_WALL_HEIGHT`; the table
+      and the constant are gone, so the sweep and its `_roofed` / `_headroom_over` /
+      `_clearance_at` / `_ramp_underside_at` chain went with them and (d) is the whole
+      check plus the shell-wall line. (d) gained the arm its own comment demanded of a
+      third kind of solid: everything named `S<floor>Plan…` keeps the strong structural
+      claim unweakened, and a HAND-BUILT part (the receptacle pillar, the checkpoint
+      post) is instead held to the deleted sweep's real question — a jump off it must
+      not reach the next walking surface, unless the storey above's own slab boxes roof
+      it, which is `_roofed` re-derived from the drawing. Check 9 lost floor 2's
+      allowance of four and moved `[0, 2]` from `touching` to `apart`: the mezzanine
+      that earned both is demolished, `FLOOR_NEIGHBOURS` is plain adjacency, and the
+      window is now three storeys from anywhere.
+- [x] Move any budget that must move (`DRAW_BUDGET`, `PLAN_BOX_BUDGET`) **in the const,
       with a comment saying what pushed it** — never by loosening an assertion.
+      **Nothing had to move.** Measured after this task: 35 meshes against
+      `DRAW_BUDGET` 35 for 453 boxes, per-storey boxes
+      32 / 28 / 52 / 43 / 52 / 29 / 29 / 81 / 61 / 46 against `PLAN_BOX_BUDGET` 120,
+      380 collision shapes against the 420 ceiling.
+
+**➕ Scope found in Task 5, all of it "the audit is reading a name the building no
+longer uses":**
+
+- **Six negative controls were anchored on `STOREYS[0]`** and are now
+  `_control_storey("s3_records_west", …)` — a ROOM, never an index, which is the idiom
+  that file already argued for. Booked by Task 2's ⚠️.
+- **"A grand ramp drawn through the keep" is re-aimed, not retired.** Its rule (keep
+  clearance) went with the keep in Task 4, so it now moves storey 3's lane down the
+  plate onto storey 2's partitions and asserts the general rule that replaced it —
+  *"a ramp's foot has to land on floor somebody can walk on"*. Booked by Task 4's ⚠️.
+- **"A lane one cell short" had to become "a lane half its length".** The grand ramp
+  carried 11.0 m from the ground when that control was written, so nine cells put it at
+  0.630 and over the 0.575 ceiling; Task 2 moved its foot up to storey 2 and the same
+  ten cells now carry 6.4 m, so it takes five cells to make it too steep. The cells are
+  taken from the WEST end so the landing stays against a short end and the control keeps
+  tripping its own rule.
+- **`_fit_boxes` gained the ground-storey arm** the Task 3 ⚠️ predicted: the bound is
+  `-SLAB_THICK` on floor 0 (whose slab hangs under the world's ground plane) and a hard
+  zero on every storey above, where `FLOOR_Y > SLAB_THICK` anyway.
+- **`IdentityMass` / `IdentityPad` / `IdentityMassShape` are gone from the audit too.**
+  The mass is found by its GATE ID through the `*GateMass_<id>` pattern the riddles
+  already used (new `_gate_mass` / `_mass_rest` helpers), the collision shape off the
+  found mesh's own name, and the PAD is asserted as a BOX rather than a node — it is
+  `collide: false`, so it batches into `Floor1Batch` and has no node to find.
+- **`_floor_visible`'s docstring in `tower_interior.gd`** still described the mezzanine
+  and "at most FOUR storey meshes"; rewritten to say the table is plain adjacency today,
+  why it stays a table, and that the window is three.
 
 ### Task 6: The rest of the callers
 

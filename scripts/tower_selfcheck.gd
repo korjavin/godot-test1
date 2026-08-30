@@ -1345,10 +1345,17 @@ func _check_plans_are_walkable() -> void:
 	    first cell it cannot reach is reported as `(c, r)` AND as world XZ, because
 	    a designer fixing it is looking at a text file and a screenshot;
 	  * the stair COINCIDES with the floor below — its lane stands on walkable
-	    cells of the storey it climbs from, or, for the grand ramp off the annulus,
-	    clear of the keep and of the door corridor that runs east from it;
+	    cells of the storey it climbs from. Every floor is a plan now (bd
+	    godot-test1-dn8), so this is one rule read off two grids and no longer has
+	    a keep-clearance special case beside it;
 	  * and the ramp is no steeper than the phase-3 ramp, which is the only slope
 	    in this building anyone has ever walked.
+
+	THE GROUND STOREY IS THE ONE WITHOUT A RAMP, and it says so in data: `from ==
+	floor` means entered from outside the building, its `s` cells are the doormat,
+	and the four lane rules above (`_lane_problems`) are skipped for it. Everything
+	else — well-formedness, the pads, both fills — is asked of it unchanged, and
+	its own negative control at the bottom is what proves that.
 
 	NEGATIVE CONTROLS AT THE BOTTOM. A flood fill that passes on a broken plan is
 	worse than no flood fill, so each assertion is re-asked against a deliberately
@@ -1499,12 +1506,21 @@ func _check_riddles_are_answerable() -> void:
 
 func _check_the_flood_fill_can_fail() -> void:
 	"""
-	The negative controls: one deliberately broken copy of the first shipped
-	storey per assertion above, each of which must produce that assertion's own
-	complaint. `_control` matches on a phrase from the message, not merely on
-	"something failed" — a control that trips a different rule proves nothing.
+	The negative controls: one deliberately broken copy of a shipped storey per
+	assertion above, each of which must produce that assertion's own complaint.
+	`_control` matches on a phrase from the message, not merely on "something
+	failed" — a control that trips a different rule proves nothing.
+
+	EVERY BASE IS FOUND BY A ROOM IT DRAWS, never by an index into `STOREYS`. That
+	was `STOREYS[0]` until the ground storey was drawn on the grid in front of it
+	(bd godot-test1-dn8), at which point six controls started mutating cells that
+	mean nothing on the new first row and reported "the assertion is decorative" —
+	the check catching itself, which is the good failure mode and exactly the one
+	`_control_storey` two functions down already argued for.
 	"""
-	var base: Dictionary = TowerPlans.STOREYS[0]
+	var base := _control_storey("s3_records_west", "the storey-3 controls")
+	if base.is_empty():
+		return
 	# A row one character short — the assertion every other one stands on.
 	_control("a short row", _row_at(base, 1, String(base["rows"][1]).substr(1)),
 			"characters wide")
@@ -1520,23 +1536,37 @@ func _check_the_flood_fill_can_fail() -> void:
 	moved = _cell_at(moved, 15, 2, TowerPlans.FLOOR_CHAR)
 	moved = _cell_at(moved, 20, 20, TowerPlans.LANDING_CHAR)
 	_control("a landing off the lane's end", moved, "short end")
-	# The lane one cell shorter: 9 cells of run for 11 m of rise is 0.63, over the
-	# phase-3 ramp's proven 0.575.
-	var short_lane := _cell_at(base, 14, 1, TowerPlans.FLOOR_CHAR)
-	short_lane = _cell_at(short_lane, 14, 2, TowerPlans.FLOOR_CHAR)
-	_control("a lane one cell short", short_lane, "steeper than")
-	# The grand ramp redrawn across the middle of the annulus, where the keep is.
-	var in_keep: Dictionary = base.duplicate(true)
+	# The lane cut to its eastern five cells: 6.4 m of rise over 9.70 m of run is
+	# 0.660, over the phase-3 ramp's proven 0.575. ONE cell used to be enough — the
+	# grand ramp carried the whole 11.0 m from the ground and nine cells put it at
+	# 0.630 — but bd godot-test1-dn8 moved its foot up onto storey 2, so the same
+	# ten cells now carry 6.4 m and it takes half the lane to make it too steep.
+	# The cells go from the WEST end so the landing stays against a short end and
+	# this control keeps tripping its own rule and not the landing's.
+	var short_lane: Dictionary = base
+	for c: int in range(5, 10):
+		short_lane = _cell_at(short_lane, c, 1, TowerPlans.FLOOR_CHAR)
+		short_lane = _cell_at(short_lane, c, 2, TowerPlans.FLOOR_CHAR)
+	_control("a lane half its length", short_lane, "steeper than")
+	# THE GRAND RAMP MOVED OFF THE CELLS THE STOREY BELOW KEEPS CLEAR FOR IT. This
+	# control used to redraw the ramp "through the keep" and assert the report said
+	# `inside the keep`; the keep is demolished (bd godot-test1-dn8) and its
+	# clearance rule went with it, so the control is re-aimed at the general rule
+	# that replaced it — a lane's cells stand on floor somebody can walk on, read
+	# out of the storey below's own grid. Moved down the plate to rows 21-22, the
+	# ten lane cells cross storey 2's south partition at column 22.
+	var off_the_clear: Dictionary = base.duplicate(true)
 	var clear_row := TowerPlans.WALL_CHAR + TowerPlans.FLOOR_CHAR.repeat(TowerPlans.PLAN_GRID - 2) \
 			+ TowerPlans.WALL_CHAR
 	var lane_row := TowerPlans.WALL_CHAR + TowerPlans.FLOOR_CHAR.repeat(15) \
 			+ TowerPlans.STAIR_UP_CHAR.repeat(10) + TowerPlans.LANDING_CHAR \
 			+ TowerPlans.FLOOR_CHAR.repeat(12) + TowerPlans.WALL_CHAR
-	in_keep["rows"][1] = clear_row
-	in_keep["rows"][2] = clear_row
-	in_keep["rows"][21] = lane_row
-	in_keep["rows"][22] = lane_row
-	_control("a grand ramp drawn through the keep", in_keep, "inside the keep")
+	off_the_clear["rows"][1] = clear_row
+	off_the_clear["rows"][2] = clear_row
+	off_the_clear["rows"][21] = lane_row
+	off_the_clear["rows"][22] = lane_row
+	_control("a grand ramp redrawn over the storey below's partitions", off_the_clear,
+			"land on floor somebody can walk on")
 	# THE FLOOR ENTERED ONLY BY STEPPING OFF THE RAMP. Wall the two cells east of
 	# storey 3's landing and the drawing is still perfectly connected on paper — but
 	# the only way off the landing is west onto the lane, and the only way off the
@@ -1579,6 +1609,27 @@ func _check_the_flood_fill_can_fail() -> void:
 		over_cell = _cell_at(over_cell, 21, 5, TowerPlans.GATE_CHAR)
 		over_cell["gates"]["21,5"] = "riddle_maze_upper"
 		_control("a riddle drawn under a room", over_cell, "belongs under a wall")
+
+	# --- and the two halves of the ground storey's `from == floor` rule --------
+	# THE ARM THAT SKIPS THE LANE RULES MUST NOT SKIP THE FLOOR. `from == floor`
+	# turns off four assertions for the one storey entered from outside the
+	# building, and an arm like that is one `return` away from turning off the
+	# whole function — at which point the ground floor, the storey every run starts
+	# on, would be the only one nothing checks. So: wall the vault's doorway and the
+	# fill must still say the vault is sealed, exactly as it does on a ramped floor.
+	var ground := _control_storey("courtyard", "the ground storey's lane-less rules")
+	if not ground.is_empty():
+		_control("a walled-off room on the storey with no lane",
+				_cell_at(_cell_at(ground, 29, 27, TowerPlans.WALL_CHAR),
+					30, 27, TowerPlans.WALL_CHAR),
+				"cannot be walked to")
+		# ...and the other direction: a storey entered from outside that draws a
+		# lane anyway is a ramp rising out of its own floor, which is a broken
+		# `from` and the reason the arm tests the pair rather than just "no S".
+		var own_lane := _cell_at(ground, 25, 15, TowerPlans.STAIR_UP_CHAR)
+		own_lane = _cell_at(own_lane, 26, 15, TowerPlans.STAIR_UP_CHAR)
+		_control("a ramp drawn on the storey entered from outside", own_lane,
+				"stands on its own storey")
 
 
 func _control_storey(room: String, what: String) -> Dictionary:
@@ -1639,52 +1690,38 @@ func _plan_problems(plan: Dictionary) -> Array[String]:
 				out.append("cell (%d, %d) is '%s', which is not a legal plan character" % [
 					c, r, line[c]])
 
-	# --- the ramp lane: one solid rectangle, long axis on X --------------------
+	# --- is there a lane at all, and should there be? --------------------------
+	# THE GROUND STOREY DRAWS NO LANE, and that is DATA rather than a special case
+	# here: `from == floor` is the format's way of saying **this storey is entered
+	# from outside the building**. Floor 0 is the only one — a player arrives
+	# through the shell's doorway, not up a ramp — and since bd godot-test1-dn8 drew
+	# floors 0 and 1 on the grid the audit has to know the rule the plan format
+	# states. Its `s` cells are the DOORMAT, so every assertion about a LANE is
+	# skipped (they are gathered in `_lane_problems`, called at the bottom) and
+	# every assertion about the LANDING still stands: the doormat is where a player
+	# actually arrives and therefore still where the flood fill starts.
+	#
+	# The rule runs both ways, which is what makes it a rule and not a licence: a
+	# storey entered from outside that DOES draw a lane has a ramp rising out of its
+	# own floor, which is a broken `from` and not a stair.
+	var from_outside: bool = int(plan["from"]) == int(plan["floor"])
 	var lane_cells := _plan_cells(plan, TowerPlans.STAIR_UP_CHAR)
 	var landing_cells := _plan_cells(plan, TowerPlans.LANDING_CHAR)
-	if lane_cells.is_empty():
-		out.append("no '%s' cells — every storey above the keep is reached by a ramp"
+	if lane_cells.is_empty() and not from_outside:
+		out.append(("no '%s' cells — a storey drawn over another floor is reached by a ramp, "
+			+ "and only 'from' == 'floor' (entered from outside the building) draws none")
 			% TowerPlans.STAIR_UP_CHAR)
 		return out
-	if landing_cells.is_empty():
-		out.append("no '%s' landing — the ramp's head is what says which way it rises"
-			% TowerPlans.LANDING_CHAR)
+	if not lane_cells.is_empty() and from_outside:
+		out.append(("floor %d says 'from' == 'floor', so it is entered from outside the "
+			+ "building, yet draws %d '%s' cells — a lane whose foot stands on its own storey")
+			% [int(plan["floor"]), lane_cells.size(), TowerPlans.STAIR_UP_CHAR])
 		return out
-	var c0 := TowerPlans.PLAN_GRID
-	var c1 := -1
-	var r0 := TowerPlans.PLAN_GRID
-	var r1 := -1
-	for cell: Vector2i in lane_cells:
-		c0 = mini(c0, cell.x)
-		c1 = maxi(c1, cell.x)
-		r0 = mini(r0, cell.y)
-		r1 = maxi(r1, cell.y)
-	var lane_w := c1 - c0 + 1
-	var lane_d := r1 - r0 + 1
-	if lane_cells.size() != lane_w * lane_d:
-		out.append(("the '%s' cells are not one solid rectangle (%d cells in a %d x %d box) "
-			+ "— the deck is one box and cannot follow a scattered lane")
-			% [TowerPlans.STAIR_UP_CHAR, lane_cells.size(), lane_w, lane_d])
-	if lane_w <= lane_d:
-		out.append(("the ramp lane is %d x %d — its long axis must be X, because every ramp "
-			+ "in this building is X-running and check 3 and the underside test both reason "
-			+ "in the XY plane") % [lane_w, lane_d])
-	# ...with its landing against ONE short end, which is how the rise is derived.
-	var east := 0
-	var west := 0
-	for cell: Vector2i in landing_cells:
-		if cell.y < r0 or cell.y > r1:
-			out.append(("the landing at (%d, %d) is not across a short end of the lane "
-				+ "(rows %d..%d)") % [cell.x, cell.y, r0, r1])
-		elif cell.x == c1 + 1:
-			east += 1
-		elif cell.x == c0 - 1:
-			west += 1
-		else:
-			out.append(("the landing at (%d, %d) does not sit against a short end of the "
-				+ "lane (columns %d and %d)") % [cell.x, cell.y, c0 - 1, c1 + 1])
-	if east > 0 and west > 0:
-		out.append("landing cells sit against BOTH short ends — the ramp rises two ways")
+	if landing_cells.is_empty():
+		out.append(("no '%s' landing — on a ramped storey it is the head of the lane and says "
+			+ "which way the ramp rises; on the ground storey it is the doormat. Either way "
+			+ "it is where the fill starts") % TowerPlans.LANDING_CHAR)
+		return out
 
 	# --- the pads --------------------------------------------------------------
 	var pads := _plan_cells(plan, TowerPlans.PAD_CHAR)
@@ -1791,6 +1828,63 @@ func _plan_problems(plan: Dictionary) -> Array[String]:
 					+ "gate belongs under a wall")
 					% [gid3, c3, r3, over, int(plan["floor"]) + 1, lift,
 						TowerInterior.SLAB_THICK, lift - TowerInterior.SLAB_THICK])
+
+	# --- and everything that is only true of a storey with a ramp --------------
+	if not from_outside:
+		out.append_array(_lane_problems(plan, lane_cells, landing_cells))
+	return out
+
+
+func _lane_problems(plan: Dictionary, lane_cells: Array[Vector2i],
+		landing_cells: Array[Vector2i]) -> Array[String]:
+	"""
+	Everything the `S` lane has to be: one solid rectangle with its long axis on X,
+	its landing against ONE short end, standing on floor somebody can walk on, and
+	no steeper than the ramp this game has always had.
+
+	Split out of `_plan_problems` when the ground storey joined `STOREYS` (bd
+	godot-test1-dn8): a floor entered from outside draws no lane, and "skip the four
+	lane rules" reads better as one call the caller can decline than as four
+	`from == floor` guards buried among rules that apply to every storey.
+	"""
+	var out: Array[String] = []
+
+	# --- the ramp lane: one solid rectangle, long axis on X --------------------
+	var c0 := TowerPlans.PLAN_GRID
+	var c1 := -1
+	var r0 := TowerPlans.PLAN_GRID
+	var r1 := -1
+	for cell: Vector2i in lane_cells:
+		c0 = mini(c0, cell.x)
+		c1 = maxi(c1, cell.x)
+		r0 = mini(r0, cell.y)
+		r1 = maxi(r1, cell.y)
+	var lane_w := c1 - c0 + 1
+	var lane_d := r1 - r0 + 1
+	if lane_cells.size() != lane_w * lane_d:
+		out.append(("the '%s' cells are not one solid rectangle (%d cells in a %d x %d box) "
+			+ "— the deck is one box and cannot follow a scattered lane")
+			% [TowerPlans.STAIR_UP_CHAR, lane_cells.size(), lane_w, lane_d])
+	if lane_w <= lane_d:
+		out.append(("the ramp lane is %d x %d — its long axis must be X, because every ramp "
+			+ "in this building is X-running and check 3 and the underside test both reason "
+			+ "in the XY plane") % [lane_w, lane_d])
+	# ...with its landing against ONE short end, which is how the rise is derived.
+	var east := 0
+	var west := 0
+	for cell: Vector2i in landing_cells:
+		if cell.y < r0 or cell.y > r1:
+			out.append(("the landing at (%d, %d) is not across a short end of the lane "
+				+ "(rows %d..%d)") % [cell.x, cell.y, r0, r1])
+		elif cell.x == c1 + 1:
+			east += 1
+		elif cell.x == c0 - 1:
+			west += 1
+		else:
+			out.append(("the landing at (%d, %d) does not sit against a short end of the "
+				+ "lane (columns %d and %d)") % [cell.x, cell.y, c0 - 1, c1 + 1])
+	if east > 0 and west > 0:
+		out.append("landing cells sit against BOTH short ends — the ramp rises two ways")
 
 	# --- the stair stands on the storey below ----------------------------------
 	var below := TowerPlans.storey(int(plan["from"]))

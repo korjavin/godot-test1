@@ -4295,14 +4295,15 @@ static func _floor_visible(index: int, current: int) -> bool:
 	The gating policy itself: the current storey and every storey it TOUCHES.
 
 	Adjacency is read out of `FLOOR_NEIGHBOURS` rather than computed as
-	`absi(index - current) <= 1`, because this building is not a stack of equal
-	slabs — read that table for the mezzanine that broke the arithmetic.
+	`absi(index - current) <= 1`. That table exists because of the keep's MEZZANINE,
+	which hung two indices under floor 2's slab and made index distance lie; bead
+	`godot-test1-dn8` demolished the keep, so the table is plain adjacency today and
+	the arithmetic would give the same answers. It stays a table anyway: the next
+	irregular storey should be one row of data and not a rewrite of this function.
 
-	At most FOUR storey meshes are drawn (from storey 3, which has the annulus, the
-	keep's landing and storey 4 against it); everywhere else it is three or two.
-	`DRAW_BUDGET` counts meshes BUILT, not drawn, so that number is unaffected —
-	what it costs is one more batched draw call on the one floor that touches three
-	others, which is the price of not shipping invisible stone.
+	At most THREE storey meshes are drawn — yourself, the one under you and the one
+	over you. It was four from storey 3 while the mezzanine existed. `DRAW_BUDGET`
+	counts meshes BUILT, not drawn, so that number is unaffected either way.
 	"""
 	if index == current:
 		return true
