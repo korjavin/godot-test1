@@ -465,13 +465,16 @@ const PLAN_BOX_BUDGET: int = 120
 ## structure keeps its budget unchanged and the office keeps its own, and a
 ## regression in either one is still legible.
 ##
-## MEASURED: the office storeys land in the 90s and the labyrinth floors — nearly
-## all corridor, with few and small rooms — in the low tens. 200 is the worst floor
-## plus about a third. What it catches is the dresser's own failure mode, which is
-## not "the walls stopped merging" but "a rule stopped excluding": drop the
-## threshold guard or the footprint test and every wall-adjacent cell in the
-## building becomes a candidate, which is hundreds per storey, not dozens.
-const PLAN_DRESS_BUDGET: int = 200
+## MEASURED, per storey: 64 / 24 / 111 / 168 / 114 / 119 / 94 / 19 / 14 / 0. The
+## office floors are the big ones (168 is the accounts floor's twelve rooms), the
+## labyrinth floors are nearly all corridor and the cell block is all set piece.
+## 240 is the worst floor plus about a third.
+##
+## What it catches is the dresser's OWN failure mode, which is not "the walls
+## stopped merging" but "a rule stopped excluding": drop the threshold guard or the
+## footprint test and every wall-adjacent cell in the building is a candidate, which
+## is many hundreds per storey rather than dozens.
+const PLAN_DRESS_BUDGET: int = 240
 
 # ============================================================================
 # THE RIDDLE LOCK (phase 15) — the fourth gate verb
@@ -2103,17 +2106,31 @@ static func _plan_dressing(plan: Dictionary, taken: Array[Dictionary]) -> Array[
 	var out: Array[Dictionary] = []
 	var floor_index := int(plan["floor"])
 	var rows: Array = plan["rows"]
+	# NOTHING SOLID MAY STAND UNDER THE STAIRWELL HOLE, and this is the one rule the
+	# footprint test above cannot express: the hole is a thing the storey ABOVE cuts
+	# out of its own slab, so it is absent from everything this storey draws.
+	#
+	# It is the no-jump-gated-climb rule, and check 2 found it rather than a
+	# playtest: a 1.85 m bookshelf on storey 9 stood under storey 10's hole, and
+	# 1.85 + a 3.61 m jump apex is 5.46 m of reach against a 5.00 m storey — an
+	# unaided hop straight onto the labyrinth's upper half, past the ramp, past the
+	# riddle and past the guard. Everywhere else the ceiling is a slab and the jump
+	# ends against it, which is why the rest of the furniture is free to be
+	# furniture-shaped. Keeping the hole clear also just reads right: it is where the
+	# ramp comes down.
+	var above := TowerPlans.storey(floor_index + 1)
+	var hole := {} if above.is_empty() else _plan_hole(above)
 	var letters: Array = plan["rooms"].keys()
 	letters.sort()
 	for letter: String in letters:
 		if DRESS_SKIP_ROOMS.has(String(plan["rooms"][letter])):
 			continue
-		out.append_array(_dress_room(plan, rows, floor_index, letter, taken))
+		out.append_array(_dress_room(plan, rows, floor_index, letter, taken, hole))
 	return out
 
 
 static func _dress_room(plan: Dictionary, rows: Array, floor_index: int,
-		letter: String, taken: Array[Dictionary]) -> Array[Dictionary]:
+		letter: String, taken: Array[Dictionary], hole: Dictionary) -> Array[Dictionary]:
 	"""One room's furniture and wall art. See `_plan_dressing` for the parameters."""
 	var cells := _room_cells(rows, letter)
 	if cells.is_empty():
@@ -2153,7 +2170,7 @@ static func _dress_room(plan: Dictionary, rows: Array, floor_index: int,
 			if _plan_char(rows, cell + step) == TowerPlans.WALL_CHAR:
 				touches_wall = true
 				break
-		if not touches_wall or _cell_is_taken(cell, taken):
+		if not touches_wall or _cell_is_taken(cell, taken) or _under_hole(cell, hole):
 			continue
 		cands.append(cell)
 	if cands.size() < DRESS_MIN_CANDIDATES:
@@ -2182,7 +2199,7 @@ static func _dress_room(plan: Dictionary, rows: Array, floor_index: int,
 			break
 		var cell: Vector2i = cands[index]
 		var piece: Dictionary = DRESS_PIECES[(kind + i) % DRESS_PIECES.size()]
-		if _piece_is_solid(piece) and not _still_connected(room, blocked, thresholds, cell):
+		if _piece_is_solid(piece) and not _still_connected(room, blocked, cell):
 			# It would have walled something off. Dropped, and the room is simply
 			# emptier — never "placed anyway with a warning", because the warning
 			# nobody reads is how a softlock ships.
@@ -2240,6 +2257,14 @@ static func _room_cells(rows: Array, letter: String) -> Array[Vector2i]:
 	return out
 
 
+static func _under_hole(cell: Vector2i, hole: Dictionary) -> bool:
+	"""Is this cell under the storey above's stairwell hole? See `_plan_dressing`."""
+	if hole.is_empty():
+		return false
+	return cell.x >= int(hole["c0"]) and cell.x <= int(hole["c1"]) \
+		and cell.y >= int(hole["r0"]) and cell.y <= int(hole["r1"])
+
+
 static func _piece_is_solid(piece: Dictionary) -> bool:
 	"""Does any part of this piece collide? Then its cell is a wall to the fill."""
 	for part: Dictionary in piece["parts"]:
@@ -2249,30 +2274,40 @@ static func _piece_is_solid(piece: Dictionary) -> bool:
 
 
 static func _still_connected(room: Dictionary, blocked: Dictionary,
-		thresholds: Array[Vector2i], adding: Vector2i) -> bool:
+		adding: Vector2i) -> bool:
 	"""
-	Would blocking one more cell leave the room in one piece?
+	Would blocking one more cell split anything the player can walk on?
 
 	@param room: Every cell of the room, as a set.
-	@param blocked: The cells already solid with furniture.
-	@param thresholds: The doorway cells, which must all stay reachable.
-	@param adding: The cell about to be blocked.
-	@return: True when every free cell of the room still reaches every other.
+	@param blocked: The cells already made solid by furniture.
+	@param adding: The cell about to be made solid.
+	@return: True when nothing gets cut off.
 
-	THE CLAIM IS STRICTER THAN "THE DOORS STILL CONNECT", on purpose: one component
-	for the whole free floor also refuses a piece that seals a corner off, which is
-	not a softlock but is a metre of office nobody can ever stand in. It costs a
-	flood fill over at most a few hundred cells, once per candidate, at build time,
-	behind `_plan_cache`.
+	THE TEST IS LOCAL, AND THAT IS EXACTLY AS STRONG AS THE GLOBAL ONE. Taking one
+	cell out of a graph can only separate cells that were reaching each other
+	THROUGH it, and every such path ran between two of its own neighbours. So: if
+	the free neighbours of the cell all still reach one another without it, no
+	component was split — anywhere, for any room shape.
+
+	THE ROOM SHAPE IS WHY IT IS LOCAL RATHER THAN "the room stays in one piece",
+	which is what this said first and which was wrong on real geometry. A `rooms`
+	letter is a NAME, not a region: the ground floor's `outer_hall` is four separate
+	blocks of `O` joined only through the corridors between them, so its cells were
+	never one component and the strong claim refused to place a single solid thing
+	in the biggest room in the building. This asks the question that was actually
+	meant — did the furniture change the connectivity — and it is the same question
+	`tower_interior_selfcheck` check 18 asks from the outside, phrased there as the
+	doorways rather than the cells because that is the property that softlocks.
 	"""
-	var free: Array[Vector2i] = []
-	for cell: Vector2i in room:
-		if cell != adding and not blocked.has(cell):
-			free.append(cell)
-	if free.is_empty():
-		return false
-	var seen := {free[0]: true}
-	var queue: Array[Vector2i] = [free[0]]
+	var here: Array[Vector2i] = []
+	for step: Vector2i in _STEPS:
+		var next: Vector2i = adding + step
+		if room.has(next) and not blocked.has(next):
+			here.append(next)
+	if here.size() < 2:
+		return true
+	var seen := {here[0]: true}
+	var queue: Array[Vector2i] = [here[0]]
 	while not queue.is_empty():
 		var at: Vector2i = queue.pop_back()
 		for step: Vector2i in _STEPS:
@@ -2281,20 +2316,28 @@ static func _still_connected(room: Dictionary, blocked: Dictionary,
 				continue
 			seen[next] = true
 			queue.append(next)
-	if seen.size() != free.size():
-		return false
-	for cell: Vector2i in thresholds:
+	for cell: Vector2i in here:
 		if not seen.has(cell):
 			return false
 	return true
 
 
+## How much of a cell's edge the footprint test gives away, and it is FLOAT NOISE
+## and not clearance. A merged wall is stored as a centre and a size, so the edge it
+## reports (`pos.x - size.x * 0.5`) reproduces the grid line it was built from only
+## to rounding — and a wall that appears to reach 1e-16 m into the cell beside it
+## rejects that cell, which is how half the offices in the building came out empty
+## with no error anywhere. A centimetre is orders of magnitude over the noise and
+## orders under anything a piece of furniture would want to know about.
+const DRESS_EPS: float = 0.01
+
+
 static func _cell_is_taken(cell: Vector2i, taken: Array[Dictionary]) -> bool:
 	"""Does anything else this storey drew stand in this cell's footprint?"""
-	var x0 := _grid_x(float(cell.x))
-	var x1 := _grid_x(float(cell.x) + 1.0)
-	var z0 := _grid_z(float(cell.y))
-	var z1 := _grid_z(float(cell.y) + 1.0)
+	var x0 := _grid_x(float(cell.x)) + DRESS_EPS
+	var x1 := _grid_x(float(cell.x) + 1.0) - DRESS_EPS
+	var z0 := _grid_z(float(cell.y)) + DRESS_EPS
+	var z1 := _grid_z(float(cell.y) + 1.0) - DRESS_EPS
 	for box: Dictionary in taken:
 		var pos: Vector3 = box["pos"]
 		var half: Vector3 = box["size"] * 0.5

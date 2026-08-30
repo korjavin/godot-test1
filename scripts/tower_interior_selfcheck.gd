@@ -149,14 +149,14 @@ const POST_SETTLE_EPS: float = 0.5
 ## is the whole building and catches a builder that started emitting a shape per
 ## CELL on floors that each merge fine.
 ##
-## 520 SINCE THE OFFICE DRESSING (bead godot-test1-0a5), and 78 of the raise is
-## real: the whole furnished building is 425, because only a piece you would walk
-## INTO is solid — the desks, cabinets, shelves, meeting tables and coolers, and
-## not one chair, plant, monitor or picture frame. That split is the bead's
-## waist-height rule and check 18 asserts it directly; this number is what would
-## notice it being quietly abandoned, since "everything collides" is roughly twice
-## as many shapes and would land here first.
-const SHAPE_CEILING: int = 520
+## 640 SINCE THE OFFICE DRESSING (bead godot-test1-0a5). The furnished building is
+## 542, and only 162 of those 727 dressing boxes are solid at all: a shape is spent
+## on a piece you would walk INTO — the desks, cabinets, shelves, meeting tables and
+## coolers — and on no chair, plant, monitor, diploma or photograph. That split is
+## the bead's waist-height rule, asserted directly by check 18; this number is what
+## would notice it being quietly abandoned, because "all of it collides" is four
+## times the shapes and lands here first.
+const SHAPE_CEILING: int = 640
 
 var _failures: Array[String] = []
 
@@ -3537,9 +3537,10 @@ func _check_the_offices_are_furnished_and_still_walkable() -> void:
 			for cell: Vector2i in placed:
 				if placed[cell]:
 					blocked[cell] = true
-			if not _room_is_one_piece(cells, blocked, doors):
-				_fail("storey %d room %s is cut in two by its own furniture — a door in it opens onto nothing" % [
-					floor_index, letter])
+			var cut := _doors_still_reach(cells, blocked, doors)
+			if cut != "":
+				_fail("storey %d room %s: %s — the furniture walled a doorway off" % [
+					floor_index, letter, cut])
 			if placed.is_empty():
 				continue
 			dressed_rooms += 1
@@ -3632,35 +3633,65 @@ func _threshold_cells(rows: Array, cells: Array[Vector2i], letter: String) -> Ar
 	return out
 
 
-func _room_is_one_piece(cells: Array[Vector2i], blocked: Dictionary,
-		doors: Array[Vector2i]) -> bool:
-	## 4-connected flood over the room's free cells: one component, every doorway in
-	## it. Written here rather than called off the builder on purpose.
+func _doors_still_reach(cells: Array[Vector2i], blocked: Dictionary,
+		doors: Array[Vector2i]) -> String:
+	"""
+	Does every doorway still reach everywhere in this room it reached empty?
+
+	@return: "" when nothing was lost, else what was.
+
+	TWO LABELLINGS OF THE SAME GRID, and the comparison between them is the whole
+	assertion: components of the room's cells with NO furniture, then components of
+	the cells the furniture left free. Two doorways in one component of the first
+	must be in one component of the second — otherwise a piece of office equipment
+	is standing where a player has to walk.
+
+	IT IS A DIFFERENCE AND NOT AN ABSOLUTE, because a `rooms` letter names a room
+	and not a REGION: `outer_hall` is four blocks of `O` on opposite sides of the
+	ground floor, joined only through corridors this fill cannot see, and asking
+	"is this room one piece" of it fails on the empty building. Asking what the
+	furniture CHANGED is the honest form, and it is the exact property the builder
+	preserves cell by cell (`_still_connected`) — arrived at from the other end, off
+	the boxes rather than off the placement, which is what makes it a second opinion.
+	"""
+	var empty_of := _components(cells, {})
+	var free_of := _components(cells, blocked)
+	for cell: Vector2i in doors:
+		if blocked.has(cell):
+			return "its doorway at %s has furniture standing in it" % cell
+	for i: int in doors.size():
+		for j: int in range(i + 1, doors.size()):
+			if empty_of[doors[i]] != empty_of[doors[j]]:
+				continue
+			if free_of[doors[i]] != free_of[doors[j]]:
+				return "doorways %s and %s reached each other in the empty room and no longer do" % [
+					doors[i], doors[j]]
+	return ""
+
+
+func _components(cells: Array[Vector2i], blocked: Dictionary) -> Dictionary:
+	## Cell -> the id of its 4-connected component, over the cells `blocked` leaves.
 	var free := {}
 	for cell: Vector2i in cells:
 		if not blocked.has(cell):
 			free[cell] = true
-	if free.is_empty():
-		return doors.is_empty()
-	var start: Vector2i = doors[0] if not doors.is_empty() else free.keys()[0]
-	if blocked.has(start):
-		return false
-	var seen := {start: true}
-	var queue: Array[Vector2i] = [start]
-	while not queue.is_empty():
-		var at: Vector2i = queue.pop_back()
-		for step: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
-			var next: Vector2i = at + step
-			if seen.has(next) or not free.has(next):
-				continue
-			seen[next] = true
-			queue.append(next)
-	if seen.size() != free.size():
-		return false
-	for cell: Vector2i in doors:
-		if not seen.has(cell):
-			return false
-	return true
+	var out := {}
+	var next_id := 0
+	for cell: Vector2i in free:
+		if out.has(cell):
+			continue
+		var queue: Array[Vector2i] = [cell]
+		out[cell] = next_id
+		while not queue.is_empty():
+			var at: Vector2i = queue.pop_back()
+			for step: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+				var to: Vector2i = at + step
+				if out.has(to) or not free.has(to):
+					continue
+				out[to] = next_id
+				queue.append(to)
+		next_id += 1
+	return out
 
 
 func _fresh_store() -> void:
