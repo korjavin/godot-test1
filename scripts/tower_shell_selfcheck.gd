@@ -393,11 +393,20 @@ func _bodies() -> Array[Dictionary]:
 	if radius <= 0.0:
 		_fail("player.tscn has no CapsuleShape3D — the facade sweep would measure nothing")
 		return []
-	var small: float = float(load(PLAYER_SCRIPT).get_script_constant_map()
-			.get("TEIBI_SCALE_SMALL", 1.0))
+	# EVERY resize scale, and a MISSING one is a failure and not a 1.0 default:
+	# defaulting would collapse the small sweep into a second normal sweep and this
+	# check would go on printing two green lines while measuring one body. (codex
+	# review, 2026-08-30.)
+	var consts: Dictionary = load(PLAYER_SCRIPT).get_script_constant_map()
+	var smallest := 1.0
+	for key: String in ["TEIBI_SCALE_SMALL", "TEIBI_SCALE_BIG"]:
+		if not consts.has(key):
+			_fail("player_controller has no %s — the smallest body cannot be derived and the sweep would silently measure the normal capsule twice" % key)
+			return []
+		smallest = minf(smallest, float(consts[key]))
 	return [
 		{"name": "the normal capsule", "radius": radius},
-		{"name": "small Teibi", "radius": radius * small},
+		{"name": "the smallest Teibi (x%.2f)" % smallest, "radius": radius * smallest},
 	]
 
 

@@ -1992,6 +1992,11 @@ func _check_resize_is_not_a_lift() -> void:
 		return
 
 	# The giant body, off the shipped capsule and the shipped scale.
+	if player.collision_shape == null or not (player.collision_shape.shape is CapsuleShape3D):
+		_fail("player.tscn's collider is not a CapsuleShape3D — check 9 cannot size a giant")
+		_clear(player)
+		tower.queue_free()
+		return
 	var capsule: CapsuleShape3D = player.collision_shape.shape as CapsuleShape3D
 	var scale_big: float = player.TEIBI_SCALE_BIG
 	var giant_height: float = capsule.height * scale_big
@@ -2018,7 +2023,8 @@ func _check_resize_is_not_a_lift() -> void:
 			giant_radius, RESIZE_WALL_GAP, "a wall")
 	if ceiling_floor >= 0:
 		await _resize_is_refused(player, interior, ceiling_floor,
-			giant_radius, giant_radius + RESIZE_CEILING_GAP, "a ceiling")
+			giant_radius, giant_radius + RESIZE_CEILING_GAP, "a ceiling",
+			giant_radius)
 	await _resize_is_allowed_in_the_open(player, interior)
 
 	_clear(player)
@@ -2027,8 +2033,19 @@ func _check_resize_is_not_a_lift() -> void:
 
 
 func _resize_is_refused(player: Node, interior: Node3D, floor_index: int,
-		giant_radius: float, gap: float, cause: String) -> void:
-	"""One subject: stand on `floor_index` beside a wall and press F twice."""
+		giant_radius: float, gap: float, cause: String,
+		clear_radius: float = 0.0) -> void:
+	"""
+	One subject: stand on `floor_index` beside a wall and press F twice.
+
+	`clear_radius` > 0 asks for the CEILING subject's extra isolation — that a
+	capsule of that radius, kept entirely under the storey's ceiling, is free where
+	the body stands. If it is, nothing horizontal can be what refuses the growth and
+	the only thing left above is the lid. (codex review, 2026-08-30: the storey's
+	arithmetic already makes the refusal unconditional across the whole floor, but a
+	regression in the vertical half could hide behind a wall that happened to be in
+	reach, and this is the measurement that says it did not.)
+	"""
 	var placed := await _stand_beside_a_wall(player, interior, floor_index, gap)
 	if placed.is_empty():
 		_fail("found nowhere to stand on storey %d — check 9's %s subject is vacuous" % [
@@ -2039,6 +2056,10 @@ func _resize_is_refused(player: Node, interior: Node3D, floor_index: int,
 	print("storey %d (%.2f m clear), %s subject at (%.1f, %.1f, %.1f)" % [
 		floor_index, TowerInterior.plan_clear_height(floor_index), cause,
 		spot.x, spot.y, spot.z])
+
+	if clear_radius > 0.0 and not _horizontally_clear(player, floor_index, clear_radius):
+		_fail("storey %d's %s subject has stone within %.2f m horizontally — the refusal below could be a wall, so the ceiling is not isolated" % [
+			floor_index, cause, clear_radius])
 
 	# NORMAL SIZE IS NOT GATED. The refusal is about the growth alone; a Teibi who
 	# could not even shrink here would be a different bug wearing the same message.
@@ -2112,6 +2133,26 @@ func _storey_held(player: Node, interior: Node3D, floor_index: int, form: String
 	if now != floor_index:
 		_fail("%s beside %s moved the body from storey %d to storey %d — Resize is a lift" % [
 			form, cause, floor_index, now])
+
+
+func _horizontally_clear(player: Node, floor_index: int, radius: float) -> bool:
+	"""
+	True when a `radius`-wide capsule that stays UNDER this storey's ceiling is free
+	where the body stands — i.e. nothing beside the player is close enough to be
+	what a full-height probe would hit.
+
+	It asks through `player._shape_blocked()`, the same query the gate itself uses,
+	so the mask, the self-exclusion and the notion of "solid" are the shipped ones
+	and not a second opinion.
+	"""
+	var clear: float = TowerInterior.plan_clear_height(floor_index)
+	var probe := CapsuleShape3D.new()
+	probe.radius = radius
+	# Held off the deck and off the ceiling by the same margin, so neither can be
+	# the thing this reports.
+	probe.height = maxf(2.0 * radius, clear - 2.0 * RESIZE_CEILING_GAP)
+	var centre: Vector3 = player.global_position + Vector3(0.0, clear * 0.5, 0.0)
+	return not player.call("_shape_blocked", probe, centre)
 
 
 func _shove(player: Node, into: Vector3) -> void:

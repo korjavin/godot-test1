@@ -4002,14 +4002,14 @@ const PRIMM_BLINK_MAX_DISTANCE: float = 40.0
 ## Scale factors for the small and giant forms (1.0 is the normal size).
 const TEIBI_SCALE_SMALL: float = 0.45
 const TEIBI_SCALE_BIG: float = 2.2
-## How much the giant-fit probe pulls its capsule in at BOTH ends before asking
-## the physics server whether the grown body fits (see `_teibi_grow_blocked`).
+## How much the giant-fit probe pulls its capsule in AT THE BOTTOM ONLY before
+## asking the physics server whether the grown body fits (`_teibi_grow_blocked`).
 ##
 ## The floor the player is standing on is always touching the capsule's bottom, so
 ## an honest full-size probe reports "blocked" everywhere and Resize would never
 ## grow at all. 5 cm is under any real clearance in the game and far more than the
-## contact epsilon, so it clears the floor and the ceiling slab alike while leaving
-## the 20 cm of head/foot room a genuine squeeze has.
+## contact epsilon. The TOP is never trimmed: this number is an allowance for the
+## floor, and spending it at the head would licence 5 cm of skull inside a ceiling.
 const TEIBI_FIT_GROUND_CLEAR: float = 0.05
 
 ## How long Teibi may stay in an altered form (small OR giant) before he snaps
@@ -4552,11 +4552,14 @@ func _teibi_grow_blocked() -> bool:
 	geometry tuning covers "the body got bigger than the room".
 
 	The probe is the ACTUAL grown capsule, not Primm's point-sized sniff, because
-	the ceiling is the half of the exploit a mid-height sphere cannot see. Its ends
-	are pulled in by `TEIBI_FIT_GROUND_CLEAR` so the floor the player is standing on
-	— and only the floor — is not itself an overlap; that is the same "the ground is
-	not an obstacle" allowance `_is_body_blocked_at` buys with its centre-height
-	lift, spent here on a shape that has to span the whole body.
+	the ceiling is the half of the exploit a mid-height sphere cannot see. Only its
+	BOTTOM is pulled in, by `TEIBI_FIT_GROUND_CLEAR`, so the floor the player is
+	standing on — and only the floor — is not itself an overlap; that is the same
+	"the ground is not an obstacle" allowance `_is_body_blocked_at` buys with its
+	centre-height lift, spent here on a shape that has to span the whole body. The
+	TOP is the giant's real crown and is not trimmed (codex review): shortening it
+	there would licence exactly `TEIBI_FIT_GROUND_CLEAR` of head inside a ceiling,
+	and a head inside a ceiling is the whole bug.
 
 	Cheap enough to sit in `get_ability_block_reason()`, which the HUD polls every
 	frame: it runs only for a Teibi whose NEXT press is the growth (size state 1),
@@ -4568,14 +4571,16 @@ func _teibi_grow_blocked() -> bool:
 		return false
 	var s := TEIBI_SCALE_BIG
 	var capsule: CapsuleShape3D = (collision_shape.shape as CapsuleShape3D)
+	# Where the capsule's underside sits relative to the body's origin — the same
+	# `bottom` `_apply_teibi_scale` pins the grown capsule to, so the probe stands
+	# exactly where the giant would.
+	var bottom := collision_base_y - collision_half_height
+	var top := bottom + capsule.height * s
 	var probe := CapsuleShape3D.new()
 	probe.radius = capsule.radius * s
-	probe.height = maxf(2.0 * probe.radius,
-			capsule.height * s - 2.0 * TEIBI_FIT_GROUND_CLEAR)
-	# Feet at `global_position`, so the grown capsule's centre is one scaled
-	# half-height up — exactly where `_apply_teibi_scale` pins it.
+	probe.height = maxf(2.0 * probe.radius, top - bottom - TEIBI_FIT_GROUND_CLEAR)
 	return _shape_blocked(probe, global_position
-			+ Vector3(0.0, collision_half_height * s, 0.0))
+			+ Vector3(0.0, top - probe.height * 0.5, 0.0))
 
 
 func _shape_blocked(probe: Shape3D, centre: Vector3) -> bool:
