@@ -2254,7 +2254,7 @@ func _probe_hunt_dispatch(hunt_species: String) -> void:
 
 
 # ============================================================================
-# CHECK 8e — THE SCENT TRAIL: a tracker arrives on a walker, never on a runner
+# CHECK 8f — THE SCENT TRAIL: a tracker arrives on a walker, never on a runner
 # ============================================================================
 # The hunt arm's SECOND LEG (owner design ruling 2026-08-31). Out of detection a
 # hunter follows the breadcrumb trail `crocodile_lod_manager` records, walking it
@@ -2373,7 +2373,7 @@ func _probe_scent(species_name: String, walking: bool) -> void:
 	var row: Dictionary = _species_table[species_name]
 	var quarry_speed: float = _walk_speed if walking else _slowest_run_speed
 	if quarry_speed <= 0.0:
-		_fail("the scent probe has no %s speed to move its quarry at — check 8e"
+		_fail("the scent probe has no %s speed to move its quarry at — check 8f"
 				% ("walk" if walking else "run") + " would measure a stationary"
 				+ " player, which every tracker reaches trivially")
 		return

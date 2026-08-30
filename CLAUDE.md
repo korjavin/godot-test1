@@ -615,6 +615,19 @@ dispatch maps and the hunter spawner alone reports a shipped predator as unspawn
 stake, and it reuses BOTH of the hunter's immunity keys — see the tower section above
 for why that is a design decision and not an inheritance.
 
+**The hunt arm has a SECOND LEG: scent tracking, and it is steering, not detection.**
+Out of detection a row carrying `scent_radius` (150 m, the hunter alone) asks the LOD
+manager for the freshest crumb of the nearest quarry's trail within that radius and walks
+it — `is_tracking` / `track_target`, a third branch beside chase and wander in
+`_physics_process`. It sets `is_chasing` for nobody, touches `detection_radius` for
+nobody, and travels at the row's OWN `chase_speed`, which `_ready()` has already clamped
+to `MAX_CHASE_SPEED` — so walking (5.0) lets a tracker arrive, which IS the pressure the
+owner asked for, and running (9.0) still leaves it behind, and no retune of a row can
+reach around either. Mercy is still decided at ENGAGEMENT by the director: the nose
+brings hunters near you, it does not grant anybody a grab. `enemy_spawn_selfcheck` check
+8f is the acceptance — a walk that must be caught up with and a run that must not,
+iterating every row that declares a nose.
+
 **Hunter mercy is tuned BEFORE contact and never by a hunter pulling its punch.**
 `scripts/hunt_director.gd` (one node in `main.tscn`, group `"hunt_director"`, modelled on
 the LOD manager: group discovery, a 2 Hz tick, a pure decision core) answers the hunt arm's
@@ -673,6 +686,20 @@ coin animation beyond its own radius. Two invariants:
   `BOSS_TERRITORY_RADIUS` (32) < `SIM_RADIUS` (45) — because it is leashed to the area it
   spawned in and the whole ZONE, not just the smell, has to fit inside the sleep radius.
 - **Crocodiles are slept, never removed.** Entity counts stay the same.
+
+**The scent trail lives here too, and it is why a slept body can now MOVE.** The same
+scan that decides who sleeps records a breadcrumb ring buffer for every focus point
+(`TRAIL_STEP` 2.5 m, `TRAIL_TTL` 3 min, matched to a quarry by proximity like
+`hunt_director`'s buckets), publishes it as `scent_point(from, radius)`, and walks a
+SLEEPING hunter one kinematic step along it per tick (`advance_tracking`). Three things
+that rule keeps: it is **runtime state outside the determinism contract** — no RNG, no
+hash stream, the weather/fauna precedent; the master's `focus_points` already contains
+every room member, so "a hunter tracks the nearest room member" costs **zero netcode**;
+and the step is kinematic (no physics, no `_physics_process`, no collision), so entity
+counts and near-player behaviour are untouched. Only a `SPECIES` row carrying
+`scent_radius` is ever asked. **`mp_manager._send_croc_sync` publishes a slept-but-
+stalking hunter** — it is the one body that leaves its deterministic spawn state without
+waking, so the usual "sleepers cost zero network" skip would pop it into place on wake.
 
 The same scan publishes the nearest chaser's distance to the danger vignette — **two
 channels off one scan**, split on the chaser's `behavior`: animals drive the red edge glow
