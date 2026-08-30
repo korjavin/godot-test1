@@ -1921,11 +1921,42 @@ func _drive_into_custody(player: Node) -> void:
 # ============================================================================
 
 func _make_player() -> Node:
-	"""A real `player.tscn`, in the tree and ready to be bitten."""
+	"""
+	A real `player.tscn`, in the tree and ready to be bitten — BY THE CHECK, and
+	not by the building it is standing in.
+
+	THE BUILDING GETS THE FIRST BITE ON A SLOW MACHINE, and that is a real race
+	this staging used to lose silently. Every check here parks the tower at the
+	origin and a fresh player spawns at the origin, i.e. INSIDE it, next to the
+	interior's own hazards. One `await process_frame` is one process frame but an
+	UNBOUNDED number of physics ticks — Godot runs as many as the elapsed wall
+	clock asks for, up to `max_physics_steps_per_frame` (8) — so on a fast desktop
+	one or two tick past and nothing reaches the body, while on a loaded CI runner
+	eight do and the rotor bar lands a hit. `hit_by_crocodile` then early-returns
+	on its own invulnerability gate for the check's hit, `caught_setback` stays 0,
+	and the guard check watches a heart get spent and the run end — six failures
+	that look like the game is broken and reproduce nowhere.
+
+	(Reproduce the old behaviour with `godot --headless --fixed-fps 5 ...`: a fifth
+	of a second per process frame is exactly the slow runner, and it fails every
+	time.)
+
+	So undo whatever the building landed while we were staging. This clears the
+	invulnerability gate and the caught/respawn timers that re-raise it — and
+	NOTHING else: lives, coins and the roster are what each check sets and asserts
+	on, so restoring those would be this harness hiding a regression rather than a
+	race.
+	"""
 	var packed: PackedScene = load(PLAYER_SCENE)
 	var player: Node = packed.instantiate()
 	root.add_child(player)
 	await process_frame
+	player.is_caught = false
+	player.caught_timer = 0.0
+	player.caught_setback = 0.0
+	player.is_respawning = false
+	player.respawn_timer = 0.0
+	player.respawn_blink_timer = 0.0
 	return player
 
 
