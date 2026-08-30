@@ -4002,6 +4002,16 @@ const PRIMM_BLINK_MAX_DISTANCE: float = 40.0
 ## Scale factors for the small and giant forms (1.0 is the normal size).
 const TEIBI_SCALE_SMALL: float = 0.45
 const TEIBI_SCALE_BIG: float = 2.2
+## How much the giant-fit probe pulls its capsule in AT THE BOTTOM ONLY before
+## asking the physics server whether the grown body fits (`_teibi_grow_blocked`).
+##
+## The floor the player is standing on is always touching the capsule's bottom, so
+## an honest full-size probe reports "blocked" everywhere and Resize would never
+## grow at all. 5 cm is under any real clearance in the game and far more than the
+## contact epsilon. The TOP is never trimmed: this number is an allowance for the
+## floor, and spending it at the head would licence 5 cm of skull inside a ceiling.
+const TEIBI_FIT_GROUND_CLEAR: float = 0.05
+
 ## How long Teibi may stay in an altered form (small OR giant) before he snaps
 ## back to normal on his own — no extra press needed. This is a TOTAL budget for
 ## the whole small/giant excursion: switching small↔giant does not refill it.
@@ -4523,15 +4533,69 @@ func _is_body_blocked_at(pos: Vector3) -> bool:
 	flat ground — which the capsule always rests on — never counts as "blocked";
 	only blocks and structures that rise above the ground do.
 	"""
+	var probe := SphereShape3D.new()
+	probe.radius = 0.5
+	# Lift the probe to the capsule's centre height so it clears the ground plane.
+	return _shape_blocked(probe, pos + Vector3(0.0, collision_base_y, 0.0))
+
+
+func _teibi_grow_blocked() -> bool:
+	"""
+	True when the GIANT capsule would not fit where the body is standing right now.
+
+	THE FIX FOR THE TOWER BREACH (bead godot-test1-3uh), and it is a fix anywhere:
+	growing inside geometry buries the grown capsule in it and the physics server's
+	depenetration then squirts the body out along the shallowest axis — which, in a
+	4.6 m storey a 4.4 m giant does not fit under, is UP, through the ceiling, onto
+	the next floor. That turned Resize into a free lift past every gate the tower's
+	softlock audit believes in. Refusing the growth is the root cause; no amount of
+	geometry tuning covers "the body got bigger than the room".
+
+	The probe is the ACTUAL grown capsule, not Primm's point-sized sniff, because
+	the ceiling is the half of the exploit a mid-height sphere cannot see. Only its
+	BOTTOM is pulled in, by `TEIBI_FIT_GROUND_CLEAR`, so the floor the player is
+	standing on — and only the floor — is not itself an overlap; that is the same
+	"the ground is not an obstacle" allowance `_is_body_blocked_at` buys with its
+	centre-height lift, spent here on a shape that has to span the whole body. The
+	TOP is the giant's real crown and is not trimmed (codex review): shortening it
+	there would licence exactly `TEIBI_FIT_GROUND_CLEAR` of head inside a ceiling,
+	and a head inside a ceiling is the whole bug.
+
+	Cheap enough to sit in `get_ability_block_reason()`, which the HUD polls every
+	frame: it runs only for a Teibi whose NEXT press is the growth (size state 1),
+	i.e. one query a frame for one hero inside a 10 s window.
+	`ponytail:` one shape per call rather than a cached probe — the allocation is a
+	RefCounted in a bounded window; cache it if the F3 overlay ever notices.
+	"""
+	if not collision_shape or not (collision_shape.shape is CapsuleShape3D):
+		return false
+	var s := TEIBI_SCALE_BIG
+	var capsule: CapsuleShape3D = (collision_shape.shape as CapsuleShape3D)
+	# Where the capsule's underside sits relative to the body's origin — the same
+	# `bottom` `_apply_teibi_scale` pins the grown capsule to, so the probe stands
+	# exactly where the giant would.
+	var bottom := collision_base_y - collision_half_height
+	var top := bottom + capsule.height * s
+	var probe := CapsuleShape3D.new()
+	probe.radius = capsule.radius * s
+	probe.height = maxf(2.0 * probe.radius, top - bottom - TEIBI_FIT_GROUND_CLEAR)
+	return _shape_blocked(probe, global_position
+			+ Vector3(0.0, top - probe.height * 0.5, 0.0))
+
+
+func _shape_blocked(probe: Shape3D, centre: Vector3) -> bool:
+	"""
+	THE one "is there solid geometry here" query — the space state, the self
+	exclusion and the mask in a single place, so Primm's landing scan and Teibi's
+	fit test can never drift apart about what counts as solid or about whose
+	collider is our own. Callers bring the shape; the question is shared.
+	"""
 	var space := get_world_3d().direct_space_state
 	if not space:
 		return false
 	var query := PhysicsShapeQueryParameters3D.new()
-	var probe := SphereShape3D.new()
-	probe.radius = 0.5
 	query.shape = probe
-	# Lift the probe to the capsule's centre height so it clears the ground plane.
-	query.transform = Transform3D(Basis(), pos + Vector3(0.0, collision_base_y, 0.0))
+	query.transform = Transform3D(Basis(), centre)
 	query.exclude = [get_rid()]  # never sense our own collider
 	query.collision_mask = collision_mask
 	return not space.intersect_shape(query, 1).is_empty()
@@ -4817,6 +4881,10 @@ func get_ability_block_reason() -> String:
 	  "CELL" — the prison role has no ability at all: every one of the four is a
 	           phase, a flight, a combat verb or a wave, and the role is defined as
 	           having none of them.
+	  "TIGHT"— Teibi's next press would make him GIANT and the grown capsule does
+	           not fit where he is standing. Growing inside geometry is not a
+	           clipping artefact, it is a lift: the depenetration pops him out
+	           upwards, through a storey's ceiling and past its gate.
 	  "RAIN" — Windman can't take off inside a storm cloud's rain zone.
 	  "LAND" — AIR RUSH IS A TAKE-OFF, NOT A MID-AIR JET: Windman must have his
 	           feet on the ground (or be inside the coyote window) to launch.
@@ -4850,6 +4918,14 @@ func get_ability_block_reason() -> String:
 	if prisoner_active:
 		return "CELL"
 	var char_name: String = CHARACTERS[current_character_index]["name"]
+	# "TIGHT" — THE GIANT NEEDS SOMEWHERE TO GROW INTO (bead godot-test1-3uh).
+	# Only the press that would make him giant is asked: small is strictly inside
+	# the normal capsule and normal is strictly inside the giant one, so every
+	# other step of the cycle shrinks the body and always fits. See
+	# `_teibi_grow_blocked()` for why growing inside stone is a traversal exploit
+	# and not just a clipping artefact.
+	if char_name == "teibi" and teibi_size_state == 1 and _teibi_grow_blocked():
+		return "TIGHT"
 	if char_name != "windman":
 		return ""
 	if _weather_is_raining_here():
