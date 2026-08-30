@@ -2697,13 +2697,27 @@ const SPECIES: Dictionary = {
 		"speed_random_factor": 0.05,
 		"size_random_factor": 0.03,
 
-		## THE SMALLEST DETECTION RADIUS OF ANY NON-AMBUSH ROW, and deliberately so:
-		## the owner ruling for the interior is "few guards, mostly puzzles". 6.5 m
-		## is about one room, so a guard owns the space it is standing in and
-		## nothing beyond the doorway — you can look at it from the next room and
-		## decide. Well under the LOD SIM_RADIUS with its margin (6.5 + 15 << 45),
-		## which the species table check measures.
-		"detection_radius": 6.5,
+		## SEES FURTHER, BUT ONLY AHEAD — and the two halves of that sentence are
+		## these two numbers, which were retuned together and only make sense
+		## together (owner item 3: "with less hunters ... instead of run-away, it's
+		## a stealth game").
+		##
+		## 9.0 m rather than the 6.5 this row shipped with, because a cone that
+		## reached one room would leave a guard blind to the corridor it is
+		## standing in — and the corridor is where the sneak happens. Still well
+		## under the LOD SIM_RADIUS with its margin (9.0 + 15 << 45), which the
+		## species table check measures.
+		##
+		## 120 degrees is the ONLY cone in the table and the first use of the
+		## optional field: 60 degrees either side of where the body is walking, so
+		## the arc reads as "looking down the corridor" rather than as a torch
+		## beam, and the whole 240 degrees behind it is a way past. Everything
+		## about how it is applied — acquisition only, never mid-chase, plus the
+		## `SPOT_TELEGRAPH_TIME` beat before the flag flips — is in
+		## `_update_chase_state`, in the shared detection code above the dispatch,
+		## because a cone is part of the smell test and not a behaviour.
+		"detection_radius": 9.0,
+		"view_cone_deg": 120.0,
 
 		# ----- Organic wandering (a beat, not a meander) -----
 		## Long legs between turns and a LONG pause at the end of each: the pause is
@@ -2864,6 +2878,56 @@ const BOSS_CHASE_SPEED: float = 7.0
 ## the LOD manager's SIM_RADIUS (45.0) — any crocodile that can detect the
 ## player must always be awake, so near-player behaviour never changes.
 const BOSS_DETECTION_RADIUS: float = 25.0
+
+# ----- Vision cones (the optional `view_cone_deg` row field) -----
+## THE DEFAULT EVERY ROW CARRIES WITHOUT WRITING IT DOWN: a full circle, which is
+## what every predator in this game has always had. `spec.get("view_cone_deg",
+## VIEW_CONE_FULL)` is the only read, so a row that says nothing keeps the
+## 360-degree distance test byte-for-byte — the cone costs the field spawners
+## nothing, takes no RNG draw, and moves no body.
+##
+## A CONE IS PART OF THE SMELL TEST, NOT A BEHAVIOUR. CLAUDE.md's rule is that
+## detection is settled ABOVE the dispatch and an arm may only bend
+## `chase_target`; "how far it can smell" and "which way it is looking" are the
+## same question asked twice, so both live in `_update_chase_state` and neither
+## is an arm. That is also what makes a cone free for every future row: it is a
+## number, and a number is what a SPECIES row is for.
+const VIEW_CONE_FULL: float = 360.0
+
+## THE STEALTH BEAT, and the reason a cone is playable rather than merely narrow.
+## A coned predator that has you in its cone does not start chasing for this long:
+## it stands, it questions (the `?` over its head and one ping), and only then
+## commits. Without it a cone is a strictly harsher 360 detector — you are seen
+## the frame you cross the edge and there is nothing to react to.
+##
+## GAME-WIDE AND NOT A ROW FIELD, the same call as MAX_CHASE_SPEED: "you get a
+## beat to back out of a cone" is a promise the player reads once and expects
+## everywhere, and a species that could shorten it would be un-learnable. 0.6 s is
+## about two walked steps back out of the arc.
+##
+## Only a CONED body ever counts it down — a 360 row has no edge to cross and no
+## beat to give, so every existing species acquires on the same frame it always
+## has. See `_update_chase_state`.
+const SPOT_TELEGRAPH_TIME: float = 0.6
+
+## HOW FAR ABOVE OR BELOW ITSELF A CONED BODY MAY ACQUIRE A QUARRY, in metres.
+##
+## A cone is a horizontal bearing test, so on its own it says nothing about
+## height — and the tower's guards stand on ten stacked storeys 4 to 5 m apart.
+## The keep's own two posts are 8.08 m apart through a SOLID SLAB, which the old
+## 6.5 m radius excluded by accident and 9.0 m does not: without this a courtyard
+## guard smells the player on the mezzanine, charges its leash boundary and stands
+## there pushing at a floor it can never leave.
+##
+## 3.0 m is over any body's standing height and under the shortest gap between two
+## walking surfaces in this building (4.0 m), so "on my floor" and "inside the
+## band" are the same statement, checked without a raycast, an occlusion test or a
+## storey field the AI would have to be told about.
+##
+## CONED ROWS ONLY, like the beat: nothing without a `view_cone_deg` reaches this,
+## so a field predator still smells a quarry stood on a block above it exactly as
+## it always did.
+const VIEW_CONE_HEIGHT_BAND: float = 3.0
 
 ## Boss territory radius: the LEASH, and the whole of this bead. A boss hunts
 ## you normally anywhere inside `home_position` + this, and never steps outside
@@ -3156,6 +3220,33 @@ var has_roll_seed: bool = false
 ## `spec.detection_radius`.
 var detection_radius: float = SPECIES["crocodile"]["detection_radius"]
 
+## THE COSINE OF HALF THIS BODY'S VIEW CONE, or -1.0 when it has none.
+##
+## A COSINE AND NOT AN ANGLE, resolved once in `_ready()` alongside
+## `detection_radius`, because the per-frame test is a dot product: comparing
+## `forward.dot(to_quarry) >= this` costs one multiply-add, where comparing
+## angles costs an `acos` per frame per body. -1.0 is the full circle, so the
+## SAME comparison is trivially true for every 360-degree row — there is no
+## branch on the hot path and nothing to skip.
+var view_cone_cos: float = -1.0
+
+## Does this body have a cone at all? Only the telegraph and the "?" read it — the
+## detection test itself needs no branch (see `view_cone_cos`), but a 360 species
+## must not grow a 0.6 s reaction beat it never had.
+var has_view_cone: bool = false
+
+## How long this body has held the quarry in its cone WITHOUT chasing yet, in
+## seconds. Counts up while the beat runs and is reset to 0 the moment the quarry
+## leaves the cone, the radius, or the chase starts — so backing out of an arc
+## really does spend the guard's read, and re-entering costs a fresh one.
+var spot_clock: float = 0.0
+
+## The `?` over a coned body's head, created lazily on its first spot and shown
+## for exactly the beat. One Label3D per coned body and none at all for the other
+## eight species — the whole population that can grow one is the handful of guards
+## standing inside one building.
+var _spot_label: Label3D = null
+
 ## Reference to the player node
 var player_node: Node3D = null
 
@@ -3299,6 +3390,15 @@ func _ready() -> void:
 		push_warning("piglet_crocodile_ai: unknown species '%s', using 'crocodile'" % species)
 		species = "crocodile"
 	spec = SPECIES[species]
+
+	# The cone, resolved once into a cosine here rather than per frame (see
+	# `view_cone_cos`). Above the boss/ordinary split on purpose: a cone is a
+	# property of the ROW, and boss-ness is a modifier on a row — a boss of a coned
+	# species looks where its species looks. Takes no RNG draw, so adding the field
+	# to a row cannot slide a single spawn.
+	var cone: float = float(spec.get("view_cone_deg", VIEW_CONE_FULL))
+	has_view_cone = cone < VIEW_CONE_FULL
+	view_cone_cos = cos(deg_to_rad(clampf(cone, 0.0, VIEW_CONE_FULL) * 0.5)) if has_view_cone else -1.0
 
 	# Seed the RNG. The terrain hands every crocodile it spawns a deterministic
 	# seed (setup_roll_seed, called before add_child), so the size/speed rolls
@@ -3541,6 +3641,22 @@ func _physics_process(delta: float) -> void:
 		if is_boss:
 			_steer_within_territory()
 
+		# THE TELEGRAPH IS A STANDSTILL, and it has to be one for the beat to mean
+		# anything. `spot_clock` is non-zero only on a CONED body that has the
+		# quarry in its arc and has not committed yet (`_update_chase_state`), and
+		# a body that kept walking through its own warning would turn as it went —
+		# rotating the quarry back out of the cone, resetting the clock, and
+		# producing a guard that notices you forever and never engages. Zeroing
+		# the heading rather than the velocity is what freezes the FACING too:
+		# the branch below leaves `rotation.y` alone when there is nowhere to go.
+		#
+		# LAST, so it out-votes the wander, the obstacle feelers and both leashes —
+		# every one of which would otherwise nudge a standing sentry. It cannot
+		# strand one: the clock is reset the moment the quarry leaves the arc, and
+		# the frame after that this is a no-op again.
+		if spot_clock > 0.0 and not is_chasing:
+			movement_direction = Vector3.ZERO
+
 		# Rotate smoothly toward the desired heading and move that way.
 		# Driving velocity from facing (not the raw direction) prevents sliding
 		# sideways and makes turns curve naturally.
@@ -3688,10 +3804,55 @@ func _update_chase_state() -> void:
 	# when nothing is smellable, so the grounded rule is folded into this one test.
 	# Bosses smell farther (still well under the LOD SIM_RADIUS — see the const);
 	# `detection_radius` is resolved once in _ready(), see the var.
-	if distance_to_player <= detection_radius:
+	var seen: bool = distance_to_player <= detection_radius
+
+	# THE VIEW CONE, and it gates the ACQUISITION EDGE ONLY. A body that has
+	# already got you keeps you until distance drops it — that is the existing
+	# rule and the reason "sneak behind it" is a way past a guard rather than a
+	# way to make one blind mid-chase. `view_cone_cos` is -1.0 for every
+	# 360-degree row, so this is one dot product and never a behaviour change for
+	# anything that has not asked for a cone.
+	#
+	# ABOVE THE DISPATCH, with the boss leash and the grounded rule, because all
+	# four are the same question: may this body engage this quarry at all. An arm
+	# bends where a predator steers; none of them may widen what it can see.
+	if seen and not is_chasing and has_view_cone:
+		var to_quarry := chase_target - global_position
+		# ...and the storey. A bearing test is blind to height, and these bodies
+		# stand on stacked floors — see VIEW_CONE_HEIGHT_BAND for the slab this
+		# would otherwise see straight through.
+		if absf(to_quarry.y) > VIEW_CONE_HEIGHT_BAND:
+			seen = false
+		to_quarry.y = 0.0
+		if seen and to_quarry.length_squared() > 0.0001:
+			var forward := Vector3(sin(rotation.y), 0.0, cos(rotation.y))
+			seen = forward.dot(to_quarry.normalized()) >= view_cone_cos
+
+	# ...AND THE BEAT. In the cone and not yet chasing is not "caught": it is a
+	# question mark and a ping, and `SPOT_TELEGRAPH_TIME` of standing there before
+	# the chase flag flips. Leave the arc and the clock is spent — re-entering
+	# costs a fresh one, which is what makes backing out of a doorway a real move.
+	if has_view_cone:
+		if seen and not is_chasing:
+			if spot_clock <= 0.0:
+				_announce_spot()
+			spot_clock += get_physics_process_delta_time()
+			# Still inside the beat: the body has noticed and has not committed.
+			seen = spot_clock >= SPOT_TELEGRAPH_TIME
+		else:
+			spot_clock = 0.0
+		if _spot_label != null:
+			_spot_label.visible = spot_clock > 0.0
+
+	if seen:
 		if not is_chasing:
 			# Just started chasing
 			is_chasing = true
+			# The beat is SPENT, not merely satisfied: `spot_clock` means "a
+			# telegraph is running", and everything that reads it — the `?`, the
+			# standstill in `_physics_process` — has to stop the frame the chase
+			# starts, or a committed body stands still wearing a question mark.
+			spot_clock = 0.0
 			_announce_acquisition()
 	else:
 		if is_chasing:
@@ -3753,6 +3914,53 @@ func _update_chase_state() -> void:
 			_behave_hunt()
 		"leap":
 			_behave_leap()
+
+
+func _announce_spot() -> void:
+	"""
+	The telegraph beat: one `?` over the head and one ping, on the frame a coned
+	body first holds the quarry in its arc.
+
+	ONLY THE ENTERING EDGE, like `_announce_acquisition()` below and for the same
+	reason — `spot_clock` is zero exactly when the beat is not already running, so
+	standing in a guard's cone is one question mark and not sixty.
+
+	THE LABEL IS BUILT HERE AND NEVER IN `_ready()`. Only a coned body can reach
+	this, and only after it has actually seen something, so a field of crocodiles
+	grows no nodes at all and the handful of guards inside one building grow one
+	each, once, the first time they notice you. It is parented to the body, so the
+	population reset frees it with everything else it was holding.
+
+	THE PING IS THE HUNTER'S, deliberately reused rather than synthesized again: a
+	guard and a retrieval unit are the same corporate chassis on two duties (see
+	the `tower_guard` row), so "a GD-SURVEY unit has locked onto you" is one sound
+	in this game and not two. Null-safe group lookup and `has_method` like every
+	SFX hook here, so a self-check or a standalone scene stays quiet.
+
+	# ponytail: SIMULATING PEER ONLY, and that is the known ceiling. This is reached
+	# from `_update_chase_state`, which sits below `_tick_remote()`'s early return,
+	# so in a room only the master sees the `?` — the same gap
+	# `_announce_acquisition()` closes by re-detecting its edge off
+	# `CROC_FLAG_CHASING` in `set_remote_state()`. The beat itself is correct
+	# everywhere (the chase still starts 0.6 s late on every screen); only the tell
+	# is missing. Closing it needs a new state bit for "telegraphing", which is a
+	# protocol change this bead does not owe, and the upgrade path is exactly that
+	# bit plus one more edge in `set_remote_state`.
+	"""
+	if _spot_label == null:
+		_spot_label = Label3D.new()
+		_spot_label.text = "?"
+		_spot_label.font_size = 96
+		_spot_label.pixel_size = 0.006
+		_spot_label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		_spot_label.no_depth_test = true
+		_spot_label.modulate = Color(1.0, 0.86, 0.25)
+		_spot_label.position = Vector3(0.0, 1.9, 0.0)
+		add_child(_spot_label)
+	_spot_label.visible = true
+	var sm := get_tree().get_first_node_in_group("sound_manager")
+	if sm != null and sm.has_method("play_hunter_lock_on"):
+		sm.play_hunter_lock_on()
 
 
 func _announce_acquisition() -> void:
@@ -4898,6 +5106,14 @@ func set_lod_active(active: bool) -> void:
 	set_physics_process(active)
 	if not active:
 		velocity = Vector3.ZERO
+		# ...and any telegraph, for exactly the reason the flee state is dropped
+		# below: `spot_clock` only ever counts in _physics_process, which we just
+		# switched off, so a body slept mid-beat would hold a frozen `?` over its
+		# head until the player walked back inside SIM_RADIUS — and the draw cull
+		# is wider than the sleep radius, so it would be visible the whole time.
+		spot_clock = 0.0
+		if _spot_label != null:
+			_spot_label.visible = false
 		# Drop any flee state on the way down. flee_time_remaining is decremented
 		# ONLY in _physics_process, which we just switched off — so a croc slept
 		# mid-flee would hold is_fleeing (and stay harmless on contact) for its

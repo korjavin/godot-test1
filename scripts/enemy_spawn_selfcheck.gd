@@ -378,6 +378,7 @@ func _run() -> void:
 	_check_ranged_cadence(croc_ai)
 	_check_hunt_pacing(croc_ai)
 	_check_leap_cycle(croc_ai)
+	_check_view_cone(croc_ai)
 	_check_determinism(terrain_script)
 	_check_hunter_stream_independence(terrain_script)
 	_check_boss_dispatch(terrain_script)
@@ -520,6 +521,19 @@ func _check_species_table() -> void:
 						+ " crocodile_lod_manager's SIM_RADIUS %.1f — a body that can"
 						% _sim_radius + " already smell the player may be slept, so its"
 						+ " chase stalls at the boundary and resumes when you close")
+		# THE OPTIONAL CONE. Absent is the common case and means a full circle; a
+		# row that declares one owes a legal arc. Zero (or negative) is a body that
+		# can never see anything, and over 360 is a row saying "wider than
+		# everywhere", both of which read at runtime as a predator that behaves
+		# oddly rather than as an error. The BEHAVIOUR of a declared cone is
+		# measured on a live body in check 8e.
+		if row.has("view_cone_deg"):
+			var arc: float = float(row["view_cone_deg"])
+			if arc <= 0.0 or arc > 360.0:
+				_fail("SPECIES['%s'].view_cone_deg is %.1f — an arc has to be inside"
+						% [species_name, arc] + " (0, 360]; this one is either a"
+						+ " predator that can never acquire a quarry or a claim to"
+						+ " see further round than a circle")
 
 	# ---- EVERY BEHAVIOUR IN THE TABLE MUST HAVE A PROBE IN THIS FILE --------
 	# The gate that makes this check cover the SEVENTH predator without anyone
@@ -2527,6 +2541,159 @@ func _leap_race(croc_ai: GDScript, row: Dictionary, chase: float, quarry_speed: 
 		if quarry.z - pos.z <= 0.0:
 			return { "gap": 0.0, "hops": hops }
 	return { "gap": quarry.z - pos.z, "hops": hops }
+
+
+# ============================================================================
+# CHECK 8e — a CONED predator only sees ahead, and gives you a beat before it
+#            commits
+# ============================================================================
+
+## How far into the cone's own detection radius the probe stands its quarry. Well
+## inside, so "not detected" can only ever be about the BEARING — a fraction near
+## 1.0 would let a rounding error in the radius test masquerade as a cone.
+const CONE_PROBE_FRACTION: float = 0.85
+
+## How many frames past the declared telegraph the probe waits before demanding a
+## chase. Two, and no more: "it eventually chased" is also true of a body with no
+## cone at all, so the check has to be able to say the beat was still holding one
+## frame earlier.
+const CONE_PROBE_SLACK: int = 2
+
+
+func _check_view_cone(croc_ai: GDScript) -> void:
+	"""
+	Check 8e. Drive the SHIPPED detection code on a live body carrying a
+	`view_cone_deg`, from behind and from in front.
+
+	@param croc_ai: the crocodile AI script, for its consts
+
+	`view_cone_deg` is the first SPECIES field that changes whether a predator can
+	see you at all, and it is the one kind of field that ships broken invisibly: a
+	cone applied in the wrong space, or read off the wrong axis, produces a guard
+	that behaves exactly like every guard before it and a stealth mechanic that
+	simply is not there. So this measures the two halves of the claim on the real
+	`_update_chase_state`, and nothing here reimplements the geometry:
+
+	  BEHIND    a quarry well inside the detection radius and directly behind the
+	            body is NOT chased, for longer than the telegraph — which is what
+	            makes "sneak up behind it" a move rather than a hope.
+	  AHEAD     the same quarry, same distance, in front: chased — but NOT on the
+	            frame it enters the cone, and not one frame before
+	            `SPOT_TELEGRAPH_TIME` is spent. Both ends, because a beat that
+	            never expires is a blind predator and a beat of zero is no beat.
+
+	AND THE 360 CONTROL, which is what stops this passing on a build where the cone
+	code accidentally blinds everything: the crocodile row declares no cone, and it
+	must chase the same quarry standing directly behind it.
+
+	IT ITERATES THE TABLE, never a list of its own — every row carrying the field
+	is probed, so the second coned species is covered the day its row lands, and a
+	cone typed onto a row that no probe reaches cannot happen.
+	"""
+	var coned: Array[String] = []
+	for name_v: Variant in _species_table:
+		var row: Dictionary = _species_table[name_v]
+		if float(row.get("view_cone_deg", 360.0)) < 360.0:
+			coned.append(String(name_v))
+	if coned.is_empty():
+		# Not a failure: nothing in the table claims a cone, so there is nothing to
+		# measure. The control below is skipped with it — it exists to prove the
+		# cone code did not blind the un-coned rows, and there is no cone code in
+		# play to have done that.
+		return
+
+	var telegraph: float = float(croc_ai.get("SPOT_TELEGRAPH_TIME"))
+	if telegraph <= 0.0:
+		_fail("piglet_crocodile_ai.SPOT_TELEGRAPH_TIME is %.2f — a coned predator"
+				% telegraph + " commits on the frame it sees you, so the arc it"
+				+ " cannot see behind it is the ONLY warning the player gets")
+	for species_name: String in coned:
+		_probe_view_cone(species_name, telegraph)
+	# The control, on the row every unknown species falls back to.
+	_probe_view_cone("crocodile", telegraph)
+	print("view cones: %s probed from behind and ahead through a %.2f s beat,"
+			% [str(coned), telegraph] + " crocodile (no cone) as the control")
+
+
+func _probe_view_cone(species_name: String, telegraph: float) -> void:
+	"""
+	One row, both bearings. A `view_cone_deg`-less row is the CONTROL and inverts
+	the behind expectation — it must be chased from any bearing at all.
+
+	@param species_name: the SPECIES key to probe
+	@param telegraph: `SPOT_TELEGRAPH_TIME`, in seconds
+
+	Same shape as the hunt dispatch probe below: a real body, a real stub quarry in
+	group "player", and `_update_chase_state()` called in a loop rather than awaited
+	as physics frames. The ceiling is the same one, and it is the right one here —
+	this measures a DECISION, and the decision is made entirely inside that
+	function.
+	"""
+	var row: Dictionary = _species_table[species_name]
+	var cone: float = float(row.get("view_cone_deg", 360.0))
+	var has_cone: bool = cone < 360.0
+	var reach: float = float(row["detection_radius"]) * CONE_PROBE_FRACTION
+
+	var stub_script := GDScript.new()
+	stub_script.source_code = HUNT_STUB_SOURCE
+	stub_script.reload()
+	var stub := Node3D.new()
+	stub.set_script(stub_script)
+	stub.add_to_group("player")
+	root.add_child(stub)
+
+	var croc: Node = load(CROC_SCENE).instantiate()
+	croc.species = species_name       # before add_child, the row's own contract
+	root.add_child(croc)
+	croc.global_position = Vector3.ZERO
+	# Yaw 0 is +Z (`_chase_player` drives velocity off sin/cos of rotation.y), so
+	# +Z is dead ahead and -Z is dead behind. Set explicitly rather than assumed:
+	# a body freshly out of a scene has whatever yaw the scene authored.
+	croc.rotation.y = 0.0
+	croc._find_player()
+
+	var dt: float = croc.get_physics_process_delta_time()
+	var frames: int = int(telegraph / maxf(dt, 0.0001)) + CONE_PROBE_SLACK
+
+	# ---- BEHIND -------------------------------------------------------------
+	stub.global_position = Vector3(0.0, 0.0, -reach)
+	for _i in range(frames):
+		croc._update_chase_state()
+	if has_cone and croc.is_chasing:
+		_fail("a %s with a %.0f degree cone chased a quarry standing %.2f m"
+				% [species_name, cone, reach] + " DIRECTLY BEHIND it (its detection"
+				+ " radius is %.1f m) — the cone is not being applied to the"
+				% float(row["detection_radius"]) + " acquisition decision, so"
+				+ " sneaking up behind one does nothing")
+	if not has_cone and not croc.is_chasing:
+		_fail("a %s — which declares no view_cone_deg — did NOT chase a quarry"
+				% species_name + " %.2f m directly behind it. The cone code has"
+				% reach + " blinded a row that never asked for one, which is every"
+				+ " predator in the field")
+
+	# ---- AHEAD: the beat, at both ends --------------------------------------
+	stub.global_position = Vector3(0.0, 0.0, reach)
+	croc._update_chase_state()
+	if has_cone and croc.is_chasing:
+		_fail("a %s committed on the very frame its quarry entered the cone —"
+				% species_name + " SPOT_TELEGRAPH_TIME is declared as %.2f s but"
+				% telegraph + " nothing is counting it, so a coned predator is"
+				+ " simply a harsher one and there is no stealth read at all")
+	for _i in range(frames):
+		croc._update_chase_state()
+	if not croc.is_chasing:
+		_fail("a %s never chased a quarry standing %.2f m DEAD AHEAD, %.2f s after"
+				% [species_name, reach, float(frames) * dt] + " it entered the"
+				+ " %.0f degree cone — the beat never expires, which is a predator"
+				% cone + " that cannot engage at all")
+	# The `?` is the player-facing half of the beat and is the only thing that
+	# makes it readable; a silent 0.6 s pause is indistinguishable from lag.
+	if has_cone and croc.get("_spot_label") == null:
+		_fail("a %s ran its whole telegraph without ever building the `?` label —"
+				% species_name + " the beat happens and the player cannot see it")
+
+	croc.free()
+	stub.free()
 
 
 # ============================================================================

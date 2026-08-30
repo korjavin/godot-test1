@@ -1064,16 +1064,39 @@ static func guard_scene() -> PackedScene:
 ## the frame above the floor and settles onto it rather than starting inside it.
 const GUARD_SPAWN_LIFT: float = 0.4
 
-## THE POSTS. Three of them, which is the top of the owner's "few guards" band,
-## and each one is a beat the route already had:
+## ============================================================================
+## THE DENSITY RULE — one guard per storey, and it is an owner ruling
+## ============================================================================
 ##
-##   HALL      — you are barely inside and something is already walking. The POST
-##               is 6.8 m from the doorway, against a 6.5 m detection radius, so
-##               the guard is not looking at you the instant you step through; its
-##               patrol box does bring it closer, which is the intended tension
-##               rather than an oversight — a hall guard you can never meet at the
-##               door is scenery.
-##   COURTYARD — the open middle, between the rotor gate and the foot of the ramp.
+## OWNER, 2026-08-30: "hunters can be one per storey in the HQ." That supersedes
+## the earlier "one per three rooms" band and it is the whole population policy of
+## this building: AT MOST ONE body per storey, zero on a storey whose plan draws
+## no post. Ten storeys, nine posts (the labyrinth on floor 8 has no corridor long
+## enough to patrol and so has none), of which the LOD manager has at most the
+## player's own storey and its neighbours awake at any moment.
+##
+## WHY SO FEW, stated once so the next retune does not quietly walk it back: this
+## building is a STEALTH problem, not a chase. Two guards on one floor means one
+## of them sees you while you are backing out of the other's cone, and the answer
+## to a room stops being "watch it, time it, walk past it" and becomes "run". The
+## rescue on storey 10 is the sharpest case and the reason the ruling exists.
+##
+## ASSERTED FROM THE BUILT POPULATION, never from this table: check 12 of
+## `tower_interior_selfcheck` counts the BODIES under `Guards` per storey. A
+## derived table that started emitting two posts for one floor, or a plan that
+## grew a second `G`, is a bug this const cannot see and that count can.
+const GUARDS_PER_STOREY_MAX: int = 1
+
+## THE HAND-AUTHORED POSTS — the phase-3 keep's two storeys, which have no plan
+## grid to read a `G` out of. Every planned storey's post is DERIVED (see
+## `guard_posts_table()`), and these two are the same shape so that one loop in
+## `reset_guards()` stands up both kinds.
+##
+##   COURTYARD — the open middle, between the rotor gate and the foot of the ramp:
+##               the ground floor's one junction, and the storey's whole route
+##               passes through it. It replaced a second, hall post when the
+##               one-per-storey ruling landed — the hall guard was the one you
+##               could always retreat from, so it was the one worth losing.
 ##   UPPER     — the approach to the identity gate, WEST of the secure partition.
 ##
 ## NONE OF THEM CAN BLOCK A ROUTE, which is what keeps the softlock audit
@@ -1091,12 +1114,6 @@ const GUARD_SPAWN_LIFT: float = 0.4
 ## and the knockback below therefore cannot drop you into a re-bite loop.
 const GUARD_POSTS: Array[Dictionary] = [
 	{
-		"name": "Hall",
-		"post": Vector3(2.8, 0.0, -3.2),
-		"patrol_center": Vector3(4.0, 0.0, -2.0),
-		"patrol_half": Vector2(3.6, 2.4),
-	},
-	{
 		"name": "Courtyard",
 		"post": Vector3(-5.0, 0.0, 1.5),
 		"patrol_center": Vector3(-5.0, 0.0, 1.5),
@@ -1109,6 +1126,115 @@ const GUARD_POSTS: Array[Dictionary] = [
 		"patrol_half": Vector2(1.9, 4.0),
 	},
 ]
+
+## How far, in whole plan cells, a derived patrol may run from its post along the
+## corridor. Three cells is 5.82 m — a beat you can watch a guard walk out and
+## back, and short enough that its 9 m cone sweeps one length of corridor rather
+## than a whole ring. The corridor is usually longer than this; the cap is what
+## stops a ring-corridor post becoming a 35 m march nobody can time.
+const GUARD_PATROL_MAX_CELLS: int = 3
+
+## Half the patrol box ACROSS the corridor. Three quarters of a cell: wide enough
+## to clear `piglet_crocodile_ai`'s CONFINE_MARGIN (0.9 m) with room to steer in,
+## narrow enough that the box stays in the lane its post stands in and the guard
+## paces the corridor rather than wandering the floor.
+const GUARD_PATROL_LANE_HALF: float = TowerPlans.PLAN_CELL * 0.75
+
+## The derived table, built once per process. `TowerPlans.STOREYS` is a const and
+## the keep's rows are a const, so the answer cannot change within a run.
+static var _guard_table_cache: Array[Dictionary] = []
+
+
+static func guard_posts_table() -> Array[Dictionary]:
+	"""
+	Every post in the building: the keep's two hand rows, then one per planned
+	storey that draws a `G`.
+
+	@return: `GUARD_POSTS`-shaped rows — `{name, post, patrol_center, patrol_half}`.
+
+	THE PLAN IS THE MAP. Phase 14 already parsed and validated `G` and built
+	nothing from it, precisely so this phase would be a reader and not a format
+	change; the population is now one line of ASCII per storey, drawn where the
+	stealth read matters, in the same file as the walls it patrols. That is also
+	what keeps the one-per-storey ruling checkable: a storey has one `G` or none,
+	and a second one is a diff you can see.
+
+	DERIVED, NEVER PERSISTED. Structure persists (the opened set); population does
+	not — `reset_guards()` rebuilds from this table on every crossing of the
+	doorway, exactly as it did from the const.
+	"""
+	if not _guard_table_cache.is_empty():
+		return _guard_table_cache
+	var out: Array[Dictionary] = []
+	out.append_array(GUARD_POSTS)
+	for floor_index: int in TowerPlans.floors():
+		var derived := _plan_guard_post(floor_index)
+		if not derived.is_empty():
+			out.append(derived)
+	_guard_table_cache = out
+	return out
+
+
+static func _plan_guard_post(floor_index: int) -> Dictionary:
+	"""
+	One storey's post, read off its `G` cell, or `{}` when it draws none.
+
+	@param floor_index: An index into `FLOOR_Y`.
+
+	The post is the cell; the PATROL is the run of corridor floor around it. Both
+	axes are measured symmetrically — the shorter side of each wins, so the box is
+	centred on the post and a guard never walks further one way than the other —
+	and the longer of the two becomes the patrol axis. That is the whole of "a
+	patrol along the corridor": the corridor IS the long run of `.` cells, so
+	nothing has to say which way it goes.
+
+	THE FIRST `G` WINS if a storey somehow draws two. The one-per-storey ruling is
+	enforced where it can actually be seen — on the built population, in check 12 —
+	rather than by this function silently picking one and hiding the second.
+	"""
+	var plan := TowerPlans.storey(floor_index)
+	if plan.is_empty():
+		return {}
+	var rows: Array = plan["rows"]
+	var cell := Vector2i(-1, -1)
+	for r: int in rows.size():
+		var line := String(rows[r])
+		var c := line.find(TowerPlans.POST_CHAR)
+		if c >= 0:
+			cell = Vector2i(c, r)
+			break
+	if cell.x < 0:
+		return {}
+	var along_x: int = mini(_floor_run(rows, cell, Vector2i(1, 0)),
+			_floor_run(rows, cell, Vector2i(-1, 0)))
+	var along_z: int = mini(_floor_run(rows, cell, Vector2i(0, 1)),
+			_floor_run(rows, cell, Vector2i(0, -1)))
+	var run: int = mini(maxi(along_x, along_z), GUARD_PATROL_MAX_CELLS)
+	var reach: float = float(run) * TowerPlans.PLAN_CELL
+	var half := (Vector2(reach, GUARD_PATROL_LANE_HALF) if along_x >= along_z
+			else Vector2(GUARD_PATROL_LANE_HALF, reach))
+	var at := Vector3(_grid_x(float(cell.x) + 0.5), FLOOR_Y[floor_index],
+			_grid_z(float(cell.y) + 0.5))
+	return {
+		"name": "Floor%d" % floor_index,
+		"post": at,
+		"patrol_center": at,
+		"patrol_half": half,
+	}
+
+
+static func _floor_run(rows: Array, from: Vector2i, step: Vector2i) -> int:
+	"""How many unbroken `.` cells lie beyond `from` in direction `step`."""
+	var n := 0
+	var at := from + step
+	while at.y >= 0 and at.y < rows.size():
+		var line := String(rows[at.y])
+		if at.x < 0 or at.x >= line.length() or line[at.x] != TowerPlans.FLOOR_CHAR:
+			break
+		n += 1
+		at += step
+	return n
+
 
 ## WHERE A GUARD'S SETBACK PUTS YOU — the two ends of `setback_point()`.
 ##
@@ -1888,9 +2014,10 @@ static func _plan_pads(plan: Dictionary) -> Array[Dictionary]:
 
 	@return: A `COLOR_SYSTEM` plate per pad, non-solid (you stand ON the slab).
 
-	# ponytail: geometry only. A purge pad with no guards to scare is a dead Area3D;
-	# the trigger and the flee wiring land in phase 17 with the guards they act on,
-	# and the plate drawn now is the phase-17 author's map of where they go.
+	# ponytail: geometry only, and still is. Phase 17 brought the guards these were
+	# waiting for, but a plate's trigger and its flee wiring are their own bead —
+	# the population pass changed WHO is on a storey, not what a pad does. Until
+	# then the plate is the author's map of where a purge will go.
 	"""
 	var out: Array[Dictionary] = []
 	var floor_index := int(plan["floor"])
@@ -3981,14 +4108,15 @@ func _on_tower_doorway(_body: Node3D) -> void:
 	FIRES IN BOTH DIRECTIONS, because an `Area3D` cannot tell walking in from
 	walking out and does not need to: "leave and come back and the guards are at
 	their posts" is the acceptance, and re-placing them on the way out costs one
-	free-and-rebuild of three bodies at the one moment nothing is looking at them.
+	free-and-rebuild of the whole population at the one moment nothing is looking
+	at it.
 	"""
 	reset_guards()
 
 
 func reset_guards() -> void:
 	"""
-	Free every guard and stand a fresh one on each authored post.
+	Free every guard and stand a fresh one on each post in `guard_posts_table()`.
 
 	THE WHOLE PERSISTENCE CONTRACT FOR THE POPULATION, and it is implemented by
 	what is NOT here: nothing reads a save, nothing writes one, and no guard state
@@ -4026,8 +4154,7 @@ func reset_guards() -> void:
 	var scene := guard_scene()
 	if scene == null:
 		return
-	for i in GUARD_POSTS.size():
-		var authored: Dictionary = GUARD_POSTS[i]
+	for authored: Dictionary in guard_posts_table():
 		var guard := scene.instantiate() as Node3D
 		# Deterministic, and stable across a reset: `croc_id_for()` hashes the node
 		# name, so the same post is the same id every time the population is rebuilt
@@ -4060,8 +4187,9 @@ func guard_posts() -> Array:
 	@return: a fresh Array of { "name": String, "position": Vector3 }.
 
 	The seam the self-check measures the population through, so it counts BODIES
-	IN THE TREE rather than rows in `GUARD_POSTS` — a spawner that silently
-	stopped instancing would otherwise be reported as three guards.
+	IN THE TREE rather than rows in `guard_posts_table()` — a spawner that silently
+	stopped instancing would otherwise be reported by the table it was meant to be
+	standing up.
 	"""
 	var out: Array = []
 	if not is_instance_valid(_guards):
