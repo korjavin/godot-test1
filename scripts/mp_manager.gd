@@ -3755,6 +3755,18 @@ func _send_presence() -> void:
 	if _room_lives_owned:
 		state["rl"] = _room_lives
 
+	# `ab` — THE ABILITY STATE A WATCHER CAN SEE (bead godot-test1-69p): Teibi's
+	# Resize form and Windman's Air Rush, as `player_controller.ABILITY_BIT_*`
+	# flags. OMITTED WHEN ZERO, which is both the normal case and exactly what an
+	# older build sends, so the decoder's missing-is-not-malformed rule reads the
+	# two the same way — "nothing special to draw". Unreliable suits it for the
+	# `rl` reason: the value is absolute and idempotent, and an ability lasts
+	# seconds, so a dropped packet costs one 66 ms tick of the pose.
+	var ability: int = int(player.call("ability_visual_state")) \
+			if player.has_method("ability_visual_state") else 0
+	if ability != 0:
+		state["ab"] = ability
+
 	var bytes: PackedByteArray = var_to_bytes(state)
 	_rtc.set_transfer_mode(MultiplayerPeer.TRANSFER_MODE_UNRELIABLE)
 	for pid: int in connected:
@@ -3858,7 +3870,8 @@ func _receive_mesh_packets() -> void:
 			continue
 
 		avatar.visible = true
-		avatar.receive_state(state["p"], state["y"], state["c"], state["s"], state["g"])
+		avatar.receive_state(state["p"], state["y"], state["c"], state["s"], state["g"],
+			state["ab"])
 		# Keep this peer's contribution to the shared totals current. The join
 		# snapshot only bootstraps it; from here on presence carries it, and the
 		# values being absolute means a lost packet costs nothing.
@@ -4952,10 +4965,28 @@ static func _decode_presence_dict(state: Dictionary) -> Dictionary:
 			return {}
 		room_lives = int(lives_value)
 
+	# `ab` — the sender's visible ability state, which RemoteAvatar draws as a
+	# scale and a wing beat. Same missing-is-not-malformed rule as the counters
+	# (absent reads as 0: an older peer keeps its normal-sized avatar rather than
+	# going invisible), and BOUNDED TO ONE BYTE so a hostile "ability" cannot be
+	# 2^40. Unknown bits are not rejected but IGNORED by the reader, exactly like
+	# the crocodile sync's flag byte — a fifth bit added by a later build must
+	# cost an older peer nothing, and `ability_visual_scale()` is total over every
+	# value that gets through here.
+	var ability: int = 0
+	var raw_ability: Variant = state.get("ab", null)
+	if raw_ability != null:
+		if not _is_number(raw_ability):
+			return {}
+		var ability_value: float = float(raw_ability)
+		if not is_finite(ability_value) or ability_value < 0.0 or ability_value > 255.0:
+			return {}
+		ability = int(ability_value)
+
 	return {
 		"p": pos, "y": yaw, "c": char_index, "s": speed, "g": state["g"],
 		"cc": counters["cc"], "lv": counters["lv"], "dd": counters["dd"],
-		"rl": room_lives,
+		"rl": room_lives, "ab": ability,
 	}
 
 

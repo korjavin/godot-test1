@@ -68,6 +68,16 @@ extends SceneTree
 ##      cannot reach) and the break-out clock and verdict. Master-only, parsed at a
 ##      trust boundary, converging in BOTH directions without undoing a fresh local
 ##      assertion, and relayed to peers whose mesh is still negotiating.
+##  23. THE HERO PRESS DECISION — what R and 1-4 mean in a room, as the pure
+##      function they both route through: the hand switches locally, an UNHELD
+##      free hero is CLAIMED through the lobby (nothing moves until the broadcast
+##      confirms), and a hero a teammate holds — or one in a cell — stays refused.
+##      Plus `hero_holder()`, the query it reads, and the claim actually reaching
+##      the lobby.
+##  24. THE ABILITY STATE A WATCHER SEES — Teibi's Resize and Windman's Air Rush
+##      on the presence packet: absent reads as normal (an older peer stays
+##      visible), a byte survives, a hostile value drops the packet whole, and the
+##      scale a bit asks for is the player's own constant.
 ##  18. Terrain FOCUS POINTS — the chunks that stay loaded around a far teammate,
 ##      so the master has crocodiles there to simulate at all. Measured in metres
 ##      against SIM_RADIUS, with the memory cap and the release both pinned.
@@ -162,7 +172,13 @@ func _run_checks() -> String:
 	failure = _check_captive_set()
 	if not failure.is_empty():
 		return failure
-	return _check_room_publish()
+	failure = _check_room_publish()
+	if not failure.is_empty():
+		return failure
+	failure = _check_hero_press_decision()
+	if not failure.is_empty():
+		return failure
+	return _check_ability_visual_state()
 
 
 # =============================================================================
@@ -2543,3 +2559,157 @@ func _spawn_hunter(node_name: String) -> Node:
 	hunter.species = "hunter_robot"
 	root.add_child(hunter)
 	return hunter
+
+
+# =============================================================================
+# 23. THE HERO PRESS DECISION (bead godot-test1-4zw)
+# =============================================================================
+
+func _check_hero_press_decision() -> String:
+	"""
+	R and 1-4 both route through `player_controller.decide_switch()`, and in a
+	room the distance between its three verdicts is the distance between taking a
+	teammate's body, asking the lobby politely, and a dead key. It is static and
+	pure precisely so it can be pinned here, with no room, no lobby and no player
+	in a tree.
+	"""
+	var all_four: Array = [0, 1, 2, 3]
+	var cases: Array = [
+		# [index, current, available, claimable, holder, expected, what it pins]
+		[2, 0, all_four, all_four, "", Player.SWITCH_LOCAL,
+			"solo, every free hero is in the hand and switches on the spot"],
+		[0, 0, all_four, all_four, "", Player.SWITCH_REFUSE,
+			"the hero we already are is refused, never re-claimed"],
+		[99, 0, all_four, all_four, "", Player.SWITCH_REFUSE,
+			"an out-of-range index is refused before it indexes CHARACTERS"],
+		[-1, 0, all_four, all_four, "", Player.SWITCH_REFUSE,
+			"a negative index is refused"],
+		[2, 0, [0], all_four, "", Player.SWITCH_CLAIM,
+			"in a room, a free hero NOBODY holds is claimed through the lobby"],
+		[1, 0, [0], all_four, "somebody-else", Player.SWITCH_REFUSE,
+			"a hero a teammate holds stays refused — nothing is ever stolen"],
+		[3, 0, [0], [0, 1, 2], "", Player.SWITCH_REFUSE,
+			"a CAPTIVE hero is unreachable even though nobody holds him"],
+		[2, 0, [0], [], "", Player.SWITCH_REFUSE,
+			"with no lobby to ask, a hero outside the hand is simply refused"],
+	]
+	for case in cases:
+		var got: int = Player.decide_switch(case[0], case[1], case[2], case[3], case[4])
+		if got != case[5]:
+			return "decide_switch(%d, %d, %s, %s, \"%s\") == %d, expected %d — %s" % [
+				case[0], case[1], str(case[2]), str(case[3]), case[4],
+				got, case[5], case[6]
+			]
+
+	# `hero_holder()` — the query the decision reads, against the acceptance
+	# criterion's own room: we hold windman, "bob" holds primm, teibi and
+	# phoboman are unheld. Posed through the lobby callback, like every other
+	# room check here, so it is the state the lobby can actually produce.
+	var mp: Node = _room_manager("me")
+	if mp.hero_holder("windman") != "me" or mp.hero_holder("primm") != "bob":
+		return "hero_holder() did not name the two holders the room has"
+	if not mp.hero_holder("teibi").is_empty() \
+			or not mp.hero_holder("phoboman").is_empty():
+		return "hero_holder() named a holder for a hero nobody holds"
+	if not mp.hero_holder("gandalf").is_empty():
+		return "hero_holder() named a holder for a hero the room has never heard of"
+
+	# ...and the claim the CLAIM verdict makes reaches the lobby as a hero
+	# request, changing NOTHING locally: the body moves when the `heroes`
+	# broadcast comes back, which is what makes two peers pressing 4 in one frame
+	# serialize on the room lock instead of both swapping.
+	var before: String = mp.my_hero()
+	mp.claim_hero("teibi")
+	if mp.my_hero() != before:
+		return "claim_hero() moved the local player before the lobby confirmed"
+	if mp._lobby.heroes_sent != ["teibi"]:
+		return "claim_hero() did not ask the lobby for the hero: %s" \
+			% str(mp._lobby.heroes_sent)
+	mp.free()
+
+	# An offline manager holds nobody, so `hero_holder()` answers "" for every
+	# hero — which is what keeps a claim from ever being the verdict solo (the
+	# claimable set is empty there too, and either alone is enough).
+	# Never added to the tree, for the reason `_check_forced_seed` gives: this is
+	# a pure read of the state field, and `_ready()` would build a whole manager.
+	var offline: Node = MPManager.new()
+	var lonely: bool = offline.hero_holder("windman").is_empty()
+	offline.free()
+	if not lonely:
+		return "an offline manager claimed to know who holds a hero"
+	return ""
+
+
+# =============================================================================
+# 24. THE ABILITY STATE A WATCHER SEES (bead godot-test1-69p)
+# =============================================================================
+
+func _check_ability_visual_state() -> String:
+	"""
+	Teibi's Resize and Windman's Air Rush ride the presence packet as `ab`, one
+	byte of `player_controller.ABILITY_BIT_*` flags, and RemoteAvatar draws them.
+	Validated exactly like every other relayed number — and ABSENT MUST READ AS
+	NORMAL, or a peer on an older build turns invisible instead of merely
+	normal-sized.
+	"""
+	var base: Dictionary = {
+		"p": Vector3.ZERO, "y": 0.0, "c": 0, "s": 0.0, "g": true,
+	}
+
+	# Absent: a peer that never sends the field draws the plain pose.
+	var legacy: Dictionary = MPManager.decode_presence(var_to_bytes(base))
+	if legacy.is_empty() or int(legacy["ab"]) != 0:
+		return "a presence packet without `ab` did not read as no ability: %s" % legacy
+
+	# Present and honest: the bits survive the wire intact.
+	var giant: Dictionary = base.duplicate()
+	giant["ab"] = Player.ABILITY_BIT_GIANT | Player.ABILITY_BIT_FLYING
+	var flown: Dictionary = MPManager.decode_presence(var_to_bytes(giant))
+	if flown.is_empty() or int(flown["ab"]) != int(giant["ab"]):
+		return "the ability bits did not survive the packet: %s" % flown
+
+	# Present and hostile: dropped WHOLE, like every other bad field.
+	for bad: Variant in ["giant", -1, 300, NAN, INF]:
+		var poison: Dictionary = base.duplicate()
+		poison["ab"] = bad
+		if not MPManager.decode_presence(var_to_bytes(poison)).is_empty():
+			return "the parser accepted a malformed ability field: %s" % str(bad)
+
+	# The SCALE a watcher draws is the player's own constant, not a second copy,
+	# and it is total: unknown bits draw normal, contradictory bits draw giant.
+	var scales: Array = [
+		[0, 1.0, "no bits is normal size"],
+		[Player.ABILITY_BIT_FLYING, 1.0, "flying alone does not resize anybody"],
+		[Player.ABILITY_BIT_SMALL, Player.TEIBI_SCALE_SMALL, "the small form"],
+		[Player.ABILITY_BIT_GIANT, Player.TEIBI_SCALE_BIG, "the giant form"],
+		[Player.ABILITY_BIT_SMALL | Player.ABILITY_BIT_GIANT, Player.TEIBI_SCALE_BIG,
+			"both size bits at once resolve to giant, not to something undefined"],
+		[1 << 7, 1.0, "a bit this build has never heard of draws normal"],
+	]
+	for case in scales:
+		var got: float = Player.ability_visual_scale(case[0])
+		if not is_equal_approx(got, case[1]):
+			return "ability_visual_scale(%d) == %f, expected %f — %s" % [
+				case[0], got, case[1], case[2]
+			]
+
+	# ...and the avatar actually WEARS it. A live RemoteAvatar, fed one presence
+	# sample the way the drain feeds it, must scale its model and NOTHING ELSE:
+	# the isolation contract says an avatar has no body, so there is nothing else
+	# to scale, and check 1 above is what keeps it that way.
+	var avatar: RemoteAvatar = RemoteAvatar.new()
+	root.add_child(avatar)
+	avatar.setup("watcher")
+	avatar.receive_state(Vector3.ZERO, 0.0, 0, 0.0, true, Player.ABILITY_BIT_GIANT)
+	if avatar.ability_bits != Player.ABILITY_BIT_GIANT:
+		avatar.free()
+		return "the avatar did not store the ability bits it was handed"
+	# Eased, not snapped, so one long step lands on the target rather than near it.
+	avatar._tick_ability_scale(10.0)
+	var worn: float = avatar.model_root.scale.x
+	avatar.free()
+	if not is_equal_approx(worn, Player.TEIBI_SCALE_BIG):
+		return "the avatar settled at scale %f, expected the giant %f" % [
+			worn, Player.TEIBI_SCALE_BIG
+		]
+	return ""

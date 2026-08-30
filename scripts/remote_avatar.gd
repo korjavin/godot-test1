@@ -86,6 +86,12 @@ const FULL_STRIDE_SPEED: float = 3.0
 const AIR_LEG_TUCK: float = 10.0      ## Degrees, both legs forward
 const AIR_ARM_SPREAD: float = 72.0    ## Degrees, arms rolled out sideways
 
+## The wing beat a peer running Air Rush gets on top of that spread — the two
+## numbers player_controller.animate_jumping() flaps by, copied for the reason
+## the walk-cycle three above are copied (bead godot-test1-69p).
+const FLAP_SPEED: float = 14.0        ## Radians per second of beat
+const FLAP_RANGE: float = 22.0        ## Degrees, added to and taken off the spread
+
 # ============================================================================
 # STATE
 # ============================================================================
@@ -105,6 +111,18 @@ var target_pos: Vector3 = Vector3.ZERO
 var target_yaw: float = 0.0
 var move_speed: float = 0.0
 var on_floor: bool = true
+
+## The peer's visible ability state, as `PLAYER_SCRIPT.ABILITY_BIT_*` flags —
+## Teibi's Resize form and Windman's Air Rush (bead godot-test1-69p). Straight
+## off the wire, already bounded to a byte by `MPManager.decode_presence()`, and
+## read only with `&` and `ability_visual_scale()`, both of which are total: a
+## bit this build does not know draws nothing rather than breaking the pose.
+var ability_bits: int = 0
+
+## Local wing-beat clock for the Air Rush flap. OUR OWN, not the sender's: a
+## flap is a loop with no meaningful phase, so nothing has to be carried on the
+## wire for it to read right.
+var _flap_phase: float = 0.0
 
 ## Container for the instanced character scene.
 var model_root: Node3D = null
@@ -298,18 +316,23 @@ func _style_model_meshes(node: Node) -> void:
 # NETWORK INPUT
 # ============================================================================
 
-func receive_state(pos: Vector3, yaw: float, char_index: int, speed: float, on_ground: bool) -> void:
+func receive_state(pos: Vector3, yaw: float, char_index: int, speed: float,
+		on_ground: bool, ability: int = 0) -> void:
 	"""
 	Store one presence sample. Called by mp_manager.gd once per packet from this
 	peer (~15 Hz); _process does the actual smoothing between samples.
 
 	Every argument here came off the wire. mp_manager validates types and ranges
 	before calling — this function trusts only what set_character() re-checks.
+
+	`ability` defaults to 0 so a caller that predates the field (and a peer whose
+	build never sends it) simply gets the normal-sized, non-flying pose.
 	"""
 	target_pos = pos
 	target_yaw = yaw
 	move_speed = speed
 	on_floor = on_ground
+	ability_bits = ability
 	set_character(char_index)
 
 # ============================================================================
@@ -334,7 +357,35 @@ func _process(delta: float) -> void:
 		rotation.y = lerp_angle(rotation.y, target_yaw, weight)
 
 	_tick_wade_sink(delta)
+	_tick_ability_scale(delta)
 	_animate(delta)
+
+
+func _tick_ability_scale(delta: float) -> void:
+	"""
+	Match this peer's Teibi Resize form, with THE SAME constants the local player
+	resizes by — `PLAYER_SCRIPT.ability_visual_scale()`, never a second copy of
+	0.45 and 2.2.
+
+	VISUAL ONLY, and the isolation contract is why this scales `model_root` and
+	nothing else: the local player also scales its collision capsule (a giant has
+	a giant body), and an avatar HAS NO BODY to scale. Nothing here adds one.
+
+	Eased at the presence-smoothing rate rather than snapped, so the resize
+	arriving on one 15 Hz packet reads as a grow rather than a pop — the local
+	player's own tween is a springy overshoot, which is a nicety a watcher two
+	hundred metres away cannot see.
+
+	ponytail: the name tag keeps its fixed LABEL_HEIGHT, so a giant peer wears
+	his name low. It hangs off the avatar root deliberately (the wade sink has
+	the same reason); scale the tag's height by this factor if it ever reads
+	wrong at 2.2x.
+	"""
+	if model_root == null:
+		return
+	var target: float = PLAYER_SCRIPT.ability_visual_scale(ability_bits)
+	var s: float = lerpf(model_root.scale.x, target, 1.0 - exp(-INTERP_RATE * delta))
+	model_root.scale = Vector3(s, s, s)
 
 
 func _tick_wade_sink(delta: float) -> void:
@@ -393,6 +444,15 @@ func _animate(delta: float) -> void:
 		# flap out of sync with the peer's own screen would read as a glitch).
 		var tuck: float = deg_to_rad(AIR_LEG_TUCK)
 		var spread: float = deg_to_rad(AIR_ARM_SPREAD)
+		# AIR RUSH BEATS THE WINGS (bead godot-test1-69p). The static spread is
+		# the plain jump pose; a peer whose presence packet says Air Rush is
+		# running gets the flap `player_controller.animate_jumping()` draws, off
+		# OUR clock rather than the sender's — see `_flap_phase`. The phase only
+		# advances while the boost is up, so the wings park level the instant it
+		# ends rather than freezing mid-beat.
+		if ability_bits & PLAYER_SCRIPT.ABILITY_BIT_FLYING:
+			_flap_phase += delta * FLAP_SPEED
+			spread += sin(_flap_phase) * deg_to_rad(FLAP_RANGE)
 		left_leg.rotation.x = rest_rotations["left_leg"].x + tuck
 		right_leg.rotation.x = rest_rotations["right_leg"].x + tuck
 		left_arm.rotation.x = rest_rotations["left_arm"].x
