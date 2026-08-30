@@ -2908,7 +2908,7 @@ func _check_guards_stand_their_posts() -> void:
 	    setback path in `player_controller` relies on and cannot check for itself.
 
 	The count is taken from the BODIES IN THE TREE (`guard_posts()`), never from
-	`GUARD_POSTS.size()`, so a spawner that quietly stopped instancing fails here
+	the table, so a spawner that quietly stopped instancing fails here
 	instead of being reported as three guards by a check reading the same table it
 	is meant to be auditing.
 	"""
@@ -2920,12 +2920,39 @@ func _check_guards_stand_their_posts() -> void:
 		return
 
 	var live: Array = interior.guard_posts()
-	if live.size() != TowerInterior.GUARD_POSTS.size():
+	if live.size() != TowerInterior.guard_posts_table().size():
 		_fail("the tower stood up %d guard(s) for %d authored post(s)"
-			% [live.size(), TowerInterior.GUARD_POSTS.size()])
+			% [live.size(), TowerInterior.guard_posts_table().size()])
 	if live.size() < 2:
-		_fail("only %d guard(s) in the building — the owner ruling is two or three"
-			% live.size())
+		_fail("only %d guard(s) in the building — a tower with no population is not"
+			% live.size() + " the stealth problem the epic is about")
+
+	# ---- THE DENSITY RULE, COUNTED OFF THE BODIES ---------------------------
+	# Owner ruling 2026-08-30: at most one guard per storey. Read from the tree and
+	# NEVER from `guard_posts_table()` — the table is the thing under audit here,
+	# and a derived reader that started emitting two posts for one plan storey (a
+	# second `G` typed into a grid, a cache merging two floors) would otherwise be
+	# reported as correct by a check asking the same function it is checking.
+	# Storey is resolved from the body's own height against FLOOR_Y, so a guard
+	# that was dropped on the wrong slab lands in the wrong bucket and shows up.
+	var per_storey: Dictionary = {}
+	for entry: Dictionary in live:
+		var at: Vector3 = entry["position"]
+		var best := -1
+		var best_gap := INF
+		for i in TowerInterior.FLOOR_Y.size():
+			var gap: float = absf(at.y - (interior.global_position.y + TowerInterior.FLOOR_Y[i]))
+			if gap < best_gap:
+				best_gap = gap
+				best = i
+		per_storey[best] = int(per_storey.get(best, 0)) + 1
+	for floor_v: Variant in per_storey:
+		if int(per_storey[floor_v]) > TowerInterior.GUARDS_PER_STOREY_MAX:
+			_fail("storey %d carries %d guards, over the owner's GUARDS_PER_STOREY_MAX"
+					% [int(floor_v) + 1, int(per_storey[floor_v])]
+					+ " of %d — two on one floor turns a room the player is meant to"
+					% TowerInterior.GUARDS_PER_STOREY_MAX + " time and walk past into"
+					+ " a chase")
 
 	var guard_row: Dictionary = load(CROC_SCRIPT).get_script_constant_map() \
 			.get("SPECIES", {}).get(TowerInterior.GUARD_SPECIES, {})
@@ -2939,8 +2966,8 @@ func _check_guards_stand_their_posts() -> void:
 		await _clear(null, shell)
 		return
 
-	for i in TowerInterior.GUARD_POSTS.size():
-		var authored: Dictionary = TowerInterior.GUARD_POSTS[i]
+	for i in TowerInterior.guard_posts_table().size():
+		var authored: Dictionary = TowerInterior.guard_posts_table()[i]
 		var label: String = String(authored["name"])
 		var body := guards.get_node_or_null("TowerGuard%s" % label) as Node3D
 		if body == null:
@@ -2999,7 +3026,8 @@ func _check_guards_stand_their_posts() -> void:
 						% [label, at.x, at.z] + " storey has no floor — it can walk"
 						+ " off the edge and land on the one below")
 
-	print("tower guards: %d on post, leashed to their own storeys" % live.size())
+	print("tower guards: %d on post, leashed to their own storeys; per storey %s"
+			% [live.size(), str(per_storey)])
 	await _clear(null, shell)
 
 
@@ -3007,9 +3035,12 @@ func _solid_near(world_pos: Vector3) -> String:
 	## The name of the first solid box a standing body at `world_pos` would be
 	## inside of, or "" when the spot is clear. Both tables — the interior's
 	## furniture and the shell's outer walls — because either one buries a guard.
+	## `all_boxes()` and not `boxes()`: since the posts are derived from the plans,
+	## most of them stand on a PLANNED storey, whose walls the keep's own table has
+	## never heard of.
 	var half := Vector3(GUARD_BODY_CLEARANCE, GUARD_BODY_HEIGHT * 0.5, GUARD_BODY_CLEARANCE)
 	var body_centre := Vector3(world_pos.x, world_pos.y + GUARD_BODY_HEIGHT * 0.5, world_pos.z)
-	for box: Dictionary in TowerInterior.boxes() + TowerShell.boxes():
+	for box: Dictionary in TowerInterior.all_boxes() + TowerShell.boxes():
 		if not box["collide"]:
 			continue
 		# The ramp is the one tilted box in either table and an AABB test over it is
@@ -3026,9 +3057,11 @@ func _standable(x: float, z: float, foot_y: float) -> bool:
 	## Is there a solid top at `foot_y` under (x, z)? Ground level is the world's
 	## own floor and always true; anything else has to be a box the interior really
 	## builds, which is what makes the upper storey's leash box measurable at all.
+	## Every storey's boxes, for the same reason `_solid_near` reads them all: a
+	## derived post's leash box hangs over a PLAN slab, which `boxes()` cannot see.
 	if is_zero_approx(foot_y):
 		return true
-	for box: Dictionary in TowerInterior.boxes():
+	for box: Dictionary in TowerInterior.all_boxes():
 		if not box["collide"] or String(box["name"]) == "Ramp":
 			continue
 		var pos: Vector3 = box["pos"]
@@ -3116,8 +3149,8 @@ func _check_guards_reset_on_re_entry() -> void:
 			_fail("re-entry kept guard %s alive — the population is repositioned,"
 					% str(id_v) + " not reset, so whatever it was doing survives")
 
-	for i in TowerInterior.GUARD_POSTS.size():
-		var authored: Dictionary = TowerInterior.GUARD_POSTS[i]
+	for i in TowerInterior.guard_posts_table().size():
+		var authored: Dictionary = TowerInterior.guard_posts_table()[i]
 		var body := after.get_node_or_null("TowerGuard%s" % String(authored["name"])) as Node3D
 		if body == null:
 			_fail("the '%s' post is empty after re-entry" % authored["name"])
@@ -3187,8 +3220,8 @@ func _check_the_leash_holds_under_a_chase() -> void:
 	# The UPPER guard, because it is the one with somewhere to fall to. Chosen by
 	# height off the authored table, never by index, so re-ordering the posts moves
 	# this with them.
-	var authored: Dictionary = TowerInterior.GUARD_POSTS[0]
-	for post: Dictionary in TowerInterior.GUARD_POSTS:
+	var authored: Dictionary = TowerInterior.guard_posts_table()[0]
+	for post: Dictionary in TowerInterior.guard_posts_table():
 		if (post["post"] as Vector3).y > (authored["post"] as Vector3).y:
 			authored = post
 	var body: Node3D = guards.get_node_or_null("TowerGuard%s" % String(authored["name"])) as Node3D
@@ -3222,6 +3255,16 @@ func _check_the_leash_holds_under_a_chase() -> void:
 	guards = interior.get_node_or_null("Guards")
 	body = guards.get_node_or_null("TowerGuard%s" % String(authored["name"])) as Node3D
 	await _settle_physics()
+	# AIM IT AT THE QUARRY. A guard's detection has been CONED since phase 17
+	# (120 degrees, acquisition only), so a body left on whatever heading its
+	# wander picked would acquire the probe whenever it happened to turn — which
+	# makes this check's verdict a coin flip on a mechanic that is not its subject.
+	# The cone itself is measured by enemy_spawn_selfcheck's cone probe; what THIS
+	# check owns is the leash, and a leash is only under load while a chase is on.
+	# Aiming is safe for the whole telegraph: `wander_turn_rate` is 0.5 rad/s, so
+	# the body can drift 17 degrees in the 0.6 s beat against a 60 degree half-cone.
+	body.rotation.y = atan2(hero.global_position.x - body.global_position.x,
+			hero.global_position.z - body.global_position.z)
 
 	var ticks := int(LEASH_PROBE_SECONDS / (1.0 / 60.0))
 	var chased := false
