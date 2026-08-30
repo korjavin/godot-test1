@@ -17,7 +17,7 @@ extends Node
 ## size/speed rolls are already `randomize()`d per instance). Keeping it here
 ## keeps the terrain's determinism contract clean and this file self-contained.
 ##
-## The model: a fixed pool of CLOUD_COUNT blocky cloud clusters floats in a
+## The model: a fixed pool of CLOUD_COUNT low-poly cloud clusters floats in a
 ## FIELD_RADIUS disc around the player, drifting with the wind. A cloud that
 ## falls too far behind (downwind of) the player is not freed — it is RECYCLED:
 ## re-rolled and re-placed at the upwind edge, so the field never depletes and
@@ -47,23 +47,52 @@ const CLOUD_COUNT: int = 26
 
 ## Altitude band (metres above ground) the clouds float in. Well above the
 ## tallest blocks and Windman's Air Rush arc, below "why is the sky empty".
-const CLOUD_ALTITUDE_MIN: float = 45.0
-const CLOUD_ALTITUDE_MAX: float = 70.0
+##
+## THE FLOOR IS COUPLED TO THE HQ (bug godot-test1-x7k). The sealed shell stands
+## TowerShell.WALL_HEIGHT + ROOF_THICK = 52 m tall and the wind moves clouds in
+## XZ only, so the shipped 45 m band drew clouds straight THROUGH storeys 9-10
+## and out of the roof — the owner saw one on level 10. 70 m is that roof plus
+## ~18 m of slack for the sine bob and a puff's own half-height. The number is
+## restated here rather than imported because weather must not depend on a tower
+## existing (no headless harness has one, and neither does most of the field);
+## `tower_shell_selfcheck` check 14 is the alarm that reads BOTH sides and fails
+## the moment they drift apart.
+const CLOUD_ALTITUDE_MIN: float = 70.0
+const CLOUD_ALTITUDE_MAX: float = 95.0
 
-## Each cloud is a cluster of a few chunky boxes, matching the blocky look of
-## the world's decorative cubes. This is the boxes-per-cluster roll range.
+## Radius (metres) around the HQ's site that no cloud centre may enter.
+##
+## Altitude alone is not the whole fix: the keep's spire and its beacon top out
+## near 100 m, INSIDE the band above, so a cloud drifting dead over the building
+## would still skewer it. A cloud that finds itself inside this disc is pushed
+## radially back out to the rim on the same tick — it slides around the building
+## with the wind, which reads as the weather parting around the HQ rather than as
+## a cloud blinking out (the alternative the bead offered, and the one that pops).
+##
+## = endless_terrain.TOWER_RADIUS (65 — the disc phase 1 clears of everything
+## procedural) + the furthest a cluster can reach from its own centre (the
+## CLOUD_SPREAD diagonal plus a storm-sized puff's half-extent, ~24 m). Restated
+## for the same reason as the floor above, and re-measured by the same check 14.
+const CLOUD_TOWER_KEEPOUT: float = 90.0
+
+## Each cloud is a cluster of a few low-poly puffs. This is the puffs-per-cluster
+## roll range. (The per-puff dictionaries are still keyed "boxes" — renaming them
+## would touch every consumer for nothing.)
 const BOXES_PER_CLOUD_MIN: int = 4
 const BOXES_PER_CLOUD_MAX: int = 9
 
-## Size range (metres, per axis) for one cloud box. Wide and flat reads more
-## "cloud" than cubic, so X/Z roll the full range while Y is halved in
-## _make_cloud().
+## Size range (metres, per axis) for one puff. Wide and flat reads more "cloud"
+## than round, so X/Z roll the full range while Y is halved in _make_cloud() —
+## on a sphere mesh that is a flattened ellipsoid, which is the cumulus lobe.
 const CLOUD_BOX_SIZE_MIN: float = 6.0
 const CLOUD_BOX_SIZE_MAX: float = 14.0
 
-## How far (metres) a box's centre may scatter from its cluster's centre.
-## Larger = looser, wispier clusters.
-const CLOUD_SPREAD: float = 10.0
+## How far (metres) a puff's centre may scatter from its cluster's centre.
+## Larger = looser, wispier clusters. Deliberately SMALLER than the puff radius
+## so the 4-9 lobes overlap into one lumpy cumulus instead of a scatter of blobs
+## — with the old box mesh a wide spread read as a cluster of cubes, which is
+## exactly the "minecraft-ish" the restyle is against.
+const CLOUD_SPREAD: float = 6.0
 
 ## Wind direction, normalized, XZ only (clouds never gain or lose altitude from
 ## wind — the sine bob below is the only vertical motion). +X is the run
@@ -89,7 +118,11 @@ const TICK_INTERVAL: float = 0.1
 ## Base colour of a normal cloud: near-white, faintly warm. Each cloud jitters
 ## its brightness a little (± CLOUD_BRIGHTNESS_JITTER, rolled once per cloud)
 ## so the field doesn't read as one flat white stamp.
-const CLOUD_COLOR: Color = Color(0.93, 0.94, 0.96)
+##
+## Nudged off pure white toward the sky's horizon tint so the clouds sit in the
+## same palette as the fog instead of being pasted on top of it. The SKY itself is
+## untouched — fog colour must keep equalling the horizon (art-direction rule).
+const CLOUD_COLOR: Color = Color(0.90, 0.91, 0.90)
 const CLOUD_BRIGHTNESS_JITTER: float = 0.07
 
 ## Storm clouds render this dark blue-grey.
@@ -182,7 +215,7 @@ const BIRD_INTERVAL_MAX: float = 120.0
 const BIRD_FLOCK_MIN: int = 3
 const BIRD_FLOCK_MAX: int = 7
 
-## Cruising altitude band (metres). Below the clouds (45–70 m) so they read as
+## Cruising altitude band (metres). Below the clouds (70–95 m) so they read as
 ## clearly nearer, well above anything the player can reach.
 const BIRD_ALTITUDE_MIN: float = 30.0
 const BIRD_ALTITUDE_MAX: float = 40.0
@@ -391,13 +424,27 @@ func _process(delta: float) -> void:
 
 func _build_cloud_multimesh() -> void:
 	## Same batching pattern as endless_terrain's per-chunk block MultiMesh:
-	## one shared unit BoxMesh, per-instance transform carries the box size,
+	## one shared unit mesh, per-instance transform carries the puff size,
 	## per-instance colour carries the cloud tint — the entire sky costs ONE
 	## draw call regardless of cloud count.
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
 	mm.use_colors = true
-	mm.mesh = BoxMesh.new()  # unit box; per-instance basis scales it
+	# ONE shared unit sphere, deliberately COARSE: 8 segments x 4 rings is a
+	# visibly polygonal silhouette — a low-poly puff, not a smooth ball and not
+	# the cube it used to be (bug godot-test1-x7k: "too minecraft-ish"). Unit
+	# diameter, so the per-instance basis carries the size exactly as it did for
+	# the box and nothing downstream changed. ~64 tris x 234 slots = ~15k tris,
+	# nothing on gl_compatibility, and still ONE draw call.
+	# ponytail: smooth normals. Hard facets would mean hand-building a deindexed
+	# mesh with per-face normals; the octagonal outline already carries the
+	# low-poly read. Build that mesh if the owner asks for visible facets.
+	var puff := SphereMesh.new()
+	puff.radial_segments = 8
+	puff.rings = 4
+	puff.radius = 0.5
+	puff.height = 1.0
+	mm.mesh = puff
 	# ponytail: fixed allocation at the worst case (every cloud rolls max boxes);
 	# unused slots are parked with a zero-scale basis instead of repacking the
 	# buffer each tick — cheaper and simpler, the GPU skips degenerate boxes.
@@ -420,7 +467,7 @@ func _build_cloud_multimesh() -> void:
 	_cloud_mmi.multimesh = mm
 	_cloud_mmi.material_override = mat
 	# Shadows off: directional_shadow_max_distance is tuned to ~55 m, so clouds
-	# at 45–70 m altitude are outside the shadow range anyway — casting would
+	# at 70–95 m altitude are outside the shadow range anyway — casting would
 	# add them to the shadow passes for nothing. Don't fight the tuning.
 	_cloud_mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(_cloud_mmi)
@@ -593,7 +640,7 @@ func _find_player() -> void:
 
 
 func _make_cloud() -> Dictionary:
-	## Roll one cloud cluster: a handful of flat-ish boxes scattered around a
+	## Roll one cloud cluster: a handful of flat-ish puffs scattered around a
 	## shared centre. Position is left at ZERO — _place_cloud_around() sets it.
 	var is_storm: bool = _rng.randf() < STORM_CHANCE
 	# Storms loom: more boxes AND bigger boxes than a fair-weather cloud.
@@ -662,6 +709,16 @@ func _update_clouds(player_pos: Vector3, elapsed: float) -> void:
 	## One throttled tick of cloud simulation: drift each cluster with the wind,
 	## recycle any that fell too far behind, then push the whole field into the
 	## MultiMesh.
+	# Where the HQ stands, resolved ONCE per tick (~10 Hz, not per cloud and not
+	# per frame) through the "terrain" group behind a has_method guard — the same
+	# null-safe shape as _sheltered_at(). No terrain in the scene, or an older one
+	# that cannot site a tower, simply means no keep-out disc.
+	var tower_xz := Vector2.INF
+	var terrain := get_tree().get_first_node_in_group("terrain")
+	if terrain != null and terrain.has_method("tower_site"):
+		var site: Vector3 = terrain.call("tower_site")
+		tower_xz = Vector2(site.x, site.z)
+
 	for cloud in _clouds:
 		cloud["center"] += WIND_DIR * cloud["speed"] * elapsed
 		var to_cloud: Vector3 = cloud["center"] - player_pos
@@ -685,6 +742,24 @@ func _update_clouds(player_pos: Vector3, elapsed: float) -> void:
 			cloud["is_storm"] = fresh["is_storm"]
 			cloud["radius"] = fresh["radius"]
 			_place_cloud_around(cloud, player_pos, rim_dir)
+		# KEEP OUT OF THE BUILDING (see CLOUD_TOWER_KEEPOUT). One distance test on
+		# the tick that already exists, and it is the LAST thing done to the centre
+		# — after the drift AND after a recycle, which is the point: the recycle rim
+		# (FIELD_RADIUS around the player) overlaps the keep-out disc whenever the
+		# player is within FIELD_RADIUS + CLOUD_TOWER_KEEPOUT of the HQ, so a cloud
+		# can be re-placed dead on top of the building by the branch above. Testing
+		# before it would render that cloud inside the walls for a tick (codex,
+		# 2026-08-30). Placed here there is no path to the write that skips it.
+		if tower_xz != Vector2.INF:
+			var flat: Vector2 = Vector2(cloud["center"].x, cloud["center"].z) - tower_xz
+			var dist: float = flat.length()
+			if dist < CLOUD_TOWER_KEEPOUT:
+				# Dead centre has no radial direction to push along; the wind's is
+				# as good as any and keeps the cloud moving the way it was going.
+				var out_dir: Vector2 = flat / dist if dist > 0.001 \
+						else Vector2(WIND_DIR.x, WIND_DIR.z).normalized()
+				var pushed: Vector2 = tower_xz + out_dir * CLOUD_TOWER_KEEPOUT
+				cloud["center"] = Vector3(pushed.x, cloud["center"].y, pushed.y)
 	_write_cloud_instances()
 
 

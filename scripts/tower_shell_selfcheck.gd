@@ -70,7 +70,16 @@ extends SceneTree
 ##      roofs. Check 13 asserts the shell's own `sheltered()` over its footprint and
 ##      outside it, and then that a REAL weather manager parked under a REAL storm
 ##      answers "dry" indoors and "raining" one step out of the door.
-##  10. THE MINIMAP MARK. It is the only marker on the map that is NOT read off a
+##  10. THE CLOUDS STAY OUT OF THE BUILDING (bug godot-test1-x7k). The owner saw
+##      a cloud on level 10: the cloud band started at 45 m, the sealed shell is
+##      52 m tall, and the wind moves clouds in XZ only, so anything below the roof
+##      drifted straight through the top storeys. Weather restates both numbers it
+##      needs (it must run in scenes with no tower at all), so check 14 is the only
+##      thing that reads BOTH sides — it fails if the band's floor drops under the
+##      roof, if the keep-out disc stops covering the exclusion disc plus a
+##      cluster's own reach, or if a real manager ticked over the real site ever
+##      puts a puff inside the shell's volume.
+##  11. THE MINIMAP MARK. It is the only marker on the map that is NOT read off a
 ##      group — it asks the terrain where the tower IS — so the usual has_method()
 ##      guard makes a rename fail silently, with the map still drawing and the
 ##      tower simply not on it. Check 10 is the alarm for that, plus the rim clamp,
@@ -123,6 +132,11 @@ const ROOF_CLEARANCE_MARGIN: float = 5.0
 ## is the roof.
 const WEATHER_SCRIPT: String = "res://scripts/weather_manager.gd"
 const STORM_RADIUS: float = 200.0
+
+## How many weather ticks check 14 drives. At TICK_INTERVAL 0.1 s that is 150 s of
+## wind — 240 m at WIND_SPEED, so the whole 250 m field walks across the building
+## while the recycler keeps feeding fresh clouds in from the upwind rim.
+const CLOUD_DRIFT_TICKS: int = 1500
 
 ## Geometry tolerance, in metres.
 const EPS: float = 0.001
@@ -186,6 +200,7 @@ func _run() -> void:
 	_check_impostor()
 	_check_minimap_marks_the_tower()
 	await _check_the_roof_keeps_the_rain_out()
+	_check_clouds_stay_clear_of_the_hq()
 	_report()
 
 
@@ -1453,6 +1468,130 @@ func _check_the_roof_keeps_the_rain_out() -> void:
 
 	weather.free()
 	shell.free()
+
+
+func _check_clouds_stay_clear_of_the_hq() -> void:
+	"""
+	Check 14. No cloud is ever inside the HQ.
+
+	THE BUG (godot-test1-x7k, owner playtest): `CLOUD_ALTITUDE_MIN` was 45 m, the
+	sealed shell is `WALL_HEIGHT + ROOF_THICK` = 52 m tall, and the wind is XZ-only
+	— so every cloud in the bottom 7 m of the band sailed through storeys 9 and 10
+	and out of the roof, in full view from inside.
+
+	WHY THIS CHECK AND NOT A COMMENT: the weather manager deliberately does not
+	depend on the tower (no headless harness has one, and neither does the field
+	outside `TOWER_LOAD_RADIUS`), so its floor and its keep-out radius are RESTATED
+	constants, not imported ones. Restated numbers drift. This is the only place
+	both sides are read at once — grow the building or shrink the disc and it says
+	so here rather than in a screenshot three weeks later.
+
+	THREE PARTS, and the third is the one that would survive a rewrite of the other
+	two: an ALTITUDE bound, a RADIUS bound, and then a real manager, ticked over the
+	real site, measured through the MultiMesh the player actually sees. The last one
+	is what makes the check about a field that really drifted rather than about
+	arithmetic — a keep-out applied to the wrong quantity passes both bounds.
+	"""
+	var terrain := _make_terrain(SEED_A)
+	var site: Vector3 = terrain.tower_site()
+
+	var weather := Node3D.new()
+	weather.set_script(load(WEATHER_SCRIPT))
+	root.add_child(weather)
+
+	# The tallest a single puff can hang below its cluster centre: the cluster's own
+	# downward scatter plus half a storm-sized puff. Anything less than this over the
+	# roof and the band's floor is a number that only LOOKS clear.
+	var puff_half: float = weather.CLOUD_BOX_SIZE_MAX * weather.STORM_SIZE_FACTOR * 0.5
+	var sag: float = weather.BOB_AMPLITUDE + weather.CLOUD_SPREAD * 0.3 + puff_half
+	var roof_top: float = TowerShell.WALL_HEIGHT + TowerShell.ROOF_THICK
+	if weather.CLOUD_ALTITUDE_MIN < roof_top + sag:
+		_fail("check 14: CLOUD_ALTITUDE_MIN %.1f m does not clear the %.1f m roof by a cloud's own %.1f m sag" % [
+			weather.CLOUD_ALTITUDE_MIN, roof_top, sag])
+	if weather.CLOUD_ALTITUDE_MAX <= weather.CLOUD_ALTITUDE_MIN:
+		_fail("check 14: the cloud altitude band is empty or inverted")
+
+	# The keep-out disc has to cover the exclusion disc the shell is promised (read
+	# off the live terrain, exactly as check 2 does) PLUS how far a cluster reaches
+	# from the centre the keep-out is applied to.
+	var reach: float = Vector2(weather.CLOUD_SPREAD, weather.CLOUD_SPREAD).length() + puff_half
+	if weather.CLOUD_TOWER_KEEPOUT < terrain.TOWER_RADIUS + reach:
+		_fail("check 14: CLOUD_TOWER_KEEPOUT %.1f m is under TOWER_RADIUS %.1f m + a cluster's %.1f m reach" % [
+			weather.CLOUD_TOWER_KEEPOUT, terrain.TOWER_RADIUS, reach])
+
+	# The shell's whole volume, spire and beacon included — the band above is well
+	# clear of the ROOF, and deliberately not clear of the keep, which is why the
+	# XZ keep-out has to exist at all.
+	var lo := Vector3.INF
+	var hi := -Vector3.INF
+	for box: Dictionary in TowerShell.boxes():
+		var pos: Vector3 = box["pos"]
+		var half: Vector3 = box["size"] * 0.5
+		lo = lo.min(pos - half)
+		hi = hi.max(pos + half)
+	var volume := AABB(site + lo, hi - lo)
+
+	# A player parked at the door, so the cloud field is centred on the building and
+	# the wind walks the whole field across it. No frame is awaited from here on: the
+	# terrain would stream a ring of chunks around this node for nothing.
+	var player := Node3D.new()
+	player.add_to_group("player")
+	player.position = site
+	root.add_child(player)
+
+	var tick: float = weather.TICK_INTERVAL
+	weather._process(tick)  # first tick fills the field around the player
+	# One cloud planted dead over the keep, at the very bottom of the band: the
+	# drift below would get there eventually, but a check that relies on randomized
+	# ambience to reach the failure case is a check that sometimes runs.
+	if not weather._clouds.is_empty():
+		weather._clouds[0]["center"] = site + Vector3(0.0, weather.CLOUD_ALTITUDE_MIN, 0.0)
+		weather._process(tick)
+		_clouds_clear_of(weather, volume, "after being planted on top of the keep")
+	# TWO STATIONS, and the second is not decoration. With the player AT the site a
+	# recycled cloud re-enters a whole FIELD_RADIUS away and can never land on the
+	# building — so a keep-out applied BEFORE the recycler would pass this check.
+	# From 200 m out the re-entry rim crosses the keep-out disc, which is exactly
+	# the one-tick window codex found (2026-08-30).
+	for station: Vector3 in [site, site + Vector3(200.0, 0.0, 0.0)]:
+		player.position = station
+		for i in CLOUD_DRIFT_TICKS:
+			weather._process(tick)
+			if not _clouds_clear_of(weather, volume, "after %.1f s of drift, player %.0f m out" % [
+					(i + 1) * tick, station.distance_to(site)]):
+				break
+
+	player.free()
+	weather.free()
+	terrain.free()
+
+
+func _clouds_clear_of(weather: Node, volume: AABB, when: String) -> bool:
+	## Every puff of every live cloud against the shell's volume. A puff is an
+	## ellipsoid yawed about Y, so its XZ half-extent is bounded by its widest
+	## horizontal semi-axis whatever the yaw; the vertical one carries the full sine
+	## bob, so the answer holds for every phase rather than for the one this tick
+	## happens to be at. Returns false on the first offender, so a cloud parked
+	## inside the building cannot print CLOUD_DRIFT_TICKS lines.
+	##
+	## Read off the manager's own cloud list rather than the MultiMesh it writes:
+	## `--headless` runs the dummy rendering server, and reading an instance
+	## transform back from it returns identity — a check written against the render
+	## buffer would pass no matter what the sky did.
+	for cloud: Dictionary in weather._clouds:
+		var center: Vector3 = cloud["center"]
+		for box: Dictionary in cloud["boxes"]:
+			var size: Vector3 = box["size"]
+			var half := Vector3(
+					maxf(size.x, size.z) * 0.5,
+					size.y * 0.5 + weather.BOB_AMPLITUDE,
+					maxf(size.x, size.z) * 0.5)
+			var at: Vector3 = center + (box["offset"] as Vector3)
+			if volume.intersects(AABB(at - half, half * 2.0)):
+				_fail("check 14: a cloud puff at (%.1f, %.1f, %.1f) is inside the HQ %s" % [
+					at.x, at.y, at.z, when])
+				return false
+	return true
 
 
 func _make_terrain(seed_value: int) -> Node3D:
