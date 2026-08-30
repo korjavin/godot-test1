@@ -3255,21 +3255,24 @@ func _check_the_leash_holds_under_a_chase() -> void:
 	guards = interior.get_node_or_null("Guards")
 	body = guards.get_node_or_null("TowerGuard%s" % String(authored["name"])) as Node3D
 	await _settle_physics()
-	# AIM IT AT THE QUARRY. A guard's detection has been CONED since phase 17
-	# (120 degrees, acquisition only), so a body left on whatever heading its
-	# wander picked would acquire the probe whenever it happened to turn — which
-	# makes this check's verdict a coin flip on a mechanic that is not its subject.
-	# The cone itself is measured by enemy_spawn_selfcheck's cone probe; what THIS
-	# check owns is the leash, and a leash is only under load while a chase is on.
-	# Aiming is safe for the whole telegraph: `wander_turn_rate` is 0.5 rad/s, so
-	# the body can drift 17 degrees in the 0.6 s beat against a 60 degree half-cone.
-	body.rotation.y = atan2(hero.global_position.x - body.global_position.x,
-			hero.global_position.z - body.global_position.z)
 
 	var ticks := int(LEASH_PROBE_SECONDS / (1.0 / 60.0))
 	var chased := false
 	var worst := 0.0
 	for _i in ticks:
+		# HOLD IT LOOKING AT THE QUARRY UNTIL IT ACQUIRES. A guard's detection has
+		# been CONED since phase 17 (120 degrees, on the acquisition edge only,
+		# after a 0.6 s telegraph it has to hold the arc for), so a body left on
+		# whatever heading its wander picked acquires the probe if and when it
+		# happens to turn — which makes this check's verdict a coin flip on a
+		# mechanic that is not its subject. The cone itself is measured by
+		# enemy_spawn_selfcheck's check 8e; what THIS check owns is the leash, and
+		# a leash is only under load while a chase is on. Dropped the moment the
+		# chase starts, so every frame that is actually being measured is the
+		# shipped body steering itself.
+		if not chased:
+			body.rotation.y = atan2(hero.global_position.x - body.global_position.x,
+					hero.global_position.z - body.global_position.z)
 		await physics_frame
 		if bool(body.get("is_chasing")):
 			chased = true

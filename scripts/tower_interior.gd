@@ -2014,9 +2014,10 @@ static func _plan_pads(plan: Dictionary) -> Array[Dictionary]:
 
 	@return: A `COLOR_SYSTEM` plate per pad, non-solid (you stand ON the slab).
 
-	# ponytail: geometry only. A purge pad with no guards to scare is a dead Area3D;
-	# the trigger and the flee wiring land in phase 17 with the guards they act on,
-	# and the plate drawn now is the phase-17 author's map of where they go.
+	# ponytail: geometry only, and still is. Phase 17 brought the guards these were
+	# waiting for, but a plate's trigger and its flee wiring are their own bead —
+	# the population pass changed WHO is on a storey, not what a pad does. Until
+	# then the plate is the author's map of where a purge will go.
 	"""
 	var out: Array[Dictionary] = []
 	var floor_index := int(plan["floor"])

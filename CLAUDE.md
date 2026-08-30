@@ -262,7 +262,10 @@ own, all pinned by `tower_interior_selfcheck`:
   that absence plus `reset_guards()` on the shell's `player_entered` signal IS the
   owner's "structure persists; population resets". Guards are parented to the building
   (a storey is flat within itself, so the gravity settle a `SPECIES` row expects holds),
-  never chunk-spawned. **Losing to one is the THIRD STAKE**: `coin_setback` (7%) off this
+  never chunk-spawned. **AT MOST ONE PER STOREY** (owner ruling 2026-08-30,
+  `GUARDS_PER_STOREY_MAX`), because the building is a stealth problem and two on a floor
+  turns a room you were meant to time and walk past into a chase; the count is asserted
+  off the BODIES in the tree, never off the table. **Losing to one is the THIRD STAKE**: `coin_setback` (7%) off this
   peer's own coins plus a knockback to `setback_point()` — the last checkpoint in the
   opened set, or the doorway — and **no life and no game over**, so the building can
   never end a run mid-rescue. It rides the one damage verb: `hit_by_crocodile(attacker)`
@@ -405,10 +408,11 @@ The building is full to its sealed roof — ten floor indices, `FLOOR_Y[0..9]`:
   cell block is hidden from every storey more than one below it**, and walking up the
   building rebuilds nothing: the window is one boolean write per floor, driven storey by
   storey in check 9.
-- **What is deliberately not here yet, all carrying `ponytail:` comments**: `P` pads are
-  geometry with no guards to scare (phase 17 owns population); `G` posts spawn nothing;
-  and the storey-8 **lift stop** ships its trigger and its graph rows but no menu to
-  choose it from — that is bead `godot-test1-3iy.7`. The entry is audited from anyway, so
+- **`G` posts ARE the population** — one per storey, read by `TowerInterior`'s
+  `guard_posts_table()`, so where a guard stands is a character in a grid and not a
+  Vector3 in a table. **What is deliberately not here yet, carrying `ponytail:`
+  comments**: `P` pads are geometry with no purge trigger behind them, and the storey-8
+  **lift stop** ships its trigger and its graph rows but no menu to choose it from — that is bead `godot-test1-3iy.7`. The entry is audited from anyway, so
   the 15-subset property already holds starting at the labyrinth's foot.
 
 `scripts/tower_graph.gd` is the tower's TOPOLOGY as one const dict of plain dicts —
@@ -493,6 +497,15 @@ no probe in that file measures. **It iterates `SPECIES`, `BIOME_SPECIES` and the
 enum, never a list of its own** — so a new predator is covered the day its row lands, and
 a new behaviour arm has to bring a probe with it. Keep it that way.
 
+**A cone is DETECTION, so it is data and it lives above the dispatch.** `view_cone_deg`
+is an optional row field defaulting to 360 — the tower guard's 120 is the only one — read
+once in `_ready()` into a cosine and applied in `_update_chase_state()` on the
+**acquisition edge only** (a predator that has you keeps you until distance drops it),
+after a game-wide `SPOT_TELEGRAPH_TIME` beat that shows a `?` and pings. It costs no RNG
+draw, so adding it to a row moves no spawn. `enemy_spawn_selfcheck` check 8e probes every
+row that carries the field, from behind and ahead, with the crocodile as the no-cone
+control.
+
 **Behaviour is one `match` on `spec["behavior"]` at the end of `_update_chase_state()`,
 and every arm is one call to its own `_behave_*()`** — no logic in the arm, no state
 shared between arms, `"solo"` deliberately having no arm at all (it is the code above it,
@@ -572,8 +585,9 @@ predator opts in with a row edit and no code change. `boss_selfcheck` check 8 dr
 control and anchors the crocodile by name against a stray key.
 
 **The tower guard is the FOURTH door, and it is not in `endless_terrain` at all.** It is
-placed on an authored post by `TowerInterior` (`GUARD_SPECIES` / `GUARD_SCENE` /
-`GUARD_POSTS`), so check 4's reachability gate reads those consts too — a union over the
+placed on a post by `TowerInterior` (`GUARD_SPECIES` / `GUARD_SCENE` /
+`GUARD_POSTS`, the keep's two hand rows, plus one derived per plan storey — see
+`guard_posts_table()`), so check 4's reachability gate reads those consts too — a union over the
 dispatch maps and the hunter spawner alone reports a shipped predator as unspawnable.
 **It adds no behaviour arm**: "patrols its floor and never leaves it" is the existing
 `set_confinement()` leash the elevated-platform guards already use, so the row is

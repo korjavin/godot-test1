@@ -3891,6 +3891,16 @@ func _announce_spot() -> void:
 	the `tower_guard` row), so "a GD-SURVEY unit has locked onto you" is one sound
 	in this game and not two. Null-safe group lookup and `has_method` like every
 	SFX hook here, so a self-check or a standalone scene stays quiet.
+
+	# ponytail: SIMULATING PEER ONLY, and that is the known ceiling. This is reached
+	# from `_update_chase_state`, which sits below `_tick_remote()`'s early return,
+	# so in a room only the master sees the `?` — the same gap
+	# `_announce_acquisition()` closes by re-detecting its edge off
+	# `CROC_FLAG_CHASING` in `set_remote_state()`. The beat itself is correct
+	# everywhere (the chase still starts 0.6 s late on every screen); only the tell
+	# is missing. Closing it needs a new state bit for "telegraphing", which is a
+	# protocol change this bead does not owe, and the upgrade path is exactly that
+	# bit plus one more edge in `set_remote_state`.
 	"""
 	if _spot_label == null:
 		_spot_label = Label3D.new()
