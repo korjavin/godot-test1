@@ -173,14 +173,105 @@ static func pad_digit(ch: String) -> int:
 
 const STOREYS: Array[Dictionary] = [
 	# ------------------------------------------------------------------------
-	# STOREY 3 (floor 2) — THE RECORDS FLOOR, and the first floor above the keep.
+	# STOREY 2 (floor 1) — THE MUSTER FLOOR, and the first of the two storeys bead
+	# `godot-test1-dn8` moved onto this grid. It used to be the keep's MEZZANINE:
+	# a 20 m square of slab over the courtyard, hand-authored against the inner
+	# faces of a building that no longer exists. It is now an ordinary 80 m plate
+	# like every floor above it.
 	#
-	# The grand ramp climbs the ANNULUS from the courtyard floor: ten cells of X
-	# (19.40 m) for an 11.0 m rise, slope 0.567 against the phase-3 ramp's proven
-	# 0.575. Its lane runs along the north ring corridor at z about -35 m, which is
-	# 25 m clear of the keep and nowhere near the door corridor that runs east from
-	# the keep's doorway — both asserted, because getting either wrong walls the
-	# player out of the building they just walked into.
+	# THE FLOOR IS TWO RAMPS AND THE WALK BETWEEN THEM. You arrive in the south
+	# west at the head of the ground floor's ramp (`s`, the six-cell `S` lane
+	# climbing 4.6 m at slope 0.395), cross the muster hall or the concourse round
+	# it, and leave at the north-west corner where the grand ramp to storey 3
+	# starts — which is why rows 1-2, columns 5-14 are PLAIN FLOOR and must stay
+	# that way: storey 3's lane stands on them, and `tower_selfcheck` reads the
+	# cell under every lane cell out of this grid.
+	#
+	# THE CHECKPOINT IS A SAFE HAVEN BY CONSTRUCTION, and that is geometry now
+	# rather than a hand-tuned number. `_plan_guard_post` measures a patrol as the
+	# symmetric run of PLAIN `.` cells around the post, and the `D` cell is not
+	# one — so the post in the vestibule (two cells of beat, west of the secure
+	# door) can never reach through the doorway it watches. A guard on this floor
+	# cannot follow you into the checkpoint; before this bead that was
+	# `GUARD_POSTS`' `patrol_half` promising the same thing by hand.
+	# ------------------------------------------------------------------------
+	{
+		"floor": 1,
+		"from": 0,
+		"landing": "upper_landing",
+		"rooms": {
+			"A": "checkpoint_room",
+			"B": "s2_muster",
+		},
+		# The identity mass fills the checkpoint's only doorway. Its pad is DERIVED
+		# from the plain floor on the vestibule side (`gate_pad_cell`), so the side
+		# you open it from is drawn rather than authored.
+		"gates": {
+			"29,13": "tower_secure_door", "29,14": "tower_secure_door",
+		},
+		"rows": [
+			"########################################",
+			"#......................................#",
+			"#......................................#",
+			"#......................................#",
+			"#..#########BB#########................#",
+			"#..#BBBBBBBBBBBBBBBBBB#................#",
+			"#..#BBBBBBBBBBBBBBBBBB#................#",
+			"#..#BBBBBBBBBBBBBBBBBB#................#",
+			"#..#BBBBBBBBBBBBBBBBBB#................#",
+			"#..#BBBBBBBBBBBBBBBBBB#......#########.#",
+			"#..#BBBBPBBBBBBBBBBBBB#......#AAAAAAA#.#",
+			"#..#BBBBBBBBBBBBBBBBBB#......#AAAAAAA#.#",
+			"#..#BBBBBBBBBBBBBBBBBB#.######AAAAAAA#.#",
+			"#..#BBBBBBBBBBBBBBBBBB#......DAAAAAAA#.#",
+			"#..#BBBBBBBBBBBBBBBBBB#...G..DAAAAAAA#.#",
+			"#..#BBBBBBBBBBBBBBBBBBB.######AAAAAAA#.#",
+			"#..#BBBBBBBBBBBBBBBBBBB......#AAAAAAA#.#",
+			"#..#BBBBBBBBBBBBBBBBBB#......#AAAAAAA#.#",
+			"#..#BBBBBBBBBBBBBBBBBB#......#########.#",
+			"#..#BBBBBBBBBBBBBBBBBB#................#",
+			"#..#BBBBBBBBBBBBBBBBBB#................#",
+			"#..#BBBBBBBBBBBBBBBBBB#................#",
+			"#..#BBBBBBBBBBBBBBPBBB#................#",
+			"#..#BBBBBBBBBBBBBBBBBB#................#",
+			"#..#BBBBBBBBBBBBBBBBBB#................#",
+			"#..#BBBBBBBBBBBBBBBBBB#................#",
+			"#..#BBBBBBBBBBBBBBBBBB#................#",
+			"#..####################................#",
+			"#......................................#",
+			"#......................................#",
+			"#...SSSSSSs............................#",
+			"#...SSSSSSs............................#",
+			"#......................................#",
+			"#......................................#",
+			"#......................................#",
+			"#......................................#",
+			"#......................................#",
+			"#......................................#",
+			"#......................................#",
+			"########################################",
+		],
+		"note": "Storey 2, the muster floor: the keep's mezzanine redrawn as a full "
+			+ "80 m plate. The ground floor's ramp lands in the south-west, the "
+			+ "grand ramp to storey 3 leaves from the north-west, and the "
+			+ "checkpoint sits east behind the secure door, watched by a post "
+			+ "whose beat stops at the doorway it guards.",
+	},
+	# ------------------------------------------------------------------------
+	# STOREY 3 (floor 2) — THE RECORDS FLOOR, and the first of the office storeys.
+	#
+	# THE GRAND RAMP NOW CLIMBS FROM STOREY 2, NOT FROM THE GROUND. It used to
+	# start on the annulus floor and carry the whole 11.0 m in ten cells of X
+	# (19.40 m, slope 0.567); bead `godot-test1-dn8` drew floor 1 as a full 80 m
+	# plate, and a ramp from 0 to 2 would pass straight THROUGH that slab — the
+	# format has no hole character, and `_plan_hole` only cuts the slab of the
+	# storey a ramp arrives on. So `from` is 1 and the same ten cells carry 6.4 m
+	# instead: slope 0.330, the gentlest ramp in the building.
+	#
+	# The lane's cells stand on rows 1-2, columns 5-14 of storey 2, which that
+	# storey's plan keeps as plain floor on purpose. `tower_selfcheck` reads the
+	# cell under every lane cell out of the storey below's own grid, so moving
+	# either drawing without the other fails the build.
 	#
 	# The floor is a two-cell RING CORRIDOR round the outside and a two-cell CROSS
 	# down each axis, so every room has two ways back to the landing and no dead end
@@ -189,7 +280,7 @@ const STOREYS: Array[Dictionary] = [
 	# ------------------------------------------------------------------------
 	{
 		"floor": 2,
-		"from": 0,
+		"from": 1,
 		"landing": "s3_landing",
 		"rooms": {
 			"A": "s3_records_west",

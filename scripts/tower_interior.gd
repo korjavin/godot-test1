@@ -333,32 +333,31 @@ const FLOOR_Y: Array[float] = [
 	TowerShell.KEEP_HEIGHT + 7.0 * TowerShell.STOREY_HEIGHT,
 ]
 
-## Which storeys physically TOUCH each one. THE VISIBILITY WINDOW'S ADJACENCY, and
-## it is NOT `absi(index - current) <= 1`.
+## Which storeys physically TOUCH each one. THE VISIBILITY WINDOW'S ADJACENCY.
 ##
-## THE KEEP'S UPPER LANDING IS A MEZZANINE, NOT A STOREY. Floor 1 covers the 20 m
-## core and nothing else, so the 80 m annulus at floor 0 runs straight past it to
-## floor 2's slab — which is the annulus's CEILING, two indices away. Under index
-## arithmetic that ceiling was hidden while solid from every square metre of the
-## ground floor, and the grand ramp (floor 0, because it starts there) vanished
-## from under the feet of anybody standing at its head on floor 2. Invisible
-## collision, on exactly the walk the phase is judged on. (codex review, 2026-08-29.)
+## IT IS PLAIN ADJACENCY AGAIN, AND THAT IS A DEMOLITION AND NOT A SIMPLIFICATION.
+## It was `[1, 2]` / `[0, 2]` / `[0, 1, 3]` at the bottom while floor 1 was the
+## KEEP'S MEZZANINE — a 20 m square of slab over the courtyard and nothing else, so
+## the 80 m annulus at floor 0 ran straight past it to floor 2's slab, which was its
+## ceiling two indices away. Index arithmetic hid that ceiling while it was solid and
+## hid the grand ramp from the head of the grand ramp: invisible collision, on
+## exactly the walk phase 14 was judged on (codex review, 2026-08-29). Bead
+## `godot-test1-dn8` demolished the keep and drew floor 1 as a full 80 m plate, so
+## floor 1's slab now roofs floor 0 everywhere and there is no storey with two rooms
+## under it.
 ##
-## Floor 2's slab roofs BOTH floor 0 and floor 1, which is why this is an adjacency
-## RELATION and not a parent table: a storey can have two rooms under it.
-##
-## Symmetric by construction and asserted symmetric by `tower_interior_selfcheck`
-## check 9, so a half-written row fails the build rather than the frame. A new plan
-## storey appends `[previous, next]` here — the same one-line edit `FLOOR_Y` takes,
-## in the same file, and the check names this table if you forget.
+## IT STAYS A TABLE. `_floor_visible` reads it and `tower_interior_selfcheck` check 9
+## asserts the RELATION's properties — symmetric, reflexive, at most three storeys
+## drawn — never the table read back to itself, so the day a mezzanine is authored
+## again the window is one row here and no arithmetic anywhere. A new plan storey
+## appends `[previous, next]`, the same one-line edit `FLOOR_Y` takes.
 const FLOOR_NEIGHBOURS: Array[Array] = [
-	[1, 2],     # 0 entry hall + courtyard + THE ANNULUS — the mezzanine over the
-	            #   keep, and storey 3's slab over everything else
-	[0, 2],     # 1 the keep's upper landing — the hall below, that same slab above
-	[0, 1, 3],  # 2 storey 3 — its slab caps the annulus AND the keep
-	[2, 4],     # 3 storey 4
-	[3, 5],     # 4 storey 5 — storey 6's slab is its ceiling since phase 16; it was
-	            #   [3] only while it was the top of the building
+	[1],        # 0 storey 1, the entry hall — floor 1's slab is its whole ceiling
+	[0, 2],     # 1 storey 2, the muster floor
+	[1, 3],     # 2 storey 3, records
+	[2, 4],     # 3 storey 4, accounts
+	[3, 5],     # 4 storey 5, executive — storey 6's slab is its ceiling since phase
+	            #   16; it was `[3]` only while it was the top of the building
 	[4, 6],     # 5 storey 6, operations
 	[5, 7],     # 6 storey 7, security
 	[6, 8],     # 7 storey 8 — the labyrinth's lower half

@@ -202,12 +202,26 @@ const TOWER_GRAPH: Dictionary = {
 		},
 		"upper_landing": {
 			"built": true, "quest": "", "cell": "", "parts": [],
-			"note": "Top of the ramp, west of the secure door.",
+			"note": "The head of the ground floor's ramp, in storey 2's south-west "
+				+ "corner. Since bead godot-test1-dn8 it is drawn on the plan grid "
+				+ "like every other landing, and it is also where the GRAND RAMP to "
+				+ "storey 3 starts — the whole climb passes through it.",
 		},
 		"checkpoint_room": {
 			"built": true, "quest": "checkpoint", "cell": "",
 			"parts": ["CheckpointPlate", "CheckpointPost"],
-			"note": "East of the identity gate. The run's respawn anchor.",
+			"note": "East of the identity gate, drawn on storey 2's grid. The run's "
+				+ "respawn anchor, and a safe haven by construction: the floor's one "
+				+ "guard post is in the vestibule outside, and a derived patrol cannot "
+				+ "cross the doorway's own cells.",
+		},
+		# The rest of storey 2. It exists so the plate has a room to BE — a pad has
+		# to stand beside one, and a floor of nothing but corridor is a floor the
+		# gates-shut binding has no rows about.
+		"s2_muster": {
+			"built": true, "quest": "", "cell": "", "parts": [],
+			"note": "The muster hall filling storey 2's west half. Plain office "
+				+ "floor: two ways in off the concourse, and the two vent pads.",
 		},
 		# --- the cell block. AUTHORED IN PHASE 8, MOVED TO STOREY 10 BY PHASE 16 ---
 		# The ids below are phase 8's, spelled exactly as phase 8 spelled them. The
@@ -249,8 +263,11 @@ const TOWER_GRAPH: Dictionary = {
 		# now needs a name the graph can walk through.
 		"outer_hall": {
 			"built": true, "quest": "", "cell": "", "parts": [],
-			"note": "The 80 m entrance hall the phase-13 envelope opened up. The keep "
-				+ "stands in the middle of it and the grand ramp climbs from its floor.",
+			"note": "The 80 m entrance hall the phase-13 envelope opened up. It used "
+				+ "to have the keep standing in the middle of it and the grand ramp "
+				+ "climbing from its floor; bead godot-test1-dn8 demolished the one "
+				+ "and moved the other up to storey 2, so this is now ordinary "
+				+ "ground-floor hall off the entry.",
 		},
 		# The storeys above are HAND-PLANNED AS TEXT — see `tower_plans.gd`. Every
 		# room a plan letters needs a row here, and `tower_selfcheck` binds the two
@@ -565,7 +582,16 @@ const TOWER_GRAPH: Dictionary = {
 		# empty solved set. A riddle dropped onto any of them fails the build. ---
 		{"id": "hall_outer", "a": "entry_hall", "b": "outer_hall",
 			"gate": "", "built": true},
-		{"id": "outer_s3", "a": "outer_hall", "b": "s3_landing",
+		# RENAMED FROM `outer_s3`, AND ITS WEST END MOVED UP A FLOOR. The grand ramp
+		# used to climb the annulus from `outer_hall`; bead godot-test1-dn8 drew
+		# floor 1 as a full 80 m plate, so a ramp from the ground to storey 3 would
+		# pass through it and the climb starts on storey 2 instead. Edge ids are NOT
+		# persisted — only gate, entry and scar ids are — which is what makes this a
+		# rename and not a save migration; `block_main_door` documents the same move.
+		{"id": "landing_s3", "a": "upper_landing", "b": "s3_landing",
+			"gate": "", "built": true},
+		# ...and the muster hall off it, ungated like every other room off a landing.
+		{"id": "landing_muster", "a": "upper_landing", "b": "s2_muster",
 			"gate": "", "built": true},
 		{"id": "s3_landing_records_west", "a": "s3_landing", "b": "s3_records_west",
 			"gate": "", "built": true},
@@ -749,7 +775,10 @@ const TOWER_GRAPH: Dictionary = {
 		GATE_IDENTITY: {
 			"class": CLASS_IDENTITY, "identity": "teibi", "effect": "", "scale": 0.0,
 			"needed_during_captivity": false, "built": true, "quest": "checkpoint",
-			"parts": ["IdentityMass", "IdentityPad"],
+			# Drawn by storey 2's `D` run since bead godot-test1-dn8, so the mass and
+			# its derived pad carry the plan builder's names — exactly as phase 16 did
+			# for the four spine gates. `parts` is NOT persisted; gate ids are.
+			"parts": ["S1PlanGateMass_tower_secure_door", "S1PlanGatePad_tower_secure_door"],
 			"note": "The mass only Teibi lifts. Behind it is a checkpoint, never a cell.",
 		},
 
@@ -944,30 +973,36 @@ const TOWER_GRAPH: Dictionary = {
 	# last is the hero's own. Each must be passable by its hero ALONE at the
 	# readiness floor, which check 3 walks edge by edge.
 	# ------------------------------------------------------------------------
-	# THE SHARED SEGMENT IS NOW THE WHOLE BUILDING, and every edge on it is
-	# UNGATED — front door, annulus, seven ramps, ROUTE A of both labyrinth floors
-	# (the outer circuits, never the riddles), the last ramp, and the cell block's
-	# wide doorway. Check 3 walks these with an EMPTY solved set, so a riddle on a
-	# spine fails the build; that is exactly why the maze has two routes and why
-	# these lists name the circuits.
+	# THE SHARED SEGMENT IS THE WHOLE BUILDING — front door, the rotor doorway, the
+	# courtyard ramp, seven more ramps, ROUTE A of both labyrinth floors (the outer
+	# circuits, never the riddles), the last ramp, and the cell block's wide
+	# doorway. Check 3 walks these with an EMPTY solved set, so a riddle on a spine
+	# fails the build; that is exactly why the maze has two routes and why these
+	# lists name the circuits.
 	#
-	# `rotor_gate` IS NO LONGER ON ANY SPINE: the route leaves the entry hall
-	# through `hall_outer` into the annulus and never enters the courtyard.
+	# `rotor_gate` IS BACK ON EVERY SPINE, and it is the ONE gate on them. Bead
+	# godot-test1-dn8 demolished the keep and moved the grand ramp's foot up to
+	# storey 2, so the only way out of the ground floor is the courtyard ramp and
+	# the only way into the courtyard is the rotor doorway. That is legal and it is
+	# the reason the class exists: a CHALLENGE is base kit, passable by any hero
+	# alone (`_passable`), so it can strand no subset — which is exactly what check
+	# 3 and the fifteen subset walks re-prove rather than take on trust. An identity
+	# or a demand gate here would be a softlock the audit would refuse.
 	"spines": {
 		"windman": {"entry": "front_door", "edges": [
-			"hall_outer", "outer_s3", "s3_s4", "s4_s5", "s5_s6", "s6_s7", "s7_s8", "s8_outer_circuit", "s8_s9",
+			"hall_courtyard", "courtyard_landing", "landing_s3", "s3_s4", "s4_s5", "s5_s6", "s6_s7", "s7_s8", "s8_outer_circuit", "s8_s9",
 			"s9_outer_circuit", "s9_s10", "block_main_door",
 			"stair_gallery_windman"]},
 		"primm": {"entry": "front_door", "edges": [
-			"hall_outer", "outer_s3", "s3_s4", "s4_s5", "s5_s6", "s6_s7", "s7_s8", "s8_outer_circuit", "s8_s9",
+			"hall_courtyard", "courtyard_landing", "landing_s3", "s3_s4", "s4_s5", "s5_s6", "s6_s7", "s7_s8", "s8_outer_circuit", "s8_s9",
 			"s9_outer_circuit", "s9_s10", "block_main_door",
 			"stair_gallery_primm"]},
 		"teibi": {"entry": "front_door", "edges": [
-			"hall_outer", "outer_s3", "s3_s4", "s4_s5", "s5_s6", "s6_s7", "s7_s8", "s8_outer_circuit", "s8_s9",
+			"hall_courtyard", "courtyard_landing", "landing_s3", "s3_s4", "s4_s5", "s5_s6", "s6_s7", "s7_s8", "s8_outer_circuit", "s8_s9",
 			"s9_outer_circuit", "s9_s10", "block_main_door",
 			"stair_gallery_teibi"]},
 		"phoboman": {"entry": "front_door", "edges": [
-			"hall_outer", "outer_s3", "s3_s4", "s4_s5", "s5_s6", "s6_s7", "s7_s8", "s8_outer_circuit", "s8_s9",
+			"hall_courtyard", "courtyard_landing", "landing_s3", "s3_s4", "s4_s5", "s5_s6", "s6_s7", "s7_s8", "s8_outer_circuit", "s8_s9",
 			"s9_outer_circuit", "s9_s10", "block_main_door",
 			"stair_gallery_phoboman"]},
 	},

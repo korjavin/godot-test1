@@ -541,23 +541,69 @@ Every one must print `SELFCHECK OK` and exit 0.
 Floor 1 first, because storey 3 already exists above it and its ramp is the thing that
 has to keep working.
 
-- [ ] Add the floor-1 `STOREYS` row per D4: `"floor": 1, "from": 0,
+- [x] Add the floor-1 `STOREYS` row per D4: `"floor": 1, "from": 0,
       "landing": "upper_landing"`, its `rooms` / `gates` maps, and 40 rows of 40 chars.
       Author the `note` as the design record: what the floor is, why the checkpoint is a
       safe haven by construction, and that the grand ramp to storey 3 starts here.
-- [ ] Keep rows 1–2, columns 5–14 as plain walkable floor (storey 3's lane stands on
+- [x] Keep rows 1–2, columns 5–14 as plain walkable floor (storey 3's lane stands on
       them); put floor 1's own six-cell `S` lane and its `s` landing on the south half.
-- [ ] Exactly two `P` cells, each 4-adjacent to a room letter; exactly one `G`, west of
-      the `D` run.
-- [ ] Change storey 3's row to `"from": 1`. Nothing else in that row moves.
-- [ ] `FLOOR_NEIGHBOURS` → plain adjacency, with the rewritten comment (D1).
-- [ ] Add `TOWER_GRAPH` rows for any new `s2_*` room plus their ungated edges from
+      (Lane at columns 4–9, rows 30–31, landing at column 10 — 11.64 m of run for the
+      4.6 m rise, slope 0.395, the second-gentlest ramp in the building.)
+- [x] Exactly two `P` cells, each 4-adjacent to a room letter; exactly one `G`, west of
+      the `D` run. The post stands in a walled two-cell VESTIBULE in front of the secure
+      door, which is what makes D4's "safe haven by construction" measurable rather than
+      asserted: `_plan_guard_post` measures the beat as the run of plain `.` cells, so
+      the patrol comes out 2 cells of X (3.88 m, ending 0.97 m short of the `D` run's
+      west face) and can never cross the doorway. Drawn in the open plate the post would
+      have taken the Z axis down the concourse instead, which is a legal patrol but not
+      the one the design record claims.
+- [x] Change storey 3's row to `"from": 1`. Nothing else in that row moves. Its ten-cell
+      lane now carries 6.4 m: **slope 0.330, 18.3 degrees**, against 0.567 before.
+- [x] `FLOOR_NEIGHBOURS` → plain adjacency, with the rewritten comment (D1).
+- [x] Add `TOWER_GRAPH` rows for any new `s2_*` room plus their ungated edges from
       `upper_landing`; rename `outer_s3` → `landing_s3` with `a: "upper_landing"` (D10);
-      re-point `tower_secure_door`'s `parts` (D5).
-- [ ] `tower_selfcheck` and `tower_interior_selfcheck` will fail here (floor 1 now emits
+      re-point `tower_secure_door`'s `parts` (D5). One new room (`s2_muster`) and one new
+      edge (`landing_muster`).
+- [x] `tower_selfcheck` and `tower_interior_selfcheck` will fail here (floor 1 now emits
       plan boxes *and* keep boxes on the same floor, duplicate names, budget). **That is
       expected** — Task 3 is what removes the keep. Note the failures; do not paper over
       them.
+
+**➕ Scope found in Task 2: the four SPINES had to move with the renamed edge.** D10
+renames `outer_s3` and moves its west end to `upper_landing`, and all four `spines` rows
+walked `hall_outer, outer_s3, …` — an edge list is a PATH and check 3 walks it edge by
+edge, so leaving it would not have been a deferred failure but a severed spine. The
+climb now starts `hall_courtyard, courtyard_landing, landing_s3, …`, which is the
+primary design (D3 puts the `G` post "between the rotor doorway and the foot of the
+ramp", i.e. the ramp's foot is in the courtyard) and NOT Task 4's ⚠️ fallback. So
+**`rotor_gate` is back on every spine and is the only gate on one** — legal, and checked
+rather than argued: a CHALLENGE is base kit and `_passable` lets any hero through alone,
+so check 3 and all fifteen subset walks pass unchanged. `custody_stair_collapse` removes
+`block_main_door`, not the courtyard stair, so the scar cannot strand the new route
+either. The comment claiming "rotor_gate is no longer on any spine" was rewritten to say
+why it is back. Task 4's ⚠️ fallback is therefore **not needed** — recorded here so it is
+not re-litigated.
+
+**➕ Measured after Task 2** — every check that failed, and nothing else:
+
+| check | failure | whose task |
+|---|---|---|
+| `tower_selfcheck` | `IdentityMass` / `IdentityPad` painted a gate colour, claimed by no graph row | Task 3 (deletes both boxes) |
+| `tower_selfcheck` | four negative controls "ACCEPT" their broken plan | see ⚠️ below — Task 5 |
+| `tower_interior_selfcheck` | 36 meshes over `DRAW_BUDGET` 35 | Task 5 (budgets move in the const) |
+| `tower_interior_selfcheck` | "floor 0 is hidden from floor 2, which it physically touches" | Task 5 (check 9's authored pairs are the mezzanine building's) |
+| `tower_interior_selfcheck` | storey 2 carries 2 guards, over `GUARDS_PER_STOREY_MAX` | Task 3 (deletes `GUARD_POSTS`) |
+
+Everything else is green, including the fifteen subset walks, the four spines, the
+plan ↔ graph binding both ways, both flood fills on the new storey, the jump rule, the
+per-storey box budgets (floor 1 emits **26** boxes) and the ramp-flush geometry.
+
+**⚠️ For Task 5: `_check_the_flood_fill_can_fail` builds its controls on
+`TowerPlans.STOREYS[0]`.** That was storey 3 and is now floor 1, so four controls mutate
+cells that mean nothing on the new drawing and report "the assertion is decorative" —
+the check catching itself, which is the good failure mode. The fix is the idiom that
+file already argues for two functions further down (`_control_storey`: find the storey by
+a ROOM it draws, never by an index), e.g. anchor `base` on `s3_records_west`.
 
 ### Task 3: Draw floor 0 (storey 1) and delete `boxes()`
 
