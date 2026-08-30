@@ -82,3 +82,6 @@ addons/
 
 # Python bytecode from the model generator scripts
 __pycache__/
+
+# ralphex run artifacts
+.ralphex/
