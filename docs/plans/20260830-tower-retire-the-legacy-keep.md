@@ -810,16 +810,60 @@ longer uses":**
 
 ### Task 6: The rest of the callers
 
-- [ ] `capture_selfcheck` (`:910`): `TowerInterior.CHECKPOINT_STAND` / `ENTRY_STAND` →
+- [x] `capture_selfcheck` (`:910`): `TowerInterior.CHECKPOINT_STAND` / `ENTRY_STAND` →
       the new functions. Confirm `_check_a_guard_takes_coins_and_ground_not_a_heart`
       still lands the player on the plate in both branches — this is the bead's
-      "guard-setback checkpoint positions" acceptance.
-- [ ] `enemy_spawn_selfcheck`: it asserts `TowerInterior.GUARD_POSTS` is non-empty.
+      "guard-setback checkpoint positions" acceptance. **Green in both branches.**
+- [x] `enemy_spawn_selfcheck`: it asserts `TowerInterior.GUARD_POSTS` is non-empty.
       Re-point it at `guard_posts_table()`, which is the seam that actually matters.
-- [ ] `grep -rn 'KEEP_HALF\|KEEP_HEIGHT\|INNER_HALF\|UpperSlab\|HallCarpet\|GUARD_POSTS\|CHECKPOINT_STAND\|ENTRY_STAND\|TowerInterior.boxes' scripts/ scenes/`
+- [x] `grep -rn 'KEEP_HALF\|KEEP_HEIGHT\|INNER_HALF\|UpperSlab\|HallCarpet\|GUARD_POSTS\|CHECKPOINT_STAND\|ENTRY_STAND\|TowerInterior.boxes' scripts/ scenes/`
       must come back empty except for the historical notes you deliberately kept.
-- [ ] `grep -rn 'keep' scripts/tower_*.gd` — read every hit and fix the comments that
+      **Four hits left, all headstones**: `tower_shell.gd:12,90` (the ring's),
+      `tower_plans.gd:295` (`patrol_half` used to promise the vestibule by hand),
+      `tower_interior.gd:286` (`FLOOR_Y`'s 11.0 m used to live on `KEEP_HEIGHT`).
+      The three live `TowerInterior.boxes()` references in `tower_graph.gd` and
+      `tower_selfcheck.gd`'s LANDMINES note now say `all_boxes()`.
+- [x] `grep -rn 'keep' scripts/tower_*.gd` — read every hit and fix the comments that
       now describe a building that does not exist.
+
+**➕ Scope found in Task 6 — three of them, and every one is "a name the building no
+longer uses", the same shape as Task 5's:**
+
+- **`tower_selfcheck.KEEP_ROOMS` is deleted, and its absence is the demolition's
+  receipt.** It named the six rooms no ASCII plan lettered — the only rooms check 1
+  allowed to be undrawn. All six (`entry_hall`, `outer_hall`, `courtyard`,
+  `upper_landing`, `vault`, `checkpoint_room`) are lettered on floors 0 and 1 now, so
+  the exemption exempted nothing and the graph→plan rule is TOTAL: every built room is
+  claimed by exactly one storey. Deleting an exemption list only ever makes an audit
+  stronger, and this one still passes.
+- **`tower_interior_selfcheck`'s palette check covered eight storeys of ten.** Its
+  carpet/wainscot half stood behind `TowerPlans.storey(f).is_empty()`, because the
+  keep's two floors were hand-authored furniture. Every floor is drawn on the grid now,
+  so the guard is gone and floors 0 and 1 are held to the same look as the rest. They
+  pass unchanged — the plan builder was already painting them.
+- **⚠️ `capture_selfcheck` check 9 (Resize is not a lift) failed for a reason the plan
+  did not book**, and it could not have been seen until this task made the file parse
+  again. Both halves are consequences of the demolition, and neither is a regression in
+  the gate the check guards:
+  - the CEILING subject's isolation (`_horizontally_clear`) was a VERDICT on whichever
+    full-height face came first in the table. On the old 80 m annulus that face stood
+    alone; on the drawn ground storey it is in a corner. The isolation is now part of
+    the SEARCH — a candidate with other stone inside the giant's radius is skipped,
+    not failed — and it is still re-asked after the shove, because that part is physics.
+  - the CONTROL stood in the annulus under "11 m of air". Floor 1 is a full plate now,
+    so the ground storey has a 4.20 m lid **everywhere** and admits a giant nowhere:
+    the control was genuinely vacuous and said so. It moved to the storey the check
+    already picks for its WALL subject — the one whose clear height is over the
+    giant's — which is the property that made the annulus the right place to stand,
+    now read off the arithmetic instead of off a demolished floor plan.
+
+**➕ Measured after Task 6** (headless, this branch): `tower_selfcheck`,
+`tower_interior_selfcheck`, `capture_selfcheck`, `enemy_spawn_selfcheck`,
+`tower_shell_selfcheck` and `tower_site_selfcheck` all `SELFCHECK OK`, exit 0.
+`tower_selfcheck` prints **10 storeys, 56 rooms, 10581 cells walkable**, graph **66
+rooms, 73 edges, 12 gates, 3 entries, 2 scars — 15 subset walks clean**; check 9's
+subjects resolve to wall storey 1 (6.00 m clear) and ceiling storey 0 (4.20 m clear),
+with the control growing a giant on storey 1.
 
 ### Task 7: Verify, measure, document
 

@@ -183,8 +183,8 @@ const TOWER_GRAPH: Dictionary = {
 
 	# ------------------------------------------------------------------------
 	# ROOMS. `quest` names the quest completed here (""), `cell` names the hero
-	# whose cell this is (""). `parts` are the `TowerInterior.boxes()` entries that
-	# ARE this room's marker — only the checkpoint has one today.
+	# whose cell this is (""). `parts` are the `TowerInterior.all_boxes()` entries
+	# that ARE this room's marker — only the checkpoint has one today.
 	# ------------------------------------------------------------------------
 	"rooms": {
 		# --- built, phase 3 ---
@@ -746,7 +746,7 @@ const TOWER_GRAPH: Dictionary = {
 	# gate lies on EVERY route to a cell, and fails on any disagreement. So the
 	# flag is documentation that cannot rot.
 	#
-	# `parts` are the `TowerInterior.boxes()` names that build this gate. Every box
+	# `parts` are the `TowerInterior.all_boxes()` names that build this gate. Every box
 	# the interior paints in a gate colour must be claimed by exactly one of these
 	# lists, which is how a gate added to the building but not to the graph is
 	# caught. An unbuilt gate claims nothing.

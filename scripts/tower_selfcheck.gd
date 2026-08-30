@@ -87,7 +87,7 @@ extends SceneTree
 ## ============================================================================
 ##
 ## PURE GRAPH WALKING. Nothing here instances a scene, adds a node or runs a frame;
-## `TowerInterior.boxes()` is static and the rest is dictionaries. A check that
+## `TowerInterior.all_boxes()` is static and the rest is dictionaries. A check that
 ## needed a running world could not be run on a graph whose rooms are not built
 ## yet — and phase 8's cell block, which this audit exists to constrain, is exactly
 ## that.
@@ -153,13 +153,15 @@ const SCAR_KEYS: Array[String] = ["id", "removes", "note"]
 ## Keys an item row may carry. Design law 2: no `carrier`, no `hero`, no `held_by`.
 const ITEM_KEYS: Array[String] = ["id", "scope", "room", "note"]
 
-## The rooms the KEEP draws from its own box table (floors 0 and 1), which is the
-## complete list of built rooms no ASCII plan letters. Check 1 requires every OTHER
-## built room to be drawn by exactly one storey: a room nothing draws is a room the
-## grid checks cannot see, so every edge it carries is silently skipped by check 14
-## — which is what `s5_stairhead` cost before phase 16 merged it away.
-const KEEP_ROOMS: Array[String] = ["entry_hall", "outer_hall", "courtyard",
-		"upper_landing", "vault", "checkpoint_room"]
+## THERE IS NO EXEMPTION LIST ANY MORE, and its absence is the demolition's
+## receipt. `KEEP_ROOMS` used to name the six rooms the phase-3 keep drew from its
+## own box table (`entry_hall`, `outer_hall`, `courtyard`, `upper_landing`, `vault`,
+## `checkpoint_room`) — the complete list of built rooms no ASCII plan lettered, and
+## the only rooms check 1 let go undrawn. Bead `godot-test1-dn8` drew floors 0 and 1
+## on the grid, so every built room is now claimed by exactly one storey and the
+## rule below is total: a room nothing draws is a room the grid checks cannot see,
+## so every edge it carries is silently skipped by check 14 — which is what
+## `s5_stairhead` cost before phase 16 merged it away.
 
 ## Rank budgets a walk can be run at. FLOOR is what the beat guarantees and the only
 ## honest budget for a rescue route; MAX is what a completionist eventually has and
@@ -339,8 +341,7 @@ func _check_plans_bind_to_the_graph() -> void:
 	Check 1, phase 14: every hand-planned storey and `TOWER_GRAPH` are the same
 	building — in both directions, and in both alphabets.
 
-	A storey above the keep is DRAWN as ASCII (`tower_plans.gd`) and WALKED as a
-	graph, and neither half can see the other's drift on its own. The graph cannot
+	A storey is DRAWN as ASCII (`tower_plans.gd`) and WALKED as a graph, and neither half can see the other's drift on its own. The graph cannot
 	see a room lettered on no floor; the ASCII cannot see a room the audit walks
 	through that nobody ever drew. Both are the same failure this check exists for —
 	an audit reasoning about a building the player is not standing in.
@@ -349,9 +350,9 @@ func _check_plans_bind_to_the_graph() -> void:
 
 	  * every id a plan names (its `rooms` values and its `landing`) is a BUILT
 	    room row, and every id is claimed by exactly ONE storey — a room is on one
-	    floor. The other way too: every built room is drawn by SOME storey, bar the
-	    keep's own `KEEP_ROOMS`, because a room nothing draws is a room check 14
-	    skips every edge of;
+	    floor. The other way too: every built room is drawn by SOME storey, with no
+	    exemptions left since the keep was demolished, because a room nothing draws
+	    is a room check 14 skips every edge of;
 	  * every letter drawn on the grid is in that storey's `rooms` dict, and every
 	    `rooms` entry is drawn somewhere on the grid;
 	  * every `D` cell's `"<c>,<r>"` key is in `gates` and names a real gate row,
@@ -467,17 +468,12 @@ func _check_plans_bind_to_the_graph() -> void:
 	# edge it carries, because it looks the room up on the drawing and does not find
 	# it. One vestigial row cost storey 5 all ten of its edges, `riddle_stair`'s
 	# among them.
-	for keep: String in KEEP_ROOMS:
-		if not rooms.has(keep):
-			_fail("KEEP_ROOMS names '%s', which is not a TOWER_GRAPH room — the exemption "
-				% keep + "list has rotted, and it is the only thing allowed to be undrawn")
 	for rid3: String in rooms:
-		if not bool(rooms[rid3]["built"]) or KEEP_ROOMS.has(rid3) or claimed_by.has(rid3):
+		if not bool(rooms[rid3]["built"]) or claimed_by.has(rid3):
 			continue
 		_fail(("room '%s' is built but no storey plan draws it — the grid checks cannot see "
 			+ "a room with no cells, so every gates-shut binding it carries is skipped. "
-			+ "Letter it on its floor, merge it into the room it is half of, or add it to "
-			+ "KEEP_ROOMS if the keep's box table builds it") % rid3)
+			+ "Letter it on its floor, or merge it into the room it is half of") % rid3)
 
 
 # ============================================================================

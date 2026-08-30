@@ -129,10 +129,12 @@ const ROOF_THICK: float = 2.0
 ## sits on -X (phase 1's ruling) and the player spawns at the origin, so a player who
 ## walks to the tower walks straight at the doorway instead of round the back.
 ##
-## BOTH RINGS ARE CUT WITH THE SAME TWO NUMBERS, so the outer envelope's hole and the
-## inner keep's hole are on one line and you walk straight through both. The door
-## TRIGGER is on the keep's, because "entered the tower" is a claim about the rooms:
-## the outer hole is a gateway into a courtyard.
+## ONE RING SINCE bd godot-test1-dn8. Phase 13 cut these two numbers TWICE — the
+## envelope's hole and the inner keep's, on one line so you walked straight through
+## both — and hung the door TRIGGER on the keep's, because "entered the tower" is a
+## claim about the rooms and the outer hole only got you into a courtyard. The keep
+## is demolished and floor 0 is a planned storey that starts at the outer wall, so
+## there is one hole, and `door_trigger_box()` is on it.
 const DOOR_HALF_WIDTH: float = 3.0
 const DOOR_HEIGHT: float = 4.0
 
@@ -637,7 +639,7 @@ static func build_impostor() -> Node3D:
 
 
 func _ready() -> void:
-	"""Build the keep, its one collision body, and the door trigger."""
+	"""Build the shell, its one collision body, and the door trigger."""
 	# Group registration so phase 3's interior, a self-check or the HUD can find the
 	# tower the project's way — no hard references anywhere (CLAUDE.md).
 	add_to_group("tower")

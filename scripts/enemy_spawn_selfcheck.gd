@@ -247,12 +247,18 @@ var _sim_radius: float = 0.0
 var _hunter_species: String = ""
 var _hunter_scene: PackedScene = null
 
-## tower_interior.gd's GUARD_SPECIES / GUARD_SCENE / GUARD_POSTS — the FOURTH door,
-## and the first that is not in endless_terrain at all. A tower guard belongs to no
-## band and no road station: it is parented to the BUILDING and placed on an
-## authored post, so a reachability union over the dispatch maps and the hunter
-## spawner alone would report it as a species nothing can spawn. Read, never
-## restated, exactly like the hunter's pair.
+## tower_interior.gd's GUARD_SPECIES / GUARD_SCENE / `guard_posts_table()` — the
+## FOURTH door, and the first that is not in endless_terrain at all. A tower guard
+## belongs to no band and no road station: it is parented to the BUILDING and stood
+## on a post, so a reachability union over the dispatch maps and the hunter spawner
+## alone would report it as a species nothing can spawn. Read, never restated,
+## exactly like the hunter's pair.
+##
+## THE POSTS ARE A FUNCTION, NOT A CONST, since bd godot-test1-dn8 demolished the
+## keep: the two hand-authored rows went with it and every post is now derived from
+## a `G` character on a `TowerPlans` storey. `guard_posts_table()` is the seam the
+## building itself calls, so asking it — rather than a table beside it — is what
+## keeps this measuring the population the tower really stands up.
 var _guard_species: String = ""
 var _guard_scene_path: String = ""
 var _guard_scene: PackedScene = null
@@ -353,7 +359,9 @@ func _run() -> void:
 	# does rather than reaching for a const that is not allowed to exist.
 	_guard_scene_path = String(tower_consts.get("GUARD_SCENE_PATH", ""))
 	_guard_scene = (load(_guard_scene_path) as PackedScene) if _guard_scene_path != "" else null
-	_guard_posts = tower_consts.get("GUARD_POSTS", [])
+	# The seam, not a table: `guard_posts_table()` walks the storeys' `G` cells, so
+	# a plan that stopped drawing one is a post this check stops counting.
+	_guard_posts = TowerInterior.guard_posts_table()
 	_biome_species = consts.get("BIOME_SPECIES", {})
 	_biome_boss = consts.get("BIOME_BOSS", {})
 	_boss_interval = int(consts.get("BOSS_INTERVAL_STATIONS", 0))
@@ -607,9 +615,9 @@ func _check_species_table() -> void:
 					% _guard_scene_path + " PackedScene — the tower has nothing to"
 					+ " instantiate its guards from")
 		if _guard_posts.is_empty():
-			_fail("TowerInterior.GUARD_POSTS is empty — the row is in the table and"
-					+ " the scene loads, but no guard is ever stood up, so the"
-					+ " species is reachable only on paper")
+			_fail("TowerInterior.guard_posts_table() is empty — the row is in the"
+					+ " table and the scene loads, but no guard is ever stood up, so"
+					+ " the species is reachable only on paper")
 	for name_v: Variant in _species_table:
 		if not dispatched.has(String(name_v)):
 			_fail("SPECIES['%s'] is in the table but in no BIOME_SPECIES or"

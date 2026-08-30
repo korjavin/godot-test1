@@ -907,8 +907,12 @@ func _check_a_guard_takes_coins_and_ground_not_a_heart() -> void:
 			shell.call("mark_opened", TowerInterior.GATE_CHECKPOINT)
 		else:
 			(shell.get("opened") as Dictionary).erase(TowerInterior.GATE_CHECKPOINT)
-		var want_spot: Vector3 = interior.global_position + (TowerInterior.CHECKPOINT_STAND
-				if lit else TowerInterior.ENTRY_STAND)
+		# Both stands are DERIVED from the drawing since bd godot-test1-dn8 demolished
+		# the keep — `checkpoint_stand()` off the checkpoint room's plan rect, and
+		# `entry_stand()` off the shell's doorway — so this reads the functions the
+		# game reads and cannot drift from the plates the player is knocked onto.
+		var want_spot: Vector3 = interior.global_position + (TowerInterior.checkpoint_stand()
+				if lit else TowerInterior.entry_stand())
 
 		var player := await _make_player()
 		player.coins_collected = SETBACK_PROBE_COINS
@@ -1931,12 +1935,23 @@ const RESIZE_CEILING_GAP: float = 0.3
 const RESIZE_SHOVE_FRAMES: int = 30
 const RESIZE_SHOVE_SPEED: float = 5.0
 
-## Where the negative control stands: out in the annulus, off the keep, under the
-## 11 m of air that storey 3's slab leaves over the ground floor. Diagonals are
-## tried in turn because the grand ramp lands in one quadrant.
+## Where the negative control stands, as interior-local XZ on the storey the check
+## picked for its WALL subject — the one whose clear height is over the giant's
+## height, so a spot with nothing beside it is a spot he fits in.
+##
+## IT USED TO BE THE ANNULUS ON FLOOR 0, under the 11 m of air the keep's mezzanine
+## left over the ground floor. Bead `godot-test1-dn8` demolished the keep and drew
+## floors 0 and 1 as full plates, so the ground storey has a 4.20 m lid everywhere
+## and admits a giant NOWHERE — the control had to move to a storey that is tall,
+## not to a corner of one that is short. Several spots are tried in turn because
+## every planned storey has partitions in it.
 const RESIZE_OPEN_SPOTS: Array[Vector2] = [
 	Vector2(20.0, 20.0), Vector2(-20.0, 20.0),
 	Vector2(20.0, -20.0), Vector2(-20.0, -20.0),
+	Vector2(10.0, 10.0), Vector2(-10.0, 10.0),
+	Vector2(10.0, -10.0), Vector2(-10.0, -10.0),
+	Vector2(30.0, 0.0), Vector2(-30.0, 0.0),
+	Vector2(0.0, 30.0), Vector2(0.0, -30.0),
 ]
 
 
@@ -2025,7 +2040,8 @@ func _check_resize_is_not_a_lift() -> void:
 		await _resize_is_refused(player, interior, ceiling_floor,
 			giant_radius, giant_radius + RESIZE_CEILING_GAP, "a ceiling",
 			giant_radius)
-	await _resize_is_allowed_in_the_open(player, interior)
+	if wall_floor >= 0:
+		await _resize_is_allowed_in_the_open(player, interior, wall_floor)
 
 	_clear(player)
 	tower.queue_free()
@@ -2046,7 +2062,8 @@ func _resize_is_refused(player: Node, interior: Node3D, floor_index: int,
 	regression in the vertical half could hide behind a wall that happened to be in
 	reach, and this is the measurement that says it did not.)
 	"""
-	var placed := await _stand_beside_a_wall(player, interior, floor_index, gap)
+	var placed := await _stand_beside_a_wall(player, interior, floor_index, gap,
+			clear_radius)
 	if placed.is_empty():
 		_fail("found nowhere to stand on storey %d — check 9's %s subject is vacuous" % [
 			floor_index, cause])
@@ -2057,6 +2074,8 @@ func _resize_is_refused(player: Node, interior: Node3D, floor_index: int,
 		floor_index, TowerInterior.plan_clear_height(floor_index), cause,
 		spot.x, spot.y, spot.z])
 
+	# Re-asked here rather than trusted from the search, because `_shove()` and the
+	# settle in between are physics and could have slid the body somewhere else.
 	if clear_radius > 0.0 and not _horizontally_clear(player, floor_index, clear_radius):
 		_fail("storey %d's %s subject has stone within %.2f m horizontally — the refusal below could be a wall, so the ceiling is not isolated" % [
 			floor_index, cause, clear_radius])
@@ -2094,12 +2113,17 @@ func _resize_is_refused(player: Node, interior: Node3D, floor_index: int,
 	_reset_form(player)
 
 
-func _resize_is_allowed_in_the_open(player: Node, interior: Node3D) -> void:
+func _resize_is_allowed_in_the_open(player: Node, interior: Node3D,
+		floor_index: int) -> void:
 	"""
-	The negative control: out in the annulus the growth goes through, and the body
-	stays on the ground floor while it does.
+	The negative control: in open floor on a storey tall enough for him the growth
+	goes through, and the body stays on that storey while it does.
+
+	`floor_index` is the WALL subject's storey — chosen because its clear height is
+	over the giant's, which is exactly what makes "the lid is not what refused it"
+	true out in the middle of the room. Before the demolition this was the ground
+	floor's annulus; see `RESIZE_OPEN_SPOTS`.
 	"""
-	var floor_index := 0
 	var placed := false
 	for spot: Vector2 in RESIZE_OPEN_SPOTS:
 		player.global_position = interior.to_global(
@@ -2110,19 +2134,22 @@ func _resize_is_allowed_in_the_open(player: Node, interior: Node3D) -> void:
 			placed = true
 			break
 	if not placed:
-		_fail("nowhere in the annulus has room for a giant — check 9's control is vacuous")
+		_fail("nowhere on storey %d has room for a giant — check 9's control is vacuous"
+				% floor_index)
 		return
 	player.try_activate_ability()          # -> small
 	await _settle(player)
 	player.ability_cooldowns[player.current_character_index] = 0.0
 	if player.get_ability_block_reason() != "":
-		_fail("in the open annulus the growth is gated by %s" % player.get_ability_block_reason())
+		_fail("in open floor on storey %d the growth is gated by %s" % [
+			floor_index, player.get_ability_block_reason()])
 	player.try_activate_ability()          # -> giant
 	await _settle(player)
 	if player.teibi_size_state != 2 or not player.is_giant:
-		_fail("in the open annulus Teibi did not grow (state %d)" % player.teibi_size_state)
+		_fail("in open floor on storey %d Teibi did not grow (state %d)" % [
+			floor_index, player.teibi_size_state])
 	_storey_held(player, interior, floor_index, "giant (allowed)", "open air")
-	print("control: the annulus grew a giant and he stayed on the ground floor")
+	print("control: storey %d grew a giant in the open and he stayed on it" % floor_index)
 	_reset_form(player)
 
 
@@ -2176,13 +2203,20 @@ func _shove(player: Node, into: Vector3) -> void:
 
 
 func _stand_beside_a_wall(player: Node, interior: Node3D, floor_index: int,
-		gap: float) -> Dictionary:
+		gap: float, clear_radius: float = 0.0) -> Dictionary:
 	"""
 	Park the player on `floor_index`'s deck, `gap` metres off the face of one of its
 	full-height walls, and return `{pos, out}` — where it ended up and the outward
 	normal of that face (empty if no candidate worked). Walls are found by geometry
 	— a box standing on this deck and running to this storey's ceiling — so the
 	check follows a replanned storey instead of naming a cell that moved.
+
+	`clear_radius` > 0 makes the CEILING subject's isolation part of the SEARCH and
+	not a verdict on whatever face came first: a candidate with other stone inside
+	that radius is skipped, not failed. Since bd godot-test1-dn8 drew floor 0 on the
+	grid, the ground storey is a floor of rooms rather than one 80 m annulus, so the
+	first full-height face in the table is quite likely to be in a corner — which is
+	a fact about the drawing, not a regression in the gate this check guards.
 	"""
 	var deck: float = TowerInterior.FLOOR_Y[floor_index]
 	var clear: float = TowerInterior.plan_clear_height(floor_index)
@@ -2206,6 +2240,8 @@ func _stand_beside_a_wall(player: Node, interior: Node3D, floor_index: int,
 				continue  # fell through, or the deck is not under this face
 			if player.call("_is_body_blocked_at", player.global_position):
 				continue  # the normal body is already in the stone here
+			if clear_radius > 0.0 and not _horizontally_clear(player, floor_index, clear_radius):
+				continue  # a corner or a partition too near: the lid is not isolated
 			return {"pos": player.global_position, "out": normal}
 	return {}
 

@@ -1411,10 +1411,11 @@ static func plan_boxes(floor_index: int) -> Array[Dictionary]:
 	@param floor_index: An index into `FLOOR_Y`.
 	@return: `boxes()`-shaped entries, or `[]` for a floor with no plan.
 
-	`boxes()` is untouched by all of this and stays the hand-authored keep; this is
-	its sibling, and `all_boxes()` is what everything downstream actually iterates.
-	Names are prefixed `S<floor>Plan`, which is what makes them unique across
-	storeys without any of the four builders below knowing the others exist.
+	THIS IS THE ONLY WAY BOXES ENTER THE BUILDING SINCE bd `godot-test1-dn8`. There
+	used to be a hand-authored `boxes()` beside it holding the phase-3 keep; the keep
+	is demolished, so `all_boxes()` is this function over `TowerPlans.floors()` and
+	nothing else. Names are prefixed `S<floor>Plan`, which is what makes them unique
+	across storeys without any of the four builders below knowing the others exist.
 	"""
 	if _plan_cache.has(floor_index):
 		return _plan_cache[floor_index]
@@ -2614,9 +2615,10 @@ static func is_own_node(box: Dictionary) -> bool:
 	`tower_interior_selfcheck` when it counts the draws and the materials — the two
 	must not be able to disagree about which boxes left the batch.
 
-	Three ways in: the hand-authored keep's `MOVING_PARTS` list, a rotor's `spin`,
-	and a plan box that declared itself `dynamic` (phase 15's riddle masses, which
-	are named by a builder and so cannot be in a const list).
+	Three ways in: the `MOVING_PARTS` name list (the hand-built parts — the gate
+	masses, the press, the rotor bars — whose names a const can hold), a rotor's
+	`spin`, and a plan box that declared itself `dynamic` (phase 15's riddle masses,
+	which are named by a builder and so cannot be in a const list).
 	"""
 	return MOVING_PARTS.has(String(box["name"])) \
 		or not is_zero_approx(float(box.get("spin", 0.0))) \

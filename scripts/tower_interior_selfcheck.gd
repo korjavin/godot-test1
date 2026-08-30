@@ -1269,18 +1269,19 @@ func _check_the_interior_is_lit_and_off_white() -> void:
 					_fail("storey %d paints a surface %s at %.2f luminance — the interior is supposed to have no dark corners" % [
 						floor_index, key, lum])
 				seen[key] = true
-		# Only the PLANNED storeys are drawn on the grid, and only they carry the
-		# carpet-and-wainscot treatment; the keep's two floors are hand-authored
-		# furniture and its carpet is one box of its own.
-		if not TowerPlans.storey(floor_index).is_empty():
-			for want: Array in [
-				[TowerInterior.COLOR_STONE, "off-white walls"],
-				[TowerInterior.COLOR_CARPET, "a mint floor"],
-				[TowerInterior.COLOR_WAINSCOT, "a wainscot band"],
-			]:
-				if not seen.has(_color_key(want[0])):
-					_fail("storey %d's batch has no %s in it — that half of the look is not wired to the geometry" % [
-						floor_index, want[1]])
+		# EVERY storey now, not just the planned ones. This used to stand behind a
+		# `TowerPlans.storey(floor_index).is_empty()` guard, because the keep's two
+		# floors were hand-authored furniture whose carpet was one box of its own;
+		# bd godot-test1-dn8 demolished the keep and drew floors 0 and 1 on the
+		# grid, so the carpet-and-wainscot treatment is owed by all ten.
+		for want: Array in [
+			[TowerInterior.COLOR_STONE, "off-white walls"],
+			[TowerInterior.COLOR_CARPET, "a mint floor"],
+			[TowerInterior.COLOR_WAINSCOT, "a wainscot band"],
+		]:
+			if not seen.has(_color_key(want[0])):
+				_fail("storey %d's batch has no %s in it — that half of the look is not wired to the geometry" % [
+					floor_index, want[1]])
 	print("tower interior: batch palette clears %.2f luminance (darkest %.2f, %s)" % [
 		INTERIOR_MIN_LUMINANCE, darkest, darkest_where])
 	interior.queue_free()
@@ -3077,9 +3078,9 @@ func _solid_near(world_pos: Vector3) -> String:
 	## The name of the first solid box a standing body at `world_pos` would be
 	## inside of, or "" when the spot is clear. Both tables — the interior's
 	## furniture and the shell's outer walls — because either one buries a guard.
-	## `all_boxes()` and not `boxes()`: since the posts are derived from the plans,
-	## most of them stand on a PLANNED storey, whose walls the keep's own table has
-	## never heard of.
+	## `all_boxes()` is every storey's plan boxes and the hand-built parts among
+	## them — since bd godot-test1-dn8 there is no second table, so the walls a post
+	## could be buried in are all in there.
 	var half := Vector3(GUARD_BODY_CLEARANCE, GUARD_BODY_HEIGHT * 0.5, GUARD_BODY_CLEARANCE)
 	var body_centre := Vector3(world_pos.x, world_pos.y + GUARD_BODY_HEIGHT * 0.5, world_pos.z)
 	for box: Dictionary in TowerInterior.all_boxes() + TowerShell.boxes():
