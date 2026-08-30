@@ -5106,6 +5106,14 @@ func set_lod_active(active: bool) -> void:
 	set_physics_process(active)
 	if not active:
 		velocity = Vector3.ZERO
+		# ...and any telegraph, for exactly the reason the flee state is dropped
+		# below: `spot_clock` only ever counts in _physics_process, which we just
+		# switched off, so a body slept mid-beat would hold a frozen `?` over its
+		# head until the player walked back inside SIM_RADIUS — and the draw cull
+		# is wider than the sleep radius, so it would be visible the whole time.
+		spot_clock = 0.0
+		if _spot_label != null:
+			_spot_label.visible = false
 		# Drop any flee state on the way down. flee_time_remaining is decremented
 		# ONLY in _physics_process, which we just switched off — so a croc slept
 		# mid-flee would hold is_fleeing (and stay harmless on contact) for its
