@@ -721,20 +721,6 @@ func _update_clouds(player_pos: Vector3, elapsed: float) -> void:
 
 	for cloud in _clouds:
 		cloud["center"] += WIND_DIR * cloud["speed"] * elapsed
-		# KEEP OUT OF THE BUILDING (see CLOUD_TOWER_KEEPOUT). One distance test on
-		# the tick that already exists, applied AFTER the drift and BEFORE anything
-		# reads the centre — so it also catches a cloud that was just placed or
-		# recycled inside the disc, and there is no second path left to forget.
-		if tower_xz != Vector2.INF:
-			var flat: Vector2 = Vector2(cloud["center"].x, cloud["center"].z) - tower_xz
-			var dist: float = flat.length()
-			if dist < CLOUD_TOWER_KEEPOUT:
-				# Dead centre has no radial direction to push along; the wind's is
-				# as good as any and keeps the cloud moving the way it was going.
-				var out_dir: Vector2 = flat / dist if dist > 0.001 \
-						else Vector2(WIND_DIR.x, WIND_DIR.z).normalized()
-				var pushed: Vector2 = tower_xz + out_dir * CLOUD_TOWER_KEEPOUT
-				cloud["center"] = Vector3(pushed.x, cloud["center"].y, pushed.y)
 		var to_cloud: Vector3 = cloud["center"] - player_pos
 		to_cloud.y = 0.0
 		# Recycle on leaving the disc in ANY direction, not just downwind. WIND_SPEED
@@ -756,6 +742,24 @@ func _update_clouds(player_pos: Vector3, elapsed: float) -> void:
 			cloud["is_storm"] = fresh["is_storm"]
 			cloud["radius"] = fresh["radius"]
 			_place_cloud_around(cloud, player_pos, rim_dir)
+		# KEEP OUT OF THE BUILDING (see CLOUD_TOWER_KEEPOUT). One distance test on
+		# the tick that already exists, and it is the LAST thing done to the centre
+		# — after the drift AND after a recycle, which is the point: the recycle rim
+		# (FIELD_RADIUS around the player) overlaps the keep-out disc whenever the
+		# player is within FIELD_RADIUS + CLOUD_TOWER_KEEPOUT of the HQ, so a cloud
+		# can be re-placed dead on top of the building by the branch above. Testing
+		# before it would render that cloud inside the walls for a tick (codex,
+		# 2026-08-30). Placed here there is no path to the write that skips it.
+		if tower_xz != Vector2.INF:
+			var flat: Vector2 = Vector2(cloud["center"].x, cloud["center"].z) - tower_xz
+			var dist: float = flat.length()
+			if dist < CLOUD_TOWER_KEEPOUT:
+				# Dead centre has no radial direction to push along; the wind's is
+				# as good as any and keeps the cloud moving the way it was going.
+				var out_dir: Vector2 = flat / dist if dist > 0.001 \
+						else Vector2(WIND_DIR.x, WIND_DIR.z).normalized()
+				var pushed: Vector2 = tower_xz + out_dir * CLOUD_TOWER_KEEPOUT
+				cloud["center"] = Vector3(pushed.x, cloud["center"].y, pushed.y)
 	_write_cloud_instances()
 
 

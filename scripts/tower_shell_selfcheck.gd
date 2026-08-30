@@ -1548,10 +1548,18 @@ func _check_clouds_stay_clear_of_the_hq() -> void:
 		weather._clouds[0]["center"] = site + Vector3(0.0, weather.CLOUD_ALTITUDE_MIN, 0.0)
 		weather._process(tick)
 		_clouds_clear_of(weather, volume, "after being planted on top of the keep")
-	for i in CLOUD_DRIFT_TICKS:
-		weather._process(tick)
-		if not _clouds_clear_of(weather, volume, "after %.1f s of drift" % [(i + 1) * tick]):
-			break
+	# TWO STATIONS, and the second is not decoration. With the player AT the site a
+	# recycled cloud re-enters a whole FIELD_RADIUS away and can never land on the
+	# building — so a keep-out applied BEFORE the recycler would pass this check.
+	# From 200 m out the re-entry rim crosses the keep-out disc, which is exactly
+	# the one-tick window codex found (2026-08-30).
+	for station: Vector3 in [site, site + Vector3(200.0, 0.0, 0.0)]:
+		player.position = station
+		for i in CLOUD_DRIFT_TICKS:
+			weather._process(tick)
+			if not _clouds_clear_of(weather, volume, "after %.1f s of drift, player %.0f m out" % [
+					(i + 1) * tick, station.distance_to(site)]):
+				break
 
 	player.free()
 	weather.free()
