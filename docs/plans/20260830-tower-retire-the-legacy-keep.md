@@ -683,19 +683,50 @@ different" arm the flood fill does.
 
 ### Task 4: The shell — delete the ring, move the trigger
 
-- [ ] Delete the six keep-ring boxes from `TowerShell.boxes()` and the constants
+- [x] Delete the six keep-ring boxes from `TowerShell.boxes()` and the constants
       `KEEP_HALF` / `KEEP_HEIGHT` (D9). Keep every castle-pass and beacon constant.
-- [ ] `door_trigger_box()` → `OUTER_HALF`, with the rewritten comment (D8).
-- [ ] `BOX_BUDGET` 28 → 22, comment naming the six that went.
-- [ ] `tower_shell_selfcheck`: drop the `"keep wall"` row from `_check_doorway_is_a_hole`
+- [x] `door_trigger_box()` → `OUTER_HALF`, with the rewritten comment (D8).
+- [x] `BOX_BUDGET` 28 → 22, comment naming the six that went.
+- [x] `tower_shell_selfcheck`: drop the `"keep wall"` row from `_check_doorway_is_a_hole`
       and any other keep assertion. **The roof-seal, Windman-reach, footprint, impostor,
       rain and cloud checks must pass with no number changed.**
-- [ ] Run `tower_shell_selfcheck` and `tower_site_selfcheck`. Both `SELFCHECK OK`.
-- [ ] ⚠️ If `tower_selfcheck` reports that `rotor_gate`'s `needed_during_captivity` or a
+- [x] Run `tower_shell_selfcheck` and `tower_site_selfcheck`. Both `SELFCHECK OK`.
+- [x] ⚠️ If `tower_selfcheck` reports that `rotor_gate`'s `needed_during_captivity` or a
       subset walk is now wrong because the whole climb sits behind the rotor doorway,
       **do not flip the flag**. The fallback is to move floor 1's `S` lane so its foot
       stands in `outer_hall` instead of `courtyard` and re-point the
       `courtyard_landing` edge accordingly — record the change here and say why.
+      **Not triggered.** `tower_selfcheck` reports exactly the seven failures Task 3
+      booked for Task 5 (storey 0's missing `S` lane plus the six negative controls) and
+      nothing else: `needed_during_captivity`, all fifteen subset walks and the four
+      spines are green with the ring gone. No fallback taken, floor 1's lane and
+      `courtyard_landing` are untouched.
+
+**➕ Measured after Task 4** (headless, this branch):
+
+| number | before | after |
+|---|---|---|
+| `TowerShell.boxes()` | 26 (budget 28) | **20 (budget 22)** |
+| shell footprint radius | 63.64 m | 63.64 m — unchanged, the ring was never the widest thing |
+| `door_trigger_box()["pos"].x` | 9.4 (keep wall plane) | **39.4** (outer wall plane) |
+
+Every other shell number is untouched, which is what the roof-seal, Windman-reach,
+impostor, rain and cloud checks passing with no edit says.
+
+**➕ Two deletions Task 4 had to make in `tower_selfcheck.gd` to keep the tree parsing**,
+both already owned by Task 5 / D9 and now done early because `KEEP_HALF` is gone:
+
+- The *"No plan below means floor 0"* branch in `_plan_problems` (the keep-clearance and
+  door-corridor rules) is deleted. Every floor a ramp can arrive from is a plan now, so
+  an empty plan below is a broken `from` and the loop says so instead of silently
+  skipping the cell.
+- `_cell_edge()` went with it — that branch was its only caller.
+
+**⚠️ For Task 5, a consequence of the above:** the negative control *"a grand ramp drawn
+through the keep"* asserts the report mentions `'inside the keep'`, and the rule it
+controls no longer exists. It now fails differently from its five siblings (it reports
+real problems, just not that one). Retire or re-aim it with the other five when
+`_control_storey` is rewritten — do not re-add the keep rule to satisfy it.
 
 ### Task 5: The audits — teach them the two new storeys
 

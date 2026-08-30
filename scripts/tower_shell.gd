@@ -4,10 +4,12 @@ extends Node3D
 ##
 ## Phase 1 decided WHERE the tower stands (`endless_terrain.tower_site()`) and kept
 ## that disc clear (`tower_excludes()`, radius `TOWER_RADIUS`). This file is what
-## stands there: a sealed 80 x 80 x 52 m block, the 20 m keep phase 3's interior is
-## authored inside (see `KEEP_HALF`), a yard slab, a door line through both, and the
-## door trigger the interior hangs off. Phase 13 grew the envelope to the ten-storey
-## HQ and, more importantly, put a LID on it — see `ROOF_THICK`.
+## stands there: a sealed 80 x 80 x 52 m block, ONE ring of walls with one hole in
+## it, a yard slab and the door trigger the interior hangs off. Phase 13 grew the
+## envelope to the ten-storey HQ and, more importantly, put a LID on it — see
+## `ROOF_THICK`. Bead godot-test1-dn8 then demolished the 20 m keep phase 3's
+## interior was authored inside, so there is one wall line again (see the headstone
+## where `KEEP_HALF` used to be).
 ##
 ## SELF-BUILDING, LIKE `ability_effect.gd`. The scene file
 ## `scenes/tower/tower_shell.tscn` is a bare Node3D carrying this script — every
@@ -56,11 +58,12 @@ extends Node3D
 signal player_entered(body: Node3D)
 
 # ============================================================================
-# GEOMETRY — the keep, in metres, local space, feet at y = 0
+# GEOMETRY — the envelope, in metres, local space, feet at y = 0
 # ============================================================================
 
-## Half the keep's OUTER footprint. The walls are a 2 * OUTER_HALF square; every
-## other horizontal number below derives from this one.
+## Half the building's OUTER footprint. The walls are a 2 * OUTER_HALF square; every
+## other horizontal number below derives from this one — and since bd godot-test1-dn8
+## demolished the inner keep, it is the ONLY wall line the shell draws.
 ##
 ## 10 -> 40 IN PHASE 13 (80 x 80 m). The owner's "100x size" ruling is read as
 ## usable FLOOR AREA (epic note, 2026-08-29): 16x the footprint times 5x the
@@ -82,26 +85,23 @@ const STOREY_HEIGHT: float = 5.0
 const STOREYS: int = 10
 const WALL_HEIGHT: float = STOREY_HEIGHT * STOREYS
 
-## THE INNER KEEP: the phase-3 building, preserved inside the phase-13 envelope.
+## THE INNER KEEP IS GONE (bd godot-test1-dn8), and this paragraph is its headstone.
 ##
-## IT IS HERE BECAUSE A FLOOR PLAN IS MADE OF WALLS, AND HALF OF THIS ONE'S WERE
-## THE SHELL'S. `TowerInterior`'s rotor posts and vault run to the shell's inner
-## faces and are closed by them; move those faces 30 m out and the plan stops being
-## a plan — the hall's furniture stands in the middle of an 80 m room with nothing
-## round it. (Found by codex review, 2026-08-29, on the first cut of this phase:
-## the cell block was in here then, and a stretched keep let you stroll round the
-## end of its spine wall. Phase 16 REDREW that block on the plan grid, where the
-## walls are cells and no width is authored at all, so the failure it found can no
-## longer be spelled — but the keep's own rooms are still authored against these
-## faces, and that is why they stay.)
+## `KEEP_HALF` (10 m) and `KEEP_HEIGHT` (11 m) used to stand here: a second six-box
+## ring, the phase-3 building preserved inside the phase-13 envelope because the
+## interior's floors 0 and 1 were hand-authored against its inner faces. The owner
+## looked at it in playtest ("in the castle on the first floor there is a legacy
+## prison; we can remove it") and it went — a windowless 20 m box standing in the
+## middle of an 80 m hall, roofing nothing and read by nobody as a room.
 ##
-## So the 20 m keep those rooms were authored against stays exactly where it was,
-## now as a structure standing inside a much larger hall, and the interior derives
-## its `INNER_HALF` from KEEP_HALF instead of from OUTER_HALF — one source of the
-## number, as before. The 30 m annulus around it is what PHASE 14 plans; when its
-## storeys are authored against the real envelope this ring is what they replace.
-const KEEP_HALF: float = 10.0
-const KEEP_HEIGHT: float = 11.0
+## What replaced it is not geometry here but geometry THERE: floors 0 and 1 are now
+## ordinary `TowerPlans.STOREYS` rows on the 40 x 40 grid like storeys 3-10, so their
+## walls are cells against the ENVELOPE's inner faces and no width is authored at
+## all. The 30 m annulus the ring used to stand in is simply floor now.
+##
+## Nothing above the roof moved: `KEEP_TOWER_*` / `KEEP_SPIRE_*` in the castle-pass
+## block below are the SILHOUETTE's keep — a non-solid mass on the lid, a different
+## thing that happens to share the word.
 
 ## THE ROOF, which is the whole point of this phase.
 ##
@@ -251,19 +251,24 @@ const YARD_LIFT: float = 0.03
 ##
 ## 12 -> 16 IN PHASE 13: yard + roof + beacon + THE SAME SIX-BOX RING TWICE (3
 ## walls, 2 jambs, a lintel) — the 80 m envelope and the 20 m keep preserved inside
-## it (see KEEP_HALF) — is 15, with one spare slot, the same courtesy phase 3 was
-## left. The spire, its cap and its overhang all went away (see BEACON_SIDE), so
-## the growth is the inner ring and nothing else. A tenth STOREY is not ten more
-## boxes: storeys are interior (phase 14) and the shell stays an extrusion however
-## the plans grow. Phase 14 is also what deletes the inner ring again.
+## it — was 15, with one spare slot, the same courtesy phase 3 was left. The spire,
+## its cap and its overhang all went away (see BEACON_SIDE), so the growth was the
+## inner ring and nothing else.
 ##
 ## 16 -> 28 IN THE CASTLE PASS (bead godot-test1-rgt), and the eleven new entries
 ## are the WHOLE castle: a parapet, a keep, its spire, and four turrets with four
 ## caps. That it is only eleven is the point — the 44 merlons are one welded mesh
 ## (see MERLON_SIZE) rather than 44 entries, because the budget is a DRAW CALL
-## budget and a merlon is not worth one. 26 of 28 used, two spare, the same
+## budget and a merlon is not worth one.
+##
+## 28 -> 22 IN THE DEMOLITION (bd godot-test1-dn8), and the six that went are the
+## whole inner ring: `KeepWallBack`, `KeepWallSideNegZ`, `KeepWallSidePosZ`,
+## `KeepJambNegZ`, `KeepJambPosZ`, `KeepLintel`. Phase 13 predicted this line
+## ("phase 14 is also what deletes the inner ring again") and it took until floors
+## 0 and 1 were drawn on the plan grid, because the ring was the wall those two
+## storeys' rooms were authored against. 20 of 22 used, two spare, the same
 ## courtesy every previous phase was left.
-const BOX_BUDGET: int = 28
+const BOX_BUDGET: int = 22
 
 ## Palette. Four colours, four materials, shared process-wide (see `_material`).
 ##
@@ -465,33 +470,7 @@ static func boxes() -> Array[Dictionary]:
 	out.append({"name": "DoorLintel", "pos": Vector3(wall_mid, DOOR_HEIGHT + lintel_height * 0.5, 0.0),
 		"size": Vector3(WALL_THICK, lintel_height, 2.0 * DOOR_HALF_WIDTH),
 		"color": COLOR_WALL, "collide": true})
-	# 4. THE INNER KEEP: the phase-3 ring, same six boxes, same door line, still
-	#    open-topped exactly as it was — the interior is authored against these
-	#    faces (see KEEP_HALF).
-	var keep_mid := KEEP_HALF - WALL_THICK * 0.5
-	var keep_side_len := 2.0 * (KEEP_HALF - WALL_THICK)
-	var keep_jamb_len := KEEP_HALF - DOOR_HALF_WIDTH
-	var keep_jamb_mid := (KEEP_HALF + DOOR_HALF_WIDTH) * 0.5
-	out.append({"name": "KeepWallBack", "pos": Vector3(-keep_mid, KEEP_HEIGHT * 0.5, 0.0),
-		"size": Vector3(WALL_THICK, KEEP_HEIGHT, 2.0 * KEEP_HALF),
-		"color": COLOR_WALL, "collide": true})
-	out.append({"name": "KeepWallSideNegZ", "pos": Vector3(0.0, KEEP_HEIGHT * 0.5, -keep_mid),
-		"size": Vector3(keep_side_len, KEEP_HEIGHT, WALL_THICK),
-		"color": COLOR_WALL, "collide": true})
-	out.append({"name": "KeepWallSidePosZ", "pos": Vector3(0.0, KEEP_HEIGHT * 0.5, keep_mid),
-		"size": Vector3(keep_side_len, KEEP_HEIGHT, WALL_THICK),
-		"color": COLOR_WALL, "collide": true})
-	out.append({"name": "KeepJambNegZ", "pos": Vector3(keep_mid, KEEP_HEIGHT * 0.5, -keep_jamb_mid),
-		"size": Vector3(WALL_THICK, KEEP_HEIGHT, keep_jamb_len),
-		"color": COLOR_WALL, "collide": true})
-	out.append({"name": "KeepJambPosZ", "pos": Vector3(keep_mid, KEEP_HEIGHT * 0.5, keep_jamb_mid),
-		"size": Vector3(WALL_THICK, KEEP_HEIGHT, keep_jamb_len),
-		"color": COLOR_WALL, "collide": true})
-	out.append({"name": "KeepLintel", "pos": Vector3(keep_mid,
-			DOOR_HEIGHT + (KEEP_HEIGHT - DOOR_HEIGHT) * 0.5, 0.0),
-		"size": Vector3(WALL_THICK, KEEP_HEIGHT - DOOR_HEIGHT, 2.0 * DOOR_HALF_WIDTH),
-		"color": COLOR_WALL, "collide": true})
-	# 5. THE LID. One slab over the whole footprint, so every wall top underneath it
+	# 4. THE LID. One slab over the whole footprint, so every wall top underneath it
 	#    is covered rather than exposed — that is what makes the facade smooth: the
 	#    only horizontal surface a flier can put his feet on is the top of this box.
 	#    It spans the full 2 * OUTER_HALF square, not the inner hole, so it also is
@@ -499,18 +478,18 @@ static func boxes() -> Array[Dictionary]:
 	out.append({"name": "Roof", "pos": Vector3(0.0, WALL_HEIGHT + ROOF_THICK * 0.5, 0.0),
 		"size": Vector3(2.0 * OUTER_HALF, ROOF_THICK, 2.0 * OUTER_HALF),
 		"color": COLOR_ROOF, "collide": true})
-	# 6. THE CASTLE, all of it standing ON the slab and none of it solid — see the
+	# 5. THE CASTLE, all of it standing ON the slab and none of it solid — see the
 	#    "EVERYTHING ABOVE THE SEAL" section for why those two facts are the seal
 	#    restated rather than a style choice.
 	var roof_top := WALL_HEIGHT + ROOF_THICK
-	# 6a. The crenellated parapet, welded into one mesh (see MERLON_SIZE). Its
+	# 5a. The crenellated parapet, welded into one mesh (see MERLON_SIZE). Its
 	#     declared size is the ring's bounding box, so the footprint sweep and the
 	#     budget check read it exactly like any other box.
 	out.append({"name": "Crenellations",
 		"pos": Vector3(0.0, roof_top + MERLON_HEIGHT * 0.5, 0.0),
 		"size": Vector3(2.0 * OUTER_HALF, MERLON_HEIGHT, 2.0 * OUTER_HALF),
 		"color": COLOR_ROOF, "collide": false, "mesh": "crenellation"})
-	# 6b. The four corner turrets: a round shaft under a conical cap, one pair per
+	# 5b. The four corner turrets: a round shaft under a conical cap, one pair per
 	#     corner, generated rather than written out four times so a retune of the
 	#     offset cannot move three of them.
 	for sx: float in [-1.0, 1.0]:
@@ -525,7 +504,7 @@ static func boxes() -> Array[Dictionary]:
 				"pos": Vector3(at.x, roof_top + TURRET_HEIGHT + TURRET_CAP_HEIGHT * 0.5, at.y),
 				"size": Vector3(TURRET_CAP_DIAMETER, TURRET_CAP_HEIGHT, TURRET_CAP_DIAMETER),
 				"color": COLOR_SPIRE, "collide": false, "mesh": "cone"})
-	# 6c. The keep: the mass that makes the silhouette taller than the body, and the
+	# 5c. The keep: the mass that makes the silhouette taller than the body, and the
 	#     spire on top of it, which is the highest point of the building.
 	out.append({"name": "KeepTower",
 		"pos": Vector3(0.0, roof_top + KEEP_TOWER_HEIGHT * 0.5, 0.0),
@@ -536,7 +515,7 @@ static func boxes() -> Array[Dictionary]:
 		"pos": Vector3(0.0, spire_base + KEEP_SPIRE_HEIGHT * 0.5, 0.0),
 		"size": Vector3(KEEP_SPIRE_DIAMETER, KEEP_SPIRE_HEIGHT, KEEP_SPIRE_DIAMETER),
 		"color": COLOR_SPIRE, "collide": false, "mesh": "cone"})
-	# 6d. The beacon, now the finial on the spire's point (see BEACON_SIDE). No
+	# 5d. The beacon, now the finial on the spire's point (see BEACON_SIDE). No
 	#     collision: it is a light, and a 1-box finial is not a place to stand.
 	out.append({"name": "Beacon",
 		"pos": Vector3(0.0, spire_base + KEEP_SPIRE_HEIGHT, 0.0),
@@ -553,12 +532,17 @@ static func door_trigger_box() -> Dictionary:
 
 	Derived from the SAME `DOOR_*` constants the jambs are cut around, which is the
 	whole reason it is a function and not a literal in `_ready()`: the trigger is
-	the hole, so it cannot end up somewhere the hole is not. It is on the INNER
-	KEEP's door line — walking through the outer envelope's hole puts you in a
-	courtyard, and "entered the tower" means the rooms (see DOOR_HALF_WIDTH). `tower_shell_selfcheck`
-	asserts exactly that — no wall box may overlap this volume.
+	the hole, so it cannot end up somewhere the hole is not.
+
+	ONE RING, SO ONE DOORWAY (bd godot-test1-dn8). This used to sit on the inner
+	keep's door line, because there were two front walls and walking through the
+	outer one only put you in a courtyard — "entered the tower" was a claim about
+	the rooms, not about the envelope. The keep is demolished and floor 0 is a
+	planned storey that begins at this wall, so the hole and the trigger are the
+	same doorway again and the argument for a second plane went with the second
+	wall. `tower_shell_selfcheck` asserts no wall box may overlap this volume.
 	"""
-	var wall_mid := KEEP_HALF - WALL_THICK * 0.5
+	var wall_mid := OUTER_HALF - WALL_THICK * 0.5
 	return {
 		"pos": Vector3(wall_mid, DOOR_HEIGHT * 0.5, 0.0),
 		"size": Vector3(WALL_THICK + 2.0 * DOOR_TRIGGER_DEPTH,

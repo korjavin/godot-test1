@@ -447,11 +447,13 @@ func _sweep_for_ledges(boxes: Array[Dictionary], roof: Dictionary, inner: float,
 		var covered := top >= roof_bottom - EPS \
 				and absf(pos.x) + half.x <= absf(roof_pos.x) + roof_half.x + EPS \
 				and absf(pos.z) + half.z <= absf(roof_pos.z) + roof_half.z + EPS
-		# INDOORS IS NOT A FACADE. The rule is about surfaces a flier outside the
-		# building can land on; the inner keep's wall tops are under a sealed roof,
-		# inside a room with no exit, and standing on one gets you nowhere. (Windman
-		# could always fly into the open-topped keep once inside — that predates this
-		# phase and is the interior's business, not the envelope's.)
+		# INDOORS IS NOT A FACADE. The rule is about surfaces a flier OUTSIDE the
+		# building can land on; anything under the sealed roof is inside a room with
+		# no exit, and standing on it gets you nowhere. Since bd godot-test1-dn8 the
+		# shell draws nothing solid in here at all (the inner keep's wall tops were
+		# the clause's one subject), so it is vacuous against this table — it stays
+		# because it is the RULE, and the interior's storeys are still built under
+		# the same lid.
 		var indoors := absf(pos.x) + half.x <= inner + EPS \
 				and absf(pos.z) + half.z <= inner + EPS
 		if covered or indoors or minf(size.x, size.z) <= limit:
@@ -671,8 +673,8 @@ func _check_materials_are_shared_and_already_toon() -> void:
 
 func _check_doorway_is_a_hole() -> void:
 	"""
-	Check 5. Each ring's door sits in a gap in its wall, that gap has walls either
-	side of it, and the trigger is on the keep's.
+	Check 5. The door sits in a gap in the wall, that gap has walls either side of
+	it, and the trigger is on that same wall plane.
 
 	BOTH HALVES MATTER. "No solid box overlaps the trigger" alone is satisfied by a
 	trigger floating in an empty field, and "the wall is there" alone is satisfied by
@@ -680,15 +682,15 @@ func _check_doorway_is_a_hole() -> void:
 	shifted sideways by its own width is tested BLOCKED — which is what makes this a
 	measurement of a hole rather than of an absence.
 	"""
-	# BOTH RINGS, because there are two front walls to walk through now (the 80 m
-	# envelope and the keep inside it) and a hole missing from either one is a
-	# building you cannot enter. They are cut from the same DOOR_* constants, so
-	# this is one loop over the two wall planes.
+	# ONE RING SINCE bd godot-test1-dn8. Phase 13 walked TWO wall planes here — the
+	# 80 m envelope and the 20 m keep inside it — because a hole missing from either
+	# was a building you could not enter. The keep is demolished and floors 0 and 1
+	# are planned storeys, so there is one front wall again. The loop stays: it is
+	# still a table of wall planes, and the day a second one is built it costs a row
+	# rather than a rewrite.
 	var rings: Array[Dictionary] = [
 		{"what": "outer wall", "mid": TowerShell.OUTER_HALF - TowerShell.WALL_THICK * 0.5,
 			"top": TowerShell.WALL_HEIGHT},
-		{"what": "keep wall", "mid": TowerShell.KEEP_HALF - TowerShell.WALL_THICK * 0.5,
-			"top": TowerShell.KEEP_HEIGHT},
 	]
 	# The doorway proper: the trigger's own reach through the wall is deliberately
 	# thicker than the wall (so a fast player cannot tunnel), and testing that depth
@@ -720,11 +722,11 @@ func _check_doorway_is_a_hole() -> void:
 				top - TowerShell.DOOR_HEIGHT, door_size.z)).is_empty():
 			_fail("nothing solid stands above the %s's doorway — it is missing its lintel" % what)
 
-	# The trigger itself is on the keep's door line and must sit in that hole.
+	# The trigger itself is on the front wall's door line and must sit in that hole.
 	var trigger: Dictionary = TowerShell.door_trigger_box()
-	if not is_equal_approx(float(trigger["pos"].x), float(rings[1]["mid"])):
-		_fail("the door trigger is at x = %.2f, not on the keep's wall plane (%.2f)" % [
-			trigger["pos"].x, rings[1]["mid"]])
+	if not is_equal_approx(float(trigger["pos"].x), float(rings[0]["mid"])):
+		_fail("the door trigger is at x = %.2f, not on the outer wall plane (%.2f)" % [
+			trigger["pos"].x, rings[0]["mid"]])
 
 
 func _check_door_fires_for_the_player_only() -> void:
@@ -1390,7 +1392,8 @@ func _check_the_roof_keeps_the_rain_out() -> void:
 
 	  * The GEOMETRY half asks the shell directly. `sheltered()` has to answer for
 	    the whole 80 m roofed footprint — not `TowerInterior.inside_walls()`, which
-	    is the 20 m phase-3 keep and would leave five-sixths of the building wet —
+	    was the 20 m phase-3 keep and would have left five-sixths of the building
+	    wet —
 	    and it has to STOP at the roof's underside, or the tower becomes a column of
 	    weather immunity reaching into the sky.
 	  * The WIRING half asks a real `WeatherManager` under a real storm cloud. That

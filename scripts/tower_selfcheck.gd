@@ -1794,31 +1794,22 @@ func _plan_problems(plan: Dictionary) -> Array[String]:
 
 	# --- the stair stands on the storey below ----------------------------------
 	var below := TowerPlans.storey(int(plan["from"]))
+	# EVERY floor a ramp can arrive from now has a plan (bd godot-test1-dn8 drew
+	# floors 0 and 1 on the grid), so `below` is never empty and the keep-clearance
+	# / door-corridor special case that used to stand here is gone with the keep it
+	# measured. An empty plan below is now a broken `from`, and saying so beats
+	# silently skipping the cell.
 	for cell2: Vector2i in lane_cells:
-		if not below.is_empty():
-			var under := String(below["rows"][cell2.y])[cell2.x]
-			if under == TowerPlans.WALL_CHAR or under == TowerPlans.STAIR_UP_CHAR:
-				out.append(("the lane cell (%d, %d) stands over '%s' on floor %d — a ramp's "
-					+ "foot has to land on floor somebody can walk on")
-					% [cell2.x, cell2.y, under, int(plan["from"])])
-			continue
-		# No plan below means floor 0: the annulus, where the keep stands and the
-		# door corridor runs east from its doorway to the outer one.
-		var x_lo := _cell_edge(cell2.x)
-		var x_hi := _cell_edge(cell2.x + 1)
-		var z_lo := _cell_edge(cell2.y)
-		var z_hi := _cell_edge(cell2.y + 1)
-		var clear_keep: float = TowerShell.KEEP_HALF + 1.0
-		if not (x_lo > clear_keep or x_hi < -clear_keep or z_lo > clear_keep or z_hi < -clear_keep):
-			out.append(("the lane cell (%d, %d) is inside the keep (x %.2f..%.2f, z %.2f..%.2f "
-				+ "against a %.1f m clearance) — the grand ramp climbs the annulus, and the "
-				+ "keep is a building standing in it")
-				% [cell2.x, cell2.y, x_lo, x_hi, z_lo, z_hi, clear_keep])
-		var corridor: float = TowerShell.DOOR_HALF_WIDTH + 1.0
-		if x_hi > TowerShell.KEEP_HALF and z_hi > -corridor and z_lo < corridor:
-			out.append(("the lane cell (%d, %d) blocks the door corridor (|z| <= %.1f east of "
-				+ "the keep) — that is the walk from the outer door to the keep door")
-				% [cell2.x, cell2.y, corridor])
+		if below.is_empty():
+			out.append(("the lane arrives from floor %d, which no storey draws — every "
+				+ "floor is a plan now, so a ramp's foot has nothing to stand on")
+				% int(plan["from"]))
+			break
+		var under := String(below["rows"][cell2.y])[cell2.x]
+		if under == TowerPlans.WALL_CHAR or under == TowerPlans.STAIR_UP_CHAR:
+			out.append(("the lane cell (%d, %d) stands over '%s' on floor %d — a ramp's "
+				+ "foot has to land on floor somebody can walk on")
+				% [cell2.x, cell2.y, under, int(plan["from"])])
 
 	# --- and it is no steeper than the ramp this game has always had -----------
 	var slope := _plan_slope(plan)
@@ -2010,11 +2001,6 @@ func _is_legal_plan_char(ch: String) -> bool:
 func _cell_x(c: int) -> float:
 	"""The CENTRE of column (or row) `c`, in interior metres. The grid is square."""
 	return -TowerPlans.PLAN_HALF + (float(c) + 0.5) * TowerPlans.PLAN_CELL
-
-
-func _cell_edge(c: int) -> float:
-	"""The west (or north) EDGE of column (or row) `c`, in interior metres."""
-	return -TowerPlans.PLAN_HALF + float(c) * TowerPlans.PLAN_CELL
 
 
 func _row_at(plan: Dictionary, r: int, line: String) -> Dictionary:
