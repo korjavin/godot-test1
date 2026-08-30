@@ -1,7 +1,13 @@
 class_name TowerPlans
 extends RefCounted
 ## THE TOWER'S STOREYS, DRAWN AS TEXT — the hand-planned layout of every floor
-## above the phase-3 keep.
+## in the building, ground storey included.
+##
+## It used to say "every floor above the phase-3 keep", because floors 0 and 1
+## were hand-authored against the inner faces of a 20 m box standing in the middle
+## of the 80 m hall. Bead `godot-test1-dn8` demolished that keep; those two floors
+## are `STOREYS` rows like every other, and there is no floor of this tower that is
+## not drawn here.
 ##
 ## Epic godot-test1-3iy, phase 14. This file is DATA, the way `tower_graph.gd` is
 ## data: a `const` dict of plain dicts, no class hierarchy, no `Resource`, no
@@ -45,6 +51,27 @@ extends RefCounted
 ## once somewhere) and `DRAW_BUDGET` 26 -> 27 (one more storey mesh). Zero lines of
 ## builder logic, and the self-check named the budget itself rather than leaving it
 ## to be noticed. That is the honest shape of the promise; both audits keep it.
+##
+## MEASURED AGAIN, ON REAL FLOORS THIS TIME. Bead `godot-test1-dn8` demolished the
+## phase-3 keep and moved its two storeys onto this grid — the two most awkward
+## floors in the building, carrying the front door, a challenge space, both of the
+## other two gate classes, the checkpoint and every guard post the hand-authored
+## table used to own. THE FORMAT DID NOT CHANGE: no new character, no new key, no
+## new rule about what a row may say. Two `STOREYS` rows, their graph rows, one
+## `S`-lane rule already implied by `from` written down at last — and NOT ONE
+## BUDGET MOVED: `DRAW_BUDGET` stayed 35 and `PLAN_BOX_BUDGET` stayed 120, because
+## the two storeys that arrived (32 and 28 boxes) took the meshes the demolished
+## keep gave back. That is the evidence the format
+## works — a text format that can absorb the floors it was never designed for is a
+## format, and one that needs a special case per storey is a spreadsheet.
+##
+## THE ONE BUILDER EDIT IT DID COST, said plainly rather than rounded away: a
+## `CLASS_DEMAND` arm in `_plan_gates` whose whole body is a `continue`. That is a
+## GATE-CLASS edit, not a storey edit — the builder had drawn identity, challenge
+## and riddle masses and had simply never met a gate that opens DOWNWARDS, and it
+## would have cost exactly the same on any floor. A gate class is a thing the plan
+## format names and the builder must know how to draw; the extension rule is about
+## storeys, and no storey has ever needed a line of code.
 ##
 ## ============================================================================
 ## THE GRID
@@ -106,6 +133,19 @@ extends RefCounted
 ##   floor    int    index into `TowerInterior.FLOOR_Y` — the walking surface, and
 ##                   the `floor` every box this storey emits declares.
 ##   from     int    the floor index this storey's ramp climbs FROM.
+##
+##                   **`from == floor` means this storey is entered from OUTSIDE
+##                   the building.** It draws no `S` lane at all, and its `s` cells
+##                   are the DOORMAT rather than the head of a ramp — still the
+##                   flood fill's start, because that is where a player actually
+##                   arrives. The ground storey is the only row shaped like this
+##                   today, and it is data rather than a special case: the builder
+##                   needs no arm for it (`_plan_stair()` already answers `{}` when
+##                   there are no `S` cells, so `_plan_ramp` and `_plan_hole` emit
+##                   nothing), and only the AUDIT knows, because every S-lane rule
+##                   it enforces — one solid lane, landing against a short end, the
+##                   lane standing on the floor below, the slope ceiling — is a
+##                   claim about a lane that does not exist here.
 ##   landing  String the `TOWER_GRAPH` room id the `s` cells are.
 ##   rooms    Dict   room letter -> `TOWER_GRAPH` room id.
 ##   gates    Dict   "<c>,<r>" -> `TOWER_GRAPH` gate id, for every `D` cell AND
@@ -154,14 +194,204 @@ static func pad_digit(ch: String) -> int:
 
 const STOREYS: Array[Dictionary] = [
 	# ------------------------------------------------------------------------
-	# STOREY 3 (floor 2) — THE RECORDS FLOOR, and the first floor above the keep.
+	# STOREY 1 (floor 0) — THE GROUND FLOOR, and the last thing bead
+	# `godot-test1-dn8` moved onto this grid. Until that bead it was the phase-3
+	# KEEP: a windowless 20 m box standing in the middle of an 80 m hall, drawn
+	# from a hand-authored table of boxes against its own inner faces. The keep is
+	# demolished; the hall it stood in is this floor.
 	#
-	# The grand ramp climbs the ANNULUS from the courtyard floor: ten cells of X
-	# (19.40 m) for an 11.0 m rise, slope 0.567 against the phase-3 ramp's proven
-	# 0.575. Its lane runs along the north ring corridor at z about -35 m, which is
-	# 25 m clear of the keep and nowhere near the door corridor that runs east from
-	# the keep's doorway — both asserted, because getting either wrong walls the
-	# player out of the building they just walked into.
+	# IT IS THE ONE STOREY ENTERED FROM OUTSIDE, so `from` is its own floor and it
+	# draws no `S` lane at all (see the header). Its `s` cells are the DOORMAT —
+	# the hall behind the shell's doorway, which is where a player actually
+	# arrives and therefore where both flood fills start. The four cells of `s`
+	# out at column 39 are the threshold itself: the plan's own outer ring stops
+	# there so the front door opens into a room and not into a wall.
+	#
+	# THE ROUTE IS PHASE 3'S ROUTE, REDRAWN AT FOUR TIMES THE SCALE. In through
+	# the east door into the ENTRY HALL; the annulus (`O`) opens off it north and
+	# south, ungated, and the grand climb leaves the far side of the ROTOR
+	# DOORWAY — the one gap in the wall at column 20, and the only land entrance
+	# to the COURTYARD. The courtyard's lane runs west and then south to the foot
+	# of storey 2's ramp at columns 4-9, rows 30-31, which is why those cells are
+	# plain floor and must stay that way: `tower_selfcheck` reads the cell under
+	# every lane cell out of this grid. Off the hall's south wall, behind the
+	# demand shutter, is the VAULT — optional, skippable, and the only room on the
+	# floor you can be refused.
+	#
+	# THE ROTOR DOORWAY CARRIES A `D`, AND THAT IS A CORRECTION TO THE PLAN THIS
+	# BEAD WAS WRITTEN FROM. Drawn as a plain gap the two rooms land in ONE piece
+	# of floor with every gate shut, and `_gates_shut_problems` rightly calls that
+	# "the drawing offers a way round a door the audit models" — the challenge
+	# would be decorative in the only place the audit can see. So it is a gate
+	# slot like `maintenance_crawl`'s, its lintel comes from `_plan_gates`'
+	# challenge arm, and the post and its two sweeping bars are hand-built from
+	# the same run (`TowerInterior._rotor_boxes`) because a thing that moves is
+	# not a plan character.
+	# ------------------------------------------------------------------------
+	{
+		"floor": 0,
+		"from": 0,
+		"landing": "entry_hall",
+		"rooms": {
+			"C": "courtyard",
+			"O": "outer_hall",
+			"V": "vault",
+		},
+		# Two gates, two classes, and neither draws its own mechanism: the rotor's
+		# bars and the vault's shutter, receptacle and calibration ladder are all
+		# hand-built off these runs.
+		"gates": {
+			"20,19": "rotor_gate", "20,20": "rotor_gate",
+			"29,27": "tower_vault", "30,27": "tower_vault",
+		},
+		"rows": [
+			"########################################",
+			"#CCCCCCCCCCCCCCCCCCC#OOOOOOOOOOOOOOOOOO#",
+			"#CCCCCCCCCCCCCCCCCCC#OOOOOOOOOOOOOOOOOO#",
+			"#CCCCCCCCCCCCCCCCCCC#OOOOOOOOOOOOOOOOOO#",
+			"#CCCCCCCCCCCCCCCCCCC#OOOOOOOOOOOOOOOOOO#",
+			"#CCCCCCCCCCCCCCCCCCC#OOOOOOOOOPOOOOOOOO#",
+			"#CCCCCCCCCCCCCCCCCCC#OOOOOOOOOOOOOOOOOO#",
+			"#CCCCCCCCCCCCCCCCCCC#OOOOOOOOOOOOOOOOOO#",
+			"#CCCCCCCCCCCCCCCCCCC#OOOOOOOOOOOOOOOOOO#",
+			"#CCCCCCCCCCCCCCCCCCC#OOOOOOOOOOOOOOOOOO#",
+			"#CCCCCCCCCCCCCCCCCCC#######..###########",
+			"#CCCCCCCCCCCCCCCCCCC#ssssssssssssssssss#",
+			"#CCCCCCCCCCCCCCCCCCC#ssssssssssssssssss#",
+			"#CCCCCCCCCCCCCCCCCCC#ssssssssssssssssss#",
+			"#CCCCCCCCCCCCCCCCCCC#ssssssssssssssssss#",
+			"#CCCCCCCCCCCCCCCCCCC#ssssssssssssssssss#",
+			"#CCCCCCCCCCCCCCCCCCC#ssssssssssssssssss#",
+			"#CCCCCCCCCCCCCCCCCCC#ssssssssssssssssss#",
+			"#CCCCCCCCCCCCCCCCCCC#sssssssssssssssssss",
+			"#CCCCCCCCC..........Dsssssssssssssssssss",
+			"#CCCCCCCCC..P.......Dsssssssssssssssssss",
+			"#CCCCCCCCC..CCCCCCCC#sssssssssssssssssss",
+			"#CCCCCCCCC..CCCCCCCC#ssssssssssssssssss#",
+			"#CCCCCCCCC..CCCCCCCC#ssssssssssssssssss#",
+			"#CCCCCCCCC..CCCCCCCC#ssssssssssssssssss#",
+			"#CCCCCCCCC.GCCCCCCCC#ssssssssssssssssss#",
+			"#CCCCCCCCC..CCCCCCCC#sssssssss.ssssssss#",
+			"#CCCCCCCCC..CCCCCCCC##..#####DD#########",
+			"#CCCCCCCCC..CCCCCCCC#OOOOO#VVVVVV#OOOOO#",
+			"#CCCCCCCCC..CCCCCCCC#OOOOO#VVVVVV#OOOOO#",
+			"#C..........CCCCCCCC#OOOOO#VVVVVV#OOOOO#",
+			"#C..........CCCCCCCC#OOOOO#VVVVVV#OOOOO#",
+			"#CCCCCCCCCCCCCCCCCCC#OOOOO#VVVVVV#OOOOO#",
+			"#CCCCCCCCCCCCCCCCCCC#OOOOO#VVVVVV#OOOOO#",
+			"#CCCCCCCCCCCCCCCCCCC#OOOOO########OOOOO#",
+			"#CCCCCCCCCCCCCCCCCCC#OOOOOOOOOOOOOOOOOO#",
+			"#CCCCCCCCCCCCCCCCCCC#OOOOOOOOOOOOOOOOOO#",
+			"#CCCCCCCCCCCCCCCCCCC#OOOOOOOOOOOOOOOOOO#",
+			"#CCCCCCCCCCCCCCCCCCC#OOOOOOOOOOOOOOOOOO#",
+			"########################################",
+		],
+		"note": "Storey 1, the ground floor: the 80 m hall the phase-3 keep used to "
+			+ "stand in. Front door east into the entry hall, the annulus off it "
+			+ "north and south, the vault behind the demand shutter to the south, "
+			+ "and west through the rotor doorway into the walled courtyard, where "
+			+ "the climb to storey 2 begins.",
+	},
+	# ------------------------------------------------------------------------
+	# STOREY 2 (floor 1) — THE MUSTER FLOOR, and the first of the two storeys bead
+	# `godot-test1-dn8` moved onto this grid. It used to be the keep's MEZZANINE:
+	# a 20 m square of slab over the courtyard, hand-authored against the inner
+	# faces of a building that no longer exists. It is now an ordinary 80 m plate
+	# like every floor above it.
+	#
+	# THE FLOOR IS TWO RAMPS AND THE WALK BETWEEN THEM. You arrive in the south
+	# west at the head of the ground floor's ramp (`s`, the six-cell `S` lane
+	# climbing 4.6 m at slope 0.395), cross the muster hall or the concourse round
+	# it, and leave at the north-west corner where the grand ramp to storey 3
+	# starts — which is why rows 1-2, columns 5-14 are PLAIN FLOOR and must stay
+	# that way: storey 3's lane stands on them, and `tower_selfcheck` reads the
+	# cell under every lane cell out of this grid.
+	#
+	# THE CHECKPOINT IS A SAFE HAVEN BY CONSTRUCTION, and that is geometry now
+	# rather than a hand-tuned number. `_plan_guard_post` measures a patrol as the
+	# symmetric run of PLAIN `.` cells around the post, and the `D` cell is not
+	# one — so the post in the vestibule (two cells of beat, west of the secure
+	# door) can never reach through the doorway it watches. A guard on this floor
+	# cannot follow you into the checkpoint; before this bead that was
+	# `GUARD_POSTS`' `patrol_half` promising the same thing by hand.
+	# ------------------------------------------------------------------------
+	{
+		"floor": 1,
+		"from": 0,
+		"landing": "upper_landing",
+		"rooms": {
+			"A": "checkpoint_room",
+			"B": "s2_muster",
+		},
+		# The identity mass fills the checkpoint's only doorway. Its pad is DERIVED
+		# from the plain floor on the vestibule side (`gate_pad_cell`), so the side
+		# you open it from is drawn rather than authored.
+		"gates": {
+			"29,13": "tower_secure_door", "29,14": "tower_secure_door",
+		},
+		"rows": [
+			"########################################",
+			"#......................................#",
+			"#......................................#",
+			"#......................................#",
+			"#..#########BB#########................#",
+			"#..#BBBBBBBBBBBBBBBBBB#................#",
+			"#..#BBBBBBBBBBBBBBBBBB#................#",
+			"#..#BBBBBBBBBBBBBBBBBB#................#",
+			"#..#BBBBBBBBBBBBBBBBBB#................#",
+			"#..#BBBBBBBBBBBBBBBBBB#......#########.#",
+			"#..#BBBBPBBBBBBBBBBBBB#......#AAAAAAA#.#",
+			"#..#BBBBBBBBBBBBBBBBBB#......#AAAAAAA#.#",
+			"#..#BBBBBBBBBBBBBBBBBB#.######AAAAAAA#.#",
+			"#..#BBBBBBBBBBBBBBBBBB#......DAAAAAAA#.#",
+			"#..#BBBBBBBBBBBBBBBBBB#...G..DAAAAAAA#.#",
+			"#..#BBBBBBBBBBBBBBBBBBB.######AAAAAAA#.#",
+			"#..#BBBBBBBBBBBBBBBBBBB......#AAAAAAA#.#",
+			"#..#BBBBBBBBBBBBBBBBBB#......#AAAAAAA#.#",
+			"#..#BBBBBBBBBBBBBBBBBB#......#########.#",
+			"#..#BBBBBBBBBBBBBBBBBB#................#",
+			"#..#BBBBBBBBBBBBBBBBBB#................#",
+			"#..#BBBBBBBBBBBBBBBBBB#................#",
+			"#..#BBBBBBBBBBBBBBPBBB#................#",
+			"#..#BBBBBBBBBBBBBBBBBB#................#",
+			"#..#BBBBBBBBBBBBBBBBBB#................#",
+			"#..#BBBBBBBBBBBBBBBBBB#................#",
+			"#..#BBBBBBBBBBBBBBBBBB#................#",
+			"#..####################................#",
+			"#......................................#",
+			"#......................................#",
+			"#...SSSSSSs............................#",
+			"#...SSSSSSs............................#",
+			"#......................................#",
+			"#......................................#",
+			"#......................................#",
+			"#......................................#",
+			"#......................................#",
+			"#......................................#",
+			"#......................................#",
+			"########################################",
+		],
+		"note": "Storey 2, the muster floor: the keep's mezzanine redrawn as a full "
+			+ "80 m plate. The ground floor's ramp lands in the south-west, the "
+			+ "grand ramp to storey 3 leaves from the north-west, and the "
+			+ "checkpoint sits east behind the secure door, watched by a post "
+			+ "whose beat stops at the doorway it guards.",
+	},
+	# ------------------------------------------------------------------------
+	# STOREY 3 (floor 2) — THE RECORDS FLOOR, and the first of the office storeys.
+	#
+	# THE GRAND RAMP NOW CLIMBS FROM STOREY 2, NOT FROM THE GROUND. It used to
+	# start on the annulus floor and carry the whole 11.0 m in ten cells of X
+	# (19.40 m, slope 0.567); bead `godot-test1-dn8` drew floor 1 as a full 80 m
+	# plate, and a ramp from 0 to 2 would pass straight THROUGH that slab — the
+	# format has no hole character, and `_plan_hole` only cuts the slab of the
+	# storey a ramp arrives on. So `from` is 1 and the same ten cells carry 6.4 m
+	# instead: slope 0.330, the gentlest ramp in the building.
+	#
+	# The lane's cells stand on rows 1-2, columns 5-14 of storey 2, which that
+	# storey's plan keeps as plain floor on purpose. `tower_selfcheck` reads the
+	# cell under every lane cell out of the storey below's own grid, so moving
+	# either drawing without the other fails the build.
 	#
 	# The floor is a two-cell RING CORRIDOR round the outside and a two-cell CROSS
 	# down each axis, so every room has two ways back to the landing and no dead end
@@ -170,7 +400,7 @@ const STOREYS: Array[Dictionary] = [
 	# ------------------------------------------------------------------------
 	{
 		"floor": 2,
-		"from": 0,
+		"from": 1,
 		"landing": "s3_landing",
 		"rooms": {
 			"A": "s3_records_west",

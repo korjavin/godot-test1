@@ -243,42 +243,38 @@ func _check_plan_fits_the_shell() -> void:
 	THE DOORWAY IS THE INTERESTING HALF: the shell's trigger volume must stay empty
 	or walking in is walking into a wall.
 
-	TWO POPULATIONS, TWO BOUNDS, AND THAT IS THE POINT. The hand-authored keep
-	(`boxes()`) lives inside the KEEP's inner faces and declares floors 0 and 1; a
-	hand-planned storey (`plan_boxes(i)`) is a whole keep wider — it spans the
-	SHELL's inner faces, `TowerPlans.PLAN_HALF` — and may declare only its own
-	floor. Measuring the plans against the keep's bound would fail every correct
-	storey; measuring the keep against the plans' would stop catching a floor plan
-	that grew out through the keep wall. So each is asked its own question, and only
-	the things that are true of the WHOLE building — name uniqueness, the doorway,
-	the shell's wall height — are asked over `all_boxes()`.
+	ONE POPULATION NOW, AND ONE BOUND. There used to be two: the hand-authored keep
+	(`boxes()`) inside the KEEP's inner faces declaring floors 0 and 1, and the
+	hand-planned storeys a whole keep wider, against the SHELL's. Bead
+	`godot-test1-dn8` demolished the keep and drew floors 0 and 1 on the grid, so
+	`all_boxes()` IS the plan loop and every box in this building is measured
+	against `TowerPlans.PLAN_HALF` on the storey that drew it. The `seen` dict is
+	what survives of the two-population shape and is still shared across the loop,
+	because name uniqueness is a claim about the whole building.
 
 	The per-storey budget is asked per storey for the same reason it exists: what
 	`PLAN_BOX_BUDGET` stops is one floor's walls quietly ceasing to merge, and a
-	total over five storeys would let one floor's chequerboard hide under four
+	total over ten storeys would let one floor's chequerboard hide under nine
 	tidy ones.
 	"""
-	var keep := TowerInterior.boxes()
-	if keep.size() > TowerInterior.BOX_BUDGET:
-		_fail("the interior is %d boxes, over its declared BOX_BUDGET of %d" % [
-			keep.size(), TowerInterior.BOX_BUDGET])
-	print("tower interior: %d keep boxes (budget %d), hall headroom %.2f m, storey %.2f m" % [
-		keep.size(), TowerInterior.BOX_BUDGET, TowerInterior.headroom(), TowerInterior.SLAB_Y])
+	print("tower interior: %d storeys, hall headroom %.2f m, storey 2 at %.2f m" % [
+		TowerPlans.floors().size(), TowerInterior.headroom(), TowerInterior.SLAB_Y])
 
 	# `seen` is shared by every call below, so name uniqueness is asked across
-	# `all_boxes()` and not merely within each population — two storeys that both
+	# `all_boxes()` and not merely within each storey — two storeys that both
 	# called a wall the same thing would collide in `find_child` and in
 	# `MOVING_PARTS`, and the second one would silently win.
 	var seen := {}
-	_fit_boxes(keep, TowerInterior.INNER_HALF, [0, 1], seen)
 	for floor_index: int in TowerPlans.floors():
 		var plan := TowerInterior.plan_boxes(floor_index)
 		if plan.size() > TowerInterior.PLAN_BOX_BUDGET:
 			_fail("storey %d emits %d boxes, over PLAN_BOX_BUDGET %d — its walls stopped merging" % [
 				floor_index, plan.size(), TowerInterior.PLAN_BOX_BUDGET])
 		# Its own floor, plus the one its ramp climbs FROM: a deck belongs to the
-		# floor it is walked onto from (the phase-3 ramp is floor 0, not floor 1),
-		# and it is the one box of a storey that legitimately says so.
+		# floor it is walked onto from — storey 2's deck claims floor 0 — and it is
+		# the one box of a storey that legitimately says so. On the ground storey
+		# the two are equal (`from == floor`, entered from outside), so the list is
+		# one floor and the rule tightens rather than loosening.
 		_fit_boxes(plan, TowerPlans.PLAN_HALF,
 				[floor_index, int(TowerPlans.storey(floor_index)["from"])], seen)
 		print("  storey %d: %d boxes (budget %d), floor at %.2f m, %.2f m clear" % [
@@ -291,6 +287,32 @@ func _check_plan_fits_the_shell() -> void:
 			TowerInterior.ROTOR_ARM, TowerInterior.ROTOR_DOOR_HALF])
 	if TowerInterior.ROTOR_ARM <= TowerInterior.ROTOR_DOOR_HALF * 0.5:
 		_fail("the rotor bars are too short to cover half the doorway — nothing to time")
+
+	# ...AND WITH THE DOORWAY THE PLAN ACTUALLY DRAWS. `ROTOR_DOOR_HALF` was a
+	# jamb-to-jamb half-width authored beside the two jamb boxes it described; those
+	# jambs are `#` cells now (bd godot-test1-dn8) and the opening is the `D` run
+	# `_plan_gates` cuts, so the constant is a claim about a drawing and nothing read
+	# it back. Two cells is 3.88 m against the bars' 3.8 m — draw the run one cell
+	# wide and the bars grind stone with no error anywhere.
+	var rotor_floor := -1
+	for f: int in TowerPlans.floors():
+		if TowerInterior.plan_gate_rect(f, "rotor_gate").size != Vector2i.ZERO:
+			rotor_floor = f
+	if rotor_floor < 0:
+		_fail("no storey draws 'rotor_gate' — the rotor doorway assertion is unmeasured")
+	else:
+		var run: Dictionary = TowerInterior._cell_span(
+				TowerInterior.plan_gate_rect(rotor_floor, "rotor_gate"))
+		# The run is one cell of X by two of Z, so the opening a bar sweeps through
+		# is its Z extent; take the larger side so this keeps measuring the opening
+		# if the doorway is ever redrawn along the other axis.
+		var opening: float = maxf(float(run["x1"]) - float(run["x0"]),
+				float(run["z1"]) - float(run["z0"]))
+		if opening < 2.0 * TowerInterior.ROTOR_DOOR_HALF - EPS:
+			_fail("the plan draws the rotor doorway %.2f m wide on floor %d, under the %.2f m the bars are built for" % [
+				opening, rotor_floor, 2.0 * TowerInterior.ROTOR_DOOR_HALF])
+		print("  rotor doorway: %.2f m of plan for %.2f m of bar sweep" % [
+			opening, 2.0 * TowerInterior.ROTOR_DOOR_HALF])
 
 
 func _fit_boxes(boxes: Array[Dictionary], bound: float, floors: Array[int],
@@ -344,8 +366,17 @@ func _fit_boxes(boxes: Array[Dictionary], bound: float, floors: Array[int],
 		# whose DECK meets the ground at its foot necessarily buries its own underside
 		# below it. Where the deck actually lands is check 3's business, and check 3
 		# pins it to the millimetre.
-		if not box.has("rot") and pos.y - reach_y < -EPS:
-			_fail("%s starts below the floor (y = %.2f)" % [box_name, pos.y - reach_y])
+		# THE GROUND STOREY'S SLAB IS THE ONE SOLID UNDER THE FLOOR, and it is meant
+		# to be. Floor 0 is drawn on the grid since bd godot-test1-dn8 and its slab
+		# hangs in `-SLAB_THICK .. 0` exactly as every other storey's hangs under its
+		# own walking surface — here that is under the world's ground plane, which is
+		# what gives the ground floor the interior's own collision instead of the
+		# streaming terrain's. Every storey above has `FLOOR_Y > SLAB_THICK`, so for
+		# all of them this is still a hard zero.
+		var floor_bottom: float = -TowerInterior.SLAB_THICK if floor_index == 0 else 0.0
+		if not box.has("rot") and pos.y - reach_y < floor_bottom - EPS:
+			_fail("%s starts at y = %.2f, below floor %d's own slab underside (%.2f m)" % [
+				box_name, pos.y - reach_y, floor_index, floor_bottom])
 		if pos.y + reach_y > TowerShell.WALL_HEIGHT + EPS:
 			_fail("%s tops out at %.2f m, over the shell's %.2f m wall" % [
 				box_name, pos.y + reach_y, TowerShell.WALL_HEIGHT])
@@ -379,10 +410,14 @@ func _check_no_jump_gated_climb() -> void:
 
 	"STANDING ON" MEANS WHAT THE ENGINE MEANS. A 2 m capsule cannot stand in a 0.6 m
 	slot, so a wall top with the ramp deck just above it is not a step however
-	inviting its height looks in the table — and the low wall under the ramp is
-	exactly that case. `_headroom_over` is what tells the two apart; without it this
-	check would either fail on correct geometry or have to be weakened until it
-	passed on incorrect geometry.
+	inviting its height looks in the table. That distinction used to need
+	`_headroom_over` and a per-box sweep of the hand-authored keep; bead
+	`godot-test1-dn8` demolished the keep and drew floors 0 and 1 on the grid, and
+	(d) below is the STRUCTURAL statement that replaced the sweep — a plan storey
+	has exactly two kinds of solid and neither can be a ledge at all. So the sweep,
+	`_roofed` (which asked "is this under the keep's slab") and the hand-authored
+	secure-door partition are gone with the table they read, and what is left is
+	(d), one thing the plans cannot say, and the shell wall.
 	"""
 	var apex := _jump_apex()
 	print("jump apex %.4f m; upper storey at %.2f m" % [apex, TowerInterior.SLAB_Y])
@@ -390,45 +425,14 @@ func _check_no_jump_gated_climb() -> void:
 		_fail("could not read the jump apex out of player_controller — check 2 would pass vacuously")
 		return
 
-	# (a) Nothing under the open sky is a step up to the upper storey.
-	var ceiling := TowerInterior.SLAB_Y
-	for box: Dictionary in TowerInterior.boxes():
-		if not box["collide"]:
-			continue
-		if box.has("rot"):
-			continue  # the ramp; it is MEANT to reach the slab — see check 3.
-		var pos: Vector3 = box["pos"]
-		var half: Vector3 = box["size"] * 0.5
-		var top := pos.y + half.y
-		if top >= ceiling - EPS:
-			continue  # level with the storey or taller: not a step onto it.
-		if top + apex <= ceiling + EPS:
-			continue  # too low to matter.
-		if _roofed(pos, half):
-			continue  # under the slab: a jump from here ends at the ceiling.
-		if _headroom_over(box) < PLAYER_HEIGHT:
-			continue  # nothing can stand here in the first place.
-		_fail("%s is a %.2f m ledge under the open sky: a jump off it reaches %.2f m and the upper storey is at %.2f m" % [
-			box["name"], top, top + apex, ceiling])
-
-	# (b) The secure door cannot be jumped from the storey it stands on.
-	var partition_top := TowerInterior.SLAB_Y + TowerInterior.UPPER_WALL_HEIGHT
-	if partition_top < TowerInterior.SLAB_Y + apex:
-		_fail("the secure door is %.2f m tall on a %.2f m floor — a %.4f m jump clears it" % [
-			TowerInterior.UPPER_WALL_HEIGHT, TowerInterior.SLAB_Y, apex])
+	# (b) The shell's wall is not jumpable from the storey above the ground. The
+	#     partition assertion that stood beside it measured `UPPER_WALL_HEIGHT`, a
+	#     hand-authored secure-door height; the secure door is a `D` run built by
+	#     `_plan_gates` now, so (d) measures it — as tall as its storey's ceiling,
+	#     like every other wall on a plan.
 	if TowerShell.WALL_HEIGHT < TowerInterior.SLAB_Y + apex:
 		_fail("the shell's %.2f m wall is jumpable from the %.2f m upper floor" % [
 			TowerShell.WALL_HEIGHT, TowerInterior.SLAB_Y])
-
-	# (c) ...and the mass filling it is as tall as the door it fills, or the gap
-	#     above it is the way through.
-	for box: Dictionary in TowerInterior.boxes():
-		if box["name"] != "IdentityMass":
-			continue
-		var top: float = box["pos"].y + box["size"].y * 0.5
-		if top < partition_top - EPS:
-			_fail("the identity mass tops out at %.2f m inside a %.2f m doorway — you can climb over it" % [
-				top, partition_top])
 
 	# (d) THE HAND-PLANNED STOREYS, AS ONE ASSERTION AND NOT AS A SWEEP.
 	#
@@ -467,14 +471,89 @@ func _check_no_jump_gated_climb() -> void:
 			var is_slab := absf(top - surface) <= EPS \
 					and absf(bottom - (surface - TowerInterior.SLAB_THICK)) <= EPS
 			var to_ceiling := bottom >= surface - EPS and absf(top - wall_top) <= EPS
-			if not (is_slab or to_ceiling):
+			if is_slab or to_ceiling:
+				continue
+			# THE THIRD KIND OF SOLID, AND THIS IS THE "COME HERE" THE PARAGRAPH
+			# ABOVE DEMANDS. Bead `godot-test1-dn8` moved the phase-3 set pieces onto
+			# the plan storeys, and two of them are furniture: `_demand_boxes`'
+			# 2.6 m receptacle pillar and `_checkpoint_boxes`' post. They are ledges
+			# by shape and by nothing else, and the structural rule has no way to say
+			# so, because it is a rule about what the PLAN emits.
+			#
+			# So the discriminator is the builder's own `_plan_prefix`: every box a
+			# storey's ASCII produces is named `S<floor>Plan…`, and that population
+			# keeps the strong claim unweakened — slab or stone to the ceiling, no
+			# exceptions, so no plan a designer can draw emits a step. A hand-built
+			# part is held instead to the question check 2's deleted keep sweep
+			# actually asked, which is the one that matters: a jump off its top must
+			# not reach the NEXT WALKING SURFACE. Nothing here buys a piece of
+			# furniture a pass; it only refuses to call a 2.6 m pillar under a 4.2 m
+			# ceiling a climb.
+			if String(box["name"]).begins_with(TowerInterior._plan_prefix(floor_index)):
 				_fail("%s spans %.2f .. %.2f m on a storey at %.2f m (ceiling %.2f) — it is neither this floor's slab nor stone reaching its ceiling, so its top is a ledge" % [
 					box["name"], bottom, top, surface, wall_top])
+				continue
+			if floor_index + 1 >= TowerInterior.FLOOR_Y.size():
+				continue  # the top storey is under the shell's sealed roof.
+			var next_surface: float = TowerInterior.FLOOR_Y[floor_index + 1]
+			if top + apex < next_surface - EPS:
+				continue
+			# It CAN be jumped high enough — so the only thing between it and the
+			# storey above is the slab, and the only opening in that slab is the
+			# stairwell hole `_plan_hole` cuts. A part standing under solid slab is
+			# not a climb: the jump ends at the ceiling. This is `_roofed` — deleted
+			# with the keep it measured — asked of the storey above's own slab boxes
+			# rather than of two authored constants, so it follows the drawing.
+			if _under_slab(floor_index + 1, box["pos"], box["size"] * 0.5):
+				continue
+			_fail("%s tops out at %.2f m on a storey at %.2f m with open slab overhead — a %.4f m jump off it reaches %.2f m and the next walking surface is %.2f m" % [
+				box["name"], top, surface, apex, top + apex, next_surface])
 		# ...and a wall you cannot see over. A walled-off room whose wall an unaided
 		# jump clears is a room with a second entrance nobody drew.
 		if clear <= apex:
 			_fail("storey %d has %.2f m of clear air on a %.4f m jump" % [
 				floor_index, clear, apex])
+
+
+func _under_slab(above_floor: int, pos: Vector3, half: Vector3) -> bool:
+	"""
+	Is this footprint entirely roofed by the slab of the storey above it?
+
+	One slab box has to cover the whole footprint, which is the conservative
+	reading: `_plan_slab` emits up to four rectangles around the stairwell hole, so
+	a footprint straddling two of them is spanning the hole and is exactly the case
+	this must not wave through.
+	"""
+	for slab: Dictionary in TowerInterior.plan_boxes(above_floor):
+		if not String(slab["name"]).contains("PlanSlab"):
+			continue
+		var at: Vector3 = slab["pos"]
+		var reach: Vector3 = slab["size"] * 0.5
+		if absf(pos.x - at.x) + half.x <= reach.x + EPS \
+				and absf(pos.z - at.z) + half.z <= reach.z + EPS:
+			return true
+	return false
+
+
+func _gate_mass(interior: Node, gate_id: String) -> MeshInstance3D:
+	"""
+	One gate's mass, found by its GATE ID and never by a hand-authored box name.
+
+	Every mass in the building is the plan builder's since bead `godot-test1-dn8`
+	and is called `S<floor>PlanGateMass_<id>`. The floor is in the name, so matching
+	on the whole name would pin the gate to a storey; the id is the persisted thing
+	and the storey is not, so the wildcard is the point.
+	"""
+	return interior.find_child("*GateMass_%s" % gate_id, true, false) as MeshInstance3D
+
+
+func _mass_rest(gate_id: String) -> float:
+	"""That mass's SHUT y, read out of the box table the builder built it from."""
+	for box: Dictionary in TowerInterior.all_boxes():
+		if String(box["name"]).ends_with("GateMass_%s" % gate_id):
+			return box["pos"].y
+	_fail("no box in the building is '%s's mass — its rest position is unmeasured" % gate_id)
+	return 0.0
 
 
 func _jump_apex() -> float:
@@ -494,96 +573,6 @@ func _jump_apex() -> float:
 	if g <= 0.0 or v <= 0.0:
 		return 0.0
 	return v * v / (2.0 * g)
-
-
-func _roofed(pos: Vector3, half: Vector3) -> bool:
-	"""Is this box entirely under the upper slab? (Then a jump off it hits a ceiling.)"""
-	return pos.x - half.x >= TowerInterior.SLAB_X0 - EPS \
-			and pos.x + half.x <= TowerInterior.INNER_HALF + EPS \
-			and absf(pos.z) + half.z <= TowerInterior.INNER_HALF + EPS
-
-
-func _headroom_over(box: Dictionary) -> float:
-	"""
-	The best clear height a player could stand in on top of this box, in metres.
-
-	Sampled at the footprint's four corners and its centre and reduced with MAX —
-	the question is whether there is ANY spot up there to stand, not whether the
-	whole top is clear. Considers the other axis-aligned solids and, analytically,
-	the ramp deck, which is the only rotated body in the building and the only thing
-	whose bounding box would lie about where its underside actually is.
-	"""
-	var pos: Vector3 = box["pos"]
-	var half: Vector3 = box["size"] * 0.5
-	var top := pos.y + half.y
-	var best := 0.0
-	for dx in [-1.0, 0.0, 1.0]:
-		for dz in [-1.0, 0.0, 1.0]:
-			var x: float = pos.x + float(dx) * half.x * 0.9
-			var z: float = pos.z + float(dz) * half.z * 0.9
-			best = maxf(best, _clearance_at(x, z, top, box["name"]))
-	return best
-
-
-func _clearance_at(x: float, z: float, from_y: float, skip: String) -> float:
-	"""
-	Vertical gap between `from_y` and the lowest solid surface above this XZ point.
-
-	OVER `all_boxes()`, so a planned storey's slab is a ceiling like any other — the
-	keep now stands INSIDE the building rather than under the sky, and a check that
-	only knew the keep's own boxes would report open air where there is 6000 m2 of
-	floor slab.
-	"""
-	var lowest := TowerShell.WALL_HEIGHT * 2.0
-	for other: Dictionary in TowerInterior.all_boxes():
-		if not other["collide"] or other["name"] == skip:
-			continue
-		if other.has("rot"):
-			lowest = minf(lowest, _ramp_underside_at(other, x, z))
-			continue
-		var pos: Vector3 = other["pos"]
-		var half: Vector3 = other["size"] * 0.5
-		if absf(pos.x - x) > half.x or absf(pos.z - z) > half.z:
-			continue
-		var bottom := pos.y - half.y
-		if bottom >= from_y - EPS:
-			lowest = minf(lowest, bottom)
-	return maxf(0.0, lowest - from_y)
-
-
-func _ramp_underside_at(ramp: Dictionary, x: float, z: float) -> float:
-	"""
-	How high ONE ramp's UNDERSIDE is over this XZ point, or a huge number where that
-	ramp is not overhead.
-
-	Analytic rather than a bounding box on purpose: a ramp is a rotated slab, and
-	its AABB claims stone from its foot's floor to its head's across its whole run —
-	which would declare the entire courtyard roofed and quietly disable check 2.
-
-	TAKES ITS RAMP AS A PARAMETER since phase 14, and derives the deck from that
-	box's own transform rather than from the keep ramp's constants. There are four
-	rotated slabs in this building now (the keep's and one per planned storey), and
-	a version that knew only `_ramp_box()` would be silently blind to three of them —
-	the same failure the hard-coded call it replaces would have become.
-	"""
-	var pos: Vector3 = ramp["pos"]
-	var size: Vector3 = ramp["size"]
-	var away := TowerShell.WALL_HEIGHT * 2.0
-	if absf(z - pos.z) > size.z * 0.5:
-		return away
-	# The deck's two ends, rebuilt exactly as check 3 rebuilds them: the top face,
-	# half a thickness along the box's own normal.
-	var theta: float = ramp["rot"].z
-	var along := Vector2(cos(theta), sin(theta))
-	var normal := Vector2(-sin(theta), cos(theta))
-	var deck_mid := Vector2(pos.x, pos.y) + normal * (size.y * 0.5)
-	var foot := deck_mid - along * (size.x * 0.5)
-	var head := deck_mid + along * (size.x * 0.5)
-	if x < minf(foot.x, head.x) or x > maxf(foot.x, head.x) \
-			or is_equal_approx(foot.x, head.x):
-		return away
-	var deck := foot.y + (x - foot.x) * (head.y - foot.y) / (head.x - foot.x)
-	return deck - size.y / cos(theta)
 
 
 # ============================================================================
@@ -648,39 +637,42 @@ func _check_ramp_is_the_stair() -> void:
 	looks perfect. So this rebuilds the deck's two end points from `pos`, `rot` and
 	`size` and asserts where they land.
 
-	EVERY ROTATED BODY IN THE BUILDING, since phase 14 — the keep's ramp is now the
-	`0 -> 1` case of a loop that also walks one deck per hand-planned storey. The
-	expected ends of a plan ramp are derived HERE from the storey's ASCII (the `S`
-	lane's two edges, and the `FLOOR_Y` values of `from` and `floor`), not from the
-	builder's own `_plan_ramp`, so this is a second opinion and not an echo. And the
-	loop is over `all_boxes()` rather than over the storeys, so a fourth rotated
-	body nobody expected fails instead of going unmeasured.
+	EVERY ROTATED BODY IN THE BUILDING, and since bead `godot-test1-dn8` every one
+	of them is a PLAN's. The phase-3 keep ramp used to be the hand-authored `0 -> 1`
+	case at the head of this loop, measured against `RAMP_X0` / `SLAB_X0`; the keep
+	is demolished, floors 0 and 1 are drawn on the grid, and floor 1's own six-cell
+	`S` lane carries that same 4.6 m. The check's intent is unchanged — a deck that
+	is not flush at BOTH ends is a stair that ends in a wall — and it is now made
+	the same way for every storey. The expected ends are derived HERE from the
+	storey's ASCII (the `S` lane's two edges, and the `FLOOR_Y` values of `from` and
+	`floor`), not from the builder's own `_plan_ramp`, so this is a second opinion
+	and not an echo. And the loop is over `all_boxes()` rather than over the
+	storeys, so a rotated body nobody expected fails instead of going unmeasured.
+
+	THE GROUND STOREY HAS NO DECK AND MUST NOT, which is the same `from == floor`
+	rule `tower_selfcheck` states: you arrive there through the shell's doorway. A
+	rotated body on it would be a ramp rising out of its own floor.
 	"""
 	# What we expect to find, one row per deck: the box, its two end points and a
 	# label for the failure text.
 	var want: Array[Dictionary] = []
-	var keep_ramp: Dictionary = {}
-	for box: Dictionary in TowerInterior.boxes():
-		if box["name"] == "Ramp":
-			keep_ramp = box
-	if keep_ramp.is_empty():
-		_fail("there is no box called Ramp — the only way between the storeys is gone")
-	else:
-		want.append({
-			"box": keep_ramp, "label": "ramp",
-			"foot": Vector2(TowerInterior.RAMP_X0, 0.0),
-			"head": Vector2(TowerInterior.SLAB_X0, TowerInterior.SLAB_Y),
-		})
 	for floor_index: int in TowerPlans.floors():
 		var deck: Dictionary = {}
 		for box: Dictionary in TowerInterior.plan_boxes(floor_index):
 			if box.has("rot"):
 				deck = box
+		var plan := TowerPlans.storey(floor_index)
+		var lane := _stair_lane(plan)
+		if int(plan["from"]) == floor_index:
+			if not deck.is_empty():
+				_fail("storey %d is entered from outside the building yet builds a ramp deck" % floor_index)
+			if not lane.is_empty():
+				_fail("storey %d is entered from outside yet draws an '%s' lane" % [
+					floor_index, TowerPlans.STAIR_UP_CHAR])
+			continue
 		if deck.is_empty():
 			_fail("storey %d has no ramp — a floor you cannot walk to" % floor_index)
 			continue
-		var plan := TowerPlans.storey(floor_index)
-		var lane := _stair_lane(plan)
 		if lane.is_empty():
 			_fail("storey %d's plan draws no '%s' lane" % [floor_index, TowerPlans.STAIR_UP_CHAR])
 			continue
@@ -850,9 +842,18 @@ func _check_headroom_clears_the_camera() -> void:
 	# The claim being asserted is the one that picked 3.85: a player standing on
 	# the courtyard's CENTRE LINE keeps the whole boom whichever way they face. So
 	# the reach, plus the arm's own margin, must fit in half the courtyard's clear
-	# width — the span from the upper slab's west edge to the shell's west inner
-	# face, derived here rather than restated so a moved wall fails this check.
-	var courtyard := TowerInterior.SLAB_X0 + TowerInterior.INNER_HALF
+	# width. That span USED to be "the upper slab's west edge to the shell's west
+	# inner face" — the annulus around a keep that no longer exists. Bead
+	# `godot-test1-dn8` drew the courtyard as a `C` room on floor 0's grid, so the
+	# same span is now the room's OWN cells, narrower side first, and moving a wall
+	# in the ASCII fails this check exactly as moving the slab used to.
+	var courtyard_floor := TowerInterior.room_floor("courtyard")
+	if courtyard_floor < 0:
+		_fail("no storey draws the courtyard — the indoor boom is measured against nothing")
+	var span: Dictionary = TowerInterior._cell_span(
+			TowerInterior.plan_room_rect(maxi(courtyard_floor, 0), "courtyard"))
+	var courtyard: float = minf(float(span["x1"]) - float(span["x0"]),
+			float(span["z1"]) - float(span["z0"]))
 	var outdoor_reach := _camera_reach(player, camera)
 	player.call("set_indoor_camera", true)
 	# A FEW FRAMES IN, the boom must be ON ITS WAY AND NOT THERE. The tower's
@@ -1268,18 +1269,19 @@ func _check_the_interior_is_lit_and_off_white() -> void:
 					_fail("storey %d paints a surface %s at %.2f luminance — the interior is supposed to have no dark corners" % [
 						floor_index, key, lum])
 				seen[key] = true
-		# Only the PLANNED storeys are drawn on the grid, and only they carry the
-		# carpet-and-wainscot treatment; the keep's two floors are hand-authored
-		# furniture and its carpet is one box of its own.
-		if not TowerPlans.storey(floor_index).is_empty():
-			for want: Array in [
-				[TowerInterior.COLOR_STONE, "off-white walls"],
-				[TowerInterior.COLOR_CARPET, "a mint floor"],
-				[TowerInterior.COLOR_WAINSCOT, "a wainscot band"],
-			]:
-				if not seen.has(_color_key(want[0])):
-					_fail("storey %d's batch has no %s in it — that half of the look is not wired to the geometry" % [
-						floor_index, want[1]])
+		# EVERY storey now, not just the planned ones. This used to stand behind a
+		# `TowerPlans.storey(floor_index).is_empty()` guard, because the keep's two
+		# floors were hand-authored furniture whose carpet was one box of its own;
+		# bd godot-test1-dn8 demolished the keep and drew floors 0 and 1 on the
+		# grid, so the carpet-and-wainscot treatment is owed by all ten.
+		for want: Array in [
+			[TowerInterior.COLOR_STONE, "off-white walls"],
+			[TowerInterior.COLOR_CARPET, "a mint floor"],
+			[TowerInterior.COLOR_WAINSCOT, "a wainscot band"],
+		]:
+			if not seen.has(_color_key(want[0])):
+				_fail("storey %d's batch has no %s in it — that half of the look is not wired to the geometry" % [
+					floor_index, want[1]])
 	print("tower interior: batch palette clears %.2f luminance (darkest %.2f, %s)" % [
 		INTERIOR_MIN_LUMINANCE, darkest, darkest_where])
 	interior.queue_free()
@@ -1355,8 +1357,18 @@ func _check_gate_lifecycle() -> void:
 	# (a) the starting state
 	if not shell.opened_ids().is_empty():
 		_fail("a fresh tower already has gates open: %s" % [shell.opened_ids()])
-	var mass := interior.find_child("IdentityMass", true, false) as MeshInstance3D
+	# THE IDENTITY MASS IS THE PLAN BUILDER'S NOW, so it is found by the PATTERN
+	# every plan gate mass answers to (`S<floor>PlanGateMass_<id>`) and never by a
+	# hand-authored name — exactly as the riddles below already were. Bead
+	# `godot-test1-dn8` drew the secure door as a `D` run on floor 1's grid; the
+	# gate id is the persisted thing and the box name is not, so matching on the id
+	# is what survives the storey moving again.
+	var mass := _gate_mass(interior, TowerInterior.GATE_IDENTITY)
 	var shutter := interior.find_child("DemandShutter", true, false) as MeshInstance3D
+	if mass == null:
+		_fail("the identity gate built no mass — check 7 has nothing to open")
+		await _clear(null, shell)
+		return
 	var mass_rest: float = mass.position.y
 	var shutter_rest: float = shutter.position.y
 
@@ -1371,7 +1383,16 @@ func _check_gate_lifecycle() -> void:
 
 	# (b) the wrong hero, standing on the pad
 	hero.hero = "windman"
-	var pad := interior.find_child("IdentityPad", true, false)
+	# The pad is a BOX and not a node: `_plan_gates` draws it `collide: false`, so
+	# it batches into `Floor1Batch` like every other static plate. It had its own
+	# `IdentityPad` node only while the mass was hand-authored (bd godot-test1-dn8),
+	# so this asks the drawing rather than the tree.
+	var pad_drawn := false
+	for plate: Dictionary in TowerInterior.all_boxes():
+		if String(plate["name"]).ends_with("GatePad_%s" % TowerInterior.GATE_IDENTITY):
+			pad_drawn = true
+	if not pad_drawn:
+		_fail("the identity gate drew no pad plate — the plan resolved no side to stand on")
 	var pad_area := interior.get_node_or_null("Floor1/IdentityTrigger") as Area3D
 	if pad_area == null:
 		_fail("there is no IdentityTrigger Area3D on the upper storey")
@@ -1393,7 +1414,7 @@ func _check_gate_lifecycle() -> void:
 	for _i in 30:
 		interior._process(0.1)
 	var body := interior.get_node_or_null("InteriorCollision") as StaticBody3D
-	var mass_shape := body.get_node_or_null("IdentityMassShape") as CollisionShape3D
+	var mass_shape := body.get_node_or_null("%sShape" % mass.name) as CollisionShape3D
 	if absf(mass.position.y - (mass_rest + TowerInterior.MASS_TRAVEL)) > 0.01:
 		_fail("the identity mass stopped at %.2f m, expected %.2f m" % [
 			mass.position.y, mass_rest + TowerInterior.MASS_TRAVEL])
@@ -1630,18 +1651,17 @@ func _check_opened_state_is_reapplied() -> void:
 	await process_frame
 
 	var interior := shell.get_node_or_null("TowerInterior") as TowerInterior
-	var mass := interior.find_child("IdentityMass", true, false) as MeshInstance3D
+	var mass := _gate_mass(interior, TowerInterior.GATE_IDENTITY)
 	var shutter := interior.find_child("DemandShutter", true, false) as MeshInstance3D
 	var plate := interior.find_child("CheckpointPlate", true, false) as MeshInstance3D
 	var body := interior.get_node_or_null("InteriorCollision") as StaticBody3D
 
-	var table := TowerInterior.boxes()
-	var mass_rest := 0.0
+	# Rest positions off `all_boxes()`, which since bead `godot-test1-dn8` is the
+	# plan loop and the whole building — there is no second table to read.
+	var mass_rest := _mass_rest(TowerInterior.GATE_IDENTITY)
 	var shutter_rest := 0.0
-	for box: Dictionary in table:
-		if box["name"] == "IdentityMass":
-			mass_rest = box["pos"].y
-		elif box["name"] == "DemandShutter":
+	for box: Dictionary in TowerInterior.all_boxes():
+		if box["name"] == "DemandShutter":
 			shutter_rest = box["pos"].y
 
 	if absf(mass.position.y - (mass_rest + TowerInterior.MASS_TRAVEL)) > EPS:
@@ -1652,7 +1672,7 @@ func _check_opened_state_is_reapplied() -> void:
 			shutter.position.y, shutter_rest - TowerInterior.SHUTTER_TRAVEL])
 	if plate.material_override != TowerInterior._material(TowerInterior.COLOR_CHECKPOINT_LIT):
 		_fail("a pre-opened tower rebuilt its checkpoint unlit")
-	var mass_shape := body.get_node_or_null("IdentityMassShape") as CollisionShape3D
+	var mass_shape := body.get_node_or_null("%sShape" % mass.name) as CollisionShape3D
 	if mass_shape == null or absf(mass_shape.position.y - mass.position.y) > EPS:
 		_fail("a pre-opened tower left the identity mass's collision shape in the doorway")
 	var shutter_shape := body.get_node_or_null("DemandShutterShape") as CollisionShape3D
@@ -1710,11 +1730,20 @@ func _check_visibility_gating() -> void:
 
 	PHASE 16 IS WHERE IT PAYS FOR ITSELF. Ten storeys, and the two heaviest are the
 	labyrinth's — so this now asserts three things a five-storey building could not
-	be asked: at most three storeys drawn from anywhere (floor 2, whose slab caps
-	both the annulus and the keep, is the one four), the cell block hidden from
+	be asked: at most three storeys drawn from ANYWHERE, the cell block hidden from
 	every storey more than one below it, and — driven live, standing on each floor
 	in turn — that walking up the building REBUILDS NOTHING and only toggles
 	`visible`.
+
+	"THREE FROM ANYWHERE" IS NEW AND IS A DELETION. Floor 2 used to be allowed four,
+	because its slab capped the 80 m annulus AND the keep's 20 m mezzanine two
+	indices below it — the mezzanine is exactly what forced `FLOOR_NEIGHBOURS` to
+	exist in place of `absi(index - current) <= 1`. Bead `godot-test1-dn8`
+	demolished the keep and drew floor 1 as a full plate, so floor 1's slab is floor
+	0's whole ceiling, the table is plain adjacency again, and the exception went
+	with the building that needed it. The table STAYS a table: what it costs is one
+	line of data, and what it buys is that the next irregular storey is a row rather
+	than a rewrite.
 	"""
 	# PHASE 14 REPLACED THE ARITHMETIC WITH A TABLE, so this asserts the PROPERTIES a
 	# visibility relation has to have plus the geometric facts THIS building has —
@@ -1733,23 +1762,23 @@ func _check_visibility_gating() -> void:
 			if TowerInterior._floor_visible(index, current):
 				seen += 1
 		# The budget half: the window exists to stop the whole building drawing.
-		# THREE IS THE RULE AND FLOOR 2 IS THE ONE EXCEPTION — its slab is the
-		# ceiling of the annulus AND of the keep's landing, so it touches three
-		# storeys and draws four. Everywhere else in a ten-storey building it is
-		# yourself plus the storey under you plus the storey over you, which is
-		# what "standing on storey 9 draws 8, 9 and 10 and nothing else" means.
-		var allowed := 4 if current == 2 else 3
+		# THREE, WITH NO EXCEPTION — yourself plus the storey under you plus the
+		# storey over you, which is what "standing on storey 9 draws 8, 9 and 10 and
+		# nothing else" means. Floor 2 was allowed four while the keep's mezzanine
+		# hung two indices under its slab; see the docstring.
+		var allowed := 3
 		if seen > allowed:
 			_fail("standing on floor %d draws %d storeys, over its allowance of %d — the window has stopped gating" % [
 				current, seen, allowed])
 	# ...and the building's own geometry, spelled out so a reader can check it
-	# against the plan. A slab is the ceiling of everything under it, and floor 2's
-	# roofs BOTH the annulus and the keep's landing; floors 3 to 9 are an ordinary
-	# stack all the way to the cell block under the sealed roof; nothing else
-	# touches.
-	var touching: Array[Array] = [[0, 1], [0, 2], [1, 2], [2, 3], [3, 4],
+	# against the plan. A slab is the ceiling of everything under it, and since bead
+	# `godot-test1-dn8` every storey is a full 80 m plate: floor 1's slab is floor
+	# 0's whole ceiling, and 1 to 9 are an ordinary stack all the way to the cell
+	# block under the sealed roof. `[0, 2]` moved from `touching` to `apart` with
+	# the keep's mezzanine, which is the one pair this demolition changed.
+	var touching: Array[Array] = [[0, 1], [1, 2], [2, 3], [3, 4],
 			[4, 5], [5, 6], [6, 7], [7, 8], [8, 9]]
-	var apart: Array[Array] = [[0, 3], [0, 4], [1, 3], [1, 4], [2, 4],
+	var apart: Array[Array] = [[0, 2], [0, 3], [0, 4], [1, 3], [1, 4], [2, 4],
 			[2, 5], [4, 6], [6, 9], [7, 9], [0, 9]]
 	for pair: Array in touching:
 		if not TowerInterior._floor_visible(pair[0], pair[1]):
@@ -2071,11 +2100,8 @@ func _check_earned_state_survives_a_relaunch() -> void:
 	if not second.is_opened(TowerInterior.GATE_IDENTITY):
 		_fail("a gate opened before the quit came back shut after the relaunch")
 	var interior := second.get_node_or_null("TowerInterior") as TowerInterior
-	var mass := interior.find_child("IdentityMass", true, false) as MeshInstance3D
-	var mass_rest := 0.0
-	for box: Dictionary in TowerInterior.boxes():
-		if box["name"] == "IdentityMass":
-			mass_rest = box["pos"].y
+	var mass := _gate_mass(interior, TowerInterior.GATE_IDENTITY)
+	var mass_rest := _mass_rest(TowerInterior.GATE_IDENTITY)
 	if absf(mass.position.y - (mass_rest + TowerInterior.MASS_TRAVEL)) > EPS:
 		_fail("the relaunched tower knew the gate was open and rebuilt the mass shut (y = %.2f, wanted %.2f)" % [
 			mass.position.y, mass_rest + TowerInterior.MASS_TRAVEL])
@@ -3052,9 +3078,9 @@ func _solid_near(world_pos: Vector3) -> String:
 	## The name of the first solid box a standing body at `world_pos` would be
 	## inside of, or "" when the spot is clear. Both tables — the interior's
 	## furniture and the shell's outer walls — because either one buries a guard.
-	## `all_boxes()` and not `boxes()`: since the posts are derived from the plans,
-	## most of them stand on a PLANNED storey, whose walls the keep's own table has
-	## never heard of.
+	## `all_boxes()` is every storey's plan boxes and the hand-built parts among
+	## them — since bd godot-test1-dn8 there is no second table, so the walls a post
+	## could be buried in are all in there.
 	var half := Vector3(GUARD_BODY_CLEARANCE, GUARD_BODY_HEIGHT * 0.5, GUARD_BODY_CLEARANCE)
 	var body_centre := Vector3(world_pos.x, world_pos.y + GUARD_BODY_HEIGHT * 0.5, world_pos.z)
 	for box: Dictionary in TowerInterior.all_boxes() + TowerShell.boxes():
