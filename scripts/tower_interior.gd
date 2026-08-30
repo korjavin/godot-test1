@@ -457,6 +457,22 @@ static func plan_clear_height(floor_index: int) -> float:
 ## well, and the collision body is the one thing here that is not batched.
 const PLAN_BOX_BUDGET: int = 120
 
+## ...and the same discipline for the FURNITURE, counted SEPARATELY and on purpose.
+##
+## Folding the dressing into `PLAN_BOX_BUDGET` would have meant tripling that
+## number, and tripling it destroys the only thing it does: an unmerged 40-cell
+## wall is 40 boxes, which is loud against 120 and invisible against 400. So the
+## structure keeps its budget unchanged and the office keeps its own, and a
+## regression in either one is still legible.
+##
+## MEASURED: the office storeys land in the 90s and the labyrinth floors — nearly
+## all corridor, with few and small rooms — in the low tens. 200 is the worst floor
+## plus about a third. What it catches is the dresser's own failure mode, which is
+## not "the walls stopped merging" but "a rule stopped excluding": drop the
+## threshold guard or the footprint test and every wall-adjacent cell in the
+## building becomes a candidate, which is hundreds per storey, not dozens.
+const PLAN_DRESS_BUDGET: int = 200
+
 # ============================================================================
 # THE RIDDLE LOCK (phase 15) — the fourth gate verb
 # ============================================================================
@@ -768,7 +784,21 @@ const FLOOR_HYSTERESIS: float = 0.8
 ## nearer 38 than 35. The budget is still the useful guard — a storey that stopped
 ## batching costs a node per box, not a surface — but do not read it as a draw
 ## count, and if draws are what you want to bound, count surfaces in check 5.
-const DRAW_BUDGET: int = 35
+##
+## 39 SINCE THE OFFICE DRESSING (bead godot-test1-0a5), AND ALL FOUR ARE THE JOKE.
+## Every desk, chair, cabinet, plant, diploma and framed photograph in this
+## building went into the storeys' EXISTING batch surfaces, so furnishing ten
+## floors moved this number by exactly ZERO. That is the chunks' "one MultiMesh
+## per chunk" applied to an office fit-out, and it is the reason the dressing is
+## vertex-coloured boxes rather than the textured quads the bead offered.
+##
+## The four are the four hero portraits on the employee-of-the-month wall, which
+## are the one thing in this building a vertex colour cannot say. A photograph
+## needs a texture, a texture needs a material of its own, and a material is a
+## draw — so they are four `QuadMesh` nodes on one storey wearing the hero HUD's
+## own `Texture2D`. They are the WHOLE of the easter egg's cost: the frames round
+## them and the brass plaques under them are batched boxes like everything else.
+const DRAW_BUDGET: int = 39
 
 # ============================================================================
 # PALETTE — one material per colour, shared process-wide (see `_material`)
@@ -892,6 +922,227 @@ const WAINSCOT_HEIGHT: float = 1.05
 ## of colour under your feet and never a lip: `CharacterBody3D` has no step-up, so
 ## anything solid you could trip on is a wall, and this is not solid at all.
 const CARPET_THICK: float = 0.02
+
+# ============================================================================
+# OFFICE DRESSING (bead godot-test1-0a5) — furniture and wall art, DERIVED
+# ============================================================================
+#
+# The storeys were correct plans in the right paint with nothing in them. This is
+# the furniture, and the whole of it is DERIVED FROM THE PLAN rather than drawn
+# in it.
+#
+# WHY NOT NEW GLYPHS. The obvious reading of "furniture from the plan" is a `d`
+# for desk and a `c` for chair in `TowerPlans`, and it was rejected for two
+# reasons, both of them about the extension rule that file's header is built on.
+# First it is ten storeys x 1600 cells of hand-editing for a change nobody could
+# review. Second, and worse, it makes furniture A THING A NEW STOREY MUST
+# REMEMBER: every floor authored after today would arrive empty until somebody
+# sprinkled glyphs through it. Derived, a storey drawn tomorrow is furnished the
+# moment its ASCII lands — and the plan alphabet is untouched, so
+# `tower_selfcheck`'s flood fill and its fifteen-subset audit are the same audits
+# over the same grid, with no new character to teach them.
+#
+# WHAT MAKES IT SAFE. A solid desk across a doorway is a softlock, and the flood
+# fill that would have caught it reads the ASCII, which knows nothing about any of
+# this. So the safety is built in rather than audited in afterwards:
+#
+#   * dressing only ever lands on a cell that TOUCHES A WALL and is neither a
+#     THRESHOLD (a room cell with a walkable non-room neighbour — i.e. a doorway)
+#     nor 4-adjacent to one. The way in, and the middle of the room, are never
+#     candidates at all;
+#   * a piece with a SOLID part is committed only if the room's remaining free
+#     cells are still ONE connected component afterwards. A piece that would wall
+#     anything off is dropped on the spot, not warned about;
+#   * a candidate cell that already carries anything else this storey draws — a
+#     pad, a lock plate, a clue strip, a containment frame, the rotor's mechanism
+#     — is refused BY FOOTPRINT, so no set piece is ever dressed and the stealth
+#     pacing is untouched. That test is geometry, not a list of names, so a set
+#     piece added later is excluded the day it is drawn.
+#
+# `tower_interior_selfcheck`'s check 18 asserts all three from the outside, plus
+# the floor on how much a real office room gets.
+
+## Waist height: the line between a piece you walk into and one you walk over.
+## Every part that declares `solid` must clear it (check 18), so a room reads
+## solid without the player ever snagging on a chair leg or a plant pot.
+const DRESS_WAIST: float = 0.70
+
+## How sparse the furniture is — one piece per this many candidate cells, then
+## clamped. A 3 x 15 cell office lands on three or four pieces; an 80 m hall gets
+## the cap and reads as a lobby rather than a warehouse of desks.
+const DRESS_SPACING: int = 7
+const DRESS_MIN_PIECES: int = 2
+const DRESS_MAX_PIECES: int = 6
+
+## Wall art, counted the same way off the cells the furniture did not take.
+const DRESS_ART_SPACING: int = 11
+const DRESS_MAX_ART: int = 4
+
+## A room with fewer candidate cells than this is a cupboard and stays empty. It
+## is also the line check 18 uses to decide which rooms owe `DRESS_MIN_PIECES`.
+const DRESS_MIN_CANDIDATES: int = 6
+
+## THE FIXED SEED, and it is fixed BECAUSE THE TOWER IS AUTHORED. `run_seed` is
+## the one thing that may never reach this building (see `tower_plans.gd`'s
+## header): a desk that moved between runs would make every screenshot of this
+## floor a screenshot of a different floor, and the softlock audits would be
+## certifying a layout nobody plays. This salt, the storey and the room's letter
+## are the whole of the entropy, so the offices are laid out identically forever.
+const DRESS_SALT: int = 0x0FF1CE
+
+## The two rooms that ARE their set piece end to end, and so are never dressed.
+## Named as graph rooms and never as floor numbers — the same rule `plan_boxes`
+## follows when it decides which storey draws the block. Everything else is kept
+## out cell by cell by the footprint test, which needs no name.
+const DRESS_SKIP_ROOMS: Array[String] = [BLOCK_ROOM, CHECKPOINT_ROOM]
+
+## THE OFFICE PALETTE. Every colour here clears `INTERIOR_MIN_LUMINANCE` on its
+## DARKEST face (`_face_shade`'s 0.78 underside), because a genuinely black
+## monitor would be the one dark region in a building whose entire look is that it
+## has none. So the screen is a cold grey that reads as "off" in a bright room,
+## which is what an unlit LCD looks like anyway.
+const COLOR_STEEL := Color(0.62, 0.64, 0.66)    # filing cabinets, pots, coolers
+const COLOR_SCREEN := Color(0.30, 0.36, 0.40)   # a monitor, off
+const COLOR_PLANT := Color(0.24, 0.50, 0.30)    # the one living thing in here
+const COLOR_PAPER := Color(0.97, 0.95, 0.88)    # a diploma's mount
+const COLOR_SEAL := Color(0.86, 0.68, 0.24)     # its foil seal, and every plaque
+const COLOR_PHOTO := Color(0.55, 0.60, 0.68)    # a photo's grey studio backdrop
+# ...and pale wood is `COLOR_WAINSCOT`, borrowed rather than restated: the desks,
+# the shelves and every frame are the same timber as the skirting, which is what
+# makes a room read as one fitted-out space instead of a props box.
+
+## THE FURNITURE, in WALL-LOCAL metres. A piece stands in ONE cell against ONE
+## wall, and its parts are measured in that wall's own frame:
+##
+##   size  (along the wall, up, out of the wall)
+##   off   (centre offset along the wall, BOTTOM above the walking surface,
+##          NEAR FACE out from the wall's face)
+##
+## which is how a human measures furniture against a wall, and is what lets one
+## table serve all four wall directions — `_dress_boxes` maps the frame onto the
+## cell's actual normal, so a desk against an east wall is the same three numbers.
+##
+## `solid` IS PER PART, not per piece, and that is the bead's rule stated where it
+## can be checked: the desk collides, the monitor and the chair tucked under it do
+## not. Nothing under `DRESS_WAIST` is ever solid.
+const DRESS_PIECES: Array[Dictionary] = [
+	{
+		"kind": "desk",
+		"parts": [
+			{"size": Vector3(1.50, 0.74, 0.75), "off": Vector3(0.0, 0.0, 0.12),
+				"color": COLOR_WAINSCOT, "solid": true},
+			{"size": Vector3(0.52, 0.34, 0.06), "off": Vector3(0.0, 0.74, 0.42),
+				"color": COLOR_SCREEN},
+			{"size": Vector3(0.50, 0.42, 0.50), "off": Vector3(0.0, 0.0, 1.02),
+				"color": COLOR_STEEL},
+			{"size": Vector3(0.50, 0.46, 0.08), "off": Vector3(0.0, 0.42, 1.44),
+				"color": COLOR_STEEL},
+		],
+	},
+	{
+		"kind": "cabinet",
+		"parts": [
+			{"size": Vector3(0.90, 1.35, 0.55), "off": Vector3(0.0, 0.0, 0.06),
+				"color": COLOR_STEEL, "solid": true},
+		],
+	},
+	{
+		"kind": "plant",
+		"parts": [
+			{"size": Vector3(0.44, 0.34, 0.44), "off": Vector3(0.0, 0.0, 0.30),
+				"color": COLOR_STEEL},
+			{"size": Vector3(0.74, 0.90, 0.74), "off": Vector3(0.0, 0.34, 0.15),
+				"color": COLOR_PLANT},
+		],
+	},
+	{
+		"kind": "shelf",
+		"parts": [
+			{"size": Vector3(1.30, 1.85, 0.42), "off": Vector3(0.0, 0.0, 0.06),
+				"color": COLOR_WAINSCOT, "solid": true},
+			{"size": Vector3(1.10, 0.30, 0.06), "off": Vector3(0.0, 1.10, 0.44),
+				"color": COLOR_SEAL},
+		],
+	},
+	{
+		"kind": "table",
+		"parts": [
+			{"size": Vector3(1.55, 0.72, 1.00), "off": Vector3(0.0, 0.0, 0.30),
+				"color": COLOR_WAINSCOT, "solid": true},
+			{"size": Vector3(0.44, 0.44, 0.44), "off": Vector3(-0.40, 0.0, 1.36),
+				"color": COLOR_STEEL},
+			{"size": Vector3(0.44, 0.44, 0.44), "off": Vector3(0.40, 0.0, 1.36),
+				"color": COLOR_STEEL},
+		],
+	},
+	{
+		"kind": "cooler",
+		"parts": [
+			{"size": Vector3(0.42, 0.98, 0.42), "off": Vector3(0.0, 0.0, 0.20),
+				"color": COLOR_STEEL, "solid": true},
+			{"size": Vector3(0.34, 0.44, 0.34), "off": Vector3(0.0, 0.98, 0.24),
+				"color": COLOR_PHOTO},
+		],
+	},
+]
+
+## THE WALL ART, in the same wall-local frame and never solid — a diploma you can
+## walk into is a shelf. Both hang clear of the `WAINSCOT_HEIGHT` band, so the
+## skirting still draws its unbroken line round the room under them.
+##
+## A DIPLOMA IS THREE BOXES AND A PHOTO IS TWO, all vertex-coloured, which is what
+## keeps this free: they go into the storey's existing batch surface, so the whole
+## of the wall art on a floor costs ZERO extra draw calls and zero materials. The
+## alternative on the table was a generated atlas texture and a third surface —
+## one more draw per storey, a new asset and a new material — to say "framed
+## rectangle with a seal on it" at four metres' viewing distance.
+const DRESS_ART: Array[Dictionary] = [
+	{
+		"kind": "diploma",
+		"parts": [
+			{"size": Vector3(0.62, 0.46, 0.05), "off": Vector3(0.0, 1.52, 0.0),
+				"color": COLOR_WAINSCOT},
+			{"size": Vector3(0.48, 0.32, 0.03), "off": Vector3(0.0, 1.59, 0.05),
+				"color": COLOR_PAPER},
+			{"size": Vector3(0.10, 0.10, 0.02), "off": Vector3(-0.14, 1.62, 0.08),
+				"color": COLOR_SEAL},
+		],
+	},
+	{
+		"kind": "photo",
+		"parts": [
+			{"size": Vector3(0.40, 0.50, 0.05), "off": Vector3(0.0, 1.46, 0.0),
+				"color": COLOR_WAINSCOT},
+			{"size": Vector3(0.30, 0.38, 0.03), "off": Vector3(0.0, 1.52, 0.05),
+				"color": COLOR_PHOTO},
+		],
+	},
+]
+
+# ============================================================================
+# THE EMPLOYEE-OF-THE-MONTH WALL — the joke
+# ============================================================================
+#
+# Four framed hero portraits on one office wall, captioned. It is the ONLY
+# textured thing in this building, and the textures are the very files the hero
+# HUD draws (`res://assets/portraits/<hero>.png`, bead #134): `load()` on a
+# `res://` path hands back the process-wide cached `Texture2D`, so hanging them
+# here is a REFERENCE and never a second copy of the art.
+#
+# Four quads, four cached materials, four draw calls, on one storey — and that is
+# the whole of what `DRAW_BUDGET` moved for. The frames and the plaques under
+# them are ordinary batched boxes and cost nothing.
+
+## Which room the wall is in — a graph room, looked up like everything else here,
+## so moving `outer_hall` in the ASCII moves the portraits with it. The outer hall
+## is the first room a player walks into off the entry hall, which is the point of
+## a joke nobody is meant to have to hunt for.
+const EGG_ROOM: String = "outer_hall"
+
+## How high off the walking surface the bottom of a portrait frame sits.
+const EGG_FRAME_Y: float = 1.30
+const EGG_FRAME_SIZE := Vector2(0.92, 1.12)   # the wooden frame, along-wall x up
+const EGG_PORTRAIT_SIZE := Vector2(0.76, 0.96) # ...and the picture inside it
 
 # ============================================================================
 # GATE IDS — the strings that go in the opened set
@@ -1365,6 +1616,11 @@ static var _materials: Dictionary = {}
 ## never change at runtime, so building it once is free correctness.
 static var _plan_cache: Dictionary = {}
 
+## Hero name -> the one material carrying that hero's portrait. Its own cache
+## rather than `_materials` because that one is keyed by COLOUR, and a portrait
+## has no colour — see `portrait_material()`.
+static var _portrait_materials: Dictionary = {}
+
 ## The same trick one storey down, and here it is not an optimization but a fix:
 ## `block_min()` / `block_max()` are read from `player_controller._physics_process`
 ## every frame a benched player is confined, and each one used to re-scan the whole
@@ -1460,7 +1716,13 @@ static func plan_boxes(floor_index: int) -> Array[Dictionary]:
 	if plan.is_empty():
 		_plan_cache[floor_index] = out
 		return out
-	out.append_array(_plan_slab(plan))
+	# THE SLAB IS COUNTED OFF SEPARATELY and never re-read below. It is the one
+	# thing on a storey that covers every cell of it, so a dresser asking "is this
+	# cell free?" against the whole list would find every cell taken; everything
+	# after this line is something a piece of furniture must genuinely stand clear
+	# of. (Same reason the ground floor's non-solid carpet is in that first group.)
+	var floor_boxes := _plan_slab(plan)
+	out.append_array(floor_boxes)
 	out.append_array(_merge_walls(plan))
 	var ramp := _plan_ramp(plan)
 	if not ramp.is_empty():
@@ -1481,6 +1743,13 @@ static func plan_boxes(floor_index: int) -> Array[Dictionary]:
 		out.append_array(_checkpoint_boxes(plan))
 	if plan_room_rect(floor_index, BLOCK_ROOM).size != Vector2i.ZERO:
 		out.append_array(_block_boxes(plan))
+	# THE DRESSING GOES LAST, AND THAT ORDER IS THE WHOLE OF ITS SAFETY. Every
+	# candidate cell is tested against everything above — the walls, the ramp, the
+	# pads, the lock plates, the gate masses and each hand-built set piece — so a
+	# desk can never land in a mechanism, and a set piece added tomorrow keeps it
+	# out on the day it is drawn without a name being written down anywhere.
+	out.append_array(_egg_boxes(plan))
+	out.append_array(_plan_dressing(plan, out.slice(floor_boxes.size())))
 	_plan_cache[floor_index] = out
 	return out
 
@@ -1810,6 +2079,384 @@ static func _plan_pads(plan: Dictionary) -> Array[Dictionary]:
 				"color": COLOR_SYSTEM, "collide": false, "floor": floor_index,
 			})
 	return out
+
+
+# ============================================================================
+# THE DRESSER — an office in every room, derived (bead godot-test1-0a5)
+# ============================================================================
+#
+# Read the block beside `DRESS_PIECES` first: it says why this is derived rather
+# than drawn, and what the three safety rules are. Everything below is those rules
+# and nothing else, and none of it names a floor, a room or a letter.
+
+static func _plan_dressing(plan: Dictionary, taken: Array[Dictionary]) -> Array[Dictionary]:
+	"""
+	Every room on one storey, furnished and hung.
+
+	@param plan: A `TowerPlans.STOREYS` row.
+	@param taken: Everything this storey has already drawn EXCEPT its floor slab —
+	        the walls, the ramp, the pads, the gate masses and every hand-built set
+	        piece. A candidate cell overlapping any of them is refused.
+	@return: `boxes()` entries, each carrying `"dress": true` so check 1 can budget
+	        the furniture apart from the structure it stands in.
+	"""
+	var out: Array[Dictionary] = []
+	var floor_index := int(plan["floor"])
+	var rows: Array = plan["rows"]
+	var letters: Array = plan["rooms"].keys()
+	letters.sort()
+	for letter: String in letters:
+		if DRESS_SKIP_ROOMS.has(String(plan["rooms"][letter])):
+			continue
+		out.append_array(_dress_room(plan, rows, floor_index, letter, taken))
+	return out
+
+
+static func _dress_room(plan: Dictionary, rows: Array, floor_index: int,
+		letter: String, taken: Array[Dictionary]) -> Array[Dictionary]:
+	"""One room's furniture and wall art. See `_plan_dressing` for the parameters."""
+	var cells := _room_cells(rows, letter)
+	if cells.is_empty():
+		return []
+	# The doorways, and the cells beside them: a room's whole traffic is through
+	# these and nothing may stand in any of them. Computing it here rather than
+	# trusting `plan_doorway_rect` is deliberate — that one answers "the gap in the
+	# wall row on the +Z side", which is one doorway of one shape, and a room with
+	# its door on the north or west side would come back empty and undefended.
+	var room := {}
+	for cell: Vector2i in cells:
+		room[cell] = true
+	var thresholds: Array[Vector2i] = []
+	for cell: Vector2i in cells:
+		for step: Vector2i in _STEPS:
+			var ch := _plan_char(rows, cell + step)
+			if ch != TowerPlans.WALL_CHAR and ch != letter:
+				thresholds.append(cell)
+				break
+	if thresholds.is_empty():
+		# A room with no way in is a drafting error, not a room to furnish. The
+		# flood fill below has no start cell either, so there is nothing honest to
+		# say about it here; `tower_selfcheck`'s check 9 is what refuses it.
+		return []
+	var barred := {}
+	for cell: Vector2i in thresholds:
+		barred[cell] = true
+		for step: Vector2i in _STEPS:
+			barred[cell + step] = true
+
+	var cands: Array[Vector2i] = []
+	for cell: Vector2i in cells:
+		if barred.has(cell):
+			continue
+		var touches_wall := false
+		for step: Vector2i in _STEPS:
+			if _plan_char(rows, cell + step) == TowerPlans.WALL_CHAR:
+				touches_wall = true
+				break
+		if not touches_wall or _cell_is_taken(cell, taken):
+			continue
+		cands.append(cell)
+	if cands.size() < DRESS_MIN_CANDIDATES:
+		return []
+
+	# The one draw of entropy this building takes, and it is not a run's. Seeded
+	# from the storey and the room's own letter, so two rooms on a floor are laid
+	# out differently and the same room is laid out identically forever.
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(Vector3i(floor_index, letter.unicode_at(0), DRESS_SALT))
+
+	var out: Array[Dictionary] = []
+	var blocked := {}
+	var used := {}
+	var want := clampi(cands.size() / DRESS_SPACING, DRESS_MIN_PIECES, DRESS_MAX_PIECES)
+	want = mini(want, cands.size())
+	# STRIDED AND NOT SHUFFLED. `cands` is in row-major order, so walking it with a
+	# stride spreads the pieces round the room's walls; a shuffle bunches three
+	# desks in one corner about as often as it does not.
+	var stride := maxi(1, cands.size() / want)
+	var offset := rng.randi_range(0, stride - 1)
+	var kind := rng.randi_range(0, DRESS_PIECES.size() - 1)
+	for i: int in want:
+		var index := offset + i * stride
+		if index >= cands.size():
+			break
+		var cell: Vector2i = cands[index]
+		var piece: Dictionary = DRESS_PIECES[(kind + i) % DRESS_PIECES.size()]
+		if _piece_is_solid(piece) and not _still_connected(room, blocked, thresholds, cell):
+			# It would have walled something off. Dropped, and the room is simply
+			# emptier — never "placed anyway with a warning", because the warning
+			# nobody reads is how a softlock ships.
+			continue
+		if _piece_is_solid(piece):
+			blocked[cell] = true
+		used[cell] = true
+		out.append_array(_dress_boxes(rows, floor_index, letter, cell, piece))
+
+	# ...then the art, on the walls the furniture left bare.
+	var free: Array[Vector2i] = []
+	for cell: Vector2i in cands:
+		if not used.has(cell):
+			free.append(cell)
+	if not free.is_empty():
+		var art_want := mini(maxi(1, free.size() / DRESS_ART_SPACING), DRESS_MAX_ART)
+		var art_stride := maxi(1, free.size() / art_want)
+		var art_offset := rng.randi_range(0, art_stride - 1)
+		var art_kind := rng.randi_range(0, DRESS_ART.size() - 1)
+		for i: int in art_want:
+			var index := art_offset + i * art_stride
+			if index >= free.size():
+				break
+			out.append_array(_dress_boxes(rows, floor_index, letter, free[index],
+					DRESS_ART[(art_kind + i) % DRESS_ART.size()]))
+	return out
+
+
+## The four 4-neighbours, named once. Every rule in the dresser is a claim about
+## 4-adjacency (a diagonal neighbour is not a way past a box), so they share one.
+const _STEPS: Array[Vector2i] = [
+	Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
+]
+
+
+static func _plan_char(rows: Array, cell: Vector2i) -> String:
+	"""One cell's character, `#` off the edge of the grid — a wall, which is what
+	the shell actually is out there."""
+	if cell.y < 0 or cell.y >= rows.size():
+		return TowerPlans.WALL_CHAR
+	var line := String(rows[cell.y])
+	if cell.x < 0 or cell.x >= line.length():
+		return TowerPlans.WALL_CHAR
+	return line[cell.x]
+
+
+static func _room_cells(rows: Array, letter: String) -> Array[Vector2i]:
+	"""Every cell of one room, in row-major order."""
+	var out: Array[Vector2i] = []
+	for r: int in rows.size():
+		var line := String(rows[r])
+		for c: int in line.length():
+			if line[c] == letter:
+				out.append(Vector2i(c, r))
+	return out
+
+
+static func _piece_is_solid(piece: Dictionary) -> bool:
+	"""Does any part of this piece collide? Then its cell is a wall to the fill."""
+	for part: Dictionary in piece["parts"]:
+		if bool(part.get("solid", false)):
+			return true
+	return false
+
+
+static func _still_connected(room: Dictionary, blocked: Dictionary,
+		thresholds: Array[Vector2i], adding: Vector2i) -> bool:
+	"""
+	Would blocking one more cell leave the room in one piece?
+
+	@param room: Every cell of the room, as a set.
+	@param blocked: The cells already solid with furniture.
+	@param thresholds: The doorway cells, which must all stay reachable.
+	@param adding: The cell about to be blocked.
+	@return: True when every free cell of the room still reaches every other.
+
+	THE CLAIM IS STRICTER THAN "THE DOORS STILL CONNECT", on purpose: one component
+	for the whole free floor also refuses a piece that seals a corner off, which is
+	not a softlock but is a metre of office nobody can ever stand in. It costs a
+	flood fill over at most a few hundred cells, once per candidate, at build time,
+	behind `_plan_cache`.
+	"""
+	var free: Array[Vector2i] = []
+	for cell: Vector2i in room:
+		if cell != adding and not blocked.has(cell):
+			free.append(cell)
+	if free.is_empty():
+		return false
+	var seen := {free[0]: true}
+	var queue: Array[Vector2i] = [free[0]]
+	while not queue.is_empty():
+		var at: Vector2i = queue.pop_back()
+		for step: Vector2i in _STEPS:
+			var next: Vector2i = at + step
+			if seen.has(next) or next == adding or blocked.has(next) or not room.has(next):
+				continue
+			seen[next] = true
+			queue.append(next)
+	if seen.size() != free.size():
+		return false
+	for cell: Vector2i in thresholds:
+		if not seen.has(cell):
+			return false
+	return true
+
+
+static func _cell_is_taken(cell: Vector2i, taken: Array[Dictionary]) -> bool:
+	"""Does anything else this storey drew stand in this cell's footprint?"""
+	var x0 := _grid_x(float(cell.x))
+	var x1 := _grid_x(float(cell.x) + 1.0)
+	var z0 := _grid_z(float(cell.y))
+	var z1 := _grid_z(float(cell.y) + 1.0)
+	for box: Dictionary in taken:
+		var pos: Vector3 = box["pos"]
+		var half: Vector3 = box["size"] * 0.5
+		if pos.x - half.x < x1 and pos.x + half.x > x0 \
+				and pos.z - half.z < z1 and pos.z + half.z > z0:
+			return true
+	return false
+
+
+static func _dress_boxes(rows: Array, floor_index: int, letter: String,
+		cell: Vector2i, piece: Dictionary) -> Array[Dictionary]:
+	"""
+	One piece, in one cell, against the wall that cell touches.
+
+	THE WALL-LOCAL FRAME IS RESOLVED HERE and nowhere else, which is what lets one
+	table serve all four directions: `normal` points out of the wall into the room,
+	`tangent` runs along it, and a part's authored (along, up, out) is mapped onto
+	them. Both are axis-aligned unit vectors, so the size mapping is a swap and not
+	a rotation — the boxes stay axis-aligned and the batch stays cheap.
+	"""
+	var out: Array[Dictionary] = []
+	var normal := Vector3.ZERO
+	for step: Vector2i in _STEPS:
+		if _plan_char(rows, cell + step) == TowerPlans.WALL_CHAR:
+			normal = Vector3(-float(step.x), 0.0, -float(step.y))
+			break
+	if normal == Vector3.ZERO:
+		return out
+	var tangent := Vector3(absf(normal.z), 0.0, absf(normal.x))
+	var centre := Vector3(_grid_x(float(cell.x) + 0.5), 0.0, _grid_z(float(cell.y) + 0.5))
+	var face := centre - normal * (TowerPlans.PLAN_CELL * 0.5)
+	var top: float = FLOOR_Y[floor_index]
+	for i: int in piece["parts"].size():
+		var part: Dictionary = piece["parts"][i]
+		var size: Vector3 = part["size"]
+		var off: Vector3 = part["off"]
+		var world := tangent * size.x + Vector3(0.0, size.y, 0.0) + normal.abs() * size.z
+		var at := face + tangent * off.x + normal * (off.z + size.z * 0.5)
+		at.y = top + off.y + size.y * 0.5
+		out.append({
+			"name": "%sDress%s_%d_%d_%s%d" % [_plan_prefix(floor_index), letter,
+					cell.x, cell.y, piece["kind"], i],
+			"pos": at, "size": world, "color": part["color"],
+			"collide": bool(part.get("solid", false)), "floor": floor_index,
+			"dress": true,
+		})
+	return out
+
+
+static func egg_frames() -> Array[Dictionary]:
+	"""
+	Where the four employee-of-the-month portraits hang, or `[]` if nowhere.
+
+	@return: One `{"hero", "floor", "pos"}` per `TowerGraph.HEROES`, `pos` being
+	        the point on the wall face at the walking surface, directly under the
+	        frame's centre line. They face +Z by construction — see below.
+
+	ONE FUNCTION, TWO CALLERS, so the batched frames and the textured pictures
+	inside them cannot drift apart by a centimetre: `_egg_boxes` builds the wood
+	and the plaques off this, and `_build_portraits` hangs the quads off the same
+	answer.
+
+	IT IS THE ROOM'S NORTHERNMOST ROW, and that is what makes the +Z facing a fact
+	rather than a hope: the cells above it are asserted to be `#` before anything is
+	returned, so the wall really is behind the frames and the pictures really do
+	look south into the room. Redraw `outer_hall` so that row is no longer against
+	stone and this answers `[]` — no portraits, rather than four floating in air.
+	"""
+	var out: Array[Dictionary] = []
+	var floor_index := room_floor(EGG_ROOM)
+	if floor_index < 0:
+		return out
+	var plan := TowerPlans.storey(floor_index)
+	var rect := plan_room_rect(floor_index, EGG_ROOM)
+	if rect.size == Vector2i.ZERO:
+		return out
+	var letter := ""
+	for key: String in plan["rooms"]:
+		if String(plan["rooms"][key]) == EGG_ROOM:
+			letter = key
+			break
+	var rows: Array = plan["rows"]
+	var count := TowerGraph.HEROES.size()
+	var r := rect.position.y
+	var c0 := rect.position.x + (rect.size.x - count) / 2
+	for i: int in count:
+		if _plan_char(rows, Vector2i(c0 + i, r)) != letter \
+				or _plan_char(rows, Vector2i(c0 + i, r - 1)) != TowerPlans.WALL_CHAR:
+			return []
+	for i: int in count:
+		out.append({
+			"hero": String(TowerGraph.HEROES[i]),
+			"floor": floor_index,
+			"pos": Vector3(_grid_x(float(c0 + i) + 0.5), FLOOR_Y[floor_index],
+					_grid_z(float(r))),
+		})
+	return out
+
+
+static func _egg_boxes(plan: Dictionary) -> Array[Dictionary]:
+	"""
+	The wooden frame and the brass plaque under each hero portrait.
+
+	Batched boxes like any other dressing, so the joke costs four draw calls for
+	the four pictures and nothing at all for the carpentry round them.
+	"""
+	var out: Array[Dictionary] = []
+	var floor_index := int(plan["floor"])
+	for frame: Dictionary in egg_frames():
+		if int(frame["floor"]) != floor_index:
+			continue
+		var hero: String = frame["hero"]
+		var at: Vector3 = frame["pos"]
+		out.append({
+			"name": "%sEggFrame_%s" % [_plan_prefix(floor_index), hero],
+			"pos": Vector3(at.x, at.y + EGG_FRAME_Y + EGG_FRAME_SIZE.y * 0.5, at.z + 0.03),
+			"size": Vector3(EGG_FRAME_SIZE.x, EGG_FRAME_SIZE.y, 0.06),
+			"color": COLOR_WAINSCOT, "collide": false, "floor": floor_index,
+			"dress": true,
+		})
+		out.append({
+			"name": "%sEggPlaque_%s" % [_plan_prefix(floor_index), hero],
+			"pos": Vector3(at.x, at.y + EGG_FRAME_Y - 0.16, at.z + 0.025),
+			"size": Vector3(0.72, 0.16, 0.05),
+			"color": COLOR_SEAL, "collide": false, "floor": floor_index,
+			"dress": true,
+		})
+	return out
+
+
+static func portrait_material(hero: String) -> StandardMaterial3D:
+	"""
+	The one material carrying one hero's portrait, for the life of the process.
+
+	@param hero: A `TowerGraph.HEROES` name.
+	@return: The cached material, or null when that hero has no portrait shipped.
+
+	THE TEXTURE IS THE HUD'S OWN. `load()` on a `res://` path returns the
+	process-wide cached resource, so this is a second reference to the very
+	`Texture2D` `hero_hud.gd` draws and never a second copy of the image.
+	`ResourceLoader.exists` first, for the same reason the HUD does it: a bare
+	`load()` on a hero who ships before his art is a red console error per frame.
+
+	UNSHADED, like everything else under this sealed roof, and `DIFFUSE_TOON` so
+	`ToonShading.apply_to_mesh()` declines to duplicate it — the same two lines
+	`_batch_material` sets, for the same two reasons.
+	"""
+	var hit: StandardMaterial3D = _portrait_materials.get(hero)
+	if hit != null:
+		return hit
+	var path := "res://assets/portraits/%s.png" % hero
+	if not ResourceLoader.exists(path):
+		return null
+	var mat := StandardMaterial3D.new()
+	mat.albedo_texture = load(path) as Texture2D
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.diffuse_mode = BaseMaterial3D.DIFFUSE_TOON
+	mat.rim_enabled = true
+	mat.rim = 0.4
+	mat.rim_tint = 0.25
+	_portrait_materials[hero] = mat
+	return mat
 
 
 static func riddle_ids() -> Array[String]:
@@ -2785,6 +3432,7 @@ func _ready() -> void:
 	_build_riddles()
 	_build_label()
 	_build_vault_prize()
+	_build_portraits()
 	# Whatever the tower already knows is open, apply it NOW — before the first
 	# frame, with no animation. This is the seam phase 5 loads a save through, and
 	# the reason the acceptance walk ("out and back in, gates still open") is a
@@ -3466,6 +4114,51 @@ func _build_label() -> void:
 	var at := gate_stand(GATE_DEMAND, 2)
 	_label = _make_label("DemandLabel", at + Vector3(0.0, 3.2, 0.0),
 		tr("PHASE RECEPTACLE"))
+
+
+func _build_portraits() -> void:
+	"""
+	The four hero portraits, and the caption that makes them a joke.
+
+	ONE QUAD PER HERO, and they are the only textured surfaces in this building —
+	which is exactly why they cannot be batched: `merged_mesh` welds boxes into two
+	VERTEX-COLOURED surfaces, and a photograph is not a vertex colour. Four draw
+	calls, on one storey, and `DRAW_BUDGET` moved by four and says so.
+
+	PARENTED TO THEIR OWN STOREY, like every other mesh here, so they hide with it:
+	the visibility gate is a boolean write on `Floor%d` and the joke is inside it,
+	not drawn from six floors up. The caption rides `_make_label`, which parents to
+	the same container for the same reason — and a `Label3D` is not a
+	`MeshInstance3D`, so it costs the mesh budget nothing.
+	"""
+	var frames := egg_frames()
+	if frames.is_empty():
+		return
+	for frame: Dictionary in frames:
+		var hero: String = frame["hero"]
+		var mat := portrait_material(hero)
+		if mat == null:
+			continue
+		var at: Vector3 = frame["pos"]
+		var quad := MeshInstance3D.new()
+		quad.name = "EggPortrait_%s" % hero
+		var plane := QuadMesh.new()
+		plane.size = EGG_PORTRAIT_SIZE
+		quad.mesh = plane
+		# 7 cm proud of the wall: 6 cm of frame, then the picture sitting in it.
+		quad.position = Vector3(at.x, at.y + EGG_FRAME_Y + EGG_FRAME_SIZE.y * 0.5,
+				at.z + 0.07)
+		quad.material_override = mat
+		_no_shadow(quad)
+		_floors[int(frame["floor"])].add_child(quad)
+	# One caption for the row rather than four, because the joke is that all four
+	# of them won it at once and four separate plaques would be four setups for it.
+	var first: Vector3 = frames[0]["pos"]
+	var last: Vector3 = frames[frames.size() - 1]["pos"]
+	_make_label("EggLabel", Vector3((first.x + last.x) * 0.5,
+			first.y + EGG_FRAME_Y + EGG_FRAME_SIZE.y + 0.55, first.z + 0.2),
+			tr("EMPLOYEE OF THE MONTH (ALL FOUR, EVERY MONTH)"),
+			int(frames[0]["floor"]))
 
 
 func _build_vault_prize() -> void:
