@@ -501,8 +501,13 @@ a new behaviour arm has to bring a probe with it. Keep it that way.
 is an optional row field defaulting to 360 — the tower guard's 120 is the only one — read
 once in `_ready()` into a cosine and applied in `_update_chase_state()` on the
 **acquisition edge only** (a predator that has you keeps you until distance drops it),
-after a game-wide `SPOT_TELEGRAPH_TIME` beat that shows a `?` and pings. It costs no RNG
-draw, so adding it to a row moves no spawn. `enemy_spawn_selfcheck` check 8e probes every
+after a game-wide `SPOT_TELEGRAPH_TIME` beat that shows a `?` and pings. **The beat is a
+STANDSTILL** — the heading is zeroed last in `_physics_process`, over the wander, the
+feelers and both leashes, because a body that walks through its own warning turns as it
+goes and rolls the quarry back out of its own cone. And a bearing test is blind to height,
+so a cone also carries `VIEW_CONE_HEIGHT_BAND`: without it a guard smells the player
+through the floor slab above it. It costs no RNG draw, so adding it to a row moves no
+spawn. `enemy_spawn_selfcheck` check 8e probes every
 row that carries the field, from behind and ahead, with the crocodile as the no-cone
 control.
 
