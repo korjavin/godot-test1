@@ -883,11 +883,15 @@ const GLOW_COLORS: Array[Color] = [
 const INTERIOR_EMISSION: float = 0.45
 
 ## The wainscot band's height off the walking surface. Pure look; never collided
-## with, never stood on. (`CARPET_THICK` stood beside it until bead
-## `godot-test1-dn8`: the ground floor walked on the world's own ground plane and
-## needed a 2 cm layer of its own under the keep's roofed half. It has a plan slab
-## like every other storey now, and a slab's top face is already carpet.)
+## with, never stood on.
 const WAINSCOT_HEIGHT: float = 1.05
+
+## The ground storey's carpet layer. 2 cm of pure colour, non-solid, laid OVER the
+## shell's `Yard` apron — see `_plan_slab` for why the ground floor is the one storey
+## whose slab top face is not the surface you look at. Thin enough that it is a change
+## of colour under your feet and never a lip: `CharacterBody3D` has no step-up, so
+## anything solid you could trip on is a wall, and this is not solid at all.
+const CARPET_THICK: float = 0.02
 
 # ============================================================================
 # GATE IDS — the strings that go in the opened set
@@ -1674,6 +1678,32 @@ static func _plan_slab(plan: Dictionary) -> Array[Dictionary]:
 			# storey below and stays off-white with the walls. One box, two colours —
 			# see `_emit_box`.
 			"top_color": COLOR_CARPET,
+		})
+	# THE GROUND STOREY IS THE ONE WHOSE FLOOR YOU NEVER SEE. Its slab's top face is
+	# at y = 0 — under the shell's `Yard`, a non-solid packed-earth apron lifted
+	# `YARD_LIFT` (3 cm) over the whole footprint — so the mint above renders as
+	# packed earth and the roofed ground floor stops matching every storey over it.
+	# (codex review, 2026-08-30.)
+	#
+	# The slab itself may NOT be lifted to clear the apron: it is `collide: true`,
+	# and 3 cm of collision is a lip at the foot of the ramp climbing out of here —
+	# `CharacterBody3D` has no step-up, so anything you can trip on is a wall. So the
+	# colour goes on separately, as the `HallCarpet` this bead deleted always did it:
+	# one NON-SOLID 2 cm layer over the apron. You stand on the slab; this is pile.
+	#
+	# IT STOPS SHORT OF THE DOORWAY, by the shell's own `DOOR_TRIGGER_DEPTH`: the door
+	# volume is a hole and nothing the interior builds may stand in it (check 1 asks
+	# that of every box, and a carpet is a box). The threshold strip that leaves is the
+	# doormat line — the slab underneath still runs to the wall.
+	if top <= TowerShell.YARD_LIFT:
+		var carpet_x1 := TowerPlans.PLAN_HALF - TowerShell.DOOR_TRIGGER_DEPTH
+		out.append({
+			"name": "%sCarpet" % _plan_prefix(floor_index),
+			"pos": Vector3((carpet_x1 - TowerPlans.PLAN_HALF) * 0.5,
+					TowerShell.YARD_LIFT + CARPET_THICK * 0.5, 0.0),
+			"size": Vector3(carpet_x1 + TowerPlans.PLAN_HALF, CARPET_THICK,
+					2.0 * TowerPlans.PLAN_HALF),
+			"color": COLOR_CARPET, "collide": false, "floor": floor_index,
 		})
 	return out
 
