@@ -1621,13 +1621,15 @@ func switch_to_next_character() -> void:
 	IN A MULTIPLAYER ROOM the lobby owns who plays which hero, so the cycle is
 	restricted to the characters this peer was assigned (see below).
 	"""
-	# Which characters may we step to? `available_character_indices()` — the lobby's
-	# hand INTERSECT the heroes nobody is holding captive. Solo, with nobody taken,
+	# Which characters may we step to? `reachable_character_indices()` — the lobby's
+	# hand INTERSECT free, PLUS (in a room) every free hero NOBODY holds, because
+	# those are the ones switch_to_character() now claims through the lobby rather
+	# than refusing (bead godot-test1-4zw). Solo, with nobody taken,
 	# it answers all four and the cycle below is arithmetically the plain
 	# `(i + 1) % size` it has always been, which is why the old `== null` branch is
 	# gone rather than kept beside it: two spellings of one increment is how the
 	# captive filter would end up applied to one of them and not the other.
-	var indices := available_character_indices()
+	var indices := reachable_character_indices()
 
 	# THIS FUNCTION ONLY PICKS AN INDEX — every guard, and the refusal feedback,
 	# live in switch_to_character(). A hand of 0 or 1 has no "next" hero, so the
@@ -1663,20 +1665,117 @@ func switch_to_character(index: int) -> bool:
 	if windman_boost_timer > 0.0 or teibi_size_state != 0:
 		return false
 
-	# Give a refused press the SAME dial flash and denial buzz a refused F press
-	# gets, so the player reads "this hero is locked" rather than "the key is
-	# broken". Pressing the hero you already are lands here too — nothing happens
-	# either way, and the flash is what says so.
-	if index == current_character_index or not available_character_indices().has(index):
-		_flash_blocked_feedback()
-		return false
+	# WHO HOLDS THE HERO THIS PRESS ASKS FOR, per the lobby — "" when nobody does,
+	# and "" for every hero when there is no room. That plus the two index sets
+	# below is everything the rule needs, so the rule itself is the pure static
+	# `decide_switch()` and this function is only the ACTION.
+	#
+	# A player with no lobby verbs to reach (solo, or a scene with a stubbed
+	# manager) can claim nothing, so it offers an EMPTY claimable set and the
+	# decision degrades to exactly the two verdicts it has always had.
+	var mp := _mp()
+	var can_claim: bool = mp != null and mp.has_method("hero_holder") \
+			and mp.has_method("claim_hero")
+	var holder: String = ""
+	if can_claim and index >= 0 and index < CHARACTERS.size():
+		holder = String(mp.hero_holder(String(CHARACTERS[index]["name"])))
+	var claimable: Array = free_character_indices() if can_claim else []
 
-	# Show the newly selected character
-	set_active_character(index)
+	match decide_switch(index, current_character_index,
+			available_character_indices(), claimable, holder):
+		SWITCH_LOCAL:
+			# Show the newly selected character
+			set_active_character(index)
+			print("Switched to character: %s" % CHARACTERS[index]["name"])
+			return true
+		SWITCH_CLAIM:
+			# ASK THE LOBBY, DO NOT MOVE (bead godot-test1-4zw). `claim_hero()`
+			# changes nothing locally by contract: the body swaps when the room's
+			# `heroes` broadcast confirms it, through `mp_manager._apply_my_hero`,
+			# which is the same path the initial auto-claim and the capture-time
+			# reassignment already take. So two peers pressing the same key in one
+			# frame serialize on the lobby's room lock — one wins, the loser keeps
+			# its hero and gets the status line, and neither ever half-switches.
+			mp.claim_hero(String(CHARACTERS[index]["name"]))
+			return true
+		_:
+			# Give a refused press the SAME dial flash and denial buzz a refused F
+			# press gets, so the player reads "this hero is locked" rather than
+			# "the key is broken". Pressing the hero you already are lands here
+			# too — nothing happens either way, and the flash is what says so.
+			_flash_blocked_feedback()
+			return false
 
-	# Print confirmation
-	print("Switched to character: %s" % CHARACTERS[index]["name"])
-	return true
+
+## `decide_switch()`'s three verdicts: refuse the press, swap the body here and
+## now, or ask the lobby for the hero and let its broadcast do the swapping.
+const SWITCH_REFUSE: int = 0
+const SWITCH_LOCAL: int = 1
+const SWITCH_CLAIM: int = 2
+
+
+static func decide_switch(index: int, current: int, available: Array,
+		claimable: Array, holder: String) -> int:
+	"""
+	What a hero press means. THE WHOLE RULE, as a pure function of four facts —
+	no node lookups, no side effects — so scripts/mp_selfcheck.gd can pin all
+	four cases without a lobby, a room or a player in a tree.
+
+	@param index: the CHARACTERS index pressed (R computed it, or 1-4 passed it).
+	@param current: the hero we are already walking as.
+	@param available: `available_character_indices()` — the lobby's hand
+	    INTERSECT free. Solo that is every hero nobody has captive.
+	@param claimable: the free heroes we may ASK the lobby for —
+	    `free_character_indices()` in a room, EMPTY with no lobby to ask.
+	@param holder: the lobby id holding `index`'s hero, "" when nobody does.
+	@return: one of SWITCH_REFUSE / SWITCH_LOCAL / SWITCH_CLAIM.
+
+	The four cases, in the order they are decided:
+
+	  1. Out of range, or the hero we already are  -> REFUSE (the flash).
+	  2. In our hand                               -> LOCAL, no round trip.
+	  3. Free, not in our hand, and UNHELD         -> CLAIM through the lobby.
+	  4. Held by a teammate, or in a cell          -> REFUSE. Nothing is stolen
+	     and nothing is sent; a captive hero is nobody's to ask for, his own
+	     holder included, which is why case 3 tests `claimable` and not `holder`
+	     alone.
+	"""
+	if index < 0 or index >= CHARACTERS.size() or index == current:
+		return SWITCH_REFUSE
+	if available.has(index):
+		return SWITCH_LOCAL
+	if claimable.has(index) and holder.is_empty():
+		return SWITCH_CLAIM
+	return SWITCH_REFUSE
+
+
+func reachable_character_indices() -> Array:
+	"""
+	Every hero a PRESS can reach right now: `available_character_indices()` plus,
+	in a room, the free heroes nobody holds — the ones `switch_to_character()`
+	claims through the lobby instead of refusing (bead godot-test1-4zw).
+
+	@return: A fresh Array of int in CHARACTERS order — possibly empty.
+
+	R cycles this and `hero_hud` dims what is NOT in it, so the cycle, the HUD
+	and the primitive's own verdict cannot disagree about which tile is pressable.
+	Solo — and in any scene with no MP manager — it is exactly
+	`available_character_indices()`, so nothing off-line changes.
+	"""
+	var available := available_character_indices()
+	var mp := _mp()
+	if mp == null or not mp.has_method("hero_holder") or not mp.has_method("claim_hero"):
+		return available
+	var free := free_character_indices()
+	var out: Array = []
+	# Walked in CHARACTERS order, which is the order both inputs are already in,
+	# so the union is still the stable cycle order R steps through.
+	for index: int in CHARACTERS.size():
+		if available.has(index) \
+				or (free.has(index) \
+					and String(mp.hero_holder(String(CHARACTERS[index]["name"]))).is_empty()):
+			out.append(index)
+	return out
 
 
 # ---------------------------------------------------------------------------
@@ -4856,3 +4955,59 @@ func crushes_crocodiles() -> bool:
 	._on_player_collision.)
 	"""
 	return is_giant
+
+
+# ============================================================================
+# THE ABILITY STATE A WATCHER CAN SEE (bead godot-test1-69p)
+# ============================================================================
+#
+# Teibi's Resize and Windman's Air Rush change what the player LOOKS like, and
+# until now only the local screen knew: the presence packet carries position,
+# heading, hero, speed and the on-floor bit, so a teammate watching a giant
+# Teibi saw a normal-sized one and a flying Windman never beat his wings.
+#
+# These three bits ride that packet as its `ab` field (mp_manager._send_presence
+# / decode_presence) and RemoteAvatar applies them. They live HERE, beside the
+# state and the scale constants they describe, so "giant means TEIBI_SCALE_BIG"
+# has exactly one copy in the project.
+#
+# READ-ONLY, both of them: this reports ability state, it never changes any, so
+# nothing about how an ability is ACTIVATED is on this path.
+
+const ABILITY_BIT_FLYING: int = 1 << 0
+const ABILITY_BIT_SMALL: int = 1 << 1
+const ABILITY_BIT_GIANT: int = 1 << 2
+
+
+func ability_visual_state() -> int:
+	"""
+	The transient ability state a watcher can see, as ABILITY_BIT_* flags. 0 —
+	the normal case — means "nothing to draw differently", which is also what an
+	older peer's silence means on the wire.
+	"""
+	var bits: int = 0
+	if windman_boost_timer > 0.0:
+		bits |= ABILITY_BIT_FLYING
+	if teibi_size_state == 1:
+		bits |= ABILITY_BIT_SMALL
+	elif teibi_size_state == 2:
+		bits |= ABILITY_BIT_GIANT
+	return bits
+
+
+static func ability_visual_scale(bits: int) -> float:
+	"""
+	The model scale `bits` asks for — the SAME constants the local player resizes
+	by, which is the whole reason this is here rather than copied into
+	RemoteAvatar.
+
+	Static and pure, and total over all 2^32 inputs: `bits` arrives off the wire,
+	so contradictory flags (a hostile packet setting small AND giant) resolve
+	deterministically to giant rather than to something undefined, and bits this
+	build has never heard of are simply ignored.
+	"""
+	if bits & ABILITY_BIT_GIANT:
+		return TEIBI_SCALE_BIG
+	if bits & ABILITY_BIT_SMALL:
+		return TEIBI_SCALE_SMALL
+	return 1.0

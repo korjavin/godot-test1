@@ -145,9 +145,12 @@ func _read_states(heroes: PackedStringArray) -> PackedInt32Array:
 	"""
 	One state per hero — see the STATE_* consts.
 
-	`available_character_indices()` is the game's single answer to "who may I BE
-	right now" (hand INTERSECT free); asking it here rather than re-deriving the
-	intersection is what keeps this HUD from becoming a second roster system.
+	`reachable_character_indices()` is the game's single answer to "who may I
+	PRESS right now" (hand INTERSECT free, plus the room's UNHELD free heroes,
+	which `switch_to_character()` claims through the lobby — bead godot-test1-4zw);
+	asking it here rather than re-deriving any of that is what keeps this HUD from
+	becoming a second roster system. A hero a teammate is actually wearing still
+	reads HELD, because that press is still refused.
 	Everything is `has_method`-guarded, so a player that predates any of these
 	methods simply reads as all-free instead of erroring.
 
@@ -166,9 +169,9 @@ func _read_states(heroes: PackedStringArray) -> PackedInt32Array:
 	if "current_character_index" in player:
 		active = player.current_character_index
 	var available: Array = []
-	var has_available: bool = player.has_method("available_character_indices")
+	var has_available: bool = player.has_method("reachable_character_indices")
 	if has_available:
-		available = player.available_character_indices()
+		available = player.reachable_character_indices()
 	var can_ask_captive: bool = player.has_method("is_hero_captive")
 
 	for index: int in heroes.size():
