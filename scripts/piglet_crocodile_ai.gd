@@ -2628,6 +2628,33 @@ const SPECIES: Dictionary = {
 		## cost of two hits from one hunter is 8 + 1.8 seconds of daylight.
 		"hunt_disengage_time": 8.0,
 
+		## THE NOSE, in metres, and the fourth number of the hunt arm (owner
+		## design ruling 2026-08-31, "sled/smell sense"). Beyond direct detection
+		## this unit reads the SCENT TRAIL the heroes leave — the breadcrumb ring
+		## buffer `crocodile_lod_manager` records at 9 Hz — and walks it toward
+		## fresher crumbs. That is what turns "one hunter per seven chunks idles
+		## in a corner" into "the retrieval division is working the field": the
+		## owner's playtest complaint was never that hunters are absent (a
+		## headless sweep finds 8-23 in a loaded ring, 2-8 of them inside 150 m)
+		## but that nothing brings them to you.
+		##
+		## 150 IS SIX TIMES SIM_RADIUS, deliberately, and it is why this feature
+		## needed the LOD manager rather than only this file: a hunter at 150 m is
+		## slept, and a slept body runs no `_physics_process` at all. See
+		## `advance_tracking()` for the slept-but-stalking half.
+		##
+		## ABSENT = NO NOSE, which is the statement `stink_immune` makes one block
+		## down: every animal in the table, and the tower guard on its post,
+		## simply does not carry this key and no line of the tracking code can
+		## reach them. A second retrieval unit opts in with a number.
+		##
+		## IT IS A RADIUS, NEVER A SPEED. Tracking moves at this row's own
+		## `chase_speed` (6.5, already clamped to MAX_CHASE_SPEED in _ready()), so
+		## the lattice is untouched and un-retunable from here: walking (5.0) lets
+		## a tracker arrive — that IS the pressure the ruling asks for — and
+		## running (9.0 at the slowest character) still leaves it behind.
+		"scent_radius": 150.0,
+
 		# ----- Immunities (the two keys that say "this row is a machine") -----
 		## THE ONLY TWO PLAYER ABILITIES THAT DO NOT APPLY TO A CHASSIS, and they
 		## are keys rather than a species check in the two guards for the reason
@@ -3122,6 +3149,29 @@ var _ranged_lock: Dictionary = {}
 ## edge where the chase drops. Behaviour-local: nothing outside the hunt arm
 ## reads it, and `_on_player_collision` only WRITES the disengage into it.
 var _hunt_lock: Dictionary = {}
+
+## THE HUNT ARM'S SECOND LEG — scent tracking, and the two fields it needs.
+##
+## `is_tracking` means "I cannot smell the quarry directly, but I am standing on
+## its track and walking up it". It is DELIBERATELY NOT `is_chasing`: the chase
+## flag is the detection decision, which is settled above the behaviour dispatch
+## and which the danger vignette, the encounter director, the MP sync flags and
+## the acquisition ping all read. A tracker has detected NOTHING — it has found a
+## footprint — so it must light none of those. What it does instead is steer and
+## move, which is all a behaviour arm is ever allowed to do.
+##
+## PUBLIC (no underscore) on purpose, unlike `_hunt_lock`: two systems outside
+## this file read it. `crocodile_lod_manager` walks a slept tracker along the
+## trail (see `advance_tracking`), and `mp_manager._send_croc_sync` publishes one
+## even though it is asleep — a stalking body has left the deterministic spawn
+## state every peer would otherwise assume for a sleeper.
+var is_tracking: bool = false
+
+## The trail crumb this unit is currently walking at, world space. Only read
+## while `is_tracking`; recomputed from scratch every check, so it is a cache and
+## never memory — a waking tracker produces the same point from where it stands
+## that it would have produced had it never slept, exactly like `hunt_steer_point`.
+var track_target: Vector3 = Vector3.ZERO
 
 ## THE LEAP ARM'S ONE PIECE OF MEMORY (`_behave_leap`): how many seconds of
 ## GROUNDED recovery this boss still owes before it may hop again, as
@@ -3621,6 +3671,12 @@ func _physics_process(delta: float) -> void:
 			if is_chasing and player_node:
 				# Chase the player
 				_chase_player()
+			elif is_tracking:
+				# Nothing in smelling range, but a track underfoot: walk it. Set
+				# by the hunt arm's second leg (`_track_scent`), which only a row
+				# carrying `scent_radius` can ever reach — so for every animal in
+				# the table this branch is dead and the wander below is unchanged.
+				_track_move()
 			else:
 				# Wander with smooth, organic steering
 				_wander(delta)
@@ -3666,8 +3722,13 @@ func _physics_process(delta: float) -> void:
 			var turn_rate: float = spec["turn_smoothness"] * (2.0 if avoiding else 1.0)
 			rotation.y = lerp_angle(rotation.y, target_rotation, delta * turn_rate)
 
-			# Flee and chase both move at the faster "chase" speed.
-			var current_speed := chase_speed_instance if (is_chasing or is_fleeing) else _wander_speed(delta)
+			# Flee and chase both move at the faster "chase" speed — and so does
+			# TRACKING, which is the owner's "close to the characters' speed" and
+			# the reason the number is this one rather than a new tunable: a
+			# tracker travels at a speed `_ready()` has already clamped to
+			# MAX_CHASE_SPEED, so a walking player is overhauled and a running one
+			# is not, and no retune of a species row can reach around that.
+			var current_speed := chase_speed_instance if (is_chasing or is_fleeing or is_tracking) else _wander_speed(delta)
 			# The burst arm's one output (see `burst_factor`). It is 1.0 for every
 			# species but the mountain cougar and the city alley hound, so this is
 			# a no-op multiply for all four older rows. Gated on `is_chasing` and
@@ -4223,7 +4284,16 @@ func _behave_hunt() -> void:
 		# Everything: the telegraph owed, the disengage owed, and the commitment.
 		# A hunter that loses you and finds you again starts the whole ritual over.
 		_hunt_lock.clear()
+		# ...and THEN the second leg. Out of detection is exactly where tracking
+		# lives: the unit has no quarry to chase, so it goes looking for the track
+		# of one. See `_track_scent()`.
+		_track_scent()
 		return
+
+	# Direct detection out-votes the nose, always. A body that can smell you does
+	# not need your footprints, and leaving the flag up would let the movement
+	# branch in _physics_process pick the stale crumb over the live quarry.
+	is_tracking = false
 
 	if not _hunt_lock.has("telegraph"):
 		# THE ACQUISITION EDGE — where the telegraph clock is armed, and nothing
@@ -4258,6 +4328,133 @@ func _behave_hunt() -> void:
 
 	chase_target = hunt_steer_point(chase_target, global_position, closing,
 			float(spec.get("hunt_standoff", 0.0)))
+
+
+func _track_scent() -> void:
+	"""
+	The hunt arm's SECOND LEG: with no quarry in smelling range, walk its track.
+
+	Owner design ruling 2026-08-31: "hunters get a sled/smell sense... they can
+	SMELL THE TRACK the heroes leave and follow it, at a speed close to the
+	characters' speed - so there is adequate, persistent pressure from hunters on
+	the heroes, not just ambient presence."
+
+	    row key      scent_radius (absent or <= 0 = this species has no nose)
+	    trail        crocodile_lod_manager's breadcrumb ring buffer
+	    each check   is_tracking := a crumb was in range; track_target := that crumb
+	    steering     _track_move() — the movement branch in _physics_process
+	    while slept  advance_tracking() — the LOD manager's 9 Hz scan
+
+	WHAT THIS DOES NOT TOUCH, and the list is the whole safety argument:
+
+	  * `is_chasing`. The detection decision is settled above the behaviour
+	    dispatch and stays there — this leg runs only when that decision came back
+	    false, and it cannot flip it. So the danger vignette, the encounter
+	    director, the acquisition ping and the MP chase flag all still mean
+	    "something has actually smelled you", and mercy is still decided at
+	    ENGAGEMENT, by the director, exactly as it was.
+	  * `detection_radius`. The nose is a separate, wider sense that produces a
+	    POINT TO WALK AT, never a longer reach. A tracker that arrives still has
+	    to acquire you at 25 m like anything else, and everything that happens
+	    after that acquisition is the code that already shipped.
+	  * any speed constant. Tracking travels at this body's own
+	    `chase_speed_instance`, which `_ready()` already clamped to
+	    MAX_CHASE_SPEED. The lattice is therefore not merely respected but
+	    unreachable from here: walking (5.0) lets a tracker close, running (9.0)
+	    leaves it behind, and retuning the row cannot break either end.
+
+	DETERMINISM: the trail is runtime state, outside the contract, the weather /
+	fauna precedent. This function rolls no dice and draws from no RNG stream — it
+	cannot slide a single spawn position anywhere in the world.
+
+	Null-safe and group-discovered like every cross-system read here: no LOD
+	manager in the scene (a character scene run standalone, most self-checks) and
+	the unit simply has nothing to smell and wanders as it always did.
+	"""
+	is_tracking = false
+	var radius: float = float(spec.get("scent_radius", 0.0))
+	if radius <= 0.0:
+		return
+	# Not cached, deliberately: `get_first_node_in_group` is a hash lookup, and a
+	# cached reference would need invalidating on a scene change to buy it back.
+	var trail := get_tree().get_first_node_in_group("lod_manager")
+	if trail == null or not trail.has_method("scent_point"):
+		return
+	var point: Variant = trail.scent_point(global_position, radius)
+	if not (point is Vector3) or not (point as Vector3).is_finite():
+		return
+	track_target = point
+	is_tracking = true
+
+
+func _track_move() -> void:
+	"""
+	Set the heading toward the crumb this tracker is walking at.
+
+	The tracking twin of `_chase_player()`, and as small: a behaviour that steers
+	is a direction and nothing else. Keeping `wander_heading` in step is the same
+	trick `_flee()` uses — the frame the trail goes cold the unit carries on in the
+	direction it was already facing instead of snapping back to a stale heading.
+	"""
+	var to_track := track_target - global_position
+	to_track.y = 0.0
+	if to_track.length() < 0.01:
+		return
+	movement_direction = to_track.normalized()
+	wander_heading = atan2(movement_direction.x, movement_direction.z)
+
+
+func advance_tracking(delta: float) -> void:
+	"""
+	SLEPT BUT STALKING: walk a sleeping tracker up the trail, kinematically.
+
+	@param delta: seconds since the LOD manager's previous scan (~0.11 s)
+
+	THE CONFLICT THIS SOLVES, and it is the reason the owner's ruling called it
+	out by name: `scent_radius` is 150 m and `crocodile_lod_manager.SIM_RADIUS` is
+	45, so a hunter that has just found your track is by definition asleep — and a
+	slept body runs no `_physics_process` at all, which is the whole point of the
+	LOD gate and must stay true. Waking it instead would put every tracker inside
+	150 m back on the full physics+raycast budget, which is precisely the cost the
+	LOD manager exists to avoid.
+
+	So the sleeper is advanced by the scan that is already running: no physics, no
+	gravity, no collision, no `move_and_slide`, one lerped step of
+	`chase_speed_instance * delta` on the XZ plane. Entity counts are unchanged
+	(a slept crocodile is still slept, never removed), near-player behaviour is
+	unchanged (inside SIM_RADIUS the body is awake and this never runs), and the
+	body wakes into the ordinary hunt arm from wherever the trail brought it.
+
+	Y IS LEFT ALONE. The world is flat at y = 0 and `set_lod_active()` refuses to
+	sleep a body that is not `is_on_floor()`, so a sleeper is standing on the
+	ground and stays standing on it. The crumbs carry the PLAYER's y, which is a
+	capsule's centre and not a floor.
+
+	ponytail: no obstacle feelers on the slept step — the walk is a straight line
+	and can cross a mountain massif. It is beyond SIM_RADIUS and past the draw
+	cull for every metre of it, and `move_and_slide`'s depenetration pushes a woken
+	body out of a block within a few frames. The upgrade path is to run
+	`_avoid_obstacles()` here, which needs a physics-space query from `_process`
+	rather than from `_physics_process`.
+	"""
+	# Awake bodies steer through the ordinary movement branch; a remote-driven one
+	# renders the master's samples and owns none of its own motion. Bosses never
+	# sleep, and none carries the row key anyway.
+	if lod_active or remote_driven or is_boss:
+		return
+	_track_scent()
+	if not is_tracking:
+		return
+	var to_track := track_target - global_position
+	to_track.y = 0.0
+	var step: float = chase_speed_instance * delta
+	var reach: float = to_track.length()
+	if reach < 0.01:
+		return
+	# Never overshoot the crumb: the next scan picks a fresher one from there.
+	var dir := to_track / reach
+	global_position += dir * minf(step, reach)
+	rotation.y = atan2(dir.x, dir.z)
 
 
 func _behave_leap() -> void:
