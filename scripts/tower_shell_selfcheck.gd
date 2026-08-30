@@ -1108,9 +1108,10 @@ func _check_impostor() -> void:
 	    are culled once it has finished, so a transparent building is not still
 	    being drawn over the real one; and
 	  * that the band sits inside the WORST-CASE load distance — TOWER_LOAD_RADIUS
-	    minus a whole chunk, because `_tower_stream` only runs on a boundary
-	    crossing. Outside that, a player walks into a half-faded silhouette with no
-	    building behind it, which is a worse artefact than the one being fixed.
+	    minus the chunk DIAGONAL minus the footprint radius (see the three terms
+	    below the loop). Outside that, a player walks into a half-faded silhouette
+	    with no building behind it, which is a worse artefact than the one being
+	    fixed.
 	"""
 	var impostor := TowerShell.build_impostor()
 	var boxes := TowerShell.boxes()
@@ -1148,10 +1149,18 @@ func _check_impostor() -> void:
 				TowerShell.IMPOSTOR_FADE_NEAR, TowerShell.IMPOSTOR_FADE_FAR])
 		# ...and it stops being submitted once it is fully transparent, but never
 		# while the fade would still have drawn a pixel.
+		# MEASURED AGAINST THE MESH'S FURTHEST CORNER, not against NEAR flat (codex
+		# review, 2026-08-30). The range test is a camera-to-origin distance while
+		# the fade is per pixel, so on an 80 m box the far face is 40 m behind the
+		# origin: culling at NEAR deletes pixels that were still visibly fading,
+		# which is a pop inside the machinery that exists to remove one.
 		var cull: float = meshes[i].visibility_range_begin
-		if cull <= 0.0 or cull > TowerShell.IMPOSTOR_FADE_NEAR:
-			_fail("impostor box %s is culled at %.0f m, outside (0, %.0f] — a fully transparent building is still being rasterised, or a visible one is being cut" % [
-				box["name"], cull, TowerShell.IMPOSTOR_FADE_NEAR])
+		var reach: float = (box["size"] as Vector3).length() * 0.5
+		if cull <= 0.0:
+			_fail("impostor box %s is never culled — a fully transparent building is still being rasterised in the doorway" % box["name"])
+		elif cull + reach > TowerShell.IMPOSTOR_FADE_NEAR + EPS:
+			_fail("impostor box %s is culled at %.1f m but reaches %.1f m past its origin, so its far face is still inside the %.0f m fade band — it would vanish mid-fade" % [
+				box["name"], cull, reach, TowerShell.IMPOSTOR_FADE_NEAR])
 
 	if TowerShell.IMPOSTOR_FADE_NEAR >= TowerShell.IMPOSTOR_FADE_FAR:
 		_fail("the impostor's fade band is inverted: NEAR %.0f m is not inside FAR %.0f m" % [
@@ -1159,14 +1168,26 @@ func _check_impostor() -> void:
 
 	# THE BAND FITS INSIDE THE WORST-CASE LOAD. Read off a live terrain, both
 	# numbers, so retuning either one fails here rather than in the view.
+	# THREE TERMS, AND THE FIRST DRAFT OF THIS CHECK GOT TWO OF THEM WRONG (codex
+	# review, 2026-08-30 — it subtracted one chunk SIDE and measured to the tower's
+	# CENTRE, and so certified 310 m for a band that can really open at 225.6 m):
+	#
+	#   * TOWER_LOAD_RADIUS is where the shell is promised;
+	#   * minus the chunk DIAGONAL, because `_tower_stream` runs on a boundary
+	#     CROSSING and a player can cross a chunk corner-to-corner between two of
+	#     them — sqrt(2) * chunk_size, not chunk_size;
+	#   * minus footprint_radius(), because `distance_fade` is per PIXEL: the fade
+	#     opens on the impostor's nearest corner, which is that much closer to the
+	#     camera than the centre the load test measures.
 	var terrain := _make_terrain(SEED_A)
-	var worst_case: float = terrain.TOWER_LOAD_RADIUS - float(terrain.chunk_size)
+	var chunk_diagonal: float = sqrt(2.0) * float(terrain.chunk_size)
+	var worst_case: float = terrain.TOWER_LOAD_RADIUS - chunk_diagonal - TowerShell.footprint_radius()
 	terrain.free()
 	if TowerShell.IMPOSTOR_FADE_FAR > worst_case:
-		_fail("the impostor starts fading at %.0f m but the shell is only guaranteed by %.0f m (TOWER_LOAD_RADIUS minus one chunk) — there is a window with a half-faded silhouette and no building" % [
-			TowerShell.IMPOSTOR_FADE_FAR, worst_case])
+		_fail("the impostor's nearest pixel starts fading at %.0f m but the shell is only guaranteed by %.1f m (TOWER_LOAD_RADIUS - chunk diagonal %.1f - footprint %.1f) — there is a window with a half-faded silhouette and no building behind it" % [
+			TowerShell.IMPOSTOR_FADE_FAR, worst_case, chunk_diagonal, TowerShell.footprint_radius()])
 	else:
-		print("impostor cross-fade: opaque beyond %.0f m, gone by %.0f m, shell guaranteed by %.0f m" % [
+		print("impostor cross-fade: opaque beyond %.0f m, gone by %.0f m, nearest pixel guaranteed a shell by %.1f m" % [
 			TowerShell.IMPOSTOR_FADE_FAR, TowerShell.IMPOSTOR_FADE_NEAR, worst_case])
 
 	# A picture and nothing else: no collision anywhere under it, or the field 400 m

@@ -632,10 +632,14 @@ const TOWER_DECOR_OVERHANG: float = 2.5
 ## AND IT IS THE OUTER EDGE OF THE CROSS-FADE. There is no swap any more (bead
 ## godot-test1-rgt): the horizon impostor dissolves across
 ## TowerShell.IMPOSTOR_FADE_FAR -> _NEAR, and that band has to sit INSIDE the worst
-## case above, or a player crosses into it with a half-faded silhouette and no
-## building behind it yet. 360 - chunk_size(50) = 310 m against a fade that starts
-## at 300 — ten metres of slack, asserted by tower_shell_selfcheck check 9 off both
-## live constants, so shrinking either one fails the build instead of the view.
+## case, or a player crosses into it with a half-faded silhouette and no building
+## behind it yet. The worst case is THREE terms, not one: 360, minus the chunk
+## DIAGONAL (a boundary crossing can be corner-to-corner, so sqrt(2) * 50 = 70.7,
+## not 50), minus the shell's own footprint radius (63.6 — the fade is per PIXEL and
+## opens on the nearest corner, not on the centre this radius measures). That is
+## 225.6 m against a fade that starts at 220. tower_shell_selfcheck check 9 computes
+## all three off the live constants, so shrinking any of them fails the build rather
+## than the view.
 const TOWER_LOAD_RADIUS: float = 360.0
 
 ## The tower's authored scene. Instanced ONCE per run, parented to this manager and

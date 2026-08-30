@@ -322,25 +322,34 @@ const IMPOSTOR_LIT_GAIN: float = 1.35
 ## where the other emerges from the fog is the only handover that has no frame in
 ## it where something changed.
 ##
-## FAR (300) SITS INSIDE THE WORST-CASE LOAD DISTANCE. `_tower_stream` is evaluated
-## only on a chunk-boundary crossing, so a shell promised at TOWER_LOAD_RADIUS (360)
-## can arrive as late as 360 - chunk_size (50) = 310 m. The fade must not start
-## before then or there is a window with a half-faded impostor and no building
-## behind it; `tower_shell_selfcheck` asserts that inequality against both live
-## constants rather than trusting this comment.
+## FAR (220) SITS INSIDE THE WORST-CASE LOAD DISTANCE, and that worst case has two
+## terms people get wrong (codex review, 2026-08-30 — the first draft of this
+## claimed 310 m and was wrong on both counts):
 ##
-## NEAR (200) is where the fade completes, and the meshes are culled outright just
-## below it (`visibility_range_begin`) so a fully transparent impostor is not still
-## being rasterised while you stand in the doorway. It is also roughly where the web
-## fog stops hiding the real shell — an unfogged crisp castle standing over a fogged
-## field would be its own artefact.
+##   * `_tower_stream` is evaluated only on a chunk-boundary CROSSING, so between
+##     two evaluations the player can cover a whole chunk DIAGONAL, not a chunk
+##     side: sqrt(2) * chunk_size (70.7 m), not 50.
+##   * `distance_fade` is PER PIXEL, measured camera-to-fragment. So the fade starts
+##     on the NEAREST CORNER of the impostor, which is `footprint_radius()` (63.6 m,
+##     the yard's corner) closer than the centre the load test measures.
+##
+## So the honest guarantee is `TOWER_LOAD_RADIUS - chunk diagonal - footprint
+## radius` = 360 - 70.7 - 63.6 = 225.6 m, and FAR has to sit under THAT.
+## `tower_shell_selfcheck` computes it from the live constants — it is three terms
+## now precisely because nobody gets three terms right from memory.
+##
+## NEAR (150) is where the fade completes, and each mesh is culled outright once
+## its FURTHEST pixel is inside it (`visibility_range_begin`, see `build_impostor`)
+## so a fully transparent impostor is not still being rasterised while you stand in
+## the doorway. It is also roughly where the web fog stops hiding the real shell —
+## an unfogged crisp castle standing over a fogged field would be its own artefact.
 ##
 ## DEGRADES SAFELY. If `distance_fade` is ever unsupported on a target, the fade
 ## flattens to the hard cull at NEAR — i.e. back to a swap, but now a swap between
 ## two things that share a palette and a silhouette, which is the bead's other
 ## accepted answer rather than a regression.
-const IMPOSTOR_FADE_FAR: float = 300.0
-const IMPOSTOR_FADE_NEAR: float = 200.0
+const IMPOSTOR_FADE_FAR: float = 220.0
+const IMPOSTOR_FADE_NEAR: float = 150.0
 
 # ============================================================================
 # STATE
@@ -626,9 +635,19 @@ static func build_impostor() -> Node3D:
 		# THE OTHER HALF OF THE CROSS-FADE. The material fades the pixels out over
 		# the band; this stops SUBMITTING the mesh once those pixels are all zero,
 		# so a fully transparent 26-box building is not being rasterised over the
-		# real one while the player stands in the doorway. Just below NEAR, so the
-		# cull can never eat a pixel the fade would still have drawn.
-		mesh.visibility_range_begin = IMPOSTOR_FADE_NEAR - 10.0
+		# real one while the player stands in the doorway.
+		#
+		# MEASURED FROM THE MESH'S FURTHEST CORNER, not from NEAR flat (codex
+		# review, 2026-08-30). The range test is a distance to the instance's
+		# ORIGIN while the fade is per pixel, so on an 80 m slab the far half is
+		# still 40 m behind the origin: cull it at NEAR and you delete pixels that
+		# were 190 m out and still visibly fading — a pop, in the middle of the
+		# thing that exists to remove one. Subtracting the bounding radius means the
+		# mesh survives until its LAST pixel is inside NEAR. (Every box in the table
+		# is centred on its own origin, which check 3 asserts, so the radius really
+		# is the half-diagonal.)
+		var reach: float = mesh.mesh.get_aabb().size.length() * 0.5
+		mesh.visibility_range_begin = maxf(IMPOSTOR_FADE_NEAR - reach, 0.0)
 		root.add_child(mesh)
 	return root
 
