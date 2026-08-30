@@ -1145,7 +1145,18 @@ const EGG_ROOM: String = "outer_hall"
 ## How high off the walking surface the bottom of a portrait frame sits.
 const EGG_FRAME_Y: float = 1.30
 const EGG_FRAME_SIZE := Vector2(0.92, 1.12)   # the wooden frame, along-wall x up
-const EGG_PORTRAIT_SIZE := Vector2(0.76, 0.96) # ...and the picture inside it
+
+## ...and the picture inside it, WHICH IS SQUARE BECAUSE THE SOURCE IS. The four
+## portraits ship at 130 x 130 and a `QuadMesh` maps the whole texture across
+## whatever surface it is given, so a 0.76 x 0.96 quad stretches every hero 26%
+## taller — no error, no warning, just four subtly wrong faces (codex review,
+## 2026-08-31). The frame stays TALL and the difference is the mount the picture is
+## hung on, which is what a framed photograph actually looks like.
+const EGG_PORTRAIT_SIZE := Vector2(0.78, 0.78)
+
+## How far under the frame's top edge the picture hangs. The rest of the frame's
+## height falls below it as mount, over the plaque.
+const EGG_PORTRAIT_INSET: float = 0.07
 
 # ============================================================================
 # GATE IDS — the strings that go in the opened set
@@ -4188,8 +4199,11 @@ func _build_portraits() -> void:
 		var plane := QuadMesh.new()
 		plane.size = EGG_PORTRAIT_SIZE
 		quad.mesh = plane
-		# 7 cm proud of the wall: 6 cm of frame, then the picture sitting in it.
-		quad.position = Vector3(at.x, at.y + EGG_FRAME_Y + EGG_FRAME_SIZE.y * 0.5,
+		# 7 cm proud of the wall: 6 cm of frame, then the picture sitting in it, hung
+		# from the frame's TOP edge so the mount falls below it over the plaque.
+		quad.position = Vector3(at.x,
+				at.y + EGG_FRAME_Y + EGG_FRAME_SIZE.y - EGG_PORTRAIT_INSET
+						- EGG_PORTRAIT_SIZE.y * 0.5,
 				at.z + 0.07)
 		quad.material_override = mat
 		_no_shadow(quad)

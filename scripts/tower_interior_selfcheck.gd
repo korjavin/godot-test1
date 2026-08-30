@@ -3564,9 +3564,20 @@ func _check_the_offices_are_furnished_and_still_walkable() -> void:
 		if heroes.has(hero):
 			_fail("%s is employee of the month twice" % hero)
 		heroes[hero] = true
-		if TowerInterior.portrait_material(hero) == null:
+		var mat := TowerInterior.portrait_material(hero)
+		if mat == null:
 			_fail("%s has no portrait to hang — res://assets/portraits/%s.png is missing" % [
 				hero, hero])
+		# THE QUAD IS SQUARE BECAUSE THE SOURCE IS, and a `QuadMesh` stretches
+		# whatever it is given across whatever it is: a portrait shipped 3:4 would
+		# hang 30% wrong with no error anywhere. So the assumption is asserted
+		# rather than commented (codex review, 2026-08-31) — a hero whose art is not
+		# square fails here, and the fix is a per-hero quad size, not a squashed face.
+		elif mat.albedo_texture != null:
+			var size := mat.albedo_texture.get_size()
+			if not is_equal_approx(size.x, size.y):
+				_fail("%s's portrait is %d x %d — the frame's quad is square, so it would hang stretched" % [
+					hero, int(size.x), int(size.y)])
 		if TowerInterior.portrait_material(hero) != TowerInterior.portrait_material(hero):
 			_fail("%s's portrait material is rebuilt per call — the texture is being copied" % hero)
 	print("tower interior: %d rooms dressed, %d dressing boxes (%d solid), %d portraits hung" % [
