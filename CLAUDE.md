@@ -376,7 +376,7 @@ The building is full to its sealed roof — ten floor indices, `FLOOR_Y[0..9]`:
   thing in this building that is not batched. Measured over the eight planned storeys:
   **52 / 43 / 52 / 29 / 29 / 81 / 61 / 46** boxes against `PLAN_BOX_BUDGET` 120 (the two
   maze floors are the 81 and the 61 — a one-cell maze legitimately produces many rects,
-  which is what that budget now guards). Mesh NODES are **39 (`DRAW_BUDGET` 39) for 1181
+  which is what that budget now guards). Mesh NODES are **39 (`DRAW_BUDGET` 39) for 1337
   boxes** — one `FloorNBatch` per storey, the parts that move, and the four hero
   portraits — and the whole interior is **542 collision shapes on one `StaticBody3D`**
   (ceiling 640, printed by check 5). A

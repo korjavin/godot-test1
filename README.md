@@ -34,13 +34,19 @@ watch the radial dial in the top-right.
   BEST** flash greets a record run.
 - **Coins pay off**: follow the coin road for a steady trickle, watch for rare
   **purple gems worth 10**, and keep a pickup streak alive for a score
-  multiplier of up to ×5. Every 75 coins banks an **extra life** (up to 5).
+  multiplier of up to ×5.
 - **The crocodile piglets mean it**: they outpace a walking player, and get
   faster and more numerous the further you go, while the coin road narrows.
   Running, jumping, and your hero powers are how you stay ahead.
-- **3 lives**: a bite costs one (you keep your coins and your spot). Lose them
-  all and it's game over — Enter, Space, or a tap starts the next run in a
-  freshly generated world.
+- **The heroes are the lives**: an ordinary bite is a tax — a slice of the run's
+  coins, a moment frozen, and you get up where you fell. What you can actually
+  lose is a hero: a GD-SURVEY hunter that gets its hands on you keeps whoever you
+  were playing, and you carry on as the next one. Free them from the cells in the
+  corporation's HQ.
+- **Game over is the corporation holding all four.** That opens the break-out —
+  the whole party in the cell block on a recall clock, and freeing one of them is
+  how you survive it. Lose that and the world is archived; Enter, Space, or a tap
+  starts the next run in a freshly generated one.
 
 ## Controls
 

@@ -996,6 +996,15 @@ func _check_a_guard_takes_coins_and_ground() -> void:
 	var player_c := await _make_player()
 	player_c.coins_collected = SETBACK_PROBE_COINS
 	player_c.own_coins = SETBACK_PROBE_COINS
+	# A LEG WORTH BANKING. With hearts, the third bite ended the run and
+	# `_trigger_game_over()` writing the record was the same event as the player
+	# stopping. Heroes being the lives took that away — the only ending left needs
+	# all four heroes held AND the break-out lost, which most sessions never reach —
+	# so a bite is what replaced the ending as the end of a leg, and it has to bank.
+	# Without this the "Best" line and the lobby's record are frozen forever for
+	# practically every player, which is invisible in a checkless build.
+	player_c.own_distance = SETBACK_PROBE_COINS
+	player_c.best_distance = 0
 	# Out of the walls and out of every hazard's reach, which is where the field is.
 	(player_c as Node3D).global_position = Vector3(4.0 * TowerPlans.PLAN_HALF, 0.0, 0.0)
 	var where: Vector3 = (player_c as Node3D).global_position
@@ -1021,6 +1030,11 @@ func _check_a_guard_takes_coins_and_ground() -> void:
 			+ " shell has streamed in")
 	if not player_c.is_respawning:
 		_fail("a %s's bite in the field opened no grace window" % CONTROL_SPECIES)
+	if player_c.best_distance != SETBACK_PROBE_COINS:
+		_fail("a bite banked no record (best_distance %d, ran %d) — with no hearts the"
+			% [player_c.best_distance, SETBACK_PROBE_COINS]
+			+ " run no longer ENDS at a bite, so banking only at game over leaves a"
+			+ " whole session unwritten to best_run.cfg, localStorage and the lobby")
 	_clear(player_c)
 	field_shell.queue_free()
 	await process_frame
@@ -1082,6 +1096,38 @@ func _check_a_guard_takes_coins_and_ground() -> void:
 			+ " archives the world for one press the player was meant to survive")
 	caught.custody_protocol_active = false
 	_clear(caught)
+
+	# (d) AND THE SECOND PLACE, one storey further on: a BENCHED peer. A prisoner
+	#     stands in a cell on storey 9, which is inside the walls, so a guard's bite
+	#     or the block's press would knock them to the plate ten storeys below —
+	#     and `_confine_to_block()` clamps x and z but deliberately NOT y, so the
+	#     next physics frame drags them back into the block's column at ground
+	#     level, under the block, with no ramp inside the clamp. The role is then
+	#     unplayable for the rest of the run: they can free no cellmate and work no
+	#     purge, which is the only way their hero comes back. `_respawn_in_place()`
+	#     already carries this refusal for the same reason; the bill still lands.
+	var benched := await _make_player()
+	benched.coins_collected = SETBACK_PROBE_COINS
+	benched.own_coins = SETBACK_PROBE_COINS
+	benched.prisoner_active = true
+	var cell: Vector3 = interior_c.global_position \
+			+ TowerInterior.cell_stand(TowerGraph.HEROES[0])
+	(benched as Node3D).global_position = cell
+	benched.hit_by_crocodile(_attacker_row(CONTROL_SPECIES))
+	benched.is_caught = false
+	benched.call("_on_caught_finished")
+	if benched.coins_collected != SETBACK_PROBE_COINS - control_loss:
+		_fail("a %s's bite on a benched peer billed %d, not the %d its row asks"
+			% [CONTROL_SPECIES, SETBACK_PROBE_COINS - benched.coins_collected,
+				control_loss]
+			+ " — only the knockback is refused for a prisoner, never the bill")
+	if (benched as Node3D).global_position.distance_to(cell) > 1.0:
+		_fail("a %s's bite threw a benched peer from its cell at %s to %s — the"
+			% [CONTROL_SPECIES, str(cell), str((benched as Node3D).global_position)]
+			+ " checkpoint plate is ten storeys below the block, and _confine_to_block()"
+			+ " clamps x/z only, so the role is stranded under the block for good")
+	benched.prisoner_active = false
+	_clear(benched)
 	shell_c.queue_free()
 	await process_frame
 

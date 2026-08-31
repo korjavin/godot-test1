@@ -1930,11 +1930,15 @@ func _capture_active_hero() -> void:
 	"""
 	A hunter earned its grab: the corporation keeps whoever was walking.
 
-	TWO STAKES, NEVER BOTH. A predator's stake is your coins; a hunter's is the
-	hero, and it takes NO coins on top — so there is deliberately nothing here that
-	touches `coins_collected`, `coin_streak` or the bank. The life and the freeze
-	are the ordinary contact cost every body in this game charges (a hunter's grab
-	is not a pulled punch); what makes it a CAPTURE is this set.
+	THE HERO IS THE STAKE ON TOP OF THE BILL, NOT INSTEAD OF IT (bead
+	godot-test1-0bc). Every predator in the table now charges `coin_setback`, the
+	hunter at the top rate of the lot (0.25) — a grab you escaped is meant to cost
+	the most — and this function still touches neither `coins_collected`, nor
+	`coin_streak`, nor the bank. That is a matter of WHERE, not of whether: the coin
+	bill is latched in `hit_by_crocodile()` and paid in `_on_caught_finished()`, one
+	site for every contact in the game, so a capture that billed here would bill
+	twice. The freeze is the same ordinary contact cost (a hunter's grab is not a
+	pulled punch); what makes it a CAPTURE is this set.
 
 	AUTO-SWITCH GOES THROUGH `set_active_character()`, NEVER THROUGH
 	`switch_to_next_character()`, for two independent reasons and either one alone
@@ -2121,8 +2125,18 @@ func _pay_coin_setback(fraction: float) -> bool:
 	# block's press bills through this path too (`hit_by_crocodile()` with no
 	# attacker). The scene owns the body while it runs; `_respawn_in_place()` puts
 	# it back where it fell, inside the block.
+	#
+	# AND NEVER FOR A PRISONER, the same refusal `_respawn_in_place()` already
+	# carries and for the same reason one storey further on. A benched peer stands
+	# in a cell on storey 9, which is inside the walls, so a guard's bite — or the
+	# block's press — would knock them to the checkpoint plate ten storeys below;
+	# `_confine_to_block()` clamps x and z but deliberately not y, so the next frame
+	# drags them back into the block's column at ground level, under the block, with
+	# no ramp inside the clamp. The role is then unplayable for the rest of the run:
+	# they can free nobody and work no purge, which is the only way their hero
+	# returns.
 	var interior := get_tree().get_first_node_in_group("tower_interior") as Node3D
-	if custody_protocol_active or interior == null \
+	if custody_protocol_active or prisoner_active or interior == null \
 			or not interior.has_method("setback_point") \
 			or not TowerInterior.inside_walls(global_position - interior.global_position):
 		print("Setback: -%d coins" % lost)
@@ -2865,6 +2879,14 @@ func _on_caught_finished() -> void:
 	# across the map.
 	var relocated: bool = _pay_coin_setback(caught_setback)
 
+	# ...and BANK THE LEG, because this is what replaced the ending. The record used
+	# to be written by `_trigger_game_over()`, which the third bite reached; with no
+	# hearts, most runs never reach an ending at all, so banking only there would
+	# mean a session's distance and coins were never persisted. Banked AFTER the
+	# bill, so what goes to the store is what the player actually walks away with.
+	# See `_bank_records()` — idempotent, and silent unless a record moved.
+	_bank_records()
+
 	if not custody_protocol_active and free_hero_count() == 0 and not captive_heroes.is_empty():
 		# GAME OVER IS WORLD-LEVEL (bead godot-test1-3iy.10, an ADOPTED READING of
 		# the owner's phrasing): the corporation has to hold EVERY hero, not merely
@@ -2895,7 +2917,7 @@ func _on_caught_finished() -> void:
 func _respawn_in_place() -> void:
 	"""
 	Soft respawn after a bite: stay exactly where we fell and keep every coin —
-	the only penalty is the lost life. We sweep crocodiles out of the immediate
+	the only penalty is the coin bill already paid. We sweep crocodiles out of the
 	area and start a short, frozen grace window (see the is_respawning branch in
 	_physics_process) so we can't be re-bitten the moment we recover. Any active
 	ability state (air boost, giant/small form) is also cleared.
@@ -3261,7 +3283,7 @@ func _tick_prison(delta: float) -> void:
 	# ...AND NOT WHILE A BITE IS STILL BEING PAID FOR. The caught freeze runs 0.55 s
 	# and this tick is 0.5 s, so on the grab that takes the room's last hero this
 	# would reach `_begin_custody_protocol()` BEFORE `_on_caught_finished()` -
-	# clearing `is_caught` under it, so the freeze is truncated and the life that
+	# clearing `is_caught` under it, so the freeze is truncated and the coin bill that
 	# grab costs is never spent. Every ending stays where it is decided.
 	if is_caught:
 		return
@@ -3429,14 +3451,45 @@ func _trigger_game_over() -> void:
 	# Game-over sting.
 	_sfx("play_game_over")
 
-	# Best-run bookkeeping: distance is the headline record, so IT decides the
-	# "NEW BEST!" flash; the coin record updates on its own max independently
-	# (see the comment block above best_distance). Only hand the store a record
-	# that actually moved — no pointless storage or network churn.
-	# Records are read off own_distance / own_coins, NOT the displayed fields: in
-	# a room those are the ROOM's totals (see _refresh_shared_totals), so writing
-	# them here would persist the furthest teammate's distance and the whole
-	# room's bank as this player's personal best. Solo the pairs are identical.
+	var is_new_best := _bank_records()
+
+	var panel := get_tree().get_first_node_in_group("game_over_ui")
+	if panel and panel.has_method("show_game_over"):
+		panel.show_game_over(coins_collected, run_distance, best_distance, best_coins, is_new_best)
+	print("Game over! Distance: %dm, final coins: %d" % [run_distance, coins_collected])
+
+
+func _bank_records() -> bool:
+	"""
+	Write this leg's records out. Idempotent, so it may be called as often as we
+	like.
+
+	@return: true if the DISTANCE record moved, which is what the "NEW BEST!" flash
+	    on the ending panel reads.
+
+	CALLED ON EVERY CONTACT, NOT ONLY AT THE ENDING (bead godot-test1-0bc). While
+	hearts existed the third bite ended the run, and `_trigger_game_over()` banking
+	the record was the same event as "the player stopped playing". Heroes being the
+	lives took that away: the only ending left is the corporation holding all four
+	AND the break-out being lost, which most sessions never reach — so a player who
+	walks, banks and closes the tab would have written nothing to
+	`user://best_run.cfg`, `localStorage` or the lobby for the whole run, and their
+	"Best" line would have been frozen forever. A bite is what replaced the ending
+	as the natural end of a leg, so a bite is where the record is banked.
+
+	Cheap to repeat: every field is monotone and `BestRunStore.submit()` is a
+	read-modify-write merge in all three layers, and the guard below only calls it
+	when a record ACTUALLY moved — so the network sees traffic on improvements and
+	nothing else.
+
+	Records are read off own_distance / own_coins, NOT the displayed fields: in a
+	room those are the ROOM's totals (see _refresh_shared_totals), so writing them
+	here would persist the furthest teammate's distance and the whole room's bank as
+	this player's personal best. Solo the pairs are identical.
+	"""
+	# Distance is the headline record, so IT decides the "NEW BEST!" flash; the
+	# coin record updates on its own max independently (see the comment block
+	# above best_distance).
 	var is_new_best := own_distance > best_distance
 	if is_new_best or own_coins > best_coins:
 		best_distance = maxi(best_distance, own_distance)
@@ -3450,11 +3503,7 @@ func _trigger_game_over() -> void:
 	var progression := get_tree().get_first_node_in_group("progression")
 	if progression and progression.has_method("save"):
 		progression.save()
-
-	var panel := get_tree().get_first_node_in_group("game_over_ui")
-	if panel and panel.has_method("show_game_over"):
-		panel.show_game_over(coins_collected, run_distance, best_distance, best_coins, is_new_best)
-	print("Game over! Distance: %dm, final coins: %d" % [run_distance, coins_collected])
+	return is_new_best
 
 
 func _reopen_archived_ending() -> void:

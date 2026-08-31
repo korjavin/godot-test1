@@ -284,7 +284,14 @@ func _hud_absolute_rects(text: String) -> Dictionary:
 	the row's corner rect without instancing the scene.
 	"""
 	var out := {}
-	var re := RegEx.create_from_string('\\[node name="([^"]+)" type="[^"]+" parent="HUD"\\]')
+	# MATCH THE NODE HEADER, NOT ONE SHAPE OF IT. `type=` is optional (an instanced
+	# child - TouchControls - has none) and `parent="HUD"` is not always the last
+	# attribute (a node in a group carries `groups=[...]` after it). Pinning either
+	# would silently skip those blocks, and this check exists precisely so the NEXT
+	# widget dropped into that corner is covered without anybody editing it - a
+	# widget that joins a group is the common shape in this HUD, so the narrow
+	# pattern would have failed at the one job the check was rebuilt for.
+	var re := RegEx.create_from_string('\\[node name="([^"]+)"[^\\]]*parent="HUD"[^\\]]*\\]')
 	for m: RegExMatch in re.search_all(text):
 		var node_name: String = m.get_string(1)
 		var start: int = m.get_start()

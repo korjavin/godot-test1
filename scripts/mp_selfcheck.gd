@@ -719,6 +719,43 @@ func _check_retired_heart_keys_are_tolerated() -> String:
 	}).is_empty():
 		return "the snapshot parser accepted a negative LIVE counter — relaxing the retired "\
 			+ "keys has relaxed the trust boundary with them"
+
+	# (e) AND THE OTHER DIRECTION, which a tolerant decoder cannot cover by itself:
+	#     OLD READS NEW. `build_version` deliberately refuses to reload a peer that
+	#     is mid-run or in a room, so an old client outlives the deploy and both
+	#     directions are live at once.
+	#
+	#     The pre-godot-test1-0bc snapshot parser REQUIRES `ls` and drops a payload
+	#     without it whole — costing that joiner this peer's position, collected-coin
+	#     ids, kill list and frozen bank for the room's whole life — so the send side
+	#     keeps the two retired keys as inert zeroes for one release. Read off the
+	#     source rather than a live manager: `_send_state_to()` needs a lobby, a room
+	#     and a mesh, none of which exist headless.
+	var source: String = FileAccess.get_file_as_string("res://scripts/mp_manager.gd")
+	var send_start: int = source.find("func _send_state_to(")
+	var send_end: int = source.find("\nfunc ", send_start + 1)
+	var send_body: String = source.substr(send_start, send_end - send_start)
+	for key: String in ["ls", "gs"]:
+		if not send_body.contains('"%s": 0' % key):
+			return "the join snapshot no longer sends the retired key '%s' — this build " % key \
+				+ "does not read it, but the PREVIOUS one requires 'ls' and drops the whole "\
+				+ "snapshot without it, so an old peer in a mixed room joins blind"
+
+	# ...and the same rule one verb along. An older MASTER still publishes the
+	# retired OVERTAKEN verdict (`co: 3`); the `room` packet is also the captive-set
+	# repair channel, so a build that bounded `co` at its own highest verdict would
+	# stop that room's cells converging over a field nobody reads. Folded to
+	# "running", never guessed at — a non-zero verdict ENDS the break-out.
+	var stale: Dictionary = MPManager.decode_room({"cap": ["primm"], "cd": 12.0, "co": 3})
+	if stale.is_empty():
+		return "decode_room dropped a packet over a retired verdict — an old master's "\
+			+ "OVERTAKEN would cost the room its captive-set repair, not just the verdict"
+	if stale["co"] != 0 or stale["cap"] != ["primm"]:
+		return "decode_room read a retired verdict as %s — an outcome this build cannot "\
+			% str(stale) + "read must fold to 'running', or it archives somebody's world"
+	if MPManager.decode_room({"cap": [], "cd": 12.0, "co": 2})["co"] != 2:
+		return "decode_room lost a verdict this build DOES know — the fold above is "\
+			+ "swallowing live outcomes with the retired one"
 	return ""
 
 
@@ -2297,7 +2334,10 @@ func _check_room_publish() -> String:
 		{"t": "room", "cap": [], "cd": -1.0, "co": 0},
 		{"t": "room", "cap": [], "cd": MPManager.MAX_CUSTODY_SECONDS + 1.0, "co": 0},
 		{"t": "room", "cap": [], "cd": 1.0},                                # no verdict
-		{"t": "room", "cap": [], "cd": 1.0, "co": 3},                       # not an outcome
+		# NOTE: `co: 3` is NOT here. An unreadable verdict is folded to "running"
+		# rather than dropped, so an older master's retired OVERTAKEN does not cost
+		# the room the captive-set repair this packet also carries — check 8 (e)
+		# owns that assertion in both directions.
 		{"t": "room", "cap": [], "cd": 1.0, "co": -1},
 		{"t": "room", "cap": [], "cd": 1.0, "co": NAN},
 	]

@@ -74,7 +74,7 @@ const MAX_PRESENCE_SPEED: float = 1.0e4
 ## Caps on a join snapshot — see `decode_state()`. `MAX_STATE_IDS` bounds BOTH
 ## ends of BOTH id lists — the collected-coin set and the crushed-crocodile kill
 ## list, each in the one we send and the one we accept.
-## `MAX_STATE_COUNTER` is a sanity bound on the coin/life/distance counters,
+## `MAX_STATE_COUNTER` is a sanity bound on the coin/distance counters,
 ## generous by design because it exists to reject hostile garbage, not to police
 ## how long a run may get.
 const MAX_STATE_IDS: int = 2048
@@ -262,6 +262,13 @@ const ROOM_SYNC_HZ: float = 2.0
 ## CUSTODY_RECALL_SECONDS is 35; this is generous because it exists to reject
 ## hostile garbage before a cast, not to police the scene's length.
 const MAX_CUSTODY_SECONDS: float = 3600.0
+
+## Highest break-out verdict THIS build understands: 0 running, 1 survived, 2
+## failed. Not a trust bound — `decode_room()` folds anything above it to "running"
+## rather than dropping the packet, because the `room` packet is also the captive-set
+## repair channel and an older master's retired OVERTAKEN (`co: 3`) must not cost a
+## mixed room its cells. See the fold there for why the fold and not a bound.
+const CUSTODY_VERDICT_MAX: int = 2
 
 ## Longest hero name a `cap` packet or a join snapshot may carry. The names are
 ## `player_controller.CHARACTERS` entries ("phoboman" is the longest at 8), and the
@@ -1644,9 +1651,25 @@ static func decode_room(packet: Dictionary) -> Dictionary:
 	if not _is_number(packet.get("co", null)):
 		return {}
 	var verdict: float = float(packet["co"])
-	if not is_finite(verdict) or verdict < 0.0 or verdict > 2.0:
+	if not is_finite(verdict) or verdict < 0.0 or verdict > float(MAX_STATE_COUNTER):
 		return {}
-	return {"cap": names, "cd": seconds, "co": int(verdict)}
+	# A VERDICT THIS BUILD CANNOT READ COSTS THE VERDICT, NOT THE PACKET, which is
+	# why the gate above is only a sanity bound and the enum is folded here instead.
+	# This build has two outcomes; a master still on the pre-`godot-test1-0bc` build
+	# publishes a third (OVERTAKEN, `co: 3`), and `build_version` deliberately
+	# refuses to reload a peer that is mid-run or in a room, so a mixed room is a
+	# state that really happens and lasts. Bounding at 2 instead would drop such a
+	# packet WHOLE — and this packet is also the captive-set repair channel, the one
+	# thing that closes the join gap `cap` cannot reach, so the room's cells would
+	# stop converging over a field we do not even use. Reading an unknown outcome as
+	# "running" is the only safe fold, hostile values included:
+	# `apply_room_custody()` hands anything non-zero to
+	# `_end_custody_protocol(verdict == 1)`, so guessing would archive somebody's
+	# world on an enum this build never wrote.
+	var known: int = int(verdict)
+	if known > CUSTODY_VERDICT_MAX:
+		known = 0
+	return {"cap": names, "cd": seconds, "co": known}
 
 
 func _receive_room(from_id: String, packet: Dictionary) -> void:
@@ -2715,6 +2738,17 @@ func _send_state_to(id: String) -> void:
 	_lobby.send_signal_to(id, {
 		"mp": "state",
 		"cc": coins,
+		# THE RETIRED HEART COUNTERS, SENT AS INERT ZEROES FOR ONE RELEASE, and this
+		# is the send-side half of the tolerance `decode_state()` states below it.
+		# Hearts are gone (bead godot-test1-0bc) and no build reads these any more —
+		# but the PREVIOUS build REQUIRES `ls`, and drops a snapshot without it
+		# whole. `build_version` deliberately refuses to reload a peer that is
+		# mid-run or in a room, so an old client outlives the deploy, and dropping
+		# its one and only snapshot would cost it this peer's position, collected-coin
+		# ids, kill list and frozen bank for the room's whole life. Delete both keys
+		# once no pre-godot-test1-0bc client can still be running.
+		"ls": 0,
+		"gs": 0,
 		"dd": dist,
 		"px": pos.x,
 		"py": pos.y,
@@ -3988,8 +4022,8 @@ func _resolve_claim_locally(id: int, count: int, value: int) -> void:
 	path, so the player is paid for something they visibly picked up.
 
 	`collect_coin` is deliberately the vehicle — it already owns the streak, the
-	extra-life threshold and the print, and in a room it reads the ROOM's
-	multiplier through `get_streak_multiplier()` anyway.
+	HUD and the print, and in a room it reads the ROOM's multiplier through
+	`get_streak_multiplier()` anyway.
 	"""
 	# Through `_absorb_collected` rather than a bare set write, so the hidden
 	# pickup waiting on that confirm is actually freed — the same sweep the
