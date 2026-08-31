@@ -173,6 +173,9 @@ class RoomStub extends Node:
 	func my_hero() -> String:
 		return held
 
+	func hero_holder(hero: String) -> String:
+		return "me" if held == hero else ""
+
 	func report_hero_captured(hero: String) -> void:
 		reported.append([hero, true])
 
@@ -581,17 +584,29 @@ func _check_a_tower_streamed_in_later_holds_him() -> void:
 	var taken: String = player.hero_name()
 	player.hit_by_crocodile(_hunter())
 
+	# In a room, a captive hero may still have a live lobby holder while that
+	# prison-role body is being placed. The cell must not draw a duplicate; once
+	# the holder is released, the same captive-set write shows the static body.
+	var room := RoomStub.new()
+	room.add_to_group("mp")
+	room.held = taken
+	root.add_child(room)
 	var shell := await _make_tower()
 	var interior := shell.get_node_or_null("TowerInterior") as TowerInterior
 	if interior == null:
 		_fail("mirror: the tower has no TowerInterior child")
 		shell.queue_free()
+		room.queue_free()
 		_clear(player)
 		return
 	if not interior.is_captive(taken):
 		_fail(("a tower built AFTER a field capture does not hold %s (it holds %s) — the "
 			+ "interior must re-seed its mirror from the player, or his cell can never be "
 			+ "opened") % [taken, str(interior.captives())])
+	_assert_cell_body(interior, taken, false)
+	room.held = ""
+	interior.set_captive(taken, true)
+	_assert_cell_body(interior, taken, true)
 	# The authored captive is the TOWER's own staging, not a hero the field took off
 	# you, so after the beat he is nobody's captive. Asserted so the re-seed can
 	# never quietly become "mirror the whole cell block back onto the roster".
@@ -601,6 +616,8 @@ func _check_a_tower_streamed_in_later_holds_him() -> void:
 
 	# Walk in. Any hero frees any cell, so the body that arrives is whoever we are.
 	interior.call("_liberate", taken)
+	await process_frame
+	_assert_cell_body(interior, taken, false)
 	if player.is_hero_captive(taken):
 		_fail("walking into %s's cell did not put him back in the player's cycle" % taken)
 	if interior.is_captive(taken):
@@ -624,6 +641,7 @@ func _check_a_tower_streamed_in_later_holds_him() -> void:
 			+ "holds %s) — the capture must push through set_captive()")
 			% [second, str(interior.captives())])
 	shell.queue_free()
+	room.queue_free()
 	_clear(player)
 	await process_frame
 
@@ -2590,6 +2608,36 @@ func _make_tower() -> Node3D:
 	root.add_child(shell)
 	await process_frame
 	return shell
+
+
+func _assert_cell_body(interior: Node, hero: String, expected: bool) -> void:
+	"""Check the captive model's lifecycle and RemoteAvatar isolation contract."""
+	var floor_index := TowerInterior.block_floor()
+	var path := "Floor%d/%s%s" % [floor_index, TowerInterior.CAPTIVE_BODY_PREFIX, hero.capitalize()]
+	var body := interior.get_node_or_null(path) as Node3D
+	if expected and body == null:
+		_fail("capture: %s's cell has no visual body under %s" % [hero, path])
+		return
+	if not expected:
+		if body != null:
+			_fail("liberation: %s's cell still has a visual body" % hero)
+		return
+	if body.get_parent() == null or String(body.get_parent().name) != "Floor%d" % floor_index:
+		_fail("capture: %s's body is not parented to its storey floor" % hero)
+	if absf(body.position.y - TowerInterior.FLOOR_Y[floor_index]) > 0.001:
+		_fail("capture: %s's body is at y %.3f, not the storey walking surface %.3f" % [
+			hero, body.position.y, TowerInterior.FLOOR_Y[floor_index]])
+	if body.process_mode != Node.PROCESS_MODE_DISABLED:
+		_fail("capture: %s's cell body has processing enabled" % hero)
+	var pending: Array[Node] = [body]
+	while not pending.is_empty():
+		var node: Node = pending.pop_back()
+		if node is CollisionObject3D:
+			_fail("capture: %s's cell body contains a collision object (%s)" % [hero, node.name])
+		if not node.get_groups().is_empty():
+			_fail("capture: %s's cell body contains group membership (%s)" % [hero, node.name])
+		for child: Node in node.get_children():
+			pending.append(child)
 
 
 func _clear(player: Node) -> void:

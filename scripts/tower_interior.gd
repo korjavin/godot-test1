@@ -1652,6 +1652,19 @@ var _press_base: float = 0.0
 ## The four containment frames, keyed by HERO, plus the authored staging unit.
 var _cell_frames: Dictionary = {}
 
+## The visual-only hero bodies in occupied cells, keyed by hero name. These are
+## deliberately separate from the containment frames: a captive is per-run
+## population, so its model is created by the same `_refresh_cells()` seam that
+## recolours the frame and is freed when the captive leaves. A body lives under
+## its storey's floor container, which keeps it inside the interior lifecycle.
+var _cell_bodies: Dictionary = {}
+
+## Character scenes are the player's authored roster, but these instances are
+## pictures rather than players. The remote-avatar precedent is the contract:
+## no group, no CollisionObject3D and no per-frame animation.
+const PLAYER_SCRIPT: GDScript = preload("res://scripts/player_controller.gd")
+const CAPTIVE_BODY_PREFIX: String = "CaptiveBody_"
+
 ## THE BODY STANDING ON THE VENT-PURGE PAD, and how long until it can fire again.
 ##
 ## The BODY and not a boolean, because eligibility has to be re-asked every frame:
@@ -3717,6 +3730,15 @@ func _ready() -> void:
 	if tower != null and tower.has_signal("player_entered") \
 			and not tower.is_connected("player_entered", _on_tower_doorway):
 		tower.connect("player_entered", _on_tower_doorway)
+	var mp := get_tree().get_first_node_in_group("mp")
+	if mp != null and mp.has_signal("heroes_changed") \
+			and not mp.is_connected("heroes_changed", _on_hero_holders_changed):
+		mp.connect("heroes_changed", _on_hero_holders_changed)
+
+
+func _on_hero_holders_changed(_heroes: Dictionary, _pool: Array) -> void:
+	"""Reconcile cell pictures when the synchronized live-holder map changes."""
+	_refresh_cells()
 
 
 func _exit_tree() -> void:
@@ -4688,18 +4710,112 @@ func _retire(mesh: MeshInstance3D, shape: CollisionShape3D, done: bool) -> void:
 
 func _refresh_cells() -> void:
 	"""
-	Repaint every containment frame from the captive set, and hide the staging unit
-	once the authored rescue is done.
+	Repaint every containment frame from the captive set, place a visual body in each
+	occupied cell, and hide the staging unit once the authored rescue is done.
 
 	THE ONE PLACE CAPTIVITY BECOMES GEOMETRY, the way `_apply_opened` is the one
-	place an opened gate does. Idempotent, so `set_captive()` can just call it.
+	place an opened gate does. Idempotent, so `set_captive()` can just call it. The
+	body is intentionally not part of the static box table: it is per-run
+	population, and its lifecycle must follow this non-monotone set.
 	"""
 	for hero: String in _cell_frames:
 		var frame: MeshInstance3D = _cell_frames[hero]
 		frame.material_override = _material(
 			COLOR_CELL if _captives.has(hero) else COLOR_CELL_FREED)
+		_refresh_cell_body(hero)
 	if _containment != null:
 		_containment.visible = not _is_open(RESCUE_DONE)
+
+
+func _refresh_cell_body(hero: String) -> void:
+	"""Create or free the one visual-only model held in `hero`'s cell."""
+	# Build-time geometry checks instantiate this scene without a shell parent. That
+	# detached form has no room-wide captive source, so keep it the static interior
+	# those checks measure; the live tower path always has the shell lifecycle.
+	if _tower() == null:
+		return
+	var existing := _cell_bodies.get(hero) as Node3D
+	if not _captives.has(hero) or _hero_has_live_holder(hero):
+		if existing != null and is_instance_valid(existing):
+			existing.queue_free()
+		_cell_bodies.erase(hero)
+		return
+	if existing != null and is_instance_valid(existing):
+		return
+	_cell_bodies.erase(hero)
+
+	var character_index := -1
+	for index: int in PLAYER_SCRIPT.CHARACTERS.size():
+		if String(PLAYER_SCRIPT.CHARACTERS[index]["name"]) == hero:
+			character_index = index
+			break
+	if character_index < 0:
+		return
+	var scene_path := String(PLAYER_SCRIPT.CHARACTERS[character_index]["scene_path"])
+	var scene := load(scene_path) as PackedScene
+	if scene == null:
+		push_warning("TowerInterior: could not load captive model %s" % scene_path)
+		return
+	var floor_index := block_floor()
+	if floor_index < 0 or floor_index >= _floors.size():
+		return
+
+	var body := scene.instantiate() as Node3D
+	if body == null:
+		return
+	body.name = "%s%s" % [CAPTIVE_BODY_PREFIX, hero.capitalize()]
+	# A jailed model is scenery. Disable any future scene-side processing so this
+	# body can never acquire the player's walk/breathe animation by accident.
+	body.process_mode = Node.PROCESS_MODE_DISABLED
+	var stand := cell_stand(hero)
+	stand.y = FLOOR_Y[floor_index]
+	body.position = stand
+	# Character scenes face -Z at their authored neutral rotation. The gallery is
+	# on the +Z side of the cell row, so a half turn makes every captive face it.
+	body.rotation.y = PI
+	_floors[floor_index].add_child(body)
+	_style_captive_model(body)
+	_pose_captive_model(body)
+	_cell_bodies[hero] = body
+
+
+func _style_captive_model(node: Node) -> void:
+	"""Match the shared character shading without adding player-only outlines."""
+	if node is MeshInstance3D:
+		ToonShading.apply_to_mesh(node)
+		_no_shadow(node)
+	for child: Node in node.get_children():
+		_style_captive_model(child)
+
+
+func _pose_captive_model(node: Node3D) -> void:
+	"""Apply one authored, slumped idle pose; nothing here is animated later."""
+	var model_body := node.get_node_or_null("Body") as Node3D
+	if model_body == null:
+		return
+	model_body.rotation.x += deg_to_rad(-8.0)
+	var limb_offsets := {
+		"LeftArm": deg_to_rad(20.0), "RightArm": deg_to_rad(20.0),
+		"LeftLeg": deg_to_rad(-8.0), "RightLeg": deg_to_rad(-8.0),
+	}
+	for limb_name: String in limb_offsets:
+		var limb := model_body.get_node_or_null(limb_name) as Node3D
+		if limb != null:
+			limb.rotation.x += float(limb_offsets[limb_name])
+
+
+func _hero_has_live_holder(hero: String) -> bool:
+	"""Whether the synchronized room assignment still has a body for `hero`.
+
+	The holder map is authoritative across peers. A holder's RemoteAvatar can be
+	temporarily hidden while WebRTC negotiates (or until the lobby removes a failed
+	member); that brief gap is benign because the containment field still marks the
+	cell and the next heroes broadcast restores the static model. Do not key this on
+	this peer's transport visibility, or cells would flicker and peers would disagree.
+	"""
+	var mp := get_tree().get_first_node_in_group("mp")
+	return mp != null and mp.has_method("hero_holder") \
+			and not String(mp.call("hero_holder", hero)).is_empty()
 
 
 func _liberate(hero: String) -> void:
