@@ -377,9 +377,10 @@ The building is full to its sealed roof — ten floor indices, `FLOOR_Y[0..9]`:
   plan whose walls stopped merging blows the box budget on its first row. **`DRAW_BUDGET`
   counts nodes, not draws**: emissive is a material property, so a storey carrying a
   `GLOW_COLORS` box commits a second SURFACE in the same `ArrayMesh` and the engine
-  submits one draw per surface. Floors 0, 1 and 9 glow (the keep and the cell block),
-  so the interior is 13 batch
-  surfaces + 29 own-node meshes = **42 real draws**. Read the number as "nothing left the
+  submits one draw per surface. Since Air Sight (bead `godot-test1-oht`) a storey
+  batches up to THREE — walls, other matte, emissive — because the walls must be
+  swappable on their own, and **`SURFACE_BUDGET` (54, measured at 51) is the bound
+  that counts draws**; check 5 asserts both. Read `DRAW_BUDGET` as "nothing left the
   batch", not as a draw count.
 - **The offices are FURNISHED, and the furniture is derived rather than drawn.** No
   glyph was added to `TowerPlans` for it: `_plan_dressing` walks each storey's rooms
@@ -480,6 +481,18 @@ every ability is gated by a per-character cooldown. windman → Air Rush (fly fa
 gravity); primm → Phase Step (blink that scans outward for a spot the body fits, so it can
 never land inside geometry); teibi → Resize (small/giant, auto-reverts on a timer, giant
 crushes crocodiles and cannot jump); phoboman → Stink Wave (crocodiles flee).
+
+**INSIDE THE HQ TWO OF THEM CHANGE, and both read the shell's own `sheltered()`** — the
+predicate that already keeps the rain off, never a restated envelope. Windman's F becomes
+**Air Sight** (`TowerInterior.set_xray()`: the storey's WALLS go translucent for 7 s so a
+patrol can be watched through them — floors, ceilings and gate set pieces stay opaque),
+because Air Rush under a 4.6 m ceiling was a press that did nothing; the take-off gates
+(`RAIN` / `LAND`) do not apply to it. Teibi's growth is **refused everywhere sheltered**
+(reason `INDOOR`, above `TIGHT`, owner ruling `godot-test1-xdf`) and a giant walking
+through the door **auto-reverts at the threshold**, so the state cannot exist inside; SMALL
+stays allowed. Air Sight is the one transient ability state that lives in another node's
+MATERIALS rather than in a float here, so it is cleared on the switch, on the respawn AND
+on the way out of the door — `capture_selfcheck` drives all three exits.
 
 `scripts/ability_effect.gd` is the self-building, self-freeing expanding sphere.
 `scripts/ability_hud.gd` reads the player's contract methods for the cooldown dial.

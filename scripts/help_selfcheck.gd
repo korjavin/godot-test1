@@ -223,6 +223,15 @@ func _check_table() -> String:
 			return ("the F row does not name the \"%s\" ability — player_controller." \
 				+ "ABILITY_NAME has %d abilities and the help lists a different set") \
 				% [ability_name, PlayerController.ABILITY_NAME.size()]
+	# ...AND THE ONE THAT IS NOT IN THAT DICT. Air Sight is a SECOND ability on an
+	# existing hero — Windman's F under the HQ's roof — rather than a fifth hero, so
+	# walking `ABILITY_NAME` cannot see it and the card was free to keep telling
+	# players that F flies indoors (codex review). Read off the same const
+	# `get_ability_name()` returns, so renaming it fails here rather than drifting.
+	if not ability_row.contains(PlayerController.INDOOR_ABILITY_NAME):
+		return ("the F row does not name \"%s\" — player_controller hands it to the HUD " \
+			+ "indoors and the card still promises only the outdoor ability") \
+			% PlayerController.INDOOR_ABILITY_NAME
 
 	# --- The heroes ---------------------------------------------------------
 	var switch_row := _row_text("R")

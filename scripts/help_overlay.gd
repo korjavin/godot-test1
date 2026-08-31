@@ -136,7 +136,7 @@ const ROWS: Array = [
 	["Ctrl", "Duck and move slowly.", Mode.DESKTOP],
 	["R", "Switch hero: Windman, Primm, Teibi, Phoboman.", Mode.DESKTOP],
 	["1 2 3 4", "Jump straight to one hero — the numbers on the portraits.", Mode.DESKTOP],
-	["F", "Special ability: Air Rush, Phase Step, Resize or Stink Wave.", Mode.DESKTOP],
+	["F", "Special ability: Air Rush, Phase Step, Resize or Stink Wave — Air Sight indoors.", Mode.DESKTOP],
 	["C", "Cycle the view: over the shoulder, eyes, front.", Mode.DESKTOP],
 	# The landmark quiz answer keys. Raw keycodes outside the input map, like K
 	# and M beneath — so `help_selfcheck.gd` cannot compare them against a bound
@@ -162,7 +162,7 @@ const ROWS: Array = [
 	["Step", "Walk by stepping in place — the phone counts your steps.", Mode.TOUCH],
 	["Tilt", "Tilt the phone to steer. The toggle up top switches to twist.", Mode.TOUCH],
 	["JUMP", "Jump. A jump also breaks a crocodile's scent.", Mode.TOUCH],
-	["SPECIAL\n(F)", "Special ability: Air Rush, Phase Step, Resize or Stink Wave.", Mode.TOUCH],
+	["SPECIAL\n(F)", "Special ability: Air Rush, Phase Step, Resize or Stink Wave — Air Sight indoors.", Mode.TOUCH],
 	["SWITCH\n(R)", "Switch hero: Windman, Primm, Teibi, Phoboman.", Mode.TOUCH],
 	["View", "Cycle the view: over the shoulder, eyes, front.", Mode.TOUCH],
 	# "Skills" is the opener button's own CSV key, so this legend reads in German

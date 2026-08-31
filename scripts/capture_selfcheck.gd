@@ -261,6 +261,7 @@ func _run() -> void:
 	await _check_the_recall_archives_the_world()
 	await _check_the_scene_does_not_leak()
 	await _check_resize_is_not_a_lift()
+	await _check_air_sight_is_the_indoor_air_rush()
 	_report()
 
 
@@ -1989,9 +1990,22 @@ func _check_resize_is_not_a_lift() -> void:
 	    NO spot on the floor admits him however far from a wall he stands. That
 	    number is the isolation; the standoff only keeps the picture honest.
 
-	And the control is the other direction: in the annulus, with 11 m of air over
-	him, the same press must go through — a gate that always refuses would pass
-	every assertion above and quietly delete the ability.
+	AND SINCE bead godot-test1-xdf THERE IS A SECOND, DESIGN REFUSAL OVER THE TOP OF
+	BOTH: the owner ruled that Teibi may not be giant anywhere inside the HQ, so the
+	dial answers "INDOOR" throughout the building and `_teibi_grow_blocked()` — still
+	unweakened, and still the whole of the refusal outdoors — is asked DIRECTLY above
+	rather than through its label. Three subjects follow from that:
+
+	  * the two above, where both gates agree and the arithmetic says which physical
+	    one would have fired;
+	  * the middle of an empty tall room, where the physical gate provably answers
+	    "it fits" and the refusal is the ruling alone;
+	  * and THE DOOR — a giant grown outside and walked in must revert on the
+	    threshold, because the press is not the only way the state can arrive.
+
+	The control moved OUTDOORS with the ruling: three shell-widths from the site the
+	same two presses must still make a giant, or a gate that always refuses would
+	pass every assertion above and quietly delete the ability.
 	"""
 	var tower := await _make_tower()
 	var interior: Node3D = get_first_node_in_group("tower_interior")
@@ -2000,7 +2014,7 @@ func _check_resize_is_not_a_lift() -> void:
 		tower.queue_free()
 		return
 	var player := await _make_player()
-	if not _become_teibi(player):
+	if not _become(player, "teibi"):
 		_fail("player.tscn has no teibi in CHARACTERS — check 9 cannot drive Resize")
 		_clear(player)
 		tower.queue_free()
@@ -2041,7 +2055,13 @@ func _check_resize_is_not_a_lift() -> void:
 			giant_radius, giant_radius + RESIZE_CEILING_GAP, "a ceiling",
 			giant_radius)
 	if wall_floor >= 0:
-		await _resize_is_allowed_in_the_open(player, interior, wall_floor)
+		await _resize_is_refused_in_the_open(player, interior, wall_floor)
+	# The control and the door, in that order — the control is what grows the giant
+	# the door then has to take away, so it hands its spot to the walk back in.
+	await _resize_is_allowed_outdoors(player, tower)
+	if wall_floor >= 0:
+		await _giant_reverts_at_the_door(player, interior, wall_floor)
+	_reset_form(player)
 
 	_clear(player)
 	tower.queue_free()
@@ -2096,7 +2116,17 @@ func _resize_is_refused(player: Node, interior: Node3D, floor_index: int,
 
 	# Press 2: small -> giant, and this is the one the building must refuse.
 	player.ability_cooldowns[player.current_character_index] = 0.0
-	if player.get_ability_block_reason() != "TIGHT":
+	# THE PHYSICS GATE IS ASKED DIRECTLY, and since bead godot-test1-xdf that is the
+	# only honest way to ask it in here: "no giant anywhere in the HQ" now answers
+	# first, so the dial says INDOOR on every square of every storey and the label
+	# stopped being able to tell a wall from a ceiling from an empty room. What #142
+	# fixed is `_teibi_grow_blocked()` itself, so that is what this half measures —
+	# unchanged in strength, and still isolated to one cause by the storey arithmetic
+	# above. Delete the indoor rule tomorrow and both assertions still hold.
+	if not bool(player.call("_teibi_grow_blocked")):
+		_fail("beside %s on storey %d the grown capsule reports that it FITS — #142's gate is gone" % [
+			cause, floor_index])
+	if player.get_ability_block_reason() != "INDOOR":
 		_fail("beside %s on storey %d the giant form is not gated: reason %s" % [
 			cause, floor_index, player.get_ability_block_reason()])
 	player.try_activate_ability()
@@ -2113,16 +2143,24 @@ func _resize_is_refused(player: Node, interior: Node3D, floor_index: int,
 	_reset_form(player)
 
 
-func _resize_is_allowed_in_the_open(player: Node, interior: Node3D,
+func _resize_is_refused_in_the_open(player: Node, interior: Node3D,
 		floor_index: int) -> void:
 	"""
-	The negative control: in open floor on a storey tall enough for him the growth
-	goes through, and the body stays on that storey while it does.
+	THE OWNER'S RULING, AND THE HALF THE GEOMETRY CANNOT EXPLAIN (bead
+	godot-test1-xdf): "Teibi can't be huge inside the HQ." So the refusal has to hold
+	where every physical excuse for it is gone — the middle of the room, on a storey
+	whose clear height is OVER the giant's, with nothing in reach horizontally.
 
-	`floor_index` is the WALL subject's storey — chosen because its clear height is
-	over the giant's, which is exactly what makes "the lid is not what refused it"
-	true out in the middle of the room. Before the demolition this was the ground
-	floor's annulus; see `RESIZE_OPEN_SPOTS`.
+	`floor_index` is the WALL subject's storey, chosen for exactly that height. This
+	spot used to be check 9's negative control ("in the open the growth goes
+	through") and it is the same spot for the same reason: it is the one place inside
+	this building where `_teibi_grow_blocked()` answers false, which is what makes
+	INDOOR the only thing left that can be refusing. The control moved outdoors —
+	see `_resize_is_allowed_outdoors()`, which is what still stops a gate that always
+	says no from quietly deleting the ability.
+
+	SMALL STAYS ALLOWED IN HERE, and that is asserted too: it is the
+	stealth-flavoured form and the bead keeps it explicitly.
 	"""
 	var placed := false
 	for spot: Vector2 in RESIZE_OPEN_SPOTS:
@@ -2134,23 +2172,100 @@ func _resize_is_allowed_in_the_open(player: Node, interior: Node3D,
 			placed = true
 			break
 	if not placed:
-		_fail("nowhere on storey %d has room for a giant — check 9's control is vacuous"
+		_fail("nowhere on storey %d is clear of geometry — check 9 cannot isolate the indoor rule from TIGHT"
 				% floor_index)
 		return
+	# Normal -> small is not gated indoors, and the press has to actually land.
+	if player.get_ability_block_reason() != "":
+		_fail("in open floor on storey %d, normal-size Teibi is gated by %s" % [
+			floor_index, player.get_ability_block_reason()])
+	player.try_activate_ability()          # -> small
+	await _settle(player)
+	if player.teibi_size_state != 1:
+		_fail("in open floor on storey %d Teibi could not go small (state %d) — the indoor rule took the wrong form" % [
+			floor_index, player.teibi_size_state])
+	player.ability_cooldowns[player.current_character_index] = 0.0
+	if player.get_ability_block_reason() != "INDOOR":
+		_fail("in open floor on storey %d the growth is gated by %s, not INDOOR" % [
+			floor_index, player.get_ability_block_reason()])
+	player.try_activate_ability()          # -> refused
+	await _settle(player)
+	if player.teibi_size_state != 1 or player.is_giant:
+		_fail("in open floor on storey %d Teibi grew anyway (state %d, giant %s)" % [
+			floor_index, player.teibi_size_state, player.is_giant])
+	if player.ability_cooldowns[player.current_character_index] > 0.0:
+		_fail("the refused indoor growth charged %.2f s of cooldown" % \
+			player.ability_cooldowns[player.current_character_index])
+	if player.teibi_form_timer <= 0.0:
+		_fail("the refused indoor growth spent the form timer as well")
+	print("indoor rule: storey %d refuses a giant in the middle of an empty room" % floor_index)
+	_reset_form(player)
+
+
+func _resize_is_allowed_outdoors(player: Node, shell: Node3D) -> Vector3:
+	"""
+	The negative control, now that the building refuses the growth everywhere: OUT IN
+	THE FIELD the same two presses still make a giant. A gate that always said no
+	would pass every assertion above and quietly delete the ability.
+
+	@return: The outdoor spot the giant is standing on, so the caller can walk him
+	        back through the door from it.
+
+	Three shell-widths from the middle of the site and asserted `sheltered()`-false
+	before anything is pressed, because "outdoors" is the entire premise here and a
+	standoff that silently landed under the roof would turn this control into a
+	second copy of the check above.
+	"""
+	var spot := shell.global_position + Vector3(TowerShell.OUTER_HALF * 3.0, 0.0, 0.0)
+	player.global_position = spot
+	await _settle(player)
+	if bool(shell.call("sheltered", player.global_position)):
+		_fail("check 9's outdoor control is standing under the roof — it cannot be a control")
+		return spot
+	if player.get_ability_block_reason() != "":
+		_fail("outdoors, normal-size Teibi is gated by %s" % player.get_ability_block_reason())
 	player.try_activate_ability()          # -> small
 	await _settle(player)
 	player.ability_cooldowns[player.current_character_index] = 0.0
 	if player.get_ability_block_reason() != "":
-		_fail("in open floor on storey %d the growth is gated by %s" % [
-			floor_index, player.get_ability_block_reason()])
+		_fail("outdoors the growth is gated by %s — the indoor rule leaked into the field" % \
+			player.get_ability_block_reason())
 	player.try_activate_ability()          # -> giant
 	await _settle(player)
 	if player.teibi_size_state != 2 or not player.is_giant:
-		_fail("in open floor on storey %d Teibi did not grow (state %d)" % [
-			floor_index, player.teibi_size_state])
-	_storey_held(player, interior, floor_index, "giant (allowed)", "open air")
-	print("control: storey %d grew a giant in the open and he stayed on it" % floor_index)
-	_reset_form(player)
+		_fail("outdoors Teibi did not grow (state %d) — the ability has been deleted, not gated" % \
+			player.teibi_size_state)
+	print("control: outdoors the same two presses still make a giant")
+	return player.global_position
+
+
+func _giant_reverts_at_the_door(player: Node, interior: Node3D,
+		floor_index: int) -> void:
+	"""
+	The other half of the ruling: a Teibi who is ALREADY giant when he reaches the
+	door reverts on crossing the threshold, so the state cannot exist inside however
+	he got there.
+
+	Refusing the press is not enough on its own — the press is not the only way in.
+	Walking is, and it is the way a player will actually find. So the body is grown
+	outdoors, teleported onto a storey, and given real physics frames: the revert
+	rides `_update_ability_timers()`, the same tick and the same
+	`_revert_teibi_to_normal()` path the form timer uses, which is what makes it
+	clean transient state rather than a second, parallel undo.
+	"""
+	if not player.is_giant:
+		_fail("check 9 could not grow a giant outdoors, so the door has nothing to revert")
+		return
+	player.global_position = interior.to_global(
+		Vector3(0.0, TowerInterior.FLOOR_Y[floor_index], 0.0))
+	await _settle(player)
+	if player.is_giant or player.teibi_size_state != 0:
+		_fail("a giant Teibi walked into the HQ and stayed giant (state %d, giant %s)" % [
+			player.teibi_size_state, player.is_giant])
+		return
+	if player.teibi_form_timer > 0.0:
+		_fail("the door's revert left %.2f s of form timer running" % player.teibi_form_timer)
+	print("the door: a giant Teibi crossing into the HQ reverted to normal")
 
 
 func _storey_held(player: Node, interior: Node3D, floor_index: int, form: String,
@@ -2265,13 +2380,143 @@ func _reset_form(player: Node) -> void:
 	player.ability_cooldowns[player.current_character_index] = 0.0
 
 
-func _become_teibi(player: Node) -> bool:
+func _check_air_sight_is_the_indoor_air_rush() -> void:
+	"""
+	Check 10 (bead godot-test1-oht). WINDMAN'S F IS ONE KEY AND TWO ABILITIES, and
+	which one it is is decided by the roof over his head.
+
+	`tower_interior_selfcheck`'s check 19 owns the other half — that the swap reaches
+	the WALLS and nothing else, and restores. This half is the PLAYER's: that the
+	dispatch picks Air Sight in here and Air Rush out there, that the ability really
+	drives the building rather than merely setting a timer, and — the part that would
+	otherwise ship broken and look fine — that it CANNOT BLEED.
+
+	THE BLEED IS THE INTERESTING FAILURE. Every other ability's leftovers are a float
+	on the player, so a missed reset is invisible; this one lives in the BUILDING's
+	materials, so a switch, a respawn or a walk out of the door that forgot to clear
+	it leaves a permanently see-through HQ with nobody holding it that way. Three
+	exits are driven here — the character switch, the walk out through the door, and
+	the timer — and all three are asked of the interior, never of the timer.
+	"""
+	var tower := await _make_tower()
+	var interior: Node3D = get_first_node_in_group("tower_interior")
+	if interior == null:
+		_fail("the tower built no interior — check 10 has nothing to see through")
+		tower.queue_free()
+		return
+	var player := await _make_player()
+	if not _become(player, "windman"):
+		_fail("player.tscn has no windman in CHARACTERS — check 10 cannot drive Air Sight")
+		_clear(player)
+		tower.queue_free()
+		return
+
+	var indoors := interior.to_global(Vector3(0.0, TowerInterior.FLOOR_Y[0], 0.0))
+	var outdoors := tower.global_position + Vector3(TowerShell.OUTER_HALF * 3.0, 0.0, 0.0)
+
+	# --- Indoors: F is Air Sight. ---
+	player.global_position = indoors
+	await _settle(player)
+	if not bool(tower.call("sheltered", player.global_position)):
+		_fail("check 10's indoor spot is not under the roof — the whole check is vacuous")
+	if player.get_ability_name() != "Air Sight":
+		_fail("indoors the HUD still advertises %s" % player.get_ability_name())
+	if player.get_ability_block_reason() != "":
+		_fail("indoors Air Sight is gated by %s — the take-off gates leaked into it" % \
+			player.get_ability_block_reason())
+	player.ability_cooldowns[player.current_character_index] = 0.0
+	player.try_activate_ability()
+	await process_frame
+	if not bool(interior.call("xray_active")):
+		_fail("F indoors did not make the walls see-through")
+	if player.windman_boost_timer > 0.0:
+		_fail("F indoors fired the Air Rush as well — the two abilities are not exclusive")
+	if player.ability_cooldowns[player.current_character_index] <= 0.0:
+		_fail("Air Sight fired and charged no cooldown — the dial has nothing to run")
+
+	# ONE LOOK AT A TIME (codex review). A fully-ranked Windman's cooldown (4.80 s) is
+	# SHORTER than the look (7 s), so a press on every recharge would hold the walls
+	# open forever — the `"LAND"` bug one ability along. The state invariant is what
+	# closes it, so it is asked as state: charge the cooldown to zero, which is the
+	# strongest form of the press the skill tree can ever produce, and the gate must
+	# still be the thing standing in the way.
+	player.ability_cooldowns[player.current_character_index] = 0.0
+	if player.get_ability_block_reason() != "SEEING":
+		_fail("with Air Sight already running and the cooldown spent, the next press is gated by %s — a skilled Windman can chain it forever" % \
+			player.get_ability_block_reason())
+	var look_left: float = player.windman_sight_timer
+	player.try_activate_ability()
+	await process_frame
+	if player.windman_sight_timer > look_left:
+		_fail("the refused press refreshed the look (%.2f s -> %.2f s)" % [
+			look_left, player.windman_sight_timer])
+	if player.ability_cooldowns[player.current_character_index] > 0.0:
+		_fail("the refused Air Sight press charged %.2f s of cooldown" % \
+			player.ability_cooldowns[player.current_character_index])
+
+	# --- The switch clears it, and it is the BUILDING that has to say so. ---
+	if not _become(player, "primm"):
+		_fail("player.tscn has no primm — check 10 cannot drive the switch")
+	if bool(interior.call("xray_active")):
+		_fail("switching character left the HQ see-through — Air Sight bled across the swap")
+	if player.windman_sight_timer > 0.0:
+		_fail("switching character left %.2f s of Air Sight running" % player.windman_sight_timer)
+	if not _become(player, "windman"):
+		_fail("could not switch back to windman")
+
+	# --- Walking out of the door ends it too. ---
+	player.ability_cooldowns[player.current_character_index] = 0.0
+	player.try_activate_ability()
+	await process_frame
+	if not bool(interior.call("xray_active")):
+		_fail("F indoors did not re-arm Air Sight after the switch")
+	player.global_position = outdoors
+	await _settle(player)
+	if bool(interior.call("xray_active")):
+		_fail("walking out of the HQ left it see-through behind us")
+	if player.windman_sight_timer > 0.0:
+		_fail("walking out left %.2f s of Air Sight running" % player.windman_sight_timer)
+
+	# --- Outdoors F is Air Rush again, unchanged. ---
+	if player.get_ability_name() != "Air Rush":
+		_fail("outdoors the HUD advertises %s" % player.get_ability_name())
+	player.ability_cooldowns[player.current_character_index] = 0.0
+	player.velocity = Vector3.ZERO
+	player.try_activate_ability()
+	await process_frame
+	if player.windman_boost_timer <= 0.0:
+		_fail("outdoors F no longer launches an Air Rush — the indoor branch swallowed it")
+	if bool(interior.call("xray_active")):
+		_fail("an outdoor Air Rush made the HQ see-through")
+
+	# --- And the timer is the third exit: it must expire on its own indoors. ---
+	player.global_position = indoors
+	await _settle(player)
+	player.ability_cooldowns[player.current_character_index] = 0.0
+	player.try_activate_ability()
+	await process_frame
+	if not bool(interior.call("xray_active")):
+		_fail("Air Sight would not re-arm for the expiry subject")
+	# Wind the timer down to the last tick rather than waiting seven real seconds —
+	# the expiry PATH is what is being measured, and it is the same one either way.
+	player.windman_sight_timer = 0.001
+	await _settle(player)
+	if bool(interior.call("xray_active")):
+		_fail("Air Sight's timer ran out and the walls stayed see-through")
+	print("air sight: indoors it swaps the walls, outdoors F is still Air Rush, and all three exits clear it")
+
+	_clear(player)
+	tower.queue_free()
+	await process_frame
+
+
+func _become(player: Node, hero: String) -> bool:
 	"""Switch through `set_active_character()` — the same door capture uses."""
 	var characters: Array = player.CHARACTERS
 	for i in range(characters.size()):
-		if String(characters[i]["name"]) == "teibi":
+		if String(characters[i]["name"]) == hero:
 			player.set_active_character(i)
-			return player.hero_name() == "teibi"
+			return player.hero_name() == hero
 	return false
 
 

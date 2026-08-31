@@ -786,7 +786,8 @@ const FLOOR_HYSTERESIS: float = 0.8
 ## forty"). Floors 0, 1 and 9 carry glow, so the interior's real draw count is
 ## nearer 38 than 35. The budget is still the useful guard — a storey that stopped
 ## batching costs a node per box, not a surface — but do not read it as a draw
-## count, and if draws are what you want to bound, count surfaces in check 5.
+## count. If draws are what you want to bound, that is `SURFACE_BUDGET` below —
+## check 5 asserts both.
 ##
 ## 39 SINCE THE OFFICE DRESSING (bead godot-test1-0a5), AND ALL FOUR ARE THE JOKE.
 ## Every desk, chair, cabinet, plant, diploma and framed photograph in this
@@ -918,6 +919,25 @@ const INTERIOR_EMISSION: float = 0.45
 ## The wainscot band's height off the walking surface. Pure look; never collided
 ## with, never stood on.
 const WAINSCOT_HEIGHT: float = 1.05
+
+## AIR SIGHT (bead godot-test1-oht) — how opaque a wall is left while Windman's
+## indoor ability is running. Not zero: the point is to READ the layout and spot a
+## patrol through it, and a wall you cannot see at all is a room with no corners.
+const XRAY_ALPHA: float = 0.30
+
+## SURFACES, WHICH ARE DRAWS — the bound `DRAW_BUDGET` explicitly declines to be
+## (read its last paragraphs: it counts NODES). `merged_mesh` welds a storey into at
+## most three of them and the engine submits one draw per surface, so this is the
+## number that moves when a batch stops merging or a fourth material sneaks into the
+## building. Air Sight is what made it worth stating: pulling the walls onto their
+## own surface so they can be swapped costs ONE surface per planned storey and
+## nothing else — no node, no material per box, and no work at all while it is off.
+##
+## MEASURED AT 51 with ten storeys authored, of which the ten wall surfaces are the
+## whole of what this bead added (it was 41). The slack over it is the same slack
+## `DRAW_BUDGET` carries, and for the same reason: a moving part earns a mesh, and a
+## mesh is at least one more draw.
+const SURFACE_BUDGET: int = 54
 
 ## The ground storey's carpet layer. 2 cm of pure colour, non-solid, laid OVER the
 ## shell's `Yard` apron — see `_plan_slab` for why the ground floor is the one storey
@@ -1506,6 +1526,19 @@ var _rotors: Array[Node3D] = []
 ## Per-floor mesh containers, index 0 = ground. `_update_visibility` shows floor
 ## `n` +/- 1 and hides the rest.
 var _floors: Array[Node3D] = []
+
+## AIR SIGHT'S SWAP LIST (bead godot-test1-oht): `[batch mesh, surface index]` for
+## every WALL surface in the building, resolved once in `_ready()` by material
+## identity. Walls and nothing else — the floor slabs, the ceilings and the gate set
+## pieces live on other surfaces or on nodes of their own, so they cannot be reached
+## from here however the ability is driven. `set_xray()` writes a surface override
+## down this list and clears it again; while the ability is off the list is not read
+## at all and the building renders exactly as it did before this bead.
+var _wall_surfaces: Array[Array] = []
+
+## Whether the walls are currently rendering translucent. Read by the self-check and
+## by nothing in the game — the player's ability owns the timer.
+var _xray_on: bool = false
 
 ## Progress of each gate's open animation, 0 = shut, 1 = fully open. Persisted only
 ## as the boolean "is this id in the opened set"; this is the tween.
@@ -3479,6 +3512,14 @@ func _ready() -> void:
 		batch.mesh = merged_mesh(batched[i])
 		_no_shadow(batch)
 		_floors[i].add_child(batch)
+		# AIR SIGHT'S SWAP LIST, resolved once and by MATERIAL IDENTITY rather than
+		# by a surface index: `merged_mesh` omits any surface a storey has nothing
+		# for, so "walls are surface 0" is true of a planned storey and meaningless
+		# on one with none. Asking which surface wears the wall material is the same
+		# question with no arithmetic to get wrong.
+		for surface: int in batch.mesh.get_surface_count():
+			if batch.mesh.surface_get_material(surface) == _batch_material(false, true):
+				_wall_surfaces.append([batch, surface])
 
 	_build_pads()
 	_build_lift_stop()
@@ -5176,33 +5217,66 @@ func _sfx(method: String) -> void:
 
 static func merged_mesh(group: Array) -> ArrayMesh:
 	"""
-	Every box in `group`, welded into one `ArrayMesh` of at most two surfaces.
+	Every box in `group`, welded into one `ArrayMesh` of at most three surfaces.
 
 	@param group: `boxes()` entries, all of one storey.
-	@return: A fresh ArrayMesh — matte surface first, emissive second, either
+	@return: A fresh ArrayMesh — WALLS first, then matte, then emissive, each
 	        omitted when that storey has none of that kind.
 
-	TWO SURFACES AND NOT ONE, because emissive is a material property and not a
-	vertex one: a light panel and a stone wall cannot share a surface however
-	similar their vertices are. Two is also the floor — every other difference
-	between these boxes (colour, size, the ramp's tilt) is baked into the vertices,
-	so a storey costs two draw calls whether it is four boxes or forty.
+	THREE SURFACES AND NOT ONE, because a material property is not a vertex one and
+	these boxes disagree about two of them. Emissive is the older split: a light
+	panel and a stone wall cannot share a surface however similar their vertices are.
+	TRANSPARENCY is the second (bead godot-test1-oht): Air Sight makes the walls of
+	your storey translucent and leaves its floor, its ceiling and its gates solid, so
+	the walls need a surface of their own to swap a material onto.
+
+	WALLS ARE FIRST ON PURPOSE, and it is the contract `set_xray()` and the
+	self-check both read: a storey that has any wall carries it as surface 0.
+
+	Three is still the floor and not a per-box cost — every other difference between
+	these boxes (colour, size, the ramp's tilt) is baked into the vertices, so a
+	storey costs three draw calls whether it is four boxes or forty, and the third is
+	the WHOLE price of the ability (see `SURFACE_BUDGET`).
 	"""
 	var out := ArrayMesh.new()
-	for glow: bool in [false, true]:
+	for kind: int in [SURFACE_WALL, SURFACE_MATTE, SURFACE_GLOW]:
 		var tool := SurfaceTool.new()
 		tool.begin(Mesh.PRIMITIVE_TRIANGLES)
 		var any := false
 		for box: Dictionary in group:
-			if GLOW_COLORS.has(box["color"]) != glow:
+			if surface_kind(box) != kind:
 				continue
 			any = true
 			_emit_box(tool, box)
 		if not any:
 			continue
 		tool.commit(out)
-		out.surface_set_material(out.get_surface_count() - 1, _batch_material(glow))
+		out.surface_set_material(out.get_surface_count() - 1,
+				_batch_material(kind == SURFACE_GLOW, kind == SURFACE_WALL))
 	return out
+
+
+## The three batch surfaces, in the order `merged_mesh` emits them.
+enum { SURFACE_WALL, SURFACE_MATTE, SURFACE_GLOW }
+
+
+static func surface_kind(box: Dictionary) -> int:
+	"""
+	Which of a storey's three surfaces one box belongs on.
+
+	@param box: A `boxes()` entry.
+	@return: `SURFACE_WALL`, `SURFACE_MATTE` or `SURFACE_GLOW`.
+
+	`wainscot` IS THE WALL TAG and no second one was invented: the flag already means
+	"this prism is a planned wall run" — it is what `_emit_box` splits a skirting
+	board off the bottom of, and `_plan_walls` is the only thing in the building that
+	sets it. A slab, a pad, a lintel and a ramp deck do not carry it and so cannot go
+	translucent. Public because the self-check derives the same answer independently
+	rather than reading `_wall_surfaces` back.
+	"""
+	if GLOW_COLORS.has(box["color"]):
+		return SURFACE_GLOW
+	return SURFACE_WALL if bool(box.get("wainscot", false)) else SURFACE_MATTE
 
 
 static func _emit_box(tool: SurfaceTool, box: Dictionary) -> void:
@@ -5295,15 +5369,23 @@ static func _face_shade(normal: Vector3) -> float:
 	return 0.90 if absf(normal.x) > 0.5 else 0.84
 
 
-static func _batch_material(glow: bool) -> StandardMaterial3D:
+static func _batch_material(glow: bool, wall: bool = false) -> StandardMaterial3D:
 	"""
-	The batch's two materials, cached beside the per-box ones.
+	The batch's three materials, cached beside the per-box ones.
 
 	Keyed by a colour that is not in the palette above (so the two caches cannot
 	collide) — the material's own albedo is white and unused, because
 	`vertex_color_use_as_albedo` is what actually colours these surfaces.
+
+	THE WALL ONE IS A THIRD OBJECT WITH IDENTICAL SETTINGS, which is the only reason
+	it exists: it renders exactly like the matte one, and having its own identity is
+	what lets `_ready()` find the wall surfaces to swap without counting indices, and
+	what lets `ToonShading`'s cache and the self-check's material cap keep saying
+	something true. Sharing the matte object instead would have made Air Sight
+	dissolve the floor slabs with it.
 	"""
-	var key := Color(0.0, 0.0, 1.0) if glow else Color(0.0, 0.0, 0.0)
+	var key := Color(0.0, 1.0, 0.0) if wall \
+			else (Color(0.0, 0.0, 1.0) if glow else Color(0.0, 0.0, 0.0))
 	var hit: StandardMaterial3D = _materials.get(key)
 	if hit != null:
 		return hit
@@ -5332,6 +5414,85 @@ static func _batch_material(glow: bool) -> StandardMaterial3D:
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	_materials[key] = mat
 	return mat
+
+
+static func xray_material() -> StandardMaterial3D:
+	"""
+	The wall material's see-through twin, cached process-wide like every other
+	material in here.
+
+	ALPHA RIDES `albedo_color`, NOT THE VERTEX COLOURS. `vertex_color_use_as_albedo`
+	multiplies the two, and `_emit_box` writes fully opaque vertices; putting the
+	alpha here means one duplicated material carries the whole effect and not one
+	re-emitted vertex anywhere. The rest of the material is inherited by `duplicate()`
+	from the wall batch's own — unshaded, vertex-coloured, toon-compatible — so a wall
+	going translucent changes exactly one thing about how it renders.
+
+	`ponytail:` fill-rate is the known ceiling. Transparency is not free on web
+	`gl_compatibility` and this makes every wall of one storey an overlapping
+	transparent surface for the duration; it is a short timed window on ONE storey
+	(the others are hidden by the visibility gate), which is why it is affordable.
+	If F3 ever shows it, the upgrade path is a depth-tested cutout rather than blend.
+	"""
+	var hit: StandardMaterial3D = _materials.get(XRAY_KEY)
+	if hit != null:
+		return hit
+	var mat: StandardMaterial3D = _batch_material(false, true).duplicate()
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.blend_mode = BaseMaterial3D.BLEND_MODE_MIX
+	mat.albedo_color = Color(1.0, 1.0, 1.0, XRAY_ALPHA)
+	_materials[XRAY_KEY] = mat
+	return mat
+
+
+## The x-ray material's cache key — a fourth colour outside the palette, for the
+## same reason as `_batch_material`'s three.
+const XRAY_KEY := Color(1.0, 0.0, 0.0, 0.5)
+
+
+func set_xray(on: bool) -> void:
+	"""
+	Make this building's WALLS translucent, or put them back.
+
+	@param on: true to see through them, false to restore.
+
+	WINDMAN'S AIR SIGHT (bead godot-test1-oht), and the whole of it on this side. The
+	swap is two material references per storey down `_wall_surfaces` — no per-box
+	work, no rebuild, no node created or freed, and nothing at all touched while the
+	ability is off.
+
+	WALLS ONLY, BY CONSTRUCTION rather than by a filter here: `_wall_surfaces` was
+	resolved in `_ready()` from the wall batch material's own identity, so the floor
+	slabs (whose undersides are the ceiling below you), the ramp decks and every gate
+	set piece are not in the list and cannot be reached from this function. You look
+	through the walls of your storey; the building keeps its floors and its gates.
+
+	`ponytail:` EVERY storey's walls are swapped, not just the one you are on (codex
+	review). Deliberate, and the answer is what stays opaque: the slabs do, so a
+	neighbouring floor's translucent walls are behind a solid ceiling and you cannot
+	see them — "your storey" is delivered by the floors, never by this list. It also
+	means walking up a ramp mid-ability needs no re-swap and no per-frame floor
+	tracking, and `_update_visibility` has already culled all but three or four
+	storeys, so the fill rate this could save is a fraction of a cost that is already
+	the ability's known ceiling (see `xray_material`). Filter by `current_floor()`
+	here if that ever measures.
+
+	Idempotent, and safe to call on an interior that is being torn down — the
+	`is_instance_valid` guard is there because the tower streams out with the terrain
+	and a running ability outlives it by up to its own duration.
+	"""
+	_xray_on = on
+	var swap: Material = xray_material() if on else null
+	for pair: Array in _wall_surfaces:
+		var mesh: MeshInstance3D = pair[0]
+		if not is_instance_valid(mesh):
+			continue
+		mesh.set_surface_override_material(int(pair[1]), swap)
+
+
+func xray_active() -> bool:
+	"""Whether Air Sight is currently showing through this building's walls."""
+	return _xray_on
 
 
 static func _no_shadow(node: GeometryInstance3D) -> void:
