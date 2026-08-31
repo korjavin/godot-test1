@@ -352,3 +352,39 @@ Fix whatever the sweep turns up. Confirm by inspection that no code path decreme
 life or triggers game over except the empty free-hero set (`grep -rn 'lives' scripts/`
 should return only unrelated prose and `lifetime`).
 **Verify:** every self-check prints `SELFCHECK OK` and exits 0.
+
+## Addendum — extra sites the CLAUDE.md map names explicitly
+
+These were found by reading CLAUDE.md's own index and MUST be handled; they are easy
+to miss because they are prose, not code:
+
+- **`hero_hud_selfcheck.gd` asserts the portrait row's fit in `main.tscn` "against the
+  hearts and F3"** (see the Commands block). Deleting the `LivesHUD` node breaks that
+  assertion. Rework it to measure the row against whatever is actually above it now —
+  do not delete the fit check, it is the only thing keeping the portrait row on screen.
+- **`capture_selfcheck.gd`'s header line in CLAUDE.md's Commands block** — "the
+  empty-roster game over with hearts in hand" — must be reworded there AND in the
+  script's own header, in the same commit as the rewritten checks.
+- **CLAUDE.md's "Systemic capture" section**: "An empty free set opens the FULL-CUSTODY
+  PROTOCOL ... decided beside the out-of-hearts branch in `_on_caught_finished()` —
+  which stays the one place a heart-death is decided" and "the grab that empties the
+  roster still pays its heart in `_on_caught_finished()`" (the `_tick_prison` sentence).
+  Both describe a branch that no longer exists.
+- **CLAUDE.md's "Gameplay loop" section**: "Coins have a streak multiplier and grant
+  extra lives at thresholds" — the extra-life half goes.
+- **CLAUDE.md's "Multiplayer / Mesh" bullet**: "Shared bank/lives/distance are a sum of
+  per-peer absolute broadcasts" — lives comes out of that list.
+- **CLAUDE.md's tower section**: the guard's stake is described as "**no life and no
+  game over**, so the building can never end a run mid-rescue" and `coin_setback` as
+  "the third stake". With every predator billing coins, the guard's distinguishing
+  stake is the CHECKPOINT KNOCKBACK, not the absence of a life. Reword both, and the
+  `Crocodiles` section's "Its `coin_setback` key is the third stake" sentence with them.
+- **`piglet_crocodile_ai.gd`'s `tower_guard` row comment** says "it cannot take a life
+  and cannot take a hero (see `coin_setback` below)" and "a body with no `coin_setback`
+  charges the ordinary predator cost (a life), which is every other row in this table".
+  Both sentences invert. Rewrite them where they sit.
+- **`crocodile_lod_manager.gd`, `mp_manager.gd` and `enemy_spawn_selfcheck.gd`** carry
+  incidental "takes a life / a life a second" prose (e.g. `enemy_spawn_selfcheck` ~1880
+  and ~1951, "a machine stands on the respawn point taking a life every 0.3 s"). Those
+  checks measure the RESPAWN SWEEP, which still matters — reword the prose to "taking a
+  bite", keep the assertion.
