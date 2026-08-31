@@ -299,13 +299,13 @@ style parse checks are NOT a substitute — run the self-checks.
 
 ## Task list
 
-### Task 1 — `SPECIES` rows grow `coin_setback`
+### Task 1: `SPECIES` rows grow `coin_setback`
 Add the key to all 13 rows that lack it, with the values in the table above and the
 comment style described. Do not touch any speed, detection or gait number. Add the
 row-completeness assertion to `enemy_spawn_selfcheck.gd`.
 **Verify:** `enemy_spawn_selfcheck` prints `SELFCHECK OK`.
 
-### Task 2 — the coin bill becomes universal in `player_controller.gd`
+### Task 2: the coin bill becomes universal in `player_controller.gd`
 Rename `_pay_guard_setback` → `_pay_coin_setback`; give `_coin_setback_of()` the
 `DEFAULT_COIN_SETBACK` fallback for spec-less attackers; rewrite both docstrings.
 Rewrite `_on_caught_finished()` to the shape above — no heart branch, no
@@ -317,7 +317,7 @@ reviewable on its own.
 heart assertions here — that is expected and Task 5 fixes it; note it, do not paper
 over it).
 
-### Task 3 — delete hearts from `player_controller.gd`
+### Task 3: delete hearts from `player_controller.gd`
 Remove `MAX_LIVES`, `lives`, `LIVES_CAP`, `EXTRA_LIFE_COINS`, `next_extra_life_at`,
 `own_lives_spent`, the extra-life loop in `collect_coin()`, the hearts half of
 `_refresh_shared_totals()`, and `_check_shared_game_over()` + its call site. Update
@@ -326,18 +326,18 @@ every banner comment that described the heart model. `is_game_over` and
 **Verify:** `grep -n '\blives\b' scripts/player_controller.gd` returns only prose that
 means something else; the project parses.
 
-### Task 4 — delete the shared-hearts machine from `mp_manager.gd`
+### Task 4: delete the shared-hearts machine from `mp_manager.gd`
 The deletions and wire-field removals listed above, validators relaxed but still
 type-checking every remaining field.
 **Verify:** `mp_selfcheck` runs (rows referencing the removed API are fixed in Task 5).
 
-### Task 5 — rewrite the self-checks
+### Task 5: rewrite the self-checks
 `capture_selfcheck.gd`, `mp_selfcheck.gd`, `tower_interior_selfcheck.gd` per the
 section above, including the new "no `lives` member exists" check.
 **Verify:** `capture_selfcheck`, `mp_selfcheck` and all four tower self-checks print
 `SELFCHECK OK`.
 
-### Task 6 — HUD, UI strings and docs
+### Task 6: HUD, UI strings and docs
 Delete `lives_hud.gd` (+ `.uid`) and its two blocks in `scenes/main.tscn`; fix the
 stale comments in `hero_hud.gd`, `game_over_ui.gd`, `mp_ui.gd`; audit
 `help_overlay.gd` and `assets/translations/ui.csv`; rewrite CLAUDE.md's death section
@@ -346,7 +346,7 @@ and fix the two other sections named above.
 `help_selfcheck`, `hero_hud_selfcheck`, `minimap_selfcheck`, `pause_selfcheck`,
 `view_selfcheck`.
 
-### Task 7 — full sweep
+### Task 7: full sweep
 Run EVERY self-check in the CLAUDE.md Commands list plus the tower and boss ones.
 Fix whatever the sweep turns up. Confirm by inspection that no code path decrements a
 life or triggers game over except the empty free-hero set (`grep -rn 'lives' scripts/`
