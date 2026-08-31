@@ -173,6 +173,9 @@ class RoomStub extends Node:
 	func my_hero() -> String:
 		return held
 
+	func hero_holder(hero: String) -> String:
+		return "me" if held == hero else ""
+
 	func report_hero_captured(hero: String) -> void:
 		reported.append([hero, true])
 
@@ -581,17 +584,28 @@ func _check_a_tower_streamed_in_later_holds_him() -> void:
 	var taken: String = player.hero_name()
 	player.hit_by_crocodile(_hunter())
 
+	# In a room, a captive hero may still have a live lobby holder while that
+	# prison-role body is being placed. The cell must not draw a duplicate; once
+	# the holder is released, the same captive-set write shows the static body.
+	var room := RoomStub.new()
+	room.add_to_group("mp")
+	room.held = taken
+	root.add_child(room)
 	var shell := await _make_tower()
 	var interior := shell.get_node_or_null("TowerInterior") as TowerInterior
 	if interior == null:
 		_fail("mirror: the tower has no TowerInterior child")
 		shell.queue_free()
+		room.queue_free()
 		_clear(player)
 		return
 	if not interior.is_captive(taken):
 		_fail(("a tower built AFTER a field capture does not hold %s (it holds %s) — the "
 			+ "interior must re-seed its mirror from the player, or his cell can never be "
 			+ "opened") % [taken, str(interior.captives())])
+	_assert_cell_body(interior, taken, false)
+	room.held = ""
+	interior.set_captive(taken, true)
 	_assert_cell_body(interior, taken, true)
 	# The authored captive is the TOWER's own staging, not a hero the field took off
 	# you, so after the beat he is nobody's captive. Asserted so the re-seed can
@@ -627,6 +641,7 @@ func _check_a_tower_streamed_in_later_holds_him() -> void:
 			+ "holds %s) — the capture must push through set_captive()")
 			% [second, str(interior.captives())])
 	shell.queue_free()
+	room.queue_free()
 	_clear(player)
 	await process_frame
 

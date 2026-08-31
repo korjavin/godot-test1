@@ -3567,6 +3567,15 @@ func _ready() -> void:
 	if tower != null and tower.has_signal("player_entered") \
 			and not tower.is_connected("player_entered", _on_tower_doorway):
 		tower.connect("player_entered", _on_tower_doorway)
+	var mp := get_tree().get_first_node_in_group("mp")
+	if mp != null and mp.has_signal("heroes_changed") \
+			and not mp.is_connected("heroes_changed", _on_hero_holders_changed):
+		mp.connect("heroes_changed", _on_hero_holders_changed)
+
+
+func _on_hero_holders_changed(_heroes: Dictionary, _pool: Array) -> void:
+	"""Reconcile cell pictures when the synchronized live-holder map changes."""
+	_refresh_cells()
 
 
 func _exit_tree() -> void:
@@ -4563,7 +4572,7 @@ func _refresh_cell_body(hero: String) -> void:
 	if _tower() == null:
 		return
 	var existing := _cell_bodies.get(hero) as Node3D
-	if not _captives.has(hero):
+	if not _captives.has(hero) or _hero_has_live_holder(hero):
 		if existing != null and is_instance_valid(existing):
 			existing.queue_free()
 		_cell_bodies.erase(hero)
@@ -4630,6 +4639,13 @@ func _pose_captive_model(node: Node3D) -> void:
 		var limb := model_body.get_node_or_null(limb_name) as Node3D
 		if limb != null:
 			limb.rotation.x += float(limb_offsets[limb_name])
+
+
+func _hero_has_live_holder(hero: String) -> bool:
+	"""Whether the synchronized room assignment still has a body for `hero`."""
+	var mp := get_tree().get_first_node_in_group("mp")
+	return mp != null and mp.has_method("hero_holder") \
+			and not String(mp.call("hero_holder", hero)).is_empty()
 
 
 func _liberate(hero: String) -> void:
