@@ -2434,6 +2434,26 @@ func _check_air_sight_is_the_indoor_air_rush() -> void:
 	if player.ability_cooldowns[player.current_character_index] <= 0.0:
 		_fail("Air Sight fired and charged no cooldown — the dial has nothing to run")
 
+	# ONE LOOK AT A TIME (codex review). A fully-ranked Windman's cooldown (4.80 s) is
+	# SHORTER than the look (7 s), so a press on every recharge would hold the walls
+	# open forever — the `"LAND"` bug one ability along. The state invariant is what
+	# closes it, so it is asked as state: charge the cooldown to zero, which is the
+	# strongest form of the press the skill tree can ever produce, and the gate must
+	# still be the thing standing in the way.
+	player.ability_cooldowns[player.current_character_index] = 0.0
+	if player.get_ability_block_reason() != "SEEING":
+		_fail("with Air Sight already running and the cooldown spent, the next press is gated by %s — a skilled Windman can chain it forever" % \
+			player.get_ability_block_reason())
+	var look_left: float = player.windman_sight_timer
+	player.try_activate_ability()
+	await process_frame
+	if player.windman_sight_timer > look_left:
+		_fail("the refused press refreshed the look (%.2f s -> %.2f s)" % [
+			look_left, player.windman_sight_timer])
+	if player.ability_cooldowns[player.current_character_index] > 0.0:
+		_fail("the refused Air Sight press charged %.2f s of cooldown" % \
+			player.ability_cooldowns[player.current_character_index])
+
 	# --- The switch clears it, and it is the BUILDING that has to say so. ---
 	if not _become(player, "primm"):
 		_fail("player.tscn has no primm — check 10 cannot drive the switch")

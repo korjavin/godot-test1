@@ -4004,8 +4004,23 @@ const WINDMAN_LIFT: float = 6.0
 ## How long the walls stay see-through, in seconds. Long enough to read a room and
 ## watch one guard's leg of a patrol, short enough that the fill-rate cost of a
 ## storey of transparent walls on web `gl_compatibility` is a window and not a mode.
-## Deliberately BELOW the 8 s cooldown, so it can never chain into a permanent x-ray.
+##
+## IT IS NOT BOUNDED BY THE COOLDOWN AND MUST NOT BE MADE TO BE (codex review): 8.0 s
+## is the UNSKILLED cooldown, and `_skilled_ability_cooldown()` takes a fully-ranked
+## Windman to 4.80 s — under this duration, so a press on every recharge would hold
+## the building transparent forever. That is the `"LAND"` gate's bug exactly, one
+## ability along, and it takes the same answer: the STATE INVARIANT that was missing,
+## not a retune. `"SEEING"` refuses the press while a look is already running, so
+## cooldown ranks stay a straight buff (they shorten the wait, never the look) and
+## the x-ray is a window whatever the skill tree says.
 const WINDMAN_SIGHT_DURATION: float = 7.0
+
+## The name the HUD gives Windman's F under the roof. A const rather than a literal
+## because `help_selfcheck` reads it: the `?` card names every ability by walking
+## `ABILITY_NAME`, and an ability that is not in that dict — because it is a second
+## ability on an existing hero, not a fifth hero — would otherwise be the one thing
+## the card is allowed to be silently wrong about.
+const INDOOR_ABILITY_NAME: String = "Air Sight"
 
 # --- Primm: Phase Step ---
 ## Desired blink distance — far enough to clear a single block in open ground.
@@ -4958,7 +4973,7 @@ func get_ability_name() -> String:
 	"""
 	var char_name: String = CHARACTERS[current_character_index]["name"]
 	if char_name == "windman" and _sheltered():
-		return "Air Sight"
+		return INDOOR_ABILITY_NAME
 	return ABILITY_NAME.get(char_name, "Ability")
 
 
@@ -5019,6 +5034,9 @@ func get_ability_block_reason() -> String:
 	           not fit where he is standing. Growing inside geometry is not a
 	           clipping artefact, it is a lift: the depenetration pops him out
 	           upwards, through a storey's ceiling and past its gate.
+	  "SEEING" — Windman's Air Sight is already running. The look outlives a skilled
+	           hero's cooldown, so without this the press would refresh it forever
+	           and the walls would never come back.
 	  "RAIN" — Windman can't take off inside a storm cloud's rain zone.
 	  "LAND" — AIR RUSH IS A TAKE-OFF, NOT A MID-AIR JET: Windman must have his
 	           feet on the ground (or be inside the coyote window) to launch.
@@ -5079,7 +5097,10 @@ func get_ability_block_reason() -> String:
 	# rule about a take-off, asked of an ability that is not one. Answering the whole
 	# windman branch in one place also means one `_sheltered()` call for the frame.
 	if _sheltered():
-		return ""
+		# "SEEING" — ONE LOOK AT A TIME. See `WINDMAN_SIGHT_DURATION` for why this is
+		# a gate and not a shorter duration: a fully-ranked cooldown comes back
+		# BEFORE the look ends, and without this the walls never go solid again.
+		return "SEEING" if windman_sight_timer > 0.0 else ""
 	if _weather_is_raining_here():
 		return "RAIN"
 	if not (is_on_floor() or coyote_timer > 0.0):

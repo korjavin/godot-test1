@@ -5467,6 +5467,16 @@ func set_xray(on: bool) -> void:
 	set piece are not in the list and cannot be reached from this function. You look
 	through the walls of your storey; the building keeps its floors and its gates.
 
+	`ponytail:` EVERY storey's walls are swapped, not just the one you are on (codex
+	review). Deliberate, and the answer is what stays opaque: the slabs do, so a
+	neighbouring floor's translucent walls are behind a solid ceiling and you cannot
+	see them — "your storey" is delivered by the floors, never by this list. It also
+	means walking up a ramp mid-ability needs no re-swap and no per-frame floor
+	tracking, and `_update_visibility` has already culled all but three or four
+	storeys, so the fill rate this could save is a fraction of a cost that is already
+	the ability's known ceiling (see `xray_material`). Filter by `current_floor()`
+	here if that ever measures.
+
 	Idempotent, and safe to call on an interior that is being torn down — the
 	`is_instance_valid` guard is there because the tower streams out with the terrain
 	and a running ability outlives it by up to its own duration.
