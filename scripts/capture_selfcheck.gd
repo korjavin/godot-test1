@@ -2609,6 +2609,9 @@ func _assert_cell_body(interior: Node, hero: String, expected: bool) -> void:
 		return
 	if body.get_parent() == null or String(body.get_parent().name) != "Floor%d" % floor_index:
 		_fail("capture: %s's body is not parented to its storey floor" % hero)
+	if absf(body.position.y - TowerInterior.FLOOR_Y[floor_index]) > 0.001:
+		_fail("capture: %s's body is at y %.3f, not the storey walking surface %.3f" % [
+			hero, body.position.y, TowerInterior.FLOOR_Y[floor_index]])
 	if body.process_mode != Node.PROCESS_MODE_DISABLED:
 		_fail("capture: %s's cell body has processing enabled" % hero)
 	var pending: Array[Node] = [body]

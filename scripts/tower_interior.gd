@@ -4595,7 +4595,9 @@ func _refresh_cell_body(hero: String) -> void:
 	# A jailed model is scenery. Disable any future scene-side processing so this
 	# body can never acquire the player's walk/breathe animation by accident.
 	body.process_mode = Node.PROCESS_MODE_DISABLED
-	body.position = cell_stand(hero)
+	var stand := cell_stand(hero)
+	stand.y = FLOOR_Y[floor_index]
+	body.position = stand
 	# Character scenes face -Z at their authored neutral rotation. The gallery is
 	# on the +Z side of the cell row, so a half turn makes every captive face it.
 	body.rotation.y = PI
