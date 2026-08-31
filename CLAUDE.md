@@ -448,7 +448,7 @@ The building is full to its sealed roof — ten floor indices, `FLOOR_Y[0..9]`:
 `scripts/tower_graph.gd` is the tower's TOPOLOGY as one const dict of plain dicts —
 rooms, gated passages, entries, the mutation table, the enumerated scar states, the four
 rescue spines. Pure data, depended on by nobody (so no cycle): the interior takes its
-gate ids and its identity gate's hero from it, and `tower_selfcheck` walks it to prove
+gate ids and its identity-gate heroes from it, and `tower_selfcheck` walks it to prove
 the campaign cannot softlock. Its three design laws are what make that audit tractable —
 **spines at floor rank, no item custody, mutations may only ADD edges** (the full-custody
 scar being the one owner-sanctioned exception) — and the check asserts all three

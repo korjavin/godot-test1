@@ -5,9 +5,9 @@ extends RefCounted
 ## Epic godot-test1-3iy, phase 4. This file is DATA. It holds no logic, runs no
 ## world, and is read by exactly two things:
 ##
-##   * `tower_interior.gd`, which takes the gate ids and the identity gate's hero
-##     from here rather than restating them (so the building and the graph cannot
-##     disagree about what a gate IS);
+##   * `tower_interior.gd`, which takes the gate ids and identity-gate heroes from
+##     here rather than restating them (so the building and graph cannot disagree
+##     about what a gate IS);
 ##   * `tower_selfcheck.gd`, which walks it headlessly and proves the campaign
 ##     cannot softlock (so the building and the graph cannot disagree about what a
 ##     gate DOES).
@@ -113,6 +113,9 @@ extends RefCounted
 const GATE_DEMAND: String = "tower_vault"
 const GATE_IDENTITY: String = "tower_secure_door"
 const GATE_CHECKPOINT: String = "tower_checkpoint"
+## The only base-kit challenge that keeps a full-height rising mass and pad.
+## Geometry overrides are deliberately not a general gate-class escape hatch.
+const GEOMETRY_MASS: String = "mass"
 
 ## Phase 16's unlockable lift stop, and it is an ENTRY id rather than a gate id —
 ## but it rides the SAME monotone opened set for the same reason a checkpoint does:
@@ -166,6 +169,12 @@ const HEROES: Array[String] = ["windman", "primm", "teibi", "phoboman"]
 ##                 set on the solve (law 3). So a riddle asks nothing of WHO you
 ##                 are — it asks where you have been — and the audit refuses a
 ##                 riddle row that names a hero.
+##
+## `geometry` is optional, but its only supported override is the secure
+## checkpoint's base-kit challenge row. That row keeps the authored rising mass
+## and derived pad (`GEOMETRY_MASS`); every other challenge remains a lintel, and
+## `tower_selfcheck` rejects any new mass override rather than certifying a gate
+## whose runtime has no generic trigger.
 const CLASS_CHALLENGE: String = "challenge"
 const CLASS_IDENTITY: String = "identity"
 const CLASS_DEMAND: String = "demand"
@@ -210,7 +219,7 @@ const TOWER_GRAPH: Dictionary = {
 		"checkpoint_room": {
 			"built": true, "quest": "checkpoint", "cell": "",
 			"parts": ["CheckpointPlate", "CheckpointPost"],
-			"note": "East of the identity gate, drawn on storey 2's grid. The run's "
+			"note": "East of the secure door, drawn on storey 2's grid. The run's "
 				+ "respawn anchor, and a safe haven by construction: the floor's one "
 				+ "guard post is in the vestibule outside, and a derived patrol cannot "
 				+ "cross the doorway's own cells.",
@@ -773,13 +782,17 @@ const TOWER_GRAPH: Dictionary = {
 			"note": "Optional vault. One rank of Long Step — forecastable, never on a rescue route.",
 		},
 		GATE_IDENTITY: {
-			"class": CLASS_IDENTITY, "identity": "teibi", "effect": "", "scale": 0.0,
+			# This was the phase-3 Teibi lock. It remains a rising mass and keeps its
+			# persisted id, but the checkpoint is base kit: a party must not lose its
+			# only restoration point when Teibi is captive or absent.
+			"class": CLASS_CHALLENGE, "identity": "", "effect": "", "scale": 0.0,
+			"geometry": GEOMETRY_MASS,
 			"needed_during_captivity": false, "built": true, "quest": "checkpoint",
 			# Drawn by storey 2's `D` run since bead godot-test1-dn8, so the mass and
 			# its derived pad carry the plan builder's names — exactly as phase 16 did
 			# for the four spine gates. `parts` is NOT persisted; gate ids are.
 			"parts": ["S1PlanGateMass_tower_secure_door", "S1PlanGatePad_tower_secure_door"],
-			"note": "The mass only Teibi lifts. Behind it is a checkpoint, never a cell.",
+			"note": "A base-kit rising mass. Behind it is a checkpoint, never a cell.",
 		},
 
 		# --- phase 8 ---
@@ -1073,11 +1086,12 @@ static func entry(id: String) -> Dictionary:
 
 static func identity_of(id: String) -> String:
 	"""
-	Which hero an identity gate asks for, "" when it asks for nobody.
+	Which hero an identity gate asks for, "" when it asks for nobody. Base-kit
+	challenge gates may also carry an empty identity while retaining a mass shape.
 
-	`tower_interior.gd` reads its identity gate's hero through here, so the name
-	"teibi" is written once in this repository and the building cannot ask for a
-	hero the audit thinks it does not.
+	`tower_interior.gd` reads identity-gate heroes through here, so a named hero is
+	written once in this repository and the building cannot ask for a hero the audit
+	thinks it does not.
 	"""
 	return String(gate(id).get("identity", ""))
 

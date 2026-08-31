@@ -43,8 +43,8 @@ extends SceneTree
 ##      materials shared process-wide and already toon so ToonShading declines to
 ##      duplicate them. Checks 5 and 6 — the shell's discipline, one storey up.
 ##   6. **THE GATE LIFECYCLE.** Check 7 is the acceptance walk, driven under real
-##      physics: a wrong hero on the identity pad opens nothing; the RIGHT hero
-##      standing on the same pad WITHOUT MOVING opens it (which is what "keys on who
+##      physics: the checkpoint's base-kit gate opens for a hero standing on its
+##      pad WITHOUT MOVING (even when Teibi is absent), which is what "keys on who
 ##      is standing there, not on who walked in" means, and the only form of the
 ##      assertion a `body_entered` latch cannot pass); the demand gate refuses a
 ##      short reading with a partway reaction, a lit-band count and an explanation
@@ -1407,18 +1407,16 @@ func _check_gate_lifecycle() -> void:
 	IN ORDER, because the order is the point:
 	  a. Nothing is open to start with, and the moving parts are where the table put
 	     them.
-	  b. A WRONG HERO stands on the identity pad and nothing happens.
-	  c. THE RIGHT HERO STANDS ON THE SAME PAD WITHOUT MOVING and it opens. This is
-	     the whole identity-gate contract — E switches character where you stand, so
-	     the gate has to re-ask every frame. A `body_entered` latch passes (b) and
-	     fails here, which is exactly why (b) and (c) are two steps and not one.
-	  d. The mass's MESH AND ITS COLLISION SHAPE both end up risen. A gate that
+	  b. A hero from a party WITHOUT TEIBI stands on the secure-door pad WITHOUT
+	     MOVING and it opens. The checkpoint is base kit, so its restored geometry
+	     must not ask which hero is present.
+	  c. The mass's MESH AND ITS COLLISION SHAPE both end up risen. A gate that
 	     opened only visually is a wall you can see through.
-	  e. A short reading at the demand gate opens nothing, moves the shutter
+	  d. A short reading at the demand gate opens nothing, moves the shutter
 	     partway, lights a PROPORTIONAL number of calibration bands and prints an
 	     explanation naming both numbers. Then a reading that meets the demand opens
 	     it for good.
-	  f. The checkpoint records itself, and all three ids are in the tower's set.
+	  e. The checkpoint records itself, and all three ids are in the tower's set.
 	"""
 	# This check asserts "a fresh tower has nothing open", so it starts from a
 	# profile that has nothing in it — an earlier check's write-through would
@@ -1434,16 +1432,28 @@ func _check_gate_lifecycle() -> void:
 	# (a) the starting state
 	if not shell.opened_ids().is_empty():
 		_fail("a fresh tower already has gates open: %s" % [shell.opened_ids()])
-	# THE IDENTITY MASS IS THE PLAN BUILDER'S NOW, so it is found by the PATTERN
+	# THE SECURE MASS IS THE PLAN BUILDER'S NOW, so it is found by the PATTERN
 	# every plan gate mass answers to (`S<floor>PlanGateMass_<id>`) and never by a
 	# hand-authored name — exactly as the riddles below already were. Bead
 	# `godot-test1-dn8` drew the secure door as a `D` run on floor 1's grid; the
 	# gate id is the persisted thing and the box name is not, so matching on the id
 	# is what survives the storey moving again.
+	var secure_gate := TowerGraph.gate(TowerInterior.GATE_IDENTITY)
+	if String(secure_gate.get("class", "")) != TowerGraph.CLASS_CHALLENGE \
+			or String(secure_gate.get("identity", "")) != "":
+		_fail("the secure checkpoint still carries an identity hero requirement")
+	if String(secure_gate.get("geometry", "")) != TowerGraph.GEOMETRY_MASS:
+		_fail("the base-kit secure checkpoint lost its authored mass geometry")
+	for box: Dictionary in TowerInterior.all_boxes():
+		var box_name := String(box.get("name", ""))
+		if box_name.ends_with("GateMass_%s" % TowerInterior.GATE_IDENTITY) \
+				or box_name.ends_with("GatePad_%s" % TowerInterior.GATE_IDENTITY):
+			if box.get("color", Color.BLACK) != TowerInterior.COLOR_HAZARD:
+				_fail("the base-kit secure door's mass/pad still uses identity styling")
 	var mass := _gate_mass(interior, TowerInterior.GATE_IDENTITY)
 	var shutter := interior.find_child("DemandShutter", true, false) as MeshInstance3D
 	if mass == null:
-		_fail("the identity gate built no mass — check 7 has nothing to open")
+		_fail("the secure door built no mass — check 7 has nothing to open")
 		await _clear(null, shell)
 		return
 	var mass_rest: float = mass.position.y
@@ -1458,7 +1468,7 @@ func _check_gate_lifecycle() -> void:
 	hero.add_to_group("player")
 	root.add_child(hero)
 
-	# (b) the wrong hero, standing on the pad
+	# (b) a party without Teibi, standing on the pad
 	hero.hero = "windman"
 	# The pad is a BOX and not a node: `_plan_gates` draws it `collide: false`, so
 	# it batches into `Floor1Batch` like every other static plate. It had its own
@@ -1469,7 +1479,7 @@ func _check_gate_lifecycle() -> void:
 		if String(plate["name"]).ends_with("GatePad_%s" % TowerInterior.GATE_IDENTITY):
 			pad_drawn = true
 	if not pad_drawn:
-		_fail("the identity gate drew no pad plate — the plan resolved no side to stand on")
+		_fail("the secure door drew no pad plate — the plan resolved no side to stand on")
 	var pad_area := interior.get_node_or_null("Floor1/IdentityTrigger") as Area3D
 	if pad_area == null:
 		_fail("there is no IdentityTrigger Area3D on the upper storey")
@@ -1478,14 +1488,8 @@ func _check_gate_lifecycle() -> void:
 	hero.global_position = pad_area.global_position
 	await _settle_physics()
 	interior._process(0.1)
-	if shell.is_opened(TowerInterior.GATE_IDENTITY):
-		_fail("Windman opened the identity gate — it is not keyed on the hero at all")
-
-	# (c) the right hero, WITHOUT MOVING
-	hero.hero = "teibi"
-	interior._process(0.1)
 	if not shell.is_opened(TowerInterior.GATE_IDENTITY):
-		_fail("Teibi standing on the identity pad did not open it — the gate latched on who walked in, not on who is standing there")
+		_fail("a party without Teibi could not open the base-kit secure door while standing on its pad")
 
 	# (d) mesh and collision shape both travel
 	for _i in 30:
@@ -1493,15 +1497,15 @@ func _check_gate_lifecycle() -> void:
 	var body := interior.get_node_or_null("InteriorCollision") as StaticBody3D
 	var mass_shape := body.get_node_or_null("%sShape" % mass.name) as CollisionShape3D
 	if absf(mass.position.y - (mass_rest + TowerInterior.MASS_TRAVEL)) > 0.01:
-		_fail("the identity mass stopped at %.2f m, expected %.2f m" % [
+		_fail("the secure mass stopped at %.2f m, expected %.2f m" % [
 			mass.position.y, mass_rest + TowerInterior.MASS_TRAVEL])
 	if mass_shape == null or absf(mass_shape.position.y - mass.position.y) > EPS:
-		_fail("the identity mass's collision shape did not travel with its mesh — the doorway still has an invisible wall in it")
+		_fail("the secure mass's collision shape did not travel with its mesh — the doorway still has an invisible wall in it")
 	# ...and having travelled, it is RETIRED. A mass is as tall as its room, so a
 	# fully risen one stands half out of the storey above (this one's centre lands
 	# on FLOOR_Y[2] exactly). Asserting the y alone let that ship.
 	if mass.visible or (mass_shape != null and not mass_shape.disabled):
-		_fail("the fully opened identity mass is still drawn/solid — it is standing 2 m proud of storey 3's floor")
+		_fail("the fully opened secure mass is still drawn/solid — it is standing 2 m proud of storey 3's floor")
 
 	# (e) the demand gate: short, then enough
 	var demand_area := interior.get_node_or_null("Floor0/DemandTrigger") as Area3D
@@ -1742,7 +1746,7 @@ func _check_opened_state_is_reapplied() -> void:
 			shutter_rest = box["pos"].y
 
 	if absf(mass.position.y - (mass_rest + TowerInterior.MASS_TRAVEL)) > EPS:
-		_fail("a pre-opened tower rebuilt its identity mass shut (y = %.2f, wanted %.2f)" % [
+		_fail("a pre-opened tower rebuilt its secure mass shut (y = %.2f, wanted %.2f)" % [
 			mass.position.y, mass_rest + TowerInterior.MASS_TRAVEL])
 	if absf(shutter.position.y - (shutter_rest - TowerInterior.SHUTTER_TRAVEL)) > EPS:
 		_fail("a pre-opened tower rebuilt its vault shutter shut (y = %.2f, wanted %.2f)" % [
@@ -1751,7 +1755,7 @@ func _check_opened_state_is_reapplied() -> void:
 		_fail("a pre-opened tower rebuilt its checkpoint unlit")
 	var mass_shape := body.get_node_or_null("%sShape" % mass.name) as CollisionShape3D
 	if mass_shape == null or absf(mass_shape.position.y - mass.position.y) > EPS:
-		_fail("a pre-opened tower left the identity mass's collision shape in the doorway")
+		_fail("a pre-opened tower left the secure mass's collision shape in the doorway")
 	var shutter_shape := body.get_node_or_null("DemandShutterShape") as CollisionShape3D
 	if shutter_shape == null or absf(shutter_shape.position.y - shutter.position.y) > EPS:
 		_fail("a pre-opened tower left the shutter's collision shape sealing the vault")
@@ -3009,7 +3013,7 @@ func _check_guards_stand_their_posts() -> void:
 	    of the building, or off the upper slab and down into the courtyard.
 	  * A LEASH BOX BIGGER THAN ITS STOREY. The upper guard's box must stay over the
 	    slab and WEST of the secure partition — that second half is what makes the
-	    checkpoint beyond the identity gate a safe haven by construction, which the
+	    checkpoint beyond the secure door a safe haven by construction, which the
 	    setback path in `player_controller` relies on and cannot check for itself.
 
 	The count is taken from the BODIES IN THE TREE (`guard_posts()`), never from

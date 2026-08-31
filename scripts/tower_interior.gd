@@ -30,7 +30,7 @@ extends Node3D
 ##                      →  THE RAMP, up the courtyard's south-west corner
 ##                      →  MUSTER FLOOR (storey 2), an 80 m plate with the
 ##                         checkpoint walled off east behind the SECURE DOOR
-##                      →  THE IDENTITY GATE: the mass only Teibi can lift
+##                      →  THE BASE-KIT MASS: any hero can lift it
 ##                      →  THE CHECKPOINT, lit green once you stand on it
 ##
 ##   and, off the hall to the south, the DEMAND GATE sealing a vault. Optional,
@@ -84,6 +84,9 @@ extends Node3D
 ##     Rule for later rooms: a challenge NEVER carries a calibration band and
 ##     NEVER carries a hero colour. If a player has to ask "can I even attempt
 ##     this?" it has been built wrong — the answer is always yes.
+##     The secure checkpoint is the one authored challenge exception to the
+##     usual lintel silhouette: its rising mass and floor pad stay hazard orange
+##     while its access remains base kit. It never uses the violet identity style.
 ##
 ##   DEMAND GATE — a corporate mechanism that measures you and finds you short.
 ##     Silhouette: a SEALED SLAB flush in a wall, plus a free-standing RECEPTACLE
@@ -577,7 +580,7 @@ const DEMAND_TARGET: float = 7.2
 ## short reading through; it only makes the comparison mean what the number says.
 const DEMAND_TOLERANCE: float = 0.01
 
-## How far the identity mass rises when it opens, and how far the demand shutter
+## How far the secure mass rises when it opens, and how far the demand shutter
 ## sinks. Both are a full body-height of travel so the opening is unambiguous, and
 ## the mass's is enough to carry its foot clear of the shell parapet — the risen
 ## counterweight is visible from the yard, which is what makes it WORLD state
@@ -3041,7 +3044,9 @@ static func _plan_gates(plan: Dictionary) -> Array[Dictionary]:
 	            batched, so the opening reads as a duct. The hazard that sweeps
 	            under it is hand-built from the same run (`_block_boxes` for the
 	            crawl's press, `_rotor_boxes` for the rotor doorway's bars), because
-	            a thing that moves is not a plan character.
+	            a thing that moves is not a plan character. The secure checkpoint is
+	            the one authored exception: its graph row declares `GEOMETRY_MASS`
+	            so the rising mass and derived pad remain while access stays base kit.
 	  DEMAND    nothing at all. Its shutter SINKS rather than rising and its
 	            receptacle is not a character either, so `_demand_boxes` builds the
 	            whole gate off the same run — see the arm for the argument.
@@ -3067,7 +3072,8 @@ static func _plan_gates(plan: Dictionary) -> Array[Dictionary]:
 		var x1 := _grid_x(float(span.end.x))
 		var z0 := _grid_z(float(span.position.y))
 		var z1 := _grid_z(float(span.end.y))
-		var cls := String(TowerGraph.gate(gid).get("class", ""))
+		var gate := TowerGraph.gate(gid)
+		var cls := String(gate.get("class", ""))
 		if cls == TowerGraph.CLASS_DEMAND:
 			# NOTHING, on purpose. A demand gate's mass SINKS — it is the one gate in
 			# the building that opens downwards — so the generic mass above, which is
@@ -3077,7 +3083,11 @@ static func _plan_gates(plan: Dictionary) -> Array[Dictionary]:
 			# in front of a door is not a plan character. `_demand_boxes()` reads this
 			# same run and builds all six.
 			continue
-		if cls == TowerGraph.CLASS_CHALLENGE:
+		# Access class and authored silhouette are separate. The secure checkpoint
+		# is base kit (challenge semantics), but its existing rising mass and derived
+		# pad are part of the shipped floor plan and must remain in the doorway.
+		var geometry := String(gate.get("geometry", ""))
+		if cls == TowerGraph.CLASS_CHALLENGE and geometry != TowerGraph.GEOMETRY_MASS:
 			var lintel_h := clear - CRAWL_LINTEL_Y
 			out.append({
 				"name": "%sGateLintel_%s" % [prefix, gid],
@@ -3088,15 +3098,19 @@ static func _plan_gates(plan: Dictionary) -> Array[Dictionary]:
 			})
 			continue
 		var identity := cls == TowerGraph.CLASS_IDENTITY
+		var mass_style := geometry == TowerGraph.GEOMETRY_MASS
 		out.append({
 			"name": "%sGateMass_%s" % [prefix, gid],
 			"pos": Vector3((x0 + x1) * 0.5, top + clear * 0.5, (z0 + z1) * 0.5),
 			"size": Vector3(x1 - x0, clear, z1 - z0),
-			"color": COLOR_IDENTITY if identity else COLOR_RIDDLE,
+			# A mass override does not turn a base-kit challenge into an identity
+			# gate visually. Violet is reserved for doors that name a hero; this
+			# checkpoint remains hazard orange like the other challenge geometry.
+			"color": COLOR_IDENTITY if identity else COLOR_HAZARD if mass_style else COLOR_RIDDLE,
 			"collide": true, "floor": floor_index,
 			"dynamic": true,
 		})
-		if not identity:
+		if not identity and not mass_style:
 			continue
 		# ...and the one pad you stand on, on the side of the doorway you approach
 		# it from. An unresolvable side is an AUTHORING ERROR and is left unbuilt
@@ -3111,7 +3125,8 @@ static func _plan_gates(plan: Dictionary) -> Array[Dictionary]:
 			"pos": Vector3(_grid_x(float(cell.x) + 0.5), top + PLAN_PAD_THICK * 0.5,
 					_grid_z(float(cell.y) + 0.5)),
 			"size": Vector3(TowerPlans.PLAN_CELL, PLAN_PAD_THICK, TowerPlans.PLAN_CELL),
-			"color": COLOR_IDENTITY_PAD, "collide": false, "floor": floor_index,
+			"color": COLOR_IDENTITY_PAD if identity else COLOR_HAZARD,
+			"collide": false, "floor": floor_index,
 		})
 
 	for pad: Dictionary in slots["pads"]:
@@ -3136,8 +3151,8 @@ static func _plan_gates(plan: Dictionary) -> Array[Dictionary]:
 
 static func gate_pad_cell(plan: Dictionary, span: Rect2i) -> Vector2i:
 	"""
-	Which cell an identity gate's pad stands on, `Vector2i(-1, -1)` when the plan
-	cannot say.
+	Which cell a rising mass's pad stands on, `Vector2i(-1, -1)` when the plan
+	cannot say. This serves named identity gates and the base-kit secure mass.
 
 	@param span: The gate's `D` run, in cells.
 
@@ -4202,7 +4217,7 @@ func _place_shutter() -> void:
 
 func _place_mass() -> void:
 	"""
-	Put the identity mass where its open fraction says. It only ever rises.
+	Put the secure mass where its open fraction says. It only ever rises.
 
 	AND IT RISES INTO STOREY 3, which is why `_retire` is here — the same call
 	`_place_spine` makes, for the same reason: fully open, half the mass stands
@@ -4227,13 +4242,13 @@ func _place_mass() -> void:
 
 func _tick_pads() -> void:
 	"""
-	Re-decide both pads against the CURRENT hero, every frame.
+	Re-decide the secure-door and demand pads against the CURRENT hero, every frame.
 
-	THIS IS THE IDENTITY GATE'S WHOLE CONTRACT and the reason it is polled rather
-	than answered in `body_entered`: E switches character while you stand there, and
-	ability state is cleared on a switch (player_controller's existing rule), so the
-	only honest question is "who is standing here NOW". Nothing is buffered, nothing
-	is held, nothing counts down.
+	The secure door is polled rather than answered in `body_entered`: E switches
+	character while you stand there, and ability state is cleared on a switch
+	(player_controller's existing rule), so the gate re-evaluates the hero standing
+	there every frame. It is base kit, so every hero passes; identity spine doors
+	below still compare their named hero. Nothing is buffered, held, or counted down.
 
 	THE DEMAND GATE GETS THE SAME TREATMENT, and for a reason that is legibility
 	rather than symmetry: its calibration ladder relights live as you cycle heroes on
@@ -4245,10 +4260,13 @@ func _tick_pads() -> void:
 	"""
 	if _player == null:
 		return
-	# WHICH hero the mass answers to is the graph's to say, not this file's — see
-	# the GATE IDS block. The name is written down once, in `tower_graph.gd`.
-	if (_on_identity_pad and _hero_name() == TowerGraph.identity_of(GATE_IDENTITY)
-			and not _is_open(GATE_IDENTITY)):
+	# The gate's access class is the graph's to say. The secure checkpoint is a
+	# base-kit challenge, so its mass opens for whoever is standing on its pad;
+	# identity gates elsewhere still compare the graph's named hero here.
+	var identity_gate := TowerGraph.gate(GATE_IDENTITY)
+	var named_identity := String(identity_gate.get("class", "")) == TowerGraph.CLASS_IDENTITY
+	var hero_matches := not named_identity or _hero_name() == TowerGraph.identity_of(GATE_IDENTITY)
+	if (_on_identity_pad and hero_matches and not _is_open(GATE_IDENTITY)):
 		_open(GATE_IDENTITY)
 		_say(tr("The mass lifts. The way through stays open."))
 		_sfx("play_level_up")
@@ -4271,7 +4289,7 @@ func _tick_riddle_pads() -> void:
 	each other, so walking from pad 2 onto pad 3 fires an enter and an exit in an
 	order Godot does not promise. Holding "which pad is under the player" and acting
 	on the CHANGE makes the step depend on where you are and not on which signal won
-	the frame — the same reasoning that made the identity gate a poll, one gate verb
+	the frame — the same reasoning that makes the secure door a poll, one gate verb
 	later. Standing still presses nothing, which is what makes a four-step sequence
 	enterable at a walk.
 	"""
@@ -4772,7 +4790,7 @@ func _remember(box_name: String, mesh: MeshInstance3D) -> void:
 			# the spine doors stand on a storey and not on y = 0.
 			_gate_rest[gid] = mesh.position.y
 			if gid == GATE_IDENTITY:
-				# THE ONE IDENTITY GATE THAT IS NOT A RESCUE SPINE. It is drawn by
+				# THE SECURE CHECKPOINT MASS THAT IS NOT A RESCUE SPINE. It is drawn by
 				# the same builder and carries the same name shape since bead
 				# `godot-test1-dn8` (`S1PlanGateMass_tower_secure_door`), but it is
 				# the phase-3 secure door with its own tween, its own trigger and its
