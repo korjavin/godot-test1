@@ -1059,6 +1059,106 @@ func _check_a_guard_takes_coins_and_ground() -> void:
 	if not player_c.run_beat_record:
 		_fail("a repeat bank cleared run_beat_record — the latch is per RUN, and"
 			+ " only the two places that wipe own_distance may clear it")
+	# ...and a LATE LOBBY REPLY reconciles it AT THE ENDING. The store answers
+	# asynchronously, so a bite early in a run banks against whatever had loaded by
+	# then (0, if the lobby leg is still in flight) — a record this run never beat
+	# has to take the flash back with it, or the ending claims a best the player's
+	# other device already holds.
+	#
+	# Driven on `server_best_distance`, the store's PRE-MERGE server number, which
+	# is the whole point of that field existing: the emitted/merged value contains
+	# this run's own banked distance by now, so it cannot tell an echo of our own
+	# submission from another device's record. A reconciliation reading the merged
+	# number is wrong in one direction or the other whichever comparison it picks.
+	var probe_store: BestRunStore = player_c.best_run_store
+	if probe_store == null:
+		_fail("the player built no BestRunStore — the record latch has nothing to"
+			+ " reconcile against and the assertions below measure nothing")
+		return
+	probe_store.server_best_distance = 0
+	player_c.call("_reconcile_record_latch")
+	if not player_c.run_beat_record:
+		_fail("an unreachable lobby (no server record at all) cleared"
+			+ " run_beat_record — 0 outranks nothing and the local comparison stands")
+	probe_store.server_best_distance = SETBACK_PROBE_COINS - 1
+	player_c.call("_reconcile_record_latch")
+	if not player_c.run_beat_record:
+		_fail("a server record BELOW this run's distance cleared run_beat_record —"
+			+ " the run really is ahead of it, so the flash was earned")
+	# THE TIE is the case a merged-value reconciliation cannot see at all: a server
+	# already holding exactly this distance raises nothing, so `loaded` never fires
+	# — and the run matched a record rather than setting one.
+	probe_store.server_best_distance = SETBACK_PROBE_COINS
+	player_c.call("_reconcile_record_latch")
+	if player_c.run_beat_record:
+		_fail("a server record EQUAL to this run's distance left run_beat_record set"
+			+ " — the run TIED the record another device holds and beat nothing, so"
+			+ " the ending would flash NEW BEST for a number it only matched")
+	player_c.run_beat_record = true
+	probe_store.server_best_distance = SETBACK_PROBE_COINS + 1
+	player_c.call("_reconcile_record_latch")
+	if player_c.run_beat_record:
+		_fail("a server record ABOVE this run's distance left run_beat_record set —"
+			+ " the ending would flash NEW BEST for a record another device holds")
+	# ...and a COIN-ONLY store emission still leaves it alone. `BestRunStore` emits
+	# `loaded` on distance OR coins, and the bank above already submitted this
+	# run's distance, so such a reply carries a distance EQUAL to own_distance by
+	# construction — the echo that a `>=` reconciliation on the emitted value used
+	# to eat the earned flash with.
+	probe_store.server_best_distance = 0
+	player_c.run_beat_record = true
+	player_c.call("_on_best_run_loaded", SETBACK_PROBE_COINS, SETBACK_PROBE_COINS * 10)
+	if not player_c.run_beat_record:
+		_fail("a coin-only store emission cleared run_beat_record — it echoes this"
+			+ " run's own banked distance back and beat nothing the run did not")
+	player_c.run_beat_record = true  # ...and back, for the join_at check below.
+
+	# ...and the BASELINE ITSELF refuses a reply that raced our own submission.
+	# Everything above assumes `server_best_distance` holds another device's
+	# number, and the two `HTTPRequest` nodes are exactly what can break that: the
+	# boot GET and a bite's POST overlap by design, the lobby serves them
+	# concurrently, and a POST merged first makes the GET reply an echo of this
+	# run. Driven on the store's own reply handler with a synthetic 200 body — the
+	# leg the assignments above deliberately skip.
+	# The body carries the store's OWN merged numbers, so `server_is_behind` reads
+	# false and the handler fires no catch-up POST — a self-check may not talk to
+	# the real lobby. Distance is this run's, which is the echo being modelled.
+	var echo_distance: int = maxi(SETBACK_PROBE_COINS, probe_store.distance)
+	var echo_body := JSON.stringify({
+		"distance": echo_distance,
+		"coins": probe_store.coins,
+		"lifetime": probe_store.lifetime_coins,
+		"spent": probe_store.spent_points,
+	}).to_utf8_buffer()
+	probe_store.server_best_distance = 0
+	probe_store.set("_get_in_flight", true)
+	probe_store.set("_get_baseline_ok", false)  # ...as a POST inside the window leaves it.
+	probe_store.call(
+		"_on_get_completed", HTTPRequest.RESULT_SUCCESS, 200, PackedStringArray(), echo_body
+	)
+	if probe_store.server_best_distance != 0:
+		_fail("a /best GET reply that a POST had already raced was recorded as a"
+			+ " pre-existing server record (server_best_distance %d)"
+			% probe_store.server_best_distance
+			+ " — that number is this run's own bank coming back, and the ending"
+			+ " would take away a NEW BEST the player earned")
+	if probe_store.get("_get_in_flight"):
+		_fail("the GET reply left its own request in flight — the next POST would"
+			+ " retire a baseline that no longer exists and every later boot would"
+			+ " report no server record at all")
+	# The control: an unraced reply is exactly what the field is for.
+	probe_store.set("_get_in_flight", true)
+	probe_store.set("_get_baseline_ok", true)
+	probe_store.call(
+		"_on_get_completed", HTTPRequest.RESULT_SUCCESS, 200, PackedStringArray(), echo_body
+	)
+	if probe_store.server_best_distance != echo_distance:
+		_fail("an unraced /best GET reply recorded no server record"
+			+ " (server_best_distance %d)" % probe_store.server_best_distance
+			+ " — the guard above ate the case it exists to protect and the"
+			+ " reconciliation can never fire")
+	probe_store.server_best_distance = 0
+
 	# ...and it does not outlive the distance it is derived from. `join_at()` is
 	# the OTHER place own_distance and run_distance restart at zero (a mid-run
 	# join to a room), and a latch left standing across it flashes "NEW BEST!"

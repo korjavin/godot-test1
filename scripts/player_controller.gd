@@ -365,6 +365,18 @@ var best_run_store: BestRunStore = null
 ## clears it.
 var run_beat_record: bool = false
 
+## How often the run's records are checkpointed while the player is simply
+## playing. `_bank_records()` runs on every bite because a bite is what replaced
+## the ending as the end of a leg (bead godot-test1-0bc) — but a bite is not
+## GUARANTEED any more, and a careful player can run for an hour without one, so
+## a closed tab would still take the whole session with it. This tick is the
+## damage-independent half of the same guarantee. It is nearly free: both writers
+## under `_bank_records()` are change-gated (`BestRunStore.submit()` only when a
+## record moved, `Progression.save()` dropping a save whose counters have not),
+## so a quiet interval costs two integer comparisons.
+const BANK_INTERVAL: float = 15.0
+var bank_timer: float = 0.0
+
 ## "Caught" sequence: when a crocodile bites the player we freeze briefly (so the
 ## bite is actually visible), flash the screen red and shake the camera, then
 ## respawn. These track that short window.
@@ -1241,6 +1253,13 @@ func _physics_process(delta: float) -> void:
 	# Measured from own_distance_origin, which is the spawn except after a mid-run
 	# join — see that field for why the personal record cannot use `travelled`.
 	own_distance = maxi(own_distance, int((here - own_distance_origin).length()))
+
+	# STEP 0.41: Checkpoint those records on a slow timer. See BANK_INTERVAL — a
+	# session that never takes a bite must not be lost to a closed tab.
+	bank_timer += delta
+	if bank_timer >= BANK_INTERVAL:
+		bank_timer = 0.0
+		_bank_records()
 
 	# STEP 0.42: In a multiplayer room the score fields the two HUDs read become
 	# the ROOM's, not this peer's. Done here, immediately after the local
@@ -3491,6 +3510,9 @@ func _trigger_game_over() -> void:
 	# `own_distance > best_distance` is false on exactly the record runs the flash
 	# exists for.
 	_bank_records()
+	# ...and reconcile that latch against what the lobby answered while the run
+	# was going on. See `_reconcile_record_latch()`.
+	_reconcile_record_latch()
 
 	var panel := get_tree().get_first_node_in_group("game_over_ui")
 	if panel and panel.has_method("show_game_over"):
@@ -3575,6 +3597,32 @@ func _on_best_run_loaded(store_distance: int, store_coins: int) -> void:
 	"""
 	best_distance = maxi(best_distance, store_distance)
 	best_coins = maxi(best_coins, store_coins)
+
+
+func _reconcile_record_latch() -> void:
+	"""
+	Take the "NEW BEST!" flash back if the record this run beat was one it never
+	saw. Called at the ending, where the flash is read.
+
+	`run_beat_record` is latched at BANK time against `best_distance` — and early
+	in a run that is only whatever has loaded so far, because the store's server
+	leg answers over the network and can still be in flight. So a bite in the
+	first seconds latches a "record" the player's other device beat long ago.
+
+	AT THE ENDING, and off the SERVER's own pre-merge number rather than anything
+	emitted: by then `best_distance` and the store's merged `distance` both
+	contain this run's `submit()`s, so an echo of our own bank is arithmetically
+	indistinguishable from another device's record — which is why the store keeps
+	`server_best_distance` separately. Reconciling on the `loaded` signal could
+	not see the case at all: a server holding EXACTLY this run's distance raises
+	nothing and emits nothing.
+
+	`>=`, because a run that TIED the standing record set no new best. A store
+	with no server answer reports 0, which outranks nothing and leaves the local
+	comparison alone.
+	"""
+	if best_run_store and best_run_store.server_best_distance >= own_distance:
+		run_beat_record = false
 
 
 func restart_game() -> void:
