@@ -4805,7 +4805,14 @@ func _pose_captive_model(node: Node3D) -> void:
 
 
 func _hero_has_live_holder(hero: String) -> bool:
-	"""Whether the synchronized room assignment still has a body for `hero`."""
+	"""Whether the synchronized room assignment still has a body for `hero`.
+
+	The holder map is authoritative across peers. A holder's RemoteAvatar can be
+	temporarily hidden while WebRTC negotiates (or until the lobby removes a failed
+	member); that brief gap is benign because the containment field still marks the
+	cell and the next heroes broadcast restores the static model. Do not key this on
+	this peer's transport visibility, or cells would flicker and peers would disagree.
+	"""
 	var mp := get_tree().get_first_node_in_group("mp")
 	return mp != null and mp.has_method("hero_holder") \
 			and not String(mp.call("hero_holder", hero)).is_empty()
