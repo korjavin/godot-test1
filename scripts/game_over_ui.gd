@@ -26,6 +26,24 @@ var best_label: Label = null
 var new_best_label: Label = null
 var new_best_tween: Tween = null
 
+## Outro clip played over the Game Over screen (web build only). Godot cannot
+## decode MP4, so on web we drop a full-screen DOM <video> over the canvas via
+## JavaScriptBridge and remove it when it ends, is clicked, or Play Again fires.
+## ponytail: desktop skips the clip — the web build is the deployed target.
+## Empty string = no clip.
+const VIDEO_URL: String = "https://img.cc.wandergeek.org/game_over.mp4"
+const VIDEO_JS: String = """
+(function(){try{
+var v=document.getElementById('ck-outro');if(v)v.remove();
+v=document.createElement('video');v.id='ck-outro';v.src=%s;v.playsInline=true;
+v.style.cssText='position:fixed;inset:0;width:100vw;height:100vh;background:#000;object-fit:contain;z-index:9999;cursor:pointer';
+var done=function(){if(v.parentNode)v.remove();};
+v.onended=done;v.onerror=done;v.onclick=done;
+document.body.appendChild(v);
+var p=v.play();if(p&&p.catch)p.catch(function(){v.muted=true;v.play().catch(done);});
+}catch(e){}})()"""
+const VIDEO_STOP_JS: String = "var v=document.getElementById('ck-outro');if(v)v.remove();"
+
 
 func _ready() -> void:
 	add_to_group("game_over_ui")
@@ -164,6 +182,8 @@ func show_game_over(coins: int, distance: int, best_distance: int,
 			new_best_tween.tween_property(new_best_label, "scale",
 					Vector2.ONE, 0.4).set_trans(Tween.TRANS_SINE)
 	visible = true
+	if VIDEO_URL != "" and OS.has_feature("web"):
+		JavaScriptBridge.eval(VIDEO_JS % JSON.stringify(VIDEO_URL), true)
 
 
 func hide_game_over() -> void:
@@ -172,6 +192,8 @@ func hide_game_over() -> void:
 	when a mid-run multiplayer join revives a game-over run (see join_at).
 	"""
 	visible = false
+	if OS.has_feature("web"):
+		JavaScriptBridge.eval(VIDEO_STOP_JS, true)
 	# Stop the "NEW BEST!" pulse — a looping tween must not keep ticking behind
 	# a hidden screen for the whole next run.
 	if new_best_tween:
