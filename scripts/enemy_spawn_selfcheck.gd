@@ -430,7 +430,7 @@ func _check_species_table() -> void:
 
 	This is the cheap half of check 4 — no world, no chunks, pure data — and it
 	exists because the biome-predator epic adds one species per bead, each of
-	them a hand-copied dictionary of ~30 keys. The three ways that goes wrong are
+	them a hand-copied dictionary of ~30 keys. The four ways that goes wrong are
 	all silent from the outside, which is this file's whole subject:
 
 	  * A MISSING KEY is a crash in a per-frame path (`spec["sway_yaw"]` in
@@ -442,6 +442,9 @@ func _check_species_table() -> void:
 	  * A dispatch entry naming a species that isn't in the table, or pointing at
 	    a scene that doesn't load, degrades to a crocodile — which reads as "the
 	    new predator isn't finished yet" rather than as a bug.
+	  * A `coin_setback` outside (0.0, 1.0] is the whole stake of a contact,
+	    silently: zero is a predator you can walk into for free now that hearts
+	    are gone, and over 1.0 is a fraction clampf() quietly rewrites.
 
 	The key set is taken from the crocodile row rather than hardcoded here, so it
 	tracks the AI: add a key to the table and every row must grow it, delete one
@@ -544,6 +547,27 @@ func _check_species_table() -> void:
 						% [species_name, arc] + " (0, 360]; this one is either a"
 						+ " predator that can never acquire a quarry or a claim to"
 						+ " see further round than a circle")
+		# THE STAKE, and it is REQUIRED of every row rather than optional. Since
+		# 2026-08-31 hearts are gone: a contact costs the caught freeze plus this
+		# fraction of the run's coins and nothing else, so a row that omitted it
+		# would be a predator you can walk into for free. PRESENCE is already
+		# covered by the crocodile-derived `required` set above (the crocodile row
+		# carries it, so every row owes it) — what only this block can see is
+		# whether the value is a legal fraction. Zero is the free-hit row the bead
+		# deleted; over 1.0 is a bill bigger than the purse, which clampf() in
+		# _coin_setback_of hides at runtime, so the row would simply be a lie.
+		#
+		# The bound is (0.0, 1.0] and not the tuning range (0.0, 0.35] on purpose:
+		# this file measures what CANNOT ship, and a playtest that wants 0.4 is a
+		# tuning argument, not a broken row.
+		if row.has("coin_setback"):
+			var setback: float = float(row["coin_setback"])
+			if setback <= 0.0 or setback > 1.0:
+				_fail("SPECIES['%s'].coin_setback is %.3f — the bill for losing to a"
+						% [species_name, setback] + " predator has to be inside"
+						+ " (0.0, 1.0]; zero is a contact that costs nothing at all"
+						+ " now that hearts are gone, and over 1.0 is a fraction"
+						+ " clampf() silently rewrites")
 
 	# ---- EVERY BEHAVIOUR IN THE TABLE MUST HAVE A PROBE IN THIS FILE --------
 	# The gate that makes this check cover the SEVENTH predator without anyone
