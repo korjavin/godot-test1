@@ -475,12 +475,12 @@ const PLAN_BOX_BUDGET: int = 120
 ## labyrinth or the block, neither of which is signed.
 ##
 ## ...AND AGAIN WITH THE SECOND DRESSING PASS (bd godot-test1-st9), which is where
-## the bulk of it now is. Re-MEASURED, per storey: 115 / 82 / 334 / 428 / 333 / 312
-## / 230 / 36 / 16 / 0. Three things moved it: `DRESS_SPACING` halved and the piece
+## the bulk of it now is. Re-MEASURED, per storey: 127 / 94 / 346 / 440 / 345 / 324
+## / 242 / 36 / 16 / 0. Three things moved it: `DRESS_SPACING` halved and the piece
 ## cap raised (a room goes from 7 dressed cells to 11-16), four new furniture kinds
 ## and two new art kinds (which are boxes per piece, not pieces), and the corridor
-## benches and planters, which are a flat ten pieces a storey. 580 is the accounts
-## floor's 428 plus a third, the same headroom the number has always carried.
+## benches and planters, up to fourteen a storey. 580 is the accounts floor's 440
+## plus a third, the same headroom the number has always carried.
 ##
 ## What it catches is the dresser's OWN failure mode, which is not "the walls
 ## stopped merging" but "a rule stopped excluding": drop the threshold guard or the
@@ -1290,15 +1290,29 @@ const DRESS_ART: Array[Dictionary] = [
 # wall is corridor too, i.e. the hall is at least two cells wide there. A
 # one-cell-wide corridor is a passage, and you do not put a bench in a passage.
 #
+# "CORRIDOR" IS `.` AND `s` BOTH, and the second one is the whole ground floor
+# (codex review, 2026-08-31). The entry hall — the largest single space in the
+# building and the first thing anybody sees — is drawn as an 18 x 18 block of
+# LANDING, not of FLOOR, so a rule written against `.` alone left it bare while
+# every storey above it got benches. A landing is walkable open floor by every
+# other measure in this file; the RAMP that lands on it is a drawn box and is
+# refused by `_cell_is_taken` like any other mechanism, and a cell touching the
+# `S` lane is refused by the neighbour rule above. Everywhere else the two
+# characters differ by at most a couple of cells.
+#
 # NOT IN THE LABYRINTH AND NOT IN THE BLOCK, the same two exclusions the
 # wayfinding plaques take and for the same reason: the maze is meant to read as
 # bare cut stone, and the block is a set piece end to end.
 
-## One piece per this many qualifying corridor cells, capped per storey. The ground
-## floor's halls run to a few hundred cells; 22 puts a bench every 40-odd metres of
-## wall, which is a corridor with something in it rather than a furniture shop.
-const HALL_SPACING: int = 22
-const HALL_MAX: int = 10
+## The walkable-open-floor alphabet — see above for why the landing is in it.
+const HALL_CHARS: String = TowerPlans.FLOOR_CHAR + TowerPlans.LANDING_CHAR
+
+## One piece per this many qualifying corridor cells, capped per storey. The office
+## storeys' halls run to a few hundred qualifying cells and take the cap; the entry
+## hall has 56 and takes four, which is a lobby with seating rather than a waiting
+## room. 12 and 14 are what put something in view down a corridor without lining it.
+const HALL_SPACING: int = 12
+const HALL_MAX: int = 14
 
 ## Its own salt, so a change to the corridors cannot slide a single desk.
 const HALL_SALT: int = 0x8A11
@@ -2469,27 +2483,27 @@ static func _hall_dressing(rows: Array, floor_index: int,
 	for r: int in rows.size():
 		var line := String(rows[r])
 		for c: int in line.length():
-			if line[c] != TowerPlans.FLOOR_CHAR:
+			if not HALL_CHARS.contains(line[c]):
 				continue
 			var cell := Vector2i(c, r)
 			# EVERY NEIGHBOUR STONE OR CORRIDOR. A doorway, a pad, a gate run, a
 			# stair lane and every room letter are all "something other than `#`
-			# or `.`", so this one test is the whole traffic rule — and a set
-			# piece drawn tomorrow is excluded by it on the day it is drawn.
+			# or `HALL_CHARS`", so this one test is the whole traffic rule — and a
+			# set piece drawn tomorrow is excluded by it on the day it is drawn.
 			var normal := Vector3.ZERO
 			for step: Vector2i in _STEPS:
 				var ch := _plan_char(rows, cell + step)
 				if ch == TowerPlans.WALL_CHAR:
 					if normal == Vector3.ZERO:
 						normal = Vector3(-float(step.x), 0.0, -float(step.y))
-				elif ch != TowerPlans.FLOOR_CHAR:
+				elif not HALL_CHARS.contains(ch):
 					normal = Vector3.ZERO
 					break
 			if normal == Vector3.ZERO:
 				continue
 			# ...and the hall is two cells wide here, so the bench leaves a lane.
-			if _plan_char(rows, cell + Vector2i(int(normal.x), int(normal.z))) \
-					!= TowerPlans.FLOOR_CHAR:
+			if not HALL_CHARS.contains(
+					_plan_char(rows, cell + Vector2i(int(normal.x), int(normal.z)))):
 				continue
 			if _cell_is_taken(cell, taken) or _under_hole(cell, hole):
 				continue

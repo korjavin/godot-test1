@@ -158,8 +158,8 @@ const POST_SETTLE_EPS: float = 0.5
 ## times the shapes and lands here first.
 ##
 ## AND IT DID NOT MOVE FOR THE SECOND DRESSING PASS (bd godot-test1-st9), which is
-## the best evidence the split is real: that bead roughly DOUBLED the dressing (727
-## boxes to 1886) and the shapes went 542 to 561, nineteen. Everything it added —
+## the best evidence the split is real: that bead nearly TRIPLED the dressing (727
+## boxes to 1970) and the shapes went 542 to 561, nineteen. Everything it added —
 ## the cactus, the fern, the bin, the coat stand, the clock, the notice board and
 ## every corridor bench and planter — is something you walk through, so the density
 ## is paid for in vertices, which are batched and free, and not in shapes, which
@@ -3577,15 +3577,17 @@ func _check_the_offices_are_furnished_and_still_walkable() -> void:
 		# which is why the halls need no fill of their own), and every cell it uses
 		# is corridor whose four neighbours are stone or more corridor — so it is
 		# never in a doorway, a gate run, a stair lane, a pad or a set piece.
+		# ("Corridor" is floor OR landing — the ground floor's entry hall is drawn
+		# as the latter, and it is the biggest hall in the building.)
 		for cell: Vector2i in _hall_dress_cells(floor_index):
 			hall_pieces += 1
-			if _plan_cell(rows, cell) != TowerPlans.FLOOR_CHAR:
+			if not _is_hall(_plan_cell(rows, cell)):
 				_fail("storey %d has corridor dressing at %s, which is not corridor" % [
 					floor_index, cell])
 				continue
 			for step: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
 				var ch := _plan_cell(rows, cell + step)
-				if ch != TowerPlans.WALL_CHAR and ch != TowerPlans.FLOOR_CHAR:
+				if ch != TowerPlans.WALL_CHAR and not _is_hall(ch):
 					_fail("storey %d has corridor dressing at %s, next to '%s' — it is in the traffic" % [
 						floor_index, cell, ch])
 					break
@@ -3817,6 +3819,13 @@ func _hall_dress_cells(floor_index: int) -> Array[Vector2i]:
 		seen[cell] = true
 		out.append(cell)
 	return out
+
+
+func _is_hall(ch: String) -> bool:
+	## Walkable open floor a bench may stand against — corridor or landing. Spelled
+	## out from `TowerPlans` rather than read off `TowerInterior.HALL_CHARS`, so this
+	## file states the rule instead of agreeing with the builder about it.
+	return ch == TowerPlans.FLOOR_CHAR or ch == TowerPlans.LANDING_CHAR
 
 
 func _plan_cell(rows: Array, cell: Vector2i) -> String:
