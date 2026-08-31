@@ -34,6 +34,9 @@ P drücken zum Fortsetzen"
 "CITY","CITY","STADT"
 "SNOW","SNOW","SCHNEE"
 "  ~ river ~","  ~ river ~","  ~ Fluss ~"
+"Floor %d","Floor %d","Etage %d"
+"JAIL F%d","JAIL F%d","ZELLE E%d"
+"NO LOCK","NO LOCK","GESTÖRT"
 "JUMP","JUMP","SPRUNG"
 "SPECIAL
 (F)","SPECIAL

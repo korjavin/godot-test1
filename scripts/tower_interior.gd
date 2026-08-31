@@ -465,16 +465,20 @@ const PLAN_BOX_BUDGET: int = 120
 ## structure keeps its budget unchanged and the office keeps its own, and a
 ## regression in either one is still legible.
 ##
-## MEASURED, per storey: 64 / 24 / 111 / 168 / 114 / 119 / 94 / 19 / 14 / 0. The
-## office floors are the big ones (168 is the accounts floor's twelve rooms), the
+## MEASURED, per storey: 64 / 28 / 143 / 216 / 146 / 143 / 110 / 19 / 14 / 0. The
+## office floors are the big ones (216 is the accounts floor's twelve rooms), the
 ## labyrinth floors are nearly all corridor and the cell block is all set piece.
-## 240 is the worst floor plus about a third.
+## 300 is the worst floor plus about a third.
+##
+## IT WENT UP WITH THE WAYFINDING PLAQUES (bd godot-test1-kox): four more boxes per
+## dressed office room, which is +48 on the accounts floor and nothing at all on the
+## labyrinth or the block, neither of which is signed.
 ##
 ## What it catches is the dresser's OWN failure mode, which is not "the walls
 ## stopped merging" but "a rule stopped excluding": drop the threshold guard or the
 ## footprint test and every wall-adjacent cell in the building is a candidate, which
 ## is many hundreds per storey rather than dozens.
-const PLAN_DRESS_BUDGET: int = 240
+const PLAN_DRESS_BUDGET: int = 300
 
 # ============================================================================
 # THE RIDDLE LOCK (phase 15) — the fourth gate verb
@@ -1143,6 +1147,75 @@ const DRESS_ART: Array[Dictionary] = [
 ]
 
 # ============================================================================
+# WAYFINDING PLAQUES (bead godot-test1-kox) — the horizontal half of the hint
+# ============================================================================
+#
+# The minimap tells you the JAIL IS ON STOREY 10 AND YOU ARE FOUR BELOW IT. That is
+# the whole of the guidance it gives, on purpose: a live bearing arrow would rank
+# the corridors at every junction for you and quietly solve the building (the design
+# note on this bead, after a codex peer-chat). So the horizontal help is AUTHORED
+# INSTEAD — GastroDefense's own corridor signage, one plaque per office room, hung by
+# the way out and pointing along its wall toward this storey's STAIR LANE, which is
+# the way up and therefore the way to the block.
+#
+# It is coarse and it is intermittent and both are the point: a sign tells you which
+# end of the floor the stairs are at, it does not tell you which of the two doors in
+# front of you to take.
+#
+# IT IS A `DRESS_ART` ENTRY IN EVERYTHING BUT NAME — it goes through `_dress_boxes`
+# onto a cell the dresser already vetted, into the storey's existing batch surface,
+# vertex-coloured and never solid. So it costs ZERO new draw calls and ZERO new
+# materials, and every safety rule check 18 asserts about the furniture (no doorway,
+# no gate run, no set-piece room, never walls a room off) covers it unchanged.
+#
+# NOT IN THE LABYRINTH AND NOT IN THE BLOCK. `is_maze_floor()` keeps the signs off
+# storeys 8 and 9 — the maze is meant to be crossed by its landmarks, and a corridor
+# sign in there is the pathfinding the whole design note refused.
+
+## Which way along the wall the arrow points, as an index into `SIGN_PIECES`.
+enum { SIGN_RIGHT, SIGN_LEFT }
+
+## THE PLAQUE, in `DRESS_PIECES`' wall-local frame (along the wall, up, out of the
+## wall) and never solid — a sign you can walk into is a shelf.
+##
+## It hangs at 1.98 m, ABOVE the wall art's band and above the tallest piece of
+## furniture (the 1.85 m shelf), which is both where real corridor signage lives and
+## what keeps it from ever sharing a wall face with anything else the dresser hung.
+##
+## The two rows are ONE SIGN MIRRORED: same board, same plate, and the shaft and the
+## head of the arrow with their along-wall offsets negated. Written out as data
+## rather than mirrored in code for `DRESS_ART`'s reason — a table you can read is
+## worth more here than four saved lines.
+const SIGN_PIECES: Array[Dictionary] = [
+	{
+		"kind": "signR",
+		"parts": [
+			{"size": Vector3(0.86, 0.34, 0.04), "off": Vector3(0.0, 1.98, 0.0),
+				"color": COLOR_WAINSCOT},
+			{"size": Vector3(0.76, 0.26, 0.03), "off": Vector3(0.0, 2.02, 0.04),
+				"color": COLOR_SEAL},
+			{"size": Vector3(0.34, 0.05, 0.02), "off": Vector3(0.10, 2.13, 0.07),
+				"color": COLOR_PAPER},
+			{"size": Vector3(0.14, 0.13, 0.02), "off": Vector3(0.31, 2.09, 0.07),
+				"color": COLOR_PAPER},
+		],
+	},
+	{
+		"kind": "signL",
+		"parts": [
+			{"size": Vector3(0.86, 0.34, 0.04), "off": Vector3(0.0, 1.98, 0.0),
+				"color": COLOR_WAINSCOT},
+			{"size": Vector3(0.76, 0.26, 0.03), "off": Vector3(0.0, 2.02, 0.04),
+				"color": COLOR_SEAL},
+			{"size": Vector3(0.34, 0.05, 0.02), "off": Vector3(-0.10, 2.13, 0.07),
+				"color": COLOR_PAPER},
+			{"size": Vector3(0.14, 0.13, 0.02), "off": Vector3(-0.31, 2.09, 0.07),
+				"color": COLOR_PAPER},
+		],
+	},
+]
+
+# ============================================================================
 # THE EMPLOYEE-OF-THE-MONTH WALL — the joke
 # ============================================================================
 #
@@ -1690,6 +1763,9 @@ static var _portrait_materials: Dictionary = {}
 ## `const` data, so one lazy fill is the whole of it.
 static var _block_floor_cache: int = -2       # -2 = not asked yet; -1 = no block
 static var _block_bounds_cache: Variant = null
+## ...and the labyrinth's storeys, filled once by `is_maze_floor()`. null = not
+## asked yet; the filled value is an `Array[int]` of floor indices.
+static var _maze_floors_cache: Variant = null
 
 
 static func _deck_box(deck_name: String, foot: Vector2, head: Vector2, z: float,
@@ -2280,9 +2356,62 @@ static func _dress_room(plan: Dictionary, rows: Array, floor_index: int,
 			var index := art_offset + i * art_stride
 			if index >= free.size():
 				break
+			used[free[index]] = true
 			out.append_array(_dress_boxes(rows, floor_index, letter, free[index],
 					DRESS_ART[(art_kind + i) % DRESS_ART.size()]))
+
+	# ...and last, ONE wayfinding plaque, on the bare wall nearest the way out.
+	out.append_array(_sign_boxes(plan, rows, floor_index, letter, cands, used, thresholds))
 	return out
+
+
+static func _sign_boxes(plan: Dictionary, rows: Array, floor_index: int, letter: String,
+		cands: Array[Vector2i], used: Dictionary, thresholds: Array[Vector2i]) -> Array[Dictionary]:
+	"""
+	One room's wayfinding plaque — see the `SIGN_PIECES` banner.
+
+	@param cands: The cells the dresser vetted, in row-major order.
+	@param used: Which of them already carry furniture or art.
+	@param thresholds: The room's doorway cells.
+	@return: `boxes()` entries, or `[]` when this storey or this room gets no sign.
+
+	NEAREST THE DOORWAY IS "AT THE JUNCTION". A candidate is never a threshold and
+	never 4-adjacent to one (that is the dresser's traffic rule), so the nearest one
+	is two cells from the door — beside the way out, which is where a sign is read.
+	Manhattan distance, ties going to the first in row-major order, so the placement
+	is as fixed as everything else in this building.
+	"""
+	if is_maze_floor(floor_index) or floor_index == block_floor():
+		return []
+	# The way up is what the sign points at. A storey with no `S` lane has nothing
+	# honest to say, so it says nothing.
+	var stair := _plan_stair(plan)
+	if stair.is_empty():
+		return []
+	var best := Vector2i(-1, -1)
+	var best_reach := 1 << 30
+	for cell: Vector2i in cands:
+		if used.has(cell):
+			continue
+		var reach := 1 << 30
+		for door: Vector2i in thresholds:
+			reach = mini(reach, absi(cell.x - door.x) + absi(cell.y - door.y))
+		if reach < best_reach:
+			best_reach = reach
+			best = cell
+	if best.x < 0:
+		return []
+	# WHICH WAY ALONG THE WALL. The sign is flat on a wall, so the only direction it
+	# can express is its tangent; the arrow takes the sign of the stair lane's offset
+	# along it. A stair dead ahead of the sign (zero offset along the wall) points
+	# right — a coin flip nobody can see, because there is no wrong answer to show.
+	var normal := _wall_normal(rows, best)
+	var tangent := Vector3(absf(normal.z), 0.0, absf(normal.x))
+	var here := Vector3(_grid_x(float(best.x) + 0.5), 0.0, _grid_z(float(best.y) + 0.5))
+	var target := Vector3(_grid_x((float(int(stair["c0"]) + int(stair["c1"])) + 1.0) * 0.5),
+			0.0, _grid_z((float(int(stair["r0"]) + int(stair["r1"])) + 1.0) * 0.5))
+	var side := SIGN_RIGHT if (target - here).dot(tangent) >= 0.0 else SIGN_LEFT
+	return _dress_boxes(rows, floor_index, letter, best, SIGN_PIECES[side])
 
 
 ## The four 4-neighbours, named once. Every rule in the dresser is a claim about
@@ -2404,6 +2533,18 @@ static func _cell_is_taken(cell: Vector2i, taken: Array[Dictionary]) -> bool:
 	return false
 
 
+static func _wall_normal(rows: Array, cell: Vector2i) -> Vector3:
+	"""
+	Out of the wall this cell touches, into the room — `Vector3.ZERO` if it touches
+	none. The first wall in `_STEPS` order wins, so a corner cell is dressed against
+	one of its two walls and never against both.
+	"""
+	for step: Vector2i in _STEPS:
+		if _plan_char(rows, cell + step) == TowerPlans.WALL_CHAR:
+			return Vector3(-float(step.x), 0.0, -float(step.y))
+	return Vector3.ZERO
+
+
 static func _dress_boxes(rows: Array, floor_index: int, letter: String,
 		cell: Vector2i, piece: Dictionary) -> Array[Dictionary]:
 	"""
@@ -2416,11 +2557,7 @@ static func _dress_boxes(rows: Array, floor_index: int, letter: String,
 	a rotation — the boxes stay axis-aligned and the batch stays cheap.
 	"""
 	var out: Array[Dictionary] = []
-	var normal := Vector3.ZERO
-	for step: Vector2i in _STEPS:
-		if _plan_char(rows, cell + step) == TowerPlans.WALL_CHAR:
-			normal = Vector3(-float(step.x), 0.0, -float(step.y))
-			break
+	var normal := _wall_normal(rows, cell)
 	if normal == Vector3.ZERO:
 		return out
 	var tangent := Vector3(absf(normal.z), 0.0, absf(normal.x))
@@ -2930,6 +3067,32 @@ const CHECKPOINT_ROOM: String = "checkpoint_room"
 ## plate, in the middle of the room, and "the checkpoint" is the space BESIDE it —
 ## put the player on the room's centre and they are inside the pillar.
 const CHECKPOINT_CLEAR: float = 1.0
+
+## ...and the same trick again for THE LABYRINTH, which is a place and not a floor
+## number: the two maze storeys are wherever their cores are drawn. Two consumers
+## read this — the wayfinding plaques below (which stay out of the maze, because the
+## maze is the one part of the building that is meant to be hard to cross) and the
+## minimap's jail line (which degrades to "NO LOCK" up here). Neither may spell
+## "storey 8 and 9" in a constant of its own.
+const MAZE_ROOMS: Array[String] = ["s8_maze_core", "s9_maze_core"]
+
+
+static func is_maze_floor(floor_index: int) -> bool:
+	"""
+	Is this storey part of the labyrinth?
+
+	Derived from `MAZE_ROOMS` through `room_floor()` and memoized on first ask, for
+	the reason `block_floor()` is: the minimap asks this on its 5 Hz tick and
+	`room_floor()` scans every storey's whole grid.
+	"""
+	if _maze_floors_cache == null:
+		var found: Array[int] = []
+		for room_id: String in MAZE_ROOMS:
+			var at := room_floor(room_id)
+			if at >= 0:
+				found.append(at)
+		_maze_floors_cache = found
+	return (_maze_floors_cache as Array[int]).has(floor_index)
 
 
 static func room_floor(room_id: String) -> int:
@@ -5252,6 +5415,42 @@ static func current_floor(local_y: float) -> int:
 		if local_y >= FLOOR_Y[i] - FLOOR_HYSTERESIS:
 			out = i
 	return out
+
+
+static func zone_at(local: Vector3) -> String:
+	"""
+	Which ROOM or MAZE CELL an interior-local point stands in — "" for none.
+
+	@param local: A point in the interior's own frame.
+	@return: `"<floor>:<room letter>"` inside a planned room, `"<floor>:<col>,<row>"`
+	        on a corridor or maze cell, and `""` in a wall or off the grid.
+
+	THE ANTI-STALL TIMER'S PROGRESS SIGNAL, and the shape of the key is the whole of
+	it (bd godot-test1-kox, codex refinement 2). A ROOM COLLAPSES TO ONE KEY because
+	a player pacing a room they have already searched is stuck and must still get
+	help — key it by cell and every step across the carpet would read as progress and
+	reset the timer forever. A CORRIDOR OR MAZE CELL IS ITS OWN KEY because that is
+	the grain the labyrinth is drawn at: there are no rooms up there, and a new cell
+	really is somewhere new.
+
+	Pure and allocation-light (one small String), which is what lets the minimap ask
+	it on its 5 Hz tick.
+	"""
+	var floor_index := current_floor(local.y)
+	var plan := TowerPlans.storey(floor_index)
+	if plan.is_empty():
+		return ""
+	# The inverse of `_grid_x` / `_grid_z`: which cell of the 40 x 40 plan this is.
+	var col := floori((local.x + TowerPlans.PLAN_HALF) / TowerPlans.PLAN_CELL)
+	var row := floori((local.z + TowerPlans.PLAN_HALF) / TowerPlans.PLAN_CELL)
+	if col < 0 or col >= TowerPlans.PLAN_GRID or row < 0 or row >= TowerPlans.PLAN_GRID:
+		return ""
+	var ch := _plan_char(plan["rows"], Vector2i(col, row))
+	if ch == TowerPlans.WALL_CHAR:
+		return ""
+	if plan["rooms"].has(ch):
+		return "%d:%s" % [floor_index, ch]
+	return "%d:%d,%d" % [floor_index, col, row]
 
 
 static func _floor_visible(index: int, current: int) -> bool:
