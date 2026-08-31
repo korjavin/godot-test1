@@ -376,9 +376,9 @@ The building is full to its sealed roof — ten floor indices, `FLOOR_Y[0..9]`:
   thing in this building that is not batched. Measured over the eight planned storeys:
   **52 / 43 / 52 / 29 / 29 / 81 / 61 / 46** boxes against `PLAN_BOX_BUDGET` 120 (the two
   maze floors are the 81 and the 61 — a one-cell maze legitimately produces many rects,
-  which is what that budget now guards). Mesh NODES are **39 (`DRAW_BUDGET` 39) for 1337
+  which is what that budget now guards). Mesh NODES are **39 (`DRAW_BUDGET` 39) for 2424
   boxes** — one `FloorNBatch` per storey, the parts that move, and the four hero
-  portraits — and the whole interior is **542 collision shapes on one `StaticBody3D`**
+  portraits — and the whole interior is **561 collision shapes on one `StaticBody3D`**
   (ceiling 640, printed by check 5). A
   plan whose walls stopped merging blows the box budget on its first row. **`DRAW_BUDGET`
   counts nodes, not draws**: emissive is a material property, so a storey carrying a
@@ -396,8 +396,11 @@ The building is full to its sealed roof — ten floor indices, `FLOOR_Y[0..9]`:
   existing batch, so ten furnished floors cost **zero** extra draw calls; only the four
   hero portraits hanging in the outer hall as "employee of the month" need textures, and
   they are the whole of `DRAW_BUDGET`'s move from 35 to 39. Furniture has its own
-  per-storey budget (`PLAN_DRESS_BUDGET` 300) so `PLAN_BOX_BUDGET` keeps measuring
-  exactly what it always did. **The WAYFINDING PLAQUES ride the same dresser** — one
+  per-storey budget (`PLAN_DRESS_BUDGET` 580) so `PLAN_BOX_BUDGET` keeps measuring
+  exactly what it always did. **The CORRIDORS are dressed too** (benches and planters,
+  `_hall_dressing`), on cells whose four neighbours are all stone or open floor and whose
+  hall is two cells wide — never in the labyrinth or the block, and **never solid**, which
+  is why the halls need no connectivity fill of their own. **The WAYFINDING PLAQUES ride the same dresser** — one
   per office room, on the bare wall nearest the way out, its arrow pointing along that
   wall at the storey's stair lane, and never in the labyrinth or the block. They are the
   HORIZONTAL half of the jail hint (the minimap's indoor line is the vertical half): a
