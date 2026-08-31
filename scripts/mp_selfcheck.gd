@@ -2343,10 +2343,10 @@ func _check_room_publish() -> String:
 		{"t": "room", "cap": [], "cd": -1.0, "co": 0},
 		{"t": "room", "cap": [], "cd": MPManager.MAX_CUSTODY_SECONDS + 1.0, "co": 0},
 		{"t": "room", "cap": [], "cd": 1.0},                                # no verdict
-		# NOTE: `co: 3` is NOT here. An unreadable verdict is folded to "running"
-		# rather than dropped, so an older master's retired OVERTAKEN does not cost
-		# the room the captive-set repair this packet also carries — check 8 (e)
-		# owns that assertion in both directions.
+		# NOTE: `co: 3` is NOT here. An unreadable verdict is folded to
+		# `CUSTODY_VERDICT_MAX` (FAILED) rather than dropped, so an older master's
+		# retired OVERTAKEN does not cost the room the captive-set repair this
+		# packet also carries — check 8 (e) owns that assertion in both directions.
 		{"t": "room", "cap": [], "cd": 1.0, "co": -1},
 		{"t": "room", "cap": [], "cd": 1.0, "co": NAN},
 	]

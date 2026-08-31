@@ -264,10 +264,12 @@ const ROOM_SYNC_HZ: float = 2.0
 const MAX_CUSTODY_SECONDS: float = 3600.0
 
 ## Highest break-out verdict THIS build understands: 0 running, 1 survived, 2
-## failed. Not a trust bound — `decode_room()` folds anything above it to "running"
-## rather than dropping the packet, because the `room` packet is also the captive-set
-## repair channel and an older master's retired OVERTAKEN (`co: 3`) must not cost a
-## mixed room its cells. See the fold there for why the fold and not a bound.
+## failed. Not a trust bound — `decode_room()` folds anything above it DOWN TO THIS
+## VALUE (FAILED) rather than dropping the packet, because the `room` packet is also
+## the captive-set repair channel and an older master's retired OVERTAKEN (`co: 3`)
+## must not cost a mixed room its cells. It never folds to 0, "running": that is the
+## one verdict a non-master can never resolve, so it seals the peer in the block for
+## the room's life. See the fold there for why the fold and not a bound.
 const CUSTODY_VERDICT_MAX: int = 2
 
 ## Longest hero name a `cap` packet or a join snapshot may carry. The names are

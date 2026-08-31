@@ -3038,6 +3038,18 @@ func _begin_custody_protocol() -> void:
 	"""
 	if custody_protocol_active:
 		return
+	# THE PRISON ROLE ENDS HERE AND NOT AT ONE CALL SITE. `prisoner_active` and this
+	# scene are mutually exclusive states — `_tick_prison()` returns above every
+	# decision while the protocol runs, so a role left standing is one nothing can
+	# clear for the rest of the run — and `_confine_to_block()` clamps to the
+	# gallery and its cells, which is on the FAR side of the spine wall from the
+	# service corridor `custody_stand()` marches the party into. A benched peer
+	# taking any hit in the frame the room's last hero falls reaches this through
+	# `_on_caught_finished()`'s roster clause rather than through `_tick_prison()`,
+	# and would be dragged through that wall into a cell — which is a liberation, so
+	# the scene it just opened is won on frame one, scar and all. Idempotent, and
+	# below the latch so it costs a re-entry nothing.
+	_exit_prison()
 	custody_protocol_active = true
 	custody_timer = CUSTODY_RECALL_SECONDS
 	# A fresh scene has no verdict yet, and the sticky latch from the last one must
@@ -3327,10 +3339,11 @@ func _tick_prison(delta: float) -> void:
 			_exit_prison()
 		return
 
-	# 1. The room is out of heroes.
+	# 1. The room is out of heroes. The role is dropped by
+	# `_begin_custody_protocol()` itself — the other way in is the roster clause in
+	# `_on_caught_finished()`, and a rule this tick remembered on its own behalf was
+	# a rule that path did not have.
 	if free_hero_count() == 0 and not captive_heroes.is_empty():
-		if prisoner_active:
-			_exit_prison()
 		_begin_custody_protocol()
 		return
 

@@ -1624,7 +1624,11 @@ func _check_reassign_first_imprison_last() -> void:
 	      godot-test1-0bc the bill is COINS rather than a heart, which is what that
 	      assertion is now read off. And a peer that was never bitten at all still
 	      ends its run when the ROOM runs out, which is the world-level reading and
-	      the only part of it no other check can see.
+	      the only part of it no other check can see. Last, the two roles are
+	      MUTUALLY EXCLUSIVE: the scene opened from a bite on a peer already in a
+	      cell drops the prison role, because the bench tick — the only other way in,
+	      and the only one that ever remembered to — cannot run inside the scene to
+	      drop it later.
 
 	THERE IS NO (f) ANY MORE. It measured the room's shared HEARTS overtaking a
 	running break-out, and bead godot-test1-0bc deleted the shared-heart machine
@@ -1897,6 +1901,55 @@ func _check_reassign_first_imprison_last() -> void:
 	if not player.in_custody_protocol():
 		_fail("the room ran out of heroes and a peer that was never bitten kept playing — "
 			+ "game over is world-level, and this is the only peer that can prove it")
+	player.custody_protocol_active = false
+	_clear(player)
+	await process_frame
+
+	# ---- (e3) the bench and the break-out cannot both be running -----------
+	#
+	# THE OTHER DOOR INTO THE SCENE. `_tick_prison()` drops the prison role before it
+	# opens the protocol, but the roster clause in `_on_caught_finished()` is reached
+	# from a BITE and not from that tick — and a benched peer is exactly who is
+	# standing in the block when the room's last hero falls. Left standing the role
+	# can never be cleared (the tick returns above every decision while the protocol
+	# runs) and `_confine_to_block()` clamps to the gallery and its cells, which is
+	# the far side of the spine wall from the service corridor `custody_stand()`
+	# marches the party into: the party is dragged into a cell, which is a
+	# liberation, so the scene is won on frame one and pays its permanent scar.
+	room.reported.clear()
+	room.reassignments = 0
+	room.held = "primm"
+	room.hand = [mine] as Array[int]
+	room.claimable = ""
+	player = await _make_player()
+	player.set_active_character(mine)
+	player.hit_by_crocodile(_hunter())
+	await _tick(POST_BITE_FRAMES)
+	if not player.prisoner_active:
+		_fail("(e3) could not bench the peer, so the overlap it measures was never staged")
+	# The grace window from that first bite is staging, not the subject — cleared so
+	# the second bite is the one this case is about.
+	player.is_respawning = false
+	player.respawn_blink_timer = 0.0
+	# The room runs out from under a peer already in a cell AND the bite lands in the
+	# same frame: the window the bench's own 0.5 s poll cannot cover.
+	for hero: Variant in TowerGraph.HEROES:
+		player.set_hero_captive(String(hero), true)
+	player.hit_by_crocodile(_hunter())
+	await _tick(POST_BITE_FRAMES)
+	if not player.in_custody_protocol():
+		_fail("(e3) the room emptied under a benched peer and the break-out never opened")
+	if player.prisoner_active:
+		_fail("the break-out opened over a live prison role — nothing can clear it now, "
+			+ "and its confinement clamp owns the body for the whole scene")
+	await _tick(4)
+	var stand: Vector3 = TerrainStub.SITE + TowerInterior.custody_stand()
+	var drift := Vector2(player.global_position.x - stand.x,
+			player.global_position.z - stand.z).length()
+	if drift > SETBACK_EPS:
+		_fail("the break-out's party was pulled %.2f m off the service corridor (at %s, "
+			% [drift, player.global_position] + "stand %s) — through the spine wall and "
+			% stand + "into a cell, which wins the scene it just opened")
 	player.custody_protocol_active = false
 	_clear(player)
 	room.queue_free()
