@@ -345,9 +345,13 @@ means something else; the project parses.
 
 ### Task 4: delete the shared-hearts machine from `mp_manager.gd`
 
-- [ ] delete the shared-hearts machine and `_peer_state`'s `"spent"` field
-- [ ] stop sending `lv` / `rl` / `ls` / `gs`; relax their validators without weakening the rest
-- [ ] `mp_selfcheck` runs
+- [x] delete the shared-hearts machine and `_peer_state`'s `"spent"` field
+- [x] stop sending `lv` / `rl` / `ls` / `gs`; relax their validators without weakening the rest
+- [x] `mp_selfcheck` runs (exits 0 / `SELFCHECK OK`, but four of its checks now
+      short-circuit on runtime errors against the removed API —
+      `_check_state_parser` (433), `_check_presence_backcompat` (590),
+      `_check_shared_lives` (626), `_check_room_lives_ordering` (1204). They are
+      SILENTLY PASSING, not passing. Task 5 rewrites all four)
 The deletions and wire-field removals listed above, validators relaxed but still
 type-checking every remaining field.
 **Verify:** `mp_selfcheck` runs (rows referencing the removed API are fixed in Task 5).
