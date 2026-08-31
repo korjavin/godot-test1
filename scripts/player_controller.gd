@@ -3932,7 +3932,11 @@ func _room_group_anchor() -> Variant:
 ## input action). They all share a per-character cooldown and a HUD dial:
 ##
 ##   * windman  — Air Rush:   launches into the sky and flies at ~5× walk speed
-##                            with softened gravity for a few seconds.
+##                            with softened gravity for a few seconds. INDOORS the
+##                            same key is AIR SIGHT instead: the HQ's walls go
+##                            translucent for a few seconds so he can watch a patrol
+##                            through them. One ability, two rooms — see
+##                            `_ability_air_sight()`.
 ##   * primm    — Phase Step: blinks straight forward THROUGH a block, never
 ##                            stopping inside it (an instant short teleport).
 ##   * teibi    — Resize:     cycles normal → small → giant → normal. Giant Teibi
@@ -3988,6 +3992,20 @@ const WINDMAN_BOOST_DURATION: float = 4.0
 const WINDMAN_GRAVITY_FACTOR: float = 0.1125
 ## Upward launch applied on activation so he gets airborne to use the speed.
 const WINDMAN_LIFT: float = 6.0
+
+# --- Windman: Air Sight (bead godot-test1-oht) ---
+## INDOORS, F IS A DIFFERENT ABILITY. Air Rush is a take-off and the HQ has a
+## ceiling 4.6 m up, so in there the same key spends the same cooldown on the other
+## half of "make the air work for him": the walls of the storey you are on go
+## translucent and you can watch a patrol through them before committing to a
+## corridor. Same dispatch, same cooldown dial, same block-reason surface — the
+## branch is one `if` in `_ability_windman()` and everything downstream is unchanged.
+##
+## How long the walls stay see-through, in seconds. Long enough to read a room and
+## watch one guard's leg of a patrol, short enough that the fill-rate cost of a
+## storey of transparent walls on web `gl_compatibility` is a window and not a mode.
+## Deliberately BELOW the 8 s cooldown, so it can never chain into a permanent x-ray.
+const WINDMAN_SIGHT_DURATION: float = 7.0
 
 # --- Primm: Phase Step ---
 ## Desired blink distance — far enough to clear a single block in open ground.
@@ -4071,6 +4089,12 @@ var _pending_cooldown_refund: float = 0.0
 ## Cached `Progression` node — see `_progression()` for why this one is cached
 ## when the sibling weather/terrain lookups beside it are not.
 var _progression_node: Node = null
+
+## Seconds left of Windman's Air Sight (0 when it is not running). Transient ability
+## state like `windman_boost_timer` beside it: ticked by `_update_ability_timers()`,
+## cleared by `_reset_ability_states()` on a switch, a respawn and a game over, and
+## dropped early by walking back out of the building.
+var windman_sight_timer: float = 0.0
 
 ## Teibi's size cycle: 0 = normal, 1 = small, 2 = giant.
 var teibi_size_state: int = 0
@@ -4224,6 +4248,29 @@ func _weather_is_raining_here() -> bool:
 	return false
 
 
+func _sheltered() -> bool:
+	"""
+	Whether the body is under the HQ's roof, asked of the shell through the "tower"
+	group — the same null-safe group + has_method shape as `_weather_is_raining_here()`
+	above, so a scene with no tower in it (the player run standalone, most of the
+	self-checks) simply answers "outdoors".
+
+	THE BUILDING OWNS THIS QUESTION and always did — `sheltered()` is what already
+	keeps the rain off Windman indoors (`weather_manager._sheltered_at`). Two indoor
+	ability rules read it now: Windman's F becomes Air Sight in here, and Teibi may
+	not be giant in here at all. Neither restates the envelope's numbers, which is
+	the whole reason the predicate lives on the shell.
+
+	Cheap enough for the per-frame paths that consume it (`get_ability_block_reason()`
+	is polled by the HUD): one group lookup plus one transform multiply and three
+	compares, no allocation.
+	"""
+	var tower := get_tree().get_first_node_in_group("tower")
+	if tower and tower.has_method("sheltered"):
+		return bool(tower.call("sheltered", global_position))
+	return false
+
+
 func _terrain_is_river_here() -> bool:
 	"""
 	Whether the player is standing in a river band, asked of the terrain through
@@ -4336,12 +4383,29 @@ func _update_ability_timers(delta: float) -> void:
 		# is actually running, so a grounded player never pays for this.)
 		if windman_boost_timer > 0.0 and _weather_is_raining_here():
 			windman_boost_timer = 0.0
+	if windman_sight_timer > 0.0:
+		windman_sight_timer = maxf(0.0, windman_sight_timer - delta)
+		# Walking back out ends it too — the same shape as the wet-wings drop above,
+		# and for the same reason: the ability is a property of being INSIDE this
+		# building, so carrying it out of the door would leave a translucent HQ
+		# standing behind a player who is no longer in it. (Only asked while the
+		# sight is actually running, so nobody else pays for the lookup.)
+		if windman_sight_timer <= 0.0 or not _sheltered():
+			_end_air_sight()
 	# Teibi's small/giant form expires on its own after a while, snapping him back
 	# to normal size with no extra press — so he can never get stuck transformed.
 	if teibi_size_state != 0 and teibi_form_timer > 0.0:
 		teibi_form_timer = maxf(0.0, teibi_form_timer - delta)
 		if teibi_form_timer <= 0.0:
 			_revert_teibi_to_normal()
+	# NO GIANT INSIDE THE HQ, EVER (bead godot-test1-xdf). `get_ability_block_reason()`
+	# refuses the press in there, which leaves exactly one way the state could still
+	# exist indoors: growing outside and walking in. So it reverts AT THE DOOR, down
+	# the same path the form timer uses, and the ruling ("Teibi can't be huge inside
+	# the HQ") becomes a property of the body rather than of the door being watched.
+	# Asked only while he is actually giant — a normal-size hero pays nothing.
+	if is_giant and _sheltered():
+		_revert_teibi_to_normal()
 
 
 func try_activate_ability() -> void:
@@ -4409,7 +4473,10 @@ func _flash_blocked_feedback() -> void:
 
 
 func _ability_windman() -> bool:
-	"""Air Rush: launch up and forward, then soar fast with softened gravity."""
+	"""Air Rush: launch up and forward, then soar fast with softened gravity —
+	or, under the HQ's roof, Air Sight instead (see `_ability_air_sight`)."""
+	if _sheltered():
+		return _ability_air_sight()
 	var forward := -transform.basis.z
 	forward.y = 0.0
 	forward = forward.normalized()
@@ -4434,6 +4501,53 @@ func _ability_windman() -> bool:
 	# An airy cyan swirl around him to sell the gust.
 	_spawn_ability_effect(global_position, Color(0.7, 0.92, 1.0, 0.4), 5.0, 0.6)
 	return true
+
+
+func _ability_air_sight() -> bool:
+	"""
+	Air Sight: for `WINDMAN_SIGHT_DURATION` the walls of the storey Windman is on go
+	translucent, so he can read the layout and — the point — watch a guard's patrol
+	through them before stepping into a corridor.
+
+	WINDMAN'S INDOOR F, and it is the same ability rather than a fifth one: the wind
+	is what he bends either way, and Air Rush under a 4.6 m ceiling was already a
+	press that did nothing worth doing. Everything around it is untouched — the same
+	dispatch, the same cooldown, the same dial, the same refusal surface.
+
+	THE BUILDING DOES THE WORK (`TowerInterior.set_xray`), through the same null-safe
+	group + `has_method` door every other system reads. No interior in the tree means
+	no ability: `false` back, so `try_activate_ability()` charges no cooldown and the
+	press can be tried again the moment he is somewhere it means something. That is
+	the standing "a no-op never locks the power" rule, and it is what keeps a Windman
+	standing under a roof this game does not have from losing eight seconds to it.
+	"""
+	var interior := get_tree().get_first_node_in_group("tower_interior")
+	if interior == null or not interior.has_method("set_xray"):
+		return false
+	interior.call("set_xray", true)
+	windman_sight_timer = WINDMAN_SIGHT_DURATION
+	# The same self-building, self-freeing sphere every other ability sells itself
+	# with — small and pale here, because the effect the player should be looking at
+	# is the room around him going see-through.
+	_spawn_ability_effect(global_position, Color(0.7, 0.92, 1.0, 0.3), 2.5, 0.5)
+	return true
+
+
+func _end_air_sight() -> void:
+	"""
+	Put the walls back. Idempotent and safe to call for any character at any time —
+	which is what lets `_reset_ability_states()` call it unconditionally beside
+	`_revert_teibi_to_normal()`, and what makes "cleared on switch, on respawn and on
+	the way out of the door" one line each instead of a state machine.
+
+	The interior is looked up fresh rather than remembered: the tower streams out
+	with the terrain, and a remembered reference would be the one thing in this
+	script holding a freed node.
+	"""
+	windman_sight_timer = 0.0
+	var interior := get_tree().get_first_node_in_group("tower_interior")
+	if interior != null and interior.has_method("set_xray"):
+		interior.call("set_xray", false)
 
 
 func _ability_primm() -> bool:
@@ -4770,11 +4884,16 @@ func _spawn_ability_effect(pos: Vector3, color: Color, max_radius: float, lifeti
 
 
 func _reset_ability_states() -> void:
-	"""Clear transient ability state on respawn (air boost, giant/small form)."""
+	"""Clear transient ability state on respawn (air boost, air sight, giant/small form)."""
 	windman_boost_timer = 0.0
 	speed_burst_timer = 0.0
 	_pending_cooldown_refund = 0.0
 	_revert_teibi_to_normal()
+	# Air Sight lives in the BUILDING's materials rather than in a field here, so it
+	# is the one transient state that leaks something visible if it is not cleared:
+	# switch character mid-ability and the HQ would stay see-through with nobody
+	# holding it that way.
+	_end_air_sight()
 	# Sidestep is transient too: the caught/respawn/game-over branches all return
 	# BEFORE update_sidestep(), so a player caught mid-step would otherwise come
 	# back with is_stepping still true and slide sideways out of the spawn.
@@ -4829,8 +4948,17 @@ func phase_reach() -> float:
 
 
 func get_ability_name() -> String:
-	"""Friendly name of the current character's ability (for the HUD)."""
+	"""
+	Friendly name of the current character's ability (for the HUD).
+
+	ASKED EVERY FRAME RATHER THAN LATCHED, for the same reason `hero_name()` is:
+	Windman's F is Air Rush outdoors and Air Sight under the HQ's roof, so the label
+	changes when he walks through the door and a dial that remembered the old name
+	would be advertising a power that press will not fire.
+	"""
 	var char_name: String = CHARACTERS[current_character_index]["name"]
+	if char_name == "windman" and _sheltered():
+		return "Air Sight"
 	return ABILITY_NAME.get(char_name, "Ability")
 
 
@@ -4881,6 +5009,12 @@ func get_ability_block_reason() -> String:
 	  "CELL" — the prison role has no ability at all: every one of the four is a
 	           phase, a flight, a combat verb or a wave, and the role is defined as
 	           having none of them.
+	  "INDOOR" — Teibi's next press would make him GIANT and he is inside the HQ.
+	           Owner ruling (bead godot-test1-xdf): the building is the stealth
+	           layer and a giant does not fit its pace. Not an exploit patch — the
+	           exploit is `_teibi_grow_blocked()`'s job and it still does it — but a
+	           design rule, which is why it refuses in the middle of an empty room
+	           too. SMALL stays allowed in here: it is the stealth-flavoured form.
 	  "TIGHT"— Teibi's next press would make him GIANT and the grown capsule does
 	           not fit where he is standing. Growing inside geometry is not a
 	           clipping artefact, it is a lift: the depenetration pops him out
@@ -4924,9 +5058,27 @@ func get_ability_block_reason() -> String:
 	# other step of the cycle shrinks the body and always fits. See
 	# `_teibi_grow_blocked()` for why growing inside stone is a traversal exploit
 	# and not just a clipping artefact.
-	if char_name == "teibi" and teibi_size_state == 1 and _teibi_grow_blocked():
-		return "TIGHT"
+	#
+	# "INDOOR" IS ASKED FIRST, ABOVE "TIGHT" (bead godot-test1-xdf). Both refuse the
+	# same press and the order only decides which one the dial names, so it is decided
+	# on which answer is TRUE: indoors "there is no room here" is not why — there is
+	# no room here or anywhere in this building, and a hero told TIGHT would go
+	# looking for a wider corridor that does not exist. `_teibi_grow_blocked()` stays
+	# the outdoor refusal and is not weakened; it is simply not the one talking in
+	# here. (`capture_selfcheck` check 9 keeps measuring it directly for that reason.)
+	if char_name == "teibi" and teibi_size_state == 1:
+		if _sheltered():
+			return "INDOOR"
+		if _teibi_grow_blocked():
+			return "TIGHT"
 	if char_name != "windman":
+		return ""
+	# INDOORS, F IS AIR SIGHT, AND NEITHER WINDMAN GATE APPLIES TO IT. RAIN could not
+	# fire in here anyway (the weather asks the same `sheltered()` before it rains on
+	# anybody), and LAND exists to stop Air Rush chaining into infinite flight — a
+	# rule about a take-off, asked of an ability that is not one. Answering the whole
+	# windman branch in one place also means one `_sheltered()` call for the frame.
+	if _sheltered():
 		return ""
 	if _weather_is_raining_here():
 		return "RAIN"

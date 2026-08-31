@@ -237,6 +237,7 @@ func _run() -> void:
 	await _check_guards_reset_on_re_entry()
 	await _check_the_leash_holds_under_a_chase()
 	_check_the_offices_are_furnished_and_still_walkable()
+	await _check_air_sight_shows_through_walls_only()
 	_report()
 
 
@@ -986,6 +987,20 @@ func _check_node_shape() -> void:
 	print("tower interior: %d meshes drawn (budget %d) for %d boxes" % [
 		meshes.size(), TowerInterior.DRAW_BUDGET, boxes.size()])
 
+	# ...AND THE SURFACES, WHICH ARE THE DRAWS. `DRAW_BUDGET` counts nodes and says
+	# so; a batch splits into a surface per material and the engine submits one draw
+	# per surface, so this is the number Air Sight's third surface actually moved and
+	# the number a storey that quietly stopped merging would explode.
+	var surfaces := 0
+	for mesh: MeshInstance3D in meshes:
+		var array_mesh := mesh.mesh as ArrayMesh
+		surfaces += array_mesh.get_surface_count() if array_mesh != null else 1
+	if surfaces > TowerInterior.SURFACE_BUDGET:
+		_fail("the interior submits %d surfaces, over its declared SURFACE_BUDGET of %d" % [
+			surfaces, TowerInterior.SURFACE_BUDGET])
+	print("tower interior: %d surfaces submitted (budget %d)" % [
+		surfaces, TowerInterior.SURFACE_BUDGET])
+
 	# The batched vertices of each storey, once, so the corner test below is a set
 	# lookup rather than a re-walk of the mesh per box. Sized off `FLOOR_Y`, like
 	# the containers themselves, so a storey added to `TowerPlans` is measured here
@@ -1182,9 +1197,14 @@ func _check_materials_are_shared_and_already_toon() -> void:
 	# built — and the whole of the office fit-out around them still costs ZERO
 	# materials, because every last desk and diploma went into the batch.
 	var portraits := TowerInterior.egg_frames().size()
-	var want := colors.size() + SWAPPED + 2 + portraits
+	# THREE BATCH MATERIALS SINCE AIR SIGHT (bead godot-test1-oht), not two: walls,
+	# other matte, emissive. The wall one is a third object with settings identical to
+	# the matte one, and having its own identity is the whole mechanism — it is what
+	# `_ready()` finds the swappable surfaces by. It costs one material process-wide,
+	# not one per storey and not one per box, which is the claim this cap makes.
+	var want := colors.size() + SWAPPED + 3 + portraits
 	if distinct.size() > want:
-		_fail("the interior holds %d materials, expected at most %d (%d moving colours + %d swapped + 2 batch + %d portraits)" % [
+		_fail("the interior holds %d materials, expected at most %d (%d moving colours + %d swapped + 3 batch + %d portraits)" % [
 			distinct.size(), want, colors.size(), SWAPPED, portraits])
 
 	for mesh: MeshInstance3D in mesh_a:
@@ -3703,6 +3723,105 @@ func _components(cells: Array[Vector2i], blocked: Dictionary) -> Dictionary:
 				queue.append(to)
 		next_id += 1
 	return out
+
+
+# ============================================================================
+# CHECK 19 — Air Sight (bead godot-test1-oht)
+# ============================================================================
+
+func _check_air_sight_shows_through_walls_only() -> void:
+	"""
+	Check 19. Windman's indoor F makes the WALLS see-through and nothing else, and
+	turning it off puts the building back exactly as it was.
+
+	THREE CLAIMS, AND THE MIDDLE ONE IS THE ABILITY'S DESIGN. "Translucent walls" is
+	trivially satisfiable by dissolving the whole storey, and the whole storey is the
+	wrong answer: you are meant to look through the walls ON YOUR FLOOR, not down
+	through the slab into the one below, and the gate set pieces are the building's
+	legibility language — a shutter you can see through stops reading as a shutter.
+	So the assertion is not "walls became transparent" but "walls and ONLY walls
+	did", asked of every surface in the building.
+
+	WHICH SURFACES ARE WALLS IS DERIVED HERE, from `all_boxes()` and
+	`TowerInterior.surface_kind()`, and never read back off `_wall_surfaces` — that
+	list is the implementation's own bookkeeping and a check that read it would be
+	the swap agreeing with itself. A storey has a wall surface iff it batches a box
+	`surface_kind()` calls a wall, and `merged_mesh` emits walls first, so it is
+	surface 0 of that storey's batch. Both halves of that sentence are asserted
+	below, which is what makes the derivation a check rather than a restatement.
+
+	THE THIRD CLAIM IS THE TRANSIENT-STATE CONTRACT in its visible form. Every other
+	ability's leftovers live in a float on the player; this one lives in the
+	BUILDING's materials, so "cleared on the timer, on a switch, on a respawn" has to
+	mean the overrides are gone — not merely that a timer read zero.
+	"""
+	var interior := await _make_interior()
+
+	# The independent derivation: which storeys own a wall surface, and where it is.
+	var wall_floors := {}
+	for box: Dictionary in TowerInterior.all_boxes():
+		if TowerInterior.is_own_node(box):
+			continue
+		if TowerInterior.surface_kind(box) == TowerInterior.SURFACE_WALL:
+			wall_floors[int(box["floor"])] = true
+	if wall_floors.is_empty():
+		_fail("check 19: no storey batches a wall — the x-ray has nothing to swap and this check is vacuous")
+
+	interior.call("set_xray", true)
+	if not bool(interior.call("xray_active")):
+		_fail("check 19: set_xray(true) did not report the walls as see-through")
+	var swapped := 0
+	for mesh: MeshInstance3D in _all_meshes(interior):
+		var array_mesh := mesh.mesh as ArrayMesh
+		var count: int = array_mesh.get_surface_count() if array_mesh != null else 1
+		for surface: int in count:
+			var override := mesh.get_surface_override_material(surface)
+			var is_wall: bool = array_mesh != null and surface == 0 \
+					and wall_floors.has(_storey_of(mesh))
+			if is_wall:
+				if override == null:
+					_fail("check 19: %s surface 0 is its storey's walls and stayed opaque" % mesh.name)
+					continue
+				var mat := override as BaseMaterial3D
+				if mat == null or mat.transparency == BaseMaterial3D.TRANSPARENCY_DISABLED:
+					_fail("check 19: %s's wall material is not transparent" % mesh.name)
+					continue
+				if mat.albedo_color.a <= 0.0 or mat.albedo_color.a >= 1.0:
+					_fail("check 19: %s's walls went to alpha %.2f — see-through means neither solid nor gone" % [
+						mesh.name, mat.albedo_color.a])
+				swapped += 1
+			elif override != null:
+				# The floor slabs (whose undersides are the ceiling below), the ramp
+				# decks, the light panels and every gate set piece. A hero looking
+				# down through the building, or through a shutter, is the bug.
+				_fail("check 19: %s surface %d is not a wall and was made see-through anyway" % [
+					mesh.name, surface])
+	if swapped != wall_floors.size():
+		_fail("check 19: %d wall surfaces went see-through but %d storeys batch walls — walls are not surface 0, or a storey was missed" % [
+			swapped, wall_floors.size()])
+	print("air sight: %d storeys' walls went see-through, everything else stayed opaque" % swapped)
+
+	interior.call("set_xray", false)
+	if bool(interior.call("xray_active")):
+		_fail("check 19: set_xray(false) still reports the walls as see-through")
+	for mesh: MeshInstance3D in _all_meshes(interior):
+		var array_mesh := mesh.mesh as ArrayMesh
+		var count: int = array_mesh.get_surface_count() if array_mesh != null else 1
+		for surface: int in count:
+			if mesh.get_surface_override_material(surface) != null:
+				_fail("check 19: %s surface %d is still overridden after the revert — the ability leaked into the building" % [
+					mesh.name, surface])
+	interior.queue_free()
+	await process_frame
+
+
+func _storey_of(mesh: MeshInstance3D) -> int:
+	## Which storey a batch mesh belongs to, off its container's name — the same
+	## `Floor%d` the builder writes. -1 for anything that is not on a storey.
+	var parent := mesh.get_parent()
+	if parent == null or not String(parent.name).begins_with("Floor"):
+		return -1
+	return String(parent.name).trim_prefix("Floor").to_int()
 
 
 func _fresh_store() -> void:
