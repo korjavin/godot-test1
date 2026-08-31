@@ -1620,8 +1620,8 @@ static func decode_room(packet: Dictionary) -> Dictionary:
 	`_pool` in `_receive_room`; `cd` is the recall clock, which drives a COUNTDOWN
 	the player watches, so it is finiteness-checked before any cast (`int(NAN)` is
 	undefined and on wasm the trunc can trap the module); `co` is the verdict (0 running,
-	1 survived, 2 failed, 3 overtaken) and is an enum, so anything outside it is a
-	peer this build cannot read.
+	1 survived, 2 failed) and is an enum, so anything outside it is a peer this build
+	cannot read.
 	"""
 	if typeof(packet.get("cap", null)) != TYPE_ARRAY:
 		return {}
@@ -1644,7 +1644,7 @@ static func decode_room(packet: Dictionary) -> Dictionary:
 	if not _is_number(packet.get("co", null)):
 		return {}
 	var verdict: float = float(packet["co"])
-	if not is_finite(verdict) or verdict < 0.0 or verdict > 3.0:
+	if not is_finite(verdict) or verdict < 0.0 or verdict > 2.0:
 		return {}
 	return {"cap": names, "cd": seconds, "co": int(verdict)}
 

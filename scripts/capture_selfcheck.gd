@@ -984,13 +984,20 @@ func _check_a_guard_takes_coins_and_ground() -> void:
 			+ " arithmetics must be distinguishable or this control measures nothing")
 		return
 
-	# (a) IN THE FIELD, with no building anywhere: the bill lands, the ground does
-	#     not move. NO TOWER IS STOOD UP for this one on purpose — an absent
-	#     `tower_interior` group is precisely the state a field bite happens in, and
-	#     staging one would measure a different situation than the game's.
+	# (a) IN THE FIELD, WITH THE BUILDING STANDING: the bill lands, the ground does
+	#     not move. THE TOWER IS STOOD UP ON PURPOSE, and staging it is the whole
+	#     point — `endless_terrain` instances the shell at TOWER_LOAD_RADIUS (360 m)
+	#     and never frees it for the rest of the run, so "the player is in the
+	#     field" and "the `tower_interior` group answers" are true AT THE SAME TIME
+	#     for every bite after the first approach to the HQ. An empty tree measured
+	#     only the opening minutes of a run and passed a build that teleported every
+	#     death in the world back to the doorway.
+	var field_shell := await _make_tower()
 	var player_c := await _make_player()
 	player_c.coins_collected = SETBACK_PROBE_COINS
 	player_c.own_coins = SETBACK_PROBE_COINS
+	# Out of the walls and out of every hazard's reach, which is where the field is.
+	(player_c as Node3D).global_position = Vector3(4.0 * TowerPlans.PLAN_HALF, 0.0, 0.0)
 	var where: Vector3 = (player_c as Node3D).global_position
 	player_c.hit_by_crocodile(_attacker_row(CONTROL_SPECIES))
 	player_c.is_caught = false
@@ -1008,12 +1015,14 @@ func _check_a_guard_takes_coins_and_ground() -> void:
 			% [CONTROL_SPECIES, player_c.own_coins, SETBACK_PROBE_COINS,
 				SETBACK_PROBE_COINS - control_loss])
 	if (player_c as Node3D).global_position.distance_to(where) > 1.0:
-		_fail("a %s's bite in the FIELD relocated the player — `setback_point()` is a"
-			% CONTROL_SPECIES + " group lookup that must find nothing out here, or every"
-			+ " death in the world teleports somewhere")
+		_fail("a %s's bite in the FIELD relocated the player — the knockback is gated"
+			% CONTROL_SPECIES + " on standing INSIDE the walls, not on the tower node"
+			+ " existing, or every death in the world teleports to the HQ once the"
+			+ " shell has streamed in")
 	if not player_c.is_respawning:
 		_fail("a %s's bite in the field opened no grace window" % CONTROL_SPECIES)
 	_clear(player_c)
+	field_shell.queue_free()
 	await process_frame
 
 	# (b) INSIDE THE BUILDING, same animal, same row: the plate takes it too. This
@@ -1040,6 +1049,39 @@ func _check_a_guard_takes_coins_and_ground() -> void:
 			+ " at %s — the checkpoint is the BUILDING's, so it must catch every hit"
 			% str(plate) + " taken in here, not only a guard's")
 	_clear(indoors)
+
+	# (c) ...AND THE ONE PLACE INSIDE THE BUILDING WHERE IT MUST NOT. During the
+	#     break-out the party stands in a SEALED cell block with containment raised
+	#     and the recall on the clock, so a knockback to the doorway plate is not a
+	#     setback — it is the scene lost to a survivable hazard, with every spine
+	#     door shut behind it. The block's own press bills through this path
+	#     (`hit_by_crocodile()` with nobody named), so this is reachable play and
+	#     not a hypothetical. The COIN bill still lands: only the ground is frozen.
+	var caught := await _make_player()
+	caught.coins_collected = SETBACK_PROBE_COINS
+	caught.own_coins = SETBACK_PROBE_COINS
+	caught.custody_protocol_active = true
+	var held: Vector3 = interior_c.global_position + TowerInterior.custody_stand()
+	(caught as Node3D).global_position = held
+	caught.hit_by_crocodile()
+	caught.is_caught = false
+	caught.call("_on_caught_finished")
+	# `player_controller.gd` carries no `class_name`, so its consts are read the way
+	# every other check in this file reads one: off the script's constant map.
+	var default_fraction: float = float((caught.get_script() as GDScript)
+			.get_script_constant_map().get("DEFAULT_COIN_SETBACK", 0.0))
+	if caught.coins_collected != SETBACK_PROBE_COINS - int(floor(
+			float(SETBACK_PROBE_COINS) * default_fraction)):
+		_fail("a hazard during the break-out billed %d coins, not the default"
+			% (SETBACK_PROBE_COINS - caught.coins_collected)
+			+ " — the bill is universal even where the knockback is refused")
+	if (caught as Node3D).global_position.distance_to(held) > 1.0:
+		_fail("a hazard during the break-out threw the player from %s to %s — out of"
+			% [str(held), str((caught as Node3D).global_position)]
+			+ " a SEALED block with the recall running, which loses the scene and"
+			+ " archives the world for one press the player was meant to survive")
+	caught.custody_protocol_active = false
+	_clear(caught)
 	shell_c.queue_free()
 	await process_frame
 
@@ -1509,9 +1551,9 @@ func _check_reassign_first_imprison_last() -> void:
 	running break-out, and bead godot-test1-0bc deleted the shared-heart machine
 	along with the concept: a room's only shared death state is the captive set,
 	which is what opens the scene rather than something that can outrank it. The
-	OVERTAKEN verdict survives on the wire (see `_end_custody_protocol`'s `record`
-	parameter) for a peer applying a master's published `3`, and `check 16` drives
-	that path.
+	OVERTAKEN verdict went with it — `_end_custody_protocol()` has two outcomes and
+	the wire's `co` is bounded at 2, because a verdict no master can send is a
+	branch no peer can reach.
 	"""
 	_fresh_store()
 	_beat_done()
@@ -1862,23 +1904,6 @@ func _check_two_clients_cannot_disagree() -> void:
 		_fail("the master's SURVIVED verdict did not take the scar, so this peer's tower "
 			+ "disagrees with the room's for the rest of the campaign")
 
-	# ...and the OVERTAKEN verdict ends a scene and writes nothing.
-	_fresh_store()
-	_beat_done()
-	_clear(player)
-	await process_frame
-	player = await _make_player()
-	player.set_active_character(TowerGraph.HEROES.find("primm"))
-	await _drive_into_custody(player)
-	if not player.in_custody_protocol():
-		_fail("the overtaken-verdict case could not open a protocol")
-	player.call("apply_room_custody", 0.0, 3)
-	if player.in_custody_protocol():
-		_fail("the master said the scene was OVERTAKEN and this peer stayed in it")
-	if BestRunStore.world_archived():
-		_fail("an OVERTAKEN verdict archived this peer's world — the room's own ending is "
-			+ "on its way and is the one that decides")
-
 	# ...and a verdict never speaks for the NEXT round. The roster is full again and
 	# this peer's own scene has not opened yet (the bench polls at 2 Hz), so what it
 	# publishes in that window would otherwise be the LAST round's answer beside a
@@ -1886,7 +1911,15 @@ func _check_two_clients_cannot_disagree() -> void:
 	# success, containment down and all.
 	# Staged exactly: the LAST round survived, the corporation has everybody again,
 	# and the run is still going. That is the only state in which a latched verdict
-	# is somebody else's answer.
+	# is somebody else's answer — and no single verdict produces it, so the three
+	# facts are set directly rather than driven through one.
+	_fresh_store()
+	_beat_done()
+	_clear(player)
+	await process_frame
+	player = await _make_player()
+	for hero: String in TowerGraph.HEROES:
+		player.captive_heroes[hero] = true
 	player.custody_verdict = 1
 	if player.is_game_over or player.free_hero_count() != 0 or player.in_custody_protocol():
 		_fail("the stale-verdict window was not staged, so it proves nothing")

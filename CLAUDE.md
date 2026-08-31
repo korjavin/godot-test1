@@ -271,9 +271,10 @@ own, all pinned by `tower_interior_selfcheck`:
   stake**: `coin_setback` (7%) off this peer's own coins — every predator bills
   coins now — plus a knockback to `setback_point()`, the last checkpoint in the
   opened set or the doorway. The KNOCKBACK is what makes losing indoors different;
-  it is the building's, not the row's (`_pay_coin_setback()` relocates whenever the
-  `tower_interior` group answers, whoever bit you), and nothing about it can end a
-  run mid-rescue. It rides the one damage verb: `hit_by_crocodile(attacker)`
+  it is the building's, not the row's (`_pay_coin_setback()` relocates whoever bit
+  you, gated on `TowerInterior.inside_walls()` — the group ANSWERING is not the
+  test, because the shell streams in at 360 m and is never freed again), and
+  nothing about it can end a run mid-rescue. It rides the one damage verb: `hit_by_crocodile(attacker)`
   reads the row key, exactly as `_is_hunter_grab` reads `behavior`. Guards stay in group
   `"crocodile"` (LOD sleep and the MP relay still want them) and refuse the Stink Wave
   and the giant's crush through `stink_immune` / `crush_immune`, never through group
@@ -788,10 +789,16 @@ bar, a boss projectile — pays `DEFAULT_COIN_SETBACK`) → **soft respawn in pl
 grace, then invulnerable blinking). **Lifetime coins are never deducted**, so
 `progression.gd` and `best_run_store.gd` are untouched by a death.
 
-`_pay_coin_setback()` also RELOCATES you, but only where there is somewhere to relocate
-to: it asks the `tower_interior` group for `setback_point()`, so inside the HQ a death
-knocks you back to the last checkpoint and the field finds nothing and stays put. That is
-the building being a checkpointed level, not a property of the guard.
+`_pay_coin_setback()` also RELOCATES you, but only while you are STANDING INSIDE the
+tower's walls: it asks the `tower_interior` group for `setback_point()` behind
+`TowerInterior.inside_walls()`, so inside the HQ a death knocks you back to the last
+checkpoint and a field death stays put. **The group answering is not the test** — the
+shell is streamed in at `TOWER_LOAD_RADIUS` (360 m) and never freed for the rest of the
+run, so once anybody has walked near the HQ the node is in the tree everywhere; gating on
+its existence alone teleports every death in the world to the doorway. The knockback is
+also refused for the whole full-custody protocol, where the party is sealed in the cell
+block on a clock and a knockback ten storeys down is not a setback but a lost scene. That
+is the building being a checkpointed level, not a property of the guard.
 
 Invulnerability is enforced in one place: the early-return at the top of
 `hit_by_crocodile()`. `reset_position()` is only the hard reset to spawn used by

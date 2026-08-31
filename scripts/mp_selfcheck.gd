@@ -2272,13 +2272,11 @@ func _check_room_publish() -> String:
 	if parsed.get("cap", []) != ["primm"] or absf(float(parsed.get("cd", -1.0)) - 12.5) > 0.001 \
 			or int(parsed.get("co", -1)) != 0:
 		return "decode_room dropped an honest publish (%s)" % str(parsed)
-	# EVERY VERDICT THE ENCODER CAN PRODUCE, swept rather than spot-checked — 3 is
-	# OVERTAKEN and is the one a parser written against the first two would drop.
-	# Nothing local produces it since the hearts went (bead godot-test1-0bc), but it
-	# still travels: a peer applying a master's published 3 ends its scene without
-	# archiving a world the master kept, and a parser that dropped the verdict would
-	# leave it with no word at all.
-	for outcome: int in 4:
+	# EVERY VERDICT THE ENCODER CAN PRODUCE, swept rather than spot-checked. There
+	# are three — 0 running, 1 survived, 2 failed — and the sweep is what binds the
+	# parser's bound to the encoder's range: a fourth added on one side and not the
+	# other is a peer that cannot read its own master.
+	for outcome: int in 3:
 		var probe: Dictionary = {"t": "room", "cap": [], "cd": 1.0, "co": outcome}
 		if int(MPManager.decode_room(probe).get("co", -1)) != outcome:
 			return "decode_room dropped the verdict %d, which the encoder can send" % outcome
@@ -2299,7 +2297,7 @@ func _check_room_publish() -> String:
 		{"t": "room", "cap": [], "cd": -1.0, "co": 0},
 		{"t": "room", "cap": [], "cd": MPManager.MAX_CUSTODY_SECONDS + 1.0, "co": 0},
 		{"t": "room", "cap": [], "cd": 1.0},                                # no verdict
-		{"t": "room", "cap": [], "cd": 1.0, "co": 4},                       # not an outcome
+		{"t": "room", "cap": [], "cd": 1.0, "co": 3},                       # not an outcome
 		{"t": "room", "cap": [], "cd": 1.0, "co": -1},
 		{"t": "room", "cap": [], "cd": 1.0, "co": NAN},
 	]

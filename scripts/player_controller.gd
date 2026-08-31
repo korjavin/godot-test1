@@ -2067,7 +2067,8 @@ func _is_sweep_exempt(body: Node) -> bool:
 func _pay_coin_setback(fraction: float) -> bool:
 	"""
 	Settle the bill for the hit that just landed: a slice of the run's coins, and
-	— inside the tower only — the ground back to the last checkpoint.
+	— while standing inside the tower's walls — the ground back to the last
+	checkpoint.
 
 	@param fraction: the attacker's `coin_setback`, already clamped to [0, 1].
 	@return: true if we RELOCATED, which tells `_on_caught_finished()` to skip the
@@ -2103,11 +2104,27 @@ func _pay_coin_setback(fraction: float) -> bool:
 	coins_collected = maxi(0, coins_collected - lost)
 
 	# THE KNOCKBACK, AND IT IS THE TOWER'S ALONE. Null-safe group lookup with a
-	# `has_method` guard, the project's no-hard-references convention — and in the
-	# FIELD that lookup finds nothing, which is the whole of "the coin bill is
-	# universal, the relocation is not". No branch of our own decides that.
-	var interior := get_tree().get_first_node_in_group("tower_interior")
-	if not (interior and interior.has_method("setback_point")):
+	# `has_method` guard, the project's no-hard-references convention — and then
+	# `inside_walls()`, the SAME predicate the indoor camera reads three hundred
+	# lines up, because the group answering is not the question. The shell is
+	# streamed in at TOWER_LOAD_RADIUS (360 m) and never freed for the rest of the
+	# run, so once a player has been anywhere near the HQ the node is in the tree
+	# forever: testing for it alone would teleport every field bite in the world
+	# back to the doorway. That was invisible while the guard was the only row
+	# carrying a `coin_setback`; the bill going universal is what made the lookup
+	# fire everywhere.
+	#
+	# AND NEVER DURING THE BREAK-OUT. The custody scene stands the party in a
+	# SEALED cell block with `begin_lockdown()` raised and a recall clock running,
+	# so knocking a body back to the checkpoint plate ten storeys below is not a
+	# setback, it is an unrecoverable loss handed out by a survivable hazard — the
+	# block's press bills through this path too (`hit_by_crocodile()` with no
+	# attacker). The scene owns the body while it runs; `_respawn_in_place()` puts
+	# it back where it fell, inside the block.
+	var interior := get_tree().get_first_node_in_group("tower_interior") as Node3D
+	if custody_protocol_active or interior == null \
+			or not interior.has_method("setback_point") \
+			or not TowerInterior.inside_walls(global_position - interior.global_position):
 		print("Setback: -%d coins" % lost)
 		return false
 	global_position = interior.call("setback_point")
@@ -2841,11 +2858,11 @@ func _on_caught_finished() -> void:
 	set of heroes going empty, tested below and handed to the full-custody
 	protocol. Every other challenge is fewer coins and a temporal freeze.
 	"""
-	# The bill first, because it is unconditional. It relocates ONLY inside the
-	# tower (the group lookup finds nothing in the field), and when it does it has
-	# already run the respawn tail itself — routing that through
-	# `_respawn_in_place()` would relocate us straight back to the room's group
-	# anchor and throw the knockback across the map.
+	# The bill first, because it is unconditional. It relocates ONLY while we are
+	# standing inside the tower's walls, and when it does it has already run the
+	# respawn tail itself — routing that through `_respawn_in_place()` would
+	# relocate us straight back to the room's group anchor and throw the knockback
+	# across the map.
 	var relocated: bool = _pay_coin_setback(caught_setback)
 
 	if not custody_protocol_active and free_hero_count() == 0 and not captive_heroes.is_empty():
@@ -3116,8 +3133,8 @@ func custody_wire_state() -> Array:
 	# opened yet, because `_tick_prison()` polls. A peer already inside the new scene
 	# would read the last round's SURVIVED and tear its containment down.
 	# `is_game_over` is what separates the stale verdict from the fresh one, and both
-	# have a full roster. A FAILED or OVERTAKEN round leaves the run finished, so its
-	# verdict is still the answer to the only round there will be; a SURVIVED one
+	# have a full roster. A FAILED round leaves the run finished, so its verdict is
+	# still the answer to the only round there will be; a SURVIVED one
 	# leaves the run going, and once the corporation has everybody AGAIN that answer
 	# belongs to a round that is over.
 	if not custody_protocol_active and not is_game_over and free_hero_count() == 0:
@@ -3140,25 +3157,23 @@ func apply_room_custody(seconds: float, verdict: int) -> void:
 	if not custody_protocol_active:
 		return
 	if verdict != 0:
-		# 3 is OVERTAKEN: end the scene, write nothing. The room's own ending is on
-		# its way to this peer through the shared totals and will raise itself.
-		_end_custody_protocol(verdict == 1, verdict != 3)
+		_end_custody_protocol(verdict == 1)
 		return
 	custody_timer = maxf(0.0, seconds)
 
 
-func _end_custody_protocol(survived: bool, record: bool = true) -> void:
+func _end_custody_protocol(survived: bool) -> void:
 	"""
 	Close the scene on its outcome. The one exit, every way.
 
 	@param survived: true when a hero was freed before the recall completed.
-	@param record: false when the scene did not END so much as get OVERTAKEN by an
-	    outcome decided somewhere else. Nothing is written and no ending is raised:
-	    that caller owns both. NO LOCAL CALLER PASSES IT TODAY — the room's shared
-	    hearts were the one thing that could overtake a running scene, and they are
-	    gone (owner ruling 2026-08-31) — but the verdict still travels the wire, so
-	    a peer applying a master's published `3` at the call site below keeps its
-	    meaning rather than archiving a world on an ordinary failure.
+
+	THERE ARE TWO OUTCOMES AND NOT THREE. A third — OVERTAKEN, "the scene ended but
+	something else decided it" — existed while a room's SHARED HEARTS could run out
+	under a running break-out; heroes are the lives now (owner ruling 2026-08-31),
+	the shared hearts are gone, and nothing left in the game can overtake this
+	scene. It went with its producer rather than being kept as a wire value no
+	master can send.
 
 	THE OUTCOME IS WRITTEN FIRST, before a single line of scene teardown, and it is
 	the ONLY thing written: a survived protocol records the scar and nothing else, a
@@ -3169,20 +3184,13 @@ func _end_custody_protocol(survived: bool, record: bool = true) -> void:
 	by coordinating two.
 	"""
 	# THE VERDICT, LATCHED BEFORE ANYTHING ELSE. On the master this is what the room
-	# is told; on everybody else it is simply a record. Written even when `record` is
-	# false — the scene really did end, whoever decided it.
-	# 1 SURVIVED, 2 FAILED, 3 OVERTAKEN — and the third is not a nicety. A scene
-	# closed with `record` false was ended by something ELSE, so it archives nothing;
-	# publishing it as an ordinary failure would have every peer that had not yet
-	# seen that other outcome archive its world while the master did not. The verdict
-	# has to carry the difference because the outcome does.
-	custody_verdict = (1 if survived else 2) if record else 3
+	# is told; on everybody else it is simply a record. 1 SURVIVED, 2 FAILED.
+	custody_verdict = 1 if survived else 2
 
-	if record:
-		if survived:
-			_apply_custody_scar()
-		else:
-			BestRunStore.archive_world()
+	if survived:
+		_apply_custody_scar()
+	else:
+		BestRunStore.archive_world()
 
 	custody_protocol_active = false
 	custody_timer = 0.0
@@ -3210,10 +3218,6 @@ func _end_custody_protocol(survived: bool, record: bool = true) -> void:
 			interior.call("set_captive", hero, captive_heroes.has(hero))
 
 	if not survived:
-		if not record:
-			# Overtaken, not lost: the building has been put back and the roster
-			# restored above, and the ending is the CALLER's to raise.
-			return
 		print("The recall completed. The world is archived.")
 		_trigger_game_over()
 		return
