@@ -385,6 +385,8 @@ func _run() -> void:
 	_check_burst_escape(croc_ai)
 	_check_ranged_cadence(croc_ai)
 	_check_hunt_pacing(croc_ai)
+	_check_scent_tracking()
+	_check_wanderer_adoption(terrain_script)
 	_check_leap_cycle(croc_ai)
 	_check_view_cone(croc_ai)
 	_check_determinism(terrain_script)
@@ -2250,6 +2252,371 @@ func _probe_hunt_dispatch(hunt_species: String) -> void:
 			% [disengage, holding, recommitted] + " after)")
 
 	_free_hunt_probe(croc, stub)
+
+
+# ============================================================================
+# CHECK 8f — THE SCENT TRAIL: a tracker arrives on a walker, never on a runner
+# ============================================================================
+# The hunt arm's SECOND LEG (owner design ruling 2026-08-31). Out of detection a
+# hunter follows the breadcrumb trail `crocodile_lod_manager` records, walking it
+# at its own chase speed while ASLEEP — advanced kinematically by the LOD scan,
+# because a body 150 m out runs no `_physics_process` and must not be woken for
+# this. Three things can silently break and none of them errors:
+#
+#   * the trail stops being recorded, or expires wrong — the nose smells nothing
+#     and hunters are exactly as absent as the bead was filed about;
+#   * the LOD manager stops calling `advance_tracking` — tracking then only works
+#     inside SIM_RADIUS, which is where direct detection already worked;
+#   * tracking outruns the lattice — a tracker that catches a RUNNING player has
+#     quietly repealed "running always escapes", the tightest promise in the game.
+#
+# So this drives the SHIPPED manager and the SHIPPED arm on live nodes, over a
+# walk and a run, and measures both ends.
+
+## Metres the probe quarry walks before stopping — the acceptance's "walks 200 m
+## and stops".
+const SCENT_WALK_M: float = 200.0
+
+## Metres the tracker is seeded BEHIND the quarry's start, the acceptance's
+## "seeded 150 m behind". Read against SIM_RADIUS (45) this is the whole point:
+## the unit spends almost the entire probe asleep.
+const SCENT_LEAD_M: float = 150.0
+
+## Probe timestep. Coarser than a physics frame on purpose — the LOD scan it
+## drives runs at ~9 Hz, so nothing here resolves finer than that anyway.
+const SCENT_DT: float = 0.1
+
+## Seconds the probe gives the tracker to arrive. The honest arithmetic: 150 m of
+## lead plus 200 m of walking, closed at 6.5 - 5.0 = 1.5 m/s while the quarry
+## moves and at 6.5 m/s after it stops, is ~50 s. 180 s is a generous ceiling that
+## still fails a tracker which has stopped closing at all.
+const SCENT_LIMIT_S: float = 180.0
+
+
+func _check_scent_tracking() -> void:
+	"""
+	Every SPECIES row that declares a nose, walked and run against.
+
+	Iterates `scent_radius` across the table rather than naming the hunter, the
+	same discipline as `_species_with(behavior)`: the day a second retrieval unit
+	gets a nose it is measured, with no edit here.
+	"""
+	var names: Array[String] = []
+	for key: Variant in _species_table:
+		if float((_species_table[key] as Dictionary).get("scent_radius", 0.0)) > 0.0:
+			names.append(String(key))
+	if names.is_empty():
+		_fail("no SPECIES row declares a 'scent_radius' — the hunt arm's scent"
+				+ " tracking leg is unreachable from any species, so hunters are"
+				+ " back to idling where they spawned")
+		return
+	for species_name: String in names:
+		var row: Dictionary = _species_table[species_name]
+		# A nose belongs to the arm that knows what to do with one. `_track_scent`
+		# is called from `_behave_hunt` and from nowhere else, so a row that
+		# declares a radius under any other behaviour has bought dead data.
+		if String(row.get("behavior", "")) != "hunt":
+			_fail("SPECIES['%s'] declares scent_radius but its behavior is '%s' —"
+					% [species_name, String(row.get("behavior", ""))]
+					+ " the tracking leg only runs inside the 'hunt' arm, so the"
+					+ " nose is data nothing reads")
+			continue
+		# A nose narrower than the eyes is the same dead data by a different route:
+		# anything it could smell it has already detected, and detection wins.
+		var detection: float = float(row.get("detection_radius", 0.0))
+		var scent: float = float(row["scent_radius"])
+		if scent <= detection:
+			_fail("SPECIES['%s'] smells %.1f m but SEES %.1f m — a nose inside the"
+					% [species_name, scent, detection] + " detection radius never"
+					+ " fires, because direct detection out-votes it every frame")
+			continue
+		# The whole reason the LOD manager had to be involved: a body that could do
+		# its tracking while awake would need none of `advance_tracking`.
+		if scent <= _sim_radius:
+			_fail("SPECIES['%s'] smells %.1f m, inside SIM_RADIUS %.1f — a tracker"
+					% [species_name, scent, _sim_radius] + " that never sleeps is"
+					+ " not the feature that was asked for, and the slept-but-"
+					+ "stalking half of this check would be measuring nothing")
+		_probe_scent(species_name, true)
+		_probe_scent(species_name, false)
+
+
+func _probe_scent(species_name: String, walking: bool) -> void:
+	"""
+	Seed a tracker `SCENT_LEAD_M` behind a moving quarry and see whether it arrives.
+
+	@param species_name: the SPECIES key to probe
+	@param walking: true = the quarry walks SCENT_WALK_M and stops (it must be
+	                caught up with); false = the quarry keeps RUNNING (it must not)
+
+	TWO PHASES, because the feature has two halves and each can fail alone:
+
+	  phase 1  SLEPT. `lod_active` is forced false and the manager's own `_process`
+	           is driven. Nothing here calls a movement function on the body — if
+	           it moves at all, it is because `_scan_crocodiles` reached
+	           `advance_tracking`, which is the dispatch this half exists to prove.
+	           It ends when the manager WAKES the unit at SIM_RADIUS, which is the
+	           "wakes normally once inside SIM_RADIUS" half of the ruling.
+	  phase 2  AWAKE. The shipped `_update_chase_state` is driven and the body is
+	           integrated along the `movement_direction` that `_track_move` sets,
+	           until direct detection takes over (`is_chasing`). This is the leg
+	           the `_physics_process` movement branch selects on `is_tracking`.
+
+	The RUN control is the negative half, and it is what makes the walk half mean
+	something: identical row, identical machinery, one speed apart. A probe where
+	everything is caught has measured no lattice at all.
+
+	ponytail: phase 2 integrates the heading by hand rather than awaiting real
+	physics frames — the same trade every live-body probe in this file makes. The
+	ceiling is that gravity, the feelers and the bite lunge are not modelled; none
+	of them can turn "walks up a trail" into "does not".
+	"""
+	var row: Dictionary = _species_table[species_name]
+	var quarry_speed: float = _walk_speed if walking else _slowest_run_speed
+	if quarry_speed <= 0.0:
+		_fail("the scent probe has no %s speed to move its quarry at — check 8f"
+				% ("walk" if walking else "run") + " would measure a stationary"
+				+ " player, which every tracker reaches trivially")
+		return
+
+	var stub_script := GDScript.new()
+	stub_script.source_code = HUNT_STUB_SOURCE
+	stub_script.reload()
+	var stub := Node3D.new()
+	stub.set_script(stub_script)
+	stub.add_to_group("player")
+	root.add_child(stub)
+	stub.global_position = Vector3.ZERO
+
+	# The SHIPPED manager, not a restatement of it: this is the node that records
+	# the trail and the node that walks a sleeper along it, so a change to either
+	# is a change to what this check measures.
+	var lod := Node.new()
+	lod.set_script(load(LOD_SCRIPT))
+	root.add_child(lod)
+
+	var croc: Node = load(CROC_SCENE).instantiate()
+	croc.species = species_name         # before add_child, the row's own contract
+	root.add_child(croc)
+	croc.global_position = Vector3(-SCENT_LEAD_M, 0.0, 0.0)
+	croc._find_player()
+	# ASLEEP BY HAND. `set_lod_active(false)` refuses a body that is not
+	# `is_on_floor()`, and a headless probe has no floor — so the setter would
+	# leave this unit awake and the slept half of the feature would go untested.
+	# Writing the flag and the callback switch is exactly what the setter does.
+	croc.lod_active = false
+	croc.set_physics_process(false)
+
+	var detection: float = float(row.get("detection_radius", 0.0))
+	var start_gap: float = croc.global_position.distance_to(stub.global_position)
+	var t: float = 0.0
+	var walked: float = 0.0
+
+	# ---- phase 1: slept, advanced only by the manager's scan -----------------
+	# SCAN FIRST, THEN MOVE, and the order matters: the quarry has to lay a crumb
+	# where it is STANDING before it walks off, or the first crumb is already
+	# further than the seed distance and a tracker seeded exactly SCENT_LEAD_M out
+	# can never smell anything at all. That also makes this probe the boundary
+	# case on purpose — the nose is 150 m and the seed is 150 m, so a `scent_radius`
+	# that stopped being inclusive at its own edge fails here.
+	while t < SCENT_LIMIT_S and not croc.lod_active:
+		lod._process(SCENT_DT)
+		if not walking or walked < SCENT_WALK_M:
+			stub.global_position.x += quarry_speed * SCENT_DT
+			walked += quarry_speed * SCENT_DT
+		t += SCENT_DT
+
+	var woke_at: float = t
+	var slept_gap: float = croc.global_position.distance_to(stub.global_position)
+
+	if not walking:
+		# THE NEGATIVE CONTROL. A runner lays the same trail; the tracker simply
+		# cannot close on it, and the gap has to be WIDER than it started.
+		if croc.lod_active:
+			_fail("a %s tracked a RUNNING quarry (%.1f m/s) all the way to"
+					% [species_name, quarry_speed] + " SIM_RADIUS in %.0f s — the"
+					% woke_at + " scent leg has outrun the speed lattice, and"
+					+ " 'running always escapes' is no longer true")
+		elif slept_gap <= start_gap:
+			_fail("a %s closed from %.0f m to %.0f m on a RUNNING quarry — it"
+					% [species_name, start_gap, slept_gap] + " should be falling"
+					+ " behind at %.1f m/s, so tracking is moving it faster than"
+					% (quarry_speed - float(row["chase_speed"])) + " its row's"
+					+ " chase_speed")
+		else:
+			print("scent tracking: %s never caught a %.1f m/s runner — %.0f m"
+					% [species_name, quarry_speed, start_gap] + " became %.0f m"
+					% slept_gap + " in %.0f s, still asleep" % t)
+		_free_scent_probe(croc, stub, lod)
+		return
+
+	if not croc.lod_active:
+		_fail("a %s seeded %.0f m behind a quarry that walked %.0f m and stopped"
+				% [species_name, start_gap, SCENT_WALK_M] + " was still %.0f m"
+				% slept_gap + " away after %.0f s — either the trail is not being"
+				% t + " recorded, or the LOD scan never reached advance_tracking,"
+				+ " so a slept hunter does not stalk and the nose is decoration")
+		_free_scent_probe(croc, stub, lod)
+		return
+
+	# ---- phase 2: awake, the arm's own leg ----------------------------------
+	var arrived: bool = false
+	while t < SCENT_LIMIT_S:
+		croc._update_chase_state()
+		if croc.is_chasing:
+			arrived = true
+			break
+		if not croc.is_tracking:
+			_fail("a woken %s standing %.0f m from its quarry is neither chasing"
+					% [species_name, croc.global_position.distance_to(stub.global_position)]
+					+ " nor tracking — the awake half of the leg drops the trail"
+					+ " the moment the body wakes, so it stalls at SIM_RADIUS")
+			break
+		croc._track_move()
+		croc.global_position += croc.movement_direction * croc.chase_speed_instance * SCENT_DT
+		lod._process(SCENT_DT)
+		t += SCENT_DT
+
+	if not arrived:
+		_fail("a %s that woke %.0f m from its quarry never reached its own %.1f m"
+				% [species_name, slept_gap, detection] + " detection radius within"
+				+ " %.0f s — the trail brought it near and then stopped bringing"
+				% SCENT_LIMIT_S + " it in")
+	else:
+		print("scent tracking: %s seeded %.0f m behind a quarry that walked %.0f m"
+				% [species_name, start_gap, SCENT_WALK_M] + " woke at %.0f m after"
+				% slept_gap + " %.0f s asleep and acquired it %.0f s in (nose"
+				% [woke_at, t] + " %.0f m, eyes %.0f m)"
+				% [float(row["scent_radius"]), detection])
+
+	_free_scent_probe(croc, stub, lod)
+
+
+# ============================================================================
+# CHECK 8g — a tracker that walks off its birth chunk SURVIVES, and leaves no twin
+# ============================================================================
+# The half of scent tracking that check 8f cannot see, because its probe has no
+# terrain: everything the world spawns is parented to its chunk so that unloading
+# the chunk frees it, and a tracker WALKS. Its birth chunk falls behind the player
+# it is following and takes the unit with it — deleting the hunter precisely for
+# doing the thing the feature exists to make it do, which is a silent regression
+# to the bug this bead was filed about. `adopt_wanderer` re-parents it to the
+# ground under its feet; the cost of that is that the birth chunk can regenerate
+# while the unit lives, so the slot registry has to refuse to build the twin.
+#
+# Both halves are measured here, and the second needs the first: a registry that
+# never releases a slot is a hunter that never comes back.
+
+## How far to sweep for a chunk that actually rolls a hunter. HUNTER_CHANCE is
+## 0.15, so a few dozen candidates is overwhelming odds; a sweep that finds none
+## is reported rather than skipped.
+const ADOPT_SCAN_CHUNKS: int = 60
+
+
+func _check_wanderer_adoption(terrain_script: GDScript) -> void:
+	"""
+	Walk one real hunter off its chunk and check who owns it afterwards.
+
+	@param terrain_script: endless_terrain.gd, driven DETACHED — `adopt_wanderer`
+	                       needs only `world_to_chunk` (pure) and `active_chunks`,
+	                       while the chunk parents and the unit are really in the
+	                       tree, which is what `reparent` needs. Attaching the
+	                       terrain would start it streaming a world of its own
+	                       (see `_make_chunk_parent`).
+	"""
+	var terrain: Node = Node3D.new()
+	terrain.set_script(terrain_script)
+	terrain.set_run_seed(RUN_SEEDS[0])
+
+	# Find a chunk this seed really gives a hunter to, rather than assuming one.
+	var birth := Vector2i.ZERO
+	var birth_parent: MeshInstance3D = null
+	var hunter: Node3D = null
+	for i: int in ADOPT_SCAN_CHUNKS:
+		var cp := Vector2i(FIELD + i, FIELD)
+		var parent := _make_chunk_parent(terrain.chunk_to_world(cp))
+		terrain.spawn_hunters_in_chunk(cp, parent, [])
+		if parent.get_child_count() > 0:
+			birth = cp
+			birth_parent = parent
+			hunter = parent.get_child(0) as Node3D
+			break
+		parent.free()
+	if hunter == null:
+		_fail("no chunk in a %d-chunk sweep spawned a hunter at HUNTER_CHANCE —"
+				% ADOPT_SCAN_CHUNKS + " check 8g has no subject, so the migration"
+				+ " that keeps a tracker alive across a chunk unload is untested")
+		terrain.free()
+		return
+	var slot: String = hunter.name
+
+	# The chunk it is about to walk onto, one chunk along. Both go into
+	# `active_chunks` because that map is the terrain's answer to "what ground is
+	# loaded", and `adopt_wanderer` refuses to hand a body to ground that is not.
+	var dest := birth + Vector2i(1, 0)
+	var dest_parent := _make_chunk_parent(terrain.chunk_to_world(dest))
+	terrain.active_chunks[birth] = birth_parent
+	terrain.active_chunks[dest] = dest_parent
+
+	# Stand it in the middle of the destination chunk and hand it over.
+	var dest_centre: Vector3 = terrain.chunk_to_world(dest)
+	hunter.global_position = Vector3(dest_centre.x, hunter.global_position.y, dest_centre.z)
+	var stood_at: Vector3 = hunter.global_position
+	terrain.adopt_wanderer(hunter)
+
+	if hunter.get_parent() != dest_parent:
+		_fail("a hunter standing in chunk %s is still parented to its birth chunk"
+				% str(dest) + " %s — the chunk that unloads when the player walks"
+				% str(birth) + " away will delete a tracker that is doing exactly"
+				+ " what the scent leg asks of it")
+	var drift: float = hunter.global_position.distance_to(stood_at)
+	if drift > EPSILON:
+		_fail("adopt_wanderer moved the body it re-parented by %.2f m — the"
+				% drift + " transfer has to keep the GLOBAL transform, or every"
+				+ " migration teleports the unit by one chunk origin (50 m) and a"
+				+ " tracker crossing a boundary jumps instead of walking")
+
+	# ...and the birth chunk must now refuse to build its twin, because the name is
+	# the room-wide crocodile id and two bodies cannot share one.
+	var rebuilt := _make_chunk_parent(terrain.chunk_to_world(birth))
+	terrain.spawn_hunters_in_chunk(birth, rebuilt, [])
+	if rebuilt.get_child_count() > 0:
+		_fail("chunk %s rebuilt its hunter while the migrated one is still alive —"
+				% str(birth) + " two bodies now answer to '%s', which is one" % slot
+				+ " crocodile id shared by two transforms in every room")
+	rebuilt.free()
+
+	# ...and it must build it again once that body is gone, or a slot leaks for the
+	# life of the run and the world quietly loses a hunter every migration.
+	hunter.free()
+	var revived := _make_chunk_parent(terrain.chunk_to_world(birth))
+	terrain.spawn_hunters_in_chunk(birth, revived, [])
+	if revived.get_child_count() == 0:
+		_fail("chunk %s never rebuilt its hunter after the migrated body was"
+				% str(birth) + " freed — the slot registry holds a dead name, so"
+				+ " every tracker the world loses is lost permanently")
+	else:
+		print("wanderer adoption: '%s' moved from chunk %s to %s, the birth chunk"
+				% [slot, str(birth), str(dest)] + " refused to rebuild it, and"
+				+ " rebuilt it once the body was freed")
+	revived.free()
+
+	birth_parent.free()
+	dest_parent.free()
+	terrain.free()
+
+
+func _free_scent_probe(croc: Node, stub: Node, lod: Node) -> void:
+	"""
+	Tear the scent probe down IMMEDIATELY — same argument as `_free_hunt_probe`.
+
+	The manager matters as much as the stub here: it stands in group
+	"lod_manager", which every crocodile the 289-chunk sweep spawns would resolve
+	through `_track_scent`, and it holds a trail that would answer them.
+	"""
+	croc.free()
+	stub.free()
+	lod.free()
 
 
 func _free_hunt_probe(croc: Node, stub: Node) -> void:

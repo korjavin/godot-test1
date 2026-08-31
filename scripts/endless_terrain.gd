@@ -2267,6 +2267,20 @@ var player: Node3D
 ## Key: Vector2i (chunk coordinates), Value: MeshInstance3D (the chunk)
 var active_chunks: Dictionary = {}
 
+## Spawn SLOTS whose body has walked out of the chunk that made it, as
+## { node name (the slot id) : the node }. Written only by `adopt_wanderer`, read
+## only by `spawn_hunters_in_chunk`, cleared by `set_run_seed`.
+##
+## THE ONE THING IT PREVENTS, and the only reason it exists: a scent-tracking
+## hunter re-parents to whatever chunk it is standing on, so its birth chunk can
+## unload and later regenerate while the unit is still alive somewhere else — and
+## that regeneration would deterministically build a SECOND body with the same
+## name, which is the room-wide crocodile id. One slot, one body.
+##
+## Entries are reaped lazily where they are read (a freed node is erased on the
+## next spawn attempt for its slot), so nothing has to watch for deletions.
+var _migrated_units: Dictionary = {}
+
 ## Last player chunk position (to detect when to update chunks)
 var last_player_chunk: Vector2i = Vector2i(999999, 999999)
 
@@ -2741,6 +2755,17 @@ func set_run_seed(value: int) -> void:
 	"""
 	run_seed = value
 	_roll_biome_offset()
+	# A NEW WORLD REMEMBERS NOTHING. Two pieces of runtime state outlive a chunk
+	# wipe and would otherwise leak across it: the migrated-slot registry (whose
+	# bodies the wipe frees, leaving stale names that would suppress the new
+	# world's hunters) and the LOD manager's scent trail — a sibling node the wipe
+	# never touches, so the new run's hunters would spend up to TRAIL_TTL following
+	# the paths of the run you just lost. Hung off the seed write for the same
+	# reason `_tower_reset()` is: every path that starts a world comes through here.
+	_migrated_units.clear()
+	var lod := get_tree().get_first_node_in_group("lod_manager") if is_inside_tree() else null
+	if lod != null and lod.has_method("reset_trails"):
+		lod.reset_trails()
 	# Put the tower's two bodies back to a not-built-yet state. The site itself no
 	# longer moves (it is a constant — see tower_site()), but the SHELL is the one
 	# thing under this manager a chunk wipe does not free, so a new world still has
@@ -5459,6 +5484,47 @@ func spawn_crocodiles_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D
 		parent_chunk.add_child(crocodile_instance)
 		spawned_positions.append(crocodile_pos)
 
+func adopt_wanderer(unit: Node3D) -> void:
+	"""
+	Re-parent a body that has walked off its birth chunk to the chunk under it.
+
+	@param unit: the wandering body — today only a scent-tracking hunter, which is
+	             the only thing in this game that moves while the LOD manager has
+	             it asleep
+
+	EVERYTHING SPAWNED PER CHUNK IS PARENTED TO THAT CHUNK so unloading frees it,
+	and that rule is exactly right for a body that stays where it was put. A
+	tracker does not: it follows a trail toward the player, so its birth chunk
+	falls out of `render_distance` behind it and takes it with it — deleting the
+	unit for doing the one thing the feature exists to make it do. Re-parenting
+	restores the rule instead of exempting the unit from it: the body still dies
+	when the ground it is ACTUALLY standing on unloads, which is still the correct
+	streaming lifetime, just measured against the right chunk.
+
+	THE NAME IS NOT TOUCHED, because the name IS the room-wide crocodile id
+	(`croc_id_for` hashes it) and every peer derives it from the birth chunk. What
+	the move does create is the possibility of that birth chunk regenerating while
+	this body is still alive, which would build a second unit with the same id —
+	so the slot is recorded in `_migrated_units` and `spawn_hunters_in_chunk`
+	refuses to fill a slot that is already standing somewhere.
+
+	Silently does nothing when the destination chunk is not loaded (leaving the
+	unit parented where it is, which is the pre-existing behaviour) or when it is
+	already parented correctly — so this is safe to call every scan, which is what
+	`advance_tracking` does.
+	"""
+	if not is_instance_valid(unit) or not unit.is_inside_tree():
+		return
+	var chunk_pos := world_to_chunk(unit.global_position)
+	if not active_chunks.has(chunk_pos):
+		return
+	var host: Node = active_chunks[chunk_pos]
+	if unit.get_parent() == host:
+		return
+	_migrated_units[unit.name] = unit
+	unit.reparent(host, true)
+
+
 func spawn_hunters_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array = []) -> void:
 	"""
 	Place this chunk's GD-SURVEY hunter robot, if it gets one.
@@ -5551,6 +5617,21 @@ func spawn_hunters_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, o
 		if tower_excludes(world.x, world.z, min_object_clearance):
 			continue
 
+		# ONE SLOT, ONE BODY. A hunter that walked off this chunk while tracking is
+		# re-parented to the ground under it (`adopt_wanderer`), so this chunk can
+		# unload and regenerate while that unit is still alive — and filling the
+		# slot again would build a second body carrying the same name, which is the
+		# room-wide crocodile id. The registry is reaped here rather than watched:
+		# a slot whose body has since been freed is simply forgotten and refilled.
+		#
+		# BELOW EVERY DRAW, like every other rejection in this function, so the
+		# stream is identical whether or not the slot happens to be occupied.
+		var slot := "Hunter_%d_%d_0" % [chunk_pos.x, chunk_pos.y]
+		if _migrated_units.has(slot):
+			if is_instance_valid(_migrated_units[slot]):
+				return
+			_migrated_units.erase(slot)
+
 		var hunter := HUNTER_SCENE.instantiate()
 		# "Hunter_<cx>_<cy>_<i>", its own namespace beside "Crocodile_" /
 		# "PatrolCrocodile_" / "BossCrocodile_". The name IS the room-wide id
@@ -5563,7 +5644,7 @@ func spawn_hunters_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, o
 		# The trailing 0 is this chunk's hunter INDEX, kept in the name even though
 		# a chunk gets at most one today: the three-part shape is what makes the
 		# name a spawn SLOT rather than a label, the way the crocodile spawner's is.
-		hunter.name = "Hunter_%d_%d_0" % [chunk_pos.x, chunk_pos.y]
+		hunter.name = slot
 		hunter.position = local
 		hunter.rotation.y = facing
 		# CALL-ORDER CONTRACT (the setup_as_boss / spawn_crocodiles_in_chunk shape):

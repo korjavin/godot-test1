@@ -4449,8 +4449,22 @@ func _send_croc_sync() -> void:
 			continue
 		# Asleep crocodiles cost zero network — every peer already agrees on where
 		# a sleeping one stands, because that is its deterministic spawn state.
+		#
+		# EXCEPT A SLEEPER THAT HAS STALKED, which is the one body that has left
+		# that state without waking: `crocodile_lod_manager` walks a sleeping
+		# tracker up the scent trail on its own scan (see `advance_tracking`), so
+		# the master's copy is somewhere the peer's deterministic spawn position
+		# is not, and skipping it would pop the unit into place the frame it woke.
+		# No protocol change and no measurable traffic — the per-peer radius filter
+		# below still applies, and a hunter is one body per few chunks.
+		#
+		# `has_stalked` and NOT `is_tracking`, deliberately: the question is whether
+		# the spawn position is still a true statement about this body, and it stops
+		# being one permanently the first time the unit takes a step. A tracker whose
+		# trail has gone cold is just as displaced as one still walking.
 		if "lod_active" in croc and not croc.lod_active:
-			continue
+			if not ("has_stalked" in croc and croc.has_stalked):
+				continue
 		# A crocodile WE are being driven on is not ours to publish. This cannot
 		# normally be true on the master (promotion releases them all), but a
 		# sample in flight across an election could land just after we were
