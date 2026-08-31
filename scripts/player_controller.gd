@@ -372,15 +372,23 @@ var is_caught: bool = false
 var caught_timer: float = 0.0
 const CAUGHT_DURATION: float = 0.55
 
-## THE THIRD STAKE, latched across the caught freeze. 0.0 for every ordinary
-## contact in the game; the fraction off the attacker's `coin_setback` row key
-## when a TOWER GUARD is what hit us. Held here rather than re-derived in
-## `_on_caught_finished()` because the attacker is gone by then (the caught freeze
-## is 33 frames long and it may have been slept, freed by a population reset, or
-## simply walked away), and re-asking would silently downgrade a guard hit to the
-## predator cost. Same shape and same reason as the capture gate two lines below
-## it in `hit_by_crocodile()`: the decision is made where the evidence is.
+## THE BILL FOR THIS CONTACT, latched across the caught freeze. Every hit in the
+## game charges one — heroes are the lives now, so a bite takes coins and never a
+## heart — and the fraction is the attacker's own `coin_setback` row key. Held
+## here rather than re-derived in `_on_caught_finished()` because the attacker is
+## gone by then (the caught freeze is 33 frames long and it may have been slept,
+## freed by a population reset, or simply walked away), and re-asking would
+## silently downgrade the hit to the default. Same shape and same reason as the
+## capture gate two lines below it in `hit_by_crocodile()`: the decision is made
+## where the evidence is.
 var caught_setback: float = 0.0
+
+## What a hit with no SPECIES row behind it costs — the tower's rotor bar, a boss
+## projectile, a `null` attacker in a self-check. Named rather than inlined so the
+## "every contact pays" rule has no free hit hiding in it, and set to the ordinary
+## field predator's number so an environmental hazard is neither the cheapest nor
+## the most expensive way to lose coins.
+const DEFAULT_COIN_SETBACK: float = 0.10
 
 ## Lives / game-over state. The player starts each run with MAX_LIVES; every
 ## crocodile bite costs one. While lives remain we respawn *in place* (keeping all
@@ -2019,46 +2027,69 @@ func _coin_setback_of(attacker: Node) -> float:
 	What fraction of this player's coins does the thing that just hit us take?
 
 	@param attacker: whoever called `hit_by_crocodile`, or null when nobody said.
-	@return: 0.0 for every ordinary contact; the attacker's `coin_setback` for a
-	         body whose SPECIES row carries one (today: the tower guard).
+	@return: every predator's own `coin_setback`, and `DEFAULT_COIN_SETBACK` for a
+	         hit with no SPECIES row behind it.
 
 	KEYED ON A ROW KEY, NOT ON A SPECIES NAME — the third time this file asks the
 	attacker a question and the third time the answer is data (see
-	`_is_hunter_grab` above, and `stink_immune` / `crush_immune` in the AI). A
-	second guard-class body opts in by editing its row and nothing here changes.
+	`_is_hunter_grab` above, and `stink_immune` / `crush_immune` in the AI). A new
+	predator sets its own price by editing its row and nothing here changes.
 
 	AND IT IS THE FRACTION, NOT A BOOLEAN, so this file holds no percentage of its
 	own: "one arithmetic everywhere" means the number lives in exactly one place
-	(the row) and is spent in exactly one place (`_pay_guard_setback`). Read
+	(the row) and is spent in exactly one place (`_pay_coin_setback`). Read
 	through `Node.get()`, which answers null for a body with no `spec` at all — the
-	tower's rotor bar, a boss projectile — so every other damage source falls
-	through to the predator arithmetic with no test of its own.
+	tower's rotor bar, a boss projectile — and THAT is the one case with no row to
+	read, so it falls to the named default rather than to a free hit.
 
 	CLAMPED TO [0, 1] AT THE READ. A hand-edited or mis-typed row cannot make a hit
 	refund coins or take more than there are, and the clamp being here rather than
 	at the spend is what keeps the spend a single subtraction.
 	"""
 	if attacker == null:
-		return 0.0
+		return DEFAULT_COIN_SETBACK
 	var row: Variant = attacker.get("spec")
 	if not (row is Dictionary):
-		return 0.0
-	return clampf(float((row as Dictionary).get("coin_setback", 0.0)), 0.0, 1.0)
+		return DEFAULT_COIN_SETBACK
+	return clampf(float((row as Dictionary).get("coin_setback", DEFAULT_COIN_SETBACK)), 0.0, 1.0)
 
 
-func _pay_guard_setback(fraction: float) -> void:
+func _is_sweep_exempt(body: Node) -> bool:
 	"""
-	Settle a tower guard's bill: a slice of the coins, and back to the checkpoint.
+	Is this body authored furniture the respawn sweep must not free?
+
+	@param body: any node in group `"crocodile"`.
+	@return: the body's `sweep_exempt` row key, false for a body with no row.
+
+	A ROW KEY, NEVER A SPECIES NAME, the same shape as `stink_immune` /
+	`crush_immune` in the AI and for the same reason: the next authored body opts
+	in by editing its row and `clear_nearby_crocodiles()` never changes. It used to
+	be inferred from `coin_setback` being non-zero, which worked only while the
+	guard was the sole row carrying that key — every predator bills coins now, so
+	the inference matches the whole world and the property has to say its own name.
+	"""
+	if body == null:
+		return false
+	var row: Variant = body.get("spec")
+	return row is Dictionary and bool((row as Dictionary).get("sweep_exempt", false))
+
+
+func _pay_coin_setback(fraction: float) -> bool:
+	"""
+	Settle the bill for the hit that just landed: a slice of the run's coins, and
+	— inside the tower only — the ground back to the last checkpoint.
 
 	@param fraction: the attacker's `coin_setback`, already clamped to [0, 1].
+	@return: true if we RELOCATED, which tells `_on_caught_finished()` to skip the
+	         ordinary respawn (see the tail of this function for why).
 
-	NO LIFE IS SPENT AND NO RUN CAN END HERE. That is the owner ruling and it is
-	enforced structurally rather than by a flag: this function is the early return
-	at the top of `_on_caught_finished()`, so both of that function's endings — the
-	heart and the game over — are physically below it.
+	NO LIFE IS SPENT AND NO RUN CAN END HERE, because there is no longer any such
+	thing: heroes are the lives (owner ruling 2026-08-31) and the only ending left
+	is the free-hero set going empty, which `_on_caught_finished()` tests after
+	calling this.
 
 	THE COINS COME OFF `own_coins`, WHICH IS THIS PEER'S OWN STAKE. Solo the two
-	fields are identical and this is simply "7% of your coins". In a ROOM
+	fields are identical and this is simply "that fraction of your coins". In a ROOM
 	`coins_collected` is the whole room's bank (see `_refresh_shared_totals`), and
 	billing a fraction of four players' bank to one player's contribution could
 	drive `own_coins` negative and make the shared total drift. So the fraction is
@@ -2066,23 +2097,10 @@ func _pay_guard_setback(fraction: float) -> void:
 	displayed figure so the HUD moves on the frame the hit lands rather than on the
 	next shared recompute.
 
-	ponytail: IN A ROOM the shared heart count is derived from the shared bank
-	(`shared_lives(own_coins, own_lives_spent)`), so a setback that docks this peer
-	across an EXTRA_LIFE_COINS boundary costs the ROOM a heart — which is the one
-	way the "no life" half of the ruling can be bent, and only in a room, only at
-	the tower, only on a threshold. Left as it is deliberately: the tower's
-	multiplayer half is bead godot-test1-3iy.10, the fix belongs with the rest of
-	that arbitration, and the alternatives available inside this bead are worse
-	(docking only the displayed figure makes the setback invisible in a room, since
-	the next shared recompute overwrites it; capping the loss at the threshold makes
-	the arithmetic two arithmetics). Solo, `lives` is only ever incremented at a
-	threshold and never recomputed from the bank, so nothing here can touch it.
-
-	`next_extra_life_at` IS DELIBERATELY LEFT WHERE IT IS. It only ever advances,
-	so re-earning coins you were docked cannot re-award a heart you already have —
-	the threshold you already crossed is behind you. What it does mean is that a
-	player docked back below the NEXT threshold has to re-earn those coins to reach
-	it, which is the setback doing its job.
+	LIFETIME COINS ARE NEVER TOUCHED. `progression.gd`'s count and
+	`best_run_store.gd`'s records are monotone by design (every persistence layer
+	merges with a plain `max`), so the setback is a RUN-side tax and nothing here
+	reaches either of them.
 
 	NOTHING IS SWEPT. `clear_nearby_crocodiles()` frees bodies, and a guard is
 	authored furniture rather than spawn clutter — see the exemption there. The
@@ -2094,26 +2112,30 @@ func _pay_guard_setback(fraction: float) -> void:
 	own_coins = maxi(0, own_coins - lost)
 	coins_collected = maxi(0, coins_collected - lost)
 
-	# THE KNOCKBACK. Null-safe group lookup with a `has_method` guard, the
-	# project's no-hard-references convention: a guard can only ever bite you
-	# inside the tower, but this is also the path a save-scummed scene or a
-	# self-check takes, and standing still is a better failure than a crash.
+	# THE KNOCKBACK, AND IT IS THE TOWER'S ALONE. Null-safe group lookup with a
+	# `has_method` guard, the project's no-hard-references convention — and in the
+	# FIELD that lookup finds nothing, which is the whole of "the coin bill is
+	# universal, the relocation is not". No branch of our own decides that.
 	var interior := get_tree().get_first_node_in_group("tower_interior")
-	if interior and interior.has_method("setback_point"):
-		global_position = interior.call("setback_point")
+	if not (interior and interior.has_method("setback_point")):
+		print("Setback: -%d coins" % lost)
+		return false
+	global_position = interior.call("setback_point")
 
 	# ...and the same landing every other respawn gets: clean ability state, a
 	# frozen grace window, then the blinking i-frames. Written out rather than
 	# routed through `_respawn_in_place()` because that function's first act is to
 	# relocate a player to the room's group anchor, which would throw the knockback
-	# we just made straight across the map.
+	# we just made straight across the map — which is also why we report the
+	# relocation to the caller, so it skips the respawn it would otherwise run.
 	_reset_ability_states()
 	velocity = Vector3.ZERO
 	is_ducking = false
 	is_running = false
 	is_respawning = true
 	respawn_timer = RESPAWN_GRACE_DURATION
-	print("Tower guard setback: -%d coins, back to the checkpoint" % lost)
+	print("Setback: -%d coins, back to the checkpoint" % lost)
+	return true
 
 
 func _capture_is_armed() -> bool:
@@ -2796,14 +2818,14 @@ func hit_by_crocodile(attacker: Node = null) -> void:
 	if _is_hunter_grab(attacker) and _capture_is_armed():
 		_capture_active_hero()
 
-	# THE THIRD STAKE, decided at the same seam and for the same reason: this is
-	# where the attacker is still in hand. A tower guard charges a fraction of your
-	# coins plus a knockback to the last checkpoint you lit inside the building —
-	# and NOT a life, so the tower can never end a run in the middle of a rescue
-	# (owner ruling, 2026-08-27). Zero for everything else in the game, which is
-	# every other row in the SPECIES table, the rotor bar, a boss projectile and a
-	# plain `null` attacker. Paid in `_on_caught_finished()`, after the same caught
-	# freeze / red flash / sting every other hit gets — a guard hit is a different
+	# THE COIN BILL, decided at the same seam and for the same reason: this is where
+	# the attacker is still in hand. EVERY contact charges one now that heroes are
+	# the lives (owner ruling 2026-08-31) — each predator's own row key, and
+	# `DEFAULT_COIN_SETBACK` for the rotor bar, a boss projectile or a plain `null`
+	# attacker. What still makes a tower guard different is the knockback to the
+	# last checkpoint you lit inside the building, and that is decided by the
+	# building's presence, not here. Paid in `_on_caught_finished()`, after the same
+	# caught freeze / red flash / sting every hit gets — a bigger animal is a bigger
 	# BILL, not a different verb.
 	caught_setback = _coin_setback_of(attacker)
 
@@ -2831,66 +2853,23 @@ func hit_by_crocodile(attacker: Node = null) -> void:
 
 func _on_caught_finished() -> void:
 	"""
-	Called once the "caught" freeze ends. One bite costs one life; from there we
-	either respawn in place (lives left) or end the run (no lives left).
+	Called once the "caught" freeze ends. EVERY contact pays the same bill — the
+	freeze that already happened, plus the attacker's slice of the run's coins —
+	and nothing here can end a run.
 
-	...UNLESS A TOWER GUARD IS WHAT HIT US, which is the one contact in the game
-	that does not spend a heart. It takes coins and ground instead, and it returns
-	from here BEFORE the `lives -= 1` below — which is the whole of "the building
-	can never game-over you mid-rescue", because both endings the function decides
-	between are underneath that line.
+	HEROES ARE THE LIVES (owner ruling 2026-08-31). There is no heart to spend and
+	no out-of-hearts branch to take: the only ending left in the game is the free
+	set of heroes going empty, tested below and handed to the full-custody
+	protocol. Every other challenge is fewer coins and a temporal freeze.
 	"""
-	if caught_setback > 0.0:
-		_pay_guard_setback(caught_setback)
-		return
+	# The bill first, because it is unconditional. It relocates ONLY inside the
+	# tower (the group lookup finds nothing in the field), and when it does it has
+	# already run the respawn tail itself — routing that through
+	# `_respawn_in_place()` would relocate us straight back to the room's group
+	# anchor and throw the knockback across the map.
+	var relocated: bool = _pay_coin_setback(caught_setback)
 
-	# IN A ROOM, RE-READ THE ROOM'S HEARTS BEFORE SPENDING ONE. `_physics_process`
-	# early-returns for the whole `is_caught` freeze (CAUGHT_DURATION, 0.55 s), so
-	# `_refresh_shared_totals()` has not run since the bite landed and `lives` is
-	# up to half a second stale — long enough for a teammate's coin pickup to have
-	# crossed an EXTRA_LIFE_COINS threshold, or for another member's death to have
-	# arrived. Branching on the stale value ends this player's run on a heart the
-	# room actually has. Done here, at the one place the decision is made, rather
-	# than inside the caught branch: the freeze is 33 frames of work to fix a
-	# single read. A no-op offline, where the call returns before touching anything.
-	_refresh_shared_totals()
-
-	lives -= 1
-	# This peer's contribution to the room's spent-lives total. Counted even solo
-	# (it is simply never read there), so there is no branch to get wrong.
-	own_lives_spent += 1
-	print("Caught! Lives remaining: %d" % lives)
-	# TWO WAYS A RUN ENDS, ONE PLACE THAT DECIDES. An empty free-hero set is game
-	# over on its own terms — there is nobody left to respawn AS, so respawning
-	# would put a captive back on his feet in the field. Checked here rather than
-	# in `_capture_active_hero()` so the capture still gets the full caught freeze,
-	# the red flash and the sting before the screen comes up, exactly like running
-	# out of hearts does; the handoff into the full-custody protocol scene (bead
-	# godot-test1-3iy.11) replaces the `_trigger_game_over()` call below and
-	# nothing else on this path.
-	# GUARDED ON THERE BEING A CAPTIVE AT ALL, so the clause can only ever fire for
-	# the reason it exists. An empty hand has one other cause — a room that has not
-	# confirmed this peer's hero — and ending a run on that would be a bug with no
-	# visible cause at all.
-	#
-	# THE ROSTER CLAUSE NOW OPENS THE FULL-CUSTODY PROTOCOL (bead
-	# godot-test1-3iy.11) instead of ending the run: the corporation has everybody,
-	# and what follows is the authored break-out, not a screen. The HEARTS clause is
-	# untouched and is tested FIRST — running out of lives has always been an
-	# ordinary game over and the protocol is not a way to dodge one. Losing the last
-	# heart INSIDE the scene is failure, decided in `_tick_custody()`.
-	if lives <= 0:
-		lives = 0
-		# LOSING YOUR LAST HEART INSIDE THE SCENE IS THE SCENE'S OUTCOME, not a
-		# second one. Routed here rather than tested again in `_tick_custody()`
-		# because two sites deciding one thing is two game-over stings, two panels
-		# and — worse — an archive written a frame after a screen that already went
-		# up for a different reason.
-		if custody_protocol_active:
-			_end_custody_protocol(false)
-		else:
-			_trigger_game_over()
-	elif not custody_protocol_active and free_hero_count() == 0 and not captive_heroes.is_empty():
+	if not custody_protocol_active and free_hero_count() == 0 and not captive_heroes.is_empty():
 		# GAME OVER IS WORLD-LEVEL (bead godot-test1-3iy.10, an ADOPTED READING of
 		# the owner's phrasing): the corporation has to hold EVERY hero, not merely
 		# every hero this peer may play. Solo that is the same sentence it has
@@ -2913,7 +2892,7 @@ func _on_caught_finished() -> void:
 		# grace window, the ability reset and the crocodile sweep, and handing the
 		# guard that just hit them a free second hit.
 		_begin_custody_protocol()
-	else:
+	elif not relocated:
 		_respawn_in_place()
 
 
@@ -3769,16 +3748,21 @@ func clear_nearby_crocodiles(spawn_point: Vector3) -> void:
 				continue
 			# AND A TOWER GUARD IS EXEMPT FOR THE SAME REASON A BOSS IS: it is
 			# authored furniture standing on an authored post, not spawn clutter.
-			# This is NOT only about a guard's own bite — every other way to die
+			# This is NOT only about a guard's own bite — every other way to lose
 			# inside the building routes here too (the rotor bar, the press, a
 			# crocodile that followed you through the door), and a 25 m sweep from
 			# anywhere in a 17.6 m building frees the WHOLE floor. That would make
-			# dying the cheapest way past a guarded room, and it would break the
+			# losing the cheapest way past a guarded room, and it would break the
 			# other half of the ruling as well: the population is supposed to come
 			# back at the doorway, not at whatever hazard you last lost to.
-			# Row key, never a species name, exactly like the two immunities in the
-			# AI — a second guard-class body inherits this with its row.
-			if _coin_setback_of(crocodile) > 0.0:
+			#
+			# KEYED ON ITS OWN ROW KEY, because the property is "authored furniture,
+			# not spawn clutter" and nothing else. It used to be inferred from
+			# `coin_setback` being non-zero, which held only while the guard was the
+			# one row carrying that key; every predator bills coins now, so that
+			# test would exempt the entire world. Row key, never a species name,
+			# exactly like the two immunities in the AI.
+			if _is_sweep_exempt(crocodile):
 				continue
 			var distance = spawn_point.distance_to(crocodile.global_position)
 			if distance <= SPAWN_SAFE_RADIUS:

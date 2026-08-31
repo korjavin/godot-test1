@@ -2880,6 +2880,17 @@ const SPECIES: Dictionary = {
 		## asks you to spend the most time in.
 		"coin_setback": 0.07,
 
+		## AUTHORED FURNITURE, SO THE RESPAWN SWEEP LEAVES IT ALONE.
+		## `player_controller.clear_nearby_crocodiles()` frees every ordinary body
+		## within SPAWN_SAFE_RADIUS of a respawn, and from anywhere in a 17.6 m
+		## building that is the WHOLE floor — so without this key losing to the
+		## rotor bar would be the cheapest way past a guarded room. A guard stands
+		## an authored post and its lifetime belongs to `reset_guards()`, not to a
+		## chunk. Absent everywhere else is the statement, like the two immunities
+		## above; the sweep used to infer this from `coin_setback` being non-zero,
+		## which stopped meaning anything the day every row grew one.
+		"sweep_exempt": true,
+
 		# ----- Immunities: it is the hunter's chassis, so it is sealed and hard --
 		## Verbatim the hunter row's two keys and verbatim its argument (read it
 		## there). Stated as a DESIGN CHOICE rather than inherited by accident,

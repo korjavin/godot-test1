@@ -312,11 +312,11 @@ row-completeness assertion to `enemy_spawn_selfcheck.gd`.
 
 ### Task 2: the coin bill becomes universal in `player_controller.gd`
 
-- [ ] rename `_pay_guard_setback` → `_pay_coin_setback`, rewrite both docstrings
-- [ ] `_coin_setback_of()` gains the `DEFAULT_COIN_SETBACK` fallback
-- [ ] `_on_caught_finished()` rewritten to the shape above (no heart branch, no `_refresh_shared_totals()`)
-- [ ] re-key the `clear_nearby_crocodiles()` exemption on what it actually means
-- [ ] the project parses
+- [x] rename `_pay_guard_setback` → `_pay_coin_setback`, rewrite both docstrings
+- [x] `_coin_setback_of()` gains the `DEFAULT_COIN_SETBACK` fallback
+- [x] `_on_caught_finished()` rewritten to the shape above (no heart branch, no `_refresh_shared_totals()`)
+- [x] re-key the `clear_nearby_crocodiles()` exemption on what it actually means
+- [x] the project parses
 Rename `_pay_guard_setback` → `_pay_coin_setback`; give `_coin_setback_of()` the
 `DEFAULT_COIN_SETBACK` fallback for spec-less attackers; rewrite both docstrings.
 Rewrite `_on_caught_finished()` to the shape above — no heart branch, no
