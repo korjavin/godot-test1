@@ -134,7 +134,7 @@ var _room_colors: Array[Color] = [
 ## then refuses either on a gate of any other class, so the whitelist stays what it
 ## is for — the only mechanical form of "no such key exists".
 const GATE_KEYS: Array[String] = [
-	"class", "identity", "effect", "scale", "needed_during_captivity",
+	"class", "identity", "geometry", "effect", "scale", "needed_during_captivity",
 	"built", "quest", "parts", "note", "clue_room", "answer",
 ]
 
@@ -433,8 +433,8 @@ func _check_plans_bind_to_the_graph() -> void:
 				_fail("%s names a gate at cell %s, where the plan draws neither a '%s' nor a "
 					% [label, slot3, TowerPlans.GATE_CHAR] + "lock pad")
 
-		# --- ...and every identity doorway can say which side you open it from ---
-		# An identity pad is DERIVED from the plain-floor side of its own `D` run
+		# --- ...and every rising mass can say which side you open it from ---
+		# A mass pad is DERIVED from the plain-floor side of its own `D` run
 		# (`TowerInterior.gate_pad_cell`) and never drawn, so the failure it can
 		# have is a doorway with floor on both sides or on neither — one builds no
 		# pad at all, the other would be a coin toss between "you open this from the
@@ -442,13 +442,16 @@ func _check_plans_bind_to_the_graph() -> void:
 		# because the fix is a character in this file.
 		for slot4: String in plan_gates:
 			var gid4 := String(plan_gates[slot4])
-			if String(gates.get(gid4, {}).get("class", "")) != TowerGraph.CLASS_IDENTITY:
+			var gate4: Dictionary = gates.get(gid4, {})
+			var geometry4 := String(gate4.get("geometry", ""))
+			if String(gate4.get("class", "")) != TowerGraph.CLASS_IDENTITY \
+					and geometry4 != "mass":
 				continue
 			var run: Rect2i = TowerInterior.gate_slots(plan)["masses"].get(gid4, Rect2i())
 			if run.size == Vector2i.ZERO:
 				continue
 			if TowerInterior.gate_pad_cell(plan, run).x < 0:
-				_fail(("%s: identity gate '%s' has no side to stand on — exactly one cell "
+				_fail(("%s: rising mass '%s' has no side to stand on — exactly one cell "
 					+ "4-adjacent to its doorway must be plain floor, and the plan gives it "
 					+ "two or none") % [label, gid4])
 
@@ -507,6 +510,14 @@ func _check_design_laws() -> void:
 			# then treat as free for everybody, which is the audit lying rather than
 			# merely a design smell.
 			_fail("gate '%s' is a %s gate but names a hero ('%s')" % [gid, cls, who])
+		var geometry := String(g.get("geometry", ""))
+		if geometry not in ["", "mass"]:
+			_fail("gate '%s' has geometry '%s', which is not a supported gate shape" % [
+				gid, geometry])
+		if geometry == "mass" and cls not in [TowerGraph.CLASS_CHALLENGE,
+				TowerGraph.CLASS_IDENTITY, TowerGraph.CLASS_RIDDLE]:
+			_fail("gate '%s' uses mass geometry with class '%s', which cannot open a mass" % [
+				gid, cls])
 		# ...and the two riddle-only keys are riddle-only in both directions.
 		var riddle := cls == TowerGraph.CLASS_RIDDLE
 		for key: String in ["clue_room", "answer"]:
