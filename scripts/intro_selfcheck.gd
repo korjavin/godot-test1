@@ -336,6 +336,12 @@ func _check_game_over_film_path() -> void:
 		_fail("off-web game over did not show the panel fallback")
 	if panel._ending_film_playing:
 		_fail("off-web game over latched ending-film state")
+	# Automatic film completion must use the same cleanup as Play Again, including
+	# killing a pending NEW BEST! pulse before it asks the player to restart.
+	panel.new_best_tween = panel.create_tween()
+	panel._on_ending_film_finished(false)
+	if panel.new_best_tween != null:
+		_fail("successful ending completion left the NEW BEST! tween alive")
 	panel.queue_free()
 	paused = false
 

@@ -209,11 +209,13 @@ func hide_game_over() -> void:
 
 func _on_ending_film_finished(failed: bool) -> void:
 	"""Restart on end/skip; show the panel if playback failed."""
-	_ending_film_playing = false
+	# Use the same cleanup path as the button before either outcome. The shared
+	# film has already been torn down by StartOverlay, so its cancellation guard
+	# is a no-op here, while hide_game_over still kills any NEW BEST! tween.
+	hide_game_over()
 	if failed:
 		visible = true
 		return
-	visible = false
 	var player := get_tree().get_first_node_in_group("player")
 	if player and player.has_method("restart_game"):
 		player.restart_game()
