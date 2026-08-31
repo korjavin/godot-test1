@@ -62,6 +62,7 @@ extends SceneTree
 ## Deliberately NOT localized (a debug surface, per CLAUDE.md).
 
 const StartOverlay := preload("res://scripts/start_overlay.gd")
+const GameOverUI := preload("res://scripts/game_over_ui.gd")
 
 
 ## The real start overlay with the film's two browser calls stubbed, so check 5
@@ -76,6 +77,23 @@ class FilmOverlay extends StartOverlay:
 	## paused when it happened — which is the ordering the invariant is made of.
 	var teardowns: int = 0
 	var teardown_saw_paused: bool = false
+
+	## URLs routed through the one shared IntroVideo.start() seam.
+	var started_urls: Array[String] = []
+	var ending_callbacks: int = 0
+	var callback_failed: bool = false
+	var film_failed: bool = false
+
+	func _start_film(video_url: String) -> bool:
+		started_urls.append(video_url)
+		return true
+
+	func record_ending_callback(failed: bool) -> void:
+		ending_callbacks += 1
+		callback_failed = failed
+
+	func _film_failed() -> bool:
+		return film_failed
 
 	func _film_finished() -> bool:
 		return film_over
@@ -100,6 +118,7 @@ func _run() -> void:
 	await process_frame
 	_check_web_gate()
 	_check_generated_js()
+	_check_game_over_film_path()
 	_check_play_solo_desktop_path()
 	_check_multiplayer_never_plays()
 	_check_world_stays_paused_behind_the_film()
@@ -152,6 +171,9 @@ func _check_web_gate() -> void:
 	if not IntroVideo.VIDEO_URL.begins_with("https://"):
 		_fail("VIDEO_URL must be an https URL (a web build on https cannot load " \
 			+ "mixed content), got %s" % IntroVideo.VIDEO_URL)
+	if not IntroVideo.GAME_OVER_VIDEO_URL.begins_with("https://"):
+		_fail("GAME_OVER_VIDEO_URL must be an https URL, got %s" \
+			% IntroVideo.GAME_OVER_VIDEO_URL)
 	if IntroVideo.SKIP_HOLD_SEC <= 0.0:
 		_fail("SKIP_HOLD_SEC must be positive, or a stray SPACE tap skips the film")
 	if IntroVideo.STALL_TIMEOUT_SEC <= IntroVideo.SKIP_HOLD_SEC:
@@ -248,6 +270,13 @@ func _check_generated_js() -> void:
 	if not js.contains(IntroVideo.VIDEO_URL):
 		_fail("_create_js() does not carry VIDEO_URL — the const is no longer the " \
 			+ "single place the film's address lives")
+	var ending_js: String = IntroVideo._create_js(IntroVideo.GAME_OVER_VIDEO_URL)
+	if not ending_js.contains(IntroVideo.GAME_OVER_VIDEO_URL):
+		_fail("_create_js( GAME_OVER_VIDEO_URL ) does not carry the ending film URL")
+	for marker: String in ["window.__ck_intro_failed", "s.fail = function()"]:
+		if not js.contains(marker):
+			_fail("_create_js() lost %s — post-start playback failures would " % marker \
+				+ "look like an ordinary end and restart into a broken film")
 	# "no leftover element over the canvas" is an acceptance criterion.
 	if not js.contains("removeChild"):
 		_fail("_create_js() never detaches its element — the overlay would survive " \
@@ -258,6 +287,63 @@ func _check_generated_js() -> void:
 		if not js.contains("addEventListener(%s" % listener):
 			_fail("_create_js() has no %s listener — that failure path would never " \
 				% listener + "report finished and the game would never start")
+
+
+## The game-over branch must use the same shared film seam, while a headless
+## game (which has no start overlay and is off-web) still exposes today's panel.
+## FilmOverlay supplies the browser result so the end/skip callback can be driven
+## without pretending a headless process has a DOM.
+func _check_game_over_film_path() -> void:
+	var overlay := _make_film_overlay()
+	var started := overlay.play_film(
+		IntroVideo.GAME_OVER_VIDEO_URL, Callable(overlay, "record_ending_callback"))
+	if not started:
+		_fail("the shared film seam rejected the game-over film in the driven path")
+	if overlay.started_urls.size() != 1 or overlay.started_urls[0] != IntroVideo.GAME_OVER_VIDEO_URL:
+		_fail("the game-over path did not route its URL through the shared film seam")
+	if not paused:
+		_fail("the game-over film did not hold the tree paused")
+	overlay.film_over = true
+	overlay._process(1.0 / 60.0)
+	if overlay.ending_callbacks != 1:
+		_fail("the ending film did not invoke its restart callback exactly once")
+	if overlay.callback_failed:
+		_fail("a normally ended ending film was reported as a failure")
+	if overlay._intro_playing or not overlay._dismissed or paused:
+		_fail("the ending film callback left the shared overlay or pause latched")
+
+	overlay.queue_free()
+	paused = false
+
+	# A post-start failure must reach the callback as failure, so Game Over can
+	# show its panel instead of restarting into a broken film loop.
+	var failed_overlay := _make_film_overlay()
+	failed_overlay.film_failed = true
+	failed_overlay.play_film(
+		IntroVideo.GAME_OVER_VIDEO_URL, Callable(failed_overlay, "record_ending_callback"))
+	failed_overlay.film_over = true
+	failed_overlay._process(1.0 / 60.0)
+	if failed_overlay.ending_callbacks != 1 or not failed_overlay.callback_failed:
+		_fail("a post-start film failure was indistinguishable from end/skip")
+	failed_overlay.queue_free()
+	paused = false
+
+	# Off-web Game Over remains the panel fallback, with no film state or pause.
+	var panel := GameOverUI.new()
+	root.add_child(panel)
+	panel.show_game_over(3, 12, 12, 3, false)
+	if not panel.visible:
+		_fail("off-web game over did not show the panel fallback")
+	if panel._ending_film_playing:
+		_fail("off-web game over latched ending-film state")
+	# Automatic film completion must use the same cleanup as Play Again, including
+	# killing a pending NEW BEST! pulse before it asks the player to restart.
+	panel.new_best_tween = panel.create_tween()
+	panel._on_ending_film_finished(false)
+	if panel.new_best_tween != null:
+		_fail("successful ending completion left the NEW BEST! tween alive")
+	panel.queue_free()
+	paused = false
 
 
 # ============================================================================

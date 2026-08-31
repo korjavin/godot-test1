@@ -26,23 +26,10 @@ var best_label: Label = null
 var new_best_label: Label = null
 var new_best_tween: Tween = null
 
-## Outro clip played over the Game Over screen (web build only). Godot cannot
-## decode MP4, so on web we drop a full-screen DOM <video> over the canvas via
-## JavaScriptBridge and remove it when it ends, is clicked, or Play Again fires.
-## ponytail: desktop skips the clip — the web build is the deployed target.
-## Empty string = no clip.
-const VIDEO_URL: String = "https://img.cc.wandergeek.org/game_over.mp4"
-const VIDEO_JS: String = """
-(function(){try{
-var v=document.getElementById('ck-outro');if(v)v.remove();
-v=document.createElement('video');v.id='ck-outro';v.src=%s;v.playsInline=true;
-v.style.cssText='position:fixed;inset:0;width:100vw;height:100vh;background:#000;object-fit:contain;z-index:9999;cursor:pointer';
-var done=function(){if(v.parentNode)v.remove();};
-v.onended=done;v.onerror=done;v.onclick=done;
-document.body.appendChild(v);
-var p=v.play();if(p&&p.catch)p.catch(function(){v.muted=true;v.play().catch(done);});
-}catch(e){}})()"""
-const VIDEO_STOP_JS: String = "var v=document.getElementById('ck-outro');if(v)v.remove();"
+## True while the shared IntroVideo lifecycle is covering the game-over state.
+## The panel remains hidden for the duration; a false/off-web start falls back to
+## showing the ordinary panel below.
+var _ending_film_playing: bool = false
 
 
 func _ready() -> void:
@@ -170,6 +157,9 @@ func show_game_over(coins: int, distance: int, best_distance: int,
 		coins_label.text = tr("Coins collected: %d") % coins
 	if best_label:
 		best_label.text = tr("Best: %dm / %d coins") % [best_distance, best_coins]
+	if new_best_tween:
+		new_best_tween.kill()
+		new_best_tween = null
 	if new_best_label:
 		new_best_label.visible = is_new_best
 		# Any previous pulse was already killed by _on_restart_pressed — the only
@@ -181,9 +171,22 @@ func show_game_over(coins: int, distance: int, best_distance: int,
 					Vector2(1.15, 1.15), 0.4).set_trans(Tween.TRANS_SINE)
 			new_best_tween.tween_property(new_best_label, "scale",
 					Vector2.ONE, 0.4).set_trans(Tween.TRANS_SINE)
+	# The ending film is the game-over screen on web. Start it through the
+	# existing start overlay so IntroVideo.start() has one call site and its pause,
+	# modal key handling and fail-open teardown are shared with PLAY SOLO.
+	visible = false
+	var overlay := get_tree().get_first_node_in_group("start_overlay")
+	if OS.has_feature("web") and overlay != null and overlay.has_method("play_film"):
+		var started: Variant = overlay.play_film(
+			IntroVideo.GAME_OVER_VIDEO_URL, Callable(self, "_on_ending_film_finished"))
+		if bool(started):
+			_ending_film_playing = true
+			return
+
+	# Desktop, headless, missing overlay and unreachable-CDN paths all preserve the
+	# original panel fallback. There is no pause or delay added on these paths.
+	_ending_film_playing = false
 	visible = true
-	if VIDEO_URL != "" and OS.has_feature("web"):
-		JavaScriptBridge.eval(VIDEO_JS % JSON.stringify(VIDEO_URL), true)
 
 
 func hide_game_over() -> void:
@@ -192,13 +195,30 @@ func hide_game_over() -> void:
 	when a mid-run multiplayer join revives a game-over run (see join_at).
 	"""
 	visible = false
-	if OS.has_feature("web"):
-		JavaScriptBridge.eval(VIDEO_STOP_JS, true)
+	if _ending_film_playing:
+		var overlay := get_tree().get_first_node_in_group("start_overlay")
+		if overlay != null and overlay.has_method("cancel_film"):
+			overlay.cancel_film()
+		_ending_film_playing = false
 	# Stop the "NEW BEST!" pulse — a looping tween must not keep ticking behind
 	# a hidden screen for the whole next run.
 	if new_best_tween:
 		new_best_tween.kill()
 		new_best_tween = null
+
+
+func _on_ending_film_finished(failed: bool) -> void:
+	"""Restart on end/skip; show the panel if playback failed."""
+	# Use the same cleanup path as the button before either outcome. The shared
+	# film has already been torn down by StartOverlay, so its cancellation guard
+	# is a no-op here, while hide_game_over still kills any NEW BEST! tween.
+	hide_game_over()
+	if failed:
+		visible = true
+		return
+	var player := get_tree().get_first_node_in_group("player")
+	if player and player.has_method("restart_game"):
+		player.restart_game()
 
 
 func _on_restart_pressed() -> void:
