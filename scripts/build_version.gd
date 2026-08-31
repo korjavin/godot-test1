@@ -30,7 +30,7 @@ extends Node
 ## ----------------------------------------------------------------------------
 ## NEVER RELOAD MID-RUN
 ## ----------------------------------------------------------------------------
-## A reload costs the player their distance, their coins and their lives, which is
+## A reload costs the player their distance, their coins and their rescues, which is
 ## a worse outcome than one more session on an old build. So the poll never
 ## reloads: it only LATCHES `_pending`, and `_process` spends that latch at the
 ## next safe moment — the start card (nothing to lose yet) or the game-over screen
@@ -213,7 +213,7 @@ func _process(delta: float) -> void:
 ## Only two are: the start card, before a run exists, and the game-over screen,
 ## after the run is already over. Everything else — mid-run, respawning, a panel
 ## open over a live world — is a moment where a reload throws away distance, coins
-## and lives, which is worse than one more session on an old build.
+## and rescues, which is worse than one more session on an old build.
 ##
 ## All three lookups are group-based with `has_method` / type guards, so this
 ## degrades to "not safe" in a scene run standalone rather than erroring.

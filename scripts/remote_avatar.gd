@@ -72,7 +72,7 @@ const LABEL_FONT_SIZE: int = 48
 ## Walk-cycle tuning. These three numbers are DUPLICATED from
 ## player_controller.gd's animate_walking() on purpose: three floats copied is
 ## cheaper than coupling a visual-only network avatar to the player controller,
-## which owns input, physics, abilities and lives. If the player's walk cycle is
+## which owns input, physics, abilities and the roster. If the player's walk cycle is
 ## ever retuned and the two visibly diverge, copy the numbers again.
 const STRIDE_FREQUENCY: float = 1.6   ## Stride phase advanced per metre walked
 const ARM_SWING: float = 30.0         ## Degrees, forward/back

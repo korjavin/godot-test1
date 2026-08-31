@@ -261,8 +261,9 @@ var step_timer: float = 0.0
 var step_direction: float = 0.0
 
 ## How many golden coins the player has collected. The HUD reads this. Coins now
-## survive a crocodile bite (we only lose a life); they are reset to 0 only on a
-## full restart from the Game Over screen (see restart_game / reset_position).
+## survive a crocodile bite (it only bills the attacker's `coin_setback` fraction);
+## they are reset to 0 only on a full restart from the Game Over screen (see
+## restart_game / reset_position).
 var coins_collected: int = 0
 
 ## Coin streak multiplier: picking up coins in quick succession (each pickup
@@ -388,7 +389,7 @@ const DEFAULT_COIN_SETBACK: float = 0.10
 ## raises the Game Over screen and freezes the player until they restart.
 var is_game_over: bool = false
 
-## Post-respawn grace, in TWO phases. Phase 1: after losing a life we stand
+## Post-respawn grace, in TWO phases. Phase 1: after a bite we stand
 ## frozen and invulnerable for RESPAWN_GRACE_DURATION seconds (with crocodiles
 ## swept out of the area). Phase 2: control returns immediately after, but we
 ## stay invulnerable for RESPAWN_BLINK_DURATION more seconds while the model
@@ -1174,8 +1175,9 @@ func _physics_process(delta: float) -> void:
 		return
 
 	# STEP 0b: If a crocodile just caught us, freeze in place and let the bite +
-	# red flash play out for a moment. When the window ends we lose a life and
-	# either respawn in place or, if that was our last life, trigger game over.
+	# red flash play out for a moment. When the window ends we pay the attacker's
+	# coin setback and respawn in place — heroes are the lives, so a bite never ends
+	# the run (owner ruling 2026-08-31).
 	if is_caught:
 		# Same freeze the game-over and respawn-grace branches use: horizontal motion
 		# stopped, gravity still applied. Zeroing velocity outright would pin a player
@@ -2773,8 +2775,8 @@ func hit_by_crocodile(attacker: Node = null) -> void:
 
 	Rather than teleporting away instantly, we play a clear "caught" signal: a red
 	screen flash, a camera shake, and a brief freeze (handled in _physics_process).
-	When that window ends _on_caught_finished() spends a life and either respawns
-	us in place or ends the run.
+	When that window ends _on_caught_finished() bills the attacker's coin setback
+	and respawns us in place.
 
 	Bites are ignored while we are already caught, inside either post-respawn
 	grace phase (frozen OR blinking), or on the game-over screen — those states
@@ -3683,7 +3685,7 @@ func clear_nearby_crocodiles(spawn_point: Vector3) -> void:
 	BOSSES ARE EXEMPT — same rule as flee_from() in piglet_crocodile_ai.gd, for
 	the same reason: a boss is a deterministic road landmark, not spawn clutter.
 	Freeing one here would make dying the CHEAPEST way past every boss on the
-	road (a soft respawn keeps all coins, so the whole cost would be one life).
+	road (the whole cost would be the boss row's own `coin_setback` bill).
 	Leaving it standing is safe: the respawn grace freeze plus the blink
 	invulnerability that follows are long enough to run, and running (>= 9.0)
 	beats MAX_CHASE_SPEED (8.5) by design.

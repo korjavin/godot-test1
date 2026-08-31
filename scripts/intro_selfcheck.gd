@@ -51,7 +51,7 @@ extends SceneTree
 ##     `start_overlay._process()` — the one that holds the pause while the film
 ##     plays — was asserted by nothing at all, and it shipped godot-test1-4x4: the
 ##     player watched 47 s of film with a live world and a live crocodile behind
-##     it, and lost a life to it. Off-web `IntroVideo.is_finished()` is a constant
+##     it, and was mauled by it. Off-web `IntroVideo.is_finished()` is a constant
 ##     `true`, so that branch cannot be driven for a single frame without a seam;
 ##     `start_overlay` therefore routes its two browser calls through
 ##     `_film_finished()` / `_film_teardown()` and `FilmOverlay` below overrides

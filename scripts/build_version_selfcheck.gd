@@ -37,7 +37,7 @@ extends SceneTree
 ##     matching SHA itself all leave it exactly as they found it.
 ##
 ##  4. **NEVER MID-RUN.** A latched update must sit there for as many frames as it
-##     takes. Reloading mid-run destroys the player's distance, coins and lives,
+##     takes. Reloading mid-run destroys the player's distance, coins and rescues,
 ##     which is strictly worse than one more session on an old build — so this is
 ##     the assertion the whole feature is worth having.
 ##
@@ -311,7 +311,7 @@ func _check_never_mid_run() -> void:
 
 	if watch.reloads != 0:
 		_fail("the tab reloaded in the middle of a run (%d times) — the player's " \
-			% watch.reloads + "distance, coins and lives are gone, which is worse " \
+			% watch.reloads + "distance, coins and rescues are gone, which is worse " \
 			+ "than running an old build")
 	if not watch._pending:
 		_fail("the pending update was dropped mid-run instead of being held — the " \

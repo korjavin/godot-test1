@@ -416,10 +416,10 @@ and fix the two other sections named above.
 
 ### Task 7: full sweep
 
-- [ ] run every self-check in the CLAUDE.md Commands list plus the tower and boss ones
-- [ ] fix the incidental "takes a life" prose in `crocodile_lod_manager.gd`, `mp_manager.gd`, `enemy_spawn_selfcheck.gd`
-- [ ] `grep -rn 'lives' scripts/` returns only unrelated prose and `lifetime`
-- [ ] every self-check prints `SELFCHECK OK` and exits 0
+- [x] run every self-check in the CLAUDE.md Commands list plus the tower and boss ones
+- [x] fix the incidental "takes a life" prose in `crocodile_lod_manager.gd`, `mp_manager.gd`, `enemy_spawn_selfcheck.gd`
+- [x] `grep -rn 'lives' scripts/` returns only unrelated prose and `lifetime`
+- [x] every self-check prints `SELFCHECK OK` and exits 0
 Run EVERY self-check in the CLAUDE.md Commands list plus the tower and boss ones.
 Fix whatever the sweep turns up. Confirm by inspection that no code path decrements a
 life or triggers game over except the empty free-hero set (`grep -rn 'lives' scripts/`

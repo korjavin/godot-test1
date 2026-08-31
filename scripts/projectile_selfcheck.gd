@@ -66,7 +66,7 @@ const REQUIRED_KEYS: Array[String] = [
 ## The lethality target: a Node3D in group "player" exposing the one method
 ## BossProjectile calls, counting the calls into a shared array. A stub rather
 ## than the real player scene because what is under test is the PROJECTILE's
-## decision — and hit_by_crocodile() on the real controller spends a life,
+## decision — and hit_by_crocodile() on the real controller bills coins,
 ## freezes the body and respawns it, all of which would move the target.
 const HIT_STUB_SOURCE: String = """
 extends Node3D

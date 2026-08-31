@@ -1901,7 +1901,7 @@ func _check_hunt_pacing(croc_ai: GDScript) -> void:
 	of ending up with one is silent. Drop the telegraph and the unit walks
 	straight in with a warning nobody got; let the ring collapse and "shadowing"
 	is an ordinary chase with a comment on it; forget the disengage and the
-	machine stands on the respawn point taking a life every 0.3 s. None of the
+	machine stands on the respawn point billing coins every 0.3 s. None of the
 	three errors anywhere — you get a fast crocodile in a hazard livery, which is
 	the one outcome this bead exists to prevent.
 
@@ -1972,7 +1972,7 @@ func _probe_hunt_geometry(croc_ai: GDScript, hunt_species: String) -> void:
 	if disengage <= 0.0:
 		_fail("SPECIES['%s'].hunt_disengage_time is %.2f s — a hunter that"
 				% [hunt_species, disengage] + " re-commits on the frame after a grab"
-				+ " stands on the respawn point taking a life a second")
+				+ " stands on the respawn point billing coins every second")
 		return
 	# The ring has to fit INSIDE what the unit can smell, with room. A hunter
 	# shadowing at or past its own detection radius drops the chase the moment it

@@ -4904,7 +4904,7 @@ func captives() -> Array:
 # in through the front door and would otherwise trip every pad in the building.
 
 func _on_hazard_touched(body: Node3D) -> void:
-	"""A rotor bar swept through the player. Costs a life, via the ONE damage verb."""
+	"""A rotor bar swept through the player. Costs coins, via the ONE damage verb."""
 	if not body.is_in_group("player") or not body.has_method("hit_by_crocodile"):
 		return
 	body.call("hit_by_crocodile")

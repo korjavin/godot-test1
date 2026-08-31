@@ -2769,7 +2769,7 @@ func _recent_dead_ids() -> Array:
 	crushes more than `MAX_STATE_IDS` crocodiles drops the OLDEST kills, so a
 	joiner can see one alive again — kilometres behind the group, in a chunk its
 	terrain will not even have built, and cosmetic when it does (a crocodile too
-	many, never a wrong bank or a wrong heart count). Reaching that cap means
+	many, never a wrong bank or a wrong shared total). Reaching that cap means
 	2048 crushes in one room, each of which needs a player standing on a
 	crocodile as giant Teibi. The upgrade path is `_recent_collected_ids()`'s:
 	filter by distance to the join anchor rather than by age.

@@ -387,7 +387,7 @@ func _notification(what: int) -> void:
 	# PAUSE INTERACTIONS (sanity-checked, nothing else to do here): the respawn
 	# countdown and the game-over UI live under default-process_mode nodes, so while
 	# the tab is hidden they freeze WITH the tree and resume cleanly on the tap — a
-	# frozen countdown is the *correct* behavior (no losing lives while backgrounded).
+	# frozen countdown is the *correct* behavior (no coin setbacks while backgrounded).
 	# Neither script is touched by this feature.
 	if what == NOTIFICATION_APPLICATION_FOCUS_OUT:
 		if not MobileSensors.is_touch_session():

@@ -1657,7 +1657,7 @@ func _check_gate_lifecycle() -> void:
 				_fail(("standing on the lift stop did not record '%s' — the trigger is wired "
 					+ "to nothing the graph names") % TowerGraph.ENTRY_LIFT_MAZE)
 
-	# And a rotor bar still costs a life, which is the challenge space's whole stake.
+	# And a rotor bar still bills the player, which is the challenge space's whole stake.
 	var hazard := interior.find_child("RotorBarLowHazard", true, false) as Area3D
 	if hazard == null:
 		_fail("the rotor bars carry no hazard volume — the challenge space is decorative")
