@@ -278,25 +278,15 @@ const STREAK_COINS_PER_STEP: int = 10
 var coin_streak: int = 0
 var streak_timer: float = 0.0
 
-## Extra lives from coins: every EXTRA_LIFE_COINS coins banked grants +1 life,
-## capped at LIVES_CAP hearts. next_extra_life_at is the next threshold to cross
-## (collect_coin advances it in a while-loop, because one gem at a high streak
-## multiplier can jump across a whole threshold — or even two).
-const EXTRA_LIFE_COINS: int = 75
-const LIVES_CAP: int = 5
-var next_extra_life_at: int = EXTRA_LIFE_COINS
-
-## MULTIPLAYER CONTRIBUTIONS. Inside a room the three numbers the HUD shows —
-## coins_collected, run_distance and lives — become the ROOM's totals, summed by
-## mp_manager.gd from what every member contributes. These two fields are what
-## THIS peer contributes: the coins it banked itself and the lives it spent
-## itself. They have to be kept apart from the displayed fields, because those
-## are overwritten with the shared totals every physics tick (see
-## _refresh_shared_totals) and would otherwise feed their own room total back
-## into itself, doubling the bank on every frame. Offline they are simply
-## carried along and never read, so solo play is unchanged.
+## MULTIPLAYER CONTRIBUTION. Inside a room the two numbers the HUD shows —
+## coins_collected and run_distance — become the ROOM's totals, summed by
+## mp_manager.gd from what every member contributes. This field is what THIS
+## peer contributes: the coins it banked itself. It has to be kept apart from
+## the displayed field, because that one is overwritten with the shared total
+## every physics tick (see _refresh_shared_totals) and would otherwise feed its
+## own room total back into itself, doubling the bank on every frame. Offline it
+## is simply carried along and never read, so solo play is unchanged.
 var own_coins: int = 0
-var own_lives_spent: int = 0
 
 ## True while _refresh_shared_totals is overwriting the displayed score fields
 ## with the room's totals. It exists purely to catch the falling edge — the frame
@@ -390,12 +380,12 @@ var caught_setback: float = 0.0
 ## the most expensive way to lose coins.
 const DEFAULT_COIN_SETBACK: float = 0.10
 
-## Lives / game-over state. The player starts each run with MAX_LIVES; every
-## crocodile bite costs one. While lives remain we respawn *in place* (keeping all
-## coins) after a short grace window; when they run out we show the Game Over
-## screen and freeze until the player restarts. The hearts HUD reads `lives`.
-const MAX_LIVES: int = 3
-var lives: int = MAX_LIVES
+## GAME-OVER STATE. HEROES ARE THE LIVES (owner ruling 2026-08-31): there is no
+## heart to spend, so an ordinary bite is the caught freeze plus the attacker's
+## `coin_setback` and a respawn in place, forever. The only ending left is the
+## free-hero set going empty — the full-custody protocol opens, and losing THAT
+## sets this flag (as does `_trigger_game_over()`, its one other caller), which
+## raises the Game Over screen and freezes the player until they restart.
 var is_game_over: bool = false
 
 ## Post-respawn grace, in TWO phases. Phase 1: after losing a life we stand
@@ -621,8 +611,8 @@ var custody_timer: float = 0.0
 ## packets, and a liberation landing within a packet's flight of the deadline would
 ## be a survival on one screen and an archived world on another. So the master
 ## publishes both (`MpManager` verb `room`) and every other peer runs the scene for
-## presentation only — the same shape the room's HEARTS, the crocodile simulation
-## and the join snapshot already use.
+## presentation only — the same shape the room's CAPTIVE SET, the crocodile
+## simulation and the join snapshot already use.
 ##
 ## THE 35 AND HOW THE COUNTDOWN READS ARE THE OWNER'S to revisit; who owns the
 ## number is not.
@@ -1174,9 +1164,10 @@ func _physics_process(delta: float) -> void:
 	# correction is absolute, so no amount of speed accumulates a way out.
 	_confine_to_block()
 
-	# STEP 0a: Game over — out of lives. Stand frozen (the Game Over screen is up
-	# and the cursor is free) until the player hits "Play Again", which calls
-	# restart_game(). We still settle under gravity so we don't hang in the air.
+	# STEP 0a: Game over — the corporation holds every hero and the break-out was
+	# lost. Stand frozen (the Game Over screen is up and the cursor is free) until
+	# the player hits "Play Again", which calls restart_game(). We still settle
+	# under gravity so we don't hang in the air.
 	if is_game_over:
 		_freeze_with_gravity(delta)
 		update_character_animation(delta, Vector2.ZERO)
@@ -1245,9 +1236,6 @@ func _physics_process(delta: float) -> void:
 	# distance max above, so this frame's own contribution is already folded in.
 	# Costs one group lookup and nothing else when there is no room.
 	_refresh_shared_totals()
-	# STEP 0.43: ...and in a room, the run ends for EVERYONE when the shared
-	# hearts run out — including the peers who were not the one bitten.
-	_check_shared_game_over()
 
 	# STEP 0.45: Tick the coin-streak window down; when it lapses the streak is
 	# over and the score multiplier drops back to x1 (see collect_coin).
@@ -2651,13 +2639,12 @@ func collect_coin(value: int = 1) -> void:
 	player touches it (see coin.gd) — a plain coin passes 1, a purple gem passes
 	its GEM_VALUE (10). The HUD picks up the new value on its next frame.
 
-	Two layered bonuses happen here:
-	- STREAK: each pickup refreshes the streak window; the pickup's value is
-	  multiplied by the current streak multiplier (see get_streak_multiplier).
-	  The streak counts *pickups*, not value — a gem is one link in the chain.
-	- EXTRA LIVES: every EXTRA_LIFE_COINS banked grants +1 life up to LIVES_CAP.
-	  A while-loop, not an if: one gem at x5 is worth 50 and can jump across a
-	  whole threshold (or two), and each crossed threshold must still pay out.
+	One bonus happens here — STREAK: each pickup refreshes the streak window; the
+	pickup's value is multiplied by the current streak multiplier (see
+	get_streak_multiplier). The streak counts *pickups*, not value — a gem is one
+	link in the chain. Coins buy nothing else: the thresholds that used to grant
+	extra lives went with the hearts (owner ruling 2026-08-31), and coins are now
+	purely the score and the thing a bite takes away.
 	"""
 	streak_timer = STREAK_WINDOW
 	coin_streak += 1
@@ -2677,11 +2664,6 @@ func collect_coin(value: int = 1) -> void:
 	var progression := get_tree().get_first_node_in_group("progression")
 	if progression and progression.has_method("add_coins"):
 		progression.add_coins(value)
-	while coins_collected >= next_extra_life_at:
-		next_extra_life_at += EXTRA_LIFE_COINS
-		if lives < LIVES_CAP:
-			lives += 1
-			print("Extra life! Lives: %d" % lives)
 	print("Collected a coin worth %d (x%d streak)! Total: %d" % [value, get_streak_multiplier(), coins_collected])
 
 
@@ -2707,11 +2689,6 @@ func bank_awarded(amount: int, base_total: int = 0) -> void:
 	    into it. Trailing, defaulting to 0, and 0 credits nothing — so a call site
 	    that does not know about it behaves exactly as it did before.
 	"""
-	# NO extra-life while-loop, unlike collect_coin(). This path only ever runs in
-	# a room, where the hearts come from the ROOM's bank: _refresh_shared_totals()
-	# overwrites `lives` (and `next_extra_life_at`, on the frame the room ends)
-	# from the shared totals every physics tick, so a private threshold walk here
-	# would be recomputed away before anything could read it.
 	coins_collected += amount
 	own_coins += amount
 	# META-PROGRESSION, at the PRE-MULTIPLIER value — the SAME null-safe group
@@ -2772,7 +2749,7 @@ func get_streak_multiplier() -> int:
 	IN A ROOM THE STREAK IS THE ROOM'S. The master owns one streak for everybody
 	(it is the thing that prices every claim), so this defers to it — which makes
 	coin_hud.gd show the room's "(xN)" with NO HUD change, the same trick phase 4
-	used for the bank and the hearts. `room_multiplier()` answers null offline and
+	used for the bank. `room_multiplier()` answers null offline and
 	this falls through to the local value on one test.
 	"""
 	var mp := _mp()
@@ -2979,8 +2956,7 @@ func _respawn_in_place() -> void:
 #
 #   SUCCESS is one liberation. Systemic play resumes from where you stand, and the
 #   tower takes a PERMANENT SCAR: the courtyard stair comes down for good.
-#   FAILURE is the recall completing (or the last heart going, in the block). The
-#   campaign ends and the world is ARCHIVED — a relaunch reopens this screen, and
+#   FAILURE is the recall clock completing. The campaign ends and the world is ARCHIVED — a relaunch reopens this screen, and
 #   only New Game hands out another world.
 #
 # THE SCAR IS THE ONE SANCTIONED EXCEPTION to `tower_graph.gd`'s edge-additive
@@ -3094,10 +3070,10 @@ func _tick_custody(delta: float) -> void:
 	if free_hero_count() > 0:
 		_end_custody_protocol(true)
 		return
-	# ...and failure is THE RECALL COMPLETING, which is the only outcome this clock
-	# owns. Losing the last heart in the block is failure too, but it is decided
-	# where every other heart is decided — `_on_caught_finished()` — so that the
-	# ending screen goes up once and the archive is written once.
+	# ...and failure is THE RECALL COMPLETING, which since the hearts went (owner
+	# ruling 2026-08-31) is the ONLY way to lose the scene: a guard or a predator
+	# inside the block bills coins like anything else and cannot end a run. So this
+	# clock is the whole failure condition, and the ending screen goes up once.
 	if custody_timer <= 0.0:
 		_end_custody_protocol(false)
 
@@ -3174,11 +3150,13 @@ func _end_custody_protocol(survived: bool, record: bool = true) -> void:
 	Close the scene on its outcome. The one exit, every way.
 
 	@param survived: true when a hero was freed before the recall completed.
-	@param record: false when the scene did not END so much as get OVERTAKEN —
-	    today only by the room running out of hearts under it (bead
-	    godot-test1-3iy.10). Nothing is written and no ending is raised: the caller
-	    owns both, because the outcome was decided somewhere else. Every other
-	    caller takes the default and behaves exactly as it always has.
+	@param record: false when the scene did not END so much as get OVERTAKEN by an
+	    outcome decided somewhere else. Nothing is written and no ending is raised:
+	    that caller owns both. NO LOCAL CALLER PASSES IT TODAY — the room's shared
+	    hearts were the one thing that could overtake a running scene, and they are
+	    gone (owner ruling 2026-08-31) — but the verdict still travels the wire, so
+	    a peer applying a master's published `3` at the call site below keeps its
+	    meaning rather than archiving a world on an ordinary failure.
 
 	THE OUTCOME IS WRITTEN FIRST, before a single line of scene teardown, and it is
 	the ONLY thing written: a survived protocol records the scar and nothing else, a
@@ -3192,10 +3170,10 @@ func _end_custody_protocol(survived: bool, record: bool = true) -> void:
 	# is told; on everybody else it is simply a record. Written even when `record` is
 	# false — the scene really did end, whoever decided it.
 	# 1 SURVIVED, 2 FAILED, 3 OVERTAKEN — and the third is not a nicety. A scene
-	# closed with `record` false was ended by something ELSE (the room's hearts), so
-	# it archives nothing; publishing it as an ordinary failure would have every peer
-	# that had not yet seen the shared total archive its world while the master did
-	# not. The verdict has to carry the difference because the outcome does.
+	# closed with `record` false was ended by something ELSE, so it archives nothing;
+	# publishing it as an ordinary failure would have every peer that had not yet
+	# seen that other outcome archive its world while the master did not. The verdict
+	# has to carry the difference because the outcome does.
 	custody_verdict = (1 if survived else 2) if record else 3
 
 	if record:
@@ -3283,7 +3261,7 @@ func _tick_prison(delta: float) -> void:
 		return
 	# The break-out scene owns the roster and the body while it runs — its grant is
 	# what lets a prisoner walk at all — so the bench has nothing to decide inside
-	# it. Same guard, same reason, as `_check_shared_game_over()`'s.
+	# it: an ending raised while the scene runs would leave the two fighting.
 	if custody_protocol_active:
 		return
 	_prison_accum += delta
@@ -3432,9 +3410,9 @@ func _show_custody_countdown() -> void:
 
 func _trigger_game_over() -> void:
 	"""
-	Out of lives: freeze the player, free the mouse cursor so the player can click
-	the button, and raise the Game Over screen (found via group) with the final
-	coin tally.
+	The run is over — the corporation holds every hero and the break-out was lost.
+	Freeze the player, free the mouse cursor so the player can click the button,
+	and raise the Game Over screen (found via group) with the final coin tally.
 	"""
 	is_game_over = true
 	velocity = Vector3.ZERO
@@ -3500,25 +3478,23 @@ func _on_best_run_loaded(store_distance: int, store_coins: int) -> void:
 func restart_game() -> void:
 	"""
 	Start a brand-new run. Called by the Game Over screen's "Play Again" button.
-	Everything resets: coins to 0, lives back to full, and the player is sent to
-	the origin spawn with the mouse recaptured.
+	Everything resets: coins to 0, the four heroes back in the player's hands, and
+	the player is sent to the origin spawn with the mouse recaptured.
 	"""
 	# Coins, distance, streak AND this peer's multiplayer contributions
-	# (own_coins / own_lives_spent / own_distance) are all wiped by
+	# (own_coins / own_distance) are all wiped by
 	# reset_position() below — the one owner of the "hard reset" wipe list, so
 	# the two can never drift out of sync.
 	#
 	# IN A ROOM, "Play Again" LEAVES THE ROOM FIRST, and that is a correctness fix
-	# rather than a policy choice. The hearts are shared — base hearts + the room's
-	# bank/EXTRA_LIFE_COINS minus the room's spent lives — and this method's ONE
-	# caller is the Game Over screen, which in a room can only be up because that
-	# figure hit zero (a peer with hearts left soft-respawns in _on_caught_finished
-	# instead). Wiping our own numbers cannot bring the room's total back: the
-	# lives another peer spent still count, so _refresh_shared_totals() re-zeroes
-	# `lives` on the very next physics tick and _check_shared_game_over() fires the
-	# Game Over screen straight back up. Play Again was an infinite loop with no
-	# way out but leaving — so leave, and hand the player the fresh solo run the
-	# button promises. leave() is the manager's single complete unwind, so the
+	# rather than a policy choice. This method's ONE caller is the Game Over
+	# screen, which in a room can only be up because the ROOM's free-hero set is
+	# empty and the break-out was lost — a room-wide state living in the mirrored
+	# captive set. Wiping our own heroes cannot bring the room's roster back: the
+	# other peers' captives still stand, and the next `cap` / `room` packet puts
+	# ours back too. Play Again was an infinite loop with no way out but leaving —
+	# so leave, and hand the player the fresh solo run the button promises.
+	# leave() is the manager's single complete unwind, so the
 	# collected-coin set, the dead-crocodile set, the frozen `_gone_*` totals and
 	# the room streak all go with it, and room_seed() then answers null below so
 	# the world is re-rolled rather than replayed with every coin already taken.
@@ -3539,13 +3515,12 @@ func restart_game() -> void:
 	# latch was never set. (When the per-world save-id epic lands, this call is
 	# where an id is minted instead; see `BestRunStore.new_game`.)
 	BestRunStore.new_game()
-	lives = MAX_LIVES
 	is_game_over = false
 	is_caught = false
-	# An unpaid guard bill dies with the run it was charged in. Cheap and
+	# An unpaid coin bill dies with the run it was charged in. Cheap and
 	# defensive: the setback path can never reach a game over, so this can only be
 	# armed here if a bite and a Play Again land in the same freeze — but a stale
-	# fraction would eat a heart's worth of the NEXT run's first bite.
+	# fraction would tax the NEXT run's coins for a bite it never took.
 	caught_setback = 0.0
 	is_respawning = false
 	# Play Again hands back all four heroes. The captive set is per-run world state
@@ -3644,23 +3619,21 @@ func reset_position() -> void:
 	"""
 	Hard reset to the origin spawn point. This is the "start over" teleport used by
 	restart_game() (and kept as the crocodile's legacy fallback). It wipes the coin
-	count — a normal bite no longer does this; it only costs a life and respawns in
-	place (see _respawn_in_place).
+	count — a normal bite no longer does this; it only takes the attacker's slice
+	of the coins and respawns in place (see _respawn_in_place).
 	"""
 	# Define spawn point
 	var spawn_point = Vector3(0, 2, 0)
 
-	# A full restart wipes the coin count, the distance score, and the streak /
-	# extra-life progress that hangs off the coin count.
+	# A full restart wipes the coin count, the distance score, and the streak that
+	# hangs off the coin count.
 	coins_collected = 0
 	own_coins = 0  # ... and this peer's share of a room's bank along with it.
-	own_lives_spent = 0  # ... and the lives it owes that room's shared hearts.
 	run_distance = 0
 	own_distance = 0
 	own_distance_origin = Vector2.ZERO  # ... back to the origin spawn it teleports to.
 	coin_streak = 0
 	streak_timer = 0.0
-	next_extra_life_at = EXTRA_LIFE_COINS
 
 	# Clear any crocodiles near the spawn point
 	clear_nearby_crocodiles(spawn_point)
@@ -3779,7 +3752,7 @@ func join_at(anchor: Vector3) -> void:
 	origin. Called once per room by mp_manager.gd, with `anchor` the group's
 	centroid (or the master's position when the group is spread out).
 
-	THIS IS NOT A RESTART. The coins, distance, lives and streak belong to the
+	THIS IS NOT A RESTART. The coins, distance, heroes and streak belong to the
 	room and must survive — so this performs exactly the teleport hygiene
 	reset_position() does (velocity, facing, camera pivot, ability state, blink
 	i-frames) and none of its score wipe.
@@ -3788,16 +3761,13 @@ func join_at(anchor: Vector3) -> void:
 	"""
 	_place_near(anchor)
 
-	# This peer's SOLO tally is not the room's. own_coins would inflate the
-	# shared bank with coins banked in a different world, and own_lives_spent is
-	# worse — it is subtracted from the room's shared hearts, so joining after a
-	# couple of solo deaths would take those hearts off everybody. The displayed
-	# coins/distance are the room's from the next tick either way, so zeroing
-	# these two costs nothing visible. (It also makes a reconnect safe: the
-	# incumbents froze this peer's old contribution in _gone_coins/_gone_spent,
-	# and coming back at zero is what stops it being counted twice.)
+	# This peer's SOLO tally is not the room's: own_coins would inflate the shared
+	# bank with coins banked in a different world. The displayed coins/distance
+	# are the room's from the next tick either way, so zeroing this costs nothing
+	# visible. (It also makes a reconnect safe: the incumbents froze this peer's
+	# old contribution in _gone_coins, and coming back at zero is what stops it
+	# being counted twice.)
 	own_coins = 0
-	own_lives_spent = 0
 	# The personal distance record restarts from where we arrived, or the group's
 	# kilometres are banked into user://best_run.cfg as ours (see the field).
 	own_distance = 0
@@ -3815,7 +3785,7 @@ func join_at(anchor: Vector3) -> void:
 	# does not pause over it, so the panel's Join button works there. Without this
 	# the joiner is placed beside the group and left frozen: is_game_over
 	# early-returns _physics_process above _refresh_shared_totals, so the room's
-	# hearts never even reach it. The room owns the lives from the next tick.
+	# bank never even reaches it. The room owns the roster from the next tick.
 	if is_game_over:
 		is_game_over = false
 		is_caught = false
@@ -3855,7 +3825,7 @@ func _place_near(anchor: Vector3) -> void:
 	blocked needs a landscape of solid stone; the anchor itself is the fallback
 	for that, and at worst costs one shove-out from the physics engine.
 
-	IT MOVES THE BODY AND NOTHING ELSE — no coins, no lives, no distance, no run
+	IT MOVES THE BODY AND NOTHING ELSE — no coins, no heroes, no distance, no run
 	state. Both callers own their own bookkeeping, and keeping it out of here is
 	exactly what lets one of them zero a solo tally while the other carries a
 	live run across the teleport untouched.
@@ -4123,20 +4093,19 @@ func _mp() -> Node:
 
 func _refresh_shared_totals() -> void:
 	"""
-	While in a multiplayer room, overwrite the three DISPLAYED score fields with
-	the room's totals: the bank is the sum of every member's own coins, the
-	distance the furthest anyone has reached, and the lives what is left of the
-	room's shared hearts (base hearts + bank/EXTRA_LIFE_COINS - lives spent).
+	While in a multiplayer room, overwrite the two DISPLAYED score fields with the
+	room's totals: the bank is the sum of every member's own coins, and the
+	distance the furthest anyone has reached. There is no third total — hearts
+	were the room's other shared number and heroes are the lives now (owner ruling
+	2026-08-31), so the room's shared death state is the captive set alone, which
+	rides the mesh and is read where a run actually ends (`_on_caught_finished()`).
 
-	The two HUD scripts are deliberately NOT edited — coin_hud.gd and lives_hud.gd
-	read these very fields, so they show the room's numbers in a room and this
-	peer's own numbers solo, with no branch of their own.
+	coin_hud.gd is deliberately NOT edited — it reads these very fields, so it
+	shows the room's numbers in a room and this peer's own numbers solo, with no
+	branch of its own.
 
 	Offline (or with no room joined) every call below answers null and nothing is
-	written, so solo play is byte-for-byte what it was. Note that collect_coin()'s
-	solo bookkeeping — including its extra-life while-loop — still runs in a room
-	and is simply overwritten here in the same frame. That is intended: a room's
-	lives come from the ROOM's bank, not from this peer's private threshold.
+	written, so solo play is byte-for-byte what it was.
 	"""
 	var mp := _mp()
 	if mp == null or not mp.has_method("shared_bank"):
@@ -4144,94 +4113,22 @@ func _refresh_shared_totals() -> void:
 	var bank: Variant = mp.shared_bank(own_coins)
 	if bank == null:
 		# Manager present but no room: solo semantics, untouched — EXCEPT on the
-		# frame the room ends. The three displayed fields are still holding the
-		# room's totals, and nothing else ever writes them back: leaving a room
-		# whose shared hearts were at 0 would carry `lives = 0` into solo play
-		# (the next bite is an instant game over), and a room's four-figure bank
-		# would sit in coins_collected with next_extra_life_at driven far past it,
-		# so solo extra lives never come again. Restore this peer's own numbers.
+		# frame the room ends. The displayed fields are still holding the room's
+		# totals and nothing else ever writes them back, so a room's four-figure
+		# bank would sit in coins_collected for the rest of the solo run. Restore
+		# this peer's own numbers.
 		if _showing_shared_totals:
 			_showing_shared_totals = false
 			coins_collected = own_coins
 			run_distance = own_distance
-			next_extra_life_at = (own_coins / EXTRA_LIFE_COINS + 1) * EXTRA_LIFE_COINS
-			# FLOORED AT ONE HEART, not zero. own_lives_spent counts deaths the
-			# ROOM's bank paid for — a mid-run joiner starts at own_coins = 0 by
-			# design, and a peer whose teammate does the collecting banks little
-			# either — so three deaths over a long room left this at 0. The room
-			# ending is not a game over (leave() fires on a dropped socket, a
-			# lobby restart or the Leave button), so that handed the player a solo
-			# run with no hearts, no warning and an instant game over on the next
-			# bite. Charging them again for deaths the room already paid for is
-			# the bug; the counter is cleared so it cannot be charged a third time.
-			lives = clampi(MAX_LIVES + own_coins / EXTRA_LIFE_COINS - own_lives_spent, 1, LIVES_CAP)
-			own_lives_spent = 0
 		return
 	_showing_shared_totals = true
-	var spent: Variant = mp.shared_lives_spent(own_lives_spent)
 	var distance: Variant = mp.shared_distance(run_distance)
 	coins_collected = int(bank)
 	if distance != null:
 		# A max, and run_distance is itself a running max, so feeding the room's
 		# best back in can never inflate it.
 		run_distance = int(distance)
-	# THE ROOM'S HEARTS COME FROM THE ROOM'S MASTER, which owns them as real
-	# state and publishes them (bead godot-test1-s86.15) — the same shape the
-	# room's coin multiplier already uses. `shared_lives()` falls back internally
-	# to the old stateless `shared_lives_from()` arithmetic when nothing has been
-	# published, so there is no second branch to keep here. The `spent != null`
-	# test above stays as the "the join has settled" gate the two other totals use.
-	if spent != null:
-		var room_lives: Variant = mp.shared_lives(own_coins, own_lives_spent)
-		if room_lives != null:
-			lives = int(room_lives)
-
-
-func _check_shared_game_over() -> void:
-	"""
-	In a multiplayer room the hearts are shared, so when the room's last one goes
-	the run is over for everybody — not only for whoever happened to be bitten.
-	That peer ends its own run in _on_caught_finished(); this is how every OTHER
-	peer learns the room is finished.
-
-	IN A ROOM ONLY, and the shared_lives_spent() null test is the guard. Solo,
-	`lives` only ever reaches 0 inside _on_caught_finished(), which already ends
-	the run there and then — firing from here as well would change solo behaviour
-	and play the game-over sting twice.
-
-	Called from _physics_process immediately after _refresh_shared_totals(), which
-	is past the is_game_over / is_caught / is_respawning early-returns, so this can
-	never end a run mid-bite before that bite has been counted. The two flags are
-	re-tested anyway, cheaply, because "the caller is past the guards" is exactly
-	the kind of invariant a later edit breaks silently.
-	"""
-	if lives > 0 or is_game_over or is_caught:
-		return
-	var mp := _mp()
-	if mp == null or not mp.has_method("shared_lives_spent"):
-		return
-	if mp.shared_lives_spent(own_lives_spent) == null:
-		return  # Manager present but no room: solo semantics, untouched.
-	# THE ROOM'S HEARTS OUTRANK A RUNNING BREAK-OUT, which is the same order
-	# `_on_caught_finished()` tests them in ("the protocol is not a way to dodge an
-	# ordinary game over") and it has to hold across the ROOM as well as inside one
-	# peer. The grab that takes the last hero can also take the last hero-body: the
-	# captor reaches game over through the hearts clause, while every other peer
-	# hears only the `cap` packet and opens the break-out — and a flag that merely
-	# suppressed this function would leave the room split between an ending screen
-	# and a scene, permanently.
-	#
-	# CLOSED WITHOUT AN OUTCOME (`record` false). The scene was overtaken rather
-	# than lost: the world is not archived by a heart the room spent somewhere else,
-	# no scar is earned, and the ending raised below is the same ordinary game over
-	# the bitten peer took. The teardown still runs, so containment comes down and
-	# the captive filter is restored — which is what bead godot-test1-3iy.11's guard
-	# was really protecting, and it is protected better by ending the scene than by
-	# leaving it running behind a screen.
-	if custody_protocol_active:
-		_end_custody_protocol(false, false)
-	print("💀 The room is out of hearts — the run is over for everyone.")
-	_trigger_game_over()
 
 
 func _weather_is_raining_here() -> bool:

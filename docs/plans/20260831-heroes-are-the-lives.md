@@ -330,11 +330,11 @@ over it).
 
 ### Task 3: delete hearts from `player_controller.gd`
 
-- [ ] delete `MAX_LIVES`, `lives`, `LIVES_CAP`, `EXTRA_LIFE_COINS`, `next_extra_life_at`, `own_lives_spent`
-- [ ] delete the extra-life loop in `collect_coin()` and the hearts half of `_refresh_shared_totals()`
-- [ ] delete `_check_shared_game_over()` and its call site
-- [ ] update every banner comment describing the heart model
-- [ ] `grep -n '\blives\b' scripts/player_controller.gd` returns only unrelated prose
+- [x] delete `MAX_LIVES`, `lives`, `LIVES_CAP`, `EXTRA_LIFE_COINS`, `next_extra_life_at`, `own_lives_spent`
+- [x] delete the extra-life loop in `collect_coin()` and the hearts half of `_refresh_shared_totals()`
+- [x] delete `_check_shared_game_over()` and its call site
+- [x] update every banner comment describing the heart model
+- [x] `grep -n '\blives\b' scripts/player_controller.gd` returns only unrelated prose
 Remove `MAX_LIVES`, `lives`, `LIVES_CAP`, `EXTRA_LIFE_COINS`, `next_extra_life_at`,
 `own_lives_spent`, the extra-life loop in `collect_coin()`, the hearts half of
 `_refresh_shared_totals()`, and `_check_shared_game_over()` + its call site. Update
