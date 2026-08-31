@@ -1049,7 +1049,16 @@ func _check_a_guard_takes_coins_and_ground() -> void:
 			+ " nothing and the latch above is untested")
 	if not player_c.run_beat_record:
 		_fail("a repeat bank cleared run_beat_record — the latch is per RUN, and"
-			+ " only reset_position() may clear it")
+			+ " only the two places that wipe own_distance may clear it")
+	# ...and it does not outlive the distance it is derived from. `join_at()` is
+	# the OTHER place own_distance and run_distance restart at zero (a mid-run
+	# join to a room), and a latch left standing across it flashes "NEW BEST!"
+	# over a room leg that started at zero and beat nothing.
+	player_c.call("join_at", where)
+	if player_c.run_beat_record:
+		_fail("joining a room left run_beat_record set — join_at() zeroes the very"
+			+ " distance the latch records having beaten, so the ending would claim"
+			+ " a record for a leg that ran from zero")
 	_clear(player_c)
 	field_shell.queue_free()
 	await process_frame

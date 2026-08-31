@@ -3857,6 +3857,11 @@ func join_at(anchor: Vector3) -> void:
 	# EVERYONE, permanently, because a max never comes back down. The room's real
 	# figure arrives from the snapshots and the next presence packet.
 	run_distance = 0
+	# ...and so does the record LATCH, because it is derived from the distance the
+	# two lines above just wiped. It is set by `_bank_records()` on a bite and read
+	# once at the ending; left standing from a solo leg it would flash "NEW BEST!"
+	# over a room leg that started at zero and beat nothing.
+	run_beat_record = false
 
 	# JOINING FROM THE GAME OVER SCREEN IS A SUPPORTED FLOW — mp_ui deliberately
 	# does not pause over it, so the panel's Join button works there. Without this
