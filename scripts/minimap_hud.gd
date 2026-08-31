@@ -387,8 +387,11 @@ var _mp: Node = null
 ## web persistence is documented as flaky. Nothing writes it to disk.
 var _zoom_index: int = ZOOM_DEFAULT_INDEX
 
-## Seconds until the next tick.
+## Seconds until the next tick...
 var _time_until_tick: float = 0.0
+## ...and seconds actually spent since the last one, which is the same number only
+## when the frame rate divides evenly into it. See `_process`.
+var _since_tick: float = 0.0
 
 ## False until the first successful read of the player — _draw() then renders
 ## nothing rather than leaving a stale map painted.
@@ -619,15 +622,28 @@ func _process(delta: float) -> void:
 	if not visible:
 		return
 	_time_until_tick -= delta
+	# ...and the REAL time between ticks, which is not TICK_INTERVAL. A tick fires on
+	# the first frame at or past the deadline, so the overshoot (a whole frame at 6
+	# FPS, a hitch at any rate) is thrown away by the line below. Every layer here is
+	# a snapshot and does not care; the stall CLOCK is the one thing that measures
+	# seconds, and crediting it 0.2 s for a 0.33 s tick would turn a 90 s rescue into
+	# a 150 s one on exactly the machine that most needs it (codex review).
+	_since_tick += delta
 	if _time_until_tick > 0.0:
 		return
 	_time_until_tick = TICK_INTERVAL
-	_tick()
+	var elapsed := _since_tick
+	_since_tick = 0.0
+	_tick(elapsed)
 
 
-func _tick() -> void:
+func _tick(elapsed: float = TICK_INTERVAL) -> void:
 	"""Re-read the world into the snapshot _draw() paints from. This is the only
-	place that touches the scene tree; it runs ~5 times a second."""
+	place that touches the scene tree; it runs ~5 times a second.
+
+	@param elapsed: Seconds since the previous tick — only the indoor stall clock
+	        reads it. It defaults to the nominal interval so a check (or anything
+	        else) can drive one tick by hand without inventing a duration."""
 	if _player == null or not is_instance_valid(_player):
 		_player = get_tree().get_first_node_in_group("player") as Node3D
 	if _player == null:
@@ -656,7 +672,7 @@ func _tick() -> void:
 	_gather_landmarks()
 	_gather_tower()
 	_gather_peers()
-	_gather_shelter()
+	_gather_shelter(elapsed)
 
 	_have_data = true
 	queue_redraw()
@@ -1023,7 +1039,7 @@ func _gather_tower() -> void:
 	_tower_count = 1
 
 
-func _gather_shelter() -> void:
+func _gather_shelter(elapsed: float) -> void:
 	"""The indoor half of the caption, and the anti-stall arrow behind it.
 
 	ONE GROUP LOOKUP AND ONE `sheltered()` CALL per 5 Hz tick while the shell exists,
@@ -1082,7 +1098,7 @@ func _gather_shelter() -> void:
 	if zone != "":
 		_visited[zone] = true
 	_seen_floor = maxi(_seen_floor, here)
-	_stall = 0.0 if progress else _stall + TICK_INTERVAL
+	_stall = 0.0 if progress else _stall + elapsed
 
 	_gather_jail_arrow(jail, degraded)
 

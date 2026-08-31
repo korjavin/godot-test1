@@ -1018,6 +1018,14 @@ func _check_indoors() -> String:
 			failure = ("walking back into an ALREADY VISITED room reset the stall timer " \
 				+ "(%.2f s) — the arrow can then be farmed by pacing a doorway") % map._stall
 			break
+		# The clock counts SECONDS, not ticks: a slow frame rate ticks the map less
+		# often, and a rescue promised in 90 s must not become one in 150 s on the
+		# machine that most needs it (codex review).
+		map._tick(1.0)
+		if not is_equal_approx(map._stall, map.TICK_INTERVAL + 1.0):
+			failure = "a %.2f s tick advanced the stall clock to %.2f s, not %.2f" \
+				% [1.0, map._stall, map.TICK_INTERVAL + 1.0]
+			break
 
 		# 5. Past the threshold the arrow fades in, on the true bearing to the block.
 		map._stall = map.STALL_SECONDS
