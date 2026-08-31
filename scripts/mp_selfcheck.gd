@@ -29,10 +29,12 @@ extends SceneTree
 ##      boundary, and the one that feeds the joiner's placement.
 ##   7. Backward compatibility: a phase-3 presence packet (no shared totals)
 ##      must still decode, or an older peer goes invisible instead of uncounted.
-##   8. THE RETIRED HEART FIELDS. `lv`/`rl`/`ls`/`gs` stopped being sent (bead
-##      godot-test1-0bc) and an old peer does not know it — both decoders must
-##      accept a packet carrying them, hand none of them back, and validate
-##      neither, while the LIVE field beside them is still checked.
+##   8. THE RETIRED HEART FIELDS. `lv`/`rl`/`ls`/`gs` stopped MEANING anything
+##      (bead godot-test1-0bc) and an old peer does not know it — both decoders
+##      must accept a packet carrying them, hand none of them back, and validate
+##      neither, while the LIVE field beside them is still checked. `lv`/`rl` also
+##      stopped being SENT; `ls`/`gs` still go out as inert zeroes for one release,
+##      because the previous build's snapshot parser requires `ls` — see case (e).
 ##   9. Hero name → CHARACTERS index, the lookup the hero split rides on.
 ##  10. The crocodile-sync parser against hostile packets — the fourth trust
 ##      boundary, and the one that drives every crocodile in the room.
@@ -649,8 +651,10 @@ func _check_presence_backcompat() -> String:
 
 ## What the shared-hearts machine used to put on the wire, both transports. `lv`
 ## and `rl` rode the presence broadcast, `ls` and `gs` the join snapshot. Bead
-## godot-test1-0bc stopped sending all four; this list is what must keep being
-## TOLERATED, and it is the whole subject of check 8.
+## godot-test1-0bc retired all four as MEANING and stopped sending `lv`/`rl`;
+## `ls`/`gs` are still emitted as inert zeroes (case (e) fails the build if they
+## are not). This list is what must keep being TOLERATED on the way IN, and it is
+## the whole subject of check 8.
 const RETIRED_WIRE_KEYS: Array[String] = ["lv", "rl", "ls", "gs"]
 
 func _check_retired_heart_keys_are_tolerated() -> String:
@@ -658,9 +662,11 @@ func _check_retired_heart_keys_are_tolerated() -> String:
 	Wire compatibility by TOLERANT DECODERS, which is the pattern this file already
 	holds every optional field to — never a protocol version bump.
 
-	Hearts are gone (bead godot-test1-0bc) and with them the four fields that
-	carried them. A peer on an older build does not know that and keeps sending
-	them, at whatever values its own dead arithmetic produced — including values
+	Hearts are gone (bead godot-test1-0bc) and with them the MEANING of the four
+	fields that carried them — two of which, `ls` and `gs`, this build still emits
+	as inert zeroes so the previous build's snapshot parser keeps accepting us (case
+	(e)). A peer on an older build does not know any of it and keeps sending all
+	four at live values, at whatever values its own dead arithmetic produced — including values
 	that would have been REJECTED when the fields were live (`gs: -1` sat in check
 	6's hostile table until this bead). Dropping such a packet would make that peer
 	invisible over a number nothing reads, so the rule is three-part and all three
@@ -744,15 +750,18 @@ func _check_retired_heart_keys_are_tolerated() -> String:
 	# ...and the same rule one verb along. An older MASTER still publishes the
 	# retired OVERTAKEN verdict (`co: 3`); the `room` packet is also the captive-set
 	# repair channel, so a build that bounded `co` at its own highest verdict would
-	# stop that room's cells converging over a field nobody reads. Folded to
-	# "running", never guessed at — a non-zero verdict ENDS the break-out.
+	# stop that room's cells converging over a field nobody reads. It folds UP, to
+	# FAILED — never down to "running", which is the one value a non-master can
+	# never leave: the master's verdict is its only exit from the scene, so a peer
+	# reading OVERTAKEN as "still going" is sealed in the block on a dead clock for
+	# the room's whole life.
 	var stale: Dictionary = MPManager.decode_room({"cap": ["primm"], "cd": 12.0, "co": 3})
 	if stale.is_empty():
 		return "decode_room dropped a packet over a retired verdict — an old master's "\
 			+ "OVERTAKEN would cost the room its captive-set repair, not just the verdict"
-	if stale["co"] != 0 or stale["cap"] != ["primm"]:
-		return "decode_room read a retired verdict as %s — an outcome this build cannot "\
-			% str(stale) + "read must fold to 'running', or it archives somebody's world"
+	if stale["co"] != MPManager.CUSTODY_VERDICT_MAX or stale["cap"] != ["primm"]:
+		return "decode_room read a retired verdict as %s — an unreadable outcome must "\
+			% str(stale) + "fold to FAILED, or the peer never leaves the break-out"
 	if MPManager.decode_room({"cap": [], "cd": 12.0, "co": 2})["co"] != 2:
 		return "decode_room lost a verdict this build DOES know — the fold above is "\
 			+ "swallowing live outcomes with the retired one"

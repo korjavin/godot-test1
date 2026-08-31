@@ -2970,7 +2970,20 @@ func _respawn_in_place() -> void:
 	# not fire the group relocation, which would throw the body kilometres out to the
 	# team and hand it straight back to `_confine_to_block()` — the yank the clamp is
 	# there to make impossible, arriving via the one path that outruns it.
-	var anchor: Variant = null if prisoner_active else _room_group_anchor()
+	#
+	# AND SO DOES THE BREAK-OUT, for the same reason one storey up and with no clamp
+	# to drag it back. `_pay_coin_setback()` already refuses the checkpoint knockback
+	# for the whole custody protocol on the stated grounds that the scene owns the
+	# body and this function puts it back where it fell — which is only true SOLO,
+	# where `_room_group_anchor()` answers null. In a room a survivable hazard inside
+	# the sealed block (a guard, the press, a rotor bar) would land here with a live
+	# teammate anchor and `_place_near()` discards Y outright, dropping the body at
+	# JOIN_SPAWN_HEIGHT ten storeys below a building under `begin_lockdown()`, with
+	# the recall clock still running and no way back up. The scene would then fail on
+	# a clock nobody could beat and archive the world — from a bite the design says
+	# cannot end a run.
+	var anchor: Variant = null if prisoner_active or custody_protocol_active \
+			else _room_group_anchor()
 	if anchor != null:
 		var from_xz := Vector2(global_position.x, global_position.z)
 		_place_near(anchor as Vector3)

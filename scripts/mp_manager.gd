@@ -1661,14 +1661,21 @@ static func decode_room(packet: Dictionary) -> Dictionary:
 	# state that really happens and lasts. Bounding at 2 instead would drop such a
 	# packet WHOLE — and this packet is also the captive-set repair channel, the one
 	# thing that closes the join gap `cap` cannot reach, so the room's cells would
-	# stop converging over a field we do not even use. Reading an unknown outcome as
-	# "running" is the only safe fold, hostile values included:
-	# `apply_room_custody()` hands anything non-zero to
-	# `_end_custody_protocol(verdict == 1)`, so guessing would archive somebody's
-	# world on an enum this build never wrote.
+	# stop converging over a field we do not even use.
+	#
+	# IT FOLDS UP, TO FAILED, AND NEVER DOWN TO "RUNNING". A non-master cannot end
+	# its own scene — `_tick_custody()` returns at `_custody_authority()` above both
+	# outcome tests — so the master's verdict is its ONLY exit, and 0 is the one
+	# value that never resolves: a peer reading an old master's OVERTAKEN as
+	# "running" sits in the sealed block behind raised containment on a clock pinned
+	# at zero, with no ending reachable, for the room's whole life. Folding up costs
+	# the master no authority it did not already have (it can publish `co: 2` and
+	# archive this world outright, and `_receive_room()` is master-only), and it is
+	# what the only real producer MEANS: OVERTAKEN was the round ending with nobody
+	# freed, which is this build's FAILED.
 	var known: int = int(verdict)
 	if known > CUSTODY_VERDICT_MAX:
-		known = 0
+		known = CUSTODY_VERDICT_MAX
 	return {"cap": names, "cd": seconds, "co": known}
 
 

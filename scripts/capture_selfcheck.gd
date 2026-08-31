@@ -176,6 +176,15 @@ class RoomStub extends Node:
 	func my_id() -> String:
 		return me
 
+	## Where the room's other members are standing, for `_respawn_in_place()`'s
+	## relocation. DEFAULTS TO NULL, which is what every check above case (e) needs:
+	## null is the solo answer, so a stub that always named a spot would quietly
+	## teleport the subject of sixteen other checks off the bite it was measuring.
+	var anchor: Variant = null
+
+	func group_anchor() -> Variant:
+		return anchor
+
 	func my_hero() -> String:
 		return held
 
@@ -1924,6 +1933,11 @@ func _check_two_clients_cannot_disagree() -> void:
 	      happily against a build where the recall clock does nothing at all.
 	  (d) THE MASTER PUBLISHES WHAT IT DECIDED, so there is something for (b) to
 	      deliver: `custody_wire_state()` carries the verdict after the scene ends.
+	  (e) AND A SURVIVABLE BITE INSIDE THE SCENE STAYS INSIDE IT. The room's group
+	      anchor is the one thing that can move a body out of a sealed cell block,
+	      and only a room has one — so this is the disagreement's other half: the
+	      clock decides the scene, and nothing else may hand it a verdict by
+	      teleporting the party somewhere they cannot come back from.
 	"""
 	_fresh_store()
 	_beat_done()
@@ -2026,6 +2040,53 @@ func _check_two_clients_cannot_disagree() -> void:
 	if wire.size() != 2 or int(wire[1]) != 2:
 		_fail("the master decided FAILED and publishes %s — with no verdict on the wire "
 			% str(wire) + "there is nothing for the other peers to agree with")
+	_clear(player)
+	await process_frame
+	_fresh_store()
+
+	# ---- (e) A SURVIVABLE BITE INSIDE THE SCENE DOES NOT LEAVE THE BLOCK ----
+	# The scene is a SEALED room on a clock: `begin_lockdown()` re-shuts every spine
+	# door and there is no way back up ten storeys. `_pay_coin_setback()` refuses the
+	# checkpoint knockback for exactly that reason and hands the body to
+	# `_respawn_in_place()` — which, IN A ROOM, relocates to the group anchor and
+	# whose `_place_near()` discards Y outright, dropping the party's last hope at
+	# JOIN_SPAWN_HEIGHT with the recall still running. That is a survivable hazard
+	# (a guard, the press, a rotor bar) deciding a run, which is the one thing bead
+	# godot-test1-0bc says nothing but the clock may do.
+	#
+	# Solo cannot see it — `group_anchor()` answers null — so the room stub names a
+	# spot, which is what makes this a room-shaped check and not a repeat of 13.
+	_beat_done()
+	room.master = "me"
+	room.held = "primm"
+	room.anchor = Vector3(600.0, 0.0, 600.0)
+	player = await _make_player()
+	player.set_active_character(TowerGraph.HEROES.find("primm"))
+	await _drive_into_custody(player)
+	if not player.in_custody_protocol():
+		_fail("case (e) could not open a protocol, so it proves nothing")
+	else:
+		var stood: Vector3 = player.global_position
+		player.hit_by_crocodile(_hunter())
+		player.is_caught = false
+		player.call("_on_caught_finished")
+		await physics_frame
+		# Read on X/Z, the axes the relocation actually crosses. Y is left out on
+		# purpose: the body is a `CharacterBody3D` settling under gravity, so it
+		# drifts a few thousandths between frames while standing perfectly still,
+		# and a jump to `JOIN_SPAWN_HEIGHT` is a whole 600 m of X and Z anyway.
+		var moved: float = Vector2(stood.x, stood.z).distance_to(
+				Vector2(player.global_position.x, player.global_position.z))
+		if moved > SETBACK_EPS:
+			_fail("a survivable bite inside the running break-out moved the body %.2f m "
+				% moved + "from %s — in a room the respawn relocates to the group "
+				% str(stood) + "anchor and _place_near() throws Y away, so the party "
+				+ "lands under a locked-down building and the clock they cannot beat "
+				+ "archives the world")
+		if not player.in_custody_protocol():
+			_fail("a survivable bite ended the break-out — the recall clock is the scene's "
+				+ "only failure condition")
+	room.anchor = null
 	_clear(player)
 	room.queue_free()
 	await process_frame
