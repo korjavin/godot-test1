@@ -74,7 +74,7 @@ const MAX_PRESENCE_SPEED: float = 1.0e4
 ## Caps on a join snapshot — see `decode_state()`. `MAX_STATE_IDS` bounds BOTH
 ## ends of BOTH id lists — the collected-coin set and the crushed-crocodile kill
 ## list, each in the one we send and the one we accept.
-## `MAX_STATE_COUNTER` is a sanity bound on the coin/life/distance counters,
+## `MAX_STATE_COUNTER` is a sanity bound on the coin/distance counters,
 ## generous by design because it exists to reject hostile garbage, not to police
 ## how long a run may get.
 const MAX_STATE_IDS: int = 2048
@@ -262,6 +262,15 @@ const ROOM_SYNC_HZ: float = 2.0
 ## CUSTODY_RECALL_SECONDS is 35; this is generous because it exists to reject
 ## hostile garbage before a cast, not to police the scene's length.
 const MAX_CUSTODY_SECONDS: float = 3600.0
+
+## Highest break-out verdict THIS build understands: 0 running, 1 survived, 2
+## failed. Not a trust bound — `decode_room()` folds anything above it DOWN TO THIS
+## VALUE (FAILED) rather than dropping the packet, because the `room` packet is also
+## the captive-set repair channel and an older master's retired OVERTAKEN (`co: 3`)
+## must not cost a mixed room its cells. It never folds to 0, "running": that is the
+## one verdict a non-master can never resolve, so it seals the peer in the block for
+## the room's life. See the fold there for why the fold and not a bound.
+const CUSTODY_VERDICT_MAX: int = 2
 
 ## Longest hero name a `cap` packet or a join snapshot may carry. The names are
 ## `player_controller.CHARACTERS` entries ("phoboman" is the longest at 8), and the
@@ -493,7 +502,7 @@ var _pool: Array[String] = []
 ## in this room has banked — a Dictionary used as a set (the value is ignored),
 ## kept in INSERTION ORDER so `_recent_collected_ids()` can truncate the oldest.
 ## `_peer_state` holds one entry per other member,
-## `{"coins": int, "spent": int, "dist": int, "pos": Vector3}`, seeded by that
+## `{"coins": int, "dist": int, "pos": Vector3}`, seeded by that
 ## peer's join snapshot and kept current by every presence packet afterwards.
 ## Both are room-scoped: `leave()` empties them and `report_coin_collected()`
 ## refuses to record while offline, so a solo session allocates nothing here no
@@ -581,12 +590,10 @@ var _state_received: Dictionary = {}
 var _first_member: bool = true
 var _join_applied: bool = false
 
-## The FROZEN contributions of members who have left. A departing peer's coins
-## and spent lives are folded in here rather than dropped: dropping them would
-## shrink the room's bank in front of everyone and — much worse — REFUND the
-## lives that peer spent. Room-scoped like the two above.
+## The FROZEN contribution of members who have left. A departing peer's coins are
+## folded in here rather than dropped: dropping them would shrink the room's bank
+## in front of everyone. Room-scoped like the two above.
 var _gone_coins: int = 0
-var _gone_spent: int = 0
 
 ## How many join snapshots this peer is still waiting on before it places itself,
 ## and how long it has waited (seconds). See `JOIN_SNAPSHOT_WAIT`.
@@ -670,42 +677,6 @@ var _room_streak: int = 0
 var _room_multiplier: int = 1
 var _room_streak_deadline_msec: int = 0
 
-## THE ROOM'S HEARTS, owned by the master as REAL STATE — bead godot-test1-s86.15.
-##
-## `shared_lives_from()` (still here, still what a room with no published count
-## falls back to) is STATELESS, and that is a behaviour bug rather than an
-## approximation: solo, a grant arriving while `lives` is already at `LIVES_CAP`
-## is BURNT (`player_controller.collect_coin()`'s `if lives < LIVES_CAP`), while a
-## formula over `(bank, spent)` alone banks the overshoot — so a room that banks
-## fast pinned at 5 hearts and deaths stopped being visible until `spent` caught
-## up. No formula can fix it, because solo's outcome depends on the ORDER of
-## grants and deaths. This is that order, kept.
-##
-## `_room_lives` is advanced by `_tick_room_lives()` on the master ONLY, and
-## published in the master's own presence packet as `rl` so every other peer
-## reads the same number (see `shared_lives()`). `_room_next_extra_at` is the
-## room's copy of `player_controller.next_extra_life_at` — the next bank
-## threshold — and `_room_spent_seen` is the total spent count the hearts have
-## already been debited for, so only the DELTA of a death is ever charged.
-##
-## The room's streak is the precedent this follows exactly: one authority, one
-## number, published rather than re-derived.
-var _room_lives: int = 0
-var _room_next_extra_at: int = 0
-var _room_spent_seen: int = 0
-
-## True while WE are the master and `_room_lives` above is live state we own.
-## Flipped by `_tick_room_lives()` itself rather than from the master-changed
-## handler, so joining as host, being promoted and being demoted all take the
-## same one path and none of them can be forgotten at a call site.
-var _room_lives_owned: bool = false
-
-## The last heart count the ROOM'S MASTER published in its presence packet, or -1
-## when nobody has. Two readers, and the second is why it is a latch rather than
-## a per-peer field: `shared_lives()` answers a non-master from it, and a peer
-## promoted to master ADOPTS it as its starting `_room_lives` — the continuity
-## that stops a master migration silently resetting the room to three hearts.
-var _room_lives_seen: int = -1
 
 
 func _init() -> void:
@@ -911,7 +882,6 @@ func leave() -> void:
 	_first_member = true
 	_join_applied = false
 	_gone_coins = 0
-	_gone_spent = 0
 	_expected_snapshots = 0
 	_join_wait = 0.0
 	_join_msec = 0
@@ -931,15 +901,6 @@ func leave() -> void:
 	_room_streak = 0
 	_room_multiplier = 1
 	_room_streak_deadline_msec = 0
-	# The room's hearts die with the room. `_room_lives_owned` false is what makes
-	# the NEXT room seed itself from scratch (or from that room's master) rather
-	# than carrying this one's count in — and `_room_lives_seen` back to -1 is
-	# what stops it being adopted as a starting count by a room it never described.
-	_room_lives_owned = false
-	_room_lives_seen = -1
-	_room_lives = 0
-	_room_next_extra_at = 0
-	_room_spent_seen = 0
 	# The room's kill list dies with the room: back in solo play every crocodile
 	# the local terrain generates is this player's own again.
 	_dead_crocs = {}
@@ -1187,7 +1148,7 @@ func _on_lobby_peer_joined(id: String, peer_name: String) -> void:
 	# EVERY member snapshots itself to the joiner, not just the master. The seed
 	# above is a single value the master owns, but the join state is not: the
 	# collected-coin set is the UNION across the room and each peer only knows
-	# the ids it banked itself, while the shared bank, lives and distance are a
+	# the ids it banked itself, while the shared bank and distance are a
 	# sum over per-peer contributions. A snapshot from the master alone would
 	# hand the joiner a world still full of coins the others took and a bank
 	# missing their share.
@@ -1206,7 +1167,6 @@ func _on_lobby_peer_left(id: String) -> void:
 	if _peer_state.has(id):
 		var gone: Dictionary = _peer_state[id]
 		_gone_coins += int(gone.get("coins", 0))
-		_gone_spent += int(gone.get("spent", 0))
 		_peer_state.erase(id)
 	if _avatars.has(id):
 		(_avatars[id] as RemoteAvatar).queue_free()
@@ -1669,8 +1629,8 @@ static func decode_room(packet: Dictionary) -> Dictionary:
 	`_pool` in `_receive_room`; `cd` is the recall clock, which drives a COUNTDOWN
 	the player watches, so it is finiteness-checked before any cast (`int(NAN)` is
 	undefined and on wasm the trunc can trap the module); `co` is the verdict (0 running,
-	1 survived, 2 failed, 3 overtaken) and is an enum, so anything outside it is a
-	peer this build cannot read.
+	1 survived, 2 failed) and is an enum, so anything outside it is a peer this build
+	cannot read.
 	"""
 	if typeof(packet.get("cap", null)) != TYPE_ARRAY:
 		return {}
@@ -1693,9 +1653,32 @@ static func decode_room(packet: Dictionary) -> Dictionary:
 	if not _is_number(packet.get("co", null)):
 		return {}
 	var verdict: float = float(packet["co"])
-	if not is_finite(verdict) or verdict < 0.0 or verdict > 3.0:
+	if not is_finite(verdict) or verdict < 0.0 or verdict > float(MAX_STATE_COUNTER):
 		return {}
-	return {"cap": names, "cd": seconds, "co": int(verdict)}
+	# A VERDICT THIS BUILD CANNOT READ COSTS THE VERDICT, NOT THE PACKET, which is
+	# why the gate above is only a sanity bound and the enum is folded here instead.
+	# This build has two outcomes; a master still on the pre-`godot-test1-0bc` build
+	# publishes a third (OVERTAKEN, `co: 3`), and `build_version` deliberately
+	# refuses to reload a peer that is mid-run or in a room, so a mixed room is a
+	# state that really happens and lasts. Bounding at 2 instead would drop such a
+	# packet WHOLE — and this packet is also the captive-set repair channel, the one
+	# thing that closes the join gap `cap` cannot reach, so the room's cells would
+	# stop converging over a field we do not even use.
+	#
+	# IT FOLDS UP, TO FAILED, AND NEVER DOWN TO "RUNNING". A non-master cannot end
+	# its own scene — `_tick_custody()` returns at `_custody_authority()` above both
+	# outcome tests — so the master's verdict is its ONLY exit, and 0 is the one
+	# value that never resolves: a peer reading an old master's OVERTAKEN as
+	# "running" sits in the sealed block behind raised containment on a clock pinned
+	# at zero, with no ending reachable, for the room's whole life. Folding up costs
+	# the master no authority it did not already have (it can publish `co: 2` and
+	# archive this world outright, and `_receive_room()` is master-only), and it is
+	# what the only real producer MEANS: OVERTAKEN was the round ending with nobody
+	# freed, which is this build's FAILED.
+	var known: int = int(verdict)
+	if known > CUSTODY_VERDICT_MAX:
+		known = CUSTODY_VERDICT_MAX
+	return {"cap": names, "cd": seconds, "co": known}
 
 
 func _receive_room(from_id: String, packet: Dictionary) -> void:
@@ -2729,8 +2712,8 @@ static func _anchor_of(positions: Dictionary, master_id: String) -> Vector3:
 # =============================================================================
 #
 # A peer joining a game already in progress has to be told what it missed: which
-# coins are gone, how much the room has banked, how many lives it has spent, how
-# far it has run, and where everybody is standing. That rides the LOBBY RELAY
+# coins are gone, how much the room has banked, how far it has run, and where
+# everybody is standing. That rides the LOBBY RELAY
 # for the same reason the seed does — it must be usable BEFORE any data channel
 # opens, and ICE takes seconds — and it is sent exactly once per
 # (incumbent, joiner) pair, so the relay carries at most three of these a join.
@@ -2750,34 +2733,40 @@ func _send_state_to(id: String) -> void:
 	var player: Node = get_tree().get_first_node_in_group("player")
 	var pos: Vector3 = Vector3.ZERO
 	var coins: int = 0
-	var spent: int = 0
 	var dist: int = 0
 	if player != null:
 		pos = player.global_position
-		# `own_coins` / `own_lives_spent` are this peer's OWN contributions,
-		# which is what the room sums; `coins_collected` is the DISPLAYED number
-		# and in a room that is already the room's total, so it must not be read
-		# here. The `in` guards are the ones `_send_presence()` uses, for the
-		# same reason: a player scene run standalone still answers something sane.
+		# `own_coins` is this peer's OWN contribution, which is what the room
+		# sums; `coins_collected` is the DISPLAYED number and in a room that is
+		# already the room's total, so it must not be read here. The `in` guards
+		# are the ones `_send_presence()` uses, for the same reason: a player
+		# scene run standalone still answers something sane.
 		coins = int(player.get("own_coins")) if "own_coins" in player else 0
-		spent = int(player.get("own_lives_spent")) if "own_lives_spent" in player else 0
 		dist = int(player.get("run_distance")) if "run_distance" in player else 0
 
 	_lobby.send_signal_to(id, {
 		"mp": "state",
 		"cc": coins,
-		"ls": spent,
+		# THE RETIRED HEART COUNTERS, SENT AS INERT ZEROES FOR ONE RELEASE, and this
+		# is the send-side half of the tolerance `decode_state()` states below it.
+		# Hearts are gone (bead godot-test1-0bc) and no build reads these any more —
+		# but the PREVIOUS build REQUIRES `ls`, and drops a snapshot without it
+		# whole. `build_version` deliberately refuses to reload a peer that is
+		# mid-run or in a room, so an old client outlives the deploy, and dropping
+		# its one and only snapshot would cost it this peer's position, collected-coin
+		# ids, kill list and frozen bank for the room's whole life. Delete both keys
+		# once no pre-godot-test1-0bc client can still be running.
+		"ls": 0,
+		"gs": 0,
 		"dd": dist,
 		"px": pos.x,
 		"py": pos.y,
 		"pz": pos.z,
 		# The FROZEN share of members who left before the joiner arrived. Presence
-		# only ever carries a live member's own numbers, so without these the
-		# joiner's `shared_bank`/`shared_lives_spent` would be short by exactly
-		# `_gone_*` for the room's life — a permanently smaller bank and fewer
-		# hearts than everyone else is looking at.
+		# only ever carries a live member's own numbers, so without this the
+		# joiner's `shared_bank` would be short by exactly `_gone_coins` for the
+		# room's life — a permanently smaller bank than everyone else is looking at.
 		"gc": _gone_coins,
-		"gs": _gone_spent,
 		"ids": _recent_collected_ids(),
 		# The room's KILL LIST, replayed for the same reason `ids` is: a joiner's
 		# own terrain generates every crocodile the seed describes, including the
@@ -2823,7 +2812,7 @@ func _recent_dead_ids() -> Array:
 	crushes more than `MAX_STATE_IDS` crocodiles drops the OLDEST kills, so a
 	joiner can see one alive again — kilometres behind the group, in a chunk its
 	terrain will not even have built, and cosmetic when it does (a crocodile too
-	many, never a wrong bank or a wrong heart count). Reaching that cap means
+	many, never a wrong bank or a wrong shared total). Reaching that cap means
 	2048 crushes in one room, each of which needs a player standing on a
 	crocodile as giant Teibi. The upgrade path is `_recent_collected_ids()`'s:
 	filter by distance to the join anchor rather than by age.
@@ -2838,7 +2827,6 @@ func _receive_state(from: String, snapshot: Dictionary) -> void:
 	"""Merge one validated join snapshot. `snapshot` came from `decode_state()`."""
 	_peer_state[from] = {
 		"coins": snapshot["cc"],
-		"spent": snapshot["ls"],
 		"dist": snapshot["dd"],
 		"pos": snapshot["pos"],
 		# GROUNDED UNTIL TOLD OTHERWISE. A snapshot is a position and a set of
@@ -2855,7 +2843,6 @@ func _receive_state(from: String, snapshot: Dictionary) -> void:
 	# peer leaves AFTER we joined — we then fold that peer in ourselves, exactly
 	# like the incumbents do, and the two paths converge on the same number.
 	_gone_coins = maxi(_gone_coins, int(snapshot["gc"]))
-	_gone_spent = maxi(_gone_spent, int(snapshot["gs"]))
 	_absorb_collected(snapshot["ids"])
 	# THE KILL LIST IS TAKEN FROM THE MASTER ALONE, and that asymmetry with `ids`
 	# right above it is the point. The collected set is a UNION — each peer only
@@ -3017,13 +3004,17 @@ static func decode_state(payload: Dictionary) -> Dictionary:
 	The lobby never inspects a relayed payload — that opacity is what keeps game
 	logic off the server — so this is unvalidated peer input, arriving over JSON
 	where *every* number is a float. Returns the validated snapshot
-	(`{"cc": int, "ls": int, "dd": int, "gc": int, "gs": int, "pos": Vector3,
+	(`{"cc": int, "dd": int, "gc": int, "pos": Vector3,
 	"ids": Array[int], "dead": Array[int]}`) or
 	an EMPTY DICTIONARY: trusted whole or dropped whole, exactly like
 	`decode_presence()`, and static and `_rtc`-free for the same reason — so
 	scripts/mp_selfcheck.gd can beat on it with a fistful of hostile payloads.
 	"""
-	for key: String in ["cc", "ls", "dd", "px", "py", "pz"]:
+	# RETIRED KEYS ARE NOT VALIDATED AND NOT READ. Hearts are gone (bead
+	# godot-test1-0bc), so an older peer's `ls` / `gs` are simply absent from every
+	# list below: unread, so a hostile value in them can reach nothing, and never
+	# required, so that peer's snapshot is still worth its position and its ids.
+	for key: String in ["cc", "dd", "px", "py", "pz"]:
 		if not _is_number(payload.get(key, null)):
 			return {}
 
@@ -3031,25 +3022,24 @@ static func decode_state(payload: Dictionary) -> Dictionary:
 	# folds `c` into its finite gate: `int(NAN)` is undefined and on wasm the
 	# trunc can trap the module, taking the tab down before any range check runs.
 	var counters: Array[int] = []
-	for key: String in ["cc", "ls", "dd"]:
+	for key: String in ["cc", "dd"]:
 		var raw: float = float(payload[key])
 		if not is_finite(raw) or raw < 0.0 or raw > float(MAX_STATE_COUNTER):
 			return {}
 		counters.append(int(raw))
 
-	# The departed-members totals. MISSING IS NOT MALFORMED — the same rule
+	# The departed-members bank. MISSING IS NOT MALFORMED — the same rule
 	# `decode_presence()` applies to its counters: a peer on an older build sends
-	# no `gc`/`gs`, and dropping its whole snapshot would cost the joiner a
-	# position and an id list over two optional fields. Present-but-bad still
-	# drops the payload, like every other field here.
-	for key: String in ["gc", "gs"]:
-		if not payload.has(key):
-			counters.append(0)
-			continue
-		var raw: float = float(payload[key]) if _is_number(payload[key]) else NAN
-		if not is_finite(raw) or raw < 0.0 or raw > float(MAX_STATE_COUNTER):
+	# no `gc`, and dropping its whole snapshot would cost the joiner a position
+	# and an id list over one optional field. Present-but-bad still drops the
+	# payload, like every other field here.
+	if not payload.has("gc"):
+		counters.append(0)
+	else:
+		var gone: float = float(payload["gc"]) if _is_number(payload["gc"]) else NAN
+		if not is_finite(gone) or gone < 0.0 or gone > float(MAX_STATE_COUNTER):
 			return {}
-		counters.append(int(raw))
+		counters.append(int(gone))
 
 	var pos: Vector3 = Vector3(
 		float(payload["px"]), float(payload["py"]), float(payload["pz"])
@@ -3105,10 +3095,8 @@ static func decode_state(payload: Dictionary) -> Dictionary:
 
 	return {
 		"cc": counters[0],
-		"ls": counters[1],
-		"dd": counters[2],
-		"gc": counters[3],
-		"gs": counters[4],
+		"dd": counters[1],
+		"gc": counters[2],
 		"pos": pos,
 		"ids": ids,
 		"dead": dead,
@@ -3146,42 +3134,33 @@ static func _decode_id_list(raw: Array) -> Variant:
 # =============================================================================
 # SHARED TOTALS
 # =============================================================================
-# The room's bank, spent lives and distance are the SUM (or, for distance, the
-# max) of every member's own contribution, with no authority and no round trips:
-# each peer broadcasts its own absolute numbers and each peer adds them up. Every
-# reader gets the same answer within one presence interval, and a peer that
-# leaves has its share frozen rather than dropped.
+# The room's bank and distance are the SUM (or, for distance, the max) of every
+# member's own contribution, with no authority and no round trips: each peer
+# broadcasts its own absolute numbers and each peer adds them up. Every reader
+# gets the same answer within one presence interval, and a peer that leaves has
+# its share frozen rather than dropped.
 #
-# All three take the CALLER's own contribution as a parameter and return `null`
+# Both take the CALLER's own contribution as a parameter and return `null`
 # offline, so the player falls through to today's solo behaviour with one
 # `== null` test and the manager never has to reach into the player.
 
 # THERE IS NO "retired contribution" HERE, and that is deliberate. "Play Again"
-# inside a room LEAVES the room first (see `player_controller.restart_game`),
-# because the shared hearts cannot recover from a local wipe — so this peer's
-# contribution is always simply its live `own_coins` / `own_lives_spent`, and a
-# restart never has to be hidden from the room's totals.
+# inside a room LEAVES the room first (see `player_controller.restart_game`), so
+# this peer's contribution is always simply its live `own_coins`, and a restart
+# never has to be hidden from the room's totals.
 
 func _contributing() -> bool:
 	"""
-	Whether this peer's own coins / spent lives / distance belong in the room's
-	totals yet.
+	Whether this peer's own coins and distance belong in the room's totals yet.
 
 	A MID-RUN JOINER'S SOLO TALLY IS NOT THE ROOM'S. `join_at()` zeroes
-	`own_coins` / `own_lives_spent` / `own_distance` / `run_distance` for exactly
-	that reason — but it only runs at PLACEMENT, which waits on the seed and on
-	every incumbent's snapshot, while presence starts the moment the mesh
-	connects. Nothing orders those two, so without this gate a joiner publishes
-	its old world's numbers in the window between: `dd` is folded in with `maxi`,
-	so a 3 km solo run raises the room's distance PERMANENTLY for everyone (a max
-	has no way back down), and `lv` is subtracted from the room's shared hearts,
-	so joining after two solo deaths takes two hearts off the whole room — and
-	can drive it to zero and game-over everybody.
-
-	Reading it locally is the same bug from the other end: a joiner who died solo
-	sums its own `own_lives_spent` into `shared_lives_spent()`, computes zero
-	hearts in a healthy room and fires `_check_shared_game_over()` on itself,
-	which only the (seed-gated) placement can undo.
+	`own_coins` / `own_distance` / `run_distance` for exactly that reason — but it
+	only runs at PLACEMENT, which waits on the seed and on every incumbent's
+	snapshot, while presence starts the moment the mesh connects. Nothing orders
+	those two, so without this gate a joiner publishes its old world's numbers in
+	the window between: `dd` is folded in with `maxi`, so a 3 km solo run raises
+	the room's distance PERMANENTLY for everyone (a max has no way back down), and
+	`cc` credits the room's bank with coins nobody in it ever picked up.
 
 	Zeroing at `welcome` instead would not work: `run_distance` is recomputed as
 	`maxi(run_distance, int(global_position.x))` every physics tick, so it climbs
@@ -3198,15 +3177,13 @@ func _join_settled() -> bool:
 	Whether the room's totals can be trusted yet.
 
 	A joiner is IN_ROOM from the `welcome` frame, but `_peer_state` fills one
-	relayed snapshot at a time — and each snapshot carries one peer's coins AND
-	its spent lives, so a HALF-ARRIVED SET IS NOT A PARTIAL AVERAGE: it can be all
-	of the room's deaths and none of the bank that paid for the extra hearts. A
-	joiner reading it mid-fill computes zero hearts in a perfectly healthy room,
-	`_check_shared_game_over()` fires, and the Game Over screen goes up — undone
-	only if the placement runs, so a joiner still waiting on the seed sits there
-	for the whole 20 s `seed_req` budget, or forever if the seed never lands.
+	relayed snapshot at a time, so a HALF-ARRIVED SET IS NOT A PARTIAL TOTAL: it
+	is a bank and a distance missing whole members, and the room's HUD would show
+	them climbing as the snapshots land. The placement that settles it waits on
+	the seed, so a joiner still waiting sits there for the whole 20 s `seed_req`
+	budget, or forever if the seed never lands.
 
-	Until this is true the three getters below answer `null` and the player falls
+	Until this is true the two getters below answer `null` and the player falls
 	through to solo semantics on the `== null` test it already makes. Same
 	condition `_can_join_place()` uses, minus the seed: the totals become readable
 	as soon as the SNAPSHOTS are in (or their deadline is spent), whether or not a
@@ -3226,17 +3203,6 @@ func shared_bank(own_coins: int) -> Variant:
 	return total
 
 
-func shared_lives_spent(own_spent: int) -> Variant:
-	"""Lives spent by everyone who has been in this room, or `null` offline /
-	before the join settles (see `_join_settled`)."""
-	if _state != State.IN_ROOM or not _join_settled():
-		return null
-	var total: int = (own_spent if _contributing() else 0) + _gone_spent
-	for state: Dictionary in _peer_state.values():
-		total += int(state.get("spent", 0))
-	return total
-
-
 func shared_distance(own_distance: int) -> Variant:
 	"""
 	The furthest anyone in the room has got, or `null` offline.
@@ -3253,189 +3219,6 @@ func shared_distance(own_distance: int) -> Variant:
 	for state: Dictionary in _peer_state.values():
 		best = maxi(best, int(state.get("dist", 0)))
 	return best
-
-
-func shared_lives(own_bank: int, own_spent: int) -> Variant:
-	"""
-	The room's remaining hearts, or `null` offline / before the join settles — the
-	same one-`== null`-test shape `shared_bank()` and its siblings use, so
-	`player_controller._refresh_shared_totals()` falls through to solo semantics
-	with no branch of its own.
-
-	THE MASTER OWNS THIS NUMBER AS REAL STATE (bead godot-test1-s86.15) — see
-	`_room_lives` and `_tick_room_lives()`. On the master this is that state; on
-	every other peer it is what the master last published in its presence packet.
-	The point of owning it rather than deriving it is ORDER: solo BURNS an extra
-	life granted while already at `LIVES_CAP`, and only a running count can do
-	that. The old stateless `shared_lives_from()` banked the overshoot, so a room
-	that banked fast pinned at 5 hearts and its deaths stopped showing.
-
-	`shared_lives_from()` REMAINS THE FALLBACK, not dead code: `--lobby-only` has
-	no mesh and therefore no presence, a master on an older build publishes no
-	`rl`, and a peer whose first presence packet from the master has not landed
-	yet has nothing to read. All three want the room's HUD to say something
-	sensible rather than nothing, and the stateless answer is exactly what
-	shipped before this bead.
-
-	ponytail: WITH NO MESH the master answers from its own state while everybody
-	else answers from the formula, so the two can differ once the cap burn bites.
-	Not worth closing, because with no mesh there is no presence AT ALL: no peer's
-	coins, deaths or distance reach anyone, so every shared total is already each
-	peer's own private number and the hearts are the least of it — that is the
-	documented ceiling of `--lobby-only`, which is a dev/test mode. The upgrade
-	path, if a real degraded mode is ever wanted, is putting the room's totals on
-	the lobby relay the way the seed and the heartbeat already ride it.
-
-	@param own_bank: this peer's own coin contribution, as `shared_bank()` takes it.
-	@param own_spent: this peer's own spent lives, as `shared_lives_spent()` takes it.
-	"""
-	if _state != State.IN_ROOM or not _join_settled():
-		return null
-	if _room_lives_owned:
-		return _room_lives
-	if _room_lives_seen >= 0:
-		return _room_lives_seen
-	# No published count: the pre-bead arithmetic, which at least tracks the bank
-	# and the deaths even if it cannot reproduce the cap-burn ordering.
-	var bank: Variant = shared_bank(own_bank)
-	var spent: Variant = shared_lives_spent(own_spent)
-	if bank == null or spent == null:
-		return null
-	return shared_lives_from(
-		int(bank), int(spent),
-		PLAYER_SCRIPT.MAX_LIVES, PLAYER_SCRIPT.EXTRA_LIFE_COINS, PLAYER_SCRIPT.LIVES_CAP
-	)
-
-
-func _tick_room_lives() -> void:
-	"""
-	MASTER ONLY: advance the room's hearts, in the ORDER solo would have.
-
-	Called once per frame from `_process` — not from the player, and not from the
-	presence handler. One owner, one tick: the player asking would tie the room's
-	hearts to whether that peer's `_physics_process` happened to run (it does not
-	while `is_caught` / `is_game_over`), and the presence handler would advance
-	them once per peer per packet.
-
-	THE ORDER IS THE WHOLE FEATURE. Deaths are charged as a DELTA against
-	`_room_spent_seen`, then grants are walked with solo's own loop — including
-	its `if lives < cap`, which BURNS a grant that lands at the cap. That burn is
-	the thing `shared_lives_from()` structurally cannot do, and the reason a room
-	that banked fast used to become unlosable.
-
-	ponytail: deaths are applied BEFORE grants within one tick, and that tie can
-	only be broken by guessing — presence samples at 15 Hz, so two events 20 ms
-	apart arrive together and their true order is simply not on the wire. Deaths
-	first is the forgiving side (the coins you were picking up as you died can buy
-	the heart back) and it only differs from grants-first at the cap. The upgrade
-	path is a sequence number per peer event rather than an absolute counter.
-	"""
-	if _state != State.IN_ROOM or _master != _you:
-		# Demoted, or never master. Drop ownership so a later promotion re-seeds
-		# from what the current master has been publishing rather than from a
-		# stale count we stopped maintaining.
-		_room_lives_owned = false
-		return
-
-	# The local player's own contribution — read the same way `_send_presence()`
-	# reads it, and with the same `in` guards, so a standalone player scene (or a
-	# frame where the player is gone) simply contributes nothing.
-	var own_bank: int = 0
-	var own_spent: int = 0
-	var player: Node = get_tree().get_first_node_in_group("player")
-	if player != null:
-		if "own_coins" in player:
-			own_bank = int(player.get("own_coins"))
-		if "own_lives_spent" in player:
-			own_spent = int(player.get("own_lives_spent"))
-	var bank_total: Variant = shared_bank(own_bank)
-	var spent_total: Variant = shared_lives_spent(own_spent)
-	if bank_total == null or spent_total == null:
-		return  # Join still settling; nothing to count yet.
-	var bank: int = int(bank_total)
-	var spent: int = int(spent_total)
-
-	if not _room_lives_owned:
-		_room_lives_owned = true
-		# SEED, don't reset. A promoted master adopts the count the deposed one was
-		# publishing (`_room_lives_seen`), because a migration must not hand the
-		# room three fresh hearts — the stall vote takes ~6 s and a room can easily
-		# be on its last one by then.
-		#
-		# WITH NOTHING PUBLISHED, SEED FROM THE STATELESS FORMULA — never from
-		# MAX_LIVES. Two cases reach here and both already have deaths behind them:
-		# a player who hosts from a live solo run in which they have been bitten
-		# (`_first_member` makes their own tally the room's opening balance, deaths
-		# included), and a promotion where no `rl` ever arrived (an older master, or
-		# one deposed before its first presence packet). Starting at MAX_LIVES and
-		# then marking those deaths as already charged handed the room hearts it
-		# had spent. `shared_lives_from()` is exactly the number the room was
-		# showing a moment ago, which is the honest place to take over from.
-		if _room_lives_seen >= 0:
-			_room_lives = _room_lives_seen
-		else:
-			_room_lives = shared_lives_from(
-				bank, spent,
-				PLAYER_SCRIPT.MAX_LIVES, PLAYER_SCRIPT.EXTRA_LIFE_COINS, PLAYER_SCRIPT.LIVES_CAP
-			)
-		# And seed the two watermarks from the CURRENT totals, never from zero:
-		# every death and every threshold up to this moment is already reflected
-		# in the count we just adopted, so re-walking them would charge the room
-		# twice for deaths and pay it twice for coins.
-		_room_spent_seen = spent
-		_room_next_extra_at = (bank / PLAYER_SCRIPT.EXTRA_LIFE_COINS + 1) \
-			* PLAYER_SCRIPT.EXTRA_LIFE_COINS
-		return
-
-	# DEATHS, as a delta. `> ` rather than `!=` on purpose: the total can fall
-	# (a peer's contribution stops counting the frame it leaves and before
-	# `_gone_spent` is folded in, and a mid-run joiner zeroes its own counter by
-	# design), and refunding a heart for that would be a bug you could farm.
-	if spent > _room_spent_seen:
-		_room_lives -= spent - _room_spent_seen
-		_room_spent_seen = spent
-
-	# GRANTS, with solo's own loop and solo's own cap-burn. A `while`, not an
-	# `if`: one gem at a high room multiplier can cross two thresholds at once.
-	while bank >= _room_next_extra_at:
-		_room_next_extra_at += PLAYER_SCRIPT.EXTRA_LIFE_COINS
-		if _room_lives < PLAYER_SCRIPT.LIVES_CAP:
-			_room_lives += 1
-
-	_room_lives = clampi(_room_lives, 0, PLAYER_SCRIPT.LIVES_CAP)
-
-
-static func shared_lives_from(bank: int, spent: int, max_lives: int, per_extra: int, cap: int) -> int:
-	"""
-	The room's remaining lives: the starting hearts, plus one per `per_extra`
-	coins the room has banked, minus every life anyone has spent, clamped into
-	[0, cap]. Pure and static so scripts/mp_selfcheck.gd can pin the arithmetic
-	without a room.
-
-	THIS IS NOW THE FALLBACK, NOT THE LIVE PATH. `shared_lives()` above is what
-	the game reads: the master keeps the room's hearts as real state and publishes
-	them, exactly as it already owns the room's streak (bead godot-test1-s86.15).
-	This function still answers when there is no published count — `--lobby-only`
-	has no presence at all, a master on an older build sends no `rl`, and the
-	first packet from a fresh master is up to 66 ms away — and it is kept pure and
-	static because `scripts/mp_selfcheck.gd` pins its arithmetic without a room.
-
-	ponytail: STATELESS, so it cannot reproduce solo exactly, and knowing the
-	difference is what motivated the stateful owner. Solo grants at the moment a
-	threshold is crossed and DROPS the grant if `lives` is already at the cap
-	(player_controller.collect_coin's `if lives < LIVES_CAP`), i.e. overshoot is
-	burnt. Here the overshoot is banked: while `bank / per_extra - spent` exceeds
-	the cap headroom the HUD pins at `cap` and a death changes nothing visible, so
-	a room that banks fast becomes hard to lose. No formula over (bank, spent)
-	alone can fix that — solo's outcome depends on the ORDER of grants and deaths
-	— and the obvious alternative (`mini(max_lives + bank / per_extra, cap) -
-	spent`) trades it for a worse one: the room would get exactly `cap` lives for
-	the whole run, and coins banked after a death would stop buying hearts back,
-	which solo definitely does allow.
-	"""
-	if per_extra <= 0:
-		return clampi(max_lives - spent, 0, cap)  # No extra-life threshold: just the base.
-	return clampi(max_lives + bank / per_extra - spent, 0, cap)
 
 
 # =============================================================================
@@ -3459,17 +3242,8 @@ func _process(delta: float) -> void:
 	# heartbeat on the relay — see the section comment on `_tick_heartbeat`.
 	_tick_heartbeat(delta)
 	_tick_stall_watch(delta)
-	# ABOVE THE `_rtc` GUARD as well, and for a reason of its own: on the master
-	# this is the room's authoritative heart count, and it must keep counting the
-	# master's OWN deaths and pickups even in a room whose mesh never came up
-	# (`--lobby-only`, ICE that never completed). It is master-only inside and a
-	# few dictionary walks over at most three peers, so a non-master pays one
-	# comparison per frame.
-	_tick_room_lives()
-
 	# The room's captive set and recall clock, slower still — and ABOVE THE `_rtc`
-	# GUARD for the same reason `_tick_room_lives()` is, plus one of its own: half
-	# the point of this publish is the LOBBY RELAY leg, which reaches peers whose
+	# GUARD, which is half the point of this publish: the LOBBY RELAY leg reaches peers whose
 	# mesh has not come up (and every peer of a `--lobby-only` master, whose mesh
 	# never will). Below the guard it would be silent in exactly the case it exists
 	# for. Master-only inside, so a non-master pays one float add and a comparison.
@@ -3669,9 +3443,9 @@ func _prune_dead_connections() -> void:
 		# `_on_lobby_peer_left` does is wrong here for the opposite reason: THIS
 		# PEER HAS NOT LEFT. It is still in the room, still playing, still counted
 		# live by every peer whose mesh link to it survived — and we replay
-		# `_gone_*` to future joiners as `gc`/`gs`, which they merge alongside that
-		# same peer's own snapshot and presence, counting its coins and its SPENT
-		# LIVES twice (hearts the room actually has, gone from the joiner's HUD).
+		# `_gone_coins` to future joiners as `gc`, which they merge alongside that
+		# same peer's own snapshot and presence, COUNTING ITS COINS TWICE — a bank
+		# on the joiner's HUD that nobody else in the room is looking at.
 		# So keep the counters attributed to the peer, drop only its position from
 		# the per-frame readers, and let the real `peer_left` freeze the correct
 		# final figure if and when it ever arrives.
@@ -3691,8 +3465,8 @@ func _send_presence() -> void:
 	Broadcast one presence packet: where the local player is, which way it faces,
 	who it is playing, how fast it is going and whether it is on the ground —
 	everything `RemoteAvatar` needs to draw a convincing runner — plus this peer's
-	own coins, spent lives and distance, which are what the room's shared totals
-	are summed from.
+	own coins and distance, which are what the room's shared totals are summed
+	from.
 
 	Sent UNRELIABLE on purpose: a dropped sample is replaced by the next one 66 ms
 	later, and re-transmitting stale positions would be strictly worse than
@@ -3722,17 +3496,17 @@ func _send_presence() -> void:
 		var v: Vector3 = player.get("velocity")
 		speed = Vector2(v.x, v.z).length()
 
-	# `cc` / `lv` / `dd` are this peer's OWN contributions to the room's shared
-	# bank, spent lives and distance — ABSOLUTE values, never deltas, so the
-	# unreliable channel is self-healing: a dropped packet is corrected 66 ms
-	# later instead of leaving the totals permanently short. Note `own_coins`,
-	# not `coins_collected`: in a room the latter is already the room's total and
-	# summing it would compound. The `in` guards keep a standalone player scene
-	# answering something sane, exactly like `c` above.
+	# `cc` / `dd` are this peer's OWN contributions to the room's shared bank and
+	# distance — ABSOLUTE values, never deltas, so the unreliable channel is
+	# self-healing: a dropped packet is corrected 66 ms later instead of leaving
+	# the totals permanently short. Note `own_coins`, not `coins_collected`: in a
+	# room the latter is already the room's total and summing it would compound.
+	# The `in` guards keep a standalone player scene answering something sane,
+	# exactly like `c` above.
 	# Until the join lands, this peer contributes NOTHING to the room's totals —
 	# its counters still describe the solo world it came from. See
 	# `_contributing()`; publishing them early raises the room's distance
-	# permanently and spends the room's hearts on deaths that happened elsewhere.
+	# permanently and credits its bank with another world's coins.
 	var mine: bool = _contributing()
 	var state: Dictionary = {
 		"p": player.global_position,
@@ -3741,26 +3515,14 @@ func _send_presence() -> void:
 		"s": speed,
 		"g": player.is_on_floor() if player.has_method("is_on_floor") else true,
 		"cc": int(player.get("own_coins")) if mine and "own_coins" in player else 0,
-		"lv": int(player.get("own_lives_spent")) if mine and "own_lives_spent" in player else 0,
 		"dd": int(player.get("run_distance")) if mine and "run_distance" in player else 0,
 	}
-	# `rl` — THE ROOM'S HEARTS, and the ONE field in this packet that is about the
-	# room rather than about the sender. Only the master has any business
-	# publishing it (it is the only peer that owns the count), and every receiver
-	# takes it from the master alone, so a non-master simply omits the key —
-	# which is also exactly what an older build does, and the decoder's
-	# missing-is-not-malformed rule reads as "not published" (-1) rather than as
-	# "zero hearts". Unreliable is right for it: the value is absolute and
-	# idempotent, so a dropped packet is corrected 66 ms later.
-	if _room_lives_owned:
-		state["rl"] = _room_lives
-
 	# `ab` — THE ABILITY STATE A WATCHER CAN SEE (bead godot-test1-69p): Teibi's
 	# Resize form and Windman's Air Rush, as `player_controller.ABILITY_BIT_*`
 	# flags. OMITTED WHEN ZERO, which is both the normal case and exactly what an
 	# older build sends, so the decoder's missing-is-not-malformed rule reads the
 	# two the same way — "nothing special to draw". Unreliable suits it for the
-	# `rl` reason: the value is absolute and idempotent, and an ability lasts
+	# counters' reason: the value is absolute and idempotent, and an ability lasts
 	# seconds, so a dropped packet costs one 66 ms tick of the pose.
 	var ability: int = int(player.call("ability_visual_state")) \
 			if player.has_method("ability_visual_state") else 0
@@ -3877,7 +3639,6 @@ func _receive_mesh_packets() -> void:
 		# values being absolute means a lost packet costs nothing.
 		_peer_state[from_id] = {
 			"coins": state["cc"],
-			"spent": state["lv"],
 			"dist": state["dd"],
 			"pos": state["p"],
 			# The on-floor bit the packet has always carried and nothing read.
@@ -3886,17 +3647,6 @@ func _receive_mesh_packets() -> void:
 			# the local player (bead godot-test1-s86.15).
 			"floor": state["g"],
 		}
-		# THE ROOM'S HEARTS, FROM THE MASTER ALONE — the same authority rule the
-		# seed, `cnf` and the croc sync all enforce, and for the same reason: the
-		# mesh is peer to peer, so without it any member could mint hearts for
-		# everybody. Latched rather than kept per peer because that is all it is
-		# ever read as — "what the room's authority last said" — and because a
-		# fresh master promoted a moment later needs exactly this number to carry
-		# on from (see `_tick_room_lives()`). -1 means "nobody has published one",
-		# which is the `--lobby-only` / older-peer case `shared_lives()` falls
-		# back to `shared_lives_from()` for.
-		if from_id == _master and int(state["rl"]) >= 0:
-			_room_lives_seen = int(state["rl"])
 
 
 static func packet_kind(packet: Dictionary) -> String:
@@ -4058,7 +3808,7 @@ func room_multiplier() -> Variant:
 	"""
 	The room's current coin multiplier, or `null` offline so
 	`player_controller.get_streak_multiplier()` falls through to its own on one
-	test — the same trick phase 4 used for the bank and the hearts, which is why
+	test — the same trick phase 4 used for the bank, which is why
 	`coin_hud.gd` shows the room's `(xN)` with no HUD change at all.
 
 	Expires on its own: a room that stops picking things up for STREAK_WINDOW is
@@ -4281,8 +4031,8 @@ func _resolve_claim_locally(id: int, count: int, value: int) -> void:
 	path, so the player is paid for something they visibly picked up.
 
 	`collect_coin` is deliberately the vehicle — it already owns the streak, the
-	extra-life threshold and the print, and in a room it reads the ROOM's
-	multiplier through `get_streak_multiplier()` anyway.
+	HUD and the print, and in a room it reads the ROOM's multiplier through
+	`get_streak_multiplier()` anyway.
 	"""
 	# Through `_absorb_collected` rather than a bare set write, so the hidden
 	# pickup waiting on that confirm is actually freed — the same sweep the
@@ -4947,8 +4697,13 @@ static func _decode_presence_dict(state: Dictionary) -> Dictionary:
 	# packet without them, and dropping those whole would make an older peer
 	# invisible rather than merely un-counted — so absent reads as 0 and only a
 	# value that is PRESENT and bad drops the packet.
+	#
+	# `lv` (this peer's spent lives) and `rl` (the room's hearts) RETIRED with the
+	# hearts themselves — bead godot-test1-0bc. They are not in this list and not
+	# in the returned dict, so an older peer still sending them is accepted whole
+	# and those two fields are simply never looked at.
 	var counters: Dictionary = {}
-	for key: String in ["cc", "lv", "dd"]:
+	for key: String in ["cc", "dd"]:
 		var raw: Variant = state.get(key, null)
 		if raw == null:
 			counters[key] = 0
@@ -4959,25 +4714,6 @@ static func _decode_presence_dict(state: Dictionary) -> Dictionary:
 		if not is_finite(value) or value < 0.0 or value > float(MAX_STATE_COUNTER):
 			return {}
 		counters[key] = int(value)
-
-	# `rl` — the room's remaining hearts, as the MASTER counts them. Same
-	# missing-is-not-malformed rule as the three counters above, but the ABSENT
-	# sentinel is -1 rather than 0, because 0 hearts is a real and very
-	# consequential value (it is what ends the run for everybody) and reading an
-	# older peer's silence as "the room is dead" would do exactly that. Bounded by
-	# the player's own LIVES_CAP rather than MAX_STATE_COUNTER: this one is
-	# ASSIGNED STRAIGHT TO THE HUD's heart count on every non-master, so a hostile
-	# master claiming 2^40 hearts would draw that many pips.
-	var room_lives: int = -1
-	var raw_lives: Variant = state.get("rl", null)
-	if raw_lives != null:
-		if not _is_number(raw_lives):
-			return {}
-		var lives_value: float = float(raw_lives)
-		if not is_finite(lives_value) or lives_value < 0.0 \
-				or lives_value > float(PLAYER_SCRIPT.LIVES_CAP):
-			return {}
-		room_lives = int(lives_value)
 
 	# `ab` — the sender's visible ability state, which RemoteAvatar draws as a
 	# scale and a wing beat. Same missing-is-not-malformed rule as the counters
@@ -4999,8 +4735,7 @@ static func _decode_presence_dict(state: Dictionary) -> Dictionary:
 
 	return {
 		"p": pos, "y": yaw, "c": char_index, "s": speed, "g": state["g"],
-		"cc": counters["cc"], "lv": counters["lv"], "dd": counters["dd"],
-		"rl": room_lives, "ab": ability,
+		"cc": counters["cc"], "dd": counters["dd"], "ab": ability,
 	}
 
 

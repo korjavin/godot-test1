@@ -187,7 +187,7 @@ const TREASURE_COLOR := Color(1.0, 0.85, 0.35, 1.0)
 # collect_coin(20) would be one link in the chain and never light the streak up
 # at all. `_award_one()` is called TREASURE amount times, spread over
 # TREASURE_BURST_DURATION — comfortably inside the 2.5 s STREAK_WINDOW, so the
-# whole burst is one unbroken chain — and the extra-life threshold, the HUD, the
+# whole burst is one unbroken chain — and the HUD, the
 # play_coin blip and the lifetime-coin credit for meta-progression all come free
 # off the existing collect_coin path (progression takes the PRE-streak value, so
 # a 20-coin burst credits 20 lifetime coins whatever the multiplier).

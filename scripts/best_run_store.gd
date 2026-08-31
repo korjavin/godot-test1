@@ -206,6 +206,18 @@ signal progression_loaded(lifetime_coins: int, spent_points: int)
 var distance: int = 0
 var coins: int = 0
 
+## The distance record THE SERVER REPORTED, kept PRE-MERGE and deliberately
+## beside `distance` rather than folded into it. `distance` is the merged best
+## and includes this session's own `submit()`s, so it cannot answer the one
+## question the "NEW BEST!" flash needs — "was there already a record this run
+## had to beat" — because by then an echo of our own bank and a record another
+## device holds are the same number. This one is only ever written from a GET
+## reply, so it is that other device's number and nothing else.
+##
+## Stays 0 while the lobby is unreachable, which reads as "no external record"
+## and leaves the caller's local comparison standing.
+var server_best_distance: int = 0
+
 ## Meta-progression, same monotone rule. `lifetime_coins` is cumulative coins
 ## picked up across every run ever and is NEVER deducted (owner, 2026-08-25);
 ## spending a skill point raises `spent_points` instead. The LEVEL is not stored
@@ -226,6 +238,24 @@ var _player_id: String = ""
 ## `_http` / `_rooms_http` split.
 var _get_http: HTTPRequest = null
 var _post_http: HTTPRequest = null
+
+## Whether the boot GET's reply may be trusted as a PRE-SUBMIT baseline — which is
+## the only thing `server_best_distance` is for, and the one property the two
+## `HTTPRequest` nodes above take away. They overlap on purpose (that is the whole
+## reason for the split), the lobby serves them concurrently, and nothing orders
+## them: a bite in the first seconds of a run POSTs this run's distance, and if
+## that merge lands before the still-in-flight GET is read, the reply hands our
+## OWN number back as if another device held it. The reconciliation then takes
+## back a flash the player earned — exactly the echo the pre-merge field exists
+## to be immune to.
+##
+## So a POST that actually started while the GET was outstanding retires the
+## baseline. `server_best_distance` then stays 0, which is already the documented
+## "no external record" degrade, and the local comparison stands — the safe
+## direction, because the alternative claims a record on evidence we produced.
+## The next boot's GET has no POST racing it and reports the truth.
+var _get_in_flight: bool = false
+var _get_baseline_ok: bool = false
 
 
 # =============================================================================
@@ -682,6 +712,10 @@ func _request_get() -> void:
 		if err != ERR_BUSY:
 			push_warning("BestRunStore: /best GET could not start (%d)" % err)
 		return
+	# The window opens here and closes in the reply handler; a POST inside it is
+	# what closes the baseline. See `_get_baseline_ok`.
+	_get_in_flight = true
+	_get_baseline_ok = true
 	_get_http.request_completed.connect(_on_get_completed, CONNECT_ONE_SHOT)
 
 
@@ -693,6 +727,9 @@ func _on_get_completed(
 	too old to have the route, an unparseable body — is simply "no server record",
 	which is the state a solo desktop player is permanently in.
 	"""
+	# Closed FIRST, above every early return: a GET that failed is still no longer
+	# outstanding, and a POST after it races nothing.
+	_get_in_flight = false
 	if result != HTTPRequest.RESULT_SUCCESS or response_code != 200:
 		return
 	var json := JSON.new()
@@ -718,6 +755,11 @@ func _on_get_completed(
 		or server_lifetime < lifetime_coins
 		or server_spent < spent_points
 	)
+	# Kept BEFORE the merge below, and `maxi` because a monotone field never
+	# unlearns. This is the only writer — and it only writes when this reply is a
+	# causally pre-submit baseline, which `_get_baseline_ok` is the whole record of.
+	if _get_baseline_ok:
+		server_best_distance = maxi(server_best_distance, server_distance)
 	var raised := server_distance > distance or server_coins > coins
 	var progression_raised := server_lifetime > lifetime_coins or server_spent > spent_points
 
@@ -757,6 +799,12 @@ func _request_post() -> void:
 	var err: int = _post_http.request(
 		_endpoint(), ["Content-Type: application/json"], HTTPClient.METHOD_POST, body
 	)
+	if err == OK and _get_in_flight:
+		# This run's numbers are now on their way to a lobby whose reply to the boot
+		# GET has not been read yet, so that reply may echo them back. Retire the
+		# baseline — only a POST that really started can contaminate it, which is why
+		# this sits under `err == OK` and not above the request.
+		_get_baseline_ok = false
 	# Same reasoning as the GET: the local record is already written, so a failure
 	# here costs only the cross-device half — but it must not be invisible.
 	if err != OK and err != ERR_BUSY:

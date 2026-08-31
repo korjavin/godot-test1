@@ -49,7 +49,7 @@ extends Control
 
 ## Size of the always-visible gear/"Tune" button. Parked BOTTOM-LEFT, the free
 ## corner of the release HUD: the steer toggle owns top-centre, the action cluster
-## bottom-right, the lives hearts + perf overlay top-left and the coin/ability HUD
+## bottom-right, the hero portrait row + perf overlay top-left and the coin/ability HUD
 ## top-right. (The debug-only MotionDebug readout also sits bottom-left, so the
 ## gear overlaps it in debug builds — acceptable: the label ignores mouse input so
 ## the gear stays tappable, and release/web builds start with it hidden.) A
@@ -231,7 +231,7 @@ func _process(_delta: float) -> void:
 ## once from `_ready()`. Anchored so it repositions correctly on any screen size.
 func _build_ui() -> void:
 	# --- Gear / "Tune" toggle, BOTTOM-LEFT --------------------------------
-	# Bottom-left is the free corner of the release HUD: lives hearts + perf overlay
+	# Bottom-left is the free corner of the release HUD: the hero portrait row + perf overlay
 	# own the top-left column, the coin counter / ability dial the top-right, the
 	# steer toggle the top-centre, and the Jump/Special/Switch cluster the bottom-
 	# right. (Debug builds also draw the MotionDebug readout here — a debug-only

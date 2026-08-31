@@ -41,7 +41,8 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            portrait per CHARACTERS hero at the single asset
 #                            path, the four tile states (captive OUTRANKS
 #                            active), the no-player degrade, and the row's
-#                            fit in main.tscn against the hearts and F3
+#                            fit in main.tscn against every other widget
+#                            pinned to that corner, F3 included
 #   landmark_selfcheck       every builder fits its declared radius
 #   prop_selfcheck           prop/structure footprints, budgets, palettes
 #   enemy_spawn_selfcheck    every species: no spawn in stone, deterministic
@@ -100,7 +101,8 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            authored beat), attribution (only a "hunt" row takes
 #                            a hero), invulnerability covering the hero too, the
 #                            clean auto-switch, liberation, the empty-roster game
-#                            over with hearts in hand, that the set never touches
+#                            over as the ONLY game over there is, that the set
+#                            never touches
 #                            the monotone store, the cell-block mirror in both
 #                            directions, and THE FULL-CUSTODY PROTOCOL: the scene
 #                            opens instead of a screen and is playable, surviving
@@ -265,10 +267,14 @@ own, all pinned by `tower_interior_selfcheck`:
   never chunk-spawned. **AT MOST ONE PER STOREY** (owner ruling 2026-08-30,
   `GUARDS_PER_STOREY_MAX`), because the building is a stealth problem and two on a floor
   turns a room you were meant to time and walk past into a chase; the count is asserted
-  off the BODIES in the tree, never off the table. **Losing to one is the THIRD STAKE**: `coin_setback` (7%) off this
-  peer's own coins plus a knockback to `setback_point()` — the last checkpoint in the
-  opened set, or the doorway — and **no life and no game over**, so the building can
-  never end a run mid-rescue. It rides the one damage verb: `hit_by_crocodile(attacker)`
+  off the BODIES in the tree, never off the table. **Losing to one costs the ordinary bill plus the BUILDING's own
+  stake**: `coin_setback` (7%) off this peer's own coins — every predator bills
+  coins now — plus a knockback to `setback_point()`, the last checkpoint in the
+  opened set or the doorway. The KNOCKBACK is what makes losing indoors different;
+  it is the building's, not the row's (`_pay_coin_setback()` relocates whoever bit
+  you, gated on `TowerInterior.inside_walls()` — the group ANSWERING is not the
+  test, because the shell streams in at 360 m and is never freed again), and
+  nothing about it can end a run mid-rescue. It rides the one damage verb: `hit_by_crocodile(attacker)`
   reads the row key, exactly as `_is_hunter_grab` reads `behavior`. Guards stay in group
   `"crocodile"` (LOD sleep and the MP relay still want them) and refuse the Stink Wave
   and the giant's crush through `stink_immune` / `crush_immune`, never through group
@@ -278,7 +284,7 @@ own, all pinned by `tower_interior_selfcheck`:
   When the corporation holds every hero, `player_controller` marches the party to
   the cell block's service corridor, RAISES CONTAINMENT (`begin_lockdown()`
   re-shuts every spine door a hundred earlier rescues opened) and runs a recall
-  clock. One liberation is success; the clock, or the last heart, is failure. The
+  clock. One liberation is success; the clock running out is failure. The
   scene's verbs are the game's — switch, move, stand on a pad — and its
   scene-scoped roster grant lives at `available_character_indices()` and nowhere
   else, so it composes with the lobby's hand and `free_hero_count()` stays honest
@@ -370,7 +376,7 @@ The building is full to its sealed roof — ten floor indices, `FLOOR_Y[0..9]`:
   thing in this building that is not batched. Measured over the eight planned storeys:
   **52 / 43 / 52 / 29 / 29 / 81 / 61 / 46** boxes against `PLAN_BOX_BUDGET` 120 (the two
   maze floors are the 81 and the 61 — a one-cell maze legitimately produces many rects,
-  which is what that budget now guards). Mesh NODES are **39 (`DRAW_BUDGET` 39) for 1181
+  which is what that budget now guards). Mesh NODES are **39 (`DRAW_BUDGET` 39) for 1337
   boxes** — one `FloorNBatch` per storey, the parts that move, and the four hero
   portraits — and the whole interior is **542 collision shapes on one `StaticBody3D`**
   (ceiling 640, printed by check 5). A
@@ -510,7 +516,8 @@ the player stays mask 1 and passes through, so damage is decided entirely by the
 crocodile's own collision handling.
 
 **Species are data, not subclasses.** Every trait that makes one predator feel different —
-speeds, detection, wander rhythm, obstacle feelers, waddle/bite geometry, river sink — is a
+speeds, detection, wander rhythm, obstacle feelers, waddle/bite geometry, river sink, and
+the `coin_setback` bill losing to it costs — is a
 row of the `SPECIES` const dict of plain dicts at the top of `piglet_crocodile_ai.gd`, the
 same shape as `Progression.SKILL_TREES`. An instance's `species` field is a plain public
 var assigned **before `add_child`** (same call-order contract as `setup_as_boss()`), and
@@ -629,8 +636,9 @@ placed on a post by `TowerInterior` (`GUARD_SPECIES` / `GUARD_SCENE` /
 dispatch maps and the hunter spawner alone reports a shipped predator as unspawnable.
 **It adds no behaviour arm**: "patrols its floor and never leaves it" is the existing
 `set_confinement()` leash the elevated-platform guards already use, so the row is
-`behavior: "solo"` and the patrol is geometry. Its `coin_setback` key is the third
-stake, and it reuses BOTH of the hunter's immunity keys — see the tower section above
+`behavior: "solo"` and the patrol is geometry. Its `coin_setback` key is the same
+required row key every predator carries — the guard's own stake is the checkpoint
+knockback the building adds to it — and it reuses BOTH of the hunter's immunity keys — see the tower section above
 for why that is a design decision and not an inheritance.
 
 **The hunt arm has a SECOND LEG: scent tracking, and it is steering, not detection.**
@@ -747,9 +755,9 @@ A post-beat grab by a predator on the `"hunt"` arm puts the ACTIVE hero in `play
 
 The player owns the set; `TowerInterior` mirrors it (pushed on a grab, re-seeded on build)
 because the tower is usually not streamed in when a field grab lands. An empty free set
-opens the FULL-CUSTODY PROTOCOL (see the tower section), decided beside the out-of-hearts
-branch in `_on_caught_finished()` — which stays the one place a heart-death is decided,
-inside the scene as well as outside it.
+opens the FULL-CUSTODY PROTOCOL (see the tower section), decided in
+`_on_caught_finished()` — which stays the one place a run's end is decided, inside the
+scene as well as outside it.
 `free_hero_count()` is the hunt director's roster seam — death-spiral mitigation belongs
 there, before contact, never in the capture path.
 
@@ -764,23 +772,54 @@ confined to the gallery and its cells (`TowerInterior.block_min/max`), with **no
 (`get_ability_block_reason()` answers `"CELL"`), able to free a CELLMATE but never
 themselves, and able to operate the VENT PURGE — theirs alone, and it scatters the pack
 around every teammate through the shipped `flee` verb. `_tick_prison()` stands aside
-while `is_caught`, so the grab that empties the roster still pays its heart in
+while `is_caught`, so the grab that empties the roster still pays its coin bill in
 `_on_caught_finished()`. **Game over is world-level** — the room's free set empty, not
 this peer's hand — which is an adopted reading of the owner's phrasing.
 
-### Death, lives, respawn
-Three lives (up to five from coins), drawn by `scripts/lives_hud.gd`, which reads the pip
-total from the player rather than keeping its own constant. `hit_by_crocodile()` →
-freeze/flash → spend a life → either **soft respawn in place** (keep coins, frozen grace
-then invulnerable blinking) or **game over**. Invulnerability is enforced in one place: the
-early-return at the top of `hit_by_crocodile()`. `reset_position()` is now only the hard
-reset to spawn used by `restart_game()`.
+### Death and respawn — THE HEROES ARE THE LIVES
+There are no hearts and there is no life counter (owner ruling 2026-08-31, bead
+`godot-test1-0bc`): **the only game over is the free-hero set going empty**, which opens
+the full-custody protocol, and losing THAT ends the run. The roster is drawn by
+`scripts/hero_hud.gd`, which is the death display from here on.
+
+Every other contact is a TAX, never an ending: `hit_by_crocodile()` → freeze/flash →
+`_on_caught_finished()` → `_pay_coin_setback()` bills the attacker's own
+`SPECIES["coin_setback"]` fraction off the RUN's coins (a spec-less attacker — the rotor
+bar, a boss projectile — pays `DEFAULT_COIN_SETBACK`) → **soft respawn in place** (frozen
+grace, then invulnerable blinking). **Lifetime coins are never deducted** — the bill comes
+off the RUN's coins alone.
+
+**A BITE IS WHERE A LEG IS BANKED**, though, so a death is not store-free:
+`_on_caught_finished()` calls `_bank_records()`. With no hearts most runs never reach an
+ending, and banking only at `_trigger_game_over()` would leave a whole session unwritten.
+It is idempotent and every field is monotone, so repeating it is free — and both writers
+below it are CHANGE-GATED, because a bite is a per-contact path and the stores are a disk
+write plus a lobby POST: `best_run_store.submit()` only when a record moved,
+`Progression.save()` dropping a save whose counters have not. The "NEW BEST!" flash
+therefore reads the `run_beat_record` LATCH and never a fresh
+`own_distance > best_distance` — the bite already raised the record it would compare
+against.
+
+`_pay_coin_setback()` also RELOCATES you, but only while you are STANDING INSIDE the
+tower's walls: it asks the `tower_interior` group for `setback_point()` behind
+`TowerInterior.inside_walls()`, so inside the HQ a death knocks you back to the last
+checkpoint and a field death stays put. **The group answering is not the test** — the
+shell is streamed in at `TOWER_LOAD_RADIUS` (360 m) and never freed for the rest of the
+run, so once anybody has walked near the HQ the node is in the tree everywhere; gating on
+its existence alone teleports every death in the world to the doorway. The knockback is
+also refused for the whole full-custody protocol, where the party is sealed in the cell
+block on a clock and a knockback ten storeys down is not a setback but a lost scene. That
+is the building being a checkpointed level, not a property of the guard.
+
+Invulnerability is enforced in one place: the early-return at the top of
+`hit_by_crocodile()`. `reset_position()` is only the hard reset to spawn used by
+`restart_game()`.
 
 ### Gameplay loop
 `run_seed` is rolled in `_ready()` from a private RNG and re-rolled by `new_run()`, which
 is the only place it changes; `set_run_seed()` is the only place it is written, because the
 biome domain offset derives from it. Distance is the headline score. Coins have a streak
-multiplier and grant extra lives at thresholds; gems are worth 10. Difficulty scales with
+multiplier; gems are worth 10. Difficulty scales with
 `absf(global_position.x)` — all pure functions of position.
 
 ### Meta-progression and skill trees
@@ -950,7 +989,7 @@ The sharpest rules, in rough order of how badly they bite:
 - Crocodiles are **master-simulated but never network-spawned** — lifetime stays local,
   deterministic and chunk-parented. A crocodile's quarry is the nearest *room member*, not
   the nearest node in group `"player"`.
-- Shared bank/lives/distance are a sum of per-peer absolute broadcasts — no authority, no
+- Shared bank/distance are a sum of per-peer absolute broadcasts — no authority, no
   round trips.
 - The join snapshot is a trust boundary and carries absolute values, never deltas.
 - **The captive set is GAME state, so it rides the mesh and not the lobby.** One verb

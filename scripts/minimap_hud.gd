@@ -2,7 +2,7 @@ extends Control
 ## Minimap HUD — where you are, which way you face, and where the coin road goes.
 ##
 ## Drawn entirely in _draw() with no texture assets, exactly like ability_hud.gd
-## and lives_hud.gd: this project ships a web build where every KB and every draw
+## and the other HUD widgets: this project ships a web build where every KB and every draw
 ## call is budgeted, so the HUD is code-built circles, lines and text.
 ##
 ## Discovery is GROUP-BASED like the rest of the HUD — the player comes from the

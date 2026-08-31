@@ -43,7 +43,7 @@ class_name IntroVideo
 ## `play()` promise that neither resolves nor rejects.
 ##
 ## What "finished" must NOT mean is "the world may run now": the caller releases
-## the pause on this answer, so a wrong one used to be worth a life. That is fixed
+## the pause on this answer, so a wrong one used to be worth a mauling. That is fixed
 ## on the caller's side — `start_overlay._dismiss()` tears this element down
 ## before it unpauses, whatever made it decide the film was over — which is why
 ## failing open here is still the right trade.

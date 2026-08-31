@@ -1,7 +1,10 @@
 extends Control
 ## Game Over screen.
 ##
-## Shown by the player (via the "game_over_ui" group) when the last life is lost.
+## Shown by the player (via the "game_over_ui" group) when the FULL-CUSTODY PROTOCOL
+## is lost — the corporation held every hero and the recall clock ran out. Heroes are
+## the lives (owner ruling 2026-08-31), so that is the only ending in the game; a
+## re-entered archived world reopens this same panel.
 ## It dims the screen, reports the final coin tally, and offers a "Play Again"
 ## button that starts a fresh run. The whole UI is built in code in _ready() so
 ## main.tscn only needs to declare one node with this script attached — the same
@@ -53,7 +56,8 @@ func _ready() -> void:
 
 	_build_ui()
 
-	# Hidden until the player runs out of lives.
+	# Hidden until a run actually ends: the full-custody protocol's failure, or
+	# `_trigger_game_over()`. Nothing else raises this screen.
 	visible = false
 
 

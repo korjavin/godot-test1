@@ -17,7 +17,7 @@ extends Area3D
 ##     chain and a chest would never light the streak up at all;
 ##   - each pickup refreshes the STREAK_WINDOW (2.5 s), and the whole burst fits
 ##     inside one window, so a chest reliably pushes the multiplier up a step;
-##   - the extra-life threshold, the HUD and the coin blip all come along for free,
+##   - the HUD and the coin blip all come along for free,
 ##     because they already hang off collect_coin.
 ## Staggering is therefore mechanical, not decorative: it is what makes a chest
 ## read (and score) as a coin *shower* rather than a single fat pickup.

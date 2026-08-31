@@ -38,7 +38,7 @@ extends Control
 ##
 ##   * the world must not run — crocodiles chase, coins spawn and the fauna timer
 ##     ticks the moment `main.tscn` loads, and a player reading a menu should not
-##     be losing hearts behind it; and
+##     be bitten behind it; and
 ##   * the player must not be *driven* — `player_controller` reads gameplay
 ##     through the global polled `Input` state and through `_input()`, neither of
 ##     which a `Control` on top suppresses, so Space (Play Solo's own shortcut)
@@ -591,7 +591,7 @@ func _dismiss(capture_mouse: bool = true) -> void:
 	# `IntroVideo.is_finished()` is deliberately FAIL-OPEN (its header: "the only
 	# thing worse than losing the intro is not being able to start the game"), and
 	# that is right — a dead CDN must never block play. But before this line the
-	# generosity cost a life instead of a film: a bogus "finished" released the
+	# generosity cost the player a mauling instead of a film: a bogus "finished" released the
 	# pause and captured the mouse while the <video> still covered the canvas, so
 	# the player watched 47 s of film with a live world and a live crocodile behind
 	# it. Tearing down here rather than trusting the answer is what makes fail-open

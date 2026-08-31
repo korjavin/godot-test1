@@ -36,7 +36,7 @@ extends Control
 ## The button is the other half, and it is what makes the panel reachable **by
 ## touch alone**: a phone has no K. It sits top-right directly under the ability
 ## dial, which is the free space beside the level indicator that `coin_hud.gd`
-## draws (lives + perf own the top-left column, the steer/View toggles the
+## draws (the hero row + perf own the top-left column, the steer/View toggles the
 ## top-centre, the action cluster the bottom-right, the MP button and ⚙ gear the
 ## bottom-left, and the minimap the left edge). It carries a `(N)` suffix while
 ## there are unspent points — the same show-it-only-when-it-matters rule the coin

@@ -228,6 +228,30 @@ const SPECIES: Dictionary = {
 
 		## How far the body lunges forward during the bite (metres).
 		"bite_lunge": 0.35,
+
+		# ----- THE STAKE -----
+		## WHAT LOSING TO THIS ANIMAL COSTS, and it is the ONLY thing it costs.
+		## Owner ruling 2026-08-31: hearts are gone, and so is every game over
+		## that was not "all four heroes jailed". A bite is now the caught freeze
+		## plus this fraction of the RUN's coins, then a respawn in place — a tax,
+		## never an ending. `player_controller._coin_setback_of()` is the single
+		## site that reads this key and `_pay_coin_setback()` the single site that
+		## charges it, off `own_coins` / `coins_collected` and never off the
+		## lifetime count in `progression.gd`.
+		##
+		## IT IS A FRACTION AND NOT A BOOLEAN, so the arithmetic lives HERE, in
+		## the table — the same shape `stink_immune` / `crush_immune` established
+		## for "this is a property of the row, not of a species name". EVERY row
+		## owes it (`enemy_spawn_selfcheck` fails one that omits it) and the
+		## SPREAD is the tuning: a small ambusher bills less than a titan, and a
+		## grab you escaped bills most of all. Keep every value in (0.0, 0.35] —
+		## above that the tax stops being survivable and becomes the soft game
+		## over this bead deleted.
+		##
+		## What it may NOT do is stand in for speed. The lattice above is
+		## untouched by any of this: walking still gets you caught, running still
+		## escapes, and what a bite now applies is pressure on coins and time.
+		"coin_setback": 0.10,
 	},
 
 	## ------------------------------------------------------------------------
@@ -499,6 +523,10 @@ const SPECIES: Dictionary = {
 		## one — so what this number sets is only how much of the animal you see
 		## while it is already on its way to you.
 		"ambush_surface_ease_speed": 0.24 / 0.12,
+
+		## THE STAKE (see the crocodile row): an ambush you barely saw, so a
+		## small bill.
+		"coin_setback": 0.08,
 	},
 
 	## ------------------------------------------------------------------------
@@ -704,6 +732,10 @@ const SPECIES: Dictionary = {
 		## number shapes the APPROACH and never becomes an orbit the player can
 		## stand safely in the middle of.
 		"pack_flank_radius": 4.0,
+
+		## THE STAKE (see the crocodile row): you were surrounded by the pack —
+		## it earned the extra.
+		"coin_setback": 0.12,
 	},
 
 	## ------------------------------------------------------------------------
@@ -924,6 +956,9 @@ const SPECIES: Dictionary = {
 		## is merely walking in a straight line, which is not a difficulty knob but
 		## a broken predator.
 		"charge_commit": 4.0,
+
+		## THE STAKE (see the crocodile row): a big animal bills hard.
+		"coin_setback": 0.20,
 	},
 
 	## ------------------------------------------------------------------------
@@ -1193,6 +1228,9 @@ const SPECIES: Dictionary = {
 		## further and the average falls under the walk and the animal stops being
 		## able to catch anybody. Both ends are measured in check 8.
 		"recover_factor": 0.55,
+
+		## THE STAKE (see the crocodile row): a burst attacker with reach.
+		"coin_setback": 0.12,
 	},
 
 	## ------------------------------------------------------------------------
@@ -1416,6 +1454,9 @@ const SPECIES: Dictionary = {
 		## below the clamped chase speed at every roll, which is what makes the
 		## recovery a real window rather than a slight ease.
 		"recover_factor": 0.6,
+
+		## THE STAKE (see the crocodile row): a burst attacker, ordinary bill.
+		"coin_setback": 0.10,
 	},
 
 	## ------------------------------------------------------------------------
@@ -1614,6 +1655,9 @@ const SPECIES: Dictionary = {
 			## 1.5 is shoulder height on the 1.8 m humanoid mesh.
 			"muzzle_height": 1.5,
 		},
+
+		## THE STAKE (see the crocodile row): the heaviest thing that walks.
+		"coin_setback": 0.25,
 	},
 	## ------------------------------------------------------------------------
 	## GREEN DRAGON — the FOREST band's BOSS, and the cheapest row in this table.
@@ -1836,6 +1880,10 @@ const SPECIES: Dictionary = {
 		## landing falls outside and `_behave_leap` simply does not launch. That
 		## refusal is the mechanism — read its docstring before retuning the arc,
 		## because a reach past 32 would be a boss that can only hop from home.
+
+		## THE STAKE (see the crocodile row): a boss bite, near the top of the
+		## range.
+		"coin_setback": 0.22,
 	},
 
 	## ------------------------------------------------------------------------
@@ -1995,6 +2043,9 @@ const SPECIES: Dictionary = {
 		"bite_duration": 0.35,
 		"bite_pitch": 26.0 * PI / 180.0,
 		"bite_lunge": 0.45,
+
+		## THE STAKE (see the crocodile row): a boss bite, several mouths of it.
+		"coin_setback": 0.18,
 	},
 
 	## ------------------------------------------------------------------------
@@ -2091,6 +2142,9 @@ const SPECIES: Dictionary = {
 		"bite_duration": 0.35,
 		"bite_pitch": 32.0 * PI / 180.0,
 		"bite_lunge": 0.55,
+
+		## THE STAKE (see the crocodile row): the lightest of the bosses.
+		"coin_setback": 0.15,
 	},
 
 	## ------------------------------------------------------------------------
@@ -2235,6 +2289,9 @@ const SPECIES: Dictionary = {
 		## ballistic by design — so `avoid_look_ahead` above only steers the
 		## GROUNDED legs. A roc that bounds into a massif slides off it exactly as
 		## it would have walked into it, at a fifth of the frames.
+
+		## THE STAKE (see the crocodile row): a boss bite from above.
+		"coin_setback": 0.18,
 	},
 
 	## ------------------------------------------------------------------------
@@ -2409,6 +2466,10 @@ const SPECIES: Dictionary = {
 			## 1.3 is shoulder-and-a-bit on the 1.61 m placeholder.
 			"muzzle_height": 1.3,
 		},
+
+		## THE STAKE (see the crocodile row): its threat is the throw, not the
+		## bite, so the bite bills like an animal.
+		"coin_setback": 0.12,
 	},
 
 	## ------------------------------------------------------------------------
@@ -2681,6 +2742,10 @@ const SPECIES: Dictionary = {
 		## block up, for a different reason: a boss is too big to squash, this
 		## thing is too hard.
 		"crush_immune": true,
+
+		## THE STAKE (see the crocodile row): a corporate grab you escaped costs
+		## the most in the table — the one contact that can also take a hero.
+		"coin_setback": 0.25,
 	},
 	"tower_guard": {
 		## THE NINTH ROW, AND THE FIRST THAT IS FURNITURE RATHER THAN WILDLIFE.
@@ -2712,7 +2777,8 @@ const SPECIES: Dictionary = {
 		## WALK_SPEED (5.0), so strolling past a guard that has seen you WILL be
 		## caught, and far under MAX_CHASE_SPEED (8.5) and the slowest run (9.0), so
 		## backing out of the room always works. A guard is a tax on carelessness,
-		## not a threat — it cannot take a life and cannot take a hero (see
+		## not a threat — it cannot take a hero, and the coins it does take come
+		## with a knockback to your last checkpoint rather than an ending (see
 		## `coin_setback` below), so it has no business also being fast.
 		"move_speed": 1.4,
 		"chase_speed": 5.6,
@@ -2796,21 +2862,34 @@ const SPECIES: Dictionary = {
 		"bite_pitch": 12.0 * PI / 180.0,
 		"bite_lunge": 0.20,
 
-		# ----- THE STAKE (the one key that is new with this row) ---------------
-		## WHAT LOSING TO A GUARD COSTS: this fraction of your coins, plus a
-		## knockback to the last checkpoint you activated inside the tower. No
-		## life, no game over, and — because this is not the `hunt` arm — no
-		## capture. Owner-ruled 2026-08-27: the building must never be able to end
-		## a run in the middle of a rescue, so the third stake is the only one it
-		## charges.
+		# ----- THE STAKE, and what makes the guard's DIFFERENT ------------------
+		## WHAT LOSING TO A GUARD COSTS: this fraction of your coins — the bill
+		## every row in this table now charges — PLUS the one thing no field
+		## predator does, a knockback to the last checkpoint you activated inside
+		## the tower. That relocation is the guard's whole distinguishing stake;
+		## the coins are the ordinary arithmetic. And because this is not the
+		## `hunt` arm, there is no capture either. Owner-ruled 2026-08-27: the
+		## building must never be able to end a run in the middle of a rescue,
+		## which since 2026-08-31 is true of everything that is not the empty
+		## free-hero set.
 		##
-		## IT IS THE FRACTION AND NOT A BOOLEAN, so the arithmetic is HERE and
-		## `player_controller` holds exactly one deduction site reading it — the
-		## same shape `stink_immune` / `crush_immune` established for "this is a
-		## property of the row, not of a species name". Absent from every other row,
-		## and absent is the statement: a body with no `coin_setback` charges the
-		## ordinary predator cost (a life), which is every other row in this table.
+		## THE NUMBER IS THE LOWEST IN THE TABLE ON PURPOSE. Being sent back to a
+		## checkpoint already costs you the walk; billing a full predator's slice
+		## of coins on top would make the building's tax the harshest in the game
+		## rather than the gentlest, which is backwards for the place the campaign
+		## asks you to spend the most time in.
 		"coin_setback": 0.07,
+
+		## AUTHORED FURNITURE, SO THE RESPAWN SWEEP LEAVES IT ALONE.
+		## `player_controller.clear_nearby_crocodiles()` frees every ordinary body
+		## within SPAWN_SAFE_RADIUS of a respawn, and from anywhere in a 17.6 m
+		## building that is the WHOLE floor — so without this key losing to the
+		## rotor bar would be the cheapest way past a guarded room. A guard stands
+		## an authored post and its lifetime belongs to `reset_guards()`, not to a
+		## chunk. Absent everywhere else is the statement, like the two immunities
+		## above; the sweep used to infer this from `coin_setback` being non-zero,
+		## which stopped meaning anything the day every row grew one.
+		"sweep_exempt": true,
 
 		# ----- Immunities: it is the hunter's chassis, so it is sealed and hard --
 		## Verbatim the hunter row's two keys and verbatim its argument (read it

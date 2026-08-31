@@ -82,7 +82,7 @@ const BUTTON_MARGIN: float = 64.0
 const TOUCH_CONTENT_SCALE: float = 1.8
 
 ## Size of the small steer-mode toggle, parked top-centre away from the action
-## cluster and clear of the existing HUD (coins top-right, perf/lives top-left).
+## cluster and clear of the existing HUD (coins top-right, perf top-left).
 const TOGGLE_WIDTH: float = 200.0
 const TOGGLE_HEIGHT: float = 72.0
 
@@ -263,7 +263,7 @@ func _input(event: InputEvent) -> void:
 func _build_ui() -> void:
 	# --- Action cluster: Jump / Special / Switch, stacked bottom-RIGHT -----
 	# Bottom-right is the natural right-thumb zone and is clear of the existing HUD
-	# (coins top-right, ability dial top-right, perf/lives top-left, motion debug
+	# (coins top-right, ability dial top-right, perf/heroes top-left, motion debug
 	# bottom-left). We stack three big square buttons up from the bottom edge.
 	#
 	# Anchoring: each button anchors to the bottom-right corner (anchor 1,1) and is
