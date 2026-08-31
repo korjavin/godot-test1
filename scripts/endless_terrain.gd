@@ -393,16 +393,16 @@ const STRUCTURE_THEMES: Dictionary = {
 ## Number of crocodiles to spawn per chunk
 ## Higher values = more dangerous terrain!
 ##
-## 10 -> 4 (owner pacing ruling, 2026-08-29: "you can't stay even for a moment").
+## 10 -> 4 -> 3 (owner pacing adjustment).
 ## This is a DESIGN change, not an optimization — the one sanctioned way croc
-## counts move. The arithmetic behind the 4: a chunk is 50 m square and the
+## counts move. The arithmetic behind the count: a chunk is 50 m square and the
 ## crocodile's detection radius is 15 m, so ten bodies tiled the 2500 m^2 with
-## overlapping detection discs and left nowhere to stand. Four leaves gaps you
+## overlapping detection discs and left nowhere to stand. Three leaves gaps you
 ## can rest in while a chunk you cross still holds a threat.
-@export var crocodiles_per_chunk: int = 4
+@export var crocodiles_per_chunk: int = 3
 
 ## Minimum distance between crocodiles (in meters)
-@export var min_crocodile_spacing: float = 3.0
+@export var min_crocodile_spacing: float = 7.0
 
 ## How much clear space (in meters) to keep between a crocodile and the nearest
 ## block. This stops crocodiles from spawning partially buried inside blocks.
