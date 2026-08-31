@@ -3728,6 +3728,14 @@ func restart_game() -> void:
 	if not MobileSensors.is_touch_session():
 		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 
+	# A web Play Again returns to the existing start card so the next run crosses
+	# the same user-input boundary and PLAY SOLO starts IntroVideo again. Desktop
+	# keeps its original direct-restart path: no extra screen or delay off-web.
+	if OS.has_feature("web"):
+		var start_overlay := get_tree().get_first_node_in_group("start_overlay")
+		if start_overlay and start_overlay.has_method("reenter_for_new_run"):
+			start_overlay.reenter_for_new_run()
+
 
 func _freeze_with_gravity(delta: float) -> void:
 	"""

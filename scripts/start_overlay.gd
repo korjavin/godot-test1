@@ -176,6 +176,11 @@ var _paused_by_us: bool = false
 ## `JavaScriptBridge`, the same desktop-safety shape `MobileSensors` uses.
 var _intro_playing: bool = false
 
+## Optional completion hook for a film that is not the opening film. The ending
+## uses this node's pause, modal processing and browser lifecycle too, then
+## restarts the player before this node is re-entered for the next PLAY SOLO.
+var _film_finished_callback: Callable = Callable()
+
 ## Cached once — the touch-session probe can reach into JavaScriptBridge, so it
 ## is not re-evaluated per frame (the same caching `touch_controls.gd` does).
 var _is_touch: bool = false
@@ -236,12 +241,24 @@ func _process(_delta: float) -> void:
 	if _intro_playing:
 		_apply_pause(true)
 		if _film_finished():
+			var failed := _film_failed()
 			_intro_playing = false
-			# `_dismiss()` tears the film's element down before it releases the
-			# pause — see the invariant note there. This branch therefore does not
-			# have to trust the ANSWER: right or wrong, the element is gone in the
-			# same step the world starts running.
-			_dismiss()
+			var callback := _film_finished_callback
+			_film_finished_callback = Callable()
+			if callback.is_valid():
+				# Keep our pause claim through the callback. A successful ending callback
+				# restarts the player and re-enters this same node, transferring the
+				# holder without a live-world frame between the two films.
+				_dismiss_for_callback()
+				callback.call(failed)
+				if _dismissed:
+					_apply_pause(false)
+			else:
+				# `_dismiss()` tears the film's element down before it releases the
+				# pause — see the invariant note there. This branch therefore does not
+				# have to trust the ANSWER: right or wrong, the element is gone in the
+				# same step the world starts running.
+				_dismiss()
 		return
 
 	# Yield the screen to TouchControls' full-rect overlays — see the header for
@@ -282,6 +299,84 @@ func _film_finished() -> bool:
 
 func _film_teardown() -> void:
 	IntroVideo.discard()
+
+
+func _film_failed() -> bool:
+	return IntroVideo.was_failed()
+
+
+## Start a film through the one shared `IntroVideo.start()` seam. Keeping this
+## wrapper as the only call site lets the intro and ending share exactly one DOM
+## lifecycle while the self-check can drive the browser branch headlessly.
+func _start_film(video_url: String) -> bool:
+	return IntroVideo.start(video_url)
+
+
+## Play a film without showing this node's card. Used by Game Over for the web
+## ending; a failed/off-web start returns false so the caller can show its normal
+## fallback UI. The callback runs only after `_dismiss()` has torn down the DOM
+## element. Its callback receives `true` for a post-start failure and `false` for
+## a natural end or skip.
+func play_film(video_url: String, finished: Callable = Callable()) -> bool:
+	if _intro_playing:
+		return false
+	_film_finished_callback = finished
+	_dismissed = false
+	visible = true
+	set_process(true)
+	set_process_unhandled_input(true)
+	_apply_pause(true)
+	if _start_film(video_url):
+		_intro_playing = true
+		if _body != null:
+			_body.visible = false
+		return true
+	_film_finished_callback = Callable()
+	_dismiss()
+	return false
+
+
+## End a callback-owned film while retaining this node's PauseHub claim. The
+## callback may immediately call `player.restart_game()`, which re-enters this
+## node and reuses the same holder for the next start card.
+func _dismiss_for_callback() -> void:
+	_dismissed = true
+	if _body != null:
+		_body.visible = false
+	visible = false
+	set_process(false)
+	set_process_unhandled_input(false)
+	_film_teardown()
+
+
+## Stop a non-menu film when another path (for example a multiplayer join)
+## revives the game-over state. No callback is delivered: the run is already
+## being resumed by that caller, so the ending must simply disappear.
+func cancel_film() -> void:
+	if not _intro_playing:
+		return
+	_intro_playing = false
+	_film_finished_callback = Callable()
+	_dismiss()
+
+
+## Return to the existing start card for a web Play Again. Desktop keeps its
+## original direct restart path, while web gets an actual user-input boundary
+## before the next opening film. This is a real reset of the one-way dismissal,
+## not merely a visibility flip: processing, input and the pause are restored.
+func reenter_for_new_run() -> void:
+	if not OS.has_feature("web") or not _dismissed:
+		return
+	_intro_playing = false
+	_film_finished_callback = Callable()
+	_dismissed = false
+	visible = true
+	set_process(true)
+	set_process_unhandled_input(true)
+	if _body != null:
+		_body.visible = true
+	_apply_pause(true)
+	IntroVideo.preload_element()
 
 
 ## True while the start CARD itself owns the screen — i.e. no run has begun and no
@@ -533,7 +628,7 @@ func _unhandled_input(event: InputEvent) -> void:
 func _on_play_solo_pressed() -> void:
 	if _intro_playing:
 		return
-	if IntroVideo.start():
+	if _start_film(IntroVideo.VIDEO_URL):
 		_intro_playing = true
 		# Hide the card but keep this node alive and processing: `_process` is what
 		# notices the film finishing. (Not `_dismiss()` — that would hand the mouse

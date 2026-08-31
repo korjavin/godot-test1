@@ -79,6 +79,11 @@ class_name IntroVideo
 ## what the web build fetches.
 const VIDEO_URL: String = "https://img.cc.wandergeek.org/intro/episode.mp4"
 
+## The ending film uses this same browser lifecycle. Keeping its address beside
+## the intro URL makes the two supported films explicit without introducing a
+## second DOM player implementation.
+const GAME_OVER_VIDEO_URL: String = "https://img.cc.wandergeek.org/game_over.mp4"
+
 ## How long SPACE has to be held to skip. A hold rather than a tap so a player
 ## resting on the key (SPACE is also `jump`) does not lose the film by accident,
 ## and long enough to read the bar filling but short enough not to feel like a
@@ -125,24 +130,24 @@ const JS_STATE: String = "window.__ck_intro"
 ## Build the (hidden) `<video>` and its overlay chrome, so the browser can buffer
 ## the film while the player reads the start menu and playback begins immediately
 ## on the press. Idempotent, and a no-op off-web.
-static func preload_element() -> void:
+static func preload_element(video_url: String = VIDEO_URL) -> void:
 	if not OS.has_feature("web"):
 		return
-	JavaScriptBridge.eval(_create_js(), true)
+	JavaScriptBridge.eval(_create_js(video_url), true)
 
 
 ## Show the film and start playback. Returns **true only if the browser actually
 ## took it** — false off-web, false when the element could not be built, false
 ## when the source already failed to load. A false answer means the caller must
 ## start the game exactly as it does today.
-static func start() -> bool:
+static func start(video_url: String = VIDEO_URL) -> bool:
 	if not OS.has_feature("web"):
 		return false
 	# Build-if-missing rather than assuming `preload_element()` ran and survived:
 	# the film plays on EVERY PLAY SOLO press (owner decision — no first-visit
 	# flag, no persistence), and a finished film tears its own element down, so a
 	# second press would otherwise have nothing to show.
-	JavaScriptBridge.eval(_create_js(), true)
+	JavaScriptBridge.eval(_create_js(video_url), true)
 	return JavaScriptBridge.eval(_start_js(), true) == true
 
 
@@ -186,7 +191,7 @@ static func _start_js() -> String:
 						s.video.muted = true;
 						s.unmute.style.display = 'block';
 						var q = s.video.play();
-						if (q && q.catch) { q.catch(function(){ s.finish(); }); }
+						if (q && q.catch) { q.catch(function(){ s.fail(); }); }
 					});
 				}
 				return true;
@@ -226,6 +231,17 @@ static func is_finished() -> bool:
 	return typeof(answer) != TYPE_BOOL or bool(answer)
 
 
+## True when the last started film failed while loading or playing. The result
+## survives `finish()` so callers can choose the fallback panel instead of
+## treating a dead stream like a deliberate end or skip. Off-web is false.
+static func was_failed() -> bool:
+	if not OS.has_feature("web"):
+		return false
+	var js := "(function(){try{return !!window.__ck_intro_failed;}catch(e){return true;}})()"
+	var answer: Variant = JavaScriptBridge.eval(js, true)
+	return typeof(answer) != TYPE_BOOL or bool(answer)
+
+
 # ============================================================================
 # INTERNAL — the element, built once
 # ============================================================================
@@ -237,12 +253,16 @@ static func is_finished() -> bool:
 ## Everything is inline styles on plain elements rather than a stylesheet — the
 ## same reason the rest of this game's UI is built in code and ships no assets:
 ## one place to read, nothing to keep in sync.
-static func _create_js() -> String:
+static func _create_js(video_url: String = VIDEO_URL) -> String:
 	return """
 		(function(){
 			try {
-				if (%s) { return true; }
+				if (%s) {
+					if (%s.video_url === %s) { return true; }
+					%s.finish();
+				}
 				if (!document || !document.body) { return false; }
+				window.__ck_intro_failed = false;
 
 				var root = document.createElement('div');
 				root.style.cssText = 'position:fixed;left:0;top:0;width:100%%;height:100%%;' +
@@ -287,6 +307,7 @@ static func _create_js() -> String:
 
 				var s = {
 					root: root, video: v, hint: hint, bar: bar, unmute: unmute,
+					video_url: %s,
 					done: false, started: false, failed: false,
 					holdTimer: null, stallTimer: null, seen: {}
 				};
@@ -303,7 +324,7 @@ static func _create_js() -> String:
 					   tear the buffered element down behind the menu. */
 					if (!s.started) { return; }
 					if (s.stallTimer) { clearTimeout(s.stallTimer); }
-					s.stallTimer = setTimeout(s.finish, ms || %d);
+					s.stallTimer = setTimeout(s.fail, ms || %d);
 				};
 
 				/* THE SINGLE EXIT. Every ending — natural end, skip, decode error,
@@ -312,9 +333,15 @@ static func _create_js() -> String:
 				   it leaves NOTHING over the canvas: listeners off, source released,
 				   element detached, scratchpad cleared. Idempotent, because several
 				   of those can race. */
+				s.fail = function(){
+					s.failed = true;
+					s.finish();
+				};
+
 				s.finish = function(){
 					if (s.done) { return; }
 					s.done = true;
+					window.__ck_intro_failed = !!s.failed;
 					if (s.holdTimer) { clearTimeout(s.holdTimer); s.holdTimer = null; }
 					if (s.stallTimer) { clearTimeout(s.stallTimer); s.stallTimer = null; }
 					window.removeEventListener('keydown', s.onKeyDown, true);
@@ -384,7 +411,7 @@ static func _create_js() -> String:
 				   and hit the same wall. Mark it failed instead, so `start()`
 				   answers false and the game begins with no film and no delay. */
 				v.addEventListener('error', function(){
-					if (s.started) { s.finish(); } else { s.failed = true; }
+					if (s.started) { s.fail(); } else { s.failed = true; }
 				});
 				/* `timeupdate` is the only "playback actually moved" signal the DOM
 				   offers, and it is exactly what the watchdog should live on. */
@@ -397,7 +424,11 @@ static func _create_js() -> String:
 		})()
 	""" % [
 		JS_STATE,
-		JSON.stringify(VIDEO_URL),
+		JS_STATE,
+		JSON.stringify(video_url),
+		JS_STATE,
+		JSON.stringify(video_url),
+		JSON.stringify(video_url),
 		int(STALL_TIMEOUT_SEC * 1000.0),
 		JS_STATE,
 		String.num(SKIP_HOLD_SEC, 3),
