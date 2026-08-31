@@ -156,6 +156,14 @@ const POST_SETTLE_EPS: float = 0.5
 ## the bead's waist-height rule, asserted directly by check 18; this number is what
 ## would notice it being quietly abandoned, because "all of it collides" is four
 ## times the shapes and lands here first.
+##
+## AND IT DID NOT MOVE FOR THE SECOND DRESSING PASS (bd godot-test1-st9), which is
+## the best evidence the split is real: that bead roughly DOUBLED the dressing (727
+## boxes to 1886) and the shapes went 542 to 561, nineteen. Everything it added —
+## the cactus, the fern, the bin, the coat stand, the clock, the notice board and
+## every corridor bench and planter — is something you walk through, so the density
+## is paid for in vertices, which are batched and free, and not in shapes, which
+## are neither. A pass that quietly made the new kinds solid would land here.
 const SHAPE_CEILING: int = 640
 
 var _failures: Array[String] = []
@@ -3529,6 +3537,7 @@ func _check_the_offices_are_furnished_and_still_walkable() -> void:
 	var dressed_rooms := 0
 	var pieces := 0
 	var solids := 0
+	var hall_pieces := 0
 	for floor_index: int in TowerPlans.floors():
 		var plan := TowerPlans.storey(floor_index)
 		var rows: Array = plan["rows"]
@@ -3549,6 +3558,9 @@ func _check_the_offices_are_furnished_and_still_walkable() -> void:
 			var top: float = box["pos"].y + box["size"].y * 0.5
 			if box["collide"]:
 				solids += 1
+				if String(box["name"]).contains(TowerInterior.HALL_LETTER):
+					_fail("%s is solid corridor dressing — a bench in a hall must be walk-through" \
+						% box["name"])
 				# (a) the waist rule, as an effect on the geometry that got built.
 				if top - surface < TowerInterior.DRESS_WAIST - EPS:
 					_fail("%s is solid but only %.2f m tall — under DRESS_WAIST (%.2f), so it is a thing to snag on" % [
@@ -3559,6 +3571,25 @@ func _check_the_offices_are_furnished_and_still_walkable() -> void:
 				if _cell_touches(cell, box):
 					_fail("%s stands in a gate run at cell %s" % [box["name"], cell])
 					break
+		# (e) THE CORRIDOR DRESSING (bd godot-test1-st9), whose safety argument is
+		# not a flood fill but two flat claims, so they are asserted flat: nothing
+		# it places collides (a bench you walk through cannot disconnect anything,
+		# which is why the halls need no fill of their own), and every cell it uses
+		# is corridor whose four neighbours are stone or more corridor — so it is
+		# never in a doorway, a gate run, a stair lane, a pad or a set piece.
+		for cell: Vector2i in _hall_dress_cells(floor_index):
+			hall_pieces += 1
+			if _plan_cell(rows, cell) != TowerPlans.FLOOR_CHAR:
+				_fail("storey %d has corridor dressing at %s, which is not corridor" % [
+					floor_index, cell])
+				continue
+			for step: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+				var ch := _plan_cell(rows, cell + step)
+				if ch != TowerPlans.WALL_CHAR and ch != TowerPlans.FLOOR_CHAR:
+					_fail("storey %d has corridor dressing at %s, next to '%s' — it is in the traffic" % [
+						floor_index, cell, ch])
+					break
+
 		# (c) and (d), per room.
 		for letter: String in plan["rooms"]:
 			var room_id := String(plan["rooms"][letter])
@@ -3597,6 +3628,8 @@ func _check_the_offices_are_furnished_and_still_walkable() -> void:
 
 	if dressed_rooms == 0:
 		_fail("not one room in the building is furnished — the dresser is wired to nothing")
+	if hall_pieces == 0:
+		_fail("not one corridor in the building is dressed — the hall dresser is wired to nothing")
 
 	# The joke, asserted as geometry rather than taken on trust: four frames, four
 	# distinct heroes, four loadable portraits, all on one storey and all standing
@@ -3627,8 +3660,8 @@ func _check_the_offices_are_furnished_and_still_walkable() -> void:
 					hero, int(size.x), int(size.y)])
 		if TowerInterior.portrait_material(hero) != TowerInterior.portrait_material(hero):
 			_fail("%s's portrait material is rebuilt per call — the texture is being copied" % hero)
-	print("tower interior: %d rooms dressed, %d dressing boxes (%d solid), %d portraits hung" % [
-		dressed_rooms, pieces, solids, frames.size()])
+	print("tower interior: %d rooms dressed, %d corridor pieces, %d dressing boxes (%d solid), %d portraits hung" % [
+		dressed_rooms, hall_pieces, pieces, solids, frames.size()])
 
 
 func _check_the_plaques_point_at_the_stairs() -> void:
@@ -3762,6 +3795,38 @@ func _dress_cells(floor_index: int, letter: String) -> Dictionary:
 		var cell := Vector2i(int(parts[0]), int(parts[1]))
 		out[cell] = bool(out.get(cell, false)) or bool(box["collide"])
 	return out
+
+
+func _hall_dress_cells(floor_index: int) -> Array[Vector2i]:
+	## Which corridor cells of one storey carry dressing, read back off the box
+	## names — the same second-opinion trick `_dress_cells` uses for the rooms.
+	var out: Array[Vector2i] = []
+	var seen := {}
+	var prefix := "%sDress%s_" % [TowerInterior._plan_prefix(floor_index),
+			TowerInterior.HALL_LETTER]
+	for box: Dictionary in TowerInterior.plan_boxes(floor_index):
+		var box_name := String(box["name"])
+		if not box_name.begins_with(prefix):
+			continue
+		var parts := box_name.substr(prefix.length()).split("_")
+		if parts.size() < 2:
+			continue
+		var cell := Vector2i(int(parts[0]), int(parts[1]))
+		if seen.has(cell):
+			continue
+		seen[cell] = true
+		out.append(cell)
+	return out
+
+
+func _plan_cell(rows: Array, cell: Vector2i) -> String:
+	## One cell's character, stone off the edge of the grid.
+	if cell.y < 0 or cell.y >= rows.size():
+		return TowerPlans.WALL_CHAR
+	var line := String(rows[cell.y])
+	if cell.x < 0 or cell.x >= line.length():
+		return TowerPlans.WALL_CHAR
+	return line[cell.x]
 
 
 func _letter_cells(rows: Array, letter: String) -> Array[Vector2i]:

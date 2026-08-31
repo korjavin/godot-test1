@@ -474,11 +474,20 @@ const PLAN_BOX_BUDGET: int = 120
 ## dressed office room, which is +48 on the accounts floor and nothing at all on the
 ## labyrinth or the block, neither of which is signed.
 ##
+## ...AND AGAIN WITH THE SECOND DRESSING PASS (bd godot-test1-st9), which is where
+## the bulk of it now is. Re-MEASURED, per storey: 115 / 82 / 334 / 428 / 333 / 312
+## / 230 / 36 / 16 / 0. Three things moved it: `DRESS_SPACING` halved and the piece
+## cap raised (a room goes from 7 dressed cells to 11-16), four new furniture kinds
+## and two new art kinds (which are boxes per piece, not pieces), and the corridor
+## benches and planters, which are a flat ten pieces a storey. 580 is the accounts
+## floor's 428 plus a third, the same headroom the number has always carried.
+##
 ## What it catches is the dresser's OWN failure mode, which is not "the walls
 ## stopped merging" but "a rule stopped excluding": drop the threshold guard or the
 ## footprint test and every wall-adjacent cell in the building is a candidate, which
-## is many hundreds per storey rather than dozens.
-const PLAN_DRESS_BUDGET: int = 300
+## is many thousands per storey rather than hundreds. That failure is an order of
+## magnitude over this, which is why raising it stays honest.
+const PLAN_DRESS_BUDGET: int = 580
 
 # ============================================================================
 # THE RIDDLE LOCK (phase 15) — the fourth gate verb
@@ -997,13 +1006,24 @@ const DRESS_WAIST: float = 0.70
 ## How sparse the furniture is — one piece per this many candidate cells, then
 ## clamped. A 3 x 15 cell office lands on three or four pieces; an 80 m hall gets
 ## the cap and reads as a lobby rather than a warehouse of desks.
-const DRESS_SPACING: int = 7
+##
+## HALVED, AND THE CAP NEARLY DOUBLED, BY bd `godot-test1-st9` — the owner played
+## #147's fit-out and read the rooms as empty. 7 and a cap of 6 put one piece per
+## 13 m of wall in a room that has 40 m of it. The floor (`DRESS_MIN_PIECES`) is
+## deliberately UNMOVED: it is what check 18 asserts an office owes, and a cupboard
+## that scrapes `DRESS_MIN_CANDIDATES` still only has room for two things.
+##
+## THE KIND ROTATION IS WHAT MAKES THE EXTRA PIECES READ AS AN OFFICE rather than a
+## showroom: `_dress_room` walks `DRESS_PIECES` from a per-room start, so a room
+## that gets ten pieces gets ten DIFFERENT ones. That is why this number could only
+## go up once the table below was widened past six.
+const DRESS_SPACING: int = 4
 const DRESS_MIN_PIECES: int = 2
-const DRESS_MAX_PIECES: int = 6
+const DRESS_MAX_PIECES: int = 10
 
 ## Wall art, counted the same way off the cells the furniture did not take.
-const DRESS_ART_SPACING: int = 11
-const DRESS_MAX_ART: int = 4
+const DRESS_ART_SPACING: int = 7
+const DRESS_MAX_ART: int = 5
 
 ## A room with fewer candidate cells than this is a cupboard and stays empty. It
 ## is also the line check 18 uses to decide which rooms owe `DRESS_MIN_PIECES`.
@@ -1034,6 +1054,8 @@ const COLOR_PLANT := Color(0.24, 0.50, 0.30)    # the one living thing in here
 const COLOR_PAPER := Color(0.97, 0.95, 0.88)    # a diploma's mount
 const COLOR_SEAL := Color(0.86, 0.68, 0.24)     # its foil seal, and every plaque
 const COLOR_PHOTO := Color(0.55, 0.60, 0.68)    # a photo's grey studio backdrop
+const COLOR_TERRACOTTA := Color(0.72, 0.44, 0.30)  # jars, planters, a cork board
+const COLOR_BLOOM := Color(0.90, 0.52, 0.58)    # the one flower on the one cactus
 # ...and pale wood is `COLOR_WAINSCOT`, borrowed rather than restated: the desks,
 # the shelves and every frame are the same timber as the skirting, which is what
 # makes a room read as one fitted-out space instead of a props box.
@@ -1052,8 +1074,19 @@ const COLOR_PHOTO := Color(0.55, 0.60, 0.68)    # a photo's grey studio backdrop
 ## `solid` IS PER PART, not per piece, and that is the bead's rule stated where it
 ## can be checked: the desk collides, the monitor and the chair tucked under it do
 ## not. Nothing under `DRESS_WAIST` is ever solid.
+##
+## TEN KINDS SINCE bd `godot-test1-st9`, AND THE ORDER IS INTERLEAVED ON PURPOSE.
+## `_dress_room` walks this table from a per-room start and takes the next kind for
+## every piece, so the table's order IS what a wall of a busy room looks like:
+## solid and light alternate down it, and a room that now gets ten pieces gets a
+## desk, a cabinet, a cactus, a shelf, a bin, a table, a fern, a cooler, a coat
+## stand and a plant rather than ten desks.
 const DRESS_PIECES: Array[Dictionary] = [
 	{
+		# THE DESK CARRIES THE CLUTTER (bd godot-test1-st9): a papers stack, a mug
+		# and a phone, three flat boxes on a surface that already exists. Clutter as
+		# its OWN placement would have wanted a cell and a table to stand on; on the
+		# desk it costs no candidate and is exactly what the owner asked for.
 		"kind": "desk",
 		"parts": [
 			{"size": Vector3(1.50, 0.74, 0.75), "off": Vector3(0.0, 0.0, 0.12),
@@ -1064,6 +1097,12 @@ const DRESS_PIECES: Array[Dictionary] = [
 				"color": COLOR_STEEL},
 			{"size": Vector3(0.50, 0.46, 0.08), "off": Vector3(0.0, 0.42, 1.44),
 				"color": COLOR_STEEL},
+			{"size": Vector3(0.26, 0.07, 0.20), "off": Vector3(-0.52, 0.74, 0.20),
+				"color": COLOR_PAPER},
+			{"size": Vector3(0.10, 0.11, 0.10), "off": Vector3(-0.24, 0.74, 0.16),
+				"color": COLOR_PAPER},
+			{"size": Vector3(0.22, 0.06, 0.16), "off": Vector3(0.52, 0.74, 0.22),
+				"color": COLOR_SCREEN},
 		],
 	},
 	{
@@ -1074,12 +1113,18 @@ const DRESS_PIECES: Array[Dictionary] = [
 		],
 	},
 	{
-		"kind": "plant",
+		# The cactus in its terracotta jar, one bloom on top. Never solid: it is
+		# knee-high and the whole point of the waist rule is that you do not snag.
+		"kind": "cactus",
 		"parts": [
-			{"size": Vector3(0.44, 0.34, 0.44), "off": Vector3(0.0, 0.0, 0.30),
-				"color": COLOR_STEEL},
-			{"size": Vector3(0.74, 0.90, 0.74), "off": Vector3(0.0, 0.34, 0.15),
+			{"size": Vector3(0.34, 0.30, 0.34), "off": Vector3(0.0, 0.0, 0.28),
+				"color": COLOR_TERRACOTTA},
+			{"size": Vector3(0.16, 0.62, 0.16), "off": Vector3(0.0, 0.30, 0.37),
 				"color": COLOR_PLANT},
+			{"size": Vector3(0.26, 0.10, 0.10), "off": Vector3(0.16, 0.62, 0.40),
+				"color": COLOR_PLANT},
+			{"size": Vector3(0.10, 0.10, 0.10), "off": Vector3(0.0, 0.92, 0.40),
+				"color": COLOR_BLOOM},
 		],
 	},
 	{
@@ -1089,6 +1134,15 @@ const DRESS_PIECES: Array[Dictionary] = [
 				"color": COLOR_WAINSCOT, "solid": true},
 			{"size": Vector3(1.10, 0.30, 0.06), "off": Vector3(0.0, 1.10, 0.44),
 				"color": COLOR_SEAL},
+		],
+	},
+	{
+		"kind": "bin",
+		"parts": [
+			{"size": Vector3(0.32, 0.52, 0.32), "off": Vector3(0.0, 0.0, 0.24),
+				"color": COLOR_STEEL},
+			{"size": Vector3(0.36, 0.05, 0.36), "off": Vector3(0.0, 0.52, 0.22),
+				"color": COLOR_SCREEN},
 		],
 	},
 	{
@@ -1103,12 +1157,47 @@ const DRESS_PIECES: Array[Dictionary] = [
 		],
 	},
 	{
+		# The tall floor plant — head height, and still not solid, because a fern
+		# you cannot walk past in a corner is furniture pretending to be a wall.
+		"kind": "fern",
+		"parts": [
+			{"size": Vector3(0.40, 0.42, 0.40), "off": Vector3(0.0, 0.0, 0.28),
+				"color": COLOR_TERRACOTTA},
+			{"size": Vector3(0.10, 0.62, 0.10), "off": Vector3(0.0, 0.42, 0.43),
+				"color": COLOR_PLANT},
+			{"size": Vector3(0.86, 0.54, 0.62), "off": Vector3(0.0, 1.04, 0.17),
+				"color": COLOR_PLANT},
+		],
+	},
+	{
 		"kind": "cooler",
 		"parts": [
 			{"size": Vector3(0.42, 0.98, 0.42), "off": Vector3(0.0, 0.0, 0.20),
 				"color": COLOR_STEEL, "solid": true},
 			{"size": Vector3(0.34, 0.44, 0.34), "off": Vector3(0.0, 0.98, 0.24),
 				"color": COLOR_PHOTO},
+		],
+	},
+	{
+		"kind": "coatstand",
+		"parts": [
+			{"size": Vector3(0.36, 0.06, 0.36), "off": Vector3(0.0, 0.0, 0.26),
+				"color": COLOR_STEEL},
+			{"size": Vector3(0.09, 1.60, 0.09), "off": Vector3(0.0, 0.06, 0.39),
+				"color": COLOR_WAINSCOT},
+			{"size": Vector3(0.56, 0.07, 0.07), "off": Vector3(0.0, 1.59, 0.40),
+				"color": COLOR_WAINSCOT},
+			{"size": Vector3(0.28, 0.60, 0.20), "off": Vector3(0.18, 0.94, 0.34),
+				"color": COLOR_PHOTO},
+		],
+	},
+	{
+		"kind": "plant",
+		"parts": [
+			{"size": Vector3(0.44, 0.34, 0.44), "off": Vector3(0.0, 0.0, 0.30),
+				"color": COLOR_STEEL},
+			{"size": Vector3(0.74, 0.90, 0.74), "off": Vector3(0.0, 0.34, 0.15),
+				"color": COLOR_PLANT},
 		],
 	},
 ]
@@ -1136,12 +1225,112 @@ const DRESS_ART: Array[Dictionary] = [
 		],
 	},
 	{
+		"kind": "clock",
+		"parts": [
+			{"size": Vector3(0.36, 0.36, 0.05), "off": Vector3(0.0, 1.50, 0.0),
+				"color": COLOR_WAINSCOT},
+			{"size": Vector3(0.28, 0.28, 0.03), "off": Vector3(0.0, 1.54, 0.05),
+				"color": COLOR_PAPER},
+			{"size": Vector3(0.03, 0.13, 0.02), "off": Vector3(0.0, 1.62, 0.07),
+				"color": COLOR_SCREEN},
+		],
+	},
+	{
 		"kind": "photo",
 		"parts": [
 			{"size": Vector3(0.40, 0.50, 0.05), "off": Vector3(0.0, 1.46, 0.0),
 				"color": COLOR_WAINSCOT},
 			{"size": Vector3(0.30, 0.38, 0.03), "off": Vector3(0.0, 1.52, 0.05),
 				"color": COLOR_PHOTO},
+		],
+	},
+	{
+		# The notice board — cork, three pinned sheets, and the only thing on these
+		# walls that is wider than it is tall. Its top is 1.90 m, which keeps it
+		# clear of the 1.98 m the wayfinding plaques hang at.
+		"kind": "notice",
+		"parts": [
+			{"size": Vector3(1.02, 0.66, 0.05), "off": Vector3(0.0, 1.24, 0.0),
+				"color": COLOR_WAINSCOT},
+			{"size": Vector3(0.92, 0.56, 0.03), "off": Vector3(0.0, 1.29, 0.05),
+				"color": COLOR_TERRACOTTA},
+			{"size": Vector3(0.16, 0.20, 0.02), "off": Vector3(-0.28, 1.42, 0.07),
+				"color": COLOR_PAPER},
+			{"size": Vector3(0.14, 0.18, 0.02), "off": Vector3(0.06, 1.36, 0.07),
+				"color": COLOR_PAPER},
+			{"size": Vector3(0.12, 0.16, 0.02), "off": Vector3(0.30, 1.48, 0.07),
+				"color": COLOR_SEAL},
+		],
+	},
+]
+
+# ============================================================================
+# CORRIDOR DRESSING (bead godot-test1-st9) — benches and planters in the halls
+# ============================================================================
+#
+# The rooms were furnished and the corridors between them were still bare stone,
+# which is what the owner's "it doesn't read as an office building" was mostly
+# about: you spend more of a storey in the halls than in any one room.
+#
+# IT IS THE SAME DRESSER, one function further down, and it takes NOTHING new:
+# the same `_dress_boxes` wall-local frame, the same batch surface, the same
+# `_cell_is_taken` footprint refusal and the same stairwell-hole rule.
+#
+# NOTHING HERE IS EVER SOLID, and that is the whole safety argument. A room's
+# furniture gets a flood fill before it commits because a desk is a wall; a bench
+# you walk through cannot disconnect anything, on any floor shape, ever — so the
+# corridors need no fill of their own and `tower_selfcheck`'s check 9 is as true
+# after this as before it. The pieces stay low for the same reason the room's
+# plants do: nothing under `DRESS_WAIST` may collide.
+#
+# WHERE. A corridor cell qualifies only if EVERY 4-neighbour is stone or more
+# corridor — so a cell beside a doorway, a pad, a `D` run, a stair lane or any
+# other lettered thing is refused outright, which is the room dresser's traffic
+# rule stated in the one form a corridor can state it — AND the cell opposite its
+# wall is corridor too, i.e. the hall is at least two cells wide there. A
+# one-cell-wide corridor is a passage, and you do not put a bench in a passage.
+#
+# NOT IN THE LABYRINTH AND NOT IN THE BLOCK, the same two exclusions the
+# wayfinding plaques take and for the same reason: the maze is meant to read as
+# bare cut stone, and the block is a set piece end to end.
+
+## One piece per this many qualifying corridor cells, capped per storey. The ground
+## floor's halls run to a few hundred cells; 22 puts a bench every 40-odd metres of
+## wall, which is a corridor with something in it rather than a furniture shop.
+const HALL_SPACING: int = 22
+const HALL_MAX: int = 10
+
+## Its own salt, so a change to the corridors cannot slide a single desk.
+const HALL_SALT: int = 0x8A11
+
+## The name the corridor pieces are filed under, standing where a room's letter
+## does in `_dress_boxes`. Deliberately NOT a single character: `_dress_cells` in
+## the selfcheck reads placements back by the prefix `Dress<letter>_`, and a
+## multi-character token can never be mistaken for a room's.
+const HALL_LETTER: String = "Hall"
+
+## Benches and planters, in `DRESS_PIECES`' wall-local frame. Never solid.
+const HALL_PIECES: Array[Dictionary] = [
+	{
+		"kind": "bench",
+		"parts": [
+			{"size": Vector3(1.40, 0.09, 0.46), "off": Vector3(0.0, 0.40, 0.10),
+				"color": COLOR_WAINSCOT},
+			{"size": Vector3(1.40, 0.44, 0.08), "off": Vector3(0.0, 0.44, 0.04),
+				"color": COLOR_WAINSCOT},
+			{"size": Vector3(0.10, 0.40, 0.42), "off": Vector3(-0.60, 0.0, 0.12),
+				"color": COLOR_STEEL},
+			{"size": Vector3(0.10, 0.40, 0.42), "off": Vector3(0.60, 0.0, 0.12),
+				"color": COLOR_STEEL},
+		],
+	},
+	{
+		"kind": "planter",
+		"parts": [
+			{"size": Vector3(1.10, 0.42, 0.42), "off": Vector3(0.0, 0.0, 0.14),
+				"color": COLOR_TERRACOTTA},
+			{"size": Vector3(1.00, 0.50, 0.36), "off": Vector3(0.0, 0.42, 0.17),
+				"color": COLOR_PLANT},
 		],
 	},
 ]
@@ -2259,6 +2448,69 @@ static func _plan_dressing(plan: Dictionary, taken: Array[Dictionary]) -> Array[
 		if DRESS_SKIP_ROOMS.has(String(plan["rooms"][letter])):
 			continue
 		out.append_array(_dress_room(plan, rows, floor_index, letter, taken, hole))
+	out.append_array(_hall_dressing(rows, floor_index, taken, hole))
+	return out
+
+
+static func _hall_dressing(rows: Array, floor_index: int,
+		taken: Array[Dictionary], hole: Dictionary) -> Array[Dictionary]:
+	"""
+	One storey's corridors, dressed. See the `HALL_PIECES` banner for the rules —
+	all of them are in the candidate loop below and none of them is new machinery.
+
+	@param rows: The storey's ASCII.
+	@param taken: As `_plan_dressing` — everything but the floor slab.
+	@param hole: The storey above's stairwell hole, or `{}`.
+	@return: `boxes()` entries carrying `"dress": true`, or `[]`.
+	"""
+	if is_maze_floor(floor_index) or floor_index == block_floor():
+		return []
+	var cands: Array[Vector2i] = []
+	for r: int in rows.size():
+		var line := String(rows[r])
+		for c: int in line.length():
+			if line[c] != TowerPlans.FLOOR_CHAR:
+				continue
+			var cell := Vector2i(c, r)
+			# EVERY NEIGHBOUR STONE OR CORRIDOR. A doorway, a pad, a gate run, a
+			# stair lane and every room letter are all "something other than `#`
+			# or `.`", so this one test is the whole traffic rule — and a set
+			# piece drawn tomorrow is excluded by it on the day it is drawn.
+			var normal := Vector3.ZERO
+			for step: Vector2i in _STEPS:
+				var ch := _plan_char(rows, cell + step)
+				if ch == TowerPlans.WALL_CHAR:
+					if normal == Vector3.ZERO:
+						normal = Vector3(-float(step.x), 0.0, -float(step.y))
+				elif ch != TowerPlans.FLOOR_CHAR:
+					normal = Vector3.ZERO
+					break
+			if normal == Vector3.ZERO:
+				continue
+			# ...and the hall is two cells wide here, so the bench leaves a lane.
+			if _plan_char(rows, cell + Vector2i(int(normal.x), int(normal.z))) \
+					!= TowerPlans.FLOOR_CHAR:
+				continue
+			if _cell_is_taken(cell, taken) or _under_hole(cell, hole):
+				continue
+			cands.append(cell)
+	if cands.size() < HALL_SPACING:
+		return []
+	# Strided over row-major candidates, exactly as `_dress_room` does it and for
+	# the same reason: a shuffle puts three benches in one corner of the lobby.
+	var want := mini(cands.size() / HALL_SPACING, HALL_MAX)
+	var stride := maxi(1, cands.size() / want)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(Vector3i(floor_index, HALL_SALT, DRESS_SALT))
+	var offset := rng.randi_range(0, stride - 1)
+	var kind := rng.randi_range(0, HALL_PIECES.size() - 1)
+	var out: Array[Dictionary] = []
+	for i: int in want:
+		var index := offset + i * stride
+		if index >= cands.size():
+			break
+		out.append_array(_dress_boxes(rows, floor_index, HALL_LETTER, cands[index],
+				HALL_PIECES[(kind + i) % HALL_PIECES.size()]))
 	return out
 
 
