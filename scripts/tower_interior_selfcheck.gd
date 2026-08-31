@@ -237,6 +237,7 @@ func _run() -> void:
 	await _check_guards_reset_on_re_entry()
 	await _check_the_leash_holds_under_a_chase()
 	_check_the_offices_are_furnished_and_still_walkable()
+	_check_the_plaques_point_at_the_stairs()
 	await _check_air_sight_shows_through_walls_only()
 	_report()
 
@@ -3602,6 +3603,109 @@ func _check_the_offices_are_furnished_and_still_walkable() -> void:
 			_fail("%s's portrait material is rebuilt per call — the texture is being copied" % hero)
 	print("tower interior: %d rooms dressed, %d dressing boxes (%d solid), %d portraits hung" % [
 		dressed_rooms, pieces, solids, frames.size()])
+
+
+func _check_the_plaques_point_at_the_stairs() -> void:
+	"""
+	Check 19. The wayfinding plaques (bd godot-test1-kox) are signed the right way
+	round, hang in the office storeys and NOWHERE ELSE, and never collide.
+
+	THE ARROW IS THE CLAIM, so the arrow is what is measured — and measured from the
+	GEOMETRY rather than from the builder's own reasoning: the sign's board says which
+	axis runs along its wall (it is 0.86 m one way and 0.04 m the other), the head
+	block says which way the arrow points along that axis, and this file finds the
+	stair lane by its own scan of the storey's `S` cells. A plaque pointing away from
+	the stairs is worse than no plaque, and it is exactly the failure a mirrored table
+	row or a flipped tangent would produce, silently, on half the walls in the
+	building.
+
+	The rest is placement: signs on every storey that has offices and a way up, none
+	at all in the labyrinth (whose whole design is that it is not signposted) or the
+	block, and nothing solid — everything else a plaque must not do (stand in a
+	doorway, in a gate run, in a set-piece room, or wall a room off) is check 18's,
+	which sees these boxes because they carry the same `dress` flag.
+	"""
+	var signed_floors := 0
+	var plaques := 0
+	for floor_index: int in TowerPlans.floors():
+		var plan := TowerPlans.storey(floor_index)
+		var rows: Array = plan["rows"]
+		# This file's OWN scan for the way up — the ramp lane's centre in metres.
+		var stair_cells: Array[Vector2i] = []
+		for r: int in rows.size():
+			var line := String(rows[r])
+			for c: int in line.length():
+				if line[c] == TowerPlans.STAIR_UP_CHAR:
+					stair_cells.append(Vector2i(c, r))
+		var stair := Vector3.ZERO
+		for cell: Vector2i in stair_cells:
+			stair += Vector3(TowerInterior._grid_x(float(cell.x) + 0.5), 0.0,
+					TowerInterior._grid_z(float(cell.y) + 0.5))
+		if not stair_cells.is_empty():
+			stair /= float(stair_cells.size())
+
+		# Every sign box on this storey, grouped by the cell its name carries.
+		var groups := {}
+		var dressed := 0
+		for box: Dictionary in TowerInterior.plan_boxes(floor_index):
+			if not bool(box.get("dress", false)):
+				continue
+			dressed += 1
+			var box_name := String(box["name"])
+			if not box_name.contains("sign"):
+				continue
+			if box["collide"]:
+				_fail("%s is a solid sign — a plaque you can walk into is a shelf" % box_name)
+			var key := box_name.substr(0, box_name.rfind("sign"))
+			if not groups.has(key):
+				groups[key] = []
+			groups[key].append(box)
+
+		var maze := TowerInterior.is_maze_floor(floor_index)
+		if maze or floor_index == TowerInterior.block_floor():
+			if not groups.is_empty():
+				_fail("storey %d is %s and carries %d wayfinding plaques anyway" % [
+					floor_index, "the labyrinth" if maze else "the cell block", groups.size()])
+			continue
+		if groups.is_empty():
+			# A storey with no way up has nothing to point at, and one with no
+			# furnished room has no wall to hang a sign on. Anything else is the
+			# feature having quietly stopped placing them.
+			if not stair_cells.is_empty() and dressed > 0:
+				_fail("storey %d has offices and a stair lane but not one wayfinding plaque" \
+					% floor_index)
+			continue
+		signed_floors += 1
+		for key: String in groups:
+			plaques += 1
+			var parts: Array = groups[key]
+			# The BOARD is the biggest box, and its footprint says which axis runs
+			# along the wall — no lookup of the builder's normal.
+			var board: Dictionary = parts[0]
+			for box: Dictionary in parts:
+				if box["size"].x * box["size"].z > board["size"].x * board["size"].z:
+					board = box
+			var along_x: bool = board["size"].x > board["size"].z
+			var centre: Vector3 = board["pos"]
+			# ...and the HEAD is whichever part sits furthest along that axis.
+			var head: Vector3 = centre
+			for box: Dictionary in parts:
+				var at: Vector3 = box["pos"]
+				var reach := absf(at.x - centre.x) if along_x else absf(at.z - centre.z)
+				var best := absf(head.x - centre.x) if along_x else absf(head.z - centre.z)
+				if reach > best:
+					head = at
+			var points := (head.x - centre.x) if along_x else (head.z - centre.z)
+			var wants := (stair.x - centre.x) if along_x else (stair.z - centre.z)
+			if absf(points) < 0.01:
+				_fail("%s's arrow has no head — the plaque points nowhere" % key)
+			elif absf(wants) > 0.01 and signf(points) != signf(wants):
+				_fail("%ssign points %s along its wall but the stairs are %s of it" % [
+					key, "+" if points > 0.0 else "-", "+" if wants > 0.0 else "-"])
+	if signed_floors == 0:
+		_fail("not one storey in the building is signposted — the plaques are wired to nothing")
+	print("tower interior: %d wayfinding plaques across %d storeys, all pointing at the stairs" \
+		% [plaques, signed_floors])
 
 
 func _cell_touches(cell: Vector2i, box: Dictionary) -> bool:

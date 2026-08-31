@@ -390,8 +390,13 @@ The building is full to its sealed roof — ten floor indices, `FLOOR_Y[0..9]`:
   existing batch, so ten furnished floors cost **zero** extra draw calls; only the four
   hero portraits hanging in the outer hall as "employee of the month" need textures, and
   they are the whole of `DRAW_BUDGET`'s move from 35 to 39. Furniture has its own
-  per-storey budget (`PLAN_DRESS_BUDGET` 240) so `PLAN_BOX_BUDGET` keeps measuring
-  exactly what it always did. **Three rules keep it safe and check 18 asserts all
+  per-storey budget (`PLAN_DRESS_BUDGET` 300) so `PLAN_BOX_BUDGET` keeps measuring
+  exactly what it always did. **The WAYFINDING PLAQUES ride the same dresser** — one
+  per office room, on the bare wall nearest the way out, its arrow pointing along that
+  wall at the storey's stair lane, and never in the labyrinth or the block. They are the
+  HORIZONTAL half of the jail hint (the minimap's indoor line is the vertical half): a
+  live bearing arrow would rank the corridors at every junction and quietly solve the
+  maze, so the horizontal help is authored, coarse and in the world. **Three rules keep it safe and check 18 asserts all
   three**: nothing lands on a doorway cell or beside one; a solid piece is committed only
   if the room's connectivity is unchanged (`_still_connected`); and a cell carrying
   anything else the storey draws — a pad, a lock plate, a set piece — or standing under
