@@ -113,6 +113,9 @@ extends RefCounted
 const GATE_DEMAND: String = "tower_vault"
 const GATE_IDENTITY: String = "tower_secure_door"
 const GATE_CHECKPOINT: String = "tower_checkpoint"
+## The only base-kit challenge that keeps a full-height rising mass and pad.
+## Geometry overrides are deliberately not a general gate-class escape hatch.
+const GEOMETRY_MASS: String = "mass"
 
 ## Phase 16's unlockable lift stop, and it is an ENTRY id rather than a gate id —
 ## but it rides the SAME monotone opened set for the same reason a checkpoint does:
@@ -167,10 +170,11 @@ const HEROES: Array[String] = ["windman", "primm", "teibi", "phoboman"]
 ##                 are — it asks where you have been — and the audit refuses a
 ##                 riddle row that names a hero.
 ##
-## `geometry` is optional and independent of access class. The secure checkpoint
-## is a base-kit challenge whose persisted doorway still uses the authored rising
-## mass and derived pad (`"geometry": "mass"`); omitting it keeps the normal
-## challenge lintel or class-specific shape.
+## `geometry` is optional, but its only supported override is the secure
+## checkpoint's base-kit challenge row. That row keeps the authored rising mass
+## and derived pad (`GEOMETRY_MASS`); every other challenge remains a lintel, and
+## `tower_selfcheck` rejects any new mass override rather than certifying a gate
+## whose runtime has no generic trigger.
 const CLASS_CHALLENGE: String = "challenge"
 const CLASS_IDENTITY: String = "identity"
 const CLASS_DEMAND: String = "demand"
@@ -782,7 +786,7 @@ const TOWER_GRAPH: Dictionary = {
 			# persisted id, but the checkpoint is base kit: a party must not lose its
 			# only restoration point when Teibi is captive or absent.
 			"class": CLASS_CHALLENGE, "identity": "", "effect": "", "scale": 0.0,
-			"geometry": "mass",
+			"geometry": GEOMETRY_MASS,
 			"needed_during_captivity": false, "built": true, "quest": "checkpoint",
 			# Drawn by storey 2's `D` run since bead godot-test1-dn8, so the mass and
 			# its derived pad carry the plan builder's names — exactly as phase 16 did

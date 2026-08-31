@@ -1442,8 +1442,14 @@ func _check_gate_lifecycle() -> void:
 	if String(secure_gate.get("class", "")) != TowerGraph.CLASS_CHALLENGE \
 			or String(secure_gate.get("identity", "")) != "":
 		_fail("the secure checkpoint still carries an identity hero requirement")
-	if String(secure_gate.get("geometry", "")) != "mass":
+	if String(secure_gate.get("geometry", "")) != TowerGraph.GEOMETRY_MASS:
 		_fail("the base-kit secure checkpoint lost its authored mass geometry")
+	for box: Dictionary in TowerInterior.all_boxes():
+		var box_name := String(box.get("name", ""))
+		if box_name.ends_with("GateMass_%s" % TowerInterior.GATE_IDENTITY) \
+				or box_name.ends_with("GatePad_%s" % TowerInterior.GATE_IDENTITY):
+			if box.get("color", Color.BLACK) != TowerInterior.COLOR_HAZARD:
+				_fail("the base-kit secure door's mass/pad still uses identity styling")
 	var mass := _gate_mass(interior, TowerInterior.GATE_IDENTITY)
 	var shutter := interior.find_child("DemandShutter", true, false) as MeshInstance3D
 	if mass == null:

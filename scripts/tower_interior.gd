@@ -84,6 +84,9 @@ extends Node3D
 ##     Rule for later rooms: a challenge NEVER carries a calibration band and
 ##     NEVER carries a hero colour. If a player has to ask "can I even attempt
 ##     this?" it has been built wrong — the answer is always yes.
+##     The secure checkpoint is the one authored challenge exception to the
+##     usual lintel silhouette: its rising mass and floor pad stay hazard orange
+##     while its access remains base kit. It never uses the violet identity style.
 ##
 ##   DEMAND GATE — a corporate mechanism that measures you and finds you short.
 ##     Silhouette: a SEALED SLAB flush in a wall, plus a free-standing RECEPTACLE
@@ -3041,9 +3044,9 @@ static func _plan_gates(plan: Dictionary) -> Array[Dictionary]:
 	            batched, so the opening reads as a duct. The hazard that sweeps
 	            under it is hand-built from the same run (`_block_boxes` for the
 	            crawl's press, `_rotor_boxes` for the rotor doorway's bars), because
-	            a thing that moves is not a plan character. A challenge may instead
-	            declare `geometry: "mass"` when its authored doorway must retain a
-	            rising mass and derived pad while remaining base kit.
+	            a thing that moves is not a plan character. The secure checkpoint is
+	            the one authored exception: its graph row declares `GEOMETRY_MASS`
+	            so the rising mass and derived pad remain while access stays base kit.
 	  DEMAND    nothing at all. Its shutter SINKS rather than rising and its
 	            receptacle is not a character either, so `_demand_boxes` builds the
 	            whole gate off the same run — see the arm for the argument.
@@ -3084,7 +3087,7 @@ static func _plan_gates(plan: Dictionary) -> Array[Dictionary]:
 		# is base kit (challenge semantics), but its existing rising mass and derived
 		# pad are part of the shipped floor plan and must remain in the doorway.
 		var geometry := String(gate.get("geometry", ""))
-		if cls == TowerGraph.CLASS_CHALLENGE and geometry != "mass":
+		if cls == TowerGraph.CLASS_CHALLENGE and geometry != TowerGraph.GEOMETRY_MASS:
 			var lintel_h := clear - CRAWL_LINTEL_Y
 			out.append({
 				"name": "%sGateLintel_%s" % [prefix, gid],
@@ -3094,16 +3097,20 @@ static func _plan_gates(plan: Dictionary) -> Array[Dictionary]:
 				"color": COLOR_STONE, "collide": true, "floor": floor_index,
 			})
 			continue
-		var identity := cls == TowerGraph.CLASS_IDENTITY or geometry == "mass"
+		var identity := cls == TowerGraph.CLASS_IDENTITY
+		var mass_style := geometry == TowerGraph.GEOMETRY_MASS
 		out.append({
 			"name": "%sGateMass_%s" % [prefix, gid],
 			"pos": Vector3((x0 + x1) * 0.5, top + clear * 0.5, (z0 + z1) * 0.5),
 			"size": Vector3(x1 - x0, clear, z1 - z0),
-			"color": COLOR_IDENTITY if identity else COLOR_RIDDLE,
+			# A mass override does not turn a base-kit challenge into an identity
+			# gate visually. Violet is reserved for doors that name a hero; this
+			# checkpoint remains hazard orange like the other challenge geometry.
+			"color": COLOR_IDENTITY if identity else COLOR_HAZARD if mass_style else COLOR_RIDDLE,
 			"collide": true, "floor": floor_index,
 			"dynamic": true,
 		})
-		if not identity:
+		if not identity and not mass_style:
 			continue
 		# ...and the one pad you stand on, on the side of the doorway you approach
 		# it from. An unresolvable side is an AUTHORING ERROR and is left unbuilt
@@ -3118,7 +3125,8 @@ static func _plan_gates(plan: Dictionary) -> Array[Dictionary]:
 			"pos": Vector3(_grid_x(float(cell.x) + 0.5), top + PLAN_PAD_THICK * 0.5,
 					_grid_z(float(cell.y) + 0.5)),
 			"size": Vector3(TowerPlans.PLAN_CELL, PLAN_PAD_THICK, TowerPlans.PLAN_CELL),
-			"color": COLOR_IDENTITY_PAD, "collide": false, "floor": floor_index,
+			"color": COLOR_IDENTITY_PAD if identity else COLOR_HAZARD,
+			"collide": false, "floor": floor_index,
 		})
 
 	for pad: Dictionary in slots["pads"]:

@@ -130,9 +130,10 @@ var _room_colors: Array[Color] = [
 ## Keys a gate row may carry. A WHITELIST, because the law that matters here is a
 ## negative one — no gate may key on a hero's ABSENCE — and the only mechanical
 ## form of "no such key exists" is "these are the keys that do".
-## `clue_room` and `answer` are on the list because a RIDDLE carries them; check 2
-## then refuses either on a gate of any other class, so the whitelist stays what it
-## is for — the only mechanical form of "no such key exists".
+## `clue_room` and `answer` are on the list because a RIDDLE carries them; the
+## optional `geometry` key is the narrow secure-door mass exception, and check 2
+## rejects it on every other row. The whitelist stays what it is for — the only
+## mechanical form of "no such key exists".
 const GATE_KEYS: Array[String] = [
 	"class", "identity", "geometry", "effect", "scale", "needed_during_captivity",
 	"built", "quest", "parts", "note", "clue_room", "answer",
@@ -445,7 +446,8 @@ func _check_plans_bind_to_the_graph() -> void:
 			var gate4: Dictionary = gates.get(gid4, {})
 			var geometry4 := String(gate4.get("geometry", ""))
 			if String(gate4.get("class", "")) != TowerGraph.CLASS_IDENTITY \
-					and geometry4 != "mass":
+					and not (gid4 == TowerGraph.GATE_IDENTITY \
+					and geometry4 == TowerGraph.GEOMETRY_MASS):
 				continue
 			var run: Rect2i = TowerInterior.gate_slots(plan)["masses"].get(gid4, Rect2i())
 			if run.size == Vector2i.ZERO:
@@ -511,13 +513,15 @@ func _check_design_laws() -> void:
 			# merely a design smell.
 			_fail("gate '%s' is a %s gate but names a hero ('%s')" % [gid, cls, who])
 		var geometry := String(g.get("geometry", ""))
-		if geometry not in ["", "mass"]:
+		if geometry not in ["", TowerGraph.GEOMETRY_MASS]:
 			_fail("gate '%s' has geometry '%s', which is not a supported gate shape" % [
 				gid, geometry])
-		if geometry == "mass" and cls not in [TowerGraph.CLASS_CHALLENGE,
-				TowerGraph.CLASS_IDENTITY, TowerGraph.CLASS_RIDDLE]:
-			_fail("gate '%s' uses mass geometry with class '%s', which cannot open a mass" % [
-				gid, cls])
+		if geometry == TowerGraph.GEOMETRY_MASS and (gid != TowerGraph.GATE_IDENTITY \
+				or cls != TowerGraph.CLASS_CHALLENGE or who != ""):
+			_fail("gate '%s' uses mass geometry outside the base-kit secure-door exception" % gid)
+		if gid == TowerGraph.GATE_IDENTITY and (cls != TowerGraph.CLASS_CHALLENGE \
+				or geometry != TowerGraph.GEOMETRY_MASS or who != ""):
+			_fail("the secure-door gate must remain the base-kit mass exception")
 		# ...and the two riddle-only keys are riddle-only in both directions.
 		var riddle := cls == TowerGraph.CLASS_RIDDLE
 		for key: String in ["clue_room", "answer"]:
