@@ -39,6 +39,10 @@ extends Control
 ##     there is no teammate layer at all and nothing is drawn or scanned.
 ##   * World X / Z coordinates and the biome underfoot as text, with a "~ river ~"
 ##     marker while the player is standing in a wading band.
+##   * INSIDE THE HQ ONLY: the storey beside the coordinates and the cell block's
+##     storey beside the biome ("Floor 6" / "JAIL F10  ^4"), plus — after 90 s
+##     without progress and never before — one amber arrow at the rim. See the
+##     INDOORS banner below for what is deliberately NOT drawn there.
 ##
 ## ZOOM. +/- step through ZOOM_RADII (raw keycodes outside the input map, like the
 ## M toggle). The WIDGET NEVER CHANGES SIZE — what changes is how many metres the
@@ -225,6 +229,50 @@ const PEER_EDGE_ALPHA: float = 0.75
 const ZOOM_BUTTON_SIZE: float = 30.0
 const ZOOM_BUTTON_GAP: float = 4.0
 
+# --- INDOORS: the storey line, the jail's floor, and the anti-stall arrow -----
+#
+# All of it is gated on `TowerShell.sheltered()` and NOTHING is added outside it —
+# out in the field this feature costs one cached null check per tick (bd
+# godot-test1-kox).
+#
+# WHAT IS DELIBERATELY NOT HERE, because the design note on that bead rejected each
+# by name: no radar sweep, no facing pulse, and NO CONTINUOUS BEARING to the cell
+# block. A live arrow to the jail would rank the corridors for you at every junction
+# — the player walks two steps down each one and keeps whichever improved the
+# bearing — which solves the labyrinth without ever entering it. The horizontal help
+# is authored into the building instead (`TowerInterior.SIGN_PIECES`).
+#
+# What survives here is the VERTICAL intent, which is honest and unsolvable: the
+# block is on the top storey and saying so costs the maze nothing.
+
+## How long (seconds) a player may go without MEANINGFUL PROGRESS before the
+## anti-stall arrow appears — and progress is a FIRST-TIME room or maze cell this
+## visit, or a storey gained, never any room-entry event (`TowerInterior.zone_at`).
+## Oscillating in a doorway must not reset this, and a player re-walking rooms they
+## have already searched is genuinely stuck and must still get help.
+const STALL_SECONDS: float = 90.0
+
+## Seconds the arrow takes to fade in once the threshold passes. It is a rescue, not
+## an alert: it must not pop.
+const STALL_FADE: float = 3.0
+
+## THE LABYRINTH'S UNSTABLE LOCK. On the maze storeys the jail line already reads
+## "NO LOCK", so an arrow that simply appeared there would make the degraded system
+## quietly reliable — the one thing the fiction may not do. It flickers instead: a
+## brief hold every period, on a bearing snapped to the compass points.
+const MAZE_FLICKER_PERIOD: float = 4.0
+const MAZE_FLICKER_ON: float = 0.9
+const MAZE_BEARING_STEP: float = PI / 4.0
+
+## The anti-stall arrow's size in pixels (half-length along the bearing, half-width
+## across it) — the player triangle's shape at the rim, a little smaller.
+const JAIL_ARROW_LENGTH: float = 8.0
+const JAIL_ARROW_HALF_WIDTH: float = 5.0
+
+## Amber: the one warm hue on the disc that is not the road's gold, and it is the
+## colour of the plaques in the building the arrow points into.
+const COLOR_JAIL := Color(1.0, 0.62, 0.15, 1.0)
+
 ## Where unused crocodile dot slots are parked. Well outside the control on both
 ## axes, so the segments drawn there land off-screen no matter where the HUD puts
 ## this control (offsets only ever move it right and down from the viewport corner).
@@ -339,8 +387,11 @@ var _mp: Node = null
 ## web persistence is documented as flaky. Nothing writes it to disk.
 var _zoom_index: int = ZOOM_DEFAULT_INDEX
 
-## Seconds until the next tick.
+## Seconds until the next tick...
 var _time_until_tick: float = 0.0
+## ...and seconds actually spent since the last one, which is the same number only
+## when the frame rate divides evenly into it. See `_process`.
+var _since_tick: float = 0.0
 
 ## False until the first successful read of the player — _draw() then renders
 ## nothing rather than leaving a stale map painted.
@@ -429,6 +480,27 @@ var _tower_points: PackedVector2Array = PackedVector2Array()
 var _tower_colors: PackedColorArray = PackedColorArray()
 var _tower_count: int = 0
 
+## The tower SHELL, from the "tower" group — cached with the stale re-fetch every
+## other node reference here uses. It owns `sheltered()`, and the interior is
+## parented at its origin, so its local frame is the interior's own.
+var _tower_node: Node3D = null
+
+## The two indoor caption fragments, composed on the tick and painted by `_draw()`.
+## Both are "" whenever the player is not sheltered, which is the whole of how this
+## feature disappears outdoors.
+var _floor_text: String = ""
+var _jail_text: String = ""
+
+## Anti-stall bookkeeping, all of it reset on leaving the building. `_visited` is the
+## set of `zone_at()` keys seen THIS VISIT (a few hundred short strings at worst),
+## `_seen_floor` the highest storey reached, `_stall` the seconds since either last
+## moved. `_jail_alpha` is 0 whenever no arrow is drawn.
+var _visited: Dictionary = {}
+var _seen_floor: int = -1
+var _stall: float = 0.0
+var _jail_alpha: float = 0.0
+var _jail_points: PackedVector2Array = PackedVector2Array()
+
 
 func _ready() -> void:
 	# Never let the map eat clicks meant for the game or the touch UI.
@@ -438,6 +510,8 @@ func _ready() -> void:
 	add_to_group("minimap")
 	# The arrow is always exactly three corners, so size it once and never again.
 	_arrow_points.resize(3)
+	# ...and so is the anti-stall arrow at the rim.
+	_jail_points.resize(3)
 	# The crocodile buffer is sized ONCE to its hard cap and never resized: see
 	# PARKED_SEGMENT for how the unused tail is kept out of the picture.
 	_croc_points.resize(MAX_CROC_DOTS * 2)
@@ -548,15 +622,28 @@ func _process(delta: float) -> void:
 	if not visible:
 		return
 	_time_until_tick -= delta
+	# ...and the REAL time between ticks, which is not TICK_INTERVAL. A tick fires on
+	# the first frame at or past the deadline, so the overshoot (a whole frame at 6
+	# FPS, a hitch at any rate) is thrown away by the line below. Every layer here is
+	# a snapshot and does not care; the stall CLOCK is the one thing that measures
+	# seconds, and crediting it 0.2 s for a 0.33 s tick would turn a 90 s rescue into
+	# a 150 s one on exactly the machine that most needs it (codex review).
+	_since_tick += delta
 	if _time_until_tick > 0.0:
 		return
 	_time_until_tick = TICK_INTERVAL
-	_tick()
+	var elapsed := _since_tick
+	_since_tick = 0.0
+	_tick(elapsed)
 
 
-func _tick() -> void:
+func _tick(elapsed: float = TICK_INTERVAL) -> void:
 	"""Re-read the world into the snapshot _draw() paints from. This is the only
-	place that touches the scene tree; it runs ~5 times a second."""
+	place that touches the scene tree; it runs ~5 times a second.
+
+	@param elapsed: Seconds since the previous tick — only the indoor stall clock
+	        reads it. It defaults to the nominal interval so a check (or anything
+	        else) can drive one tick by hand without inventing a duration."""
 	if _player == null or not is_instance_valid(_player):
 		_player = get_tree().get_first_node_in_group("player") as Node3D
 	if _player == null:
@@ -585,6 +672,7 @@ func _tick() -> void:
 	_gather_landmarks()
 	_gather_tower()
 	_gather_peers()
+	_gather_shelter(elapsed)
 
 	_have_data = true
 	queue_redraw()
@@ -951,6 +1039,104 @@ func _gather_tower() -> void:
 	_tower_count = 1
 
 
+func _gather_shelter(elapsed: float) -> void:
+	"""The indoor half of the caption, and the anti-stall arrow behind it.
+
+	ONE GROUP LOOKUP AND ONE `sheltered()` CALL per 5 Hz tick while the shell exists,
+	and while it does not (which is most of a run — the tower is built only within
+	`DRAW_RADIUS` of the site) a null check. `sheltered()` is three compares and a
+	transform; `current_floor()` and `zone_at()` are pure walks of `const` tables.
+
+	MULTIPLAYER: the "player" group is the LOCAL player by contract, so every peer
+	sees their own storey and their own stall timer, and nothing here is relayed."""
+	if _tower_node == null or not is_instance_valid(_tower_node):
+		_tower_node = get_tree().get_first_node_in_group("tower") as Node3D
+	if _tower_node == null or not _tower_node.has_method("sheltered") \
+			or not _tower_node.sheltered(_player_pos):
+		# OUTSIDE. Everything this feature knows is forgotten, so the next visit
+		# starts a fresh set of rooms and a fresh timer.
+		_floor_text = ""
+		_jail_text = ""
+		_jail_alpha = 0.0
+		_stall = 0.0
+		_seen_floor = -1
+		if not _visited.is_empty():
+			_visited.clear()
+		return
+
+	# The interior is parented at the shell's own origin (endless_terrain builds it
+	# that way), so the shell's local frame IS the interior's — which is the frame
+	# every `TowerInterior` static below is written in.
+	var local: Vector3 = _tower_node.to_local(_player_pos)
+	var here: int = TowerInterior.current_floor(local.y)
+	var jail: int = TowerInterior.block_floor()
+	# +1 because `current_floor()` answers a FLOOR_Y index and a lift says storeys:
+	# the cell block is drawn on index 9 and the building calls it storey 10, which
+	# is what the plans, the fiction and this caption all say.
+	_floor_text = tr("Floor %d") % (here + 1)
+	var degraded := TowerInterior.is_maze_floor(here)
+	if jail < 0:
+		# No storey draws the block — nothing honest to say about where it is.
+		_jail_text = ""
+	else:
+		var delta := jail - here
+		var chevron := ""
+		if delta != 0:
+			chevron = "  %s%d" % ["^" if delta > 0 else "v", absi(delta)]
+		# THE LABYRINTH DEGRADES RATHER THAN GOING BLANK: the storey delta stays
+		# (you can always count floors), the target lock is what the maze jams.
+		_jail_text = (tr("NO LOCK") if degraded else tr("JAIL F%d") % (jail + 1)) + chevron
+
+	# --- progress, and the stall timer behind it ---------------------------------
+	if _seen_floor < 0:
+		# First tick of this visit.
+		_visited.clear()
+		_seen_floor = here
+		_stall = 0.0
+	var zone := TowerInterior.zone_at(local)
+	var progress := here > _seen_floor or (zone != "" and not _visited.has(zone))
+	if zone != "":
+		_visited[zone] = true
+	_seen_floor = maxi(_seen_floor, here)
+	_stall = 0.0 if progress else _stall + elapsed
+
+	_gather_jail_arrow(jail, degraded)
+
+
+func _gather_jail_arrow(jail: int, degraded: bool) -> void:
+	"""The rim arrow — ANTI-STALL ONLY, and never a bearing you can navigate by.
+
+	It exists for the player who has been going nowhere for `STALL_SECONDS`, and it
+	is gone the instant they find a room they have not been in. In the labyrinth it
+	flickers on a coarse bearing instead of holding a true one, because up there the
+	line above it says NO LOCK and a degraded system that quietly starts working is
+	a lie the fiction cannot afford."""
+	_jail_alpha = 0.0
+	if jail < 0 or _stall < STALL_SECONDS:
+		return
+	if degraded and fmod(_stall - STALL_SECONDS, MAZE_FLICKER_PERIOD) >= MAZE_FLICKER_ON:
+		return
+	# The gallery's own centre, off the confinement box the prison role already
+	# derives from the plan — no second lookup of where the block is.
+	var target: Vector3 = _tower_node.to_global(
+			(TowerInterior.block_min() + TowerInterior.block_max()) * 0.5)
+	var offset := Vector2(target.x - _player_pos.x, target.z - _player_pos.z)
+	if offset.length_squared() < 0.0001:
+		return
+	var dir := offset.normalized()
+	if degraded:
+		dir = Vector2.from_angle(snappedf(dir.angle(), MAZE_BEARING_STEP))
+	_jail_alpha = clampf((_stall - STALL_SECONDS) / STALL_FADE, 0.0, 1.0)
+	# A triangle at the rim, pointing out along the bearing — the player arrow's
+	# shape and construction, so there is no second piece of trigonometry here.
+	var perp := Vector2(-dir.y, dir.x)
+	var tip := MAP_CENTER + dir * (MAP_RADIUS - 1.0)
+	var tail := tip - dir * JAIL_ARROW_LENGTH * 2.0
+	_jail_points[0] = tip
+	_jail_points[1] = tail + perp * JAIL_ARROW_HALF_WIDTH
+	_jail_points[2] = tail - perp * JAIL_ARROW_HALF_WIDTH
+
+
 func _park_tower() -> void:
 	"""Push the tower buffer off-control and transparent, exactly as every other
 	layer parks its unused tail."""
@@ -1091,6 +1277,12 @@ func _draw() -> void:
 	_arrow_points[2] = tail - perp * ARROW_HALF_WIDTH
 	draw_colored_polygon(_arrow_points, COLOR_PLAYER)
 
+	# 4b. The anti-stall arrow, ONE draw call and only while `_jail_alpha` is above
+	#     zero — which is never outdoors, and indoors only after STALL_SECONDS
+	#     without progress (see _gather_jail_arrow).
+	if _jail_alpha > 0.0:
+		draw_colored_polygon(_jail_points, Color(COLOR_JAIL, _jail_alpha))
+
 	# 5. Coordinates + biome under the disc, as ONE two-line string. X is also the
 	#    run's distance score (the coin road's X is strictly increasing by
 	#    construction), so the number doubles as "how far have I got". The outline
@@ -1101,12 +1293,20 @@ func _draw() -> void:
 	#    automatic Control translation never sees it. X and Z are axis letters and
 	#    stay as they are. `_draw()` re-runs on the 0.2 s tick, so a language
 	#    switched mid-run reaches this caption within one tick like everything else.
-	var text := "X %d   Z %d\n%s" % [roundi(_player_pos.x), roundi(_player_pos.z),
-		tr(BIOME_NAMES[_biome])]
+	var text := "X %d   Z %d" % [roundi(_player_pos.x), roundi(_player_pos.z)]
+	# INDOORS, the storey goes BESIDE THE COORDINATES and the jail's floor beside the
+	# biome — two fragments composed on the tick, appended to the two lines the
+	# caption already has. A third line would need a taller control (see
+	# minimap_selfcheck's widget-rect check) to say what fits on these two.
+	if not _floor_text.is_empty():
+		text += "   " + _floor_text
+	text += "\n" + tr(BIOME_NAMES[_biome])
 	var color := COLOR_TEXT
 	if _in_river:
 		text += tr("  ~ river ~")
 		color = COLOR_RIVER_TEXT
+	if not _jail_text.is_empty():
+		text += "   " + _jail_text
 	# draw_multiline_string* is what keeps this at 2 draw calls instead of 4: the
 	# per-line draw_string()/draw_string_outline() pair it replaced cost one each.
 	var font := get_theme_default_font()

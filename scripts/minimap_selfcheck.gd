@@ -50,6 +50,14 @@ extends SceneTree
 ##      control's SIZE lives in main.tscn, so the two drift apart silently — a disc
 ##      that outgrows its rect puts the caption off the disc's axis and walks the
 ##      widget into its HUD neighbours.
+##   9. INDOORS (bd godot-test1-kox): that the storey line and the jail's floor
+##      appear while sheltered and NOWHERE ELSE, that the labyrinth degrades the
+##      line rather than blanking it, that NO CONTINUOUS BEARING is ever drawn
+##      before the anti-stall timer, and that the timer's PROGRESS signal is a
+##      first-time room or a storey gained — re-entering a room you have already
+##      been in must NOT reset it, which is the whole difference between an
+##      anti-stall rescue and a compass. Driven through a `StubTower`, because the
+##      real shell is 400 m from spawn and is not built at all out there.
 ##
 ## It boots the real main scene, because the road station cache only exists once a
 ## chunk has generated — there is nothing pure to test in isolation here.
@@ -129,6 +137,18 @@ class StubCroc extends Node3D:
 	func set_lod_active(_active: bool) -> void:
 		pass
 
+
+## A stand-in for `TowerShell`, in the "tower" group — the one node the indoor half
+## of the map reaches for, and the one that is NOT built at spawn: the HQ stands 400
+## m away and `endless_terrain` instances it only within `DRAW_RADIUS`. It answers
+## `sheltered()` from a flag, and being an unrotated `Node3D` its `to_local()` is the
+## interior frame the check positions the player in.
+class StubTower extends Node3D:
+	var inside: bool = true
+
+	func sheltered(_pos: Vector3) -> bool:
+		return inside
+
 func _initialize() -> void:
 	# _initialize() cannot await, so the scene-booting half runs as its own
 	# coroutine; the tree keeps processing until it calls quit().
@@ -159,6 +179,8 @@ func _run() -> void:
 		failure = await _check_terrain()
 	if failure.is_empty():
 		failure = _check_widget_rect()
+	if failure.is_empty():
+		failure = _check_indoors()
 	if failure.is_empty():
 		print("SELFCHECK OK")
 		quit(0)
@@ -894,6 +916,210 @@ func _check_widget_rect() -> String:
 	print("widget: %.0f px disc in a %.0f x %.0f rect, clear of its HUD neighbours" \
 		% [map.MAP_RADIUS, map.size.x, map.size.y])
 	return ""
+
+
+func _check_indoors() -> String:
+	"""Check 9 — the indoor caption and the anti-stall arrow (bd godot-test1-kox).
+
+	EVERY ASSERTION IS AN EFFECT with the storey CHOSEN HERE and read back out of the
+	caption, never a re-run of the map's own formula: the check parks the player on
+	storey k and requires the line to say k, so an off-by-one or a floor read off the
+	wrong frame fails rather than agreeing with itself.
+
+	The negative controls are the point of the feature. Outside the building nothing
+	is drawn at all; inside, no bearing is drawn until the stall timer has run; and
+	re-entering a room already visited does NOT restart that timer, which is what
+	stops the arrow from being a compass you can farm by walking through a doorway."""
+	var map: Control = root.get_node_or_null("Main/HUD/MinimapHUD")
+	var player: Node3D = get_first_node_in_group("player")
+	if map == null or player == null:
+		return "no MinimapHUD or no player for the indoor checks"
+
+	# The storeys this check drives, picked off the plans rather than written down:
+	# the first non-maze, non-block storey with two rooms to walk between, and the
+	# first storey of the labyrinth.
+	var office := -1
+	var letters: Array = []
+	var maze := -1
+	var jail := TowerInterior.block_floor()
+	for f: int in TowerPlans.floors():
+		if TowerInterior.is_maze_floor(f):
+			if maze < 0:
+				maze = f
+			continue
+		if f == jail or office >= 0:
+			continue
+		var rooms: Dictionary = TowerPlans.storey(f)["rooms"]
+		if rooms.size() >= 2:
+			office = f
+			letters = rooms.keys()
+			letters.sort()
+	if office < 0 or maze < 0 or jail < 0:
+		return "the plans have no office storey (%d), no labyrinth (%d) or no cell block (%d)" \
+			% [office, maze, jail]
+	var zone_a := _room_cell_local(office, String(letters[0]))
+	var zone_b := _room_cell_local(office, String(letters[1]))
+	var zone_maze := _room_cell_local(maze, String(TowerPlans.storey(maze)["rooms"].keys()[0]))
+	if zone_a == Vector3.INF or zone_b == Vector3.INF or zone_maze == Vector3.INF:
+		return "could not find a room cell to stand in on storey %d / %d" % [office, maze]
+
+	var tower := StubTower.new()
+	tower.add_to_group("tower")
+	root.add_child(tower)
+	var failure := ""
+	while true:  # one pass; every exit is a `break`, so the stub is always freed
+		# 1. OUTSIDE — the negative control, and it is the whole gate on this feature.
+		tower.inside = false
+		_stand_in(tower, player, zone_a)
+		map._tick()
+		if not map._floor_text.is_empty() or not map._jail_text.is_empty() \
+				or map._jail_alpha > 0.0:
+			failure = "outside the HQ the map still shows \"%s\" / \"%s\" (arrow alpha %.2f)" \
+				% [map._floor_text, map._jail_text, map._jail_alpha]
+			break
+
+		# 2. INSIDE, on a known storey. The caption must name THAT storey and the cell
+		#    block's, as the lift numbers them (a FLOOR_Y index plus one).
+		tower.inside = true
+		map._tick()
+		if not map._floor_text.contains(str(office + 1)):
+			failure = "standing on storey %d the map says \"%s\"" % [office + 1, map._floor_text]
+			break
+		if not map._jail_text.contains("F%d" % (jail + 1)):
+			failure = "the jail line \"%s\" never names the block's storey F%d" \
+				% [map._jail_text, jail + 1]
+			break
+		if not map._jail_text.contains("^%d" % (jail - office)):
+			failure = "the jail line \"%s\" is missing the ^%d floor delta" \
+				% [map._jail_text, jail - office]
+			break
+		# 3. NO CONTINUOUS BEARING. This is the design note's central refusal: a live
+		#    arrow ranks the corridors at every junction and solves the building.
+		if map._jail_alpha > 0.0:
+			failure = "an arrow is drawn on arrival (alpha %.2f) — that is a continuous bearing" \
+				% map._jail_alpha
+			break
+
+		# 4. PROGRESS is a FIRST-TIME room or a storey gained, and nothing else.
+		map._tick()
+		if not is_equal_approx(map._stall, map.TICK_INTERVAL):
+			failure = "a second tick in the same room left the stall timer at %.2f s, not %.2f" \
+				% [map._stall, map.TICK_INTERVAL]
+			break
+		_stand_in(tower, player, zone_b)
+		map._tick()
+		if map._stall > 0.0:
+			failure = "walking into a room for the first time did not reset the stall timer (%.2f s)" \
+				% map._stall
+			break
+		_stand_in(tower, player, zone_a)
+		map._tick()
+		if not is_equal_approx(map._stall, map.TICK_INTERVAL):
+			failure = ("walking back into an ALREADY VISITED room reset the stall timer " \
+				+ "(%.2f s) — the arrow can then be farmed by pacing a doorway") % map._stall
+			break
+		# The clock counts SECONDS, not ticks: a slow frame rate ticks the map less
+		# often, and a rescue promised in 90 s must not become one in 150 s on the
+		# machine that most needs it (codex review).
+		map._tick(1.0)
+		if not is_equal_approx(map._stall, map.TICK_INTERVAL + 1.0):
+			failure = "a %.2f s tick advanced the stall clock to %.2f s, not %.2f" \
+				% [1.0, map._stall, map.TICK_INTERVAL + 1.0]
+			break
+
+		# 5. Past the threshold the arrow fades in, on the true bearing to the block.
+		map._stall = map.STALL_SECONDS
+		map._tick()
+		if map._jail_alpha <= 0.0:
+			failure = "no anti-stall arrow after %.0f s without progress" % map.STALL_SECONDS
+			break
+		var target: Vector3 = tower.to_global(
+				(TowerInterior.block_min() + TowerInterior.block_max()) * 0.5)
+		var want := Vector2(target.x - map._player_pos.x, target.z - map._player_pos.z).normalized()
+		var centre: Vector2 = map.MAP_CENTER
+		var tip: Vector2 = map._jail_points[0]
+		var got := (tip - centre).normalized()
+		if want.dot(got) < 0.999:
+			failure = "the anti-stall arrow points %s, not at the cell block (%s)" % [got, want]
+			break
+
+		# 6. THE LABYRINTH degrades the line instead of blanking it, and its arrow
+		#    flickers on a coarse bearing rather than holding a true one.
+		_stand_in(tower, player, zone_maze)
+		map._tick()
+		if not map._floor_text.contains(str(maze + 1)):
+			failure = "in the labyrinth the storey line reads \"%s\"" % map._floor_text
+			break
+		if map._jail_text.contains("F%d" % (jail + 1)):
+			failure = "the labyrinth still holds a lock on the block: \"%s\"" % map._jail_text
+			break
+		if not map._jail_text.contains("^%d" % (jail - maze)):
+			failure = "the degraded line \"%s\" dropped the ^%d floor delta" \
+				% [map._jail_text, jail - maze]
+			break
+		map._stall = map.STALL_SECONDS
+		var lit := 0
+		var dark := 0
+		var coarse := true
+		# One flicker period and a quarter, at TICK_INTERVAL a tick.
+		for _i: int in int(map.MAZE_FLICKER_PERIOD * 1.25 / map.TICK_INTERVAL):
+			map._tick()
+			if map._jail_alpha <= 0.0:
+				dark += 1
+				continue
+			lit += 1
+			var lit_tip: Vector2 = map._jail_points[0]
+			var angle: float = (lit_tip - centre).angle()
+			var over: float = fposmod(angle, map.MAZE_BEARING_STEP)
+			if minf(over, map.MAZE_BEARING_STEP - over) > 0.001:
+				coarse = false
+		if lit == 0 or dark == 0:
+			failure = ("the labyrinth's unstable lock is not unstable: %d ticks lit, %d dark " \
+				+ "— a degraded system that always answers is not degraded") % [lit, dark]
+			break
+		if not coarse:
+			failure = "the labyrinth's bearing is not snapped to %.2f rad" % map.MAZE_BEARING_STEP
+			break
+
+		# 7. Out of the door, everything is forgotten — including the rooms, so the
+		#    next visit starts a fresh timer rather than one that is already expired.
+		tower.inside = false
+		map._tick()
+		if not map._floor_text.is_empty() or not map._jail_text.is_empty() \
+				or map._jail_alpha > 0.0 or map._stall > 0.0 or not map._visited.is_empty():
+			failure = "leaving the HQ left %d rooms and %.1f s of stall behind" \
+				% [map._visited.size(), map._stall]
+		break
+
+	tower.free()
+	map._tick()
+	if not failure.is_empty():
+		return failure
+	print("indoors: storey line + jail intent on storey %d, degraded on %d, arrow anti-stall only" \
+		% [office + 1, maze + 1])
+	return ""
+
+
+func _room_cell_local(floor_index: int, letter: String) -> Vector3:
+	"""One cell of one room, as a point on that storey's walking surface in the
+	interior's own frame — `Vector3.INF` when the room has no cells."""
+	var cells: Array[Vector2i] = TowerInterior._room_cells(
+			TowerPlans.storey(floor_index)["rows"], letter)
+	if cells.is_empty():
+		return Vector3.INF
+	var cell: Vector2i = cells[cells.size() / 2]
+	return Vector3(TowerInterior._grid_x(float(cell.x) + 0.5),
+			TowerInterior.FLOOR_Y[floor_index] + 0.1,
+			TowerInterior._grid_z(float(cell.y) + 0.5))
+
+
+func _stand_in(tower: Node3D, player: Node3D, local: Vector3) -> void:
+	"""Park the stub tower so the (stationary) player stands at `local` inside it.
+
+	Moving the BUILDING rather than the player is what keeps this honest: the player
+	is a live `CharacterBody3D` on a live world and teleporting it up a hundred
+	metres would put it in freefall through everything else the tick reads."""
+	tower.global_position = player.global_position - local
 
 
 func _landmark_is_clamped(map: Control, index: int) -> bool:
