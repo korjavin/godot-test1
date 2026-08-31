@@ -414,6 +414,11 @@ var skill_ranks: Dictionary = {}
 ## Where the counters are kept. See the header for why this is our own instance.
 var store: BestRunStore = null
 
+## What the last accepted `save()` wrote — the change test that keeps an
+## unchanged save off the disk and off the lobby. Empty until the first save, so
+## the first one always goes through; see `save()`.
+var _saved_signature: Array = []
+
 var _message_timer: float = 0.0
 
 
@@ -652,12 +657,28 @@ func coins_to_next_level() -> int:
 
 func save() -> void:
 	"""
-	Persist the counters (local layer first, then the lobby). Called on a level-up
-	and from `player_controller._trigger_game_over()`, so coins banked below the
-	next threshold survive the run that earned them.
+	Persist the counters (local layer first, then the lobby). Called on a level-up,
+	on a skill point spent, and from `player_controller._bank_records()` — which
+	since bead godot-test1-0bc runs on EVERY BITE, not once at an ending, so coins
+	banked below the next level threshold survive the run that earned them.
+
+	A SAVE WHOSE COUNTERS HAVE NOT MOVED IS DROPPED, and that guard lives here
+	rather than at the bite because every caller routes through this one function.
+	`submit_progression()` is a `ConfigFile`/`localStorage` read-modify-write plus a
+	lobby POST with no change detection of its own; a player caught repeatedly by a
+	pack pays a bite every few seconds, and re-writing an unchanged total on each
+	one is disk and network traffic carrying no information — on the web build,
+	landing on exactly the frame the caught freeze hands back control. Monotone
+	merges make a dropped no-op save free: the values on the other end are already
+	these ones.
 	"""
-	if store:
-		store.submit_progression(lifetime_coins, spent_points, skill_ranks)
+	if not store:
+		return
+	var signature: Array = [lifetime_coins, spent_points, skill_ranks.hash()]
+	if signature == _saved_signature:
+		return
+	_saved_signature = signature
+	store.submit_progression(lifetime_coins, spent_points, skill_ranks)
 
 
 static func level_coin_threshold(target_level: int) -> int:

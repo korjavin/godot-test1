@@ -356,6 +356,15 @@ var best_distance: int = 0
 var best_coins: int = 0
 var best_run_store: BestRunStore = null
 
+## Did THIS run move the distance record? A LATCH, not a comparison, because
+## `_bank_records()` now runs on every bite (bead godot-test1-0bc) and raises
+## `best_distance` to `own_distance` as it goes — so by the time the ending
+## panel asks, `own_distance > best_distance` is false on the very runs that
+## earned the flash. The fact is recorded where it is still true and read at the
+## ending; `reset_position()` (the hard-reset wipe list that owns `own_distance`)
+## clears it.
+var run_beat_record: bool = false
+
 ## "Caught" sequence: when a crocodile bites the player we freeze briefly (so the
 ## bite is actually visible), flash the screen red and shake the camera, then
 ## respawn. These track that short window.
@@ -3451,11 +3460,17 @@ func _trigger_game_over() -> void:
 	# Game-over sting.
 	_sfx("play_game_over")
 
-	var is_new_best := _bank_records()
+	# Bank once more (idempotent) and then read the LATCH, not this call's return:
+	# the grab that emptied the roster already banked this leg, so a fresh
+	# `own_distance > best_distance` is false on exactly the record runs the flash
+	# exists for.
+	_bank_records()
 
 	var panel := get_tree().get_first_node_in_group("game_over_ui")
 	if panel and panel.has_method("show_game_over"):
-		panel.show_game_over(coins_collected, run_distance, best_distance, best_coins, is_new_best)
+		panel.show_game_over(
+			coins_collected, run_distance, best_distance, best_coins, run_beat_record
+		)
 	print("Game over! Distance: %dm, final coins: %d" % [run_distance, coins_collected])
 
 
@@ -3464,8 +3479,10 @@ func _bank_records() -> bool:
 	Write this leg's records out. Idempotent, so it may be called as often as we
 	like.
 
-	@return: true if the DISTANCE record moved, which is what the "NEW BEST!" flash
-	    on the ending panel reads.
+	@return: true if the DISTANCE record moved ON THIS CALL. The "NEW BEST!" flash
+	    reads the `run_beat_record` LATCH this also sets, never a fresh comparison:
+	    a bite banks, so `best_distance` already equals `own_distance` by the time
+	    the ending asks.
 
 	CALLED ON EVERY CONTACT, NOT ONLY AT THE ENDING (bead godot-test1-0bc). While
 	hearts existed the third bite ended the run, and `_trigger_game_over()` banking
@@ -3491,6 +3508,7 @@ func _bank_records() -> bool:
 	# coin record updates on its own max independently (see the comment block
 	# above best_distance).
 	var is_new_best := own_distance > best_distance
+	run_beat_record = run_beat_record or is_new_best
 	if is_new_best or own_coins > best_coins:
 		best_distance = maxi(best_distance, own_distance)
 		best_coins = maxi(best_coins, own_coins)
@@ -3500,6 +3518,9 @@ func _bank_records() -> bool:
 	# Meta-progression banks itself on every level-up, so this only catches the
 	# coins picked up SINCE the last one — the partial progress toward the next
 	# level, which is exactly what a player would notice missing on the next boot.
+	# `Progression.save()` drops a save whose counters have not moved, which is
+	# what keeps a bite off the disk and off the lobby when nothing changed — a
+	# bite is a per-contact path now, not the once-a-run ending it used to be.
 	var progression := get_tree().get_first_node_in_group("progression")
 	if progression and progression.has_method("save"):
 		progression.save()
@@ -3687,6 +3708,7 @@ func reset_position() -> void:
 	run_distance = 0
 	own_distance = 0
 	own_distance_origin = Vector2.ZERO  # ... back to the origin spawn it teleports to.
+	run_beat_record = false  # ... and the new run has not beaten anything yet.
 	coin_streak = 0
 	streak_timer = 0.0
 

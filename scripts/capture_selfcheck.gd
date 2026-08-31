@@ -1035,6 +1035,21 @@ func _check_a_guard_takes_coins_and_ground() -> void:
 			% [player_c.best_distance, SETBACK_PROBE_COINS]
 			+ " run no longer ENDS at a bite, so banking only at game over leaves a"
 			+ " whole session unwritten to best_run.cfg, localStorage and the lobby")
+	# ...and the FLASH survives its own banking. The bite above raised
+	# best_distance to own_distance, so the ending panel re-deriving
+	# `own_distance > best_distance` reads false on exactly the runs that earned
+	# "NEW BEST!". The latch is what it reads instead; the second call here is the
+	# negative control — it must report no fresh record while the latch holds.
+	if not player_c.run_beat_record:
+		_fail("a record-setting bite left run_beat_record false — the ending's"
+			+ " NEW BEST flash reads the latch, so this is the flash going dark")
+	if player_c.call("_bank_records"):
+		_fail("banking twice reported a SECOND fresh record — best_distance was"
+			+ " already raised to own_distance, so this assertion is measuring"
+			+ " nothing and the latch above is untested")
+	if not player_c.run_beat_record:
+		_fail("a repeat bank cleared run_beat_record — the latch is per RUN, and"
+			+ " only reset_position() may clear it")
 	_clear(player_c)
 	field_shell.queue_free()
 	await process_frame

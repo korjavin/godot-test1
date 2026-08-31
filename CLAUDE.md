@@ -786,8 +786,19 @@ Every other contact is a TAX, never an ending: `hit_by_crocodile()` → freeze/f
 `_on_caught_finished()` → `_pay_coin_setback()` bills the attacker's own
 `SPECIES["coin_setback"]` fraction off the RUN's coins (a spec-less attacker — the rotor
 bar, a boss projectile — pays `DEFAULT_COIN_SETBACK`) → **soft respawn in place** (frozen
-grace, then invulnerable blinking). **Lifetime coins are never deducted**, so
-`progression.gd` and `best_run_store.gd` are untouched by a death.
+grace, then invulnerable blinking). **Lifetime coins are never deducted** — the bill comes
+off the RUN's coins alone.
+
+**A BITE IS WHERE A LEG IS BANKED**, though, so a death is not store-free:
+`_on_caught_finished()` calls `_bank_records()`. With no hearts most runs never reach an
+ending, and banking only at `_trigger_game_over()` would leave a whole session unwritten.
+It is idempotent and every field is monotone, so repeating it is free — and both writers
+below it are CHANGE-GATED, because a bite is a per-contact path and the stores are a disk
+write plus a lobby POST: `best_run_store.submit()` only when a record moved,
+`Progression.save()` dropping a save whose counters have not. The "NEW BEST!" flash
+therefore reads the `run_beat_record` LATCH and never a fresh
+`own_distance > best_distance` — the bite already raised the record it would compare
+against.
 
 `_pay_coin_setback()` also RELOCATES you, but only while you are STANDING INSIDE the
 tower's walls: it asks the `tower_interior` group for `setback_point()` behind
