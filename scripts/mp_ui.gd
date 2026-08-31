@@ -73,8 +73,8 @@ extends Control
 # ============================================================================
 
 ## The always-visible "MP" toggle button. Bottom-LEFT is the corner the plan
-## picked because the rest of the HUD is spoken for: lives hearts + perf overlay
-## own the top-left column, coins + the ability dial the top-right, the view /
+## picked because the rest of the HUD is spoken for: the hero portrait row + perf
+## overlay own the top-left column, coins + the ability dial the top-right, the view /
 ## steer toggles the top-centre, and the Jump/Special/Switch cluster the
 ## bottom-right. `mobile_settings_panel.gd`'s ⚙ Tune gear also lives
 ## bottom-left, so this button is stacked ABOVE it (see `_build_ui`) rather

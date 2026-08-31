@@ -1,5 +1,6 @@
 extends Control
-## Hero portrait HUD — the Commandos-style squad row under the hearts.
+## Hero portrait HUD — the Commandos-style squad row, and since bead
+## godot-test1-0bc the HUD's only death display: the heroes ARE the lives.
 ##
 ## Four tiles, one per `PlayerController.CHARACTERS` entry, in that array's order,
 ## each carrying its 1-4 hotkey digit. The tile says, at a glance, WHO YOU ARE and
@@ -23,8 +24,9 @@ extends Control
 ## the player through the "player" group, re-fetching when the reference goes stale,
 ## and mirrors state read off the player every frame (there is no capture signal to
 ## subscribe to, and inventing one would put a second roster system in the game).
-## It repaints only when what it would draw actually changed, the `lives_hud.gd`
-## idiom, so the common case costs one integer comparison a frame and no `_draw`.
+## It repaints only when what it would draw actually changed — the HUD widget
+## idiom in this project — so the common case costs one integer comparison a
+## frame and no `_draw`.
 ##
 ## It is READ-ONLY: no input handling, `MOUSE_FILTER_IGNORE`, and the capture and
 ## liberation paths in `player_controller` need no edit at all — the HUD reads the
@@ -116,7 +118,7 @@ func _process(_delta: float) -> void:
 
 	var heroes := _read_roster()
 	var states := _read_states(heroes)
-	# Repaint only on change (lives_hud idiom) — `_draw` is comparatively
+	# Repaint only on change (the HUD widget idiom) — `_draw` is comparatively
 	# expensive and the roster is unchanged on almost every frame of a run.
 	if heroes == _heroes and states == _states:
 		return

@@ -35,7 +35,8 @@ func _ready() -> void:
 
 	_build_ui()
 
-	# Hidden until the player runs out of lives.
+	# Hidden until a run actually ends: the full-custody protocol's failure, or
+	# `_trigger_game_over()`. Nothing else raises this screen.
 	visible = false
 
 

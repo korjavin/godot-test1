@@ -5,7 +5,7 @@ extends Control
 ## is answered without opening the map.
 ##
 ## Drawn entirely in `_draw()` with no texture assets, exactly like
-## `minimap_hud.gd`, `ability_hud.gd` and `lives_hud.gd` — this project ships a web
+## `minimap_hud.gd`, `ability_hud.gd` and `hero_hud.gd` — this project ships a web
 ## build where every KB and every draw call is budgeted, so the HUD is code-built
 ## rectangles and lines.
 ##

@@ -37,9 +37,12 @@ extends SceneTree
 ##      "a teammate has him" reading as HELD rather than as free.
 ##   4. **THE STANDALONE DEGRADE**: no player in the group -> an empty row.
 ##   5. **THE ROW FITS ITS CONTROL AND CLEARS ITS NEIGHBOURS** in `main.tscn` —
-##      four tiles need 210 px, and the hearts and the F3 overlay have to stay out
-##      of the band. The overlay moving is part of this bead, so an edit that puts
-##      it back on top of the row gets caught here.
+##      four tiles need 210 px, and no other top-left-anchored HUD widget may sit
+##      in the band. The neighbours are ENUMERATED OUT OF THE SCENE (every
+##      `parent="HUD"` block at `anchors_preset = 0`) rather than named here, so
+##      the row is measured against whatever the HUD actually carries — which is
+##      what kept this check alive when the hearts widget it used to name was
+##      deleted, and what will catch the next widget dropped into that corner.
 ##
 ##      IT MOVED SIDEWAYS AND NOT DOWN, which is worth knowing before you "fix" it:
 ##      `PerfOverlay` is a Label whose real height is its TEXT's minimum size (316
@@ -239,10 +242,9 @@ func _check_the_row_fits_and_clears_its_neighbours() -> void:
 		_fail("could not read %s" % MAIN_SCENE_PATH)
 		return
 	var hero_rect: Variant = _node_rect(text, "HeroHUD")
-	var lives_rect: Variant = _node_rect(text, "LivesHUD")
 	var perf_rect: Variant = _node_rect(text, "PerfOverlay")
-	if hero_rect == null or lives_rect == null or perf_rect == null:
-		_fail("HeroHUD / LivesHUD / PerfOverlay not all found in %s" % MAIN_SCENE_PATH)
+	if hero_rect == null or perf_rect == null:
+		_fail("HeroHUD / PerfOverlay not both found in %s" % MAIN_SCENE_PATH)
 		return
 
 	var count: int = _hero_names().size()
@@ -253,11 +255,47 @@ func _check_the_row_fits_and_clears_its_neighbours() -> void:
 			% [(hero_rect as Rect2).size.x, count, needed])
 	_check((hero_rect as Rect2).size.y >= float(HUD_SCRIPT.TILE_SIZE),
 		"HeroHUD is shorter than one tile")
-	_check(not (hero_rect as Rect2).intersects(lives_rect as Rect2),
-		"the portrait row overlaps the hearts")
+	_check((hero_rect as Rect2).position.x >= 0.0
+			and (hero_rect as Rect2).position.y >= 0.0,
+		"the portrait row starts off the top/left edge of the screen")
 	_check(not (hero_rect as Rect2).intersects(perf_rect as Rect2),
 		"the portrait row overlaps the F3 perf overlay — move the overlay clear of it "
 		+ "(sideways: pushing it DOWN walks its text into the minimap)")
+	# Every OTHER widget pinned to the same corner, read out of the scene rather
+	# than listed here: the row's neighbours are whatever `main.tscn` ships.
+	var neighbours := _hud_absolute_rects(text)
+	for other_name: String in neighbours:
+		if other_name == "HeroHUD":
+			continue
+		_check(not (hero_rect as Rect2).intersects(neighbours[other_name] as Rect2),
+			"the portrait row overlaps %s (%s vs %s)"
+				% [other_name, hero_rect, neighbours[other_name]])
+	_check(neighbours.size() >= 2,
+		"found only %d absolutely-positioned HUD widget(s) — the neighbour scan "
+			% neighbours.size()
+		+ "stopped seeing the scene, so this check would pass on anything")
+
+
+func _hud_absolute_rects(text: String) -> Dictionary:
+	"""
+	Every `parent="HUD"` node laid out in absolute offsets (`anchors_preset = 0`),
+	as name -> Rect2. An anchored widget (the minimap, the ability dial) is skipped
+	because its offsets are relative to an anchor and cannot be compared against
+	the row's corner rect without instancing the scene.
+	"""
+	var out := {}
+	var re := RegEx.create_from_string('\\[node name="([^"]+)" type="[^"]+" parent="HUD"\\]')
+	for m: RegExMatch in re.search_all(text):
+		var node_name: String = m.get_string(1)
+		var start: int = m.get_start()
+		var end := text.find("\n[node ", start + 1)
+		var block := text.substr(start, -1 if end < 0 else end - start)
+		if not block.contains("anchors_preset = 0"):
+			continue
+		var rect: Variant = _node_rect(text, node_name)
+		if rect != null:
+			out[node_name] = rect
+	return out
 
 
 func _node_rect(text: String, node_name: String) -> Variant:

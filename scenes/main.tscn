@@ -1,4 +1,4 @@
-[gd_scene load_steps=34 format=3 uid="uid://clqb4rcmjrpgs"]
+[gd_scene load_steps=33 format=3 uid="uid://clqb4rcmjrpgs"]
 
 [ext_resource type="PackedScene" uid="uid://bqtq2xtxqnvvr" path="res://scenes/player.tscn" id="1_main"]
 [ext_resource type="Script" uid="uid://b07rwceo0eo4o" path="res://scripts/endless_terrain.gd" id="2_terrain"]
@@ -7,7 +7,6 @@
 [ext_resource type="Script" path="res://scripts/perf_overlay.gd" id="5_perf"]
 [ext_resource type="Script" path="res://scripts/crocodile_lod_manager.gd" id="6_lod"]
 [ext_resource type="Script" path="res://scripts/ability_hud.gd" id="7_ability"]
-[ext_resource type="Script" path="res://scripts/lives_hud.gd" id="8_lives"]
 [ext_resource type="Script" path="res://scripts/game_over_ui.gd" id="9_gameover"]
 [ext_resource type="Script" uid="uid://b84u622g7v4en" path="res://scripts/motion_debug.gd" id="10_motion"]
 [ext_resource type="Script" uid="uid://bdapps0prr7es" path="res://scripts/mobile_input.gd" id="11_mobileinput"]
@@ -167,15 +166,6 @@ offset_bottom = 270.0
 grow_horizontal = 0
 mouse_filter = 2
 script = ExtResource("7_ability")
-
-[node name="LivesHUD" type="Control" parent="HUD"]
-anchors_preset = 0
-offset_left = 16.0
-offset_top = 16.0
-offset_right = 160.0
-offset_bottom = 64.0
-mouse_filter = 2
-script = ExtResource("8_lives")
 
 [node name="HeroHUD" type="Control" parent="HUD"]
 anchors_preset = 0

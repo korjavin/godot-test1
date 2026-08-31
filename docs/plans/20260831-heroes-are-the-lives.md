@@ -388,12 +388,24 @@ section above, including the new "no `lives` member exists" check.
 
 ### Task 6: HUD, UI strings and docs
 
-- [ ] delete `lives_hud.gd` (+ `.uid`) and its two blocks in `scenes/main.tscn`
-- [ ] rework `hero_hud_selfcheck`'s fit assertion (it measured against the hearts)
-- [ ] fix the stale comments in `hero_hud.gd`, `game_over_ui.gd`, `mp_ui.gd`
-- [ ] audit `help_overlay.gd` and `assets/translations/ui.csv`
-- [ ] rewrite CLAUDE.md's death section and every other site the Addendum names
-- [ ] `locale_selfcheck`, `help_selfcheck`, `hero_hud_selfcheck`, `minimap_selfcheck`, `pause_selfcheck`, `view_selfcheck` all print `SELFCHECK OK`
+- [x] delete `lives_hud.gd` (+ `.uid`) and its two blocks in `scenes/main.tscn`
+      (`load_steps` 34 → 33 with the `ext_resource`)
+- [x] rework `hero_hud_selfcheck`'s fit assertion (it measured against the hearts) —
+      it now ENUMERATES the neighbours out of the scene (every `parent="HUD"` block at
+      `anchors_preset = 0`) instead of naming them, so the next widget dropped into
+      that corner is covered and a deleted one cannot silently retire the check; plus
+      an on-screen assertion and a "the scan still sees the scene" floor
+- [x] fix the stale comments in `hero_hud.gd`, `game_over_ui.gd`, `mp_ui.gd`
+      (and the same "lives hearts own the top-left column" prose in
+      `mobile_settings_panel.gd`, `minimap_hud.gd`, `teammate_locator.gd`, plus the
+      dead `LivesHUD` entry in `minimap_selfcheck`'s neighbour list)
+- [x] audit `help_overlay.gd` and `assets/translations/ui.csv` — **no lives/hearts row
+      in either**, so no `ui.csv` edit and no new translation keys in this bead
+- [x] rewrite CLAUDE.md's death section and every other site the Addendum names
+      (death section, Systemic capture ×2, Gameplay loop, MP mesh bullet, the tower
+      guard's stake, the Crocodiles "third stake" sentence + `coin_setback` as a row
+      key, and both Commands-block headers)
+- [x] `locale_selfcheck`, `help_selfcheck`, `hero_hud_selfcheck`, `minimap_selfcheck`, `pause_selfcheck`, `view_selfcheck` all print `SELFCHECK OK`
 Delete `lives_hud.gd` (+ `.uid`) and its two blocks in `scenes/main.tscn`; fix the
 stale comments in `hero_hud.gd`, `game_over_ui.gd`, `mp_ui.gd`; audit
 `help_overlay.gd` and `assets/translations/ui.csv`; rewrite CLAUDE.md's death section
