@@ -144,6 +144,16 @@ const WIDTH_BUDGETS: Array = [
 	# The card title is one non-wrapping line across CARD_WIDTH 640 less the
 	# 18 px content margin each side and the ScrollContainer's own 36 px.
 	["%s — Level %d,  %d points", 22, 604.0, "skill tree card title"],
+	# minimap_hud.gd — the two INDOOR caption fragments (bead godot-test1-kox).
+	# They are appended to the caption's two existing lines, which are centred
+	# across the widget's own 202 px (MAP_CENTER.x * 2) at TEXT_SIZE 15 and do NOT
+	# clip — a German string that outgrew the line would wrap under the disc and
+	# push the map's own text off its neighbours. 80 px each leaves room for the
+	# "X 412   Z -37" / biome name the fragment is composed onto, the three-space
+	# joiner, and the jail line's trailing "  ^4" chevron.
+	["Floor %d", 15, 80.0, "minimap storey line"],
+	["JAIL F%d", 15, 80.0, "minimap jail intent"],
+	["NO LOCK", 15, 80.0, "minimap jail intent, jammed in the labyrinth"],
 ]
 
 var _failures: Array[String] = []
