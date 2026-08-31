@@ -358,10 +358,29 @@ type-checking every remaining field.
 
 ### Task 5: rewrite the self-checks
 
-- [ ] rewrite `capture_selfcheck.gd`'s heart assertions (incl. the new "no `lives` member" check)
-- [ ] rewrite `mp_selfcheck.gd`'s shared-lives rows into the old-peer tolerance check
-- [ ] reword `tower_interior_selfcheck.gd` ~2994
-- [ ] `capture_selfcheck`, `mp_selfcheck` and all four tower self-checks print `SELFCHECK OK`
+- [x] rewrite `capture_selfcheck.gd`'s heart assertions (incl. the new "no `lives` member" check — check 17)
+- [x] rewrite `mp_selfcheck.gd`'s shared-lives rows into the old-peer tolerance check
+      (check 8 is now `_check_retired_heart_keys_are_tolerated`; the room-lives
+      ordering check is deleted with the machine it measured)
+- [x] reword `tower_interior_selfcheck.gd` ~2994
+- [x] `capture_selfcheck`, `mp_selfcheck` and all four tower self-checks print `SELFCHECK OK`
+
+Two findings worth carrying into the remaining tasks:
+
+- **The checkpoint knockback is the BUILDING's, not the guard's row.**
+  `_pay_coin_setback()` relocates whenever the `tower_interior` group answers,
+  whoever bit you — so since Task 2 a crocodile, the rotor bar and the press all
+  knock you to the plate INSIDE the HQ, and nothing relocates in the field. That is
+  coherent (the tower is a checkpointed level; `_respawn_in_place()` would send an
+  indoor death to the room's group anchor outdoors) and it is what check 11 now
+  measures, with a field control and an indoor control. Task 6/7's CLAUDE.md prose
+  should say "inside the building" rather than "the guard", which is stronger than
+  the Addendum's wording.
+- `tower_interior_selfcheck`'s check 14 needed a staging fix, not a prose one: its
+  probe stands on storey 9 inside the rotor bar's arc, and once every hit billed
+  coins the staging bite teleported the quarry to the doorway plate before the
+  leash was ever loaded. The probe now clears the staging bite and holds the
+  shipped blink i-frames for its 8 s.
 `capture_selfcheck.gd`, `mp_selfcheck.gd`, `tower_interior_selfcheck.gd` per the
 section above, including the new "no `lives` member exists" check.
 **Verify:** `capture_selfcheck`, `mp_selfcheck` and all four tower self-checks print

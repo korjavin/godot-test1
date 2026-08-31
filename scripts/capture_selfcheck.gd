@@ -47,8 +47,10 @@ extends SceneTree
 ##      of the grab carries no transient ability state — the bead's landmine.
 ##   5. **LIBERATION RESTORES THE INDEX.** `hero_freed()` is the cell block's seam
 ##      and it must put the hero straight back in the cycle, idempotently.
-##   6. **THE LAST FREE HERO ENDS THE RUN**, with hearts still in hand — game over
-##      is "nobody left to play", not only "no lives left".
+##   6. **THE LAST FREE HERO ENDS THE RUN**, and since bead godot-test1-0bc it is
+##      the ONLY thing that does: hearts are gone, so "nobody left to play" is the
+##      whole of the game's failure state and every other contact is a coin bill.
+##      Check 17 pins the absence itself, so a reintroduced `lives` fails loudly.
 ##   7. **THE SET STAYS OUT OF THE MONOTONE STORE.** A capture must not write the
 ##      profile's tower set: that set is a UNION that can only grow, and a captive
 ##      folded into it could never be freed.
@@ -66,6 +68,10 @@ extends SceneTree
 ##      a free lift past every gate `tower_selfcheck`'s softlock audit models. With
 ##      its negative control: out in the annulus, where 11 m of air stands over
 ##      him, the same press goes through.
+##  17. **THERE IS NO SECOND WAY TO LOSE** (bead godot-test1-0bc). The player
+##      declares no `lives` / `MAX_LIVES` / `EXTRA_LIFE_COINS` member at all, so a
+##      reintroduced heart model fails here on the day it is typed rather than on
+##      the day something starts spending it.
 ##  13-16. **THE FULL-CUSTODY PROTOCOL** (bead godot-test1-3iy.11), which is what
 ##      the empty-roster branch now opens instead of a screen: the scene opens and
 ##      is playable, surviving it takes exactly one AUTHORED scar, losing it
@@ -210,15 +216,10 @@ class RoomStub extends Node:
 		flees.append([origin, duration, radius, tracks_player])
 		return true
 
-	## The one shared-total query `_check_shared_game_over()` gates on. `null` is
-	## the real manager's "no room" answer and is the default here, so every check
-	## that does not set it keeps solo semantics — deliberately NOT `shared_bank`,
-	## which would put `_refresh_shared_totals()` in charge of `lives` and overwrite
-	## the very number these checks set by hand.
-	var shared_spent: Variant = null
-
-	func shared_lives_spent(_own: int) -> Variant:
-		return shared_spent
+	## NO SHARED-TOTAL STUB LIVES HERE ANY MORE. It used to answer
+	## `shared_lives_spent()` for `_check_shared_game_over()`, and both went with the
+	## hearts in bead godot-test1-0bc: a room's only shared death state is the
+	## room-wide captive set, which the `cap` verb below already carries.
 
 
 ## A terrain that answers exactly one question: where the building stands. The
@@ -252,7 +253,7 @@ func _run() -> void:
 	await _check_a_tower_streamed_in_later_holds_him()
 	await _check_capture_respects_the_rooms_hand()
 	await _check_the_ai_says_who_bit()
-	await _check_a_guard_takes_coins_and_ground_not_a_heart()
+	await _check_a_guard_takes_coins_and_ground()
 	await _check_the_sweep_spares_a_guard()
 	await _check_the_protocol_opens_and_can_be_played()
 	await _check_the_break_out_scars_the_world()
@@ -262,6 +263,7 @@ func _run() -> void:
 	await _check_the_scene_does_not_leak()
 	await _check_resize_is_not_a_lift()
 	await _check_air_sight_is_the_indoor_air_rush()
+	await _check_no_second_way_to_lose()
 	_report()
 
 
@@ -472,21 +474,23 @@ func _check_liberation_restores_the_index() -> void:
 
 func _check_the_last_free_hero_ends_the_run() -> void:
 	"""
-	An empty free-hero set ENDS FIELD PLAY with hearts still in hand.
+	An empty free-hero set is THE ONLY THING THAT ENDS FIELD PLAY.
 
-	The hearts are the point. Game over on lives already existed, so a check that
-	drained the roster and the hearts together would pass on a build with no
-	capture trigger at all; here the player keeps most of its hearts and field play
-	stops anyway, which only the free-set clause can do.
+	Since bead godot-test1-0bc there is no second ending to confuse this with:
+	hearts are gone, and every contact that used to spend one now pays the
+	attacker's `coin_setback` and respawns. So the clause measured here is not one
+	ending among two any more — it is the whole of the game's failure state, and a
+	build that lost it would be a game nobody can lose.
 
-	SINCE BEAD godot-test1-3iy.11 THAT CLAUSE OPENS THE FULL-CUSTODY PROTOCOL rather
-	than the Game Over screen — the one line this check had to move with. What is
-	measured here is still the CLAUSE (it fired, on hearts it did not need); what
-	the scene then does is checks 13-16.
+	THAT CLAUSE OPENS THE FULL-CUSTODY PROTOCOL rather than the Game Over screen
+	(bead godot-test1-3iy.11). What is measured here is the CLAUSE; what the scene
+	then does is checks 13-16.
 
-	And the negative control on the same path — three of four heroes held, hearts
-	in hand — must leave the run alone entirely, or "the clause fired" would only
-	mean "something happened".
+	Two things make it a measurement rather than a coincidence, and both are asked
+	below: the run's coins are DELIBERATELY LEFT FAT before the grab, so nothing
+	about the bank can be what stopped play; and the negative control — three of
+	four heroes held — must leave the run alone entirely, or "the clause fired"
+	would only mean "something happened".
 	"""
 	_beat_done()
 	var player := await _make_player()
@@ -494,14 +498,19 @@ func _check_the_last_free_hero_ends_the_run() -> void:
 	for hero: String in TowerGraph.HEROES:
 		if hero != last_one:
 			player.captive_heroes[hero] = true
+	# Coins the setback cannot exhaust: the only reason field play may stop here is
+	# the empty roster.
+	player.coins_collected = 1000
+	player.own_coins = 1000
 	player.hit_by_crocodile(_hunter())
 	player.is_caught = false
 	player.call("_on_caught_finished")
-	if player.lives <= 0:
-		_fail("the roster ran out but so did the hearts — this check would prove nothing")
+	if player.coins_collected <= 0:
+		_fail("the probe's bank was emptied by the setback, so a coin clause could be"
+			+ " what stopped play — this check would prove nothing")
 	if not player.in_custody_protocol():
-		_fail("the last free hero was captured with %d hearts left and field play went on"
-			% player.lives)
+		_fail("the last free hero was captured with %d coins in hand and field play went on"
+			% player.coins_collected)
 	_clear(player)
 
 	# Negative control: one hero left free, and the run goes on.
@@ -513,8 +522,7 @@ func _check_the_last_free_hero_ends_the_run() -> void:
 	player.is_caught = false
 	player.call("_on_caught_finished")
 	if player.is_game_over or player.in_custody_protocol():
-		_fail("the run ended with %s still free and %d hearts left"
-			% [free_one, player.lives])
+		_fail("the run ended with %s still free" % free_one)
 	_clear(player)
 
 
@@ -676,8 +684,6 @@ func _check_capture_respects_the_rooms_hand() -> void:
 		_fail("free_character_indices() should still list the three heroes the room gave away")
 	player.is_caught = false
 	player.call("_on_caught_finished")
-	if player.lives <= 0:
-		_fail("the room case ran out of hearts, so it proves nothing")
 	if player.in_custody_protocol():
 		_fail(("an emptied HAND opened the full-custody protocol while %d heroes are still "
 			+ "free in the room — game over is world-level (bead godot-test1-3iy.10)")
@@ -694,8 +700,6 @@ func _check_capture_respects_the_rooms_hand() -> void:
 		_fail("the positive control did not empty the roster, so it proves nothing")
 	player.is_caught = false
 	player.call("_on_caught_finished")
-	if player.lives <= 0:
-		_fail("the positive control ran out of hearts, so it proves nothing")
 	if not player.in_custody_protocol():
 		_fail("the room ran out of heroes entirely and field play went on")
 	# The scene is left running and the player is freed under it. Deliberately NOT
@@ -848,50 +852,64 @@ func _check_the_ai_says_who_bit() -> void:
 
 
 # ============================================================================
-# 11. THE THIRD STAKE — a tower guard takes coins and ground, never a heart
+# 11. THE GUARD'S STAKE — coins like everybody, and the GROUND, which is his alone
 # ============================================================================
 
-## What this check starts the player with. Round enough that the expected loss is
-## exact at 7% (200 -> 14) and big enough that an off-by-one in the arithmetic is
-## visible rather than lost in a rounding argument.
+## What this check starts the player with. Round enough that both expected losses
+## are exact (7% of 200 -> 14 for the guard, 10% -> 20 for the crocodile control)
+## and big enough that an off-by-one in the arithmetic is visible rather than lost
+## in a rounding argument.
 const SETBACK_PROBE_COINS: int = 200
+## The control's row. An ordinary field predator, on the ordinary path, with a
+## `coin_setback` of its own — which since bead godot-test1-0bc is every row in the
+## table, and is the reason this check's control had to be rewritten.
+const CONTROL_SPECIES: String = "crocodile"
 
-func _check_a_guard_takes_coins_and_ground_not_a_heart() -> void:
+func _check_a_guard_takes_coins_and_ground() -> void:
 	"""
 	The tower's own stake, and the ruling it enforces: the building may NEVER end a
 	run (owner, 2026-08-27).
 
-	THE HEARTS ARE THE POINT, exactly as they are in check 6 one direction over.
-	The probe goes in with ONE heart and capture ARMED — the two states in which
-	every other contact in this game is fatal — and comes out still standing, with
-	the heart, the roster and the run all intact and a slice of the bank gone
-	instead. A build where a guard fell through to the ordinary predator path would
-	show a dead player here; a build where the setback also spent a heart would show
-	a game over.
+	WHAT MAKES A GUARD DIFFERENT IS THE GROUND, AND SINCE BEAD godot-test1-0bc IT IS
+	THE ONLY THING. Hearts are gone and every predator in the table bills coins now,
+	so "he took coins instead of a life" no longer names a difference.
 
-	FOUR THINGS ARE MEASURED AND ALL FOUR ARE SEPARATE FAILURES:
+	AND THE GROUND BELONGS TO THE BUILDING, NOT TO HIS ROW — which is worth saying
+	out loud, because it is easy to read `coin_setback` as the thing that buys the
+	knockback and it is not. `_pay_coin_setback()` asks the `tower_interior` group
+	for a `setback_point()` and takes it if one answers, whoever bit you: the rotor
+	bar, the press, a crocodile that followed you through the doorway. In the FIELD
+	nothing answers and nothing relocates. So the tower is a checkpointed level and
+	the field is not, with no branch anywhere deciding it — and the two controls
+	below measure exactly that pair, an animal in the field that is left standing
+	where it fell, and the same animal INSIDE the building that is knocked back to
+	the plate like everybody else.
+
+	FOUR THINGS ARE MEASURED ON THE GUARD AND ALL FOUR ARE SEPARATE FAILURES:
 
 	  * the coins: exactly `floor(own_coins x coin_setback)`, off BOTH the displayed
 	    figure and this peer's own contribution, read from the ROW rather than from
 	    a 0.07 typed in here — retune the row and this check retunes with it;
-	  * the heart: unspent, and no game over, with the run's last heart in hand;
+	  * the run: no game over, which is the ruling itself. It is a weaker claim than
+	    it once was (nothing ends a run but the empty roster now) and it is kept
+	    because it is free and it is the sentence the owner wrote;
 	  * the hero: untaken, WITH CAPTURE ARMED, which is the "guards never capture"
 	    half of the ruling;
 	  * the ground: the body is standing on the last checkpoint it lit — and on the
 	    doorway instead when it has lit none, which is the other branch of
 	    `setback_point()` and would otherwise never be executed by anything.
 
-	And the crocodile control on the same path, because every one of those
+	And the crocodile controls on the same path, because every one of those
 	assertions is also true of a build where `hit_by_crocodile` stopped working
 	altogether.
 	"""
 	_beat_done()
-	var row: Dictionary = load(CROC_SCRIPT).get_script_constant_map() \
-			.get("SPECIES", {}).get(GUARD_SPECIES, {})
+	var species: Dictionary = load(CROC_SCRIPT).get_script_constant_map().get("SPECIES", {})
+	var row: Dictionary = species.get(GUARD_SPECIES, {})
 	var fraction: float = float(row.get("coin_setback", 0.0))
 	if fraction <= 0.0:
-		_fail("SPECIES['%s'] carries no coin_setback — the third stake has no" % GUARD_SPECIES
-				+ " arithmetic, so a guard would take a heart like any animal")
+		_fail("SPECIES['%s'] carries no coin_setback — the guard has no" % GUARD_SPECIES
+				+ " arithmetic, so his hit would be free")
 		return
 	var expected_loss: int = int(floor(float(SETBACK_PROBE_COINS) * fraction))
 	if expected_loss <= 0:
@@ -918,16 +936,12 @@ func _check_a_guard_takes_coins_and_ground_not_a_heart() -> void:
 		var player := await _make_player()
 		player.coins_collected = SETBACK_PROBE_COINS
 		player.own_coins = SETBACK_PROBE_COINS
-		player.lives = 1
 		var hero: String = player.hero_name()
 
 		player.hit_by_crocodile(_attacker_row(GUARD_SPECIES))
 		player.is_caught = false
 		player.call("_on_caught_finished")
 
-		if player.lives != 1:
-			_fail("a guard's hit spent a heart (%d left) — the building can end a run"
-				% player.lives)
 		if player.is_game_over:
 			_fail("a guard's hit ended the run — the tower is not allowed to game-over"
 					+ " the player mid-rescue")
@@ -953,27 +967,79 @@ func _check_a_guard_takes_coins_and_ground_not_a_heart() -> void:
 		shell.queue_free()
 		await process_frame
 
-	# ---- THE CONTROL: an animal still costs a heart, coins and ground ---------
-	var shell_c := await _make_tower()
+	# ---- THE CONTROLS: an ordinary animal, outside and then inside ------------
+	#
+	# The bill it is expected to pay is read from its OWN row and must differ from
+	# the guard's, or "the two paths charge different amounts" would be satisfied by
+	# a build that charges everybody 7%.
+	var control_fraction: float = float(species.get(CONTROL_SPECIES, {}).get("coin_setback", 0.0))
+	if control_fraction <= 0.0:
+		_fail("SPECIES['%s'] carries no coin_setback — the control is not on the" % CONTROL_SPECIES
+				+ " ordinary predator path, so the guard branch above proves nothing")
+		return
+	var control_loss: int = int(floor(float(SETBACK_PROBE_COINS) * control_fraction))
+	if control_loss <= 0 or control_loss == expected_loss:
+		_fail("a %.3f control setback on %d coins bills %d, the guard's %d — the two"
+			% [control_fraction, SETBACK_PROBE_COINS, control_loss, expected_loss]
+			+ " arithmetics must be distinguishable or this control measures nothing")
+		return
+
+	# (a) IN THE FIELD, with no building anywhere: the bill lands, the ground does
+	#     not move. NO TOWER IS STOOD UP for this one on purpose — an absent
+	#     `tower_interior` group is precisely the state a field bite happens in, and
+	#     staging one would measure a different situation than the game's.
 	var player_c := await _make_player()
 	player_c.coins_collected = SETBACK_PROBE_COINS
 	player_c.own_coins = SETBACK_PROBE_COINS
 	var where: Vector3 = (player_c as Node3D).global_position
-	var hearts: int = player_c.lives
-	player_c.hit_by_crocodile(_attacker_row("crocodile"))
+	player_c.hit_by_crocodile(_attacker_row(CONTROL_SPECIES))
 	player_c.is_caught = false
 	player_c.call("_on_caught_finished")
-	if player_c.lives != hearts - 1:
-		_fail("a crocodile's bite left %d hearts of %d — the control is not on the"
-			% [player_c.lives, hearts] + " ordinary predator path, so the guard"
-			+ " branch above proves nothing about being different")
-	if player_c.coins_collected != SETBACK_PROBE_COINS:
-		_fail("a crocodile's bite moved the coin count to %d — the setback is"
-			% player_c.coins_collected + " reaching rows that do not carry it")
+	if player_c.is_game_over or player_c.in_custody_protocol():
+		_fail("an ordinary bite ended the run — heroes are the lives, and this peer"
+				+ " still has all four")
+	if player_c.coins_collected != SETBACK_PROBE_COINS - control_loss:
+		_fail("a %s's bite left %d of %d displayed coins, expected %d — every row"
+			% [CONTROL_SPECIES, player_c.coins_collected, SETBACK_PROBE_COINS,
+				SETBACK_PROBE_COINS - control_loss]
+			+ " bills its own setback now, so the field path must charge it too")
+	if player_c.own_coins != SETBACK_PROBE_COINS - control_loss:
+		_fail("a %s's bite left %d of %d own_coins, expected %d"
+			% [CONTROL_SPECIES, player_c.own_coins, SETBACK_PROBE_COINS,
+				SETBACK_PROBE_COINS - control_loss])
 	if (player_c as Node3D).global_position.distance_to(where) > 1.0:
-		_fail("a crocodile's bite knocked the player to the tower — the knockback is"
-				+ " reaching rows that do not carry a setback")
+		_fail("a %s's bite in the FIELD relocated the player — `setback_point()` is a"
+			% CONTROL_SPECIES + " group lookup that must find nothing out here, or every"
+			+ " death in the world teleports somewhere")
+	if not player_c.is_respawning:
+		_fail("a %s's bite in the field opened no grace window" % CONTROL_SPECIES)
 	_clear(player_c)
+	await process_frame
+
+	# (b) INSIDE THE BUILDING, same animal, same row: the plate takes it too. This
+	#     is the assertion that keeps the docstring honest — the knockback is the
+	#     BUILDING's rule and not the guard's key, and reading it the other way is
+	#     what would have somebody "fix" the field's rotor bar into a free hit.
+	var shell_c := await _make_tower()
+	var interior_c := shell_c.get_node_or_null("TowerInterior") as TowerInterior
+	(shell_c.get("opened") as Dictionary).erase(TowerInterior.GATE_CHECKPOINT)
+	var plate: Vector3 = interior_c.global_position + TowerInterior.entry_stand()
+	var indoors := await _make_player()
+	indoors.coins_collected = SETBACK_PROBE_COINS
+	indoors.own_coins = SETBACK_PROBE_COINS
+	indoors.hit_by_crocodile(_attacker_row(CONTROL_SPECIES))
+	indoors.is_caught = false
+	indoors.call("_on_caught_finished")
+	if indoors.coins_collected != SETBACK_PROBE_COINS - control_loss:
+		_fail("a %s's bite indoors billed %d, not the %d its own row asks — the tower"
+			% [CONTROL_SPECIES, SETBACK_PROBE_COINS - indoors.coins_collected, control_loss]
+			+ " is charging the guard's rate for somebody else's bite")
+	if (indoors as Node3D).global_position.distance_to(plate) > SETBACK_EPS:
+		_fail("a %s's bite inside the HQ left the player at %s, not on the doorway plate"
+			% [CONTROL_SPECIES, str((indoors as Node3D).global_position)]
+			+ " at %s — the checkpoint is the BUILDING's, so it must catch every hit"
+			% str(plate) + " taken in here, not only a guard's")
+	_clear(indoors)
 	shell_c.queue_free()
 	await process_frame
 
@@ -995,8 +1061,11 @@ func _check_the_sweep_spares_a_guard() -> void:
 	the bug is invisible in the code and obvious at the keyboard.
 
 	Driven on REAL bodies from the shipped scenes, because the exemption is a row
-	read (`coin_setback`) on a live `spec`: a stub would prove the branch compiles
-	and nothing about whether the thing standing in the tower carries the key.
+	read (`sweep_exempt`) on a live `spec`: a stub would prove the branch compiles
+	and nothing about whether the thing standing in the tower carries the key. The
+	key is the guard's OWN and says its own name — it used to be inferred from
+	`coin_setback` being non-zero, which stopped naming anything the day every row
+	in the table grew one (bead godot-test1-0bc).
 
 	The crocodile beside it is the control. Without it "the guard survived" is also
 	true of a sweep that was never called, never found the group, or has quietly
@@ -1014,9 +1083,12 @@ func _check_the_sweep_spares_a_guard() -> void:
 	(guard as Node3D).global_position = spot + Vector3(1.0, 0.0, 0.0)
 	(croc as Node3D).global_position = spot + Vector3(2.0, 0.0, 0.0)
 	if String(guard.spec.get("behavior", "")) == "" \
-			or float(guard.spec.get("coin_setback", 0.0)) <= 0.0:
+			or not bool(guard.spec.get("sweep_exempt", false)):
 		_fail("the probe guard did not resolve the '%s' row — check 12 would be"
 			% GUARD_SPECIES + " measuring a crocodile that happens to be exempt")
+	if bool(croc.spec.get("sweep_exempt", false)):
+		_fail("the control crocodile carries sweep_exempt — the exemption has spread"
+				+ " past the building's own furniture and the sweep frees nothing")
 
 	player.clear_nearby_crocodiles(spot)
 	await process_frame
@@ -1108,11 +1180,10 @@ func _check_the_protocol_opens_and_can_be_played() -> void:
 	player.is_caught = false
 	player.call("_on_caught_finished")
 
-	if player.lives <= 0:
-		_fail("the roster ran out but so did the hearts — this check would prove nothing")
 	if player.is_game_over:
-		_fail("the last free hero was taken with %d hearts left and the run ENDED — the "
-			% player.lives + "roster clause must open the full-custody protocol, not a screen")
+		_fail("the last free hero was taken and the run ENDED on a screen — the roster "
+				+ "clause must open the full-custody protocol, which is the run's one "
+				+ "remaining chance to get somebody back")
 	if not player.in_custody_protocol():
 		_fail("the last free hero was taken and no protocol opened")
 		_clear(player)
@@ -1258,36 +1329,52 @@ func _check_the_recall_archives_the_world() -> void:
 		_fail("Play Again left the ending screen up")
 	_clear(continued)
 
-	# ...and the OTHER way to lose it: the last heart, spent inside the block. It is
-	# the same outcome and must be recorded exactly once — two sites deciding one
-	# ending is two stings and an archive written behind a screen that went up for a
-	# different reason.
+	# ...AND THE CLOCK IS THE ONLY THING THAT CAN LOSE IT. There used to be a second
+	# way out of the block — the last heart, spent inside it — and bead
+	# godot-test1-0bc deleted the concept, so the case that measured it is now the
+	# opposite assertion: a bite in the cell block is SURVIVABLE, and the run must
+	# come out of it still in the scene with its clock still running.
+	#
+	# That is not a formality. Inside the break-out `free_hero_count()` is pinned at
+	# 0 (it is how the scene's outcome test knows nobody has been let out yet), so
+	# every bite in here reaches the roster clause in `_on_caught_finished()` and
+	# only the `custody_protocol_active` guard keeps it from re-entering the
+	# protocol — which would swallow the respawn, the grace window and the ability
+	# reset, and hand the guard that just hit you a free second hit.
 	_fresh_store()
 	_beat_done()
-	var bled := await _make_player()
-	await _drive_into_custody(bled)
-	if not bled.in_custody_protocol():
-		_fail("archive: no protocol to bleed out in")
-		_clear(bled)
+	var bitten := await _make_player()
+	await _drive_into_custody(bitten)
+	if not bitten.in_custody_protocol():
+		_fail("archive: no protocol to be bitten inside")
+		_clear(bitten)
 		_fresh_store()
 		return
-	bled.lives = 1
-	bled.hit_by_crocodile(_hunter())
-	bled.is_caught = false
-	bled.call("_on_caught_finished")
-	if bled.in_custody_protocol():
-		_fail("the last heart went inside the block and the scene ran on")
-	if not bled.is_game_over:
-		_fail("the last heart went inside the block and the campaign did not end")
-	if not BestRunStore.world_archived():
-		_fail("the last heart went inside the block and the world was not archived")
-	# ...and the clock must not then decide it a second time.
-	var timer_after: float = bled.custody_timer
-	await physics_frame
-	await physics_frame
-	if bled.custody_timer != timer_after:
-		_fail("the recall clock kept running after the scene ended")
-	_clear(bled)
+	var clock_before: float = bitten.custody_timer
+	bitten.coins_collected = SETBACK_PROBE_COINS
+	bitten.own_coins = SETBACK_PROBE_COINS
+	bitten.hit_by_crocodile(_hunter())
+	bitten.is_caught = false
+	bitten.call("_on_caught_finished")
+	if not bitten.in_custody_protocol():
+		_fail("a bite inside the block closed the scene — heroes are the lives, and a"
+				+ " grab in here takes a hero who is already in a cell")
+	if bitten.is_game_over:
+		_fail("a bite inside the block ended the campaign — the recall clock is the only"
+				+ " way to lose the break-out")
+	if BestRunStore.world_archived():
+		_fail("a bite inside the block archived the world")
+	if bitten.coins_collected >= SETBACK_PROBE_COINS:
+		_fail("a bite inside the block cost nothing — the coin bill is the stake in here"
+				+ " too, and without it the scene has no cost at all")
+	if not bitten.is_respawning:
+		_fail("a bite inside the block opened no grace window — the roster clause"
+				+ " swallowed the respawn and the next hit lands free")
+	# ...and the clock kept running rather than being reset or stopped by the hit.
+	if bitten.custody_timer > clock_before:
+		_fail("a bite inside the block put %.2f s back on a %.2f s recall clock"
+			% [bitten.custody_timer, clock_before])
+	_clear(bitten)
 	_fresh_store()
 
 
@@ -1408,19 +1495,23 @@ func _check_reassign_first_imprison_last() -> void:
 	      LATER ends it through the tick's own retry, which is the half of
 	      "reassign first" that only exists after the bench; and a prisoner may free
 	      a CELLMATE but never themselves.
-	  (f) THE ROOM'S HEARTS OUTRANK A RUNNING BREAK-OUT. The grab that empties the
-	      roster can also spend the room's last shared heart: the peer that was
-	      bitten ends on the hearts clause, while every other peer hears only the
-	      `cap` packet and opens the scene. So the shared game over has to be able
-	      to CLOSE a running protocol — and to close it without archiving the world
-	      or taking a scar, because the scene was overtaken and not lost.
 	  (e) THE ENDING, from both sides. The grab that takes the room's LAST hero
-	      still costs its heart and gets its full freeze — the bench tick polls at
+	      still pays its bill and gets its full freeze — the bench tick polls at
 	      0.5 s and the freeze runs 0.55 s, so a tick that did not stand aside for
 	      it would open the protocol first, clear `is_caught` under
-	      `_on_caught_finished()` and make the final grab free. And a peer that was
-	      never bitten at all still ends its run when the ROOM runs out, which is
-	      the world-level reading and the only part of it no other check can see.
+	      `_on_caught_finished()` and make the final grab free. Since bead
+	      godot-test1-0bc the bill is COINS rather than a heart, which is what that
+	      assertion is now read off. And a peer that was never bitten at all still
+	      ends its run when the ROOM runs out, which is the world-level reading and
+	      the only part of it no other check can see.
+
+	THERE IS NO (f) ANY MORE. It measured the room's shared HEARTS overtaking a
+	running break-out, and bead godot-test1-0bc deleted the shared-heart machine
+	along with the concept: a room's only shared death state is the captive set,
+	which is what opens the scene rather than something that can outrank it. The
+	OVERTAKEN verdict survives on the wire (see `_end_custody_protocol`'s `record`
+	parameter) for a peer applying a master's published `3`, and `check 16` drives
+	that path.
 	"""
 	_fresh_store()
 	_beat_done()
@@ -1642,7 +1733,15 @@ func _check_reassign_first_imprison_last() -> void:
 	_clear(player)
 	await process_frame
 
-	# ---- (e1) the last grab still costs a heart ----------------------------
+	# ---- (e1) the last grab still pays its bill ----------------------------
+	#
+	# THE RACE, not the arithmetic: the bench tick polls every 0.5 s and the caught
+	# freeze runs 0.55 s, so a tick that did not stand aside while `is_caught` would
+	# open the protocol first and clear the freeze out from under
+	# `_on_caught_finished()`, making the grab that ends the run the one grab in the
+	# game that costs nothing. Read off the COINS since bead godot-test1-0bc — the
+	# bill is the only thing a contact takes now, so it is also the only witness
+	# that the freeze ran to completion.
 	room.held = "phoboman"
 	var last_index: int = TowerGraph.HEROES.find("phoboman")
 	room.hand = [last_index] as Array[int]
@@ -1652,80 +1751,19 @@ func _check_reassign_first_imprison_last() -> void:
 	for hero: Variant in TowerGraph.HEROES:
 		if String(hero) != "phoboman":
 			player.set_hero_captive(String(hero), true)
-	var hearts: int = player.lives
+	player.coins_collected = SETBACK_PROBE_COINS
+	player.own_coins = SETBACK_PROBE_COINS
 	player.hit_by_crocodile(_hunter())
 	await _tick(POST_BITE_FRAMES)
-	if player.lives != hearts - 1:
-		_fail("the grab that took the room's last hero cost %d hearts, expected one — the "
-			% (hearts - player.lives) + "bench tick outran the caught freeze and "
-			+ "`_on_caught_finished()` never got to spend it")
+	if player.coins_collected >= SETBACK_PROBE_COINS:
+		_fail("the grab that took the room's last hero cost nothing — the bench tick "
+				+ "outran the caught freeze and `_on_caught_finished()` never got to "
+				+ "settle the bill")
 	if not player.in_custody_protocol():
 		_fail("the room's last hero was taken and the protocol did not open")
-
-	# ...AND A SURVIVABLE BITE INSIDE THE SCENE STAYS ON THE RESPAWN PATH. The
-	# break-out pins the free-hero count at 0 for its whole length — that is how its
-	# outcome test knows nobody has been let out yet — so the world-level roster
-	# clause is true on EVERY hit in the cell block. Unguarded, each one re-enters a
-	# protocol that is already running, `_begin_custody_protocol()` returns on its
-	# own latch, and the player is left with no grace window, no ability reset and no
-	# crocodile sweep, standing next to the guard that just hit them.
-	if player.lives <= 1:
-		_fail("the in-scene bite has no heart to spend, so it proves nothing")
-	var inside: int = player.lives
-	player.is_respawning = false
-	player.respawn_blink_timer = 0.0
-	player.hit_by_crocodile(_hunter())
-	player.is_caught = false
-	player.call("_on_caught_finished")
-	if player.lives != inside - 1:
-		_fail("a survivable bite inside the break-out cost %d hearts, expected one"
-			% (inside - player.lives))
-	if not player.is_respawning:
-		_fail("a survivable bite inside the break-out opened no grace window — the guard "
-			+ "that just hit you gets a free second hit, every hit, for the whole scene")
-	if not player.in_custody_protocol():
-		_fail("a survivable bite inside the break-out ended the scene")
 	player.custody_protocol_active = false
 	_clear(player)
 	await process_frame
-
-	# ---- (f) the room's hearts outrank a running break-out -----------------
-	_fresh_store()
-	_beat_done()
-	room.held = "phoboman"
-	room.hand = [last_index] as Array[int]
-	player = await _make_player()
-	player.set_active_character(last_index)
-	await _drive_into_custody(player)
-	if not player.in_custody_protocol():
-		_fail("the overtake case could not open a protocol, so it proves nothing")
-	# The room's hearts are gone — the same state the peer who was actually bitten
-	# reached — and this peer was not the one bitten. `shared_spent` non-null is
-	# what makes this a ROOM rather than solo play, which is the gate the function
-	# under test uses.
-	room.shared_spent = 3
-	player.lives = 0
-	player.is_caught = false
-	player.call("_check_shared_game_over")
-	if player.in_custody_protocol():
-		_fail("the room ran out of hearts and this peer stayed in the break-out — the room "
-			+ "is now split between an ending screen and a scene, permanently")
-	if not player.is_game_over:
-		_fail("the room ran out of hearts under the break-out and no ending was raised")
-	if BestRunStore.world_archived():
-		_fail("a heart the room spent somewhere else archived this world — the scene was "
-			+ "overtaken, not lost, and only losing it ends the campaign")
-	# ...AND IT SAYS SO ON THE WIRE. Published as an ordinary FAILED, every peer that
-	# has not yet seen the shared heart total would archive its own world while this
-	# one did not — the same split, one hop further out.
-	var overtaken: Array = player.call("custody_wire_state") as Array
-	if overtaken.size() != 2 or int(overtaken[1]) != 3:
-		_fail("an overtaken scene publishes %s, not the OVERTAKEN verdict — a peer reading "
-			% str(overtaken) + "it as a plain failure archives a world the master kept")
-	room.shared_spent = null
-	_clear(player)
-	await process_frame
-	_fresh_store()
 
 	# ---- (e2) the world-level ending, on a peer nothing ever bit -----------
 	room.held = "windman"
@@ -2510,6 +2548,54 @@ func _check_air_sight_is_the_indoor_air_rush() -> void:
 	await process_frame
 
 
+# ============================================================================
+# 17. THERE IS NO SECOND WAY TO LOSE
+# ============================================================================
+
+## The retired heart model, by name. Every one of these was a member or a const of
+## `player_controller` before bead godot-test1-0bc, and the bead's whole promise is
+## that nothing decrements a life or ends a run except the empty free-hero set — so
+## the cheapest honest way to keep that promise is to assert the vocabulary is gone.
+const RETIRED_HEART_MEMBERS: Array[String] = [
+	"lives", "MAX_LIVES", "LIVES_CAP", "EXTRA_LIFE_COINS", "next_extra_life_at",
+	"own_lives_spent",
+]
+
+func _check_no_second_way_to_lose() -> void:
+	"""
+	Check 17. The player declares NO heart model at all, so one cannot come back
+	quietly.
+
+	Every other check in this file measures behaviour, and behaviour is exactly what
+	a reintroduced life would not change on the day it landed: a `lives` field that
+	nothing spends yet passes all sixteen. This one measures the VOCABULARY instead.
+	`"lives" in player` is false on a `player_controller` that has no such member,
+	and a `var lives: int = 3` typed back in flips it to true the moment it is
+	saved — which is a loud failure at the one place a reviewer would want one,
+	rather than a silent second ending discovered by a player.
+
+	IT IS DELIBERATELY A SPELLING TEST AND SAYS SO. A second ending under another
+	name would walk straight past it; what it buys is that the OLD one cannot walk
+	back in, and the old one is the whole of what this bead removed.
+
+	The positive control is on the same line: `is_game_over` must still be a member,
+	or `"X in player"` has stopped meaning what this check reads it as (a freed
+	player, a renamed script, a typo in the probe) and every assertion above it is
+	vacuously true.
+	"""
+	var player := await _make_player()
+	if not ("is_game_over" in player):
+		_fail("the probe player has no `is_game_over` member — `in` is not reading this "
+				+ "object's properties, so the absences below prove nothing")
+	for member: String in RETIRED_HEART_MEMBERS:
+		if member in player:
+			_fail("player_controller declares `%s` again — heroes are the lives (owner " % member
+					+ "ruling 2026-08-31) and a second way to end a run is exactly what "
+					+ "bead godot-test1-0bc removed")
+	_clear(player)
+	await process_frame
+
+
 func _become(player: Node, hero: String) -> bool:
 	"""Switch through `set_active_character()` — the same door capture uses."""
 	var characters: Array = player.CHARACTERS
@@ -2556,7 +2642,7 @@ func _make_player() -> Node:
 	one or two tick past and nothing reaches the body, while on a loaded CI runner
 	eight do and the rotor bar lands a hit. `hit_by_crocodile` then early-returns
 	on its own invulnerability gate for the check's hit, `caught_setback` stays 0,
-	and the guard check watches a heart get spent and the run end — six failures
+	and the guard check watches a bank the building already billed — six failures
 	that look like the game is broken and reproduce nowhere.
 
 	(Reproduce the old behaviour with `godot --headless --fixed-fps 5 ...`: a fifth
@@ -2565,9 +2651,8 @@ func _make_player() -> Node:
 
 	So undo whatever the building landed while we were staging. This clears the
 	invulnerability gate and the caught/respawn timers that re-raise it — and
-	NOTHING else: lives, coins and the roster are what each check sets and asserts
-	on, so restoring those would be this harness hiding a regression rather than a
-	race.
+	NOTHING else: coins and the roster are what each check sets and asserts on, so
+	restoring those would be this harness hiding a regression rather than a race.
 	"""
 	var packed: PackedScene = load(PLAYER_SCENE)
 	var player: Node = packed.instantiate()

@@ -2990,11 +2990,13 @@ func _check_guards_stand_their_posts() -> void:
 	    interior's and the shell's — because a post that is clear of the furniture
 	    and buried in the outer wall is exactly as wrong.
 	  * `species` ASSIGNED AFTER `add_child`. The body would run on the CROCODILE's
-	    row: a 15 m detection radius indoors, a crocodile's gait, and no
-	    `coin_setback`, so it would take a HEART instead of coins and the whole
-	    ruling would be silently undone. Asserted on the resolved `spec`, not on the
-	    `species` string, because the string is right in both worlds — only `spec`
-	    knows which row `_ready()` actually read.
+	    row: a 15 m detection radius indoors, a crocodile's gait, a 120° view cone
+	    it never had, its own `coin_setback` instead of the guard's, and — the one
+	    that undoes the ruling outright — no `sweep_exempt` and no immunities, so
+	    the respawn sweep would clear the floor and a Stink Wave would empty the
+	    building. Asserted on the resolved `spec`, not on the `species` string,
+	    because the string is right in both worlds — only `spec` knows which row
+	    `_ready()` actually read.
 	  * A LEASH THAT WAS NEVER APPLIED. `is_confined` false means a guard walks out
 	    of the building, or off the upper slab and down into the courtyard.
 	  * A LEASH BOX BIGGER THAN ITS STOREY. The upper guard's box must stay over the
@@ -3374,6 +3376,27 @@ func _check_the_leash_holds_under_a_chase() -> void:
 	body = guards.get_node_or_null("TowerGuard%s" % String(authored["name"])) as Node3D
 	await _settle_physics()
 
+	# UNDO WHATEVER THE BUILDING LANDED WHILE WE WERE STAGING, and then keep it from
+	# landing anything else — the same landmine `capture_selfcheck._make_player`
+	# documents, which bit here the day the coin bill became universal (bead
+	# godot-test1-0bc). The probe stands on storey 9 inside the rotor bar's arc, so a
+	# hit is not a slow-machine race but a certainty, and since that bead EVERY hit
+	# taken inside the HQ ends at `setback_point()`: the quarry vanishes to the
+	# doorway plate nine floors down, the guard has nothing to smell, and check 14
+	# reports a leash it never put under load. (Before the bead the same hit spent a
+	# heart and respawned in place, which is why this staging survived so long.)
+	#
+	# Held with the shipped BLINK i-frames rather than by re-planting the body:
+	# blinking does not freeze movement, so the guard is still chasing a live
+	# `CharacterBody3D`, and it goes through `hit_by_crocodile()`'s one early return
+	# instead of inventing a second way to be invulnerable.
+	hero.is_caught = false
+	hero.caught_timer = 0.0
+	hero.caught_setback = 0.0
+	hero.is_respawning = false
+	hero.respawn_timer = 0.0
+	hero.global_position = Vector3(centre.x, floor_y + 0.2, centre.z + half.y + LEASH_PROBE_GAP)
+
 	var ticks := int(LEASH_PROBE_SECONDS / (1.0 / 60.0))
 	var chased := false
 	var worst := 0.0
@@ -3394,6 +3417,9 @@ func _check_the_leash_holds_under_a_chase() -> void:
 		if not chased:
 			body.rotation.y = atan2(hero.global_position.x - body.global_position.x,
 					hero.global_position.z - body.global_position.z)
+		# Topped up every frame — see the block above the loop. The window is 2.5 s
+		# and the probe runs 8, so one write at the start would wear off halfway.
+		hero.respawn_blink_timer = hero.RESPAWN_BLINK_DURATION
 		await physics_frame
 		# THE BEAT IS A STANDSTILL, measured under real physics because that is the
 		# only place it exists: `_update_chase_state` decides the beat, but what

@@ -29,7 +29,10 @@ extends SceneTree
 ##      boundary, and the one that feeds the joiner's placement.
 ##   7. Backward compatibility: a phase-3 presence packet (no shared totals)
 ##      must still decode, or an older peer goes invisible instead of uncounted.
-##   8. The shared-lives arithmetic — the room's hearts, off by one is a death.
+##   8. THE RETIRED HEART FIELDS. `lv`/`rl`/`ls`/`gs` stopped being sent (bead
+##      godot-test1-0bc) and an old peer does not know it — both decoders must
+##      accept a packet carrying them, hand none of them back, and validate
+##      neither, while the LIVE field beside them is still checked.
 ##   9. Hero name → CHARACTERS index, the lookup the hero split rides on.
 ##  10. The crocodile-sync parser against hostile packets — the fourth trust
 ##      boundary, and the one that drives every crocodile in the room.
@@ -49,9 +52,6 @@ extends SceneTree
 ##  15. The jump hatch for REMOTE members — a teammate who is off the ground must
 ##      not be offered as a crocodile's quarry, and one jumper must not veto the
 ##      scent of the grounded teammate beside them.
-##  16. The room's HEARTS as the master's own state, pinned against the stateless
-##      formula it replaces: a grant that lands at LIVES_CAP is burnt, a death is
-##      charged once, and a master migration carries the count over.
 ##  17. The claim's BASE VALUE, which is what a room's pickups credit to
 ##      meta-progression — non-zero, distinct from the multiplied award, and
 ##      UNFORGEABLE: derived from the winner's own pending claim rather than from
@@ -127,7 +127,7 @@ func _run_checks() -> String:
 	failure = _check_presence_backcompat()
 	if not failure.is_empty():
 		return failure
-	failure = _check_shared_lives()
+	failure = _check_retired_heart_keys_are_tolerated()
 	if not failure.is_empty():
 		return failure
 	failure = _check_hero_index()
@@ -149,9 +149,6 @@ func _run_checks() -> String:
 	if not failure.is_empty():
 		return failure
 	failure = _check_remote_scent()
-	if not failure.is_empty():
-		return failure
-	failure = _check_room_lives_ordering()
 	if not failure.is_empty():
 		return failure
 	failure = _check_claim_base_value()
@@ -421,6 +418,12 @@ func _check_state_parser() -> String:
 	`Dictionary` and `LobbyClient` only ever hands it one, so "not a dictionary"
 	is enforced by the signature and cannot be exercised from here — an empty
 	dictionary (every field missing) is the reachable shape of that case.
+
+	EVERY PAYLOAD BELOW STILL CARRIES `ls`, ON PURPOSE. It is a retired heart field
+	(bead godot-test1-0bc) and this file keeps sending it because an OLD PEER does:
+	its presence in a snapshot must change nothing about how the snapshot is read,
+	which makes each of these rows a second, free assertion of the wire tolerance
+	check 8 owns.
 	"""
 	var good := {
 		"cc": 42.0, "ls": 2.0, "dd": 1337.0,
@@ -430,8 +433,10 @@ func _check_state_parser() -> String:
 	var snapshot: Dictionary = MPManager.decode_state(good)
 	if snapshot.is_empty():
 		return "state parser rejected a well-formed snapshot"
-	if snapshot["cc"] != 42 or snapshot["ls"] != 2 or snapshot["dd"] != 1337:
+	if snapshot["cc"] != 42 or snapshot["dd"] != 1337:
 		return "state parser mangled the counters: %s" % snapshot
+	if snapshot.has("ls"):
+		return "state parser carried the retired heart field through: %s" % snapshot
 	if snapshot["pos"] != Vector3(10.0, 2.0, -5.0):
 		return "state parser mangled the position: %s" % snapshot["pos"]
 	if snapshot["ids"] != [111, 222, -333]:
@@ -448,17 +453,21 @@ func _check_state_parser() -> String:
 	})
 	if with_dead.is_empty() or with_dead["dead"] != [7, -8]:
 		return "state parser mangled the kill list: %s" % with_dead
-	# `gc`/`gs` (the room's frozen departed-member totals) follow the presence
-	# counters' rule: MISSING IS NOT MALFORMED. `good` above carries neither, so
-	# an older peer's snapshot still lands, reading as zero.
-	if snapshot["gc"] != 0 or snapshot["gs"] != 0:
-		return "state parser invented departed-member totals: %s" % snapshot
+	# `gc` (the room's frozen departed-member bank) follows the presence counters'
+	# rule: MISSING IS NOT MALFORMED. `good` above carries none, so an older peer's
+	# snapshot still lands, reading as zero. Its old sibling `gs` — the departed
+	# members' spent HEARTS — retired with the hearts, so a snapshot carrying it is
+	# accepted and the field is never read.
+	if snapshot["gc"] != 0:
+		return "state parser invented a departed-member bank: %s" % snapshot
 	var with_gone: Dictionary = MPManager.decode_state({
 		"cc": 0.0, "ls": 0.0, "dd": 0.0, "px": 0.0, "py": 0.0, "pz": 0.0,
 		"gc": 500.0, "gs": 3.0, "ids": [],
 	})
-	if with_gone.is_empty() or with_gone["gc"] != 500 or with_gone["gs"] != 3:
-		return "state parser mangled the departed-member totals: %s" % with_gone
+	if with_gone.is_empty() or with_gone["gc"] != 500:
+		return "state parser mangled the departed-member bank: %s" % with_gone
+	if with_gone.has("gs"):
+		return "state parser carried the retired departed-hearts field through: %s" % with_gone
 
 	# An over-long list is TRUNCATED, not rejected — the ids are sent
 	# most-recent-first, so the head is the part nearest the joiner, and the
@@ -534,15 +543,12 @@ func _check_state_parser() -> String:
 			"cc": 0.0, "ls": 0.0, "dd": 0.0, "px": 1.0e30, "py": 0.0, "pz": 0.0,
 			"ids": []
 		}],
-		# Absent gc/gs is fine (above); PRESENT AND BAD still drops the payload,
-		# like every other field here.
+		# Absent `gc` is fine (above); PRESENT AND BAD still drops the payload,
+		# like every other LIVE field here. A retired one is different and is a
+		# GOOD case rather than a bad one — see the block under the loop.
 		["gc as String", {
 			"cc": 0.0, "ls": 0.0, "dd": 0.0, "px": 0.0, "py": 0.0, "pz": 0.0,
 			"gc": "loads", "ids": []
-		}],
-		["negative gs", {
-			"cc": 0.0, "ls": 0.0, "dd": 0.0, "px": 0.0, "py": 0.0, "pz": 0.0,
-			"gs": -1.0, "ids": []
 		}],
 		# Absent `dead` is fine (above); PRESENT AND BAD drops the payload whole,
 		# exactly as a bad `ids` does — same validator, same rule.
@@ -569,6 +575,21 @@ func _check_state_parser() -> String:
 		var result: Dictionary = MPManager.decode_state(case[1])
 		if not result.is_empty():
 			return "state parser accepted a bad snapshot (%s): %s" % [case[0], result]
+
+	# A RETIRED KEY IS NOT A FIELD ANY MORE, so a hostile value in one may not drop
+	# the packet either — that would be validating a key nothing reads, and it would
+	# make an old peer's honest `gs: 3` one refactor away from being a disconnect.
+	# The negative `gs` below sat in the `bad` table above until bead
+	# godot-test1-0bc; this is the same row, on the other side of the ledger.
+	var stale: Dictionary = MPManager.decode_state({
+		"cc": 7.0, "dd": 9.0, "px": 0.0, "py": 0.0, "pz": 0.0, "ids": [],
+		"ls": -1.0, "gs": -1.0,
+	})
+	if stale.is_empty():
+		return "state parser dropped a snapshot over a retired heart field — an old peer "\
+			+ "still sending ls/gs must be read for everything it does say"
+	if stale["cc"] != 7 or stale["dd"] != 9:
+		return "state parser mangled a snapshot that carried retired fields: %s" % stale
 	return ""
 
 
@@ -578,17 +599,22 @@ func _check_state_parser() -> String:
 
 func _check_presence_backcompat() -> String:
 	"""
-	A phase-3 peer sends a presence packet with no `cc`/`lv`/`dd`. Dropping those
-	whole would make that peer INVISIBLE rather than merely uncounted, so absent
-	must read as 0 — only a field that is present and bad may drop the packet.
+	A phase-3 peer sends a presence packet with no `cc`/`dd`. Dropping those whole
+	would make that peer INVISIBLE rather than merely uncounted, so absent must read
+	as 0 — only a field that is present and bad may drop the packet.
 	"""
 	var legacy: Dictionary = MPManager.decode_presence(var_to_bytes({
 		"p": Vector3(3.0, 1.0, 4.0), "y": 0.25, "c": 1, "s": 2.0, "g": false
 	}))
 	if legacy.is_empty():
 		return "parser rejected a phase-3 shaped packet (no shared totals)"
-	if legacy["cc"] != 0 or legacy["lv"] != 0 or legacy["dd"] != 0:
+	if legacy["cc"] != 0 or legacy["dd"] != 0:
 		return "a phase-3 packet did not read as zero contributions: %s" % legacy
+	# ...and the compatibility runs FORWARD as well as back: `lv` (this peer's
+	# spent hearts) and `rl` (the room's) retired with the hearts in bead
+	# godot-test1-0bc, so they must be absent from what the parser hands out.
+	if legacy.has("lv") or legacy.has("rl"):
+		return "the presence parser still publishes a retired heart field: %s" % legacy
 
 	# Present-and-bad still drops the packet whole.
 	var poisoned: Dictionary = MPManager.decode_presence(var_to_bytes({
@@ -618,30 +644,81 @@ func _check_presence_backcompat() -> String:
 
 
 # =============================================================================
-# 8. SHARED LIVES ARITHMETIC
+# 8. THE RETIRED HEART FIELDS, AND THE OLD PEER STILL SENDING THEM
 # =============================================================================
 
-func _check_shared_lives() -> String:
-	"""The room's hearts. Off by one here is a death that should not have been."""
-	var base: int = Player.MAX_LIVES
-	var per: int = Player.EXTRA_LIFE_COINS
-	var cap: int = Player.LIVES_CAP
+## What the shared-hearts machine used to put on the wire, both transports. `lv`
+## and `rl` rode the presence broadcast, `ls` and `gs` the join snapshot. Bead
+## godot-test1-0bc stopped sending all four; this list is what must keep being
+## TOLERATED, and it is the whole subject of check 8.
+const RETIRED_WIRE_KEYS: Array[String] = ["lv", "rl", "ls", "gs"]
 
-	var cases: Array = [
-		# [bank, spent, expected, what it pins]
-		[0, 0, base, "a fresh room starts on MAX_LIVES"],
-		[per, 0, base + 1, "one extra life per EXTRA_LIFE_COINS banked"],
-		[per * 2 - 1, 1, base, "integer division floors: 149 banked is +1, not +2"],
-		[0, base, 0, "spending every heart lands on 0"],
-		[0, base + 99, 0, "over-spending clamps to 0, never negative"],
-		[per * 99, 0, cap, "the bank cannot push past LIVES_CAP"],
-	]
-	for case in cases:
-		var got: int = MPManager.shared_lives_from(case[0], case[1], base, per, cap)
-		if got != case[2]:
-			return "shared_lives_from(%d, %d) == %d, expected %d — %s" % [
-				case[0], case[1], got, case[2], case[3]
-			]
+func _check_retired_heart_keys_are_tolerated() -> String:
+	"""
+	Wire compatibility by TOLERANT DECODERS, which is the pattern this file already
+	holds every optional field to — never a protocol version bump.
+
+	Hearts are gone (bead godot-test1-0bc) and with them the four fields that
+	carried them. A peer on an older build does not know that and keeps sending
+	them, at whatever values its own dead arithmetic produced — including values
+	that would have been REJECTED when the fields were live (`gs: -1` sat in check
+	6's hostile table until this bead). Dropping such a packet would make that peer
+	invisible over a number nothing reads, so the rule is three-part and all three
+	are asserted here:
+
+	  * ACCEPTED — the packet lands, on both transports;
+	  * IGNORED — not one retired key comes back out of either decoder, so nothing
+	    downstream can start reading one again by accident;
+	  * UNVALIDATED — a hostile value in a retired key changes nothing, because
+	    validating a field nobody reads is how the tolerance rots back into a
+	    requirement.
+
+	AND THE MIRROR, which is the half that actually catches a mistake: a LIVE field
+	next to them is still fully validated. Without it "the packet was accepted"
+	would also be true of a decoder that had stopped checking anything at all.
+	"""
+	# (a) PRESENCE. A full phase-5 packet plus the two retired keys, hostile.
+	var presence: Dictionary = MPManager.decode_presence(var_to_bytes({
+		"p": Vector3(1.0, 2.0, 3.0), "y": 0.5, "c": 0, "s": 1.0, "g": true,
+		"cc": 40, "dd": 12, "lv": -7, "rl": "three hearts",
+	}))
+	if presence.is_empty():
+		return "the presence parser dropped a packet over a retired heart field — an old "\
+			+ "peer still sending lv/rl would go invisible rather than merely uncounted"
+	if presence["cc"] != 40 or presence["dd"] != 12:
+		return "a packet carrying retired fields lost its live counters: %s" % presence
+
+	# (b) THE JOIN SNAPSHOT, the other transport, the other two keys.
+	var snapshot: Dictionary = MPManager.decode_state({
+		"cc": 40.0, "dd": 12.0, "px": 1.0, "py": 2.0, "pz": 3.0, "ids": [],
+		"ls": -7.0, "gs": "three hearts",
+	})
+	if snapshot.is_empty():
+		return "the snapshot parser dropped a join over a retired heart field — a joining "\
+			+ "old peer would arrive with no position and no coin ids"
+	if snapshot["cc"] != 40 or snapshot["dd"] != 12:
+		return "a snapshot carrying retired fields lost its live counters: %s" % snapshot
+
+	# (c) IGNORED, both ways out.
+	for key: String in RETIRED_WIRE_KEYS:
+		if presence.has(key):
+			return "the presence parser hands out the retired field '%s': %s" % [key, presence]
+		if snapshot.has(key):
+			return "the snapshot parser hands out the retired field '%s': %s" % [key, snapshot]
+
+	# (d) THE MIRROR: a LIVE field beside them is still validated, so (a) and (b)
+	#     are tolerance rather than a decoder that has stopped looking.
+	if not MPManager.decode_presence(var_to_bytes({
+		"p": Vector3.ZERO, "y": 0.0, "c": 0, "s": 0.0, "g": true,
+		"cc": -5, "lv": 0,
+	})).is_empty():
+		return "the presence parser accepted a negative LIVE counter — relaxing the retired "\
+			+ "keys has relaxed the trust boundary with them"
+	if not MPManager.decode_state({
+		"cc": -1.0, "dd": 0.0, "px": 0.0, "py": 0.0, "pz": 0.0, "ids": [], "ls": 0.0,
+	}).is_empty():
+		return "the snapshot parser accepted a negative LIVE counter — relaxing the retired "\
+			+ "keys has relaxed the trust boundary with them"
 	return ""
 
 
@@ -1181,150 +1258,6 @@ func _check_remote_scent() -> String:
 	if not (awake is Array) or (awake as Array).size() != 1:
 		return ("peer_positions() dropped an airborne member — the crocodiles around a jumping teammate "
 			+ "would fall asleep under them")
-	return ""
-
-
-# =============================================================================
-# 16. THE ROOM'S HEARTS, OWNED BY THE MASTER (bead godot-test1-s86.15)
-# =============================================================================
-
-func _check_room_lives_ordering() -> String:
-	"""
-	The room's hearts must behave like solo's, and the property that pins that is
-	the CAP BURN: solo DROPS an extra life granted while already at `LIVES_CAP`
-	(`collect_coin`'s `if lives < LIVES_CAP`), so a death after a long rich spell
-	is visible. The stateless `shared_lives_from()` banks the overshoot instead,
-	which is what made a fast-banking room effectively unlosable.
-
-	THE NEGATIVE CONTROL IS THE OLD FUNCTION ITSELF. The scenario is built so the
-	two answers DIFFER, and the check fails if they agree — because a
-	`shared_lives()` that quietly forwarded to the stateless formula would satisfy
-	every "the hearts went down" assertion just as well.
-	"""
-	var per: int = Player.EXTRA_LIFE_COINS
-	var cap: int = Player.LIVES_CAP
-	var base: int = Player.MAX_LIVES
-
-	var mp: Node = MPManager.new()
-	root.add_child(mp)
-	mp._state = MPManager.State.IN_ROOM
-	mp._you = "me"
-	mp._master = "me"
-	# Contributing, and the join settled, with no snapshots to wait for.
-	mp._first_member = true
-
-	# One remote peer carries the room's whole bank and death count — that is what
-	# `shared_bank()` / `shared_lives_spent()` sum, so no player node is needed.
-	var peer: Dictionary = {"pos": Vector3.ZERO, "floor": true, "coins": 0, "spent": 0, "dist": 0}
-	mp._peer_state = {"aaa": peer}
-
-	mp._tick_room_lives()
-	if not mp._room_lives_owned:
-		mp.free()
-		return "the master did not take ownership of the room's hearts"
-	if mp.shared_lives(0, 0) != base:
-		var fresh: Variant = mp.shared_lives(0, 0)
-		mp.free()
-		return "a fresh room started on %s hearts, expected MAX_LIVES (%d)" % [str(fresh), base]
-
-	# TAKING OWNERSHIP MUST NOT REFILL HEARTS THAT ARE ALREADY SPENT. Two ways in
-	# and both already have deaths behind them: hosting from a live solo run in
-	# which the player has been bitten (a host's own tally IS the room's opening
-	# balance), and a promotion where no `rl` ever arrived. Seeding at MAX_LIVES
-	# and then marking those deaths already-charged handed the room free lives.
-	var wounded: Node = MPManager.new()
-	root.add_child(wounded)
-	wounded._state = MPManager.State.IN_ROOM
-	wounded._you = "me"
-	wounded._master = "me"
-	wounded._first_member = true
-	wounded._peer_state = {}
-	wounded._tick_room_lives()  # own_spent is read off the player group: none here...
-	# ...so drive the death through this peer's OWN contribution, which is what a
-	# host arriving from a solo run actually carries.
-	wounded._room_lives_owned = false
-	wounded._peer_state = {"aaa": {"pos": Vector3.ZERO, "floor": true, "coins": 0, "spent": 1, "dist": 0}}
-	wounded._tick_room_lives()
-	var wounded_start: Variant = wounded.shared_lives(0, 0)
-	wounded.free()
-	if wounded_start == base:
-		return ("a room seeded while a life was already spent started on MAX_LIVES (%d) — taking "
-			+ "ownership refilled a heart the room had lost") % base
-	if wounded_start != base - 1:
-		return "a room seeded with one life spent started on %s hearts, expected %d" % [
-			str(wounded_start), base - 1
-		]
-
-	# Bank far past the cap without dying: every grant beyond LIVES_CAP is BURNT,
-	# exactly as solo burns it.
-	peer["coins"] = per * 20
-	mp._tick_room_lives()
-	if mp.shared_lives(0, 0) != cap:
-		var pinned: Variant = mp.shared_lives(0, 0)
-		mp.free()
-		return "a room banking %d coins holds %s hearts, expected the cap (%d)" % [
-			int(peer["coins"]), str(pinned), cap
-		]
-
-	# NOW DIE. Solo this shows immediately (the overshoot was never kept); the
-	# stateless formula still has ~17 unspent grants in hand and shows nothing.
-	peer["spent"] = 1
-	mp._tick_room_lives()
-	var owned: Variant = mp.shared_lives(0, 0)
-	var stateless: int = MPManager.shared_lives_from(int(peer["coins"]), 1, base, per, cap)
-	if owned != cap - 1:
-		mp.free()
-		return ("a death after a rich spell left %s hearts, expected %d — the cap overshoot is being "
-			+ "banked again") % [str(owned), cap - 1]
-	if stateless == owned:
-		mp.free()
-		return ("the stateless formula agrees with the owned count in the very scenario built to "
-			+ "separate them — this check can no longer tell the fix from the bug")
-
-	# A SECOND TICK WITH NOTHING NEW MUST CHANGE NOTHING. The death is charged as a
-	# delta against `_room_spent_seen`; charging the absolute total every frame
-	# would drain the room in about a second.
-	mp._tick_room_lives()
-	if mp.shared_lives(0, 0) != cap - 1:
-		var redrained: Variant = mp.shared_lives(0, 0)
-		mp.free()
-		return "re-ticking with no new events moved the hearts to %s — the death delta is re-charged" % str(redrained)
-
-	# Coins banked AFTER a death still buy a heart back — the thing the obvious
-	# alternative formula (`mini(base + bank/per, cap) - spent`) would have broken.
-	peer["coins"] = int(peer["coins"]) + per
-	mp._tick_room_lives()
-	if mp.shared_lives(0, 0) != cap:
-		var bought: Variant = mp.shared_lives(0, 0)
-		mp.free()
-		return "banking another %d coins after a death did not buy the heart back (%s)" % [per, str(bought)]
-
-	# MASTER MIGRATION MUST NOT REFILL THE ROOM. Demote, then promote: the new
-	# owner adopts what the old one published rather than starting at MAX_LIVES,
-	# and must not re-walk thresholds the room has already been paid for.
-	# One more death, chosen so the room lands on a count that is NOT MAX_LIVES —
-	# otherwise "adopted" and "reset to MAX_LIVES" are the same number and the
-	# assertion below would pass for a migration that silently refilled the room.
-	peer["spent"] = 2
-	mp._tick_room_lives()
-	var before_migration: Variant = mp.shared_lives(0, 0)
-	mp._master = "someone-else"
-	mp._tick_room_lives()  # Demotes: ownership dropped.
-	if mp._room_lives_owned:
-		mp.free()
-		return "a demoted master kept ownership of the room's hearts"
-	mp._room_lives_seen = int(before_migration)  # What the new master had been publishing.
-	mp._master = "me"
-	mp._tick_room_lives()  # Promotes: adopt, do not reset.
-	var after_migration: Variant = mp.shared_lives(0, 0)
-	mp.free()
-	if after_migration == base:
-		return ("the promoted master landed on exactly MAX_LIVES, so this check cannot tell adoption "
-			+ "from a reset — rebuild the scenario")
-	if after_migration != before_migration:
-		return "a master migration moved the room from %s hearts to %s — the count must carry over" % [
-			str(before_migration), str(after_migration)
-		]
 	return ""
 
 
@@ -2340,9 +2273,11 @@ func _check_room_publish() -> String:
 			or int(parsed.get("co", -1)) != 0:
 		return "decode_room dropped an honest publish (%s)" % str(parsed)
 	# EVERY VERDICT THE ENCODER CAN PRODUCE, swept rather than spot-checked — 3 is
-	# OVERTAKEN and is the one a parser written against the first two would drop,
-	# leaving the peers that need it most (a scene ended by the room's hearts) with
-	# no word at all.
+	# OVERTAKEN and is the one a parser written against the first two would drop.
+	# Nothing local produces it since the hearts went (bead godot-test1-0bc), but it
+	# still travels: a peer applying a master's published 3 ends its scene without
+	# archiving a world the master kept, and a parser that dropped the verdict would
+	# leave it with no word at all.
 	for outcome: int in 4:
 		var probe: Dictionary = {"t": "room", "cap": [], "cd": 1.0, "co": outcome}
 		if int(MPManager.decode_room(probe).get("co", -1)) != outcome:
