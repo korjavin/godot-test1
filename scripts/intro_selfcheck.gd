@@ -339,11 +339,29 @@ func _check_generated_js() -> void:
 	# every key in the capture phase — the game would come back keyboard-dead, which
 	# is worse than the frozen frame the sweep is clearing.
 	if not js.contains("root.__ckOff = function()"):
-		_fail("_create_js() no longer hangs its listener-removal handle on the root " \
-			+ "— an orphan sweep cannot unregister the capture-phase key swallower")
+		_fail("_create_js() no longer hangs its silencer on the root — an orphan " \
+			+ "sweep cannot unregister the capture-phase key swallower or cancel " \
+			+ "the timers that will later run the orphan's own finish()")
 	if not IntroVideo._sweep_js().contains("__ckOff"):
 		_fail("_sweep_js() detaches an orphan without calling its `__ckOff` — the " \
 			+ "recovered game is left keyboard-dead for the rest of the session")
+	# `__ckOff` has to SILENCE, not just unlisten: a surviving stall timer would
+	# later run the ORPHAN's `finish()`, which nulls the scratchpad and sweeps by
+	# class — tearing down whatever film the player is watching by then.
+	for silenced: String in ["s.done = true;", "clearTimeout(s.stallTimer)"]:
+		if not js.contains(silenced):
+			_fail("_create_js() lost `%s` — an orphan's own timers outlive it and " \
+				% silenced + "can tear down the NEXT film")
+	# The discard path's sweep must be in its OWN `try`: a corrupted state whose
+	# `finish()` throws would otherwise jump past the sweep entirely, and the caller
+	# unpauses with the element still over the canvas.
+	var discard_js: String = IntroVideo._discard_js()
+	if not discard_js.contains("}catch(e){}try{"):
+		_fail("_discard_js() no longer sweeps in a separate try — a finish() that " \
+			+ "throws skips the recovery this path exists for")
+	if not discard_js.contains(sweep):
+		_fail("_discard_js() does not sweep by class — a null scratchpad leaves an " \
+			+ "orphaned film on screen with nothing able to remove it")
 	# Both of these route into `finish`, and finish is the only thing that ever
 	# flips the flag Godot polls. Lose either and a failed load hangs the menu.
 	for listener: String in ["'ended'", "'error'"]:

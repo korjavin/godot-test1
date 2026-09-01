@@ -228,13 +228,21 @@ static func _start_js() -> String:
 static func discard() -> void:
 	if not OS.has_feature("web"):
 		return
-	# The sweep runs UNCONDITIONALLY, not just when there is a state object to
-	# call `finish()` on: a null scratchpad used to mean "nothing to do", which is
-	# exactly wrong for the one case this needs to cover — an orphaned root still
-	# on screen. See ROOT_CLASS.
-	JavaScriptBridge.eval(
-		"(function(){try{var s=%s;if(s){s.finish();}%s}catch(e){}})()"
-		% [JS_STATE, _sweep_js()], true)
+	JavaScriptBridge.eval(_discard_js(), true)
+
+
+## The discard snippet, its own function so `intro_selfcheck` can assert its shape.
+##
+## TWO INDEPENDENT `try` BLOCKS, which is the whole point. The sweep runs
+## unconditionally — not merely when there is a state object to call `finish()` on
+## (a null scratchpad used to mean "nothing to do", which is exactly wrong for the
+## case this exists for), and not merely when that `finish()` returned normally. A
+## partially corrupted state whose `finish()` throws would otherwise jump straight
+## past the sweep, and the caller would unpause with the element still attached —
+## which is the bug, not the recovery.
+static func _discard_js() -> String:
+	return "(function(){try{var s=%s;if(s){s.finish();}}catch(e){}try{%s}catch(e){}})()" \
+		% [JS_STATE, _sweep_js()]
 
 
 ## Detach every overlay root this file ever built, releasing each one's source
@@ -404,18 +412,35 @@ static func _create_js(video_url: String = VIDEO_URL) -> String:
 					s.finish();
 				};
 
-				s.finish = function(){
-					if (s.done) { return; }
+				/* SILENCE THIS STATE, without touching the document. Everything that
+				   can still CALL BACK into a film — its two timers and its two
+				   capture-phase key listeners — plus the `done` flag that makes
+				   `finish()` a no-op from here on.
+				   It hangs on the ROOT, not on `s`, because that is the only handle
+				   the class sweep has: an orphan is by definition a root whose state
+				   object nothing can reach any more. Sweeping one without this leaves
+				   the game keyboard-dead for the session, and leaves a stall timer
+				   that will later run the ORPHAN's `finish()` — which nulls the
+				   scratchpad and sweeps the film the player is watching by then. */
+				root.__ckOff = function(){
 					s.done = true;
-					window.__ck_intro_failed = !!s.failed;
 					if (s.holdTimer) { clearTimeout(s.holdTimer); s.holdTimer = null; }
 					if (s.stallTimer) { clearTimeout(s.stallTimer); s.stallTimer = null; }
 					window.removeEventListener('keydown', s.onKeyDown, true);
 					window.removeEventListener('keyup', s.onKeyUp, true);
+				};
+
+				s.finish = function(){
+					if (s.done) { return; }
+					window.__ck_intro_failed = !!s.failed;
+					root.__ckOff();
+					/* The scratchpad goes BEFORE the document work: a sweep that threw
+					   half way must still leave `is_finished()` answering true, which
+					   is this file's fail-open invariant. */
+					%s = null;
 					/* BY CLASS, not `root`: this element's own root carries it, and
 					   so does any earlier one that lost its owner. See ROOT_CLASS. */
 					%s
-					%s = null;
 				};
 
 				unmute.onclick = function(){
@@ -472,15 +497,6 @@ static func _create_js(video_url: String = VIDEO_URL) -> String:
 					bar.style.width = '0';
 				};
 
-				/* The sweep's handle on this root's `window` listeners — see
-				   `_sweep_js()`. `finish()` still removes them directly; this is for
-				   the root that no longer has a reachable `s` to be finished
-				   through. */
-				root.__ckOff = function(){
-					window.removeEventListener('keydown', s.onKeyDown, true);
-					window.removeEventListener('keyup', s.onKeyUp, true);
-				};
-
 				v.addEventListener('ended', s.finish);
 				/* An error BEFORE playback (unreachable URL, wrong content type)
 				   must not tear the element down — `start()` would only rebuild it
@@ -507,8 +523,8 @@ static func _create_js(video_url: String = VIDEO_URL) -> String:
 		JSON.stringify(video_url),
 		JSON.stringify(video_url),
 		int(STALL_TIMEOUT_SEC * 1000.0),
-		_sweep_js(),
 		JS_STATE,
+		_sweep_js(),
 		String.num(SKIP_HOLD_SEC, 3),
 		int(SKIP_HOLD_SEC * 1000.0),
 		JS_STATE,
