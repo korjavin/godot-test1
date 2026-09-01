@@ -18,7 +18,7 @@ extends SceneTree
 ##     rule has played (the mechanic reads as a bug, and the beat then teaches
 ##     nothing);
 ##   * it takes the WRONG contact — a crocodile bite, a boss bolt, the tower's
-##     rotor bar — and the roster drains for reasons the player cannot see;
+##     press — and the roster drains for reasons the player cannot see;
 ##   * it takes a hero during the post-respawn blink, so one grab strips the whole
 ##     roster a frame at a time and the run ends on a screen nobody can account for.
 ##
@@ -355,7 +355,7 @@ func _check_only_a_hunter_takes_a_hero() -> void:
 	predicate that had drifted back onto `behavior` passes for the first and fails
 	for the second. The NEGATIVE side is every other shape of contact, and the
 	three below fail differently: an ordinary predator row (the crocodile), a body
-	with no `spec` property at all (a boss projectile, the tower's rotor bar), and
+	with no `spec` property at all (a boss projectile, the tower's press), and
 	the plain no-argument call most callers in the codebase make.
 
 	The rows are ENUMERATED FROM THE TABLE, not listed here, so the day a third
@@ -983,7 +983,7 @@ func _check_a_guard_takes_coins_and_ground() -> void:
 
 	THE GROUND IS STILL THE BUILDING'S AND NOT THE ROW'S. `_pay_coin_setback()`
 	asks the `tower_interior` group for a `setback_point()` and takes it if one
-	answers, whoever bit you — the rotor bar, the press, a crocodile that followed
+	answers, whoever bit you — the press, a crocodile that followed
 	you through the doorway — and the arrest latch is the ONE thing that waives it.
 	In the FIELD nothing answers and nothing relocates. The controls below measure
 	exactly that: an animal in the field left standing where it fell, and the same
@@ -1343,7 +1343,7 @@ func _check_a_guard_takes_coins_and_ground() -> void:
 	# (b) INSIDE THE BUILDING, same animal, same row: the plate takes it too. This
 	#     is the assertion that keeps the docstring honest — the knockback is the
 	#     BUILDING's rule and not the guard's key, and reading it the other way is
-	#     what would have somebody "fix" the field's rotor bar into a free hit.
+	#     what would have somebody "fix" the building's press into a free hit.
 	var shell_c := await _make_tower()
 	var interior_c := shell_c.get_node_or_null("TowerInterior") as TowerInterior
 	(shell_c.get("opened") as Dictionary).erase(TowerInterior.GATE_CHECKPOINT)
@@ -1442,10 +1442,10 @@ func _check_the_sweep_spares_a_guard() -> void:
 	`clear_nearby_crocodiles()` FREES bodies, and a guard must not be one of them.
 
 	THIS IS NOT ABOUT A GUARD'S OWN BITE. Every other way to lose inside the tower
-	routes through the ordinary respawn — the rotor bar, the block's press, a
+	routes through the ordinary respawn — the block's press, a
 	crocodile that followed you in through the doorway — and that path sweeps a
 	25 m radius, which from anywhere in a 17.6 m building is the WHOLE floor. Left
-	unexempted, dying to the rotor is the cheapest way to clear a guarded room, and
+	unexempted, dying to the press is the cheapest way to clear a guarded room, and
 	the population comes back at the next doorway crossing rather than never — so
 	the bug is invisible in the code and obvious at the keyboard.
 
@@ -2495,7 +2495,7 @@ func _check_two_clients_cannot_disagree() -> void:
 	# `_respawn_in_place()` — which, IN A ROOM, relocates to the group anchor and
 	# whose `_place_near()` discards Y outright, dropping the party's last hope at
 	# JOIN_SPAWN_HEIGHT with the recall still running. That is a survivable hazard
-	# (a guard, the press, a rotor bar) deciding a run, which is the one thing bead
+	# (a guard, the press, a falling mass) deciding a run, which is the one thing bead
 	# godot-test1-0bc says nothing but the clock may do.
 	#
 	# Solo cannot see it — `group_anchor()` answers null — so the room stub names a
@@ -3248,7 +3248,7 @@ func _make_player() -> Node:
 	UNBOUNDED number of physics ticks — Godot runs as many as the elapsed wall
 	clock asks for, up to `max_physics_steps_per_frame` (8) — so on a fast desktop
 	one or two tick past and nothing reaches the body, while on a loaded CI runner
-	eight do and the rotor bar lands a hit. `hit_by_crocodile` then early-returns
+	eight do and the building lands a hit. `hit_by_crocodile` then early-returns
 	on its own invulnerability gate for the check's hit, `caught_setback` stays 0,
 	and the guard check watches a bank the building already billed — six failures
 	that look like the game is broken and reproduce nowhere.

@@ -280,7 +280,7 @@ own, all pinned by `tower_interior_selfcheck`:
   contacts that arrest**, latched in `hit_by_crocodile()` (`caught_captured`) and
   read in `_pay_coin_setback()`, because the ruling's second half is that the
   surviving heroes carry on from where the party fell. It still catches every other
-  way to lose indoors — a PRE-BEAT guard, the rotor bar, the press, an animal that
+  way to lose indoors — a PRE-BEAT guard, the press, an animal that
   followed you in — and it is the building's, not the row's
   (`_pay_coin_setback()` relocates whoever bit you, gated on
   `TowerInterior.inside_walls()` — the group ANSWERING is not the test, because the
@@ -390,16 +390,16 @@ The building is full to its sealed roof — ten floor indices, `FLOOR_Y[0..9]`:
   thing in this building that is not batched. Measured over the eight planned storeys:
   **52 / 43 / 52 / 29 / 29 / 81 / 61 / 46** boxes against `PLAN_BOX_BUDGET` 120 (the two
   maze floors are the 81 and the 61 — a one-cell maze legitimately produces many rects,
-  which is what that budget now guards). Mesh NODES are **39 (`DRAW_BUDGET` 39) for 2424
+  which is what that budget now guards). Mesh NODES are **37 (`DRAW_BUDGET` 37) for 2420
   boxes** — one `FloorNBatch` per storey, the parts that move, and the four hero
-  portraits — and the whole interior is **561 collision shapes on one `StaticBody3D`**
+  portraits — and the whole interior is **559 collision shapes on one `StaticBody3D`**
   (ceiling 640, printed by check 5). A
   plan whose walls stopped merging blows the box budget on its first row. **`DRAW_BUDGET`
   counts nodes, not draws**: emissive is a material property, so a storey carrying a
   `GLOW_COLORS` box commits a second SURFACE in the same `ArrayMesh` and the engine
   submits one draw per surface. Since Air Sight (bead `godot-test1-oht`) a storey
   batches up to THREE — walls, other matte, emissive — because the walls must be
-  swappable on their own, and **`SURFACE_BUDGET` (54, measured at 51) is the bound
+  swappable on their own, and **`SURFACE_BUDGET` (54, measured at 48) is the bound
   that counts draws**; check 5 asserts both. Read `DRAW_BUDGET` as "nothing left the
   batch", not as a draw count.
 - **The offices are FURNISHED, and the furniture is derived rather than drawn.** No
@@ -409,7 +409,8 @@ The building is full to its sealed roof — ten floor indices, `FLOOR_Y[0..9]`:
   `run_seed` — the tower is authored). It is all vertex-coloured boxes in the storey's
   existing batch, so ten furnished floors cost **zero** extra draw calls; only the four
   hero portraits hanging in the outer hall as "employee of the month" need textures, and
-  they are the whole of `DRAW_BUDGET`'s move from 35 to 39. Furniture has its own
+  they are the whole of `DRAW_BUDGET`'s move from 35 to 39 (37 since the rotor
+  turnstile came out). Furniture has its own
   per-storey budget (`PLAN_DRESS_BUDGET` 580) so `PLAN_BOX_BUDGET` keeps measuring
   exactly what it always did. **The CORRIDORS are dressed too** (benches and planters,
   `_hall_dressing`), on cells whose four neighbours are all stone or open floor and whose
@@ -806,8 +807,8 @@ the full-custody protocol, and losing THAT ends the run. The roster is drawn by
 
 Every other contact is a TAX, never an ending: `hit_by_crocodile()` → freeze/flash →
 `_on_caught_finished()` → `_pay_coin_setback()` bills the attacker's own
-`SPECIES["coin_setback"]` fraction off the RUN's coins (a spec-less attacker — the rotor
-bar, a boss projectile — pays `DEFAULT_COIN_SETBACK`) → **soft respawn in place** (frozen
+`SPECIES["coin_setback"]` fraction off the RUN's coins (a spec-less attacker — the
+tower press, a boss projectile — pays `DEFAULT_COIN_SETBACK`) → **soft respawn in place** (frozen
 grace, then invulnerable blinking). **Lifetime coins are never deducted** — the bill comes
 off the RUN's coins alone.
 

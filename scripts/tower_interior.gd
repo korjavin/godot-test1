@@ -23,8 +23,9 @@ extends Node3D
 ##                         of headroom under storey 2's slab
 ##                      →  THE ANNULUS (`outer_hall`), off the hall north and
 ##                         south, ungated — and the way up the building
-##                      →  THE ROTOR GATE (the CHALLENGE SPACE): the only opening
-##                         west, with two counter-rotating bars sweeping it
+##                      →  THE COURTYARD DOORWAY: the only opening west, and since
+##                         bead `godot-test1-e7q` a plain one — it used to carry a
+##                         rotor turnstile the owner had removed as confusing
 ##                      →  COURTYARD, the whole west half of the plate. Storey 2
 ##                         roofs it now, which the persisted room id does not mind
 ##                      →  THE RAMP, up the courtyard's south-west corner
@@ -157,7 +158,7 @@ extends Node3D
 ## EVERY storey in the building now comes from `TowerPlans.STOREYS`: `all_boxes()`
 ## is the plan builder over `TowerPlans.floors()` plus the hand-built PARTS, which
 ## are the things a grid of characters cannot say. A part is a thing that MOVES
-## (the rotor's bars, a gate mass), a thing that MEASURES you (the demand
+## (the crawl's press, a gate mass), a thing that MEASURES you (the demand
 ## receptacle and its calibration ladder) or a thing that LIGHTS UP (a checkpoint
 ## plate, a pad), and each is placed from a plan lookup — `plan_room_rect()` /
 ## `plan_gate_rect()` — never from an authored X or Z. That is why floors 0 and 1
@@ -187,13 +188,11 @@ extends Node3D
 ##
 ##   THE GROUND FLOOR IS ROOFED, ALL OF IT. While the keep stood, the courtyard
 ##   was open to the sky and this paragraph was a sweep: every box top between the
-##   floor and 4.6 - 3.6125 = 0.9875 m was a step onto the storey above, which is
-##   what turned the rotor post into a full-height column instead of the waist-high
-##   hub it wants to be. Storey 2 is a full 80 m plate now, so there is no open sky
-##   below the roof and the sweep is gone with the table it read — a jump anywhere
-##   on floor 0 ends at that slab's underside, exactly as it always did in the
-##   entry hall. The receptacle's 2.6 m and the rotor column are harmless for the
-##   same reason.
+##   floor and 4.6 - 3.6125 = 0.9875 m was a step onto the storey above. Storey 2
+##   is a full 80 m plate now, so there is no open sky below the roof and the sweep
+##   is gone with the table it read — a jump anywhere on floor 0 ends at that
+##   slab's underside, exactly as it always did in the entry hall. The
+##   receptacle's 2.6 m is harmless for the same reason.
 ##
 ##   WHAT REPLACED IT IS STRUCTURAL, not a measurement: a plan storey has exactly
 ##   two kinds of solid — a wall as tall as its own storey's ceiling, and a gate
@@ -238,10 +237,10 @@ extends Node3D
 ##
 ## TWENTY-ODD `MeshInstance3D`s for the parts that move (plus one batch per storey)
 ## and everything else welded into those batches (see THE BATCH below), ONE
-## `StaticBody3D`, twenty-odd `Area3D`s (three pads, two rotor hazards, from
+## `StaticBody3D`, twenty-odd `Area3D`s (three pads, from
 ## phase 8 one press hazard, four spine pads and four cell volumes, from phase
 ## 15 one per riddle lock pad and from phase 16 the labyrinth's lift stop —
-## check 5 counts them and is the number that is actually true), two rotor pivots,
+## check 5 counts them and is the number that is actually true),
 ## a `Label3D` per sign — three fixed (the demand gate, the spine, the cell) plus a
 ## lock sign and a clue sign per riddle, so eleven at four riddles and two more per
 ## riddle after that — and one gem —
@@ -273,30 +272,6 @@ extends Node3D
 ## it costs shell wall height; lowering it breaks one of the two.
 const SLAB_Y: float = 4.6
 const SLAB_THICK: float = 0.4
-
-## The rotor doorway: the one gap in the wall between the entry hall and the
-## courtyard, and therefore the only land route to the climb. `ROTOR_ARM` must stay
-## under `ROTOR_DOOR_HALF` so the sweeping bars clear the jambs, and over
-## `ROTOR_DOOR_HALF * 0.5` so a bar lying across the doorway actually blocks a gap
-## instead of leaving one open.
-##
-## WHERE the doorway is, is the PLAN's to say — the `D` run bound to `rotor_gate` on
-## whichever storey draws it. What stays here is the pair of numbers the BARS are
-## made of, and `tower_interior_selfcheck` asserts the run the plan draws is wide
-## enough to hold them.
-const ROTOR_DOOR_HALF: float = 1.9
-const ROTOR_ARM: float = 1.7
-
-## The two bars: height off the floor, and angular velocity (rad/s). OPPOSITE
-## SIGNS and INCOMMENSURATE RATES on purpose — same-signed bars would lock into a
-## fixed pattern you learn once, and a rational ratio would make the doorway
-## periodic. Both are low enough to hop (the apex is 3.6 m) because DUCKING DOES
-## NOT SHRINK THE PLAYER'S CAPSULE in this game — the duck is a model-scale, so a
-## "duck under it" bar would be an unwinnable one.
-const ROTOR_LOW_Y: float = 0.55
-const ROTOR_HIGH_Y: float = 1.05
-const ROTOR_LOW_SPEED: float = 1.15
-const ROTOR_HIGH_SPEED: float = -0.77
 
 ## How thick a ramp deck is. The only survivor of the phase-3 ramp's own constants:
 ## `_deck_box()` still places every ramp in the building by its TOP face and derives
@@ -642,8 +617,7 @@ const NUDGE_TIME: float = 1.4
 
 ## The crawl press's lintel height, its stroke and its rhythm. The press is an
 ## `Area3D` hazard on a mesh that never becomes solid — a solid block driven by
-## script shoves a `CharacterBody3D` through whatever is behind it, which is the
-## same reason the rotor bars are hazards (see `_make_rotor`).
+## script shoves a `CharacterBody3D` through whatever is behind it.
 ##
 ## IT IS A CHALLENGE AND MUST STAY ONE. `maintenance_crawl` is the route the
 ## custody scar leaves standing when it drops the block's wide doorway, so the
@@ -818,7 +792,11 @@ const FLOOR_HYSTERESIS: float = 0.8
 ## draw — so they are four `QuadMesh` nodes on one storey wearing the hero HUD's
 ## own `Texture2D`. They are the WHOLE of the easter egg's cost: the frames round
 ## them and the brass plaques under them are batched boxes like everything else.
-const DRAW_BUDGET: int = 39
+##
+## 37 SINCE BEAD `godot-test1-e7q` took the rotor turnstile out of the courtyard
+## doorway: its two bars were the only spinning parts in the building and each was
+## a mesh of its own. The post was batched, so it cost nothing here.
+const DRAW_BUDGET: int = 37
 
 # ============================================================================
 # PALETTE — one material per colour, shared process-wide (see `_material`)
@@ -993,7 +971,7 @@ const CARPET_THICK: float = 0.02
 #     cells are still ONE connected component afterwards. A piece that would wall
 #     anything off is dropped on the spot, not warned about;
 #   * a candidate cell that already carries anything else this storey draws — a
-#     pad, a lock plate, a clue strip, a containment frame, the rotor's mechanism
+#     pad, a lock plate, a clue strip, a containment frame, the crawl's press
 #     — is refused BY FOOTPRINT, so no set piece is ever dressed and the stealth
 #     pacing is untouched. That test is geometry, not a list of names, so a set
 #     piece added later is excluded the day it is drawn.
@@ -1548,10 +1526,9 @@ const AUTHORED_CAPTIVE: String = "primm"
 #
 #   * the two gates, which travel;
 #   * the four calibration bands, which relight as often as a hero switches;
-#   * the checkpoint's plate and post, which relight once;
-#   * the two rotor bars, which hang off spinning pivots of their own.
+#   * the checkpoint's plate and post, which relight once.
 #
-# Ten nodes, and every one of them earns it. Anything you add that just SITS there
+# Every one of them earns it. Anything you add that just SITS there
 # belongs in the batch — leave it out of this set and it is batched for free.
 const MOVING_PARTS: Array[String] = [
 	"DemandShutter",
@@ -1797,10 +1774,6 @@ var _checkpoint_meshes: Array[MeshInstance3D] = []
 var _label: Label3D = null
 var _spine_label: Label3D = null
 var _cell_label: Label3D = null
-
-## The two rotor pivots. The bars and their hazard volumes are children, so one
-## `rotation.y` per pivot animates both.
-var _rotors: Array[Node3D] = []
 
 ## Per-floor mesh containers, index 0 = ground. `_update_visibility` shows floor
 ## `n` +/- 1 and hides the rest.
@@ -2077,8 +2050,6 @@ static func plan_boxes(floor_index: int) -> Array[Dictionary]:
 	# `godot-test1-dn8` brought the phase-3 keep's three set pieces under it when the
 	# ground floor and the mezzanine became plan rows like every other. Move the `D`
 	# run or the room's letters in the ASCII and the mechanism follows.
-	if plan_gate_rect(floor_index, "rotor_gate").size != Vector2i.ZERO:
-		out.append_array(_rotor_boxes(plan))
 	if plan_gate_rect(floor_index, GATE_DEMAND).size != Vector2i.ZERO:
 		out.append_array(_demand_boxes(plan))
 	if plan_room_rect(floor_index, CHECKPOINT_ROOM).size != Vector2i.ZERO:
@@ -3043,8 +3014,8 @@ static func _plan_gates(plan: Dictionary) -> Array[Dictionary]:
 	  CHALLENGE a LINTEL: a partial-height wall over the run, in ordinary stone and
 	            batched, so the opening reads as a duct. The hazard that sweeps
 	            under it is hand-built from the same run (`_block_boxes` for the
-	            crawl's press, `_rotor_boxes` for the rotor doorway's bars), because
-	            a thing that moves is not a plan character. The secure checkpoint is
+	            crawl's press), because a thing that moves is not a plan character.
+	            The secure checkpoint is
 	            the one authored exception: its graph row declares `GEOMETRY_MASS`
 	            so the rising mass and derived pad remain while access stays base kit.
 	  DEMAND    nothing at all. Its shutter SINKS rather than rising and its
@@ -3456,45 +3427,6 @@ static func entry_stand() -> Vector3:
 	return Vector3(TowerPlans.PLAN_HALF - TowerShell.DOOR_TRIGGER_DEPTH - 1.0, 0.2, 0.0)
 
 
-static func _rotor_boxes(plan: Dictionary) -> Array[Dictionary]:
-	"""
-	The challenge space's mechanism: the post in the rotor doorway and its two
-	counter-rotating bars.
-
-	@return: `RotorPost` (solid, full storey height) and `RotorBarLow` /
-	        `RotorBarHigh` (never solid — a script-moved solid body shoves a
-	        `CharacterBody3D` through whatever is behind it, and behind this one is
-	        the outside world).
-
-	The DOORWAY is a `D` run drawn on the plan and `_plan_gates`' challenge arm
-	builds its lintel; what cannot be a plan character is a thing that MOVES, so the
-	post and the bars are placed from the same run here. Same division of labour as
-	the maintenance crawl's press, one gate class along.
-	"""
-	var floor_index := int(plan["floor"])
-	var top: float = FLOOR_Y[floor_index]
-	var clear := plan_clear_height(floor_index)
-	var run := _cell_span(plan_gate_rect(floor_index, "rotor_gate"))
-	var at_x: float = (run["x0"] + run["x1"]) * 0.5
-	var at_z: float = (run["z0"] + run["z1"]) * 0.5
-	var out: Array[Dictionary] = [{
-		"name": "RotorPost",
-		"pos": Vector3(at_x, top + clear * 0.5, at_z),
-		"size": Vector3(0.4, clear, 0.4),
-		"color": COLOR_HAZARD, "collide": true, "floor": floor_index,
-	}]
-	for bar: Array in [["RotorBarLow", ROTOR_LOW_Y, ROTOR_LOW_SPEED],
-			["RotorBarHigh", ROTOR_HIGH_Y, ROTOR_HIGH_SPEED]]:
-		out.append({
-			"name": String(bar[0]),
-			"pos": Vector3(at_x, top + float(bar[1]), at_z),
-			"size": Vector3(2.0 * ROTOR_ARM, 0.3, 0.3),
-			"color": COLOR_HAZARD, "collide": false, "floor": floor_index,
-			"spin": float(bar[2]),
-		})
-	return out
-
-
 static func _demand_boxes(plan: Dictionary) -> Array[Dictionary]:
 	"""
 	The demand gate: the shutter that sinks, the receptacle pillar you read it from,
@@ -3622,9 +3554,9 @@ static func _block_boxes(plan: Dictionary) -> Array[Dictionary]:
 	var clear := plan_clear_height(floor_index)
 
 	# ---- The maintenance crawl's press, in the duct the plan drew for it ----
-	# `sweep` marks a part that is MOVING on any frame you look at it, the way
-	# `spin` marks a rotor bar. Its y here is the TOP of the stroke, which is where
-	# `press_y(0)` puts it — see that function.
+	# `sweep` marks a part that is MOVING on any frame you look at it. Its y here is
+	# the TOP of the stroke, which is where `press_y(0)` puts it — see that
+	# function.
 	var crawl := plan_gate_rect(floor_index, "maintenance_crawl")
 	if crawl.size != Vector2i.ZERO:
 		var duct := _cell_span(crawl)
@@ -3868,13 +3800,12 @@ static func is_own_node(box: Dictionary) -> bool:
 	`tower_interior_selfcheck` when it counts the draws and the materials — the two
 	must not be able to disagree about which boxes left the batch.
 
-	Three ways in: the `MOVING_PARTS` name list (the hand-built parts — the gate
-	masses, the press, the rotor bars — whose names a const can hold), a rotor's
-	`spin`, and a plan box that declared itself `dynamic` (phase 15's riddle masses,
-	which are named by a builder and so cannot be in a const list).
+	Two ways in: the `MOVING_PARTS` name list (the hand-built parts — the gate
+	masses, the press — whose names a const can hold), and a plan box that declared
+	itself `dynamic` (phase 15's riddle masses, which are named by a builder and so
+	cannot be in a const list).
 	"""
 	return MOVING_PARTS.has(String(box["name"])) \
-		or not is_zero_approx(float(box.get("spin", 0.0))) \
 		or bool(box.get("dynamic", false))
 
 
@@ -3905,10 +3836,7 @@ func _ready() -> void:
 
 	for box: Dictionary in all_boxes():
 		var parent: Node3D = _floors[int(box["floor"])]
-		var spin: float = float(box.get("spin", 0.0))
-		if not is_zero_approx(spin):
-			parent = _make_rotor(box, parent)
-		elif not is_own_node(box):
+		if not is_own_node(box):
 			batched[int(box["floor"])].append(box)
 			if box["collide"]:
 				_add_shape(body, box)
@@ -3916,9 +3844,7 @@ func _ready() -> void:
 		var mesh := MeshInstance3D.new()
 		mesh.name = box["name"]
 		mesh.mesh = _box_mesh(box["size"])
-		# A rotor bar hangs off a pivot that is already at the post, so only its
-		# HEIGHT is local; everything else is placed in interior space.
-		mesh.position = Vector3(0.0, box["pos"].y, 0.0) if not is_zero_approx(spin) else box["pos"]
+		mesh.position = box["pos"]
 		if box.has("rot"):
 			mesh.rotation = box["rot"]
 		mesh.material_override = _material(box["color"])
@@ -4045,17 +3971,14 @@ func _process(delta: float) -> void:
 	"""
 	Everything that moves, plus the visibility gating.
 
-	ONE `_process` FOR THE WHOLE BUILDING — the fauna manager's rule. Two rotor
-	pivots, two gate tweens, one distance test and two boolean writes; the rotors
-	are skipped outright while the interior is not drawn, which is most of a run.
+	ONE `_process` FOR THE WHOLE BUILDING — the fauna manager's rule. The press,
+	two gate tweens, one distance test and two boolean writes; all of it is skipped
+	outright while the interior is not drawn, which is most of a run.
 	"""
 	_player = get_tree().get_first_node_in_group("player") as Node3D
 	var near := _update_visibility()
 	if not near:
 		return
-	for i in _rotors.size():
-		var speed: float = ROTOR_LOW_SPEED if i == 0 else ROTOR_HIGH_SPEED
-		_rotors[i].rotation.y = wrapf(_rotors[i].rotation.y + speed * delta, 0.0, TAU)
 	_tick_press(delta)
 	_tick_gates(delta)
 	_tick_pads()
@@ -4435,35 +4358,6 @@ func _light_checkpoint() -> void:
 # ============================================================================
 # BUILD HELPERS
 # ============================================================================
-
-func _make_rotor(box: Dictionary, parent: Node3D) -> Node3D:
-	"""
-	A rotor bar's pivot: a Node3D at the post, carrying the bar mesh and the bar's
-	hazard volume, so ONE `rotation.y` sweeps both.
-
-	The hazard is an `Area3D`, never a solid body — a solid bar moved by script
-	shoves a `CharacterBody3D` through whatever is behind it, and behind this one is
-	the outside world.
-	"""
-	var pivot := Node3D.new()
-	pivot.name = "%sPivot" % box["name"]
-	pivot.position = Vector3(box["pos"].x, 0.0, box["pos"].z)
-	parent.add_child(pivot)
-	_rotors.append(pivot)
-
-	var hazard := Area3D.new()
-	hazard.name = "%sHazard" % box["name"]
-	hazard.monitorable = false
-	var shape := CollisionShape3D.new()
-	var box_shape := BoxShape3D.new()
-	box_shape.size = box["size"]
-	shape.shape = box_shape
-	hazard.add_child(shape)
-	hazard.position = Vector3(0.0, box["pos"].y, 0.0)
-	hazard.body_entered.connect(_on_hazard_touched)
-	pivot.add_child(hazard)
-	return pivot
-
 
 func _build_pads() -> void:
 	"""
@@ -5304,7 +5198,7 @@ func captives() -> Array:
 # in through the front door and would otherwise trip every pad in the building.
 
 func _on_hazard_touched(body: Node3D) -> void:
-	"""A rotor bar swept through the player. Costs coins, via the ONE damage verb."""
+	"""A swept hazard moved through the player. Costs coins, via the ONE damage verb."""
 	if not body.is_in_group("player") or not body.has_method("hit_by_crocodile"):
 		return
 	body.call("hit_by_crocodile")
@@ -5612,8 +5506,8 @@ func setback_point() -> Vector3:
 	NOT "A GUARD'S", since bead godot-test1-3iy.19: a post-beat guard ARRESTS, and
 	an arrest is the one contact whose knockback is waived (the surviving heroes
 	carry on from where the party fell). This is the plate for everything else the
-	building can do to you — a pre-beat guard, the rotor bar, the press, an animal
-	that followed you through the door.
+	building can do to you — a pre-beat guard, the press, an animal that followed
+	you through the door.
 
 	@return: a WORLD position, standable, on the storey the checkpoint is on.
 
@@ -6124,10 +6018,8 @@ func _add_hazard_child(mesh: MeshInstance3D, size: Vector3) -> void:
 	"""
 	Hang a swept part's hazard volume off the mesh itself, so the two move as one.
 
-	The rotor bars get theirs from `_make_rotor` (they hang off a pivot instead,
-	because a rotation has to sweep both); a linear part has no pivot to share, and
-	parenting the `Area3D` to the mesh is the smaller of the two ways to keep what
-	you see and what hurts you in the same place.
+	Parenting the `Area3D` to the mesh is the smallest way to keep what you see and
+	what hurts you in the same place.
 	"""
 	var hazard := Area3D.new()
 	hazard.name = "%sHazard" % mesh.name

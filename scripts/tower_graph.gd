@@ -207,7 +207,7 @@ const TOWER_GRAPH: Dictionary = {
 		},
 		"courtyard": {
 			"built": true, "quest": "", "cell": "", "parts": [],
-			"note": "Open to the sky, west of the rotor doorway. The ramp starts here.",
+			"note": "Open to the sky, west of the hall doorway. The ramp starts here.",
 		},
 		"upper_landing": {
 			"built": true, "quest": "", "cell": "", "parts": [],
@@ -541,8 +541,11 @@ const TOWER_GRAPH: Dictionary = {
 	# see `mutations`.
 	# ------------------------------------------------------------------------
 	"edges": [
+		# UNGATED since bead `godot-test1-e7q` removed the rotor turnstile that used
+		# to stand in it. The edge stays — it is still the only land route to the
+		# climb, and every spine still walks it — but there is nothing to pass now.
 		{"id": "hall_courtyard", "a": "entry_hall", "b": "courtyard",
-			"gate": "rotor_gate", "built": true},
+			"gate": "", "built": true},
 		{"id": "hall_vault", "a": "entry_hall", "b": "vault",
 			"gate": GATE_DEMAND, "built": true},
 		# The ramp. Not a gate: it is the only way up and it asks nothing.
@@ -761,17 +764,6 @@ const TOWER_GRAPH: Dictionary = {
 	# caught. An unbuilt gate claims nothing.
 	# ------------------------------------------------------------------------
 	"gates": {
-		"rotor_gate": {
-			"class": CLASS_CHALLENGE, "identity": "", "effect": "", "scale": 0.0,
-			# TRUE, and not for the obvious reason: from the lift stop, with the
-			# custody scar having dropped the courtyard stair, this doorway is the
-			# only way back down to the maintenance crawl. The audit computes that
-			# — this flag is its answer written down, and it is checked, not
-			# trusted.
-			"needed_during_captivity": true, "built": true, "quest": "",
-			"parts": ["RotorPost", "RotorBarLow", "RotorBarHigh"],
-			"note": "Two counter-rotating bars. Base kit, so no subset can be stopped by it.",
-		},
 		GATE_DEMAND: {
 			"class": CLASS_DEMAND, "identity": "", "effect": "primm_blink",
 			# Kept equal to `TowerInterior.DEMAND_TARGET` by the self-check — the
@@ -986,21 +978,23 @@ const TOWER_GRAPH: Dictionary = {
 	# last is the hero's own. Each must be passable by its hero ALONE at the
 	# readiness floor, which check 3 walks edge by edge.
 	# ------------------------------------------------------------------------
-	# THE SHARED SEGMENT IS THE WHOLE BUILDING — front door, the rotor doorway, the
-	# courtyard ramp, seven more ramps, ROUTE A of both labyrinth floors (the outer
-	# circuits, never the riddles), the last ramp, and the cell block's wide
+	# THE SHARED SEGMENT IS THE WHOLE BUILDING — front door, the courtyard doorway,
+	# the courtyard ramp, seven more ramps, ROUTE A of both labyrinth floors (the
+	# outer circuits, never the riddles), the last ramp, and the cell block's wide
 	# doorway. Check 3 walks these with an EMPTY solved set, so a riddle on a spine
 	# fails the build; that is exactly why the maze has two routes and why these
 	# lists name the circuits.
 	#
-	# `rotor_gate` IS BACK ON EVERY SPINE, and it is the ONE gate on them. Bead
+	# THERE IS NO GATE ON A SPINE AT ALL since bead `godot-test1-e7q`. Bead
 	# godot-test1-dn8 demolished the keep and moved the grand ramp's foot up to
 	# storey 2, so the only way out of the ground floor is the courtyard ramp and
-	# the only way into the courtyard is the rotor doorway. That is legal and it is
-	# the reason the class exists: a CHALLENGE is base kit, passable by any hero
-	# alone (`_passable`), so it can strand no subset — which is exactly what check
-	# 3 and the fifteen subset walks re-prove rather than take on trust. An identity
-	# or a demand gate here would be a softlock the audit would refuse.
+	# the only way into the courtyard is the `hall_courtyard` doorway; that doorway
+	# carried the rotor turnstile, a CHALLENGE — base kit, passable by any hero
+	# alone (`_passable`), so it could strand no subset — and the owner removed it
+	# for reading as a puzzle. The edge stays, ungated. The fifteen subset walks
+	# re-prove the spines rather than take them on trust either way; what the
+	# removal changes is only that there is now nothing on them to prove passable.
+	# An identity or a demand gate here would still be a softlock the audit refuses.
 	"spines": {
 		"windman": {"entry": "front_door", "edges": [
 			"hall_courtyard", "courtyard_landing", "landing_s3", "s3_s4", "s4_s5", "s5_s6", "s6_s7", "s7_s8", "s8_outer_circuit", "s8_s9",

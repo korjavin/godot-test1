@@ -209,7 +209,7 @@ const STOREYS: Array[Dictionary] = [
 	#
 	# THE ROUTE IS PHASE 3'S ROUTE, REDRAWN AT FOUR TIMES THE SCALE. In through
 	# the east door into the ENTRY HALL; the annulus (`O`) opens off it north and
-	# south, ungated, and the grand climb leaves the far side of the ROTOR
+	# south, ungated, and the grand climb leaves the far side of the COURTYARD
 	# DOORWAY — the one gap in the wall at column 20, and the only land entrance
 	# to the COURTYARD. The courtyard's lane runs west and then south to the foot
 	# of storey 2's ramp at columns 4-9, rows 30-31, which is why those cells are
@@ -218,15 +218,16 @@ const STOREYS: Array[Dictionary] = [
 	# demand shutter, is the VAULT — optional, skippable, and the only room on the
 	# floor you can be refused.
 	#
-	# THE ROTOR DOORWAY CARRIES A `D`, AND THAT IS A CORRECTION TO THE PLAN THIS
-	# BEAD WAS WRITTEN FROM. Drawn as a plain gap the two rooms land in ONE piece
-	# of floor with every gate shut, and `_gates_shut_problems` rightly calls that
-	# "the drawing offers a way round a door the audit models" — the challenge
-	# would be decorative in the only place the audit can see. So it is a gate
-	# slot like `maintenance_crawl`'s, its lintel comes from `_plan_gates`'
-	# challenge arm, and the post and its two sweeping bars are hand-built from
-	# the same run (`TowerInterior._rotor_boxes`) because a thing that moves is
-	# not a plan character.
+	# THE COURTYARD DOORWAY IS A PLAIN GAP, AND SINCE BEAD `godot-test1-e7q` THAT
+	# IS THE WHOLE OF IT. It used to carry a `D` bound to `rotor_gate`, a timing
+	# challenge of two counter-rotating bars, and the `D` was load-bearing for the
+	# audit: a gated edge whose rooms are in one component anyway is "the drawing
+	# offers a way round a door the audit models", so the doorway had to be the
+	# door. The owner removed the mechanism (it read as a puzzle and was only
+	# confusing), the `hall_courtyard` edge is ungated now, and the reasoning
+	# inverts with it — `_gates_shut_problems` REQUIRES an ungated edge's two
+	# rooms to land in one component, which is exactly what two cells of plain
+	# floor give it.
 	# ------------------------------------------------------------------------
 	{
 		"floor": 0,
@@ -237,11 +238,10 @@ const STOREYS: Array[Dictionary] = [
 			"O": "outer_hall",
 			"V": "vault",
 		},
-		# Two gates, two classes, and neither draws its own mechanism: the rotor's
-		# bars and the vault's shutter, receptacle and calibration ladder are all
-		# hand-built off these runs.
+		# One gate left on this floor, and it does not draw its own mechanism: the
+		# vault's shutter, receptacle and calibration ladder are all hand-built off
+		# this run.
 		"gates": {
-			"20,19": "rotor_gate", "20,20": "rotor_gate",
 			"29,27": "tower_vault", "30,27": "tower_vault",
 		},
 		"rows": [
@@ -264,8 +264,8 @@ const STOREYS: Array[Dictionary] = [
 			"#CCCCCCCCCCCCCCCCCCC#ssssssssssssssssss#",
 			"#CCCCCCCCCCCCCCCCCCC#ssssssssssssssssss#",
 			"#CCCCCCCCCCCCCCCCCCC#sssssssssssssssssss",
-			"#CCCCCCCCC..........Dsssssssssssssssssss",
-			"#CCCCCCCCC..P.......Dsssssssssssssssssss",
+			"#CCCCCCCCC...........sssssssssssssssssss",
+			"#CCCCCCCCC..P........sssssssssssssssssss",
 			"#CCCCCCCCC..CCCCCCCC#sssssssssssssssssss",
 			"#CCCCCCCCC..CCCCCCCC#ssssssssssssssssss#",
 			"#CCCCCCCCC..CCCCCCCC#ssssssssssssssssss#",
@@ -289,7 +289,7 @@ const STOREYS: Array[Dictionary] = [
 		"note": "Storey 1, the ground floor: the 80 m hall the phase-3 keep used to "
 			+ "stand in. Front door east into the entry hall, the annulus off it "
 			+ "north and south, the vault behind the demand shutter to the south, "
-			+ "and west through the rotor doorway into the walled courtyard, where "
+			+ "and west through the open doorway into the walled courtyard, where "
 			+ "the climb to storey 2 begins.",
 	},
 	# ------------------------------------------------------------------------
