@@ -556,7 +556,11 @@ because Air Rush under a 4.6 m ceiling was a press that did nothing; the take-of
 (`RAIN` / `LAND`) do not apply to it. Teibi's growth is **refused everywhere sheltered**
 (reason `INDOOR`, above `TIGHT`, owner ruling `godot-test1-xdf`) and a giant walking
 through the door **auto-reverts at the threshold**, so the state cannot exist inside; SMALL
-stays allowed. Air Sight is the one transient ability state that lives in another node's
+stays allowed. **The FORM TIMER's revert waits for room** (`_teibi_fit_blocked(1.0)`,
+retried at `TEIBI_REVERT_RETRY`) — inflating a 2 m capsule inside stone is
+`_teibi_grow_blocked`'s bug in reverse, and the HQ's 1.2 m crawl alcove is the first space
+in this game a normal body does not fit in. The FORCED reverts (character switch, respawn,
+the no-giant-indoors threshold) stay unconditional: those are not the body's call. Air Sight is the one transient ability state that lives in another node's
 MATERIALS rather than in a float here, so it is cleared on the switch, on the respawn AND
 on the way out of the door — `capture_selfcheck` drives all three exits.
 

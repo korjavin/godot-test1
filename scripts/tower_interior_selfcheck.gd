@@ -4658,12 +4658,85 @@ func _check_the_dossiers_are_findable() -> void:
 	interior.call("_collect_dossier", 0, hero)
 	if int(hero.get("coins_collected")) != again:
 		_fail("check 20: a dossier already taken paid out a second time")
+	# (f) ...AND NOBODY IS TRAPPED IN THE ALCOVE. Small Teibi's form expires on a
+	#     timer wherever he happens to be standing, and before this bead every space
+	#     in this game was at least a capsule tall — so the revert grew the body
+	#     unconditionally. Under a 1.2 m lintel that is `_teibi_grow_blocked`'s bug
+	#     in reverse: a 2 m capsule inflated inside stone, depenetrated along
+	#     whichever axis is shallowest. Driven on the REAL physics query against the
+	#     REAL lintel, at the alcove and one cell away as the control.
+	await _check_the_alcove_does_not_trap_teibi(hero)
+
 	print("dossiers: %d authored on storeys %d..%d, one taken for %d coins" % [
 		TowerInterior.DOSSIERS.size(), TowerInterior.DOSSIER_FLOOR_MIN,
 		TowerInterior.DOSSIER_FLOOR_MAX, gained])
 	hero.queue_free()
 	interior.queue_free()
 	await process_frame
+
+
+func _check_the_alcove_does_not_trap_teibi(hero: Node3D) -> void:
+	"""
+	The automatic revert waits for room — measured, at the alcove and beside it.
+
+	@param hero: a live `player_controller` already in the tree, so the shape query
+	    runs against the interior's real `InteriorCollision` body.
+
+	TWO ASSERTIONS AND A CONTROL. The predicate first (`_teibi_fit_blocked(1.0)` is
+	true under the lintel and false one cell away — a probe that answered "blocked"
+	everywhere would defer the revert forever and one that answered "clear"
+	everywhere is the bug), then the TIMER path driven through the real frames, so
+	"the revert defers" is behaviour rather than a reading of the branch.
+	"""
+	var index := -1
+	for i: int in TowerInterior.DOSSIERS.size():
+		if bool(TowerInterior.DOSSIERS[i].get("alcove", false)):
+			index = i
+			break
+	if index < 0:
+		return   # no alcove authored; check 20 has already failed on that.
+	var floor_index := int(TowerInterior.DOSSIERS[index]["floor"])
+	var cell: Vector2i = TowerInterior.DOSSIERS[index]["cell"]
+	var surface: float = TowerInterior.FLOOR_Y[floor_index]
+	var inside := Vector3(TowerInterior.dossier_point(index).x, surface,
+			TowerInterior.dossier_point(index).z)
+	# The control is the room cell the alcove's one mouth opens onto — full height,
+	# and the place a crawling Teibi stands up the moment he backs out of the gap.
+	var outside := inside
+	for step: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+		var plan := TowerPlans.storey(floor_index)
+		if _plan_char_at(plan, cell + step) != TowerPlans.WALL_CHAR:
+			outside = Vector3(TowerInterior._grid_x(float(cell.x + step.x) + 0.5), surface,
+					TowerInterior._grid_z(float(cell.y + step.y) + 0.5))
+	hero.global_position = inside
+	if not bool(hero.call("_teibi_fit_blocked", 1.0)):
+		_fail("check 20: the normal capsule fits inside the crawl alcove — the height gate is not there")
+	hero.global_position = outside
+	if bool(hero.call("_teibi_fit_blocked", 1.0)):
+		_fail("check 20: the normal capsule does not fit in the room beside the alcove — the fit probe says 'blocked' everywhere and the revert would never fire")
+
+	# ...and the timer really honours it. Small, one tick from expiring, in the hole.
+	#
+	# THE CLOCK IS DRIVEN WITH AN EXPLICIT DELTA, not by awaiting frames: a headless
+	# SceneTree runs uncapped, so "four frames" is an unknown and vanishing amount of
+	# time and the retry interval is 0.2 s. `_update_ability_timers` is the shipped
+	# per-frame call, so this is the real path at a controlled rate.
+	hero.global_position = inside
+	hero.set("teibi_size_state", 1)
+	hero.call("_apply_teibi_scale", float(load(PLAYER_SCRIPT).get("TEIBI_SCALE_SMALL")))
+	hero.set("teibi_form_timer", 0.05)
+	for _i in 10:
+		hero.call("_update_ability_timers", 0.1)
+	if int(hero.get("teibi_size_state")) != 1:
+		_fail("check 20: small Teibi's form expired inside the crawl alcove and the body grew back into the lintel")
+	# ...and stands up again the moment he is out from under it, which is what makes
+	# the deferral a wait rather than a second way to be stuck.
+	hero.global_position = outside
+	for _i in 10:
+		hero.call("_update_ability_timers", 0.1)
+	if int(hero.get("teibi_size_state")) != 0:
+		_fail("check 20: Teibi crawled out of the alcove and never reverted — the deferral is a trap of its own")
+	print("crawl alcove: the revert waits under the lintel and fires one cell away")
 
 
 func _check_the_crawl_alcove_fits_only_small_teibi(interior: Node3D) -> void:

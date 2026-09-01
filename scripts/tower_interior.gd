@@ -781,6 +781,10 @@ const DOSSIER_TITLE: String = "EVIDENCE DOSSIER"
 ## rather than restating either.
 const DOSSIER_CRAWL_CLEAR: float = 1.2
 
+## How often a peer standing in the HQ re-reads the room's collected set — see
+## `_tick_dossiers` for why a poll and not a third loop in the manager's sweep.
+const DOSSIER_POLL: float = 0.5
+
 ## `Coin.id_at()` is the pickup id every peer agrees on, and a dossier borrows it
 ## rather than inventing a second scheme — which is the whole reason `mp_manager`
 ## needed no edit for this bead. See `dossier_id()`.
@@ -2097,6 +2101,9 @@ var _captives: Dictionary = {}
 ## twice and remembers which instances to zero-scale.
 var _dossier_rack: MultiMeshInstance3D = null
 var _dossier_found: Dictionary = {}
+
+## Seconds until the next "has a teammate taken one?" read — see `_tick_dossiers`.
+var _dossier_poll: float = 0.0
 
 ## The storey `_update_visibility` last drew the window around, -1 before the first
 ## frame. The rack is ONE node for the whole building, so it cannot hide with a
@@ -4477,6 +4484,7 @@ func _process(delta: float) -> void:
 	_tick_pads()
 	_tick_lure_pads(delta)
 	_tick_purge(delta)
+	_tick_dossiers(delta)
 
 
 # ============================================================================
@@ -5165,6 +5173,38 @@ func _latch_dossiers() -> void:
 		if bool(mp.call("is_coin_collected", dossier_id(index))):
 			_dossier_found[index] = true
 	_refresh_dossiers()
+
+
+func _tick_dossiers(delta: float) -> void:
+	"""
+	Ask the room, twice a second, whether a TEAMMATE has taken a dossier.
+
+	THE ONE THING THE COIN'S MACHINERY DOES NOT HAND US FOR FREE (codex review).
+	`MpManager._absorb_collected` sweeps the "coin" and "chest" groups when a
+	confirm lands, so a coin a teammate banks disappears on every screen at once. A
+	dossier is in neither group and could not usefully be — it is one instance of a
+	shared `MultiMesh` plus a trigger, not a node the sweep could free — so without
+	this a peer already standing in the HQ keeps seeing a folder that pays nothing
+	when they walk into it.
+
+	A POLL RATHER THAN A THIRD LOOP IN THAT SWEEP, and that is this bead's contract
+	rather than a judgement about which is nicer: the whole point of borrowing
+	`Coin.id_at` and `claim_pickup` was that `mp_manager.gd` is not touched.
+	`_latch_dossiers()` is already exactly the right read, so this is that call on a
+	clock — six dictionary lookups twice a second, only while somebody is standing
+	in this building (`_process` returns above), and only while something is still
+	unfound.
+
+	ponytail: a `"dossier"` group in `_absorb_collected` is the cheaper answer and
+	the upgrade path, for the day somebody is editing that file anyway.
+	"""
+	if _dossier_found.size() >= DOSSIERS.size():
+		return
+	_dossier_poll -= delta
+	if _dossier_poll > 0.0:
+		return
+	_dossier_poll = DOSSIER_POLL
+	_latch_dossiers()
 
 
 func _on_dossier_enter(body: Node3D, index: int) -> void:
