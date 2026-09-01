@@ -1070,16 +1070,17 @@ static func _landmark_golden_gate(terrain: Node3D, center: Vector3, rng: RandomN
 	const CABLE_SEGMENTS := 11
 	var top_y := LEG.y
 	var sag_y := DECK_Y + 0.9
+	var cable_dims := Vector3(TOWER_X * 2.0 / float(CABLE_SEGMENTS - 1) + 0.15, 0.3, 0.3)
 	for z_side in [-1.0, 1.0]:
 		for i in CABLE_SEGMENTS:
 			var t := float(i) / float(CABLE_SEGMENTS - 1)   # 0..1 across the span
 			var u := t * 2.0 - 1.0                          # -1..1, 0 at mid-span
 			var x := u * TOWER_X
 			var y: float = sag_y + (top_y - sag_y) * u * u   # parabola == shallow catenary
-			terrain.create_box(center + rot * Vector3(x, y, z_side * LEG_Z), Vector3(TOWER_X * 2.0 / float(CABLE_SEGMENTS - 1) + 0.15, 0.3, 0.3),
+			terrain.create_box(center + rot * Vector3(x, y, z_side * LEG_Z), cable_dims,
 					yaw, rng, block_batch, block_body, 0.0, orange, false)
 
-	return { "radius": 9.4, "top": rotated_box_top(LEG.y, Vector3(0.3, 0.3, 0.3), 0.0) }
+	return { "radius": 9.4, "top": rotated_box_top(LEG.y, cable_dims, 0.0) }
 
 static func _landmark_liberty(terrain: Node3D, center: Vector3, rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
 	"""
@@ -3936,6 +3937,8 @@ static func _landmark_hollywood(terrain: Node3D, center: Vector3, rng: RandomNum
 					Vector3(lx + (float(seg[0]) - 0.5) * LW, base_y + float(seg[1]) * LH * scale, 0.0),
 					Vector3(lx + (float(seg[2]) - 0.5) * LW, base_y + float(seg[3]) * LH * scale, 0.0),
 					0.32, _lm_shade(white, rng, 0.02), yaw, rng, block_batch, block_body, true)
+		# The 0.25 m buffer covers the diagonal strut corners from _lm_strut
+		# (thick * 0.5 * sin(tilt) reaches up to ~0.08 m beyond the bar endpoints).
 		top = maxf(top, base_y + LH * scale + 0.25)
 
 	return { "radius": 8.8, "top": top }

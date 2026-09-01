@@ -353,7 +353,7 @@ func _run() -> void:
 	else:
 		_check_radii(terrain_script, builders_script, registry, "field")
 		_check_radii(terrain_script, builders_script, city, "city")
-		_check_top_negative_control(terrain_script, builders_script, registry[0])
+		_check_top_negative_control()
 		_check_constants(consts, registry)
 		_check_facts(registry)
 		await _check_toast(registry)
@@ -456,7 +456,7 @@ func _check_radii(terrain_script: GDScript, builders_script: GDScript, registry:
 
 			var returned_top: float = float((footprint as Dictionary)["top"])
 			var highest_y := _highest_vertical_extent(block_batch)
-			if returned_top < highest_y - RADIUS_EPSILON:
+			if not _top_covers(returned_top, highest_y):
 				_fail("%s (seed %d): builder returned top %.2f m below highest emitted vertex %.2f m (overflow %.2f m)"
 						% [place, seed_index, returned_top, highest_y, highest_y - returned_top])
 
@@ -497,6 +497,10 @@ func _check_radii(terrain_script: GDScript, builders_script: GDScript, registry:
 	terrain.free()
 
 
+func _top_covers(t: float, h: float) -> bool:
+	return t >= h - RADIUS_EPSILON
+
+
 func _highest_vertical_extent(block_batch: Array) -> float:
 	"""
 	The highest Y vertex reached by any emitted box in the batch, accounting
@@ -512,29 +516,18 @@ func _highest_vertical_extent(block_batch: Array) -> float:
 	return highest
 
 
-func _check_top_negative_control(terrain_script: GDScript, builders_script: GDScript, entry: Dictionary) -> void:
+func _check_top_negative_control() -> void:
 	"""
-	NEGATIVE CONTROL for the recorded-top assertion: hand a builder's emitted batch
-	with a deliberately lowered recorded top, and assert that the check catches it.
+	NEGATIVE CONTROL for the recorded-top assertion: prove that _top_covers
+	rejects a top below highest_y and accepts a top at or above highest_y.
 	"""
-	var terrain := Node3D.new()
-	terrain.set_script(terrain_script)
-	var builder: String = String(entry["builder"])
-	var block_batch: Array = []
-	var block_body := StaticBody3D.new()
-	var chunk := MeshInstance3D.new()
-	var rng := RandomNumberGenerator.new()
-	rng.seed = hash(Vector3i(0, builder.hash(), 0))
-	builders_script.call(builder, terrain, Vector3.ZERO, rng, chunk, block_batch, block_body)
-	var highest_y := _highest_vertical_extent(block_batch)
-	block_body.free()
-	chunk.free()
-	terrain.free()
-
-	var lowered_top := highest_y - 0.5
-	if not (lowered_top < highest_y - RADIUS_EPSILON):
-		_fail("check 1 negative control: a recorded top 0.5 m below emitted stone was accepted — the top check is not testing anything")
-
+	var h := 10.0
+	if _top_covers(h - 0.5, h):
+		_fail("check 1 negative control: _top_covers accepted a top 0.5 m below highest vertex — the top check is not testing anything")
+	if not _top_covers(h, h):
+		_fail("check 1 negative control: _top_covers rejected an exact match at highest vertex")
+	if not _top_covers(h + 0.5, h):
+		_fail("check 1 negative control: _top_covers rejected a top 0.5 m above highest vertex")
 
 
 func _worst_horizontal_extent(block_batch: Array) -> float:
