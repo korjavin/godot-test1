@@ -1,7 +1,7 @@
 [gd_scene load_steps=3 format=3 uid="uid://snowtitan01"]
 
 [ext_resource type="Script" path="res://scripts/piglet_crocodile_ai.gd" id="1_titan"]
-[ext_resource type="PackedScene" path="res://scenes/characters/teibi.tscn" id="2_model"]
+[ext_resource type="PackedScene" path="res://assets/models/characters/titan.glb" id="2_model"]
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_1"]
 radius = 0.32

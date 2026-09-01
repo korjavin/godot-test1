@@ -1549,10 +1549,9 @@ const SPECIES: Dictionary = {
 		"avoid_speed_factor": 0.6,
 
 		# ----- Procedural body animation -----
-		## PI, not the quadrupeds' -PI/2: this is a re-skinned humanoid CHARACTER
-		## model (see scenes/characters/titan.tscn) and those are authored facing
-		## -Z, where every predator mesh is authored nose-along-+X. The body still
-		## travels +Z, so the model needs a half turn instead of a quarter.
+		## -PI/2, the standard enemy/boss facing offset. titan.glb is authored
+		## nose/front-along-+X (the toolkit's first contract) and the body travels
+		## +Z, so the model rotates -90°.
 		##
 		## THE CAPSULE IN titan.tscn IS RECORDED HERE for the reason the viper's
 		## is: a .tscn cannot hold a comment an editor resave will not eat.
@@ -1563,7 +1562,7 @@ const SPECIES: Dictionary = {
 		## identity the crocodile's 0.16/0.16 and the viper's 0.11/0.11 use). The
 		## body scale from the boss schedule multiplies all of it, so a 6x titan
 		## is a 10.8 m capsule around a 10.8 m model.
-		"model_facing_offset": PI,
+		"model_facing_offset": -PI / 2.0,
 
 		## A slow, heavy tread with almost no waddle — the read is a colossus
 		## planting its feet, not an animal scurrying.
@@ -2378,9 +2377,10 @@ const SPECIES: Dictionary = {
 		"avoid_speed_factor": 0.6,
 
 		# ----- Procedural body animation -----
-		## PI, the humanoid facing (see the naga): character meshes are authored
-		## facing -Z and the body travels +Z.
-		"model_facing_offset": PI,
+		## -PI/2, the standard enemy/boss facing offset. clown.glb is authored
+		## nose/front-along-+X (the toolkit's first contract) and the body travels
+		## +Z, so the model rotates -90°.
+		"model_facing_offset": -PI / 2.0,
 
 		## A CAPER. The biggest waddle roll and the biggest bob of any row here,
 		## over a quick stride, with almost no chase lean — the read is a thing
