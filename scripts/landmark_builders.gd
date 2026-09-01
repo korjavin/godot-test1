@@ -5793,24 +5793,45 @@ static func _city_szechenyi_baths(terrain: Node3D, center: Vector3, rng: RandomN
 
 	# 4. Outdoor Thermal Pools (Dry geometry with thermal turquoise tint)
 	# Pool 1 (North Adventure Pool with circular whirlpool)
-	terrain.create_box(center + Vector3(0.0, 0.85, -12.0), Vector3(22.0, 0.3, 12.0), 0.0,
+	terrain.create_box(center + Vector3(0.0, 1.05, -12.0), Vector3(22.0, 0.12, 12.0), 0.0,
 			rng, block_batch, block_body, 0.0, _lm_shade(pool_water, rng, 0.02), false)
-	terrain.create_box(center + Vector3(0.0, 1.1, -12.0), Vector3(24.0, 0.4, 14.0), 0.0,
+	# Coping rim around Pool 1
+	terrain.create_box(center + Vector3(0.0, 1.15, -18.3), Vector3(23.6, 0.3, 0.8), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false)
+	terrain.create_box(center + Vector3(0.0, 1.15, -5.7), Vector3(23.6, 0.3, 0.8), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false)
+	terrain.create_box(center + Vector3(-11.3, 1.15, -12.0), Vector3(0.8, 0.3, 13.4), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false)
+	terrain.create_box(center + Vector3(11.3, 1.15, -12.0), Vector3(0.8, 0.3, 13.4), 0.0,
 			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false)
 	# Central fountain column in north pool
-	terrain.create_box(center + Vector3(0.0, 2.0, -12.0), Vector3(2.0, 2.2, 2.0), 0.0,
+	terrain.create_box(center + Vector3(0.0, 1.8, -12.0), Vector3(2.0, 1.5, 2.0), 0.0,
 			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03), false)
 
 	# Pool 2 (Central Olympic Swimming Pool)
-	terrain.create_box(center + Vector3(0.0, 0.85, 4.0), Vector3(20.0, 0.3, 16.0), 0.0,
+	terrain.create_box(center + Vector3(0.0, 1.05, 4.0), Vector3(20.0, 0.12, 16.0), 0.0,
 			rng, block_batch, block_body, 0.0, _lm_shade(pool_water, rng, 0.02), false)
-	terrain.create_box(center + Vector3(0.0, 1.1, 4.0), Vector3(22.0, 0.4, 18.0), 0.0,
+	# Coping rim around Pool 2
+	terrain.create_box(center + Vector3(0.0, 1.15, -4.3), Vector3(21.6, 0.3, 0.8), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false)
+	terrain.create_box(center + Vector3(0.0, 1.15, 12.3), Vector3(21.6, 0.3, 0.8), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false)
+	terrain.create_box(center + Vector3(-10.3, 1.15, 4.0), Vector3(0.8, 0.3, 17.4), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false)
+	terrain.create_box(center + Vector3(10.3, 1.15, 4.0), Vector3(0.8, 0.3, 17.4), 0.0,
 			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false)
 
 	# Pool 3 (South Thermal Sitting Pool with poolside chess players)
-	terrain.create_box(center + Vector3(0.0, 0.85, 19.0), Vector3(22.0, 0.3, 10.0), 0.0,
+	terrain.create_box(center + Vector3(0.0, 1.05, 19.0), Vector3(22.0, 0.12, 10.0), 0.0,
 			rng, block_batch, block_body, 0.0, _lm_shade(pool_water, rng, 0.02), false)
-	terrain.create_box(center + Vector3(0.0, 1.1, 19.0), Vector3(24.0, 0.4, 12.0), 0.0,
+	# Coping rim around Pool 3
+	terrain.create_box(center + Vector3(0.0, 1.15, 13.7), Vector3(23.6, 0.3, 0.8), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false)
+	terrain.create_box(center + Vector3(0.0, 1.15, 24.3), Vector3(23.6, 0.3, 0.8), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false)
+	terrain.create_box(center + Vector3(-11.3, 1.15, 19.0), Vector3(0.8, 0.3, 11.4), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false)
+	terrain.create_box(center + Vector3(11.3, 1.15, 19.0), Vector3(0.8, 0.3, 11.4), 0.0,
 			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false)
 
 	# Poolside Stone Chess Tables & Benches (Széchenyi's signature)
@@ -5889,9 +5910,16 @@ static func _city_gellert_baths(terrain: Node3D, center: Vector3, rng: RandomNum
 				turquoise, rng, block_batch, block_body)
 
 	# 5. Outdoor Wave Pool Terrace at -X
-	terrain.create_box(center + Vector3(-15.0, 0.85, 0.0), Vector3(12.0, 0.3, 26.0), 0.0,
+	terrain.create_box(center + Vector3(-15.0, 1.05, 0.0), Vector3(12.0, 0.12, 26.0), 0.0,
 			rng, block_batch, block_body, 0.0, _lm_shade(pool_water, rng, 0.02), false)
-	terrain.create_box(center + Vector3(-15.0, 1.1, 0.0), Vector3(14.0, 0.4, 28.0), 0.0,
+	# Coping rim around Wave Pool
+	terrain.create_box(center + Vector3(-15.0, 1.15, -13.3), Vector3(13.6, 0.3, 0.8), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false)
+	terrain.create_box(center + Vector3(-15.0, 1.15, 13.3), Vector3(13.6, 0.3, 0.8), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false)
+	terrain.create_box(center + Vector3(-21.3, 1.15, 0.0), Vector3(0.8, 0.3, 27.4), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false)
+	terrain.create_box(center + Vector3(-8.7, 1.15, 0.0), Vector3(0.8, 0.3, 27.4), 0.0,
 			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false)
 	# Wave generator chamber at head of pool (+Z end)
 	terrain.create_box(center + Vector3(-15.0, 3.0, 15.0), Vector3(10.0, 4.0, 4.0), 0.0,
@@ -6114,4 +6142,3 @@ static func _city_budapest_eye(terrain: Node3D, center: Vector3, rng: RandomNumb
 				rng, block_batch, block_body, 0.0, _lm_shade(Color(0.3, 0.7, 0.8), rng, 0.04), false)
 
 	return { "radius": 38.0, "top": 62.5 }
-
