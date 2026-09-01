@@ -1193,11 +1193,17 @@ const DRESS_MIN_CANDIDATES: int = 6
 ## are the whole of the entropy, so the offices are laid out identically forever.
 const DRESS_SALT: int = 0x0FF1CE
 
-## The two rooms that ARE their set piece end to end, and so are never dressed.
+## The three rooms that ARE their set piece end to end, and so are never dressed.
 ## Named as graph rooms and never as floor numbers — the same rule `plan_boxes`
 ## follows when it decides which storey draws the block. Everything else is kept
 ## out cell by cell by the footprint test, which needs no name.
-const DRESS_SKIP_ROOMS: Array[String] = [BLOCK_ROOM, CHECKPOINT_ROOM]
+##
+## THE MUSTER FLOOR IS THE THIRD (bead `godot-test1-3iy.24`) and it joined the list
+## the day it stopped being anonymous `.` and became a lettered room. It is the
+## block's approach — an empty plate you cross in sight of a sentry, which is the
+## stealth beat the whole storey is — and it is also the largest room in the
+## building, so the dresser would have put a couple of hundred desks on it.
+const DRESS_SKIP_ROOMS: Array[String] = [BLOCK_ROOM, CHECKPOINT_ROOM, "s10_landing"]
 
 ## THE OFFICE PALETTE. Every colour here clears `INTERIOR_MIN_LUMINANCE` on its
 ## DARKEST face (`_face_shade`'s 0.78 underside), because a genuinely black

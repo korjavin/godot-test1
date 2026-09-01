@@ -1040,12 +1040,39 @@ const STOREYS: Array[Dictionary] = [
 	# NOT drawn: the builder derives each one from the plain-floor side of its own
 	# doorway (see `_plan_gates`), which is why row 12 is `.` and not corridor.
 	#
-	# BOTH `P` PADS STAND IN THE CORRIDOR AND NEITHER IS IN THE GALLERY, which is
-	# not a layout preference: the gallery already carries the VENT PURGE, a LIVE
-	# `COLOR_SYSTEM` plate, and a plan pad is the same colour and inert until phase
-	# 17 gives it something to do. Two identical cyan plates a metre apart, one of
-	# which works, is the legibility language lying — a system pad promises "stand
-	# here and something opens, elsewhere". Keep them out of this room.
+	# BOTH `P` PLATES STAND ON THE MUSTER FLOOR, FLANKING THE BLOCK'S ENTRY (owner
+	# ruling 2026-09-01, bead `godot-test1-3iy.24`). Since bead `godot-test1-3iy.22`
+	# a plate is a LURE — step on it and this storey's guard walks over to look at
+	# it — and this storey's `G` stands out on the muster floor by the ramp. Drawn
+	# inside the service corridor, as they were, the errand ran through the block's
+	# doorway, which the 1.5x chassis does not reliably walk: the guard wedged on
+	# the jamb and gave up, so the one lure that has to work at the climax was the
+	# one that did not. Out here it is a walk across open floor, and the pair is a
+	# real choice — pull the guard west to (7, 19) and the eastern approach to the
+	# doorway is clear, pull it east to (21, 19) and the western one is.
+	#
+	# They are also still OUT OF THE GALLERY, for the phase-8 reason: the gallery
+	# carries the VENT PURGE, a LIVE `COLOR_SYSTEM` plate, and two identical cyan
+	# plates a metre apart, one of which works, is the legibility language lying.
+	#
+	# THE MUSTER FLOOR IS LETTERED `M`, WHICH DRAWS A ROOM THAT ALREADY EXISTED.
+	# `s10_landing` is a `TOWER_GRAPH` room ("the MUSTER FLOOR") that this grid used
+	# to draw as anonymous `.`. A plate has to stand beside a room (`tower_selfcheck`
+	# check 9 — a plate in open floor belongs to nothing), the block's outer wall is
+	# one cell thick, and so the ONLY cells out here that were ever 4-adjacent to a
+	# room letter were the block's own doorway. Lettering the floor writes down what
+	# the graph already said; NO graph row changed.
+	#
+	# THREE RUNS OF PLAIN `.` SURVIVE OUT HERE, and each is read by a function that
+	# counts `FLOOR_CHAR` and nothing else — letter one of them and it goes quiet:
+	#   * (13..14, 15), the wide doorway. `TowerInterior.plan_doorway_rect()` finds
+	#     it as the run of floor in the corridor's south wall, and the custody
+	#     scar's rubble is drawn to stand exactly in it.
+	#   * (27, 16), the step outside the maintenance crawl. `gate_pad_cell()` wants
+	#     EXACTLY ONE plain-floor neighbour of the `D`, and this is it.
+	#   * (37, 31..37), the guard's beat. `_plan_guard_post` measures a patrol as the
+	#     symmetric run of plain `.` cells around the post, so lettering these would
+	#     leave the sentry standing on a zero-length beat.
 	#
 	# ITS CEILING IS THE SEALED ROOF, not a slab: 46.0 m of floor under 50.0 m of
 	# wall is 4.0 m of clear air, the tightest number in this phase and 5 cm over
@@ -1066,6 +1093,10 @@ const STOREYS: Array[Dictionary] = [
 			"E": "cell_primm",
 			"F": "cell_teibi",
 			"H": "cell_phoboman",
+			# The floor the block stands in, which is also this storey's landing —
+			# the one row in this file where a letter and `landing` name the same
+			# graph room, because the muster floor IS where the ramp arrives.
+			"M": "s10_landing",
 		},
 		# The four rescue spines, west to east, in `TowerInterior.SPINE_DOORS`
 		# order — and the hero each one answers to is read from `TowerGraph`, never
@@ -1079,50 +1110,52 @@ const STOREYS: Array[Dictionary] = [
 		},
 		"rows": [
 			"########################################",
-			"#......................................#",
-			"#......................................#",
-			"#.........#####################........#",
-			"#.........#CCCC#EEEE#FFFF#HHHH#........#",
-			"#.........#CCCC#EEEE#FFFF#HHHH#........#",
-			"#.........#CCCC#EEEE#FFFF#HHHH#........#",
-			"#.........#CCCC#EEEE#FFFF#HHHH#........#",
-			"#.........#BBBBBBBBBBBBBBBBBBB#........#",
-			"#.........#BBBBBBBBBBBBBBBBBBB#........#",
-			"#.........#BBBBBBBBBBBBBBBBBBB#........#",
-			"#.........##D####D####D####D###........#",
-			"#.........#...................#........#",
-			"#.........#AAAAAAAAAAAAAAAAAAA#........#",
-			"#.........#AAPAAAAAAAAAAAAPAAA#........#",
-			"#.........###..############D###........#",
-			"#......................................#",
-			"#......................................#",
-			"#......................................#",
-			"#......................................#",
-			"#......................................#",
-			"#......................................#",
-			"#......................................#",
-			"#......................................#",
-			"#......................................#",
-			"#......................................#",
-			"#......................................#",
-			"#......................................#",
-			"#......................................#",
-			"#......................................#",
-			"#......................................#",
-			"#......................................#",
-			"#......................................#",
-			"#......................................#",
-			"#...........................SSSSSSs..G.#",
-			"#...........................SSSSSSs....#",
-			"#......................................#",
-			"#......................................#",
-			"#......................................#",
+			"#MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM#",
+			"#MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM#",
+			"#MMMMMMMMM#####################MMMMMMMM#",
+			"#MMMMMMMMM#CCCC#EEEE#FFFF#HHHH#MMMMMMMM#",
+			"#MMMMMMMMM#CCCC#EEEE#FFFF#HHHH#MMMMMMMM#",
+			"#MMMMMMMMM#CCCC#EEEE#FFFF#HHHH#MMMMMMMM#",
+			"#MMMMMMMMM#CCCC#EEEE#FFFF#HHHH#MMMMMMMM#",
+			"#MMMMMMMMM#BBBBBBBBBBBBBBBBBBB#MMMMMMMM#",
+			"#MMMMMMMMM#BBBBBBBBBBBBBBBBBBB#MMMMMMMM#",
+			"#MMMMMMMMM#BBBBBBBBBBBBBBBBBBB#MMMMMMMM#",
+			"#MMMMMMMMM##D####D####D####D###MMMMMMMM#",
+			"#MMMMMMMMM#...................#MMMMMMMM#",
+			"#MMMMMMMMM#AAAAAAAAAAAAAAAAAAA#MMMMMMMM#",
+			"#MMMMMMMMM#AAAAAAAAAAAAAAAAAAA#MMMMMMMM#",
+			"#MMMMMMMMM###..############D###MMMMMMMM#",
+			"#MMMMMMMMMMMMMMMMMMMMMMMMMM.MMMMMMMMMMM#",
+			"#MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM#",
+			"#MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM#",
+			"#MMMMMMPMMMMMMMMMMMMMPMMMMMMMMMMMMMMMMM#",
+			"#MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM#",
+			"#MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM#",
+			"#MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM#",
+			"#MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM#",
+			"#MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM#",
+			"#MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM#",
+			"#MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM#",
+			"#MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM#",
+			"#MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM#",
+			"#MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM#",
+			"#MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM#",
+			"#MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM.M#",
+			"#MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM.M#",
+			"#MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM.M#",
+			"#MMMMMMMMMMMMMMMMMMMMMMMMMMMSSSSSSsMMGM#",
+			"#MMMMMMMMMMMMMMMMMMMMMMMMMMMSSSSSSsMM.M#",
+			"#MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM.M#",
+			"#MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM.M#",
+			"#MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM#",
 			"########################################",
 		],
 		"note": "Storey 10, the cell block: the service corridor, the four identity "
 			+ "doorways in its north wall, the gallery behind them and four uniform "
 			+ "recesses off that. The muster floor around it is the landing the "
-			+ "ramp from storey 9 arrives on.",
+			+ "ramp from storey 9 arrives on, drawn as the room it always was in the "
+			+ "graph, and its two lure plates flank the block's entry so either one "
+			+ "walks the guard off the approach you did not take.",
 	},
 ]
 

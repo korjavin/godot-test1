@@ -381,9 +381,17 @@ func _check_plans_bind_to_the_graph() -> void:
 		var plan_gates: Dictionary = plan["gates"]
 
 		# --- plan -> graph: every id the floor names is a BUILT room row -----
+		# A ROOM IS ON ONE FLOOR, AND A STOREY CLAIMING ITS OWN LANDING TWICE IS NOT
+		# TWO FLOORS. Storey 10 letters its muster floor `M` -> `s10_landing`, which
+		# is also its `landing` — the floor the ramp arrives on and the floor the
+		# block stands in are one room, and a plate has to stand beside a drawn room
+		# (the pad rule in `_plan_problems`). Deduping here keeps the cross-storey
+		# claim exactly as strict as it was; `claimed_by` is still one storey per id.
 		var named: Array[String] = [String(plan["landing"])]
 		for letter: String in plan_rooms:
-			named.append(String(plan_rooms[letter]))
+			var lettered := String(plan_rooms[letter])
+			if not named.has(lettered):
+				named.append(lettered)
 		for rid: String in named:
 			if not rooms.has(rid):
 				_fail("%s names room '%s', which is not a TOWER_GRAPH room" % [label, rid])
