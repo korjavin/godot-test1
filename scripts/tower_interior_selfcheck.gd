@@ -4828,6 +4828,35 @@ func _check_the_dossiers_are_findable() -> void:
 	interior.call("_collect_dossier", 0, hero)
 	if int(hero.get("coins_collected")) != again:
 		_fail("check 20: a dossier already taken paid out a second time")
+	# (e2) ...AND A REFUSED LORE LINE WAITS INSTEAD OF DYING (codex post-merge
+	#      review). `announce()` answers false while a landmark question owns the
+	#      card — possible in a room, where the quiz does not pause movement — and
+	#      the folder is hidden by then, so a dropped return was the line gone for
+	#      good. Driven on a REAL toast (the script builds its own labels), with the
+	#      quiz flag held up as the refusal and let go as the release.
+	var toast := Control.new()
+	toast.set_script(load("res://scripts/landmark_toast.gd"))
+	root.add_child(toast)
+	await process_frame
+	toast.set("_quiz_pending", true)
+	interior.call("_collect_dossier", 1, hero)
+	var queue: Array = interior.get("_dossier_lore_queue")
+	if queue.size() != 1:
+		_fail("check 20: a lore line refused by a pending quiz was dropped (queue holds %d)" % queue.size())
+	interior.set("_dossier_poll", 0.0)
+	interior.call("_tick_dossiers", 0.016)
+	if Array(interior.get("_dossier_lore_queue")).size() != 1:
+		_fail("check 20: the retry announced over a quiz still on screen")
+	toast.set("_quiz_pending", false)
+	interior.set("_dossier_poll", 0.0)
+	interior.call("_tick_dossiers", 0.016)
+	if not Array(interior.get("_dossier_lore_queue")).is_empty():
+		_fail("check 20: the queued lore line was not announced once the quiz cleared")
+	var fact_label: Label = toast.get("fact_label")
+	if fact_label == null or fact_label.text != String(TowerInterior.DOSSIERS[1]["lore"]):
+		_fail("check 20: the retried card does not carry the refused dossier's lore line")
+	toast.queue_free()
+	await process_frame
 	# (f) ...AND NOBODY IS TRAPPED IN THE ALCOVE. Small Teibi's form expires on a
 	#     timer wherever he happens to be standing, and before this bead every space
 	#     in this game was at least a capsule tall — so the revert grew the body
