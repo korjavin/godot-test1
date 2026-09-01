@@ -290,6 +290,9 @@ const ROAD_WIDTH: float = 2.5
 const TEXT_SIZE: int = 15
 const TEXT_TOP_GAP: float = 18.0
 
+## Budapest under-map status line font size (smaller than the main 15 px caption).
+const BUDAPEST_TEXT_SIZE: int = 13
+
 ## Terrain layer: biome samples per axis across the disc's bounding square.
 ##
 ## COARSE ON PURPOSE. The biome field has a 400 m wavelength (BIOME_CELL_SIZE, ~8
@@ -1446,11 +1449,8 @@ func _draw() -> void:
 	# INDOORS, the storey goes BESIDE THE COORDINATES and the jail's floor beside the
 	# biome — two fragments composed on the tick, appended to the two lines the
 	# caption already has.
-	# OUTDOORS, the Budapest countdown/explored count goes BESIDE THE COORDINATES.
 	if not _floor_text.is_empty():
 		text += "   " + _floor_text
-	elif not _budapest_text.is_empty():
-		text += "   " + _budapest_text
 	text += "\n" + tr(BIOME_NAMES[_biome])
 	var color := COLOR_TEXT
 	if _in_river:
@@ -1466,3 +1466,12 @@ func _draw() -> void:
 		HORIZONTAL_ALIGNMENT_CENTER, size.x, TEXT_SIZE, -1, 4, Color(0, 0, 0, 0.85))
 	font.draw_multiline_string(get_canvas_item(), pos, text,
 		HORIZONTAL_ALIGNMENT_CENTER, size.x, TEXT_SIZE, -1, color)
+
+	# 5b. OUTDOORS: the Budapest countdown / explored count on its own third line,
+	#     smaller, in COLOR_BUDAPEST.
+	if _floor_text.is_empty() and not _budapest_text.is_empty():
+		var b_pos := Vector2(0.0, pos.y + font.get_height(TEXT_SIZE) * 2.0 + 2.0)
+		font.draw_multiline_string_outline(get_canvas_item(), b_pos, _budapest_text,
+			HORIZONTAL_ALIGNMENT_CENTER, size.x, BUDAPEST_TEXT_SIZE, -1, 4, Color(0, 0, 0, 0.85))
+		font.draw_multiline_string(get_canvas_item(), b_pos, _budapest_text,
+			HORIZONTAL_ALIGNMENT_CENTER, size.x, BUDAPEST_TEXT_SIZE, -1, COLOR_BUDAPEST)

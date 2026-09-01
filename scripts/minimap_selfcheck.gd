@@ -133,7 +133,11 @@ class StubTerrain extends Node:
 
 class StubCroc extends Node3D:
 	var is_chasing: bool = false
-	var spec: Dictionary = {"captures_hero": true}
+	var spec: Dictionary = {}
+
+	func _init() -> void:
+		var croc_script: GDScript = load("res://scripts/piglet_crocodile_ai.gd")
+		spec = croc_script.SPECIES["hunter_robot"]
 
 	func set_lod_active(_active: bool) -> void:
 		pass
@@ -141,7 +145,11 @@ class StubCroc extends Node3D:
 
 class StubAnimal extends Node3D:
 	var is_chasing: bool = false
-	var spec: Dictionary = {"captures_hero": false}
+	var spec: Dictionary = {}
+
+	func _init() -> void:
+		var croc_script: GDScript = load("res://scripts/piglet_crocodile_ai.gd")
+		spec = croc_script.SPECIES["crocodile"]
 
 	func set_lod_active(_active: bool) -> void:
 		pass
@@ -909,10 +917,10 @@ func _check_widget_rect() -> String:
 			% [map.size.x, map.MAP_CENTER.x]
 	if map.MAP_CENTER.x - map.MAP_RADIUS < 0.0 or map.MAP_CENTER.y - map.MAP_RADIUS < 0.0:
 		return "the %.0f px disc pokes out of the top/left of its own control" % map.MAP_RADIUS
-	# Two lines of caption below the disc: the first baseline sits TEXT_TOP_GAP under
-	# the rim, the second roughly a font size below that, plus its descent.
+	# Three lines of caption below the disc: the first baseline sits TEXT_TOP_GAP under
+	# the rim, the second for biome, and the third for Budapest status outdoors.
 	var caption_bottom: float = map.MAP_CENTER.y + map.MAP_RADIUS + map.TEXT_TOP_GAP \
-		+ map.TEXT_SIZE * 2.0
+		+ map.TEXT_SIZE * 3.0
 	if map.size.y < caption_bottom:
 		return "the MinimapHUD control is %.0f px tall but the disc + caption need %.0f px" \
 			% [map.size.y, caption_bottom]
@@ -1187,13 +1195,16 @@ func _check_hunters_only() -> String:
 	if map == null or player == null:
 		return "no MinimapHUD or no player for hunter checks"
 
+	var croc_script: GDScript = load("res://scripts/piglet_crocodile_ai.gd")
+	var species: Dictionary = croc_script.SPECIES
+
 	var hunter := StubCroc.new()
-	hunter.spec = {"captures_hero": true}
+	hunter.spec = species["hunter_robot"]
 	root.add_child(hunter)
 	hunter.global_position = player.global_position + Vector3(10.0, 0.0, 0.0)
 
 	var animal := StubAnimal.new()
-	animal.spec = {"captures_hero": false}
+	animal.spec = species["crocodile"]
 	root.add_child(animal)
 	animal.global_position = player.global_position + Vector3(8.0, 0.0, 0.0)
 
@@ -1211,11 +1222,18 @@ func _check_hunters_only() -> String:
 			failure = "an animal (captures_hero: false) was drawn on the minimap as a threat dot"
 			break
 
-		# Add hunter (captures_hero: true)
+		# Add hunter (captures_hero: true, hunter_robot)
 		hunter.add_to_group("crocodile")
 		map._tick()
 		if map._croc_count != base_crocs + 1:
-			failure = "a hunter (captures_hero: true) was NOT drawn on the minimap as a threat dot"
+			failure = "a hunter (hunter_robot) was NOT drawn on the minimap as a threat dot"
+			break
+
+		# Test tower guard (captures_hero: true, tower_guard)
+		hunter.spec = species["tower_guard"]
+		map._tick()
+		if map._croc_count != base_crocs + 1:
+			failure = "a tower guard (tower_guard) was NOT drawn on the minimap as a threat dot"
 			break
 
 		# Remove hunter, keep animal
