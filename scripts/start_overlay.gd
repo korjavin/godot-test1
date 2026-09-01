@@ -116,6 +116,26 @@ const CARD_WIDTH: float = 420.0
 ## size is the fastest way to read which one that is.
 const BUTTON_HEIGHT: float = 64.0
 
+## GODOT'S OWN BACKSTOP BEHIND THE BROWSER'S. How long the film may make no
+## visible progress before this node stops believing it and lands the player on an
+## interactive surface.
+##
+## `IntroVideo` already carries two watchdogs, and both of them are `setTimeout`s
+## living in the same JS state machine as the `ended` listener and `finish()`
+## itself. That machine is a single point of failure for the whole handoff: if it
+## stops — a lost scratchpad, an element nobody owns any more, a timer that never
+## fires — every backstop inside it stops with it, `is_finished()` answers `false`
+## forever, and this poll waits forever behind a frozen frame. That is the
+## reported bug (godot-test1-3iy.20), and no amount of hardening INSIDE the state
+## machine can rule it out, because the hardening lives there too.
+##
+## So the poll gets a clock of its own, outside the browser, watching the one
+## number the browser cannot fake: `IntroVideo.progress()`. Derived rather than
+## chosen, and deliberately the SUM of the browser's two budgets, so it can only
+## ever fire on a film the browser's own watchdogs have already failed to catch —
+## it is a backstop, never a second policy.
+const FILM_STALL_LIMIT_SEC: float = IntroVideo.START_TIMEOUT_SEC + IntroVideo.STALL_TIMEOUT_SEC
+
 const TITLE_FONT_SIZE: int = 40
 const BUTTON_FONT_SIZE: int = 24
 const HINT_FONT_SIZE: int = 16
@@ -181,6 +201,12 @@ var _intro_playing: bool = false
 ## restarts the player before this node is re-entered for the next PLAY SOLO.
 var _film_finished_callback: Callable = Callable()
 
+## The stall backstop's two numbers: the last playback position seen, and how long
+## it has been sitting there. Reset by `_watch_film()` at every film start, so the
+## ending film never inherits the intro's reading. See FILM_STALL_LIMIT_SEC.
+var _film_mark: float = -2.0
+var _film_stall: float = 0.0
+
 ## Cached once — the touch-session probe can reach into JavaScriptBridge, so it
 ## is not re-evaluated per frame (the same caching `touch_controls.gd` does).
 var _is_touch: bool = false
@@ -229,7 +255,7 @@ func _ready() -> void:
 	IntroVideo.preload_element()
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	if _dismissed:
 		return
 
@@ -240,8 +266,15 @@ func _process(_delta: float) -> void:
 	# off-web `is_finished()` is a constant true.
 	if _intro_playing:
 		_apply_pause(true)
-		if _film_finished():
-			var failed := _film_failed()
+		# Asked EVERY frame, not only when the film says it is still running: the
+		# accumulator is what makes "no progress since last frame" into "wedged",
+		# and it can only count while somebody is counting.
+		var stalled: bool = _film_stalled(delta)
+		if _film_finished() or stalled:
+			# A stall is a FAILURE, not an end: the film did not finish, we gave up
+			# on it — so the callback gets the same answer a dead stream gets and
+			# Game Over shows its panel rather than treating this as a clean ending.
+			var failed := stalled or _film_failed()
 			_intro_playing = false
 			var callback := _film_finished_callback
 			_film_finished_callback = Callable()
@@ -305,6 +338,35 @@ func _film_failed() -> bool:
 	return IntroVideo.was_failed()
 
 
+func _film_progress() -> float:
+	return IntroVideo.progress()
+
+
+## Latch the stall backstop onto a film that is just starting. Called from both
+## `_intro_playing = true` sites, so a second film never inherits the first one's
+## reading — two films that happened to be stopped at the same position would
+## otherwise look like one film that never moved.
+func _watch_film() -> void:
+	_film_mark = -2.0
+	_film_stall = 0.0
+
+
+## Has the film gone quiet for longer than this node is willing to wait?
+##
+## Off-web `_film_progress()` is a constant `-1.0`, so this would eventually
+## answer true for a desktop film — which is fine and unreachable both: off-web
+## `_film_finished()` is a constant `true`, so `_intro_playing` is never latched
+## for a single frame and nothing ever asks. See FILM_STALL_LIMIT_SEC.
+func _film_stalled(delta: float) -> bool:
+	var at: float = _film_progress()
+	if at != _film_mark:
+		_film_mark = at
+		_film_stall = 0.0
+		return false
+	_film_stall += delta
+	return _film_stall >= FILM_STALL_LIMIT_SEC
+
+
 ## Start a film through the one shared `IntroVideo.start()` seam. Keeping this
 ## wrapper as the only call site lets the intro and ending share exactly one DOM
 ## lifecycle while the self-check can drive the browser branch headlessly.
@@ -328,6 +390,7 @@ func play_film(video_url: String, finished: Callable = Callable()) -> bool:
 	_apply_pause(true)
 	if _start_film(video_url):
 		_intro_playing = true
+		_watch_film()
 		if _body != null:
 			_body.visible = false
 		return true
@@ -630,6 +693,7 @@ func _on_play_solo_pressed() -> void:
 		return
 	if _start_film(IntroVideo.VIDEO_URL):
 		_intro_playing = true
+		_watch_film()
 		# Hide the card but keep this node alive and processing: `_process` is what
 		# notices the film finishing. (Not `_dismiss()` — that would hand the mouse
 		# and the pause back with 47 seconds of film still to run.)

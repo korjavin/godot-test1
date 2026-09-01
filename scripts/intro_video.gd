@@ -122,6 +122,19 @@ const START_TIMEOUT_SEC: float = 30.0
 ## uses for its retained callbacks.
 const JS_STATE: String = "window.__ck_intro"
 
+## The class stamped on every overlay root this file builds, so teardown can be
+## driven off the DOM instead of off the scratchpad.
+##
+## `finish()` used to detach `root` — the element the state object it was reached
+## through happens to hold — and `discard()` did nothing at all when the
+## scratchpad was already null. Those two together are the only shape in which the
+## reported symptom (a film frozen on its last frame that nothing takes down) is
+## reachable: an element on screen that `%s` no longer points at has no owner and
+## no exit. Sweeping BY CLASS makes teardown total — every root this file ever
+## built goes, whether or not anybody still holds a reference to it — which costs
+## one `querySelectorAll` on a path that runs once per film.
+const ROOT_CLASS: String = "ck-film-root"
+
 
 # ============================================================================
 # PUBLIC API — all three are safe to call anywhere, on any platform
@@ -215,8 +228,45 @@ static func _start_js() -> String:
 static func discard() -> void:
 	if not OS.has_feature("web"):
 		return
-	JavaScriptBridge.eval(
-		"(function(){try{var s=%s;if(s){s.finish();}}catch(e){}})()" % JS_STATE, true)
+	JavaScriptBridge.eval(_discard_js(), true)
+
+
+## The discard snippet, its own function so `intro_selfcheck` can assert its shape.
+##
+## TWO INDEPENDENT `try` BLOCKS, which is the whole point. The sweep runs
+## unconditionally — not merely when there is a state object to call `finish()` on
+## (a null scratchpad used to mean "nothing to do", which is exactly wrong for the
+## case this exists for), and not merely when that `finish()` returned normally. A
+## partially corrupted state whose `finish()` throws would otherwise jump straight
+## past the sweep, and the caller would unpause with the element still attached —
+## which is the bug, not the recovery.
+static func _discard_js() -> String:
+	return "(function(){try{var s=%s;if(s){s.finish();}}catch(e){}try{%s}catch(e){}})()" \
+		% [JS_STATE, _sweep_js()]
+
+
+## Detach every overlay root this file ever built, releasing each one's source
+## first so a still-decoding element cannot go on playing audio off-screen.
+## Idempotent by construction (a swept element is no longer in the document) and
+## safe to run when there is nothing to sweep.
+static func _sweep_js() -> String:
+	return """
+		var q = document.querySelectorAll('.%s');
+		for (var i = 0; i < q.length; i++) {
+			/* THE LISTENERS ARE ON `window`, NOT ON THE ROOT, so detaching the
+			   element cannot take them with it — and they swallow every key in the
+			   capture phase. An orphan swept without this leaves the game
+			   keyboard-dead for the rest of the session, which is a worse bug than
+			   the frozen frame this sweep exists to clear. `__ckOff` is the handle
+			   each root carries for exactly this. */
+			try { if (q[i].__ckOff) { q[i].__ckOff(); } } catch (e) {}
+			var vs = q[i].getElementsByTagName('video');
+			for (var j = 0; j < vs.length; j++) {
+				try { vs[j].pause(); vs[j].removeAttribute('src'); vs[j].load(); } catch (e) {}
+			}
+			if (q[i].parentNode) { q[i].parentNode.removeChild(q[i]); }
+		}
+	""" % ROOT_CLASS
 
 
 ## True once the film has ended, been skipped, or failed. **Fails open**: off-web,
@@ -229,6 +279,28 @@ static func is_finished() -> bool:
 	var js := "(function(){try{var s=%s;return !s||!!s.done;}catch(e){return true;}})()" % JS_STATE
 	var answer: Variant = JavaScriptBridge.eval(js, true)
 	return typeof(answer) != TYPE_BOOL or bool(answer)
+
+
+## How far into the film the browser has actually got, in seconds — or `-1.0`
+## when there is nothing to ask (off-web, no element, a JS exception).
+##
+## This is the ONE fact that separates a film that is playing from a film that is
+## wedged, and it exists so the GODOT side can watch for a stall on its own clock
+## instead of trusting the browser's `setTimeout` to still be alive. Everything
+## below `is_finished()` — the `ended` listener, the rolling watchdog, `finish()`
+## itself — lives in the same JS state machine, so if that machine stops, every
+## backstop in it stops with it and `is_finished()` answers `false` forever. A
+## number Godot can compare against the number it saw last frame is outside that
+## machine, which is the whole point. See `start_overlay._film_stalled()`.
+static func progress() -> float:
+	if not OS.has_feature("web"):
+		return -1.0
+	var js := "(function(){try{var s=%s;return (s&&s.video)?s.video.currentTime:-1;}" % JS_STATE \
+		+ "catch(e){return -1;}})()"
+	var answer: Variant = JavaScriptBridge.eval(js, true)
+	if typeof(answer) != TYPE_FLOAT and typeof(answer) != TYPE_INT:
+		return -1.0
+	return float(answer)
 
 
 ## True when the last started film failed while loading or playing. The result
@@ -265,6 +337,8 @@ static func _create_js(video_url: String = VIDEO_URL) -> String:
 				window.__ck_intro_failed = false;
 
 				var root = document.createElement('div');
+				/* The handle teardown is driven off — see ROOT_CLASS. */
+				root.className = '%s';
 				root.style.cssText = 'position:fixed;left:0;top:0;width:100%%;height:100%%;' +
 					'z-index:2147483000;background:#000;display:none;';
 
@@ -338,17 +412,35 @@ static func _create_js(video_url: String = VIDEO_URL) -> String:
 					s.finish();
 				};
 
-				s.finish = function(){
-					if (s.done) { return; }
+				/* SILENCE THIS STATE, without touching the document. Everything that
+				   can still CALL BACK into a film — its two timers and its two
+				   capture-phase key listeners — plus the `done` flag that makes
+				   `finish()` a no-op from here on.
+				   It hangs on the ROOT, not on `s`, because that is the only handle
+				   the class sweep has: an orphan is by definition a root whose state
+				   object nothing can reach any more. Sweeping one without this leaves
+				   the game keyboard-dead for the session, and leaves a stall timer
+				   that will later run the ORPHAN's `finish()` — which nulls the
+				   scratchpad and sweeps the film the player is watching by then. */
+				root.__ckOff = function(){
 					s.done = true;
-					window.__ck_intro_failed = !!s.failed;
 					if (s.holdTimer) { clearTimeout(s.holdTimer); s.holdTimer = null; }
 					if (s.stallTimer) { clearTimeout(s.stallTimer); s.stallTimer = null; }
 					window.removeEventListener('keydown', s.onKeyDown, true);
 					window.removeEventListener('keyup', s.onKeyUp, true);
-					try { v.pause(); v.removeAttribute('src'); v.load(); } catch (e) {}
-					if (root.parentNode) { root.parentNode.removeChild(root); }
+				};
+
+				s.finish = function(){
+					if (s.done) { return; }
+					window.__ck_intro_failed = !!s.failed;
+					root.__ckOff();
+					/* The scratchpad goes BEFORE the document work: a sweep that threw
+					   half way must still leave `is_finished()` answering true, which
+					   is this file's fail-open invariant. */
 					%s = null;
+					/* BY CLASS, not `root`: this element's own root carries it, and
+					   so does any earlier one that lost its owner. See ROOT_CLASS. */
+					%s
 				};
 
 				unmute.onclick = function(){
@@ -427,10 +519,12 @@ static func _create_js(video_url: String = VIDEO_URL) -> String:
 		JS_STATE,
 		JSON.stringify(video_url),
 		JS_STATE,
+		ROOT_CLASS,
 		JSON.stringify(video_url),
 		JSON.stringify(video_url),
 		int(STALL_TIMEOUT_SEC * 1000.0),
 		JS_STATE,
+		_sweep_js(),
 		String.num(SKIP_HOLD_SEC, 3),
 		int(SKIP_HOLD_SEC * 1000.0),
 		JS_STATE,

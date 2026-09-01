@@ -207,18 +207,27 @@ func hide_game_over() -> void:
 		new_best_tween = null
 
 
-func _on_ending_film_finished(failed: bool) -> void:
-	"""Restart on end/skip; show the panel if playback failed."""
-	# Use the same cleanup path as the button before either outcome. The shared
-	# film has already been torn down by StartOverlay, so its cancellation guard
-	# is a no-op here, while hide_game_over still kills any NEW BEST! tween.
+func _on_ending_film_finished(_failed: bool) -> void:
+	"""
+	The film is over, however it ended — show this panel.
+
+	**AND NOTHING ELSE.** This used to call `player.restart_game()` on a clean end,
+	which reaches `BestRunStore.new_game()` and clears the `[world] archived` latch.
+	On the boot path that is catastrophic and silent: an archived world reopens its
+	ending at `_ready()`, so the film played itself and DESTROYED the archive with
+	zero user input — the exact opposite of the contract the archive exists for
+	("Continue reopens the ending; only Play Again mints a fresh world").
+
+	So the film's end is a handoff to an interactive surface, never a decision. The
+	one route to a fresh world is the button below, which is the player's press —
+	and `_failed` no longer changes anything, because "the stream died" and "the
+	film ended" want the same next screen.
+	"""
+	# Use the same cleanup path as the button. The shared film has already been
+	# torn down by StartOverlay, so its cancellation guard is a no-op here, while
+	# hide_game_over still kills any NEW BEST! tween.
 	hide_game_over()
-	if failed:
-		visible = true
-		return
-	var player := get_tree().get_first_node_in_group("player")
-	if player and player.has_method("restart_game"):
-		player.restart_game()
+	visible = true
 
 
 func _on_restart_pressed() -> void:
