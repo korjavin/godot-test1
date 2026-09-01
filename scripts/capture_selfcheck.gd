@@ -247,6 +247,26 @@ class TerrainStub extends Node:
 	func tower_site() -> Vector3:
 		return SITE
 
+	## ...and the streaming seam the full-custody march uses to build its destination
+	## before standing in it (bead godot-test1-3iy.21). `CHUNK` is this stub's own
+	## mapping and its value is arbitrary — the assertion is that the ring bought is
+	## the one containing the stand under WHATEVER mapping the terrain answers with,
+	## which is exactly what the real `world_to_chunk()` is to the real streamer.
+	const CHUNK: float = 50.0
+	var rings: Array[Vector2i] = []
+	## Where the body was standing each time a ring was bought. THE ORDER IS THE
+	## POINT: a build asked for after the teleport is a building that arrives under a
+	## party already falling through where it was going to be.
+	var ring_from: Array[Vector3] = []
+
+	func world_to_chunk(world_pos: Vector3) -> Vector2i:
+		return Vector2i(int(floor(world_pos.x / CHUNK)), int(floor(world_pos.z / CHUNK)))
+
+	func build_ring_now(around: Vector2i) -> void:
+		rings.append(around)
+		var body: Node = get_tree().get_first_node_in_group("player")
+		ring_from.append((body as Node3D).global_position if body != null else Vector3.INF)
+
 
 func _initialize() -> void:
 	BestRunStore.config_path = LOCAL_STORE_PATH
@@ -1876,7 +1896,10 @@ func _check_reassign_first_imprison_last() -> void:
 	      MUTUALLY EXCLUSIVE: the scene opened from a bite on a peer already in a
 	      cell drops the prison role, because the bench tick — the only other way in,
 	      and the only one that ever remembered to — cannot run inside the scene to
-	      drop it later.
+	      drop it later. And that march BUILDS ITS DESTINATION BEFORE IT ARRIVES IN
+	      IT — the terrain stub records the ring and WHERE THE BODY WAS when it was
+	      asked for, because a shell streamed in after the teleport is a party
+	      falling through the tenth storey.
 
 	THERE IS NO (f) ANY MORE. It measured the room's shared HEARTS overtaking a
 	running break-out, and bead godot-test1-0bc deleted the shared-heart machine
@@ -2198,6 +2221,24 @@ func _check_reassign_first_imprison_last() -> void:
 		_fail("the break-out's party was pulled %.2f m off the service corridor (at %s, "
 			% [drift, player.global_position] + "stand %s) — through the spine wall and "
 			% stand + "into a cell, which wins the scene it just opened")
+
+	# ...AND THE MARCH BUILT THE DESTINATION BEFORE IT ARRIVED IN IT (bead
+	# godot-test1-3iy.21). The stand is on the tenth storey of a building the
+	# streamer instances from its own `_process`, on the next chunk-boundary
+	# crossing — so a teleport that does not ask first drops the party into the air
+	# where the cell block is about to be, and the recall runs out somewhere
+	# unplayable. Measured as the ring bought AND when: a build asked for after the
+	# body moved is the same bug with the call in it.
+	var want_ring: Vector2i = terrain.world_to_chunk(stand)
+	if not terrain.rings.has(want_ring):
+		_fail("the march to %s never asked the terrain to build chunk %s (it asked for %s) "
+			% [stand, want_ring, str(terrain.rings)] + "— the party arrives on the tenth "
+			+ "storey of a shell the streamer has not been told about yet")
+	elif Vector2(terrain.ring_from[terrain.rings.find(want_ring)].x
+			- stand.x, terrain.ring_from[terrain.rings.find(want_ring)].z
+			- stand.z).length() <= SETBACK_EPS:
+		_fail("the destination was built AFTER the body was already standing in it — the "
+			+ "frames in between are the ones with no floor in them")
 	player.custody_protocol_active = false
 	_clear(player)
 	room.queue_free()
@@ -2234,6 +2275,15 @@ func _check_two_clients_cannot_disagree() -> void:
 	      happily against a build where the recall clock does nothing at all.
 	  (d) THE MASTER PUBLISHES WHAT IT DECIDED, so there is something for (b) to
 	      deliver: `custody_wire_state()` carries the verdict after the scene ends.
+	  (f) ...AND STOPS. A verdict answers the round that produced it and no other:
+	      a master parked on its ending screen published FAILED forever, and the
+	      next peer to open a break-out was failed by it on the first packet it ever
+	      read — the film on the same frame as the fourth capture, which is the bug
+	      this bead was filed on. Its other half is (f2): that master will never
+	      send a verdict either, so a peer left deferring to it is sealed in the
+	      block on a clock that decides nothing. It takes its own scene once the
+	      master has been silent about the round, with the master still publishing
+	      as the control.
 	  (e) AND A SURVIVABLE BITE INSIDE THE SCENE STAYS INSIDE IT. The room's group
 	      anchor is the one thing that can move a body out of a sealed cell block,
 	      and only a room has one — so this is the disagreement's other half: the
@@ -2341,6 +2391,99 @@ func _check_two_clients_cannot_disagree() -> void:
 	if wire.size() != 2 or int(wire[1]) != 2:
 		_fail("the master decided FAILED and publishes %s — with no verdict on the wire "
 			% str(wire) + "there is nothing for the other peers to agree with")
+
+	# ---- (f) ...and STOPS, once that round is over -------------------------
+	# THE BUG THIS BEAD CAME IN ABOUT, from the room side (godot-test1-3iy.21). The
+	# verdict above is sticky, and a master parked on its ending screen used to
+	# publish it for the rest of the room's life: the next peer to open a break-out
+	# — a joiner adopts the master's full-custody set and `_tick_prison()` marches it
+	# into the block half a second later — was failed by the first packet it read,
+	# and got the ending film on the same frame as the fourth capture, with no 35 s
+	# in between. The latch is aged rather than waited out, so this costs no seconds.
+	player._custody_verdict_msec = Time.get_ticks_msec() \
+			- player.CUSTODY_VERDICT_HOLD_MSEC - 1
+	wire = player.call("custody_wire_state") as Array
+	if wire.size() != 2 or int(wire[1]) != 0:
+		_fail("a master on its ending screen still publishes %s — that verdict is the "
+			% str(wire) + "answer to a round that is over, and the next peer to open a "
+			+ "break-out is failed by it on the first packet it ever reads")
+	_clear(player)
+	await process_frame
+	_fresh_store()
+
+	# ---- (f2) and a master with no round of its own decides nobody's -------
+	# THE OTHER HALF, and without it (f) trades the film for something worse. The
+	# peer that opens the fresh scene is not the master, so it adjudicates nothing;
+	# a master parked on an ending screen will never send it a verdict, and every
+	# packet it does send says "no scene here". Read literally that is a countdown
+	# pinned at zero in a sealed block for the room's whole life — so the publish is
+	# dropped whole, and the silence it leaves falls back to the solo answer.
+	_beat_done()
+	room.master = "somebody_else"
+	room.held = "primm"
+	player = await _make_player()
+	player.set_active_character(TowerGraph.HEROES.find("primm"))
+	# THE JOINER'S STAGING, and it is what makes the verdict below somebody else's: the
+	# master is publishing a decided round BEFORE this peer's own scene opens, which is
+	# exactly what a master parked on its ending screen does at 2 Hz.
+	player.call("apply_room_custody", 0.0, 2)
+	await _drive_into_custody(player)
+	if not player.in_custody_protocol():
+		_fail("case (f2) could not open a protocol, so it proves nothing")
+	else:
+		# THE VERDICT IS ADDRESSED, which is what the publisher's expiry cannot do
+		# (codex review, 2026-09-01): this peer joined inside the hold window, and the
+		# FAILED it is being handed decided a round that was over before its own opened.
+		player.call("apply_room_custody", 0.0, 2)
+		if not player.in_custody_protocol():
+			_fail("a peer whose scene opened UNDER a master that had already decided a "
+				+ "round was failed by that round's verdict — the joiner arriving inside "
+				+ "the hold window, with the film on the frame its own scene opened")
+		if BestRunStore.world_archived():
+			_fail("a verdict from a round this peer was never in archived its world")
+		# ...and "no scene here" is not a spent clock either.
+		player.custody_timer = 12.0
+		player.call("apply_room_custody", 0.0, 0)
+		if absf(player.custody_timer - 12.0) > 0.05:
+			_fail("a master with no scene published [0.0, 0] and this peer read it as a "
+				+ "spent clock (%.2f s) — that is a countdown frozen at zero in a sealed "
+				% player.custody_timer + "block, not a scene")
+		# ...and the peer still defers while the master is talking to it: this is the
+		# control for the fallback below, and it is case (a)'s rule one round on. It is
+		# also the negotiating peer's whole case — the relay leg is change-gated, so a
+		# master mid-round can be silent for seconds without being absent.
+		player.call("apply_room_custody", 9.0, 0)
+		player._custody_master_msec = Time.get_ticks_msec() \
+				- player.CUSTODY_MASTER_SILENCE_MSEC - 1
+		player.custody_timer = 0.0
+		await _tick(4)
+		if not player.in_custody_protocol():
+			_fail("a non-master promoted itself on a stopwatch while the master was mid-"
+				+ "round — the `room` relay leg is change-gated, so silence is not absence "
+				+ "and this puts two authorities on one scene")
+		# ...AND THAT RUNNING PUBLISH ALSO RETIRED THE STALE VERDICT. The peer must now
+		# be able to be ended by the master it is actually listening to, or the fix has
+		# traded a wrong ending for a room that ends on three screens out of four.
+		player.call("apply_room_custody", 0.0, 1)
+		if player.in_custody_protocol():
+			_fail("the master published a live round and THEN its verdict, and this peer "
+				+ "refused it — the address is on the round, not on the verdict")
+		# Now the master says "no scene here" and goes quiet: nobody is deciding this
+		# scene, so after the silence window this peer must. The scene is reopened
+		# directly rather than through a second bite — the bite is check 13's subject,
+		# and what this measures is the authority rule on a scene that is running.
+		player.call("_begin_custody_protocol")
+		if not player.in_custody_protocol():
+			_fail("the fallback case could not reopen a protocol")
+		player.call("apply_room_custody", 0.0, 0)
+		player._custody_master_msec = Time.get_ticks_msec() \
+				- player.CUSTODY_MASTER_SILENCE_MSEC - 1
+		player.custody_timer = 0.0
+		await _tick(4)
+		if player.in_custody_protocol():
+			_fail("the master has no round and never will, and this peer is still waiting "
+				+ "for its verdict — the party is sealed in the block on a clock that "
+				+ "decides nothing, for the rest of the room's life")
 	_clear(player)
 	await process_frame
 	_fresh_store()

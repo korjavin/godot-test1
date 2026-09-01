@@ -9303,16 +9303,25 @@ func build_ring_now(around: Vector2i) -> void:
 
 	@param around: chunk coordinates at the centre of the ring
 
-	FOR THE ONE CALLER THAT PROBES THE WORLD RATHER THAN WALKING INTO IT.
+	FOR THE CALLERS THAT ARRIVE IN THE WORLD RATHER THAN WALKING INTO IT.
 	Ground-first streaming is safe for anybody who arrives on foot: the floor is
 	under them immediately and the scenery catches up around them. A mid-run
 	multiplayer joiner is the exception — `MpManager._apply_join_placement()`
 	rebuilds the world around the group and then has `join_at()` ask the physics
 	space for a clear spot and sweep the crocodiles off it, and a question asked
 	of a world whose blocks and crocodiles have not been built yet gets the
-	answer "all clear" for every candidate. So that path, and only that path,
-	buys the ring's content up front and pays the one-frame hitch it used to pay
-	anyway.
+	answer "all clear" for every candidate. So that path, and the full-custody
+	protocol's march to the tower below, buy the ring's content up front and pay
+	the one-frame hitch they used to pay anyway.
+
+	...AND THE TOWER WITH IT, on the same reasoning `new_run()` already applies:
+	`_tower_stream()` is otherwise reached only from the next chunk-boundary
+	crossing, one `_process` later, and BOTH callers here teleport a body to the
+	destination before that. For the joiner that is a probe run against a missing
+	building; for `player_controller._begin_custody_protocol()` it is the party
+	standing on the tenth storey of a shell that does not exist yet. The stream is
+	still range-gated and still one-shot, so a ring nowhere near the site pays a
+	single distance test.
 
 	Cost is bounded by the ring, not the render distance: 9 chunks, the exact
 	build `update_chunks` used to do synchronously on every new_run.
@@ -9324,6 +9333,7 @@ func build_ring_now(around: Vector2i) -> void:
 	for x in range(around.x - SYNC_RING, around.x + SYNC_RING + 1):
 		for z in range(around.y - SYNC_RING, around.y + SYNC_RING + 1):
 			create_chunk(Vector2i(x, z))
+	_tower_stream(chunk_to_world(around))
 
 # ============================================================================
 # DEBUG FUNCTIONS
