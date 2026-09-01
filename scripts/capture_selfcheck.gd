@@ -2423,37 +2423,59 @@ func _check_two_clients_cannot_disagree() -> void:
 	room.held = "primm"
 	player = await _make_player()
 	player.set_active_character(TowerGraph.HEROES.find("primm"))
+	# THE JOINER'S STAGING, and it is what makes the verdict below somebody else's: the
+	# master is publishing a decided round BEFORE this peer's own scene opens, which is
+	# exactly what a master parked on its ending screen does at 2 Hz.
+	player.call("apply_room_custody", 0.0, 2)
 	await _drive_into_custody(player)
 	if not player.in_custody_protocol():
 		_fail("case (f2) could not open a protocol, so it proves nothing")
 	else:
+		# THE VERDICT IS ADDRESSED, which is what the publisher's expiry cannot do
+		# (codex review, 2026-09-01): this peer joined inside the hold window, and the
+		# FAILED it is being handed decided a round that was over before its own opened.
+		player.call("apply_room_custody", 0.0, 2)
+		if not player.in_custody_protocol():
+			_fail("a peer whose scene opened UNDER a master that had already decided a "
+				+ "round was failed by that round's verdict — the joiner arriving inside "
+				+ "the hold window, with the film on the frame its own scene opened")
+		if BestRunStore.world_archived():
+			_fail("a verdict from a round this peer was never in archived its world")
+		# ...and "no scene here" is not a spent clock either.
 		player.custody_timer = 12.0
 		player.call("apply_room_custody", 0.0, 0)
 		if absf(player.custody_timer - 12.0) > 0.05:
 			_fail("a master with no scene published [0.0, 0] and this peer read it as a "
 				+ "spent clock (%.2f s) — that is a countdown frozen at zero in a sealed "
 				% player.custody_timer + "block, not a scene")
-		# ...AND THE VERDICT IS ADDRESSED, which is what the publisher's expiry cannot
-		# do (codex review, 2026-09-01): this peer is the JOINER, five seconds inside
-		# the hold window, in a round the master was never in — it has never read a
-		# running clock from it. The stale FAILED must not be deliverable here.
-		player.call("apply_room_custody", 0.0, 2)
-		if not player.in_custody_protocol():
-			_fail("a peer that never once read the master's running clock was still "
-				+ "failed by its verdict — that is the joiner arriving inside the hold "
-				+ "window, and the film lands on the frame its own scene opened")
-		if BestRunStore.world_archived():
-			_fail("a verdict from a round this peer was never in archived its world")
 		# ...and the peer still defers while the master is talking to it: this is the
-		# control for the fallback below, and it is case (a)'s rule one round on.
+		# control for the fallback below, and it is case (a)'s rule one round on. It is
+		# also the negotiating peer's whole case — the relay leg is change-gated, so a
+		# master mid-round can be silent for seconds without being absent.
 		player.call("apply_room_custody", 9.0, 0)
+		player._custody_master_msec = Time.get_ticks_msec() \
+				- player.CUSTODY_MASTER_SILENCE_MSEC - 1
 		player.custody_timer = 0.0
 		await _tick(4)
 		if not player.in_custody_protocol():
-			_fail("a non-master decided its own scene while the master was publishing one "
-				+ "— the fallback must need the master to be SILENT about this round")
-		# Now age that last word past the silence window: nobody is deciding this
-		# scene, so this peer must.
+			_fail("a non-master promoted itself on a stopwatch while the master was mid-"
+				+ "round — the `room` relay leg is change-gated, so silence is not absence "
+				+ "and this puts two authorities on one scene")
+		# ...AND THAT RUNNING PUBLISH ALSO RETIRED THE STALE VERDICT. The peer must now
+		# be able to be ended by the master it is actually listening to, or the fix has
+		# traded a wrong ending for a room that ends on three screens out of four.
+		player.call("apply_room_custody", 0.0, 1)
+		if player.in_custody_protocol():
+			_fail("the master published a live round and THEN its verdict, and this peer "
+				+ "refused it — the address is on the round, not on the verdict")
+		# Now the master says "no scene here" and goes quiet: nobody is deciding this
+		# scene, so after the silence window this peer must. The scene is reopened
+		# directly rather than through a second bite — the bite is check 13's subject,
+		# and what this measures is the authority rule on a scene that is running.
+		player.call("_begin_custody_protocol")
+		if not player.in_custody_protocol():
+			_fail("the fallback case could not reopen a protocol")
+		player.call("apply_room_custody", 0.0, 0)
 		player._custody_master_msec = Time.get_ticks_msec() \
 				- player.CUSTODY_MASTER_SILENCE_MSEC - 1
 		player.custody_timer = 0.0

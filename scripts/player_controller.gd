@@ -732,11 +732,16 @@ var _custody_verdict_msec: int = 0
 const CUSTODY_MASTER_SILENCE_MSEC: int = 3000
 var _custody_master_msec: int = 0
 
-## ...and whether it has said anything about THIS round at all — the address on the
-## verdict. False until a publish carrying a RUNNING clock arrives, which is the one
-## thing a peer that was in the master's round has read and a peer that opened a round
-## the master is not in never will. See `apply_room_custody()`.
-var _custody_master_seen: bool = false
+## Was the master publishing "no scene here" (`[0.0, 0]`) the last time it reached us?
+## The POSITIVE half of the rule above — a master that is merely quiet is a master we
+## keep deferring to. Reset when our own scene opens.
+var _custody_master_idle: bool = false
+
+## Is the master sitting on a decided round right now, and was it doing so when OUR
+## scene opened? The first is what the wire says between rounds; the second is the
+## address on the verdict — see `apply_room_custody()`.
+var _custody_master_decided: bool = false
+var _custody_stale_verdict: bool = false
 
 ## The captive set as it stood when the scene began, so it can be put back.
 ##
@@ -3154,10 +3159,12 @@ func _begin_custody_protocol() -> void:
 	custody_verdict = 0
 	# ...and the master is credited with this round until it says otherwise, so the
 	# half-second of entry skew between two peers' `_tick_prison()` polls is never
-	# read as an absent one. See `_custody_authority()`. It has not spoken about THIS
-	# round yet, though, which is what makes a verdict from the last one undeliverable.
+	# read as an absent one. See `_custody_authority()`. And a master that is ALREADY
+	# sitting on a decided round when this one opens has decided somebody else's — the
+	# address on the verdict we are about to be handed. See `apply_room_custody()`.
 	_custody_master_msec = Time.get_ticks_msec()
-	_custody_master_seen = false
+	_custody_master_idle = false
+	_custody_stale_verdict = _custody_master_decided
 	# What was true before the scene, so the exit can put it back — see the field.
 	_custody_entry_captives = captive_heroes.duplicate()
 	# ...and now every hero is a prisoner, which is the fiction AND the geometry:
@@ -3291,16 +3298,23 @@ func _custody_authority() -> bool:
 	every decision it could make while `is_game_over`, and it will never send a
 	verdict — so deferring to it forever seals the party in the block on a clock that
 	decides nothing, which is strictly worse than the film this bead came in about.
-	The evidence is POSITIVE and not merely absent: the master publishes `[0.0, 0]`
-	twice a second in exactly that state, `apply_room_custody()` drops it, and the
-	silence that leaves behind is what falls through here to the solo answer.
+	THE EVIDENCE IS POSITIVE AND NEVER MERELY ABSENT (codex review, 2026-09-01), which
+	is why `_custody_master_idle` is a latch and not a timeout on its own: the master
+	publishes `[0.0, 0]` — "no scene here" — twice a second in exactly that state, and
+	only a peer that has READ one falls back. Silence alone would not do. The `room`
+	verb's relay leg is deliberately change-gated (see `MpManager._send_room_state()`),
+	so a peer whose mesh is still negotiating hears nothing from a master that is
+	perfectly alive and mid-round; promoting it on a stopwatch would put two
+	authorities on one scene, which is the disagreement this whole seam exists to
+	prevent. The silence window then only bounds how long we wait AFTER that statement.
 	"""
 	var mp := _mp()
 	if mp == null or not mp.has_method("is_online") or not bool(mp.call("is_online")):
 		return true
 	if String(mp.call("get_master")) == String(mp.call("my_id")):
 		return true
-	return Time.get_ticks_msec() - _custody_master_msec > CUSTODY_MASTER_SILENCE_MSEC
+	return _custody_master_idle \
+			and Time.get_ticks_msec() - _custody_master_msec > CUSTODY_MASTER_SILENCE_MSEC
 
 
 func custody_wire_state() -> Array:
@@ -3362,26 +3376,44 @@ func apply_room_custody(seconds: float, verdict: int) -> void:
 	room. Dropping it whole also leaves the silence below honest: the master is not
 	talking about OUR round, so it is not deciding it either.
 
-	...AND A VERDICT IS ADDRESSED TO THE ROUND IT DECIDED, which `_custody_master_seen`
-	is how a receiver reads the address (codex review, 2026-09-01). The publisher's own
-	`CUSTODY_VERDICT_HOLD_MSEC` only BOUNDS the lie — a peer that joins inside that
-	window, adopts the master's full-custody set and opens its own break-out is still
-	handed the last round's failure — and no expiry can tell an old round's participant
-	from a new arrival. What can: a peer that was in the master's round has been reading
-	its running clock all along, and one that opened a round the master is not in has
-	never read a single one. So a verdict is honoured only after a RUNNING publish for
-	this scene, and everything else falls through to the silence rule below.
+	...AND A VERDICT IS ADDRESSED TO THE ROUND IT DECIDED (codex review, 2026-09-01).
+	The publisher's own `CUSTODY_VERDICT_HOLD_MSEC` only BOUNDS the lie: a peer that
+	joins inside that window, adopts the master's full-custody set and opens its own
+	break-out is still handed the last round's failure. The address is read here, off
+	what the master was publishing WHEN OUR SCENE OPENED — a master already sitting on
+	a decided round has decided somebody else's, and `_custody_stale_verdict` refuses it
+	until a `co: 0` publish says that round is behind us.
+
+	IT IS DELIBERATELY POSITIVE EVIDENCE OF STALENESS rather than evidence of freshness.
+	"Only honour a verdict from a round we watched running" is the same rule read the
+	other way round, and it is WRONG on the one peer that needs the verdict most: the
+	`room` verb's relay leg is change-gated, so a peer still negotiating its mesh can
+	legitimately receive no running clock at all and then the verdict, which it would
+	refuse — a room ends and one screen stays in the block.
+
+	ponytail: what closes this exactly rather than by evidence is a ROUND ID on the
+	wire, compared instead of inferred; the residue without one is a joiner that
+	receives not a single `room` packet before its own bench opens a scene. That costs
+	a new field through `decode_room()`'s trust boundary and a protocol version peers on
+	the old build cannot read, for a window measured in one publish period.
 	"""
+	# RECORDED BEFORE ANYTHING IS APPLIED, and deliberately above the "no scene of our
+	# own" return: what the master publishes BETWEEN our rounds is the only evidence
+	# the next one has about whose answer it is being handed.
+	if verdict == 0:
+		_custody_stale_verdict = false
+	_custody_master_decided = verdict != 0
 	if not custody_protocol_active:
 		return
 	if seconds <= 0.0 and verdict == 0:
+		_custody_master_idle = true
 		return
+	_custody_master_idle = false
 	if verdict != 0:
-		if not _custody_master_seen:
+		if _custody_stale_verdict:
 			return
 		_end_custody_protocol(verdict == 1)
 		return
-	_custody_master_seen = true
 	_custody_master_msec = Time.get_ticks_msec()
 	custody_timer = maxf(0.0, seconds)
 
