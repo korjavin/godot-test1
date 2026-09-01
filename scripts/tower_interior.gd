@@ -712,6 +712,15 @@ const LURE_HOLD_SECONDS: float = 10.0
 ## `piglet_crocodile_ai.investigate_point()` refusing a body that is already busy.
 const LURE_COOLDOWN: float = 20.0
 
+## How many plan cells a lure route may run in a straight line before it puts
+## another waypoint down. CORNERS ALONE ARE NOT ENOUGH, and this number was
+## MEASURED rather than chosen: aimed at a corner nineteen cells up a corridor,
+## the guard's own obstacle feelers nudge it a cell off the lane on the way, and
+## it then arrives at the cell block's doorway at an angle and wedges on the jamb.
+## Re-aiming every four cells (7.8 m) keeps a long leg in the middle of the
+## corridor it was routed down, which is what a doorway needs.
+const ROUTE_MAX_RUN: int = 4
+
 # ============================================================================
 # VISIBILITY GATING — the web frame budget's half of this bead
 # ============================================================================
@@ -2484,6 +2493,111 @@ static func pad_point(floor_index: int, pad_index: int) -> Vector3:
 	var cell: Vector2i = cells[pad_index]
 	return Vector3(_grid_x(float(cell.x) + 0.5), FLOOR_Y[floor_index],
 			_grid_z(float(cell.y) + 0.5))
+
+
+static func _plan_cell_of(local: Vector3) -> Vector2i:
+	"""Interior-local metres -> the plan cell they stand in. `_grid_x` inverted."""
+	return Vector2i(
+			int(floor((local.x + TowerPlans.PLAN_HALF) / TowerPlans.PLAN_CELL)),
+			int(floor((local.z + TowerPlans.PLAN_HALF) / TowerPlans.PLAN_CELL)))
+
+
+static func _route_open(ch: String) -> bool:
+	"""
+	May a walking body cross this plan cell on its way somewhere?
+
+	STONE AND THE RAMP ARE OUT for opposite reasons — one is a wall, the other is a
+	DECK that descends a whole storey along its lane, so a body crossing it
+	sideways is walking off a cliff (the `s` landing at its head is flush, and is
+	in). A `D` IS OUT TOO, and that is the interesting one: every doorway on this
+	grid is a gate slot, the mass in it may be down, and a router that took the
+	short way through a shut door would send a guard to stand against it until its
+	patience ran out. Every storey's ungated circuit is what makes routing round
+	them possible — the labyrinth's route A is that rule written on a floor plan.
+	"""
+	return ch != TowerPlans.WALL_CHAR and ch != TowerPlans.STAIR_UP_CHAR \
+			and ch != TowerPlans.GATE_CHAR
+
+
+static func plan_route(floor_index: int, from_local: Vector3,
+		to_local: Vector3) -> PackedVector3Array:
+	"""
+	A walkable way across one storey, as corner waypoints in interior-local metres.
+
+	@return: the corners to walk, ending at the destination cell's centre, or an
+	    EMPTY array when the plan offers no way — which the lure reads as "that
+	    plate cannot call this guard" and refuses.
+
+	A BREADTH-FIRST WALK OF THE FLOOR PLAN, four-connected, on a 40 x 40 grid of
+	characters that is a `const` — so this is a few hundred microseconds on a press
+	and there is nothing to cache, invalidate or keep in step. The alternative was
+	the obstacle feelers alone, which have a 1.8 m reach and no memory: measured
+	against the shipped plans, exactly ONE of the seventeen (post, plate) pairs in
+	this building has a clear straight line, so a lure that steered by bearing was a
+	lure that walked fifteen guards into a wall.
+
+	THE CORNERS ARE THE OUTPUT, not the cells. A body that steered at every cell
+	centre would stutter down a straight corridor; keeping only the cells where the
+	direction changes leaves the follower one heading per leg, which is exactly what
+	`_investigate_move()` wants and what the wander already does.
+	"""
+	var plan := TowerPlans.storey(floor_index)
+	if plan.is_empty():
+		return PackedVector3Array()
+	var rows: Array = plan["rows"]
+	var height: int = rows.size()
+	var width: int = String(rows[0]).length()
+	var start := _plan_cell_of(from_local)
+	var goal := _plan_cell_of(to_local)
+	if start.x < 0 or start.y < 0 or start.x >= width or start.y >= height \
+			or goal.x < 0 or goal.y < 0 or goal.x >= width or goal.y >= height:
+		return PackedVector3Array()
+	if start == goal:
+		return PackedVector3Array([to_local])
+	var came: Dictionary = {start: start}
+	var queue: Array[Vector2i] = [start]
+	var head: int = 0
+	var found := false
+	while head < queue.size():
+		var cur: Vector2i = queue[head]
+		head += 1
+		if cur == goal:
+			found = true
+			break
+		for step: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0),
+				Vector2i(0, 1), Vector2i(0, -1)]:
+			var next := cur + step
+			if next.x < 0 or next.y < 0 or next.x >= width or next.y >= height:
+				continue
+			if came.has(next):
+				continue
+			if not _route_open(String(rows[next.y])[next.x]):
+				continue
+			came[next] = cur
+			queue.append(next)
+	if not found:
+		return PackedVector3Array()
+	var cells: Array[Vector2i] = []
+	var walk := goal
+	while walk != start:
+		cells.push_front(walk)
+		walk = came[walk]
+	cells.push_front(start)
+	# ---- Corners, plus a mark every ROUTE_MAX_RUN cells, plus the destination.
+	var out := PackedVector3Array()
+	var top: float = FLOOR_Y[floor_index]
+	var run := 0
+	for i in range(1, cells.size() - 1):
+		var before: Vector2i = cells[i] - cells[i - 1]
+		var after: Vector2i = cells[i + 1] - cells[i]
+		run += 1
+		if before == after and run < ROUTE_MAX_RUN:
+			continue
+		run = 0
+		out.append(Vector3(_grid_x(float(cells[i].x) + 0.5), top,
+				_grid_z(float(cells[i].y) + 0.5)))
+	out.append(to_local)
+	return out
 
 
 func pad_world(floor_index: int, pad_index: int) -> Vector3:
@@ -4635,6 +4749,11 @@ func lure_guard(floor_index: int, pad_index: int) -> bool:
 
 	PUBLIC because there are two callers and they must not drift: this building's
 	own plate, and `MpManager._apply_guard_lure()` applying a relayed press.
+
+	THE ROUTE IS COMPUTED HERE AND NOT IN THE AI, which is the whole reason
+	`investigate_point()` takes one: this file owns the floor plan, and a predator
+	that knew about `TowerPlans` would be a hunting AI with a level editor in it.
+	The guard walks corners; a plate the plan offers no way to is simply refused.
 	"""
 	var where := pad_world(floor_index, pad_index)
 	if not where.is_finite():
@@ -4642,7 +4761,14 @@ func lure_guard(floor_index: int, pad_index: int) -> bool:
 	var guard := _guard_on(floor_index)
 	if guard == null or not guard.has_method("investigate_point"):
 		return false
-	return bool(guard.call("investigate_point", where, LURE_HOLD_SECONDS))
+	var route := plan_route(floor_index, guard.global_position - global_position,
+			pad_point(floor_index, pad_index))
+	if route.is_empty():
+		return false
+	var world := PackedVector3Array()
+	for point: Vector3 in route:
+		world.append(global_position + point)
+	return bool(guard.call("investigate_point", where, LURE_HOLD_SECONDS, world))
 
 
 func _guard_on(floor_index: int) -> Node3D:

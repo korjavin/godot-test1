@@ -460,9 +460,14 @@ The building is full to its sealed roof — ten floor indices, `FLOOR_Y[0..9]`:
   then walks back — a flag state (`investigate_point()`) beside `is_tracking` and **no
   behaviour arm**, so the row stays `"solo"`. Every anti-puppet rule (busy refuses,
   acquisition cancels, the plate's own cooldown) lives in that one shared function
-  because a master-routed `pad` verb is the second way in. The leash is GROWN to
-  contain the plate and handed back when the guard is home — the pads are 5–30 cells
-  from their post, so the clamp is not a no-op. **What is deliberately not here yet,
+  because a master-routed `pad` verb is the second way in. **The guard walks CORNERS
+  the interior hands it** (`TowerInterior.plan_route()`, a BFS of the floor plan that
+  refuses stone, the ramp deck and every `D`): exactly one of the building's eighteen
+  (post, plate) pairs has a clear straight line, so a lure that steered by bearing
+  walked seventeen guards into a wall. The AI is handed points and knows nothing about
+  `TowerPlans`. The leash is GROWN toward the waypoint being walked and handed back at
+  the post; an acquisition takes the growth back around the body on the spot, so a
+  chase is still fought over a beat-sized patch. **What is deliberately not here yet,
   carrying a `ponytail:` comment**: the storey-8
   **lift stop** ships its trigger and its graph rows but no menu to choose it from — that is bead `godot-test1-3iy.7`. The entry is audited from anyway, so
   the 15-subset property already holds starting at the labyrinth's foot.

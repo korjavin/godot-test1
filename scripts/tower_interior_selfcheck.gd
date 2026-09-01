@@ -3680,30 +3680,36 @@ func _check_the_lure_diverts_a_guard() -> void:
 				+ " a puppet string")
 
 	# ---- (a) THE WALK ---------------------------------------------------------
-	# The box is grown to contain the plate (centre kept, so it strictly contains
-	# the authored one) and the excursion is measured against THAT box every frame.
-	var grown: Vector2 = guard.get("confine_half")
-	if grown.x < authored_half.x - EPS or grown.y < authored_half.y - EPS:
-		_fail("the lure SHRANK the guard's leash (%s -> %s)" % [authored_half, grown])
-	var pad_off := Vector2(pad.x - authored_centre.x, pad.z - authored_centre.z)
-	if absf(pad_off.x) > grown.x or absf(pad_off.y) > grown.y:
-		_fail("the grown leash does not contain the plate it was grown for — the"
-				+ " clamp will stop the guard short and the errand never ends")
+	# The box is grown, frame by frame, to reach whichever waypoint the guard is
+	# walking at — so the excursion is measured against the box AS IT STANDS THAT
+	# FRAME, which is the only honest reading of "the clamp kept running".
 	var arrive: float = float(load(CROC_SCRIPT).get_script_constant_map()["INVESTIGATE_ARRIVE"])
 	var ticks := int(LURE_WALK_BUDGET / (1.0 / 60.0))
 	var arrived := false
 	var worst := 0.0
 	var walked := 0.0
+	var shrank := false
 	var start := guard.global_position
 	for _i in ticks:
 		await physics_frame
-		var off := guard.global_position - authored_centre
-		worst = maxf(worst, maxf(absf(off.x) - grown.x, absf(off.z) - grown.y))
+		var box: Vector2 = guard.get("confine_half")
+		var centre: Vector3 = guard.get("confine_center")
+		shrank = shrank or box.x < authored_half.x - EPS or box.y < authored_half.y - EPS
+		var off := guard.global_position - centre
+		worst = maxf(worst, maxf(absf(off.x) - box.x, absf(off.z) - box.y))
 		walked = maxf(walked, (guard.global_position - start).length())
 		if Vector2(guard.global_position.x - pad.x,
 				guard.global_position.z - pad.z).length() <= arrive:
 			arrived = true
 			break
+	if shrank:
+		_fail("the lure SHRANK the guard's leash below its authored extents %s"
+				% authored_half)
+	var grown: Vector2 = guard.get("confine_half")
+	var pad_off := Vector2(pad.x - authored_centre.x, pad.z - authored_centre.z)
+	if arrived and (absf(pad_off.x) > grown.x or absf(pad_off.y) > grown.y):
+		_fail("the leash never grew to contain the plate the guard walked to — the"
+				+ " clamp would have stopped it short and the errand never ends")
 	if not arrived:
 		_fail("the guard never reached its plate %.1f m away in %.0f s (it moved"
 				% [pad_gap, LURE_WALK_BUDGET] + " %.1f m) — the lure is a flag" % walked
@@ -3752,21 +3758,73 @@ func _check_the_lure_diverts_a_guard() -> void:
 		_fail("the guard is still aimed at its plate after acquiring the player —"
 				+ " an errand that survives an acquisition is resumed the moment you"
 				+ " break line of sight")
+	# ...AND THE GROWTH IS HANDED BACK ON THE SPOT. The errand opened the storey
+	# up; the chase that interrupted it must be fought over a beat-sized patch, or
+	# a lure is a way to buy a guard that pursues you across the whole floor.
+	var chase_box: Vector2 = guard.get("confine_half")
+	if absf(chase_box.x - authored_half.x) > EPS or absf(chase_box.y - authored_half.y) > EPS:
+		_fail("the guard kept its grown leash %s into the chase (authored %s) —"
+				% [chase_box, authored_half] + " an acquisition has to take the"
+				+ " growth back, or the lure sells a floor-wide pursuit")
 
-	# ---- the leash comes BACK, and where it comes back moves nothing -----------
+	# ---- IT WALKS HOME, and the leash comes back where it moves nothing --------
+	# The probe leaves, the chase drops, and the guard finishes the errand the only
+	# way it is allowed to: on its own feet, back down the route it came. Driven
+	# rather than teleported, because "restoring the authored box teleports nobody"
+	# is only true if the body is standing at the post when it happens.
 	hero.global_position = interior.global_position + park
-	await _settle_physics()
-	guard.global_position = Vector3(authored_centre.x,
-			guard.global_position.y, authored_centre.z)
-	await physics_frame
-	await physics_frame
-	if bool(guard.get("is_investigating")):
-		_fail("the guard is still on its errand after walking home")
+	var home := false
+	for _i in ticks:
+		await physics_frame
+		if not bool(guard.get("is_investigating")):
+			home = true
+			break
+	if not home:
+		_fail("the guard never finished its errand and went back on post within"
+				+ " %.0f s" % LURE_WALK_BUDGET)
+	var post_off := guard.global_position - authored_centre
+	if absf(post_off.x) > authored_half.x + EPS or absf(post_off.z) > authored_half.y + EPS:
+		_fail("the guard ended its errand %s outside its authored box — the"
+				% str(Vector2(post_off.x, post_off.z)) + " restore teleports it back"
+				+ " on the next frame, which is a guard that blinks across the floor")
 	var back: Vector2 = guard.get("confine_half")
 	if absf(back.x - authored_half.x) > EPS or absf(back.y - authored_half.y) > EPS:
 		_fail("the guard kept its grown leash after the errand (%s, authored %s) —"
 				% [back, authored_half] + " a lure that permanently widens a patrol"
 				+ " box is a lure that deletes the beat it was diverting")
+
+	# ---- (f) A HOLD THAT SIMPLY RUNS OUT ends the same way ---------------------
+	# The probe above cancelled its errand by being SEEN, which is the interesting
+	# path and not the common one. An expiring hold reaches the turn-around
+	# through a different door (`_investigate_go_home` rather than
+	# `_abandon_investigation`, which refuses a body whose hold is already spent) —
+	# and when that door was missing, a guard stood on its plate for the rest of
+	# the run with every assertion above still green.
+	var beside := guard.global_position + Vector3(0.5, 0.0, 0.0)
+	if not guard.call("investigate_point", beside, 0.3):
+		_fail("an idle guard back on its post refused a lure")
+	var expired := false
+	var turned := false
+	for _i in 240:
+		await physics_frame
+		# THE TURN IS THE ASSERTION, not the ending. A body whose expiry never
+		# reached the turn-around ALSO stops investigating — one frame later, by
+		# handing its leash back where it stands, which on a real errand is a plate
+		# tens of metres from the post and a hard clamp that teleports it there.
+		# So what is measured is that it aimed at its POST before it finished.
+		var aim: Vector3 = guard.get("investigate_target")
+		turned = turned or Vector2(aim.x - authored_centre.x,
+				aim.z - authored_centre.z).length() < EPS
+		if not bool(guard.get("is_investigating")):
+			expired = true
+			break
+	if not expired:
+		_fail("the guard never came off a hold that ran out — an expiring hold has"
+				+ " to turn the errand round, or the plate parks a sentry for good")
+	if not turned:
+		_fail("the guard finished a spent hold without ever aiming at its post —"
+				+ " it ended the errand where it stood, so on a real plate the hard"
+				+ " clamp would have teleported it home")
 
 	# ---- (c) the other two refusals, on an idle body --------------------------
 	guard.set("is_biting", true)
@@ -3792,9 +3850,88 @@ func _check_the_lure_diverts_a_guard() -> void:
 	if not bool(guard.get("is_investigating")):
 		_fail("the plate never re-armed — a one-shot lure is a decoration")
 
-	print("tower lure: storey %d plate %d — walked %.1f m to it, worst excursion %.4f m, held %.3f rad off, cancelled on acquisition, re-armed on its cooldown"
+	print("tower lure: storey %d plate %d — walked %.1f m to it, worst excursion %.4f m, held %.3f rad off, cancelled on acquisition, walked home, re-armed on its cooldown"
 		% [floor_index, pad_index, walked, worst, facing_off])
 	await _clear(hero, shell)
+	_check_every_plate_has_a_way_to_it()
+
+
+func _check_every_plate_has_a_way_to_it() -> void:
+	"""
+	Check 21b — THE ROUTER, on the plans, with no physics in the way.
+
+	The walk above is one plate on one storey; this is the other seventeen. It
+	exists because the first cut of this bead steered by BEARING, and exactly ONE
+	of the building's (post, plate) pairs has a clear straight line — the very one
+	a "nearest plate" probe picks. Fifteen guards would have walked into a wall
+	while every assertion above stayed green.
+
+	WHAT IS ASSERTED, per storey that draws a `G`:
+	  * at least one of its plates is reachable — a storey where neither is means
+	    a guard nobody can call;
+	  * every route returned is WALKABLE: consecutive corners are axis-aligned and
+	    every cell between them is open on the plan. A router that returned the
+	    straight line, or cut a corner through stone, fails here;
+	  * and the negative control: a destination inside the shell's wall has no
+	    route at all, or "reachable" would be true of anything.
+	"""
+	var pairs := 0
+	var routed := 0
+	var corners := 0
+	for floor_index: int in TowerPlans.floors():
+		var post: Dictionary = TowerInterior._plan_guard_post(floor_index)
+		if post.is_empty():
+			continue
+		var from: Vector3 = post["post"]
+		var here := 0
+		var cells := TowerInterior.pad_cells(TowerPlans.storey(floor_index))
+		for i: int in cells.size():
+			pairs += 1
+			var to := TowerInterior.pad_point(floor_index, i)
+			var route := TowerInterior.plan_route(floor_index, from, to)
+			if route.is_empty():
+				continue
+			here += 1
+			routed += 1
+			corners += route.size()
+			var walk := from
+			for point: Vector3 in route:
+				var bad := _route_leg_blocked(floor_index, walk, point)
+				if bad != "":
+					_fail("storey %d plate %d: the route's leg %s -> %s %s"
+							% [floor_index, i, str(walk), str(point), bad])
+				walk = point
+			if not walk.is_equal_approx(to):
+				_fail("storey %d plate %d: the route ends at %s, not at the plate"
+						% [floor_index, i, str(walk)])
+		if here == 0:
+			_fail("storey %d stands a guard and draws %d plates, and the plan"
+					% [floor_index, cells.size()] + " offers a way to none of them")
+	# The negative control: the middle of the outer wall is on no floor plan.
+	var walled := Vector3(TowerPlans.PLAN_HALF + 1.0, 0.0, 0.0)
+	if not TowerInterior.plan_route(0, Vector3.ZERO, walled).is_empty():
+		_fail("the router found a way into the shell's wall — it is not reading"
+				+ " the plan, and every route above is worth nothing")
+	print("tower lure: %d of %d (post, plate) pairs routed, %d corners in total"
+		% [routed, pairs, corners])
+
+
+func _route_leg_blocked(floor_index: int, from: Vector3, to: Vector3) -> String:
+	"""One leg of a route: "" when it is a clear axis-aligned walk, else why not."""
+	var plan := TowerPlans.storey(floor_index)
+	var rows: Array = plan["rows"]
+	var a := TowerInterior._plan_cell_of(from)
+	var b := TowerInterior._plan_cell_of(to)
+	if a.x != b.x and a.y != b.y:
+		return "turns a corner mid-leg (%s -> %s cells)" % [str(a), str(b)]
+	var step := Vector2i(signi(b.x - a.x), signi(b.y - a.y))
+	var at := a
+	while at != b:
+		at += step
+		var ch := String(rows[at.y])[at.x]
+		if not TowerInterior._route_open(ch):
+			return "crosses '%s' at cell %s" % [ch, str(at)]
+	return ""
 
 
 # ============================================================================
