@@ -70,6 +70,19 @@ PRONG_LEN = 0.14
 # dark-saddle comment describes, and this model is nothing but right angles.
 BITE = 0.02
 
+# --- The whole chassis is then scaled UP on export (owner: "scale hunters 150%
+# bigger" -> 1.5x current size, bead godot-test1-6bj). It rides `save`'s existing
+# scale argument rather than being multiplied into the proportions above, for two
+# reasons: every number in this file stays the number a reader can compare against
+# the other generators', and the scale is applied to the WELDED mesh before the
+# feet-at-y=0 translation, so the contract `verify()` asserts survives it for free.
+# 1.35 x 1.00 x 0.375 m becomes 2.025 x 1.50 x 0.5625 — still inside
+# predator_parts' LENGTH_RANGE (0.6, 2.2), and still walks under every tower
+# storey's ~4.6 m clear height. The .tscn capsules are the same 1.5x by hand
+# (a scene cannot read a Python constant); see the hunter row's measured block in
+# piglet_crocodile_ai.gd, which records both.
+CHASSIS_SCALE = 1.5
+
 BACK_Y = LEG_LEN + HULL_H          # top of the chassis, the machine's shoulder line
 MAST_TOP = BACK_Y + MAST_H
 HEAD_Y = MAST_TOP - BITE + HEAD_H / 2
@@ -159,4 +172,4 @@ def build_hunter():
 
 
 if __name__ == "__main__":
-    save(build_hunter(), "hunter")
+    save(build_hunter(), "hunter", CHASSIS_SCALE)

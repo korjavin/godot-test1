@@ -1712,6 +1712,22 @@ static func _plan_guard_post(floor_index: int) -> Dictionary:
 	THE FIRST `G` WINS if a storey somehow draws two. The one-per-storey ruling is
 	enforced where it can actually be seen — on the built population, in check 12 —
 	rather than by this function silently picking one and hiding the second.
+
+	AND THE PATROL AXIS IS ALSO THE SPAWN FACING (`yaw`), which is not decoration.
+	The chassis is 2.025 m long (bead `godot-test1-6bj` scaled it 1.5x) and a plan
+	cell is 1.94 m, so a guard is LONGER THAN THE CELL IT STANDS ON: stood across a
+	one-cell corridor it is inside the wall before it has taken a step, and
+	`move_and_slide` depenetrates it off the post nobody moved it from. Facing it
+	along the beat it was just measured for is the fix and costs nothing — the run
+	of `.` cells it paces is exactly the run its body needs to lie in.
+
+	CEILING, AND IT IS THE SPAWN THAT MATTERS: a guard turns freely once it is
+	walking, so in a one-cell corridor a heading broadside to the lane still puts
+	the ends of the capsule in the walls. That is an ordinary moving contact
+	`move_and_slide` slides out of, and the heading is transient because a patrol's
+	facing follows its motion; a body that STARTS buried is the one that gets
+	resolved somewhere nobody authored. If the chassis is ever scaled again, the
+	fix is a wider lane (two cells) under the `G`, not a longer list of yaws.
 	"""
 	var plan := TowerPlans.storey(floor_index)
 	if plan.is_empty():
@@ -1732,7 +1748,8 @@ static func _plan_guard_post(floor_index: int) -> Dictionary:
 			_floor_run(rows, cell, Vector2i(0, -1)))
 	var run: int = mini(maxi(along_x, along_z), GUARD_PATROL_MAX_CELLS)
 	var reach: float = float(run) * TowerPlans.PLAN_CELL
-	var half := (Vector2(reach, GUARD_PATROL_LANE_HALF) if along_x >= along_z
+	var along_the_x: bool = along_x >= along_z
+	var half := (Vector2(reach, GUARD_PATROL_LANE_HALF) if along_the_x
 			else Vector2(GUARD_PATROL_LANE_HALF, reach))
 	var at := Vector3(_grid_x(float(cell.x) + 0.5), FLOOR_Y[floor_index],
 			_grid_z(float(cell.y) + 0.5))
@@ -1741,6 +1758,9 @@ static func _plan_guard_post(floor_index: int) -> Dictionary:
 		"post": at,
 		"patrol_center": at,
 		"patrol_half": half,
+		# The body's long axis is its local +Z (that is where the capsule lies in
+		# `tower_guard.tscn`), so a yaw of 0 faces +Z and PI/2 faces +X.
+		"yaw": (PI * 0.5 if along_the_x else 0.0),
 	}
 
 
@@ -5457,6 +5477,10 @@ func reset_guards() -> void:
 		guard.name = "TowerGuard%s" % String(authored["name"])
 		var post: Vector3 = authored["post"]
 		guard.position = post + Vector3(0.0, GUARD_SPAWN_LIFT, 0.0)
+		# ALONG THE BEAT, NEVER ACROSS IT — see `_plan_guard_post`. The chassis is
+		# longer than a plan cell, so this is what keeps a fresh body out of the
+		# corridor wall it would otherwise be standing broadside to.
+		guard.rotation.y = float(authored["yaw"])
 		# THE CALL-ORDER CONTRACT (`setup_as_boss` / the hunter spawner / the
 		# platform spawner, all the same shape): `species` goes in BEFORE
 		# `add_child`, because `_ready()` is where it is resolved into `spec` and
