@@ -2,7 +2,7 @@
 """
 Shared faceted-box toolkit for the biome-predator model generators
 (generate_wolf / cougar / bear / hound / snake / hunter / naga / hydra /
-green_dragon / roc).
+green_dragon / roc / titan / clown).
 
 Why this module exists at all: the five animal predators are the same animal with
 different numbers. Copy-pasting a 200-line trimesh quadruped five times is how
@@ -714,7 +714,7 @@ if __name__ == "__main__":
 
     here = pathlib.Path(__file__).resolve().parent
     for species in ("wolf", "cougar", "bear", "hound", "snake", "hunter",
-                    "naga", "hydra", "green_dragon", "roc"):
+                    "naga", "hydra", "green_dragon", "roc", "titan", "clown"):
         runpy.run_path(str(here / f"generate_{species}.py"), run_name="__main__")
     # `wings` HAS consumers now (the dragon and the roc, both above), but `verify`
     # only ever sees the finished animal — one welded mesh in which the pair is no
