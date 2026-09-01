@@ -3985,8 +3985,8 @@ func _route_leg_blocked(floor_index: int, from: Vector3, to: Vector3) -> String:
 #
 # So this is the acceptance for that move and nothing else. The lure's rules are
 # check 21's and are not re-asked here; what is measured is that on THIS floor the
-# errand completes — it arrives at the plate, it stands facing it, and it turns
-# for home when the hold runs out.
+# errand completes — it arrives at the plate, it stands facing it, and it walks
+# off again when the hold runs out.
 
 ## The pace slack on the derived budget: turns, the obstacle feelers, and the sniff
 ## pause the body may be standing in when the plate goes off.
@@ -3996,7 +3996,7 @@ const LURE_SLOW_LANE: float = 1.6
 func _check_the_block_floor_lure_completes() -> void:
 	"""
 	Check 21c. The cell block's guard walks the length of the muster floor to a
-	plate, holds on it, and turns for home.
+	plate, holds on it, and walks off it again.
 
 	THE BUDGET IS DERIVED AND THAT IS THE POINT. `LURE_WALK_BUDGET` is 18 s because
 	the ground floor's nearest plate is 11.6 m from its post; the same constant here
@@ -4086,7 +4086,7 @@ func _check_the_block_floor_lure_completes() -> void:
 		await _clear(hero, shell)
 		return
 
-	# ---- THE WALK, and then the HOLD, and then the TURN -----------------------
+	# ---- THE WALK, then the HOLD, then off the plate again --------------------
 	var arrive: float = float(load(CROC_SCRIPT).get_script_constant_map()["INVESTIGATE_ARRIVE"])
 	var reached := 0.0
 	var closest := INF
