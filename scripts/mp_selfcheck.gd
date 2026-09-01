@@ -1878,14 +1878,8 @@ func _check_acquisition_cue() -> String:
 ## signal, no injection and no hard reference.
 const CAPTIVE_PLAYER_SOURCE := """extends Node
 var told: Array = []
-var custody: Array = []
-var wire: Array = [0.0, 0]
 func set_hero_captive(hero: String, held: bool) -> void:
 	told.append([hero, held])
-func apply_room_custody(seconds: float, verdict: int) -> void:
-	custody.append([seconds, verdict])
-func custody_wire_state() -> Array:
-	return wire
 """
 
 ## A lobby that records instead of sending. It SUBCLASSES the real `LobbyClient`
@@ -2046,7 +2040,7 @@ func _check_captive_set() -> String:
 	  2. ...AND IT IS NOT A LIFETIME CAP. A peer that was reassigned after losing
 	     one hero may lose the NEXT one too — the ordinary path in a two- or
 	     three-player room — and every peer must record it, or the room's sets
-	     diverge and full custody never arrives for anybody.
+	     diverge and the ending never arrives for anybody.
 	  3. THE POOL IS THE WHITELIST, and an assertion cannot be re-made.
 	  4. RELEASE IS OPEN, deliberately: liberation is performed by whoever walked
 	     into the cell, which is never the captive's holder.
@@ -2371,14 +2365,16 @@ func _check_room_publish() -> String:
 	if parsed.get("cap", []) != ["primm"] or absf(float(parsed.get("cd", -1.0)) - 12.5) > 0.001 \
 			or int(parsed.get("co", -1)) != 0:
 		return "decode_room dropped an honest publish (%s)" % str(parsed)
-	# EVERY VERDICT THE ENCODER CAN PRODUCE, swept rather than spot-checked. There
-	# are three — 0 running, 1 survived, 2 failed — and the sweep is what binds the
-	# parser's bound to the encoder's range: a fourth added on one side and not the
-	# other is a peer that cannot read its own master.
+	# EVERY `co` AN OLDER MASTER CAN PRODUCE, swept rather than spot-checked. This
+	# build always sends 0 and reads none of them (owner veto 2026-09-01, bead
+	# `godot-test1-ueg`), but `build_version` refuses to reload a peer that is in a
+	# room, so a master on the pre-veto build is a state that really happens and its
+	# three verdicts must still decode — the packet is the captive-set repair
+	# channel and a drop costs the room its cells.
 	for outcome: int in 3:
 		var probe: Dictionary = {"t": "room", "cap": [], "cd": 1.0, "co": outcome}
 		if int(MPManager.decode_room(probe).get("co", -1)) != outcome:
-			return "decode_room dropped the verdict %d, which the encoder can send" % outcome
+			return "decode_room dropped the verdict %d, which an older master can send" % outcome
 	var over_long: Array[String] = []
 	for i: int in MPManager.MAX_STATE_CAPTIVES + 1:
 		over_long.append("primm")
@@ -2415,7 +2411,7 @@ func _check_room_publish() -> String:
 	mp._receive_mesh_verb("stranger", "room", {"t": "room", "cap": ["teibi"], "cd": 5.0, "co": 0})
 	if mp.is_hero_captive("teibi"):
 		return "a non-master's room publish rewrote the captive set — any member could then "\
-			+ "put the whole roster in cells, or end the room's break-out"
+			+ "put the whole roster in cells, which is every peer's game over"
 
 	# --- 3. convergence, forwards.
 	mp._receive_mesh_verb("themaster", "room", {"t": "room", "cap": ["teibi"], "cd": 5.0, "co": 0})
@@ -2469,13 +2465,30 @@ func _check_room_publish() -> String:
 			+ "a capture landing in the join gap reaches neither the snapshot nor the `cap` "\
 			+ "packet, and nothing else would ever correct it"
 
-	# --- 6. the clock and the verdict reach the player.
-	player.custody.clear()
-	mp._receive_mesh_verb("themaster", "room", {"t": "room", "cap": [], "cd": 7.25, "co": 2})
-	if player.custody.size() != 1 or absf(float((player.custody[0] as Array)[0]) - 7.25) > 0.001 \
-			or int((player.custody[0] as Array)[1]) != 2:
-		return "the master's clock and verdict did not reach the player (%s) — every peer "\
-			% str(player.custody) + "then runs its own 35 s and they can disagree about the outcome"
+	# --- 6. THE RETIRED HALF IS A SHAPE AND NOTHING ELSE (owner veto 2026-09-01,
+	# bead `godot-test1-ueg`). The master publishes `cd`/`co` as zeros, and a packet
+	# carrying an OLDER master's real clock and verdict must still land its captive
+	# set rather than being read as an instruction. Both directions asserted here,
+	# because "we ignore it" is only true if the encoder stopped sending it too.
+	host._lobby.relayed.clear()
+	host._room_accum = 0.0
+	host._process(1.0 / MPManager.ROOM_SYNC_HZ + 0.01)
+	for entry: Variant in host._lobby.relayed:
+		var sent: Dictionary = (entry as Array)[1] as Dictionary
+		if String(sent.get("mp", "")) != "room":
+			continue
+		if not sent.has("cd") or not sent.has("co"):
+			return "the master dropped `cd`/`co` off the wire — `decode_room()` drops a "\
+				+ "packet missing either, so a mixed-build room stops repairing its cells"
+		if absf(float(sent["cd"])) > 0.0 or int(sent["co"]) != 0:
+			return "the master published a live clock/verdict (%s) — the break-out is gone"\
+				% str(sent)
+	mp._receive_mesh_verb("themaster", "room", {"t": "room", "cap": ["teibi"], "cd": 7.25, "co": 2})
+	if not mp.is_hero_captive("teibi"):
+		return "an older master's publish carrying a real clock and verdict lost its "\
+			+ "captive set — the retired fields must cost the packet nothing"
+	mp._captured_msec["teibi"] = Time.get_ticks_msec() - MPManager.RELEASE_GRACE_MSEC - 1
+	mp._receive_mesh_verb("themaster", "room", {"t": "room", "cap": [], "cd": 0.0, "co": 0})
 
 	# --- 7. dispatched on both transports, metered, and actually published.
 	if MPManager.packet_kind({"t": "room", "cap": [], "cd": 1.0, "co": 0}) != "room":
@@ -2483,9 +2496,9 @@ func _check_room_publish() -> String:
 	if not MPManager.VERB_BUDGET_PER_SEC.has("room"):
 		return "the room verb has no rate budget — it is applied wholesale, which is the "\
 			+ "most amplified verb in the file"
-	player.custody.clear()
-	mp._on_lobby_relay("themaster", {"mp": "room", "cap": [], "cd": 3.5, "co": 0})
-	if player.custody.size() != 1:
+	var before: int = player.told.size()
+	mp._on_lobby_relay("themaster", {"mp": "room", "cap": ["primm"], "cd": 3.5, "co": 0})
+	if player.told.size() == before or player.told[-1] != ["primm", true]:
 		return "a room publish relayed over the LOBBY was dropped — that is the only wire "\
 			+ "that reaches a peer whose mesh is still negotiating"
 	var budget: int = int(MPManager.VERB_BUDGET_PER_SEC["room"])
@@ -2511,14 +2524,8 @@ func _check_room_publish() -> String:
 			+ "exists if something drives it"
 	host._lobby.relayed.clear()
 	for tick: int in 4:
-		# THE CLOCK MOVES WHILE THE SET DOES NOT, which is the whole shape of a
-		# running break-out — and the case a change test that included the clock
-		# would relay on every single tick, putting the master back in front of the
-		# lobby's stall rule with nothing to say.
-		player.wire = [30.0 - float(tick), 0]
 		host._room_accum = 0.0
 		host._process(1.0 / MPManager.ROOM_SYNC_HZ + 0.01)
-	player.wire = [0.0, 0]
 	# COUNTED BY VERB, because the heartbeat rides this same socket and is SUPPOSED
 	# to: it is the one frame a stalled tab stops sending, which is what makes the
 	# vote possible at all. What must go quiet is this publish.
@@ -2530,9 +2537,7 @@ func _check_room_publish() -> String:
 	# --- 7c. A NEW MEMBER RE-OPENS THE RELAY, even with nothing changed.
 	#
 	# The digest is one string for the whole room, so a peer that joins after the
-	# last change is skipped by every unchanged publish afterwards — and its join
-	# snapshot carries the SET but not a running scene's clock or an
-	# already-decided verdict. It would sit in a break-out nobody else is in.
+	# last change is skipped by every unchanged publish afterwards.
 	host._lobby.relayed.clear()
 	host._on_lobby_peer_joined("latecomer", "latecomer")
 	host._room_accum = 0.0

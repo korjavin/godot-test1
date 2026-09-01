@@ -238,8 +238,8 @@ func _run() -> void:
 	await _check_visibility_gating()
 	await _check_earned_state_survives_a_relaunch()
 	_check_the_block_has_no_way_round_it()
-	_check_the_custody_stand_and_the_scar()
-	await _check_the_custody_scene_runs()
+	_check_the_scar_plan()
+	await _check_the_scar_is_drawn_and_permanent()
 	await _check_spines_and_liberation()
 	await _check_guards_stand_their_posts()
 	await _check_guards_reset_on_re_entry()
@@ -2483,113 +2483,33 @@ func _solid_at(x: float, z: float, y: float) -> bool:
 
 
 # ============================================================================
-# CHECK 16 — the full-custody protocol's geometry (bead godot-test1-3iy.11)
+# CHECK 16 — the scar's geometry (bead godot-test1-3iy.11)
 # ============================================================================
+#
+# THE BREAK-OUT SCENE THAT INFLICTED THIS SCAR IS GONE (owner veto 2026-09-01,
+# bead `godot-test1-ueg`), and the stand-clearance half of this check went with
+# it — `custody_stand()` no longer exists. The scar half stays, because the id
+# is PERSISTED: a profile that survived that scene has `custody_stair_collapse`
+# in its monotone opened set forever, and the rubble it earned still has to be
+# drawn, solid and permanent.
 
-## Half the player's collision capsule. The default `CapsuleShape3D` in
-## `player.tscn`, and the reason the stand below needs any clearance at all: a body
-## dropped with a wall inside its radius is shoved out of it on the first frame,
-## which in a 2 m corridor means shoved through the wall on the far side.
-const PLAYER_RADIUS: float = 0.5
-
-
-func _check_the_custody_stand_and_the_scar() -> void:
+func _check_the_scar_plan() -> void:
 	"""
-	Check 16. The break-out scene stands the party somewhere real, and the scar it
-	can earn is a passage that was open and is now stone.
+	Check 16. The scar is a passage that was open and is now stone.
 
-	TWO THINGS, ONE CHECK, because they are the two ends of the same scene and both
-	are invisible in a screenshot until somebody plays twenty minutes to reach it.
-
-	(a) THE STAND. `TowerInterior.custody_stand()` is where the protocol teleports
-	    the party. It has to be inside the service corridor, clear of every solid
-	    box by a body radius, on the CORRIDOR side of the spine wall (a stand in the
-	    gallery would put the party three metres from a cell and there would be no
-	    scene at all), and it has to leave the spring arm something to extend into.
-	    It is derived from the corridor's own plan cells since phase 16 — it used to
-	    be a bare `Vector3`, which is the exact shape of constant that ends up 40 cm
-	    inside a wall the day a doorway moves, and phase 16 moved every doorway in
-	    this room 46 m upwards.
-
-	(b) THE SCAR. `boxes()` is the UNSCARRED plan — `_solid_at` skips scar boxes for
-	    exactly that reason — so the doorway the scar fills must be walkable in it
-	    and stone with the scar box counted. That is what stops the two halves of
-	    the feature drifting into "the rubble was always there" (a passage the
-	    softlock audit thinks exists and the player never had) or "the rubble is
-	    scenery" (a scar the audit removes and the player walks straight through).
+	`boxes()` is the UNSCARRED plan — `_solid_at` skips scar boxes for exactly that
+	reason — so the doorway the scar fills must be walkable in it and stone with the
+	scar box counted. That is what stops the two halves of the feature drifting into
+	"the rubble was always there" (a passage the softlock audit thinks exists and the
+	player never had) or "the rubble is scenery" (a scar the audit removes and the
+	player walks straight through).
 	"""
-	# --- (a) the stand -------------------------------------------------------
-	var floor_index := TowerInterior.block_floor()
-	if floor_index < 0:
-		_fail("no storey draws the cell block — the custody scene has nowhere to open")
-		return
-	var surface: float = TowerInterior.FLOOR_Y[floor_index]
-	var clear := TowerInterior.plan_clear_height(floor_index)
-	var corridor := TowerInterior.plan_room_rect(floor_index, "service_stair")
-	var stand: Vector3 = TowerInterior.custody_stand()
-	var corridor_z0 := _grid_edge(corridor.position.y)
-	var corridor_z1 := _grid_edge(corridor.end.y)
-	if stand.z <= corridor_z0 or stand.z >= corridor_z1:
-		_fail(("the custody stand is at z = %.2f, outside the service corridor's own cells "
-			+ "(%.2f .. %.2f) — the break-out would start in the wrong room")
-			% [stand.z, corridor_z0, corridor_z1])
-	if stand.x <= _grid_edge(corridor.position.x) or stand.x >= _grid_edge(corridor.end.x):
-		_fail("the custody stand is at x = %.2f, off the end of the corridor (%.2f .. %.2f)"
-			% [stand.x, _grid_edge(corridor.position.x), _grid_edge(corridor.end.x)])
-	if stand.y < surface or stand.y + PLAYER_HEIGHT > surface + clear:
-		_fail("the custody stand puts a %.1f m body at y = %.2f on a %.2f m floor with %.2f m clear" % [
-			PLAYER_HEIGHT, stand.y, surface, clear])
-
-	# Clear of every solid box, sampled around the capsule at knee, waist and head:
-	# one point would miss a lintel, and a wall the body's RADIUS reaches into is a
-	# body shoved sideways on frame one.
-	for angle_step in 16:
-		var theta := TAU * float(angle_step) / 16.0
-		var px := stand.x + cos(theta) * PLAYER_RADIUS
-		var pz := stand.z + sin(theta) * PLAYER_RADIUS
-		for probe_y: float in [0.4, 1.0, 1.8]:
-			if _solid_at(px, pz, stand.y + probe_y):
-				_fail(("the custody stand's body reaches solid geometry at (%.2f, %.2f, %.2f)"
-					+ " — the party would be shoved through a wall on the first frame")
-					% [px, stand.y + probe_y, pz])
-				break
-
-	# ...and it is not standing on a spine pad's trigger, which would fire a door's
-	# refusal line on the frame the scene opens, before the player has read anything.
-	var plan := TowerPlans.storey(floor_index)
-	for i in TowerInterior.SPINE_DOORS.size():
-		var run := TowerInterior.plan_gate_rect(
-			floor_index, String(TowerInterior.SPINE_DOORS[i]["gate"]))
-		if run.size == Vector2i.ZERO:
-			continue
-		var cell := TowerInterior.gate_pad_cell(plan, run)
-		if cell.x < 0:
-			continue
-		var dx: float = absf(stand.x - _grid_centre(cell.x)) - TowerPlans.PLAN_CELL * 0.5
-		var dz: float = absf(stand.z - _grid_centre(cell.y)) \
-				- TowerInterior.PAD_TRIGGER_DEPTH * 0.5
-		if dx < PLAYER_RADIUS and dz < PLAYER_RADIUS:
-			_fail("the custody stand overlaps spine pad %d's trigger" % i)
-
-	# THE CAMERA. Facing the way the protocol turns the body (+X, `SPAWN_FACING_Y`),
-	# there has to be more than HALF an arm of corridor behind it, which is the
-	# difference between a shot and the back of a head. The plan-grid corridor is
-	# long enough that the arm extends fully; the assertion stays the weaker one the
-	# constant's comment made, because the claim it protects has not changed.
-	var arm: float = _spring_length()
-	var behind: float = stand.x - _grid_edge(corridor.position.x)
-	if behind < arm * 0.5:
-		_fail(("the custody stand leaves the %.2f m spring arm only %.2f m of corridor to "
-			+ "back into — the scene opens on the back of the hero's head")
-			% [arm, behind])
-
-	# --- (b) the scar --------------------------------------------------------
 	var scar_boxes: Array[Dictionary] = []
 	for box: Dictionary in TowerInterior.all_boxes():
 		if String(box.get("scar", "")) != "":
 			scar_boxes.append(box)
 	if scar_boxes.is_empty():
-		_fail("the interior builds no scar box — the full-custody scar is data only")
+		_fail("the interior builds no scar box — the authored scar is data only")
 		return
 	for box: Dictionary in scar_boxes:
 		var pos: Vector3 = box["pos"]
@@ -2609,8 +2529,8 @@ func _check_the_custody_stand_and_the_scar() -> void:
 				+ "passage has to reach from the floor past head height (%.2f)")
 				% [String(box["name"]), pos.y - half.y, pos.y + half.y, base, head])
 
-	print("custody scene: stand (%.2f, %.2f, %.2f), %.2f m behind the camera; %d scar box(es)"
-		% [stand.x, stand.y, stand.z, behind, scar_boxes.size()])
+	print("scar plan: %d scar box(es), each a doorway the unscarred plan leaves open"
+		% scar_boxes.size())
 
 
 func _spring_length() -> float:
@@ -2628,154 +2548,55 @@ func _spring_length() -> float:
 
 
 # ============================================================================
-# CHECK 17 — the custody scene, driven (bead godot-test1-3iy.11)
+# CHECK 17 — the scar, drawn on a real building (bead godot-test1-3iy.11)
 # ============================================================================
 
-func _check_the_custody_scene_runs() -> void:
+func _check_the_scar_is_drawn_and_permanent() -> void:
 	"""
-	Check 17. Raised containment and the scar, on a real building under real frames.
+	Check 17. The scar on a real building under real frames, not on the plan.
 
-	CHECK 16 IS THE PLAN; THIS IS THE BUILDING. Every failure it catches is one
-	where the feature is shipped, green and INERT — the exact shape of bug that
-	survives a check which hands itself the input the game never supplies:
+	CHECK 16 IS THE PLAN; THIS IS THE BUILDING, and the failure it catches is the
+	one where the feature is shipped, green and INERT: rubble that is recorded and
+	never drawn, or drawn and never solid — a permanent consequence walked straight
+	through — or one that heals itself across a relaunch.
 
-	  a. containment that never comes down on doors a hundred rescues opened, so the
-	     break-out is walking three metres to a cell and there is no scene;
-	  b. containment that comes down and then TWEENS STRAIGHT BACK OPEN, because
-	     `_tick_gates` still believes the opened set — same outcome, one frame later;
-	  c. a pad that never RELEASES it, which is worse: the scene is unwinnable and
-	     every player loses their campaign to a bug;
-	  d. a pad that releases it for the WRONG HERO, which is (a) with extra steps;
-	  e. rubble that is recorded and never drawn, or drawn and never solid — the
-	     permanent consequence the whole bead is about, walked straight through.
-
-	All five are driven through the shipped verbs (`begin_lockdown`, the real pad
-	tick, `apply_scar`) on a tower assembled the way `endless_terrain` assembles it.
+	THE RAISED-CONTAINMENT DRIVE THAT USED TO STAND HERE IS GONE with the break-out
+	scene it measured (owner veto 2026-09-01, bead `godot-test1-ueg`). This half
+	stays because the scar id is PERSISTED: profiles carrying it must still draw
+	their rubble, which is exactly why the row was kept rather than retired.
 	"""
 	_fresh_store()
 	var shell := await _make_tower()
 	var interior := shell.get_node_or_null("TowerInterior") as TowerInterior
 	if interior == null:
-		_fail("custody: the tower has no TowerInterior child")
+		_fail("scar: the tower has no TowerInterior child")
 		await _clear(null, shell)
 		return
-
-	# A probe standing in the building, because `_process` gates everything on the
-	# player being near enough to draw — without one, every tick below is a no-op
-	# and every assertion after it would pass on any build at all.
-	var hero_body := ProbePlayer.new()
-	var shape := CollisionShape3D.new()
-	var box := BoxShape3D.new()
-	box.size = Vector3(0.8, 1.8, 0.8)
-	shape.shape = box
-	hero_body.add_child(shape)
-	hero_body.add_to_group("player")
-	root.add_child(hero_body)
-	hero_body.global_position = shell.global_position + TowerInterior.custody_stand()
-	await _settle_physics()
-
-	var door: Dictionary = TowerInterior.SPINE_DOORS[0]
-	var gate_id := String(door["gate"])
-	var wants := TowerGraph.identity_of(gate_id)
-	var wrong := "teibi" if wants != "teibi" else "windman"
-	var mass := interior.find_child(String(door["mass"]), true, false) as MeshInstance3D
 	var body := interior.get_node_or_null("InteriorCollision") as StaticBody3D
-	var mass_shape := body.get_node_or_null("%sShape" % String(door["mass"])) as CollisionShape3D
-	if mass == null or mass_shape == null:
-		_fail("custody: spine door '%s' has no mass or no collision shape" % gate_id)
-		await _clear(hero_body, shell)
-		return
-	var shut_y: float = mass.position.y
-	var open_y: float = shut_y - TowerInterior.SPINE_TRAVEL
-
-	# An EARLIER RESCUE opened this door for good, which is the only starting state
-	# in which raised containment means anything at all.
-	shell.mark_opened(gate_id)
-	for _i in 40:
-		interior._process(0.1)
-	if absf(mass.position.y - open_y) > 0.01:
-		_fail("custody: the earned door never opened, so nothing below is measured")
-
-	# (a) the protocol arrives and shuts it again.
-	interior.begin_lockdown()
-	if absf(mass.position.y - shut_y) > 0.01:
-		_fail("custody: containment was raised and '%s' stayed at %.2f m (open is %.2f) — "
-			% [gate_id, mass.position.y, open_y] + "the break-out has nothing to do")
-	if absf(mass_shape.position.y - mass.position.y) > EPS:
-		_fail("custody: '%s' shut visually and left its doorway walkable" % gate_id)
-
-	# (b) ...and it STAYS shut. The opened set still says this door is open, so a
-	#     `_tick_gates` that does not consult the lockdown re-opens it here.
-	for _i in 40:
-		interior._process(0.1)
-	if absf(mass.position.y - shut_y) > 0.01:
-		_fail("custody: '%s' tweened back open under lockdown — the opened set beat the "
-			% gate_id + "scene and the break-out is three metres of walking")
-
-	# (d) the wrong hero on the pad releases nothing.
-	# THE STOREY IS ASKED, NEVER SPELLED: the block is wherever `TowerPlans` draws a
-	# cell gallery, and this path is the one place a literal 9 would rot.
-	var block := "Floor%d" % TowerInterior.block_floor()
-	var pad_area := interior.get_node_or_null("%s/SpineTrigger1" % block) as Area3D
-	if pad_area == null:
-		_fail("custody: there is no SpineTrigger1 — the first spine door has no pad")
-		await _clear(hero_body, shell)
-		return
-	hero_body.hero = wrong
-	hero_body.global_position = pad_area.global_position
-	await _settle_physics()
-	interior._process(0.1)
-	if not interior.is_locked_down(gate_id):
-		_fail("custody: %s released containment on '%s', which answers to %s"
-			% [wrong, gate_id, wants])
-
-	# (c) the right hero, standing on the SAME pad without moving, does — and the
-	#     door really sinks afterwards.
-	hero_body.hero = wants
-	interior._process(0.1)
-	if interior.is_locked_down(gate_id):
-		_fail("custody: %s stood on '%s's pad and containment held — the scene is unwinnable"
-			% [wants, gate_id])
-	for _i in 40:
-		interior._process(0.1)
-	if absf(mass.position.y - open_y) > 0.01:
-		_fail("custody: containment lifted on '%s' and the mass stayed at %.2f m"
-			% [gate_id, mass.position.y])
-
-	# ...and ending the scene puts every other door back the way the save says.
-	interior.begin_lockdown()
-	interior.end_lockdown()
-	for _i in 40:
-		interior._process(0.1)
-	if absf(mass.position.y - open_y) > 0.01:
-		_fail("custody: the scene ended and '%s' was left shut — a door the player earned "
-			% gate_id + "was taken away by a scene that only borrowed it")
-
-	# (e) THE SCAR. Hidden and non-solid until taken, stone the moment it is.
 	var rubble := interior.find_child(TowerInterior.SCAR_BOX, true, false) as MeshInstance3D
 	var rubble_shape := body.get_node_or_null(
 		"%sShape" % TowerInterior.SCAR_BOX) as CollisionShape3D
 	if rubble == null or rubble_shape == null:
-		_fail("custody: the interior builds no '%s' mesh + shape" % TowerInterior.SCAR_BOX)
-		await _clear(hero_body, shell)
+		_fail("scar: the interior builds no '%s' mesh + shape" % TowerInterior.SCAR_BOX)
+		await _clear(null, shell)
 		return
 	if rubble.visible or not rubble_shape.disabled:
-		_fail("custody: an unscarred tower already shows the collapse (visible %s, solid %s)"
+		_fail("scar: an unscarred tower already shows the collapse (visible %s, solid %s)"
 			% [rubble.visible, not rubble_shape.disabled])
 	if not interior.apply_scar(TowerGraph.SCAR_CUSTODY):
-		_fail("custody: the interior refused its own authored scar '%s'"
+		_fail("scar: the interior refused its own authored scar '%s'"
 			% TowerGraph.SCAR_CUSTODY)
 	if not rubble.visible:
-		_fail("custody: the world took the scar and the collapse is invisible")
+		_fail("scar: the world took the scar and the collapse is invisible")
 	if rubble_shape.disabled:
-		_fail("custody: the collapse is drawn and walkable — the shortcut is not closed")
+		_fail("scar: the collapse is drawn and walkable — the shortcut is not closed")
 	if not shell.is_opened(TowerGraph.SCAR_CUSTODY):
-		_fail("custody: the scar is geometry only; it never reached the tower's opened set")
+		_fail("scar: the scar is geometry only; it never reached the tower's opened set")
 	# An id nobody authored must be refused outright, or "exactly one enumerated
 	# scar" is whatever the caller felt like.
 	if interior.apply_scar("custody_made_up_scar"):
-		_fail("custody: the interior accepted an unauthored scar id")
-	await _clear(hero_body, shell)
+		_fail("scar: the interior accepted an unauthored scar id")
+	await _clear(null, shell)
 
 	# ...and a tower REBUILT from the store comes up scarred, which is the whole
 	# meaning of permanent. Same union merge, same lesson as check 10.
@@ -2783,11 +2604,12 @@ func _check_the_custody_scene_runs() -> void:
 	var reborn := relaunched.get_node_or_null("TowerInterior") as TowerInterior
 	var reborn_rubble := reborn.find_child(TowerInterior.SCAR_BOX, true, false) as MeshInstance3D
 	if reborn_rubble == null or not reborn_rubble.visible:
-		_fail("custody: a tower rebuilt from the store came up unscarred — the collapse "
+		_fail("scar: a tower rebuilt from the store came up unscarred — the collapse "
 			+ "healed itself across a relaunch")
 	await _clear(null, relaunched)
 	_fresh_store()
-	print("custody scene: containment raised, released by %s, and the doorway collapsed" % wants)
+	print("scar: '%s' drawn, solid, and still there after a relaunch"
+		% TowerGraph.SCAR_CUSTODY)
 
 
 # ============================================================================

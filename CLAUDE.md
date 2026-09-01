@@ -89,9 +89,9 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            the spine line SAMPLED for holes (a gap there makes
 #                            every identity gate in the wing decorative), the
 #                            acceptance walk for a spine door plus liberation, and
-#                            the custody scene DRIVEN (containment re-shuts earned
-#                            doors and stays shut, the right hero's pad releases it,
-#                            the scar's rubble is drawn AND solid AND permanent).
+#                            the DORMANT SCAR still drawn (its rubble is a doorway
+#                            the unscarred plan leaves open, and once taken it is
+#                            drawn AND solid AND survives a relaunch).
 #                            Every geometry check LOOPS OVER STOREYS off FLOOR_Y
 #                            and TowerPlans.floors(), so a new plan row is
 #                            covered the day it lands: per-storey box budget,
@@ -113,11 +113,11 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            over as the ONLY game over there is, that the set
 #                            never touches
 #                            the monotone store, the cell-block mirror in both
-#                            directions, and THE FULL-CUSTODY PROTOCOL: the scene
-#                            opens instead of a screen and is playable, surviving
-#                            it takes exactly one AUTHORED scar, losing it archives
-#                            the world (Continue reopens the ending, New Game
-#                            clears it), and the roster override does not leak
+#                            directions, and THE ENDING: the fourth capture ends
+#                            the run in the same frame chain and archives the world
+#                            without touching the building (Continue reopens the
+#                            ending, New Game clears it), plus the vocabulary of
+#                            both retired models — hearts and the vetoed break-out
 #   tower_selfcheck          THE SOFTLOCK AUDIT: TOWER_GRAPH bound to the boxes
 #                            the interior really builds, the three design laws
 #                            (spines at floor rank, no item custody, mutations
@@ -294,33 +294,39 @@ own, all pinned by `tower_interior_selfcheck`:
   shell streams in at 360 m and is never freed again). The arming gate is
   unchanged and is REQUIRED here: the authored Primm rescue is a room in this
   building, so pre-beat a guard is byte-for-byte today's setback-plus-knockback or a
-  tutorial visit could strip the roster. An arrest still cannot end a run —
-  the empty free set opens the break-out, in the block the guard was standing in.
+  tutorial visit could strip the roster. An arrest ends a run only by being the
+  FOURTH one — the empty free set is the game's one ending, raised where it lands.
   Guards stay in group
   `"crocodile"` (LOD sleep and the MP relay still want them) and refuse the Stink Wave
   and the giant's crush through `stink_immune` / `crush_immune`, never through group
   tricks; `clear_nearby_crocodiles()` exempts them the way it exempts a boss, or any
   death inside the building would clear the floor.
-- **THE FULL-CUSTODY PROTOCOL is what an empty roster opens instead of a screen.**
-  When the corporation holds every hero, `player_controller` marches the party to
-  the cell block's service corridor, RAISES CONTAINMENT (`begin_lockdown()`
-  re-shuts every spine door a hundred earlier rescues opened) and runs a recall
-  clock. One liberation is success; the clock running out is failure. The
-  scene's verbs are the game's — switch, move, stand on a pad — and its
-  scene-scoped roster grant lives at `available_character_indices()` and nowhere
-  else, so it composes with the lobby's hand and `free_hero_count()` stays honest
-  (0 until somebody is actually freed, which is how the outcome is decided).
-  **The exit set is `entry INTERSECT still-held`** — the scene marks all four
-  captive, so anything less leaks a teammate's hero into this peer's filter.
+- **AN EMPTY ROSTER IS THE ENDING, IMMEDIATELY — and there is no scene between**
+  (owner veto 2026-09-01, bead `godot-test1-ueg`, verbatim: *"i still see this
+  recall in 33 after all caught, why? I never asked for this"*). There used to be a
+  FULL-CUSTODY BREAK-OUT here — a march to the cell block, raised containment, a
+  35 s recall clock, a scene-scoped roster grant. It was an ADOPTED READING layered
+  by a planning pass onto the owner's actual ruling (`godot-test1-0bc`, "game over
+  ONLY when all four heroes are jailed"); beads `3iy.11` built it and `3iy.21`
+  hardened the web build to present it reliably, when the owner wanted the film.
+  The fourth capture now calls `BestRunStore.archive_world()` and
+  `_trigger_game_over()` on the same frame, in `_on_caught_finished()`'s roster
+  clause and in `_tick_prison()`'s first clause. **Do not re-adopt the scene**;
+  `capture_selfcheck` check 17 asserts its vocabulary is gone. The PARTIAL-capture
+  rescue play is untouched — spine doors, liberation, the benched-peer prison role,
+  the vent purge and the block confinement are all the same code they were.
 - **A FOURTH HOME, and it is a fourth for one reason.** The SCAR rides the monotone
   opened set like a gate (earned, permanent, no verb heals it — it is only design
   law 3's exception in what the *building* does with the id, never in how it is
   stored). The WORLD ARCHIVE cannot: New Game has to clear it and a union has no
   removal verb, so it is its own `[world] archived` latch in `best_run_store.gd`,
-  read at boot (Continue reopens the ending) and cleared by `restart_game()`. The
-  scene's own clock, grant and entry set are stored **nowhere**, like the guards.
-  Every scar is authored in `TowerGraph.scars` and picked by `next_scar()`; nothing
-  computes a scar id, and `tower_selfcheck` fails a scar row no box implements.
+  written by the roster clause directly, read at boot (Continue reopens the ending)
+  and cleared by `restart_game()`. **The SCAR IS DORMANT and the row stays anyway**:
+  the break-out was its only inflictor, but `custody_stair_collapse` is a PERSISTED
+  id in the opened set of every profile that survived one, and retiring a persisted
+  id is a save migration nobody ordered — deleting the row would un-draw rubble a
+  world earned. `TowerGraph.next_scar()` therefore has no caller today; the row, its
+  boxes and both audits stay, and wiring a new inflictor needs an owner ruling.
 
 #### Hand-planned storeys — the ASCII plans are the level editor
 `scripts/tower_plans.gd` is a third const dict of plain dicts, and it is what a
@@ -502,8 +508,8 @@ rooms, gated passages, entries, the mutation table, the enumerated scar states, 
 rescue spines. Pure data, depended on by nobody (so no cycle): the interior takes its
 gate ids and its identity-gate heroes from it, and `tower_selfcheck` walks it to prove
 the campaign cannot softlock. Its three design laws are what make that audit tractable —
-**spines at floor rank, no item custody, mutations may only ADD edges** (the full-custody
-scar being the one owner-sanctioned exception) — and the check asserts all three
+**spines at floor rank, no item custody, mutations may only ADD edges** (the authored
+scar being the one owner-sanctioned exception, dormant since the break-out's veto) — and the check asserts all three
 structurally, so a row that breaks one fails the build. **A gate added to the building
 must appear there**: the correspondence is bound through the interior's legibility
 colours, in both directions.
@@ -819,9 +825,10 @@ Four rules:
 
 The player owns the set; `TowerInterior` mirrors it (pushed on a grab, re-seeded on build)
 because the tower is usually not streamed in when a field grab lands. An empty free set
-opens the FULL-CUSTODY PROTOCOL (see the tower section), decided in
-`_on_caught_finished()` — which stays the one place a run's end is decided, inside the
-scene as well as outside it.
+ENDS THE RUN ON THE SPOT — `archive_world()` plus `_trigger_game_over()` (owner veto
+2026-09-01, bead `godot-test1-ueg`; see the tower section) — decided in
+`_on_caught_finished()`, which stays the one place a run's end is decided, with
+`_tick_prison()`'s 0.5 s poll as the door for every peer nothing bit.
 `free_hero_count()` is the hunt director's roster seam — death-spiral mitigation belongs
 there, before contact, never in the capture path.
 
@@ -842,9 +849,10 @@ this peer's hand — which is an adopted reading of the owner's phrasing.
 
 ### Death and respawn — THE HEROES ARE THE LIVES
 There are no hearts and there is no life counter (owner ruling 2026-08-31, bead
-`godot-test1-0bc`): **the only game over is the free-hero set going empty**, which opens
-the full-custody protocol, and losing THAT ends the run. The roster is drawn by
-`scripts/hero_hud.gd`, which is the death display from here on.
+`godot-test1-0bc`): **the only game over is the free-hero set going empty**, and since
+the owner's veto of the break-out scene (2026-09-01, bead `godot-test1-ueg`) the FOURTH
+CAPTURE raises the ending immediately — the film on web, the panel on desktop. The roster
+is drawn by `scripts/hero_hud.gd`, which is the death display from here on.
 
 Every other contact is a TAX, never an ending: `hit_by_crocodile()` → freeze/flash →
 `_on_caught_finished()` → `_pay_coin_setback()` bills the attacker's own
@@ -870,10 +878,10 @@ tower's walls: it asks the `tower_interior` group for `setback_point()` behind
 checkpoint and a field death stays put. **The group answering is not the test** — the
 shell is streamed in at `TOWER_LOAD_RADIUS` (360 m) and never freed for the rest of the
 run, so once anybody has walked near the HQ the node is in the tree everywhere; gating on
-its existence alone teleports every death in the world to the doorway. The knockback is
-also refused for the whole full-custody protocol, where the party is sealed in the cell
-block on a clock and a knockback ten storeys down is not a setback but a lost scene. That
-is the building being a checkpointed level, not a property of the guard.
+its existence alone teleports every death in the world to the doorway. It is refused for
+an ARREST (the surviving heroes carry on from where the party fell) and for a BENCHED
+peer (whose clamp would drag the body under the block), and it is the building's, not the
+row's: a checkpointed level, not a property of the guard.
 
 Invulnerability is enforced in one place: the early-return at the top of
 `hit_by_crocodile()`. `reset_position()` is only the hard reset to spawn used by
@@ -1066,17 +1074,21 @@ The sharpest rules, in rough order of how badly they bite:
   peers whose ICE is not finished, the seed's own reasoning one verb along. The join
   snapshot carries the whole set and is honoured **from the master alone**, like `dead`.
   Entering a room resets the local mirror: a room's roster is the room's.
-- **The master publishes the two values a room may never disagree about** — the captive
-  set and the break-out's clock and verdict — on one verb (`room`, 2 Hz, mesh + relay,
-  master-only, applied wholesale). It is a REPAIR channel, not the source: it closes the
+- **The master publishes the one value a room may never disagree about** — the captive
+  set — on the `room` verb (2 Hz, mesh + relay, master-only, applied wholesale). It is a
+  REPAIR channel, not the source: it closes the
   join gap the per-hero verb cannot reach (a capture landing between the master
   snapshotting a joiner and the captor learning that joiner exists), and it converges in
   BOTH directions while leaving any assertion younger than `RELEASE_GRACE_MSEC` alone —
   without that the master's older picture undoes a fresh local capture and puts it back
-  next tick, a flap at the publish rate. **A non-master runs the recall clock for
-  presentation and decides nothing**; the master's verdict is what ends the scene, and it
-  survives re-election because the clock is published as SECONDS LEFT, so the new master
-  carries on from the number it was already showing. `_auto_claim_hero()` waits for
+  next tick, a flap at the publish rate. **The packet still carries `cd`/`co`, as ZEROS
+  and as a SHAPE ONLY**: they were the vetoed break-out's clock and verdict, nothing
+  reads them, but `decode_room()` drops a packet missing either and `build_version`
+  refuses to reload a peer that is in a room — so mixed-build rooms are real and an older
+  master's real values must still decode, or the room stops repairing its cells over a
+  field nobody uses. There is no authority left to hold: **game over is decided per peer
+  off the mirrored set**, so every peer reaches the same empty free set on its own.
+  `_auto_claim_hero()` waits for
   `_join_settled()` — on the `welcome` frame the captive set is still empty, and claiming
   there means claiming a hero who is in a cell.
 - The stall heartbeat rides the lobby relay, not the mesh, because a throttled tab stops
