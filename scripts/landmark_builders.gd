@@ -865,6 +865,15 @@ static func _lm_shade(base: Color, rng: RandomNumberGenerator, amount: float = 0
 	var d := rng.randf_range(-amount, amount)
 	return Color(clampf(base.r + d, 0.0, 1.0), clampf(base.g + d, 0.0, 1.0), clampf(base.b + d, 0.0, 1.0))
 
+
+static func rotated_box_top(center_y: float, size: Vector3, tilt: float) -> float:
+	"""
+	The highest vertex of a box of dimensions `size` centered vertically at
+	`center_y` and tilted by `tilt` radians about a horizontal axis
+	(Basis(RIGHT, tilt)): center_y + hy·|cos(tilt)| + hz·|sin(tilt)|.
+	"""
+	return center_y + (size.y * 0.5) * absf(cos(tilt)) + (size.z * 0.5) * absf(sin(tilt))
+
 static func _landmark_stonehenge(terrain: Node3D, center: Vector3, rng: RandomNumberGenerator, _parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
 	"""
 	Kind 0 — STONEHENGE: an outer ring of 5 trilithons (two uprights carrying a
@@ -1070,7 +1079,7 @@ static func _landmark_golden_gate(terrain: Node3D, center: Vector3, rng: RandomN
 			terrain.create_box(center + rot * Vector3(x, y, z_side * LEG_Z), Vector3(TOWER_X * 2.0 / float(CABLE_SEGMENTS - 1) + 0.15, 0.3, 0.3),
 					yaw, rng, block_batch, block_body, 0.0, orange, false)
 
-	return { "radius": 9.4, "top": LEG.y }
+	return { "radius": 9.4, "top": rotated_box_top(LEG.y, Vector3(0.3, 0.3, 0.3), 0.0) }
 
 static func _landmark_liberty(terrain: Node3D, center: Vector3, rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
 	"""
@@ -1508,11 +1517,12 @@ static func _landmark_pisa(terrain: Node3D, center: Vector3, rng: RandomNumberGe
 		# as a colonnaded tower rather than as a pile of blocks.
 		var lip_s := s + dims.y
 		var lip_pos := center + lean_dir * (lip_s * sin(LEAN)) + Vector3(0.0, lip_s * cos(LEAN), 0.0)
-		terrain.create_box(lip_pos, Vector3(dims.x + 0.5, 0.25, dims.z + 0.5), drum_yaw,
+		var lip_dims := Vector3(dims.x + 0.5, 0.25, dims.z + 0.5)
+		terrain.create_box(lip_pos, lip_dims, drum_yaw,
 				rng, block_batch, block_body, LEAN, _lm_shade(marble, rng, 0.02).darkened(0.12), false)
 		s += dims.y
 
-	return { "radius": 4.4, "top": s * cos(LEAN) }
+	return { "radius": 4.4, "top": rotated_box_top(s * cos(LEAN), Vector3(BELFRY.x + 0.5, 0.25, BELFRY.z + 0.5), LEAN) }
 
 static func _landmark_sphinx(terrain: Node3D, center: Vector3, rng: RandomNumberGenerator, _parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
 	"""
@@ -2337,17 +2347,20 @@ static func _landmark_machu_picchu(terrain: Node3D, center: Vector3, rng: Random
 	# way, so the peak overhangs the town exactly as the real one does.
 	var px := rng.randf_range(-1.2, 1.2)
 	var py := top_y
+	var top := top_y
 	var lean := rng.randf_range(0.06, 0.14)
 	var pw := 3.4
 	for i in 3:
 		var h: float = 3.4 - float(i) * 0.5
+		var peak_dims := Vector3(pw, h, pw)
 		terrain.create_box(center + rot * Vector3(px + float(i) * 0.5, py + h / 2.0, -5.0 + float(i) * 0.45),
-				Vector3(pw, h, pw), yaw + float(i) * 0.3, rng, block_batch, block_body, lean,
+				peak_dims, yaw + float(i) * 0.3, rng, block_batch, block_body, lean,
 				_lm_shade(stone, rng, 0.05))
+		top = maxf(top, rotated_box_top(py + h / 2.0, peak_dims, lean))
 		py += h
 		pw -= 0.9
 
-	return { "radius": 9.0, "top": py }
+	return { "radius": 9.0, "top": top }
 
 static func _landmark_pont_du_gard(terrain: Node3D, center: Vector3, rng: RandomNumberGenerator, _parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
 	"""
@@ -2886,10 +2899,11 @@ static func _landmark_holstentor(terrain: Node3D, center: Vector3, rng: RandomNu
 			var w: float = 4.6 - float(i) * 1.4
 			var mid := cy + 0.85
 			var pos := foot + lean_dir * (mid * sin(LEAN)) + Vector3(0.0, mid * cos(LEAN), 0.0)
-			terrain.create_box(pos, Vector3(w, 1.7, w), drum_yaw, rng, block_batch, block_body, LEAN,
+			var roof_dims := Vector3(w, 1.7, w)
+			terrain.create_box(pos, roof_dims, drum_yaw, rng, block_batch, block_body, LEAN,
 					_lm_shade(roof, rng, 0.03), false)
+			tower_top = maxf(tower_top, rotated_box_top(0.6 + mid * cos(LEAN), roof_dims, LEAN))
 			cy += 1.7
-		tower_top = 0.6 + cy * cos(LEAN)
 
 	# THE CENTRE BLOCK between the towers, lower, with the stepped gable that fills
 	# the gap above the archway.
@@ -3922,7 +3936,7 @@ static func _landmark_hollywood(terrain: Node3D, center: Vector3, rng: RandomNum
 					Vector3(lx + (float(seg[0]) - 0.5) * LW, base_y + float(seg[1]) * LH * scale, 0.0),
 					Vector3(lx + (float(seg[2]) - 0.5) * LW, base_y + float(seg[3]) * LH * scale, 0.0),
 					0.32, _lm_shade(white, rng, 0.02), yaw, rng, block_batch, block_body, true)
-		top = maxf(top, base_y + LH * scale)
+		top = maxf(top, base_y + LH * scale + 0.25)
 
 	return { "radius": 8.8, "top": top }
 
@@ -5352,7 +5366,7 @@ static func _city_vaci_utca(terrain: Node3D, center: Vector3, rng: RandomNumberG
 		terrain.create_box(center + Vector3(px, 2.9, pz), Vector3(4.2, 0.3, 4.2), 0.0,
 				rng, block_batch, block_body, 0.0, _lm_shade(LM_MARBLE, rng, 0.03), false)
 
-	return { "radius": 78.0, "top": 21.0 }
+	return { "radius": 78.0, "top": 22.0 }
 
 
 static func _city_national_museum(terrain: Node3D, center: Vector3, rng: RandomNumberGenerator, _parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
