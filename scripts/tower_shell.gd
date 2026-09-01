@@ -39,11 +39,13 @@ extends Node3D
 ## from local information only — it does not even need the seed. No spawn packet,
 ## no claim, no authority.
 ##
-## COST: 26 `MeshInstance3D`s, ONE `StaticBody3D` holding 13 box shapes, one `Area3D`,
-## and 5 materials shared process-wide by the static cache below. That is the whole
+## COST: 24 `MeshInstance3D`s, ONE `StaticBody3D` holding 7 box shapes, one `Area3D`,
+## and 8 materials shared process-wide by the static cache below. That is the whole
 ## bill, once, for the life of a run. Eleven of those meshes are the castle the
 ## silhouette bead added (godot-test1-rgt) — all of it above the sealed roof, none of
-## it solid, and the 44 merlons of its parapet welded into ONE of the eleven.
+## it solid, and the 44 merlons of its parapet welded into ONE of the eleven. Four
+## more are the Fachwerk facade (godot-test1-rzk), welded the same way: ~810 timbers,
+## panels, window recesses and iron bars in FOUR meshes.
 
 # ============================================================================
 # SIGNALS
@@ -225,6 +227,100 @@ const KEEP_TOWER_HEIGHT: float = 26.0
 const KEEP_SPIRE_DIAMETER: float = 26.0
 const KEEP_SPIRE_HEIGHT: float = 20.0
 
+# ----------------------------------------------------------------------------
+# THE FACADE, i.e. EVERYTHING GLUED TO THE WALL BELOW THE SEAL (bead godot-test1-rzk)
+# ----------------------------------------------------------------------------
+##
+## THE OWNER'S NOTE WAS "the HQ is just white from outside; it should look like a
+## german castle, Fachwerkhaus on the top, some barred with iron bars small windows".
+## So: stone for the bottom six storeys with small dark barred windows in it, and the
+## top four storeys plastered and timber-framed.
+##
+## THE ONE RULE THIS SECTION OBEYS, and it is the castle section's rule one floor
+## down: nothing here is `collide: true` and nothing here is more than a few
+## centimetres proud of the wall it is stuck to. Both halves are load-bearing:
+##
+##   * NOT SOLID, so the phase-13 seal is untouched. `_topmost_solid()` still finds
+##     the Roof, check 11's ray grid still lands on the slab, and — the sharp one —
+##     the no-ledge sweep of check 12 never sees a 0.55 m timber rail as a thing a
+##     Windman could stand on 45 m up. A solid facade would be a fire escape.
+##   * PROUD BY CENTIMETRES, so `footprint_radius()` does not move. The furthest any
+##     of it reaches is `OUTER_HALF + TIMBER_OUT` (40.25 m), well inside the yard's
+##     own corners at 63.6 m, so the exclusion disc is unaffected.
+##
+## AND IT IS FOUR MESHES, NOT EIGHT HUNDRED NODES — the crenellation precedent
+## (see `MERLON_SIZE`), generalised: `_facade_pieces()` returns a list of
+## `{xform, size}` timbers, `_pieces_aabb()` measures them and `_welded_mesh()`
+## stamps them all into ONE surface. That is what lets a whole timber lattice cost
+## the draw budget of a single box, and what lets the table go on describing itself
+## as `pos ± size/2` — the declared size IS the measured bounding box, so the
+## footprint sweep, the budget and the impostor need to know nothing about any of it.
+## A diagonal brace is just a stamp transform with a roll in it.
+
+## How many of the ten storeys are timber-framed, counted DOWN FROM THE ROOF. The
+## owner said "Fachwerkhaus on the top"; four of ten is the top 20 m of a 50 m wall,
+## which is where the eye lands from the field.
+const FACHWERK_STOREYS: int = 4
+const FACHWERK_BASE: float = STOREY_HEIGHT * (STOREYS - FACHWERK_STOREYS)
+
+## The three layers of the facade, as the distance each one's OUTER surface stands
+## proud of the wall face at `OUTER_HALF`. Plaster first, timber over it, and the
+## bars over their own window recess — so the frame reads as applied to the panel
+## and the bars as sitting in front of the hole, from any angle and at any hour.
+##
+## They are millimetre-scale on purpose: this is paint with a relief, not a
+## structure. `FACADE_THICK` is how deep each piece is BURIED, which only has to be
+## enough that the wall behind never shows through at a grazing angle.
+const PLASTER_OUT: float = 0.10
+const TIMBER_OUT: float = 0.25
+const FACADE_THICK: float = 0.40
+
+## One timber's face width, and the bay the posts repeat at.
+##
+## THE BAY CLOSES ON BOTH CORNERS BY CONSTRUCTION, exactly like the merlons: the
+## post centres walk from -inset to +inset in whole steps, and the step is DERIVED
+## from that span rather than authored, so retuning `TIMBER_BAY` moves the pitch and
+## never leaves a half-bay at one end.
+##
+## THE BRACES ARE SPARSE, AND THAT IS THE WHOLE DIFFERENCE BETWEEN A HALF-TIMBERED
+## HOUSE AND A TRUSS (measured on a 110 m screenshot, 2026-09-01: the first draft
+## braced every bay and read as a radio mast wrapped in a bridge). `TIMBER_BRACE_EVERY`
+## bays carry one, its direction alternating with the bay and the storey — which is
+## what a St Andrew's pattern looks like once you stop drawing both halves of it —
+## and the bays between them stay plain plaster, which is what the eye reads as
+## Fachwerk.
+const TIMBER_WIDTH: float = 0.55
+const TIMBER_BAY: float = 4.0
+const TIMBER_BRACE_EVERY: int = 3
+
+## THE BARRED WINDOWS, on the stone storeys only.
+##
+## SMALL, SPARSE AND IRREGULAR — a castle, not an office block. The irregularity is
+## AUTHORED and not seeded: `WINDOW_ROW_PHASE` slides each row sideways by a fixed
+## amount and the run has a fixed hole punched in it, because the tower is
+## hand-planned once and forever (CLAUDE.md) and a window that moved between runs
+## would be the same mistake as a tower that did. Grep this file for `run_seed` and
+## there is nothing to find.
+##
+## The recess is a proud dark panel rather than a real hole: a hole means cutting
+## the wall slab into pieces, which is collision geometry and a whole new class of
+## bug, for something you read as a dark rectangle from 100 m.
+const WINDOW_WIDTH: float = 1.4
+const WINDOW_HEIGHT: float = 2.1
+## Height of the sill above its own storey's floor, and the spacing along the wall.
+const WINDOW_SILL: float = 2.2
+const WINDOW_PITCH: float = 12.0
+## The lowest storey INDEX that carries a row. Storey 0 is the entry hall and the
+## doorway is in it; the rows start one floor up and stop where the plaster starts.
+const WINDOW_ROW_FLOOR: int = 1
+const WINDOW_ROW_PHASE: Array[float] = [0.0, 4.5, -2.0, 2.5, -3.5]
+const WINDOW_OUT: float = 0.06
+const WINDOW_THICK: float = 0.12
+const WINDOW_BARS: int = 3
+const BAR_WIDTH: float = 0.12
+const BAR_OUT: float = 0.14
+const BAR_THICK: float = 0.10
+
 ## The yard: a flat visual slab under the whole compound. VISUAL ONLY and 3 cm
 ## proud of the ground — no collision shape, no lip to step over. The flat-world
 ## invariant (CLAUDE.md) says the ground stays at y = 0 and everything assumes it;
@@ -270,7 +366,13 @@ const YARD_LIFT: float = 0.03
 ## 0 and 1 were drawn on the plan grid, because the ring was the wall those two
 ## storeys' rooms were authored against. 20 of 22 used, two spare, the same
 ## courtesy every previous phase was left.
-const BOX_BUDGET: int = 22
+##
+## 22 -> 26 IN THE GERMAN-CASTLE PASS (bead godot-test1-rzk), and the four new
+## entries are the WHOLE facade: the plaster field, its timber lattice, the window
+## recesses and their iron bars. That it is only four — for ~810 timbers, panels and
+## bars — is the crenellation argument restated: this is a DRAW CALL budget, and a
+## single mullion is not worth one. 24 of 26 used, two spare, the same courtesy.
+const BOX_BUDGET: int = 26
 
 ## Palette. Four colours, four materials, shared process-wide (see `_material`).
 ##
@@ -287,10 +389,33 @@ const BOX_BUDGET: int = 22
 ## decisively into the blue, away from the near-neutral plum it was. A pale wall
 ## against a plum roof reads as one grey building; a pale wall against slate blue
 ## reads as a roof.
-const COLOR_WALL := Color(0.48, 0.47, 0.44)      # pale weathered limestone
+##
+## AND THE GERMAN-CASTLE PASS MOVED THE WALL BACK DOWN (bead godot-test1-rzk). The
+## owner's report was "the HQ is just white from outside", and a screenshot from
+## 110 m is what settles which half of the new contrast was missing: the timber
+## lattice read immediately, and the plaster/stone SPLIT did not, because a 0.48 wall
+## under a 0.56 plaster is one value through the grade. Stone is now clearly the
+## darker material of the two, which is also what makes the four turrets and the keep
+## above the roof read as stonework rather than as more of the same white mass.
+const COLOR_WALL := Color(0.37, 0.36, 0.34)      # weathered grey limestone
 const COLOR_ROOF := Color(0.16, 0.18, 0.29)      # steep dark slate blue
 const COLOR_YARD := Color(0.33, 0.31, 0.29)      # packed earth, a shade under the wall
 const COLOR_BEACON := Color(1.0, 0.72, 0.18)     # the amber light on the spire
+
+## THE GERMAN-CASTLE PASS ADDED THREE (bead godot-test1-rzk), and what they are FOR
+## is contrast: the owner's complaint was that the HQ reads as one white mass from
+## the field. The plaster is the pale one now and the stone under it is not (see
+## COLOR_WALL above) — that split is the horizontal read, and the near-black oak
+## lattice over the plaster is the vertical one. Judge them against a screenshot from
+## ~100 m, never against the swatch (see the paragraph above).
+##
+## THE RECESS SHARES THE TIMBER, on purpose rather than to save a constant: a window
+## opening and a weathered beam are the same near-black at any distance this building
+## is seen from, and the thing that has to READ against the opening is the bar in
+## front of it — which is why the iron is the one of the three that is a light value.
+const COLOR_PLASTER := Color(0.58, 0.54, 0.44)   # warm lime plaster
+const COLOR_TIMBER := Color(0.15, 0.10, 0.07)    # dark oak, and the window openings
+const COLOR_IRON := Color(0.28, 0.29, 0.32)      # cold bar iron, over the openings
 
 ## The spires and turret caps: the same slate as the roof, but LIT FROM WITHIN.
 ##
@@ -418,7 +543,7 @@ static func boxes() -> Array[Dictionary]:
 	"""
 	The whole building, as boxes: `{name, pos, size, color, collide}` in local metres,
 	plus an optional `mesh` naming a shape other than a box ("cylinder", "cone",
-	"crenellation" — see `_shape_mesh`).
+	"crenellation", and the four facade kinds — see `_shape_mesh`).
 
 	`mesh` IS A SHAPE, NEVER A SECOND SIZE. Whatever it names, the mesh it builds
 	fits exactly inside `size`, so every measurement below — the footprint sweep,
@@ -472,6 +597,20 @@ static func boxes() -> Array[Dictionary]:
 	out.append({"name": "DoorLintel", "pos": Vector3(wall_mid, DOOR_HEIGHT + lintel_height * 0.5, 0.0),
 		"size": Vector3(WALL_THICK, lintel_height, 2.0 * DOOR_HALF_WIDTH),
 		"color": COLOR_WALL, "collide": true})
+	# 3b. THE FACADE (bead godot-test1-rzk): plaster and a timber lattice over the
+	#     top FACHWERK_STOREYS, barred windows in the stone below. Four welded meshes
+	#     stuck to the outside of the ring above, none of them solid and none of them
+	#     more than 25 cm proud — see the FACADE section for why both of those are the
+	#     seal and the exclusion disc restated rather than decoration policy.
+	#
+	#     THE TABLE ENTRY IS MEASURED, NOT AUTHORED. `_facade_box` takes the bounding
+	#     box of the timbers it is about to weld, so the `pos ± size/2` contract every
+	#     other measurement in this file leans on holds for a lattice exactly as it
+	#     does for a slab, with no second number to keep in step.
+	out.append(_facade_box("PlasterField", "plaster", COLOR_PLASTER))
+	out.append(_facade_box("Fachwerk", "fachwerk", COLOR_TIMBER))
+	out.append(_facade_box("Windows", "windows", COLOR_TIMBER))
+	out.append(_facade_box("WindowBars", "bars", COLOR_IRON))
 	# 4. THE LID. One slab over the whole footprint, so every wall top underneath it
 	#    is covered rather than exposed — that is what makes the facade smooth: the
 	#    only horizontal surface a flier can put his feet on is the top of this box.
@@ -842,6 +981,15 @@ static func _shape_mesh(box: Dictionary) -> Mesh:
 			return cone
 		"crenellation":
 			return _crenellation_mesh(size)
+		"plaster", "fachwerk", "windows", "bars":
+			# THE FACADE KINDS ALL SHARE ONE BUILDER, and it ignores `size` on
+			# purpose: the pieces are laid out against the WALL (OUTER_HALF and the
+			# storey grid), and `boxes()` measured the result to get the size in the
+			# first place. Re-deriving the same list here rather than fitting it into
+			# a declared box is what makes the AABB contract true by construction
+			# instead of by two authors agreeing.
+			var pieces := _facade_pieces(String(box.get("mesh", "")))
+			return _welded_mesh(pieces, _pieces_aabb(pieces).get_center())
 	var mesh := BoxMesh.new()
 	mesh.size = size
 	return mesh
@@ -885,6 +1033,296 @@ static func _crenellation_mesh(size: Vector3) -> ArrayMesh:
 		st.append_from(merlon, 0, Transform3D(Basis(), Vector3(-inset, 0.0, t)))
 		st.append_from(merlon, 0, Transform3D(Basis(), Vector3(inset, 0.0, t)))
 	return st.commit()
+
+
+# ============================================================================
+# THE FACADE — four welded meshes on the outside of the wall (bead godot-test1-rzk)
+# ============================================================================
+#
+# The shape of this block is the crenellation trick with the hard part factored out.
+# `_crenellation_mesh` could lay its merlons out against a declared size because a
+# ring of cubes has an obvious bounding box; a timber lattice with rotated braces in
+# it does not, so the direction is REVERSED here: each builder lays its pieces out
+# against the WALL, `_pieces_aabb` measures what came out, and `boxes()` declares
+# that. Nothing is ever fitted to a number somebody wrote down.
+#
+# Everything below is a pure function of the constants — no seed, no hash, no randf.
+# The tower is hand-planned once and forever (CLAUDE.md), and that applies to a
+# window as much as to a storey.
+
+
+static func _face_normals() -> Array[Vector3]:
+	"""
+	The four wall faces, as outward normals.
+
+	@return: +X (the door face), -X, +Z, -Z.
+
+	Every builder writes ONE face in "panel space" — u along the wall, v up, n
+	outward — and gets four, so a facade rule cannot come out different on the back
+	of the building than on the front.
+	"""
+	return [Vector3(1.0, 0.0, 0.0), Vector3(-1.0, 0.0, 0.0),
+		Vector3(0.0, 0.0, 1.0), Vector3(0.0, 0.0, -1.0)]
+
+
+static func _stamp(out: Array[Dictionary], n: Vector3, u: float, v: float,
+		depth: float, size: Vector3, roll: float = 0.0) -> void:
+	"""
+	Place one timber on one face, in panel space.
+
+	@param out: The piece list being built; one `{xform, size}` is appended.
+	@param n: The face's outward normal, from `_face_normals()`.
+	@param u: Sideways along that wall, from its middle.
+	@param v: Height above the ground plane (NOT relative to anything).
+	@param depth: Distance of the piece's CENTRE from the building's middle along n,
+	             i.e. how far out the wall it stands.
+	@param size: Full extent in panel space: (along the wall, up, out).
+	@param roll: Rotation about the face normal, radians — this is the whole of what
+	            makes a diagonal brace different from a post.
+
+	`u_axis` is derived as `UP x n` rather than tabled, because that is the ONE
+	choice that keeps the basis right-handed on all four faces. Hand-picking a
+	sideways direction per face gets two of them wrong, and a left-handed basis
+	inverts the winding: every box is then drawn inside out and back-face culling
+	makes the whole facade invisible from outside — which is the only place it is
+	ever seen from.
+	"""
+	var u_axis := Vector3.UP.cross(n)
+	var basis := Basis(u_axis, Vector3.UP, n)
+	if not is_zero_approx(roll):
+		basis = basis * Basis(Vector3(0.0, 0.0, 1.0), roll)
+	out.append({
+		"xform": Transform3D(basis, u_axis * u + Vector3.UP * v + n * depth),
+		"size": size,
+	})
+
+
+static func _pieces_aabb(pieces: Array[Dictionary]) -> AABB:
+	"""
+	The exact bounding box of a piece list, in the shell's local frame.
+
+	@param pieces: `{xform, size}` entries from `_stamp`.
+	@return: The AABB `boxes()` declares and `tower_shell_selfcheck` measures the
+	        built mesh against.
+
+	EIGHT CORNERS, NOT A SHORTCUT, because the braces are rotated: a rotated box's
+	extent is not its size, and the whole point of declaring the measured box is that
+	it is the same box the vertices produce. So this walks the same corners
+	`SurfaceTool` is about to weld.
+	"""
+	var lo := Vector3.INF
+	var hi := -Vector3.INF
+	for piece: Dictionary in pieces:
+		var xform: Transform3D = piece["xform"]
+		var half: Vector3 = (piece["size"] as Vector3) * 0.5
+		for i in 8:
+			var at: Vector3 = xform * Vector3(
+				half.x if (i & 1) != 0 else -half.x,
+				half.y if (i & 2) != 0 else -half.y,
+				half.z if (i & 4) != 0 else -half.z)
+			lo = Vector3(minf(lo.x, at.x), minf(lo.y, at.y), minf(lo.z, at.z))
+			hi = Vector3(maxf(hi.x, at.x), maxf(hi.y, at.y), maxf(hi.z, at.z))
+	return AABB(lo, hi - lo)
+
+
+static func _welded_mesh(pieces: Array[Dictionary], centre: Vector3) -> ArrayMesh:
+	"""
+	Every piece of one facade layer, welded into ONE surface.
+
+	@param pieces: `{xform, size}` entries from `_stamp`.
+	@param centre: The AABB centre, subtracted so the mesh is centred on its own
+	              origin — which `_shape_mesh`'s contract and the impostor's per-mesh
+	              cull radius both require.
+	@return: A single-surface `ArrayMesh`.
+
+	The `BoxMesh` cache is per call and worth its four lines: a lattice is ~400
+	pieces drawn from a handful of distinct sizes, so this is the difference between
+	allocating four hundred meshes and allocating six.
+	"""
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var shapes: Dictionary = {}
+	for piece: Dictionary in pieces:
+		var size: Vector3 = piece["size"]
+		var shape: BoxMesh = shapes.get(size)
+		if shape == null:
+			shape = BoxMesh.new()
+			shape.size = size
+			shapes[size] = shape
+		var xform: Transform3D = piece["xform"]
+		st.append_from(shape, 0, Transform3D(xform.basis, xform.origin - centre))
+	return st.commit()
+
+
+static func _facade_pieces(kind: String) -> Array[Dictionary]:
+	"""
+	Every timber of one facade layer. The one dispatch, read by both `boxes()` (to
+	measure it) and `_shape_mesh` (to build it).
+
+	@param kind: One of "plaster", "fachwerk", "windows", "bars".
+	@return: `{xform, size}` entries; empty for an unknown kind, which then declares
+	        an empty box and fails check 1 loudly rather than drawing nothing quietly.
+	"""
+	match kind:
+		"plaster":
+			return _plaster_pieces()
+		"fachwerk":
+			return _fachwerk_pieces()
+		"windows":
+			return _window_pieces(false)
+		"bars":
+			return _window_pieces(true)
+	return []
+
+
+static func _facade_box(box_name: String, kind: String, color: Color) -> Dictionary:
+	"""
+	One facade layer as a `boxes()` table entry, measured off its own geometry.
+
+	@param box_name: The mesh node's name.
+	@param kind: The `_facade_pieces` kind, which is also the `mesh` field.
+	@param color: One of the palette consts — never a literal, or the shared material
+	             cache grows an entry check 4 will not account for.
+	@return: The same `{name, pos, size, color, collide, mesh}` shape as every
+	        hand-written row above.
+	"""
+	var aabb := _pieces_aabb(_facade_pieces(kind))
+	return {"name": box_name, "pos": aabb.get_center(), "size": aabb.size,
+		"color": color, "collide": false, "mesh": kind}
+
+
+static func _plaster_pieces() -> Array[Dictionary]:
+	"""
+	The plaster field: one panel per face over the top `FACHWERK_STOREYS`.
+
+	A PANEL AND NOT A REPAINT, deliberately. Splitting each wall slab into
+	stone-below and plaster-above would work and would cost four more table rows —
+	but those slabs are `collide: true`, so it would also double the shell's
+	collision shapes and put a horizontal seam at 30 m into the one geometry check 12
+	is trying to prove has no ledges in it. A 40 cm panel stuck to the outside changes
+	the colour of the wall and nothing about the wall.
+
+	Each panel spans the full corner-to-corner width including its neighbours'
+	thickness, so the four meet at the corners with no notch and the measured box
+	comes out square.
+	"""
+	var out: Array[Dictionary] = []
+	var half := OUTER_HALF + PLASTER_OUT
+	var height := WALL_HEIGHT - FACHWERK_BASE
+	for n: Vector3 in _face_normals():
+		_stamp(out, n, 0.0, FACHWERK_BASE + height * 0.5, half - FACADE_THICK * 0.5,
+			Vector3(2.0 * half, height, FACADE_THICK))
+	return out
+
+
+static func _rail_y(k: int) -> float:
+	"""
+	The centre height of the k-th horizontal rail of the timber frame.
+
+	@param k: 0 at the bottom of the plaster field, `FACHWERK_STOREYS` at the top.
+	@return: Metres above the ground plane.
+
+	The two END rails are pulled half a timber INWARDS so the lattice finishes flush
+	with the plaster it is drawn on instead of overhanging it — which is also what
+	makes the measured box exactly the plaster band's height, with the braces safely
+	inside it.
+	"""
+	var y := FACHWERK_BASE + STOREY_HEIGHT * k
+	if k == 0:
+		return y + TIMBER_WIDTH * 0.5
+	if k == FACHWERK_STOREYS:
+		return y - TIMBER_WIDTH * 0.5
+	return y
+
+
+static func _fachwerk_pieces() -> Array[Dictionary]:
+	"""
+	The timber lattice: rails at every storey line, posts every bay, and one diagonal
+	brace per bay per storey.
+
+	THE PITCH IS DERIVED, exactly like the merlons': the post centres walk from
+	-inset to +inset in whole steps and the step is that span divided by the count,
+	so there is no half-bay at either corner and no number to hand-tune when
+	`TIMBER_BAY` is retuned.
+
+	The braces alternate direction with `(bay + storey)`, which reads as a St
+	Andrew's pattern across a wall while costing one timber per bay instead of two.
+	A brace runs post-centre to post-centre and rail-centre to rail-centre, so it
+	always lands inside the frame it braces and never outside the measured box.
+	"""
+	var out: Array[Dictionary] = []
+	var half := OUTER_HALF + TIMBER_OUT
+	var height := WALL_HEIGHT - FACHWERK_BASE
+	var depth := half - FACADE_THICK * 0.5
+	var inset := half - TIMBER_WIDTH * 0.5
+	var steps := int(round(2.0 * inset / TIMBER_BAY))
+	var pitch := 2.0 * inset / float(steps)
+	for n: Vector3 in _face_normals():
+		for k in FACHWERK_STOREYS + 1:
+			_stamp(out, n, 0.0, _rail_y(k), depth,
+				Vector3(2.0 * half, TIMBER_WIDTH, FACADE_THICK))
+		for i in steps + 1:
+			_stamp(out, n, -inset + pitch * i, FACHWERK_BASE + height * 0.5, depth,
+				Vector3(TIMBER_WIDTH, height, FACADE_THICK))
+		for storey in FACHWERK_STOREYS:
+			var low := _rail_y(storey)
+			var high := _rail_y(storey + 1)
+			var rise := high - low
+			var brace := Vector3(sqrt(pitch * pitch + rise * rise), TIMBER_WIDTH,
+				FACADE_THICK)
+			var angle := atan2(rise, pitch)
+			for i in steps:
+				if (i + storey) % TIMBER_BRACE_EVERY != 0:
+					continue
+				_stamp(out, n, -inset + pitch * (float(i) + 0.5), (low + high) * 0.5,
+					depth, brace, angle if (i + storey) % 2 == 0 else -angle)
+	return out
+
+
+static func _window_pieces(bars: bool) -> Array[Dictionary]:
+	"""
+	The barred windows on the stone storeys — the recesses, or the iron in them.
+
+	@param bars: false for the dark openings, true for the bars over them. ONE
+	            layout function for both, because a bar that does not line up with
+	            its own hole is the only way this can look wrong, and two functions
+	            is how that happens.
+	@return: `{xform, size}` entries for all four faces.
+
+	The rows stop below `FACHWERK_BASE` (they are cut into stone, and the storeys
+	above it are plastered) and start one storey above the ground, which is also what
+	keeps them clear of the doorway without anybody having to special-case it.
+	"""
+	var out: Array[Dictionary] = []
+	# Keep the run half a pitch off each corner, then close it on whole pitches so
+	# the row is centred before its phase slides it.
+	var reach := OUTER_HALF - WINDOW_PITCH * 0.5
+	var count := int(floor(2.0 * reach / WINDOW_PITCH)) + 1
+	var span := WINDOW_PITCH * float(count - 1)
+	var depth := OUTER_HALF + (BAR_OUT - BAR_THICK * 0.5 if bars
+		else WINDOW_OUT - WINDOW_THICK * 0.5)
+	for n: Vector3 in _face_normals():
+		for row in WINDOW_ROW_PHASE.size():
+			var v := STOREY_HEIGHT * float(WINDOW_ROW_FLOOR + row) + WINDOW_SILL \
+				+ WINDOW_HEIGHT * 0.5
+			for i in count:
+				# THE AUTHORED HOLE. Without it the rows are a grid and the building
+				# reads as the office block it is pretending not to be; with it (and
+				# the row phase) no two rows line up. Fixed arithmetic, no hash —
+				# see the WINDOW_* block for why the tower may not roll for this.
+				if (i + row * 2) % 5 == 0:
+					continue
+				var u := -span * 0.5 + WINDOW_PITCH * float(i) + WINDOW_ROW_PHASE[row]
+				if not bars:
+					_stamp(out, n, u, v, depth,
+						Vector3(WINDOW_WIDTH, WINDOW_HEIGHT, WINDOW_THICK))
+					continue
+				for b in WINDOW_BARS:
+					var offset := (float(b + 1) / float(WINDOW_BARS + 1) - 0.5) \
+						* WINDOW_WIDTH
+					_stamp(out, n, u + offset, v, depth,
+						Vector3(BAR_WIDTH, WINDOW_HEIGHT, BAR_THICK))
+	return out
 
 
 static func _material(color: Color) -> StandardMaterial3D:
