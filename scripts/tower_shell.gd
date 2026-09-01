@@ -607,10 +607,10 @@ static func boxes() -> Array[Dictionary]:
 	#     box of the timbers it is about to weld, so the `pos ± size/2` contract every
 	#     other measurement in this file leans on holds for a lattice exactly as it
 	#     does for a slab, with no second number to keep in step.
-	out.append(_facade_box("PlasterField", "plaster", COLOR_PLASTER))
-	out.append(_facade_box("Fachwerk", "fachwerk", COLOR_TIMBER))
-	out.append(_facade_box("Windows", "windows", COLOR_TIMBER))
-	out.append(_facade_box("WindowBars", "bars", COLOR_IRON))
+	out.append(_facade_box("PlasterField", "plaster", COLOR_PLASTER, 1))
+	out.append(_facade_box("Fachwerk", "fachwerk", COLOR_TIMBER, 2))
+	out.append(_facade_box("Windows", "windows", COLOR_TIMBER, 1))
+	out.append(_facade_box("WindowBars", "bars", COLOR_IRON, 2))
 	# 4. THE LID. One slab over the whole footprint, so every wall top underneath it
 	#    is covered rather than exposed — that is what makes the facade smooth: the
 	#    only horizontal surface a flier can put his feet on is the top of this box.
@@ -773,6 +773,32 @@ static func build_impostor() -> Node3D:
 		# is the half-diagonal.)
 		var reach: float = mesh.mesh.get_aabb().size.length() * 0.5
 		mesh.visibility_range_begin = maxf(IMPOSTOR_FADE_NEAR - reach, 0.0)
+		# AND THE FACADE HAS TO SORT IN FRONT OF THE WALL IT IS GLUED TO (codex
+		# review, 2026-09-01). This is the price of the cross-fade: `PIXEL_ALPHA`
+		# makes every impostor material TRANSPARENT, so none of them writes depth
+		# and the renderer orders them back-to-front by their own ORIGINS instead.
+		# The four facade meshes are whole-building meshes centred on the axis,
+		# while the walls they are stuck to are centred on their own faces — so the
+		# NEAR wall sorts last and paints over the Fachwerk, and the impostor
+		# reverts to the plain white box this bead exists to remove. Measured, not
+		# reasoned: rendered at 230 m the facade was simply gone.
+		#
+		# `sorting_offset` is the documented fix and needs no second material: a
+		# mesh with a higher one is treated as that many metres NEARER for sorting
+		# alone. A whole building's width clears every wall in the table, and one
+		# metre per layer separates the timbers from their plaster and the bars
+		# from their own recess (those two share an origin exactly, so without it
+		# their order is not merely wrong but undefined).
+		#
+		# WHAT IT DOES NOT FIX, stated so nobody reads it as more than it is: a
+		# facade layer is ONE mesh wrapping all four faces, so the FAR face's
+		# timbers also sort in front of the NEAR face's plaster and the impostor is
+		# faintly see-through where they cross. Rendered at 415 m — where this thing
+		# is actually looked at, before the fog blend — it is invisible, and the
+		# alternative is sixteen table entries and sixteen draw calls for four.
+		var layer := int(box.get("layer", 0))
+		if layer > 0:
+			mesh.sorting_offset = 2.0 * OUTER_HALF + float(layer)
 		root.add_child(mesh)
 	return root
 
@@ -1175,7 +1201,8 @@ static func _facade_pieces(kind: String) -> Array[Dictionary]:
 	return []
 
 
-static func _facade_box(box_name: String, kind: String, color: Color) -> Dictionary:
+static func _facade_box(box_name: String, kind: String, color: Color,
+		layer: int) -> Dictionary:
 	"""
 	One facade layer as a `boxes()` table entry, measured off its own geometry.
 
@@ -1183,12 +1210,16 @@ static func _facade_box(box_name: String, kind: String, color: Color) -> Diction
 	@param kind: The `_facade_pieces` kind, which is also the `mesh` field.
 	@param color: One of the palette consts — never a literal, or the shared material
 	             cache grows an entry check 4 will not account for.
+	@param layer: How far OUT this sits from the wall, as a rank rather than a
+	             distance: 1 is stuck to the stone (the plaster, the window
+	             recesses), 2 is stuck to layer 1 (the timbers, the bars). Only
+	             `build_impostor()` reads it — see `IMPOSTOR_SORT_LIFT`.
 	@return: The same `{name, pos, size, color, collide, mesh}` shape as every
-	        hand-written row above.
+	        hand-written row above, plus `layer`.
 	"""
 	var aabb := _pieces_aabb(_facade_pieces(kind))
 	return {"name": box_name, "pos": aabb.get_center(), "size": aabb.size,
-		"color": color, "collide": false, "mesh": kind}
+		"color": color, "collide": false, "mesh": kind, "layer": layer}
 
 
 static func _plaster_pieces() -> Array[Dictionary]:
