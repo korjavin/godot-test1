@@ -3175,12 +3175,16 @@ func _guard_footprint(yaw: float) -> Rect2:
 		var shape_node := probe.find_child("CollisionShape3D", true, false) as CollisionShape3D
 		var capsule := (shape_node.shape if shape_node != null else null) as CapsuleShape3D
 		if capsule != null:
-			# The two capsule end-centres in body space, turned to the spawn yaw, then
+			# The two HEMISPHERE CENTRES in body space, turned to the spawn yaw, then
 			# inflated by the radius: that is the capsule's exact ground AABB.
+			# `CapsuleShape3D.height` is tip to tip, caps included, so the centres are
+			# a radius short of each end — take `height * 0.5` for the reach and the
+			# inflation below counts both caps twice, quietly lengthening the body by
+			# a whole diameter and failing posts that are fine.
 			var turn := Basis(Vector3.UP, yaw)
 			var axis: Vector3 = turn * (shape_node.transform.basis.y.normalized())
 			var mid: Vector3 = turn * shape_node.position
-			var reach: Vector3 = axis * (capsule.height * 0.5)
+			var reach: Vector3 = axis * maxf(capsule.height * 0.5 - capsule.radius, 0.0)
 			var r: float = capsule.radius
 			for x: float in [mid.x - reach.x, mid.x + reach.x]:
 				lo.x = minf(lo.x, x - r)
