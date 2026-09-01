@@ -642,13 +642,38 @@ func _show_plain(marker: Node3D) -> void:
 	The two strings go STRAIGHT onto Label.text with no tr() — see the
 	localization note at the top of the file before changing that.
 	"""
-	name_label.text = str(marker.get_meta("name_key", ""))
-	fact_label.text = str(marker.get_meta("fact_key", ""))
+	announce(str(marker.get_meta("name_key", "")), str(marker.get_meta("fact_key", "")))
+
+
+func announce(title: String, body: String) -> bool:
+	"""
+	Raise the plain two-line card for anything at all.
+
+	@return: false when a pending question owns the card and the line was dropped.
+
+	PUBLIC BECAUSE THERE IS A SECOND ANNOUNCER: the HQ's evidence dossiers (bead
+	godot-test1-3iy.23) want a paced, fading, screen-space line and this widget is
+	already the one that queues them. It is the whole of the seam — the caller hands
+	over two strings and knows nothing about labels, holds or fades.
+
+	Both strings go STRAIGHT onto `Label.text` with no `tr()`: they are `ui.csv`
+	keys and Godot's `Control` auto-translation does the rest. See the localization
+	note at the top of this file before changing that.
+
+	A PENDING QUESTION WINS. `_scan()` already refuses to raise a landmark card over
+	one, and an announcement from somewhere else must not be the exception that
+	overwrites three options the player is halfway through reading.
+	"""
+	if _quiz_pending:
+		return false
+	name_label.text = title
+	fact_label.text = body
 	fact_label.visible = true
 	treasure_label.visible = false
 	_hide_options()
 	_hold = TOAST_DURATION
 	visible = true
+	return true
 
 
 func _update_fade(delta: float) -> void:

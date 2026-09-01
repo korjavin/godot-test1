@@ -4353,6 +4353,21 @@ const TEIBI_FIT_GROUND_CLEAR: float = 0.05
 ## the whole small/giant excursion: switching small↔giant does not refill it.
 const TEIBI_FORM_DURATION: float = 10.0
 
+## How long the automatic revert waits before asking AGAIN whether the normal
+## capsule fits where the body is standing (bd godot-test1-3iy.23, codex review).
+##
+## The timeout used to grow the body back unconditionally, which was harmless while
+## every space in this game was at least 2 m tall. The HQ's crawl alcove is 1.2 m,
+## so a small Teibi whose form expires in there would have been inflated INSIDE
+## solid stone and squirted out along whichever axis the depenetration liked —
+## `_teibi_grow_blocked`'s bug, in the other direction. So the revert waits for
+## room instead of forcing it, and this is how often it re-asks: five times a
+## second, which is instant to a player walking out and costs one shape query per
+## tick for one hero in a place he can only be by choosing to crawl in. Nothing can
+## strand him — SMALL is not a penalty, F is not refused indoors, and the first
+## frame the capsule fits he stands up.
+const TEIBI_REVERT_RETRY: float = 0.2
+
 ## Seconds of shockwave flight Teibi's Crush Quake buys (the `quake` skill node).
 ## Deliberately far shorter than Phoboman's whole ability — the quake is a
 ## side-effect of a transformation Teibi wanted anyway, not a fear power.
@@ -4642,7 +4657,19 @@ func _update_ability_timers(delta: float) -> void:
 	if teibi_size_state != 0 and teibi_form_timer > 0.0:
 		teibi_form_timer = maxf(0.0, teibi_form_timer - delta)
 		if teibi_form_timer <= 0.0:
-			_revert_teibi_to_normal()
+			# ...BUT ONLY WHERE THE NORMAL BODY FITS (bd godot-test1-3iy.23, codex
+			# review). Inflating inside stone is the exact shape of the tower breach
+			# `_teibi_grow_blocked` closes, and the HQ's 1.2 m crawl alcove is the
+			# first space in this game a normal capsule does not fit in. The revert
+			# is DEFERRED, never cancelled: `TEIBI_REVERT_RETRY` re-asks five times a
+			# second and the first frame there is room he stands up. The forced
+			# reverts below and in `_reset_ability_states()` are unconditional on
+			# purpose — a character switch, a respawn and the no-giant-indoors ruling
+			# are not the body's decision to make.
+			if _teibi_fit_blocked(1.0):
+				teibi_form_timer = TEIBI_REVERT_RETRY
+			else:
+				_revert_teibi_to_normal()
 	# NO GIANT INSIDE THE HQ, EVER (bead godot-test1-xdf). `get_ability_block_reason()`
 	# refuses the press in there, which leaves exactly one way the state could still
 	# exist indoors: growing outside and walking in. So it reverts AT THE DOOR, down
@@ -4926,9 +4953,23 @@ func _teibi_grow_blocked() -> bool:
 	`ponytail:` one shape per call rather than a cached probe — the allocation is a
 	RefCounted in a bounded window; cache it if the F3 overlay ever notices.
 	"""
+	return _teibi_fit_blocked(TEIBI_SCALE_BIG)
+
+
+func _teibi_fit_blocked(s: float) -> bool:
+	"""
+	True when Teibi's capsule at scale `s` would not fit where the body is standing.
+
+	@param s: the body scale to test — `TEIBI_SCALE_BIG` for the growth above, 1.0
+	    for the automatic revert, which is the other direction of the same bug.
+
+	THE PROBE IS THE ONE ABOVE, PARAMETERISED (bd godot-test1-3iy.23, codex review),
+	and it had to become one function rather than two: "would this body fit here"
+	has exactly one right answer, and a second copy of the bottom-clearance
+	allowance is a second chance to spend it at the head.
+	"""
 	if not collision_shape or not (collision_shape.shape is CapsuleShape3D):
 		return false
-	var s := TEIBI_SCALE_BIG
 	var capsule: CapsuleShape3D = (collision_shape.shape as CapsuleShape3D)
 	# Where the capsule's underside sits relative to the body's origin — the same
 	# `bottom` `_apply_teibi_scale` pins the grown capsule to, so the probe stands

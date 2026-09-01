@@ -248,6 +248,7 @@ func _run() -> void:
 	_check_the_offices_are_furnished_and_still_walkable()
 	_check_the_plaques_point_at_the_stairs()
 	await _check_air_sight_shows_through_walls_only()
+	await _check_the_dossiers_are_findable()
 	_report()
 
 
@@ -952,11 +953,18 @@ func _check_node_shape() -> void:
 	var interior := await _make_interior()
 	var boxes := TowerInterior.all_boxes()
 	var meshes := _all_meshes(interior)
-	if meshes.size() > TowerInterior.DRAW_BUDGET:
+	# THE DOSSIER RACK COUNTS, and it counts in BOTH numbers. It is a
+	# `MultiMeshInstance3D` rather than a `MeshInstance3D` — the only one in the
+	# building — so `_all_meshes` cannot see it, and a node the engine draws that no
+	# budget counts is a budget that has stopped meaning anything. One node, one
+	# surface, one draw, six pickups: see `TowerInterior._build_dossiers`.
+	var racks := _multimeshes(interior)
+	var drawn := meshes.size() + racks.size()
+	if drawn > TowerInterior.DRAW_BUDGET:
 		_fail("the interior builds %d meshes, over its declared DRAW_BUDGET of %d" % [
-			meshes.size(), TowerInterior.DRAW_BUDGET])
+			drawn, TowerInterior.DRAW_BUDGET])
 	print("tower interior: %d meshes drawn (budget %d) for %d boxes" % [
-		meshes.size(), TowerInterior.DRAW_BUDGET, boxes.size()])
+		drawn, TowerInterior.DRAW_BUDGET, boxes.size()])
 
 	# ...AND THE SURFACES, WHICH ARE THE DRAWS. `DRAW_BUDGET` counts nodes and says
 	# so; a batch splits into a surface per material and the engine submits one draw
@@ -966,6 +974,11 @@ func _check_node_shape() -> void:
 	for mesh: MeshInstance3D in meshes:
 		var array_mesh := mesh.mesh as ArrayMesh
 		surfaces += array_mesh.get_surface_count() if array_mesh != null else 1
+	for rack: MultiMeshInstance3D in racks:
+		# A multimesh submits its mesh's surfaces once however many instances it
+		# holds — which is the entire argument for the dossiers being one rack.
+		var rack_mesh: Mesh = rack.multimesh.mesh if rack.multimesh != null else null
+		surfaces += rack_mesh.get_surface_count() if rack_mesh != null else 1
 	if surfaces > TowerInterior.SURFACE_BUDGET:
 		_fail("the interior submits %d surfaces, over its declared SURFACE_BUDGET of %d" % [
 			surfaces, TowerInterior.SURFACE_BUDGET])
@@ -1025,16 +1038,21 @@ func _check_node_shape() -> void:
 
 	var bodies := 0
 	var areas := 0
-	var multimeshes := 0
 	for child: Node in _descendants(interior):
-		if child is MultiMeshInstance3D:
-			multimeshes += 1
-		elif child is StaticBody3D:
+		if child is StaticBody3D:
 			bodies += 1
 		elif child is Area3D:
 			areas += 1
-	if multimeshes != 0:
-		_fail("the interior holds %d MultiMeshInstance3D — it is authored geometry, not chunk content" % multimeshes)
+	# EXACTLY ONE MULTIMESH, AND IT IS THE DOSSIER RACK. The rule this replaces was
+	# "none at all — it is authored geometry, not chunk content", and it still says
+	# that: what a multimesh must not be here is the chunk streamer's decorative
+	# batching coming indoors. One rack of six AUTHORED pickups that have to
+	# disappear one at a time is the one thing a merged storey batch cannot express,
+	# and it is counted in both budgets above rather than hiding under them.
+	if racks.size() != 1:
+		_fail("the interior holds %d MultiMeshInstance3D — expected exactly one, the DossierRack" % racks.size())
+	elif String(racks[0].name) != "DossierRack":
+		_fail("the interior's one MultiMeshInstance3D is called %s, not DossierRack" % racks[0].name)
 	if bodies != 1:
 		_fail("the interior has %d StaticBody3D, expected exactly one" % bodies)
 	# Three pads (demand, identity, checkpoint) and the block's own: four spine pads,
@@ -1055,9 +1073,13 @@ func _check_node_shape() -> void:
 	# counted off `lift_stop_floor()` rather than written down, so a graph with no
 	# such entry — or a plan that stopped carrying its landing — is a build with no
 	# trigger and this count follows it down instead of failing on a stale number.
+	#
+	# ...and one per EVIDENCE DOSSIER (bead godot-test1-3iy.23), counted off the
+	# authored table for the same reason: a dossier added to `DOSSIERS` that never
+	# grew a trigger is a folder you can walk through, and this is where that shows.
 	var lift_stops := 1 if TowerInterior.lift_stop_floor() >= 0 else 0
 	var want_areas := 3 + TowerInterior.SPINE_DOORS.size() + TowerGraph.HEROES.size() \
-			+ 2 + lift_stops
+			+ 2 + lift_stops + TowerInterior.DOSSIERS.size()
 	var lock_pads := 0
 	var lure_pads := 0
 	for plan: Dictionary in TowerPlans.STOREYS:
@@ -1065,9 +1087,9 @@ func _check_node_shape() -> void:
 		lure_pads += TowerInterior.pad_cells(plan).size()
 	want_areas += lock_pads + lure_pads
 	if areas != want_areas:
-		_fail("the interior has %d Area3D, expected %d (3 pads + %d spine pads + %d cells + 1 press + 1 purge + %d riddle lock pads + %d lure pads + %d lift stop)" % [
+		_fail("the interior has %d Area3D, expected %d (3 pads + %d spine pads + %d cells + 1 press + 1 purge + %d riddle lock pads + %d lure pads + %d lift stop + %d dossiers)" % [
 			areas, want_areas, TowerInterior.SPINE_DOORS.size(), TowerGraph.HEROES.size(),
-			lock_pads, lure_pads, lift_stops])
+			lock_pads, lure_pads, lift_stops, TowerInterior.DOSSIERS.size()])
 	# ...and the stop stands where the graph says it does. A trigger built on the
 	# wrong storey would still be one `Area3D` and pass the count above.
 	if lift_stops == 1:
@@ -2028,6 +2050,18 @@ func _all_meshes(node: Node) -> Array[MeshInstance3D]:
 	var out: Array[MeshInstance3D] = []
 	for child: Node in _descendants(node):
 		if child is MeshInstance3D:
+			out.append(child)
+	return out
+
+
+func _multimeshes(node: Node) -> Array[MultiMeshInstance3D]:
+	## The `MultiMeshInstance3D`s under `node` — the dossier rack, and nothing else
+	## in this building. Separate from `_all_meshes` because they are not
+	## `MeshInstance3D`s and check 6's material walk is a claim about the ones that
+	## are; check 5 adds the two together, because the ENGINE does.
+	var out: Array[MultiMeshInstance3D] = []
+	for child: Node in _descendants(node):
+		if child is MultiMeshInstance3D:
 			out.append(child)
 	return out
 
@@ -4454,6 +4488,418 @@ func _check_air_sight_shows_through_walls_only() -> void:
 					mesh.name, surface])
 	interior.queue_free()
 	await process_frame
+
+
+# ============================================================================
+# CHECK 20 — the evidence dossiers (bead godot-test1-3iy.23)
+# ============================================================================
+
+func _check_the_dossiers_are_findable() -> void:
+	"""
+	Check 20. Six authored pickups that stand somewhere a player can reach, that
+	nothing else is standing on, and that pay out when they are walked into.
+
+	EVERY FAILURE HERE IS SILENT AND SHIPPABLE. A dossier is one `Vector2i` in a
+	const table, so the ways to get it wrong are all invisible: a cell inside a wall
+	(a folder embedded in stone), a cell on the labyrinth or in the cell block (a
+	scavenger hunt in a maze and a jail, which the bead rules out), a cell the flood
+	fill cannot reach, a cell the derived office dresser also chose (a desk on top of
+	a pickup), two rows on the same cell (one id, one pickup, two folders drawn), or
+	a crawl alcove whose lintel is the wrong height — which is the whole gate, and
+	0.3 m either way turns it into a wall or into a doorway anybody walks through.
+
+	THE CRAWL ARITHMETIC IS MEASURED AGAINST THE REAL BODIES, never against 2.0 and
+	0.45 written down here: the capsule comes off `player.tscn` and the shrink factor
+	off `player_controller.TEIBI_SCALE_SMALL`, so the day somebody retunes either the
+	alcove fails instead of quietly becoming impassable — or open to everybody.
+
+	And the last part is DRIVEN, because the five structural assertions above would
+	all pass on a dossier that pays nothing: `_collect_dossier` is called the way the
+	trigger calls it and the coins, the hidden instance and the refusal to pay twice
+	are read back off the real player and the real rack.
+	"""
+	var interior := await _make_interior()
+	var rack := interior.get_node_or_null("DossierRack") as MultiMeshInstance3D
+	if rack == null:
+		_fail("check 20: the interior builds no DossierRack")
+		interior.queue_free()
+		await process_frame
+		return
+	if rack.multimesh.instance_count != TowerInterior.DOSSIERS.size():
+		_fail("check 20: the rack holds %d instances for %d authored dossiers" % [
+			rack.multimesh.instance_count, TowerInterior.DOSSIERS.size()])
+	# ...and every one of them is DRAWN, at its own cell, on a fresh building. This
+	# is the positive half of the hiding assertion at the bottom: a rack that never
+	# wrote its buffer at all would satisfy "the taken one is invisible" perfectly.
+	for index: int in TowerInterior.DOSSIERS.size():
+		if _rack_scale(rack, index) <= EPS:
+			_fail("check 20: dossier %d is not drawn on a fresh building" % index)
+		if not _rack_origin(rack, index).is_equal_approx(TowerInterior.dossier_point(index)):
+			_fail("check 20: dossier %d is drawn at %s, not at its cell %s" % [
+				index, _rack_origin(rack, index), TowerInterior.dossier_point(index)])
+
+	# (a) WHERE THEY STAND — one storey at a time, so the flood fill is walked once
+	#     per floor and not once per dossier.
+	var cells := {}
+	var ids := {}
+	for index: int in TowerInterior.DOSSIERS.size():
+		var row: Dictionary = TowerInterior.DOSSIERS[index]
+		var floor_index := int(row["floor"])
+		var cell: Vector2i = row["cell"]
+		var key := "%d:%d,%d" % [floor_index, cell.x, cell.y]
+		if cells.has(key):
+			_fail("check 20: dossiers %d and %d both stand on %s" % [
+				cells[key], index, key])
+		cells[key] = index
+		if floor_index < TowerInterior.DOSSIER_FLOOR_MIN \
+				or floor_index > TowerInterior.DOSSIER_FLOOR_MAX:
+			_fail("check 20: dossier %d is on storey %d, outside the office and ops storeys %d..%d" % [
+				index, floor_index, TowerInterior.DOSSIER_FLOOR_MIN,
+				TowerInterior.DOSSIER_FLOOR_MAX])
+			continue
+		# ...and the range is not trusted on its own: the two places the bead
+		# actually forbids are asked by name, so re-planning the maze or the block
+		# onto another storey moves this assertion with them.
+		if TowerInterior.is_maze_floor(floor_index) or floor_index == TowerInterior.block_floor():
+			_fail("check 20: dossier %d stands on storey %d, which is the labyrinth or the cell block" % [
+				index, floor_index])
+		var plan := TowerPlans.storey(floor_index)
+		if plan.is_empty():
+			_fail("check 20: dossier %d names storey %d, which no plan draws" % [index, floor_index])
+			continue
+		var ch := _plan_char_at(plan, cell)
+		if ch == "":
+			_fail("check 20: dossier %d's cell %s is off storey %d's grid" % [index, cell, floor_index])
+			continue
+		# Open floor or a room's own cells, and NOTHING ELSE — a pad, a post, a gate
+		# slot, a lock digit and the ramp lane each mean something to somebody, and a
+		# pickup drawn over one is a pickup fighting a mechanism.
+		if ch != TowerPlans.FLOOR_CHAR and not plan["rooms"].has(ch):
+			_fail("check 20: dossier %d stands on '%s' at %s on storey %d — dossiers go on open floor or in a room, never on a pad, post, gate, lock or ramp cell" % [
+				index, ch, cell, floor_index])
+			continue
+		# (b) AND IT IS REACHABLE. The same 4-connected fill `tower_selfcheck` runs,
+		#     from the storey's own landing — the thing that separates "a legal cell"
+		#     from "a cell somebody can walk to".
+		if not _plan_reaches(plan, cell):
+			_fail("check 20: dossier %d's cell %s on storey %d is not reachable from the landing" % [
+				index, cell, floor_index])
+		# (c) NOTHING ELSE IS STANDING THERE. Every box this storey draws over its
+		#     walking surface is asked, so a desk, a plate, a gate mass and a set
+		#     piece are all one assertion — and the only pass is the alcove lintel,
+		#     which is this dossier's own gate and lives 1.2 m over its head.
+		var surface: float = TowerInterior.FLOOR_Y[floor_index]
+		var mine := "%sDossierLintel%d" % [TowerInterior._plan_prefix(floor_index), index]
+		for box: Dictionary in TowerInterior.plan_boxes(floor_index):
+			if box["pos"].y + box["size"].y * 0.5 <= surface + EPS:
+				continue   # the slab (and the ground floor's carpet) is under everybody.
+			if String(box["name"]) == mine:
+				continue
+			if _box_covers_cell(box, cell):
+				_fail("check 20: %s stands in dossier %d's cell %s on storey %d" % [
+					box["name"], index, cell, floor_index])
+		var id: int = interior.call("dossier_id", index)
+		if ids.has(id):
+			_fail("check 20: dossiers %d and %d share the pickup id %d" % [ids[id], index, id])
+		ids[id] = index
+
+	# (c2) AND THE RESERVATION THAT KEEPS (c) TRUE IS REAL. Nothing in today's layout
+	#      wanted these six cells, so (c) passes whether or not they are handed to
+	#      `_plan_dressing` — which would leave the one seam that keeps a derived desk
+	#      off a pickup untested until the day a designer moved a dossier onto a wall
+	#      the dresser likes. So the seam is measured on its own terms: one mark per
+	#      dossier on the storey, covering that dossier's cell and NO cell beside it.
+	for floor_index: int in range(TowerInterior.DOSSIER_FLOOR_MIN,
+			TowerInterior.DOSSIER_FLOOR_MAX + 1):
+		var here: Array[int] = []
+		for index: int in TowerInterior.DOSSIERS.size():
+			if int(TowerInterior.DOSSIERS[index]["floor"]) == floor_index:
+				here.append(index)
+		var marks := TowerInterior._dossier_marks(floor_index)
+		if marks.size() != here.size():
+			_fail("check 20: storey %d reserves %d cells for %d dossiers" % [
+				floor_index, marks.size(), here.size()])
+		for index: int in here:
+			var cell: Vector2i = TowerInterior.DOSSIERS[index]["cell"]
+			var covered := 0
+			for mark: Dictionary in marks:
+				if _box_covers_cell(mark, cell):
+					covered += 1
+				for step: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0),
+						Vector2i(0, 1), Vector2i(0, -1)]:
+					if _box_covers_cell(mark, cell + step):
+						_fail("check 20: storey %d's reservation spills onto %s, next door to dossier %d — it would empty half the room" % [
+							floor_index, cell + step, index])
+			if covered != 1:
+				_fail("check 20: dossier %d's cell %s is covered by %d of storey %d's reservations, expected exactly one" % [
+					index, cell, covered, floor_index])
+
+	# (d) THE CRAWL GATE, in metres, against the two real capsules.
+	_check_the_crawl_alcove_fits_only_small_teibi(interior)
+
+	# (e) ...AND ONE IS ACTUALLY TAKEN. Driven through the same call the trigger
+	#     makes, on a real player, so "it pays coins and then it is gone" is a
+	#     measurement rather than a reading of the code.
+	var hero: Node3D = load(PLAYER_SCENE).instantiate() as Node3D
+	root.add_child(hero)
+	await process_frame
+	var before: int = hero.get("coins_collected")
+	interior.call("_collect_dossier", 0, hero)
+	var gained: int = int(hero.get("coins_collected")) - before
+	if gained <= 0:
+		_fail("check 20: walking into a dossier paid %d coins" % gained)
+	if _rack_scale(rack, 0) > EPS:
+		_fail("check 20: the dossier was taken and its instance is still drawn")
+	if not _rack_origin(rack, 0).is_equal_approx(TowerInterior.dossier_point(0)):
+		_fail("check 20: a hidden dossier moved off its cell instead of losing its scale")
+	# ...and it cannot be taken twice, which is the difference between a pickup and
+	# a coin printer: the trigger fires again every time the player steps back in.
+	var again: int = hero.get("coins_collected")
+	interior.call("_collect_dossier", 0, hero)
+	if int(hero.get("coins_collected")) != again:
+		_fail("check 20: a dossier already taken paid out a second time")
+	# (f) ...AND NOBODY IS TRAPPED IN THE ALCOVE. Small Teibi's form expires on a
+	#     timer wherever he happens to be standing, and before this bead every space
+	#     in this game was at least a capsule tall — so the revert grew the body
+	#     unconditionally. Under a 1.2 m lintel that is `_teibi_grow_blocked`'s bug
+	#     in reverse: a 2 m capsule inflated inside stone, depenetrated along
+	#     whichever axis is shallowest. Driven on the REAL physics query against the
+	#     REAL lintel, at the alcove and one cell away as the control.
+	await _check_the_alcove_does_not_trap_teibi(hero)
+
+	print("dossiers: %d authored on storeys %d..%d, one taken for %d coins" % [
+		TowerInterior.DOSSIERS.size(), TowerInterior.DOSSIER_FLOOR_MIN,
+		TowerInterior.DOSSIER_FLOOR_MAX, gained])
+	hero.queue_free()
+	interior.queue_free()
+	await process_frame
+
+
+func _check_the_alcove_does_not_trap_teibi(hero: Node3D) -> void:
+	"""
+	The automatic revert waits for room — measured, at the alcove and beside it.
+
+	@param hero: a live `player_controller` already in the tree, so the shape query
+	    runs against the interior's real `InteriorCollision` body.
+
+	TWO ASSERTIONS AND A CONTROL. The predicate first (`_teibi_fit_blocked(1.0)` is
+	true under the lintel and false one cell away — a probe that answered "blocked"
+	everywhere would defer the revert forever and one that answered "clear"
+	everywhere is the bug), then the TIMER path driven through the real frames, so
+	"the revert defers" is behaviour rather than a reading of the branch.
+	"""
+	var index := -1
+	for i: int in TowerInterior.DOSSIERS.size():
+		if bool(TowerInterior.DOSSIERS[i].get("alcove", false)):
+			index = i
+			break
+	if index < 0:
+		return   # no alcove authored; check 20 has already failed on that.
+	var floor_index := int(TowerInterior.DOSSIERS[index]["floor"])
+	var cell: Vector2i = TowerInterior.DOSSIERS[index]["cell"]
+	var surface: float = TowerInterior.FLOOR_Y[floor_index]
+	var inside := Vector3(TowerInterior.dossier_point(index).x, surface,
+			TowerInterior.dossier_point(index).z)
+	# The control is the room cell the alcove's one mouth opens onto — full height,
+	# and the place a crawling Teibi stands up the moment he backs out of the gap.
+	var outside := inside
+	for step: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+		var plan := TowerPlans.storey(floor_index)
+		if _plan_char_at(plan, cell + step) != TowerPlans.WALL_CHAR:
+			outside = Vector3(TowerInterior._grid_x(float(cell.x + step.x) + 0.5), surface,
+					TowerInterior._grid_z(float(cell.y + step.y) + 0.5))
+	hero.global_position = inside
+	if not bool(hero.call("_teibi_fit_blocked", 1.0)):
+		_fail("check 20: the normal capsule fits inside the crawl alcove — the height gate is not there")
+	hero.global_position = outside
+	if bool(hero.call("_teibi_fit_blocked", 1.0)):
+		_fail("check 20: the normal capsule does not fit in the room beside the alcove — the fit probe says 'blocked' everywhere and the revert would never fire")
+
+	# ...and the timer really honours it. Small, one tick from expiring, in the hole.
+	#
+	# THE CLOCK IS DRIVEN WITH AN EXPLICIT DELTA, not by awaiting frames: a headless
+	# SceneTree runs uncapped, so "four frames" is an unknown and vanishing amount of
+	# time and the retry interval is 0.2 s. `_update_ability_timers` is the shipped
+	# per-frame call, so this is the real path at a controlled rate.
+	hero.global_position = inside
+	hero.set("teibi_size_state", 1)
+	hero.call("_apply_teibi_scale", float(load(PLAYER_SCRIPT).get("TEIBI_SCALE_SMALL")))
+	hero.set("teibi_form_timer", 0.05)
+	for _i in 10:
+		hero.call("_update_ability_timers", 0.1)
+	if int(hero.get("teibi_size_state")) != 1:
+		_fail("check 20: small Teibi's form expired inside the crawl alcove and the body grew back into the lintel")
+	# ...and stands up again the moment he is out from under it, which is what makes
+	# the deferral a wait rather than a second way to be stuck.
+	hero.global_position = outside
+	for _i in 10:
+		hero.call("_update_ability_timers", 0.1)
+	if int(hero.get("teibi_size_state")) != 0:
+		_fail("check 20: Teibi crawled out of the alcove and never reverted — the deferral is a trap of its own")
+	print("crawl alcove: the revert waits under the lintel and fires one cell away")
+
+
+func _check_the_crawl_alcove_fits_only_small_teibi(interior: Node3D) -> void:
+	"""
+	The crawl alcove's lintel: over small Teibi, under everybody else, and BUILT.
+
+	Both bodies are read rather than restated — the capsule off `player.tscn` and
+	the shrink off `player_controller` — because the whole claim is about the player
+	this game ships, and a copy of 2.0 here would keep passing after a retune.
+	"""
+	var full := _player_capsule_height()
+	if full <= 0.0:
+		_fail("check 20: could not read the player capsule out of player.tscn")
+		return
+	var script: GDScript = load(PLAYER_SCRIPT)
+	var small: float = full * float(script.get("TEIBI_SCALE_SMALL"))
+	var clear := TowerInterior.DOSSIER_CRAWL_CLEAR
+	if clear >= full:
+		_fail("check 20: the crawl alcove leaves %.2f m under its lintel and the player is %.2f m tall — it is not a gate at all" % [
+			clear, full])
+	if clear <= small:
+		_fail("check 20: the crawl alcove leaves %.2f m and small Teibi is %.2f m tall — nobody can get in" % [
+			clear, small])
+	print("crawl alcove: %.2f m clear, refuses a %.2f m capsule, passes a %.2f m one" % [
+		clear, full, small])
+
+	var alcoves := 0
+	for index: int in TowerInterior.DOSSIERS.size():
+		var row: Dictionary = TowerInterior.DOSSIERS[index]
+		if not bool(row.get("alcove", false)):
+			continue
+		alcoves += 1
+		var floor_index := int(row["floor"])
+		var surface: float = TowerInterior.FLOOR_Y[floor_index]
+		var want := "%sDossierLintel%d" % [TowerInterior._plan_prefix(floor_index), index]
+		var lintel := interior.find_child(want, true, false)
+		var built := {}
+		for box: Dictionary in TowerInterior.plan_boxes(floor_index):
+			if String(box["name"]) == want:
+				built = box
+		if built.is_empty():
+			_fail("check 20: dossier %d is an alcove and no lintel was drawn for it — the gate is decorative" % index)
+			continue
+		if lintel != null:
+			_fail("check 20: %s left the storey's batch — a lintel never moves and must not cost a draw" % want)
+		var under: float = built["pos"].y - built["size"].y * 0.5
+		if not is_equal_approx(under, surface + TowerInterior.DOSSIER_CRAWL_CLEAR):
+			_fail("check 20: %s's underside is at %.3f m, not the declared %.3f m" % [
+				want, under, surface + TowerInterior.DOSSIER_CRAWL_CLEAR])
+		if not bool(built["collide"]):
+			_fail("check 20: %s is not solid — you can walk through the gate" % want)
+		# ...AND THE ALCOVE IS A DEAD END. The lintel is invisible to both 2-D flood
+		# fills BY DESIGN, which is only safe while the cell it covers leads nowhere:
+		# drawn across a corridor the same box would be a route no audit can see
+		# closing.
+		var plan := TowerPlans.storey(floor_index)
+		var cell: Vector2i = row["cell"]
+		var ways := 0
+		for step: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			if _plan_char_at(plan, cell + step) != TowerPlans.WALL_CHAR:
+				ways += 1
+		if ways != 1:
+			_fail("check 20: dossier %d's alcove at %s has %d ways in — a lintel over anything but a dead end gates a route the audits cannot see" % [
+				index, cell, ways])
+	if alcoves != 1:
+		_fail("check 20: %d crawl alcoves are authored, expected exactly the one" % alcoves)
+
+
+func _rack_scale(rack: MultiMeshInstance3D, index: int) -> float:
+	## How big instance `index` is drawn, read off the multimesh's own `buffer`.
+	##
+	## THE BUFFER AND NOT `get_instance_transform`, and this is a headless trap worth
+	## naming: the per-instance getter reads back from the RenderingServer, which
+	## under `--headless` is the dummy driver — it answers identity for every
+	## instance however the interior wrote them, so an assertion built on it passes
+	## on a rack that draws nothing and fails on one that works. `buffer` lives on
+	## the resource and is what the interior writes (see `_refresh_dossiers`).
+	var buffer := rack.multimesh.buffer
+	var base := index * 12
+	if base + 11 >= buffer.size():
+		return 0.0
+	return Vector3(buffer[base + 0], buffer[base + 4], buffer[base + 8]).length()
+
+
+func _rack_origin(rack: MultiMeshInstance3D, index: int) -> Vector3:
+	## Where instance `index` stands, off the same buffer.
+	var buffer := rack.multimesh.buffer
+	var base := index * 12
+	if base + 11 >= buffer.size():
+		return Vector3.INF
+	return Vector3(buffer[base + 3], buffer[base + 7], buffer[base + 11])
+
+
+func _player_capsule_height() -> float:
+	## The player's real collision capsule height, off `player.tscn` — the same
+	## "never a literal" discipline `_spring_length()` follows.
+	var player: Node3D = load(PLAYER_SCENE).instantiate() as Node3D
+	var shape := player.get_node_or_null("CollisionShape3D") as CollisionShape3D
+	var capsule: CapsuleShape3D = (shape.shape if shape != null else null) as CapsuleShape3D
+	var height := capsule.height if capsule != null else 0.0
+	player.free()
+	return height
+
+
+func _plan_char_at(plan: Dictionary, cell: Vector2i) -> String:
+	## One cell of a storey's ASCII, "" off the grid.
+	var rows: Array = plan["rows"]
+	if cell.y < 0 or cell.y >= rows.size():
+		return ""
+	var line := String(rows[cell.y])
+	return "" if cell.x < 0 or cell.x >= line.length() else line[cell.x]
+
+
+func _plan_reaches(plan: Dictionary, goal: Vector2i) -> bool:
+	## Is `goal` 4-connected to this storey's `s` landing over non-`#` cells?
+	##
+	## `tower_selfcheck`'s fill in miniature, and deliberately a second
+	## implementation rather than a shared one: that check owns "every room cell is
+	## reachable" and this one owns "this pickup is", and the two failing together
+	## on one bug is worth more than either being able to hide the other.
+	var rows: Array = plan["rows"]
+	var start := Vector2i(-1, -1)
+	for r: int in rows.size():
+		var line := String(rows[r])
+		for c: int in line.length():
+			if line[c] == TowerPlans.LANDING_CHAR:
+				start = Vector2i(c, r)
+				break
+		if start.x >= 0:
+			break
+	if start.x < 0:
+		return false
+	var seen := {start: true}
+	var queue: Array[Vector2i] = [start]
+	while not queue.is_empty():
+		var cur: Vector2i = queue.pop_front()
+		if cur == goal:
+			return true
+		for step: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			var next := cur + step
+			if seen.has(next):
+				continue
+			var ch := _plan_char_at(plan, next)
+			if ch == "" or ch == TowerPlans.WALL_CHAR:
+				continue
+			seen[next] = true
+			queue.append(next)
+	return false
+
+
+func _box_covers_cell(box: Dictionary, cell: Vector2i) -> bool:
+	## Does this box's footprint reach into `cell`? `_cell_is_taken`'s test, with
+	## the same `DRESS_EPS` inset, so "the dresser thought this cell was free" and
+	## "this cell is free" are the same question.
+	var eps := TowerInterior.DRESS_EPS
+	var x0 := TowerInterior._grid_x(float(cell.x)) + eps
+	var x1 := TowerInterior._grid_x(float(cell.x) + 1.0) - eps
+	var z0 := TowerInterior._grid_z(float(cell.y)) + eps
+	var z1 := TowerInterior._grid_z(float(cell.y) + 1.0) - eps
+	var pos: Vector3 = box["pos"]
+	var half: Vector3 = box["size"] * 0.5
+	return pos.x - half.x < x1 and pos.x + half.x > x0 \
+			and pos.z - half.z < z1 and pos.z + half.z > z0
 
 
 func _storey_of(mesh: MeshInstance3D) -> int:
