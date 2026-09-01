@@ -842,12 +842,12 @@ const BOSS_INTERVAL_STATIONS: int = 50
 
 ## Size schedule: boss `i` scales the whole croc body by
 ## min(BOSS_BASE_SCALE * (1 + (i-1) * BOSS_GROWTH), BOSS_MAX_SCALE)
-## → 2.5, 3.375, 4.25, 5.125, 6.0, 6.0, ... Each boss is visibly bigger than the
-## last until the cap. BOSS_BASE_SCALE (2.5x) is clearly bigger than the biggest
+## → 3.75, 5.0625, 6.375, 7.6875, 9.0, 9.0, ... Each boss is visibly bigger than the
+## last until the cap. BOSS_BASE_SCALE (3.75x) is clearly bigger than the biggest
 ## regular croc's random +25% size roll, so a boss always reads as "not a normal one".
-const BOSS_BASE_SCALE: float = 2.5
+const BOSS_BASE_SCALE: float = 3.75
 const BOSS_GROWTH: float = 0.35
-const BOSS_MAX_SCALE: float = 6.0
+const BOSS_MAX_SCALE: float = 9.0
 
 ## A small deterministic lateral offset off the centerline (±this, in meters), so
 ## bosses don't all stand dead-center on the road like a row of toll booths.
