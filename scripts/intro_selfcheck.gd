@@ -72,6 +72,27 @@ extends SceneTree
 ##     `restart_game()` and therefore `BestRunStore.new_game()`. Driven against a
 ##     counting stand-in in group `"player"`, because the bug is the CALL.
 ##
+##  8. **NO JS SNIPPET ANYWHERE RETURNS A BOOLEAN** — a static scan of every
+##     `scripts/*.gd`, in the `pause_selfcheck` `.paused`-scan style. Godot
+##     4.5.stable's web template marshals a JS boolean back through
+##     `JavaScriptBridge.eval` as a corrupted Variant: `== true` answers false,
+##     `typeof()` is not `TYPE_BOOL`, and stringifying it aborts the calling
+##     GDScript function silently. That single engine bug is godot-test1-8f8 —
+##     `_start_js()` returned `true`, `start()` read it as false, PLAY SOLO fell
+##     through to `_dismiss()`, and the film was discarded a millisecond after the
+##     browser began playing it. Nothing in check 1-7 could see it, because
+##     headless Godot has no bridge to corrupt anything.
+##
+##     So the guard is textual, and deliberately blunt: no `return true;`, no
+##     `return false;`, no `return !` in any script. Those three shapes are JS
+##     syntax and nothing else here — this codebase writes no semicolons and uses
+##     `not`, so the patterns cannot match GDScript, and a snippet that wants a
+##     boolean answer has to write `? 1 : 0` instead. It is a tripwire and not a
+##     proof (a snippet ending in a bare `.matches` still slips past, which is why
+##     the numeric reads live in one helper per file); what it does buy is that the
+##     exact regression that cost this feature three fixes cannot come back
+##     unnoticed.
+##
 ## Deliberately NOT localized (a debug surface, per CLAUDE.md).
 
 const StartOverlay := preload("res://scripts/start_overlay.gd")
@@ -145,6 +166,7 @@ func _run() -> void:
 	_check_world_stays_paused_behind_the_film()
 	_check_film_end_is_watchdog_covered()
 	_check_film_end_never_mints_a_world()
+	_check_no_js_boolean_returns()
 	_finish()
 
 
@@ -286,9 +308,15 @@ func _check_generated_js() -> void:
 			+ "SPACE that launched the film would stay latched in Godot")
 	# A source that failed during preload must be torn down, not merely declined,
 	# or a dead <video> and its buffers outlive the session.
-	if not start_js.contains("if (s.failed) { s.finish(); return false; }"):
+	if not start_js.contains("if (s.failed) { s.finish(); return 0; }"):
 		_fail("_start_js() declines a failed source without tearing it down — the " \
 			+ "hidden element leaks for the rest of the session")
+	# The answer `start()` reads has to be a NUMBER — see check 8's header. A `true`
+	# here is the whole of godot-test1-8f8, and it is silent in every other check.
+	if not start_js.contains("return 1;"):
+		_fail("_start_js() no longer answers with a number — a JS boolean comes back " \
+			+ "from the bridge corrupted, `start()` reads it as false, and PLAY SOLO " \
+			+ "tears the film down a millisecond after the browser started it")
 
 	if not js.contains("width:100%;"):
 		_fail("_create_js() lost its `width:100%` — the CSS percentages did not " \
@@ -685,6 +713,78 @@ func _check_film_end_never_mints_a_world() -> void:
 	panel.queue_free()
 	player.queue_free()
 	paused = false
+
+
+# ============================================================================
+# 8. NO JS SNIPPET RETURNS A BOOLEAN
+# ============================================================================
+
+## The three JS shapes that hand a boolean back through `JavaScriptBridge.eval`.
+## They are JS syntax and cannot match GDScript as this codebase writes it: no
+## statement here ends in a semicolon, and negation is spelled `not`.
+const JS_BOOL_RETURNS: Array[String] = ["return true;", "return false;", "return !"]
+
+## `*_selfcheck.gd` is exempt for the same reason `pause_selfcheck` exempts it:
+## these files QUOTE the shapes they are banning, and a scan that cannot tell an
+## assertion from an offence would force the explanations out of the checks.
+func _check_no_js_boolean_returns() -> void:
+	# NEGATIVE CONTROL FIRST. Every assertion below is "we found nothing", which is
+	# also what a matcher looking for the wrong thing reports. So prove the matcher
+	# bites on a line that is exactly the bug this check exists for.
+	if _js_bool_offence("(function(){try{return !!s.done;}catch(e){return true;}})()").is_empty():
+		_fail("the boolean-return matcher does not flag the snippet godot-test1-8f8 " \
+			+ "actually shipped — check 8 would pass vacuously")
+
+	var dir := DirAccess.open("res://scripts")
+	if dir == null:
+		_fail("could not open res://scripts — check 8 would pass vacuously")
+		return
+	var names: PackedStringArray = dir.get_files()
+	if names.size() < 20:
+		_fail("res://scripts listed only %d files — check 8 would pass vacuously" \
+			% names.size())
+		return
+
+	var scanned := 0
+	var seen_a_bridge_user := false
+	for name: String in names:
+		if not name.ends_with(".gd") or name.ends_with("_selfcheck.gd"):
+			continue
+		var source: String = FileAccess.get_file_as_string("res://scripts/" + name)
+		if source.is_empty():
+			_fail("could not read res://scripts/%s — check 8 would pass vacuously" % name)
+			return
+		scanned += 1
+		if source.contains("JavaScriptBridge.eval("):
+			seen_a_bridge_user = true
+		var offence: String = _js_bool_offence(source)
+		if not offence.is_empty():
+			_fail(("%s hands a JS boolean back over the bridge (`%s`) — Godot 4.5's " \
+				+ "web template marshals it into a corrupted Variant, so `== true` is " \
+				+ "false and stringifying it aborts the reader silently. Answer `? 1 : 0` " \
+				+ "and compare numerically (godot-test1-8f8)") % [name, offence])
+
+	# The scan has to be looking at the files that matter, or a rename turns it into
+	# an expensive no-op that reads only bystanders.
+	if not seen_a_bridge_user:
+		_fail("the scan found no JavaScriptBridge.eval caller in %d files — it is " \
+			% scanned + "not reading the scripts that talk to the browser")
+	print("sources: %d scripts scanned, no JS snippet returns a boolean" % scanned)
+
+
+## The first banned shape in `source`, as the offending line, or "" for clean.
+## Comment tails are stripped first — the headers of `intro_video.gd` and
+## `mobile_sensors.gd` explain the bug in prose, and prose is not an offence.
+func _js_bool_offence(source: String) -> String:
+	for line: String in source.split("\n"):
+		var code: String = line
+		var hash_at: int = code.find("#")
+		if hash_at >= 0:
+			code = code.substr(0, hash_at)
+		for banned: String in JS_BOOL_RETURNS:
+			if code.contains(banned):
+				return code.strip_edges()
+	return ""
 
 
 ## A stand-in for the player, in the `player` group, that counts restarts and does

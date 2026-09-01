@@ -69,6 +69,30 @@ class_name IntroVideo
 ## entirely in `window` keydown/keyup listeners plus a `setTimeout`, and the
 ## progress bar is one CSS width transition of exactly `SKIP_HOLD_SEC`. Godot only
 ## ever polls the single `done` flag.
+##
+## ----------------------------------------------------------------------------
+## NO JS BOOLEAN MAY EVER CROSS THE BRIDGE — the bug that ate this whole feature
+## ----------------------------------------------------------------------------
+## On Godot 4.5.stable's web template a snippet whose value is a JS **boolean**
+## comes back from `JavaScriptBridge.eval` as a corrupted Variant: `== true`
+## answers false, `typeof()` is not `TYPE_BOOL`, and stringifying it aborts the
+## calling GDScript function outright, silently, with no error anywhere. Numbers
+## and strings round-trip perfectly.
+##
+## That is the whole of godot-test1-8f8, and it is why three previous fixes
+## (COEP headers, 4x4, zmz, 3iy.20/21) each treated a symptom: `_start_js()`
+## returned JS `true`, `start()` read it as false, PLAY SOLO fell through to
+## `_dismiss()`, and the film was torn down about a millisecond after the browser
+## had begun playing it. `is_finished()`'s `typeof != TYPE_BOOL` fail-open read
+## the same corruption as "finished", so even a film that survived the start
+## ended instantly.
+##
+## So: **every snippet in this file returns a NUMBER (1 or 0) or a string**, and
+## every reader goes through `_js_flag()`, which compares numerically and keeps
+## each call site's original fail-open/fail-closed direction as an explicit
+## argument. Inner JS helpers answer 1/0 too — not because their values cross the
+## bridge (they do not), but so `intro_selfcheck`'s static scan can stay a dumb,
+## unfoolable grep for a boolean literal after a `return`.
 
 # ============================================================================
 # TUNABLES
@@ -161,7 +185,21 @@ static func start(video_url: String = VIDEO_URL) -> bool:
 	# flag, no persistence), and a finished film tears its own element down, so a
 	# second press would otherwise have nothing to show.
 	JavaScriptBridge.eval(_create_js(video_url), true)
-	return JavaScriptBridge.eval(_start_js(), true) == true
+	# FAIL CLOSED here, and only here: an unreadable answer means "no film", so the
+	# game starts immediately rather than waiting on something that may not exist.
+	return _js_flag(JavaScriptBridge.eval(_start_js(), true), false)
+
+
+## The one reader for every snippet answer in this file. See the header: a JS
+## boolean is a corrupted Variant on the web template, so snippets answer 1/0 and
+## this compares numerically. `fallback` is the answer for anything that is NOT a
+## readable number (null off a blocked eval, a JS exception the wrapper missed, a
+## future engine quirk) — it is where each caller's fail-open decision lives, and
+## every one of them is the direction that was there when these were booleans.
+static func _js_flag(answer: Variant, fallback: bool) -> bool:
+	if typeof(answer) != TYPE_FLOAT and typeof(answer) != TYPE_INT:
+		return fallback
+	return float(answer) != 0.0
 
 
 ## The start snippet: reveal, arm the skip listeners and the hang backstop, and
@@ -178,13 +216,13 @@ static func _start_js() -> String:
 		(function(){
 			try {
 				var s = %s;
-				if (!s || s.done) { return false; }
+				if (!s || s.done) { return 0; }
 				/* The source already failed to load. Tear the dead element down
 				   through the single exit rather than just declining — otherwise a
 				   hidden <video> with its retained buffers outlives the whole
 				   session for a film that is never going to play. */
-				if (s.failed) { s.finish(); return false; }
-				if (s.started) { return true; }
+				if (s.failed) { s.finish(); return 0; }
+				if (s.started) { return 1; }
 				s.started = true;
 				s.hint.textContent = %s;
 				s.unmute.textContent = %s;
@@ -207,8 +245,8 @@ static func _start_js() -> String:
 						if (q && q.catch) { q.catch(function(){ s.fail(); }); }
 					});
 				}
-				return true;
-			} catch (e) { return false; }
+				return 1;
+			} catch (e) { return 0; }
 		})()
 	""" % [
 		JS_STATE,
@@ -270,15 +308,17 @@ static func _sweep_js() -> String:
 
 
 ## True once the film has ended, been skipped, or failed. **Fails open**: off-web,
-## on a missing element, on a non-boolean answer or on any JS exception this is
+## on a missing element, on an unreadable answer or on any JS exception this is
 ## `true`, because the only thing worse than losing the intro is not being able to
-## start the game.
+## start the game. The fail-open direction is the `true` handed to `_js_flag()`:
+## anything that is not a readable **0** counts as finished. (It used to be
+## `typeof != TYPE_BOOL`, which read the corrupted boolean of the header's engine
+## bug as "finished" and ended every film on its first polled frame.)
 static func is_finished() -> bool:
 	if not OS.has_feature("web"):
 		return true
-	var js := "(function(){try{var s=%s;return !s||!!s.done;}catch(e){return true;}})()" % JS_STATE
-	var answer: Variant = JavaScriptBridge.eval(js, true)
-	return typeof(answer) != TYPE_BOOL or bool(answer)
+	var js := "(function(){try{var s=%s;return (!s||s.done)?1:0;}catch(e){return 1;}})()" % JS_STATE
+	return _js_flag(JavaScriptBridge.eval(js, true), true)
 
 
 ## How far into the film the browser has actually got, in seconds — or `-1.0`
@@ -309,9 +349,10 @@ static func progress() -> float:
 static func was_failed() -> bool:
 	if not OS.has_feature("web"):
 		return false
-	var js := "(function(){try{return !!window.__ck_intro_failed;}catch(e){return true;}})()"
-	var answer: Variant = JavaScriptBridge.eval(js, true)
-	return typeof(answer) != TYPE_BOOL or bool(answer)
+	# Same fail-open direction as before: an unreadable answer counts as FAILED, so
+	# Game Over shows its panel rather than treating a dead stream as a clean end.
+	var js := "(function(){try{return window.__ck_intro_failed?1:0;}catch(e){return 1;}})()"
+	return _js_flag(JavaScriptBridge.eval(js, true), true)
 
 
 # ============================================================================
@@ -330,10 +371,10 @@ static func _create_js(video_url: String = VIDEO_URL) -> String:
 		(function(){
 			try {
 				if (%s) {
-					if (%s.video_url === %s) { return true; }
+					if (%s.video_url === %s) { return 1; }
 					%s.finish();
 				}
-				if (!document || !document.body) { return false; }
+				if (!document || !document.body) { return 0; }
 				window.__ck_intro_failed = false;
 
 				var root = document.createElement('div');
@@ -465,8 +506,8 @@ static func _create_js(video_url: String = VIDEO_URL) -> String:
 				s.swallow = function(e){
 					e.stopPropagation();
 					if (e.stopImmediatePropagation) { e.stopImmediatePropagation(); }
-					if (e.code === 'Space' || e.key === ' ') { e.preventDefault(); return true; }
-					return false;
+					if (e.code === 'Space' || e.key === ' ') { e.preventDefault(); return 1; }
+					return 0;
 				};
 				s.keyOf = function(e){ return e.code || e.key; };
 				s.onKeyDown = function(e){
@@ -511,8 +552,8 @@ static func _create_js(video_url: String = VIDEO_URL) -> String:
 
 				document.body.appendChild(root);
 				%s = s;
-				return true;
-			} catch (e) { return false; }
+				return 1;
+			} catch (e) { return 0; }
 		})()
 	""" % [
 		JS_STATE,
