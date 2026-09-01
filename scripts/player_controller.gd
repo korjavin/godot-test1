@@ -404,11 +404,11 @@ var caught_setback: float = 0.0
 ## survivor to the doorway plate would be a second, unruled penalty on top of the
 ## one the owner asked for — and on the storey where the arrest happened, the way
 ## back to the cells. The knockback still catches every OTHER way to lose in the
-## building: a pre-beat guard, the rotor bar, the press, an animal that followed
+## building: a pre-beat guard, the press, an animal that followed
 ## you through the door.
 var caught_captured: bool = false
 
-## What a hit with no SPECIES row behind it costs — the tower's rotor bar, a boss
+## What a hit with no SPECIES row behind it costs — the tower's press, a boss
 ## projectile, a `null` attacker in a self-check. Named rather than inlined so the
 ## "every contact pays" rule has no free hit hiding in it, and set to the ordinary
 ## field predator's number so an environmental hazard is neither the cheapest nor
@@ -2097,7 +2097,7 @@ func _takes_a_hero(attacker: Node) -> bool:
 	`_coin_setback_of` below.
 
 	Read off the row through `Node.get()`, which answers null for a body that has
-	no `spec` at all (a boss projectile, the tower's rotor bar), so every other
+	no `spec` at all (a boss projectile, the tower's press), so every other
 	damage source falls through to the predator arithmetic.
 	"""
 	if attacker == null:
@@ -2123,7 +2123,7 @@ func _coin_setback_of(attacker: Node) -> float:
 	own: "one arithmetic everywhere" means the number lives in exactly one place
 	(the row) and is spent in exactly one place (`_pay_coin_setback`). Read
 	through `Node.get()`, which answers null for a body with no `spec` at all — the
-	tower's rotor bar, a boss projectile — and THAT is the one case with no row to
+	tower's press, a boss projectile — and THAT is the one case with no row to
 	read, so it falls to the named default rather than to a free hit.
 
 	CLAMPED TO [0, 1] AT THE READ. A hand-edited or mis-typed row cannot make a hit
@@ -2904,7 +2904,7 @@ func hit_by_crocodile(attacker: Node = null) -> void:
 	VERB STAYS ONE VERB: a hunter's grab is not a second entry point with a second
 	copy of the invulnerability rule, it is this one told who is biting. The
 	parameter is OPTIONAL and defaults to null, so every existing caller — the
-	ordinary bite, the boss bite, a boss projectile, the tower's rotor bar — keeps
+	ordinary bite, the boss bite, a boss projectile, the tower's press — keeps
 	working byte for byte and takes the predator arithmetic it always has.
 
 	Rather than teleporting away instantly, we play a clear "caught" signal: a red
@@ -2942,7 +2942,7 @@ func hit_by_crocodile(attacker: Node = null) -> void:
 	# THE COIN BILL, decided at the same seam and for the same reason: this is where
 	# the attacker is still in hand. EVERY contact charges one now that heroes are
 	# the lives (owner ruling 2026-08-31) — each predator's own row key, and
-	# `DEFAULT_COIN_SETBACK` for the rotor bar, a boss projectile or a plain `null`
+	# `DEFAULT_COIN_SETBACK` for the press, a boss projectile or a plain `null`
 	# attacker. What still makes a tower guard different is the knockback to the
 	# last checkpoint you lit inside the building, and that is decided by the
 	# building's presence, not here. Paid in `_on_caught_finished()`, after the same
@@ -3078,7 +3078,7 @@ func _respawn_in_place() -> void:
 	# for the whole custody protocol on the stated grounds that the scene owns the
 	# body and this function puts it back where it fell — which is only true SOLO,
 	# where `_room_group_anchor()` answers null. In a room a survivable hazard inside
-	# the sealed block (a guard, the press, a rotor bar) would land here with a live
+	# the sealed block (a guard, the press, a falling mass) would land here with a live
 	# teammate anchor and `_place_near()` discards Y outright, dropping the body at
 	# JOIN_SPAWN_HEIGHT ten storeys below a building under `begin_lockdown()`, with
 	# the recall clock still running and no way back up. The scene would then fail on
@@ -4066,7 +4066,7 @@ func clear_nearby_crocodiles(spawn_point: Vector3) -> void:
 			# AND A TOWER GUARD IS EXEMPT FOR THE SAME REASON A BOSS IS: it is
 			# authored furniture standing on an authored post, not spawn clutter.
 			# This is NOT only about a guard's own bite — every other way to lose
-			# inside the building routes here too (the rotor bar, the press, a
+			# inside the building routes here too (the press, a
 			# crocodile that followed you through the door), and a 25 m sweep from
 			# anywhere in a 17.6 m building frees the WHOLE floor. That would make
 			# losing the cheapest way past a guarded room, and it would break the

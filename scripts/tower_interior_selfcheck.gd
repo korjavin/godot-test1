@@ -318,39 +318,6 @@ func _check_plan_fits_the_shell() -> void:
 			dress, TowerInterior.PLAN_DRESS_BUDGET,
 			TowerInterior.FLOOR_Y[floor_index], TowerInterior.plan_clear_height(floor_index)])
 
-	# The rotor's two dimensions have to agree with the doorway they guard.
-	if TowerInterior.ROTOR_ARM >= TowerInterior.ROTOR_DOOR_HALF:
-		_fail("the rotor bars (%.2f m) are longer than their doorway is wide (%.2f m) — they grind the jambs" % [
-			TowerInterior.ROTOR_ARM, TowerInterior.ROTOR_DOOR_HALF])
-	if TowerInterior.ROTOR_ARM <= TowerInterior.ROTOR_DOOR_HALF * 0.5:
-		_fail("the rotor bars are too short to cover half the doorway — nothing to time")
-
-	# ...AND WITH THE DOORWAY THE PLAN ACTUALLY DRAWS. `ROTOR_DOOR_HALF` was a
-	# jamb-to-jamb half-width authored beside the two jamb boxes it described; those
-	# jambs are `#` cells now (bd godot-test1-dn8) and the opening is the `D` run
-	# `_plan_gates` cuts, so the constant is a claim about a drawing and nothing read
-	# it back. Two cells is 3.88 m against the bars' 3.8 m — draw the run one cell
-	# wide and the bars grind stone with no error anywhere.
-	var rotor_floor := -1
-	for f: int in TowerPlans.floors():
-		if TowerInterior.plan_gate_rect(f, "rotor_gate").size != Vector2i.ZERO:
-			rotor_floor = f
-	if rotor_floor < 0:
-		_fail("no storey draws 'rotor_gate' — the rotor doorway assertion is unmeasured")
-	else:
-		var run: Dictionary = TowerInterior._cell_span(
-				TowerInterior.plan_gate_rect(rotor_floor, "rotor_gate"))
-		# The run is one cell of X by two of Z, so the opening a bar sweeps through
-		# is its Z extent; take the larger side so this keeps measuring the opening
-		# if the doorway is ever redrawn along the other axis.
-		var opening: float = maxf(float(run["x1"]) - float(run["x0"]),
-				float(run["z1"]) - float(run["z0"]))
-		if opening < 2.0 * TowerInterior.ROTOR_DOOR_HALF - EPS:
-			_fail("the plan draws the rotor doorway %.2f m wide on floor %d, under the %.2f m the bars are built for" % [
-				opening, rotor_floor, 2.0 * TowerInterior.ROTOR_DOOR_HALF])
-		print("  rotor doorway: %.2f m of plan for %.2f m of bar sweep" % [
-			opening, 2.0 * TowerInterior.ROTOR_DOOR_HALF])
-
 
 func _fit_boxes(boxes: Array[Dictionary], bound: float, floors: Array[int],
 		seen: Dictionary) -> void:
@@ -376,18 +343,12 @@ func _fit_boxes(boxes: Array[Dictionary], bound: float, floors: Array[int],
 			_fail("%s claims storey %d; its population may only claim %s" % [
 				box_name, floor_index, floors])
 
-		# A rotor bar sweeps a DISC, so its footprint is its own length in every
-		# horizontal direction — measuring its axis-aligned box would miss the tip
-		# hitting a jamb a quarter turn later.
 		var pos: Vector3 = box["pos"]
 		var half: Vector3 = box["size"] * 0.5
 		var reach_x := half.x
 		var reach_z := half.z
 		var reach_y := half.y
-		if not is_zero_approx(float(box.get("spin", 0.0))):
-			reach_x = maxf(half.x, half.z)
-			reach_z = reach_x
-		elif box.has("rot"):
+		if box.has("rot"):
 			# The ramp is the one tilted body: its axis-aligned extent is the
 			# projection of the tilted one, and using the untilted half-sizes would
 			# put its corner a metre outside the wall it actually clears.
@@ -1033,10 +994,7 @@ func _check_node_shape() -> void:
 		if mesh == null:
 			_fail("no mesh called %s was built" % box["name"])
 			continue
-		# A rotor bar's world spot is its pivot plus its own local offset.
 		var placed: Vector3 = mesh.position
-		if mesh.get_parent() != null and String(mesh.get_parent().name).ends_with("Pivot"):
-			placed += (mesh.get_parent() as Node3D).position
 		if box.has("sweep"):
 			# A SWEPT PART IS MOVING ON THE FRAME THIS CHECK READS IT, so its table
 			# position is the top of its stroke and not where it is now — asserting
@@ -1078,11 +1036,10 @@ func _check_node_shape() -> void:
 		_fail("the interior holds %d MultiMeshInstance3D — it is authored geometry, not chunk content" % multimeshes)
 	if bodies != 1:
 		_fail("the interior has %d StaticBody3D, expected exactly one" % bodies)
-	# Three pads (demand, identity, checkpoint), one hazard per rotor bar, and the
-	# block's own: four spine pads, four cell volumes, the crawl press's hazard and
-	# the gallery's vent-purge pad.
+	# Three pads (demand, identity, checkpoint) and the block's own: four spine pads,
+	# four cell volumes, the crawl press's hazard and the gallery's vent-purge pad.
 	# COUNTED AND NOT CAPPED — an Area3D nobody meant to build is a trigger that
-	# fires, and every one of these fifteen is named in this file.
+	# fires, and every one of these is named in this file.
 	#
 	# A `P` cell still adds NONE — it draws a cyan plate and nothing else, because
 	# there are no guards up there yet to purge (phase 17 owns population). What
@@ -1095,14 +1052,14 @@ func _check_node_shape() -> void:
 	# such entry — or a plan that stopped carrying its landing — is a build with no
 	# trigger and this count follows it down instead of failing on a stale number.
 	var lift_stops := 1 if TowerInterior.lift_stop_floor() >= 0 else 0
-	var want_areas := 5 + TowerInterior.SPINE_DOORS.size() + TowerGraph.HEROES.size() \
+	var want_areas := 3 + TowerInterior.SPINE_DOORS.size() + TowerGraph.HEROES.size() \
 			+ 2 + lift_stops
 	var lock_pads := 0
 	for plan: Dictionary in TowerPlans.STOREYS:
 		lock_pads += (TowerInterior.gate_slots(plan)["pads"] as Array).size()
 	want_areas += lock_pads
 	if areas != want_areas:
-		_fail("the interior has %d Area3D, expected %d (3 pads + 2 rotor hazards + %d spine pads + %d cells + 1 press + 1 purge + %d riddle lock pads + %d lift stop)" % [
+		_fail("the interior has %d Area3D, expected %d (3 pads + %d spine pads + %d cells + 1 press + 1 purge + %d riddle lock pads + %d lift stop)" % [
 			areas, want_areas, TowerInterior.SPINE_DOORS.size(), TowerGraph.HEROES.size(),
 			lock_pads, lift_stops])
 	# ...and the stop stands where the graph says it does. A trigger built on the
@@ -1258,7 +1215,7 @@ func _check_the_interior_is_lit_and_off_white() -> void:
 	  a. NOTHING IN HERE WAITS FOR A LIGHT. There is no `Light3D` in this building
 	     and the shell's roof keeps the key light out, so the batch must be UNSHADED
 	     (its vertex colour is what you see, and `_face_shade` is what gives it form)
-	     and every matte PER-COLOUR material — the ten moving parts — must carry
+	     and every matte PER-COLOUR material — the moving parts — must carry
 	     additive emission in its own colour. The emissive material must not have
 	     picked up an emission it multiplies by its own colour: that is how a light
 	     panel silently goes dim.
@@ -1289,7 +1246,7 @@ func _check_the_interior_is_lit_and_off_white() -> void:
 			_fail("the %s batch material is not UNSHADED — under the sealed roof it renders black" % pair[1])
 		if not mat.vertex_color_use_as_albedo:
 			_fail("the %s batch material stopped reading its vertex colours" % pair[1])
-	# ...and the per-colour materials the ten moving parts wear, which cannot bake
+	# ...and the per-colour materials the moving parts wear, which cannot bake
 	# anything into a vertex and self-light with plain additive emission instead.
 	var steel := TowerInterior._material(TowerInterior.COLOR_MECHANISM)
 	if not steel.emission_enabled:
@@ -1669,17 +1626,23 @@ func _check_gate_lifecycle() -> void:
 				_fail(("standing on the lift stop did not record '%s' — the trigger is wired "
 					+ "to nothing the graph names") % TowerGraph.ENTRY_LIFT_MAZE)
 
-	# And a rotor bar still bills the player, which is the challenge space's whole stake.
-	var hazard := interior.find_child("RotorBarLowHazard", true, false) as Area3D
+	# ...and a swept hazard still bills the player. Bead `godot-test1-e7q` removed
+	# the rotor bars, which is what used to drive this; the crawl press is the other
+	# body on the same `_on_hazard_touched` seam and it keeps the one runnable check
+	# on it, so a hazard that stopped costing anything still fails here.
+	var hazard := interior.find_child("CrawlPressHazard", true, false) as Area3D
 	if hazard == null:
-		_fail("the rotor bars carry no hazard volume — the challenge space is decorative")
+		_fail("the crawl press carries no hazard volume — the challenge is decorative")
 	else:
-		hero.global_position = check_area.global_position + Vector3(0.0, 0.0, 40.0)
+		# Stand clear first: `body_entered` fires on ENTRY, so a probe that happened
+		# to be inside the volume already would count nothing.
+		hero.global_position = hazard.global_position + Vector3(0.0, 0.0, 40.0)
 		await _settle_physics()
+		var before: int = hero.hits
 		hero.global_position = hazard.global_position
 		await _settle_physics()
-		if hero.hits == 0:
-			_fail("a rotor bar swept through the player and cost nothing")
+		if hero.hits == before:
+			_fail("the crawl press swept through the player and cost nothing")
 
 	hero.queue_free()
 	shell.queue_free()
@@ -3391,7 +3354,7 @@ func _check_the_leash_holds_under_a_chase() -> void:
 	# UNDO WHATEVER THE BUILDING LANDED WHILE WE WERE STAGING, and then keep it from
 	# landing anything else — the same landmine `capture_selfcheck._make_player`
 	# documents, which bit here the day the coin bill became universal (bead
-	# godot-test1-0bc). The probe stands on storey 9 inside the rotor bar's arc, so a
+	# godot-test1-0bc). The probe stands inside the guard's own reach, so a
 	# hit is not a slow-machine race but a certainty, and since that bead EVERY hit
 	# taken inside the HQ ends at `setback_point()`: the quarry vanishes to the
 	# doorway plate nine floors down, the guard has nothing to smell, and check 14

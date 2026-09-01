@@ -2838,7 +2838,7 @@ const SPECIES: Dictionary = {
 
 		# ----- Obstacle avoidance (indoors, so short) -----
 		## 1.8 m of feeler rather than the crocodile's 3.0: the building is jambs,
-		## piers and a rotor post, and a long probe indoors turns the guard away
+		## piers and pillars, and a long probe indoors turns the guard away
 		## from a doorway it is two metres from walking through.
 		"avoid_look_ahead": 1.8,
 		"avoid_feeler_angle": PI / 4.0,  # 45°, wider than the field rows: corners
@@ -2883,8 +2883,8 @@ const SPECIES: Dictionary = {
 		## checkpoint knockback that used to be the guard's whole distinguishing
 		## stake is skipped on exactly the contacts that arrest, so the surviving
 		## heroes carry on from where the party fell. The knockback still catches
-		## every OTHER way to lose inside the building (a pre-beat guard, the rotor
-		## bar, the press) and it was never this row's anyway — `_pay_coin_setback()`
+		## every OTHER way to lose inside the building (a pre-beat guard, the
+		## press) and it was never this row's anyway — `_pay_coin_setback()`
 		## relocates whoever bit you, gated on standing inside the walls.
 		##
 		## THE NUMBER IS THE LOWEST IN THE TABLE ON PURPOSE, and the arrest is why
@@ -2911,7 +2911,7 @@ const SPECIES: Dictionary = {
 		## `player_controller.clear_nearby_crocodiles()` frees every ordinary body
 		## within SPAWN_SAFE_RADIUS of a respawn, and from anywhere in a 17.6 m
 		## building that is the WHOLE floor — so without this key losing to the
-		## rotor bar would be the cheapest way past a guarded room. A guard stands
+		## press would be the cheapest way past a guarded room. A guard stands
 		## an authored post and its lifetime belongs to `reset_guards()`, not to a
 		## chunk. Absent everywhere else is the statement, like the two immunities
 		## above; the sweep used to infer this from `coin_setback` being non-zero,
