@@ -15,11 +15,12 @@ extends Node3D
 ##   * Budget: hard CROWD_MAX (60 on web, 120 on desktop) rendered via FOUR
 ##     MultiMeshInstance3D nodes (one per hero archetype: Windman, Primm, Teibi,
 ##     Phoboman), costing exactly 4 draw calls for the entire crowd.
-##   * Shared static resources: one shared BoxMesh-derived composite mesh per
-##     archetype with baked vertex colors, and ONE shared StandardMaterial3D
-##     across all archetypes (never duplicate() per citizen).
-##   * Waypoint walk: citizens follow the 62 m street grid of Budapest, pausing
-##     at crossings, never walking into the Danube river or the plateau cliffs.
+##   * Shared static resources: one shared composite mesh per archetype with
+##     baked vertex colors derived from the hero specifications, and ONE shared
+##     StandardMaterial3D across all archetypes (never duplicate() per citizen).
+##   * Waypoint walk: citizens follow the 62 m street grid of Budapest, spread
+##     across lateral street lanes, maintaining walking queues, never walking into
+##     the Danube river, plateau cliffs, or solid landmark buildings.
 ##   * Feet rest at y = 0 by construction. Spawning occurs in a bubble around
 ##     the local player inside BudapestPlan.rect(), recycling when out of range.
 
@@ -35,7 +36,7 @@ const CROWD_MAX_WEB: int = 60
 ## Active spawn and recycling radii around the local player (metres).
 const SPAWN_RADIUS: float = 110.0
 const DESPAWN_RADIUS: float = 145.0
-const SPAWN_MIN_DIST: float = 20.0
+const SPAWN_MIN_DIST: float = 15.0
 
 ## Walking speeds (m/s) — a natural pedestrian pace.
 const WALK_SPEED_MIN: float = 1.8
@@ -51,6 +52,12 @@ const WALK_PITCH_AMOUNT: float = 0.015
 const GRID_PITCH: float = 62.0
 const GRID_ORIGIN_X: float = 1600.0
 const GRID_ORIGIN_Z: float = 0.0
+
+## Minimum distance between walkers in the same street lane (metres).
+const MIN_WALKER_SPACING: float = 1.8
+
+## Lateral lane offsets across the street corridor.
+const LANE_OFFSETS: Array[float] = [-3.2, -1.6, 0.0, 1.6, 3.2]
 
 ## Hero archetype indices (order matches PlayerController.CHARACTERS).
 const ARCHETYPE_WINDMAN: int = 0
@@ -79,8 +86,9 @@ var _crowd_max: int = CROWD_MAX_DESKTOP
 ## List of all citizen state dictionaries.
 ## Each record:
 ##   archetype: int (0..3)
-##   pos: Vector3 (world position, y = 0)
-##   target: Vector3 (current target waypoint, y = 0)
+##   pos: Vector3 (current intersection/grid position along street)
+##   target: Vector3 (next target intersection along street)
+##   lane_offset: float (lateral offset perpendicular to street direction)
 ##   speed: float (walking speed in m/s)
 ##   walk_phase: float (accumulated stride distance)
 ##   pause_timer: float (time remaining to wait at intersection)
@@ -115,7 +123,7 @@ static func _get_shared_material() -> StandardMaterial3D:
 
 
 static func _add_box(st: SurfaceTool, center: Vector3, size: Vector3, col: Color) -> void:
-	## Adds a 6-sided box with outward normals and vertex color to a SurfaceTool.
+	## Adds a 6-sided box with outward CCW normals and vertex color to a SurfaceTool.
 	var h := size * 0.5
 	var min_p := center - h
 	var max_p := center + h
@@ -192,128 +200,176 @@ static func _get_archetype_mesh(archetype: int) -> ArrayMesh:
 
 	match archetype:
 		ARCHETYPE_WINDMAN:
-			# Windman Look-Alike: Athletic build, blue tunic, headband, fan in hand
-			var skin := Color(0.88, 0.74, 0.60)
-			var shirt := Color(0.24, 0.44, 0.82)
-			var headband_blue := Color(0.35, 0.55, 0.90)
-			var headband_red := Color(0.82, 0.25, 0.25)
-			var shorts := Color(0.38, 0.28, 0.20)
-			var boots := Color(0.12, 0.12, 0.14)
-			var fan := Color(0.40, 0.30, 0.18)
+			# Windman Look-Alike (~1.75 m): Moderately stout humanoid build.
+			# Royal blue tee with single white 'W' chest monogram, blue-over-red eye bandage,
+			# short messy brown hair, baggy brown shorts, black boots, pinwheel fan in hand.
+			var skin := Color(0.93, 0.74, 0.62)
+			var hair := Color(0.32, 0.20, 0.11)
+			var shirt_blue := Color(0.18, 0.35, 0.62)
+			var letter_white := Color(0.95, 0.95, 0.95)
+			var bandage_blue := Color(0.20, 0.38, 0.75)
+			var bandage_red := Color(0.72, 0.18, 0.15)
+			var shorts_brown := Color(0.42, 0.30, 0.18)
+			var boots_black := Color(0.08, 0.08, 0.09)
+			var fan_blue := Color(0.16, 0.45, 0.85)
+			var fan_red := Color(0.85, 0.20, 0.18)
+			var fan_handle := Color(0.45, 0.30, 0.16)
 
 			# Boots (left & right)
-			_add_box(st, Vector3(-0.15, 0.15, 0.03), Vector3(0.18, 0.30, 0.30), boots)
-			_add_box(st, Vector3(0.15, 0.15, 0.03), Vector3(0.18, 0.30, 0.30), boots)
-			# Legs
-			_add_box(st, Vector3(-0.15, 0.50, 0.0), Vector3(0.15, 0.45, 0.15), shorts)
-			_add_box(st, Vector3(0.15, 0.50, 0.0), Vector3(0.15, 0.45, 0.15), shorts)
-			# Shorts / Hips
-			_add_box(st, Vector3(0.0, 0.80, 0.0), Vector3(0.42, 0.25, 0.28), shorts)
-			# Torso (blue shirt)
-			_add_box(st, Vector3(0.0, 1.15, 0.0), Vector3(0.42, 0.50, 0.26), shirt)
-			# Arms
-			_add_box(st, Vector3(-0.28, 1.15, 0.0), Vector3(0.12, 0.45, 0.12), shirt)
-			_add_box(st, Vector3(0.28, 1.15, 0.0), Vector3(0.12, 0.45, 0.12), shirt)
-			# Hands
-			_add_box(st, Vector3(-0.28, 0.85, 0.0), Vector3(0.10, 0.14, 0.10), skin)
-			_add_box(st, Vector3(0.28, 0.85, 0.0), Vector3(0.10, 0.14, 0.10), skin)
-			# Fan in right hand
-			_add_box(st, Vector3(0.35, 0.88, -0.10), Vector3(0.04, 0.28, 0.16), fan)
-			# Head
-			_add_box(st, Vector3(0.0, 1.58, 0.0), Vector3(0.32, 0.32, 0.32), skin)
-			# Headband (upper blue + lower red)
-			_add_box(st, Vector3(0.0, 1.64, 0.0), Vector3(0.34, 0.07, 0.34), headband_blue)
-			_add_box(st, Vector3(0.0, 1.57, 0.0), Vector3(0.34, 0.05, 0.34), headband_red)
+			_add_box(st, Vector3(-0.14, 0.14, 0.04), Vector3(0.16, 0.28, 0.28), boots_black)
+			_add_box(st, Vector3(0.14, 0.14, 0.04), Vector3(0.16, 0.28, 0.28), boots_black)
+			# Bare lower legs
+			_add_box(st, Vector3(-0.14, 0.42, 0.0), Vector3(0.13, 0.30, 0.13), skin)
+			_add_box(st, Vector3(0.14, 0.42, 0.0), Vector3(0.13, 0.30, 0.13), skin)
+			# Brown knee-length baggy shorts
+			_add_box(st, Vector3(-0.14, 0.68, 0.0), Vector3(0.18, 0.26, 0.20), shorts_brown)
+			_add_box(st, Vector3(0.14, 0.68, 0.0), Vector3(0.18, 0.26, 0.20), shorts_brown)
+			_add_box(st, Vector3(0.0, 0.82, 0.0), Vector3(0.44, 0.22, 0.26), shorts_brown)
+			# Royal blue tee torso
+			_add_box(st, Vector3(0.0, 1.15, 0.0), Vector3(0.46, 0.48, 0.26), shirt_blue)
+			# White "W" chest band / monogram
+			_add_box(st, Vector3(0.0, 1.20, -0.135), Vector3(0.32, 0.12, 0.02), letter_white)
+			_add_box(st, Vector3(0.0, 1.12, -0.135), Vector3(0.10, 0.08, 0.02), letter_white)
+			# Arms (short blue sleeves + bare skin forearms)
+			_add_box(st, Vector3(-0.29, 1.26, 0.0), Vector3(0.13, 0.18, 0.13), shirt_blue)
+			_add_box(st, Vector3(0.29, 1.26, 0.0), Vector3(0.13, 0.18, 0.13), shirt_blue)
+			_add_box(st, Vector3(-0.29, 0.98, 0.0), Vector3(0.11, 0.38, 0.11), skin)
+			_add_box(st, Vector3(0.29, 0.98, 0.0), Vector3(0.11, 0.38, 0.11), skin)
+			# Pinwheel fan in right hand
+			_add_box(st, Vector3(0.36, 0.92, -0.12), Vector3(0.03, 0.22, 0.03), fan_handle)
+			_add_box(st, Vector3(0.36, 1.05, -0.12), Vector3(0.16, 0.08, 0.02), fan_blue)
+			_add_box(st, Vector3(0.36, 1.05, -0.12), Vector3(0.08, 0.16, 0.02), fan_red)
+			# Head & messy brown hair
+			_add_box(st, Vector3(0.0, 1.54, 0.0), Vector3(0.30, 0.30, 0.30), skin)
+			_add_box(st, Vector3(0.0, 1.68, 0.0), Vector3(0.32, 0.08, 0.32), hair)
+			_add_box(st, Vector3(0.0, 1.58, 0.14), Vector3(0.32, 0.24, 0.06), hair)
+			# Blue-over-red eye bandage wrapping head
+			_add_box(st, Vector3(0.0, 1.58, 0.0), Vector3(0.32, 0.06, 0.32), bandage_blue)
+			_add_box(st, Vector3(0.0, 1.52, 0.0), Vector3(0.32, 0.06, 0.32), bandage_red)
 
 		ARCHETYPE_PRIMM:
-			# Primm Look-Alike: Slender, violet/purple tunic, twin-tails hair buns
-			var skin := Color(0.92, 0.78, 0.65)
-			var hair_violet := Color(0.62, 0.38, 0.88)
-			var dress_violet := Color(0.55, 0.32, 0.80)
-			var trim_lilac := Color(0.78, 0.68, 0.88)
-			var stockings := Color(0.35, 0.22, 0.45)
-			var boots := Color(0.20, 0.15, 0.25)
+			# Primm Look-Alike (~1.78 m): Slim, lean, athletic young man.
+			# Long open purple trench coat with silver trim, black inner shirt with cyan circuit,
+			# dark navy jeans, silver tech visor with pale blue lens, black boots with silver band.
+			var skin := Color(0.91, 0.73, 0.62)
+			var hair := Color(0.26, 0.16, 0.10)
+			var coat_purple := Color(0.32, 0.16, 0.46)
+			var silver_trim := Color(0.74, 0.76, 0.80)
+			var cuff_grey := Color(0.62, 0.68, 0.74)
+			var shirt_black := Color(0.07, 0.07, 0.10)
+			var cyan_glow := Color(0.20, 0.85, 0.85)
+			var jeans_navy := Color(0.10, 0.11, 0.17)
+			var boots_black := Color(0.07, 0.07, 0.08)
+			var boot_band := Color(0.86, 0.88, 0.90)
+			var visor_frame := Color(0.70, 0.72, 0.76)
+			var visor_lens := Color(0.66, 0.80, 0.90)
 
-			# Boots
-			_add_box(st, Vector3(-0.10, 0.15, 0.03), Vector3(0.14, 0.30, 0.26), boots)
-			_add_box(st, Vector3(0.10, 0.15, 0.03), Vector3(0.14, 0.30, 0.26), boots)
-			# Legs / Stockings
-			_add_box(st, Vector3(-0.10, 0.52, 0.0), Vector3(0.12, 0.48, 0.12), stockings)
-			_add_box(st, Vector3(0.10, 0.52, 0.0), Vector3(0.12, 0.48, 0.12), stockings)
-			# Skirt / Hips
-			_add_box(st, Vector3(0.0, 0.82, 0.0), Vector3(0.36, 0.22, 0.26), dress_violet)
-			# Torso
-			_add_box(st, Vector3(0.0, 1.12, 0.0), Vector3(0.34, 0.42, 0.22), dress_violet)
-			_add_box(st, Vector3(0.0, 1.20, 0.0), Vector3(0.35, 0.14, 0.23), trim_lilac)
-			# Arms
-			_add_box(st, Vector3(-0.24, 1.12, 0.0), Vector3(0.10, 0.42, 0.10), dress_violet)
-			_add_box(st, Vector3(0.24, 1.12, 0.0), Vector3(0.10, 0.42, 0.10), dress_violet)
-			_add_box(st, Vector3(-0.24, 0.84, 0.0), Vector3(0.08, 0.12, 0.08), skin)
-			_add_box(st, Vector3(0.24, 0.84, 0.0), Vector3(0.08, 0.12, 0.08), skin)
-			# Head
-			_add_box(st, Vector3(0.0, 1.50, 0.0), Vector3(0.28, 0.28, 0.28), skin)
-			# Twin-tails / Hair Buns
-			_add_box(st, Vector3(-0.18, 1.62, -0.04), Vector3(0.12, 0.22, 0.12), hair_violet)
-			_add_box(st, Vector3(0.18, 1.62, -0.04), Vector3(0.12, 0.22, 0.12), hair_violet)
-			_add_box(st, Vector3(0.0, 1.60, 0.06), Vector3(0.26, 0.14, 0.18), hair_violet)
+			# Black boots with silver band
+			_add_box(st, Vector3(-0.11, 0.12, 0.03), Vector3(0.14, 0.24, 0.26), boots_black)
+			_add_box(st, Vector3(0.11, 0.12, 0.03), Vector3(0.14, 0.24, 0.26), boots_black)
+			_add_box(st, Vector3(-0.11, 0.25, 0.0), Vector3(0.15, 0.04, 0.16), boot_band)
+			_add_box(st, Vector3(0.11, 0.25, 0.0), Vector3(0.15, 0.04, 0.16), boot_band)
+			# Slim dark navy jeans
+			_add_box(st, Vector3(-0.11, 0.52, 0.0), Vector3(0.13, 0.50, 0.14), jeans_navy)
+			_add_box(st, Vector3(0.11, 0.52, 0.0), Vector3(0.13, 0.50, 0.14), jeans_navy)
+			# Purple trench coat tails hanging past hips
+			_add_box(st, Vector3(0.0, 0.78, 0.0), Vector3(0.38, 0.30, 0.22), coat_purple)
+			# Black inner shirt with glowing cyan circuit line
+			_add_box(st, Vector3(0.0, 1.15, 0.0), Vector3(0.36, 0.48, 0.22), shirt_black)
+			_add_box(st, Vector3(0.0, 1.18, -0.115), Vector3(0.08, 0.32, 0.02), cyan_glow)
+			# Open purple trench coat over torso + high collar & silver trim
+			_add_box(st, Vector3(-0.16, 1.15, 0.0), Vector3(0.08, 0.48, 0.24), coat_purple)
+			_add_box(st, Vector3(0.16, 1.15, 0.0), Vector3(0.08, 0.48, 0.24), coat_purple)
+			_add_box(st, Vector3(0.0, 1.15, 0.10), Vector3(0.38, 0.48, 0.06), coat_purple)
+			_add_box(st, Vector3(-0.18, 1.15, -0.11), Vector3(0.03, 0.48, 0.03), silver_trim)
+			_add_box(st, Vector3(0.18, 1.15, -0.11), Vector3(0.03, 0.48, 0.03), silver_trim)
+			_add_box(st, Vector3(0.0, 1.40, 0.06), Vector3(0.34, 0.10, 0.16), coat_purple)
+			# Purple sleeves + grey cuffs + dark tech gloves
+			_add_box(st, Vector3(-0.24, 1.18, 0.0), Vector3(0.10, 0.38, 0.10), coat_purple)
+			_add_box(st, Vector3(0.24, 1.18, 0.0), Vector3(0.10, 0.38, 0.10), coat_purple)
+			_add_box(st, Vector3(-0.24, 0.96, 0.0), Vector3(0.11, 0.06, 0.11), cuff_grey)
+			_add_box(st, Vector3(0.24, 0.96, 0.0), Vector3(0.11, 0.06, 0.11), cuff_grey)
+			_add_box(st, Vector3(-0.24, 0.86, 0.0), Vector3(0.09, 0.14, 0.09), boots_black)
+			_add_box(st, Vector3(0.24, 0.86, 0.0), Vector3(0.09, 0.14, 0.09), boots_black)
+			# Head + dark brown hair
+			_add_box(st, Vector3(0.0, 1.54, 0.0), Vector3(0.26, 0.26, 0.26), skin)
+			_add_box(st, Vector3(0.0, 1.66, 0.0), Vector3(0.28, 0.08, 0.28), hair)
+			_add_box(st, Vector3(0.0, 1.56, 0.12), Vector3(0.28, 0.22, 0.06), hair)
+			# Silver tech visor with pale blue lens
+			_add_box(st, Vector3(0.0, 1.56, -0.12), Vector3(0.28, 0.07, 0.05), visor_frame)
+			_add_box(st, Vector3(0.0, 1.56, -0.14), Vector3(0.20, 0.05, 0.02), visor_lens)
 
 		ARCHETYPE_TEIBI:
-			# Teibi Look-Alike: Compact stout build, warm amber/orange helmet, backpack
-			var skin := Color(0.90, 0.74, 0.60)
-			var helmet_orange := Color(0.95, 0.60, 0.18)
-			var overalls := Color(0.85, 0.50, 0.14)
-			var backpack := Color(0.48, 0.32, 0.18)
-			var legs_brown := Color(0.42, 0.30, 0.18)
-			var boots := Color(0.18, 0.14, 0.12)
+			# Teibi Look-Alike (~1.75 m): Medium/lean build, natural human proportions.
+			# Signature dark navy French beret with top nub, mustard long-sleeve polo,
+			# dark charcoal-navy full-length trousers, dark brown shoes.
+			var skin := Color(0.86, 0.66, 0.54)
+			var hair := Color(0.17, 0.12, 0.09)
+			var beret_navy := Color(0.07, 0.09, 0.20)
+			var shirt_mustard := Color(0.88, 0.67, 0.18)
+			var placket := Color(0.70, 0.52, 0.11)
+			var trousers := Color(0.20, 0.22, 0.28)
+			var belt := Color(0.11, 0.10, 0.11)
+			var shoes := Color(0.16, 0.11, 0.08)
 
-			# Boots
-			_add_box(st, Vector3(-0.12, 0.12, 0.03), Vector3(0.16, 0.24, 0.26), boots)
-			_add_box(st, Vector3(0.12, 0.12, 0.03), Vector3(0.16, 0.24, 0.26), boots)
-			# Legs
-			_add_box(st, Vector3(-0.12, 0.38, 0.0), Vector3(0.14, 0.32, 0.14), legs_brown)
-			_add_box(st, Vector3(0.12, 0.38, 0.0), Vector3(0.14, 0.32, 0.14), legs_brown)
-			# Stout Torso / Overalls
-			_add_box(st, Vector3(0.0, 0.78, 0.0), Vector3(0.42, 0.48, 0.32), overalls)
-			# Backpack
-			_add_box(st, Vector3(0.0, 0.82, 0.20), Vector3(0.34, 0.36, 0.14), backpack)
-			# Arms
-			_add_box(st, Vector3(-0.26, 0.78, 0.0), Vector3(0.11, 0.36, 0.11), overalls)
-			_add_box(st, Vector3(0.26, 0.78, 0.0), Vector3(0.11, 0.36, 0.11), overalls)
-			_add_box(st, Vector3(-0.26, 0.54, 0.0), Vector3(0.09, 0.12, 0.09), skin)
-			_add_box(st, Vector3(0.26, 0.54, 0.0), Vector3(0.09, 0.12, 0.09), skin)
-			# Head
-			_add_box(st, Vector3(0.0, 1.18, 0.0), Vector3(0.32, 0.30, 0.32), skin)
-			# Helmet dome & visor
-			_add_box(st, Vector3(0.0, 1.28, 0.0), Vector3(0.36, 0.16, 0.36), helmet_orange)
-			_add_box(st, Vector3(0.0, 1.22, -0.16), Vector3(0.34, 0.08, 0.08), helmet_orange.darkened(0.2))
+			# Dark shoes
+			_add_box(st, Vector3(-0.12, 0.10, 0.03), Vector3(0.14, 0.20, 0.26), shoes)
+			_add_box(st, Vector3(0.12, 0.10, 0.03), Vector3(0.14, 0.20, 0.26), shoes)
+			# Straight charcoal-navy trousers (full length)
+			_add_box(st, Vector3(-0.12, 0.48, 0.0), Vector3(0.14, 0.56, 0.15), trousers)
+			_add_box(st, Vector3(0.12, 0.48, 0.0), Vector3(0.14, 0.56, 0.15), trousers)
+			_add_box(st, Vector3(0.0, 0.78, 0.0), Vector3(0.40, 0.16, 0.24), trousers)
+			_add_box(st, Vector3(0.0, 0.86, 0.0), Vector3(0.41, 0.06, 0.25), belt)
+			# Mustard long-sleeve polo torso + collar & placket
+			_add_box(st, Vector3(0.0, 1.14, 0.0), Vector3(0.40, 0.50, 0.24), shirt_mustard)
+			_add_box(st, Vector3(0.0, 1.22, -0.125), Vector3(0.08, 0.22, 0.02), placket)
+			_add_box(st, Vector3(0.0, 1.37, 0.0), Vector3(0.28, 0.06, 0.24), placket)
+			# Long mustard sleeves (whole arm) + skin hands
+			_add_box(st, Vector3(-0.26, 1.10, 0.0), Vector3(0.11, 0.48, 0.11), shirt_mustard)
+			_add_box(st, Vector3(0.26, 1.10, 0.0), Vector3(0.11, 0.48, 0.11), shirt_mustard)
+			_add_box(st, Vector3(-0.26, 0.80, 0.0), Vector3(0.09, 0.12, 0.09), skin)
+			_add_box(st, Vector3(0.26, 0.80, 0.0), Vector3(0.09, 0.12, 0.09), skin)
+			# Head & dark hair
+			_add_box(st, Vector3(0.0, 1.50, 0.0), Vector3(0.28, 0.28, 0.28), skin)
+			_add_box(st, Vector3(0.0, 1.52, 0.13), Vector3(0.28, 0.22, 0.04), hair)
+			# Signature dark navy French beret + top nub
+			_add_box(st, Vector3(0.02, 1.64, 0.0), Vector3(0.36, 0.10, 0.36), beret_navy)
+			_add_box(st, Vector3(0.02, 1.70, 0.0), Vector3(0.26, 0.06, 0.26), beret_navy)
+			_add_box(st, Vector3(0.02, 1.75, 0.0), Vector3(0.05, 0.06, 0.05), beret_navy)
 
 		ARCHETYPE_PHOBOMAN:
-			# Phoboman Look-Alike: Broad cloaked mantle, dark forest charcoal, glowing visor
-			var hood_dark := Color(0.20, 0.28, 0.22)
-			var cloak_black := Color(0.16, 0.22, 0.18)
-			var vest_emerald := Color(0.28, 0.62, 0.36)
-			var glowing_visor := Color(0.45, 0.88, 0.40)
-			var boots := Color(0.10, 0.12, 0.10)
+			# Phoboman Look-Alike (~1.45 m): Non-humanoid round pho bowl sphere!
+			# Giant round royal-blue body sphere, bold red dragon wrapping front,
+			# brass diving helmet with glowing orange noodle porthole, stubby arms & tiny boots.
+			var skin := Color(0.93, 0.74, 0.62)
+			var body_blue := Color(0.14, 0.19, 0.48)
+			var dragon_red := Color(0.82, 0.14, 0.14)
+			var dragon_gold := Color(0.92, 0.74, 0.30)
+			var helmet_gold := Color(0.82, 0.64, 0.25)
+			var helmet_dark := Color(0.55, 0.41, 0.15)
+			var glass := Color(0.55, 0.75, 0.82)
+			var broth_orange := Color(0.95, 0.52, 0.18)
+			var boots_black := Color(0.08, 0.08, 0.09)
 
-			# Boots
-			_add_box(st, Vector3(-0.15, 0.15, 0.04), Vector3(0.18, 0.30, 0.32), boots)
-			_add_box(st, Vector3(0.15, 0.15, 0.04), Vector3(0.18, 0.30, 0.32), boots)
-			# Legs
-			_add_box(st, Vector3(-0.15, 0.48, 0.0), Vector3(0.16, 0.40, 0.16), cloak_black)
-			_add_box(st, Vector3(0.15, 0.48, 0.0), Vector3(0.16, 0.40, 0.16), cloak_black)
-			# Long Coat Lower
-			_add_box(st, Vector3(0.0, 0.68, 0.0), Vector3(0.46, 0.42, 0.32), cloak_black)
-			# Broad Torso
-			_add_box(st, Vector3(0.0, 1.10, 0.0), Vector3(0.50, 0.48, 0.32), vest_emerald)
-			# Broad Shoulder Mantle
-			_add_box(st, Vector3(0.0, 1.34, 0.0), Vector3(0.58, 0.16, 0.36), hood_dark)
-			# Arms
-			_add_box(st, Vector3(-0.32, 1.05, 0.0), Vector3(0.14, 0.45, 0.14), hood_dark)
-			_add_box(st, Vector3(0.32, 1.05, 0.0), Vector3(0.14, 0.45, 0.14), hood_dark)
-			# Head (Hooded)
-			_add_box(st, Vector3(0.0, 1.55, 0.0), Vector3(0.34, 0.34, 0.34), hood_dark)
-			# Glowing Visor / Eyes
-			_add_box(st, Vector3(0.0, 1.55, -0.16), Vector3(0.24, 0.08, 0.06), glowing_visor)
+			# Tiny black boots at bottom
+			_add_box(st, Vector3(-0.11, 0.08, 0.0), Vector3(0.13, 0.16, 0.20), boots_black)
+			_add_box(st, Vector3(0.11, 0.08, 0.0), Vector3(0.13, 0.16, 0.20), boots_black)
+			# Giant round royal-blue body sphere (belly IS the body)
+			_add_box(st, Vector3(0.0, 0.58, 0.0), Vector3(0.72, 0.68, 0.68), body_blue)
+			_add_box(st, Vector3(0.0, 0.58, 0.0), Vector3(0.64, 0.76, 0.64), body_blue)
+			# Bold red dragon wrapping front of sphere
+			_add_box(st, Vector3(0.0, 0.58, -0.345), Vector3(0.48, 0.38, 0.03), dragon_red)
+			_add_box(st, Vector3(0.0, 0.66, -0.355), Vector3(0.24, 0.14, 0.03), dragon_gold)
+			# Short thick bare skin arms poking from upper sides
+			_add_box(st, Vector3(-0.40, 0.68, 0.0), Vector3(0.16, 0.24, 0.16), skin)
+			_add_box(st, Vector3(0.40, 0.68, 0.0), Vector3(0.16, 0.24, 0.16), skin)
+			# Brass diving helmet sitting right on top of sphere + porthole & noodle glow
+			_add_box(st, Vector3(0.0, 1.02, 0.0), Vector3(0.42, 0.10, 0.42), helmet_dark)
+			_add_box(st, Vector3(0.0, 1.20, 0.0), Vector3(0.38, 0.28, 0.38), helmet_gold)
+			_add_box(st, Vector3(0.0, 1.36, 0.0), Vector3(0.08, 0.08, 0.08), helmet_dark)
+			_add_box(st, Vector3(0.0, 1.20, -0.195), Vector3(0.24, 0.20, 0.04), helmet_dark)
+			_add_box(st, Vector3(0.0, 1.20, -0.21), Vector3(0.18, 0.14, 0.02), broth_orange)
+			_add_box(st, Vector3(0.0, 1.20, -0.22), Vector3(0.18, 0.14, 0.01), glass)
 
 	_archetype_meshes[archetype] = st.commit()
 	return _archetype_meshes[archetype]
@@ -358,6 +414,7 @@ func _ready() -> void:
 				"archetype": k,
 				"pos": Vector3.ZERO,
 				"target": Vector3.ZERO,
+				"lane_offset": LANE_OFFSETS[i % LANE_OFFSETS.size()],
 				"speed": 2.0,
 				"walk_phase": 0.0,
 				"pause_timer": 0.0,
@@ -494,9 +551,9 @@ func _pick_next_waypoint(current_pos: Vector3, current_heading: Vector2) -> Vect
 	return valid_candidates[_rng.randi() % valid_candidates.size()]
 
 
-func _find_spawn_point_near(player_pos: Vector3) -> Vector3:
-	## Finds a valid walkable grid corner within SPAWN_RADIUS of the player.
-	for attempt in 16:
+func _find_spawn_segment_near(player_pos: Vector3) -> Dictionary:
+	## Finds a valid street segment (start, end) within SPAWN_RADIUS of the player.
+	for attempt in 20:
 		var angle := _rng.randf_range(0.0, TAU)
 		var dist := _rng.randf_range(SPAWN_MIN_DIST, SPAWN_RADIUS)
 		var cand_x := player_pos.x + cos(angle) * dist
@@ -504,31 +561,43 @@ func _find_spawn_point_near(player_pos: Vector3) -> Vector3:
 		var snapped := snap_to_grid(cand_x, cand_z)
 
 		if is_walkable(snapped.x, snapped.y):
-			return Vector3(snapped.x, 0.0, snapped.y)
+			var corner := Vector3(snapped.x, 0.0, snapped.y)
+			var dir_choice := Vector2(1.0 if _rng.randf() < 0.5 else -1.0, 0.0)
+			if _rng.randf() < 0.5:
+				dir_choice = Vector2(0.0, 1.0 if _rng.randf() < 0.5 else -1.0)
+			var next_corner := _pick_next_waypoint(corner, dir_choice)
+			if next_corner != corner:
+				return {"start": corner, "end": next_corner, "dir": dir_choice}
 
-	# Fallback: snap player position directly if valid
+	# Fallback to snapped player pos
 	var p_snap := snap_to_grid(player_pos.x, player_pos.z)
 	if is_walkable(p_snap.x, p_snap.y):
-		return Vector3(p_snap.x, 0.0, p_snap.y)
+		var p_corner := Vector3(p_snap.x, 0.0, p_snap.y)
+		var p_next := _pick_next_waypoint(p_corner, Vector2(1.0, 0.0))
+		return {"start": p_corner, "end": p_next, "dir": Vector2(1.0, 0.0)}
 
-	return Vector3.ZERO
+	return {}
 
 
 func _update_crowd_spawns(player_pos: Vector3) -> void:
-	## Activates or recycles citizens so they surround the player within SPAWN_RADIUS.
+	## Activates or recycles citizens in a natural, distributed arrangement around the player.
 	for citizen: Dictionary in _citizens:
 		if not citizen["active"]:
-			var spawn_pt := _find_spawn_point_near(player_pos)
-			if spawn_pt != Vector3.ZERO:
-				citizen["pos"] = spawn_pt
+			var seg := _find_spawn_segment_near(player_pos)
+			if not seg.is_empty():
+				var start_pt: Vector3 = seg["start"]
+				var end_pt: Vector3 = seg["end"]
+				var t_prog := _rng.randf_range(0.05, 0.95)
+				citizen["pos"] = start_pt.lerp(end_pt, t_prog)
+				citizen["target"] = end_pt
+				citizen["lane_offset"] = LANE_OFFSETS[_rng.randi() % LANE_OFFSETS.size()]
 				citizen["speed"] = _rng.randf_range(WALK_SPEED_MIN, WALK_SPEED_MAX)
 				citizen["walk_phase"] = _rng.randf_range(0.0, TAU)
 				citizen["pause_timer"] = 0.0
-				var initial_dir := Vector2(1.0 if _rng.randf() < 0.5 else -1.0, 0.0)
-				citizen["heading_dir"] = initial_dir
-				citizen["target"] = _pick_next_waypoint(spawn_pt, initial_dir)
-				var delta_x: float = citizen["target"].x - spawn_pt.x
-				var delta_z: float = citizen["target"].z - spawn_pt.z
+				var delta_x: float = end_pt.x - start_pt.x
+				var delta_z: float = end_pt.z - start_pt.z
+				var heading := Vector2(delta_x, delta_z).normalized()
+				citizen["heading_dir"] = heading
 				citizen["facing_yaw"] = atan2(-delta_x, -delta_z)
 				citizen["active"] = true
 		else:
@@ -537,39 +606,63 @@ func _update_crowd_spawns(player_pos: Vector3) -> void:
 			var flat_dist := Vector2(cpos.x - player_pos.x, cpos.z - player_pos.z).length()
 			if flat_dist > DESPAWN_RADIUS or not is_walkable(cpos.x, cpos.z):
 				# Recycle closer to player
-				var new_pt := _find_spawn_point_near(player_pos)
-				if new_pt != Vector3.ZERO:
-					citizen["pos"] = new_pt
+				var seg := _find_spawn_segment_near(player_pos)
+				if not seg.is_empty():
+					var start_pt: Vector3 = seg["start"]
+					var end_pt: Vector3 = seg["end"]
+					var t_prog := _rng.randf_range(0.05, 0.95)
+					citizen["pos"] = start_pt.lerp(end_pt, t_prog)
+					citizen["target"] = end_pt
+					citizen["lane_offset"] = LANE_OFFSETS[_rng.randi() % LANE_OFFSETS.size()]
 					citizen["speed"] = _rng.randf_range(WALK_SPEED_MIN, WALK_SPEED_MAX)
 					citizen["walk_phase"] = _rng.randf_range(0.0, TAU)
 					citizen["pause_timer"] = 0.0
-					var initial_dir := Vector2(0.0, 1.0 if _rng.randf() < 0.5 else -1.0)
-					citizen["heading_dir"] = initial_dir
-					citizen["target"] = _pick_next_waypoint(new_pt, initial_dir)
-					var delta_x: float = citizen["target"].x - new_pt.x
-					var delta_z: float = citizen["target"].z - new_pt.z
+					var delta_x: float = end_pt.x - start_pt.x
+					var delta_z: float = end_pt.z - start_pt.z
+					var heading := Vector2(delta_x, delta_z).normalized()
+					citizen["heading_dir"] = heading
 					citizen["facing_yaw"] = atan2(-delta_x, -delta_z)
 				else:
 					citizen["active"] = false
 
 
 func _update_walkers(delta: float, _player_pos: Vector3) -> void:
-	## Advances citizen movement, handles crossing pauses, and pushes transforms
-	## to the four MultiMeshes.
+	## Advances citizen movement, avoids clumping via lane queuing, and pushes
+	## transforms to the four MultiMeshes.
 	var counts := [0, 0, 0, 0]
 
-	for citizen: Dictionary in _citizens:
+	for i in _citizens.size():
+		var citizen: Dictionary = _citizens[i]
 		if not citizen["active"]:
 			continue
 
 		var k: int = citizen["archetype"]
 		var pos: Vector3 = citizen["pos"]
 		var target: Vector3 = citizen["target"]
+		var lane: float = citizen["lane_offset"]
 		var is_moving := false
+
+		# Check spacing against other walkers in the same corridor/lane
+		var is_blocked := false
+		for j in _citizens.size():
+			if i == j:
+				continue
+			var other: Dictionary = _citizens[j]
+			if not other["active"]:
+				continue
+			if absf(other["lane_offset"] - lane) < 1.4:
+				var to_other: Vector3 = other["pos"] - pos
+				var dist_other := to_other.length()
+				if dist_other < MIN_WALKER_SPACING:
+					var move_vec := (target - pos).normalized()
+					if to_other.dot(move_vec) > 0.0:
+						# Another walker is directly ahead in our lane: queue behind them
+						is_blocked = true
+						break
 
 		if citizen["pause_timer"] > 0.0:
 			citizen["pause_timer"] -= delta
-		else:
+		elif not is_blocked:
 			var step: float = citizen["speed"] * delta
 			var to_target := target - pos
 			var dist := to_target.length()
@@ -577,8 +670,8 @@ func _update_walkers(delta: float, _player_pos: Vector3) -> void:
 			if dist <= step or dist < 0.05:
 				pos = target
 				citizen["walk_phase"] += dist * STRIDE_FREQUENCY
-				# Reached crossing: chance to pause
-				if _rng.randf() < 0.25:
+				# Reached crossing: chance to pause and switch lanes
+				if _rng.randf() < 0.30:
 					citizen["pause_timer"] = _rng.randf_range(0.6, 2.0)
 				# Pick next intersection
 				var next_target := _pick_next_waypoint(pos, citizen["heading_dir"])
@@ -599,6 +692,11 @@ func _update_walkers(delta: float, _player_pos: Vector3) -> void:
 
 		citizen["pos"] = pos
 
+		# Calculate lateral offset perpendicular to movement heading
+		var h_dir: Vector2 = citizen["heading_dir"]
+		var lat_dir := Vector3(-h_dir.y, 0.0, h_dir.x)
+		var world_pos := pos + lat_dir * lane
+
 		# Calculate walking animation procedural bob and sway
 		var phase: float = citizen["walk_phase"]
 		var bob_y: float = absf(sin(phase * 2.0)) * WALK_BOB_AMOUNT if is_moving else 0.0
@@ -609,7 +707,7 @@ func _update_walkers(delta: float, _player_pos: Vector3) -> void:
 		if is_moving:
 			basis = basis.rotated(Vector3(0, 0, 1), sway_z).rotated(Vector3(1, 0, 0), pitch_x)
 
-		var t := Transform3D(basis, Vector3(pos.x, bob_y, pos.z))
+		var t := Transform3D(basis, Vector3(world_pos.x, bob_y, world_pos.z))
 
 		var mm_inst: MultiMeshInstance3D = _multimesh_nodes[k]
 		var mm: MultiMesh = mm_inst.multimesh
