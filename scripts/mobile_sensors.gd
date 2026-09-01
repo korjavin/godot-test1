@@ -268,20 +268,36 @@ static func _probe_touch_session() -> bool:
 	# feature so a native desktop build NEVER evaluates JS (and never errors).
 	if OS.has_feature("web"):
 		# A coarse pointer (finger) strongly implies a touch device.
-		# `JavaScriptBridge.eval` returns a `Variant` (the JS value, or null when
-		# the expression can't be evaluated), so the hint is `: Variant`.
-		var coarse: Variant = JavaScriptBridge.eval(
-			"matchMedia('(pointer: coarse)').matches", true)
-		if coarse != null and bool(coarse):
+		#
+		# `? 1 : 0`, NOT the bare `.matches` boolean: Godot 4.5's web template
+		# marshals a JS **boolean** back as a corrupted Variant — `== true` is
+		# false, `typeof()` is not `TYPE_BOOL`, and stringifying it aborts the
+		# calling function outright (godot-test1-8f8, which cost the intro film
+		# three fixes before anyone looked at the bridge). Numbers round-trip, so
+		# every probe in this file answers 1 or 0 and is read numerically.
+		if _js_probe("matchMedia('(pointer: coarse)').matches ? 1 : 0") == 1:
 			return true
 		# Belt-and-braces: a browser reporting NO fine pointer (no mouse/trackpad)
 		# is almost certainly a phone — show the (ignorable) overlay rather than
 		# strand a phone player who'd otherwise have neither touch UI nor keyboard.
-		var fine: Variant = JavaScriptBridge.eval(
-			"matchMedia('(pointer: fine)').matches", true)
-		if fine != null and not bool(fine):
+		# An UNREADABLE answer is not a "no": only a readable 0 means no mouse, so
+		# a probe that cannot be evaluated leaves desktop play exactly as it was.
+		if _js_probe("matchMedia('(pointer: fine)').matches ? 1 : 0") == 0:
 			return true
 	return false
+
+
+## Run one web-only JS probe that answers 1 or 0, and report `-1` for "no answer"
+## (null off a blocked eval, or anything that is not a readable number).
+##
+## Every JS probe in this file goes through here. See `_probe_touch_session()` for
+## why the snippets may not hand back a JS boolean; keeping the numeric read in one
+## place is also what lets `intro_selfcheck`'s static scan stay a dumb grep.
+static func _js_probe(js: String) -> int:
+	var answer: Variant = JavaScriptBridge.eval(js, true)
+	if typeof(answer) != TYPE_FLOAT and typeof(answer) != TYPE_INT:
+		return -1
+	return 1 if float(answer) != 0.0 else 0
 
 
 ## Can this session enter browser fullscreen at all? Web-only feature-detect, in
@@ -299,10 +315,10 @@ static func _probe_touch_session() -> bool:
 static func is_fullscreen_available() -> bool:
 	if not OS.has_feature("web"):
 		return false
-	# Strict `=== true` so a missing/undefined property reads as unavailable.
-	var enabled_probe: Variant = JavaScriptBridge.eval(
-		"document.fullscreenEnabled === true", true)
-	return enabled_probe != null and bool(enabled_probe)
+	# Strict `=== true` so a missing/undefined property reads as unavailable — then
+	# `? 1 : 0`, because the boolean itself cannot survive the bridge (see
+	# `_probe_touch_session()`). Only a readable 1 shows the button.
+	return _js_probe("(document.fullscreenEnabled === true) ? 1 : 0") == 1
 
 
 func _ready() -> void:
@@ -775,11 +791,15 @@ func _request_web_permission() -> void:
 	_ensure_js_callbacks()
 
 	# Does this browser require an explicit permission gesture (iOS)? We evaluate a
-	# small JS snippet that returns the boolean, rather than poking the API from
-	# GDScript, so the feature-detect lives in one place and is browser-robust.
-	var needs_permission: bool = bool(JavaScriptBridge.eval(
+	# small JS snippet, rather than poking the API from GDScript, so the
+	# feature-detect lives in one place and is browser-robust. It answers 1/0 for
+	# the bridge's sake (see `_probe_touch_session()`), and only a readable 1 takes
+	# the iOS branch: `_install_ios_permission_flow()` calls `requestPermission()`
+	# unguarded, so guessing "iOS" on an unreadable probe would throw in every other
+	# browser instead of just attaching the listeners.
+	var needs_permission: bool = _js_probe(
 		"(typeof DeviceMotionEvent !== 'undefined' && " +
-		"typeof DeviceMotionEvent.requestPermission === 'function')", true))
+		"typeof DeviceMotionEvent.requestPermission === 'function') ? 1 : 0") == 1
 
 	if needs_permission:
 		# iOS: requestPermission() returns a Promise. We can't await it from
