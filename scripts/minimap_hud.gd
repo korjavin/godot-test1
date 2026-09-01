@@ -24,7 +24,8 @@ extends Control
 ##   * The player as a triangle at the centre, rotated to the character's facing.
 ##   * The coin road centerline as a polyline, read straight out of the terrain's
 ##     existing station cache (see _gather_road below).
-##   * Crocodiles within range as small red dots.
+##   * Hunters within range as small red dots (species rows carrying `captures_hero`).
+##     Animals and bosses draw no dots. HQ guards indoors keep theirs.
 ##   * Geo landmarks (Stonehenge, Giza, the Eiffel Tower — see endless_terrain's
 ##     GEO LANDMARKS banner) as small violet X marks, clamped to the rim and
 ##     dimmed when they are off the map. They are destinations, so a rim hint is
@@ -39,10 +40,14 @@ extends Control
 ##     there is no teammate layer at all and nothing is drawn or scanned.
 ##   * World X / Z coordinates and the biome underfoot as text, with a "~ river ~"
 ##     marker while the player is standing in a wading band.
+##   * OUTDOORS: the Budapest countdown ("Budapest: 1.4 km") or explored count
+##     ("Budapest 3/22") beside the coordinates, plus a small violet arrow at the
+##     rim pointing toward Budapest's gate until inside the city rectangle.
 ##   * INSIDE THE HQ ONLY: the storey beside the coordinates and the cell block's
-##     storey beside the biome ("Floor 6" / "JAIL F10  ^4"), plus — after 90 s
-##     without progress and never before — one amber arrow at the rim. See the
-##     INDOORS banner below for what is deliberately NOT drawn there.
+##     storey beside the biome ("Floor 6" / "JAIL F10  ^4"), taking priority over
+##     the Budapest line/arrow, plus — after 90 s without progress and never before
+##     — one amber arrow at the rim. See the INDOORS banner below for what is
+##     deliberately NOT drawn there.
 ##
 ## ZOOM. +/- step through ZOOM_RADII (raw keycodes outside the input map, like the
 ## M toggle). The WIDGET NEVER CHANGES SIZE — what changes is how many metres the
@@ -344,6 +349,17 @@ const COLOR_TOWER := Color(0.35, 1.0, 0.6, 0.98)
 const COLOR_TEXT := Color(1, 1, 1, 0.95)
 const COLOR_RIVER_TEXT := Color(0.45, 0.75, 1.0, 0.95)
 
+## Colour of the Budapest line & direction arrow (matches landmark violet).
+const COLOR_BUDAPEST := Color(0.85, 0.72, 1.0, 1.0)
+
+## The small Budapest direction arrow on the rim.
+const BUDAPEST_ARROW_LENGTH: float = 7.0
+const BUDAPEST_ARROW_HALF_WIDTH: float = 4.5
+
+## The Budapest line format strings (reusing the same CSV keys).
+const BUDAPEST_FAR: String = "Budapest: %.1f km"
+const BUDAPEST_HERE: String = "Budapest %d/%d"
+
 ## The terrain palette, indexed by endless_terrain's Biome enum (PLAINS, DESERT,
 ## FOREST, MOUNTAIN, CITY, SNOW — the declaration order, which is what the int we
 ## get across the group boundary means).
@@ -497,6 +513,11 @@ var _tower_node: Node3D = null
 var _floor_text: String = ""
 var _jail_text: String = ""
 
+## The Budapest status line under the minimap (outdoors only; superseded by storey line indoors).
+var _budapest_text: String = ""
+var _show_budapest_arrow: bool = false
+var _budapest_arrow_points: PackedVector2Array = PackedVector2Array()
+
 ## Anti-stall bookkeeping, all of it reset on leaving the building. `_visited` is the
 ## set of `zone_at()` keys seen THIS VISIT (a few hundred short strings at worst),
 ## `_seen_floor` the highest storey reached, `_stall` the seconds since either last
@@ -518,6 +539,8 @@ func _ready() -> void:
 	_arrow_points.resize(3)
 	# ...and so is the anti-stall arrow at the rim.
 	_jail_points.resize(3)
+	# ...and the small Budapest direction arrow.
+	_budapest_arrow_points.resize(3)
 	# The crocodile buffer is sized ONCE to its hard cap and never resized: see
 	# PARKED_SEGMENT for how the unused tail is kept out of the picture.
 	_croc_points.resize(MAX_CROC_DOTS * 2)
@@ -679,6 +702,7 @@ func _tick(elapsed: float = TICK_INTERVAL) -> void:
 	_gather_tower()
 	_gather_peers()
 	_gather_shelter(elapsed)
+	_gather_budapest()
 
 	_have_data = true
 	queue_redraw()
@@ -886,20 +910,16 @@ func _gather_road() -> void:
 
 
 func _gather_crocodiles() -> void:
-	"""Crocodile dots, on THIS control's ~5 Hz tick — never a per-frame scan.
+	"""Hunter dots, on THIS control's ~5 Hz tick — never a per-frame scan.
 
-	The "crocodile" group holds every spawned croc in the active chunk field (the
-	LOD manager sleeps the distant ones but never removes them), so this is one
-	group fetch plus a squared-distance compare each; no square roots, and the
-	positions land in a reused buffer. Reading the LOD manager's own 9 Hz scan
-	instead would save this pass, but it would also mean a new cross-file contract
-	for something this cheap.
+	Filters the "crocodile" group to bodies whose resolved species row carries
+	`captures_hero: true` (the hunter and the HQ guard). Animals and bosses draw
+	no dot. HQ guards indoors are hunters to the player (CLAUDE.md) so they keep
+	their dot.
 
 	Each dot is stored as a short LINE SEGMENT (two points), not a centre: _draw()
 	hands the whole array to one draw_multiline(), which is the difference between
-	one draw call and one per crocodile. Measured with the F3 counters, draw_circle()
-	per dot cost exactly 1 draw call each — fine at the 6 near the spawn point,
-	40 out where the density gradient has ramped up."""
+	one draw call and one per threat."""
 	_croc_count = 0
 	var scale := _map_scale()
 	var croc_view := _croc_view_radius()
@@ -912,6 +932,11 @@ func _gather_crocodiles() -> void:
 			break
 		var croc := node as Node3D
 		if croc == null:
+			continue
+		# Hunters only: resolved SPECIES row carrying captures_hero
+		# Read through the body's spec, never a species-name test
+		var row: Variant = croc.get("spec")
+		if not (row is Dictionary) or not bool((row as Dictionary).get("captures_hero", false)):
 			continue
 		var pos := croc.global_position
 		var dx := pos.x - _player_pos.x
@@ -1221,6 +1246,43 @@ func _gather_jail_arrow(jail: int, degraded: bool) -> void:
 	_jail_points[2] = tail - perp * JAIL_ARROW_HALF_WIDTH
 
 
+func _gather_budapest() -> void:
+	"""Budapest line status and small directional arrow at the rim.
+
+	Outdoors: points a small violet arrow toward BudapestPlan.GATE until inside the
+	Budapest rectangle (then hides the arrow), and displays the countdown or
+	explored landmark count under the minimap in the storey line slot.
+	Indoors (HQ): hidden completely in favour of the indoor storey line and anti-stall arrow."""
+	_budapest_text = ""
+	_show_budapest_arrow = false
+
+	# Inside HQ: the indoor storey line has priority
+	if not _floor_text.is_empty():
+		return
+
+	if BudapestPlan.contains(_player_pos.x, _player_pos.z):
+		var explored: int = 0
+		if _player != null and _player.has_method("explored_count"):
+			explored = int(_player.call("explored_count"))
+		_budapest_text = tr(BUDAPEST_HERE) % [explored, BudapestPlan.SLOTS.size()]
+		_show_budapest_arrow = false
+	else:
+		var gate: Vector3 = BudapestPlan.GATE
+		var metres: float = Vector2(_player_pos.x - gate.x, _player_pos.z - gate.z).length()
+		_budapest_text = tr(BUDAPEST_FAR) % (metres / 1000.0)
+
+		var offset := Vector2(gate.x - _player_pos.x, gate.z - _player_pos.z)
+		if offset.length_squared() > 1.0:
+			var dir := offset.normalized()
+			var perp := Vector2(-dir.y, dir.x)
+			var tip := MAP_CENTER + dir * (MAP_RADIUS - 1.0)
+			var tail := tip - dir * BUDAPEST_ARROW_LENGTH * 2.0
+			_budapest_arrow_points[0] = tip
+			_budapest_arrow_points[1] = tail + perp * BUDAPEST_ARROW_HALF_WIDTH
+			_budapest_arrow_points[2] = tail - perp * BUDAPEST_ARROW_HALF_WIDTH
+			_show_budapest_arrow = true
+
+
 func _park_tower() -> void:
 	"""Push the tower buffer off-control and transparent, exactly as every other
 	layer parks its unused tail."""
@@ -1361,11 +1423,14 @@ func _draw() -> void:
 	_arrow_points[2] = tail - perp * ARROW_HALF_WIDTH
 	draw_colored_polygon(_arrow_points, COLOR_PLAYER)
 
-	# 4b. The anti-stall arrow, ONE draw call and only while `_jail_alpha` is above
-	#     zero — which is never outdoors, and indoors only after STALL_SECONDS
-	#     without progress (see _gather_jail_arrow).
+	# 4b. The anti-stall arrow indoors, or the Budapest direction arrow outdoors.
+	#     Both are ONE draw call, and the two are mutually exclusive: indoors the
+	#     anti-stall arrow owns the rim; outdoors the small violet Budapest arrow
+	#     points toward the gate until inside the city rect.
 	if _jail_alpha > 0.0:
 		draw_colored_polygon(_jail_points, Color(COLOR_JAIL, _jail_alpha))
+	elif _show_budapest_arrow:
+		draw_colored_polygon(_budapest_arrow_points, COLOR_BUDAPEST)
 
 	# 5. Coordinates + biome under the disc, as ONE two-line string. X is also the
 	#    run's distance score (the coin road's X is strictly increasing by
@@ -1380,10 +1445,12 @@ func _draw() -> void:
 	var text := "X %d   Z %d" % [roundi(_player_pos.x), roundi(_player_pos.z)]
 	# INDOORS, the storey goes BESIDE THE COORDINATES and the jail's floor beside the
 	# biome — two fragments composed on the tick, appended to the two lines the
-	# caption already has. A third line would need a taller control (see
-	# minimap_selfcheck's widget-rect check) to say what fits on these two.
+	# caption already has.
+	# OUTDOORS, the Budapest countdown/explored count goes BESIDE THE COORDINATES.
 	if not _floor_text.is_empty():
 		text += "   " + _floor_text
+	elif not _budapest_text.is_empty():
+		text += "   " + _budapest_text
 	text += "\n" + tr(BIOME_NAMES[_biome])
 	var color := COLOR_TEXT
 	if _in_river:

@@ -133,6 +133,15 @@ class StubTerrain extends Node:
 
 class StubCroc extends Node3D:
 	var is_chasing: bool = false
+	var spec: Dictionary = {"captures_hero": true}
+
+	func set_lod_active(_active: bool) -> void:
+		pass
+
+
+class StubAnimal extends Node3D:
+	var is_chasing: bool = false
+	var spec: Dictionary = {"captures_hero": false}
 
 	func set_lod_active(_active: bool) -> void:
 		pass
@@ -181,6 +190,10 @@ func _run() -> void:
 		failure = _check_widget_rect()
 	if failure.is_empty():
 		failure = _check_indoors()
+	if failure.is_empty():
+		failure = _check_hunters_only()
+	if failure.is_empty():
+		failure = _check_budapest()
 	if failure.is_empty():
 		print("SELFCHECK OK")
 		quit(0)
@@ -1165,3 +1178,135 @@ func _dot_center(map: Control, index: int) -> Vector2:
 	"""The midpoint of a teammate dot's segment pair — the dot's actual position,
 	whether it was drawn as an on-map blob or a rim tick."""
 	return (map._peer_points[index * 2] + map._peer_points[index * 2 + 1]) * 0.5
+
+
+func _check_hunters_only() -> String:
+	"""Guards that ONLY hunters (captures_hero: true) get minimap dots; animals and bosses draw nothing."""
+	var map: Control = root.get_node_or_null("Main/HUD/MinimapHUD")
+	var player: Node3D = get_first_node_in_group("player")
+	if map == null or player == null:
+		return "no MinimapHUD or no player for hunter checks"
+
+	var hunter := StubCroc.new()
+	hunter.spec = {"captures_hero": true}
+	root.add_child(hunter)
+	hunter.global_position = player.global_position + Vector3(10.0, 0.0, 0.0)
+
+	var animal := StubAnimal.new()
+	animal.spec = {"captures_hero": false}
+	root.add_child(animal)
+	animal.global_position = player.global_position + Vector3(8.0, 0.0, 0.0)
+
+	var failure := ""
+	while true:
+		hunter.remove_from_group("crocodile")
+		animal.remove_from_group("crocodile")
+		map._tick()
+		var base_crocs: int = map._croc_count
+
+		# Add animal only (8m from player, well within detection radius)
+		animal.add_to_group("crocodile")
+		map._tick()
+		if map._croc_count != base_crocs:
+			failure = "an animal (captures_hero: false) was drawn on the minimap as a threat dot"
+			break
+
+		# Add hunter (captures_hero: true)
+		hunter.add_to_group("crocodile")
+		map._tick()
+		if map._croc_count != base_crocs + 1:
+			failure = "a hunter (captures_hero: true) was NOT drawn on the minimap as a threat dot"
+			break
+
+		# Remove hunter, keep animal
+		hunter.remove_from_group("crocodile")
+		map._tick()
+		if map._croc_count != base_crocs:
+			failure = "threat dot persisted after removing hunter while animal remained"
+			break
+
+		break
+
+	hunter.remove_from_group("crocodile")
+	animal.remove_from_group("crocodile")
+	hunter.queue_free()
+	animal.queue_free()
+	map._tick()
+
+	if not failure.is_empty():
+		return failure
+
+	print("hunters-only: hunters dotted on minimap | animals (captures_hero: false) draw no dot")
+	return ""
+
+
+func _check_budapest() -> String:
+	"""Guards the Budapest minimap features (godot-test1-8gw.13):
+	1. Outdoors outside Budapest: small arrow pointing towards BudapestPlan.GATE and distance countdown line.
+	2. Outdoors inside Budapest: arrow hidden, explored count line shown.
+	3. Indoors inside HQ: arrow hidden, Budapest line cleared in favour of the storey line."""
+	var map: Control = root.get_node_or_null("Main/HUD/MinimapHUD")
+	var player: Node3D = get_first_node_in_group("player")
+	if map == null or player == null:
+		return "no MinimapHUD or no player for Budapest checks"
+
+	# 1. Outdoors, at player spawn (outside Budapest rect)
+	map._tick()
+	if not map._show_budapest_arrow:
+		return "Budapest direction arrow is not shown outdoors outside Budapest"
+	var want_countdown_prefix: String = tr("Budapest: %.1f km").split(":")[0]
+	if not map._budapest_text.begins_with(want_countdown_prefix):
+		return "Budapest countdown line is missing or incorrect outdoors: '%s'" % map._budapest_text
+	if not map._floor_text.is_empty():
+		return "floor_text is set outdoors: '%s'" % map._floor_text
+
+	# Arrow tip should point along normalized offset to gate
+	var gate: Vector3 = BudapestPlan.GATE
+	var want_dir := Vector2(gate.x - player.global_position.x, gate.z - player.global_position.z).normalized()
+	var tip_pt: Vector2 = map._budapest_arrow_points[0]
+	var map_center: Vector2 = map.MAP_CENTER
+	var tip_offset := (tip_pt - map_center).normalized()
+	if want_dir.dot(tip_offset) < 0.99:
+		return "Budapest arrow points %s, expected %s toward gate %s" % [tip_offset, want_dir, gate]
+
+	# 2. Outdoors inside Budapest rect
+	var old_pos := player.global_position
+	player.global_position = Vector3(BudapestPlan.GATE.x + 200.0, 0.0, 0.0)
+	map._tick()
+	var inside_arrow: bool = map._show_budapest_arrow
+	var inside_text: String = map._budapest_text
+	player.global_position = old_pos
+	map._tick()
+
+	if inside_arrow:
+		return "Budapest arrow is still shown when player is inside Budapest rectangle"
+	var want_inside_prefix: String = tr("Budapest %d/%d").split(" ")[0]
+	if not inside_text.begins_with(want_inside_prefix):
+		return "Budapest explored count line is missing when player is inside Budapest: '%s'" % inside_text
+
+	# 3. Inside HQ: storey line wins, Budapest line and arrow are hidden
+	var stub_tower := StubTower.new()
+	root.add_child(stub_tower)
+	stub_tower.add_to_group("tower")
+	stub_tower.inside = true
+	map._tower_node = stub_tower
+	map._tick()
+
+	var hq_arrow: bool = map._show_budapest_arrow
+	var hq_budapest: String = map._budapest_text
+	var hq_floor: String = map._floor_text
+
+	stub_tower.remove_from_group("tower")
+	stub_tower.queue_free()
+	map._tower_node = null
+	map._tick()
+
+	if hq_arrow:
+		return "Budapest arrow is shown while sheltered inside HQ"
+	if not hq_budapest.is_empty():
+		return "Budapest text is not empty while sheltered inside HQ ('%s')" % hq_budapest
+	if hq_floor.is_empty():
+		return "storey line is missing while sheltered inside HQ"
+
+	print("budapest: arrow points to gate outdoors | hidden in city rect and HQ | countdown & explored lines verified")
+	return ""
