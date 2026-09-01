@@ -2941,15 +2941,18 @@ func _check_spines_and_liberation() -> void:
 # ============================================================================
 
 ## How much room a guard's body needs around its post before "clear of the
-## stonework" means anything. The `tower_guard.tscn` capsule is 0.1875 m in
-## radius; this is comfortably over it, so a post that merely GRAZES a jamb is a
-## failure rather than a lucky pass. Read as: nothing solid may come within this
-## of a post, at any height a standing body occupies.
+## stonework" means anything. The `tower_guard.tscn` capsule is 0.28125 m in
+## radius (the 1.5x chassis of bead godot-test1-6bj; it was 0.1875); this is
+## still over it, so a post that merely GRAZES a jamb is a failure rather than a
+## lucky pass. Read as: nothing solid may come within this of a post, at any
+## height a standing body occupies.
 const GUARD_BODY_CLEARANCE: float = 0.45
 
-## How tall a standing guard is, for the same test. The capsule is 1.35 m; a
-## little over it, so a post under the crawl lintel (top at 2.8 m, underside 2.0)
-## or under a raised mass would be caught.
+## How tall a standing guard is, for the same test. The chassis stands 1.5 m
+## (the capsule lies on the travel axis, so it is the MODEL's height that this
+## has to cover, not the capsule's 2.025 m length); a little over it, so a post
+## under the crawl lintel (top at 2.8 m, underside 2.0) or under a raised mass
+## would be caught.
 const GUARD_BODY_HEIGHT: float = 1.6
 
 func _check_guards_stand_their_posts() -> void:

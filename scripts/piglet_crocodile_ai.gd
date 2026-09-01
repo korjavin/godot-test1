@@ -2490,17 +2490,22 @@ const SPECIES: Dictionary = {
 	## MEASURED OFF assets/models/characters/hunter.glb (built by
 	## scripts/generate_hunter.py), recorded here for the same reason the viper's
 	## are: a .tscn cannot hold a comment an editor resave will not eat.
-	##   * 1.350 m long, 1.000 m TALL, 0.375 m wide — the only predator in the
+	##   * 2.025 m long, 1.500 m TALL, 0.5625 m wide — the only predator in the
 	##     table that is TALLER than it is wide by a factor of nearly three, and
 	##     the only one whose height is comparable to a player's. A crocodile is
-	##     1.40 x 0.28 x 0.276; this thing stands up.
-	##   * The capsule in hunter_robot.tscn is `radius = 0.1875, height = 1.35`,
+	##     1.40 x 0.28 x 0.276; this thing stands up, and since bead
+	##     godot-test1-6bj it stands a head over the player (the generator's
+	##     `CHASSIS_SCALE` 1.5 — every number in this block is the old one times
+	##     that, because the scale is applied uniformly to the welded mesh).
+	##   * The capsule in hunter_robot.tscn is `radius = 0.28125, height = 2.025`,
 	##     laid on the travel axis with the crocodile's basis, at
-	##     `(0, 0.1875, -0.065)`. radius == centre y, the crocodile/viper identity,
-	##     so the capsule's bottom sits exactly on y = 0 and the chassis rests on
-	##     the ground plane. z = -0.065 is the mesh's own midpoint: like the viper,
-	##     the hunter is built forward of its origin, so a capsule centred on the
-	##     origin would leave solid body hanging off the back.
+	##     `(0, 0.28125, -0.0975)`. radius == centre y, the crocodile/viper
+	##     identity, so the capsule's bottom sits exactly on y = 0 and the chassis
+	##     rests on the ground plane. z = -0.0975 is the mesh's own midpoint: like
+	##     the viper, the hunter is built forward of its origin, so a capsule
+	##     centred on the origin would leave solid body hanging off the back.
+	##     tower_guard.tscn carries the identical three numbers — one chassis, one
+	##     capsule, and a grown model over an unscaled capsule would be the bug.
 	"hunter_robot": {
 		## THE SIXTH ARM, and the first one whose subject is PACING rather than
 		## geometry or speed. `_behave_hunt()` is all it selects, and all it
@@ -2851,7 +2856,11 @@ const SPECIES: Dictionary = {
 		## same corporate machine on two duties, and they are never in frame
 		## together (the hunter belongs to no band and works the field, the guard
 		## stands inside one building). So the facing offset and the gait numbers
-		## are the hunter's, slowed to the walked beat above.
+		## are the hunter's, slowed to the walked beat above — and so is the SIZE:
+		## the 1.5x chassis of bead godot-test1-6bj is the shared .glb, so
+		## tower_guard.tscn's capsule is the hunter's capsule (radius 0.28125,
+		## height 2.025, at `(0, 0.28125, -0.0975)`) and grew with it. 1.5 m of
+		## machine still clears a storey's ~4.6 m ceiling with room to spare.
 		"model_facing_offset": -PI / 2.0,
 		"stride_frequency": 9.0,
 		"waddle_roll": 0.5 * PI / 180.0,
