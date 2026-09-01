@@ -703,6 +703,35 @@ var _prison_confined: bool = false
 ## is a no-op — `_end_custody_protocol()` returns on a scene that is not running.
 var custody_verdict: int = 0
 
+## ...STICKY, BUT NOT FOREVER (bead godot-test1-3iy.21). When the verdict was
+## latched, and how long the master keeps publishing it afterwards.
+##
+## The latch has to outlive the scene by enough for the `room` verb (2 Hz, mesh plus
+## a change-driven relay leg) to carry it to every peer that was IN that round. It
+## must not outlive the ROUND: a master sitting on its ending screen published FAILED
+## for the rest of the room's life, so the next peer to open a break-out — a joiner
+## adopts the master's full-custody set and `_tick_prison()` marches it into the cell
+## block half a second later — had its fresh 35 s scene ended by the first packet it
+## ever read, and got the ending film on the same frame as the fourth capture. That
+## is the bug from the chair, and `custody_wire_state()` is where it is closed.
+##
+## WALL CLOCK AND NOT A DELTA ACCUMULATOR, deliberately: a master publishing a dead
+## round's verdict is BY DEFINITION on its game-over screen, and `_physics_process`
+## returns above everything that could tick one.
+const CUSTODY_VERDICT_HOLD_MSEC: int = 5000
+var _custody_verdict_msec: int = 0
+
+## When the master last told us something about the round WE are in — see
+## `custody_wire_state()` for what "something" is, and `_custody_authority()` for what
+## the silence means. Seeded when our own scene opens, so the ~0.5 s of entry skew
+## between two peers' `_tick_prison()` polls is never read as an absent master.
+##
+## The window is the lobby's own `stallMasterSilence` number (`server/room.go`) for
+## the same reason it uses it: six publishes at ROOM_SYNC_HZ is far past coincidence,
+## and it is two orders under the 35 s scene it protects.
+const CUSTODY_MASTER_SILENCE_MSEC: int = 3000
+var _custody_master_msec: int = 0
+
 ## The captive set as it stood when the scene began, so it can be put back.
 ##
 ## THE BEAD'S LANDMINE, and this field is the whole answer to it: the scene marks
@@ -3117,6 +3146,10 @@ func _begin_custody_protocol() -> void:
 	# A fresh scene has no verdict yet, and the sticky latch from the last one must
 	# not be published over this one.
 	custody_verdict = 0
+	# ...and the master is credited with this round until it says otherwise, so the
+	# half-second of entry skew between two peers' `_tick_prison()` polls is never
+	# read as an absent one. See `_custody_authority()`.
+	_custody_master_msec = Time.get_ticks_msec()
 	# What was true before the scene, so the exit can put it back — see the field.
 	_custody_entry_captives = captive_heroes.duplicate()
 	# ...and now every hero is a prisoner, which is the fiction AND the geometry:
@@ -3147,8 +3180,20 @@ func _begin_custody_protocol() -> void:
 	var terrain := get_tree().get_first_node_in_group("terrain")
 	if terrain != null and terrain.has_method("tower_site"):
 		var from_xz := Vector2(global_position.x, global_position.z)
-		global_position = (terrain.call("tower_site") as Vector3) \
+		var stand: Vector3 = (terrain.call("tower_site") as Vector3) \
 				+ TowerInterior.custody_stand()
+		# BUILD THE DESTINATION BEFORE ARRIVING IN IT (bead godot-test1-3iy.21), the
+		# `MpManager._apply_join_placement()` precedent and the upgrade path
+		# `_respawn_in_place()` names. Ground-first streaming is right for anybody who
+		# walks in — the floor is under them and the scenery catches up — and wrong for
+		# a body that TELEPORTS 400 m onto the tenth storey of a building the streamer
+		# has not been asked about yet: the shell is instanced from the terrain's own
+		# `_process` on the next chunk-boundary crossing, so the party spends the frames
+		# until then falling through where the cell block is about to be. This is the
+		# ring's content plus the building itself, at the destination, this frame.
+		if terrain.has_method("build_ring_now") and terrain.has_method("world_to_chunk"):
+			terrain.call("build_ring_now", terrain.call("world_to_chunk", stand))
+		global_position = stand
 		# A TELEPORT IS NOT DISTANCE RUN. Shifting the origin by exactly the jump is
 		# what `_respawn_in_place()` does and for the same reason: without it, the
 		# 400 m to the tower would be banked into `user://best_run.cfg` as a
@@ -3231,11 +3276,23 @@ func _custody_authority() -> bool:
 	property the crocodile sync relies on for the same event, and it is why the
 	clock is published as SECONDS LEFT rather than as a wall-clock deadline: a
 	deadline would need the two machines to agree what time it is.
+
+	AND A MASTER WITH NO ROUND OF ITS OWN DECIDES NOBODY'S (bead godot-test1-3iy.21).
+	The authority exists so two peers in the SAME scene cannot disagree; a master
+	parked on its ending screen is in no scene at all, `_tick_prison()` returns above
+	every decision it could make while `is_game_over`, and it will never send a
+	verdict — so deferring to it forever seals the party in the block on a clock that
+	decides nothing, which is strictly worse than the film this bead came in about.
+	The evidence is POSITIVE and not merely absent: the master publishes `[0.0, 0]`
+	twice a second in exactly that state, `apply_room_custody()` drops it, and the
+	silence that leaves behind is what falls through here to the solo answer.
 	"""
 	var mp := _mp()
 	if mp == null or not mp.has_method("is_online") or not bool(mp.call("is_online")):
 		return true
-	return String(mp.call("get_master")) == String(mp.call("my_id"))
+	if String(mp.call("get_master")) == String(mp.call("my_id")):
+		return true
+	return Time.get_ticks_msec() - _custody_master_msec > CUSTODY_MASTER_SILENCE_MSEC
 
 
 func custody_wire_state() -> Array:
@@ -3246,19 +3303,36 @@ func custody_wire_state() -> Array:
 	side effects, so publishing can never perturb the scene it is describing — the
 	same rule the perf overlay's counters are written to.
 	"""
-	# THE VERDICT BELONGS TO THE ROUND THAT PRODUCED IT, and this is the one window
-	# where it could be read as the next one's: the roster has filled again — so the
-	# set we publish beside it says "full custody" — but our own scene has not
-	# opened yet, because `_tick_prison()` polls. A peer already inside the new scene
-	# would read the last round's SURVIVED and tear its containment down.
-	# `is_game_over` is what separates the stale verdict from the fresh one, and both
-	# have a full roster. A FAILED round leaves the run finished, so its verdict is
-	# still the answer to the only round there will be; a SURVIVED one
-	# leaves the run going, and once the corporation has everybody AGAIN that answer
-	# belongs to a round that is over.
-	if not custody_protocol_active and not is_game_over and free_hero_count() == 0:
+	# A RUNNING SCENE PUBLISHES ITSELF, and `custody_verdict` is 0 inside one.
+	if custody_protocol_active:
+		return [custody_timer, custody_verdict]
+
+	# THE VERDICT BELONGS TO THE ROUND THAT PRODUCED IT, and outside a running scene
+	# there are two windows where it would be read as somebody else's. Both end with
+	# a peer that is INSIDE a round nobody decided being handed a stranger's answer.
+	#
+	#   (1) THE ROSTER HAS FILLED AGAIN and our own scene has not opened yet, because
+	#       `_tick_prison()` polls — so the set we publish beside the verdict already
+	#       says "full custody" while the verdict is the LAST round's SURVIVED. A peer
+	#       already inside the new scene tears its containment down on it.
+	#       `is_game_over` is what separates that from a FAILED round, which has a
+	#       full roster for the same reason and whose verdict is still fresh.
+	#   (2) THE ROUND IS SIMPLY OVER (bead godot-test1-3iy.21). A failed round leaves
+	#       the run finished, and this used to read as "so its verdict is the answer
+	#       to the only round there will be" — which is true of THIS peer's run and
+	#       false of the ROOM's: a joiner arriving at a master parked on its ending
+	#       screen adopts the full-custody set, opens a fresh break-out and is failed
+	#       by a verdict latched before it ever joined. So the latch expires
+	#       (`CUSTODY_VERDICT_HOLD_MSEC`), long after every peer that was in the round
+	#       has had it and long before another one can start.
+	#
+	# What we publish once it does is `[0.0, 0]` — "no scene here", which
+	# `apply_room_custody()` reads as no information rather than as a spent clock.
+	var fresh: bool = custody_verdict != 0 \
+			and Time.get_ticks_msec() - _custody_verdict_msec <= CUSTODY_VERDICT_HOLD_MSEC
+	if not fresh or (not is_game_over and free_hero_count() == 0):
 		return [0.0, 0]
-	return [custody_timer if custody_protocol_active else 0.0, custody_verdict]
+	return [0.0, custody_verdict]
 
 
 func apply_room_custody(seconds: float, verdict: int) -> void:
@@ -3272,9 +3346,19 @@ func apply_room_custody(seconds: float, verdict: int) -> void:
 	already over — where it is a no-op, because `_end_custody_protocol()` returns on
 	a scene that is not running. That is what makes a repeated publish safe and what
 	lets the latch be sticky instead of timed.
+
+	...AND `[0.0, 0]` IS NOT A SPENT CLOCK, it is "the master has no scene" — the
+	other half of `custody_wire_state()`'s contract. Taking it literally pinned the
+	countdown of a peer whose round the master is not in at zero, which is where a
+	master parked on its ending screen used to leave every later break-out in the
+	room. Dropping it whole also leaves the silence below honest: the master is not
+	talking about OUR round, so it is not deciding it either.
 	"""
 	if not custody_protocol_active:
 		return
+	if seconds <= 0.0 and verdict == 0:
+		return
+	_custody_master_msec = Time.get_ticks_msec()
 	if verdict != 0:
 		_end_custody_protocol(verdict == 1)
 		return
@@ -3304,7 +3388,10 @@ func _end_custody_protocol(survived: bool) -> void:
 	"""
 	# THE VERDICT, LATCHED BEFORE ANYTHING ELSE. On the master this is what the room
 	# is told; on everybody else it is simply a record. 1 SURVIVED, 2 FAILED.
+	# ...and WHEN, because the latch is what the master publishes and a verdict is
+	# only the answer to the round that produced it — see CUSTODY_VERDICT_HOLD_MSEC.
 	custody_verdict = 1 if survived else 2
+	_custody_verdict_msec = Time.get_ticks_msec()
 
 	if survived:
 		_apply_custody_scar()
