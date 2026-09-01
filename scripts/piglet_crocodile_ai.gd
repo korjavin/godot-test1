@@ -3300,6 +3300,75 @@ var track_target: Vector3 = Vector3.ZERO
 ## prevent.
 var has_stalked: bool = false
 
+## ---------------------------------------------------------------------------
+## THE LURE — a point somebody asked this body to walk over and look at
+## (bead godot-test1-3iy.22, the HQ's `P` plates)
+## ---------------------------------------------------------------------------
+##
+## A FLAG STATE BESIDE `is_tracking`, AND DELIBERATELY NOT A BEHAVIOUR ARM. It
+## steers and it holds a facing, which is all a state down here is ever allowed
+## to do; it lights no detection flag, so the cone, the telegraph, the danger
+## vignette, the encounter director and the MP chase bit all still mean exactly
+## what they meant. The one row that uses it today is `tower_guard`, whose
+## `behavior` stays "solo" BY RULING (bead godot-test1-3iy.19) — an arm here
+## would have handed a sentry the hunt arm's nose and its director seams.
+##
+## SPEED FALLS OUT: the movement branch reads `chase_speed_instance` only while
+## chasing, fleeing or tracking, so an investigating body walks at
+## `_wander_speed()`. A lured guard travels at its patrol pace with no speed
+## code anywhere, which is what makes the walk something you can watch and time.
+##
+## THE LEASH IS GROWN, NEVER BYPASSED. The pads are 5 to 30 plan cells from the
+## post that guards them, and a derived patrol box is 3 cells long — so the
+## architect's "the clamp is normally a no-op" is not true of this building, and
+## a lure that respected the shipped box would move a guard a metre and a half.
+## `investigate_point()` therefore GROWS `confine_half` (keeping the centre, so
+## the box can only ever contain the authored one) and hands it back on the way
+## home. `_steer_within_platform` and `_clamp_to_platform` keep running every
+## frame throughout, which is the difference between a bigger leash and no leash.
+##
+## AND THE WALK HOME IS PART OF THE DIVERSION, for a reason that is mechanical
+## rather than decorative: `_clamp_to_platform` is a HARD clamp, so restoring the
+## authored box while the body stands on a pad 40 m away would teleport it back.
+## The guard walks its own way home and the box is restored where restoring it
+## moves nothing.
+var is_investigating: bool = false
+
+## Where the investigation is walking RIGHT NOW: the pad on the way out, the
+## authored patrol centre on the way home. World space.
+var investigate_target: Vector3 = Vector3.ZERO
+
+## Seconds of facing hold still owed at the pad. > 0 IS THE OUTBOUND LEG — it is
+## the one bit that says which way this body is walking, so there is no phase
+## enum to keep in step with it.
+var _investigate_hold: float = 0.0
+
+## Seconds of outbound walking still allowed before the lure gives up and goes
+## home. The guard walks a floor plan, not an empty room: a pad behind a press
+## it cannot time or in a maze pocket its feelers keep turning it out of would
+## otherwise leave a body off its post with a grown leash for the rest of the run.
+var _investigate_walk: float = 0.0
+
+## The authored leash, `{center: Vector3, half: Vector2}`, put back when the body
+## is home again. Empty for an unconfined body, which simply ends the lure where
+## it stands — nothing to give back and nowhere to give it back at.
+var _investigate_leash: Dictionary = {}
+
+## How close to the pad (or to the patrol centre) counts as arrived, in metres.
+## Comfortably over the chassis' own footprint: a body that has to stand exactly
+## on a point orbits it forever, turning a hold into a shuffle.
+const INVESTIGATE_ARRIVE: float = 1.6
+
+## How much room the grown leash leaves around the pad. It must exceed
+## CONFINE_MARGIN (0.9) or `_steer_within_platform` would push the guard off the
+## plate it was lured onto — the steer starts a margin short of the edge.
+const INVESTIGATE_LEASH_MARGIN: float = 2.0
+
+## The outbound leg's ceiling in seconds. A guard patrols at ~1.2 m/s and the
+## longest pad on any plan is under 60 m away, so an honest walk fits inside this
+## with room to spare and only a blocked one ever spends it.
+const INVESTIGATE_WALK_TIMEOUT: float = 90.0
+
 ## THE LEAP ARM'S ONE PIECE OF MEMORY (`_behave_leap`): how many seconds of
 ## GROUNDED recovery this boss still owes before it may hop again, as
 ## { "cooldown": float }. Empty means "ready now", so a dragon that has just
@@ -3804,6 +3873,12 @@ func _physics_process(delta: float) -> void:
 				# carrying `scent_radius` can ever reach — so for every animal in
 				# the table this branch is dead and the wander below is unchanged.
 				_track_move()
+			elif is_investigating:
+				# Somebody set a plate off across the floor: go and look at it.
+				# UNDER the track and the chase on purpose — a live quarry and a
+				# fresh footprint both outrank a noise, so the lure can never pull
+				# a committed body off anything. See `investigate_point()`.
+				_investigate_move(delta)
 			else:
 				# Wander with smooth, organic steering
 				_wander(delta)
@@ -4041,6 +4116,11 @@ func _update_chase_state() -> void:
 			# standstill in `_physics_process` — has to stop the frame the chase
 			# starts, or a committed body stands still wearing a question mark.
 			spot_clock = 0.0
+			# ...AND THE LURE IS OFF. A guard that spots you on its way to a plate
+			# has something better to do than the errand, and it must not pick the
+			# errand back up when it loses you — a diversion that survives an
+			# acquisition is a puppet string. See `_abandon_investigation()`.
+			_abandon_investigation()
 			_announce_acquisition()
 	else:
 		if is_chasing:
@@ -4529,6 +4609,137 @@ func _track_move() -> void:
 		return
 	movement_direction = to_track.normalized()
 	wander_heading = atan2(movement_direction.x, movement_direction.z)
+
+
+func investigate_point(pos: Vector3, seconds: float) -> bool:
+	"""
+	Go and look at `pos` for `seconds`, then walk back and resume the beat.
+
+	@param pos: world space. The HQ's cyan `P` plate that was just stepped on.
+	@param seconds: how long to stand facing it once there.
+	@return: whether the lure was TAKEN. False is the ordinary answer, not an
+	    error: a body that is busy refuses, and the caller spends its cooldown
+	    anyway (see `TowerInterior._press_lure_pad`).
+
+	THE ANTI-PUPPET RULES ARE ALL HERE, in the one shared function, because there
+	are two ways in — a local press and the master applying a relayed `pad` verb —
+	and a rule enforced at either door is a rule the other door does not have:
+
+	  1. A BUSY BODY REFUSES. Chasing, biting or already on an errand: the
+	     diversion may never erase a guard's stake in you, and it may never queue.
+	  2. AN ACQUISITION CANCELS (`_abandon_investigation`, on the `is_chasing`
+	     edge in `_update_chase_state`) — so a guard that catches sight of you
+	     mid-walk does not resume the errand after losing you.
+	  3. THE PAD'S OWN COOLDOWN re-arms only after the walk and the hold, which is
+	     the caller's half and the one that stops two players alternating a pair.
+
+	REMOTE-DRIVEN BODIES REFUSE TOO: in a room the master owns the walk and every
+	other peer renders its samples, so a peer applying this locally would be
+	writing state its own `_tick_remote()` overwrites 100 ms later — and would
+	grow a leash nothing on that machine ever hands back.
+	"""
+	if remote_driven or is_chasing or is_biting or is_investigating:
+		return false
+	if not pos.is_finite() or not is_finite(seconds) or seconds <= 0.0:
+		return false
+	is_investigating = true
+	# WAKE IT, and the refusal in `set_lod_active()` keeps it awake for the errand.
+	# A storey is wider than SIM_RADIUS, so the guard a far plate lures is usually
+	# asleep when the plate is pressed — and a sleeper runs no `_physics_process`,
+	# so setting the flag alone would have lured nobody. The manager's next scan
+	# puts it back down the moment the errand ends.
+	set_lod_active(true)
+	investigate_target = pos
+	_investigate_hold = seconds
+	_investigate_walk = INVESTIGATE_WALK_TIMEOUT
+	if is_confined:
+		# GROW THE BOX, KEEPING ITS CENTRE — see the block above `is_investigating`
+		# for why the pads need this and why growing is not bypassing. Centre-fixed
+		# means the grown box strictly CONTAINS the authored one, so handing it
+		# back at the centre can never move the body.
+		_investigate_leash = {"center": confine_center, "half": confine_half}
+		var off := Vector2(pos.x - confine_center.x, pos.z - confine_center.z)
+		confine_half = Vector2(
+				maxf(confine_half.x, absf(off.x) + INVESTIGATE_LEASH_MARGIN),
+				maxf(confine_half.y, absf(off.y) + INVESTIGATE_LEASH_MARGIN))
+	return true
+
+
+func _investigate_move(delta: float) -> void:
+	"""
+	One frame of the lure: walk out, stand and face the plate, walk home.
+
+	Three legs and no phase enum — `_investigate_hold` above zero IS the outbound
+	leg. Nothing here touches a speed: leaving `is_chasing` / `is_tracking` alone
+	is what makes the whole errand happen at `_wander_speed()`.
+	"""
+	var to_target := investigate_target - global_position
+	to_target.y = 0.0
+	var reach := to_target.length()
+
+	if _investigate_hold <= 0.0:
+		# ---- HOME. Arrived means the authored box is around us again, so this is
+		# the one moment restoring it moves nothing.
+		if reach <= INVESTIGATE_ARRIVE:
+			_end_investigation()
+			return
+		movement_direction = to_target / reach
+		wander_heading = atan2(movement_direction.x, movement_direction.z)
+		return
+
+	if reach > INVESTIGATE_ARRIVE:
+		# ---- OUT, with a ceiling on it. A blocked walk gives up and goes home
+		# rather than standing in a corridor with a grown leash forever.
+		_investigate_walk -= delta
+		if _investigate_walk <= 0.0:
+			_abandon_investigation()
+			return
+		movement_direction = to_target / reach
+		wander_heading = atan2(movement_direction.x, movement_direction.z)
+		return
+
+	# ---- THE HOLD. A zero heading is what freezes the body AND its facing (the
+	# rotation branch in `_physics_process` leaves `rotation.y` alone when there is
+	# nowhere to go), so the facing is written straight in — this is the whole
+	# point of the diversion: 120 degrees of cone pointing at a plate and away from
+	# wherever the player is walking.
+	movement_direction = Vector3.ZERO
+	if reach > 0.05:
+		rotation.y = atan2(to_target.x, to_target.z)
+		wander_heading = rotation.y
+	_investigate_hold -= delta
+	if _investigate_hold <= 0.0:
+		_abandon_investigation()
+
+
+func _abandon_investigation() -> void:
+	"""
+	Drop the errand: turn the outbound leg into the walk home, or end it outright.
+
+	ONE FUNCTION FOR "THE HOLD EXPIRED" AND "IT SPOTTED THE PLAYER", because the
+	body's obligation is the same in both cases — the leash it is standing in is
+	borrowed and it has to be given back where it was taken. What the acquisition
+	adds is only that the pad stops being the destination, which is exactly what
+	"does not resume the walk after losing you" means.
+	"""
+	if not is_investigating:
+		return
+	_investigate_hold = 0.0
+	if _investigate_leash.is_empty():
+		is_investigating = false  # Unconfined: no leash to give back, no post to keep.
+		return
+	investigate_target = _investigate_leash["center"]
+
+
+func _end_investigation() -> void:
+	"""Home again: hand the authored leash back and go back to the beat."""
+	if not _investigate_leash.is_empty():
+		confine_center = _investigate_leash["center"]
+		confine_half = _investigate_leash["half"]
+		_investigate_leash = {}
+	is_investigating = false
+	_investigate_hold = 0.0
+	_choose_new_direction()
 
 
 func advance_tracking(delta: float) -> void:
@@ -5439,6 +5650,17 @@ func set_lod_active(active: bool) -> void:
 	# scan and re-issues the call while the states disagree, so refusing here just
 	# costs a few extra calls until the body is on the floor.
 	if not active and not is_on_floor():
+		return
+
+	# ...AND REFUSE TO SLEEP A BODY THAT IS ON AN ERRAND, the same way and for the
+	# same shape of reason (bead godot-test1-3iy.22). A storey is ~78 m across and
+	# SIM_RADIUS is 45, so the guard the far plate lures is usually asleep when the
+	# plate is pressed — and a sleeper runs no `_physics_process`, so it would
+	# neither walk nor (`mp_manager._send_croc_sync` skips sleepers) travel to
+	# anybody else's screen. The window is bounded by the lure itself (one body,
+	# one walk-hold-return) and an awake body syncs normally, which is why this is
+	# a refusal here rather than a second slept-step path beside `advance_tracking`.
+	if not active and is_investigating:
 		return
 
 	lod_active = active

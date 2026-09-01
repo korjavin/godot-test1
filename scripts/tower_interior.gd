@@ -107,14 +107,17 @@ extends Node3D
 ##     Light:      the pad glows; there is no mass beside it, and that absence is
 ##                 the tell. A gate always has something in the doorway.
 ##     Reads as:   "stand here and something opens, elsewhere".
-##     ONE IS WIRED TODAY: the cell block's VENT PURGE, which a benched multiplayer
-##     player operates for the team outside (bead godot-test1-3iy.10). The other
-##     cyan plates are the `P` cells every storey plan carries — drawn as geometry,
-##     wired to nothing until phase 17 brings the guards they scare (see
-##     `_plan_pads`). Two of them stand inside the block itself since the block
-##     moved to storey 10, so the purge pad is NOT the only cyan plate a prisoner
-##     can see; that ambiguity is phase 17's to resolve, and the resolution is
-##     wiring them, not recolouring them.
+##     TWO THINGS ARE WIRED TO IT. The cell block's VENT PURGE, which a benched
+##     multiplayer player operates for the team outside (bead godot-test1-3iy.10),
+##     and — since bead godot-test1-3iy.22 — every `P` cell on every storey plan,
+##     which LURES that storey's guard over to stand and look at it (see
+##     `LURE_HOLD_SECONDS` and `_build_lure_pads`). The sketch here used to say the
+##     plates would SCARE the guards; the lure was adopted instead, because a pad
+##     that empties the corridor hands you the floor for free and the scare verb is
+##     already the purge's. Two `P` cells stand inside the block itself since the
+##     block moved to storey 10, so the purge pad is not the only cyan plate a
+##     prisoner can see: they wire as lures like every other plan pad, which is the
+##     "wiring them, not recolouring them" this record promised.
 ##
 ##   RIDDLE GATE — a lock that asks where you have been (phase 15).
 ##     Silhouette: a MASS in a doorway, with FOUR COLOURED PLATES on the floor in
@@ -237,9 +240,10 @@ extends Node3D
 ##
 ## TWENTY-ODD `MeshInstance3D`s for the parts that move (plus one batch per storey)
 ## and everything else welded into those batches (see THE BATCH below), ONE
-## `StaticBody3D`, twenty-odd `Area3D`s (three pads, from
+## `StaticBody3D`, forty-odd `Area3D`s (three pads, from
 ## phase 8 one press hazard, four spine pads and four cell volumes, from phase
-## 15 one per riddle lock pad and from phase 16 the labyrinth's lift stop —
+## 15 one per riddle lock pad, from phase 16 the labyrinth's lift stop and from
+## bead godot-test1-3iy.22 one per `P` cell, which is two a storey —
 ## check 5 counts them and is the number that is actually true),
 ## a `Label3D` per sign — three fixed (the demand gate, the spine, the cell) plus a
 ## lock sign and a clue sign per riddle, so eleven at four riddles and two more per
@@ -680,6 +684,33 @@ const PURGE_FLEE_RADIUS: float = 40.0
 ## hold-to-win button, and comfortably inside `MpManager`'s 4-per-second `flee`
 ## budget even with three teammates taking one packet each.
 const PURGE_COOLDOWN: float = 20.0
+
+## THE LURE — what every OTHER cyan plate in the building does (bead
+## godot-test1-3iy.22). Step on a `P` cell and the storey's one guard walks over
+## at its patrol pace, stands facing the plate for `LURE_HOLD_SECONDS`, and then
+## walks back to its post. Every plan carries exactly two, which
+## `tower_selfcheck` has asserted since they were drawn: pull the 120-degree cone
+## to one plate and walk past on the other side.
+##
+## THE DESIGN RECORD ABOVE USED TO SKETCH THESE AS A SCARE (a purge that makes
+## guards flee) and this bead adopted a LURE instead, owner unreachable. A flee
+## pad clears the corridor for free and deletes the challenge it was meant to be
+## part of; a lure is the stealth verb the epic was ruled to — and the scare verb
+## is already spoken for by the cell block's vent purge, which stays exactly as it
+## is (the block's own hand-built pad keeps its own wiring; the two plan `P` cells
+## that stand inside the block since it moved to storey 10 wire as lures like
+## every other, which is the "wiring, not recolouring" the record promised).
+##
+## PROVISIONAL, both of them. Ten seconds is about two lengths of a corridor at a
+## walk — long enough to use, short enough that it is a window and not a solution.
+const LURE_HOLD_SECONDS: float = 10.0
+
+## Seconds a pad stays dead after a press, counted from the press and therefore
+## COVERING THE ERRAND ITSELF (a walk out, the hold, the walk home) plus a rest.
+## The anti-puppet rule this half owns is "two players alternating the pair cannot
+## walk a guard around the floor forever"; the other half is
+## `piglet_crocodile_ai.investigate_point()` refusing a body that is already busy.
+const LURE_COOLDOWN: float = 20.0
 
 # ============================================================================
 # VISIBILITY GATING — the web frame budget's half of this bead
@@ -1873,6 +1904,12 @@ const CAPTIVE_BODY_PREFIX: String = "CaptiveBody_"
 ## spine pads - see `_tick_spine_pads()`.
 var _purge_body: Node3D = null
 var _purge_cooldown: float = 0.0
+
+## Seconds each lure plate still has to sit dead, keyed `"floor:pad"`. Per-run and
+## per-peer like the purge's own cooldown, and deliberately not shared over the
+## mesh: it is an INPUT gate on this screen's plate, while the rule that stops a
+## room walking a guard around is the guard's own refusal to take a second errand.
+var _lure_cooldown: Dictionary = {}
 var _containment: MeshInstance3D = null
 
 ## The scar's rubble and its collision shape. Hidden and non-solid until the world
@@ -2389,29 +2426,74 @@ static func _plan_pads(plan: Dictionary) -> Array[Dictionary]:
 
 	@return: A `COLOR_SYSTEM` plate per pad, non-solid (you stand ON the slab).
 
-	# ponytail: geometry only, and still is. Phase 17 brought the guards these were
-	# waiting for, but a plate's trigger and its flee wiring are their own bead —
-	# the population pass changed WHO is on a storey, not what a pad does. Until
-	# then the plate is the author's map of where a purge will go.
+	THE PLATE IS THE PAINT AND `_build_lure_pads()` IS THE LOCK, exactly as the
+	riddle pads are drawn here and triggered there: what makes a plate a lure is an
+	`Area3D` standing on it, and only what MOVES ever leaves the storey's batch.
+	Both read the same `pad_cells()` scan, so the volume you step into and the
+	square you see it painted on cannot drift apart.
 	"""
 	var out: Array[Dictionary] = []
 	var floor_index := int(plan["floor"])
 	var top: float = FLOOR_Y[floor_index]
+	for cell: Vector2i in pad_cells(plan):
+		out.append({
+			"name": "%sPad%d_%d" % [_plan_prefix(floor_index), cell.x, cell.y],
+			"pos": Vector3(_grid_x(float(cell.x) + 0.5), top + PLAN_PAD_THICK * 0.5,
+					_grid_z(float(cell.y) + 0.5)),
+			"size": Vector3(TowerPlans.PLAN_CELL, PLAN_PAD_THICK,
+					TowerPlans.PLAN_CELL),
+			"color": COLOR_SYSTEM, "collide": false, "floor": floor_index,
+		})
+	return out
+
+
+static func pad_cells(plan: Dictionary) -> Array[Vector2i]:
+	"""
+	One storey's `P` cells, row-major.
+
+	@param plan: A `TowerPlans.STOREYS` row.
+	@return: the pad cells in reading order — and that ORDER IS AN INDEX every
+	    peer in a room agrees on, because `TowerPlans` is a const and nothing about
+	    a storey is seeded. It is what the `pad` verb carries instead of a
+	    position, so a modified client cannot name a plate that is not on a plan.
+	"""
+	var out: Array[Vector2i] = []
 	var rows: Array = plan["rows"]
 	for r: int in rows.size():
 		var line: String = rows[r]
 		for c: int in line.length():
-			if line[c] != TowerPlans.PAD_CHAR:
-				continue
-			out.append({
-				"name": "%sPad%d_%d" % [_plan_prefix(floor_index), c, r],
-				"pos": Vector3(_grid_x(float(c) + 0.5), top + PLAN_PAD_THICK * 0.5,
-						_grid_z(float(r) + 0.5)),
-				"size": Vector3(TowerPlans.PLAN_CELL, PLAN_PAD_THICK,
-						TowerPlans.PLAN_CELL),
-				"color": COLOR_SYSTEM, "collide": false, "floor": floor_index,
-			})
+			if line[c] == TowerPlans.PAD_CHAR:
+				out.append(Vector2i(c, r))
 	return out
+
+
+static func pad_point(floor_index: int, pad_index: int) -> Vector3:
+	"""
+	Where pad `pad_index` of storey `floor_index` is, in interior-local metres.
+
+	@return: the plate's centre at the storey's walking surface, or
+	    `Vector3.INF` when that storey draws no such pad — a refusal a caller can
+	    test, rather than the origin, which is a real place inside this building.
+	"""
+	var plan := TowerPlans.storey(floor_index)
+	if plan.is_empty():
+		return Vector3.INF
+	var cells := pad_cells(plan)
+	if pad_index < 0 or pad_index >= cells.size():
+		return Vector3.INF
+	var cell: Vector2i = cells[pad_index]
+	return Vector3(_grid_x(float(cell.x) + 0.5), FLOOR_Y[floor_index],
+			_grid_z(float(cell.y) + 0.5))
+
+
+func pad_world(floor_index: int, pad_index: int) -> Vector3:
+	"""
+	`pad_point()` in world space — what the master validates a `pad` verb against.
+
+	@return: `Vector3.INF` for a pad no plan draws, which is a rejection.
+	"""
+	var local := pad_point(floor_index, pad_index)
+	return local if not local.is_finite() else global_position + local
 
 
 # ============================================================================
@@ -3925,6 +4007,7 @@ func _ready() -> void:
 				_wall_surfaces.append([batch, surface])
 
 	_build_pads()
+	_build_lure_pads()
 	_build_lift_stop()
 	_build_block()
 	_build_riddles()
@@ -4002,6 +4085,7 @@ func _process(delta: float) -> void:
 	_tick_press(delta)
 	_tick_gates(delta)
 	_tick_pads()
+	_tick_lure_pads(delta)
 	_tick_purge(delta)
 
 
@@ -4473,6 +4557,110 @@ static func landing_rect(floor_index: int) -> Rect2i:
 			span = cell if first else span.merge(cell)
 			first = false
 	return Rect2i() if first else span
+
+
+func _build_lure_pads() -> void:
+	"""
+	One trigger volume per `P` cell in the building — the lure's whole geometry.
+
+	NO PLATE IS BUILT HERE. `_plan_pads()` already draws them into the storey's
+	batch, and both read `pad_cells()`, so the volume and the paint are one scan
+	apart and cannot drift. The riddle locks are wired exactly this way for exactly
+	this reason.
+
+	NOTHING IS AUTHORED, and that is the extension rule holding: a storey that
+	grows a `P` gets a working lure the day its plan row lands, and a storey with
+	no `G` simply has plates nobody answers — `lure_guard()` finds no guard and
+	says so, which is the same degrade as a standalone interior with no population.
+	"""
+	for floor_index: int in TowerPlans.floors():
+		var cells := pad_cells(TowerPlans.storey(floor_index))
+		for i: int in cells.size():
+			var at := pad_point(floor_index, i)
+			if not at.is_finite():
+				continue
+			_add_area("LurePad%d_%d" % [floor_index, i], at + Vector3(0.0, 1.0, 0.0),
+					Vector3(TowerPlans.PLAN_CELL, 2.0, TowerPlans.PLAN_CELL),
+					_on_lure_pad_enter.bind(floor_index, i), Callable(), floor_index)
+
+
+func _on_lure_pad_enter(body: Node3D, floor_index: int, pad_index: int) -> void:
+	"""A plate went off under the local player. Plain overlap, like every pad here."""
+	if body.is_in_group("player"):
+		_press_lure_pad(floor_index, pad_index)
+
+
+func _press_lure_pad(floor_index: int, pad_index: int) -> void:
+	"""
+	Spend the plate: send the storey's guard to look at it, or route the intent.
+
+	THE COOLDOWN IS SPENT ON THE PRESS, not on the acceptance, and it covers the
+	whole errand (`LURE_HOLD_SECONDS + LURE_COOLDOWN`). A guard that refuses
+	because it is chasing you has already given you the only answer that matters,
+	and a pad that re-armed instantly on a refusal would be a button to hold down
+	while a guard is busy.
+
+	SOLO IS THE `not routed` PATH, and it is the absent-MP degrade every seam in
+	this building has: no manager, or a manager that is not in a room, and the
+	press applies right here with zero mesh. In a room `request_guard_lure()`
+	applies locally AND relays to the master, the `flee` verb's shape one verb
+	along — the master is the authority for these bodies and its walk reaches every
+	screen through the ordinary crocodile sync, with no flag and no new protocol.
+	"""
+	var key := "%d:%d" % [floor_index, pad_index]
+	if float(_lure_cooldown.get(key, 0.0)) > 0.0:
+		return
+	_lure_cooldown[key] = LURE_HOLD_SECONDS + LURE_COOLDOWN
+	var mp := get_tree().get_first_node_in_group("mp")
+	var routed := (mp != null and mp.has_method("request_guard_lure")
+			and bool(mp.call("request_guard_lure", floor_index, pad_index)))
+	if not routed:
+		lure_guard(floor_index, pad_index)
+
+
+func _tick_lure_pads(delta: float) -> void:
+	"""Run every plate's cooldown down. At most two entries per storey, ever."""
+	for key: String in _lure_cooldown:
+		_lure_cooldown[key] = maxf(0.0, float(_lure_cooldown[key]) - delta)
+
+
+func lure_guard(floor_index: int, pad_index: int) -> bool:
+	"""
+	Send storey `floor_index`'s guard to stand and look at pad `pad_index`.
+
+	@return: whether a guard took the errand. False is ordinary: an unplanned pad,
+	    a storey with no `G`, a population that has not been stood up yet, or a
+	    guard that is busy (`investigate_point()` owns that last judgement and
+	    every other anti-puppet rule with it — see it for why they live there).
+
+	PUBLIC because there are two callers and they must not drift: this building's
+	own plate, and `MpManager._apply_guard_lure()` applying a relayed press.
+	"""
+	var where := pad_world(floor_index, pad_index)
+	if not where.is_finite():
+		return false
+	var guard := _guard_on(floor_index)
+	if guard == null or not guard.has_method("investigate_point"):
+		return false
+	return bool(guard.call("investigate_point", where, LURE_HOLD_SECONDS))
+
+
+func _guard_on(floor_index: int) -> Node3D:
+	"""
+	The one guard standing on storey `floor_index`, or null.
+
+	MATCHED THROUGH THE AUTHORED TABLE rather than by rebuilding the node name:
+	`reset_guards()` names a body after its post row, so asking the table which row
+	stands at this storey's height is the same question without a second copy of
+	the naming rule to keep in step.
+	"""
+	if not is_instance_valid(_guards):
+		return null
+	for authored: Dictionary in guard_posts_table():
+		if absf((authored["post"] as Vector3).y - FLOOR_Y[floor_index]) > 0.01:
+			continue
+		return _guards.get_node_or_null("TowerGuard%s" % String(authored["name"])) as Node3D
+	return null
 
 
 func _add_area(area_name: String, pos: Vector3, size: Vector3,

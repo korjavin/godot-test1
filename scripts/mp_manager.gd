@@ -244,10 +244,25 @@ const MAX_FLEE_DURATION: float = 60.0
 ##         clock. Master-only and applied wholesale, so it is the `dead` class of
 ##         verb: budgeted a few times its own ROOM_SYNC_HZ so a burst after a hitch
 ##         still drains while a flood cannot.
+##   pad   is one press of an HQ lure plate (bead godot-test1-3iy.22). Budgeted
+##         like `flee` and for the same reason: it is a rare deliberate act with a
+##         20 s cooldown on the plate itself, so anything above a trickle is a peer
+##         that is not playing. It costs the master one `investigate_point()` call
+##         that a busy guard refuses outright.
 const VERB_BUDGET_PER_SEC: Dictionary = {
 	"clm": 30, "kill": 10, "flee": 4, "croc": 40, "cnf": 150, "dead": 60,
-	"cap": 8, "room": 12,
+	"cap": 8, "room": 12, "pad": 4,
 }
+
+## How far from a lure plate a peer may be and still have pressed it, in metres.
+##
+## THE TRUST BOUNDARY THE `pad` VERB NEEDS, and the reason the packet carries a
+## plate INDEX and no position at all: the master looks the plate up in the
+## authored plan and then asks whether the sender was anywhere near it. Without
+## the second half a modified client diverts any guard in the building from
+## anywhere in the world. Generous — presence is published at PRESENCE_HZ and the
+## plate is a 1.94 m cell — and still three cells wide, against a 78 m storey.
+const MAX_PAD_PRESS_DISTANCE: float = 6.0
 
 ## How often the master publishes the room's captive set and recall clock, in hertz.
 ##
@@ -3697,6 +3712,8 @@ func _receive_mesh_verb(from_id: String, verb: String, packet: Dictionary) -> vo
 			_receive_kill(from_id, packet)
 		"dead":
 			_receive_dead(from_id, packet)
+		"pad":
+			_receive_pad(from_id, packet)
 		"cap":
 			_receive_captive(from_id, packet)
 		"room":
@@ -4391,6 +4408,7 @@ func _release_synced_crocs() -> void:
 # a lost one is an ability that visibly did nothing):
 #
 #     flee   peer   → master   {"t":"flee","x","y","z","d"}    Phoboman's wave
+#     pad    peer   → master   {"t":"pad","f":int,"p":int}     an HQ lure plate
 #     kill   peer   → master   {"t":"kill","id":int}           giant Teibi's crush
 #     dead   master → everyone {"t":"dead","id":int}           the kill ruling
 #
@@ -4515,6 +4533,127 @@ func _receive_flee(_from_id: String, packet: Dictionary) -> void:
 	# tracks_player FALSE: the caster is on another screen, so the crocodiles must
 	# run from `origin`, not from our own player.
 	_apply_flee(origin, duration, radius, false)
+
+
+func request_guard_lure(floor_index: int, pad_index: int) -> bool:
+	"""
+	An HQ lure plate was stepped on: divert that storey's guard, room-wide.
+
+	@return: whether the room has taken it over — false OFFLINE ONLY, which is the
+	    caller's signal to apply the press itself (`TowerInterior._press_lure_pad`,
+	    the same one-test shape `request_croc_flee()` gives its callers).
+
+	THE `flee` VERB'S SHAPE, ONE VERB ALONG, and everything it does not do is the
+	point: no transform, no flag, no broadcast. The master applies the press to the
+	guard it is the authority for and the walk reaches every other screen through
+	the crocodile sync that is already running — a lured guard is just a crocodile
+	that is somewhere else 100 ms later.
+
+	APPLIED LOCALLY AS WELL AS RELAYED, for the coverage reason the flee's own
+	docstring states: the master only drives the bodies ITS terrain has streamed
+	in, so a peer standing in the HQ while the master is a kilometre away in the
+	field would otherwise press a plate that did nothing at all. On that peer the
+	guard is nobody's remote, so the local pass IS the simulation; where the master
+	does drive it, `investigate_point()` refuses a remote-driven body and the local
+	pass is a no-op.
+	"""
+	if _state != State.IN_ROOM:
+		return false
+	_apply_guard_lure(floor_index, pad_index)
+	if _master == _you:
+		return true
+	_send_reliable_to_master(var_to_bytes({
+		"t": "pad", "f": floor_index, "p": pad_index,
+	}))
+	return true
+
+
+func _apply_guard_lure(floor_index: int, pad_index: int) -> void:
+	"""
+	Hand one press to the building. Group-discovered and `has_method`-guarded like
+	every other cross-system call here: no tower streamed in on this machine and
+	there is no guard to divert, which is not an error.
+	"""
+	var interior := get_tree().get_first_node_in_group("tower_interior")
+	if interior == null or not interior.has_method("lure_guard"):
+		return
+	interior.call("lure_guard", floor_index, pad_index)
+
+
+static func decode_pad(packet: Dictionary) -> Dictionary:
+	"""
+	The `pad` parser, and the SIXTH trust boundary in this file.
+
+	@return: `{"f": int, "p": int}`, or an EMPTY DICTIONARY — trusted whole or
+	    dropped whole, static and instance-free so scripts/mp_selfcheck.gd can beat
+	    on it, exactly like `decode_captive()`.
+
+	STRICTLY INTS. `var_to_bytes` round-trips real types over the mesh, so a float
+	or a numeric string in either field is a peer that is not speaking this
+	protocol. Bounds are NOT this function's business beyond "not negative": which
+	pairs exist is a question about the authored plans, and `_receive_pad()` asks
+	the building rather than trusting a number written down twice.
+	"""
+	if typeof(packet.get("f", null)) != TYPE_INT or typeof(packet.get("p", null)) != TYPE_INT:
+		return {}
+	var floor_index: int = int(packet["f"])
+	var pad_index: int = int(packet["p"])
+	if floor_index < 0 or pad_index < 0:
+		return {}
+	return {"f": floor_index, "p": pad_index}
+
+
+static func pad_press_in_reach(sender: Vector3, pad: Vector3) -> bool:
+	"""
+	Could a peer standing at `sender` have stepped on the plate at `pad`?
+
+	Static and pure so the self-check can drive it, and finiteness-checked before
+	anything is derived from either point — `pad_world()` answers `Vector3.INF` for
+	a plate no plan draws, which has to read as "no" and not as "infinitely far,
+	therefore compare it anyway".
+	"""
+	if not sender.is_finite() or not pad.is_finite():
+		return false
+	return sender.distance_to(pad) <= MAX_PAD_PRESS_DISTANCE
+
+
+func _receive_pad(from_id: String, packet: Dictionary) -> void:
+	"""
+	MASTER ONLY: another peer stepped on a lure plate.
+
+	THE VERB CARRIES INTENT AND NOTHING ELSE — a storey and a plate index — so
+	there is no position to spoof and no body to name. What makes it safe is the
+	pair of questions asked here, both against things this machine owns:
+
+	  1. IS THERE SUCH A PLATE? `pad_world()` reads the authored plan, so a peer
+	     naming storey 12 plate 9 names nothing.
+	  2. WAS THE SENDER THERE? Its last published presence position has to be
+	     within `MAX_PAD_PRESS_DISTANCE` of that plate. Without this a modified
+	     client would divert any guard in the building from the far side of the
+	     world, which is the whole attack this verb could otherwise offer.
+
+	A master with no tower streamed in answers `Vector3.INF` to question 1 and
+	drops the packet — correct, because it also has no guard to divert.
+	"""
+	if _master != _you:
+		return
+	var msg: Dictionary = decode_pad(packet)
+	if msg.is_empty():
+		return
+	var interior := get_tree().get_first_node_in_group("tower_interior")
+	if interior == null or not interior.has_method("pad_world"):
+		return
+	var where: Variant = interior.call("pad_world", int(msg["f"]), int(msg["p"]))
+	if typeof(where) != TYPE_VECTOR3:
+		return
+	if not _peer_state.has(from_id):
+		return
+	var sender: Variant = (_peer_state[from_id] as Dictionary).get("pos", null)
+	if typeof(sender) != TYPE_VECTOR3:
+		return
+	if not pad_press_in_reach(sender as Vector3, where as Vector3):
+		return
+	_apply_guard_lure(int(msg["f"]), int(msg["p"]))
 
 
 func request_croc_kill(id: int) -> bool:

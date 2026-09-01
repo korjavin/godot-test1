@@ -171,6 +171,9 @@ func _run_checks() -> String:
 	failure = _check_captive_set()
 	if not failure.is_empty():
 		return failure
+	failure = _check_pad_parser()
+	if not failure.is_empty():
+		return failure
 	failure = _check_room_publish()
 	if not failure.is_empty():
 		return failure
@@ -1975,6 +1978,56 @@ func _check_captive_parser() -> String:
 	for packet: Dictionary in hostile:
 		if not MPManager.decode_captive(packet).is_empty():
 			return "decode_captive accepted the hostile packet %s" % str(packet)
+	return ""
+
+
+func _check_pad_parser() -> String:
+	"""
+	The `pad` verb's two pure halves — the SIXTH trust boundary (bead
+	godot-test1-3iy.22).
+
+	The verb carries a storey and a plate index and NO POSITION, so the whole of
+	its safety is these two functions plus the plan lookup between them: is that a
+	plate the building draws, and was the sender standing on it. The honest cases
+	are asserted first, or a parser that dropped everything would pass every
+	rejection below.
+	"""
+	var good: Dictionary = MPManager.decode_pad({"t": "pad", "f": 3, "p": 1})
+	if int(good.get("f", -1)) != 3 or int(good.get("p", -1)) != 1:
+		return "decode_pad dropped an honest press (%s)" % str(good)
+	if MPManager.decode_pad({"t": "pad", "f": 0, "p": 0}).is_empty():
+		return "decode_pad dropped storey 0 pad 0 — the keep's own plate"
+
+	# `var_to_bytes` round-trips real types, so a float or a numeric string in
+	# either field is a peer that is not speaking this protocol.
+	var hostile: Array[Dictionary] = [
+		{"t": "pad", "p": 1},                       # no storey
+		{"t": "pad", "f": 3},                       # no plate
+		{"t": "pad", "f": 3.0, "p": 1},             # storey is a float
+		{"t": "pad", "f": 3, "p": "1"},             # plate is a string
+		{"t": "pad", "f": -1, "p": 1},              # negative storey
+		{"t": "pad", "f": 3, "p": -2},              # negative plate
+		{"t": "pad", "f": [3], "p": 1},             # storey is an array
+		{"t": "pad", "f": true, "p": 1},            # ...or a bool
+	]
+	for packet: Dictionary in hostile:
+		if not MPManager.decode_pad(packet).is_empty():
+			return "decode_pad accepted the hostile packet %s" % str(packet)
+
+	# ...and the second half: a press is only a press if the sender was there. The
+	# plate is a 1.94 m cell and a storey is ~78 m across, so "somewhere on the
+	# floor" must NOT pass — that is the whole attack this half exists to stop.
+	var plate := Vector3(120.0, 40.0, -8.0)
+	if not MPManager.pad_press_in_reach(plate + Vector3(1.0, 0.0, 1.0), plate):
+		return "pad_press_in_reach refused a peer standing on the plate"
+	if MPManager.pad_press_in_reach(plate + Vector3(0.0, 0.0, 40.0), plate):
+		return "pad_press_in_reach accepted a peer 40 m from the plate — a modified"\
+				+ " client could divert any guard in the building from anywhere"
+	if MPManager.pad_press_in_reach(plate, Vector3.INF):
+		return "pad_press_in_reach accepted a plate no plan draws (Vector3.INF is"\
+				+ " pad_world's refusal, and it must not read as a distance)"
+	if MPManager.pad_press_in_reach(Vector3(NAN, 0.0, 0.0), plate):
+		return "pad_press_in_reach accepted a NaN sender position"
 	return ""
 
 
