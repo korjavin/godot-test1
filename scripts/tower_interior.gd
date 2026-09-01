@@ -1720,6 +1720,14 @@ static func _plan_guard_post(floor_index: int) -> Dictionary:
 	`move_and_slide` depenetrates it off the post nobody moved it from. Facing it
 	along the beat it was just measured for is the fix and costs nothing — the run
 	of `.` cells it paces is exactly the run its body needs to lie in.
+
+	CEILING, AND IT IS THE SPAWN THAT MATTERS: a guard turns freely once it is
+	walking, so in a one-cell corridor a heading broadside to the lane still puts
+	the ends of the capsule in the walls. That is an ordinary moving contact
+	`move_and_slide` slides out of, and the heading is transient because a patrol's
+	facing follows its motion; a body that STARTS buried is the one that gets
+	resolved somewhere nobody authored. If the chassis is ever scaled again, the
+	fix is a wider lane (two cells) under the `G`, not a longer list of yaws.
 	"""
 	var plan := TowerPlans.storey(floor_index)
 	if plan.is_empty():
