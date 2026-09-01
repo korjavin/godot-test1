@@ -59,6 +59,19 @@ extends SceneTree
 ##     the film is up the tree STAYS paused, and the step that finally unpauses it
 ##     is the same step that tears the element down — teardown first.
 ##
+##  6. **THE FILM'S END IS WATCHDOG-COVERED FROM BOTH SIDES.** Every backstop the
+##     film had lived inside ONE browser state machine, so any way that machine
+##     stops is a way `is_finished()` answers `false` forever behind a frozen last
+##     frame (godot-test1-3iy.20). The Godot-side stall clock is checked with its
+##     own negative control: a film whose position keeps advancing must survive
+##     well past the budget, and a film whose position never moves must be given
+##     up on inside it, as a FAILURE, with the teardown before the unpause.
+##
+##  7. **THE FILM'S END NEVER MINTS A WORLD.** The end of the film hands the
+##     player an interactive surface and decides nothing; only Play Again reaches
+##     `restart_game()` and therefore `BestRunStore.new_game()`. Driven against a
+##     counting stand-in in group `"player"`, because the bug is the CALL.
+##
 ## Deliberately NOT localized (a debug surface, per CLAUDE.md).
 
 const StartOverlay := preload("res://scripts/start_overlay.gd")
@@ -84,6 +97,11 @@ class FilmOverlay extends StartOverlay:
 	var callback_failed: bool = false
 	var film_failed: bool = false
 
+	## What `_film_progress()` answers — the browser's playback position, which is
+	## the one number the Godot-side stall backstop watches. Held constant to
+	## simulate a wedged film; advanced to simulate a healthy one.
+	var film_progress: float = 0.0
+
 	func _start_film(video_url: String) -> bool:
 		started_urls.append(video_url)
 		return true
@@ -97,6 +115,9 @@ class FilmOverlay extends StartOverlay:
 
 	func _film_finished() -> bool:
 		return film_over
+
+	func _film_progress() -> float:
+		return film_progress
 
 	func _film_teardown() -> void:
 		teardowns += 1
@@ -122,6 +143,8 @@ func _run() -> void:
 	_check_play_solo_desktop_path()
 	_check_multiplayer_never_plays()
 	_check_world_stays_paused_behind_the_film()
+	_check_film_end_is_watchdog_covered()
+	_check_film_end_never_mints_a_world()
 	_finish()
 
 
@@ -166,6 +189,12 @@ func _check_web_gate() -> void:
 	if not IntroVideo.is_finished():
 		_fail("IntroVideo.is_finished() answered false off-web — it must fail open, " \
 			+ "or `_process` never dismisses the start overlay")
+	# The stall backstop's input. Off-web it must be inert like the rest — and it
+	# must answer the "nothing to ask" sentinel rather than a plausible position,
+	# or a desktop build would look like a film frozen at that position.
+	if IntroVideo.progress() != -1.0:
+		_fail("IntroVideo.progress() answered %f off-web — it must report -1.0 " \
+			% IntroVideo.progress() + "without touching JavaScriptBridge")
 
 	# The tunables the browser half is built from.
 	if not IntroVideo.VIDEO_URL.begins_with("https://"):
@@ -188,6 +217,15 @@ func _check_web_gate() -> void:
 			% [IntroVideo.START_TIMEOUT_SEC, IntroVideo.STALL_TIMEOUT_SEC] \
 			+ "first buffer would be treated as a dead stream and the film killed " \
 			+ "before its first frame")
+	# Godot's own backstop is a BACKSTOP: it may only ever fire on a film the
+	# browser's two watchdogs already failed to catch. Set it below either budget
+	# and it becomes a second, tighter policy that kills healthy slow fetches.
+	if StartOverlay.FILM_STALL_LIMIT_SEC <= maxf(
+			IntroVideo.START_TIMEOUT_SEC, IntroVideo.STALL_TIMEOUT_SEC):
+		_fail("start_overlay.FILM_STALL_LIMIT_SEC (%f) does not exceed the browser's " \
+			% StartOverlay.FILM_STALL_LIMIT_SEC \
+			+ "own watchdog budgets — Godot would pre-empt the film's cold fetch " \
+			+ "instead of backstopping a wedged one")
 
 	# `discard()` is the MULTIPLAYER path's teardown. Off-web it must be as inert
 	# as the rest — it is called unconditionally from `_on_multiplayer_pressed()`.
@@ -281,6 +319,21 @@ func _check_generated_js() -> void:
 	if not js.contains("removeChild"):
 		_fail("_create_js() never detaches its element — the overlay would survive " \
 			+ "the film and sit on top of the running game")
+	# ...and it has to detach BY CLASS, because the reported freeze is precisely an
+	# element the scratchpad no longer points at: `root.parentNode.removeChild(root)`
+	# can only ever free the one root the caller reached through, and `discard()`
+	# used to do nothing at all when the scratchpad was null. Both ends of the
+	# teardown must sweep, or an orphaned film has no exit at all.
+	var sweep: String = "querySelectorAll('.%s')" % IntroVideo.ROOT_CLASS
+	if not js.contains("root.className = '%s'" % IntroVideo.ROOT_CLASS):
+		_fail("_create_js() no longer stamps ROOT_CLASS on its overlay root — the " \
+			+ "sweep below has nothing to find and an orphaned film stays on screen")
+	if not js.contains(sweep):
+		_fail("_create_js()'s finish() no longer sweeps by class — a root the " \
+			+ "scratchpad has stopped pointing at would never be detached")
+	if not IntroVideo._sweep_js().contains(sweep):
+		_fail("_sweep_js() does not select ROOT_CLASS — the const is no longer the " \
+			+ "single place the teardown handle lives")
 	# Both of these route into `finish`, and finish is the only thing that ever
 	# flips the flag Godot polls. Lose either and a failed load hangs the menu.
 	for listener: String in ["'ended'", "'error'"]:
@@ -477,6 +530,146 @@ func _check_world_stays_paused_behind_the_film() -> void:
 
 	overlay.queue_free()
 	paused = false
+
+
+# ============================================================================
+# 6. THE FILM'S END IS WATCHDOG-COVERED FROM BOTH SIDES
+# ============================================================================
+
+## The bug this check exists for: the owner's ending film "stopped on the last
+## frame" — no restart, no panel, nothing interactive. Every backstop the film had
+## lived in ONE browser state machine (`ended`, the rolling `setTimeout`, and
+## `finish()` itself), so any way that machine stops is a way `is_finished()`
+## answers `false` forever while `_process` politely waits behind a frozen frame.
+##
+## The fix is a clock OUTSIDE that machine, and this is its acceptance. Two
+## subjects, because a backstop that fires on a healthy film is worse than no
+## backstop at all:
+##
+##   * a film whose playback position never moves must be given up on WITHIN the
+##     budget, reported as a FAILURE (so Game Over shows its panel rather than
+##     treating it as a clean ending), torn down, and the pause released; and
+##   * a film whose position keeps advancing must survive far past that same
+##     budget untouched — the negative control.
+func _check_film_end_is_watchdog_covered() -> void:
+	# THE NEGATIVE CONTROL FIRST. A film that is playing normally must not be
+	# killed by its own backstop, however long it runs.
+	var healthy := _make_film_overlay()
+	healthy.play_film(
+		IntroVideo.GAME_OVER_VIDEO_URL, Callable(healthy, "record_ending_callback"))
+	for step: int in 100:
+		healthy.film_progress = float(step)
+		healthy._process(1.0)
+	if not healthy._intro_playing:
+		_fail("the stall backstop tore down a film whose playback was still " \
+			+ "advancing — a slow but healthy stream would lose its film")
+	if healthy.teardowns != 0 or healthy.ending_callbacks != 0:
+		_fail("a progressing film was ended by the stall backstop (%d teardowns, " \
+			% healthy.teardowns + "%d callbacks)" % healthy.ending_callbacks)
+	healthy.cancel_film()
+	healthy.queue_free()
+	paused = false
+
+	# THE SUBJECT. `film_over` stays false for the whole run — this is exactly the
+	# wedged browser state machine, in which nothing will EVER report finished.
+	var wedged := _make_film_overlay()
+	wedged.play_film(
+		IntroVideo.GAME_OVER_VIDEO_URL, Callable(wedged, "record_ending_callback"))
+	wedged.film_progress = 4.0
+	if not paused:
+		_fail("the film did not pause the tree — every assertion below would pass " \
+			+ "vacuously")
+	# One second per step, run to twice the budget: comfortably long enough that a
+	# missing backstop is a failure and not a rounding question.
+	var budget: float = StartOverlay.FILM_STALL_LIMIT_SEC
+	for _step: int in int(budget * 2.0) + 2:
+		if not wedged._intro_playing:
+			break
+		wedged._process(1.0)
+	if wedged._intro_playing:
+		_fail("a film that never reported finished and never advanced was still " \
+			+ "playing after %f s — `is_finished()` can stay false with nothing " \
+			% (budget * 2.0) + "armed, which is the frozen last frame itself")
+		wedged.queue_free()
+		paused = false
+		return
+	if wedged.ending_callbacks != 1:
+		_fail("the stall backstop ran the completion callback %d times, not once" \
+			% wedged.ending_callbacks)
+	if not wedged.callback_failed:
+		_fail("a film given up on by the stall backstop was reported as a clean " \
+			+ "end — Game Over would treat a dead stream as a finished film")
+	if wedged.teardowns != 1:
+		_fail("the stall backstop left the film's element up (%d teardowns)" \
+			% wedged.teardowns)
+	elif not wedged.teardown_saw_paused:
+		_fail("the stall backstop released the pause before tearing the element " \
+			+ "down — the world runs behind a video still covering the canvas")
+	if paused:
+		_fail("the stall backstop fired and the tree is still paused — the film " \
+			+ "blocked play, which is the one thing it may never do")
+
+	wedged.queue_free()
+	paused = false
+
+
+# ============================================================================
+# 7. THE FILM'S END NEVER MINTS A WORLD
+# ============================================================================
+
+## The PR #155 regression. `_on_ending_film_finished()` called
+## `player.restart_game()` on a clean end, and `restart_game()` calls
+## `BestRunStore.new_game()`, which clears the `[world] archived` latch. An
+## archived world reopens its ending at boot, so the film played itself through
+## and DESTROYED the archive with zero user input — the exact inverse of
+## "Continue reopens the ending; only Play Again mints a fresh world".
+##
+## Driven against a counting stand-in in group `"player"`, because the failure is
+## the CALL: with no player in the tree the old code was already silent, and an
+## assertion on the archive alone would pass for the wrong reason.
+func _check_film_end_never_mints_a_world() -> void:
+	var player := RestartSpy.new()
+	root.add_child(player)
+
+	var panel := GameOverUI.new()
+	root.add_child(panel)
+
+	# Both outcomes, because the whole point is that they now agree: an ended film
+	# and a dead stream both hand the player the same interactive surface.
+	for failed: bool in [false, true]:
+		panel.visible = false
+		panel._on_ending_film_finished(failed)
+		if not panel.visible:
+			_fail("the ending film finished (failed=%s) and left NO interactive " \
+				% failed + "surface up — that is the frozen-last-frame report")
+		if player.restarts != 0:
+			_fail("the ending film finished (failed=%s) and restarted the game by " \
+				% failed + "itself — restart_game() reaches BestRunStore.new_game() " \
+				+ "and an archived world is destroyed with no user input")
+			break
+
+	# ...and the button still does, or Play Again would no longer start anything.
+	panel._on_restart_pressed()
+	if player.restarts != 1:
+		_fail("Play Again ran restart_game() %d times — the button is the ONE " \
+			% player.restarts + "route to a fresh world and it has to work")
+
+	panel.queue_free()
+	player.queue_free()
+	paused = false
+
+
+## A stand-in for the player, in the `player` group, that counts restarts and does
+## nothing else. `game_over_ui` finds the player by group and calls it by name, so
+## this is the whole of the seam.
+class RestartSpy extends Node:
+	var restarts: int = 0
+
+	func _ready() -> void:
+		add_to_group("player")
+
+	func restart_game() -> void:
+		restarts += 1
 
 
 ## A live `start_overlay.gd` under the tree root, so `_ready()` really runs.
