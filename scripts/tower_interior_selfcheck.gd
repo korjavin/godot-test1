@@ -3093,7 +3093,7 @@ func _check_guards_stand_their_posts() -> void:
 
 		# THE POST IS STANDABLE. Both tables, at every height a body occupies.
 		var post: Vector3 = interior.global_position + (authored["post"] as Vector3)
-		var blocker := _solid_near(post)
+		var blocker := _solid_near(post, float(authored["yaw"]))
 		if blocker != "":
 			_fail("the '%s' post at %s is inside '%s' — the body would settle in the"
 					% [label, str(authored["post"]), blocker]
@@ -3123,15 +3123,27 @@ func _check_guards_stand_their_posts() -> void:
 	await _clear(null, shell)
 
 
-func _solid_near(world_pos: Vector3) -> String:
-	## The name of the first solid box a standing body at `world_pos` would be
-	## inside of, or "" when the spot is clear. Both tables — the interior's
+func _solid_near(world_pos: Vector3, yaw: float) -> String:
+	## The name of the first solid box a standing body at `world_pos`, facing `yaw`,
+	## would be inside of, or "" when the spot is clear. Both tables — the interior's
 	## furniture and the shell's outer walls — because either one buries a guard.
 	## `all_boxes()` is every storey's plan boxes and the hand-built parts among
 	## them — since bd godot-test1-dn8 there is no second table, so the walls a post
 	## could be buried in are all in there.
-	var half := Vector3(GUARD_BODY_CLEARANCE, GUARD_BODY_HEIGHT * 0.5, GUARD_BODY_CLEARANCE)
-	var body_centre := Vector3(world_pos.x, world_pos.y + GUARD_BODY_HEIGHT * 0.5, world_pos.z)
+	##
+	## A DISC WAS NOT ENOUGH ONCE THE CHASSIS GREW (bead `godot-test1-6bj`). The
+	## capsule is 2.025 m long and a plan cell is 1.94 m, so the body reaches into
+	## the NEIGHBOURING cells along its facing, and a symmetric
+	## `GUARD_BODY_CLEARANCE` box measured only the 0.28125 m radius — it passed a
+	## post standing broadside inside a corridor wall. The footprint is therefore
+	## measured off `tower_guard.tscn`'s own shape, turned to the spawn yaw, and
+	## then widened to at least the old clearance on both axes so the margin that
+	## test bought is still bought.
+	var span := _guard_footprint(yaw)
+	var half := Vector3(span.size.x * 0.5, GUARD_BODY_HEIGHT * 0.5, span.size.y * 0.5)
+	var body_centre := Vector3(world_pos.x + span.position.x + half.x,
+			world_pos.y + GUARD_BODY_HEIGHT * 0.5,
+			world_pos.z + span.position.y + half.z)
 	for box: Dictionary in TowerInterior.all_boxes() + TowerShell.boxes():
 		if not box["collide"]:
 			continue
@@ -3143,6 +3155,41 @@ func _solid_near(world_pos: Vector3) -> String:
 		if _overlaps(body_centre, half * 2.0, box["pos"], box["size"]):
 			return String(box["name"])
 	return ""
+
+
+func _guard_footprint(yaw: float) -> Rect2:
+	## The ground footprint a guard standing at the origin facing `yaw` occupies, as
+	## a Rect2 in (x, z) RELATIVE TO THE POST — asymmetric, because the capsule is
+	## offset back along the body (the chassis is built forward of its origin).
+	##
+	## READ OFF `tower_guard.tscn`, never restated here: the capsule's own transform
+	## and dimensions are the thing under test, so a scene whose shape stopped
+	## matching its model must not be measured against a copy of the number it used
+	## to carry. Degrades to the plain `GUARD_BODY_CLEARANCE` disc if the scene is
+	## ever reshaped into something this cannot read.
+	var lo := Vector2(-GUARD_BODY_CLEARANCE, -GUARD_BODY_CLEARANCE)
+	var hi := Vector2(GUARD_BODY_CLEARANCE, GUARD_BODY_CLEARANCE)
+	var scene := TowerInterior.guard_scene()
+	if scene != null:
+		var probe := scene.instantiate()
+		var shape_node := probe.find_child("CollisionShape3D", true, false) as CollisionShape3D
+		var capsule := (shape_node.shape if shape_node != null else null) as CapsuleShape3D
+		if capsule != null:
+			# The two capsule end-centres in body space, turned to the spawn yaw, then
+			# inflated by the radius: that is the capsule's exact ground AABB.
+			var turn := Basis(Vector3.UP, yaw)
+			var axis: Vector3 = turn * (shape_node.transform.basis.y.normalized())
+			var mid: Vector3 = turn * shape_node.position
+			var reach: Vector3 = axis * (capsule.height * 0.5)
+			var r: float = capsule.radius
+			for x: float in [mid.x - reach.x, mid.x + reach.x]:
+				lo.x = minf(lo.x, x - r)
+				hi.x = maxf(hi.x, x + r)
+			for z: float in [mid.z - reach.z, mid.z + reach.z]:
+				lo.y = minf(lo.y, z - r)
+				hi.y = maxf(hi.y, z + r)
+		probe.free()
+	return Rect2(lo, hi - lo)
 
 
 func _standable(x: float, z: float, foot_y: float) -> bool:
