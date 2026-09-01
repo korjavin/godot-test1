@@ -712,14 +712,6 @@ const LURE_HOLD_SECONDS: float = 10.0
 ## `piglet_crocodile_ai.investigate_point()` refusing a body that is already busy.
 const LURE_COOLDOWN: float = 20.0
 
-## How many plan cells a lure route may run in a straight line before it puts
-## another waypoint down. CORNERS ALONE ARE NOT ENOUGH, and this number was
-## MEASURED rather than chosen: aimed at a corner nineteen cells up a corridor,
-## the guard's own obstacle feelers nudge it a cell off the lane on the way, and
-## it then arrives at the cell block's doorway at an angle and wedges on the jamb.
-## Re-aiming every four cells (7.8 m) keeps a long leg in the middle of the
-## corridor it was routed down, which is what a doorway needs.
-const ROUTE_MAX_RUN: int = 4
 
 # ============================================================================
 # VISIBILITY GATING — the web frame budget's half of this bead
@@ -2583,17 +2575,15 @@ static func plan_route(floor_index: int, from_local: Vector3,
 		cells.push_front(walk)
 		walk = came[walk]
 	cells.push_front(start)
-	# ---- Corners, plus a mark every ROUTE_MAX_RUN cells, plus the destination.
+	# ---- EVERY CELL CENTRE, and that is a measurement rather than laziness. The
+	# first cut emitted corners only, which is what a follower with no drift would
+	# want; the shipped follower has the obstacle feelers, and nineteen cells of
+	# corridor is enough of them to nudge a body a whole cell off the lane — so it
+	# arrived at the cell block's doorway at an angle and wedged on the jamb. A
+	# waypoint per cell is the lane, so the walk stays in the middle of it.
 	var out := PackedVector3Array()
 	var top: float = FLOOR_Y[floor_index]
-	var run := 0
 	for i in range(1, cells.size() - 1):
-		var before: Vector2i = cells[i] - cells[i - 1]
-		var after: Vector2i = cells[i + 1] - cells[i]
-		run += 1
-		if before == after and run < ROUTE_MAX_RUN:
-			continue
-		run = 0
 		out.append(Vector3(_grid_x(float(cells[i].x) + 0.5), top,
 				_grid_z(float(cells[i].y) + 0.5)))
 	out.append(to_local)

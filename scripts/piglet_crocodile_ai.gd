@@ -3368,13 +3368,19 @@ var _investigate_home: Array[Vector3] = []
 ## enum to keep in step with it.
 var _investigate_hold: float = 0.0
 
-## Seconds of walking still allowed on this leg before the lure gives up. Set from
-## the leg's own LENGTH (see `_investigate_budget`), because the routes across
-## this building run from ten metres to a hundred and seventy and one constant
-## would be either a straitjacket or no backstop at all. The guard walks a floor
-## plan, not an empty room: a pocket its feelers keep turning it out of would
-## otherwise leave a body off its post with a grown leash for the rest of the run.
-var _investigate_walk: float = 0.0
+## THE STALL CLOCK: seconds since this leg last got measurably closer to the
+## waypoint it is walking at, and the nearest it has been. A LENGTH-BASED BUDGET
+## WAS THE FIRST TRY AND IT WAS THE WRONG SHAPE — the routes in this building run
+## from ten metres to a hundred and seventy, so a budget generous enough for the
+## long ones left a wedged guard shuffling against a doorway jamb for two minutes.
+## Progress is the thing actually being asked about, and a body that is making
+## none is stuck no matter how far it still has to go.
+##
+## The sniff pause and the spot telegraph both stand the body still, and neither
+## can spend this: a paused body never reaches this function at all, and the
+## telegraph is 0.6 s against `INVESTIGATE_STALL_TIME`.
+var _investigate_stall: float = 0.0
+var _investigate_best: float = INF
 
 ## The authored leash, `{center: Vector3, half: Vector2}`, put back when the body
 ## is home again. Empty for an unconfined body, which simply ends the lure where
@@ -3391,12 +3397,13 @@ const INVESTIGATE_ARRIVE: float = 1.6
 ## plate it was lured onto — the steer starts a margin short of the edge.
 const INVESTIGATE_LEASH_MARGIN: float = 2.0
 
-## The pace a leg's patience is budgeted at, in m/s, plus a flat allowance. Half a
-## guard's patrol speed, so the sniff pauses, the corners and a bump off a doorway
-## jamb are all inside the budget and only a body that is actually STUCK ever
-## spends it.
-const INVESTIGATE_MIN_PACE: float = 0.6
-const INVESTIGATE_WALK_SLACK: float = 10.0
+## How long a leg may make no progress before the errand gives up, and how much
+## closer counts as progress. Six seconds is several times a sniff pause and a
+## whole turn, and half a metre is a third of `INVESTIGATE_ARRIVE` — so an honest
+## walk resets the clock long before it runs, and a body pressed against a jamb
+## turns round in six seconds instead of standing there for the rest of the run.
+const INVESTIGATE_STALL_TIME: float = 6.0
+const INVESTIGATE_PROGRESS: float = 0.5
 
 ## THE LEAP ARM'S ONE PIECE OF MEMORY (`_behave_leap`): how many seconds of
 ## GROUNDED recovery this boss still owes before it may hop again, as
@@ -4699,21 +4706,18 @@ func investigate_point(pos: Vector3, seconds: float,
 	set_lod_active(true)
 	investigate_target = _investigate_path[0]
 	_investigate_hold = seconds
-	_investigate_walk = _investigate_budget(_investigate_path)
+	_investigate_aim(_investigate_path[0])
 	if is_confined:
 		_investigate_leash = {"center": confine_center, "half": confine_half}
 		_investigate_home.append(confine_center)
 	return true
 
 
-func _investigate_budget(path: Array[Vector3]) -> float:
-	"""How many seconds this leg is allowed, measured off its own length."""
-	var metres: float = 0.0
-	var at := global_position
-	for point: Vector3 in path:
-		metres += Vector2(point.x - at.x, point.z - at.z).length()
-		at = point
-	return INVESTIGATE_WALK_SLACK + metres / INVESTIGATE_MIN_PACE
+func _investigate_aim(point: Vector3) -> void:
+	"""Walk at `point` from here, with a fresh stall clock. The one waypoint seam."""
+	investigate_target = point
+	_investigate_stall = 0.0
+	_investigate_best = INF
 
 
 func _investigate_move(delta: float) -> void:
@@ -4736,10 +4740,15 @@ func _investigate_move(delta: float) -> void:
 	var reach := to_target.length()
 
 	if reach > INVESTIGATE_ARRIVE:
-		# ---- WALKING, with a ceiling on it. A blocked leg gives up rather than
-		# leaving a body off its post with a grown leash for the rest of the run.
-		_investigate_walk -= delta
-		if _investigate_walk <= 0.0:
+		# ---- WALKING, and watched for PROGRESS rather than for time. A leg that
+		# stops getting closer gives up, rather than leaving a body off its post
+		# with a grown leash for the rest of the run.
+		if reach < _investigate_best - INVESTIGATE_PROGRESS:
+			_investigate_best = reach
+			_investigate_stall = 0.0
+		else:
+			_investigate_stall += delta
+		if _investigate_stall > INVESTIGATE_STALL_TIME:
 			if _investigate_hold > 0.0:
 				_abandon_investigation()
 			else:
@@ -4756,7 +4765,7 @@ func _investigate_move(delta: float) -> void:
 	if _investigate_path.size() > 1:
 		# ---- A CORNER. Take the next one; the heading is picked next frame.
 		_investigate_path.pop_front()
-		investigate_target = _investigate_path[0]
+		_investigate_aim(_investigate_path[0])
 		return
 
 	if _investigate_hold <= 0.0:
@@ -4832,8 +4841,7 @@ func _investigate_go_home() -> void:
 		return
 	_investigate_path = _investigate_home
 	_investigate_home = []
-	investigate_target = _investigate_path[0]
-	_investigate_walk = _investigate_budget(_investigate_path)
+	_investigate_aim(_investigate_path[0])
 
 
 func _end_investigation() -> void:
