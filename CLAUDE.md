@@ -96,10 +96,12 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            and TowerPlans.floors(), so a new plan row is
 #                            covered the day it lands: per-storey box budget,
 #                            headroom, and the ramp flush at both ends
-#   capture_selfcheck        SYSTEMIC CAPTURE and the tower guard's setback: the
+#   capture_selfcheck        SYSTEMIC CAPTURE and the tower guard's stake: the
 #                            arming gate (pre/post the
-#                            authored beat), attribution (only a "hunt" row takes
-#                            a hero), invulnerability covering the hero too, the
+#                            authored beat), attribution (every `captures_hero`
+#                            row takes one, animals and row-less hazards none),
+#                            the guard's arrest in place vs its PRE-BEAT
+#                            setback+knockback, invulnerability covering the hero too, the
 #                            clean auto-switch, liberation, the empty-roster game
 #                            over as the ONLY game over there is, that the set
 #                            never touches
@@ -267,15 +269,27 @@ own, all pinned by `tower_interior_selfcheck`:
   never chunk-spawned. **AT MOST ONE PER STOREY** (owner ruling 2026-08-30,
   `GUARDS_PER_STOREY_MAX`), because the building is a stealth problem and two on a floor
   turns a room you were meant to time and walk past into a chase; the count is asserted
-  off the BODIES in the tree, never off the table. **Losing to one costs the ordinary bill plus the BUILDING's own
-  stake**: `coin_setback` (7%) off this peer's own coins — every predator bills
-  coins now — plus a knockback to `setback_point()`, the last checkpoint in the
-  opened set or the doorway. The KNOCKBACK is what makes losing indoors different;
-  it is the building's, not the row's (`_pay_coin_setback()` relocates whoever bit
-  you, gated on `TowerInterior.inside_walls()` — the group ANSWERING is not the
-  test, because the shell streams in at 360 m and is never freed again), and
-  nothing about it can end a run mid-rescue. It rides the one damage verb: `hit_by_crocodile(attacker)`
-  reads the row key, exactly as `_is_hunter_grab` reads `behavior`. Guards stay in group
+  off the BODIES in the tree, never off the table. **Losing to one is an ARREST** (owner ruling 2026-09-01, bead
+  `godot-test1-3iy.19`, superseding the third stake): to the player the thing that
+  grabbed them in the HQ is a hunter — it is the same chassis — so a post-beat
+  guard grab imprisons the hero exactly like a field grab, through the `captures_hero`
+  ROW KEY the two GD-SURVEY rows share (`behavior` stays `"solo"`: behaviour is
+  STEERING, and a sentry must not have the hunt arm's nose or its director seams).
+  The `coin_setback` (7%, the lowest in the table) is billed on top —
+  one arithmetic everywhere. **The checkpoint knockback is SKIPPED on exactly the
+  contacts that arrest**, latched in `hit_by_crocodile()` (`caught_captured`) and
+  read in `_pay_coin_setback()`, because the ruling's second half is that the
+  surviving heroes carry on from where the party fell. It still catches every other
+  way to lose indoors — a PRE-BEAT guard, the rotor bar, the press, an animal that
+  followed you in — and it is the building's, not the row's
+  (`_pay_coin_setback()` relocates whoever bit you, gated on
+  `TowerInterior.inside_walls()` — the group ANSWERING is not the test, because the
+  shell streams in at 360 m and is never freed again). The arming gate is
+  unchanged and is REQUIRED here: the authored Primm rescue is a room in this
+  building, so pre-beat a guard is byte-for-byte today's setback-plus-knockback or a
+  tutorial visit could strip the roster. An arrest still cannot end a run —
+  the empty free set opens the break-out, in the block the guard was standing in.
+  Guards stay in group
   `"crocodile"` (LOD sleep and the MP relay still want them) and refuse the Stink Wave
   and the giant's crush through `stink_immune` / `crush_immune`, never through group
   tricks; `clear_nearby_crocodiles()` exempts them the way it exempts a boss, or any
@@ -640,9 +654,9 @@ dispatch maps and the hunter spawner alone reports a shipped predator as unspawn
 **It adds no behaviour arm**: "patrols its floor and never leaves it" is the existing
 `set_confinement()` leash the elevated-platform guards already use, so the row is
 `behavior: "solo"` and the patrol is geometry. Its `coin_setback` key is the same
-required row key every predator carries — the guard's own stake is the checkpoint
-knockback the building adds to it — and it reuses BOTH of the hunter's immunity keys — see the tower section above
-for why that is a design decision and not an inheritance.
+required row key every predator carries, and it reuses BOTH of the hunter's immunity
+keys AND its `captures_hero` — see the tower section above for why each is a design
+decision and not an inheritance.
 
 **The hunt arm has a SECOND LEG: scent tracking, and it is steering, not detection.**
 Out of detection a row carrying `scent_radius` (150 m, the hunter alone) asks the LOD
@@ -741,9 +755,13 @@ the machine channel with its `SPECIES` row and no edit anywhere.
 Hunters are in group `"crocodile"`, so **the F3 overlay's "Crocs (active/total)" counter
 means predators + hunters** — which is exactly what the LOD manager manages.
 
-### Systemic capture — a hunter takes the HERO
-A post-beat grab by a predator on the `"hunt"` arm puts the ACTIVE hero in `player_controller`'s
-`captive_heroes` and steps into the next free one. Four rules:
+### Systemic capture — a GD-SURVEY machine takes the HERO
+A post-beat grab by a predator whose `SPECIES` row carries `captures_hero` puts the
+ACTIVE hero in `player_controller`'s `captive_heroes` and steps into the next free
+one. **It is a ROW KEY, not the `"hunt"` behaviour** (bead `godot-test1-3iy.19`):
+the field's retrieval unit and the HQ's sentry both arrest, and only the first is on
+that arm — behaviour is steering, and the guard's patrol is `set_confinement()`.
+Four rules:
 
 - **Availability is `hand INTERSECT free`, at ONE site.** `switch_to_next_character()` already
   cycles inside an allowed-index array (the lobby's, in a room); captivity is one more
@@ -752,6 +770,7 @@ A post-beat grab by a predator on the `"hunt"` arm puts the ACTIVE hero in `play
   `_reset_ability_states()` lives, and the cycle refuses a press mid-Air-Rush anyway.
 - **It arms only after the authored Primm rescue** (`TowerInterior.RESCUE_DONE` in the stored
   tower set) — the beat is where the rule is taught. Before it, a grab is an ordinary bite.
+  That gate is load-bearing for the guard, not incidental: the beat happens INSIDE the HQ.
 - **The set is NON-MONOTONE** (captures add, liberations remove), so it stays out of
   `best_run_store`'s union/max merge, which the tower's opened-gate ids *do* ride. A captive
   folded into a union could never be freed.

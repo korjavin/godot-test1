@@ -395,6 +395,19 @@ const CAUGHT_DURATION: float = 0.55
 ## where the evidence is.
 var caught_setback: float = 0.0
 
+## DID THIS CONTACT ARREST US? Latched beside the bill above, decided at the same
+## seam and for the same reason: the attacker is gone by the time the freeze ends.
+## Read by `_pay_coin_setback()`, which refuses the tower's checkpoint knockback
+## for an arrest — owner ruling 2026-09-01 (bead godot-test1-3iy.19): a catch
+## inside the HQ imprisons the hero exactly like a field grab, and the heroes
+## still free "continue to play from the same place after cooldown". Dragging the
+## survivor to the doorway plate would be a second, unruled penalty on top of the
+## one the owner asked for — and on the storey where the arrest happened, the way
+## back to the cells. The knockback still catches every OTHER way to lose in the
+## building: a pre-beat guard, the rotor bar, the press, an animal that followed
+## you through the door.
+var caught_captured: bool = false
+
 ## What a hit with no SPECIES row behind it costs — the tower's rotor bar, a boss
 ## projectile, a `null` attacker in a self-check. Named rather than inlined so the
 ## "every contact pays" rule has no free hit hiding in it, and set to the ordinary
@@ -1956,7 +1969,9 @@ func set_hero_captive(hero: String, held: bool) -> void:
 
 func _capture_active_hero() -> void:
 	"""
-	A hunter earned its grab: the corporation keeps whoever was walking.
+	A GD-SURVEY machine earned its grab — the field's retrieval unit or the HQ's
+	sentry, whichever row carried `captures_hero` — and the corporation keeps
+	whoever was walking.
 
 	THE HERO IS THE STAKE ON TOP OF THE BILL, NOT INSTEAD OF IT (bead
 	godot-test1-0bc). Every predator in the table now charges `coin_setback`, the
@@ -1981,7 +1996,7 @@ func _capture_active_hero() -> void:
 	if captive_heroes.has(hero):
 		return
 	captive_heroes[hero] = true
-	print("Captured by a hunter: %s" % hero)
+	print("Captured by GD-SURVEY: %s" % hero)
 
 	# THE CELL BLOCK IS THE WAY BACK, so it has to know who it is holding — its
 	# `_liberate()` early-returns on a hero it has no record of, and a captive with
@@ -2024,24 +2039,31 @@ func _capture_active_hero() -> void:
 			return
 
 
-func _is_hunter_grab(attacker: Node) -> bool:
+func _takes_a_hero(attacker: Node) -> bool:
 	"""
-	Was this contact a retrieval unit's grab rather than an animal's bite?
+	Was this contact an ARREST rather than an animal's bite?
 
 	@param attacker: whoever called `hit_by_crocodile`, or null when nobody said.
-	@return: true only for a predator on the hunt arm.
+	@return: the attacker's `captures_hero` row key, false for a body without one.
 
-	KEYED ON THE BEHAVIOUR, NOT ON THE SPECIES NAME, exactly as the disengage
-	clock in `piglet_crocodile_ai.gd` is: "I take the hero, not the coins" is a
-	trait of the mechanic, so a second retrieval unit inherits it with its row and
-	nothing here changes. Read off the row through `Node.get()`, which answers null
-	for a body that has no `spec` at all (a boss projectile, the tower's rotor
-	bar), so every other damage source falls through to the predator arithmetic.
+	A ROW KEY, NEVER THE BEHAVIOUR AND NEVER A SPECIES NAME (bead
+	godot-test1-3iy.19). It used to read `behavior == "hunt"`, which quietly tied
+	"the corporation imprisons you" to how a body STEERS: the tower guard is the
+	same GD-SURVEY chassis on a different duty, and to the owner a catch inside
+	the HQ is a catch — but a sentry leashed to one storey by `set_confinement()`
+	must not have the hunt arm's scent tracking or its hunt-director seams. So
+	what a body does with the quarry it catches is its own key, the same
+	data-not-species shape as `stink_immune` / `crush_immune` / `sweep_exempt` and
+	`_coin_setback_of` below.
+
+	Read off the row through `Node.get()`, which answers null for a body that has
+	no `spec` at all (a boss projectile, the tower's rotor bar), so every other
+	damage source falls through to the predator arithmetic.
 	"""
 	if attacker == null:
 		return false
 	var row: Variant = attacker.get("spec")
-	return row is Dictionary and String((row as Dictionary).get("behavior", "")) == "hunt"
+	return row is Dictionary and bool((row as Dictionary).get("captures_hero", false))
 
 
 func _coin_setback_of(attacker: Node) -> float:
@@ -2054,7 +2076,7 @@ func _coin_setback_of(attacker: Node) -> float:
 
 	KEYED ON A ROW KEY, NOT ON A SPECIES NAME — the third time this file asks the
 	attacker a question and the third time the answer is data (see
-	`_is_hunter_grab` above, and `stink_immune` / `crush_immune` in the AI). A new
+	`_takes_a_hero` above, and `stink_immune` / `crush_immune` in the AI). A new
 	predator sets its own price by editing its row and nothing here changes.
 
 	AND IT IS THE FRACTION, NOT A BOOLEAN, so this file holds no percentage of its
@@ -2131,6 +2153,8 @@ func _pay_coin_setback(fraction: float) -> bool:
 	checkpoint is safe by construction anyway: no guard's patrol box reaches it.
 	"""
 	caught_setback = 0.0
+	var arrested: bool = caught_captured
+	caught_captured = false
 	var lost: int = int(floor(float(own_coins) * fraction))
 	own_coins = maxi(0, own_coins - lost)
 	coins_collected = maxi(0, coins_collected - lost)
@@ -2163,8 +2187,19 @@ func _pay_coin_setback(fraction: float) -> bool:
 	# no ramp inside the clamp. The role is then unplayable for the rest of the run:
 	# they can free nobody and work no purge, which is the only way their hero
 	# returns.
+	#
+	# AND NEVER WHEN THE CONTACT WAS AN ARREST (owner ruling 2026-09-01, bead
+	# godot-test1-3iy.19). A guard's grab now imprisons the hero exactly as a field
+	# hunter's does, and the ruling's second half is that the heroes still free
+	# "continue to play from the same place after cooldown" — so the hero that
+	# steps in stands where the party fell, on the storey the arrest happened on,
+	# which is also the way back to the cells. Relocating them as well would charge
+	# a second penalty nobody ruled for the one contact that already charges the
+	# expensive one. The coin bill above is deliberately NOT waived: one arithmetic
+	# everywhere. The latch is `hit_by_crocodile()`'s, because by now the attacker
+	# is gone and there is nothing left here to ask.
 	var interior := get_tree().get_first_node_in_group("tower_interior") as Node3D
-	if custody_protocol_active or prisoner_active or interior == null \
+	if arrested or custody_protocol_active or prisoner_active or interior == null \
 			or not interior.has_method("setback_point") \
 			or not TowerInterior.inside_walls(global_position - interior.global_position):
 		print("Setback: -%d coins" % lost)
@@ -2852,8 +2887,16 @@ func hit_by_crocodile(attacker: Node = null) -> void:
 	# the same reason the streak reset is: a bite that costs nothing must not cost
 	# a hero either, and the blink window after a capture would otherwise strip the
 	# roster one frame at a time. Both gates are cheap and both are `false` for
-	# every contact in the game that is not a post-beat hunter.
-	if _is_hunter_grab(attacker) and _capture_is_armed():
+	# every contact in the game that is not a post-beat GD-SURVEY machine — the
+	# field's retrieval unit or the HQ's sentry, which carry one row key between
+	# them and no shared behaviour arm.
+	# ...and the LATCH, which is what "the survivors carry on from the same place"
+	# costs in code: `_pay_coin_setback()` runs a whole caught freeze later, with
+	# the attacker long gone, so the one thing it cannot re-derive is whether this
+	# contact was an arrest. Written here, where the evidence is, exactly like the
+	# bill below.
+	caught_captured = _takes_a_hero(attacker) and _capture_is_armed()
+	if caught_captured:
 		_capture_active_hero()
 
 	# THE COIN BILL, decided at the same seam and for the same reason: this is where
@@ -3088,6 +3131,7 @@ func _begin_custody_protocol() -> void:
 	is_respawning = false
 	is_game_over = false
 	caught_setback = 0.0
+	caught_captured = false
 	respawn_blink_timer = 0.0
 	velocity = Vector3.ZERO
 	ability_cooldowns.fill(0.0)
@@ -3672,6 +3716,7 @@ func restart_game() -> void:
 	# armed here if a bite and a Play Again land in the same freeze — but a stale
 	# fraction would tax the NEXT run's coins for a bite it never took.
 	caught_setback = 0.0
+	caught_captured = false
 	is_respawning = false
 	# Play Again hands back all four heroes. The captive set is per-run world state
 	# and nothing about it is earned, so unlike the tower's opened gates it does

@@ -36,9 +36,12 @@ extends SceneTree
 ##      predator arithmetic and no hero. Post-beat it takes the active one. The
 ##      beat is `TowerInterior.RESCUE_DONE` in the stored tower set, which is what
 ##      the authored rescue writes.
-##   2. **ATTRIBUTION.** Post-beat, a predator that is not on the hunt arm, a body
-##      with no row at all, and a contact that names no attacker take nobody. Keyed
-##      on the row's `behavior`, so a second retrieval unit is covered by its row.
+##   2. **ATTRIBUTION.** Post-beat, the two GD-SURVEY rows — the field's retrieval
+##      unit and the HQ's sentry — take the hero; an animal, a body with no row at
+##      all, and a contact that names no attacker take nobody. Keyed on the
+##      `captures_hero` ROW KEY and not on `behavior` (bead godot-test1-3iy.19), so
+##      the guard arrests without ever joining the hunt arm and the next machine is
+##      covered by its row.
 ##   3. **INVULNERABILITY COVERS THE HERO TOO.** A grab inside any of the four
 ##      invulnerable states costs nothing — `hit_by_crocodile()`'s early return is
 ##      the one place that rule lives and the capture must sit under it.
@@ -118,18 +121,18 @@ const LOCAL_STORE_PATH: String = "user://capture_selfcheck_best_run.cfg"
 var _failures: Array[String] = []
 
 ## The attacker stubs, made once and freed in `_report()`. Each is an orphan Node
-## (never added to the tree — `_is_hunter_grab()` only ever reads its `spec`), so
+## (never added to the tree — `_takes_a_hero()` only ever reads its `spec`), so
 ## nothing reclaims them but this file.
 var _stubs: Dictionary = {}
 
 
-## A body that names a `spec` row, which is all `_is_hunter_grab()` reads of an
+## A body that names a `spec` row, which is all `_takes_a_hero()` reads of an
 ## attacker.
 ##
 ## THE ROW IS THE REAL ONE, pulled out of `SPECIES` by name rather than written out
-## here: the whole point of keying on `behavior` is that the table decides, so a
-## check that typed `{"behavior": "hunt"}` into a literal would still pass on the
-## day the arm was renamed and capture had silently stopped firing.
+## here: the whole point of keying on a row key is that the table decides, so a
+## check that typed `{"captures_hero": true}` into a literal would still pass on the
+## day the key was renamed and capture had silently stopped firing.
 class AttackerStub extends Node:
 	var spec: Dictionary = {}
 
@@ -323,15 +326,51 @@ func _check_the_arming_gate() -> void:
 
 func _check_only_a_hunter_takes_a_hero() -> void:
 	"""
-	Post-beat, every contact that is NOT a retrieval unit costs the predator
-	arithmetic and nothing more.
+	Post-beat, WHO TAKES A HERO IS A ROW KEY — `captures_hero` — and nothing else.
 
-	Three shapes, because they fail differently: an ordinary predator row (the
-	crocodile), a body with no `spec` property at all (a boss projectile, the
-	tower's rotor bar), and the plain no-argument call every caller in the codebase
-	makes today.
+	BOTH SIDES OF THE KEY, because either alone is satisfied by a build that has
+	stopped reading it. The POSITIVE side is the whole of bead godot-test1-3iy.19:
+	both GD-SURVEY rows arrest, and they are the field's retrieval unit (on the
+	`hunt` arm) and the HQ's sentry (on `solo`, leashed to its storey), so a
+	predicate that had drifted back onto `behavior` passes for the first and fails
+	for the second. The NEGATIVE side is every other shape of contact, and the
+	three below fail differently: an ordinary predator row (the crocodile), a body
+	with no `spec` property at all (a boss projectile, the tower's rotor bar), and
+	the plain no-argument call most callers in the codebase make.
+
+	The rows are ENUMERATED FROM THE TABLE, not listed here, so the day a third
+	machine opts in it is measured without anybody editing this file — and an
+	animal that grew the key by accident fails on the negative half.
 	"""
 	_beat_done()
+
+	# ---- POSITIVE: every row the table says arrests, really does ----------------
+	var table: Dictionary = load(CROC_SCRIPT).get_script_constant_map().get("SPECIES", {})
+	var arresting: Array[String] = []
+	for name_v: Variant in table:
+		if bool((table[name_v] as Dictionary).get("captures_hero", false)):
+			arresting.append(String(name_v))
+	if not arresting.has(GUARD_SPECIES):
+		_fail("SPECIES['%s'] does not carry `captures_hero` — a catch inside the HQ"
+			% GUARD_SPECIES + " must imprison the hero like a field grab (owner"
+			+ " ruling 2026-09-01)")
+	if arresting.size() < 2:
+		_fail("only %d row carries `captures_hero` — with one row this check cannot"
+			% arresting.size() + " tell the key apart from a `behavior` test")
+	for species: String in arresting:
+		var taker := await _make_player()
+		var hero: String = taker.hero_name()
+		taker.hit_by_crocodile(_attacker_row(species))
+		if not taker.is_hero_captive(hero):
+			_fail("a '%s' grab left %s free, though its row declares `captures_hero`"
+				% [species, hero] + " — the predicate is reading something other than"
+				+ " the key (the `behavior` arm, most likely)")
+		if taker.hero_name() == hero:
+			_fail("a '%s' grab did not auto-switch off the captured hero %s"
+				% [species, hero])
+		_clear(taker)
+
+	# ---- NEGATIVE: and nothing else does ---------------------------------------
 	for label: String in ["crocodile", "no spec", "no attacker"]:
 		var player := await _make_player()
 		var coins_before: int = player.coins_collected
@@ -345,7 +384,7 @@ func _check_only_a_hunter_takes_a_hero() -> void:
 			_:
 				player.hit_by_crocodile()
 		if player.captive_heroes.size() != 0:
-			_fail(("a '%s' contact took %s — only a predator on the hunt arm takes a hero")
+			_fail(("a '%s' contact took %s — only a row carrying `captures_hero` takes a hero")
 				% [label, str(player.captive_heroes.keys())])
 		if player.coins_collected != coins_before:
 			_fail("a '%s' contact moved the coin count — only a body carrying a"
@@ -503,27 +542,35 @@ func _check_the_last_free_hero_ends_the_run() -> void:
 	about the bank can be what stopped play; and the negative control — three of
 	four heroes held — must leave the run alone entirely, or "the clause fired"
 	would only mean "something happened".
+
+	DRIVEN ON BOTH ARRESTING ROWS. Since bead godot-test1-3iy.19 a tower guard
+	takes the last free hero too, and the ruling's own note is that this is now
+	REACHABLE INSIDE THE BUILDING — which is the intent, not a hole: an arrest can
+	never end a run, it opens the break-out, and the break-out is played in the
+	cell block the guard was standing in.
 	"""
 	_beat_done()
-	var player := await _make_player()
-	var last_one: String = player.hero_name()
-	for hero: String in TowerGraph.HEROES:
-		if hero != last_one:
-			player.captive_heroes[hero] = true
-	# Coins the setback cannot exhaust: the only reason field play may stop here is
-	# the empty roster.
-	player.coins_collected = 1000
-	player.own_coins = 1000
-	player.hit_by_crocodile(_hunter())
-	player.is_caught = false
-	player.call("_on_caught_finished")
-	if player.coins_collected <= 0:
-		_fail("the probe's bank was emptied by the setback, so a coin clause could be"
-			+ " what stopped play — this check would prove nothing")
-	if not player.in_custody_protocol():
-		_fail("the last free hero was captured with %d coins in hand and field play went on"
-			% player.coins_collected)
-	_clear(player)
+	var player: Node = null
+	for species: String in ["hunter_robot", GUARD_SPECIES]:
+		player = await _make_player()
+		var last_one: String = player.hero_name()
+		for hero: String in TowerGraph.HEROES:
+			if hero != last_one:
+				player.captive_heroes[hero] = true
+		# Coins the setback cannot exhaust: the only reason field play may stop here is
+		# the empty roster.
+		player.coins_collected = 1000
+		player.own_coins = 1000
+		player.hit_by_crocodile(_attacker_row(species))
+		player.is_caught = false
+		player.call("_on_caught_finished")
+		if player.coins_collected <= 0:
+			_fail("the probe's bank was emptied by the setback, so a coin clause could be"
+				+ " what stopped play — this check would prove nothing")
+		if not player.in_custody_protocol():
+			_fail("a '%s' took the last free hero with %d coins in hand and field play"
+				% [species, player.coins_collected] + " went on")
+		_clear(player)
 
 	# Negative control: one hero left free, and the run goes on.
 	player = await _make_player()
@@ -778,7 +825,7 @@ func _check_the_ai_says_who_bit() -> void:
 	pass with perfect indifference to whether anything in the game ever does. It
 	shipped that way: `_on_player_collision` in piglet_crocodile_ai.gd called
 	`player.hit_by_crocodile()` with no argument at both bite sites, so `attacker`
-	was null, `_is_hunter_grab` answered false, and systemic capture was
+	was null, `_takes_a_hero` answered false, and systemic capture was
 	unreachable code in a build whose nine checks were green.
 
 	That is the exact shape of failure this file exists for — silent, invisible in
@@ -821,13 +868,14 @@ func _check_the_ai_says_who_bit() -> void:
 		_clear(player)
 		await process_frame
 
-	# ---- AND THE SAME QUESTION FOR THE THIRD STAKE -------------------------
+	# ---- AND THE SAME QUESTION FOR THE BUILDING'S OWN SENTRY ----------------
 	# Check 11 hands `hit_by_crocodile` a row stub, so it is indifferent to whether
 	# the thing standing in the tower ever reaches that line — the exact
 	# indifference that let systemic capture ship unreachable. So: a REAL guard from
-	# the shipped scene, its own `_on_player_collision`, and the coins have to move.
-	# A guard is not on the hunt arm, so this is also the negative control for
-	# capture that a live body can give and a stub cannot.
+	# the shipped scene, its own `_on_player_collision`, and BOTH halves of its
+	# stake have to land — the coins and, since bead godot-test1-3iy.19, the hero.
+	# A guard is on the `solo` arm, so this is also the one place a LIVE body proves
+	# the arrest is keyed on `captures_hero` and not on how the thing steers.
 	#
 	# NO TOWER IN THE TREE, DELIBERATELY, and it was a real green-on-my-machine /
 	# red-on-CI bug: building one stands three MORE live guards up beside the probe,
@@ -870,9 +918,11 @@ func _check_the_ai_says_who_bit() -> void:
 		_fail("a LIVE guard's collision took no coins — _on_player_collision is not"
 				+ " telling hit_by_crocodile who bit, so the whole setback is"
 				+ " unreachable in the game even though check 11 passes")
-	if mark.captive_heroes.size() > 0:
-		_fail("a LIVE guard's collision took %s — a guard is not a retrieval unit"
-			% str(mark.captive_heroes.keys()))
+	if mark.captive_heroes.size() != 1:
+		_fail("a LIVE guard's collision imprisoned %s — with capture armed, a catch"
+			% str(mark.captive_heroes.keys()) + " inside the HQ takes exactly the"
+			+ " hero who was walking (owner ruling 2026-09-01), and this is the only"
+			+ " block that drives it through the shipped collision handler")
 	sentry.queue_free()
 	_clear(mark)
 	await process_frame
@@ -894,25 +944,33 @@ const CONTROL_SPECIES: String = "crocodile"
 
 func _check_a_guard_takes_coins_and_ground() -> void:
 	"""
-	The tower's own stake, and the ruling it enforces: the building may NEVER end a
-	run (owner, 2026-08-27).
+	The tower's own stake, ON BOTH SIDES OF THE ARMING GATE — which is what makes
+	this one check instead of two, because the guard's two behaviours are the same
+	contact told a different thing about the world.
 
-	WHAT MAKES A GUARD DIFFERENT IS THE GROUND, AND SINCE BEAD godot-test1-0bc IT IS
-	THE ONLY THING. Hearts are gone and every predator in the table bills coins now,
-	so "he took coins instead of a life" no longer names a difference.
+	PRE-BEAT (the first half) IS TODAY'S GUARD, BYTE FOR BYTE: coins plus the
+	knockback to the last checkpoint, and no hero. That is not legacy left standing
+	— it is required (bead godot-test1-3iy.19). The authored Primm rescue happens
+	INSIDE this building, so the first guards a player ever meets are met before the
+	scene that teaches capture; a tutorial visit that stripped the roster would be
+	the mechanic firing before its own lesson.
 
-	AND THE GROUND BELONGS TO THE BUILDING, NOT TO HIS ROW — which is worth saying
-	out loud, because it is easy to read `coin_setback` as the thing that buys the
-	knockback and it is not. `_pay_coin_setback()` asks the `tower_interior` group
-	for a `setback_point()` and takes it if one answers, whoever bit you: the rotor
-	bar, the press, a crocodile that followed you through the doorway. In the FIELD
-	nothing answers and nothing relocates. So the tower is a checkpointed level and
-	the field is not, with no branch anywhere deciding it — and the two controls
-	below measure exactly that pair, an animal in the field that is left standing
-	where it fell, and the same animal INSIDE the building that is knocked back to
-	the plate like everybody else.
+	POST-BEAT (the second half) IS THE 2026-09-01 RULING: the same grab imprisons
+	the hero exactly as a field hunter's does, and the hero who steps in RESUMES
+	WHERE THE PARTY FELL — no knockback, because the survivors "continue to play
+	from the same place after cooldown". The coin bill is not waived by the arrest:
+	one arithmetic everywhere.
 
-	FOUR THINGS ARE MEASURED ON THE GUARD AND ALL FOUR ARE SEPARATE FAILURES:
+	THE GROUND IS STILL THE BUILDING'S AND NOT THE ROW'S. `_pay_coin_setback()`
+	asks the `tower_interior` group for a `setback_point()` and takes it if one
+	answers, whoever bit you — the rotor bar, the press, a crocodile that followed
+	you through the doorway — and the arrest latch is the ONE thing that waives it.
+	In the FIELD nothing answers and nothing relocates. The controls below measure
+	exactly that: an animal in the field left standing where it fell, and the same
+	animal INSIDE the building knocked back to the plate like everybody else.
+
+	FOUR THINGS ARE MEASURED ON THE PRE-BEAT GUARD AND ALL FOUR ARE SEPARATE
+	FAILURES:
 
 	  * the coins: exactly `floor(own_coins x coin_setback)`, off BOTH the displayed
 	    figure and this peer's own contribution, read from the ROW rather than from
@@ -920,8 +978,9 @@ func _check_a_guard_takes_coins_and_ground() -> void:
 	  * the run: no game over, which is the ruling itself. It is a weaker claim than
 	    it once was (nothing ends a run but the empty roster now) and it is kept
 	    because it is free and it is the sentence the owner wrote;
-	  * the hero: untaken, WITH CAPTURE ARMED, which is the "guards never capture"
-	    half of the ruling;
+	  * the hero: untaken, WITH THE BEAT UNPLAYED, which is the arming gate seen
+	    from inside the building — the one place it decides anything, since the
+	    beat itself is a room in here;
 	  * the ground: the body is standing on the last checkpoint it lit — and on the
 	    doorway instead when it has lit none, which is the other branch of
 	    `setback_point()` and would otherwise never be executed by anything.
@@ -930,7 +989,11 @@ func _check_a_guard_takes_coins_and_ground() -> void:
 	assertions is also true of a build where `hit_by_crocodile` stopped working
 	altogether.
 	"""
-	_beat_done()
+	# THE BEAT IS UNPLAYED for the first half, and this is the only check in the
+	# file that has to un-arm capture after arming it — every check above leaves the
+	# id in the store. The second half re-arms before the controls, so what runs
+	# after this function sees exactly the world it always did.
+	_fresh_store()
 	var species: Dictionary = load(CROC_SCRIPT).get_script_constant_map().get("SPECIES", {})
 	var row: Dictionary = species.get(GUARD_SPECIES, {})
 	var fraction: float = float(row.get("coin_setback", 0.0))
@@ -973,26 +1036,93 @@ func _check_a_guard_takes_coins_and_ground() -> void:
 			_fail("a guard's hit ended the run — the tower is not allowed to game-over"
 					+ " the player mid-rescue")
 		if player.captive_heroes.has(hero):
-			_fail("a guard took %s with capture armed — guards never capture" % hero)
+			_fail("a PRE-BEAT guard took %s — the authored Primm rescue is a room in" % hero
+					+ " this building, so the guards met on the way to it must charge"
+					+ " the ordinary tax and nothing more; capture arms at the beat")
 		if player.coins_collected != SETBACK_PROBE_COINS - expected_loss:
-			_fail("a guard's setback left %d of %d displayed coins, expected %d"
+			_fail("a pre-beat guard's setback left %d of %d displayed coins, expected %d"
 				% [player.coins_collected, SETBACK_PROBE_COINS,
 					SETBACK_PROBE_COINS - expected_loss])
 		if player.own_coins != SETBACK_PROBE_COINS - expected_loss:
-			_fail("a guard's setback left %d of %d own_coins, expected %d — in a room"
+			_fail("a pre-beat guard's setback left %d of %d own_coins, expected %d — in a room"
 				% [player.own_coins, SETBACK_PROBE_COINS,
 					SETBACK_PROBE_COINS - expected_loss]
 				+ " that is this peer's contribution to the shared bank")
 		if (player as Node3D).global_position.distance_to(want_spot) > SETBACK_EPS:
-			_fail("a guard's setback left the player at %s, not on the %s at %s"
+			_fail("a pre-beat guard's setback left the player at %s, not on the %s at %s"
 				% [str((player as Node3D).global_position),
 					("checkpoint" if lit else "doorway"), str(want_spot)])
 		if not player.is_respawning:
-			_fail("a guard's setback did not open a grace window — the guard that just"
+			_fail("a pre-beat guard's setback did not open a grace window — the guard that just"
 					+ " hit you gets a free second bite")
 		_clear(player)
 		shell.queue_free()
 		await process_frame
+
+	# ---- POST-BEAT: THE ARREST, AND THE GROUND THAT DOES NOT MOVE -------------
+	#
+	# The owner ruling of 2026-09-01 in one contact: the hero goes to prison exactly
+	# as a field grab sends them, the coins are billed exactly as the row asks, and
+	# the hero who steps in is standing where the party fell — "if other characters
+	# left not caught they continue to play from the same place after cooldown".
+	#
+	# THE CHECKPOINT IS DELIBERATELY LIT AND THE BODY IS DELIBERATELY NOWHERE NEAR
+	# IT. Without both, "no knockback" is unfalsifiable: an unlit plate or a player
+	# already standing on the plate passes a build that relocates on every hit. The
+	# stand is the cell block's, which is inside the walls (so `inside_walls()` says
+	# yes and the relocation is genuinely one `if` away) and ten storeys above the
+	# checkpoint the arrest must NOT drag them to.
+	_beat_done()
+	var arrest_shell := await _make_tower()
+	var arrest_interior := arrest_shell.get_node_or_null("TowerInterior") as TowerInterior
+	arrest_shell.call("mark_opened", TowerInterior.GATE_CHECKPOINT)
+	var plate_far: Vector3 = arrest_interior.global_position + TowerInterior.checkpoint_stand()
+	var arrested := await _make_player()
+	arrested.coins_collected = SETBACK_PROBE_COINS
+	arrested.own_coins = SETBACK_PROBE_COINS
+	var stood: Vector3 = arrest_interior.global_position + TowerInterior.custody_stand()
+	(arrested as Node3D).global_position = stood
+	if stood.distance_to(plate_far) <= SETBACK_EPS:
+		_fail("the arrest probe is standing on the checkpoint plate — a knockback"
+				+ " would move it nowhere and the whole block would be vacuous")
+	if not TowerInterior.inside_walls(stood - arrest_interior.global_position):
+		_fail("the arrest probe is standing outside the walls, where nothing"
+				+ " relocates anybody — the knockback this block asserts is refused"
+				+ " would never have fired")
+	var arrested_hero: String = arrested.hero_name()
+	arrested.hit_by_crocodile(_attacker_row(GUARD_SPECIES))
+	arrested.is_caught = false
+	arrested.call("_on_caught_finished")
+	if not arrested.is_hero_captive(arrested_hero):
+		_fail("a post-beat guard left %s free — a catch inside the HQ follows the"
+			% arrested_hero + " same procedure as a catch outside it (owner ruling"
+			+ " 2026-09-01), so the hero goes to a cell")
+	if arrested.hero_name() == arrested_hero:
+		_fail("an arrest did not auto-switch off %s — the party plays on, and it"
+			% arrested_hero + " cannot play on as the hero in the cell")
+	if arrested.coins_collected != SETBACK_PROBE_COINS - expected_loss:
+		_fail("an arrest billed %d coins, not the %d the guard's row asks — the"
+			% [SETBACK_PROBE_COINS - arrested.coins_collected, expected_loss]
+			+ " hero is the stake ON TOP of the bill, never instead of it")
+	if arrested.own_coins != SETBACK_PROBE_COINS - expected_loss:
+		_fail("an arrest left %d own_coins of %d, expected %d"
+			% [arrested.own_coins, SETBACK_PROBE_COINS, SETBACK_PROBE_COINS - expected_loss])
+	if (arrested as Node3D).global_position.distance_to(stood) > SETBACK_EPS:
+		_fail("an arrest threw the surviving hero from %s to %s — the checkpoint"
+			% [str(stood), str((arrested as Node3D).global_position)]
+			+ " knockback is refused for a contact that captured, so the party"
+			+ " resumes from the same place (and on the storey the cells are on)")
+	if not arrested.is_respawning:
+		_fail("an arrest opened no grace window — the guard that just took a hero"
+				+ " gets the next one for free")
+	if arrested.in_custody_protocol() or arrested.is_game_over:
+		_fail("an arrest with three heroes still free ended field play")
+	if arrested.get("caught_captured"):
+		_fail("the arrest latch survived the contact it was set for — the next hit"
+				+ " taken indoors would have its knockback waived for free")
+	_clear(arrested)
+	arrest_shell.queue_free()
+	await process_frame
 
 	# ---- THE CONTROLS: an ordinary animal, outside and then inside ------------
 	#
@@ -2996,6 +3126,7 @@ func _make_player() -> Node:
 	player.is_caught = false
 	player.caught_timer = 0.0
 	player.caught_setback = 0.0
+	player.caught_captured = false
 	player.is_respawning = false
 	player.respawn_timer = 0.0
 	player.respawn_blink_timer = 0.0
@@ -3057,8 +3188,8 @@ func _attacker_row(species: String) -> Node:
 	A stub carrying `species`'s REAL row out of `PigletCrocodile.SPECIES`.
 
 	Reading the table rather than typing a literal is the whole point: capture is
-	keyed on the row's `behavior`, so if the arm is ever renamed this check moves
-	with it instead of quietly passing on a string nothing uses any more.
+	keyed on the row's `captures_hero`, so if that key is ever renamed this check
+	moves with it instead of quietly passing on a flag nothing reads any more.
 	"""
 	if _stubs.has(species):
 		return _stubs[species]
