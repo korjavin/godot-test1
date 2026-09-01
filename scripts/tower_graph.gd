@@ -141,7 +141,11 @@ const ENTRY_LIFT_MAZE: String = "lift_stop_maze"
 ## `scars`, so the audit always walks the clean building first.
 const SCAR_NONE: String = "none"
 
-## The full-custody protocol's scar: the courtyard stair comes down.
+## The cell block's wide doorway comes down. DORMANT SINCE 2026-09-01 (owner veto,
+## bead `godot-test1-ueg`): nothing inflicts this any more — the break-out scene
+## that did is gone. The row stays because the id is PERSISTED in the monotone
+## opened set of every profile that survived that scene, and retiring a persisted
+## id is a save migration the owner did not order.
 const SCAR_CUSTODY: String = "custody_stair_collapse"
 
 ## The four playable heroes, in `PlayerController.CHARACTERS` order. Restated here
@@ -940,10 +944,13 @@ const TOWER_GRAPH: Dictionary = {
 	],
 
 	# ------------------------------------------------------------------------
-	# SCARS — the ONE sanctioned exception to law 3 (owner-ruled), phase 11's
-	# full-custody protocol. A scar may CLOSE passages. Enumerated and few, and the
-	# whole property re-runs inside each one; a scar that severs the last singleton
-	# spine fails the build, not the player.
+	# SCARS — the ONE sanctioned exception to law 3 (owner-ruled). A scar may CLOSE
+	# passages. Enumerated and few, and the whole property re-runs inside each one;
+	# a scar that severs the last singleton spine fails the build, not the player.
+	#
+	# NO INFLICTOR SHIPS TODAY (owner veto 2026-09-01, bead `godot-test1-ueg` — the
+	# break-out scene that took one is gone). The rows are kept so a world that
+	# already took one still draws it; do NOT wire a new inflictor without a ruling.
 	# ------------------------------------------------------------------------
 	"scars": [
 		{
@@ -952,10 +959,14 @@ const TOWER_GRAPH: Dictionary = {
 		},
 		{
 			"id": SCAR_CUSTODY, "removes": ["block_main_door"],
-			"note": "The protocol brings the cell block's wide doorway down. "
-				+ "`block_crawl` is why that is survivable — and why it exists. The "
-				+ "scar ID IS PERSISTED and did not change when the block moved to "
-				+ "storey 10; only the edge it names did.",
+			"note": "The cell block's wide doorway comes down. `block_crawl` is why "
+				+ "that is survivable — and why it exists. DORMANT: the full-custody "
+				+ "break-out that inflicted it was vetoed by the owner on 2026-09-01 "
+				+ "(bead godot-test1-ueg, verbatim: 'i still see this recall in 33 "
+				+ "after all caught, why? I never asked for this'). Kept because the "
+				+ "scar ID IS PERSISTED in real profiles' opened sets — deleting it "
+				+ "un-draws rubble a world earned, which is a save migration. Do not "
+				+ "wire a new inflictor without an owner ruling.",
 		},
 	],
 
@@ -1130,10 +1141,11 @@ static func next_scar(applied: Array) -> String:
 	@return: one id out of `scar_ids()`, or "" — never a computed string.
 
 	PURE, and it takes the applied set as an argument rather than reading a store:
-	this file is data with no dependency on anything that saves. The protocol's
-	"exactly one enumerated scar" is this call plus the write, and a second
-	full-custody outcome in a world that has already collapsed its stair takes no
-	new scar rather than inventing one — the list is the budget.
+	this file is data with no dependency on anything that saves.
+
+	# ponytail: NO CALLER TODAY. The break-out scene that inflicted a scar was
+	# vetoed (2026-09-01, bead `godot-test1-ueg`); this is kept beside the rows it
+	# picks from so a future, owner-ruled inflictor is one call and not a design.
 	"""
 	for id: String in scar_ids():
 		if not applied.has(id):

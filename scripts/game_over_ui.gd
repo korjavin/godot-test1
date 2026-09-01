@@ -43,8 +43,8 @@ func _ready() -> void:
 
 	_build_ui()
 
-	# Hidden until a run actually ends: the full-custody protocol's failure, or
-	# `_trigger_game_over()`. Nothing else raises this screen.
+	# Hidden until a run actually ends. `_trigger_game_over()` is the one thing that
+	# raises this screen, and the empty free-hero set is the one thing that calls it.
 	visible = false
 
 

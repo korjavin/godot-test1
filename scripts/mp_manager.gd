@@ -240,8 +240,7 @@ const MAX_FLEE_DURATION: float = 60.0
 ##         beat first, which is seconds; the SET is bounded independently by the
 ##         one-captive-per-peer rule in `_receive_captive`, so this budget is only
 ##         about the cost of the packet, not about the damage a flood could do.
-##   room  is the MASTER'S PERIODIC TRUTH about the captive set and the break-out
-##         clock. Master-only and applied wholesale, so it is the `dead` class of
+##   room  is the MASTER'S PERIODIC TRUTH about the captive set. Master-only and applied wholesale, so it is the `dead` class of
 ##         verb: budgeted a few times its own ROOM_SYNC_HZ so a burst after a hitch
 ##         still drains while a flood cannot.
 ##   pad   is one press of an HQ lure plate (bead godot-test1-3iy.22). Budgeted
@@ -264,27 +263,28 @@ const VERB_BUDGET_PER_SEC: Dictionary = {
 ## plate is a 1.94 m cell — and still three cells wide, against a 78 m storey.
 const MAX_PAD_PRESS_DISTANCE: float = 6.0
 
-## How often the master publishes the room's captive set and recall clock, in hertz.
+## How often the master publishes the room's captive set, in hertz.
 ##
-## SLOW ON PURPOSE. It is a repair channel and a countdown, not motion: the live
+## SLOW ON PURPOSE. It is a repair channel, not motion: the live
 ## `cap` verb carries every change the instant it happens, and this exists for the
-## windows that verb cannot reach (a peer whose mesh was still negotiating) plus the
-## one number two peers must never disagree about. Twice a second is well inside the
-## 35 s recall and costs a handful of bytes.
+## windows that verb cannot reach (a peer whose mesh was still negotiating). Twice a
+## second costs a handful of bytes.
 const ROOM_SYNC_HZ: float = 2.0
 
-## Trust-boundary bound on a published recall clock. `player_controller`'s own
-## CUSTODY_RECALL_SECONDS is 35; this is generous because it exists to reject
-## hostile garbage before a cast, not to police the scene's length.
+## Trust-boundary bound on the `cd` field. RETIRED AS A VALUE, KEPT AS A SHAPE
+## (owner veto 2026-09-01, bead `godot-test1-ueg`): this build always publishes 0.0
+## and reads nothing off it, but `decode_room()` DROPS a packet missing `cd`, and
+## `build_version` refuses to reload a peer that is in a room — so a mixed room is a
+## state that really happens and an older master's real clock must still decode, or
+## the room's cells stop converging over a field nobody uses.
 const MAX_CUSTODY_SECONDS: float = 3600.0
 
-## Highest break-out verdict THIS build understands: 0 running, 1 survived, 2
-## failed. Not a trust bound — `decode_room()` folds anything above it DOWN TO THIS
-## VALUE (FAILED) rather than dropping the packet, because the `room` packet is also
-## the captive-set repair channel and an older master's retired OVERTAKEN (`co: 3`)
-## must not cost a mixed room its cells. It never folds to 0, "running": that is the
-## one verdict a non-master can never resolve, so it seals the peer in the block for
-## the room's life. See the fold there for why the fold and not a bound.
+## Highest `co` value THIS build understands. RETIRED AS A VALUE, KEPT AS A SHAPE
+## alongside `MAX_CUSTODY_SECONDS` (owner veto 2026-09-01, bead `godot-test1-ueg`):
+## nothing reads the field, but `decode_room()` folds anything above it DOWN rather
+## than dropping the packet, because the `room` packet is also the captive-set
+## repair channel and an older master's larger verdict must not cost a mixed room
+## its cells.
 const CUSTODY_VERDICT_MAX: int = 2
 
 ## Longest hero name a `cap` packet or a join snapshot may carry. The names are
@@ -1142,10 +1142,8 @@ func _on_lobby_peer_joined(id: String, peer_name: String) -> void:
 	# THE NEW MEMBER HAS HEARD NONE OF IT. The relay digest is global — one string
 	# for "what the room was last told" — so without this, a peer that joins after
 	# the last change is skipped by every subsequent unchanged publish and never
-	# learns the current set or verdict over the relay at all. Its snapshot carries
-	# the set, but not a running scene's clock or an already-decided verdict, so it
-	# could sit in a break-out nobody else is in. One extra relay per join, which is
-	# nowhere near the lobby's stall window.
+	# learns the current set over the relay at all. One extra relay per join, which
+	# is nowhere near the lobby's stall window.
 	_room_relay_digest = ""
 	# Append only if this id is not already listed. `_members.size()` is
 	# load-bearing — `_tick_stall_watch` uses it as the "is there anybody to elect"
@@ -1576,12 +1574,26 @@ func _relay_to_negotiating(payload: Dictionary) -> void:
 
 func _send_room_state() -> void:
 	"""
-	MASTER ONLY: publish the room's captive set and the break-out clock.
+	MASTER ONLY: publish the room's captive set.
 
-	ONE VERB FOR TWO FACTS, because they are the same kind of fact — the value the
-	room must not disagree about — and they are read together (the scene's outcome
-	is "is anybody free yet" plus "is the clock spent"). Splitting them would be two
-	channels that can arrive out of step with each other.
+	`cd` / `co` ARE PUBLISHED AS ZEROS AND NOTHING READS THEM (owner veto
+	2026-09-01, bead `godot-test1-ueg`). They carried the break-out's clock and
+	verdict; the scene is gone and the ending is now decided per peer off the
+	mirrored captive set below, which needs no authority because every peer reaches
+	the same empty free set. The FIELDS stay on the wire because `decode_room()`
+	drops a packet missing either and mixed-build rooms are real — see
+	`MAX_CUSTODY_SECONDS`.
+
+	ponytail: `co: 0` TELLS A PRE-VETO PEER "the master has no scene", so once its
+	own roster empties it waits out `CUSTODY_MASTER_SILENCE_MSEC` and runs its
+	legacy 35 s break-out alone — the old build behaving like the old build, which
+	is the honest degrade and the ceiling here (codex review 2026-09-01). Publishing
+	a standing `co: 2` to end it instead is WORSE, and measurably so: that peer's
+	scene opens in the same window the master's verdict latches, so its
+	`_custody_stale_verdict` refuses the first one, no later `co: 0` ever arrives to
+	clear the refusal, and `verdict != 0` keeps `_custody_master_idle` false — it can
+	neither be ended nor self-authorize, and sits sealed in the block for the room's
+	life. The real upgrade path is a protocol version, not a value.
 
 	WHAT IT REPAIRS, and why the live `cap` verb is not enough on its own: a capture
 	that lands in the gap between the master snapshotting a joiner and the CAPTOR
@@ -1601,28 +1613,17 @@ func _send_room_state() -> void:
 	never be deposed. `scripts/mp_e2e.sh`'s stall phase is what caught that, and it
 	is the reason this leg is not simply "send it every time".
 
-	THE CLOCK IS DELIBERATELY OUTSIDE THE COMPARISON. It changes every tick, so
-	including it would defeat the whole rule; and a peer whose mesh never came up
-	does not need a smooth countdown, it needs the SET and the VERDICT — the two
-	facts that decide the outcome — which is exactly what the change test carries.
-	Its displayed clock drifts on its own until the verdict lands, and the verdict
-	IS a change.
+	THE ZEROED FIELDS ARE DELIBERATELY OUTSIDE THE COMPARISON, which is now free:
+	the SET is the only fact this verb carries, and the set is exactly what the
+	change test watches.
 	"""
 	if _state != State.IN_ROOM or _master != _you:
 		return
-	var seconds: float = 0.0
-	var verdict: int = 0
-	var player: Node = get_tree().get_first_node_in_group("player")
-	if player != null and player.has_method("custody_wire_state"):
-		var wire: Array = player.call("custody_wire_state") as Array
-		if wire.size() == 2:
-			seconds = float(wire[0])
-			verdict = int(wire[1])
 	var payload: Dictionary = {
-		"t": "room", "cap": captive_heroes(), "cd": seconds, "co": verdict,
+		"t": "room", "cap": captive_heroes(), "cd": 0.0, "co": 0,
 	}
 	_broadcast_reliable(var_to_bytes(payload))
-	var digest: String = "%s|%d" % [str(payload["cap"]), verdict]
+	var digest: String = str(payload["cap"])
 	if digest == _room_relay_digest:
 		return
 	_room_relay_digest = digest
@@ -1641,11 +1642,13 @@ static func decode_room(packet: Dictionary) -> Dictionary:
 	    like the four parsers above it.
 
 	`cap` is bounded and every entry length-gated here, then whitelisted against
-	`_pool` in `_receive_room`; `cd` is the recall clock, which drives a COUNTDOWN
-	the player watches, so it is finiteness-checked before any cast (`int(NAN)` is
-	undefined and on wasm the trunc can trap the module); `co` is the verdict (0 running,
-	1 survived, 2 failed) and is an enum, so anything outside it is a peer this build
-	cannot read.
+	`_pool` in `_receive_room`. `cd` and `co` ARE RETIRED VALUES AND A LIVE SHAPE
+	(owner veto 2026-09-01, bead `godot-test1-ueg`): this build publishes zeros and
+	reads neither, but an older master publishes a real recall clock and verdict and
+	the packet is also the captive-set repair channel, so both are still validated
+	exactly as before — finiteness before any cast (`int(NAN)` is undefined and on
+	wasm the trunc can trap the module) and the enum folded rather than dropped —
+	and a malformed one still costs the whole packet.
 	"""
 	if typeof(packet.get("cap", null)) != TYPE_ARRAY:
 		return {}
@@ -1680,16 +1683,9 @@ static func decode_room(packet: Dictionary) -> Dictionary:
 	# thing that closes the join gap `cap` cannot reach, so the room's cells would
 	# stop converging over a field we do not even use.
 	#
-	# IT FOLDS UP, TO FAILED, AND NEVER DOWN TO "RUNNING". A non-master cannot end
-	# its own scene — `_tick_custody()` returns at `_custody_authority()` above both
-	# outcome tests — so the master's verdict is its ONLY exit, and 0 is the one
-	# value that never resolves: a peer reading an old master's OVERTAKEN as
-	# "running" sits in the sealed block behind raised containment on a clock pinned
-	# at zero, with no ending reachable, for the room's whole life. Folding up costs
-	# the master no authority it did not already have (it can publish `co: 2` and
-	# archive this world outright, and `_receive_room()` is master-only), and it is
-	# what the only real producer MEANS: OVERTAKEN was the round ending with nobody
-	# freed, which is this build's FAILED.
+	# IT FOLDS UP AND NEVER DOWN, which is now a shape kept honest rather than a
+	# behaviour: nothing reads `co`, and the fold is what stops an unknown value
+	# costing the captive set it travels with.
 	var known: int = int(verdict)
 	if known > CUSTODY_VERDICT_MAX:
 		known = CUSTODY_VERDICT_MAX
@@ -1701,7 +1697,9 @@ func _receive_room(from_id: String, packet: Dictionary) -> void:
 	The master's periodic truth. MASTER ONLY — the same authority rule the seed,
 	`cnf`, `dead` and the croc sync all enforce, and for the same reason: this is
 	applied WHOLESALE, so honouring a stranger's copy would let any member rewrite
-	the room's cells and end its break-out.
+	the room's cells.
+
+	`cd` / `co` are decoded and then deliberately unused — see `decode_room()`.
 	"""
 	if from_id != _master:
 		return
@@ -1709,9 +1707,6 @@ func _receive_room(from_id: String, packet: Dictionary) -> void:
 	if msg.is_empty():
 		return
 	_adopt_room_captives(msg["cap"])
-	var player: Node = get_tree().get_first_node_in_group("player")
-	if player != null and player.has_method("apply_room_custody"):
-		player.call("apply_room_custody", float(msg["cd"]), int(msg["co"]))
 
 
 func _adopt_room_captives(names: Array) -> void:
@@ -3257,7 +3252,7 @@ func _process(delta: float) -> void:
 	# heartbeat on the relay — see the section comment on `_tick_heartbeat`.
 	_tick_heartbeat(delta)
 	_tick_stall_watch(delta)
-	# The room's captive set and recall clock, slower still — and ABOVE THE `_rtc`
+	# The room's captive set, slower still — and ABOVE THE `_rtc`
 	# GUARD, which is half the point of this publish: the LOBBY RELAY leg reaches peers whose
 	# mesh has not come up (and every peer of a `--lobby-only` master, whose mesh
 	# never will). Below the guard it would be silent in exactly the case it exists

@@ -9310,16 +9310,13 @@ func build_ring_now(around: Vector2i) -> void:
 	rebuilds the world around the group and then has `join_at()` ask the physics
 	space for a clear spot and sweep the crocodiles off it, and a question asked
 	of a world whose blocks and crocodiles have not been built yet gets the
-	answer "all clear" for every candidate. So that path, and the full-custody
-	protocol's march to the tower below, buy the ring's content up front and pay
-	the one-frame hitch they used to pay anyway.
+	answer "all clear" for every candidate. So that path buys the ring's content
+	up front and pays the one-frame hitch it used to pay anyway.
 
 	...AND THE TOWER WITH IT, on the same reasoning `new_run()` already applies:
 	`_tower_stream()` is otherwise reached only from the next chunk-boundary
-	crossing, one `_process` later, and BOTH callers here teleport a body to the
-	destination before that. For the joiner that is a probe run against a missing
-	building; for `player_controller._begin_custody_protocol()` it is the party
-	standing on the tenth storey of a shell that does not exist yet. The stream is
+	crossing, one `_process` later, and the caller here teleports a body to the
+	destination before that — a probe run against a missing building. The stream is
 	still range-gated and still one-shot, so a ring nowhere near the site pays a
 	single distance test.
 
