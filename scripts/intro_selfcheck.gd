@@ -334,6 +334,16 @@ func _check_generated_js() -> void:
 	if not IntroVideo._sweep_js().contains(sweep):
 		_fail("_sweep_js() does not select ROOT_CLASS — the const is no longer the " \
 			+ "single place the teardown handle lives")
+	# ...and the sweep has to take the WINDOW listeners with it. They are registered
+	# on `window`, not on the root, so detaching the element leaves them swallowing
+	# every key in the capture phase — the game would come back keyboard-dead, which
+	# is worse than the frozen frame the sweep is clearing.
+	if not js.contains("root.__ckOff = function()"):
+		_fail("_create_js() no longer hangs its listener-removal handle on the root " \
+			+ "— an orphan sweep cannot unregister the capture-phase key swallower")
+	if not IntroVideo._sweep_js().contains("__ckOff"):
+		_fail("_sweep_js() detaches an orphan without calling its `__ckOff` — the " \
+			+ "recovered game is left keyboard-dead for the rest of the session")
 	# Both of these route into `finish`, and finish is the only thing that ever
 	# flips the flag Godot polls. Lose either and a failed load hangs the menu.
 	for listener: String in ["'ended'", "'error'"]:

@@ -245,6 +245,13 @@ static func _sweep_js() -> String:
 	return """
 		var q = document.querySelectorAll('.%s');
 		for (var i = 0; i < q.length; i++) {
+			/* THE LISTENERS ARE ON `window`, NOT ON THE ROOT, so detaching the
+			   element cannot take them with it — and they swallow every key in the
+			   capture phase. An orphan swept without this leaves the game
+			   keyboard-dead for the rest of the session, which is a worse bug than
+			   the frozen frame this sweep exists to clear. `__ckOff` is the handle
+			   each root carries for exactly this. */
+			try { if (q[i].__ckOff) { q[i].__ckOff(); } } catch (e) {}
 			var vs = q[i].getElementsByTagName('video');
 			for (var j = 0; j < vs.length; j++) {
 				try { vs[j].pause(); vs[j].removeAttribute('src'); vs[j].load(); } catch (e) {}
@@ -463,6 +470,15 @@ static func _create_js(video_url: String = VIDEO_URL) -> String:
 					if (s.holdTimer) { clearTimeout(s.holdTimer); s.holdTimer = null; }
 					bar.style.transition = 'width .15s ease-out';
 					bar.style.width = '0';
+				};
+
+				/* The sweep's handle on this root's `window` listeners — see
+				   `_sweep_js()`. `finish()` still removes them directly; this is for
+				   the root that no longer has a reachable `s` to be finished
+				   through. */
+				root.__ckOff = function(){
+					window.removeEventListener('keydown', s.onKeyDown, true);
+					window.removeEventListener('keyup', s.onKeyUp, true);
 				};
 
 				v.addEventListener('ended', s.finish);
