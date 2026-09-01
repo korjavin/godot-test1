@@ -115,12 +115,12 @@ static func _get_shared_material() -> StandardMaterial3D:
 
 
 static func _add_box(st: SurfaceTool, center: Vector3, size: Vector3, col: Color) -> void:
-	## Adds a 6-sided box with normals and vertex color to a SurfaceTool.
+	## Adds a 6-sided box with outward normals and vertex color to a SurfaceTool.
 	var h := size * 0.5
 	var min_p := center - h
 	var max_p := center + h
 
-	# 1. Front (+Z)
+	# 1. Front (+Z, normal (0, 0, 1))
 	st.set_normal(Vector3(0, 0, 1))
 	st.set_color(col)
 	st.add_vertex(Vector3(min_p.x, min_p.y, max_p.z))
@@ -130,7 +130,7 @@ static func _add_box(st: SurfaceTool, center: Vector3, size: Vector3, col: Color
 	st.add_vertex(Vector3(max_p.x, max_p.y, max_p.z))
 	st.add_vertex(Vector3(min_p.x, max_p.y, max_p.z))
 
-	# 2. Back (-Z)
+	# 2. Back (-Z, normal (0, 0, -1))
 	st.set_normal(Vector3(0, 0, -1))
 	st.set_color(col)
 	st.add_vertex(Vector3(max_p.x, min_p.y, min_p.z))
@@ -138,9 +138,9 @@ static func _add_box(st: SurfaceTool, center: Vector3, size: Vector3, col: Color
 	st.add_vertex(Vector3(min_p.x, max_p.y, min_p.z))
 	st.add_vertex(Vector3(max_p.x, min_p.y, min_p.z))
 	st.add_vertex(Vector3(min_p.x, max_p.y, min_p.z))
-	st.add_vertex(Vector3(max_p.x, min_p.y, min_p.z))
+	st.add_vertex(Vector3(max_p.x, max_p.y, min_p.z))
 
-	# 3. Left (-X)
+	# 3. Left (-X, normal (-1, 0, 0))
 	st.set_normal(Vector3(-1, 0, 0))
 	st.set_color(col)
 	st.add_vertex(Vector3(min_p.x, min_p.y, min_p.z))
@@ -148,29 +148,29 @@ static func _add_box(st: SurfaceTool, center: Vector3, size: Vector3, col: Color
 	st.add_vertex(Vector3(min_p.x, max_p.y, max_p.z))
 	st.add_vertex(Vector3(min_p.x, min_p.y, min_p.z))
 	st.add_vertex(Vector3(min_p.x, max_p.y, max_p.z))
-	st.add_vertex(Vector3(min_p.x, min_p.y, max_p.z))
+	st.add_vertex(Vector3(min_p.x, max_p.y, min_p.z))
 
-	# 4. Right (+X)
+	# 4. Right (+X, normal (1, 0, 0))
 	st.set_normal(Vector3(1, 0, 0))
 	st.set_color(col)
-	st.add_vertex(Vector3(max_p.x, min_p.y, min_p.z))
 	st.add_vertex(Vector3(max_p.x, min_p.y, max_p.z))
-	st.add_vertex(Vector3(max_p.x, max_p.y, max_p.z))
 	st.add_vertex(Vector3(max_p.x, min_p.y, min_p.z))
-	st.add_vertex(Vector3(max_p.x, max_p.y, max_p.z))
-	st.add_vertex(Vector3(max_p.x, min_p.y, min_p.z))
-
-	# 5. Top (+Y)
-	st.set_normal(Vector3(0, 1, 0))
-	st.set_color(col)
-	st.add_vertex(Vector3(min_p.x, max_p.y, min_p.z))
+	st.add_vertex(Vector3(max_p.x, max_p.y, min_p.z))
+	st.add_vertex(Vector3(max_p.x, min_p.y, max_p.z))
 	st.add_vertex(Vector3(max_p.x, max_p.y, min_p.z))
 	st.add_vertex(Vector3(max_p.x, max_p.y, max_p.z))
-	st.add_vertex(Vector3(min_p.x, max_p.y, min_p.z))
-	st.add_vertex(Vector3(max_p.x, max_p.y, max_p.z))
-	st.add_vertex(Vector3(min_p.x, max_p.y, max_p.z))
 
-	# 6. Bottom (-Y)
+	# 5. Top (+Y, normal (0, 1, 0))
+	st.set_normal(Vector3(0, 1, 0))
+	st.set_color(col)
+	st.add_vertex(Vector3(min_p.x, max_p.y, max_p.z))
+	st.add_vertex(Vector3(max_p.x, max_p.y, max_p.z))
+	st.add_vertex(Vector3(max_p.x, max_p.y, min_p.z))
+	st.add_vertex(Vector3(min_p.x, max_p.y, max_p.z))
+	st.add_vertex(Vector3(max_p.x, max_p.y, min_p.z))
+	st.add_vertex(Vector3(min_p.x, max_p.y, min_p.z))
+
+	# 6. Bottom (-Y, normal (0, -1, 0))
 	st.set_normal(Vector3(0, -1, 0))
 	st.set_color(col)
 	st.add_vertex(Vector3(min_p.x, min_p.y, min_p.z))
@@ -404,14 +404,45 @@ func _is_near_budapest(player_pos: Vector3) -> bool:
 			and player_pos.z >= -1200.0 and player_pos.z <= 1200.0
 
 
+## Major solid landmark building footprints to exclude from crowd street paths.
+## Open plazas (Heroes' Square, Budapest Eye), pedestrian promenades (Váci utca),
+## and bridges (Chain/Elisabeth/Liberty/Margaret) are kept walkable.
+const SOLID_LANDMARK_EXCLUSIONS: Array = [
+	{"id": "parliament", "pos": Vector2(2760.0, -480.0), "radius": 140.0},
+	{"id": "basilica", "pos": Vector2(2920.0, -280.0), "radius": 52.0},
+	{"id": "market_hall", "pos": Vector2(2820.0, 620.0), "radius": 75.0},
+	{"id": "synagogue", "pos": Vector2(2960.0, 200.0), "radius": 45.0},
+	{"id": "national_museum", "pos": Vector2(2920.0, 440.0), "radius": 55.0},
+	{"id": "opera", "pos": Vector2(3000.0, -180.0), "radius": 45.0},
+	{"id": "vajdahunyad", "pos": Vector2(3680.0, -340.0), "radius": 85.0},
+	{"id": "szechenyi_bath", "pos": Vector2(3620.0, -760.0), "radius": 75.0},
+	{"id": "gellert_bath", "pos": Vector2(2420.0, 1000.0), "radius": 55.0},
+	{"id": "rudas_bath", "pos": Vector2(2370.0, 560.0), "radius": 45.0},
+]
+
+
+static func _is_inside_solid_landmark(x: float, z: float) -> bool:
+	for slot: Dictionary in SOLID_LANDMARK_EXCLUSIONS:
+		var spos: Vector2 = slot["pos"]
+		var r: float = slot["radius"]
+		var dx: float = x - spos.x
+		var dz: float = z - spos.y
+		if dx * dx + dz * dz < r * r:
+			return true
+	return false
+
+
 static func is_walkable(x: float, z: float) -> bool:
 	## Pure predicate: returns true if the coordinate is valid dry street ground.
-	## Must be inside Budapest, outside Danube water, and outside plateau massifs.
+	## Must be inside Budapest, outside Danube water, outside plateau massifs,
+	## and outside solid landmark buildings.
 	if not PLAN_SCRIPT.contains(x, z):
 		return false
 	if PLAN_SCRIPT.danube_wet(x, z):
 		return false
 	if PLAN_SCRIPT.plateau_top_at(x, z) > 0.0:
+		return false
+	if _is_inside_solid_landmark(x, z):
 		return false
 	return true
 

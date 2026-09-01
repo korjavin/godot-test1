@@ -175,6 +175,11 @@ func _verify_active_citizens(context: String) -> void:
 		if plan_script.plateau_top_at(pos.x, pos.z) > 0.0:
 			_failures.append("%s: citizen at (%f, %f) is on a plateau cliff" % [context, pos.x, pos.z])
 
+		# Must never enter solid landmark buildings
+		var mgr_script: GDScript = load("res://scripts/crowd_manager.gd")
+		if mgr_script._is_inside_solid_landmark(pos.x, pos.z):
+			_failures.append("%s: citizen at (%f, %f) is inside a solid landmark building" % [context, pos.x, pos.z])
+
 		# Speed must be positive
 		if citizen["speed"] <= 0.0:
 			_failures.append("%s: citizen has invalid speed %f" % [context, citizen["speed"]])
