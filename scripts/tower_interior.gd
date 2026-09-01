@@ -2111,6 +2111,12 @@ var _dossier_found: Dictionary = {}
 ## Seconds until the next "has a teammate taken one?" read — see `_tick_dossiers`.
 var _dossier_poll: float = 0.0
 
+## Lore lines the toast REFUSED (a pending landmark question owns the card — possible
+## in a room, where the quiz does not pause movement), waiting to be retried on
+## `_tick_dossiers`' clock. Without this the false return was dropped after
+## `_dossier_found` was already set, and a one-time line was gone for good.
+var _dossier_lore_queue: Array[String] = []
+
 ## The storey `_update_visibility` last drew the window around, -1 before the first
 ## frame. The rack is ONE node for the whole building, so it cannot hide with a
 ## storey container; this is what tells `_refresh_dossiers()` when to re-decide,
@@ -5212,13 +5218,21 @@ func _tick_dossiers(delta: float) -> void:
 	ponytail: a `"dossier"` group in `_absorb_collected` is the cheaper answer and
 	the upgrade path, for the day somebody is editing that file anyway.
 	"""
-	if _dossier_found.size() >= DOSSIERS.size():
+	if _dossier_lore_queue.is_empty() and _dossier_found.size() >= DOSSIERS.size():
 		return
 	_dossier_poll -= delta
 	if _dossier_poll > 0.0:
 		return
 	_dossier_poll = DOSSIER_POLL
-	_latch_dossiers()
+	# A refused lore line retries here, one per tick — the same clock paces two
+	# dossiers grabbed back to back, so neither card stamps out the other.
+	if not _dossier_lore_queue.is_empty():
+		var toast := get_tree().get_first_node_in_group("landmark_toast")
+		if toast != null and toast.has_method("announce") \
+				and bool(toast.call("announce", DOSSIER_TITLE, _dossier_lore_queue[0])):
+			_dossier_lore_queue.pop_front()
+	if _dossier_found.size() < DOSSIERS.size():
+		_latch_dossiers()
 
 
 func _on_dossier_enter(body: Node3D, index: int) -> void:
@@ -5270,10 +5284,17 @@ func _announce_dossier(lore: String) -> void:
 
 	Group-discovered and `has_method`-guarded like every other seam here, so an
 	interior built standalone simply says nothing.
+
+	A REFUSAL IS A QUEUE, NOT A DROP (codex post-merge review): `announce()` answers
+	false while a landmark question owns the card, and the folder is already hidden
+	by the time this runs — so the line waits in `_dossier_lore_queue` and
+	`_tick_dossiers` retries it. Only an explicit false queues; a missing toast is
+	the standalone interior, which stays silent by design.
 	"""
 	var toast := get_tree().get_first_node_in_group("landmark_toast")
 	if toast != null and toast.has_method("announce"):
-		toast.call("announce", DOSSIER_TITLE, lore)
+		if not bool(toast.call("announce", DOSSIER_TITLE, lore)):
+			_dossier_lore_queue.append(lore)
 
 
 func _add_area(area_name: String, pos: Vector3, size: Vector3,
