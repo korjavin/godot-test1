@@ -3428,7 +3428,7 @@ static func gate_stand(gate_id: String, steps: int) -> Vector3:
 
 static func checkpoint_stand() -> Vector3:
 	"""
-	Where a guard's setback drops a player who HAS lit the checkpoint.
+	Where a knockback drops a player who HAS lit the checkpoint.
 
 	Inside `CheckpointTrigger`'s volume and clear of `CheckpointPost` by
 	`CHECKPOINT_CLEAR` — "the checkpoint" is the space beside the post, not the
@@ -5606,8 +5606,14 @@ func guard_posts() -> Array:
 
 func setback_point() -> Vector3:
 	"""
-	Where a guard's setback drops the player: the last checkpoint they activated
-	inside this tower, or the doorway if they have not activated one yet.
+	Where a knockback taken inside this tower drops the player: the last checkpoint
+	they activated in it, or the doorway if they have not activated one yet.
+
+	NOT "A GUARD'S", since bead godot-test1-3iy.19: a post-beat guard ARRESTS, and
+	an arrest is the one contact whose knockback is waived (the surviving heroes
+	carry on from where the party fell). This is the plate for everything else the
+	building can do to you — a pre-beat guard, the rotor bar, the press, an animal
+	that followed you through the door.
 
 	@return: a WORLD position, standable, on the storey the checkpoint is on.
 

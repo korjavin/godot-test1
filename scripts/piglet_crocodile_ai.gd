@@ -2746,6 +2746,17 @@ const SPECIES: Dictionary = {
 		## THE STAKE (see the crocodile row): a corporate grab you escaped costs
 		## the most in the table — the one contact that can also take a hero.
 		"coin_setback": 0.25,
+
+		## ...AND TAKING THE HERO IS ITS OWN KEY, not a reading of `behavior`.
+		## `player_controller._takes_a_hero()` used to answer `behavior == "hunt"`,
+		## which made "the corporation imprisons you" a side effect of how this unit
+		## STEERS — so the tower guard, the same chassis on a different duty, could
+		## not imprison anybody without being moved onto an arm whose scent tracking
+		## and hunt-director seams a sentry on a post must not have (bead
+		## godot-test1-3iy.19). The same data-not-species-name shape as
+		## `stink_immune` / `crush_immune` / `sweep_exempt`: absent is the statement,
+		## and every animal in the table is absent.
+		"captures_hero": true,
 	},
 	"tower_guard": {
 		## THE NINTH ROW, AND THE FIRST THAT IS FURNITURE RATHER THAN WILDLIFE.
@@ -2776,10 +2787,10 @@ const SPECIES: Dictionary = {
 		## THE CHASE SPEED IS THE LATTICE AND NOTHING MORE: 5.6 is just over
 		## WALK_SPEED (5.0), so strolling past a guard that has seen you WILL be
 		## caught, and far under MAX_CHASE_SPEED (8.5) and the slowest run (9.0), so
-		## backing out of the room always works. A guard is a tax on carelessness,
-		## not a threat — it cannot take a hero, and the coins it does take come
-		## with a knockback to your last checkpoint rather than an ending (see
-		## `coin_setback` below), so it has no business also being fast.
+		## backing out of the room always works. Losing to one costs a hero and the
+		## smallest coin bill in the table (see `captures_hero` and `coin_setback`
+		## below) — the arrest is the stake, so the sentry has no business also being
+		## fast enough to make it unavoidable.
 		"move_speed": 1.4,
 		"chase_speed": 5.6,
 
@@ -2864,21 +2875,37 @@ const SPECIES: Dictionary = {
 
 		# ----- THE STAKE, and what makes the guard's DIFFERENT ------------------
 		## WHAT LOSING TO A GUARD COSTS: this fraction of your coins — the bill
-		## every row in this table now charges — PLUS the one thing no field
-		## predator does, a knockback to the last checkpoint you activated inside
-		## the tower. That relocation is the guard's whole distinguishing stake;
-		## the coins are the ordinary arithmetic. And because this is not the
-		## `hunt` arm, there is no capture either. Owner-ruled 2026-08-27: the
-		## building must never be able to end a run in the middle of a rescue,
-		## which since 2026-08-31 is true of everything that is not the empty
-		## free-hero set.
+		## every row in this table now charges — plus, once the authored beat has
+		## armed capture, THE HERO (see `captures_hero` below). Owner ruling
+		## 2026-09-01 (bead godot-test1-3iy.19) SUPERSEDES the 2026-08-27 third
+		## stake: to the player the thing that grabbed them in the HQ is a hunter —
+		## it is the same chassis — so it does what a hunter does, and the
+		## checkpoint knockback that used to be the guard's whole distinguishing
+		## stake is skipped on exactly the contacts that arrest, so the surviving
+		## heroes carry on from where the party fell. The knockback still catches
+		## every OTHER way to lose inside the building (a pre-beat guard, the rotor
+		## bar, the press) and it was never this row's anyway — `_pay_coin_setback()`
+		## relocates whoever bit you, gated on standing inside the walls.
 		##
-		## THE NUMBER IS THE LOWEST IN THE TABLE ON PURPOSE. Being sent back to a
-		## checkpoint already costs you the walk; billing a full predator's slice
-		## of coins on top would make the building's tax the harshest in the game
-		## rather than the gentlest, which is backwards for the place the campaign
-		## asks you to spend the most time in.
+		## THE NUMBER IS THE LOWEST IN THE TABLE ON PURPOSE, and the arrest is why
+		## it stays lowest: the building is the place the campaign asks you to spend
+		## the most time in, and a hero in a cell is already the expensive half of
+		## the bill. One arithmetic everywhere — a capture does not waive the coins,
+		## here or on the hunt arm.
 		"coin_setback": 0.07,
+
+		## THE HERO, and it is the hunter's key rather than the hunt arm's
+		## behaviour. `behavior` stays "solo" because behaviour is STEERING — the
+		## scent trail, the hunt-director's engagement seams, the shadowing lull —
+		## and a sentry leashed to one storey by `set_confinement()` must have none
+		## of it. What the corporation does with a body it catches is a separate
+		## question, so it is a separate key, read by
+		## `player_controller._takes_a_hero()` beside `stink_immune` and
+		## `crush_immune`. The arming gate is unchanged and is REQUIRED here: the
+		## authored Primm rescue happens inside this building, so pre-beat a guard
+		## still charges coins and the knockback and takes nobody — a tutorial visit
+		## may not strip the roster before the scene that teaches the rule.
+		"captures_hero": true,
 
 		## AUTHORED FURNITURE, SO THE RESPAWN SWEEP LEAVES IT ALONE.
 		## `player_controller.clear_nearby_crocodiles()` frees every ordinary body
