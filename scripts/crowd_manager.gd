@@ -14,15 +14,16 @@ extends Node3D
 ##   * Story only, no mechanics: hunters are NOT confused by crowds in this bead.
 ##   * Budget: hard CROWD_MAX (60 on web, 120 on desktop) rendered via FOUR
 ##     MultiMeshInstance3D nodes (one per hero archetype: Windman, Primm, Teibi,
-##     Phoboman), costing exactly 4 draw calls for the entire crowd.
+##     Phoboman), costing exactly 4 draw calls for the entire crowd (shadows off).
 ##   * Shared static resources: one shared composite mesh per archetype with
 ##     baked vertex colors derived from the hero specifications, and ONE shared
 ##     StandardMaterial3D across all archetypes (never duplicate() per citizen).
-##   * Waypoint walk: citizens follow the 62 m street grid of Budapest, spread
+##   * Waypoint walk: citizens follow BudapestPlan.STREET_PITCH street grid, spread
 ##     across lateral street lanes, maintaining walking queues, never walking into
 ##     the Danube river, plateau cliffs, or solid landmark buildings.
 ##   * Feet rest at y = 0 by construction. Spawning occurs in a bubble around
 ##     the local player inside BudapestPlan.rect(), recycling when out of range.
+##   * Transforms written in bulk via multimesh.buffer (never set_instance_transform).
 
 # ============================================================================
 # CONSTANTS — budgets, distances, and grid
@@ -47,11 +48,6 @@ const STRIDE_FREQUENCY: float = 4.2
 const WALK_BOB_AMOUNT: float = 0.045
 const WALK_SWAY_AMOUNT: float = 0.035
 const WALK_PITCH_AMOUNT: float = 0.015
-
-## Street grid step (matches BudapestPlan.STREET_PITCH).
-const GRID_PITCH: float = 62.0
-const GRID_ORIGIN_X: float = 1600.0
-const GRID_ORIGIN_Z: float = 0.0
 
 ## Minimum distance between walkers in the same street lane (metres).
 const MIN_WALKER_SPACING: float = 1.8
@@ -109,84 +105,43 @@ const PLAN_SCRIPT := preload("res://scripts/budapest_plan.gd")
 
 static var _shared_material: StandardMaterial3D = null
 static var _archetype_meshes: Array = [null, null, null, null]
+static var _box_cache: Dictionary = {}
 
 
 static func _get_shared_material() -> StandardMaterial3D:
-	## The ONE standard material with vertex colors enabled, shared by all
-	## four crowd MultiMeshes across the entire session.
+	## The ONE standard material with vertex colors and sRGB conversion enabled,
+	## shared by all four crowd MultiMeshes across the entire session.
 	if _shared_material == null:
 		_shared_material = StandardMaterial3D.new()
 		_shared_material.vertex_color_use_as_albedo = true
+		_shared_material.vertex_color_is_srgb = true
 		_shared_material.roughness = 0.85
 		_shared_material.cull_mode = BaseMaterial3D.CULL_BACK
 	return _shared_material
 
 
+static func _box_mesh(size: Vector3) -> BoxMesh:
+	## Cached BoxMesh generator to ensure engine-accurate standard normals,
+	## vertex winding, and UVs.
+	if not _box_cache.has(size):
+		var bm := BoxMesh.new()
+		bm.size = size
+		_box_cache[size] = bm
+	return _box_cache[size]
+
+
 static func _add_box(st: SurfaceTool, center: Vector3, size: Vector3, col: Color) -> void:
-	## Adds a 6-sided box with outward CCW normals and vertex color to a SurfaceTool.
-	var h := size * 0.5
-	var min_p := center - h
-	var max_p := center + h
+	## Adds an engine-accurate 6-sided box with correct outward CCW winding
+	## and vertex color to a SurfaceTool.
+	var arrays: Array = _box_mesh(size).get_mesh_arrays()
+	var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+	var normals: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL]
+	var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
 
-	# 1. Front (+Z, normal (0, 0, 1))
-	st.set_normal(Vector3(0, 0, 1))
-	st.set_color(col)
-	st.add_vertex(Vector3(min_p.x, min_p.y, max_p.z))
-	st.add_vertex(Vector3(max_p.x, min_p.y, max_p.z))
-	st.add_vertex(Vector3(max_p.x, max_p.y, max_p.z))
-	st.add_vertex(Vector3(min_p.x, min_p.y, max_p.z))
-	st.add_vertex(Vector3(max_p.x, max_p.y, max_p.z))
-	st.add_vertex(Vector3(min_p.x, max_p.y, max_p.z))
-
-	# 2. Back (-Z, normal (0, 0, -1))
-	st.set_normal(Vector3(0, 0, -1))
-	st.set_color(col)
-	st.add_vertex(Vector3(max_p.x, min_p.y, min_p.z))
-	st.add_vertex(Vector3(min_p.x, min_p.y, min_p.z))
-	st.add_vertex(Vector3(min_p.x, max_p.y, min_p.z))
-	st.add_vertex(Vector3(max_p.x, min_p.y, min_p.z))
-	st.add_vertex(Vector3(min_p.x, max_p.y, min_p.z))
-	st.add_vertex(Vector3(max_p.x, max_p.y, min_p.z))
-
-	# 3. Left (-X, normal (-1, 0, 0))
-	st.set_normal(Vector3(-1, 0, 0))
-	st.set_color(col)
-	st.add_vertex(Vector3(min_p.x, min_p.y, min_p.z))
-	st.add_vertex(Vector3(min_p.x, min_p.y, max_p.z))
-	st.add_vertex(Vector3(min_p.x, max_p.y, max_p.z))
-	st.add_vertex(Vector3(min_p.x, min_p.y, min_p.z))
-	st.add_vertex(Vector3(min_p.x, max_p.y, max_p.z))
-	st.add_vertex(Vector3(min_p.x, max_p.y, min_p.z))
-
-	# 4. Right (+X, normal (1, 0, 0))
-	st.set_normal(Vector3(1, 0, 0))
-	st.set_color(col)
-	st.add_vertex(Vector3(max_p.x, min_p.y, max_p.z))
-	st.add_vertex(Vector3(max_p.x, min_p.y, min_p.z))
-	st.add_vertex(Vector3(max_p.x, max_p.y, min_p.z))
-	st.add_vertex(Vector3(max_p.x, min_p.y, max_p.z))
-	st.add_vertex(Vector3(max_p.x, max_p.y, min_p.z))
-	st.add_vertex(Vector3(max_p.x, max_p.y, max_p.z))
-
-	# 5. Top (+Y, normal (0, 1, 0))
-	st.set_normal(Vector3(0, 1, 0))
-	st.set_color(col)
-	st.add_vertex(Vector3(min_p.x, max_p.y, max_p.z))
-	st.add_vertex(Vector3(max_p.x, max_p.y, max_p.z))
-	st.add_vertex(Vector3(max_p.x, max_p.y, min_p.z))
-	st.add_vertex(Vector3(min_p.x, max_p.y, max_p.z))
-	st.add_vertex(Vector3(max_p.x, max_p.y, min_p.z))
-	st.add_vertex(Vector3(min_p.x, max_p.y, min_p.z))
-
-	# 6. Bottom (-Y, normal (0, -1, 0))
-	st.set_normal(Vector3(0, -1, 0))
-	st.set_color(col)
-	st.add_vertex(Vector3(min_p.x, min_p.y, min_p.z))
-	st.add_vertex(Vector3(max_p.x, min_p.y, min_p.z))
-	st.add_vertex(Vector3(max_p.x, min_p.y, max_p.z))
-	st.add_vertex(Vector3(min_p.x, min_p.y, min_p.z))
-	st.add_vertex(Vector3(max_p.x, min_p.y, max_p.z))
-	st.add_vertex(Vector3(min_p.x, min_p.y, max_p.z))
+	for i: int in indices:
+		st.set_color(col)
+		st.set_normal(normals[i])
+		st.add_vertex(center + verts[i])
 
 
 static func _get_archetype_mesh(archetype: int) -> ArrayMesh:
@@ -215,7 +170,7 @@ static func _get_archetype_mesh(archetype: int) -> ArrayMesh:
 			var fan_red := Color(0.85, 0.20, 0.18)
 			var fan_handle := Color(0.45, 0.30, 0.16)
 
-			# Boots (left & right)
+			# Boots (left & right) — feet at y = 0 (0.14 - 0.28/2 = 0)
 			_add_box(st, Vector3(-0.14, 0.14, 0.04), Vector3(0.16, 0.28, 0.28), boots_black)
 			_add_box(st, Vector3(0.14, 0.14, 0.04), Vector3(0.16, 0.28, 0.28), boots_black)
 			# Bare lower legs
@@ -264,11 +219,11 @@ static func _get_archetype_mesh(archetype: int) -> ArrayMesh:
 			var visor_frame := Color(0.70, 0.72, 0.76)
 			var visor_lens := Color(0.66, 0.80, 0.90)
 
-			# Black boots with silver band
-			_add_box(st, Vector3(-0.11, 0.12, 0.03), Vector3(0.14, 0.24, 0.26), boots_black)
-			_add_box(st, Vector3(0.11, 0.12, 0.03), Vector3(0.14, 0.24, 0.26), boots_black)
-			_add_box(st, Vector3(-0.11, 0.25, 0.0), Vector3(0.15, 0.04, 0.16), boot_band)
-			_add_box(st, Vector3(0.11, 0.25, 0.0), Vector3(0.15, 0.04, 0.16), boot_band)
+			# Black boots with silver band — feet at y = 0 (0.13 - 0.26/2 = 0)
+			_add_box(st, Vector3(-0.11, 0.13, 0.03), Vector3(0.14, 0.26, 0.26), boots_black)
+			_add_box(st, Vector3(0.11, 0.13, 0.03), Vector3(0.14, 0.26, 0.26), boots_black)
+			_add_box(st, Vector3(-0.11, 0.26, 0.0), Vector3(0.15, 0.04, 0.16), boot_band)
+			_add_box(st, Vector3(0.11, 0.26, 0.0), Vector3(0.15, 0.04, 0.16), boot_band)
 			# Slim dark navy jeans
 			_add_box(st, Vector3(-0.11, 0.52, 0.0), Vector3(0.13, 0.50, 0.14), jeans_navy)
 			_add_box(st, Vector3(0.11, 0.52, 0.0), Vector3(0.13, 0.50, 0.14), jeans_navy)
@@ -312,7 +267,7 @@ static func _get_archetype_mesh(archetype: int) -> ArrayMesh:
 			var belt := Color(0.11, 0.10, 0.11)
 			var shoes := Color(0.16, 0.11, 0.08)
 
-			# Dark shoes
+			# Dark shoes — feet at y = 0 (0.10 - 0.20/2 = 0)
 			_add_box(st, Vector3(-0.12, 0.10, 0.03), Vector3(0.14, 0.20, 0.26), shoes)
 			_add_box(st, Vector3(0.12, 0.10, 0.03), Vector3(0.14, 0.20, 0.26), shoes)
 			# Straight charcoal-navy trousers (full length)
@@ -351,7 +306,7 @@ static func _get_archetype_mesh(archetype: int) -> ArrayMesh:
 			var broth_orange := Color(0.95, 0.52, 0.18)
 			var boots_black := Color(0.08, 0.08, 0.09)
 
-			# Tiny black boots at bottom
+			# Tiny black boots at bottom — feet at y = 0 (0.08 - 0.16/2 = 0)
 			_add_box(st, Vector3(-0.11, 0.08, 0.0), Vector3(0.13, 0.16, 0.20), boots_black)
 			_add_box(st, Vector3(0.11, 0.08, 0.0), Vector3(0.13, 0.16, 0.20), boots_black)
 			# Giant round royal-blue body sphere (belly IS the body)
@@ -385,7 +340,7 @@ func _ready() -> void:
 
 	_crowd_max = CROWD_MAX_WEB if OS.has_feature("web") else CROWD_MAX_DESKTOP
 
-	# Create 4 MultiMeshInstance3D child nodes
+	# Create 4 MultiMeshInstance3D child nodes (shadows off, matching fauna precedent)
 	_multimesh_nodes.resize(ARCHETYPE_COUNT)
 	var per_archetype := _crowd_max / ARCHETYPE_COUNT
 
@@ -393,7 +348,7 @@ func _ready() -> void:
 		var mm_inst := MultiMeshInstance3D.new()
 		mm_inst.name = "Crowd_%s" % ARCHETYPE_NAMES[k].capitalize()
 		mm_inst.material_override = _get_shared_material()
-		mm_inst.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+		mm_inst.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 
 		var mm := MultiMesh.new()
 		mm.transform_format = MultiMesh.TRANSFORM_3D
@@ -456,34 +411,38 @@ func _find_player() -> Node3D:
 
 
 func _is_near_budapest(player_pos: Vector3) -> bool:
-	## True when player is inside or approaching Budapest (x: 1500..3900, z: -1200..1200).
-	return player_pos.x >= 1500.0 and player_pos.x <= 3900.0 \
-			and player_pos.z >= -1200.0 and player_pos.z <= 1200.0
+	## True when player is inside or within 100m margin of Budapest rect.
+	return PLAN_SCRIPT.rect().grow(100.0).has_point(Vector2(player_pos.x, player_pos.z))
 
 
-## Major solid landmark building footprints to exclude from crowd street paths.
-## Open plazas (Heroes' Square, Budapest Eye), pedestrian promenades (Váci utca),
-## and bridges (Chain/Elisabeth/Liberty/Margaret) are kept walkable.
-const SOLID_LANDMARK_EXCLUSIONS: Array = [
-	{"id": "parliament", "pos": Vector2(2760.0, -480.0), "radius": 140.0},
-	{"id": "basilica", "pos": Vector2(2920.0, -280.0), "radius": 52.0},
-	{"id": "market_hall", "pos": Vector2(2820.0, 620.0), "radius": 75.0},
-	{"id": "synagogue", "pos": Vector2(2960.0, 200.0), "radius": 45.0},
-	{"id": "national_museum", "pos": Vector2(2920.0, 440.0), "radius": 55.0},
-	{"id": "opera", "pos": Vector2(3000.0, -180.0), "radius": 45.0},
-	{"id": "vajdahunyad", "pos": Vector2(3680.0, -340.0), "radius": 85.0},
-	{"id": "szechenyi_bath", "pos": Vector2(3620.0, -760.0), "radius": 75.0},
-	{"id": "gellert_bath", "pos": Vector2(2420.0, 1000.0), "radius": 55.0},
-	{"id": "rudas_bath", "pos": Vector2(2370.0, 560.0), "radius": 45.0},
-]
+## Slots that are open plazas, pedestrian streets, bridges, or plateaus
+## where ground-level street path checks should not block walkers.
+const WALKABLE_LANDMARK_IDS: Dictionary = {
+	"heroes_square": true,
+	"budapest_eye": true,
+	"vaci_utca": true,
+	"shoes_on_the_danube": true,
+	"chain_bridge": true,
+	"liberty_bridge": true,
+	"elisabeth_bridge": true,
+	"margaret_bridge": true,
+	"margaret_island": true,
+	"buda_castle": true,   # plateau_top_at handles plateau
+	"matthias": true,      # plateau_top_at handles plateau
+	"citadella": true,     # plateau_top_at handles plateau
+}
 
 
 static func _is_inside_solid_landmark(x: float, z: float) -> bool:
-	for slot: Dictionary in SOLID_LANDMARK_EXCLUSIONS:
-		var spos: Vector2 = slot["pos"]
+	## Checks dynamically against BudapestPlan.SLOTS using exact authored radii.
+	for slot: Dictionary in PLAN_SCRIPT.SLOTS:
+		var slot_id: String = slot.get("id", "")
+		if WALKABLE_LANDMARK_IDS.has(slot_id):
+			continue
+		var spos: Vector3 = slot["pos"]
 		var r: float = slot["radius"]
 		var dx: float = x - spos.x
-		var dz: float = z - spos.y
+		var dz: float = z - spos.z
 		if dx * dx + dz * dz < r * r:
 			return true
 	return false
@@ -506,8 +465,10 @@ static func is_walkable(x: float, z: float) -> bool:
 
 static func snap_to_grid(x: float, z: float) -> Vector2:
 	## Snaps world XZ to the nearest Budapest street grid intersection.
-	var gx: float = roundf((x - GRID_ORIGIN_X) / GRID_PITCH) * GRID_PITCH + GRID_ORIGIN_X
-	var gz: float = roundf((z - GRID_ORIGIN_Z) / GRID_PITCH) * GRID_PITCH + GRID_ORIGIN_Z
+	var pitch: float = PLAN_SCRIPT.STREET_PITCH
+	var origin_x: float = PLAN_SCRIPT.GATE.x
+	var gx: float = roundf((x - origin_x) / pitch) * pitch + origin_x
+	var gz: float = roundf(z / pitch) * pitch
 	return Vector2(gx, gz)
 
 
@@ -515,12 +476,13 @@ func _pick_next_waypoint(current_pos: Vector3, current_heading: Vector2) -> Vect
 	## Given a grid intersection, picks the next walkable neighbor along the grid.
 	var gx: float = current_pos.x
 	var gz: float = current_pos.z
+	var pitch: float = PLAN_SCRIPT.STREET_PITCH
 
 	var directions: Array[Vector2] = [
-		Vector2(GRID_PITCH, 0.0),
-		Vector2(-GRID_PITCH, 0.0),
-		Vector2(0.0, GRID_PITCH),
-		Vector2(0.0, -GRID_PITCH),
+		Vector2(pitch, 0.0),
+		Vector2(-pitch, 0.0),
+		Vector2(0.0, pitch),
+		Vector2(0.0, -pitch),
 	]
 
 	var valid_candidates: Array[Vector3] = []
@@ -553,7 +515,7 @@ func _pick_next_waypoint(current_pos: Vector3, current_heading: Vector2) -> Vect
 
 func _find_spawn_segment_near(player_pos: Vector3) -> Dictionary:
 	## Finds a valid street segment (start, end) within SPAWN_RADIUS of the player.
-	for attempt in 20:
+	for attempt in 16:
 		var angle := _rng.randf_range(0.0, TAU)
 		var dist := _rng.randf_range(SPAWN_MIN_DIST, SPAWN_RADIUS)
 		var cand_x := player_pos.x + cos(angle) * dist
@@ -574,7 +536,8 @@ func _find_spawn_segment_near(player_pos: Vector3) -> Dictionary:
 	if is_walkable(p_snap.x, p_snap.y):
 		var p_corner := Vector3(p_snap.x, 0.0, p_snap.y)
 		var p_next := _pick_next_waypoint(p_corner, Vector2(1.0, 0.0))
-		return {"start": p_corner, "end": p_next, "dir": Vector2(1.0, 0.0)}
+		if p_next != p_corner:
+			return {"start": p_corner, "end": p_next, "dir": Vector2(1.0, 0.0)}
 
 	return {}
 
@@ -584,22 +547,24 @@ func _update_crowd_spawns(player_pos: Vector3) -> void:
 	for citizen: Dictionary in _citizens:
 		if not citizen["active"]:
 			var seg := _find_spawn_segment_near(player_pos)
-			if not seg.is_empty():
-				var start_pt: Vector3 = seg["start"]
-				var end_pt: Vector3 = seg["end"]
-				var t_prog := _rng.randf_range(0.05, 0.95)
-				citizen["pos"] = start_pt.lerp(end_pt, t_prog)
-				citizen["target"] = end_pt
-				citizen["lane_offset"] = LANE_OFFSETS[_rng.randi() % LANE_OFFSETS.size()]
-				citizen["speed"] = _rng.randf_range(WALK_SPEED_MIN, WALK_SPEED_MAX)
-				citizen["walk_phase"] = _rng.randf_range(0.0, TAU)
-				citizen["pause_timer"] = 0.0
-				var delta_x: float = end_pt.x - start_pt.x
-				var delta_z: float = end_pt.z - start_pt.z
-				var heading := Vector2(delta_x, delta_z).normalized()
-				citizen["heading_dir"] = heading
-				citizen["facing_yaw"] = atan2(-delta_x, -delta_z)
-				citizen["active"] = true
+			if seg.is_empty():
+				# No walkable street near player: break immediately to avoid retry storm
+				break
+			var start_pt: Vector3 = seg["start"]
+			var end_pt: Vector3 = seg["end"]
+			var t_prog := _rng.randf_range(0.05, 0.95)
+			citizen["pos"] = start_pt.lerp(end_pt, t_prog)
+			citizen["target"] = end_pt
+			citizen["lane_offset"] = LANE_OFFSETS[_rng.randi() % LANE_OFFSETS.size()]
+			citizen["speed"] = _rng.randf_range(WALK_SPEED_MIN, WALK_SPEED_MAX)
+			citizen["walk_phase"] = _rng.randf_range(0.0, TAU)
+			citizen["pause_timer"] = 0.0
+			var delta_x: float = end_pt.x - start_pt.x
+			var delta_z: float = end_pt.z - start_pt.z
+			var heading := Vector2(delta_x, delta_z).normalized()
+			citizen["heading_dir"] = heading
+			citizen["facing_yaw"] = atan2(-delta_x, -delta_z)
+			citizen["active"] = true
 		else:
 			# Check if citizen has drifted beyond DESPAWN_RADIUS or out of walkable zone
 			var cpos: Vector3 = citizen["pos"]
@@ -628,8 +593,14 @@ func _update_crowd_spawns(player_pos: Vector3) -> void:
 
 func _update_walkers(delta: float, _player_pos: Vector3) -> void:
 	## Advances citizen movement, avoids clumping via lane queuing, and pushes
-	## transforms to the four MultiMeshes.
+	## transforms to the four MultiMeshes via multimesh.buffer.
 	var counts := [0, 0, 0, 0]
+	var buffers: Array[PackedFloat32Array] = []
+	for k in ARCHETYPE_COUNT:
+		var count: int = _multimesh_nodes[k].multimesh.instance_count
+		var buf := PackedFloat32Array()
+		buf.resize(count * 12)
+		buffers.append(buf)
 
 	for i in _citizens.size():
 		var citizen: Dictionary = _citizens[i]
@@ -709,16 +680,32 @@ func _update_walkers(delta: float, _player_pos: Vector3) -> void:
 
 		var t := Transform3D(basis, Vector3(world_pos.x, bob_y, world_pos.z))
 
-		var mm_inst: MultiMeshInstance3D = _multimesh_nodes[k]
-		var mm: MultiMesh = mm_inst.multimesh
 		var idx: int = counts[k]
-		if idx < mm.instance_count:
-			mm.set_instance_transform(idx, t)
+		var max_inst: int = _multimesh_nodes[k].multimesh.instance_count
+		if idx < max_inst:
+			var buf: PackedFloat32Array = buffers[k]
+			var base := idx * 12
+			buf[base + 0] = t.basis.x.x
+			buf[base + 1] = t.basis.y.x
+			buf[base + 2] = t.basis.z.x
+			buf[base + 3] = t.origin.x
+
+			buf[base + 4] = t.basis.x.y
+			buf[base + 5] = t.basis.y.y
+			buf[base + 6] = t.basis.z.y
+			buf[base + 7] = t.origin.y
+
+			buf[base + 8] = t.basis.x.z
+			buf[base + 9] = t.basis.y.z
+			buf[base + 10] = t.basis.z.z
+			buf[base + 11] = t.origin.z
 			counts[k] += 1
 
-	# Update visible count for all four MultiMeshes
+	# Push buffers and update visible counts in bulk for all four MultiMeshes
 	for k in ARCHETYPE_COUNT:
-		_multimesh_nodes[k].multimesh.visible_instance_count = counts[k]
+		var mm: MultiMesh = _multimesh_nodes[k].multimesh
+		mm.buffer = buffers[k]
+		mm.visible_instance_count = counts[k]
 
 
 func _hide_all() -> void:
