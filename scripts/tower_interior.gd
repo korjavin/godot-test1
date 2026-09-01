@@ -714,6 +714,129 @@ const LURE_COOLDOWN: float = 20.0
 
 
 # ============================================================================
+# THE EVIDENCE DOSSIERS (bead godot-test1-3iy.23) — the HQ's findings
+# ============================================================================
+#
+# Six folders of GastroDefense paperwork, standing at HAND-PICKED cells on the
+# office and operations storeys. Walk into one and it pays coins and tells you a
+# line about the corporation; it is gone for the rest of the run and back on the
+# next one, exactly like a coin.
+#
+# AUTHORED, LIKE EVERY OTHER THING IN THIS BUILDING. The table below is a const of
+# plain dicts — no `run_seed`, no `randf`, no `hash` — for the reason `TowerPlans`
+# gives at length: a tower whose contents moved between runs would mean the
+# softlock audit certified a layout nobody plays. A designer moves a dossier by
+# editing a `Vector2i` here.
+#
+# WHERE THEY MAY STAND, and the self-check asserts all of it: floors 2..6 (the
+# office and ops storeys), never the labyrinth and never the cell block — those two
+# are a maze and a jail and neither wants a scavenger hunt in it; a cell that is
+# open on its storey's plan and reached by the same flood fill; and a cell nothing
+# else this storey draws already occupies. That last one is `_dossier_marks()`,
+# which is handed to `_plan_dressing` as though the dossier were a set piece, so a
+# derived desk can never land on top of a pickup.
+#
+# TWO OF THE SIX ARE GATED, and neither gate is new machinery:
+#
+#   * THE CRAWL ALCOVE — a one-cell dead end off storey 3's west record stack with
+#     a lintel `DOSSIER_CRAWL_CLEAR` off the floor over its mouth. The player's
+#     capsule is 2.0 m and small Teibi's is `TEIBI_SCALE_SMALL` of that (0.9 m), so
+#     the alcove asks for a hero nobody has to bring and refuses everybody else.
+#     SMALL is the one resize allowed indoors (owner ruling godot-test1-xdf refuses
+#     only growth), and the maintenance crawl in the cell block is the same idea a
+#     metre and a half higher. The 2-D audits cannot see a height gate, which is
+#     exactly why the alcove's cells stay ordinary floor in `TowerPlans`.
+#   * THE GUARD-CONE SPOT — a dossier standing in the stretch of corridor storey
+#     3's sentry watches. It is PURE CELL CHOICE and zero code: the guard's 120
+#     degree cone and its walked beat are already there, and taking the folder is a
+#     matter of timing the beat. It must stay takeable by timing ALONE — the lure
+#     plates (bead godot-test1-3iy.22) make it easier and are never required.
+#
+# NO PHASE-STEP SPOT, and that is a ruling rather than an omission: a blink-only
+# sealed nook is either cells the flood fill cannot reach or a hole in a wall that
+# `tower_selfcheck`'s gates-shut component rule is built to catch. An indoor blink
+# challenge needs an audit-sanctioned mechanism of its own.
+
+## What one dossier pays. Three gems (a gem is `Coin.GEM_VALUE`, 10), because a
+## dossier is authored, one-per-run and often behind something — provisional
+## against the coin economy and the one number to turn if they feel cheap.
+const DOSSIER_VALUE: int = 30
+
+## The folder itself: a squat matte box you read as paperwork on the floor.
+const DOSSIER_SIZE := Vector3(0.62, 0.34, 0.44)
+
+## Manila. Deliberately NOT a `GLOW_COLORS` entry — an emissive dossier would
+## commit the rack a second surface (see `SURFACE_BUDGET`) to say something the
+## shape already says.
+const COLOR_DOSSIER := Color(0.88, 0.76, 0.46)
+
+## The card's heading. A plain literal, so Godot's `Control` auto-translation picks
+## it up off `assets/translations/ui.csv` with no `tr()` — localization RULE 1, and
+## the same reason `landmark_toast` has none.
+const DOSSIER_TITLE: String = "EVIDENCE DOSSIER"
+
+## Clear air under the crawl alcove's lintel. Over small Teibi (2.0 m capsule at
+## `TEIBI_SCALE_SMALL` 0.45 = 0.90 m) with room to walk, and comfortably under the
+## 2.0 m everybody else is — the self-check reads both out of `player_controller`
+## rather than restating either.
+const DOSSIER_CRAWL_CLEAR: float = 1.2
+
+## `Coin.id_at()` is the pickup id every peer agrees on, and a dossier borrows it
+## rather than inventing a second scheme — which is the whole reason `mp_manager`
+## needed no edit for this bead. See `dossier_id()`.
+const COIN_SCRIPT: GDScript = preload("res://scripts/coin.gd")
+
+## THE SIX, in the order their ids and their trigger names are derived from.
+##
+##   floor   int      index into `FLOOR_Y`; must be an office or ops storey (2..6).
+##   cell    Vector2i `(column, row)` on that storey's `TowerPlans` grid.
+##   alcove  bool     optional — this one stands in a crawl alcove, so the builder
+##                    hangs a lintel over its cell (see `_dossier_alcove_boxes`).
+##   lore    String   the line the card shows. Player-facing, so it is a row in
+##                    `ui.csv` in both languages and carries no `tr()` (RULE 1).
+const DOSSIERS: Array[Dictionary] = [
+	# Storey 3, the records floor. THE CRAWL ALCOVE: the cupboard bitten out of the
+	# pier between the two west record stacks — see the storey's own comment block.
+	{
+		"floor": 2, "cell": Vector2i(10, 12), "alcove": true,
+		"lore": "Shredder log, west stack: 41,000 pages, one afternoon, no reason given.",
+	},
+	# ...and THE GUARD-CONE SPOT, out in the north ring corridor two cells along the
+	# sentry's beat. Nothing in the code knows that; the post is a `G` on the plan.
+	{
+		"floor": 2, "cell": Vector2i(26, 2),
+		"lore": "Retrieval order 7: \"subject is fond of the four. Collect all four.\"",
+	},
+	# Storey 4, the accounts floor: deep in a supply office.
+	{
+		"floor": 3, "cell": Vector2i(5, 30),
+		"lore": "Invoice, unpaid: 300 crocodile crates, delivered to the riverbank.",
+	},
+	# Storey 5, the executive floor: the audit suite, which audited nothing.
+	{
+		"floor": 4, "cell": Vector2i(10, 32),
+		"lore": "Board minute: \"the field programme is not a programme. Bill it anyway.\"",
+	},
+	# Storey 6, operations: the control centre the fleet is dispatched from.
+	{
+		"floor": 5, "cell": Vector2i(20, 10),
+		"lore": "Dispatch sheet: every unit sent north. Nobody wrote down who asked.",
+	},
+	# Storey 7, security: the briefing room under the labyrinth.
+	{
+		"floor": 6, "cell": Vector2i(10, 28),
+		"lore": "Briefing card: \"the maze upstairs is not for intruders. It is for us.\"",
+	},
+]
+
+## The storeys a dossier may stand on — the offices and operations, never the
+## labyrinth and never the cell block. A range rather than a list because that is
+## what the bead ruled and what the self-check asserts.
+const DOSSIER_FLOOR_MIN: int = 2
+const DOSSIER_FLOOR_MAX: int = 6
+
+
+# ============================================================================
 # VISIBILITY GATING — the web frame budget's half of this bead
 # ============================================================================
 
@@ -828,7 +951,18 @@ const FLOOR_HYSTERESIS: float = 0.8
 ## 37 SINCE BEAD `godot-test1-e7q` took the rotor turnstile out of the courtyard
 ## doorway: its two bars were the only spinning parts in the building and each was
 ## a mesh of its own. The post was batched, so it cost nothing here.
-const DRAW_BUDGET: int = 37
+##
+## 38 SINCE THE EVIDENCE DOSSIERS (bead godot-test1-3iy.23), AND THAT ONE NODE IS
+## SIX PICKUPS. A dossier has to disappear on its own when it is taken, which is
+## the one thing a storey's merged batch cannot do — and six `MeshInstance3D` would
+## have been six nodes and six SURFACES, which is what `SURFACE_BUDGET` (48
+## measured against 54) has no room for. One `MultiMeshInstance3D` is one node, one
+## surface and one draw however many dossiers are authored, and a taken one is a
+## zero-scaled instance. Check 5 counts it as a mesh node and as a surface, because
+## it is both; the "no MultiMeshInstance3D here" rule it replaces meant "this is
+## authored geometry, not chunk content", and one authored rack of pickups is not
+## the chunk streamer coming indoors.
+const DRAW_BUDGET: int = 38
 
 # ============================================================================
 # PALETTE — one material per colour, shared process-wide (see `_material`)
@@ -959,10 +1093,15 @@ const XRAY_ALPHA: float = 0.30
 ## own surface so they can be swapped costs ONE surface per planned storey and
 ## nothing else — no node, no material per box, and no work at all while it is off.
 ##
-## MEASURED AT 51 with ten storeys authored, of which the ten wall surfaces are the
-## whole of what this bead added (it was 41). The slack over it is the same slack
-## `DRAW_BUDGET` carries, and for the same reason: a moving part earns a mesh, and a
-## mesh is at least one more draw.
+## MEASURED AT 49 with ten storeys authored, of which the ten wall surfaces are the
+## whole of what Air Sight added. The slack over it is the same slack `DRAW_BUDGET`
+## carries, and for the same reason: a moving part earns a mesh, and a mesh is at
+## least one more draw.
+##
+## 48 -> 49 IS THE EVIDENCE DOSSIERS (bead godot-test1-3iy.23) — one `MultiMesh` of
+## matte folders, deliberately NOT a `GLOW_COLORS` colour, so the six pickups cost
+## the building one surface between them and no emissive surface at all. That is
+## the whole reason they are one rack and not six meshes: see `DRAW_BUDGET`.
 const SURFACE_BUDGET: int = 54
 
 ## The ground storey's carpet layer. 2 cm of pure colour, non-solid, laid OVER the
@@ -1944,6 +2083,28 @@ var _lockdown: Dictionary = {}
 ## after one. Those two plus `_liberate()` are the only writers.
 var _captives: Dictionary = {}
 
+## THE EVIDENCE DOSSIERS' one node, and which of them have been taken this run.
+##
+## PER-RUN, LIKE A COIN AND NOT LIKE A GATE. The opened set on the shell is a
+## MONOTONE UNION that survives the process (`_open()` explains why); a dossier
+## refinds on the next run, so putting an id in there would mean a pickup nobody
+## could ever pick up again. `_captives` is per-run for the mirror-image reason,
+## and this is the same shelf.
+##
+## In a ROOM the dedupe is not this dict at all — it is `MpManager`'s
+## `_collected_ids`, reached through the very same `claim_pickup` / join replay a
+## coin uses (see `_collect_dossier`). This one only stops the local trigger firing
+## twice and remembers which instances to zero-scale.
+var _dossier_rack: MultiMeshInstance3D = null
+var _dossier_found: Dictionary = {}
+
+## The storey `_update_visibility` last drew the window around, -1 before the first
+## frame. The rack is ONE node for the whole building, so it cannot hide with a
+## storey container; this is what tells `_refresh_dossiers()` when to re-decide,
+## and it means the decision costs one integer compare a frame rather than six
+## transform writes.
+var _drawn_floor: int = -1
+
 ## The partway reaction's clock, counting 0 -> 1 over NUDGE_TIME. Zero when idle.
 var _nudge: float = 0.0
 var _nudge_ratio: float = 0.0
@@ -2119,8 +2280,17 @@ static func plan_boxes(floor_index: int) -> Array[Dictionary]:
 	# pads, the lock plates, the gate masses and each hand-built set piece — so a
 	# desk can never land in a mechanism, and a set piece added tomorrow keeps it
 	# out on the day it is drawn without a name being written down anywhere.
+	out.append_array(_dossier_alcove_boxes(plan))
 	out.append_array(_egg_boxes(plan))
-	out.append_array(_plan_dressing(plan, out.slice(floor_boxes.size())))
+	# ...and the dossiers RESERVE their cells without drawing anything here. The
+	# folders themselves are one `MultiMesh` (see `_build_dossiers`), so they are in
+	# no box list at all — but the dresser decides where a desk goes by asking what
+	# else this storey drew, and a desk on top of a pickup is the bug that costs
+	# nothing to prevent and cannot be seen in a screenshot. Same seam every
+	# hand-built set piece uses, one footprint per dossier and no geometry.
+	var reserved := out.slice(floor_boxes.size())
+	reserved.append_array(_dossier_marks(floor_index))
+	out.append_array(_plan_dressing(plan, reserved))
 	_plan_cache[floor_index] = out
 	return out
 
@@ -2598,6 +2768,115 @@ func pad_world(floor_index: int, pad_index: int) -> Vector3:
 	"""
 	var local := pad_point(floor_index, pad_index)
 	return local if not local.is_finite() else global_position + local
+
+
+# ============================================================================
+# THE EVIDENCE DOSSIERS — geometry (see the DOSSIERS banner for the design)
+# ============================================================================
+
+static func dossier_point(index: int) -> Vector3:
+	"""
+	Where dossier `index` stands, in interior-local metres — its BOX CENTRE.
+
+	@return: `Vector3.INF` for an index no row names, which every caller treats as
+	    "there is no such dossier".
+
+	The centre and not the cell corner, because this is also what `dossier_id()`
+	hashes: the id has to name the same 12.5 cm cell on every peer, and the only
+	way to promise that is to derive both the picture and the name from one point.
+	"""
+	if index < 0 or index >= DOSSIERS.size():
+		return Vector3.INF
+	var row: Dictionary = DOSSIERS[index]
+	var floor_index := int(row["floor"])
+	var cell: Vector2i = row["cell"]
+	return Vector3(_grid_x(float(cell.x) + 0.5),
+			FLOOR_Y[floor_index] + DOSSIER_SIZE.y * 0.5,
+			_grid_z(float(cell.y) + 0.5))
+
+
+static func _dossier_marks(floor_index: int) -> Array[Dictionary]:
+	"""
+	One storey's dossier cells as bare footprints, for the dresser to keep clear.
+
+	@return: `{pos, size}` entries — the two keys `_cell_is_taken()` reads, and
+	    deliberately not `boxes()` entries: nothing here is ever drawn or collided
+	    with, so a full box row carrying a name and a colour would invite somebody
+	    to append it to `all_boxes()` and blow the budgets it is here to protect.
+
+	The footprint is the WHOLE CELL rather than the folder, so the dresser refuses
+	the cell a dossier stands in and nothing more: `_cell_is_taken` insets a
+	candidate by `DRESS_EPS` on all four sides, so a box that exactly fills one cell
+	cannot reach the next one.
+	"""
+	var out: Array[Dictionary] = []
+	for index: int in DOSSIERS.size():
+		if int(DOSSIERS[index]["floor"]) != floor_index:
+			continue
+		var cell: Vector2i = DOSSIERS[index]["cell"]
+		out.append({
+			"pos": Vector3(_grid_x(float(cell.x) + 0.5), FLOOR_Y[floor_index],
+					_grid_z(float(cell.y) + 0.5)),
+			"size": Vector3(TowerPlans.PLAN_CELL, PLAN_PAD_THICK,
+					TowerPlans.PLAN_CELL),
+		})
+	return out
+
+
+static func _dossier_alcove_boxes(plan: Dictionary) -> Array[Dictionary]:
+	"""
+	The lintel over a crawl alcove's mouth — the whole of the Teibi gate.
+
+	@return: one box per `alcove` row on this storey, or `[]`.
+
+	IT FILLS THE ALCOVE CELL FROM `DOSSIER_CRAWL_CLEAR` TO THE CEILING, which is
+	what makes it stone rather than a step: check 2's structural rule is "a plan
+	storey has exactly two kinds of solid — floor, and stone reaching the ceiling"
+	and a box whose top stopped short of `plan_clear_height()` would be a ledge you
+	could jump onto. The maintenance crawl's lintel is the same shape 1.6 m higher.
+
+	The alcove is ordinary `.` floor on the drawing and must stay that way: both
+	flood fills are 2-D, so this gate is invisible to them BY DESIGN — the alcove is
+	a dead end that gates a pickup and never a route, so there is nothing for them
+	to be wrong about.
+	"""
+	var out: Array[Dictionary] = []
+	var floor_index := int(plan["floor"])
+	var surface: float = FLOOR_Y[floor_index]
+	var top := surface + plan_clear_height(floor_index)
+	var bottom := surface + DOSSIER_CRAWL_CLEAR
+	for index: int in DOSSIERS.size():
+		var row: Dictionary = DOSSIERS[index]
+		if int(row["floor"]) != floor_index or not bool(row.get("alcove", false)):
+			continue
+		var cell: Vector2i = row["cell"]
+		out.append({
+			"name": "%sDossierLintel%d" % [_plan_prefix(floor_index), index],
+			"pos": Vector3(_grid_x(float(cell.x) + 0.5), (bottom + top) * 0.5,
+					_grid_z(float(cell.y) + 0.5)),
+			"size": Vector3(TowerPlans.PLAN_CELL, top - bottom, TowerPlans.PLAN_CELL),
+			"color": COLOR_STONE, "collide": true, "floor": floor_index,
+		})
+	return out
+
+
+func dossier_id(index: int) -> int:
+	"""
+	The pickup id every peer in a room agrees this dossier has.
+
+	`Coin.id_at()` of its WORLD position, which is exactly what a field coin does —
+	and the reason `mp_manager.gd` needed no edit for this feature: the claim, the
+	confirm, the shared bank, the room multiplier and the join replay all already
+	speak in these ids. World and not local, because the id namespace is shared with
+	the field's coins and two things at different places must not collide.
+
+	A DOSSIER NEVER MOVES, so unlike a coin there is nothing to latch against: the
+	bob is what forced `coin.gd` to freeze its id at spawn, and this stands still.
+	Callers must still be past the frame `endless_terrain` parks the shell on the
+	tower site — see `_latch_dossiers()`, which is deferred for that reason.
+	"""
+	var local := dossier_point(index)
+	return 0 if not local.is_finite() else int(COIN_SCRIPT.id_at(global_position + local))
 
 
 # ============================================================================
@@ -4112,6 +4391,7 @@ func _ready() -> void:
 
 	_build_pads()
 	_build_lure_pads()
+	_build_dossiers()
 	_build_lift_stop()
 	_build_block()
 	_build_riddles()
@@ -4134,6 +4414,12 @@ func _ready() -> void:
 	# every guard to a box 400 m away and `_clamp_to_platform` would fire on the
 	# first frame. One idle frame later the shell is where it belongs.
 	reset_guards.call_deferred()
+
+	# ...and the dossiers' JOIN REPLAY, deferred for the very same reason: a dossier
+	# id is its world position, and right now this building is standing at the
+	# terrain's origin. One idle frame later it is on the tower site and the id a
+	# joiner's collected set was written with is the id we compute.
+	_latch_dossiers.call_deferred()
 
 	# ...and re-place them whenever the local player crosses the doorway. The shell
 	# owns the door trigger and already emits on it; connecting here rather than
@@ -4777,6 +5063,163 @@ func _guard_on(floor_index: int) -> Node3D:
 			continue
 		return _guards.get_node_or_null("TowerGuard%s" % String(authored["name"])) as Node3D
 	return null
+
+
+func _build_dossiers() -> void:
+	"""
+	The six evidence dossiers: ONE `MultiMeshInstance3D` and one trigger apiece.
+
+	WHY A MULTIMESH AND NOT SIX MESHES, since it is the one place this building
+	breaks its own "authored geometry, not chunk content" habit. A dossier has to
+	vanish when it is taken, which is exactly what the storey's merged batch cannot
+	do — and six `MeshInstance3D` would be six nodes AND six surfaces against a
+	`SURFACE_BUDGET` measured at 48 of 54. A multimesh is one node, one surface and
+	one draw for as many dossiers as anyone ever authors, and hiding one is writing
+	a zero-scaled transform. `DRAW_BUDGET` 37 -> 38 and surfaces 48 -> 49 is the
+	whole cost, and check 5 asserts both by name.
+
+	THE TRIGGERS ARE `_add_area`'s, like every pad in the building, so they hide
+	with their storey and cost nothing while it is not drawn — and they are the only
+	reason the rack itself never needs a collision shape.
+	"""
+	var mesh := MultiMesh.new()
+	mesh.transform_format = MultiMesh.TRANSFORM_3D
+	mesh.mesh = _box_mesh(DOSSIER_SIZE)
+	mesh.instance_count = DOSSIERS.size()
+	_dossier_rack = MultiMeshInstance3D.new()
+	_dossier_rack.name = "DossierRack"
+	_dossier_rack.multimesh = mesh
+	# One shared material out of the same per-colour cache every other part of this
+	# building draws from — never a duplicate, and already `DIFFUSE_TOON`.
+	_dossier_rack.material_override = _material(COLOR_DOSSIER)
+	_no_shadow(_dossier_rack)
+	add_child(_dossier_rack)
+	var cell := Vector3(TowerPlans.PLAN_CELL, 2.0, TowerPlans.PLAN_CELL)
+	for index: int in DOSSIERS.size():
+		var at := dossier_point(index)
+		if not at.is_finite():
+			continue
+		_add_area("DossierTrigger%d" % index, Vector3(at.x, at.y + 0.5, at.z), cell,
+				_on_dossier_enter.bind(index), Callable(),
+				int(DOSSIERS[index]["floor"]))
+	_refresh_dossiers()
+
+
+func _refresh_dossiers() -> void:
+	"""
+	Re-decide which dossiers are drawn: not yet taken, and on a storey being drawn.
+
+	A HIDDEN INSTANCE KEEPS ITS ORIGIN and loses its basis, rather than being moved
+	away — so the rack's transforms stay a readable statement of where the dossiers
+	are whatever their state, which is what the self-check reads them as.
+
+	WRITTEN AS ONE `buffer`, NOT AS SIX `set_instance_transform` CALLS, and the
+	reason is measurement rather than throughput (six calls is nothing). The
+	per-instance setter writes THROUGH to the RenderingServer and reads back from it,
+	and under `--headless` — which is every self-check and all of CI — that server is
+	the dummy driver: the write vanishes and the read answers with an identity
+	transform. `buffer` round-trips on the resource, so the state a check reads is
+	the state the renderer is handed. It is also the bulk path the engine documents.
+
+	`_drawn_floor < 0` means no frame has decided a window yet (a standalone build in
+	a self-check, or the frame before the first `_process`), and then everything
+	uncollected is drawn — the same "degrade to visible" every seam in this file
+	takes when the thing it would ask is not there.
+	"""
+	if _dossier_rack == null:
+		return
+	var window := _drawn_floor >= 0 and _drawn_floor < FLOOR_Y.size()
+	var buffer := PackedFloat32Array()
+	buffer.resize(DOSSIERS.size() * 12)
+	for index: int in DOSSIERS.size():
+		var at := dossier_point(index)
+		if not at.is_finite():
+			continue
+		var shown := not _dossier_found.has(index) \
+				and (not window or _floor_visible(int(DOSSIERS[index]["floor"]), _drawn_floor))
+		# The 3 x 4 rows a TRANSFORM_3D multimesh stores: the basis, scaled to
+		# nothing when this dossier is not being drawn, then the origin.
+		var s := 1.0 if shown else 0.0
+		var base := index * 12
+		buffer[base + 0] = s
+		buffer[base + 3] = at.x
+		buffer[base + 5] = s
+		buffer[base + 7] = at.y
+		buffer[base + 10] = s
+		buffer[base + 11] = at.z
+	_dossier_rack.multimesh.buffer = buffer
+
+
+func _latch_dossiers() -> void:
+	"""
+	Hide the dossiers the ROOM has already banked — the coin's join replay, verbatim.
+
+	Deferred out of `_ready()` because a dossier id is its world position and the
+	shell is not on the tower site yet when `_ready()` runs (see `reset_guards`).
+	Offline the group lookup finds nothing and this is six failed lookups, once.
+	"""
+	var mp := get_tree().get_first_node_in_group("mp")
+	if mp == null or not mp.has_method("is_coin_collected"):
+		return
+	for index: int in DOSSIERS.size():
+		if bool(mp.call("is_coin_collected", dossier_id(index))):
+			_dossier_found[index] = true
+	_refresh_dossiers()
+
+
+func _on_dossier_enter(body: Node3D, index: int) -> void:
+	"""A dossier's trigger fired. Plain overlap, like every pad in this building."""
+	if body.is_in_group("player"):
+		_collect_dossier(index, body)
+
+
+func _collect_dossier(index: int, body: Node) -> void:
+	"""
+	Take one dossier: claim it, pay it, say its line, and put it away.
+
+	THE MULTIPLAYER PATH IS `coin.gd`'S, LINE FOR LINE, and that is the point. In a
+	room the pickup is CLAIMED and the master's confirm is what pays (which is why
+	nothing is awarded on that branch); offline — and in a room with no mesh to
+	arbitrate over — `claim_pickup` answers false and the solo path runs, banking
+	locally and reporting the id so a later joiner never sees the folder. No verb,
+	no id scheme and no line of `mp_manager.gd` was added for any of it.
+
+	The card is shown either way, including on a claim this peer went on to LOSE:
+	you walked to it and read it, and a lore line is not a payout.
+	"""
+	if _dossier_found.has(index) or index < 0 or index >= DOSSIERS.size():
+		return
+	_dossier_found[index] = true
+	var id := dossier_id(index)
+	var mp := get_tree().get_first_node_in_group("mp")
+	var claimed: bool = mp != null and mp.has_method("claim_pickup") \
+			and bool(mp.call("claim_pickup", id, 1, DOSSIER_VALUE))
+	if not claimed:
+		if body != null and body.has_method("collect_coin"):
+			body.call("collect_coin", DOSSIER_VALUE)
+		if mp != null and mp.has_method("report_coin_collected"):
+			mp.call("report_coin_collected", id)
+	_refresh_dossiers()
+	_sfx("play_coin")
+	_announce_dossier(String(DOSSIERS[index]["lore"]))
+
+
+func _announce_dossier(lore: String) -> void:
+	"""
+	Put one dossier's line on the landmark card — the HUD that already paces these.
+
+	NOT `_say()`. This building's `Label3D`s stand where they were built, and a line
+	about storey 5 written onto the entry hall's label is a line nobody reads (the
+	lift stop's own comment says so). The toast is a screen-space card that queues
+	and fades, which is what an announcement wants; `announce()` is its one public
+	seam and it refuses politely while a landmark question is on screen.
+
+	Group-discovered and `has_method`-guarded like every other seam here, so an
+	interior built standalone simply says nothing.
+	"""
+	var toast := get_tree().get_first_node_in_group("landmark_toast")
+	if toast != null and toast.has_method("announce"):
+		toast.call("announce", DOSSIER_TITLE, lore)
 
 
 func _add_area(area_name: String, pos: Vector3, size: Vector3,
@@ -5888,6 +6331,14 @@ func _update_visibility() -> bool:
 	var current := current_floor(local.y)
 	for i in _floors.size():
 		_floors[i].visible = _floor_visible(i, current)
+	# THE DOSSIER RACK IS ONE NODE FOR TEN STOREYS, so it cannot ride a storey
+	# container the way everything else in this building does — a folder on floor 6
+	# would hang in the air over a hidden floor 5. Its instances are zero-scaled
+	# instead, and only when the window actually moves: one integer compare a frame
+	# against six transform writes.
+	if current != _drawn_floor:
+		_drawn_floor = current
+		_refresh_dossiers()
 	return true
 
 

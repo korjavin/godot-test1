@@ -397,6 +397,17 @@ const STOREYS: Array[Dictionary] = [
 	# down each axis, so every room has two ways back to the landing and no dead end
 	# is longer than one room. Eight long stacks hang off it, two per quadrant, each
 	# entered through a two-cell hole in the wall it shares with the cross corridor.
+	#
+	# THE ONE CELL THAT IS A CUPBOARD, NOT A ROOM: (10, 12), a single `.` bitten out
+	# of the pier between the two west record stacks and reachable only from `A`. It
+	# is a dead end that leads nowhere and joins no graph row — the whole of it is a
+	# place to put something (bead `godot-test1-3iy.23` stands an evidence dossier
+	# there). What makes it a CRAWL is a lintel `TowerInterior` hangs over its mouth
+	# at `DOSSIER_CRAWL_CLEAR`, and that is deliberately invisible to this drawing:
+	# the audits flood-fill in 2-D, so a height gate reads to them as ordinary floor,
+	# exactly as the cell block's maintenance crawl does. Keep the cell non-`#` or
+	# the alcove stops existing; keep its other three neighbours `#` or it stops
+	# being a dead end and the lintel starts blocking a route.
 	# ------------------------------------------------------------------------
 	{
 		"floor": 2,
@@ -433,7 +444,7 @@ const STOREYS: Array[Dictionary] = [
 			"#..#AAAAAA##BBBBBB#..#CCCCCC##EEEEEE#..#",
 			"#..#AAPAAA##BBBBBB#..#CCCCCC##EEEEEE#..#",
 			"#..#AAAAAA##BBBBBB#..#CCCCCC##EEEEEE#..#",
-			"#..#AAAAAA##BBBBBB#..#CCCCCC##EEEEEE#..#",
+			"#..#AAAAAA.#BBBBBB#..#CCCCCC##EEEEEE#..#",
 			"#..#AAAAAA##BBBBBB#..#CCCCCC##EEEEEE#..#",
 			"#..#AAAAAA##BBBBBB#..#CCCCCC##EEEEEE#..#",
 			"#..#AAAAAA##BBBBBB#..#CCCCCC##EEEEEE#..#",

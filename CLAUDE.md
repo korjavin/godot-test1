@@ -95,7 +95,14 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            Every geometry check LOOPS OVER STOREYS off FLOOR_Y
 #                            and TowerPlans.floors(), so a new plan row is
 #                            covered the day it lands: per-storey box budget,
-#                            headroom, and the ramp flush at both ends
+#                            headroom, and the ramp flush at both ends.
+#                            Check 20 is the EVIDENCE DOSSIERS: every authored
+#                            cell open, flood-fill-reachable, on an office or
+#                            ops storey, distinct, and clear of everything else
+#                            that storey draws; the crawl alcove measured
+#                            against the real capsule and TEIBI_SCALE_SMALL and
+#                            asserted to be a dead end; and one dossier taken
+#                            for real coins, hidden, and refusing to pay twice
 #   capture_selfcheck        SYSTEMIC CAPTURE and the tower guard's stake: the
 #                            arming gate (pre/post the
 #                            authored beat), attribution (every `captures_hero`
@@ -388,20 +395,38 @@ The building is full to its sealed roof — ten floor indices, `FLOOR_Y[0..9]`:
 - **Walls are 2-D run-length merged**, so a 40-cell wall is one box and not forty — which
   matters because each box is also a `CollisionShape3D`, and the collision body is the one
   thing in this building that is not batched. Measured over the eight planned storeys:
-  **52 / 43 / 52 / 29 / 29 / 81 / 61 / 46** boxes against `PLAN_BOX_BUDGET` 120 (the two
+  **55 / 43 / 52 / 29 / 29 / 81 / 61 / 46** boxes against `PLAN_BOX_BUDGET` 120 (the two
   maze floors are the 81 and the 61 — a one-cell maze legitimately produces many rects,
-  which is what that budget now guards). Mesh NODES are **37 (`DRAW_BUDGET` 37) for 2420
-  boxes** — one `FloorNBatch` per storey, the parts that move, and the four hero
-  portraits — and the whole interior is **559 collision shapes on one `StaticBody3D`**
-  (ceiling 640, printed by check 5). A
+  which is what that budget now guards). Mesh NODES are **38 (`DRAW_BUDGET` 38) for 2420
+  boxes** — one `FloorNBatch` per storey, the parts that move, the four hero
+  portraits and the dossier rack — and the whole interior is **562 collision shapes on
+  one `StaticBody3D`** (ceiling 640, printed by check 5). A
   plan whose walls stopped merging blows the box budget on its first row. **`DRAW_BUDGET`
   counts nodes, not draws**: emissive is a material property, so a storey carrying a
   `GLOW_COLORS` box commits a second SURFACE in the same `ArrayMesh` and the engine
   submits one draw per surface. Since Air Sight (bead `godot-test1-oht`) a storey
   batches up to THREE — walls, other matte, emissive — because the walls must be
-  swappable on their own, and **`SURFACE_BUDGET` (54, measured at 48) is the bound
+  swappable on their own, and **`SURFACE_BUDGET` (54, measured at 49) is the bound
   that counts draws**; check 5 asserts both. Read `DRAW_BUDGET` as "nothing left the
   batch", not as a draw count.
+- **The EVIDENCE DOSSIERS are the one MultiMesh in the building, and one is the cap.**
+  Six authored folders (`DOSSIERS`, a const table of `{floor, cell, lore}` — floors 2-6
+  only, never the labyrinth or the block) pay `DOSSIER_VALUE` coins and a localized line
+  on the `landmark_toast` card when you walk into one. A pickup has to vanish on its own,
+  which a merged storey batch cannot do, and six meshes would be six SURFACES — so they
+  are one `MultiMeshInstance3D` (`DRAW_BUDGET` 37 -> 38, surfaces 48 -> 49, no emissive
+  surface), and a taken one is a zero-scaled instance. **Write the rack through
+  `multimesh.buffer`, never `set_instance_transform`**: the per-instance setter round-trips
+  through the RenderingServer, which is the dummy driver under `--headless`, so every
+  self-check reads identity back. State is per-run on the interior (the coin's rule, never
+  the monotone opened set); in a room it is `claim_pickup(Coin.id_at(world), 1, value)` and
+  the join replay, so `mp_manager.gd` needed **no edit at all**. Two finds are gated and
+  neither is new machinery: a one-cell CRAWL ALCOVE off storey 3's west stack under a
+  `DOSSIER_CRAWL_CLEAR` lintel (small Teibi only — the alcove's cells stay ordinary floor,
+  because a height gate is exactly what the 2-D audits cannot see, and check 20 asserts the
+  cell is a DEAD END so the invisible gate closes no route), and one standing in a guard's
+  watched stretch, which is pure cell choice and must stay takeable by timing the patrol
+  alone.
 - **The offices are FURNISHED, and the furniture is derived rather than drawn.** No
   glyph was added to `TowerPlans` for it: `_plan_dressing` walks each storey's rooms
   and puts desks, chairs, cabinets, bookshelves, meeting tables, coolers, plants and
