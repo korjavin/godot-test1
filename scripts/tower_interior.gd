@@ -5169,10 +5169,18 @@ func _latch_dossiers() -> void:
 	var mp := get_tree().get_first_node_in_group("mp")
 	if mp == null or not mp.has_method("is_coin_collected"):
 		return
+	var moved := false
 	for index: int in DOSSIERS.size():
+		if _dossier_found.has(index):
+			continue
 		if bool(mp.call("is_coin_collected", dossier_id(index))):
 			_dossier_found[index] = true
-	_refresh_dossiers()
+			moved = true
+	# CHANGE-GATED, because `_tick_dossiers` drives this twice a second: rebuilding
+	# the rack's buffer when nothing was taken is work with no output, and the same
+	# discipline `_bank_records`' two writers follow.
+	if moved:
+		_refresh_dossiers()
 
 
 func _tick_dossiers(delta: float) -> void:
