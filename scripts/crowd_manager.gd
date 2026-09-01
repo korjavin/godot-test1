@@ -555,15 +555,20 @@ func _update_crowd_spawns(player_pos: Vector3) -> void:
 			var t_prog := _rng.randf_range(0.05, 0.95)
 			citizen["pos"] = start_pt.lerp(end_pt, t_prog)
 			citizen["target"] = end_pt
-			citizen["lane_offset"] = LANE_OFFSETS[_rng.randi() % LANE_OFFSETS.size()]
-			citizen["speed"] = _rng.randf_range(WALK_SPEED_MIN, WALK_SPEED_MAX)
-			citizen["walk_phase"] = _rng.randf_range(0.0, TAU)
-			citizen["pause_timer"] = 0.0
 			var delta_x: float = end_pt.x - start_pt.x
 			var delta_z: float = end_pt.z - start_pt.z
 			var heading := Vector2(delta_x, delta_z).normalized()
 			citizen["heading_dir"] = heading
 			citizen["facing_yaw"] = atan2(-delta_x, -delta_z)
+			var lane: float = LANE_OFFSETS[_rng.randi() % LANE_OFFSETS.size()]
+			var lat_dir := Vector3(-heading.y, 0.0, heading.x)
+			var test_pos: Vector3 = citizen["pos"] + lat_dir * lane
+			if not is_walkable(test_pos.x, test_pos.z):
+				lane = 0.0
+			citizen["lane_offset"] = lane
+			citizen["speed"] = _rng.randf_range(WALK_SPEED_MIN, WALK_SPEED_MAX)
+			citizen["walk_phase"] = _rng.randf_range(0.0, TAU)
+			citizen["pause_timer"] = 0.0
 			citizen["active"] = true
 		else:
 			# Check if citizen has drifted beyond DESPAWN_RADIUS or out of walkable zone
@@ -578,22 +583,27 @@ func _update_crowd_spawns(player_pos: Vector3) -> void:
 					var t_prog := _rng.randf_range(0.05, 0.95)
 					citizen["pos"] = start_pt.lerp(end_pt, t_prog)
 					citizen["target"] = end_pt
-					citizen["lane_offset"] = LANE_OFFSETS[_rng.randi() % LANE_OFFSETS.size()]
-					citizen["speed"] = _rng.randf_range(WALK_SPEED_MIN, WALK_SPEED_MAX)
-					citizen["walk_phase"] = _rng.randf_range(0.0, TAU)
-					citizen["pause_timer"] = 0.0
 					var delta_x: float = end_pt.x - start_pt.x
 					var delta_z: float = end_pt.z - start_pt.z
 					var heading := Vector2(delta_x, delta_z).normalized()
 					citizen["heading_dir"] = heading
 					citizen["facing_yaw"] = atan2(-delta_x, -delta_z)
+					var lane: float = LANE_OFFSETS[_rng.randi() % LANE_OFFSETS.size()]
+					var lat_dir := Vector3(-heading.y, 0.0, heading.x)
+					var test_pos: Vector3 = citizen["pos"] + lat_dir * lane
+					if not is_walkable(test_pos.x, test_pos.z):
+						lane = 0.0
+					citizen["lane_offset"] = lane
+					citizen["speed"] = _rng.randf_range(WALK_SPEED_MIN, WALK_SPEED_MAX)
+					citizen["walk_phase"] = _rng.randf_range(0.0, TAU)
+					citizen["pause_timer"] = 0.0
 				else:
 					citizen["active"] = false
 
 
 func _update_walkers(delta: float, _player_pos: Vector3) -> void:
-	## Advances citizen movement, avoids clumping via lane queuing, and pushes
-	## transforms to the four MultiMeshes via multimesh.buffer.
+	## Advances citizen movement, applies procedural walk bob/sway, and pushes
+	## transforms in bulk to the four MultiMeshes via multimesh.buffer.
 	var counts := [0, 0, 0, 0]
 	var buffers: Array[PackedFloat32Array] = []
 	for k in ARCHETYPE_COUNT:
@@ -613,27 +623,9 @@ func _update_walkers(delta: float, _player_pos: Vector3) -> void:
 		var lane: float = citizen["lane_offset"]
 		var is_moving := false
 
-		# Check spacing against other walkers in the same corridor/lane
-		var is_blocked := false
-		for j in _citizens.size():
-			if i == j:
-				continue
-			var other: Dictionary = _citizens[j]
-			if not other["active"]:
-				continue
-			if absf(other["lane_offset"] - lane) < 1.4:
-				var to_other: Vector3 = other["pos"] - pos
-				var dist_other := to_other.length()
-				if dist_other < MIN_WALKER_SPACING:
-					var move_vec := (target - pos).normalized()
-					if to_other.dot(move_vec) > 0.0:
-						# Another walker is directly ahead in our lane: queue behind them
-						is_blocked = true
-						break
-
 		if citizen["pause_timer"] > 0.0:
 			citizen["pause_timer"] -= delta
-		elif not is_blocked:
+		else:
 			var step: float = citizen["speed"] * delta
 			var to_target := target - pos
 			var dist := to_target.length()
@@ -641,8 +633,8 @@ func _update_walkers(delta: float, _player_pos: Vector3) -> void:
 			if dist <= step or dist < 0.05:
 				pos = target
 				citizen["walk_phase"] += dist * STRIDE_FREQUENCY
-				# Reached crossing: chance to pause and switch lanes
-				if _rng.randf() < 0.30:
+				# Reached crossing: chance to pause
+				if _rng.randf() < 0.25:
 					citizen["pause_timer"] = _rng.randf_range(0.6, 2.0)
 				# Pick next intersection
 				var next_target := _pick_next_waypoint(pos, citizen["heading_dir"])

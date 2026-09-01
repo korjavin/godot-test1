@@ -224,7 +224,5 @@ func _verify_active_citizens(context: String) -> void:
 
 			if not origin.is_finite():
 				_failures.append("%s: MultiMesh %s instance %d has non-finite origin %s" % [context, node.name, idx, str(origin)])
-			if not plan_script.contains(ox, oz):
-				_failures.append("%s: MultiMesh %s instance %d origin (%f, %f) outside Budapest" % [context, node.name, idx, ox, oz])
-			if plan_script.danube_wet(ox, oz):
-				_failures.append("%s: MultiMesh %s instance %d origin (%f, %f) is in Danube" % [context, node.name, idx, ox, oz])
+			if not mgr_script.is_walkable(ox, oz):
+				_failures.append("%s: MultiMesh %s instance %d drawn origin (%f, %f) is not walkable" % [context, node.name, idx, ox, oz])
