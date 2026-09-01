@@ -2913,6 +2913,20 @@ func _on_caught_finished() -> void:
 		# BELOW THE BILL AND THE BANK ON PURPOSE: the grab that empties the roster
 		# still pays its `coin_setback` and still banks the leg, which is the
 		# ordering every other contact has.
+		#
+		# ponytail: IN A ROOM THIS IS DECIDED OFF AN EVENTUALLY CONSISTENT MIRROR,
+		# and there is deliberately no authority over it (codex review 2026-09-01).
+		# The ceiling: a liberation and the fourth capture crossing in flight leave
+		# this peer reading four captives for one packet's flight, and the ending it
+		# writes is irreversible — a later `cap: false` cannot un-archive a world.
+		# The window is narrow (the only hero who can free anybody is the one being
+		# grabbed) and it is not new — the vetoed break-out ALSO opened off this same
+		# local mirror and only its OUTCOME was adjudicated, so a spurious scene
+		# archived the world 35 s later instead of now. The upgrade path is a
+		# master-published room-level ENDING verdict, which is the machinery the owner
+		# vetoed on this very bead: it needs a ruling, not a patch. The 0.5 s poll in
+		# `_tick_prison()` is what every OTHER peer ends through, and it rides out the
+		# flap for free by being a poll rather than an edge.
 		BestRunStore.archive_world()
 		_trigger_game_over()
 	elif not relocated:

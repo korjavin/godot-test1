@@ -1584,6 +1584,17 @@ func _send_room_state() -> void:
 	drops a packet missing either and mixed-build rooms are real — see
 	`MAX_CUSTODY_SECONDS`.
 
+	ponytail: `co: 0` TELLS A PRE-VETO PEER "the master has no scene", so once its
+	own roster empties it waits out `CUSTODY_MASTER_SILENCE_MSEC` and runs its
+	legacy 35 s break-out alone — the old build behaving like the old build, which
+	is the honest degrade and the ceiling here (codex review 2026-09-01). Publishing
+	a standing `co: 2` to end it instead is WORSE, and measurably so: that peer's
+	scene opens in the same window the master's verdict latches, so its
+	`_custody_stale_verdict` refuses the first one, no later `co: 0` ever arrives to
+	clear the refusal, and `verdict != 0` keeps `_custody_master_idle` false — it can
+	neither be ended nor self-authorize, and sits sealed in the block for the room's
+	life. The real upgrade path is a protocol version, not a value.
+
 	WHAT IT REPAIRS, and why the live `cap` verb is not enough on its own: a capture
 	that lands in the gap between the master snapshotting a joiner and the CAPTOR
 	learning that joiner exists reaches neither — the snapshot was already stale and
