@@ -207,7 +207,7 @@ Each `.gd` has a sibling `.gd.uid` managed by Godot; don't hand-edit them.
 Systems never hold hard references to each other. Use
 `get_tree().get_first_node_in_group(...)`, not `$`-paths or exported references, and
 guard with `has_method` so a scene run standalone degrades instead of erroring. Groups:
-`player`, `crocodile`, `enemy`, `coin`, `landmark`, `terrain`, `weather`, `fauna`,
+`player`, `crocodile`, `enemy`, `coin`, `landmark`, `terrain`, `weather`, `fauna`, `crowd`,
 `sound_manager`, `progression`, `mp`, `lod_manager`, plus one per HUD widget.
 
 **`"player"` means the LOCAL player and nothing else.** Terrain streaming, crocodile
@@ -1093,6 +1093,20 @@ facade. So `_plan_tower_detour` reads `tower_site()` / `TOWER_RADIUS` off the te
 group once per herd, computes the lateral offset that clears the disc, and writes it into
 the **existing** `_avoid_target` — no fourth steering term, no per-animal work, and the
 probe keeps everything else. Spawn origins inside the disc re-roll the whole line.
+
+### Budapest citizen crowds — hero look-alikes walking the streets
+`scripts/crowd_manager.gd` (`group "crowd"`) implements the owner's story vision: heroes
+blend into Budapest because masses of citizens look remarkably like them. Following the
+fauna precedent, this is pure ambience outside the determinism contract (`randomize()`d RNG).
+
+Citizens join **no group** and have **no collision** bodies or Area3Ds (zero interference with
+hunters, crocodiles, or Stink Wave). The whole crowd is drawn in **exactly 4 draw calls** via
+four `MultiMeshInstance3D` nodes (one per hero archetype: Windman, Primm, Teibi, Phoboman),
+sharing one `StandardMaterial3D` with vertex colors across the process. Budget is capped at
+`CROWD_MAX` (60 on web, 120 on desktop). Walkers navigate the 62 m street grid of Budapest,
+pausing at crossings, strictly avoiding the wet Danube and plateau cliffs, with feet at y = 0.
+Ambient spawns bubble around the local player inside `BudapestPlan.rect()`, recycling when out
+of range and sleeping when outside the city. Pinned by `crowd_selfcheck`.
 
 ### Art direction
 Authored in `main.tscn` (key light, ProceduralSky, glow, BCS grade) plus
