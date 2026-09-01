@@ -2433,6 +2433,17 @@ func _check_two_clients_cannot_disagree() -> void:
 			_fail("a master with no scene published [0.0, 0] and this peer read it as a "
 				+ "spent clock (%.2f s) — that is a countdown frozen at zero in a sealed "
 				% player.custody_timer + "block, not a scene")
+		# ...AND THE VERDICT IS ADDRESSED, which is what the publisher's expiry cannot
+		# do (codex review, 2026-09-01): this peer is the JOINER, five seconds inside
+		# the hold window, in a round the master was never in — it has never read a
+		# running clock from it. The stale FAILED must not be deliverable here.
+		player.call("apply_room_custody", 0.0, 2)
+		if not player.in_custody_protocol():
+			_fail("a peer that never once read the master's running clock was still "
+				+ "failed by its verdict — that is the joiner arriving inside the hold "
+				+ "window, and the film lands on the frame its own scene opened")
+		if BestRunStore.world_archived():
+			_fail("a verdict from a round this peer was never in archived its world")
 		# ...and the peer still defers while the master is talking to it: this is the
 		# control for the fallback below, and it is case (a)'s rule one round on.
 		player.call("apply_room_custody", 9.0, 0)

@@ -732,6 +732,12 @@ var _custody_verdict_msec: int = 0
 const CUSTODY_MASTER_SILENCE_MSEC: int = 3000
 var _custody_master_msec: int = 0
 
+## ...and whether it has said anything about THIS round at all — the address on the
+## verdict. False until a publish carrying a RUNNING clock arrives, which is the one
+## thing a peer that was in the master's round has read and a peer that opened a round
+## the master is not in never will. See `apply_room_custody()`.
+var _custody_master_seen: bool = false
+
 ## The captive set as it stood when the scene began, so it can be put back.
 ##
 ## THE BEAD'S LANDMINE, and this field is the whole answer to it: the scene marks
@@ -3148,8 +3154,10 @@ func _begin_custody_protocol() -> void:
 	custody_verdict = 0
 	# ...and the master is credited with this round until it says otherwise, so the
 	# half-second of entry skew between two peers' `_tick_prison()` polls is never
-	# read as an absent one. See `_custody_authority()`.
+	# read as an absent one. See `_custody_authority()`. It has not spoken about THIS
+	# round yet, though, which is what makes a verdict from the last one undeliverable.
 	_custody_master_msec = Time.get_ticks_msec()
+	_custody_master_seen = false
 	# What was true before the scene, so the exit can put it back — see the field.
 	_custody_entry_captives = captive_heroes.duplicate()
 	# ...and now every hero is a prisoner, which is the fiction AND the geometry:
@@ -3353,15 +3361,28 @@ func apply_room_custody(seconds: float, verdict: int) -> void:
 	master parked on its ending screen used to leave every later break-out in the
 	room. Dropping it whole also leaves the silence below honest: the master is not
 	talking about OUR round, so it is not deciding it either.
+
+	...AND A VERDICT IS ADDRESSED TO THE ROUND IT DECIDED, which `_custody_master_seen`
+	is how a receiver reads the address (codex review, 2026-09-01). The publisher's own
+	`CUSTODY_VERDICT_HOLD_MSEC` only BOUNDS the lie — a peer that joins inside that
+	window, adopts the master's full-custody set and opens its own break-out is still
+	handed the last round's failure — and no expiry can tell an old round's participant
+	from a new arrival. What can: a peer that was in the master's round has been reading
+	its running clock all along, and one that opened a round the master is not in has
+	never read a single one. So a verdict is honoured only after a RUNNING publish for
+	this scene, and everything else falls through to the silence rule below.
 	"""
 	if not custody_protocol_active:
 		return
 	if seconds <= 0.0 and verdict == 0:
 		return
-	_custody_master_msec = Time.get_ticks_msec()
 	if verdict != 0:
+		if not _custody_master_seen:
+			return
 		_end_custody_protocol(verdict == 1)
 		return
+	_custody_master_seen = true
+	_custody_master_msec = Time.get_ticks_msec()
 	custody_timer = maxf(0.0, seconds)
 
 
