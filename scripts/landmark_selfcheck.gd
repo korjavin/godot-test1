@@ -112,6 +112,17 @@ extends SceneTree
 ##      nothing, so without the clock stopping too, a backgrounded tab would time
 ##      the question out and resume the world with nobody looking at it.
 ##
+##   8. BUDAPEST'S BUILDERS CANNOT REACH THE FIELD'S LANDMARK ROLL. They live in
+##      a second registry, CITY_LANDMARKS, because that roll is
+##      randi_range(0, LANDMARKS.size() - 1) off the chunk's shared RNG — so a
+##      city row in the field table would either be built in the countryside at a
+##      150 m radius the 9.5 m placement test never cleared, or, filtered after
+##      the draw, would still have moved every landmark in every world by
+##      resizing the range. Check 1 already calls those builders and measures
+##      their stone; this one measures the SPLIT: the two tables share no builder
+##      name, and every city row carries the four keys the shared machinery reads.
+##      Both halves have a negative control, run on a mutated copy.
+##
 ## HOUSE RULE, followed throughout: every check is an EFFECT measurement with a
 ## negative control, never a getter read-back. Check 1 measures emitted geometry
 ## rather than reading the returned radius (a builder returning `entry.radius`
@@ -333,21 +344,26 @@ func _run() -> void:
 	var consts: Dictionary = terrain_script.get_script_constant_map()
 	var builders_script: GDScript = load(BUILDERS_SCRIPT)
 	var registry: Array = builders_script.get_script_constant_map().get("LANDMARKS", [])
+	var city: Array = builders_script.get_script_constant_map().get("CITY_LANDMARKS", [])
 
 	if registry.is_empty():
 		_fail("landmark_builders.gd has no LANDMARKS registry")
+	elif city.is_empty():
+		_fail("landmark_builders.gd has no CITY_LANDMARKS registry")
 	else:
-		_check_radii(terrain_script, builders_script, registry)
+		_check_radii(terrain_script, builders_script, registry, "field")
+		_check_radii(terrain_script, builders_script, city, "city")
 		_check_constants(consts, registry)
 		_check_facts(registry)
 		await _check_toast(registry)
 		await _check_toast_radius_derived(registry)
 		_check_quiz_options(builders_script, registry)
 		await _check_quiz_toast(registry)
+		_check_city_registry(registry, city)
 
 	if _failures.is_empty():
-		print("landmarks: %d builders × %d seeds measured, toast once-per-approach + radius-derived trigger + first-visit treasure OK, quiz options over %d × %d seeds × %d ids OK, quiz card ask/answer/tap/timeout/re-visit OK"
-				% [registry.size(), SEEDS_PER_BUILDER, registry.size(), QUIZ_SEEDS.size(), QUIZ_IDS.size()])
+		print("landmarks: %d field + %d city builders × %d seeds measured, toast once-per-approach + radius-derived trigger + first-visit treasure OK, quiz options over %d × %d seeds × %d ids OK, quiz card ask/answer/tap/timeout/re-visit OK"
+				% [registry.size(), city.size(), SEEDS_PER_BUILDER, registry.size(), QUIZ_SEEDS.size(), QUIZ_IDS.size()])
 		print("SELFCHECK OK")
 		quit(0)
 		return
@@ -364,9 +380,15 @@ func _fail(message: String) -> void:
 # CHECK 1 — the declared radius bounds the stone the builder actually emits
 # ============================================================================
 
-func _check_radii(terrain_script: GDScript, builders_script: GDScript, registry: Array) -> void:
+func _check_radii(terrain_script: GDScript, builders_script: GDScript, registry: Array, label: String) -> void:
 	"""
 	Call every builder for real and measure what it emitted.
+
+	Driven over BOTH registries — the field's LANDMARKS and Budapest's
+	CITY_LANDMARKS — because the property is the builders' and not the table's: a
+	declared radius that does not bound the stone puts half a building across a
+	seam whether the building is 9 m across or 300. `label` only names the table in
+	the report; every assertion below is identical for both.
 
 	The terrain node is DETACHED (never added to the tree) on purpose: _ready()
 	rolls a run seed, builds fog, materials and the first chunks, none of which a
@@ -395,6 +417,13 @@ func _check_radii(terrain_script: GDScript, builders_script: GDScript, registry:
 			continue
 
 		var worst_overall := 0.0
+		# Box counts, printed rather than asserted for the same reason the headroom
+		# is: there is no right number, and the next person to add a place needs to
+		# know what one costs. Every box is also a CollisionShape3D unless the
+		# builder passed collide = false, so the second figure is the one a chunk's
+		# single BlockCollision body pays.
+		var boxes := 0
+		var solids := 0
 		var seed_index := 0
 		while seed_index < SEEDS_PER_BUILDER:
 			var block_batch: Array = []
@@ -430,6 +459,8 @@ func _check_radii(terrain_script: GDScript, builders_script: GDScript, registry:
 				_fail("%s (seed %d): emits stone out to %.2f m, past its declared radius %.2f — it would straddle a chunk seam"
 						% [place, seed_index, worst, declared])
 
+			boxes = block_batch.size()
+			solids = block_body.get_child_count()
 			block_body.free()
 			chunk.free()
 			seed_index += 1
@@ -440,8 +471,8 @@ func _check_radii(terrain_script: GDScript, builders_script: GDScript, registry:
 		# 3 m of headroom or 3 cm — which is exactly what they need to know before
 		# nudging one. Printed rather than asserted for the reason the note below
 		# gives: a tight fit is correct and a loose one is correct.
-		print("landmark_selfcheck: %-24s declared %5.2f  measured %5.2f  headroom %5.2f"
-				% [place, declared, worst_overall, declared - worst_overall])
+		print("landmark_selfcheck: %-5s %-40s declared %6.2f  measured %6.2f  headroom %5.2f  boxes %4d (%d solid)"
+				% [label, place, declared, worst_overall, declared - worst_overall, boxes, solids])
 
 		# DELIBERATELY NOT ASSERTED: "the radius is not much LARGER than the stone".
 		# Over-declaring is safe for every rule the radius feeds — the seam bound,
@@ -1679,3 +1710,99 @@ func _has_underpopulated_region(per_region: Dictionary) -> bool:
 		if int(per_region[region]) < 3:
 			return true
 	return false
+
+
+# ============================================================================
+# CHECK 8 — the city registry is a SECOND table, and the field roll cannot see it
+# ============================================================================
+
+func _check_city_registry(registry: Array, city: Array) -> void:
+	"""
+	Budapest's builders live in CITY_LANDMARKS rather than in LANDMARKS, and the
+	whole reason is that endless_terrain.gd's landmark kind roll is
+	randi_range(0, LANDMARKS.size() - 1) drawn out of the chunk's shared RNG: a
+	city row in that array would either be rolled in the countryside or, filtered
+	out after the draw, would still have changed every world by resizing the range.
+	A separate const is unreachable from that roll by construction.
+
+	"By construction" is exactly the kind of claim that stops being true quietly,
+	so three things are measured here rather than argued:
+
+	  (a) THE TABLES ARE DISJOINT BY BUILDER NAME. A city builder that also
+	      appears in LANDMARKS is reachable from the field roll again, and it
+	      would be reachable with a 150 m radius against a 9.5 m placement test —
+	      the failure this split exists to make impossible. Names, not rows,
+	      because a copy-pasted row with a tweaked fact is the realistic mistake.
+	  (b) LANDMARKS' SIZE IS THE ROLL'S RANGE, so this check also fails if a city
+	      row is ever appended to it: check 2 already refuses a radius above
+	      LANDMARK_RADIUS, and (a) refuses the shared builder, which between them
+	      leave no way to smuggle a 268 m building into the field stream.
+	  (c) EVERY CITY ROW IS WELL-FORMED — the four keys the shared machinery reads
+	      (builder / name / radius / region) present and of the right type, the
+	      region from the same five-word vocabulary check 6 enforces, and the names
+	      distinct. Check 1 has already called each builder, so what is left here
+	      is the data around it.
+
+	DELIBERATELY NOT CHECKED: a CSV row per city fact. The field registry's facts
+	are asserted translated (check 3) because they are on screen today; the city
+	catalogue that first displays these is bead .5, and its rows land with it. A
+	fact with no CSV row renders as readable English, which is the designed
+	fall-through and not a break.
+
+	NEGATIVE CONTROL, run below on COPIES so the shipped tables are untouched:
+	a city row whose builder is stolen from the field table must fail (a), and a
+	city row carrying a sixth continent word must fail (c).
+	"""
+	_city_rows_ok(registry, city, "CITY_LANDMARKS")
+
+	# --- The negative controls. Each mutates a copy and must produce failures;
+	# if it does not, the assertions above are decorative.
+	var stolen: Array = city.duplicate(true)
+	(stolen[0] as Dictionary)["builder"] = String((registry[0] as Dictionary)["builder"])
+	if _city_rows_ok(registry, stolen, "").is_empty():
+		_fail("check 8 negative control: a city row sharing a FIELD builder name was accepted — the disjointness test is not testing anything")
+
+	var bad_region: Array = city.duplicate(true)
+	(bad_region[1] as Dictionary)["region"] = "pannonia"
+	if _city_rows_ok(registry, bad_region, "").is_empty():
+		_fail("check 8 negative control: a city row with an invented region was accepted")
+
+
+func _city_rows_ok(registry: Array, city: Array, report_as: String) -> Array[String]:
+	"""
+	The body of check 8, factored out so the negative controls can run it against a
+	mutated copy WITHOUT its failures reaching _failures. Returns the problems it
+	found; with a non-empty `report_as` they are also recorded as real failures.
+	"""
+	var problems: Array[String] = []
+	var field_builders := {}
+	for entry_variant: Variant in registry:
+		field_builders[String((entry_variant as Dictionary).get("builder", ""))] = true
+
+	var seen_names := {}
+	for entry_variant: Variant in city:
+		var entry: Dictionary = entry_variant
+		var place := String(entry.get("name", ""))
+		var builder := String(entry.get("builder", ""))
+
+		if builder.is_empty() or place.is_empty():
+			problems.append("a %s row is missing its builder or name" % report_as)
+			continue
+		if field_builders.has(builder):
+			problems.append("%s's builder %s is ALSO in LANDMARKS — the field's kind roll can reach it"
+					% [place, builder])
+		if seen_names.has(place):
+			problems.append("%s appears twice in the city registry" % place)
+		seen_names[place] = true
+		if not (entry.get("radius") is float) or float(entry.get("radius", 0.0)) <= 0.0:
+			problems.append("%s: radius must be a positive float" % place)
+		if not (entry.get("fact") is String) or String(entry.get("fact", "")).is_empty():
+			problems.append("%s: no fact — bead .5's catalogue reads this field" % place)
+		if not QUIZ_REGIONS.has(String(entry.get("region", ""))):
+			problems.append("%s: region %s is not one of the five continent words"
+					% [place, String(entry.get("region", ""))])
+
+	if not report_as.is_empty():
+		for problem: String in problems:
+			_fail(problem)
+	return problems
