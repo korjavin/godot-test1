@@ -154,6 +154,18 @@ const WIDTH_BUDGETS: Array = [
 	["Floor %d", 15, 80.0, "minimap storey line"],
 	["JAIL F%d", 15, 80.0, "minimap jail intent"],
 	["NO LOCK", 15, 80.0, "minimap jail intent, jammed in the labyrinth"],
+	# coin_hud.gd — the BUDAPEST LINE (bead godot-test1-8gw.5). It hangs under the
+	# CoinLabel and takes its width from it: scenes/main.tscn gives that label
+	# offsets -280 → -24 from the right edge, i.e. 256 px, at BUDAPEST_FONT_SIZE 20 — dropped from 22 because German says "Nach
+	# Budapest" and 22 px of that is 257 px against a 256 px label. The
+	# and with NO WRAP (it is one line in a corner, not a card that may grow). The
+	# budget keeps 16 px of that as slack for the outline.
+	#
+	# The format specifiers are measured as literal text, which is the honest
+	# reading here: "%.1f" is four characters against the "12.3" it renders and
+	# "%d/%d" is five against "18/22", so neither budget is optimistic.
+	["Budapest: %.1f km", 20, 240.0, "HUD Budapest countdown"],
+	["Budapest %d/%d", 20, 240.0, "HUD Budapest explored count"],
 ]
 
 var _failures: Array[String] = []

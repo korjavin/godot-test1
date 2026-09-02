@@ -328,6 +328,12 @@ const COLOR_PLAYER := Color(0.4, 0.95, 1.0, 1.0)     # cyan, nothing else on the
 ## Violet, deliberately away from every other hue on the disc — the road's gold,
 ## the crocodiles' red, the player's cyan — and legible on all four biome tints.
 const COLOR_LANDMARK := Color(0.85, 0.55, 1.0, 0.95)
+## An EXPLORED Budapest slot: the same violet, dimmed and desaturated toward the
+## background. Deliberately not a new hue — an explored landmark is the same kind
+## of thing as an unexplored one and the map is already at its colour budget —
+## and deliberately the DIMMER of the two, because what the player is looking for
+## on this disc is the ones still to walk. Bead godot-test1-8gw.5.
+const COLOR_LANDMARK_DONE := Color(0.55, 0.45, 0.62, 0.75)
 ## The tower's mint green. Every other hue on the disc is taken — the road's gold,
 ## the crocodiles' red, the landmarks' violet, the player's cyan — and the biome
 ## tints are all dark and desaturated, so a saturated mint sits on top of any of
@@ -963,33 +969,8 @@ func _gather_landmarks() -> void:
 			continue
 		# Same north-up mapping as every other layer, off the SAME shared scale:
 		# world (x, z) → screen (x, y). See `_view_radius()`.
-		var offset := Vector2(marker.global_position.x - _player_pos.x,
-			marker.global_position.z - _player_pos.z) * scale
-		var color := COLOR_LANDMARK
-		var center: Vector2
-		var dist := offset.length()
-		if dist > MAP_RADIUS:
-			# OFF THE MAP — classified against the DISC EDGE itself, never against
-			# the inset the mark is drawn at, for the reason `_gather_peers` spells
-			# out: testing against the inset declares the outer band of the disc
-			# off-map and dims a landmark you can actually see. The division is safe
-			# — this branch needs dist > MAP_RADIUS > 0.
-			center = MAP_CENTER + (offset / dist) * (MAP_RADIUS - LANDMARK_MARK_REACH)
-			color.a *= LANDMARK_EDGE_ALPHA
-		else:
-			# ON the map, pulled in by the mark's own REACH (see LANDMARK_MARK_REACH
-			# — the corner, not the arm) so an X at the very edge of the view does
-			# not poke past the ring. That moves it by at most that reach and never
-			# changes the classification above.
-			center = MAP_CENTER + offset.limit_length(MAP_RADIUS - LANDMARK_MARK_REACH)
-		var p := _landmark_count * 4
-		_landmark_points[p] = center + Vector2(-arm, -arm)
-		_landmark_points[p + 1] = center + Vector2(arm, arm)
-		_landmark_points[p + 2] = center + Vector2(-arm, arm)
-		_landmark_points[p + 3] = center + Vector2(arm, -arm)
-		_landmark_colors[_landmark_count * 2] = color
-		_landmark_colors[_landmark_count * 2 + 1] = color
-		_landmark_count += 1
+		_plot_landmark(marker.global_position, COLOR_LANDMARK, scale, arm)
+	_gather_city_landmarks(scale, arm)
 	# Park the unused tail off-control and transparent, for the reason the crocodile
 	# and teammate tails are parked: the buffers are permanently sized so the tick
 	# never allocates, and `draw_multiline_colors()` consumes the whole array.
@@ -997,6 +978,96 @@ func _gather_landmarks() -> void:
 		_landmark_points[i] = PARKED_SEGMENT
 	for i in range(_landmark_count * 2, _landmark_colors.size()):
 		_landmark_colors[i] = Color(0, 0, 0, 0)
+
+
+func _plot_landmark(world: Vector3, base: Color, scale: float, arm: float) -> bool:
+	"""
+	Put one landmark X into the shared buffers.
+
+	@return: false when `MAX_LANDMARK_DOTS` is already spent, so a caller with more
+	    to plot can stop asking.
+
+	Extracted from the group walk so the city slots below can use the SAME rim
+	clamp, the same reach inset and the same dimming — three rules that were only
+	ever right once, and a second copy is how the two layers drift apart.
+	"""
+	if _landmark_count >= MAX_LANDMARK_DOTS:
+		return false
+	# Same north-up mapping as every other layer, off the SAME shared scale:
+	# world (x, z) → screen (x, y). See `_view_radius()`.
+	var offset := Vector2(world.x - _player_pos.x, world.z - _player_pos.z) * scale
+	var color := base
+	var center: Vector2
+	var dist := offset.length()
+	if dist > MAP_RADIUS:
+		# OFF THE MAP — classified against the DISC EDGE itself, never against the
+		# inset the mark is drawn at, for the reason `_gather_peers` spells out:
+		# testing against the inset declares the outer band of the disc off-map and
+		# dims a landmark you can actually see. The division is safe — this branch
+		# needs dist > MAP_RADIUS > 0.
+		center = MAP_CENTER + (offset / dist) * (MAP_RADIUS - LANDMARK_MARK_REACH)
+		color.a *= LANDMARK_EDGE_ALPHA
+	else:
+		# ON the map, pulled in by the mark's own REACH (see LANDMARK_MARK_REACH —
+		# the corner, not the arm) so an X at the very edge of the view does not
+		# poke past the ring. That moves it by at most that reach and never changes
+		# the classification above.
+		center = MAP_CENTER + offset.limit_length(MAP_RADIUS - LANDMARK_MARK_REACH)
+	var p := _landmark_count * 4
+	_landmark_points[p] = center + Vector2(-arm, -arm)
+	_landmark_points[p + 1] = center + Vector2(arm, arm)
+	_landmark_points[p + 2] = center + Vector2(-arm, arm)
+	_landmark_points[p + 3] = center + Vector2(arm, -arm)
+	_landmark_colors[_landmark_count * 2] = color
+	_landmark_colors[_landmark_count * 2 + 1] = color
+	_landmark_count += 1
+	return true
+
+
+func _gather_city_landmarks(scale: float, arm: float) -> void:
+	"""Budapest's 22 authored slots, lit by the explored mask (bead
+	godot-test1-8gw.5) — the "which of these have I still to walk" layer.
+
+	READ OFF THE PLAN AND NOT OFF A GROUP, `_gather_tower`'s rule and its reason:
+	a city slot is a constant in `BudapestPlan.SLOTS` that exists whether or not
+	its chunk is loaded, whether or not its stone has been built, and — for the
+	seven wave-C reservations — whether or not it HAS a builder. There are no
+	marker nodes to walk, which is exactly why `landmark_toast` scans the table
+	too.
+
+	ONLY INSIDE THE RECT. Outside Budapest this is two comparisons; the countdown
+	in the corner is what points you at the city from the field, and 22 marks piled
+	on the rim from 2 km away would say nothing the countdown does not.
+
+	ON-DISC SLOTS FIRST, then the rim-clamped ones, and the two-pass is what makes
+	the shared 12-mark cap behave: a single index-order pass would spend the whole
+	budget on the nine Danube-core slots and never draw the one you are standing
+	next to.
+
+	ponytail: TWO CEILINGS, both named by the bead and both deliberate. The map
+	holds `MAX_LANDMARK_DOTS` (12) marks against 22 slots, and at the default zoom
+	it reaches ~130 m against a 2.2 km city — so this disc is a "what is around
+	me" layer and never the city map. The city MAP PANEL, which draws the plan once
+	and lights all 22 from the same mask, is bead `godot-test1-8gw.11`."""
+	if not BudapestPlan.contains(_player_pos.x, _player_pos.z):
+		return
+	var mask: int = 0
+	var player := get_tree().get_first_node_in_group("player")
+	if player != null and "explored_mask" in player:
+		mask = int(player.explored_mask)
+	# Two passes over 22 rows of a `const` table, only while standing in the city.
+	for near_pass in [true, false]:
+		for i in range(BudapestPlan.SLOTS.size()):
+			if _landmark_count >= MAX_LANDMARK_DOTS:
+				return
+			var pos: Vector3 = BudapestPlan.SLOTS[i]["pos"]
+			var on_disc: bool = Vector2(pos.x - _player_pos.x,
+					pos.z - _player_pos.z).length() * scale <= MAP_RADIUS
+			if on_disc != near_pass:
+				continue
+			_plot_landmark(pos,
+					COLOR_LANDMARK_DONE if mask & (1 << i) != 0 else COLOR_LANDMARK,
+					scale, arm)
 
 
 func _gather_tower() -> void:

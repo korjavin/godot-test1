@@ -608,6 +608,38 @@ var current_character_index: int = 0
 var captive_heroes: Dictionary = {}
 
 # ---------------------------------------------------------------------------
+# THE EXPLORED SET — 22 bits, and eighteen of them is the WIN
+# ---------------------------------------------------------------------------
+#
+# Epic `godot-test1-8gw`, bead .5. `BudapestPlan.SLOTS` is the authored win set:
+# 22 places, indexed once and forever, so "which landmarks has this run seen" is
+# a bitmask and not a set of names, a set of ids or a list of nodes. One int.
+#
+# THREE PROPERTIES, and each one is why it is an int here rather than anything
+# else:
+#
+#   * PER-RUN, LIKE THE CAPTIVE SET. `restart_game()` empties it beside
+#     `captive_heroes` and for the same reason — nothing about a walk through
+#     Budapest is EARNED, so this may not ride `best_run_store`'s monotone union.
+#     What IS banked is the COUNT, through `submit_landmarks()`, which is a max
+#     and therefore safe.
+#   * ADD-ONLY WITHIN A RUN, which is what makes the multiplayer half trivial.
+#     `adopt_explored_mask()` ORs and never assigns, so a stale `room` packet can
+#     un-explore nothing and the two directions need none of the grace-window
+#     machinery `_adopt_room_captives` carries for a set that can go backwards.
+#   * ROOM-WIDE IN A ROOM. A landmark counts when ANY member walks it (bead .5),
+#     so `MpManager` unions the room's claims and hands them back here. Solo, this
+#     mask is the whole truth.
+var explored_mask: int = 0
+
+## How many of the 22 slots end the run in victory — the owner's 80%, rounded to
+## the 18 the epic states in words. Written here rather than derived from
+## `SLOTS.size()` because 18-of-22 is a DESIGN number: a wave that adds a
+## twenty-third landmark must be an explicit decision about the win, not a
+## silent retune of it.
+const BUDAPEST_WIN_LANDMARKS: int = 18
+
+# ---------------------------------------------------------------------------
 # THE FOURTH CAPTURE IS THE ENDING (owner veto 2026-09-01, bead godot-test1-ueg)
 # ---------------------------------------------------------------------------
 #
@@ -3184,6 +3216,109 @@ func end_run(outcome: Outcome = Outcome.CAPTURED) -> void:
 	_end_run(outcome)
 
 
+# ============================================================================
+# BUDAPEST — the explored set, and the win it decides
+# ============================================================================
+#
+# See the `explored_mask` banner for the three properties of the set itself.
+# These four methods are its whole public surface: one writer for a local
+# arrival, one writer for the room's mirror, one reader for the HUD and the
+# bank, and the win test they both end in.
+
+func explore_landmark(index: int) -> bool:
+	"""
+	The local player walked into `BudapestPlan.SLOTS[index]`. Set its bit, tell
+	the room, and ask whether that was the eighteenth.
+
+	@return: whether the bit was NEW to this run — the caller's cue to pay the
+	    arrival a card and its coins, so a return trip is silent and free.
+
+	IDEMPOTENT. `landmark_toast.gd` re-arms its approach latch every time you walk
+	out of range, so this is asked again on every visit to the same place.
+
+	THE ROOM HEARS IT BEFORE ANYTHING IS DECIDED, which is `_capture_active_hero`'s
+	ordering and for the same reason: in a room the win is a fact about the ROOM's
+	mask, and the master is what unions the claims into one.
+	"""
+	if index < 0 or index >= BudapestPlan.SLOTS.size():
+		return false
+	var bit: int = 1 << index
+	if explored_mask & bit != 0:
+		return false
+	explored_mask |= bit
+	var mp := _mp()
+	if mp != null and mp.has_method("report_landmark_explored"):
+		mp.call("report_landmark_explored", index)
+	_check_budapest_win()
+	return true
+
+
+func adopt_explored_mask(mask: int) -> void:
+	"""
+	THE ROOM'S MIRROR: fold the room's explored set into ours.
+
+	@param mask: a 22-bit mask from `MpManager` — the room's union, or a join
+	    snapshot's absolute picture.
+
+	OR, NEVER ASSIGN, and masked to the slots that exist. The OR is what lets the
+	`room` packet be a plain repair channel with none of `_adopt_room_captives`'s
+	grace windows: this set only ever grows inside a run, so a master's older copy
+	can undo nothing and the two directions converge on their own. The AND is the
+	trust boundary's second half — `MpManager` range-checks every INDEX it accepts,
+	but a mask crosses the wire as one integer.
+	"""
+	explored_mask |= mask & ((1 << BudapestPlan.SLOTS.size()) - 1)
+	_check_budapest_win()
+
+
+func explored_count() -> int:
+	"""How many of Budapest's 22 landmarks this run has walked into."""
+	return _popcount(explored_mask)
+
+
+static func _popcount(mask: int) -> int:
+	"""
+	Bits set in `mask`. GDScript has no popcount, and Kernighan's loop runs once
+	per SET bit — at most 22 here, and typically none at all outside the city.
+	"""
+	var n: int = 0
+	var bits: int = mask
+	while bits != 0:
+		bits &= bits - 1
+		n += 1
+	return n
+
+
+func _check_budapest_win() -> void:
+	"""
+	Eighteen of twenty-two ends the run in VICTORY — the epic's 80%.
+
+	IN A ROOM THE MASK IS THE ROOM'S, AND IT IS NEVER READ BEFORE THE JOIN SETTLES
+	(epic decision 7). A joiner is IN_ROOM from the `welcome` frame while its
+	picture of the room still fills one snapshot at a time, so a mask read there is
+	a partial one — and a win is not a thing you can take back. Deferring costs
+	half a second at most: the master republishes at `ROOM_SYNC_HZ` and every
+	`room` packet re-drives this through `adopt_explored_mask()`.
+
+	`is_busy()` and not `is_online()`, the same test `landmark_toast._take_pause`
+	makes for a related reason: a join spends seconds in CONNECTING before it is a
+	room, and our own bits have not reached the master yet either.
+	"""
+	if is_game_over:
+		return
+	var mask: int = explored_mask
+	var mp := _mp()
+	if mp != null and mp.has_method("is_busy") and bool(mp.is_busy()):
+		if not mp.has_method("room_explored_mask"):
+			return
+		var room: Variant = mp.call("room_explored_mask")
+		if room == null:
+			return   # the join has not settled — the next `room` packet asks again
+		mask |= int(room)
+	if _popcount(mask) >= BUDAPEST_WIN_LANDMARKS:
+		end_run(Outcome.WON)
+
+
 func _bank_records() -> bool:
 	"""
 	Write this leg's records out. Idempotent, so it may be called as often as we
@@ -3222,6 +3357,15 @@ func _bank_records() -> bool:
 		best_coins = maxi(best_coins, own_coins)
 		if best_run_store:
 			best_run_store.submit(0, best_coins)
+
+	# BUDAPEST'S RECORD, banked here for the coin record's reason (a run that never
+	# reaches an ending would otherwise write nothing) and CHANGE-GATED for it too:
+	# `submit_landmarks` is a `maxi` plus a disk write, and this function runs on
+	# every bite. `landmarks_best` is a count and not the mask — a max merges, a
+	# 22-bit set of WHICH ones is per-run world state and stays off the store.
+	var landmarks: int = explored_count()
+	if best_run_store and landmarks > best_run_store.landmarks_best:
+		best_run_store.submit_landmarks(landmarks)
 
 	# Meta-progression banks itself on every level-up, so this only catches the
 	# coins picked up SINCE the last one — the partial progress toward the next
@@ -3341,6 +3485,10 @@ func restart_game() -> void:
 	# not survive the button. The break-out scene's own state goes with it — it is
 	# per-run for the same reason and stored in exactly as many places (none).
 	captive_heroes.clear()
+	# Budapest is unexplored again, for exactly the captive set's reason: the walk
+	# is per-run world state and nothing about it is earned. What survives is the
+	# COUNT, already banked into `landmarks_best` by `_bank_records()`.
+	explored_mask = 0
 	# The bench goes with the run for the same reason: it is a fact about a room's
 	# roster, and Play Again inside a room leaves the room first.
 	prisoner_active = false
