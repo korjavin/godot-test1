@@ -108,6 +108,7 @@ const CONFIG_PLAYER_SECTION: String = "player"
 ## Web persistence: `localStorage` keys. Prefixed because the origin is shared
 ## with whatever else is served from it.
 const LS_PLAYER_ID: String = "ck_player_id"
+const LS_DISTANCE: String = "ck_best_distance"
 const LS_COINS: String = "ck_best_coins"
 const LS_LIFETIME: String = "ck_lifetime_coins"
 const LS_SPENT: String = "ck_spent_points"
@@ -202,10 +203,7 @@ signal progression_loaded(lifetime_coins: int, spent_points: int)
 # =============================================================================
 
 ## Best known to this store. Public so a caller can read them without waiting.
-## Distance is RETIRED as a score (bead `godot-test1-8gw.1`), so there is no
-## `distance` member and nothing writes the stored key any more — a permanently
-## zero field would have overwritten a real record on this device the first time
-## anything saved.
+var distance: int = 0
 var coins: int = 0
 
 ## The coins record THE SERVER REPORTED, kept PRE-MERGE and deliberately
@@ -219,6 +217,7 @@ var coins: int = 0
 ## Stays 0 while the lobby is unreachable, which reads as "no external record"
 ## and leaves the caller's local comparison standing.
 var server_best_coins: int = 0
+var server_best_distance: int = 0
 
 ## Meta-progression, same monotone rule. `lifetime_coins` is cumulative coins
 ## picked up across every run ever and is NEVER deducted (owner, 2026-08-25);
@@ -242,17 +241,17 @@ var _get_http: HTTPRequest = null
 var _post_http: HTTPRequest = null
 
 ## Whether the boot GET's reply may be trusted as a PRE-SUBMIT baseline — which is
-## the only thing `server_best_coins` is for, and the one property the two
+## the only thing `server_best_distance` is for, and the one property the two
 ## `HTTPRequest` nodes above take away. They overlap on purpose (that is the whole
 ## reason for the split), the lobby serves them concurrently, and nothing orders
-## them: a bite in the first seconds of a run POSTs this run's coins, and if
+## them: a bite in the first seconds of a run POSTs this run's distance, and if
 ## that merge lands before the still-in-flight GET is read, the reply hands our
 ## OWN number back as if another device held it. The reconciliation then takes
 ## back a flash the player earned — exactly the echo the pre-merge field exists
 ## to be immune to.
 ##
 ## So a POST that actually started while the GET was outstanding retires the
-## baseline. `server_best_coins` then stays 0, which is already the documented
+## baseline. `server_best_distance` then stays 0, which is already the documented
 ## "no external record" degrade, and the local comparison stands — the safe
 ## direction, because the alternative claims a record on evidence we produced.
 ## The next boot's GET has no POST racing it and reports the truth.
@@ -271,7 +270,7 @@ func fetch() -> void:
 	raise them.
 	"""
 	_read_local()
-	loaded.emit(0, coins)
+	loaded.emit(distance, coins)
 	progression_loaded.emit(lifetime_coins, spent_points)
 	_request_get()
 
@@ -288,6 +287,7 @@ func submit(_new_distance: int, new_coins: int) -> void:
 	"""
 	_read_local()
 	coins = maxi(coins, new_coins)
+	distance = 0
 	_write_local()
 	_request_post()
 
@@ -391,6 +391,7 @@ func _write_local() -> void:
 	"""
 	_read_local()
 	if OS.has_feature("web"):
+		_ls_set(LS_DISTANCE, "0")
 		_ls_set(LS_COINS, str(coins))
 		_ls_set(LS_LIFETIME, str(lifetime_coins))
 		_ls_set(LS_SPENT, str(spent_points))
@@ -398,6 +399,7 @@ func _write_local() -> void:
 		return
 	var cfg := ConfigFile.new()
 	cfg.load(config_path)  # keep any other section (the player id) intact
+	cfg.set_value(CONFIG_SECTION, "distance", 0)
 	cfg.set_value(CONFIG_SECTION, "coins", coins)
 	cfg.set_value(CONFIG_PROGRESSION_SECTION, "lifetime_coins", lifetime_coins)
 	cfg.set_value(CONFIG_PROGRESSION_SECTION, "spent_points", spent_points)
@@ -759,6 +761,7 @@ func _on_get_completed(
 	var progression_raised := server_lifetime > lifetime_coins or server_spent > spent_points
 
 	coins = maxi(coins, server_coins)
+	distance = 0
 	lifetime_coins = maxi(lifetime_coins, server_lifetime)
 	spent_points = maxi(spent_points, server_spent)
 	if raised or progression_raised:
@@ -785,10 +788,6 @@ func _request_post() -> void:
 		_post_http.timeout = REQUEST_TIMEOUT_SEC
 		add_child(_post_http)
 	var body := JSON.stringify({
-		# Distance is retired as a score and this store no longer keeps one — but
-		# the field stays on the wire, as a ZERO and a SHAPE ONLY, because the Go
-		# lobby merges it with `max` against records older profiles already hold.
-		# Dropping it would leave a decoder on the other side reading a missing key.
 		"distance": 0,
 		"coins": coins,
 		"lifetime": lifetime_coins,

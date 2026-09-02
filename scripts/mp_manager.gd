@@ -2743,6 +2743,7 @@ func _send_state_to(id: String) -> void:
 	var player: Node = get_tree().get_first_node_in_group("player")
 	var pos: Vector3 = Vector3.ZERO
 	var coins: int = 0
+	var dist: int = 0
 	if player != null:
 		pos = player.global_position
 		# `own_coins` is this peer's OWN contribution, which is what the room
@@ -2751,6 +2752,7 @@ func _send_state_to(id: String) -> void:
 		# are the ones `_send_presence()` uses, for the same reason: a player
 		# scene run standalone still answers something sane.
 		coins = int(player.get("own_coins")) if "own_coins" in player else 0
+		dist = int(player.get("run_distance")) if "run_distance" in player else 0
 
 	_lobby.send_signal_to(id, {
 		"mp": "state",
@@ -3209,6 +3211,24 @@ func shared_bank(own_coins: int) -> Variant:
 	for state: Dictionary in _peer_state.values():
 		total += int(state.get("coins", 0))
 	return total
+
+
+func shared_distance(own_distance: int) -> Variant:
+	"""
+	The furthest anyone in the room has got, or `null` offline.
+
+	A max, so feeding it back into the player's own running max cannot inflate it
+	— which is also why a departed peer needs no frozen accumulator: whatever it
+	reached was already folded in while it was here.
+
+	`null` offline, and while the join is still settling (see `_join_settled`).
+	"""
+	if _state != State.IN_ROOM or not _join_settled():
+		return null
+	var best: int = own_distance if _contributing() else 0
+	for state: Dictionary in _peer_state.values():
+		best = maxi(best, int(state.get("dist", 0)))
+	return best
 
 
 # =============================================================================

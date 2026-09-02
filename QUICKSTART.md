@@ -15,7 +15,7 @@ to install.
 
 ## Controls
 
-- **W/S** move · **Q/E** turn · **A/D** sidestep · **Mouse** look
+- **W/S** move · **A/D** turn · **Q/E** sidestep · **Mouse** look
 - **Space** jump · **Shift** run · **Ctrl** duck
 - **R** switch hero · **F** special ability
 - **P** pause · **Esc** release/recapture mouse · **F3** perf overlay

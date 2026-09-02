@@ -151,13 +151,6 @@ const LAND_HARD_SPEED: float = 12.0
 ## every landing squashed maximally. 16.0 puts a plain jump at ~0.64 and leaves
 ## headroom above it for genuine drops.
 const LAND_SQUASH_SPEED_DIVISOR: float = 16.0
-## How fast the SIDE SHUFFLE cycles, against the walk's own 8.0 (animate_walking).
-## The strafe is a CONTINUOUSLY HELD move, so unlike the burst it replaced it has
-## no progress ramp of its own to pose from — without a clock the limbs below are
-## constants and the body slides sideways frozen. Slightly under the walk because
-## a shuffle takes shorter steps than a stride; both are scaled 1.5x by running,
-## so the two cadences stay in step when a strafe turns into a walk.
-const SIDESTEP_CYCLE_SPEED: float = 6.5
 ## Seconds left in the current squash (0 = none) and its 0.2–1.0 strength.
 var land_squash_timer: float = 0.0
 var land_squash_strength: float = 0.0
@@ -190,7 +183,7 @@ const ROTATION_SPEED: float = 10.0
 ## Mouse sensitivity for camera rotation
 const MOUSE_SENSITIVITY: float = 0.003
 
-## Keyboard-turn camera easing: when Q/E spin the body, the camera pivot lags
+## Keyboard-turn camera easing: when A/D spin the body, the camera pivot lags
 ## the turn and eases back in at this rate (higher = catches up faster), so a
 ## keyboard turn sweeps smoothly instead of snapping with the body. MOUSE turns
 ## deliberately bypass this (they never touch camera_yaw_lag) and stay 1:1.
@@ -338,9 +331,8 @@ const JOIN_RING_ANGLES: int = 8
 ## spawn point uses, so the landing squash reads instead of a hard snap.
 const JOIN_SPAWN_HEIGHT: float = 2.0
 
-## The best-run COIN record. Read in _trigger_game_over() to decide the
-## "NEW BEST!" flash, and pushed back through the store there. Distance is not
-## a record any more (bead godot-test1-8gw.1) and has no field here.
+## Best-run records (coins). Read in _trigger_game_over() to decide the
+## "NEW BEST!" flash, and pushed back through the store there.
 ##
 ## WHERE THEY ARE KEPT IS NOT THIS FILE'S BUSINESS ANY MORE. `best_run_store.gd`
 ## owns both the local store (a ConfigFile on desktop, `localStorage` on web)
@@ -348,22 +340,20 @@ const JOIN_SPAWN_HEIGHT: float = 2.0
 ## player between devices. All this side does is fold whatever the store
 ## reports in with `maxi`, so a late server reply can never lower a record and the
 ## order the two layers answer in does not matter.
+var best_distance: int = 0
 var best_coins: int = 0
 var best_run_store: BestRunStore = null
 
 ## Did THIS run move the coin record? A LATCH, not a comparison, because
 ## `_bank_records()` now runs on every bite (bead godot-test1-0bc) and raises
-## `best_coins` to `record_coins` as it goes — so by the time the ending
-## panel asks, `record_coins > best_coins` is false on the very runs that
+## `best_coins` to `own_coins` as it goes — so by the time the ending
+## panel asks, `own_coins > best_coins` is false on the very runs that
 ## earned the flash. The fact is recorded where it is still true and read at the
 ## ending; `reset_position()` (the hard-reset wipe list) clears it.
 var run_beat_record: bool = false
-## THE RUN'S COIN PEAK, and the only figure any record is written from. Raised at
-## every pickup (`collect_coin`, `bank_awarded`), never lowered — which `own_coins`
-## is, by `_pay_coin_setback()`. Both places a record is banked run AFTER that bill,
-## so reading the live total there would persist a record one setback below the one
-## the HUD showed; the same reason it, and not `own_coins`, is what
-## `_reconcile_record_latch()` compares against `server_best_coins` at the ending.
+## The coin peak that set the `run_beat_record` latch in this run. Reconciled
+## against `server_best_coins` at game over instead of `own_coins`, because
+## setbacks (bites) decrease `own_coins` after the record was banked.
 var record_coins: int = 0
 
 ## How often the run's records are checkpointed while the player is simply
@@ -451,7 +441,7 @@ const SHAKE_DECAY: float = 1.0
 
 ## Keyboard-turn camera lag (radians). handle_turning subtracts each frame's
 ## body turn into this; _process applies it to the pivot's yaw and decays it to
-## zero, so the camera trails a Q/E turn and eases in behind the body. Mouse
+## zero, so the camera trails an A/D turn and eases in behind the body. Mouse
 ## turns never touch it, keeping mouse look 1:1. Zeroed in reset_position().
 var camera_yaw_lag: float = 0.0
 
@@ -1118,7 +1108,7 @@ func _physics_process(delta: float) -> void:
 	#
 	# C CYCLES three views (third-person → eyes → front/mirror → third-person)
 	# rather than toggling two. CONTROLS ARE NEVER MIRRORED WITH THE CAMERA: in
-	# the front view Q/E, A/D and the mouse still move the BODY the same way they do
+	# the front view A/D and the mouse still turn the BODY the same way they do
 	# in third-person, and the camera swings with it. Inverting them to match
 	# what the player sees on screen reads clever and plays terribly — the world
 	# stops agreeing with the stick. Only the picture is mirrored.
@@ -1371,7 +1361,7 @@ func _process(delta: float) -> void:
 		camera.v_offset = 0.0
 
 	# Eased keyboard turn: the pivot's yaw holds the lag handle_turning banked,
-	# then the lag decays toward zero — so the camera starts behind a Q/E turn
+	# then the lag decays toward zero — so the camera starts behind an A/D turn
 	# and smoothly catches up. Mouse turns never bank lag, so they stay 1:1.
 	camera_pivot.rotation = Vector3(camera_pitch, camera_yaw_lag, 0.0)
 	camera_yaw_lag = lerpf(camera_yaw_lag, 0.0, minf(1.0, CAMERA_TURN_EASE * delta))
@@ -1405,25 +1395,12 @@ func get_input_direction() -> Vector2:
 	- Normalizing the composed 2D vector guarantees diagonal movement never
 	  exceeds 1.0 magnitude (the speed contract).
 	"""
-	# READ AIRBORNE TOO, exactly like the forward axis. A/D is a primary movement
-	# axis now, not the old grounded one-shot burst: gating it on `is_on_floor()`
-	# does not merely refuse air-steering, it drops `input_dir` to ZERO for a
-	# player holding A alone, which sends STEP 8 into its FRICTION branch and
-	# brakes the existing lateral velocity at ~50 m/s² in mid-air — a sideways
-	# jump stops dead about a tenth of a second after take-off. The airborne
-	# concern is the POSE, and `update_sidestep()` already owns it.
-	var input_x := Input.get_axis("step_left", "step_right")
+	var input_x := Input.get_axis("step_left", "step_right") if is_on_floor() else 0.0
 	var input_y := Input.get_axis("move_forward", "move_backward")
 	var raw_dir := Vector2(input_x, input_y)
-	# ALWAYS normalized, never merely capped. STEP 8 multiplies this by
-	# current_speed, so an ANALOG axis magnitude would scale the walk itself — and
-	# `mobile_input.gd` drives `move_forward` at `walk_energy`, a sawtooth that
-	# sits well below 1.0 at an ordinary cadence. Capping only above 1.0 therefore
-	# walks a phone player at a fraction of WALK_SPEED, under the chase speed the
-	# catchable-walk contract is measured against. Desktop keys are ±1 either way.
-	if raw_dir == Vector2.ZERO:
-		return raw_dir
-	return raw_dir.normalized()
+	if raw_dir.length_squared() > 1.0:
+		return raw_dir.normalized()
+	return raw_dir
 
 func calculate_current_speed() -> float:
 	"""
@@ -1571,9 +1548,6 @@ func reset_sidestep_pose() -> void:
 	The sidestep is the only animation that touches the Z (roll) rotation, so the
 	walk/idle animations never put it back on their own. We snap it here when a
 	step ends so a finished step never leaves the legs slightly splayed.
-
-	The body's shuffle LIFT goes back too — animate_sidestep writes position.y and
-	so this has to unwrite it, or the reset does not undo the pose it names.
 	"""
 	if left_arm and original_rotations.has("left_arm"):
 		left_arm.rotation.z = original_rotations["left_arm"].z
@@ -1585,7 +1559,6 @@ func reset_sidestep_pose() -> void:
 		right_leg.rotation.z = original_rotations["right_leg"].z
 	if character_body and original_rotations.has("body"):
 		character_body.rotation.z = original_rotations["body"].z
-		character_body.position.y = 0.0
 
 # ============================================================================
 # DEBUG AND UTILITY FUNCTIONS
@@ -2545,44 +2518,28 @@ func animate_sidestep() -> void:
 	if not left_arm or not right_arm or not left_leg or not right_leg:
 		return
 
-	# THE OTHER HALF OF animate_walking's reset_sidestep_pose(), and it is needed
-	# for the same reason in the other key order: the walk swings the limbs on X
-	# and this pose writes only Z, so releasing W with A still held (W+A -> A)
-	# leaves the legs frozen at whatever mid-stride X angle the last walk frame
-	# wrote — for as long as the strafe is held, which is as long as the player
-	# likes. Snapped, not eased: the walk's own hand-over is a snap too.
-	left_arm.rotation.x = original_rotations["left_arm"].x
-	right_arm.rotation.x = original_rotations["right_arm"].x
-	left_leg.rotation.x = original_rotations["left_leg"].x
-	right_leg.rotation.x = original_rotations["right_leg"].x
-
-	# THE SHUFFLE CLOCK. A/D is held for as long as the player likes, so the pose
-	# needs a cycle of its own or the character slides sideways with its limbs
-	# locked in one splayed frame. `animation_time` is the same clock the walk
-	# swings on and running scales it the same 1.5x, so a strafe that turns into a
-	# walk hands over mid-stride instead of snapping.
-	var cycle := sin(animation_time * SIDESTEP_CYCLE_SPEED * (1.5 if is_running else 1.0))
-
-	# How far the legs splay sideways, and how much the reaching leg leads.
+	# How far the legs splay sideways, and the extra lift on the leading leg.
 	var leg_splay := step_direction * deg_to_rad(28)
 	var lead_lift := step_direction * deg_to_rad(14)
 	# Arms counter-swing for balance.
 	var arm_balance := step_direction * deg_to_rad(20)
 
-	# Both legs lean toward the step for the whole shuffle — that constant splay is
-	# the pose that reads as "sideways" — and the cycle passes the reach back and
-	# forth between them: one foot steps out, the other closes up behind it.
-	left_leg.rotation.z = original_rotations["left_leg"].z + leg_splay + lead_lift * cycle
-	right_leg.rotation.z = original_rotations["right_leg"].z + leg_splay - lead_lift * cycle
+	# Both legs lean toward the step; the leading leg (on the step side) lifts a
+	# touch more so the step reads as one foot reaching out and the other following.
+	left_leg.rotation.z = original_rotations["left_leg"].z + leg_splay
+	right_leg.rotation.z = original_rotations["right_leg"].z + leg_splay
+	if step_direction > 0.0:
+		right_leg.rotation.z += lead_lift
+	else:
+		left_leg.rotation.z += lead_lift
 
-	left_arm.rotation.z = original_rotations["left_arm"].z - arm_balance - arm_balance * 0.4 * cycle
-	right_arm.rotation.z = original_rotations["right_arm"].z - arm_balance + arm_balance * 0.4 * cycle
+	left_arm.rotation.z = original_rotations["left_arm"].z - arm_balance
+	right_arm.rotation.z = original_rotations["right_arm"].z - arm_balance
 
-	# Lean the body into the step direction for a bit of weight shift, and bob on
-	# the closing foot (twice a cycle, the walk's own bob relation).
+	# Lean the body into the step direction for a bit of weight shift.
 	if character_body:
 		character_body.rotation.z = original_rotations["body"].z - step_direction * deg_to_rad(8)
-		character_body.position.y = absf(cycle) * 0.025
+		character_body.position.y = 0.0
 
 func animate_jumping() -> void:
 	"""
@@ -2691,12 +2648,6 @@ func collect_coin(value: int = 1) -> void:
 	# multiplayer room (see own_coins). Untouched by the shared recompute, which
 	# overwrites coins_collected but never this.
 	own_coins += value * get_streak_multiplier()
-	# THE PEAK, LATCHED AT PICKUP. `own_coins` is NOT monotone — `_pay_coin_setback()`
-	# bills a fraction of it — and `_bank_records()` runs AFTER that bill, so a record
-	# read off `own_coins` is always at least one setback below what the HUD showed.
-	# Harmless while the headline record was distance (monotone by construction);
-	# retiring distance (bead godot-test1-8gw.1) is what made it bite.
-	record_coins = maxi(record_coins, own_coins)
 	# META-PROGRESSION: the PRE-STREAK value, because lifetime coins count what
 	# was physically picked up (a coin is 1, a gem is 10) while the streak is a
 	# SCORE multiplier on what the run is worth. This is also the only place
@@ -2734,8 +2685,6 @@ func bank_awarded(amount: int, base_total: int = 0) -> void:
 	"""
 	coins_collected += amount
 	own_coins += amount
-	# The peak, same latch and same reason as collect_coin() above.
-	record_coins = maxi(record_coins, own_coins)
 	# META-PROGRESSION, at the PRE-MULTIPLIER value — the SAME null-safe group
 	# call collect_coin() makes, and deliberately the same rule: a coin won
 	# through the claim protocol has to credit the player exactly what it would
@@ -2902,10 +2851,8 @@ func _on_caught_finished() -> void:
 	# ...and BANK THE LEG, because this is what replaced the ending. The record used
 	# to be written by `_trigger_game_over()`, which the third bite reached; with no
 	# hearts, most runs never reach an ending at all, so banking only there would
-	# mean a session's coins were never persisted. Runs after the bill in ORDER but
-	# not in VALUE: what it banks is `record_coins`, the run's peak, which the bill
-	# above deliberately does not touch — see that field. Ordering it before the
-	# bill would change nothing, which is the point.
+	# mean a session's distance and coins were never persisted. Banked AFTER the
+	# bill, so what goes to the store is what the player actually walks away with.
 	# See `_bank_records()` — idempotent, and silent unless a record moved.
 	_bank_records()
 
@@ -3198,15 +3145,8 @@ func _trigger_game_over() -> void:
 
 	var panel := get_tree().get_first_node_in_group("game_over_ui")
 	if panel and panel.has_method("show_game_over"):
-		# THE PEAK, NOT THE LIVE TOTAL — the same figure `_bank_records()` writes
-		# the record from. `_pay_coin_setback()` has already taken its cut by the
-		# time we get here, so handing the panel `coins_collected` alone shows a
-		# headline BELOW the `best_coins` printed beside it while "NEW BEST!" is
-		# flashing about the record that run just set. `maxi` keeps the room case
-		# right: in a room `coins_collected` is the ROOM's bank and legitimately
-		# exceeds this peer's own peak.
 		panel.show_game_over(
-			maxi(coins_collected, record_coins), best_coins, run_beat_record
+			coins_collected, best_coins, run_beat_record
 		)
 	print("Game over! Final coins: %d" % coins_collected)
 
@@ -3218,7 +3158,7 @@ func _bank_records() -> bool:
 
 	@return: true if the COIN record moved ON THIS CALL. The "NEW BEST!" flash
 	    reads the `run_beat_record` LATCH this also sets, never a fresh comparison:
-	    a bite banks, so `best_coins` already equals `record_coins` by the time
+	    a bite banks, so `best_coins` already equals `own_coins` by the time
 	    the ending asks.
 
 	CALLED ON EVERY CONTACT, NOT ONLY AT THE ENDING (bead godot-test1-0bc). While
@@ -3236,21 +3176,17 @@ func _bank_records() -> bool:
 	when a record ACTUALLY moved — so the network sees traffic on improvements and
 	nothing else.
 
-	Records are read off `record_coins` (this peer's own PEAK — see the field), NOT
-	the displayed fields: in a room those are the ROOM's totals (see
-	_refresh_shared_totals), so writing them here would persist the whole room's bank
-	as this player's personal best. Solo the pairs are identical.
+	Records are read off own_coins, NOT the displayed fields: in a
+	room those are the ROOM's totals (see _refresh_shared_totals), so writing them
+	here would persist the whole room's bank as this player's personal best. Solo
+	the pairs are identical.
 	"""
 	# Coins is the headline record, so IT decides the "NEW BEST!" flash (bead godot-test1-8gw.1).
-	# READ OFF `record_coins`, THE PEAK, NEVER OFF `own_coins`: this is called from
-	# `_on_caught_finished()` AFTER `_pay_coin_setback()` has already taken its cut,
-	# so the live total is the post-tax figure and banking it would persist a record
-	# strictly below the one the player watched themselves set. See `record_coins`.
-	record_coins = maxi(record_coins, own_coins)
-	var is_new_best := record_coins > best_coins
+	var is_new_best := own_coins > best_coins
 	run_beat_record = run_beat_record or is_new_best
 	if is_new_best:
-		best_coins = maxi(best_coins, record_coins)
+		record_coins = maxi(record_coins, own_coins)
+		best_coins = maxi(best_coins, own_coins)
 		if best_run_store:
 			best_run_store.submit(0, best_coins)
 
@@ -3433,18 +3369,7 @@ func _freeze_with_gravity(delta: float) -> void:
 	Hold the player still (no horizontal movement) while still settling under
 	gravity, so a frozen state never leaves the character hovering. Used by the
 	game-over and post-respawn-grace branches of _physics_process.
-
-	All three of those branches `return` ABOVE `update_sidestep()`, so a player
-	frozen mid-strafe keeps `is_stepping` set — and `animate_sidestep()` runs off
-	`animation_time`, which `update_character_animation()` goes on advancing during
-	the freeze. Without this the body shuffles its legs, counter-swings its arms
-	and bobs for the whole CAUGHT_DURATION. Cleared here rather than in each
-	branch: this is the one function all three already share.
 	"""
-	if is_stepping:
-		is_stepping = false
-		step_direction = 0.0
-		reset_sidestep_pose()
 	velocity.x = 0.0
 	velocity.z = 0.0
 	if not is_on_floor():
@@ -3996,17 +3921,14 @@ func _refresh_shared_totals() -> void:
 	var bank: Variant = mp.shared_bank(own_coins)
 	if bank == null:
 		# Manager present but no room: solo semantics, untouched — EXCEPT on the
-		# frame the room ends. coins_collected is still holding the room's total
-		# and nothing else ever writes it back, so a room's four-figure bank would
-		# sit there for the rest of the solo run. Restore this peer's own number.
-		# (run_distance is NOT restored: since .1 retired distance nothing shares
-		# or overwrites it, so it is this peer's own running max already — and
-		# assigning own_distance over it would LOWER a max that is documented
-		# never to fall, for a mid-run joiner whose own_distance_origin is not
-		# the world origin.)
+		# frame the room ends. The displayed fields are still holding the room's
+		# totals and nothing else ever writes them back, so a room's four-figure
+		# bank would sit in coins_collected for the rest of the solo run. Restore
+		# this peer's own numbers.
 		if _showing_shared_totals:
 			_showing_shared_totals = false
 			coins_collected = own_coins
+			run_distance = own_distance
 		return
 	_showing_shared_totals = true
 	coins_collected = int(bank)

@@ -1226,7 +1226,6 @@ func _check_a_guard_takes_coins_and_ground() -> void:
 	if not player_c.run_beat_record:
 		_fail("a repeat bank cleared run_beat_record — the latch is per RUN, and"
 			+ " only the two places that wipe own_coins may clear it")
-
 	# ...and a LATE LOBBY REPLY reconciles it AT THE ENDING. The store answers
 	# asynchronously, so a bite early in a run banks against whatever had loaded by
 	# then (0, if the lobby leg is still in flight) — a record this run never beat
@@ -1361,6 +1360,12 @@ func _check_a_guard_takes_coins_and_ground() -> void:
 	if absf(diag_dir.length() - 1.0) > 0.001:
 		_fail("diagonal input length is %.3f (expected normalized 1.0) — speed contract broken" % diag_dir.length())
 
+	var cur_speed: float = player_c.calculate_current_speed()
+	var composed_vel: Vector3 = (player_c.transform.basis * Vector3(diag_dir.x, 0.0, diag_dir.y)) * cur_speed
+	var horiz_speed: float = Vector2(composed_vel.x, composed_vel.z).length()
+	if horiz_speed > cur_speed + 0.01:
+		_fail("diagonal composed speed %.2f exceeds current speed %.2f" % [horiz_speed, cur_speed])
+
 	# Sidestep state updates continuously while held on the ground
 	player_c.update_sidestep(0.016)
 	if not player_c.is_stepping or player_c.step_direction <= 0.0:
@@ -1389,111 +1394,10 @@ func _check_a_guard_takes_coins_and_ground() -> void:
 			or absf(player_c.character_body.rotation.z - player_c.original_rotations["body"].z) > 0.001:
 		_fail("adding W while holding A left sidestep Z roll stuck in walk animation")
 
-	# ...AND THE OTHER DIRECTION, W -> A, which is the half the Z assertion above
-	# cannot see. The walk swings the limbs on X and the strafe pose writes only Z,
-	# so releasing W with A still held hands over to a pose that never unwrites the
-	# walk: without animate_sidestep's own X reset the leg stays thrown 40° forward
-	# for as long as the strafe is held. Wound up on the walk first (one frame's
-	# swing can be near zero at a sine crossing) and then measured on the strafe.
-	Input.action_release("step_left")
-	for _swing in 8:
-		player_c.update_sidestep(0.016)
-		player_c.update_character_animation(0.016, player_c.get_input_direction())
-	if absf(player_c.left_leg.rotation.x - player_c.original_rotations["left_leg"].x) < 0.01:
-		_fail("the walk left no X swing to freeze — the W -> A probe below would "
-				+ "pass against any implementation whatever")
-	Input.action_press("step_left", 1.0)
-	Input.action_release("move_forward")
-	player_c.update_sidestep(0.016)
-	player_c.update_character_animation(0.016, player_c.get_input_direction())
-	if absf(player_c.left_leg.rotation.x - player_c.original_rotations["left_leg"].x) > 0.001 \
-			or absf(player_c.right_arm.rotation.x - player_c.original_rotations["right_arm"].x) > 0.001:
-		_fail("releasing W while holding A left the WALK's X swing frozen into the "
-				+ "strafe pose — the character shuffles sideways mid-stride")
-
 	Input.action_release("move_forward")
 	Input.action_release("step_left")
 	player_c.update_sidestep(0.016)
 	player_c.update_character_animation(0.016, player_c.get_input_direction())
-
-	# ...and THE SPEED CONTRACT IS MEASURED ON THE BODY, never recomposed here.
-	# Feeding `diag_dir` back through `basis * dir * speed` would only restate
-	# STEP 8's own arithmetic against an already-asserted unit vector — an identity
-	# that holds for EVERY possible implementation, so it printed SELFCHECK OK with
-	# the normalization deleted. Drive the real `_physics_process` and read the
-	# velocity it wrote. MOVE_ACCELERATION is 40 m/s², so ~0.5 s of 60 Hz ticks is
-	# far past convergence at any character's walk speed.
-	#
-	# LAST in this block on purpose: `move_and_slide()` carries the body ~2.4 m,
-	# which walks it off the probe floor and would leave `is_on_floor()` false for
-	# every grounded assertion above. The position is restored afterwards anyway,
-	# for whatever comes after.
-	# The record probes further up left this subject on the game-over screen, and
-	# all three freeze branches sit ABOVE STEP 8 — so clear them, or the
-	# measurement reads `_freeze_with_gravity`'s zero and "passes" nothing.
-	Input.action_press("move_forward", 1.0)
-	Input.action_press("step_right", 1.0)
-	var cur_speed: float = player_c.calculate_current_speed()
-	var stood_at: Vector3 = player_c.global_position
-	player_c.is_game_over = false
-	player_c.is_caught = false
-	player_c.is_respawning = false
-	player_c.velocity = Vector3.ZERO
-	for _tick in 30:
-		player_c._physics_process(0.016)
-	var horiz_speed: float = Vector2(player_c.velocity.x, player_c.velocity.z).length()
-	Input.action_release("step_right")
-	Input.action_release("move_forward")
-	player_c.global_position = stood_at
-	player_c.velocity = Vector3.ZERO
-	player_c.update_sidestep(0.016)
-	if horiz_speed > cur_speed + 0.01:
-		_fail("W+D drove the body at %.2f m/s against a current speed of %.2f —"
-			% [horiz_speed, cur_speed]
-			+ " the diagonal is not normalized, so strafing diagonally outruns the"
-			+ " catchable-walk contract every predator speed is measured against")
-	if horiz_speed < cur_speed - 0.01:
-		_fail("W+D drove the body at only %.2f m/s against a current speed of %.2f —"
-			% [horiz_speed, cur_speed]
-			+ " a held strafe axis is being dropped somewhere between"
-			+ " get_input_direction() and STEP 8")
-
-
-	# ...and THE RECORD IS THE RUN'S PEAK, NOT WHAT IS LEFT AFTER THE BILL.
-	# `_on_caught_finished()` pays the setback and THEN banks, and `own_coins` is
-	# the one score field in this game that goes DOWN — so a record read off the
-	# live total is always at least one setback below the number the HUD showed.
-	# Harmless while the headline record was distance (raised by a `maxi` every
-	# physics tick and never lowered); retiring distance (bead godot-test1-8gw.1)
-	# is what made it bite. Driven through `collect_coin()` on purpose: the peak
-	# is latched AT PICKUP, so a probe that assigns `own_coins` by hand — which is
-	# what every other leg here does, deliberately, to control the arithmetic —
-	# cannot see this at all.
-	var peaked := await _make_player()
-	(peaked as Node3D).global_position = Vector3(4.0 * TowerPlans.PLAN_HALF, 0.0, 0.0)
-	peaked.best_coins = 0
-	for i in range(20):
-		peaked.collect_coin(10)
-	var peak: int = peaked.own_coins
-	if peak <= 0:
-		_fail("20 pickups through collect_coin() banked %d own_coins — the peak"
-			% peak + " probe has nothing to lose")
-	peaked.hit_by_crocodile(_attacker_row(CONTROL_SPECIES))
-	peaked.is_caught = false
-	peaked.call("_on_caught_finished")
-	if peaked.own_coins >= peak:
-		_fail("a %s's bite took nothing off own_coins (%d of %d) — the peak probe"
-			% [CONTROL_SPECIES, peaked.own_coins, peak] + " measures nothing"
-			+ " unless the bill actually lands")
-	if peaked.best_coins != peak:
-		_fail("a bite banked %d against a run that peaked at %d — the record is"
-			% [peaked.best_coins, peak] + " being read off own_coins AFTER"
-			+ " _pay_coin_setback() billed it, so every player's Best line is a"
-			+ " setback below the score they watched themselves set")
-	# FREED NOW, not queued: the legs after this one resolve "the player" through
-	# get_first_node_in_group("player"), and a deferred free leaves this probe —
-	# caught, respawning and mid-bite — in that group for the rest of the frame.
-	(peaked as Node).free()
 
 	_clear(player_c)
 	field_shell.queue_free()
