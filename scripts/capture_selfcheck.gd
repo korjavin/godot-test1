@@ -291,6 +291,7 @@ func _run() -> void:
 	await _check_the_fourth_capture_ends_the_run()
 	await _check_reassign_first_imprison_last()
 	await _check_the_ending_archives_the_world()
+	await _check_run_outcome_and_win()
 	await _check_resize_is_not_a_lift()
 	await _check_air_sight_is_the_indoor_air_rush()
 	await _check_no_second_way_to_lose()
@@ -1724,6 +1725,72 @@ func _check_the_ending_archives_the_world() -> void:
 	if not bitten.is_respawning:
 		_fail("a survivable bite opened no grace window")
 	_clear(bitten)
+	await process_frame
+	_fresh_store()
+
+
+func _check_run_outcome_and_win() -> void:
+	"""
+	Budapest run outcome (godot-test1-8gw.2):
+	- outcome enum {CAPTURED, WON} with one end-run latch.
+	- end_run(WON) archives outcome="won" and sets has_won in BestRunStore.
+	- Continue reopens the win ending (run_outcome == WON).
+	- Play Again / restart_game() clears the world archive, while has_won persists across relaunches.
+	- Latching idempotency: once won, a subsequent end_run / capture call is a no-op.
+	"""
+	_fresh_store()
+	_beat_done()
+	var player := await _make_player()
+	if player.is_game_over:
+		_fail("new player started with is_game_over true")
+	if BestRunStore.world_archived():
+		_fail("fresh world started archived")
+
+	# Drive end_run(WON)
+	player.end_run(player.Outcome.WON)
+	if not player.is_game_over:
+		_fail("end_run(WON) did not set is_game_over")
+	if player.run_outcome != player.Outcome.WON:
+		_fail("end_run(WON) did not set run_outcome to WON")
+	if not BestRunStore.world_archived():
+		_fail("end_run(WON) did not archive the world")
+	if BestRunStore.archived_outcome() != "won":
+		_fail("end_run(WON) archived outcome '%s' instead of 'won'" % BestRunStore.archived_outcome())
+
+	# Latching idempotency: a second end-run call (e.g. CAPTURED) is ignored
+	player.end_run(player.Outcome.CAPTURED)
+	if player.run_outcome != player.Outcome.WON:
+		_fail("subsequent end_run(CAPTURED) overwrote latched WON outcome")
+
+	# Check has_won persistence in BestRunStore
+	var store := BestRunStore.new()
+	store._read_local()
+	if not store.has_won or not BestRunStore.has_ever_won():
+		_fail("end_run(WON) did not persist has_won to BestRunStore")
+	_clear(player)
+	await process_frame
+
+	# CONTINUE: boot into the won archived world reopens the win ending
+	var continued := await _make_player()
+	await process_frame
+	if not continued.is_game_over:
+		_fail("Continue into won archived world did not reopen ending")
+	if continued.run_outcome != continued.Outcome.WON:
+		_fail("Continue into won archived world reopened with outcome %s instead of WON" % str(continued.run_outcome))
+
+	# NEW GAME: Play Again clears archive latch, but has_won remains true
+	continued.restart_game()
+	if BestRunStore.world_archived():
+		_fail("Play Again left the won world archived")
+	if continued.is_game_over:
+		_fail("Play Again left is_game_over true")
+
+	var fresh_store := BestRunStore.new()
+	fresh_store._read_local()
+	if not fresh_store.has_won or not BestRunStore.has_ever_won():
+		_fail("has_won was lost after starting a new game (must be permanent)")
+
+	_clear(continued)
 	await process_frame
 	_fresh_store()
 

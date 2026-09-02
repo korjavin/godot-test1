@@ -14,8 +14,10 @@ extends Control
 ## restart_game(); it never holds a hard reference, matching the rest of the
 ## project's group-based wiring.
 
-## The labels we rewrite each time the screen appears. Coins is the HEADLINE
-## score (bigger, above the all-time best).
+## The labels we rewrite each time the screen appears.
+var title_label: Label = null
+var story_label: Label = null
+## Coins is the HEADLINE score (bigger, above the all-time best).
 var coins_label: Label = null
 ## All-time records line ("Best: NN coins") — the player persists these
 ## across sessions (user://best_run.cfg), we just display what it hands us.
@@ -42,8 +44,8 @@ func _ready() -> void:
 
 	_build_ui()
 
-	# Hidden until a run actually ends. `_trigger_game_over()` is the one thing that
-	# raises this screen, and the empty free-hero set is the one thing that calls it.
+	# Hidden until a run actually ends. `_trigger_game_over()` / `end_run()` is the
+	# one thing that raises this screen.
 	visible = false
 
 
@@ -64,22 +66,34 @@ func _build_ui() -> void:
 
 	var vbox := VBoxContainer.new()
 	vbox.alignment = BoxContainer.ALIGNMENT_CENTER
-	vbox.add_theme_constant_override("separation", 28)
+	vbox.add_theme_constant_override("separation", 24)
 	center.add_child(vbox)
 
-	# Title.
-	var title := Label.new()
-	title.text = "GAME OVER"
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.add_theme_font_size_override("font_size", 72)
-	title.add_theme_color_override("font_color", Color(0.95, 0.2, 0.2))
-	title.add_theme_color_override("font_outline_color", Color(0, 0, 0))
-	title.add_theme_constant_override("outline_size", 10)
-	vbox.add_child(title)
+	# Title (GAME OVER or VICTORY!).
+	title_label = Label.new()
+	title_label.text = "GAME OVER"
+	title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title_label.add_theme_font_size_override("font_size", 72)
+	title_label.add_theme_color_override("font_color", Color(0.95, 0.2, 0.2))
+	title_label.add_theme_color_override("font_outline_color", Color(0, 0, 0))
+	title_label.add_theme_constant_override("outline_size", 10)
+	vbox.add_child(title_label)
 
-	# "NEW BEST!" record flash — sits right under the title, hidden unless this
+	# Story subtitle line for win outcome.
+	story_label = Label.new()
+	story_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	story_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	story_label.custom_minimum_size = Vector2(560.0, 0)
+	story_label.add_theme_font_size_override("font_size", 22)
+	story_label.add_theme_color_override("font_color", Color(0.9, 0.95, 1.0))
+	story_label.add_theme_color_override("font_outline_color", Color(0, 0, 0))
+	story_label.add_theme_constant_override("outline_size", 5)
+	story_label.visible = false
+	vbox.add_child(story_label)
+
+	# "NEW BEST!" record flash — sits right under the title/story, hidden unless this
 	# run beat the all-time coin record (see show_game_over). Bright green so
-	# it reads as a reward against the red GAME OVER above it.
+	# it reads as a reward against the title above it.
 	new_best_label = Label.new()
 	new_best_label.text = "NEW BEST!"
 	new_best_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -132,12 +146,30 @@ func _unhandled_input(event: InputEvent) -> void:
 		_on_restart_pressed()
 
 
-func show_game_over(coins: int, best_coins: int, is_new_best: bool) -> void:
+func show_game_over(coins: int, best_coins: int, is_new_best: bool, outcome: int = 1) -> void:
 	"""
-	Reveal the screen: the run's coin count (headline), the all-time
-	best coins line, and — when this run set a new coin record — a pulsing
-	"NEW BEST!" flash. The player computes/persists the records; we only display.
+	Reveal the ending screen:
+	- For CAPTURED (outcome = 1): Red "GAME OVER" title.
+	- For WON (outcome = 2): Gold "VICTORY!" title with Budapest story text.
+	Headline coins, all-time best coins, optional NEW BEST! pulse, and web film.
 	"""
+	var is_won := (outcome == 2)
+	if title_label:
+		if is_won:
+			title_label.text = tr("VICTORY!")
+			title_label.add_theme_color_override("font_color", Color(1.0, 0.84, 0.0))
+		else:
+			title_label.text = tr("GAME OVER")
+			title_label.add_theme_color_override("font_color", Color(0.95, 0.2, 0.2))
+
+	if story_label:
+		if is_won:
+			story_label.text = tr("The heroes vanished into Budapest and started a new life. Next adventure coming!")
+			story_label.visible = true
+		else:
+			story_label.text = ""
+			story_label.visible = false
+
 	if coins_label:
 		coins_label.text = tr("Coins collected: %d") % coins
 	if best_label:
@@ -156,14 +188,15 @@ func show_game_over(coins: int, best_coins: int, is_new_best: bool) -> void:
 					Vector2(1.15, 1.15), 0.4).set_trans(Tween.TRANS_SINE)
 			new_best_tween.tween_property(new_best_label, "scale",
 					Vector2.ONE, 0.4).set_trans(Tween.TRANS_SINE)
-	# The ending film is the game-over screen on web. Start it through the
+	# The ending film is the game-over / win screen on web. Start it through the
 	# existing start overlay so IntroVideo.start() has one call site and its pause,
 	# modal key handling and fail-open teardown are shared with PLAY SOLO.
 	visible = false
 	var overlay := get_tree().get_first_node_in_group("start_overlay")
 	if OS.has_feature("web") and overlay != null and overlay.has_method("play_film"):
+		var video_url := IntroVideo.WIN_VIDEO_URL if is_won else IntroVideo.GAME_OVER_VIDEO_URL
 		var started: Variant = overlay.play_film(
-			IntroVideo.GAME_OVER_VIDEO_URL, Callable(self, "_on_ending_film_finished"))
+			video_url, Callable(self, "_on_ending_film_finished"))
 		if bool(started):
 			_ending_film_playing = true
 			return
@@ -172,6 +205,16 @@ func show_game_over(coins: int, best_coins: int, is_new_best: bool) -> void:
 	# original panel fallback. There is no pause or delay added on these paths.
 	_ending_film_playing = false
 	visible = true
+
+
+func show_win(coins: int, best_coins: int, is_new_best: bool) -> void:
+	"""Convenience wrapper to show the Budapest win panel."""
+	show_game_over(coins, best_coins, is_new_best, 2)
+
+
+func show_ending(coins: int, best_coins: int, is_new_best: bool, outcome: int = 1) -> void:
+	"""Unified entry point for run endings."""
+	show_game_over(coins, best_coins, is_new_best, outcome)
 
 
 func hide_game_over() -> void:

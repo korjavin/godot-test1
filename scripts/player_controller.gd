@@ -217,6 +217,12 @@ enum ViewMode {
 	FRONT,         ## Boom in FRONT looking back — the hero's face, plus what is behind them.
 }
 
+## The two run-ending outcomes.
+enum Outcome {
+	CAPTURED = 1,  ## All four heroes captured by GastroDefense.
+	WON = 2,       ## Escaped to Budapest with city explored.
+}
+
 ## Safe spawn radius - crocodiles within this distance will be removed on respawn
 const SPAWN_SAFE_RADIUS: float = 25.0
 
@@ -413,6 +419,8 @@ const DEFAULT_COIN_SETBACK: float = 0.10
 ## veto 2026-09-01, bead godot-test1-ueg), which raises the Game Over screen and
 ## freezes the player until they restart. `_trigger_game_over()` is the one writer.
 var is_game_over: bool = false
+## Outcome of the ended run: CAPTURED (loss) or WON (victory).
+var run_outcome: Outcome = Outcome.CAPTURED
 
 ## Post-respawn grace, in TWO phases. Phase 1: after a bite we stand
 ## frozen and invulnerable for RESPAWN_GRACE_DURATION seconds (with crocodiles
@@ -2896,8 +2904,7 @@ func _on_caught_finished() -> void:
 		# vetoed on this very bead: it needs a ruling, not a patch. The 0.5 s poll in
 		# `_tick_prison()` is what every OTHER peer ends through, and it rides out the
 		# flap for free by being a poll rather than an edge.
-		BestRunStore.archive_world()
-		_trigger_game_over()
+		_end_run(Outcome.CAPTURED)
 	elif not relocated:
 		_respawn_in_place()
 
@@ -3021,8 +3028,7 @@ func _tick_prison(delta: float) -> void:
 	# a poll rather than an edge. `_exit_prison()` first because a benched peer is
 	# standing in a cell and the ending must not leave the role latched.
 	if free_hero_count() == 0 and not captive_heroes.is_empty():
-		BestRunStore.archive_world()
-		_trigger_game_over()
+		_end_run(Outcome.CAPTURED)
 		return
 
 	# 2/3. What does the lobby say we are holding, and is he in a cell?
@@ -3113,13 +3119,19 @@ func _confine_to_block() -> void:
 	global_position.z = clampf(global_position.z, lo.z, hi.z)
 
 
-func _trigger_game_over() -> void:
+func _end_run(outcome: Outcome = Outcome.CAPTURED) -> void:
 	"""
-	The run is over — the corporation holds every hero.
-	Freeze the player, free the mouse cursor so the player can click the button,
-	and raise the Game Over screen (found via group) with the final coin tally.
+	The run is over — either the corporation holds every hero (CAPTURED),
+	or the heroes reached Budapest and escaped (WON).
+
+	LATCHING: the first call ends the run and sets the outcome. Every later
+	call is a no-op, which stops wins double-counting when repair/replay
+	re-enters the path.
 	"""
+	if is_game_over:
+		return
 	is_game_over = true
+	run_outcome = outcome
 	velocity = Vector3.ZERO
 	# THE BENCH DOES NOT OUTLIVE THE RUN, and it is dropped HERE rather than at the
 	# two call sites because a role left standing has nothing left to clear it:
@@ -3131,8 +3143,17 @@ func _trigger_game_over() -> void:
 	_hide_respawn_message()
 	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 
-	# Game-over sting.
-	_sfx("play_game_over")
+	if outcome == Outcome.WON:
+		_sfx("play_level_up")
+		BestRunStore.archive_world(BestRunStore.OUTCOME_WON)
+		if best_run_store:
+			best_run_store.record_win()
+		print("Won the run! Escaped to Budapest! Final coins: %d" % coins_collected)
+	else:
+		# Game-over sting.
+		_sfx("play_game_over")
+		BestRunStore.archive_world(BestRunStore.OUTCOME_CAPTURED)
+		print("Game over! Final coins: %d" % coins_collected)
 
 	# Bank once more (idempotent) and then read the LATCH, not this call's return:
 	# the grab that emptied the roster already banked this leg, so a fresh
@@ -3146,9 +3167,21 @@ func _trigger_game_over() -> void:
 	var panel := get_tree().get_first_node_in_group("game_over_ui")
 	if panel and panel.has_method("show_game_over"):
 		panel.show_game_over(
-			coins_collected, best_coins, run_beat_record
+			coins_collected, best_coins, run_beat_record, int(outcome)
 		)
-	print("Game over! Final coins: %d" % coins_collected)
+
+
+func _trigger_game_over() -> void:
+	"""Compatibility alias for ending the run via capture."""
+	_end_run(Outcome.CAPTURED)
+
+
+func end_run(outcome: Outcome = Outcome.CAPTURED) -> void:
+	"""
+	Public entry point for ending the run (CAPTURED or WON).
+	Can be called by landmark exploration system (.5) when Budapest is explored.
+	"""
+	_end_run(outcome)
 
 
 func _bank_records() -> bool:
@@ -3205,14 +3238,12 @@ func _bank_records() -> bool:
 func _reopen_archived_ending() -> void:
 	"""
 	Bring the ending screen back for a world whose campaign already ended.
-
-	`_trigger_game_over()` and not a second screen: the ending IS that panel, and
-	re-entering it here costs nothing it does not already do — no record can move
-	(distance and coins are 0 on the frame a run starts), and Play Again is the New
-	Game the archive is waiting for.
+	Reopens the right ending (WON vs CAPTURED) from the stored archive outcome.
 	"""
 	if BestRunStore.world_archived() and not is_game_over:
-		_trigger_game_over()
+		var archived := BestRunStore.archived_outcome()
+		var outcome: Outcome = Outcome.WON if archived == BestRunStore.OUTCOME_WON else Outcome.CAPTURED
+		_end_run(outcome)
 
 
 func _on_best_run_loaded(_store_distance: int, store_coins: int) -> void:
@@ -3296,6 +3327,7 @@ func restart_game() -> void:
 	# where an id is minted instead; see `BestRunStore.new_game`.)
 	BestRunStore.new_game()
 	is_game_over = false
+	run_outcome = Outcome.CAPTURED
 	is_caught = false
 	# An unpaid coin bill dies with the run it was charged in. Cheap and
 	# defensive: the setback path can never reach a game over, so this can only be
@@ -3581,6 +3613,7 @@ func join_at(anchor: Vector3) -> void:
 	# bank never even reaches it. The room owns the roster from the next tick.
 	if is_game_over:
 		is_game_over = false
+		run_outcome = Outcome.CAPTURED
 		is_caught = false
 		is_respawning = false
 		ability_cooldowns.fill(0.0)  # Frozen at full since the run ended (see restart_game).
