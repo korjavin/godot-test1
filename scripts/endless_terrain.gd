@@ -1831,13 +1831,12 @@ const DANUBE_SLOT_BASE: int = 500
 ## are what says so, and `budapest_selfcheck` check 4 measures every chunk in the
 ## 2.2 km rect against them and prints the worst one it found beside each ceiling.
 ##
-## MEASURED over the whole rect (2025 chunks, 2026-09-02, AFTER rule 2a's splitter
-## landed — cutting the giants' oversized boxes on the chunk grid is what moved
-## the box figure from 62): worst 69 boxes, worst 15 collision shapes, worst
-## 7.4 ms. The ceilings are those numbers with room
-## for the seven wave-C landmark builders that are still reservations, and the ms
-## budget is deliberately loose because it is wall-clock on whatever machine CI
-## happens to be — it is a runaway detector, not a benchmark.
+## MEASURED over the whole rect (2025 chunks, 2026-09-02, with ALL 22 landmark
+## builders placed and the four bridge decks built — the last re-measure was
+## 69 / 15 / 7.4 ms with the seven wave-C slots still empty reservations): worst
+## 92 boxes, worst 15 collision shapes, worst 3.0 ms. The ceilings keep headroom
+## over those, and the ms budget is deliberately loose because it is wall-clock on
+## whatever machine CI happens to be — it is a runaway detector, not a benchmark.
 ##
 ## The box number is the one to watch: a landmark builder that stopped being a
 ## pure function of (centre, rng) would emit its whole self into every chunk its

@@ -425,15 +425,19 @@ const CITY_LANDMARK_SALT: int = 0xB0DA9E51
 ## three slots standing on a plateau (buda_castle, matthias, citadella), which
 ## carry that plateau's `top`. Check 2 prints the count.
 ##
-## `radius` for rows 0-14 is the registry's OWN declared radius, copied. Check 2
-## asserts the two agree, so a later edit to a shipped builder's radius fails this
-## build instead of silently overhanging into the street.
+## `radius` is the registry's OWN declared radius, copied. Check 2 asserts the two
+## agree, so a later edit to a shipped builder's radius fails this build instead
+## of silently overhanging into the street.
 ##
-## `radius` for rows 15-21 — the seven whose builders are wave C — is a
-## RESERVATION: authored generously here so the catalogue and the reachability
-## audit have 22 slots to work with from day one, and so wave C's builders have a
-## declared bound to hit. An empty `builder` is skipped by the streamer and exempt
-## from the registry check.
+## ALL 22 ROWS NOW CARRY A BUILDER. Rows 15-21 were RESERVATIONS through waves A
+## and B — a position and a generous radius, `"builder": ""`, skipped by the
+## streamer and exempt from the registry check, which is the whole of "leave the
+## slot empty". Wave C (bead `godot-test1-8gw.8`) landed their geometry, so each
+## took its builder's name and its registry radius, which is TIGHTER than the
+## reservation was in every case (110 -> 62, 100 -> 54, 90 -> 60, 70 -> 52,
+## 50 -> 42, 40 -> 32, 40 -> 38): a reservation is authored generously on purpose
+## and the real building is measured. The empty-builder path is still live code —
+## it is what a future 23rd place would use — and check 2 still exempts one.
 const SLOTS: Array = [
 	# ---- the Danube core ---------------------------------------------------
 	{"id": "parliament", "builder": "_city_parliament", "pos": Vector3(2760.0, 0.0, -480.0), "radius": 151.0},
@@ -453,14 +457,14 @@ const SLOTS: Array = [
 	{"id": "national_museum", "builder": "_city_national_museum", "pos": Vector3(2920.0, 0.0, 440.0), "radius": 62.0},
 	{"id": "opera", "builder": "_city_opera", "pos": Vector3(3000.0, 0.0, -180.0), "radius": 49.0},
 	# ---- the Andrássy end, folded in (see LIBERTIES 2) ---------------------
-	{"id": "heroes_square", "builder": "", "pos": Vector3(3520.0, 0.0, -520.0), "radius": 110.0},
-	{"id": "vajdahunyad", "builder": "", "pos": Vector3(3680.0, 0.0, -340.0), "radius": 100.0},
-	{"id": "szechenyi_bath", "builder": "", "pos": Vector3(3620.0, 0.0, -760.0), "radius": 90.0},
+	{"id": "heroes_square", "builder": "_city_heroes_square", "pos": Vector3(3520.0, 0.0, -520.0), "radius": 62.0},
+	{"id": "vajdahunyad", "builder": "_city_vajdahunyad", "pos": Vector3(3680.0, 0.0, -340.0), "radius": 54.0},
+	{"id": "szechenyi_bath", "builder": "_city_szechenyi_baths", "pos": Vector3(3620.0, 0.0, -760.0), "radius": 60.0},
 	# ---- the baths and the odd ones ----------------------------------------
-	{"id": "gellert_bath", "builder": "", "pos": Vector3(2420.0, 0.0, 1000.0), "radius": 70.0},
-	{"id": "rudas_bath", "builder": "", "pos": Vector3(2370.0, 0.0, 560.0), "radius": 50.0},
-	{"id": "shoes_on_the_danube", "builder": "", "pos": Vector3(2640.0, 0.0, -300.0), "radius": 40.0},
-	{"id": "budapest_eye", "builder": "", "pos": Vector3(2870.0, 0.0, -60.0), "radius": 40.0},
+	{"id": "gellert_bath", "builder": "_city_gellert_baths", "pos": Vector3(2420.0, 0.0, 1000.0), "radius": 52.0},
+	{"id": "rudas_bath", "builder": "_city_rudas_baths", "pos": Vector3(2370.0, 0.0, 560.0), "radius": 42.0},
+	{"id": "shoes_on_the_danube", "builder": "_city_shoes_on_danube", "pos": Vector3(2640.0, 0.0, -300.0), "radius": 32.0},
+	{"id": "budapest_eye", "builder": "_city_budapest_eye", "pos": Vector3(2870.0, 0.0, -60.0), "radius": 38.0},
 ]
 
 # ============================================================================
