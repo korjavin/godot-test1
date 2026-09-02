@@ -340,30 +340,30 @@ const JOIN_RING_ANGLES: int = 8
 ## spawn point uses, so the landing squash reads instead of a hard snap.
 const JOIN_SPAWN_HEIGHT: float = 2.0
 
-## Best-run records. The two are tracked INDEPENDENTLY: best_distance is the
-## farthest any run got, best_coins the richest any run got — a long-but-poor run
-## can set one without the other. Read in _trigger_game_over() to decide the
+## Best-run records (coins). Read in _trigger_game_over() to decide the
 ## "NEW BEST!" flash, and pushed back through the store there.
 ##
 ## WHERE THEY ARE KEPT IS NOT THIS FILE'S BUSINESS ANY MORE. `best_run_store.gd`
-## owns both the local store (a ConfigFile on desktop, `localStorage` on web —
-## `user://` did not hold on the web export, which is what made every run flash
-## "NEW BEST!") and the lobby's `/best` endpoint, which is what makes a record
-## follow a player between devices. All this side does is fold whatever the store
+## owns both the local store (a ConfigFile on desktop, `localStorage` on web)
+## and the lobby's `/best` endpoint, which is what makes a record follow a
+## player between devices. All this side does is fold whatever the store
 ## reports in with `maxi`, so a late server reply can never lower a record and the
 ## order the two layers answer in does not matter.
 var best_distance: int = 0
 var best_coins: int = 0
 var best_run_store: BestRunStore = null
 
-## Did THIS run move the distance record? A LATCH, not a comparison, because
+## Did THIS run move the coin record? A LATCH, not a comparison, because
 ## `_bank_records()` now runs on every bite (bead godot-test1-0bc) and raises
-## `best_distance` to `own_distance` as it goes — so by the time the ending
-## panel asks, `own_distance > best_distance` is false on the very runs that
+## `best_coins` to `own_coins` as it goes — so by the time the ending
+## panel asks, `own_coins > best_coins` is false on the very runs that
 ## earned the flash. The fact is recorded where it is still true and read at the
-## ending; `reset_position()` (the hard-reset wipe list that owns `own_distance`)
-## clears it.
+## ending; `reset_position()` (the hard-reset wipe list) clears it.
 var run_beat_record: bool = false
+## The coin peak that set the `run_beat_record` latch in this run. Reconciled
+## against `server_best_coins` at game over instead of `own_coins`, because
+## setbacks (bites) decrease `own_coins` after the record was banked.
+var record_coins: int = 0
 
 ## How often the run's records are checkpointed while the player is simply
 ## playing. `_bank_records()` runs on every bite because a bite is what replaced
@@ -3167,7 +3167,7 @@ func _trigger_game_over() -> void:
 
 	# Bank once more (idempotent) and then read the LATCH, not this call's return:
 	# the grab that emptied the roster already banked this leg, so a fresh
-	# `own_distance > best_distance` is false on exactly the record runs the flash
+	# `own_coins > best_coins` is false on exactly the record runs the flash
 	# exists for.
 	_bank_records()
 	# ...and reconcile that latch against what the lobby answered while the run
@@ -3177,9 +3177,9 @@ func _trigger_game_over() -> void:
 	var panel := get_tree().get_first_node_in_group("game_over_ui")
 	if panel and panel.has_method("show_game_over"):
 		panel.show_game_over(
-			coins_collected, run_distance, best_distance, best_coins, run_beat_record
+			coins_collected, best_coins, run_beat_record
 		)
-	print("Game over! Distance: %dm, final coins: %d" % [run_distance, coins_collected])
+	print("Game over! Final coins: %d" % coins_collected)
 
 
 func _bank_records() -> bool:
@@ -3187,9 +3187,9 @@ func _bank_records() -> bool:
 	Write this leg's records out. Idempotent, so it may be called as often as we
 	like.
 
-	@return: true if the DISTANCE record moved ON THIS CALL. The "NEW BEST!" flash
+	@return: true if the COIN record moved ON THIS CALL. The "NEW BEST!" flash
 	    reads the `run_beat_record` LATCH this also sets, never a fresh comparison:
-	    a bite banks, so `best_distance` already equals `own_distance` by the time
+	    a bite banks, so `best_coins` already equals `own_coins` by the time
 	    the ending asks.
 
 	CALLED ON EVERY CONTACT, NOT ONLY AT THE ENDING (bead godot-test1-0bc). While
@@ -3207,21 +3207,19 @@ func _bank_records() -> bool:
 	when a record ACTUALLY moved — so the network sees traffic on improvements and
 	nothing else.
 
-	Records are read off own_distance / own_coins, NOT the displayed fields: in a
+	Records are read off own_coins, NOT the displayed fields: in a
 	room those are the ROOM's totals (see _refresh_shared_totals), so writing them
-	here would persist the furthest teammate's distance and the whole room's bank as
-	this player's personal best. Solo the pairs are identical.
+	here would persist the whole room's bank as this player's personal best. Solo
+	the pairs are identical.
 	"""
-	# Distance is the headline record, so IT decides the "NEW BEST!" flash; the
-	# coin record updates on its own max independently (see the comment block
-	# above best_distance).
-	var is_new_best := own_distance > best_distance
+	# Coins is the headline record, so IT decides the "NEW BEST!" flash (bead godot-test1-8gw.1).
+	var is_new_best := own_coins > best_coins
 	run_beat_record = run_beat_record or is_new_best
-	if is_new_best or own_coins > best_coins:
-		best_distance = maxi(best_distance, own_distance)
+	if is_new_best:
+		record_coins = maxi(record_coins, own_coins)
 		best_coins = maxi(best_coins, own_coins)
 		if best_run_store:
-			best_run_store.submit(best_distance, best_coins)
+			best_run_store.submit(0, best_coins)
 
 	# Meta-progression banks itself on every level-up, so this only catches the
 	# coins picked up SINCE the last one — the partial progress toward the next
@@ -3248,14 +3246,13 @@ func _reopen_archived_ending() -> void:
 		_trigger_game_over()
 
 
-func _on_best_run_loaded(store_distance: int, store_coins: int) -> void:
+func _on_best_run_loaded(_store_distance: int, store_coins: int) -> void:
 	"""
 	Fold the store's records in. `maxi`, never assignment: this fires once with
 	the local values and again if the lobby knows better, and it can land at any
 	moment — including after a game over has already banked a fresh record — so a
 	late or stale reply must be incapable of lowering anything.
 	"""
-	best_distance = maxi(best_distance, store_distance)
 	best_coins = maxi(best_coins, store_coins)
 
 
@@ -3264,24 +3261,28 @@ func _reconcile_record_latch() -> void:
 	Take the "NEW BEST!" flash back if the record this run beat was one it never
 	saw. Called at the ending, where the flash is read.
 
-	`run_beat_record` is latched at BANK time against `best_distance` — and early
+	`run_beat_record` is latched at BANK time against `best_coins` — and early
 	in a run that is only whatever has loaded so far, because the store's server
 	leg answers over the network and can still be in flight. So a bite in the
 	first seconds latches a "record" the player's other device beat long ago.
 
 	AT THE ENDING, and off the SERVER's own pre-merge number rather than anything
-	emitted: by then `best_distance` and the store's merged `distance` both
+	emitted: by then `best_coins` and the store's merged `coins` both
 	contain this run's `submit()`s, so an echo of our own bank is arithmetically
 	indistinguishable from another device's record — which is why the store keeps
-	`server_best_distance` separately. Reconciling on the `loaded` signal could
-	not see the case at all: a server holding EXACTLY this run's distance raises
+	`server_best_coins` separately. Reconciling on the `loaded` signal could
+	not see the case at all: a server holding EXACTLY this run's coins raises
 	nothing and emits nothing.
+
+	Reconciliation compares against `record_coins` (the peak that latched the record),
+	not `own_coins`: subsequent setbacks/bites reduce the mutable `own_coins`
+	balance while the banked record and ending "Best" line remain at the peak.
 
 	`>=`, because a run that TIED the standing record set no new best. A store
 	with no server answer reports 0, which outranks nothing and leaves the local
 	comparison alone.
 	"""
-	if best_run_store and best_run_store.server_best_distance >= own_distance:
+	if best_run_store and record_coins > 0 and best_run_store.server_best_coins >= record_coins:
 		run_beat_record = false
 
 
@@ -3448,6 +3449,7 @@ func reset_position() -> void:
 	own_distance = 0
 	own_distance_origin = Vector2.ZERO  # ... back to the origin spawn it teleports to.
 	run_beat_record = false  # ... and the new run has not beaten anything yet.
+	record_coins = 0
 	coin_streak = 0
 	streak_timer = 0.0
 
@@ -3596,11 +3598,12 @@ func join_at(anchor: Vector3) -> void:
 	# EVERYONE, permanently, because a max never comes back down. The room's real
 	# figure arrives from the snapshots and the next presence packet.
 	run_distance = 0
-	# ...and so does the record LATCH, because it is derived from the distance the
-	# two lines above just wiped. It is set by `_bank_records()` on a bite and read
+	# ...and so does the record LATCH, because it is derived from the coins the
+	# lines above just wiped. It is set by `_bank_records()` on a bite and read
 	# once at the ending; left standing from a solo leg it would flash "NEW BEST!"
 	# over a room leg that started at zero and beat nothing.
 	run_beat_record = false
+	record_coins = 0
 
 	# JOINING FROM THE GAME OVER SCREEN IS A SUPPORTED FLOW — mp_ui deliberately
 	# does not pause over it, so the panel's Join button works there. Without this
@@ -3959,12 +3962,7 @@ func _refresh_shared_totals() -> void:
 			run_distance = own_distance
 		return
 	_showing_shared_totals = true
-	var distance: Variant = mp.shared_distance(run_distance)
 	coins_collected = int(bank)
-	if distance != null:
-		# A max, and run_distance is itself a running max, so feeding the room's
-		# best back in can never inflate it.
-		run_distance = int(distance)
 
 
 func _weather_is_raining_here() -> bool:

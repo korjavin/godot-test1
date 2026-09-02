@@ -105,11 +105,10 @@ func _run() -> void:
 		_finish(1, "BEST_RUN FAILED: player id is not stable within one store")
 		return
 
-	# A distance nobody could reach by playing, so the assertion cannot be
+	# A coin count nobody could reach by playing, so the assertion cannot be
 	# satisfied by whatever this machine's real record happens to be.
-	var target_distance := 900000 + (Time.get_ticks_msec() % 1000)
-	var target_coins := 4242
-	store.submit(target_distance, target_coins)
+	var target_coins := 4242 + (Time.get_ticks_msec() % 1000)
+	store.submit(0, target_coins)
 
 	# Trap 2: the record is now in the LOCAL store as well. Clear it, so the only
 	# thing that can raise the reader's numbers is the lobby.
@@ -126,17 +125,13 @@ func _run() -> void:
 	# Polled rather than awaited once, because the POST above is still in flight:
 	# the first GET may legitimately beat it to the server.
 	var waited := 0.0
-	while waited < TIMEOUT_SEC and reader.distance < target_distance:
+	while waited < TIMEOUT_SEC and reader.coins < target_coins:
 		reader.fetch()
 		await create_timer(POLL_SEC).timeout
 		waited += POLL_SEC
 
-	if reader.distance < target_distance:
-		_finish(1, "BEST_RUN FAILED: server never returned the submitted distance (got %d, wanted %d)"
-			% [reader.distance, target_distance])
-		return
 	if reader.coins < target_coins:
-		_finish(1, "BEST_RUN FAILED: server returned coins %d, wanted at least %d"
+		_finish(1, "BEST_RUN FAILED: server never returned the submitted coins (got %d, wanted %d)"
 			% [reader.coins, target_coins])
 		return
 
@@ -146,10 +141,10 @@ func _run() -> void:
 	# past it, or that history never reaches the player's other devices until they
 	# happen to beat it. `_write_local` is the store's own path, so this fakes the
 	# pre-existing record the way the old build would have left it.
-	var catch_up := target_distance + 1000
+	var catch_up_coins := target_coins + 1000
 	var cfg := ConfigFile.new()
 	cfg.load(BestRunStore.config_path)
-	cfg.set_value(BestRunStore.CONFIG_SECTION, "distance", catch_up)
+	cfg.set_value(BestRunStore.CONFIG_SECTION, "coins", catch_up_coins)
 	cfg.save(BestRunStore.config_path)
 
 	var upgrader := _make_store()
@@ -160,13 +155,13 @@ func _run() -> void:
 	_clear_local_records()
 	var checker := _make_store()
 	waited = 0.0
-	while waited < TIMEOUT_SEC and checker.distance < catch_up:
+	while waited < TIMEOUT_SEC and checker.coins < catch_up_coins:
 		checker.fetch()
 		await create_timer(POLL_SEC).timeout
 		waited += POLL_SEC
-	if checker.distance < catch_up:
+	if checker.coins < catch_up_coins:
 		_finish(1, "BEST_RUN FAILED: a pre-existing local record was never pushed to the server (got %d, wanted %d)"
-			% [checker.distance, catch_up])
+			% [checker.coins, catch_up_coins])
 		return
 
 	# PROGRESSION (bead godot-test1-20z.2). Lifetime coins and spent skill points
@@ -206,6 +201,6 @@ func _run() -> void:
 	# "Records only ever go up" is pinned server-side in server/best_test.go, which
 	# is where it belongs — repeating it from here would only re-test the Go code
 	# over a slower wire.
-	_finish(0, "BEST_RUN OK: id %s, distance %d, coins %d, catch-up %d, lifetime %d (level %d), spent %d"
-		% [id, reader.distance, reader.coins, checker.distance,
+	_finish(0, "BEST_RUN OK: id %s, coins %d, catch-up %d, lifetime %d (level %d), spent %d"
+		% [id, reader.coins, checker.coins,
 			prog_reader.lifetime_coins, level, prog_reader.spent_points])

@@ -440,7 +440,7 @@ func _check_game_over_film_path() -> void:
 	# Off-web Game Over remains the panel fallback, with no film state or pause.
 	var panel := GameOverUI.new()
 	root.add_child(panel)
-	panel.show_game_over(3, 12, 12, 3, false)
+	panel.show_game_over(3, 3, false)
 	if not panel.visible:
 		_fail("off-web game over did not show the panel fallback")
 	if panel._ending_film_playing:

@@ -206,8 +206,8 @@ signal progression_loaded(lifetime_coins: int, spent_points: int)
 var distance: int = 0
 var coins: int = 0
 
-## The distance record THE SERVER REPORTED, kept PRE-MERGE and deliberately
-## beside `distance` rather than folded into it. `distance` is the merged best
+## The coins record THE SERVER REPORTED, kept PRE-MERGE and deliberately
+## beside `coins` rather than folded into it. `coins` is the merged best
 ## and includes this session's own `submit()`s, so it cannot answer the one
 ## question the "NEW BEST!" flash needs — "was there already a record this run
 ## had to beat" — because by then an echo of our own bank and a record another
@@ -216,6 +216,7 @@ var coins: int = 0
 ##
 ## Stays 0 while the lobby is unreachable, which reads as "no external record"
 ## and leaves the caller's local comparison standing.
+var server_best_coins: int = 0
 var server_best_distance: int = 0
 
 ## Meta-progression, same monotone rule. `lifetime_coins` is cumulative coins
@@ -274,19 +275,19 @@ func fetch() -> void:
 	_request_get()
 
 
-func submit(new_distance: int, new_coins: int) -> void:
+func submit(_new_distance: int, new_coins: int) -> void:
 	"""
 	Record a run's results. Called from `_trigger_game_over()` only when a record
 	actually moved, so this is not a per-frame path.
 
 	It re-reads the local store first so that a `submit()` without a preceding
-	`fetch()` cannot LOWER a stored record — `distance` starts at 0, and a plain
+	`fetch()` cannot LOWER a stored record — `coins` starts at 0, and a plain
 	`_write_local()` off that would overwrite a real best with this run's number.
 	One file open per game over, and it makes call order stop mattering.
 	"""
 	_read_local()
-	distance = maxi(distance, new_distance)
 	coins = maxi(coins, new_coins)
+	distance = 0
 	_write_local()
 	_request_post()
 
@@ -347,7 +348,6 @@ func _read_local() -> void:
 	throws nobody's best away.
 	"""
 	if OS.has_feature("web"):
-		distance = maxi(distance, maxi(0, _ls_get(LS_DISTANCE).to_int()))
 		coins = maxi(coins, maxi(0, _ls_get(LS_COINS).to_int()))
 		lifetime_coins = maxi(lifetime_coins, maxi(0, _ls_get(LS_LIFETIME).to_int()))
 		spent_points = maxi(spent_points, maxi(0, _ls_get(LS_SPENT).to_int()))
@@ -357,7 +357,6 @@ func _read_local() -> void:
 	# That is also the bead's "delete the file, get a clean level-0 profile" case.
 	if cfg.load(config_path) != OK:
 		return
-	distance = maxi(distance, maxi(0, int(cfg.get_value(CONFIG_SECTION, "distance", 0))))
 	coins = maxi(coins, maxi(0, int(cfg.get_value(CONFIG_SECTION, "coins", 0))))
 	lifetime_coins = maxi(
 		lifetime_coins,
@@ -392,7 +391,7 @@ func _write_local() -> void:
 	"""
 	_read_local()
 	if OS.has_feature("web"):
-		_ls_set(LS_DISTANCE, str(distance))
+		_ls_set(LS_DISTANCE, "0")
 		_ls_set(LS_COINS, str(coins))
 		_ls_set(LS_LIFETIME, str(lifetime_coins))
 		_ls_set(LS_SPENT, str(spent_points))
@@ -400,7 +399,7 @@ func _write_local() -> void:
 		return
 	var cfg := ConfigFile.new()
 	cfg.load(config_path)  # keep any other section (the player id) intact
-	cfg.set_value(CONFIG_SECTION, "distance", distance)
+	cfg.set_value(CONFIG_SECTION, "distance", 0)
 	cfg.set_value(CONFIG_SECTION, "coins", coins)
 	cfg.set_value(CONFIG_PROGRESSION_SECTION, "lifetime_coins", lifetime_coins)
 	cfg.set_value(CONFIG_PROGRESSION_SECTION, "spent_points", spent_points)
@@ -736,7 +735,6 @@ func _on_get_completed(
 	if json.parse(body.get_string_from_utf8()) != OK or typeof(json.data) != TYPE_DICTIONARY:
 		return
 	var data := json.data as Dictionary
-	var server_distance := maxi(0, int(data.get("distance", 0)))
 	var server_coins := maxi(0, int(data.get("coins", 0)))
 	# A lobby too old to know about progression simply omits these, which reads as
 	# zero and raises nothing — the same forward/backward compatibility the server
@@ -750,8 +748,7 @@ func _on_get_completed(
 	# reply is the only moment we know what the server has, so it is where the
 	# catch-up POST belongs. It converges: the next boot finds them equal.
 	var server_is_behind := (
-		server_distance < distance
-		or server_coins < coins
+		server_coins < coins
 		or server_lifetime < lifetime_coins
 		or server_spent < spent_points
 	)
@@ -759,19 +756,19 @@ func _on_get_completed(
 	# unlearns. This is the only writer — and it only writes when this reply is a
 	# causally pre-submit baseline, which `_get_baseline_ok` is the whole record of.
 	if _get_baseline_ok:
-		server_best_distance = maxi(server_best_distance, server_distance)
-	var raised := server_distance > distance or server_coins > coins
+		server_best_coins = maxi(server_best_coins, server_coins)
+	var raised := server_coins > coins
 	var progression_raised := server_lifetime > lifetime_coins or server_spent > spent_points
 
-	distance = maxi(distance, server_distance)
 	coins = maxi(coins, server_coins)
+	distance = 0
 	lifetime_coins = maxi(lifetime_coins, server_lifetime)
 	spent_points = maxi(spent_points, server_spent)
 	if raised or progression_raised:
 		# Mirror down, so the next boot has them even with the lobby unreachable.
 		_write_local()
 	if raised:
-		loaded.emit(distance, coins)
+		loaded.emit(0, coins)
 	if progression_raised:
 		progression_loaded.emit(lifetime_coins, spent_points)
 	if server_is_behind:
@@ -791,7 +788,7 @@ func _request_post() -> void:
 		_post_http.timeout = REQUEST_TIMEOUT_SEC
 		add_child(_post_http)
 	var body := JSON.stringify({
-		"distance": distance,
+		"distance": 0,
 		"coins": coins,
 		"lifetime": lifetime_coins,
 		"spent": spent_points,

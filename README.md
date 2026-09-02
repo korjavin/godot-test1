@@ -6,7 +6,7 @@ You are a CrimeKicker dropped into an infinite, procedurally generated world. A
 trail of coins — the **coin road** — winds off toward the horizon. Follow it as
 far as you can: the further you get, the meaner and denser the crocodile piglets
 chasing you become. Switch between four heroes on the fly, each with their own
-signature power, rack up distance and coins, and try to beat your own best run.
+signature power, rack up coins, and try to beat your own best run.
 Every run generates a brand-new world.
 
 **▶ Play it in your browser: https://korjavin.github.io/godot-test1/**
@@ -29,9 +29,9 @@ watch the radial dial in the top-right.
 
 ## How a run works
 
-- **Distance is your score** — how far from the spawn you've pushed. Your best
-  distance and coin haul are saved (they survive page reloads) and a **NEW
-  BEST** flash greets a record run.
+- **Coins are your score** — how many coins and gems you've banked. Your best
+  coin haul is saved (survives page reloads) and a **NEW BEST** flash greets a
+  record run.
 - **Coins pay off**: follow the coin road for a steady trickle, watch for rare
   **purple gems worth 10**, and keep a pickup streak alive for a score
   multiplier of up to ×5.

@@ -890,7 +890,9 @@ Invulnerability is enforced in one place: the early-return at the top of
 ### Gameplay loop
 `run_seed` is rolled in `_ready()` from a private RNG and re-rolled by `new_run()`, which
 is the only place it changes; `set_run_seed()` is the only place it is written, because the
-biome domain offset derives from it. Distance is the headline score. Coins have a streak
+biome domain offset derives from it. Coins are the headline score (distance is
+retired from scoring everywhere the player sees it; world X coordinate remains internal
+plumbing for chunk streaming and difficulty scaling). Coins have a streak
 multiplier; gems are worth 10. Difficulty scales with
 `absf(global_position.x)` — all pure functions of position.
 
