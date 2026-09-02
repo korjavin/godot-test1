@@ -1,4 +1,4 @@
-[gd_scene load_steps=33 format=3 uid="uid://clqb4rcmjrpgs"]
+[gd_scene load_steps=34 format=3 uid="uid://clqb4rcmjrpgs"]
 
 [ext_resource type="PackedScene" uid="uid://bqtq2xtxqnvvr" path="res://scenes/player.tscn" id="1_main"]
 [ext_resource type="Script" uid="uid://b07rwceo0eo4o" path="res://scripts/endless_terrain.gd" id="2_terrain"]
@@ -29,6 +29,7 @@
 [ext_resource type="Script" path="res://scripts/build_version.gd" id="27_version"]
 [ext_resource type="Script" path="res://scripts/hunt_director.gd" id="28_huntdir"]
 [ext_resource type="Script" path="res://scripts/hero_hud.gd" id="29_herohud"]
+[ext_resource type="Script" path="res://scripts/crowd_manager.gd" id="30_crowd"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_1"]
 sky_top_color = Color(0.25, 0.45, 0.75, 1)
@@ -79,6 +80,9 @@ script = ExtResource("17_weather")
 
 [node name="FaunaManager" type="Node" parent="."]
 script = ExtResource("18_fauna")
+
+[node name="CrowdManager" type="Node3D" parent="."]
+script = ExtResource("30_crowd")
 
 [node name="Multiplayer" type="Node" parent="." groups=["mp"]]
 script = ExtResource("19_mp")
