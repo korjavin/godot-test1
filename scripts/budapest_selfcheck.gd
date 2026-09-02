@@ -772,10 +772,10 @@ func _check_budgets(terrain: Node3D, terrain_script: GDScript) -> void:
 			% edge_chunks + "chunks in the shipped rect (square in, centre out), "
 			+ "%d with stone — the rect is chunk-aligned today" % edge_with_stone)
 
-	_check_web_residency(boxes_at, shapes_at)
+	_check_web_residency(terrain, boxes_at, shapes_at)
 
 
-func _check_web_residency(boxes_at: Dictionary, shapes_at: Dictionary) -> void:
+func _check_web_residency(terrain: Node3D, boxes_at: Dictionary, shapes_at: Dictionary) -> void:
 	"""
 	THE WEB RESIDENCY PROOF: what the whole VIEW costs, not what one chunk costs.
 
@@ -829,8 +829,8 @@ func _check_web_residency(boxes_at: Dictionary, shapes_at: Dictionary) -> void:
 			% [CITY_RESIDENCY_BOX_BUDGET, worst_shapes, CITY_RESIDENCY_SHAPE_BUDGET])
 	# The two named windows the bead asks for — Parliament and Chain Bridge —
 	# are printed as information via _slot_index so the anchors cannot rot.
-	# The densest window the walk above already finds (4510 at (64,-7))
-	# dominates them, so assert on that walk, not on these two.
+	# The densest window the walk above already finds dominates them, so
+	# assert on that walk, not on these two.
 	var side2 := 2 * WEB_RENDER_DISTANCE + 1
 	for id in ["parliament", "chain_bridge"]:
 		var idx := _slot_index(id)
@@ -838,11 +838,7 @@ func _check_web_residency(boxes_at: Dictionary, shapes_at: Dictionary) -> void:
 			_fail("no slot '%s' for web window anchor" % id)
 			continue
 		var anchor_pos: Vector3 = BudapestPlan.SLOTS[idx]["pos"]
-		var centre2: Vector2i = Vector2i(
-				int(floor((anchor_pos.x - BudapestPlan.BUDAPEST_MIN.x) / 50.0)),
-				int(floor((anchor_pos.z - BudapestPlan.BUDAPEST_MIN.y) / 50.0)))
-		# Use the same chunk conversion the terrain uses, but via arithmetic
-		# so we do not need a terrain instance here.
+		var centre2: Vector2i = terrain.world_to_chunk(anchor_pos)
 		var boxes2 := 0
 		var shapes2 := 0
 		var origin2 := centre2 - Vector2i(WEB_RENDER_DISTANCE, WEB_RENDER_DISTANCE)
@@ -851,7 +847,7 @@ func _check_web_residency(boxes_at: Dictionary, shapes_at: Dictionary) -> void:
 				var at2 := origin2 + Vector2i(dx, dz)
 				boxes2 += int(boxes_at.get(at2, 0))
 				shapes2 += int(shapes_at.get(at2, 0))
-		print("  web window %s 7×7 at %s holds %d boxes and %d shapes (info, densest is 4510 at (64,-7))" % [id, centre2, boxes2, shapes2])
+		print("  web window %s 7×7 at %s holds %d boxes and %d shapes (info, densest is %d at %s)" % [id, centre2, boxes2, shapes2, worst_boxes, worst_at])
 
 
 # ============================================================================
@@ -3856,7 +3852,7 @@ func _reach_blocked_by_landmark(x: float, z: float) -> bool:
 
 
 # ============================================================================
-# CHECK 17 — FULL-CITY BUDGET: coins in the timed window + surfaces
+# CHECK 17 — (folded into check 4; see _check_budgets / _check_web_residency)
 
 
 
