@@ -69,6 +69,30 @@ uniform float biome_blend = 0.05;             // smoothstep radius at each thres
 uniform vec2 tower_dry_center = vec2(0.0);
 uniform float tower_dry_radius = -1.0;
 
+// --- BUDAPEST — the GPU half of the authored city ---------------------------
+// The city is hand-planned data (scripts/budapest_plan.gd), and every number
+// below is pushed from it by _apply_biome_shader_params(). Three clauses, all of
+// them the twin of something biome_at()/is_river_at() do on the CPU:
+//   1. inside city_rect the ground is CITY, whatever the noise field says;
+//   2. inside city_rect the river is the AUTHORED Danube polyline and nothing
+//      else — the noise band is suppressed in there, exactly as the CPU's early
+//      return suppresses it;
+//   3. the Danube is punched out by city_dry — the bridge decks and Margaret
+//      Island — because is_river_at() is XZ-only and a deck must be dry to both.
+// The tower's dry disc does NOT apply inside the city: one river or the other,
+// never both, and the two features are 2 km apart anyway.
+// EDIT THIS TOGETHER WITH biome_at()/is_river_at(). The defaults are INERT
+// (city_rect's max < its min, both counts 0), the tower_dry_radius = -1 pattern,
+// so a material nobody fed draws exactly the world it always drew.
+const int CITY_SEG_MAX = 8;
+const int CITY_DRY_MAX = 8;
+uniform vec4 city_rect = vec4(0.0, 0.0, -1.0, -1.0); // xmin, zmin, xmax, zmax
+uniform vec4 city_river[CITY_SEG_MAX];               // x1, z1, x2, z2 per segment
+uniform int city_river_count = 0;
+uniform float city_river_half = 0.0;
+uniform vec4 city_dry[CITY_DRY_MAX];                 // xmin, zmin, xmax, zmax
+uniform int city_dry_count = 0;
+
 // --- Biome colours — pure art, never read by GDScript -----------------------
 uniform vec3 desert_color: source_color = vec3(0.78, 0.68, 0.44);   // ochre sand
 // Paved warm grey — dusty flagstone / worn asphalt. Deliberately well clear of
@@ -99,6 +123,14 @@ uniform vec3 river_color: source_color = vec3(0.10, 0.28, 0.34);    // dark blue
 // error evenly instead of putting all of it on one side.
 const float RIVER_EDGE_SOFT = 0.2;
 
+// The Danube's soft waterline, in METRES rather than as a fraction of the band.
+// The noise river's fraction would be 24 m of fade on a 120 m half-width; the
+// Danube's edge is a shoreline, so it gets the same ~2 m of softness the noise
+// river actually has and is centred on the gameplay edge for the same reason
+// (see RIVER_EDGE_SOFT above): the CPU's test is a hard `< half`, so half the
+// unavoidable error goes on each bank.
+const float CITY_RIVER_EDGE_SOFT = 2.0;
+
 // Ground mottling computed per-vertex, interpolated for free across the triangle.
 varying float v_noise;
 // The raw biome field value at this vertex — thresholded in fragment(), and the
@@ -107,6 +139,18 @@ varying float v_biome;
 // World XZ, carried through only so the river shimmer can animate in world
 // space (so it doesn't swim when the chunk it belongs to is elsewhere).
 varying vec2 v_world_xz;
+// The AUTHORED Danube's band factor — 1 mid-river, 0 on dry land.
+//
+// WHY THIS ONE IS PER-VERTEX WHILE THE NOISE RIVER IS PER-FRAGMENT: it is a
+// sampling-rate argument and nothing else. The noise band is ~8 m wide against
+// the chunk plane's ~3 m vertex spacing (16x16 over 50 m) — 2.6x, undersampled,
+// so interpolating it would move the blue a metre or two off the wading zone.
+// The Danube is 240 m wide against the same 3 m spacing — 40x OVERSAMPLED — so
+// interpolating its band factor costs no accuracy you could see, and it keeps an
+// 8-segment point-to-segment loop off a fill-rate-bound WebGL2 target. The HARD
+// part of the city river, the dry-deck mask, stays per-fragment for the mirror
+// image of this reason (see fragment()).
+varying float v_city_river;
 
 // Sine-free 2D lattice hash: turns a lattice point into a pseudo-random 0..1
 // value. Deterministic (pure function of position), so the pattern never
@@ -152,6 +196,22 @@ float biome_noise(vec2 world_xz) {
 	return clamp(value_noise(p), 0.0, 1.0);
 }
 
+// Shortest distance from a world XZ to the authored Danube polyline — the GPU
+// twin of BudapestPlan.danube_distance(), the same clamped point-to-segment
+// projection, which is why that one is written in Vector2 (f32) throughout.
+float city_river_distance(vec2 p) {
+	float best = 1.0e9;
+	for (int i = 0; i < city_river_count; i++) {
+		vec2 a = city_river[i].xy;
+		vec2 b = city_river[i].zw;
+		vec2 ab = b - a;
+		float len_sq = dot(ab, ab);
+		float t = len_sq <= 0.0 ? 0.0 : clamp(dot(p - a, ab) / len_sq, 0.0, 1.0);
+		best = min(best, distance(p, a + ab * t));
+	}
+	return best;
+}
+
 void vertex() {
 	// World-space XZ of this vertex — the key to cross-chunk continuity.
 	vec2 world_xz = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xz;
@@ -164,6 +224,15 @@ void vertex() {
 
 	// The biome field, sampled once per vertex like everything else here.
 	v_biome = biome_noise(world_xz);
+
+	// The Danube, ditto — see the note on v_city_river for why this one is safe
+	// to interpolate and the noise river is not. Zero when no city is fed, which
+	// is what makes the inert defaults inert.
+	v_city_river = 0.0;
+	if (city_river_count > 0) {
+		v_city_river = 1.0 - smoothstep(city_river_half - CITY_RIVER_EDGE_SOFT,
+				city_river_half + CITY_RIVER_EDGE_SOFT, city_river_distance(world_xz));
+	}
 }
 
 void fragment() {
@@ -195,6 +264,18 @@ void fragment() {
 	albedo = mix(albedo, snow_color * mottle,
 			smoothstep(biome_mountain_max - biome_blend, biome_mountain_max + biome_blend, v_biome));
 
+	// BUDAPEST forces CITY over the whole chain above. The rect test is done here
+	// and not interpolated from a varying: v_world_xz is exact per fragment, and
+	// the city's edge is an authored line the CPU answers with a hard compare, so
+	// the two agree to the pixel. `city_rect.z < city_rect.x` is the inert
+	// default — no city fed, nothing changes.
+	bool in_city = city_rect.z >= city_rect.x
+			&& v_world_xz.x >= city_rect.x && v_world_xz.x <= city_rect.z
+			&& v_world_xz.y >= city_rect.y && v_world_xz.y <= city_rect.w;
+	if (in_city) {
+		albedo = city_color * mottle;
+	}
+
 	float roughness = 0.8; // matches the old StandardMaterial3D ground roughness
 
 	// River = a thin CONTOUR of the same field: distance from the contour,
@@ -222,7 +303,30 @@ void fragment() {
 	// and its yard). Folded INTO this branch rather than standing above it: only a
 	// river pixel can be masked, so only a river pixel pays for the distance, which
 	// is the rule this `if` exists to enforce on a fill-rate-bound web target.
-	if (v_river > 0.0 && distance(v_world_xz, tower_dry_center) > tower_dry_radius) {
+	// Inside the city the noise river is REPLACED by the authored Danube — one
+	// river or the other, never both, the twin of is_river_at()'s early return —
+	// and the Danube is then punched out by the dry rects.
+	//
+	// WHY THE DRY MASK IS PER-FRAGMENT while the band factor is per-vertex: a
+	// bridge deck is 32 m wide and its edge is HARD. Interpolated over ~3 m of
+	// vertex spacing it would fade, and the blue you see would stand a metre and
+	// a half off the deck the CPU answers exactly. Up to 8 rects, four compares
+	// each, and only for pixels actually inside the city.
+	if (in_city) {
+		v_river = v_city_river;
+		for (int i = 0; i < city_dry_count; i++) {
+			if (v_world_xz.x >= city_dry[i].x && v_world_xz.x <= city_dry[i].z
+					&& v_world_xz.y >= city_dry[i].y && v_world_xz.y <= city_dry[i].w) {
+				v_river = 0.0;
+			}
+		}
+	}
+
+	// The tower's dry disc does not apply inside the city (the `in_city ||`): the
+	// mask exists to take the NOISE river out from under the shell, and inside
+	// the rect there is no noise river left to take.
+	if (v_river > 0.0
+			&& (in_city || distance(v_world_xz, tower_dry_center) > tower_dry_radius)) {
 		// Cheap crossed-sine shimmer: two sines drifting in opposite senses so
 		// the interference pattern never reads as a repeating grid. World-space
 		// input keeps it continuous across chunk seams, TIME makes it flow.

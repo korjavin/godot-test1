@@ -535,14 +535,14 @@ or co-author trailers anywhere.
 
 ### Task 2: parity — CPU and GPU, in the same commit
 
-- [ ] `endless_terrain.gd`: the `biome_at` and `is_river_at` clauses of DEC-8, each with a
+- [x] `endless_terrain.gd`: the `biome_at` and `is_river_at` clauses of DEC-8, each with a
       comment saying it is one half of a two-language contract and naming the other half.
-- [ ] `ground.gdshader`: the uniforms, the vertex-stage band varying, the fragment-stage
+- [x] `ground.gdshader`: the uniforms, the vertex-stage band varying, the fragment-stage
       dry mask, the forced CITY albedo, and the "tower disc does not apply inside the
       city" clause. Carry the 240 m / 3 m oversampling arithmetic in the comment.
-- [ ] `_apply_biome_shader_params()`: push every new uniform, from `BudapestPlan`, beside
+- [x] `_apply_biome_shader_params()`: push every new uniform, from `BudapestPlan`, beside
       the tower's two.
-- [ ] Run `wade_selfcheck` — it drives `is_river_at` through a stub and through the real
+- [x] Run `wade_selfcheck` — it drives `is_river_at` through a stub and through the real
       thing; it must stay green.
 
 ### Task 3: the road — the terminal station, the four caps, the corridor

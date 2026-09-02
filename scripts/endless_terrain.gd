@@ -1655,6 +1655,17 @@ const RIVER_HALF_WIDTH: float = 0.007
 ## hard thresholds above, the eye reads this blend.
 const BIOME_BLEND: float = 0.05
 
+## The sizes of ground.gdshader's two Budapest array uniforms, restated here for
+## the ONE thing GDScript can do that GLSL cannot: fail loudly. A GLSL array is a
+## fixed size, so the plan's Danube and its dry rects have to be padded to it —
+## and if a future author adds a sixth polyline point or a ninth dry rect, the
+## asserts in _city_river_segments() / _city_dry_rects() say so instead of the
+## river quietly losing its last bend. Keep both in step with CITY_SEG_MAX /
+## CITY_DRY_MAX in the shader; they are the same two-language contract as
+## everything else in this pair of files.
+const CITY_SHADER_SEG_MAX: int = 8
+const CITY_SHADER_DRY_MAX: int = 8
+
 # ----------------------------------------------------------------------------
 # BIOME CONTENT TUNING (what each biome actually BUILDS)
 # ----------------------------------------------------------------------------
@@ -2851,6 +2862,61 @@ func _apply_biome_shader_params() -> void:
 	var site := tower_site()
 	mat.set_shader_parameter("tower_dry_center", Vector2(site.x, site.z))
 	mat.set_shader_parameter("tower_dry_radius", TOWER_RADIUS)
+	# BUDAPEST, the GPU half of it: the forced CITY ground, the authored Danube
+	# and the dry decks, straight off BudapestPlan — the same numbers biome_at()
+	# and is_river_at() answer with, so the paint and the wading cannot disagree.
+	# Parity-critical in the same strongest sense as the dry disc above. All of it
+	# is CONSTANT (the city is authored, there is no seed in it), so this could in
+	# principle be pushed once — it is pushed here anyway, beside its siblings,
+	# because ONE function feeding the ground material is the thing that makes the
+	# contract auditable. The shader's own defaults are inert, so a material that
+	# never met this function draws exactly the world it always drew.
+	mat.set_shader_parameter("city_rect", Vector4(
+			BudapestPlan.BUDAPEST_MIN.x, BudapestPlan.BUDAPEST_MIN.y,
+			BudapestPlan.BUDAPEST_MAX.x, BudapestPlan.BUDAPEST_MAX.y))
+	mat.set_shader_parameter("city_river", _city_river_segments())
+	mat.set_shader_parameter("city_river_count", BudapestPlan.DANUBE.size() - 1)
+	mat.set_shader_parameter("city_river_half", BudapestPlan.DANUBE_HALF_WIDTH)
+	mat.set_shader_parameter("city_dry", _city_dry_rects())
+	mat.set_shader_parameter("city_dry_count", BudapestPlan.DRY_RECTS.size())
+
+
+func _city_river_segments() -> PackedVector4Array:
+	"""
+	The Danube polyline as (x1, z1, x2, z2) segments, for ground.gdshader's
+	`city_river` array uniform.
+
+	Padded to CITY_SEG_MAX (8) because a GLSL array uniform is that size whatever
+	the polyline's length is; the shader reads `city_river_count` of them and the
+	padding is never touched. If a future author adds a sixth point to DANUBE, the
+	assert below is what tells them the shader's array has to grow with it.
+	"""
+	var segs := PackedVector4Array()
+	segs.resize(CITY_SHADER_SEG_MAX)
+	assert(BudapestPlan.DANUBE.size() - 1 <= CITY_SHADER_SEG_MAX,
+			"BudapestPlan.DANUBE has more segments than ground.gdshader's CITY_SEG_MAX")
+	for i in range(mini(BudapestPlan.DANUBE.size() - 1, CITY_SHADER_SEG_MAX)):
+		var a: Vector2 = BudapestPlan.DANUBE[i]
+		var b: Vector2 = BudapestPlan.DANUBE[i + 1]
+		segs[i] = Vector4(a.x, a.y, b.x, b.y)
+	return segs
+
+
+func _city_dry_rects() -> PackedVector4Array:
+	"""
+	The dry rects — bridge decks and Margaret Island — as (xmin, zmin, xmax, zmax)
+	for ground.gdshader's `city_dry`, padded to CITY_DRY_MAX exactly like the
+	segments above and read `city_dry_count` deep.
+	"""
+	var rects := PackedVector4Array()
+	rects.resize(CITY_SHADER_DRY_MAX)
+	assert(BudapestPlan.DRY_RECTS.size() <= CITY_SHADER_DRY_MAX,
+			"BudapestPlan.DRY_RECTS has more rows than ground.gdshader's CITY_DRY_MAX")
+	for i in range(mini(BudapestPlan.DRY_RECTS.size(), CITY_SHADER_DRY_MAX)):
+		var r: Rect2 = BudapestPlan.DRY_RECTS[i]
+		rects[i] = Vector4(r.position.x, r.position.y,
+				r.position.x + r.size.x, r.position.y + r.size.y)
+	return rects
 
 
 func _ready() -> void:
@@ -8369,7 +8435,16 @@ func biome_at(world_x: float, world_z: float) -> Biome:
 	Pure function, no RNG, no allocation — safe to call from any spawner in any
 	order. Rivers are NOT a return value here: they are an overlay, tested with
 	is_river_at().
+
+	...with ONE override, and it is BUDAPEST. Inside the authored city rect the
+	answer is CITY whatever the noise field says: the city is hand-planned like
+	the HQ's site, and a band that wandered under it between runs would put
+	desert sand down Váci utca. This is one half of a two-language contract —
+	the other half is the `in_city` clause in ground.gdshader's fragment(), fed
+	`city_rect` by _apply_biome_shader_params(). EDIT BOTH TOGETHER.
 	"""
+	if BudapestPlan.contains(world_x, world_z):
+		return Biome.CITY
 	var n := _biome_noise(world_x, world_z)
 	if n < BIOME_DESERT_MAX:
 		return Biome.DESERT
@@ -8415,6 +8490,18 @@ func is_river_at(world_pos: Vector3) -> bool:
 	# in, for the same reason the noise port routes everything through Vector2.
 	if Vector2(world_pos.x - site.x, world_pos.z - site.z).length() <= TOWER_RADIUS:
 		return false
+	# ...and ONE MORE, which is BUDAPEST: inside the city rect the answer is the
+	# AUTHORED Danube and nothing else. The early return is what suppresses the
+	# noise river in there — the city has one river, it is drawn in
+	# BudapestPlan.DANUBE, and a second one wandering through Pest would be a
+	# river no map and no landmark slot knows about. One half of a two-language
+	# contract: ground.gdshader computes the same predicate from the same numbers
+	# (city_river / city_river_half / city_dry, pushed by
+	# _apply_biome_shader_params), so the blue you SEE is the water you WADE.
+	# EDIT BOTH TOGETHER. The polyline distance is routed through Vector2 inside
+	# BudapestPlan for the same fp32 reason as the disc above.
+	if BudapestPlan.contains(world_pos.x, world_pos.z):
+		return BudapestPlan.danube_wet(world_pos.x, world_pos.z)
 	return absf(_biome_noise(world_pos.x, world_pos.z) - RIVER_LEVEL) < RIVER_HALF_WIDTH
 
 
