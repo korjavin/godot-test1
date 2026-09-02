@@ -83,7 +83,16 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            hunters as the positive control), the Danube
 #                            crocodiles' own stream A/B'd against the shared one,
 #                            the plateau ramps' slope, the difficulty clamp at
-#                            both ends, and the gate-to-river avenue walkable
+#                            both ends, the gate-to-river avenue walkable, and
+#                            — check 14 — THE FOUR BRIDGES: each deck rect bound
+#                            to the SLOTS row its pylons stand on, both abutments
+#                            on the bank, the crossing DRY metre by metre with a
+#                            wet control off the parapet, and the surface the
+#                            chunks really build measured against the plan's
+#                            profile (flush, no step, no seam gap on either
+#                            axis); plus Margaret Island dry and inside the band,
+#                            and the Danube's crocodiles bucketed north/middle/
+#                            south so the policy is proved along the WHOLE river
 #   landmark_progress_selfcheck
 #                            BUDAPEST'S WIN: the catalogue (every slot resolves a
 #                            CITY_LANDMARKS row by BUILDER NAME, a wave-C
@@ -307,6 +316,18 @@ Three rules of the city's own, all pinned by `budapest_selfcheck`:
   in `_spawn_city_landmarks_in_chunk`'s docstring: manager-parenting the giants (a dozen
   more lifetime exceptions) and a wider residency radius for city chunks (spending the
   exact budget the decision protects).
+- **A BRIDGE IS TWO FILES, and `BudapestPlan.BRIDGES` is the joint.** The pylons, towers,
+  chains, trusses and lions are `landmark_builders.gd`'s, on the `SLOTS` row of the id;
+  the DECK — a level slab at `BRIDGE_DECK_TOP` (12 m, where every builder's ornament
+  stops) plus one ramped approach at each end — is `endless_terrain.gd`'s
+  `spawn_city_bridges_in_chunk`, built off the row's `DRY_RECTS` entry so **the rect the
+  band is punched out by and the rect the stone stands on are one number**. Both ramps
+  live INSIDE that rect, which is why the approach needed no new dry row and **no shader
+  edit**: a deck rect overhangs the 240 m band by 21–41 m, so a ramp's foot is on the bank
+  and its head reaches out over the water. No jump gates outdoors either — the approach
+  shares the plateaus' `_city_ramp_slice` and is held to `TowerInterior.PLAN_RAMP_MAX_SLOPE`.
+  **Margaret Island is the same mechanism**, one `DRY_RECTS` row, no machinery of its own.
+  Known and documented: `DRY_RECTS` is XZ-only, so the river bed *under* a deck is dry too.
 - **The road's four CONSUMERS stop at the terminal station `T`; the road itself does not.**
   `_road_terminal_k()` is the last station at or west of `ROAD_TERMINAL_X`, and the caps
   are numbered 1–4 in the code: road coins, road clearance, road bosses

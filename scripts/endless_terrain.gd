@@ -1718,6 +1718,14 @@ const CITY_HILL_STONE := Color(0.47, 0.45, 0.41)
 ## the plateau's lid.
 const CITY_RAMP_THICKNESS: float = 1.0
 
+## A BRIDGE DECK's slab thickness, metres. Thicker than a ramp because it is read
+## from BELOW as well — you wade under it — and because the Margaret Bridge's
+## piers top out at y = 11 and its arches spring from there, so a 1.2 m slab hung
+## off BudapestPlan.BRIDGE_DECK_TOP lands its underside exactly on them. The
+## approach ramps stay CITY_RAMP_THICKNESS: they meet the deck at its TOP surface,
+## which is the only place a step could appear.
+const CITY_BRIDGE_DECK_THICKNESS: float = 1.2
+
 ## The avenue's pavement slab: 4 cm, straddling y = 0, and collide = FALSE.
 ##
 ## The avenue is a READ — the thing that says "this way into the city" — and not
@@ -9809,6 +9817,57 @@ func _city_chunk_slice(chunk_center: Vector3, area: Rect2) -> Rect2:
 	return square.intersection(area)
 
 
+func _city_ramp_slice(chunk_center: Vector3, ramp: Rect2, rise: float, dir: float,
+		thickness: float, rng: RandomNumberGenerator, block_batch: Array,
+		block_body: StaticBody3D, stone: Color) -> void:
+	"""
+	This chunk's slice of ONE tilted ramp, on the X axis. The city has two kinds
+	and they are the same slab: a plateau's climb onto its lid, and a bridge's
+	approach onto its deck.
+
+	@param chunk_center: This chunk's centre, from chunk_to_world().
+	@param ramp: The ramp's footprint in world XZ — `size.x` is the RUN, `size.y`
+	             the width.
+	@param rise: How far it climbs, in metres. The foot is at y = 0.
+	@param dir: +1 if it climbs eastward (foot on the west end), -1 if westward.
+	@param thickness: The slab's own thickness.
+
+	A TILTED BOX, NEVER STEPS. CharacterBody3D cannot climb a step at all, and the
+	HQ's rule — no traversal may demand a jump-height — is the same rule outdoors.
+	The derivation is _city_cable's, read it there: create_box composes
+	Basis(UP, yaw) * Basis(RIGHT, tilt), so a box long in LOCAL Z is tipped by
+	`tilt` and then swung to its heading by `yaw`, and local +Z lands on
+	(cos(tilt)*sin(yaw), -sin(tilt), cos(tilt)*cos(yaw)). A ramp on +X is therefore
+	yaw = +PI/2 with tilt = -atan2(rise, run); a box long in local X could not be
+	sloped at all, and yaw = -PI/2 mirrors the whole thing for a -X climb.
+
+	NO FOOTPRINT, deliberately: a ramp is the one piece of city geometry you are
+	MEANT to walk up, and an `obstacles` entry is a keep-out claim that would push
+	crocodiles off it and drop every coin that crossed it.
+	"""
+	var slice := _city_chunk_slice(chunk_center, ramp)
+	if not slice.has_area():
+		return
+	var run: float = ramp.size.x
+	var mid := slice.get_center()
+	# How far up the climb this slice's centre sits, 0 at the foot to 1 at the
+	# head — measured from the rect's west edge and flipped for a -X ramp, so
+	# `dir` is honoured rather than assumed.
+	var climbed := clampf((mid.x - ramp.position.x) / run, 0.0, 1.0)
+	if dir < 0.0:
+		climbed = 1.0 - climbed
+	# The slice is longer than its X width by exactly the slope's hypotenuse
+	# ratio, which is what makes two neighbouring slices meet flush on the same
+	# plane rather than leaving a lip at the seam.
+	var slope_len := slice.size.x * sqrt(run * run + rise * rise) / run
+	create_box(
+			Vector3(mid.x - chunk_center.x,
+					climbed * rise - thickness * 0.5,
+					mid.y - chunk_center.z),
+			Vector3(slice.size.y, thickness, slope_len),
+			PI * 0.5 * dir, rng, block_batch, block_body, -atan2(rise, run), stone)
+
+
 func spawn_city_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
 	"""
 	Build this chunk's slice of Budapest (bead godot-test1-8gw.3).
@@ -9834,7 +9893,10 @@ func spawn_city_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obst
 	  2. the RAMP slice — one TILTED box, the only way onto that lid;
 	  3. the LANDMARK slices — _spawn_city_landmarks_in_chunk, this chunk's share
 	     of every authored slot whose disc reaches into its square;
-	  5. the AVENUE slice — a thin, non-colliding pavement slab out of the gate.
+	  5. the AVENUE slice — a thin, non-colliding pavement slab out of the gate;
+	  6. the four BRIDGE DECKS and their ramped approaches — bead .4's, and the
+	     one step with a public entry point of its own so the self-check can walk
+	     a deck without twenty landmark builders in the way.
 	4 is the gate district and is its own task; the Danube's crocodiles are a
 	spawner of their own, not city stone. The numbering is DEC-10's, kept as it
 	is so the gap is visibly a slot rather than an omission.
@@ -9875,42 +9937,11 @@ func spawn_city_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obst
 			})
 
 		# ---- 2. THE RAMP ----------------------------------------------------
-		# A TILTED BOX, NEVER STEPS. CharacterBody3D cannot climb a step at all,
-		# and the HQ's rule — no traversal may demand a jump-height — is the same
-		# rule outdoors. The derivation is _city_cable's, read it there: create_box
-		# composes Basis(UP, yaw) * Basis(RIGHT, tilt), so a box long in LOCAL Z is
-		# tipped by `tilt` and then swung to its heading by `yaw`, and local +Z
-		# lands on (cos(tilt)*sin(yaw), -sin(tilt), cos(tilt)*cos(yaw)). A ramp on
-		# +X is therefore yaw = +PI/2 with tilt = -atan2(rise, run); a box long in
-		# local X could not be sloped at all.
-		#
-		# NO FOOTPRINT, deliberately: a ramp is the one piece of city geometry you
-		# are MEANT to walk up, and an `obstacles` entry is a keep-out claim that
-		# would push crocodiles off it and drop every coin that crossed it.
-		var ramp: Rect2 = row["ramp"]
-		var ramp_slice := _city_chunk_slice(chunk_center, ramp)
-		if not ramp_slice.has_area():
-			continue
-		var run: float = ramp.size.x
-		var dir: float = signf(float(row["ramp_dir"]))
-		var mid_r := ramp_slice.get_center()
-		# How far up the climb this slice's centre sits, 0 at the foot to 1 at the
-		# head — measured from the rect's west edge and flipped for a -X ramp, so
-		# `ramp_dir` is honoured rather than assumed.
-		var climbed := clampf((mid_r.x - ramp.position.x) / run, 0.0, 1.0)
-		if dir < 0.0:
-			climbed = 1.0 - climbed
-		# The slice is longer than its X width by exactly the slope's hypotenuse
-		# ratio, which is what makes two neighbouring slices meet flush on the same
-		# plane rather than leaving a lip at the seam.
-		var slope_len := ramp_slice.size.x * sqrt(run * run + top * top) / run
-		create_box(
-				Vector3(mid_r.x - chunk_center.x,
-						climbed * top - CITY_RAMP_THICKNESS * 0.5,
-						mid_r.y - chunk_center.z),
-				Vector3(ramp_slice.size.y, CITY_RAMP_THICKNESS, slope_len),
-				PI * 0.5 * dir, rng, block_batch, block_body, -atan2(top, run),
-				CITY_HILL_STONE)
+		# One tilted slab, the only way onto the lid — see _city_ramp_slice, which
+		# the bridges' approaches share.
+		_city_ramp_slice(chunk_center, row["ramp"], top,
+				signf(float(row["ramp_dir"])), CITY_RAMP_THICKNESS,
+				rng, block_batch, block_body, CITY_HILL_STONE)
 
 	# ---- 3. THE LANDMARK SLICES ---------------------------------------------
 	# Its own function because it is the bead's keystone decision and wants the
@@ -9941,6 +9972,84 @@ func spawn_city_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obst
 				Vector3(mid_a.x - chunk_center.x, 0.0, mid_a.y - chunk_center.z),
 				Vector3(av.size.x, CITY_AVENUE_THICKNESS, av.size.y), 0.0,
 				rng, block_batch, block_body, 0.0, CITY_AVENUE_STONE, false)
+
+	# ---- 6. THE FOUR BRIDGE DECKS -------------------------------------------
+	spawn_city_bridges_in_chunk(chunk_center, block_batch, block_body)
+
+
+func spawn_city_bridges_in_chunk(chunk_center: Vector3, block_batch: Array,
+		block_body: StaticBody3D) -> void:
+	"""
+	Build this chunk's slice of the four Danube bridges' DECKS (bead
+	godot-test1-8gw.4).
+
+	@param chunk_center: This chunk's centre in world space, from chunk_to_world().
+	@param block_batch: Out-param; every box joins the chunk's ONE MultiMesh.
+	@param block_body: The chunk's single shared collision body.
+
+	PUBLIC, for the same reason split_city_boxes_on_chunk_grid is: budapest_selfcheck
+	check 14 walks a bridge's chunks and measures the surface it can actually stand
+	on, and it can only do that if the deck's boxes arrive on their own instead of
+	mixed in with twenty landmark builders' piers and towers.
+
+	WHAT IT BUILDS, per bridge, all of it sliced by _city_chunk_slice so
+	neighbouring chunks meet flush: a flat colliding slab hung under
+	BudapestPlan.BRIDGE_DECK_TOP across the middle, and one tilted ramp at each end
+	climbing to it from y = 0. The ramp shares the plateaus' _city_ramp_slice, so
+	"no traversal may demand a jump-height" is one piece of arithmetic in this file
+	and not two.
+
+	WHAT IT DOES NOT BUILD is the bridge: the towers, chains, trusses, cutwaters and
+	lions belong to landmark_builders.gd's `_city_*_bridge` rows, which stand on the
+	SLOTS entry of the same id. The deck is placed off the DRY_RECTS row the band is
+	already punched out by, and check 14 asserts the two agree on where the bridge
+	is — the ornament hangs its chains at exactly BRIDGE_DECK_TOP.
+
+	ITS OWN PRIVATE STREAM, the gate district's precedent: create_box draws four
+	numbers per box for a colour ramp this feature overrides anyway, and a draw
+	taken from a stream somebody else reads slides every crocodile in the world.
+
+	NO `obstacles` FOOTPRINT, deliberately, and for the ramp's reason one span
+	along: a deck is MEANT to be walked. Nothing downstream wants one either —
+	inside the rect the coin line stops at the west bank and the only predator is
+	spawn_danube_crocodiles_in_chunk, which keeps clear of a deck through
+	DANUBE_CROC_DECK_MARGIN off the same rect rather than through this list.
+
+	# ponytail: THE STRIP UNDER A DECK IS DRY TOO, and that is DRY_RECTS being
+	# XZ-only rather than an oversight — the same trade the plan's SECTION 3 makes
+	# for Margaret Island. A player who ignores the ramps can walk the river bed
+	# beneath a bridge without wading. Closing it means a Y-aware is_river_at(),
+	# which every predator and the ground shader read per frame; the cheap half-fix
+	# (a solid abutment wedge at each end) is worth doing the day somebody notices.
+	"""
+	var rng := RandomNumberGenerator.new()
+	rng.seed = CITY_STREAM_SEED
+
+	for row_v: Variant in BudapestPlan.BRIDGES:
+		var row: Dictionary = row_v
+		var deck: Rect2 = BudapestPlan.bridge_deck(row)
+		# Cheap reject: a chunk nowhere near this bridge pays one intersection.
+		if not _city_chunk_slice(chunk_center, deck).has_area():
+			continue
+
+		# The level span, hung UNDER its walking height so the ramps meet its top.
+		var flat := _city_chunk_slice(chunk_center, BudapestPlan.bridge_flat(row))
+		if flat.has_area():
+			var mid := flat.get_center()
+			create_box(
+					Vector3(mid.x - chunk_center.x,
+							BudapestPlan.BRIDGE_DECK_TOP - CITY_BRIDGE_DECK_THICKNESS * 0.5,
+							mid.y - chunk_center.z),
+					Vector3(flat.size.x, CITY_BRIDGE_DECK_THICKNESS, flat.size.y),
+					0.0, rng, block_batch, block_body, 0.0, CITY_AVENUE_STONE)
+
+		# ...and the two approaches. The east one climbs WESTWARD (dir -1), so its
+		# foot is on the east bank — the same slab mirrored, not a second case.
+		for east in [false, true]:
+			_city_ramp_slice(chunk_center, BudapestPlan.bridge_ramp(row, east),
+					BudapestPlan.BRIDGE_DECK_TOP, -1.0 if east else 1.0,
+					CITY_RAMP_THICKNESS, rng, block_batch, block_body,
+					CITY_AVENUE_STONE)
 
 
 ## The width below which a piece of a split city box is not a piece at all — see

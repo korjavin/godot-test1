@@ -146,6 +146,7 @@ func _run() -> void:
 	_check_ramps(terrain)
 	_check_difficulty_clamp()
 	_check_avenue(terrain)
+	_check_bridges(terrain)
 	terrain.free()
 
 	_report()
@@ -1954,6 +1955,16 @@ func _check_avenue(terrain: Node3D) -> void:
 	arrive at the bridge — so its disc reaches the last metre of the corridor by
 	design, and the collision sweep above is what says the arrival is walkable.
 
+	AND SINCE BEAD .4 THE COLLISION SWEEP EXEMPTS THE DECK ITSELF — by rect, so
+	the exemption is exactly the bridge and not a radius around it. The Chain
+	Bridge's western approach begins 22 m short of the bank and runs straight up
+	the middle of the avenue, which is the correct city: the road out of the gate
+	arrives at the bridge and climbs onto it. That ramp is solid stone whose top
+	surface is flush with the ground at its foot, so "nothing solid stands here" is
+	the wrong question to ask of it; check 14 asks the right ones — slope under
+	TowerInterior.PLAN_RAMP_MAX_SLOPE, flush at both ends, no step at a chunk seam,
+	no gap to fall through. Everything else in the corridor is still a wall.
+
 	The full one-hero reachability audit over all 22 slots is bead
 	godot-test1-8gw.10; this is the one corridor .3 promises.
 	"""
@@ -2011,6 +2022,12 @@ func _check_avenue(terrain: Node3D) -> void:
 					continue
 				if wz + az < corridor.position.y or wz - az > corridor.end.y:
 					continue
+				# THE ONE EXEMPTION, and it is a rect and not a radius: a bridge's
+				# own deck. See the docstring — the avenue arrives at the Chain
+				# Bridge and climbs it, and a ramp is measured by check 14, not by
+				# an absence of stone.
+				if _on_a_bridge_deck(wx, wz):
+					continue
 				blockers += 1
 				if blockers <= 3:
 					_fail("a solid box stands in the avenue at (%.0f, %.0f), "
@@ -2026,5 +2043,474 @@ func _check_avenue(terrain: Node3D) -> void:
 				+ "is not what was measured")
 
 	print("avenue: %.0f m from the gate to the west bank at x = %.0f, %d solid "
-			% [corridor.size.x, east, blockers] + "boxes inside its 16 m, out of "
-			+ "%d shapes examined" % shapes_examined)
+			% [corridor.size.x, east, blockers] + "boxes inside its 16 m (the Chain "
+			+ "Bridge's approach exempted), out of %d shapes examined" % shapes_examined)
+
+
+func _on_a_bridge_deck(x: float, z: float) -> bool:
+	"""Is this world XZ homed on one of the four bridges' deck rects? The avenue
+	sweep's one exemption, and the same rect the band is punched out by."""
+	for row_v: Variant in BudapestPlan.BRIDGES:
+		if (BudapestPlan.bridge_deck(row_v) as Rect2).has_point(Vector2(x, z)):
+			return true
+	return false
+
+
+# ============================================================================
+# CHECK 14 — the four bridges: a walking player crosses each one, dry
+# ============================================================================
+
+## How far a deck rect's END has to stand clear of the 240 m band before the ramp
+## whose foot sits on it counts as landing on the BANK. A margin and not a zero
+## for PLATEAU_DRY_MARGIN's reason: an approach authored flush against the water's
+## edge is one retune of DANUBE_HALF_WIDTH away from starting in it.
+const BRIDGE_BANK_MARGIN: float = 10.0
+
+## How far outside a deck's long edge check 14 starts asking "is it still the
+## river?". Small, because the point is that the cutout is exactly the deck and
+## not a fairway around it — two metres off the parapet you are wading.
+const BRIDGE_WET_PROBE: float = 2.0
+
+## ...and how far it will keep stepping out while the answer is another AUTHORED
+## dry rect. The Margaret Bridge crosses Margaret Island, so its northern parapet
+## has 232 m of lawn beside it and its southern 44; 60 gives that side a verdict
+## and lets the northern one abstain, which is the mechanism working rather than
+## the band failing.
+const BRIDGE_WET_PROBE_REACH: float = 60.0
+
+## Check 14's crocodile sweep buckets the Danube into three by Z — upstream, the
+## bend, downstream — and every bucket has to be populated. "The policy runs along
+## the whole length" is otherwise satisfied by one crocodile at the bend.
+const DANUBE_BUCKETS: int = 3
+
+
+func _check_bridges(terrain: Node3D) -> void:
+	"""
+	The four decks, Margaret Island, and the crocodiles along the whole river.
+
+	THE ACCEPTANCE IS "A WALKING PLAYER CROSSES EACH BRIDGE WITHOUT WADING", and
+	it splits into two questions measured in two different places:
+
+	  DRY is is_river_at()'s, walked metre by metre along the deck's centre line,
+	  with a WET control two metres off the parapet — the cutout has to be exactly
+	  the deck and not a fairway around it.
+
+	  WALKABLE is the BOXES', held to the standard check 11 holds the plateau ramps
+	  to, because CharacterBody3D cannot climb a step at all: the surface every
+	  slice actually builds is compared against BudapestPlan.bridge_surface_y() at
+	  both ends of every slab, and the slabs have to COVER the rect on both axes
+	  with no seam gap to fall through. The slope ceiling is
+	  TowerInterior.PLAN_RAMP_MAX_SLOPE, READ from there and never restated.
+
+	AND THE ORNAMENT HAS TO AGREE. The pylons, towers, chains and lions are
+	landmark_builders.gd's, standing on the SLOTS row of the same id; the deck is
+	built off the DRY_RECTS row. Nothing in the engine binds those two, so this is
+	where they are bound: every BRIDGES row names a slot that exists, has a
+	builder, and sits at the deck rect's own centre.
+
+	# ponytail: THE HEIGHT IS NOT BOUND, only the XZ position. Every bridge
+	# builder's ornament stops at y = 12 (the Chain's and the Elisabeth's hangers
+	# hang to it, the Liberty's river piers top out on it, the Margaret's lamp
+	# standards stand on it), but those are literals inside those functions and not
+	# data anything can read. Retuning BRIDGE_DECK_TOP therefore leaves the chains
+	# hanging in air with nothing here to say so — cosmetic, which is why it is a
+	# note. Binding it means measuring the ornament's own boxes for a horizontal
+	# edge at the deck's height; worth doing the day the deck height moves.
+	"""
+	_check_bridge_profile_control()
+	var ceiling: float = TowerInterior.PLAN_RAMP_MAX_SLOPE
+	var slope: float = BudapestPlan.BRIDGE_DECK_TOP / BudapestPlan.BRIDGE_RAMP_RUN
+	if slope > ceiling:
+		_fail("a bridge approach climbs %.1f m over %.0f (slope %.3f), over "
+				% [BudapestPlan.BRIDGE_DECK_TOP, BudapestPlan.BRIDGE_RAMP_RUN, slope]
+				+ "TowerInterior.PLAN_RAMP_MAX_SLOPE %.3f — no traversal in this "
+				% ceiling + "game may demand a jump-height, indoors or out")
+
+	var claimed: Dictionary = {}
+	for row_v: Variant in BudapestPlan.BRIDGES:
+		var row: Dictionary = row_v
+		var id := String(row["id"])
+		var dry := int(row["dry"])
+		if dry < 0 or dry >= BudapestPlan.DRY_RECTS.size():
+			_fail("bridge '%s' names DRY_RECTS row %d, which does not exist — its "
+					% [id, dry] + "deck would be built where the band was never "
+					+ "punched out")
+			continue
+		if claimed.has(dry):
+			_fail("bridges '%s' and '%s' both claim DRY_RECTS row %d — two decks "
+					% [id, String(claimed[dry]), dry] + "cannot stand on one rect")
+		claimed[dry] = id
+		_check_one_bridge(terrain, row, id, slope, ceiling)
+
+	_check_margaret_island(terrain, claimed)
+	_check_danube_crocodiles(terrain)
+
+
+func _check_bridge_profile_control() -> void:
+	"""
+	THE TWO PIECES OF NEW PURE LOGIC EVERYTHING ELSE IN CHECK 14 LEANS ON, driven
+	on values whose answers are known — because both are the kind of helper that
+	fails SILENTLY AND AGREEABLY.
+
+	BudapestPlan.bridge_surface_y() is the profile every built slab is measured
+	against, so a wrong profile makes the geometry agree with the wrong shape and
+	reports 0.000 m of error. _span_gap() is the coverage test, and a coverage test
+	that can never see a hole passes over a deck with a hole in it. So: the profile
+	is asserted at both feet, at both ramp heads and across the middle, and the gap
+	finder is handed intervals with a hole cut in them and has to find it.
+	"""
+	var row: Dictionary = BudapestPlan.BRIDGES[0]
+	var deck: Rect2 = BudapestPlan.bridge_deck(row)
+	var run: float = BudapestPlan.BRIDGE_RAMP_RUN
+	var top: float = BudapestPlan.BRIDGE_DECK_TOP
+	# (world X, expected height): the two feet, the two heads, the middle, and one
+	# point half way up each ramp.
+	var want: Array = [
+		[deck.position.x, 0.0], [deck.end.x, 0.0],
+		[deck.position.x + run, top], [deck.end.x - run, top],
+		[deck.get_center().x, top],
+		[deck.position.x + run * 0.5, top * 0.5],
+		[deck.end.x - run * 0.5, top * 0.5],
+	]
+	for pair_v: Variant in want:
+		var pair: Array = pair_v
+		var got: float = BudapestPlan.bridge_surface_y(row, float(pair[0]))
+		if absf(got - float(pair[1])) > RAMP_FLUSH_TOL:
+			_fail("BudapestPlan.bridge_surface_y answers %.3f m at x = %.1f where "
+					% [got, float(pair[0])] + "the deck's profile is %.3f — every "
+					% float(pair[1]) + "geometry assertion in check 14 is measured "
+					+ "against this, so it would agree with the wrong shape")
+
+	# ...and the gap finder, with a 3 m hole cut out of the middle of a covered run.
+	var solid: Array[Vector2] = [Vector2(0.0, 10.0), Vector2(10.0, 20.0)]
+	if _span_gap(solid, 0.0, 20.0) > 0.001:
+		_fail("_span_gap reports a hole in two intervals that meet exactly — the "
+				+ "bridge coverage test would fail every deck it measured")
+	var holed: Array[Vector2] = [Vector2(0.0, 10.0), Vector2(13.0, 20.0)]
+	if absf(_span_gap(holed, 0.0, 20.0) - 3.0) > 0.001:
+		_fail("_span_gap missed a 3 m hole between two intervals — check 14's "
+				+ "coverage test cannot see a deck with a hole in it")
+	if absf(_span_gap(solid, 0.0, 25.0) - 5.0) > 0.001:
+		_fail("_span_gap missed 5 m of deck missing off the END of the run — a "
+				+ "bridge that stopped short of its own abutment would pass")
+
+
+func _check_one_bridge(terrain: Node3D, row: Dictionary, id: String,
+		slope: float, ceiling: float) -> void:
+	"""One deck: its binding to the ornament's slot, its abutments, the surface it
+	actually builds, and the wade read along the crossing."""
+	var deck: Rect2 = BudapestPlan.bridge_deck(row)
+	var top: float = BudapestPlan.BRIDGE_DECK_TOP
+	var centre := deck.get_center()
+
+	# ---- 1. THE DECK AND THE ORNAMENT ARE THE SAME BRIDGE --------------------
+	var si := _slot_index(id)
+	if si < 0:
+		_fail("bridge '%s' has no SLOTS row — its deck would be built where "
+				% id + "nothing ever puts a pylon under it")
+		return
+	var slot: Dictionary = BudapestPlan.SLOTS[si]
+	if String(slot["builder"]).is_empty():
+		_fail("bridge '%s' has an empty builder — a roadway 12 m up with no "
+				% id + "towers, no cables and no piers is a floating slab")
+	var pos: Vector3 = slot["pos"]
+	var off := Vector2(pos.x - centre.x, pos.z - centre.y).length()
+	if off > RAMP_FLUSH_TOL:
+		_fail("bridge '%s': its deck rect is centred at (%.1f, %.1f) but its slot "
+				% [id, centre.x, centre.y] + "stands at (%.1f, %.1f), %.1f m away "
+				% [pos.x, pos.z, off] + "— the roadway and the towers that are "
+				+ "supposed to carry it have come apart")
+
+	# ---- 2. THE TWO RAMPS FIT, AND THEIR FEET ARE ON THE BANK ----------------
+	var flat := BudapestPlan.bridge_flat(row)
+	if flat.size.x <= 0.0:
+		_fail("bridge '%s' is %.0f m long against two %.0f m approaches — the "
+				% [id, deck.size.x, BudapestPlan.BRIDGE_RAMP_RUN] + "ramps meet in "
+				+ "the middle and there is no level deck at all")
+		return
+	var driest := INF
+	for end_x: float in [deck.position.x, deck.end.x]:
+		for k in 5:
+			var z := lerpf(deck.position.y, deck.end.y, float(k) / 4.0)
+			driest = minf(driest, BudapestPlan.danube_distance(end_x, z))
+	if driest < BudapestPlan.DANUBE_HALF_WIDTH + BRIDGE_BANK_MARGIN:
+		_fail("bridge '%s': an end of its deck rect reaches %.1f m from the "
+				% [id, driest] + "polyline (band %.0f + margin %.0f) — the foot of "
+				% [BudapestPlan.DANUBE_HALF_WIDTH, BRIDGE_BANK_MARGIN]
+				+ "an approach stands in the water, so there is no dry way on")
+	# ...and the deck really does SPAN the river rather than ending mid-channel.
+	if terrain.is_river_at(Vector3(deck.position.x - 1.0, 0.0, centre.y)) \
+			or terrain.is_river_at(Vector3(deck.end.x + 1.0, 0.0, centre.y)):
+		_fail("bridge '%s' does not reach dry ground on both banks — one metre "
+				% id + "off an end of the deck is still the river")
+
+	# ---- 3. THE WADE READ ALONG THE CROSSING, AND ITS WET CONTROL ------------
+	var dry_samples := 0
+	var x := deck.position.x
+	while x <= deck.end.x:
+		if terrain.is_river_at(Vector3(x, 0.0, centre.y)):
+			_fail("bridge '%s' is WET at x = %.0f — a crossing you have to wade "
+					% [id, x] + "is not a bridge")
+			break
+		dry_samples += 1
+		x += 1.0
+	# The WET CONTROL: step off the parapet until the point is on no dry rect at
+	# all, and the first such point has to be river. Stepping rather than probing
+	# once is Margaret Island's fault and is the mechanism working — that deck runs
+	# ACROSS the island, so two metres off its parapet is still authored dry land,
+	# and a fixed probe would report the bridge's own cutout as a fairway. So the
+	# statement is "the water starts again as soon as the AUTHORED dry stops", and
+	# a side that never leaves dry ground inside the reach abstains.
+	var wet_control := 0
+	var probes := 0
+	for side: float in [-1.0, 1.0]:
+		var out := BRIDGE_WET_PROBE
+		while out <= BRIDGE_WET_PROBE_REACH:
+			var z := centre.y + side * (deck.size.y * 0.5 + out)
+			if not BudapestPlan.is_dry(centre.x, z):
+				probes += 1
+				if terrain.is_river_at(Vector3(centre.x, 0.0, z)):
+					wet_control += 1
+				else:
+					_fail("bridge '%s': %.0f m off its parapet at (%.0f, %.0f) is "
+							% [id, out, centre.x, z] + "neither a dry rect nor the "
+							+ "river — the cutout is a fairway round the bridge "
+							+ "instead of the bridge")
+				break
+			out += 1.0
+	if probes < 1:
+		_fail("bridge '%s': neither side of its deck leaves authored dry ground "
+				% id + "within %.0f m — the wet control probed nothing and the "
+				% BRIDGE_WET_PROBE_REACH + "cutout's edge was never measured")
+
+	# ---- 4. THE SURFACE, ON THE BOXES THE STREAMER ACTUALLY BUILDS -----------
+	var lo: Vector2i = terrain.world_to_chunk(Vector3(deck.position.x, 0.0, deck.position.y))
+	var hi: Vector2i = terrain.world_to_chunk(Vector3(deck.end.x, 0.0, deck.end.y))
+	var boxes := 0
+	var shapes := 0
+	var worst := 0.0
+	var x_spans: Array[Vector2] = []
+	var z_spans: Array[Vector2] = []
+	for cx in range(lo.x, hi.x + 1):
+		for cz in range(lo.y, hi.y + 1):
+			var chunk_centre: Vector3 = terrain.chunk_to_world(Vector2i(cx, cz))
+			var batch: Array = []
+			var body := StaticBody3D.new()
+			terrain.spawn_city_bridges_in_chunk(chunk_centre, batch, body)
+			for entry_v: Variant in batch:
+				var entry: Dictionary = entry_v
+				var xf: Transform3D = entry["transform"]
+				var wx := xf.origin.x + chunk_centre.x
+				var wz := xf.origin.z + chunk_centre.z
+				# A chunk square can meet two bridges' rects at a corner, so the
+				# box is homed by its own centre — the streamer's own rule.
+				if wx < deck.position.x or wx > deck.end.x \
+						or wz < deck.position.y or wz > deck.end.y:
+					continue
+				boxes += 1
+				var span := Vector2(INF, -INF)
+				if absf(xf.basis.y.normalized().y - 1.0) > 0.0001:
+					# A RAMP, measured exactly as check 11 measures a plateau's:
+					# the top surface's two end points on the slab's centre line,
+					# with the X SPAN taken on the MID-HEIGHT end faces (tilting
+					# slides the top face along X, and two slabs that meet
+					# perfectly still read as a gap if it is measured up there).
+					var up := xf.basis.y * 0.5
+					for sign: float in [-1.0, 1.0]:
+						var p: Vector3 = xf.origin + up + xf.basis.z * (0.5 * sign)
+						worst = maxf(worst, absf(p.y - BudapestPlan.bridge_surface_y(
+								row, p.x + chunk_centre.x)))
+						var mid: Vector3 = xf.origin + xf.basis.z * (0.5 * sign)
+						span = Vector2(minf(span.x, mid.x + chunk_centre.x),
+								maxf(span.y, mid.x + chunk_centre.x))
+					# The slab's WIDTH runs on local X, which yaw = +-PI/2 lays
+					# on world Z — not on basis.z, which is the climb.
+					var hz := absf(xf.basis.x.z) * 0.5
+					z_spans.append(Vector2(wz - hz, wz + hz))
+				else:
+					# THE LEVEL SPAN. One height, and it is the WALKING height: the
+					# slab hangs under it, so a thickness retune must never move
+					# the surface the two ramps meet.
+					worst = maxf(worst, absf(xf.origin.y + absf(xf.basis.y.y) * 0.5 - top))
+					var hx := absf(xf.basis.x.x) * 0.5
+					span = Vector2(wx - hx, wx + hx)
+					var hz2 := absf(xf.basis.z.z) * 0.5
+					z_spans.append(Vector2(wz - hz2, wz + hz2))
+				x_spans.append(span)
+			# A DECK YOU FALL THROUGH IS NOT A DECK: every box here collides.
+			for child in body.get_children():
+				if child is CollisionShape3D:
+					shapes += 1
+			body.free()
+
+	if boxes < 3:
+		_fail("bridge '%s' came out as %d boxes — a %.0f m deck crosses several "
+				% [id, boxes, deck.size.x] + "chunks, so this measured the wrong thing")
+		return
+	if shapes != boxes:
+		_fail("bridge '%s' built %d boxes but %d collision shapes — a deck you "
+				% [id, boxes, shapes] + "fall through is not a deck")
+	if worst > RAMP_FLUSH_TOL:
+		_fail("bridge '%s': its surface is %.3f m off BudapestPlan.bridge_surface_y "
+				% [id, worst] + "at a slice end — two slices disagree, which is a "
+				+ "STEP, and CharacterBody3D cannot climb one at all")
+	var gap_x := _span_gap(x_spans, deck.position.x, deck.end.x)
+	if gap_x > RAMP_FLUSH_TOL:
+		_fail("bridge '%s': its slabs leave a %.3f m gap ALONG the crossing — "
+				% [id, gap_x] + "neighbouring chunks' slices do not meet, so there "
+				+ "is a hole to fall through in the middle of the river")
+	var gap_z := _span_gap(z_spans, deck.position.y, deck.end.y)
+	if gap_z > RAMP_FLUSH_TOL:
+		_fail("bridge '%s': its slabs leave a %.3f m gap ACROSS the deck — the "
+				% [id, gap_z] + "roadway is narrower than the rect the river was "
+				+ "punched out by, so its edge is a hole over open water")
+
+	print("bridge '%s': %.0f m deck at y = %.1f (slope %.3f <= %.3f), %d boxes / "
+			% [id, deck.size.x, top, slope, ceiling, boxes]
+			+ "%d shapes, worst %.3f m off the profile, seam gaps %.3f / %.3f, "
+			% [shapes, worst, gap_x, gap_z]
+			+ "%d dry samples across, abutments %.0f m out from the polyline"
+			% [dry_samples, driest])
+
+
+func _span_gap(spans: Array[Vector2], from: float, to: float) -> float:
+	"""
+	The widest hole a set of 1-D intervals leaves in [from, to].
+
+	Check 11's arithmetic, lifted here because the bridges want it on BOTH axes:
+	sort by start, walk, and take the worst of (the step from the current reach to
+	the next span's start) and (whatever is left over at the end).
+	"""
+	var sorted: Array[Vector2] = spans.duplicate()
+	sorted.sort_custom(func(a: Vector2, b: Vector2) -> bool: return a.x < b.x)
+	var reach := from
+	var gap := 0.0
+	for span: Vector2 in sorted:
+		gap = maxf(gap, span.x - reach)
+		reach = maxf(reach, span.y)
+	return maxf(gap, to - reach)
+
+
+func _check_margaret_island(terrain: Node3D, claimed: Dictionary) -> void:
+	"""
+	MARGARET ISLAND IS DRY LAND IN THE RIVER, on the same mechanism as a deck —
+	which is the point of DRY_RECTS and the reason this bead needed no machinery
+	for it. Three things it has to be: a DRY_RECTS row no bridge claims, dry over
+	its whole area, and INSIDE the band. An "island" whose rect reaches the bank is
+	a headland, and its cutout is then punching a hole in dry ground for nothing.
+	"""
+	var island := -1
+	for i in range(BudapestPlan.DRY_RECTS.size()):
+		if not claimed.has(i):
+			island = i
+			break
+	if island < 0:
+		_fail("every DRY_RECTS row is claimed by a bridge deck — Margaret Island "
+				+ "has stopped being dry land in the river")
+		return
+	var r: Rect2 = BudapestPlan.DRY_RECTS[island]
+	var wet := 0
+	var outside := 0
+	for i in range(11):
+		for k in range(11):
+			var p := Vector2(lerpf(r.position.x, r.end.x, float(i) / 10.0),
+					lerpf(r.position.y, r.end.y, float(k) / 10.0))
+			if terrain.is_river_at(Vector3(p.x, 0.0, p.y)):
+				wet += 1
+			if BudapestPlan.danube_distance(p.x, p.y) > BudapestPlan.DANUBE_HALF_WIDTH:
+				outside += 1
+	if wet > 0:
+		_fail("%d of 121 points on Margaret Island answer WET — an island you "
+				% wet + "wade across is a shallow, not an island")
+	if outside > 0:
+		_fail("%d of 121 points on Margaret Island lie OUTSIDE the %.0f m band — "
+				% [outside, BudapestPlan.DANUBE_HALF_WIDTH] + "its rect has reached "
+				+ "the bank, so it is a headland and its cutout is punching a hole "
+				+ "in ground that was already dry")
+
+	# ...and the landmark that names it stands ON it, disc and all.
+	var si := _slot_index("margaret_island")
+	if si < 0:
+		_fail("no 'margaret_island' slot — the island is dry land nobody names")
+		return
+	var slot: Dictionary = BudapestPlan.SLOTS[si]
+	var pos: Vector3 = slot["pos"]
+	var rad: float = slot["radius"]
+	if pos.x - rad < r.position.x or pos.x + rad > r.end.x \
+			or pos.z - rad < r.position.y or pos.z + rad > r.end.y:
+		_fail("the Margaret Island landmark's %.0f m disc at (%.0f, %.0f) "
+				% [rad, pos.x, pos.z] + "overhangs its island rect — its water "
+				+ "tower and its park would stand in the river")
+
+	print("Margaret Island: DRY_RECTS row %d, %.0f x %.0f m, 121/121 points dry "
+			% [island, r.size.x, r.size.y] + "and every one inside the band; the "
+			+ "landmark's %.0f m disc fits on it" % rad)
+
+
+func _check_danube_crocodiles(terrain: Node3D) -> void:
+	"""
+	THE CROCODILE POLICY ALONG THE WHOLE LENGTH — the river read north to south
+	rather than sampled at the bend.
+
+	Check 9 already proves the policy is per-system and that a Danube crocodile is
+	wet; what it cannot say is that the river is populated END TO END, because its
+	stride lands ~60 chunks over a 2.2 km rect and ONE crocodile satisfies it. So
+	this walks EVERY wet chunk, buckets them into three by Z, and requires all
+	three to answer — the whole 2.2 km of water is the threat line, not its middle.
+
+	It also re-states the deck rule on the BODIES: nothing may stand within
+	DANUBE_CROC_DECK_MARGIN of a dry rect, which is what keeps a crocodile out of a
+	bridge pier's overhanging stone and off Margaret Island's lawn.
+	"""
+	var lo: Vector2i = terrain.world_to_chunk(
+			Vector3(BudapestPlan.BUDAPEST_MIN.x, 0.0, BudapestPlan.BUDAPEST_MIN.y))
+	var hi: Vector2i = terrain.world_to_chunk(
+			Vector3(BudapestPlan.BUDAPEST_MAX.x, 0.0, BudapestPlan.BUDAPEST_MAX.y))
+	var buckets: Array[int] = []
+	for i in DANUBE_BUCKETS:
+		buckets.append(0)
+	var wet_chunks := 0
+	var total := 0
+	var near_deck := 0
+	var margin: float = terrain.DANUBE_CROC_DECK_MARGIN
+	var span: float = BudapestPlan.BUDAPEST_MAX.y - BudapestPlan.BUDAPEST_MIN.y
+	for cx in range(lo.x, hi.x + 1):
+		for cz in range(lo.y, hi.y + 1):
+			var chunk_pos := Vector2i(cx, cz)
+			var chunk_centre: Vector3 = terrain.chunk_to_world(chunk_pos)
+			if not BudapestPlan.danube_wet(chunk_centre.x, chunk_centre.z):
+				continue
+			wet_chunks += 1
+			var parent := MeshInstance3D.new()
+			parent.position = chunk_centre
+			root.add_child(parent)
+			terrain.spawn_danube_crocodiles_in_chunk(chunk_pos, parent)
+			for child in parent.get_children():
+				var node := child as Node3D
+				if node == null or not node.is_in_group("crocodile"):
+					continue
+				total += 1
+				var world: Vector3 = node.position + chunk_centre
+				if terrain._near_dry_rect(world.x, world.z, margin):
+					near_deck += 1
+					if near_deck <= 3:
+						_fail("a Danube crocodile stands within %.0f m of a dry "
+								% margin + "rect at (%.0f, %.0f) — inside a bridge "
+								% [world.x, world.z] + "pier's stone, or on "
+								+ "Margaret Island's lawn")
+				var b := clampi(int(float(DANUBE_BUCKETS)
+						* (world.z - BudapestPlan.BUDAPEST_MIN.y) / span),
+						0, DANUBE_BUCKETS - 1)
+				buckets[b] += 1
+			parent.free()
+
+	var names: Array[String] = ["northern", "middle", "southern"]
+	for i in DANUBE_BUCKETS:
+		if buckets[i] < 1:
+			_fail("the %s third of the Danube holds no crocodile at all across "
+					% names[i] + "%d wet chunks — the policy runs along part of "
+					% wet_chunks + "the river and not its whole length")
+
+	print("Danube crocodiles: %d over %d wet chunks along the full 2.2 km, "
+			% [total, wet_chunks] + "buckets %s north -> south, %d within %.0f m "
+			% [str(buckets), near_deck, margin] + "of a deck or the island")

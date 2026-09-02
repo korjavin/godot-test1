@@ -188,6 +188,103 @@ const DRY_RECTS: Array = [
 ]
 
 # ============================================================================
+# SECTION 3b — THE FOUR BRIDGES' DECKS (bead godot-test1-8gw.4)
+# ============================================================================
+
+## A BRIDGE IS TWO FILES, and this table is the joint.
+##
+## The PYLONS, towers, chains, trusses, cutwaters and lions are
+## `landmark_builders.gd`'s — placed on the `SLOTS` row of the same id, which is
+## where a bridge IS. The DECK — the flat roadway you walk and the ramp at each
+## end that gets you up onto it — is `endless_terrain.gd`'s, built off this table.
+## Every one of those builders' docstrings says "the deck is bead .4's" and hangs
+## its chains, its arches and its lamp standards at a roadway 12 m up; this is
+## that roadway.
+##
+## THE DECK RECT IS ALREADY IN `DRY_RECTS`, so a row here names its INDEX rather
+## than restating it. One rect, two readers: the band is punched out by it (in
+## both languages) and the stone is built on it, and there is no second number to
+## drift. `budapest_selfcheck` check 14 asserts each rect is centred on its own
+## slot, so the deck and the ornament cannot come apart.
+##
+## THE ORDER IS THE RIVER'S, north to south — Margaret, Chain, Elisabeth,
+## Liberty — which is the real one and also `DRY_RECTS`'s.
+const BRIDGES: Array = [
+	{"id": "margaret_bridge", "dry": 0},
+	{"id": "chain_bridge", "dry": 1},
+	{"id": "elisabeth_bridge", "dry": 2},
+	{"id": "liberty_bridge", "dry": 3},
+]
+
+## The deck's WALKING HEIGHT, and it is 12 m because the ORNAMENT SAYS SO. The
+## Chain Bridge's hangers and the Elisabeth's both stop at y = 12, the Liberty's
+## river piers are 12 m tall, the Margaret's lamp standards start at 12 and its
+## arches spring from 11. A deck anywhere else would leave every one of them
+## hanging in air or buried in stone, and none of that is data this file can read
+## — so the number is authored here, and check 14 is what pins the ornament and
+## the roadway to one XZ position.
+const BRIDGE_DECK_TOP: float = 12.0
+
+## The RAMPED APPROACH at each end of a deck, in metres of X.
+##
+## No jump gates, indoors or out: `CharacterBody3D` cannot climb a step at all,
+## so the 12 m rise is a tilted slab exactly like a plateau's — the same helper,
+## the same slice arithmetic, the same flushness check. 48 m gives a slope of
+## 0.25, comfortably under `TowerInterior.PLAN_RAMP_MAX_SLOPE` (check 14 reads it
+## from there rather than restating it) and a touch steeper than the two hills,
+## which is right: a bridge approach is a ramp, a hillside is a road.
+##
+## BOTH RAMPS LIVE INSIDE THE DECK RECT, and that is the whole reason the approach
+## needs no new dry rows and no shader edit. A deck rect overhangs the 240 m band
+## by 21-41 m at both ends (check 14 measures it), so the ramp's FOOT stands on
+## the bank while its head reaches out over the water — which is what a bridge
+## approach is — and every metre of it is already punched out of the river.
+const BRIDGE_RAMP_RUN: float = 48.0
+
+
+static func bridge_deck(row: Dictionary) -> Rect2:
+	"""The deck rect of a `BRIDGES` row — its `DRY_RECTS` entry, never a copy."""
+	return DRY_RECTS[int(row["dry"])]
+
+
+static func bridge_ramp(row: Dictionary, east: bool) -> Rect2:
+	"""
+	One of a bridge's two ramped approaches, in world XZ.
+
+	@param row: a `BRIDGES` row.
+	@param east: the east ramp (which rises WESTWARD) rather than the west one.
+	@return the ramp's footprint — full deck width, `BRIDGE_RAMP_RUN` of X, at the
+	        deck rect's own end.
+	"""
+	var d := bridge_deck(row)
+	var x := d.end.x - BRIDGE_RAMP_RUN if east else d.position.x
+	return Rect2(x, d.position.y, BRIDGE_RAMP_RUN, d.size.y)
+
+
+static func bridge_flat(row: Dictionary) -> Rect2:
+	"""The level part of a bridge's deck: what is left of the rect between the two
+	ramps. Every shipped row is 290 m or longer against a 96 m pair of ramps, and
+	check 14 fails a row whose ramps met in the middle."""
+	var d := bridge_deck(row)
+	return Rect2(d.position.x + BRIDGE_RAMP_RUN, d.position.y,
+			d.size.x - 2.0 * BRIDGE_RAMP_RUN, d.size.y)
+
+
+static func bridge_surface_y(row: Dictionary, x: float) -> float:
+	"""
+	The walking height of a bridge's deck at a world X: 0 at either end of the
+	rect, `BRIDGE_DECK_TOP` across the middle, linear up each ramp.
+
+	The IDEAL the built boxes are measured against (check 14), and the one place
+	the deck's profile is written down. Answers for the flat span and both ramps
+	off one expression, because the two ramps are the same climb mirrored.
+	"""
+	var d := bridge_deck(row)
+	var from_end := minf(x - d.position.x, d.end.x - x)
+	return clampf(from_end / BRIDGE_RAMP_RUN, 0.0, 1.0) * BRIDGE_DECK_TOP
+
+
+# ============================================================================
 # SECTION 4 — THE PLATEAUS: massifs with a lid, and one tilted ramp each
 # ============================================================================
 
