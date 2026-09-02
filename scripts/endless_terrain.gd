@@ -399,6 +399,10 @@ const STRUCTURE_THEMES: Dictionary = {
 ## crocodile's detection radius is 15 m, so ten bodies tiled the 2500 m^2 with
 ## overlapping detection discs and left nowhere to stand. Three leaves gaps you
 ## can rest in while a chunk you cross still holds a threat.
+##
+## NOT THE FINAL COUNT since bead godot-test1-7ed: spawn_crocodiles_in_chunk adds
+## the distance gradient to this and then HALVES the sum (owner, 2026-09-02). Read
+## this as the gradient's base; the real per-chunk count is the target there.
 @export var crocodiles_per_chunk: int = 3
 
 ## Minimum distance between crocodiles (in meters)
@@ -751,8 +755,11 @@ const COIN_TOWER_CLEARANCE: float = 0.7
 @export var road_width_max: float = 20.0
 
 ## Coins CONSIDERED per slice, and the chance each one actually spawns. Average coins per
-## slice = road_coin_slots * road_coin_chance. Lower the chance for a sparser, less obvious
-## trail; raise it (or the slots) for a denser swath. Keeping the average near ~1 makes the
+## slice = road_coin_slots * road_coin_chance * 0.7 — the 0.7 is the deterministic 30%
+## THINNING at the bottom of _road_coins_at (bead godot-test1-7ed), which is a post-draw
+## skip and therefore not expressible as a lower chance here: lowering the chance would
+## re-scatter every surviving coin, and the point of the thinning is that it does not.
+## Lower the chance for a sparser, less obvious trail; raise it (or the slots) for a denser swath. Keeping the average near ~1 makes the
 ## band feel like scattered territory, not a carpet. Skipped slots are what give the road
 ## its irregular, "not so obvious" look.
 @export var road_coin_slots: int = 3
@@ -982,11 +989,15 @@ const ARTIFACT_GLOW_ENERGY: float = 3.0
 ## case on screen to a handful of extra unshadowed draws.
 const ARTIFACT_MAX_ACCENTS: int = 4
 
-## Coin reward: 3-5 ordinary coins ring the artifact's base (ring radius =
+## Coin reward: 2-4 ordinary coins ring the artifact's base (ring radius =
 ## footprint radius + a pad in [PAD_MIN, PAD_MAX]) plus exactly one gem at the
 ## centre — the incentive to detour off the coin road.
-const ARTIFACT_COIN_MIN: int = 3
-const ARTIFACT_COIN_MAX: int = 5
+##
+## 3-5 -> 2-4 with every other reward pair, bead godot-test1-7ed (owner, 2026-09-02:
+## "scale down amount of coins, 30% less"). The GEM is untouched: it is the
+## artifact's whole distinction, and one is already the minimum a thing can pay.
+const ARTIFACT_COIN_MIN: int = 2
+const ARTIFACT_COIN_MAX: int = 4
 const ARTIFACT_COIN_RING_PAD_MIN: float = 1.5
 const ARTIFACT_COIN_RING_PAD_MAX: float = 4.0
 
@@ -1135,8 +1146,9 @@ const CAMP_EMBER_COLOR := Color(1.0, 0.55, 0.18)
 const CAMP_EMBER_ENERGY: float = 2.5
 
 ## Coin reward: a couple of scattered coins near the fire. NO gem — see the banner.
-const CAMP_COIN_MIN: int = 2
-const CAMP_COIN_MAX: int = 4
+## 2-4 -> 1-3, the 30% reward trim of bead godot-test1-7ed.
+const CAMP_COIN_MIN: int = 1
+const CAMP_COIN_MAX: int = 3
 
 # ----------------------------------------------------------------------------
 # TREASURE CHESTS (small, common, opened on touch for a coin shower)
@@ -1146,9 +1158,9 @@ const CAMP_COIN_MAX: int = 4
 ## and COMMONEST of the three — a snack, not a monument. The reward hierarchy is
 ## the whole reason each exists at its own rarity:
 ##
-##   artifact  ~1 chunk in 23  huge ruin, 3-5 coins AND the one guaranteed GEM
-##   camp      ~1 chunk in 31  a whole village, 2-4 coins, no gem
-##   chest     ~1 chunk in 13  a 1.3 m box, 8-15 coins in a burst, NO GEM
+##   artifact  ~1 chunk in 23  huge ruin, 2-4 coins AND the one guaranteed GEM
+##   camp      ~1 chunk in 31  a whole village, 1-3 coins, no gem
+##   chest     ~1 chunk in 13  a 1.3 m box, 6-11 coins in a burst, NO GEM
 ##
 ## A chest gets NO gem for exactly the reason a camp gets none: the guaranteed gem
 ## is the artifacts' distinction, and handing one to the commonest landmark in the
@@ -1253,8 +1265,9 @@ const CHEST_BRASS := Color(0.72, 0.55, 0.20)
 ## is drawn from the chest's own seeded RNG, so it is deterministic within a run.
 ## See treasure_chest.gd for why this is N x collect_coin(1) and never
 ## collect_coin(N): the streak machinery counts pickups, not value.
-const CHEST_COINS_MIN: int = 8
-const CHEST_COINS_MAX: int = 15
+## 8-15 -> 6-11, the 30% reward trim of bead godot-test1-7ed.
+const CHEST_COINS_MIN: int = 6
+const CHEST_COINS_MAX: int = 11
 ## Comfortably inside the player's STREAK_WINDOW (2.5 s), so the whole burst is
 ## one unbroken streak chain.
 const CHEST_BURST_DURATION: float = 0.8
@@ -1282,12 +1295,16 @@ const TREASURE_CHEST_SCRIPT := preload("res://scripts/treasure_chest.gd")
 ##
 ## The reward hierarchy this slots into, and why each rarity is what it is:
 ##
-##   chest     ~1 chunk in 13   a 1.3 m box, 8-15 coins in a burst, NO GEM
-##   artifact  ~1 chunk in 23   huge ruin, 3-5 coins AND the one guaranteed GEM
-##   camp      ~1 chunk in 31   a whole village, 2-4 coins, no gem
-##   landmark  ~1 chunk in 40-60  a famous place, 3-5 coins, NO GEM, plus a fact
+##   chest     ~1 chunk in 13   a 1.3 m box, 6-11 coins in a burst, NO GEM
+##   artifact  ~1 chunk in 23   huge ruin, 2-4 coins AND the one guaranteed GEM
+##   camp      ~1 chunk in 31   a whole village, 1-3 coins, no gem
+##   landmark  ~1 chunk in 40-60  a famous place, 2-4 coins, NO GEM, plus a fact
 ##
-## REWARD DECISION — a small coin ring (LANDMARK_COIN_MIN..MAX, 3-5 ordinary
+## The four pairs were 8-15 / 3-5 / 2-4 / 3-5 until bead godot-test1-7ed trimmed
+## every one of them by ~30% (owner, 2026-09-02). The HIERARCHY is what matters
+## here and it is unchanged — they were scaled together, not re-ranked.
+##
+## REWARD DECISION — a small coin ring (LANDMARK_COIN_MIN..MAX, 2-4 ordinary
 ## coins) and DELIBERATELY NO GEM. This is exactly the rule that kept gems out of
 ## camps and chests: the guaranteed gem is the ARTIFACTS' distinction, and a
 ## fourth source of one would flatten "an ancient prize worth a detour" into
@@ -1524,8 +1541,9 @@ const LANDMARK_EDGE_MARGIN: float = 12.0
 ## number beside them.
 
 ## Coin reward: a small ring round the base. NO GEM — see the banner above.
-const LANDMARK_COIN_MIN: int = 3
-const LANDMARK_COIN_MAX: int = 5
+## 3-5 -> 2-4, the 30% reward trim of bead godot-test1-7ed.
+const LANDMARK_COIN_MIN: int = 2
+const LANDMARK_COIN_MAX: int = 4
 ## How far outside the shape's own radius the ring sits, so the coins are found
 ## by walking AROUND the landmark rather than by clipping into it.
 ##
@@ -5675,13 +5693,32 @@ func spawn_crocodiles_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D
 
 	# Difficulty gradient: chunks farther from origin (along the road's +X axis) hold
 	# MORE crocodiles — +1 per 10 chunks of |x| distance, capped at +4 over the base,
-	# so the far field runs 4..8 rather than the old 10..18. Rescaled with the base
+	# so the undivided target runs 3..7; after the halving below the field really
+	# holds 1..2 near the origin and 3..4 far out. Rescaled with the base
 	# count (owner pacing ruling, 2026-08-29): the gradient must stay a slope you
 	# feel, not one that restores the wall-to-wall density further out.
 	# A pure function of chunk coords, so within-run determinism is untouched (the
 	# same chunk always regenerates the same count). The LOD manager keeps the extra
 	# distant crocodiles cheap: they are slept (frozen, monitoring off), never removed.
-	var chunk_croc_target := crocodiles_per_chunk + mini(4, absi(chunk_pos.x) / 10)
+	#
+	# HALVED (owner pacing ruling, 2026-09-02, bead godot-test1-7ed: "reduce
+	# predator amount in half"). This is a TARGET, not a roll — the same
+	# discipline as CITY_CROC_DIVISOR right below and DESERT_BLOCK_KEEP_EVERY:
+	# the halving costs the chunk RNG ZERO draws, so the surviving crocodiles are
+	# byte-for-byte the FIRST half of the undivided stream, standing exactly where
+	# they always stood, with the tail simply never spawned.
+	#
+	# WHY THE `posmod(chunk_pos.y, 2)`: the undivided targets are 3..7, whose
+	# halves are 1.5..3.5. Rounding every one of them the same way gives 57% (up)
+	# or 43% (down), not half — and the base band, where the player spends most of
+	# the run, would sit at 2/3. Adding the chunk ROW's parity before the integer
+	# divide rounds odd targets up on every other row of chunks and down on the
+	# rest, so the field averages EXACTLY half at every distance while staying a
+	# pure function of chunk coordinates. A target of 3 therefore yields 1 or 2 —
+	# "1 stays possible", and a base of 0 still yields 0.
+	var chunk_croc_target := (crocodiles_per_chunk
+			+ mini(4, absi(chunk_pos.x) / 10)
+			+ posmod(chunk_pos.y, 2)) / 2
 
 	# CITY — the one band whose croc target is divided (owner call, 2026-08-26: a
 	# city is not croc-free, it is QUIETER; the roofs are the real safety).
@@ -9487,6 +9524,9 @@ func _road_coins_at(k: int) -> Array:
 	         `k` — `pos` is the world-space coin position, `gem` marks the rare purple
 	         gem variant (ROAD_GEM_CHANCE). May be EMPTY when the per-coin spawn rolls
 	         come up short — that is exactly what keeps the trail sparse and irregular.
+	         Three slots in ten are then dropped outright by the 30% thinning at the
+	         bottom of the loop; see there for why that lives here and not on the
+	         station spacing.
 
 	EDUCATIONAL NOTE — why this stays deterministic & seam-correct:
 	- The scatter RNG is seeded ONLY from `k` (+ ROAD_COIN_SEED + the run-constant
@@ -9528,7 +9568,7 @@ func _road_coins_at(k: int) -> Array:
 	rng.seed = hash(Vector3i(k, ROAD_COIN_SEED, run_seed))
 
 	var coins: Array = []
-	for _slot in road_coin_slots:
+	for slot in road_coin_slots:
 		# Rolling each slot (rather than always placing a coin) is what makes the swath
 		# sparse and irregular instead of a regular grid. A skipped slot still consumes
 		# one draw, so the RNG sequence — and thus every later coin — stays deterministic.
@@ -9540,6 +9580,29 @@ func _road_coins_at(k: int) -> Array:
 		# One extra draw AFTER the position: is this coin a rare gem? The draw order
 		# (chance, lat, lon, gem) is fixed, so the whole station stays deterministic.
 		var gem := rng.randf() < ROAD_GEM_CHANCE
+		# THE 30% THINNING (owner, 2026-09-02, bead godot-test1-7ed: "scale down
+		# amount of coins, 30% less"), and it is here rather than on
+		# road_coin_spacing DELIBERATELY. That export is the road's STATION STEP,
+		# not a coin gap: _road_extend_to_x integrates the centerline by it, so
+		# widening it to 8.6 would move every station, every boss (which owns every
+		# BOSS_INTERVAL_STATIONS-th one), and the terminal station the city's
+		# approach corridor hangs off. So the SPACING IS UNTOUCHED and the coin is
+		# thinned PER STATION instead.
+		#
+		# A POST-DRAW SKIP, exactly like the river/spawn-bubble rejections in
+		# spawn_crocodiles_in_chunk: all four of this slot's draws are already spent
+		# above, and the test itself is a pure function of (k, slot) that costs the
+		# stream nothing. The surviving coins therefore sit byte-for-byte where they
+		# always sat — this drops 3 of every 10 slots, it does not re-scatter the
+		# road. posmod because stations west of the origin have negative k.
+		#
+		# Interleaving on (k * slots + slot) rather than on `slot` alone is what
+		# keeps the pattern from landing on the same slot index every station (which
+		# at road_coin_slots == 3 would thin one third of the band's WIDTH instead of
+		# one third of its coins): over any 10 consecutive stations the residues 0..29
+		# are hit once each, so exactly 9 of 30 slots go.
+		if posmod(k * road_coin_slots + slot, 10) < 3:
+			continue
 		coins.append({ "pos": Vector3(p.x, COIN_GROUND_HEIGHT, p.y), "gem": gem })
 	return coins
 
