@@ -82,16 +82,10 @@ const WADE_SINK_EASE_SPEED: float = WADE_SINK_DEPTH / 0.2
 ## the jump step, precisely so this reads the current frame rather than the last.
 const WADE_JUMP_FACTOR: float = 0.75
 
-## How fast A / D rotate the character, in radians per second.
-## A and D no longer strafe — they turn the body (tank-style steering), so
-## whatever way the character ends up facing is the way W will walk.
+## How fast Q / E rotate the character, in radians per second.
+## Q and E turn the body (tank-style steering), so whatever way the character
+## ends up facing is the way W will walk.
 const TURN_SPEED: float = 2.6
-
-## Sidestep ("step aside") tuning for Q / E.
-## A step is a short, self-contained burst sideways: STEP_SPEED for STEP_DURATION
-## seconds, so the character slides about STEP_SPEED * STEP_DURATION metres over.
-const STEP_SPEED: float = 5.5
-const STEP_DURATION: float = 0.28
 
 ## How quickly horizontal velocity approaches the input's target speed, in m/s².
 ## Instead of snapping instantly to full speed the moment W is pressed, velocity
@@ -250,14 +244,11 @@ var is_wading: bool = false
 ## in a puddle that is not there for the fifth of a second the ease would take.
 var _wade_sink: float = 0.0
 
-## Sidestep state. While a "step aside" is playing we slide sideways for a short
-## burst and run a matching leg animation; new step requests are ignored until it
-## finishes so taps don't stack into a long slide.
+## Sidestep / strafe state. While A / D is held on the ground we strafe sideways
+## and run a matching leg pose.
 var is_stepping: bool = false
-## Seconds left in the current sidestep (counts down to 0).
-var step_timer: float = 0.0
 ## Direction of the current sidestep in the character's local space:
-## -1 = stepping left (Q), +1 = stepping right (E).
+## -1 = strafing left (A), +1 = strafing right (D).
 var step_direction: float = 0.0
 
 ## How many golden coins the player has collected. The HUD reads this. Coins now
@@ -808,8 +799,8 @@ func _ready() -> void:
 	print("Player Controller initialized!")
 	print("Controls:")
 	print("  W / S - Walk forward / back")
-	print("  A / D - Turn left / right")
-	print("  Q / E - Step aside left / right")
+	print("  Q / E - Turn left / right")
+	print("  A / D - Strafe left / right")
 	print("  Space - Jump")
 	print("  Shift - Run")
 	print("  Ctrl - Duck")
@@ -1310,32 +1301,26 @@ func _physics_process(delta: float) -> void:
 	# STEP 4: Handle Running
 	is_running = Input.is_action_pressed("run") and not is_ducking
 
-	# STEP 5: Turn the character with A / D (changes which way it faces)
+	# STEP 5: Turn the character with Q / E (changes which way it faces)
 	handle_turning(delta)
 
-	# STEP 6: Advance any in-progress sidestep, and start a new one on Q / E
+	# STEP 6: Track continuous sidestep with A / D
 	update_sidestep(delta)
 
-	# STEP 7: Read forward/back input and the current movement speed
+	# STEP 7: Read forward/back and strafe input and the current movement speed
 	# (is_wading was computed back at STEP 1.5, so calculate_current_speed()
 	# below already knows about the river underfoot.)
 	var input_dir := get_input_direction()
 	var current_speed := calculate_current_speed()
 
-	# STEP 8: Build this frame's horizontal velocity from two sources:
-	#   - forward/back walking in the direction the character faces (W/S), and
-	#   - a quick lateral burst while a sidestep is active (Q/E).
-	# Both are expressed in the character's local space, then rotated into the
-	# world by transform.basis, so they always follow the current facing.
+	# STEP 8: Build this frame's horizontal velocity from input_dir in local space,
+	# rotated into the world by transform.basis. Composed (lateral, forward) is
+	# normalized in get_input_direction() so diagonal speed never exceeds current_speed;
+	# strafe rides current_speed (walk/run) uniformly with forward movement.
 	var planar_velocity := Vector3.ZERO
-
-	if absf(input_dir.y) > 0.01:
-		var forward_dir := (transform.basis * Vector3(0.0, 0.0, input_dir.y)).normalized()
-		planar_velocity += forward_dir * current_speed
-
-	if is_stepping:
-		var step_dir := (transform.basis * Vector3(step_direction, 0.0, 0.0)).normalized()
-		planar_velocity += step_dir * STEP_SPEED
+	if input_dir != Vector2.ZERO:
+		var move_dir := (transform.basis * Vector3(input_dir.x, 0.0, input_dir.y))
+		planar_velocity = move_dir * current_speed
 
 	if planar_velocity != Vector3.ZERO:
 		# Accelerate toward the target velocity instead of snapping to it —
@@ -1399,19 +1384,23 @@ func _process(delta: float) -> void:
 
 func get_input_direction() -> Vector2:
 	"""
-	Reads forward/back keyboard input and returns it as a 2D direction vector.
+	Reads movement input (forward/back and lateral strafe) and returns it as a
+	normalized 2D direction vector.
 
-	@return Vector2: x is always 0 (A/D now turn the body instead of strafing),
-	                 y is the forward/back axis from W/S.
+	@return Vector2: x is the lateral strafe axis from A/D (step_left/step_right),
+	                 y is the forward/back axis from W/S (move_forward/move_backward).
 
 	EDUCATIONAL NOTE:
 	- Input.get_axis() returns a value between -1 and 1.
-	- Sideways movement is no longer continuous here: A/D rotate the character
-	  (see handle_turning) and Q/E fire a one-off sidestep (see update_sidestep).
+	- Normalizing the composed 2D vector guarantees diagonal movement never
+	  exceeds 1.0 magnitude (the speed contract).
 	"""
+	var input_x := Input.get_axis("step_left", "step_right") if is_on_floor() else 0.0
 	var input_y := Input.get_axis("move_forward", "move_backward")
-
-	return Vector2(0.0, input_y)
+	var raw_dir := Vector2(input_x, input_y)
+	if raw_dir.length_squared() > 1.0:
+		return raw_dir.normalized()
+	return raw_dir
 
 func calculate_current_speed() -> float:
 	"""
@@ -1500,20 +1489,20 @@ func handle_ducking() -> void:
 
 func handle_turning(delta: float) -> void:
 	"""
-	Rotate the whole character left/right with A and D.
+	Rotate the whole character left/right with Q and E.
 
-	A and D no longer strafe — they change which way the character is *facing*,
-	like the tank-style steering in classic adventure games. Whatever direction
-	the body ends up pointing is the direction W will walk. (The mouse can still
-	turn the body too; the two just add together.)
+	Q and E change which way the character is *facing*, like the tank-style
+	steering in classic adventure games. Whatever direction the body ends up
+	pointing is the direction W will walk. (The mouse can still turn the body
+	too; the two just add together.)
 
 	@param delta: Time since last frame, so the turn rate is frame-rate independent
 	"""
-	# +1 when turning left (A), -1 when turning right (D).
+	# +1 when turning left (Q), -1 when turning right (E).
 	var turn_input := Input.get_axis("turn_right", "turn_left")
 	if absf(turn_input) > 0.01:
 		# A positive angle spins counter-clockwise around +Y, i.e. to the
-		# character's left — which matches A producing a positive turn_input.
+		# character's left — which matches Q producing a positive turn_input.
 		var turn_delta := turn_input * TURN_SPEED * delta
 		rotate_y(turn_delta)
 		# Bank the same turn as camera lag: the pivot counter-rotates by it and
@@ -1522,46 +1511,35 @@ func handle_turning(delta: float) -> void:
 		# _input and never touch this, keeping mouse look 1:1.)
 		camera_yaw_lag -= turn_delta
 
-func update_sidestep(delta: float) -> void:
+func update_sidestep(_delta: float) -> void:
 	"""
-	Manage the quick "step aside" triggered by Q (left) and E (right).
+	Manage continuous sidestep / strafe triggered by A (left) and D (right).
 
-	A step is short and self-contained: press once and the character slides about
-	one step sideways while the legs play a matching side-step animation. We
-	ignore new requests until the current step finishes, so tapping doesn't stack
-	into a long continuous slide.
-
-	@param delta: Time since last frame
+	A/D strafe smoothly for as long as held while grounded. When released,
+	when airborne, or when forward/backward movement (W/S) takes over the
+	animation, resets the sidestep limb roll so key order never leaves
+	a stuck lean.
 	"""
-	# Tick down a step that's already in progress.
-	if is_stepping:
-		step_timer -= delta
-		if step_timer <= 0.0:
-			# Step done: clear the state and unwind the side-step pose so the
-			# next idle/walk frame starts from a clean rest pose.
+	if not is_on_floor():
+		if is_stepping:
 			is_stepping = false
-			step_timer = 0.0
+			step_direction = 0.0
 			reset_sidestep_pose()
 		return
 
-	# Only start a new step while grounded — no air-stepping.
-	if not is_on_floor():
-		return
-
-	if Input.is_action_just_pressed("step_left"):
-		start_sidestep(-1.0)
-	elif Input.is_action_just_pressed("step_right"):
-		start_sidestep(1.0)
-
-func start_sidestep(direction: float) -> void:
-	"""
-	Begin a sidestep in the character's local space.
-
-	@param direction: -1.0 = step left (Q), +1.0 = step right (E)
-	"""
-	is_stepping = true
-	step_timer = STEP_DURATION
-	step_direction = direction
+	var step_axis := Input.get_axis("step_left", "step_right")
+	var moving_fwd := absf(Input.get_axis("move_forward", "move_backward")) > 0.01
+	if absf(step_axis) > 0.01:
+		is_stepping = true
+		step_direction = step_axis
+		if moving_fwd:
+			# Forward/backward motion uses the standard walk/run animation cycle;
+			# clear the lateral roll pose so W+A and A+W share the identical clean walk.
+			reset_sidestep_pose()
+	elif is_stepping:
+		is_stepping = false
+		step_direction = 0.0
+		reset_sidestep_pose()
 
 func reset_sidestep_pose() -> void:
 	"""
@@ -2438,8 +2416,8 @@ func update_character_animation(delta: float, input_dir: Vector2) -> void:
 	# Jump/Fall animation
 	if not current_on_floor:
 		animate_jumping()
-	# Sidestep takes priority on the ground so the legs read the side motion
-	elif is_stepping:
+	# Sidestep takes priority on the ground when strafing without forward motion
+	elif is_stepping and absf(input_dir.y) <= 0.01:
 		animate_sidestep()
 	# Landing detected
 	elif not was_on_floor and current_on_floor:
@@ -2492,6 +2470,9 @@ func animate_walking(delta: float, speed_multiplier: float) -> void:
 	if not left_arm or not right_arm or not left_leg or not right_leg:
 		return
 
+	# Clear any residual sideways roll so diagonal and straight walks are identical.
+	reset_sidestep_pose()
+
 	# Walking animation uses sine waves for smooth swinging motion
 	var walk_speed = 8.0 * speed_multiplier
 	var arm_swing_amount = deg_to_rad(30)  # 30 degrees swing
@@ -2529,14 +2510,7 @@ func animate_walking(delta: float, speed_multiplier: float) -> void:
 
 func animate_sidestep() -> void:
 	"""
-	Animate the legs (and arms) for a sideways "step aside".
-
-	The step runs over STEP_DURATION. We turn the time remaining into a 0 -> 1
-	progress value, then feed it through sin() to get a smooth arc that is 0 at
-	the start, peaks mid-step, and returns to 0 as the foot plants. Driving the
-	pose off that arc means the legs splay out toward the step direction and come
-	back together on their own — and because the arc is 0 at the end, the pose
-	lands exactly on the rest pose.
+	Animate the legs (and arms) for a sideways strafe while A / D is held.
 
 	Unlike walking (which swings the limbs forward/back on the X axis), the
 	sidestep rolls them on the Z axis so the motion reads as sideways.
@@ -2544,16 +2518,11 @@ func animate_sidestep() -> void:
 	if not left_arm or not right_arm or not left_leg or not right_leg:
 		return
 
-	# 0.0 at the start of the step, 1.0 at the very end.
-	var progress := 1.0 - clampf(step_timer / STEP_DURATION, 0.0, 1.0)
-	# Smooth arc: 0 -> 1 (mid-step) -> 0 (foot plants).
-	var arc := sin(progress * PI)
-
 	# How far the legs splay sideways, and the extra lift on the leading leg.
-	var leg_splay := step_direction * arc * deg_to_rad(28)
-	var lead_lift := step_direction * arc * deg_to_rad(14)
+	var leg_splay := step_direction * deg_to_rad(28)
+	var lead_lift := step_direction * deg_to_rad(14)
 	# Arms counter-swing for balance.
-	var arm_balance := step_direction * arc * deg_to_rad(20)
+	var arm_balance := step_direction * deg_to_rad(20)
 
 	# Both legs lean toward the step; the leading leg (on the step side) lifts a
 	# touch more so the step reads as one foot reaching out and the other following.
@@ -2569,7 +2538,7 @@ func animate_sidestep() -> void:
 
 	# Lean the body into the step direction for a bit of weight shift.
 	if character_body:
-		character_body.rotation.z = original_rotations["body"].z - step_direction * arc * deg_to_rad(8)
+		character_body.rotation.z = original_rotations["body"].z - step_direction * deg_to_rad(8)
 		character_body.position.y = 0.0
 
 func animate_jumping() -> void:
@@ -4655,7 +4624,6 @@ func _reset_ability_states() -> void:
 	# back with is_stepping still true and slide sideways out of the spawn.
 	if is_stepping:
 		is_stepping = false
-		step_timer = 0.0
 		step_direction = 0.0
 		reset_sidestep_pose()
 

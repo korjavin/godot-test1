@@ -1346,6 +1346,59 @@ func _check_a_guard_takes_coins_and_ground() -> void:
 		_fail("joining a room left run_beat_record set — join_at() zeroes the very"
 			+ " coins the latch records having beaten, so the ending would claim"
 			+ " a record for a leg that ran from zero")
+
+	# ---- CONTINUOUS STRAFE & THE SPEED CONTRACT (bead godot-test1-khw) --------
+	# A/D strafe continuously while held. Forward (W/S) + lateral (A/D) diagonal
+	# input must be normalized so the diagonal never exceeds calculate_current_speed().
+	Input.action_press("move_forward", 1.0)
+	var fwd_dir: Vector2 = player_c.get_input_direction()
+	if absf(fwd_dir.x) > 0.001 or absf(fwd_dir.y - (-1.0)) > 0.001:
+		_fail("get_input_direction() with move_forward produced %s, expected (0, -1)" % fwd_dir)
+
+	Input.action_press("step_right", 1.0)
+	var diag_dir: Vector2 = player_c.get_input_direction()
+	if absf(diag_dir.length() - 1.0) > 0.001:
+		_fail("diagonal input length is %.3f (expected normalized 1.0) — speed contract broken" % diag_dir.length())
+
+	var cur_speed: float = player_c.calculate_current_speed()
+	var composed_vel: Vector3 = (player_c.transform.basis * Vector3(diag_dir.x, 0.0, diag_dir.y)) * cur_speed
+	var horiz_speed: float = Vector2(composed_vel.x, composed_vel.z).length()
+	if horiz_speed > cur_speed + 0.01:
+		_fail("diagonal composed speed %.2f exceeds current speed %.2f" % [horiz_speed, cur_speed])
+
+	# Sidestep state updates continuously while held on the ground
+	player_c.update_sidestep(0.016)
+	if not player_c.is_stepping or player_c.step_direction <= 0.0:
+		_fail("holding step_right did not maintain is_stepping with positive direction")
+
+	# Releasing step_right resets sidestep state and pose
+	Input.action_release("step_right")
+	Input.action_release("move_forward")
+	player_c.update_sidestep(0.016)
+	if player_c.is_stepping or player_c.step_direction != 0.0:
+		_fail("releasing step_right did not clear is_stepping / step_direction")
+
+	# Key order symmetry: (1) press A alone, then add W vs (2) press W alone, then add A
+	# Both orders must end in the exact same clean walk pose with no stuck Z roll.
+	Input.action_press("step_left", 1.0)
+	player_c.update_sidestep(0.016)
+	player_c.update_character_animation(0.016, player_c.get_input_direction())
+	if absf(player_c.left_leg.rotation.z - player_c.original_rotations["left_leg"].z) < 0.01:
+		_fail("pure sidestep did not apply lateral leg splay")
+
+	# Add W while holding A — walk animation must take over and reset Z roll
+	Input.action_press("move_forward", 1.0)
+	player_c.update_sidestep(0.016)
+	player_c.update_character_animation(0.016, player_c.get_input_direction())
+	if absf(player_c.left_leg.rotation.z - player_c.original_rotations["left_leg"].z) > 0.001 \
+			or absf(player_c.character_body.rotation.z - player_c.original_rotations["body"].z) > 0.001:
+		_fail("adding W while holding A left sidestep Z roll stuck in walk animation")
+
+	Input.action_release("move_forward")
+	Input.action_release("step_left")
+	player_c.update_sidestep(0.016)
+	player_c.update_character_animation(0.016, player_c.get_input_direction())
+
 	_clear(player_c)
 	field_shell.queue_free()
 	await process_frame
