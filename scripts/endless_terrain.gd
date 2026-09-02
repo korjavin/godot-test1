@@ -3513,6 +3513,17 @@ func _process(_delta: float) -> void:
 		remove_chunk(pending_removals.pop_front())
 		drain -= 1
 
+	# The horizon impostor is a distant picture of the HQ. When the local
+	# player is standing inside Budapest the city itself is the destination —
+	# the HQ behind it is irrelevant and its fog-exempt silhouette reads as a
+	# second city on the horizon. Hide the picture while inside, show it again
+	# the moment the player steps out. The distance fade (FADE_FAR -> NEAR)
+	# still owns opacity outside the city; this only suppresses the picture
+	# entirely while inside. Multiplayer: each peer decides for its own screen
+	# — remote avatars are pictures, not another "player" to read.
+	if is_instance_valid(_tower_impostor) and is_instance_valid(player):
+		_tower_impostor.visible = not BudapestPlan.contains(player.global_position.x, player.global_position.z)
+
 # ============================================================================
 # CHUNK MANAGEMENT FUNCTIONS
 # ============================================================================
