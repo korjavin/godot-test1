@@ -183,9 +183,111 @@ const DRY_RECTS: Array = [
 	Rect2(2380.0, -716.0, 320.0, 32.0),   # Margaret Bridge deck
 	Rect2(2330.0, -16.0, 290.0, 32.0),    # Chain Bridge deck
 	Rect2(2350.0, 404.0, 290.0, 32.0),    # Elisabeth Bridge deck
-	Rect2(2360.0, 684.0, 300.0, 32.0),    # Liberty Bridge deck
+	# The Liberty Bridge's deck starts at 2380 and not at the 2360 the keystone
+	# authored, because bead .4 put STONE on these rects: Gellért Hill's massif
+	# ends at x = 2370, and a 2360 abutment buried the first 10 m of the western
+	# approach inside 46 m of impassable rock with a cliff across the way onto it.
+	# The whole rect moved east so the slot stays its centre (see BRIDGES).
+	Rect2(2380.0, 684.0, 300.0, 32.0),    # Liberty Bridge deck
 	Rect2(2470.0, -950.0, 130.0, 310.0),  # Margaret Island — dry land in the river
 ]
+
+# ============================================================================
+# SECTION 3b — THE FOUR BRIDGES' DECKS (bead godot-test1-8gw.4)
+# ============================================================================
+
+## A BRIDGE IS TWO FILES, and this table is the joint.
+##
+## The PYLONS, towers, chains, trusses, cutwaters and lions are
+## `landmark_builders.gd`'s — placed on the `SLOTS` row of the same id, which is
+## where a bridge IS. The DECK — the flat roadway you walk and the ramp at each
+## end that gets you up onto it — is `endless_terrain.gd`'s, built off this table.
+## Every one of those builders' docstrings says "the deck is bead .4's" and hangs
+## its chains, its arches and its lamp standards at a roadway 12 m up; this is
+## that roadway.
+##
+## THE DECK RECT IS ALREADY IN `DRY_RECTS`, so a row here names its INDEX rather
+## than restating it. One rect, two readers: the band is punched out by it (in
+## both languages) and the stone is built on it, and there is no second number to
+## drift. `budapest_selfcheck` check 14 asserts each rect is centred on its own
+## slot, so the deck and the ornament cannot come apart.
+##
+## THE ORDER IS THE RIVER'S, north to south — Margaret, Chain, Elisabeth,
+## Liberty — which is the real one and also `DRY_RECTS`'s.
+const BRIDGES: Array = [
+	{"id": "margaret_bridge", "dry": 0},
+	{"id": "chain_bridge", "dry": 1},
+	{"id": "elisabeth_bridge", "dry": 2},
+	{"id": "liberty_bridge", "dry": 3},
+]
+
+## The deck's WALKING HEIGHT, and it is 12 m because the ORNAMENT SAYS SO. The
+## Chain Bridge's hangers and the Elisabeth's both stop at y = 12, the Liberty's
+## river piers are 12 m tall, the Margaret's lamp standards start at 12 and its
+## arches spring from 11. A deck anywhere else would leave every one of them
+## hanging in air or buried in stone, and none of that is data this file can read
+## — so the number is authored here, and check 14 is what pins the ornament and
+## the roadway to one XZ position.
+const BRIDGE_DECK_TOP: float = 12.0
+
+## The RAMPED APPROACH at each end of a deck, in metres of X.
+##
+## No jump gates, indoors or out: `CharacterBody3D` cannot climb a step at all,
+## so the 12 m rise is a tilted slab exactly like a plateau's — the same helper,
+## the same slice arithmetic, the same flushness check. 48 m gives a slope of
+## 0.25, comfortably under `TowerInterior.PLAN_RAMP_MAX_SLOPE` (check 14 reads it
+## from there rather than restating it) and a touch steeper than the two hills,
+## which is right: a bridge approach is a ramp, a hillside is a road.
+##
+## BOTH RAMPS LIVE INSIDE THE DECK RECT, and that is the whole reason the approach
+## needs no new dry rows and no shader edit. A deck rect overhangs the 240 m band
+## by 21-41 m at both ends (check 14 measures it), so the ramp's FOOT stands on
+## the bank while its head reaches out over the water — which is what a bridge
+## approach is — and every metre of it is already punched out of the river.
+const BRIDGE_RAMP_RUN: float = 48.0
+
+
+static func bridge_deck(row: Dictionary) -> Rect2:
+	"""The deck rect of a `BRIDGES` row — its `DRY_RECTS` entry, never a copy."""
+	return DRY_RECTS[int(row["dry"])]
+
+
+static func bridge_ramp(row: Dictionary, east: bool) -> Rect2:
+	"""
+	One of a bridge's two ramped approaches, in world XZ.
+
+	@param row: a `BRIDGES` row.
+	@param east: the east ramp (which rises WESTWARD) rather than the west one.
+	@return the ramp's footprint — full deck width, `BRIDGE_RAMP_RUN` of X, at the
+	        deck rect's own end.
+	"""
+	var d := bridge_deck(row)
+	var x := d.end.x - BRIDGE_RAMP_RUN if east else d.position.x
+	return Rect2(x, d.position.y, BRIDGE_RAMP_RUN, d.size.y)
+
+
+static func bridge_flat(row: Dictionary) -> Rect2:
+	"""The level part of a bridge's deck: what is left of the rect between the two
+	ramps. Every shipped row is 290 m or longer against a 96 m pair of ramps, and
+	check 14 fails a row whose ramps met in the middle."""
+	var d := bridge_deck(row)
+	return Rect2(d.position.x + BRIDGE_RAMP_RUN, d.position.y,
+			d.size.x - 2.0 * BRIDGE_RAMP_RUN, d.size.y)
+
+
+static func bridge_surface_y(row: Dictionary, x: float) -> float:
+	"""
+	The walking height of a bridge's deck at a world X: 0 at either end of the
+	rect, `BRIDGE_DECK_TOP` across the middle, linear up each ramp.
+
+	The IDEAL the built boxes are measured against (check 14), and the one place
+	the deck's profile is written down. Answers for the flat span and both ramps
+	off one expression, because the two ramps are the same climb mirrored.
+	"""
+	var d := bridge_deck(row)
+	var from_end := minf(x - d.position.x, d.end.x - x)
+	return clampf(from_end / BRIDGE_RAMP_RUN, 0.0, 1.0) * BRIDGE_DECK_TOP
+
 
 # ============================================================================
 # SECTION 4 — THE PLATEAUS: massifs with a lid, and one tilted ramp each
@@ -328,15 +430,19 @@ const CITY_LANDMARK_SALT: int = 0xB0DA9E51
 ## three slots standing on a plateau (buda_castle, matthias, citadella), which
 ## carry that plateau's `top`. Check 2 prints the count.
 ##
-## `radius` for rows 0-14 is the registry's OWN declared radius, copied. Check 2
-## asserts the two agree, so a later edit to a shipped builder's radius fails this
-## build instead of silently overhanging into the street.
+## `radius` is the registry's OWN declared radius, copied. Check 2 asserts the two
+## agree, so a later edit to a shipped builder's radius fails this build instead
+## of silently overhanging into the street.
 ##
-## `radius` for rows 15-21 — the seven whose builders are wave C — is a
-## RESERVATION: authored generously here so the catalogue and the reachability
-## audit have 22 slots to work with from day one, and so wave C's builders have a
-## declared bound to hit. An empty `builder` is skipped by the streamer and exempt
-## from the registry check.
+## ALL 22 ROWS NOW CARRY A BUILDER. Rows 15-21 were RESERVATIONS through waves A
+## and B — a position and a generous radius, `"builder": ""`, skipped by the
+## streamer and exempt from the registry check, which is the whole of "leave the
+## slot empty". Wave C (bead `godot-test1-8gw.8`) landed their geometry, so each
+## took its builder's name and its registry radius, which is TIGHTER than the
+## reservation was in every case (110 -> 62, 100 -> 54, 90 -> 60, 70 -> 52,
+## 50 -> 42, 40 -> 32, 40 -> 38): a reservation is authored generously on purpose
+## and the real building is measured. The empty-builder path is still live code —
+## it is what a future 23rd place would use — and check 2 still exempts one.
 const SLOTS: Array = [
 	# ---- the Danube core ---------------------------------------------------
 	{"id": "parliament", "builder": "_city_parliament", "pos": Vector3(2760.0, 0.0, -480.0), "radius": 151.0},
@@ -345,7 +451,8 @@ const SLOTS: Array = [
 	{"id": "citadella", "builder": "_city_citadella", "pos": Vector3(2230.0, 46.0, 760.0), "radius": 120.0},
 	{"id": "margaret_island", "builder": "_city_margaret_island", "pos": Vector3(2535.0, 0.0, -880.0), "radius": 56.0},
 	{"id": "chain_bridge", "builder": "_city_chain_bridge", "pos": Vector3(2475.0, 0.0, 0.0), "radius": 124.0},
-	{"id": "liberty_bridge", "builder": "_city_liberty_bridge", "pos": Vector3(2510.0, 0.0, 700.0), "radius": 104.0},
+	# 2530, moved east with its deck rect — see the note on DRY_RECTS row 3.
+	{"id": "liberty_bridge", "builder": "_city_liberty_bridge", "pos": Vector3(2530.0, 0.0, 700.0), "radius": 104.0},
 	{"id": "elisabeth_bridge", "builder": "_city_elisabeth_bridge", "pos": Vector3(2495.0, 0.0, 420.0), "radius": 122.0},
 	{"id": "margaret_bridge", "builder": "_city_margaret_bridge", "pos": Vector3(2540.0, 0.0, -700.0), "radius": 114.0},
 	# ---- Pest's inner city -------------------------------------------------
@@ -356,14 +463,27 @@ const SLOTS: Array = [
 	{"id": "national_museum", "builder": "_city_national_museum", "pos": Vector3(2920.0, 0.0, 440.0), "radius": 62.0},
 	{"id": "opera", "builder": "_city_opera", "pos": Vector3(3000.0, 0.0, -180.0), "radius": 49.0},
 	# ---- the Andrássy end, folded in (see LIBERTIES 2) ---------------------
-	{"id": "heroes_square", "builder": "", "pos": Vector3(3520.0, 0.0, -520.0), "radius": 110.0},
-	{"id": "vajdahunyad", "builder": "", "pos": Vector3(3680.0, 0.0, -340.0), "radius": 100.0},
-	{"id": "szechenyi_bath", "builder": "", "pos": Vector3(3620.0, 0.0, -760.0), "radius": 90.0},
+	{"id": "heroes_square", "builder": "_city_heroes_square", "pos": Vector3(3520.0, 0.0, -520.0), "radius": 62.0},
+	{"id": "vajdahunyad", "builder": "_city_vajdahunyad", "pos": Vector3(3680.0, 0.0, -340.0), "radius": 54.0},
+	{"id": "szechenyi_bath", "builder": "_city_szechenyi_baths", "pos": Vector3(3620.0, 0.0, -760.0), "radius": 60.0},
 	# ---- the baths and the odd ones ----------------------------------------
-	{"id": "gellert_bath", "builder": "", "pos": Vector3(2420.0, 0.0, 1000.0), "radius": 70.0},
-	{"id": "rudas_bath", "builder": "", "pos": Vector3(2370.0, 0.0, 560.0), "radius": 50.0},
-	{"id": "shoes_on_the_danube", "builder": "", "pos": Vector3(2640.0, 0.0, -300.0), "radius": 40.0},
-	{"id": "budapest_eye", "builder": "", "pos": Vector3(2870.0, 0.0, -60.0), "radius": 40.0},
+	# THE TWO BATHS MOVED WHEN THEIR BUILDERS LANDED, and the reason is the same
+	# one that moved the Liberty Bridge's deck: a reservation is a position nothing
+	# has ever been built at, and both of these turned out to be positions where
+	# the stone would not fit. Gellért was authored 136.9 m from the polyline with
+	# a 52 m disc and Rudas 133.9 m with a 42 m one, so both platforms overhung the
+	# 240 m band — and `is_river_at()` is XZ-only, so you WADE standing on them.
+	# Rudas was worse: its disc also reached into Gellért Hill's massif, which is
+	# solid stone to its 46 m lid.
+	#
+	# Both slid along the bank at the foot of the hill, which is where they really
+	# are: Gellért 40.3 m south-west (175.1 m out, 3.1 m of disc to spare), Rudas
+	# 49.5 m north-west past the massif's corner (165.0 m out, 3.0 m to spare).
+	# Check 14 measures the stone rather than the disc and holds both there.
+	{"id": "gellert_bath", "builder": "_city_gellert_baths", "pos": Vector3(2380.0, 0.0, 1005.0), "radius": 52.0},
+	{"id": "rudas_bath", "builder": "_city_rudas_baths", "pos": Vector3(2335.0, 0.0, 525.0), "radius": 42.0},
+	{"id": "shoes_on_the_danube", "builder": "_city_shoes_on_danube", "pos": Vector3(2640.0, 0.0, -300.0), "radius": 32.0},
+	{"id": "budapest_eye", "builder": "_city_budapest_eye", "pos": Vector3(2870.0, 0.0, -60.0), "radius": 38.0},
 ]
 
 # ============================================================================
