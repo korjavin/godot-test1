@@ -43,10 +43,10 @@ watch the radial dial in the top-right.
   lose is a hero: a GD-SURVEY hunter that gets its hands on you keeps whoever you
   were playing, and you carry on as the next one. Free them from the cells in the
   corporation's HQ.
-- **Game over is the corporation holding all four.** That opens the break-out —
-  the whole party in the cell block on a recall clock, and freeing one of them is
-  how you survive it. Lose that and the world is archived; Enter, Space, or a tap
-  starts the next run in a freshly generated one.
+- **Game over is the corporation holding all four.** The fourth capture ends the
+  run on the spot: the world is archived, Continue reopens the ending, and Enter,
+  Space, or a tap starts the next run in a freshly generated one. The way to win
+  is ahead of you — see `docs/STORY.md`.
 
 ## Controls
 

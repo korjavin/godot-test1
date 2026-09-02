@@ -531,7 +531,7 @@ Don't simplify any line of it back to scalar arithmetic.
 `biome_at()` / `is_river_at()` are the public API — pure, allocation-free, safe per tick.
 
 ### Player
-`scripts/player_controller.gd` (a `CharacterBody3D`). Character switching on E cycles
+`scripts/player_controller.gd` (a `CharacterBody3D`). Character switching on R (`switch_character`) cycles
 `CHARACTERS`, freeing and re-instancing under `$CharacterModel`.
 
 **There is no `AnimationPlayer`.** Limb animation is sine waves driven onto child nodes
@@ -814,7 +814,7 @@ Four rules:
 - **Availability is `hand INTERSECT free`, at ONE site.** `switch_to_next_character()` already
   cycles inside an allowed-index array (the lobby's, in a room); captivity is one more
   intersection there. There is no second roster system, and there may not be one.
-- **The auto-switch goes through `set_active_character()`**, never the E-cycle: that is where
+- **The auto-switch goes through `set_active_character()`**, never the R-cycle: that is where
   `_reset_ability_states()` lives, and the cycle refuses a press mid-Air-Rush anyway.
 - **It arms only after the authored Primm rescue** (`TowerInterior.RESCUE_DONE` in the stored
   tower set) — the beat is where the rule is taught. Before it, a grab is an ordinary bite.
@@ -834,7 +834,7 @@ there, before contact, never in the capture path.
 
 **IN A ROOM THE CAPTIVE SET IS ROOM-WIDE, and the rule is REASSIGN FIRST, IMPRISON
 LAST.** A capture broadcasts the `cap` verb; every peer mirrors it into its own
-`captive_heroes`, so the picker, the E-cycle and the ending all become world-level with
+`captive_heroes`, so the picker, the R-cycle and the ending all become world-level with
 no second roster. The reassignment is the LOBBY's `SetHero` and needs no server change —
 two peers benched in one frame serialize on the room lock, first wins, second retries on
 the next `_tick_prison()`, which is the ONE site that sends it. Only a room with nothing
