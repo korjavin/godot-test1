@@ -1683,6 +1683,52 @@ const CITY_SHADER_SEG_MAX: int = 8
 const CITY_SHADER_DRY_MAX: int = 8
 
 # ----------------------------------------------------------------------------
+# BUDAPEST — THE CITY STREAMER (bead godot-test1-8gw.3)
+# ----------------------------------------------------------------------------
+##
+## What spawn_city_in_chunk needs that BudapestPlan does not carry. The plan is
+## the DESIGN — where the hills are, how wide the avenue is, which liberties were
+## taken with the map — and a designer edits it. These are the MATERIALS: how
+## thick a slab is and what colour the stone is, which is this file's business,
+## beside CITY_PLASTER_* and every other palette and thickness in it.
+
+## The seed of the city streamer's PRIVATE RandomNumberGenerator, and it is a
+## CONSTANT for two reasons that both matter.
+##
+## PRIVATE, because create_box draws four numbers per box for its colour ramp and
+## one extra draw taken from the chunk's shared stream slides every crocodile in
+## the world (see the determinism block in SECTION 1). The city is authored, so
+## it has nothing to seed from anyway — this stream exists only to feed those
+## discarded draws.
+##
+## CONSTANT rather than per-chunk, because every box the streamer places passes
+## an explicit color_override and a plateau whose slices each drew their own
+## colour would be a different grey on either side of every chunk seam. One seed,
+## one hill.
+const CITY_STREAM_SEED: int = 0x8_6D4_9E51
+
+## The plateau massifs' stone, and their ramps' — ONE colour for both, because
+## they are the same hill. Deliberately duller and greyer than CITY_PLASTER_*:
+## Castle Hill has to read as the rock the city stands ON rather than as another
+## building on it.
+const CITY_HILL_STONE := Color(0.47, 0.45, 0.41)
+
+## A plateau ramp's slab thickness, metres. Thick enough to read as a viaduct
+## from the side, thin enough that the head of the ramp never pokes up through
+## the plateau's lid.
+const CITY_RAMP_THICKNESS: float = 1.0
+
+## The avenue's pavement slab: 15 cm, and collide = FALSE.
+##
+## The avenue is a READ — the thing that says "this way into the city" — and not
+## a corridor. The ground under it is already flat and walkable, so a COLLIDING
+## 15 cm lip would buy nothing and cost 900 m of kerb for a CharacterBody3D to
+## catch its toe on. Same reasoning as the forest canopies' collide = false: pure
+## decoration pays for its pixels and not for a collision shape.
+const CITY_AVENUE_THICKNESS: float = 0.15
+const CITY_AVENUE_STONE := Color(0.62, 0.60, 0.56)
+
+# ----------------------------------------------------------------------------
 # BIOME CONTENT TUNING (what each biome actually BUILDS)
 # ----------------------------------------------------------------------------
 ##
@@ -3502,6 +3548,22 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 	# a camp, an artifact or a landmark — the reverse order would let a camp be
 	# pitched on top of a chest that was already there.
 	spawn_chest_in_chunk(chunk_pos, mesh_instance, obstacles, block_batch, block_body)
+
+	# BUDAPEST — this chunk's slice of the authored city (bead godot-test1-8gw.3).
+	# NOT a hash stream and NOT a roll: the city is a table of constants in
+	# budapest_plan.gd, so this consumes no draw from anybody and asks the plan
+	# only whether its rect reaches this chunk. Outside the rect it costs one
+	# rectangle intersection.
+	#
+	# SAME ORDERING REQUIREMENT as the five above, and it is why it runs LAST of
+	# the six: after them so the plateau footprints join the finished obstacles
+	# list (and so nothing procedural has to know the city is coming — the spawner
+	# policy that keeps props out of Pest is each spawner's own early return), and
+	# before _build_block_multimesh / the block_body attach so a hill, a ramp and a
+	# pavement slab join the chunk's ONE MultiMesh draw call and ONE collision
+	# body, exactly like a cactus. It also runs BEFORE the coin spawners below,
+	# which is what lets the approach line perch or skip over city stone.
+	spawn_city_in_chunk(chunk_pos, mesh_instance, obstacles, block_batch, block_body)
 
 	# Build the chunk's batched block visuals. If any blocks were placed, collapse
 	# them all into one MultiMeshInstance3D parented to this chunk (so it is freed
@@ -8562,6 +8624,31 @@ func is_river_at(world_pos: Vector3) -> bool:
 	return absf(_biome_noise(world_pos.x, world_pos.z) - RIVER_LEVEL) < RIVER_HALF_WIDTH
 
 
+func in_budapest(world_x: float, world_z: float) -> bool:
+	"""
+	Is this world XZ inside the authored Budapest rect?
+
+	@param world_x, world_z: The point, WORLD space (the `obstacles` list is
+	                         chunk-local; convert before calling, exactly like
+	                         tower_excludes below).
+	@return: true when the city owns this ground.
+
+	THE SINGLE HOME of the city's membership test on this side of the seam, the
+	way tower_excludes() is the single home of the tower's. It delegates to
+	BudapestPlan.contains() and adds nothing: the rect is the PLAN's number, and a
+	second copy of it here is the one way the streamer and the shader could ever
+	disagree about where the city is.
+
+	IT IS DELIBERATELY NOT tower_excludes(). The tower's disc excludes everything
+	procedural with one answer; the city wants a DIFFERENT answer per system —
+	props off, hunters on, its own crocodiles in the river — so each spawner reads
+	this predicate and decides for itself (bead godot-test1-8gw.3, DEC-9).
+
+	Pure and allocation-free, safe to call from any spawner in any order.
+	"""
+	return BudapestPlan.contains(world_x, world_z)
+
+
 func tower_site() -> Vector3:
 	"""
 	Where the tower stands this run — the ONE position the whole tower epic
@@ -9312,6 +9399,177 @@ func spawn_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obs
 			if cw.gem:
 				coin.make_gem()
 			parent_chunk.add_child(coin)
+
+# ============================================================================
+# SECTION — BUDAPEST, STREAMED THROUGH ORDINARY CHUNKS
+# ============================================================================
+#
+# The city is AUTHORED (scripts/budapest_plan.gd) and STREAMED (here). Those two
+# words are the whole design: every coordinate is a constant a designer typed,
+# and every box those constants describe is emitted by the same create_chunk pass
+# that emits a cactus — chunk-parented, into the chunk's ONE MultiMesh batch and
+# ONE collision body, freed when the chunk unloads.
+#
+# THAT IS WHY THE CITY IS NOT A SECOND TOWER. The HQ is manager-parented and
+# CLAUDE.md says it is the ONE exception and must stay one; a 2.2 km city held
+# outside the chunk dictionary would be an exception 4,000 times its size, and
+# the 49-chunk web residency ceiling is exactly what chunk streaming buys. So a
+# thing 800 m long is not built by one chunk — it is SLICED, and every chunk
+# builds the part of it that stands in its own square.
+#
+# NOTHING HERE DRAWS FROM THE SHARED CHUNK STREAM. create_box spends four random
+# numbers per box on its colour ramp, and one extra draw taken from the chunk's
+# RNG moves every block, crocodile and coin downstream of it. The streamer
+# carries its own RandomNumberGenerator at a fixed seed (CITY_STREAM_SEED) whose
+# draws are discarded padding, because every box passes a colour override.
+
+
+func _city_chunk_slice(chunk_center: Vector3, area: Rect2) -> Rect2:
+	"""
+	This chunk's share of an authored city rect, in WORLD XZ.
+
+	@param chunk_center: This chunk's centre, from chunk_to_world().
+	@param area: The authored rect (a plateau, a ramp, the avenue), world XZ.
+	@return: The intersection, or a zero-area Rect2 when the two do not meet —
+	         test it with has_area() before building anything from it.
+
+	ONE HELPER FOR EVERY SLICED RECT, and that is the point rather than a
+	convenience. "Neighbouring chunks' slices meet flush" is the claim a plateau
+	and a ramp both rest on, and routing both through the same intersection makes
+	it true BY CONSTRUCTION instead of by review: adjacent chunk squares share an
+	edge exactly, so their intersections with one rect share that edge exactly and
+	the two boxes touch with no gap and no overlap.
+
+	A slice that is exactly a line (a rect whose edge lies on a chunk seam) has no
+	area, so has_area() drops it — the degenerate box is never built, and the
+	chunk on the other side of the seam owns the whole thing.
+	"""
+	var half := chunk_size / 2.0
+	var square := Rect2(chunk_center.x - half, chunk_center.z - half, chunk_size, chunk_size)
+	return square.intersection(area)
+
+
+func spawn_city_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
+	"""
+	Build this chunk's slice of Budapest (bead godot-test1-8gw.3).
+
+	@param chunk_pos: Chunk coordinates being built.
+	@param parent_chunk: The chunk mesh, for the parts of the city that are nodes
+	                     rather than boxes (the landmark accents; nothing here
+	                     needs it yet).
+	@param obstacles: Out-param; the plateau massifs append their footprints here,
+	                  so the crocodile spawner and the coin perch rule see them.
+	@param block_batch: Out-param; every box joins the chunk's ONE MultiMesh.
+	@param block_body: The chunk's single shared collision body.
+
+	ORDERING REQUIREMENT, the same one the artifact / camp / landmark / chest
+	family carries: this runs AFTER every spawner that fills `obstacles` and
+	BEFORE _build_block_multimesh and the block_body attach, so the city's stone
+	joins the chunk's one draw call and its one collision body — and BEFORE the
+	coin spawners, so the approach line's perch-or-skip rule can see a plateau.
+
+	WHAT IT BUILDS, in this order:
+	  1. the PLATEAU slice — one box, the chunk square meeting the hill's rect,
+	     y = 0 to `top`, plus one footprint at climbable: false;
+	  2. the RAMP slice — one TILTED box, the only way onto that lid;
+	  3. the AVENUE slice — a thin, non-colliding pavement slab out of the gate.
+	The landmark slices, the gate district and the Danube's crocodiles are their
+	own functions and their own beads' tasks.
+	"""
+	var chunk_center := chunk_to_world(chunk_pos)
+	# Cheap rect reject: every chunk in the world that is not in the city pays one
+	# intersection and nothing else.
+	if not _city_chunk_slice(chunk_center, BudapestPlan.rect()).has_area():
+		return
+
+	# The private stream — see CITY_STREAM_SEED for why it is private and why it
+	# is constant. Its draws are colour-ramp padding; every box below overrides.
+	var rng := RandomNumberGenerator.new()
+	rng.seed = CITY_STREAM_SEED
+
+	for i in range(BudapestPlan.PLATEAUS.size()):
+		var row: Dictionary = BudapestPlan.PLATEAUS[i]
+		var top: float = row["top"]
+
+		# ---- 1. THE PLATEAU -------------------------------------------------
+		# A hill in this game is a MASSIF WITH A WALKABLE LID, not raised terrain:
+		# the ground is one flat plane at y = 0 and every coin height, gravity
+		# settle and block base in the world depends on that. So the hill is one
+		# box per chunk with cliffs on every side, and the footprint is
+		# climbable: false — the mountain-massif convention, which is what tells
+		# the coin road to SKIP a coin over it rather than perch one on a cliff.
+		var slice := _city_chunk_slice(chunk_center, row["rect"])
+		if slice.has_area():
+			var mid := slice.get_center()
+			var local := Vector3(mid.x - chunk_center.x, top * 0.5, mid.y - chunk_center.z)
+			create_box(local, Vector3(slice.size.x, top, slice.size.y), 0.0,
+					rng, block_batch, block_body, 0.0, CITY_HILL_STONE)
+			obstacles.append({
+				"pos": Vector3(local.x, 0.0, local.z),
+				"radius": slice.size.length() * 0.5,   # the slice's circumscribing disc
+				"top": top,
+				"climbable": false,
+			})
+
+		# ---- 2. THE RAMP ----------------------------------------------------
+		# A TILTED BOX, NEVER STEPS. CharacterBody3D cannot climb a step at all,
+		# and the HQ's rule — no traversal may demand a jump-height — is the same
+		# rule outdoors. The derivation is _city_cable's, read it there: create_box
+		# composes Basis(UP, yaw) * Basis(RIGHT, tilt), so a box long in LOCAL Z is
+		# tipped by `tilt` and then swung to its heading by `yaw`, and local +Z
+		# lands on (cos(tilt)*sin(yaw), -sin(tilt), cos(tilt)*cos(yaw)). A ramp on
+		# +X is therefore yaw = +PI/2 with tilt = -atan2(rise, run); a box long in
+		# local X could not be sloped at all.
+		#
+		# NO FOOTPRINT, deliberately: a ramp is the one piece of city geometry you
+		# are MEANT to walk up, and an `obstacles` entry is a keep-out claim that
+		# would push crocodiles off it and drop every coin that crossed it.
+		var ramp: Rect2 = row["ramp"]
+		var ramp_slice := _city_chunk_slice(chunk_center, ramp)
+		if not ramp_slice.has_area():
+			continue
+		var run: float = ramp.size.x
+		var dir: float = signf(float(row["ramp_dir"]))
+		var mid_r := ramp_slice.get_center()
+		# How far up the climb this slice's centre sits, 0 at the foot to 1 at the
+		# head — measured from the rect's west edge and flipped for a -X ramp, so
+		# `ramp_dir` is honoured rather than assumed.
+		var climbed := clampf((mid_r.x - ramp.position.x) / run, 0.0, 1.0)
+		if dir < 0.0:
+			climbed = 1.0 - climbed
+		# The slice is longer than its X width by exactly the slope's hypotenuse
+		# ratio, which is what makes two neighbouring slices meet flush on the same
+		# plane rather than leaving a lip at the seam.
+		var slope_len := ramp_slice.size.x * sqrt(run * run + top * top) / run
+		create_box(
+				Vector3(mid_r.x - chunk_center.x,
+						climbed * top - CITY_RAMP_THICKNESS * 0.5,
+						mid_r.y - chunk_center.z),
+				Vector3(ramp_slice.size.y, CITY_RAMP_THICKNESS, slope_len),
+				PI * 0.5 * dir, rng, block_batch, block_body, -atan2(top, run),
+				CITY_HILL_STONE)
+
+	# ---- 3. THE AVENUE ------------------------------------------------------
+	# The one street this bead draws: 16 m of pavement running east out of the
+	# gate along z = 0, to the Danube's west bank. Bead godot-test1-8gw.9 owns the
+	# rest of the grid; this file owns STREET_PITCH as a parameter and nothing more.
+	#
+	# The east end is _approach_coin_east_end() — the SAME west bank the approach
+	# coin line stops at, asked once and answered from the river's own polyline, so
+	# the pavement and the coins on it cannot end in different places.
+	var avenue := Rect2(
+			BudapestPlan.GATE.x,
+			BudapestPlan.GATE.z - BudapestPlan.AVENUE_HALF_WIDTH,
+			_approach_coin_east_end() - BudapestPlan.GATE.x,
+			BudapestPlan.AVENUE_HALF_WIDTH * 2.0)
+	var av := _city_chunk_slice(chunk_center, avenue)
+	if av.has_area():
+		var mid_a := av.get_center()
+		create_box(
+				Vector3(mid_a.x - chunk_center.x, CITY_AVENUE_THICKNESS * 0.5, mid_a.y - chunk_center.z),
+				Vector3(av.size.x, CITY_AVENUE_THICKNESS, av.size.y), 0.0,
+				rng, block_batch, block_body, 0.0, CITY_AVENUE_STONE, false)
+
 
 func spawn_approach_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array) -> void:
 	"""

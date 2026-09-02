@@ -566,15 +566,15 @@ or co-author trailers anywhere.
 
 ### Task 4: the streamer — `spawn_city_in_chunk`, plateaus, ramps, the avenue
 
-- [ ] `in_budapest(x, z)` on the terrain.
-- [ ] `spawn_city_in_chunk(chunk_pos, parent_chunk, obstacles, block_batch, block_body)`,
+- [x] `in_budapest(x, z)` on the terrain.
+- [x] `spawn_city_in_chunk(chunk_pos, parent_chunk, obstacles, block_batch, block_body)`,
       inserted at DEC-10's exact point, emitting items 1, 2 and 5 (plateau, ramp, avenue)
       for now. Private RNG, never the chunk stream.
-- [ ] Slicing helper: a chunk-square ∩ Rect2 intersection returning the box centre and
+- [x] Slicing helper: a chunk-square ∩ Rect2 intersection returning the box centre and
       size, used by both the plateau and the ramp so "the slices meet flush" is true by
       construction rather than by review.
-- [ ] Footprints appended to `obstacles` per DEC-10.
-- [ ] Run `chunk_stream_selfcheck`.
+- [x] Footprints appended to `obstacles` per DEC-10.
+- [x] Run `chunk_stream_selfcheck`.
 
 ### Task 5: the landmark slices — the keystone decision, built
 
