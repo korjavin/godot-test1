@@ -67,6 +67,24 @@ extends SceneTree
 ## and the relay; this file owns the parsers they carry), and whether the German
 ## rows read well — `locale_selfcheck` owns the CSV and cannot judge prose.
 
+## ============================================================================
+## LANDMINE — THE STORE IS REDIRECTED FIRST, BEFORE ANY PLAYER EXISTS
+## ============================================================================
+##
+## `capture_selfcheck`'s rule, and this file learns it the expensive way: check 3
+## really ends a run in VICTORY, and `_end_run(Outcome.WON)` calls
+## `BestRunStore.archive_world()`. Against the real `user://best_run.cfg` that
+## latches the profile as a finished world — and `player_controller._ready()`
+## then calls `_reopen_archived_ending()` on EVERY player any LATER check builds,
+## setting `is_game_over` before its first frame. `_physics_process` returns above
+## everything at that point, so `wade_selfcheck` measures a body that cannot jump
+## and `pause_selfcheck` presses P at a game-over screen: two unrelated checks
+## turned red by this one's leftovers, in a suite that shares one `user://`.
+##
+## So the store is pointed at this file's own throwaway in `_initialize()`,
+## deleted at both ends, and NEVER the player's own save.
+const LOCAL_STORE_PATH: String = "user://landmark_progress_selfcheck_best_run.cfg"
+
 const PLAYER_SCENE: String = "res://scenes/player.tscn"
 const TOAST_SCRIPT: GDScript = preload("res://scripts/landmark_toast.gd")
 ## `player_controller.gd` and `mp_manager.gd` reached as SCRIPTS, not as
@@ -80,6 +98,10 @@ var _failures: Array[String] = []
 
 
 func _initialize() -> void:
+	# FIRST, BEFORE ANY PLAYER EXISTS — see the LANDMINE banner. This check wins a
+	# run for real, and a win archives the world.
+	BestRunStore.config_path = LOCAL_STORE_PATH
+	DirAccess.remove_absolute(LOCAL_STORE_PATH)
 	# ONE FRAME FIRST: `_initialize()` runs before the main loop, and a node added
 	# to `root` before that answers null to `get_tree()`. The same lesson
 	# `pause_selfcheck` and `minimap_selfcheck` both record.
@@ -92,6 +114,9 @@ func _initialize() -> void:
 	_check_claim_verb()
 	await _check_trigger()
 	await _check_room_hygiene()
+
+	# ...and at the other end, so nothing this file wrote survives it.
+	DirAccess.remove_absolute(LOCAL_STORE_PATH)
 
 	if _failures.is_empty():
 		print("SELFCHECK OK")
