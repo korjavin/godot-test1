@@ -363,6 +363,241 @@ const AVENUE_HALF_WIDTH: float = 8.0
 ## at the terminal would otherwise freeze the score for the last 900 m.
 const CITY_COIN_SPACING: float = 8.0
 
+# ----------------------------------------------------------------------------
+# SECTION 5b — THE BLOCKS (bead godot-test1-8gw.9)
+# ----------------------------------------------------------------------------
+#
+# THE GRID IS THE LEVEL EDITOR, AND IT IS ARITHMETIC RATHER THAN A TABLE.
+#
+# The owner's direction was "Budapest seems really empty, but it is full of multi
+# storey buildings in fact — like what we can see on google map walking mode". A
+# street-view city is not a scatter of houses; it is a CONTINUOUS STREET WALL with
+# a hollow courtyard behind it, which is exactly what a Pest block is. So the
+# grid `STREET_PITCH` already parameterises stops being a parameter and becomes
+# the thing itself: every square between four street lines is a BLOCK, and every
+# block the city has not reserved for something else is FILLED.
+#
+# A CELL IS AN INTEGER PAIR, AND THAT IS THE WHOLE ADDRESSING SCHEME. Cell
+# (k, m) spans x in [street_x(k), street_x(k + 1)] and z in [street_z(m),
+# street_z(m + 1)], and `block_rect()` insets that by `AVENUE_HALF_WIDTH` on all
+# four sides — so the 16 m street around every grid line is CLEAR BY
+# CONSTRUCTION and not by a check. That is the answer to "a solid piece must
+# never sever a street": nothing is ever built on one. `budapest_selfcheck`
+# check 15 sweeps the collision shapes anyway, because "by construction" is a
+# claim and a sweep is a measurement.
+#
+# THE ORIGIN IS THE GATE, so street row m = 0 IS the avenue this file already
+# draws at z = 0 and street column k = 0 is the city's west edge. There is no
+# second alignment to keep in step, and the one street bead .3 shipped is row 0
+# of the grid bead .9 fills in around it.
+#
+# NOTHING HERE IS SEEDED OR HASHED — check 1 bans the hashing CALL in this file
+# outright, which is why the per-cell facade stream lives in `endless_terrain.gd`
+# (its `CITY_BLOCK_SALT`, the tower furniture precedent) and only the LAYOUT
+# lives here. The layout is pure integer arithmetic over authored constants.
+
+## How deep a street wall is: the wing that faces the street, in metres.
+##
+## A block's buildable interior is `STREET_PITCH - 2 * AVENUE_HALF_WIDTH` = 46 m,
+## so 13 m of wing on all four sides leaves a 20 m COURTYARD, which is hollow and
+## which nothing ever builds in. That hollow is the point: it is what makes a
+## block a ring of buildings rather than a solid 46 m cube, it is what the eye
+## reads through a gateway, and it is 4 boxes per block instead of 1 giant one.
+const BLOCK_WING_DEPTH: float = 13.0
+
+## The PAVEMENT: how far a facade stands back from the edge of the carriageway.
+##
+## `AVENUE_HALF_WIDTH` is the CARRIAGEWAY, and a facade built flush against it is
+## a wall standing on the last metre of the one corridor bead .3 promises —
+## check 13 says so, in metres, the moment the blocks land. It is also where the
+## proud bands go: a balcony course stands 0.52 m off its wall and a cornice
+## 0.46 m, and a balcony hanging over the middle of a street is a thing you walk
+## your head through. 1.2 m clears the widest of them with room to spare and
+## turns "the street is clear" from a boundary case into a measured margin.
+const BLOCK_PAVEMENT: float = 1.2
+
+## How many buildings one side of a block is broken into. Two, because a single
+## 46 m facade box reads as a wall and two segments at different heights read as
+## a STREET — a stepped roofline is the cheapest thing that says "these are
+## separate houses" without a box per window. Raising it multiplies the block's
+## box count directly, so it is measured against `CITY_CHUNK_BOX_BUDGET`.
+const BLOCK_SEGMENTS: int = 2
+
+## Storeys, as (min, max) inclusive, either side of the river. Pest is the
+## eclectic 4-6 storey grid the owner asked for; Buda is 2-3 storey hillside
+## houses under the castle. `is_buda()` is what picks, off the Danube's own
+## polyline, so a plan that reshaped the river reshapes the skyline with it.
+const BLOCK_STOREYS_PEST := Vector2i(4, 6)
+const BLOCK_STOREYS_BUDA := Vector2i(2, 3)
+
+## Every Nth street line is an AVENUE — the routes the city's coins ride.
+##
+## COINS ARE THE HEADLINE SCORE since bead .1 retired distance, and bead .3's
+## approach line stops at the Danube's west bank, so the whole 1.4 km of Pest
+## shipped with no coin source at all. Putting coins on EVERY street would be
+## ~35 lines each way and a coin every 8 m of a 2.2 km city; putting them on
+## every FOURTH line is one avenue every 248 m, which is a route you follow
+## rather than a carpet you stand in. Nine avenues each way over the rect.
+const CITY_AVENUE_EVERY: int = 4
+
+
+static func street_x(k: int) -> float:
+	"""The world X of street column `k`. Column 0 is the gate's own meridian."""
+	return GATE.x + float(k) * STREET_PITCH
+
+
+static func street_z(m: int) -> float:
+	"""The world Z of street row `m`. Row 0 is the avenue out of the gate."""
+	return GATE.z + float(m) * STREET_PITCH
+
+
+static func block_cell(x: float, z: float) -> Vector2i:
+	"""Which block cell a world XZ falls in — a point on a street belongs to the
+	cell east/south of it, which is a convention and not a decision: callers ask
+	for a RANGE of cells and take the union."""
+	return Vector2i(floori((x - GATE.x) / STREET_PITCH),
+			floori((z - GATE.z) / STREET_PITCH))
+
+
+static func block_rect(cell: Vector2i) -> Rect2:
+	"""
+	The BUILDABLE interior of one block: the square between four street lines,
+	inset by `AVENUE_HALF_WIDTH + BLOCK_PAVEMENT` on every side.
+
+	The inset IS the street. Every facade this plan describes lies inside this
+	rect, so the 16 m carriageway around each grid line — plus a metre of
+	pavement either side for the balconies to hang over — can never be built on,
+	which is the whole of the "a solid piece must never sever a street" rule.
+	"""
+	var inset := AVENUE_HALF_WIDTH + BLOCK_PAVEMENT
+	return Rect2(street_x(cell.x) + inset, street_z(cell.y) + inset,
+			STREET_PITCH - 2.0 * inset, STREET_PITCH - 2.0 * inset)
+
+
+static func block_courtyard(cell: Vector2i) -> Rect2:
+	"""The hollow in the middle of a block — the buildable rect less one
+	`BLOCK_WING_DEPTH` wing on every side. Nothing is ever built here; check 15
+	measures it empty."""
+	return block_rect(cell).grow(-BLOCK_WING_DEPTH)
+
+
+static func is_avenue(i: int) -> bool:
+	"""Is street line `i` (a column or a row — the grid is square) an AVENUE, i.e.
+	one of the lines the city's coin routes run down?"""
+	return i % CITY_AVENUE_EVERY == 0
+
+
+static func river_x_at(z: float) -> float:
+	"""
+	Where the Danube's centreline is at this Z, by walking the polyline.
+
+	@return the interpolated X, clamped to the end segments north and south of the
+	        authored span.
+
+	The polyline's Z is strictly increasing (check 2 would have nothing to say
+	about a river that doubled back, so this is the plan's shape and not a
+	coincidence), which is what makes one linear scan enough.
+	"""
+	var last: int = DANUBE.size() - 1
+	if z <= (DANUBE[0] as Vector2).y:
+		return (DANUBE[0] as Vector2).x
+	if z >= (DANUBE[last] as Vector2).y:
+		return (DANUBE[last] as Vector2).x
+	for i in range(last):
+		var a: Vector2 = DANUBE[i]
+		var b: Vector2 = DANUBE[i + 1]
+		if z >= a.y and z <= b.y:
+			return a.x + (b.x - a.x) * (z - a.y) / maxf(b.y - a.y, 0.001)
+	return (DANUBE[last] as Vector2).x
+
+
+static func is_buda(x: float, z: float) -> bool:
+	"""West of the Danube — the hillside half of the city, 2-3 storeys instead of
+	Pest's 4-6. Asked of the river's OWN polyline so the skyline follows a plan
+	that reshapes it."""
+	return x < river_x_at(z)
+
+
+static func block_buildable(cell: Vector2i) -> bool:
+	"""
+	May this block be FILLED with buildings?
+
+	@param cell: the block's integer coordinates.
+	@return false when the block's rect is outside the city, meets a landmark
+	        slot's disc, a plateau or its ramp, the gate district, a dry rect
+	        (a bridge deck, Margaret Island) or the Danube's band.
+
+	ONE PREDICATE, AND EVERY REFUSAL IN IT IS A THING THAT IS ALREADY THERE. A
+	block over the Parliament's disc would clip through it; a block on a plateau
+	would stand inside 30 m of solid stone; a block in the band would be a street
+	wall you WADE through, because `is_river_at()` is XZ-only. The gate district
+	is refused because bead .3 authored sixteen houses there by hand and this
+	would build over them.
+
+	THE RIVER IS SAMPLED ON NINE POINTS, not on the centre. The band is 240 m
+	wide against a 46 m block, so corners-plus-edge-midpoints is comfortably
+	enough to catch a block whose corner dips in, and the alternative — a proper
+	rect-to-polyline distance — is arithmetic nobody needs for a 20:1 ratio.
+	"""
+	var r := block_rect(cell)
+	var city := rect()
+	if not (city.has_point(r.position) and city.has_point(r.end)):
+		return false
+	if r.intersects(DISTRICT):
+		return false
+	for row_v: Variant in PLATEAUS:
+		var row: Dictionary = row_v
+		if r.intersects(row["rect"] as Rect2) or r.intersects(row["ramp"] as Rect2):
+			return false
+	for dry_v: Variant in DRY_RECTS:
+		if r.intersects(dry_v as Rect2):
+			return false
+	for slot_v: Variant in SLOTS:
+		var slot: Dictionary = slot_v
+		var pos: Vector3 = slot["pos"]
+		var near := Vector2(clampf(pos.x, r.position.x, r.end.x),
+				clampf(pos.z, r.position.y, r.end.y))
+		if Vector2(pos.x - near.x, pos.z - near.y).length() < float(slot["radius"]):
+			return false
+	for p: Vector2 in [
+			r.position, Vector2(r.end.x, r.position.y),
+			Vector2(r.position.x, r.end.y), r.end, r.get_center(),
+			Vector2(r.get_center().x, r.position.y), Vector2(r.get_center().x, r.end.y),
+			Vector2(r.position.x, r.get_center().y), Vector2(r.end.x, r.get_center().y)]:
+		if danube_distance(p.x, p.y) < DANUBE_HALF_WIDTH:
+			return false
+	return true
+
+
+static func block_wing(cell: Vector2i, side: int) -> Rect2:
+	"""
+	One of a block's four street walls, in world XZ.
+
+	@param side: 0 north (-Z face), 1 south (+Z), 2 west (-X), 3 east (+X).
+
+	The north and south wings span the block's FULL width and the two side wings
+	fill what is left between them, so the four tile the ring exactly: no overlap
+	at the corners (which would be two boxes in one metre) and no gap (which would
+	be a hole in the street wall you could see the courtyard through).
+	"""
+	var r := block_rect(cell)
+	var d := BLOCK_WING_DEPTH
+	match side:
+		0: return Rect2(r.position.x, r.position.y, r.size.x, d)
+		1: return Rect2(r.position.x, r.end.y - d, r.size.x, d)
+		2: return Rect2(r.position.x, r.position.y + d, d, r.size.y - 2.0 * d)
+		_: return Rect2(r.end.x - d, r.position.y + d, d, r.size.y - 2.0 * d)
+
+
+static func block_wing_outward(side: int) -> Vector2:
+	"""The direction a wing's street face looks in — the axis its shopfront band
+	and its doorways stand proud of."""
+	match side:
+		0: return Vector2(0.0, -1.0)
+		1: return Vector2(0.0, 1.0)
+		2: return Vector2(-1.0, 0.0)
+		_: return Vector2(1.0, 0.0)
+
 # ============================================================================
 # SECTION 6 — THE GATE DISTRICT
 # ============================================================================

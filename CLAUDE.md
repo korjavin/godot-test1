@@ -101,7 +101,16 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            plateau, exempting only slots on a DRY_RECTS row or
 #                            a plateau lid plus the one named
 #                            `shoes_on_the_danube`; with a mutation control that
-#                            runs a shipped builder mid-channel
+#                            runs a shipped builder mid-channel. Check 15 is THE
+#                            CITY IS FULL: every grid cell the plan does not
+#                            reserve filled with a ring of street walls, no
+#                            solid box in any carriageway (the authored city's
+#                            own cells, the plateaus and the decks exempted and
+#                            counted), every courtyard hollow, and the coin
+#                            routes on the avenues with a gem at a square and a
+#                            line across every bridge — plus check 4's WEB
+#                            RESIDENCY window, the only thing that can see a
+#                            cost that moved out of one chunk and into 1,631
 #   landmark_progress_selfcheck
 #                            BUDAPEST'S WIN: the catalogue (every slot resolves a
 #                            CITY_LANDMARKS row by BUILDER NAME, a wave-C
@@ -346,6 +355,63 @@ Three rules of the city's own, all pinned by `budapest_selfcheck`:
   the player is carried on by `spawn_approach_coins_in_chunk`, a deterministic corridor
   (`BudapestPlan.road_approach_point()`) from `T` through the gate to the Danube's west
   bank: the one seam where the seeded road meets the authored city.
+- **EVERY BLOCK OF THE GRID IS FILLED, and the grid is arithmetic rather than a table.**
+  Owner, verbatim: *"budapest seems really empty, but it is full of multi story
+  buildings in fact, make it so, make it like what we can see on google map walking
+  mode"*. So `STREET_PITCH` (62 m) stopped being a parameter and became the city:
+  cell `(k, m)` is the square between four street lines, `block_rect()` insets it by
+  `AVENUE_HALF_WIDTH` **plus `BLOCK_PAVEMENT`**, and `block_buildable()` is the one
+  predicate that refuses a cell meeting a landmark disc, a plateau or its ramp, the
+  gate district, a `DRY_RECTS` row or the Danube's band. 805 of 1,296 cells fill.
+  Each is a RING of four wings around a HOLLOW COURTYARD — never a solid cube — with
+  Pest 4-6 storeys and Buda 2-3, picked off `is_buda()` against the river's own
+  polyline. **The streets are clear BY CONSTRUCTION**: nothing is ever drawn outside
+  `block_rect`, which is the whole of "a solid piece must never sever a street", and
+  `budapest_selfcheck` check 15 sweeps the collision shapes anyway because a
+  construction argument fails silently.
+- **A FACADE IS BANDS, NEVER A BOX PER WINDOW, and `_city_band` is the whole
+  vocabulary.** One colliding hull, then ONE window course per storey (proud, glass
+  tone alternating by storey parity), two shopfronts with the doorway gap between
+  them, an awning, an optional balcony and the roofline cornice — ~10 boxes for a
+  5-storey building against the ~30 a window grid would cost. **Every proud is
+  POSITIVE**: the batch is opaque boxes with no cutouts, so a band recessed into the
+  hull is invisible and produces nothing but z-fighting — that was measured the
+  expensive way and `CITY_WINDOW_PROUD` carries the note. Hues are per-BUILDING off
+  the bank's own palette (`CITY_FACADE_PEST` cream/ochre/grey-green/rose/stone,
+  `CITY_FACADE_BUDA` whitewash/ochre/brick red), tinted but never re-chosen, because
+  eight lerps along one ramp is one building repeated eight times. All of it comes off
+  a per-cell `CITY_BLOCK_SALT` stream (the tower-furniture precedent: a fixed salt,
+  never `run_seed`, and never the chunk, because a block is sliced by up to four of
+  them and they must agree), and **every parameter for the whole block is drawn BEFORE
+  the first box is emitted**, which is what makes that agreement bit-exact.
+- **The bands are what raised the budgets, and the two were raised TOGETHER** —
+  `CITY_CHUNK_BOX_BUDGET` 120 → 200 against a measured worst 145, and check 4's
+  `CITY_RESIDENCY_BOX_BUDGET` 3000 → 6000 against a measured 4,510 in the worst
+  49-chunk web window. Collision did not move (15 shapes worst) because a building's
+  only colliding box is its hull. That pairing is the bead's own instruction: a
+  per-chunk ceiling raised alone would hide a cost that had moved into the number of
+  chunks, which is exactly what the **web residency** window exists to see —
+  Budapest went from 378 chunks with stone to 1,631.
+- **BUDAPEST CHUNKS CAST NO SHADOW, and that is an OWNER RULING** (2026-09-02, bead
+  `godot-test1-8gw.9`, verbatim: *"it's okay without shadow, performance is more
+  important"*). 2,100+ tall casters in the 49-chunk web view cost **19 ms a frame in
+  the shadow pass alone** — none of it visible in the draw-call count the box budgets
+  guard — so `_build_block_multimesh`'s `cast_shadows` flag makes a city chunk's batch
+  a shadow RECEIVER only, the tower interior's measured rule met outdoors. It is the
+  WHOLE chunk, so a landmark loses its cast shadow with the blocks around it; the
+  chunk has ONE batch and splitting it is a second draw call per chunk, which is the
+  invariant check 4 defends. **Do not split the batch to restore them** — that needs a
+  new ruling.
+- **THE CITY'S COINS RIDE THE AVENUES AND EVERY BRIDGE.** `spawn_city_coins_in_chunk`,
+  zero RNG like its `spawn_approach_coins_in_chunk` sibling: every fourth grid line is
+  an avenue (`CITY_AVENUE_EVERY`), coins step along it at `CITY_COIN_SPACING`, gems
+  stand where two avenues cross, and each bridge carries its own line at
+  `bridge_surface_y`. Three rules and each is a bug avoided: no coin west of
+  `_approach_coin_east_end()` on the gate avenue (bead .3's corridor owns that), none
+  on a deck rect at ground level (the bridge's own line owns the crossing, 12 m up),
+  and the deck line skips `_settle_coin_y` because the perch rule is about the ground
+  under a column. Coin identity is still `Coin.id_at(world)`, so **`mp_manager.gd`
+  needed no edit**.
 - **The spawner policy inside the rect is PER SYSTEM, and it is emphatically not
   `tower_excludes()`.** The tower's disc has one answer for everybody; the city wants a
   different answer per spawner, so each one reads `in_budapest()` and decides for itself:
