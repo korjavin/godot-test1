@@ -1549,10 +1549,9 @@ const SPECIES: Dictionary = {
 		"avoid_speed_factor": 0.6,
 
 		# ----- Procedural body animation -----
-		## PI, not the quadrupeds' -PI/2: this is a re-skinned humanoid CHARACTER
-		## model (see scenes/characters/titan.tscn) and those are authored facing
-		## -Z, where every predator mesh is authored nose-along-+X. The body still
-		## travels +Z, so the model needs a half turn instead of a quarter.
+		## -PI/2, the standard enemy/boss facing offset. titan.glb is authored
+		## nose/front-along-+X (the toolkit's first contract) and the body travels
+		## +Z, so the model rotates -90°.
 		##
 		## THE CAPSULE IN titan.tscn IS RECORDED HERE for the reason the viper's
 		## is: a .tscn cannot hold a comment an editor resave will not eat.
@@ -1563,7 +1562,7 @@ const SPECIES: Dictionary = {
 		## identity the crocodile's 0.16/0.16 and the viper's 0.11/0.11 use). The
 		## body scale from the boss schedule multiplies all of it, so a 6x titan
 		## is a 10.8 m capsule around a 10.8 m model.
-		"model_facing_offset": PI,
+		"model_facing_offset": -PI / 2.0,
 
 		## A slow, heavy tread with almost no waddle — the read is a colossus
 		## planting its feet, not an animal scurrying.
@@ -2313,19 +2312,13 @@ const SPECIES: Dictionary = {
 	## numbers is measured by projectile_selfcheck's sweep, which scans every
 	## "ranged" dict in this table and so picked this row up the day it landed.
 	##
-	## PLACEHOLDER, MEASURED. scenes/characters/clown.tscn instances
-	## phoboman.tscn — the lumpiest, least human of the character meshes, which is
-	## the right shape for something wearing a person's outline badly — at
-	## (0.75, 1.0, 0.75). Phoboman's mesh is 1.566 x 1.069 x 1.634 (x, z, y), the
-	## widest in the set because of its arms; at that scale it spans x ±0.587,
-	## z -0.428 .. +0.374 and stands 1.609 m. The capsule in clown.tscn is
-	## `radius = 0.59, height = 1.61` at `(0, 0.805, 0)`, UPRIGHT like the titan's:
-	##   * 1.61 is the standing height, 0.805 = height/2 puts the bottom on y = 0.
-	##   * 0.59 covers the 0.587 m half-span of the arms, and as an upright capsule
-	##     that radius IS the horizontal reach — under the spawner's 0.7 bound,
-	##     which is what the 0.75 horizontal squash bought. This is the widest
-	##     footprint in the family and the one with the least slack; a placeholder
-	##     swap that widens it needs re-measuring against that constant.
+	## THE CAPSULE IN clown.tscn IS RECORDED HERE for the reason the viper's and
+	## titan's are: a .tscn cannot hold a comment an editor resave will not eat.
+	## clown.glb spans x -0.215..+0.313, z ±0.36, and stands 1.67 m tall. The
+	## capsule is `radius = 0.36, height = 1.67` at `(0, 0.835, 0)`, UPRIGHT:
+	##   * 1.67 is the standing height, 0.835 = height/2 puts the bottom on y = 0.
+	##   * 0.36 covers the ±0.36 m half-width of the ruffled suit and limbs, and
+	##     is well under the spawner's 0.7 bound (BOSS_FOOTPRINT_RADIUS_PER_SCALE).
 	"clown": {
 		## THE TITAN'S ARM, REUSED. `_behave_ranged` is one cooldown and one
 		## BossProjectile.fire() call, and everything it does is read out of the
@@ -2378,9 +2371,10 @@ const SPECIES: Dictionary = {
 		"avoid_speed_factor": 0.6,
 
 		# ----- Procedural body animation -----
-		## PI, the humanoid facing (see the naga): character meshes are authored
-		## facing -Z and the body travels +Z.
-		"model_facing_offset": PI,
+		## -PI/2, the standard enemy/boss facing offset. clown.glb is authored
+		## nose/front-along-+X (the toolkit's first contract) and the body travels
+		## +Z, so the model rotates -90°.
+		"model_facing_offset": -PI / 2.0,
 
 		## A CAPER. The biggest waddle roll and the biggest bob of any row here,
 		## over a quick stride, with almost no chase lean — the read is a thing
