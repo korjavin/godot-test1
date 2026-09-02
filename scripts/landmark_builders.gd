@@ -665,7 +665,7 @@ const CITY_LANDMARKS: Array = [
 	{
 		"builder": "_city_basilica",
 		"name": "St Stephen's Basilica",
-		"fact": "A neo-Renaissance basilica in Budapest, finished in 1905 after its half-built dome collapsed in a storm — its 96 m exactly matches the Parliament's, and nothing in the city is built taller.",
+		"fact": "A neo-Renaissance basilica in Budapest, finished in 1905 after its half-built dome collapsed in a storm — at 96 m it ties the Parliament exactly, the height the city held its skyline to for a century.",
 		"radius": 58.0,
 		"region": "europe",
 	},
@@ -4957,6 +4957,13 @@ static func _city_basilica(terrain: Node3D, center: Vector3, rng: RandomNumberGe
 	compact cross, a classical drum with sixteen columns round it, and two SQUARE
 	towers that stop at three quarters of the dome. Nothing here is pointed.
 
+	THE DRUM IS 23 M ACROSS BECAUSE THE RING IS AT 18. Two crossed boxes make an
+	octagon whose 45-degree twin reaches half_width * sqrt(2) on the cardinals, so
+	a 30 m drum swallowed eight of the sixteen columns whole and shipped a ring
+	with every other post missing. 11.5 * sqrt(2) = 16.26 clears the columns'
+	inner face at 17.1 — the same arithmetic the radius line below uses, one
+	radius in.
+
 	RADIUS ARITHMETIC (declared 58.0). The front flight wins it — the third step,
 	44 x 2 at z = -51: sqrt(22.00^2 + 52.00^2) = 56.46 — with the plinth (56 x 92)
 	second at sqrt(28.00^2 + 46.00^2) = 53.85 and a bell tower's cornice (15 x 15
@@ -4991,7 +4998,8 @@ static func _city_basilica(terrain: Node3D, center: Vector3, rng: RandomNumberGe
 	for side in [-1.0, 1.0]:
 		terrain.create_box(center + Vector3(side * 25.0, 10.6, 0.0), Vector3(12.0, 18.0, 60.0), 0.0,
 				rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02))
-		_city_bays(terrain, center + Vector3(side * 25.6, 10.6, -27.0), Vector3(0.0, 0.0, 6.0), 10,
+		# ON the aisle's OUTER face (each aisle spans |x| = 19..31), never inside it.
+		_city_bays(terrain, center + Vector3(side * 30.6, 10.6, -27.0), Vector3(0.0, 0.0, 6.0), 10,
 				Vector3(1.4, 18.0, 2.6), stone, rng, block_batch, block_body, false)
 
 	# The west front: the block, six columns, the architrave and the pediment.
@@ -5025,7 +5033,7 @@ static func _city_basilica(terrain: Node3D, center: Vector3, rng: RandomNumberGe
 	# 45-degree twin), the ring of sixteen columns that is this dome's signature,
 	# the stepped cap, the lantern and the finial.
 	for k in 2:
-		terrain.create_box(center + Vector3(0.0, 40.6, 4.0), Vector3(30.0, 26.0, 30.0),
+		terrain.create_box(center + Vector3(0.0, 40.6, 4.0), Vector3(23.0, 26.0, 23.0),
 				float(k) * PI / 4.0, rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02))
 	for i in 16:
 		var a := TAU * float(i) / 16.0
@@ -5033,15 +5041,15 @@ static func _city_basilica(terrain: Node3D, center: Vector3, rng: RandomNumberGe
 				Vector3(1.8, 9.0, 1.8), 0.0, rng, block_batch, block_body, 0.0,
 				_lm_shade(stone, rng, 0.03), false)
 	var y := 53.6
-	y += _city_dome(terrain, center + Vector3(0.0, y, 4.0), 30.0, 22.0, copper, rng, block_batch, block_body)
-	terrain.create_box(center + Vector3(0.0, y + 3.5, 4.0), Vector3(10.0, 7.0, 10.0), 0.0,
+	y += _city_dome(terrain, center + Vector3(0.0, y, 4.0), 23.0, 22.0, copper, rng, block_batch, block_body)
+	terrain.create_box(center + Vector3(0.0, y + 3.5, 4.0), Vector3(9.0, 7.0, 9.0), 0.0,
 			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03), false)
 	y += 7.0
-	y += _city_spire(terrain, center + Vector3(0.0, y, 4.0), 6.0, 8.0, 4, copper, rng, block_batch, block_body)
+	y += _city_spire(terrain, center + Vector3(0.0, y, 4.0), 5.5, 8.0, 4, copper, rng, block_batch, block_body)
+	# ONE accent, per this file's rule 4 — the spire under it is the cross's shaft,
+	# so the lit box is the crossbar alone and not a second draw call for it.
 	terrain._spawn_artifact_accent(parent_chunk, center + Vector3(0.0, y + 1.2, 4.0),
-			Vector3(0.5, 2.4, 0.5), 0.0, 0.0, terrain._get_camp_ember_material())
-	terrain._spawn_artifact_accent(parent_chunk, center + Vector3(0.0, y + 1.4, 4.0),
-			Vector3(1.6, 0.5, 0.5), 0.0, 0.0, terrain._get_camp_ember_material())
+			Vector3(1.6, 1.8, 0.5), 0.0, 0.0, terrain._get_camp_ember_material())
 
 	return { "radius": 58.0, "top": y + 2.4 }
 
