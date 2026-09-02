@@ -36,6 +36,11 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #   progression_selfcheck    level curve, skill trees, effects on a live player
 #   wade_selfcheck           river wading (player, croc, boss)
 #   minimap_selfcheck        the map actually read the world
+#   city_map_selfcheck       the Budapest map panel (B): the key is free against
+#                            the input map AND every other panel's constant, the
+#                            plan is BAKED ONCE and is really the plan, the mask
+#                            lights the right slots, and the pause is taken solo
+#                            but never in a room nor over game over
 #   help_selfcheck           keymap card vs the real input map
 #   hero_hud_selfcheck       the portrait row: one colour row and one loadable
 #                            portrait per CHARACTERS hero at the single asset
@@ -1118,7 +1123,7 @@ pair in `player_controller`, so the consts stay consts.
 **There is no walk-speed effect and there may never be one** — the catchable-walk contract
 above is the tightest margin in the game.
 
-Panels open on raw keycodes outside the input map (K, M, P, +/−, F3–F7): named actions are
+Panels open on raw keycodes outside the input map (K, M, P, B, +/−, F3–F7): named actions are
 for rebindable *gameplay* input, and a key that only opens a panel has nothing to rebind
 against. Every overlay pauses the tree, because the player reads gameplay through global
 polled `Input`, which a focused `Control` does not suppress.
