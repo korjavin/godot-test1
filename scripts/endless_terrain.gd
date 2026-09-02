@@ -2931,8 +2931,10 @@ var _tower_site_dist: float = -1.0
 ##     TOWER_LOAD_RADIUS, then never freed for the rest of the run — a bounded,
 ##     known cost, and freeing it would only trade nine boxes for a pop-in.
 ##   * `_tower_impostor` is the fog-exempt horizon silhouette, built at _ready() and
-##     alive for the whole session; it is HIDDEN, not freed, once the shell exists,
-##     because new_run() needs it back.
+##     alive for the whole session; it is not freed when the shell exists — the
+##     cross-fade (bead godot-test1-rgt) keeps it visible alongside the shell and
+##     fades it via the material, and it is hidden only while the local player
+##     stands inside Budapest (bead godot-test1-8gw.14) — because new_run() needs it back.
 var _tower_shell: Node3D = null
 var _tower_impostor: Node3D = null
 
@@ -3466,9 +3468,14 @@ func _process(_delta: float) -> void:
 		focus_dirty = false
 		update_chunks(player_chunk)
 		last_player_chunk = player_chunk
-		# THE TOWER'S ONLY PER-FRAME COST, which is to say none: it rides the
-		# boundary crossing the chunk streamer already pays for, so walking a
-		# whole run nowhere near the site costs one distance test per 50 m.
+		# The tower shell streams on a chunk-boundary crossing — the streamer
+		# already pays for that test, so walking nowhere near the site costs one
+		# distance test per 50 m. The impostor's Budapest gate below is the one
+		# per-frame tower cost: BUDAPEST_MIN/MAX are chunk-aligned (1600, ±1100
+		# vs chunk_size 50) so the gate could be folded into this `if`, but
+		# `_tower_reset()` writes `visible = true` outside any crossing and the
+		# gate must win the next frame. Per-frame is the robust form, and
+		# `set_visible` early-outs when nothing changed so it costs nothing.
 		_tower_stream(player.global_position)
 
 	# TIME-SLICED FILL: build exactly ONE queued chunk per frame (see the
@@ -3520,8 +3527,9 @@ func _process(_delta: float) -> void:
 	# the moment the player steps out. The distance fade (FADE_FAR -> NEAR)
 	# still owns opacity outside the city; this only suppresses the picture
 	# entirely while inside. Multiplayer: each peer decides for its own screen
-	# — remote avatars are pictures, not another "player" to read.
-	if is_instance_valid(_tower_impostor) and is_instance_valid(player):
+	# — remote avatars are pictures, not another "player" to read. Per-frame is
+	# the robust form (see the note on the boundary block above).
+	if is_instance_valid(_tower_impostor):
 		_tower_impostor.visible = not BudapestPlan.contains(player.global_position.x, player.global_position.z)
 
 # ============================================================================

@@ -1306,7 +1306,7 @@ func _check_impostor_hidden_in_budapest() -> void:
 			BudapestPlan.BUDAPEST_MIN.x + (BudapestPlan.BUDAPEST_MAX.x - BudapestPlan.BUDAPEST_MIN.x) * 0.5,
 			0.0,
 			BudapestPlan.BUDAPEST_MIN.y + (BudapestPlan.BUDAPEST_MAX.y - BudapestPlan.BUDAPEST_MIN.y) * 0.5)
-	var outside := Vector3(0.0, 0.0, 0.0)
+	var outside := Vector3(BudapestPlan.BUDAPEST_MIN.x - 1.0, 0.0, 0.0)
 	# Far outside case must still be outside — (0,0) is west of the city and
 	# east of the tower, so the usual far-field impostor would be visible.
 	if BudapestPlan.contains(outside.x, outside.z):
@@ -1322,10 +1322,11 @@ func _check_impostor_hidden_in_budapest() -> void:
 				inside, BudapestPlan.BUDAPEST_MIN, BudapestPlan.BUDAPEST_MAX])
 	probe.global_position = outside
 	terrain._process(0.0)
-	if is_instance_valid(terrain._tower_impostor) and not terrain._tower_impostor.visible:
+	if not is_instance_valid(terrain._tower_impostor):
+		_fail("no horizon impostor after stepping out of Budapest")
+	elif not terrain._tower_impostor.visible:
 		_fail("the horizon impostor stayed hidden after the player stepped out of Budapest to %s" % outside)
-	else:
-		print("impostor Budapest gate: hidden at %s, visible at %s" % [inside, outside])
+	print("impostor Budapest gate: hidden at %s, visible at %s" % [inside, outside])
 	probe.free()
 	terrain.free()
 
