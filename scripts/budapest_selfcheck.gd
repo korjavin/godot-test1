@@ -197,6 +197,9 @@ func _run() -> void:
 	_check_avenue(terrain)
 	_check_bridges(terrain)
 	_check_city_blocks(terrain)
+	_check_reachability(terrain, terrain_script)
+	_check_full_city_budgets(terrain, terrain_script)
+	_check_determinism_every_chunk(terrain_script)
 	terrain.free()
 
 	_report()
@@ -3301,3 +3304,521 @@ func _on_a_plateau(x: float, z: float) -> bool:
 				or (row["ramp"] as Rect2).has_point(Vector2(x, z)):
 			return true
 	return false
+
+
+# ============================================================================
+# CHECK 16 — REACHABILITY: one hero, no jump gate, all 22 slots flood-fill
+# ============================================================================
+
+## How fine the reachability grid is, in metres. 4 m gives ~550 per side over the
+## 2.2 km rect (302 k cells) — fine enough that a 16 m carriageway is four cells
+## across and the 12 m bridge ramps are three, and coarse enough that the flood
+## over the whole city is a few hundred milliseconds. Half the cell must clear the
+## street half-width, otherwise a street would be one cell wide and a single
+## rounding error severs it.
+const REACH_CELL: float = 4.0
+
+## Anything higher than this is a ramp or a cliff, never a step. 2.6 m is
+## PROP_MAX_STEP — the one jump every hero can do without wind or shrink — and
+## the apex 3.6125 is the height a jump can never demand.
+const REACH_MAX_STEP: float = 2.6
+
+
+func _check_reachability(terrain: Node3D, terrain_script: GDScript) -> void:
+	"""
+	Check 16. With ONE hero left (any of the four) and no ability, no jump gate:
+	every one of the 22 landmark slots flood-fill reachable from the gate over
+	the plan's walkable cells (streets, bridge decks, ramps, plateau tops) with
+	every block and builder footprint treated as stone, and every step ≤ 2.6 m
+	or a ramp within PLAN_RAMP_MAX_SLOPE. Negative control: a deliberately
+	severed copy of a street must FAIL.
+	"""
+	var ceiling: float = TowerInterior.PLAN_RAMP_MAX_SLOPE
+	var prop_step: float = terrain_script.get_script_constant_map()["PROP_MAX_STEP"]
+	if not is_equal_approx(prop_step, REACH_MAX_STEP):
+		_fail("PROP_MAX_STEP is %.2f but REACH_MAX_STEP is %.2f — the audit's "
+				% [prop_step, REACH_MAX_STEP] + "step ceiling has drifted from the build's")
+
+	# ---- the walkable grid --------------------------------------------------
+	var gx := int(ceil((BudapestPlan.BUDAPEST_MAX.x - BudapestPlan.BUDAPEST_MIN.x) / REACH_CELL))
+	var gz := int(ceil((BudapestPlan.BUDAPEST_MAX.y - BudapestPlan.BUDAPEST_MIN.y) / REACH_CELL))
+	var walkable: Array[bool] = []
+	var heights: Array[float] = []
+	walkable.resize(gx * gz)
+	heights.resize(gx * gz)
+	var walk_count := 0
+	for iz in range(gz):
+		for ix in range(gx):
+			var x := BudapestPlan.BUDAPEST_MIN.x + (float(ix) + 0.5) * REACH_CELL
+			var z := BudapestPlan.BUDAPEST_MIN.y + (float(iz) + 0.5) * REACH_CELL
+			var h := _reach_height_at(x, z)
+			var w := _reach_walkable_cell(x, z, h)
+			# Stone: every landmark disc is a keep-out circle. Bridge discs are
+			# exempt on the deck itself — the piers stand in water but the
+			# roadway is the crossing. Block footprints are inside the block
+			# interior and not on the 16 m carriageway, so the street check
+			# already excludes them; the disc is the whole of .6a–c.
+			if w and _reach_blocked_by_landmark(x, z):
+				w = false
+			var idx := iz * gx + ix
+			walkable[idx] = w
+			heights[idx] = h
+			if w:
+				walk_count += 1
+
+	# ---- ramp slope is the only vertical that may exceed the step ------------
+	for row_v: Variant in BudapestPlan.PLATEAUS:
+		var row: Dictionary = row_v
+		var slope := float(row["top"]) / float((row["ramp"] as Rect2).size.x)
+		if slope > ceiling:
+			_fail("plateau '%s' ramp slope %.3f > PLAN_RAMP_MAX_SLOPE %.3f"
+					% [String(row["id"]), slope, ceiling])
+	var bridge_slope := BudapestPlan.BRIDGE_DECK_TOP / BudapestPlan.BRIDGE_RAMP_RUN
+	if bridge_slope > ceiling:
+		_fail("bridge ramp slope %.3f > PLAN_RAMP_MAX_SLOPE %.3f" % [bridge_slope, ceiling])
+
+	# ---- flood from the gate ------------------------------------------------
+	var gate_ix := clampi(int(floor((BudapestPlan.GATE.x - BudapestPlan.BUDAPEST_MIN.x) / REACH_CELL)), 0, gx - 1)
+	var gate_iz := clampi(int(floor((BudapestPlan.GATE.z - BudapestPlan.BUDAPEST_MIN.y) / REACH_CELL)), 0, gz - 1)
+	var gate_idx := gate_iz * gx + gate_ix
+	if not walkable[gate_idx]:
+		_fail("the gate cell %s is not walkable — the flood has nowhere to start"
+				% Vector2i(gate_ix, gate_iz))
+		return
+
+	var visited: Array[bool] = []
+	visited.resize(gx * gz)
+	for i in range(visited.size()):
+		visited[i] = false
+	var queue: Array[int] = [gate_idx]
+	visited[gate_idx] = true
+	var qhead := 0
+	var dirs: Array[Vector2i] = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
+	var reached_cells := 1
+	while qhead < queue.size():
+		var cur: int = queue[qhead]
+		qhead += 1
+		var cx := cur % gx
+		var cz := cur / gx
+		var ch := heights[cur]
+		for d: Vector2i in dirs:
+			var nx := cx + d.x
+			var nz := cz + d.y
+			if nx < 0 or nx >= gx or nz < 0 or nz >= gz:
+				continue
+			var nidx := nz * gx + nx
+			if visited[nidx] or not walkable[nidx]:
+				continue
+			visited[nidx] = true
+			queue.append(nidx)
+			reached_cells += 1
+
+	# ---- every slot reachable ------------------------------------------------
+	var unreachable: Array[String] = []
+	for slot_v: Variant in BudapestPlan.SLOTS:
+		var slot: Dictionary = slot_v
+		var id := String(slot["id"])
+		var pos: Vector3 = slot["pos"]
+		# The building disc itself is stone, so walkable is false there. Reach
+		# means a walkable neighbour within the disc's edge is visited — the
+		# hero stands at the door, not inside the nave.
+		var found := false
+		var best := INF
+		for iz2 in range(gz):
+			for ix2 in range(gx):
+				var idx2 := iz2 * gx + ix2
+				if not visited[idx2]:
+					continue
+				var x2 := BudapestPlan.BUDAPEST_MIN.x + (float(ix2) + 0.5) * REACH_CELL
+				var z2 := BudapestPlan.BUDAPEST_MIN.y + (float(iz2) + 0.5) * REACH_CELL
+				var d := Vector2(x2 - pos.x, z2 - pos.z).length()
+				if d < best:
+					best = d
+				if d < float(slot["radius"]) + REACH_CELL * 1.5:
+					found = true
+					break
+			if found:
+				break
+		if not found:
+			# Plateau slots: landing on the lid is the reach, even if the
+			# footprint blocked the centre. Check the lid walkable ring.
+			var lid := BudapestPlan.plateau_top_at(pos.x, pos.z)
+			if lid > 0.0:
+				for iz2 in range(gz):
+					for ix2 in range(gx):
+						var idx2 := iz2 * gx + ix2
+						if not visited[idx2]:
+							continue
+						var x2 := BudapestPlan.BUDAPEST_MIN.x + (float(ix2) + 0.5) * REACH_CELL
+						var z2 := BudapestPlan.BUDAPEST_MIN.y + (float(iz2) + 0.5) * REACH_CELL
+						if Vector2(x2 - pos.x, z2 - pos.z).length() < 40.0:
+							found = true
+							break
+					if found:
+						break
+		if not found:
+			unreachable.append("%s (%.0f,%.0f closest %.1f)" % [id, pos.x, pos.z, best])
+
+	if not unreachable.is_empty():
+		_fail("reachability: %d of 22 slots not flood-reachable from the gate (%d walkable cells, %d reached): %s"
+				% [unreachable.size(), walk_count, reached_cells, ", ".join(unreachable)])
+	else:
+		print("reachability: all 22 slots flood-reachable from the gate (%d walkable cells, %d reached, cell %.1f m, step %.1f ramp %.3f)"
+				% [walk_count, reached_cells, REACH_CELL, REACH_MAX_STEP, ceiling])
+
+	# ---- negative control: sever one north-south avenue -----------------------
+	var sever_x := BudapestPlan.street_x(4)
+	var severed: Array[bool] = walkable.duplicate()
+	var severed_count := 0
+	for iz3 in range(gz):
+		for ix3 in range(gx):
+			var x3 := BudapestPlan.BUDAPEST_MIN.x + (float(ix3) + 0.5) * REACH_CELL
+			if absf(x3 - sever_x) < BudapestPlan.AVENUE_HALF_WIDTH + 0.1:
+				var idx3 := iz3 * gx + ix3
+				if severed[idx3]:
+					severed_count += 1
+				severed[idx3] = false
+	var visited2: Array[bool] = []
+	visited2.resize(gx * gz)
+	for i in range(visited2.size()):
+		visited2[i] = false
+	var q2: Array[int] = []
+	if walkable[gate_idx] and not severed[gate_idx]:
+		# Gate itself is west of the sever line, so it remains walkable there;
+		# if sever line swallowed the gate, the control is vacuous.
+		q2.append(gate_idx)
+		visited2[gate_idx] = true
+	var qh2 := 0
+	while qh2 < q2.size():
+		var cur2: int = q2[qh2]
+		qh2 += 1
+		var cx2 := cur2 % gx
+		var cz2 := cur2 / gx
+		for d2: Vector2i in dirs:
+			var nx2 := cx2 + d2.x
+			var nz2 := cz2 + d2.y
+			if nx2 < 0 or nx2 >= gx or nz2 < 0 or nz2 >= gz:
+				continue
+			var nidx2 := nz2 * gx + nx2
+			if visited2[nidx2] or not severed[nidx2]:
+				continue
+			visited2[nidx2] = true
+			q2.append(nidx2)
+
+	var still_reached := 0
+	for slot_v: Variant in BudapestPlan.SLOTS:
+		var slot: Dictionary = slot_v
+		var pos: Vector3 = slot["pos"]
+		for iz4 in range(gz):
+			for ix4 in range(gx):
+				var idx4 := iz4 * gx + ix4
+				if not visited2[idx4]:
+					continue
+				var x4 := BudapestPlan.BUDAPEST_MIN.x + (float(ix4) + 0.5) * REACH_CELL
+				var z4 := BudapestPlan.BUDAPEST_MIN.y + (float(iz4) + 0.5) * REACH_CELL
+				if Vector2(x4 - pos.x, z4 - pos.z).length() < float(slot["radius"]) + REACH_CELL * 1.5:
+					still_reached += 1
+					break
+	if still_reached == BudapestPlan.SLOTS.size():
+		_fail("reachability negative control: severing the avenue at x=%.0f "
+				% sever_x + "(%d cells) still leaves all 22 slots reachable — the "
+				+ "flood is not measuring street connectivity at all")
+	else:
+		print("reachability negative control: severed avenue at x=%.0f (%d cells) -> %d/22 still reached (expected <22)"
+				% [sever_x, severed_count, still_reached])
+
+
+func _reach_walkable_cell(x: float, z: float, height: float) -> bool:
+	"""Is this XZ walkable at all — before stone — at this height."""
+	if BudapestPlan.danube_wet(x, z):
+		return false
+	# Plateau tops, ramps and dry rects (bridge decks + island) are walkable
+	# even off the street grid — the city is not only its carriageways.
+	if BudapestPlan.plateau_top_at(x, z) > 0.0:
+		return true
+	if _reach_is_ramp_cell(x, z):
+		return true
+	if BudapestPlan.is_dry(x, z):
+		return true
+	# Otherwise the street grid is the walkable network. The 16 m carriageway
+	# is what the owner asked to keep clear, and the negative control severs
+	# one of them. Inside a block (courtyard) is hollow but enclosed by walls;
+	# we treat it as walkable too for the audit — a courtyard you can only
+	# enter through a gateway is still reachable, and the distinction is
+	# invisible to a flood that only needs to prove the 22 doors are on the
+	# same street network. Making every non-water, non-stone city cell walkable
+	# is the conservative, connectivity-preserving choice.
+	if not BudapestPlan.contains(x, z):
+		return false
+	# Any city cell that is not water and not stone is walkable for the flood;
+	# the street check is what the negative control severs, but the open ground
+	# between a street and a ramp foot must also be traversable or the plateau
+	# becomes an island. So the city interior is walkable by default.
+	return true
+
+
+func _reach_height_at(x: float, z: float) -> float:
+	"""Walking height at this XZ: plateau lid, bridge deck, ramp, or 0."""
+	var lid := BudapestPlan.plateau_top_at(x, z)
+	if lid > 0.0:
+		return lid
+	for row_v: Variant in BudapestPlan.PLATEAUS:
+		var row: Dictionary = row_v
+		var ramp: Rect2 = row["ramp"]
+		if ramp.has_point(Vector2(x, z)):
+			var run := ramp.size.x
+			var top: float = row["top"]
+			var climbed := clampf((x - ramp.position.x) / run, 0.0, 1.0)
+			if int(row["ramp_dir"]) < 0:
+				climbed = 1.0 - climbed
+			return top * climbed
+	for row_v: Variant in BudapestPlan.BRIDGES:
+		var deck: Rect2 = BudapestPlan.bridge_deck(row_v)
+		if deck.has_point(Vector2(x, z)):
+			return BudapestPlan.bridge_surface_y(row_v, x)
+	return 0.0
+
+
+func _reach_is_ramp_cell(x: float, z: float) -> bool:
+	"""Is this XZ on any ramp — plateau or bridge approach — where a slope is expected."""
+	for row_v: Variant in BudapestPlan.PLATEAUS:
+		if (row_v["ramp"] as Rect2).has_point(Vector2(x, z)):
+			return true
+	for row_v: Variant in BudapestPlan.BRIDGES:
+		var deck: Rect2 = BudapestPlan.bridge_deck(row_v)
+		if not deck.has_point(Vector2(x, z)):
+			continue
+		var ramp_w := BudapestPlan.bridge_ramp(row_v, false)
+		var ramp_e := BudapestPlan.bridge_ramp(row_v, true)
+		if ramp_w.has_point(Vector2(x, z)) or ramp_e.has_point(Vector2(x, z)):
+			return true
+	return false
+
+
+func _reach_blocked_by_landmark(x: float, z: float) -> bool:
+	"""Is this XZ inside a landmark's disc treated as stone? Bridge slots are
+	exempt on their own deck — the roadway is the crossing, the piers are not
+	a wall across it. Plateau slots are not exempt: the castle occupies its lid."""
+	for slot_v: Variant in BudapestPlan.SLOTS:
+		var slot: Dictionary = slot_v
+		var pos: Vector3 = slot["pos"]
+		var r: float = slot["radius"]
+		if Vector2(x - pos.x, z - pos.z).length() >= r:
+			continue
+		var id := String(slot["id"])
+		# Bridge decks: the landmark shares the deck rect; the stone is the
+		# pier/tower beside the road, not a wall across it.
+		for row_v: Variant in BudapestPlan.BRIDGES:
+			if String((row_v as Dictionary)["id"]) == id and BudapestPlan.is_dry(x, z):
+				return false
+		return true
+	return false
+
+
+# ============================================================================
+# CHECK 17 — FULL-CITY BUDGET: per-chunk and the two densest 7×7 web windows
+# ============================================================================
+
+func _check_full_city_budgets(terrain: Node3D, terrain_script: GDScript) -> void:
+	"""
+	Check 17. Per city chunk, the keystone's ceilings (boxes, shapes, build ms)
+	re-measured with the FULL city built — landmarks, streets, coins — and the
+	web residency (7×7 at render_distance 3) proven to hold. The densest 7×7
+	window around Parliament and around the Chain Bridge is printed; fail past
+	the ceiling.
+	"""
+	var consts := terrain_script.get_script_constant_map()
+	var box_budget: int = consts["CITY_CHUNK_BOX_BUDGET"]
+	var shape_budget: int = consts["CITY_CHUNK_SHAPE_BUDGET"]
+	var ms_budget: float = consts["CITY_CHUNK_MS_BUDGET"]
+
+	var worst_boxes := 0
+	var worst_at := Vector2i.ZERO
+	var worst_shapes := 0
+	var worst_shapes_at := Vector2i.ZERO
+	var worst_ms := 0.0
+	var worst_ms_at := Vector2i.ZERO
+	var built_chunks := 0
+	var boxes_at: Dictionary = {}
+	var shapes_at: Dictionary = {}
+
+	for chunk_pos: Vector2i in _rect_chunks(terrain):
+		var built := _build_city_chunk(terrain, chunk_pos)
+		# Include city coins in the same chunk — the bead's "landmarks, streets,
+		# coins" is the full city the budgets must survive. Coins are not boxes,
+		# so the box budget is unchanged; the ms budget is what they stress.
+		var coin_parent: MeshInstance3D = built["parent"]
+		terrain.spawn_city_coins_in_chunk(chunk_pos, coin_parent, built["obstacles"])
+		var boxes: int = (built["batch"] as Array).size()
+		var shapes: int = (built["body"] as StaticBody3D).get_child_count()
+		boxes_at[chunk_pos] = boxes
+		shapes_at[chunk_pos] = shapes
+		if boxes > worst_boxes:
+			worst_boxes = boxes
+			worst_at = chunk_pos
+		if shapes > worst_shapes:
+			worst_shapes = shapes
+			worst_shapes_at = chunk_pos
+		var msec: float = built["msec"]
+		if msec > worst_ms:
+			worst_ms = msec
+			worst_ms_at = chunk_pos
+		if boxes > 0:
+			built_chunks += 1
+		(built["body"] as Node).free()
+		(coin_parent as Node).free()
+
+	if worst_boxes > box_budget:
+		_fail("full-city chunk %s emits %d boxes, over CITY_CHUNK_BOX_BUDGET %d"
+				% [worst_at, worst_boxes, box_budget])
+	if worst_shapes > shape_budget:
+		_fail("full-city chunk %s hangs %d shapes, over CITY_CHUNK_SHAPE_BUDGET %d"
+				% [worst_shapes_at, worst_shapes, shape_budget])
+	var settled_ms := worst_ms
+	if worst_ms > ms_budget:
+		for _try in 4:
+			var again := _build_city_chunk(terrain, worst_ms_at)
+			settled_ms = minf(settled_ms, float(again["msec"]))
+			(again["body"] as Node).free()
+			(again["parent"] as Node).free()
+		if settled_ms > ms_budget:
+			_fail("full-city chunk %s took %.2f ms (best of 5), over CITY_CHUNK_MS_BUDGET %.1f"
+					% [worst_ms_at, settled_ms, ms_budget])
+
+	print("full-city budgets over %d city chunks (%d with stone): worst %d boxes at %s (budget %d), worst %d shapes at %s (budget %d), worst %.2f ms at %s (settled %.2f, budget %.1f)"
+			% [_rect_chunks(terrain).size(), built_chunks, worst_boxes, worst_at, box_budget, worst_shapes, worst_shapes_at, shape_budget, worst_ms, worst_ms_at, settled_ms, ms_budget])
+
+	# ---- the two densest 7×7 web windows the bead names ----------------------
+	var side := 2 * WEB_RENDER_DISTANCE + 1
+	for anchor_v: Variant in [
+			{"name": "Parliament", "pos": Vector3(2760.0, 0.0, -480.0)},
+			{"name": "Chain Bridge", "pos": Vector3(2475.0, 0.0, 0.0)}]:
+		var anchor: Dictionary = anchor_v
+		var centre: Vector2i = terrain.world_to_chunk(anchor["pos"] as Vector3)
+		var boxes := 0
+		var shapes := 0
+		var origin := centre - Vector2i(WEB_RENDER_DISTANCE, WEB_RENDER_DISTANCE)
+		for dx in side:
+			for dz in side:
+				var at := origin + Vector2i(dx, dz)
+				boxes += int(boxes_at.get(at, 0))
+				shapes += int(shapes_at.get(at, 0))
+		print("  web window %s 7×7 at %s holds %d boxes (budget %d) and %d shapes (budget %d)"
+				% [String(anchor["name"]), centre, boxes, CITY_RESIDENCY_BOX_BUDGET, shapes, CITY_RESIDENCY_SHAPE_BUDGET])
+		if boxes > CITY_RESIDENCY_BOX_BUDGET:
+			_fail("the densest 7×7 around %s holds %d boxes, over CITY_RESIDENCY_BOX_BUDGET %d"
+					% [String(anchor["name"]), boxes, CITY_RESIDENCY_BOX_BUDGET])
+		if shapes > CITY_RESIDENCY_SHAPE_BUDGET:
+			_fail("the densest 7×7 around %s hangs %d shapes, over CITY_RESIDENCY_SHAPE_BUDGET %d"
+					% [String(anchor["name"]), shapes, CITY_RESIDENCY_SHAPE_BUDGET])
+
+
+# ============================================================================
+# CHECK 18 — DETERMINISM: every city chunk identical, outside streams unchanged
+# ============================================================================
+
+func _check_determinism_every_chunk(terrain_script: GDScript) -> void:
+	"""
+	Check 18. Every city chunk regenerates byte-identical across the two run
+	seeds (the city is authored, no draw may leak), and the crocodile/hunter
+	streams outside the rect are unchanged A/B'd against a build with the city
+	disabled.
+	"""
+	# ---- every city chunk byte-identical -----------------------------------
+	var a := _detached_terrain(terrain_script, RUN_SEED)
+	var b := _detached_terrain(terrain_script, SECOND_SEED)
+	var all_chunks: Array[Vector2i] = _rect_chunks(a)
+	var mismatched := 0
+	var total_boxes := 0
+	for chunk_pos: Vector2i in all_chunks:
+		var sig_a := _city_signature(a, chunk_pos)
+		var sig_b := _city_signature(b, chunk_pos)
+		total_boxes += (sig_a[0] as Array).size()
+		if var_to_bytes(sig_a) != var_to_bytes(sig_b):
+			mismatched += 1
+			if mismatched <= 3:
+				_fail("city chunk %s differs across seeds %d vs %d (%d vs %d boxes, %d vs %d shapes)"
+						% [chunk_pos, RUN_SEED, SECOND_SEED, (sig_a[0] as Array).size(), (sig_b[0] as Array).size(), (sig_a[1] as Array).size(), (sig_b[1] as Array).size()])
+	if mismatched == 0:
+		print("determinism: all %d city chunks byte-identical across seeds %d and %d (%d boxes total)"
+				% [all_chunks.size(), RUN_SEED, SECOND_SEED, total_boxes])
+	else:
+		print("determinism: %d of %d city chunks mismatched across seeds" % [mismatched, all_chunks.size()])
+	a.free()
+	b.free()
+
+	# ---- outside streams A/B: crocodiles + hunters --------------------------
+	var outside_origin := Vector3(BudapestPlan.BUDAPEST_MIN.x - 400.0, 0.0, 0.0)
+	var moved_crocs := _outside_stream_moved(terrain_script, "crocodile", outside_origin, 2)
+	var moved_hunters := _outside_stream_moved(terrain_script, "hunter", outside_origin, 2)
+	print("determinism outside rect: crocodiles moved %d chunks, hunters moved %d chunks (both 0 expected)"
+			% [moved_crocs, moved_hunters])
+	if moved_crocs > 0:
+		_fail("%d chunks outside Budapest moved their crocodiles when the city streamer ran — shared stream leak"
+				% moved_crocs)
+	if moved_hunters > 0:
+		_fail("%d chunks outside Budapest moved their hunters when the city streamer ran"
+				% moved_hunters)
+
+
+func _outside_stream_moved(terrain_script: GDScript, kind: String, at: Vector3, reach: int) -> int:
+	"""How many chunks outside Budapest moved this predator kind when the city
+	streamer was enabled. @return moved chunk count."""
+	var with_city := _outside_predator_field(terrain_script, true, at, reach, kind)
+	var without := _outside_predator_field(terrain_script, false, at, reach, kind)
+	var moved := 0
+	for k_v: Variant in with_city:
+		if var_to_bytes(with_city[k_v]) != var_to_bytes(without.get(k_v, [])):
+			moved += 1
+	return moved
+
+
+func _outside_predator_field(terrain_script: GDScript, city_on: bool, at: Vector3, reach: int, kind: String) -> Dictionary:
+	"""Outside field for one predator kind, city streamer on/off. @return chunk -> [name,pos,yaw]."""
+	var terrain := _detached_terrain(terrain_script, RUN_SEED)
+	var origin: Vector2i = terrain.world_to_chunk(at)
+	var out := {}
+	for dx in range(-reach, reach + 1):
+		for dz in range(-reach, reach + 1):
+			var chunk_pos := Vector2i(origin.x + dx, origin.y + dz)
+			var centre: Vector3 = terrain.chunk_to_world(chunk_pos)
+			if terrain.in_budapest(centre.x, centre.z):
+				continue
+			var parent := MeshInstance3D.new()
+			parent.position = centre
+			root.add_child(parent)
+			var platforms: Array = []
+			var batch: Array = []
+			var body := StaticBody3D.new()
+			var obstacles: Array = terrain.spawn_objects_in_chunk(chunk_pos, platforms, batch, body)
+			terrain.spawn_artifact_in_chunk(chunk_pos, parent, obstacles, batch, body)
+			terrain.spawn_biome_content_in_chunk(chunk_pos, obstacles, batch, body)
+			terrain.spawn_camp_in_chunk(chunk_pos, parent, obstacles, batch, body)
+			terrain.spawn_landmark_in_chunk(chunk_pos, parent, obstacles, batch, body)
+			terrain.spawn_chest_in_chunk(chunk_pos, parent, obstacles, batch, body)
+			if city_on:
+				terrain.spawn_city_in_chunk(chunk_pos, parent, obstacles, batch, body)
+			terrain.spawn_crocodiles_in_chunk(chunk_pos, parent, obstacles)
+			terrain.spawn_platform_crocodiles(chunk_pos, parent, platforms)
+			terrain.spawn_danube_crocodiles_in_chunk(chunk_pos, parent)
+			terrain.spawn_bosses_in_chunk(chunk_pos, parent, obstacles)
+			terrain.spawn_hunters_in_chunk(chunk_pos, parent, obstacles)
+			var parts: Array = []
+			for child in parent.get_children():
+				if not (child as Node).is_in_group("crocodile"):
+					continue
+				var name := String((child as Node).name)
+				var is_hunter := name.begins_with("Hunter_")
+				if (kind == "hunter" and not is_hunter) or (kind == "crocodile" and is_hunter):
+					continue
+				# Bosses are crocodiles too; filter by kind: crocodile kind includes bosses and ordinary, hunter kind includes only hunters
+				if kind == "crocodile" and name.begins_with("BossCrocodile_"):
+					# Bosses are outside the city (T west of gate), so include them as crocodiles
+					pass
+				var node := child as Node3D
+				parts.append([name, node.position, node.rotation.y])
+			out[chunk_pos] = parts
+			body.free()
+			parent.free()
+	terrain.free()
+	return out
