@@ -8244,12 +8244,22 @@ func _spawn_desert_content(chunk_center: Vector3, rng: RandomNumberGenerator, ob
 	for _i in count:
 		var local_x := rng.randf_range(-half, half)
 		var local_z := rng.randf_range(-half, half)
-		# Draw width/segments/yaw BEFORE the scarcity test so every draw still
-		# happens when the cactus is thinned — k=1 chunks stay byte-identical.
+		# Rejections are `continue`s AFTER the position draws, so a rejected cactus
+		# costs a spot and not a shift in this (or any) RNG sequence.
+		if not _biome_spot_ok(chunk_center, local_x, local_z, CACTUS_WIDTH_MAX * 1.2, CACTUS_ROAD_CLEARANCE, obstacles):
+			continue
+		# Edge feathering, same rule as the forest and the mountains: the chunk
+		# CENTRE chose this builder, but each cactus re-tests the biome at its OWN
+		# position, so the sand dissolves into the plain along the noise contour
+		# instead of stopping dead on a straight chunk seam.
+		if biome_at(chunk_center.x + local_x, chunk_center.z + local_z) != Biome.DESERT:
+			continue
+
 		var width := rng.randf_range(CACTUS_WIDTH_MIN, CACTUS_WIDTH_MAX)
 		var segments := rng.randi_range(2, 3)
 		var yaw := rng.randf_range(0.0, TAU)
-		# Pre-draw segment heights and arm rolls so the thinning is a POST-DRAW skip.
+		# Pre-collect segment heights so scarcity is the last check before emit
+		# and every draw still happens at k=1 (post-draw skip).
 		var seg_hs: Array[float] = []
 		for _s_seg in segments:
 			seg_hs.append(rng.randf_range(CACTUS_SEGMENT_MIN, CACTUS_SEGMENT_MAX))
@@ -8260,18 +8270,9 @@ func _spawn_desert_content(chunk_center: Vector3, rng: RandomNumberGenerator, ob
 			arm_len = width * rng.randf_range(2.0, 3.0)
 			arm_y_ratio = rng.randf_range(0.45, 0.7)
 		# Per-object scarcity: own hash stream (chunk, index, SCARCITY_SALT), no new draw.
+		# Must be the last continue before geometry is emitted, after every existing draw/rejection.
 		var scarcity_roll := float(hash(Vector3i(chunk_pos_cactus.x * 96174811, chunk_pos_cactus.y * 18266587, run_seed ^ SCARCITY_SALT ^ _i)) % 1000000) / 1000000.0
 		if scarcity_roll >= k_cactus:
-			continue
-		# Rejections are `continue`s AFTER the position draws, so a rejected cactus
-		# costs a spot and not a shift in this (or any) RNG sequence.
-		if not _biome_spot_ok(chunk_center, local_x, local_z, CACTUS_WIDTH_MAX * 1.2, CACTUS_ROAD_CLEARANCE, obstacles):
-			continue
-		# Edge feathering, same rule as the forest and the mountains: the chunk
-		# CENTRE chose this builder, but each cactus re-tests the biome at its OWN
-		# position, so the sand dissolves into the plain along the noise contour
-		# instead of stopping dead on a straight chunk seam.
-		if biome_at(chunk_center.x + local_x, chunk_center.z + local_z) != Biome.DESERT:
 			continue
 
 		var top_y := 0.0
@@ -8507,22 +8508,23 @@ func _spawn_forest_content(chunk_center: Vector3, rng: RandomNumberGenerator, ob
 		var local_z := rng.randf_range(-half, half)
 		var world_x := chunk_center.x + local_x
 		var world_z := chunk_center.z + local_z
-		# Draw trunk/canopy params BEFORE scarcity so the thinning is POST-DRAW.
-		var trunk_w := rng.randf_range(TREE_TRUNK_WIDTH_MIN, TREE_TRUNK_WIDTH_MAX)
-		var trunk_h := rng.randf_range(TREE_TRUNK_HEIGHT_MIN, TREE_TRUNK_HEIGHT_MAX)
-		var yaw := rng.randf_range(0.0, TAU)
-		var layers := rng.randi_range(TREE_CANOPY_LAYERS_MIN, TREE_CANOPY_LAYERS_MAX)
-		var canopy_w := rng.randf_range(TREE_CANOPY_WIDTH_MIN, TREE_CANOPY_WIDTH_MAX)
-		# Per-object scarcity: own hash stream, no draw on biome RNG.
-		var scarcity_roll := float(hash(Vector3i(chunk_pos_forest.x * 96174811, chunk_pos_forest.y * 18266587, run_seed ^ SCARCITY_SALT ^ _i)) % 1000000) / 1000000.0
-		if scarcity_roll >= k_forest:
-			continue
 		# Both rejections are post-draw `continue`s (see _spawn_desert_content).
 		# The radius is the widest a TRUNK can be — the canopy is visual-only, and
 		# leaves brushing a nearby block is exactly what a real wood looks like.
 		if not _biome_spot_ok(chunk_center, local_x, local_z, TREE_TRUNK_WIDTH_MAX * 0.71 + 0.3, FOREST_ROAD_CLEARANCE, obstacles):
 			continue
 		if biome_at(world_x, world_z) != Biome.FOREST:
+			continue
+
+		var trunk_w := rng.randf_range(TREE_TRUNK_WIDTH_MIN, TREE_TRUNK_WIDTH_MAX)
+		var trunk_h := rng.randf_range(TREE_TRUNK_HEIGHT_MIN, TREE_TRUNK_HEIGHT_MAX)
+		var yaw := rng.randf_range(0.0, TAU)
+		var layers := rng.randi_range(TREE_CANOPY_LAYERS_MIN, TREE_CANOPY_LAYERS_MAX)
+		var canopy_w := rng.randf_range(TREE_CANOPY_WIDTH_MIN, TREE_CANOPY_WIDTH_MAX)
+		# Per-object scarcity: own hash stream, no draw on biome RNG.
+		# Must be the last continue before geometry is emitted.
+		var scarcity_roll := float(hash(Vector3i(chunk_pos_forest.x * 96174811, chunk_pos_forest.y * 18266587, run_seed ^ SCARCITY_SALT ^ _i)) % 1000000) / 1000000.0
+		if scarcity_roll >= k_forest:
 			continue
 
 		# Trunk: solid, so you bump into it and crocodiles' raycasts see it.
@@ -8976,11 +8978,20 @@ func _spawn_snow_content(chunk_center: Vector3, rng: RandomNumberGenerator, obst
 	for _i in snow_tree_count:
 		var local_x := rng.randf_range(-tree_half, tree_half)
 		var local_z := rng.randf_range(-tree_half, tree_half)
+		# The FOOTPRINT, by contrast, bounds the TRUNK only — the forest's rule
+		#
+		# Both rejections are post-draw `continue`s, the discipline every removal in
+		# this file follows: the draws still advance the stream.
+		if not _biome_spot_ok(chunk_center, local_x, local_z, FROZEN_TREE_TRUNK_WIDTH_MAX * 0.71 + 0.3, FROZEN_TREE_ROAD_CLEARANCE, obstacles):
+			continue
+		if biome_at(chunk_center.x + local_x, chunk_center.z + local_z) != Biome.SNOW:
+			continue
+
 		var trunk_w := rng.randf_range(FROZEN_TREE_TRUNK_WIDTH_MIN, FROZEN_TREE_TRUNK_WIDTH_MAX)
 		var trunk_h := rng.randf_range(FROZEN_TREE_HEIGHT_MIN, FROZEN_TREE_HEIGHT_MAX)
 		var yaw := rng.randf_range(0.0, TAU)
 		var branch_n := rng.randi_range(2, 3)
-		# Pre-draw branch params so thinned trees still advance RNG.
+		# Pre-draw branch params so scarcity is the last check before emit.
 		var branch_as: Array[float] = []
 		var branch_bys: Array[float] = []
 		var branch_tilts: Array[float] = []
@@ -8990,17 +9001,6 @@ func _spawn_snow_content(chunk_center: Vector3, rng: RandomNumberGenerator, obst
 			branch_tilts.append(rng.randf_range(-0.5, 0.5))
 		var scarcity_roll_snowt := float(hash(Vector3i(chunk_pos_snow.x * 96174811, chunk_pos_snow.y * 18266587, run_seed ^ SCARCITY_SALT ^ _i)) % 1000000) / 1000000.0
 		if scarcity_roll_snowt >= k_snow:
-			continue
-		# The FOOTPRINT, by contrast, bounds the TRUNK only — the forest's rule
-		# verbatim: branches are collide = false, so nothing can be stuck inside one,
-		# and demanding clearance for the whole span would space dead trees out like
-		# massifs. `+ 0.3` is the forest's own slack figure.
-		#
-		# Both rejections are post-draw `continue`s, the discipline every removal in
-		# this file follows: the draws still advance the stream.
-		if not _biome_spot_ok(chunk_center, local_x, local_z, FROZEN_TREE_TRUNK_WIDTH_MAX * 0.71 + 0.3, FROZEN_TREE_ROAD_CLEARANCE, obstacles):
-			continue
-		if biome_at(chunk_center.x + local_x, chunk_center.z + local_z) != Biome.SNOW:
 			continue
 
 		# Trunk: solid, so you bump into it and the crocodiles' raycasts see it.
@@ -9053,18 +9053,11 @@ func _spawn_snow_content(chunk_center: Vector3, rng: RandomNumberGenerator, obst
 				placed = true
 		if not placed:
 			continue
-		# Per-object scarcity for mammoths: draw mammoth RNG before test so k=1 identical.
-		# We pre-draw the mammoth's yaw/params via a dummy call count? Instead draw
-		# a full mammoth into a temp batch and discard if thinned — simpler to use hash
-		# and still consume draws: we stash the RNG state, test, then if thinned we
-		# still need to advance RNG as if built. Do it by building into temp and discarding.
+		# Per-object scarcity for mammoths (post-draw, hash stream). Mammoth draws are
+		# inside _snow_mammoth but per-chunk RNG is isolated, so skipping the whole
+		# build when thinned does not shift any other chunk at k=1.
 		var scarcity_roll_mammoth := float(hash(Vector3i(chunk_pos_snow.x * 96174811, chunk_pos_snow.y * 18266587, run_seed ^ SCARCITY_SALT ^ (_i + 5000))) % 1000000) / 1000000.0
 		if scarcity_roll_mammoth >= k_snow:
-			# Advance RNG as if we built one, but discard geometry: call into temp.
-			var _tmp_batch: Array = []
-			var _tmp_body := StaticBody3D.new()
-			_snow_mammoth(Vector3(mx, 0.0, mz), rng, _tmp_batch, _tmp_body)
-			_tmp_body.free()
 			continue
 
 		var top := _snow_mammoth(Vector3(mx, 0.0, mz), rng, block_batch, block_body)
