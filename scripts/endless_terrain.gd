@@ -1779,6 +1779,61 @@ const CITY_AVENUE_STONE := Color(0.62, 0.60, 0.56)
 const CITY_DISTRICT_PROP_Z: float = 14.0
 const CITY_DISTRICT_PROP_SIZE: float = 2.0
 
+## ---------------------------------------------------------------------------
+## THE CITY BLOCKS (bead godot-test1-8gw.9) — how a street wall is DRAWN
+## ---------------------------------------------------------------------------
+##
+## The LAYOUT is BudapestPlan's (which cell, which wing, how deep, how many
+## storeys); everything below is the PALETTE AND THE THICKNESSES, which is the
+## same division of labour DISTRICT_HOUSES already runs under — the plan carries
+## shade FACTORS and this file carries the colours they lerp between.
+##
+## ONE FACADE BOX PER BUILDING, NEVER ONE BOX PER WINDOW. A 46 m block side is
+## two segments, each ONE colliding hull, and the articulation that makes it read
+## as a street is VERTEX-COLOURED BANDS lying against it: a ground-floor
+## shopfront, a balcony course, a roof cornice and one doorway. Seven boxes buy a
+## whole side of a Budapest block; a window grid would buy a tenth of one and
+## blow CITY_CHUNK_BOX_BUDGET on the first cell.
+##
+## THE STREAM IS PER-CELL AND FIXED-SALT — the tower furniture precedent
+## (`_plan_dressing`'s FIXED salt, never run_seed). Budapest is authored, so the
+## facade a player photographs has to be the same facade every run and for every
+## peer; and a cell's stream must not depend on which chunk is asking, because a
+## block straddles up to four of them. Both fall out of seeding one RNG off
+## (cell.x, cell.y, CITY_BLOCK_SALT) and drawing EVERY parameter for the whole
+## block before emitting anything.
+const CITY_BLOCK_SALT: int = 0x8_DA9E_571
+
+## A storey, in metres. 4.2 is a tall Pest piano-nobile floor rather than a
+## modern 3 m one, which is what makes a 5-storey block read as 21 m of eclectic
+## facade instead of a suburban office.
+const CITY_STOREY_HEIGHT: float = 4.2
+
+## The bands. Each is a thin, NON-COLLIDING box lying against the hull and
+## standing `*_PROUD` metres off its faces on the cross axis — the hull is the
+## only thing with a collision shape, so a band can never be something to snag on.
+const CITY_SHOPFRONT_HEIGHT: float = 2.9    # ground floor, one storey of glass
+const CITY_SHOPFRONT_PROUD: float = 0.16
+const CITY_BALCONY_THICKNESS: float = 0.26
+const CITY_BALCONY_PROUD: float = 0.52
+const CITY_CORNICE_THICKNESS: float = 0.55
+const CITY_CORNICE_PROUD: float = 0.46
+const CITY_DOOR_WIDTH: float = 1.5
+const CITY_DOOR_HEIGHT: float = 2.4
+const CITY_DOOR_PROUD: float = 0.10
+
+## The block palette. Walls reuse the CITY_PLASTER_A/B pair the gate district's
+## houses lerp between, so Budapest is ONE city and not two; the rest is new
+## because a 5-storey facade has parts a 2.5 m cottage does not.
+const CITY_SHOPFRONT_GLASS := Color(0.20, 0.22, 0.25)   # dark glazing + signage
+const CITY_BALCONY_IRON := Color(0.24, 0.24, 0.26)      # wrought-iron course
+const CITY_DOOR_WOOD := Color(0.30, 0.20, 0.14)         # the carriage gateway
+
+## How far a block's own facade stream may push a segment off the cell's base
+## storey count, in storeys. +-1 is a stepped roofline; more and the block stops
+## reading as one period.
+const CITY_BLOCK_STOREY_JITTER: int = 1
+
 ## THE DANUBE'S CROCODILES — the one predator the city rect does NOT turn off,
 ## and the whole reason the spawner policy is per-system instead of one
 ## tower_excludes() disc (DEC-9). Pest gets no cacti, no camps and no biome
@@ -3719,7 +3774,38 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 	# them all into one MultiMeshInstance3D parented to this chunk (so it is freed
 	# automatically when the chunk unloads, like every other per-chunk node).
 	if not block_batch.is_empty():
-		_build_block_multimesh(mesh_instance, block_batch)
+		# THE CITY'S STREET WALLS CAST NO SHADOW, and this one boolean is the
+		# whole of bead godot-test1-8gw.9's performance story (measured on a
+		# Pest chunk at the web build's own render_distance 3, standing still,
+		# best of three runs each):
+		#
+		#     before the blocks landed   47 FPS   22.6 ms process   126 draws
+		#     blocks, shadows casting    25 FPS   42.1 ms process   150 draws
+		#     blocks, shadows off        48 FPS   22.7 ms process   127 draws
+		#
+		# 19 ms a frame, all of it in the shadow pass and none of it in the draw
+		# call count the box budgets guard — and with it gone, a Budapest with
+		# every block filled costs what the empty one did, to the millisecond. A filled block is ~2,100 boxes in the
+		# 49-chunk web view, most of them 8-25 m tall, so every one of them is a
+		# long caster crossing several cascades of the directional light — the
+		# exact cost TowerInterior's "one batched mesh per storey and casts no
+		# shadow" already measured indoors, met again outdoors at city scale.
+		#
+		# THE BUILDINGS STILL LIGHT AND SELF-SHADE: they RECEIVE the directional
+		# light, so a north wall is dark and a south wall is bright and the
+		# roofline still reads. What is gone is the shadow a building throws onto
+		# the flat ground beside it, which in a city that is a street wall on both
+		# sides of every road is a dark band the fog eats anyway.
+		#
+		# ponytail: it is the WHOLE Budapest chunk, so a landmark's stone loses
+		# its cast shadow with the blocks around it — the chunk has ONE batch and
+		# splitting it is a second draw call per chunk, which is the invariant
+		# budapest_selfcheck check 4 exists to defend. Giving the sights their
+		# shadows back means a second batch and a raised accent budget, and it
+		# wants an owner ruling on the trade rather than a guess here.
+		var here := chunk_to_world(chunk_pos)
+		_build_block_multimesh(mesh_instance, block_batch,
+				not in_budapest(here.x, here.z))
 
 	# Attach the chunk's single block-collision body — but only if it actually
 	# collected shapes. A chunk with no blocks (rare) would otherwise leave an empty
@@ -3773,6 +3859,12 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 		# turns coins off must turn off all of them. Zero RNG, so it consumes no
 		# draw from anybody's stream.
 		spawn_approach_coins_in_chunk(chunk_pos, mesh_instance, obstacles)
+		# ...and the CITY's own routes (bead godot-test1-8gw.9), which pick the
+		# trail up at the west bank and carry it down every avenue of the street
+		# grid and across every bridge. Same flag again, same zero-RNG rule: the
+		# player should never be able to tell where one authored line ends and
+		# the next begins.
+		spawn_city_coins_in_chunk(chunk_pos, mesh_instance, obstacles)
 
 	# TELEMETRY, counted HERE and not in _ensure_chunk_ground: the counter exists
 	# to explain frame spikes (see its comment in SECTION 2), and after the
@@ -5595,7 +5687,8 @@ func create_box(center_pos: Vector3, dimensions: Vector3, yaw: float, rng: Rando
 	# create_chunk once generation finishes, so all these shapes unload with the chunk.)
 	block_body.add_child(collision_shape)
 
-func _build_block_multimesh(parent_chunk: MeshInstance3D, block_batch: Array) -> void:
+func _build_block_multimesh(parent_chunk: MeshInstance3D, block_batch: Array,
+		cast_shadows: bool = true) -> void:
 	"""
 	Turn a chunk's whole batch of blocks into ONE MultiMeshInstance3D, so every block
 	in the chunk renders in a single draw call (instead of one draw call per block).
@@ -5605,6 +5698,11 @@ func _build_block_multimesh(parent_chunk: MeshInstance3D, block_batch: Array) ->
 	                    parenting rule everything else follows).
 	@param block_batch: The list of { "transform": Transform3D, "color": Color } entries
 	                    create_box appended while building this chunk's blocks.
+	@param cast_shadows: OPTIONAL — false makes this chunk's batch a shadow RECEIVER
+	                    only. Defaults to true, so every pre-existing chunk in the
+	                    world is byte-for-byte what it was; the ONE caller that
+	                    passes false is a Budapest chunk, and the reason is measured
+	                    in create_chunk's comment at the call site.
 
 	EDUCATIONAL NOTE — how a MultiMesh renders many blocks in one draw call:
 	- A MultiMesh holds ONE `mesh` (here the shared unit cube) plus a flat buffer of
@@ -5638,6 +5736,8 @@ func _build_block_multimesh(parent_chunk: MeshInstance3D, block_batch: Array) ->
 	# One shared material for every block; vertex_color_use_as_albedo lets the
 	# per-instance colours show through (see _get_shared_block_material).
 	mmi.material_override = _get_shared_block_material()
+	if not cast_shadows:
+		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 
 	# Parent at the chunk's LOCAL origin: the instance transforms are already local to
 	# the chunk (create_box used chunk-local `center_pos`), and the chunk mesh itself
@@ -10014,6 +10114,15 @@ func spawn_city_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obst
 	# ---- 4. THE GATE DISTRICT ------------------------------------------------
 	_spawn_gate_district_in_chunk(chunk_center, obstacles, block_batch, block_body)
 
+	# ---- 4b. THE CITY BLOCKS (bead godot-test1-8gw.9) ------------------------
+	# Every block of the street grid the plan lays down, filled with a continuous
+	# street wall around a hollow courtyard. It runs AFTER the landmarks and the
+	# gate district for the same reason those run after the props: `obstacles` is
+	# read to decide nothing here (a block is authored, not rolled), but the
+	# ORDER the footprints land in is what every later spawner's candidate loop
+	# sees, and the authored city has first claim on its own ground.
+	_spawn_city_blocks_in_chunk(chunk_center, obstacles, block_batch, block_body)
+
 	# ---- 5. THE AVENUE ------------------------------------------------------
 	# The one street this bead draws: 16 m of pavement running east out of the
 	# gate along z = 0, to the Danube's west bank. Bead godot-test1-8gw.9 owns the
@@ -10626,6 +10735,250 @@ func _spawn_gate_district_in_chunk(chunk_center: Vector3, obstacles: Array, bloc
 		})
 
 
+func _spawn_city_blocks_in_chunk(chunk_center: Vector3, obstacles: Array,
+		block_batch: Array, block_body: StaticBody3D) -> void:
+	"""
+	Fill this chunk's share of every CITY BLOCK the plan's street grid bounds
+	(bead godot-test1-8gw.9).
+
+	@param chunk_center: This chunk's centre in world space, from chunk_to_world().
+	@param obstacles: Out-param; one keep-out disc per few metres of street wall,
+	                  so the hunters that DO spawn in the city are not wedged
+	                  inside a facade and a coin over one is skipped, not buried.
+	@param block_batch: Out-param; every box joins the chunk's ONE MultiMesh.
+	@param block_body: The chunk's single shared collision body.
+
+	WHAT THE OWNER ASKED FOR, verbatim: "budapest seems really empty, but it is
+	full of multi story buildings in fact, make it so, make it like what we can see
+	on google map walking mode". A street-view city is a CONTINUOUS STREET WALL,
+	so every block of the grid that the city has not reserved for something else
+	(BudapestPlan.block_buildable) gets four wings of contiguous facade around a
+	hollow courtyard: 4-6 storeys of eclectic Pest, 2-3 of Buda hillside.
+
+	AT MOST FOUR CELLS ARE EVER ASKED. A block is 62 m on the grid and a chunk is
+	50 m, so a chunk square can straddle one grid line per axis and no more. The
+	cheap rect reject in spawn_city_in_chunk has already turned away every chunk
+	outside the rect, so the cost of this function for the whole rest of the world
+	is zero.
+
+	A BLOCK IS BUILT WHOLE BY EVERY CHUNK THAT TOUCHES IT, AND SLICED ON THE WAY
+	OUT. That is the landmark builders' rule one scale down: the facade stream is
+	seeded off the CELL, every parameter for the whole block is drawn before
+	anything is emitted, and only then is each rect intersected with this chunk's
+	square. So two chunks slicing one block agree bit for bit on its heights and
+	its colours, and the wall meets flush at the seam because _city_chunk_slice
+	cuts both halves out of the same rect.
+	"""
+	var half := chunk_size / 2.0
+	var square := Rect2(chunk_center.x - half, chunk_center.z - half, chunk_size, chunk_size)
+	var lo: Vector2i = BudapestPlan.block_cell(square.position.x, square.position.y)
+	var hi: Vector2i = BudapestPlan.block_cell(square.end.x, square.end.y)
+	for k in range(lo.x, hi.x + 1):
+		for m in range(lo.y, hi.y + 1):
+			var cell := Vector2i(k, m)
+			if BudapestPlan.block_buildable(cell):
+				_build_city_block(cell, chunk_center, obstacles, block_batch, block_body)
+
+
+func _build_city_block(cell: Vector2i, chunk_center: Vector3, obstacles: Array,
+		block_batch: Array, block_body: StaticBody3D) -> void:
+	"""
+	One block of the city: eight buildings in a ring, and this chunk's slice of
+	each of them.
+
+	@param cell: The block's integer grid coordinates.
+
+	THE STREAM IS THE WHOLE CORRECTNESS ARGUMENT. `rng` is seeded off (cell,
+	CITY_BLOCK_SALT) and NOTHING ELSE — no run_seed (Budapest is authored, the
+	tower-furniture precedent), no chunk coordinate (a block is built by up to
+	four of them and they have to agree), no draw from anybody else's stream. And
+	every parameter for all eight buildings is drawn UP FRONT, before the first
+	box is emitted, so a chunk that ends up emitting nothing still consumes the
+	identical sequence.
+
+	FIVE BOXES BUY A BUILDING: one colliding hull, plus a cornice, a shopfront
+	band, a balcony course and a doorway. The bands are what make a 21 m plaster
+	box read as a Budapest facade without a box per window; see the CITY BLOCKS
+	constants.
+	"""
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(Vector3i(cell.x, cell.y, CITY_BLOCK_SALT))
+
+	var interior := BudapestPlan.block_rect(cell)
+	var centre := interior.get_center()
+	var band: Vector2i = BudapestPlan.BLOCK_STOREYS_BUDA \
+			if BudapestPlan.is_buda(centre.x, centre.y) \
+			else BudapestPlan.BLOCK_STOREYS_PEST
+
+	# ---- EVERY DRAW, BEFORE ANY EMIT ---------------------------------------
+	var base := rng.randi_range(band.x, band.y)
+	var roof := CITY_ROOF_TILE.lerp(CITY_ROOF_SLATE, rng.randf())
+	var storeys: Array[int] = []
+	var walls: Array[Color] = []
+	for _i in range(4 * BudapestPlan.BLOCK_SEGMENTS):
+		storeys.append(clampi(
+				base + rng.randi_range(-CITY_BLOCK_STOREY_JITTER, CITY_BLOCK_STOREY_JITTER),
+				band.x, band.y))
+		walls.append(CITY_PLASTER_A.lerp(CITY_PLASTER_B, rng.randf()))
+
+	# ---- ...AND ONLY THEN, THIS CHUNK'S SLICE OF EACH ------------------------
+	for side in 4:
+		var wing: Rect2 = BudapestPlan.block_wing(cell, side)
+		var outward: Vector2 = BudapestPlan.block_wing_outward(side)
+		# A wing is long on X for the north/south walls and long on Z for the two
+		# side walls; `along_x` is which axis it runs down, and the bands stand
+		# proud on the other one.
+		var along_x := absf(outward.y) > 0.5
+		for seg in range(BudapestPlan.BLOCK_SEGMENTS):
+			var idx := side * BudapestPlan.BLOCK_SEGMENTS + seg
+			var height := float(storeys[idx]) * CITY_STOREY_HEIGHT
+			var piece := _city_block_segment(wing, along_x, seg)
+			_city_block_boxes(piece, along_x, height, walls[idx], roof,
+					chunk_center, rng, block_batch, block_body)
+			_city_block_footprints(piece, height, chunk_center, obstacles)
+			_city_block_door(piece, outward, chunk_center, rng, block_batch, block_body)
+
+
+func _city_block_segment(wing: Rect2, along_x: bool, seg: int) -> Rect2:
+	"""One building's footprint: the `seg`'th equal slice of a wing along its long
+	axis. Equal slices and not jittered ones, because the ROOFLINE is where the
+	variety lives — two neighbours of different heights read as two houses, and a
+	jittered party wall would only cost a constant nobody can see."""
+	var n := float(BudapestPlan.BLOCK_SEGMENTS)
+	if along_x:
+		var w := wing.size.x / n
+		return Rect2(wing.position.x + float(seg) * w, wing.position.y, w, wing.size.y)
+	var d := wing.size.y / n
+	return Rect2(wing.position.x, wing.position.y + float(seg) * d, wing.size.x, d)
+
+
+func _city_block_boxes(piece: Rect2, along_x: bool, height: float, wall: Color,
+		roof: Color, chunk_center: Vector3, rng: RandomNumberGenerator,
+		block_batch: Array, block_body: StaticBody3D) -> void:
+	"""
+	The four SLICEABLE boxes of one building — hull, shopfront, balcony, cornice.
+
+	THE BANDS ARE GROWN BEFORE THEY ARE SLICED, never after, and that ordering is
+	load-bearing at a chunk seam. Growing a slice would push a band across the
+	seam and into the identical band its neighbour chunk grew the other way, so
+	the two would overlap by twice the proud distance and z-fight for the length
+	of the wall. Growing the WHOLE rect and then cutting it gives two pieces that
+	meet exactly, which is the same argument _city_chunk_slice already makes for
+	the hull.
+
+	Only the HULL collides. A cornice you could stand on would be a 20 m ledge
+	the whole way round every block in the city; a shopfront you could snag on
+	would be 46 m of kerb per block face. Both are decoration, and decoration in
+	this codebase pays for its pixels and not for a collision shape.
+	"""
+	# The hull: the one box with a collision shape, floor to roofline.
+	var hull := _city_chunk_slice(chunk_center, piece)
+	if hull.has_area():
+		var c := hull.get_center()
+		create_box(Vector3(c.x - chunk_center.x, height * 0.5, c.y - chunk_center.z),
+				Vector3(hull.size.x, height, hull.size.y), 0.0,
+				rng, block_batch, block_body, 0.0, wall)
+
+	# The three bands, each grown on the CROSS axis only so it stands proud of the
+	# street face (and of the courtyard face — a Budapest courtyard has cornices
+	# too) without lengthening the wall into the building next door.
+	for spec: Array in [
+			[CITY_SHOPFRONT_PROUD, CITY_SHOPFRONT_HEIGHT * 0.5,
+					CITY_SHOPFRONT_HEIGHT, CITY_SHOPFRONT_GLASS],
+			[CITY_BALCONY_PROUD, _city_balcony_y(height), CITY_BALCONY_THICKNESS,
+					CITY_BALCONY_IRON],
+			[CITY_CORNICE_PROUD, height + CITY_CORNICE_THICKNESS * 0.25,
+					CITY_CORNICE_THICKNESS, roof]]:
+		var proud: float = spec[0]
+		var band_y: float = spec[1]
+		var band_h: float = spec[2]
+		var band_c: Color = spec[3]
+		var grown: Rect2 = piece.grow_individual(0.0, proud, 0.0, proud) if along_x \
+				else piece.grow_individual(proud, 0.0, proud, 0.0)
+		var slice := _city_chunk_slice(chunk_center, grown)
+		if not slice.has_area():
+			continue
+		var mid := slice.get_center()
+		create_box(Vector3(mid.x - chunk_center.x, band_y, mid.y - chunk_center.z),
+				Vector3(slice.size.x, band_h, slice.size.y), 0.0,
+				rng, block_batch, block_body, 0.0, band_c, false)
+
+
+func _city_balcony_y(height: float) -> float:
+	"""The height of a building's balcony course: the top of its SECOND storey, or
+	of its first when it only has two. A course drawn above the roofline is a rail
+	hanging in the sky, which is what a fixed 8.4 m would give every Buda house."""
+	return minf(2.0 * CITY_STOREY_HEIGHT, height - CITY_STOREY_HEIGHT * 0.5)
+
+
+func _city_block_door(piece: Rect2, outward: Vector2, chunk_center: Vector3,
+		rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> void:
+	"""
+	One carriage gateway on a building's street face — the piece of a Pest block
+	that tells you the courtyard behind it is hollow.
+
+	OWNER-CHUNK PLACED, NOT SLICED, and that is the difference between a POINT
+	feature and a RECT one. A door is 1.5 m wide; slicing it would be pointless,
+	and centring it on the SLICE rather than on the building would move it every
+	time the chunk grid moved and would draw it twice on a building that straddles
+	a seam. So the chunk containing the door's own anchor builds the whole thing,
+	on the same half-open comparison the gate district's houses use.
+	"""
+	var c := piece.get_center()
+	var face := c + outward * (0.5 * (absf(outward.x) * piece.size.x
+			+ absf(outward.y) * piece.size.y) + CITY_DOOR_PROUD * 0.5)
+	var half := chunk_size / 2.0
+	var local := Vector3(face.x - chunk_center.x, 0.0, face.y - chunk_center.z)
+	if not (local.x >= -half and local.x < half and local.z >= -half and local.z < half):
+		return
+	# Thin on the outward axis, CITY_DOOR_WIDTH across it.
+	var size := Vector3(CITY_DOOR_PROUD, CITY_DOOR_HEIGHT, CITY_DOOR_WIDTH) \
+			if absf(outward.x) > 0.5 \
+			else Vector3(CITY_DOOR_WIDTH, CITY_DOOR_HEIGHT, CITY_DOOR_PROUD)
+	create_box(local + Vector3(0.0, CITY_DOOR_HEIGHT * 0.5, 0.0), size, 0.0,
+			rng, block_batch, block_body, 0.0, CITY_DOOR_WOOD, false)
+
+
+func _city_block_footprints(piece: Rect2, height: float, chunk_center: Vector3,
+		obstacles: Array) -> void:
+	"""
+	Claim one building's ground as `obstacles`, as a CHAIN OF DISCS rather than as
+	one circumscribing circle.
+
+	@param piece: the building's own rect, world XZ. The claim is made in this
+	              chunk's local frame; a disc that falls outside the chunk is
+	              simply never asked about.
+
+	WHY NOT ONE DISC. `obstacles` is a list of circles, and the circle round a
+	23 x 13 m building has a 13 m radius centred 6.5 m behind the facade — it
+	would reach 6.5 m past the kerb into a 16 m street, and every coin on that
+	avenue would be dropped by _settle_coin_y as "buried". A chain of discs one
+	wing-depth apart covers the same rect and reaches only ~2.7 m into the street,
+	which is inside the pavement the buildings stand on.
+
+	climbable: FALSE, because these are 8 to 25 m tall. That is what makes a coin
+	that lands on one SKIPPED rather than perched on a roof no one can reach, and
+	it is the same mountain-massif convention the plateaus use.
+	"""
+	var r := BudapestPlan.BLOCK_WING_DEPTH * 0.5
+	var along_x := piece.size.x >= piece.size.y
+	var span := piece.size.x if along_x else piece.size.y
+	var n := maxi(1, ceili(span / BudapestPlan.BLOCK_WING_DEPTH))
+	for i in range(n):
+		var t := (float(i) + 0.5) / float(n)
+		var p := piece.position + Vector2(
+				piece.size.x * (t if along_x else 0.5),
+				piece.size.y * (0.5 if along_x else t))
+		obstacles.append({
+			"pos": Vector3(p.x - chunk_center.x, 0.0, p.y - chunk_center.z),
+			# The disc that covers a wing-depth square of the wall, so the chain
+			# leaves no gap between its links.
+			"radius": r * sqrt(2.0),
+			"top": height,
+			"climbable": false,
+		})
+
+
 func spawn_approach_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array) -> void:
 	"""
 	Lay this chunk's slice of the APPROACH + AVENUE coin line: the trail that
@@ -10730,6 +11083,142 @@ func _approach_coin_line() -> PackedVector2Array:
 		_approach_coin_line_cache = BudapestPlan.approach_coin_line(
 				terminal, ROAD_TERMINAL_X, _approach_coin_east_end())
 	return _approach_coin_line_cache
+
+func spawn_city_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array) -> void:
+	"""
+	Lay this chunk's slice of the CITY's own coin routes (bead godot-test1-8gw.9):
+	the avenues of the street grid, and every bridge across the Danube.
+
+	@param chunk_pos: Chunk coordinates this body is laying coins for.
+	@param parent_chunk: The chunk mesh the coins attach to (positions are stored
+	                     chunk-LOCAL, exactly like the road's).
+	@param obstacles: This chunk's block footprints, for the shared perch-or-skip
+	                  rule in _settle_coin_y.
+
+	WHY IT EXISTS. Coins are the headline score since bead .1 retired distance,
+	and bead .3's approach line deliberately stops at the Danube's west bank — its
+	own docstring says so and calls the 1.4 km of Pest east of it "no coin source
+	at all". This is that source. `in_budapest()` turns every PROCEDURAL coin off
+	inside the rect, so an authored city needs an authored reward line.
+
+	ZERO RNG, exactly like its sibling above: a fixed pitch along authored lines,
+	so there is no stream here to keep independent of the chunk's, nothing for a
+	determinism A/B to measure, and the same coin stands in the same metre of
+	Budapest in every run and for every peer. Coin identity is Coin.id_at(world)
+	(quantized position), so multiplayer claims work with NO mp_manager edit.
+
+	THREE RULES, and each one is a thing that would otherwise be a bug:
+	  1. NOT ON THE APPROACH LINE. Street row 0 IS the avenue out of the gate, and
+	     bead .3's corridor already paves it as far as the west bank. Coins west
+	     of `_approach_coin_east_end()` inside the carriageway are therefore
+	     skipped — the two lines are one trail and must not double up.
+	  2. NOT UNDER A BRIDGE. A deck rect crosses the grid at 12 m, and an avenue
+	     coin under one would sit at COIN_GROUND_HEIGHT with a colliding slab over
+	     it (a deck takes no `obstacles` footprint, deliberately, so _settle_coin_y
+	     cannot see it — the same reasoning `_approach_coin_east_end` is built on).
+	     The bridge's OWN line, at deck height, replaces it.
+	  3. GEMS AT THE SQUARES. Where two avenues cross is a square, and a square is
+	     worth stopping at — a gem is 10 coins, so the streak the player is
+	     building has somewhere to pay off.
+	"""
+	if not spawn_coins or coin_scene == null:
+		return
+	var centre := chunk_to_world(chunk_pos)
+	var half := chunk_size / 2.0
+	var square := Rect2(centre.x - half, centre.z - half, chunk_size, chunk_size)
+	if not square.intersects(BudapestPlan.rect()):
+		return
+
+	# ---- THE AVENUES --------------------------------------------------------
+	# Both axes, one loop each: a NORTH-SOUTH avenue is a fixed X with coins
+	# stepped in Z, and an EAST-WEST one is the transpose. The step is anchored on
+	# the city rect's own corner rather than on the chunk, so a coin's position is
+	# a function of the CITY and every chunk that could own it agrees on where it
+	# is — the road's seam rule, one authored line along.
+	for axis_x in [true, false]:
+		var line_lo: int = ceili((square.position.x - BudapestPlan.GATE.x) / BudapestPlan.STREET_PITCH) \
+				if axis_x else ceili((square.position.y - BudapestPlan.GATE.z) / BudapestPlan.STREET_PITCH)
+		var line_hi: int = floori((square.end.x - BudapestPlan.GATE.x) / BudapestPlan.STREET_PITCH) \
+				if axis_x else floori((square.end.y - BudapestPlan.GATE.z) / BudapestPlan.STREET_PITCH)
+		for i in range(line_lo, line_hi + 1):
+			if not BudapestPlan.is_avenue(i):
+				continue
+			var fixed: float = BudapestPlan.street_x(i) if axis_x else BudapestPlan.street_z(i)
+			var run_min: float = BudapestPlan.BUDAPEST_MIN.y if axis_x else BudapestPlan.BUDAPEST_MIN.x
+			var lo := maxf(square.position.y if axis_x else square.position.x, run_min)
+			var hi := minf(square.end.y if axis_x else square.end.x,
+					BudapestPlan.BUDAPEST_MAX.y if axis_x else BudapestPlan.BUDAPEST_MAX.x)
+			var j := ceili((lo - run_min) / BudapestPlan.CITY_COIN_SPACING)
+			var along := run_min + float(j) * BudapestPlan.CITY_COIN_SPACING
+			while along <= hi:
+				var world := Vector3(fixed if axis_x else along, COIN_GROUND_HEIGHT,
+						along if axis_x else fixed)
+				along += BudapestPlan.CITY_COIN_SPACING
+				_place_city_coin(world, chunk_pos, centre, parent_chunk, obstacles,
+						_city_square_here(world.x, world.z))
+
+	# ---- AND EVERY BRIDGE ---------------------------------------------------
+	# Down the middle of each deck, at the height the deck's own profile gives —
+	# BudapestPlan.bridge_surface_y, the same expression the slabs are built from,
+	# so the trail climbs each ramp with the stone instead of through it.
+	for row_v: Variant in BudapestPlan.BRIDGES:
+		var deck: Rect2 = BudapestPlan.bridge_deck(row_v)
+		if not square.intersects(deck):
+			continue
+		var z := deck.get_center().y
+		var b := ceili((maxf(square.position.x, deck.position.x) - deck.position.x)
+				/ BudapestPlan.CITY_COIN_SPACING)
+		var x := deck.position.x + float(b) * BudapestPlan.CITY_COIN_SPACING
+		while x <= minf(square.end.x, deck.end.x):
+			var world := Vector3(x, BudapestPlan.bridge_surface_y(row_v, x) + COIN_GROUND_HEIGHT, z)
+			x += BudapestPlan.CITY_COIN_SPACING
+			if world_to_chunk(world) != chunk_pos:
+				continue
+			# NO _settle_coin_y HERE, and that is deliberate: a deck coin is 12 m
+			# up, and the perch rule is about what stands on the GROUND under a
+			# column. Asking it would drop every coin on the Chain Bridge for the
+			# pier stone at its foot.
+			var gem := coin_scene.instantiate()
+			gem.position = Vector3(world.x - centre.x, world.y, world.z - centre.z)
+			parent_chunk.add_child(gem)
+
+
+func _place_city_coin(world: Vector3, chunk_pos: Vector2i, centre: Vector3,
+		parent_chunk: MeshInstance3D, obstacles: Array, gem: bool) -> void:
+	"""One avenue coin, through every rule the routes' docstring lists. Bucketed
+	by `world_to_chunk` like the road's, so seams are gap-free and duplicate-free."""
+	if world_to_chunk(world) != chunk_pos:
+		return
+	# Rule 1 — the gate avenue is already paved as far as the west bank.
+	if absf(world.z - BudapestPlan.GATE.z) < BudapestPlan.AVENUE_HALF_WIDTH \
+			and world.x < _approach_coin_east_end():
+		return
+	# Rule 2 — a bridge's own line owns the crossing, at deck height.
+	for row_v: Variant in BudapestPlan.BRIDGES:
+		if (BudapestPlan.bridge_deck(row_v) as Rect2).has_point(Vector2(world.x, world.z)):
+			return
+	var local := Vector3(world.x - centre.x, world.y, world.z - centre.z)
+	local.y = _settle_coin_y(local.x, local.z, local.y, obstacles)
+	if is_inf(local.y):
+		return
+	var coin := coin_scene.instantiate()
+	coin.position = local
+	if gem:
+		coin.make_gem()
+	parent_chunk.add_child(coin)
+
+
+func _city_square_here(x: float, z: float) -> bool:
+	"""Is this coin standing on a SQUARE — within half a pitch of a crossing of two
+	avenues? That is where the gems go, and it is the one place the grid's two
+	axes have anything to say to each other."""
+	var half := BudapestPlan.CITY_COIN_SPACING * 0.5
+	var k := roundi((x - BudapestPlan.GATE.x) / BudapestPlan.STREET_PITCH)
+	var m := roundi((z - BudapestPlan.GATE.z) / BudapestPlan.STREET_PITCH)
+	return BudapestPlan.is_avenue(k) and BudapestPlan.is_avenue(m) \
+			and absf(x - BudapestPlan.street_x(k)) <= half \
+			and absf(z - BudapestPlan.street_z(m)) <= half
+
 
 func _approach_coin_east_end() -> float:
 	"""
