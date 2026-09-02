@@ -3440,6 +3440,12 @@ var _crowd_confusion_cooldown: float = 0.0
 ## contract (finding #1). Only a confused row ever sets this.
 var _crowd_errand: bool = false
 
+func _tick_crowd_cooldown(delta: float) -> void:
+	## Cooldown tick with pause while the crowd errand runs (finding #3).
+	## Extracted so the probe can drive the shipped tick rather than a copy of it.
+	if _crowd_confusion_cooldown > 0.0 and not _crowd_errand:
+		_crowd_confusion_cooldown = maxf(_crowd_confusion_cooldown - delta, 0.0)
+
 ## THE LEAP ARM'S ONE PIECE OF MEMORY (`_behave_leap`): how many seconds of
 ## GROUNDED recovery this boss still owes before it may hop again, as
 ## { "cooldown": float }. Empty means "ready now", so a dragon that has just
@@ -3905,15 +3911,9 @@ func _physics_process(delta: float) -> void:
 	# terrain, and skipping gravity is what keeps it perfectly put) instead of
 	# half-simulating. Every other piece of state (heading, chase flags, phases,
 	# confinement) is preserved untouched, so waking resumes seamlessly.
-	# Crowd-confusion re-roll guard ticks while awake (runtime state, no draw).
-	# Above the lod_active early return in effect: the decrement is placed
-	# BEFORE the gate so the frame that decides to sleep still ticks, and sleep
-	# itself is refused while the guard ticks (see set_lod_active) so a
-	# just-confused hunter that would otherwise sleep keeps the guard from freezing.
-	# Paused while the crowd errand runs (finding #3) — otherwise the 6 s expires
-	# during the walk+hold and the hunter re-rolls immediately after.
-	if _crowd_confusion_cooldown > 0.0 and not _crowd_errand:
-		_crowd_confusion_cooldown = maxf(_crowd_confusion_cooldown - delta, 0.0)
+	# Crowd cooldown tick — before the lod gate so the frame that decides to sleep
+	# still ticks, and sleep itself is refused while the guard ticks (see set_lod_active).
+	_tick_crowd_cooldown(delta)
 
 	if not lod_active:
 		velocity = Vector3.ZERO

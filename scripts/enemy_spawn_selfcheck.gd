@@ -3294,11 +3294,7 @@ func _probe_crowd_inside(species_name: String) -> void:
 			var cleared_cd: float = -1.0
 			for _s in range(int(hold / 0.016) + 120):
 				croc._investigate_move(0.016)
-				# Keep ticking the cooldown as _physics_process would — paused while _crowd_errand.
-				if not bool(croc.get("_crowd_errand")):
-					var cd: float = float(croc.get("_crowd_confusion_cooldown"))
-					if cd > 0.0:
-						croc.set("_crowd_confusion_cooldown", maxf(cd - 0.016, 0.0))
+				croc._tick_crowd_cooldown(0.016)
 				if not bool(croc.get("is_investigating")):
 					cleared_cd = float(croc.get("_crowd_confusion_cooldown"))
 					break
@@ -3378,6 +3374,8 @@ func _probe_crowd_inside(species_name: String) -> void:
 			if hold_after >= hold_before - 0.001:
 				_fail("SPECIES['%s'] hold did not tick while _crowd_errand with quarry at 60 m — movement branch was hijacked by _track_move (finding #2)" % species_name)
 			lod_stub.free()
+		else:
+			_fail("SPECIES['%s'] produced 0 track-test confusions in 80 inside-city trials — cannot guard _track_scent" % species_name)
 		track_croc.free()
 		# Restore stub quarry for the cooldown guard below.
 		stub.global_position = city_pos + Vector3(5, 0, 0)
