@@ -81,8 +81,11 @@ const TERRITORY_RADIUS: float = CROC_SCRIPT.BOSS_TERRITORY_RADIUS
 const DETECTION_RADIUS: float = CROC_SCRIPT.BOSS_DETECTION_RADIUS
 const SIM_RADIUS: float = LOD_SCRIPT.SIM_RADIUS
 
-## Body scale for the test boss. The terrain's schedule hands out 2.5x–6x; a
+## Body scale for the test boss. The terrain's schedule hands out 3.75x–9x; a
 ## middling one keeps the capsule from dominating the distances measured here.
+## Deliberately NOT the cap: check 7 already measures the footprint promise
+## against BOSS_MAX_SCALE arithmetically, and a 9x capsule here would swamp the
+## 25/32/45 m radii checks 1-6 are actually about.
 const BOSS_SCALE: float = 3.0
 
 ## Any fixed seed: it makes the WANDER stream deterministic (a boss takes no
@@ -635,7 +638,7 @@ func _check_footprint(boss: CharacterBody3D) -> void:
 	only where that circle is clear. The constant is a flat number, not a per-kind
 	measurement, so it is a PROMISE EVERY SCENE MAKES and nothing until now made
 	the scene keep it: a capsule reaching further than 0.7 m at body scale 1 gets
-	placed overlapping a tree or a rock and, at the 6x cap, wedges there.
+	placed overlapping a tree or a rock and, at the 9x cap, wedges there.
 
 	THE TRAP IS THE OFFSET, and it has already been hit once (the hydra, PR #125):
 	the reach of a LAID capsule is not its radius and not its half-length, it is
@@ -688,7 +691,7 @@ func _check_footprint(boss: CharacterBody3D) -> void:
 				% reach + "over BOSS_FOOTPRINT_RADIUS_PER_SCALE (%.2f) — the "
 				% budget + "spawner clears only %.2f m per unit scale, so this "
 				% budget + "kind gets placed overlapping a prop and wedges in it "
-				+ "at the 6x cap. Shorten the mesh, or centre it on its own "
+				+ "at the 9x cap. Shorten the mesh, or centre it on its own "
 				+ "origin: the reach is the collider's offset PLUS its extent, so "
 				+ "an off-centre body spends the budget twice.")
 

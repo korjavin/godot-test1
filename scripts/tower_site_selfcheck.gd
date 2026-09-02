@@ -20,7 +20,7 @@ extends SceneTree
 ##      address. Checks 1 and 2.
 ##   2. THE SITE IS DRY, AND IT IS EMPTY. is_river_at() ignores Y by contract and
 ##      the player's wade test is XZ-only, so a tower over a river band would wade
-##      on every floor; and a mountain massif, a nomad camp or a 6x boss standing
+##      on every floor; and a mountain massif, a nomad camp or a 9x boss standing
 ##      in the lobby is the same bug with a different silhouette. Checks 3 and 4.
 ##      Since phase 12 the site no longer RUNS from the water — the water is masked
 ##      under it — so check 3 asserts the mask, from both sides of its rim.

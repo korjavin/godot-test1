@@ -851,7 +851,25 @@ const BOSS_MAX_SCALE: float = 9.0
 
 ## A small deterministic lateral offset off the centerline (±this, in meters), so
 ## bosses don't all stand dead-center on the road like a row of toll booths.
-const BOSS_LATERAL_MAX: float = 4.0
+##
+## WIDENED 4.0 -> 9.0 WITH THE 1.5x SIZE BUMP (bead godot-test1-9k7), and it is
+## the half of that bump that actually cost something. The candidate walk in
+## spawn_bosses_in_chunk rejects any spot within BOSS_FOOTPRINT_RADIUS_PER_SCALE
+## * scale of an obstacle — 6.3 m at the new 9x cap where it was 4.2 m at 6x — so
+## at the old ±4 m every candidate a boss had lay inside one 8 m-wide window and
+## a single mound near the station killed all of them. MEASURED over 25 seeds /
+## 126 road stations: 105 bosses reached the world at the old scales, 91 at the
+## new ones with this still at 4.0, and 106 with 9.0 + BOSS_PLACE_TRIES 8. More
+## tries alone bought 1 (92) — the band, not the draw count, was the bound.
+##
+## THE CEILING ON THIS NUMBER IS THE CAMP/LANDMARK EXCLUSION, which is one
+## inequality per feature and is stated at CAMP_ROAD_CLEARANCE and
+## LANDMARK_ROAD_CLEARANCE (landmark_selfcheck re-checks its half from the live
+## constants). With BOSS_FORWARD_OFFSET 8.0 the boss's reach off a station centre
+## is hypot(8, 9) = 12.04 m, and the tightest of the two bounds allows
+## 22.0 - 9.5 = 12.5 — i.e. 0.46 m of slack. Raising this further means raising
+## those clearances first.
+const BOSS_LATERAL_MAX: float = 9.0
 
 ## Spawn a bit AHEAD of the owning station along the road tangent, so the player
 ## sees the boss looming up the road rather than materializing beside them.
@@ -861,9 +879,9 @@ const BOSS_FORWARD_OFFSET: float = 8.0
 ## crocodile's collision capsule LIES DOWN (piglet_crocodile.tscn rotates the
 ## 1.4 m capsule onto its side), so its widest horizontal reach is half that
 ## length — 0.7 m at body scale 1. Multiplying by the boss's scale is the whole
-## point: a 6x boss needs ~4.2 m of clearance from a block where a normal
-## crocodile needs ~0.7, so the fixed min_object_clearance that the ordinary
-## crocodile spawner uses would be far too small here.
+## point: a 9x boss (BOSS_MAX_SCALE) needs ~6.3 m of clearance from a block where
+## a normal crocodile needs ~0.7, so the fixed min_object_clearance that the
+## ordinary crocodile spawner uses would be far too small here.
 const BOSS_FOOTPRINT_RADIUS_PER_SCALE: float = 0.7
 
 ## How many deterministic lateral candidates a boss tries before it is skipped
@@ -872,7 +890,14 @@ const BOSS_FOOTPRINT_RADIUS_PER_SCALE: float = 0.7
 ## the draw that existed before this list did, so the boss schedule (which
 ## station, what size) and the placement of every unobstructed boss are
 ## byte-for-byte what they were.
-const BOSS_PLACE_TRIES: int = 4
+##
+## 4 -> 8 with the 1.5x size bump, and the honest measurement is that this is the
+## SMALLER half of that fix: at ±4 m lateral, 8 tries bought one extra boss over
+## 126 stations. It is worth having beside the widened BOSS_LATERAL_MAX (which
+## bought 8 more) because the two multiply — a wider band with too few draws
+## samples it too sparsely — but 12 tries bought only one further boss (107), so
+## this is where the curve flattens.
+const BOSS_PLACE_TRIES: int = 8
 
 ## Fixed seed for the boss placement RNG — its OWN independent hash stream (like
 ## ROAD_COIN_SEED), mixed with the boss index and run_seed as
@@ -1076,14 +1101,17 @@ const CAMP_RADIUS: float = 9.4
 ## distance to STATION CENTRES (that is all _road_lateral_distance computes), and
 ## a boss does NOT stand on its station centre: _boss_at offsets it
 ## BOSS_FORWARD_OFFSET (8.0 m) along the tangent AND up to BOSS_LATERAL_MAX
-## (4.0 m) across it. Both legs must appear in the bound, or the invariant is
+## (9.0 m) across it. Both legs must appear in the bound, or the invariant is
 ## checked against a number 8 m smaller than the real one:
 ##     CAMP_ROAD_CLEARANCE > CAMP_RADIUS + sqrt(BOSS_FORWARD_OFFSET^2 + BOSS_LATERAL_MAX^2)
-##     22.0                > 9.4         + sqrt(8.0^2 + 4.0^2) = 9.4 + 8.94 = 18.34  ✓
-## i.e. 3.66 m of slack, not the 8.6 the lateral leg alone suggests. (The real
+##     22.0                > 9.4         + sqrt(8.0^2 + 9.0^2) = 9.4 + 12.04 = 21.44  ✓
+## i.e. 0.56 m of slack — it was 3.66 before bead godot-test1-9k7 widened the
+## lateral band from 4.0 to 9.0 to find spots for a 9x boss. (The landmark's
+## copy of this inequality is tighter still, 0.46 m, and is the one that binds.)
+## (The real
 ## clearance is larger still — stations are only _road_spacing() 6 m apart, so
-## the boss is in practice ~4.5 m from its NEAREST station centre rather than
-## 8.94 — but the hypotenuse is the bound that holds without assuming anything
+## the boss is in practice closer to its NEAREST station centre than the
+## hypotenuse says — but the hypotenuse is the bound that holds without assuming anything
 ## about station spacing.) That inequality is the WHOLE boss exclusion —
 ## spawn_bosses_in_chunk needs no edit and no extra test. Re-check this line if
 ## ANY of the four constants named in it is retuned, BOSS_FORWARD_OFFSET included.
@@ -1508,10 +1536,12 @@ const LANDMARK_RADIUS: float = 9.5
 ## arithmetic. The test measures distance to STATION CENTRES (that is all
 ## _road_lateral_distance computes), and a boss does NOT stand on its station
 ## centre: _boss_at offsets it BOSS_FORWARD_OFFSET (8.0 m) along the tangent AND
-## up to BOSS_LATERAL_MAX (4.0 m) across it, so BOTH legs belong in the bound:
+## up to BOSS_LATERAL_MAX (9.0 m) across it, so BOTH legs belong in the bound:
 ##     LANDMARK_ROAD_CLEARANCE > LANDMARK_RADIUS + sqrt(BOSS_FORWARD_OFFSET^2 + BOSS_LATERAL_MAX^2)
-##     22.0                    > 9.5             + sqrt(8.0^2 + 4.0^2) = 9.5 + 8.94 = 18.44  ✓
-## i.e. 3.56 m of slack, NOT the 8.5 the lateral leg alone suggests. That single
+##     22.0                    > 9.5             + sqrt(8.0^2 + 9.0^2) = 9.5 + 12.04 = 21.54  ✓
+## i.e. 0.46 m of slack — it was 3.56 before bead godot-test1-9k7 widened the
+## lateral band from 4.0 to 9.0 so a 9x boss could find a clear spot, and this is
+## the TIGHTEST of the two boss exclusions (the camp's has 0.56). That single
 ## inequality IS the whole boss exclusion — spawn_bosses_in_chunk needs no edit
 ## and no extra test. Re-check this line if ANY of the four constants named in it
 ## is retuned, BOSS_FORWARD_OFFSET included.
@@ -2244,7 +2274,7 @@ const BIOME_BOSS: Dictionary = {
 	## no projectile, no behaviour arm, no speed opt-out. The second row, and the
 	## cheap one: everything it needed already existed, so it is this line, a
 	## SPECIES entry and a .tscn. (Forest is the densest tree cover in the world
-	## and a 6x dragon is a wide body, so some forest stations will legitimately
+	## and a 9x dragon is a ~6.3 m-radius body, so some forest stations will legitimately
 	## find no clear candidate and place no boss at all — that is the designed
 	## outcome of spawn_bosses_in_chunk's clearance walk, not a reason to loosen
 	## it.)
@@ -3749,7 +3779,7 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 		spawn_danube_crocodiles_in_chunk(chunk_pos, mesh_instance)
 		# Rare BOSS crocodiles guarding the coin road (deterministic, station-
 		# indexed — its own BOSS_SEED hash stream, no shared RNG draws consumed).
-		# Gets `obstacles` like its siblings so a 2.5x-6x boss is never wedged
+		# Gets `obstacles` like its siblings so a 3.75x-9x boss is never wedged
 		# inside a wall/mound/tree/mountain right on the player's path.
 		spawn_bosses_in_chunk(chunk_pos, mesh_instance, obstacles)
 
@@ -6347,7 +6377,7 @@ func spawn_bosses_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, ob
 	lands in THIS chunk (world_to_chunk(pos) == chunk_pos) — each boss is claimed
 	by exactly one chunk, so there are no seam gaps or duplicates.
 
-	A boss is 2.5x–6x the size of a normal crocodile and stands ON the road, so a
+	A boss is 3.75x–9x the size of a normal crocodile and stands ON the road, so a
 	boss wedged into a wall/mound/tree/mountain sits right on the player's path.
 	Each boss therefore walks its deterministic candidate list (see _boss_at) and
 	takes the first spot clear of every footprint in `obstacles`, exactly like the
@@ -6437,7 +6467,7 @@ func spawn_bosses_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, ob
 
 		var boss: Dictionary = _boss_at(cur_i)
 		var boss_scale: float = boss.scale
-		# Clearance this boss needs, SCALED BY ITS SIZE — a 6x boss reaches ~4.2 m
+		# Clearance this boss needs, SCALED BY ITS SIZE — a 9x boss reaches ~6.3 m
 		# where a normal crocodile reaches ~0.7, so the crocodile spawner's fixed
 		# min_object_clearance would be nowhere near enough (see the constant).
 		var footprint: float = BOSS_FOOTPRINT_RADIUS_PER_SCALE * boss_scale
@@ -6460,7 +6490,7 @@ func spawn_bosses_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, ob
 					clear = false
 					break
 			# The tower's site is one more thing a boss may not stand in — its own
-			# scaled footprint again, so a 6x boss cannot lean into the doorway.
+			# scaled footprint again, so a 9x boss cannot lean into the doorway.
 			# Post-draw by construction: _boss_at already computed this whole
 			# candidate list on its own hash stream, so skipping one costs nothing.
 			if clear and tower_excludes(candidate.x, candidate.z, footprint):

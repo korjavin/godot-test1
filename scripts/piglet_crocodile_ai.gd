@@ -205,8 +205,8 @@ const SPECIES: Dictionary = {
 		##
 		## BOSSES NEED NO SPECIAL CASE. _ready() sets
 		## `scale = Vector3.ONE * boss_scale` on the BODY, and the model is its
-		## child, so this local offset is scaled by the engine: a 6x boss sinks
-		## 6 × 0.18 = 1.08 m in world space and shows 6 × 0.060 = 0.36 m of ridge.
+		## child, so this local offset is scaled by the engine: a 9x boss sinks
+		## 9 × 0.18 = 1.62 m in world space and shows 9 × 0.060 = 0.54 m of ridge.
 		## The submerged FRACTION is identical at every scale, which is what "a
 		## proportional snout" actually means. Same free ride for the ±25%
 		## size_random_factor roll on regular crocodiles.
@@ -1541,7 +1541,7 @@ const SPECIES: Dictionary = {
 
 		# ----- Obstacle avoidance -----
 		## Longer feelers than any quadruped's, cast from higher up: this body is
-		## a 1.8 m humanoid BEFORE the 2.5x-6x boss scale, so a probe at the
+		## a 1.8 m humanoid BEFORE the 3.75x-9x boss scale, so a probe at the
 		## crocodile's 0.3 m would sample the snow under its knees.
 		"avoid_look_ahead": 4.0,
 		"avoid_feeler_angle": PI / 5.0,  # 36°
@@ -1572,8 +1572,8 @@ const SPECIES: Dictionary = {
 		##     deal exactly: collision is the BODY, and pricing a held weapon into
 		##     the footprint would cost the snow band boss stations for a surface
 		##     nothing can stand on.
-		## The body scale from the boss schedule multiplies all of it, so a 6x
-		## titan is an 11.46 m capsule around an 11.46 m model.
+		## The body scale from the boss schedule multiplies all of it, so a 9x
+		## titan is a 17.19 m capsule around a 17.19 m model.
 		"model_facing_offset": -PI / 2.0,
 
 		## A slow, heavy tread with almost no waddle — the read is a colossus
@@ -1660,8 +1660,8 @@ const SPECIES: Dictionary = {
 			"max_fire_range": 22.0,
 
 			## Height of the drawn bow above the body origin, in MODEL-LOCAL
-			## metres — _behave_ranged multiplies it by the body's scale, so a 6x
-			## titan fires from 9 m up and a 2.5x one from 3.75 m, which keeps the
+			## metres — _behave_ranged multiplies it by the body's scale, so a 9x
+			## titan fires from 13.5 m up and a 3.75x one from 5.63 m, which keeps the
 			## muzzle at the shoulder of whatever size the schedule handed out.
 			## 1.5 is shoulder height on the 1.8 m humanoid mesh.
 			"muzzle_height": 1.5,
@@ -1723,7 +1723,7 @@ const SPECIES: Dictionary = {
 	##     (0.7), which is the clearance every boss candidate is judged against.
 	##     The reach of a LAID capsule is its offset PLUS its half-length, which is
 	##     why generate_green_dragon.py shifts the finished animal onto its own
-	##     x-midpoint: an off-centre mesh spends that 0.7 twice and at the 6x cap
+	##     x-midpoint: an off-centre mesh spends that 0.7 twice and at the 9x cap
 	##     lands the dragon inside the tree it was placed clear of.
 	##   * radius == centre y, the crocodile/viper/hunter identity, so the
 	##     capsule's bottom sits exactly on y = 0 and the body rests on the flat
@@ -1735,7 +1735,7 @@ const SPECIES: Dictionary = {
 	## wingspan into the capsule would cost the mountain and forest bands boss
 	## stations for a surface nothing can stand on.
 	## The boss schedule's `scale = ONE * boss_scale` multiplies all of it, so a
-	## 6x dragon is a 7.8 m capsule around a 4.4 m tall model.
+	## 9x dragon is an 11.7 m capsule around a 6.6 m tall model.
 	"green_dragon": {
 		## THE SEVENTH ARM, shared with the roc: a bounded hop with an arc and a
 		## grounded recovery window (`_behave_leap`). Everything the row does NOT
@@ -2171,7 +2171,7 @@ const SPECIES: Dictionary = {
 	##
 	## A massif band is also the one where a boss station most often finds NO
 	## clear candidate: spawn_bosses_in_chunk walks obstacle footprints with
-	## per-scale clearance, and a 6x roc is a wide body. Some mountain stations
+	## per-scale clearance, and a 9x roc is a wide body (~6.3 m). Some mountain stations
 	## will legitimately place no boss at all — that is the designed outcome of
 	## that walk, not a reason to loosen the clearance.
 	##
@@ -2435,7 +2435,7 @@ const SPECIES: Dictionary = {
 			"gravity": 12.0,
 			"hit_radius": 1.1,
 			"min_fire_range": 8.0,
-			"max_range": 16.0,
+			"max_range": 20.0,
 			"lifetime": 5.0,
 			"max_live": 3,
 			"color": Color(1.0, 0.55, 0.75),
@@ -2458,16 +2458,20 @@ const SPECIES: Dictionary = {
 			## cannot — the same counterplay the titan offers, for free.
 			##
 			## The CEILING (14 m) sits under three things at once: the projectile's
-			## own `max_range` (16), so no shot is fired that would evaporate short
-			## of its aim point; BOSS_DETECTION_RADIUS (25), so the whole band is
+			## own `max_range` (20), so no shot is fired that would evaporate short
+			## of its aim point — and that is a 3-D distance from a muzzle that at
+			## the 9x cap stands 11.7 m up, i.e. hypot(14, 11.7) = 18.24 m, which
+			## is why 16 was not enough once bead godot-test1-9k7 raised the size
+			## schedule (projectile_selfcheck check 1c now asserts exactly this);
+			## BOSS_DETECTION_RADIUS (25), so the whole band is
 			## inside what a clown can smell (the arm only runs while chasing, so a
 			## wider ceiling would simply never fire); and BOSS_TERRITORY_RADIUS
 			## (32), so it cannot shell you out of a zone you have already left.
 			"max_fire_range": 14.0,
 
 			## Height of the throwing hand above the body origin, in MODEL-LOCAL
-			## metres — _behave_ranged multiplies it by the body's scale, so a 6x
-			## clown throws from 7.8 m up and a 2.5x one from 3.25 m, keeping the
+			## metres — _behave_ranged multiplies it by the body's scale, so a 9x
+			## clown throws from 11.7 m up and a 3.75x one from 4.88 m, keeping the
 			## muzzle at the raised arm of whatever size the schedule handed out.
 			## 1.3 is shoulder-and-a-bit on the 1.61 m placeholder.
 			"muzzle_height": 1.3,
@@ -3832,8 +3836,8 @@ func _style_model_meshes(node: Node) -> void:
 	  that is a second draw call per mesh × ~490 crocs — unaffordable.
 	"""
 	if node is GeometryInstance3D:
-		# Bosses scale the cull range by their body scale: a 6x boss is visible
-		# from ~6x further, so culling it at the regular 60 m would make a
+		# Bosses scale the cull range by their body scale: a 9x boss is visible
+		# from ~9x further, so culling it at the regular 60 m would make a
 		# mountain of crocodile pop into view. Regular crocs (boss_scale = 1.0)
 		# get byte-identical values to before.
 		node.visibility_range_end = VISUAL_CULL_DISTANCE * boss_scale
@@ -5660,9 +5664,9 @@ func _avoid_obstacles() -> bool:
 
 	# Both probe dimensions SCALE WITH THE BODY (inert at scale 1, i.e. for every
 	# regular crocodile). _ready() sets `scale = ONE * boss_scale` for a boss, so a
-	# 6x boss's capsule alone reaches 0.7 * 6 = 4.2 m ahead of its origin — past the
-	# fixed 3 m world-space feeler, leaving avoidance completely dead from boss 4 on
-	# (useful reach 1.25 m, 0.64 m, 0.03 m, 0, 0 …) against a body that is also 6x
+	# 9x boss's capsule alone reaches 0.7 * 9 = 6.3 m ahead of its origin — past the
+	# fixed 3 m world-space feeler, leaving avoidance completely dead from boss 2 on
+	# (useful reach 0.38 m at 3.75x, then 0, 0, 0 …) against a body that is also 9x
 	# wider and needs MORE clearance. The height likewise has to rise, or a big boss
 	# samples the ground at its own feet instead of a block's side wall.
 	var probe_scale := maxf(scale.x, scale.z)
@@ -6095,7 +6099,7 @@ func setup_as_boss(body_scale: float) -> void:
 	setting them after the node enters the tree would be too late.
 
 	@param body_scale: Uniform body scale from the terrain's deterministic
-	    size schedule (2.5x and up — always bigger than any regular croc's roll)
+	    size schedule (3.75x and up — always bigger than any regular croc's roll)
 	"""
 	is_boss = true
 	boss_scale = body_scale
@@ -6487,7 +6491,7 @@ func _on_player_collision(player: Node) -> void:
 	  * Giant-form Teibi CRUSHES the crocodile on contact instead of being bitten.
 	  * A crocodile fleeing Phoboman's stink is harmless and just brushes past.
 	"""
-	# A BOSS is bigger than even giant-form Teibi (2.5x+ vs the giant scale), so
+	# A BOSS is bigger than even giant-form Teibi (3.75x+ vs the giant scale), so
 	# giant form gets bitten like anyone else — bosses are never crushable. This
 	# early check sits ABOVE the crush block so that block stays untouched.
 	#
