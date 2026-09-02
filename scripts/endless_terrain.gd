@@ -2462,6 +2462,11 @@ var _road_terminal_k_cache: int = ROAD_TERMINAL_K_UNSET
 ## alone. INF is the "not resolved yet" sentinel.
 var _approach_coin_east_end_cache: float = INF
 
+## Memoized result of _approach_coin_line() — the whole approach + avenue coin
+## line, resampled by arc length. It rides the TERMINAL STATION, so unlike the
+## east end above it IS seeded, and new_run() resets it beside the terminal cache.
+var _approach_coin_line_cache: PackedVector2Array = PackedVector2Array()
+
 ## Reference to the player node to track their position
 var player: Node3D
 
@@ -9590,14 +9595,20 @@ func _road_lateral_distance(world_x: float, world_z: float, clearance: float) ->
 	# gate there is nothing to keep clear — in_budapest() has already turned every
 	# one of those spawners off inside the rect.
 	#
-	# One point per X (the corridor has no width in the plan), so this is a single
-	# distance and no scan; BudapestPlan.road_approach_point is the same pure
-	# function the coin line rides, which is what keeps the swath and the coins on
-	# one centreline with no second copy of the corridor here.
-	if world_x > ROAD_TERMINAL_X and world_x < BudapestPlan.GATE.x:
+	# Asked as a distance to the corridor as a CURVE — BudapestPlan.road_approach_distance,
+	# the same pure geometry the coin line rides, so the swath and the coins stay
+	# on one centreline with no second copy of the corridor here. NOT the corridor
+	# point at this candidate's own X: the road's Z at the terminal is seeded and
+	# the smoothstep can be far steeper than 45 degrees, on which a same-X reading
+	# overstates the distance by sqrt(1 + slope^2) and waves a massif through at a
+	# few metres (see that function).
+	# The window is the corridor's own X span WIDENED BY THE CLEARANCE, because the
+	# nearest point of a curve is not at the candidate's X: a candidate `clearance`
+	# metres west of the terminal can still be inside the swath, and one further
+	# west than that cannot be (the corridor's X never goes below the terminal's).
+	if world_x > ROAD_TERMINAL_X - clearance and world_x < BudapestPlan.GATE.x + clearance:
 		var terminal: Vector2 = _road_station(_road_terminal_k()).center
-		var c: Vector2 = BudapestPlan.road_approach_point(terminal, world_x)
-		best = minf(best, Vector2(world_x, world_z).distance_to(c))
+		best = minf(best, BudapestPlan.road_approach_distance(terminal, Vector2(world_x, world_z)))
 	return best
 
 func spawn_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array) -> void:
@@ -10397,18 +10408,20 @@ func spawn_approach_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstan
 	whole walk into the city — the road would read as "you have arrived nowhere".
 
 	ZERO RNG, and that is the design and not an omission. Every coin is at a fixed
-	CITY_COIN_SPACING pitch on BudapestPlan.road_approach_point()'s centreline, so
-	this line is AUTHORED like the rest of the city (the tower_site() ruling one
-	scale up). There is no hash stream here to keep independent of the chunk's, no
-	salt to pick and nothing for a determinism A/B to measure — the only run-varying
-	input is the terminal station itself, which is where the road's own seed enters.
+	CITY_COIN_SPACING pitch ALONG BudapestPlan.road_approach_point()'s centreline
+	(BudapestPlan.approach_coin_line resamples it by arc length — a pitch stepped in
+	X would open to 8 * sqrt(1 + slope^2) on a steep seed), so this line is AUTHORED
+	like the rest of the city (the tower_site() ruling one scale up). There is no
+	hash stream here to keep independent of the chunk's, no salt to pick and nothing
+	for a determinism A/B to measure — the only run-varying input is the terminal
+	station itself, which is where the road's own seed enters.
 
-	SEAM-CORRECTNESS, the road's rule unchanged: a coin's index fixes its world X
-	exactly (no jitter), but its Z rides the corridor, so a coin whose X is in this
-	chunk's column can still belong to the chunk one row over. Every coin is
-	therefore BUCKETED by `world_to_chunk(pos) == chunk_pos` — the chunk that owns
-	it scans the same X window and picks it up, so there are no gaps and no
-	duplicates. Coin identity is Coin.id_at(world) (quantized position), so
+	SEAM-CORRECTNESS, the road's rule unchanged: a coin's position is fixed by its
+	index in that one shared line, but it rides the corridor in BOTH axes, so a coin
+	whose X is in this chunk's column can still belong to the chunk one row over.
+	Every coin is therefore BUCKETED by `world_to_chunk(pos) == chunk_pos` — the
+	chunk that owns it scans the same X window and picks it up, so there are no gaps
+	and no duplicates. Coin identity is Coin.id_at(world) (quantized position), so
 	multiplayer claims work with no mp_manager edit at all.
 
 	Nothing here is a MeshInstance3D or a body of its own: coins are ordinary
@@ -10417,34 +10430,30 @@ func spawn_approach_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstan
 	if not spawn_coins or coin_scene == null:
 		return
 
-	# The corridor's west end is the terminal station's centre — the ONE place the
-	# run's seed reaches this line. _road_terminal_k() has already extended the
-	# cache far enough to cover it.
-	var terminal: Vector2 = _road_station(_road_terminal_k()).center
+	var line := _approach_coin_line()
+	if line.is_empty():
+		return
 
 	var center := chunk_to_world(chunk_pos)
 	var half_chunk := chunk_size / 2.0
 	var x0 := center.x - half_chunk
 	var x1 := center.x + half_chunk
+	# The line is in increasing X, so a chunk column outside its span has nothing
+	# to do at all — which is every chunk in the world bar the corridor's own few.
+	if x1 < line[0].x or x0 > line[line.size() - 1].x:
+		return
 
-	# Coin `n` sits at exactly ROAD_TERMINAL_X + n * spacing, so this chunk's X
-	# column maps to a contiguous, exactly-known index range — no pad is needed
-	# (the road's pad exists only because its coins jitter in X, and these do not).
-	var spacing := BudapestPlan.CITY_COIN_SPACING
-	var east_end := _approach_coin_east_end()
-	var n := maxi(0, ceili((x0 - ROAD_TERMINAL_X) / spacing))
-	while true:
-		var x := ROAD_TERMINAL_X + float(n) * spacing
-		n += 1
-		# Past this chunk's column, or past the west bank — X only grows from here,
-		# so either one is the end of this chunk's work. The bank test is a bound
-		# and NOT a per-coin `continue`: a chunk east of the river starts its scan
-		# already beyond the water, so asking "is this point wet" of each coin in
-		# turn would answer "no" and pave the whole Pest side.
-		if x > x1 or x >= east_end:
+	for i in range(line.size()):
+		var p: Vector2 = line[i]
+		# Past this chunk's column — X only grows from here, so this is the end of
+		# this chunk's work. (The west bank is where the LINE stops, not a per-coin
+		# test: a chunk east of the river would answer "not wet" for every coin in
+		# turn and pave the whole Pest side.)
+		if p.x > x1:
 			break
+		if p.x < x0:
+			continue
 
-		var p := BudapestPlan.road_approach_point(terminal, x)
 		var world := Vector3(p.x, COIN_GROUND_HEIGHT, p.y)
 		# Bucket by final chunk — the seam rule, identical to the road's.
 		if world_to_chunk(world) != chunk_pos:
@@ -10462,6 +10471,29 @@ func spawn_approach_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstan
 		var coin := coin_scene.instantiate()
 		coin.position = local
 		parent_chunk.add_child(coin)
+
+func _approach_coin_line() -> PackedVector2Array:
+	"""
+	The approach + avenue coin line for this run: every coin centre, in increasing
+	X, at a uniform CITY_COIN_SPACING pitch ALONG the corridor.
+
+	@return: The shared, memoized line. Callers must not mutate it.
+
+	Memoized because every chunk in the world asks for it and it is a pure function
+	of the terminal station — which is fixed for the run. new_run() resets it
+	beside _road_terminal_k_cache, the one seeded input it has.
+
+	The resampling itself lives in BudapestPlan.approach_coin_line(), with the rest
+	of the corridor's arithmetic, so the coins and the clearance swath keep reading
+	one geometry.
+	"""
+	if _approach_coin_line_cache.is_empty():
+		# _road_terminal_k() has already extended the cache far enough to cover the
+		# terminal — the ONE place the run's seed reaches this line.
+		var terminal: Vector2 = _road_station(_road_terminal_k()).center
+		_approach_coin_line_cache = BudapestPlan.approach_coin_line(
+				terminal, ROAD_TERMINAL_X, _approach_coin_east_end())
+	return _approach_coin_line_cache
 
 func _approach_coin_east_end() -> float:
 	"""
@@ -10654,6 +10686,8 @@ func new_run(forced_seed = null, around: Vector2i = Vector2i.ZERO) -> void:
 	# ROAD_TERMINAL_X. Reset it HERE, beside what it is derived from, so the two
 	# can never be reset apart.
 	_road_terminal_k_cache = ROAD_TERMINAL_K_UNSET
+	# ...and the approach coin line with it: it is resampled off that station.
+	_approach_coin_line_cache = PackedVector2Array()
 	pending_chunks.clear()
 	pending_removals.clear()
 

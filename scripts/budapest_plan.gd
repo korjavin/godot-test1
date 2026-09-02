@@ -395,17 +395,27 @@ static func danube_distance(x: float, z: float) -> float:
 	var p := Vector2(x, z)
 	var best := INF
 	for i in range(DANUBE.size() - 1):
-		var a: Vector2 = DANUBE[i]
-		var b: Vector2 = DANUBE[i + 1]
-		var ab := b - a
-		var len_sq := ab.length_squared()
-		# A zero-length segment would divide by zero; the table has none, but a
-		# future author editing the polyline should not have to know that.
-		var t := 0.0 if len_sq <= 0.0 else clampf((p - a).dot(ab) / len_sq, 0.0, 1.0)
-		var d := p.distance_to(a + ab * t)
+		var d := segment_distance(p, DANUBE[i], DANUBE[i + 1])
 		if d < best:
 			best = d
 	return best
+
+
+static func segment_distance(p: Vector2, a: Vector2, b: Vector2) -> float:
+	"""
+	Distance from `p` to the SEGMENT ab — project, clamp the parameter to [0, 1].
+
+	The one home of that arithmetic on this side: the Danube polyline and the
+	approach corridor's polyline both want it, and a second copy is how the two
+	drift. Written entirely in `Vector2` so every intermediate is f32 and matches
+	what the shader computes.
+	"""
+	var ab := b - a
+	var len_sq := ab.length_squared()
+	# A zero-length segment would divide by zero; neither caller produces one
+	# today, but a future author editing a polyline should not have to know that.
+	var t := 0.0 if len_sq <= 0.0 else clampf((p - a).dot(ab) / len_sq, 0.0, 1.0)
+	return p.distance_to(a + ab * t)
 
 
 static func is_dry(x: float, z: float) -> bool:
@@ -472,6 +482,94 @@ static func road_approach_point(terminal: Vector2, x: float) -> Vector2:
 		return Vector2(x, GATE.z)
 	var t := smoothstep(terminal.x, GATE.x, x)
 	return Vector2(x, lerpf(terminal.y, GATE.z, t))
+
+
+## How finely the corridor is sampled when it is measured as a CURVE rather than
+## read at one X: the sub-step, in metres of X, used by road_approach_distance()
+## and approach_coin_line(). The corridor spans GATE.x - terminal.x (~150 m), so
+## this is ~150 segments — far below the smoothstep's curvature and cheap enough
+## to walk on every clearance query.
+const APPROACH_SAMPLE_STEP: float = 1.0
+
+
+static func road_approach_distance(terminal: Vector2, p: Vector2) -> float:
+	"""
+	Shortest distance from a world XZ to the approach CORRIDOR — the corridor read
+	as a curve, not sampled at the point's own X.
+
+	@param terminal: The terminal station's centre, (x, z).
+	@param p: The world point, as (x, z).
+	@return Distance to the nearest point of the corridor centreline.
+
+	WHY IT IS NOT `absf(p.y - road_approach_point(terminal, p.x).y)`. The road's Z
+	at the terminal is seeded and can be hundreds of metres off the avenue's line,
+	so the smoothstep has to cover that drop in 150 m of X — measured over 500
+	seeds the corridor's own maximum slope reaches 6.4 m of Z per metre of X. On a
+	stretch that steep the nearest point of the corridor is nowhere near the
+	candidate's X, and the same-X reading overstates the distance by
+	sqrt(1 + slope^2): a massif reading a comfortable 24 m can be under 4 m from
+	the walk it is supposed to leave alone. So the corridor is walked as a
+	polyline and every segment is asked, exactly as the Danube is.
+
+	Pure in (`terminal`, `p`), like road_approach_point itself.
+	"""
+	var best := INF
+	var prev := road_approach_point(terminal, terminal.x)
+	var x := terminal.x
+	while x < GATE.x:
+		x = minf(x + APPROACH_SAMPLE_STEP, GATE.x)
+		var cur := road_approach_point(terminal, x)
+		var d := segment_distance(p, prev, cur)
+		if d < best:
+			best = d
+		prev = cur
+	return best
+
+
+static func approach_coin_line(terminal: Vector2, start_x: float, east_x: float) -> PackedVector2Array:
+	"""
+	The approach + avenue coin line: points at a uniform CITY_COIN_SPACING pitch
+	ALONG THE CORRIDOR, from `start_x` east to `east_x`.
+
+	@param terminal: The terminal station's centre, (x, z).
+	@param start_x: World X of the first coin (the road's terminal cap).
+	@param east_x: World X to stop at (the Danube's west bank).
+	@return The coin centres, in increasing X.
+
+	WHY IT IS NOT `start_x + n * CITY_COIN_SPACING`. Stepping the PITCH IN X makes
+	the physical gap 8 * sqrt(1 + slope^2), and the corridor's slope is seeded (see
+	road_approach_distance) — on a steep seed that is a 50 m gap between coins on
+	the one stretch of the walk that has nothing else to read. A trail is a pitch
+	along its own length, so the corridor is resampled by ARC LENGTH: sub-step in
+	X, accumulate the distance actually travelled, and emit a coin every
+	CITY_COIN_SPACING metres of it (interpolating inside the sub-step, so the pitch
+	is exact and not quantised to the step).
+
+	Still ZERO RNG and still pure in (`terminal`, `start_x`, `east_x`) — the run's
+	seed reaches this line only through the terminal, exactly as before.
+	"""
+	var pts := PackedVector2Array()
+	if east_x <= start_x:
+		return pts
+	var prev := road_approach_point(terminal, start_x)
+	pts.append(prev)
+	var carried := 0.0  # arc length walked since the last coin
+	var x := start_x
+	while x < east_x:
+		x = minf(x + APPROACH_SAMPLE_STEP, east_x)
+		var cur := road_approach_point(terminal, x)
+		var seg := prev.distance_to(cur)
+		# A sub-step can be long enough for several coins when the corridor is
+		# steep, so this is a loop and not an `if`.
+		while seg > 0.0 and carried + seg >= CITY_COIN_SPACING:
+			var t := (CITY_COIN_SPACING - carried) / seg
+			prev = prev.lerp(cur, t)
+			pts.append(prev)
+			carried = 0.0
+			seg = prev.distance_to(cur)
+		carried += seg
+		prev = cur
+	return pts
 
 
 # ponytail: TWO DELIBERATE DEFERRALS, recorded here so the next reader knows they

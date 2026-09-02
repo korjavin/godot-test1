@@ -1157,6 +1157,7 @@ func _check_approach_corridor(terrain_script: GDScript) -> void:
 
 	var worst_offset := 0.0
 	var worst_kink := 0.0
+	var worst_gap := 0.0
 	var measured := 0
 	for s in range(APPROACH_SEEDS):
 		var terrain := _detached_terrain(terrain_script, RUN_SEED + s * 977)
@@ -1224,12 +1225,25 @@ func _check_approach_corridor(terrain_script: GDScript) -> void:
 		# at all. (The centreline's own placement cannot be pinned here without
 		# restating BudapestPlan.road_approach_point, so it deliberately is not:
 		# the coin line and the swath ride the one function on purpose.)
+		#
+		# OFFSET ALONG THE CORRIDOR'S OWN NORMAL, not along +Z, and that is the
+		# whole strength of this leg. The road's Z at the terminal is seeded, so
+		# the smoothstep can be far steeper than 45 degrees (6.4 m of Z per metre
+		# of X, measured over 500 seeds); a Z-offset probe then asks for a point
+		# only 8 / sqrt(1 + slope^2) metres from the walk, and an implementation
+		# that reads the corridor at the candidate's own X answers "8 m" to it and
+		# passes while waving massifs through at under 4 m. The normal is taken
+		# from the curve numerically, so it needs no second copy of the corridor.
 		var cx := terminal_x + 1.0
 		while cx < BudapestPlan.GATE.x:
 			var cp: Vector2 = BudapestPlan.road_approach_point(terminal, cx)
+			var ahead: Vector2 = BudapestPlan.road_approach_point(terminal, cx + 0.5)
+			var behind: Vector2 = BudapestPlan.road_approach_point(terminal, cx - 0.5)
+			var normal := (ahead - behind).orthogonal().normalized()
 			# Inside the swath. `min` over the stations too, so this is an upper
 			# bound only — a station near T can legitimately answer closer.
-			var near: float = terrain._road_lateral_distance(cp.x, cp.y + 8.0, 24.0)
+			var p8 := cp + normal * 8.0
+			var near: float = terrain._road_lateral_distance(p8.x, p8.y, 24.0)
 			if near > 8.01:
 				_fail("seed %d: 8 m off the approach corridor at x = %.0f reads "
 						% [RUN_SEED + s * 977, cx] + "%.1f m from the road — the "
@@ -1237,14 +1251,51 @@ func _check_approach_corridor(terrain_script: GDScript) -> void:
 						+ "around it, only a zero-width line")
 				break
 			# ...and well outside it, where the answer has to grow with the offset.
-			var far: float = terrain._road_lateral_distance(cp.x, cp.y + 400.0, 24.0)
-			if far < 200.0:
-				_fail("seed %d: 400 m off the approach corridor at x = %.0f still "
-						% [RUN_SEED + s * 977, cx] + "reads %.1f m from the road — "
-						% far + "the corridor's clearance has no edge, so it is "
-						+ "suppressing every spawner across the whole band")
+			# NOT along the normal, and not 400 m off the centreline either: the
+			# corridor covers up to 645 m of Z inside 150 m of X, so a point 400 m
+			# off it in Z is genuinely a few metres from the stretch of corridor
+			# that has already climbed to that Z, and "400 m off must read 400 m"
+			# would be a false claim about a curve this steep. The bound that IS
+			# rigorous is one taken past the corridor's whole Z EXTENT: no point of
+			# it is within 400 m of this probe, whatever shape it takes in between.
+			# Asked only where the STATION scan is already empty (its window is the
+			# clearance plus two spacings, capped at T), because the Z extent bounds
+			# the corridor and says nothing about a station's own wander.
+			var beyond := maxf(terminal.y, BudapestPlan.GATE.z) + 400.0
+			if cx - (24.0 + spacing * 2.0) <= terminal.x:
+				cx += 25.0
+				continue
+			var far: float = terrain._road_lateral_distance(cx, beyond, 24.0)
+			if far < 399.0:
+				_fail("seed %d: 400 m beyond the approach corridor's whole Z extent "
+						% (RUN_SEED + s * 977) + "at x = %.0f reads %.1f m from the "
+						% [cx, far] + "road — the corridor's clearance has no edge, "
+						+ "so it is suppressing every spawner across the whole band")
 				break
 			cx += 25.0
+
+		# THE COIN LINE IS PITCHED ALONG THE CORRIDOR, NOT ALONG X. Stepping the
+		# pitch in X opens the physical gap to CITY_COIN_SPACING * sqrt(1 + slope^2)
+		# — up to ~50 m on a steep seed, on the one stretch of the walk that has
+		# nothing else to read. Measured on the shipped line, between consecutive
+		# coins, which is the only thing the player can see.
+		var pitch: float = BudapestPlan.CITY_COIN_SPACING
+		var line: PackedVector2Array = terrain._approach_coin_line()
+		if line.size() < 2:
+			_fail("seed %d: the approach coin line has %d coins"
+					% [RUN_SEED + s * 977, line.size()])
+		# Measured as the STRAIGHT LINE between neighbours, which is what the
+		# player walks past; the pitch is along the corridor, so on a bend the
+		# chord sits a little under it and can never sit over it.
+		for i in range(1, line.size()):
+			var gap := line[i - 1].distance_to(line[i])
+			worst_gap = maxf(worst_gap, gap)
+			if gap > pitch + 0.05 or gap < pitch * 0.8:
+				_fail("seed %d: approach coins %d and %d stand %.1f m apart, not "
+						% [RUN_SEED + s * 977, i - 1, i, gap] + "the %.0f m pitch "
+						% pitch + "— the line is spaced in X instead of along the "
+						+ "corridor, so a steep seed reads as a broken trail")
+				break
 
 		# THE TANGENTIAL JOIN. Skipped, counted, when the road happens to arrive
 		# almost on the avenue's own line: every step is then ~0 and the ratio is
@@ -1261,8 +1312,10 @@ func _check_approach_corridor(terrain_script: GDScript) -> void:
 
 	print("approach: %d seeds, terminal within %.1f m of ROAD_TERMINAL_X, "
 			% [APPROACH_SEEDS, worst_offset]
-			+ "worst end-step %.0f%% of the mid-span step over %d measurable joins"
-			% [worst_kink * 100.0, measured])
+			+ "worst end-step %.0f%% of the mid-span step over %d measurable joins, "
+			% [worst_kink * 100.0, measured]
+			+ "worst coin gap %.2f m against a %.0f m pitch"
+			% [worst_gap, BudapestPlan.CITY_COIN_SPACING])
 
 
 # ============================================================================
