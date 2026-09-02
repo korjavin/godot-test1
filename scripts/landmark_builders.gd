@@ -65,7 +65,11 @@ const LM_SLATE_BLUE := Color(0.30, 0.34, 0.45)   # Neuschwanstein's blue-grey sp
 ## BUDAPEST (the city registry below). TWO new entries for nine new places, which
 ## is the wave-2 palette rule again — everything else the Danube core needs is
 ## already in the table above and is reused where it is honestly the right colour
-## (see CITY_LANDMARKS' banner for the whole mapping).
+## (see CITY_LANDMARKS' banner for the whole mapping). Wave B — Pest's inner
+## city, six more places — adds NOTHING to the palette: its brick is LM_OCHRE
+## (dE 0.200, the warm family's one member that is dark enough to meet pavement),
+## the Zsolnay glazes are the copper / vermilion / sandstone trio Matthias
+## already wears, and the Opera and the Museum are the palace cream.
 ##
 ## Both were chosen against a MEASURED number rather than by eye, because in the
 ## city these boxes stand on the CITY ground tint (ground.gdshader `city_color`
@@ -656,6 +660,48 @@ const CITY_LANDMARKS: Array = [
 		"name": "Margaret Bridge",
 		"fact": "A Danube bridge at Budapest of 1876 that bends in the middle so both arms meet the current square — and sends a branch down onto Margaret Island.",
 		"radius": 114.0,
+		"region": "europe",
+	},
+	{
+		"builder": "_city_basilica",
+		"name": "St Stephen's Basilica",
+		"fact": "A neo-Renaissance basilica in Budapest, finished in 1905 after its half-built dome collapsed in a storm — its 96 m exactly matches the Parliament's, and nothing in the city is built taller.",
+		"radius": 58.0,
+		"region": "europe",
+	},
+	{
+		"builder": "_city_market_hall",
+		"name": "Great Market Hall",
+		"fact": "Budapest's central market of 1897 — 150 m of brick and iron under a roof of glazed Zsolnay tiles, bombed in 1945, closed as unsafe in 1991 and reopened restored in 1994.",
+		"radius": 82.0,
+		"region": "europe",
+	},
+	{
+		"builder": "_city_synagogue",
+		"name": "Dohány Street Synagogue",
+		"fact": "The largest synagogue in Europe, opened in Budapest in 1859 — 3,000 seats in a Moorish hall between two onion-domed towers.",
+		"radius": 49.0,
+		"region": "europe",
+	},
+	{
+		"builder": "_city_vaci_utca",
+		"name": "Váci utca",
+		"fact": "Budapest's shopping street, one block back from the Danube in Pest — a promenade since the 18th century and closed to traffic since the 1960s.",
+		"radius": 78.0,
+		"region": "europe",
+	},
+	{
+		"builder": "_city_national_museum",
+		"name": "Hungarian National Museum",
+		"fact": "Hungary's national museum, opened in Budapest in 1847 — the revolution of 15 March 1848 is remembered as having begun on its steps.",
+		"radius": 62.0,
+		"region": "europe",
+	},
+	{
+		"builder": "_city_opera",
+		"name": "Hungarian State Opera House",
+		"fact": "A neo-Renaissance opera house opened in Budapest in 1884, its drive guarded by two stone sphinxes — Gustav Mahler ran it from 1888.",
+		"radius": 49.0,
 		"region": "europe",
 	},
 ]
@@ -4870,3 +4916,552 @@ static func _city_margaret_bridge(terrain: Node3D, center: Vector3, rng: RandomN
 					rng, block_batch, block_body, 0.0, _lm_shade(iron, rng, 0.02), false)
 
 	return { "radius": 114.0, "top": 26.0 }
+
+# ----------------------------------------------------------------------------
+# BUDAPEST — WAVE B: THE PEST INNER CITY
+# ----------------------------------------------------------------------------
+##
+## Six more builders for CITY_LANDMARKS, one block back from the water. EVERY
+## RULE OF WAVE A APPLIES UNCHANGED and none of it is restated here: the fixed
+## orientation (a building's long axis on Z, because the Danube runs on Z), the
+## RNG touching COLOUR ONLY, the four shared helpers above, the corner-and-not-
+## axis radius arithmetic in each docstring, and collide = false on everything
+## nobody can reach. The four helpers took all six of these places with no new
+## parameter and no fifth helper, which is the measurement that says wave A
+## picked the right four gestures rather than the four its own nine happened to
+## need.
+##
+## NO NEW COLOUR EITHER, which is the wave-2 palette rule a third time: Pest's
+## inner city is brick where the Danube core was stone, and LM_OCHRE is honestly
+## brick (dE 0.200 against the paved grey — the one member of the warm mid-tone
+## family that is dark enough to meet a pavement, see the CITY_CREAM banner).
+##
+## ONE THING WAVE A DID NOT HAVE: a LINE landmark. Váci utca is 150 m of street
+## and not a building, so its footprint is honestly a RECT — and the registry
+## carries only a `radius`, so it declares that rect's BOUNDING CIRCLE. That
+## over-reserves the ground either side of the street, which is safe for every
+## rule the radius feeds (check 1's closing note is the argument) and costs the
+## plan nothing, because the SLOT is bead .3's and a slot may be a rect. A
+## `shape` key here would be a second geometry language invented for one row, so
+## there is not one.
+
+static func _city_basilica(terrain: Node3D, center: Vector3, rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	CITY 9 — ST STEPHEN'S BASILICA: a 74 m nave on Z under the 96 m dome, twin
+	bell towers standing either side of a six-column portico at the -Z end, and
+	the colonnaded drum that is the reason this dome reads as a bubble on a RING.
+
+	THE TWO DOMES OF BUDAPEST ARE THE SAME HEIGHT — that is the fact on the card —
+	so the silhouette's whole job is to say "the other one". The Parliament is a
+	long spiky wall with a Gothic bubble a third of the way along it; this is a
+	compact cross, a classical drum with sixteen columns round it, and two SQUARE
+	towers that stop at three quarters of the dome. Nothing here is pointed.
+
+	RADIUS ARITHMETIC (declared 58.0). The front flight wins it — the third step,
+	44 x 2 at z = -51: sqrt(22.00^2 + 52.00^2) = 56.46 — with the plinth (56 x 92)
+	second at sqrt(28.00^2 + 46.00^2) = 53.85 and a bell tower's cornice (15 x 15
+	at x = +/-23, z = -37) third at sqrt(30.50^2 + 44.50^2) = 53.95.
+	So 56.46 <= 58.0.
+	ONE ACCENT: the cross on the dome's finial. It is the highest lit thing in the
+	city and the Parliament's beacon is the other one, which is the pair of lights
+	the fact is about.
+	Boxes: 92. Colliding: 15.
+	"""
+	var stone := LM_MARBLE
+	var copper: Color = LM_COPPER.darkened(0.15)
+	var lead: Color = LM_COPPER.darkened(0.4)
+
+	# The plinth, and the flight up to the portico. THE STEPS DO NOT COLLIDE: a
+	# 0.5 m step is a stair no CharacterBody3D in this game can climb (CLAUDE.md's
+	# no-jump-gate rule is the same fact indoors), so the flight is ornament and
+	# the plinth is what a body actually meets.
+	terrain.create_box(center + Vector3(0.0, 0.8, 0.0), Vector3(56.0, 1.6, 92.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02))
+	for i in 3:
+		terrain.create_box(center + Vector3(0.0, 1.2 - float(i) * 0.5, -47.0 - float(i) * 2.0),
+				Vector3(44.0, 0.5, 2.0), 0.0, rng, block_batch, block_body, 0.0,
+				_lm_shade(stone, rng, 0.03).darkened(0.08), false)
+
+	# The nave, its two aisles, and the pilaster bays that keep 74 m of wall from
+	# reading as one extrusion.
+	terrain.create_box(center + Vector3(0.0, 14.6, 0.0), Vector3(38.0, 26.0, 74.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02))
+	terrain.create_box(center + Vector3(0.0, 28.6, 0.0), Vector3(34.0, 2.0, 70.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(lead, rng, 0.03), false)
+	for side in [-1.0, 1.0]:
+		terrain.create_box(center + Vector3(side * 25.0, 10.6, 0.0), Vector3(12.0, 18.0, 60.0), 0.0,
+				rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02))
+		_city_bays(terrain, center + Vector3(side * 25.6, 10.6, -27.0), Vector3(0.0, 0.0, 6.0), 10,
+				Vector3(1.4, 18.0, 2.6), stone, rng, block_batch, block_body, false)
+
+	# The west front: the block, six columns, the architrave and the pediment.
+	terrain.create_box(center + Vector3(0.0, 14.6, -40.0), Vector3(46.0, 26.0, 8.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02))
+	_city_bays(terrain, center + Vector3(-12.5, 10.6, -45.5), Vector3(5.0, 0.0, 0.0), 6,
+			Vector3(2.6, 18.0, 2.6), stone, rng, block_batch, block_body)
+	terrain.create_box(center + Vector3(0.0, 20.8, -45.5), Vector3(30.0, 2.4, 3.6), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03), false)
+	var pediment: Array = [28.0, 19.0, 10.0]
+	for i in 3:
+		terrain.create_box(center + Vector3(0.0, 22.85 + float(i) * 1.7, -45.5),
+				Vector3(float(pediment[i]), 1.7, 3.2), 0.0, rng, block_batch, block_body, 0.0,
+				_lm_shade(stone, rng, 0.03), false)
+
+	# The two bell towers. Square, cornice, lantern, copper cap, short spire — and
+	# they stop at 78 m so the dome is unambiguously the tall thing.
+	for side in [-1.0, 1.0]:
+		terrain.create_box(center + Vector3(side * 23.0, 29.6, -37.0), Vector3(13.0, 56.0, 13.0), 0.0,
+				rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02))
+		terrain.create_box(center + Vector3(side * 23.0, 58.4, -37.0), Vector3(15.0, 1.6, 15.0), 0.0,
+				rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03).darkened(0.08), false)
+		terrain.create_box(center + Vector3(side * 23.0, 62.7, -37.0), Vector3(9.0, 7.0, 9.0), 0.0,
+				rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03), false)
+		var cap := 66.2 + _city_dome(terrain, center + Vector3(side * 23.0, 66.2, -37.0), 9.0, 6.0,
+				copper, rng, block_batch, block_body)
+		_city_spire(terrain, center + Vector3(side * 23.0, cap, -37.0), 3.0, 6.0, 3,
+				copper, rng, block_batch, block_body)
+
+	# THE DOME, on the crossing at z = +12: the octagonal drum (a box and its
+	# 45-degree twin), the ring of sixteen columns that is this dome's signature,
+	# the stepped cap, the lantern and the finial.
+	for k in 2:
+		terrain.create_box(center + Vector3(0.0, 40.6, 4.0), Vector3(30.0, 26.0, 30.0),
+				float(k) * PI / 4.0, rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02))
+	for i in 16:
+		var a := TAU * float(i) / 16.0
+		terrain.create_box(center + Vector3(cos(a) * 18.0, 32.1, 4.0 + sin(a) * 18.0),
+				Vector3(1.8, 9.0, 1.8), 0.0, rng, block_batch, block_body, 0.0,
+				_lm_shade(stone, rng, 0.03), false)
+	var y := 53.6
+	y += _city_dome(terrain, center + Vector3(0.0, y, 4.0), 30.0, 22.0, copper, rng, block_batch, block_body)
+	terrain.create_box(center + Vector3(0.0, y + 3.5, 4.0), Vector3(10.0, 7.0, 10.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03), false)
+	y += 7.0
+	y += _city_spire(terrain, center + Vector3(0.0, y, 4.0), 6.0, 8.0, 4, copper, rng, block_batch, block_body)
+	terrain._spawn_artifact_accent(parent_chunk, center + Vector3(0.0, y + 1.2, 4.0),
+			Vector3(0.5, 2.4, 0.5), 0.0, 0.0, terrain._get_camp_ember_material())
+	terrain._spawn_artifact_accent(parent_chunk, center + Vector3(0.0, y + 1.4, 4.0),
+			Vector3(1.6, 0.5, 0.5), 0.0, 0.0, terrain._get_camp_ember_material())
+
+	return { "radius": 58.0, "top": y + 2.4 }
+
+
+static func _city_market_hall(terrain: Node3D, center: Vector3, rng: RandomNumberGenerator, _parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	CITY 10 — THE GREAT MARKET HALL: 144 m of brick nave on Z under the ZSOLNAY
+	ROOF, a neo-Gothic entrance gable with a rose window and two turrets at the
+	-Z end, four corner turrets, and the iron canopy over the door.
+
+	THE ROOF IS THE LANDMARK and it is where the box budget goes — 40 of the 116.
+	It is drawn as four courses of ten bays each, coloured glazes[(course + bay) %
+	3], which is a CHECKERBOARD and not a stripe: the real roof's diamond pattern
+	is the one thing about this building that survives being seen from 200 m as a
+	MultiMesh of boxes, and four long slabs in three colours would have been a
+	flag. That the pattern needs no RNG is the point — the tile a given bay wears
+	is arithmetic, so this roof is identical in every run, like every other city
+	shape (see the wave A banner).
+
+	RADIUS ARITHMETIC (declared 82.0). The plinth, 54 x 150, is the worst box:
+	sqrt(27.00^2 + 75.00^2) = 79.71. A gable turret (6 x 6 at x = +/-16, z = -73)
+	is second at sqrt(19.00^2 + 76.00^2) = 78.34 and the entrance gable (36 x 6 at
+	z = -73) third at sqrt(18.00^2 + 76.00^2) = 78.10. So 79.71 <= 82.0.
+	NO ACCENT: a market is lit from inside through its glazing, and this
+	vocabulary cannot draw that — a glow on the rose window would say "church",
+	which is the one thing 40 boxes of coloured roof exist to stop.
+	Boxes: 116. Colliding: 42.
+	"""
+	var brick := LM_OCHRE
+	var dressing := LM_MARBLE
+	var iron: Color = LM_IRON.darkened(0.2)
+	# The three Zsolnay glazes, the same trio Matthias Church wears — this roof and
+	# that one are by the same tile works, which is why they share a palette.
+	var glazes: Array = [LM_COPPER, LM_VERMILION.darkened(0.25), LM_SANDSTONE]
+
+	terrain.create_box(center + Vector3(0.0, 1.0, 0.0), Vector3(54.0, 2.0, 150.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(dressing, rng, 0.02).darkened(0.1))
+	terrain.create_box(center + Vector3(0.0, 11.0, 0.0), Vector3(48.0, 18.0, 144.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(brick, rng, 0.03))
+
+	# Sixteen buttresses a side, and the glazing band between them.
+	for side in [-1.0, 1.0]:
+		_city_bays(terrain, center + Vector3(side * 24.6, 11.0, -67.5), Vector3(0.0, 0.0, 9.0), 16,
+				Vector3(1.6, 16.0, 2.6), dressing, rng, block_batch, block_body)
+		terrain.create_box(center + Vector3(side * 24.2, 11.0, 0.0), Vector3(0.8, 9.0, 138.0), 0.0,
+				rng, block_batch, block_body, 0.0, _lm_shade(brick, rng, 0.03).darkened(0.55), false)
+
+	# THE ZSOLNAY ROOF: four courses, ten bays, three glazes, no RNG.
+	var widths: Array = [48.0, 38.0, 26.0, 12.0]
+	for course in 4:
+		for bay in 10:
+			terrain.create_box(center + Vector3(0.0, 21.5 + float(course) * 3.0, -64.8 + float(bay) * 14.4),
+					Vector3(float(widths[course]), 3.0, 14.4), 0.0, rng, block_batch, block_body, 0.0,
+					_lm_shade(glazes[(course + bay) % 3], rng, 0.04), false)
+
+	# The entrance gable at -Z: the block, its stepped pediment, the rose window
+	# and the two turrets.
+	terrain.create_box(center + Vector3(0.0, 17.0, -73.0), Vector3(36.0, 30.0, 6.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(brick, rng, 0.03))
+	var gable: Array = [30.0, 20.0, 10.0]
+	for i in 3:
+		terrain.create_box(center + Vector3(0.0, 33.1 + float(i) * 2.2, -73.0),
+				Vector3(float(gable[i]), 2.2, 5.0), 0.0, rng, block_batch, block_body, 0.0,
+				_lm_shade(dressing, rng, 0.03), false)
+	terrain.create_box(center + Vector3(0.0, 22.0, -76.2), Vector3(12.0, 12.0, 0.5), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(dressing, rng, 0.03), false)
+	terrain.create_box(center + Vector3(0.0, 22.0, -76.4), Vector3(10.0, 10.0, 0.8), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(glazes[0], rng, 0.03).darkened(0.3), false)
+	for side in [-1.0, 1.0]:
+		terrain.create_box(center + Vector3(side * 16.0, 20.0, -73.0), Vector3(6.0, 36.0, 6.0), 0.0,
+				rng, block_batch, block_body, 0.0, _lm_shade(brick, rng, 0.03))
+		_city_spire(terrain, center + Vector3(side * 16.0, 38.0, -73.0), 5.0, 8.0, 3,
+				glazes[1], rng, block_batch, block_body)
+
+	# The rear gable, and the four corner turrets.
+	terrain.create_box(center + Vector3(0.0, 15.0, 73.0), Vector3(34.0, 26.0, 6.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(brick, rng, 0.03))
+	for i in 2:
+		terrain.create_box(center + Vector3(0.0, 29.1 + float(i) * 2.2, 73.0),
+				Vector3(float(gable[i]), 2.2, 5.0), 0.0, rng, block_batch, block_body, 0.0,
+				_lm_shade(dressing, rng, 0.03), false)
+	for sx in [-23.0, 23.0]:
+		for sz in [-70.0, 70.0]:
+			terrain.create_box(center + Vector3(sx, 15.0, sz), Vector3(5.0, 26.0, 5.0), 0.0,
+					rng, block_batch, block_body, 0.0, _lm_shade(brick, rng, 0.03))
+			_city_spire(terrain, center + Vector3(sx, 28.0, sz), 4.5, 8.0, 3,
+					glazes[2], rng, block_batch, block_body)
+
+	# The iron canopy over the door — the one place the hall's steel shows outside.
+	terrain.create_box(center + Vector3(0.0, 8.0, -76.0), Vector3(30.0, 0.6, 4.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(iron, rng, 0.02), false)
+	_city_bays(terrain, center + Vector3(-12.5, 4.0, -77.0), Vector3(5.0, 0.0, 0.0), 6,
+			Vector3(0.8, 7.0, 0.8), iron, rng, block_batch, block_body, false)
+
+	return { "radius": 82.0, "top": 46.0 }
+
+
+static func _city_synagogue(terrain: Node3D, center: Vector3, rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	CITY 11 — THE DOHÁNY STREET SYNAGOGUE: a 72 m banded-brick hall on Z between
+	two octagonal towers under ONION DOMES, with the arcade and the rose window on
+	the -Z front.
+
+	THE ONION IS THE SILHOUETTE, and it is COMPOSED rather than borrowed. The
+	obvious move was the field's _lm_onion, which St Basil's has drawn since wave
+	1 — but that helper's bulge is `width x 0.84*width x width`, i.e. always a
+	CUBE, and its shoulder is a fixed 0.56 m. At St Basil's 4 m bulbs that reads
+	as a bulb; at the 11 m this tower wants, the screenshot showed a green box
+	with a lip. So the onion here is one wide bulge box under _city_dome's
+	narrowing stack under a spire — the wave A helper doing the shoulder it is
+	good at, at the one scale where doing it by hand was wrong. The bulge is 12 m
+	across on a 6.5 m shaft, and that OVERHANG is what keeps this off the
+	Basilica's page: a Danube dome sits on its drum and only ever narrows.
+
+	The HORIZONTAL BANDS are the other half: five thin courses of pale stone
+	across the brick, which is what says Moorish revival rather than "brick shed",
+	and they cost five boxes because they run the whole hall.
+
+	RADIUS ARITHMETIC (declared 49.0). An onion's bulge, 12 x 12 at x = +/-12,
+	z = -37, wins: sqrt(18.00^2 + 43.00^2) = 46.62. The tower gallery under it
+	(11 x 11) is second at sqrt(17.50^2 + 42.50^2) = 45.96, and the arcade roof
+	(24 x 4 at z = -41) third at sqrt(12.00^2 + 43.00^2) = 44.64.
+	So 46.62 <= 49.0.
+	ONE ACCENT: the rose window, lit from inside — the only warm light on a facade
+	this dark, and the thing a person walking Dohány Street after dark sees first.
+	Boxes: 67. Colliding: 17.
+	"""
+	var brick := LM_OCHRE
+	var band := LM_SANDSTONE
+	var copper := LM_COPPER
+	var roof: Color = LM_COPPER.darkened(0.3)
+
+	terrain.create_box(center + Vector3(0.0, 0.8, 0.0), Vector3(34.0, 1.6, 78.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(band, rng, 0.02).darkened(0.2))
+	terrain.create_box(center + Vector3(0.0, 12.6, 0.0), Vector3(28.0, 22.0, 72.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(brick, rng, 0.03))
+	for i in 5:
+		terrain.create_box(center + Vector3(0.0, 5.0 + float(i) * 4.0, 0.0), Vector3(28.6, 1.2, 72.6), 0.0,
+				rng, block_batch, block_body, 0.0, _lm_shade(band, rng, 0.03), false)
+	for side in [-1.0, 1.0]:
+		_city_bays(terrain, center + Vector3(side * 14.3, 13.0, -32.0), Vector3(0.0, 0.0, 8.0), 9,
+				Vector3(0.8, 9.0, 3.4), brick.darkened(0.55), rng, block_batch, block_body, false)
+
+	# The roof, and the two side wings that stop the hall from being a box.
+	var slabs: Array = [26.0, 20.0, 12.0]
+	for i in 3:
+		terrain.create_box(center + Vector3(0.0, 24.4 + float(i) * 1.6, 0.0),
+				Vector3(float(slabs[i]), 1.6, 70.0), 0.0, rng, block_batch, block_body, 0.0,
+				_lm_shade(roof, rng, 0.03), false)
+	for side in [-1.0, 1.0]:
+		terrain.create_box(center + Vector3(side * 18.0, 7.6, 30.0), Vector3(8.0, 12.0, 14.0), 0.0,
+				rng, block_batch, block_body, 0.0, _lm_shade(brick, rng, 0.03))
+
+	# The front: the block, the arcade, the rose window and its accent.
+	terrain.create_box(center + Vector3(0.0, 14.6, -37.0), Vector3(31.0, 26.0, 6.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(brick, rng, 0.03))
+	_city_bays(terrain, center + Vector3(-10.5, 7.1, -41.0), Vector3(3.0, 0.0, 0.0), 8,
+			Vector3(1.4, 11.0, 1.4), band, rng, block_batch, block_body)
+	terrain.create_box(center + Vector3(0.0, 12.5, -41.0), Vector3(24.0, 1.0, 4.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(band, rng, 0.03), false)
+	terrain.create_box(center + Vector3(0.0, 22.0, -40.4), Vector3(9.0, 9.0, 0.8), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(band, rng, 0.03), false)
+	terrain._spawn_artifact_accent(parent_chunk, center + Vector3(0.0, 22.0, -40.9),
+			Vector3(6.4, 6.4, 0.4), 0.0, 0.0, terrain._get_camp_ember_material())
+
+	# THE TWO TOWERS: octagonal shaft, gallery, onion. The onion is the field's
+	# _lm_onion, and its own finial is the gilded spike it always draws.
+	var top := 0.0
+	for side in [-1.0, 1.0]:
+		for k in 2:
+			terrain.create_box(center + Vector3(side * 12.0, 24.6, -37.0), Vector3(6.5, 46.0, 6.5),
+					float(k) * PI / 4.0, rng, block_batch, block_body, 0.0, _lm_shade(brick, rng, 0.03))
+		terrain.create_box(center + Vector3(side * 12.0, 48.3, -37.0), Vector3(11.0, 1.4, 11.0), 0.0,
+				rng, block_batch, block_body, 0.0, _lm_shade(band, rng, 0.03), false)
+		terrain.create_box(center + Vector3(side * 12.0, 50.75, -37.0), Vector3(12.0, 3.5, 12.0), 0.0,
+				rng, block_batch, block_body, 0.0, _lm_shade(copper, rng, 0.03), false)
+		top = 52.5 + _city_dome(terrain, center + Vector3(side * 12.0, 52.5, -37.0), 12.0, 11.0,
+				copper, rng, block_batch, block_body)
+		top += _city_spire(terrain, center + Vector3(side * 12.0, top, -37.0), 2.4, 5.0, 3,
+				band, rng, block_batch, block_body)
+
+	return { "radius": 49.0, "top": top }
+
+
+static func _city_vaci_utca(terrain: Node3D, center: Vector3, rng: RandomNumberGenerator, _parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	CITY 12 — VÁCI UTCA: 150 m of granite-paved pedestrian street on Z, sixteen
+	shopfront houses in two facing rows, awnings, lamp standards down the middle
+	and four café parasols.
+
+	THE ONLY LINE LANDMARK IN THE CITY, and it is a place because of what it is
+	NOT: no dome, no tower, nothing over 19 m. What names it is the corridor —
+	two walls of mixed-height fronts with a lit gap between them — so the height
+	pattern is a HAND-WRITTEN TABLE (HEIGHTS below) and not a roll. Nine of these
+	houses would be a terrace; sixteen at eight different heights is a street.
+
+	IT COLLIDES LIKE A STREET SHOULD: the house masses are solid, and the paving,
+	the awnings, the cornices, the roofs and the shop glazing are not — a 0.2 m
+	paving slab you could stand on is a 0.2 m step no body here can climb, and an
+	awning at 4.8 m is a roof over the one route through this landmark.
+
+	RADIUS ARITHMETIC (declared 78.0). The paving, 20 x 150, wins:
+	sqrt(10.00^2 + 75.00^2) = 75.66. A house cornice (14 x 17 at x = +/-16.5,
+	z = +/-63) is second at sqrt(23.50^2 + 71.50^2) = 75.26, and the house mass
+	under it (13 x 16) third at sqrt(23.00^2 + 71.00^2) = 74.63.
+	So 75.66 <= 78.0.
+	NO ACCENT: sixteen shop windows and eight lamps all want to be the lit thing,
+	and one glowing box among them would just look like a bug.
+	Boxes: 105. Colliding: 16.
+	"""
+	# Eight heights, mirrored to both sides — the table IS the design record, in
+	# tower_plans.gd's sense: edit these numbers and you have re-drawn the street.
+	const HEIGHTS: Array = [16.0, 13.0, 19.0, 15.0, 17.0, 13.5, 18.0, 14.5]
+	var fronts: Array = [CITY_CREAM, LM_MARBLE, LM_OCHRE.lightened(0.2), LM_OCHRE]
+	var awnings: Array = [LM_VERMILION.darkened(0.25), CITY_PARK_GREEN, LM_COPPER.darkened(0.2)]
+
+	terrain.create_box(center + Vector3(0.0, 0.1, 0.0), Vector3(20.0, 0.2, 150.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(LM_GRANITE, rng, 0.03), false)
+
+	for i in 8:
+		var z := -63.0 + float(i) * 18.0
+		var h: float = float(HEIGHTS[i])
+		for side in [-1.0, 1.0]:
+			var x: float = side * 16.5
+			terrain.create_box(center + Vector3(x, h * 0.5, z), Vector3(13.0, h, 16.0), 0.0,
+					rng, block_batch, block_body, 0.0, _lm_shade(fronts[i % 4], rng, 0.03))
+			terrain.create_box(center + Vector3(x, h + 0.5, z), Vector3(14.0, 1.0, 17.0), 0.0,
+					rng, block_batch, block_body, 0.0, _lm_shade(fronts[i % 4], rng, 0.03).darkened(0.12), false)
+			terrain.create_box(center + Vector3(x, h + 2.0, z), Vector3(12.0, 2.0, 15.0), 0.0,
+					rng, block_batch, block_body, 0.0, _lm_shade(LM_ROOF, rng, 0.04), false)
+			# The shopfront glazing, and the awning over it.
+			terrain.create_box(center + Vector3(side * 10.3, 2.4, z), Vector3(0.6, 4.0, 12.0), 0.0,
+					rng, block_batch, block_body, 0.0, _lm_shade(LM_SLATE_BLUE, rng, 0.03), false)
+			terrain.create_box(center + Vector3(side * 8.6, 4.8, z), Vector3(2.6, 0.3, 10.0), 0.0,
+					rng, block_batch, block_body, 0.0, _lm_shade(awnings[i % 3], rng, 0.04), false)
+
+		# One lamp standard per bay, alternating sides of the centre line.
+		var lamp_x := 3.5 if i % 2 == 0 else -3.5
+		terrain.create_box(center + Vector3(lamp_x, 3.5, z), Vector3(0.4, 7.0, 0.4), 0.0,
+				rng, block_batch, block_body, 0.0, _lm_shade(LM_BASALT, rng, 0.02), false)
+		terrain.create_box(center + Vector3(lamp_x, 7.2, z), Vector3(1.0, 0.7, 1.0), 0.0,
+				rng, block_batch, block_body, 0.0, _lm_shade(LM_SANDSTONE, rng, 0.02), false)
+
+	# Four café parasols, off the centre line so the walk stays clear.
+	for i in 4:
+		var px := 6.5 if i % 2 == 0 else -6.5
+		var pz := -27.0 + float(i) * 18.0
+		terrain.create_box(center + Vector3(px, 1.3, pz), Vector3(0.25, 2.6, 0.25), 0.0,
+				rng, block_batch, block_body, 0.0, _lm_shade(LM_BASALT, rng, 0.02), false)
+		terrain.create_box(center + Vector3(px, 2.9, pz), Vector3(4.2, 0.3, 4.2), 0.0,
+				rng, block_batch, block_body, 0.0, _lm_shade(LM_MARBLE, rng, 0.03), false)
+
+	return { "radius": 78.0, "top": 21.0 }
+
+
+static func _city_national_museum(terrain: Node3D, center: Vector3, rng: RandomNumberGenerator, _parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	CITY 13 — THE HUNGARIAN NATIONAL MUSEUM: a 92 m neoclassical block on Z, the
+	eight-column portico and its pediment on the -X front, a low dome over the
+	centre, and the garden the fact is really about.
+
+	THE STEPS ARE THE LANDMARK — 1848 is remembered as having started on them — so
+	the flight is drawn wide and shallow and given the whole -X frontage, and the
+	portico stands back behind it. Like the Basilica's, the steps do not collide
+	(a 0.6 m step is unclimbable here); the podium is what a body meets.
+
+	THE PORTICO FACES -X, which is the one place a wave B builder departs from the
+	Danube rule, and deliberately: this museum stands four blocks inland with its
+	front on a street, so a river-parallel facade would be the wrong building. The
+	MASS still runs its long axis on Z, which is the rule that actually matters —
+	the plan places on Z-parallel streets.
+
+	RADIUS ARITHMETIC (declared 62.0). The podium, 64 x 100, wins:
+	sqrt(32.00^2 + 50.00^2) = 59.36. The cornice (60 x 96) is second at
+	sqrt(30.00^2 + 48.00^2) = 56.60, and a garden hedge (2 x 70 at x = +/-41)
+	third at sqrt(42.00^2 + 35.00^2) = 54.68. So 59.36 <= 62.0.
+	NO ACCENT.
+	Boxes: 67. Colliding: 18.
+	"""
+	var wall := CITY_CREAM
+	var stone := LM_MARBLE
+	var tile: Color = LM_VERMILION.darkened(0.3)
+
+	terrain.create_box(center + Vector3(0.0, 0.6, 0.0), Vector3(64.0, 1.2, 100.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02).darkened(0.12))
+	for i in 4:
+		terrain.create_box(center + Vector3(-34.0 - float(i) * 2.4, 0.9 - float(i) * 0.3, 0.0),
+				Vector3(2.4, 0.6, 60.0), 0.0, rng, block_batch, block_body, 0.0,
+				_lm_shade(LM_GRANITE, rng, 0.03), false)
+
+	terrain.create_box(center + Vector3(0.0, 11.2, 0.0), Vector3(56.0, 20.0, 92.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(wall, rng, 0.02))
+	terrain.create_box(center + Vector3(0.0, 22.0, 0.0), Vector3(60.0, 1.6, 96.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03), false)
+	var slabs: Array = [54.0, 44.0, 30.0]
+	for i in 3:
+		terrain.create_box(center + Vector3(0.0, 23.7 + float(i) * 1.8, 0.0),
+				Vector3(float(slabs[i]), 1.8, 90.0 - float(i) * 7.0), 0.0, rng, block_batch, block_body,
+				0.0, _lm_shade(tile, rng, 0.04), false)
+	for side in [-1.0, 1.0]:
+		_city_bays(terrain, center + Vector3(side * 28.6, 11.2, -40.5), Vector3(0.0, 0.0, 9.0), 10,
+				Vector3(1.2, 18.0, 2.4), stone, rng, block_batch, block_body, false)
+
+	# The portico: eight columns, the architrave, the pediment.
+	_city_bays(terrain, center + Vector3(-30.0, 9.7, -14.0), Vector3(0.0, 0.0, 4.0), 8,
+			Vector3(2.6, 17.0, 2.6), stone, rng, block_batch, block_body)
+	terrain.create_box(center + Vector3(-30.0, 20.0, 0.0), Vector3(6.0, 2.6, 34.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03), false)
+	var ped: Array = [30.0, 20.0, 10.0]
+	for i in 3:
+		terrain.create_box(center + Vector3(-30.0, 22.2 + float(i) * 1.8, 0.0),
+				Vector3(5.4, 1.8, float(ped[i])), 0.0, rng, block_batch, block_body, 0.0,
+				_lm_shade(stone, rng, 0.03), false)
+
+	# The low dome over the centre.
+	for k in 2:
+		terrain.create_box(center + Vector3(0.0, 27.0, 0.0), Vector3(20.0, 10.0, 20.0),
+				float(k) * PI / 4.0, rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02))
+	var y := 32.0
+	y += _city_dome(terrain, center + Vector3(0.0, y, 0.0), 20.0, 12.0,
+			LM_COPPER.darkened(0.2), rng, block_batch, block_body)
+	y += _city_spire(terrain, center + Vector3(0.0, y, 0.0), 4.0, 5.0, 3,
+			LM_COPPER.darkened(0.2), rng, block_batch, block_body)
+
+	# THE GARDEN. Two hedges and six trees, and they are the second reason this
+	# place is on the card: a museum in a park is what the 1848 crowd stood in.
+	for side in [-1.0, 1.0]:
+		terrain.create_box(center + Vector3(side * 41.0, 0.7, 0.0), Vector3(2.0, 1.4, 70.0), 0.0,
+				rng, block_batch, block_body, 0.0, _lm_shade(CITY_PARK_GREEN, rng, 0.05), false)
+		for tz in [-24.0, 0.0, 24.0]:
+			terrain.create_box(center + Vector3(side * 38.0, 2.25, tz), Vector3(1.2, 4.5, 1.2), 0.0,
+					rng, block_batch, block_body, 0.0, _lm_shade(LM_ROOF, rng, 0.04))
+			terrain.create_box(center + Vector3(side * 38.0, 7.5, tz), Vector3(6.5, 6.5, 6.5), 0.0,
+					rng, block_batch, block_body, 0.0, _lm_shade(CITY_PARK_GREEN, rng, 0.05), false)
+
+	return { "radius": 62.0, "top": y + 1.0 }
+
+
+static func _city_opera(terrain: Node3D, center: Vector3, rng: RandomNumberGenerator, _parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	CITY 14 — THE HUNGARIAN STATE OPERA HOUSE: a 78 m neo-Renaissance front on Z
+	with the seven-arch loggia at street level, a first-floor colonnade carrying
+	ten statues on its balustrade, the stage tower behind, and THE TWO SPHINXES on
+	the drive.
+
+	THE STAGE TOWER IS WHY THIS IS NOT THE MUSEUM. Both are cream classical blocks
+	of about the same length; what tells them apart at 100 m is that an opera house
+	has a windowless 45 m box behind the audience and a museum does not. So the
+	tower is drawn tall and plain, off-centre toward +X, and it clears the 27 m
+	front by 18 m — a clearance MEASURED from eye height in front of the building,
+	because at 34 m it was hidden behind its own facade at exactly the distance a
+	person stands to look at one.
+
+	RADIUS ARITHMETIC (declared 49.0). The podium, 44 x 84, wins:
+	sqrt(22.00^2 + 42.00^2) = 47.41. The cornice (42 x 82) is second at
+	sqrt(21.00^2 + 41.00^2) = 46.06, and a candelabrum at (x = -30, z = +/-21)
+	third at sqrt(30.25^2 + 21.25^2) = 36.97. So 47.41 <= 49.0.
+	NO ACCENT: the loggia is the lit part of a real one and it is a whole facade,
+	which this vocabulary cannot glow; one bright box on the roof would read as an
+	aerial.
+	Boxes: 71. Colliding: 15.
+	"""
+	var wall := CITY_CREAM
+	var stone := LM_MARBLE
+	var roof: Color = LM_COPPER.darkened(0.35)
+
+	terrain.create_box(center + Vector3(0.0, 0.5, 0.0), Vector3(44.0, 1.0, 84.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02).darkened(0.14))
+	for i in 3:
+		terrain.create_box(center + Vector3(-22.0 - float(i) * 2.0, 0.8 - float(i) * 0.3, 0.0),
+				Vector3(2.0, 0.4, 20.0), 0.0, rng, block_batch, block_body, 0.0,
+				_lm_shade(LM_GRANITE, rng, 0.03), false)
+	terrain.create_box(center + Vector3(0.0, 13.0, 0.0), Vector3(38.0, 24.0, 78.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(wall, rng, 0.02))
+	terrain.create_box(center + Vector3(10.0, 23.0, 0.0), Vector3(26.0, 44.0, 32.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(wall, rng, 0.02).darkened(0.06))
+
+	# The loggia: eight piers, seven arch heads, the balcony over them.
+	_city_bays(terrain, center + Vector3(-19.6, 5.5, -14.0), Vector3(0.0, 0.0, 4.0), 8,
+			Vector3(1.8, 9.0, 2.6), stone, rng, block_batch, block_body)
+	_city_bays(terrain, center + Vector3(-19.6, 11.0, -12.0), Vector3(0.0, 0.0, 4.0), 7,
+			Vector3(1.8, 2.0, 2.2), stone, rng, block_batch, block_body, false)
+	terrain.create_box(center + Vector3(-20.0, 12.4, 0.0), Vector3(5.0, 0.8, 34.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03), false)
+
+	# The first-floor colonnade, its balustrade, and the ten composers on it.
+	_city_bays(terrain, center + Vector3(-19.4, 17.8, -14.0), Vector3(0.0, 0.0, 4.0), 8,
+			Vector3(1.6, 10.0, 1.6), stone, rng, block_batch, block_body, false)
+	terrain.create_box(center + Vector3(-21.6, 23.4, 0.0), Vector3(4.0, 1.2, 34.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03), false)
+	for i in 10:
+		var sz := -18.0 + float(i) * 4.0
+		terrain.create_box(center + Vector3(-21.6, 24.6, sz), Vector3(1.3, 1.3, 1.3), 0.0,
+				rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03), false)
+		terrain.create_box(center + Vector3(-21.6, 26.5, sz), Vector3(0.9, 2.4, 0.9), 0.0,
+				rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.04), false)
+
+	terrain.create_box(center + Vector3(0.0, 25.8, 0.0), Vector3(42.0, 1.6, 82.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03), false)
+	var slabs: Array = [38.0, 30.0, 20.0]
+	for i in 3:
+		terrain.create_box(center + Vector3(0.0, 27.5 + float(i) * 1.8, 0.0),
+				Vector3(float(slabs[i]), 1.8, 78.0 - float(i) * 9.0), 0.0, rng, block_batch, block_body,
+				0.0, _lm_shade(roof, rng, 0.03), false)
+
+	# THE TWO SPHINXES, couchant on their plinths either side of the drive, and the
+	# candelabra along the kerb.
+	for side in [-1.0, 1.0]:
+		terrain.create_box(center + Vector3(-27.0, 1.2, side * 11.0), Vector3(4.0, 2.4, 7.0), 0.0,
+				rng, block_batch, block_body, 0.0, _lm_shade(LM_GRANITE, rng, 0.02))
+		terrain.create_box(center + Vector3(-27.0, 3.4, side * 11.0), Vector3(2.6, 2.0, 6.0), 0.0,
+				rng, block_batch, block_body, 0.0, _lm_shade(LM_GRANITE, rng, 0.03))
+		terrain.create_box(center + Vector3(-27.0, 5.3, side * 13.2), Vector3(1.8, 1.8, 1.8), 0.0,
+				rng, block_batch, block_body, 0.0, _lm_shade(LM_GRANITE, rng, 0.03), false)
+		terrain.create_box(center + Vector3(-27.0, 6.5, side * 13.2), Vector3(2.4, 0.7, 2.4), 0.0,
+				rng, block_batch, block_body, 0.0, _lm_shade(LM_GRANITE, rng, 0.04), false)
+		for cz in [7.0, 21.0]:
+			terrain.create_box(center + Vector3(-30.0, 4.2, side * cz), Vector3(0.5, 6.5, 0.5), 0.0,
+					rng, block_batch, block_body, 0.0, _lm_shade(LM_BASALT, rng, 0.02), false)
+			terrain.create_box(center + Vector3(-30.0, 7.8, side * cz), Vector3(0.9, 0.9, 0.9), 0.0,
+					rng, block_batch, block_body, 0.0, _lm_shade(LM_SANDSTONE, rng, 0.03), false)
+
+	return { "radius": 49.0, "top": 45.0 }
