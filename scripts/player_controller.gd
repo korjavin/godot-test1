@@ -87,10 +87,6 @@ const WADE_JUMP_FACTOR: float = 0.75
 ## ends up facing is the way W will walk.
 const TURN_SPEED: float = 2.6
 
-## Sidestep / strafe tuning for A / D.
-## A and D strafe continuously sideways while held on the ground.
-const STEP_SPEED: float = 5.0
-
 ## How quickly horizontal velocity approaches the input's target speed, in m/s².
 ## Instead of snapping instantly to full speed the moment W is pressed, velocity
 ## ramps toward it — at 40 m/s² a standing start reaches walk speed (5 m/s) in
@@ -1319,7 +1315,8 @@ func _physics_process(delta: float) -> void:
 
 	# STEP 8: Build this frame's horizontal velocity from input_dir in local space,
 	# rotated into the world by transform.basis. Composed (lateral, forward) is
-	# normalized in get_input_direction() so diagonal speed never exceeds current_speed.
+	# normalized in get_input_direction() so diagonal speed never exceeds current_speed;
+	# strafe rides current_speed (walk/run) uniformly with forward movement.
 	var planar_velocity := Vector3.ZERO
 	if input_dir != Vector2.ZERO:
 		var move_dir := (transform.basis * Vector3(input_dir.x, 0.0, input_dir.y))
@@ -1518,8 +1515,10 @@ func update_sidestep(_delta: float) -> void:
 	"""
 	Manage continuous sidestep / strafe triggered by A (left) and D (right).
 
-	A/D strafe smoothly for as long as held while grounded. When released or
-	when airborne, resets the sidestep pose.
+	A/D strafe smoothly for as long as held while grounded. When released,
+	when airborne, or when forward/backward movement (W/S) takes over the
+	animation, resets the sidestep limb roll so key order never leaves
+	a stuck lean.
 	"""
 	if not is_on_floor():
 		if is_stepping:
@@ -1529,9 +1528,14 @@ func update_sidestep(_delta: float) -> void:
 		return
 
 	var step_axis := Input.get_axis("step_left", "step_right")
+	var moving_fwd := absf(Input.get_axis("move_forward", "move_backward")) > 0.01
 	if absf(step_axis) > 0.01:
 		is_stepping = true
 		step_direction = step_axis
+		if moving_fwd:
+			# Forward/backward motion uses the standard walk/run animation cycle;
+			# clear the lateral roll pose so W+A and A+W share the identical clean walk.
+			reset_sidestep_pose()
 	elif is_stepping:
 		is_stepping = false
 		step_direction = 0.0
@@ -2465,6 +2469,9 @@ func animate_walking(delta: float, speed_multiplier: float) -> void:
 	"""
 	if not left_arm or not right_arm or not left_leg or not right_leg:
 		return
+
+	# Clear any residual sideways roll so diagonal and straight walks are identical.
+	reset_sidestep_pose()
 
 	# Walking animation uses sine waves for smooth swinging motion
 	var walk_speed = 8.0 * speed_multiplier

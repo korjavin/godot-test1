@@ -1378,6 +1378,27 @@ func _check_a_guard_takes_coins_and_ground() -> void:
 	if player_c.is_stepping or player_c.step_direction != 0.0:
 		_fail("releasing step_right did not clear is_stepping / step_direction")
 
+	# Key order symmetry: (1) press A alone, then add W vs (2) press W alone, then add A
+	# Both orders must end in the exact same clean walk pose with no stuck Z roll.
+	Input.action_press("step_left", 1.0)
+	player_c.update_sidestep(0.016)
+	player_c.update_character_animation(0.016, player_c.get_input_direction())
+	if absf(player_c.left_leg.rotation.z - player_c.original_rotations["left_leg"].z) < 0.01:
+		_fail("pure sidestep did not apply lateral leg splay")
+
+	# Add W while holding A — walk animation must take over and reset Z roll
+	Input.action_press("move_forward", 1.0)
+	player_c.update_sidestep(0.016)
+	player_c.update_character_animation(0.016, player_c.get_input_direction())
+	if absf(player_c.left_leg.rotation.z - player_c.original_rotations["left_leg"].z) > 0.001 \
+			or absf(player_c.character_body.rotation.z - player_c.original_rotations["body"].z) > 0.001:
+		_fail("adding W while holding A left sidestep Z roll stuck in walk animation")
+
+	Input.action_release("move_forward")
+	Input.action_release("step_left")
+	player_c.update_sidestep(0.016)
+	player_c.update_character_animation(0.016, player_c.get_input_direction())
+
 	_clear(player_c)
 	field_shell.queue_free()
 	await process_frame
