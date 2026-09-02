@@ -2166,8 +2166,240 @@ func _check_bridges(terrain: Node3D) -> void:
 		_check_one_bridge(terrain, row, id, slope, ceiling)
 
 	_check_no_reward_under_a_deck(terrain)
+	_check_nothing_stands_in_the_river(terrain)
 	_check_margaret_island(terrain, claimed)
 	_check_danube_crocodiles(terrain)
+
+
+## The one slot whose STONE stands in the Danube on purpose. Sixty pairs of iron
+## shoes on the embankment facing the water IS the memorial — moving them onto dry
+## ground would be moving the thing itself. Authored, named here, and the only
+## name in this file: everything else is exempted by a MECHANISM (standing on a
+## DRY_RECTS row, or on a plateau's lid) or is not exempt at all.
+const WET_STONE_ALLOWED: Array[String] = ["shoes_on_the_danube"]
+
+
+func _check_nothing_stands_in_the_river(terrain: Node3D) -> void:
+	"""
+	NO LANDMARK'S STONE MAY STAND IN THE DANUBE, AND NONE MAY STAND IN A MASSIF.
+
+	Both halves are the same bug one axis apart, and it is the bug that moved the
+	two baths and the Liberty Bridge's deck: `is_river_at()` is XZ-only, so a
+	platform over the band WADES however high it is, and a plateau is solid stone
+	from the ground to its lid, so a building inside one is buried and unreachable.
+
+	THE WET HALF IS MEASURED ON THE COLLIDING BOXES, NOT ON THE DISC, and that
+	distinction is the whole reason this check is worth writing. A slot's radius is
+	an axis-agnostic BOUND: the Parliament is 268 m long on Z and 125 m on X, so
+	its 151 m disc reaches 33 m into the water while not one stone of it does. A
+	disc rule would have to allow-list the Parliament, and that exemption would
+	then hide a real Parliament that DID reach the river. Boxes have no such
+	slack — and they are what you stand on, which is what wading is about.
+
+	Non-colliding boxes are ignored on purpose: a cornice, a canopy or a cable
+	overhanging the water is a thing you look at, not a thing you stand on.
+
+	THE PLATEAU HALF IS THE DISC, because there the bound is the right instrument:
+	a massif is a keep-out volume, the disc is the slot's claim on the map, and a
+	claim that overlaps one is an authoring mistake whichever way the building is
+	elongated.
+
+	TWO MECHANISM EXEMPTIONS AND ONE NAME. A slot standing on a DRY_RECTS row is a
+	bridge or Margaret Island — a bridge's piers are in open water because that is
+	what a pier is — and a slot whose `pos.y` is a lid stands ON a plateau by
+	design. Neither is a list that can rot. The one name is WET_STONE_ALLOWED.
+	"""
+	_check_river_rule_control(terrain)
+	var checked := 0
+	var exempt := 0
+	for i in range(BudapestPlan.SLOTS.size()):
+		var slot: Dictionary = BudapestPlan.SLOTS[i]
+		var id := String(slot["id"])
+		var pos: Vector3 = slot["pos"]
+		var radius: float = slot["radius"]
+
+		# ---- the massif half, on the disc ------------------------------------
+		# Exempt: a slot authored at a lid height stands on that plateau.
+		if pos.y <= 0.0:
+			for plateau_v: Variant in BudapestPlan.PLATEAUS:
+				var plateau: Dictionary = plateau_v
+				var gap := _rect_point_distance(plateau["rect"], Vector2(pos.x, pos.z)) - radius
+				if gap < 0.0:
+					_fail("landmark '%s' overlaps the '%s' massif by %.1f m — that "
+							% [id, String(plateau["id"]), -gap] + "hill is solid "
+							+ "stone to its %.0f m lid, so the building is buried "
+							% float(plateau["top"]) + "in it and unreachable")
+
+		# ---- the river half, on the stone -----------------------------------
+		if String(slot["builder"]).is_empty():
+			continue
+		if id in WET_STONE_ALLOWED or BudapestPlan.is_dry(pos.x, pos.z):
+			exempt += 1
+			continue
+		checked += 1
+		var wettest := _landmark_wettest(terrain, i, pos)
+		var worst: float = wettest["d"]
+		var worst_at: Vector2 = wettest["at"]
+		if worst < BudapestPlan.DANUBE_HALF_WIDTH:
+			_fail("landmark '%s' puts colliding stone %.1f m from the Danube's "
+					% [id, worst] + "polyline at (%.0f, %.0f), inside the %.0f m "
+					% [worst_at.x, worst_at.y, BudapestPlan.DANUBE_HALF_WIDTH]
+					+ "band — is_river_at() is XZ-only, so a player standing on "
+					+ "that platform WADES on it")
+
+	print("nothing in the river: %d landmarks' colliding stone measured against "
+			% checked + "the band, %d exempt (on a dry rect, or %s)"
+			% [exempt, str(WET_STONE_ALLOWED)])
+
+
+func _landmark_wettest(terrain: Node3D, index: int, centre: Vector3) -> Dictionary:
+	"""
+	The closest any COLLIDING box of one landmark builder comes to the Danube's
+	polyline, run at `centre`.
+
+	@return { d: metres from the polyline, at: the offending box's XZ centre }.
+
+	Taking the centre as a PARAMETER rather than reading the slot is what lets the
+	mutation control below run a real shipped builder somewhere it must fail — the
+	measurement and the control are then the same code, which is the only way the
+	control proves anything about the check.
+	"""
+	var built := _run_builder(terrain, index, centre, Vector3.ZERO)
+	var worst := INF
+	var worst_at := Vector2.ZERO
+	for child in (built["body"] as Node).get_children():
+		var shape := child as CollisionShape3D
+		if shape == null:
+			continue
+		var box := shape.shape as BoxShape3D
+		if box == null:
+			continue
+		var xf: Transform3D = shape.transform
+		var e: Vector3 = box.size * 0.5
+		# The box's world-axis half-extents, through its own basis — the same
+		# projection check 13's avenue sweep uses on the same kind of node.
+		var ax := absf(xf.basis.x.x) * e.x + absf(xf.basis.y.x) * e.y + absf(xf.basis.z.x) * e.z
+		var az := absf(xf.basis.x.z) * e.x + absf(xf.basis.y.z) * e.y + absf(xf.basis.z.z) * e.z
+		var foot := Rect2(xf.origin.x - ax, xf.origin.z - az, ax * 2.0, az * 2.0)
+		var d := _rect_polyline_distance(foot)
+		if d < worst:
+			worst = d
+			worst_at = foot.get_center()
+	_free_builder(built)
+	return {"d": worst, "at": worst_at}
+
+
+func _check_river_rule_control(terrain: Node3D) -> void:
+	"""
+	THE MUTATION CONTROL for the rule above, in two parts, because the rule has two
+	pieces that can each fail silently and agreeably.
+
+	THE MEASUREMENT: a real shipped builder is run at a centre ON THE DANUBE'S
+	CENTRELINE and has to be reported as wet. Same function, same builder, moved
+	input — which is the only version of this control that says anything about the
+	check people actually run. A rule that could not see a bath in mid-river would
+	pass every bath ever authored.
+
+	THE GEOMETRY: _rect_polyline_distance's exactness, on the case the docstring
+	claims it for — a rect that SPANS the river with all four corners on dry land.
+	A corner-sampling implementation reads that as 272 m of clearance; the right
+	answer is zero. That is not a hypothetical: it is what a long east-west plinth
+	on the embankment looks like the day somebody widens one.
+	"""
+	var probe := _slot_index("rudas_bath")
+	if probe < 0:
+		_fail("check 14's river control could not find a builder to mutate")
+		return
+	var mid: Vector2 = BudapestPlan.DANUBE[2]
+	var wet := _landmark_wettest(terrain, probe, Vector3(mid.x, 0.0, mid.y))
+	if float(wet["d"]) >= BudapestPlan.DANUBE_HALF_WIDTH:
+		_fail("a landmark built ON the Danube's centreline measured %.1f m from "
+				% float(wet["d"]) + "the polyline — the river rule cannot see "
+				+ "stone standing in mid-channel, so it proves nothing about the "
+				+ "landmarks it passed")
+
+	# All four corners > 120 m from the polyline at z = 0 (the band there is
+	# x 2352..2592), and the rect contains the river.
+	var spanning := Rect2(2200.0, -5.0, 550.0, 10.0)
+	if _rect_polyline_distance(spanning) > 0.001:
+		_fail("a rect spanning the Danube from bank to bank measured %.1f m of "
+				% _rect_polyline_distance(spanning) + "clearance — the rect / "
+				+ "polyline distance is sampling corners, so a plinth laid across "
+				+ "the river reads as dry")
+	# ...and the positive control beside it: genuinely dry ground stays dry.
+	if _rect_polyline_distance(Rect2(1700.0, -10.0, 20.0, 20.0)) <= BudapestPlan.DANUBE_HALF_WIDTH:
+		_fail("a rect 650 m west of the Danube measured as inside the band — the "
+				+ "rect / polyline distance answers wet for everything")
+
+
+func _rect_point_distance(r: Rect2, p: Vector2) -> float:
+	"""Distance from a point to an axis-aligned rect, 0 inside it."""
+	return Vector2(maxf(maxf(r.position.x - p.x, 0.0), p.x - r.end.x),
+			maxf(maxf(r.position.y - p.y, 0.0), p.y - r.end.y)).length()
+
+
+func _rect_polyline_distance(r: Rect2) -> float:
+	"""
+	Shortest distance from an axis-aligned rect to the Danube's polyline — the
+	EXACT minimum over the whole rect, not a sample of it.
+
+	A box that pokes into the band between its own corners is exactly the case a
+	corner sample misses, and a grid sample fine enough to catch it over the
+	Parliament's 125 x 272 m plinth is thousands of points. It needs neither: for
+	two DISJOINT convex sets in the plane the minimum distance is attained at a
+	VERTEX of one of them, so asking the four rect corners against each segment and
+	the two segment endpoints against the rect is the whole answer.
+
+	DISJOINT IS THE LOAD-BEARING WORD, and the control above is what taught it: a
+	segment that CROSSES the rect has no vertex anywhere near it — the Danube's
+	z = -40 and z = 520 endpoints are both far outside a 10 m-deep plinth laid
+	across the river — and the vertex enumeration cheerfully returns 35 m for two
+	shapes that overlap. So the crossing is tested first, and answers 0.
+	"""
+	var corners: Array[Vector2] = [r.position, Vector2(r.end.x, r.position.y),
+			Vector2(r.position.x, r.end.y), r.end]
+	var best := INF
+	for i in range(BudapestPlan.DANUBE.size() - 1):
+		var a: Vector2 = BudapestPlan.DANUBE[i]
+		var b: Vector2 = BudapestPlan.DANUBE[i + 1]
+		if _segment_hits_rect(a, b, r):
+			return 0.0
+		for c: Vector2 in corners:
+			best = minf(best, BudapestPlan.segment_distance(c, a, b))
+		best = minf(best, _rect_point_distance(r, a))
+		best = minf(best, _rect_point_distance(r, b))
+	return best
+
+
+func _segment_hits_rect(a: Vector2, b: Vector2, r: Rect2) -> bool:
+	"""
+	Does segment ab meet the axis-aligned rect? Liang-Barsky's slab clip: walk the
+	four half-planes, narrowing the segment's own [0, 1] parameter window, and the
+	segment meets the rect exactly when the window survives.
+
+	A segment PARALLEL to a slab and outside it (p == 0, q < 0) is rejected
+	outright rather than dividing by zero — the Danube's near-vertical segments
+	against a wide, shallow plinth are exactly that case on the X axis.
+	"""
+	var d := b - a
+	var t0 := 0.0
+	var t1 := 1.0
+	var ps: Array[float] = [-d.x, d.x, -d.y, d.y]
+	var qs: Array[float] = [a.x - r.position.x, r.end.x - a.x,
+			a.y - r.position.y, r.end.y - a.y]
+	for i in 4:
+		var p: float = ps[i]
+		var q: float = qs[i]
+		if is_zero_approx(p):
+			if q < 0.0:
+				return false
+			continue
+		var t := q / p
+		if p < 0.0:
+			t0 = maxf(t0, t)
+		else:
+			t1 = minf(t1, t)
+	return t0 <= t1
 
 
 func _check_no_reward_under_a_deck(terrain: Node3D) -> void:

@@ -91,8 +91,17 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            chunks really build measured against the plan's
 #                            profile (flush, no step, no seam gap on either
 #                            axis); plus Margaret Island dry and inside the band,
-#                            and the Danube's crocodiles bucketed north/middle/
-#                            south so the policy is proved along the WHOLE river
+#                            the Danube's crocodiles bucketed north/middle/
+#                            south so the policy is proved along the WHOLE river,
+#                            and NOTHING STANDS IN THE RIVER OR IN A MASSIF —
+#                            every landmark's COLLIDING STONE measured against
+#                            the band (never its disc, which for a 268 m
+#                            Parliament is a bound 33 m into the water while not
+#                            one stone of it is) and every disc against every
+#                            plateau, exempting only slots on a DRY_RECTS row or
+#                            a plateau lid plus the one named
+#                            `shoes_on_the_danube`; with a mutation control that
+#                            runs a shipped builder mid-channel
 #   landmark_progress_selfcheck
 #                            BUDAPEST'S WIN: the catalogue (every slot resolves a
 #                            CITY_LANDMARKS row by BUILDER NAME, a wave-C

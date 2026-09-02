@@ -467,8 +467,21 @@ const SLOTS: Array = [
 	{"id": "vajdahunyad", "builder": "_city_vajdahunyad", "pos": Vector3(3680.0, 0.0, -340.0), "radius": 54.0},
 	{"id": "szechenyi_bath", "builder": "_city_szechenyi_baths", "pos": Vector3(3620.0, 0.0, -760.0), "radius": 60.0},
 	# ---- the baths and the odd ones ----------------------------------------
-	{"id": "gellert_bath", "builder": "_city_gellert_baths", "pos": Vector3(2420.0, 0.0, 1000.0), "radius": 52.0},
-	{"id": "rudas_bath", "builder": "_city_rudas_baths", "pos": Vector3(2370.0, 0.0, 560.0), "radius": 42.0},
+	# THE TWO BATHS MOVED WHEN THEIR BUILDERS LANDED, and the reason is the same
+	# one that moved the Liberty Bridge's deck: a reservation is a position nothing
+	# has ever been built at, and both of these turned out to be positions where
+	# the stone would not fit. Gellért was authored 136.9 m from the polyline with
+	# a 52 m disc and Rudas 133.9 m with a 42 m one, so both platforms overhung the
+	# 240 m band — and `is_river_at()` is XZ-only, so you WADE standing on them.
+	# Rudas was worse: its disc also reached into Gellért Hill's massif, which is
+	# solid stone to its 46 m lid.
+	#
+	# Both slid along the bank at the foot of the hill, which is where they really
+	# are: Gellért 40.3 m south-west (175.1 m out, 3.1 m of disc to spare), Rudas
+	# 49.5 m north-west past the massif's corner (165.0 m out, 3.0 m to spare).
+	# Check 14 measures the stone rather than the disc and holds both there.
+	{"id": "gellert_bath", "builder": "_city_gellert_baths", "pos": Vector3(2380.0, 0.0, 1005.0), "radius": 52.0},
+	{"id": "rudas_bath", "builder": "_city_rudas_baths", "pos": Vector3(2335.0, 0.0, 525.0), "radius": 42.0},
 	{"id": "shoes_on_the_danube", "builder": "_city_shoes_on_danube", "pos": Vector3(2640.0, 0.0, -300.0), "radius": 32.0},
 	{"id": "budapest_eye", "builder": "_city_budapest_eye", "pos": Vector3(2870.0, 0.0, -60.0), "radius": 38.0},
 ]
