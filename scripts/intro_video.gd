@@ -104,9 +104,12 @@ class_name IntroVideo
 const VIDEO_URL: String = "https://img.cc.wandergeek.org/intro/episode.mp4"
 
 ## The ending film uses this same browser lifecycle. Keeping its address beside
-## the intro URL makes the two supported films explicit without introducing a
+## the intro URL makes the supported films explicit without introducing a
 ## second DOM player implementation.
 const GAME_OVER_VIDEO_URL: String = "https://img.cc.wandergeek.org/game_over.mp4"
+
+## The win film slot for Budapest victory — played when the heroes win the run.
+const WIN_VIDEO_URL: String = "https://img.cc.wandergeek.org/win.mp4"
 
 ## How long SPACE has to be held to skip. A hold rather than a tap so a player
 ## resting on the key (SPACE is also `jump`) does not lose the film by accident,

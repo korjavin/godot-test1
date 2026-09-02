@@ -110,6 +110,8 @@ const CONFIG_PLAYER_SECTION: String = "player"
 const LS_PLAYER_ID: String = "ck_player_id"
 const LS_DISTANCE: String = "ck_best_distance"
 const LS_COINS: String = "ck_best_coins"
+const LS_HAS_WON: String = "ck_has_won"
+const LS_LANDMARKS_BEST: String = "ck_landmarks_best"
 const LS_LIFETIME: String = "ck_lifetime_coins"
 const LS_SPENT: String = "ck_spent_points"
 ## The per-hero skill ranks, as a JSON object. JSON on BOTH layers (rather than a
@@ -117,6 +119,9 @@ const LS_SPENT: String = "ck_spent_points"
 ## wrong instead of two, and so a hand-edited or truncated value fails the same
 ## way everywhere: it is ignored and the ranks stay as they were.
 const LS_RANKS: String = "ck_skill_ranks"
+
+const CONFIG_RECORD_HAS_WON: String = "has_won"
+const CONFIG_RECORD_LANDMARKS_BEST: String = "landmarks_best"
 
 ## Desktop section for the progression counters. A section of its own so a
 ## player's meta-progression is legible in `best_run.cfg` and so deleting it by
@@ -226,6 +231,10 @@ var server_best_distance: int = 0
 ## cannot drift from the count that produced it.
 var lifetime_coins: int = 0
 var spent_points: int = 0
+
+## Win state (OR-merged) and best landmark count (max-merged) for Budapest escape.
+var has_won: bool = false
+var landmarks_best: int = 0
 
 ## Per-hero skill ranks (`hero → { skill id: rank }`), LOCAL LAYER ONLY — see the
 ## header for why they never reach the server. Merged, never assigned.
@@ -351,6 +360,8 @@ func _read_local() -> void:
 		coins = maxi(coins, maxi(0, _ls_get(LS_COINS).to_int()))
 		lifetime_coins = maxi(lifetime_coins, maxi(0, _ls_get(LS_LIFETIME).to_int()))
 		spent_points = maxi(spent_points, maxi(0, _ls_get(LS_SPENT).to_int()))
+		has_won = has_won or (_ls_get(LS_HAS_WON) == "1" or _ls_get(LS_HAS_WON) == "true")
+		landmarks_best = maxi(landmarks_best, maxi(0, _ls_get(LS_LANDMARKS_BEST).to_int()))
 		merge_ranks(skill_ranks, _parse_ranks(_ls_get(LS_RANKS)))
 	var cfg := ConfigFile.new()
 	# A missing file (first ever run) is NOT an error — the zero defaults stand.
@@ -358,6 +369,11 @@ func _read_local() -> void:
 	if cfg.load(config_path) != OK:
 		return
 	coins = maxi(coins, maxi(0, int(cfg.get_value(CONFIG_SECTION, "coins", 0))))
+	has_won = has_won or bool(cfg.get_value(CONFIG_SECTION, CONFIG_RECORD_HAS_WON, false))
+	landmarks_best = maxi(
+		landmarks_best,
+		maxi(0, int(cfg.get_value(CONFIG_SECTION, CONFIG_RECORD_LANDMARKS_BEST, 0)))
+	)
 	lifetime_coins = maxi(
 		lifetime_coins,
 		maxi(0, int(cfg.get_value(CONFIG_PROGRESSION_SECTION, "lifetime_coins", 0)))
@@ -393,6 +409,8 @@ func _write_local() -> void:
 	if OS.has_feature("web"):
 		_ls_set(LS_DISTANCE, "0")
 		_ls_set(LS_COINS, str(coins))
+		_ls_set(LS_HAS_WON, "1" if has_won else "0")
+		_ls_set(LS_LANDMARKS_BEST, str(landmarks_best))
 		_ls_set(LS_LIFETIME, str(lifetime_coins))
 		_ls_set(LS_SPENT, str(spent_points))
 		_ls_set(LS_RANKS, JSON.stringify(skill_ranks))
@@ -401,10 +419,24 @@ func _write_local() -> void:
 	cfg.load(config_path)  # keep any other section (the player id) intact
 	cfg.set_value(CONFIG_SECTION, "distance", 0)
 	cfg.set_value(CONFIG_SECTION, "coins", coins)
+	cfg.set_value(CONFIG_SECTION, CONFIG_RECORD_HAS_WON, has_won)
+	cfg.set_value(CONFIG_SECTION, CONFIG_RECORD_LANDMARKS_BEST, landmarks_best)
 	cfg.set_value(CONFIG_PROGRESSION_SECTION, "lifetime_coins", lifetime_coins)
 	cfg.set_value(CONFIG_PROGRESSION_SECTION, "spent_points", spent_points)
 	cfg.set_value(CONFIG_PROGRESSION_SECTION, "skill_ranks", JSON.stringify(skill_ranks))
 	cfg.save(config_path)
+
+
+func record_win() -> void:
+	"""Record that the player has won the game: OR-merged so a win is never lost."""
+	has_won = true
+	_write_local()
+
+
+func submit_landmarks(count: int) -> void:
+	"""Record explored landmark count: max-merged."""
+	landmarks_best = maxi(landmarks_best, count)
+	_write_local()
 
 
 # =============================================================================
@@ -578,36 +610,55 @@ static func _sanitize_tower_ids(parsed: Variant) -> Array[String]:
 # and the only thing that clears it is starting a new one. Read at boot by
 # `player_controller`, which raises the ending screen instead of handing out a run.
 
+const OUTCOME_CAPTURED: String = "captured"
+const OUTCOME_WON: String = "won"
+
 static func world_archived() -> bool:
 	"""
-	Has this world's campaign ended? False for a missing or unreadable file.
+	Has this world's campaign ended? False for a missing, unreadable, or active file.
+	"""
+	return not archived_outcome().is_empty()
 
-	Every failure mode — no profile yet, a hand-edited mess, a truncated write —
-	answers "no", which is the safe direction: the worst case is a player getting a
-	run back, never a player locked out of one by a corrupt byte.
+
+static func archived_outcome() -> String:
+	"""
+	Return the archived outcome ("captured" or "won"), or "" if no world is archived.
+	Handles legacy boolean `true` as "captured".
 	"""
 	var cfg := ConfigFile.new()
 	if cfg.load(config_path) != OK:
-		return false
-	return bool(cfg.get_value(CONFIG_WORLD_SECTION, CONFIG_WORLD_ARCHIVED, false))
+		return ""
+	var val: Variant = cfg.get_value(CONFIG_WORLD_SECTION, CONFIG_WORLD_ARCHIVED, false)
+	if typeof(val) == TYPE_STRING:
+		return String(val)
+	elif typeof(val) == TYPE_BOOL and bool(val):
+		return OUTCOME_CAPTURED
+	return ""
 
 
-static func archive_world() -> void:
+static func has_ever_won() -> bool:
 	"""
-	End this world. The full-custody protocol's failure record, and its ONLY one.
+	Has the player ever won? Reads local store.
+	"""
+	if OS.has_feature("web"):
+		return _ls_get(LS_HAS_WON) == "1" or _ls_get(LS_HAS_WON) == "true"
+	var cfg := ConfigFile.new()
+	if cfg.load(config_path) != OK:
+		return false
+	return bool(cfg.get_value(CONFIG_SECTION, CONFIG_RECORD_HAS_WON, false))
+
+
+static func archive_world(outcome: String = OUTCOME_CAPTURED) -> void:
+	"""
+	End this world with the specified outcome ("captured" or "won").
 
 	READ-MODIFY-WRITE like every other write in this file, so the records, the
 	counters, the player id and the tower's opened set survive it — an archived
 	world is still the profile that earned them.
-
-	IT IS THE OUTCOME, not a note about the outcome. Nothing else is written when
-	the recall completes, so there is no second fact this one can disagree with and
-	nothing to make atomic with respect to: a crash the instant after this line has
-	an archived world, and a crash the instant before has a world still in play.
 	"""
 	var cfg := ConfigFile.new()
 	cfg.load(config_path)
-	cfg.set_value(CONFIG_WORLD_SECTION, CONFIG_WORLD_ARCHIVED, true)
+	cfg.set_value(CONFIG_WORLD_SECTION, CONFIG_WORLD_ARCHIVED, outcome)
 	cfg.save(config_path)
 
 
