@@ -9842,6 +9842,119 @@ func spawn_city_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obst
 				rng, block_batch, block_body, 0.0, CITY_AVENUE_STONE, false)
 
 
+func _chunk_grid_spans(centre: float, size: float) -> Array:
+	"""
+	One axis of split_city_boxes_on_chunk_grid: cut the interval
+	[centre - size/2, centre + size/2] at every WORLD chunk boundary it crosses.
+
+	@param centre: The interval's centre in WORLD space (not chunk-local).
+	@param size: Its full extent on that axis.
+	@return: [Vector2(piece centre, piece size), ...], west/north to east/south.
+	         One element — the input, unchanged — when the interval fits in a cell.
+
+	World space is deliberate: the boundaries are `k * chunk_size`, which is the
+	same set of lines whichever chunk is asking, so every chunk that runs a slot's
+	builder cuts that slot's boxes into the SAME pieces. That identity is what lets
+	the centre rule below stay the whole of the assignment.
+
+	A boundary that coincides with an edge produces no zero-width piece: the first
+	cut is strictly east of `lo` (floori + 1) and the loop stops at `hi`.
+	"""
+	var lo := centre - size * 0.5
+	var hi := centre + size * 0.5
+	var spans: Array = []
+	var k := floori(lo / chunk_size) + 1
+	var cut := float(k) * chunk_size
+	var start := lo
+	while cut < hi:
+		spans.append(Vector2((start + cut) * 0.5, cut - start))
+		start = cut
+		k += 1
+		cut = float(k) * chunk_size
+	spans.append(Vector2((start + hi) * 0.5, hi - start))
+	return spans
+
+
+func split_city_boxes_on_chunk_grid(chunk_center: Vector3, batch: Array, body: StaticBody3D) -> void:
+	"""
+	Cut every box in a landmark builder's output that is wider than a chunk into
+	per-cell pieces, on the WORLD chunk grid, in place. Rule 2a of
+	_spawn_city_landmarks_in_chunk — read that docstring for why it exists.
+
+	@param chunk_center: The world centre of the chunk whose local frame `batch`
+	                     and `body` are expressed in.
+	@param batch: In/out — the scratch MultiMesh batch, rewritten.
+	@param body: In/out — the scratch collision body, its shapes rewritten.
+
+	BOTH HALVES, INDEPENDENTLY. They are cut by the same arithmetic but never
+	paired by index: every `collide = false` box (domes, spires, cornices — these
+	builders are full of them) makes the two lists different lengths, which is the
+	same reason the clip itself treats them separately.
+
+	AXIS-ALIGNED ONLY. A rotated box has no representation as axis-aligned pieces,
+	so it is left alone and keeps the centre rule; budapest_selfcheck check 5 is
+	what fails a rotated box big enough for that to matter.
+
+	Public (no leading underscore) so the self-check can run it over a builder's
+	unclipped output the way the streamer does, rather than restating it.
+	"""
+	var out: Array = []
+	for entry_v: Variant in batch:
+		var entry: Dictionary = entry_v
+		var t: Transform3D = entry["transform"]
+		var b := t.basis
+		# Axis-aligned means the basis is diagonal: create_box builds it as
+		# rot.scaled_local(dimensions), so yaw = tilt = 0 leaves exactly that.
+		if not (is_zero_approx(b.x.y) and is_zero_approx(b.x.z)
+				and is_zero_approx(b.y.x) and is_zero_approx(b.y.z)
+				and is_zero_approx(b.z.x) and is_zero_approx(b.z.y)):
+			out.append(entry)
+			continue
+		var xs := _chunk_grid_spans(chunk_center.x + t.origin.x, absf(b.x.x))
+		var zs := _chunk_grid_spans(chunk_center.z + t.origin.z, absf(b.z.z))
+		if xs.size() == 1 and zs.size() == 1:
+			out.append(entry)
+			continue
+		for xv: Vector2 in xs:
+			for zv: Vector2 in zs:
+				var nb := Basis(
+						Vector3(signf(b.x.x) * xv.y, 0.0, 0.0),
+						b.y,
+						Vector3(0.0, 0.0, signf(b.z.z) * zv.y))
+				out.append({
+					"transform": Transform3D(nb, Vector3(
+							xv.x - chunk_center.x, t.origin.y, zv.x - chunk_center.z)),
+					"color": entry["color"],
+				})
+	batch.clear()
+	batch.append_array(out)
+
+	# get_children() hands back a copy, so the shapes added below are not revisited.
+	for child in body.get_children():
+		var cs := child as CollisionShape3D
+		if cs == null:
+			continue
+		var box := cs.shape as BoxShape3D
+		if box == null or not cs.transform.basis.is_equal_approx(Basis.IDENTITY):
+			continue
+		var o := cs.transform.origin
+		var xs := _chunk_grid_spans(chunk_center.x + o.x, box.size.x)
+		var zs := _chunk_grid_spans(chunk_center.z + o.z, box.size.z)
+		if xs.size() == 1 and zs.size() == 1:
+			continue
+		for xv: Vector2 in xs:
+			for zv: Vector2 in zs:
+				var piece := CollisionShape3D.new()
+				var shape := BoxShape3D.new()
+				shape.size = Vector3(xv.y, box.size.y, zv.y)
+				piece.shape = shape
+				piece.transform = Transform3D(Basis.IDENTITY, Vector3(
+						xv.x - chunk_center.x, o.y, zv.x - chunk_center.z))
+				body.add_child(piece)
+		body.remove_child(cs)
+		cs.free()
+
+
 func _spawn_city_landmarks_in_chunk(chunk_center: Vector3, parent_chunk: MeshInstance3D, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
 	"""
 	Build this chunk's SHARE of every authored Budapest landmark whose disc reaches
@@ -9899,6 +10012,18 @@ func _spawn_city_landmarks_in_chunk(chunk_center: Vector3, parent_chunk: MeshIns
 	2. THE CLIP IS HALF-OPEN — `>= -half` and `< half` on both axes. A box centred
 	   exactly on a chunk boundary then lands in exactly ONE chunk: never in both
 	   (a doubled, z-fighting wall) and never in neither (a hole).
+	   THE CENTRE RULE ONLY SLICES A LANDMARK; IT DOES NOT SLICE A BOX, and these
+	   builders emit single boxes far bigger than a chunk (Buda Castle's terrace is
+	   70 x 300, the Parliament's plinth 125 x 272, against a 50 m chunk). Handed
+	   whole to the chunk holding its centre, such a box unloads with that chunk —
+	   on the web build that is 150 m of Chebyshev residency against a 300 m
+	   palace, i.e. the building vanishing while you walk its far end, which is the
+	   exact failure this whole function exists to prevent. So
+	   split_city_boxes_on_chunk_grid() cuts every oversized AXIS-ALIGNED box on
+	   the world chunk grid FIRST; the centre rule then sees only pieces that fit
+	   inside one cell and is correct again. Rotated boxes cannot be cut into boxes
+	   and keep the centre rule — budapest_selfcheck check 5 fails a rotated box
+	   whose footprint exceeds a chunk, which is what keeps that safe.
 	   ponytail: the test is on the CHUNK-LOCAL centre, and a local coordinate is
 	   an f32 with the chunk's own origin already subtracted, so two neighbours
 	   disagree about a seam-straddling box only if their f32 rounding disagrees —
@@ -9963,11 +10088,16 @@ func _spawn_city_landmarks_in_chunk(chunk_center: Vector3, parent_chunk: MeshIns
 
 		# Builders take a CHUNK-LOCAL centre (the field landmarks' convention), so
 		# the slot's world position is rebased here — and its authored y is passed
-		# through unchanged, which is how the four slots on a plateau stand on the
+		# through unchanged, which is how the three slots on a plateau stand on the
 		# lid instead of inside the hill.
 		var center := Vector3(pos.x - chunk_center.x, pos.y, pos.z - chunk_center.z)
 		var footprint: Dictionary = _landmark_builders.call(
 				builder, self, center, rng, scratch_chunk, scratch_batch, scratch_body)
+
+		# Rule 2a: a box WIDER THAN A CHUNK is cut on the grid first (see the
+		# helper). Without this the centre rule below hands a 300 m box to one
+		# chunk whole, and that chunk unloads while you stand on the far end.
+		split_city_boxes_on_chunk_grid(chunk_center, scratch_batch, scratch_body)
 
 		# Rule 2 + 3a: the visual half, half-open on both axes.
 		for entry in scratch_batch:

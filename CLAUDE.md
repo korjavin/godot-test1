@@ -272,7 +272,13 @@ Three rules of the city's own, all pinned by `budapest_selfcheck`:
   chunk whose square meets a slot's disc runs that slot's builder into a scratch batch /
   body / node and keeps only the boxes whose CENTRE lands in its own square (half-open on
   both axes, so a seam-straddling box lands in exactly one chunk — never doubled, never
-  missing). It is nearly free because `landmark_builders.gd`'s builders are pure functions
+  missing). **The centre rule slices a LANDMARK, not a BOX**, and these builders emit
+  single boxes far bigger than a chunk (Buda Castle's terrace is 70 x 300 m), so every
+  oversized axis-aligned box is first cut on the world chunk grid by
+  `split_city_boxes_on_chunk_grid()` — without it a 300 m palace lives in one 50 m chunk
+  and vanishes at the web build's 150 m residency edge while you walk its far end. A
+  ROTATED box cannot be cut into boxes and keeps the centre rule; `budapest_selfcheck`
+  check 5 fails any box, turned or not, bigger than a chunk. It is nearly free because `landmark_builders.gd`'s builders are pure functions
   of (centre, rng) whose stream touches **colour only**. **The seed is the SLOT INDEX and
   nothing else** — no `run_seed` (the city is authored) and above all no chunk coordinate,
   or the building comes out tie-dyed along its seams. The two rejected answers are recorded

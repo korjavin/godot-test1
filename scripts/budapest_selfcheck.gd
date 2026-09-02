@@ -591,7 +591,7 @@ func _check_slicing(terrain: Node3D) -> void:
 		var builder := String(slot["builder"])
 
 		# The unclipped build, once, for the box and accent COUNTS this slot owes.
-		var whole := _run_builder(terrain, index, Vector3(pos.x, pos.y, pos.z))
+		var whole := _run_builder(terrain, index, Vector3(pos.x, pos.y, pos.z), Vector3.ZERO)
 		var total: int = (whole["batch"] as Array).size()
 		var whole_accents: int = (whole["accents"] as int)
 		_free_builder(whole)
@@ -610,7 +610,7 @@ func _check_slicing(terrain: Node3D) -> void:
 				# The same builder run the streamer is about to make, in the same
 				# frame, so its entries are byte-comparable with what comes back.
 				var rebased := _run_builder(terrain, index,
-						Vector3(pos.x - centre.x, pos.y, pos.z - centre.z))
+						Vector3(pos.x - centre.x, pos.y, pos.z - centre.z), centre)
 				var by_bytes := {}
 				var rebased_batch: Array = rebased["batch"]
 				for i in range(rebased_batch.size()):
@@ -662,12 +662,78 @@ func _check_slicing(terrain: Node3D) -> void:
 		print("slicing '%s': %d boxes over %d chunks, each kept exactly once, "
 				% [id, total, chunks] + "%d accent(s) total" % accents)
 
+	_check_no_box_outgrows_a_chunk(terrain)
 
-func _run_builder(terrain: Node3D, index: int, center: Vector3) -> Dictionary:
+
+func _check_no_box_outgrows_a_chunk(terrain: Node3D) -> void:
+	"""
+	THE OTHER HALF OF THE KEYSTONE, and the one the "kept exactly once" tally is
+	blind to: a box KEPT ONCE but BIGGER THAN THE CHUNK THAT KEPT IT.
+
+	The centre rule slices a LANDMARK, not a BOX. Buda Castle's terrace is a single
+	70 x 300 box and a chunk is 50 m, so before rule 2a the whole palace lived in
+	one chunk and unloaded with it — on the web build (render_distance 3, a 150 m
+	Chebyshev square) that is the building disappearing while you stand on its far
+	end, 11 m from stone you can see. Every existing assertion passed through it:
+	check 4 counts boxes, check 5 counts how many chunks kept each one, and a box
+	of any size satisfies both.
+
+	So: run EVERY slot's builder through the streamer's own splitter and fail any
+	surviving box whose own W x D outgrows a chunk.
+
+	MEASURED ON THE BOX'S OWN DIMENSIONS, NOT ITS WORLD AABB, and that is the whole
+	subtlety. An axis-aligned box's dimensions ARE its world footprint, so for
+	everything the splitter cuts the two are the same test. A ROTATED box is the one
+	case the splitter deliberately skips — a turned box has no representation as
+	axis-aligned pieces — so it keeps the centre rule, and the question is how far
+	it can then reach past its own cell. A box whose own dimensions fit a chunk
+	reaches at most sqrt(2)/2 of a chunk from its centre instead of 1/2, i.e. 0.21
+	of a chunk further than an aligned one (the Parliament's dome drum, 36 x 36 at
+	45 degrees, is the only box in the city that spends any of it). That is a
+	chunk-sized pop at the residency edge, which is what every prop in the game
+	already is; a 300 m palace vanishing is not.
+	"""
+	var worst := 0.0
+	var worst_id := ""
+	for index in range(BudapestPlan.SLOTS.size()):
+		var slot: Dictionary = BudapestPlan.SLOTS[index]
+		if String(slot["builder"]).is_empty():
+			continue
+		var pos: Vector3 = slot["pos"]
+		var built := _run_builder(terrain, index, pos, Vector3.ZERO)
+		for entry_v: Variant in (built["batch"] as Array):
+			var b: Basis = (entry_v as Dictionary)["transform"].basis
+			# create_box builds the basis as rot.scaled_local(dimensions), so a
+			# column's LENGTH is that dimension whatever the rotation is.
+			var w := b.x.length()
+			var d := b.z.length()
+			var big := maxf(w, d)
+			if big > worst:
+				worst = big
+				worst_id = String(slot["id"])
+			if big > terrain.chunk_size:
+				_fail("'%s' emits a %.1f x %.1f m box, bigger than the %.0f m "
+						% [slot["id"], w, d, terrain.chunk_size] + "chunk that "
+						+ "would keep it whole — it unloads while you are standing "
+						+ "on it (rule 2a stopped cutting, or a ROTATED box outgrew "
+						+ "the one case the splitter skips)")
+		_free_builder(built)
+
+	print("no box outgrows a chunk: worst %.1f m ('%s') against a %.0f m chunk"
+			% [worst, worst_id, terrain.chunk_size])
+
+
+func _run_builder(terrain: Node3D, index: int, center: Vector3, chunk_center: Vector3) -> Dictionary:
 	"""
 	One landmark builder, run exactly the way _spawn_city_landmarks_in_chunk runs
-	it: the SEED is the slot index and the plan's salt, and nothing else. THE
-	CALLER PASSES THE RESULT TO _free_builder.
+	it: the SEED is the slot index and the plan's salt, and nothing else, and the
+	output is then cut on the world chunk grid by the streamer's OWN splitter (rule
+	2a — never a restatement of it here). THE CALLER PASSES THE RESULT TO
+	_free_builder.
+
+	@param center: The builder's centre, in the frame `chunk_center` names.
+	@param chunk_center: The world centre of the chunk that frame belongs to; pass
+	                     Vector3.ZERO to work directly in world space.
 	"""
 	var slot: Dictionary = BudapestPlan.SLOTS[index]
 	var rng := RandomNumberGenerator.new()
@@ -677,6 +743,7 @@ func _run_builder(terrain: Node3D, index: int, center: Vector3) -> Dictionary:
 	var body := StaticBody3D.new()
 	terrain._landmark_builders.call(String(slot["builder"]), terrain, center, rng,
 			chunk, batch, body)
+	terrain.split_city_boxes_on_chunk_grid(chunk_center, batch, body)
 	return {"batch": batch, "body": body, "chunk": chunk,
 			"accents": chunk.get_child_count()}
 
@@ -826,6 +893,124 @@ func _check_parity(terrain: Node3D) -> void:
 			+ "%d wet river samples, %d dry-rect points, shader arrays %d/%d >= %d/%d"
 			% [wet, dry_points, seg_max, dry_max,
 					BudapestPlan.DANUBE.size() - 1, BudapestPlan.DRY_RECTS.size()])
+
+	_check_parity_packing(terrain, shader)
+
+
+func _check_parity_packing(terrain: Node3D, shader: String) -> void:
+	"""
+	THE HALF A TEXT SCAN CANNOT REACH: whether the numbers pushed into the shader's
+	array uniforms are PACKED the way the shader unpacks them.
+
+	The scan above proves each uniform is declared and pushed. It cannot see that
+	ground.gdshader reads city_dry[i] as (xmin, zmin, xmax, zmax) while DRY_RECTS
+	is stored as Rect2(position, SIZE) — one plausible line in _city_dry_rects,
+
+	    rects[i] = Vector4(r.position.x, r.position.y, r.size.x, r.size.y)
+
+	turns the Chain Bridge's test into `x >= 2330 && x <= 290`, never true, and
+	every bridge deck and Margaret Island are painted as open water while
+	is_river_at keeps them dry. That is exactly the "the blue you see is not the
+	water you wade" failure check 6 exists for, and nothing else in this file sees
+	it.
+
+	So: run the SHADER'S OWN predicate here, in GDScript, driven off the values
+	read back OFF THE MATERIAL (not off BudapestPlan — reading the plan again would
+	just re-derive the packing this is trying to test), and compare it to
+	is_river_at over a lattice across the rect plus the corners and centre of every
+	dry rect. Samples within CITY_RIVER_EDGE_SOFT of the band edge are skipped:
+	that edge is a smoothstep on the GPU and a hard `<` on the CPU, which is the
+	one place the two are deliberately allowed to differ.
+	"""
+	# _ready() returns at its "no player" guard long before it builds the default
+	# ground material, so the harness stands one up the same way _ready does. The
+	# PUSH is still the shipped one — _apply_biome_shader_params below is the only
+	# thing that writes a uniform, here and in the game.
+	if terrain.terrain_material == null:
+		var ground := ShaderMaterial.new()
+		ground.shader = load(SHADER_PATH)
+		terrain.terrain_material = ground
+	terrain._apply_biome_shader_params()
+	var mat := terrain.terrain_material as ShaderMaterial
+	if mat == null:
+		_fail("the terrain's material is not a ShaderMaterial — check 6 could not "
+				+ "read back a single pushed uniform")
+		return
+
+	var rect: Vector4 = mat.get_shader_parameter("city_rect")
+	var segs: PackedVector4Array = mat.get_shader_parameter("city_river")
+	var seg_count: int = mat.get_shader_parameter("city_river_count")
+	var half: float = mat.get_shader_parameter("city_river_half")
+	var dry: PackedVector4Array = mat.get_shader_parameter("city_dry")
+	var dry_count: int = mat.get_shader_parameter("city_dry_count")
+	var soft := float(_shader_int(shader, "CITY_RIVER_EDGE_SOFT"))
+	if soft <= 0.0:
+		soft = 2.0
+
+	var points: Array[Vector2] = []
+	var lo := BudapestPlan.BUDAPEST_MIN
+	var span := BudapestPlan.BUDAPEST_MAX - lo
+	for ix in range(61):
+		for iz in range(61):
+			points.append(lo + Vector2(span.x * float(ix) / 60.0, span.y * float(iz) / 60.0))
+	# The dry rects are the whole point of the packing, so hit every corner and
+	# centre of every one of them as well as the lattice.
+	for r_v: Variant in BudapestPlan.DRY_RECTS:
+		var r: Rect2 = r_v
+		points.append(r.position + r.size * 0.5)
+		for cx in [0.02, 0.98]:
+			for cz in [0.02, 0.98]:
+				points.append(r.position + Vector2(r.size.x * cx, r.size.y * cz))
+
+	var disagreed := 0
+	var checked := 0
+	var gpu_dry_hits := 0
+	for p: Vector2 in points:
+		# in_city, verbatim from ground.gdshader's fragment().
+		if not (rect.z >= rect.x and p.x >= rect.x and p.x <= rect.z
+				and p.y >= rect.y and p.y <= rect.w):
+			continue
+		# city_river_distance(), verbatim: clamped point-to-segment, min over the
+		# first city_river_count entries.
+		var best := 1.0e9
+		for i in range(seg_count):
+			var a := Vector2(segs[i].x, segs[i].y)
+			var b := Vector2(segs[i].z, segs[i].w)
+			var ab := b - a
+			var len_sq := ab.dot(ab)
+			var t := 0.0 if len_sq <= 0.0 else clampf((p - a).dot(ab) / len_sq, 0.0, 1.0)
+			best = minf(best, p.distance_to(a + ab * t))
+		if absf(best - half) <= soft:
+			continue   # the smoothstep band: the two are allowed to differ here
+		# The per-fragment dry mask, verbatim.
+		var is_dry := false
+		for i in range(dry_count):
+			if p.x >= dry[i].x and p.x <= dry[i].z and p.y >= dry[i].y and p.y <= dry[i].w:
+				is_dry = true
+				break
+		if is_dry:
+			gpu_dry_hits += 1
+		var gpu_wet := best < half and not is_dry
+		checked += 1
+		if gpu_wet != terrain.is_river_at(Vector3(p.x, 0.0, p.y)):
+			disagreed += 1
+			if disagreed == 1:
+				_fail("the ground shader's OWN predicate, run on the values pushed "
+						+ "into its uniforms, says (%.0f, %.0f) is %s while "
+						% [p.x, p.y, "WET" if gpu_wet else "DRY"]
+						+ "is_river_at says the opposite — the city's array "
+						+ "uniforms are packed in an order the shader does not "
+						+ "unpack (city_dry is (xmin, zmin, xmax, zmax), NOT "
+						+ "Rect2's position + size)")
+
+	if gpu_dry_hits < BudapestPlan.DRY_RECTS.size():
+		_fail("only %d sample landed on a dry rect out of %d rows — the packing "
+				% [gpu_dry_hits, BudapestPlan.DRY_RECTS.size()] + "check walked "
+				+ "past the bridges it exists to measure")
+
+	print("  packing: %d in-city samples agree between the shader's predicate on "
+			% checked + "its PUSHED uniforms and is_river_at (%d of them on a dry "
+			% gpu_dry_hits + "rect), %d disagreements" % disagreed)
 
 
 func _shader_int(shader: String, name: String) -> int:
@@ -1172,25 +1357,52 @@ func _check_spawner_policy(terrain: Node3D) -> void:
 
 func _check_crocodile_stream_ab(terrain_script: GDScript) -> void:
 	"""
-	Build a field of chunks OUTSIDE the rect twice — once with the city streamer
-	and the Danube's spawner live, once with neither called — and compare the
-	crocodiles byte for byte.
+	Build a field of chunks twice — once with the city streamer live, once with it
+	not called at all — and compare the crocodiles byte for byte.
 
 	"Not called at all" is the strongest form of off available and needs no flag:
 	the harness drives create_chunk's sequence itself, so a leg simply omits the
-	two calls. What it measures is CLAUDE.md's determinism rule — an independent
-	feature takes its OWN hash stream and consumes no draw from the shared chunk
-	RNG — and the cost of breaking it is invisible and total: one extra draw
-	slides every crocodile in the world.
+	call. What it measures is CLAUDE.md's determinism rule — an independent feature
+	takes its OWN hash stream and consumes no draw from a stream somebody else
+	reads — and the cost of breaking it is invisible and total: one extra draw
+	slides every crocodile the other spawner places.
 
-	The field sits just WEST of the gate, where crocodiles are dense and the city
-	is one chunk away, because a field in the middle of nowhere would agree with
-	itself for the wrong reason.
+	TWO FIELDS, BECAUSE ONE OF THEM CANNOT FAIL AND SAYING SO IS THE POINT. The
+	two crocodile spawners gate on in_budapest(chunk centre) with OPPOSITE
+	polarity, and BUDAPEST_MIN/MAX are exact multiples of chunk_size, so no chunk
+	in the world ever runs both:
 
-	BOTH HALVES, like check 12: byte-identical AND non-empty.
+	  - WEST OF THE GATE the subject is the ORDINARY chunk crocodile, and the city
+	    streamer's own rect reject means neither city call reaches a draw. The A/B
+	    is therefore a statement that the reject really is the first thing either
+	    function does — true, worth keeping, and structurally unable to fail on the
+	    stream question.
+	  - ON THE DANUBE the subject is the DANUBE crocodile, which shares its chunks
+	    with the city streamer — 20-odd landmark builders, the plateaus, the ramps
+	    and the avenue, all running in the same call. THAT is the leg that can
+	    fail, and it is the one CLAUDE.md's "the Danube crocodiles' own stream
+	    A/B'd against the shared one" is actually about.
+
+	BOTH HALVES OF BOTH FIELDS, like check 12: byte-identical AND non-empty.
 	"""
-	var live := _croc_ab_field(terrain_script, true)
-	var off := _croc_ab_field(terrain_script, false)
+	var west_crocs := _croc_ab_pair(terrain_script, "west of the gate", 2,
+			Vector3(BudapestPlan.BUDAPEST_MIN.x - 400.0, 0.0, 0.0))
+	var river_crocs := _croc_ab_pair(terrain_script, "on the Danube", 4,
+			Vector3(BudapestPlan.DANUBE[2].x, 0.0, BudapestPlan.DANUBE[2].y))
+
+	print("croc A/B: %d ordinary crocodiles west of the gate and %d Danube "
+			% [west_crocs, river_crocs] + "crocodiles in the city's own chunks, "
+			+ "none moved by the city streamer")
+
+
+func _croc_ab_pair(terrain_script: GDScript, where: String, reach: int, at: Vector3) -> int:
+	"""
+	One A/B: the same field with and without spawn_city_in_chunk, compared byte for
+	byte. @return the crocodile count, so the caller can prove the field was not
+	empty (a comparison of two empty signatures proves nothing).
+	"""
+	var live := _croc_ab_field(terrain_script, true, at, reach)
+	var off := _croc_ab_field(terrain_script, false, at, reach)
 
 	var moved := 0
 	var crocs := 0
@@ -1201,19 +1413,17 @@ func _check_crocodile_stream_ab(terrain_script: GDScript) -> void:
 			moved += 1
 
 	if moved > 0:
-		_fail("%d of %d chunks outside the city put their crocodiles somewhere "
-				% [moved, live.size()] + "else once the city streamer and the "
-				+ "Danube's spawner were live — one of them is drawing from the "
-				+ "shared chunk RNG instead of its own DANUBE_SALT stream")
+		_fail("%d of %d chunks %s put their crocodiles somewhere else once the "
+				% [moved, live.size(), where] + "city streamer was live — it is "
+				+ "drawing from a stream a crocodile spawner reads, instead of "
+				+ "from its own CITY_STREAM_SEED / DANUBE_SALT")
 	if crocs < 1:
-		_fail("the A/B field outside the city contained no crocodiles at all — "
-				+ "check 10 compared two empty signatures and proved nothing")
-
-	print("croc A/B: %d chunks west of the gate, %d crocodiles unmoved by the "
-			% [live.size(), crocs] + "city streamer and the Danube's spawner")
+		_fail("the A/B field %s contained no crocodiles at all — check 10 "
+				% where + "compared two empty signatures and proved nothing")
+	return crocs
 
 
-func _croc_ab_field(terrain_script: GDScript, city_on: bool) -> Dictionary:
+func _croc_ab_field(terrain_script: GDScript, city_on: bool, at: Vector3, reach: int) -> Dictionary:
 	"""One leg of check 10: chunk -> [name, species, position, yaw] per crocodile."""
 	# DELIBERATELY NOT IN THE TREE. endless_terrain's _ready() re-rolls run_seed
 	# FIRST THING, so a terrain added to the tree after set_run_seed() throws the
@@ -1221,11 +1431,10 @@ func _croc_ab_field(terrain_script: GDScript, city_on: bool) -> Dictionary:
 	# agreeing about nothing. (_make_terrain, which the in-tree checks use, adds
 	# first and forces the seed second for exactly this reason.)
 	var terrain := _detached_terrain(terrain_script, RUN_SEED)
-	var origin: Vector2i = terrain.world_to_chunk(
-			Vector3(BudapestPlan.BUDAPEST_MIN.x - 400.0, 0.0, 0.0))
+	var origin: Vector2i = terrain.world_to_chunk(at)
 	var out := {}
-	for dx in range(-2, 3):
-		for dz in range(-2, 3):
+	for dx in range(-reach, reach + 1):
+		for dz in range(-reach, reach + 1):
 			var chunk_pos := Vector2i(origin.x + dx, origin.y + dz)
 			var parent := MeshInstance3D.new()
 			parent.position = terrain.chunk_to_world(chunk_pos)
@@ -1243,8 +1452,10 @@ func _croc_ab_field(terrain_script: GDScript, city_on: bool) -> Dictionary:
 				terrain.spawn_city_in_chunk(chunk_pos, parent, obstacles, batch, body)
 			terrain.spawn_crocodiles_in_chunk(chunk_pos, parent, obstacles)
 			terrain.spawn_platform_crocodiles(chunk_pos, parent, platforms)
-			if city_on:
-				terrain.spawn_danube_crocodiles_in_chunk(chunk_pos, parent)
+			# ALWAYS, in both legs: the Danube's spawner is a SUBJECT of this
+			# A/B on the river field, not the variable. The variable is the city
+			# streamer above, which is the thing that shares its chunks.
+			terrain.spawn_danube_crocodiles_in_chunk(chunk_pos, parent)
 			var parts: Array = []
 			for child in parent.get_children():
 				if not (child as Node).is_in_group("crocodile"):

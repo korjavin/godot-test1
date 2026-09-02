@@ -314,7 +314,8 @@ const CITY_LANDMARK_SALT: int = 0xB0DA9E51
 ## registry without editing it or importing it.
 ##
 ## `pos.y` is the BASE HEIGHT the builder is placed at: 0 everywhere except the
-## four slots standing on a plateau, which carry that plateau's `top`.
+## three slots standing on a plateau (buda_castle, matthias, citadella), which
+## carry that plateau's `top`. Check 2 prints the count.
 ##
 ## `radius` for rows 0-14 is the registry's OWN declared radius, copied. Check 2
 ## asserts the two agree, so a later edit to a shipped builder's radius fails this
