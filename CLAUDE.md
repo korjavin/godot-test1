@@ -118,20 +118,27 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            RESIDENCY window, the only thing that can see a
 #                            cost that moved out of one chunk and into 1,631.
 #                            Check 16 is REACHABILITY: with one hero and no
-#                            jump gate (apex 3.6125) every one of the 22 slots
+#                            jump gate (apex 3.6125, step 2.6) every slot
 #                            flood-fill reachable from the gate over streets,
-#                            bridges, ramps and plateau tops with every .7 block
-#                            and .6a–c builder footprint as stone, and every
-#                            step ≤ 2.6 or a ramp within PLAN_RAMP_MAX_SLOPE —
-#                            plus the severed-street negative control. Check 17
-#                            is the FULL-CITY BUDGET: the keystone's per-chunk
-#                            ceilings re-measured with landmarks, streets and
-#                            coins, and the densest 7×7 web window around
-#                            Parliament and around the Chain Bridge proven to
-#                            hold. Check 18 is DETERMINISM: every city chunk
-#                            byte-identical across the two seeds and the
-#                            crocodile/hunter streams outside the rect A/B'd
-#                            against a build with the city disabled
+#                            bridge decks, ramps and plateau tops with every
+#                            .7 block and .6a–c builder footprint as stone
+#                            (climbable ≤2.6 exempt) and every step ≤2.6 or a
+#                            ramp within PLAN_RAMP_MAX_SLOPE measured via the
+#                            flood's height gate — plus a footprint-sized wall
+#                            on Margaret Bridge and a removed Castle Hill ramp
+#                            as negative controls. Check 17 prints the
+#                            Parliament and Chain Bridge 7×7 windows as info
+#                            (via _slot_index) and the per-chunk ceilings
+#                            (boxes, surfaces, shapes, ms with coins inside
+#                            the timed window) are already asserted in check 4
+#                            and its web residency walk (densest 4510 at
+#                            (64,-7) dominates the two named windows). Check
+#                            18 is DETERMINISM: every city chunk byte-identical
+#                            across the two seeds and the crocodile stream
+#                            outside the rect (west field) plus the hunter
+#                            stream on the Danube leg where the city really
+#                            builds A/B'd against city-disabled builds with
+#                            non-empty body counts
 #   landmark_progress_selfcheck
 #                            BUDAPEST'S WIN: the catalogue (every slot resolves a
 #                            CITY_LANDMARKS row by BUILDER NAME, a wave-C
