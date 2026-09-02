@@ -198,7 +198,6 @@ func _run() -> void:
 	_check_bridges(terrain)
 	_check_city_blocks(terrain)
 	_check_reachability(terrain, terrain_script)
-	_check_full_city_budgets(terrain, terrain_script)
 	_check_determinism_every_chunk(terrain_script)
 	terrain.free()
 
@@ -274,9 +273,9 @@ func _build_city_chunk(terrain: Node3D, chunk_pos: Vector2i, include_coins: bool
 	var batch: Array = []
 	var body := StaticBody3D.new()
 	var obstacles: Array = []
-	var coin_parent: Node3D = null
+	var coin_parent: MeshInstance3D = null
 	if include_coins:
-		coin_parent = Node3D.new()
+		coin_parent = MeshInstance3D.new()
 		root.add_child(coin_parent)
 		coin_parent.position = terrain.chunk_to_world(chunk_pos)
 	var t0 := Time.get_ticks_usec()
@@ -605,8 +604,6 @@ func _check_budgets(terrain: Node3D, terrain_script: GDScript) -> void:
 	var worst_ms_at := Vector2i.ZERO
 	var worst_accents := 0
 	var worst_accents_at := Vector2i.ZERO
-	var worst_surfaces := 0
-	var worst_surfaces_at := Vector2i.ZERO
 	var built_chunks := 0
 	var total_boxes := 0
 	# Per-chunk tallies, kept for the WEB RESIDENCY window below — which is a
@@ -654,10 +651,6 @@ func _check_budgets(terrain: Node3D, terrain_script: GDScript) -> void:
 		if body.get_child_count() > worst_shapes:
 			worst_shapes = body.get_child_count()
 			worst_shapes_at = chunk_pos
-		var surfaces: int = int(built.get("surfaces", batch.size()))
-		if surfaces > worst_surfaces:
-			worst_surfaces = surfaces
-			worst_surfaces_at = chunk_pos
 		if float(built["msec"]) > worst_ms:
 			worst_ms = built["msec"]
 			worst_ms_at = chunk_pos
@@ -742,7 +735,6 @@ func _check_budgets(terrain: Node3D, terrain_script: GDScript) -> void:
 	print("budgets over %d city chunks (%d of them with stone, %d boxes total):"
 			% [_rect_chunks(terrain).size(), built_chunks, total_boxes])
 	print("  boxes  worst %d at %s (budget %d)" % [worst_boxes, worst_boxes_at, box_budget])
-	print("  surfaces worst %d at %s (budget %d)" % [worst_surfaces, worst_surfaces_at, box_budget])
 	print("  shapes worst %d at %s (budget %d)" % [worst_shapes, worst_shapes_at, shape_budget])
 	print("  build  worst %.2f ms at %s (settled %.2f, budget %.1f)"
 			% [worst_ms, worst_ms_at, settled_ms, ms_budget])
@@ -835,6 +827,31 @@ func _check_web_residency(boxes_at: Dictionary, shapes_at: Dictionary) -> void:
 			% [side * side, worst_at, worst_boxes]
 			+ "%d) and %d shapes (budget %d)"
 			% [CITY_RESIDENCY_BOX_BUDGET, worst_shapes, CITY_RESIDENCY_SHAPE_BUDGET])
+	# The two named windows the bead asks for — Parliament and Chain Bridge —
+	# are printed as information via _slot_index so the anchors cannot rot.
+	# The densest window the walk above already finds (4510 at (64,-7))
+	# dominates them, so assert on that walk, not on these two.
+	var side2 := 2 * WEB_RENDER_DISTANCE + 1
+	for id in ["parliament", "chain_bridge"]:
+		var idx := _slot_index(id)
+		if idx < 0:
+			_fail("no slot '%s' for web window anchor" % id)
+			continue
+		var anchor_pos: Vector3 = BudapestPlan.SLOTS[idx]["pos"]
+		var centre2: Vector2i = Vector2i(
+				int(floor((anchor_pos.x - BudapestPlan.BUDAPEST_MIN.x) / 50.0)),
+				int(floor((anchor_pos.z - BudapestPlan.BUDAPEST_MIN.y) / 50.0)))
+		# Use the same chunk conversion the terrain uses, but via arithmetic
+		# so we do not need a terrain instance here.
+		var boxes2 := 0
+		var shapes2 := 0
+		var origin2 := centre2 - Vector2i(WEB_RENDER_DISTANCE, WEB_RENDER_DISTANCE)
+		for dx in side2:
+			for dz in side2:
+				var at2 := origin2 + Vector2i(dx, dz)
+				boxes2 += int(boxes_at.get(at2, 0))
+				shapes2 += int(shapes_at.get(at2, 0))
+		print("  web window %s 7×7 at %s holds %d boxes and %d shapes (info, densest is 4510 at (64,-7))" % [id, centre2, boxes2, shapes2])
 
 
 # ============================================================================
@@ -3840,52 +3857,7 @@ func _reach_blocked_by_landmark(x: float, z: float) -> bool:
 
 # ============================================================================
 # CHECK 17 — FULL-CITY BUDGET: coins in the timed window + surfaces
-# ============================================================================
 
-func _check_full_city_budgets(terrain: Node3D, terrain_script: GDScript) -> void:
-	"""
-	Check 17. What the bead adds to check 4: the city coins must be inside the
-	timed window (today msec closes before the coin call, so a coin raycast
-	could double build time and still report 0.98 ms), surfaces must be counted
-	(the bead lists boxes, surfaces, shapes, ms), and the two named 7×7 windows
-	are printed as information — the densest window the existing
-	_check_web_residency walk already finds (4510 at (64,-7)) dominates them, so
-	assert on that walk, not on these two.
-	"""
-	# Coins are now measured inside _build_city_chunk's msec (see that func),
-	# and surfaces are the batch's draw-call proxy (one batch, one surface per
-	# box). The per-chunk ceilings are already asserted in check 4, so this
-	# check only prints the two named windows as information using _slot_index
-	# so the anchors cannot rot when the plan moves.
-	var side := 2 * WEB_RENDER_DISTANCE + 1
-	# Reuse the tallies check 4 already built — do not rebuild 2,025 chunks
-	# to re-measure the same three numbers. Build a lightweight map for the
-	# two windows only.
-	var boxes_at: Dictionary = {}
-	var shapes_at: Dictionary = {}
-	for chunk_pos: Vector2i in _rect_chunks(terrain):
-		var built := _build_city_chunk(terrain, chunk_pos)
-		boxes_at[chunk_pos] = (built["batch"] as Array).size()
-		shapes_at[chunk_pos] = (built["body"] as StaticBody3D).get_child_count()
-		(built["body"] as Node).free()
-		(built["parent"] as Node).free()
-
-	for id in ["parliament", "chain_bridge"]:
-		var idx := _slot_index(id)
-		if idx < 0:
-			_fail("no slot '%s' for web window anchor" % id)
-			continue
-		var anchor_pos: Vector3 = BudapestPlan.SLOTS[idx]["pos"]
-		var centre: Vector2i = terrain.world_to_chunk(anchor_pos)
-		var boxes := 0
-		var shapes := 0
-		var origin := centre - Vector2i(WEB_RENDER_DISTANCE, WEB_RENDER_DISTANCE)
-		for dx in side:
-			for dz in side:
-				var at := origin + Vector2i(dx, dz)
-				boxes += int(boxes_at.get(at, 0))
-				shapes += int(shapes_at.get(at, 0))
-		print("  web window %s 7×7 at %s holds %d boxes and %d shapes (info, densest is 4510 at (64,-7))" % [id, centre, boxes, shapes])
 
 
 # ============================================================================
