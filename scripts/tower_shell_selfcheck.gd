@@ -198,6 +198,7 @@ func _run() -> void:
 	_check_a_detached_terrain_still_sites_the_tower()
 	_check_no_road_coin_is_buried_in_the_walls()
 	_check_impostor()
+	_check_impostor_hidden_in_budapest()
 	_check_minimap_marks_the_tower()
 	await _check_the_roof_keeps_the_rain_out()
 	_check_clouds_stay_clear_of_the_hq()
@@ -1279,6 +1280,55 @@ func _check_impostor() -> void:
 	if _has_collision(impostor):
 		_fail("the horizon impostor carries a collision body — it is a picture, not a building")
 	impostor.free()
+
+
+func _check_impostor_hidden_in_budapest() -> void:
+	"""
+	Check 9b. The horizon impostor is hidden while the LOCAL player stands
+	inside Budapest and returns the instant they step out.
+
+	The fade band still owns opacity outside the city; this only suppresses
+	the PICTURE entirely while inside, so the city on the horizon is not
+	doubled by a second, fog-exempt silhouette behind it. "All heroes" is the
+	local player — each peer decides for its own screen, remote avatars are
+	pictures (bead godot-test1-8gw.14).
+	"""
+	var terrain := _make_terrain(SEED_A)
+	terrain.render_distance = 0
+	var probe := Node3D.new()
+	probe.add_to_group("player")
+	root.add_child(probe)
+	terrain.player = probe
+	# Drive the per-tick visibility update without waiting for a chunk-boundary
+	# crossing — the update rides _process every frame, not the streamer's
+	# boundary hook.
+	var inside := Vector3(
+			BudapestPlan.BUDAPEST_MIN.x + (BudapestPlan.BUDAPEST_MAX.x - BudapestPlan.BUDAPEST_MIN.x) * 0.5,
+			0.0,
+			BudapestPlan.BUDAPEST_MIN.y + (BudapestPlan.BUDAPEST_MAX.y - BudapestPlan.BUDAPEST_MIN.y) * 0.5)
+	var outside := Vector3(BudapestPlan.BUDAPEST_MIN.x - 1.0, 0.0, 0.0)
+	# One metre west of the rect's edge, still outside TOWER_LOAD_RADIUS, so
+	# the usual far-field impostor is visible.
+	if BudapestPlan.contains(outside.x, outside.z):
+		_fail("self-check outside probe %s is inside Budapest — test is vacuous" % outside)
+	if not BudapestPlan.contains(inside.x, inside.z):
+		_fail("self-check inside probe %s is outside Budapest — test is vacuous" % inside)
+	probe.global_position = inside
+	terrain._process(0.0)
+	if not is_instance_valid(terrain._tower_impostor):
+		_fail("no horizon impostor to hide inside Budapest")
+	elif terrain._tower_impostor.visible:
+		_fail("the horizon impostor is still visible while the player stands inside Budapest at %s (rect %s -> %s)" % [
+				inside, BudapestPlan.BUDAPEST_MIN, BudapestPlan.BUDAPEST_MAX])
+	probe.global_position = outside
+	terrain._process(0.0)
+	if not is_instance_valid(terrain._tower_impostor):
+		_fail("no horizon impostor after stepping out of Budapest")
+	elif not terrain._tower_impostor.visible:
+		_fail("the horizon impostor stayed hidden after the player stepped out of Budapest to %s" % outside)
+	print("impostor Budapest gate: hidden at %s, visible at %s" % [inside, outside])
+	probe.free()
+	terrain.free()
 
 
 func _check_minimap_marks_the_tower() -> void:

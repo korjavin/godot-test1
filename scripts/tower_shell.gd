@@ -743,9 +743,11 @@ static func build_impostor() -> Node3D:
 	the fog underneath it. The impostor is transparent while it fades, so it does
 	not write depth and cannot z-fight with the shell it is standing in.
 
-	NO COLLISION, NO GROUP, NO SCRIPT: it is a picture, and nothing is ever done to
-	it at all — the fade is a material property and the cull is a mesh property, so
-	`_tower_stream` has no per-frame work and nothing to get wrong.
+	NO COLLISION, NO GROUP, NO SCRIPT: it is a picture. The cross-fade (bead
+	godot-test1-rgt) is a material property and the cull a mesh property, so
+	`_tower_stream` has no per-frame work. The one per-frame writer is
+	`endless_terrain._process()`'s Budapest gate (bead godot-test1-8gw.14), which
+	hides the fog-exempt silhouette while the local player stands inside the city.
 	"""
 	var root := Node3D.new()
 	root.name = "TowerImpostor"
