@@ -815,11 +815,15 @@ func _push_terrain_bar(x0: float, x1: float, y: float, biome: int) -> void:
 func _gather_road() -> void:
 	"""Walk the terrain's EXISTING coin-road station cache across the map window.
 
-	No road maths is duplicated and no cache is extended: the stations covering the
-	player's own chunk are already cached (spawn_coins_in_chunk built them when the
-	chunk loaded, and the cache is contiguous and never reset within a run), and the
-	binary search is the terrain's own O(log n) helper. Anything outside the cached
-	range is simply not drawn — a soft, silent degradation rather than a hitch.
+	No road maths is duplicated and no cache is extended FOR THE WINDOW: the stations
+	covering the player's own chunk are already cached (spawn_coins_in_chunk built
+	them when the chunk loaded, and the cache is contiguous and never reset within a
+	run), and the binary search is the terrain's own O(log n) helper. Anything outside
+	the cached range is simply not drawn — a soft, silent degradation rather than a
+	hitch. The one exception is CAP 4's _road_terminal_k() below, which extends the
+	cache as far as ROAD_TERMINAL_X on its FIRST call anywhere in the run — in
+	practice never here, because spawn_approach_coins_in_chunk asks for it on every
+	chunk build and the answer is memoized for the run.
 
 	Stations step _road_spacing() (6 m) apart, so a 120 m window is ~20 points."""
 	_road_count = 0

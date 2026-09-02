@@ -383,11 +383,6 @@ static func rect() -> Rect2:
 	return Rect2(BUDAPEST_MIN, BUDAPEST_MAX - BUDAPEST_MIN)
 
 
-static func gate_point() -> Vector3:
-	"""Where the road's approach corridor meets the city, on the west edge."""
-	return GATE
-
-
 static func danube_distance(x: float, z: float) -> float:
 	"""
 	Shortest distance from a world XZ to the Danube polyline.
@@ -476,14 +471,6 @@ static func road_approach_point(terminal: Vector2, x: float) -> Vector2:
 		return Vector2(x, GATE.z)
 	var t := smoothstep(terminal.x, GATE.x, x)
 	return Vector2(x, lerpf(terminal.y, GATE.z, t))
-
-
-static func slot(index: int) -> Dictionary:
-	"""One landmark slot by index, or an empty dict if the index is out of range
-	— a caller walking the table off the end gets nothing rather than a crash."""
-	if index < 0 or index >= SLOTS.size():
-		return {}
-	return SLOTS[index]
 
 
 # ponytail: TWO DELIBERATE DEFERRALS, recorded here so the next reader knows they

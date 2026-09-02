@@ -909,6 +909,24 @@ func _check_approach_corridor(terrain_script: GDScript) -> void:
 			prev = p
 			x += step
 
+		# THE CORRIDOR IS KEPT CLEAR. CAP 2 stops the road's clearance at T, so the
+		# corridor has to answer the clearance question itself or the last 150 m
+		# into the gate become ordinary procedural ground with a coin line through
+		# it — a massif across it is non-climbable, and the trail simply stops.
+		# Asked on the centreline from ROAD_TERMINAL_X east, which is exactly where
+		# the cap bites: west of it the stations themselves answer, and the corridor
+		# is at most a station spacing off them there.
+		var cx := terminal_x + 1.0
+		while cx < BudapestPlan.GATE.x:
+			var cp: Vector2 = BudapestPlan.road_approach_point(terminal, cx)
+			var lat: float = terrain._road_lateral_distance(cp.x, cp.y, 24.0)
+			if lat > 1.0:
+				_fail("seed %d: the approach corridor at x = %.0f reads %.1f m from "
+						% [RUN_SEED + s * 977, cx, lat] + "the road — nothing keeps "
+						+ "a massif or a camp off the walk into the gate")
+				break
+			cx += 25.0
+
 		# THE TANGENTIAL JOIN. Skipped, counted, when the road happens to arrive
 		# almost on the avenue's own line: every step is then ~0 and the ratio is
 		# noise over noise, not a measurement.

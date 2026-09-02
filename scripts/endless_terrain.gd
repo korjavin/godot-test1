@@ -9496,7 +9496,8 @@ func _road_lateral_distance(world_x: float, world_z: float, clearance: float) ->
 	# shoved aside to keep a coin swath clear that does not exist. Past T the scan
 	# window is empty and this returns INF, which every caller already reads as
 	# "nowhere near the road" — the same answer it has always given for a point far
-	# off-road in X, so no caller needed an edit.
+	# off-road in X, so no caller needed an edit. The ONE stretch that still wants a
+	# clear swath is the approach corridor, added back below the loop.
 	#
 	# The cap is on this CONSUMER and not on _road_extend_to_x: that function's
 	# forward loop hangs if the cache stops growing (see _road_terminal_k), and the
@@ -9510,6 +9511,23 @@ func _road_lateral_distance(world_x: float, world_z: float, clearance: float) ->
 		var d := Vector2(world_x, world_z).distance_to(st.center)
 		if d < best:
 			best = d
+	# CAP 2's ONE SEAM — between the terminal station and the gate the APPROACH
+	# CORRIDOR carries the trail (spawn_approach_coins_in_chunk), so it inherits the
+	# clearance the road used to give this stretch. Drop it and a massif, a forest,
+	# a camp or a geo landmark can be generated straight across the walk into
+	# Budapest: massifs are climbable: false, so _settle_coin_y skips every coin
+	# behind one and the line into the city dead-ends against a wall. East of the
+	# gate there is nothing to keep clear — in_budapest() has already turned every
+	# one of those spawners off inside the rect.
+	#
+	# One point per X (the corridor has no width in the plan), so this is a single
+	# distance and no scan; BudapestPlan.road_approach_point is the same pure
+	# function the coin line rides, which is what keeps the swath and the coins on
+	# one centreline with no second copy of the corridor here.
+	if world_x > ROAD_TERMINAL_X and world_x < BudapestPlan.GATE.x:
+		var terminal: Vector2 = _road_station(_road_terminal_k()).center
+		var c: Vector2 = BudapestPlan.road_approach_point(terminal, world_x)
+		best = minf(best, Vector2(world_x, world_z).distance_to(c))
 	return best
 
 func spawn_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array) -> void:
@@ -10092,8 +10110,11 @@ func _spawn_gate_district_in_chunk(chunk_center: Vector3, obstacles: Array, bloc
 	# The three jb7 CITY prop builders, called DIRECTLY rather than through
 	# _build_prop: that function's job is to pick a theme from biome_at, and here
 	# the theme is not in question — this is Budapest, so it is the city arm or
-	# nothing. Seven pieces, one in each gap between neighbouring houses on the
-	# north row, alternating sides and cycling the three builders.
+	# nothing. One piece in each gap between neighbouring houses on the north row
+	# (seven today), alternating sides and cycling the three builders. The row is
+	# FILTERED out of the table rather than counted off the front of it: the south
+	# houses share the table, so a ninth north house typed in would otherwise pair
+	# a north house with a south one and drop the prop at a meaningless midpoint.
 	#
 	# The spots are DERIVED from the house table rather than typed into a second
 	# one, so moving a house moves the crate stack beside it and there is no
@@ -10101,8 +10122,9 @@ func _spawn_gate_district_in_chunk(chunk_center: Vector3, obstacles: Array, bloc
 	# its index alone — the builders draw real dimensions, and one seeded off the
 	# shared stream would make a prop's shape depend on how many boxes the chunk
 	# happened to build before it.
-	var north: Array = BudapestPlan.DISTRICT_HOUSES
-	for i in range(7):
+	var north: Array = BudapestPlan.DISTRICT_HOUSES.filter(
+			func(h: Dictionary) -> bool: return h["pos"].z < 0.0)
+	for i in range(north.size() - 1):
 		var a: Vector3 = north[i]["pos"]
 		var b: Vector3 = north[i + 1]["pos"]
 		var wx := (a.x + b.x) * 0.5

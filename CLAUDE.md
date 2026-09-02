@@ -255,14 +255,15 @@ with the tower's *lifetime* model deliberately refused: one `const` plan in the
 `budapest_selfcheck` check 1 reads it as TEXT to keep it that way — but every cell of it
 is streamed by `create_chunk` through `create_box()` / `block_batch` / the chunk's single
 `BlockCollision`, **chunk-parented and therefore freed by chunk unloading like any prop**.
-The arithmetic is the whole argument: a 2 x 2 km city is 1,936 chunk cells against the web
+The arithmetic is the whole argument: the 2.2 x 2.2 km city is 2,025 chunk cells against the web
 build's 49-chunk residency, so a manager-parented shell would hold the entire city in
 memory forever. The tower stays the one lifetime exception precisely *because* the city is
 not one. `in_budapest()` is the single home of the membership test on this side, the way
 `tower_excludes()` is the tower's, and it delegates to `BudapestPlan.contains()` so the
 rect is never written down twice. Parity is the same contract one clause wider — forced
 CITY ground, the authored Danube band and the dry cutouts (bridge decks, Margaret Island)
-live in `_biome_noise`/`is_river_at` **and** `ground.gdshader`, edited together.
+live in `biome_at`/`is_river_at` **and** `ground.gdshader`, edited together (`_biome_noise`
+itself is untouched — the city is an OVERRIDE above the field, not a change to it).
 
 Three rules of the city's own, all pinned by `budapest_selfcheck`:
 
