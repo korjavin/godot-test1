@@ -128,8 +128,8 @@ enum Mode {
 ## line.
 const ROWS: Array = [
 	["W / S", "Walk forward and back.", Mode.DESKTOP],
-	["A / D", "Turn left and right.", Mode.DESKTOP],
-	["Q / E", "Step aside left or right.", Mode.DESKTOP],
+	["Q / E", "Turn left and right.", Mode.DESKTOP],
+	["A / D", "Strafe left or right while held.", Mode.DESKTOP],
 	["Mouse", "Look around. Click to grab the cursor again.", Mode.DESKTOP],
 	["Space", "Jump. A jump also breaks a crocodile's scent.", Mode.DESKTOP],
 	["Shift", "Run. Running always outruns a crocodile.", Mode.DESKTOP],

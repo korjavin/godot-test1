@@ -54,8 +54,8 @@ watch the radial dial in the top-right.
 | Key | Action |
 |---|---|
 | **W / S** | Walk forward / back |
-| **A / D** | Turn |
-| **Q / E** | Sidestep |
+| **Q / E** | Turn |
+| **A / D** | Strafe left / right |
 | **Mouse** | Look around |
 | **Space** | Jump |
 | **Shift** | Run |
