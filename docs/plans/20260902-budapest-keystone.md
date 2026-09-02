@@ -506,18 +506,18 @@ or co-author trailers anywhere.
 
 ### Task 1: `scripts/budapest_plan.gd` — the plan, and nothing but the plan
 
-- [ ] Create `scripts/budapest_plan.gd`: `class_name BudapestPlan extends RefCounted`.
-- [ ] Header in the `tower_plans.gd` idiom (`##` doc comments, ALL-CAPS fenced sections):
+- [x] Create `scripts/budapest_plan.gd`: `class_name BudapestPlan extends RefCounted`.
+- [x] Header in the `tower_plans.gd` idiom (`##` doc comments, ALL-CAPS fenced sections):
       WHY IT IS AUTHORED (the owner's "plan it once and forever", `tower_site()`'s ruling
       one scale up), **THE ORIENTATION** (+X east, +Z south) in its own paragraph, the
       real-map liberties taken (the Andrássy fold, the narrowed Danube) and the rule that
       **the numbers ARE the design record because there is no seed to reroll**.
-- [ ] Constants per DEC-2, DEC-3, DEC-4, DEC-5: `BUDAPEST_MIN` / `BUDAPEST_MAX` / `GATE`,
+- [x] Constants per DEC-2, DEC-3, DEC-4, DEC-5: `BUDAPEST_MIN` / `BUDAPEST_MAX` / `GATE`,
       `DANUBE` / `DANUBE_HALF_WIDTH`, `DRY_RECTS`, `PLATEAUS`, `STREET_PITCH`,
       `AVENUE_HALF_WIDTH`, `DISTRICT`, `DISTRICT_HOUSES`, `CITY_COIN_SPACING`,
       `CITY_LANDMARK_SALT`.
-- [ ] `const SLOTS: Array` per DEC-6, all 22 rows, five keys, in the table's order.
-- [ ] Pure static helpers, ALL allocation-light and safe per tick (`is_river_at` calls two
+- [x] `const SLOTS: Array` per DEC-6, all 22 rows, five keys, in the table's order.
+- [x] Pure static helpers, ALL allocation-light and safe per tick (`is_river_at` calls two
       of them every physics frame):
       `contains(x, z) -> bool`, `rect() -> Rect2`, `gate_point() -> Vector3`,
       `danube_distance(x, z) -> float`, `is_dry(x, z) -> bool`,
@@ -525,13 +525,13 @@ or co-author trailers anywhere.
       `road_approach_point(terminal: Vector2, x: float) -> Vector2`,
       `slot(index) -> Dictionary`.
       Route the segment-distance math through `Vector2`, never scalar — the fp32 rule.
-- [ ] A `ponytail:` comment recording the two deliberate deferrals: **no horizon
+- [x] A `ponytail:` comment recording the two deliberate deferrals: **no horizon
       impostors** (the bead says "may"; the tower's manager-parented lifetime is the one
       exception and this bead does not open a second), and **fauna is not excluded from
       the rect** (`fauna_manager.gd` reads `tower_site()` only; a herd crossing the city
       has no collision and joins no group, so it is ambience in the wrong place and not a
       bug — name the bead that should fix it).
-- [ ] Sanity: `grep -nE 'run_seed|randf|randi|hash\(' scripts/budapest_plan.gd` is EMPTY.
+- [x] Sanity: `grep -nE 'run_seed|randf|randi|hash\(' scripts/budapest_plan.gd` is EMPTY.
 
 ### Task 2: parity — CPU and GPU, in the same commit
 
