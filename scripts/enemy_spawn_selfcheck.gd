@@ -3144,60 +3144,49 @@ func _check_crowd_confusion(croc_ai: GDScript) -> void:
 
 	  * Outside Budapest the acquisition is never refused (negative control).
 	  * Inside with a citizen in range, over N trials the refusal rate lands
-	    near the row's chance; every stall in [2,10] s; no chase flag and no
-	    grab while stalled; state clears and the hunter resumes.
+	    near the row's chance; every stall in [2,10] s; no chase flag while
+	    stalled and errand survives N extra frames with quarry still in range;
+	    state clears and the hunter resumes; scent nose not confused.
 	  * A key-less row (crocodile) is unchanged as the control.
 
-	Runs on the shipped pure helper `_should_confuse` and on a live body
-	driven through _update_chase_state / investigate_point — the same seam
-	the game uses, not a copy of it. The scent nose is NOT confused.
+	Runs on a live body driven through the shipped _update_chase_state /
+	investigate_point seam — not a copy of it. The pure helper _should_confuse
+	is exercised only as a unit test of its own truth table; the city and crowd
+	gates are measured on the body, because the shipped call site hardcodes both
+	booleans to true and the helper alone cannot see the early returns.
 	"""
 	var confused: Array[String] = []
 	for name_v: Variant in _species_table:
 		if _species_table[name_v].has("crowd_confusion_chance"):
 			confused.append(str(name_v))
 	if confused.is_empty():
-		# No row opts in — nothing to measure; the control below still runs.
 		print("crowd confusion: no SPECIES row declares the key — probe vacuous")
 	else:
 		print("crowd confusion: probing %s" % str(confused))
-	# Pure helper gate — refusal is a refused acquisition, never outside city
-	# and never without a citizen.
 	for species_name: String in confused:
 		var row: Dictionary = _species_table[species_name]
 		var chance: float = float(row.get("crowd_confusion_chance", 0.0))
 		if chance < 0.0 or chance > 0.7 + 1e-6:
 			_fail("SPECIES['%s'].crowd_confusion_chance is %.3f — outside [0,0.7], the owner's ceiling" % [species_name, chance])
-		# Outside Budapest with citizen: must NOT confuse.
-		if croc_ai._should_confuse(chance, false, true, 0.0):
-			_fail("SPECIES['%s'] would confuse outside Budapest — the city gate is not being read" % species_name)
-		# Inside without citizen: must NOT confuse.
-		if croc_ai._should_confuse(chance, true, false, 0.0):
-			_fail("SPECIES['%s'] would confuse with no citizen nearby — the crowd gate is not being read" % species_name)
-		# Inside with citizen, roll at chance- epsilon and chance+epsilon.
+		# Helper truth table — does not prove the city/crowd gates, which are
+		# early returns in _try_crowd_confusion and are measured on the body below.
 		if not croc_ai._should_confuse(chance, true, true, chance * 0.5):
-			_fail("SPECIES['%s'] with chance %.2f did not confuse on roll %.3f < chance" % [species_name, chance, chance * 0.5])
+			_fail("helper _should_confuse: SPECIES['%s'] with chance %.2f did not confuse on roll %.3f < chance" % [species_name, chance, chance * 0.5])
 		if croc_ai._should_confuse(chance, true, true, minf(chance + 0.01, 1.0)):
-			_fail("SPECIES['%s'] confused on roll above its chance" % species_name)
-		# Key-less control: crocodile must never confuse.
-		if _species_table.has("crocodile"):
-			var c_chance: float = float(_species_table["crocodile"].get("crowd_confusion_chance", 0.0))
-			if croc_ai._should_confuse(c_chance, true, true, 0.0) and c_chance == 0.0:
-				_fail("crocodile (no key) would confuse — absent must be 0.0")
-	# ---- LIVE BODY: outside Budapest never refused ----
+			_fail("helper _should_confuse: SPECIES['%s'] confused on roll above its chance" % species_name)
+	# ---- LIVE BODY: outside Budapest never refused (real city gate) ----
 	for species_name: String in confused:
 		_probe_crowd_outside(species_name)
-	# ---- LIVE BODY: inside with citizen — rate near chance, stall in [2,10], no chase, clears ----
+	# ---- LIVE BODY: inside with citizen — rate near chance, stall in [2,10], no chase, persists N frames, clears ----
 	for species_name: String in confused:
 		_probe_crowd_inside(species_name)
-	# ---- CONTROL: crocodile is unchanged ----
-	_probe_crowd_outside("crocodile")
+	# ---- CONTROL: crocodile is unchanged even inside with citizen ----
 	_probe_crowd_crocodile_inside()
+	# Also exercise the outside control for crocodile explicitly (was previously dead via if chance>0).
+	_probe_crowd_outside("crocodile")
 
 
 func _probe_crowd_outside(species_name: String) -> void:
-	var row: Dictionary = _species_table[species_name] if _species_table.has(species_name) else {}
-	var chance: float = float(row.get("crowd_confusion_chance", 0.0))
 	# A stub quarry in group "player" at a position OUTSIDE Budapest.
 	var stub_script := GDScript.new()
 	stub_script.source_code = HUNT_STUB_SOURCE
@@ -3227,11 +3216,11 @@ func _probe_crowd_outside(species_name: String) -> void:
 	stub.global_position = croc.global_position + Vector3(5, 0, 0)
 	for _i in range(5):
 		croc._update_chase_state()
-	if chance > 0.0 and croc.get("is_investigating"):
+	if bool(croc.get("is_investigating")):
 		_fail("SPECIES['%s'] confused OUTSIDE Budapest — city gate not applied on a live body" % species_name)
-	if croc.get("is_chasing") and chance > 0.0:
-		# It should have chased, not been confused; confusing outside would have made it investigate instead.
-		pass
+	if not bool(croc.get("is_chasing")) and not bool(croc.get("is_investigating")):
+		# Outside city it must chase, not stall and not idle — detection failed.
+		_fail("SPECIES['%s'] did not chase outside Budapest with quarry 5 m away" % species_name)
 	croc.free()
 	stub.free()
 	crowd.free()
@@ -3254,16 +3243,18 @@ func _probe_crowd_inside(species_name: String) -> void:
 	stub.global_position = city_pos + Vector3(5, 0, 0)
 	var crowd := Node3D.new()
 	var crowd_script := GDScript.new()
-	crowd_script.source_code = "extends Node3D\nfunc nearest_citizen_to(pos: Vector3, max_dist: float = 40.0) -> Variant:\n\treturn pos + Vector3(3, 0, 0)\n"
+	crowd_script.source_code = "extends Node3D\nfunc nearest_citizen_to(pos: Vector3, max_dist: float = 40.0) -> Variant:\n\treturn pos + Vector3(1, 0, 0)\n"
 	crowd_script.reload()
 	crowd.set_script(crowd_script)
 	crowd.add_to_group("crowd")
 	root.add_child(crowd)
-	# Run N trials resetting the body each time for rate measurement.
-	var trials: int = 400
+	var trials: int = 600
 	var refuses: int = 0
 	var seen_bad_stall := false
 	var seen_chase_while_stalled := false
+	var seen_tracking_while_stalled := false
+	var seen_not_persisted := false
+	var seen_no_clear := false
 	for _t in range(trials):
 		var croc: Node = load(CROC_SCENE).instantiate()
 		croc.species = species_name
@@ -3271,84 +3262,115 @@ func _probe_crowd_inside(species_name: String) -> void:
 		croc.global_position = city_pos
 		croc.rotation.y = 0.0
 		croc._find_player()
-		# Ensure detection will fire next update.
 		croc._update_chase_state()
 		if bool(croc.get("is_investigating")):
 			refuses += 1
 			var hold: float = float(croc.get("_investigate_hold"))
-			# Stall is uniform 2-10 s at the moment of investigate_point; hold may be slightly less after one frame.
 			if hold < 1.95 or hold > 10.01:
 				seen_bad_stall = true
 			if bool(croc.get("is_chasing")):
 				seen_chase_while_stalled = true
-			# Verify it does not still think it is tracking (scent not confused).
-			# Tracking is independent; we just ensure investigate did not set it.
-			# State must clear after the hold expires.
-			# Advance the hold to expiry and ensure it resumes.
-			# Fast-forward by holding.
-			var steps: int = int(hold / 0.016) + 10
-			for _s in range(steps):
+			if bool(croc.get("is_tracking")):
+				seen_tracking_while_stalled = true
+			# Errand must SURVIVE N extra frames with quarry still in range (finding #1).
+			var persisted := true
+			for _f in range(5):
+				croc._update_chase_state()
+				if not bool(croc.get("is_investigating")) or bool(croc.get("is_chasing")):
+					persisted = false
+					break
+			if not persisted:
+				seen_not_persisted = true
+			# State must clear after the hold expires and hunter resumes.
+			# Walk the errand to completion via _investigate_move, then verify it
+			# can chase again.
+			for _s in range(int(hold / 0.016) + 120):
 				croc._investigate_move(0.016)
+				# Keep ticking the cooldown as _physics_process would.
+				var cd: float = float(croc.get("_crowd_confusion_cooldown"))
+				if cd > 0.0:
+					croc.set("_crowd_confusion_cooldown", maxf(cd - 0.016, 0.0))
 				if not bool(croc.get("is_investigating")):
 					break
 			if bool(croc.get("is_investigating")):
-				# Still investigating after hold should have expired and walk home completed — measure with longer run
-				pass
-		else:
-			if not bool(croc.get("is_chasing")):
-				# Neither chasing nor investigating — detection may have failed; count as miss.
+				seen_no_clear = true
+			else:
+				# After clearing, with cooldown expired it must be able to chase again.
+				croc.set("_crowd_confusion_cooldown", 0.0)
+				croc.set("is_chasing", false)
+				croc._update_chase_state()
+				# We do not fail if this rolls a second confusion — that is rate;
+				# we just ensure the errand itself cleared.
 				pass
 		croc.free()
-	# Guard against flakiness: a chance of 0.7 over 400 trials should land within +-0.15.
 	var rate: float = float(refuses) / float(trials)
-	var lo: float = chance - 0.18
-	var hi: float = chance + 0.18
+	var lo: float = chance - 0.12
+	var hi: float = chance + 0.12
 	if rate < lo or rate > hi:
 		_fail("SPECIES['%s'] crowd refusal rate %.2f outside [%.2f, %.2f] over %d trials inside Budapest (chance %.2f)" % [species_name, rate, lo, hi, trials, chance])
 	if seen_bad_stall:
 		_fail("SPECIES['%s'] produced a stall outside [2,10] s" % species_name)
 	if seen_chase_while_stalled:
 		_fail("SPECIES['%s'] lit is_chasing while stalled on a citizen" % species_name)
-	# Cooldown re-roll guard: a body that just finished a confusion must not immediately re-confuse.
+	if seen_tracking_while_stalled:
+		_fail("SPECIES['%s'] kept is_tracking while stalled — scent nose is supposed to be untouched and cleared on confusion" % species_name)
+	if seen_not_persisted:
+		_fail("SPECIES['%s'] errand did not survive 5 extra frames with quarry still in range — the stall is destroyed ~16 ms after it starts (finding #1)" % species_name)
+	if seen_no_clear:
+		_fail("SPECIES['%s'] is_investigating never cleared after hold expiry — hunter never resumes" % species_name)
+	# Cooldown re-roll guard: a live confused body that we keep calling
+	# _update_chase_state on must keep refusing while is_investigating, and
+	# after we artificially end the errand but keep the cooldown, it must chase
+	# not re-confuse.
 	var croc2: Node = load(CROC_SCENE).instantiate()
 	croc2.species = species_name
 	root.add_child(croc2)
 	croc2.global_position = city_pos
 	croc2.rotation.y = 0.0
 	croc2._find_player()
-	# Force a confusion by seeding roll low via monkey: we can't seed randf, so just loop until we get one.
 	var got_confusion := false
 	for _a in range(80):
 		croc2.set("_crowd_confusion_cooldown", 0.0)
 		croc2.set("is_investigating", false)
 		croc2.set("is_chasing", false)
 		croc2.set("_investigate_hold", 0.0)
+		croc2.set("is_tracking", false)
 		croc2._update_chase_state()
 		if bool(croc2.get("is_investigating")):
 			got_confusion = true
 			break
-		# If it chased instead, reset to not chasing to re-test the edge.
 		croc2.set("is_chasing", false)
 		croc2._choose_new_direction()
 	if got_confusion:
-		# Now the cooldown is set; the next edge while still inside Budapest must NOT re-confuse.
-		croc2.set("is_chasing", false)
-		croc2.set("is_investigating", false)
-		# Keep the cooldown value the successful confusion set — do not clear it.
-		# Move quarry still in range and try again: should chase, not re-confuse.
+		# While still investigating, next frame must still refuse (persist).
+		var still_refusing := true
+		for _b in range(4):
+			croc2._update_chase_state()
+			if not bool(croc2.get("is_investigating")) or bool(croc2.get("is_chasing")):
+				still_refusing = false
+				break
+		if not still_refusing:
+			_fail("SPECIES['%s'] did not persist refusal while is_investigating — errand killed on next frame" % species_name)
+		# Now end the errand naturally and keep the cooldown: must NOT re-confuse.
+		# Use _end_investigation to clear is_investigating but leave cooldown.
+		croc2.call("_end_investigation")
+		# cooldown is still >0 from the confusion; next edge must chase, not confuse.
 		var re_confused := false
 		for _b in range(6):
+			croc2.set("is_chasing", false)
 			croc2._update_chase_state()
 			if bool(croc2.get("is_investigating")):
 				re_confused = true
 				break
-			croc2.set("is_chasing", false)
 		if re_confused:
 			_fail("SPECIES['%s'] re-confused immediately after a just-finished errand — per-body re-roll guard not applied" % species_name)
+	else:
+		# 80 trials with 0.7 chance should almost never fail to get one confusion.
+		_fail("SPECIES['%s'] produced 0 confusions in 80 inside-city trials — chance %.2f not being honoured" % [species_name, chance])
 	croc2.free()
 	stub.free()
 	crowd.free()
-	print("crowd inside %s: %d/%d refuses (rate %.2f), stall and re-roll guard checked" % [species_name, refuses, trials, rate])
+	print("crowd inside %s: %d/%d refuses (rate %.2f), stall/persist/clear/re-roll checked" % [species_name, refuses, trials, rate])
 
 
 func _probe_crowd_crocodile_inside() -> void:

@@ -3428,8 +3428,10 @@ const INVESTIGATE_PROGRESS: float = 0.5
 ## After a false-arrest errand finishes the body must not immediately re-roll
 ## on the same re-acquisition while the player stands still, or the hunter
 ## never threatens inside the city. One cooldown per body, in seconds, counted
-## down each physics frame. Set on a successful confusion (see _try_crowd_confusion)
-## and cleared on the next chase-loss edge; a miss does NOT set it.
+## down each physics frame while awake (and sleep is refused while it ticks, so
+## a just-confused hunter that would otherwise sleep keeps its guard). Set on a
+## successful confusion (see _try_crowd_confusion) and cleared on the next
+## chase-loss edge; a miss does NOT set it.
 const CROWD_CONFUSION_COOLDOWN: float = 6.0
 var _crowd_confusion_cooldown: float = 0.0
 
@@ -3898,13 +3900,17 @@ func _physics_process(delta: float) -> void:
 	# terrain, and skipping gravity is what keeps it perfectly put) instead of
 	# half-simulating. Every other piece of state (heading, chase flags, phases,
 	# confinement) is preserved untouched, so waking resumes seamlessly.
+	# Crowd-confusion re-roll guard ticks while awake (runtime state, no draw).
+	# Above the lod_active early return in effect: the decrement is placed
+	# BEFORE the gate so the frame that decides to sleep still ticks, and sleep
+	# itself is refused while the guard ticks (see set_lod_active) so a
+	# just-confused hunter that would otherwise sleep keeps the guard from freezing.
+	if _crowd_confusion_cooldown > 0.0:
+		_crowd_confusion_cooldown = maxf(_crowd_confusion_cooldown - delta, 0.0)
+
 	if not lod_active:
 		velocity = Vector3.ZERO
 		return
-
-	# Crowd-confusion re-roll guard ticks while awake (runtime state, no draw).
-	if _crowd_confusion_cooldown > 0.0:
-		_crowd_confusion_cooldown = maxf(_crowd_confusion_cooldown - delta, 0.0)
 
 	# Apply gravity
 	if not is_on_floor():
@@ -4190,7 +4196,17 @@ func _update_chase_state() -> void:
 			# Above the is_chasing write: investigate_point refuses a chasing body,
 			# so a confused hunter never lights the chase flag — it walks to a
 			# citizen and checks documents for 2-10 s at _wander_speed() instead.
+			# The refusal must PERSIST for the whole errand: the next frame the
+			# quarry is still in range, so without this guard we would fall through
+			# to is_chasing=true and _abandon_investigation(), destroying the stall
+			# ~16 ms after it started (finding #1). Clearing spot_clock and
+			# is_tracking here is load-bearing for coned rows and for the hunt arm's
+			# tracking branch (findings #4/#5).
 			if _try_crowd_confusion():
+				spot_clock = 0.0
+				if _spot_label != null:
+					_spot_label.visible = false
+				is_tracking = false
 				return
 			# Just started chasing
 			is_chasing = true
@@ -4199,6 +4215,8 @@ func _update_chase_state() -> void:
 			# standstill in `_physics_process` — has to stop the frame the chase
 			# starts, or a committed body stands still wearing a question mark.
 			spot_clock = 0.0
+			if _spot_label != null:
+				_spot_label.visible = false
 			# ...AND THE LURE IS OFF. A guard that spots you on its way to a plate
 			# has something better to do than the errand, and it must not pick the
 			# errand back up when it loses you — a diversion that survives an
@@ -4211,6 +4229,10 @@ func _update_chase_state() -> void:
 			is_chasing = false
 			# Choose new random direction
 			_choose_new_direction()
+			# Crowd-confusion cooldown is per-acquisition, not per-run; losing
+			# the quarry is the edge that clears it so the next engagement can be
+			# confused again. A miss does not set it, so this is the only clear.
+			_crowd_confusion_cooldown = 0.0
 
 	# ------------------------------------------------------------------------
 	# BEHAVIOUR DISPATCH — the whole of it, and it is deliberately this small
@@ -4909,6 +4931,9 @@ func _end_investigation() -> void:
 ## Returns true if THIS acquisition should be refused (caller must NOT set
 ## is_chasing and should walk to a citizen instead). Runtime RNG only —
 ## no hash, no run_seed, no chunk draw, so no spawn moves.
+## ponytail: errand targets a SNAPSHOT of the citizen's pos; the walker keeps
+## walking, so the robot checks an empty patch of pavement. Tracking the walker
+## needs a live handle, which citizens do not have (no body, no group).
 static func _should_confuse(chance: float, inside_budapest: bool, has_citizen: bool, roll: float) -> bool:
 	return inside_budapest and has_citizen and chance > 0.0 and roll < chance
 
@@ -4931,11 +4956,18 @@ func _try_crowd_confusion() -> bool:
 	global randf() family (randomized at boot, never a run_seed hash), so
 	it costs the deterministic streams nothing — verified by the world A/B.
 	City-only via BudapestPlan.contains() and requires a citizen nearby.
+
+	persistence: once confused the body is is_investigating for 2-10 s; the
+	next frame's _update_chase_state would otherwise see seen+!is_chasing and
+	fall through to is_chasing=true + _abandon_investigation(), destroying the
+	stall ~16 ms after it started. So a running errand keeps refusing.
 	"""
+	# Persist the refusal for the whole errand (finding #1). No new roll, no
+	# citizen walk — just keep the early return so the caller never acquires.
+	if is_investigating:
+		return true
 	var chance := float(spec.get("crowd_confusion_chance", 0.0))
 	if chance <= 0.0:
-		return false
-	if is_boss:
 		return false
 	if remote_driven:
 		return false
@@ -4944,6 +4976,10 @@ func _try_crowd_confusion() -> bool:
 	# CITY-ONLY — BudapestPlan.contains via the class, never a restated rect.
 	if not BudapestPlan.contains(global_position.x, global_position.z):
 		return false
+	# Roll BEFORE the O(60) crowd walk so misses (30% at 0.7) pay nothing.
+	var roll := randf()
+	if roll >= chance:
+		return false
 	var citizen_pos: Variant = _nearest_citizen_pos()
 	if citizen_pos == null or not (citizen_pos is Vector3):
 		return false
@@ -4951,16 +4987,19 @@ func _try_crowd_confusion() -> bool:
 	if not pos.is_finite():
 		return false
 	# Runtime draw, uniform 2-10 s stall, outside the determinism contract.
-	var roll := randf()
-	if not _should_confuse(chance, true, true, roll):
-		return false
 	var stall := randf_range(2.0, 10.0)
 	# investigate_point walks at _wander_speed() so the stall is watchable;
 	# busy/remote guards make this return false with no side effect.
 	if not investigate_point(pos, stall):
 		return false
 	_crowd_confusion_cooldown = CROWD_CONFUSION_COOLDOWN
+	is_tracking = false
+	spot_clock = 0.0
+	if _spot_label != null:
+		_spot_label.visible = false
 	return true
+
+
 func advance_tracking(delta: float) -> void:
 	"""
 	SLEPT BUT STALKING: walk a sleeping tracker up the trail, kinematically.
@@ -5880,6 +5919,12 @@ func set_lod_active(active: bool) -> void:
 	# one walk-hold-return) and an awake body syncs normally, which is why this is
 	# a refusal here rather than a second slept-step path beside `advance_tracking`.
 	if not active and is_investigating:
+		return
+
+	# ...AND WHILE THE CROWD-CONFUSION COOLDOWN TICKS (bead 8gw.16). Same shape:
+	# a just-confused hunter that would otherwise sleep would freeze its 6 s guard
+	# indefinitely, because _physics_process never ticks it while slept.
+	if not active and _crowd_confusion_cooldown > 0.0:
 		return
 
 	lod_active = active
