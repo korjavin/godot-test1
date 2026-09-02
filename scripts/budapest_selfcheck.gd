@@ -596,6 +596,10 @@ func _check_budgets(terrain: Node3D, terrain_script: GDScript) -> void:
 	# statement about 49 chunks at once and cannot be made one chunk at a time.
 	var boxes_at: Dictionary = {}
 	var shapes_at: Dictionary = {}
+	# The rect's edge ring: chunks whose SQUARE meets Budapest while their centre
+	# does not. See the shadow assertion in the loop.
+	var edge_chunks := 0
+	var edge_with_stone := 0
 
 	for chunk_pos: Vector2i in _rect_chunks(terrain):
 		var built := _build_city_chunk(terrain, chunk_pos)
@@ -605,6 +609,28 @@ func _check_budgets(terrain: Node3D, terrain_script: GDScript) -> void:
 
 		boxes_at[chunk_pos] = batch.size()
 		shapes_at[chunk_pos] = body.get_child_count()
+
+		# THE SHADOW RULING IS PER CHUNK, AND THE TWO READERS MUST AGREE.
+		# create_chunk turns a chunk's batch into a shadow receiver when
+		# city_chunk() says the chunk meets Budapest; spawn_city_in_chunk builds
+		# city stone on exactly the same predicate. If a chunk ever emits city
+		# boxes while that predicate is false, its facades cast shadows the owner
+		# ruled out — which is what asking about the chunk's CENTRE used to do all
+		# the way round the rect's edge.
+		var centre_w: Vector3 = terrain.chunk_to_world(chunk_pos)
+		var is_city: bool = terrain.city_chunk(centre_w)
+		if not batch.is_empty() and not is_city:
+			_fail("city chunk %s emitted %d boxes but city_chunk() answers false "
+					% [chunk_pos, batch.size()] + "— its batch would cast shadows "
+					+ "the owner's ruling excludes")
+		# EDGE CHUNKS ARE THE WHOLE POINT, so count the ones whose square meets
+		# the rect while their CENTRE does not. A predicate written on the centre
+		# gets every one of these wrong; the tally is printed so the case cannot
+		# quietly stop being exercised.
+		if is_city and not terrain.in_budapest(centre_w.x, centre_w.z):
+			edge_chunks += 1
+			if not batch.is_empty():
+				edge_with_stone += 1
 		if batch.size() > worst_boxes:
 			worst_boxes = batch.size()
 			worst_boxes_at = chunk_pos
@@ -697,6 +723,36 @@ func _check_budgets(terrain: Node3D, terrain_script: GDScript) -> void:
 	print("  accents worst %d at %s (budget %d) — everything else the city draws "
 			% [worst_accents, worst_accents_at, CITY_CHUNK_ACCENT_BUDGET]
 			+ "is in the chunk's one batch")
+
+	# ...AND THE PREDICATE ITSELF, PROBED, because the sweep above cannot test the
+	# case that matters. Budapest's rect corners land EXACTLY on chunk centres
+	# today (2200 m and 1600 m are both whole multiples of the 50 m chunk), so the
+	# shipped city has no square-in / centre-out chunk at all and the loop's
+	# agreement holds by ALIGNMENT rather than by the predicate being right. One
+	# edit to BUDAPEST_MIN, BUDAPEST_MAX or chunk_size brings the whole edge ring
+	# back, which is why the probe is unconditional and the tally is only printed.
+	#
+	# A centre 0.4 of a chunk outside the west edge: its square still reaches into
+	# the rect, so it CAN build a sliced facade, and a predicate asking about its
+	# centre answers "not the city" and lets that facade cast a shadow.
+	var cell_m: float = terrain.chunk_size
+	var outside := Vector3(BudapestPlan.BUDAPEST_MIN.x - cell_m * 0.4, 0.0, 0.0)
+	if terrain.in_budapest(outside.x, outside.z):
+		_fail("check 4's shadow probe is not outside the rect at all (%.0f) — it "
+				% outside.x + "proves nothing")
+	if not terrain.city_chunk(outside):
+		_fail("city_chunk() answers false for a chunk centred %.0f m outside the "
+				% (BudapestPlan.BUDAPEST_MIN.x - outside.x) + "west edge whose "
+				+ "SQUARE still meets Budapest — it is asking about the centre "
+				+ "again, so every chunk on the rect's edge builds city stone that "
+				+ "casts a shadow the owner ruled out")
+	# The other end of the same predicate: a chunk that touches nothing.
+	if terrain.city_chunk(Vector3(BudapestPlan.BUDAPEST_MIN.x - cell_m * 4.0, 0.0, 0.0)):
+		_fail("city_chunk() answers true four chunks clear of the rect — it would "
+				+ "strip shadows from ordinary world geometry")
+	print("  shadow: predicate is the chunk SQUARE (probed both ways); %d edge "
+			% edge_chunks + "chunks in the shipped rect (square in, centre out), "
+			+ "%d with stone — the rect is chunk-aligned today" % edge_with_stone)
 
 	_check_web_residency(boxes_at, shapes_at)
 
@@ -2990,6 +3046,8 @@ func _check_city_blocks(terrain: Node3D) -> void:
 	     building would be unreachable, and one that skipped a whole bridge would
 	     leave the crossing unrewarded.
 	"""
+	var consts := (terrain.get_script() as GDScript).get_script_constant_map()
+
 	# ---- a. the plan refuses what is already there ---------------------------
 	var buildable := 0
 	var scanned := 0
@@ -3097,6 +3155,46 @@ func _check_city_blocks(terrain: Node3D) -> void:
 		_fail("check 15's sweep judged no collision shape at all (%d seen, %d in "
 				% [shapes_seen, exempt] + "cells nothing may be built on) — the "
 				+ "blocks built nothing, so clear streets is not what was measured")
+
+	# ---- b's NEGATIVE CONTROL, which every sibling check in this file carries --
+	# "0 boxes in a street" is a COUNT THAT STAYS ZERO whether the streets are
+	# genuinely clear or the judgement is broken — an exemption that swallowed
+	# everything, or an _in_carriageway that always answered false, both pass the
+	# loop above in silence. So one deliberately street-cutting building is put
+	# through the SAME judgement and must be caught.
+	#
+	# Driven on the predicate rather than on a rebuilt world, because the predicate
+	# IS the judgement: the loop above only feeds it each shape's world centre and
+	# half-extents, which is exactly what these two lines hand it.
+	var cut_line: float = BudapestPlan.street_x(BudapestPlan.CITY_AVENUE_EVERY * 4)
+	if not _in_carriageway(cut_line, 4.0, BudapestPlan.GATE.x):
+		_fail("check 15's negative control was NOT caught: a 8 m wall straddling "
+				+ "the grid line at x = %.0f reads as clear of the street, so the "
+				% cut_line + "sweep's zero above measures nothing")
+	# ...and the matching POSITIVE control, so the predicate is not simply always
+	# true: a facade standing where the blocks really put it, one pavement back
+	# from the kerb, must read as clear.
+	var facade := cut_line + BudapestPlan.AVENUE_HALF_WIDTH \
+			+ BudapestPlan.BLOCK_PAVEMENT + BudapestPlan.BLOCK_WING_DEPTH * 0.5
+	if _in_carriageway(facade, BudapestPlan.BLOCK_WING_DEPTH * 0.5, BudapestPlan.GATE.x):
+		_fail("check 15's positive control failed: a wing sitting exactly where "
+				+ "block_rect puts it reads as standing in the street, so the "
+				+ "sweep would fail on every building in Budapest")
+
+	# ---- d's GEOMETRY: no band may reach the carriageway --------------------
+	# THE AWNING IS THE WIDEST THING A FACADE HANGS OVER THE PAVEMENT, and the
+	# only reason a coin on the avenue is not underneath one is that
+	# BLOCK_PAVEMENT is wider than it. That is arithmetic, so it is asserted as
+	# arithmetic rather than left as a comment somebody has to find: widen any
+	# proud past the pavement and the routes start stranding pickups under stone,
+	# with nothing on screen to say so.
+	var widest: float = maxf(maxf(consts["CITY_AWNING_PROUD"], consts["CITY_BALCONY_PROUD"]),
+			maxf(consts["CITY_CORNICE_PROUD"], consts["CITY_SHOPFRONT_PROUD"]))
+	if widest >= BudapestPlan.BLOCK_PAVEMENT:
+		_fail("the widest facade band stands %.2f m proud against a %.2f m "
+				% [widest, BudapestPlan.BLOCK_PAVEMENT] + "pavement — it reaches "
+				+ "the carriageway, so an avenue coin can end up under it and the "
+				+ "street sweep above has decoration to exempt")
 
 	# ---- d. the coin routes -------------------------------------------------
 	var coins := 0

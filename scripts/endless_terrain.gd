@@ -1800,8 +1800,10 @@ const CITY_DISTRICT_PROP_SIZE: float = 2.0
 ## facade a player photographs has to be the same facade every run and for every
 ## peer; and a cell's stream must not depend on which chunk is asking, because a
 ## block straddles up to four of them. Both fall out of seeding one RNG off
-## (cell.x, cell.y, CITY_BLOCK_SALT) and drawing EVERY parameter for the whole
-## block before emitting anything.
+## (cell.x, cell.y, CITY_BLOCK_SALT) and drawing every parameter ANYTHING READS
+## before emitting anything — see _build_city_block for why that qualifier is
+## exact, and why create_box's own ramp draws after it are padding that may
+## legitimately differ between two chunks slicing one cell.
 const CITY_BLOCK_SALT: int = 0x8_DA9E_571
 
 ## A storey, in metres. 4.2 is a tall Pest piano-nobile floor rather than a
@@ -3886,9 +3888,14 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 		# Do not split the batch to restore them; a future author who wants the
 		# landmarks' shadows back needs a new ruling, because the cost is the
 		# 19 ms measured above and the second draw call per chunk on top of it.
-		var here := chunk_to_world(chunk_pos)
+		#
+		# ASKED OF THE CHUNK'S SQUARE, NEVER ITS CENTRE — `city_chunk()` is the
+		# SAME predicate spawn_city_in_chunk rejects on, so "built a slice of
+		# Budapest" and "casts no shadow" are one answer and cannot disagree. An
+		# earlier cut asked `in_budapest()` about the centre and got both edge
+		# cases wrong, all the way round a 2.2 km rect.
 		_build_block_multimesh(mesh_instance, block_batch,
-				not in_budapest(here.x, here.z))
+				not city_chunk(chunk_to_world(chunk_pos)))
 
 	# Attach the chunk's single block-collision body — but only if it actually
 	# collected shapes. A chunk with no blocks (rare) would otherwise leave an empty
@@ -10037,6 +10044,32 @@ func spawn_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obs
 # draws are discarded padding, because every box passes a colour override.
 
 
+func city_chunk(chunk_center: Vector3) -> bool:
+	"""
+	Does this chunk's SQUARE meet Budapest — i.e. is it a chunk that can build
+	city stone?
+
+	@param chunk_center: This chunk's centre, from chunk_to_world().
+
+	ONE PREDICATE, TWO READERS, AND THAT IS THE WHOLE REASON IT EXISTS.
+	spawn_city_in_chunk's cheap reject asks it to decide whether to build, and
+	create_chunk asks it to decide whether the chunk's batch casts a shadow. Those
+	two answers MUST be the same answer: the owner's no-shadow ruling is about the
+	city, so a chunk that builds a slice of Budapest must not cast, and a chunk
+	that builds none of it must.
+
+	IT IS THE SQUARE, NOT THE CENTRE, and that distinction is a real bug that was
+	shipped once. A chunk on the rect's edge can straddle the boundary — its
+	square meets the city and it builds a sliced facade, while its CENTRE sits
+	outside. Asked about its centre it kept its shadows and cast them off city
+	stone; the mirror case (centre inside, a sliver of ordinary world outside)
+	silently stripped shadows from that sliver's cactus. Both are one ring of
+	chunks all the way round a 2.2 km rect. budapest_selfcheck check 4 now asserts
+	the two readers agree, and names the edge chunks it found.
+	"""
+	return _city_chunk_slice(chunk_center, BudapestPlan.rect()).has_area()
+
+
 func _city_chunk_slice(chunk_center: Vector3, area: Rect2) -> Rect2:
 	"""
 	This chunk's share of an authored city rect, in WORLD XZ.
@@ -10149,7 +10182,7 @@ func spawn_city_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obst
 	var chunk_center := chunk_to_world(chunk_pos)
 	# Cheap rect reject: every chunk in the world that is not in the city pays one
 	# intersection and nothing else.
-	if not _city_chunk_slice(chunk_center, BudapestPlan.rect()).has_area():
+	if not city_chunk(chunk_center):
 		return
 
 	# The private stream — see CITY_STREAM_SEED for why it is private and why it
@@ -10846,8 +10879,8 @@ func _spawn_city_blocks_in_chunk(chunk_center: Vector3, obstacles: Array,
 
 	A BLOCK IS BUILT WHOLE BY EVERY CHUNK THAT TOUCHES IT, AND SLICED ON THE WAY
 	OUT. That is the landmark builders' rule one scale down: the facade stream is
-	seeded off the CELL, every parameter for the whole block is drawn before
-	anything is emitted, and only then is each rect intersected with this chunk's
+	seeded off the CELL, every parameter anything READS is drawn before anything
+	is emitted, and only then is each rect intersected with this chunk's
 	square. So two chunks slicing one block agree bit for bit on its heights and
 	its colours, and the wall meets flush at the seam because _city_chunk_slice
 	cuts both halves out of the same rect.
@@ -10874,15 +10907,28 @@ func _build_city_block(cell: Vector2i, chunk_center: Vector3, obstacles: Array,
 	THE STREAM IS THE WHOLE CORRECTNESS ARGUMENT. `rng` is seeded off (cell,
 	CITY_BLOCK_SALT) and NOTHING ELSE — no run_seed (Budapest is authored, the
 	tower-furniture precedent), no chunk coordinate (a block is built by up to
-	four of them and they have to agree), no draw from anybody else's stream. And
-	every parameter for all eight buildings is drawn UP FRONT, before the first
-	box is emitted, so a chunk that ends up emitting nothing still consumes the
-	identical sequence.
+	four of them and they have to agree), no draw from anybody else's stream.
 
-	FIVE BOXES BUY A BUILDING: one colliding hull, plus a cornice, a shopfront
-	band, a balcony course and a doorway. The bands are what make a 21 m plaster
-	box read as a Budapest facade without a box per window; see the CITY BLOCKS
-	constants.
+	AND EVERY DRAW ANYTHING READS IS TAKEN UP FRONT, before the first box is
+	emitted. That is the exact claim, and the qualifier is load-bearing: create_box
+	spends four more numbers per box on its curated colour ramp and its roughness,
+	AFTER these, and a chunk that skips a box (its piece is in the chunk next door)
+	does not spend them. So the streams of two chunks slicing one cell DO diverge —
+	in create_box's ramp draws, and only there.
+
+	That divergence is unobservable by construction, for the reason CITY_STREAM_SEED
+	states one feature along: every box here passes an explicit `color_override`, so
+	the ramp's output is discarded and its draws are pure padding. Nothing downstream
+	reads this rng either — it is per-cell and dies with the call. What the two
+	chunks must agree on is `storeys`, `walls`, `awnings`, `balconies` and `roof`,
+	and those are all drawn above, in one fixed order, for all eight buildings,
+	before any geometry exists to skip. budapest_selfcheck check 3 measures the
+	result rather than the argument: a dense Pest block, byte-identical across two
+	different run seeds.
+
+	~TEN BOXES BUY A BUILDING: one colliding hull, a window course per storey, two
+	shopfronts around a doorway gap, an awning, an optional balcony and the cornice.
+	See _city_block_boxes and the CITY BLOCKS constants.
 	"""
 	var rng := RandomNumberGenerator.new()
 	rng.seed = hash(Vector3i(cell.x, cell.y, CITY_BLOCK_SALT))
