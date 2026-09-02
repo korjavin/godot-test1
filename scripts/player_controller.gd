@@ -3300,15 +3300,21 @@ func _check_budapest_win() -> void:
 	half a second at most: the master republishes at `ROOM_SYNC_HZ` and every
 	`room` packet re-drives this through `adopt_explored_mask()`.
 
-	`is_busy()` and not `is_online()`, the same test `landmark_toast._take_pause`
-	makes for a related reason: a join spends seconds in CONNECTING before it is a
-	room, and our own bits have not reached the master yet either.
+	`is_online()` AND NOT `is_busy()`, which is the opposite of the choice
+	`landmark_toast._take_pause` makes and deliberately so (codex review
+	2026-09-02). `is_busy()` is true through the seconds a join spends CONNECTING,
+	where there is no room, no union and nothing to be partial about — deferring
+	there would be deferring to nobody, and a join that then FAILS leaves the
+	eighteenth landmark undecided with nothing left to ask again (the toast will
+	not re-report a slot whose bit is already set). While CONNECTING our own mask
+	IS the truth, exactly as it is solo; the gate belongs on the room, and the room
+	is `is_online()`.
 	"""
 	if is_game_over:
 		return
 	var mask: int = explored_mask
 	var mp := _mp()
-	if mp != null and mp.has_method("is_busy") and bool(mp.is_busy()):
+	if mp != null and mp.has_method("is_online") and bool(mp.is_online()):
 		if not mp.has_method("room_explored_mask"):
 			return
 		var room: Variant = mp.call("room_explored_mask")
@@ -3485,10 +3491,8 @@ func restart_game() -> void:
 	# not survive the button. The break-out scene's own state goes with it — it is
 	# per-run for the same reason and stored in exactly as many places (none).
 	captive_heroes.clear()
-	# Budapest is unexplored again, for exactly the captive set's reason: the walk
-	# is per-run world state and nothing about it is earned. What survives is the
-	# COUNT, already banked into `landmarks_best` by `_bank_records()`.
-	explored_mask = 0
+	# (Budapest's explored mask is wiped by `reset_position()` below, with the rest
+	# of the hard-reset list.)
 	# The bench goes with the run for the same reason: it is a fact about a room's
 	# roster, and Play Again inside a room leaves the room first.
 	prisoner_active = false
@@ -3601,6 +3605,14 @@ func reset_position() -> void:
 	record_coins = 0
 	coin_streak = 0
 	streak_timer = 0.0
+	# BUDAPEST IS UNEXPLORED AGAIN. Per-run world state, the captive set's rule —
+	# nothing about the walk is earned, and the COUNT was already banked into
+	# `landmarks_best` by `_bank_records()`. It lives HERE rather than in
+	# `restart_game()` because this is the one owner of the hard-reset wipe list,
+	# and the seed-arrival path into a room (`MpManager._receive_seed`) calls this
+	# and not that: a peer carrying a solo run's eighteen landmarks into somebody
+	# else's world would win it on arrival (codex review 2026-09-02).
+	explored_mask = 0
 
 	# Clear any crocodiles near the spawn point
 	clear_nearby_crocodiles(spawn_point)
@@ -3753,6 +3765,13 @@ func join_at(anchor: Vector3) -> void:
 	# over a room leg that started at zero and beat nothing.
 	run_beat_record = false
 	record_coins = 0
+	# ...AND SO DOES BUDAPEST. This peer's solo walk is not the room's: the mask is
+	# unioned across the room and the win is decided off it, so a joiner arriving
+	# with a finished solo mask would win somebody else's run on its first `room`
+	# packet — and a partial one would make this the only peer counting landmarks
+	# nobody else has (codex review 2026-09-02). The room's set arrives whole in the
+	# master's join snapshot (`lm`) moments later.
+	explored_mask = 0
 
 	# JOINING FROM THE GAME OVER SCREEN IS A SUPPORTED FLOW — mp_ui deliberately
 	# does not pause over it, so the panel's Join button works there. Without this

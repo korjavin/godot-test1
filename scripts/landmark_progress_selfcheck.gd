@@ -48,6 +48,15 @@ extends SceneTree
 ##     plateau lid 46 m up (the distance is flat XZ on purpose) and from a
 ##     non-finite point.
 ##
+##  7. **THE ROOM'S TWO HYGIENE RULES** (both from codex review 2026-09-02). A
+##     claim is made ONCE PER RUN — `explore_landmark()` will never report the same
+##     slot again — so a claim the master discards (a joiner reaching a landmark
+##     before its first presence packet) is a landmark permanently missing from the
+##     room's win set: it must be REMEMBERED and re-sent until the master's own
+##     published mask acknowledges it. And a peer that adopts a foreign world seed
+##     must arrive with an EMPTY mask, or a finished solo run wins somebody else's
+##     room on its first `room` packet.
+##
 ##  6. **THE TRIGGER.** `landmark_toast._scan_city()` driven against the real
 ##     shipped widget with a player standing on a slot: the bit is claimed, the
 ##     approach latches so a second tick does not re-fire, and walking out past
@@ -82,6 +91,7 @@ func _initialize() -> void:
 	_check_decode_absent()
 	_check_claim_verb()
 	await _check_trigger()
+	await _check_room_hygiene()
 
 	if _failures.is_empty():
 		print("SELFCHECK OK")
@@ -408,6 +418,78 @@ func _check_trigger() -> void:
 
 	toast.queue_free()
 	player.queue_free()
+
+
+# ============================================================================
+# 7. THE ROOM'S HYGIENE — the retry queue and the world-replacement wipe
+# ============================================================================
+
+func _check_room_hygiene() -> void:
+	# --- the wipe, on the shipped player ------------------------------------
+	# `reset_position()` is the one owner of the hard-reset wipe list, and
+	# `join_at()` is the mid-run path that deliberately does not call it — so both
+	# have to clear the mask and both are asked here.
+	var player: Node = await _make_player()
+	player.explored_mask = 0b111
+	player.reset_position()
+	if player.explored_mask != 0:
+		_fail("reset_position() left %d landmarks explored — a peer adopting a "
+			% player.explored_count() + "foreign world seed would carry its solo walk in")
+	player.explored_mask = 0b111
+	player.join_at(Vector3.ZERO)
+	if player.explored_mask != 0:
+		_fail("join_at() left %d landmarks explored — a mid-run joiner would count "
+			% player.explored_count() + "landmarks the room has never seen")
+	player.queue_free()
+
+	# --- the retry queue, on a real manager ---------------------------------
+	# Driven on a bare `MpManager` with the room fields set directly. Every send
+	# path degrades to a no-op with no `_rtc` and no `_lobby`
+	# (`_send_reliable_to_master` and `_relay_to_negotiating` both return early),
+	# which is exactly the case the queue exists for: the packet did not leave.
+	var mp: Node = MPManager.new()
+	root.add_child(mp)
+	await process_frame
+	mp._state = MPManager.State.IN_ROOM
+	mp._you = "us"
+	mp._master = "them"
+
+	mp.report_landmark_explored(4)
+	if not mp._pending_landmarks.has(4):
+		_fail("a claim the mesh could not carry was forgotten — that landmark can "
+			+ "never be reported again and is lost to the room for the run")
+	if mp._explored_mask & (1 << 4) == 0:
+		_fail("our own claim did not reach our own room mask")
+
+	# THE ACK IS THE MASTER'S PUBLISHED MASK AND NOTHING ELSE. Our own bits are
+	# already in `_explored_mask`, so a queue drained by `_apply_explored` would
+	# acknowledge every claim the instant it was made — which is a retry that never
+	# retries, and passes every other assertion here.
+	mp._tick_landmark_claims()
+	if not mp._pending_landmarks.has(4):
+		_fail("the retry tick dropped an unacknowledged claim")
+
+	# A packet from somebody who is NOT the master acknowledges nothing.
+	mp._receive_room("a-stranger", {"cap": [], "cd": 0.0, "co": 0, "m": 1 << 4})
+	if not mp._pending_landmarks.has(4):
+		_fail("a stranger's `room` packet acknowledged our claim")
+
+	# ...and the master's own does.
+	mp._receive_room("them", {"cap": [], "cd": 0.0, "co": 0, "m": 1 << 4})
+	if mp._pending_landmarks.has(4):
+		_fail("the master published our claim back and it stayed queued — this peer "
+			+ "would re-send it twice a second for the rest of the room")
+
+	# A re-election makes US the union: nothing is left outstanding, because
+	# everything queued is already in the mask we are about to publish.
+	mp.report_landmark_explored(5)
+	mp._master = "us"
+	mp._tick_landmark_claims()
+	if not mp._pending_landmarks.is_empty():
+		_fail("becoming the master left %d claims queued for a master that is us"
+			% mp._pending_landmarks.size())
+
+	mp.queue_free()
 
 
 # ============================================================================

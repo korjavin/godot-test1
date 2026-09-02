@@ -55,6 +55,17 @@ const BUDAPEST_HEIGHT: float = 30.0
 ## `locale_selfcheck.WIDTH_BUDGETS` measures German against — this corner is
 ## 256 px wide and the label does not wrap.
 ##
+## ponytail: THE DECIMAL SEPARATOR IS A POINT IN BOTH LANGUAGES, and German
+## writes 1,4. GDScript's `%` formatting is locale-independent by design, so
+## fixing it means formatting the number by hand against the active locale — and
+## this is not the string that would be fixed first: `ui.csv` already ships
+## German rows carrying `%.1f` (the HQ's phase-receptacle readout is two of
+## them), so a comma HERE and a point THERE is a worse state than the one we are
+## in. Upgrade path, when somebody wants it: one shared "format a number for the
+## active locale" helper, applied to every `%.1f` / `%.2f` row at once. Rejected
+## in this bead as a project-wide change wearing one label's clothes (codex
+## review 2026-09-02, P3).
+##
 ## ponytail: the distance is in kilometres at one decimal all the way in, so the
 ## last 100 m of the approach all read "Budapest: 0.1 km". The city is 2 km from
 ## the HQ, so that is the last few seconds of a long walk and the gate is in

@@ -620,6 +620,18 @@ var _room_accum: float = 0.0
 ## PLAYER's copy deliberately survives a room join — see `report_landmark_explored`.
 var _explored_mask: int = 0
 
+## Landmark claims this peer has made and not yet seen the master publish back:
+## `{ slot index : true }`. THE ONLY RETRY QUEUE IN THIS FILE, and the reason is
+## in `report_landmark_explored()` — a claim is made exactly once per run, so a
+## dropped one is a landmark permanently missing from the ROOM's win set, which
+## no other verb here is true of. Bounded by the plan's 22 slots, drained one per
+## `room` beat, and normally empty. Master-side it is always empty (a master
+## unions its own claims directly); `leave()` empties it with the room.
+##
+## NOT to be confused with `_pending_claims`, which is the coin-pickup arbitration's
+## in-flight table — a different verb (`clm`) about a different kind of claim.
+var _pending_landmarks: Dictionary = {}
+
 ## The last captive-set-and-verdict the master RELAYED, as a string to compare
 ## against. The relay leg fires only when this changes - see `_send_room_state()`,
 ## where the reason is the lobby's own stall rule and not tidiness.
@@ -928,6 +940,7 @@ func leave() -> void:
 	# Nothing is pushed into the player from here: a leave is not an un-exploring,
 	# and the player's own bits are its own truth again the moment it is solo.
 	_explored_mask = 0
+	_pending_landmarks = {}
 	_last_holder = {}
 	_released_msec = {}
 	_captured_msec = {}
@@ -1782,7 +1795,16 @@ func _receive_room(from_id: String, packet: Dictionary) -> void:
 	# no `m`, which decodes as 0 and ORs to nothing — the documented mixed-room
 	# ceiling, not a special case. This is also the beat that re-drives a win the
 	# join gate deferred; see `_apply_explored()`.
-	_apply_explored(int(msg["m"]))
+	var published: int = int(msg["m"])
+	_apply_explored(published)
+	# THE ACK. This packet is the master's own truth, so a pending claim it carries
+	# has landed and may stop being re-sent — see `_tick_landmark_claims()`. It is
+	# done HERE and not in `_apply_explored()` because that function is also fed by
+	# our OWN bits, and a claim cannot acknowledge itself.
+	if not _pending_landmarks.is_empty():
+		for index: int in _pending_landmarks.keys():
+			if published & (1 << index) != 0:
+				_pending_landmarks.erase(index)
 
 
 func _adopt_room_captives(names: Array) -> void:
@@ -2575,6 +2597,17 @@ func _receive_seed(payload: Dictionary) -> void:
 	_room_seed = int(raw_seed)
 	_has_seed = true
 	status.emit("Shared world seed received")
+
+	# BUDAPEST IS UNEXPLORED IN A WORLD WE HAVE NOT WALKED. Adopting a foreign seed
+	# is the one event that REPLACES this peer's world, and it is the single site
+	# above all three branches below — the spawn reset, the mid-run rebuild and the
+	# hand-over to `_apply_join_placement()`, only the first of which calls
+	# `reset_position()`. Without it a peer carrying a finished solo mask wins
+	# somebody else's run on its first `room` packet (codex review 2026-09-02). A
+	# HOST never gets here, which is correct: its own run continues, seed and all.
+	var seed_player: Node = get_tree().get_first_node_in_group("player")
+	if seed_player != null and "explored_mask" in seed_player:
+		seed_player.set("explored_mask", 0)
 
 	# A MID-RUN JOINER MUST NOT BE RESET TO THE ORIGIN. Once a snapshot is in
 	# hand the group's position is known, so hand straight over to the join
@@ -3384,6 +3417,7 @@ func _process(delta: float) -> void:
 	if _room_accum >= room_interval:
 		_room_accum = fmod(_room_accum, room_interval)
 		_send_room_state()
+		_tick_landmark_claims()
 
 	if _rtc == null:
 		return
@@ -4836,8 +4870,70 @@ func report_landmark_explored(index: int) -> void:
 	_apply_explored(1 << index)
 	if _master == _you:
 		return   # we ARE the union; `_send_room_state` publishes it
+	# ONE-SHOT SENDS ARE NOT ENOUGH HERE, and this is the one place in the file
+	# where that is true (codex review 2026-09-02). Every other event verb can
+	# afford to be dropped — a lost `flee` is an ability that visibly did nothing —
+	# but this claim is made ONCE PER RUN by construction: `explore_landmark()` sets
+	# the local bit and refuses to report the same slot again, so a claim the master
+	# discards is a landmark permanently missing from the ROOM's win set. And the
+	# master discards it on a case that really happens: a joiner reaching a landmark
+	# before its first presence packet has arrived has no entry in the master's
+	# `_peer_state`, so `_receive_lmk` has nowhere to check its position against.
+	#
+	# So it is remembered and re-sent by `_tick_landmark_claims()` until the
+	# master's own published mask says it landed. That is an ACK we already have and
+	# did not have to invent — the `room` packet's `m` is the master's truth.
+	_pending_landmarks[index] = true
+	_send_landmark_claim(index)
+
+
+func _send_landmark_claim(index: int) -> void:
+	"""
+	Put one `lmk` on the wire, over BOTH transports.
+
+	`_publish_captive`'s rule for `_publish_captive`'s reason: ICE takes seconds
+	and the relay is open from `welcome`, so the relay leg is what reaches a master
+	whose mesh channel is not up. It writes to peers whose mesh is down (normally
+	none, so normally zero sends) and a non-master that receives one drops it in
+	`_receive_lmk`.
+	"""
 	_send_reliable_to_master(var_to_bytes({"t": "lmk", "i": index}))
 	_relay_to_negotiating({"mp": "lmk", "i": index})
+
+
+func _tick_landmark_claims() -> void:
+	"""
+	The claim retry, on the `room` publish beat — see `report_landmark_explored()`
+	for why a landmark claim is the one verb in this file that may not be dropped.
+
+	ONE CLAIM PER TICK, and the bound is what makes the retry safe: 22 slots at
+	`ROOM_SYNC_HZ` is 2 packets a second against the verb's own budget of 10, so a
+	peer whose every claim is outstanding still cannot rate-limit itself out. It
+	drains in index order and is normally EMPTY — a claim that landed is forgotten
+	the moment the master's next `m` carries it (`_apply_explored`).
+
+	THE SECOND JOB IS THE WIN RETRY, and it is one line because `_apply_explored`
+	already pushes the mask into the player unconditionally.
+	`player_controller._check_budapest_win()` refuses to decide before
+	`_join_settled()`, so something has to ask again; a master that has gone quiet
+	would otherwise leave a settled joiner's eighteenth landmark undecided forever.
+	"""
+	if _state != State.IN_ROOM:
+		return
+	# Re-drive the deferred win check (and re-seed a player that entered the tree
+	# after us). Costs one group lookup and a popcount of at most 22 bits, twice a
+	# second, and only in a room.
+	_apply_explored(0)
+	if _master == _you:
+		# A re-election made US the union: everything outstanding is already in
+		# `_explored_mask` and goes out on the next `room` packet.
+		_pending_landmarks.clear()
+		return
+	if _pending_landmarks.is_empty():
+		return
+	for index: int in _pending_landmarks.keys():
+		_send_landmark_claim(index)
+		return
 
 
 func room_explored_mask() -> Variant:
