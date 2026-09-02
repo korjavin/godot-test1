@@ -79,6 +79,16 @@ func _run() -> void:
 		_report()
 		return
 
+	# BUDAPEST Z-FIGHTING FIX (bead 8gw.17): the default near=0.05 / far=4000 gives an
+	# 80,000:1 ratio and 0.06 m CITY_WINDOW_PROUD flickers on gl_compatibility.
+	# Raising near to 0.25 buys 5x depth precision (10x at 0.5) for zero draw cost;
+	# the SpringArm3D is 8.25 m with 0.25 margin so nothing is ever within 0.25 m.
+	# Far stays 4000 — the HQ horizon impostor is fog-exempt and must remain.
+	if not is_equal_approx(camera.near, 0.25):
+		_fail("Camera3D.near is %.4f, expected 0.25 — Budapest 0.06 m proud bands z-fight at the default 0.05 (bead 8gw.17)" % camera.near)
+	if not is_equal_approx(camera.far, 4000.0):
+		_fail("Camera3D.far is %.1f, expected 4000 — lowering it pops the fog-exempt HQ horizon impostor" % camera.far)
+
 	# Three views, three measurements. `forward` is the body's facing (-Z, the
 	# Godot convention this controller moves along); `ahead` is how far along it
 	# the camera sits, signed — negative is behind the hero, positive in front.
