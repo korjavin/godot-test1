@@ -6,7 +6,7 @@ You are a CrimeKicker dropped into an infinite, procedurally generated world. A
 trail of coins — the **coin road** — winds off toward the horizon. Follow it as
 far as you can: the further you get, the meaner and denser the crocodile piglets
 chasing you become. Switch between four heroes on the fly, each with their own
-signature power, rack up distance and coins, and try to beat your own best run.
+signature power, rack up coins, and try to beat your own best run.
 Every run generates a brand-new world.
 
 **▶ Play it in your browser: https://korjavin.github.io/godot-test1/**

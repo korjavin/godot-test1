@@ -360,6 +360,10 @@ var best_run_store: BestRunStore = null
 ## earned the flash. The fact is recorded where it is still true and read at the
 ## ending; `reset_position()` (the hard-reset wipe list) clears it.
 var run_beat_record: bool = false
+## The coin peak that set the `run_beat_record` latch in this run. Reconciled
+## against `server_best_coins` at game over instead of `own_coins`, because
+## setbacks (bites) decrease `own_coins` after the record was banked.
+var record_coins: int = 0
 
 ## How often the run's records are checkpointed while the player is simply
 ## playing. `_bank_records()` runs on every bite because a bite is what replaced
@@ -3212,6 +3216,7 @@ func _bank_records() -> bool:
 	var is_new_best := own_coins > best_coins
 	run_beat_record = run_beat_record or is_new_best
 	if is_new_best:
+		record_coins = maxi(record_coins, own_coins)
 		best_coins = maxi(best_coins, own_coins)
 		if best_run_store:
 			best_run_store.submit(0, best_coins)
@@ -3269,11 +3274,15 @@ func _reconcile_record_latch() -> void:
 	not see the case at all: a server holding EXACTLY this run's coins raises
 	nothing and emits nothing.
 
+	Reconciliation compares against `record_coins` (the peak that latched the record),
+	not `own_coins`: subsequent setbacks/bites reduce the mutable `own_coins`
+	balance while the banked record and ending "Best" line remain at the peak.
+
 	`>=`, because a run that TIED the standing record set no new best. A store
 	with no server answer reports 0, which outranks nothing and leaves the local
 	comparison alone.
 	"""
-	if best_run_store and best_run_store.server_best_coins >= own_coins:
+	if best_run_store and record_coins > 0 and best_run_store.server_best_coins >= record_coins:
 		run_beat_record = false
 
 
@@ -3440,6 +3449,7 @@ func reset_position() -> void:
 	own_distance = 0
 	own_distance_origin = Vector2.ZERO  # ... back to the origin spawn it teleports to.
 	run_beat_record = false  # ... and the new run has not beaten anything yet.
+	record_coins = 0
 	coin_streak = 0
 	streak_timer = 0.0
 
@@ -3588,11 +3598,12 @@ func join_at(anchor: Vector3) -> void:
 	# EVERYONE, permanently, because a max never comes back down. The room's real
 	# figure arrives from the snapshots and the next presence packet.
 	run_distance = 0
-	# ...and so does the record LATCH, because it is derived from the distance the
-	# two lines above just wiped. It is set by `_bank_records()` on a bite and read
+	# ...and so does the record LATCH, because it is derived from the coins the
+	# lines above just wiped. It is set by `_bank_records()` on a bite and read
 	# once at the ending; left standing from a solo leg it would flash "NEW BEST!"
 	# over a room leg that started at zero and beat nothing.
 	run_beat_record = false
+	record_coins = 0
 
 	# JOINING FROM THE GAME OVER SCREEN IS A SUPPORTED FLOW — mp_ui deliberately
 	# does not pause over it, so the panel's Join button works there. Without this

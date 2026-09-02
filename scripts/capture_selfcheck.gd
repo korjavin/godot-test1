@@ -1267,6 +1267,21 @@ func _check_a_guard_takes_coins_and_ground() -> void:
 	if player_c.run_beat_record:
 		_fail("a server record ABOVE this run's coins left run_beat_record set —"
 			+ " the ending would flash NEW BEST for a record another device holds")
+	# ...and SETBACKS AFTER BANKING do not corrupt reconciliation.
+	# When a run banks a record (e.g. at 8 coins), later bites/setbacks reduce the
+	# mutable own_coins balance (e.g. to 5). Reconciling against a server record
+	# between the two (e.g. 7 coins) must compare against the peak that set the latch
+	# (record_coins = 8), NOT the depleted own_coins balance (5) — or an earned flash
+	# is lost to a server record this run actually beat.
+	player_c.run_beat_record = true
+	player_c.own_coins = banked_coins - 3
+	probe_store.server_best_coins = banked_coins - 1
+	player_c.call("_reconcile_record_latch")
+	if not player_c.run_beat_record:
+		_fail("a setback lowering own_coins below a server record cleared run_beat_record"
+			+ " — reconciliation must compare against record_coins (the peak that latched it),"
+			+ " not the mutable current balance")
+	player_c.own_coins = banked_coins
 	# ...and an echoed store emission still leaves it alone.
 	probe_store.server_best_coins = 0
 	player_c.run_beat_record = true
