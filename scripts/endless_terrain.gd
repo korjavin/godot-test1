@@ -8240,6 +8240,8 @@ func _spawn_desert_content(chunk_center: Vector3, rng: RandomNumberGenerator, ob
 	var count := rng.randi_range(CACTUS_MIN, CACTUS_MAX)
 	var chunk_pos_cactus := world_to_chunk(chunk_center)
 	var k_cactus := scarcity_at(chunk_center)
+	if k_cactus <= 0.0:
+		return
 
 	for _i in count:
 		var local_x := rng.randf_range(-half, half)
@@ -8258,25 +8260,10 @@ func _spawn_desert_content(chunk_center: Vector3, rng: RandomNumberGenerator, ob
 		var width := rng.randf_range(CACTUS_WIDTH_MIN, CACTUS_WIDTH_MAX)
 		var segments := rng.randi_range(2, 3)
 		var yaw := rng.randf_range(0.0, TAU)
-		# Pre-collect segment heights so scarcity is the last check before emit
-		# and every draw still happens at k=1 (post-draw skip).
-		var seg_hs: Array[float] = []
-		for _s_seg in segments:
-			seg_hs.append(rng.randf_range(CACTUS_SEGMENT_MIN, CACTUS_SEGMENT_MAX))
-		var has_arm := rng.randf() < CACTUS_ARM_CHANCE
-		var arm_len := 0.0
-		var arm_y_ratio := 0.0
-		if has_arm:
-			arm_len = width * rng.randf_range(2.0, 3.0)
-			arm_y_ratio = rng.randf_range(0.45, 0.7)
-		# Per-object scarcity: own hash stream (chunk, index, SCARCITY_SALT), no new draw.
-		# Must be the last continue before geometry is emitted, after every existing draw/rejection.
-		var scarcity_roll := float(hash(Vector3i(chunk_pos_cactus.x * 96174811, chunk_pos_cactus.y * 18266587, run_seed ^ SCARCITY_SALT ^ _i)) % 1000000) / 1000000.0
-		if scarcity_roll >= k_cactus:
-			continue
-
 		var top_y := 0.0
-		for seg_h in seg_hs:
+
+		for _s in segments:
+			var seg_h := rng.randf_range(CACTUS_SEGMENT_MIN, CACTUS_SEGMENT_MAX)
 			create_box(
 				Vector3(local_x, top_y + seg_h * 0.5, local_z),
 				Vector3(width, seg_h, width),
@@ -8285,8 +8272,9 @@ func _spawn_desert_content(chunk_center: Vector3, rng: RandomNumberGenerator, ob
 			top_y += seg_h
 
 		# Optional arm: a short horizontal box budding from the middle of the stack.
-		if has_arm:
-			var arm_y := top_y * arm_y_ratio
+		if rng.randf() < CACTUS_ARM_CHANCE:
+			var arm_len := width * rng.randf_range(2.0, 3.0)
+			var arm_y := top_y * rng.randf_range(0.45, 0.7)
 			# Push the arm out along its OWN long axis, which create_box orients with
 			# Basis(UP, yaw) — that maps local +X to (cos yaw, 0, -sin yaw). Writing
 			# the +sin form here rotates the offset the wrong way round, so the arm
@@ -8502,6 +8490,8 @@ func _spawn_forest_content(chunk_center: Vector3, rng: RandomNumberGenerator, ob
 	var count := rng.randi_range(FOREST_TREES_MIN, FOREST_TREES_MAX)
 	var chunk_pos_forest := world_to_chunk(chunk_center)
 	var k_forest := scarcity_at(chunk_center)
+	if k_forest <= 0.0:
+		return
 
 	for _i in count:
 		var local_x := rng.randf_range(-half, half)
@@ -8519,10 +8509,6 @@ func _spawn_forest_content(chunk_center: Vector3, rng: RandomNumberGenerator, ob
 		var trunk_w := rng.randf_range(TREE_TRUNK_WIDTH_MIN, TREE_TRUNK_WIDTH_MAX)
 		var trunk_h := rng.randf_range(TREE_TRUNK_HEIGHT_MIN, TREE_TRUNK_HEIGHT_MAX)
 		var yaw := rng.randf_range(0.0, TAU)
-		var layers := rng.randi_range(TREE_CANOPY_LAYERS_MIN, TREE_CANOPY_LAYERS_MAX)
-		var canopy_w := rng.randf_range(TREE_CANOPY_WIDTH_MIN, TREE_CANOPY_WIDTH_MAX)
-		# Per-object scarcity: own hash stream, no draw on biome RNG.
-		# Must be the last continue before geometry is emitted.
 		var scarcity_roll := float(hash(Vector3i(chunk_pos_forest.x * 96174811, chunk_pos_forest.y * 18266587, run_seed ^ SCARCITY_SALT ^ _i)) % 1000000) / 1000000.0
 		if scarcity_roll >= k_forest:
 			continue
@@ -8536,7 +8522,8 @@ func _spawn_forest_content(chunk_center: Vector3, rng: RandomNumberGenerator, ob
 
 		# Canopy: 2-3 shrinking slabs stacked from just below the trunk top, each
 		# VISUAL ONLY (collide = false) — you walk under a tree, not into its leaves.
-		# layers/canopy_w already drawn before scarcity above.
+		var layers := rng.randi_range(TREE_CANOPY_LAYERS_MIN, TREE_CANOPY_LAYERS_MAX)
+		var canopy_w := rng.randf_range(TREE_CANOPY_WIDTH_MIN, TREE_CANOPY_WIDTH_MAX)
 		var canopy_y := trunk_h - TREE_CANOPY_LAYER_HEIGHT * 0.3
 		for _l in layers:
 			create_box(
@@ -8583,6 +8570,8 @@ func _spawn_mountain_content(chunk_center: Vector3, rng: RandomNumberGenerator, 
 	var count := rng.randi_range(MOUNTAIN_MASSIF_MIN, MOUNTAIN_MASSIF_MAX)
 	var chunk_pos_mtn := world_to_chunk(chunk_center)
 	var k_mtn := scarcity_at(chunk_center)
+	if k_mtn <= 0.0:
+		return
 
 	# Massifs are NOT checked against the whole `obstacles` list. A massif's
 	# footprint radius is ~9.7 m, so demanding clearance from all dozen scattered
@@ -8643,39 +8632,40 @@ func _spawn_mountain_content(chunk_center: Vector3, rng: RandomNumberGenerator, 
 
 		var height := rng.randf_range(MOUNTAIN_HEIGHT_MIN, MOUNTAIN_HEIGHT_MAX)
 		var base_w := rng.randf_range(MOUNTAIN_BASE_WIDTH_MIN, MOUNTAIN_BASE_WIDTH_MAX)
-		var layers_tmp := maxi(2, int(height / MOUNTAIN_MIN_LAYER_HEIGHT))
-		var snowy_tmp := height >= MOUNTAIN_SNOW_HEIGHT
-		var snow_from_tmp := maxi(1, layers_tmp - MOUNTAIN_SNOW_LAYERS)
-		# Pre-draw per-layer values so thinned massifs still advance the biome RNG.
-		var layer_colors: Array[Color] = []
-		var layer_jx: Array[float] = []
-		var layer_jz: Array[float] = []
-		var layer_yaws: Array[float] = []
-		for li in layers_tmp:
-			var is_snow_tmp := snowy_tmp and li >= snow_from_tmp
-			var col: Color = MOUNTAIN_SNOW_COLOR if is_snow_tmp else MOUNTAIN_ROCK_A.lerp(MOUNTAIN_ROCK_B, rng.randf())
-			layer_colors.append(col)
-			layer_jx.append(rng.randf_range(-MOUNTAIN_LAYER_JITTER, MOUNTAIN_LAYER_JITTER))
-			layer_jz.append(rng.randf_range(-MOUNTAIN_LAYER_JITTER, MOUNTAIN_LAYER_JITTER))
-			layer_yaws.append(rng.randf_range(0.0, TAU))
-		# Per-object scarcity: own hash stream, no draw. Every biome draw above still happened.
+		# Per-object scarcity: own hash stream, no draw.
+		# Must be the last continue before geometry is emitted, after whatever draws master makes before that point.
+		# At k=1 nothing is skipped and the stream is master's; at k<1 a thinned object's emit-time draws are skipped, which shifts the rest of THIS chunk — deterministic (k is pure in position) and intended.
 		var scarcity_roll_mtn := float(hash(Vector3i(chunk_pos_mtn.x * 96174811, chunk_pos_mtn.y * 18266587, run_seed ^ SCARCITY_SALT ^ _i)) % 1000000) / 1000000.0
 		if scarcity_roll_mtn >= k_mtn:
 			continue
-		var layers := layers_tmp
-		var snow_from := snow_from_tmp
+		# The layer count falls straight out of the height: every step must be too
+		# tall to jump onto. Without that rule an 8 m massif split into 7 layers is
+		# a 1.14 m staircase with a 1.7 m ledge at each level — a walkable ziggurat,
+		# which would break the "impassable, you go around" contract that the whole
+		# mountains-as-blocks design rests on under the flat-world invariant. With
+		# heights of 8-20 m this gives 2-5 layers.
+		var layers := maxi(2, int(height / MOUNTAIN_MIN_LAYER_HEIGHT))
+		var snowy := height >= MOUNTAIN_SNOW_HEIGHT
+		# Index of the first snow layer. Always leaves at least one rock layer
+		# showing: a 14-15.9 m massif gets exactly 3 layers, and a flat
+		# "top MOUNTAIN_SNOW_LAYERS" rule would paint 2 of those 3 white, so the
+		# peak read as a snow pillar rather than rock wearing a cap.
+		var snow_from := maxi(1, layers - MOUNTAIN_SNOW_LAYERS)
 		var layer_h := height / float(layers)
+
 		var width := base_w
 		var y := 0.0
 		for layer_index in layers:
-			var color: Color = layer_colors[layer_index]
-			var jitter_x := layer_jx[layer_index]
-			var jitter_z := layer_jz[layer_index]
-			var yaw_mtn := layer_yaws[layer_index]
+			# The top boxes of a tall massif are forced white: a snow cap is the
+			# cheapest possible "this one is high" signal.
+			var is_snow := snowy and layer_index >= snow_from
+			var color: Color = MOUNTAIN_SNOW_COLOR if is_snow else MOUNTAIN_ROCK_A.lerp(MOUNTAIN_ROCK_B, rng.randf())
+			var jitter_x := rng.randf_range(-MOUNTAIN_LAYER_JITTER, MOUNTAIN_LAYER_JITTER)
+			var jitter_z := rng.randf_range(-MOUNTAIN_LAYER_JITTER, MOUNTAIN_LAYER_JITTER)
 			create_box(
 				Vector3(local_x + jitter_x, y + layer_h * 0.5, local_z + jitter_z),
 				Vector3(width, layer_h, width),
-				yaw_mtn, rng, block_batch, block_body, 0.0, color
+				rng.randf_range(0.0, TAU), rng, block_batch, block_body, 0.0, color
 			)
 			y += layer_h
 			width *= MOUNTAIN_LAYER_TAPER
@@ -8727,6 +8717,8 @@ func _spawn_city_content(chunk_center: Vector3, rng: RandomNumberGenerator, obst
 	var half := chunk_size / 2.0 - CITY_HOUSE_RADIUS_MAX
 	var chunk_pos_city := world_to_chunk(chunk_center)
 	var k_city := scarcity_at(chunk_center)
+	if k_city <= 0.0:
+		return
 
 	# ---- HOUSES ------------------------------------------------------------
 	for _i in rng.randi_range(CITY_HOUSE_TRIES_MIN, CITY_HOUSE_TRIES_MAX):
@@ -8972,13 +8964,17 @@ func _spawn_snow_content(chunk_center: Vector3, rng: RandomNumberGenerator, obst
 	# of a 25.00 m seam over just fourteen chunks.
 	var branch_reach := FROZEN_TREE_BRANCH_LEN * 0.42 + 0.5 * Vector3(FROZEN_TREE_BRANCH_LEN, 0.22, 0.22).length()
 	var tree_half := chunk_size / 2.0 - (FROZEN_TREE_TRUNK_WIDTH_MAX * 0.71 + branch_reach)
-	var snow_tree_count := rng.randi_range(FROZEN_TREE_MIN, FROZEN_TREE_MAX)
 	var chunk_pos_snow := world_to_chunk(chunk_center)
 	var k_snow := scarcity_at(chunk_center)
-	for _i in snow_tree_count:
+	if k_snow <= 0.0:
+		return
+	for _i in rng.randi_range(FROZEN_TREE_MIN, FROZEN_TREE_MAX):
 		var local_x := rng.randf_range(-tree_half, tree_half)
 		var local_z := rng.randf_range(-tree_half, tree_half)
 		# The FOOTPRINT, by contrast, bounds the TRUNK only — the forest's rule
+		# verbatim: branches are collide = false, so nothing can be stuck inside one,
+		# and demanding clearance for the whole span would space dead trees out like
+		# massifs. `+ 0.3` is the forest's own slack figure.
 		#
 		# Both rejections are post-draw `continue`s, the discipline every removal in
 		# this file follows: the draws still advance the stream.
@@ -8990,15 +8986,9 @@ func _spawn_snow_content(chunk_center: Vector3, rng: RandomNumberGenerator, obst
 		var trunk_w := rng.randf_range(FROZEN_TREE_TRUNK_WIDTH_MIN, FROZEN_TREE_TRUNK_WIDTH_MAX)
 		var trunk_h := rng.randf_range(FROZEN_TREE_HEIGHT_MIN, FROZEN_TREE_HEIGHT_MAX)
 		var yaw := rng.randf_range(0.0, TAU)
-		var branch_n := rng.randi_range(2, 3)
-		# Pre-draw branch params so scarcity is the last check before emit.
-		var branch_as: Array[float] = []
-		var branch_bys: Array[float] = []
-		var branch_tilts: Array[float] = []
-		for _b in branch_n:
-			branch_as.append(rng.randf_range(0.0, TAU))
-			branch_bys.append(trunk_h * rng.randf_range(0.55, 0.92))
-			branch_tilts.append(rng.randf_range(-0.5, 0.5))
+		# Per-object scarcity for snow trees: own hash stream, no draw.
+		# Must be the last continue before geometry is emitted, after whatever draws master makes before that point.
+		# At k=1 nothing is skipped and the stream is master's; at k<1 a thinned object's emit-time draws are skipped, which shifts the rest of THIS chunk — deterministic (k is pure in position) and intended.
 		var scarcity_roll_snowt := float(hash(Vector3i(chunk_pos_snow.x * 96174811, chunk_pos_snow.y * 18266587, run_seed ^ SCARCITY_SALT ^ _i)) % 1000000) / 1000000.0
 		if scarcity_roll_snowt >= k_snow:
 			continue
@@ -9011,15 +9001,14 @@ func _spawn_snow_content(chunk_center: Vector3, rng: RandomNumberGenerator, obst
 
 		# Bare branches — no canopy, that is the point of a dead tree. Visual only:
 		# you walk under them exactly as you walk under a forest canopy.
-		for _b in branch_n:
-			var a: float = branch_as[_b]
-			var by: float = branch_bys[_b]
-			var tilt: float = branch_tilts[_b]
+		for _b in rng.randi_range(2, 3):
+			var a := rng.randf_range(0.0, TAU)
+			var by := trunk_h * rng.randf_range(0.55, 0.92)
 			var dir := Vector3(cos(a), 0.0, sin(a)) * (FROZEN_TREE_BRANCH_LEN * 0.42)
 			create_box(
 				Vector3(local_x, by, local_z) + dir,
 				Vector3(FROZEN_TREE_BRANCH_LEN, 0.22, 0.22),
-				a + PI * 0.5, rng, block_batch, block_body, tilt,
+				a + PI * 0.5, rng, block_batch, block_body, rng.randf_range(-0.5, 0.5),
 				SNOW_DEADWOOD, false
 			)
 
@@ -9034,8 +9023,7 @@ func _spawn_snow_content(chunk_center: Vector3, rng: RandomNumberGenerator, obst
 
 	# ---- MAMMOTH SKELETONS -------------------------------------------------
 	var mammoth_half := chunk_size / 2.0 - MAMMOTH_EDGE_MARGIN
-	var mammoth_count := rng.randi_range(0, MAMMOTH_MAX)
-	for _i in mammoth_count:
+	for _i in rng.randi_range(0, MAMMOTH_MAX):
 		# The candidate loop lives HERE rather than in a rarity roll, for the reason
 		# camps and artifacts both had theirs moved: this is where `obstacles`
 		# exists, and overlap is the test that actually rejects. Every draw happens
@@ -9052,12 +9040,8 @@ func _spawn_snow_content(chunk_center: Vector3, rng: RandomNumberGenerator, obst
 					and biome_at(chunk_center.x + mx, chunk_center.z + mz) == Biome.SNOW:
 				placed = true
 		if not placed:
-			continue
-		# Per-object scarcity for mammoths (post-draw, hash stream). Mammoth draws are
-		# inside _snow_mammoth but per-chunk RNG is isolated, so skipping the whole
-		# build when thinned does not shift any other chunk at k=1.
-		var scarcity_roll_mammoth := float(hash(Vector3i(chunk_pos_snow.x * 96174811, chunk_pos_snow.y * 18266587, run_seed ^ SCARCITY_SALT ^ (_i + 5000))) % 1000000) / 1000000.0
-		if scarcity_roll_mammoth >= k_snow:
+			# Every try failing means NO skeleton. A mammoth shoved through a stand
+			# of trees reads worse than a chunk without one — the camp's rule.
 			continue
 
 		var top := _snow_mammoth(Vector3(mx, 0.0, mz), rng, block_batch, block_body)
