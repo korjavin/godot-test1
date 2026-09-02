@@ -808,6 +808,22 @@ const ROAD_NARROW_FLOOR_FACTOR: float = 0.4
 ## and the eye would read regular rows; this staggers them so the swath looks organic.
 const ROAD_COIN_LONG_JITTER: float = 0.5
 
+## THE ROAD'S TERMINAL X — where the coin road stops being the thing you follow
+## and the city takes over (bead godot-test1-8gw.3).
+##
+## The centreline's Z is a function of run_seed (only station 0 is fixed), so a
+## road that wandered on would arrive at Budapest's west edge at a different Z
+## every run — and Budapest is AUTHORED at a fixed rect. The road therefore ends
+## at a TERMINAL STATION west of the gate, and BudapestPlan.road_approach_point()
+## eases the corridor from that station's Z to the gate's z = 0 (see
+## spawn_approach_coins_in_chunk).
+##
+## 1450 is 150 m west of the gate (BudapestPlan.GATE.x = 1600) — far enough that
+## the last road boss (BOSS_INTERVAL_STATIONS at ~6 m/station) can never be
+## standing in the gate district, close enough that the corridor's ease is short
+## enough to read as one continuous route rather than a dogleg.
+const ROAD_TERMINAL_X: float = 1450.0
+
 # ----------------------------------------------------------------------------
 # BOSS CROCODILES (deterministic, station-indexed placement along the coin road)
 # ----------------------------------------------------------------------------
@@ -2271,6 +2287,23 @@ var road_stations: Dictionary = {}
 var road_k_min: int = 1
 var road_k_max: int = 0
 
+## Memoized result of _road_terminal_k() — the last station at or west of
+## ROAD_TERMINAL_X. It is a pure function of run_seed and the road config (both
+## constant within a run) and EVERY road consumer asks for it, so it is computed
+## once and reset in new_run() beside the station cache it is derived from.
+##
+## The sentinel is a station index nothing can legitimately be: the cache grows
+## contiguously outward from station 0 and a run would have to walk ~10^9
+## stations west to reach it.
+const ROAD_TERMINAL_K_UNSET: int = -0x7FFFFFFF
+var _road_terminal_k_cache: int = ROAD_TERMINAL_K_UNSET
+
+## Memoized result of _approach_coin_east_end() — where the approach coin line
+## meets the Danube. Unlike the terminal station above this carries NO run seed
+## (the avenue is authored at z = 0 and so is the river), so new_run() leaves it
+## alone. INF is the "not resolved yet" sentinel.
+var _approach_coin_east_end_cache: float = INF
+
 ## Reference to the player node to track their position
 var player: Node3D
 
@@ -3511,6 +3544,13 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 	# crosses one — see spawn_coins_in_chunk).
 	if spawn_coins:
 		spawn_coins_in_chunk(chunk_pos, mesh_instance, obstacles)
+		# ...and the APPROACH + AVENUE line that takes over where the road's coins
+		# stop, from the terminal station through the gate to the Danube's west
+		# bank (bead godot-test1-8gw.3). Same flag as its sibling: they are one
+		# continuous trail as far as the player is concerned, and a check that
+		# turns coins off must turn off all of them. Zero RNG, so it consumes no
+		# draw from anybody's stream.
+		spawn_approach_coins_in_chunk(chunk_pos, mesh_instance, obstacles)
 
 	# TELEMETRY, counted HERE and not in _ensure_chunk_ground: the counter exists
 	# to explain frame spikes (see its comment in SECTION 2), and after the
@@ -5972,6 +6012,23 @@ func spawn_bosses_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, ob
 		# Past the cache = past this chunk's padded window (the cache spans it and
 		# centerline X is strictly increasing in k), so we're done either way.
 		if k > road_k_max:
+			break
+		# CAP 3 OF 4 — no boss stands past the road's terminal station (bead
+		# godot-test1-8gw.3). Bosses GUARD the coin road; east of T there is no road
+		# to guard, and the city's own predator policy is Budapest's to decide.
+		#
+		# It sits ABOVE _boss_row_at below, deliberately: the BIOME_BOSS dispatch
+		# must never fire for a station the road does not reach, or the city would
+		# be picking boss kinds for bosses that are never placed. `break`, not
+		# `continue` — k = cur_i * BOSS_INTERVAL_STATIONS is strictly increasing in
+		# `i`, so once one index is past T every later one is too. No RNG has been
+		# drawn at this point (_boss_at is a pure hash stream), so leaving early
+		# consumes nothing and slides nothing.
+		#
+		# The cap is on this CONSUMER and not on _road_extend_to_x, whose forward
+		# loop hangs when the cache stops growing (see _road_terminal_k) and whose
+		# binary-search callers — the k_start above is one — assume it spans any X.
+		if k > _road_terminal_k():
 			break
 		# The station's centreline point, read ONCE: it bounds the window scan
 		# below AND it is what this boss's species is dispatched on (see
@@ -8946,6 +9003,36 @@ func _road_first_k_at_or_after_x(x: float) -> int:
 			hi = mid - 1
 	return lo
 
+func _road_terminal_k() -> int:
+	"""
+	The LAST station of the coin road: the largest `k` whose centreline X is at or
+	west of ROAD_TERMINAL_X. Every road CONSUMER stops here (bead godot-test1-8gw.3).
+
+	@return: The terminal station index. Memoized for the run in
+	         `_road_terminal_k_cache`, which new_run() resets with the station cache.
+
+	WHY THE CAP IS ON THE CONSUMERS AND NOT ON _road_extend_to_x.
+	It would be tempting to simply stop growing the cache past the terminal. That
+	HANGS the game. _road_extend_to_x's forward loop runs `while` the cached X has
+	not yet reached the requested x_max — a cache that refuses to grow past T never
+	reaches any x_max east of T and spins forever. And all three binary-search
+	callers (_road_first_k_at_or_after_x's own contract, the coin scan and the boss
+	scan) ASSUME the cache spans whatever X they asked for; a short cache silently
+	answers them with the terminal station for every chunk in the city. So the
+	centreline cache stays infinite and honest — it is the four things that READ it
+	(road coins, road clearance, road bosses, the minimap line) that stop at T.
+
+	The definition is the one the machinery already provides: extend so the cache
+	covers T, binary-search the first station at or after T, and step back one. The
+	road's X is strictly increasing in `k`, so that is exactly "the last station at
+	or west of T" and there is no edge case in between.
+	"""
+	if _road_terminal_k_cache != ROAD_TERMINAL_K_UNSET:
+		return _road_terminal_k_cache
+	_road_extend_to_x(ROAD_TERMINAL_X, ROAD_TERMINAL_X)
+	_road_terminal_k_cache = _road_first_k_at_or_after_x(ROAD_TERMINAL_X) - 1
+	return _road_terminal_k_cache
+
 func _road_width(k: int) -> float:
 	"""
 	Smoothly-varying coin BAND width (metres) at station `k`, oscillating between
@@ -8994,6 +9081,20 @@ func _road_coins_at(k: int) -> Array:
 	  ROAD_COIN_LONG_JITTER*spacing (along-road); spawn_coins_in_chunk's `pad` is derived
 	  from exactly that bound so the scan window can never miss a scattered coin at a seam.
 	"""
+	# CAP 1 OF 4 — the road's coins stop at the terminal station (bead
+	# godot-test1-8gw.3). Past T the coin line is the city's authored approach
+	# corridor instead (spawn_approach_coins_in_chunk), so a road coin here would
+	# be a second, wandering trail crossing the avenue.
+	#
+	# The cap is on this CONSUMER and not on _road_extend_to_x because that
+	# function's forward loop only terminates while the cached X keeps advancing
+	# toward the requested x_max — refusing to grow past T hangs it outright, and
+	# its three binary-search callers all assume the cache spans any X. Skipping a
+	# station perturbs no other station: every station's scatter RNG is seeded from
+	# `k` alone, so there is no shared stream here to keep in step.
+	if k > _road_terminal_k():
+		return []
+
 	var st: Dictionary = _road_station(k)
 	var center: Vector2 = st.center
 	var heading: float = st.heading
@@ -9062,7 +9163,18 @@ func _road_lateral_distance(world_x: float, world_z: float, clearance: float) ->
 
 	var best := INF
 	var k := _road_first_k_at_or_after_x(world_x - pad)
-	while k <= road_k_max:
+	# CAP 2 OF 4 — the road's CLEARANCE stops at the terminal station too (bead
+	# godot-test1-8gw.3): east of T there is no road, so nothing out there should be
+	# shoved aside to keep a coin swath clear that does not exist. Past T the scan
+	# window is empty and this returns INF, which every caller already reads as
+	# "nowhere near the road" — the same answer it has always given for a point far
+	# off-road in X, so no caller needed an edit.
+	#
+	# The cap is on this CONSUMER and not on _road_extend_to_x: that function's
+	# forward loop hangs if the cache stops growing (see _road_terminal_k), and the
+	# _road_extend_to_x call above is what makes the binary search below valid.
+	var k_last := mini(road_k_max, _road_terminal_k())
+	while k <= k_last:
 		var st: Dictionary = _road_station(k)
 		k += 1
 		if st.center.x > world_x + pad:
@@ -9200,6 +9312,129 @@ func spawn_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obs
 			if cw.gem:
 				coin.make_gem()
 			parent_chunk.add_child(coin)
+
+func spawn_approach_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array) -> void:
+	"""
+	Lay this chunk's slice of the APPROACH + AVENUE coin line: the trail that
+	carries the player from the road's terminal station, through Budapest's gate,
+	up the avenue to the Danube's west bank (bead godot-test1-8gw.3).
+
+	@param chunk_pos: Chunk coordinates this body is laying coins for.
+	@param parent_chunk: The chunk mesh the coins attach to (positions are stored
+	                     chunk-LOCAL, exactly like the road's).
+	@param obstacles: This chunk's block footprints, for the shared perch-or-skip
+	                  rule in _settle_coin_y.
+
+	WHY IT EXISTS AT ALL. _road_coins_at stops at the terminal station, and the
+	terminal is ~900 m west of the Danube. Coins are the headline score since bead
+	.1 retired distance, so without this line the score would sit frozen for the
+	whole walk into the city — the road would read as "you have arrived nowhere".
+
+	ZERO RNG, and that is the design and not an omission. Every coin is at a fixed
+	CITY_COIN_SPACING pitch on BudapestPlan.road_approach_point()'s centreline, so
+	this line is AUTHORED like the rest of the city (the tower_site() ruling one
+	scale up). There is no hash stream here to keep independent of the chunk's, no
+	salt to pick and nothing for a determinism A/B to measure — the only run-varying
+	input is the terminal station itself, which is where the road's own seed enters.
+
+	SEAM-CORRECTNESS, the road's rule unchanged: a coin's index fixes its world X
+	exactly (no jitter), but its Z rides the corridor, so a coin whose X is in this
+	chunk's column can still belong to the chunk one row over. Every coin is
+	therefore BUCKETED by `world_to_chunk(pos) == chunk_pos` — the chunk that owns
+	it scans the same X window and picks it up, so there are no gaps and no
+	duplicates. Coin identity is Coin.id_at(world) (quantized position), so
+	multiplayer claims work with no mp_manager edit at all.
+
+	Nothing here is a MeshInstance3D or a body of its own: coins are ordinary
+	chunk-parented pickups that unload with the chunk, like every road coin.
+	"""
+	if not spawn_coins or coin_scene == null:
+		return
+
+	# The corridor's west end is the terminal station's centre — the ONE place the
+	# run's seed reaches this line. _road_terminal_k() has already extended the
+	# cache far enough to cover it.
+	var terminal: Vector2 = _road_station(_road_terminal_k()).center
+
+	var center := chunk_to_world(chunk_pos)
+	var half_chunk := chunk_size / 2.0
+	var x0 := center.x - half_chunk
+	var x1 := center.x + half_chunk
+
+	# Coin `n` sits at exactly ROAD_TERMINAL_X + n * spacing, so this chunk's X
+	# column maps to a contiguous, exactly-known index range — no pad is needed
+	# (the road's pad exists only because its coins jitter in X, and these do not).
+	var spacing := BudapestPlan.CITY_COIN_SPACING
+	var east_end := _approach_coin_east_end()
+	var n := maxi(0, ceili((x0 - ROAD_TERMINAL_X) / spacing))
+	while true:
+		var x := ROAD_TERMINAL_X + float(n) * spacing
+		n += 1
+		# Past this chunk's column, or past the west bank — X only grows from here,
+		# so either one is the end of this chunk's work. The bank test is a bound
+		# and NOT a per-coin `continue`: a chunk east of the river starts its scan
+		# already beyond the water, so asking "is this point wet" of each coin in
+		# turn would answer "no" and pave the whole Pest side.
+		if x > x1 or x >= east_end:
+			break
+
+		var p := BudapestPlan.road_approach_point(terminal, x)
+		var world := Vector3(p.x, COIN_GROUND_HEIGHT, p.y)
+		# Bucket by final chunk — the seam rule, identical to the road's.
+		if world_to_chunk(world) != chunk_pos:
+			continue
+
+		var local := Vector3(world.x - center.x, world.y, world.z - center.z)
+		# The shared perch-or-skip rule: perch on a climbable top, drop the coin
+		# where the corridor runs under something sheer (INF). The city's own
+		# geometry is already in `obstacles` — spawn_city_in_chunk runs before the
+		# coin spawners, like every other footprint producer.
+		local.y = _settle_coin_y(local.x, local.z, local.y, obstacles)
+		if is_inf(local.y):
+			continue
+
+		var coin := coin_scene.instantiate()
+		coin.position = local
+		parent_chunk.add_child(coin)
+
+func _approach_coin_east_end() -> float:
+	"""
+	The world X the approach + avenue coin line stops at: the Danube's WEST BANK
+	on the avenue's own line, z = 0.
+
+	@return: The first X at or east of the gate where the avenue is in the water.
+
+	Asked of the river's own polyline rather than written down, so bead .4 can
+	reshape the Danube and this line follows with no edit here — the same "one home
+	for the rule" discipline _settle_coin_y gives the coin perch.
+
+	IT IS THE BAND, NOT danube_wet(), AND THAT DISTINCTION IS THE WHOLE FUNCTION.
+	The avenue runs east along z = 0, and the Danube's z = 0 crossing is exactly
+	where the CHAIN BRIDGE stands — so its deck is a DRY_RECTS row and danube_wet()
+	answers false for every metre of the crossing. A line that stopped at the first
+	wet metre would therefore not stop at all: it would run the full 2.2 km of the
+	rect and out the other side of the city, paving the bridge and all of Pest with
+	the gate's coin trail. A BANK is where the water's edge is; a dry rect is a
+	thing built ON the water and has nothing to say about where the river runs.
+
+	Memoized for the process, and it may be: east of the gate the corridor IS the
+	avenue at z = 0, so this is a pure function of BudapestPlan's authored polyline
+	with no run_seed in it anywhere. new_run() has nothing to reset. The scan is
+	bounded by the city rect's east edge, so a plan whose river missed z = 0
+	entirely would terminate with the line simply running the width of the city
+	rather than looping.
+	"""
+	if not is_inf(_approach_coin_east_end_cache):
+		return _approach_coin_east_end_cache
+	var east := BudapestPlan.BUDAPEST_MAX.x
+	var x := BudapestPlan.GATE.x
+	while x < east:
+		if BudapestPlan.danube_distance(x, BudapestPlan.GATE.z) < BudapestPlan.DANUBE_HALF_WIDTH:
+			east = x
+			break
+		x += BudapestPlan.CITY_COIN_SPACING
+	_approach_coin_east_end_cache = east
+	return east
 
 func _settle_coin_y(local_x: float, local_z: float, ground_y: float, obstacles: Array) -> float:
 	"""
@@ -9348,6 +9583,11 @@ func new_run(forced_seed = null, around: Vector2i = Vector2i.ZERO) -> void:
 	road_stations = {}
 	road_k_min = 1
 	road_k_max = 0
+	# The terminal station is derived from the centreline, so it is exactly as
+	# stale as the cache above: a new seed puts a different station at
+	# ROAD_TERMINAL_X. Reset it HERE, beside what it is derived from, so the two
+	# can never be reset apart.
+	_road_terminal_k_cache = ROAD_TERMINAL_K_UNSET
 	pending_chunks.clear()
 	pending_removals.clear()
 

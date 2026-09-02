@@ -834,6 +834,15 @@ func _gather_road() -> void:
 		return
 	var k_min: int = _terrain.road_k_min
 	var k_max: int = _terrain.road_k_max
+	# CAP 4 OF 4 — the drawn line stops where the road does (bead
+	# godot-test1-8gw.3). The coin road ends at a terminal station west of
+	# Budapest's gate; the station CACHE keeps growing past it (its loops and
+	# binary searches depend on spanning any X — see endless_terrain's
+	# _road_terminal_k), so the map has to clamp its own window or it would paint
+	# a road through the city that carries no coins and steers nobody. A `_terrain.`
+	# call like the two already here, guarded the same way.
+	if _terrain.has_method("_road_terminal_k"):
+		k_max = mini(k_max, _terrain._road_terminal_k())
 	# The window is the map's reach at the CURRENT zoom, in both directions —
 	# never a hardcoded metre count. See `_view_radius()`.
 	var view := _view_radius()

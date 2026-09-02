@@ -547,15 +547,22 @@ or co-author trailers anywhere.
 
 ### Task 3: the road — the terminal station, the four caps, the corridor
 
-- [ ] `ROAD_TERMINAL_X` const + `_road_terminal_k()` + its per-run cache, reset in
+- [x] `ROAD_TERMINAL_X` const + `_road_terminal_k()` + its per-run cache, reset in
       `new_run()` beside the road cache reset.
-- [ ] The four consumer caps of DEC-7(i), each with a comment saying **why the cap is on
+- [x] The four consumer caps of DEC-7(i), each with a comment saying **why the cap is on
       the consumer and not on `_road_extend_to_x`** (its loops and all three binary-search
       callers assume the cache spans any X — capping it there hangs the forward loop).
-- [ ] `BudapestPlan.road_approach_point()` and `spawn_approach_coins_in_chunk`, called from
+- [x] `BudapestPlan.road_approach_point()` and `spawn_approach_coins_in_chunk`, called from
       `create_chunk` beside `spawn_coins_in_chunk` under the same `spawn_coins` flag.
-- [ ] Run `minimap_selfcheck` and `enemy_spawn_selfcheck` (its road walk crosses water and
-      would notice a road that stopped existing).
+      The line's EAST END is the Danube's BAND edge at z = 0, not `danube_wet()`: the
+      avenue's river crossing is the Chain Bridge, whose deck is a `DRY_RECTS` row, so a
+      wet test never fires and the trail would pave all of Pest.
+- [x] Run `minimap_selfcheck` and `enemy_spawn_selfcheck` (its road walk crosses water and
+      would notice a road that stopped existing). `enemy_spawn_selfcheck`'s boss-dispatch
+      walk needed the cap: forty bosses is twelve kilometres of road and the road now ends
+      at 1450 m, so it clamps per seed to `_road_terminal_k()` and buys its reach from a
+      longer seed list (`BOSS_DISPATCH_SEEDS`) instead of from distance — 58 of 70 bosses
+      placed, all six `BIOME_BOSS` bands and three river stations.
 
 ### Task 4: the streamer — `spawn_city_in_chunk`, plateaus, ramps, the avenue
 
