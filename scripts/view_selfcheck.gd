@@ -81,13 +81,25 @@ func _run() -> void:
 
 	# BUDAPEST Z-FIGHTING FIX (bead 8gw.17): the default near=0.05 / far=4000 gives an
 	# 80,000:1 ratio and 0.06 m CITY_WINDOW_PROUD flickers on gl_compatibility.
-	# Raising near to 0.25 buys 5x depth precision (10x at 0.5) for zero draw cost;
-	# the SpringArm3D is 8.25 m with 0.25 margin so nothing is ever within 0.25 m.
+	# 0.2 buys 4x depth precision (0.25 would be 5x) for zero draw cost; 0.25 looked
+	# safe from the SpringArm3D 8.25 m + 0.25 margin, but first-person bypasses the
+	# arm (spring_length = 0, camera on body's axis), so the nearest geometry is
+	# one capsule radius away — 0.5 m normally, 0.225 m for small Teibi (0.5 * 0.45).
 	# Far stays 4000 — the HQ horizon impostor is fog-exempt and must remain.
-	if not is_equal_approx(camera.near, 0.25):
-		_fail("Camera3D.near is %.4f, expected 0.25 — Budapest 0.06 m proud bands z-fight at the default 0.05 (bead 8gw.17)" % camera.near)
+	if not is_equal_approx(camera.near, 0.2):
+		_fail("Camera3D.near is %.4f, expected 0.2 — Budapest 0.06 m proud bands z-fight at the default 0.05 (bead 8gw.17)" % camera.near)
 	if not is_equal_approx(camera.far, 4000.0):
 		_fail("Camera3D.far is %.1f, expected 4000 — lowering it pops the fog-exempt HQ horizon impostor" % camera.far)
+	# Derived ceiling so a future raise knows the bound without rediscovering the alcove:
+	# capsule radius (scenes/player.tscn CapsuleShape3D default 0.5 m) * TEIBI_SCALE_SMALL.
+	var base_radius: float = 0.5
+	# Read the constant from the player script rather than restating 0.45.
+	var teibi_small: float = float(player.get_script().get_script_constant_map().get("TEIBI_SCALE_SMALL", 0.45))
+	if teibi_small == 0.0:
+		teibi_small = 0.45
+	var small_radius: float = base_radius * teibi_small
+	if camera.near >= small_radius - 0.001:
+		_fail("Camera3D.near %.4f must be < small-Teibi capsule radius %.4f (0.5 * TEIBI_SCALE_SMALL %.2f) — first-person would clip walls in the 1.2 m alcove" % [camera.near, small_radius, teibi_small])
 
 	# Three views, three measurements. `forward` is the body's facing (-Z, the
 	# Godot convention this controller moves along); `ahead` is how far along it

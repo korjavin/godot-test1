@@ -32,5 +32,5 @@ margin = 0.25
 
 [node name="Camera3D" type="Camera3D" parent="CameraPivot/CameraArm"]
 transform = Transform3D(1, 0, 0, 0, 0.999848, 0.0174524, 0, -0.0174524, 0.999848, 0, 0, 0)
-near = 0.25
+near = 0.2
 far = 4000.0
