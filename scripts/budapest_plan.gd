@@ -183,7 +183,12 @@ const DRY_RECTS: Array = [
 	Rect2(2380.0, -716.0, 320.0, 32.0),   # Margaret Bridge deck
 	Rect2(2330.0, -16.0, 290.0, 32.0),    # Chain Bridge deck
 	Rect2(2350.0, 404.0, 290.0, 32.0),    # Elisabeth Bridge deck
-	Rect2(2360.0, 684.0, 300.0, 32.0),    # Liberty Bridge deck
+	# The Liberty Bridge's deck starts at 2380 and not at the 2360 the keystone
+	# authored, because bead .4 put STONE on these rects: Gellért Hill's massif
+	# ends at x = 2370, and a 2360 abutment buried the first 10 m of the western
+	# approach inside 46 m of impassable rock with a cliff across the way onto it.
+	# The whole rect moved east so the slot stays its centre (see BRIDGES).
+	Rect2(2380.0, 684.0, 300.0, 32.0),    # Liberty Bridge deck
 	Rect2(2470.0, -950.0, 130.0, 310.0),  # Margaret Island — dry land in the river
 ]
 
@@ -446,7 +451,8 @@ const SLOTS: Array = [
 	{"id": "citadella", "builder": "_city_citadella", "pos": Vector3(2230.0, 46.0, 760.0), "radius": 120.0},
 	{"id": "margaret_island", "builder": "_city_margaret_island", "pos": Vector3(2535.0, 0.0, -880.0), "radius": 56.0},
 	{"id": "chain_bridge", "builder": "_city_chain_bridge", "pos": Vector3(2475.0, 0.0, 0.0), "radius": 124.0},
-	{"id": "liberty_bridge", "builder": "_city_liberty_bridge", "pos": Vector3(2510.0, 0.0, 700.0), "radius": 104.0},
+	# 2530, moved east with its deck rect — see the note on DRY_RECTS row 3.
+	{"id": "liberty_bridge", "builder": "_city_liberty_bridge", "pos": Vector3(2530.0, 0.0, 700.0), "radius": 104.0},
 	{"id": "elisabeth_bridge", "builder": "_city_elisabeth_bridge", "pos": Vector3(2495.0, 0.0, 420.0), "radius": 122.0},
 	{"id": "margaret_bridge", "builder": "_city_margaret_bridge", "pos": Vector3(2540.0, 0.0, -700.0), "radius": 114.0},
 	# ---- Pest's inner city -------------------------------------------------

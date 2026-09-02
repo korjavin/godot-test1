@@ -2280,7 +2280,24 @@ func _check_one_bridge(terrain: Node3D, row: Dictionary, id: String,
 				% [pos.x, pos.z, off] + "— the roadway and the towers that are "
 				+ "supposed to carry it have come apart")
 
-	# ---- 2. THE TWO RAMPS FIT, AND THEIR FEET ARE ON THE BANK ----------------
+	# ---- 2. NO DECK MAY MEET A PLATEAU --------------------------------------
+	# A plateau is an IMPASSABLE MASSIF with cliffs on every side, floor to lid, so
+	# a deck rect that reaches into one buries the foot of an approach inside the
+	# rock and puts a vertical face across the only way onto it. There is no
+	# gameplay reading of that overlap — it is not "the bridge lands on the hill",
+	# because the lid is 34 m above the deck and the only way up is a ramp on the
+	# far side. The whole rect is tested and not just the ramps: a deck through a
+	# massif is wrong at every metre of it.
+	for plateau_v: Variant in BudapestPlan.PLATEAUS:
+		var plateau: Dictionary = plateau_v
+		if (plateau["rect"] as Rect2).intersects(deck):
+			_fail("bridge '%s': its deck rect meets the '%s' massif, which is "
+					% [id, String(plateau["id"])] + "solid stone from the ground to "
+					+ "its lid at %.0f m — the approach's foot is inside the rock "
+					% float(plateau["top"]) + "and there is a cliff across the way "
+					+ "onto it")
+
+	# ---- 3. THE TWO RAMPS FIT, AND THEIR FEET ARE ON THE BANK ----------------
 	var flat := BudapestPlan.bridge_flat(row)
 	if flat.size.x <= 0.0:
 		_fail("bridge '%s' is %.0f m long against two %.0f m approaches — the "
@@ -2303,7 +2320,7 @@ func _check_one_bridge(terrain: Node3D, row: Dictionary, id: String,
 		_fail("bridge '%s' does not reach dry ground on both banks — one metre "
 				% id + "off an end of the deck is still the river")
 
-	# ---- 3. THE WADE READ ALONG THE CROSSING, AND ITS WET CONTROL ------------
+	# ---- 4. THE WADE READ ALONG THE CROSSING, AND ITS WET CONTROL ------------
 	var dry_samples := 0
 	var x := deck.position.x
 	while x <= deck.end.x:
@@ -2342,7 +2359,7 @@ func _check_one_bridge(terrain: Node3D, row: Dictionary, id: String,
 				% id + "within %.0f m — the wet control probed nothing and the "
 				% BRIDGE_WET_PROBE_REACH + "cutout's edge was never measured")
 
-	# ---- 4. THE SURFACE, ON THE BOXES THE STREAMER ACTUALLY BUILDS -----------
+	# ---- 5. THE SURFACE, ON THE BOXES THE STREAMER ACTUALLY BUILDS -----------
 	var lo: Vector2i = terrain.world_to_chunk(Vector3(deck.position.x, 0.0, deck.position.y))
 	var hi: Vector2i = terrain.world_to_chunk(Vector3(deck.end.x, 0.0, deck.end.y))
 	var boxes := 0
