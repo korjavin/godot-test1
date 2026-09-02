@@ -23,36 +23,33 @@ Piglet Crocodiles are hostile NPCs that roam the game world. They are fatal to t
 
 ## Behavior
 
-**Movement**:
-- Wanders randomly around the terrain
-- Slow to medium speed (2-3 m/s)
-- Pauses occasionally as if sniffing or looking around
-- Does NOT actively chase the player (passive threat)
+Kept in step with `scripts/piglet_crocodile_ai.gd` (the `SPECIES` table) and
+CLAUDE.md — those are the source of truth for numbers.
 
-**AI Pattern**:
-- Random walk with directional changes every 3-5 seconds
-- Rotates body to face movement direction
-- Stays on terrain, doesn't jump or climb
+**Movement**: wanders with directional changes on a per-species rhythm, then
+**chases** once the player is inside its detection radius. Chase speed (5.5 m/s)
+is above walking speed, so walking gets you caught; every species' sustained
+speed is capped below the slowest hero's run, so running always escapes.
 
-**Collision**:
-- **FATAL**: When the player collides with a Piglet Crocodile, the game should reset the player's position or show a game over state
-- Collision box is slightly larger than visual model for easier detection
+**Collision**: contact is a **tax, not a death** — the player freezes for a
+moment and loses a fraction of the run's coins (`coin_setback`), then gets up
+where they fell. Only GD-SURVEY hunters and HQ guards take a hero.
+
+**Bosses**: a boss crocodile holds a road station standing in a river, grows
+with distance, is immune to the Stink Wave and to giant Teibi's crush, and
+never leaves its territory.
 
 ## Spawning
 
-**Spawn Locations**:
-- Random positions around the terrain
-- Minimum 10 meters away from player spawn point
-- 3-5 crocodiles active at a time
-
-**Spawn Pattern**:
-- Spawn when terrain chunks are created
-- Despawn when chunks are removed (optimization)
+Deterministic per chunk from the run seed; none inside the spawn-safe bubble
+(`SPAWN_SAFE_RADIUS`, 25 m). Which species a chunk gets is decided by its
+biome; the crocodile is the river and plains default. Distant crocodiles are
+put to sleep by the LOD manager, never removed.
 
 ## Technical Specifications
 
 **Node Type**: CharacterBody3D
-**Collision Shape**: CapsuleShape3D (rotated horizontally for elongated body)
+**Collision Shape**: CapsuleShape3D (rotated horizontally for elongated body); the player passes through, damage is decided by the crocodile's own collision handling
 **Movement**: Uses move_and_slide() for physics-based movement
 **Scale**: Approximately 0.5x - 0.7x of player size
 
