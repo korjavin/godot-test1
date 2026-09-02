@@ -3431,9 +3431,14 @@ const INVESTIGATE_PROGRESS: float = 0.5
 ## down each physics frame while awake (and sleep is refused while it ticks, so
 ## a just-confused hunter that would otherwise sleep keeps its guard). Set on a
 ## successful confusion (see _try_crowd_confusion) and cleared on the next
-## chase-loss edge; a miss does NOT set it.
+## chase-loss edge; a miss does NOT set it. Paused while the errand runs so the
+## 6 s covers the period AFTER the citizen check, not the walk+hold itself.
 const CROWD_CONFUSION_COOLDOWN: float = 6.0
 var _crowd_confusion_cooldown: float = 0.0
+## Dedicated latch so the persist guard is keyed on crowd confusion alone —
+## is_investigating is also set by the HQ lure, and keying on it broke that
+## contract (finding #1). Only a confused row ever sets this.
+var _crowd_errand: bool = false
 
 ## THE LEAP ARM'S ONE PIECE OF MEMORY (`_behave_leap`): how many seconds of
 ## GROUNDED recovery this boss still owes before it may hop again, as
@@ -3905,7 +3910,9 @@ func _physics_process(delta: float) -> void:
 	# BEFORE the gate so the frame that decides to sleep still ticks, and sleep
 	# itself is refused while the guard ticks (see set_lod_active) so a
 	# just-confused hunter that would otherwise sleep keeps the guard from freezing.
-	if _crowd_confusion_cooldown > 0.0:
+	# Paused while the crowd errand runs (finding #3) — otherwise the 6 s expires
+	# during the walk+hold and the hunter re-rolls immediately after.
+	if _crowd_confusion_cooldown > 0.0 and not _crowd_errand:
 		_crowd_confusion_cooldown = maxf(_crowd_confusion_cooldown - delta, 0.0)
 
 	if not lod_active:
@@ -4196,17 +4203,11 @@ func _update_chase_state() -> void:
 			# Above the is_chasing write: investigate_point refuses a chasing body,
 			# so a confused hunter never lights the chase flag — it walks to a
 			# citizen and checks documents for 2-10 s at _wander_speed() instead.
-			# The refusal must PERSIST for the whole errand: the next frame the
-			# quarry is still in range, so without this guard we would fall through
-			# to is_chasing=true and _abandon_investigation(), destroying the stall
-			# ~16 ms after it started (finding #1). Clearing spot_clock and
-			# is_tracking here is load-bearing for coned rows and for the hunt arm's
-			# tracking branch (findings #4/#5).
+			# The refusal must PERSIST for the whole errand via _crowd_errand,
+			# not is_investigating (which the HQ lure also sets — finding #1).
+			# is_tracking / spot_clock are cleared once on the initial hit inside
+			# _try_crowd_confusion, not on each persist frame (finding #5 ping loop).
 			if _try_crowd_confusion():
-				spot_clock = 0.0
-				if _spot_label != null:
-					_spot_label.visible = false
-				is_tracking = false
 				return
 			# Just started chasing
 			is_chasing = true
@@ -4645,6 +4646,8 @@ func _behave_hunt() -> void:
 func _track_scent() -> void:
 	"""
 	The hunt arm's SECOND LEG: with no quarry in smelling range, walk its track.
+	Crowd errand has the movement branch (finding #2): while _crowd_errand
+	the hunter must keep walking to the citizen, not to a scent crumb.
 
 	Owner design ruling 2026-08-31: "hunters get a sled/smell sense... they can
 	SMELL THE TRACK the heroes leave and follow it, at a speed close to the
@@ -4683,6 +4686,11 @@ func _track_scent() -> void:
 	manager in the scene (a character scene run standalone, most self-checks) and
 	the unit simply has nothing to smell and wanders as it always did.
 	"""
+	# While on a crowd errand the branch order would otherwise hand the movement
+	# to _track_move() and the hold never decrements (finding #2).
+	if _crowd_errand:
+		is_tracking = false
+		return
 	is_tracking = false
 	var radius: float = float(spec.get("scent_radius", 0.0))
 	if radius <= 0.0:
@@ -4874,6 +4882,8 @@ func _investigate_grow_leash(point: Vector3) -> void:
 func _abandon_investigation() -> void:
 	"""
 	Cancel an OUTBOUND errand: the guard spotted somebody, or the walk timed out.
+	# Also clears the crowd latch (finding #1) — a lure cancellation must not
+	# leave a ghost crowd errand that keeps refusing acquisitions.
 
 	ONE FUNCTION FOR BOTH, because the body's obligation is the same either way —
 	the leash it is standing in is borrowed and it has to be given back where it
@@ -4886,6 +4896,7 @@ func _abandon_investigation() -> void:
 	"""
 	if not is_investigating or _investigate_hold <= 0.0:
 		return  # Already on the way home; an errand is abandoned once.
+	_crowd_errand = false
 	_investigate_go_home()
 
 
@@ -4919,6 +4930,7 @@ func _end_investigation() -> void:
 		confine_center = _investigate_leash["center"]
 		confine_half = _investigate_leash["half"]
 		_investigate_leash = {}
+	_crowd_errand = false
 	is_investigating = false
 	_investigate_hold = 0.0
 	_investigate_path = []
@@ -4957,14 +4969,14 @@ func _try_crowd_confusion() -> bool:
 	it costs the deterministic streams nothing — verified by the world A/B.
 	City-only via BudapestPlan.contains() and requires a citizen nearby.
 
-	persistence: once confused the body is is_investigating for 2-10 s; the
+	persistence: once confused the body is _crowd_errand for 2-10 s; the
 	next frame's _update_chase_state would otherwise see seen+!is_chasing and
 	fall through to is_chasing=true + _abandon_investigation(), destroying the
-	stall ~16 ms after it started. So a running errand keeps refusing.
+	stall ~16 ms after it started. So a running errand keeps refusing on the
+	dedicated latch, not on is_investigating which the HQ lure also sets.
 	"""
-	# Persist the refusal for the whole errand (finding #1). No new roll, no
-	# citizen walk — just keep the early return so the caller never acquires.
-	if is_investigating:
+	# Persist the refusal for the whole crowd errand via dedicated latch (finding #1).
+	if _crowd_errand:
 		return true
 	var chance := float(spec.get("crowd_confusion_chance", 0.0))
 	if chance <= 0.0:
@@ -4992,6 +5004,7 @@ func _try_crowd_confusion() -> bool:
 	# busy/remote guards make this return false with no side effect.
 	if not investigate_point(pos, stall):
 		return false
+	_crowd_errand = true
 	_crowd_confusion_cooldown = CROWD_CONFUSION_COOLDOWN
 	is_tracking = false
 	spot_clock = 0.0
@@ -6036,9 +6049,13 @@ func set_remote_state(pos: Vector3, yaw: float, flags: int) -> void:
 	# is already running — and `_tick_remote()` returns above `_investigate_move()`,
 	# so it could never finish, never hand its grown leash back, and would resume
 	# a stale walk if authority ever came home. Cleared where authority changes,
-	# which is the one place that knows.
+	# which is the one place that knows. Also clears crowd latch/cooldown so a
+	# locally-confused hunter that becomes remote does not keep a frozen cooldown
+	# and refuse sleep forever (finding #6).
 	if is_investigating:
 		_end_investigation()
+	_crowd_errand = false
+	_crowd_confusion_cooldown = 0.0
 
 	_remote_pos = pos
 	_remote_yaw = fposmod(yaw, TAU)

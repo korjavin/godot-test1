@@ -3253,6 +3253,7 @@ func _probe_crowd_inside(species_name: String) -> void:
 	var seen_bad_stall := false
 	var seen_chase_while_stalled := false
 	var seen_tracking_while_stalled := false
+	var seen_spot_not_cleared := false
 	var seen_not_persisted := false
 	var seen_no_clear := false
 	for _t in range(trials):
@@ -3262,6 +3263,9 @@ func _probe_crowd_inside(species_name: String) -> void:
 		croc.global_position = city_pos
 		croc.rotation.y = 0.0
 		croc._find_player()
+		# Pre-arm tracking and telegraph so the clear on confusion is not vacuous (findings #4/#5).
+		croc.set("is_tracking", true)
+		croc.set("spot_clock", 0.8)
 		croc._update_chase_state()
 		if bool(croc.get("is_investigating")):
 			refuses += 1
@@ -3272,6 +3276,9 @@ func _probe_crowd_inside(species_name: String) -> void:
 				seen_chase_while_stalled = true
 			if bool(croc.get("is_tracking")):
 				seen_tracking_while_stalled = true
+			if float(croc.get("spot_clock")) > 0.01:
+				# spot_clock must have been zeroed on the refusal (finding #4).
+				seen_spot_not_cleared = true
 			# Errand must SURVIVE N extra frames with quarry still in range (finding #1).
 			var persisted := true
 			for _f in range(5):
@@ -3314,6 +3321,8 @@ func _probe_crowd_inside(species_name: String) -> void:
 		_fail("SPECIES['%s'] lit is_chasing while stalled on a citizen" % species_name)
 	if seen_tracking_while_stalled:
 		_fail("SPECIES['%s'] kept is_tracking while stalled — scent nose is supposed to be untouched and cleared on confusion" % species_name)
+	if seen_spot_not_cleared:
+		_fail("SPECIES['%s'] spot_clock not zeroed on confusion — coned row would freeze with ? (finding #4)" % species_name)
 	if seen_not_persisted:
 		_fail("SPECIES['%s'] errand did not survive 5 extra frames with quarry still in range — the stall is destroyed ~16 ms after it starts (finding #1)" % species_name)
 	if seen_no_clear:

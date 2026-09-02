@@ -621,7 +621,6 @@ func _update_walkers(delta: float, _player_pos: Vector3) -> void:
 		var k: int = citizen["archetype"]
 		var pos: Vector3 = citizen["pos"]
 		var target: Vector3 = citizen["target"]
-		var lane: float = citizen["lane_offset"]
 		var is_moving := false
 
 		if citizen["pause_timer"] > 0.0:
