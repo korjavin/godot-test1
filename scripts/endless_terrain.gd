@@ -10670,10 +10670,12 @@ func _approach_coin_line() -> PackedVector2Array:
 
 func _approach_coin_east_end() -> float:
 	"""
-	The world X the approach + avenue coin line stops at: the Danube's WEST BANK
-	on the avenue's own line, z = 0.
+	The world X the approach + avenue coin line stops at: the Danube's WEST BANK on
+	the avenue's own line at z = 0, or the western abutment of the bridge standing
+	on that line, whichever comes first.
 
-	@return: The first X at or east of the gate where the avenue is in the water.
+	@return: The first X at or east of the gate where the avenue is in the water or
+	         is climbing a bridge.
 
 	Asked of the river's own polyline rather than written down, so bead .4 can
 	reshape the Danube and this line follows with no edit here — the same "one home
@@ -10710,6 +10712,23 @@ func _approach_coin_east_end() -> float:
 			east = x
 			break
 		x += BudapestPlan.CITY_COIN_SPACING
+
+	# ...OR AT THE BRIDGE'S ABUTMENT, WHICHEVER COMES FIRST (bead .4), which is the
+	# reshaping this function's third paragraph was written to absorb.
+	#
+	# A deck rect deliberately OVERHANGS the band so its ramps' feet land on dry
+	# ground, so the Chain Bridge's western approach begins ~22 m short of the bank
+	# and climbs to 12 m across those metres. Everything the corridor puts on that
+	# stretch is put UNDER a colliding ramp slab: the last coins would sit at
+	# COIN_GROUND_HEIGHT with several metres of stone over them (a ramp takes no
+	# `obstacles` footprint, deliberately, so _settle_coin_y cannot see it), and the
+	# pavement would be buried with them. The corridor the city actually offers is
+	# the gate to the bridge, and then up — so both stop where the bridge starts.
+	for row_v: Variant in BudapestPlan.BRIDGES:
+		var deck: Rect2 = BudapestPlan.bridge_deck(row_v)
+		if deck.position.y <= BudapestPlan.GATE.z and deck.end.y >= BudapestPlan.GATE.z:
+			east = minf(east, deck.position.x)
+
 	_approach_coin_east_end_cache = east
 	return east
 

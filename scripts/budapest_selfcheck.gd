@@ -2165,8 +2165,44 @@ func _check_bridges(terrain: Node3D) -> void:
 		claimed[dry] = id
 		_check_one_bridge(terrain, row, id, slope, ceiling)
 
+	_check_no_reward_under_a_deck(terrain)
 	_check_margaret_island(terrain, claimed)
 	_check_danube_crocodiles(terrain)
+
+
+func _check_no_reward_under_a_deck(terrain: Node3D) -> void:
+	"""
+	NO COIN OF THE APPROACH LINE STANDS ON A BRIDGE'S FOOTPRINT.
+
+	The corridor out of the gate runs east along z = 0, which is exactly where the
+	Chain Bridge crosses — and a deck rect overhangs the band on purpose, so the
+	bridge's western approach begins ~22 m short of the water and climbs 12 m over
+	those metres. A ramp takes no `obstacles` footprint (it is the one thing you
+	are MEANT to walk up), so _settle_coin_y cannot see it and would leave the last
+	coins of the line at COIN_GROUND_HEIGHT with several metres of colliding stone
+	over them — a reward you can see and never reach.
+
+	Measured on the LINE the spawner actually uses, not on the east end it was
+	clamped to: a clamp asserted against itself proves nothing, and the line is
+	resampled by arc length so its last point is not simply the end value.
+	"""
+	var line: PackedVector2Array = terrain._approach_coin_line()
+	if line.size() < 2:
+		_fail("the approach coin line came out as %d points — check 14's buried-"
+				% line.size() + "reward sweep measured nothing")
+		return
+	var buried := 0
+	for p: Vector2 in line:
+		if _on_a_bridge_deck(p.x, p.y):
+			buried += 1
+			if buried <= 3:
+				_fail("an approach coin at (%.0f, %.0f) stands on a bridge deck's "
+						% [p.x, p.y] + "footprint — it is spawned at ground height "
+						+ "under a colliding ramp slab, so it can be seen and "
+						+ "never picked up")
+
+	print("approach coins: %d on the line, last at x = %.0f, %d of them under a "
+			% [line.size(), line[line.size() - 1].x, buried] + "bridge deck")
 
 
 func _check_bridge_profile_control() -> void:
