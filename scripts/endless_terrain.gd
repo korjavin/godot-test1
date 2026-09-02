@@ -1787,6 +1787,28 @@ const DANUBE_CROC_MAX: int = 2
 ## crocodiles here could never claim a name twice.
 const DANUBE_SLOT_BASE: int = 500
 
+## THE CITY'S PER-CHUNK CEILINGS — what a Budapest chunk is allowed to cost.
+##
+## A chunk in Pest is an ordinary chunk: ONE MultiMesh, ONE collision body, built
+## in the same one-chunk-per-frame drain as a chunk of cactus. These three numbers
+## are what says so, and `budapest_selfcheck` check 4 measures every chunk in the
+## 2.2 km rect against them and prints the worst one it found beside each ceiling.
+##
+## MEASURED over the whole rect (2025 chunks, 2026-09-02): worst 62 boxes, worst
+## 15 collision shapes, worst 0.71 ms. The ceilings are those numbers with room
+## for the seven wave-C landmark builders that are still reservations, and the ms
+## budget is deliberately loose because it is wall-clock on whatever machine CI
+## happens to be — it is a runaway detector, not a benchmark.
+##
+## The box number is the one to watch: a landmark builder that stopped being a
+## pure function of (centre, rng) would emit its whole self into every chunk its
+## disc touches instead of its own slice, and THAT is what this catches — 122
+## boxes of Parliament in one 50 m square instead of the half-dozen that stand
+## in it.
+const CITY_CHUNK_BOX_BUDGET: int = 120
+const CITY_CHUNK_SHAPE_BUDGET: int = 40
+const CITY_CHUNK_MS_BUDGET: float = 12.0
+
 # ----------------------------------------------------------------------------
 # BIOME CONTENT TUNING (what each biome actually BUILDS)
 # ----------------------------------------------------------------------------

@@ -625,21 +625,21 @@ it detached unless a check needs the tree. A section banner per check, numbered 
 banner and not in the function name, and a class header enumerating them as "WHAT IT
 GUARDS" with a sentence each on how that failure is INVISIBLE in play.
 
-- [ ] **1 — plan purity.** Read `scripts/budapest_plan.gd` as TEXT and fail on
+- [x] **1 — plan purity.** Read `scripts/budapest_plan.gd` as TEXT and fail on
       `run_seed`, `randf`, `randi` or `hash(`. Negative control: the same scan over a
       string that does contain one.
-- [ ] **2 — the plan is well formed.** 22 slots; every slot disc inside the rect; no two
+- [x] **2 — the plan is well formed.** 22 slots; every slot disc inside the rect; no two
       slot discs overlap; every non-empty `builder` is a row of `CITY_LANDMARKS` and its
       `radius` equals the registry's; every empty-builder slot is exempt; every non-bridge,
       non-island slot centre is at least `DANUBE_HALF_WIDTH` from the polyline (nothing
       stands in the river); every bridge/island slot centre is inside its dry rect; the
       four plateau slots' `pos.y` equals their plateau's `top`.
-- [ ] **3 — two identical regenerations.** Build the same city chunk twice, from two fresh
+- [x] **3 — two identical regenerations.** Build the same city chunk twice, from two fresh
       terrains on two different `run_seed`s, and compare `var_to_bytes` of the whole batch
       (transforms and colours) and of every collision shape's transform. Two seeds, because
       an authored city must be **identical across runs**, not merely within one — which is
       a stronger statement than any other spawner in this game makes.
-- [ ] **4 — per-chunk budgets, printed with their ceilings.** Over the whole rect: boxes
+- [x] **4 — per-chunk budgets, printed with their ceilings.** Over the whole rect: boxes
       per chunk (`CITY_CHUNK_BOX_BUDGET`), collision shapes per chunk
       (`CITY_CHUNK_SHAPE_BUDGET`), **exactly one `BlockMultiMesh` node** per city chunk
       (the one-draw-call invariant), and build milliseconds (`CITY_CHUNK_MS_BUDGET`).
@@ -647,12 +647,12 @@ GUARDS" with a sentence each on how that failure is INVISIBLE in play.
       budget in the failure message the way `tower_interior_selfcheck` does. Start at
       boxes 240 / shapes 140 / 12 ms and **move the constant to the measured number plus
       headroom**, with the measurement in its comment.
-- [ ] **5 — the slicing decision, asserted.** For `parliament` and `buda_castle`: build the
+- [x] **5 — the slicing decision, asserted.** For `parliament` and `buda_castle`: build the
       builder ONCE unclipped, then build every overlapping chunk's slice, and assert the
       multiset union of slice boxes equals the unclipped set EXACTLY — every box present
       once, none twice, none lost. Then assert the same for colours (the per-slot seed
       rule), and that exactly one chunk received the accent node.
-- [ ] **6 — CPU/GPU parity.** CPU: `biome_at` is CITY at 200 sampled points in the rect and
+- [x] **6 — CPU/GPU parity.** CPU: `biome_at` is CITY at 200 sampled points in the rect and
       is NOT forced one metre outside it; `is_river_at` is true mid-channel at each polyline
       vertex and each midpoint, false at the centre and all four corners of every dry rect,
       false 200 m either side of the band, and **the tower's disc still answers dry** (the
@@ -661,36 +661,36 @@ GUARDS" with a sentence each on how that failure is INVISIBLE in play.
       - 1` and `CITY_DRY_MAX >= DRY_RECTS.size()` (a ninth segment would silently truncate),
       and that `endless_terrain.gd`'s text pushes each new uniform through
       `set_shader_parameter`.
-- [ ] **7 — the approach corridor reaches the gate, for 50 seeds.** Per seed: T exists and
+- [x] **7 — the approach corridor reaches the gate, for 50 seeds.** Per seed: T exists and
       its X is within one station spacing of `ROAD_TERMINAL_X`; `road_approach_point` at
       `GATE.x` equals the gate within epsilon; the corridor is continuous (|Δz| per metre
       bounded) and has no kink at T (the first step off T is smaller than the last step
       before it, which is what the `smoothstep` join buys).
-- [ ] **8 — the consumers stop at T.** Walk stations past T: `_road_coins_at` returns empty
+- [x] **8 — the consumers stop at T.** Walk stations past T: `_road_coins_at` returns empty
       for every one; `_road_lateral_distance` answers INF well past T; no boss index
       dispatches past T (and `_boss_row_at` is never reached — assert by station index, and
       keep a positive control that bosses DO still spawn before T, or this measures an
       inert road); the minimap's gathered road count stops at T's screen position.
-- [ ] **9 — the spawner policy.** Build ~60 chunks spread over the rect: zero props, zero
+- [x] **9 — the spawner policy.** Build ~60 chunks spread over the rect: zero props, zero
       structures, zero artifacts, zero camps, zero geo landmarks, zero chests, zero biome
       content; **at least one hunter** across the sweep (a positive control — a policy that
       silently killed hunters would pass every negative); crocodiles only in chunks whose
       centre is `danube_wet`, and every crocodile found is `species == "crocodile"` and
       stands on wet XZ; **no other species anywhere inside**.
-- [ ] **10 — the crocodile stream A/B, `enemy_spawn_selfcheck` check 12's methodology.**
+- [x] **10 — the crocodile stream A/B, `enemy_spawn_selfcheck` check 12's methodology.**
       Build a field of chunks OUTSIDE the rect twice — once with the Danube spawner and the
       city streamer live, once with them off — and compare the crocodile signature
       (`name`, `species`, `position`, `rotation.y`) through `var_to_bytes`. Both halves,
       like check 12: the field must be byte-identical **and** must have contained
       crocodiles, or the check compared two empty signatures and proved nothing.
-- [ ] **11 — the plateau ramps.** Slope ≤ `TowerInterior.PLAN_RAMP_MAX_SLOPE` **read from
+- [x] **11 — the plateau ramps.** Slope ≤ `TowerInterior.PLAN_RAMP_MAX_SLOPE` **read from
       that script**, never restated; the ramp's low end is at y = 0 and its high end is
       flush with its plateau's `top` (both within a centimetre); the ramp rect touches its
       plateau's rect edge; a chunk-sliced ramp's top surface agrees with the unsliced
       plane at both slice ends.
-- [ ] **12 — the difficulty clamp.** Drive the arithmetic at both ends: at x = 3800 the
+- [x] **12 — the difficulty clamp.** Drive the arithmetic at both ends: at x = 3800 the
       factor equals the factor at x = 1600, and at x = -3800 it does not.
-- [ ] **13 — the avenue is walkable.** The avenue's 16 m corridor from the gate to the
+- [x] **13 — the avenue is walkable.** The avenue's 16 m corridor from the gate to the
       Danube's west bank crosses no plateau rect and no landmark footprint disc, and no
       chunk emits a colliding box inside it. (The full one-hero reachability audit over
       all 22 slots is bead .10; this is the one corridor .3 promises.)
