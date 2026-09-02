@@ -601,10 +601,19 @@ or co-author trailers anywhere.
 
 ### Task 7: the gate district + the difficulty clamp
 
-- [ ] `DISTRICT_HOUSES` built per DEC-11, sliced by chunk like everything else.
-- [ ] The three jb7 CITY prop builders called for street dressing.
-- [ ] The one-line difficulty clamp of DEC-12, with its comment.
-- [ ] Run `enemy_spawn_selfcheck` and `hunt_director_selfcheck`.
+- [x] `DISTRICT_HOUSES` built per DEC-11, sliced by chunk like everything else —
+      by OWNERSHIP (the half-open test on the house centre), because a 4 m house
+      needs no clipping the way a 268 m Parliament does.
+- [x] The three jb7 CITY prop builders called for street dressing: seven pieces on
+      spots DERIVED from the house table (one per gap, alternating sides, cycling
+      the three), each off its own index-seeded RNG so a prop's shape does not
+      depend on how many boxes its chunk happened to build first.
+- [x] The one-line difficulty clamp of DEC-12, with its comment.
+- [x] Run `enemy_spawn_selfcheck` and `hunt_director_selfcheck`. Both green, plus
+      `chunk_stream_selfcheck`, `boss_selfcheck`, `landmark_selfcheck` and
+      `prop_selfcheck` as the regression. Measured on an ad-hoc driver over the
+      district's chunks: 16 house footprints + 7 prop footprints, 107 boxes and
+      32 collision shapes in total, worst chunk 15 boxes.
 
 ### Task 8: `scripts/budapest_selfcheck.gd`
 

@@ -3692,8 +3692,17 @@ func _ready() -> void:
 	# chase speed scales — wandering stays lazy everywhere; it's being HUNTED that
 	# gets scarier the farther you push. Shared by both branches below so the
 	# gradient applies to bosses too.
+	#
+	# CLAMPED AT BUDAPEST'S GATE (bead godot-test1-8gw.3). The city is the run's
+	# destination, not another 2.2 km of escalation: `minf` on the SIGNED x pins
+	# the gradient at the gate's own X, so walking east into Pest is exactly as
+	# dangerous as arriving at the gate was and no more. `absf` stays OUTSIDE it,
+	# so travelling WEST — the HQ is at x = -400 and the world runs on — is
+	# untouched. BudapestPlan is a class_name on a RefCounted that depends on
+	# nothing, so this is a constant read and not a cycle.
 	var distance_factor := 1.0 + clampf(
-		absf(global_position.x) / DISTANCE_SPEED_SCALE_DENOM, 0.0, DISTANCE_SPEED_SCALE_MAX
+		absf(minf(global_position.x, BudapestPlan.GATE.x)) / DISTANCE_SPEED_SCALE_DENOM,
+		0.0, DISTANCE_SPEED_SCALE_MAX
 	)
 
 	if is_boss:

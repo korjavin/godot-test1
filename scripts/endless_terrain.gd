@@ -1728,6 +1728,23 @@ const CITY_RAMP_THICKNESS: float = 1.0
 const CITY_AVENUE_THICKNESS: float = 0.15
 const CITY_AVENUE_STONE := Color(0.62, 0.60, 0.56)
 
+## THE GATE DISTRICT'S STREET DRESSING (DEC-11) — where the jb7 city prop
+## builders are called, and how big.
+##
+## The spots are DERIVED from DISTRICT_HOUSES rather than typed into a second
+## table: one prop in each gap between neighbouring houses, alternating sides,
+## cycling _prop_crate_stack / _prop_garden_wall / _prop_paving_stack. Seven
+## props, no new plan data, and the dressing follows the houses if a designer
+## moves them.
+##
+## Z IS THE LOAD-BEARING NUMBER. 14 m off the centreline puts the widest prop's
+## own footprint (2.0 * PROP_RADIUS_FACTOR = 1.42) at 12.6 m, comfortably clear
+## of the avenue's 8 m half-width — the corridor out of the gate has to stay
+## walkable, and a crate stack standing in it is exactly the failure the .3
+## acceptance walk looks for.
+const CITY_DISTRICT_PROP_Z: float = 14.0
+const CITY_DISTRICT_PROP_SIZE: float = 2.0
+
 ## THE DANUBE'S CROCODILES — the one predator the city rect does NOT turn off,
 ## and the whole reason the spawner policy is per-system instead of one
 ## tower_excludes() disc (DEC-9). Pest gets no cacti, no camps and no biome
@@ -9760,6 +9777,9 @@ func spawn_city_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obst
 	# it, and its own per-slot RNG rather than this one.
 	_spawn_city_landmarks_in_chunk(chunk_center, parent_chunk, obstacles, block_batch, block_body)
 
+	# ---- 4. THE GATE DISTRICT ------------------------------------------------
+	_spawn_gate_district_in_chunk(chunk_center, obstacles, block_batch, block_body)
+
 	# ---- 5. THE AVENUE ------------------------------------------------------
 	# The one street this bead draws: 16 m of pavement running east out of the
 	# gate along z = 0, to the Danube's west bank. Bead godot-test1-8gw.9 owns the
@@ -9936,6 +9956,154 @@ func _spawn_city_landmarks_in_chunk(chunk_center: Vector3, parent_chunk: MeshIns
 			"radius": radius,
 			"top": footprint.get("top", pos.y),
 			"climbable": false,
+		})
+
+
+func _spawn_gate_district_in_chunk(chunk_center: Vector3, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
+	"""
+	Build this chunk's share of the GATE DISTRICT (DEC-11, bead godot-test1-8gw.3).
+
+	@param chunk_center: This chunk's centre in world space, from chunk_to_world().
+	@param obstacles: Out-param; one CLIMBABLE disc per house, one prop footprint
+	                  per dressing piece.
+	@param block_batch: Out-param; every box joins the chunk's ONE MultiMesh.
+	@param block_body: The chunk's single shared collision body.
+
+	WHY THIS DISTRICT AND ONLY THIS DISTRICT. It is ~200 x 260 m immediately east
+	of the gate — the SMALLEST slice that exercises every dangerous seam at once:
+	authored buildings streamed through ordinary chunks, the city prop builders
+	called on authored spots, the avenue running between them, a plateau ramp one
+	chunk west and a dry bridge deck 900 m east. Bead godot-test1-8gw.7 owns the
+	rest of the street grid; this file owns STREET_PITCH as a parameter and this
+	one block as the proof.
+
+	SLICED BY OWNERSHIP, NOT BY CLIPPING, and that is the difference between a
+	house and the Parliament. A landmark is 268 m long and has to be cut across
+	the chunks it stands on (see _spawn_city_landmarks_in_chunk); a house is 4 m,
+	so the chunk containing its CENTRE builds the whole thing. The test is the
+	same HALF-OPEN comparison for the same reason — a house centred exactly on a
+	seam lands in exactly one chunk, never both and never neither. The couple of
+	metres a house may overhang its own chunk are freed with it, 150 m away and
+	three chunks behind the camera.
+
+	THE RECIPE IS _spawn_city_content'S, COPIED AND NOT SHARED. Hull + eaves roof
+	+ door + windows, with the dimensions AUTHORED (DISTRICT_HOUSES) instead of
+	drawn. Refactoring the two to share would move code inside a hot deterministic
+	path whose draw ORDER is load-bearing for every crocodile downstream of it;
+	ten lines of create_box here is a smaller and far safer diff than proving a
+	code motion changed no draw.
+
+	EVERY HOUSE ROOF IS STILL A REST SPOT. The plan caps every authored `height`
+	at PROP_MAX_STEP (2.6) and the footprint is climbable: true at the HULL top,
+	exactly as the procedural city's is — a gate district whose roofs you could
+	not reach would quietly be the one city block that is not a city block.
+	"""
+	var half := chunk_size / 2.0
+	if not _city_chunk_slice(chunk_center, BudapestPlan.DISTRICT).has_area():
+		return
+
+	# The private stream. Its draws are create_box's colour-ramp padding: every
+	# box below passes an explicit override off the plan's authored shades, so the
+	# seed only has to be a constant, not a good one.
+	var rng := RandomNumberGenerator.new()
+	rng.seed = CITY_STREAM_SEED
+
+	for row in BudapestPlan.DISTRICT_HOUSES:
+		var pos: Vector3 = row["pos"]
+		var local := Vector3(pos.x - chunk_center.x, 0.0, pos.z - chunk_center.z)
+		if not (local.x >= -half and local.x < half and local.z >= -half and local.z < half):
+			continue
+
+		var size: Vector3 = row["size"]
+		var width := size.x
+		var height := size.y
+		var depth := size.z
+		# Both rows FACE THE AVENUE: yaw 0 puts `front` on +Z for the north side,
+		# yaw PI turns the south side round. The plan carries no yaw column because
+		# there is nothing to choose — a street is two facades looking at each other.
+		var yaw := 0.0 if pos.z < 0.0 else PI
+		var front := Vector3(-sin(yaw), 0.0, cos(yaw))
+		var right := Vector3(cos(yaw), 0.0, sin(yaw))
+		# The plan's shades are FACTORS between this file's palette entries, which
+		# is what keeps budapest_plan.gd free of any dependency on it.
+		var wall := CITY_PLASTER_A.lerp(CITY_PLASTER_B, float(row["wall_shade"]))
+		var roof := CITY_ROOF_TILE.lerp(CITY_ROOF_SLATE, float(row["roof_shade"]))
+
+		# Hull — the ONLY colliding box, and the one whose top face the footprint
+		# names.
+		create_box(
+			local + Vector3(0.0, height * 0.5, 0.0), Vector3(width, height, depth),
+			yaw, rng, block_batch, block_body, 0.0, wall
+		)
+		# Roof — a thin film over the hull top, collide = false, oversailing as
+		# eaves. The player stands on the HULL, inside this film.
+		create_box(
+			local + Vector3(0.0, height + CITY_ROOF_THICKNESS * 0.5, 0.0),
+			Vector3(width + CITY_ROOF_EAVES * 2.0, CITY_ROOF_THICKNESS, depth + CITY_ROOF_EAVES * 2.0),
+			yaw, rng, block_batch, block_body, 0.0, roof, false
+		)
+		# Door and windows — trim, never solid: they sit inside the hull's own
+		# collision box, so making them collide would buy nothing but a snag.
+		var door_h := height * 0.62
+		create_box(
+			local + front * (depth * 0.5) + Vector3(0.0, door_h * 0.5, 0.0),
+			Vector3(width * 0.24, door_h, 0.10), yaw,
+			rng, block_batch, block_body, 0.0, PROP_CRATE, false
+		)
+		for w in 2:
+			var offset := (float(w) - 0.5) * width * 0.32
+			create_box(
+				local + front * (depth * 0.5) + right * (offset + width * 0.26)
+						+ Vector3(0.0, height * 0.62, 0.0),
+				Vector3(width * 0.16, height * 0.22, 0.10), yaw,
+				rng, block_batch, block_body, 0.0, CITY_ROOF_SLATE, false
+			)
+
+		obstacles.append({
+			"pos": local,
+			"radius": 0.5 * sqrt(pow(width + CITY_ROOF_EAVES * 2.0, 2.0) + pow(depth + CITY_ROOF_EAVES * 2.0, 2.0)),
+			"top": height,
+			"climbable": true,
+		})
+
+	# ---- STREET DRESSING ----------------------------------------------------
+	# The three jb7 CITY prop builders, called DIRECTLY rather than through
+	# _build_prop: that function's job is to pick a theme from biome_at, and here
+	# the theme is not in question — this is Budapest, so it is the city arm or
+	# nothing. Seven pieces, one in each gap between neighbouring houses on the
+	# north row, alternating sides and cycling the three builders.
+	#
+	# The spots are DERIVED from the house table rather than typed into a second
+	# one, so moving a house moves the crate stack beside it and there is no
+	# second table to fall out of step. Each piece takes its OWN RNG seeded off
+	# its index alone — the builders draw real dimensions, and one seeded off the
+	# shared stream would make a prop's shape depend on how many boxes the chunk
+	# happened to build before it.
+	var north: Array = BudapestPlan.DISTRICT_HOUSES
+	for i in range(7):
+		var a: Vector3 = north[i]["pos"]
+		var b: Vector3 = north[i + 1]["pos"]
+		var wx := (a.x + b.x) * 0.5
+		var wz := -CITY_DISTRICT_PROP_Z if i % 2 == 0 else CITY_DISTRICT_PROP_Z
+		var p_local := Vector3(wx - chunk_center.x, 0.0, wz - chunk_center.z)
+		if not (p_local.x >= -half and p_local.x < half and p_local.z >= -half and p_local.z < half):
+			continue
+
+		var prng := RandomNumberGenerator.new()
+		prng.seed = CITY_STREAM_SEED + i
+		var foot: Dictionary
+		match i % 3:
+			0:
+				foot = _prop_crate_stack(p_local, CITY_DISTRICT_PROP_SIZE, prng, block_batch, block_body)
+			1:
+				foot = _prop_garden_wall(p_local, CITY_DISTRICT_PROP_SIZE, prng, block_batch, block_body)
+			_:
+				foot = _prop_paving_stack(p_local, CITY_DISTRICT_PROP_SIZE, prng, block_batch, block_body)
+		obstacles.append({
+			"pos": p_local,
+			"radius": foot["radius"],
+			"top": foot["top"],
+			"climbable": foot["climbable"],
 		})
 
 
