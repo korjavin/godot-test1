@@ -278,6 +278,8 @@ Load-bearing rules:
   loop in the spawner where `obstacles` exists, judged by `_biome_spot_ok(...)` — the
   single home of the river / road-clearance / overlap rule. The loop must not live in the
   rarity function: there is no geometry to test against there.
+- **Scarcity.** Outside the union of Budapest rect and HQ-to-gate corridor, objects thin
+  logarithmically to plain terrain at 4 km: a rarity roll is compared against `chance * scarcity_at(centre)`, a count target is multiplied by `roundi(target * k)`; never a new draw, per-object post-draw skip on its own `SCARCITY_SALT` hash stream.
 - **Ground is one shared `PlaneMesh` at y = 0**, shaded by `assets/shaders/ground.gdshader`.
 
 Features built this way: the coin road (a parametric station-indexed path whose X strictly
