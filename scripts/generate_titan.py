@@ -15,7 +15,6 @@ single mesh, no named child nodes).
 """
 
 import pathlib
-import sys
 
 import numpy as np
 import trimesh

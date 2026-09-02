@@ -96,9 +96,22 @@ const BANNED_TOKENS: Array[String] = ["run_seed", "randf", "randi", "hash("]
 ## as a number long before it hit this bound.
 const RAMP_FLUSH_TOL: float = 0.02
 
+## How far outside the Danube's band check 11 demands the hills and their ramps
+## stay, in metres. A margin and not a zero, because the band's edge is where the
+## wade begins and a hill authored flush against it is one retune of
+## DANUBE_HALF_WIDTH away from standing in the water. Both hills clear it today.
+const PLATEAU_DRY_MARGIN: float = 10.0
+
 ## Check 9's sweep: every Nth chunk of the rect in both axes, which lands ~60
 ## chunks spread over the whole 2.2 km rather than a corner of it.
 const POLICY_CHUNK_STRIDE: int = 6
+
+## Check 4's ceiling on the emissive accents ONE city chunk may hang beside its
+## batch. An accent is a real MeshInstance3D and therefore a real extra draw call
+## — the one thing the city is allowed to add on top of its single batched mesh,
+## because the batch's shared material is matte and an accent glows. Measured, not
+## guessed: the worst city chunk is printed beside it.
+const CITY_CHUNK_ACCENT_BUDGET: int = 4
 
 var _failures: Array[String] = []
 
@@ -499,6 +512,8 @@ func _check_budgets(terrain: Node3D, terrain_script: GDScript) -> void:
 	var worst_shapes_at := Vector2i.ZERO
 	var worst_ms := 0.0
 	var worst_ms_at := Vector2i.ZERO
+	var worst_accents := 0
+	var worst_accents_at := Vector2i.ZERO
 	var built_chunks := 0
 	var total_boxes := 0
 
@@ -521,17 +536,39 @@ func _check_budgets(terrain: Node3D, terrain_script: GDScript) -> void:
 		if not batch.is_empty():
 			built_chunks += 1
 			total_boxes += batch.size()
-			# The chunk's ONE draw call, built exactly the way create_chunk builds
-			# it — asserted on the NODE and not on the promise.
-			terrain._build_block_multimesh(parent, batch)
-			var meshes := 0
+			# THE INVARIANT, AND IT IS MEASURED BEFORE THE BATCH'S OWN MultiMesh IS
+			# BUILT. Counting "BlockMultiMesh" nodes AFTER calling
+			# _build_block_multimesh asks nothing: that function constructs exactly
+			# one and names it, so the count is 1 for every implementation whatever,
+			# including a city that also hung a MeshInstance3D per box. What the
+			# streamer left on the chunk BEFORE the batch is built is the real
+			# question — every one of those nodes is a draw call the city added on
+			# top of its one batch.
+			#
+			# ACCENTS ARE THE SANCTIONED EXCEPTION and the only one: an emissive box
+			# cannot join a batch whose one shared material is matte (see
+			# _spawn_artifact_accent). So they are counted against a budget rather
+			# than banned, and anything that is not one — above all a
+			# MultiMeshInstance3D, which is a builder that grew a batch of its own —
+			# fails outright.
 			for child in parent.get_children():
-				if String(child.name) == "BlockMultiMesh":
-					meshes += 1
-			if meshes != 1:
-				_fail("city chunk %s produced %d BlockMultiMesh nodes, not 1 — "
-						% [chunk_pos, meshes] + "the city's stone left the chunk's "
-						+ "one batched draw call")
+				var mi := child as MeshInstance3D
+				if mi == null or child is MultiMeshInstance3D or mi.material_override == null:
+					_fail("city chunk %s hangs a %s ('%s') on the chunk — the "
+							% [chunk_pos, child.get_class(), child.name]
+							+ "city's stone has left the chunk's one batched draw call")
+					break
+			if parent.get_child_count() > CITY_CHUNK_ACCENT_BUDGET:
+				_fail("city chunk %s hangs %d emissive accents, over %d — each one "
+						% [chunk_pos, parent.get_child_count(), CITY_CHUNK_ACCENT_BUDGET]
+						+ "is its own draw call, so the box budget beside it stops "
+						+ "meaning anything")
+			if parent.get_child_count() > worst_accents:
+				worst_accents = parent.get_child_count()
+				worst_accents_at = chunk_pos
+			# ...and then the chunk's ONE draw call, built exactly the way
+			# create_chunk builds it.
+			terrain._build_block_multimesh(parent, batch)
 
 		body.free()
 		parent.free()
@@ -557,7 +594,9 @@ func _check_budgets(terrain: Node3D, terrain_script: GDScript) -> void:
 	print("  boxes  worst %d at %s (budget %d)" % [worst_boxes, worst_boxes_at, box_budget])
 	print("  shapes worst %d at %s (budget %d)" % [worst_shapes, worst_shapes_at, shape_budget])
 	print("  build  worst %.2f ms at %s (budget %.1f)" % [worst_ms, worst_ms_at, ms_budget])
-	print("  one BlockMultiMesh per city chunk: yes")
+	print("  accents worst %d at %s (budget %d) — everything else the city draws "
+			% [worst_accents, worst_accents_at, CITY_CHUNK_ACCENT_BUDGET]
+			+ "is in the chunk's one batch")
 
 
 # ============================================================================
@@ -584,6 +623,25 @@ func _check_slicing(terrain: Node3D) -> void:
 	along its chunk seams — the failure the per-slot seed exists to prevent, and
 	the one no single-chunk check could ever see.
 	"""
+	# ONE PREDICATE, BOTH HALVES — asserted directly, because the slicing walk
+	# below cannot see it. `create_box` hands the batch entry
+	# `rot.scaled_local(dimensions)` and the shape node the bare `rot`, so a test
+	# against an ABSOLUTE epsilon answers differently for the same box the bigger
+	# it is: Basis(UP, PI) is fp32 and leaves an 8.7e-8 off-diagonal, which a 272 m
+	# plinth scales to 2.4e-5 — over is_zero_approx's 1e-5, under it bare. That is
+	# a drawn wall homed in one chunk and its collision cut across six. Nothing
+	# ships a yawed giant today, which is exactly why it is measured here rather
+	# than found later.
+	var yawed := Basis(Vector3.UP, PI)
+	for dim: Vector3 in [Vector3(1.0, 1.0, 1.0), Vector3(125.0, 3.0, 272.0)]:
+		if not terrain._is_axis_aligned_basis(yawed.scaled_local(dim)):
+			_fail("a PI-yawed %.0f x %.0f box reads as ROTATED to the splitter "
+					% [dim.x, dim.z] + "while its own collision basis reads as "
+					+ "axis-aligned — the two halves are testing different things")
+	if terrain._is_axis_aligned_basis(Basis(Vector3.UP, PI * 0.25)):
+		_fail("a 45-degree yaw reads as axis-aligned — the splitter would cut a "
+				+ "rotated box into pieces that do not reassemble")
+
 	for id: String in ["parliament", "buda_castle"]:
 		var index := _slot_index(id)
 		if index < 0:
@@ -935,17 +993,22 @@ func _check_parity(terrain: Node3D) -> void:
 						% [r.position.x, r.position.y, p.x, p.y]
 						+ "deck you wade across is not a bridge")
 
-	# AND THE TOWER'S DISC IS STILL DRY. The city clause must sit BELOW the
-	# tower's in is_river_at; above it, the HQ would flood the day the two rules
-	# were reordered.
+	# AND THE TOWER'S DISC IS STILL DRY — the city grew is_river_at() a second
+	# early return and this is the one thing already standing under the first.
+	#
+	# WHAT THIS DOES NOT MEASURE, deliberately stated rather than claimed: the
+	# ORDER of the two clauses. tower_site() is the constant (-400, 0, 0) and the
+	# city rect starts at x = 1600, so the two regions are disjoint and swapping
+	# them answers identically at every point in the world. There is nothing here
+	# to assert; if the HQ ever moves inside the rect, THAT is when the order
+	# becomes a rule and this probe starts being able to see it.
 	var site: Vector3 = terrain.tower_site()
 	for angle in range(8):
 		var a := TAU * float(angle) / 8.0
 		var p: Vector3 = site + Vector3(cos(a), 0.0, sin(a)) * (terrain.TOWER_RADIUS * 0.5)
 		if terrain.is_river_at(p):
 			_fail("the GastroDefense HQ's disc answers WET at (%.0f, %.0f) — the "
-					% [p.x, p.z] + "city's river clause has been moved above the "
-					+ "tower's mask")
+					% [p.x, p.z] + "tower's mask has stopped masking")
 
 	# ---- GPU: the shader, as text -------------------------------------------
 	var shader := FileAccess.get_file_as_string(SHADER_PATH)
@@ -1254,27 +1317,31 @@ func _check_approach_corridor(terrain_script: GDScript) -> void:
 						% near + "walk into the gate has no clearance swath "
 						+ "around it, only a zero-width line")
 				break
-			# ...and well outside it, where the answer has to grow with the offset.
-			# NOT along the normal, and not 400 m off the centreline either: the
-			# corridor covers up to 645 m of Z inside 150 m of X, so a point 400 m
-			# off it in Z is genuinely a few metres from the stretch of corridor
-			# that has already climbed to that Z, and "400 m off must read 400 m"
-			# would be a false claim about a curve this steep. The bound that IS
-			# rigorous is one taken past the corridor's whole Z EXTENT: no point of
-			# it is within 400 m of this probe, whatever shape it takes in between.
-			# Asked only where the STATION scan is already empty (its window is the
-			# clearance plus two spacings, capped at T), because the Z extent bounds
-			# the corridor and says nothing about a station's own wander.
-			var beyond := maxf(terminal.y, BudapestPlan.GATE.z) + 400.0
-			if cx - (24.0 + spacing * 2.0) <= terminal.x:
+			# ...AND THE SWATH HAS AN EDGE, which is the half that actually bites.
+			# The previous spelling of this leg probed 400 m past the corridor's
+			# whole Z EXTENT and demanded 399 m back: outside the clearance window
+			# _road_lateral_distance is documented to return INF, and INF passes any
+			# lower bound, so the leg could not fail for the reason it named. A band
+			# with no edge — one that answers "on the road" everywhere — is caught
+			# only by a probe just OUTSIDE it, taken along the same normal as the
+			# inside probe so a steep seed cannot flatter it.
+			#
+			# Asked only where the STATION scan is already empty, so this is purely
+			# a measurement of the corridor: past the terminal by the scan window
+			# (clearance + two spacings) PLUS the offset itself, since the normal on
+			# a steep stretch points mostly along X and would otherwise carry the
+			# probe's own window back over T.
+			var out_off := 24.0 + 4.0
+			if cx - (24.0 + spacing * 2.0 + out_off) <= terminal.x:
 				cx += 25.0
 				continue
-			var far: float = terrain._road_lateral_distance(cx, beyond, 24.0)
-			if far < 399.0:
-				_fail("seed %d: 400 m beyond the approach corridor's whole Z extent "
-						% (RUN_SEED + s * 977) + "at x = %.0f reads %.1f m from the "
-						% [cx, far] + "road — the corridor's clearance has no edge, "
-						+ "so it is suppressing every spawner across the whole band")
+			var p_out := cp + normal * out_off
+			var far: float = terrain._road_lateral_distance(p_out.x, p_out.y, 24.0)
+			if far <= 24.0:
+				_fail("seed %d: %.0f m off the approach corridor at x = %.0f still "
+						% [RUN_SEED + s * 977, out_off, cx] + "reads %.1f m from "
+						% far + "the road — the clearance swath has no edge, so it "
+						+ "is suppressing every spawner across the whole band")
 				break
 			cx += 25.0
 
@@ -1705,6 +1772,34 @@ func _check_ramps(terrain: Node3D) -> void:
 		if ramp.position.y < plateau.position.y or ramp.end.y > plateau.end.y:
 			_fail("'%s' ramp is not against its plateau's face in Z" % id)
 
+		# NEITHER THE HILL NOR ITS RAMP MAY STAND IN THE DANUBE, and the two
+		# symptoms are why: is_river_at() is XZ-only, so a lid at y = 30 over the
+		# band WADES, and spawn_danube_crocodiles_in_chunk re-tests only
+		# danube_wet(), so it would put a crocodile inside 30 m of solid stone.
+		# Both hills clear the band by more than PLATEAU_DRY_MARGIN today (Castle
+		# Hill by 11 m, Gellért by 15) — see the note over BudapestPlan.PLATEAUS,
+		# which is why the SE corner is authored at 370 m and not 400.
+		#
+		# Measured on the PERIMETER at 1 m, which bounds the interior too: the
+		# polyline runs from z = -1100 to z = +1100, so it cannot lie inside one of
+		# these rects without crossing its edge, and a crossing reads ~0 here.
+		var wettest := INF
+		for area: Rect2 in [plateau, ramp]:
+			for ux in range(int(area.size.x) + 1):
+				wettest = minf(wettest, minf(
+						BudapestPlan.danube_distance(area.position.x + float(ux), area.position.y),
+						BudapestPlan.danube_distance(area.position.x + float(ux), area.end.y)))
+			for uz in range(int(area.size.y) + 1):
+				wettest = minf(wettest, minf(
+						BudapestPlan.danube_distance(area.position.x, area.position.y + float(uz)),
+						BudapestPlan.danube_distance(area.end.x, area.position.y + float(uz))))
+		if wettest < BudapestPlan.DANUBE_HALF_WIDTH + PLATEAU_DRY_MARGIN:
+			_fail("'%s' (hill or ramp) reaches %.1f m from the Danube's polyline "
+					% [id, wettest] + "(band half-width %.0f) — a hill standing in "
+					% BudapestPlan.DANUBE_HALF_WIDTH
+					+ "the river wades on its own lid and spawns crocodiles "
+					+ "inside its own stone")
+
 		# The slices, and the plane they all have to agree with.
 		var lo: Vector2i = terrain.world_to_chunk(Vector3(ramp.position.x, 0.0, ramp.position.y))
 		var hi: Vector2i = terrain.world_to_chunk(Vector3(ramp.end.x, 0.0, ramp.end.y))
@@ -1782,8 +1877,10 @@ func _check_ramps(terrain: Node3D) -> void:
 
 		print("ramp '%s': slope %.3f <= %.3f, %d slices, worst %.3f m off the "
 				% [id, slope, ceiling, slices, worst]
-				+ "plane, worst seam gap %.3f, foot %.3f, head %.3f (lid %.0f)"
-				% [gap, lowest, highest, top])
+				+ "plane, worst seam gap %.3f, foot %.3f, head %.3f (lid %.0f), "
+				% [gap, lowest, highest, top]
+				+ "nearest Danube %.1f m (band %.0f + margin %.0f)"
+				% [wettest, BudapestPlan.DANUBE_HALF_WIDTH, PLATEAU_DRY_MARGIN])
 
 
 # ============================================================================

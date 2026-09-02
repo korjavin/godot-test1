@@ -86,7 +86,7 @@ extends Node
 ##   (Task 6) — same posture Task 3 takes with its accelerometer axes.
 ##
 ## The same low-coupling guard applies: steering only writes Input while `active`,
-## so desktop keyboard A/D turning is byte-for-byte untouched, and `disable()`
+## so desktop keyboard Q/E turning is byte-for-byte untouched, and `disable()`
 ## releases both turn actions so nothing is left stuck pressed.
 
 # ============================================================================
@@ -178,7 +178,7 @@ const WALK_DEADZONE: float = 0.08
 
 ## Ceiling for the synthesized turn strength, in [0,1]. The controller multiplies
 ## the polled axis by its own `TURN_SPEED`, so 1.0 here means "tilt can command the
-## same top turn rate the A/D keys do". Capped at 1.0 (a full key press); kept a
+## same top turn rate the Q/E keys do". Capped at 1.0 (a full key press); kept a
 ## constant — the panel tunes sensitivity via the deadzone/full-angle, not this cap.
 const STEER_MAX_STRENGTH: float = 1.0
 
@@ -408,7 +408,7 @@ func _physics_process(delta: float) -> void:
 
 	_update_step_to_walk(delta)
 	# Steering shares the same active-gated path so it, too, never writes turn
-	# actions while disabled — keeping desktop A/D turning byte-for-byte untouched.
+	# actions while disabled — keeping desktop Q/E turning byte-for-byte untouched.
 	_update_steering(delta)
 
 
@@ -443,7 +443,7 @@ func disable() -> void:
 	active = false
 	_release_forward()
 	# Hand the turn actions straight back to the keyboard too, so a hero that was
-	# mid-turn on tilt doesn't get stuck "pressed" when control returns to A/D.
+	# mid-turn on tilt doesn't get stuck "pressed" when control returns to Q/E.
 	_release_turns()
 	_reset_step_state()
 	_reset_steer_state()
@@ -794,13 +794,13 @@ func _reset_step_state() -> void:
 ## One frame of steering: read the active source (roll in TILT mode, twist in TWIST
 ## mode) as a signed angle in **degrees**, deadzone + scale it to a turn strength,
 ## and drive the matching turn action. Only ever called while `active`, so every
-## Input write below is gated by that flag (desktop A/D turning stays untouched).
+## Input write below is gated by that flag (desktop Q/E turning stays untouched).
 func _update_steering(_delta: float) -> void:
 	# --- 1. Read the steer angle (signed, degrees) ------------------------
 	# Both sources come from MobileSensors relative to the calibrated neutral, in
 	# radians; we convert to degrees so the deadzone/full-scale constants read in
 	# intuitive units. With no live sensor (desktop, or web before permission) the
-	# getters return 0, so angle == 0 → no turn → the keyboard keeps A/D.
+	# getters return 0, so angle == 0 → no turn → the keyboard keeps Q/E.
 	var angle_deg: float = 0.0
 	if _sensors != null:
 		if steer_mode == SteerMode.TILT:

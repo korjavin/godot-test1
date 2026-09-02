@@ -10007,10 +10007,21 @@ func _is_axis_aligned_basis(b: Basis) -> bool:
 	quarter-turned box wider than a chunk fails budapest_selfcheck check 5 loudly
 	rather than vanishing silently, which is why the case is documented here
 	instead of handled. Handling it means swapping the X/Z spans in the caller.
+
+	ORTHONORMALIZED FIRST, AND THAT IS THE WHOLE POINT OF ONE HOME. is_zero_approx
+	compares against an ABSOLUTE epsilon (1e-5), while the two bases handed here
+	differ by the box's own dimensions — the batch entry carries
+	`rot.scaled_local(dimensions)`, the shape node the bare `rot`. Basis is real_t
+	(fp32), so `Basis(UP, PI)` leaves x.z ~ 8.7e-8: bare it is zero to the epsilon,
+	but scaled by a 272 m Parliament plinth it is 2.4e-5 and is NOT. That is the two
+	spellings drifting apart while reading one function — the drawn wall in one
+	chunk and its collision in another, exactly what the caller says cannot happen.
+	Normalising the columns makes the test scale-free and the two halves agree.
 	"""
-	return (is_zero_approx(b.x.y) and is_zero_approx(b.x.z)
-			and is_zero_approx(b.y.x) and is_zero_approx(b.y.z)
-			and is_zero_approx(b.z.x) and is_zero_approx(b.z.y))
+	var n := b.orthonormalized()
+	return (is_zero_approx(n.x.y) and is_zero_approx(n.x.z)
+			and is_zero_approx(n.y.x) and is_zero_approx(n.y.z)
+			and is_zero_approx(n.z.x) and is_zero_approx(n.z.y))
 
 
 func split_city_boxes_on_chunk_grid(chunk_center: Vector3, batch: Array, body: StaticBody3D) -> void:

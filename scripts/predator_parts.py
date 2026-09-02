@@ -708,8 +708,18 @@ def _selfcheck_necks() -> None:
 
 
 if __name__ == "__main__":
-    # Running the toolkit runs every generator that uses it, so `verify` fires on
-    # every species. Same shape as the project's GDScript self-checks.
+    # Running the toolkit runs every generator below, so this rebuilds and checks
+    # every model in one command. Same shape as the project's GDScript self-checks.
+    #
+    # TEN OF THE TWELVE GO THROUGH `verify` HERE; the two humanoid bosses do not,
+    # and the reason is one assertion in it. `verify` demands a quadruped's
+    # silhouette — longer along +X than it is wide — which is exactly false of a
+    # biped standing upright, so `titan` and `clown` carry their own `verify_*`
+    # with that clause dropped and everything else (faces, feet at y = 0, +X
+    # facing, one vertex-coloured mesh, mirror bias) restated. Their bias
+    # tolerance is looser than the mirror-exact one used here because a humanoid
+    # is posed rather than mirrored — the titan's javelin arm is the reason.
+    # A THIRD humanoid should share theirs rather than growing a fourth copy.
     import runpy
 
     here = pathlib.Path(__file__).resolve().parent

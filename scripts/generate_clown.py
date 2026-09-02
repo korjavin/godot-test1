@@ -16,7 +16,6 @@ nodes).
 """
 
 import pathlib
-import sys
 
 import numpy as np
 import trimesh

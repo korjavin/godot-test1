@@ -1389,6 +1389,28 @@ func _check_a_guard_takes_coins_and_ground() -> void:
 			or absf(player_c.character_body.rotation.z - player_c.original_rotations["body"].z) > 0.001:
 		_fail("adding W while holding A left sidestep Z roll stuck in walk animation")
 
+	# ...AND THE OTHER DIRECTION, W -> A, which is the half the Z assertion above
+	# cannot see. The walk swings the limbs on X and the strafe pose writes only Z,
+	# so releasing W with A still held hands over to a pose that never unwrites the
+	# walk: without animate_sidestep's own X reset the leg stays thrown 40° forward
+	# for as long as the strafe is held. Wound up on the walk first (one frame's
+	# swing can be near zero at a sine crossing) and then measured on the strafe.
+	Input.action_release("step_left")
+	for _swing in 8:
+		player_c.update_sidestep(0.016)
+		player_c.update_character_animation(0.016, player_c.get_input_direction())
+	if absf(player_c.left_leg.rotation.x - player_c.original_rotations["left_leg"].x) < 0.01:
+		_fail("the walk left no X swing to freeze — the W -> A probe below would "
+				+ "pass against any implementation whatever")
+	Input.action_press("step_left", 1.0)
+	Input.action_release("move_forward")
+	player_c.update_sidestep(0.016)
+	player_c.update_character_animation(0.016, player_c.get_input_direction())
+	if absf(player_c.left_leg.rotation.x - player_c.original_rotations["left_leg"].x) > 0.001 \
+			or absf(player_c.right_arm.rotation.x - player_c.original_rotations["right_arm"].x) > 0.001:
+		_fail("releasing W while holding A left the WALK's X swing frozen into the "
+				+ "strafe pose — the character shuffles sideways mid-stride")
+
 	Input.action_release("move_forward")
 	Input.action_release("step_left")
 	player_c.update_sidestep(0.016)

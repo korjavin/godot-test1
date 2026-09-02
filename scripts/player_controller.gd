@@ -190,7 +190,7 @@ const ROTATION_SPEED: float = 10.0
 ## Mouse sensitivity for camera rotation
 const MOUSE_SENSITIVITY: float = 0.003
 
-## Keyboard-turn camera easing: when A/D spin the body, the camera pivot lags
+## Keyboard-turn camera easing: when Q/E spin the body, the camera pivot lags
 ## the turn and eases back in at this rate (higher = catches up faster), so a
 ## keyboard turn sweeps smoothly instead of snapping with the body. MOUSE turns
 ## deliberately bypass this (they never touch camera_yaw_lag) and stay 1:1.
@@ -451,7 +451,7 @@ const SHAKE_DECAY: float = 1.0
 
 ## Keyboard-turn camera lag (radians). handle_turning subtracts each frame's
 ## body turn into this; _process applies it to the pivot's yaw and decays it to
-## zero, so the camera trails an A/D turn and eases in behind the body. Mouse
+## zero, so the camera trails a Q/E turn and eases in behind the body. Mouse
 ## turns never touch it, keeping mouse look 1:1. Zeroed in reset_position().
 var camera_yaw_lag: float = 0.0
 
@@ -1118,7 +1118,7 @@ func _physics_process(delta: float) -> void:
 	#
 	# C CYCLES three views (third-person → eyes → front/mirror → third-person)
 	# rather than toggling two. CONTROLS ARE NEVER MIRRORED WITH THE CAMERA: in
-	# the front view A/D and the mouse still turn the BODY the same way they do
+	# the front view Q/E, A/D and the mouse still move the BODY the same way they do
 	# in third-person, and the camera swings with it. Inverting them to match
 	# what the player sees on screen reads clever and plays terribly — the world
 	# stops agreeing with the stick. Only the picture is mirrored.
@@ -1371,7 +1371,7 @@ func _process(delta: float) -> void:
 		camera.v_offset = 0.0
 
 	# Eased keyboard turn: the pivot's yaw holds the lag handle_turning banked,
-	# then the lag decays toward zero — so the camera starts behind an A/D turn
+	# then the lag decays toward zero — so the camera starts behind a Q/E turn
 	# and smoothly catches up. Mouse turns never bank lag, so they stay 1:1.
 	camera_pivot.rotation = Vector3(camera_pitch, camera_yaw_lag, 0.0)
 	camera_yaw_lag = lerpf(camera_yaw_lag, 0.0, minf(1.0, CAMERA_TURN_EASE * delta))
@@ -1571,6 +1571,9 @@ func reset_sidestep_pose() -> void:
 	The sidestep is the only animation that touches the Z (roll) rotation, so the
 	walk/idle animations never put it back on their own. We snap it here when a
 	step ends so a finished step never leaves the legs slightly splayed.
+
+	The body's shuffle LIFT goes back too — animate_sidestep writes position.y and
+	so this has to unwrite it, or the reset does not undo the pose it names.
 	"""
 	if left_arm and original_rotations.has("left_arm"):
 		left_arm.rotation.z = original_rotations["left_arm"].z
@@ -1582,6 +1585,7 @@ func reset_sidestep_pose() -> void:
 		right_leg.rotation.z = original_rotations["right_leg"].z
 	if character_body and original_rotations.has("body"):
 		character_body.rotation.z = original_rotations["body"].z
+		character_body.position.y = 0.0
 
 # ============================================================================
 # DEBUG AND UTILITY FUNCTIONS
@@ -2541,6 +2545,17 @@ func animate_sidestep() -> void:
 	if not left_arm or not right_arm or not left_leg or not right_leg:
 		return
 
+	# THE OTHER HALF OF animate_walking's reset_sidestep_pose(), and it is needed
+	# for the same reason in the other key order: the walk swings the limbs on X
+	# and this pose writes only Z, so releasing W with A still held (W+A -> A)
+	# leaves the legs frozen at whatever mid-stride X angle the last walk frame
+	# wrote — for as long as the strafe is held, which is as long as the player
+	# likes. Snapped, not eased: the walk's own hand-over is a snap too.
+	left_arm.rotation.x = original_rotations["left_arm"].x
+	right_arm.rotation.x = original_rotations["right_arm"].x
+	left_leg.rotation.x = original_rotations["left_leg"].x
+	right_leg.rotation.x = original_rotations["right_leg"].x
+
 	# THE SHUFFLE CLOCK. A/D is held for as long as the player likes, so the pose
 	# needs a cycle of its own or the character slides sideways with its limbs
 	# locked in one splayed frame. `animation_time` is the same clock the walk
@@ -2887,8 +2902,10 @@ func _on_caught_finished() -> void:
 	# ...and BANK THE LEG, because this is what replaced the ending. The record used
 	# to be written by `_trigger_game_over()`, which the third bite reached; with no
 	# hearts, most runs never reach an ending at all, so banking only there would
-	# mean a session's distance and coins were never persisted. Banked AFTER the
-	# bill, so what goes to the store is what the player actually walks away with.
+	# mean a session's coins were never persisted. Runs after the bill in ORDER but
+	# not in VALUE: what it banks is `record_coins`, the run's peak, which the bill
+	# above deliberately does not touch — see that field. Ordering it before the
+	# bill would change nothing, which is the point.
 	# See `_bank_records()` — idempotent, and silent unless a record moved.
 	_bank_records()
 

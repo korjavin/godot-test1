@@ -170,8 +170,10 @@ The biome-predator models — five animals, the GD-SURVEY hunter robot and the n
 hydra, green dragon and roc bosses — share one
 toolkit, `scripts/predator_parts.py`, which carries the orientation / feet-at-y=0 /
 one-vertex-coloured-mesh contract an enemy model must honour and asserts it on every
-build. Running it directly rebuilds and checks all ten:
-`python3 scripts/predator_parts.py` -> `SELFCHECK OK`. Two of its primitives are
+build. Running it directly rebuilds and checks all TWELVE models:
+`python3 scripts/predator_parts.py` -> `SELFCHECK OK`. The two HUMANOID bosses (titan,
+clown) are rebuilt by that loop but carry their own `verify_*`, because the shared one
+demands a quadruped's longer-than-wide silhouette — see the note over the loop. Two of its primitives are
 composed INTO models rather than being models — `wings()` (the winged bosses' folded
 silhouette; they hop, nothing in this game flies) and `necks()` (a fan of necks and
 heads off ONE point on the spine, the multi-head capability the hydra spends) — so each

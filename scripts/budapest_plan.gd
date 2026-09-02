@@ -209,10 +209,21 @@ const DRY_RECTS: Array = [
 ## `TowerInterior.PLAN_RAMP_MAX_SLOPE` — READ from there, never restated here, so
 ## retuning the one ramp in this game anybody has actually walked retunes this
 ## ceiling with it.
+##
+## AND A HILL MAY NOT STAND IN THE RIVER. `is_river_at()` is XZ-only, so a lid at
+## y = 30 standing over the band would WADE — the exact bug `DRY_RECTS` exists for,
+## one axis further out — and `spawn_danube_crocodiles_in_chunk` re-tests only
+## `danube_wet()`, so it would drop a crocodile inside 30 m of solid stone. Neither
+## symptom is worth a mechanism when the rects are authored: both hills simply stop
+## short of the band, with margin, and `budapest_selfcheck` check 11 measures every
+## rect and every ramp against `DANUBE_HALF_WIDTH` so a future author who widens one
+## is told rather than discovering it in the water.
 const PLATEAUS: Array = [
 	{
 		"id": "castle_hill",
-		"rect": Rect2(1970.0, -860.0, 400.0, 800.0),
+		# 370 m, not the 400 the real hill's bank would take: 400 puts the SE corner
+		# 101 m from the polyline, 19 m inside the band. 370 clears it by 11 m.
+		"rect": Rect2(1970.0, -860.0, 370.0, 800.0),
 		"top": 30.0,
 		"ramp": Rect2(1830.0, -466.0, 140.0, 12.0),
 		"ramp_dir": 1,   # +X: climbs eastward, head against the plateau's west face
