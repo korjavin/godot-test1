@@ -1307,8 +1307,8 @@ func _check_impostor_hidden_in_budapest() -> void:
 			0.0,
 			BudapestPlan.BUDAPEST_MIN.y + (BudapestPlan.BUDAPEST_MAX.y - BudapestPlan.BUDAPEST_MIN.y) * 0.5)
 	var outside := Vector3(BudapestPlan.BUDAPEST_MIN.x - 1.0, 0.0, 0.0)
-	# Far outside case must still be outside — (0,0) is west of the city and
-	# east of the tower, so the usual far-field impostor would be visible.
+	# One metre west of the rect's edge, still outside TOWER_LOAD_RADIUS, so
+	# the usual far-field impostor is visible.
 	if BudapestPlan.contains(outside.x, outside.z):
 		_fail("self-check outside probe %s is inside Budapest — test is vacuous" % outside)
 	if not BudapestPlan.contains(inside.x, inside.z):
