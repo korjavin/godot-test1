@@ -8386,12 +8386,19 @@ func _spawn_city_content(chunk_center: Vector3, rng: RandomNumberGenerator, obst
 			rng, block_batch, block_body, 0.0, PROP_CRATE, false
 		)
 
-		# Windows, spread along the front. Same reasoning: trim, never solid.
+		# Windows, spread SYMMETRICALLY about the door and sitting ABOVE its head.
+		# Both halves of that matter and both were wrong: a `+ width * 0.26` bias
+		# used to push the whole run onto one side (a two-window facade came out
+		# lopsided with a blank wall opposite), and at `height * 0.62` the inner
+		# window's box spanned the door's own box — same front face, same local Z
+		# extent, same yaw, so the two were exactly COPLANAR and z-fought in the
+		# chunk's one MultiMesh. Door head is 0.62h and the window is 0.22h tall,
+		# so 0.78h clears it for every window count, centred one included.
 		for w in windows:
 			var offset := (float(w) - float(windows - 1) * 0.5) * width * 0.32
 			create_box(
-				local + front * (depth * 0.5) + right * (offset + width * 0.26)
-						+ Vector3(0.0, height * 0.62, 0.0),
+				local + front * (depth * 0.5) + right * offset
+						+ Vector3(0.0, height * 0.78, 0.0),
 				Vector3(width * 0.16, height * 0.22, 0.10), yaw,
 				rng, block_batch, block_body, 0.0, CITY_ROOF_SLATE, false
 			)
@@ -10363,11 +10370,15 @@ func _spawn_gate_district_in_chunk(chunk_center: Vector3, obstacles: Array, bloc
 			Vector3(width * 0.24, door_h, 0.10), yaw,
 			rng, block_batch, block_body, 0.0, PROP_CRATE, false
 		)
+		# Two windows, SYMMETRIC about the door and above its head — the same
+		# arrangement (and the same two fixes) as `_spawn_city_content`'s houses,
+		# which this recipe is copied from: no one-sided bias, and clear of the
+		# door's box so the two never end up coplanar and z-fighting.
 		for w in 2:
 			var offset := (float(w) - 0.5) * width * 0.32
 			create_box(
-				local + front * (depth * 0.5) + right * (offset + width * 0.26)
-						+ Vector3(0.0, height * 0.62, 0.0),
+				local + front * (depth * 0.5) + right * offset
+						+ Vector3(0.0, height * 0.78, 0.0),
 				Vector3(width * 0.16, height * 0.22, 0.10), yaw,
 				rng, block_batch, block_body, 0.0, CITY_ROOF_SLATE, false
 			)

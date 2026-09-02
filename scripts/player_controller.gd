@@ -1405,7 +1405,14 @@ func get_input_direction() -> Vector2:
 	- Normalizing the composed 2D vector guarantees diagonal movement never
 	  exceeds 1.0 magnitude (the speed contract).
 	"""
-	var input_x := Input.get_axis("step_left", "step_right") if is_on_floor() else 0.0
+	# READ AIRBORNE TOO, exactly like the forward axis. A/D is a primary movement
+	# axis now, not the old grounded one-shot burst: gating it on `is_on_floor()`
+	# does not merely refuse air-steering, it drops `input_dir` to ZERO for a
+	# player holding A alone, which sends STEP 8 into its FRICTION branch and
+	# brakes the existing lateral velocity at ~50 m/s² in mid-air — a sideways
+	# jump stops dead about a tenth of a second after take-off. The airborne
+	# concern is the POSE, and `update_sidestep()` already owns it.
+	var input_x := Input.get_axis("step_left", "step_right")
 	var input_y := Input.get_axis("move_forward", "move_backward")
 	var raw_dir := Vector2(input_x, input_y)
 	# ALWAYS normalized, never merely capped. STEP 8 multiplies this by
@@ -3409,7 +3416,18 @@ func _freeze_with_gravity(delta: float) -> void:
 	Hold the player still (no horizontal movement) while still settling under
 	gravity, so a frozen state never leaves the character hovering. Used by the
 	game-over and post-respawn-grace branches of _physics_process.
+
+	All three of those branches `return` ABOVE `update_sidestep()`, so a player
+	frozen mid-strafe keeps `is_stepping` set — and `animate_sidestep()` runs off
+	`animation_time`, which `update_character_animation()` goes on advancing during
+	the freeze. Without this the body shuffles its legs, counter-swings its arms
+	and bobs for the whole CAUGHT_DURATION. Cleared here rather than in each
+	branch: this is the one function all three already share.
 	"""
+	if is_stepping:
+		is_stepping = false
+		step_direction = 0.0
+		reset_sidestep_pose()
 	velocity.x = 0.0
 	velocity.z = 0.0
 	if not is_on_floor():

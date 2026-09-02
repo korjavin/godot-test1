@@ -1361,12 +1361,6 @@ func _check_a_guard_takes_coins_and_ground() -> void:
 	if absf(diag_dir.length() - 1.0) > 0.001:
 		_fail("diagonal input length is %.3f (expected normalized 1.0) — speed contract broken" % diag_dir.length())
 
-	var cur_speed: float = player_c.calculate_current_speed()
-	var composed_vel: Vector3 = (player_c.transform.basis * Vector3(diag_dir.x, 0.0, diag_dir.y)) * cur_speed
-	var horiz_speed: float = Vector2(composed_vel.x, composed_vel.z).length()
-	if horiz_speed > cur_speed + 0.01:
-		_fail("diagonal composed speed %.2f exceeds current speed %.2f" % [horiz_speed, cur_speed])
-
 	# Sidestep state updates continuously while held on the ground
 	player_c.update_sidestep(0.016)
 	if not player_c.is_stepping or player_c.step_direction <= 0.0:
@@ -1399,6 +1393,48 @@ func _check_a_guard_takes_coins_and_ground() -> void:
 	Input.action_release("step_left")
 	player_c.update_sidestep(0.016)
 	player_c.update_character_animation(0.016, player_c.get_input_direction())
+
+	# ...and THE SPEED CONTRACT IS MEASURED ON THE BODY, never recomposed here.
+	# Feeding `diag_dir` back through `basis * dir * speed` would only restate
+	# STEP 8's own arithmetic against an already-asserted unit vector — an identity
+	# that holds for EVERY possible implementation, so it printed SELFCHECK OK with
+	# the normalization deleted. Drive the real `_physics_process` and read the
+	# velocity it wrote. MOVE_ACCELERATION is 40 m/s², so ~0.5 s of 60 Hz ticks is
+	# far past convergence at any character's walk speed.
+	#
+	# LAST in this block on purpose: `move_and_slide()` carries the body ~2.4 m,
+	# which walks it off the probe floor and would leave `is_on_floor()` false for
+	# every grounded assertion above. The position is restored afterwards anyway,
+	# for whatever comes after.
+	# The record probes further up left this subject on the game-over screen, and
+	# all three freeze branches sit ABOVE STEP 8 — so clear them, or the
+	# measurement reads `_freeze_with_gravity`'s zero and "passes" nothing.
+	Input.action_press("move_forward", 1.0)
+	Input.action_press("step_right", 1.0)
+	var cur_speed: float = player_c.calculate_current_speed()
+	var stood_at: Vector3 = player_c.global_position
+	player_c.is_game_over = false
+	player_c.is_caught = false
+	player_c.is_respawning = false
+	player_c.velocity = Vector3.ZERO
+	for _tick in 30:
+		player_c._physics_process(0.016)
+	var horiz_speed: float = Vector2(player_c.velocity.x, player_c.velocity.z).length()
+	Input.action_release("step_right")
+	Input.action_release("move_forward")
+	player_c.global_position = stood_at
+	player_c.velocity = Vector3.ZERO
+	player_c.update_sidestep(0.016)
+	if horiz_speed > cur_speed + 0.01:
+		_fail("W+D drove the body at %.2f m/s against a current speed of %.2f —"
+			% [horiz_speed, cur_speed]
+			+ " the diagonal is not normalized, so strafing diagonally outruns the"
+			+ " catchable-walk contract every predator speed is measured against")
+	if horiz_speed < cur_speed - 0.01:
+		_fail("W+D drove the body at only %.2f m/s against a current speed of %.2f —"
+			% [horiz_speed, cur_speed]
+			+ " a held strafe axis is being dropped somewhere between"
+			+ " get_input_direction() and STEP 8")
 
 
 	# ...and THE RECORD IS THE RUN'S PEAK, NOT WHAT IS LEFT AFTER THE BILL.
