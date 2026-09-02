@@ -90,8 +90,8 @@ const CROC_ROLL_SEED: int = 230
 
 ## Boss scale used by check 7. Deliberately BOSS_MAX_SCALE, the biggest the
 ## terrain's schedule ever builds — if the proportional sink holds anywhere it
-## holds here, and a 6x error is impossible to write off as slop.
-const BOSS_TEST_SCALE: float = 6.0
+## holds here, and a 9x error is impossible to write off as slop.
+const BOSS_TEST_SCALE: float = 9.0
 
 ## Physics frames to run for an ease to finish. The sink eases over ~0.2 s; 30
 ## frames at 60 Hz is 0.5 s, comfortably past it.

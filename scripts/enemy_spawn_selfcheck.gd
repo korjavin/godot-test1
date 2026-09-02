@@ -36,7 +36,7 @@ extends SceneTree
 ##   * spawn_crocodiles_in_chunk (ground) rejects candidates within
 ##     `ob.radius + min_object_clearance` of every footprint in `obstacles`.
 ##   * spawn_bosses_in_chunk walks BOSS_PLACE_TRIES candidates against the same
-##     list with a per-scale clearance, because a 6x boss needs ~4.2 m.
+##     list with a per-scale clearance, because a 9x boss needs ~6.3 m.
 ##   * spawn_platform_crocodiles gets NO obstacles at all. It is handed walkable
 ##     tops and trusts their declared geometry — which is exactly where this
 ##     check earns its keep, and where the bug it was written for lived: a wall
@@ -168,12 +168,26 @@ const BOSS_DISPATCH_SEEDS: Array[int] = [
 ]
 
 ## Fewest of those bosses — over every seed in BOSS_DISPATCH_SEEDS together — that must
-## actually reach the world before check 11's verdict means anything. It is well
-## under the walk's length on purpose: a boss whose first candidate is buried in
-## geometry is skipped by design (see spawn_bosses_in_chunk's claim rule), so a
-## proportion of misses is correct. What this number rejects is the check silently
-## measuring nothing at all.
-const BOSS_DISPATCH_MIN_MEASURED: int = 40
+## actually reach the world. It is under the walk's length on purpose: a boss whose
+## every candidate is buried in geometry is skipped by design (see
+## spawn_bosses_in_chunk's claim rule), so a proportion of misses is correct.
+##
+## SINCE BEAD godot-test1-9k7 IT IS A PLACEMENT FLOOR, NOT JUST AN ANTI-VACUITY
+## GATE, and that is the whole reason it moved. Bosses got 1.5x bigger
+## (BOSS_BASE_SCALE 2.5 -> 3.75, BOSS_MAX_SCALE 6 -> 9), and the candidate walk
+## rejects a spot within BOSS_FOOTPRINT_RADIUS_PER_SCALE * scale of an obstacle —
+## so a size bump SILENTLY DELETES BOSSES from the road. It did: measured over
+## this seed list, placement fell from 58 of 70 to 50 of 70 on the two-constant
+## commit, and every gate in this check still passed, because "at least one of
+## each kind reached the world" is true of a road with a third of its guardians
+## missing. The number below is that measurement made into an assertion.
+##
+## 55 is set just under the 58 this walk places both before the bump and after it
+## was paid for (BOSS_LATERAL_MAX 4 -> 9, BOSS_PLACE_TRIES 4 -> 8; a wider sweep
+## over 25 seeds and 126 stations reads 105 -> 91 -> 106). The gap is deliberate
+## slack for a future prop or landmark legitimately crowding a station or two —
+## but a change that costs the road a tenth of its bosses now has to say so here.
+const BOSS_DISPATCH_MIN_MEASURED: int = 55
 
 ## Fewest distinct biome bands those stations must land in. The dispatch is a
 ## FUNCTION of the band; asked the same question forty times it could be a
@@ -3739,9 +3753,14 @@ func _check_boss_dispatch(terrain_script: GDScript) -> void:
 				+ " function of the boss index, so two peers sharing a run_seed put"
 				+ " different animals on the same road. First: %s" % worst)
 	if measured < BOSS_DISPATCH_MIN_MEASURED:
-		_fail("only %d of %d road bosses actually spawned — the dispatch verdict"
-				% [measured, offered]
-				+ " above was taken over almost nothing")
+		_fail("only %d of %d road bosses actually spawned, under the %d floor —"
+				% [measured, offered, BOSS_DISPATCH_MIN_MEASURED]
+				+ " either the dispatch verdict above was taken over almost"
+				+ " nothing, or something (a bigger BOSS_MAX_SCALE, a wider"
+				+ " BOSS_FOOTPRINT_RADIUS_PER_SCALE, a new prop crowding the road)"
+				+ " is quietly deleting bosses in spawn_bosses_in_chunk's"
+				+ " clearance walk. Widen BOSS_LATERAL_MAX / BOSS_PLACE_TRIES, or"
+				+ " lower this floor deliberately")
 	if bands.size() < BOSS_DISPATCH_MIN_BANDS:
 		_fail("the %d bosses measured stand in only %d biome band(s) %s — the"
 				% [measured, bands.size(), bands.keys()]

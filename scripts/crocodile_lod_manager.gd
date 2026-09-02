@@ -426,10 +426,15 @@ func _scan_crocodiles(elapsed: float = SCAN_INTERVAL) -> void:
 		# BOSSES NEVER SLEEP. Every croc's draw cull is deliberately WIDER than the
 		# sleep radius so a visible crocodile is never a frozen-mid-stride sleeper —
 		# but `piglet_crocodile_ai` scales a boss's `visibility_range_end` by its
-		# `boss_scale` (60 m × 2.5…6.0 = 150…360 m) so a mountain of crocodile doesn't
+		# `boss_scale` (60 m × 3.75…9.0 = 225…540 m since bead godot-test1-9k7) so a
+		# mountain of crocodile doesn't
 		# pop into view, which inverts that invariant for exactly the entity the
 		# player looks at most: a boss standing on the road ahead would be drawn as a
-		# motionless statue for the first 100–310 m of its approach. Keeping them
+		# motionless statue for the first 180–495 m of its approach. THE REASONING
+		# ONLY GOT STRONGER with the 1.5x size bump: the cull distance is now well
+		# past the terrain's own residency radius (render_distance, 150 m on web),
+		# so a boss is never culled at all while its chunk exists — which makes
+		# "drawn but frozen" the ONLY thing sleeping one could produce. Keeping them
 		# awake restores the invariant and costs nothing — bosses sit one per 300 m of
 		# road, so at most a couple are ever loaded. Same defensive `in` guard as the
 		# `is_chasing` read above.
