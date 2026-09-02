@@ -697,7 +697,7 @@ GUARDS" with a sentence each on how that failure is INVISIBLE in play.
 
 ### Task 9: `CLAUDE.md`
 
-- [ ] In the "**The tower (GastroDefense HQ) is the one exception and must stay one**"
+- [x] In the "**The tower (GastroDefense HQ) is the one exception and must stay one**"
       paragraph, add the city's DIFFERENT lifetime model so the rule stays true: Budapest
       is **authored data streamed through ordinary chunks** — one const plan
       (`budapest_plan.gd`, the `tower_plans.gd` idiom: no seed, no hash, no `randf`), read
@@ -706,13 +706,13 @@ GUARDS" with a sentence each on how that failure is INVISIBLE in play.
       city is 1,936 cells against the web build's 49-chunk residency, so it CANNOT be a
       second manager-parented shell — the tower stays the one exception precisely because
       the city is not one.
-- [ ] Record, in the same place or beside the determinism rules: the **slicing decision**
+- [x] Record, in the same place or beside the determinism rules: the **slicing decision**
       (a big landmark's builder is re-run per overlapping chunk and clipped by box centre,
       off a seed that is a function of the SLOT and nothing else), the **four road
       consumers capped at T** and why `_road_extend_to_x` is not, and the **per-system
       spawner policy** (hunters ON, Danube crocodiles ON on their own stream, everything
       else procedural OFF, coins authored) as explicitly NOT `tower_excludes()`.
-- [ ] Add `budapest_selfcheck` to the self-check list in the Commands block, with a
+- [x] Add `budapest_selfcheck` to the self-check list in the Commands block, with a
       one-line description of what it asserts in the style of its neighbours.
 
 ### Task 10: the full sweep
