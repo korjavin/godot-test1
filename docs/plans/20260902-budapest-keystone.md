@@ -592,12 +592,12 @@ or co-author trailers anywhere.
 
 ### Task 6: spawner policy + the Danube crocodiles
 
-- [ ] The early returns of DEC-9, one per spawner, each with a one-line comment saying
+- [x] The early returns of DEC-9, one per spawner, each with a one-line comment saying
       which of the city's five answers it is implementing and why this is NOT
       `tower_excludes()`.
-- [ ] `spawn_danube_crocodiles_in_chunk` with its own salt and primes; called from
+- [x] `spawn_danube_crocodiles_in_chunk` with its own salt and primes; called from
       `create_chunk` inside the `spawn_crocodiles` branch.
-- [ ] Run `enemy_spawn_selfcheck` (checks 4 and 12 in particular) and `boss_selfcheck`.
+- [x] Run `enemy_spawn_selfcheck` (checks 4 and 12 in particular) and `boss_selfcheck`.
 
 ### Task 7: the gate district + the difficulty clamp
 

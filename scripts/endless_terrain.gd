@@ -1728,6 +1728,48 @@ const CITY_RAMP_THICKNESS: float = 1.0
 const CITY_AVENUE_THICKNESS: float = 0.15
 const CITY_AVENUE_STONE := Color(0.62, 0.60, 0.56)
 
+## THE DANUBE'S CROCODILES — the one predator the city rect does NOT turn off,
+## and the whole reason the spawner policy is per-system instead of one
+## tower_excludes() disc (DEC-9). Pest gets no cacti, no camps and no biome
+## predators; the river gets crocodiles, because the owner's standing rule is
+## "river -> crocodile" (it is what _boss_row_at already answers on a wet
+## station) and a 240 m band of empty water reads as scenery rather than as a
+## crossing you have to think about.
+##
+## ITS OWN HASH STREAM, for the reason stated five times in this file already:
+## the chunk's crocodile RNG is one shared sequence, and a single extra draw
+## taken from it slides every crocodile in the world. Own salt, own coordinate
+## primes, the ARTIFACT_SALT / CAMP_SALT / HUNTER_SALT family — and
+## budapest_selfcheck's A/B measures it the way enemy_spawn_selfcheck check 12
+## measures the hunter's.
+const DANUBE_SALT: int = 0xDA_11BE  # "DANUBE"-ish; arbitrary fixed constant
+
+## Coordinate multiplier primes for the Danube stream, DIFFERENT from every other
+## stream in this file — object/artifact (73856093 / 19349663), camp (40960001 /
+## 26463089), biome (83492791 / 15485863), croc-roll (179424673 / 32452843),
+## chest (86028121 / 50331653), hunter (122949829 / 104395301) — so no two
+## streams can correlate on a shared lattice.
+const DANUBE_HASH_PRIME_X: int = 141650939
+const DANUBE_HASH_PRIME_Y: int = 175961107
+
+## Chance a wet chunk gets crocodiles at all, and how many it may hold. Higher
+## than any land rarity roll on purpose: the river is a THREAT LINE across the
+## middle of the city, and one you can wade through unopposed half the time is
+## not one.
+const DANUBE_CROC_CHANCE: float = 0.55
+const DANUBE_CROC_MAX: int = 2
+
+## Which slice of the spawn-slot index space the Danube takes — for BOTH the
+## node name and _croc_roll_seed, one number because they are one identity.
+##
+## The name keeps the "Crocodile_" prefix (croc_id_for hashes it; the four
+## prefixes are the whole naming scheme enemy_spawn_selfcheck classifies by), and
+## the two spawners are mutually exclusive by construction anyway —
+## spawn_crocodiles_in_chunk returns before drawing anything inside the rect. The
+## index base is belt-and-braces on top of that exclusion, so re-enabling ground
+## crocodiles here could never claim a name twice.
+const DANUBE_SLOT_BASE: int = 500
+
 # ----------------------------------------------------------------------------
 # BIOME CONTENT TUNING (what each biome actually BUILDS)
 # ----------------------------------------------------------------------------
@@ -3587,6 +3629,14 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 		spawn_crocodiles_in_chunk(chunk_pos, mesh_instance, obstacles)
 		# Rare crocodiles that patrol an elevated platform (mound summit / wall ridge)
 		spawn_platform_crocodiles(chunk_pos, mesh_instance, platforms)
+		# ...and the DANUBE's crocodiles, the one predator the authored city rect
+		# keeps (bead godot-test1-8gw.3, DEC-9). Same flag as its siblings — a
+		# check that turns predators off must turn off all of them — but its own
+		# independent DANUBE_SALT hash stream, so the spawner above regenerates
+		# every crocodile in the world exactly where it already was. Takes no
+		# `obstacles`: nothing is built in the water, and its own danube_wet()
+		# re-test at each body is what keeps one off a bridge deck.
+		spawn_danube_crocodiles_in_chunk(chunk_pos, mesh_instance)
 		# Rare BOSS crocodiles guarding the coin road (deterministic, station-
 		# indexed — its own BOSS_SEED hash stream, no shared RNG draws consumed).
 		# Gets `obstacles` like its siblings so a 2.5x-6x boss is never wedged
@@ -3643,6 +3693,18 @@ func spawn_objects_in_chunk(chunk_pos: Vector2i, platforms: Array, block_batch: 
 	- This means the same chunk always generates the same objects
 	- Objects are parented to the chunk so they're removed when chunk is removed
 	"""
+
+	# BUDAPEST — props and feature structures are OFF inside the city rect (bead
+	# godot-test1-8gw.3, DEC-9): the city is AUTHORED, and a barrier wall or a
+	# terraced mound rolled into the middle of Pest is the one thing the plan
+	# cannot design around. NOT tower_excludes(), which would turn everything off
+	# with one answer — the rect wants a different answer per system, and the very
+	# next spawner down (the Danube's crocodiles) is a yes. Keyed on the CHUNK
+	# CENTRE, and taken BEFORE the RNG exists because there is nothing to advance:
+	# this stream is never consulted for a city chunk at all.
+	var city_probe := chunk_to_world(chunk_pos)
+	if in_budapest(city_probe.x, city_probe.z):
+		return []
 
 	# Use chunk coordinates (+ this run's seed) to create a unique but consistent seed.
 	# Within a run the same chunk always regenerates the same objects; across runs the
@@ -5490,6 +5552,21 @@ func spawn_crocodiles_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D
 	if not crocodile_scene:
 		return
 
+	# BUDAPEST — biome predators are OFF inside the city rect (bead
+	# godot-test1-8gw.3, DEC-9), and this is the early return the whole per-system
+	# policy exists for: the rect forces the CITY band, so without it Pest would
+	# get alley hounds wandering the Parliament's steps while the RIVER — the one
+	# place the city DOES want predators — got the same treatment as the streets.
+	# The Danube's own spawner below is the yes half of that split, on its own
+	# stream. NOT tower_excludes(), which has exactly one answer for everybody.
+	#
+	# BEFORE the seed is even mixed, because there is no stream to advance: a city
+	# chunk never consults this sequence at all, so nothing outside the rect can
+	# shift by one draw.
+	var croc_center := chunk_to_world(chunk_pos)
+	if in_budapest(croc_center.x, croc_center.z):
+		return
+
 	# Use chunk coordinates (+ this run's seed) to create a unique but consistent seed.
 	# Different multipliers than the object seed give different positions than objects;
 	# run_seed makes crocodile placement differ run-to-run (constant within a run).
@@ -5651,6 +5728,96 @@ func spawn_crocodiles_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D
 		# Add to chunk (so it gets removed when chunk is removed)
 		parent_chunk.add_child(crocodile_instance)
 		spawned_positions.append(crocodile_pos)
+
+func spawn_danube_crocodiles_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D) -> void:
+	"""
+	Put crocodiles in the Danube — the city rect's ONE yes in a policy of noes.
+
+	@param chunk_pos: Chunk coordinates — the only spatial input, so placement is a
+	                  pure function of (chunk, run_seed)
+	@param parent_chunk: The chunk mesh they parent to, so they are freed when the
+	                     chunk unloads (the per-chunk parenting rule everything follows)
+
+	WHY THIS FUNCTION EXISTS SEPARATELY, and it is the same answer the hunter's
+	spawner gives: its OWN hash stream. DANUBE_SALT plus DANUBE_HASH_PRIME_X/Y
+	give a private RNG that touches no other sequence, so every crocodile OUTSIDE
+	the city stands byte-for-byte where it stood before the city existed. Folding
+	this into spawn_crocodiles_in_chunk as a branch would have been fewer lines and
+	would have slid the whole world by one draw.
+
+	WHY CROCODILES and not one of the six biome rows: the owner's standing rule is
+	"river -> crocodile", the same one _boss_row_at applies to a station standing
+	in water. The city forces the CITY band, so BIOME_SPECIES would have answered
+	"alley hound" — a dog treading water.
+
+	EVERY REJECTION IS A POST-DRAW SKIP, the discipline the whole file runs on:
+	both position draws and the facing draw are spent before the first test, so a
+	candidate costs this stream exactly three draws whether it is taken or thrown
+	away, and a bridge deck can never slide a later candidate.
+	"""
+	if not crocodile_scene:
+		return
+
+	# The rect first, and it is not redundant with danube_wet below: the polyline
+	# runs to the rect's north and south edges, so a chunk 40 m outside the city
+	# can still sit inside the 120 m band. is_river_at() already asks the two
+	# questions in this order; so does this.
+	var chunk_world_pos := chunk_to_world(chunk_pos)
+	if not in_budapest(chunk_world_pos.x, chunk_world_pos.z):
+		return
+	if not BudapestPlan.danube_wet(chunk_world_pos.x, chunk_world_pos.z):
+		return
+
+	# Chunk coords + run_seed ^ DANUBE_SALT, with this stream's own primes.
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(Vector3i(
+		chunk_pos.x * DANUBE_HASH_PRIME_X,
+		chunk_pos.y * DANUBE_HASH_PRIME_Y,
+		run_seed ^ DANUBE_SALT
+	))
+
+	# The rarity roll, first draw of the stream and taken before anything else so
+	# geometry can never perturb it — the _chest_at / spawn_hunters_in_chunk shape.
+	if rng.randf() > DANUBE_CROC_CHANCE:
+		return
+
+	var half_span := chunk_size / 2.0 - 3.0
+	var spawned := 0
+	for _try in DANUBE_CROC_MAX * 3:
+		if spawned >= DANUBE_CROC_MAX:
+			break
+
+		# THE THREE DRAWS. All of them, unconditionally, before any test below.
+		var local := Vector3(
+			rng.randf_range(-half_span, half_span),
+			0.5,
+			rng.randf_range(-half_span, half_span))
+		var facing := rng.randf_range(0.0, TAU)
+		var world := chunk_world_pos + local
+
+		# Re-asked AT THE BODY, not just at the chunk centre: a chunk on the bank
+		# is half dry land, and the bridge decks and Margaret Island are dry rects
+		# INSIDE the band. This is what keeps a crocodile off the Chain Bridge.
+		if not BudapestPlan.danube_wet(world.x, world.z):
+			continue
+
+		var croc := crocodile_scene.instantiate()
+		# "Crocodile_<cx>_<cy>_<i>", the ground spawner's own prefix and namespace
+		# — croc_id_for() hashes the name into the room-wide id, and the four
+		# prefixes are the whole scheme every peer and every self-check reads. The
+		# two spawners cannot both run in a chunk (the one above returns inside the
+		# rect), and DANUBE_SLOT_BASE puts the indices out of reach anyway.
+		croc.name = "Crocodile_%d_%d_%d" % [chunk_pos.x, chunk_pos.y, DANUBE_SLOT_BASE + spawned]
+		croc.position = local
+		croc.rotation.y = facing
+		# CALL-ORDER CONTRACT (the setup_as_boss / spawn_crocodiles_in_chunk
+		# shape): both of these BEFORE add_child, because _ready() is where
+		# `species` is resolved into `spec` and where the size/speed rolls that
+		# READ that spec happen.
+		croc.setup_roll_seed(_croc_roll_seed(chunk_pos, DANUBE_SLOT_BASE + spawned))
+		croc.species = "crocodile"
+		parent_chunk.add_child(croc)
+		spawned += 1
 
 func adopt_wanderer(unit: Node3D) -> void:
 	"""
@@ -6425,6 +6592,13 @@ func spawn_artifact_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, 
 	@param block_batch / block_body: The chunk's visual batch + collision body,
 	                                 threaded through to create_box.
 	"""
+	# BUDAPEST — no lost-civilization artifacts in the city (DEC-9): the rect's
+	# monuments are its 22 authored landmark slots, and a procedural monolith
+	# beside the Parliament reads as a bug. NOT tower_excludes(): that disc is one
+	# answer for everything, and the city's answer differs per system.
+	var art_center := chunk_to_world(chunk_pos)
+	if in_budapest(art_center.x, art_center.z):
+		return
 	if not spawn_artifacts:
 		return
 	var art := _artifact_at(chunk_pos)
@@ -6798,6 +6972,13 @@ func spawn_camp_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obst
 	                  village, which is what keeps crocodiles out — see the bottom.
 	@param block_batch / block_body: The chunk's visual batch + collision body.
 	"""
+	# BUDAPEST — no nomad camps in the city (DEC-9): a dome-hut village pitched on
+	# Andrassy Avenue is the clearest case of the procedural world contradicting
+	# the plan. NOT tower_excludes(); see in_budapest for why the city takes one
+	# answer per system.
+	var camp_center := chunk_to_world(chunk_pos)
+	if in_budapest(camp_center.x, camp_center.z):
+		return
 	if not spawn_camps:
 		return
 	var camp := _camp_at(chunk_pos)
@@ -7012,6 +7193,12 @@ func spawn_chest_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obs
 	                  appended to with the chest's own small climbable footprint.
 	@param block_batch / block_body: The chunk's visual batch + collision body.
 	"""
+	# BUDAPEST — no treasure chests in the city (DEC-9): the rect's reward line is
+	# the authored avenue coins, so a chest here would be loot the plan never
+	# placed. NOT tower_excludes(); the city answers per system.
+	var chest_center := chunk_to_world(chunk_pos)
+	if in_budapest(chest_center.x, chest_center.z):
+		return
 	if not spawn_chests:
 		return
 	var chest := _chest_at(chunk_pos)
@@ -7234,6 +7421,13 @@ func spawn_landmark_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, 
 	@param block_batch / block_body: The chunk's visual batch + collision body,
 	                                 threaded through to create_box.
 	"""
+	# BUDAPEST — no PROCEDURAL geo landmarks in the city (DEC-9). The builders are
+	# the same ones the rect uses, but WHERE they stand is the plan's 22 slots and
+	# not a rarity roll — two Eiffel Towers, one authored and one rolled, in the
+	# same district. NOT tower_excludes(): per-system answers.
+	var lm_center := chunk_to_world(chunk_pos)
+	if in_budapest(lm_center.x, lm_center.z):
+		return
 	if not spawn_landmarks:
 		return
 	var lm := _landmark_at(chunk_pos)
@@ -7443,6 +7637,14 @@ func spawn_biome_content_in_chunk(chunk_pos: Vector2i, obstacles: Array, block_b
 	param. Everything a biome builds is a create_box entry — no builder has a node
 	to parent — so the argument would be dead weight at every call site.
 	"""
+	# BUDAPEST — no biome geometry in the city (DEC-9). The rect forces the CITY
+	# band, so this would draw _spawn_city_content's procedural blocks straight
+	# through the authored streets. NOT tower_excludes(): per-system answers, and
+	# the Danube's crocodiles are the system that says yes.
+	var biome_center := chunk_to_world(chunk_pos)
+	if in_budapest(biome_center.x, biome_center.z):
+		return
+
 	if not spawn_biome_content:
 		return
 
