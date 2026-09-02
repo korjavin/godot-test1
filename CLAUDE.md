@@ -77,7 +77,8 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #   budapest_selfcheck       the authored city: the plan's PURITY read as text (no
 #                            seed, no draw, no hash) and its 22 slots well formed,
 #                            two byte-identical regenerations across DIFFERENT run
-#                            seeds, the per-chunk box/shape budgets, the SLICING
+#                            seeds (and every city chunk byte-identical across the
+#                            same pair), the per-chunk box/shape budgets, the SLICING
 #                            decision (every box AND every collision shape of a
 #                            giant kept exactly once across its chunks, off the
 #                            slot's seed alone, neither outgrowing a chunk),
@@ -115,7 +116,22 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            routes on the avenues with a gem at a square and a
 #                            line across every bridge — plus check 4's WEB
 #                            RESIDENCY window, the only thing that can see a
-#                            cost that moved out of one chunk and into 1,631
+#                            cost that moved out of one chunk and into 1,631.
+#                            Check 16 REACHABILITY: one hero, no ability —
+#                            every slot flood-reachable from the gate over
+#                            streets/decks/ramps/plateau tops, every .7 block
+#                            and .6a–c footprint as stone, the flood
+#                            height-gated at 2.6 m or a ramp; two negative
+#                            controls (a wall on Margaret Bridge, Castle
+#                            Hill's ramp removed). Check 4 also names the
+#                            Parliament and Chain Bridge 7×7 windows as info
+#                            beside the densest one it asserts, with city
+#                            coins inside the timed window. Check 18
+#                            DETERMINISM: every city chunk byte-identical
+#                            across the two seeds and the crocodile stream
+#                            outside the rect plus the hunter stream on
+#                            the north field outside, both A/B'd against
+#                            city-disabled builds with non-empty body counts
 #   landmark_progress_selfcheck
 #                            BUDAPEST'S WIN: the catalogue (every slot resolves a
 #                            CITY_LANDMARKS row by BUILDER NAME, a wave-C
