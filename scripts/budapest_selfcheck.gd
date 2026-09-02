@@ -288,9 +288,13 @@ func _check_plan_purity() -> void:
 
 	var hits := _scan_banned(text)
 	if not hits.is_empty():
-		_fail("budapest_plan.gd is supposed to be pure authored DATA, but it "
+		# PARENTHESISED: `%` binds tighter than `+`, so without the brackets the
+		# format applies to the LAST fragment — which carries no specifier — and
+		# the only thing this check has to say (what it found, and where) is
+		# replaced by an engine formatting error.
+		_fail(("budapest_plan.gd is supposed to be pure authored DATA, but it "
 				+ "contains %s — a city that moves between runs cannot be put on a "
-				+ "map, audited for reachability or described to a player"
+				+ "map, audited for reachability or described to a player")
 				% ", ".join(hits))
 
 	# THE NEGATIVE CONTROL. A scanner with a typo in its token list passes this

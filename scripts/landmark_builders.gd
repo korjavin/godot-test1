@@ -5215,8 +5215,9 @@ static func _city_synagogue(terrain: Node3D, center: Vector3, rng: RandomNumberG
 	terrain._spawn_artifact_accent(parent_chunk, center + Vector3(0.0, 22.0, -40.9),
 			Vector3(6.4, 6.4, 0.4), 0.0, 0.0, terrain._get_camp_ember_material())
 
-	# THE TWO TOWERS: octagonal shaft, gallery, onion. The onion is the field's
-	# _lm_onion, and its own finial is the gilded spike it always draws.
+	# THE TWO TOWERS: octagonal shaft, gallery, bulb, spire. The bulb is _city_dome
+	# and NOT the field's _lm_onion — see the docstring for why that was refused
+	# here (its bulge is a fixed cube with a 0.56 m shoulder, wrong at 11 m).
 	var top := 0.0
 	for side in [-1.0, 1.0]:
 		for k in 2:

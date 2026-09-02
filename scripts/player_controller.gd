@@ -338,8 +338,9 @@ const JOIN_RING_ANGLES: int = 8
 ## spawn point uses, so the landing squash reads instead of a hard snap.
 const JOIN_SPAWN_HEIGHT: float = 2.0
 
-## Best-run records (coins). Read in _trigger_game_over() to decide the
-## "NEW BEST!" flash, and pushed back through the store there.
+## The best-run COIN record. Read in _trigger_game_over() to decide the
+## "NEW BEST!" flash, and pushed back through the store there. Distance is not
+## a record any more (bead godot-test1-8gw.1) and has no field here.
 ##
 ## WHERE THEY ARE KEPT IS NOT THIS FILE'S BUSINESS ANY MORE. `best_run_store.gd`
 ## owns both the local store (a ConfigFile on desktop, `localStorage` on web)
@@ -347,7 +348,6 @@ const JOIN_SPAWN_HEIGHT: float = 2.0
 ## player between devices. All this side does is fold whatever the store
 ## reports in with `maxi`, so a late server reply can never lower a record and the
 ## order the two layers answer in does not matter.
-var best_distance: int = 0
 var best_coins: int = 0
 var best_run_store: BestRunStore = null
 
@@ -3174,8 +3174,15 @@ func _trigger_game_over() -> void:
 
 	var panel := get_tree().get_first_node_in_group("game_over_ui")
 	if panel and panel.has_method("show_game_over"):
+		# THE PEAK, NOT THE LIVE TOTAL — the same figure `_bank_records()` writes
+		# the record from. `_pay_coin_setback()` has already taken its cut by the
+		# time we get here, so handing the panel `coins_collected` alone shows a
+		# headline BELOW the `best_coins` printed beside it while "NEW BEST!" is
+		# flashing about the record that run just set. `maxi` keeps the room case
+		# right: in a room `coins_collected` is the ROOM's bank and legitimately
+		# exceeds this peer's own peak.
 		panel.show_game_over(
-			coins_collected, best_coins, run_beat_record
+			maxi(coins_collected, record_coins), best_coins, run_beat_record
 		)
 	print("Game over! Final coins: %d" % coins_collected)
 

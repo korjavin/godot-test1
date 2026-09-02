@@ -9608,7 +9608,20 @@ func _road_lateral_distance(world_x: float, world_z: float, clearance: float) ->
 	# west than that cannot be (the corridor's X never goes below the terminal's).
 	if world_x > ROAD_TERMINAL_X - clearance and world_x < BudapestPlan.GATE.x + clearance:
 		var terminal: Vector2 = _road_station(_road_terminal_k()).center
-		best = minf(best, BudapestPlan.road_approach_distance(terminal, Vector2(world_x, world_z)))
+		# THE Z REJECT IS NOT AN OPTIMIZATION FOR ITS OWN SAKE. road_approach_distance
+		# walks ~150 polyline segments, and this runs once per PLACEMENT CANDIDATE —
+		# _spawn_forest_content alone tries up to FOREST_TREES_MAX per chunk — on the
+		# handful of chunk columns either side of T, which are exactly the frames the
+		# player is walking into Budapest on. The corridor's Z never leaves
+		# [min(terminal.z, GATE.z), max(...)], so a point outside that span grown by
+		# `clearance` is provably further than `clearance` away and skipping it can
+		# only leave `best` capped short of the clearance — which this function's
+		# contract above already says may happen, and which its one caller
+		# (_biome_spot_ok, comparing `< clearance`) cannot tell apart.
+		var lo := minf(terminal.y, BudapestPlan.GATE.z) - clearance
+		var hi := maxf(terminal.y, BudapestPlan.GATE.z) + clearance
+		if world_z > lo and world_z < hi:
+			best = minf(best, BudapestPlan.road_approach_distance(terminal, Vector2(world_x, world_z)))
 	return best
 
 func spawn_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array) -> void:
@@ -9923,6 +9936,11 @@ func spawn_city_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obst
 				rng, block_batch, block_body, 0.0, CITY_AVENUE_STONE, false)
 
 
+## The width below which a piece of a split city box is not a piece at all — see
+## _chunk_grid_spans. Well above the f32 rounding on a world coordinate at the
+## city's X (~0.24 mm), well below the thinnest thing any builder draws.
+const SPAN_EPS: float = 0.001
+
 func _chunk_grid_spans(centre: float, size: float) -> Array:
 	"""
 	One axis of split_city_boxes_on_chunk_grid: cut the interval
@@ -9938,8 +9956,15 @@ func _chunk_grid_spans(centre: float, size: float) -> Array:
 	builder cuts that slot's boxes into the SAME pieces. That identity is what lets
 	the centre rule below stay the whole of the assignment.
 
-	A boundary that coincides with an edge produces no zero-width piece: the first
-	cut is strictly east of `lo` (floori + 1) and the loop stops at `hi`.
+	A boundary that coincides with an edge produces no zero-width piece, and
+	SPAN_EPS is what makes that true rather than nearly true. `t.origin` is f32,
+	so `chunk_center + origin` rounds differently in each chunk's local frame and
+	an edge sitting ON a boundary lands a fraction of a millimetre either side of
+	it depending on who is asking. Without the epsilon one frame cuts and another
+	does not — the identity above is lost, and a sub-micron sliver box (or, for a
+	colliding box, a degenerate BoxShape3D) is shipped into the live batch. The
+	epsilon is far above the worst f32 ulp at city X (~0.24 mm) and far below any
+	real geometry, so it only ever eats a piece that should not exist.
 	"""
 	var lo := centre - size * 0.5
 	var hi := centre + size * 0.5
@@ -9947,9 +9972,10 @@ func _chunk_grid_spans(centre: float, size: float) -> Array:
 	var k := floori(lo / chunk_size) + 1
 	var cut := float(k) * chunk_size
 	var start := lo
-	while cut < hi:
-		spans.append(Vector2((start + cut) * 0.5, cut - start))
-		start = cut
+	while cut < hi - SPAN_EPS:
+		if cut - start > SPAN_EPS:
+			spans.append(Vector2((start + cut) * 0.5, cut - start))
+			start = cut
 		k += 1
 		cut = float(k) * chunk_size
 	spans.append(Vector2((start + hi) * 0.5, hi - start))
@@ -9966,6 +9992,14 @@ func _is_axis_aligned_basis(b: Basis) -> bool:
 	Signs are deliberately not constrained: create_box builds the basis as
 	`Basis(UP, yaw) * Basis(RIGHT, tilt)`, so yaw or tilt = PI is a diagonal with
 	negative entries and frames a box that is still perfectly axis-aligned.
+
+	DIAGONAL, NOT "SQUARE TO THE AXES", AND THE TWO DIFFER AT ONE ANGLE. A quarter
+	turn (yaw = +-PI/2) is ANTI-diagonal: the box is still world-axis-aligned but
+	this answers false, so it keeps the centre rule instead of being cut. Nothing
+	ships one — the city builders yaw by 0, PI or a deliberate PI/4 — and a
+	quarter-turned box wider than a chunk fails budapest_selfcheck check 5 loudly
+	rather than vanishing silently, which is why the case is documented here
+	instead of handled. Handling it means swapping the X/Z spans in the caller.
 	"""
 	return (is_zero_approx(b.x.y) and is_zero_approx(b.x.z)
 			and is_zero_approx(b.y.x) and is_zero_approx(b.y.z)
@@ -10514,6 +10548,12 @@ func _approach_coin_east_end() -> float:
 	rect and out the other side of the city, paving the bridge and all of Pest with
 	the gate's coin trail. A BANK is where the water's edge is; a dry rect is a
 	thing built ON the water and has nothing to say about where the river runs.
+
+	ponytail: the line stops at the west bank, so the 1.4 km of Pest east of the
+	Danube ships with no coin source at all (in_budapest() turns every procedural
+	one off inside the rect). That is this bead's authored scope — the city's own
+	reward line is bead .5's — not an oversight, and it is written down here
+	because a corridor that simply ends reads like one.
 
 	Memoized for the process, and it may be: east of the gate the corridor IS the
 	avenue at z = 0, so this is a pure function of BudapestPlan's authored polyline

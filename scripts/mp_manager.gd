@@ -2743,7 +2743,6 @@ func _send_state_to(id: String) -> void:
 	var player: Node = get_tree().get_first_node_in_group("player")
 	var pos: Vector3 = Vector3.ZERO
 	var coins: int = 0
-	var dist: int = 0
 	if player != null:
 		pos = player.global_position
 		# `own_coins` is this peer's OWN contribution, which is what the room
@@ -2752,7 +2751,6 @@ func _send_state_to(id: String) -> void:
 		# are the ones `_send_presence()` uses, for the same reason: a player
 		# scene run standalone still answers something sane.
 		coins = int(player.get("own_coins")) if "own_coins" in player else 0
-		dist = int(player.get("run_distance")) if "run_distance" in player else 0
 
 	_lobby.send_signal_to(id, {
 		"mp": "state",
