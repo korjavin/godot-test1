@@ -1401,9 +1401,15 @@ func get_input_direction() -> Vector2:
 	var input_x := Input.get_axis("step_left", "step_right") if is_on_floor() else 0.0
 	var input_y := Input.get_axis("move_forward", "move_backward")
 	var raw_dir := Vector2(input_x, input_y)
-	if raw_dir.length_squared() > 1.0:
-		return raw_dir.normalized()
-	return raw_dir
+	# ALWAYS normalized, never merely capped. STEP 8 multiplies this by
+	# current_speed, so an ANALOG axis magnitude would scale the walk itself — and
+	# `mobile_input.gd` drives `move_forward` at `walk_energy`, a sawtooth that
+	# sits well below 1.0 at an ordinary cadence. Capping only above 1.0 therefore
+	# walks a phone player at a fraction of WALK_SPEED, under the chase speed the
+	# catchable-walk contract is measured against. Desktop keys are ±1 either way.
+	if raw_dir == Vector2.ZERO:
+		return raw_dir
+	return raw_dir.normalized()
 
 func calculate_current_speed() -> float:
 	"""

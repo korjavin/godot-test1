@@ -217,7 +217,6 @@ var coins: int = 0
 ## Stays 0 while the lobby is unreachable, which reads as "no external record"
 ## and leaves the caller's local comparison standing.
 var server_best_coins: int = 0
-var server_best_distance: int = 0
 
 ## Meta-progression, same monotone rule. `lifetime_coins` is cumulative coins
 ## picked up across every run ever and is NEVER deducted (owner, 2026-08-25);
@@ -241,17 +240,17 @@ var _get_http: HTTPRequest = null
 var _post_http: HTTPRequest = null
 
 ## Whether the boot GET's reply may be trusted as a PRE-SUBMIT baseline — which is
-## the only thing `server_best_distance` is for, and the one property the two
+## the only thing `server_best_coins` is for, and the one property the two
 ## `HTTPRequest` nodes above take away. They overlap on purpose (that is the whole
 ## reason for the split), the lobby serves them concurrently, and nothing orders
-## them: a bite in the first seconds of a run POSTs this run's distance, and if
+## them: a bite in the first seconds of a run POSTs this run's coins, and if
 ## that merge lands before the still-in-flight GET is read, the reply hands our
 ## OWN number back as if another device held it. The reconciliation then takes
 ## back a flash the player earned — exactly the echo the pre-merge field exists
 ## to be immune to.
 ##
 ## So a POST that actually started while the GET was outstanding retires the
-## baseline. `server_best_distance` then stays 0, which is already the documented
+## baseline. `server_best_coins` then stays 0, which is already the documented
 ## "no external record" degrade, and the local comparison stands — the safe
 ## direction, because the alternative claims a record on evidence we produced.
 ## The next boot's GET has no POST racing it and reports the truth.

@@ -628,6 +628,17 @@ func _check_slicing(terrain: Node3D) -> void:
 				var rebased_shapes: Array = _shape_keys(rebased["body"])
 				for i in range(rebased_shapes.size()):
 					by_shape[rebased_shapes[i]] = i
+				# THE ACCENT HALF, and it needs the same byte map for the same
+				# reason the other two do: the streamer builds EVERY slot reaching
+				# the chunk, so a bare `parent.get_child_count()` also tallies the
+				# accents of any other accent-bearing slot whose centre lands in
+				# this rect — it would fail rule 4 for a city that is correct, or
+				# hide a doubled beacon behind a slot that emits one fewer.
+				# Reparenting preserves the local transform and both nodes share
+				# the chunk's frame, so the match is exact.
+				var by_accent := {}
+				for child in (rebased["chunk"] as Node).get_children():
+					by_accent[var_to_bytes((child as Node3D).transform)] = true
 				_free_builder(rebased)
 
 				# ...and the streamer's own output for that chunk. It carries every
@@ -655,7 +666,9 @@ func _check_slicing(terrain: Node3D) -> void:
 					kept += 1
 				if kept > 0:
 					chunks += 1
-				accents += parent.get_child_count()
+				for child in parent.get_children():
+					if by_accent.has(var_to_bytes((child as Node3D).transform)):
+						accents += 1
 				body.free()
 				parent.free()
 
