@@ -2030,6 +2030,40 @@ const CITY_CHUNK_SHAPE_BUDGET: int = 40
 const CITY_CHUNK_MS_BUDGET: float = 12.0
 
 # ----------------------------------------------------------------------------
+# SCARCITY GRADIENT — objects thin out logarithmically with distance
+# ----------------------------------------------------------------------------
+##
+## Plain terrain at SCARCITY_PLAIN_DISTANCE = 4000 m. Inside/near Budapest
+## k=1, at 4000 m k=0, logarithmically: k = 1 - log(1+d/d0)/log(1+4000/d0)
+## with d0=400 m. d is distance from pos to the nearest edge of the Budapest
+## rect (BudapestPlan.rect()), 0 inside. HQ at ~2 km keeps k≈0.5-1.0.
+const SCARCITY_PLAIN_DISTANCE: float = 4000.0
+const SCARCITY_D0: float = 400.0
+const _SCARCITY_DENOM: float = 2.3978952727983707 # log(1+4000/400) = log(11)
+
+
+func scarcity_at(pos: Vector3) -> float:
+	"""Pure function in [0,1]: 1 inside/near Budapest, 0 at 4 km."""
+	var rect: Rect2 = BudapestPlan.rect()
+	var dx := 0.0
+	if pos.x < rect.position.x:
+		dx = rect.position.x - pos.x
+	elif pos.x > rect.position.x + rect.size.x:
+		dx = pos.x - (rect.position.x + rect.size.x)
+	var dz := 0.0
+	if pos.z < rect.position.y:
+		dz = rect.position.y - pos.z
+	elif pos.z > rect.position.y + rect.size.y:
+		dz = pos.z - (rect.position.y + rect.size.y)
+	var d := sqrt(dx * dx + dz * dz)
+	if d <= 0.0:
+		return 1.0
+	if d >= SCARCITY_PLAIN_DISTANCE:
+		return 0.0
+	return clampf(1.0 - log(1.0 + d / SCARCITY_D0) / _SCARCITY_DENOM, 0.0, 1.0)
+
+
+# ----------------------------------------------------------------------------
 # BIOME CONTENT TUNING (what each biome actually BUILDS)
 # ----------------------------------------------------------------------------
 ##
@@ -4072,7 +4106,10 @@ func spawn_objects_in_chunk(chunk_pos: Vector2i, platforms: Array, block_batch: 
 	# The THRESHOLD is per-territory (see _structure_chance_at) while the DRAW is
 	# not: one rng.randf() either way, so the shared chunk stream is unaffected by
 	# which biome this chunk sits in.
-	if rng.randf() < _structure_chance_at(chunk_center):
+	# Scarcity thins feature structures to plain at 4 km — compare the same
+	# roll against chance * k, no new draw.
+	var k_struct := scarcity_at(chunk_center)
+	if rng.randf() < _structure_chance_at(chunk_center) * k_struct:
 		spawn_feature_structure(rng, half_chunk, chunk_center, obstacles, platforms, block_batch, block_body)
 
 	# Is this a DESERT chunk? A desert keeps only one scattered block in
@@ -4091,6 +4128,15 @@ func spawn_objects_in_chunk(chunk_pos: Vector2i, platforms: Array, block_batch: 
 	var object_target := objects_per_chunk
 	if desert_chunk:
 		object_target = maxi(1, objects_per_chunk / DESERT_BLOCK_KEEP_EVERY)
+	# SCARCITY — plain terrain at 4 km. Multiply the TARGET, never add a draw
+	# on the shared chunk RNG (same discipline as desert). Budapest itself is
+	# exempt (early return above), so this only thins the wilderness.
+	var k := scarcity_at(chunk_center)
+	object_target = int(object_target * k)
+	if object_target == 0:
+		# Still need to count attempts? No — return early with no props, but
+		# keep the footprints empty so later spawners see honest (fewer) obstacles.
+		return obstacles
 
 	# Store positions of scattered objects to check spacing between them
 	var spawned_positions: Array[Vector3] = []
@@ -6779,7 +6825,8 @@ func _artifact_at(chunk_pos: Vector2i) -> Dictionary:
 	# Rarity roll — most chunks bail here. This is the ONLY draw taken from the
 	# stream at this point; the rest happen in spawn_artifact_in_chunk off an RNG
 	# re-seeded from `seed`, so the two stay a single fixed sequence per chunk.
-	if rng.randf() >= ARTIFACT_CHANCE:
+	var k_art := scarcity_at(chunk_to_world(chunk_pos))
+	if rng.randf() >= ARTIFACT_CHANCE * k_art:
 		return {}
 
 	return { "seed": rng.randi() }
@@ -7158,7 +7205,9 @@ func _camp_at(chunk_pos: Vector2i) -> Dictionary:
 	rng.seed = hash(Vector3i(chunk_pos.x * 40960001, chunk_pos.y * 26463089, run_seed ^ CAMP_SALT))
 
 	# 1. Rarity roll — the overwhelming majority of chunks bail here.
-	if rng.randf() >= CAMP_CHANCE:
+	# Scarcity thins camps logarithmically to plain terrain at 4 km.
+	var k := scarcity_at(chunk_to_world(chunk_pos))
+	if rng.randf() >= CAMP_CHANCE * k:
 		return {}
 
 	# 2. A further seed for the camp's own RNG, which both picks the spot and
@@ -7562,7 +7611,8 @@ func _chest_at(chunk_pos: Vector2i) -> Dictionary:
 	# The rarity roll — most chunks bail here, and this is the ONLY draw taken from
 	# the stream at this point. The rest happen in spawn_chest_in_chunk off an RNG
 	# re-seeded from `seed`, so the two together stay one fixed sequence per chunk.
-	if rng.randf() >= CHEST_CHANCE:
+	var k_chest := scarcity_at(chunk_to_world(chunk_pos))
+	if rng.randf() >= CHEST_CHANCE * k_chest:
 		return {}
 
 	return { "seed": rng.randi() }
@@ -7772,7 +7822,8 @@ func _landmark_at(chunk_pos: Vector2i) -> Dictionary:
 	# taken from the stream at this point. The rest happen in
 	# spawn_landmark_in_chunk off an RNG re-seeded from `seed`, so the two together
 	# stay one fixed sequence per chunk.
-	if rng.randf() >= LANDMARK_CHANCE:
+	var k_lm := scarcity_at(chunk_to_world(chunk_pos))
+	if rng.randf() >= LANDMARK_CHANCE * k_lm:
 		return {}
 
 	# WHICH place. Drawn here rather than in the spawner so the kind is decided by
@@ -8053,6 +8104,13 @@ func spawn_biome_content_in_chunk(chunk_pos: Vector2i, obstacles: Array, block_b
 	rng.seed = hash(Vector3i(chunk_pos.x * 83492791, chunk_pos.y * 15485863, run_seed ^ BIOME_SALT))
 
 	var center := chunk_to_world(chunk_pos)
+	# Scarcity thins biome content to plain terrain at 4 km. Use a separate
+	# hash for the scarcity roll so the biome stream's draws stay identical
+	# when k=1 (otherwise the extra draw would shift every tree/rock).
+	var k_bio := scarcity_at(center)
+	var scarcity_roll := float(hash(Vector3i(chunk_pos.x * 96174811, chunk_pos.y * 18266587, run_seed ^ 0x5CA1C17)) % 1000000) / 1000000.0
+	if scarcity_roll >= k_bio:
+		return
 	match biome_at(center.x, center.z):
 		Biome.DESERT:
 			_spawn_desert_content(center, rng, obstacles, block_batch, block_body)

@@ -169,6 +169,7 @@ func _run() -> void:
 		_check_biome_bands(terrain_script, consts)
 		_check_city_content(terrain_script, consts)
 		_check_snow_content(terrain_script, consts)
+		_check_scarcity(terrain_script, consts)
 
 	if _failures.is_empty():
 		print("props: %d builders x %d seeds x %d sizes measured; radius bound, climb ladder, box budget and chunk purity OK"
@@ -1133,3 +1134,84 @@ func _axis_reach(batch: Array) -> float:
 			var p := xform * corner
 			worst = maxf(worst, maxf(absf(p.x), absf(p.z)))
 	return worst
+
+
+# ============================================================================
+# CHECK 9 — scarcity gradient: plain terrain at 4 km
+# ============================================================================
+
+func _check_scarcity(terrain_script: GDScript, consts: Dictionary) -> void:
+	"""
+	Scarcity gradient: objects thin logarithmically with distance from Budapest,
+	plain terrain at 4 km. k = 1 - log(1+d/d0)/log(1+4000/d0), d0=400, clamped.
+	"""
+	var terrain := Node3D.new()
+	terrain.set_script(terrain_script)
+	terrain.set_run_seed(20260826)
+
+	var samples: Array[float] = []
+	var dists: Array[float] = [0.0, 1000.0, 2000.0, 4000.0]
+	for d in dists:
+		var probe_pos := Vector3(3800.0 + d, 0.0, 0.0)
+		if d == 0.0:
+			probe_pos = Vector3(2700.0, 0.0, 0.0)
+		samples.append(float(terrain.call("scarcity_at", probe_pos)))
+
+	# Monotone decreasing and 0 at 4 km.
+	for i in range(1, samples.size()):
+		if samples[i] > samples[i - 1] + 1e-6:
+			_fail("scarcity k must be monotone decreasing: k at %d m (%.3f) > k at %d m (%.3f)" % [dists[i], samples[i], dists[i - 1], samples[i - 1]])
+	if absf(samples[3]) > 1e-6:
+		_fail("scarcity k at 4 km must be 0, got %.6f" % samples[3])
+	if samples[0] < 0.99:
+		_fail("scarcity k inside Budapest must be ~1, got %.3f" % samples[0])
+
+	# A chunk field at 5 km (beyond plain) builds zero props/camps/artifacts/landmarks/chests/biome.
+	var far_pos := Vector3(8000.0, 0.0, 0.0) # ~4.2 km east of rect (3800+4000=7800) -> 200 beyond
+	var far_chunk: Vector2i = terrain.world_to_chunk(far_pos)
+	var far_center: Vector3 = terrain.chunk_to_world(far_chunk)
+	# Build a 3x3 field at 5 km and count.
+	var far_counts := {"props": 0, "camps": 0, "artifacts": 0, "landmarks": 0, "chests": 0, "biome": 0}
+	for dx in range(-1, 2):
+		for dz in range(-1, 2):
+			var cp := far_chunk + Vector2i(dx, dz)
+			var c: Vector3 = terrain.chunk_to_world(cp)
+			# Use the same in_budapest guard the spawners use — far field is far outside.
+			if terrain.in_budapest(c.x, c.z):
+				continue
+			var batch: Array = []
+			var body := StaticBody3D.new()
+			var plats: Array = []
+			var obs: Array = terrain.spawn_objects_in_chunk(cp, plats, batch, body)
+			far_counts["props"] += batch.size()
+			body.free()
+			# Camps etc. via their _at funcs (hash stream, no shared draw)
+			var camp: Dictionary = terrain.call("_camp_at", cp)
+			if not camp.is_empty():
+				far_counts["camps"] += 1
+			var art: Dictionary = terrain.call("_artifact_at", cp)
+			if not art.is_empty():
+				far_counts["artifacts"] += 1
+			var lm: Dictionary = terrain.call("_landmark_at", cp)
+			if not lm.is_empty():
+				far_counts["landmarks"] += 1
+			var ch: Dictionary = terrain.call("_chest_at", cp)
+			if not ch.is_empty():
+				far_counts["chests"] += 1
+			var b_batch: Array = []
+			var b_body := StaticBody3D.new()
+			var b_obs: Array = []
+			terrain.call("spawn_biome_content_in_chunk", cp, b_obs, b_batch, b_body)
+			far_counts["biome"] += b_batch.size()
+			b_body.free()
+
+	for k: String in far_counts.keys():
+		if int(far_counts[k]) != 0:
+			_fail("scarcity: field at 5 km builds %d %s — plain terrain at ≥4 km must be empty" % [int(far_counts[k]), k])
+
+	if _failures.is_empty():
+		print("  scarcity   k at 0/1/2/4 km: %.3f / %.3f / %.3f / %.3f, 5 km field empty" % [samples[0], samples[1], samples[2], samples[3]])
+	else:
+		print("  scarcity   k at 0/1/2/4 km: %.3f / %.3f / %.3f / %.3f" % [samples[0], samples[1], samples[2], samples[3]])
+
+	terrain.free()
