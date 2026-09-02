@@ -808,6 +808,22 @@ const ROAD_NARROW_FLOOR_FACTOR: float = 0.4
 ## and the eye would read regular rows; this staggers them so the swath looks organic.
 const ROAD_COIN_LONG_JITTER: float = 0.5
 
+## THE ROAD'S TERMINAL X — where the coin road stops being the thing you follow
+## and the city takes over (bead godot-test1-8gw.3).
+##
+## The centreline's Z is a function of run_seed (only station 0 is fixed), so a
+## road that wandered on would arrive at Budapest's west edge at a different Z
+## every run — and Budapest is AUTHORED at a fixed rect. The road therefore ends
+## at a TERMINAL STATION west of the gate, and BudapestPlan.road_approach_point()
+## eases the corridor from that station's Z to the gate's z = 0 (see
+## spawn_approach_coins_in_chunk).
+##
+## 1450 is 150 m west of the gate (BudapestPlan.GATE.x = 1600) — far enough that
+## the last road boss (BOSS_INTERVAL_STATIONS at ~6 m/station) can never be
+## standing in the gate district, close enough that the corridor's ease is short
+## enough to read as one continuous route rather than a dogleg.
+const ROAD_TERMINAL_X: float = 1450.0
+
 # ----------------------------------------------------------------------------
 # BOSS CROCODILES (deterministic, station-indexed placement along the coin road)
 # ----------------------------------------------------------------------------
@@ -1655,6 +1671,175 @@ const RIVER_HALF_WIDTH: float = 0.007
 ## hard thresholds above, the eye reads this blend.
 const BIOME_BLEND: float = 0.05
 
+## The sizes of ground.gdshader's two Budapest array uniforms, restated here for
+## the ONE thing GDScript can do that GLSL cannot: fail loudly. A GLSL array is a
+## fixed size, so the plan's Danube and its dry rects have to be padded to it —
+## and if a future author adds a sixth polyline point or a ninth dry rect, the
+## asserts in _city_river_segments() / _city_dry_rects() say so instead of the
+## river quietly losing its last bend. Keep both in step with CITY_SEG_MAX /
+## CITY_DRY_MAX in the shader; they are the same two-language contract as
+## everything else in this pair of files.
+const CITY_SHADER_SEG_MAX: int = 8
+const CITY_SHADER_DRY_MAX: int = 8
+
+# ----------------------------------------------------------------------------
+# BUDAPEST — THE CITY STREAMER (bead godot-test1-8gw.3)
+# ----------------------------------------------------------------------------
+##
+## What spawn_city_in_chunk needs that BudapestPlan does not carry. The plan is
+## the DESIGN — where the hills are, how wide the avenue is, which liberties were
+## taken with the map — and a designer edits it. These are the MATERIALS: how
+## thick a slab is and what colour the stone is, which is this file's business,
+## beside CITY_PLASTER_* and every other palette and thickness in it.
+
+## The seed of the city streamer's PRIVATE RandomNumberGenerator, and it is a
+## CONSTANT for two reasons that both matter.
+##
+## PRIVATE, because create_box draws four numbers per box for its colour ramp and
+## one extra draw taken from the chunk's shared stream slides every crocodile in
+## the world (see the determinism block in SECTION 1). The city is authored, so
+## it has nothing to seed from anyway — this stream exists only to feed those
+## discarded draws.
+##
+## CONSTANT rather than per-chunk, because every box the streamer places passes
+## an explicit color_override and a plateau whose slices each drew their own
+## colour would be a different grey on either side of every chunk seam. One seed,
+## one hill.
+const CITY_STREAM_SEED: int = 0x8_6D4_9E51
+
+## The plateau massifs' stone, and their ramps' — ONE colour for both, because
+## they are the same hill. Deliberately duller and greyer than CITY_PLASTER_*:
+## Castle Hill has to read as the rock the city stands ON rather than as another
+## building on it.
+const CITY_HILL_STONE := Color(0.47, 0.45, 0.41)
+
+## A plateau ramp's slab thickness, metres. Thick enough to read as a viaduct
+## from the side, thin enough that the head of the ramp never pokes up through
+## the plateau's lid.
+const CITY_RAMP_THICKNESS: float = 1.0
+
+## The avenue's pavement slab: 4 cm, straddling y = 0, and collide = FALSE.
+##
+## The avenue is a READ — the thing that says "this way into the city" — and not
+## a corridor. The ground under it is already flat and walkable, so a COLLIDING
+## lip would buy nothing and cost 900 m of kerb for a CharacterBody3D to catch its
+## toe on. Same reasoning as the forest canopies' collide = false: pure decoration
+## pays for its pixels and not for a collision shape.
+##
+## WHICH IS EXACTLY WHY IT MUST BE THIN AND CENTRED ON THE GROUND. Nothing stands
+## ON this slab — the player walks the y = 0 plane straight through it, capsule
+## bottom at y = 0 and the model's feet with it — so every centimetre of pavement
+## above y = 0 is a centimetre of shin rendered inside opaque stone, for the whole
+## 750 m of the one authored route out of the gate. A kerb-height 15 cm slab sunk
+## its feet; 4 cm straddling zero leaves 2 cm proud (enough to read as pavement
+## and to stay off the ground plane's own depth) and 2 cm buried out of sight.
+const CITY_AVENUE_THICKNESS: float = 0.04
+const CITY_AVENUE_STONE := Color(0.62, 0.60, 0.56)
+
+## THE GATE DISTRICT'S STREET DRESSING (DEC-11) — where the jb7 city prop
+## builders are called, and how big.
+##
+## The spots are DERIVED from DISTRICT_HOUSES rather than typed into a second
+## table: one prop in each gap between neighbouring houses, alternating sides,
+## cycling _prop_crate_stack / _prop_garden_wall / _prop_paving_stack. Seven
+## props, no new plan data, and the dressing follows the houses if a designer
+## moves them.
+##
+## Z IS THE LOAD-BEARING NUMBER. 14 m off the centreline puts the widest prop's
+## own footprint (2.0 * PROP_RADIUS_FACTOR = 1.42) at 12.6 m, comfortably clear
+## of the avenue's 8 m half-width — the corridor out of the gate has to stay
+## walkable, and a crate stack standing in it is exactly the failure the .3
+## acceptance walk looks for.
+const CITY_DISTRICT_PROP_Z: float = 14.0
+const CITY_DISTRICT_PROP_SIZE: float = 2.0
+
+## THE DANUBE'S CROCODILES — the one predator the city rect does NOT turn off,
+## and the whole reason the spawner policy is per-system instead of one
+## tower_excludes() disc (DEC-9). Pest gets no cacti, no camps and no biome
+## predators; the river gets crocodiles, because the owner's standing rule is
+## "river -> crocodile" (it is what _boss_row_at already answers on a wet
+## station) and a 240 m band of empty water reads as scenery rather than as a
+## crossing you have to think about.
+##
+## ITS OWN HASH STREAM, for the reason stated five times in this file already:
+## the chunk's crocodile RNG is one shared sequence, and a single extra draw
+## taken from it slides every crocodile in the world. Own salt, own coordinate
+## primes, the ARTIFACT_SALT / CAMP_SALT / HUNTER_SALT family — and
+## budapest_selfcheck's A/B measures it the way enemy_spawn_selfcheck check 12
+## measures the hunter's.
+const DANUBE_SALT: int = 0xDA_11BE  # "DANUBE"-ish; arbitrary fixed constant
+
+## Coordinate multiplier primes for the Danube stream, DIFFERENT from every other
+## stream in this file — object/artifact (73856093 / 19349663), camp (40960001 /
+## 26463089), biome (83492791 / 15485863), croc-roll (179424673 / 32452843),
+## chest (86028121 / 50331653), hunter (122949829 / 104395301) — so no two
+## streams can correlate on a shared lattice.
+const DANUBE_HASH_PRIME_X: int = 141650939
+const DANUBE_HASH_PRIME_Y: int = 175961107
+
+## Chance a wet chunk gets crocodiles at all, and how many it may hold. Higher
+## than any land rarity roll on purpose: the river is a THREAT LINE across the
+## middle of the city, and one you can wade through unopposed half the time is
+## not one.
+const DANUBE_CROC_CHANCE: float = 0.55
+const DANUBE_CROC_MAX: int = 2
+
+## How far off a DRY RECT a Danube crocodile has to stand, and it is the ONE
+## obstacle test this spawner has.
+##
+## A bridge's STONE OVERHANGS ITS DECK. The Margaret Bridge's cutwaters are 10 m
+## boxes turned 45 degrees at z = +/-13 off a deck rect only 32 m deep, so their
+## corners reach 20.07 m out on Z against the rect's 16 — 4.07 m of solid, colliding
+## stone standing in open water. The Chain Bridge's tower piers overhang by 0.5 m
+## the same way. `danube_wet()` answers true there (it is off the rect), so the
+## per-body re-test that keeps a crocodile off the DECK does not keep it out of the
+## PIER, and it is reachable: chunk (2425, -675) is wet and its candidate square
+## covers the western cutwater's overhang.
+##
+## Every sibling spawner rejects a candidate standing in stone against `obstacles`;
+## this one cannot, because a city landmark's footprint is ONE disc up to 156 m
+## across and passing the list would empty the whole reach of the river. So the
+## test is the deck rect grown by the widest measured overhang plus a body's width
+## instead — bounded, allocation-free, and in WORLD space, which matters because
+## the box in the way may be owned by the neighbouring chunk (the centre rule homes
+## a landmark box by its own centre, not by where it reaches).
+const DANUBE_CROC_DECK_MARGIN: float = 8.0
+
+## Which slice of the spawn-slot index space the Danube takes — for BOTH the
+## node name and _croc_roll_seed, one number because they are one identity.
+##
+## The name keeps the "Crocodile_" prefix (croc_id_for hashes it; the four
+## prefixes are the whole naming scheme enemy_spawn_selfcheck classifies by), and
+## the two spawners are mutually exclusive by construction anyway —
+## spawn_crocodiles_in_chunk returns before drawing anything inside the rect. The
+## index base is belt-and-braces on top of that exclusion, so re-enabling ground
+## crocodiles here could never claim a name twice.
+const DANUBE_SLOT_BASE: int = 500
+
+## THE CITY'S PER-CHUNK CEILINGS — what a Budapest chunk is allowed to cost.
+##
+## A chunk in Pest is an ordinary chunk: ONE MultiMesh, ONE collision body, built
+## in the same one-chunk-per-frame drain as a chunk of cactus. These three numbers
+## are what says so, and `budapest_selfcheck` check 4 measures every chunk in the
+## 2.2 km rect against them and prints the worst one it found beside each ceiling.
+##
+## MEASURED over the whole rect (2025 chunks, 2026-09-02, AFTER rule 2a's splitter
+## landed — cutting the giants' oversized boxes on the chunk grid is what moved
+## the box figure from 62): worst 69 boxes, worst 15 collision shapes, worst
+## 7.4 ms. The ceilings are those numbers with room
+## for the seven wave-C landmark builders that are still reservations, and the ms
+## budget is deliberately loose because it is wall-clock on whatever machine CI
+## happens to be — it is a runaway detector, not a benchmark.
+##
+## The box number is the one to watch: a landmark builder that stopped being a
+## pure function of (centre, rng) would emit its whole self into every chunk its
+## disc touches instead of its own slice, and THAT is what this catches — 122
+## boxes of Parliament in one 50 m square instead of the half-dozen that stand
+## in it.
+const CITY_CHUNK_BOX_BUDGET: int = 120
+const CITY_CHUNK_SHAPE_BUDGET: int = 40
+const CITY_CHUNK_MS_BUDGET: float = 12.0
+
 # ----------------------------------------------------------------------------
 # BIOME CONTENT TUNING (what each biome actually BUILDS)
 # ----------------------------------------------------------------------------
@@ -2260,6 +2445,28 @@ var road_stations: Dictionary = {}
 var road_k_min: int = 1
 var road_k_max: int = 0
 
+## Memoized result of _road_terminal_k() — the last station at or west of
+## ROAD_TERMINAL_X. It is a pure function of run_seed and the road config (both
+## constant within a run) and EVERY road consumer asks for it, so it is computed
+## once and reset in new_run() beside the station cache it is derived from.
+##
+## The sentinel is a station index nothing can legitimately be: the cache grows
+## contiguously outward from station 0 and a run would have to walk ~10^9
+## stations west to reach it.
+const ROAD_TERMINAL_K_UNSET: int = -0x7FFFFFFF
+var _road_terminal_k_cache: int = ROAD_TERMINAL_K_UNSET
+
+## Memoized result of _approach_coin_east_end() — where the approach coin line
+## meets the Danube. Unlike the terminal station above this carries NO run seed
+## (the avenue is authored at z = 0 and so is the river), so new_run() leaves it
+## alone. INF is the "not resolved yet" sentinel.
+var _approach_coin_east_end_cache: float = INF
+
+## Memoized result of _approach_coin_line() — the whole approach + avenue coin
+## line, resampled by arc length. It rides the TERMINAL STATION, so unlike the
+## east end above it IS seeded, and new_run() resets it beside the terminal cache.
+var _approach_coin_line_cache: PackedVector2Array = PackedVector2Array()
+
 ## Reference to the player node to track their position
 var player: Node3D
 
@@ -2851,6 +3058,69 @@ func _apply_biome_shader_params() -> void:
 	var site := tower_site()
 	mat.set_shader_parameter("tower_dry_center", Vector2(site.x, site.z))
 	mat.set_shader_parameter("tower_dry_radius", TOWER_RADIUS)
+	# BUDAPEST, the GPU half of it: the forced CITY ground, the authored Danube
+	# and the dry decks, straight off BudapestPlan — the same numbers biome_at()
+	# and is_river_at() answer with, so the paint and the wading cannot disagree.
+	# Parity-critical in the same strongest sense as the dry disc above. All of it
+	# is CONSTANT (the city is authored, there is no seed in it), so this could in
+	# principle be pushed once — it is pushed here anyway, beside its siblings,
+	# because ONE function feeding the ground material is the thing that makes the
+	# contract auditable. The shader's own defaults are inert, so a material that
+	# never met this function draws exactly the world it always drew.
+	mat.set_shader_parameter("city_rect", Vector4(
+			BudapestPlan.BUDAPEST_MIN.x, BudapestPlan.BUDAPEST_MIN.y,
+			BudapestPlan.BUDAPEST_MAX.x, BudapestPlan.BUDAPEST_MAX.y))
+	mat.set_shader_parameter("city_river", _city_river_segments())
+	# CLAMPED, like the arrays themselves: the asserts in the two builders below are
+	# stripped in an exported build — which is the web build, the one target this
+	# shader exists for — so a plan that outgrew CITY_SEG_MAX / CITY_DRY_MAX would
+	# ship a count past the end of a GLSL array uniform. That read is undefined in
+	# GLSL ES 3.00. Losing the last bend is a bug budapest_selfcheck catches; a
+	# driver-dependent out-of-range fetch is not.
+	mat.set_shader_parameter("city_river_count",
+			mini(BudapestPlan.DANUBE.size() - 1, CITY_SHADER_SEG_MAX))
+	mat.set_shader_parameter("city_river_half", BudapestPlan.DANUBE_HALF_WIDTH)
+	mat.set_shader_parameter("city_dry", _city_dry_rects())
+	mat.set_shader_parameter("city_dry_count",
+			mini(BudapestPlan.DRY_RECTS.size(), CITY_SHADER_DRY_MAX))
+
+
+func _city_river_segments() -> PackedVector4Array:
+	"""
+	The Danube polyline as (x1, z1, x2, z2) segments, for ground.gdshader's
+	`city_river` array uniform.
+
+	Padded to CITY_SEG_MAX (8) because a GLSL array uniform is that size whatever
+	the polyline's length is; the shader reads `city_river_count` of them and the
+	padding is never touched. If a future author adds a sixth point to DANUBE, the
+	assert below is what tells them the shader's array has to grow with it.
+	"""
+	var segs := PackedVector4Array()
+	segs.resize(CITY_SHADER_SEG_MAX)
+	assert(BudapestPlan.DANUBE.size() - 1 <= CITY_SHADER_SEG_MAX,
+			"BudapestPlan.DANUBE has more segments than ground.gdshader's CITY_SEG_MAX")
+	for i in range(mini(BudapestPlan.DANUBE.size() - 1, CITY_SHADER_SEG_MAX)):
+		var a: Vector2 = BudapestPlan.DANUBE[i]
+		var b: Vector2 = BudapestPlan.DANUBE[i + 1]
+		segs[i] = Vector4(a.x, a.y, b.x, b.y)
+	return segs
+
+
+func _city_dry_rects() -> PackedVector4Array:
+	"""
+	The dry rects — bridge decks and Margaret Island — as (xmin, zmin, xmax, zmax)
+	for ground.gdshader's `city_dry`, padded to CITY_DRY_MAX exactly like the
+	segments above and read `city_dry_count` deep.
+	"""
+	var rects := PackedVector4Array()
+	rects.resize(CITY_SHADER_DRY_MAX)
+	assert(BudapestPlan.DRY_RECTS.size() <= CITY_SHADER_DRY_MAX,
+			"BudapestPlan.DRY_RECTS has more rows than ground.gdshader's CITY_DRY_MAX")
+	for i in range(mini(BudapestPlan.DRY_RECTS.size(), CITY_SHADER_DRY_MAX)):
+		var r: Rect2 = BudapestPlan.DRY_RECTS[i]
+		rects[i] = Vector4(r.position.x, r.position.y,
+				r.position.x + r.size.x, r.position.y + r.size.y)
+	return rects
 
 
 func _ready() -> void:
@@ -3404,6 +3674,22 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 	# pitched on top of a chest that was already there.
 	spawn_chest_in_chunk(chunk_pos, mesh_instance, obstacles, block_batch, block_body)
 
+	# BUDAPEST — this chunk's slice of the authored city (bead godot-test1-8gw.3).
+	# NOT a hash stream and NOT a roll: the city is a table of constants in
+	# budapest_plan.gd, so this consumes no draw from anybody and asks the plan
+	# only whether its rect reaches this chunk. Outside the rect it costs one
+	# rectangle intersection.
+	#
+	# SAME ORDERING REQUIREMENT as the five above, and it is why it runs LAST of
+	# the six: after them so the plateau footprints join the finished obstacles
+	# list (and so nothing procedural has to know the city is coming — the spawner
+	# policy that keeps props out of Pest is each spawner's own early return), and
+	# before _build_block_multimesh / the block_body attach so a hill, a ramp and a
+	# pavement slab join the chunk's ONE MultiMesh draw call and ONE collision
+	# body, exactly like a cactus. It also runs BEFORE the coin spawners below,
+	# which is what lets the approach line perch or skip over city stone.
+	spawn_city_in_chunk(chunk_pos, mesh_instance, obstacles, block_batch, block_body)
+
 	# Build the chunk's batched block visuals. If any blocks were placed, collapse
 	# them all into one MultiMeshInstance3D parented to this chunk (so it is freed
 	# automatically when the chunk unloads, like every other per-chunk node).
@@ -3426,6 +3712,16 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 		spawn_crocodiles_in_chunk(chunk_pos, mesh_instance, obstacles)
 		# Rare crocodiles that patrol an elevated platform (mound summit / wall ridge)
 		spawn_platform_crocodiles(chunk_pos, mesh_instance, platforms)
+		# ...and the DANUBE's crocodiles, the one predator the authored city rect
+		# keeps (bead godot-test1-8gw.3, DEC-9). Same flag as its siblings — a
+		# check that turns predators off must turn off all of them — but its own
+		# independent DANUBE_SALT hash stream, so the spawner above regenerates
+		# every crocodile in the world exactly where it already was. Takes no
+		# `obstacles` — a city landmark's footprint is one disc up to 156 m across,
+		# which would empty the whole river — and clears stone with its own
+		# danube_wet() re-test at each body plus a deck-rect margin for the pier
+		# and cutwater stone that hangs off a deck (DANUBE_CROC_DECK_MARGIN).
+		spawn_danube_crocodiles_in_chunk(chunk_pos, mesh_instance)
 		# Rare BOSS crocodiles guarding the coin road (deterministic, station-
 		# indexed — its own BOSS_SEED hash stream, no shared RNG draws consumed).
 		# Gets `obstacles` like its siblings so a 2.5x-6x boss is never wedged
@@ -3445,6 +3741,13 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 	# crosses one — see spawn_coins_in_chunk).
 	if spawn_coins:
 		spawn_coins_in_chunk(chunk_pos, mesh_instance, obstacles)
+		# ...and the APPROACH + AVENUE line that takes over where the road's coins
+		# stop, from the terminal station through the gate to the Danube's west
+		# bank (bead godot-test1-8gw.3). Same flag as its sibling: they are one
+		# continuous trail as far as the player is concerned, and a check that
+		# turns coins off must turn off all of them. Zero RNG, so it consumes no
+		# draw from anybody's stream.
+		spawn_approach_coins_in_chunk(chunk_pos, mesh_instance, obstacles)
 
 	# TELEMETRY, counted HERE and not in _ensure_chunk_ground: the counter exists
 	# to explain frame spikes (see its comment in SECTION 2), and after the
@@ -3475,6 +3778,18 @@ func spawn_objects_in_chunk(chunk_pos: Vector2i, platforms: Array, block_batch: 
 	- This means the same chunk always generates the same objects
 	- Objects are parented to the chunk so they're removed when chunk is removed
 	"""
+
+	# BUDAPEST — props and feature structures are OFF inside the city rect (bead
+	# godot-test1-8gw.3, DEC-9): the city is AUTHORED, and a barrier wall or a
+	# terraced mound rolled into the middle of Pest is the one thing the plan
+	# cannot design around. NOT tower_excludes(), which would turn everything off
+	# with one answer — the rect wants a different answer per system, and the very
+	# next spawner down (the Danube's crocodiles) is a yes. Keyed on the CHUNK
+	# CENTRE, and taken BEFORE the RNG exists because there is nothing to advance:
+	# this stream is never consulted for a city chunk at all.
+	var city_probe := chunk_to_world(chunk_pos)
+	if in_budapest(city_probe.x, city_probe.z):
+		return []
 
 	# Use chunk coordinates (+ this run's seed) to create a unique but consistent seed.
 	# Within a run the same chunk always regenerates the same objects; across runs the
@@ -5322,6 +5637,21 @@ func spawn_crocodiles_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D
 	if not crocodile_scene:
 		return
 
+	# BUDAPEST — biome predators are OFF inside the city rect (bead
+	# godot-test1-8gw.3, DEC-9), and this is the early return the whole per-system
+	# policy exists for: the rect forces the CITY band, so without it Pest would
+	# get alley hounds wandering the Parliament's steps while the RIVER — the one
+	# place the city DOES want predators — got the same treatment as the streets.
+	# The Danube's own spawner below is the yes half of that split, on its own
+	# stream. NOT tower_excludes(), which has exactly one answer for everybody.
+	#
+	# BEFORE the seed is even mixed, because there is no stream to advance: a city
+	# chunk never consults this sequence at all, so nothing outside the rect can
+	# shift by one draw.
+	var croc_center := chunk_to_world(chunk_pos)
+	if in_budapest(croc_center.x, croc_center.z):
+		return
+
 	# Use chunk coordinates (+ this run's seed) to create a unique but consistent seed.
 	# Different multipliers than the object seed give different positions than objects;
 	# run_seed makes crocodile placement differ run-to-run (constant within a run).
@@ -5483,6 +5813,125 @@ func spawn_crocodiles_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D
 		# Add to chunk (so it gets removed when chunk is removed)
 		parent_chunk.add_child(crocodile_instance)
 		spawned_positions.append(crocodile_pos)
+
+func spawn_danube_crocodiles_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D) -> void:
+	"""
+	Put crocodiles in the Danube — the city rect's ONE yes in a policy of noes.
+
+	@param chunk_pos: Chunk coordinates — the only spatial input, so placement is a
+	                  pure function of (chunk, run_seed)
+	@param parent_chunk: The chunk mesh they parent to, so they are freed when the
+	                     chunk unloads (the per-chunk parenting rule everything follows)
+
+	WHY THIS FUNCTION EXISTS SEPARATELY, and it is the same answer the hunter's
+	spawner gives: its OWN hash stream. DANUBE_SALT plus DANUBE_HASH_PRIME_X/Y
+	give a private RNG that touches no other sequence, so every crocodile OUTSIDE
+	the city stands byte-for-byte where it stood before the city existed. Folding
+	this into spawn_crocodiles_in_chunk as a branch would have been fewer lines and
+	would have slid the whole world by one draw.
+
+	WHY CROCODILES and not one of the six biome rows: the owner's standing rule is
+	"river -> crocodile", the same one _boss_row_at applies to a station standing
+	in water. The city forces the CITY band, so BIOME_SPECIES would have answered
+	"alley hound" — a dog treading water.
+
+	EVERY REJECTION IS A POST-DRAW SKIP, the discipline the whole file runs on:
+	both position draws and the facing draw are spent before the first test, so a
+	candidate costs this stream exactly three draws whether it is taken or thrown
+	away, and a bridge deck can never slide a later candidate.
+	"""
+	if not crocodile_scene:
+		return
+
+	# The rect first, and it is not redundant with danube_wet below: the polyline
+	# runs to the rect's north and south edges, so a chunk 40 m outside the city
+	# can still sit inside the 120 m band. is_river_at() already asks the two
+	# questions in this order; so does this.
+	var chunk_world_pos := chunk_to_world(chunk_pos)
+	if not in_budapest(chunk_world_pos.x, chunk_world_pos.z):
+		return
+	if not BudapestPlan.danube_wet(chunk_world_pos.x, chunk_world_pos.z):
+		return
+
+	# Chunk coords + run_seed ^ DANUBE_SALT, with this stream's own primes.
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(Vector3i(
+		chunk_pos.x * DANUBE_HASH_PRIME_X,
+		chunk_pos.y * DANUBE_HASH_PRIME_Y,
+		run_seed ^ DANUBE_SALT
+	))
+
+	# The rarity roll, first draw of the stream and taken before anything else so
+	# geometry can never perturb it — the _chest_at / spawn_hunters_in_chunk shape.
+	if rng.randf() > DANUBE_CROC_CHANCE:
+		return
+
+	var half_span := chunk_size / 2.0 - 3.0
+	var spawned := 0
+	for _try in DANUBE_CROC_MAX * 3:
+		if spawned >= DANUBE_CROC_MAX:
+			break
+
+		# THE THREE DRAWS. All of them, unconditionally, before any test below.
+		var local := Vector3(
+			rng.randf_range(-half_span, half_span),
+			0.5,
+			rng.randf_range(-half_span, half_span))
+		var facing := rng.randf_range(0.0, TAU)
+		var world := chunk_world_pos + local
+
+		# Re-asked AT THE BODY, not just at the chunk centre: a chunk on the bank
+		# is half dry land, and the bridge decks and Margaret Island are dry rects
+		# INSIDE the band. This is what keeps a crocodile off the Chain Bridge.
+		if not BudapestPlan.danube_wet(world.x, world.z):
+			continue
+
+		# ...and off the stone that HANGS OFF the deck it stands on, which the test
+		# above cannot see. See DANUBE_CROC_DECK_MARGIN.
+		if _near_dry_rect(world.x, world.z, DANUBE_CROC_DECK_MARGIN):
+			continue
+
+		var croc := crocodile_scene.instantiate()
+		# "Crocodile_<cx>_<cy>_<i>", the ground spawner's own prefix and namespace
+		# — croc_id_for() hashes the name into the room-wide id, and the four
+		# prefixes are the whole scheme every peer and every self-check reads. The
+		# two spawners cannot both run in a chunk (the one above returns inside the
+		# rect), and DANUBE_SLOT_BASE puts the indices out of reach anyway.
+		croc.name = "Crocodile_%d_%d_%d" % [chunk_pos.x, chunk_pos.y, DANUBE_SLOT_BASE + spawned]
+		croc.position = local
+		croc.rotation.y = facing
+		# CALL-ORDER CONTRACT (the setup_as_boss / spawn_crocodiles_in_chunk
+		# shape): both of these BEFORE add_child, because _ready() is where
+		# `species` is resolved into `spec` and where the size/speed rolls that
+		# READ that spec happen.
+		croc.setup_roll_seed(_croc_roll_seed(chunk_pos, DANUBE_SLOT_BASE + spawned))
+		croc.species = "crocodile"
+		parent_chunk.add_child(croc)
+		spawned += 1
+
+
+func _near_dry_rect(x: float, z: float, margin: float) -> bool:
+	"""
+	Is this world XZ within `margin` of a Danube DRY RECT (a bridge deck, or the
+	island)?
+
+	@param x, z: world XZ
+	@param margin: how far outside a rect still counts as "near"
+	@return: whether any DRY_RECTS row, grown by `margin` on all four sides,
+	         contains the point
+
+	`BudapestPlan.is_dry` asks the same question with margin 0 and cannot be given
+	one: it is half of the wading contract and is mirrored in `ground.gdshader`, so
+	a margin there would move the shoreline. This is a SPAWNER-side clearance test
+	over the same table and touches neither language of that contract.
+	"""
+	for i in range(BudapestPlan.DRY_RECTS.size()):
+		var r: Rect2 = BudapestPlan.DRY_RECTS[i]
+		if x >= r.position.x - margin and x <= r.position.x + r.size.x + margin \
+				and z >= r.position.y - margin and z <= r.position.y + r.size.y + margin:
+			return true
+	return false
+
 
 func adopt_wanderer(unit: Node3D) -> void:
 	"""
@@ -5907,6 +6356,23 @@ func spawn_bosses_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, ob
 		# centerline X is strictly increasing in k), so we're done either way.
 		if k > road_k_max:
 			break
+		# CAP 3 OF 4 — no boss stands past the road's terminal station (bead
+		# godot-test1-8gw.3). Bosses GUARD the coin road; east of T there is no road
+		# to guard, and the city's own predator policy is Budapest's to decide.
+		#
+		# It sits ABOVE _boss_row_at below, deliberately: the BIOME_BOSS dispatch
+		# must never fire for a station the road does not reach, or the city would
+		# be picking boss kinds for bosses that are never placed. `break`, not
+		# `continue` — k = cur_i * BOSS_INTERVAL_STATIONS is strictly increasing in
+		# `i`, so once one index is past T every later one is too. No RNG has been
+		# drawn at this point (_boss_at is a pure hash stream), so leaving early
+		# consumes nothing and slides nothing.
+		#
+		# The cap is on this CONSUMER and not on _road_extend_to_x, whose forward
+		# loop hangs when the cache stops growing (see _road_terminal_k) and whose
+		# binary-search callers — the k_start above is one — assume it spans any X.
+		if k > _road_terminal_k():
+			break
 		# The station's centreline point, read ONCE: it bounds the window scan
 		# below AND it is what this boss's species is dispatched on (see
 		# _boss_row_at) — the only coordinate a boss has that is pure in `cur_i`.
@@ -6240,6 +6706,13 @@ func spawn_artifact_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, 
 	@param block_batch / block_body: The chunk's visual batch + collision body,
 	                                 threaded through to create_box.
 	"""
+	# BUDAPEST — no lost-civilization artifacts in the city (DEC-9): the rect's
+	# monuments are its 22 authored landmark slots, and a procedural monolith
+	# beside the Parliament reads as a bug. NOT tower_excludes(): that disc is one
+	# answer for everything, and the city's answer differs per system.
+	var art_center := chunk_to_world(chunk_pos)
+	if in_budapest(art_center.x, art_center.z):
+		return
 	if not spawn_artifacts:
 		return
 	var art := _artifact_at(chunk_pos)
@@ -6613,6 +7086,13 @@ func spawn_camp_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obst
 	                  village, which is what keeps crocodiles out — see the bottom.
 	@param block_batch / block_body: The chunk's visual batch + collision body.
 	"""
+	# BUDAPEST — no nomad camps in the city (DEC-9): a dome-hut village pitched on
+	# Andrassy Avenue is the clearest case of the procedural world contradicting
+	# the plan. NOT tower_excludes(); see in_budapest for why the city takes one
+	# answer per system.
+	var camp_center := chunk_to_world(chunk_pos)
+	if in_budapest(camp_center.x, camp_center.z):
+		return
 	if not spawn_camps:
 		return
 	var camp := _camp_at(chunk_pos)
@@ -6827,6 +7307,12 @@ func spawn_chest_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obs
 	                  appended to with the chest's own small climbable footprint.
 	@param block_batch / block_body: The chunk's visual batch + collision body.
 	"""
+	# BUDAPEST — no treasure chests in the city (DEC-9): the rect's reward line is
+	# the authored avenue coins, so a chest here would be loot the plan never
+	# placed. NOT tower_excludes(); the city answers per system.
+	var chest_center := chunk_to_world(chunk_pos)
+	if in_budapest(chest_center.x, chest_center.z):
+		return
 	if not spawn_chests:
 		return
 	var chest := _chest_at(chunk_pos)
@@ -7049,6 +7535,13 @@ func spawn_landmark_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, 
 	@param block_batch / block_body: The chunk's visual batch + collision body,
 	                                 threaded through to create_box.
 	"""
+	# BUDAPEST — no PROCEDURAL geo landmarks in the city (DEC-9). The builders are
+	# the same ones the rect uses, but WHERE they stand is the plan's 22 slots and
+	# not a rarity roll — two Eiffel Towers, one authored and one rolled, in the
+	# same district. NOT tower_excludes(): per-system answers.
+	var lm_center := chunk_to_world(chunk_pos)
+	if in_budapest(lm_center.x, lm_center.z):
+		return
 	if not spawn_landmarks:
 		return
 	var lm := _landmark_at(chunk_pos)
@@ -7258,6 +7751,14 @@ func spawn_biome_content_in_chunk(chunk_pos: Vector2i, obstacles: Array, block_b
 	param. Everything a biome builds is a create_box entry — no builder has a node
 	to parent — so the argument would be dead weight at every call site.
 	"""
+	# BUDAPEST — no biome geometry in the city (DEC-9). The rect forces the CITY
+	# band, so this would draw _spawn_city_content's procedural blocks straight
+	# through the authored streets. NOT tower_excludes(): per-system answers, and
+	# the Danube's crocodiles are the system that says yes.
+	var biome_center := chunk_to_world(chunk_pos)
+	if in_budapest(biome_center.x, biome_center.z):
+		return
+
 	if not spawn_biome_content:
 		return
 
@@ -7885,12 +8386,19 @@ func _spawn_city_content(chunk_center: Vector3, rng: RandomNumberGenerator, obst
 			rng, block_batch, block_body, 0.0, PROP_CRATE, false
 		)
 
-		# Windows, spread along the front. Same reasoning: trim, never solid.
+		# Windows, spread SYMMETRICALLY about the door and sitting ABOVE its head.
+		# Both halves of that matter and both were wrong: a `+ width * 0.26` bias
+		# used to push the whole run onto one side (a two-window facade came out
+		# lopsided with a blank wall opposite), and at `height * 0.62` the inner
+		# window's box spanned the door's own box — same front face, same local Z
+		# extent, same yaw, so the two were exactly COPLANAR and z-fought in the
+		# chunk's one MultiMesh. Door head is 0.62h and the window is 0.22h tall,
+		# so 0.78h clears it for every window count, centred one included.
 		for w in windows:
 			var offset := (float(w) - float(windows - 1) * 0.5) * width * 0.32
 			create_box(
-				local + front * (depth * 0.5) + right * (offset + width * 0.26)
-						+ Vector3(0.0, height * 0.62, 0.0),
+				local + front * (depth * 0.5) + right * offset
+						+ Vector3(0.0, height * 0.78, 0.0),
 				Vector3(width * 0.16, height * 0.22, 0.10), yaw,
 				rng, block_batch, block_body, 0.0, CITY_ROOF_SLATE, false
 			)
@@ -8369,7 +8877,16 @@ func biome_at(world_x: float, world_z: float) -> Biome:
 	Pure function, no RNG, no allocation — safe to call from any spawner in any
 	order. Rivers are NOT a return value here: they are an overlay, tested with
 	is_river_at().
+
+	...with ONE override, and it is BUDAPEST. Inside the authored city rect the
+	answer is CITY whatever the noise field says: the city is hand-planned like
+	the HQ's site, and a band that wandered under it between runs would put
+	desert sand down Váci utca. This is one half of a two-language contract —
+	the other half is the `in_city` clause in ground.gdshader's fragment(), fed
+	`city_rect` by _apply_biome_shader_params(). EDIT BOTH TOGETHER.
 	"""
+	if BudapestPlan.contains(world_x, world_z):
+		return Biome.CITY
 	var n := _biome_noise(world_x, world_z)
 	if n < BIOME_DESERT_MAX:
 		return Biome.DESERT
@@ -8415,7 +8932,44 @@ func is_river_at(world_pos: Vector3) -> bool:
 	# in, for the same reason the noise port routes everything through Vector2.
 	if Vector2(world_pos.x - site.x, world_pos.z - site.z).length() <= TOWER_RADIUS:
 		return false
+	# ...and ONE MORE, which is BUDAPEST: inside the city rect the answer is the
+	# AUTHORED Danube and nothing else. The early return is what suppresses the
+	# noise river in there — the city has one river, it is drawn in
+	# BudapestPlan.DANUBE, and a second one wandering through Pest would be a
+	# river no map and no landmark slot knows about. One half of a two-language
+	# contract: ground.gdshader computes the same predicate from the same numbers
+	# (city_river / city_river_half / city_dry, pushed by
+	# _apply_biome_shader_params), so the blue you SEE is the water you WADE.
+	# EDIT BOTH TOGETHER. The polyline distance is routed through Vector2 inside
+	# BudapestPlan for the same fp32 reason as the disc above.
+	if BudapestPlan.contains(world_pos.x, world_pos.z):
+		return BudapestPlan.danube_wet(world_pos.x, world_pos.z)
 	return absf(_biome_noise(world_pos.x, world_pos.z) - RIVER_LEVEL) < RIVER_HALF_WIDTH
+
+
+func in_budapest(world_x: float, world_z: float) -> bool:
+	"""
+	Is this world XZ inside the authored Budapest rect?
+
+	@param world_x, world_z: The point, WORLD space (the `obstacles` list is
+	                         chunk-local; convert before calling, exactly like
+	                         tower_excludes below).
+	@return: true when the city owns this ground.
+
+	THE SINGLE HOME of the city's membership test on this side of the seam, the
+	way tower_excludes() is the single home of the tower's. It delegates to
+	BudapestPlan.contains() and adds nothing: the rect is the PLAN's number, and a
+	second copy of it here is the one way the streamer and the shader could ever
+	disagree about where the city is.
+
+	IT IS DELIBERATELY NOT tower_excludes(). The tower's disc excludes everything
+	procedural with one answer; the city wants a DIFFERENT answer per system —
+	props off, hunters on, its own crocodiles in the river — so each spawner reads
+	this predicate and decides for itself (bead godot-test1-8gw.3, DEC-9).
+
+	Pure and allocation-free, safe to call from any spawner in any order.
+	"""
+	return BudapestPlan.contains(world_x, world_z)
 
 
 func tower_site() -> Vector3:
@@ -8859,6 +9413,36 @@ func _road_first_k_at_or_after_x(x: float) -> int:
 			hi = mid - 1
 	return lo
 
+func _road_terminal_k() -> int:
+	"""
+	The LAST station of the coin road: the largest `k` whose centreline X is at or
+	west of ROAD_TERMINAL_X. Every road CONSUMER stops here (bead godot-test1-8gw.3).
+
+	@return: The terminal station index. Memoized for the run in
+	         `_road_terminal_k_cache`, which new_run() resets with the station cache.
+
+	WHY THE CAP IS ON THE CONSUMERS AND NOT ON _road_extend_to_x.
+	It would be tempting to simply stop growing the cache past the terminal. That
+	HANGS the game. _road_extend_to_x's forward loop runs `while` the cached X has
+	not yet reached the requested x_max — a cache that refuses to grow past T never
+	reaches any x_max east of T and spins forever. And all three binary-search
+	callers (_road_first_k_at_or_after_x's own contract, the coin scan and the boss
+	scan) ASSUME the cache spans whatever X they asked for; a short cache silently
+	answers them with the terminal station for every chunk in the city. So the
+	centreline cache stays infinite and honest — it is the four things that READ it
+	(road coins, road clearance, road bosses, the minimap line) that stop at T.
+
+	The definition is the one the machinery already provides: extend so the cache
+	covers T, binary-search the first station at or after T, and step back one. The
+	road's X is strictly increasing in `k`, so that is exactly "the last station at
+	or west of T" and there is no edge case in between.
+	"""
+	if _road_terminal_k_cache != ROAD_TERMINAL_K_UNSET:
+		return _road_terminal_k_cache
+	_road_extend_to_x(ROAD_TERMINAL_X, ROAD_TERMINAL_X)
+	_road_terminal_k_cache = _road_first_k_at_or_after_x(ROAD_TERMINAL_X) - 1
+	return _road_terminal_k_cache
+
 func _road_width(k: int) -> float:
 	"""
 	Smoothly-varying coin BAND width (metres) at station `k`, oscillating between
@@ -8907,6 +9491,20 @@ func _road_coins_at(k: int) -> Array:
 	  ROAD_COIN_LONG_JITTER*spacing (along-road); spawn_coins_in_chunk's `pad` is derived
 	  from exactly that bound so the scan window can never miss a scattered coin at a seam.
 	"""
+	# CAP 1 OF 4 — the road's coins stop at the terminal station (bead
+	# godot-test1-8gw.3). Past T the coin line is the city's authored approach
+	# corridor instead (spawn_approach_coins_in_chunk), so a road coin here would
+	# be a second, wandering trail crossing the avenue.
+	#
+	# The cap is on this CONSUMER and not on _road_extend_to_x because that
+	# function's forward loop only terminates while the cached X keeps advancing
+	# toward the requested x_max — refusing to grow past T hangs it outright, and
+	# its three binary-search callers all assume the cache spans any X. Skipping a
+	# station perturbs no other station: every station's scatter RNG is seeded from
+	# `k` alone, so there is no shared stream here to keep in step.
+	if k > _road_terminal_k():
+		return []
+
 	var st: Dictionary = _road_station(k)
 	var center: Vector2 = st.center
 	var heading: float = st.heading
@@ -8975,7 +9573,19 @@ func _road_lateral_distance(world_x: float, world_z: float, clearance: float) ->
 
 	var best := INF
 	var k := _road_first_k_at_or_after_x(world_x - pad)
-	while k <= road_k_max:
+	# CAP 2 OF 4 — the road's CLEARANCE stops at the terminal station too (bead
+	# godot-test1-8gw.3): east of T there is no road, so nothing out there should be
+	# shoved aside to keep a coin swath clear that does not exist. Past T the scan
+	# window is empty and this returns INF, which every caller already reads as
+	# "nowhere near the road" — the same answer it has always given for a point far
+	# off-road in X, so no caller needed an edit. The ONE stretch that still wants a
+	# clear swath is the approach corridor, added back below the loop.
+	#
+	# The cap is on this CONSUMER and not on _road_extend_to_x: that function's
+	# forward loop hangs if the cache stops growing (see _road_terminal_k), and the
+	# _road_extend_to_x call above is what makes the binary search below valid.
+	var k_last := mini(road_k_max, _road_terminal_k())
+	while k <= k_last:
 		var st: Dictionary = _road_station(k)
 		k += 1
 		if st.center.x > world_x + pad:
@@ -8983,6 +9593,42 @@ func _road_lateral_distance(world_x: float, world_z: float, clearance: float) ->
 		var d := Vector2(world_x, world_z).distance_to(st.center)
 		if d < best:
 			best = d
+	# CAP 2's ONE SEAM — between the terminal station and the gate the APPROACH
+	# CORRIDOR carries the trail (spawn_approach_coins_in_chunk), so it inherits the
+	# clearance the road used to give this stretch. Drop it and a massif, a forest,
+	# a camp or a geo landmark can be generated straight across the walk into
+	# Budapest: massifs are climbable: false, so _settle_coin_y skips every coin
+	# behind one and the line into the city dead-ends against a wall. East of the
+	# gate there is nothing to keep clear — in_budapest() has already turned every
+	# one of those spawners off inside the rect.
+	#
+	# Asked as a distance to the corridor as a CURVE — BudapestPlan.road_approach_distance,
+	# the same pure geometry the coin line rides, so the swath and the coins stay
+	# on one centreline with no second copy of the corridor here. NOT the corridor
+	# point at this candidate's own X: the road's Z at the terminal is seeded and
+	# the smoothstep can be far steeper than 45 degrees, on which a same-X reading
+	# overstates the distance by sqrt(1 + slope^2) and waves a massif through at a
+	# few metres (see that function).
+	# The window is the corridor's own X span WIDENED BY THE CLEARANCE, because the
+	# nearest point of a curve is not at the candidate's X: a candidate `clearance`
+	# metres west of the terminal can still be inside the swath, and one further
+	# west than that cannot be (the corridor's X never goes below the terminal's).
+	if world_x > ROAD_TERMINAL_X - clearance and world_x < BudapestPlan.GATE.x + clearance:
+		var terminal: Vector2 = _road_station(_road_terminal_k()).center
+		# THE Z REJECT IS NOT AN OPTIMIZATION FOR ITS OWN SAKE. road_approach_distance
+		# walks ~150 polyline segments, and this runs once per PLACEMENT CANDIDATE —
+		# _spawn_forest_content alone tries up to FOREST_TREES_MAX per chunk — on the
+		# handful of chunk columns either side of T, which are exactly the frames the
+		# player is walking into Budapest on. The corridor's Z never leaves
+		# [min(terminal.z, GATE.z), max(...)], so a point outside that span grown by
+		# `clearance` is provably further than `clearance` away and skipping it can
+		# only leave `best` capped short of the clearance — which this function's
+		# contract above already says may happen, and which its one caller
+		# (_biome_spot_ok, comparing `< clearance`) cannot tell apart.
+		var lo := minf(terminal.y, BudapestPlan.GATE.z) - clearance
+		var hi := maxf(terminal.y, BudapestPlan.GATE.z) + clearance
+		if world_z > lo and world_z < hi:
+			best = minf(best, BudapestPlan.road_approach_distance(terminal, Vector2(world_x, world_z)))
 	return best
 
 func spawn_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array) -> void:
@@ -9113,6 +9759,851 @@ func spawn_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obs
 			if cw.gem:
 				coin.make_gem()
 			parent_chunk.add_child(coin)
+
+# ============================================================================
+# SECTION — BUDAPEST, STREAMED THROUGH ORDINARY CHUNKS
+# ============================================================================
+#
+# The city is AUTHORED (scripts/budapest_plan.gd) and STREAMED (here). Those two
+# words are the whole design: every coordinate is a constant a designer typed,
+# and every box those constants describe is emitted by the same create_chunk pass
+# that emits a cactus — chunk-parented, into the chunk's ONE MultiMesh batch and
+# ONE collision body, freed when the chunk unloads.
+#
+# THAT IS WHY THE CITY IS NOT A SECOND TOWER. The HQ is manager-parented and
+# CLAUDE.md says it is the ONE exception and must stay one; a 2.2 km city held
+# outside the chunk dictionary would be an exception 4,000 times its size, and
+# the 49-chunk web residency ceiling is exactly what chunk streaming buys. So a
+# thing 800 m long is not built by one chunk — it is SLICED, and every chunk
+# builds the part of it that stands in its own square.
+#
+# NOTHING HERE DRAWS FROM THE SHARED CHUNK STREAM. create_box spends four random
+# numbers per box on its colour ramp, and one extra draw taken from the chunk's
+# RNG moves every block, crocodile and coin downstream of it. The streamer
+# carries its own RandomNumberGenerator at a fixed seed (CITY_STREAM_SEED) whose
+# draws are discarded padding, because every box passes a colour override.
+
+
+func _city_chunk_slice(chunk_center: Vector3, area: Rect2) -> Rect2:
+	"""
+	This chunk's share of an authored city rect, in WORLD XZ.
+
+	@param chunk_center: This chunk's centre, from chunk_to_world().
+	@param area: The authored rect (a plateau, a ramp, the avenue), world XZ.
+	@return: The intersection, or a zero-area Rect2 when the two do not meet —
+	         test it with has_area() before building anything from it.
+
+	ONE HELPER FOR EVERY SLICED RECT, and that is the point rather than a
+	convenience. "Neighbouring chunks' slices meet flush" is the claim a plateau
+	and a ramp both rest on, and routing both through the same intersection makes
+	it true BY CONSTRUCTION instead of by review: adjacent chunk squares share an
+	edge exactly, so their intersections with one rect share that edge exactly and
+	the two boxes touch with no gap and no overlap.
+
+	A slice that is exactly a line (a rect whose edge lies on a chunk seam) has no
+	area, so has_area() drops it — the degenerate box is never built, and the
+	chunk on the other side of the seam owns the whole thing.
+	"""
+	var half := chunk_size / 2.0
+	var square := Rect2(chunk_center.x - half, chunk_center.z - half, chunk_size, chunk_size)
+	return square.intersection(area)
+
+
+func spawn_city_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
+	"""
+	Build this chunk's slice of Budapest (bead godot-test1-8gw.3).
+
+	@param chunk_pos: Chunk coordinates being built.
+	@param parent_chunk: The chunk mesh, for the parts of the city that are nodes
+	                     rather than boxes (the landmark accents; nothing here
+	                     needs it yet).
+	@param obstacles: Out-param; the plateau massifs append their footprints here,
+	                  so the crocodile spawner and the coin perch rule see them.
+	@param block_batch: Out-param; every box joins the chunk's ONE MultiMesh.
+	@param block_body: The chunk's single shared collision body.
+
+	ORDERING REQUIREMENT, the same one the artifact / camp / landmark / chest
+	family carries: this runs AFTER every spawner that fills `obstacles` and
+	BEFORE _build_block_multimesh and the block_body attach, so the city's stone
+	joins the chunk's one draw call and its one collision body — and BEFORE the
+	coin spawners, so the approach line's perch-or-skip rule can see a plateau.
+
+	WHAT IT BUILDS, in this order:
+	  1. the PLATEAU slice — one box, the chunk square meeting the hill's rect,
+	     y = 0 to `top`, plus one footprint at climbable: false;
+	  2. the RAMP slice — one TILTED box, the only way onto that lid;
+	  3. the LANDMARK slices — _spawn_city_landmarks_in_chunk, this chunk's share
+	     of every authored slot whose disc reaches into its square;
+	  5. the AVENUE slice — a thin, non-colliding pavement slab out of the gate.
+	4 is the gate district and is its own task; the Danube's crocodiles are a
+	spawner of their own, not city stone. The numbering is DEC-10's, kept as it
+	is so the gap is visibly a slot rather than an omission.
+	"""
+	var chunk_center := chunk_to_world(chunk_pos)
+	# Cheap rect reject: every chunk in the world that is not in the city pays one
+	# intersection and nothing else.
+	if not _city_chunk_slice(chunk_center, BudapestPlan.rect()).has_area():
+		return
+
+	# The private stream — see CITY_STREAM_SEED for why it is private and why it
+	# is constant. Its draws are colour-ramp padding; every box below overrides.
+	var rng := RandomNumberGenerator.new()
+	rng.seed = CITY_STREAM_SEED
+
+	for i in range(BudapestPlan.PLATEAUS.size()):
+		var row: Dictionary = BudapestPlan.PLATEAUS[i]
+		var top: float = row["top"]
+
+		# ---- 1. THE PLATEAU -------------------------------------------------
+		# A hill in this game is a MASSIF WITH A WALKABLE LID, not raised terrain:
+		# the ground is one flat plane at y = 0 and every coin height, gravity
+		# settle and block base in the world depends on that. So the hill is one
+		# box per chunk with cliffs on every side, and the footprint is
+		# climbable: false — the mountain-massif convention, which is what tells
+		# the coin road to SKIP a coin over it rather than perch one on a cliff.
+		var slice := _city_chunk_slice(chunk_center, row["rect"])
+		if slice.has_area():
+			var mid := slice.get_center()
+			var local := Vector3(mid.x - chunk_center.x, top * 0.5, mid.y - chunk_center.z)
+			create_box(local, Vector3(slice.size.x, top, slice.size.y), 0.0,
+					rng, block_batch, block_body, 0.0, CITY_HILL_STONE)
+			obstacles.append({
+				"pos": Vector3(local.x, 0.0, local.z),
+				"radius": slice.size.length() * 0.5,   # the slice's circumscribing disc
+				"top": top,
+				"climbable": false,
+			})
+
+		# ---- 2. THE RAMP ----------------------------------------------------
+		# A TILTED BOX, NEVER STEPS. CharacterBody3D cannot climb a step at all,
+		# and the HQ's rule — no traversal may demand a jump-height — is the same
+		# rule outdoors. The derivation is _city_cable's, read it there: create_box
+		# composes Basis(UP, yaw) * Basis(RIGHT, tilt), so a box long in LOCAL Z is
+		# tipped by `tilt` and then swung to its heading by `yaw`, and local +Z
+		# lands on (cos(tilt)*sin(yaw), -sin(tilt), cos(tilt)*cos(yaw)). A ramp on
+		# +X is therefore yaw = +PI/2 with tilt = -atan2(rise, run); a box long in
+		# local X could not be sloped at all.
+		#
+		# NO FOOTPRINT, deliberately: a ramp is the one piece of city geometry you
+		# are MEANT to walk up, and an `obstacles` entry is a keep-out claim that
+		# would push crocodiles off it and drop every coin that crossed it.
+		var ramp: Rect2 = row["ramp"]
+		var ramp_slice := _city_chunk_slice(chunk_center, ramp)
+		if not ramp_slice.has_area():
+			continue
+		var run: float = ramp.size.x
+		var dir: float = signf(float(row["ramp_dir"]))
+		var mid_r := ramp_slice.get_center()
+		# How far up the climb this slice's centre sits, 0 at the foot to 1 at the
+		# head — measured from the rect's west edge and flipped for a -X ramp, so
+		# `ramp_dir` is honoured rather than assumed.
+		var climbed := clampf((mid_r.x - ramp.position.x) / run, 0.0, 1.0)
+		if dir < 0.0:
+			climbed = 1.0 - climbed
+		# The slice is longer than its X width by exactly the slope's hypotenuse
+		# ratio, which is what makes two neighbouring slices meet flush on the same
+		# plane rather than leaving a lip at the seam.
+		var slope_len := ramp_slice.size.x * sqrt(run * run + top * top) / run
+		create_box(
+				Vector3(mid_r.x - chunk_center.x,
+						climbed * top - CITY_RAMP_THICKNESS * 0.5,
+						mid_r.y - chunk_center.z),
+				Vector3(ramp_slice.size.y, CITY_RAMP_THICKNESS, slope_len),
+				PI * 0.5 * dir, rng, block_batch, block_body, -atan2(top, run),
+				CITY_HILL_STONE)
+
+	# ---- 3. THE LANDMARK SLICES ---------------------------------------------
+	# Its own function because it is the bead's keystone decision and wants the
+	# whole docstring to itself. It gets the chunk centre rather than recomputing
+	# it, and its own per-slot RNG rather than this one.
+	_spawn_city_landmarks_in_chunk(chunk_center, parent_chunk, obstacles, block_batch, block_body)
+
+	# ---- 4. THE GATE DISTRICT ------------------------------------------------
+	_spawn_gate_district_in_chunk(chunk_center, obstacles, block_batch, block_body)
+
+	# ---- 5. THE AVENUE ------------------------------------------------------
+	# The one street this bead draws: 16 m of pavement running east out of the
+	# gate along z = 0, to the Danube's west bank. Bead godot-test1-8gw.9 owns the
+	# rest of the grid; this file owns STREET_PITCH as a parameter and nothing more.
+	#
+	# The east end is _approach_coin_east_end() — the SAME west bank the approach
+	# coin line stops at, asked once and answered from the river's own polyline, so
+	# the pavement and the coins on it cannot end in different places.
+	var avenue := Rect2(
+			BudapestPlan.GATE.x,
+			BudapestPlan.GATE.z - BudapestPlan.AVENUE_HALF_WIDTH,
+			_approach_coin_east_end() - BudapestPlan.GATE.x,
+			BudapestPlan.AVENUE_HALF_WIDTH * 2.0)
+	var av := _city_chunk_slice(chunk_center, avenue)
+	if av.has_area():
+		var mid_a := av.get_center()
+		create_box(
+				Vector3(mid_a.x - chunk_center.x, 0.0, mid_a.y - chunk_center.z),
+				Vector3(av.size.x, CITY_AVENUE_THICKNESS, av.size.y), 0.0,
+				rng, block_batch, block_body, 0.0, CITY_AVENUE_STONE, false)
+
+
+## The width below which a piece of a split city box is not a piece at all — see
+## _chunk_grid_spans. Well above the f32 rounding on a world coordinate at the
+## city's X (~0.24 mm), well below the thinnest thing any builder draws.
+const SPAN_EPS: float = 0.001
+
+func _chunk_grid_spans(centre: float, size: float) -> Array:
+	"""
+	One axis of split_city_boxes_on_chunk_grid: cut the interval
+	[centre - size/2, centre + size/2] at every WORLD chunk boundary it crosses.
+
+	@param centre: The interval's centre in WORLD space (not chunk-local).
+	@param size: Its full extent on that axis.
+	@return: [Vector2(piece centre, piece size), ...], west/north to east/south.
+	         One element — the input, unchanged — when the interval fits in a cell.
+
+	World space is deliberate: the boundaries are `k * chunk_size`, which is the
+	same set of lines whichever chunk is asking, so every chunk that runs a slot's
+	builder cuts that slot's boxes into the SAME pieces. That identity is what lets
+	the centre rule below stay the whole of the assignment.
+
+	A boundary that coincides with an edge produces no zero-width piece, and
+	SPAN_EPS is what makes that true rather than nearly true. `t.origin` is f32,
+	so `chunk_center + origin` rounds differently in each chunk's local frame and
+	an edge sitting ON a boundary lands a fraction of a millimetre either side of
+	it depending on who is asking. Without the epsilon one frame cuts and another
+	does not — the identity above is lost, and a sub-micron sliver box (or, for a
+	colliding box, a degenerate BoxShape3D) is shipped into the live batch. The
+	epsilon is far above the worst f32 ulp at city X (~0.24 mm) and far below any
+	real geometry, so it only ever eats a piece that should not exist.
+
+	Eating it is also what bounds every piece by `chunk_size` exactly, which is
+	the inequality budapest_selfcheck check 5 asserts — see the loop.
+	"""
+	var lo := centre - size * 0.5
+	var hi := centre + size * 0.5
+	var spans: Array = []
+	var k := floori(lo / chunk_size) + 1
+	var cut := float(k) * chunk_size
+	var start := lo
+	while cut < hi - SPAN_EPS:
+		if cut - start > SPAN_EPS:
+			spans.append(Vector2((start + cut) * 0.5, cut - start))
+		# `start` advances whether or not the piece was kept, so the epsilon EATS
+		# the sliver rather than folding it into the next piece. Folding it looks
+		# harmless — it is sub-millimetre geometry — but it makes that next piece
+		# `chunk_size + SPAN_EPS` wide, which budapest_selfcheck check 5 rejects on
+		# a strict `> chunk_size` with a message blaming the splitter for not
+		# cutting at all. Dropping 0.5 mm off an edge is the invisible half.
+		start = cut
+		k += 1
+		cut = float(k) * chunk_size
+	spans.append(Vector2((start + hi) * 0.5, hi - start))
+	return spans
+
+
+func _is_axis_aligned_basis(b: Basis) -> bool:
+	"""
+	Is this basis DIAGONAL — i.e. does the box it frames sit square to the world
+	axes? One home for the test, read by both halves of
+	split_city_boxes_on_chunk_grid(), because the two halves are handed different
+	bases for the same box and a second spelling is how they drifted apart.
+
+	Signs are deliberately not constrained: create_box builds the basis as
+	`Basis(UP, yaw) * Basis(RIGHT, tilt)`, so yaw or tilt = PI is a diagonal with
+	negative entries and frames a box that is still perfectly axis-aligned.
+
+	DIAGONAL, NOT "SQUARE TO THE AXES", AND THE TWO DIFFER AT ONE ANGLE. A quarter
+	turn (yaw = +-PI/2) is ANTI-diagonal: the box is still world-axis-aligned but
+	this answers false, so it keeps the centre rule instead of being cut. Nothing
+	ships one — the city builders yaw by 0, PI or a deliberate PI/4 — and a
+	quarter-turned box wider than a chunk fails budapest_selfcheck check 5 loudly
+	rather than vanishing silently, which is why the case is documented here
+	instead of handled. Handling it means swapping the X/Z spans in the caller.
+
+	ORTHONORMALIZED FIRST, AND THAT IS THE WHOLE POINT OF ONE HOME. is_zero_approx
+	compares against an ABSOLUTE epsilon (1e-5), while the two bases handed here
+	differ by the box's own dimensions — the batch entry carries
+	`rot.scaled_local(dimensions)`, the shape node the bare `rot`. Basis is real_t
+	(fp32), so `Basis(UP, PI)` leaves x.z ~ 8.7e-8: bare it is zero to the epsilon,
+	but scaled by a 272 m Parliament plinth it is 2.4e-5 and is NOT. That is the two
+	spellings drifting apart while reading one function — the drawn wall in one
+	chunk and its collision in another, exactly what the caller says cannot happen.
+	Normalising the columns makes the test scale-free and the two halves agree.
+	"""
+	var n := b.orthonormalized()
+	return (is_zero_approx(n.x.y) and is_zero_approx(n.x.z)
+			and is_zero_approx(n.y.x) and is_zero_approx(n.y.z)
+			and is_zero_approx(n.z.x) and is_zero_approx(n.z.y))
+
+
+func split_city_boxes_on_chunk_grid(chunk_center: Vector3, batch: Array, body: StaticBody3D) -> void:
+	"""
+	Cut every box in a landmark builder's output that is wider than a chunk into
+	per-cell pieces, on the WORLD chunk grid, in place. Rule 2a of
+	_spawn_city_landmarks_in_chunk — read that docstring for why it exists.
+
+	@param chunk_center: The world centre of the chunk whose local frame `batch`
+	                     and `body` are expressed in.
+	@param batch: In/out — the scratch MultiMesh batch, rewritten.
+	@param body: In/out — the scratch collision body, its shapes rewritten.
+
+	BOTH HALVES, INDEPENDENTLY. They are cut by the same arithmetic but never
+	paired by index: every `collide = false` box (domes, spires, cornices — these
+	builders are full of them) makes the two lists different lengths, which is the
+	same reason the clip itself treats them separately.
+
+	AXIS-ALIGNED ONLY. A rotated box has no representation as axis-aligned pieces,
+	so it is left alone and keeps the centre rule; budapest_selfcheck check 5 is
+	what fails a rotated box big enough for that to matter.
+
+	Public (no leading underscore) so the self-check can run it over a builder's
+	unclipped output the way the streamer does, rather than restating it.
+	"""
+	var out: Array = []
+	for entry_v: Variant in batch:
+		var entry: Dictionary = entry_v
+		var t: Transform3D = entry["transform"]
+		var b := t.basis
+		if not _is_axis_aligned_basis(b):
+			out.append(entry)
+			continue
+		var xs := _chunk_grid_spans(chunk_center.x + t.origin.x, absf(b.x.x))
+		var zs := _chunk_grid_spans(chunk_center.z + t.origin.z, absf(b.z.z))
+		if xs.size() == 1 and zs.size() == 1:
+			out.append(entry)
+			continue
+		for xv: Vector2 in xs:
+			for zv: Vector2 in zs:
+				var nb := Basis(
+						Vector3(signf(b.x.x) * xv.y, 0.0, 0.0),
+						b.y,
+						Vector3(0.0, 0.0, signf(b.z.z) * zv.y))
+				out.append({
+					"transform": Transform3D(nb, Vector3(
+							xv.x - chunk_center.x, t.origin.y, zv.x - chunk_center.z)),
+					"color": entry["color"],
+				})
+	batch.clear()
+	batch.append_array(out)
+
+	# get_children() hands back a copy, so the shapes added below are not revisited.
+	for child in body.get_children():
+		var cs := child as CollisionShape3D
+		if cs == null:
+			continue
+		var box := cs.shape as BoxShape3D
+		# THE SAME PREDICATE AS THE VISUAL HALF, and it has to be: create_box gives
+		# the shape node the bare `rot` basis while the batch entry gets
+		# `rot.scaled_local(dimensions)`, so an identity test here would refuse
+		# exactly the boxes the loop above accepts — yaw = PI is a signed diagonal,
+		# and a mirrored wing is the most ordinary thing a builder writes. Cutting
+		# one half and not the other is a drawn wall whose collision lives in
+		# another chunk. A diagonal ROTATION has entries of magnitude 1, so the
+		# shape's world extents are its `size` and the pieces stay identity-framed
+		# (a box is symmetric under a ±1 flip).
+		if box == null or not _is_axis_aligned_basis(cs.transform.basis):
+			continue
+		var o := cs.transform.origin
+		var xs := _chunk_grid_spans(chunk_center.x + o.x, box.size.x)
+		var zs := _chunk_grid_spans(chunk_center.z + o.z, box.size.z)
+		if xs.size() == 1 and zs.size() == 1:
+			continue
+		for xv: Vector2 in xs:
+			for zv: Vector2 in zs:
+				var piece := CollisionShape3D.new()
+				var shape := BoxShape3D.new()
+				shape.size = Vector3(xv.y, box.size.y, zv.y)
+				piece.shape = shape
+				piece.transform = Transform3D(Basis.IDENTITY, Vector3(
+						xv.x - chunk_center.x, o.y, zv.x - chunk_center.z))
+				body.add_child(piece)
+		body.remove_child(cs)
+		cs.free()
+
+
+func _spawn_city_landmarks_in_chunk(chunk_center: Vector3, parent_chunk: MeshInstance3D, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
+	"""
+	Build this chunk's SHARE of every authored Budapest landmark whose disc reaches
+	into its square (bead godot-test1-8gw.3).
+
+	@param chunk_center: This chunk's centre in world space, from chunk_to_world().
+	@param parent_chunk: The real chunk mesh — the accent nodes' final home, but
+	                     only for the chunk holding a slot's CENTRE (see below).
+	@param obstacles: Out-param; one round footprint per overlapping slot.
+	@param block_batch: Out-param; the kept boxes join the chunk's ONE MultiMesh.
+	@param block_body: The chunk's single shared collision body.
+
+	================= THE DECISION, AND THE TWO IT BEAT =================
+
+	The Parliament is 268 m long and Buda Castle's disc is 156 m across, while a
+	chunk is 50 m and the web build keeps 49 of them resident. So a landmark
+	CANNOT be emitted by "its own" chunk: walk to the far end of the Parliament and
+	the chunk that would have built it has unloaded, and the building disappears
+	while you are standing on it.
+
+	THE ANSWER IS (a) PER-CHUNK SLICING. Every chunk whose square meets a slot's
+	disc runs that slot's builder into a SCRATCH batch, a SCRATCH body and a
+	SCRATCH chunk node, and keeps only the pieces whose CENTRE falls inside its own
+	square. The two rejected answers, recorded here because this is exactly what a
+	future reader will want to re-open:
+
+	  (b) MANAGER-PARENT THE GIANTS, the way the HQ's shell is parented. Rejected
+	      because CLAUDE.md says the tower is the ONE lifetime exception and must
+	      stay one, and this would make a second one out of a dozen buildings —
+	      each with its own "when does it get freed" question and no chunk to
+	      answer it.
+	  (c) A WIDER RESIDENCY RADIUS for city chunks. Rejected because the 49-chunk
+	      web residency ceiling is the entire reason the city is chunk-streamed
+	      instead of authored into the scene; widening it for the city spends the
+	      budget the decision was made to protect.
+
+	WHY (a) IS NEARLY FREE: the city builders are PURE FUNCTIONS OF (centre, rng)
+	whose random stream touches COLOUR ONLY — landmark_builders.gd's own banner
+	says so, and not one dimension, offset or count is drawn. Run the same builder
+	from the same seed in a neighbouring chunk and it emits the SAME boxes at the
+	SAME world positions, so clipping is a filter on the output and needs no edit
+	to that file at all. The cost is measured: the Parliament is 122 boxes over
+	~49 chunks, i.e. ~6,000 create_box calls spread one chunk per frame — about
+	122 a frame, which is what one ordinary prop chunk already pays.
+
+	================= THE FOUR RULES THAT MAKE IT CORRECT =================
+
+	1. THE SEED IS THE SLOT INDEX AND NOTHING ELSE. No run_seed (the city is
+	   authored — tower_site()'s ruling) and, far more sharply, NO CHUNK
+	   COORDINATE: mix one in and every slice draws its own colours, and the
+	   Parliament comes out tie-dyed along its chunk seams. The salt is wider than
+	   an int32 and wraps into Vector3i's component; the wrap is silent but it is
+	   deterministic and identical in every chunk, which is the only property this
+	   seed needs.
+	2. THE CLIP IS HALF-OPEN — `>= -half` and `< half` on both axes. A box centred
+	   exactly on a chunk boundary then lands in exactly ONE chunk: never in both
+	   (a doubled, z-fighting wall) and never in neither (a hole).
+	   THE CENTRE RULE ONLY SLICES A LANDMARK; IT DOES NOT SLICE A BOX, and these
+	   builders emit single boxes far bigger than a chunk (Buda Castle's terrace is
+	   70 x 300, the Parliament's plinth 125 x 272, against a 50 m chunk). Handed
+	   whole to the chunk holding its centre, such a box unloads with that chunk —
+	   on the web build that is 150 m of Chebyshev residency against a 300 m
+	   palace, i.e. the building vanishing while you walk its far end, which is the
+	   exact failure this whole function exists to prevent. So
+	   split_city_boxes_on_chunk_grid() cuts every oversized AXIS-ALIGNED box on
+	   the world chunk grid FIRST; the centre rule then sees only pieces that fit
+	   inside one cell and is correct again. Rotated boxes cannot be cut into boxes
+	   and keep the centre rule — budapest_selfcheck check 5 fails a rotated box
+	   whose footprint exceeds a chunk, which is what keeps that safe.
+	   ponytail: the test is on the CHUNK-LOCAL centre, and a local coordinate is
+	   an f32 with the chunk's own origin already subtracted, so two neighbours
+	   disagree about a seam-straddling box only if their f32 rounding disagrees —
+	   sub-micron, and measured as zero over all 15 shipped buildings. If a box
+	   ever does double, nudge the slot, not this test: an epsilon here reopens
+	   the hole case on the other side.
+	3. THE CLIP APPLIES TO BOTH HALVES. Batch entries are filtered on their
+	   transform origin; collision shapes are filtered on the scratch body's own
+	   CollisionShape3D transforms and REPARENTED rather than rebuilt. Do NOT try
+	   to pair a shape with a batch entry by index — every `collide = false` box
+	   (and these builders are full of them: domes, spires, cornices) makes the
+	   two lists different lengths.
+	4. THE ACCENT EXISTS EXACTLY ONCE. Ten of these builders hang a glowing
+	   MeshInstance3D on parent_chunk, and under slicing that would give the
+	   Parliament one beacon per overlapping chunk. So they are handed a scratch
+	   node, and afterwards: if the slot's CENTRE is in this chunk the scratch's
+	   children are reparented onto the real one, otherwise the scratch is freed
+	   and takes them with it. One rule, no builder edit.
+
+	THE FOOTPRINT is one disc per slot in EVERY chunk the slot touches, at
+	climbable: false — the massif convention, so the coin rule skips a coin over a
+	cathedral rather than perching it on the silhouette top of a hollow nave, and
+	the crocodile spawner keeps out. It is per-chunk because `obstacles` is
+	per-chunk, and it is the whole slot rather than this slice because a spawner
+	200 m away in another chunk cannot see a neighbour's list anyway.
+
+	AN EMPTY BUILDER IS SKIPPED — that is the whole of "leave the slot empty" for
+	the seven wave-C reservations.
+	"""
+	var half := chunk_size / 2.0
+
+	for i in range(BudapestPlan.SLOTS.size()):
+		var slot: Dictionary = BudapestPlan.SLOTS[i]
+		var builder: String = slot["builder"]
+		if builder.is_empty():
+			continue   # a wave-C reservation: a position and a radius, no stone yet
+
+		var pos: Vector3 = slot["pos"]
+		var radius: float = slot["radius"]
+
+		# Exact disc-meets-square reject, via the square's closest point to the
+		# centre. Every chunk in the city pays 22 of these and nothing else; the
+		# rest of the world never gets here at all (spawn_city_in_chunk's own rect
+		# reject returned first).
+		var near := Vector2(
+				clampf(pos.x, chunk_center.x - half, chunk_center.x + half),
+				clampf(pos.z, chunk_center.z - half, chunk_center.z + half))
+		if Vector2(pos.x - near.x, pos.z - near.y).length_squared() > radius * radius:
+			continue
+
+		# Rule 1. The seed carries the slot index and the salt; the chunk is
+		# deliberately absent.
+		var rng := RandomNumberGenerator.new()
+		rng.seed = hash(Vector3i(i, BudapestPlan.CITY_LANDMARK_SALT, 0))
+
+		# The scratch trio. None of the three is ever added to the scene tree:
+		# the body and the chunk node are pure receptacles that get emptied and
+		# freed below, and the batch is a plain Array.
+		var scratch_batch: Array = []
+		var scratch_body := StaticBody3D.new()
+		var scratch_chunk := MeshInstance3D.new()
+
+		# Builders take a CHUNK-LOCAL centre (the field landmarks' convention), so
+		# the slot's world position is rebased here — and its authored y is passed
+		# through unchanged, which is how the three slots on a plateau stand on the
+		# lid instead of inside the hill.
+		var center := Vector3(pos.x - chunk_center.x, pos.y, pos.z - chunk_center.z)
+		var footprint: Dictionary = _landmark_builders.call(
+				builder, self, center, rng, scratch_chunk, scratch_batch, scratch_body)
+
+		# Rule 2a: a box WIDER THAN A CHUNK is cut on the grid first (see the
+		# helper). Without this the centre rule below hands a 300 m box to one
+		# chunk whole, and that chunk unloads while you stand on the far end.
+		split_city_boxes_on_chunk_grid(chunk_center, scratch_batch, scratch_body)
+
+		# Rule 2 + 3a: the visual half, half-open on both axes.
+		for entry in scratch_batch:
+			var o: Vector3 = entry["transform"].origin
+			if o.x >= -half and o.x < half and o.z >= -half and o.z < half:
+				block_batch.append(entry)
+
+		# Rule 3b: the collision half. get_children() hands back a copy, so
+		# removing while iterating it is safe.
+		for shape in scratch_body.get_children():
+			var o: Vector3 = shape.transform.origin
+			if o.x >= -half and o.x < half and o.z >= -half and o.z < half:
+				scratch_body.remove_child(shape)
+				block_body.add_child(shape)
+		scratch_body.free()   # takes every shape this chunk did not claim with it
+
+		# Rule 4: the accent, on the centre chunk only.
+		if center.x >= -half and center.x < half and center.z >= -half and center.z < half:
+			for accent in scratch_chunk.get_children():
+				scratch_chunk.remove_child(accent)
+				parent_chunk.add_child(accent)
+		scratch_chunk.free()
+
+		# `top` IS RELATIVE TO THE BUILDER'S CENTRE, and here that centre is not on
+		# the ground: a builder accumulates its height from 0 and the field spawners
+		# hand it center.y = 0, so there the two frames coincide and `footprint.top`
+		# is read straight through. The three slots standing on a plateau lid get
+		# center.y = pos.y (30, 30, 46), so the lid has to be added back or the
+		# entry understates Buda Castle's roofline by the whole hill — and `top` is
+		# the shared footprint currency every later spawner reads.
+		obstacles.append({
+			"pos": Vector3(center.x, 0.0, center.z),
+			"radius": radius,
+			"top": pos.y + float(footprint.get("top", 0.0)),
+			"climbable": false,
+		})
+
+
+func _spawn_gate_district_in_chunk(chunk_center: Vector3, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
+	"""
+	Build this chunk's share of the GATE DISTRICT (DEC-11, bead godot-test1-8gw.3).
+
+	@param chunk_center: This chunk's centre in world space, from chunk_to_world().
+	@param obstacles: Out-param; one CLIMBABLE disc per house, one prop footprint
+	                  per dressing piece.
+	@param block_batch: Out-param; every box joins the chunk's ONE MultiMesh.
+	@param block_body: The chunk's single shared collision body.
+
+	WHY THIS DISTRICT AND ONLY THIS DISTRICT. It is ~200 x 260 m immediately east
+	of the gate — the SMALLEST slice that exercises every dangerous seam at once:
+	authored buildings streamed through ordinary chunks, the city prop builders
+	called on authored spots, the avenue running between them, a plateau ramp one
+	chunk west and a dry bridge deck 900 m east. Bead godot-test1-8gw.7 owns the
+	rest of the street grid; this file owns STREET_PITCH as a parameter and this
+	one block as the proof.
+
+	SLICED BY OWNERSHIP, NOT BY CLIPPING, and that is the difference between a
+	house and the Parliament. A landmark is 268 m long and has to be cut across
+	the chunks it stands on (see _spawn_city_landmarks_in_chunk); a house is 4 m,
+	so the chunk containing its CENTRE builds the whole thing. The test is the
+	same HALF-OPEN comparison for the same reason — a house centred exactly on a
+	seam lands in exactly one chunk, never both and never neither. The couple of
+	metres a house may overhang its own chunk are freed with it, 150 m away and
+	three chunks behind the camera.
+
+	THE RECIPE IS _spawn_city_content'S, COPIED AND NOT SHARED. Hull + eaves roof
+	+ door + windows, with the dimensions AUTHORED (DISTRICT_HOUSES) instead of
+	drawn. Refactoring the two to share would move code inside a hot deterministic
+	path whose draw ORDER is load-bearing for every crocodile downstream of it;
+	ten lines of create_box here is a smaller and far safer diff than proving a
+	code motion changed no draw.
+
+	EVERY HOUSE ROOF IS STILL A REST SPOT. The plan caps every authored `height`
+	at PROP_MAX_STEP (2.6) and the footprint is climbable: true at the HULL top,
+	exactly as the procedural city's is — a gate district whose roofs you could
+	not reach would quietly be the one city block that is not a city block.
+	"""
+	var half := chunk_size / 2.0
+	if not _city_chunk_slice(chunk_center, BudapestPlan.DISTRICT).has_area():
+		return
+
+	# The private stream. Its draws are create_box's colour-ramp padding: every
+	# box below passes an explicit override off the plan's authored shades, so the
+	# seed only has to be a constant, not a good one.
+	var rng := RandomNumberGenerator.new()
+	rng.seed = CITY_STREAM_SEED
+
+	for row in BudapestPlan.DISTRICT_HOUSES:
+		var pos: Vector3 = row["pos"]
+		var local := Vector3(pos.x - chunk_center.x, 0.0, pos.z - chunk_center.z)
+		if not (local.x >= -half and local.x < half and local.z >= -half and local.z < half):
+			continue
+
+		var size: Vector3 = row["size"]
+		var width := size.x
+		var height := size.y
+		var depth := size.z
+		# Both rows FACE THE AVENUE: yaw 0 puts `front` on +Z for the north side,
+		# yaw PI turns the south side round. The plan carries no yaw column because
+		# there is nothing to choose — a street is two facades looking at each other.
+		var yaw := 0.0 if pos.z < 0.0 else PI
+		var front := Vector3(-sin(yaw), 0.0, cos(yaw))
+		var right := Vector3(cos(yaw), 0.0, sin(yaw))
+		# The plan's shades are FACTORS between this file's palette entries, which
+		# is what keeps budapest_plan.gd free of any dependency on it.
+		var wall := CITY_PLASTER_A.lerp(CITY_PLASTER_B, float(row["wall_shade"]))
+		var roof := CITY_ROOF_TILE.lerp(CITY_ROOF_SLATE, float(row["roof_shade"]))
+
+		# Hull — the ONLY colliding box, and the one whose top face the footprint
+		# names.
+		create_box(
+			local + Vector3(0.0, height * 0.5, 0.0), Vector3(width, height, depth),
+			yaw, rng, block_batch, block_body, 0.0, wall
+		)
+		# Roof — a thin film over the hull top, collide = false, oversailing as
+		# eaves. The player stands on the HULL, inside this film.
+		create_box(
+			local + Vector3(0.0, height + CITY_ROOF_THICKNESS * 0.5, 0.0),
+			Vector3(width + CITY_ROOF_EAVES * 2.0, CITY_ROOF_THICKNESS, depth + CITY_ROOF_EAVES * 2.0),
+			yaw, rng, block_batch, block_body, 0.0, roof, false
+		)
+		# Door and windows — trim, never solid: they sit inside the hull's own
+		# collision box, so making them collide would buy nothing but a snag.
+		var door_h := height * 0.62
+		create_box(
+			local + front * (depth * 0.5) + Vector3(0.0, door_h * 0.5, 0.0),
+			Vector3(width * 0.24, door_h, 0.10), yaw,
+			rng, block_batch, block_body, 0.0, PROP_CRATE, false
+		)
+		# Two windows, SYMMETRIC about the door and above its head — the same
+		# arrangement (and the same two fixes) as `_spawn_city_content`'s houses,
+		# which this recipe is copied from: no one-sided bias, and clear of the
+		# door's box so the two never end up coplanar and z-fighting.
+		for w in 2:
+			var offset := (float(w) - 0.5) * width * 0.32
+			create_box(
+				local + front * (depth * 0.5) + right * offset
+						+ Vector3(0.0, height * 0.78, 0.0),
+				Vector3(width * 0.16, height * 0.22, 0.10), yaw,
+				rng, block_batch, block_body, 0.0, CITY_ROOF_SLATE, false
+			)
+
+		obstacles.append({
+			"pos": local,
+			"radius": 0.5 * sqrt(pow(width + CITY_ROOF_EAVES * 2.0, 2.0) + pow(depth + CITY_ROOF_EAVES * 2.0, 2.0)),
+			"top": height,
+			"climbable": true,
+		})
+
+	# ---- STREET DRESSING ----------------------------------------------------
+	# The three jb7 CITY prop builders, called DIRECTLY rather than through
+	# _build_prop: that function's job is to pick a theme from biome_at, and here
+	# the theme is not in question — this is Budapest, so it is the city arm or
+	# nothing. One piece in each gap between neighbouring houses on the north row
+	# (seven today), alternating sides and cycling the three builders. The row is
+	# FILTERED out of the table rather than counted off the front of it: the south
+	# houses share the table, so a ninth north house typed in would otherwise pair
+	# a north house with a south one and drop the prop at a meaningless midpoint.
+	#
+	# The spots are DERIVED from the house table rather than typed into a second
+	# one, so moving a house moves the crate stack beside it and there is no
+	# second table to fall out of step. Each piece takes its OWN RNG seeded off
+	# its index alone — the builders draw real dimensions, and one seeded off the
+	# shared stream would make a prop's shape depend on how many boxes the chunk
+	# happened to build before it.
+	var north: Array = BudapestPlan.DISTRICT_HOUSES.filter(
+			func(h: Dictionary) -> bool: return h["pos"].z < 0.0)
+	for i in range(north.size() - 1):
+		var a: Vector3 = north[i]["pos"]
+		var b: Vector3 = north[i + 1]["pos"]
+		var wx := (a.x + b.x) * 0.5
+		var wz := -CITY_DISTRICT_PROP_Z if i % 2 == 0 else CITY_DISTRICT_PROP_Z
+		var p_local := Vector3(wx - chunk_center.x, 0.0, wz - chunk_center.z)
+		if not (p_local.x >= -half and p_local.x < half and p_local.z >= -half and p_local.z < half):
+			continue
+
+		var prng := RandomNumberGenerator.new()
+		prng.seed = CITY_STREAM_SEED + i
+		var foot: Dictionary
+		match i % 3:
+			0:
+				foot = _prop_crate_stack(p_local, CITY_DISTRICT_PROP_SIZE, prng, block_batch, block_body)
+			1:
+				foot = _prop_garden_wall(p_local, CITY_DISTRICT_PROP_SIZE, prng, block_batch, block_body)
+			_:
+				foot = _prop_paving_stack(p_local, CITY_DISTRICT_PROP_SIZE, prng, block_batch, block_body)
+		obstacles.append({
+			"pos": p_local,
+			"radius": foot["radius"],
+			"top": foot["top"],
+			"climbable": foot["climbable"],
+		})
+
+
+func spawn_approach_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array) -> void:
+	"""
+	Lay this chunk's slice of the APPROACH + AVENUE coin line: the trail that
+	carries the player from the road's terminal station, through Budapest's gate,
+	up the avenue to the Danube's west bank (bead godot-test1-8gw.3).
+
+	@param chunk_pos: Chunk coordinates this body is laying coins for.
+	@param parent_chunk: The chunk mesh the coins attach to (positions are stored
+	                     chunk-LOCAL, exactly like the road's).
+	@param obstacles: This chunk's block footprints, for the shared perch-or-skip
+	                  rule in _settle_coin_y.
+
+	WHY IT EXISTS AT ALL. _road_coins_at stops at the terminal station, and the
+	terminal is ~900 m west of the Danube. Coins are the headline score since bead
+	.1 retired distance, so without this line the score would sit frozen for the
+	whole walk into the city — the road would read as "you have arrived nowhere".
+
+	ZERO RNG, and that is the design and not an omission. Every coin is at a fixed
+	CITY_COIN_SPACING pitch ALONG BudapestPlan.road_approach_point()'s centreline
+	(BudapestPlan.approach_coin_line resamples it by arc length — a pitch stepped in
+	X would open to 8 * sqrt(1 + slope^2) on a steep seed), so this line is AUTHORED
+	like the rest of the city (the tower_site() ruling one scale up). There is no
+	hash stream here to keep independent of the chunk's, no salt to pick and nothing
+	for a determinism A/B to measure — the only run-varying input is the terminal
+	station itself, which is where the road's own seed enters.
+
+	SEAM-CORRECTNESS, the road's rule unchanged: a coin's position is fixed by its
+	index in that one shared line, but it rides the corridor in BOTH axes, so a coin
+	whose X is in this chunk's column can still belong to the chunk one row over.
+	Every coin is therefore BUCKETED by `world_to_chunk(pos) == chunk_pos` — the
+	chunk that owns it scans the same X window and picks it up, so there are no gaps
+	and no duplicates. Coin identity is Coin.id_at(world) (quantized position), so
+	multiplayer claims work with no mp_manager edit at all.
+
+	Nothing here is a MeshInstance3D or a body of its own: coins are ordinary
+	chunk-parented pickups that unload with the chunk, like every road coin.
+	"""
+	if not spawn_coins or coin_scene == null:
+		return
+
+	var line := _approach_coin_line()
+	if line.is_empty():
+		return
+
+	var center := chunk_to_world(chunk_pos)
+	var half_chunk := chunk_size / 2.0
+	var x0 := center.x - half_chunk
+	var x1 := center.x + half_chunk
+	# The line is in increasing X, so a chunk column outside its span has nothing
+	# to do at all — which is every chunk in the world bar the corridor's own few.
+	if x1 < line[0].x or x0 > line[line.size() - 1].x:
+		return
+
+	for i in range(line.size()):
+		var p: Vector2 = line[i]
+		# Past this chunk's column — X only grows from here, so this is the end of
+		# this chunk's work. (The west bank is where the LINE stops, not a per-coin
+		# test: a chunk east of the river would answer "not wet" for every coin in
+		# turn and pave the whole Pest side.)
+		if p.x > x1:
+			break
+		if p.x < x0:
+			continue
+
+		var world := Vector3(p.x, COIN_GROUND_HEIGHT, p.y)
+		# Bucket by final chunk — the seam rule, identical to the road's.
+		if world_to_chunk(world) != chunk_pos:
+			continue
+
+		var local := Vector3(world.x - center.x, world.y, world.z - center.z)
+		# The shared perch-or-skip rule: perch on a climbable top, drop the coin
+		# where the corridor runs under something sheer (INF). The city's own
+		# geometry is already in `obstacles` — spawn_city_in_chunk runs before the
+		# coin spawners, like every other footprint producer.
+		local.y = _settle_coin_y(local.x, local.z, local.y, obstacles)
+		if is_inf(local.y):
+			continue
+
+		var coin := coin_scene.instantiate()
+		coin.position = local
+		parent_chunk.add_child(coin)
+
+func _approach_coin_line() -> PackedVector2Array:
+	"""
+	The approach + avenue coin line for this run: every coin centre, in increasing
+	X, at a uniform CITY_COIN_SPACING pitch ALONG the corridor.
+
+	@return: The shared, memoized line. Callers must not mutate it.
+
+	Memoized because every chunk in the world asks for it and it is a pure function
+	of the terminal station — which is fixed for the run. new_run() resets it
+	beside _road_terminal_k_cache, the one seeded input it has.
+
+	The resampling itself lives in BudapestPlan.approach_coin_line(), with the rest
+	of the corridor's arithmetic, so the coins and the clearance swath keep reading
+	one geometry.
+	"""
+	if _approach_coin_line_cache.is_empty():
+		# _road_terminal_k() has already extended the cache far enough to cover the
+		# terminal — the ONE place the run's seed reaches this line.
+		var terminal: Vector2 = _road_station(_road_terminal_k()).center
+		_approach_coin_line_cache = BudapestPlan.approach_coin_line(
+				terminal, ROAD_TERMINAL_X, _approach_coin_east_end())
+	return _approach_coin_line_cache
+
+func _approach_coin_east_end() -> float:
+	"""
+	The world X the approach + avenue coin line stops at: the Danube's WEST BANK
+	on the avenue's own line, z = 0.
+
+	@return: The first X at or east of the gate where the avenue is in the water.
+
+	Asked of the river's own polyline rather than written down, so bead .4 can
+	reshape the Danube and this line follows with no edit here — the same "one home
+	for the rule" discipline _settle_coin_y gives the coin perch.
+
+	IT IS THE BAND, NOT danube_wet(), AND THAT DISTINCTION IS THE WHOLE FUNCTION.
+	The avenue runs east along z = 0, and the Danube's z = 0 crossing is exactly
+	where the CHAIN BRIDGE stands — so its deck is a DRY_RECTS row and danube_wet()
+	answers false for every metre of the crossing. A line that stopped at the first
+	wet metre would therefore not stop at all: it would run the full 2.2 km of the
+	rect and out the other side of the city, paving the bridge and all of Pest with
+	the gate's coin trail. A BANK is where the water's edge is; a dry rect is a
+	thing built ON the water and has nothing to say about where the river runs.
+
+	ponytail: the line stops at the west bank, so the 1.4 km of Pest east of the
+	Danube ships with no coin source at all (in_budapest() turns every procedural
+	one off inside the rect). That is this bead's authored scope — the city's own
+	reward line is bead .5's — not an oversight, and it is written down here
+	because a corridor that simply ends reads like one.
+
+	Memoized for the process, and it may be: east of the gate the corridor IS the
+	avenue at z = 0, so this is a pure function of BudapestPlan's authored polyline
+	with no run_seed in it anywhere. new_run() has nothing to reset. The scan is
+	bounded by the city rect's east edge, so a plan whose river missed z = 0
+	entirely would terminate with the line simply running the width of the city
+	rather than looping.
+	"""
+	if not is_inf(_approach_coin_east_end_cache):
+		return _approach_coin_east_end_cache
+	var east := BudapestPlan.BUDAPEST_MAX.x
+	var x := BudapestPlan.GATE.x
+	while x < east:
+		if BudapestPlan.danube_distance(x, BudapestPlan.GATE.z) < BudapestPlan.DANUBE_HALF_WIDTH:
+			east = x
+			break
+		x += BudapestPlan.CITY_COIN_SPACING
+	_approach_coin_east_end_cache = east
+	return east
 
 func _settle_coin_y(local_x: float, local_z: float, ground_y: float, obstacles: Array) -> float:
 	"""
@@ -9261,6 +10752,13 @@ func new_run(forced_seed = null, around: Vector2i = Vector2i.ZERO) -> void:
 	road_stations = {}
 	road_k_min = 1
 	road_k_max = 0
+	# The terminal station is derived from the centreline, so it is exactly as
+	# stale as the cache above: a new seed puts a different station at
+	# ROAD_TERMINAL_X. Reset it HERE, beside what it is derived from, so the two
+	# can never be reset apart.
+	_road_terminal_k_cache = ROAD_TERMINAL_K_UNSET
+	# ...and the approach coin line with it: it is resampled off that station.
+	_approach_coin_line_cache = PackedVector2Array()
 	pending_chunks.clear()
 	pending_removals.clear()
 

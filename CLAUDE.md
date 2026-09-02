@@ -43,7 +43,8 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            active), the no-player degrade, and the row's
 #                            fit in main.tscn against every other widget
 #                            pinned to that corner, F3 included
-#   landmark_selfcheck       every builder fits its declared radius
+#   landmark_selfcheck       every builder fits its declared radius AND its
+#                            declared top
 #   prop_selfcheck           prop/structure footprints, budgets, palettes
 #   enemy_spawn_selfcheck    every species: no spawn in stone, deterministic
 #                            placement, biome dispatch, behaviour, MP identity
@@ -68,6 +69,21 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            through the arm's real seam
 #   perf_selfcheck           frame-spike telemetry (thresholds, correlation, reset)
 #   chunk_stream_selfcheck   ground-first chunk streaming (floor, debt, determinism)
+#   budapest_selfcheck       the authored city: the plan's PURITY read as text (no
+#                            seed, no draw, no hash) and its 22 slots well formed,
+#                            two byte-identical regenerations across DIFFERENT run
+#                            seeds, the per-chunk box/shape budgets, the SLICING
+#                            decision (every box AND every collision shape of a
+#                            giant kept exactly once across its chunks, off the
+#                            slot's seed alone, neither outgrowing a chunk),
+#                            CPU/GPU parity over the forced CITY ground and the
+#                            authored Danube, the approach corridor reaching the
+#                            gate for 50 seeds, all four road consumers stopping
+#                            at T, the five per-system spawner answers (with the
+#                            hunters as the positive control), the Danube
+#                            crocodiles' own stream A/B'd against the shared one,
+#                            the plateau ramps' slope, the difficulty clamp at
+#                            both ends, and the gate-to-river avenue walkable
 #   intro_selfcheck          intro film: web gate, desktop PLAY SOLO path, JS shape
 #   build_version_selfcheck  auto-reload onto a new build: the CI bake contract,
 #                            the web gate, and never mid-run / never in a room
@@ -155,8 +171,10 @@ The biome-predator models — five animals, the GD-SURVEY hunter robot and the n
 hydra, green dragon and roc bosses — share one
 toolkit, `scripts/predator_parts.py`, which carries the orientation / feet-at-y=0 /
 one-vertex-coloured-mesh contract an enemy model must honour and asserts it on every
-build. Running it directly rebuilds and checks all ten:
-`python3 scripts/predator_parts.py` -> `SELFCHECK OK`. Two of its primitives are
+build. Running it directly rebuilds and checks all TWELVE models:
+`python3 scripts/predator_parts.py` -> `SELFCHECK OK`. The two HUMANOID bosses (titan,
+clown) are rebuilt by that loop but carry their own `verify_*`, because the shared one
+demands a quadruped's longer-than-wide silhouette — see the note over the loop. Two of its primitives are
 composed INTO models rather than being models — `wings()` (the winged bosses' folded
 silhouette; they hop, nothing in this game flies) and `necks()` (a fan of necks and
 heads off ONE point on the spine, the multi-head capability the hydra spends) — so each
@@ -233,6 +251,67 @@ and its fog-exempt horizon impostor are parented to the terrain **manager** (the
 precedent) so chunk unloading can never free the building you are standing in. The
 shell is instanced lazily on a chunk-boundary crossing and **shares `TOWER_RADIUS`**
 rather than restating any distance of its own. `tower_shell_selfcheck` pins all of it.
+
+**BUDAPEST IS AUTHORED TOO, AND THAT IS WHY IT IS NOT A SECOND EXCEPTION.** The city
+(`scripts/budapest_plan.gd`, epic `godot-test1-8gw`) is the tower's *authorship* model
+with the tower's *lifetime* model deliberately refused: one `const` plan in the
+`tower_plans.gd` idiom — no `run_seed`, no `randf`, no `hash(` anywhere in the file, and
+`budapest_selfcheck` check 1 reads it as TEXT to keep it that way — but every cell of it
+is streamed by `create_chunk` through `create_box()` / `block_batch` / the chunk's single
+`BlockCollision`, **chunk-parented and therefore freed by chunk unloading like any prop**.
+The arithmetic is the whole argument: the 2.2 x 2.2 km city is 2,025 chunk cells against the web
+build's 49-chunk residency, so a manager-parented shell would hold the entire city in
+memory forever. The tower stays the one lifetime exception precisely *because* the city is
+not one. `in_budapest()` is the single home of the membership test on this side, the way
+`tower_excludes()` is the tower's, and it delegates to `BudapestPlan.contains()` so the
+rect is never written down twice. Parity is the same contract one clause wider — forced
+CITY ground, the authored Danube band and the dry cutouts (bridge decks, Margaret Island)
+live in `biome_at`/`is_river_at` **and** `ground.gdshader`, edited together (`_biome_noise`
+itself is untouched — the city is an OVERRIDE above the field, not a change to it).
+
+Three rules of the city's own, all pinned by `budapest_selfcheck`:
+
+- **A landmark bigger than a chunk is SLICED, not re-homed.** The Parliament is 268 m
+  long; the chunk that "owns" it has unloaded by the time you reach its far end. So every
+  chunk whose square meets a slot's disc runs that slot's builder into a scratch batch /
+  body / node and keeps only the boxes whose CENTRE lands in its own square (half-open on
+  both axes, so a seam-straddling box lands in exactly one chunk — never doubled, never
+  missing). **The centre rule slices a LANDMARK, not a BOX**, and these builders emit
+  single boxes far bigger than a chunk (Buda Castle's terrace is 70 x 300 m), so every
+  oversized axis-aligned box is first cut on the world chunk grid by
+  `split_city_boxes_on_chunk_grid()` — without it a 300 m palace lives in one 50 m chunk
+  and vanishes at the web build's 150 m residency edge while you walk its far end. A
+  ROTATED box cannot be cut into boxes and keeps the centre rule; `budapest_selfcheck`
+  check 5 fails any box, turned or not, bigger than a chunk. **The splitter cuts the MESH
+  and the COLLISION BODY on ONE shared predicate** (`_is_axis_aligned_basis`): `create_box`
+  hands the two halves different bases for the same box — the batch entry carries the
+  dimensions, the shape node only the rotation — so a second spelling of "axis-aligned"
+  is how they drift into a drawn wall whose collision lives in another chunk. Check 5
+  tallies both halves. It is nearly free because `landmark_builders.gd`'s builders are pure functions
+  of (centre, rng) whose stream touches **colour only**. **The seed is the SLOT INDEX and
+  nothing else** — no `run_seed` (the city is authored) and above all no chunk coordinate,
+  or the building comes out tie-dyed along its seams. The two rejected answers are recorded
+  in `_spawn_city_landmarks_in_chunk`'s docstring: manager-parenting the giants (a dozen
+  more lifetime exceptions) and a wider residency radius for city chunks (spending the
+  exact budget the decision protects).
+- **The road's four CONSUMERS stop at the terminal station `T`; the road itself does not.**
+  `_road_terminal_k()` is the last station at or west of `ROAD_TERMINAL_X`, and the caps
+  are numbered 1–4 in the code: road coins, road clearance, road bosses
+  (`endless_terrain.gd`) and the minimap's drawn line (`minimap_hud.gd`).
+  **`_road_extend_to_x` is deliberately NOT capped** — it is the station cache, and a cache
+  that stops growing hangs every forward loop that walks it until it passes an X. From `T`
+  the player is carried on by `spawn_approach_coins_in_chunk`, a deterministic corridor
+  (`BudapestPlan.road_approach_point()`) from `T` through the gate to the Danube's west
+  bank: the one seam where the seeded road meets the authored city.
+- **The spawner policy inside the rect is PER SYSTEM, and it is emphatically not
+  `tower_excludes()`.** The tower's disc has one answer for everybody; the city wants a
+  different answer per spawner, so each one reads `in_budapest()` and decides for itself:
+  procedural props, structures, artifacts, camps, chests, geo landmarks and biome content
+  **off**; ordinary chunk crocodiles **off** (the early return sits *above* the seed mix,
+  so a city chunk never draws from that stream at all and nothing outside the rect shifts);
+  **hunters ON** (GD-SURVEY hunts every band — check 9 carries them as a positive control);
+  **Danube crocodiles ON**, on their own salt and their own coordinate primes inside the
+  authored band; and coins **authored**, via the approach corridor.
 
 `scripts/tower_interior.gd` is the same idea one floor in: a second box table for the
 two-storey keep, plus eight hand-planned storeys over it (see below) rising to the CELL

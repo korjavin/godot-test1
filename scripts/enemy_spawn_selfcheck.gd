@@ -134,16 +134,40 @@ const DETERMINISM_FIELD: int = 7
 const DETERMINISM_CONTROL_SEED: int = 777
 
 ## How many consecutive road-station BOSSES check 11 walks, starting at boss 1.
-## Forty is chosen for REACH, not for sample size: a boss owns every
-## BOSS_INTERVAL_STATIONS-th station, so forty of them stretch roughly twelve
-## kilometres of centerline and drag the dispatch across most of the biome bands
-## and a river or two. The sweep's 289-chunk fields contain ONE boss each, which
-## is why this check exists as its own walk rather than as a branch in there — one
-## body cannot show that a rule keyed on a coordinate answers different questions
-## at different coordinates.
+## A boss owns every BOSS_INTERVAL_STATIONS-th station, so forty of them would
+## stretch roughly twelve kilometres of centerline. The sweep's 289-chunk fields
+## contain ONE boss each, which is why this check exists as its own walk rather
+## than as a branch in there — one body cannot show that a rule keyed on a
+## coordinate answers different questions at different coordinates.
+##
+## SINCE BEAD godot-test1-8gw.3 THIS IS A CEILING, NOT A COUNT. The coin road now
+## ENDS at endless_terrain.ROAD_TERMINAL_X (1450 m, just west of Budapest's gate)
+## — past it there is no road to guard and spawn_bosses_in_chunk places nothing.
+## One road is therefore ~5 bosses long, not forty, and the walk clamps itself per
+## seed to what the terminal station allows. Left at forty so the clamp is visible
+## as a clamp; raising it alone buys nothing.
 const BOSS_DISPATCH_COUNT: int = 40
 
-## Fewest of those bosses — over every seed in RUN_SEEDS together — that must
+## The seeds check 11's boss walk runs, and the reason it is its OWN list rather
+## than RUN_SEEDS.
+##
+## REACH NOW COMES FROM SEED COUNT, NOT FROM DISTANCE. Before the road had a
+## terminal station, forty bosses on two roads dragged the dispatch across twelve
+## kilometres of biome bands and a river or two. A 1450 m road crosses one or two
+## bands and almost never a river, so the same coverage has to be bought by
+## walking MANY short roads instead of two long ones: every seed re-offsets the
+## biome domain, so each one presents its five stations in a different band mix.
+##
+## Fourteen seeds put ~70 stations on the board — all six bands and three river
+## crossings, measured 2026-09-02. The last two are in the list for the RIVER arm
+## specifically (they are the only two crossings in seeds 1..40) and the comment
+## is here so a future edit does not drop them as duplicates of nothing.
+const BOSS_DISPATCH_SEEDS: Array[int] = [
+	12345, 20260826, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+	19, 39,
+]
+
+## Fewest of those bosses — over every seed in BOSS_DISPATCH_SEEDS together — that must
 ## actually reach the world before check 11's verdict means anything. It is well
 ## under the walk's length on purpose: a boss whose first candidate is buried in
 ## geometry is skipped by design (see spawn_bosses_in_chunk's claim rule), so a
@@ -3588,13 +3612,18 @@ func _check_boss_dispatch(terrain_script: GDScript) -> void:
 	var mismatches := 0
 	var worst := ""
 
-	# EVERY seed in RUN_SEEDS, not just one, and the reason is the river arm: a
-	# river is a thin contour, so whether the first forty stations of one
-	# particular road happen to cross one is luck (seed 12345's first river boss
-	# is number 150). Walking the whole seed list is what makes the arm the owner
-	# named actually get asked, and the gate below says so out loud instead of
-	# leaving it to chance.
-	for run_seed: int in RUN_SEEDS:
+	## How many boss stations the walk actually offered, summed over the seeds —
+	## the denominator every verdict below is reported against. It is COUNTED and
+	## not `count * seeds` because the road's terminal station falls where the run
+	## seed puts it, so one seed offers five bosses and the next one four.
+	var offered := 0
+
+	# EVERY seed in BOSS_DISPATCH_SEEDS, not just one, and the reason is the river
+	# arm: a river is a thin contour, so whether one particular 1450 m road happens
+	# to cross one is luck. Walking many short roads is what makes the arm the
+	# owner named actually get asked, and the gate below says so out loud instead
+	# of leaving it to chance.
+	for run_seed: int in BOSS_DISPATCH_SEEDS:
 		var terrain := Node3D.new()
 		terrain.set_script(terrain_script)
 		terrain.set_run_seed(run_seed)
@@ -3612,7 +3641,16 @@ func _check_boss_dispatch(terrain_script: GDScript) -> void:
 			terrain._road_extend_to_x(0.0, reach)
 			reach *= 1.5
 
-		for i in range(1, BOSS_DISPATCH_COUNT + 1):
+		# CLAMPED TO THE ROAD THAT EXISTS. spawn_bosses_in_chunk places nothing past
+		# the terminal station (bead godot-test1-8gw.3), so asking about boss 40 on
+		# a road that ends at boss 5 would not test the dispatch — it would just
+		# count four hundred absences and report the cap as a coverage failure.
+		# Read from the terrain, never restated here, so moving ROAD_TERMINAL_X
+		# moves this walk with it.
+		var last_boss: int = mini(BOSS_DISPATCH_COUNT,
+				terrain._road_terminal_k() / _boss_interval)
+		offered += last_boss
+		for i in range(1, last_boss + 1):
 			var centre: Vector2 = terrain._road_station(i * _boss_interval).center
 			var in_river: bool = terrain.is_river_at(Vector3(centre.x, 0.0, centre.y))
 			var biome: int = terrain.biome_at(centre.x, centre.y)
@@ -3689,7 +3727,7 @@ func _check_boss_dispatch(terrain_script: GDScript) -> void:
 			parent.free()
 
 	print("boss dispatch: %d of %d road bosses reached the world across %d biome"
-			% [measured, BOSS_DISPATCH_COUNT * RUN_SEEDS.size(), bands.size()]
+			% [measured, offered, bands.size()]
 			+ " band(s); %d of their stations stand in a river; BIOME_BOSS has %d"
 					% [rivers, _biome_boss.size()]
 			+ " row(s); kinds spawned %s" % kinds)
@@ -3702,7 +3740,7 @@ func _check_boss_dispatch(terrain_script: GDScript) -> void:
 				+ " different animals on the same road. First: %s" % worst)
 	if measured < BOSS_DISPATCH_MIN_MEASURED:
 		_fail("only %d of %d road bosses actually spawned — the dispatch verdict"
-				% [measured, BOSS_DISPATCH_COUNT * RUN_SEEDS.size()]
+				% [measured, offered]
 				+ " above was taken over almost nothing")
 	if bands.size() < BOSS_DISPATCH_MIN_BANDS:
 		_fail("the %d bosses measured stand in only %d biome band(s) %s — the"
