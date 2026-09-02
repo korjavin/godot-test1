@@ -399,6 +399,10 @@ const STRUCTURE_THEMES: Dictionary = {
 ## crocodile's detection radius is 15 m, so ten bodies tiled the 2500 m^2 with
 ## overlapping detection discs and left nowhere to stand. Three leaves gaps you
 ## can rest in while a chunk you cross still holds a threat.
+##
+## NOT THE FINAL COUNT since bead godot-test1-7ed: spawn_crocodiles_in_chunk adds
+## the distance gradient to this and then HALVES the sum (owner, 2026-09-02). Read
+## this as the gradient's base; the real per-chunk count is the target there.
 @export var crocodiles_per_chunk: int = 3
 
 ## Minimum distance between crocodiles (in meters)
@@ -751,8 +755,11 @@ const COIN_TOWER_CLEARANCE: float = 0.7
 @export var road_width_max: float = 20.0
 
 ## Coins CONSIDERED per slice, and the chance each one actually spawns. Average coins per
-## slice = road_coin_slots * road_coin_chance. Lower the chance for a sparser, less obvious
-## trail; raise it (or the slots) for a denser swath. Keeping the average near ~1 makes the
+## slice = road_coin_slots * road_coin_chance * 0.7 — the 0.7 is the deterministic 30%
+## THINNING at the bottom of _road_coins_at (bead godot-test1-7ed), which is a post-draw
+## skip and therefore not expressible as a lower chance here: lowering the chance would
+## re-scatter every surviving coin, and the point of the thinning is that it does not.
+## Lower the chance for a sparser, less obvious trail; raise it (or the slots) for a denser swath. Keeping the average near ~1 makes the
 ## band feel like scattered territory, not a carpet. Skipped slots are what give the road
 ## its irregular, "not so obvious" look.
 @export var road_coin_slots: int = 3
@@ -835,16 +842,34 @@ const BOSS_INTERVAL_STATIONS: int = 50
 
 ## Size schedule: boss `i` scales the whole croc body by
 ## min(BOSS_BASE_SCALE * (1 + (i-1) * BOSS_GROWTH), BOSS_MAX_SCALE)
-## → 2.5, 3.375, 4.25, 5.125, 6.0, 6.0, ... Each boss is visibly bigger than the
-## last until the cap. BOSS_BASE_SCALE (2.5x) is clearly bigger than the biggest
+## → 3.75, 5.0625, 6.375, 7.6875, 9.0, 9.0, ... Each boss is visibly bigger than the
+## last until the cap. BOSS_BASE_SCALE (3.75x) is clearly bigger than the biggest
 ## regular croc's random +25% size roll, so a boss always reads as "not a normal one".
-const BOSS_BASE_SCALE: float = 2.5
+const BOSS_BASE_SCALE: float = 3.75
 const BOSS_GROWTH: float = 0.35
-const BOSS_MAX_SCALE: float = 6.0
+const BOSS_MAX_SCALE: float = 9.0
 
 ## A small deterministic lateral offset off the centerline (±this, in meters), so
 ## bosses don't all stand dead-center on the road like a row of toll booths.
-const BOSS_LATERAL_MAX: float = 4.0
+##
+## WIDENED 4.0 -> 9.0 WITH THE 1.5x SIZE BUMP (bead godot-test1-9k7), and it is
+## the half of that bump that actually cost something. The candidate walk in
+## spawn_bosses_in_chunk rejects any spot within BOSS_FOOTPRINT_RADIUS_PER_SCALE
+## * scale of an obstacle — 6.3 m at the new 9x cap where it was 4.2 m at 6x — so
+## at the old ±4 m every candidate a boss had lay inside one 8 m-wide window and
+## a single mound near the station killed all of them. MEASURED over 25 seeds /
+## 126 road stations: 105 bosses reached the world at the old scales, 91 at the
+## new ones with this still at 4.0, and 106 with 9.0 + BOSS_PLACE_TRIES 8. More
+## tries alone bought 1 (92) — the band, not the draw count, was the bound.
+##
+## THE CEILING ON THIS NUMBER IS THE CAMP/LANDMARK EXCLUSION, which is one
+## inequality per feature and is stated at CAMP_ROAD_CLEARANCE and
+## LANDMARK_ROAD_CLEARANCE (landmark_selfcheck re-checks its half from the live
+## constants). With BOSS_FORWARD_OFFSET 8.0 the boss's reach off a station centre
+## is hypot(8, 9) = 12.04 m, and the tightest of the two bounds allows
+## 22.0 - 9.5 = 12.5 — i.e. 0.46 m of slack. Raising this further means raising
+## those clearances first.
+const BOSS_LATERAL_MAX: float = 9.0
 
 ## Spawn a bit AHEAD of the owning station along the road tangent, so the player
 ## sees the boss looming up the road rather than materializing beside them.
@@ -854,9 +879,9 @@ const BOSS_FORWARD_OFFSET: float = 8.0
 ## crocodile's collision capsule LIES DOWN (piglet_crocodile.tscn rotates the
 ## 1.4 m capsule onto its side), so its widest horizontal reach is half that
 ## length — 0.7 m at body scale 1. Multiplying by the boss's scale is the whole
-## point: a 6x boss needs ~4.2 m of clearance from a block where a normal
-## crocodile needs ~0.7, so the fixed min_object_clearance that the ordinary
-## crocodile spawner uses would be far too small here.
+## point: a 9x boss (BOSS_MAX_SCALE) needs ~6.3 m of clearance from a block where
+## a normal crocodile needs ~0.7, so the fixed min_object_clearance that the
+## ordinary crocodile spawner uses would be far too small here.
 const BOSS_FOOTPRINT_RADIUS_PER_SCALE: float = 0.7
 
 ## How many deterministic lateral candidates a boss tries before it is skipped
@@ -865,7 +890,14 @@ const BOSS_FOOTPRINT_RADIUS_PER_SCALE: float = 0.7
 ## the draw that existed before this list did, so the boss schedule (which
 ## station, what size) and the placement of every unobstructed boss are
 ## byte-for-byte what they were.
-const BOSS_PLACE_TRIES: int = 4
+##
+## 4 -> 8 with the 1.5x size bump, and the honest measurement is that this is the
+## SMALLER half of that fix: at ±4 m lateral, 8 tries bought one extra boss over
+## 126 stations. It is worth having beside the widened BOSS_LATERAL_MAX (which
+## bought 8 more) because the two multiply — a wider band with too few draws
+## samples it too sparsely — but 12 tries bought only one further boss (107), so
+## this is where the curve flattens.
+const BOSS_PLACE_TRIES: int = 8
 
 ## Fixed seed for the boss placement RNG — its OWN independent hash stream (like
 ## ROAD_COIN_SEED), mixed with the boss index and run_seed as
@@ -982,11 +1014,15 @@ const ARTIFACT_GLOW_ENERGY: float = 3.0
 ## case on screen to a handful of extra unshadowed draws.
 const ARTIFACT_MAX_ACCENTS: int = 4
 
-## Coin reward: 3-5 ordinary coins ring the artifact's base (ring radius =
+## Coin reward: 2-4 ordinary coins ring the artifact's base (ring radius =
 ## footprint radius + a pad in [PAD_MIN, PAD_MAX]) plus exactly one gem at the
 ## centre — the incentive to detour off the coin road.
-const ARTIFACT_COIN_MIN: int = 3
-const ARTIFACT_COIN_MAX: int = 5
+##
+## 3-5 -> 2-4 with every other reward pair, bead godot-test1-7ed (owner, 2026-09-02:
+## "scale down amount of coins, 30% less"). The GEM is untouched: it is the
+## artifact's whole distinction, and one is already the minimum a thing can pay.
+const ARTIFACT_COIN_MIN: int = 2
+const ARTIFACT_COIN_MAX: int = 4
 const ARTIFACT_COIN_RING_PAD_MIN: float = 1.5
 const ARTIFACT_COIN_RING_PAD_MAX: float = 4.0
 
@@ -1065,14 +1101,17 @@ const CAMP_RADIUS: float = 9.4
 ## distance to STATION CENTRES (that is all _road_lateral_distance computes), and
 ## a boss does NOT stand on its station centre: _boss_at offsets it
 ## BOSS_FORWARD_OFFSET (8.0 m) along the tangent AND up to BOSS_LATERAL_MAX
-## (4.0 m) across it. Both legs must appear in the bound, or the invariant is
+## (9.0 m) across it. Both legs must appear in the bound, or the invariant is
 ## checked against a number 8 m smaller than the real one:
 ##     CAMP_ROAD_CLEARANCE > CAMP_RADIUS + sqrt(BOSS_FORWARD_OFFSET^2 + BOSS_LATERAL_MAX^2)
-##     22.0                > 9.4         + sqrt(8.0^2 + 4.0^2) = 9.4 + 8.94 = 18.34  ✓
-## i.e. 3.66 m of slack, not the 8.6 the lateral leg alone suggests. (The real
+##     22.0                > 9.4         + sqrt(8.0^2 + 9.0^2) = 9.4 + 12.04 = 21.44  ✓
+## i.e. 0.56 m of slack — it was 3.66 before bead godot-test1-9k7 widened the
+## lateral band from 4.0 to 9.0 to find spots for a 9x boss. (The landmark's
+## copy of this inequality is tighter still, 0.46 m, and is the one that binds.)
+## (The real
 ## clearance is larger still — stations are only _road_spacing() 6 m apart, so
-## the boss is in practice ~4.5 m from its NEAREST station centre rather than
-## 8.94 — but the hypotenuse is the bound that holds without assuming anything
+## the boss is in practice closer to its NEAREST station centre than the
+## hypotenuse says — but the hypotenuse is the bound that holds without assuming anything
 ## about station spacing.) That inequality is the WHOLE boss exclusion —
 ## spawn_bosses_in_chunk needs no edit and no extra test. Re-check this line if
 ## ANY of the four constants named in it is retuned, BOSS_FORWARD_OFFSET included.
@@ -1135,8 +1174,9 @@ const CAMP_EMBER_COLOR := Color(1.0, 0.55, 0.18)
 const CAMP_EMBER_ENERGY: float = 2.5
 
 ## Coin reward: a couple of scattered coins near the fire. NO gem — see the banner.
-const CAMP_COIN_MIN: int = 2
-const CAMP_COIN_MAX: int = 4
+## 2-4 -> 1-3, the 30% reward trim of bead godot-test1-7ed.
+const CAMP_COIN_MIN: int = 1
+const CAMP_COIN_MAX: int = 3
 
 # ----------------------------------------------------------------------------
 # TREASURE CHESTS (small, common, opened on touch for a coin shower)
@@ -1146,9 +1186,9 @@ const CAMP_COIN_MAX: int = 4
 ## and COMMONEST of the three — a snack, not a monument. The reward hierarchy is
 ## the whole reason each exists at its own rarity:
 ##
-##   artifact  ~1 chunk in 23  huge ruin, 3-5 coins AND the one guaranteed GEM
-##   camp      ~1 chunk in 31  a whole village, 2-4 coins, no gem
-##   chest     ~1 chunk in 13  a 1.3 m box, 8-15 coins in a burst, NO GEM
+##   artifact  ~1 chunk in 23  huge ruin, 2-4 coins AND the one guaranteed GEM
+##   camp      ~1 chunk in 31  a whole village, 1-3 coins, no gem
+##   chest     ~1 chunk in 13  a 1.3 m box, 6-11 coins in a burst, NO GEM
 ##
 ## A chest gets NO gem for exactly the reason a camp gets none: the guaranteed gem
 ## is the artifacts' distinction, and handing one to the commonest landmark in the
@@ -1253,8 +1293,9 @@ const CHEST_BRASS := Color(0.72, 0.55, 0.20)
 ## is drawn from the chest's own seeded RNG, so it is deterministic within a run.
 ## See treasure_chest.gd for why this is N x collect_coin(1) and never
 ## collect_coin(N): the streak machinery counts pickups, not value.
-const CHEST_COINS_MIN: int = 8
-const CHEST_COINS_MAX: int = 15
+## 8-15 -> 6-11, the 30% reward trim of bead godot-test1-7ed.
+const CHEST_COINS_MIN: int = 6
+const CHEST_COINS_MAX: int = 11
 ## Comfortably inside the player's STREAK_WINDOW (2.5 s), so the whole burst is
 ## one unbroken streak chain.
 const CHEST_BURST_DURATION: float = 0.8
@@ -1282,12 +1323,16 @@ const TREASURE_CHEST_SCRIPT := preload("res://scripts/treasure_chest.gd")
 ##
 ## The reward hierarchy this slots into, and why each rarity is what it is:
 ##
-##   chest     ~1 chunk in 13   a 1.3 m box, 8-15 coins in a burst, NO GEM
-##   artifact  ~1 chunk in 23   huge ruin, 3-5 coins AND the one guaranteed GEM
-##   camp      ~1 chunk in 31   a whole village, 2-4 coins, no gem
-##   landmark  ~1 chunk in 40-60  a famous place, 3-5 coins, NO GEM, plus a fact
+##   chest     ~1 chunk in 13   a 1.3 m box, 6-11 coins in a burst, NO GEM
+##   artifact  ~1 chunk in 23   huge ruin, 2-4 coins AND the one guaranteed GEM
+##   camp      ~1 chunk in 31   a whole village, 1-3 coins, no gem
+##   landmark  ~1 chunk in 40-60  a famous place, 2-4 coins, NO GEM, plus a fact
 ##
-## REWARD DECISION — a small coin ring (LANDMARK_COIN_MIN..MAX, 3-5 ordinary
+## The four pairs were 8-15 / 3-5 / 2-4 / 3-5 until bead godot-test1-7ed trimmed
+## every one of them by ~30% (owner, 2026-09-02). The HIERARCHY is what matters
+## here and it is unchanged — they were scaled together, not re-ranked.
+##
+## REWARD DECISION — a small coin ring (LANDMARK_COIN_MIN..MAX, 2-4 ordinary
 ## coins) and DELIBERATELY NO GEM. This is exactly the rule that kept gems out of
 ## camps and chests: the guaranteed gem is the ARTIFACTS' distinction, and a
 ## fourth source of one would flatten "an ancient prize worth a detour" into
@@ -1491,10 +1536,12 @@ const LANDMARK_RADIUS: float = 9.5
 ## arithmetic. The test measures distance to STATION CENTRES (that is all
 ## _road_lateral_distance computes), and a boss does NOT stand on its station
 ## centre: _boss_at offsets it BOSS_FORWARD_OFFSET (8.0 m) along the tangent AND
-## up to BOSS_LATERAL_MAX (4.0 m) across it, so BOTH legs belong in the bound:
+## up to BOSS_LATERAL_MAX (9.0 m) across it, so BOTH legs belong in the bound:
 ##     LANDMARK_ROAD_CLEARANCE > LANDMARK_RADIUS + sqrt(BOSS_FORWARD_OFFSET^2 + BOSS_LATERAL_MAX^2)
-##     22.0                    > 9.5             + sqrt(8.0^2 + 4.0^2) = 9.5 + 8.94 = 18.44  ✓
-## i.e. 3.56 m of slack, NOT the 8.5 the lateral leg alone suggests. That single
+##     22.0                    > 9.5             + sqrt(8.0^2 + 9.0^2) = 9.5 + 12.04 = 21.54  ✓
+## i.e. 0.46 m of slack — it was 3.56 before bead godot-test1-9k7 widened the
+## lateral band from 4.0 to 9.0 so a 9x boss could find a clear spot, and this is
+## the TIGHTEST of the two boss exclusions (the camp's has 0.56). That single
 ## inequality IS the whole boss exclusion — spawn_bosses_in_chunk needs no edit
 ## and no extra test. Re-check this line if ANY of the four constants named in it
 ## is retuned, BOSS_FORWARD_OFFSET included.
@@ -1524,8 +1571,9 @@ const LANDMARK_EDGE_MARGIN: float = 12.0
 ## number beside them.
 
 ## Coin reward: a small ring round the base. NO GEM — see the banner above.
-const LANDMARK_COIN_MIN: int = 3
-const LANDMARK_COIN_MAX: int = 5
+## 3-5 -> 2-4, the 30% reward trim of bead godot-test1-7ed.
+const LANDMARK_COIN_MIN: int = 2
+const LANDMARK_COIN_MAX: int = 4
 ## How far outside the shape's own radius the ring sits, so the coins are found
 ## by walking AROUND the landmark rather than by clipping into it.
 ##
@@ -1761,6 +1809,125 @@ const CITY_AVENUE_STONE := Color(0.62, 0.60, 0.56)
 const CITY_DISTRICT_PROP_Z: float = 14.0
 const CITY_DISTRICT_PROP_SIZE: float = 2.0
 
+## ---------------------------------------------------------------------------
+## THE CITY BLOCKS (bead godot-test1-8gw.9) — how a street wall is DRAWN
+## ---------------------------------------------------------------------------
+##
+## The LAYOUT is BudapestPlan's (which cell, which wing, how deep, how many
+## storeys); everything below is the PALETTE AND THE THICKNESSES, which is the
+## same division of labour DISTRICT_HOUSES already runs under — the plan carries
+## shade FACTORS and this file carries the colours they lerp between.
+##
+## ONE FACADE BOX PER BUILDING, NEVER ONE BOX PER WINDOW. A 46 m block side is
+## two segments, each ONE colliding hull, and the articulation that makes it read
+## as a street is VERTEX-COLOURED BANDS lying against it: a ground-floor
+## shopfront, a balcony course, a roof cornice and one doorway. Seven boxes buy a
+## whole side of a Budapest block; a window grid would buy a tenth of one and
+## blow CITY_CHUNK_BOX_BUDGET on the first cell.
+##
+## THE STREAM IS PER-CELL AND FIXED-SALT — the tower furniture precedent
+## (`_plan_dressing`'s FIXED salt, never run_seed). Budapest is authored, so the
+## facade a player photographs has to be the same facade every run and for every
+## peer; and a cell's stream must not depend on which chunk is asking, because a
+## block straddles up to four of them. Both fall out of seeding one RNG off
+## (cell.x, cell.y, CITY_BLOCK_SALT) and drawing every parameter ANYTHING READS
+## before emitting anything — see _build_city_block for why that qualifier is
+## exact, and why create_box's own ramp draws after it are padding that may
+## legitimately differ between two chunks slicing one cell.
+const CITY_BLOCK_SALT: int = 0x8_DA9E_571
+
+## A storey, in metres. 4.2 is a tall Pest piano-nobile floor rather than a
+## modern 3 m one, which is what makes a 5-storey block read as 21 m of eclectic
+## facade instead of a suburban office.
+const CITY_STOREY_HEIGHT: float = 4.2
+
+## The bands. Each is a thin, NON-COLLIDING box lying against the hull and
+## standing `*_PROUD` metres off its faces on the cross axis — the hull is the
+## only thing with a collision shape, so a band can never be something to snag on.
+## EVERY PROUD IS POSITIVE, and it has to be: the batch is opaque boxes with no
+## cutouts, so a band set back INSIDE the hull is a band nobody can see — see
+## CITY_WINDOW_PROUD, which is where that was learned the expensive way.
+const CITY_SHOPFRONT_HEIGHT: float = 2.9    # ground floor, one storey of glass
+const CITY_SHOPFRONT_PROUD: float = 0.16
+const CITY_AWNING_THICKNESS: float = 0.22
+const CITY_AWNING_PROUD: float = 0.62       # oversails the shopfront it shades
+const CITY_BALCONY_THICKNESS: float = 0.26
+const CITY_BALCONY_PROUD: float = 0.52
+const CITY_CORNICE_THICKNESS: float = 0.55
+const CITY_CORNICE_PROUD: float = 0.46
+const CITY_DOOR_WIDTH: float = 1.5
+const CITY_DOOR_HEIGHT: float = 2.4
+const CITY_DOOR_PROUD: float = 0.10
+
+## ONE WINDOW ROW PER STOREY, and it is a ROW and not a window.
+##
+## The owner asked for Google-Street-View Budapest and the first cut shipped
+## blank slabs: a 21 m facade with a single cornice line on it reads as a wall,
+## not as a building. What makes a real facade legible at 30 m is the HORIZONTAL
+## RHYTHM of its window courses, so each storey above the shopfront gets one
+## recessed dark band the full width of the facade. That is ONE box per storey
+## against the ~30 a window grid would cost, and it is the same trade the
+## shopfront and cornice already make.
+##
+## THE TWO-TONE IS FREE: the band's glass colour alternates by storey parity
+## (CITY_WINDOW_DARK / CITY_WINDOW_LIT), so a five-storey facade reads as five
+## distinct courses rather than one striped texture, and it costs no extra box.
+##
+## IT STANDS PROUD, AND IT HAS TO. The first cut RECESSED these bands into the
+## wall, which is what a real window reveal does and which is invisible here: the
+## batch is opaque boxes with no cutouts, so a band inside the hull is a band you
+## cannot see, and all it actually produced was z-fighting where the two surfaces
+## nearly met. 6 cm proud is flush to the eye at street distance and is the only
+## thing that makes the course exist at all.
+const CITY_WINDOW_HEIGHT: float = 1.60
+const CITY_WINDOW_PROUD: float = 0.06
+const CITY_WINDOW_SILL: float = 1.15        # sill height above the storey floor
+
+## The block palette. Walls reuse the CITY_PLASTER_A/B pair the gate district's
+## houses lerp between, so Budapest is ONE city and not two; the rest is new
+## because a 5-storey facade has parts a 2.5 m cottage does not.
+const CITY_SHOPFRONT_GLASS := Color(0.20, 0.22, 0.25)   # dark glazing + signage
+const CITY_BALCONY_IRON := Color(0.24, 0.24, 0.26)      # wrought-iron course
+const CITY_DOOR_WOOD := Color(0.30, 0.20, 0.14)         # the carriage gateway
+const CITY_WINDOW_DARK := Color(0.20, 0.23, 0.27)       # a shaded course
+const CITY_WINDOW_LIT := Color(0.29, 0.33, 0.38)        # ...and a sunlit one
+const CITY_AWNING_A := Color(0.60, 0.25, 0.22)          # shop canvas, red
+const CITY_AWNING_B := Color(0.26, 0.42, 0.33)          # ...and green
+
+## THE FACADE HUES, one array per bank of the river, and a building picks ONE.
+##
+## A block whose eight buildings are eight lerps along a single cream-to-grey
+## ramp is a block of one building repeated. Pest is ECLECTIC — the real thing is
+## cream beside ochre beside grey-green beside rose — and Buda under the castle
+## is whitewash, ochre and brick red. The per-building tint below still runs, but
+## it now varies a chosen hue instead of choosing the hue.
+const CITY_FACADE_PEST: Array[Color] = [
+	Color(0.90, 0.86, 0.75),   # cream
+	Color(0.84, 0.70, 0.44),   # ochre
+	Color(0.69, 0.73, 0.65),   # grey-green
+	Color(0.84, 0.69, 0.67),   # rose
+	Color(0.77, 0.75, 0.71),   # stone grey
+]
+const CITY_FACADE_BUDA: Array[Color] = [
+	Color(0.93, 0.92, 0.87),   # whitewash
+	Color(0.86, 0.73, 0.49),   # ochre
+	Color(0.73, 0.44, 0.35),   # brick red
+]
+
+## How far a building's own draw may shade its chosen hue toward the weathered
+## render, 0..1. Small: this is grime and sun, not a second colour choice.
+const CITY_FACADE_TINT_MAX: float = 0.30
+
+## The share of PEST buildings that carry a balcony course. Balconies everywhere
+## are a texture; balconies on two facades of a block are a detail the eye
+## lands on. Buda's 2-3 storey houses get none at all.
+const CITY_BALCONY_CHANCE: float = 0.42
+
+## How far a block's own facade stream may push a segment off the cell's base
+## storey count, in storeys. +-1 is a stepped roofline; more and the block stops
+## reading as one period.
+const CITY_BLOCK_STOREY_JITTER: int = 1
+
 ## THE DANUBE'S CROCODILES — the one predator the city rect does NOT turn off,
 ## and the whole reason the spawner policy is per-system instead of one
 ## tower_excludes() disc (DEC-9). Pest gets no cacti, no camps and no biome
@@ -1832,18 +1999,33 @@ const DANUBE_SLOT_BASE: int = 500
 ## 2.2 km rect against them and prints the worst one it found beside each ceiling.
 ##
 ## MEASURED over the whole rect (2025 chunks, 2026-09-02, with ALL 22 landmark
-## builders placed and the four bridge decks built — the last re-measure was
-## 69 / 15 / 7.4 ms with the seven wave-C slots still empty reservations): worst
-## 92 boxes, worst 15 collision shapes, worst 3.0 ms. The ceilings keep headroom
-## over those, and the ms budget is deliberately loose because it is wall-clock on
+## builders placed, the four bridge decks built and — since bead
+## godot-test1-8gw.9 — every block of the street grid FILLED): worst 145 boxes,
+## worst 15 collision shapes, worst 1.1 ms, over 96,770 boxes and 1,631 chunks
+## with stone. The ms budget is deliberately loose because it is wall-clock on
 ## whatever machine CI happens to be — it is a runaway detector, not a benchmark.
 ##
-## The box number is the one to watch: a landmark builder that stopped being a
-## pure function of (centre, rng) would emit its whole self into every chunk its
-## disc touches instead of its own slice, and THAT is what this catches — 122
-## boxes of Parliament in one 50 m square instead of the half-dozen that stand
+## THE BOX BUDGET MOVED 120 -> 200 WHEN THE BLOCKS LANDED, and that is the one
+## raise this file has taken. The history is worth keeping because it says what
+## each number measures:
+##
+##   wave B, seven slots still reservations    69 boxes   15 shapes   7.4 ms
+##   all 22 landmarks + the four decks         92 boxes   15 shapes   3.0 ms
+##   ...and every block filled (bead .9)      145 boxes   15 shapes   1.1 ms
+##
+## The worst chunk is STILL a Parliament slice; the densest all-block chunk is
+## 119. Collision is unmoved at 15 because a building's only colliding box is its
+## hull — every band is decoration. Bead .9's own note said to raise this budget
+## and the web residency proof TOGETHER if a dense chunk needed it, and this is
+## that raise: see CITY_RESIDENCY_BOX_BUDGET in budapest_selfcheck.gd, which went
+## 3000 -> 6000 against a measured 4,510 in the same pass.
+##
+## The box number is still the one to watch: a landmark builder that stopped
+## being a pure function of (centre, rng) would emit its whole self into every
+## chunk its disc touches instead of its own slice, and THAT is what this catches
+## — 268 boxes of Parliament in one 50 m square instead of the dozen that stand
 ## in it.
-const CITY_CHUNK_BOX_BUDGET: int = 120
+const CITY_CHUNK_BOX_BUDGET: int = 200
 const CITY_CHUNK_SHAPE_BUDGET: int = 40
 const CITY_CHUNK_MS_BUDGET: float = 12.0
 
@@ -2226,7 +2408,7 @@ const BIOME_BOSS: Dictionary = {
 	## no projectile, no behaviour arm, no speed opt-out. The second row, and the
 	## cheap one: everything it needed already existed, so it is this line, a
 	## SPECIES entry and a .tscn. (Forest is the densest tree cover in the world
-	## and a 6x dragon is a wide body, so some forest stations will legitimately
+	## and a 9x dragon is a ~6.3 m-radius body, so some forest stations will legitimately
 	## find no clear candidate and place no boss at all — that is the designed
 	## outcome of spawn_bosses_in_chunk's clearance walk, not a reason to loosen
 	## it.)
@@ -3701,7 +3883,49 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 	# them all into one MultiMeshInstance3D parented to this chunk (so it is freed
 	# automatically when the chunk unloads, like every other per-chunk node).
 	if not block_batch.is_empty():
-		_build_block_multimesh(mesh_instance, block_batch)
+		# THE CITY'S STREET WALLS CAST NO SHADOW, and this one boolean is the
+		# whole of bead godot-test1-8gw.9's performance story (measured on a
+		# Pest chunk at the web build's own render_distance 3, standing still,
+		# best of three runs each):
+		#
+		#     before the blocks landed   47 FPS   22.6 ms process   126 draws
+		#     blocks, shadows casting    25 FPS   42.1 ms process   150 draws
+		#     blocks, shadows off        48 FPS   22.7 ms process   127 draws
+		#
+		# 19 ms a frame, all of it in the shadow pass and none of it in the draw
+		# call count the box budgets guard — and with it gone, a Budapest with
+		# every block filled costs what the empty one did, to the millisecond. A filled block is ~2,100 boxes in the
+		# 49-chunk web view, most of them 8-25 m tall, so every one of them is a
+		# long caster crossing several cascades of the directional light — the
+		# exact cost TowerInterior's "one batched mesh per storey and casts no
+		# shadow" already measured indoors, met again outdoors at city scale.
+		#
+		# THE BUILDINGS STILL LIGHT AND SELF-SHADE: they RECEIVE the directional
+		# light, so a north wall is dark and a south wall is bright and the
+		# roofline still reads. What is gone is the shadow a building throws onto
+		# the flat ground beside it, which in a city that is a street wall on both
+		# sides of every road is a dark band the fog eats anyway.
+		#
+		# IT IS THE WHOLE BUDAPEST CHUNK, so a landmark's stone loses its cast
+		# shadow along with the blocks around it — the chunk has ONE batch, and
+		# splitting it to give the sights their shadows back is a second draw
+		# call per chunk, which is the invariant budapest_selfcheck check 4
+		# exists to defend.
+		#
+		# THAT TRADE IS AN OWNER RULING AND NOT A GUESS (2026-09-02, bead
+		# godot-test1-8gw.9, verbatim: "it's okay without shadow, performance is
+		# more important"). Budapest chunk batches stay shadow RECEIVERS ONLY.
+		# Do not split the batch to restore them; a future author who wants the
+		# landmarks' shadows back needs a new ruling, because the cost is the
+		# 19 ms measured above and the second draw call per chunk on top of it.
+		#
+		# ASKED OF THE CHUNK'S SQUARE, NEVER ITS CENTRE — `city_chunk()` is the
+		# SAME predicate spawn_city_in_chunk rejects on, so "built a slice of
+		# Budapest" and "casts no shadow" are one answer and cannot disagree. An
+		# earlier cut asked `in_budapest()` about the centre and got both edge
+		# cases wrong, all the way round a 2.2 km rect.
+		_build_block_multimesh(mesh_instance, block_batch,
+				not city_chunk(chunk_to_world(chunk_pos)))
 
 	# Attach the chunk's single block-collision body — but only if it actually
 	# collected shapes. A chunk with no blocks (rare) would otherwise leave an empty
@@ -3731,7 +3955,7 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 		spawn_danube_crocodiles_in_chunk(chunk_pos, mesh_instance)
 		# Rare BOSS crocodiles guarding the coin road (deterministic, station-
 		# indexed — its own BOSS_SEED hash stream, no shared RNG draws consumed).
-		# Gets `obstacles` like its siblings so a 2.5x-6x boss is never wedged
+		# Gets `obstacles` like its siblings so a 3.75x-9x boss is never wedged
 		# inside a wall/mound/tree/mountain right on the player's path.
 		spawn_bosses_in_chunk(chunk_pos, mesh_instance, obstacles)
 
@@ -3755,6 +3979,12 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 		# turns coins off must turn off all of them. Zero RNG, so it consumes no
 		# draw from anybody's stream.
 		spawn_approach_coins_in_chunk(chunk_pos, mesh_instance, obstacles)
+		# ...and the CITY's own routes (bead godot-test1-8gw.9), which pick the
+		# trail up at the west bank and carry it down every avenue of the street
+		# grid and across every bridge. Same flag again, same zero-RNG rule: the
+		# player should never be able to tell where one authored line ends and
+		# the next begins.
+		spawn_city_coins_in_chunk(chunk_pos, mesh_instance, obstacles)
 
 	# TELEMETRY, counted HERE and not in _ensure_chunk_ground: the counter exists
 	# to explain frame spikes (see its comment in SECTION 2), and after the
@@ -5577,7 +5807,8 @@ func create_box(center_pos: Vector3, dimensions: Vector3, yaw: float, rng: Rando
 	# create_chunk once generation finishes, so all these shapes unload with the chunk.)
 	block_body.add_child(collision_shape)
 
-func _build_block_multimesh(parent_chunk: MeshInstance3D, block_batch: Array) -> void:
+func _build_block_multimesh(parent_chunk: MeshInstance3D, block_batch: Array,
+		cast_shadows: bool = true) -> void:
 	"""
 	Turn a chunk's whole batch of blocks into ONE MultiMeshInstance3D, so every block
 	in the chunk renders in a single draw call (instead of one draw call per block).
@@ -5587,6 +5818,11 @@ func _build_block_multimesh(parent_chunk: MeshInstance3D, block_batch: Array) ->
 	                    parenting rule everything else follows).
 	@param block_batch: The list of { "transform": Transform3D, "color": Color } entries
 	                    create_box appended while building this chunk's blocks.
+	@param cast_shadows: OPTIONAL — false makes this chunk's batch a shadow RECEIVER
+	                    only. Defaults to true, so every pre-existing chunk in the
+	                    world is byte-for-byte what it was; the ONE caller that
+	                    passes false is a Budapest chunk, and the reason is measured
+	                    in create_chunk's comment at the call site.
 
 	EDUCATIONAL NOTE — how a MultiMesh renders many blocks in one draw call:
 	- A MultiMesh holds ONE `mesh` (here the shared unit cube) plus a flat buffer of
@@ -5620,6 +5856,8 @@ func _build_block_multimesh(parent_chunk: MeshInstance3D, block_batch: Array) ->
 	# One shared material for every block; vertex_color_use_as_albedo lets the
 	# per-instance colours show through (see _get_shared_block_material).
 	mmi.material_override = _get_shared_block_material()
+	if not cast_shadows:
+		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 
 	# Parent at the chunk's LOCAL origin: the instance transforms are already local to
 	# the chunk (create_box used chunk-local `center_pos`), and the chunk mesh itself
@@ -5675,13 +5913,32 @@ func spawn_crocodiles_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D
 
 	# Difficulty gradient: chunks farther from origin (along the road's +X axis) hold
 	# MORE crocodiles — +1 per 10 chunks of |x| distance, capped at +4 over the base,
-	# so the far field runs 4..8 rather than the old 10..18. Rescaled with the base
+	# so the undivided target runs 3..7; after the halving below the field really
+	# holds 1..2 near the origin and 3..4 far out. Rescaled with the base
 	# count (owner pacing ruling, 2026-08-29): the gradient must stay a slope you
 	# feel, not one that restores the wall-to-wall density further out.
 	# A pure function of chunk coords, so within-run determinism is untouched (the
 	# same chunk always regenerates the same count). The LOD manager keeps the extra
 	# distant crocodiles cheap: they are slept (frozen, monitoring off), never removed.
-	var chunk_croc_target := crocodiles_per_chunk + mini(4, absi(chunk_pos.x) / 10)
+	#
+	# HALVED (owner pacing ruling, 2026-09-02, bead godot-test1-7ed: "reduce
+	# predator amount in half"). This is a TARGET, not a roll — the same
+	# discipline as CITY_CROC_DIVISOR right below and DESERT_BLOCK_KEEP_EVERY:
+	# the halving costs the chunk RNG ZERO draws, so the surviving crocodiles are
+	# byte-for-byte the FIRST half of the undivided stream, standing exactly where
+	# they always stood, with the tail simply never spawned.
+	#
+	# WHY THE `posmod(chunk_pos.y, 2)`: the undivided targets are 3..7, whose
+	# halves are 1.5..3.5. Rounding every one of them the same way gives 57% (up)
+	# or 43% (down), not half — and the base band, where the player spends most of
+	# the run, would sit at 2/3. Adding the chunk ROW's parity before the integer
+	# divide rounds odd targets up on every other row of chunks and down on the
+	# rest, so the field averages EXACTLY half at every distance while staying a
+	# pure function of chunk coordinates. A target of 3 therefore yields 1 or 2 —
+	# "1 stays possible", and a base of 0 still yields 0.
+	var chunk_croc_target := (crocodiles_per_chunk
+			+ mini(4, absi(chunk_pos.x) / 10)
+			+ posmod(chunk_pos.y, 2)) / 2
 
 	# CITY — the one band whose croc target is divided (owner call, 2026-08-26: a
 	# city is not croc-free, it is QUIETER; the roofs are the real safety).
@@ -6310,7 +6567,7 @@ func spawn_bosses_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, ob
 	lands in THIS chunk (world_to_chunk(pos) == chunk_pos) — each boss is claimed
 	by exactly one chunk, so there are no seam gaps or duplicates.
 
-	A boss is 2.5x–6x the size of a normal crocodile and stands ON the road, so a
+	A boss is 3.75x–9x the size of a normal crocodile and stands ON the road, so a
 	boss wedged into a wall/mound/tree/mountain sits right on the player's path.
 	Each boss therefore walks its deterministic candidate list (see _boss_at) and
 	takes the first spot clear of every footprint in `obstacles`, exactly like the
@@ -6400,7 +6657,7 @@ func spawn_bosses_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, ob
 
 		var boss: Dictionary = _boss_at(cur_i)
 		var boss_scale: float = boss.scale
-		# Clearance this boss needs, SCALED BY ITS SIZE — a 6x boss reaches ~4.2 m
+		# Clearance this boss needs, SCALED BY ITS SIZE — a 9x boss reaches ~6.3 m
 		# where a normal crocodile reaches ~0.7, so the crocodile spawner's fixed
 		# min_object_clearance would be nowhere near enough (see the constant).
 		var footprint: float = BOSS_FOOTPRINT_RADIUS_PER_SCALE * boss_scale
@@ -6423,7 +6680,7 @@ func spawn_bosses_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, ob
 					clear = false
 					break
 			# The tower's site is one more thing a boss may not stand in — its own
-			# scaled footprint again, so a 6x boss cannot lean into the doorway.
+			# scaled footprint again, so a 9x boss cannot lean into the doorway.
 			# Post-draw by construction: _boss_at already computed this whole
 			# candidate list on its own hash stream, so skipping one costs nothing.
 			if clear and tower_excludes(candidate.x, candidate.z, footprint):
@@ -9487,6 +9744,9 @@ func _road_coins_at(k: int) -> Array:
 	         `k` — `pos` is the world-space coin position, `gem` marks the rare purple
 	         gem variant (ROAD_GEM_CHANCE). May be EMPTY when the per-coin spawn rolls
 	         come up short — that is exactly what keeps the trail sparse and irregular.
+	         Three slots in ten are then dropped outright by the 30% thinning at the
+	         bottom of the loop; see there for why that lives here and not on the
+	         station spacing.
 
 	EDUCATIONAL NOTE — why this stays deterministic & seam-correct:
 	- The scatter RNG is seeded ONLY from `k` (+ ROAD_COIN_SEED + the run-constant
@@ -9528,7 +9788,7 @@ func _road_coins_at(k: int) -> Array:
 	rng.seed = hash(Vector3i(k, ROAD_COIN_SEED, run_seed))
 
 	var coins: Array = []
-	for _slot in road_coin_slots:
+	for slot in road_coin_slots:
 		# Rolling each slot (rather than always placing a coin) is what makes the swath
 		# sparse and irregular instead of a regular grid. A skipped slot still consumes
 		# one draw, so the RNG sequence — and thus every later coin — stays deterministic.
@@ -9540,6 +9800,29 @@ func _road_coins_at(k: int) -> Array:
 		# One extra draw AFTER the position: is this coin a rare gem? The draw order
 		# (chance, lat, lon, gem) is fixed, so the whole station stays deterministic.
 		var gem := rng.randf() < ROAD_GEM_CHANCE
+		# THE 30% THINNING (owner, 2026-09-02, bead godot-test1-7ed: "scale down
+		# amount of coins, 30% less"), and it is here rather than on
+		# road_coin_spacing DELIBERATELY. That export is the road's STATION STEP,
+		# not a coin gap: _road_extend_to_x integrates the centerline by it, so
+		# widening it to 8.6 would move every station, every boss (which owns every
+		# BOSS_INTERVAL_STATIONS-th one), and the terminal station the city's
+		# approach corridor hangs off. So the SPACING IS UNTOUCHED and the coin is
+		# thinned PER STATION instead.
+		#
+		# A POST-DRAW SKIP, exactly like the river/spawn-bubble rejections in
+		# spawn_crocodiles_in_chunk: all four of this slot's draws are already spent
+		# above, and the test itself is a pure function of (k, slot) that costs the
+		# stream nothing. The surviving coins therefore sit byte-for-byte where they
+		# always sat — this drops 3 of every 10 slots, it does not re-scatter the
+		# road. posmod because stations west of the origin have negative k.
+		#
+		# Interleaving on (k * slots + slot) rather than on `slot` alone is what
+		# keeps the pattern from landing on the same slot index every station (which
+		# at road_coin_slots == 3 would thin one third of the band's WIDTH instead of
+		# one third of its coins): over any 10 consecutive stations the residues 0..29
+		# are hit once each, so exactly 9 of 30 slots go.
+		if posmod(k * road_coin_slots + slot, 10) < 3:
+			continue
 		coins.append({ "pos": Vector3(p.x, COIN_GROUND_HEIGHT, p.y), "gem": gem })
 	return coins
 
@@ -9791,6 +10074,32 @@ func spawn_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obs
 # draws are discarded padding, because every box passes a colour override.
 
 
+func city_chunk(chunk_center: Vector3) -> bool:
+	"""
+	Does this chunk's SQUARE meet Budapest — i.e. is it a chunk that can build
+	city stone?
+
+	@param chunk_center: This chunk's centre, from chunk_to_world().
+
+	ONE PREDICATE, TWO READERS, AND THAT IS THE WHOLE REASON IT EXISTS.
+	spawn_city_in_chunk's cheap reject asks it to decide whether to build, and
+	create_chunk asks it to decide whether the chunk's batch casts a shadow. Those
+	two answers MUST be the same answer: the owner's no-shadow ruling is about the
+	city, so a chunk that builds a slice of Budapest must not cast, and a chunk
+	that builds none of it must.
+
+	IT IS THE SQUARE, NOT THE CENTRE, and that distinction is a real bug that was
+	shipped once. A chunk on the rect's edge can straddle the boundary — its
+	square meets the city and it builds a sliced facade, while its CENTRE sits
+	outside. Asked about its centre it kept its shadows and cast them off city
+	stone; the mirror case (centre inside, a sliver of ordinary world outside)
+	silently stripped shadows from that sliver's cactus. Both are one ring of
+	chunks all the way round a 2.2 km rect. budapest_selfcheck check 4 now asserts
+	the two readers agree, and names the edge chunks it found.
+	"""
+	return _city_chunk_slice(chunk_center, BudapestPlan.rect()).has_area()
+
+
 func _city_chunk_slice(chunk_center: Vector3, area: Rect2) -> Rect2:
 	"""
 	This chunk's share of an authored city rect, in WORLD XZ.
@@ -9903,7 +10212,7 @@ func spawn_city_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obst
 	var chunk_center := chunk_to_world(chunk_pos)
 	# Cheap rect reject: every chunk in the world that is not in the city pays one
 	# intersection and nothing else.
-	if not _city_chunk_slice(chunk_center, BudapestPlan.rect()).has_area():
+	if not city_chunk(chunk_center):
 		return
 
 	# The private stream — see CITY_STREAM_SEED for why it is private and why it
@@ -9950,6 +10259,15 @@ func spawn_city_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obst
 
 	# ---- 4. THE GATE DISTRICT ------------------------------------------------
 	_spawn_gate_district_in_chunk(chunk_center, obstacles, block_batch, block_body)
+
+	# ---- 4b. THE CITY BLOCKS (bead godot-test1-8gw.9) ------------------------
+	# Every block of the street grid the plan lays down, filled with a continuous
+	# street wall around a hollow courtyard. It runs AFTER the landmarks and the
+	# gate district for the same reason those run after the props: `obstacles` is
+	# read to decide nothing here (a block is authored, not rolled), but the
+	# ORDER the footprints land in is what every later spawner's candidate loop
+	# sees, and the authored city has first claim on its own ground.
+	_spawn_city_blocks_in_chunk(chunk_center, obstacles, block_batch, block_body)
 
 	# ---- 5. THE AVENUE ------------------------------------------------------
 	# The one street this bead draws: 16 m of pavement running east out of the
@@ -10563,6 +10881,342 @@ func _spawn_gate_district_in_chunk(chunk_center: Vector3, obstacles: Array, bloc
 		})
 
 
+func _spawn_city_blocks_in_chunk(chunk_center: Vector3, obstacles: Array,
+		block_batch: Array, block_body: StaticBody3D) -> void:
+	"""
+	Fill this chunk's share of every CITY BLOCK the plan's street grid bounds
+	(bead godot-test1-8gw.9).
+
+	@param chunk_center: This chunk's centre in world space, from chunk_to_world().
+	@param obstacles: Out-param; one keep-out disc per few metres of street wall,
+	                  so the hunters that DO spawn in the city are not wedged
+	                  inside a facade and a coin over one is skipped, not buried.
+	@param block_batch: Out-param; every box joins the chunk's ONE MultiMesh.
+	@param block_body: The chunk's single shared collision body.
+
+	WHAT THE OWNER ASKED FOR, verbatim: "budapest seems really empty, but it is
+	full of multi story buildings in fact, make it so, make it like what we can see
+	on google map walking mode". A street-view city is a CONTINUOUS STREET WALL,
+	so every block of the grid that the city has not reserved for something else
+	(BudapestPlan.block_buildable) gets four wings of contiguous facade around a
+	hollow courtyard: 4-6 storeys of eclectic Pest, 2-3 of Buda hillside.
+
+	AT MOST FOUR CELLS ARE EVER ASKED. A block is 62 m on the grid and a chunk is
+	50 m, so a chunk square can straddle one grid line per axis and no more. The
+	cheap rect reject in spawn_city_in_chunk has already turned away every chunk
+	outside the rect, so the cost of this function for the whole rest of the world
+	is zero.
+
+	A BLOCK IS BUILT WHOLE BY EVERY CHUNK THAT TOUCHES IT, AND SLICED ON THE WAY
+	OUT. That is the landmark builders' rule one scale down: the facade stream is
+	seeded off the CELL, every parameter anything READS is drawn before anything
+	is emitted, and only then is each rect intersected with this chunk's
+	square. So two chunks slicing one block agree bit for bit on its heights and
+	its colours, and the wall meets flush at the seam because _city_chunk_slice
+	cuts both halves out of the same rect.
+	"""
+	var half := chunk_size / 2.0
+	var square := Rect2(chunk_center.x - half, chunk_center.z - half, chunk_size, chunk_size)
+	var lo: Vector2i = BudapestPlan.block_cell(square.position.x, square.position.y)
+	var hi: Vector2i = BudapestPlan.block_cell(square.end.x, square.end.y)
+	for k in range(lo.x, hi.x + 1):
+		for m in range(lo.y, hi.y + 1):
+			var cell := Vector2i(k, m)
+			if BudapestPlan.block_buildable(cell):
+				_build_city_block(cell, chunk_center, obstacles, block_batch, block_body)
+
+
+func _build_city_block(cell: Vector2i, chunk_center: Vector3, obstacles: Array,
+		block_batch: Array, block_body: StaticBody3D) -> void:
+	"""
+	One block of the city: eight buildings in a ring, and this chunk's slice of
+	each of them.
+
+	@param cell: The block's integer grid coordinates.
+
+	THE STREAM IS THE WHOLE CORRECTNESS ARGUMENT. `rng` is seeded off (cell,
+	CITY_BLOCK_SALT) and NOTHING ELSE — no run_seed (Budapest is authored, the
+	tower-furniture precedent), no chunk coordinate (a block is built by up to
+	four of them and they have to agree), no draw from anybody else's stream.
+
+	AND EVERY DRAW ANYTHING READS IS TAKEN UP FRONT, before the first box is
+	emitted. That is the exact claim, and the qualifier is load-bearing: create_box
+	spends four more numbers per box on its curated colour ramp and its roughness,
+	AFTER these, and a chunk that skips a box (its piece is in the chunk next door)
+	does not spend them. So the streams of two chunks slicing one cell DO diverge —
+	in create_box's ramp draws, and only there.
+
+	That divergence is unobservable by construction, for the reason CITY_STREAM_SEED
+	states one feature along: every box here passes an explicit `color_override`, so
+	the ramp's output is discarded and its draws are pure padding. Nothing downstream
+	reads this rng either — it is per-cell and dies with the call. What the two
+	chunks must agree on is `storeys`, `walls`, `awnings`, `balconies` and `roof`,
+	and those are all drawn above, in one fixed order, for all eight buildings,
+	before any geometry exists to skip. budapest_selfcheck check 3 measures the
+	result rather than the argument: a dense Pest block, byte-identical across two
+	different run seeds.
+
+	~TEN BOXES BUY A BUILDING: one colliding hull, a window course per storey, two
+	shopfronts around a doorway gap, an awning, an optional balcony and the cornice.
+	See _city_block_boxes and the CITY BLOCKS constants.
+	"""
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(Vector3i(cell.x, cell.y, CITY_BLOCK_SALT))
+
+	var interior := BudapestPlan.block_rect(cell)
+	var centre := interior.get_center()
+	var band: Vector2i = BudapestPlan.BLOCK_STOREYS_BUDA \
+			if BudapestPlan.is_buda(centre.x, centre.y) \
+			else BudapestPlan.BLOCK_STOREYS_PEST
+
+	# ---- EVERY DRAW, BEFORE ANY EMIT ---------------------------------------
+	# A building's whole description is drawn here, in one fixed order, for all
+	# eight of them — see the docstring. `hues` is the bank's own palette, so a
+	# Pest block is cream beside ochre beside grey-green and not eight samples of
+	# one ramp.
+	var buda := BudapestPlan.is_buda(centre.x, centre.y)
+	var hues: Array[Color] = CITY_FACADE_BUDA if buda else CITY_FACADE_PEST
+	var base := rng.randi_range(band.x, band.y)
+	var roof := CITY_ROOF_TILE.lerp(CITY_ROOF_SLATE, rng.randf())
+	var storeys: Array[int] = []
+	var walls: Array[Color] = []
+	var awnings: Array[Color] = []
+	var balconies: Array[bool] = []
+	for _i in range(4 * BudapestPlan.BLOCK_SEGMENTS):
+		storeys.append(clampi(
+				base + rng.randi_range(-CITY_BLOCK_STOREY_JITTER, CITY_BLOCK_STOREY_JITTER),
+				band.x, band.y))
+		walls.append((hues[rng.randi_range(0, hues.size() - 1)] as Color)
+				.lerp(CITY_PLASTER_B, rng.randf() * CITY_FACADE_TINT_MAX))
+		awnings.append(CITY_AWNING_A.lerp(CITY_AWNING_B, rng.randf()))
+		# Buda's houses get no balcony at all, but the draw is taken either way:
+		# a stream whose length depended on which bank it was on would be a
+		# second thing to keep in step for nothing.
+		balconies.append(rng.randf() < CITY_BALCONY_CHANCE and not buda)
+
+	# ---- ...AND ONLY THEN, THIS CHUNK'S SLICE OF EACH ------------------------
+	for side in 4:
+		var wing: Rect2 = BudapestPlan.block_wing(cell, side)
+		var outward: Vector2 = BudapestPlan.block_wing_outward(side)
+		# A wing is long on X for the north/south walls and long on Z for the two
+		# side walls; `along_x` is which axis it runs down, and the bands stand
+		# proud on the other one.
+		var along_x := absf(outward.y) > 0.5
+		for seg in range(BudapestPlan.BLOCK_SEGMENTS):
+			var idx := side * BudapestPlan.BLOCK_SEGMENTS + seg
+			var height := float(storeys[idx]) * CITY_STOREY_HEIGHT
+			var piece := _city_block_segment(wing, along_x, seg)
+			_city_block_boxes(piece, along_x, storeys[idx], walls[idx], roof,
+					awnings[idx], balconies[idx], chunk_center, rng,
+					block_batch, block_body)
+			_city_block_footprints(piece, height, chunk_center, obstacles)
+			_city_block_door(piece, outward, chunk_center, rng, block_batch, block_body)
+
+
+func _city_block_segment(wing: Rect2, along_x: bool, seg: int) -> Rect2:
+	"""One building's footprint: the `seg`'th equal slice of a wing along its long
+	axis. Equal slices and not jittered ones, because the ROOFLINE is where the
+	variety lives — two neighbours of different heights read as two houses, and a
+	jittered party wall would only cost a constant nobody can see."""
+	var n := float(BudapestPlan.BLOCK_SEGMENTS)
+	if along_x:
+		var w := wing.size.x / n
+		return Rect2(wing.position.x + float(seg) * w, wing.position.y, w, wing.size.y)
+	var d := wing.size.y / n
+	return Rect2(wing.position.x, wing.position.y + float(seg) * d, wing.size.x, d)
+
+
+func _city_block_boxes(piece: Rect2, along_x: bool, storeys: int, wall: Color,
+		roof: Color, awning: Color, balcony: bool, chunk_center: Vector3,
+		rng: RandomNumberGenerator, block_batch: Array,
+		block_body: StaticBody3D) -> void:
+	"""
+	Every SLICEABLE box of one building: the hull, a window course per storey, the
+	two halves of its shopfront with the doorway gap between them, the awning over
+	them, an optional balcony course and the roofline cornice.
+
+	WHY A BAND AND NOT A WINDOW. A 21 m facade drawn as one plaster box with a
+	cornice on top reads as a WALL — which is what the first cut of this bead
+	shipped and what the owner's "like google map walking mode" is not. What makes
+	a real street legible from across it is the HORIZONTAL RHYTHM of the window
+	courses, and a band gets that for ONE box per storey where a window grid would
+	cost thirty. `_city_band` is the whole vocabulary; everything here is a call
+	to it with a height, a thickness, a proud distance and a colour.
+
+	THE BANDS ARE GROWN BEFORE THEY ARE SLICED, never after, and that ordering is
+	load-bearing at a chunk seam. Growing a slice would push a band across the
+	seam and into the identical band its neighbour chunk grew the other way, so
+	the two would overlap by twice the proud distance and z-fight for the length
+	of the wall. Growing the WHOLE rect and then cutting it gives two pieces that
+	meet exactly, which is the same argument _city_chunk_slice already makes for
+	the hull.
+
+	Only the HULL collides. A cornice you could stand on would be a 20 m ledge the
+	whole way round every block in the city; a shopfront you could snag on would
+	be 46 m of kerb per block face. Both are decoration, and decoration in this
+	codebase pays for its pixels and not for a collision shape.
+	"""
+	var height := float(storeys) * CITY_STOREY_HEIGHT
+
+	# The hull: the one box with a collision shape, floor to roofline.
+	var hull := _city_chunk_slice(chunk_center, piece)
+	if hull.has_area():
+		var c := hull.get_center()
+		create_box(Vector3(c.x - chunk_center.x, height * 0.5, c.y - chunk_center.z),
+				Vector3(hull.size.x, height, hull.size.y), 0.0,
+				rng, block_batch, block_body, 0.0, wall)
+
+	# ---- THE WINDOW COURSES, one per storey above the shopfront -------------
+	# 6 cm PROUD, which reads as flush at street distance and is the only way the
+	# course exists at all — see CITY_WINDOW_PROUD for the recessed version that
+	# did not. The glass tone alternates by storey parity, so five storeys read as
+	# five courses and not as one striped texture.
+	for s in range(1, storeys):
+		_city_band(piece, along_x, CITY_WINDOW_PROUD,
+				float(s) * CITY_STOREY_HEIGHT + CITY_WINDOW_SILL + CITY_WINDOW_HEIGHT * 0.5,
+				CITY_WINDOW_HEIGHT,
+				CITY_WINDOW_DARK if s % 2 == 0 else CITY_WINDOW_LIT,
+				chunk_center, rng, block_batch, block_body)
+
+	# ---- THE GROUND FLOOR: two shopfronts with the doorway between them ------
+	# One band split around the door's own width is what turns a continuous dark
+	# stripe into a row of SHOPS with an entrance, and it costs one extra box.
+	# The door itself is _city_block_door's, placed by the chunk that owns it.
+	var span := piece.size.x if along_x else piece.size.y
+	var gap := (CITY_DOOR_WIDTH + 0.9) / span * 0.5   # half the gap, as a fraction
+	for half in [Vector2(0.0, 0.5 - gap), Vector2(0.5 + gap, 1.0)]:
+		_city_band(_city_sub_rect(piece, along_x, half.x, half.y), along_x,
+				CITY_SHOPFRONT_PROUD, CITY_SHOPFRONT_HEIGHT * 0.5,
+				CITY_SHOPFRONT_HEIGHT, CITY_SHOPFRONT_GLASS,
+				chunk_center, rng, block_batch, block_body)
+	# ...and the canvas awning over them, oversailing the pavement.
+	_city_band(piece, along_x, CITY_AWNING_PROUD,
+			CITY_SHOPFRONT_HEIGHT + CITY_AWNING_THICKNESS * 0.5,
+			CITY_AWNING_THICKNESS, awning, chunk_center, rng, block_batch, block_body)
+
+	# ---- THE BALCONY COURSE, on the Pest buildings that drew one ------------
+	if balcony:
+		_city_band(piece, along_x, CITY_BALCONY_PROUD, _city_balcony_y(height),
+				CITY_BALCONY_THICKNESS, CITY_BALCONY_IRON,
+				chunk_center, rng, block_batch, block_body)
+
+	# ---- ...AND THE ROOFLINE ------------------------------------------------
+	_city_band(piece, along_x, CITY_CORNICE_PROUD,
+			height + CITY_CORNICE_THICKNESS * 0.25, CITY_CORNICE_THICKNESS, roof,
+			chunk_center, rng, block_batch, block_body)
+
+
+func _city_band(piece: Rect2, along_x: bool, proud: float, y: float, thickness: float,
+		tone: Color, chunk_center: Vector3, rng: RandomNumberGenerator,
+		block_batch: Array, block_body: StaticBody3D) -> void:
+	"""
+	ONE horizontal band lying against a building's facade — the single vocabulary
+	every piece of articulation in this city is spelled in.
+
+	@param proud: how far it stands off the wall on the CROSS axis. NEGATIVE
+	              recesses it INTO the wall, which is what a window course is.
+	@param y: the band's centre height. @param thickness: its full height.
+
+	Grown on the cross axis only, so it never lengthens into the building next
+	door, and grown before it is sliced — see the caller for why that ordering is
+	the difference between a flush seam and a z-fighting one. Never collides.
+	"""
+	var grown: Rect2 = piece.grow_individual(0.0, proud, 0.0, proud) if along_x \
+			else piece.grow_individual(proud, 0.0, proud, 0.0)
+	var slice := _city_chunk_slice(chunk_center, grown)
+	if not slice.has_area():
+		return
+	var mid := slice.get_center()
+	create_box(Vector3(mid.x - chunk_center.x, y, mid.y - chunk_center.z),
+			Vector3(slice.size.x, thickness, slice.size.y), 0.0,
+			rng, block_batch, block_body, 0.0, tone, false)
+
+
+func _city_sub_rect(piece: Rect2, along_x: bool, from: float, to: float) -> Rect2:
+	"""The `from`..`to` fraction of a building's rect along its LONG axis — how the
+	shopfront is split around its doorway."""
+	if along_x:
+		return Rect2(piece.position.x + piece.size.x * from, piece.position.y,
+				piece.size.x * (to - from), piece.size.y)
+	return Rect2(piece.position.x, piece.position.y + piece.size.y * from,
+			piece.size.x, piece.size.y * (to - from))
+
+
+func _city_balcony_y(height: float) -> float:
+	"""The height of a building's balcony course: the top of its SECOND storey, or
+	of its first when it only has two. A course drawn above the roofline is a rail
+	hanging in the sky, which is what a fixed 8.4 m would give every Buda house."""
+	return minf(2.0 * CITY_STOREY_HEIGHT, height - CITY_STOREY_HEIGHT * 0.5)
+
+
+func _city_block_door(piece: Rect2, outward: Vector2, chunk_center: Vector3,
+		rng: RandomNumberGenerator, block_batch: Array, block_body: StaticBody3D) -> void:
+	"""
+	One carriage gateway on a building's street face — the piece of a Pest block
+	that tells you the courtyard behind it is hollow.
+
+	OWNER-CHUNK PLACED, NOT SLICED, and that is the difference between a POINT
+	feature and a RECT one. A door is 1.5 m wide; slicing it would be pointless,
+	and centring it on the SLICE rather than on the building would move it every
+	time the chunk grid moved and would draw it twice on a building that straddles
+	a seam. So the chunk containing the door's own anchor builds the whole thing,
+	on the same half-open comparison the gate district's houses use.
+	"""
+	var c := piece.get_center()
+	var face := c + outward * (0.5 * (absf(outward.x) * piece.size.x
+			+ absf(outward.y) * piece.size.y) + CITY_DOOR_PROUD * 0.5)
+	var half := chunk_size / 2.0
+	var local := Vector3(face.x - chunk_center.x, 0.0, face.y - chunk_center.z)
+	if not (local.x >= -half and local.x < half and local.z >= -half and local.z < half):
+		return
+	# Thin on the outward axis, CITY_DOOR_WIDTH across it.
+	var size := Vector3(CITY_DOOR_PROUD, CITY_DOOR_HEIGHT, CITY_DOOR_WIDTH) \
+			if absf(outward.x) > 0.5 \
+			else Vector3(CITY_DOOR_WIDTH, CITY_DOOR_HEIGHT, CITY_DOOR_PROUD)
+	create_box(local + Vector3(0.0, CITY_DOOR_HEIGHT * 0.5, 0.0), size, 0.0,
+			rng, block_batch, block_body, 0.0, CITY_DOOR_WOOD, false)
+
+
+func _city_block_footprints(piece: Rect2, height: float, chunk_center: Vector3,
+		obstacles: Array) -> void:
+	"""
+	Claim one building's ground as `obstacles`, as a CHAIN OF DISCS rather than as
+	one circumscribing circle.
+
+	@param piece: the building's own rect, world XZ. The claim is made in this
+	              chunk's local frame; a disc that falls outside the chunk is
+	              simply never asked about.
+
+	WHY NOT ONE DISC. `obstacles` is a list of circles, and the circle round a
+	23 x 13 m building has a 13 m radius centred 6.5 m behind the facade — it
+	would reach 6.5 m past the kerb into a 16 m street, and every coin on that
+	avenue would be dropped by _settle_coin_y as "buried". A chain of discs one
+	wing-depth apart covers the same rect and reaches only ~2.7 m into the street,
+	which is inside the pavement the buildings stand on.
+
+	climbable: FALSE, because these are 8 to 25 m tall. That is what makes a coin
+	that lands on one SKIPPED rather than perched on a roof no one can reach, and
+	it is the same mountain-massif convention the plateaus use.
+	"""
+	var r := BudapestPlan.BLOCK_WING_DEPTH * 0.5
+	var along_x := piece.size.x >= piece.size.y
+	var span := piece.size.x if along_x else piece.size.y
+	var n := maxi(1, ceili(span / BudapestPlan.BLOCK_WING_DEPTH))
+	for i in range(n):
+		var t := (float(i) + 0.5) / float(n)
+		var p := piece.position + Vector2(
+				piece.size.x * (t if along_x else 0.5),
+				piece.size.y * (0.5 if along_x else t))
+		obstacles.append({
+			"pos": Vector3(p.x - chunk_center.x, 0.0, p.y - chunk_center.z),
+			# The disc that covers a wing-depth square of the wall, so the chain
+			# leaves no gap between its links.
+			"radius": r * sqrt(2.0),
+			"top": height,
+			"climbable": false,
+		})
+
+
 func spawn_approach_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array) -> void:
 	"""
 	Lay this chunk's slice of the APPROACH + AVENUE coin line: the trail that
@@ -10667,6 +11321,142 @@ func _approach_coin_line() -> PackedVector2Array:
 		_approach_coin_line_cache = BudapestPlan.approach_coin_line(
 				terminal, ROAD_TERMINAL_X, _approach_coin_east_end())
 	return _approach_coin_line_cache
+
+func spawn_city_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array) -> void:
+	"""
+	Lay this chunk's slice of the CITY's own coin routes (bead godot-test1-8gw.9):
+	the avenues of the street grid, and every bridge across the Danube.
+
+	@param chunk_pos: Chunk coordinates this body is laying coins for.
+	@param parent_chunk: The chunk mesh the coins attach to (positions are stored
+	                     chunk-LOCAL, exactly like the road's).
+	@param obstacles: This chunk's block footprints, for the shared perch-or-skip
+	                  rule in _settle_coin_y.
+
+	WHY IT EXISTS. Coins are the headline score since bead .1 retired distance,
+	and bead .3's approach line deliberately stops at the Danube's west bank — its
+	own docstring says so and calls the 1.4 km of Pest east of it "no coin source
+	at all". This is that source. `in_budapest()` turns every PROCEDURAL coin off
+	inside the rect, so an authored city needs an authored reward line.
+
+	ZERO RNG, exactly like its sibling above: a fixed pitch along authored lines,
+	so there is no stream here to keep independent of the chunk's, nothing for a
+	determinism A/B to measure, and the same coin stands in the same metre of
+	Budapest in every run and for every peer. Coin identity is Coin.id_at(world)
+	(quantized position), so multiplayer claims work with NO mp_manager edit.
+
+	THREE RULES, and each one is a thing that would otherwise be a bug:
+	  1. NOT ON THE APPROACH LINE. Street row 0 IS the avenue out of the gate, and
+	     bead .3's corridor already paves it as far as the west bank. Coins west
+	     of `_approach_coin_east_end()` inside the carriageway are therefore
+	     skipped — the two lines are one trail and must not double up.
+	  2. NOT UNDER A BRIDGE. A deck rect crosses the grid at 12 m, and an avenue
+	     coin under one would sit at COIN_GROUND_HEIGHT with a colliding slab over
+	     it (a deck takes no `obstacles` footprint, deliberately, so _settle_coin_y
+	     cannot see it — the same reasoning `_approach_coin_east_end` is built on).
+	     The bridge's OWN line, at deck height, replaces it.
+	  3. GEMS AT THE SQUARES. Where two avenues cross is a square, and a square is
+	     worth stopping at — a gem is 10 coins, so the streak the player is
+	     building has somewhere to pay off.
+	"""
+	if not spawn_coins or coin_scene == null:
+		return
+	var centre := chunk_to_world(chunk_pos)
+	var half := chunk_size / 2.0
+	var square := Rect2(centre.x - half, centre.z - half, chunk_size, chunk_size)
+	if not square.intersects(BudapestPlan.rect()):
+		return
+
+	# ---- THE AVENUES --------------------------------------------------------
+	# Both axes, one loop each: a NORTH-SOUTH avenue is a fixed X with coins
+	# stepped in Z, and an EAST-WEST one is the transpose. The step is anchored on
+	# the city rect's own corner rather than on the chunk, so a coin's position is
+	# a function of the CITY and every chunk that could own it agrees on where it
+	# is — the road's seam rule, one authored line along.
+	for axis_x in [true, false]:
+		var line_lo: int = ceili((square.position.x - BudapestPlan.GATE.x) / BudapestPlan.STREET_PITCH) \
+				if axis_x else ceili((square.position.y - BudapestPlan.GATE.z) / BudapestPlan.STREET_PITCH)
+		var line_hi: int = floori((square.end.x - BudapestPlan.GATE.x) / BudapestPlan.STREET_PITCH) \
+				if axis_x else floori((square.end.y - BudapestPlan.GATE.z) / BudapestPlan.STREET_PITCH)
+		for i in range(line_lo, line_hi + 1):
+			if not BudapestPlan.is_avenue(i):
+				continue
+			var fixed: float = BudapestPlan.street_x(i) if axis_x else BudapestPlan.street_z(i)
+			var run_min: float = BudapestPlan.BUDAPEST_MIN.y if axis_x else BudapestPlan.BUDAPEST_MIN.x
+			var lo := maxf(square.position.y if axis_x else square.position.x, run_min)
+			var hi := minf(square.end.y if axis_x else square.end.x,
+					BudapestPlan.BUDAPEST_MAX.y if axis_x else BudapestPlan.BUDAPEST_MAX.x)
+			var j := ceili((lo - run_min) / BudapestPlan.CITY_COIN_SPACING)
+			var along := run_min + float(j) * BudapestPlan.CITY_COIN_SPACING
+			while along <= hi:
+				var world := Vector3(fixed if axis_x else along, COIN_GROUND_HEIGHT,
+						along if axis_x else fixed)
+				along += BudapestPlan.CITY_COIN_SPACING
+				_place_city_coin(world, chunk_pos, centre, parent_chunk, obstacles,
+						_city_square_here(world.x, world.z))
+
+	# ---- AND EVERY BRIDGE ---------------------------------------------------
+	# Down the middle of each deck, at the height the deck's own profile gives —
+	# BudapestPlan.bridge_surface_y, the same expression the slabs are built from,
+	# so the trail climbs each ramp with the stone instead of through it.
+	for row_v: Variant in BudapestPlan.BRIDGES:
+		var deck: Rect2 = BudapestPlan.bridge_deck(row_v)
+		if not square.intersects(deck):
+			continue
+		var z := deck.get_center().y
+		var b := ceili((maxf(square.position.x, deck.position.x) - deck.position.x)
+				/ BudapestPlan.CITY_COIN_SPACING)
+		var x := deck.position.x + float(b) * BudapestPlan.CITY_COIN_SPACING
+		while x <= minf(square.end.x, deck.end.x):
+			var world := Vector3(x, BudapestPlan.bridge_surface_y(row_v, x) + COIN_GROUND_HEIGHT, z)
+			x += BudapestPlan.CITY_COIN_SPACING
+			if world_to_chunk(world) != chunk_pos:
+				continue
+			# NO _settle_coin_y HERE, and that is deliberate: a deck coin is 12 m
+			# up, and the perch rule is about what stands on the GROUND under a
+			# column. Asking it would drop every coin on the Chain Bridge for the
+			# pier stone at its foot.
+			var gem := coin_scene.instantiate()
+			gem.position = Vector3(world.x - centre.x, world.y, world.z - centre.z)
+			parent_chunk.add_child(gem)
+
+
+func _place_city_coin(world: Vector3, chunk_pos: Vector2i, centre: Vector3,
+		parent_chunk: MeshInstance3D, obstacles: Array, gem: bool) -> void:
+	"""One avenue coin, through every rule the routes' docstring lists. Bucketed
+	by `world_to_chunk` like the road's, so seams are gap-free and duplicate-free."""
+	if world_to_chunk(world) != chunk_pos:
+		return
+	# Rule 1 — the gate avenue is already paved as far as the west bank.
+	if absf(world.z - BudapestPlan.GATE.z) < BudapestPlan.AVENUE_HALF_WIDTH \
+			and world.x < _approach_coin_east_end():
+		return
+	# Rule 2 — a bridge's own line owns the crossing, at deck height.
+	for row_v: Variant in BudapestPlan.BRIDGES:
+		if (BudapestPlan.bridge_deck(row_v) as Rect2).has_point(Vector2(world.x, world.z)):
+			return
+	var local := Vector3(world.x - centre.x, world.y, world.z - centre.z)
+	local.y = _settle_coin_y(local.x, local.z, local.y, obstacles)
+	if is_inf(local.y):
+		return
+	var coin := coin_scene.instantiate()
+	coin.position = local
+	if gem:
+		coin.make_gem()
+	parent_chunk.add_child(coin)
+
+
+func _city_square_here(x: float, z: float) -> bool:
+	"""Is this coin standing on a SQUARE — within half a pitch of a crossing of two
+	avenues? That is where the gems go, and it is the one place the grid's two
+	axes have anything to say to each other."""
+	var half := BudapestPlan.CITY_COIN_SPACING * 0.5
+	var k := roundi((x - BudapestPlan.GATE.x) / BudapestPlan.STREET_PITCH)
+	var m := roundi((z - BudapestPlan.GATE.z) / BudapestPlan.STREET_PITCH)
+	return BudapestPlan.is_avenue(k) and BudapestPlan.is_avenue(m) \
+			and absf(x - BudapestPlan.street_x(k)) <= half \
+			and absf(z - BudapestPlan.street_z(m)) <= half
+
 
 func _approach_coin_east_end() -> float:
 	"""

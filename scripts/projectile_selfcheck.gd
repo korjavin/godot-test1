@@ -55,6 +55,16 @@ const CROC_SCRIPT: GDScript = preload("res://scripts/piglet_crocodile_ai.gd")
 ## The cue table, so a style cannot ship without a muzzle sound (see check 1d).
 const SOUND_SCRIPT: GDScript = preload("res://scripts/sound_manager.gd")
 
+## THE BOSS SIZE SCHEDULE, read from the file that owns it. Every shooter in this
+## game is a boss, `_behave_ranged` fires from `muzzle_height * scale.y`, and
+## `BossProjectile` ends a flight on the 3-D distance from that muzzle — so the
+## biggest scale the terrain ever hands out is a term in the range contract
+## (check 1c) and in how high the dodge sim shoots from (check 4). Read, never
+## retyped: bead godot-test1-9k7 raised this 6.0 -> 9.0 and the clown's shots
+## started freeing themselves in mid-air, which is exactly the failure a retyped
+## constant here would have hidden.
+const TERRAIN_SCRIPT: GDScript = preload("res://scripts/endless_terrain.gd")
+
 ## Every key a params dict must carry. Listed here and not derived from one of
 ## the shipped styles on purpose: deriving it would let a style that DROPS a key
 ## redefine the requirement instead of failing it.
@@ -253,6 +263,45 @@ func _check_fairness() -> void:
 			_fail("%s: max_live is %d — a cap under 1 means the boss can never "
 					% [label, int(p["max_live"])] + "fire at all")
 
+		# ---- 1c-bis. THE RANGE IS A 3-D DISTANCE FROM A MUZZLE THAT IS HIGH UP --
+		# The clause above compares max_range against min_fire_range, which is the
+		# FLOOR of the band and flat. Both halves of that are wrong for the real
+		# shot and in the same direction:
+		#
+		#   • the arm fires at anything out to `max_fire_range`, not just the
+		#     minimum (`ranged_shot_due` bounds the band at both ends), and
+		#   • `BossProjectile._physics_process` frees on
+		#     `_origin.distance_to(global_position) >= max_range`, a 3-D distance
+		#     from a muzzle sitting `muzzle_height * scale.y` above the ground —
+		#     and `scale.y` is the terrain's boss schedule, up to BOSS_MAX_SCALE.
+		#
+		# So the shot that has furthest to fly is the one at the band's CEILING
+		# from the TALLEST shooter, and its path is the hypotenuse. Bead
+		# godot-test1-9k7 raised BOSS_MAX_SCALE 6 -> 9 and put the clown's muzzle
+		# at 11.7 m: hypot(14, 11.7) = 18.24 m against a 16 m range, i.e. the top
+		# ~2 m of its firing band threw ice creams that deleted themselves in the
+		# air. Nothing errors, nothing logs — the boss simply stops being able to
+		# hit you at the far end of its own band, which reads as "the clown is
+		# harmless" and never as a bug.
+		#
+		# Only the SPECIES rows carry the two arm-side keys (see the "A COPY of
+		# BossProjectile.STYLES[...]" notes), so the STYLES entries skip this —
+		# they have no band ceiling and no muzzle to be raised.
+		if p.has("max_fire_range") and p.has("muzzle_height"):
+			var ceiling: float = float(p["max_fire_range"])
+			var muzzle: float = float(p["muzzle_height"]) * float(TERRAIN_SCRIPT.BOSS_MAX_SCALE)
+			var longest: float = sqrt(ceiling * ceiling + muzzle * muzzle)
+			if max_range <= longest:
+				_fail(("%s: at BOSS_MAX_SCALE (%.2f) the muzzle stands %.2f m up, "
+						+ "so a shot at the band's %.1f m ceiling has %.2f m to "
+						+ "fly — but max_range is %.1f m, and the projectile frees "
+						+ "itself on the 3-D distance from that muzzle. The top of "
+						+ "this boss's firing band throws shots that evaporate in "
+						+ "mid-air. Raise max_range (and keep lifetime above "
+						+ "max_range / speed), or lower max_fire_range.")
+						% [label, float(TERRAIN_SCRIPT.BOSS_MAX_SCALE), muzzle,
+						ceiling, longest, max_range])
+
 		# ---- 1d. EVERY STYLE HAS A MUZZLE CUE ----
 		# The fairness contract measures the dodge from the muzzle flash. A style
 		# with no announced cue is a style that kills people from off-screen, and
@@ -353,7 +402,7 @@ func _check_straight_flight() -> void:
 		return
 	if not p.top_level:
 		_fail("straight: the projectile is not top_level — it would inherit the "
-				+ "chunk's (and a 6x boss's) transform, so a big boss would fire "
+				+ "chunk's (and a 9x boss's) transform, so a big boss would fire "
 				+ "a big bolt travelling proportionally too far")
 
 	var speed: float = float(params["speed"])
@@ -523,9 +572,50 @@ func _check_lob_landing() -> void:
 func _check_dodges() -> void:
 	## Run both halves for EVERY shipped style, not just the bolt: a lob and a
 	## straight shot fail this in completely different ways.
+	## Printed so the derived muzzle heights are VISIBLE in the run log. A style
+	## no SPECIES row claims falls back to a 2.5 m stand-in inside _check_dodge,
+	## and a silent fallback for a style that IS fired is the one way this
+	## derivation could rot back into the literal it replaced.
+	var heights := {}
+	for style_name in PROJECTILE.STYLES:
+		heights[str(style_name)] = "%.2f m" % _muzzle_height_for(str(style_name))
+	print("dodge muzzles at BOSS_MAX_SCALE %.2f: %s"
+			% [float(TERRAIN_SCRIPT.BOSS_MAX_SCALE), heights])
 	for style_name in PROJECTILE.STYLES:
 		await _check_dodge(str(style_name), true)
 		await _check_dodge(str(style_name), false)
+
+
+func _muzzle_height_for(style_name: String) -> float:
+	"""
+	How high above the ground the tallest shooter of `style_name` actually fires.
+
+	@param style_name: a key of BossProjectile.STYLES
+	@return `muzzle_height * BOSS_MAX_SCALE` for the SPECIES row that fires this
+	        style (the tallest, if more than one ever shares it), or 0.0 for a
+	        style no row has claimed yet
+
+	DERIVED, NEVER TYPED. This used to be a literal 2.5 m in `_check_dodge` —
+	"roughly the height a large boss would actually shoot from" — and it was
+	roughly nothing: `_behave_ranged` fires from `muzzle_height * scale.y`, so
+	the real number is 13.5 m for a 9x titan and 11.7 m for a 9x clown. A dodge
+	measured from 2.5 m is a dodge against a flight that is a third as long as
+	the shipped one, which is a check quietly grading the wrong shot — and it
+	stayed wrong through a size bump precisely because a literal cannot notice
+	one. `muzzle_height` lives on the SPECIES row rather than in STYLES (it is
+	the ARM's business, not the projectile's), so the row is where it is read
+	from.
+	"""
+	var tallest := 0.0
+	for species in CROC_SCRIPT.SPECIES:
+		var row: Dictionary = CROC_SCRIPT.SPECIES[species]
+		if not row.has("ranged"):
+			continue
+		var ranged: Dictionary = row["ranged"]
+		if str(ranged.get("style", "")) != style_name:
+			continue
+		tallest = maxf(tallest, float(ranged.get("muzzle_height", 0.0)))
+	return tallest * float(TERRAIN_SCRIPT.BOSS_MAX_SCALE)
 
 
 func _check_dodge(style_name: String, walking: bool) -> void:
@@ -542,13 +632,19 @@ func _check_dodge(style_name: String, walking: bool) -> void:
 	var range_m: float = float(params["min_fire_range"])
 	var parent: Node3D = _make_parent()
 	# The quarry stands on the ground plane at +X; the muzzle is behind it and
-	# above, roughly the height a large boss would actually shoot from.
+	# above, at the height the BIGGEST shooter of this style really fires from
+	# (see _muzzle_height_for — derived from the SPECIES row and BOSS_MAX_SCALE,
+	# never a literal). The cap is the worst case for this check: elevation
+	# lengthens the flight, and a longer flight is a bigger sidestep, so anything
+	# that passes here passes for every smaller boss on the schedule. A style no
+	# row fires yet keeps the old 2.5 m stand-in.
 	var hits: Array = [0]
 	var stub: Node3D = _make_hit_stub(Vector3(range_m, 0.0, 0.0), hits)
 	if stub == null:
 		parent.queue_free()
 		return
-	var from := Vector3(0.0, 2.5, 0.0)
+	var muzzle: float = _muzzle_height_for(style_name)
+	var from := Vector3(0.0, muzzle if muzzle > 0.0 else 2.5, 0.0)
 
 	var p: BossProjectile = PROJECTILE.fire(from, stub.global_position, parent, params)
 	if p == null:

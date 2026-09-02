@@ -1206,12 +1206,35 @@ func _check_a_guard_takes_coins_and_ground() -> void:
 			+ " shell has streamed in")
 	if not player_c.is_respawning:
 		_fail("a %s's bite in the field opened no grace window" % CONTROL_SPECIES)
-	var banked_coins: int = SETBACK_PROBE_COINS - control_loss
+	# THE RECORD IS THE PEAK, NOT THE CHANGE LEFT IN THE POCKET (bead godot-test1-h6x).
+	# `_on_caught_finished()` bills the setback and THEN banks, so a bank reading the
+	# live `own_coins` persists a record one bill BELOW the number the HUD showed all
+	# run — invisible in the game (the "Best" line is simply low) and permanent in
+	# best_run.cfg, localStorage and the lobby. The player reached SETBACK_PROBE_COINS;
+	# that is the record. The subtraction below is the negative control: it is exactly
+	# the wrong answer, and it must not be what is stored.
+	var banked_coins: int = SETBACK_PROBE_COINS
+	var post_bill: int = SETBACK_PROBE_COINS - control_loss
+	if player_c.best_coins == post_bill:
+		_fail("a bite banked the POST-SETBACK balance (%d) as the coin record —"
+			% post_bill + " the run peaked at %d and that is what the player saw," % banked_coins
+			+ " so the bill is being persisted as a lower personal best forever")
 	if player_c.best_coins != banked_coins:
-		_fail("a bite banked no record (best_coins %d, expected %d) — with no hearts the"
+		_fail("a bite banked no record (best_coins %d, expected the run peak %d) — with"
 			% [player_c.best_coins, banked_coins]
-			+ " run no longer ENDS at a bite, so banking only at game over leaves a"
-			+ " whole session unwritten to best_run.cfg, localStorage and the lobby")
+			+ " no hearts the run no longer ENDS at a bite, so banking only at game over"
+			+ " leaves a whole session unwritten to best_run.cfg, localStorage and the lobby")
+	if player_c.record_coins != banked_coins:
+		_fail("record_coins is %d after a bite, expected the run peak %d — it is the"
+			% [player_c.record_coins, banked_coins]
+			+ " peak both the bank and _reconcile_record_latch() read, and _pay_coin_setback()"
+			+ " is the one place that can still see the pre-bill balance")
+	# ...and the live balance really did pay the bill, so the peak is a SEPARATE
+	# number and not the setback quietly going missing.
+	if player_c.own_coins != post_bill:
+		_fail("banking the peak left own_coins at %d, expected %d — the record is the"
+			% [player_c.own_coins, post_bill]
+			+ " peak but the RUN still pays the setback; nothing here may refund it")
 	# ...and the FLASH survives its own banking. The bite above raised
 	# best_coins to own_coins, so the ending panel re-deriving
 	# `own_coins > best_coins` reads false on exactly the runs that earned

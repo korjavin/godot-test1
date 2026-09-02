@@ -357,9 +357,17 @@ var best_run_store: BestRunStore = null
 ## earned the flash. The fact is recorded where it is still true and read at the
 ## ending; `reset_position()` (the hard-reset wipe list) clears it.
 var run_beat_record: bool = false
-## The coin peak that set the `run_beat_record` latch in this run. Reconciled
-## against `server_best_coins` at game over instead of `own_coins`, because
-## setbacks (bites) decrease `own_coins` after the record was banked.
+## THIS RUN'S COIN PEAK — the highest `own_coins` ever reached, not the live
+## balance. `_bank_records()` banks THIS (bead godot-test1-h6x) and
+## `_reconcile_record_latch()` reconciles against it, both for the same reason:
+## `own_coins` goes DOWN at a setback, and a bite bills the setback and then banks
+## in the same call chain (`_on_caught_finished`), so a record read off the live
+## balance is always one bill below the number the HUD showed.
+##
+## Maintained at the ONE place `own_coins` decreases (`_pay_coin_setback`, which
+## snapshots the pre-bill balance) plus a `maxi` in `_bank_records` — never at the
+## two `+=` sites, because a peak only needs recording where it is about to be
+## lost. Both wipes of `own_coins` (`restart_game`, the room join) clear it.
 var record_coins: int = 0
 
 ## How often the run's records are checkpointed while the player is simply
@@ -2111,6 +2119,12 @@ func _pay_coin_setback(fraction: float) -> bool:
 	var arrested: bool = caught_captured
 	caught_captured = false
 	var lost: int = int(floor(float(own_coins) * fraction))
+	# THE PEAK, SNAPSHOTTED BEFORE THE BILL. This is the only place `own_coins`
+	# ever goes down, so remembering it here is the whole of peak tracking — and it
+	# has to happen HERE rather than in `_bank_records()`, which `_on_caught_finished`
+	# calls immediately AFTER this bill and which would otherwise bank the balance
+	# the player was left with instead of the one the HUD showed (bead godot-test1-h6x).
+	record_coins = maxi(record_coins, own_coins)
 	own_coins = maxi(0, own_coins - lost)
 	coins_collected = maxi(0, coins_collected - lost)
 
@@ -2892,7 +2906,9 @@ func _on_caught_finished() -> void:
 	# to be written by `_trigger_game_over()`, which the third bite reached; with no
 	# hearts, most runs never reach an ending at all, so banking only there would
 	# mean a session's distance and coins were never persisted. Banked AFTER the
-	# bill, so what goes to the store is what the player actually walks away with.
+	# bill, which is why `_bank_records()` banks the run's PEAK and not the live
+	# balance (bead godot-test1-h6x): the record is the number the player reached,
+	# not the change left in their pocket after the crocodile took its cut.
 	# See `_bank_records()` — idempotent, and silent unless a record moved.
 	_bank_records()
 
@@ -3354,13 +3370,19 @@ func _bank_records() -> bool:
 	room those are the ROOM's totals (see _refresh_shared_totals), so writing them
 	here would persist the whole room's bank as this player's personal best. Solo
 	the pairs are identical.
+
+	...off the run's PEAK own_coins, though, not its live balance (bead
+	godot-test1-h6x). `_on_caught_finished()` bills the attacker's setback and THEN
+	calls this, so a record taken off the balance is a record one bill below the
+	number the player watched the HUD reach — the peak is what they earned and what
+	`_reconcile_record_latch()` already compared against.
 	"""
 	# Coins is the headline record, so IT decides the "NEW BEST!" flash (bead godot-test1-8gw.1).
-	var is_new_best := own_coins > best_coins
+	record_coins = maxi(record_coins, own_coins)
+	var is_new_best := record_coins > best_coins
 	run_beat_record = run_beat_record or is_new_best
 	if is_new_best:
-		record_coins = maxi(record_coins, own_coins)
-		best_coins = maxi(best_coins, own_coins)
+		best_coins = maxi(best_coins, record_coins)
 		if best_run_store:
 			best_run_store.submit(0, best_coins)
 
@@ -3424,9 +3446,9 @@ func _reconcile_record_latch() -> void:
 	not see the case at all: a server holding EXACTLY this run's coins raises
 	nothing and emits nothing.
 
-	Reconciliation compares against `record_coins` (the peak that latched the record),
-	not `own_coins`: subsequent setbacks/bites reduce the mutable `own_coins`
-	balance while the banked record and ending "Best" line remain at the peak.
+	Reconciliation compares against `record_coins` (the run's coin PEAK), not
+	`own_coins`: subsequent setbacks/bites reduce the mutable `own_coins` balance
+	while the banked record and ending "Best" line remain at the peak.
 
 	`>=`, because a run that TIED the standing record set no new best. A store
 	with no server answer reports 0, which outranks nothing and leaves the local

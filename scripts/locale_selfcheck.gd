@@ -144,28 +144,16 @@ const WIDTH_BUDGETS: Array = [
 	# The card title is one non-wrapping line across CARD_WIDTH 640 less the
 	# 18 px content margin each side and the ScrollContainer's own 36 px.
 	["%s — Level %d,  %d points", 22, 604.0, "skill tree card title"],
-	# minimap_hud.gd — the two INDOOR caption fragments (bead godot-test1-kox).
-	# They are appended to the caption's two existing lines, which are centred
-	# across the widget's own 202 px (MAP_CENTER.x * 2) at TEXT_SIZE 15 and do NOT
-	# clip — a German string that outgrew the line would wrap under the disc and
-	# push the map's own text off its neighbours. 80 px each leaves room for the
-	# "X 412   Z -37" / biome name the fragment is composed onto, the three-space
-	# joiner, and the jail line's trailing "  ^4" chevron.
+	# minimap_hud.gd — the caption fragments (bead godot-test1-kox and godot-test1-8gw.13).
+	# They are drawn under the disc, centred across the widget's own 202 px (MAP_CENTER.x * 2)
+	# at TEXT_SIZE 15 (and BUDAPEST_TEXT_SIZE 13 for the third line) and do NOT clip.
+	# The indoor fragments append to lines 1 and 2 (budget 80 px each).
+	# The Budapest lines occupy their own non-wrapping third row across the 202 px widget (budget 190 px).
 	["Floor %d", 15, 80.0, "minimap storey line"],
 	["JAIL F%d", 15, 80.0, "minimap jail intent"],
 	["NO LOCK", 15, 80.0, "minimap jail intent, jammed in the labyrinth"],
-	# coin_hud.gd — the BUDAPEST LINE (bead godot-test1-8gw.5). It hangs under the
-	# CoinLabel and takes its width from it: scenes/main.tscn gives that label
-	# offsets -280 → -24 from the right edge, i.e. 256 px, at BUDAPEST_FONT_SIZE 20 — dropped from 22 because German says "Nach
-	# Budapest" and 22 px of that is 257 px against a 256 px label. The
-	# and with NO WRAP (it is one line in a corner, not a card that may grow). The
-	# budget keeps 16 px of that as slack for the outline.
-	#
-	# The format specifiers are measured as literal text, which is the honest
-	# reading here: "%.1f" is four characters against the "12.3" it renders and
-	# "%d/%d" is five against "18/22", so neither budget is optimistic.
-	["Budapest: %.1f km", 20, 240.0, "HUD Budapest countdown"],
-	["Budapest %d/%d", 20, 240.0, "HUD Budapest explored count"],
+	["Budapest: %.1f km", 13, 190.0, "minimap Budapest countdown"],
+	["Budapest %d/%d", 13, 190.0, "minimap Budapest explored count"],
 ]
 
 var _failures: Array[String] = []

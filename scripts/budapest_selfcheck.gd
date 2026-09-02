@@ -58,6 +58,14 @@ extends SceneTree
 ##      through the city keeps escalating a gradient the run was supposed to end.
 ##  13. THE AVENUE IS WALKABLE. The one corridor this bead promises: gate to west
 ##      bank, nothing solid standing in it.
+##  15. THE CITY IS FULL, AND STILL A CITY (bead godot-test1-8gw.9). Every block
+##      of the grid the plan does not reserve is filled with a street wall, which
+##      is ~1,250 new buildings and four ways to be quietly wrong: a block over a
+##      landmark, a facade standing in a street, a courtyard filled solid, and a
+##      coin route that drops pickups inside a wall or skips a bridge. Check 4
+##      grew the WEB RESIDENCY window with it, because filling the city moved the
+##      cost from "one expensive chunk" to "1,631 ordinary ones" and a per-chunk
+##      ceiling cannot see that at all.
 ##
 ## Deliberately NOT covered: the full one-hero reachability audit over all 22
 ## slots (bead godot-test1-8gw.10), and how any of it LOOKS. This file measures
@@ -119,6 +127,41 @@ const MS_REMEASURES: int = 4
 ## guessed: the worst city chunk is printed beside it.
 const CITY_CHUNK_ACCENT_BUDGET: int = 4
 
+## The web build's chunk residency radius — `endless_terrain.WEB_RENDER_DISTANCE`
+## restated here only because check 4's window has to be a compile-time square.
+## 3 means a 7 x 7 = 49-chunk view, which is the number CLAUDE.md's whole "the
+## city is streamed and the tower is not" argument rests on.
+const WEB_RENDER_DISTANCE: int = 3
+
+## What the worst 49-chunk WEB VIEW of Budapest may hold. MEASURED, not guessed —
+## the reading is printed beside each one, and see _check_web_residency for why a
+## per-chunk budget cannot answer this question. Both are order-of-magnitude
+## guards on a number that more than doubled when bead .9 filled the blocks and
+## doubled again when their facades grew window courses: 4,510 boxes and 465
+## shapes today. Raised 3000 -> 6000 in the same pass as
+## endless_terrain.CITY_CHUNK_BOX_BUDGET (120 -> 200), which is bead .9's own
+## instruction — the per-chunk ceiling and this one move together or the raise
+## means nothing.
+const CITY_RESIDENCY_BOX_BUDGET: int = 6000
+const CITY_RESIDENCY_SHAPE_BUDGET: int = 900
+
+## How many chunk columns / rows of the rect check 15's collision sweep walks.
+## The sweep is the expensive half of that check (every shape in every chunk,
+## projected through its own basis), and the property it measures — "no solid box
+## overlaps a street" — is a claim about the BUILDER, not about a neighbourhood,
+## so a stride that lands ~230 chunks spread over the whole 2.2 km proves it as
+## well as all 2,025 would.
+const BLOCK_SWEEP_STRIDE: int = 3
+
+## Check 15's tolerance where a facade meets a street, in metres. A hull's own
+## edge sits BLOCK_PAVEMENT (1.2 m) back from the carriageway, so anything this
+## check reports is a real overlap and not an f32 boundary — the epsilon only
+## stops a box that ends exactly on a courtyard line from reading as inside it.
+const BLOCK_TOUCH_EPS: float = 0.01
+
+## How far along one avenue check 15 walks looking for its coins, in chunks.
+const COIN_WALK_CHUNKS: int = 24
+
 var _failures: Array[String] = []
 
 
@@ -153,6 +196,7 @@ func _run() -> void:
 	_check_difficulty_clamp()
 	_check_avenue(terrain)
 	_check_bridges(terrain)
+	_check_city_blocks(terrain)
 	terrain.free()
 
 	_report()
@@ -455,6 +499,11 @@ func _check_regeneration(terrain_script: GDScript) -> void:
 		a.world_to_chunk(Vector3(2760.0, 0.0, -480.0)),   # the Parliament's centre
 		a.world_to_chunk(Vector3(1690.0, 0.0, -26.0)),    # the gate district
 		a.world_to_chunk(Vector3(1900.0, 0.0, -460.0)),   # Castle Hill's ramp
+		# ...and a DENSE PEST BLOCK (bead .9). The block streamer carries a
+		# per-cell RNG of its own, which is the newest place a run seed could
+		# leak into an authored city — and the three probes above would never
+		# see it, because not one of them fills a block.
+		a.world_to_chunk(_dense_pest_chunk_probe()),
 	]
 
 	var boxes := 0
@@ -476,6 +525,26 @@ func _check_regeneration(terrain_script: GDScript) -> void:
 			% [probes.size(), boxes, RUN_SEED, SECOND_SEED])
 	a.free()
 	b.free()
+
+
+func _dense_pest_chunk_probe() -> Vector3:
+	"""
+	A world point inside a block Pest actually FILLS — the first buildable cell
+	east of the Danube, scanned rather than typed, so a plan edit that moved the
+	river or a landmark cannot leave this probe pointing at an empty field and
+	quietly turn check 3's fourth signature into a comparison of two zeroes.
+	"""
+	for k in range(BudapestPlan.CITY_AVENUE_EVERY * 4, 34):
+		for m in range(-8, 9):
+			var cell := Vector2i(k, m)
+			if not BudapestPlan.block_buildable(cell):
+				continue
+			var c := BudapestPlan.block_rect(cell).get_center()
+			if not BudapestPlan.is_buda(c.x, c.y):
+				return Vector3(c.x, 0.0, c.y)
+	_fail("no buildable Pest block was found anywhere east of the Danube — the "
+			+ "city the owner asked to fill is empty")
+	return Vector3(2900.0, 0.0, 100.0)
 
 
 func _city_signature(terrain: Node3D, chunk_pos: Vector2i) -> Array:
@@ -523,6 +592,14 @@ func _check_budgets(terrain: Node3D, terrain_script: GDScript) -> void:
 	var worst_accents_at := Vector2i.ZERO
 	var built_chunks := 0
 	var total_boxes := 0
+	# Per-chunk tallies, kept for the WEB RESIDENCY window below — which is a
+	# statement about 49 chunks at once and cannot be made one chunk at a time.
+	var boxes_at: Dictionary = {}
+	var shapes_at: Dictionary = {}
+	# The rect's edge ring: chunks whose SQUARE meets Budapest while their centre
+	# does not. See the shadow assertion in the loop.
+	var edge_chunks := 0
+	var edge_with_stone := 0
 
 	for chunk_pos: Vector2i in _rect_chunks(terrain):
 		var built := _build_city_chunk(terrain, chunk_pos)
@@ -530,6 +607,30 @@ func _check_budgets(terrain: Node3D, terrain_script: GDScript) -> void:
 		var batch: Array = built["batch"]
 		var body: StaticBody3D = built["body"]
 
+		boxes_at[chunk_pos] = batch.size()
+		shapes_at[chunk_pos] = body.get_child_count()
+
+		# THE SHADOW RULING IS PER CHUNK, AND THE TWO READERS MUST AGREE.
+		# create_chunk turns a chunk's batch into a shadow receiver when
+		# city_chunk() says the chunk meets Budapest; spawn_city_in_chunk builds
+		# city stone on exactly the same predicate. If a chunk ever emits city
+		# boxes while that predicate is false, its facades cast shadows the owner
+		# ruled out — which is what asking about the chunk's CENTRE used to do all
+		# the way round the rect's edge.
+		var centre_w: Vector3 = terrain.chunk_to_world(chunk_pos)
+		var is_city: bool = terrain.city_chunk(centre_w)
+		if not batch.is_empty() and not is_city:
+			_fail("city chunk %s emitted %d boxes but city_chunk() answers false "
+					% [chunk_pos, batch.size()] + "— its batch would cast shadows "
+					+ "the owner's ruling excludes")
+		# EDGE CHUNKS ARE THE WHOLE POINT, so count the ones whose square meets
+		# the rect while their CENTRE does not. A predicate written on the centre
+		# gets every one of these wrong; the tally is printed so the case cannot
+		# quietly stop being exercised.
+		if is_city and not terrain.in_budapest(centre_w.x, centre_w.z):
+			edge_chunks += 1
+			if not batch.is_empty():
+				edge_with_stone += 1
 		if batch.size() > worst_boxes:
 			worst_boxes = batch.size()
 			worst_boxes_at = chunk_pos
@@ -583,7 +684,8 @@ func _check_budgets(terrain: Node3D, terrain_script: GDScript) -> void:
 	if worst_boxes > box_budget:
 		_fail("city chunk %s emits %d boxes, over CITY_CHUNK_BOX_BUDGET %d — a "
 				% [worst_boxes_at, worst_boxes, box_budget]
-				+ "landmark builder has stopped emitting only its own slice")
+				+ "landmark builder has stopped emitting only its own slice, or a "
+				+ "block's facade has grown a band per window")
 	if worst_shapes > shape_budget:
 		_fail("city chunk %s hangs %d collision shapes on its one body, over "
 				% [worst_shapes_at, worst_shapes]
@@ -621,6 +723,92 @@ func _check_budgets(terrain: Node3D, terrain_script: GDScript) -> void:
 	print("  accents worst %d at %s (budget %d) — everything else the city draws "
 			% [worst_accents, worst_accents_at, CITY_CHUNK_ACCENT_BUDGET]
 			+ "is in the chunk's one batch")
+
+	# ...AND THE PREDICATE ITSELF, PROBED, because the sweep above cannot test the
+	# case that matters. Budapest's rect corners land EXACTLY on chunk centres
+	# today (2200 m and 1600 m are both whole multiples of the 50 m chunk), so the
+	# shipped city has no square-in / centre-out chunk at all and the loop's
+	# agreement holds by ALIGNMENT rather than by the predicate being right. One
+	# edit to BUDAPEST_MIN, BUDAPEST_MAX or chunk_size brings the whole edge ring
+	# back, which is why the probe is unconditional and the tally is only printed.
+	#
+	# A centre 0.4 of a chunk outside the west edge: its square still reaches into
+	# the rect, so it CAN build a sliced facade, and a predicate asking about its
+	# centre answers "not the city" and lets that facade cast a shadow.
+	var cell_m: float = terrain.chunk_size
+	var outside := Vector3(BudapestPlan.BUDAPEST_MIN.x - cell_m * 0.4, 0.0, 0.0)
+	if terrain.in_budapest(outside.x, outside.z):
+		_fail("check 4's shadow probe is not outside the rect at all (%.0f) — it "
+				% outside.x + "proves nothing")
+	if not terrain.city_chunk(outside):
+		_fail("city_chunk() answers false for a chunk centred %.0f m outside the "
+				% (BudapestPlan.BUDAPEST_MIN.x - outside.x) + "west edge whose "
+				+ "SQUARE still meets Budapest — it is asking about the centre "
+				+ "again, so every chunk on the rect's edge builds city stone that "
+				+ "casts a shadow the owner ruled out")
+	# The other end of the same predicate: a chunk that touches nothing.
+	if terrain.city_chunk(Vector3(BudapestPlan.BUDAPEST_MIN.x - cell_m * 4.0, 0.0, 0.0)):
+		_fail("city_chunk() answers true four chunks clear of the rect — it would "
+				+ "strip shadows from ordinary world geometry")
+	print("  shadow: predicate is the chunk SQUARE (probed both ways); %d edge "
+			% edge_chunks + "chunks in the shipped rect (square in, centre out), "
+			+ "%d with stone — the rect is chunk-aligned today" % edge_with_stone)
+
+	_check_web_residency(boxes_at, shapes_at)
+
+
+func _check_web_residency(boxes_at: Dictionary, shapes_at: Dictionary) -> void:
+	"""
+	THE WEB RESIDENCY PROOF: what the whole VIEW costs, not what one chunk costs.
+
+	@param boxes_at, shapes_at: every city chunk's tallies, from check 4's sweep.
+
+	The per-chunk budgets above are a statement about ONE frame of the
+	one-chunk-per-frame drain. They say nothing at all about what is on screen,
+	and since bead .9 filled every block that is the number that moved: the city
+	went from 378 chunks with stone to ~1630, so a per-chunk ceiling that was
+	never approached can stay exactly where it is while the RESIDENT set behind it
+	quadruples.
+
+	WEB_RENDER_DISTANCE is 3, so the web build holds a 7 x 7 = 49-chunk square
+	around the player, each an instance in its own MultiMesh and a shape on its
+	own body. This walks every such window that fits in the city rect and takes
+	the worst — which is the densest thing a web player can ever be standing in
+	the middle of. Both ceilings are MEASURED, printed beside the reading, and
+	deliberately generous: they are here to catch a change of ORDER (a builder
+	that stopped slicing, a block table that stopped excluding), not to be tuned.
+	"""
+	var side := 2 * WEB_RENDER_DISTANCE + 1
+	var worst_boxes := 0
+	var worst_shapes := 0
+	var worst_at := Vector2i.ZERO
+	for origin_v: Variant in boxes_at.keys():
+		var origin: Vector2i = origin_v
+		var boxes := 0
+		var shapes := 0
+		for dx in side:
+			for dz in side:
+				var at := origin + Vector2i(dx, dz)
+				boxes += int(boxes_at.get(at, 0))
+				shapes += int(shapes_at.get(at, 0))
+		if boxes > worst_boxes:
+			worst_boxes = boxes
+			worst_shapes = shapes
+			worst_at = origin
+	if worst_boxes > CITY_RESIDENCY_BOX_BUDGET:
+		_fail("the worst %d-chunk web window (at %s) holds %d boxes, over "
+				% [side * side, worst_at, worst_boxes]
+				+ "CITY_RESIDENCY_BOX_BUDGET %d — the per-chunk budget passed "
+				% CITY_RESIDENCY_BOX_BUDGET
+				+ "because the cost moved into the number of chunks, not into one")
+	if worst_shapes > CITY_RESIDENCY_SHAPE_BUDGET:
+		_fail("the worst %d-chunk web window (at %s) hangs %d collision shapes, "
+				% [side * side, worst_at, worst_shapes]
+				+ "over CITY_RESIDENCY_SHAPE_BUDGET %d" % CITY_RESIDENCY_SHAPE_BUDGET)
+	print("  web residency: worst %d-chunk window at %s holds %d boxes (budget "
+			% [side * side, worst_at, worst_boxes]
+			+ "%d) and %d shapes (budget %d)"
+			% [CITY_RESIDENCY_BOX_BUDGET, worst_shapes, CITY_RESIDENCY_SHAPE_BUDGET])
 
 
 # ============================================================================
@@ -2822,3 +3010,294 @@ func _check_danube_crocodiles(terrain: Node3D) -> void:
 	print("Danube crocodiles: %d over %d wet chunks along the full 2.2 km, "
 			% [total, wet_chunks] + "buckets %s north -> south, %d within %.0f m "
 			% [str(buckets), near_deck, margin] + "of a deck or the island")
+
+
+# ============================================================================
+# CHECK 15 — the blocks are a CITY: streets clear, courtyards hollow, coins on
+#            the avenues and every bridge
+# ============================================================================
+
+func _check_city_blocks(terrain: Node3D) -> void:
+	"""
+	THE OWNER'S BEAD, MEASURED. "budapest seems really empty, but it is full of
+	multi story buildings in fact ... like what we can see on google map walking
+	mode" — so the question this check answers is whether the city is FULL, and
+	whether filling it broke the two things a filled city can break.
+
+	Four parts, and each is a different way for the feature to be quietly wrong:
+
+	  a. THE PLAN REFUSES WHAT IS ALREADY THERE. Every landmark slot, both
+	     plateaus, the gate district and the river must fall in cells
+	     block_buildable() says no to — with the count of cells it says YES to
+	     printed, because a predicate that refuses everything passes every one of
+	     those assertions and ships an empty city.
+	  b. NO SOLID PIECE SEVERS A STREET. The bead's own landmine. It is true BY
+	     CONSTRUCTION (block_rect insets by the carriageway plus a pavement), and
+	     that is exactly why it is worth measuring: a construction argument fails
+	     silently the day somebody adds a piece that is not drawn off block_rect.
+	     Measured on the COLLISION SHAPES, through each one's own basis, the way
+	     check 13 measures the avenue.
+	  c. THE COURTYARDS ARE HOLLOW. The other half of "a block is a ring": if a
+	     wing's depth ever exceeded half the block, the four would meet in the
+	     middle and every block in Budapest would be a solid 44 m cube with a
+	     cornice on it.
+	  d. THE COINS RIDE THE AVENUES AND EVERY BRIDGE. With a gem at a square, and
+	     with every coin on a carriageway — a coin the routes put inside a
+	     building would be unreachable, and one that skipped a whole bridge would
+	     leave the crossing unrewarded.
+	"""
+	var consts := (terrain.get_script() as GDScript).get_script_constant_map()
+
+	# ---- a. the plan refuses what is already there ---------------------------
+	var buildable := 0
+	var scanned := 0
+	var lo: Vector2i = BudapestPlan.block_cell(
+			BudapestPlan.BUDAPEST_MIN.x, BudapestPlan.BUDAPEST_MIN.y)
+	var hi: Vector2i = BudapestPlan.block_cell(
+			BudapestPlan.BUDAPEST_MAX.x, BudapestPlan.BUDAPEST_MAX.y)
+	for k in range(lo.x, hi.x + 1):
+		for m in range(lo.y, hi.y + 1):
+			scanned += 1
+			if BudapestPlan.block_buildable(Vector2i(k, m)):
+				buildable += 1
+	if buildable < scanned / 4:
+		_fail("only %d of %d city cells are buildable — the owner asked for a "
+				% [buildable, scanned] + "city full of buildings and this one is "
+				+ "mostly empty lots")
+
+	for slot_v: Variant in BudapestPlan.SLOTS:
+		var slot: Dictionary = slot_v
+		var pos: Vector3 = slot["pos"]
+		var at: Vector2i = BudapestPlan.block_cell(pos.x, pos.z)
+		if BudapestPlan.block_buildable(at):
+			_fail("a city block would be built over landmark '%s' at cell %s"
+					% [String(slot["id"]), at])
+	for row_v: Variant in BudapestPlan.PLATEAUS:
+		var row: Dictionary = row_v
+		var c := (row["rect"] as Rect2).get_center()
+		if BudapestPlan.block_buildable(BudapestPlan.block_cell(c.x, c.y)):
+			_fail("a city block would be built on plateau '%s', which is solid "
+					% String(row["id"]) + "stone to its lid")
+	var mid_river: Vector2 = BudapestPlan.DANUBE[2]
+	if BudapestPlan.block_buildable(BudapestPlan.block_cell(mid_river.x, mid_river.y)):
+		_fail("a city block would be built in the middle of the Danube")
+	var gate_c := BudapestPlan.DISTRICT.get_center()
+	if BudapestPlan.block_buildable(BudapestPlan.block_cell(gate_c.x, gate_c.y)):
+		_fail("a city block would be built over the authored gate district")
+
+	# ---- b + c. streets clear, courtyards hollow ----------------------------
+	var shapes_seen := 0
+	var exempt := 0
+	var in_street := 0
+	var in_courtyard := 0
+	var block_chunk_worst := 0
+	var block_chunk_worst_at := Vector2i.ZERO
+	for chunk_pos: Vector2i in _rect_chunks(terrain, BLOCK_SWEEP_STRIDE):
+		var centre: Vector3 = terrain.chunk_to_world(chunk_pos)
+		var built := _build_city_chunk(terrain, chunk_pos)
+		var body: StaticBody3D = built["body"]
+		var batch: Array = built["batch"]
+		if batch.size() > block_chunk_worst:
+			block_chunk_worst = batch.size()
+			block_chunk_worst_at = chunk_pos
+		for child in body.get_children():
+			var shape := child as CollisionShape3D
+			var box := shape.shape as BoxShape3D
+			if box == null:
+				continue
+			shapes_seen += 1
+			var xf: Transform3D = shape.transform
+			var e: Vector3 = box.size * 0.5
+			var ax := absf(xf.basis.x.x) * e.x + absf(xf.basis.y.x) * e.y + absf(xf.basis.z.x) * e.z
+			var az := absf(xf.basis.x.z) * e.x + absf(xf.basis.y.z) * e.y + absf(xf.basis.z.z) * e.z
+			var wx := xf.origin.x + centre.x
+			var wz := xf.origin.z + centre.z
+			var cell: Vector2i = BudapestPlan.block_cell(wx, wz)
+			# WHAT THE SWEEP IS ABOUT. The grid is the BLOCKS' contract, and a
+			# cell block_buildable() refuses is where bead .3's AUTHORED city
+			# stands instead — a landmark's plinth, the gate district's houses, a
+			# plateau's massif, a bridge's abutment. Those are placed by hand, are
+			# governed by checks 11, 13 and 14, and legitimately reach across a
+			# line the block grid draws over them. So a box is judged only when it
+			# is homed in a cell the blocks are allowed to fill, and the number of
+			# boxes that exemption covers is printed rather than hidden.
+			#
+			# THE HILLS AND THE DECKS NEED A SECOND, RECT-SHAPED EXEMPTION on top
+			# of the cell one, because they are SLICED: a chunk's 10 m slice of
+			# Gellért's massif can have its centre in a cell whose own block rect
+			# clears the hill by 3 m while the slice reaches across the line. The
+			# rect is the honest test for a thing built off a rect.
+			if not BudapestPlan.block_buildable(cell) \
+					or _on_a_plateau(wx, wz) or _on_a_bridge_deck(wx, wz):
+				exempt += 1
+				continue
+			# THE STREET TEST. A box is only ever judged against the ONE grid line
+			# nearest each of its own faces, so this is two comparisons and not a
+			# walk of 35 lines: the pitch is wider than any piece a block draws, so
+			# a box clear of its nearest carriageway is clear of every other.
+			if _in_carriageway(wx, ax, BudapestPlan.GATE.x) \
+					or _in_carriageway(wz, az, BudapestPlan.GATE.z):
+				in_street += 1
+				if in_street <= 3:
+					_fail("a solid box at (%.0f, %.0f), %.1f x %.1f m, stands in "
+							% [wx, wz, ax * 2.0, az * 2.0] + "a street of the city "
+							+ "grid — a block has severed the route past it")
+			var yard: Rect2 = BudapestPlan.block_courtyard(cell).grow(-BLOCK_TOUCH_EPS)
+			if Rect2(wx - ax, wz - az, ax * 2.0, az * 2.0).intersection(yard).has_area():
+				in_courtyard += 1
+				if in_courtyard <= 3:
+					_fail("a solid box at (%.0f, %.0f) stands in block %s's "
+							% [wx, wz, cell] + "COURTYARD — the block is a solid "
+							+ "cube, not a ring of buildings")
+		body.free()
+		(built["parent"] as Node).free()
+	if shapes_seen - exempt < 1:
+		_fail("check 15's sweep judged no collision shape at all (%d seen, %d in "
+				% [shapes_seen, exempt] + "cells nothing may be built on) — the "
+				+ "blocks built nothing, so clear streets is not what was measured")
+
+	# ---- b's NEGATIVE CONTROL, which every sibling check in this file carries --
+	# "0 boxes in a street" is a COUNT THAT STAYS ZERO whether the streets are
+	# genuinely clear or the judgement is broken — an exemption that swallowed
+	# everything, or an _in_carriageway that always answered false, both pass the
+	# loop above in silence. So one deliberately street-cutting building is put
+	# through the SAME judgement and must be caught.
+	#
+	# Driven on the predicate rather than on a rebuilt world, because the predicate
+	# IS the judgement: the loop above only feeds it each shape's world centre and
+	# half-extents, which is exactly what these two lines hand it.
+	var cut_line: float = BudapestPlan.street_x(BudapestPlan.CITY_AVENUE_EVERY * 4)
+	if not _in_carriageway(cut_line, 4.0, BudapestPlan.GATE.x):
+		_fail("check 15's negative control was NOT caught: a 8 m wall straddling "
+				+ "the grid line at x = %.0f reads as clear of the street, so the "
+				% cut_line + "sweep's zero above measures nothing")
+	# ...and the matching POSITIVE control, so the predicate is not simply always
+	# true: a facade standing where the blocks really put it, one pavement back
+	# from the kerb, must read as clear.
+	var facade := cut_line + BudapestPlan.AVENUE_HALF_WIDTH \
+			+ BudapestPlan.BLOCK_PAVEMENT + BudapestPlan.BLOCK_WING_DEPTH * 0.5
+	if _in_carriageway(facade, BudapestPlan.BLOCK_WING_DEPTH * 0.5, BudapestPlan.GATE.x):
+		_fail("check 15's positive control failed: a wing sitting exactly where "
+				+ "block_rect puts it reads as standing in the street, so the "
+				+ "sweep would fail on every building in Budapest")
+
+	# ---- d's GEOMETRY: no band may reach the carriageway --------------------
+	# THE AWNING IS THE WIDEST THING A FACADE HANGS OVER THE PAVEMENT, and the
+	# only reason a coin on the avenue is not underneath one is that
+	# BLOCK_PAVEMENT is wider than it. That is arithmetic, so it is asserted as
+	# arithmetic rather than left as a comment somebody has to find: widen any
+	# proud past the pavement and the routes start stranding pickups under stone,
+	# with nothing on screen to say so.
+	var widest: float = maxf(maxf(consts["CITY_AWNING_PROUD"], consts["CITY_BALCONY_PROUD"]),
+			maxf(consts["CITY_CORNICE_PROUD"], consts["CITY_SHOPFRONT_PROUD"]))
+	if widest >= BudapestPlan.BLOCK_PAVEMENT:
+		_fail("the widest facade band stands %.2f m proud against a %.2f m "
+				% [widest, BudapestPlan.BLOCK_PAVEMENT] + "pavement — it reaches "
+				+ "the carriageway, so an avenue coin can end up under it and the "
+				+ "street sweep above has decoration to exempt")
+
+	# ---- d. the coin routes -------------------------------------------------
+	var coins := 0
+	var gems := 0
+	var off_route := 0
+	var bridge_coins: Dictionary = {}
+	for row_v: Variant in BudapestPlan.BRIDGES:
+		bridge_coins[String((row_v as Dictionary)["id"])] = 0
+	# One column avenue's worth of chunks, plus every chunk each bridge deck
+	# touches — the two things the routes promise, walked rather than asserted.
+	var walk: Dictionary = {}
+	var cell_m: float = terrain.chunk_size
+	var avenue_x: float = BudapestPlan.street_x(BudapestPlan.CITY_AVENUE_EVERY * 4)
+	for i in COIN_WALK_CHUNKS:
+		var z: float = BudapestPlan.BUDAPEST_MIN.y + float(i) * cell_m
+		walk[terrain.world_to_chunk(Vector3(avenue_x, 0.0, z))] = true
+	for row_v: Variant in BudapestPlan.BRIDGES:
+		var deck: Rect2 = BudapestPlan.bridge_deck(row_v)
+		var x := deck.position.x
+		while x <= deck.end.x:
+			walk[terrain.world_to_chunk(Vector3(x, 0.0, deck.get_center().y))] = true
+			x += cell_m * 0.5
+
+	for chunk_pos_v: Variant in walk.keys():
+		var chunk_pos: Vector2i = chunk_pos_v
+		var centre: Vector3 = terrain.chunk_to_world(chunk_pos)
+		var built := _build_city_chunk(terrain, chunk_pos)
+		var parent: MeshInstance3D = built["parent"]
+		terrain.spawn_city_coins_in_chunk(chunk_pos, parent, built["obstacles"])
+		for child in parent.get_children():
+			var pickup := child as Node3D
+			if pickup == null or not pickup.is_in_group("coin"):
+				continue
+			var world: Vector3 = pickup.position + centre
+			coins += 1
+			if int(pickup.get("value")) > 1:
+				gems += 1
+			var on_deck := false
+			for row_v: Variant in BudapestPlan.BRIDGES:
+				if (BudapestPlan.bridge_deck(row_v) as Rect2).has_point(
+						Vector2(world.x, world.z)):
+					bridge_coins[String((row_v as Dictionary)["id"])] += 1
+					on_deck = true
+			if on_deck:
+				continue
+			# EVERY OTHER COIN IS ON A CARRIAGEWAY. A coin the routes dropped
+			# inside a block would be standing in a wall, which is the one way an
+			# authored reward line can be worse than none at all.
+			if not (_on_a_carriageway(world.x, BudapestPlan.GATE.x)
+					or _on_a_carriageway(world.z, BudapestPlan.GATE.z)):
+				off_route += 1
+				if off_route <= 3:
+					_fail("a city coin at (%.0f, %.0f) is on no street of the "
+							% [world.x, world.z] + "grid — the routes have put a "
+							+ "pickup inside a building")
+		(built["body"] as Node).free()
+		parent.free()
+
+	if coins < 1:
+		_fail("the city's coin routes laid no coin at all over %d chunks of one "
+				% walk.size() + "avenue and four bridges — Pest is still the "
+				+ "1.4 km with no coin source bead .3 left behind")
+	if gems < 1:
+		_fail("no gem anywhere on the walked avenue — the squares where two "
+				+ "avenues cross are supposed to be worth stopping at")
+	for id_v: Variant in bridge_coins.keys():
+		if int(bridge_coins[id_v]) < 1:
+			_fail("bridge '%s' carries no coin at all — 'coins ... across every "
+					% String(id_v) + "bridge' is the bead's own wording")
+
+	print("blocks: %d of %d city cells filled, %d of %d swept collision shapes "
+			% [buildable, scanned, shapes_seen - exempt, shapes_seen]
+			+ "judged (every %dth chunk), %d in a street and %d in a courtyard; "
+			% [BLOCK_SWEEP_STRIDE, in_street, in_courtyard]
+			+ "densest city chunk %d boxes at %s"
+			% [block_chunk_worst, block_chunk_worst_at])
+	print("city coins: %d over %d walked chunks (%d gems), %s on the four decks, "
+			% [coins, walk.size(), gems, str(bridge_coins.values())]
+			+ "%d off the grid" % off_route)
+
+
+func _in_carriageway(w: float, half_extent: float, origin: float) -> bool:
+	"""Does a box centred at `w` with this half-extent reach into the 16 m
+	carriageway around the NEAREST grid line? The nearest line is enough: the
+	pitch (62 m) is wider than any piece a block draws, so a box clear of its own
+	nearest line is clear of all of them."""
+	var line := origin + roundf((w - origin) / BudapestPlan.STREET_PITCH) \
+			* BudapestPlan.STREET_PITCH
+	return absf(w - line) - half_extent < BudapestPlan.AVENUE_HALF_WIDTH - BLOCK_TOUCH_EPS
+
+
+func _on_a_carriageway(w: float, origin: float) -> bool:
+	"""Is this world coordinate ON the carriageway of its nearest grid line — the
+	POINT form of _in_carriageway, for a coin rather than a box."""
+	return _in_carriageway(w, 0.0, origin)
+
+
+func _on_a_plateau(x: float, z: float) -> bool:
+	"""Is this world XZ standing on one of the two hills, or on its ramp? The
+	street sweep's second exemption — see the call site."""
+	for row_v: Variant in BudapestPlan.PLATEAUS:
+		var row: Dictionary = row_v
+		if (row["rect"] as Rect2).has_point(Vector2(x, z)) \
+				or (row["ramp"] as Rect2).has_point(Vector2(x, z)):
+			return true
+	return false

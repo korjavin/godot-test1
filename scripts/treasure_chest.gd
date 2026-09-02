@@ -212,7 +212,7 @@ func _on_body_entered(body: Node) -> void:
 		# the collected set. Without it `setup()`'s `is_coin_collected` check —
 		# the chest's ONLY de-duplication, since nothing sweeps chests the way
 		# `_absorb_collected` sweeps the "coin" group — misses on a chunk reload
-		# or a later joiner, and the shared bank pays a second 8-15 coin burst.
+		# or a later joiner, and the shared bank pays a second CHEST_COINS_MIN..MAX burst.
 		mp.report_coin_collected(_id)
 
 	# Stop listening. MUST be deferred: Godot blocks direct property writes to a
