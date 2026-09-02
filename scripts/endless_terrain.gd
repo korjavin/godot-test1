@@ -9472,9 +9472,12 @@ func spawn_city_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obst
 	  1. the PLATEAU slice — one box, the chunk square meeting the hill's rect,
 	     y = 0 to `top`, plus one footprint at climbable: false;
 	  2. the RAMP slice — one TILTED box, the only way onto that lid;
-	  3. the AVENUE slice — a thin, non-colliding pavement slab out of the gate.
-	The landmark slices, the gate district and the Danube's crocodiles are their
-	own functions and their own beads' tasks.
+	  3. the LANDMARK slices — _spawn_city_landmarks_in_chunk, this chunk's share
+	     of every authored slot whose disc reaches into its square;
+	  5. the AVENUE slice — a thin, non-colliding pavement slab out of the gate.
+	4 is the gate district and is its own task; the Danube's crocodiles are a
+	spawner of their own, not city stone. The numbering is DEC-10's, kept as it
+	is so the gap is visibly a slot rather than an omission.
 	"""
 	var chunk_center := chunk_to_world(chunk_pos)
 	# Cheap rect reject: every chunk in the world that is not in the city pays one
@@ -9549,7 +9552,13 @@ func spawn_city_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obst
 				PI * 0.5 * dir, rng, block_batch, block_body, -atan2(top, run),
 				CITY_HILL_STONE)
 
-	# ---- 3. THE AVENUE ------------------------------------------------------
+	# ---- 3. THE LANDMARK SLICES ---------------------------------------------
+	# Its own function because it is the bead's keystone decision and wants the
+	# whole docstring to itself. It gets the chunk centre rather than recomputing
+	# it, and its own per-slot RNG rather than this one.
+	_spawn_city_landmarks_in_chunk(chunk_center, parent_chunk, obstacles, block_batch, block_body)
+
+	# ---- 5. THE AVENUE ------------------------------------------------------
 	# The one street this bead draws: 16 m of pavement running east out of the
 	# gate along z = 0, to the Danube's west bank. Bead godot-test1-8gw.9 owns the
 	# rest of the grid; this file owns STREET_PITCH as a parameter and nothing more.
@@ -9569,6 +9578,163 @@ func spawn_city_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obst
 				Vector3(mid_a.x - chunk_center.x, CITY_AVENUE_THICKNESS * 0.5, mid_a.y - chunk_center.z),
 				Vector3(av.size.x, CITY_AVENUE_THICKNESS, av.size.y), 0.0,
 				rng, block_batch, block_body, 0.0, CITY_AVENUE_STONE, false)
+
+
+func _spawn_city_landmarks_in_chunk(chunk_center: Vector3, parent_chunk: MeshInstance3D, obstacles: Array, block_batch: Array, block_body: StaticBody3D) -> void:
+	"""
+	Build this chunk's SHARE of every authored Budapest landmark whose disc reaches
+	into its square (bead godot-test1-8gw.3).
+
+	@param chunk_center: This chunk's centre in world space, from chunk_to_world().
+	@param parent_chunk: The real chunk mesh — the accent nodes' final home, but
+	                     only for the chunk holding a slot's CENTRE (see below).
+	@param obstacles: Out-param; one round footprint per overlapping slot.
+	@param block_batch: Out-param; the kept boxes join the chunk's ONE MultiMesh.
+	@param block_body: The chunk's single shared collision body.
+
+	================= THE DECISION, AND THE TWO IT BEAT =================
+
+	The Parliament is 268 m long and Buda Castle's disc is 156 m across, while a
+	chunk is 50 m and the web build keeps 49 of them resident. So a landmark
+	CANNOT be emitted by "its own" chunk: walk to the far end of the Parliament and
+	the chunk that would have built it has unloaded, and the building disappears
+	while you are standing on it.
+
+	THE ANSWER IS (a) PER-CHUNK SLICING. Every chunk whose square meets a slot's
+	disc runs that slot's builder into a SCRATCH batch, a SCRATCH body and a
+	SCRATCH chunk node, and keeps only the pieces whose CENTRE falls inside its own
+	square. The two rejected answers, recorded here because this is exactly what a
+	future reader will want to re-open:
+
+	  (b) MANAGER-PARENT THE GIANTS, the way the HQ's shell is parented. Rejected
+	      because CLAUDE.md says the tower is the ONE lifetime exception and must
+	      stay one, and this would make a second one out of a dozen buildings —
+	      each with its own "when does it get freed" question and no chunk to
+	      answer it.
+	  (c) A WIDER RESIDENCY RADIUS for city chunks. Rejected because the 49-chunk
+	      web residency ceiling is the entire reason the city is chunk-streamed
+	      instead of authored into the scene; widening it for the city spends the
+	      budget the decision was made to protect.
+
+	WHY (a) IS NEARLY FREE: the city builders are PURE FUNCTIONS OF (centre, rng)
+	whose random stream touches COLOUR ONLY — landmark_builders.gd's own banner
+	says so, and not one dimension, offset or count is drawn. Run the same builder
+	from the same seed in a neighbouring chunk and it emits the SAME boxes at the
+	SAME world positions, so clipping is a filter on the output and needs no edit
+	to that file at all. The cost is measured: the Parliament is 122 boxes over
+	~49 chunks, i.e. ~6,000 create_box calls spread one chunk per frame — about
+	122 a frame, which is what one ordinary prop chunk already pays.
+
+	================= THE FOUR RULES THAT MAKE IT CORRECT =================
+
+	1. THE SEED IS THE SLOT INDEX AND NOTHING ELSE. No run_seed (the city is
+	   authored — tower_site()'s ruling) and, far more sharply, NO CHUNK
+	   COORDINATE: mix one in and every slice draws its own colours, and the
+	   Parliament comes out tie-dyed along its chunk seams. The salt is wider than
+	   an int32 and wraps into Vector3i's component; the wrap is silent but it is
+	   deterministic and identical in every chunk, which is the only property this
+	   seed needs.
+	2. THE CLIP IS HALF-OPEN — `>= -half` and `< half` on both axes. A box centred
+	   exactly on a chunk boundary then lands in exactly ONE chunk: never in both
+	   (a doubled, z-fighting wall) and never in neither (a hole).
+	   ponytail: the test is on the CHUNK-LOCAL centre, and a local coordinate is
+	   an f32 with the chunk's own origin already subtracted, so two neighbours
+	   disagree about a seam-straddling box only if their f32 rounding disagrees —
+	   sub-micron, and measured as zero over all 15 shipped buildings. If a box
+	   ever does double, nudge the slot, not this test: an epsilon here reopens
+	   the hole case on the other side.
+	3. THE CLIP APPLIES TO BOTH HALVES. Batch entries are filtered on their
+	   transform origin; collision shapes are filtered on the scratch body's own
+	   CollisionShape3D transforms and REPARENTED rather than rebuilt. Do NOT try
+	   to pair a shape with a batch entry by index — every `collide = false` box
+	   (and these builders are full of them: domes, spires, cornices) makes the
+	   two lists different lengths.
+	4. THE ACCENT EXISTS EXACTLY ONCE. Ten of these builders hang a glowing
+	   MeshInstance3D on parent_chunk, and under slicing that would give the
+	   Parliament one beacon per overlapping chunk. So they are handed a scratch
+	   node, and afterwards: if the slot's CENTRE is in this chunk the scratch's
+	   children are reparented onto the real one, otherwise the scratch is freed
+	   and takes them with it. One rule, no builder edit.
+
+	THE FOOTPRINT is one disc per slot in EVERY chunk the slot touches, at
+	climbable: false — the massif convention, so the coin rule skips a coin over a
+	cathedral rather than perching it on the silhouette top of a hollow nave, and
+	the crocodile spawner keeps out. It is per-chunk because `obstacles` is
+	per-chunk, and it is the whole slot rather than this slice because a spawner
+	200 m away in another chunk cannot see a neighbour's list anyway.
+
+	AN EMPTY BUILDER IS SKIPPED — that is the whole of "leave the slot empty" for
+	the seven wave-C reservations.
+	"""
+	var half := chunk_size / 2.0
+
+	for i in range(BudapestPlan.SLOTS.size()):
+		var slot: Dictionary = BudapestPlan.SLOTS[i]
+		var builder: String = slot["builder"]
+		if builder.is_empty():
+			continue   # a wave-C reservation: a position and a radius, no stone yet
+
+		var pos: Vector3 = slot["pos"]
+		var radius: float = slot["radius"]
+
+		# Exact disc-meets-square reject, via the square's closest point to the
+		# centre. Every chunk in the city pays 22 of these and nothing else; the
+		# rest of the world never gets here at all (spawn_city_in_chunk's own rect
+		# reject returned first).
+		var near := Vector2(
+				clampf(pos.x, chunk_center.x - half, chunk_center.x + half),
+				clampf(pos.z, chunk_center.z - half, chunk_center.z + half))
+		if Vector2(pos.x - near.x, pos.z - near.y).length_squared() > radius * radius:
+			continue
+
+		# Rule 1. The seed carries the slot index and the salt; the chunk is
+		# deliberately absent.
+		var rng := RandomNumberGenerator.new()
+		rng.seed = hash(Vector3i(i, BudapestPlan.CITY_LANDMARK_SALT, 0))
+
+		# The scratch trio. None of the three is ever added to the scene tree:
+		# the body and the chunk node are pure receptacles that get emptied and
+		# freed below, and the batch is a plain Array.
+		var scratch_batch: Array = []
+		var scratch_body := StaticBody3D.new()
+		var scratch_chunk := MeshInstance3D.new()
+
+		# Builders take a CHUNK-LOCAL centre (the field landmarks' convention), so
+		# the slot's world position is rebased here — and its authored y is passed
+		# through unchanged, which is how the four slots on a plateau stand on the
+		# lid instead of inside the hill.
+		var center := Vector3(pos.x - chunk_center.x, pos.y, pos.z - chunk_center.z)
+		var footprint: Dictionary = _landmark_builders.call(
+				builder, self, center, rng, scratch_chunk, scratch_batch, scratch_body)
+
+		# Rule 2 + 3a: the visual half, half-open on both axes.
+		for entry in scratch_batch:
+			var o: Vector3 = entry["transform"].origin
+			if o.x >= -half and o.x < half and o.z >= -half and o.z < half:
+				block_batch.append(entry)
+
+		# Rule 3b: the collision half. get_children() hands back a copy, so
+		# removing while iterating it is safe.
+		for shape in scratch_body.get_children():
+			var o: Vector3 = shape.transform.origin
+			if o.x >= -half and o.x < half and o.z >= -half and o.z < half:
+				scratch_body.remove_child(shape)
+				block_body.add_child(shape)
+		scratch_body.free()   # takes every shape this chunk did not claim with it
+
+		# Rule 4: the accent, on the centre chunk only.
+		if center.x >= -half and center.x < half and center.z >= -half and center.z < half:
+			for accent in scratch_chunk.get_children():
+				scratch_chunk.remove_child(accent)
+				parent_chunk.add_child(accent)
+		scratch_chunk.free()
+
+		obstacles.append({
+			"pos": Vector3(center.x, 0.0, center.z),
+			"radius": radius,
+			"top": footprint.get("top", pos.y),
+			"climbable": false,
+		})
 
 
 func spawn_approach_coins_in_chunk(chunk_pos: Vector2i, parent_chunk: MeshInstance3D, obstacles: Array) -> void:

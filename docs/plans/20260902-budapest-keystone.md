@@ -578,13 +578,17 @@ or co-author trailers anywhere.
 
 ### Task 5: the landmark slices — the keystone decision, built
 
-- [ ] `_spawn_city_landmarks_in_chunk`, DEC-1 in full: the per-slot seed, the scratch
+- [x] `_spawn_city_landmarks_in_chunk`, DEC-1 in full: the per-slot seed, the scratch
       batch / body / chunk, the half-open clip on both halves, the accent reparent-or-free,
       the per-chunk footprint, the empty-builder skip.
-- [ ] The docstring states the DECISION and why (b) and (c) were rejected — this is the
+- [x] The docstring states the DECISION and why (b) and (c) were rejected — this is the
       thing a future reader will want to re-litigate, and the bead note is the record.
-- [ ] Run `landmark_selfcheck` — it must be **byte-for-byte green**, because this task must
-      not have touched `landmark_builders.gd`.
+- [x] Run `landmark_selfcheck` — it must be **byte-for-byte green**, because this task must
+      not have touched `landmark_builders.gd`. Green, plus `chunk_stream_selfcheck`,
+      `enemy_spawn_selfcheck` and `prop_selfcheck` as the regression. Measured on an
+      ad-hoc driver over all 15 shipped slots: every box the unsliced builder emits is
+      recovered exactly once across the slices, none twice, and each slot's accent
+      exists exactly once.
 
 ### Task 6: spawner policy + the Danube crocodiles
 
