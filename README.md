@@ -29,9 +29,9 @@ watch the radial dial in the top-right.
 
 ## How a run works
 
-- **Distance is your score** — how far from the spawn you've pushed. Your best
-  distance and coin haul are saved (they survive page reloads) and a **NEW
-  BEST** flash greets a record run.
+- **Coins are your score** — how many coins and gems you've banked. Your best
+  coin haul is saved (survives page reloads) and a **NEW BEST** flash greets a
+  record run.
 - **Coins pay off**: follow the coin road for a steady trickle, watch for rare
   **purple gems worth 10**, and keep a pickup streak alive for a score
   multiplier of up to ×5.

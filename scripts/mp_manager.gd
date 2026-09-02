@@ -2768,7 +2768,7 @@ func _send_state_to(id: String) -> void:
 		# once no pre-godot-test1-0bc client can still be running.
 		"ls": 0,
 		"gs": 0,
-		"dd": dist,
+		"dd": 0,
 		"px": pos.x,
 		"py": pos.y,
 		"pz": pos.z,
@@ -3525,7 +3525,7 @@ func _send_presence() -> void:
 		"s": speed,
 		"g": player.is_on_floor() if player.has_method("is_on_floor") else true,
 		"cc": int(player.get("own_coins")) if mine and "own_coins" in player else 0,
-		"dd": int(player.get("run_distance")) if mine and "run_distance" in player else 0,
+		"dd": 0,
 	}
 	# `ab` — THE ABILITY STATE A WATCHER CAN SEE (bead godot-test1-69p): Teibi's
 	# Resize form and Windman's Air Rush, as `player_controller.ABILITY_BIT_*`

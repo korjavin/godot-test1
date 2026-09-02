@@ -1,10 +1,10 @@
 extends Label
-## Score HUD (top-right of the screen): distance travelled plus coin count.
+## Score HUD (top-right of the screen): level and coin count.
 ##
-## Each frame this mirrors the player's distance (the headline score — see
-## run_distance in player_controller.gd) and coin count into the label text. It
-## finds the player through the "player" group rather than a hard reference,
-## matching the rest of the project, so it keeps working across player respawns.
+## Each frame this mirrors the player's coin count (the headline score) and
+## progression level into the label text. It finds the player through the "player"
+## group rather than a hard reference, matching the rest of the project, so it
+## keeps working across player respawns.
 
 ## How big the label pops when a coin is picked up (1.25 = 25% oversized).
 const POP_SCALE: float = 1.25
@@ -42,16 +42,16 @@ func _process(delta: float) -> void:
 			scale = Vector2.ONE * POP_SCALE
 		_last_coins = player.coins_collected
 		# `tr()` explicitly, because Godot's Control auto-translation would only
-		# ever see the FORMATTED result ("Distance: 240m   Coins: 87"), which is
-		# not a key in any translation. The rule across the project: a plain
-		# literal assigned to `.text` needs no `tr()`; a format string does, and
-		# the `tr()` goes on the format string, before the `%`.
+		# ever see the FORMATTED result ("Coins: 87"), which is not a key in any
+		# translation. The rule across the project: a plain literal assigned to
+		# `.text` needs no `tr()`; a format string does, and the `tr()` goes on
+		# the format string, before the `%`.
 		# The level prefix is only rendered when a Progression node exists (found by
 		# group, like everything else here), so this label keeps working unchanged
 		# in a scene without one — and both format strings are CSV rows.
 		if progression and "level" in progression and progression.has_method("unspent_points"):
-			text = tr("Lv %d   Distance: %dm   Coins: %d") % [
-				progression.level, player.run_distance, player.coins_collected
+			text = tr("Lv %d   Coins: %d") % [
+				progression.level, player.coins_collected
 			]
 			# Unspent skill points, shown only when there are any — the same
 			# suffix-when-it-matters rule the streak "(xN)" below follows. Nothing
@@ -60,11 +60,11 @@ func _process(delta: float) -> void:
 			if points > 0:
 				text += tr("  %d SP") % points
 		else:
-			text = tr("Distance: %dm   Coins: %d") % [
-				player.run_distance, player.coins_collected
+			text = tr("Coins: %d") % [
+				player.coins_collected
 			]
 		# Show the coin-streak multiplier only while it's actually boosting (>1),
-		# e.g. "Distance: 240m   Coins: 87 (x3)" — see get_streak_multiplier().
+		# e.g. "Coins: 87 (x3)" — see get_streak_multiplier().
 		var mult: int = player.get_streak_multiplier()
 		if mult > 1:
 			text += " (x%d)" % mult
