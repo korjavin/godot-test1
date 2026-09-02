@@ -1794,8 +1794,10 @@ const DANUBE_SLOT_BASE: int = 500
 ## are what says so, and `budapest_selfcheck` check 4 measures every chunk in the
 ## 2.2 km rect against them and prints the worst one it found beside each ceiling.
 ##
-## MEASURED over the whole rect (2025 chunks, 2026-09-02): worst 62 boxes, worst
-## 15 collision shapes, worst 0.71 ms. The ceilings are those numbers with room
+## MEASURED over the whole rect (2025 chunks, 2026-09-02, AFTER rule 2a's splitter
+## landed — cutting the giants' oversized boxes on the chunk grid is what moved
+## the box figure from 62): worst 69 boxes, worst 15 collision shapes, worst
+## 7.4 ms. The ceilings are those numbers with room
 ## for the seven wave-C landmark builders that are still reservations, and the ms
 ## budget is deliberately loose because it is wall-clock on whatever machine CI
 ## happens to be — it is a runaway detector, not a benchmark.
@@ -3035,10 +3037,18 @@ func _apply_biome_shader_params() -> void:
 			BudapestPlan.BUDAPEST_MIN.x, BudapestPlan.BUDAPEST_MIN.y,
 			BudapestPlan.BUDAPEST_MAX.x, BudapestPlan.BUDAPEST_MAX.y))
 	mat.set_shader_parameter("city_river", _city_river_segments())
-	mat.set_shader_parameter("city_river_count", BudapestPlan.DANUBE.size() - 1)
+	# CLAMPED, like the arrays themselves: the asserts in the two builders below are
+	# stripped in an exported build — which is the web build, the one target this
+	# shader exists for — so a plan that outgrew CITY_SEG_MAX / CITY_DRY_MAX would
+	# ship a count past the end of a GLSL array uniform. That read is undefined in
+	# GLSL ES 3.00. Losing the last bend is a bug budapest_selfcheck catches; a
+	# driver-dependent out-of-range fetch is not.
+	mat.set_shader_parameter("city_river_count",
+			mini(BudapestPlan.DANUBE.size() - 1, CITY_SHADER_SEG_MAX))
 	mat.set_shader_parameter("city_river_half", BudapestPlan.DANUBE_HALF_WIDTH)
 	mat.set_shader_parameter("city_dry", _city_dry_rects())
-	mat.set_shader_parameter("city_dry_count", BudapestPlan.DRY_RECTS.size())
+	mat.set_shader_parameter("city_dry_count",
+			mini(BudapestPlan.DRY_RECTS.size(), CITY_SHADER_DRY_MAX))
 
 
 func _city_river_segments() -> PackedVector4Array:
@@ -9875,6 +9885,22 @@ func _chunk_grid_spans(centre: float, size: float) -> Array:
 	return spans
 
 
+func _is_axis_aligned_basis(b: Basis) -> bool:
+	"""
+	Is this basis DIAGONAL — i.e. does the box it frames sit square to the world
+	axes? One home for the test, read by both halves of
+	split_city_boxes_on_chunk_grid(), because the two halves are handed different
+	bases for the same box and a second spelling is how they drifted apart.
+
+	Signs are deliberately not constrained: create_box builds the basis as
+	`Basis(UP, yaw) * Basis(RIGHT, tilt)`, so yaw or tilt = PI is a diagonal with
+	negative entries and frames a box that is still perfectly axis-aligned.
+	"""
+	return (is_zero_approx(b.x.y) and is_zero_approx(b.x.z)
+			and is_zero_approx(b.y.x) and is_zero_approx(b.y.z)
+			and is_zero_approx(b.z.x) and is_zero_approx(b.z.y))
+
+
 func split_city_boxes_on_chunk_grid(chunk_center: Vector3, batch: Array, body: StaticBody3D) -> void:
 	"""
 	Cut every box in a landmark builder's output that is wider than a chunk into
@@ -9903,11 +9929,7 @@ func split_city_boxes_on_chunk_grid(chunk_center: Vector3, batch: Array, body: S
 		var entry: Dictionary = entry_v
 		var t: Transform3D = entry["transform"]
 		var b := t.basis
-		# Axis-aligned means the basis is diagonal: create_box builds it as
-		# rot.scaled_local(dimensions), so yaw = tilt = 0 leaves exactly that.
-		if not (is_zero_approx(b.x.y) and is_zero_approx(b.x.z)
-				and is_zero_approx(b.y.x) and is_zero_approx(b.y.z)
-				and is_zero_approx(b.z.x) and is_zero_approx(b.z.y)):
+		if not _is_axis_aligned_basis(b):
 			out.append(entry)
 			continue
 		var xs := _chunk_grid_spans(chunk_center.x + t.origin.x, absf(b.x.x))
@@ -9935,7 +9957,16 @@ func split_city_boxes_on_chunk_grid(chunk_center: Vector3, batch: Array, body: S
 		if cs == null:
 			continue
 		var box := cs.shape as BoxShape3D
-		if box == null or not cs.transform.basis.is_equal_approx(Basis.IDENTITY):
+		# THE SAME PREDICATE AS THE VISUAL HALF, and it has to be: create_box gives
+		# the shape node the bare `rot` basis while the batch entry gets
+		# `rot.scaled_local(dimensions)`, so an identity test here would refuse
+		# exactly the boxes the loop above accepts — yaw = PI is a signed diagonal,
+		# and a mirrored wing is the most ordinary thing a builder writes. Cutting
+		# one half and not the other is a drawn wall whose collision lives in
+		# another chunk. A diagonal ROTATION has entries of magnitude 1, so the
+		# shape's world extents are its `size` and the pieces stay identity-framed
+		# (a box is symmetric under a ±1 flip).
+		if box == null or not _is_axis_aligned_basis(cs.transform.basis):
 			continue
 		var o := cs.transform.origin
 		var xs := _chunk_grid_spans(chunk_center.x + o.x, box.size.x)

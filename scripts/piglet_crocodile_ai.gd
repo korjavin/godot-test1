@@ -1555,13 +1555,23 @@ const SPECIES: Dictionary = {
 		##
 		## THE CAPSULE IN titan.tscn IS RECORDED HERE for the reason the viper's
 		## is: a .tscn cannot hold a comment an editor resave will not eat.
-		## `radius = 0.32, height = 1.8` at `(0, 0.9, 0)`, UPRIGHT — no lay-down
+		## `radius = 0.45, height = 1.91` at `(0, 0.955, 0)`, UPRIGHT — no lay-down
 		## rotation, the one thing this scene does that the quadrupeds' do not.
-		## The mesh is a 1.8 m biped, so the capsule is its full standing height,
-		## and centre 0.9 = height/2 puts its bottom exactly on y = 0 (the same
+		## MEASURED OFF THE SHIPPED titan.glb, not off the design intent: its
+		## POSITION accessor spans x -0.48..0.76, y 0..1.91, z ±0.45. So the height
+		## is the mesh's real 1.91 (not the 1.8 the sketch called for) and the
+		## radius is its half-DEPTH, 0.45, which also covers the 0.48 shoulder;
+		## centre 0.955 = height/2 puts the bottom exactly on y = 0 (the same
 		## identity the crocodile's 0.16/0.16 and the viper's 0.11/0.11 use). The
 		## body scale from the boss schedule multiplies all of it, so a 6x titan
-		## is a 10.8 m capsule around a 10.8 m model.
+		## is an 11.46 m capsule around an 11.46 m model.
+		##
+		## THE JAVELIN AT x = +0.76 IS AN ACCEPTED OVERHANG, the same call the
+		## clown's row records: pulling the radius out to cover it would put the
+		## capsule at 0.76 and blow endless_terrain's
+		## BOSS_FOOTPRINT_RADIUS_PER_SCALE (0.7), the clearance every boss
+		## candidate site is judged against. 0.45 leaves margin;
+		## boss_selfcheck check 7 is what holds the line.
 		"model_facing_offset": -PI / 2.0,
 
 		## A slow, heavy tread with almost no waddle — the read is a colossus

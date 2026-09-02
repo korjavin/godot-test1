@@ -1226,6 +1226,7 @@ func _check_a_guard_takes_coins_and_ground() -> void:
 	if not player_c.run_beat_record:
 		_fail("a repeat bank cleared run_beat_record — the latch is per RUN, and"
 			+ " only the two places that wipe own_coins may clear it")
+
 	# ...and a LATE LOBBY REPLY reconciles it AT THE ENDING. The store answers
 	# asynchronously, so a bite early in a run banks against whatever had loaded by
 	# then (0, if the lobby leg is still in flight) — a record this run never beat
@@ -1398,6 +1399,43 @@ func _check_a_guard_takes_coins_and_ground() -> void:
 	Input.action_release("step_left")
 	player_c.update_sidestep(0.016)
 	player_c.update_character_animation(0.016, player_c.get_input_direction())
+
+
+	# ...and THE RECORD IS THE RUN'S PEAK, NOT WHAT IS LEFT AFTER THE BILL.
+	# `_on_caught_finished()` pays the setback and THEN banks, and `own_coins` is
+	# the one score field in this game that goes DOWN — so a record read off the
+	# live total is always at least one setback below the number the HUD showed.
+	# Harmless while the headline record was distance (raised by a `maxi` every
+	# physics tick and never lowered); retiring distance (bead godot-test1-8gw.1)
+	# is what made it bite. Driven through `collect_coin()` on purpose: the peak
+	# is latched AT PICKUP, so a probe that assigns `own_coins` by hand — which is
+	# what every other leg here does, deliberately, to control the arithmetic —
+	# cannot see this at all.
+	var peaked := await _make_player()
+	(peaked as Node3D).global_position = Vector3(4.0 * TowerPlans.PLAN_HALF, 0.0, 0.0)
+	peaked.best_coins = 0
+	for i in range(20):
+		peaked.collect_coin(10)
+	var peak: int = peaked.own_coins
+	if peak <= 0:
+		_fail("20 pickups through collect_coin() banked %d own_coins — the peak"
+			% peak + " probe has nothing to lose")
+	peaked.hit_by_crocodile(_attacker_row(CONTROL_SPECIES))
+	peaked.is_caught = false
+	peaked.call("_on_caught_finished")
+	if peaked.own_coins >= peak:
+		_fail("a %s's bite took nothing off own_coins (%d of %d) — the peak probe"
+			% [CONTROL_SPECIES, peaked.own_coins, peak] + " measures nothing"
+			+ " unless the bill actually lands")
+	if peaked.best_coins != peak:
+		_fail("a bite banked %d against a run that peaked at %d — the record is"
+			% [peaked.best_coins, peak] + " being read off own_coins AFTER"
+			+ " _pay_coin_setback() billed it, so every player's Best line is a"
+			+ " setback below the score they watched themselves set")
+	# FREED NOW, not queued: the legs after this one resolve "the player" through
+	# get_first_node_in_group("player"), and a deferred free leaves this probe —
+	# caught, respawning and mid-bite — in that group for the rest of the frame.
+	(peaked as Node).free()
 
 	_clear(player_c)
 	field_shell.queue_free()

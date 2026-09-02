@@ -346,14 +346,17 @@ var best_run_store: BestRunStore = null
 
 ## Did THIS run move the coin record? A LATCH, not a comparison, because
 ## `_bank_records()` now runs on every bite (bead godot-test1-0bc) and raises
-## `best_coins` to `own_coins` as it goes — so by the time the ending
-## panel asks, `own_coins > best_coins` is false on the very runs that
+## `best_coins` to `record_coins` as it goes — so by the time the ending
+## panel asks, `record_coins > best_coins` is false on the very runs that
 ## earned the flash. The fact is recorded where it is still true and read at the
 ## ending; `reset_position()` (the hard-reset wipe list) clears it.
 var run_beat_record: bool = false
-## The coin peak that set the `run_beat_record` latch in this run. Reconciled
-## against `server_best_coins` at game over instead of `own_coins`, because
-## setbacks (bites) decrease `own_coins` after the record was banked.
+## THE RUN'S COIN PEAK, and the only figure any record is written from. Raised at
+## every pickup (`collect_coin`, `bank_awarded`), never lowered — which `own_coins`
+## is, by `_pay_coin_setback()`. Both places a record is banked run AFTER that bill,
+## so reading the live total there would persist a record one setback below the one
+## the HUD showed; the same reason it, and not `own_coins`, is what
+## `_reconcile_record_latch()` compares against `server_best_coins` at the ending.
 var record_coins: int = 0
 
 ## How often the run's records are checkpointed while the player is simply
@@ -2648,6 +2651,12 @@ func collect_coin(value: int = 1) -> void:
 	# multiplayer room (see own_coins). Untouched by the shared recompute, which
 	# overwrites coins_collected but never this.
 	own_coins += value * get_streak_multiplier()
+	# THE PEAK, LATCHED AT PICKUP. `own_coins` is NOT monotone — `_pay_coin_setback()`
+	# bills a fraction of it — and `_bank_records()` runs AFTER that bill, so a record
+	# read off `own_coins` is always at least one setback below what the HUD showed.
+	# Harmless while the headline record was distance (monotone by construction);
+	# retiring distance (bead godot-test1-8gw.1) is what made it bite.
+	record_coins = maxi(record_coins, own_coins)
 	# META-PROGRESSION: the PRE-STREAK value, because lifetime coins count what
 	# was physically picked up (a coin is 1, a gem is 10) while the streak is a
 	# SCORE multiplier on what the run is worth. This is also the only place
@@ -2685,6 +2694,8 @@ func bank_awarded(amount: int, base_total: int = 0) -> void:
 	"""
 	coins_collected += amount
 	own_coins += amount
+	# The peak, same latch and same reason as collect_coin() above.
+	record_coins = maxi(record_coins, own_coins)
 	# META-PROGRESSION, at the PRE-MULTIPLIER value — the SAME null-safe group
 	# call collect_coin() makes, and deliberately the same rule: a coin won
 	# through the claim protocol has to credit the player exactly what it would
@@ -3158,7 +3169,7 @@ func _bank_records() -> bool:
 
 	@return: true if the COIN record moved ON THIS CALL. The "NEW BEST!" flash
 	    reads the `run_beat_record` LATCH this also sets, never a fresh comparison:
-	    a bite banks, so `best_coins` already equals `own_coins` by the time
+	    a bite banks, so `best_coins` already equals `record_coins` by the time
 	    the ending asks.
 
 	CALLED ON EVERY CONTACT, NOT ONLY AT THE ENDING (bead godot-test1-0bc). While
@@ -3176,17 +3187,21 @@ func _bank_records() -> bool:
 	when a record ACTUALLY moved — so the network sees traffic on improvements and
 	nothing else.
 
-	Records are read off own_coins, NOT the displayed fields: in a
-	room those are the ROOM's totals (see _refresh_shared_totals), so writing them
-	here would persist the whole room's bank as this player's personal best. Solo
-	the pairs are identical.
+	Records are read off `record_coins` (this peer's own PEAK — see the field), NOT
+	the displayed fields: in a room those are the ROOM's totals (see
+	_refresh_shared_totals), so writing them here would persist the whole room's bank
+	as this player's personal best. Solo the pairs are identical.
 	"""
 	# Coins is the headline record, so IT decides the "NEW BEST!" flash (bead godot-test1-8gw.1).
-	var is_new_best := own_coins > best_coins
+	# READ OFF `record_coins`, THE PEAK, NEVER OFF `own_coins`: this is called from
+	# `_on_caught_finished()` AFTER `_pay_coin_setback()` has already taken its cut,
+	# so the live total is the post-tax figure and banking it would persist a record
+	# strictly below the one the player watched themselves set. See `record_coins`.
+	record_coins = maxi(record_coins, own_coins)
+	var is_new_best := record_coins > best_coins
 	run_beat_record = run_beat_record or is_new_best
 	if is_new_best:
-		record_coins = maxi(record_coins, own_coins)
-		best_coins = maxi(best_coins, own_coins)
+		best_coins = maxi(best_coins, record_coins)
 		if best_run_store:
 			best_run_store.submit(0, best_coins)
 

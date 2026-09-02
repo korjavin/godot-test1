@@ -72,8 +72,9 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            seed, no draw, no hash) and its 22 slots well formed,
 #                            two byte-identical regenerations across DIFFERENT run
 #                            seeds, the per-chunk box/shape budgets, the SLICING
-#                            decision (every box of a giant kept exactly once
-#                            across its chunks, off the slot's seed alone),
+#                            decision (every box AND every collision shape of a
+#                            giant kept exactly once across its chunks, off the
+#                            slot's seed alone, neither outgrowing a chunk),
 #                            CPU/GPU parity over the forced CITY ground and the
 #                            authored Danube, the approach corridor reaching the
 #                            gate for 50 seeds, all four road consumers stopping
@@ -278,7 +279,12 @@ Three rules of the city's own, all pinned by `budapest_selfcheck`:
   `split_city_boxes_on_chunk_grid()` — without it a 300 m palace lives in one 50 m chunk
   and vanishes at the web build's 150 m residency edge while you walk its far end. A
   ROTATED box cannot be cut into boxes and keeps the centre rule; `budapest_selfcheck`
-  check 5 fails any box, turned or not, bigger than a chunk. It is nearly free because `landmark_builders.gd`'s builders are pure functions
+  check 5 fails any box, turned or not, bigger than a chunk. **The splitter cuts the MESH
+  and the COLLISION BODY on ONE shared predicate** (`_is_axis_aligned_basis`): `create_box`
+  hands the two halves different bases for the same box — the batch entry carries the
+  dimensions, the shape node only the rotation — so a second spelling of "axis-aligned"
+  is how they drift into a drawn wall whose collision lives in another chunk. Check 5
+  tallies both halves. It is nearly free because `landmark_builders.gd`'s builders are pure functions
   of (centre, rng) whose stream touches **colour only**. **The seed is the SLOT INDEX and
   nothing else** — no `run_seed` (the city is authored) and above all no chunk coordinate,
   or the building comes out tie-dyed along its seams. The two rejected answers are recorded

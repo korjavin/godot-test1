@@ -593,6 +593,7 @@ func _check_slicing(terrain: Node3D) -> void:
 		# The unclipped build, once, for the box and accent COUNTS this slot owes.
 		var whole := _run_builder(terrain, index, Vector3(pos.x, pos.y, pos.z), Vector3.ZERO)
 		var total: int = (whole["batch"] as Array).size()
+		var shape_total: int = _shape_keys(whole["body"]).size()
 		var whole_accents: int = (whole["accents"] as int)
 		_free_builder(whole)
 
@@ -600,6 +601,7 @@ func _check_slicing(terrain: Node3D) -> void:
 		var lo: Vector2i = terrain.world_to_chunk(Vector3(pos.x - radius, 0.0, pos.z - radius))
 		var hi: Vector2i = terrain.world_to_chunk(Vector3(pos.x + radius, 0.0, pos.z + radius))
 		var claimed := {}          # index in the builder's output -> how many chunks kept it
+		var shape_claimed := {}    # ...and the same tally for its COLLISION shapes
 		var accents := 0
 		var chunks := 0
 		for cx in range(lo.x, hi.x + 1):
@@ -615,6 +617,17 @@ func _check_slicing(terrain: Node3D) -> void:
 				var rebased_batch: Array = rebased["batch"]
 				for i in range(rebased_batch.size()):
 					by_bytes[var_to_bytes(rebased_batch[i])] = i
+				# THE COLLISION HALF, and it needs its own map because the two lists
+				# are different lengths: every `collide = false` box (domes, spires,
+				# cornices — these builders are full of them) is in the batch and not
+				# in the body, which is why neither the clip nor the splitter pairs
+				# them by index. Without this tally the clip's and the splitter's
+				# collision halves are both entirely unmeasured, and a hole you fall
+				# through prints SELFCHECK OK.
+				var by_shape := {}
+				var rebased_shapes: Array = _shape_keys(rebased["body"])
+				for i in range(rebased_shapes.size()):
+					by_shape[rebased_shapes[i]] = i
 				_free_builder(rebased)
 
 				# ...and the streamer's own output for that chunk. It carries every
@@ -634,6 +647,12 @@ func _check_slicing(terrain: Node3D) -> void:
 					var i: int = by_bytes[key]
 					claimed[i] = int(claimed.get(i, 0)) + 1
 					kept += 1
+				for key_v: Variant in _shape_keys(body):
+					if not by_shape.has(key_v):
+						continue
+					var si: int = by_shape[key_v]
+					shape_claimed[si] = int(shape_claimed.get(si, 0)) + 1
+					kept += 1
 				if kept > 0:
 					chunks += 1
 				accents += parent.get_child_count()
@@ -650,6 +669,18 @@ func _check_slicing(terrain: Node3D) -> void:
 			_fail("'%s': of %d boxes the builder emits, %d were kept by no chunk "
 					% [id, total, lost] + "and %d by more than one — the half-open "
 					% doubled + "clip has a hole or an overlap in it")
+
+		var shape_doubled := 0
+		for i_v: Variant in shape_claimed:
+			if int(shape_claimed[i_v]) > 1:
+				shape_doubled += 1
+		var shape_lost := shape_total - shape_claimed.size()
+		if shape_lost != 0 or shape_doubled != 0:
+			_fail("'%s': of %d COLLISION shapes the builder emits, %d were kept by "
+					% [id, shape_total, shape_lost] + "no chunk and %d by more than "
+					% shape_doubled + "one — the drawn stone and the stone you walk "
+					+ "into are not in the same chunks (the clip or the splitter "
+					+ "treats the two halves differently)")
 		# The accent count is the whole of rule 4: ten of these builders hang a
 		# glowing mesh on their chunk, and under slicing that would be one beacon
 		# per overlapping chunk.
@@ -659,8 +690,9 @@ func _check_slicing(terrain: Node3D) -> void:
 					% whole_accents + "supposed to exist exactly once, on the chunk "
 					+ "holding the slot's centre")
 
-		print("slicing '%s': %d boxes over %d chunks, each kept exactly once, "
-				% [id, total, chunks] + "%d accent(s) total" % accents)
+		print("slicing '%s': %d boxes and %d collision shapes over %d chunks, each "
+				% [id, total, shape_total, chunks] + "kept exactly once, "
+				+ "%d accent(s) total" % accents)
 
 	_check_no_box_outgrows_a_chunk(terrain)
 
@@ -701,6 +733,24 @@ func _check_no_box_outgrows_a_chunk(terrain: Node3D) -> void:
 			continue
 		var pos: Vector3 = slot["pos"]
 		var built := _run_builder(terrain, index, pos, Vector3.ZERO)
+		# The collision half, on the same bound. A shape wider than a chunk unloads
+		# with the chunk holding its centre exactly like a mesh does — you then walk
+		# through the far end of a building you can still see.
+		for child in (built["body"] as StaticBody3D).get_children():
+			var cs := child as CollisionShape3D
+			if cs == null:
+				continue
+			var sbox := cs.shape as BoxShape3D
+			if sbox == null:
+				continue
+			var sb := cs.transform.basis
+			var sw := sbox.size.x * sb.x.length()
+			var sd := sbox.size.z * sb.z.length()
+			if maxf(sw, sd) > terrain.chunk_size:
+				_fail("'%s' hangs a %.1f x %.1f m COLLISION shape, bigger than the "
+						% [slot["id"], sw, sd] + "%.0f m chunk that would keep it "
+						% terrain.chunk_size + "whole — the splitter cut the mesh "
+						+ "and not the body")
 		for entry_v: Variant in (built["batch"] as Array):
 			var b: Basis = (entry_v as Dictionary)["transform"].basis
 			# create_box builds the basis as rot.scaled_local(dimensions), so a
@@ -721,6 +771,25 @@ func _check_no_box_outgrows_a_chunk(terrain: Node3D) -> void:
 
 	print("no box outgrows a chunk: worst %.1f m ('%s') against a %.0f m chunk"
 			% [worst, worst_id, terrain.chunk_size])
+
+
+func _shape_keys(body_v: Variant) -> Array:
+	"""
+	A body's box shapes as comparable BYTES — one entry per CollisionShape3D,
+	`[transform, size]`, in tree order. The collision-side twin of
+	var_to_bytes(batch_entry), and the thing that lets check 5 tally the half it
+	used to be blind to.
+	"""
+	var out: Array = []
+	for child in (body_v as StaticBody3D).get_children():
+		var cs := child as CollisionShape3D
+		if cs == null:
+			continue
+		var box := cs.shape as BoxShape3D
+		if box == null:
+			continue
+		out.append(var_to_bytes([cs.transform, box.size]))
+	return out
 
 
 func _run_builder(terrain: Node3D, index: int, center: Vector3, chunk_center: Vector3) -> Dictionary:
@@ -869,8 +938,15 @@ func _check_parity(terrain: Node3D) -> void:
 	var terrain_text := FileAccess.get_file_as_string(TERRAIN_PATH)
 	var uniforms: Array[String] = ["city_rect", "city_river", "city_river_count",
 			"city_river_half", "city_dry", "city_dry_count"]
+	# MATCHED AS A DECLARATION, not as a substring. `shader.contains(name)` is
+	# satisfied by the prose above the uniform block (which names city_rect and
+	# city_dry) and by a longer sibling (`city_river` is inside `city_river_half`,
+	# `city_river_count`, `v_city_river` and `city_river_distance`) — so deleting
+	# the declaration outright left the old test green.
+	var decl := RegEx.new()
 	for name: String in uniforms:
-		if not shader.contains("uniform") or not shader.contains(name):
+		decl.compile("(?m)^\\s*uniform\\s+\\w+\\s+%s\\s*(\\[|=|;)" % name)
+		if decl.search(shader) == null:
 			_fail("ground.gdshader declares no '%s' — the GPU is drawing a river "
 					% name + "the CPU is not wading")
 		if not terrain_text.contains("set_shader_parameter(\"%s\"" % name):
@@ -943,9 +1019,14 @@ func _check_parity_packing(terrain: Node3D, shader: String) -> void:
 	var half: float = mat.get_shader_parameter("city_river_half")
 	var dry: PackedVector4Array = mat.get_shader_parameter("city_dry")
 	var dry_count: int = mat.get_shader_parameter("city_dry_count")
-	var soft := float(_shader_int(shader, "CITY_RIVER_EDGE_SOFT"))
+	# `CITY_RIVER_EDGE_SOFT` is a `const float`, so _shader_int's is_valid_int()
+	# can never parse it — read it with the float parser and FAIL if it is gone,
+	# rather than substituting a literal that quietly stops tracking the shader.
+	var soft := _shader_float(shader, "CITY_RIVER_EDGE_SOFT")
 	if soft <= 0.0:
-		soft = 2.0
+		_fail("ground.gdshader declares no CITY_RIVER_EDGE_SOFT — check 6's "
+				+ "smoothstep tolerance would be a number written down twice")
+		return
 
 	var points: Array[Vector2] = []
 	var lo := BudapestPlan.BUDAPEST_MIN
@@ -1022,6 +1103,23 @@ func _shader_int(shader: String, name: String) -> int:
 		if tail.is_valid_int():
 			return tail.to_int()
 	return -1
+
+
+func _shader_float(shader: String, name: String) -> float:
+	"""
+	The value of a `const float NAME = n.n;` line in the shader, or -1.
+
+	Its own function because is_valid_int() is FALSE for "2.0" — _shader_int
+	fed a float constant returns -1 for every shader ever written, which is a
+	parser that cannot fail and a caller that never notices.
+	"""
+	for line in shader.split("\n"):
+		if not line.contains(name) or not line.contains("="):
+			continue
+		var tail := line.split("=")[1].strip_edges().replace(";", "")
+		if tail.is_valid_float():
+			return tail.to_float()
+	return -1.0
 
 
 # ============================================================================
@@ -1101,14 +1199,37 @@ func _check_approach_corridor(terrain_script: GDScript) -> void:
 		# Asked on the centreline from ROAD_TERMINAL_X east, which is exactly where
 		# the cap bites: west of it the stations themselves answer, and the corridor
 		# is at most a station spacing off them there.
+		#
+		#
+		# PROBED OFF THE CENTRELINE, BOTH SIDES OF THE SWATH'S EDGE, and never ON
+		# it: feeding _road_lateral_distance the point road_approach_point() just
+		# returned makes it compute the distance from that point to ITSELF, which
+		# is 0.0 for any implementation whatever and measures nothing. Offsetting
+		# is what turns the leg into a measurement of the swath's WIDTH — a
+		# clearance band with no edge suppresses every spawner across the whole
+		# approach, and one that reads INF a metre out gives the walk no clearance
+		# at all. (The centreline's own placement cannot be pinned here without
+		# restating BudapestPlan.road_approach_point, so it deliberately is not:
+		# the coin line and the swath ride the one function on purpose.)
 		var cx := terminal_x + 1.0
 		while cx < BudapestPlan.GATE.x:
 			var cp: Vector2 = BudapestPlan.road_approach_point(terminal, cx)
-			var lat: float = terrain._road_lateral_distance(cp.x, cp.y, 24.0)
-			if lat > 1.0:
-				_fail("seed %d: the approach corridor at x = %.0f reads %.1f m from "
-						% [RUN_SEED + s * 977, cx, lat] + "the road — nothing keeps "
-						+ "a massif or a camp off the walk into the gate")
+			# Inside the swath. `min` over the stations too, so this is an upper
+			# bound only — a station near T can legitimately answer closer.
+			var near: float = terrain._road_lateral_distance(cp.x, cp.y + 8.0, 24.0)
+			if near > 8.01:
+				_fail("seed %d: 8 m off the approach corridor at x = %.0f reads "
+						% [RUN_SEED + s * 977, cx] + "%.1f m from the road — the "
+						% near + "walk into the gate has no clearance swath "
+						+ "around it, only a zero-width line")
+				break
+			# ...and well outside it, where the answer has to grow with the offset.
+			var far: float = terrain._road_lateral_distance(cp.x, cp.y + 400.0, 24.0)
+			if far < 200.0:
+				_fail("seed %d: 400 m off the approach corridor at x = %.0f still "
+						% [RUN_SEED + s * 977, cx] + "reads %.1f m from the road — "
+						% far + "the corridor's clearance has no edge, so it is "
+						+ "suppressing every spawner across the whole band")
 				break
 			cx += 25.0
 
