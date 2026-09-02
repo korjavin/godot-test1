@@ -4195,15 +4195,21 @@ static func _city_spire(terrain: Node3D, base: Vector3, width: float, height: fl
 	Parliament's pinnacles, its corner-pavilion spires, Matthias's steeple, the
 	Bastion's seven turret cones and the water tower's finial are all this.
 
+	THE INTERPOLATION RUNS THROUGH ITS ENDPOINT (steps - 1 in the denominator, not
+	steps), because a spire whose last slab is width / steps wide is a flat-topped
+	stump, and these shapes are load-bearing silhouette: the water tower's two-step
+	finial ended 1.45 m across before this was fixed. maxi guards the degenerate
+	one-step call, which is a slab and not a taper anyway.
+
 	collide = false: a cone is not a floor, and at 13 pinnacles per Parliament the
 	collision shapes would be the expensive half of the building.
-	The widest step is the first, `width` + 0.25, so the bound from the spire's own
-	axis is (width + 0.25) / 2 * sqrt(2).
+	The widest step is the first, exactly `width`, so the bound from the spire's own
+	axis is width / 2 * sqrt(2).
 	"""
 	var h := 0.0
 	var slab := height / float(steps)
 	for i in steps:
-		var w: float = width * (1.0 - float(i) / float(steps)) + 0.25
+		var w: float = lerpf(width, 0.25, float(i) / float(maxi(steps - 1, 1)))
 		terrain.create_box(base + Vector3(0.0, h + slab * 0.5, 0.0), Vector3(w, slab, w), 0.0,
 				rng, block_batch, block_body, 0.0, _lm_shade(color, rng, 0.03), false)
 		h += slab
