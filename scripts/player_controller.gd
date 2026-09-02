@@ -3996,14 +3996,17 @@ func _refresh_shared_totals() -> void:
 	var bank: Variant = mp.shared_bank(own_coins)
 	if bank == null:
 		# Manager present but no room: solo semantics, untouched — EXCEPT on the
-		# frame the room ends. The displayed fields are still holding the room's
-		# totals and nothing else ever writes them back, so a room's four-figure
-		# bank would sit in coins_collected for the rest of the solo run. Restore
-		# this peer's own numbers.
+		# frame the room ends. coins_collected is still holding the room's total
+		# and nothing else ever writes it back, so a room's four-figure bank would
+		# sit there for the rest of the solo run. Restore this peer's own number.
+		# (run_distance is NOT restored: since .1 retired distance nothing shares
+		# or overwrites it, so it is this peer's own running max already — and
+		# assigning own_distance over it would LOWER a max that is documented
+		# never to fall, for a mid-run joiner whose own_distance_origin is not
+		# the world origin.)
 		if _showing_shared_totals:
 			_showing_shared_totals = false
 			coins_collected = own_coins
-			run_distance = own_distance
 		return
 	_showing_shared_totals = true
 	coins_collected = int(bank)

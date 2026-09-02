@@ -9972,6 +9972,9 @@ func _chunk_grid_spans(centre: float, size: float) -> Array:
 	colliding box, a degenerate BoxShape3D) is shipped into the live batch. The
 	epsilon is far above the worst f32 ulp at city X (~0.24 mm) and far below any
 	real geometry, so it only ever eats a piece that should not exist.
+
+	Eating it is also what bounds every piece by `chunk_size` exactly, which is
+	the inequality budapest_selfcheck check 5 asserts — see the loop.
 	"""
 	var lo := centre - size * 0.5
 	var hi := centre + size * 0.5
@@ -9982,7 +9985,13 @@ func _chunk_grid_spans(centre: float, size: float) -> Array:
 	while cut < hi - SPAN_EPS:
 		if cut - start > SPAN_EPS:
 			spans.append(Vector2((start + cut) * 0.5, cut - start))
-			start = cut
+		# `start` advances whether or not the piece was kept, so the epsilon EATS
+		# the sliver rather than folding it into the next piece. Folding it looks
+		# harmless — it is sub-millimetre geometry — but it makes that next piece
+		# `chunk_size + SPAN_EPS` wide, which budapest_selfcheck check 5 rejects on
+		# a strict `> chunk_size` with a message blaming the splitter for not
+		# cutting at all. Dropping 0.5 mm off an edge is the invisible half.
+		start = cut
 		k += 1
 		cut = float(k) * chunk_size
 	spans.append(Vector2((start + hi) * 0.5, hi - start))

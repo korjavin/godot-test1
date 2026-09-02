@@ -1009,6 +1009,7 @@ static func _landmark_golden_gate(terrain: Node3D, center: Vector3, rng: RandomN
 	# collide = false — a 30 cm strand of cable overhead is decoration, and giving
 	# it a collision shape would let the player stand on thin air at mid-span.
 	const CABLE_SEGMENTS := 11
+	const CABLE_THICK := 0.3
 	var top_y := LEG.y
 	var sag_y := DECK_Y + 0.9
 	for z_side in [-1.0, 1.0]:
@@ -1017,10 +1018,12 @@ static func _landmark_golden_gate(terrain: Node3D, center: Vector3, rng: RandomN
 			var u := t * 2.0 - 1.0                          # -1..1, 0 at mid-span
 			var x := u * TOWER_X
 			var y: float = sag_y + (top_y - sag_y) * u * u   # parabola == shallow catenary
-			terrain.create_box(center + rot * Vector3(x, y, z_side * LEG_Z), Vector3(TOWER_X * 2.0 / float(CABLE_SEGMENTS - 1) + 0.15, 0.3, 0.3),
+			terrain.create_box(center + rot * Vector3(x, y, z_side * LEG_Z), Vector3(TOWER_X * 2.0 / float(CABLE_SEGMENTS - 1) + 0.15, CABLE_THICK, CABLE_THICK),
 					yaw, rng, block_batch, block_body, 0.0, orange, false)
 
-	return { "radius": 9.4, "top": LEG.y }
+	# TOP is the CABLE, not the tower: the end segments are centred on the tower
+	# top, so half the strand stands proud of it.
+	return { "radius": 9.4, "top": LEG.y + CABLE_THICK * 0.5 }
 
 static func _landmark_liberty(terrain: Node3D, center: Vector3, rng: RandomNumberGenerator, parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
 	"""
@@ -1431,6 +1434,8 @@ static func _landmark_pisa(terrain: Node3D, center: Vector3, rng: RandomNumberGe
 	NO ACCENT.
 	"""
 	const LEAN := 0.10
+	const LIP_H := 0.25      # a gallery lip's thickness
+	const LIP_PAD := 0.5     # how far it overhangs its drum, total across
 	const BASE_DRUM := Vector3(4.4, 1.7, 4.4)
 	const GALLERY := Vector3(4.0, 1.45, 4.0)
 	const BELFRY := Vector3(3.2, 1.6, 3.2)
@@ -1458,11 +1463,17 @@ static func _landmark_pisa(terrain: Node3D, center: Vector3, rng: RandomNumberGe
 		# as a colonnaded tower rather than as a pile of blocks.
 		var lip_s := s + dims.y
 		var lip_pos := center + lean_dir * (lip_s * sin(LEAN)) + Vector3(0.0, lip_s * cos(LEAN), 0.0)
-		terrain.create_box(lip_pos, Vector3(dims.x + 0.5, 0.25, dims.z + 0.5), drum_yaw,
+		terrain.create_box(lip_pos, Vector3(dims.x + LIP_PAD, LIP_H, dims.z + LIP_PAD), drum_yaw,
 				rng, block_batch, block_body, LEAN, _lm_shade(marble, rng, 0.02).darkened(0.12), false)
 		s += dims.y
 
-	return { "radius": 4.4, "top": s * cos(LEAN) }
+	# TOP, and the vertical twin of the radius arithmetic above. `s * cos(LEAN)` is
+	# where the stack's AXIS ends; the belfry lip is centred there and TILTED, and
+	# create_box's basis sends local +Z's y-component to sin(tilt) (see the SIGN
+	# GOTCHA), so the box's highest corner is hy*cos(LEAN) + hz*sin(LEAN) above its
+	# own centre. 0.31 m on a 10.5 m tower — the same order as the lean itself.
+	return { "radius": 4.4, "top": s * cos(LEAN)
+			+ LIP_H * 0.5 * cos(LEAN) + (BELFRY.z + LIP_PAD) * 0.5 * sin(LEAN) }
 
 static func _landmark_sphinx(terrain: Node3D, center: Vector3, rng: RandomNumberGenerator, _parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
 	"""
@@ -2289,15 +2300,20 @@ static func _landmark_machu_picchu(terrain: Node3D, center: Vector3, rng: Random
 	var py := top_y
 	var lean := rng.randf_range(0.06, 0.14)
 	var pw := 3.4
+	# The overhang is the point of this peak, so it is also the footprint's crown:
+	# a box tilted by `lean` reaches hy*cos + hz*sin above its own centre, which is
+	# past the axial height `py` tracks. Same arithmetic as Pisa's lip.
+	var peak_top := 0.0
 	for i in 3:
 		var h: float = 3.4 - float(i) * 0.5
 		terrain.create_box(center + rot * Vector3(px + float(i) * 0.5, py + h / 2.0, -5.0 + float(i) * 0.45),
 				Vector3(pw, h, pw), yaw + float(i) * 0.3, rng, block_batch, block_body, lean,
 				_lm_shade(stone, rng, 0.05))
+		peak_top = maxf(peak_top, py + h / 2.0 + h * 0.5 * cos(lean) + pw * 0.5 * sin(lean))
 		py += h
 		pw -= 0.9
 
-	return { "radius": 9.0, "top": py }
+	return { "radius": 9.0, "top": maxf(py, peak_top) }
 
 static func _landmark_pont_du_gard(terrain: Node3D, center: Vector3, rng: RandomNumberGenerator, _parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
 	"""
@@ -2838,8 +2854,10 @@ static func _landmark_holstentor(terrain: Node3D, center: Vector3, rng: RandomNu
 			var pos := foot + lean_dir * (mid * sin(LEAN)) + Vector3(0.0, mid * cos(LEAN), 0.0)
 			terrain.create_box(pos, Vector3(w, 1.7, w), drum_yaw, rng, block_batch, block_body, LEAN,
 					_lm_shade(roof, rng, 0.03), false)
+			# Same tilted-box crown as Pisa's lip: the cone reaches hz*sin(LEAN)
+			# past the axis, and the topmost one is the tower's real top.
 			cy += 1.7
-		tower_top = 0.6 + cy * cos(LEAN)
+			tower_top = maxf(tower_top, 0.6 + cy * cos(LEAN) + w * 0.5 * sin(LEAN))
 
 	# THE CENTRE BLOCK between the towers, lower, with the stepped gable that fills
 	# the gap above the archway.
@@ -3835,6 +3853,7 @@ static func _landmark_hollywood(terrain: Node3D, center: Vector3, rng: RandomNum
 	const LH := 2.4          # letter height
 	const PITCH := 1.85      # letter-to-letter spacing
 	const STROKE := 0.34     # how thick the sheet metal is, front to back
+	const DIAG_THICK := 0.32 # a diagonal stroke's square section (Y and W only)
 	var yaw := rng.randf_range(0.0, TAU)
 	var rot := Basis(Vector3.UP, yaw)
 	var white := _lm_shade(LM_MARBLE, rng, 0.03)
@@ -3871,8 +3890,16 @@ static func _landmark_hollywood(terrain: Node3D, center: Vector3, rng: RandomNum
 			_lm_strut(terrain, center,
 					Vector3(lx + (float(seg[0]) - 0.5) * LW, base_y + float(seg[1]) * LH * scale, 0.0),
 					Vector3(lx + (float(seg[2]) - 0.5) * LW, base_y + float(seg[3]) * LH * scale, 0.0),
-					0.32, _lm_shade(white, rng, 0.02), yaw, rng, block_batch, block_body, true)
-		top = maxf(top, base_y + LH * scale)
+					DIAG_THICK, _lm_shade(white, rng, 0.02), yaw, rng, block_batch, block_body, true)
+		# A BAR ends at the letter's own height; a STRUT does not. _lm_strut's end
+		# faces sit on the endpoint, so a tilted stroke's box corner reaches up to
+		# thick * 0.71 past it — the vertical twin of that function's radius note.
+		# Only Y and W carry diagonals, so the pad is charged per glyph rather than
+		# to the whole word, which would float the row's crown over an O.
+		var glyph_top := base_y + LH * scale
+		if not (HW_DIAGS[glyph] as Array).is_empty():
+			glyph_top += DIAG_THICK * 0.71
+		top = maxf(top, glyph_top)
 
 	return { "radius": 8.8, "top": top }
 
@@ -5303,7 +5330,9 @@ static func _city_vaci_utca(terrain: Node3D, center: Vector3, rng: RandomNumberG
 		terrain.create_box(center + Vector3(px, 2.9, pz), Vector3(4.2, 0.3, 4.2), 0.0,
 				rng, block_batch, block_body, 0.0, _lm_shade(LM_MARBLE, rng, 0.03), false)
 
-	return { "radius": 78.0, "top": 21.0 }
+	# TOP: the tallest house is HEIGHTS[2] = 19.0; its roof box sits at h + 2.0
+	# with a 2.0 height, so the real crown is 19 + 2 + 1 = 22.0.
+	return { "radius": 78.0, "top": 22.0 }
 
 
 static func _city_national_museum(terrain: Node3D, center: Vector3, rng: RandomNumberGenerator, _parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:

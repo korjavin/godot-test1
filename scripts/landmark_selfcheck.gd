@@ -417,6 +417,10 @@ func _check_radii(terrain_script: GDScript, builders_script: GDScript, registry:
 			continue
 
 		var worst_overall := 0.0
+		var top_overall := 0.0
+		# The worst declared crown over the seeds, for the report only — the
+		# assertion is per-seed, against that seed's own answer.
+		var declared_top := 0.0
 		# Box counts, printed rather than asserted for the same reason the headroom
 		# is: there is no right number, and the next person to add a place needs to
 		# know what one costs. Every box is also a CollisionShape3D unless the
@@ -453,14 +457,36 @@ func _check_radii(terrain_script: GDScript, builders_script: GDScript, registry:
 				_fail("%s (seed %d): builder returned radius %.2f but the registry declares %.2f"
 						% [place, seed_index, returned, declared])
 
+			# `top`, unlike `radius`, is NOT in the registry and is allowed to roll
+			# with the seed (the Hollywood sign's letters are uneven on purpose),
+			# so it is checked against the geometry of ITS OWN seed.
+			var returned_top: float = float((footprint as Dictionary)["top"])
+			declared_top = maxf(declared_top, returned_top)
+
 			var worst := _worst_horizontal_extent(block_batch)
 			worst_overall = maxf(worst_overall, worst)
 			if worst > declared + RADIUS_EPSILON:
 				_fail("%s (seed %d): emits stone out to %.2f m, past its declared radius %.2f — it would straddle a chunk seam"
 						% [place, seed_index, worst, declared])
 
-			boxes = block_batch.size()
-			solids = block_body.get_child_count()
+			# `top` is the other half of the footprint the streamer writes into
+			# `obstacles`, and until this line nothing measured it — Váci utca
+			# declared 21.0 against a 22.0 crown for a whole epic, inert only
+			# because that entry happens to be climbable = false. UNDER-declaring
+			# is the failure: it perches a coin inside the roof it claims to be
+			# above. Over-declaring is left alone for the same reason the radius
+			# is (see the note below).
+			var crown := _worst_top(block_batch)
+			top_overall = maxf(top_overall, crown)
+			if crown > returned_top + RADIUS_EPSILON:
+				_fail("%s (seed %d): emits stone up to %.2f m, above its declared top %.2f — a coin settled on this footprint lands inside the geometry"
+						% [place, seed_index, crown, returned_top])
+
+			# A max over the seeds, not the last one's: a builder whose box count
+			# varies by seed must report the worst case, which is the number the
+			# next person adding a place is budgeting against.
+			boxes = maxi(boxes, block_batch.size())
+			solids = maxi(solids, block_body.get_child_count())
 			block_body.free()
 			chunk.free()
 			seed_index += 1
@@ -471,8 +497,8 @@ func _check_radii(terrain_script: GDScript, builders_script: GDScript, registry:
 		# 3 m of headroom or 3 cm — which is exactly what they need to know before
 		# nudging one. Printed rather than asserted for the reason the note below
 		# gives: a tight fit is correct and a loose one is correct.
-		print("landmark_selfcheck: %-5s %-40s declared %6.2f  measured %6.2f  headroom %5.2f  boxes %4d (%d solid)"
-				% [label, place, declared, worst_overall, declared - worst_overall, boxes, solids])
+		print("landmark_selfcheck: %-5s %-40s declared %6.2f  measured %6.2f  headroom %5.2f  top %6.2f/%6.2f  boxes %4d (%d solid)"
+				% [label, place, declared, worst_overall, declared - worst_overall, top_overall, declared_top, boxes, solids])
 
 		# DELIBERATELY NOT ASSERTED: "the radius is not much LARGER than the stone".
 		# Over-declaring is safe for every rule the radius feeds — the seam bound,
@@ -488,6 +514,24 @@ func _check_radii(terrain_script: GDScript, builders_script: GDScript, registry:
 		pass
 
 	terrain.free()
+
+
+func _worst_top(block_batch: Array) -> float:
+	"""
+	The highest point any emitted box reaches above the landmark's base, the
+	vertical twin of _worst_horizontal_extent and measured the same way — real
+	corners through the real Transform3D, so a tilted box is exact.
+
+	Same `block_batch` ponytail ceiling as its twin: the five accent meshes are
+	not in the batch and so are not measured.
+	"""
+	var worst := 0.0
+	for item_variant: Variant in block_batch:
+		var item: Dictionary = item_variant
+		var t: Transform3D = item["transform"]
+		for corner: Vector3 in UNIT_CORNERS:
+			worst = maxf(worst, (t.origin + t.basis * corner).y)
+	return worst
 
 
 func _worst_horizontal_extent(block_batch: Array) -> float:

@@ -43,7 +43,8 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            active), the no-player degrade, and the row's
 #                            fit in main.tscn against every other widget
 #                            pinned to that corner, F3 included
-#   landmark_selfcheck       every builder fits its declared radius
+#   landmark_selfcheck       every builder fits its declared radius AND its
+#                            declared top
 #   prop_selfcheck           prop/structure footprints, budgets, palettes
 #   enemy_spawn_selfcheck    every species: no spawn in stone, deterministic
 #                            placement, biome dispatch, behaviour, MP identity

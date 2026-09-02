@@ -167,7 +167,7 @@ const BOSS_DISPATCH_SEEDS: Array[int] = [
 	19, 39,
 ]
 
-## Fewest of those bosses — over every seed in RUN_SEEDS together — that must
+## Fewest of those bosses — over every seed in BOSS_DISPATCH_SEEDS together — that must
 ## actually reach the world before check 11's verdict means anything. It is well
 ## under the walk's length on purpose: a boss whose first candidate is buried in
 ## geometry is skipped by design (see spawn_bosses_in_chunk's claim rule), so a

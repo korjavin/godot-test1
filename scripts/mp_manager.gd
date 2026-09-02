@@ -3211,24 +3211,6 @@ func shared_bank(own_coins: int) -> Variant:
 	return total
 
 
-func shared_distance(own_distance: int) -> Variant:
-	"""
-	The furthest anyone in the room has got, or `null` offline.
-
-	A max, so feeding it back into the player's own running max cannot inflate it
-	— which is also why a departed peer needs no frozen accumulator: whatever it
-	reached was already folded in while it was here.
-
-	`null` offline, and while the join is still settling (see `_join_settled`).
-	"""
-	if _state != State.IN_ROOM or not _join_settled():
-		return null
-	var best: int = own_distance if _contributing() else 0
-	for state: Dictionary in _peer_state.values():
-		best = maxi(best, int(state.get("dist", 0)))
-	return best
-
-
 # =============================================================================
 # PER-FRAME: PRESENCE SEND + RECEIVE
 # =============================================================================
