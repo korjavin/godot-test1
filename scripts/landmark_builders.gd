@@ -704,6 +704,56 @@ const CITY_LANDMARKS: Array = [
 		"radius": 49.0,
 		"region": "europe",
 	},
+	# --- WAVE C: THE ANDRÁSSY END AND THE ODD ONES (7 places completing the 22-landmark Budapest set).
+	{
+		"builder": "_city_heroes_square",
+		"name": "Heroes' Square",
+		"fact": "Budapest's grand square laid out in 1896 for the millennium — the 36 m Millennium Column topped by the Archangel Gabriel, flanked by twin colonnades honoring Hungary's kings.",
+		"radius": 62.0,
+		"region": "europe",
+	},
+	{
+		"builder": "_city_vajdahunyad",
+		"name": "Vajdahunyad Castle",
+		"fact": "A castle in Budapest's City Park built for the 1896 Millennium, blending replicas of famous Hungarian buildings — Romanesque, Gothic, Renaissance and Baroque.",
+		"radius": 54.0,
+		"region": "europe",
+	},
+	{
+		"builder": "_city_szechenyi_baths",
+		"name": "Széchenyi Thermal Bath",
+		"fact": "One of Europe's largest bath complexes, opened in 1913 in City Park — a yellow neo-Baroque palace framing three steaming open-air thermal pools.",
+		"radius": 60.0,
+		"region": "europe",
+	},
+	{
+		"builder": "_city_gellert_baths",
+		"name": "Gellért Thermal Bath",
+		"fact": "An Art Nouveau palace opened in 1918 at the foot of Gellért Hill, renowned for its turquoise Zsolnay mosaics, glass domes and thermal spring pools.",
+		"radius": 52.0,
+		"region": "europe",
+	},
+	{
+		"builder": "_city_rudas_baths",
+		"name": "Rudas Thermal Bath",
+		"fact": "A Turkish bath built in 1566 during Ottoman rule in Hungary, centered on an octagonal thermal pool under a 10 m dome studded with coloured glass skylights.",
+		"radius": 42.0,
+		"region": "europe",
+	},
+	{
+		"builder": "_city_shoes_on_danube",
+		"name": "Shoes on the Danube Bank",
+		"fact": "A memorial on the Pest embankment of the Danube, honoring the victims shot into the river in 1944–45 — sixty pairs of period iron shoes facing the water.",
+		"radius": 32.0,
+		"region": "europe",
+	},
+	{
+		"builder": "_city_budapest_eye",
+		"name": "Budapest Eye",
+		"fact": "A 65 m giant Ferris wheel in Erzsébet Square in central Pest, offering panoramic views across the Danube and the rooftops of Budapest.",
+		"radius": 38.0,
+		"region": "europe",
+	},
 ]
 
 # ----------------------------------------------------------------------------
@@ -5473,3 +5523,622 @@ static func _city_opera(terrain: Node3D, center: Vector3, rng: RandomNumberGener
 					rng, block_batch, block_body, 0.0, _lm_shade(LM_SANDSTONE, rng, 0.03), false)
 
 	return { "radius": 49.0, "top": 45.0 }
+
+
+# ----------------------------------------------------------------------------
+# BUDAPEST — WAVE C: THE ANDRÁSSY END AND THE ODD ONES
+# ----------------------------------------------------------------------------
+##
+## Seven builders completing the 22-landmark Budapest set for the Escape-to-
+## Budapest epic. Reusing all shared palettes (CITY_CREAM, CITY_PARK_GREEN,
+## LM_MARBLE, LM_COPPER, LM_BASALT, LM_STONE_GREY, LM_SANDSTONE, LM_OCHRE,
+## LM_ROOF, LM_IRON, LM_SLATE_BLUE) and the four shared city helpers (_city_dome,
+## _city_spire, _city_bays, _city_cable).
+##
+## All radius contracts and geometry bounds strictly satisfied.
+
+static func _city_heroes_square(terrain: Node3D, center: Vector3, rng: RandomNumberGenerator, _parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	CITY 15 — HEROES' SQUARE (Hősök tere): the grand paved plaza of 1896 at the
+	end of Andrássy Avenue, the 36 m Millennium Column topped by Archangel Gabriel
+	holding the Holy Crown and apostolic cross, seven Magyar chieftain equestrian
+	statues circling its base, and the twin semicircular colonnades honoring
+	Hungary's historical kings with allegorical chariot crowns.
+
+	THE SILHOUETTE: the slender Corinthian column rising high above the square with
+	Gabriel's outstretched wings, framed by two symmetrical colonnaded wings.
+
+	RADIUS ARITHMETIC (declared 62.0):
+	  * Plaza plinth: 40.0 x 90.0: sqrt(20.0^2 + 45.0^2) = 49.24 m.
+	  * Colonnade outer crown statue at (x = 22.5, z = +/-38.5):
+	    sqrt(24.3^2 + 40.3^2) = 47.06 m.
+	  * Column capital at (0, 36): reaches radius 2.5 m.
+	  So 49.24 <= 62.0.
+	Boxes: 94. Colliding: 18.
+	"""
+	var stone := LM_MARBLE
+	var granite := LM_GRANITE
+	var bronze := LM_BASALT
+	var gold := LM_SANDSTONE
+
+	# 1. Main Plaza Paving & Millennium Column Base
+	terrain.create_box(center + Vector3(0.0, 0.4, 0.0), Vector3(40.0, 0.8, 90.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02).darkened(0.12))
+
+	# Stepped column plinth tiers
+	terrain.create_box(center + Vector3(0.0, 1.3, 0.0), Vector3(16.0, 1.0, 16.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(granite, rng, 0.02))
+	terrain.create_box(center + Vector3(0.0, 2.3, 0.0), Vector3(12.0, 1.0, 12.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(granite, rng, 0.02))
+	terrain.create_box(center + Vector3(0.0, 3.8, 0.0), Vector3(8.0, 2.0, 8.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(granite, rng, 0.02))
+
+	# Seven Magyar Chieftain equestrian statues around the pedestal
+	for i in 7:
+		var a := TAU * float(i) / 7.0
+		var pos := center + Vector3(cos(a) * 5.2, 3.8, sin(a) * 5.2)
+		terrain.create_box(pos, Vector3(1.6, 2.2, 2.6), a + PI * 0.5, rng, block_batch, block_body,
+				0.0, _lm_shade(bronze, rng, 0.03), false)
+
+	# 2. Central Millennium Column
+	terrain.create_box(center + Vector3(0.0, 5.8, 0.0), Vector3(4.0, 2.0, 4.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02))
+	terrain.create_box(center + Vector3(0.0, 21.0, 0.0), Vector3(2.4, 28.4, 2.4), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02))
+	# Column capital
+	terrain.create_box(center + Vector3(0.0, 35.8, 0.0), Vector3(3.8, 1.2, 3.8), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03), false)
+
+	# Archangel Gabriel statue on top
+	terrain.create_box(center + Vector3(0.0, 37.8, 0.0), Vector3(1.2, 2.8, 1.2), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(gold, rng, 0.03), false)
+	# Outstretched wings & cross
+	terrain.create_box(center + Vector3(0.0, 38.6, -0.4), Vector3(2.6, 2.2, 0.4), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(gold, rng, 0.03), false)
+	terrain.create_box(center + Vector3(0.0, 40.2, 0.3), Vector3(0.3, 2.4, 0.3), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(gold, rng, 0.03), false)
+	terrain.create_box(center + Vector3(0.0, 40.8, 0.3), Vector3(1.6, 0.3, 0.3), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(gold, rng, 0.03), false)
+
+	# 3. Twin Semicircular Colonnades (North and South wings at +X)
+	for side in [-1.0, 1.0]:
+		# Two curved chord segments per colonnade wing
+		# Segment 1 (inner): from z = 10 to 24
+		terrain.create_box(center + Vector3(14.0, 0.9, side * 17.0), Vector3(5.4, 1.0, 15.0), 0.0,
+				rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02))
+		_city_bays(terrain, center + Vector3(14.0, 6.0, side * 11.0), Vector3(0.0, 0.0, side * 3.0), 5,
+				Vector3(1.2, 9.2, 1.2), stone, rng, block_batch, block_body, false)
+		terrain.create_box(center + Vector3(14.0, 11.2, side * 17.0), Vector3(5.0, 1.4, 15.4), 0.0,
+				rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03), false)
+
+		# Segment 2 (outer angled): from z = 24 to 38
+		terrain.create_box(center + Vector3(20.0, 0.9, side * 31.0), Vector3(5.4, 1.0, 15.0), side * 0.26,
+				rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02))
+		_city_bays(terrain, center + Vector3(17.5, 6.0, side * 25.0), Vector3(1.0, 0.0, side * 2.8), 5,
+				Vector3(1.2, 9.2, 1.2), stone, rng, block_batch, block_body, false)
+		terrain.create_box(center + Vector3(20.0, 11.2, side * 31.0), Vector3(5.0, 1.4, 15.4), side * 0.26,
+				rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03), false)
+
+		# Statues of kings between columns (7 statues per wing)
+		for k in 7:
+			var kz: float = side * (11.0 + float(k) * 3.8)
+			var kx: float = 14.0 + (float(k) * 1.2 if k >= 4 else 0.0)
+			terrain.create_box(center + Vector3(kx, 2.4, kz), Vector3(1.0, 2.0, 1.0), 0.0,
+					rng, block_batch, block_body, 0.0, _lm_shade(bronze, rng, 0.04), false)
+
+		# Crown statue groups at colonnade ends
+		# Inner end statue
+		terrain.create_box(center + Vector3(14.0, 13.0, side * 9.5), Vector3(2.8, 2.4, 2.8), 0.0,
+				rng, block_batch, block_body, 0.0, _lm_shade(bronze, rng, 0.03), false)
+		# Outer end chariot / allegorical crown
+		terrain.create_box(center + Vector3(22.5, 13.2, side * 38.5), Vector3(3.6, 2.8, 3.6), side * 0.26,
+				rng, block_batch, block_body, 0.0, _lm_shade(bronze, rng, 0.03), false)
+
+	return { "radius": 62.0, "top": 42.0 }
+
+
+static func _city_vajdahunyad(terrain: Node3D, center: Vector3, rng: RandomNumberGenerator, _parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	CITY 16 — VAJDAHUNYAD CASTLE: the romantic Millennium castle of 1896 in the
+	City Park boating lake, integrating replicas of iconic Hungarian and
+	Transylvanian architecture — the medieval Gothic gatehouse, the towering
+	Neboisa keep, the Romanesque chapel portal, and the Renaissance/Baroque palace.
+
+	RADIUS ARITHMETIC (declared 54.0):
+	  * Island plinth: 52.0 x 62.0 at (0, 0): sqrt(26.0^2 + 31.0^2) = 40.46 m.
+	  * Drawbridge tip at (-26.0, 0, 0): sqrt(32.0^2 + 2.5^2) = 32.10 m.
+	  * Chapel apse at (8.0, 0, 26.0): sqrt(12.0^2 + 28.0^2) = 30.46 m.
+	  * Neboisa keep bartizans at (6.0, 37.0, -16.0): sqrt(11.9^2 + 21.9^2) = 24.91 m.
+	  So 40.46 <= 54.0.
+	Boxes: 86. Colliding: 19.
+	"""
+	var stone := LM_STONE_GREY
+	var cream := CITY_CREAM
+	var roof_blue := LM_SLATE_BLUE
+	var tile_brown := LM_ROOF
+	var sandstone := LM_SANDSTONE
+
+	# 1. Island Plinth in the Boating Lake
+	terrain.create_box(center + Vector3(0.0, 0.5, 0.0), Vector3(52.0, 1.0, 62.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(LM_GRANITE, rng, 0.02).darkened(0.14))
+
+	# 2. Medieval Gothic Gatehouse & Drawbridge at -X
+	# Drawbridge
+	terrain.create_box(center + Vector3(-26.0, 0.7, 0.0), Vector3(12.0, 0.6, 5.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(tile_brown, rng, 0.03))
+	# Gatehouse central arch block
+	terrain.create_box(center + Vector3(-18.0, 7.0, 0.0), Vector3(6.0, 12.0, 10.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02))
+	# Twin gatehouse towers with spires
+	for side in [-1.0, 1.0]:
+		terrain.create_box(center + Vector3(-18.0, 11.0, side * 7.5), Vector3(5.0, 20.0, 5.0), 0.0,
+				rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02))
+		_city_spire(terrain, center + Vector3(-18.0, 21.0, side * 7.5), 5.5, 9.0, 4,
+				roof_blue, rng, block_batch, block_body)
+
+	# 3. Main Transylvanian Gothic Hall & High Roof
+	terrain.create_box(center + Vector3(0.0, 9.0, 0.0), Vector3(22.0, 16.0, 36.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02))
+	# Steep Gothic roof tiers
+	var roof_w := [20.0, 14.0, 8.0]
+	for i in 3:
+		terrain.create_box(center + Vector3(0.0, 18.0 + float(i) * 2.5, 0.0),
+				Vector3(float(roof_w[i]), 2.5, 34.0 - float(i) * 3.0), 0.0, rng, block_batch, block_body,
+				0.0, _lm_shade(tile_brown, rng, 0.03), false)
+	# Buttress bays on hall sides
+	_city_bays(terrain, center + Vector3(-11.5, 8.0, -14.0), Vector3(0.0, 0.0, 7.0), 5,
+			Vector3(1.2, 14.0, 1.6), stone, rng, block_batch, block_body, false)
+
+	# 4. Neboisa Keep (The Great Tower, replica of Hunyad Castle) at (6.0, 0, -16.0)
+	terrain.create_box(center + Vector3(6.0, 18.0, -16.0), Vector3(9.0, 34.0, 9.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02))
+	# Overhanging battlements & machicolations
+	terrain.create_box(center + Vector3(6.0, 35.6, -16.0), Vector3(11.0, 2.2, 11.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03).darkened(0.08), false)
+	# Corner bartizan turrets
+	for cx in [-1.0, 1.0]:
+		for cz in [-1.0, 1.0]:
+			terrain.create_box(center + Vector3(6.0 + cx * 5.0, 37.0, -16.0 + cz * 5.0),
+					Vector3(1.8, 3.0, 1.8), 0.0, rng, block_batch, block_body, 0.0,
+					_lm_shade(stone, rng, 0.03), false)
+			_city_spire(terrain, center + Vector3(6.0 + cx * 5.0, 38.5, -16.0 + cz * 5.0),
+					2.0, 4.0, 3, roof_blue, rng, block_batch, block_body)
+	# Tower main high spire
+	_city_spire(terrain, center + Vector3(6.0, 36.7, -16.0), 8.0, 13.0, 5,
+			roof_blue, rng, block_batch, block_body)
+
+	# 5. Romanesque Chapel Wing & Apse at (+8.0, 0, +16.0)
+	terrain.create_box(center + Vector3(8.0, 6.5, 16.0), Vector3(12.0, 11.0, 18.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(sandstone, rng, 0.02))
+	# Semicircular apse with dome
+	terrain.create_box(center + Vector3(8.0, 5.5, 26.0), Vector3(8.0, 9.0, 4.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(sandstone, rng, 0.02))
+	_city_dome(terrain, center + Vector3(8.0, 10.0, 26.0), 8.0, 4.0,
+			tile_brown, rng, block_batch, block_body)
+	# Chapel octagonal bell turret
+	terrain.create_box(center + Vector3(13.0, 9.5, 23.0), Vector3(4.0, 17.0, 4.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(sandstone, rng, 0.02))
+	_city_spire(terrain, center + Vector3(13.0, 18.0, 23.0), 4.4, 7.0, 3,
+			roof_blue, rng, block_batch, block_body)
+
+	# 6. Baroque Palace Wing at (+12.0, 0, -2.0)
+	terrain.create_box(center + Vector3(12.0, 8.0, -2.0), Vector3(12.0, 14.0, 24.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(cream, rng, 0.02))
+	terrain.create_box(center + Vector3(12.0, 16.0, -2.0), Vector3(10.0, 3.0, 22.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(tile_brown, rng, 0.03), false)
+
+	return { "radius": 54.0, "top": 50.0 }
+
+
+static func _city_szechenyi_baths(terrain: Node3D, center: Vector3, rng: RandomNumberGenerator, _parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	CITY 17 — SZÉCHENYI THERMAL BATH: Europe's grand neo-Baroque yellow bath
+	palace of 1913 in the City Park, featuring its central dome, symmetrical
+	colonnaded wings, and the vast courtyard with three steaming open-air
+	pools — including the famous poolside chess tables.
+
+	RADIUS ARITHMETIC (declared 60.0):
+	  * Base courtyard terrace: 64.0 x 78.0 at (0, 0): sqrt(32.0^2 + 39.0^2) = 50.45 m.
+	  * North entrance pavilion dome at (0, 0, -28.0): reaches radius 36.0 m.
+	  * Wing corner pavilions at (+/-25.0, 0, 28.0): sqrt(32.0^2 + 34.0^2) = 46.69 m.
+	  So 50.45 <= 60.0.
+	Boxes: 90. Colliding: 17.
+	"""
+	var yellow := Color(0.92, 0.82, 0.48)
+	var stone := LM_MARBLE
+	var copper := LM_COPPER
+	var pool_water := Color(0.18, 0.65, 0.72)
+	var granite := LM_GRANITE
+
+	# 1. Courtyard Terrace & Sun Deck
+	terrain.create_box(center + Vector3(0.0, 0.5, 0.0), Vector3(64.0, 1.0, 78.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02).darkened(0.1))
+
+	# 2. North Entrance Neo-Baroque Palace Pavilion at (0.0, 0.0, -28.0)
+	terrain.create_box(center + Vector3(0.0, 7.5, -28.0), Vector3(44.0, 13.0, 14.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(yellow, rng, 0.02))
+	terrain.create_box(center + Vector3(0.0, 14.5, -28.0), Vector3(46.0, 1.4, 15.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03), false)
+	# Central Baroque Dome on octagonal drum
+	for k in 2:
+		terrain.create_box(center + Vector3(0.0, 17.0, -28.0), Vector3(16.0, 4.0, 16.0),
+				float(k) * PI / 4.0, rng, block_batch, block_body, 0.0, _lm_shade(yellow, rng, 0.02))
+	var dy := 19.0 + _city_dome(terrain, center + Vector3(0.0, 19.0, -28.0), 16.0, 8.0,
+			copper, rng, block_batch, block_body)
+	_city_spire(terrain, center + Vector3(0.0, dy, -28.0), 3.0, 5.0, 3,
+			copper, rng, block_batch, block_body)
+
+	# 3. Flanking East and West Palace Wings (U-shaped courtyard)
+	for side in [-1.0, 1.0]:
+		terrain.create_box(center + Vector3(side * 25.0, 6.0, 0.0), Vector3(12.0, 10.0, 56.0), 0.0,
+				rng, block_batch, block_body, 0.0, _lm_shade(yellow, rng, 0.02))
+		terrain.create_box(center + Vector3(side * 25.0, 11.5, 0.0), Vector3(13.0, 1.2, 57.0), 0.0,
+				rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03), false)
+		# Courtyard inner arcade columns
+		_city_bays(terrain, center + Vector3(side * 18.5, 5.0, -18.0), Vector3(0.0, 0.0, 6.0), 7,
+				Vector3(1.2, 8.0, 1.2), stone, rng, block_batch, block_body, false)
+		# South end pavilion with corner dome
+		terrain.create_box(center + Vector3(side * 25.0, 7.5, 28.0), Vector3(14.0, 13.0, 12.0), 0.0,
+				rng, block_batch, block_body, 0.0, _lm_shade(yellow, rng, 0.02))
+		var cdy := 14.0 + _city_dome(terrain, center + Vector3(side * 25.0, 14.0, 28.0), 9.0, 5.0,
+				copper, rng, block_batch, block_body)
+		_city_spire(terrain, center + Vector3(side * 25.0, cdy, 28.0), 2.0, 3.5, 3,
+				copper, rng, block_batch, block_body)
+
+	# South Colonnade connecting the wings
+	terrain.create_box(center + Vector3(0.0, 4.5, 32.0), Vector3(38.0, 7.0, 4.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(yellow, rng, 0.02))
+	_city_bays(terrain, center + Vector3(-15.0, 4.0, 29.5), Vector3(5.0, 0.0, 0.0), 7,
+			Vector3(1.2, 6.0, 1.2), stone, rng, block_batch, block_body, false)
+
+	# 4. Outdoor Thermal Pools (Dry geometry with thermal turquoise tint)
+	# Pool 1 (North Adventure Pool with circular whirlpool)
+	terrain.create_box(center + Vector3(0.0, 1.05, -12.0), Vector3(22.0, 0.12, 12.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(pool_water, rng, 0.02), false)
+	# Coping rim around Pool 1
+	terrain.create_box(center + Vector3(0.0, 1.15, -18.3), Vector3(23.6, 0.3, 0.8), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false)
+	terrain.create_box(center + Vector3(0.0, 1.15, -5.7), Vector3(23.6, 0.3, 0.8), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false)
+	terrain.create_box(center + Vector3(-11.3, 1.15, -12.0), Vector3(0.8, 0.3, 13.4), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false)
+	terrain.create_box(center + Vector3(11.3, 1.15, -12.0), Vector3(0.8, 0.3, 13.4), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false)
+	# Central fountain column in north pool
+	terrain.create_box(center + Vector3(0.0, 1.8, -12.0), Vector3(2.0, 1.5, 2.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03), false)
+
+	# Pool 2 (Central Olympic Swimming Pool)
+	terrain.create_box(center + Vector3(0.0, 1.05, 4.0), Vector3(20.0, 0.12, 16.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(pool_water, rng, 0.02), false)
+	# Coping rim around Pool 2
+	terrain.create_box(center + Vector3(0.0, 1.15, -4.3), Vector3(21.6, 0.3, 0.8), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false)
+	terrain.create_box(center + Vector3(0.0, 1.15, 12.3), Vector3(21.6, 0.3, 0.8), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false)
+	terrain.create_box(center + Vector3(-10.3, 1.15, 4.0), Vector3(0.8, 0.3, 17.4), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false)
+	terrain.create_box(center + Vector3(10.3, 1.15, 4.0), Vector3(0.8, 0.3, 17.4), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false)
+
+	# Pool 3 (South Thermal Sitting Pool with poolside chess players)
+	terrain.create_box(center + Vector3(0.0, 1.05, 19.0), Vector3(22.0, 0.12, 10.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(pool_water, rng, 0.02), false)
+	# Coping rim around Pool 3
+	terrain.create_box(center + Vector3(0.0, 1.15, 13.7), Vector3(23.6, 0.3, 0.8), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false)
+	terrain.create_box(center + Vector3(0.0, 1.15, 24.3), Vector3(23.6, 0.3, 0.8), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false)
+	terrain.create_box(center + Vector3(-11.3, 1.15, 19.0), Vector3(0.8, 0.3, 11.4), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false)
+	terrain.create_box(center + Vector3(11.3, 1.15, 19.0), Vector3(0.8, 0.3, 11.4), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false)
+
+	# Poolside Stone Chess Tables & Benches (Széchenyi's signature)
+	for side in [-1.0, 1.0]:
+		terrain.create_box(center + Vector3(side * 8.0, 1.6, 19.0), Vector3(1.6, 0.8, 1.6), 0.0,
+				rng, block_batch, block_body, 0.0, _lm_shade(granite, rng, 0.03), false)
+		terrain.create_box(center + Vector3(side * 8.0, 2.05, 19.0), Vector3(1.2, 0.1, 1.2), 0.0,
+				rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.04), false)
+		terrain.create_box(center + Vector3(side * 8.0, 1.4, 17.5), Vector3(1.4, 0.6, 0.6), 0.0,
+				rng, block_batch, block_body, 0.0, _lm_shade(granite, rng, 0.03), false)
+
+	return { "radius": 60.0, "top": 32.0 }
+
+
+static func _city_gellert_baths(terrain: Node3D, center: Vector3, rng: RandomNumberGenerator, _parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	CITY 18 — GELLÉRT THERMAL BATH: the 1918 Art Nouveau palace at the foot of
+	Gellért Hill, featuring curvilinear Secessionist gables, turquoise Zsolnay
+	mosaic domes, colonnaded wings, and the outdoor wave pool terrace against the
+	rocky hill.
+
+	RADIUS ARITHMETIC (declared 52.0):
+	  * Base podium: 46.0 x 70.0 at (0, 0): sqrt(23.0^2 + 35.0^2) = 41.88 m.
+	  * Wave pool terrace at (-15.0, 0, 0): reaches x = -22.0, z = 14.0 -> 26.08 m.
+	  * Wing corner domes at (-10.0, 0, +/-31.0): sqrt(13.2^2 + 33.2^2) = 35.73 m.
+	  So 41.88 <= 52.0.
+	Boxes: 76. Colliding: 16.
+	"""
+	var wall := CITY_CREAM
+	var stone := LM_MARBLE
+	var turquoise := LM_COPPER
+	var rock := LM_BASALT
+	var pool_water := Color(0.18, 0.65, 0.72)
+
+	# 1. Base Podium & Plaza
+	terrain.create_box(center + Vector3(0.0, 0.5, 0.0), Vector3(46.0, 1.0, 70.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02).darkened(0.12))
+
+	# 2. Gellért Hill Rock Outcrop at +X (rear backdrop)
+	for i in 3:
+		terrain.create_box(center + Vector3(16.0 + float(i) * 3.0, 6.0 + float(i) * 4.0, 0.0),
+				Vector3(6.0, 12.0 + float(i) * 6.0, 66.0 - float(i) * 6.0), 0.0,
+				rng, block_batch, block_body, 0.0, _lm_shade(rock, rng, 0.04))
+
+	# 3. Main Art Nouveau Central Rotunda Pavilion at (-2.0, 0, 0)
+	terrain.create_box(center + Vector3(-2.0, 10.0, 0.0), Vector3(26.0, 18.0, 24.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(wall, rng, 0.02))
+	# Curvilinear Secessionist Gable on front facade (-X)
+	var gable_w := [22.0, 16.0, 10.0]
+	for i in 3:
+		terrain.create_box(center + Vector3(-15.2, 19.5 + float(i) * 1.5, 0.0),
+				Vector3(1.2, 1.5, float(gable_w[i])), 0.0, rng, block_batch, block_body,
+				0.0, _lm_shade(stone, rng, 0.03), false)
+	# Turquoise Zsolnay Glass Dome on central rotunda
+	for k in 2:
+		terrain.create_box(center + Vector3(-2.0, 20.0, 0.0), Vector3(16.0, 3.0, 16.0),
+				float(k) * PI / 4.0, rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02))
+	var dy := 21.5 + _city_dome(terrain, center + Vector3(-2.0, 21.5, 0.0), 16.0, 8.0,
+			turquoise, rng, block_batch, block_body)
+	_city_spire(terrain, center + Vector3(-2.0, dy, 0.0), 3.0, 4.5, 3,
+			turquoise, rng, block_batch, block_body)
+
+	# 4. Flanking Hotel & Bath Wings
+	for side in [-1.0, 1.0]:
+		terrain.create_box(center + Vector3(0.0, 8.5, side * 24.0), Vector3(22.0, 15.0, 22.0), 0.0,
+				rng, block_batch, block_body, 0.0, _lm_shade(wall, rng, 0.02))
+		terrain.create_box(center + Vector3(0.0, 16.5, side * 24.0), Vector3(23.0, 1.2, 23.0), 0.0,
+				rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03), false)
+		# Balconies and bays
+		_city_bays(terrain, center + Vector3(-11.5, 8.0, side * 17.0), Vector3(0.0, 0.0, side * 4.0), 4,
+				Vector3(1.4, 12.0, 1.6), stone, rng, block_batch, block_body, false)
+		# Corner turrets with turquoise cupolas
+		terrain.create_box(center + Vector3(-10.0, 16.5, side * 31.0), Vector3(6.0, 6.0, 6.0), 0.0,
+				rng, block_batch, block_body, 0.0, _lm_shade(wall, rng, 0.02), false)
+		_city_dome(terrain, center + Vector3(-10.0, 19.5, side * 31.0), 6.4, 4.0,
+				turquoise, rng, block_batch, block_body)
+
+	# 5. Outdoor Wave Pool Terrace at -X
+	terrain.create_box(center + Vector3(-15.0, 1.05, 0.0), Vector3(12.0, 0.12, 26.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(pool_water, rng, 0.02), false)
+	# Coping rim around Wave Pool
+	terrain.create_box(center + Vector3(-15.0, 1.15, -13.3), Vector3(13.6, 0.3, 0.8), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false)
+	terrain.create_box(center + Vector3(-15.0, 1.15, 13.3), Vector3(13.6, 0.3, 0.8), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false)
+	terrain.create_box(center + Vector3(-21.3, 1.15, 0.0), Vector3(0.8, 0.3, 27.4), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false)
+	terrain.create_box(center + Vector3(-8.7, 1.15, 0.0), Vector3(0.8, 0.3, 27.4), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false)
+	# Wave generator chamber at head of pool (+Z end)
+	terrain.create_box(center + Vector3(-15.0, 3.0, 15.0), Vector3(10.0, 4.0, 4.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03), false)
+
+	return { "radius": 52.0, "top": 34.0 }
+
+
+static func _city_rudas_baths(terrain: Node3D, center: Vector3, rng: RandomNumberGenerator, _parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	CITY 19 — RUDAS THERMAL BATH: the 1566 Ottoman Turkish bath at the foot of
+	Gellért Hill by the Elisabeth Bridge, centered on its ancient octagonal
+	thermal pool chamber under a 10 m dome studded with coloured glass skylights,
+	wrapped by 19th-century neoclassical bath halls.
+
+	RADIUS ARITHMETIC (declared 42.0):
+	  * Base plinth: 38.0 x 48.0 at (0, 0): sqrt(19.0^2 + 24.0^2) = 30.61 m.
+	  * Front neoclassical portico at (-16.5, 0, 0): reaches x = -18.0, z = 8.0 -> 19.70 m.
+	  * Central Ottoman dome at (0, 0): reaches radius 8.0 m.
+	  So 30.61 <= 42.0.
+	Boxes: 64. Colliding: 14.
+	"""
+	var ottoman_stone := LM_OCHRE.darkened(0.2)
+	var cream := CITY_CREAM
+	var stone := LM_MARBLE
+	var cupola_glass := Color(0.25, 0.70, 0.80)
+	var roof_tile := LM_ROOF
+
+	# 1. Base Plinth & Embankment Terrace
+	terrain.create_box(center + Vector3(0.0, 0.5, 0.0), Vector3(38.0, 1.0, 48.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02).darkened(0.14))
+
+	# 2. Central 16th-century Ottoman Turkish Bath Chamber
+	# Octagonal masonry drum (two crossed 16x16 boxes at 0 and 45 deg)
+	for k in 2:
+		terrain.create_box(center + Vector3(0.0, 6.0, 0.0), Vector3(16.0, 10.0, 16.0),
+				float(k) * PI / 4.0, rng, block_batch, block_body, 0.0, _lm_shade(ottoman_stone, rng, 0.03))
+	# Main Ottoman Masonry Dome
+	var dy := 11.0 + _city_dome(terrain, center + Vector3(0.0, 11.0, 0.0), 15.0, 8.0,
+			roof_tile, rng, block_batch, block_body)
+	# Crescent / finial spire on top
+	_city_spire(terrain, center + Vector3(0.0, dy, 0.0), 2.2, 4.0, 3,
+			LM_SANDSTONE, rng, block_batch, block_body)
+
+	# Eight Stained-Glass Roof Cupolas (skylight portholes on the dome surface)
+	for i in 8:
+		var a := TAU * float(i) / 8.0
+		var cpos := center + Vector3(cos(a) * 5.2, 15.5, sin(a) * 5.2)
+		terrain.create_box(cpos, Vector3(1.2, 1.2, 1.2), a, rng, block_batch, block_body,
+				0.0, _lm_shade(cupola_glass, rng, 0.04), false)
+
+	# 3. Neoclassical Front Facade & Wings wrapping the Turkish core (-X and sides)
+	terrain.create_box(center + Vector3(-12.0, 5.5, 0.0), Vector3(8.0, 9.0, 36.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(cream, rng, 0.02))
+	terrain.create_box(center + Vector3(-12.0, 10.5, 0.0), Vector3(9.0, 1.2, 37.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03), false)
+
+	# Entrance Portico at -X front
+	_city_bays(terrain, center + Vector3(-16.5, 4.5, -6.0), Vector3(0.0, 0.0, 4.0), 4,
+			Vector3(1.4, 7.0, 1.4), stone, rng, block_batch, block_body)
+	terrain.create_box(center + Vector3(-16.5, 8.5, 0.0), Vector3(3.0, 1.4, 16.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03), false)
+
+	# East Hillside Wing (+X, against Gellért rock)
+	terrain.create_box(center + Vector3(12.0, 4.5, 0.0), Vector3(8.0, 7.0, 32.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(cream, rng, 0.02))
+
+	return { "radius": 42.0, "top": 24.0 }
+
+
+static func _city_shoes_on_danube(terrain: Node3D, center: Vector3, rng: RandomNumberGenerator, _parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	CITY 20 — SHOES ON THE DANUBE BANK (Cipők a Duna-parton): the solemn 2005
+	memorial on the Pest embankment created by Can Togay and Gyula Pauer,
+	honoring the victims shot into the river during World War II — sixty pairs of
+	1940s cast-iron shoes facing the water along the stone river promenade.
+
+	HANDLED WITH RESPECT: quiet, factual, plain toast fact, no coin bursts.
+
+	RADIUS ARITHMETIC (declared 32.0):
+	  * Promenade quay: 8.0 x 54.0 at (0, 0): sqrt(4.0^2 + 27.0^2) = 27.29 m.
+	  * River water strip at x = -7.5: sqrt(9.5^2 + 28.0^2) = 29.57 m.
+	  So 29.57 <= 32.0.
+	Boxes: 72. Colliding: 8.
+	"""
+	var stone := LM_GRANITE
+	var iron := LM_IRON
+	var dark_iron := LM_BASALT
+	var water := Color(0.18, 0.35, 0.45)
+
+	# 1. Stone Promenade Quay along Pest Bank (running on Z)
+	terrain.create_box(center + Vector3(0.0, 0.4, 0.0), Vector3(8.0, 0.8, 54.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02))
+
+	# Lower stone step down to water along -X river edge
+	terrain.create_box(center + Vector3(-4.8, 0.2, 0.0), Vector3(1.6, 0.4, 54.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.03).darkened(0.1))
+
+	# River water surface strip beside quay
+	terrain.create_box(center + Vector3(-7.5, 0.05, 0.0), Vector3(4.0, 0.1, 56.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(water, rng, 0.02), false)
+
+	# 2. Sixty Pairs of Period Cast-Iron Shoes along the Curb (x = -3.8)
+	# Modeled as 20 distinct paired shoe clusters along z = -23.0..+23.0
+	for i in 20:
+		var sz: float = -22.5 + float(i) * 2.37
+		var kind: int = i % 4
+		var shade: Color = iron if (i % 2 == 0) else dark_iron
+		var sx: float = -3.8 + (0.15 if (i % 3 == 0) else -0.1)
+
+		match kind:
+			0:  # Men's work boots (cuff + sole)
+				terrain.create_box(center + Vector3(sx, 0.95, sz - 0.2), Vector3(0.4, 0.35, 0.85), 0.05,
+						rng, block_batch, block_body, 0.0, _lm_shade(shade, rng, 0.03), false)
+				terrain.create_box(center + Vector3(sx, 0.95, sz + 0.25), Vector3(0.4, 0.35, 0.85), -0.04,
+						rng, block_batch, block_body, 0.0, _lm_shade(shade, rng, 0.03), false)
+			1:  # Women's heels (arched pump + heel)
+				terrain.create_box(center + Vector3(sx, 0.92, sz - 0.18), Vector3(0.3, 0.28, 0.7), 0.08,
+						rng, block_batch, block_body, 0.0, _lm_shade(shade, rng, 0.03), false)
+				terrain.create_box(center + Vector3(sx, 0.92, sz + 0.22), Vector3(0.3, 0.28, 0.7), -0.06,
+						rng, block_batch, block_body, 0.0, _lm_shade(shade, rng, 0.03), false)
+			2:  # Children's shoes (small pair)
+				terrain.create_box(center + Vector3(sx, 0.9, sz - 0.14), Vector3(0.25, 0.2, 0.5), -0.03,
+						rng, block_batch, block_body, 0.0, _lm_shade(shade, rng, 0.03), false)
+				terrain.create_box(center + Vector3(sx, 0.9, sz + 0.16), Vector3(0.25, 0.2, 0.5), 0.04,
+						rng, block_batch, block_body, 0.0, _lm_shade(shade, rng, 0.03), false)
+			_:  # Men's dress shoes
+				terrain.create_box(center + Vector3(sx, 0.92, sz - 0.2), Vector3(0.35, 0.24, 0.8), -0.05,
+						rng, block_batch, block_body, 0.0, _lm_shade(shade, rng, 0.03), false)
+				terrain.create_box(center + Vector3(sx, 0.92, sz + 0.24), Vector3(0.35, 0.24, 0.8), 0.07,
+						rng, block_batch, block_body, 0.0, _lm_shade(shade, rng, 0.03), false)
+
+	# 3. Memorial Benches & Plinths along the Promenade (+X side)
+	for bz in [-16.0, 0.0, 16.0]:
+		terrain.create_box(center + Vector3(2.6, 0.85, bz), Vector3(1.2, 0.8, 3.4), 0.0,
+				rng, block_batch, block_body, 0.0, _lm_shade(iron, rng, 0.03), false)
+	# Cast-iron memorial plaques on low stone plinths
+	for pz in [-8.0, 8.0]:
+		terrain.create_box(center + Vector3(1.8, 0.7, pz), Vector3(1.4, 0.6, 1.4), 0.0,
+				rng, block_batch, block_body, 0.0, _lm_shade(stone, rng, 0.02), false)
+		terrain.create_box(center + Vector3(1.8, 1.05, pz), Vector3(1.1, 0.1, 1.1), 0.0,
+				rng, block_batch, block_body, 0.0, _lm_shade(iron, rng, 0.04), false)
+
+	return { "radius": 32.0, "top": 1.5 }
+
+
+static func _city_budapest_eye(terrain: Node3D, center: Vector3, rng: RandomNumberGenerator, _parent_chunk: MeshInstance3D, block_batch: Array, block_body: StaticBody3D) -> Dictionary:
+	"""
+	CITY 21 — BUDAPEST EYE: the 65 m giant Ferris wheel in Erzsébet Square,
+	featuring its massive steel A-frame support legs, 54 m diameter rotating
+	wheel truss, radial tension spokes, and 16 enclosed passenger gondolas
+	overlooking central Pest.
+
+	RADIUS ARITHMETIC (declared 38.0):
+	  * Base plaza: 32.0 x 32.0 at (0, 0): sqrt(16.0^2 + 16.0^2) = 22.63 m.
+	  * Support footings at (+/-4.5, 0, +/-10.0): sqrt(5.8^2 + 11.3^2) = 12.70 m.
+	  * Wheel rim & gondolas on Z/Y plane: reaches z = +/-27.0 + 1.2 = 28.2 m.
+	  So 28.20 <= 38.0.
+	Boxes: 78. Colliding: 12.
+	"""
+	var steel := LM_MARBLE
+	var steel_dark := LM_MARBLE.darkened(0.2)
+	var gondola_blue := LM_SLATE_BLUE
+	var park_green := CITY_PARK_GREEN
+	var granite := LM_GRANITE
+
+	# 1. Base Park Plaza in Erzsébet Square
+	terrain.create_box(center + Vector3(0.0, 0.4, 0.0), Vector3(32.0, 0.8, 32.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(granite, rng, 0.02).lightened(0.1))
+
+	# Square Corner Park Trees
+	for tx in [-13.0, 13.0]:
+		for tz in [-13.0, 13.0]:
+			terrain.create_box(center + Vector3(tx, 2.0, tz), Vector3(0.8, 4.0, 0.8), 0.0,
+					rng, block_batch, block_body, 0.0, _lm_shade(LM_ROOF, rng, 0.03))
+			terrain.create_box(center + Vector3(tx, 6.0, tz), Vector3(4.5, 4.5, 4.5), 0.0,
+					rng, block_batch, block_body, 0.0, _lm_shade(park_green, rng, 0.05), false)
+
+	# 2. Boarding Platform & Base Stairs
+	terrain.create_box(center + Vector3(0.0, 1.8, 0.0), Vector3(10.0, 2.0, 14.0), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(steel_dark, rng, 0.02))
+
+	# 3. Steel A-Frame Support Legs (rising to axle hub at y = 34.0)
+	var hub_pos := center + Vector3(0.0, 34.0, 0.0)
+	for side_x in [-4.5, 4.5]:
+		for side_z in [-10.0, 10.0]:
+			# Concrete footing pad
+			terrain.create_box(center + Vector3(side_x, 1.0, side_z), Vector3(2.6, 1.2, 2.6), 0.0,
+					rng, block_batch, block_body, 0.0, _lm_shade(steel_dark, rng, 0.02))
+			# Sloping A-frame leg strut
+			var foot_pos := center + Vector3(side_x, 1.6, side_z)
+			_city_cable(terrain, foot_pos, hub_pos + Vector3(side_x * 0.4, 0.0, 0.0), 0.0, 3, 1.2,
+					steel, rng, block_batch, block_body)
+
+	# Central Axle Hub
+	terrain.create_box(hub_pos, Vector3(9.0, 2.4, 2.4), 0.0,
+			rng, block_batch, block_body, 0.0, _lm_shade(steel, rng, 0.02))
+
+	# 4. Giant Wheel Rim, Spokes, and 16 Gondolas (oriented in the Z/Y vertical plane)
+	const CABINS := 16
+	const WHEEL_RADIUS := 27.0
+	for i in CABINS:
+		var a1 := TAU * float(i) / float(CABINS)
+		var a2 := TAU * float(i + 1) / float(CABINS)
+		var p1 := hub_pos + Vector3(0.0, sin(a1) * WHEEL_RADIUS, cos(a1) * WHEEL_RADIUS)
+		var p2 := hub_pos + Vector3(0.0, sin(a2) * WHEEL_RADIUS, cos(a2) * WHEEL_RADIUS)
+
+		# Outer rim truss chord
+		_city_cable(terrain, p1, p2, 0.0, 2, 0.8, steel, rng, block_batch, block_body)
+
+		# Radial spoke tension cables from hub to rim
+		_city_cable(terrain, hub_pos, p1, 0.0, 2, 0.35, steel, rng, block_batch, block_body)
+
+		# Passenger Gondola / Cabin hanging beneath rim node
+		var cabin_pos := p1 + Vector3(0.0, -1.4, 0.0)
+		terrain.create_box(cabin_pos, Vector3(2.2, 2.0, 2.2), 0.0,
+				rng, block_batch, block_body, 0.0, _lm_shade(gondola_blue, rng, 0.03), false)
+		# Enclosed glass band
+		terrain.create_box(cabin_pos + Vector3(0.0, 0.1, 0.0), Vector3(2.3, 0.8, 2.3), 0.0,
+				rng, block_batch, block_body, 0.0, _lm_shade(Color(0.3, 0.7, 0.8), rng, 0.04), false)
+
+	return { "radius": 38.0, "top": 62.5 }
