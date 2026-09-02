@@ -248,10 +248,31 @@ const MAX_FLEE_DURATION: float = 60.0
 ##         20 s cooldown on the plate itself, so anything above a trickle is a peer
 ##         that is not playing. It costs the master one `investigate_point()` call
 ##         that a busy guard refuses outright.
+##   lmk   is one Budapest landmark claim (bead godot-test1-8gw.5). There are 22
+##         of them in a run and each is claimed once, so a trickle is the honest
+##         traffic; budgeted like `kill` so a burst after a hitch still drains
+##         while a flood cannot. Master-only, and it costs the master one range
+##         test plus one proximity test against its own presence table.
 const VERB_BUDGET_PER_SEC: Dictionary = {
 	"clm": 30, "kill": 10, "flee": 4, "croc": 40, "cnf": 150, "dead": 60,
-	"cap": 8, "room": 12, "pad": 4,
+	"cap": 8, "room": 12, "pad": 4, "lmk": 10,
 }
+
+## How far outside a Budapest landmark's OWN radius a peer may be standing and
+## still have walked into it, in metres.
+##
+## THE TRUST BOUNDARY THE `lmk` VERB NEEDS, and the reason the packet carries a
+## slot INDEX and no position at all — `MAX_PAD_PRESS_DISTANCE`'s rule one verb
+## along. The master looks the slot up in the authored plan and asks whether the
+## sender was anywhere near it; without that a modified client explores the whole
+## city from the gate and hands the room a win nobody walked.
+##
+## Generous on purpose, and it has to be: the claim is triggered at
+## `radius + landmark_toast.APPROACH_PAD` (6 m) but presence is only published at
+## `PRESENCE_HZ`, so the master's picture of the sender can be a fraction of a
+## second — several metres of running — behind the moment the trigger fired.
+## Against slot radii of 40-156 m this is a small skirt, not a second radius.
+const MAX_LANDMARK_CLAIM_PAD: float = 30.0
 
 ## How far from a lure plate a peer may be and still have pressed it, in metres.
 ##
@@ -584,6 +605,33 @@ const RELEASE_GRACE_MSEC: int = 3000
 ## Seconds accumulated toward the master's next room publish.
 var _room_accum: float = 0.0
 
+## THE ROOM'S EXPLORED SET — 22 bits of Budapest, one per `BudapestPlan.SLOTS`
+## row (bead godot-test1-8gw.5). The room-wide union of what every member has
+## walked into; `player_controller.explored_mask` is this peer's own copy and the
+## two are folded into each other exactly as `_captives` and `captive_heroes` are.
+##
+## ADD-ONLY, which is the whole reason this needs none of the captive set's
+## machinery. `_apply_explored()` ORs, so ordering between the live `lmk` verb,
+## the master's periodic `room` packet and a join snapshot does not matter, a
+## repeat is free, and a stale master can un-explore nothing — there is no
+## `_released_msec` here because there is no release.
+##
+## Room-scoped: `leave()` empties it and a solo session never touches it. The
+## PLAYER's copy deliberately survives a room join — see `report_landmark_explored`.
+var _explored_mask: int = 0
+
+## Landmark claims this peer has made and not yet seen the master publish back:
+## `{ slot index : true }`. THE ONLY RETRY QUEUE IN THIS FILE, and the reason is
+## in `report_landmark_explored()` — a claim is made exactly once per run, so a
+## dropped one is a landmark permanently missing from the ROOM's win set, which
+## no other verb here is true of. Bounded by the plan's 22 slots, drained one per
+## `room` beat, and normally empty. Master-side it is always empty (a master
+## unions its own claims directly); `leave()` empties it with the room.
+##
+## NOT to be confused with `_pending_claims`, which is the coin-pickup arbitration's
+## in-flight table — a different verb (`clm`) about a different kind of claim.
+var _pending_landmarks: Dictionary = {}
+
 ## The last captive-set-and-verdict the master RELAYED, as a string to compare
 ## against. The relay leg fires only when this changes - see `_send_room_state()`,
 ## where the reason is the lobby's own stall rule and not tidiness.
@@ -888,6 +936,11 @@ func leave() -> void:
 	# what happens to that. Nothing is pushed into the player from here - a leave
 	# is not a liberation.
 	_captives = {}
+	# The ROOM's explored set dies with the room, like the captive set above it.
+	# Nothing is pushed into the player from here: a leave is not an un-exploring,
+	# and the player's own bits are its own truth again the moment it is solo.
+	_explored_mask = 0
+	_pending_landmarks = {}
 	_last_holder = {}
 	_released_msec = {}
 	_captured_msec = {}
@@ -1020,6 +1073,21 @@ func _on_lobby_joined(you: String, room: String, master: String, members: Array)
 	# Alone in the `welcome` frame means the lobby just minted this room for us:
 	# there is no run in progress to join, so no placement is ever applied.
 	_first_member = members.size() <= 1
+	# THE HOST'S BUDAPEST WALK IS THE ROOM'S STARTING UNION (codex review
+	# 2026-09-02). A host is the one peer whose world is NOT replaced — it never
+	# adopts a foreign seed, so `reset_position()` never runs and its
+	# `explored_mask` deliberately survives into the room. Left out of
+	# `_explored_mask` those landmarks would be invisible to every peer for the
+	# room's life, because `explore_landmark()` refuses a bit it has already set and
+	# so can never report them again — the host would then be the only member
+	# counting them, which is exactly the divergence a room-wide set exists to stop.
+	# Only for the host: a JOINER's mask is cleared by `_receive_seed` and importing
+	# it here could race that clear.
+	if _first_member:
+		var host_player: Node = get_tree().get_first_node_in_group("player")
+		if host_player != null and "explored_mask" in host_player:
+			_explored_mask |= int(host_player.explored_mask) \
+					& ((1 << BudapestPlan.SLOTS.size()) - 1)
 	# Every member already here sends us exactly one join snapshot, so this is how
 	# many the placement waits for (see JOIN_SNAPSHOT_WAIT). Peers arriving AFTER
 	# us are deliberately not counted: the protocol sends snapshots to the joiner,
@@ -1621,9 +1689,15 @@ func _send_room_state() -> void:
 		return
 	var payload: Dictionary = {
 		"t": "room", "cap": captive_heroes(), "cd": 0.0, "co": 0,
+		# BUDAPEST'S EXPLORED SET (bead godot-test1-8gw.5). A NEW OPTIONAL FIELD:
+		# `decode_room()` treats a missing `m` as absent rather than malformed, so
+		# an older master's packet still repairs the cells it always did — the
+		# `dead` / `gc` rule, and the opposite of `cd`/`co`, which are REQUIRED by
+		# every peer that already shipped and so can never be dropped.
+		"m": _explored_mask,
 	}
 	_broadcast_reliable(var_to_bytes(payload))
-	var digest: String = str(payload["cap"])
+	var digest: String = "%s|%d" % [payload["cap"], _explored_mask]
 	if digest == _room_relay_digest:
 		return
 	_room_relay_digest = digest
@@ -1689,7 +1763,30 @@ static func decode_room(packet: Dictionary) -> Dictionary:
 	var known: int = int(verdict)
 	if known > CUSTODY_VERDICT_MAX:
 		known = CUSTODY_VERDICT_MAX
-	return {"cap": names, "cd": seconds, "co": known}
+
+	# BUDAPEST'S EXPLORED MASK. MISSING IS NOT MALFORMED, the `dead` / `gc` rule
+	# and the exact opposite of `cd` / `co` above: a master on a pre-.5 build
+	# publishes no `m` at all, and `build_version` refuses to reload a peer that is
+	# in a room, so that master is a state that really happens. Dropping its packet
+	# over an absent field would stop the room repairing its CELLS — the thing this
+	# verb has always been for — over a field that build has never heard of.
+	# Present-but-malformed still costs the whole packet, like every other field.
+	#
+	# Finite and bounded BEFORE the cast, and the bound is the plan's own size: a
+	# mask is folded down to the slots that exist rather than dropped, because a
+	# LARGER one is what a peer on a build with a twenty-third landmark would send
+	# and its first 22 bits are still true. `player_controller.adopt_explored_mask`
+	# masks again on its own side — the same belt-and-braces `_pool` gives `cap`.
+	var explored: int = 0
+	if packet.has("m"):
+		if not _is_number(packet.get("m", null)):
+			return {}
+		var raw_mask: float = float(packet["m"])
+		if not is_finite(raw_mask) or raw_mask < 0.0 or raw_mask > float(MAX_STATE_COUNTER):
+			return {}
+		explored = int(raw_mask) & ((1 << BudapestPlan.SLOTS.size()) - 1)
+
+	return {"cap": names, "cd": seconds, "co": known, "m": explored}
 
 
 func _receive_room(from_id: String, packet: Dictionary) -> void:
@@ -1707,6 +1804,22 @@ func _receive_room(from_id: String, packet: Dictionary) -> void:
 	if msg.is_empty():
 		return
 	_adopt_room_captives(msg["cap"])
+	# THE EXPLORED SET NEEDS NO `_adopt_*` OF ITS OWN, and that is the whole payoff
+	# of it being add-only: there is no direction for the master's older picture to
+	# undo, so there is nothing for a grace window to protect. An old master sends
+	# no `m`, which decodes as 0 and ORs to nothing — the documented mixed-room
+	# ceiling, not a special case. This is also the beat that re-drives a win the
+	# join gate deferred; see `_apply_explored()`.
+	var published: int = int(msg["m"])
+	_apply_explored(published)
+	# THE ACK. This packet is the master's own truth, so a pending claim it carries
+	# has landed and may stop being re-sent — see `_tick_landmark_claims()`. It is
+	# done HERE and not in `_apply_explored()` because that function is also fed by
+	# our OWN bits, and a claim cannot acknowledge itself.
+	if not _pending_landmarks.is_empty():
+		for index: int in _pending_landmarks.keys():
+			if published & (1 << index) != 0:
+				_pending_landmarks.erase(index)
 
 
 func _adopt_room_captives(names: Array) -> void:
@@ -2342,6 +2455,20 @@ func _on_lobby_relay(from: String, payload: Dictionary) -> void:
 			if not _verb_rate_ok(from, "cap"):
 				return
 			_receive_captive(from, payload)
+		"lmk":
+			# A Budapest landmark claim from a peer whose mesh we have not finished
+			# building — see `report_landmark_explored()` for why the relay carries
+			# this one at all. SAME PARSER, SAME AUTHORITY CHECK, SAME FUNCTION as
+			# the mesh verb, and rate-limited on the same budget, because a relayed
+			# packet is peer input like any other.
+			#
+			# `i` arrives as a JSON number here rather than a `var_to_bytes` int, and
+			# `decode_lmk()` demands TYPE_INT either way. JSON parses a whole number
+			# to an int in Godot 4, so the same gate holds without a second spelling
+			# — and a fractional one is a peer not speaking this protocol.
+			if not _verb_rate_ok(from, "lmk"):
+				return
+			_receive_lmk(from, payload)
 		"room":
 			# The master's periodic truth, for a peer whose mesh is not up yet —
 			# which is the whole reason this verb exists (see `_send_room_state`).
@@ -2485,6 +2612,17 @@ func _receive_seed(payload: Dictionary) -> void:
 	_room_seed = int(raw_seed)
 	_has_seed = true
 	status.emit("Shared world seed received")
+
+	# BUDAPEST IS UNEXPLORED IN A WORLD WE HAVE NOT WALKED. Adopting a foreign seed
+	# is the one event that REPLACES this peer's world, and it is the single site
+	# above all three branches below — the spawn reset, the mid-run rebuild and the
+	# hand-over to `_apply_join_placement()`, only the first of which calls
+	# `reset_position()`. Without it a peer carrying a finished solo mask wins
+	# somebody else's run on its first `room` packet (codex review 2026-09-02). A
+	# HOST never gets here, which is correct: its own run continues, seed and all.
+	var seed_player: Node = get_tree().get_first_node_in_group("player")
+	if seed_player != null and "explored_mask" in seed_player:
+		seed_player.set("explored_mask", 0)
 
 	# A MID-RUN JOINER MUST NOT BE RESET TO THE ORIGIN. Once a snapshot is in
 	# hand the group's position is known, so hand straight over to the join
@@ -2790,6 +2928,14 @@ func _send_state_to(id: String) -> void:
 		# reassigned has no such holder left to prove it, so a replay cannot be
 		# authorized the same way.
 		"cap": captive_heroes(),
+		# BUDAPEST'S EXPLORED SET, absolute and never a delta — the `cap` rule, and
+		# honoured from the MASTER alone for a simpler version of `cap`'s reason: a
+		# live `lmk` authorizes itself by the sender's own published position, and a
+		# replay has no position left to check, so the room's own authority is the
+		# only honest source. `lm`, not `m`: this snapshot already spends `dd` and
+		# `gc` on two-letter counters and a one-letter key beside them reads as a
+		# typo.
+		"lm": _explored_mask,
 	})
 
 
@@ -2899,9 +3045,25 @@ func _receive_state(from: String, snapshot: Dictionary) -> void:
 				continue
 			_captives[name] = true
 			_captive_changed(name, true)
+	# BUDAPEST'S EXPLORED SET, from the master alone — the captive set's authority
+	# rule, and it needs none of the guards above it: the set is add-only, so a
+	# snapshot that is a moment stale can only ever be a subset of the truth and
+	# there is no release for it to resurrect over. Unconditional (a peer on an
+	# older build decodes to 0 and ORs to nothing) and re-drives the win check the
+	# `_join_settled()` gate has been deferring — which is precisely the gate this
+	# snapshot is what closes.
 	# The snapshot may be the last thing the placement was waiting on (the seed
 	# can equally well be). Both call in; the latch inside decides.
 	_apply_join_placement()
+	# BUDAPEST'S EXPLORED SET, AFTER THE PLACEMENT AND NOT BEFORE (codex review
+	# 2026-09-02). This snapshot can be the frame that makes `_join_settled()` true
+	# AND the frame that carries eighteen landmarks, so applied above the placement
+	# it opens the victory screen synchronously — and `join_at()` then reads that as
+	# a pre-join game over and hides it, only for the next `room` packet to raise it
+	# again half a second later. Placed here the joiner is put down first and the
+	# win lands once, on a body that is already standing where the room is.
+	if from == _master:
+		_apply_explored(int(snapshot.get("lm", 0)))
 	# ...and the last thing the AUTO-CLAIM was waiting on, for the reason in
 	# `_auto_claim_hero()`: this snapshot is where a joiner learns which heroes are
 	# in a cell, and claiming before it lands is claiming one of them.
@@ -3103,6 +3265,20 @@ static func decode_state(payload: Dictionary) -> Dictionary:
 				return {}
 			captives.append(hero)
 
+	# Budapest's explored mask. MISSING IS NOT MALFORMED, the `gc`/`dead`/`cap`
+	# rule: a peer on a pre-.5 build is still worth its position, its counters and
+	# its id lists. Finite and bounded before the cast, then folded down to the
+	# slots this build knows — see `decode_room()`, which does the same thing to
+	# the same number for the same reasons.
+	var explored: int = 0
+	if payload.has("lm"):
+		if not _is_number(payload["lm"]):
+			return {}
+		var raw_mask: float = float(payload["lm"])
+		if not is_finite(raw_mask) or raw_mask < 0.0 or raw_mask > float(MAX_STATE_COUNTER):
+			return {}
+		explored = int(raw_mask) & ((1 << BudapestPlan.SLOTS.size()) - 1)
+
 	return {
 		"cc": counters[0],
 		"dd": counters[1],
@@ -3111,6 +3287,7 @@ static func decode_state(payload: Dictionary) -> Dictionary:
 		"ids": ids,
 		"dead": dead,
 		"cap": captives,
+		"lm": explored,
 	}
 
 
@@ -3262,6 +3439,7 @@ func _process(delta: float) -> void:
 	if _room_accum >= room_interval:
 		_room_accum = fmod(_room_accum, room_interval)
 		_send_room_state()
+		_tick_landmark_claims()
 
 	if _rtc == null:
 		return
@@ -3709,6 +3887,8 @@ func _receive_mesh_verb(from_id: String, verb: String, packet: Dictionary) -> vo
 			_receive_dead(from_id, packet)
 		"pad":
 			_receive_pad(from_id, packet)
+		"lmk":
+			_receive_lmk(from_id, packet)
 		"cap":
 			_receive_captive(from_id, packet)
 		"room":
@@ -4649,6 +4829,256 @@ func _receive_pad(from_id: String, packet: Dictionary) -> void:
 	if not pad_press_in_reach(sender as Vector3, where as Vector3):
 		return
 	_apply_guard_lure(int(msg["f"]), int(msg["p"]))
+
+
+# =============================================================================
+# BUDAPEST'S EXPLORED SET — the `lmk` claim, and the mask that carries it
+# =============================================================================
+#
+# Epic `godot-test1-8gw`, bead .5. Eighteen of the city's 22 authored landmarks
+# ends the run in victory, and in a room a landmark counts when ANY member walks
+# into it — so the set is room-wide and the master owns it.
+#
+#     lmk    peer   → master   {"t":"lmk","i":int}    "I walked into slot i"
+#     room   master → everyone {..., "m":int}         the union, 2 Hz, OPTIONAL
+#     state  master → joiner   {..., "lm":int}        the absolute set, once
+#
+# THREE THINGS THIS IS NOT, each on purpose:
+#
+#   * NOT THE GENERIC PICKUP LIST. `clm`/`cnf` arbitrate ONE winner for a coin
+#     two peers raced for; exploring is not a race and has no loser. And the join
+#     replay truncates its id list at `MAX_STATE_IDS`, which would silently drop
+#     landmarks out of a win condition.
+#   * NOT A POSITION. The packet carries an INDEX into an AUTHORED table, so
+#     there is nothing to spoof: `_receive_lmk` asks the plan whether that slot
+#     exists and its own presence table whether the sender was standing there.
+#     `pad`'s rule, one verb along.
+#   * NOT AUTHORITY OVER THE WIN. Game over is decided per peer off the mirrored
+#     mask (the captive set's rule since the break-out veto), and a peer's own
+#     walk counts locally the moment it happens. The master's job is the UNION —
+#     making your teammates' landmarks yours — not permission to have walked.
+#
+# THE MIXED-ROOM CEILING, stated because it is a real state: `build_version`
+# refuses to reload a peer that is in a room, so a master on a pre-.5 build is
+# reachable. It publishes no `m` and drops no packet over ours (`decode_room`
+# treats a missing field as absent, never as malformed), so the room's union
+# never advances: every peer still counts its OWN walk and nobody inherits a
+# teammate's. Eighteen alone still wins; eighteen between two people does not.
+
+func report_landmark_explored(index: int) -> void:
+	"""
+	The local player walked into Budapest landmark `index`. Tell the room.
+
+	A no-op offline — solo the player's own `explored_mask` is the whole truth,
+	which is why this returns nothing for the caller to branch on (unlike
+	`request_croc_flee`, where the master taking over means the caller must NOT
+	also act locally; here both always act).
+
+	APPLIED LOCALLY AS WELL AS SENT, `request_guard_lure`'s shape: our own bit
+	belongs in the room mask this peer publishes and reads, whether or not we are
+	the master and whether or not the master ever answers.
+
+	OVER THE MESH AND THE LOBBY RELAY, `_publish_captive`'s rule for
+	`_publish_captive`'s reason: ICE takes seconds, and a claim made in that window
+	would otherwise be lost to the room for the rest of the run — this peer's own
+	bit is set for good, so nothing would ever re-send it. The relay leg reaches
+	exactly the peers whose mesh is not up (normally none, so normally zero sends);
+	a non-master that receives it drops it in `_receive_lmk`.
+	"""
+	if _state != State.IN_ROOM:
+		return
+	if index < 0 or index >= BudapestPlan.SLOTS.size():
+		return
+	_apply_explored(1 << index)
+	if _master == _you:
+		return   # we ARE the union; `_send_room_state` publishes it
+	# ONE-SHOT SENDS ARE NOT ENOUGH HERE, and this is the one place in the file
+	# where that is true (codex review 2026-09-02). Every other event verb can
+	# afford to be dropped — a lost `flee` is an ability that visibly did nothing —
+	# but this claim is made ONCE PER RUN by construction: `explore_landmark()` sets
+	# the local bit and refuses to report the same slot again, so a claim the master
+	# discards is a landmark permanently missing from the ROOM's win set. And the
+	# master discards it on a case that really happens: a joiner reaching a landmark
+	# before its first presence packet has arrived has no entry in the master's
+	# `_peer_state`, so `_receive_lmk` has nowhere to check its position against.
+	#
+	# So it is remembered and re-sent by `_tick_landmark_claims()` until the
+	# master's own published mask says it landed. That is an ACK we already have and
+	# did not have to invent — the `room` packet's `m` is the master's truth.
+	_pending_landmarks[index] = true
+	_send_landmark_claim(index)
+
+
+func _send_landmark_claim(index: int) -> void:
+	"""
+	Put one `lmk` on the wire, over BOTH transports.
+
+	`_publish_captive`'s rule for `_publish_captive`'s reason: ICE takes seconds
+	and the relay is open from `welcome`, so the relay leg is what reaches a master
+	whose mesh channel is not up. It writes to peers whose mesh is down (normally
+	none, so normally zero sends) and a non-master that receives one drops it in
+	`_receive_lmk`.
+	"""
+	_send_reliable_to_master(var_to_bytes({"t": "lmk", "i": index}))
+	_relay_to_negotiating({"mp": "lmk", "i": index})
+
+
+func _tick_landmark_claims() -> void:
+	"""
+	The claim retry, on the `room` publish beat — see `report_landmark_explored()`
+	for why a landmark claim is the one verb in this file that may not be dropped.
+
+	ONE CLAIM PER TICK, and the bound is what makes the retry safe: 22 slots at
+	`ROOM_SYNC_HZ` is 2 packets a second against the verb's own budget of 10, so a
+	peer whose every claim is outstanding still cannot rate-limit itself out. It
+	drains in index order and is normally EMPTY — a claim that landed is forgotten
+	the moment the master's next `m` carries it (`_apply_explored`).
+
+	THE SECOND JOB IS THE WIN RETRY, and it is one line because `_apply_explored`
+	already pushes the mask into the player unconditionally.
+	`player_controller._check_budapest_win()` refuses to decide before
+	`_join_settled()`, so something has to ask again; a master that has gone quiet
+	would otherwise leave a settled joiner's eighteenth landmark undecided forever.
+	"""
+	if _state != State.IN_ROOM:
+		return
+	# Re-drive the deferred win check (and re-seed a player that entered the tree
+	# after us). Costs one group lookup and a popcount of at most 22 bits, twice a
+	# second, and only in a room.
+	_apply_explored(0)
+	if _master == _you:
+		# A re-election made US the union: everything outstanding is already in
+		# `_explored_mask` and goes out on the next `room` packet.
+		_pending_landmarks.clear()
+		return
+	if _pending_landmarks.is_empty():
+		return
+	for index: int in _pending_landmarks.keys():
+		_send_landmark_claim(index)
+		return
+
+
+func room_explored_mask() -> Variant:
+	"""
+	The room's explored set, or `null` offline / before the join settles.
+
+	`shared_bank()`'s exact shape, and the `null` carries `shared_bank()`'s exact
+	meaning: a joiner is IN_ROOM from the `welcome` frame while its picture of the
+	room is still arriving one snapshot at a time, so a mask read there is a
+	partial one — and the epic's decision 7 is that victory is never evaluated
+	before `_join_settled()`. `player_controller._check_budapest_win()` waits on
+	this and is re-driven by the next `room` packet.
+	"""
+	if _state != State.IN_ROOM or not _join_settled():
+		return null
+	return _explored_mask
+
+
+static func decode_lmk(packet: Dictionary) -> Dictionary:
+	"""
+	The `lmk` parser, and the SEVENTH trust boundary in this file.
+
+	@return: `{"i": int}`, or an EMPTY DICTIONARY — trusted whole or dropped
+	    whole, static and instance-free so scripts/landmark_progress_selfcheck.gd
+	    can beat on it, exactly like `decode_pad()`.
+
+	`_is_number` AND NOT `TYPE_INT`, unlike `decode_pad`, and the difference is the
+	transport: this verb also travels the LOBBY RELAY (see
+	`report_landmark_explored`), where `JSON.parse_string` hands every number back
+	as a FLOAT — the same gotcha `_receive_seed` documents. So the value is checked
+	FINITE AND IN RANGE BEFORE ANY CAST (`int(NAN)` is undefined and on wasm the
+	trunc can trap the module), and a fractional one is refused afterwards: 3.5 is
+	not a slot, it is a peer that is not speaking this protocol.
+
+	THE RANGE IS CHECKED HERE rather than left to the caller, because unlike a
+	plate index it bounds a SHIFT — `1 << i` for a large `i` is how a claim becomes
+	an overflow instead of a refusal.
+	"""
+	if not _is_number(packet.get("i", null)):
+		return {}
+	var raw: float = float(packet["i"])
+	if not is_finite(raw) or raw < 0.0 or raw >= float(BudapestPlan.SLOTS.size()):
+		return {}
+	var index: int = int(raw)
+	if float(index) != raw:
+		return {}
+	return {"i": index}
+
+
+static func landmark_claim_in_reach(sender: Vector3, slot: Vector3, radius: float) -> bool:
+	"""
+	Could a peer standing at `sender` have walked into the landmark at `slot`?
+
+	Static and pure so the self-check can drive it, and finiteness-checked before
+	anything is derived from either point — the `pad_press_in_reach` rule, for the
+	same reason: a non-finite input has to read as "no", never as "infinitely far,
+	compare it anyway".
+
+	FLAT XZ, like `landmark_toast._xz_distance`: three of the 22 slots stand on a
+	plateau lid 30-46 m up, and a Y-aware distance would refuse the claim of
+	somebody standing right on top of Buda Castle.
+	"""
+	if not sender.is_finite() or not slot.is_finite():
+		return false
+	if not is_finite(radius) or radius < 0.0:
+		return false
+	var flat := Vector2(sender.x - slot.x, sender.z - slot.z)
+	return flat.length() <= radius + MAX_LANDMARK_CLAIM_PAD
+
+
+func _receive_lmk(from_id: String, packet: Dictionary) -> void:
+	"""
+	MASTER ONLY: another peer says it walked into a Budapest landmark.
+
+	The two questions, both asked against things this machine owns:
+
+	  1. IS THERE SUCH A SLOT? `decode_lmk` reads the authored plan's size, so a
+	     peer naming slot 40 names nothing.
+	  2. WAS THE SENDER THERE? Its last published presence position has to be
+	     within the slot's own radius plus `MAX_LANDMARK_CLAIM_PAD`. Without this
+	     a modified client wins the run from the gate.
+
+	A REFUSED CLAIM COSTS THE ROOM'S UNION AND NOT THE CLAIMANT'S OWN BIT, which
+	is the honest reading of a peer-to-peer mesh: a modified client can always lie
+	to itself, and game over is decided per peer (the captive set's rule). What the
+	master protects is everybody ELSE's mask.
+	"""
+	if _master != _you:
+		return
+	var msg: Dictionary = decode_lmk(packet)
+	if msg.is_empty():
+		return
+	if not _peer_state.has(from_id):
+		return
+	var sender: Variant = (_peer_state[from_id] as Dictionary).get("pos", null)
+	if typeof(sender) != TYPE_VECTOR3:
+		return
+	var index: int = int(msg["i"])
+	var slot: Dictionary = BudapestPlan.SLOTS[index]
+	if not landmark_claim_in_reach(
+			sender as Vector3, slot["pos"] as Vector3, float(slot["radius"])):
+		return
+	_apply_explored(1 << index)
+
+
+func _apply_explored(mask: int) -> void:
+	"""
+	Fold `mask` into the room's explored set and mirror it into the player.
+
+	OR AND NEVER ASSIGN — the one gate every source goes through (our own walk, a
+	peer's `lmk`, the master's `room` packet, a join snapshot), so no two of them
+	can drift and none of them can undo another.
+
+	THE PLAYER IS PUSHED UNCONDITIONALLY, even when nothing moved, and that is
+	load-bearing rather than lazy: `player_controller._check_budapest_win()` REFUSES
+	to decide a win before `_join_settled()`, so the packet that re-drives it is the
+	next `room` packet — which usually carries a mask this peer already has.
+	`adopt_explored_mask()` is an OR and a popcount of at most 22 bits.
+	"""
+	_explored_mask |= mask & ((1 << BudapestPlan.SLOTS.size()) - 1)
+	var player: Node = get_tree().get_first_node_in_group("player")
+	if player != null and player.has_method("adopt_explored_mask"):
+		player.call("adopt_explored_mask", _explored_mask)
 
 
 func request_croc_kill(id: int) -> bool:

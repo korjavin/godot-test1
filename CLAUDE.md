@@ -84,6 +84,19 @@ mkdir -p build/web && godot --headless --export-release "Web" build/web/index.ht
 #                            crocodiles' own stream A/B'd against the shared one,
 #                            the plateau ramps' slope, the difficulty clamp at
 #                            both ends, and the gate-to-river avenue walkable
+#   landmark_progress_selfcheck
+#                            BUDAPEST'S WIN: the catalogue (every slot resolves a
+#                            CITY_LANDMARKS row by BUILDER NAME, a wave-C
+#                            reservation gracefully resolves none), the 22-bit
+#                            explored mask on a real player.tscn (idempotent,
+#                            range-checked, the mirror ORs and never assigns),
+#                            the 18-of-22 threshold WITH its negative control,
+#                            both wire formats DECODED WITH THE FIELD ABSENT
+#                            (`room`'s `m`, the join snapshot's `lm` — an old
+#                            master's packet must repair the cells, not be
+#                            dropped), the `lmk` parser over ints AND relay
+#                            floats, the master's proximity rule, and the
+#                            approach trigger driven through the shipped toast
 #   intro_selfcheck          intro film: web gate, desktop PLAY SOLO path, JS shape
 #   build_version_selfcheck  auto-reload onto a new build: the CI bake contract,
 #                            the web gate, and never mid-run / never in a room
@@ -312,6 +325,26 @@ Three rules of the city's own, all pinned by `budapest_selfcheck`:
   **hunters ON** (GD-SURVEY hunts every band — check 9 carries them as a positive control);
   **Danube crocodiles ON**, on their own salt and their own coordinate primes inside the
   authored band; and coins **authored**, via the approach corridor.
+- **THE WIN IS A 22-BIT MASK, AND EIGHTEEN BITS ENDS THE RUN.** Walking within
+  `radius + landmark_toast.APPROACH_PAD` of a `BudapestPlan.SLOTS` row sets its bit in
+  `player_controller.explored_mask`; `_check_budapest_win()` raises
+  `end_run(Outcome.WON)` at `BUDAPEST_WIN_LANDMARKS` (18). Four rules, all pinned by
+  `landmark_progress_selfcheck`:
+  **it is PER-RUN and add-only** (`restart_game()` empties it beside `captive_heroes`; the
+  monotone store gets the COUNT through `submit_landmarks()`, never the set — a walk is
+  not earned); **the trigger reads the PLAN, not a group**, because a slot is authored and
+  exists whether or not its chunk, its stone or even its builder does — an empty `builder`
+  still counts and simply shows no card (`minimap_hud._gather_tower`'s precedent, one
+  table along); **the card and the coins are a SECOND, PERSONAL latch** (`landmark_toast`'s
+  own `_visited`), so a landmark a teammate explored still pays you when you walk it; and
+  **in a room the set is the ROOM's** — the `lmk` claim carries a slot INDEX and nothing
+  else, the master range-checks it and asks its own presence table whether the sender was
+  within `MAX_LANDMARK_CLAIM_PAD` of that slot, and publishes the union as an **optional**
+  `m` on the `room` packet plus an absolute `lm` in the join snapshot. Both are optional
+  because `decode_room` may not drop an old master's packet — it is also the captive set's
+  repair channel. **The mixed-room ceiling is documented and real**: a pre-.5 master
+  advances no union, so eighteen alone still wins and eighteen between two people does not.
+  Victory is never evaluated before `_join_settled()`.
 
 `scripts/tower_interior.gd` is the same idea one floor in: a second box table for the
 two-storey keep, plus eight hand-planned storeys over it (see below) rising to the CELL

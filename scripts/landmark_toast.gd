@@ -534,6 +534,7 @@ func _process(delta: float) -> void:
 		return
 	_tick_timer = 0.0
 	_scan()
+	_scan_city()
 
 
 # ============================================================================
@@ -615,6 +616,197 @@ func _scan() -> void:
 			_start_quiz(nearest)
 		else:
 			_show_plain(nearest)
+
+
+# ============================================================================
+# BUDAPEST — the city's 22 authored landmarks (epic godot-test1-8gw, bead .5)
+# ============================================================================
+#
+# The win condition of the whole game is walking into eighteen of the twenty-two
+# places in `BudapestPlan.SLOTS`, so this is the second half of this widget: the
+# same approach trigger, the same dead-band, the same card and the same
+# first-visit coin burst, over a different source of "where the landmarks are".
+#
+# THERE ARE NO MARKER NODES AND THERE MUST NOT BE, which is the one real
+# difference and it is the reason the scan is separate rather than folded into
+# `_scan()`. A geo landmark is found through the "landmark" group because its
+# marker is chunk-parented and streams in and out with the ground under it. A
+# city slot is AUTHORED: 22 constant positions and radii that exist whether or
+# not their chunk is loaded, whether or not their stone has been built, and —
+# for the seven wave-C reservations — whether or not a builder exists at all. So
+# the source here is the const table itself, which is `minimap_hud._gather_tower`'s
+# precedent exactly: ask the plan where the thing IS, never the tree where its
+# geometry currently is.
+#
+# AN EMPTY BUILDER STILL COUNTS, AND SHOWS NO CARD. The seven wave-C slots carry
+# `"builder": ""` until bead godot-test1-8gw.8 lands. Walking one still sets its
+# bit — the win must be reachable, and the place is a place whether or not its
+# art has been drawn — but there is nothing to name and nothing true to say
+# about a patch of ground, so no card is raised and no coins are paid. The day
+# the builder and its `CITY_LANDMARKS` row land, both start happening with no
+# edit here: the row is looked up by BUILDER NAME, not by index.
+#
+# THERE IS DELIBERATELY NO QUIZ HERE, and it is a design decision rather than a
+# deferral. The field's question GATES ITS TREASURE, which is the only thing that
+# card pays; a city landmark pays PROGRESS TOWARD THE WIN, and a wrong answer
+# costing you one of the eighteen would make the ending a trivia test. The coins
+# stay (the same per-place burst, off the same hash stream), the question does
+# not.
+#
+# ponytail: the SECONDARY reason the quiz is absent is that it could not be
+# written honestly today — `LandmarkBuilders.quiz_options()` picks its three
+# names out of the FIELD registry, and seven of the 22 city rows do not exist
+# yet, so a picker over `CITY_LANDMARKS` could not even name the place it was
+# asking about. Upgrade path, if a later pass wants a city question that gates
+# the COINS ONLY (never the bit): a `city_quiz_options()` beside `quiz_options()`
+# in `landmark_builders.gd`, once wave C has filled that table to 22 rows.
+
+## The line the first arrival at a named city landmark shows under the fact — the
+## "+N coins" the burst is about to pay. COMPOSED at runtime, so this is the
+## second and last `tr()` in this file: Localization RULE 2, on the FORMAT string.
+const CITY_FOUND: String = "Explored! +%d coins"
+
+## The city slot this approach belongs to, as an index into `BudapestPlan.SLOTS`,
+## or -1 when re-armed. `_active`'s exact role one table along, including its
+## re-arm rule — see that variable for why the first arrival is LATCHED rather
+## than the nearest one winning every tick.
+var _city_active: int = -1
+
+
+func _scan_city() -> void:
+	"""
+	One throttled pass over Budapest's authored slots: find the nearest one in
+	range and, if it is not the one this approach already belongs to, arrive at it.
+
+	`_scan()`'s shape, term for term — re-arm first, nearest in range wins, latch
+	the first arrival — over a const table instead of a group. The one thing added
+	is the RECT REJECT: outside Budapest this costs two comparisons and returns,
+	which is the whole price of the feature for the rest of the world.
+	"""
+	var player := get_tree().get_first_node_in_group("player") as Node3D
+	if player == null:
+		_city_active = -1
+		return
+	var origin: Vector3 = player.global_position
+	if not BudapestPlan.contains(origin.x, origin.z):
+		_city_active = -1
+		return
+
+	# Re-arm FIRST, so walking out of a slot cannot block the next arrival — and
+	# note there is no `is_instance_valid` twin here: an index into a `const` table
+	# cannot dangle, which is the whole benefit of not having marker nodes.
+	if _city_active >= 0:
+		var held: Dictionary = BudapestPlan.SLOTS[_city_active]
+		if _slot_distance(origin, held) > float(held["radius"]) + LEAVE_PAD:
+			_city_active = -1
+
+	var nearest: int = -1
+	var nearest_distance: float = INF
+	for i in range(BudapestPlan.SLOTS.size()):
+		var slot: Dictionary = BudapestPlan.SLOTS[i]
+		var distance: float = _slot_distance(origin, slot)
+		if distance >= float(slot["radius"]) + APPROACH_PAD:
+			continue
+		if distance < nearest_distance:
+			nearest_distance = distance
+			nearest = i
+
+	# ONE APPROACH AT A TIME, and a pending question owns the card — `_scan()`'s
+	# two guards, for `_scan()`'s two reasons. City slots overlap far more freely
+	# than field landmarks do (the Chain Bridge's 124 m disc reaches the Buda
+	# Castle's), so latching the first arrival matters more here, not less.
+	if _city_active >= 0 or nearest < 0 or _quiz_pending:
+		return
+	_city_active = nearest
+	_arrive_city(nearest)
+
+
+func _slot_distance(origin: Vector3, slot: Dictionary) -> float:
+	"""Flat XZ distance from `origin` to a `BudapestPlan.SLOTS` row.
+
+	FLAT, for `_xz_distance`'s reason and one more: three of these slots stand on
+	a plateau lid 30-46 m up, and a Y-aware distance would refuse to fire for
+	somebody standing directly on top of Buda Castle."""
+	var pos: Vector3 = slot["pos"]
+	return Vector2(origin.x - pos.x, origin.z - pos.z).length()
+
+
+func _arrive_city(index: int) -> void:
+	"""
+	The player walked into `BudapestPlan.SLOTS[index]`. Set its bit, then — if it
+	is a place with a name — raise its card and pay its first visit.
+
+	THE BIT AND THE CARD ARE TWO INDEPENDENT LATCHES, and keeping them apart is
+	what makes the multiplayer semantics right. The BIT is room-wide and add-only
+	(`player_controller.explore_landmark`, which is idempotent and reports to the
+	room); the CARD AND THE COINS are PERSONAL, on this widget's own per-run
+	`_visited` set, exactly as the field's treasure is personal — a landmark a
+	teammate explored still shows you its card and still pays you when YOU walk it.
+	That is the bead's "NOT its visited semantics", and it falls out of using the
+	two latches the two facts already have rather than folding them into one.
+	"""
+	var slot: Dictionary = BudapestPlan.SLOTS[index]
+
+	# THE BIT FIRST, and unconditionally: an unnamed wave-C reservation counts
+	# exactly as much toward the eighteen as the Parliament does.
+	var player := get_tree().get_first_node_in_group("player")
+	if player != null and player.has_method("explore_landmark"):
+		player.call("explore_landmark", index)
+
+	# ...AND IF THAT WAS THE EIGHTEENTH, THE RUN IS ALREADY OVER (codex review
+	# 2026-09-02). `explore_landmark()` reaches `_end_run()` synchronously, which
+	# banks the score and raises the victory panel — so a card raised now would
+	# float over that panel, and a burst armed now would trickle 15-25 coins into a
+	# total that has already been banked and displayed, advertising a reward the
+	# final screen does not show. The panel IS the reward for the last landmark;
+	# the card and the coins are what the other seventeen pay.
+	if player != null and "is_game_over" in player and bool(player.is_game_over):
+		return
+
+	var row: Dictionary = _city_row(String(slot["builder"]))
+	if row.is_empty():
+		return   # a wave-C reservation: a position and a radius, nothing to say
+
+	# Read the run BEFORE the visited test, `_first_visit`'s ordering: a new run
+	# between the last arrival and this one empties the set we are about to ask.
+	var run_seed: int = _sync_run()
+	# The two strings go STRAIGHT onto Label.text with no tr() — see the
+	# localization note at the top of the file. `announce` refuses under a pending
+	# question, and a card that was refused must not pay a burst it never showed.
+	if not announce(String(row["name"]), String(row["fact"])):
+		return
+
+	var id: int = COIN_SCRIPT.id_at(slot["pos"] as Vector3)
+	if _visited.has(id):
+		return   # a return trip: the card again, the coins once
+	_visited[id] = true
+	var amount: int = _treasure_amount(id, run_seed)
+	# The one composed line on this card, hence the `tr()`: RULE 2, on the FORMAT
+	# string. `announce` has already hidden this label, so it is re-shown here.
+	treasure_label.text = tr(CITY_FOUND) % amount
+	treasure_label.visible = true
+	_arm_burst(amount)
+
+
+static func _city_row(builder: String) -> Dictionary:
+	"""
+	The `LandmarkBuilders.CITY_LANDMARKS` row a slot's builder names, or an empty
+	dictionary for a wave-C reservation (and for a builder with no row yet).
+
+	BY BUILDER NAME AND NOT BY INDEX, which is the whole point. The two tables are
+	in the same order today and neither file promises the other that they will
+	stay that way — wave C appends seven rows to one of them and fills seven
+	`builder` fields in the other, in separate beads — so pairing them positionally
+	would silently hand the Opera the Basilica's fact the first time somebody
+	reorders either. A linear walk of 15-22 rows, on an arrival and never on a tick.
+	"""
+	if builder.is_empty():
+		return {}
+	for i in range(LandmarkBuilders.CITY_LANDMARKS.size()):
+		var row: Dictionary = LandmarkBuilders.CITY_LANDMARKS[i]
+		if String(row["builder"]) == builder:
+			return row
+	return {}
 
 
 func _marker_radius(marker: Node3D) -> float:
@@ -1169,6 +1361,10 @@ func _sync_run() -> int:
 		_visited_run_seed = run_seed
 		_visited.clear()
 		_burst_remaining = 0
+		# The city approach latch re-arms with the field one (`_cancel_quiz` below
+		# clears `_active`): the first Budapest landmark of the NEW run must not be
+		# blocked by a slot the OLD run was standing in.
+		_city_active = -1
 		# A question asked about the old world cannot be answered into the new
 		# one — same event, same reason, as the shower cancel above it.
 		_cancel_quiz()

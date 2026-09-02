@@ -208,13 +208,18 @@ func show_game_over(coins: int, best_coins: int, is_new_best: bool, outcome: int
 
 
 func show_win(coins: int, best_coins: int, is_new_best: bool) -> void:
-	"""Convenience wrapper to show the Budapest win panel."""
+	"""
+	Reveal the VICTORY panel — `show_game_over` with the outcome already chosen.
+
+	The one caller in the tree is `scripts/intro_selfcheck.gd`, which drives the
+	win panel directly rather than staging a whole run to reach it; the game
+	itself arrives here through `player_controller._end_run(Outcome.WON)`, which
+	passes the outcome along the general path. `show_ending()` — a third spelling
+	of the same call taking the outcome as an argument, i.e. `show_game_over` with
+	a different name — was deleted in bead godot-test1-8gw.5 as the dead code it
+	was.
+	"""
 	show_game_over(coins, best_coins, is_new_best, 2)
-
-
-func show_ending(coins: int, best_coins: int, is_new_best: bool, outcome: int = 1) -> void:
-	"""Unified entry point for run endings."""
-	show_game_over(coins, best_coins, is_new_best, outcome)
 
 
 func hide_game_over() -> void:
