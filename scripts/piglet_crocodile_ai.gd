@@ -1555,13 +1555,25 @@ const SPECIES: Dictionary = {
 		##
 		## THE CAPSULE IN titan.tscn IS RECORDED HERE for the reason the viper's
 		## is: a .tscn cannot hold a comment an editor resave will not eat.
-		## `radius = 0.32, height = 1.8` at `(0, 0.9, 0)`, UPRIGHT — no lay-down
-		## rotation, the one thing this scene does that the quadrupeds' do not.
-		## The mesh is a 1.8 m biped, so the capsule is its full standing height,
-		## and centre 0.9 = height/2 puts its bottom exactly on y = 0 (the same
-		## identity the crocodile's 0.16/0.16 and the viper's 0.11/0.11 use). The
-		## body scale from the boss schedule multiplies all of it, so a 6x titan
-		## is a 10.8 m capsule around a 10.8 m model.
+		## titan.glb spans x -0.48..+0.76, z ±0.45 and stands 1.91 m tall. The
+		## capsule is `radius = 0.45, height = 1.91` at `(0, 0.955, 0)`, UPRIGHT —
+		## no lay-down rotation, the one thing this scene does that the
+		## quadrupeds' do not:
+		##   * 1.91 is the mesh's full standing height, and centre
+		##     0.955 = height/2 puts its bottom exactly on y = 0 (the same
+		##     identity the crocodile's 0.16/0.16 and the viper's 0.11/0.11 use),
+		##     so the gravity settle rests the feet on the flat world's ground.
+		##   * 0.45 covers the ±0.45 m half-width across the shoulders and
+		##     pauldrons, and is inside endless_terrain's
+		##     BOSS_FOOTPRINT_RADIUS_PER_SCALE (0.7), the clearance every boss
+		##     candidate is judged against.
+		##   * THE RAISED ARM AND ITS JAVELIN REACH PAST THE CAPSULE (out to
+		##     x +0.76 against a 0.45 radius) and that is the green dragon's wing
+		##     deal exactly: collision is the BODY, and pricing a held weapon into
+		##     the footprint would cost the snow band boss stations for a surface
+		##     nothing can stand on.
+		## The body scale from the boss schedule multiplies all of it, so a 6x
+		## titan is an 11.46 m capsule around an 11.46 m model.
 		"model_facing_offset": -PI / 2.0,
 
 		## A slow, heavy tread with almost no waddle — the read is a colossus
