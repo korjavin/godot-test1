@@ -225,6 +225,9 @@ func _check_web_gate() -> void:
 	if not IntroVideo.GAME_OVER_VIDEO_URL.begins_with("https://"):
 		_fail("GAME_OVER_VIDEO_URL must be an https URL, got %s" \
 			% IntroVideo.GAME_OVER_VIDEO_URL)
+	if not IntroVideo.WIN_VIDEO_URL.begins_with("https://"):
+		_fail("WIN_VIDEO_URL must be an https URL, got %s" \
+			% IntroVideo.WIN_VIDEO_URL)
 	if IntroVideo.SKIP_HOLD_SEC <= 0.0:
 		_fail("SKIP_HOLD_SEC must be positive, or a stray SPACE tap skips the film")
 	if IntroVideo.STALL_TIMEOUT_SEC <= IntroVideo.SKIP_HOLD_SEC:
@@ -339,6 +342,9 @@ func _check_generated_js() -> void:
 	var ending_js: String = IntroVideo._create_js(IntroVideo.GAME_OVER_VIDEO_URL)
 	if not ending_js.contains(IntroVideo.GAME_OVER_VIDEO_URL):
 		_fail("_create_js( GAME_OVER_VIDEO_URL ) does not carry the ending film URL")
+	var win_js: String = IntroVideo._create_js(IntroVideo.WIN_VIDEO_URL)
+	if not win_js.contains(IntroVideo.WIN_VIDEO_URL):
+		_fail("_create_js( WIN_VIDEO_URL ) does not carry the win film URL")
 	for marker: String in ["window.__ck_intro_failed", "s.fail = function()"]:
 		if not js.contains(marker):
 			_fail("_create_js() lost %s — post-start playback failures would " % marker \
@@ -452,6 +458,19 @@ func _check_game_over_film_path() -> void:
 	if panel.new_best_tween != null:
 		_fail("successful ending completion left the NEW BEST! tween alive")
 	panel.queue_free()
+	paused = false
+
+	# Win outcome panel shows VICTORY and story text
+	var win_panel := GameOverUI.new()
+	root.add_child(win_panel)
+	win_panel.show_win(10, 10, true)
+	if not win_panel.visible:
+		_fail("off-web win did not show the panel fallback")
+	if win_panel.title_label == null or not win_panel.title_label.text.contains("VICTORY"):
+		_fail("win panel did not show VICTORY title")
+	if win_panel.story_label == null or not win_panel.story_label.visible:
+		_fail("win panel did not make story_label visible")
+	win_panel.queue_free()
 	paused = false
 
 
