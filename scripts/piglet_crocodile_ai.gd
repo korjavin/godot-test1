@@ -2762,6 +2762,15 @@ const SPECIES: Dictionary = {
 		## the most in the table — the one contact that can also take a hero.
 		"coin_setback": 0.25,
 
+		## CROWD CONFUSION — Budapest's defence (bead godot-test1-8gw.16).
+		## Probability that an ACQUISITION EDGE inside the city is a false alarm:
+		## the robot walks to a nearby citizen and checks documents for 2-10 s
+		## instead of acquiring the player. Absent = 0.0, so a key-less row
+		## behaves byte-for-byte as today. Data, not a species test — the next
+		## machine opts in with a row edit. 0.7 is the owner's ceiling; the
+		## tower guard does NOT carry it (no crowd indoors).
+		"crowd_confusion_chance": 0.7,
+
 		## ...AND TAKING THE HERO IS ITS OWN KEY, not a reading of `behavior`.
 		## `player_controller._takes_a_hero()` used to answer `behavior == "hunt"`,
 		## which made "the corporation imprisons you" a side effect of how this unit
@@ -3415,6 +3424,15 @@ const INVESTIGATE_LEASH_MARGIN: float = 2.0
 const INVESTIGATE_STALL_TIME: float = 6.0
 const INVESTIGATE_PROGRESS: float = 0.5
 
+## CROWD CONFUSION — per-body re-roll guard (bead godot-test1-8gw.16).
+## After a false-arrest errand finishes the body must not immediately re-roll
+## on the same re-acquisition while the player stands still, or the hunter
+## never threatens inside the city. One cooldown per body, in seconds, counted
+## down each physics frame. Set on a successful confusion (see _try_crowd_confusion)
+## and cleared on the next chase-loss edge; a miss does NOT set it.
+const CROWD_CONFUSION_COOLDOWN: float = 6.0
+var _crowd_confusion_cooldown: float = 0.0
+
 ## THE LEAP ARM'S ONE PIECE OF MEMORY (`_behave_leap`): how many seconds of
 ## GROUNDED recovery this boss still owes before it may hop again, as
 ## { "cooldown": float }. Empty means "ready now", so a dragon that has just
@@ -3884,6 +3902,10 @@ func _physics_process(delta: float) -> void:
 		velocity = Vector3.ZERO
 		return
 
+	# Crowd-confusion re-roll guard ticks while awake (runtime state, no draw).
+	if _crowd_confusion_cooldown > 0.0:
+		_crowd_confusion_cooldown = maxf(_crowd_confusion_cooldown - delta, 0.0)
+
 	# Apply gravity
 	if not is_on_floor():
 		velocity.y -= GRAVITY * delta
@@ -4164,6 +4186,12 @@ func _update_chase_state() -> void:
 
 	if seen:
 		if not is_chasing:
+			# CROWD CONFUSION — refused acquisition inside Budapest (bead 8gw.16).
+			# Above the is_chasing write: investigate_point refuses a chasing body,
+			# so a confused hunter never lights the chase flag — it walks to a
+			# citizen and checks documents for 2-10 s at _wander_speed() instead.
+			if _try_crowd_confusion():
+				return
 			# Just started chasing
 			is_chasing = true
 			# The beat is SPENT, not merely satisfied: `spot_clock` means "a
@@ -4874,6 +4902,65 @@ func _end_investigation() -> void:
 	_investigate_path = []
 	_investigate_home = []
 	_choose_new_direction()
+
+
+## CROWD CONFUSION — Budapest crowd false-arrest (bead godot-test1-8gw.16).
+## One pure helper so the probe can drive the decision without a body.
+## Returns true if THIS acquisition should be refused (caller must NOT set
+## is_chasing and should walk to a citizen instead). Runtime RNG only —
+## no hash, no run_seed, no chunk draw, so no spawn moves.
+static func _should_confuse(chance: float, inside_budapest: bool, has_citizen: bool, roll: float) -> bool:
+	return inside_budapest and has_citizen and chance > 0.0 and roll < chance
+
+
+func _nearest_citizen_pos() -> Variant:
+	"""Walk the crowd manager's walker array for the nearest active citizen."""
+	var crowd := get_tree().get_first_node_in_group("crowd")
+	if crowd == null or not crowd.has_method("nearest_citizen_to"):
+		return null
+	return crowd.nearest_citizen_to(global_position)
+
+
+func _try_crowd_confusion() -> bool:
+	"""
+	Refused-acquisition gate for Budapest crowd confusion.
+
+	Called ABOVE the is_chasing write, on the acquisition edge only.
+	investigate_point() refuses a chasing/busy/remote body, so this being a
+	refusal rather than a cancellation is enforced by the callee. Uses the
+	global randf() family (randomized at boot, never a run_seed hash), so
+	it costs the deterministic streams nothing — verified by the world A/B.
+	City-only via BudapestPlan.contains() and requires a citizen nearby.
+	"""
+	var chance := float(spec.get("crowd_confusion_chance", 0.0))
+	if chance <= 0.0:
+		return false
+	if is_boss:
+		return false
+	if remote_driven:
+		return false
+	if _crowd_confusion_cooldown > 0.0:
+		return false
+	# CITY-ONLY — BudapestPlan.contains via the class, never a restated rect.
+	if not BudapestPlan.contains(global_position.x, global_position.z):
+		return false
+	var citizen_pos: Variant = _nearest_citizen_pos()
+	if citizen_pos == null or not (citizen_pos is Vector3):
+		return false
+	var pos: Vector3 = citizen_pos as Vector3
+	if not pos.is_finite():
+		return false
+	# Runtime draw, uniform 2-10 s stall, outside the determinism contract.
+	var roll := randf()
+	if not _should_confuse(chance, true, true, roll):
+		return false
+	var stall := randf_range(2.0, 10.0)
+	# investigate_point walks at _wander_speed() so the stall is watchable;
+	# busy/remote guards make this return false with no side effect.
+	if not investigate_point(pos, stall):
+		return false
+	_crowd_confusion_cooldown = CROWD_CONFUSION_COOLDOWN
+	return true
 func advance_tracking(delta: float) -> void:
 	"""
 	SLEPT BUT STALKING: walk a sleeping tracker up the trail, kinematically.

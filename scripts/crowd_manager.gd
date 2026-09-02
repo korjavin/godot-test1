@@ -11,7 +11,8 @@ extends Node3D
 ##     its own randomize()d RNG drives waypoint choices and walk speeds.
 ##   * Citizens join NO group and carry NO collision bodies or Area3Ds (a node in
 ##     "player" or "crocodile" would be grabbed by the Stink Wave, LOD, or chase).
-##   * Story only, no mechanics: hunters are NOT confused by crowds in this bead.
+##   * City defence (bead 8gw.16): nearest_citizen_to() is the seam the hunter
+##     reads — the crowd confuses GD-SURVEY acquisitions inside the city.
 ##   * Budget: hard CROWD_MAX (60 on web, 120 on desktop) rendered via FOUR
 ##     MultiMeshInstance3D nodes (one per hero archetype: Windman, Primm, Teibi,
 ##     Phoboman), costing exactly 4 draw calls for the entire crowd (shadows off).
@@ -698,6 +699,28 @@ func _update_walkers(delta: float, _player_pos: Vector3) -> void:
 		var mm: MultiMesh = _multimesh_nodes[k].multimesh
 		mm.buffer = buffers[k]
 		mm.visible_instance_count = counts[k]
+
+
+func nearest_citizen_to(pos: Vector3, max_dist: float = 40.0) -> Variant:
+	## Nearest active citizen to `pos` within `max_dist`, or null.
+	## Walks the manager's own walker array — citizens are MultiMesh instances
+	## in no group with no collision, so this is not a scene query and never
+	## gives them a body or group. Pure read of runtime state.
+	var best: Variant = null
+	var best_d2 := INF
+	var max_d2 := max_dist * max_dist
+	for citizen: Dictionary in _citizens:
+		if not citizen["active"]:
+			continue
+		var base: Vector3 = citizen["pos"]
+		var h: Vector2 = citizen["heading_dir"]
+		var lat := Vector3(-h.y, 0.0, h.x) * float(citizen["lane_offset"])
+		var wpos: Vector3 = base + lat
+		var d2 := Vector2(wpos.x - pos.x, wpos.z - pos.z).length_squared()
+		if d2 <= max_d2 and d2 < best_d2:
+			best_d2 = d2
+			best = wpos
+	return best
 
 
 func _hide_all() -> void:
