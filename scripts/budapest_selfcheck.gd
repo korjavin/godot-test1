@@ -136,8 +136,13 @@ const WEB_RENDER_DISTANCE: int = 3
 ## What the worst 49-chunk WEB VIEW of Budapest may hold. MEASURED, not guessed —
 ## the reading is printed beside each one, and see _check_web_residency for why a
 ## per-chunk budget cannot answer this question. Both are order-of-magnitude
-## guards on a number that quadrupled when bead .9 filled the blocks.
-const CITY_RESIDENCY_BOX_BUDGET: int = 3000
+## guards on a number that more than doubled when bead .9 filled the blocks and
+## doubled again when their facades grew window courses: 4,510 boxes and 465
+## shapes today. Raised 3000 -> 6000 in the same pass as
+## endless_terrain.CITY_CHUNK_BOX_BUDGET (120 -> 200), which is bead .9's own
+## instruction — the per-chunk ceiling and this one move together or the raise
+## means nothing.
+const CITY_RESIDENCY_BOX_BUDGET: int = 6000
 const CITY_RESIDENCY_SHAPE_BUDGET: int = 900
 
 ## How many chunk columns / rows of the rect check 15's collision sweep walks.
@@ -653,7 +658,8 @@ func _check_budgets(terrain: Node3D, terrain_script: GDScript) -> void:
 	if worst_boxes > box_budget:
 		_fail("city chunk %s emits %d boxes, over CITY_CHUNK_BOX_BUDGET %d — a "
 				% [worst_boxes_at, worst_boxes, box_budget]
-				+ "landmark builder has stopped emitting only its own slice")
+				+ "landmark builder has stopped emitting only its own slice, or a "
+				+ "block's facade has grown a band per window")
 	if worst_shapes > shape_budget:
 		_fail("city chunk %s hangs %d collision shapes on its one body, over "
 				% [worst_shapes_at, worst_shapes]

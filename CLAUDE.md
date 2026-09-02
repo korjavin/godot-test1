@@ -368,19 +368,40 @@ Three rules of the city's own, all pinned by `budapest_selfcheck`:
   polyline. **The streets are clear BY CONSTRUCTION**: nothing is ever drawn outside
   `block_rect`, which is the whole of "a solid piece must never sever a street", and
   `budapest_selfcheck` check 15 sweeps the collision shapes anyway because a
-  construction argument fails silently. **Five boxes buy a building** — one colliding
-  hull plus vertex-coloured shopfront, balcony, cornice and doorway bands, NEVER a box
-  per window — off a per-cell `CITY_BLOCK_SALT` stream (the tower-furniture precedent:
-  a fixed salt, never `run_seed`, and never the chunk, because a block is sliced by up
-  to four of them and they must agree). Every parameter for the whole block is drawn
-  BEFORE the first box is emitted, which is what makes that agreement bit-exact.
-  **The one thing that had to give was SHADOW**: 2,100 tall casters in the 49-chunk web
-  view cost 19 ms a frame in the shadow pass alone, so a Budapest chunk's batch is a
-  shadow RECEIVER only (`_build_block_multimesh`'s `cast_shadows` flag, the tower
-  interior's measured rule met outdoors) and a filled city then costs what the empty
-  one did, to the millisecond. Check 4 grew a **web residency** window beside the
-  per-chunk budgets, because filling the city moved the cost from one expensive chunk
-  to 1,631 ordinary ones and a per-chunk ceiling cannot see that at all.
+  construction argument fails silently.
+- **A FACADE IS BANDS, NEVER A BOX PER WINDOW, and `_city_band` is the whole
+  vocabulary.** One colliding hull, then ONE window course per storey (proud, glass
+  tone alternating by storey parity), two shopfronts with the doorway gap between
+  them, an awning, an optional balcony and the roofline cornice — ~10 boxes for a
+  5-storey building against the ~30 a window grid would cost. **Every proud is
+  POSITIVE**: the batch is opaque boxes with no cutouts, so a band recessed into the
+  hull is invisible and produces nothing but z-fighting — that was measured the
+  expensive way and `CITY_WINDOW_PROUD` carries the note. Hues are per-BUILDING off
+  the bank's own palette (`CITY_FACADE_PEST` cream/ochre/grey-green/rose/stone,
+  `CITY_FACADE_BUDA` whitewash/ochre/brick red), tinted but never re-chosen, because
+  eight lerps along one ramp is one building repeated eight times. All of it comes off
+  a per-cell `CITY_BLOCK_SALT` stream (the tower-furniture precedent: a fixed salt,
+  never `run_seed`, and never the chunk, because a block is sliced by up to four of
+  them and they must agree), and **every parameter for the whole block is drawn BEFORE
+  the first box is emitted**, which is what makes that agreement bit-exact.
+- **The bands are what raised the budgets, and the two were raised TOGETHER** —
+  `CITY_CHUNK_BOX_BUDGET` 120 → 200 against a measured worst 145, and check 4's
+  `CITY_RESIDENCY_BOX_BUDGET` 3000 → 6000 against a measured 4,510 in the worst
+  49-chunk web window. Collision did not move (15 shapes worst) because a building's
+  only colliding box is its hull. That pairing is the bead's own instruction: a
+  per-chunk ceiling raised alone would hide a cost that had moved into the number of
+  chunks, which is exactly what the **web residency** window exists to see —
+  Budapest went from 378 chunks with stone to 1,631.
+- **BUDAPEST CHUNKS CAST NO SHADOW, and that is an OWNER RULING** (2026-09-02, bead
+  `godot-test1-8gw.9`, verbatim: *"it's okay without shadow, performance is more
+  important"*). 2,100+ tall casters in the 49-chunk web view cost **19 ms a frame in
+  the shadow pass alone** — none of it visible in the draw-call count the box budgets
+  guard — so `_build_block_multimesh`'s `cast_shadows` flag makes a city chunk's batch
+  a shadow RECEIVER only, the tower interior's measured rule met outdoors. It is the
+  WHOLE chunk, so a landmark loses its cast shadow with the blocks around it; the
+  chunk has ONE batch and splitting it is a second draw call per chunk, which is the
+  invariant check 4 defends. **Do not split the batch to restore them** — that needs a
+  new ruling.
 - **THE CITY'S COINS RIDE THE AVENUES AND EVERY BRIDGE.** `spawn_city_coins_in_chunk`,
   zero RNG like its `spawn_approach_coins_in_chunk` sibling: every fourth grid line is
   an avenue (`CITY_AVENUE_EVERY`), coins step along it at `CITY_COIN_SPACING`, gems

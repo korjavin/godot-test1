@@ -1812,8 +1812,13 @@ const CITY_STOREY_HEIGHT: float = 4.2
 ## The bands. Each is a thin, NON-COLLIDING box lying against the hull and
 ## standing `*_PROUD` metres off its faces on the cross axis — the hull is the
 ## only thing with a collision shape, so a band can never be something to snag on.
+## EVERY PROUD IS POSITIVE, and it has to be: the batch is opaque boxes with no
+## cutouts, so a band set back INSIDE the hull is a band nobody can see — see
+## CITY_WINDOW_PROUD, which is where that was learned the expensive way.
 const CITY_SHOPFRONT_HEIGHT: float = 2.9    # ground floor, one storey of glass
 const CITY_SHOPFRONT_PROUD: float = 0.16
+const CITY_AWNING_THICKNESS: float = 0.22
+const CITY_AWNING_PROUD: float = 0.62       # oversails the shopfront it shades
 const CITY_BALCONY_THICKNESS: float = 0.26
 const CITY_BALCONY_PROUD: float = 0.52
 const CITY_CORNICE_THICKNESS: float = 0.55
@@ -1822,12 +1827,69 @@ const CITY_DOOR_WIDTH: float = 1.5
 const CITY_DOOR_HEIGHT: float = 2.4
 const CITY_DOOR_PROUD: float = 0.10
 
+## ONE WINDOW ROW PER STOREY, and it is a ROW and not a window.
+##
+## The owner asked for Google-Street-View Budapest and the first cut shipped
+## blank slabs: a 21 m facade with a single cornice line on it reads as a wall,
+## not as a building. What makes a real facade legible at 30 m is the HORIZONTAL
+## RHYTHM of its window courses, so each storey above the shopfront gets one
+## recessed dark band the full width of the facade. That is ONE box per storey
+## against the ~30 a window grid would cost, and it is the same trade the
+## shopfront and cornice already make.
+##
+## THE TWO-TONE IS FREE: the band's glass colour alternates by storey parity
+## (CITY_WINDOW_DARK / CITY_WINDOW_LIT), so a five-storey facade reads as five
+## distinct courses rather than one striped texture, and it costs no extra box.
+##
+## IT STANDS PROUD, AND IT HAS TO. The first cut RECESSED these bands into the
+## wall, which is what a real window reveal does and which is invisible here: the
+## batch is opaque boxes with no cutouts, so a band inside the hull is a band you
+## cannot see, and all it actually produced was z-fighting where the two surfaces
+## nearly met. 6 cm proud is flush to the eye at street distance and is the only
+## thing that makes the course exist at all.
+const CITY_WINDOW_HEIGHT: float = 1.60
+const CITY_WINDOW_PROUD: float = 0.06
+const CITY_WINDOW_SILL: float = 1.15        # sill height above the storey floor
+
 ## The block palette. Walls reuse the CITY_PLASTER_A/B pair the gate district's
 ## houses lerp between, so Budapest is ONE city and not two; the rest is new
 ## because a 5-storey facade has parts a 2.5 m cottage does not.
 const CITY_SHOPFRONT_GLASS := Color(0.20, 0.22, 0.25)   # dark glazing + signage
 const CITY_BALCONY_IRON := Color(0.24, 0.24, 0.26)      # wrought-iron course
 const CITY_DOOR_WOOD := Color(0.30, 0.20, 0.14)         # the carriage gateway
+const CITY_WINDOW_DARK := Color(0.20, 0.23, 0.27)       # a shaded course
+const CITY_WINDOW_LIT := Color(0.29, 0.33, 0.38)        # ...and a sunlit one
+const CITY_AWNING_A := Color(0.60, 0.25, 0.22)          # shop canvas, red
+const CITY_AWNING_B := Color(0.26, 0.42, 0.33)          # ...and green
+
+## THE FACADE HUES, one array per bank of the river, and a building picks ONE.
+##
+## A block whose eight buildings are eight lerps along a single cream-to-grey
+## ramp is a block of one building repeated. Pest is ECLECTIC — the real thing is
+## cream beside ochre beside grey-green beside rose — and Buda under the castle
+## is whitewash, ochre and brick red. The per-building tint below still runs, but
+## it now varies a chosen hue instead of choosing the hue.
+const CITY_FACADE_PEST: Array[Color] = [
+	Color(0.90, 0.86, 0.75),   # cream
+	Color(0.84, 0.70, 0.44),   # ochre
+	Color(0.69, 0.73, 0.65),   # grey-green
+	Color(0.84, 0.69, 0.67),   # rose
+	Color(0.77, 0.75, 0.71),   # stone grey
+]
+const CITY_FACADE_BUDA: Array[Color] = [
+	Color(0.93, 0.92, 0.87),   # whitewash
+	Color(0.86, 0.73, 0.49),   # ochre
+	Color(0.73, 0.44, 0.35),   # brick red
+]
+
+## How far a building's own draw may shade its chosen hue toward the weathered
+## render, 0..1. Small: this is grime and sun, not a second colour choice.
+const CITY_FACADE_TINT_MAX: float = 0.30
+
+## The share of PEST buildings that carry a balcony course. Balconies everywhere
+## are a texture; balconies on two facades of a block are a detail the eye
+## lands on. Buda's 2-3 storey houses get none at all.
+const CITY_BALCONY_CHANCE: float = 0.42
 
 ## How far a block's own facade stream may push a segment off the cell's base
 ## storey count, in storeys. +-1 is a stepped roofline; more and the block stops
@@ -1905,18 +1967,33 @@ const DANUBE_SLOT_BASE: int = 500
 ## 2.2 km rect against them and prints the worst one it found beside each ceiling.
 ##
 ## MEASURED over the whole rect (2025 chunks, 2026-09-02, with ALL 22 landmark
-## builders placed and the four bridge decks built — the last re-measure was
-## 69 / 15 / 7.4 ms with the seven wave-C slots still empty reservations): worst
-## 92 boxes, worst 15 collision shapes, worst 3.0 ms. The ceilings keep headroom
-## over those, and the ms budget is deliberately loose because it is wall-clock on
+## builders placed, the four bridge decks built and — since bead
+## godot-test1-8gw.9 — every block of the street grid FILLED): worst 145 boxes,
+## worst 15 collision shapes, worst 1.1 ms, over 96,770 boxes and 1,631 chunks
+## with stone. The ms budget is deliberately loose because it is wall-clock on
 ## whatever machine CI happens to be — it is a runaway detector, not a benchmark.
 ##
-## The box number is the one to watch: a landmark builder that stopped being a
-## pure function of (centre, rng) would emit its whole self into every chunk its
-## disc touches instead of its own slice, and THAT is what this catches — 122
-## boxes of Parliament in one 50 m square instead of the half-dozen that stand
+## THE BOX BUDGET MOVED 120 -> 200 WHEN THE BLOCKS LANDED, and that is the one
+## raise this file has taken. The history is worth keeping because it says what
+## each number measures:
+##
+##   wave B, seven slots still reservations    69 boxes   15 shapes   7.4 ms
+##   all 22 landmarks + the four decks         92 boxes   15 shapes   3.0 ms
+##   ...and every block filled (bead .9)      145 boxes   15 shapes   1.1 ms
+##
+## The worst chunk is STILL a Parliament slice; the densest all-block chunk is
+## 119. Collision is unmoved at 15 because a building's only colliding box is its
+## hull — every band is decoration. Bead .9's own note said to raise this budget
+## and the web residency proof TOGETHER if a dense chunk needed it, and this is
+## that raise: see CITY_RESIDENCY_BOX_BUDGET in budapest_selfcheck.gd, which went
+## 3000 -> 6000 against a measured 4,510 in the same pass.
+##
+## The box number is still the one to watch: a landmark builder that stopped
+## being a pure function of (centre, rng) would emit its whole self into every
+## chunk its disc touches instead of its own slice, and THAT is what this catches
+## — 268 boxes of Parliament in one 50 m square instead of the dozen that stand
 ## in it.
-const CITY_CHUNK_BOX_BUDGET: int = 120
+const CITY_CHUNK_BOX_BUDGET: int = 200
 const CITY_CHUNK_SHAPE_BUDGET: int = 40
 const CITY_CHUNK_MS_BUDGET: float = 12.0
 
@@ -3797,12 +3874,18 @@ func create_chunk(chunk_pos: Vector2i) -> void:
 		# the flat ground beside it, which in a city that is a street wall on both
 		# sides of every road is a dark band the fog eats anyway.
 		#
-		# ponytail: it is the WHOLE Budapest chunk, so a landmark's stone loses
-		# its cast shadow with the blocks around it — the chunk has ONE batch and
-		# splitting it is a second draw call per chunk, which is the invariant
-		# budapest_selfcheck check 4 exists to defend. Giving the sights their
-		# shadows back means a second batch and a raised accent budget, and it
-		# wants an owner ruling on the trade rather than a guess here.
+		# IT IS THE WHOLE BUDAPEST CHUNK, so a landmark's stone loses its cast
+		# shadow along with the blocks around it — the chunk has ONE batch, and
+		# splitting it to give the sights their shadows back is a second draw
+		# call per chunk, which is the invariant budapest_selfcheck check 4
+		# exists to defend.
+		#
+		# THAT TRADE IS AN OWNER RULING AND NOT A GUESS (2026-09-02, bead
+		# godot-test1-8gw.9, verbatim: "it's okay without shadow, performance is
+		# more important"). Budapest chunk batches stay shadow RECEIVERS ONLY.
+		# Do not split the batch to restore them; a future author who wants the
+		# landmarks' shadows back needs a new ruling, because the cost is the
+		# 19 ms measured above and the second draw call per chunk on top of it.
 		var here := chunk_to_world(chunk_pos)
 		_build_block_multimesh(mesh_instance, block_batch,
 				not in_budapest(here.x, here.z))
@@ -10811,15 +10894,29 @@ func _build_city_block(cell: Vector2i, chunk_center: Vector3, obstacles: Array,
 			else BudapestPlan.BLOCK_STOREYS_PEST
 
 	# ---- EVERY DRAW, BEFORE ANY EMIT ---------------------------------------
+	# A building's whole description is drawn here, in one fixed order, for all
+	# eight of them — see the docstring. `hues` is the bank's own palette, so a
+	# Pest block is cream beside ochre beside grey-green and not eight samples of
+	# one ramp.
+	var buda := BudapestPlan.is_buda(centre.x, centre.y)
+	var hues: Array[Color] = CITY_FACADE_BUDA if buda else CITY_FACADE_PEST
 	var base := rng.randi_range(band.x, band.y)
 	var roof := CITY_ROOF_TILE.lerp(CITY_ROOF_SLATE, rng.randf())
 	var storeys: Array[int] = []
 	var walls: Array[Color] = []
+	var awnings: Array[Color] = []
+	var balconies: Array[bool] = []
 	for _i in range(4 * BudapestPlan.BLOCK_SEGMENTS):
 		storeys.append(clampi(
 				base + rng.randi_range(-CITY_BLOCK_STOREY_JITTER, CITY_BLOCK_STOREY_JITTER),
 				band.x, band.y))
-		walls.append(CITY_PLASTER_A.lerp(CITY_PLASTER_B, rng.randf()))
+		walls.append((hues[rng.randi_range(0, hues.size() - 1)] as Color)
+				.lerp(CITY_PLASTER_B, rng.randf() * CITY_FACADE_TINT_MAX))
+		awnings.append(CITY_AWNING_A.lerp(CITY_AWNING_B, rng.randf()))
+		# Buda's houses get no balcony at all, but the draw is taken either way:
+		# a stream whose length depended on which bank it was on would be a
+		# second thing to keep in step for nothing.
+		balconies.append(rng.randf() < CITY_BALCONY_CHANCE and not buda)
 
 	# ---- ...AND ONLY THEN, THIS CHUNK'S SLICE OF EACH ------------------------
 	for side in 4:
@@ -10833,8 +10930,9 @@ func _build_city_block(cell: Vector2i, chunk_center: Vector3, obstacles: Array,
 			var idx := side * BudapestPlan.BLOCK_SEGMENTS + seg
 			var height := float(storeys[idx]) * CITY_STOREY_HEIGHT
 			var piece := _city_block_segment(wing, along_x, seg)
-			_city_block_boxes(piece, along_x, height, walls[idx], roof,
-					chunk_center, rng, block_batch, block_body)
+			_city_block_boxes(piece, along_x, storeys[idx], walls[idx], roof,
+					awnings[idx], balconies[idx], chunk_center, rng,
+					block_batch, block_body)
 			_city_block_footprints(piece, height, chunk_center, obstacles)
 			_city_block_door(piece, outward, chunk_center, rng, block_batch, block_body)
 
@@ -10852,11 +10950,22 @@ func _city_block_segment(wing: Rect2, along_x: bool, seg: int) -> Rect2:
 	return Rect2(wing.position.x, wing.position.y + float(seg) * d, wing.size.x, d)
 
 
-func _city_block_boxes(piece: Rect2, along_x: bool, height: float, wall: Color,
-		roof: Color, chunk_center: Vector3, rng: RandomNumberGenerator,
-		block_batch: Array, block_body: StaticBody3D) -> void:
+func _city_block_boxes(piece: Rect2, along_x: bool, storeys: int, wall: Color,
+		roof: Color, awning: Color, balcony: bool, chunk_center: Vector3,
+		rng: RandomNumberGenerator, block_batch: Array,
+		block_body: StaticBody3D) -> void:
 	"""
-	The four SLICEABLE boxes of one building — hull, shopfront, balcony, cornice.
+	Every SLICEABLE box of one building: the hull, a window course per storey, the
+	two halves of its shopfront with the doorway gap between them, the awning over
+	them, an optional balcony course and the roofline cornice.
+
+	WHY A BAND AND NOT A WINDOW. A 21 m facade drawn as one plaster box with a
+	cornice on top reads as a WALL — which is what the first cut of this bead
+	shipped and what the owner's "like google map walking mode" is not. What makes
+	a real street legible from across it is the HORIZONTAL RHYTHM of the window
+	courses, and a band gets that for ONE box per storey where a window grid would
+	cost thirty. `_city_band` is the whole vocabulary; everything here is a call
+	to it with a height, a thickness, a proud distance and a colour.
 
 	THE BANDS ARE GROWN BEFORE THEY ARE SLICED, never after, and that ordering is
 	load-bearing at a chunk seam. Growing a slice would push a band across the
@@ -10866,11 +10975,13 @@ func _city_block_boxes(piece: Rect2, along_x: bool, height: float, wall: Color,
 	meet exactly, which is the same argument _city_chunk_slice already makes for
 	the hull.
 
-	Only the HULL collides. A cornice you could stand on would be a 20 m ledge
-	the whole way round every block in the city; a shopfront you could snag on
-	would be 46 m of kerb per block face. Both are decoration, and decoration in
-	this codebase pays for its pixels and not for a collision shape.
+	Only the HULL collides. A cornice you could stand on would be a 20 m ledge the
+	whole way round every block in the city; a shopfront you could snag on would
+	be 46 m of kerb per block face. Both are decoration, and decoration in this
+	codebase pays for its pixels and not for a collision shape.
 	"""
+	var height := float(storeys) * CITY_STOREY_HEIGHT
+
 	# The hull: the one box with a collision shape, floor to roofline.
 	var hull := _city_chunk_slice(chunk_center, piece)
 	if hull.has_area():
@@ -10879,29 +10990,80 @@ func _city_block_boxes(piece: Rect2, along_x: bool, height: float, wall: Color,
 				Vector3(hull.size.x, height, hull.size.y), 0.0,
 				rng, block_batch, block_body, 0.0, wall)
 
-	# The three bands, each grown on the CROSS axis only so it stands proud of the
-	# street face (and of the courtyard face — a Budapest courtyard has cornices
-	# too) without lengthening the wall into the building next door.
-	for spec: Array in [
-			[CITY_SHOPFRONT_PROUD, CITY_SHOPFRONT_HEIGHT * 0.5,
-					CITY_SHOPFRONT_HEIGHT, CITY_SHOPFRONT_GLASS],
-			[CITY_BALCONY_PROUD, _city_balcony_y(height), CITY_BALCONY_THICKNESS,
-					CITY_BALCONY_IRON],
-			[CITY_CORNICE_PROUD, height + CITY_CORNICE_THICKNESS * 0.25,
-					CITY_CORNICE_THICKNESS, roof]]:
-		var proud: float = spec[0]
-		var band_y: float = spec[1]
-		var band_h: float = spec[2]
-		var band_c: Color = spec[3]
-		var grown: Rect2 = piece.grow_individual(0.0, proud, 0.0, proud) if along_x \
-				else piece.grow_individual(proud, 0.0, proud, 0.0)
-		var slice := _city_chunk_slice(chunk_center, grown)
-		if not slice.has_area():
-			continue
-		var mid := slice.get_center()
-		create_box(Vector3(mid.x - chunk_center.x, band_y, mid.y - chunk_center.z),
-				Vector3(slice.size.x, band_h, slice.size.y), 0.0,
-				rng, block_batch, block_body, 0.0, band_c, false)
+	# ---- THE WINDOW COURSES, one per storey above the shopfront -------------
+	# 6 cm PROUD, which reads as flush at street distance and is the only way the
+	# course exists at all — see CITY_WINDOW_PROUD for the recessed version that
+	# did not. The glass tone alternates by storey parity, so five storeys read as
+	# five courses and not as one striped texture.
+	for s in range(1, storeys):
+		_city_band(piece, along_x, CITY_WINDOW_PROUD,
+				float(s) * CITY_STOREY_HEIGHT + CITY_WINDOW_SILL + CITY_WINDOW_HEIGHT * 0.5,
+				CITY_WINDOW_HEIGHT,
+				CITY_WINDOW_DARK if s % 2 == 0 else CITY_WINDOW_LIT,
+				chunk_center, rng, block_batch, block_body)
+
+	# ---- THE GROUND FLOOR: two shopfronts with the doorway between them ------
+	# One band split around the door's own width is what turns a continuous dark
+	# stripe into a row of SHOPS with an entrance, and it costs one extra box.
+	# The door itself is _city_block_door's, placed by the chunk that owns it.
+	var span := piece.size.x if along_x else piece.size.y
+	var gap := (CITY_DOOR_WIDTH + 0.9) / span * 0.5   # half the gap, as a fraction
+	for half in [Vector2(0.0, 0.5 - gap), Vector2(0.5 + gap, 1.0)]:
+		_city_band(_city_sub_rect(piece, along_x, half.x, half.y), along_x,
+				CITY_SHOPFRONT_PROUD, CITY_SHOPFRONT_HEIGHT * 0.5,
+				CITY_SHOPFRONT_HEIGHT, CITY_SHOPFRONT_GLASS,
+				chunk_center, rng, block_batch, block_body)
+	# ...and the canvas awning over them, oversailing the pavement.
+	_city_band(piece, along_x, CITY_AWNING_PROUD,
+			CITY_SHOPFRONT_HEIGHT + CITY_AWNING_THICKNESS * 0.5,
+			CITY_AWNING_THICKNESS, awning, chunk_center, rng, block_batch, block_body)
+
+	# ---- THE BALCONY COURSE, on the Pest buildings that drew one ------------
+	if balcony:
+		_city_band(piece, along_x, CITY_BALCONY_PROUD, _city_balcony_y(height),
+				CITY_BALCONY_THICKNESS, CITY_BALCONY_IRON,
+				chunk_center, rng, block_batch, block_body)
+
+	# ---- ...AND THE ROOFLINE ------------------------------------------------
+	_city_band(piece, along_x, CITY_CORNICE_PROUD,
+			height + CITY_CORNICE_THICKNESS * 0.25, CITY_CORNICE_THICKNESS, roof,
+			chunk_center, rng, block_batch, block_body)
+
+
+func _city_band(piece: Rect2, along_x: bool, proud: float, y: float, thickness: float,
+		tone: Color, chunk_center: Vector3, rng: RandomNumberGenerator,
+		block_batch: Array, block_body: StaticBody3D) -> void:
+	"""
+	ONE horizontal band lying against a building's facade — the single vocabulary
+	every piece of articulation in this city is spelled in.
+
+	@param proud: how far it stands off the wall on the CROSS axis. NEGATIVE
+	              recesses it INTO the wall, which is what a window course is.
+	@param y: the band's centre height. @param thickness: its full height.
+
+	Grown on the cross axis only, so it never lengthens into the building next
+	door, and grown before it is sliced — see the caller for why that ordering is
+	the difference between a flush seam and a z-fighting one. Never collides.
+	"""
+	var grown: Rect2 = piece.grow_individual(0.0, proud, 0.0, proud) if along_x \
+			else piece.grow_individual(proud, 0.0, proud, 0.0)
+	var slice := _city_chunk_slice(chunk_center, grown)
+	if not slice.has_area():
+		return
+	var mid := slice.get_center()
+	create_box(Vector3(mid.x - chunk_center.x, y, mid.y - chunk_center.z),
+			Vector3(slice.size.x, thickness, slice.size.y), 0.0,
+			rng, block_batch, block_body, 0.0, tone, false)
+
+
+func _city_sub_rect(piece: Rect2, along_x: bool, from: float, to: float) -> Rect2:
+	"""The `from`..`to` fraction of a building's rect along its LONG axis — how the
+	shopfront is split around its doorway."""
+	if along_x:
+		return Rect2(piece.position.x + piece.size.x * from, piece.position.y,
+				piece.size.x * (to - from), piece.size.y)
+	return Rect2(piece.position.x, piece.position.y + piece.size.y * from,
+			piece.size.x, piece.size.y * (to - from))
 
 
 func _city_balcony_y(height: float) -> float:
